@@ -2,7 +2,6 @@
 
 import {
   KeyboardControls,
-  Sky,
   useKeyboardControls,
 } from "@react-three/drei";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
@@ -28,16 +27,12 @@ import {
 import {
   BoxGeometry,
   Color,
-  DirectionalLight,
   Euler,
-  Fog,
   Group,
-  HemisphereLight,
   InstancedMesh,
   MathUtils,
   MeshBasicMaterial,
   Object3D,
-  PMREMGenerator,
   PointLight,
   PointsMaterial,
   Quaternion,
@@ -45,19 +40,35 @@ import {
   Vector2,
   Vector3,
 } from "three";
-import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import type { Ray as RapierRay } from "@dimforge/rapier3d-compat";
 import {
   breakablePieceById,
   breakablePieces,
-  fractureAt,
+  fractureLocallyAt,
   lampDefinitions,
   materialRuntimeProfiles,
   settleAfterBreak,
+  structuralMaterialProfiles,
   type BreakableMaterial,
   type BreakablePieceDefinition,
-  type LampDefinition,
 } from "./destructionScene";
+import {
+  BLAST_PUSH_RADIUS,
+  BLAST_RADIUS,
+  MAX_LIVE_SHARDS,
+  MG_FIRE_INTERVAL,
+  MG_RANGE,
+  VOLUME_BREAK_FRACTION,
+  blastFactorByMaterial,
+  blastNoise,
+  buildShards,
+  bulletHoleRadius,
+  carveBox,
+  crumbleOnLanding,
+  type RemnantDefinition,
+  type ShardDefinition,
+  type ShardSource,
+} from "./destructionRuntime";
 import {
   playDebrisSound,
   playExplosionSound,
@@ -65,7 +76,21 @@ import {
   playImpactSound,
   playLaunchSound,
 } from "./impactAudio";
-import { getPieceMaterial, setWindowGlow } from "./materialTextures";
+import {
+  FirstPersonHammer,
+  FirstPersonLauncher,
+  FirstPersonMachineGun,
+  type SwingDefinition,
+} from "./FirstPersonWeapons";
+import { HingedDoorSystem } from "./HingedDoorSystem";
+import { getPieceMaterial } from "./materialTextures";
+import { resolveRuntimeStructure } from "./runtimeStructure";
+import {
+  DayNightCycle,
+  LampLight,
+  SceneEnvironment,
+  type TimeOfDay,
+} from "./WorldEnvironment";
 
 type ControlName =
   | "forward"
@@ -93,44 +118,10 @@ interface ImpactBurstDefinition {
   readonly material: BreakableMaterial;
 }
 
-interface ShardDefinition {
-  readonly id: string;
-  readonly material: BreakableMaterial;
-  readonly color: string;
-  readonly size: readonly [number, number, number];
-  readonly position: readonly [number, number, number];
-  readonly quaternion: readonly [number, number, number, number];
-  readonly linearVelocity: readonly [number, number, number];
-  readonly angularVelocity: readonly [number, number, number];
-}
-
-interface ShardSource {
-  readonly id: string;
-  readonly material: BreakableMaterial;
-  readonly color: string;
-  readonly size: readonly [number, number, number];
-}
-
-interface RemnantDefinition {
-  readonly id: string;
-  readonly parentId: string;
-  readonly material: BreakableMaterial;
-  readonly color: string;
-  readonly size: readonly [number, number, number];
-  readonly position: readonly [number, number, number];
-  readonly quaternion: readonly [number, number, number, number];
-  readonly detached: boolean;
-}
-
 interface TracerDefinition {
   readonly id: number;
   readonly from: readonly [number, number, number];
   readonly to: readonly [number, number, number];
-}
-
-interface SwingDefinition {
-  readonly id: number;
-  readonly reach: number;
 }
 
 interface GrenadeDefinition {
@@ -145,285 +136,6 @@ interface VoxelExplosionDefinition {
 }
 
 const PLAYER_SPAWN = [0, 1.25, 7.4] as const;
-
-const BLAST_RADIUS = 2.35;
-const BLAST_PUSH_RADIUS = 4.4;
-
-const blastFactorByMaterial: Record<BreakableMaterial, number> = {
-  glass: 1.5,
-  plaster: 1.3,
-  wood: 1.05,
-  brick: 0.9,
-  stone: 0.75,
-  concrete: 0.75,
-  steel: 0.6,
-  soil: 0.45,
-  asphalt: 0.6,
-};
-
-function blastNoise(value: string, salt: number): number {
-  let hash = 2166136261 ^ salt;
-
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-
-  return ((hash >>> 0) % 1000) / 1000;
-}
-
-const MAX_SHARDS_PER_PIECE = 12;
-const MAX_LIVE_SHARDS = 240;
-const MIN_SHARD_SIDE = 0.07;
-const MIN_REMNANT_SIDE = 0.05;
-const VOLUME_BREAK_FRACTION = 0.45;
-const MG_FIRE_INTERVAL = 0.11;
-const MG_RANGE = 70;
-
-// Bullet carve radius per material; glass shatters whole, steel is immune.
-const bulletHoleRadius: Partial<Record<BreakableMaterial, number>> = {
-  brick: 0.19,
-  stone: 0.18,
-  concrete: 0.18,
-  plaster: 0.27,
-  wood: 0.2,
-  soil: 0.3,
-  asphalt: 0.24,
-};
-
-interface RemnantSpec {
-  readonly size: readonly [number, number, number];
-  readonly localCenter: readonly [number, number, number];
-}
-
-interface CarveResult {
-  readonly kept: readonly RemnantSpec[];
-  readonly removedVolume: number;
-}
-
-// Subtract a blocky (voxel-style) hole around localPoint from a box and
-// return the remainder as at most six axis-aligned boxes.
-function carveBox(
-  size: readonly [number, number, number],
-  localPoint: Vector3,
-  radius: number,
-  salt: string,
-): CarveResult | null {
-  const point = [localPoint.x, localPoint.y, localPoint.z];
-  const holeMin: number[] = [];
-  const holeMax: number[] = [];
-
-  for (let axis = 0; axis < 3; axis += 1) {
-    const half = radius * (0.8 + blastNoise(`${salt}:${axis}`, 29) * 0.35);
-    const low = Math.max(-size[axis] / 2, point[axis] - half);
-    const high = Math.min(size[axis] / 2, point[axis] + half);
-    if (high - low < 0.015) {
-      return null;
-    }
-    holeMin.push(low);
-    holeMax.push(high);
-  }
-
-  const kept: RemnantSpec[] = [];
-  const pushBox = (min: readonly number[], max: readonly number[]) => {
-    const dims = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
-    if (
-      dims[0] < MIN_REMNANT_SIDE ||
-      dims[1] < MIN_REMNANT_SIDE ||
-      dims[2] < MIN_REMNANT_SIDE
-    ) {
-      return;
-    }
-    kept.push({
-      size: [dims[0], dims[1], dims[2]],
-      localCenter: [
-        (min[0] + max[0]) / 2,
-        (min[1] + max[1]) / 2,
-        (min[2] + max[2]) / 2,
-      ],
-    });
-  };
-
-  const boxMin = [-size[0] / 2, -size[1] / 2, -size[2] / 2];
-  const boxMax = [size[0] / 2, size[1] / 2, size[2] / 2];
-  pushBox(boxMin, [holeMin[0], boxMax[1], boxMax[2]]);
-  pushBox([holeMax[0], boxMin[1], boxMin[2]], boxMax);
-  pushBox(
-    [holeMin[0], boxMin[1], boxMin[2]],
-    [holeMax[0], holeMin[1], boxMax[2]],
-  );
-  pushBox(
-    [holeMin[0], holeMax[1], boxMin[2]],
-    [holeMax[0], boxMax[1], boxMax[2]],
-  );
-  pushBox(
-    [holeMin[0], holeMin[1], boxMin[2]],
-    [holeMax[0], holeMax[1], holeMin[2]],
-  );
-  pushBox(
-    [holeMin[0], holeMin[1], holeMax[2]],
-    [holeMax[0], holeMax[1], boxMax[2]],
-  );
-
-  const total = size[0] * size[1] * size[2];
-  const keptVolume = kept.reduce(
-    (sum, box) => sum + box.size[0] * box.size[1] * box.size[2],
-    0,
-  );
-
-  return { kept, removedVolume: total - keptVolume };
-}
-
-const crumbleOnLanding: ReadonlySet<BreakableMaterial> = new Set([
-  "brick",
-  "stone",
-  "plaster",
-  "concrete",
-  "glass",
-  "asphalt",
-]);
-
-function shardCellSize(material: BreakableMaterial): number {
-  switch (material) {
-    case "glass":
-      return 0.34;
-    case "wood":
-      return 0.3;
-    case "steel":
-      return 0.5;
-    case "soil":
-      return Number.POSITIVE_INFINITY;
-    default:
-      return 0.21;
-  }
-}
-
-function shardGridCounts(
-  size: readonly [number, number, number],
-  material: BreakableMaterial,
-): [number, number, number] | null {
-  const cell = shardCellSize(material);
-  if (!Number.isFinite(cell)) {
-    return null;
-  }
-
-  const counts = [0, 1, 2].map((axis) => {
-    let count = MathUtils.clamp(Math.round(size[axis] / cell), 1, 6);
-    while (count > 1 && size[axis] / count < MIN_SHARD_SIDE) {
-      count -= 1;
-    }
-    return count;
-  }) as [number, number, number];
-
-  while (counts[0] * counts[1] * counts[2] > MAX_SHARDS_PER_PIECE) {
-    const largestAxis = counts.indexOf(Math.max(...counts)) as 0 | 1 | 2;
-    counts[largestAxis] -= 1;
-  }
-
-  if (counts[0] * counts[1] * counts[2] < 2) {
-    return null;
-  }
-
-  return counts;
-}
-
-// Split a box body into a grid of smaller real bodies that tile its current
-// volume, inheriting its transform and velocity — Teardown-style crumble.
-function buildShards(
-  source: ShardSource,
-  idPrefix: string,
-  bodyPosition: Vector3,
-  bodyQuaternion: Quaternion,
-  baseLinearVelocity: Vector3,
-  baseAngularVelocity: Vector3,
-  burstCenter: Vector3,
-  burstSpeed: number,
-): ShardDefinition[] | null {
-  const counts = shardGridCounts(source.size, source.material);
-  if (!counts) {
-    return null;
-  }
-
-  const shards: ShardDefinition[] = [];
-  const local = new Vector3();
-  const world = new Vector3();
-  const relative = new Vector3();
-  const spinVelocity = new Vector3();
-  const outward = new Vector3();
-  const shardSize: [number, number, number] = [
-    (source.size[0] / counts[0]) * 0.94,
-    (source.size[1] / counts[1]) * 0.94,
-    (source.size[2] / counts[2]) * 0.94,
-  ];
-  let index = 0;
-
-  for (let ix = 0; ix < counts[0]; ix += 1) {
-    for (let iy = 0; iy < counts[1]; iy += 1) {
-      for (let iz = 0; iz < counts[2]; iz += 1) {
-        local.set(
-          ((ix + 0.5) / counts[0] - 0.5) * source.size[0],
-          ((iy + 0.5) / counts[1] - 0.5) * source.size[1],
-          ((iz + 0.5) / counts[2] - 0.5) * source.size[2],
-        );
-        world.copy(local).applyQuaternion(bodyQuaternion).add(bodyPosition);
-        relative.copy(world).sub(bodyPosition);
-        spinVelocity.copy(baseAngularVelocity).cross(relative);
-        outward.copy(world).sub(burstCenter);
-        const distance = Math.max(0.14, outward.length());
-        outward.normalize();
-
-        const id = `${idPrefix}:${index}`;
-        const noise = blastNoise(id, 11);
-        const speed = (burstSpeed * (0.5 + noise * 0.7)) / (0.7 + distance);
-        const tumble = 2.5 + noise * 7;
-
-        shards.push({
-          id,
-          material: source.material,
-          color: source.color,
-          size: shardSize,
-          position: [world.x, world.y, world.z],
-          quaternion: [
-            bodyQuaternion.x,
-            bodyQuaternion.y,
-            bodyQuaternion.z,
-            bodyQuaternion.w,
-          ],
-          linearVelocity: [
-            baseLinearVelocity.x + spinVelocity.x + outward.x * speed,
-            baseLinearVelocity.y +
-              spinVelocity.y +
-              outward.y * speed +
-              speed * 0.22,
-            baseLinearVelocity.z + spinVelocity.z + outward.z * speed,
-          ],
-          angularVelocity: [
-            baseAngularVelocity.x + (noise - 0.5) * tumble,
-            baseAngularVelocity.y + (blastNoise(id, 5) - 0.5) * tumble,
-            baseAngularVelocity.z + (blastNoise(id, 3) - 0.5) * tumble,
-          ],
-        });
-        index += 1;
-      }
-    }
-  }
-
-  return shards;
-}
-
-function SceneEnvironment() {
-  const gl = useThree((state) => state.gl);
-  const envTexture = useMemo(() => {
-    const pmrem = new PMREMGenerator(gl);
-    const texture = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    pmrem.dispose();
-    return texture;
-  }, [gl]);
-
-  useEffect(() => () => envTexture.dispose(), [envTexture]);
-
-  return <primitive object={envTexture} attach="environment" />;
-}
 
 function Player({
   registerBody,
@@ -604,134 +316,6 @@ function Player({
     >
       <CapsuleCollider args={[0.45, 0.36]} />
     </RigidBody>
-  );
-}
-
-function FirstPersonHammer({ swing }: { swing: SwingDefinition }) {
-  const group = useRef<Group>(null);
-  const { camera } = useThree();
-  const swingProgress = useRef(1);
-  const previousSwing = useRef(swing.id);
-  const localOffset = useMemo(() => new Vector3(), []);
-  const cameraQuaternion = useMemo(() => new Quaternion(), []);
-  const toolEuler = useMemo(() => new Euler(), []);
-
-  useFrame((_, delta) => {
-    if (!group.current) {
-      return;
-    }
-
-    if (previousSwing.current !== swing.id) {
-      previousSwing.current = swing.id;
-      swingProgress.current = 0;
-    }
-
-    swingProgress.current = Math.min(1, swingProgress.current + delta * 4.6);
-    const progress = swingProgress.current;
-    const impactArc = Math.sin(progress * Math.PI);
-    const recoil = Math.sin(Math.min(1, progress * 1.7) * Math.PI);
-
-    group.current.position.copy(camera.position);
-    group.current.quaternion.copy(camera.getWorldQuaternion(cameraQuaternion));
-
-    localOffset.set(
-      0.52 - impactArc * 0.18,
-      -0.42 + recoil * 0.09,
-      -0.72 - impactArc * Math.max(0.18, swing.reach - 0.72),
-    );
-    localOffset.applyQuaternion(group.current.quaternion);
-    group.current.position.add(localOffset);
-
-    toolEuler.set(-0.18 - impactArc * 0.85, 0.08, 0.34 + impactArc * 0.42);
-    group.current.quaternion.multiply(new Quaternion().setFromEuler(toolEuler));
-  });
-
-  return (
-    <group ref={group} renderOrder={20}>
-      <mesh position={[0, -0.06, 0]} castShadow>
-        <cylinderGeometry args={[0.028, 0.042, 0.62, 10]} />
-        <meshStandardMaterial color="#a9743f" roughness={0.86} />
-      </mesh>
-      <mesh position={[0, -0.3, 0]} castShadow>
-        <cylinderGeometry args={[0.046, 0.05, 0.17, 10]} />
-        <meshStandardMaterial color="#3a2c1e" roughness={0.92} />
-      </mesh>
-      <mesh position={[0, 0.245, -0.02]} castShadow>
-        <boxGeometry args={[0.078, 0.06, 0.13]} />
-        <meshStandardMaterial color="#8a5c32" roughness={0.85} />
-      </mesh>
-      <mesh position={[0, 0.3, -0.02]} castShadow>
-        <boxGeometry args={[0.11, 0.11, 0.3]} />
-        <meshStandardMaterial color="#454543" metalness={0.76} roughness={0.36} />
-      </mesh>
-      <mesh position={[0, 0.3, -0.2]} rotation={[Math.PI / 2, 0, 0]} castShadow>
-        <cylinderGeometry args={[0.052, 0.06, 0.09, 12]} />
-        <meshStandardMaterial color="#565654" metalness={0.82} roughness={0.28} />
-      </mesh>
-      <mesh position={[0, 0.3, 0.18]} rotation={[Math.PI / 2, 0, 0]} castShadow>
-        <coneGeometry args={[0.056, 0.16, 4]} />
-        <meshStandardMaterial color="#383836" metalness={0.8} roughness={0.32} />
-      </mesh>
-    </group>
-  );
-}
-
-function FirstPersonLauncher({ kick }: { kick: number }) {
-  const group = useRef<Group>(null);
-  const { camera } = useThree();
-  const kickProgress = useRef(1);
-  const previousKick = useRef(kick);
-  const localOffset = useMemo(() => new Vector3(), []);
-  const cameraQuaternion = useMemo(() => new Quaternion(), []);
-  const toolEuler = useMemo(() => new Euler(), []);
-
-  useFrame((_, delta) => {
-    if (!group.current) {
-      return;
-    }
-
-    if (previousKick.current !== kick) {
-      previousKick.current = kick;
-      kickProgress.current = 0;
-    }
-
-    kickProgress.current = Math.min(1, kickProgress.current + delta * 3.2);
-    const recoil = Math.sin(Math.min(1, kickProgress.current) * Math.PI);
-
-    group.current.position.copy(camera.position);
-    group.current.quaternion.copy(camera.getWorldQuaternion(cameraQuaternion));
-
-    localOffset.set(0.42, -0.34 + recoil * 0.05, -0.62 + recoil * 0.17);
-    localOffset.applyQuaternion(group.current.quaternion);
-    group.current.position.add(localOffset);
-
-    toolEuler.set(recoil * 0.3, -0.06, 0.04);
-    group.current.quaternion.multiply(new Quaternion().setFromEuler(toolEuler));
-  });
-
-  return (
-    <group ref={group} renderOrder={20}>
-      <mesh rotation={[Math.PI / 2, 0, 0]} castShadow>
-        <cylinderGeometry args={[0.058, 0.062, 0.64, 12]} />
-        <meshStandardMaterial color="#43503f" metalness={0.42} roughness={0.5} />
-      </mesh>
-      <mesh position={[0, 0, -0.33]} rotation={[Math.PI / 2, 0, 0]} castShadow>
-        <cylinderGeometry args={[0.078, 0.07, 0.11, 12]} />
-        <meshStandardMaterial color="#333d31" metalness={0.5} roughness={0.44} />
-      </mesh>
-      <mesh position={[0, 0, 0.26]} castShadow>
-        <boxGeometry args={[0.1, 0.13, 0.16]} />
-        <meshStandardMaterial color="#2f372d" metalness={0.36} roughness={0.6} />
-      </mesh>
-      <mesh position={[0, -0.11, 0.1]} rotation={[0.3, 0, 0]} castShadow>
-        <boxGeometry args={[0.045, 0.15, 0.06]} />
-        <meshStandardMaterial color="#241f18" roughness={0.9} />
-      </mesh>
-      <mesh position={[0, 0.085, -0.12]} castShadow>
-        <boxGeometry args={[0.03, 0.05, 0.1]} />
-        <meshStandardMaterial color="#20261f" metalness={0.4} roughness={0.5} />
-      </mesh>
-    </group>
   );
 }
 
@@ -1090,11 +674,16 @@ const BreakablePiece = memo(function BreakablePiece({
   }, [broken, piece.column, piece.material, piece.row, rapier]);
 
   useEffect(() => {
-    if (!body.current) {
+    const currentBody = body.current;
+    if (!currentBody) {
       return;
     }
 
-    body.current.setTranslation(
+    if (currentBody.bodyType() !== rapier.RigidBodyType.Fixed) {
+      currentBody.setBodyType(rapier.RigidBodyType.Fixed, true);
+    }
+    currentBody.enableCcd(false);
+    currentBody.setTranslation(
       {
         x: piece.position[0],
         y: piece.position[1],
@@ -1102,7 +691,7 @@ const BreakablePiece = memo(function BreakablePiece({
       },
       true,
     );
-    body.current.setRotation(
+    currentBody.setRotation(
       {
         x: initialRotation.x,
         y: initialRotation.y,
@@ -1111,10 +700,10 @@ const BreakablePiece = memo(function BreakablePiece({
       },
       true,
     );
-    body.current.setLinvel({ x: 0, y: 0, z: 0 }, true);
-    body.current.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    currentBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    currentBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
     wasBroken.current = false;
-  }, [initialRotation, piece.position, resetVersion]);
+  }, [initialRotation, piece.position, rapier, resetVersion]);
 
   return (
     <RigidBody
@@ -1500,98 +1089,6 @@ function Tracer({
   );
 }
 
-function FirstPersonMachineGun({
-  shotsRef,
-}: {
-  shotsRef: { current: number };
-}) {
-  const group = useRef<Group>(null);
-  const flash = useRef<Group>(null);
-  const light = useRef<PointLight>(null);
-  const { camera } = useThree();
-  const kickProgress = useRef(1);
-  const flashTime = useRef(1);
-  const seenShots = useRef(0);
-  const localOffset = useMemo(() => new Vector3(), []);
-  const cameraQuaternion = useMemo(() => new Quaternion(), []);
-  const toolEuler = useMemo(() => new Euler(), []);
-
-  useFrame((_, delta) => {
-    if (!group.current) {
-      return;
-    }
-
-    if (seenShots.current !== shotsRef.current) {
-      seenShots.current = shotsRef.current;
-      kickProgress.current = 0;
-      flashTime.current = 0;
-    }
-
-    kickProgress.current = Math.min(1, kickProgress.current + delta * 11);
-    flashTime.current += delta;
-    const recoil = Math.sin(Math.min(1, kickProgress.current) * Math.PI);
-
-    group.current.position.copy(camera.position);
-    group.current.quaternion.copy(camera.getWorldQuaternion(cameraQuaternion));
-
-    localOffset.set(0.36, -0.3 + recoil * 0.014, -0.58 + recoil * 0.075);
-    localOffset.applyQuaternion(group.current.quaternion);
-    group.current.position.add(localOffset);
-
-    toolEuler.set(recoil * 0.09, -0.045, 0.02);
-    group.current.quaternion.multiply(new Quaternion().setFromEuler(toolEuler));
-
-    const flashVisible = flashTime.current < 0.05;
-    if (flash.current) {
-      flash.current.visible = flashVisible;
-      flash.current.rotation.z += delta * 40;
-    }
-    if (light.current) {
-      light.current.intensity = flashVisible ? 9 : 0;
-    }
-  });
-
-  return (
-    <group ref={group} renderOrder={20}>
-      <mesh position={[0, 0, -0.42]} rotation={[Math.PI / 2, 0, 0]} castShadow>
-        <cylinderGeometry args={[0.03, 0.034, 0.56, 10]} />
-        <meshStandardMaterial color="#33383b" metalness={0.72} roughness={0.34} />
-      </mesh>
-      <mesh position={[0, 0, -0.24]} rotation={[Math.PI / 2, 0, 0]} castShadow>
-        <cylinderGeometry args={[0.055, 0.055, 0.3, 10]} />
-        <meshStandardMaterial color="#42484c" metalness={0.6} roughness={0.42} />
-      </mesh>
-      <mesh position={[0, -0.005, 0.06]} castShadow>
-        <boxGeometry args={[0.13, 0.15, 0.36]} />
-        <meshStandardMaterial color="#3a3f42" metalness={0.55} roughness={0.46} />
-      </mesh>
-      <mesh position={[0.1, -0.02, 0.05]} castShadow>
-        <boxGeometry args={[0.08, 0.11, 0.16]} />
-        <meshStandardMaterial color="#4c5233" metalness={0.3} roughness={0.6} />
-      </mesh>
-      <mesh position={[0, -0.13, 0.14]} rotation={[0.32, 0, 0]} castShadow>
-        <boxGeometry args={[0.045, 0.16, 0.06]} />
-        <meshStandardMaterial color="#241f18" roughness={0.9} />
-      </mesh>
-      <mesh position={[0, 0.1, -0.02]} castShadow>
-        <boxGeometry args={[0.028, 0.05, 0.09]} />
-        <meshStandardMaterial color="#20261f" metalness={0.4} roughness={0.5} />
-      </mesh>
-      <group ref={flash} position={[0, 0, -0.74]} visible={false}>
-        <mesh>
-          <boxGeometry args={[0.16, 0.05, 0.05]} />
-          <meshBasicMaterial color="#ffe9a8" toneMapped={false} />
-        </mesh>
-        <mesh rotation={[0, 0, Math.PI / 2]}>
-          <boxGeometry args={[0.16, 0.05, 0.05]} />
-          <meshBasicMaterial color="#ffce6e" toneMapped={false} />
-        </mesh>
-        <pointLight ref={light} color="#ffc46e" distance={5} decay={2} />
-      </group>
-    </group>
-  );
-}
-
 const VOXEL_COUNT = 84;
 const VOXEL_LIFE = 1.15;
 const voxelFireColors = ["#fff3c4", "#ffd166", "#ff9f43", "#f4652f", "#c73e1d"];
@@ -1791,156 +1288,6 @@ function OpenWorldShell() {
   );
 }
 
-type TimeOfDay = "day" | "sunset" | "night";
-
-const timeOfDayTargets: Record<TimeOfDay, number> = {
-  day: 0.25,
-  sunset: 0.484,
-  night: 0.75,
-};
-
-// Manually switched time of day: the sun sweeps to the requested position,
-// sky and fog recolour, window glow and courtyard lamps come alive at night.
-function DayNightCycle({
-  mode,
-  nightRef,
-}: {
-  mode: TimeOfDay;
-  nightRef: { current: number };
-}) {
-  const directional = useRef<DirectionalLight>(null);
-  const hemisphere = useRef<HemisphereLight>(null);
-  const fogRef = useRef<Fog>(null);
-  const backgroundRef = useRef<Color>(null);
-  const time = useRef(timeOfDayTargets.day);
-  const skyThrottle = useRef(10);
-  const lastSkyTime = useRef(-1);
-  const [skySun, setSkySun] = useState<readonly [number, number, number]>([
-    24, 12, 14,
-  ]);
-  const dayColor = useMemo(() => new Color("#9cc0ce"), []);
-  const duskColor = useMemo(() => new Color("#d09a67"), []);
-  const nightColor = useMemo(() => new Color("#0d1420"), []);
-  const sunWarmColor = useMemo(() => new Color("#ffc07a"), []);
-  const sunDayColor = useMemo(() => new Color("#fff3d7"), []);
-  const moonColor = useMemo(() => new Color("#8fa5c8"), []);
-  const scratchColor = useMemo(() => new Color(), []);
-
-  useFrame((_, delta) => {
-    const target = timeOfDayTargets[mode];
-    const diff = ((target - time.current + 1.5) % 1) - 0.5;
-    const step =
-      Math.sign(diff) * Math.min(Math.abs(diff), delta * 0.22);
-    time.current = (time.current + step + 1) % 1;
-    const angle = time.current * Math.PI * 2;
-    const elevation = Math.sin(angle);
-    const azimuth = angle + Math.PI * 0.3;
-    const day = MathUtils.clamp(elevation / 0.32, 0, 1);
-    const night = 1 - day;
-    const twilight = MathUtils.clamp(1 - Math.abs(elevation) * 3.4, 0, 1);
-
-    const sunX = Math.cos(azimuth) * 30;
-    const sunZ = Math.sin(azimuth) * 24;
-    const sunY = elevation * 26;
-
-    if (directional.current) {
-      directional.current.position.set(sunX, Math.max(sunY, 7), sunZ);
-      directional.current.intensity = 0.32 + 2.8 * day;
-      if (day > 0.02) {
-        scratchColor
-          .copy(sunWarmColor)
-          .lerp(sunDayColor, MathUtils.clamp(elevation * 2.4, 0, 1));
-        directional.current.color.copy(scratchColor);
-      } else {
-        directional.current.color.copy(moonColor);
-      }
-    }
-    if (hemisphere.current) {
-      hemisphere.current.intensity = 0.14 + 0.9 * day;
-    }
-
-    scratchColor
-      .copy(nightColor)
-      .lerp(dayColor, day)
-      .lerp(duskColor, twilight * 0.8);
-    fogRef.current?.color.copy(scratchColor);
-    backgroundRef.current?.copy(scratchColor);
-
-    setWindowGlow(night * 1.9);
-    nightRef.current = night;
-
-    skyThrottle.current += delta;
-    if (
-      skyThrottle.current > 0.25 &&
-      Math.abs(time.current - lastSkyTime.current) > 0.003
-    ) {
-      skyThrottle.current = 0;
-      lastSkyTime.current = time.current;
-      setSkySun([sunX, sunY, sunZ]);
-    }
-  });
-
-  return (
-    <>
-      <color ref={backgroundRef} attach="background" args={["#92b9c8"]} />
-      <fog ref={fogRef} attach="fog" args={["#9cc0ce", 45, 110]} />
-      <Sky
-        distance={520}
-        sunPosition={[...skySun]}
-        turbidity={5.5}
-        rayleigh={1.6}
-        mieCoefficient={0.004}
-        mieDirectionalG={0.75}
-      />
-      <hemisphereLight ref={hemisphere} args={["#d8f0ff", "#4d5d38", 1.05]} />
-      <directionalLight
-        ref={directional}
-        castShadow
-        position={[10, 16, 9]}
-        intensity={3.1}
-        color="#fff3d7"
-        shadow-mapSize-width={2048}
-        shadow-mapSize-height={2048}
-        shadow-camera-near={1}
-        shadow-camera-far={110}
-        shadow-camera-left={-38}
-        shadow-camera-right={38}
-        shadow-camera-top={38}
-        shadow-camera-bottom={-38}
-      />
-    </>
-  );
-}
-
-// A real light for each lamp fixture; goes dark when its shade is smashed.
-function LampLight({
-  lamp,
-  broken,
-  nightRef,
-}: {
-  lamp: LampDefinition;
-  broken: boolean;
-  nightRef: { current: number };
-}) {
-  const light = useRef<PointLight>(null);
-
-  useFrame(() => {
-    if (light.current) {
-      light.current.intensity = broken ? 0 : nightRef.current * 2.6;
-    }
-  });
-
-  return (
-    <pointLight
-      ref={light}
-      position={[...lamp.position]}
-      color="#ffd9a0"
-      distance={9}
-      decay={1.8}
-    />
-  );
-}
-
 interface OpenWorldSceneProps {
   active: boolean;
   weapon: WeaponName;
@@ -2001,18 +1348,6 @@ function OpenWorldScene({
   const shardCounter = useRef(0);
   const impactShatterTimes = useRef<number[]>([]);
   const chipTimes = useRef<number[]>([]);
-  const hingedDoors = useMemo(
-    () => breakablePieces.filter((piece) => piece.hinge),
-    [],
-  );
-  const doorStates = useRef(
-    new Map<string, { angle: number; sign: number }>(),
-  );
-  const doorCameraDir = useRef(new Vector3());
-  const doorToTarget = useRef(new Vector3());
-  const doorQuaternion = useRef(new Quaternion());
-  const doorRelative = useRef(new Vector3());
-  const doorUpAxis = useRef(new Vector3(0, 1, 0));
   const remnantsRef = useRef<readonly RemnantDefinition[]>([]);
   const remnantById = useRef(new Map<string, RemnantDefinition>());
   const remnantCounter = useRef(0);
@@ -2089,120 +1424,12 @@ function OpenWorldScene({
     restCounters.current.clear();
     impactShatterTimes.current = [];
     chipTimes.current = [];
-    doorStates.current.clear();
     for (const timer of strikeTimers.current) {
       window.clearTimeout(timer);
     }
     strikeTimers.current = [];
     onBrokenCountChange(settled.size);
   }, [onBrokenCountChange, resetVersion]);
-
-  // Doors on hinges: swing open away from the player when approached and
-  // looked at, swing shut when the player walks away. A door stays a fully
-  // breakable piece — hits knock it off its hinges as usual.
-  useFrame((_, delta) => {
-    const states = doorStates.current;
-    camera.getWorldDirection(doorCameraDir.current);
-
-    for (const door of hingedDoors) {
-      if (brokenPiecesRef.current.has(door.id)) {
-        states.delete(door.id);
-        continue;
-      }
-      const body = pieceBodies.current.get(door.id);
-      if (!body || body.bodyType() === rapier.RigidBodyType.Dynamic) {
-        continue;
-      }
-
-      const hinge = door.hinge!;
-      let state = states.get(door.id);
-      if (!state) {
-        state = { angle: 0, sign: 0 };
-        states.set(door.id, state);
-      }
-
-      const dx = camera.position.x - hinge.pivot[0];
-      const dy = camera.position.y - door.position[1];
-      const dz = camera.position.z - hinge.pivot[2];
-      const distance = Math.hypot(dx, dy, dz);
-
-      let open: boolean;
-      if (state.angle > 0.05) {
-        open = distance < 3.2;
-      } else {
-        doorToTarget.current
-          .set(
-            door.position[0] - camera.position.x,
-            door.position[1] - camera.position.y,
-            door.position[2] - camera.position.z,
-          )
-          .normalize();
-        open =
-          distance < 2.4 &&
-          doorToTarget.current.dot(doorCameraDir.current) > 0.25;
-      }
-
-      if (open && state.sign === 0) {
-        const side =
-          Math.sign(dx * hinge.normal[0] + dz * hinge.normal[2]) || 1;
-        const crossDotNormal =
-          hinge.direction[2] * hinge.normal[0] -
-          hinge.direction[0] * hinge.normal[2];
-        state.sign = -side * Math.sign(crossDotNormal || 1);
-      }
-
-      const targetAngle = open ? 1.8 : 0;
-      state.angle +=
-        (targetAngle - state.angle) * Math.min(1, delta * (open ? 5 : 3));
-
-      if (!open && state.angle < 0.02) {
-        state.angle = 0;
-        state.sign = 0;
-        if (body.bodyType() !== rapier.RigidBodyType.Fixed) {
-          body.setBodyType(rapier.RigidBodyType.Fixed, true);
-          body.setTranslation(
-            {
-              x: door.position[0],
-              y: door.position[1],
-              z: door.position[2],
-            },
-            false,
-          );
-          body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, false);
-        }
-        continue;
-      }
-
-      if (
-        body.bodyType() !== rapier.RigidBodyType.KinematicPositionBased
-      ) {
-        body.setBodyType(rapier.RigidBodyType.KinematicPositionBased, true);
-      }
-
-      doorQuaternion.current.setFromAxisAngle(
-        doorUpAxis.current,
-        state.sign * state.angle,
-      );
-      doorRelative.current
-        .set(
-          door.position[0] - hinge.pivot[0],
-          0,
-          door.position[2] - hinge.pivot[2],
-        )
-        .applyQuaternion(doorQuaternion.current);
-      body.setNextKinematicTranslation({
-        x: hinge.pivot[0] + doorRelative.current.x,
-        y: door.position[1],
-        z: hinge.pivot[2] + doorRelative.current.z,
-      });
-      body.setNextKinematicRotation({
-        x: doorQuaternion.current.x,
-        y: doorQuaternion.current.y,
-        z: doorQuaternion.current.z,
-        w: doorQuaternion.current.w,
-      });
-    }
-  });
 
   // Put settled debris to sleep and drop CCD so a big mess stays cheap.
   useFrame((_, delta) => {
@@ -2244,14 +1471,92 @@ function OpenWorldScene({
     }
   });
 
-  const breakAt = useCallback(
-    (target: BreakablePieceDefinition, currentImpact: number) => {
-      const next = fractureAt(target, brokenPiecesRef.current, currentImpact);
-      brokenPiecesRef.current = next;
-      setBrokenPieces(next);
-      onBrokenCountChange(next.size);
+  const settleStructure = useCallback(
+    (seedBroken: ReadonlySet<string>): ReadonlySet<string> => {
+      let result = resolveRuntimeStructure(
+        breakablePieces,
+        structuralMaterialProfiles,
+        seedBroken,
+        carvedPiecesRef.current,
+        remnantsRef.current,
+      );
+      const sectionFailures = new Set(result.brokenPieceIds);
+
+      for (const parentId of carvedPiecesRef.current) {
+        if (sectionFailures.has(parentId)) {
+          continue;
+        }
+        const parent = breakablePieceById.get(parentId);
+        if (!parent) {
+          continue;
+        }
+
+        const originalVolume =
+          parent.size[0] * parent.size[1] * parent.size[2];
+        const stableVolume = remnantsRef.current
+          .filter(
+            (remnant) =>
+              remnant.parentId === parentId &&
+              !result.detachedFragmentIds.has(remnant.id),
+          )
+          .reduce(
+            (total, remnant) =>
+              total + remnant.size[0] * remnant.size[1] * remnant.size[2],
+            0,
+          );
+        if (stableVolume < originalVolume * VOLUME_BREAK_FRACTION) {
+          sectionFailures.add(parentId);
+        }
+      }
+
+      if (sectionFailures.size > result.brokenPieceIds.size) {
+        result = resolveRuntimeStructure(
+          breakablePieces,
+          structuralMaterialProfiles,
+          sectionFailures,
+          carvedPiecesRef.current,
+          remnantsRef.current,
+        );
+      }
+      let remnantsChanged = false;
+      const updatedRemnants = remnantsRef.current.map((remnant) => {
+        if (
+          remnant.detached ||
+          !result.detachedFragmentIds.has(remnant.id)
+        ) {
+          return remnant;
+        }
+
+        remnantsChanged = true;
+        return { ...remnant, detached: true };
+      });
+
+      if (remnantsChanged) {
+        remnantsRef.current = updatedRemnants;
+        remnantById.current = new Map(
+          updatedRemnants.map((remnant) => [remnant.id, remnant]),
+        );
+        setRemnants(updatedRemnants);
+      }
+
+      brokenPiecesRef.current = result.brokenPieceIds;
+      setBrokenPieces(result.brokenPieceIds);
+      onBrokenCountChange(result.brokenPieceIds.size);
+      return result.brokenPieceIds;
     },
     [onBrokenCountChange],
+  );
+
+  const breakAt = useCallback(
+    (target: BreakablePieceDefinition, currentImpact: number) => {
+      const next = fractureLocallyAt(
+        target,
+        brokenPiecesRef.current,
+        currentImpact,
+      );
+      settleStructure(next);
+    },
+    [settleStructure],
   );
 
   const applyImpact = useCallback(
@@ -2364,12 +1669,9 @@ function OpenWorldScene({
       for (const id of ids) {
         next.add(id);
       }
-      const resolved = settleAfterBreak(next);
-      brokenPiecesRef.current = resolved;
-      setBrokenPieces(resolved);
-      onBrokenCountChange(resolved.size);
+      settleStructure(next);
     },
-    [onBrokenCountChange],
+    [settleStructure],
   );
 
   // Replace a whole box body with real sub-boxes of the same object,
@@ -2797,189 +2099,11 @@ function OpenWorldScene({
     [ensureDynamic, subtractParentVolume],
   );
 
-  // Support sweep for carved leftovers: a group of fixed remnants that no
-  // longer touches any standing structure falls, and a carved piece with no
-  // standing remnants left stops pretending to carry load.
+  // Original pieces and carved remnants are solved by the same load-path graph.
+  // Rapier only receives the fragments that this structural pass releases.
   const settleWorld = useCallback(() => {
-    const touches = (
-      a: { min: readonly number[]; max: readonly number[] },
-      b: { min: readonly number[]; max: readonly number[] },
-    ) => {
-      for (let axis = 0; axis < 3; axis += 1) {
-        if (
-          a.min[axis] - 0.06 > b.max[axis] ||
-          b.min[axis] - 0.06 > a.max[axis]
-        ) {
-          return false;
-        }
-      }
-      return true;
-    };
-
-    const remnantBounds = (remnant: RemnantDefinition) => {
-      const quaternion = new Quaternion(...remnant.quaternion);
-      const axisX = new Vector3(remnant.size[0] / 2, 0, 0).applyQuaternion(
-        quaternion,
-      );
-      const axisY = new Vector3(0, remnant.size[1] / 2, 0).applyQuaternion(
-        quaternion,
-      );
-      const axisZ = new Vector3(0, 0, remnant.size[2] / 2).applyQuaternion(
-        quaternion,
-      );
-      const extents = [
-        Math.abs(axisX.x) + Math.abs(axisY.x) + Math.abs(axisZ.x),
-        Math.abs(axisX.y) + Math.abs(axisY.y) + Math.abs(axisZ.y),
-        Math.abs(axisX.z) + Math.abs(axisY.z) + Math.abs(axisZ.z),
-      ];
-      return {
-        min: [
-          remnant.position[0] - extents[0],
-          remnant.position[1] - extents[1],
-          remnant.position[2] - extents[2],
-        ],
-        max: [
-          remnant.position[0] + extents[0],
-          remnant.position[1] + extents[1],
-          remnant.position[2] + extents[2],
-        ],
-      };
-    };
-
-    for (let pass = 0; pass < 4; pass += 1) {
-      const broken = brokenPiecesRef.current;
-      const fixedRemnants = remnantsRef.current.filter(
-        (remnant) => !remnant.detached && !broken.has(remnant.parentId),
-      );
-      const boundsById = new Map(
-        fixedRemnants.map((remnant) => [remnant.id, remnantBounds(remnant)]),
-      );
-      const standingBounds = breakablePieces
-        .filter(
-          (piece) =>
-            !broken.has(piece.id) && !carvedPiecesRef.current.has(piece.id),
-        )
-        .map((piece) => ({
-          min: [
-            piece.position[0] - piece.size[0] / 2,
-            piece.position[1] - piece.size[1] / 2,
-            piece.position[2] - piece.size[2] / 2,
-          ],
-          max: [
-            piece.position[0] + piece.size[0] / 2,
-            piece.position[1] + piece.size[1] / 2,
-            piece.position[2] + piece.size[2] / 2,
-          ],
-        }));
-
-      const byParent = new Map<string, RemnantDefinition[]>();
-      for (const remnant of fixedRemnants) {
-        const group = byParent.get(remnant.parentId);
-        if (group) {
-          group.push(remnant);
-        } else {
-          byParent.set(remnant.parentId, [remnant]);
-        }
-      }
-
-      const toDetach: RemnantDefinition[] = [];
-      for (const [parentId, group] of byParent) {
-        const visited = new Set<string>();
-
-        for (const seed of group) {
-          if (visited.has(seed.id)) {
-            continue;
-          }
-
-          const component: RemnantDefinition[] = [];
-          const stack = [seed];
-          visited.add(seed.id);
-          while (stack.length > 0) {
-            const current = stack.pop()!;
-            component.push(current);
-            const currentBounds = boundsById.get(current.id)!;
-            for (const other of group) {
-              if (
-                !visited.has(other.id) &&
-                touches(currentBounds, boundsById.get(other.id)!)
-              ) {
-                visited.add(other.id);
-                stack.push(other);
-              }
-            }
-          }
-
-          let anchored = false;
-          for (const member of component) {
-            const memberBounds = boundsById.get(member.id)!;
-            if (standingBounds.some((bounds) => touches(memberBounds, bounds))) {
-              anchored = true;
-              break;
-            }
-            if (
-              fixedRemnants.some(
-                (other) =>
-                  other.parentId !== parentId &&
-                  touches(memberBounds, boundsById.get(other.id)!),
-              )
-            ) {
-              anchored = true;
-              break;
-            }
-          }
-
-          if (!anchored) {
-            toDetach.push(...component);
-          }
-        }
-      }
-
-      const volumeBroken = new Set<string>();
-      if (toDetach.length > 0) {
-        const detachIds = new Set(toDetach.map((remnant) => remnant.id));
-        const updated = remnantsRef.current.map((remnant) =>
-          detachIds.has(remnant.id)
-            ? { ...remnant, detached: true }
-            : remnant,
-        );
-        remnantsRef.current = updated;
-        remnantById.current = new Map(
-          updated.map((remnant) => [remnant.id, remnant]),
-        );
-        setRemnants(updated);
-
-        for (const remnant of toDetach) {
-          const body = pieceBodies.current.get(remnant.id);
-          if (body) {
-            ensureDynamic(body);
-            body.wakeUp();
-          }
-          const volume =
-            remnant.size[0] * remnant.size[1] * remnant.size[2];
-          if (subtractParentVolume(remnant.parentId, volume)) {
-            volumeBroken.add(remnant.parentId);
-          }
-        }
-      }
-
-      for (const parentId of carvedPiecesRef.current) {
-        if (broken.has(parentId) || volumeBroken.has(parentId)) {
-          continue;
-        }
-        const hasStanding = remnantsRef.current.some(
-          (remnant) => remnant.parentId === parentId && !remnant.detached,
-        );
-        if (!hasStanding) {
-          volumeBroken.add(parentId);
-        }
-      }
-
-      breakPieces([...volumeBroken]);
-      if (toDetach.length === 0 && volumeBroken.size === 0) {
-        break;
-      }
-    }
-  }, [breakPieces, ensureDynamic, subtractParentVolume]);
+    settleStructure(brokenPiecesRef.current);
+  }, [settleStructure]);
 
   const fireRound = useCallback(() => {
     playGunshotSound();
@@ -3214,10 +2338,7 @@ function OpenWorldScene({
         }
       }
 
-      const resolved = settleAfterBreak(next);
-      brokenPiecesRef.current = resolved;
-      setBrokenPieces(resolved);
-      onBrokenCountChange(resolved.size);
+      const resolved = settleStructure(next);
 
       // Teardown crumble: the pieces closest to the blast shatter into
       // real sub-pieces, the rest fly away whole.
@@ -3367,8 +2488,8 @@ function OpenWorldScene({
       carveAt,
       detachRemnant,
       ensureDynamic,
-      onBrokenCountChange,
       rapier,
+      settleStructure,
       settleWorld,
       shatterTarget,
     ],
@@ -3697,15 +2818,24 @@ function OpenWorldScene({
         />
       ))}
       {tracers.map((tracer) => (
-        <Tracer key={tracer.id} tracer={tracer} onDone={removeTracer} />
+        <Tracer
+          key={`tracer:${tracer.id}`}
+          tracer={tracer}
+          onDone={removeTracer}
+        />
       ))}
       {grenades.map((grenade) => (
         <Grenade
-          key={grenade.id}
+          key={`grenade:${grenade.id}`}
           grenade={grenade}
           onExplode={handleGrenadeExplode}
         />
       ))}
+      <HingedDoorSystem
+        bodies={pieceBodies}
+        brokenPieces={brokenPiecesRef}
+        resetVersion={resetVersion}
+      />
       <Player registerBody={registerBody} />
       {weapon === "hammer" ? (
         <FirstPersonHammer swing={swing} />
@@ -3723,11 +2853,15 @@ function OpenWorldScene({
         onStrikeEnd={strikeEnd}
       />
       {bursts.map((burst) => (
-        <DustBurst key={burst.id} burst={burst} onDone={removeBurst} />
+        <DustBurst
+          key={`burst:${burst.id}`}
+          burst={burst}
+          onDone={removeBurst}
+        />
       ))}
       {explosions.map((explosion) => (
         <VoxelExplosion
-          key={explosion.id}
+          key={`explosion:${explosion.id}`}
           explosion={explosion}
           onDone={removeExplosion}
         />
@@ -3823,6 +2957,7 @@ export function MakeAMessGame() {
                 maxCcdSubsteps={2}
               >
                 <OpenWorldScene
+                  key={resetVersion}
                   active={active}
                   weapon={weapon}
                   timeOfDay={timeOfDay}

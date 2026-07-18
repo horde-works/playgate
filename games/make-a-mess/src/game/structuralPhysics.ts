@@ -13,6 +13,7 @@ export interface StructuralMaterialProfile {
   readonly cantilever: number;
   readonly maximumVerticalGap: number;
   readonly foundation?: boolean;
+  readonly bearsLoad?: boolean;
   readonly carriesAttachments?: boolean;
   readonly sideAttachmentReach?: number;
 }
@@ -33,6 +34,7 @@ const CONTACT_TOLERANCE = 0.055;
 const MINIMUM_VERTICAL_ORDER = 0.11;
 const SAME_LEVEL_TOLERANCE = 0.1;
 const MAXIMUM_OVERLOAD_PASSES = 8;
+const SPATIAL_CELL_SIZE = 2.5;
 
 function lowerBound<Material extends string>(
   piece: StructuralPieceDefinition<Material>,
@@ -46,6 +48,22 @@ function upperBound<Material extends string>(
   axis: 0 | 1 | 2,
 ): number {
   return piece.position[axis] + piece.size[axis] / 2;
+}
+
+function spatialCellRange(minimum: number, maximum: number): readonly number[] {
+  const first = Math.floor(minimum / SPATIAL_CELL_SIZE);
+  const last = Math.floor(maximum / SPATIAL_CELL_SIZE);
+  const cells: number[] = [];
+
+  for (let cell = first; cell <= last; cell += 1) {
+    cells.push(cell);
+  }
+
+  return cells;
+}
+
+function spatialKey(x: number, y: number, z: number): string {
+  return `${x}:${y}:${z}`;
 }
 
 function intervalOverlap<Material extends string>(
@@ -80,6 +98,69 @@ export function createStructuralSolver<Material extends string>(
   materialProfiles: Readonly<Record<Material, StructuralMaterialProfile>>,
 ): StructuralSolver {
   const pieceById = new Map(pieces.map((piece) => [piece.id, piece]));
+  const maximumHorizontalReach = Math.max(
+    CONTACT_TOLERANCE,
+    ...Object.values(materialProfiles).map(
+      (profile) => profile.sideAttachmentReach ?? 0,
+    ),
+  );
+  const maximumVerticalReach = Math.max(
+    CONTACT_TOLERANCE,
+    ...Object.values(materialProfiles).map(
+      (profile) => profile.maximumVerticalGap,
+    ),
+  );
+  const spatialBuckets = new Map<string, StructuralPieceDefinition<Material>[]>();
+
+  for (const piece of pieces) {
+    const xCells = spatialCellRange(lowerBound(piece, 0), upperBound(piece, 0));
+    const yCells = spatialCellRange(lowerBound(piece, 1), upperBound(piece, 1));
+    const zCells = spatialCellRange(lowerBound(piece, 2), upperBound(piece, 2));
+
+    for (const x of xCells) {
+      for (const y of yCells) {
+        for (const z of zCells) {
+          const key = spatialKey(x, y, z);
+          const bucket = spatialBuckets.get(key);
+          if (bucket) {
+            bucket.push(piece);
+          } else {
+            spatialBuckets.set(key, [piece]);
+          }
+        }
+      }
+    }
+  }
+
+  const nearbyPieces = (
+    piece: StructuralPieceDefinition<Material>,
+  ): readonly StructuralPieceDefinition<Material>[] => {
+    const nearby = new Map<string, StructuralPieceDefinition<Material>>();
+    const xCells = spatialCellRange(
+      lowerBound(piece, 0) - maximumHorizontalReach,
+      upperBound(piece, 0) + maximumHorizontalReach,
+    );
+    const yCells = spatialCellRange(
+      lowerBound(piece, 1) - maximumVerticalReach,
+      upperBound(piece, 1) + maximumVerticalReach,
+    );
+    const zCells = spatialCellRange(
+      lowerBound(piece, 2) - maximumHorizontalReach,
+      upperBound(piece, 2) + maximumHorizontalReach,
+    );
+
+    for (const x of xCells) {
+      for (const y of yCells) {
+        for (const z of zCells) {
+          for (const candidate of spatialBuckets.get(spatialKey(x, y, z)) ?? []) {
+            nearby.set(candidate.id, candidate);
+          }
+        }
+      }
+    }
+
+    return [...nearby.values()];
+  };
 
   const canSitOn = (
     piece: StructuralPieceDefinition<Material>,
@@ -95,6 +176,9 @@ export function createStructuralSolver<Material extends string>(
 
     const pieceProfile = materialProfiles[piece.material];
     const supportProfile = materialProfiles[support.material];
+    if (supportProfile.bearsLoad === false) {
+      return false;
+    }
     const verticalGap = lowerBound(piece, 1) - upperBound(support, 1);
     if (verticalGap > pieceProfile.maximumVerticalGap) {
       return false;
@@ -156,15 +240,16 @@ export function createStructuralSolver<Material extends string>(
   const sideAttachmentCandidates = new Map<string, readonly string[]>();
 
   for (const piece of pieces) {
+    const candidates = nearbyPieces(piece);
     verticalSupportCandidates.set(
       piece.id,
-      pieces
+      candidates
         .filter((candidate) => canSitOn(piece, candidate))
         .map((candidate) => candidate.id),
     );
     sideAttachmentCandidates.set(
       piece.id,
-      pieces
+      candidates
         .filter((candidate) => canAttachToSide(piece, candidate))
         .map((candidate) => candidate.id),
     );
@@ -214,6 +299,9 @@ export function createStructuralSolver<Material extends string>(
         .map((piece) => piece.id),
     );
     const supportsByPiece = new Map<string, readonly string[]>();
+    const supportDepthByPiece = new Map(
+      [...stable].map((id) => [id, 0] as const),
+    );
     let changed = true;
 
     while (changed) {
@@ -242,6 +330,15 @@ export function createStructuralSolver<Material extends string>(
             piece.id,
             verticalSupports.map((support) => support.id),
           );
+          supportDepthByPiece.set(
+            piece.id,
+            1 +
+              Math.min(
+                ...verticalSupports.map(
+                  (support) => supportDepthByPiece.get(support.id) ?? 0,
+                ),
+              ),
+          );
           changed = true;
           continue;
         }
@@ -252,24 +349,37 @@ export function createStructuralSolver<Material extends string>(
         if (attachedSupports.length > 0) {
           stable.add(piece.id);
           supportsByPiece.set(piece.id, attachedSupports);
+          supportDepthByPiece.set(
+            piece.id,
+            1 +
+              Math.min(
+                ...attachedSupports.map(
+                  (id) => supportDepthByPiece.get(id) ?? 0,
+                ),
+              ),
+          );
           changed = true;
         }
       }
     }
 
-    // Welded side attachments carry load alongside bearing contacts, so a
-    // load path never funnels through a single weak member when the piece is
-    // also tied into a wall. Resolved after the full stable set is known.
+    // A side tie may share load only toward an already shorter path to the
+    // foundation. This keeps useful wall bracing without allowing equal-level
+    // pieces to form a self-supporting cycle.
     for (const piece of pieces) {
+      const pieceDepth = supportDepthByPiece.get(piece.id);
       if (
-        !stable.has(piece.id) ||
+        pieceDepth === undefined ||
         materialProfiles[piece.material].foundation
       ) {
         continue;
       }
 
       const attached = (sideAttachmentCandidates.get(piece.id) ?? []).filter(
-        (id) => stable.has(id),
+        (id) => {
+          const supportDepth = supportDepthByPiece.get(id);
+          return supportDepth !== undefined && supportDepth < pieceDepth;
+        },
       );
       if (attached.length === 0) {
         continue;

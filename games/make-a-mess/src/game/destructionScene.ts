@@ -1757,7 +1757,7 @@ export const structuralMaterialProfiles: Record<
   },
   plaster: {
     density: materialRuntimeProfiles.plaster.density,
-    compressionStrength: 28,
+    compressionStrength: 40,
     cantilever: 0.3,
     maximumVerticalGap: 0.2,
     sideAttachmentReach: 0.34,
@@ -1775,6 +1775,7 @@ export const structuralMaterialProfiles: Record<
     compressionStrength: 180,
     cantilever: 0.18,
     maximumVerticalGap: 0.2,
+    bearsLoad: false,
     sideAttachmentReach: 0.22,
   },
   steel: {
@@ -1830,7 +1831,7 @@ function deterministicNoise(value: string): number {
   return ((hash >>> 0) % 10000) / 10000;
 }
 
-export function fractureAt(
+export function fractureLocallyAt(
   target: BreakablePieceDefinition,
   current: ReadonlySet<string>,
   impactIndex: number,
@@ -1895,52 +1896,19 @@ export function fractureAt(
     }
   }
 
-  return settleAfterBreak(next);
+  return next;
 }
 
-function releaseUnsupportedStacks(next: Set<string>): void {
-  let releasedSupport = true;
-
-  while (releasedSupport) {
-    releasedSupport = false;
-
-    for (const stackCluster of breakableClusters) {
-      if (stackCluster.supportMode !== "stack") {
-        continue;
-      }
-
-      for (const piece of stackCluster.pieces) {
-        if (!piece.row || next.has(piece.id)) {
-          continue;
-        }
-
-        const supports = stackCluster.pieces.filter(
-          (candidate) =>
-            candidate.row === piece.row! - 1 &&
-            Math.hypot(
-              candidate.position[0] - piece.position[0],
-              candidate.position[2] - piece.position[2],
-            ) <
-              Math.max(candidate.size[0], candidate.size[2], piece.size[0]) *
-                0.78,
-        );
-
-        if (
-          supports.length > 0 &&
-          supports.every((support) => next.has(support.id))
-        ) {
-          next.add(piece.id);
-          releasedSupport = true;
-        }
-      }
-    }
-  }
+export function fractureAt(
+  target: BreakablePieceDefinition,
+  current: ReadonlySet<string>,
+  impactIndex: number,
+): ReadonlySet<string> {
+  return settleAfterBreak(fractureLocallyAt(target, current, impactIndex));
 }
 
 export function settleAfterBreak(
   broken: ReadonlySet<string>,
 ): ReadonlySet<string> {
-  const next = new Set(broken);
-  releaseUnsupportedStacks(next);
-  return resolveStructuralCollapse(next);
+  return resolveStructuralCollapse(broken);
 }

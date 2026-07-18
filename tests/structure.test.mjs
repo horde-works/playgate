@@ -143,6 +143,29 @@ test("the upper storey cannot hang from only the corner frame posts", () => {
   );
 });
 
+test("the panel building cascades when its complete ground storey is removed", () => {
+  const removedGroundStorey = new Set(
+    breakablePieces
+      .filter(
+        (piece) =>
+          piece.id.startsWith("hru:") &&
+          piece.material !== "soil" &&
+          piece.material !== "asphalt" &&
+          piece.position[1] < 2.7,
+      )
+      .map((piece) => piece.id),
+  );
+
+  const collapsed = resolveStructuralCollapse(removedGroundStorey);
+  const secondary = [...collapsed].filter(
+    (id) => !removedGroundStorey.has(id),
+  );
+
+  assert.equal(secondary.some((id) => id.startsWith("hru:slab:2")), true);
+  assert.equal(secondary.some((id) => id.startsWith("hru:south:3")), true);
+  assert.equal(secondary.length > 400, true);
+});
+
 test("a local impact always releases its directly hit part", () => {
   const target = breakablePieceById.get("door:front:board:2");
   assert.ok(target);
