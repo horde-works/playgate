@@ -1,4 +1,4 @@
-import { MathUtils, Quaternion, Vector3 } from "three";
+import { Euler, MathUtils, Quaternion, Vector3 } from "three";
 import type { BreakableMaterial } from "./destructionScene";
 
 export interface ShardDefinition {
@@ -18,6 +18,9 @@ export interface ShardSource {
   readonly color: string;
   readonly size: readonly [number, number, number];
 }
+
+export type FractureCause = "impact" | "blast" | "fall";
+export type LandingDamage = "none" | "chip" | "shatter";
 
 export interface RemnantDefinition {
   readonly id: string;
@@ -71,6 +74,43 @@ export const crumbleOnLanding: ReadonlySet<BreakableMaterial> = new Set([
   "earth",
 ]);
 
+const landingDamageByMaterial: Partial<
+  Record<
+    BreakableMaterial,
+    {
+      readonly chipSpeed: number;
+      readonly shatterSpeed: number;
+      readonly minimumIntensity: number;
+    }
+  >
+> = {
+  glass: { chipSpeed: 2.2, shatterSpeed: 3.8, minimumIntensity: 0.12 },
+  plaster: { chipSpeed: 3.2, shatterSpeed: 5.6, minimumIntensity: 0.14 },
+  brick: { chipSpeed: 4.8, shatterSpeed: 7.6, minimumIntensity: 0.15 },
+  earth: { chipSpeed: 5.2, shatterSpeed: 8.2, minimumIntensity: 0.15 },
+  concrete: { chipSpeed: 6.8, shatterSpeed: 10.5, minimumIntensity: 0.16 },
+  asphalt: { chipSpeed: 7.4, shatterSpeed: 11.5, minimumIntensity: 0.17 },
+  stone: { chipSpeed: 8.2, shatterSpeed: 12.4, minimumIntensity: 0.18 },
+};
+
+export function classifyLandingDamage(
+  material: BreakableMaterial,
+  approachSpeed: number,
+  intensity: number,
+): LandingDamage {
+  const profile = landingDamageByMaterial[material];
+  if (!profile || intensity < profile.minimumIntensity) {
+    return "none";
+  }
+  if (approachSpeed >= profile.shatterSpeed) {
+    return "shatter";
+  }
+  if (approachSpeed >= profile.chipSpeed) {
+    return "chip";
+  }
+  return "none";
+}
+
 // Ground materials never break away whole from a blast — they only crater.
 export const groundMaterials: ReadonlySet<BreakableMaterial> = new Set([
   "soil",
@@ -90,6 +130,25 @@ interface RemnantSpec {
 export interface CarveResult {
   readonly kept: readonly RemnantSpec[];
   readonly removedVolume: number;
+}
+
+export function distanceToOrientedBox(
+  point: Vector3,
+  position: readonly [number, number, number],
+  size: readonly [number, number, number],
+  rotation?: readonly [number, number, number],
+): number {
+  const local = point.clone().sub(new Vector3(...position));
+  if (rotation) {
+    local.applyQuaternion(
+      new Quaternion().setFromEuler(new Euler(...rotation)).invert(),
+    );
+  }
+
+  const dx = Math.max(0, Math.abs(local.x) - size[0] / 2);
+  const dy = Math.max(0, Math.abs(local.y) - size[1] / 2);
+  const dz = Math.max(0, Math.abs(local.z) - size[2] / 2);
+  return Math.hypot(dx, dy, dz);
 }
 
 export function blastNoise(value: string, salt: number): number {
@@ -178,12 +237,19 @@ export function carveBox(
   return { kept, removedVolume: total - keptVolume };
 }
 
-function shardCellSize(material: BreakableMaterial): number {
+function shardCellSize(
+  material: BreakableMaterial,
+  cause: FractureCause,
+): number {
   switch (material) {
     case "glass":
       return 0.34;
     case "wood":
       return 0.3;
+    case "concrete":
+      // A fallen concrete block cracks into a few heavy pieces rather than
+      // turning into gravel on the first hard landing.
+      return cause === "fall" ? 0.44 : 0.21;
     case "steel":
       return 0.5;
     case "soil":
@@ -196,8 +262,9 @@ function shardCellSize(material: BreakableMaterial): number {
 function shardGridCounts(
   size: readonly [number, number, number],
   material: BreakableMaterial,
+  cause: FractureCause,
 ): [number, number, number] | null {
-  const cell = shardCellSize(material);
+  const cell = shardCellSize(material, cause);
   if (!Number.isFinite(cell)) {
     return null;
   }
@@ -222,6 +289,63 @@ function shardGridCounts(
   return counts;
 }
 
+interface ShardSlice {
+  readonly center: number;
+  readonly size: number;
+}
+
+function uniformSlices(length: number, count: number): ShardSlice[] {
+  return Array.from({ length: count }, (_, index) => ({
+    center: ((index + 0.5) / count - 0.5) * length,
+    size: length / count,
+  }));
+}
+
+function localizedWoodSlices(
+  length: number,
+  impactCoordinate: number,
+  crossSection: number,
+): ShardSlice[] {
+  const half = length / 2;
+  const minimumEnd = Math.min(0.12, length / 5);
+  const damageHalf = MathUtils.clamp(
+    Math.max(crossSection * 0.55, length * 0.035),
+    minimumEnd,
+    Math.min(0.38, length * 0.16),
+  );
+  const impact = MathUtils.clamp(
+    impactCoordinate,
+    -half + damageHalf + minimumEnd,
+    half - damageHalf - minimumEnd,
+  );
+  const boundaries = [
+    -half,
+    impact - damageHalf,
+    impact,
+    impact + damageHalf,
+    half,
+  ];
+
+  return boundaries.slice(0, -1).map((start, index) => {
+    const end = boundaries[index + 1];
+    return {
+      center: (start + end) / 2,
+      size: end - start,
+    };
+  });
+}
+
+export function isElongatedWood(source: ShardSource): boolean {
+  if (source.material !== "wood") {
+    return false;
+  }
+  const orderedSides = [...source.size].sort((left, right) => right - left);
+  return (
+    orderedSides[0] >= 0.8 &&
+    orderedSides[0] / Math.max(0.01, orderedSides[1]) >= 2.2
+  );
+}
+
 export function buildShards(
   source: ShardSource,
   idPrefix: string,
@@ -231,11 +355,37 @@ export function buildShards(
   baseAngularVelocity: Vector3,
   burstCenter: Vector3,
   burstSpeed: number,
+  cause: FractureCause = "impact",
 ): ShardDefinition[] | null {
-  const counts = shardGridCounts(source.size, source.material);
+  const counts = shardGridCounts(source.size, source.material, cause);
   if (!counts) {
     return null;
   }
+
+  const localImpact = burstCenter
+    .clone()
+    .sub(bodyPosition)
+    .applyQuaternion(bodyQuaternion.clone().invert());
+  const orderedAxes = ([0, 1, 2] as const).sort(
+    (left, right) => source.size[right] - source.size[left],
+  );
+  const longestAxis = orderedAxes[0];
+  const secondLongest = source.size[orderedAxes[1]];
+  const localizeWoodBlast =
+    cause === "blast" && isElongatedWood(source);
+  const impactCoordinates = [localImpact.x, localImpact.y, localImpact.z];
+  const slices = ([0, 1, 2] as const).map((axis) => {
+    if (localizeWoodBlast) {
+      return axis === longestAxis
+        ? localizedWoodSlices(
+            source.size[axis],
+            impactCoordinates[axis],
+            secondLongest,
+          )
+        : uniformSlices(source.size[axis], 1);
+    }
+    return uniformSlices(source.size[axis], counts[axis]);
+  });
 
   const shards: ShardDefinition[] = [];
   const local = new Vector3();
@@ -243,20 +393,17 @@ export function buildShards(
   const relative = new Vector3();
   const spinVelocity = new Vector3();
   const outward = new Vector3();
-  const shardSize: [number, number, number] = [
-    (source.size[0] / counts[0]) * 0.94,
-    (source.size[1] / counts[1]) * 0.94,
-    (source.size[2] / counts[2]) * 0.94,
-  ];
+  const shrink = localizeWoodBlast ? 0.975 : 0.94;
   let index = 0;
 
-  for (let ix = 0; ix < counts[0]; ix += 1) {
-    for (let iy = 0; iy < counts[1]; iy += 1) {
-      for (let iz = 0; iz < counts[2]; iz += 1) {
+  for (let ix = 0; ix < slices[0].length; ix += 1) {
+    for (let iy = 0; iy < slices[1].length; iy += 1) {
+      for (let iz = 0; iz < slices[2].length; iz += 1) {
+        const cell = [slices[0][ix], slices[1][iy], slices[2][iz]] as const;
         local.set(
-          ((ix + 0.5) / counts[0] - 0.5) * source.size[0],
-          ((iy + 0.5) / counts[1] - 0.5) * source.size[1],
-          ((iz + 0.5) / counts[2] - 0.5) * source.size[2],
+          cell[0].center,
+          cell[1].center,
+          cell[2].center,
         );
         world.copy(local).applyQuaternion(bodyQuaternion).add(bodyPosition);
         relative.copy(world).sub(bodyPosition);
@@ -274,7 +421,11 @@ export function buildShards(
           id,
           material: source.material,
           color: source.color,
-          size: shardSize,
+          size: [
+            cell[0].size * shrink,
+            cell[1].size * shrink,
+            cell[2].size * shrink,
+          ],
           position: [world.x, world.y, world.z],
           quaternion: [
             bodyQuaternion.x,

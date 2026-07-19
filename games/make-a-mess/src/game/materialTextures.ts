@@ -6,6 +6,8 @@ import {
   MeshStandardMaterial,
   RepeatWrapping,
   SRGBColorSpace,
+  Texture,
+  TextureLoader,
 } from "three";
 import { litWindowColor, type BreakableMaterial } from "./destructionScene";
 
@@ -21,7 +23,33 @@ export function setWindowGlow(intensity: number): void {
 
 const TEXTURE_SIZE = 128;
 
-const textureCache = new Map<BreakableMaterial, CanvasTexture>();
+const photorealTextureUrls: Partial<Record<BreakableMaterial, string>> = {
+  brick: "/games/make-a-mess/textures/brick.webp",
+  wood: "/games/make-a-mess/textures/wood.webp",
+  plaster: "/games/make-a-mess/textures/plaster.webp",
+  concrete: "/games/make-a-mess/textures/concrete.webp",
+  stone: "/games/make-a-mess/textures/stone.webp",
+  soil: "/games/make-a-mess/textures/soil.webp",
+  earth: "/games/make-a-mess/textures/soil.webp",
+  asphalt: "/games/make-a-mess/textures/asphalt.webp",
+  steel: "/games/make-a-mess/textures/steel.webp",
+};
+
+const bumpScaleByMaterial: Record<BreakableMaterial, number> = {
+  brick: 0.035,
+  wood: 0.018,
+  plaster: 0.012,
+  concrete: 0.026,
+  glass: 0,
+  steel: 0.006,
+  stone: 0.045,
+  soil: 0.035,
+  earth: 0.032,
+  asphalt: 0.018,
+};
+
+const textureLoader = new TextureLoader();
+const textureCache = new Map<BreakableMaterial, Texture>();
 const materialCache = new Map<string, MeshStandardMaterial>();
 
 function createRandom(seed: number): () => number {
@@ -284,14 +312,9 @@ function paintMaterial(
   }
 }
 
-export function getMaterialTexture(
+function createProceduralTexture(
   material: BreakableMaterial,
 ): CanvasTexture {
-  const cached = textureCache.get(material);
-  if (cached) {
-    return cached;
-  }
-
   const canvas = document.createElement("canvas");
   canvas.width = TEXTURE_SIZE;
   canvas.height = TEXTURE_SIZE;
@@ -309,6 +332,41 @@ export function getMaterialTexture(
   texture.minFilter = LinearMipmapLinearFilter;
   texture.anisotropy = 4;
   texture.colorSpace = SRGBColorSpace;
+  return texture;
+}
+
+function configureTexture(texture: Texture): Texture {
+  texture.wrapS = RepeatWrapping;
+  texture.wrapT = RepeatWrapping;
+  texture.magFilter = LinearFilter;
+  texture.minFilter = LinearMipmapLinearFilter;
+  texture.anisotropy = 8;
+  texture.colorSpace = SRGBColorSpace;
+  return texture;
+}
+
+export function getMaterialTexture(
+  material: BreakableMaterial,
+): Texture {
+  const cached = textureCache.get(material);
+  if (cached) {
+    return cached;
+  }
+
+  const sourceUrl = photorealTextureUrls[material];
+  let texture: Texture;
+  if (sourceUrl) {
+    texture = configureTexture(
+      textureLoader.load(sourceUrl, undefined, undefined, () => {
+        const fallback = createProceduralTexture(material);
+        texture.image = fallback.image;
+        texture.needsUpdate = true;
+      }),
+    );
+  } else {
+    texture = createProceduralTexture(material);
+  }
+
   textureCache.set(material, texture);
   return texture;
 }
@@ -325,14 +383,25 @@ export function getPieceMaterial(
 
   const isGlass = material === "glass";
   const isSteel = material === "steel";
+  const surfaceTexture = getMaterialTexture(material);
   const standardMaterial = new MeshStandardMaterial({
     color,
-    map: getMaterialTexture(material),
+    map: surfaceTexture,
+    bumpMap: isGlass ? null : surfaceTexture,
+    bumpScale: bumpScaleByMaterial[material],
     transparent: isGlass,
     opacity: isGlass ? 0.45 : 1,
     depthWrite: !isGlass,
     metalness: isSteel ? 0.78 : 0,
-    roughness: isSteel ? 0.34 : isGlass ? 0.16 : material === "wood" ? 0.82 : 0.95,
+    roughness: isSteel
+      ? 0.38
+      : isGlass
+        ? 0.16
+        : material === "wood"
+          ? 0.76
+          : material === "asphalt"
+            ? 0.88
+            : 0.94,
     envMapIntensity: isSteel ? 1.1 : isGlass ? 1.5 : 0.35,
   });
 

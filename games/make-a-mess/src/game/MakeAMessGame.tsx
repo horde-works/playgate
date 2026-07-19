@@ -66,8 +66,12 @@ import {
   buildShards,
   bulletHoleRadius,
   carveBox,
+  classifyLandingDamage,
   crumbleOnLanding,
+  distanceToOrientedBox,
   groundMaterials,
+  isElongatedWood,
+  type FractureCause,
   type RemnantDefinition,
   type ShardDefinition,
   type ShardSource,
@@ -155,8 +159,12 @@ const UNIT_BOX = new BoxGeometry(1, 1, 1);
 
 const PLAYER_SPAWN = [0, 1.25, 7.4] as const;
 const PIECE_SPATIAL_INDEX = createSpatialIndex(breakablePieces, 5);
-const MAX_PIECE_HALF_EXTENT = breakablePieces.reduce(
-  (maximum, piece) => Math.max(maximum, Math.max(...piece.size) / 2),
+const MAX_PIECE_BOUNDING_RADIUS = breakablePieces.reduce(
+  (maximum, piece) =>
+    Math.max(
+      maximum,
+      Math.hypot(piece.size[0], piece.size[1], piece.size[2]) / 2,
+    ),
   0,
 );
 const MAX_BLAST_QUERY_RADIUS =
@@ -1984,6 +1992,7 @@ function OpenWorldScene({
       origin: "piece" | "shard" | "remnant",
       burstCenter: Vector3 | null,
       burstSpeed: number,
+      cause: FractureCause = "impact",
     ): boolean => {
       const body = pieceBodies.current.get(source.id);
       const staticPiece =
@@ -2033,6 +2042,7 @@ function OpenWorldScene({
         bodyAngularVelocity,
         burstCenter ?? bodyPosition,
         burstSpeed,
+        cause,
       );
       if (!generated) {
         return false;
@@ -2513,17 +2523,54 @@ function OpenWorldScene({
     }
 
     if (material === "glass") {
-      // Glass blows out whole.
+      // Glass remains brittle after it has fallen out of its frame. Bullets
+      // can keep reducing panes and large shards until only tiny chips remain.
       if (piece && !brokenPiecesRef.current.has(piece.id)) {
         impactId.current += 1;
         breakAt(piece, impactId.current);
-        if (!shatterTarget(piece, "piece", point, 5)) {
-          applyImpact(piece.id, material, point, direction, 0.6);
-        }
-        settleWorld();
-        return;
       }
-      applyImpact(targetId, material, point, direction, 0.5);
+
+      let shattered = false;
+      if (piece) {
+        shattered = shatterTarget(piece, "piece", point, 5);
+      } else if (shardId) {
+        const shardDefinition = shardById.current.get(shardId);
+        if (shardDefinition) {
+          shattered = shatterTarget(
+            shardDefinition,
+            "shard",
+            point,
+            4.2,
+          );
+          if (!shattered) {
+            shardsRef.current = shardsRef.current.filter(
+              (shard) => shard.id !== shardId,
+            );
+            shardById.current.delete(shardId);
+            setShards(shardsRef.current);
+            shattered = true;
+          }
+        }
+      } else if (remnantId) {
+        const remnantDefinition = remnantById.current.get(remnantId);
+        if (remnantDefinition) {
+          shattered = shatterTarget(
+            remnantDefinition,
+            "remnant",
+            point,
+            4.2,
+          );
+          if (!shattered) {
+            commitRemnants(remnantId, []);
+            shattered = true;
+          }
+        }
+      }
+
+      if (!shattered) {
+        applyImpact(targetId, material, point, direction, 0.5);
+      }
+      settleWorld();
       return;
     }
 
@@ -2603,6 +2650,7 @@ function OpenWorldScene({
     camera,
     carveAt,
     carveLooseTarget,
+    commitRemnants,
     intersectBreakables,
     settleWorld,
     shatterTarget,
@@ -2660,7 +2708,7 @@ function OpenWorldScene({
       const blastCenter = [center3.x, center3.y, center3.z] as const;
       for (const piece of PIECE_SPATIAL_INDEX.querySphere(
         blastCenter,
-        MAX_BLAST_QUERY_RADIUS,
+        MAX_BLAST_QUERY_RADIUS + MAX_PIECE_BOUNDING_RADIUS,
       )) {
         if (next.has(piece.id) || groundMaterials.has(piece.material)) {
           continue;
@@ -2670,10 +2718,14 @@ function OpenWorldScene({
           BLAST_RADIUS *
           blastFactorByMaterial[piece.material] *
           (0.78 + blastNoise(piece.id, nextExplosionId) * 0.44);
-        const dx = piece.position[0] - center3.x;
-        const dy = piece.position[1] - center3.y;
-        const dz = piece.position[2] - center3.z;
-        if (dx * dx + dy * dy + dz * dz <= radius * radius) {
+        if (
+          distanceToOrientedBox(
+            center3,
+            piece.position,
+            piece.size,
+            piece.rotation,
+          ) <= radius
+        ) {
           next.add(piece.id);
         }
       }
@@ -2692,18 +2744,37 @@ function OpenWorldScene({
         )
         .map((candidate) => ({
           piece: candidate,
-          distance: Math.hypot(
+          distance: distanceToOrientedBox(
+            center3,
+            candidate.position,
+            candidate.size,
+            candidate.rotation,
+          ),
+          centerDistance: Math.hypot(
             candidate.position[0] - center3.x,
             candidate.position[1] - center3.y,
             candidate.position[2] - center3.z,
           ),
         }))
         .filter((entry) => entry.distance <= BLAST_RADIUS)
-        .sort((left, right) => left.distance - right.distance)
-        .slice(0, 10);
+        .sort((left, right) => {
+          const leftScore =
+            left.distance -
+            (isElongatedWood(left.piece) ? BLAST_RADIUS * 0.72 : 0);
+          const rightScore =
+            right.distance -
+            (isElongatedWood(right.piece) ? BLAST_RADIUS * 0.72 : 0);
+          return (
+            leftScore - rightScore ||
+            left.centerDistance - right.centerDistance
+          );
+        })
+        .slice(0, 16);
 
       for (const entry of shatterCandidates) {
-        if (shatterTarget(entry.piece, "piece", center3, 8.5)) {
+        if (
+          shatterTarget(entry.piece, "piece", center3, 8.5, "blast")
+        ) {
           shatteredNow.add(entry.piece.id);
         }
       }
@@ -2714,7 +2785,7 @@ function OpenWorldScene({
       let craterBudget = 8;
       const craterCandidates = PIECE_SPATIAL_INDEX.querySphere(
         blastCenter,
-        BLAST_RADIUS * 1.6 + MAX_PIECE_HALF_EXTENT,
+        BLAST_RADIUS * 1.6 + MAX_PIECE_BOUNDING_RADIUS,
       );
       for (const piece of craterCandidates) {
         if (craterBudget <= 0) {
@@ -2728,15 +2799,13 @@ function OpenWorldScene({
           continue;
         }
 
-        const pieceDistance = Math.hypot(
-          piece.position[0] - center3.x,
-          piece.position[1] - center3.y,
-          piece.position[2] - center3.z,
+        const pieceDistance = distanceToOrientedBox(
+          center3,
+          piece.position,
+          piece.size,
+          piece.rotation,
         );
-        if (
-          pieceDistance >
-          BLAST_RADIUS * 1.6 + Math.max(...piece.size) / 2
-        ) {
+        if (pieceDistance > BLAST_RADIUS * 1.6) {
           continue;
         }
 
@@ -2947,25 +3016,25 @@ function OpenWorldScene({
         return;
       }
 
-      // Fall damage is self-inflicted only: the piece must itself be moving
-      // fast (it fell) — a resting piece that something lands ON stays whole.
-      const ownSpeedSq =
-        motion.linear.x * motion.linear.x +
-        motion.linear.y * motion.linear.y +
-        motion.linear.z * motion.linear.z;
-      if (ownSpeedSq < 9) {
+      const landingDamage = classifyLandingDamage(
+        piece.material,
+        approachSpeed,
+        intensity,
+      );
+      if (landingDamage === "none") {
         return;
       }
 
-      // Brutal impacts crumble the faller completely.
-      if (intensity >= 1.15) {
+      // A high drop cracks concrete into a few heavy chunks; softer brittle
+      // materials use the same speed-based contract with lower thresholds.
+      if (landingDamage === "shatter") {
         impactShatterTimes.current = impactShatterTimes.current.filter(
           (time) => now - time < 350,
         );
         if (impactShatterTimes.current.length >= 2) {
           return;
         }
-        if (shatterTarget(piece, "piece", null, 1.6)) {
+        if (shatterTarget(piece, "piece", null, 1.15, "fall")) {
           impactShatterTimes.current.push(now);
           settleWorld();
         }
@@ -2973,9 +3042,6 @@ function OpenWorldScene({
       }
 
       // Hard (but survivable) landings chip the struck corner — minimally.
-      if (intensity < 0.7) {
-        return;
-      }
       chipTimes.current = chipTimes.current.filter((time) => now - time < 400);
       if (chipTimes.current.length >= 2) {
         return;
