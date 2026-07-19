@@ -12,6 +12,7 @@ export type BreakableMaterial =
   | "steel"
   | "stone"
   | "soil"
+  | "earth"
   | "asphalt";
 
 export type BreakableShape =
@@ -167,6 +168,18 @@ export const materialRuntimeProfiles: Record<
     debrisColor: "#5d4d37",
     debrisCount: 4,
     restitution: 0.01,
+  },
+  earth: {
+    density: 1.6,
+    impulse: 1.9,
+    lift: 0.3,
+    torque: 0.12,
+    fractureRadius: [0.7, 0.5],
+    neighborChance: 0.06,
+    dustColor: "#7b6647",
+    debrisColor: "#54452f",
+    debrisCount: 4,
+    restitution: 0.008,
   },
   asphalt: {
     density: 2.0,
@@ -1046,6 +1059,15 @@ function createTerrace(): BreakableClusterDefinition {
         "#70442a",
       ),
       makePiece(
+        `${id}:post:front:${x}`,
+        id,
+        "wood",
+        "plank",
+        [x, 0.85, 1.45],
+        [0.18, 1.1, 0.18],
+        "#70442a",
+      ),
+      makePiece(
         `${id}:rail:${x}`,
         id,
         "wood",
@@ -1060,15 +1082,42 @@ function createTerrace(): BreakableClusterDefinition {
   return cluster(id, "Wood terrace", "wood", "linked", pieces);
 }
 
+// A proper terrace chair: four vertical legs standing ON the deck, a seat on
+// top of them, two back stiles rising from the seat and a back panel between
+// them — every part bears on the previous one for the structural solver.
 function createChair(id: string, x: number, z: number): BreakableClusterDefinition {
-  const pieces = [
-    makePiece(`${id}:seat:0`, id, "wood", "plank", [x, 0.78, z], [0.85, 0.14, 0.72], "#a66a3b", [-0.08, 0, 0]),
-    makePiece(`${id}:back:0`, id, "wood", "plank", [x, 1.25, z + 0.31], [0.85, 0.12, 0.95], "#9a6036", [0.32, 0, 0]),
-    makePiece(`${id}:leg:left`, id, "wood", "plank", [x - 0.33, 0.42, z], [0.14, 0.72, 0.14], "#70442a", [0, 0, -0.12]),
-    makePiece(`${id}:leg:right`, id, "wood", "plank", [x + 0.33, 0.42, z], [0.14, 0.72, 0.14], "#70442a", [0, 0, 0.12]),
-    makePiece(`${id}:arm:left`, id, "wood", "plank", [x - 0.48, 0.98, z - 0.02], [0.16, 0.14, 0.86], "#b07142"),
-    makePiece(`${id}:arm:right`, id, "wood", "plank", [x + 0.48, 0.98, z - 0.02], [0.16, 0.14, 0.86], "#b07142"),
-  ];
+  const deckTop = 0.41;
+  const pieces: BreakablePieceDefinition[] = [];
+
+  for (const [legX, legZ] of [
+    [-0.31, -0.24],
+    [0.31, -0.24],
+    [-0.31, 0.24],
+    [0.31, 0.24],
+  ] as const) {
+    pieces.push(
+      makePiece(
+        `${id}:leg:${legX}:${legZ}`,
+        id,
+        "wood",
+        "plank",
+        [x + legX, deckTop + 0.23, z + legZ],
+        [0.09, 0.45, 0.09],
+        "#70442a",
+      ),
+    );
+  }
+
+  pieces.push(
+    makePiece(`${id}:seat`, id, "wood", "plank",
+      [x, deckTop + 0.51, z], [0.8, 0.1, 0.64], "#a66a3b"),
+    makePiece(`${id}:stile:l`, id, "wood", "plank",
+      [x - 0.265, deckTop + 0.95, z - 0.245], [0.07, 0.78, 0.07], "#7e4d2c"),
+    makePiece(`${id}:stile:r`, id, "wood", "plank",
+      [x + 0.265, deckTop + 0.95, z - 0.245], [0.07, 0.78, 0.07], "#7e4d2c"),
+    makePiece(`${id}:back`, id, "wood", "plank",
+      [x, deckTop + 1.08, z - 0.245], [0.46, 0.44, 0.07], "#9a6036"),
+  );
 
   return cluster(id, "Wood chair", "wood", "linked", pieces);
 }
@@ -1152,27 +1201,56 @@ function createStoneGazebo(): BreakableClusterDefinition {
   return cluster(id, "Stone garden gazebo", "stone", "stack", pieces);
 }
 
-function createGroundTiles(): BreakableClusterDefinition {
-  const pieces: BreakablePieceDefinition[] = [];
-  const id = "yard:ground";
+function createGroundTiles(): BreakableClusterDefinition[] {
+  const grassPieces: BreakablePieceDefinition[] = [];
+  const upperPieces: BreakablePieceDefinition[] = [];
+  const lowerPieces: BreakablePieceDefinition[] = [];
 
-  for (let xIndex = 0; xIndex < 10; xIndex += 1) {
-    for (let zIndex = 0; zIndex < 7; zIndex += 1) {
-      pieces.push(
+  for (let xIndex = 0; xIndex < 15; xIndex += 1) {
+    for (let zIndex = 0; zIndex < 12; zIndex += 1) {
+      const cx = -12 + xIndex * 6;
+      const cz = -48 + zIndex * 6;
+      grassPieces.push(
         makePiece(
-          `${id}:${xIndex}:${zIndex}`,
-          id,
+          `yard:ground:${xIndex}:${zIndex}`,
+          "yard:ground",
           "soil",
           "groundTile",
-          [-12 + xIndex * 6, -0.14, -24 + zIndex * 6],
+          [cx, -0.14, cz],
           [6, 0.24, 6],
           (xIndex + zIndex) % 2 === 0 ? "#607b43" : "#6b874a",
+        ),
+      );
+      upperPieces.push(
+        makePiece(
+          `yard:earth:u:${xIndex}:${zIndex}`,
+          "yard:earth:upper",
+          "earth",
+          "groundTile",
+          [cx, -0.71, cz],
+          [6, 0.9, 6],
+          (xIndex + zIndex) % 2 === 0 ? "#6d5a3e" : "#665336",
+        ),
+      );
+      lowerPieces.push(
+        makePiece(
+          `yard:earth:l:${xIndex}:${zIndex}`,
+          "yard:earth:lower",
+          "earth",
+          "groundTile",
+          [cx, -1.61, cz],
+          [6, 0.9, 6],
+          (xIndex + zIndex) % 2 === 0 ? "#5c4a33" : "#55442d",
         ),
       );
     }
   }
 
-  return cluster(id, "Breakable ground cover", "soil", "linked", pieces);
+  return [
+    cluster("yard:ground", "Breakable ground cover", "soil", "linked", grassPieces),
+    cluster("yard:earth:upper", "Topsoil layer", "earth", "linked", upperPieces),
+    cluster("yard:earth:lower", "Deep earth layer", "earth", "linked", lowerPieces),
+  ];
 }
 
 const panelPalette = ["#c8c1b2", "#bfb8aa", "#d1cabc", "#c4bdb0"];
@@ -1202,8 +1280,60 @@ function windowGlassColor(id: string, litChance: number): string {
 // floor slabs bearing on them, a stairwell per entrance with two concrete
 // flights and a half-landing per storey, balconies from the second storey,
 // flat roof with a parapet. Typical floor plan repeats on every storey.
-function createKhrushchevka(): BreakableClusterDefinition[] {
+type PieceRecolor = (piece: BreakablePieceDefinition) => string;
+
+// Translate a finished cluster to a new spot on the map, prefixing every id
+// so several instances of the same building template can coexist.
+function transformCluster(
+  source: BreakableClusterDefinition,
+  prefix: string | undefined,
+  dx: number,
+  dz: number,
+  recolor?: PieceRecolor,
+): BreakableClusterDefinition {
+  const mapId = (value: string) => (prefix ? `${prefix}:${value}` : value);
+
+  return {
+    ...source,
+    id: mapId(source.id),
+    pieces: source.pieces.map((piece) => ({
+      ...piece,
+      id: mapId(piece.id),
+      clusterId: mapId(source.id),
+      position: [
+        piece.position[0] + dx,
+        piece.position[1],
+        piece.position[2] + dz,
+      ] as SceneVector3,
+      hinge: piece.hinge
+        ? {
+            ...piece.hinge,
+            pivot: [
+              piece.hinge.pivot[0] + dx,
+              piece.hinge.pivot[1],
+              piece.hinge.pivot[2] + dz,
+            ] as SceneVector3,
+          }
+        : undefined,
+      color: recolor ? recolor(piece) : piece.color,
+    })),
+  };
+}
+
+interface KhrushchevkaConfig {
+  readonly prefix?: string;
+  readonly dx?: number;
+  readonly dz?: number;
+  readonly palette?: readonly string[];
+  readonly shellOnly?: boolean;
+  readonly includeLamps?: boolean;
+}
+
+function createKhrushchevka(
+  config: KhrushchevkaConfig = {},
+): BreakableClusterDefinition[] {
   const clusters: BreakableClusterDefinition[] = [];
+  const localLamps: LampDefinition[] = [];
   const x0 = 12;
   const x1 = 34;
   const z0 = -8;
@@ -1326,7 +1456,7 @@ function createKhrushchevka(): BreakableClusterDefinition[] {
           makePiece(`hru:entry:lamp:${bay}`, "hru:entry", "glass", "glassPane",
             [cx, b + 2.2, -0.76], [0.24, 0.2, 0.18], litWindowColor),
         );
-        lampCollector.push({
+        localLamps.push({
           id: `hru:entry:lamp:${bay}`,
           position: [cx, b + 2.1, -0.25],
         });
@@ -1353,7 +1483,7 @@ function createKhrushchevka(): BreakableClusterDefinition[] {
       if (floor >= 1 && balconyBays.includes(bay)) {
         balconyPieces.push(
           makePiece(`hru:balcony:${floor}:${bay}:plate`, "hru:balcony", "concrete", "stoneBlock",
-            [cx, b - 0.06, -0.425], [1.9, 0.14, 1.05], slabPalette[1]),
+            [cx, b - 0.06, -0.475], [1.9, 0.14, 1.15], slabPalette[1]),
           makePiece(`hru:balcony:${floor}:${bay}:rail`, "hru:balcony", "steel", "steelSheet",
             [cx, b + 0.41, 0.06], [1.84, 0.78, 0.05], "#77848a"),
         );
@@ -1438,9 +1568,11 @@ function createKhrushchevka(): BreakableClusterDefinition[] {
     const clusterId = `hru:ends:${floor}`;
     for (const ex of [x0, x1]) {
       for (const [index, zc] of [-6.25, -2.75].entries()) {
+        // Торцевые панели чуть выше этажа: каждая опирается на предыдущую,
+        // цепочка несёт от цоколя, а не от нулевой кромки плиты.
         pieces.push(
           makePiece(`${clusterId}:${ex}:${index}`, clusterId, "concrete", "panel",
-            [ex, wallCenterY(floor), zc], [0.3, wallHeight, 3.46],
+            [ex, floorBase(floor) + 1.22, zc], [0.3, 2.42, 3.46],
             panelPalette[(floor + index) % panelPalette.length]),
         );
       }
@@ -1675,7 +1807,7 @@ function createKhrushchevka(): BreakableClusterDefinition[] {
       makePiece(`hru:streetlamp:${index}:head`, "hru:yard", "glass", "glassPane",
         [lx, 3.69, lz], [0.34, 0.22, 0.34], litWindowColor),
     );
-    lampCollector.push({
+    localLamps.push({
       id: `hru:streetlamp:${index}:head`,
       position: [lx, 3.42, lz + 0.1],
     });
@@ -1698,26 +1830,441 @@ function createKhrushchevka(): BreakableClusterDefinition[] {
   );
   clusters.push(cluster("hru:asphalt", "Asphalt yard", "asphalt", "mounted", asphaltPieces));
 
-  return clusters;
+  const shellExcluded = new Set([
+    "hru:furniture:0",
+    "hru:furniture:1",
+    "hru:fixtures",
+    "hru:yard",
+    "hru:asphalt",
+    "hru:flatdoors",
+    "hru:stairs:0",
+    "hru:stairs:1",
+  ]);
+  const baseExcluded = config.prefix
+    ? new Set(["hru:yard", "hru:asphalt"])
+    : new Set<string>();
+  const excluded = config.shellOnly ? shellExcluded : baseExcluded;
+  let result = clusters.filter((entry) => !excluded.has(entry.id));
+
+  const dx = config.dx ?? 0;
+  const dz = config.dz ?? 0;
+  const paletteMap = new Map<string, string>();
+  if (config.palette) {
+    panelPalette.forEach((original, index) => {
+      paletteMap.set(
+        original,
+        config.palette![index % config.palette!.length],
+      );
+    });
+  }
+  const needsRecolor = config.palette !== undefined || config.prefix !== undefined;
+  const recolor: PieceRecolor | undefined = needsRecolor
+    ? (piece) => {
+        if (piece.material === "glass") {
+          if (
+            piece.id.includes(":stairwell:") ||
+            piece.id.includes(":lamp") ||
+            piece.id.includes(":plafond:")
+          ) {
+            return piece.color;
+          }
+          // re-roll lived-in windows so every building glows differently
+          return deterministicNoise(`lit:${piece.id}`) < 0.42
+            ? litWindowColor
+            : "#9fd5dd";
+        }
+        return paletteMap.get(piece.color) ?? piece.color;
+      }
+    : undefined;
+
+  if (config.prefix || dx !== 0 || dz !== 0 || recolor) {
+    result = result.map((entry) =>
+      transformCluster(entry, config.prefix, dx, dz, recolor),
+    );
+  }
+
+  if (config.includeLamps ?? true) {
+    const keptIds = new Set(
+      result.flatMap((entry) => entry.pieces.map((piece) => piece.id)),
+    );
+    for (const lamp of localLamps) {
+      const id = config.prefix ? `${config.prefix}:${lamp.id}` : lamp.id;
+      if (keptIds.has(id)) {
+        lampCollector.push({
+          id,
+          position: [
+            lamp.position[0] + dx,
+            lamp.position[1],
+            lamp.position[2] + dz,
+          ],
+        });
+      }
+    }
+  }
+
+  return result;
+}
+
+
+// ---------------------------------------------------------------------------
+// Town: streets with intersections, garages, a concrete fence, playgrounds
+// ---------------------------------------------------------------------------
+
+const silicateBrick = ["#d6d2c6", "#cfcabb", "#ddd8cc"];
+
+function houseRecolor(
+  colorMap: Record<string, string>,
+  litSalt: string,
+): PieceRecolor {
+  return (piece) => {
+    if (
+      piece.material === "glass" &&
+      piece.color === "#9fd5dd" &&
+      deterministicNoise(`${litSalt}:${piece.id}`) < 0.35
+    ) {
+      return litWindowColor;
+    }
+    return colorMap[piece.color] ?? piece.color;
+  };
+}
+
+const silicateHouseColors: Record<string, string> = {
+  "#9f3e29": "#d8d3c6",
+  "#b84a2d": "#cfc9ba",
+  "#853523": "#c6c0b1",
+  "#c45632": "#e0dbcf",
+  "#68777a": "#8a4a3e",
+  "#78898b": "#965446",
+  "#59686b": "#7c4136",
+  "#4e5c5f": "#703a30",
+};
+
+const yellowHouseColors: Record<string, string> = {
+  "#9f3e29": "#c9a25a",
+  "#b84a2d": "#d4ad62",
+  "#853523": "#b8924f",
+  "#c45632": "#ddb76e",
+  "#68777a": "#4f6b4a",
+  "#78898b": "#5a7a54",
+  "#59686b": "#46603f",
+  "#4e5c5f": "#3d5438",
+};
+
+function createOldHouse(
+  prefix?: string,
+  dx = 0,
+  dz = 0,
+  recolor?: PieceRecolor,
+): BreakableClusterDefinition[] {
+  const clusters = [
+    ...createHouseWalls(),
+    createBandBeams(),
+    ...createGables(),
+    createChimney(),
+    createHouseFrame(),
+    ...createFloorsAndStairs(),
+    ...createWindows(),
+    createDoor("door:front", 0.36, 0.76, 1),
+    createDoor("door:back", 2.88, -6.76, -1),
+    createSteelRoof(),
+  ];
+
+  if (!prefix && dx === 0 && dz === 0 && !recolor) {
+    return clusters;
+  }
+  return clusters.map((entry) =>
+    transformCluster(entry, prefix, dx, dz, recolor),
+  );
+}
+
+function createStreets(): BreakableClusterDefinition[] {
+  const roadPieces: BreakablePieceDefinition[] = [];
+  const curbPieces: BreakablePieceDefinition[] = [];
+  const markingPieces: BreakablePieceDefinition[] = [];
+
+  for (let index = 0; index < 15; index += 1) {
+    const cx = -12 + index * 6;
+    roadPieces.push(
+      makePiece(`town:road:main:${index}`, "town:roads", "asphalt", "groundTile",
+        [cx, 0.03, -12], [6, 0.1, 6], index % 2 === 0 ? "#4a4a48" : "#4e4e4c"),
+      makePiece(`town:road:south:${index}`, "town:roads", "asphalt", "groundTile",
+        [cx, 0.03, -30], [6, 0.1, 6], index % 2 === 0 ? "#4e4e4c" : "#4a4a48"),
+    );
+    curbPieces.push(
+      makePiece(`town:curb:n:${index}`, "town:curbs", "concrete", "panel",
+        [cx, 0.06, -8.88], [5.96, 0.16, 0.22], "#b5b8b6"),
+      makePiece(`town:curb:s:${index}`, "town:curbs", "concrete", "panel",
+        [cx, 0.06, -15.12], [5.96, 0.16, 0.22], "#b5b8b6"),
+    );
+  }
+
+  for (let index = 0; index < 12; index += 1) {
+    const cz = -48 + index * 6;
+    if (cz === -12 || cz === -30) {
+      continue;
+    }
+    roadPieces.push(
+      makePiece(`town:road:cross:${index}`, "town:roads", "asphalt", "groundTile",
+        [42, 0.03, cz], [6, 0.1, 6], index % 2 === 0 ? "#4a4a48" : "#4e4e4c"),
+    );
+  }
+
+  for (let index = 0; index < 14; index += 1) {
+    const cx = -10 + index * 6;
+    if (cx >= 38 && cx <= 46) {
+      continue;
+    }
+    markingPieces.push(
+      makePiece(`town:mark:main:${index}`, "town:markings", "concrete", "panel",
+        [cx, 0.095, -12], [1.6, 0.03, 0.16], "#e8e6df"),
+      makePiece(`town:mark:south:${index}`, "town:markings", "concrete", "panel",
+        [cx, 0.095, -30], [1.6, 0.03, 0.16], "#e8e6df"),
+    );
+  }
+  for (let stripe = 0; stripe < 6; stripe += 1) {
+    markingPieces.push(
+      makePiece(`town:zebra:${stripe}`, "town:markings", "concrete", "panel",
+        [35 + stripe * 0.55, 0.095, -12], [0.34, 0.03, 4.6], "#e8e6df"),
+    );
+  }
+
+  return [
+    cluster("town:roads", "Asphalt streets", "asphalt", "mounted", roadPieces),
+    cluster("town:curbs", "Street curbs", "concrete", "mounted", curbPieces),
+    cluster("town:markings", "Road markings", "concrete", "mounted", markingPieces),
+  ];
+}
+
+function createGarages(): BreakableClusterDefinition {
+  const id = "town:garages";
+  const pieces: BreakablePieceDefinition[] = [];
+  const originX = -11;
+  const pitch = 3.3;
+  const gateColors = [
+    "#5c7d5e",
+    "#7d6a54",
+    "#6a7b8c",
+    "#79585c",
+    "#5d6a7d",
+    "#6d7a58",
+  ];
+
+  for (let wall = 0; wall <= 6; wall += 1) {
+    pieces.push(
+      makePiece(`${id}:side:${wall}`, id, "brick", "brick",
+        [originX + pitch * wall, 1.08, -22.15], [0.24, 2.2, 5.55],
+        silicateBrick[wall % silicateBrick.length]),
+    );
+  }
+
+  for (let box = 0; box < 6; box += 1) {
+    const cx = originX + pitch * (box + 0.5);
+    pieces.push(
+      makePiece(`${id}:back:${box}`, id, "brick", "brick",
+        [cx, 1.08, -24.9], [3.04, 2.2, 0.22],
+        silicateBrick[(box + 1) % silicateBrick.length]),
+      makePiece(`${id}:lintel:${box}`, id, "concrete", "panel",
+        [cx, 2.09, -19.3], [3.28, 0.3, 0.24], "#a9aca8"),
+      makePiece(`${id}:roof:${box}`, id, "concrete", "stoneBlock",
+        [cx, 2.32, -22.1], [3.28, 0.15, 6.1], "#84888c"),
+    );
+
+    for (const side of [-1, 1] as const) {
+      const pivotX = cx + side * 1.52;
+      pieces.push({
+        ...makePiece(`${id}:gate:${box}:${side}`, id, "steel", "steelSheet",
+          [cx + side * 0.76, 0.99, -19.3], [1.5, 1.88, 0.08],
+          gateColors[box]),
+        hinge: {
+          pivot: [pivotX, 0.99, -19.3],
+          direction: [-side, 0, 0],
+          normal: [0, 0, 1],
+        },
+      });
+    }
+  }
+
+  return cluster(id, "Garage row", "brick", "mounted", pieces);
+}
+
+function createConcreteFence(): BreakableClusterDefinition {
+  const id = "town:fence";
+  const pieces: BreakablePieceDefinition[] = [];
+
+  for (let post = 0; post <= 8; post += 1) {
+    pieces.push(
+      makePiece(`${id}:post:${post}`, id, "concrete", "panel",
+        [-11.2 + post * 2.6, 1.03, -26.3], [0.22, 2.1, 0.22], "#8f9595"),
+    );
+  }
+  for (let panel = 0; panel < 8; panel += 1) {
+    pieces.push(
+      makePiece(`${id}:panel:${panel}`, id, "concrete", "panel",
+        [-9.9 + panel * 2.6, 0.99, -26.3], [2.34, 1.86, 0.1], "#9aa0a0"),
+    );
+  }
+
+  return cluster(id, "Concrete fence", "concrete", "mounted", pieces);
+}
+
+function createPlayground(
+  id: string,
+  px: number,
+  pz: number,
+): BreakableClusterDefinition {
+  const pieces: BreakablePieceDefinition[] = [];
+
+  // песочница с настоящим копаемым песком
+  pieces.push(
+    makePiece(`${id}:sand`, id, "earth", "groundTile",
+      [px, 0.03, pz], [1.7, 0.12, 1.7], "#c8b280"),
+    makePiece(`${id}:sand:border:n`, id, "wood", "plank",
+      [px, 0.1, pz - 0.92], [1.9, 0.24, 0.12], "#b6603f"),
+    makePiece(`${id}:sand:border:s`, id, "wood", "plank",
+      [px, 0.1, pz + 0.92], [1.9, 0.24, 0.12], "#3f7db6"),
+    makePiece(`${id}:sand:border:w`, id, "wood", "plank",
+      [px - 0.92, 0.1, pz], [0.12, 0.24, 1.9], "#d8a324"),
+    makePiece(`${id}:sand:border:e`, id, "wood", "plank",
+      [px + 0.92, 0.1, pz], [0.12, 0.24, 1.9], "#4f9a4c"),
+  );
+
+  // горка: площадка на ножках, стальная лесенка, скат
+  const sx = px + 3.5;
+  pieces.push(
+    makePiece(`${id}:slide:leg:l`, id, "steel", "steelSheet",
+      [sx - 0.3, 0.73, pz - 0.25], [0.07, 1.5, 0.07], "#c8542e"),
+    makePiece(`${id}:slide:leg:r`, id, "steel", "steelSheet",
+      [sx + 0.3, 0.73, pz - 0.25], [0.07, 1.5, 0.07], "#c8542e"),
+    makePiece(`${id}:slide:deck`, id, "steel", "steelSheet",
+      [sx, 1.52, pz - 0.25], [0.75, 0.07, 0.75], "#e0b73a"),
+    makePiece(`${id}:slide:ramp`, id, "steel", "steelSheet",
+      [sx, 0.82, pz + 1.15], [0.66, 0.06, 2.5], "#d9d4c8", [0.55, 0, 0]),
+    makePiece(`${id}:slide:stile:l`, id, "steel", "steelSheet",
+      [sx - 0.28, 0.73, pz - 0.68], [0.05, 1.46, 0.05], "#3f7db6"),
+    makePiece(`${id}:slide:stile:r`, id, "steel", "steelSheet",
+      [sx + 0.28, 0.73, pz - 0.68], [0.05, 1.46, 0.05], "#3f7db6"),
+    makePiece(`${id}:slide:rung:0`, id, "steel", "steelSheet",
+      [sx, 0.45, pz - 0.68], [0.52, 0.045, 0.045], "#e0b73a"),
+    makePiece(`${id}:slide:rung:1`, id, "steel", "steelSheet",
+      [sx, 0.85, pz - 0.68], [0.52, 0.045, 0.045], "#e0b73a"),
+    makePiece(`${id}:slide:rung:2`, id, "steel", "steelSheet",
+      [sx, 1.25, pz - 0.68], [0.52, 0.045, 0.045], "#e0b73a"),
+  );
+
+  // карусель
+  const kx = px + 6.8;
+  pieces.push(
+    makePiece(`${id}:carousel:post`, id, "steel", "steelSheet",
+      [kx, 0.42, pz], [0.12, 0.9, 0.12], "#8f9595"),
+    makePiece(`${id}:carousel:disc`, id, "steel", "steelSheet",
+      [kx, 0.92, pz], [1.5, 0.08, 1.5], "#c8542e"),
+    makePiece(`${id}:carousel:handle:0`, id, "steel", "steelSheet",
+      [kx - 0.6, 1.14, pz - 0.6], [0.05, 0.36, 0.05], "#e0b73a"),
+    makePiece(`${id}:carousel:handle:1`, id, "steel", "steelSheet",
+      [kx + 0.6, 1.14, pz - 0.6], [0.05, 0.36, 0.05], "#3f7db6"),
+    makePiece(`${id}:carousel:handle:2`, id, "steel", "steelSheet",
+      [kx - 0.6, 1.14, pz + 0.6], [0.05, 0.36, 0.05], "#4f9a4c"),
+    makePiece(`${id}:carousel:handle:3`, id, "steel", "steelSheet",
+      [kx + 0.6, 1.14, pz + 0.6], [0.05, 0.36, 0.05], "#d8a324"),
+  );
+
+  // качели-балансир
+  pieces.push(
+    makePiece(`${id}:seesaw:log`, id, "wood", "plank",
+      [px + 1.8, 0.14, pz + 2.6], [0.3, 0.32, 0.34], "#70442a"),
+    makePiece(`${id}:seesaw:plank`, id, "wood", "plank",
+      [px + 1.8, 0.38, pz + 2.6], [2.6, 0.07, 0.3], "#c8542e", [0, 0, 0.07]),
+  );
+
+  // турник
+  pieces.push(
+    makePiece(`${id}:bar:post:l`, id, "steel", "steelSheet",
+      [px + 5.2, 0.93, pz + 2.7], [0.07, 1.9, 0.07], "#3f7db6"),
+    makePiece(`${id}:bar:post:r`, id, "steel", "steelSheet",
+      [px + 6.8, 0.93, pz + 2.7], [0.07, 1.9, 0.07], "#3f7db6"),
+    makePiece(`${id}:bar:bar`, id, "steel", "steelSheet",
+      [px + 6.0, 1.9, pz + 2.7], [1.68, 0.05, 0.05], "#d9d4c8"),
+  );
+
+  return cluster(id, "Playground", "steel", "mounted", pieces);
+}
+
+function createTownLamps(): BreakableClusterDefinition {
+  const id = "town:street";
+  const pieces: BreakablePieceDefinition[] = [];
+
+  for (const [index, [lx, lz]] of ([
+    [-2, -16.1],
+    [56, -16.1],
+  ] as const).entries()) {
+    pieces.push(
+      makePiece(`${id}:lamp:${index}:pole`, id, "steel", "steelSheet",
+        [lx, 1.78, lz], [0.14, 3.6, 0.14], "#5d6663"),
+      makePiece(`${id}:lamp:${index}:head`, id, "glass", "glassPane",
+        [lx, 3.69, lz], [0.34, 0.22, 0.34], litWindowColor),
+    );
+    lampCollector.push({
+      id: `${id}:lamp:${index}:head`,
+      position: [lx, 3.42, lz + 0.1],
+    });
+  }
+
+  return cluster(id, "Street lamps", "steel", "mounted", pieces);
 }
 
 export const breakableClusters = [
-  createGroundTiles(),
-  ...createHouseWalls(),
-  createBandBeams(),
-  ...createGables(),
-  createChimney(),
-  createHouseFrame(),
-  ...createFloorsAndStairs(),
-  ...createWindows(),
-  createDoor("door:front", 0.36, 0.76, 1),
-  createDoor("door:back", 2.88, -6.76, -1),
-  createSteelRoof(),
+  ...createGroundTiles(),
+  ...createOldHouse(),
+  ...createOldHouse("h2", 56, 0, houseRecolor(silicateHouseColors, "lit-h2")),
+  ...createOldHouse("h3", 56, -38, houseRecolor(yellowHouseColors, "lit-h3")),
   createTerrace(),
   createChair("yard:chair:left", -1.95, 2.75),
   createChair("yard:chair:right", 2.3, 2.75),
   createStoneGazebo(),
   ...createKhrushchevka(),
+  ...createKhrushchevka({
+    prefix: "k2",
+    dz: -16,
+    palette: ["#b3c0ad", "#a8b5a2", "#bec9b8", "#adbaa7"],
+  }),
+  ...createKhrushchevka({
+    prefix: "k3",
+    dx: 36,
+    dz: -16,
+    palette: ["#aeb9c2", "#a3aeb7", "#b9c3cc", "#a8b3bc"],
+    shellOnly: true,
+    includeLamps: false,
+  }),
+  ...createKhrushchevka({
+    prefix: "k4",
+    dx: -24,
+    dz: -34,
+    palette: ["#c9b3ae", "#bea8a3", "#d3bdb8", "#c3ada8"],
+    shellOnly: true,
+    includeLamps: false,
+  }),
+  ...createKhrushchevka({
+    prefix: "k5",
+    dx: 2,
+    dz: -34,
+    palette: ["#d5d2c9", "#cac7be", "#dfdcd3", "#cfccc3"],
+    shellOnly: true,
+    includeLamps: false,
+  }),
+  ...createKhrushchevka({
+    prefix: "k6",
+    dx: 36,
+    dz: 20,
+    palette: ["#cdc49f", "#c2b994", "#d7cea9", "#c7be99"],
+    shellOnly: true,
+    includeLamps: false,
+  }),
+  ...createStreets(),
+  createGarages(),
+  createConcreteFence(),
+  createPlayground("playground:0", 21, 3.8),
+  createPlayground("playground:1", 65, 7),
+  createTownLamps(),
 ] as const;
 
 export const lampDefinitions: readonly LampDefinition[] = lampCollector;
@@ -1751,7 +2298,7 @@ export const structuralMaterialProfiles: Record<
   wood: {
     density: materialRuntimeProfiles.wood.density,
     compressionStrength: 62,
-    cantilever: 1.25,
+    cantilever: 0.4,
     maximumVerticalGap: 0.2,
     carriesAttachments: true,
   },
@@ -1794,6 +2341,14 @@ export const structuralMaterialProfiles: Record<
   },
   soil: {
     density: materialRuntimeProfiles.soil.density,
+    compressionStrength: Number.POSITIVE_INFINITY,
+    cantilever: Number.POSITIVE_INFINITY,
+    maximumVerticalGap: 0.2,
+    foundation: true,
+    carriesAttachments: true,
+  },
+  earth: {
+    density: materialRuntimeProfiles.earth.density,
     compressionStrength: Number.POSITIVE_INFINITY,
     cantilever: Number.POSITIVE_INFINITY,
     maximumVerticalGap: 0.2,

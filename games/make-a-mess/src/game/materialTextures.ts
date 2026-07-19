@@ -236,6 +236,33 @@ function paintMaterial(
       }
       break;
     }
+    case "earth": {
+      fillNoise(context, random, 185, 68, 4);
+      for (let index = 0; index < 60; index += 1) {
+        gray(context, 110 + random() * 70, 0.7);
+        context.beginPath();
+        context.ellipse(
+          random() * TEXTURE_SIZE,
+          random() * TEXTURE_SIZE,
+          1.5 + random() * 4,
+          1 + random() * 2.6,
+          random() * Math.PI,
+          0,
+          Math.PI * 2,
+        );
+        context.fill();
+      }
+      for (let index = 0; index < 8; index += 1) {
+        gray(context, 205 + random() * 40, 0.6);
+        context.fillRect(
+          random() * TEXTURE_SIZE,
+          random() * TEXTURE_SIZE,
+          2 + random() * 3,
+          2 + random() * 2,
+        );
+      }
+      break;
+    }
     case "soil": {
       fillNoise(context, random, 172, 76, 4);
       for (let index = 0; index < 46; index += 1) {

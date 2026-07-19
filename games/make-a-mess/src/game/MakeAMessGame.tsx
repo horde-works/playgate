@@ -11,6 +11,7 @@ import {
   CuboidCollider,
   Physics,
   RigidBody,
+  useBeforePhysicsStep,
   useRapier,
   type RapierRigidBody,
 } from "@react-three/rapier";
@@ -65,6 +66,7 @@ import {
   bulletHoleRadius,
   carveBox,
   crumbleOnLanding,
+  groundMaterials,
   type RemnantDefinition,
   type ShardDefinition,
   type ShardSource,
@@ -76,6 +78,11 @@ import {
   playImpactSound,
   playLaunchSound,
 } from "./impactAudio";
+import {
+  measureImpactApproachSpeed,
+  shouldPlayDebrisImpact,
+  type ImpactMotion,
+} from "./impactSoundPolicy";
 import {
   FirstPersonHammer,
   FirstPersonLauncher,
@@ -135,6 +142,8 @@ interface VoxelExplosionDefinition {
   readonly position: readonly [number, number, number];
 }
 
+const UNIT_BOX = new BoxGeometry(1, 1, 1);
+
 const PLAYER_SPAWN = [0, 1.25, 7.4] as const;
 
 function Player({
@@ -151,6 +160,7 @@ function Player({
   const groundRay = useRef<RapierRay | null>(null);
   const stepRay = useRef<RapierRay | null>(null);
   const stepCooldown = useRef(0);
+  const spawnFrames = useRef(0);
 
   useEffect(() => {
     registerBody("player", body.current);
@@ -159,6 +169,23 @@ function Player({
 
   useFrame((_, delta) => {
     if (!body.current) {
+      return;
+    }
+
+    // Spawn grace: pin the player to the spawn point for the first frames so
+    // load-time physics hiccups can never push them through the ground.
+    if (spawnFrames.current < 40) {
+      spawnFrames.current += 1;
+      body.current.setTranslation(
+        { x: PLAYER_SPAWN[0], y: PLAYER_SPAWN[1], z: PLAYER_SPAWN[2] },
+        true,
+      );
+      body.current.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      camera.position.set(
+        PLAYER_SPAWN[0],
+        PLAYER_SPAWN[1] + 0.54,
+        PLAYER_SPAWN[2],
+      );
       return;
     }
 
@@ -295,7 +322,9 @@ function Player({
 
     camera.position.set(position.x, position.y + 0.54, position.z);
 
-    if (position.y < -4) {
+    // Below the invisible safety floor means the player left the world
+    // volume (deepest legit crater floor keeps the capsule center ≈ -1.3).
+    if (position.y < -2.6) {
       body.current.setTranslation(
         { x: PLAYER_SPAWN[0], y: PLAYER_SPAWN[1], z: PLAYER_SPAWN[2] },
         true,
@@ -313,6 +342,7 @@ function Player({
       friction={0.15}
       linearDamping={0.35}
       canSleep={false}
+      ccd
     >
       <CapsuleCollider args={[0.45, 0.36]} />
     </RigidBody>
@@ -451,6 +481,19 @@ function MouseLook({
       if (pointerLocked && event.button === 0) {
         onStrike();
         return;
+      }
+
+      // Fallback mode: retry pointer lock on every click gesture over the
+      // game — the moment the browser grants it, the cursor is captured.
+      if (!pointerLocked && event.target === gl.domElement) {
+        try {
+          const request = gl.domElement.requestPointerLock?.() as
+            | Promise<void>
+            | undefined;
+          request?.catch?.(() => {});
+        } catch {
+          // stay in drag mode
+        }
       }
 
       if (event.button === 0 || event.button === 2) {
@@ -598,9 +641,14 @@ function BreakablePieceMesh({ piece }: { piece: BreakablePieceDefinition }) {
   }
 
   return (
-    <mesh castShadow receiveShadow userData={hitData} material={material}>
-      <boxGeometry args={[width, height, depth]} />
-    </mesh>
+    <mesh
+      castShadow={piece.shape !== "groundTile"}
+      receiveShadow
+      userData={hitData}
+      material={material}
+      geometry={UNIT_BOX}
+      scale={[width, height, depth]}
+    />
   );
 }
 
@@ -879,9 +927,9 @@ const Shard = memo(function Shard({
           breakableShard: shard.id,
           breakableMaterial: shard.material,
         }}
-      >
-        <boxGeometry args={[...shard.size]} />
-      </mesh>
+        geometry={UNIT_BOX}
+        scale={[...shard.size]}
+      />
     </RigidBody>
   );
 });
@@ -1028,9 +1076,9 @@ const Remnant = memo(function Remnant({
           breakableRemnant: remnant.id,
           breakableMaterial: remnant.material,
         }}
-      >
-        <boxGeometry args={[...remnant.size]} />
-      </mesh>
+        geometry={UNIT_BOX}
+        scale={[...remnant.size]}
+      />
     </RigidBody>
   );
 });
@@ -1089,10 +1137,17 @@ function Tracer({
   );
 }
 
-const VOXEL_COUNT = 84;
-const VOXEL_LIFE = 1.15;
-const voxelFireColors = ["#fff3c4", "#ffd166", "#ff9f43", "#f4652f", "#c73e1d"];
-const voxelSmokeColors = ["#787878", "#5c5c5c", "#454545"];
+const VOXEL_COUNT = 132;
+const VOXEL_LIFE = 1.8;
+const voxelFireColors = [
+  "#fff8d5",
+  "#ffe08a",
+  "#ffb13b",
+  "#ff782f",
+  "#d84220",
+];
+const voxelSmokeColors = ["#858078", "#625e59", "#464441", "#302f2e"];
+const voxelSparkColors = ["#fff7b1", "#ffd15c", "#ff8d32"];
 
 function VoxelExplosion({
   explosion,
@@ -1103,6 +1158,9 @@ function VoxelExplosion({
 }) {
   const mesh = useRef<InstancedMesh>(null);
   const light = useRef<PointLight>(null);
+  const core = useRef<Group>(null);
+  const coreMaterial = useRef<MeshBasicMaterial>(null);
+  const coreOuterMaterial = useRef<MeshBasicMaterial>(null);
   const elapsed = useRef(0);
   const done = useRef(false);
   const dummy = useMemo(() => new Object3D(), []);
@@ -1118,17 +1176,46 @@ function VoxelExplosion({
         const t = (index + 0.5) / VOXEL_COUNT;
         const inclination = Math.acos(1 - 2 * t);
         const azimuth = golden * index;
-        const speed = 3.2 + (((index * 37) % 23) / 23) * 5.6;
+        const variant = index % 10;
+        const kind =
+          variant < 5 ? ("fire" as const) : variant < 8 ? ("smoke" as const) : ("spark" as const);
+        const variation = ((index * 37) % 23) / 23;
+        const vertical = Math.cos(inclination);
+        const directionY =
+          kind === "smoke"
+            ? Math.abs(vertical) * 0.52 + 0.48
+            : vertical * 0.72 + 0.28;
 
         return {
+          kind,
           direction: [
             Math.sin(inclination) * Math.cos(azimuth),
-            Math.abs(Math.cos(inclination)) * 0.8 + 0.3,
+            directionY,
             Math.sin(inclination) * Math.sin(azimuth),
           ] as const,
-          speed,
-          size: 0.07 + (((index * 53) % 17) / 17) * 0.17,
-          spin: (((index * 29) % 13) / 13) * 6,
+          speed:
+            kind === "spark"
+              ? 8.5 + variation * 6.5
+              : kind === "fire"
+                ? 4.3 + variation * 5.4
+                : 1.4 + variation * 2.2,
+          size:
+            kind === "spark"
+              ? 0.035 + variation * 0.04
+              : kind === "fire"
+                ? 0.1 + variation * 0.2
+                : 0.17 + variation * 0.25,
+          spin: 2.5 + (((index * 29) % 13) / 13) * 8,
+          delay:
+            kind === "smoke" ? 0.05 + (index % 4) * 0.035 : (index % 3) * 0.008,
+          life:
+            kind === "spark"
+              ? 0.9 + variation * 0.35
+              : kind === "fire"
+                ? 0.62 + variation * 0.34
+                : 1.35 + variation * 0.4,
+          drag: kind === "spark" ? 1.25 : kind === "fire" ? 2.2 : 1.6,
+          gravity: kind === "spark" ? 7.8 : kind === "fire" ? 3.1 : -0.32,
         };
       }),
     [],
@@ -1142,20 +1229,31 @@ function VoxelExplosion({
 
     const color = new Color();
     for (let index = 0; index < VOXEL_COUNT; index += 1) {
-      const isFire = index % 5 !== 0;
-      const palette = isFire ? voxelFireColors : voxelSmokeColors;
+      const particle = particles[index];
+      const palette =
+        particle.kind === "fire"
+          ? voxelFireColors
+          : particle.kind === "smoke"
+            ? voxelSmokeColors
+            : voxelSparkColors;
       color.set(palette[(index * 7) % palette.length]);
       instanced.setColorAt(index, color);
+
+      dummy.position.set(0, 0, 0);
+      dummy.scale.setScalar(0.0001);
+      dummy.updateMatrix();
+      instanced.setMatrixAt(index, dummy.matrix);
     }
     if (instanced.instanceColor) {
       instanced.instanceColor.needsUpdate = true;
     }
+    instanced.instanceMatrix.needsUpdate = true;
 
     return () => {
       geometry.dispose();
       voxelMaterial.dispose();
     };
-  }, [geometry, voxelMaterial]);
+  }, [dummy, geometry, particles, voxelMaterial]);
 
   useFrame((_, delta) => {
     elapsed.current += delta;
@@ -1165,31 +1263,73 @@ function VoxelExplosion({
     if (instanced) {
       for (let index = 0; index < VOXEL_COUNT; index += 1) {
         const particle = particles[index];
-        const travel = particle.speed * time * (1 - time * 0.32);
+        const localTime = Math.max(0, time - particle.delay);
+        const lifeProgress = Math.min(1, localTime / particle.life);
+        const travel =
+          particle.speed *
+          ((1 - Math.exp(-particle.drag * localTime)) / particle.drag);
+        const appear = Math.min(1, localTime / 0.075);
+        const disappear = Math.max(0, 1 - lifeProgress);
         const grow =
-          time < 0.1
-            ? time / 0.1
-            : Math.max(0, 1 - (time - 0.1) / (VOXEL_LIFE - 0.1));
+          particle.kind === "smoke"
+            ? appear * disappear ** 0.48 * (0.72 + localTime * 0.75)
+            : particle.kind === "fire"
+              ? appear * disappear ** 1.35
+              : appear * disappear ** 0.72;
 
         dummy.position.set(
           particle.direction[0] * travel,
-          particle.direction[1] * travel - 3.4 * time * time,
+          particle.direction[1] * travel -
+            particle.gravity * localTime * localTime * 0.5,
           particle.direction[2] * travel,
         );
         dummy.rotation.set(
-          particle.spin * time,
-          particle.spin * 0.7 * time,
-          particle.spin * 0.4 * time,
+          particle.spin * localTime,
+          particle.spin * 0.7 * localTime,
+          particle.spin * 0.4 * localTime,
         );
-        dummy.scale.setScalar(Math.max(0.0001, particle.size * grow));
+        if (particle.kind === "spark") {
+          dummy.scale.set(
+            Math.max(0.0001, particle.size * grow * 0.55),
+            Math.max(0.0001, particle.size * grow * 0.55),
+            Math.max(0.0001, particle.size * grow * 2.8),
+          );
+        } else {
+          const size = Math.max(0.0001, particle.size * grow);
+          dummy.scale.set(
+            size * (0.82 + (index % 3) * 0.12),
+            size * (0.9 + (index % 2) * 0.18),
+            size,
+          );
+        }
         dummy.updateMatrix();
         instanced.setMatrixAt(index, dummy.matrix);
       }
       instanced.instanceMatrix.needsUpdate = true;
     }
 
+    const flashProgress = Math.min(1, time / 0.28);
+    if (core.current) {
+      const coreScale =
+        time < 0.045
+          ? 0.35 + (time / 0.045) * 1.2
+          : Math.max(0.001, (1 - flashProgress) * (1.65 + time * 2.2));
+      core.current.scale.setScalar(coreScale);
+      core.current.rotation.set(time * 3.4, time * 2.2, time * 4.1);
+    }
+    if (coreMaterial.current) {
+      coreMaterial.current.opacity = Math.max(0, 1 - flashProgress ** 0.7);
+    }
+    if (coreOuterMaterial.current) {
+      coreOuterMaterial.current.opacity = Math.max(
+        0,
+        0.72 * (1 - flashProgress),
+      );
+    }
+
     if (light.current) {
-      light.current.intensity = Math.max(0, 30 * (1 - time / 0.32));
+      light.current.intensity =
+        52 * Math.max(0, 1 - time / 0.38) ** 1.7;
     }
 
     if (time >= VOXEL_LIFE && !done.current) {
@@ -1205,7 +1345,31 @@ function VoxelExplosion({
         args={[geometry, voxelMaterial, VOXEL_COUNT]}
         frustumCulled={false}
       />
-      <pointLight ref={light} color="#ffb45e" distance={10} decay={2} />
+      <group ref={core} scale={0.01}>
+        <mesh rotation={[0.24, 0.42, 0.12]}>
+          <boxGeometry args={[0.92, 0.92, 0.92]} />
+          <meshBasicMaterial
+            ref={coreMaterial}
+            color="#fff8cf"
+            transparent
+            opacity={1}
+            depthWrite={false}
+            toneMapped={false}
+          />
+        </mesh>
+        <mesh rotation={[-0.36, 0.18, 0.62]} scale={0.72}>
+          <boxGeometry args={[1.35, 0.82, 1.12]} />
+          <meshBasicMaterial
+            ref={coreOuterMaterial}
+            color="#ff9f32"
+            transparent
+            opacity={0.72}
+            depthWrite={false}
+            toneMapped={false}
+          />
+        </mesh>
+      </group>
+      <pointLight ref={light} color="#ffb04a" distance={16} decay={2} />
     </group>
   );
 }
@@ -1279,11 +1443,11 @@ function DustBurst({
 function OpenWorldShell() {
   return (
     <RigidBody type="fixed" colliders={false}>
-      <CuboidCollider args={[30.5, 0.12, 21.5]} position={[15, -0.42, -6]} friction={1} />
-      <CuboidCollider args={[0.12, 8, 21.5]} position={[-15.5, 7.6, -6]} />
-      <CuboidCollider args={[0.12, 8, 21.5]} position={[45.5, 7.6, -6]} />
-      <CuboidCollider args={[30.5, 8, 0.12]} position={[15, 7.6, -27.5]} />
-      <CuboidCollider args={[30.5, 8, 0.12]} position={[15, 7.6, 15.5]} />
+      <CuboidCollider args={[45.5, 0.12, 36.5]} position={[30, -2.2, -15]} friction={1} />
+      <CuboidCollider args={[0.12, 8, 36.5]} position={[-15.5, 7.6, -15]} />
+      <CuboidCollider args={[0.12, 8, 36.5]} position={[75.5, 7.6, -15]} />
+      <CuboidCollider args={[45.5, 8, 0.12]} position={[30, 7.6, -51.5]} />
+      <CuboidCollider args={[45.5, 8, 0.12]} position={[30, 7.6, 21.5]} />
     </RigidBody>
   );
 }
@@ -1340,6 +1504,8 @@ function OpenWorldScene({
   const brokenPiecesRef = useRef<ReadonlySet<string>>(brokenPieces);
   const nightRef = useRef(0);
   const pieceBodies = useRef(new Map<string, RapierRigidBody>());
+  const preStepMotions = useRef(new Map<string, ImpactMotion>());
+  const debrisSoundByBody = useRef(new Map<string, number>());
   const restCounters = useRef(new Map<string, number>());
   const settleAccumulator = useRef(0);
   const strikeTimers = useRef<ReturnType<typeof window.setTimeout>[]>([]);
@@ -1370,10 +1536,31 @@ function OpenWorldScene({
         pieceBodies.current.set(id, body);
       } else {
         pieceBodies.current.delete(id);
+        preStepMotions.current.delete(id);
+        debrisSoundByBody.current.delete(id);
       }
     },
     [],
   );
+
+  useBeforePhysicsStep(() => {
+    for (const [id, body] of pieceBodies.current) {
+      if (
+        body.bodyType() !== rapier.RigidBodyType.Dynamic ||
+        body.isSleeping()
+      ) {
+        preStepMotions.current.delete(id);
+        continue;
+      }
+
+      const linear = body.linvel();
+      const angular = body.angvel();
+      preStepMotions.current.set(id, {
+        linear: { x: linear.x, y: linear.y, z: linear.z },
+        angular: { x: angular.x, y: angular.y, z: angular.z },
+      });
+    }
+  });
 
   const ensureDynamic = useCallback(
     (body: RapierRigidBody) => {
@@ -1422,6 +1609,8 @@ function OpenWorldScene({
     setGrenades([]);
     setExplosions([]);
     restCounters.current.clear();
+    preStepMotions.current.clear();
+    debrisSoundByBody.current.clear();
     impactShatterTimes.current = [];
     chipTimes.current = [];
     for (const timer of strikeTimers.current) {
@@ -1878,10 +2067,11 @@ function OpenWorldScene({
       commitShards(generated);
 
       burstId.current += 1;
+      const nextBurstId = burstId.current;
       setBursts((current) => [
         ...current,
         {
-          id: burstId.current,
+          id: nextBurstId,
           position: [worldPoint.x, worldPoint.y, worldPoint.z],
           direction: [0, 1, 0],
           material: source.material,
@@ -2058,10 +2248,11 @@ function OpenWorldScene({
       commitShards(debris);
 
       burstId.current += 1;
+      const nextBurstId = burstId.current;
       setBursts((current) => [
         ...current,
         {
-          id: burstId.current,
+          id: nextBurstId,
           position: [worldPoint.x, worldPoint.y, worldPoint.z],
           direction: [0, 1, 0],
           material: source.material,
@@ -2131,10 +2322,11 @@ function OpenWorldScene({
       ? hit.point
       : camera.position.clone().add(direction.clone().multiplyScalar(MG_RANGE));
     tracerId.current += 1;
+    const nextTracerId = tracerId.current;
     setTracers((current) => [
       ...current.slice(-8),
       {
-        id: tracerId.current,
+        id: nextTracerId,
         from: [muzzle.x, muzzle.y, muzzle.z],
         to: [end.x, end.y, end.z],
       },
@@ -2163,10 +2355,11 @@ function OpenWorldScene({
     if (material === "steel") {
       // Bullets don't pierce steel — sparks and a shove.
       burstId.current += 1;
+      const nextBurstId = burstId.current;
       setBursts((current) => [
         ...current,
         {
-          id: burstId.current,
+          id: nextBurstId,
           position: [point.x, point.y, point.z],
           direction: [direction.x, direction.y, direction.z],
           material: "steel",
@@ -2301,18 +2494,20 @@ function OpenWorldScene({
     (center3: Vector3) => {
       playExplosionSound();
       explosionId.current += 1;
+      const nextExplosionId = explosionId.current;
       setExplosions((current) => [
         ...current,
         {
-          id: explosionId.current,
+          id: nextExplosionId,
           position: [center3.x, center3.y, center3.z],
         },
       ]);
       burstId.current += 1;
+      const nextBurstId = burstId.current;
       setBursts((current) => [
         ...current,
         {
-          id: burstId.current,
+          id: nextBurstId,
           position: [center3.x, center3.y + 0.2, center3.z],
           direction: [0, 1, 0],
           material: "soil",
@@ -2322,14 +2517,14 @@ function OpenWorldScene({
       const previousBroken = brokenPiecesRef.current;
       const next = new Set(previousBroken);
       for (const piece of breakablePieces) {
-        if (next.has(piece.id)) {
+        if (next.has(piece.id) || groundMaterials.has(piece.material)) {
           continue;
         }
 
         const radius =
           BLAST_RADIUS *
           blastFactorByMaterial[piece.material] *
-          (0.78 + blastNoise(piece.id, explosionId.current) * 0.44);
+          (0.78 + blastNoise(piece.id, nextExplosionId) * 0.44);
         const dx = piece.position[0] - center3.x;
         const dy = piece.position[1] - center3.y;
         const dz = piece.position[2] - center3.z;
@@ -2396,7 +2591,13 @@ function OpenWorldScene({
           continue;
         }
 
-        const carve = carveAt(piece.id, center3, BLAST_RADIUS * 0.8, null);
+        // The carve radius shrinks with depth below the blast, so thick
+        // ground layers get a stepped bowl-shaped crater, not a shaft.
+        const pieceTop = piece.position[1] + piece.size[1] / 2;
+        const depthBelow = Math.max(0, center3.y - pieceTop);
+        const craterRadius =
+          BLAST_RADIUS * 0.8 * Math.max(0.35, 1 - depthBelow * 0.42);
+        const carve = carveAt(piece.id, center3, craterRadius, null);
         if (carve.carved) {
           craterBudget -= 1;
           if (carve.brokenParentId) {
@@ -2520,10 +2721,11 @@ function OpenWorldScene({
       .add(new Vector3(0, -0.12, 0));
 
     grenadeId.current += 1;
+    const nextGrenadeId = grenadeId.current;
     setGrenades((current) => [
       ...current,
       {
-        id: grenadeId.current,
+        id: nextGrenadeId,
         position: [origin.x, origin.y, origin.z],
         velocity: [
           direction.x * 23,
@@ -2542,8 +2744,34 @@ function OpenWorldScene({
       forceDirection: { x: number; y: number; z: number },
     ) => {
       const intensity = magnitude / Math.max(0.001, mass * 320);
-      if (intensity >= 0.18) {
+      const body = pieceBodies.current.get(piece.id);
+      if (!body) {
+        return;
+      }
+
+      const currentLinear = body.linvel();
+      const currentAngular = body.angvel();
+      const motion = preStepMotions.current.get(piece.id) ?? {
+        linear: currentLinear,
+        angular: currentAngular,
+      };
+      const now = performance.now();
+      const approachSpeed = measureImpactApproachSpeed(
+        motion,
+        forceDirection,
+        piece.size,
+      );
+      if (
+        shouldPlayDebrisImpact({
+          intensity,
+          approachSpeed,
+          elapsedSinceLastSound:
+            now - (debrisSoundByBody.current.get(piece.id) ?? -Infinity),
+          minimumIntensity: 0.18,
+        })
+      ) {
         playDebrisSound(piece.material, Math.min(1, intensity));
+        debrisSoundByBody.current.set(piece.id, now);
       }
 
       if (!crumbleOnLanding.has(piece.material)) {
@@ -2552,18 +2780,13 @@ function OpenWorldScene({
 
       // Fall damage is self-inflicted only: the piece must itself be moving
       // fast (it fell) — a resting piece that something lands ON stays whole.
-      const body = pieceBodies.current.get(piece.id);
-      if (!body) {
-        return;
-      }
-      const linvel = body.linvel();
       const ownSpeedSq =
-        linvel.x * linvel.x + linvel.y * linvel.y + linvel.z * linvel.z;
+        motion.linear.x * motion.linear.x +
+        motion.linear.y * motion.linear.y +
+        motion.linear.z * motion.linear.z;
       if (ownSpeedSq < 9) {
         return;
       }
-
-      const now = performance.now();
 
       // Brutal impacts crumble the faller completely.
       if (intensity >= 1.15) {
@@ -2598,10 +2821,41 @@ function OpenWorldScene({
   // Chunky debris only sounds off on landings — no further chipping, so a
   // collapse never cascades into an avalanche of contact-driven splits.
   const handleShardContact = useCallback(
-    (shard: ShardDefinition, magnitude: number, mass: number) => {
+    (
+      shard: ShardDefinition,
+      magnitude: number,
+      mass: number,
+      forceDirection: { x: number; y: number; z: number },
+    ) => {
       const intensity = magnitude / Math.max(0.001, mass * 320);
-      if (intensity >= 0.24) {
+      const body = pieceBodies.current.get(shard.id);
+      if (!body) {
+        return;
+      }
+
+      const currentLinear = body.linvel();
+      const currentAngular = body.angvel();
+      const motion = preStepMotions.current.get(shard.id) ?? {
+        linear: currentLinear,
+        angular: currentAngular,
+      };
+      const now = performance.now();
+      const approachSpeed = measureImpactApproachSpeed(
+        motion,
+        forceDirection,
+        shard.size,
+      );
+      if (
+        shouldPlayDebrisImpact({
+          intensity,
+          approachSpeed,
+          elapsedSinceLastSound:
+            now - (debrisSoundByBody.current.get(shard.id) ?? -Infinity),
+          minimumIntensity: 0.24,
+        })
+      ) {
         playDebrisSound(shard.material, Math.min(1, intensity));
+        debrisSoundByBody.current.set(shard.id, now);
       }
     },
     [],
@@ -2676,10 +2930,11 @@ function OpenWorldScene({
 
     const contactTimer = window.setTimeout(() => {
       burstId.current += 1;
+      const nextBurstId = burstId.current;
       setBursts((current) => [
         ...current,
         {
-          id: burstId.current,
+          id: nextBurstId,
           position: [point.x, point.y, point.z],
           direction: [direction.x, direction.y, direction.z],
           material,
@@ -2688,7 +2943,21 @@ function OpenWorldScene({
 
       const strikeSpeed = materialRuntimeProfiles[material].impulse * 2.1;
 
-      if (piece) {
+      if (piece && groundMaterials.has(piece.material)) {
+        // The hammer digs a bite out of the ground instead of ripping a
+        // whole tile loose.
+        if (!brokenPiecesRef.current.has(piece.id)) {
+          const dig = carveAt(piece.id, point, 0.34, direction);
+          if (dig.carved) {
+            if (dig.brokenParentId) {
+              breakPieces([dig.brokenParentId]);
+            }
+            settleWorld();
+            return;
+          }
+        }
+        applyImpact(piece.id, material, point, direction, 0.5);
+      } else if (piece) {
         if (!brokenPiecesRef.current.has(piece.id)) {
           breakAt(piece, currentImpact);
         }
@@ -2746,7 +3015,9 @@ function OpenWorldScene({
   }, [
     applyImpact,
     breakAt,
+    breakPieces,
     camera,
+    carveAt,
     center,
     commitRemnants,
     fallbackLook,
@@ -2919,6 +3190,19 @@ export function MakeAMessGame() {
     setActive(true);
     setFallbackLook(false);
     setControlRequest((version) => version + 1);
+    // Request pointer lock synchronously inside the click gesture — some
+    // browsers reject requests coming later from a React effect.
+    const canvas = document.querySelector<HTMLCanvasElement>(
+      ".game-canvas canvas, canvas",
+    );
+    try {
+      const request = canvas?.requestPointerLock?.() as
+        | Promise<void>
+        | undefined;
+      request?.catch?.(() => {});
+    } catch {
+      // MouseLook's fallback drag mode covers refusal.
+    }
   }, []);
 
   return (
@@ -2928,7 +3212,7 @@ export function MakeAMessGame() {
           <Canvas
             className="game-canvas"
             shadows
-            dpr={[1, 1.5]}
+            dpr={[1, 1.25]}
             camera={{
               position: [
                 PLAYER_SPAWN[0],
@@ -2937,7 +3221,7 @@ export function MakeAMessGame() {
               ],
               fov: 72,
               near: 0.05,
-              far: 640,
+              far: 140,
             }}
             gl={{
               antialias: true,
@@ -2948,11 +3232,16 @@ export function MakeAMessGame() {
                 Для Make a Mess нужен браузер с WebGL.
               </div>
             }
-            onCreated={() => setReady(true)}
+            onCreated={(state) => {
+              state.gl.shadowMap.autoUpdate = false;
+              state.gl.shadowMap.needsUpdate = true;
+              setReady(true);
+            }}
           >
             <Suspense fallback={null}>
               <Physics
                 gravity={[0, -14, 0]}
+                timeStep={1 / 60}
                 numSolverIterations={6}
                 maxCcdSubsteps={2}
               >
@@ -3054,10 +3343,10 @@ export function MakeAMessGame() {
               {brokenCount > 0 ? "Продолжим беспорядок?" : "Всё можно сломать."}
             </h2>
             <p>
-              Дом, терраса, беседка — а через двор целая панельная
-              четырёхэтажка: подъезды с лестницами и перилами, квартиры с
-              мебелью и дверями, балконы. День сменяется ночью, в квартирах
-              загораются окна. Клик — молоток, 2 — гранатомёт, 3 — пулемёт:
+              Целый квартал: шесть панельных четырёхэтажек, три дома, улицы
+              с перекрёстками, гаражи с распахивающимися воротами, детские
+              площадки и дворы. Клавиша N — день, закат или ночь: в окнах
+              загорается свет. Клик — молоток, 2 — гранатомёт, 3 — пулемёт:
               выгрызает дырки прямо в стенах.
             </p>
             <button

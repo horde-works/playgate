@@ -46,6 +46,7 @@ export const blastFactorByMaterial: Record<BreakableMaterial, number> = {
   concrete: 0.75,
   steel: 0.6,
   soil: 0.45,
+  earth: 0.5,
   asphalt: 0.6,
 };
 
@@ -56,6 +57,7 @@ export const bulletHoleRadius: Partial<Record<BreakableMaterial, number>> = {
   plaster: 0.27,
   wood: 0.2,
   soil: 0.3,
+  earth: 0.26,
   asphalt: 0.24,
 };
 
@@ -65,6 +67,14 @@ export const crumbleOnLanding: ReadonlySet<BreakableMaterial> = new Set([
   "plaster",
   "concrete",
   "glass",
+  "asphalt",
+  "earth",
+]);
+
+// Ground materials never break away whole from a blast — they only crater.
+export const groundMaterials: ReadonlySet<BreakableMaterial> = new Set([
+  "soil",
+  "earth",
   "asphalt",
 ]);
 

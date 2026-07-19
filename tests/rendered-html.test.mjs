@@ -54,6 +54,6 @@ test("server-renders the catalog and game space", async () => {
   assert.match(gameHtml, /Make a Mess \/ 004/);
   assert.match(gameHtml, /Дом — объект/);
   assert.match(gameHtml, /Всё можно сломать/);
-  assert.match(gameHtml, /панельная\s+четырёхэтажка/);
+  assert.match(gameHtml, /панельных\s+четырёхэтажек/);
   assert.match(gameHtml, /Взять молоток/);
 });

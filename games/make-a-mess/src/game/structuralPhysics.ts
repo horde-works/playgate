@@ -278,7 +278,16 @@ export function createStructuralSolver<Material extends string>(
       const minimum = Math.min(...contacts.map((contact) => contact[0]));
       const maximum = Math.max(...contacts.map((contact) => contact[1]));
       const center = piece.position[axis];
-      if (center < minimum - allowance || center > maximum + allowance) {
+      // A moment connection is only as strong as its bearing patch: a plate
+      // embedded 15+cm into a wall keeps its full cantilever, while a seat
+      // balancing on a single slender leg gets almost none and tips over.
+      const hullWidth = Math.max(0, maximum - minimum);
+      const effectiveAllowance =
+        allowance * Math.min(1, hullWidth / 0.15);
+      if (
+        center < minimum - effectiveAllowance ||
+        center > maximum + effectiveAllowance
+      ) {
         return false;
       }
     }
