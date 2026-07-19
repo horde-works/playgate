@@ -91,6 +91,7 @@ import {
   type SwingDefinition,
 } from "./FirstPersonWeapons";
 import { HingedDoorSystem } from "./HingedDoorSystem";
+import { IntactBreakableWorld } from "./IntactBreakableWorld";
 import { getPieceMaterial } from "./materialTextures";
 import { resolveRuntimeStructure } from "./runtimeStructure";
 import { createSpatialIndex } from "./spatialIndex";
@@ -169,6 +170,8 @@ interface BreakableHitData {
   readonly remnantId?: string;
   readonly material?: BreakableMaterial;
 }
+
+type BodyAction = (body: RapierRigidBody) => void;
 
 function readBreakableHit(
   intersection: Intersection,
@@ -646,7 +649,6 @@ function MouseLook({
 interface BreakablePieceProps {
   piece: BreakablePieceDefinition;
   broken: boolean;
-  resetVersion: number;
   registerBody: (id: string, body: RapierRigidBody | null) => void;
   onDebrisContact: (
     piece: BreakablePieceDefinition,
@@ -722,7 +724,6 @@ function BreakablePieceMesh({
 const BreakablePiece = memo(function BreakablePiece({
   piece,
   broken,
-  resetVersion,
   registerBody,
   onDebrisContact,
 }: BreakablePieceProps) {
@@ -730,17 +731,6 @@ const BreakablePiece = memo(function BreakablePiece({
   const wasBroken = useRef(false);
   const { rapier } = useRapier();
   const profile = materialRuntimeProfiles[piece.material];
-  const initialRotation = useMemo(
-    () =>
-      new Quaternion().setFromEuler(
-        new Euler(
-          piece.rotation?.[0] ?? 0,
-          piece.rotation?.[1] ?? 0,
-          piece.rotation?.[2] ?? 0,
-        ),
-      ),
-    [piece.rotation],
-  );
 
   useEffect(() => {
     registerBody(piece.id, body.current);
@@ -788,38 +778,6 @@ const BreakablePiece = memo(function BreakablePiece({
     wasBroken.current = broken;
   }, [broken, piece.column, piece.material, piece.row, rapier]);
 
-  useEffect(() => {
-    const currentBody = body.current;
-    if (!currentBody) {
-      return;
-    }
-
-    if (currentBody.bodyType() !== rapier.RigidBodyType.Fixed) {
-      currentBody.setBodyType(rapier.RigidBodyType.Fixed, true);
-    }
-    currentBody.enableCcd(false);
-    currentBody.setTranslation(
-      {
-        x: piece.position[0],
-        y: piece.position[1],
-        z: piece.position[2],
-      },
-      true,
-    );
-    currentBody.setRotation(
-      {
-        x: initialRotation.x,
-        y: initialRotation.y,
-        z: initialRotation.z,
-        w: initialRotation.w,
-      },
-      true,
-    );
-    currentBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
-    currentBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
-    wasBroken.current = false;
-  }, [initialRotation, piece.position, rapier, resetVersion]);
-
   return (
     <RigidBody
       ref={body}
@@ -858,13 +816,11 @@ const BreakablePiece = memo(function BreakablePiece({
 function BreakableObjects({
   brokenPieces,
   shatteredPieces,
-  resetVersion,
   registerBody,
   onDebrisContact,
 }: {
   brokenPieces: ReadonlySet<string>;
   shatteredPieces: ReadonlySet<string>;
-  resetVersion: number;
   registerBody: (id: string, body: RapierRigidBody | null) => void;
   onDebrisContact: (
     piece: BreakablePieceDefinition,
@@ -873,20 +829,41 @@ function BreakableObjects({
     forceDirection: { x: number; y: number; z: number },
   ) => void;
 }) {
+  const { intactPieces, bodyPieces } = useMemo(() => {
+    const intact: BreakablePieceDefinition[] = [];
+    const bodies: BreakablePieceDefinition[] = [];
+    for (const piece of breakablePieces) {
+      if (shatteredPieces.has(piece.id)) {
+        continue;
+      }
+      if (
+        brokenPieces.has(piece.id) ||
+        piece.hinge ||
+        piece.shape === "cinderBlock"
+      ) {
+        bodies.push(piece);
+      } else {
+        intact.push(piece);
+      }
+    }
+    return {
+      intactPieces: intact,
+      bodyPieces: bodies,
+    };
+  }, [brokenPieces, shatteredPieces]);
+
   return (
     <group>
-      {breakablePieces.map((piece) =>
-        shatteredPieces.has(piece.id) ? null : (
-          <BreakablePiece
-            key={piece.id}
-            piece={piece}
-            broken={brokenPieces.has(piece.id)}
-            resetVersion={resetVersion}
-            registerBody={registerBody}
-            onDebrisContact={onDebrisContact}
-          />
-        ),
-      )}
+      <IntactBreakableWorld pieces={intactPieces} />
+      {bodyPieces.map((piece) => (
+        <BreakablePiece
+          key={piece.id}
+          piece={piece}
+          broken={brokenPieces.has(piece.id)}
+          registerBody={registerBody}
+          onDebrisContact={onDebrisContact}
+        />
+      ))}
     </group>
   );
 }
@@ -1575,6 +1552,7 @@ function OpenWorldScene({
   const breakableRaycastRoot = useRef<Group>(null);
   const pieceBodies = useRef(new Map<string, RapierRigidBody>());
   const dynamicBodies = useRef(new Map<string, RapierRigidBody>());
+  const pendingBodyActions = useRef(new Map<string, BodyAction[]>());
   const preStepMotions = useRef(new Map<string, ImpactMotion>());
   const debrisSoundByBody = useRef(new Map<string, number>());
   const restCounters = useRef(new Map<string, number>());
@@ -1624,6 +1602,13 @@ function OpenWorldScene({
         } else {
           dynamicBodies.current.delete(id);
         }
+        const pending = pendingBodyActions.current.get(id);
+        if (pending) {
+          pendingBodyActions.current.delete(id);
+          for (const action of pending) {
+            action(body);
+          }
+        }
       } else {
         pieceBodies.current.delete(id);
         dynamicBodies.current.delete(id);
@@ -1633,6 +1618,21 @@ function OpenWorldScene({
     },
     [rapier],
   );
+
+  const withBody = useCallback((id: string, action: BodyAction) => {
+    const body = pieceBodies.current.get(id);
+    if (body) {
+      action(body);
+      return;
+    }
+
+    const pending = pendingBodyActions.current.get(id);
+    if (pending) {
+      pending.push(action);
+    } else {
+      pendingBodyActions.current.set(id, [action]);
+    }
+  }, []);
 
   useBeforePhysicsStep(() => {
     for (const [id, body] of dynamicBodies.current) {
@@ -1718,6 +1718,7 @@ function OpenWorldScene({
     restCounters.current.clear();
     preStepMotions.current.clear();
     debrisSoundByBody.current.clear();
+    pendingBodyActions.current.clear();
     impactShatterTimes.current = [];
     chipTimes.current = [];
     for (const timer of strikeTimers.current) {
@@ -1863,45 +1864,50 @@ function OpenWorldScene({
       direction: Vector3,
       power = 1,
     ) => {
-      const body = pieceBodies.current.get(pieceId);
-      if (!body) {
+      if (
+        breakablePieceById.has(pieceId) &&
+        !brokenPiecesRef.current.has(pieceId) &&
+        !pieceBodies.current.has(pieceId)
+      ) {
         return;
       }
 
       const profile = materialRuntimeProfiles[material];
-      ensureDynamic(pieceId, body);
-      body.enableCcd(true);
-      body.wakeUp();
+      withBody(pieceId, (body) => {
+        ensureDynamic(pieceId, body);
+        body.enableCcd(true);
+        body.wakeUp();
 
-      const mass = Math.max(0.04, body.mass());
-      const strikeSpeed = profile.impulse * 1.5 * power;
-      body.applyImpulseAtPoint(
-        {
-          x: direction.x * strikeSpeed * mass,
-          y: (direction.y * strikeSpeed + profile.lift) * mass,
-          z: direction.z * strikeSpeed * mass,
-        },
-        {
-          x: point.x,
-          y: point.y,
-          z: point.z,
-        },
-        true,
-      );
-      body.applyTorqueImpulse(
-        {
-          x: -direction.z * profile.torque * mass,
-          y:
-            (point.x >= body.translation().x ? -1 : 1) *
-            profile.torque *
-            0.82 *
-            mass,
-          z: direction.x * profile.torque * mass,
-        },
-        true,
-      );
+        const mass = Math.max(0.04, body.mass());
+        const strikeSpeed = profile.impulse * 1.5 * power;
+        body.applyImpulseAtPoint(
+          {
+            x: direction.x * strikeSpeed * mass,
+            y: (direction.y * strikeSpeed + profile.lift) * mass,
+            z: direction.z * strikeSpeed * mass,
+          },
+          {
+            x: point.x,
+            y: point.y,
+            z: point.z,
+          },
+          true,
+        );
+        body.applyTorqueImpulse(
+          {
+            x: -direction.z * profile.torque * mass,
+            y:
+              (point.x >= body.translation().x ? -1 : 1) *
+              profile.torque *
+              0.82 *
+              mass,
+            z: direction.x * profile.torque * mass,
+          },
+          true,
+        );
+      });
     },
-    [ensureDynamic],
+    [ensureDynamic, withBody],
   );
 
   const commitShards = useCallback(
@@ -1980,28 +1986,51 @@ function OpenWorldScene({
       burstSpeed: number,
     ): boolean => {
       const body = pieceBodies.current.get(source.id);
-      if (!body) {
+      const staticPiece =
+        origin === "piece" ? breakablePieceById.get(source.id) : undefined;
+      if (!body && !staticPiece) {
         return false;
       }
 
-      const translation = body.translation();
-      const rotation = body.rotation();
-      const linearVelocity = body.linvel();
-      const angularVelocity = body.angvel();
-      const bodyPosition = new Vector3(
-        translation.x,
-        translation.y,
-        translation.z,
-      );
+      const translation = body?.translation();
+      const rotation = body?.rotation();
+      const linearVelocity = body?.linvel();
+      const angularVelocity = body?.angvel();
+      const bodyPosition = translation
+        ? new Vector3(translation.x, translation.y, translation.z)
+        : new Vector3(...staticPiece!.position);
+      const bodyQuaternion = rotation
+        ? new Quaternion(rotation.x, rotation.y, rotation.z, rotation.w)
+        : new Quaternion().setFromEuler(
+            new Euler(
+              staticPiece!.rotation?.[0] ?? 0,
+              staticPiece!.rotation?.[1] ?? 0,
+              staticPiece!.rotation?.[2] ?? 0,
+            ),
+          );
+      const bodyLinearVelocity = linearVelocity
+        ? new Vector3(
+            linearVelocity.x,
+            linearVelocity.y,
+            linearVelocity.z,
+          )
+        : new Vector3();
+      const bodyAngularVelocity = angularVelocity
+        ? new Vector3(
+            angularVelocity.x,
+            angularVelocity.y,
+            angularVelocity.z,
+          )
+        : new Vector3();
 
       shardCounter.current += 1;
       const generated = buildShards(
         source,
         `shard:${shardCounter.current}`,
         bodyPosition,
-        new Quaternion(rotation.x, rotation.y, rotation.z, rotation.w),
-        new Vector3(linearVelocity.x, linearVelocity.y, linearVelocity.z),
-        new Vector3(angularVelocity.x, angularVelocity.y, angularVelocity.z),
+        bodyQuaternion,
+        bodyLinearVelocity,
+        bodyAngularVelocity,
         burstCenter ?? bodyPosition,
         burstSpeed,
       );
@@ -2257,24 +2286,31 @@ function OpenWorldScene({
       }
 
       const body = pieceBodies.current.get(targetId);
-      if (!body || body.bodyType() !== rapier.RigidBodyType.Fixed) {
+      if (
+        body &&
+        body.bodyType() !== rapier.RigidBodyType.Fixed
+      ) {
+        return { carved: false, brokenParentId: null };
+      }
+      if (!body && (!piece || brokenPiecesRef.current.has(piece.id))) {
         return { carved: false, brokenParentId: null };
       }
 
       const parentId = remnant ? remnant.parentId : targetId;
-      const translation = body.translation();
-      const rotation = body.rotation();
-      const bodyPosition = new Vector3(
-        translation.x,
-        translation.y,
-        translation.z,
-      );
-      const bodyQuaternion = new Quaternion(
-        rotation.x,
-        rotation.y,
-        rotation.z,
-        rotation.w,
-      );
+      const translation = body?.translation();
+      const rotation = body?.rotation();
+      const bodyPosition = translation
+        ? new Vector3(translation.x, translation.y, translation.z)
+        : new Vector3(...piece!.position);
+      const bodyQuaternion = rotation
+        ? new Quaternion(rotation.x, rotation.y, rotation.z, rotation.w)
+        : new Quaternion().setFromEuler(
+            new Euler(
+              piece!.rotation?.[0] ?? 0,
+              piece!.rotation?.[1] ?? 0,
+              piece!.rotation?.[2] ?? 0,
+            ),
+          );
       const localPoint = worldPoint
         .clone()
         .sub(bodyPosition)
@@ -2737,10 +2773,11 @@ function OpenWorldScene({
 
       breakPieces(volumeBroken);
       const finalBroken = brokenPiecesRef.current;
+      const pushedIds = new Set<string>();
 
-      for (const [id, body] of pieceBodies.current) {
+      const pushBody = (id: string, body: RapierRigidBody) => {
         if (shatteredNow.has(id)) {
-          continue;
+          return;
         }
         const translation = body.translation();
         const dx = translation.x - center3.x;
@@ -2748,7 +2785,7 @@ function OpenWorldScene({
         const dz = translation.z - center3.z;
         const distance = Math.hypot(dx, dy, dz);
         if (distance > BLAST_PUSH_RADIUS) {
-          continue;
+          return;
         }
 
         const falloff = 1 - distance / BLAST_PUSH_RADIUS;
@@ -2764,12 +2801,12 @@ function OpenWorldScene({
             },
             true,
           );
-          continue;
+          return;
         }
 
         const isDynamic = body.bodyType() === rapier.RigidBodyType.Dynamic;
         if (!isDynamic && !finalBroken.has(id)) {
-          continue;
+          return;
         }
 
         ensureDynamic(id, body);
@@ -2793,6 +2830,24 @@ function OpenWorldScene({
           },
           true,
         );
+      };
+
+      for (const piece of PIECE_SPATIAL_INDEX.querySphere(
+        blastCenter,
+        BLAST_PUSH_RADIUS,
+      )) {
+        if (!finalBroken.has(piece.id) || shatteredNow.has(piece.id)) {
+          continue;
+        }
+        pushedIds.add(piece.id);
+        withBody(piece.id, (body) => pushBody(piece.id, body));
+      }
+
+      for (const [id, body] of pieceBodies.current) {
+        if (pushedIds.has(id)) {
+          continue;
+        }
+        pushBody(id, body);
       }
 
       settleWorld();
@@ -2806,6 +2861,7 @@ function OpenWorldScene({
       settleStructure,
       settleWorld,
       shatterTarget,
+      withBody,
     ],
   );
 
@@ -3180,7 +3236,6 @@ function OpenWorldScene({
         <BreakableObjects
           brokenPieces={brokenPieces}
           shatteredPieces={hiddenPieces}
-          resetVersion={resetVersion}
           registerBody={registerBody}
           onDebrisContact={handleDebrisContact}
         />
@@ -3369,7 +3424,7 @@ export function MakeAMessGame() {
         <KeyboardControls map={[...keyboardMap]}>
           <Canvas
             className="game-canvas"
-            shadows
+            shadows="percentage"
             dpr={[1, 1.25]}
             camera={{
               position: [
