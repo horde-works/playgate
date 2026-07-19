@@ -82,6 +82,7 @@ import {
   playGunshotSound,
   playImpactSound,
   playLaunchSound,
+  prepareGameAudio,
 } from "./impactAudio";
 import {
   measureImpactApproachSpeed,
@@ -3466,6 +3467,7 @@ export function MakeAMessGame() {
 
   const progress = Math.round((brokenCount / breakablePieces.length) * 100);
   const startPlaying = useCallback(() => {
+    prepareGameAudio();
     setActive(true);
     setFallbackLook(false);
     setControlRequest((version) => version + 1);
