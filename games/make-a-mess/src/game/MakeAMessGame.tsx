@@ -40,6 +40,7 @@ import {
   Raycaster,
   Vector2,
   Vector3,
+  type Intersection,
 } from "three";
 import type { Ray as RapierRay } from "@dimforge/rapier3d-compat";
 import {
@@ -92,6 +93,7 @@ import {
 import { HingedDoorSystem } from "./HingedDoorSystem";
 import { getPieceMaterial } from "./materialTextures";
 import { resolveRuntimeStructure } from "./runtimeStructure";
+import { createSpatialIndex } from "./spatialIndex";
 import {
   DayNightCycle,
   LampLight,
@@ -142,9 +144,68 @@ interface VoxelExplosionDefinition {
   readonly position: readonly [number, number, number];
 }
 
+interface PerformanceSnapshot {
+  readonly fps: number;
+  readonly calls: number;
+  readonly triangles: number;
+}
+
 const UNIT_BOX = new BoxGeometry(1, 1, 1);
 
 const PLAYER_SPAWN = [0, 1.25, 7.4] as const;
+const PIECE_SPATIAL_INDEX = createSpatialIndex(breakablePieces, 5);
+const MAX_PIECE_HALF_EXTENT = breakablePieces.reduce(
+  (maximum, piece) => Math.max(maximum, Math.max(...piece.size) / 2),
+  0,
+);
+const MAX_BLAST_QUERY_RADIUS =
+  BLAST_RADIUS *
+  Math.max(...Object.values(blastFactorByMaterial)) *
+  1.22;
+
+interface BreakableHitData {
+  readonly pieceId?: string;
+  readonly shardId?: string;
+  readonly remnantId?: string;
+  readonly material?: BreakableMaterial;
+}
+
+function readBreakableHit(
+  intersection: Intersection,
+): BreakableHitData | null {
+  const userData = intersection.object.userData;
+  const instanceIds = userData.breakableInstanceIds as
+    | readonly string[]
+    | undefined;
+  const pieceId =
+    typeof userData.breakablePiece === "string"
+      ? userData.breakablePiece
+      : intersection.instanceId === undefined
+        ? undefined
+        : instanceIds?.[intersection.instanceId];
+  const shardId =
+    typeof userData.breakableShard === "string"
+      ? userData.breakableShard
+      : undefined;
+  const remnantId =
+    typeof userData.breakableRemnant === "string"
+      ? userData.breakableRemnant
+      : undefined;
+
+  if (!pieceId && !shardId && !remnantId) {
+    return null;
+  }
+
+  return {
+    pieceId,
+    shardId,
+    remnantId,
+    material:
+      typeof userData.breakableMaterial === "string"
+        ? (userData.breakableMaterial as BreakableMaterial)
+        : undefined,
+  };
+}
 
 function Player({
   registerBody,
@@ -595,7 +656,13 @@ interface BreakablePieceProps {
   ) => void;
 }
 
-function BreakablePieceMesh({ piece }: { piece: BreakablePieceDefinition }) {
+function BreakablePieceMesh({
+  piece,
+  broken,
+}: {
+  piece: BreakablePieceDefinition;
+  broken: boolean;
+}) {
   const hitData = useMemo(() => ({ breakablePiece: piece.id }), [piece.id]);
   const material = useMemo(
     () => getPieceMaterial(piece.material, piece.color),
@@ -608,7 +675,7 @@ function BreakablePieceMesh({ piece }: { piece: BreakablePieceDefinition }) {
       <group>
         <mesh
           position={[0, height * 0.36, 0]}
-          castShadow
+          castShadow={!broken}
           receiveShadow
           userData={hitData}
           material={material}
@@ -617,7 +684,7 @@ function BreakablePieceMesh({ piece }: { piece: BreakablePieceDefinition }) {
         </mesh>
         <mesh
           position={[0, -height * 0.36, 0]}
-          castShadow
+          castShadow={!broken}
           receiveShadow
           userData={hitData}
           material={material}
@@ -628,7 +695,7 @@ function BreakablePieceMesh({ piece }: { piece: BreakablePieceDefinition }) {
           <mesh
             key={offset}
             position={[width * offset, 0, 0]}
-            castShadow
+            castShadow={!broken}
             receiveShadow
             userData={hitData}
             material={material}
@@ -642,7 +709,7 @@ function BreakablePieceMesh({ piece }: { piece: BreakablePieceDefinition }) {
 
   return (
     <mesh
-      castShadow={piece.shape !== "groundTile"}
+      castShadow={!broken && piece.shape !== "groundTile"}
       receiveShadow
       userData={hitData}
       material={material}
@@ -783,7 +850,7 @@ const BreakablePiece = memo(function BreakablePiece({
           : undefined
       }
     >
-      <BreakablePieceMesh piece={piece} />
+      <BreakablePieceMesh piece={piece} broken={broken} />
     </RigidBody>
   );
 });
@@ -920,7 +987,7 @@ const Shard = memo(function Shard({
       }
     >
       <mesh
-        castShadow
+        castShadow={false}
         receiveShadow
         material={material}
         userData={{
@@ -1069,7 +1136,7 @@ const Remnant = memo(function Remnant({
       ccd={freed}
     >
       <mesh
-        castShadow
+        castShadow={!freed}
         receiveShadow
         material={material}
         userData={{
@@ -1462,6 +1529,7 @@ interface OpenWorldSceneProps {
   onActiveChange: (active: boolean) => void;
   onFallbackChange: (fallback: boolean) => void;
   onBrokenCountChange: (count: number) => void;
+  onDynamicBodyCountChange: (count: number) => void;
 }
 
 function OpenWorldScene({
@@ -1474,10 +1542,11 @@ function OpenWorldScene({
   onActiveChange,
   onFallbackChange,
   onBrokenCountChange,
+  onDynamicBodyCountChange,
 }: OpenWorldSceneProps) {
-  const { camera, scene } = useThree();
+  const { camera } = useThree();
   const { rapier } = useRapier();
-  const raycaster = useMemo(() => new Raycaster(), []);
+  const raycaster = useRef(new Raycaster());
   const center = useMemo(() => new Vector2(0, 0), []);
   const [brokenPieces, setBrokenPieces] = useState<ReadonlySet<string>>(
     () => settleAfterBreak(new Set()),
@@ -1503,7 +1572,9 @@ function OpenWorldScene({
   const [tracers, setTracers] = useState<readonly TracerDefinition[]>([]);
   const brokenPiecesRef = useRef<ReadonlySet<string>>(brokenPieces);
   const nightRef = useRef(0);
+  const breakableRaycastRoot = useRef<Group>(null);
   const pieceBodies = useRef(new Map<string, RapierRigidBody>());
+  const dynamicBodies = useRef(new Map<string, RapierRigidBody>());
   const preStepMotions = useRef(new Map<string, ImpactMotion>());
   const debrisSoundByBody = useRef(new Map<string, number>());
   const restCounters = useRef(new Map<string, number>());
@@ -1529,26 +1600,43 @@ function OpenWorldScene({
   const grenadeId = useRef(0);
   const lastGrenadeTime = useRef(0);
   const previousReset = useRef(resetVersion);
+  const shadowInvalidation = useRef(1);
+  const appliedShadowInvalidation = useRef(0);
+
+  const intersectBreakables = useCallback(
+    (maximumDistance: number) => {
+      const root = breakableRaycastRoot.current;
+      if (!root) {
+        return [];
+      }
+      raycaster.current.far = maximumDistance;
+      return raycaster.current.intersectObject(root, true);
+    },
+    [],
+  );
 
   const registerBody = useCallback(
     (id: string, body: RapierRigidBody | null) => {
       if (body) {
         pieceBodies.current.set(id, body);
+        if (body.bodyType() === rapier.RigidBodyType.Dynamic) {
+          dynamicBodies.current.set(id, body);
+        } else {
+          dynamicBodies.current.delete(id);
+        }
       } else {
         pieceBodies.current.delete(id);
+        dynamicBodies.current.delete(id);
         preStepMotions.current.delete(id);
         debrisSoundByBody.current.delete(id);
       }
     },
-    [],
+    [rapier],
   );
 
   useBeforePhysicsStep(() => {
-    for (const [id, body] of pieceBodies.current) {
-      if (
-        body.bodyType() !== rapier.RigidBodyType.Dynamic ||
-        body.isSleeping()
-      ) {
+    for (const [id, body] of dynamicBodies.current) {
+      if (body.isSleeping()) {
         preStepMotions.current.delete(id);
         continue;
       }
@@ -1563,10 +1651,11 @@ function OpenWorldScene({
   });
 
   const ensureDynamic = useCallback(
-    (body: RapierRigidBody) => {
+    (id: string, body: RapierRigidBody) => {
       if (body.bodyType() !== rapier.RigidBodyType.Dynamic) {
         body.setBodyType(rapier.RigidBodyType.Dynamic, true);
       }
+      dynamicBodies.current.set(id, body);
     },
     [rapier],
   );
@@ -1582,7 +1671,25 @@ function OpenWorldScene({
 
   useEffect(() => {
     onBrokenCountChange(brokenPiecesRef.current.size);
-  }, [onBrokenCountChange]);
+    onDynamicBodyCountChange(dynamicBodies.current.size);
+  }, [onBrokenCountChange, onDynamicBodyCountChange]);
+
+  useEffect(() => {
+    shadowInvalidation.current += 1;
+  }, [
+    brokenPieces,
+    carvedPieces,
+    resetVersion,
+    shatteredPieces,
+  ]);
+
+  useFrame((frameState) => {
+    if (appliedShadowInvalidation.current === shadowInvalidation.current) {
+      return;
+    }
+    appliedShadowInvalidation.current = shadowInvalidation.current;
+    frameState.gl.shadowMap.needsUpdate = true;
+  });
 
   useEffect(() => {
     if (previousReset.current === resetVersion) {
@@ -1627,11 +1734,11 @@ function OpenWorldScene({
       return;
     }
     settleAccumulator.current = 0;
+    onDynamicBodyCountChange(dynamicBodies.current.size);
 
-    for (const [id, body] of pieceBodies.current) {
+    for (const [id, body] of dynamicBodies.current) {
       if (
         id === "player" ||
-        body.bodyType() !== rapier.RigidBodyType.Dynamic ||
         body.isSleeping()
       ) {
         continue;
@@ -1762,7 +1869,7 @@ function OpenWorldScene({
       }
 
       const profile = materialRuntimeProfiles[material];
-      ensureDynamic(body);
+      ensureDynamic(pieceId, body);
       body.enableCcd(true);
       body.wakeUp();
 
@@ -2280,7 +2387,7 @@ function OpenWorldScene({
 
       const body = pieceBodies.current.get(remnant.id);
       if (body) {
-        ensureDynamic(body);
+        ensureDynamic(remnant.id, body);
         body.wakeUp();
       }
 
@@ -2305,13 +2412,11 @@ function OpenWorldScene({
     direction.y += (Math.random() - 0.5) * 0.024;
     direction.z += (Math.random() - 0.5) * 0.024;
     direction.normalize();
-    raycaster.set(camera.position, direction);
-    const intersections = raycaster.intersectObjects(scene.children, true);
+    raycaster.current.set(camera.position, direction);
+    const intersections = intersectBreakables(MG_RANGE);
     const hit = intersections.find(
       (intersection) =>
-        (typeof intersection.object.userData.breakablePiece === "string" ||
-          typeof intersection.object.userData.breakableShard === "string" ||
-          typeof intersection.object.userData.breakableRemnant === "string") &&
+        readBreakableHit(intersection) !== null &&
         intersection.distance <= MG_RANGE,
     );
 
@@ -2336,14 +2441,15 @@ function OpenWorldScene({
       return;
     }
 
-    const userData = hit.object.userData;
-    const pieceId = userData.breakablePiece as string | undefined;
-    const shardId = userData.breakableShard as string | undefined;
-    const remnantId = userData.breakableRemnant as string | undefined;
+    const hitData = readBreakableHit(hit);
+    if (!hitData) {
+      return;
+    }
+    const { pieceId, shardId, remnantId } = hitData;
     const piece = pieceId ? breakablePieceById.get(pieceId) : undefined;
     const material =
       piece?.material ??
-      (userData.breakableMaterial as BreakableMaterial | undefined);
+      hitData.material;
     const targetId = pieceId ?? shardId ?? remnantId;
 
     if (!targetId || !material) {
@@ -2461,8 +2567,7 @@ function OpenWorldScene({
     camera,
     carveAt,
     carveLooseTarget,
-    raycaster,
-    scene.children,
+    intersectBreakables,
     settleWorld,
     shatterTarget,
     subtractParentVolume,
@@ -2516,7 +2621,11 @@ function OpenWorldScene({
 
       const previousBroken = brokenPiecesRef.current;
       const next = new Set(previousBroken);
-      for (const piece of breakablePieces) {
+      const blastCenter = [center3.x, center3.y, center3.z] as const;
+      for (const piece of PIECE_SPATIAL_INDEX.querySphere(
+        blastCenter,
+        MAX_BLAST_QUERY_RADIUS,
+      )) {
         if (next.has(piece.id) || groundMaterials.has(piece.material)) {
           continue;
         }
@@ -2567,7 +2676,11 @@ function OpenWorldScene({
       // loose remnants that hang near the blast.
       const volumeBroken: string[] = [];
       let craterBudget = 8;
-      for (const piece of breakablePieces) {
+      const craterCandidates = PIECE_SPATIAL_INDEX.querySphere(
+        blastCenter,
+        BLAST_RADIUS * 1.6 + MAX_PIECE_HALF_EXTENT,
+      );
+      for (const piece of craterCandidates) {
         if (craterBudget <= 0) {
           break;
         }
@@ -2659,7 +2772,7 @@ function OpenWorldScene({
           continue;
         }
 
-        ensureDynamic(body);
+        ensureDynamic(id, body);
         body.enableCcd(true);
         body.wakeUp();
 
@@ -2881,13 +2994,10 @@ function OpenWorldScene({
       return;
     }
 
-    raycaster.setFromCamera(center, camera);
-    const intersections = raycaster.intersectObjects(scene.children, true);
+    raycaster.current.setFromCamera(center, camera);
+    const intersections = intersectBreakables(3);
     const hit = intersections.find(
-      (intersection) =>
-        typeof intersection.object.userData.breakablePiece === "string" ||
-        typeof intersection.object.userData.breakableShard === "string" ||
-        typeof intersection.object.userData.breakableRemnant === "string",
+      (intersection) => readBreakableHit(intersection) !== null,
     );
     const inReach = hit && hit.distance <= 3;
     const reach = inReach
@@ -2903,19 +3013,21 @@ function OpenWorldScene({
       return;
     }
 
-    const primaryPieceId = hit.object.userData.breakablePiece as
-      | string
-      | undefined;
-    const shardId = hit.object.userData.breakableShard as string | undefined;
-    const remnantId = hit.object.userData.breakableRemnant as
-      | string
-      | undefined;
+    const hitData = readBreakableHit(hit);
+    if (!hitData) {
+      return;
+    }
+    const {
+      pieceId: primaryPieceId,
+      shardId,
+      remnantId,
+    } = hitData;
     const piece = primaryPieceId
       ? breakablePieceById.get(primaryPieceId)
       : undefined;
     const material =
       piece?.material ??
-      (hit.object.userData.breakableMaterial as BreakableMaterial | undefined);
+      hitData.material;
     const targetId = primaryPieceId ?? shardId ?? remnantId;
 
     if (!targetId || !material) {
@@ -3023,8 +3135,7 @@ function OpenWorldScene({
     fallbackLook,
     fireGrenade,
     fireRound,
-    raycaster,
-    scene.children,
+    intersectBreakables,
     settleWorld,
     shatterTarget,
     weapon,
@@ -3065,29 +3176,31 @@ function OpenWorldScene({
       ))}
       <SceneEnvironment />
       <OpenWorldShell />
-      <BreakableObjects
-        brokenPieces={brokenPieces}
-        shatteredPieces={hiddenPieces}
-        resetVersion={resetVersion}
-        registerBody={registerBody}
-        onDebrisContact={handleDebrisContact}
-      />
-      {remnants.map((remnant) => (
-        <Remnant
-          key={remnant.id}
-          remnant={remnant}
-          freed={remnant.detached || brokenPieces.has(remnant.parentId)}
+      <group ref={breakableRaycastRoot}>
+        <BreakableObjects
+          brokenPieces={brokenPieces}
+          shatteredPieces={hiddenPieces}
+          resetVersion={resetVersion}
           registerBody={registerBody}
+          onDebrisContact={handleDebrisContact}
         />
-      ))}
-      {shards.map((shard) => (
-        <Shard
-          key={shard.id}
-          shard={shard}
-          registerBody={registerBody}
-          onContact={handleShardContact}
-        />
-      ))}
+        {remnants.map((remnant) => (
+          <Remnant
+            key={remnant.id}
+            remnant={remnant}
+            freed={remnant.detached || brokenPieces.has(remnant.parentId)}
+            registerBody={registerBody}
+          />
+        ))}
+        {shards.map((shard) => (
+          <Shard
+            key={shard.id}
+            shard={shard}
+            registerBody={registerBody}
+            onContact={handleShardContact}
+          />
+        ))}
+      </group>
       {tracers.map((tracer) => (
         <Tracer
           key={`tracer:${tracer.id}`}
@@ -3141,6 +3254,42 @@ function OpenWorldScene({
   );
 }
 
+function PerformanceProbe({
+  enabled,
+  onSample,
+}: {
+  enabled: boolean;
+  onSample: (snapshot: PerformanceSnapshot) => void;
+}) {
+  const gl = useThree((state) => state.gl);
+  const elapsed = useRef(0);
+  const frames = useRef(0);
+
+  useFrame((_, delta) => {
+    if (!enabled) {
+      elapsed.current = 0;
+      frames.current = 0;
+      return;
+    }
+
+    elapsed.current += delta;
+    frames.current += 1;
+    if (elapsed.current < 0.5) {
+      return;
+    }
+
+    onSample({
+      fps: Math.round(frames.current / elapsed.current),
+      calls: gl.info.render.calls,
+      triangles: gl.info.render.triangles,
+    });
+    elapsed.current = 0;
+    frames.current = 0;
+  });
+
+  return null;
+}
+
 export function MakeAMessGame() {
   const [active, setActive] = useState(false);
   const [fallbackLook, setFallbackLook] = useState(false);
@@ -3150,6 +3299,13 @@ export function MakeAMessGame() {
   const [weapon, setWeapon] = useState<WeaponName>("hammer");
   const [timeOfDay, setTimeOfDay] = useState<TimeOfDay>("day");
   const [ready, setReady] = useState(false);
+  const [showPerformance, setShowPerformance] = useState(false);
+  const [dynamicBodyCount, setDynamicBodyCount] = useState(0);
+  const [performance, setPerformance] = useState<PerformanceSnapshot>({
+    fps: 0,
+    calls: 0,
+    triangles: 0,
+  });
 
   const reset = useCallback(() => {
     setBrokenCount(0);
@@ -3178,6 +3334,8 @@ export function MakeAMessGame() {
         setTimeOfDay((current) =>
           current === "day" ? "sunset" : current === "sunset" ? "night" : "day",
         );
+      } else if (event.code === "KeyP") {
+        setShowPerformance((current) => !current);
       }
     };
 
@@ -3256,8 +3414,13 @@ export function MakeAMessGame() {
                   onActiveChange={setActive}
                   onFallbackChange={setFallbackLook}
                   onBrokenCountChange={setBrokenCount}
+                  onDynamicBodyCountChange={setDynamicBodyCount}
                 />
               </Physics>
+              <PerformanceProbe
+                enabled={showPerformance}
+                onSample={setPerformance}
+              />
             </Suspense>
           </Canvas>
         </KeyboardControls>
@@ -3276,6 +3439,15 @@ export function MakeAMessGame() {
           <span aria-hidden="true">↗</span>
         </Link>
       </header>
+
+      {showPerformance ? (
+        <aside className="game-performance" aria-label="Производительность">
+          <span>{performance.fps} FPS</span>
+          <span>{performance.calls} calls</span>
+          <span>{performance.triangles.toLocaleString()} tris</span>
+          <span>{dynamicBodyCount} bodies</span>
+        </aside>
+      ) : null}
 
       <aside className="game-objective" aria-live="polite">
         <p>Open house test 001</p>

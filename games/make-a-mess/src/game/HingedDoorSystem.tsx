@@ -27,13 +27,16 @@ export function HingedDoorSystem({
   const doorQuaternion = useRef(new Quaternion());
   const doorRelative = useRef(new Vector3());
   const doorUpAxis = useRef(new Vector3(0, 1, 0));
+  const shadowAccumulator = useRef(1);
 
   useEffect(() => {
     states.current.clear();
   }, [resetVersion]);
 
-  useFrame((_, delta) => {
+  useFrame((frameState, delta) => {
     camera.getWorldDirection(cameraDirection.current);
+    shadowAccumulator.current += delta;
+    let doorMoved = false;
 
     for (const door of hingedDoors) {
       if (brokenPieces.current.has(door.id)) {
@@ -83,8 +86,10 @@ export function HingedDoorSystem({
       }
 
       const targetAngle = open ? 1.8 : 0;
+      const previousAngle = state.angle;
       state.angle +=
         (targetAngle - state.angle) * Math.min(1, delta * (open ? 5 : 3));
+      doorMoved ||= Math.abs(state.angle - previousAngle) > 0.0005;
 
       if (!open && state.angle < 0.02) {
         state.angle = 0;
@@ -130,6 +135,11 @@ export function HingedDoorSystem({
         z: doorQuaternion.current.z,
         w: doorQuaternion.current.w,
       });
+    }
+
+    if (doorMoved && shadowAccumulator.current > 0.18) {
+      shadowAccumulator.current = 0;
+      frameState.gl.shadowMap.needsUpdate = true;
     }
   });
 

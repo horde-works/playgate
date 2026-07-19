@@ -1547,6 +1547,26 @@ button:focus-visible {
   gap: 14px;
 }
 
+.game-performance {
+  position: absolute;
+  top: 82px;
+  right: clamp(18px, 3vw, 48px);
+  z-index: 16;
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  gap: 5px 14px;
+  padding: 10px 12px;
+  border: 1px solid rgb(182 255 60 / 0.42);
+  background: rgb(8 10 9 / 0.78);
+  color: var(--acid);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  pointer-events: none;
+  text-transform: uppercase;
+}
+
 .game-objective {
   position: absolute;
   top: 94px;

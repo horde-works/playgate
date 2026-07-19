@@ -64,20 +64,23 @@ export function DayNightCycle({
   const scratchColor = useMemo(() => new Color(), []);
 
   const shadowThrottle = useRef(1);
+  const sunWasMoving = useRef(false);
 
   useFrame((frameState, delta) => {
-    // The shadow map is frozen (autoUpdate=false, set at canvas creation):
-    // with a mostly-static sun re-rendering ~5600 casters every frame is
-    // pure waste. Refresh it a few times a second instead.
-    shadowThrottle.current += delta;
-    if (shadowThrottle.current > 0.18) {
-      shadowThrottle.current = 0;
-      frameState.gl.shadowMap.needsUpdate = true;
-    }
-
     const target = timeOfDayTargets[mode];
     const diff = ((target - time.current + 1.5) % 1) - 0.5;
     const step = Math.sign(diff) * Math.min(Math.abs(diff), delta * 0.22);
+    const sunIsMoving = Math.abs(step) > 0.00001;
+    shadowThrottle.current += delta;
+    if (
+      (sunIsMoving && shadowThrottle.current > 0.24) ||
+      (!sunIsMoving && sunWasMoving.current)
+    ) {
+      shadowThrottle.current = 0;
+      frameState.gl.shadowMap.needsUpdate = true;
+    }
+    sunWasMoving.current = sunIsMoving;
+
     time.current = (time.current + step + 1) % 1;
     const angle = time.current * Math.PI * 2;
     const elevation = Math.sin(angle);
@@ -145,8 +148,8 @@ export function DayNightCycle({
         position={[10, 16, 9]}
         intensity={3.1}
         color="#fff3d7"
-        shadow-mapSize-width={4096}
-        shadow-mapSize-height={4096}
+        shadow-mapSize-width={2048}
+        shadow-mapSize-height={2048}
         shadow-camera-near={1}
         shadow-camera-far={170}
         shadow-camera-left={-70}
