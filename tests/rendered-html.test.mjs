@@ -36,24 +36,32 @@ test("server-renders the handmade games hero", async () => {
 });
 
 test("server-renders the catalog and game space", async () => {
-  const [catalogResponse, gameResponse] = await Promise.all([
+  const [catalogResponse, gameResponse, fortressResponse] = await Promise.all([
     render("/games"),
     render("/games/make-a-mess"),
+    render("/games/make-a-mess/minas-tirith"),
   ]);
 
   assert.equal(catalogResponse.status, 200);
   assert.equal(gameResponse.status, 200);
+  assert.equal(fortressResponse.status, 200);
 
-  const [catalogHtml, gameHtml] = await Promise.all([
+  const [catalogHtml, gameHtml, fortressHtml] = await Promise.all([
     catalogResponse.text(),
     gameResponse.text(),
+    fortressResponse.text(),
   ]);
 
   assert.match(catalogHtml, /Каталог/);
+  assert.match(catalogHtml, /Make a Mess: Minas Tirith/);
+  assert.match(catalogHtml, /href="\/games\/make-a-mess\/minas-tirith"/);
   assert.match(catalogHtml, /Следующий слот/);
   assert.match(gameHtml, /Make a Mess \/ 004/);
   assert.match(gameHtml, /Дом — объект/);
   assert.match(gameHtml, /Всё можно сломать/);
   assert.match(gameHtml, /панельных\s+четырёхэтажек/);
   assert.match(gameHtml, /Взять молоток/);
+  assert.match(fortressHtml, /Make a Mess \/ Minas Tirith/);
+  assert.match(fortressHtml, /Крепость — объект/);
+  assert.match(fortressHtml, /Выйти к воротам/);
 });

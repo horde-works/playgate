@@ -19,7 +19,6 @@ import {
   Vector3,
 } from "three";
 import {
-  litWindowColor,
   type BreakableMaterial,
   type BreakablePieceDefinition,
 } from "./destructionScene";
@@ -27,7 +26,10 @@ import type {
   RemnantDefinition,
   ShardDefinition,
 } from "./destructionRuntime";
-import { getPieceMaterial } from "./materialTextures";
+import {
+  getPieceMaterial,
+  pieceMaterialBaseColor,
+} from "./materialTextures";
 
 const UNIT_BOX = new BoxGeometry(1, 1, 1);
 
@@ -42,7 +44,7 @@ interface DynamicBreakableFragment {
   readonly sourceId: string;
   readonly kind: DynamicBreakableKind;
   readonly material: BreakableMaterial;
-  readonly litGlass: boolean;
+  readonly materialColor: string;
   readonly color: string;
   readonly center: readonly [number, number, number];
   readonly size: readonly [number, number, number];
@@ -53,7 +55,7 @@ interface DynamicBreakableFragment {
 interface DynamicBreakableBatch {
   readonly id: string;
   readonly material: BreakableMaterial;
-  readonly litGlass: boolean;
+  readonly materialColor: string;
   readonly fragments: readonly DynamicBreakableFragment[];
 }
 
@@ -114,8 +116,7 @@ function sourceFragments(
         sourceId: piece.id,
         kind: "piece",
         material: piece.material,
-        litGlass:
-          piece.material === "glass" && piece.color === litWindowColor,
+        materialColor: pieceMaterialBaseColor(piece.material, piece.color),
         color: piece.color,
         center: box.center,
         size: box.size,
@@ -135,8 +136,7 @@ function sourceFragments(
         sourceId: shard.id,
         kind: "shard",
         material: shard.material,
-        litGlass:
-          shard.material === "glass" && shard.color === litWindowColor,
+        materialColor: pieceMaterialBaseColor(shard.material, shard.color),
         color: shard.color,
         center: box.center,
         size: box.size,
@@ -156,9 +156,10 @@ function sourceFragments(
         sourceId: remnant.id,
         kind: "remnant",
         material: remnant.material,
-        litGlass:
-          remnant.material === "glass" &&
-          remnant.color === litWindowColor,
+        materialColor: pieceMaterialBaseColor(
+          remnant.material,
+          remnant.color,
+        ),
         color: remnant.color,
         center: box.center,
         size: box.size,
@@ -177,7 +178,7 @@ function buildBatches(
   const batches = new Map<string, DynamicBreakableFragment[]>();
 
   for (const fragment of fragments) {
-    const key = `${fragment.material}:${Number(fragment.litGlass)}`;
+    const key = `${fragment.material}:${fragment.materialColor}`;
     const current = batches.get(key);
     if (current) {
       current.push(fragment);
@@ -189,7 +190,7 @@ function buildBatches(
   return [...batches].map(([id, batchFragments]) => ({
     id,
     material: batchFragments[0].material,
-    litGlass: batchFragments[0].litGlass,
+    materialColor: batchFragments[0].materialColor,
     fragments: batchFragments,
   }));
 }
@@ -247,9 +248,9 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
     () =>
       getPieceMaterial(
         batch.material,
-        batch.litGlass ? litWindowColor : "#ffffff",
+        batch.materialColor,
       ),
-    [batch.litGlass, batch.material],
+    [batch.material, batch.materialColor],
   );
   const instanceIds = useMemo(
     () => batch.fragments.map((fragment) => fragment.sourceId),
@@ -281,7 +282,11 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
       current.setMatrixAt(index, dummy.matrix);
       current.setColorAt(
         index,
-        color.set(fragment.litGlass ? "#ffffff" : fragment.color),
+        color.set(
+          fragment.materialColor === "#ffffff"
+            ? fragment.color
+            : "#ffffff",
+        ),
       );
     });
     current.instanceMatrix.setUsage(DynamicDrawUsage);

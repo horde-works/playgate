@@ -15,12 +15,15 @@ import {
   StaticDrawUsage,
 } from "three";
 import {
-  litWindowColor,
   materialRuntimeProfiles,
   type BreakableMaterial,
   type BreakablePieceDefinition,
 } from "./destructionScene";
-import { getPieceMaterial } from "./materialTextures";
+import {
+  getPieceMaterial,
+  isGlassMaterial,
+  pieceMaterialBaseColor,
+} from "./materialTextures";
 
 const UNIT_BOX = new BoxGeometry(1, 1, 1);
 const WORLD_CHUNK_SIZE = 18;
@@ -28,7 +31,7 @@ const WORLD_CHUNK_SIZE = 18;
 interface IntactInstanceBatch {
   readonly id: string;
   readonly material: BreakableMaterial;
-  readonly litGlass: boolean;
+  readonly materialColor: string;
   readonly castShadow: boolean;
   readonly pieces: readonly BreakablePieceDefinition[];
 }
@@ -44,13 +47,15 @@ function buildInstanceBatches(
 ): readonly IntactInstanceBatch[] {
   const batches = new Map<string, BreakablePieceDefinition[]>();
   for (const piece of pieces) {
-    const litGlass =
-      piece.material === "glass" && piece.color === litWindowColor;
+    const materialColor = pieceMaterialBaseColor(
+      piece.material,
+      piece.color,
+    );
     const castShadow =
-      piece.material !== "glass" && piece.shape !== "groundTile";
-    const id = `${worldChunkKey(piece)}:${piece.material}:${Number(
-      litGlass,
-    )}:${Number(castShadow)}`;
+      !isGlassMaterial(piece.material) && piece.shape !== "groundTile";
+    const id = `${worldChunkKey(piece)}:${piece.material}:${materialColor}:${Number(
+      castShadow,
+    )}`;
     const batch = batches.get(id);
     if (batch) {
       batch.push(piece);
@@ -62,11 +67,12 @@ function buildInstanceBatches(
   return [...batches].map(([id, batchPieces]) => ({
     id,
     material: batchPieces[0].material,
-    litGlass:
-      batchPieces[0].material === "glass" &&
-      batchPieces[0].color === litWindowColor,
+    materialColor: pieceMaterialBaseColor(
+      batchPieces[0].material,
+      batchPieces[0].color,
+    ),
     castShadow:
-      batchPieces[0].material !== "glass" &&
+      !isGlassMaterial(batchPieces[0].material) &&
       batchPieces[0].shape !== "groundTile",
     pieces: batchPieces,
   }));
@@ -82,9 +88,9 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
     () =>
       getPieceMaterial(
         batch.material,
-        batch.litGlass ? litWindowColor : "#ffffff",
+        batch.materialColor,
       ),
-    [batch.litGlass, batch.material],
+    [batch.material, batch.materialColor],
   );
   const instanceIds = useMemo(
     () => batch.pieces.map((piece) => piece.id),
@@ -111,7 +117,7 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
       current.setMatrixAt(index, transform.matrix);
       current.setColorAt(
         index,
-        color.set(batch.litGlass ? "#ffffff" : piece.color),
+        color.set(batch.materialColor === "#ffffff" ? piece.color : "#ffffff"),
       );
     });
     current.instanceMatrix.setUsage(StaticDrawUsage);

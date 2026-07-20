@@ -24,6 +24,17 @@ export const games = [
     stageLabel: "Собираем ядро",
     theme: "safety-orange",
   },
+  {
+    slug: "make-a-mess-minas-tirith",
+    title: "Make a Mess: Minas Tirith",
+    href: "/games/make-a-mess/minas-tirith",
+    summary:
+      "Горная крепость с тёмной стеной, воротами и многоэтажной башней — всё на том же едином движке разрушения.",
+    genre: "Siege sandbox",
+    status: "playable",
+    stageLabel: "Новая карта",
+    theme: "electric-blue",
+  },
 ] as const satisfies readonly GameEntry[];
 
 export const featuredGame = games[0];

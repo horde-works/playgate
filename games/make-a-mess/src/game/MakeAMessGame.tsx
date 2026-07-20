@@ -47,16 +47,12 @@ import {
 } from "three";
 import type { Ray as RapierRay } from "@dimforge/rapier3d-compat";
 import {
-  breakablePieceById,
-  breakablePieces,
-  fractureLocallyAt,
-  lampDefinitions,
   materialRuntimeProfiles,
-  settleAfterBreak,
-  structuralScopeFor,
   structuralMaterialProfiles,
+  openHouseScene,
   type BreakableMaterial,
   type BreakablePieceDefinition,
+  type DestructionSceneDefinition,
 } from "./destructionScene";
 import {
   BLAST_PUSH_RADIUS,
@@ -204,27 +200,20 @@ const ROCKET_TRAIL_LIFE = 0.58;
 const ROCKET_TRAIL_INTERVAL = 0.035;
 const ROCKET_TRAIL_COLORS = ["#ffcf67", "#f06a32", "#4b4d49"] as const;
 
-const PLAYER_SPAWN = [0, 1.25, 7.4] as const;
-const PIECE_SPATIAL_INDEX = createSpatialIndex(breakablePieces, 5);
-const MAX_PIECE_BOUNDING_RADIUS = breakablePieces.reduce(
-  (maximum, piece) =>
-    Math.max(
-      maximum,
-      Math.hypot(piece.size[0], piece.size[1], piece.size[2]) / 2,
-    ),
-  0,
-);
-
 const blastTransmissionByMaterial: Record<BreakableMaterial, number> = {
   glass: 0.76,
+  darkGlass: 0.68,
   plaster: 0.36,
   wood: 0.24,
+  grass: 0.11,
   soil: 0.1,
   earth: 0.09,
   brick: 0.06,
   asphalt: 0.05,
   concrete: 0.025,
   stone: 0.02,
+  graphiteStone: 0.018,
+  basalt: 0.014,
   steel: 0.01,
 };
 
@@ -413,9 +402,11 @@ function readBreakableHit(
 function Player({
   registerBody,
   mobileControls,
+  spawn,
 }: {
   registerBody: (id: string, body: RapierRigidBody | null) => void;
   mobileControls: MobileControlsRef;
+  spawn: readonly [number, number, number];
 }) {
   const body = useRef<RapierRigidBody>(null);
   const [, getControls] = useKeyboardControls<ControlName>();
@@ -443,14 +434,14 @@ function Player({
     if (spawnFrames.current < 40) {
       spawnFrames.current += 1;
       body.current.setTranslation(
-        { x: PLAYER_SPAWN[0], y: PLAYER_SPAWN[1], z: PLAYER_SPAWN[2] },
+        { x: spawn[0], y: spawn[1], z: spawn[2] },
         true,
       );
       body.current.setLinvel({ x: 0, y: 0, z: 0 }, true);
       camera.position.set(
-        PLAYER_SPAWN[0],
-        PLAYER_SPAWN[1] + 0.54,
-        PLAYER_SPAWN[2],
+        spawn[0],
+        spawn[1] + 0.54,
+        spawn[2],
       );
       return;
     }
@@ -601,7 +592,7 @@ function Player({
     // volume (deepest legit crater floor keeps the capsule center ≈ -1.3).
     if (position.y < -2.6) {
       body.current.setTranslation(
-        { x: PLAYER_SPAWN[0], y: PLAYER_SPAWN[1], z: PLAYER_SPAWN[2] },
+        { x: spawn[0], y: spawn[1], z: spawn[2] },
         true,
       );
       body.current.setLinvel({ x: 0, y: 0, z: 0 }, true);
@@ -611,7 +602,7 @@ function Player({
   return (
     <RigidBody
       ref={body}
-      position={[...PLAYER_SPAWN]}
+      position={[...spawn]}
       colliders={false}
       enabledRotations={[false, false, false]}
       friction={0.15}
@@ -1007,12 +998,14 @@ const BreakablePiece = memo(function BreakablePiece({
 });
 
 function BreakableObjects({
+  pieces,
   brokenPieces,
   shatteredPieces,
   bodies,
   registerBody,
   onDebrisContact,
 }: {
+  pieces: readonly BreakablePieceDefinition[];
   brokenPieces: ReadonlySet<string>;
   shatteredPieces: ReadonlySet<string>;
   bodies: MutableRefObject<Map<string, RapierRigidBody>>;
@@ -1027,7 +1020,7 @@ function BreakableObjects({
   const { intactPieces, bodyPieces } = useMemo(() => {
     const intact: BreakablePieceDefinition[] = [];
     const bodies: BreakablePieceDefinition[] = [];
-    for (const piece of breakablePieces) {
+    for (const piece of pieces) {
       if (shatteredPieces.has(piece.id)) {
         continue;
       }
@@ -1045,7 +1038,7 @@ function BreakableObjects({
       intactPieces: intact,
       bodyPieces: bodies,
     };
-  }, [brokenPieces, shatteredPieces]);
+  }, [brokenPieces, pieces, shatteredPieces]);
 
   return (
     <group>
@@ -1946,19 +1939,44 @@ function DustBurst({
   );
 }
 
-function OpenWorldShell() {
+function OpenWorldShell({
+  scene,
+}: {
+  scene: DestructionSceneDefinition;
+}) {
+  const [centerX, centerZ] = scene.worldCenter;
+  const [halfX, halfZ] = scene.worldHalfExtents;
+  const wallY = scene.safetyFloorY + 9.8;
+
   return (
     <RigidBody type="fixed" colliders={false}>
-      <CuboidCollider args={[45.5, 0.12, 36.5]} position={[30, -2.2, -15]} friction={1} />
-      <CuboidCollider args={[0.12, 8, 36.5]} position={[-15.5, 7.6, -15]} />
-      <CuboidCollider args={[0.12, 8, 36.5]} position={[75.5, 7.6, -15]} />
-      <CuboidCollider args={[45.5, 8, 0.12]} position={[30, 7.6, -51.5]} />
-      <CuboidCollider args={[45.5, 8, 0.12]} position={[30, 7.6, 21.5]} />
+      <CuboidCollider
+        args={[halfX, 0.12, halfZ]}
+        position={[centerX, scene.safetyFloorY, centerZ]}
+        friction={1}
+      />
+      <CuboidCollider
+        args={[0.12, 12, halfZ]}
+        position={[centerX - halfX, wallY, centerZ]}
+      />
+      <CuboidCollider
+        args={[0.12, 12, halfZ]}
+        position={[centerX + halfX, wallY, centerZ]}
+      />
+      <CuboidCollider
+        args={[halfX, 12, 0.12]}
+        position={[centerX, wallY, centerZ - halfZ]}
+      />
+      <CuboidCollider
+        args={[halfX, 12, 0.12]}
+        position={[centerX, wallY, centerZ + halfZ]}
+      />
     </RigidBody>
   );
 }
 
 interface OpenWorldSceneProps {
+  scene: DestructionSceneDefinition;
   active: boolean;
   weapon: WeaponName;
   timeOfDay: TimeOfDay;
@@ -1974,6 +1992,7 @@ interface OpenWorldSceneProps {
 }
 
 function OpenWorldScene({
+  scene,
   active,
   weapon,
   timeOfDay,
@@ -1987,6 +2006,30 @@ function OpenWorldScene({
   onBrokenCountChange,
   onDynamicBodyCountChange,
 }: OpenWorldSceneProps) {
+  const {
+    breakablePieceById,
+    breakablePieces,
+    fractureLocallyAt,
+    lampDefinitions,
+    settleAfterBreak,
+    structuralScopeFor,
+  } = scene;
+  const pieceSpatialIndex = useMemo(
+    () => createSpatialIndex(breakablePieces, 5),
+    [breakablePieces],
+  );
+  const maxPieceBoundingRadius = useMemo(
+    () =>
+      breakablePieces.reduce(
+        (maximum, piece) =>
+          Math.max(
+            maximum,
+            Math.hypot(piece.size[0], piece.size[1], piece.size[2]) / 2,
+          ),
+        0,
+      ),
+    [breakablePieces],
+  );
   const { camera } = useThree();
   const { rapier, world } = useRapier();
   const raycaster = useRef(new Raycaster());
@@ -3192,9 +3235,9 @@ function OpenWorldScene({
 
       const previousBroken = new Set(brokenPiecesRef.current);
       const blastCenter = [center3.x, center3.y, center3.z] as const;
-      const blastPieceCandidates = PIECE_SPATIAL_INDEX.querySphere(
+      const blastPieceCandidates = pieceSpatialIndex.querySphere(
         blastCenter,
-        blastRadius + MAX_PIECE_BOUNDING_RADIUS,
+        blastRadius + maxPieceBoundingRadius,
       );
 
       const resolveBlastPose = (
@@ -3549,7 +3592,7 @@ function OpenWorldScene({
         );
       };
 
-      for (const piece of PIECE_SPATIAL_INDEX.querySphere(
+      for (const piece of pieceSpatialIndex.querySphere(
         blastCenter,
         blastPushRadius,
       )) {
@@ -4054,7 +4097,11 @@ function OpenWorldScene({
 
   return (
     <>
-      <DayNightCycle mode={timeOfDay} nightRef={nightRef} />
+      <DayNightCycle
+        mode={timeOfDay}
+        nightRef={nightRef}
+        theme={scene.environment}
+      />
       {lampDefinitions.map((lamp) => (
         <LampLight
           key={lamp.id}
@@ -4064,9 +4111,10 @@ function OpenWorldScene({
         />
       ))}
       <SceneEnvironment />
-      <OpenWorldShell />
+      <OpenWorldShell scene={scene} />
       <group ref={breakableRaycastRoot}>
         <BreakableObjects
+          pieces={breakablePieces}
           brokenPieces={brokenPieces}
           shatteredPieces={hiddenPieces}
           bodies={pieceBodies}
@@ -4116,7 +4164,11 @@ function OpenWorldScene({
         brokenPieces={brokenPiecesRef}
         resetVersion={resetVersion}
       />
-      <Player registerBody={registerBody} mobileControls={mobileControls} />
+      <Player
+        registerBody={registerBody}
+        mobileControls={mobileControls}
+        spawn={scene.playerSpawn}
+      />
       {weapon === "hammer" ? (
         <FirstPersonHammer swing={swing} />
       ) : weapon === "launcher" ? (
@@ -4571,7 +4623,11 @@ function MobileGameControls({
   );
 }
 
-export function MakeAMessGame() {
+export function MakeAMessGame({
+  scene = openHouseScene,
+}: {
+  scene?: DestructionSceneDefinition;
+}) {
   const mobileControls = useRef<MobileControlsState>(createMobileControlsState());
   const mobileActions = useRef<MobileActionBridge>({
     strike: () => {},
@@ -4638,7 +4694,10 @@ export function MakeAMessGame() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [cycleTimeOfDay, reset]);
 
-  const progress = Math.round((brokenCount / breakablePieces.length) * 100);
+  const progress =
+    Math.round(
+      (brokenCount / scene.breakablePieces.length) * 1000,
+    ) / 10;
   const startPlaying = useCallback(() => {
     prepareGameAudio();
     setActive(true);
@@ -4674,13 +4733,13 @@ export function MakeAMessGame() {
             dpr={[1, 1.25]}
             camera={{
               position: [
-                PLAYER_SPAWN[0],
-                PLAYER_SPAWN[1] + 0.54,
-                PLAYER_SPAWN[2],
+                scene.playerSpawn[0],
+                scene.playerSpawn[1] + 0.54,
+                scene.playerSpawn[2],
               ],
               fov: 72,
               near: 0.05,
-              far: 140,
+              far: scene.cameraFar,
             }}
             gl={{
               antialias: true,
@@ -4706,6 +4765,7 @@ export function MakeAMessGame() {
               >
                 <OpenWorldScene
                   key={resetVersion}
+                  scene={scene}
                   active={active}
                   weapon={weapon}
                   timeOfDay={timeOfDay}
@@ -4735,7 +4795,7 @@ export function MakeAMessGame() {
         </Link>
         <div className="prototype-status">
           <span />
-          Make a Mess / 004
+          {scene.copy.status}
         </div>
         <Link href="/games" className="play-exit">
           Все игры
@@ -4753,8 +4813,8 @@ export function MakeAMessGame() {
       ) : null}
 
       <aside className="game-objective" aria-live="polite">
-        <p>Open house test 001</p>
-        <h1>Дом — объект.</h1>
+        <p>{scene.copy.eyebrow}</p>
+        <h1>{scene.copy.heading}</h1>
         <div className="damage-meter">
           <span style={{ width: `${progress}%` }} />
         </div>
@@ -4828,16 +4888,12 @@ export function MakeAMessGame() {
       {!active && (
         <section className="game-gate" aria-label="Запуск трёхмерной сцены">
           <div className="gate-card">
-            <p>{ready ? "Open house ready" : "Собираем дом…"}</p>
+            <p>{ready ? scene.copy.ready : scene.copy.loading}</p>
             <h2>
               {brokenCount > 0 ? "Продолжим беспорядок?" : "Всё можно сломать."}
             </h2>
             <p>
-              Целый квартал: шесть панельных четырёхэтажек, три дома, улицы
-              с перекрёстками, гаражи с распахивающимися воротами, детские
-              площадки и дворы. На компьютере — WASD и мышь. На телефоне или
-              планшете — левый стик, правая зона обзора и крупные кнопки
-              оружия.
+              {scene.copy.description}
             </p>
             <button
               id="enter-game"
@@ -4846,12 +4902,12 @@ export function MakeAMessGame() {
               disabled={!ready}
               onClick={startPlaying}
             >
-              {brokenCount > 0 ? "Вернуться в гараж" : "Взять молоток"}
+              {brokenCount > 0 ? scene.copy.returnToGame : scene.copy.enter}
               <span aria-hidden="true">↗</span>
             </button>
             {brokenCount > 0 && (
               <button className="reset-game" type="button" onClick={reset}>
-                Собрать дом заново
+                {scene.copy.reset}
               </button>
             )}
           </div>

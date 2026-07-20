@@ -11,6 +11,10 @@ export type BreakableMaterial =
   | "glass"
   | "steel"
   | "stone"
+  | "basalt"
+  | "graphiteStone"
+  | "darkGlass"
+  | "grass"
   | "soil"
   | "earth"
   | "asphalt";
@@ -156,6 +160,54 @@ export const materialRuntimeProfiles: Record<
     debrisColor: "#716d64",
     debrisCount: 5,
     restitution: 0.018,
+  },
+  basalt: {
+    density: 2.9,
+    impulse: 2.05,
+    lift: 0.3,
+    torque: 0.14,
+    fractureRadius: [0.76, 0.58],
+    neighborChance: 0.2,
+    dustColor: "#777879",
+    debrisColor: "#303235",
+    debrisCount: 5,
+    restitution: 0.014,
+  },
+  graphiteStone: {
+    density: 2.7,
+    impulse: 2.1,
+    lift: 0.32,
+    torque: 0.15,
+    fractureRadius: [0.8, 0.6],
+    neighborChance: 0.22,
+    dustColor: "#858687",
+    debrisColor: "#3d3f42",
+    debrisCount: 5,
+    restitution: 0.016,
+  },
+  darkGlass: {
+    density: 1.18,
+    impulse: 1.8,
+    lift: 0.28,
+    torque: 0.36,
+    fractureRadius: [1.6, 1.55],
+    neighborChance: 0.94,
+    dustColor: "#8fa8ae",
+    debrisColor: "#425b62",
+    debrisCount: 7,
+    restitution: 0.055,
+  },
+  grass: {
+    density: 1.25,
+    impulse: 1.7,
+    lift: 0.2,
+    torque: 0.1,
+    fractureRadius: [0.66, 0.66],
+    neighborChance: 0.06,
+    dustColor: "#6f7950",
+    debrisColor: "#455038",
+    debrisCount: 3,
+    restitution: 0.008,
   },
   soil: {
     density: 1.35,
@@ -1266,6 +1318,9 @@ export const litWindowColor = "#f2dfa7";
 export interface LampDefinition {
   readonly id: string;
   readonly position: SceneVector3;
+  readonly color?: string;
+  readonly distance?: number;
+  readonly intensity?: number;
 }
 
 const lampCollector: LampDefinition[] = [];
@@ -2339,6 +2394,35 @@ export const structuralMaterialProfiles: Record<
     maximumVerticalGap: 0.2,
     carriesAttachments: true,
   },
+  basalt: {
+    density: materialRuntimeProfiles.basalt.density,
+    compressionStrength: 360,
+    cantilever: 0.4,
+    maximumVerticalGap: 0.2,
+    carriesAttachments: true,
+  },
+  graphiteStone: {
+    density: materialRuntimeProfiles.graphiteStone.density,
+    compressionStrength: 300,
+    cantilever: 0.42,
+    maximumVerticalGap: 0.2,
+    carriesAttachments: true,
+  },
+  darkGlass: {
+    density: materialRuntimeProfiles.darkGlass.density,
+    compressionStrength: 360,
+    cantilever: 0.16,
+    maximumVerticalGap: 0.2,
+    carriesAttachments: false,
+    sideAttachmentReach: 0.22,
+  },
+  grass: {
+    density: materialRuntimeProfiles.grass.density,
+    compressionStrength: Number.POSITIVE_INFINITY,
+    cantilever: 0.18,
+    maximumVerticalGap: 0.2,
+    carriesAttachments: true,
+  },
   soil: {
     density: materialRuntimeProfiles.soil.density,
     compressionStrength: Number.POSITIVE_INFINITY,
@@ -2364,23 +2448,6 @@ export const structuralMaterialProfiles: Record<
   },
 };
 
-const structuralSolver = createStructuralSolver(
-  breakablePieces,
-  structuralMaterialProfiles,
-);
-
-export function resolveStructuralCollapse(
-  broken: ReadonlySet<string>,
-): ReadonlySet<string> {
-  return structuralSolver.resolve(broken);
-}
-
-export function structuralScopeFor(
-  pieceIds: Iterable<string>,
-): ReadonlySet<string> {
-  return structuralSolver.connectedPieceIds(pieceIds);
-}
-
 function deterministicNoise(value: string): number {
   let hash = 2166136261;
 
@@ -2392,72 +2459,228 @@ function deterministicNoise(value: string): number {
   return ((hash >>> 0) % 10000) / 10000;
 }
 
+export interface DestructionSceneCopy {
+  readonly status: string;
+  readonly eyebrow: string;
+  readonly heading: string;
+  readonly ready: string;
+  readonly loading: string;
+  readonly description: string;
+  readonly enter: string;
+  readonly returnToGame: string;
+  readonly reset: string;
+}
+
+export interface DestructionSceneDefinition {
+  readonly id: string;
+  readonly title: string;
+  readonly environment: "town" | "fortress";
+  readonly playerSpawn: SceneVector3;
+  readonly cameraFar: number;
+  readonly worldCenter: readonly [x: number, z: number];
+  readonly worldHalfExtents: readonly [x: number, z: number];
+  readonly safetyFloorY: number;
+  readonly copy: DestructionSceneCopy;
+  readonly breakableClusters: readonly BreakableClusterDefinition[];
+  readonly breakablePieces: readonly BreakablePieceDefinition[];
+  readonly breakablePieceById: ReadonlyMap<string, BreakablePieceDefinition>;
+  readonly breakableClusterById: ReadonlyMap<
+    string,
+    BreakableClusterDefinition
+  >;
+  readonly lampDefinitions: readonly LampDefinition[];
+  readonly resolveStructuralCollapse: (
+    broken: ReadonlySet<string>,
+  ) => ReadonlySet<string>;
+  readonly structuralScopeFor: (
+    pieceIds: Iterable<string>,
+  ) => ReadonlySet<string>;
+  readonly fractureLocallyAt: (
+    target: BreakablePieceDefinition,
+    current: ReadonlySet<string>,
+    impactIndex: number,
+  ) => ReadonlySet<string>;
+  readonly settleAfterBreak: (
+    broken: ReadonlySet<string>,
+  ) => ReadonlySet<string>;
+}
+
+interface DestructionSceneOptions {
+  readonly id: string;
+  readonly title: string;
+  readonly environment?: DestructionSceneDefinition["environment"];
+  readonly playerSpawn: SceneVector3;
+  readonly cameraFar?: number;
+  readonly worldCenter: readonly [x: number, z: number];
+  readonly worldHalfExtents: readonly [x: number, z: number];
+  readonly safetyFloorY?: number;
+  readonly copy: DestructionSceneCopy;
+  readonly clusters: readonly BreakableClusterDefinition[];
+  readonly lamps?: readonly LampDefinition[];
+}
+
+export function createDestructionScene(
+  options: DestructionSceneOptions,
+): DestructionSceneDefinition {
+  const pieces = options.clusters.flatMap(
+    (currentCluster) => currentCluster.pieces,
+  );
+  const pieceById = new Map(pieces.map((piece) => [piece.id, piece]));
+  const clusterById = new Map(
+    options.clusters.map((currentCluster) => [
+      currentCluster.id,
+      currentCluster,
+    ]),
+  );
+  const structuralSolver = createStructuralSolver(
+    pieces,
+    structuralMaterialProfiles,
+  );
+
+  const resolveStructuralCollapse = (
+    broken: ReadonlySet<string>,
+  ): ReadonlySet<string> => structuralSolver.resolve(broken);
+  const structuralScopeFor = (
+    pieceIds: Iterable<string>,
+  ): ReadonlySet<string> => structuralSolver.connectedPieceIds(pieceIds);
+  const fractureLocallyAt = (
+    target: BreakablePieceDefinition,
+    current: ReadonlySet<string>,
+    impactIndex: number,
+  ): ReadonlySet<string> => {
+    if (current.has(target.id)) {
+      return current;
+    }
+
+    const currentCluster = clusterById.get(target.clusterId);
+    if (!currentCluster) {
+      return current;
+    }
+
+    const profile = materialRuntimeProfiles[target.material];
+    const next = new Set(current);
+    next.add(target.id);
+
+    for (const candidate of currentCluster.pieces) {
+      if (next.has(candidate.id)) {
+        continue;
+      }
+
+      const dx =
+        (candidate.position[0] - target.position[0]) /
+        profile.fractureRadius[0];
+      const dy =
+        (candidate.position[1] - target.position[1]) /
+        profile.fractureRadius[1];
+      const dz =
+        (candidate.position[2] - target.position[2]) /
+        profile.fractureRadius[0];
+      const distance = Math.hypot(dx, dy, dz);
+      const noise = deterministicNoise(
+        `${target.id}:${candidate.id}:${impactIndex}`,
+      );
+      const irregularEdge = 0.68 + noise * 0.46;
+
+      if (
+        distance < irregularEdge &&
+        noise < profile.neighborChance + Math.max(0, 1 - distance) * 0.3
+      ) {
+        next.add(candidate.id);
+      }
+    }
+
+    if (currentCluster.supportMode === "linked") {
+      const linkedCandidates = currentCluster.pieces
+        .filter((piece) => !next.has(piece.id))
+        .sort(
+          (left, right) =>
+            Math.hypot(
+              left.position[0] - target.position[0],
+              left.position[1] - target.position[1],
+              left.position[2] - target.position[2],
+            ) -
+            Math.hypot(
+              right.position[0] - target.position[0],
+              right.position[1] - target.position[1],
+              right.position[2] - target.position[2],
+            ),
+        );
+
+      if (linkedCandidates[0] && impactIndex % 3 === 0) {
+        next.add(linkedCandidates[0].id);
+      }
+    }
+
+    return next;
+  };
+  const settleAfterBreak = (
+    broken: ReadonlySet<string>,
+  ): ReadonlySet<string> => resolveStructuralCollapse(broken);
+
+  return {
+    id: options.id,
+    title: options.title,
+    environment: options.environment ?? "town",
+    playerSpawn: options.playerSpawn,
+    cameraFar: options.cameraFar ?? 140,
+    worldCenter: options.worldCenter,
+    worldHalfExtents: options.worldHalfExtents,
+    safetyFloorY: options.safetyFloorY ?? -2.2,
+    copy: options.copy,
+    breakableClusters: options.clusters,
+    breakablePieces: pieces,
+    breakablePieceById: pieceById,
+    breakableClusterById: clusterById,
+    lampDefinitions: options.lamps ?? [],
+    resolveStructuralCollapse,
+    structuralScopeFor,
+    fractureLocallyAt,
+    settleAfterBreak,
+  };
+}
+
+export const openHouseScene = createDestructionScene({
+  id: "open-house",
+  title: "Make a Mess",
+  environment: "town",
+  playerSpawn: [0, 1.25, 7.4],
+  worldCenter: [30, -15],
+  worldHalfExtents: [45.5, 36.5],
+  safetyFloorY: -2.2,
+  copy: {
+    status: "Make a Mess / 004",
+    eyebrow: "Open house test 001",
+    heading: "Дом — объект.",
+    ready: "Open house ready",
+    loading: "Собираем дом…",
+    description:
+      "Целый квартал: шесть панельных четырёхэтажек, три дома, улицы с перекрёстками, гаражи с распахивающимися воротами, детские площадки и дворы. На компьютере — WASD и мышь. На телефоне или планшете — левый стик, правая зона обзора и крупные кнопки оружия.",
+    enter: "Взять молоток",
+    returnToGame: "Вернуться в гараж",
+    reset: "Собрать дом заново",
+  },
+  clusters: breakableClusters,
+  lamps: lampDefinitions,
+});
+
+export function resolveStructuralCollapse(
+  broken: ReadonlySet<string>,
+): ReadonlySet<string> {
+  return openHouseScene.resolveStructuralCollapse(broken);
+}
+
+export function structuralScopeFor(
+  pieceIds: Iterable<string>,
+): ReadonlySet<string> {
+  return openHouseScene.structuralScopeFor(pieceIds);
+}
+
 export function fractureLocallyAt(
   target: BreakablePieceDefinition,
   current: ReadonlySet<string>,
   impactIndex: number,
 ): ReadonlySet<string> {
-  if (current.has(target.id)) {
-    return current;
-  }
-
-  const currentCluster = breakableClusterById.get(target.clusterId);
-  if (!currentCluster) {
-    return current;
-  }
-
-  const profile = materialRuntimeProfiles[target.material];
-  const next = new Set(current);
-  next.add(target.id);
-
-  for (const candidate of currentCluster.pieces) {
-    if (next.has(candidate.id)) {
-      continue;
-    }
-
-    const dx =
-      (candidate.position[0] - target.position[0]) / profile.fractureRadius[0];
-    const dy =
-      (candidate.position[1] - target.position[1]) / profile.fractureRadius[1];
-    const dz =
-      (candidate.position[2] - target.position[2]) / profile.fractureRadius[0];
-    const distance = Math.hypot(dx, dy, dz);
-    const noise = deterministicNoise(
-      `${target.id}:${candidate.id}:${impactIndex}`,
-    );
-    const irregularEdge = 0.68 + noise * 0.46;
-
-    if (
-      distance < irregularEdge &&
-      noise < profile.neighborChance + Math.max(0, 1 - distance) * 0.3
-    ) {
-      next.add(candidate.id);
-    }
-  }
-
-  if (currentCluster.supportMode === "linked") {
-    const linkedCandidates = currentCluster.pieces
-      .filter((piece) => !next.has(piece.id))
-      .sort(
-        (left, right) =>
-          Math.hypot(
-            left.position[0] - target.position[0],
-            left.position[1] - target.position[1],
-            left.position[2] - target.position[2],
-          ) -
-          Math.hypot(
-            right.position[0] - target.position[0],
-            right.position[1] - target.position[1],
-            right.position[2] - target.position[2],
-          ),
-      );
-
-    if (linkedCandidates[0] && impactIndex % 3 === 0) {
-      next.add(linkedCandidates[0].id);
-    }
-  }
-
-  return next;
+  return openHouseScene.fractureLocallyAt(target, current, impactIndex);
 }
 
 export function fractureAt(
@@ -2471,5 +2694,5 @@ export function fractureAt(
 export function settleAfterBreak(
   broken: ReadonlySet<string>,
 ): ReadonlySet<string> {
-  return resolveStructuralCollapse(broken);
+  return openHouseScene.settleAfterBreak(broken);
 }

@@ -144,11 +144,15 @@ export function debrisSleepSampleRequirement(
 
 export const bulletHoleRadius: Partial<Record<BreakableMaterial, number>> = {
   glass: 0.24,
+  darkGlass: 0.22,
   brick: 0.19,
   stone: 0.18,
+  basalt: 0.16,
+  graphiteStone: 0.17,
   concrete: 0.18,
   plaster: 0.27,
   wood: 0.2,
+  grass: 0.3,
   soil: 0.3,
   earth: 0.26,
   asphalt: 0.24,
@@ -164,14 +168,18 @@ export const fractureEnergyByMaterial: Record<
   number
 > = {
   glass: 0.18,
+  darkGlass: 0.2,
   plaster: 0.38,
   wood: 0.72,
+  grass: 0.78,
   soil: 0.9,
   earth: 0.95,
   brick: 1.15,
   asphalt: 1.5,
   concrete: 2.4,
   stone: 2.8,
+  graphiteStone: 3,
+  basalt: 3.2,
   steel: 24,
 };
 
@@ -224,9 +232,13 @@ export const crumbleOnLanding: ReadonlySet<BreakableMaterial> = new Set([
   "wood",
   "brick",
   "stone",
+  "basalt",
+  "graphiteStone",
   "plaster",
   "concrete",
   "glass",
+  "darkGlass",
+  "grass",
   "asphalt",
   "earth",
 ]);
@@ -242,13 +254,21 @@ const landingDamageByMaterial: Partial<
   >
 > = {
   glass: { chipSpeed: 2.2, shatterSpeed: 3.8, minimumIntensity: 0.12 },
+  darkGlass: { chipSpeed: 2.4, shatterSpeed: 4, minimumIntensity: 0.12 },
   plaster: { chipSpeed: 3.2, shatterSpeed: 5.6, minimumIntensity: 0.14 },
   brick: { chipSpeed: 4.8, shatterSpeed: 7.6, minimumIntensity: 0.15 },
   wood: { chipSpeed: 3.8, shatterSpeed: 6.4, minimumIntensity: 0.11 },
   earth: { chipSpeed: 5.2, shatterSpeed: 8.2, minimumIntensity: 0.15 },
+  grass: { chipSpeed: 4.8, shatterSpeed: 7.8, minimumIntensity: 0.14 },
   concrete: { chipSpeed: 6.8, shatterSpeed: 10.5, minimumIntensity: 0.16 },
   asphalt: { chipSpeed: 7.4, shatterSpeed: 11.5, minimumIntensity: 0.17 },
   stone: { chipSpeed: 8.2, shatterSpeed: 12.4, minimumIntensity: 0.18 },
+  graphiteStone: {
+    chipSpeed: 8.5,
+    shatterSpeed: 12.8,
+    minimumIntensity: 0.18,
+  },
+  basalt: { chipSpeed: 9, shatterSpeed: 13.5, minimumIntensity: 0.2 },
 };
 
 export function classifyLandingDamage(
@@ -274,18 +294,23 @@ export const groundMaterials: ReadonlySet<BreakableMaterial> = new Set([
   "soil",
   "earth",
   "asphalt",
+  "grass",
 ]);
 
 const MIN_REMNANT_VOXELS = 2;
 
 const voxelSizeByMaterial: Record<BreakableMaterial, number> = {
   glass: 0.09,
+  darkGlass: 0.09,
   plaster: 0.11,
   wood: 0.12,
   brick: 0.12,
   stone: 0.15,
+  basalt: 0.16,
+  graphiteStone: 0.15,
   concrete: 0.14,
   steel: 0.18,
+  grass: 0.18,
   soil: 0.18,
   earth: 0.16,
   asphalt: 0.16,
@@ -293,12 +318,16 @@ const voxelSizeByMaterial: Record<BreakableMaterial, number> = {
 
 const damageRoughnessByMaterial: Record<BreakableMaterial, number> = {
   glass: 0.42,
+  darkGlass: 0.4,
   plaster: 0.34,
   wood: 0.18,
   brick: 0.3,
   stone: 0.26,
+  basalt: 0.24,
+  graphiteStone: 0.25,
   concrete: 0.27,
   steel: 0.12,
+  grass: 0.4,
   soil: 0.38,
   earth: 0.36,
   asphalt: 0.25,

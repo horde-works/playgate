@@ -29,6 +29,8 @@ const photorealTextureUrls: Partial<Record<BreakableMaterial, string>> = {
   plaster: "/games/make-a-mess/textures/plaster.webp",
   concrete: "/games/make-a-mess/textures/concrete.webp",
   stone: "/games/make-a-mess/textures/stone.webp",
+  basalt: "/games/make-a-mess/textures/stone.webp",
+  graphiteStone: "/games/make-a-mess/textures/stone.webp",
   soil: "/games/make-a-mess/textures/soil.webp",
   earth: "/games/make-a-mess/textures/soil.webp",
   asphalt: "/games/make-a-mess/textures/asphalt.webp",
@@ -43,6 +45,10 @@ const bumpScaleByMaterial: Record<BreakableMaterial, number> = {
   glass: 0,
   steel: 0.006,
   stone: 0.045,
+  basalt: 0.052,
+  graphiteStone: 0.04,
+  darkGlass: 0,
+  grass: 0.042,
   soil: 0.035,
   earth: 0.032,
   asphalt: 0.018,
@@ -135,7 +141,9 @@ function paintMaterial(
       drawMortarBorder(context, random, 7);
       break;
     }
-    case "stone": {
+    case "stone":
+    case "basalt":
+    case "graphiteStone": {
       fillNoise(context, random, 190, 66, 5);
       for (let index = 0; index < 14; index += 1) {
         gray(context, 150 + random() * 70, 0.4);
@@ -152,6 +160,23 @@ function paintMaterial(
         context.fill();
       }
       drawMortarBorder(context, random, 6);
+      break;
+    }
+    case "grass": {
+      fillNoise(context, random, 156, 58, 3);
+      for (let index = 0; index < 95; index += 1) {
+        const shade = 92 + random() * 95;
+        context.strokeStyle = `rgba(${Math.round(shade * 0.65)},${Math.round(
+          shade,
+        )},${Math.round(shade * 0.48)},0.7)`;
+        context.lineWidth = 0.8 + random() * 1.2;
+        const x = random() * TEXTURE_SIZE;
+        const y = random() * TEXTURE_SIZE;
+        context.beginPath();
+        context.moveTo(x, y + 2 + random() * 4);
+        context.lineTo(x + (random() - 0.5) * 3, y);
+        context.stroke();
+      }
       break;
     }
     case "concrete": {
@@ -222,7 +247,8 @@ function paintMaterial(
       }
       break;
     }
-    case "glass": {
+    case "glass":
+    case "darkGlass": {
       fillNoise(context, random, 246, 8, 8);
       context.lineWidth = 1.2;
       for (let index = 0; index < 5; index += 1) {
@@ -381,8 +407,13 @@ export function getPieceMaterial(
     return cached;
   }
 
-  const isGlass = material === "glass";
+  const isGlass = isGlassMaterial(material);
   const isSteel = material === "steel";
+  const isDarkStone =
+    material === "basalt" || material === "graphiteStone";
+  const isEyeGlass =
+    material === "darkGlass" &&
+    (color === "#ff5a2f" || color === "#9f241a");
   const surfaceTexture = getMaterialTexture(material);
   const standardMaterial = new MeshStandardMaterial({
     color,
@@ -390,13 +421,15 @@ export function getPieceMaterial(
     bumpMap: isGlass ? null : surfaceTexture,
     bumpScale: bumpScaleByMaterial[material],
     transparent: isGlass,
-    opacity: isGlass ? 0.45 : 1,
+    opacity: material === "darkGlass" ? 0.68 : isGlass ? 0.45 : 1,
     depthWrite: !isGlass,
-    metalness: isSteel ? 0.78 : 0,
+    metalness: isSteel ? 0.78 : material === "graphiteStone" ? 0.08 : 0,
     roughness: isSteel
       ? 0.38
       : isGlass
         ? 0.16
+        : isDarkStone
+          ? 0.86
         : material === "wood"
           ? 0.76
           : material === "asphalt"
@@ -410,7 +443,34 @@ export function getPieceMaterial(
     standardMaterial.emissiveIntensity = 0;
     glowMaterials.push(standardMaterial);
   }
+  if (isEyeGlass) {
+    standardMaterial.emissive = new Color(
+      color === "#ff5a2f" ? "#ff3b16" : "#7a150d",
+    );
+    standardMaterial.emissiveIntensity = 0.35;
+    glowMaterials.push(standardMaterial);
+  }
 
   materialCache.set(key, standardMaterial);
   return standardMaterial;
+}
+
+export function isGlassMaterial(material: BreakableMaterial): boolean {
+  return material === "glass" || material === "darkGlass";
+}
+
+export function pieceMaterialBaseColor(
+  material: BreakableMaterial,
+  color: string,
+): string {
+  if (material === "glass" && color === litWindowColor) {
+    return litWindowColor;
+  }
+  if (
+    material === "darkGlass" &&
+    (color === "#ff5a2f" || color === "#9f241a")
+  ) {
+    return color;
+  }
+  return "#ffffff";
 }

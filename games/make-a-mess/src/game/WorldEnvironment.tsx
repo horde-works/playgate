@@ -41,9 +41,11 @@ export function SceneEnvironment() {
 export function DayNightCycle({
   mode,
   nightRef,
+  theme = "town",
 }: {
   mode: TimeOfDay;
   nightRef: { current: number };
+  theme?: "town" | "fortress";
 }) {
   const directional = useRef<DirectionalLight>(null);
   const hemisphere = useRef<HemisphereLight>(null);
@@ -55,9 +57,19 @@ export function DayNightCycle({
   const [skySun, setSkySun] = useState<readonly [number, number, number]>([
     24, 12, 14,
   ]);
-  const dayColor = useMemo(() => new Color("#9cc0ce"), []);
-  const duskColor = useMemo(() => new Color("#d09a67"), []);
-  const nightColor = useMemo(() => new Color("#0d1420"), []);
+  const fortress = theme === "fortress";
+  const dayColor = useMemo(
+    () => new Color(fortress ? "#84939d" : "#9cc0ce"),
+    [fortress],
+  );
+  const duskColor = useMemo(
+    () => new Color(fortress ? "#a66c54" : "#d09a67"),
+    [fortress],
+  );
+  const nightColor = useMemo(
+    () => new Color(fortress ? "#090d13" : "#0d1420"),
+    [fortress],
+  );
   const sunWarmColor = useMemo(() => new Color("#ffc07a"), []);
   const sunDayColor = useMemo(() => new Color("#fff3d7"), []);
   const moonColor = useMemo(() => new Color("#8fa5c8"), []);
@@ -131,17 +143,32 @@ export function DayNightCycle({
 
   return (
     <>
-      <color ref={backgroundRef} attach="background" args={["#92b9c8"]} />
-      <fog ref={fogRef} attach="fog" args={["#9cc0ce", 50, 128]} />
+      <color
+        ref={backgroundRef}
+        attach="background"
+        args={[fortress ? "#84939d" : "#92b9c8"]}
+      />
+      <fog
+        ref={fogRef}
+        attach="fog"
+        args={[fortress ? "#84939d" : "#9cc0ce", fortress ? 64 : 50, fortress ? 190 : 128]}
+      />
       <Sky
-        distance={110}
+        distance={fortress ? 170 : 110}
         sunPosition={[...skySun]}
-        turbidity={5.5}
-        rayleigh={1.6}
-        mieCoefficient={0.004}
+        turbidity={fortress ? 8.2 : 5.5}
+        rayleigh={fortress ? 1.05 : 1.6}
+        mieCoefficient={fortress ? 0.007 : 0.004}
         mieDirectionalG={0.75}
       />
-      <hemisphereLight ref={hemisphere} args={["#d8f0ff", "#4d5d38", 1.05]} />
+      <hemisphereLight
+        ref={hemisphere}
+        args={[
+          fortress ? "#c9d7df" : "#d8f0ff",
+          fortress ? "#31352f" : "#4d5d38",
+          1.05,
+        ]}
+      />
       <directionalLight
         ref={directional}
         castShadow
@@ -152,10 +179,10 @@ export function DayNightCycle({
         shadow-mapSize-height={2048}
         shadow-camera-near={1}
         shadow-camera-far={170}
-        shadow-camera-left={-70}
-        shadow-camera-right={70}
-        shadow-camera-top={70}
-        shadow-camera-bottom={-70}
+        shadow-camera-left={fortress ? -95 : -70}
+        shadow-camera-right={fortress ? 95 : 70}
+        shadow-camera-top={fortress ? 95 : 70}
+        shadow-camera-bottom={fortress ? -95 : -70}
       />
     </>
   );
@@ -174,7 +201,8 @@ export function LampLight({
 
   useFrame(() => {
     if (light.current) {
-      light.current.intensity = broken ? 0 : nightRef.current * 2.6;
+      light.current.intensity =
+        broken ? 0 : nightRef.current * (lamp.intensity ?? 2.6);
     }
   });
 
@@ -182,8 +210,8 @@ export function LampLight({
     <pointLight
       ref={light}
       position={[...lamp.position]}
-      color="#ffd9a0"
-      distance={9}
+      color={lamp.color ?? "#ffd9a0"}
+      distance={lamp.distance ?? 9}
       decay={1.8}
     />
   );
