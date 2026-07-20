@@ -73,6 +73,9 @@ import {
   closestPointOnOrientedBox,
   crumbleOnLanding,
   damageBody,
+  debrisColliderBoxes,
+  debrisCollisionTuning,
+  debrisSleepSampleRequirement,
   fractureEnergyByMaterial,
   grenadeEnergyAtDistance,
   groundMaterials,
@@ -177,12 +180,11 @@ interface GrenadeDefinition {
   readonly velocity: readonly [number, number, number];
 }
 
-interface RocketTrailVoxel {
-  readonly id: number;
-  readonly position: readonly [number, number, number];
-  readonly age: number;
-  readonly size: number;
-  readonly color: string;
+interface RocketTrailSlot {
+  readonly position: Vector3;
+  age: number;
+  size: number;
+  active: boolean;
 }
 
 interface VoxelExplosionDefinition {
@@ -197,6 +199,10 @@ interface PerformanceSnapshot {
 }
 
 const UNIT_BOX = new BoxGeometry(1, 1, 1);
+const ROCKET_TRAIL_COUNT = 42;
+const ROCKET_TRAIL_LIFE = 0.58;
+const ROCKET_TRAIL_INTERVAL = 0.035;
+const ROCKET_TRAIL_COLORS = ["#ffcf67", "#f06a32", "#4b4d49"] as const;
 
 const PLAYER_SPAWN = [0, 1.25, 7.4] as const;
 const PIECE_SPATIAL_INDEX = createSpatialIndex(breakablePieces, 5);
@@ -892,6 +898,10 @@ const BreakablePiece = memo(function BreakablePiece({
   const { rapier } = useRapier();
   const profile = materialRuntimeProfiles[piece.material];
   const renderBoxes = useMemo(() => getPieceRenderBoxes(piece), [piece]);
+  const colliderBoxes = broken
+    ? debrisColliderBoxes(piece.size, renderBoxes)
+    : renderBoxes;
+  const collisionTuning = debrisCollisionTuning(piece.size);
 
   useEffect(() => {
     registerBody(piece.id, body.current);
@@ -960,7 +970,10 @@ const BreakablePiece = memo(function BreakablePiece({
       linearDamping={0.18}
       angularDamping={0.24}
       density={profile.density}
-      ccd={broken}
+      ccd={broken && collisionTuning.hardCcd}
+      softCcdPrediction={
+        broken ? collisionTuning.softCcdPrediction : 0
+      }
       onContactForce={
         broken
           ? (payload) => {
@@ -978,7 +991,7 @@ const BreakablePiece = memo(function BreakablePiece({
           : undefined
       }
     >
-      {renderBoxes.map((box, index) => (
+      {colliderBoxes.map((box, index) => (
         <CuboidCollider
           key={index}
           args={[
@@ -1072,12 +1085,10 @@ const Shard = memo(function Shard({
 }) {
   const body = useRef<RapierRigidBody>(null);
   const profile = materialRuntimeProfiles[shard.material];
-  const boxes =
-    shard.boxes && shard.boxes.length > 0
-      ? shard.boxes
-      : [{ center: [0, 0, 0] as const, size: shard.size }];
+  const colliderBoxes = debrisColliderBoxes(shard.size, shard.boxes);
   const isChunky =
     shard.size[0] * shard.size[1] * shard.size[2] > 0.015;
+  const collisionTuning = debrisCollisionTuning(shard.size);
 
   useEffect(() => {
     const currentBody = body.current;
@@ -1133,7 +1144,8 @@ const Shard = memo(function Shard({
       restitution={profile.restitution}
       linearDamping={0.15}
       angularDamping={0.25}
-      ccd
+      ccd={collisionTuning.hardCcd}
+      softCcdPrediction={collisionTuning.softCcdPrediction}
       onContactForce={
         isChunky
           ? (payload) => {
@@ -1151,7 +1163,7 @@ const Shard = memo(function Shard({
           : undefined
       }
     >
-      {boxes.map((box, index) => (
+      {colliderBoxes.map((box, index) => (
         <CuboidCollider
           key={`collider:${index}`}
           args={[
@@ -1181,10 +1193,27 @@ function Grenade({
 }) {
   const body = useRef<RapierRigidBody>(null);
   const rocketVisual = useRef<Group>(null);
+  const rocketTrailMesh = useRef<InstancedMesh>(null);
   const exploded = useRef(false);
   const trailTimer = useRef(0);
-  const trailId = useRef(0);
-  const [rocketTrail, setRocketTrail] = useState<readonly RocketTrailVoxel[]>([]);
+  const nextTrailSlot = useRef(0);
+  const trailNoiseId = useRef(0);
+  const trailSlots = useMemo<readonly RocketTrailSlot[]>(
+    () =>
+      Array.from({ length: ROCKET_TRAIL_COUNT }, () => ({
+        position: new Vector3(),
+        age: ROCKET_TRAIL_LIFE,
+        size: 0,
+        active: false,
+      })),
+    [],
+  );
+  const trailDummy = useMemo(() => new Object3D(), []);
+  const trailBase = useMemo(() => new Vector3(), []);
+  const trailSide = useMemo(() => new Vector3(), []);
+  const trailUp = useMemo(() => new Vector3(), []);
+  const trailPoint = useMemo(() => new Vector3(), []);
+  const trailColor = useMemo(() => new Color(), []);
   const rocketDirection = useMemo(() => {
     const direction = new Vector3(
       grenade.velocity[0],
@@ -1198,6 +1227,25 @@ function Grenade({
   }, [grenade.velocity]);
   const rocketQuaternion = useMemo(() => new Quaternion(), []);
   const rocketForward = useMemo(() => new Vector3(0, 0, 1), []);
+
+  useEffect(() => {
+    const mesh = rocketTrailMesh.current;
+    if (!mesh) {
+      return;
+    }
+
+    trailDummy.position.set(0, -1000, 0);
+    trailDummy.scale.setScalar(0);
+    trailDummy.updateMatrix();
+    for (let index = 0; index < ROCKET_TRAIL_COUNT; index += 1) {
+      mesh.setMatrixAt(index, trailDummy.matrix);
+      mesh.setColorAt(index, trailColor.set(ROCKET_TRAIL_COLORS[2]));
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) {
+      mesh.instanceColor.needsUpdate = true;
+    }
+  }, [trailColor, trailDummy]);
 
   const trigger = useCallback(() => {
     if (exploded.current || !body.current) {
@@ -1243,7 +1291,8 @@ function Grenade({
   const isRocket = grenade.kind === "rocket";
 
   useFrame((_, delta) => {
-    if (!isRocket || !body.current) {
+    const trailMesh = rocketTrailMesh.current;
+    if (!isRocket || !body.current || !trailMesh) {
       return;
     }
 
@@ -1260,51 +1309,78 @@ function Grenade({
     }
 
     trailTimer.current += delta;
-    if (trailTimer.current < 0.035) {
-      setRocketTrail((current) =>
-        current
-          .map((voxel) => ({ ...voxel, age: voxel.age + delta }))
-          .filter((voxel) => voxel.age < 0.58),
-      );
-      return;
-    }
-
-    trailTimer.current = 0;
-    const base = new Vector3(translation.x, translation.y, translation.z).add(
-      rocketDirection.clone().multiplyScalar(-0.34),
+    const spawnBatches = Math.min(
+      3,
+      Math.floor(trailTimer.current / ROCKET_TRAIL_INTERVAL),
     );
-    const side = new Vector3(rocketDirection.z, 0, -rocketDirection.x);
-    if (side.lengthSq() < 0.001) {
-      side.set(1, 0, 0);
-    }
-    side.normalize();
-    const up = new Vector3().crossVectors(side, rocketDirection).normalize();
-
-    setRocketTrail((current) => {
-      const aged = current
-        .map((voxel) => ({ ...voxel, age: voxel.age + delta }))
-        .filter((voxel) => voxel.age < 0.58);
-      const additions: RocketTrailVoxel[] = [];
-      for (let index = 0; index < 3; index += 1) {
-        trailId.current += 1;
-        const noiseA = blastNoise(`${grenade.id}:rocket:${trailId.current}`, 31) - 0.5;
-        const noiseB = blastNoise(`${grenade.id}:rocket:${trailId.current}`, 37) - 0.5;
-        const spread = 0.045 + index * 0.018;
-        const point = base
-          .clone()
-          .add(side.clone().multiplyScalar(noiseA * spread))
-          .add(up.clone().multiplyScalar(noiseB * spread))
-          .add(rocketDirection.clone().multiplyScalar(-index * 0.08));
-        additions.push({
-          id: trailId.current,
-          position: [point.x, point.y, point.z],
-          age: 0,
-          size: 0.075 + index * 0.025,
-          color: index === 0 ? "#ffcf67" : index === 1 ? "#f06a32" : "#4b4d49",
-        });
+    if (spawnBatches > 0) {
+      trailTimer.current -= spawnBatches * ROCKET_TRAIL_INTERVAL;
+      trailBase
+        .set(translation.x, translation.y, translation.z)
+        .addScaledVector(rocketDirection, -0.34);
+      trailSide.set(rocketDirection.z, 0, -rocketDirection.x);
+      if (trailSide.lengthSq() < 0.001) {
+        trailSide.set(1, 0, 0);
       }
-      return [...aged, ...additions].slice(-42);
-    });
+      trailSide.normalize();
+      trailUp.crossVectors(trailSide, rocketDirection).normalize();
+
+      for (let batch = 0; batch < spawnBatches; batch += 1) {
+        for (let index = 0; index < 3; index += 1) {
+          trailNoiseId.current += 1;
+          const slotIndex = nextTrailSlot.current;
+          nextTrailSlot.current =
+            (nextTrailSlot.current + 1) % ROCKET_TRAIL_COUNT;
+          const slot = trailSlots[slotIndex];
+          const noiseKey = `${grenade.id}:rocket:${trailNoiseId.current}`;
+          const noiseA = blastNoise(noiseKey, 31) - 0.5;
+          const noiseB = blastNoise(noiseKey, 37) - 0.5;
+          const spread = 0.045 + index * 0.018;
+          trailPoint
+            .copy(trailBase)
+            .addScaledVector(trailSide, noiseA * spread)
+            .addScaledVector(trailUp, noiseB * spread)
+            .addScaledVector(
+              rocketDirection,
+              -index * 0.08 - batch * 0.025,
+            );
+          slot.position.copy(trailPoint);
+          slot.age = 0;
+          slot.size = 0.075 + index * 0.025;
+          slot.active = true;
+          trailMesh.setColorAt(
+            slotIndex,
+            trailColor.set(ROCKET_TRAIL_COLORS[index]),
+          );
+        }
+      }
+      if (trailMesh.instanceColor) {
+        trailMesh.instanceColor.needsUpdate = true;
+      }
+    }
+
+    for (let index = 0; index < ROCKET_TRAIL_COUNT; index += 1) {
+      const slot = trailSlots[index];
+      if (slot.active) {
+        slot.age += delta;
+        if (slot.age >= ROCKET_TRAIL_LIFE) {
+          slot.active = false;
+        }
+      }
+
+      if (slot.active) {
+        const life = 1 - slot.age / ROCKET_TRAIL_LIFE;
+        const scale = slot.size * (1 + slot.age * 1.9) * life;
+        trailDummy.position.copy(slot.position);
+        trailDummy.scale.setScalar(scale);
+      } else {
+        trailDummy.position.set(0, -1000, 0);
+        trailDummy.scale.setScalar(0);
+      }
+      trailDummy.updateMatrix();
+      trailMesh.setMatrixAt(index, trailDummy.matrix);
+    }
+    trailMesh.instanceMatrix.needsUpdate = true;
   });
 
   return (
@@ -1367,25 +1443,21 @@ function Grenade({
         </group>
       ) : null}
 
-      {rocketTrail.map((voxel) => {
-        const opacity = Math.max(0, 1 - voxel.age / 0.58);
-        return (
-          <mesh
-            key={voxel.id}
-            position={[...voxel.position]}
-            scale={voxel.size * (1 + voxel.age * 1.9)}
-          >
-            <boxGeometry args={[1, 1, 1]} />
-            <meshBasicMaterial
-              color={voxel.color}
-              transparent
-              opacity={opacity * 0.72}
-              depthWrite={false}
-              toneMapped={false}
-            />
-          </mesh>
-        );
-      })}
+      {isRocket ? (
+        <instancedMesh
+          ref={rocketTrailMesh}
+          args={[undefined, undefined, ROCKET_TRAIL_COUNT]}
+          frustumCulled={false}
+        >
+          <boxGeometry args={[1, 1, 1]} />
+          <meshBasicMaterial
+            transparent
+            opacity={0.72}
+            depthWrite={false}
+            toneMapped={false}
+          />
+        </instancedMesh>
+      ) : null}
     </>
   );
 }
@@ -1416,8 +1488,12 @@ const Remnant = memo(function Remnant({
     remnant.boxes && remnant.boxes.length > 0
       ? remnant.boxes
       : [{ center: [0, 0, 0] as const, size: remnant.size }];
+  const colliderBoxes = freed
+    ? debrisColliderBoxes(remnant.size, boxes)
+    : boxes;
   const isChunky =
     remnant.size[0] * remnant.size[1] * remnant.size[2] > 0.015;
+  const collisionTuning = debrisCollisionTuning(remnant.size);
 
   useEffect(() => {
     const currentBody = body.current;
@@ -1477,7 +1553,10 @@ const Remnant = memo(function Remnant({
       linearDamping={0.16}
       angularDamping={0.24}
       density={profile.density}
-      ccd={freed}
+      ccd={freed && collisionTuning.hardCcd}
+      softCcdPrediction={
+        freed ? collisionTuning.softCcdPrediction : 0
+      }
       onContactForce={
         freed && isChunky
           ? (payload) => {
@@ -1495,7 +1574,7 @@ const Remnant = memo(function Remnant({
           : undefined
       }
     >
-      {boxes.map((box, index) => (
+      {colliderBoxes.map((box, index) => (
         <CuboidCollider
           key={`collider:${index}`}
           args={[
@@ -1909,7 +1988,7 @@ function OpenWorldScene({
   onDynamicBodyCountChange,
 }: OpenWorldSceneProps) {
   const { camera } = useThree();
-  const { rapier } = useRapier();
+  const { rapier, world } = useRapier();
   const raycaster = useRef(new Raycaster());
   const center = useMemo(() => new Vector2(0, 0), []);
   const [brokenPieces, setBrokenPieces] = useState<ReadonlySet<string>>(
@@ -2063,6 +2142,23 @@ function OpenWorldScene({
     [rapier],
   );
 
+  const configureDebrisCollision = useCallback(
+    (id: string, body: RapierRigidBody) => {
+      const source =
+        shardById.current.get(id) ??
+        remnantById.current.get(id) ??
+        breakablePieceById.get(id);
+      if (!source) {
+        return;
+      }
+
+      const tuning = debrisCollisionTuning(source.size);
+      body.enableCcd(tuning.hardCcd);
+      body.setSoftCcdPrediction(tuning.softCcdPrediction);
+    },
+    [],
+  );
+
   useEffect(
     () => () => {
       for (const timer of strikeTimers.current) {
@@ -2162,8 +2258,27 @@ function OpenWorldScene({
         performance.now() - (dynamicStartedAt.current.get(id) ?? 0);
 
       if (energy < 0.035 || (dynamicAge > 4500 && energy < 0.28)) {
+        let hasPhysicalContact = false;
+        for (
+          let colliderIndex = 0;
+          colliderIndex < body.numColliders() && !hasPhysicalContact;
+          colliderIndex += 1
+        ) {
+          world.contactPairsWith(body.collider(colliderIndex), () => {
+            hasPhysicalContact = true;
+          });
+        }
+        const requiredSamples = debrisSleepSampleRequirement(
+          energy,
+          dynamicAge,
+          hasPhysicalContact,
+        );
+        if (requiredSamples === null) {
+          restCounters.current.delete(id);
+          continue;
+        }
+
         const count = (restCounters.current.get(id) ?? 0) + 1;
-        const requiredSamples = energy < 0.035 ? 3 : 2;
         if (count >= requiredSamples) {
           body.setLinvel({ x: 0, y: 0, z: 0 }, false);
           body.setAngvel({ x: 0, y: 0, z: 0 }, false);
@@ -2301,7 +2416,7 @@ function OpenWorldScene({
       const profile = materialRuntimeProfiles[material];
       withBody(pieceId, (body) => {
         ensureDynamic(pieceId, body);
-        body.enableCcd(true);
+        configureDebrisCollision(pieceId, body);
         body.wakeUp();
 
         const mass = Math.max(0.04, body.mass());
@@ -2333,7 +2448,7 @@ function OpenWorldScene({
         );
       });
     },
-    [ensureDynamic, withBody],
+    [configureDebrisCollision, ensureDynamic, withBody],
   );
 
   const commitShards = useCallback(
@@ -3412,7 +3527,7 @@ function OpenWorldScene({
         }
 
         ensureDynamic(id, body);
-        body.enableCcd(true);
+        configureDebrisCollision(id, body);
         body.wakeUp();
 
         const speed = (isRocket ? 7.8 : 5.2) + (isRocket ? 10.5 : 6.5) * falloff;
@@ -3462,6 +3577,7 @@ function OpenWorldScene({
     [
       carveAt,
       carveLooseTarget,
+      configureDebrisCollision,
       ensureDynamic,
       rapier,
       settleStructure,

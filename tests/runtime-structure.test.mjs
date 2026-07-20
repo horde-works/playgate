@@ -162,3 +162,59 @@ test("a voxel fragment only bears load through boxes touching its base", () => {
 
   assert.equal(fragmentBearingArea(fragment), 0.2);
 });
+
+test("empty space inside a voxel remnant cannot act as a hidden support", () => {
+  const pieces = [
+    {
+      id: "ground",
+      material: "ground",
+      position: [0, 0, 0],
+      size: [8, 0.2, 8],
+    },
+    {
+      id: "post",
+      material: "concrete",
+      position: [0, 0.65, 0],
+      size: [0.3, 1.1, 0.3],
+    },
+    {
+      id: "wall",
+      material: "concrete",
+      position: [0, 1.75, 0],
+      size: [4, 1, 0.4],
+    },
+  ];
+  const fragments = [
+    {
+      id: "wall-with-center-hole",
+      parentId: "wall",
+      material: "concrete",
+      position: [0, 1.75, 0],
+      size: [4, 1, 0.4],
+      detached: false,
+      boxes: [
+        {
+          center: [-1.5, 0, 0],
+          size: [1, 1, 0.4],
+        },
+        {
+          center: [1.5, 0, 0],
+          size: [1, 1, 0.4],
+        },
+      ],
+    },
+  ];
+
+  const result = resolveRuntimeStructure(
+    pieces,
+    profiles,
+    new Set(),
+    new Set(["wall"]),
+    fragments,
+  );
+
+  assert.equal(
+    result.detachedFragmentIds.has("wall-with-center-hole"),
+    true,
+  );
+});

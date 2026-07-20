@@ -1,5 +1,10 @@
 export type StructuralVector3 = readonly [x: number, y: number, z: number];
 
+export interface StructuralContactBox {
+  readonly position: StructuralVector3;
+  readonly size: StructuralVector3;
+}
+
 export interface StructuralPieceDefinition<Material extends string> {
   readonly id: string;
   readonly material: Material;
@@ -7,6 +12,7 @@ export interface StructuralPieceDefinition<Material extends string> {
   readonly size: StructuralVector3;
   readonly volume?: number;
   readonly bearingArea?: number;
+  readonly contactBoxes?: readonly StructuralContactBox[];
 }
 
 export interface StructuralMaterialProfile {
@@ -28,6 +34,11 @@ export interface StructuralSolver {
 type HorizontalAxis = 0 | 2;
 type ContactInterval = readonly [minimum: number, maximum: number];
 
+interface BearingContactPatch {
+  readonly x: ContactInterval;
+  readonly z: ContactInterval;
+}
+
 interface StableStructure {
   readonly stable: ReadonlySet<string>;
   readonly supportsByPiece: ReadonlyMap<string, readonly string[]>;
@@ -38,16 +49,17 @@ const MINIMUM_VERTICAL_ORDER = 0.11;
 const SAME_LEVEL_TOLERANCE = 0.1;
 const MAXIMUM_OVERLOAD_PASSES = 8;
 const SPATIAL_CELL_SIZE = 2.5;
+const MAXIMUM_DETAILED_BEARING_OVERLAP = 0.12;
 
-function lowerBound<Material extends string>(
-  piece: StructuralPieceDefinition<Material>,
+function lowerBound(
+  piece: StructuralContactBox,
   axis: 0 | 1 | 2,
 ): number {
   return piece.position[axis] - piece.size[axis] / 2;
 }
 
-function upperBound<Material extends string>(
-  piece: StructuralPieceDefinition<Material>,
+function upperBound(
+  piece: StructuralContactBox,
   axis: 0 | 1 | 2,
 ): number {
   return piece.position[axis] + piece.size[axis] / 2;
@@ -69,9 +81,9 @@ function spatialKey(x: number, y: number, z: number): string {
   return `${x}:${y}:${z}`;
 }
 
-function intervalOverlap<Material extends string>(
-  left: StructuralPieceDefinition<Material>,
-  right: StructuralPieceDefinition<Material>,
+function intervalOverlap(
+  left: StructuralContactBox,
+  right: StructuralContactBox,
   axis: HorizontalAxis,
 ): ContactInterval | undefined {
   const minimum = Math.max(lowerBound(left, axis), lowerBound(right, axis));
@@ -82,6 +94,54 @@ function intervalOverlap<Material extends string>(
   }
 
   return [minimum, maximum];
+}
+
+function physicalContactBoxes(
+  piece: StructuralContactBox & {
+    readonly contactBoxes?: readonly StructuralContactBox[];
+  },
+): readonly StructuralContactBox[] {
+  return piece.contactBoxes && piece.contactBoxes.length > 0
+    ? piece.contactBoxes
+    : [piece];
+}
+
+function bearingContactPatches(
+  piece: StructuralContactBox & {
+    readonly contactBoxes?: readonly StructuralContactBox[];
+  },
+  support: StructuralContactBox & {
+    readonly contactBoxes?: readonly StructuralContactBox[];
+  },
+  maximumVerticalGap: number,
+): readonly BearingContactPatch[] {
+  const patches: BearingContactPatch[] = [];
+  const usesDetailedGeometry =
+    (piece.contactBoxes?.length ?? 0) > 0 ||
+    (support.contactBoxes?.length ?? 0) > 0;
+
+  for (const pieceBox of physicalContactBoxes(piece)) {
+    for (const supportBox of physicalContactBoxes(support)) {
+      const x = intervalOverlap(pieceBox, supportBox, 0);
+      const z = intervalOverlap(pieceBox, supportBox, 2);
+      if (!x || !z) {
+        continue;
+      }
+
+      const verticalGap =
+        lowerBound(pieceBox, 1) - upperBound(supportBox, 1);
+      if (
+        verticalGap > maximumVerticalGap ||
+        (usesDetailedGeometry &&
+          verticalGap < -MAXIMUM_DETAILED_BEARING_OVERLAP)
+      ) {
+        continue;
+      }
+      patches.push({ x, z });
+    }
+  }
+
+  return patches;
 }
 
 function geometryBearingRank<Material extends string>(
@@ -168,11 +228,7 @@ export function createStructuralSolver<Material extends string>(
     piece: StructuralPieceDefinition<Material>,
     support: StructuralPieceDefinition<Material>,
   ): boolean => {
-    if (
-      piece.id === support.id ||
-      !intervalOverlap(piece, support, 0) ||
-      !intervalOverlap(piece, support, 2)
-    ) {
+    if (piece.id === support.id) {
       return false;
     }
 
@@ -181,8 +237,13 @@ export function createStructuralSolver<Material extends string>(
     if (supportProfile.bearsLoad === false) {
       return false;
     }
-    const verticalGap = lowerBound(piece, 1) - upperBound(support, 1);
-    if (verticalGap > pieceProfile.maximumVerticalGap) {
+    if (
+      bearingContactPatches(
+        piece,
+        support,
+        pieceProfile.maximumVerticalGap,
+      ).length === 0
+    ) {
       return false;
     }
 
@@ -217,25 +278,35 @@ export function createStructuralSolver<Material extends string>(
       return false;
     }
 
-    const verticalOverlap =
-      Math.min(upperBound(piece, 1), upperBound(support, 1)) -
-      Math.max(lowerBound(piece, 1), lowerBound(support, 1));
-    if (verticalOverlap < Math.min(piece.size[1], support.size[1]) * 0.18) {
-      return false;
+    for (const pieceBox of physicalContactBoxes(piece)) {
+      for (const supportBox of physicalContactBoxes(support)) {
+        const verticalOverlap =
+          Math.min(upperBound(pieceBox, 1), upperBound(supportBox, 1)) -
+          Math.max(lowerBound(pieceBox, 1), lowerBound(supportBox, 1));
+        if (
+          verticalOverlap <
+          Math.min(pieceBox.size[1], supportBox.size[1]) * 0.18
+        ) {
+          continue;
+        }
+
+        const gapX = Math.max(
+          0,
+          Math.abs(pieceBox.position[0] - supportBox.position[0]) -
+            (pieceBox.size[0] + supportBox.size[0]) / 2,
+        );
+        const gapZ = Math.max(
+          0,
+          Math.abs(pieceBox.position[2] - supportBox.position[2]) -
+            (pieceBox.size[2] + supportBox.size[2]) / 2,
+        );
+        if (Math.hypot(gapX, gapZ) <= reach) {
+          return true;
+        }
+      }
     }
 
-    const gapX = Math.max(
-      0,
-      Math.abs(piece.position[0] - support.position[0]) -
-        (piece.size[0] + support.size[0]) / 2,
-    );
-    const gapZ = Math.max(
-      0,
-      Math.abs(piece.position[2] - support.position[2]) -
-        (piece.size[2] + support.size[2]) / 2,
-    );
-
-    return Math.hypot(gapX, gapZ) <= reach;
+    return false;
   };
 
   const verticalSupportCandidates = new Map<string, readonly string[]>();
@@ -351,9 +422,12 @@ export function createStructuralSolver<Material extends string>(
 
     for (const axis of [0, 2] as const) {
       const contacts = supports
-        .map((support) => intervalOverlap(piece, support, axis))
-        .filter(
-          (contact): contact is ContactInterval => contact !== undefined,
+        .flatMap((support) =>
+          bearingContactPatches(
+            piece,
+            support,
+            materialProfiles[piece.material].maximumVerticalGap,
+          ).map((patch) => patch[axis === 0 ? "x" : "z"]),
         );
       if (contacts.length === 0) {
         return false;
@@ -541,13 +615,20 @@ export function createStructuralSolver<Material extends string>(
         if (!support) {
           return { supportId, weight: 0 };
         }
-        const overlapX = intervalOverlap(piece, support, 0);
-        const overlapZ = intervalOverlap(piece, support, 2);
-        const contactArea =
-          overlapX && overlapZ
-            ? Math.max(0.01, overlapX[1] - overlapX[0]) *
-              Math.max(0.01, overlapZ[1] - overlapZ[0])
-            : 0.01;
+        const contactArea = Math.max(
+          0.01,
+          bearingContactPatches(
+            piece,
+            support,
+            materialProfiles[piece.material].maximumVerticalGap,
+          ).reduce(
+            (area, patch) =>
+              area +
+              Math.max(0.01, patch.x[1] - patch.x[0]) *
+                Math.max(0.01, patch.z[1] - patch.z[0]),
+            0,
+          ),
+        );
         const fill =
           (support.bearingArea ??
             support.size[0] * support.size[2]) /

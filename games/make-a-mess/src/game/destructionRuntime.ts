@@ -64,6 +64,84 @@ export const VOLUME_BREAK_FRACTION = 0.45;
 export const MG_FIRE_INTERVAL = 0.11;
 export const MG_RANGE = 70;
 
+export interface DebrisCollisionTuning {
+  readonly hardCcd: boolean;
+  readonly softCcdPrediction: number;
+}
+
+export interface DebrisColliderBox {
+  readonly center: readonly [number, number, number];
+  readonly size: readonly [number, number, number];
+}
+
+/**
+ * Full CCD shape-casts are reserved for genuinely small debris that could
+ * cross a collider between fixed physics steps. Larger boards, slabs and wall
+ * sections use Rapier's cheaper predictive constraints instead.
+ */
+export function debrisCollisionTuning(
+  size: readonly [number, number, number],
+): DebrisCollisionTuning {
+  const volume = size[0] * size[1] * size[2];
+  const largestExtent = Math.max(size[0], size[1], size[2]);
+  const hardCcd = volume <= 0.025 && largestExtent <= 0.48;
+
+  return {
+    hardCcd,
+    softCcdPrediction: hardCcd
+      ? 0
+      : Math.min(0.7, Math.max(0.24, largestExtent * 0.16)),
+  };
+}
+
+/**
+ * Keeps collision proxies inside actually occupied voxel boxes. Selecting the
+ * largest boxes is intentionally conservative: omitted chips may overlap a
+ * little, but empty holes never become invisible shelves that hold debris up.
+ */
+export function debrisColliderBoxes(
+  size: readonly [number, number, number],
+  boxes: readonly DebrisColliderBox[] | undefined,
+  maximumBoxes = 3,
+): readonly DebrisColliderBox[] {
+  if (!boxes || boxes.length === 0) {
+    return [{ center: [0, 0, 0], size }];
+  }
+  if (boxes.length <= maximumBoxes) {
+    return boxes;
+  }
+
+  return boxes
+    .map((box, index) => ({
+      box,
+      index,
+      volume: box.size[0] * box.size[1] * box.size[2],
+    }))
+    .toSorted(
+      (left, right) =>
+        right.volume - left.volume || left.index - right.index,
+    )
+    .slice(0, Math.max(1, maximumBoxes))
+    .map((entry) => entry.box);
+}
+
+export function debrisSleepSampleRequirement(
+  energy: number,
+  dynamicAgeMs: number,
+  hasPhysicalContact: boolean,
+): number | null {
+  if (!hasPhysicalContact) {
+    return null;
+  }
+  if (energy < 0.035) {
+    return 3;
+  }
+  if (dynamicAgeMs > 4500 && energy < 0.28) {
+    return 2;
+  }
+  return null;
+}
+
 export const bulletHoleRadius: Partial<Record<BreakableMaterial, number>> = {
   glass: 0.24,
   brick: 0.19,

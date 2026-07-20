@@ -91,6 +91,27 @@ export function rotatedBoxAabbSize(
   ];
 }
 
+function rotateStructuralVector(
+  vector: StructuralVector3,
+  quaternion: StructuralQuaternion | undefined,
+): StructuralVector3 {
+  if (!quaternion) {
+    return vector;
+  }
+
+  const [x, y, z] = vector;
+  const [qx, qy, qz, qw] = quaternion;
+  const ix = qw * x + qy * z - qz * y;
+  const iy = qw * y + qz * x - qx * z;
+  const iz = qw * z + qx * y - qy * x;
+  const iw = -qx * x - qy * y - qz * z;
+  return [
+    ix * qw + iw * -qx + iy * -qz - iz * -qy,
+    iy * qw + iw * -qy + iz * -qx - ix * -qz,
+    iz * qw + iw * -qz + ix * -qy - iy * -qx,
+  ];
+}
+
 export function resolveRuntimeStructure<Material extends string>(
   pieces: readonly StructuralPieceDefinition<Material>[],
   materialProfiles: Readonly<Record<Material, StructuralMaterialProfile>>,
@@ -123,6 +144,20 @@ export function resolveRuntimeStructure<Material extends string>(
       const bearingFill =
         fragmentBearingArea(fragment) /
         Math.max(1e-6, fragment.size[0] * fragment.size[2]);
+      const contactBoxes = fragment.boxes?.map((box) => {
+        const offset = rotateStructuralVector(
+          box.center,
+          fragment.quaternion,
+        );
+        return {
+          position: [
+            fragment.position[0] + offset[0],
+            fragment.position[1] + offset[1],
+            fragment.position[2] + offset[2],
+          ] as const,
+          size: rotatedBoxAabbSize(box.size, fragment.quaternion),
+        };
+      });
       return {
         id: fragment.id,
         material: fragment.material,
@@ -130,6 +165,7 @@ export function resolveRuntimeStructure<Material extends string>(
         size,
         volume: fragment.volume,
         bearingArea: size[0] * size[2] * bearingFill,
+        contactBoxes,
       };
     });
   const structuralPieces = [...activePieces, ...structuralFragments];

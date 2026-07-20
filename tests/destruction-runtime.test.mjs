@@ -12,6 +12,9 @@ import {
   classifyLandingDamage,
   damageBody,
   damageRadiusScaleByMaterial,
+  debrisColliderBoxes,
+  debrisCollisionTuning,
+  debrisSleepSampleRequirement,
   distanceToOrientedBox,
   fractureEnergyByMaterial,
   grenadeEnergyAtDistance,
@@ -25,6 +28,45 @@ import {
 
 const still = new Vector3();
 const identity = new Quaternion();
+
+test("only genuinely small debris pays for full continuous collision detection", () => {
+  assert.deepEqual(debrisCollisionTuning([0.18, 0.12, 0.1]), {
+    hardCcd: true,
+    softCcdPrediction: 0,
+  });
+
+  const board = debrisCollisionTuning([4.8, 0.18, 0.42]);
+  const slab = debrisCollisionTuning([3.2, 0.22, 2.6]);
+  assert.equal(board.hardCcd, false);
+  assert.equal(slab.hardCcd, false);
+  assert.equal(board.softCcdPrediction > 0, true);
+  assert.equal(slab.softCcdPrediction > 0, true);
+  assert.equal(board.softCcdPrediction <= 0.7, true);
+  assert.equal(slab.softCcdPrediction <= 0.7, true);
+});
+
+test("debris collision proxies never fill an empty voxel gap", () => {
+  const occupied = [
+    { center: [-1.25, 0, 0], size: [1.5, 1, 0.4] },
+    { center: [1.25, 0, 0], size: [1.5, 1, 0.4] },
+    { center: [0, 0.45, 0], size: [0.2, 0.1, 0.2] },
+  ];
+  const proxies = debrisColliderBoxes([4, 1, 0.4], occupied, 2);
+
+  assert.equal(proxies.length, 2);
+  assert.equal(proxies.every((box) => box.size[0] < 4), true);
+  assert.deepEqual(
+    proxies.map((box) => box.center[0]).toSorted((a, b) => a - b),
+    [-1.25, 1.25],
+  );
+});
+
+test("debris cannot sleep in mid-air just because it briefly slows down", () => {
+  assert.equal(debrisSleepSampleRequirement(0.001, 20_000, false), null);
+  assert.equal(debrisSleepSampleRequirement(0.01, 1000, true), 3);
+  assert.equal(debrisSleepSampleRequirement(0.2, 5000, true), 2);
+  assert.equal(debrisSleepSampleRequirement(0.5, 5000, true), null);
+});
 
 test("a blast reaches the end of a long board even when its centre is outside", () => {
   assert.equal(
