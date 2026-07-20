@@ -2847,13 +2847,6 @@ function OpenWorldScene({
   }, []);
 
   useEffect(() => {
-    mobileActions.current = {
-      strike,
-      strikeEnd,
-    };
-  }, [mobileActions, strike, strikeEnd]);
-
-  useEffect(() => {
     firing.current = false;
   }, [active, weapon]);
 
@@ -3663,6 +3656,13 @@ function OpenWorldScene({
   const removeTracer = useCallback((id: number) => {
     setTracers((current) => current.filter((tracer) => tracer.id !== id));
   }, []);
+
+  useEffect(() => {
+    mobileActions.current = {
+      strike,
+      strikeEnd,
+    };
+  }, [mobileActions, strike, strikeEnd]);
 
   const hiddenPieces = useMemo(() => {
     const next = new Set(shatteredPieces);
