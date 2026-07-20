@@ -24,6 +24,8 @@ import {
   useMemo,
   useRef,
   useState,
+  type MutableRefObject,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import {
   BoxGeometry,
@@ -122,6 +124,22 @@ type ControlName =
 type WeaponName = "hammer" | "launcher" | "mg" | "rocket";
 type ExplosiveKind = "grenade" | "rocket";
 
+interface MobileControlsState {
+  moveX: number;
+  moveZ: number;
+  lookDeltaX: number;
+  lookDeltaY: number;
+  jump: boolean;
+  run: boolean;
+}
+
+type MobileControlsRef = MutableRefObject<MobileControlsState>;
+
+interface MobileActionBridge {
+  strike: () => void;
+  strikeEnd: () => void;
+}
+
 const keyboardMap: Array<{ name: ControlName; keys: string[] }> = [
   { name: "forward", keys: ["ArrowUp", "KeyW"] },
   { name: "backward", keys: ["ArrowDown", "KeyS"] },
@@ -174,6 +192,29 @@ const MAX_PIECE_BOUNDING_RADIUS = breakablePieces.reduce(
     ),
   0,
 );
+
+function createMobileControlsState(): MobileControlsState {
+  return {
+    moveX: 0,
+    moveZ: 0,
+    lookDeltaX: 0,
+    lookDeltaY: 0,
+    jump: false,
+    run: false,
+  };
+}
+
+function isTouchLikeDevice(): boolean {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  return (
+    navigator.maxTouchPoints > 0 ||
+    window.matchMedia("(pointer: coarse)").matches ||
+    window.matchMedia("(max-width: 900px)").matches
+  );
+}
 interface BreakableHitData {
   readonly pieceId?: string;
   readonly shardId?: string;
@@ -222,8 +263,10 @@ function readBreakableHit(
 
 function Player({
   registerBody,
+  mobileControls,
 }: {
   registerBody: (id: string, body: RapierRigidBody | null) => void;
+  mobileControls: MobileControlsRef;
 }) {
   const body = useRef<RapierRigidBody>(null);
   const [, getControls] = useKeyboardControls<ControlName>();
@@ -266,9 +309,18 @@ function Player({
     const position = body.current.translation();
     const velocity = body.current.linvel();
     const { forward, backward, left, right, run, jump } = getControls();
-    const inputX = Number(right) - Number(left);
-    const inputZ = Number(backward) - Number(forward);
-    const speed = run ? 6.2 : 4.25;
+    const touch = mobileControls.current;
+    const inputX = MathUtils.clamp(
+      Number(right) - Number(left) + touch.moveX,
+      -1,
+      1,
+    );
+    const inputZ = MathUtils.clamp(
+      Number(backward) - Number(forward) + touch.moveZ,
+      -1,
+      1,
+    );
+    const speed = run || touch.run ? 6.2 : 4.25;
 
     movement.set(inputX, 0, inputZ);
     if (movement.lengthSq() > 0) {
@@ -384,7 +436,7 @@ function Player({
       {
         x: velocity.x + (movement.x - velocity.x) * control,
         y:
-          jump && grounded
+          (jump || touch.jump) && grounded
             ? 5.4
             : autoLift > 0
               ? Math.max(velocity.y, autoLift)
@@ -426,6 +478,7 @@ function Player({
 interface MouseLookProps {
   active: boolean;
   requestVersion: number;
+  mobileControls: MobileControlsRef;
   onActiveChange: (active: boolean) => void;
   onFallbackChange: (fallback: boolean) => void;
   onStrike: () => void;
@@ -435,6 +488,7 @@ interface MouseLookProps {
 function MouseLook({
   active,
   requestVersion,
+  mobileControls,
   onActiveChange,
   onFallbackChange,
   onStrike,
@@ -458,14 +512,30 @@ function MouseLook({
   });
 
   useFrame(() => {
-    if (initialized.current) {
+    if (!initialized.current) {
+      initialized.current = true;
+      yaw.current = 0;
+      pitch.current = 0;
+      cameraRef.current.rotation.set(0, 0, 0, "YXZ");
+    }
+
+    const touch = mobileControls.current;
+    if (!active || (touch.lookDeltaX === 0 && touch.lookDeltaY === 0)) {
       return;
     }
 
-    initialized.current = true;
-    yaw.current = 0;
-    pitch.current = 0;
-    cameraRef.current.rotation.set(0, 0, 0, "YXZ");
+    const movementX = touch.lookDeltaX;
+    const movementY = touch.lookDeltaY;
+    touch.lookDeltaX = 0;
+    touch.lookDeltaY = 0;
+
+    yaw.current -= movementX * 0.003;
+    pitch.current = MathUtils.clamp(
+      pitch.current - movementY * 0.0027,
+      -Math.PI / 2.1,
+      Math.PI / 2.1,
+    );
+    cameraRef.current.rotation.set(pitch.current, yaw.current, 0, "YXZ");
   });
 
   useEffect(() => {
@@ -1644,6 +1714,8 @@ interface OpenWorldSceneProps {
   timeOfDay: TimeOfDay;
   fallbackLook: boolean;
   controlRequest: number;
+  mobileControls: MobileControlsRef;
+  mobileActions: MutableRefObject<MobileActionBridge>;
   resetVersion: number;
   onActiveChange: (active: boolean) => void;
   onFallbackChange: (fallback: boolean) => void;
@@ -1657,6 +1729,8 @@ function OpenWorldScene({
   timeOfDay,
   fallbackLook,
   controlRequest,
+  mobileControls,
+  mobileActions,
   resetVersion,
   onActiveChange,
   onFallbackChange,
@@ -2773,6 +2847,13 @@ function OpenWorldScene({
   }, []);
 
   useEffect(() => {
+    mobileActions.current = {
+      strike,
+      strikeEnd,
+    };
+  }, [mobileActions, strike, strikeEnd]);
+
+  useEffect(() => {
     firing.current = false;
   }, [active, weapon]);
 
@@ -3648,7 +3729,7 @@ function OpenWorldScene({
         brokenPieces={brokenPiecesRef}
         resetVersion={resetVersion}
       />
-      <Player registerBody={registerBody} />
+      <Player registerBody={registerBody} mobileControls={mobileControls} />
       {weapon === "hammer" ? (
         <FirstPersonHammer swing={swing} />
       ) : weapon === "launcher" || weapon === "rocket" ? (
@@ -3659,6 +3740,7 @@ function OpenWorldScene({
       <MouseLook
         active={active}
         requestVersion={controlRequest}
+        mobileControls={mobileControls}
         onActiveChange={onActiveChange}
         onFallbackChange={onFallbackChange}
         onStrike={strike}
@@ -3718,7 +3800,239 @@ function PerformanceProbe({
   return null;
 }
 
+function MobileGameControls({
+  active,
+  weapon,
+  timeOfDay,
+  controls,
+  onStart,
+  onStrike,
+  onStrikeEnd,
+  onWeaponChange,
+  onTimeChange,
+  onReset,
+}: {
+  active: boolean;
+  weapon: WeaponName;
+  timeOfDay: TimeOfDay;
+  controls: MobileControlsRef;
+  onStart: () => void;
+  onStrike: () => void;
+  onStrikeEnd: () => void;
+  onWeaponChange: (weapon: WeaponName) => void;
+  onTimeChange: () => void;
+  onReset: () => void;
+}) {
+  const movePointer = useRef<number | null>(null);
+  const lookPointer = useRef<number | null>(null);
+  const moveOrigin = useRef({ x: 0, y: 0 });
+  const moveKnob = useRef({ x: 0, y: 0 });
+  const lastLook = useRef({ x: 0, y: 0 });
+  const [, setVisualTick] = useState(0);
+
+  const refresh = useCallback(() => {
+    setVisualTick((tick) => (tick + 1) % 1000);
+  }, []);
+
+  const stopMove = useCallback(() => {
+    movePointer.current = null;
+    moveKnob.current = { x: 0, y: 0 };
+    controls.current.moveX = 0;
+    controls.current.moveZ = 0;
+    controls.current.run = false;
+    refresh();
+  }, [controls, refresh]);
+
+  const handleMoveStart = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      movePointer.current = event.pointerId;
+      moveOrigin.current = { x: event.clientX, y: event.clientY };
+      moveKnob.current = { x: 0, y: 0 };
+      if (!active) {
+        onStart();
+      }
+      refresh();
+    },
+    [active, onStart, refresh],
+  );
+
+  const handleMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (movePointer.current !== event.pointerId) {
+        return;
+      }
+
+      event.preventDefault();
+      const maxDistance = 58;
+      const dx = event.clientX - moveOrigin.current.x;
+      const dy = event.clientY - moveOrigin.current.y;
+      const distance = Math.hypot(dx, dy);
+      const scale = distance > maxDistance ? maxDistance / distance : 1;
+      const x = dx * scale;
+      const y = dy * scale;
+      moveKnob.current = { x, y };
+      controls.current.moveX = MathUtils.clamp(x / maxDistance, -1, 1);
+      controls.current.moveZ = MathUtils.clamp(y / maxDistance, -1, 1);
+      controls.current.run = distance > maxDistance * 0.86;
+      refresh();
+    },
+    [controls, refresh],
+  );
+
+  const handleLookStart = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (event.target !== event.currentTarget) {
+        return;
+      }
+
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      lookPointer.current = event.pointerId;
+      lastLook.current = { x: event.clientX, y: event.clientY };
+      if (!active) {
+        onStart();
+      }
+    },
+    [active, onStart],
+  );
+
+  const handleLookMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (lookPointer.current !== event.pointerId) {
+        return;
+      }
+
+      event.preventDefault();
+      controls.current.lookDeltaX += event.clientX - lastLook.current.x;
+      controls.current.lookDeltaY += event.clientY - lastLook.current.y;
+      lastLook.current = { x: event.clientX, y: event.clientY };
+    },
+    [controls],
+  );
+
+  const handleLookEnd = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (lookPointer.current === event.pointerId) {
+      lookPointer.current = null;
+    }
+  }, []);
+
+  const handleFireStart = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      if (!active) {
+        onStart();
+      }
+      onStrike();
+    },
+    [active, onStart, onStrike],
+  );
+
+  const handleFireEnd = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      onStrikeEnd();
+    },
+    [onStrikeEnd],
+  );
+
+  const setJump = useCallback(
+    (jump: boolean) => {
+      controls.current.jump = jump;
+      refresh();
+    },
+    [controls, refresh],
+  );
+
+  const fireLabel =
+    weapon === "hammer" ? "Удар" : weapon === "mg" ? "Огонь" : "Пуск";
+  const timeLabel =
+    timeOfDay === "day" ? "День" : timeOfDay === "sunset" ? "Закат" : "Ночь";
+
+  return (
+    <div
+      className={`mobile-controls${active ? " is-active" : ""}`}
+      aria-label="Сенсорное управление"
+    >
+      <div
+        className="mobile-look-zone"
+        aria-hidden="true"
+        onPointerDown={handleLookStart}
+        onPointerMove={handleLookMove}
+        onPointerCancel={handleLookEnd}
+        onPointerUp={handleLookEnd}
+      />
+      <div
+        className="mobile-stick"
+        aria-label="Движение"
+        onPointerDown={handleMoveStart}
+        onPointerMove={handleMove}
+        onPointerCancel={stopMove}
+        onPointerUp={stopMove}
+      >
+        <span
+          style={{
+            transform: `translate(${moveKnob.current.x}px, ${moveKnob.current.y}px)`,
+          }}
+        />
+      </div>
+      <div className="mobile-actions" aria-label="Действия">
+        <button
+          className="mobile-fire"
+          type="button"
+          onPointerDown={handleFireStart}
+          onPointerCancel={handleFireEnd}
+          onPointerLeave={handleFireEnd}
+          onPointerUp={handleFireEnd}
+        >
+          {fireLabel}
+        </button>
+        <button
+          type="button"
+          onPointerDown={(event) => {
+            event.preventDefault();
+            setJump(true);
+          }}
+          onPointerCancel={() => setJump(false)}
+          onPointerLeave={() => setJump(false)}
+          onPointerUp={() => setJump(false)}
+        >
+          Прыжок
+        </button>
+      </div>
+      <div className="mobile-weapon-bar" aria-label="Оружие">
+        {([
+          ["hammer", "1", "Молоток"],
+          ["launcher", "2", "Граната"],
+          ["mg", "3", "Пулемёт"],
+          ["rocket", "4", "Ракета"],
+        ] as const).map(([nextWeapon, shortcut, label]) => (
+          <button
+            key={nextWeapon}
+            type="button"
+            className={weapon === nextWeapon ? "is-active" : undefined}
+            onClick={() => onWeaponChange(nextWeapon)}
+          >
+            <span>{shortcut}</span>
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="mobile-utility-bar" aria-label="Сервис">
+        <button type="button" onClick={onTimeChange}>{timeLabel}</button>
+        <button type="button" onClick={onReset}>Заново</button>
+      </div>
+    </div>
+  );
+}
+
 export function MakeAMessGame() {
+  const mobileControls = useRef<MobileControlsState>(createMobileControlsState());
+  const mobileActions = useRef<MobileActionBridge>({
+    strike: () => {},
+    strikeEnd: () => {},
+  });
   const [active, setActive] = useState(false);
   const [fallbackLook, setFallbackLook] = useState(false);
   const [controlRequest, setControlRequest] = useState(0);
@@ -3738,6 +4052,13 @@ export function MakeAMessGame() {
   const reset = useCallback(() => {
     setBrokenCount(0);
     setResetVersion((version) => version + 1);
+    mobileControls.current = createMobileControlsState();
+  }, []);
+
+  const cycleTimeOfDay = useCallback(() => {
+    setTimeOfDay((current) =>
+      current === "day" ? "sunset" : current === "sunset" ? "night" : "day",
+    );
   }, []);
 
   useEffect(() => {
@@ -3763,9 +4084,7 @@ export function MakeAMessGame() {
                 : "hammer",
         );
       } else if (event.code === "KeyN") {
-        setTimeOfDay((current) =>
-          current === "day" ? "sunset" : current === "sunset" ? "night" : "day",
-        );
+        cycleTimeOfDay();
       } else if (event.code === "KeyP") {
         setShowPerformance((current) => !current);
       }
@@ -3773,14 +4092,19 @@ export function MakeAMessGame() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [reset]);
+  }, [cycleTimeOfDay, reset]);
 
   const progress = Math.round((brokenCount / breakablePieces.length) * 100);
   const startPlaying = useCallback(() => {
     prepareGameAudio();
     setActive(true);
-    setFallbackLook(false);
+    const touchLike = isTouchLikeDevice();
+    setFallbackLook(touchLike);
     setControlRequest((version) => version + 1);
+    if (touchLike) {
+      return;
+    }
+
     // Request pointer lock synchronously inside the click gesture — some
     // browsers reject requests coming later from a React effect.
     const canvas = document.querySelector<HTMLCanvasElement>(
@@ -3843,6 +4167,8 @@ export function MakeAMessGame() {
                   timeOfDay={timeOfDay}
                   fallbackLook={fallbackLook}
                   controlRequest={controlRequest}
+                  mobileControls={mobileControls}
+                  mobileActions={mobileActions}
                   resetVersion={resetVersion}
                   onActiveChange={setActive}
                   onFallbackChange={setFallbackLook}
@@ -3921,6 +4247,19 @@ export function MakeAMessGame() {
         <i />
       </div>
 
+      <MobileGameControls
+        active={active}
+        weapon={weapon}
+        timeOfDay={timeOfDay}
+        controls={mobileControls}
+        onStart={startPlaying}
+        onStrike={() => mobileActions.current.strike()}
+        onStrikeEnd={() => mobileActions.current.strikeEnd()}
+        onWeaponChange={setWeapon}
+        onTimeChange={cycleTimeOfDay}
+        onReset={reset}
+      />
+
       <div className="controls-hint" aria-hidden="true">
         <span>WASD</span>
         Двигаться
@@ -3952,9 +4291,9 @@ export function MakeAMessGame() {
             <p>
               Целый квартал: шесть панельных четырёхэтажек, три дома, улицы
               с перекрёстками, гаражи с распахивающимися воротами, детские
-              площадки и дворы. Клавиша N — день, закат или ночь: в окнах
-              загорается свет. Клик — молоток, 2 — гранатомёт, 3 — пулемёт:
-              выгрызает дырки прямо в стенах.
+              площадки и дворы. На компьютере — WASD и мышь. На телефоне или
+              планшете — левый стик, правая зона обзора и крупные кнопки
+              оружия.
             </p>
             <button
               id="enter-game"
@@ -3974,10 +4313,6 @@ export function MakeAMessGame() {
           </div>
         </section>
       )}
-
-      <div className="mobile-game-note">
-        Открытая сцена рассчитана на клавиатуру и мышь.
-      </div>
     </main>
   );
 }

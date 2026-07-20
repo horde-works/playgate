@@ -1786,36 +1786,159 @@ button:focus-visible {
   background: transparent;
 }
 
-.mobile-game-note {
-  display: none;
+.mobile-controls {
   position: absolute;
-  right: 18px;
-  bottom: 18px;
-  left: 18px;
+  inset: 0;
   z-index: 30;
-  padding: 13px 15px;
-  border: 1px solid rgb(247 243 232 / 0.3);
-  background: rgb(15 17 16 / 0.86);
-  color: rgb(247 243 232 / 0.76);
-  font-size: 11px;
-  line-height: 1.45;
-  text-align: center;
+  display: none;
+  pointer-events: none;
+  touch-action: none;
+  user-select: none;
 }
 
-@media (max-width: 700px), (pointer: coarse) {
+.mobile-look-zone {
+  position: absolute;
+  top: 80px;
+  right: 0;
+  bottom: 0;
+  left: 34%;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.mobile-stick {
+  position: absolute;
+  bottom: max(24px, env(safe-area-inset-bottom));
+  left: max(22px, env(safe-area-inset-left));
+  width: 142px;
+  height: 142px;
+  border: 1px solid rgb(247 243 232 / 0.28);
+  border-radius: 999px;
+  background:
+    radial-gradient(circle, rgb(247 243 232 / 0.12), transparent 58%),
+    rgb(13 15 14 / 0.32);
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.24);
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.mobile-stick span {
+  position: absolute;
+  top: 43px;
+  left: 43px;
+  width: 56px;
+  height: 56px;
+  border: 1px solid rgb(247 243 232 / 0.58);
+  border-radius: 999px;
+  background: rgb(247 243 232 / 0.2);
+  box-shadow: 0 8px 22px rgb(0 0 0 / 0.28);
+}
+
+.mobile-actions {
+  position: absolute;
+  right: max(20px, env(safe-area-inset-right));
+  bottom: max(30px, env(safe-area-inset-bottom));
+  display: grid;
+  grid-template-columns: 86px 74px;
+  gap: 12px;
+  align-items: end;
+  pointer-events: auto;
+}
+
+.mobile-actions button,
+.mobile-weapon-bar button,
+.mobile-utility-bar button {
+  border: 1px solid rgb(247 243 232 / 0.34);
+  border-radius: 999px;
+  background: rgb(13 15 14 / 0.58);
+  color: #f7f3e8;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9px;
+  font-weight: 760;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  touch-action: none;
+}
+
+.mobile-actions button {
+  min-height: 74px;
+  backdrop-filter: blur(12px);
+}
+
+.mobile-actions .mobile-fire {
+  min-height: 86px;
+  border-color: rgb(255 104 49 / 0.78);
+  background: rgb(255 104 49 / 0.34);
+  box-shadow: 0 0 24px rgb(255 104 49 / 0.18);
+}
+
+.mobile-weapon-bar {
+  position: absolute;
+  right: max(20px, env(safe-area-inset-right));
+  bottom: calc(max(30px, env(safe-area-inset-bottom)) + 104px);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(74px, 86px));
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.mobile-weapon-bar button {
+  display: grid;
+  min-height: 42px;
+  place-items: center;
+  border-radius: 14px;
+  font-size: 7px;
+  line-height: 1.2;
+}
+
+.mobile-weapon-bar button span {
+  color: var(--acid);
+  font-size: 8px;
+}
+
+.mobile-weapon-bar button.is-active {
+  border-color: rgb(182 255 60 / 0.84);
+  background: rgb(182 255 60 / 0.18);
+}
+
+.mobile-utility-bar {
+  position: absolute;
+  top: max(78px, calc(env(safe-area-inset-top) + 68px));
+  right: max(18px, env(safe-area-inset-right));
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.mobile-utility-bar button {
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 12px;
+  font-size: 7px;
+}
+
+@media (max-width: 900px), (pointer: coarse) {
   .play-page {
     min-height: 560px;
   }
 
   .prototype-status,
   .game-objective,
-  .controls-hint,
-  .crosshair {
+  .controls-hint {
     display: none;
+  }
+
+  .mobile-controls.is-active {
+    display: block;
+  }
+
+  .crosshair {
+    opacity: 0.82;
   }
 
   .play-topbar {
     grid-template-columns: 1fr auto;
+    min-height: 58px;
   }
 
   .game-gate {
@@ -1828,8 +1951,8 @@ button:focus-visible {
     padding: 26px 22px;
   }
 
-  .mobile-game-note {
-    display: block;
+  .gate-card > p:not(:first-child) {
+    max-width: none;
   }
 }
 
