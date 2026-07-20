@@ -5,6 +5,8 @@ export interface StructuralPieceDefinition<Material extends string> {
   readonly material: Material;
   readonly position: StructuralVector3;
   readonly size: StructuralVector3;
+  readonly volume?: number;
+  readonly bearingArea?: number;
 }
 
 export interface StructuralMaterialProfile {
@@ -98,17 +100,16 @@ export function createStructuralSolver<Material extends string>(
   materialProfiles: Readonly<Record<Material, StructuralMaterialProfile>>,
 ): StructuralSolver {
   const pieceById = new Map(pieces.map((piece) => [piece.id, piece]));
+  const profiles = Object.values(
+    materialProfiles,
+  ) as StructuralMaterialProfile[];
   const maximumHorizontalReach = Math.max(
     CONTACT_TOLERANCE,
-    ...Object.values(materialProfiles).map(
-      (profile) => profile.sideAttachmentReach ?? 0,
-    ),
+    ...profiles.map((profile) => profile.sideAttachmentReach ?? 0),
   );
   const maximumVerticalReach = Math.max(
     CONTACT_TOLERANCE,
-    ...Object.values(materialProfiles).map(
-      (profile) => profile.maximumVerticalGap,
-    ),
+    ...profiles.map((profile) => profile.maximumVerticalGap),
   );
   const spatialBuckets = new Map<string, StructuralPieceDefinition<Material>[]>();
 
@@ -308,8 +309,8 @@ export function createStructuralSolver<Material extends string>(
         .map((piece) => piece.id),
     );
     const supportsByPiece = new Map<string, readonly string[]>();
-    const supportDepthByPiece = new Map(
-      [...stable].map((id) => [id, 0] as const),
+    const supportDepthByPiece = new Map<string, number>(
+      [...stable].map((id) => [id, 0]),
     );
     let changed = true;
 
@@ -404,9 +405,8 @@ export function createStructuralSolver<Material extends string>(
   const pieceWeight = (
     piece: StructuralPieceDefinition<Material>,
   ): number =>
-    piece.size[0] *
-    piece.size[1] *
-    piece.size[2] *
+    (piece.volume ??
+      piece.size[0] * piece.size[1] * piece.size[2]) *
     materialProfiles[piece.material].density;
 
   const supportCapacity = (
@@ -419,8 +419,16 @@ export function createStructuralSolver<Material extends string>(
 
     const horizontalSize = Math.max(piece.size[0], piece.size[2]);
     const columnFactor = piece.size[1] > horizontalSize * 1.15 ? 2 : 1;
+    const boundingVolume = piece.size[0] * piece.size[1] * piece.size[2];
+    const fillFraction = Math.min(
+      1,
+      (piece.volume ?? boundingVolume) / Math.max(1e-6, boundingVolume),
+    );
     return (
-      piece.size[0] * piece.size[2] * profile.compressionStrength * columnFactor
+      (piece.bearingArea ?? piece.size[0] * piece.size[2]) *
+      profile.compressionStrength *
+      columnFactor *
+      Math.pow(fillFraction, 0.72)
     );
   };
 
@@ -445,8 +453,36 @@ export function createStructuralSolver<Material extends string>(
         continue;
       }
 
-      const share = load / supports.length;
-      for (const supportId of supports) {
+      const weightedSupports = supports.map((supportId) => {
+        const support = pieceById.get(supportId);
+        if (!support) {
+          return { supportId, weight: 0 };
+        }
+        const overlapX = intervalOverlap(piece, support, 0);
+        const overlapZ = intervalOverlap(piece, support, 2);
+        const contactArea =
+          overlapX && overlapZ
+            ? Math.max(0.01, overlapX[1] - overlapX[0]) *
+              Math.max(0.01, overlapZ[1] - overlapZ[0])
+            : 0.01;
+        const fill =
+          (support.bearingArea ??
+            support.size[0] * support.size[2]) /
+          Math.max(1e-6, support.size[0] * support.size[2]);
+        return {
+          supportId,
+          weight: contactArea * Math.max(0.04, Math.min(1, fill)),
+        };
+      });
+      const totalWeight = weightedSupports.reduce(
+        (total, support) => total + support.weight,
+        0,
+      );
+      for (const { supportId, weight } of weightedSupports) {
+        const share =
+          totalWeight > 0
+            ? (load * weight) / totalWeight
+            : load / supports.length;
         loadByPiece.set(
           supportId,
           (loadByPiece.get(supportId) ?? 0) + share,

@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  CONTACT_SEPARATION_MS,
+  isNewPhysicalContact,
   measureImpactApproachSpeed,
   shouldPlayDebrisImpact,
 } from "../games/make-a-mess/src/game/impactSoundPolicy.ts";
@@ -76,5 +78,39 @@ test("fast sliding across a floor is not treated as a landing", () => {
       minimumIntensity: 0.18,
     }),
     false,
+  );
+});
+
+test("a rebound moving away from the contact is not a second impact", () => {
+  const approachSpeed = measureImpactApproachSpeed(
+    {
+      linear: { x: 0, y: 3.5, z: 0 },
+      angular: { x: 0, y: 0, z: 0 },
+    },
+    { x: 0, y: 1, z: 0 },
+    [0.8, 0.4, 0.4],
+  );
+
+  assert.equal(approachSpeed, 0);
+});
+
+test("continuous solver force stays one physical contact", () => {
+  const firstContactAt = 1_000;
+
+  assert.equal(isNewPhysicalContact(firstContactAt, undefined), true);
+  assert.equal(isNewPhysicalContact(firstContactAt + 16, firstContactAt), false);
+  assert.equal(
+    isNewPhysicalContact(
+      firstContactAt + CONTACT_SEPARATION_MS,
+      firstContactAt,
+    ),
+    false,
+  );
+  assert.equal(
+    isNewPhysicalContact(
+      firstContactAt + CONTACT_SEPARATION_MS + 1,
+      firstContactAt,
+    ),
+    true,
   );
 });

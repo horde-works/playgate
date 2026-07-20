@@ -1,7 +1,12 @@
 import type { NextConfig } from "next";
 
+const isFirebaseStaticExport = process.env.FIREBASE_STATIC_EXPORT === "1";
+
 const nextConfig: NextConfig = {
-  /* config options here */
+  output: isFirebaseStaticExport ? "export" : undefined,
+  typescript: isFirebaseStaticExport
+    ? { tsconfigPath: "tsconfig.firebase.json" }
+    : undefined,
 };
 
 export default nextConfig;

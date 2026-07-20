@@ -69,3 +69,62 @@ test("a beam fails when its remaining support exceeds the material cantilever", 
 
   assert.equal(settled.has("beam"), true);
 });
+
+test("compression follows the surviving bearing area", () => {
+  const loadProfiles = {
+    ground: profiles.ground,
+    post: {
+      density: 1,
+      compressionStrength: 5,
+      cantilever: 0.1,
+      maximumVerticalGap: 0.15,
+      carriesAttachments: true,
+    },
+    load: {
+      density: 10,
+      compressionStrength: 100,
+      cantilever: 0.1,
+      maximumVerticalGap: 0.15,
+    },
+  };
+  const base = [
+    {
+      id: "ground",
+      material: "ground",
+      position: [0, 0, 0],
+      size: [8, 0.2, 8],
+    },
+    {
+      id: "load",
+      material: "load",
+      position: [0, 1.3, 0],
+      size: [1, 0.4, 1],
+    },
+  ];
+  const fullPost = {
+    id: "post",
+    material: "post",
+    position: [0, 0.7, 0],
+    size: [1, 1, 1],
+    volume: 1,
+    bearingArea: 1,
+  };
+  const holedPost = {
+    ...fullPost,
+    bearingArea: 0.05,
+  };
+
+  const full = createStructuralSolver(
+    [base[0], fullPost, base[1]],
+    loadProfiles,
+  ).resolve(new Set());
+  const holed = createStructuralSolver(
+    [base[0], holedPost, base[1]],
+    loadProfiles,
+  ).resolve(new Set());
+
+  assert.equal(full.has("post"), false);
+  assert.equal(full.has("load"), false);
+  assert.equal(holed.has("post"), true);
+  assert.equal(holed.has("load"), true);
+});

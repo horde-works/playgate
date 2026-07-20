@@ -1,5 +1,14 @@
-import { Euler, MathUtils, Quaternion, Vector3 } from "three";
+import { Euler, Quaternion, Vector3 } from "three";
 import type { BreakableMaterial } from "./destructionScene";
+import {
+  applyVoxelDamage,
+  createSolidVoxelBody,
+  createVoxelBodyFromComponent,
+  splitVoxelComponents,
+  type VoxelBody,
+  type VoxelBox,
+  type VoxelVector3,
+} from "./voxelFracture.ts";
 
 export interface ShardDefinition {
   readonly id: string;
@@ -10,6 +19,9 @@ export interface ShardDefinition {
   readonly quaternion: readonly [number, number, number, number];
   readonly linearVelocity: readonly [number, number, number];
   readonly angularVelocity: readonly [number, number, number];
+  readonly voxelBody?: VoxelBody;
+  readonly boxes?: readonly VoxelBox[];
+  readonly volume?: number;
 }
 
 export interface ShardSource {
@@ -17,6 +29,7 @@ export interface ShardSource {
   readonly material: BreakableMaterial;
   readonly color: string;
   readonly size: readonly [number, number, number];
+  readonly voxelBody?: VoxelBody;
 }
 
 export type FractureCause = "impact" | "blast" | "fall";
@@ -31,29 +44,27 @@ export interface RemnantDefinition {
   readonly position: readonly [number, number, number];
   readonly quaternion: readonly [number, number, number, number];
   readonly detached: boolean;
+  readonly voxelBody?: VoxelBody;
+  readonly boxes?: readonly VoxelBox[];
+  readonly volume?: number;
 }
 
-export const BLAST_RADIUS = 2.35;
-export const BLAST_PUSH_RADIUS = 4.4;
-export const MAX_LIVE_SHARDS = 240;
+export const BLAST_RADIUS = 3.25;
+export const BLAST_PUSH_RADIUS = 5.8;
+export const GRENADE_DAMAGE_ENERGY = 22;
+const ROCKET_VOLUME_SCALE = Math.cbrt(5);
+export const ROCKET_BLAST_RADIUS = BLAST_RADIUS * ROCKET_VOLUME_SCALE;
+export const ROCKET_BLAST_PUSH_RADIUS = BLAST_PUSH_RADIUS * ROCKET_VOLUME_SCALE;
+export const ROCKET_DAMAGE_ENERGY = GRENADE_DAMAGE_ENERGY * 5;
+export const MAX_BLAST_RADIUS = Math.max(BLAST_RADIUS, ROCKET_BLAST_RADIUS);
+export const MAX_LIVE_SHARDS = 180;
+export const MAX_LIVE_SHARD_BOXES = 900;
 export const VOLUME_BREAK_FRACTION = 0.45;
 export const MG_FIRE_INTERVAL = 0.11;
 export const MG_RANGE = 70;
 
-export const blastFactorByMaterial: Record<BreakableMaterial, number> = {
-  glass: 1.5,
-  plaster: 1.3,
-  wood: 1.05,
-  brick: 0.9,
-  stone: 0.75,
-  concrete: 0.75,
-  steel: 0.6,
-  soil: 0.45,
-  earth: 0.5,
-  asphalt: 0.6,
-};
-
 export const bulletHoleRadius: Partial<Record<BreakableMaterial, number>> = {
+  glass: 0.24,
   brick: 0.19,
   stone: 0.18,
   concrete: 0.18,
@@ -64,7 +75,74 @@ export const bulletHoleRadius: Partial<Record<BreakableMaterial, number>> = {
   asphalt: 0.24,
 };
 
+/**
+ * Relative fracture energy, calibrated around ordinary dry construction wood.
+ * These are not compressive-strength figures: they model how much delivered
+ * energy the material absorbs before a comparable volume separates.
+ */
+export const fractureEnergyByMaterial: Record<
+  BreakableMaterial,
+  number
+> = {
+  glass: 0.18,
+  plaster: 0.38,
+  wood: 0.72,
+  soil: 0.9,
+  earth: 0.95,
+  brick: 1.15,
+  asphalt: 1.5,
+  concrete: 2.4,
+  stone: 2.8,
+  steel: 24,
+};
+
+/**
+ * Radius is derived from energy because removed volume grows roughly with
+ * radius cubed. Every weapon and every body state uses this same conversion.
+ */
+export const damageRadiusScaleByMaterial = Object.fromEntries(
+  Object.entries(fractureEnergyByMaterial).map(([material, energy]) => [
+    material,
+    Math.cbrt(1 / energy),
+  ]),
+) as Record<BreakableMaterial, number>;
+
+export function grenadeEnergyAtDistance(surfaceDistance: number): number {
+  return blastEnergyAtDistance(
+    surfaceDistance,
+    BLAST_RADIUS,
+    GRENADE_DAMAGE_ENERGY,
+  );
+}
+
+export function rocketEnergyAtDistance(surfaceDistance: number): number {
+  return blastEnergyAtDistance(
+    surfaceDistance,
+    ROCKET_BLAST_RADIUS,
+    ROCKET_DAMAGE_ENERGY,
+  );
+}
+
+export function blastEnergyAtDistance(
+  surfaceDistance: number,
+  radius: number,
+  energy: number,
+): number {
+  if (surfaceDistance >= radius) {
+    return 0;
+  }
+  const normalizedDistance = Math.max(
+    0,
+    surfaceDistance / radius,
+  );
+  return (
+    energy *
+    Math.pow(1 - normalizedDistance, 1.15)
+  );
+}
+
 export const crumbleOnLanding: ReadonlySet<BreakableMaterial> = new Set([
+  "wood",
   "brick",
   "stone",
   "plaster",
@@ -87,6 +165,7 @@ const landingDamageByMaterial: Partial<
   glass: { chipSpeed: 2.2, shatterSpeed: 3.8, minimumIntensity: 0.12 },
   plaster: { chipSpeed: 3.2, shatterSpeed: 5.6, minimumIntensity: 0.14 },
   brick: { chipSpeed: 4.8, shatterSpeed: 7.6, minimumIntensity: 0.15 },
+  wood: { chipSpeed: 3.8, shatterSpeed: 6.4, minimumIntensity: 0.11 },
   earth: { chipSpeed: 5.2, shatterSpeed: 8.2, minimumIntensity: 0.15 },
   concrete: { chipSpeed: 6.8, shatterSpeed: 10.5, minimumIntensity: 0.16 },
   asphalt: { chipSpeed: 7.4, shatterSpeed: 11.5, minimumIntensity: 0.17 },
@@ -118,18 +197,94 @@ export const groundMaterials: ReadonlySet<BreakableMaterial> = new Set([
   "asphalt",
 ]);
 
-const MAX_SHARDS_PER_PIECE = 12;
-const MIN_SHARD_SIDE = 0.07;
-const MIN_REMNANT_SIDE = 0.05;
+const MIN_REMNANT_VOXELS = 2;
+
+const voxelSizeByMaterial: Record<BreakableMaterial, number> = {
+  glass: 0.09,
+  plaster: 0.11,
+  wood: 0.12,
+  brick: 0.12,
+  stone: 0.15,
+  concrete: 0.14,
+  steel: 0.18,
+  soil: 0.18,
+  earth: 0.16,
+  asphalt: 0.16,
+};
+
+const damageRoughnessByMaterial: Record<BreakableMaterial, number> = {
+  glass: 0.42,
+  plaster: 0.34,
+  wood: 0.18,
+  brick: 0.3,
+  stone: 0.26,
+  concrete: 0.27,
+  steel: 0.12,
+  soil: 0.38,
+  earth: 0.36,
+  asphalt: 0.25,
+};
 
 interface RemnantSpec {
   readonly size: readonly [number, number, number];
   readonly localCenter: readonly [number, number, number];
+  readonly voxelBody: VoxelBody;
+  readonly boxes: readonly VoxelBox[];
+  readonly volume: number;
 }
 
 export interface CarveResult {
   readonly kept: readonly RemnantSpec[];
   readonly removedVolume: number;
+}
+
+export interface CarveOptions {
+  readonly material?: BreakableMaterial;
+  readonly body?: VoxelBody;
+  readonly direction?: VoxelVector3;
+  readonly penetration?: number;
+  readonly roughness?: number;
+}
+
+export interface DamageBodyState {
+  readonly position: Vector3;
+  readonly quaternion: Quaternion;
+  readonly linearVelocity: Vector3;
+  readonly angularVelocity: Vector3;
+}
+
+export interface DamageBodyRequest {
+  readonly idPrefix: string;
+  readonly worldPoint: Vector3;
+  readonly radius: number;
+  readonly burstSpeed: number;
+  readonly direction?: Vector3;
+  readonly penetration?: number;
+  readonly roughness?: number;
+}
+
+export interface BodyDamageResult {
+  readonly fragments: readonly ShardDefinition[];
+  readonly removedVolume: number;
+}
+
+export function closestPointOnOrientedBox(
+  point: Vector3,
+  position: Vector3,
+  size: readonly [number, number, number],
+  quaternion: Quaternion,
+): Vector3 {
+  const inverseRotation = quaternion.clone().invert();
+  const local = point
+    .clone()
+    .sub(position)
+    .applyQuaternion(inverseRotation);
+  local.set(
+    Math.max(-size[0] / 2, Math.min(size[0] / 2, local.x)),
+    Math.max(-size[1] / 2, Math.min(size[1] / 2, local.y)),
+    Math.max(-size[2] / 2, Math.min(size[2] / 2, local.z)),
+  );
+  return local.applyQuaternion(quaternion).add(position);
 }
 
 export function distanceToOrientedBox(
@@ -138,17 +293,18 @@ export function distanceToOrientedBox(
   size: readonly [number, number, number],
   rotation?: readonly [number, number, number],
 ): number {
-  const local = point.clone().sub(new Vector3(...position));
-  if (rotation) {
-    local.applyQuaternion(
-      new Quaternion().setFromEuler(new Euler(...rotation)).invert(),
-    );
-  }
-
-  const dx = Math.max(0, Math.abs(local.x) - size[0] / 2);
-  const dy = Math.max(0, Math.abs(local.y) - size[1] / 2);
-  const dz = Math.max(0, Math.abs(local.z) - size[2] / 2);
-  return Math.hypot(dx, dy, dz);
+  const worldPosition = new Vector3(...position);
+  const quaternion = rotation
+    ? new Quaternion().setFromEuler(new Euler(...rotation))
+    : new Quaternion();
+  return point.distanceTo(
+    closestPointOnOrientedBox(
+      point,
+      worldPosition,
+      size,
+      quaternion,
+    ),
+  );
 }
 
 export function blastNoise(value: string, salt: number): number {
@@ -162,187 +318,212 @@ export function blastNoise(value: string, salt: number): number {
   return ((hash >>> 0) % 1000) / 1000;
 }
 
+export function trimShardBudget(
+  shards: readonly ShardDefinition[],
+  maximumBodies = MAX_LIVE_SHARDS,
+  maximumBoxes = MAX_LIVE_SHARD_BOXES,
+): readonly ShardDefinition[] {
+  const kept: ShardDefinition[] = [];
+  let boxCount = 0;
+
+  for (let index = shards.length - 1; index >= 0; index -= 1) {
+    if (kept.length >= maximumBodies) {
+      break;
+    }
+    const shard = shards[index];
+    const cost = Math.max(1, shard.boxes?.length ?? 1);
+    if (boxCount + cost > maximumBoxes && kept.length > 0) {
+      continue;
+    }
+    kept.push(shard);
+    boxCount += cost;
+  }
+
+  return kept.reverse();
+}
+
 export function carveBox(
   size: readonly [number, number, number],
   localPoint: Vector3,
   radius: number,
   salt: string,
+  options: CarveOptions = {},
 ): CarveResult | null {
-  const point = [localPoint.x, localPoint.y, localPoint.z];
-  const holeMin: number[] = [];
-  const holeMax: number[] = [];
-
-  for (let axis = 0; axis < 3; axis += 1) {
-    const half = radius * (0.8 + blastNoise(`${salt}:${axis}`, 29) * 0.35);
-    const low = Math.max(-size[axis] / 2, point[axis] - half);
-    const high = Math.min(size[axis] / 2, point[axis] + half);
-    if (high - low < 0.015) {
-      return null;
-    }
-    holeMin.push(low);
-    holeMax.push(high);
-  }
-
-  const kept: RemnantSpec[] = [];
-  const pushBox = (minimum: readonly number[], maximum: readonly number[]) => {
-    const dimensions = [
-      maximum[0] - minimum[0],
-      maximum[1] - minimum[1],
-      maximum[2] - minimum[2],
-    ];
-    if (
-      dimensions[0] < MIN_REMNANT_SIDE ||
-      dimensions[1] < MIN_REMNANT_SIDE ||
-      dimensions[2] < MIN_REMNANT_SIDE
-    ) {
-      return;
-    }
-    kept.push({
-      size: [dimensions[0], dimensions[1], dimensions[2]],
-      localCenter: [
-        (minimum[0] + maximum[0]) / 2,
-        (minimum[1] + maximum[1]) / 2,
-        (minimum[2] + maximum[2]) / 2,
-      ],
-    });
-  };
-
-  const boxMin = [-size[0] / 2, -size[1] / 2, -size[2] / 2];
-  const boxMax = [size[0] / 2, size[1] / 2, size[2] / 2];
-  pushBox(boxMin, [holeMin[0], boxMax[1], boxMax[2]]);
-  pushBox([holeMax[0], boxMin[1], boxMin[2]], boxMax);
-  pushBox(
-    [holeMin[0], boxMin[1], boxMin[2]],
-    [holeMax[0], holeMin[1], boxMax[2]],
-  );
-  pushBox(
-    [holeMin[0], holeMax[1], boxMin[2]],
-    [holeMax[0], boxMax[1], boxMax[2]],
-  );
-  pushBox(
-    [holeMin[0], holeMin[1], boxMin[2]],
-    [holeMax[0], holeMax[1], holeMin[2]],
-  );
-  pushBox(
-    [holeMin[0], holeMin[1], holeMax[2]],
-    [holeMax[0], holeMax[1], boxMax[2]],
-  );
-
-  const total = size[0] * size[1] * size[2];
-  const keptVolume = kept.reduce(
-    (sum, box) => sum + box.size[0] * box.size[1] * box.size[2],
-    0,
-  );
-
-  return { kept, removedVolume: total - keptVolume };
-}
-
-function shardCellSize(
-  material: BreakableMaterial,
-  cause: FractureCause,
-): number {
-  switch (material) {
-    case "glass":
-      return 0.34;
-    case "wood":
-      return 0.3;
-    case "concrete":
-      // A fallen concrete block cracks into a few heavy pieces rather than
-      // turning into gravel on the first hard landing.
-      return cause === "fall" ? 0.44 : 0.21;
-    case "steel":
-      return 0.5;
-    case "soil":
-      return Number.POSITIVE_INFINITY;
-    default:
-      return 0.21;
-  }
-}
-
-function shardGridCounts(
-  size: readonly [number, number, number],
-  material: BreakableMaterial,
-  cause: FractureCause,
-): [number, number, number] | null {
-  const cell = shardCellSize(material, cause);
-  if (!Number.isFinite(cell)) {
-    return null;
-  }
-
-  const counts = [0, 1, 2].map((axis) => {
-    let count = MathUtils.clamp(Math.round(size[axis] / cell), 1, 6);
-    while (count > 1 && size[axis] / count < MIN_SHARD_SIDE) {
-      count -= 1;
-    }
-    return count;
-  }) as [number, number, number];
-
-  while (counts[0] * counts[1] * counts[2] > MAX_SHARDS_PER_PIECE) {
-    const largestAxis = counts.indexOf(Math.max(...counts)) as 0 | 1 | 2;
-    counts[largestAxis] -= 1;
-  }
-
-  if (counts[0] * counts[1] * counts[2] < 2) {
-    return null;
-  }
-
-  return counts;
-}
-
-interface ShardSlice {
-  readonly center: number;
-  readonly size: number;
-}
-
-function uniformSlices(length: number, count: number): ShardSlice[] {
-  return Array.from({ length: count }, (_, index) => ({
-    center: ((index + 0.5) / count - 0.5) * length,
-    size: length / count,
-  }));
-}
-
-function localizedWoodSlices(
-  length: number,
-  impactCoordinate: number,
-  crossSection: number,
-): ShardSlice[] {
-  const half = length / 2;
-  const minimumEnd = Math.min(0.12, length / 5);
-  const damageHalf = MathUtils.clamp(
-    Math.max(crossSection * 0.55, length * 0.035),
-    minimumEnd,
-    Math.min(0.38, length * 0.16),
-  );
-  const impact = MathUtils.clamp(
-    impactCoordinate,
-    -half + damageHalf + minimumEnd,
-    half - damageHalf - minimumEnd,
-  );
-  const boundaries = [
-    -half,
-    impact - damageHalf,
-    impact,
-    impact + damageHalf,
-    half,
-  ];
-
-  return boundaries.slice(0, -1).map((start, index) => {
-    const end = boundaries[index + 1];
-    return {
-      center: (start + end) / 2,
-      size: end - start,
-    };
+  const material = options.material ?? "brick";
+  const body =
+    options.body ??
+    createSolidVoxelBody(size, voxelSizeByMaterial[material]);
+  const result = applyVoxelDamage(body, {
+    point: [localPoint.x, localPoint.y, localPoint.z],
+    radius,
+    seed: salt,
+    roughness: options.roughness ?? 0.26,
+    direction: options.direction,
+    penetration: options.penetration,
   });
+  if (result.removedVoxelCount === 0) {
+    return null;
+  }
+
+  const kept = result.components
+    .filter((component) => component.voxelCount >= MIN_REMNANT_VOXELS)
+    .map((component): RemnantSpec => {
+      const extracted = createVoxelBodyFromComponent(result.body, component);
+      const localComponent = splitVoxelComponents(extracted.body)[0];
+      return {
+        size: extracted.body.size,
+        localCenter: extracted.localCenter,
+        voxelBody: extracted.body,
+        boxes: localComponent?.boxes ?? [],
+        volume: component.volume,
+      };
+    });
+
+  return {
+    kept,
+    removedVolume: result.removedVolume,
+  };
 }
 
-export function isElongatedWood(source: ShardSource): boolean {
-  if (source.material !== "wood") {
-    return false;
+/**
+ * The single material-damage contract used for attached, falling and settled
+ * bodies. Motion is merely input state: it never changes which voxels break.
+ */
+export function damageBody(
+  source: ShardSource,
+  state: DamageBodyState,
+  request: DamageBodyRequest,
+): BodyDamageResult | null {
+  const inverseRotation = state.quaternion.clone().invert();
+  const localPoint = request.worldPoint
+    .clone()
+    .sub(state.position)
+    .applyQuaternion(inverseRotation);
+  const localDirection = request.direction
+    ?.clone()
+    .applyQuaternion(inverseRotation)
+    .normalize();
+  const result = carveBox(
+    source.size,
+    localPoint,
+    request.radius * damageRadiusScaleByMaterial[source.material],
+    request.idPrefix,
+    {
+      material: source.material,
+      body: source.voxelBody,
+      direction: localDirection
+        ? [localDirection.x, localDirection.y, localDirection.z]
+        : undefined,
+      penetration: request.penetration,
+      roughness:
+        request.roughness ?? damageRoughnessByMaterial[source.material],
+    },
+  );
+  if (!result) {
+    return null;
   }
-  const orderedSides = [...source.size].sort((left, right) => right - left);
-  return (
-    orderedSides[0] >= 0.8 &&
-    orderedSides[0] / Math.max(0.01, orderedSides[1]) >= 2.2
+
+  const relative = new Vector3();
+  const spinVelocity = new Vector3();
+  const outward = new Vector3();
+  const fragments = result.kept
+    .slice(0, 14)
+    .map((fragment, index): ShardDefinition => {
+      const world = new Vector3(...fragment.localCenter)
+        .applyQuaternion(state.quaternion)
+        .add(state.position);
+      relative.copy(world).sub(state.position);
+      spinVelocity.copy(state.angularVelocity).cross(relative);
+      outward.copy(world).sub(request.worldPoint);
+      const distance = Math.max(0.12, outward.length());
+      if (outward.lengthSq() < 1e-8) {
+        outward.set(
+          blastNoise(`${request.idPrefix}:${index}`, 3) - 0.5,
+          0.45,
+          blastNoise(`${request.idPrefix}:${index}`, 7) - 0.5,
+        );
+      }
+      outward.normalize();
+
+      const id = `${request.idPrefix}:${index}`;
+      const noise = blastNoise(id, 11);
+      const speed =
+        (request.burstSpeed * (0.34 + noise * 0.46)) /
+        (0.72 + distance);
+      const tumble = 1.5 + noise * 4.5;
+      return {
+        id,
+        material: source.material,
+        color: source.color,
+        size: fragment.size,
+        voxelBody: fragment.voxelBody,
+        boxes: fragment.boxes,
+        volume: fragment.volume,
+        position: [world.x, world.y, world.z],
+        quaternion: [
+          state.quaternion.x,
+          state.quaternion.y,
+          state.quaternion.z,
+          state.quaternion.w,
+        ],
+        linearVelocity: [
+          state.linearVelocity.x + spinVelocity.x + outward.x * speed,
+          state.linearVelocity.y +
+            spinVelocity.y +
+            outward.y * speed +
+            speed * 0.16,
+          state.linearVelocity.z + spinVelocity.z + outward.z * speed,
+        ],
+        angularVelocity: [
+          state.angularVelocity.x + (noise - 0.5) * tumble,
+          state.angularVelocity.y +
+            (blastNoise(id, 5) - 0.5) * tumble,
+          state.angularVelocity.z +
+            (blastNoise(id, 3) - 0.5) * tumble,
+        ],
+      };
+    });
+
+  return {
+    fragments,
+    removedVolume: result.removedVolume,
+  };
+}
+
+export function impactDamageRadius(
+  source: ShardSource,
+  cause: FractureCause,
+  strength: number,
+): number {
+  const body =
+    source.voxelBody ??
+    createSolidVoxelBody(
+      source.size,
+      voxelSizeByMaterial[source.material],
+    );
+  const orderedAxes = ([0, 1, 2] as const).toSorted(
+    (left, right) => source.size[right] - source.size[left],
+  );
+  const crossSection = Math.max(
+    body.cellSize[orderedAxes[1]],
+    Math.min(source.size[orderedAxes[1]], source.size[orderedAxes[2]]),
+  );
+  const causeScale =
+    cause === "blast" ? 0.06 : cause === "fall" ? 0.19 : 0.045;
+  const materialScale = damageRadiusScaleByMaterial[source.material];
+  const minimumRadius =
+    Math.max(...body.cellSize) *
+    0.72 *
+    (cause === "fall" ? 1 / materialScale : 1);
+  const maximumRadius =
+    cause === "fall"
+      ? (crossSection * 0.72) / materialScale
+      : cause === "blast"
+        ? 1.05
+        : 0.72;
+  return Math.max(
+    minimumRadius,
+    Math.min(maximumRadius, strength * causeScale),
   );
 }
 
@@ -357,100 +538,38 @@ export function buildShards(
   burstSpeed: number,
   cause: FractureCause = "impact",
 ): ShardDefinition[] | null {
-  const counts = shardGridCounts(source.size, source.material, cause);
-  if (!counts) {
+  if (source.material === "soil") {
     return null;
   }
-
-  const localImpact = burstCenter
-    .clone()
-    .sub(bodyPosition)
-    .applyQuaternion(bodyQuaternion.clone().invert());
-  const orderedAxes = ([0, 1, 2] as const).sort(
-    (left, right) => source.size[right] - source.size[left],
+  const body =
+    source.voxelBody ??
+    createSolidVoxelBody(
+      source.size,
+      voxelSizeByMaterial[source.material],
+    );
+  const damageRadius = impactDamageRadius(source, cause, burstSpeed);
+  const result = damageBody(
+    { ...source, voxelBody: body },
+    {
+      position: bodyPosition,
+      quaternion: bodyQuaternion,
+      linearVelocity: baseLinearVelocity,
+      angularVelocity: baseAngularVelocity,
+    },
+    {
+      idPrefix,
+      worldPoint: burstCenter,
+      radius: damageRadius,
+      burstSpeed,
+      direction:
+        cause === "fall"
+          ? new Vector3(0, 1, 0).applyQuaternion(bodyQuaternion)
+          : undefined,
+      penetration: cause === "fall" ? source.size[1] : undefined,
+    },
   );
-  const longestAxis = orderedAxes[0];
-  const secondLongest = source.size[orderedAxes[1]];
-  const localizeWoodBlast =
-    cause === "blast" && isElongatedWood(source);
-  const impactCoordinates = [localImpact.x, localImpact.y, localImpact.z];
-  const slices = ([0, 1, 2] as const).map((axis) => {
-    if (localizeWoodBlast) {
-      return axis === longestAxis
-        ? localizedWoodSlices(
-            source.size[axis],
-            impactCoordinates[axis],
-            secondLongest,
-          )
-        : uniformSlices(source.size[axis], 1);
-    }
-    return uniformSlices(source.size[axis], counts[axis]);
-  });
-
-  const shards: ShardDefinition[] = [];
-  const local = new Vector3();
-  const world = new Vector3();
-  const relative = new Vector3();
-  const spinVelocity = new Vector3();
-  const outward = new Vector3();
-  const shrink = localizeWoodBlast ? 0.975 : 0.94;
-  let index = 0;
-
-  for (let ix = 0; ix < slices[0].length; ix += 1) {
-    for (let iy = 0; iy < slices[1].length; iy += 1) {
-      for (let iz = 0; iz < slices[2].length; iz += 1) {
-        const cell = [slices[0][ix], slices[1][iy], slices[2][iz]] as const;
-        local.set(
-          cell[0].center,
-          cell[1].center,
-          cell[2].center,
-        );
-        world.copy(local).applyQuaternion(bodyQuaternion).add(bodyPosition);
-        relative.copy(world).sub(bodyPosition);
-        spinVelocity.copy(baseAngularVelocity).cross(relative);
-        outward.copy(world).sub(burstCenter);
-        const distance = Math.max(0.14, outward.length());
-        outward.normalize();
-
-        const id = `${idPrefix}:${index}`;
-        const noise = blastNoise(id, 11);
-        const speed = (burstSpeed * (0.5 + noise * 0.7)) / (0.7 + distance);
-        const tumble = 2.5 + noise * 7;
-
-        shards.push({
-          id,
-          material: source.material,
-          color: source.color,
-          size: [
-            cell[0].size * shrink,
-            cell[1].size * shrink,
-            cell[2].size * shrink,
-          ],
-          position: [world.x, world.y, world.z],
-          quaternion: [
-            bodyQuaternion.x,
-            bodyQuaternion.y,
-            bodyQuaternion.z,
-            bodyQuaternion.w,
-          ],
-          linearVelocity: [
-            baseLinearVelocity.x + spinVelocity.x + outward.x * speed,
-            baseLinearVelocity.y +
-              spinVelocity.y +
-              outward.y * speed +
-              speed * 0.22,
-            baseLinearVelocity.z + spinVelocity.z + outward.z * speed,
-          ],
-          angularVelocity: [
-            baseAngularVelocity.x + (noise - 0.5) * tumble,
-            baseAngularVelocity.y + (blastNoise(id, 5) - 0.5) * tumble,
-            baseAngularVelocity.z + (blastNoise(id, 3) - 0.5) * tumble,
-          ],
-        });
-        index += 1;
-      }
-    }
+  if (!result) {
+    return null;
   }
-
-  return shards;
+  return [...result.fragments];
 }

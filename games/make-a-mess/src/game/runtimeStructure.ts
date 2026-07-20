@@ -20,11 +20,38 @@ export interface RuntimeStructuralFragment<Material extends string> {
   readonly size: StructuralVector3;
   readonly quaternion?: StructuralQuaternion;
   readonly detached: boolean;
+  readonly volume?: number;
+  readonly boxes?: readonly {
+    readonly center: StructuralVector3;
+    readonly size: StructuralVector3;
+  }[];
 }
 
 export interface RuntimeStructuralResult {
   readonly brokenPieceIds: ReadonlySet<string>;
   readonly detachedFragmentIds: ReadonlySet<string>;
+}
+
+export function fragmentBearingArea<Material extends string>(
+  fragment: RuntimeStructuralFragment<Material>,
+): number {
+  if (!fragment.boxes || fragment.boxes.length === 0) {
+    return fragment.size[0] * fragment.size[2];
+  }
+
+  const bottom = -fragment.size[1] / 2;
+  const tolerance = Math.max(0.025, fragment.size[1] * 0.03);
+  const area = fragment.boxes
+    .filter(
+      (box) =>
+        Math.abs(box.center[1] - box.size[1] / 2 - bottom) <=
+        tolerance,
+    )
+    .reduce((total, box) => total + box.size[0] * box.size[2], 0);
+  return Math.min(
+    fragment.size[0] * fragment.size[2],
+    Math.max(0.0001, area),
+  );
 }
 
 export function rotatedBoxAabbSize(
@@ -81,12 +108,23 @@ export function resolveRuntimeStructure<Material extends string>(
     activeFragments.map((fragment) => [fragment.id, fragment]),
   );
   const structuralFragments: StructuralPieceDefinition<Material>[] =
-    activeFragments.map((fragment) => ({
-      id: fragment.id,
-      material: fragment.material,
-      position: fragment.position,
-      size: rotatedBoxAabbSize(fragment.size, fragment.quaternion),
-    }));
+    activeFragments.map((fragment) => {
+      const size = rotatedBoxAabbSize(
+        fragment.size,
+        fragment.quaternion,
+      );
+      const bearingFill =
+        fragmentBearingArea(fragment) /
+        Math.max(1e-6, fragment.size[0] * fragment.size[2]);
+      return {
+        id: fragment.id,
+        material: fragment.material,
+        position: fragment.position,
+        size,
+        volume: fragment.volume,
+        bearingArea: size[0] * size[2] * bearingFill,
+      };
+    });
   const structuralPieces = [...activePieces, ...structuralFragments];
   const structuralBroken = new Set(
     [...brokenPieceIds].filter((id) => activePieceIds.has(id)),

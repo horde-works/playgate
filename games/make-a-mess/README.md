@@ -15,7 +15,7 @@ The first game in the Handmade Games repository.
 The destruction core must not import React or rendering code. Content may gain
 better meshes, textures, effects, and LODs without changing structural rules.
 
-## Prototype 004
+## Prototype 005
 
 The first playable 3D slice lives in `src/game/MakeAMessGame.tsx`:
 
@@ -27,5 +27,16 @@ The first playable 3D slice lives in `src/game/MakeAMessGame.tsx`:
   stone gazebo assembled entirely from breakable parts
 - a global structural support graph that detaches every part without a path to
   the ground
-- persistent physical fragments that can be struck again, transient dust,
-  synthesized material sound, reset, and a first-person hammer
+- one voxel-damage contract for attached, falling, and settled bodies: holes
+  remove real material, connected components become physical compound bodies,
+  and every surviving fragment can be damaged again
+- one shared material-strength scale for blasts, directed bullet channels,
+  hammer impacts, and real landing speed: glass and plaster yield first, then
+  wood and masonry, while concrete, stone, and steel retain more section
+- grenades deliver distance-based energy into the same material scale, so
+  concrete now craters heavily near the burst, while wood, glass, plaster, and
+  brick lose proportionally more volume under the same blast
+- load propagation through the surviving volume and bearing area, so a narrow
+  section can fail under the weight above it
+- bounded fragment and compound-collider budgets, sleeping debris, transient
+  dust, recorded material sound, reset, hammer, machine gun, and grenades

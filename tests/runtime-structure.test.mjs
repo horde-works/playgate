@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { resolveRuntimeStructure } from "../games/make-a-mess/src/game/runtimeStructure.ts";
+import {
+  fragmentBearingArea,
+  resolveRuntimeStructure,
+} from "../games/make-a-mess/src/game/runtimeStructure.ts";
 
 const profiles = {
   ground: {
@@ -135,4 +138,27 @@ test("remaining section and hole position decide whether a beam still stands", (
 
   assert.equal(supported.brokenPieceIds.has("beam"), false);
   assert.equal(cantilevered.brokenPieceIds.has("beam"), true);
+});
+
+test("a voxel fragment only bears load through boxes touching its base", () => {
+  const fragment = {
+    id: "holed-column",
+    parentId: "column",
+    material: "concrete",
+    position: [0, 1, 0],
+    size: [1, 2, 1],
+    detached: false,
+    boxes: [
+      {
+        center: [-0.4, -0.5, 0],
+        size: [0.2, 1, 1],
+      },
+      {
+        center: [0.25, 0.5, 0],
+        size: [0.5, 1, 1],
+      },
+    ],
+  };
+
+  assert.equal(fragmentBearingArea(fragment), 0.2);
 });

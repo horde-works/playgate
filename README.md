@@ -16,6 +16,17 @@ npm run dev
 npm run build
 ```
 
+## Firebase Hosting
+
+The repository is linked to the `playgate-handmade-games` Firebase project.
+Firebase uses a separate static export, so the existing local Vinext workflow
+stays unchanged.
+
+```bash
+npm run build:firebase
+npm run deploy:firebase
+```
+
 ## Repository shape
 
 - `app`: hero page, catalog, and game routes
@@ -31,6 +42,12 @@ connection cannot keep an otherwise unsupported storey in the air. The same
 solver runs for every assembly at scene start, after each impact, and on reset;
 it contains no house-specific support rules.
 
+Destruction uses a material-resolution voxel body behind every visible object.
+The same damage function edits an attached wall section, a falling beam, or a
+settled fragment; only pose, motion, and current structural connections differ.
+Surviving connected components remain physical and destructible. Their true
+volume and remaining bearing area feed back into the structural load solver.
+
 Wall courses are generated against real opening bounds, so doors, windows, and
 corners receive fitted full/half/cut pieces automatically. Tiled surfaces use
 the same boundary rule: adjacent floor, deck, roof, and lawn cells meet without
@@ -40,4 +57,6 @@ hidden air gaps.
 
 - `npm run dev`: start local development
 - `npm run build`: verify the production build
+- `npm run build:firebase`: create the static Firebase Hosting bundle
+- `npm run deploy:firebase`: build and deploy to Firebase Hosting
 - `npm test`: build and verify the hero, catalog, and game routes

@@ -18,6 +18,17 @@ interface DebrisImpactDecision {
 
 export const DEBRIS_SOUND_COOLDOWN_MS = 180;
 export const DEBRIS_SOUND_MIN_APPROACH_SPEED = 0.8;
+export const CONTACT_SEPARATION_MS = 320;
+
+export function isNewPhysicalContact(
+  now: number,
+  previousContactAt: number | undefined,
+): boolean {
+  return (
+    previousContactAt === undefined ||
+    now - previousContactAt > CONTACT_SEPARATION_MS
+  );
+}
 
 export function measureImpactApproachSpeed(
   motion: ImpactMotion,
@@ -31,11 +42,13 @@ export function measureImpactApproachSpeed(
   );
   const normalLinearSpeed =
     directionLength > 0.0001
-      ? Math.abs(
-          (motion.linear.x * forceDirection.x +
+      ? Math.max(
+          0,
+          -(
+            motion.linear.x * forceDirection.x +
             motion.linear.y * forceDirection.y +
-            motion.linear.z * forceDirection.z) /
-            directionLength,
+            motion.linear.z * forceDirection.z
+          ) / directionLength,
         )
       : Math.hypot(motion.linear.x, motion.linear.y, motion.linear.z);
 
