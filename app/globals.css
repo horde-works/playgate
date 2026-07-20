@@ -1798,6 +1798,7 @@ button:focus-visible {
 
 .mobile-look-zone {
   position: absolute;
+  z-index: 1;
   top: 80px;
   right: 0;
   bottom: 0;
@@ -1808,6 +1809,7 @@ button:focus-visible {
 
 .mobile-stick {
   position: absolute;
+  z-index: 3;
   bottom: max(24px, env(safe-area-inset-bottom));
   left: max(22px, env(safe-area-inset-left));
   width: 142px;
@@ -1836,6 +1838,7 @@ button:focus-visible {
 
 .mobile-actions {
   position: absolute;
+  z-index: 4;
   right: max(20px, env(safe-area-inset-right));
   bottom: max(30px, env(safe-area-inset-bottom));
   display: grid;
@@ -1874,6 +1877,7 @@ button:focus-visible {
 
 .mobile-weapon-bar {
   position: absolute;
+  z-index: 4;
   right: max(20px, env(safe-area-inset-right));
   bottom: calc(max(30px, env(safe-area-inset-bottom)) + 104px);
   display: grid;
@@ -1903,6 +1907,7 @@ button:focus-visible {
 
 .mobile-utility-bar {
   position: absolute;
+  z-index: 4;
   top: max(78px, calc(env(safe-area-inset-top) + 68px));
   right: max(18px, env(safe-area-inset-right));
   display: flex;

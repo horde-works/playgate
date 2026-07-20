@@ -3834,40 +3834,11 @@ function MobileGameControls({
     setVisualTick((tick) => (tick + 1) % 1000);
   }, []);
 
-  const stopMove = useCallback(() => {
-    movePointer.current = null;
-    moveKnob.current = { x: 0, y: 0 };
-    controls.current.moveX = 0;
-    controls.current.moveZ = 0;
-    controls.current.run = false;
-    refresh();
-  }, [controls, refresh]);
-
-  const handleMoveStart = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      event.preventDefault();
-      event.currentTarget.setPointerCapture(event.pointerId);
-      movePointer.current = event.pointerId;
-      moveOrigin.current = { x: event.clientX, y: event.clientY };
-      moveKnob.current = { x: 0, y: 0 };
-      if (!active) {
-        onStart();
-      }
-      refresh();
-    },
-    [active, onStart, refresh],
-  );
-
-  const handleMove = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (movePointer.current !== event.pointerId) {
-        return;
-      }
-
-      event.preventDefault();
+  const updateMove = useCallback(
+    (clientX: number, clientY: number) => {
       const maxDistance = 58;
-      const dx = event.clientX - moveOrigin.current.x;
-      const dy = event.clientY - moveOrigin.current.y;
+      const dx = clientX - moveOrigin.current.x;
+      const dy = clientY - moveOrigin.current.y;
       const distance = Math.hypot(dx, dy);
       const scale = distance > maxDistance ? maxDistance / distance : 1;
       const x = dx * scale;
@@ -3881,6 +3852,90 @@ function MobileGameControls({
     [controls, refresh],
   );
 
+  const updateLook = useCallback(
+    (clientX: number, clientY: number) => {
+      controls.current.lookDeltaX += clientX - lastLook.current.x;
+      controls.current.lookDeltaY += clientY - lastLook.current.y;
+      lastLook.current = { x: clientX, y: clientY };
+    },
+    [controls],
+  );
+
+  const stopMove = useCallback(() => {
+    movePointer.current = null;
+    moveKnob.current = { x: 0, y: 0 };
+    controls.current.moveX = 0;
+    controls.current.moveZ = 0;
+    controls.current.run = false;
+    refresh();
+  }, [controls, refresh]);
+
+  const stopLook = useCallback(() => {
+    lookPointer.current = null;
+  }, []);
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      let handled = false;
+
+      if (movePointer.current === event.pointerId) {
+        updateMove(event.clientX, event.clientY);
+        handled = true;
+      }
+
+      if (lookPointer.current === event.pointerId) {
+        updateLook(event.clientX, event.clientY);
+        handled = true;
+      }
+
+      if (handled) {
+        event.preventDefault();
+      }
+    };
+
+    const handlePointerEnd = (event: PointerEvent) => {
+      if (movePointer.current === event.pointerId) {
+        stopMove();
+      }
+
+      if (lookPointer.current === event.pointerId) {
+        stopLook();
+      }
+    };
+
+    document.addEventListener("pointermove", handlePointerMove);
+    document.addEventListener("pointerup", handlePointerEnd);
+    document.addEventListener("pointercancel", handlePointerEnd);
+
+    return () => {
+      document.removeEventListener("pointermove", handlePointerMove);
+      document.removeEventListener("pointerup", handlePointerEnd);
+      document.removeEventListener("pointercancel", handlePointerEnd);
+    };
+  }, [stopLook, stopMove, updateLook, updateMove]);
+
+  const handleMoveStart = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // The document-level tracker below is the reliable path on mobile.
+      }
+      movePointer.current = event.pointerId;
+      const rect = event.currentTarget.getBoundingClientRect();
+      moveOrigin.current = {
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
+      };
+      updateMove(event.clientX, event.clientY);
+      if (!active) {
+        onStart();
+      }
+    },
+    [active, onStart, updateMove],
+  );
+
   const handleLookStart = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       if (event.target !== event.currentTarget) {
@@ -3888,7 +3943,11 @@ function MobileGameControls({
       }
 
       event.preventDefault();
-      event.currentTarget.setPointerCapture(event.pointerId);
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // The document-level tracker below is the reliable path on mobile.
+      }
       lookPointer.current = event.pointerId;
       lastLook.current = { x: event.clientX, y: event.clientY };
       if (!active) {
@@ -3898,25 +3957,14 @@ function MobileGameControls({
     [active, onStart],
   );
 
-  const handleLookMove = useCallback(
+  const handleLookEnd = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (lookPointer.current !== event.pointerId) {
-        return;
+      if (lookPointer.current === event.pointerId) {
+        stopLook();
       }
-
-      event.preventDefault();
-      controls.current.lookDeltaX += event.clientX - lastLook.current.x;
-      controls.current.lookDeltaY += event.clientY - lastLook.current.y;
-      lastLook.current = { x: event.clientX, y: event.clientY };
     },
-    [controls],
+    [stopLook],
   );
-
-  const handleLookEnd = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (lookPointer.current === event.pointerId) {
-      lookPointer.current = null;
-    }
-  }, []);
 
   const handleFireStart = useCallback(
     (event: ReactPointerEvent<HTMLButtonElement>) => {
@@ -3959,7 +4007,6 @@ function MobileGameControls({
         className="mobile-look-zone"
         aria-hidden="true"
         onPointerDown={handleLookStart}
-        onPointerMove={handleLookMove}
         onPointerCancel={handleLookEnd}
         onPointerUp={handleLookEnd}
       />
@@ -3967,7 +4014,6 @@ function MobileGameControls({
         className="mobile-stick"
         aria-label="Движение"
         onPointerDown={handleMoveStart}
-        onPointerMove={handleMove}
         onPointerCancel={stopMove}
         onPointerUp={stopMove}
       >
