@@ -26,6 +26,7 @@ import {
   useState,
   type MutableRefObject,
   type PointerEvent as ReactPointerEvent,
+  type TouchEvent as ReactTouchEvent,
 } from "react";
 import {
   BoxGeometry,
@@ -3825,6 +3826,8 @@ function MobileGameControls({
 }) {
   const movePointer = useRef<number | null>(null);
   const lookPointer = useRef<number | null>(null);
+  const moveTouch = useRef<number | null>(null);
+  const lookTouch = useRef<number | null>(null);
   const moveOrigin = useRef({ x: 0, y: 0 });
   const moveKnob = useRef({ x: 0, y: 0 });
   const lastLook = useRef({ x: 0, y: 0 });
@@ -3852,6 +3855,14 @@ function MobileGameControls({
     [controls, refresh],
   );
 
+  const setMoveOriginFromElement = useCallback((element: HTMLElement) => {
+    const rect = element.getBoundingClientRect();
+    moveOrigin.current = {
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+    };
+  }, []);
+
   const updateLook = useCallback(
     (clientX: number, clientY: number) => {
       controls.current.lookDeltaX += clientX - lastLook.current.x;
@@ -3863,6 +3874,7 @@ function MobileGameControls({
 
   const stopMove = useCallback(() => {
     movePointer.current = null;
+    moveTouch.current = null;
     moveKnob.current = { x: 0, y: 0 };
     controls.current.moveX = 0;
     controls.current.moveZ = 0;
@@ -3872,7 +3884,26 @@ function MobileGameControls({
 
   const stopLook = useCallback(() => {
     lookPointer.current = null;
+    lookTouch.current = null;
   }, []);
+
+  const findTouch = useCallback(
+    (touches: TouchList, identifier: number | null) => {
+      if (identifier === null) {
+        return null;
+      }
+
+      for (let index = 0; index < touches.length; index += 1) {
+        const touch = touches.item(index);
+        if (touch?.identifier === identifier) {
+          return touch;
+        }
+      }
+
+      return null;
+    },
+    [],
+  );
 
   useEffect(() => {
     const handlePointerMove = (event: PointerEvent) => {
@@ -3914,6 +3945,48 @@ function MobileGameControls({
     };
   }, [stopLook, stopMove, updateLook, updateMove]);
 
+  useEffect(() => {
+    const handleTouchMove = (event: TouchEvent) => {
+      let handled = false;
+      const movingTouch = findTouch(event.touches, moveTouch.current);
+      const lookingTouch = findTouch(event.touches, lookTouch.current);
+
+      if (movingTouch) {
+        updateMove(movingTouch.clientX, movingTouch.clientY);
+        handled = true;
+      }
+
+      if (lookingTouch) {
+        updateLook(lookingTouch.clientX, lookingTouch.clientY);
+        handled = true;
+      }
+
+      if (handled) {
+        event.preventDefault();
+      }
+    };
+
+    const handleTouchEnd = (event: TouchEvent) => {
+      if (findTouch(event.changedTouches, moveTouch.current)) {
+        stopMove();
+      }
+
+      if (findTouch(event.changedTouches, lookTouch.current)) {
+        stopLook();
+      }
+    };
+
+    document.addEventListener("touchmove", handleTouchMove, { passive: false });
+    document.addEventListener("touchend", handleTouchEnd);
+    document.addEventListener("touchcancel", handleTouchEnd);
+
+    return () => {
+      document.removeEventListener("touchmove", handleTouchMove);
+      document.removeEventListener("touchend", handleTouchEnd);
+      document.removeEventListener("touchcancel", handleTouchEnd);
+    };
+  }, [findTouch, stopLook, stopMove, updateLook, updateMove]);
+
   const handleMoveStart = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       event.preventDefault();
@@ -3923,17 +3996,31 @@ function MobileGameControls({
         // The document-level tracker below is the reliable path on mobile.
       }
       movePointer.current = event.pointerId;
-      const rect = event.currentTarget.getBoundingClientRect();
-      moveOrigin.current = {
-        x: rect.left + rect.width / 2,
-        y: rect.top + rect.height / 2,
-      };
+      setMoveOriginFromElement(event.currentTarget);
       updateMove(event.clientX, event.clientY);
       if (!active) {
         onStart();
       }
     },
-    [active, onStart, updateMove],
+    [active, onStart, setMoveOriginFromElement, updateMove],
+  );
+
+  const handleMoveTouchStart = useCallback(
+    (event: ReactTouchEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      const touch = event.changedTouches.item(0);
+      if (!touch) {
+        return;
+      }
+
+      moveTouch.current = touch.identifier;
+      setMoveOriginFromElement(event.currentTarget);
+      updateMove(touch.clientX, touch.clientY);
+      if (!active) {
+        onStart();
+      }
+    },
+    [active, onStart, setMoveOriginFromElement, updateMove],
   );
 
   const handleLookStart = useCallback(
@@ -3950,6 +4037,27 @@ function MobileGameControls({
       }
       lookPointer.current = event.pointerId;
       lastLook.current = { x: event.clientX, y: event.clientY };
+      if (!active) {
+        onStart();
+      }
+    },
+    [active, onStart],
+  );
+
+  const handleLookTouchStart = useCallback(
+    (event: ReactTouchEvent<HTMLDivElement>) => {
+      if (event.target !== event.currentTarget) {
+        return;
+      }
+
+      event.preventDefault();
+      const touch = event.changedTouches.item(0);
+      if (!touch) {
+        return;
+      }
+
+      lookTouch.current = touch.identifier;
+      lastLook.current = { x: touch.clientX, y: touch.clientY };
       if (!active) {
         onStart();
       }
@@ -4007,6 +4115,7 @@ function MobileGameControls({
         className="mobile-look-zone"
         aria-hidden="true"
         onPointerDown={handleLookStart}
+        onTouchStart={handleLookTouchStart}
         onPointerCancel={handleLookEnd}
         onPointerUp={handleLookEnd}
       />
@@ -4014,6 +4123,7 @@ function MobileGameControls({
         className="mobile-stick"
         aria-label="Движение"
         onPointerDown={handleMoveStart}
+        onTouchStart={handleMoveTouchStart}
         onPointerCancel={stopMove}
         onPointerUp={stopMove}
       >
