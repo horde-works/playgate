@@ -2375,6 +2375,12 @@ export function resolveStructuralCollapse(
   return structuralSolver.resolve(broken);
 }
 
+export function structuralScopeFor(
+  pieceIds: Iterable<string>,
+): ReadonlySet<string> {
+  return structuralSolver.connectedPieceIds(pieceIds);
+}
+
 function deterministicNoise(value: string): number {
   let hash = 2166136261;
 

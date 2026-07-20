@@ -206,11 +206,11 @@ test("grenade energy falls with distance and ends at its physical radius", () =>
   assert.equal(grenadeEnergyAtDistance(BLAST_RADIUS + 1), 0);
 });
 
-test("rocket blast is five times the grenade profile by volume and energy", () => {
-  assert.equal(ROCKET_DAMAGE_ENERGY, GRENADE_DAMAGE_ENERGY * 5);
+test("rocket blast is twenty-five times the grenade profile by volume and energy", () => {
+  assert.equal(ROCKET_DAMAGE_ENERGY, GRENADE_DAMAGE_ENERGY * 25);
   assert.equal(
     Math.round((ROCKET_BLAST_RADIUS / BLAST_RADIUS) ** 3 * 1000) / 1000,
-    5,
+    25,
   );
   assert.equal(rocketEnergyAtDistance(0), ROCKET_DAMAGE_ENERGY);
   assert.equal(rocketEnergyAtDistance(BLAST_RADIUS) > 0, true);

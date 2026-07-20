@@ -97,11 +97,18 @@ export function resolveRuntimeStructure<Material extends string>(
   brokenPieceIds: ReadonlySet<string>,
   carvedPieceIds: ReadonlySet<string>,
   fragments: readonly RuntimeStructuralFragment<Material>[],
+  scopePieceIds?: ReadonlySet<string>,
 ): RuntimeStructuralResult {
-  const activePieces = pieces.filter((piece) => !carvedPieceIds.has(piece.id));
+  const activePieces = pieces.filter(
+    (piece) =>
+      (scopePieceIds === undefined || scopePieceIds.has(piece.id)) &&
+      !carvedPieceIds.has(piece.id),
+  );
   const activePieceIds = new Set(activePieces.map((piece) => piece.id));
   const activeFragments = fragments.filter(
     (fragment) =>
+      (scopePieceIds === undefined ||
+        scopePieceIds.has(fragment.parentId)) &&
       !fragment.detached && !brokenPieceIds.has(fragment.parentId),
   );
   const fragmentById = new Map(

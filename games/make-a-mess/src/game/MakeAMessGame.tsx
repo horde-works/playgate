@@ -53,6 +53,7 @@ import {
   lampDefinitions,
   materialRuntimeProfiles,
   settleAfterBreak,
+  structuralScopeFor,
   structuralMaterialProfiles,
   type BreakableMaterial,
   type BreakablePieceDefinition,
@@ -72,6 +73,7 @@ import {
   closestPointOnOrientedBox,
   crumbleOnLanding,
   damageBody,
+  fractureEnergyByMaterial,
   grenadeEnergyAtDistance,
   groundMaterials,
   impactDamageRadius,
@@ -100,8 +102,13 @@ import {
   FirstPersonHammer,
   FirstPersonLauncher,
   FirstPersonMachineGun,
+  FirstPersonRocketLauncher,
   type SwingDefinition,
 } from "./FirstPersonWeapons";
+import {
+  DynamicBreakableWorld,
+  getPieceRenderBoxes,
+} from "./DynamicBreakableWorld";
 import { HingedDoorSystem } from "./HingedDoorSystem";
 import { IntactBreakableWorld } from "./IntactBreakableWorld";
 import { getPieceMaterial } from "./materialTextures";
@@ -170,6 +177,14 @@ interface GrenadeDefinition {
   readonly velocity: readonly [number, number, number];
 }
 
+interface RocketTrailVoxel {
+  readonly id: number;
+  readonly position: readonly [number, number, number];
+  readonly age: number;
+  readonly size: number;
+  readonly color: string;
+}
+
 interface VoxelExplosionDefinition {
   readonly id: number;
   readonly position: readonly [number, number, number];
@@ -193,6 +208,118 @@ const MAX_PIECE_BOUNDING_RADIUS = breakablePieces.reduce(
     ),
   0,
 );
+
+const blastTransmissionByMaterial: Record<BreakableMaterial, number> = {
+  glass: 0.76,
+  plaster: 0.36,
+  wood: 0.24,
+  soil: 0.1,
+  earth: 0.09,
+  brick: 0.06,
+  asphalt: 0.05,
+  concrete: 0.025,
+  stone: 0.02,
+  steel: 0.01,
+};
+
+type BlastOccluderSource =
+  | BreakablePieceDefinition
+  | RemnantDefinition
+  | ShardDefinition;
+
+interface BlastOccluder {
+  readonly id: string;
+  readonly parentId: string;
+  readonly material: BreakableMaterial;
+  readonly position: Vector3;
+  readonly quaternion: Quaternion;
+  readonly size: readonly [number, number, number];
+  readonly surfaceDistance: number;
+}
+
+function segmentIntersectsOrientedBox(
+  start: Vector3,
+  end: Vector3,
+  position: Vector3,
+  size: readonly [number, number, number],
+  quaternion: Quaternion,
+  padding = 0.025,
+): boolean {
+  const inverseRotation = quaternion.clone().invert();
+  const localStart = start.clone().sub(position).applyQuaternion(inverseRotation);
+  const localEnd = end.clone().sub(position).applyQuaternion(inverseRotation);
+  const direction = localEnd.clone().sub(localStart);
+  let tMin = 0;
+  let tMax = 1;
+
+  for (const [axis, halfSize] of [
+    ["x", size[0] / 2 + padding],
+    ["y", size[1] / 2 + padding],
+    ["z", size[2] / 2 + padding],
+  ] as const) {
+    const origin = localStart[axis];
+    const delta = direction[axis];
+
+    if (Math.abs(delta) < 1e-5) {
+      if (origin < -halfSize || origin > halfSize) {
+        return false;
+      }
+      continue;
+    }
+
+    const inverse = 1 / delta;
+    let near = (-halfSize - origin) * inverse;
+    let far = (halfSize - origin) * inverse;
+    if (near > far) {
+      [near, far] = [far, near];
+    }
+    tMin = Math.max(tMin, near);
+    tMax = Math.min(tMax, far);
+    if (tMin > tMax) {
+      return false;
+    }
+  }
+
+  return tMax > 0.015 && tMin < 0.985;
+}
+
+function blastVisibilityFactor(
+  center: Vector3,
+  targetPoint: Vector3,
+  targetId: string,
+  targetParentId: string,
+  targetDistance: number,
+  occluders: readonly BlastOccluder[],
+): number {
+  let factor = 1;
+
+  for (const occluder of occluders) {
+    if (
+      occluder.id === targetId ||
+      occluder.parentId === targetParentId ||
+      occluder.surfaceDistance >= targetDistance - 0.08
+    ) {
+      continue;
+    }
+
+    if (
+      segmentIntersectsOrientedBox(
+        center,
+        targetPoint,
+        occluder.position,
+        occluder.size,
+        occluder.quaternion,
+      )
+    ) {
+      factor *= blastTransmissionByMaterial[occluder.material];
+      if (factor < 0.04) {
+        return factor;
+      }
+    }
+  }
+
+  return factor;
+}
 
 function createMobileControlsState(): MobileControlsState {
   return {
@@ -232,20 +359,35 @@ function readBreakableHit(
   const instanceIds = userData.breakableInstanceIds as
     | readonly string[]
     | undefined;
+  const instanceKinds = userData.breakableInstanceKinds as
+    | readonly ("piece" | "shard" | "remnant")[]
+    | undefined;
+  const instanceKind =
+    intersection.instanceId === undefined
+      ? undefined
+      : instanceKinds?.[intersection.instanceId];
+  const instanceSourceId =
+    intersection.instanceId === undefined
+      ? undefined
+      : instanceIds?.[intersection.instanceId];
   const pieceId =
     typeof userData.breakablePiece === "string"
       ? userData.breakablePiece
-      : intersection.instanceId === undefined
-        ? undefined
-        : instanceIds?.[intersection.instanceId];
+      : instanceKind === undefined || instanceKind === "piece"
+        ? instanceSourceId
+        : undefined;
   const shardId =
     typeof userData.breakableShard === "string"
       ? userData.breakableShard
-      : undefined;
+      : instanceKind === "shard"
+        ? instanceSourceId
+        : undefined;
   const remnantId =
     typeof userData.breakableRemnant === "string"
       ? userData.breakableRemnant
-      : undefined;
+      : instanceKind === "remnant"
+        ? instanceSourceId
+        : undefined;
 
   if (!pieceId && !shardId && !remnantId) {
     return null;
@@ -739,69 +881,6 @@ interface BreakablePieceProps {
   ) => void;
 }
 
-function BreakablePieceMesh({
-  piece,
-  broken,
-}: {
-  piece: BreakablePieceDefinition;
-  broken: boolean;
-}) {
-  const hitData = useMemo(() => ({ breakablePiece: piece.id }), [piece.id]);
-  const material = useMemo(
-    () => getPieceMaterial(piece.material, piece.color),
-    [piece.color, piece.material],
-  );
-  const [width, height, depth] = piece.size;
-
-  if (piece.shape === "cinderBlock") {
-    return (
-      <group>
-        <mesh
-          position={[0, height * 0.36, 0]}
-          castShadow={!broken}
-          receiveShadow
-          userData={hitData}
-          material={material}
-        >
-          <boxGeometry args={[width, height * 0.28, depth]} />
-        </mesh>
-        <mesh
-          position={[0, -height * 0.36, 0]}
-          castShadow={!broken}
-          receiveShadow
-          userData={hitData}
-          material={material}
-        >
-          <boxGeometry args={[width, height * 0.28, depth]} />
-        </mesh>
-        {[-0.4, 0, 0.4].map((offset) => (
-          <mesh
-            key={offset}
-            position={[width * offset, 0, 0]}
-            castShadow={!broken}
-            receiveShadow
-            userData={hitData}
-            material={material}
-          >
-            <boxGeometry args={[width * 0.18, height * 0.48, depth]} />
-          </mesh>
-        ))}
-      </group>
-    );
-  }
-
-  return (
-    <mesh
-      castShadow={!broken && piece.shape !== "groundTile"}
-      receiveShadow
-      userData={hitData}
-      material={material}
-      geometry={UNIT_BOX}
-      scale={[width, height, depth]}
-    />
-  );
-}
-
 const BreakablePiece = memo(function BreakablePiece({
   piece,
   broken,
@@ -812,6 +891,7 @@ const BreakablePiece = memo(function BreakablePiece({
   const wasBroken = useRef(false);
   const { rapier } = useRapier();
   const profile = materialRuntimeProfiles[piece.material];
+  const renderBoxes = useMemo(() => getPieceRenderBoxes(piece), [piece]);
 
   useEffect(() => {
     registerBody(piece.id, body.current);
@@ -874,7 +954,7 @@ const BreakablePiece = memo(function BreakablePiece({
       type={broken ? "dynamic" : "fixed"}
       position={[...piece.position]}
       rotation={piece.rotation ? [...piece.rotation] : undefined}
-      colliders="cuboid"
+      colliders={false}
       friction={piece.material === "wood" ? 0.66 : 0.84}
       restitution={profile.restitution}
       linearDamping={0.18}
@@ -898,7 +978,17 @@ const BreakablePiece = memo(function BreakablePiece({
           : undefined
       }
     >
-      <BreakablePieceMesh piece={piece} broken={broken} />
+      {renderBoxes.map((box, index) => (
+        <CuboidCollider
+          key={index}
+          args={[
+            Math.max(0.002, box.size[0] / 2 - 0.002),
+            Math.max(0.002, box.size[1] / 2 - 0.002),
+            Math.max(0.002, box.size[2] / 2 - 0.002),
+          ]}
+          position={[...box.center]}
+        />
+      ))}
     </RigidBody>
   );
 });
@@ -906,11 +996,13 @@ const BreakablePiece = memo(function BreakablePiece({
 function BreakableObjects({
   brokenPieces,
   shatteredPieces,
+  bodies,
   registerBody,
   onDebrisContact,
 }: {
   brokenPieces: ReadonlySet<string>;
   shatteredPieces: ReadonlySet<string>;
+  bodies: MutableRefObject<Map<string, RapierRigidBody>>;
   registerBody: (id: string, body: RapierRigidBody | null) => void;
   onDebrisContact: (
     piece: BreakablePieceDefinition,
@@ -945,6 +1037,12 @@ function BreakableObjects({
   return (
     <group>
       <IntactBreakableWorld pieces={intactPieces} />
+      <DynamicBreakableWorld
+        pieces={bodyPieces}
+        shards={[]}
+        remnants={[]}
+        bodies={bodies}
+      />
       {bodyPieces.map((piece) => (
         <BreakablePiece
           key={piece.id}
@@ -974,10 +1072,6 @@ const Shard = memo(function Shard({
 }) {
   const body = useRef<RapierRigidBody>(null);
   const profile = materialRuntimeProfiles[shard.material];
-  const material = useMemo(
-    () => getPieceMaterial(shard.material, shard.color),
-    [shard.color, shard.material],
-  );
   const boxes =
     shard.boxes && shard.boxes.length > 0
       ? shard.boxes
@@ -1068,21 +1162,6 @@ const Shard = memo(function Shard({
           position={[...box.center]}
         />
       ))}
-      {boxes.map((box, index) => (
-        <mesh
-          key={`mesh:${index}`}
-          position={[...box.center]}
-          castShadow={false}
-          receiveShadow
-          material={material}
-          userData={{
-            breakableShard: shard.id,
-            breakableMaterial: shard.material,
-          }}
-          geometry={UNIT_BOX}
-          scale={[...box.size]}
-        />
-      ))}
     </RigidBody>
   );
 });
@@ -1101,7 +1180,24 @@ function Grenade({
   ) => void;
 }) {
   const body = useRef<RapierRigidBody>(null);
+  const rocketVisual = useRef<Group>(null);
   const exploded = useRef(false);
+  const trailTimer = useRef(0);
+  const trailId = useRef(0);
+  const [rocketTrail, setRocketTrail] = useState<readonly RocketTrailVoxel[]>([]);
+  const rocketDirection = useMemo(() => {
+    const direction = new Vector3(
+      grenade.velocity[0],
+      grenade.velocity[1],
+      grenade.velocity[2],
+    );
+    if (direction.lengthSq() < 0.001) {
+      direction.set(0, 0, 1);
+    }
+    return direction.normalize();
+  }, [grenade.velocity]);
+  const rocketQuaternion = useMemo(() => new Quaternion(), []);
+  const rocketForward = useMemo(() => new Vector3(0, 0, 1), []);
 
   const trigger = useCallback(() => {
     if (exploded.current || !body.current) {
@@ -1132,7 +1228,10 @@ function Grenade({
       },
       true,
     );
-    body.current.setAngvel({ x: 7, y: 3, z: 9 }, true);
+    body.current.setAngvel(
+      grenade.kind === "rocket" ? { x: 0, y: 0, z: 0 } : { x: 7, y: 3, z: 9 },
+      true,
+    );
 
     const fuse = window.setTimeout(
       trigger,
@@ -1143,20 +1242,101 @@ function Grenade({
 
   const isRocket = grenade.kind === "rocket";
 
+  useFrame((_, delta) => {
+    if (!isRocket || !body.current) {
+      return;
+    }
+
+    const translation = body.current.translation();
+    if (rocketVisual.current) {
+      rocketVisual.current.position.set(
+        translation.x,
+        translation.y,
+        translation.z,
+      );
+      rocketVisual.current.quaternion.copy(
+        rocketQuaternion.setFromUnitVectors(rocketForward, rocketDirection),
+      );
+    }
+
+    trailTimer.current += delta;
+    if (trailTimer.current < 0.035) {
+      setRocketTrail((current) =>
+        current
+          .map((voxel) => ({ ...voxel, age: voxel.age + delta }))
+          .filter((voxel) => voxel.age < 0.58),
+      );
+      return;
+    }
+
+    trailTimer.current = 0;
+    const base = new Vector3(translation.x, translation.y, translation.z).add(
+      rocketDirection.clone().multiplyScalar(-0.34),
+    );
+    const side = new Vector3(rocketDirection.z, 0, -rocketDirection.x);
+    if (side.lengthSq() < 0.001) {
+      side.set(1, 0, 0);
+    }
+    side.normalize();
+    const up = new Vector3().crossVectors(side, rocketDirection).normalize();
+
+    setRocketTrail((current) => {
+      const aged = current
+        .map((voxel) => ({ ...voxel, age: voxel.age + delta }))
+        .filter((voxel) => voxel.age < 0.58);
+      const additions: RocketTrailVoxel[] = [];
+      for (let index = 0; index < 3; index += 1) {
+        trailId.current += 1;
+        const noiseA = blastNoise(`${grenade.id}:rocket:${trailId.current}`, 31) - 0.5;
+        const noiseB = blastNoise(`${grenade.id}:rocket:${trailId.current}`, 37) - 0.5;
+        const spread = 0.045 + index * 0.018;
+        const point = base
+          .clone()
+          .add(side.clone().multiplyScalar(noiseA * spread))
+          .add(up.clone().multiplyScalar(noiseB * spread))
+          .add(rocketDirection.clone().multiplyScalar(-index * 0.08));
+        additions.push({
+          id: trailId.current,
+          position: [point.x, point.y, point.z],
+          age: 0,
+          size: 0.075 + index * 0.025,
+          color: index === 0 ? "#ffcf67" : index === 1 ? "#f06a32" : "#4b4d49",
+        });
+      }
+      return [...aged, ...additions].slice(-42);
+    });
+  });
+
   return (
-    <RigidBody
-      ref={body}
-      position={[...grenade.position]}
-      colliders={false}
-      density={isRocket ? 3.4 : 2.2}
-      linearDamping={0.04}
-      angularDamping={0.35}
-      ccd
-      onCollisionEnter={trigger}
-    >
-      <BallCollider args={[isRocket ? 0.14 : 0.09]} />
+    <>
+      <RigidBody
+        ref={body}
+        position={[...grenade.position]}
+        colliders={false}
+        density={isRocket ? 3.4 : 2.2}
+        gravityScale={isRocket ? 0 : 1}
+        linearDamping={0.04}
+        angularDamping={isRocket ? 0.95 : 0.35}
+        ccd
+        onCollisionEnter={trigger}
+      >
+        <BallCollider args={[isRocket ? 0.14 : 0.09]} />
+        {!isRocket ? (
+          <>
+            <mesh castShadow>
+              <boxGeometry args={[0.13, 0.13, 0.2]} />
+              <meshStandardMaterial color="#3f4d33" metalness={0.35} roughness={0.55} />
+            </mesh>
+            <mesh position={[0, 0, 0.14]}>
+              <boxGeometry args={[0.05, 0.05, 0.09]} />
+              <meshStandardMaterial color="#c8ccc4" metalness={0.6} roughness={0.4} />
+            </mesh>
+          </>
+        ) : null}
+      </RigidBody>
+
       {isRocket ? (
-        <group>
+        <group ref={rocketVisual}>
           <mesh castShadow rotation={[Math.PI / 2, 0, 0]}>
             <cylinderGeometry args={[0.085, 0.11, 0.54, 18]} />
             <meshStandardMaterial color="#28302e" metalness={0.42} roughness={0.48} />
@@ -1185,19 +1365,28 @@ function Grenade({
             </mesh>
           ))}
         </group>
-      ) : (
-        <>
-          <mesh castShadow>
-            <boxGeometry args={[0.13, 0.13, 0.2]} />
-            <meshStandardMaterial color="#3f4d33" metalness={0.35} roughness={0.55} />
+      ) : null}
+
+      {rocketTrail.map((voxel) => {
+        const opacity = Math.max(0, 1 - voxel.age / 0.58);
+        return (
+          <mesh
+            key={voxel.id}
+            position={[...voxel.position]}
+            scale={voxel.size * (1 + voxel.age * 1.9)}
+          >
+            <boxGeometry args={[1, 1, 1]} />
+            <meshBasicMaterial
+              color={voxel.color}
+              transparent
+              opacity={opacity * 0.72}
+              depthWrite={false}
+              toneMapped={false}
+            />
           </mesh>
-          <mesh position={[0, 0, 0.14]}>
-            <boxGeometry args={[0.05, 0.05, 0.09]} />
-            <meshStandardMaterial color="#c8ccc4" metalness={0.6} roughness={0.4} />
-          </mesh>
-        </>
-      )}
-    </RigidBody>
+        );
+      })}
+    </>
   );
 }
 
@@ -1223,10 +1412,6 @@ const Remnant = memo(function Remnant({
   const wasFreed = useRef(false);
   const { rapier } = useRapier();
   const profile = materialRuntimeProfiles[remnant.material];
-  const material = useMemo(
-    () => getPieceMaterial(remnant.material, remnant.color),
-    [remnant.color, remnant.material],
-  );
   const boxes =
     remnant.boxes && remnant.boxes.length > 0
       ? remnant.boxes
@@ -1319,21 +1504,6 @@ const Remnant = memo(function Remnant({
             Math.max(0.002, box.size[2] / 2 - 0.002),
           ]}
           position={[...box.center]}
-        />
-      ))}
-      {boxes.map((box, index) => (
-        <mesh
-          key={`mesh:${index}`}
-          position={[...box.center]}
-          castShadow={!freed}
-          receiveShadow
-          material={material}
-          userData={{
-            breakableRemnant: remnant.id,
-            breakableMaterial: remnant.material,
-          }}
-          geometry={UNIT_BOX}
-          scale={[...box.size]}
         />
       ))}
     </RigidBody>
@@ -2011,12 +2181,19 @@ function OpenWorldScene({
 
   const settleStructure = useCallback(
     (seedBroken: ReadonlySet<string>): ReadonlySet<string> => {
+      const scopeSeeds = new Set<string>([
+        ...seedBroken,
+        ...carvedPiecesRef.current,
+        ...remnantsRef.current.map((remnant) => remnant.parentId),
+      ]);
+      const structuralScope = structuralScopeFor(scopeSeeds);
       let result = resolveRuntimeStructure(
         breakablePieces,
         structuralMaterialProfiles,
         seedBroken,
         carvedPiecesRef.current,
         remnantsRef.current,
+        structuralScope,
       );
       const sectionFailures = new Set(result.brokenPieceIds);
 
@@ -2061,6 +2238,7 @@ function OpenWorldScene({
           sectionFailures,
           carvedPiecesRef.current,
           remnantsRef.current,
+          structuralScope,
         );
       }
       let remnantsChanged = false;
@@ -2904,6 +3082,74 @@ function OpenWorldScene({
         blastRadius + MAX_PIECE_BOUNDING_RADIUS,
       );
 
+      const resolveBlastPose = (
+        id: string,
+        source: BlastOccluderSource,
+      ) => {
+        const body = pieceBodies.current.get(id);
+        const translation = body?.translation();
+        const rotation = body?.rotation();
+        const position = translation
+          ? new Vector3(translation.x, translation.y, translation.z)
+          : new Vector3(...source.position);
+        const quaternion = rotation
+          ? new Quaternion(rotation.x, rotation.y, rotation.z, rotation.w)
+          : "quaternion" in source
+            ? new Quaternion(...source.quaternion)
+            : new Quaternion().setFromEuler(
+                new Euler(
+                  "rotation" in source ? source.rotation?.[0] ?? 0 : 0,
+                  "rotation" in source ? source.rotation?.[1] ?? 0 : 0,
+                  "rotation" in source ? source.rotation?.[2] ?? 0 : 0,
+                ),
+              );
+        return { position, quaternion };
+      };
+
+      const solidOccluders: BlastOccluder[] = [
+        ...blastPieceCandidates
+          .filter(
+            (piece) =>
+              !previousBroken.has(piece.id) &&
+              !carvedPiecesRef.current.has(piece.id),
+          )
+          .map((piece) => ({
+            source: piece,
+            id: piece.id,
+            parentId: piece.id,
+          })),
+        ...remnantsRef.current.map((remnant) => ({
+          source: remnant,
+          id: remnant.id,
+          parentId: remnant.parentId,
+        })),
+      ]
+        .map((entry) => {
+          const { position, quaternion } = resolveBlastPose(
+            entry.id,
+            entry.source,
+          );
+          const impactPoint = closestPointOnOrientedBox(
+            center3,
+            position,
+            entry.source.size,
+            quaternion,
+          );
+          return {
+            id: entry.id,
+            parentId: entry.parentId,
+            material: entry.source.material,
+            position,
+            quaternion,
+            size: entry.source.size,
+            surfaceDistance: center3.distanceTo(impactPoint),
+          };
+        })
+        .filter((entry) => entry.surfaceDistance <= blastRadius)
+        .sort(
+          (left, right) => left.surfaceDistance - right.surfaceDistance,
+        );
+
       // Capture moving bodies before this blast creates a new generation.
       // Each body receives exactly one damage pass, regardless of whether it
       // started attached, falling or already settled on the ground.
@@ -2969,29 +3215,10 @@ function OpenWorldScene({
           })),
       ]
         .map((target) => {
-            const body = pieceBodies.current.get(target.targetId);
-            const translation = body?.translation();
-            const rotation = body?.rotation();
-            const position = translation
-              ? new Vector3(translation.x, translation.y, translation.z)
-              : new Vector3(...target.source.position);
-            const quaternion = rotation
-              ? new Quaternion(rotation.x, rotation.y, rotation.z, rotation.w)
-              : "quaternion" in target.source
-                ? new Quaternion(...target.source.quaternion)
-                : new Quaternion().setFromEuler(
-                    new Euler(
-                      "rotation" in target.source
-                        ? target.source.rotation?.[0] ?? 0
-                        : 0,
-                      "rotation" in target.source
-                        ? target.source.rotation?.[1] ?? 0
-                        : 0,
-                      "rotation" in target.source
-                        ? target.source.rotation?.[2] ?? 0
-                        : 0,
-                    ),
-                  );
+            const { position, quaternion } = resolveBlastPose(
+              target.targetId,
+              target.source,
+            );
             const impactPoint = closestPointOnOrientedBox(
               center3,
               position,
@@ -2999,15 +3226,28 @@ function OpenWorldScene({
               quaternion,
             );
             const surfaceDistance = center3.distanceTo(impactPoint);
-            const energy = energyAtDistance(surfaceDistance);
+            const visibility = blastVisibilityFactor(
+              center3,
+              impactPoint,
+              target.targetId,
+              target.parentId,
+              surfaceDistance,
+              solidOccluders,
+            );
+            const energy = energyAtDistance(surfaceDistance) * visibility;
             return {
               ...target,
               impactPoint,
               surfaceDistance,
+              visibility,
               energy,
             };
           })
-          .filter((entry) => entry.energy > 0)
+          .filter(
+            (entry) =>
+              entry.energy >
+              fractureEnergyByMaterial[entry.source.material] * 1.15,
+          )
           .sort(
             (left, right) =>
               left.surfaceDistance - right.surfaceDistance,
@@ -3061,12 +3301,25 @@ function OpenWorldScene({
             quaternion,
           );
           const surfaceDistance = center3.distanceTo(impactPoint);
-          const energy = energyAtDistance(surfaceDistance);
-          return energy > 0
+          const parentId =
+            entry.origin === "remnant"
+              ? entry.source.parentId
+              : entry.source.id;
+          const visibility = blastVisibilityFactor(
+            center3,
+            impactPoint,
+            entry.source.id,
+            parentId,
+            surfaceDistance,
+            solidOccluders,
+          );
+          const energy = energyAtDistance(surfaceDistance) * visibility;
+          return energy > fractureEnergyByMaterial[entry.source.material] * 0.95
             ? {
                 ...entry,
                 impactPoint,
                 surfaceDistance,
+                visibility,
                 damageRadius: impactDamageRadius(
                   entry.source,
                   "blast",
@@ -3120,7 +3373,20 @@ function OpenWorldScene({
           return;
         }
 
-        const falloff = 1 - distance / blastPushRadius;
+        const targetParentId = remnantById.current.get(id)?.parentId ?? id;
+        const visibility = blastVisibilityFactor(
+          center3,
+          new Vector3(translation.x, translation.y, translation.z),
+          id,
+          targetParentId,
+          distance,
+          solidOccluders,
+        );
+        if (visibility < 0.04) {
+          return;
+        }
+
+        const falloff = (1 - distance / blastPushRadius) * visibility;
         const inverse = 1 / Math.max(0.25, distance);
         const mass = Math.max(0.04, body.mass());
 
@@ -3192,8 +3458,6 @@ function OpenWorldScene({
         }
         withBody(remnant.id, (body) => pushBody(remnant.id, body));
       }
-
-      settleWorld();
     },
     [
       carveAt,
@@ -3201,7 +3465,6 @@ function OpenWorldScene({
       ensureDynamic,
       rapier,
       settleStructure,
-      settleWorld,
       withBody,
     ],
   );
@@ -3690,6 +3953,7 @@ function OpenWorldScene({
         <BreakableObjects
           brokenPieces={brokenPieces}
           shatteredPieces={hiddenPieces}
+          bodies={pieceBodies}
           registerBody={registerBody}
           onDebrisContact={handleDebrisContact}
         />
@@ -3710,6 +3974,12 @@ function OpenWorldScene({
             onContact={handleShardContact}
           />
         ))}
+        <DynamicBreakableWorld
+          pieces={[]}
+          shards={shards}
+          remnants={remnants}
+          bodies={pieceBodies}
+        />
       </group>
       {tracers.map((tracer) => (
         <Tracer
@@ -3733,8 +4003,10 @@ function OpenWorldScene({
       <Player registerBody={registerBody} mobileControls={mobileControls} />
       {weapon === "hammer" ? (
         <FirstPersonHammer swing={swing} />
-      ) : weapon === "launcher" || weapon === "rocket" ? (
+      ) : weapon === "launcher" ? (
         <FirstPersonLauncher kick={launcherKick} />
+      ) : weapon === "rocket" ? (
+        <FirstPersonRocketLauncher kick={launcherKick} />
       ) : (
         <FirstPersonMachineGun shotsRef={mgShots} />
       )}

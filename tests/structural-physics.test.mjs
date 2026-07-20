@@ -70,6 +70,41 @@ test("a beam fails when its remaining support exceeds the material cantilever", 
   assert.equal(settled.has("beam"), true);
 });
 
+test("shared terrain does not merge independent structural islands", () => {
+  const solver = createStructuralSolver(
+    [
+      {
+        id: "wide-ground",
+        material: "ground",
+        position: [0, 0, 0],
+        size: [20, 0.2, 4],
+      },
+      {
+        id: "left-structure",
+        material: "wood",
+        position: [-6, 1.1, 0],
+        size: [0.4, 2, 0.4],
+      },
+      {
+        id: "right-structure",
+        material: "wood",
+        position: [6, 1.1, 0],
+        size: [0.4, 2, 0.4],
+      },
+    ],
+    profiles,
+  );
+
+  const leftScope = solver.connectedPieceIds(["left-structure"]);
+  assert.equal(leftScope.has("left-structure"), true);
+  assert.equal(leftScope.has("wide-ground"), true);
+  assert.equal(leftScope.has("right-structure"), false);
+
+  const groundScope = solver.connectedPieceIds(["wide-ground"]);
+  assert.equal(groundScope.has("left-structure"), true);
+  assert.equal(groundScope.has("right-structure"), true);
+});
+
 test("compression follows the surviving bearing area", () => {
   const loadProfiles = {
     ground: profiles.ground,

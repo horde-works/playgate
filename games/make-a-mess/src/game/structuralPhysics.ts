@@ -22,6 +22,7 @@ export interface StructuralMaterialProfile {
 
 export interface StructuralSolver {
   resolve(broken: ReadonlySet<string>): ReadonlySet<string>;
+  connectedPieceIds(seedIds: Iterable<string>): ReadonlySet<string>;
 }
 
 type HorizontalAxis = 0 | 2;
@@ -254,6 +255,88 @@ export function createStructuralSolver<Material extends string>(
         .filter((candidate) => canAttachToSide(piece, candidate))
         .map((candidate) => candidate.id),
     );
+  }
+
+  const structuralNeighbors = new Map<string, Set<string>>(
+    pieces.map((piece) => [piece.id, new Set<string>()]),
+  );
+  for (const piece of pieces) {
+    const neighbors = [
+      ...(verticalSupportCandidates.get(piece.id) ?? []),
+      ...(sideAttachmentCandidates.get(piece.id) ?? []),
+    ];
+    for (const neighborId of neighbors) {
+      structuralNeighbors.get(piece.id)?.add(neighborId);
+      structuralNeighbors.get(neighborId)?.add(piece.id);
+    }
+  }
+
+  // Foundations are stable roots, not structural bridges. Two buildings may
+  // touch the same continuous terrain without becoming one recalculation
+  // island. Non-foundation load paths form the islands; the exact foundation
+  // cells beneath each island are then attached to it.
+  const componentIdsByPieceId = new Map<string, Set<number>>();
+  const componentPieceIds = new Map<number, Set<string>>();
+  let nextComponentId = 0;
+  for (const piece of pieces) {
+    if (
+      materialProfiles[piece.material].foundation ||
+      componentIdsByPieceId.has(piece.id)
+    ) {
+      continue;
+    }
+
+    const componentId = nextComponentId;
+    nextComponentId += 1;
+    const members = new Set<string>();
+    const pending = [piece.id];
+    componentIdsByPieceId.set(piece.id, new Set([componentId]));
+
+    while (pending.length > 0) {
+      const currentId = pending.pop();
+      if (!currentId) {
+        continue;
+      }
+      members.add(currentId);
+      for (const neighborId of structuralNeighbors.get(currentId) ?? []) {
+        const neighbor = pieceById.get(neighborId);
+        if (
+          !neighbor ||
+          materialProfiles[neighbor.material].foundation ||
+          componentIdsByPieceId.has(neighborId)
+        ) {
+          continue;
+        }
+        componentIdsByPieceId.set(neighborId, new Set([componentId]));
+        pending.push(neighborId);
+      }
+    }
+    componentPieceIds.set(componentId, members);
+  }
+
+  for (const piece of pieces) {
+    if (!materialProfiles[piece.material].foundation) {
+      continue;
+    }
+
+    const adjacentComponentIds = new Set<number>();
+    for (const neighborId of structuralNeighbors.get(piece.id) ?? []) {
+      for (const componentId of componentIdsByPieceId.get(neighborId) ?? []) {
+        adjacentComponentIds.add(componentId);
+      }
+    }
+
+    if (adjacentComponentIds.size === 0) {
+      const componentId = nextComponentId;
+      nextComponentId += 1;
+      adjacentComponentIds.add(componentId);
+      componentPieceIds.set(componentId, new Set());
+    }
+
+    componentIdsByPieceId.set(piece.id, adjacentComponentIds);
+    for (const componentId of adjacentComponentIds) {
+      componentPieceIds.get(componentId)?.add(piece.id);
+    }
   }
 
   const supportsCenterOfMass = (
@@ -499,6 +582,22 @@ export function createStructuralSolver<Material extends string>(
   };
 
   return {
+    connectedPieceIds(seedIds: Iterable<string>): ReadonlySet<string> {
+      const componentIds = new Set<number>();
+      for (const seedId of seedIds) {
+        for (const componentId of componentIdsByPieceId.get(seedId) ?? []) {
+          componentIds.add(componentId);
+        }
+      }
+
+      const connected = new Set<string>();
+      for (const componentId of componentIds) {
+        for (const pieceId of componentPieceIds.get(componentId) ?? []) {
+          connected.add(pieceId);
+        }
+      }
+      return connected;
+    },
     resolve(broken: ReadonlySet<string>): ReadonlySet<string> {
       const next = new Set(broken);
       let structure = findStableStructure(next);

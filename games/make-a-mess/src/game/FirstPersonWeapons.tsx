@@ -137,6 +137,73 @@ export function FirstPersonLauncher({ kick }: { kick: number }) {
   );
 }
 
+export function FirstPersonRocketLauncher({ kick }: { kick: number }) {
+  const group = useRef<Group>(null);
+  const { camera } = useThree();
+  const kickProgress = useRef(1);
+  const previousKick = useRef(kick);
+  const localOffset = useMemo(() => new Vector3(), []);
+  const cameraQuaternion = useMemo(() => new Quaternion(), []);
+  const toolEuler = useMemo(() => new Euler(), []);
+
+  useFrame((_, delta) => {
+    if (!group.current) {
+      return;
+    }
+
+    if (previousKick.current !== kick) {
+      previousKick.current = kick;
+      kickProgress.current = 0;
+    }
+
+    kickProgress.current = Math.min(1, kickProgress.current + delta * 2.5);
+    const recoil = Math.sin(Math.min(1, kickProgress.current) * Math.PI);
+
+    group.current.position.copy(camera.position);
+    group.current.quaternion.copy(camera.getWorldQuaternion(cameraQuaternion));
+
+    localOffset.set(0.47, -0.32 + recoil * 0.035, -0.72 + recoil * 0.26);
+    localOffset.applyQuaternion(group.current.quaternion);
+    group.current.position.add(localOffset);
+
+    toolEuler.set(recoil * 0.42, -0.08, 0.025);
+    group.current.quaternion.multiply(new Quaternion().setFromEuler(toolEuler));
+  });
+
+  return (
+    <group ref={group} renderOrder={20}>
+      <mesh position={[0, 0, -0.08]} rotation={[Math.PI / 2, 0, 0]} castShadow>
+        <cylinderGeometry args={[0.082, 0.098, 0.95, 14]} />
+        <meshStandardMaterial color="#2f3934" metalness={0.5} roughness={0.45} />
+      </mesh>
+      <mesh position={[0, 0, -0.58]} rotation={[Math.PI / 2, 0, 0]} castShadow>
+        <cylinderGeometry args={[0.115, 0.095, 0.16, 14]} />
+        <meshStandardMaterial color="#1f2724" metalness={0.58} roughness={0.38} />
+      </mesh>
+      <mesh position={[0, 0, 0.41]} rotation={[Math.PI / 2, 0, 0]} castShadow>
+        <cylinderGeometry args={[0.09, 0.12, 0.2, 14]} />
+        <meshStandardMaterial color="#59615a" metalness={0.42} roughness={0.5} />
+      </mesh>
+      <mesh position={[0, -0.13, -0.02]} rotation={[0.22, 0, 0]} castShadow>
+        <boxGeometry args={[0.052, 0.22, 0.075]} />
+        <meshStandardMaterial color="#241f18" roughness={0.9} />
+      </mesh>
+      <mesh position={[0, -0.09, 0.35]} rotation={[0.12, 0, 0]} castShadow>
+        <boxGeometry args={[0.16, 0.08, 0.26]} />
+        <meshStandardMaterial color="#2a231a" roughness={0.82} />
+      </mesh>
+      <mesh position={[0, 0.11, -0.18]} castShadow>
+        <boxGeometry args={[0.045, 0.055, 0.22]} />
+        <meshStandardMaterial color="#20261f" metalness={0.44} roughness={0.48} />
+      </mesh>
+      <mesh position={[0, 0.09, -0.46]} castShadow>
+        <boxGeometry args={[0.12, 0.03, 0.1]} />
+        <meshStandardMaterial color="#6a716a" metalness={0.36} roughness={0.52} />
+      </mesh>
+    </group>
+  );
+}
+
 export function FirstPersonMachineGun({
   shotsRef,
 }: {
