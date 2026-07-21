@@ -1,5 +1,6 @@
 export type GameStatus = "building" | "playable" | "archived";
 export type GameTheme = "safety-orange" | "electric-blue" | "acid-green";
+export type GameArt = "mess" | "minas-tirith";
 
 export interface GameEntry {
   readonly slug: string;
@@ -10,6 +11,7 @@ export interface GameEntry {
   readonly status: GameStatus;
   readonly stageLabel: string;
   readonly theme: GameTheme;
+  readonly art: GameArt;
 }
 
 export const games = [
@@ -23,6 +25,7 @@ export const games = [
     status: "building",
     stageLabel: "Собираем ядро",
     theme: "safety-orange",
+    art: "mess",
   },
   {
     slug: "make-a-mess-minas-tirith",
@@ -34,6 +37,7 @@ export const games = [
     status: "playable",
     stageLabel: "Новая карта",
     theme: "electric-blue",
+    art: "minas-tirith",
   },
 ] as const satisfies readonly GameEntry[];
 

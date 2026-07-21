@@ -910,6 +910,12 @@ function createWindow(options: WindowOptions): BreakableClusterDefinition {
   const [x, y, z] = options.position;
   const isFront = options.axis === "x";
   const frameDepth = 0.22;
+  // Ceiling-side lamp standing on the top frame plank just inside the
+  // glass — as close to "под потолком" as the old house's framing allows.
+  // The house interior is toward its centre at roughly (0, -3).
+  const inwardSign = isFront ? Math.sign(-3 - z) || 1 : Math.sign(0 - x) || 1;
+  const lampX = isFront ? x + width * 0.18 : x + inwardSign * 0.1;
+  const lampZ = isFront ? z + inwardSign * 0.1 : z + width * 0.18;
   const pieces: BreakablePieceDefinition[] = [
     makePiece(
       `${options.id}:glass`,
@@ -919,6 +925,15 @@ function createWindow(options: WindowOptions): BreakableClusterDefinition {
       options.position,
       isFront ? [width, height, 0.08] : [0.08, height, width],
       "#9fd5dd",
+    ),
+    makePiece(
+      `${options.id}:winlamp`,
+      options.id,
+      "glass",
+      "glassPane",
+      [lampX, y + height / 2 + 0.065 + 0.15, lampZ],
+      [0.24, 0.3, 0.2],
+      windowLampColor(`${options.id}:winlamp`, 0.3),
     ),
     makePiece(
       `${options.id}:frame:top`,
@@ -1342,10 +1357,17 @@ export interface LampDefinition {
 
 const lampCollector: LampDefinition[] = [];
 
-function windowGlassColor(id: string, litChance: number): string {
+// Window glass itself never glows: lived-in light comes from a small lamp
+// standing on the sill INSIDE the room. Shoot the glass — shards fall dark
+// and the room keeps glowing through the hole; break the lamp — the room
+// goes out. Unlit flats still get a lamp, just switched off.
+const unlitLampGlass = "#b9c2bd";
+const plainWindowGlass = "#9fd5dd";
+
+function windowLampColor(id: string, litChance: number): string {
   return deterministicNoise(`lit:${id}`) < litChance
     ? litWindowColor
-    : "#9fd5dd";
+    : unlitLampGlass;
 }
 
 // A four-storey two-entrance panel khrushchevka: big wall panels with seams,
@@ -1539,7 +1561,12 @@ function createKhrushchevka(
             panelPalette[(bay + floor) % panelPalette.length]),
           makePiece(`${clusterId}:${bay}:glass`, clusterId, "glass", "glassPane",
             [cx, b + 1.39, z1], [bayWidth - 0.08, 1.14, 0.06],
-            windowGlassColor(`${clusterId}:${bay}`, 0.42)),
+            plainWindowGlass),
+          // Люстра под потолком комнаты: висит на боковом креплении к
+          // оконной перемычке, нижний край чуть виден в верху окна.
+          makePiece(`${clusterId}:${bay}:winlamp`, clusterId, "glass", "glassPane",
+            [cx, b + 2.05, z1 - 0.35], [0.42, 0.26, 0.3],
+            windowLampColor(`${clusterId}:${bay}`, 0.42)),
           makePiece(`${clusterId}:${bay}:lintel`, clusterId, "concrete", "panel",
             [cx, b + 2.185, z1], [bayWidth - 0.01, 0.41, 0.3],
             panelPalette[(bay + floor + 2) % panelPalette.length]),
@@ -1585,7 +1612,10 @@ function createKhrushchevka(
           panelPalette[(strip + floor) % panelPalette.length]),
         makePiece(`${clusterId}:${strip}:glass`, clusterId, "glass", "glassPane",
           [cx, b + 1.39, z0], [1.9, 1.14, 0.06],
-          windowGlassColor(`${clusterId}:${strip}`, 0.45)),
+          plainWindowGlass),
+        makePiece(`${clusterId}:${strip}:winlamp`, clusterId, "glass", "glassPane",
+          [cx, b + 2.05, z0 + 0.35], [0.42, 0.26, 0.3],
+          windowLampColor(`${clusterId}:${strip}`, 0.45)),
         makePiece(`${clusterId}:${strip}:jamb:l`, clusterId, "concrete", "panel",
           [cx - 0.95 - jambWidth / 2 - 0.01, b + 1.39, z0],
           [jambWidth, 1.14, 0.3], panelPalette[(strip + floor + 1) % panelPalette.length]),
@@ -1612,10 +1642,12 @@ function createKhrushchevka(
         [cx, 1.565, z0], [stripWidth - 0.02, 2.31, 0.3], panelPalette[0]),
     );
     for (let window = 0; window < 3; window += 1) {
+      // Stairwell glazing is plain: the landings inside carry their own
+      // plafond fixtures, which is where the light actually lives.
       pieces.push(
         makePiece(`${clusterId}:glass:${window}`, clusterId, "glass", "glassPane",
           [cx, 3.31 + window * floorHeight, z0], [stripWidth - 0.05, 1.14, 0.06],
-          litWindowColor),
+          plainWindowGlass),
       );
       if (window < 2) {
         pieces.push(
@@ -1933,17 +1965,14 @@ function createKhrushchevka(
   const recolor: PieceRecolor | undefined = needsRecolor
     ? (piece) => {
         if (piece.material === "glass") {
-          if (
-            piece.id.includes(":stairwell:") ||
-            piece.id.includes(":lamp") ||
-            piece.id.includes(":plafond:")
-          ) {
-            return piece.color;
+          // Re-roll the sill lamps so every building glows differently;
+          // window glass itself stays plain everywhere.
+          if (piece.id.includes(":winlamp")) {
+            return deterministicNoise(`lit:${piece.id}`) < 0.42
+              ? litWindowColor
+              : unlitLampGlass;
           }
-          // re-roll lived-in windows so every building glows differently
-          return deterministicNoise(`lit:${piece.id}`) < 0.42
-            ? litWindowColor
-            : "#9fd5dd";
+          return piece.color;
         }
         return paletteMap.get(piece.color) ?? piece.color;
       }
@@ -1989,12 +2018,10 @@ function houseRecolor(
   litSalt: string,
 ): PieceRecolor {
   return (piece) => {
-    if (
-      piece.material === "glass" &&
-      piece.color === "#9fd5dd" &&
-      deterministicNoise(`${litSalt}:${piece.id}`) < 0.35
-    ) {
-      return litWindowColor;
+    if (piece.material === "glass" && piece.id.includes(":winlamp")) {
+      return deterministicNoise(`${litSalt}:${piece.id}`) < 0.35
+        ? litWindowColor
+        : unlitLampGlass;
     }
     return colorMap[piece.color] ?? piece.color;
   };
@@ -2062,12 +2089,15 @@ function createStreets(): BreakableClusterDefinition[] {
       makePiece(`town:road:south:${index}`, "town:roads", "asphalt", "groundTile",
         [cx, 0.03, -30], [6, 0.1, 6], index % 2 === 0 ? "#4e4e4c" : "#4a4a48"),
     );
-    curbPieces.push(
-      makePiece(`town:curb:n:${index}`, "town:curbs", "concrete", "panel",
-        [cx, 0.06, -8.88], [5.96, 0.16, 0.22], "#b5b8b6"),
-      makePiece(`town:curb:s:${index}`, "town:curbs", "concrete", "panel",
-        [cx, 0.06, -15.12], [5.96, 0.16, 0.22], "#b5b8b6"),
-    );
+    // The cross street joins at cx=42 — no curb across its mouth.
+    if (cx !== 42) {
+      curbPieces.push(
+        makePiece(`town:curb:n:${index}`, "town:curbs", "concrete", "panel",
+          [cx, 0.06, -8.88], [5.96, 0.16, 0.22], "#b5b8b6"),
+        makePiece(`town:curb:s:${index}`, "town:curbs", "concrete", "panel",
+          [cx, 0.06, -15.12], [5.96, 0.16, 0.22], "#b5b8b6"),
+      );
+    }
   }
 
   for (let index = 0; index < 12; index += 1) {
@@ -2093,10 +2123,23 @@ function createStreets(): BreakableClusterDefinition[] {
         [cx, 0.095, -30], [1.6, 0.03, 0.16], "#e8e6df"),
     );
   }
+  // Four zebra crossings around the intersection at (42, -12), one per
+  // approach. Stripes run parallel to the road axis (the driver sees "piano
+  // keys" pointing down the lane); pedestrians step across them.
   for (let stripe = 0; stripe < 6; stripe += 1) {
+    const acrossMain = -14.5 + stripe * 1.0;
     markingPieces.push(
-      makePiece(`town:zebra:${stripe}`, "town:markings", "concrete", "panel",
-        [35 + stripe * 0.55, 0.095, -12], [0.34, 0.03, 4.6], "#e8e6df"),
+      makePiece(`town:zebra:west:${stripe}`, "town:markings", "concrete", "panel",
+        [36.9, 0.095, acrossMain], [3.0, 0.03, 0.4], "#e8e6df"),
+      makePiece(`town:zebra:east:${stripe}`, "town:markings", "concrete", "panel",
+        [47.1, 0.095, acrossMain], [3.0, 0.03, 0.4], "#e8e6df"),
+    );
+    const acrossCross = 39.5 + stripe * 1.0;
+    markingPieces.push(
+      makePiece(`town:zebra:north:${stripe}`, "town:markings", "concrete", "panel",
+        [acrossCross, 0.095, -7.4], [0.4, 0.03, 3.0], "#e8e6df"),
+      makePiece(`town:zebra:south:${stripe}`, "town:markings", "concrete", "panel",
+        [acrossCross, 0.095, -16.6], [0.4, 0.03, 3.0], "#e8e6df"),
     );
   }
 
@@ -2265,27 +2308,147 @@ function createTownLamps(): BreakableClusterDefinition {
   const id = "town:street";
   const pieces: BreakablePieceDefinition[] = [];
 
-  for (const [index, [lx, lz]] of ([
-    [-2, -16.1],
-    [56, -16.1],
-  ] as const).entries()) {
+  const addLamp = (
+    name: string,
+    lx: number,
+    lz: number,
+    armToward: -1 | 1,
+  ): void => {
+    // Pole on the grass verge, arm reaching over the roadway, glowing head
+    // resting on the arm tip. The head is the lamp: break it, the light dies.
+    const headZ = lz + armToward * 0.72;
     pieces.push(
-      makePiece(`${id}:lamp:${index}:pole`, id, "steel", "steelSheet",
-        [lx, 1.78, lz], [0.14, 3.6, 0.14], "#5d6663"),
-      makePiece(`${id}:lamp:${index}:head`, id, "glass", "glassPane",
-        [lx, 3.69, lz], [0.34, 0.22, 0.34], litWindowColor),
+      makePiece(`${id}:${name}:pole`, id, "steel", "steelSheet",
+        [lx, 2.28, lz], [0.16, 4.6, 0.16], "#565f5c"),
+      makePiece(`${id}:${name}:arm`, id, "steel", "steelSheet",
+        [lx, 4.5, lz + armToward * 0.42], [0.12, 0.12, 1.0], "#565f5c"),
+      makePiece(`${id}:${name}:head`, id, "glass", "glassPane",
+        [lx, 4.68, headZ], [0.36, 0.24, 0.36], litWindowColor),
+      makePiece(`${id}:${name}:cap`, id, "steel", "steelSheet",
+        [lx, 4.85, headZ], [0.46, 0.1, 0.46], "#4a5350"),
     );
     lampCollector.push({
-      id: `${id}:lamp:${index}:head`,
-      position: [lx, 3.42, lz + 0.1],
+      id: `${id}:${name}:head`,
+      position: [lx, 4.46, headZ],
+      color: "#ffdca8",
+      distance: 12,
+      intensity: 3.4,
     });
+  };
+
+  const addCrossLamp = (name: string, lx: number, lz: number): void => {
+    // Lamps along the north-south street: the arm reaches west over the road.
+    pieces.push(
+      makePiece(`${id}:${name}:pole`, id, "steel", "steelSheet",
+        [lx, 2.28, lz], [0.16, 4.6, 0.16], "#565f5c"),
+      makePiece(`${id}:${name}:arm`, id, "steel", "steelSheet",
+        [lx - 0.42, 4.5, lz], [1.0, 0.12, 0.12], "#565f5c"),
+      makePiece(`${id}:${name}:head`, id, "glass", "glassPane",
+        [lx - 0.72, 4.68, lz], [0.36, 0.24, 0.36], litWindowColor),
+      makePiece(`${id}:${name}:cap`, id, "steel", "steelSheet",
+        [lx - 0.72, 4.85, lz], [0.46, 0.1, 0.46], "#4a5350"),
+    );
+    lampCollector.push({
+      id: `${id}:${name}:head`,
+      position: [lx - 0.72, 4.46, lz],
+      color: "#ffdca8",
+      distance: 12,
+      intensity: 3.4,
+    });
+  };
+
+  // Main street (z = -12): poles on the north verge, arms south over the road.
+  for (const [index, lx] of [-8, 10, 28, 58, 70].entries()) {
+    addLamp(`main:${index}`, lx, -8.15, -1);
   }
+  // South street (z = -30): poles on its north verge.
+  for (const [index, lx] of [-2, 22, 52, 70].entries()) {
+    addLamp(`south:${index}`, lx, -26.15, -1);
+  }
+  // Cross street (x = 42): poles on the east verge.
+  for (const [index, lz] of [-44, -22, 4].entries()) {
+    addCrossLamp(`cross:${index}`, 45.85, lz);
+  }
+  // The intersection gets its own four corner lamps, arms toward the middle.
+  addLamp("junction:nw", 37.4, -7.7, -1);
+  addLamp("junction:ne", 46.6, -7.7, -1);
+  addLamp("junction:sw", 37.4, -16.3, 1);
+  addLamp("junction:se", 46.6, -16.3, 1);
 
   return cluster(id, "Street lamps", "steel", "mounted", pieces);
 }
 
+/**
+ * The town used to end at a hard rectangle. Like the fortress map, the play
+ * field is a circle now: a meadow ring with bushes, field stones and dirt
+ * patches fills everything between the authored blocks and the world rim.
+ */
+function createOutskirts(): BreakableClusterDefinition[] {
+  const meadowPieces: BreakablePieceDefinition[] = [];
+  const earthPieces: BreakablePieceDefinition[] = [];
+  const floraPieces: BreakablePieceDefinition[] = [];
+  const tile = 6;
+  let index = 0;
+
+  for (let cx = -48; cx <= 108; cx += tile) {
+    for (let cz = -78; cz <= 48; cz += tile) {
+      const insideTown =
+        cx >= -12 && cx <= 72 && cz >= -48 && cz <= 18;
+      const distance = Math.hypot(cx - 30, cz + 15);
+      if (insideTown || distance > 57) {
+        continue;
+      }
+
+      const tone = deterministicNoise(`outskirt:${cx}:${cz}`);
+      meadowPieces.push(
+        makePiece(`town:outskirt:grass:${index}`, "town:outskirts", "soil", "groundTile",
+          [cx, -0.14, cz], [6.04, 0.24, 6.04],
+          tone > 0.66 ? "#5d7a41" : tone > 0.33 ? "#647f46" : "#587440"),
+      );
+      earthPieces.push(
+        makePiece(`town:outskirt:earth:${index}`, "town:outskirts:earth", "earth", "groundTile",
+          [cx, -0.71, cz], [6.04, 0.9, 6.04],
+          tone > 0.5 ? "#665336" : "#5f4c31"),
+      );
+
+      const dressing = deterministicNoise(`outskirt:flora:${cx}:${cz}`);
+      const offsetX = (deterministicNoise(`outskirt:ox:${cx}:${cz}`) - 0.5) * 3.4;
+      const offsetZ = (deterministicNoise(`outskirt:oz:${cx}:${cz}`) - 0.5) * 3.4;
+      if (dressing > 0.8) {
+        const width = 0.9 + dressing * 1.5;
+        const height = 0.5 + deterministicNoise(`outskirt:bh:${cx}:${cz}`) * 0.9;
+        floraPieces.push(
+          makePiece(`town:outskirt:bush:${index}`, "town:outskirts:flora", "foliage", "groundTile",
+            [cx + offsetX, -0.02 + height / 2, cz + offsetZ],
+            [width, height, width * 0.82],
+            index % 3 === 0 ? "#3c5230" : index % 3 === 1 ? "#49603a" : "#425934",
+            [0, deterministicNoise(`outskirt:br:${cx}:${cz}`) * Math.PI, 0]),
+        );
+      } else if (dressing < 0.07) {
+        const width = 0.5 + deterministicNoise(`outskirt:rw:${cx}:${cz}`) * 0.9;
+        const height = 0.3 + deterministicNoise(`outskirt:rh:${cx}:${cz}`) * 0.5;
+        floraPieces.push(
+          makePiece(`town:outskirt:rock:${index}`, "town:outskirts:flora", "stone", "stoneBlock",
+            [cx + offsetX, -0.02 + height / 2, cz + offsetZ],
+            [width, height, width * 0.8],
+            index % 2 === 0 ? "#7b786f" : "#8a867b",
+            [0, deterministicNoise(`outskirt:rr:${cx}:${cz}`) * Math.PI, 0.04]),
+        );
+      }
+      index += 1;
+    }
+  }
+
+  return [
+    cluster("town:outskirts", "Meadow ring", "soil", "linked", meadowPieces),
+    cluster("town:outskirts:earth", "Meadow subsoil", "earth", "linked", earthPieces),
+    cluster("town:outskirts:flora", "Outskirt bushes and field stones", "foliage", "stack", floraPieces),
+  ];
+}
+
 export const breakableClusters = [
   ...createGroundTiles(),
+  ...createOutskirts(),
   ...createOldHouse(),
   ...createOldHouse("h2", 56, 0, houseRecolor(silicateHouseColors, "lit-h2")),
   ...createOldHouse("h3", 56, -38, houseRecolor(yellowHouseColors, "lit-h3")),
@@ -2673,7 +2836,8 @@ export const openHouseScene = createDestructionScene({
   environment: "town",
   playerSpawn: [0, 1.25, 7.4],
   worldCenter: [30, -15],
-  worldHalfExtents: [45.5, 36.5],
+  worldHalfExtents: [62, 62],
+  worldRadius: 60,
   safetyFloorY: -2.2,
   copy: {
     status: "Make a Mess / 004",

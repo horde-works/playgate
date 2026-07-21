@@ -111,7 +111,6 @@ import {
 } from "./DynamicBreakableWorld";
 import { HingedDoorSystem } from "./HingedDoorSystem";
 import { IntactBreakableWorld } from "./IntactBreakableWorld";
-import { getPieceMaterial } from "./materialTextures";
 import { resolveRuntimeStructure } from "./runtimeStructure";
 import { createSpatialIndex } from "./spatialIndex";
 import {
@@ -120,7 +119,7 @@ import {
 } from "./playerMovement";
 import {
   DayNightCycle,
-  LampLight,
+  LampLightPool,
   SceneEnvironment,
   type TimeOfDay,
 } from "./WorldEnvironment";
@@ -1073,11 +1072,12 @@ function BreakableObjects({
     forceDirection: { x: number; y: number; z: number },
   ) => void;
 }) {
-  const { intactPieces, bodyPieces } = useMemo(() => {
-    const intact: BreakablePieceDefinition[] = [];
+  const { hiddenPieceIds, bodyPieces } = useMemo(() => {
+    const hidden = new Set<string>();
     const bodies: BreakablePieceDefinition[] = [];
     for (const piece of pieces) {
       if (shatteredPieces.has(piece.id)) {
+        hidden.add(piece.id);
         continue;
       }
       if (
@@ -1085,20 +1085,22 @@ function BreakableObjects({
         piece.hinge ||
         piece.shape === "cinderBlock"
       ) {
+        hidden.add(piece.id);
         bodies.push(piece);
-      } else {
-        intact.push(piece);
       }
     }
     return {
-      intactPieces: intact,
+      hiddenPieceIds: hidden,
       bodyPieces: bodies,
     };
   }, [brokenPieces, pieces, shatteredPieces]);
 
   return (
     <group>
-      <IntactBreakableWorld pieces={intactPieces} />
+      <IntactBreakableWorld
+        pieces={pieces}
+        hiddenPieceIds={hiddenPieceIds}
+      />
       <DynamicBreakableWorld
         pieces={bodyPieces}
         shards={[]}
@@ -4092,6 +4094,28 @@ function OpenWorldScene({
           !remnantDefinition.detached &&
           !brokenPiecesRef.current.has(remnantDefinition.parentId)
         ) {
+          if (groundMaterials.has(remnantDefinition.material)) {
+            // Ground stays ground: repeated hammer blows keep digging the
+            // crater deeper instead of finishing the parent tile and
+            // popping a whole 6 m block out of the lawn.
+            const dig = carveAt(remnantDefinition.id, point, 0.18, direction);
+            if (dig.carved) {
+              if (dig.brokenParentId) {
+                breakPieces([dig.brokenParentId]);
+              }
+            } else {
+              applyImpact(
+                remnantDefinition.id,
+                material,
+                point,
+                direction,
+                0.4,
+              );
+            }
+            settleWorld();
+            return;
+          }
+
           if (
             remnantDefinition.material === "concrete" ||
             remnantDefinition.material === "stone"
@@ -4180,6 +4204,16 @@ function OpenWorldScene({
     return next;
   }, [carvedPieces, shatteredPieces]);
 
+  // A light fixture counts as dead whether it broke loose, shattered or got
+  // a hole carved through it.
+  const deadLampPieces = useMemo(() => {
+    const next = new Set(brokenPieces);
+    for (const id of hiddenPieces) {
+      next.add(id);
+    }
+    return next;
+  }, [brokenPieces, hiddenPieces]);
+
   return (
     <>
       <DayNightCycle
@@ -4187,15 +4221,12 @@ function OpenWorldScene({
         nightRef={nightRef}
         theme={scene.environment}
       />
-      {lampDefinitions.map((lamp) => (
-        <LampLight
-          key={lamp.id}
-          lamp={lamp}
-          broken={brokenPieces.has(lamp.id)}
-          nightRef={nightRef}
-        />
-      ))}
-      <SceneEnvironment />
+      <LampLightPool
+        lamps={lampDefinitions}
+        brokenPieces={deadLampPieces}
+        nightRef={nightRef}
+      />
+      <SceneEnvironment theme={scene.environment} />
       <OpenWorldShell scene={scene} />
       <group ref={breakableRaycastRoot}>
         <BreakableObjects
@@ -4362,6 +4393,22 @@ function PerformanceProbe({
   const elapsed = useRef(0);
   const frames = useRef(0);
 
+  // The composer issues many render calls per frame and each one resets
+  // gl.info by default; accumulate manually so calls/tris cover the whole
+  // frame instead of only the last full-screen pass.
+  useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+    const info = gl.info;
+    info.autoReset = false;
+    info.reset();
+    return () => {
+      info.autoReset = true;
+    };
+  }, [enabled, gl]);
+
+  // Priority 2: runs after the composer has rendered this frame.
   useFrame((_, delta) => {
     if (!enabled) {
       elapsed.current = 0;
@@ -4371,18 +4418,17 @@ function PerformanceProbe({
 
     elapsed.current += delta;
     frames.current += 1;
-    if (elapsed.current < 0.5) {
-      return;
+    if (elapsed.current >= 0.5) {
+      onSample({
+        fps: Math.round(frames.current / elapsed.current),
+        calls: gl.info.render.calls,
+        triangles: gl.info.render.triangles,
+      });
+      elapsed.current = 0;
+      frames.current = 0;
     }
-
-    onSample({
-      fps: Math.round(frames.current / elapsed.current),
-      calls: gl.info.render.calls,
-      triangles: gl.info.render.triangles,
-    });
-    elapsed.current = 0;
-    frames.current = 0;
-  });
+    gl.info.reset();
+  }, 2);
 
   return null;
 }
@@ -4910,7 +4956,9 @@ export function MakeAMessGame({
               far: scene.cameraFar,
             }}
             gl={{
-              antialias: true,
+              // MSAA is bypassed by the always-on composer; SMAA in the post
+              // chain resolves edges instead.
+              antialias: false,
               powerPreference: "high-performance",
             }}
             fallback={
@@ -4921,7 +4969,7 @@ export function MakeAMessGame({
             onCreated={(state) => {
               state.gl.toneMapping = AgXToneMapping;
               state.gl.toneMappingExposure = 1.08;
-              state.gl.shadowMap.autoUpdate = false;
+              state.gl.shadowMap.autoUpdate = true;
               state.gl.shadowMap.needsUpdate = true;
               setReady(true);
             }}
@@ -4956,9 +5004,7 @@ export function MakeAMessGame({
                 onSample={setPerformance}
               />
               <AdaptiveRenderScale compact={fallbackLook} />
-              {!fallbackLook && timeOfDay !== "day" ? (
-                <TeardownPostProcessing compact={false} />
-              ) : null}
+              <TeardownPostProcessing compact={fallbackLook} />
             </Suspense>
           </Canvas>
         </KeyboardControls>

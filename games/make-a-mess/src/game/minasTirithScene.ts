@@ -828,6 +828,86 @@ function createWallWalk(): void {
   addCluster(id, "Battlement walk", "basalt", "stack", pieces);
 }
 
+function createWallTorches(): void {
+  const id = "minas:wall-torches";
+  const pieces: BreakablePieceDefinition[] = [];
+
+  // Iron sconces along the inner face of the wall; the flames are the same
+  // lamp-driven glass the gate torches use, so night patrols read the wall.
+  for (const [index, x] of [-22.4, -13.6, 13.6, 22.4].entries()) {
+    pieces.push(
+      piece(
+        `${id}:bracket:${index}`,
+        id,
+        "steel",
+        "steelSheet",
+        [x, 6.9, 0.86],
+        [0.3, 0.16, 0.34],
+        "#272c2f",
+      ),
+      piece(
+        `${id}:flame:${index}`,
+        id,
+        "glass",
+        "glassPane",
+        [x, 7.26, 0.88],
+        [0.26, 0.56, 0.26],
+        litWindowColor,
+      ),
+    );
+    lamps.push({
+      id: `${id}:flame:${index}`,
+      position: [x, 7.32, 1.3],
+      color: "#ffb46a",
+      distance: 8,
+      intensity: 3.1,
+    });
+  }
+
+  // Two braziers flanking the causeway before the gate.
+  for (const [index, side] of ([-1, 1] as const).entries()) {
+    const x = side * 5.4;
+    pieces.push(
+      piece(
+        `${id}:brazier:base:${index}`,
+        id,
+        "steel",
+        "steelSheet",
+        [x, 0.54, 12.4],
+        [0.22, 1.0, 0.22],
+        "#2c3134",
+      ),
+      piece(
+        `${id}:brazier:bowl:${index}`,
+        id,
+        "steel",
+        "steelSheet",
+        [x, 1.14, 12.4],
+        [0.58, 0.2, 0.58],
+        "#33383b",
+      ),
+      piece(
+        `${id}:brazier:flame:${index}`,
+        id,
+        "glass",
+        "glassPane",
+        [x, 1.49, 12.4],
+        [0.34, 0.5, 0.34],
+        litWindowColor,
+      ),
+    );
+    lamps.push({
+      id: `${id}:brazier:flame:${index}`,
+      position: [x, 1.65, 12.4],
+      color: "#ffa95c",
+      distance: 9,
+      intensity: 3.4,
+    });
+  }
+
+  addCluster(id, "Wall torches and braziers", "steel", "mounted", pieces);
+}
+
 function createDarkTower(): void {
   const id = "minas:dark-tower";
   const pieces: BreakablePieceDefinition[] = [];
@@ -1274,6 +1354,7 @@ createMountainRidge(1);
 createCitadelWall();
 createGatehouse();
 createWallWalk();
+createWallTorches();
 createDarkTower();
 createApproachDetails();
 createWeatheredHighlandDetails();

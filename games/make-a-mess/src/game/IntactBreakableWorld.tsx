@@ -13,142 +13,175 @@ import {
   Color,
   InstancedBufferAttribute,
   InstancedMesh,
+  Matrix4,
   Object3D,
   StaticDrawUsage,
 } from "three";
 import {
   materialRuntimeProfiles,
-  type BreakableMaterial,
   type BreakablePieceDefinition,
 } from "./destructionScene";
-import {
-  getPieceMaterial,
-  getSilicateJointMaterial,
-  isGlassMaterial,
-  pieceMaterialBaseColor,
-} from "./materialTextures";
+import { groundMaterials } from "./destructionRuntime";
+import { getPieceMaterial } from "./materialTextures";
 import { materialAnchor } from "./materialAppearance";
 import {
   SILICATE_JOINT_EXPANSION,
   hasSilicateJoints,
   silicateJointBand,
-  silicateJointBandKey,
   silicateJointTint,
 } from "./silicateJoints";
+import {
+  applyHiddenPieceDiff,
+  buildIntactInstanceBatches,
+  type IntactInstanceBatch,
+} from "./intactWorldBatching";
+import {
+  WorldLightingBake,
+  writeBakeResult,
+} from "./worldLightingBake";
 import {
   buildStaticColliderMeshes,
   type StaticColliderMeshDefinition,
 } from "./staticColliders";
 
 const UNIT_BOX = new BoxGeometry(1, 1, 1);
-// Both authored maps fit inside one 256 m render cell. Their box geometry is
-// cheap; splitting it into tiny cells cost hundreds of draw calls (and the
-// same again in the shadow pass) while barely reducing visible triangles.
-// Physics and blast queries keep their own spatial index, so render batching
-// does not make structural work global.
-const WORLD_CHUNK_SIZE = 256;
+const HIDDEN_MATRIX = new Matrix4().makeScale(0, 0, 0);
 
-interface IntactInstanceBatch {
-  readonly id: string;
-  readonly material: BreakableMaterial;
-  readonly materialColor: string;
-  readonly castShadow: boolean;
-  readonly pieces: readonly BreakablePieceDefinition[];
+// Jointed masonry is rendered expanded by the same margin the former joint
+// shell used, so the silicate binder keeps closing the authored air gaps
+// between blocks. Physics colliders stay on the authored sizes, exactly as
+// the (collider-less) shell did before.
+function pieceRenderExpansion(piece: BreakablePieceDefinition): number {
+  return hasSilicateJoints(piece.id, piece.material)
+    ? SILICATE_JOINT_EXPANSION
+    : 0;
 }
 
-interface SilicateJointBatch {
-  readonly id: string;
-  readonly normalizedBand: number;
-  readonly pieces: readonly BreakablePieceDefinition[];
+function writePieceTransform(
+  transform: Object3D,
+  piece: BreakablePieceDefinition,
+): void {
+  const expansion = pieceRenderExpansion(piece);
+  transform.position.set(...piece.position);
+  transform.rotation.set(
+    piece.rotation?.[0] ?? 0,
+    piece.rotation?.[1] ?? 0,
+    piece.rotation?.[2] ?? 0,
+  );
+  transform.scale.set(
+    piece.size[0] + expansion,
+    piece.size[1] + expansion,
+    piece.size[2] + expansion,
+  );
+  transform.updateMatrix();
 }
 
-function worldChunkKey(piece: BreakablePieceDefinition): string {
-  return `${Math.floor(
-    (piece.position[0] + WORLD_CHUNK_SIZE / 2) / WORLD_CHUNK_SIZE,
-  )}:${Math.floor(
-    (piece.position[2] + WORLD_CHUNK_SIZE / 2) / WORLD_CHUNK_SIZE,
-  )}`;
-}
-
-function buildInstanceBatches(
-  pieces: readonly BreakablePieceDefinition[],
-): readonly IntactInstanceBatch[] {
-  const batches = new Map<string, BreakablePieceDefinition[]>();
-  for (const piece of pieces) {
-    const materialColor = pieceMaterialBaseColor(
-      piece.material,
-      piece.color,
-    );
-    const castShadow =
-      !isGlassMaterial(piece.material) && piece.shape !== "groundTile";
-    const id = `${worldChunkKey(piece)}:${piece.material}:${materialColor}:${Number(
-      castShadow,
-    )}`;
-    const batch = batches.get(id);
-    if (batch) {
-      batch.push(piece);
-    } else {
-      batches.set(id, [piece]);
-    }
-  }
-
-  return [...batches].map(([id, batchPieces]) => ({
-    id,
-    material: batchPieces[0].material,
-    materialColor: pieceMaterialBaseColor(
-      batchPieces[0].material,
-      batchPieces[0].color,
-    ),
-    castShadow:
-      !isGlassMaterial(batchPieces[0].material) &&
-      batchPieces[0].shape !== "groundTile",
-    pieces: batchPieces,
-  }));
-}
-
-function buildSilicateJointBatches(
-  pieces: readonly BreakablePieceDefinition[],
-): readonly SilicateJointBatch[] {
-  const batches = new Map<string, BreakablePieceDefinition[]>();
-  for (const piece of pieces) {
-    if (!hasSilicateJoints(piece.id, piece.material)) {
-      continue;
-    }
-    const bandKey = silicateJointBandKey(piece.size);
-    const id = `${worldChunkKey(piece)}:${bandKey}`;
-    const batch = batches.get(id);
-    if (batch) {
-      batch.push(piece);
-    } else {
-      batches.set(id, [piece]);
-    }
-  }
-
-  return [...batches].map(([id, batchPieces]) => ({
-    id,
-    normalizedBand: silicateJointBand(batchPieces[0].size),
-    pieces: batchPieces,
-  }));
-}
-
+/**
+ * One instanced mesh per material batch, built ONCE from the full authored
+ * piece list. Breaking, carving or shattering a piece only writes a zero
+ * scale into its instance slot (uploaded via updateRanges), so a machine-gun
+ * burst no longer re-uploads ten thousand matrices per hit.
+ */
 const IntactPieceBatch = memo(function IntactPieceBatch({
   batch,
+  hiddenPieceIds,
+  lighting,
 }: {
   batch: IntactInstanceBatch;
+  hiddenPieceIds: ReadonlySet<string>;
+  lighting: WorldLightingBake;
 }) {
   const mesh = useRef<InstancedMesh>(null);
+  const appliedHidden = useRef(new Set<string>());
+  const indexById = useMemo(
+    () => new Map(batch.pieces.map((piece, index) => [piece.id, index])),
+    [batch.pieces],
+  );
   const geometry = useMemo(() => {
     const next = UNIT_BOX.clone();
     const anchors = new Float32Array(batch.pieces.length * 3);
+    const aoA = new Float32Array(batch.pieces.length * 4).fill(1);
+    const aoB = new Float32Array(batch.pieces.length * 4).fill(1);
+    const sky = new Float32Array(batch.pieces.length).fill(1);
+    // Intact pieces: masonry blocks expose every face (their bevels and
+    // edge wear are the desired block look); ground tiles form one flush
+    // surface, so their faces are treated as interior — no seam grid.
+    const facePos = new Float32Array(batch.pieces.length * 3).fill(1);
+    const faceNeg = new Float32Array(batch.pieces.length * 3).fill(1);
     batch.pieces.forEach((piece, index) => {
       anchors.set(materialAnchor(piece.position), index * 3);
+      if (piece.shape === "groundTile") {
+        facePos.fill(0, index * 3, index * 3 + 3);
+        faceNeg.fill(0, index * 3, index * 3 + 3);
+      }
+      const baked = lighting.resultFor(piece.id);
+      if (baked) {
+        writeBakeResult(baked, index, aoA, aoB, sky);
+      }
     });
     next.setAttribute(
       "materialAnchor",
       new InstancedBufferAttribute(anchors, 3, false),
     );
+    next.setAttribute(
+      "bakedAoA",
+      new InstancedBufferAttribute(aoA, 4, false),
+    );
+    next.setAttribute(
+      "bakedAoB",
+      new InstancedBufferAttribute(aoB, 4, false),
+    );
+    next.setAttribute(
+      "bakedSkyExposure",
+      new InstancedBufferAttribute(sky, 1, false),
+    );
+    next.setAttribute(
+      "materialFaceMaskPos",
+      new InstancedBufferAttribute(facePos, 3, false),
+    );
+    next.setAttribute(
+      "materialFaceMaskNeg",
+      new InstancedBufferAttribute(faceNeg, 3, false),
+    );
+
+    if (batch.jointed) {
+      const bands = new Float32Array(batch.pieces.length);
+      const tints = new Float32Array(batch.pieces.length * 3);
+      const tint = new Color();
+      batch.pieces.forEach((piece, index) => {
+        if (!hasSilicateJoints(piece.id, piece.material)) {
+          return;
+        }
+        bands[index] = silicateJointBand(piece.size);
+        tint.set(silicateJointTint(piece.color));
+        tints[index * 3] = tint.r;
+        tints[index * 3 + 1] = tint.g;
+        tints[index * 3 + 2] = tint.b;
+      });
+      next.setAttribute(
+        "silicateJointBand",
+        new InstancedBufferAttribute(bands, 1, false),
+      );
+      next.setAttribute(
+        "silicateJointTint",
+        new InstancedBufferAttribute(tints, 3, false),
+      );
+    }
     return next;
-  }, [batch.pieces]);
+  }, [batch, lighting]);
+
+  // The bake writes refreshed neighbour values straight into these
+  // attributes when nearby pieces are destroyed.
+  useEffect(() => {
+    return lighting.registerBatch({
+      aoA: geometry.getAttribute("bakedAoA") as InstancedBufferAttribute,
+      aoB: geometry.getAttribute("bakedAoB") as InstancedBufferAttribute,
+      sky: geometry.getAttribute(
+        "bakedSkyExposure",
+      ) as InstancedBufferAttribute,
+      indexById,
+    });
+  }, [geometry, indexById, lighting]);
   const material = useMemo(
     () =>
       getPieceMaterial(
@@ -161,9 +194,32 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
     () => batch.pieces.map((piece) => piece.id),
     [batch.pieces],
   );
+  // Ground tiles form one continuous surface out of many boxes; blending
+  // each tile's authored tone toward the batch average softens the hard
+  // 6 m color steps at the seams while the continuous world-space macro
+  // noise keeps the tonal variety.
+  const groundAverageColor = useMemo(() => {
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    let count = 0;
+    const sample = new Color();
+    for (const piece of batch.pieces) {
+      if (piece.shape !== "groundTile" || !groundMaterials.has(piece.material)) {
+        continue;
+      }
+      sample.set(piece.color);
+      r += sample.r;
+      g += sample.g;
+      b += sample.b;
+      count += 1;
+    }
+    return count > 0 ? new Color(r / count, g / count, b / count) : null;
+  }, [batch.pieces]);
 
   useEffect(() => () => geometry.dispose(), [geometry]);
 
+  // Full write: runs once per batch identity (i.e. once per mount).
   useLayoutEffect(() => {
     const current = mesh.current;
     if (!current) {
@@ -173,28 +229,55 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
     const transform = new Object3D();
     const color = new Color();
     batch.pieces.forEach((piece, index) => {
-      transform.position.set(...piece.position);
-      transform.rotation.set(
-        piece.rotation?.[0] ?? 0,
-        piece.rotation?.[1] ?? 0,
-        piece.rotation?.[2] ?? 0,
-      );
-      transform.scale.set(...piece.size);
-      transform.updateMatrix();
+      writePieceTransform(transform, piece);
       current.setMatrixAt(index, transform.matrix);
-      current.setColorAt(
-        index,
-        color.set(batch.materialColor === "#ffffff" ? piece.color : "#ffffff"),
-      );
+      color.set(batch.materialColor === "#ffffff" ? piece.color : "#ffffff");
+      if (
+        groundAverageColor &&
+        piece.shape === "groundTile" &&
+        groundMaterials.has(piece.material)
+      ) {
+        color.lerp(groundAverageColor, 0.6);
+      }
+      current.setColorAt(index, color);
     });
     current.instanceMatrix.setUsage(StaticDrawUsage);
     current.instanceMatrix.needsUpdate = true;
     if (current.instanceColor) {
       current.instanceColor.needsUpdate = true;
     }
-    current.computeBoundingBox();
     current.computeBoundingSphere();
-  }, [batch]);
+    appliedHidden.current = new Set();
+  }, [batch, groundAverageColor]);
+
+  // Incremental pass: touch only the instances whose hidden state changed.
+  useLayoutEffect(() => {
+    const current = mesh.current;
+    if (!current) {
+      return;
+    }
+
+    const { hide, restore } = applyHiddenPieceDiff(
+      batch.pieces,
+      appliedHidden.current,
+      hiddenPieceIds,
+    );
+    if (hide.length === 0 && restore.length === 0) {
+      return;
+    }
+
+    const transform = new Object3D();
+    for (const index of hide) {
+      current.setMatrixAt(index, HIDDEN_MATRIX);
+      current.instanceMatrix.addUpdateRange(index * 16, 16);
+    }
+    for (const index of restore) {
+      writePieceTransform(transform, batch.pieces[index]);
+      current.setMatrixAt(index, transform.matrix);
+      current.instanceMatrix.addUpdateRange(index * 16, 16);
+    }
+    current.instanceMatrix.needsUpdate = true;
+  }, [batch, hiddenPieceIds]);
 
   return (
     <instancedMesh
@@ -205,69 +288,6 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
       userData={{
         breakableInstanceIds: instanceIds,
         breakableMaterial: batch.material,
-      }}
-    />
-  );
-});
-
-const SilicateJointBatch = memo(function SilicateJointBatch({
-  batch,
-}: {
-  batch: SilicateJointBatch;
-}) {
-  const mesh = useRef<InstancedMesh>(null);
-  const material = useMemo(
-    () => getSilicateJointMaterial(batch.normalizedBand),
-    [batch.normalizedBand],
-  );
-  const instanceIds = useMemo(
-    () => batch.pieces.map((piece) => piece.id),
-    [batch.pieces],
-  );
-
-  useLayoutEffect(() => {
-    const current = mesh.current;
-    if (!current) {
-      return;
-    }
-
-    const transform = new Object3D();
-    const color = new Color();
-    for (let index = 0; index < batch.pieces.length; index += 1) {
-      const piece = batch.pieces[index];
-      transform.position.set(...piece.position);
-      transform.rotation.set(
-        piece.rotation?.[0] ?? 0,
-        piece.rotation?.[1] ?? 0,
-        piece.rotation?.[2] ?? 0,
-      );
-      transform.scale.set(
-        piece.size[0] + SILICATE_JOINT_EXPANSION,
-        piece.size[1] + SILICATE_JOINT_EXPANSION,
-        piece.size[2] + SILICATE_JOINT_EXPANSION,
-      );
-      transform.updateMatrix();
-      current.setMatrixAt(index, transform.matrix);
-      current.setColorAt(index, color.set(silicateJointTint(piece.color)));
-    }
-    current.instanceMatrix.setUsage(StaticDrawUsage);
-    current.instanceMatrix.needsUpdate = true;
-    if (current.instanceColor) {
-      current.instanceColor.needsUpdate = true;
-    }
-    current.computeBoundingBox();
-    current.computeBoundingSphere();
-  }, [batch]);
-
-  return (
-    <instancedMesh
-      ref={mesh}
-      args={[UNIT_BOX, material, batch.pieces.length]}
-      castShadow={false}
-      receiveShadow
-      renderOrder={1}
-      userData={{
-        breakableInstanceIds: instanceIds,
       }}
     />
   );
@@ -312,27 +332,38 @@ const IntactPieceColliders = memo(function IntactPieceColliders({
 
 export const IntactBreakableWorld = memo(function IntactBreakableWorld({
   pieces,
+  hiddenPieceIds,
 }: {
   pieces: readonly BreakablePieceDefinition[];
+  hiddenPieceIds: ReadonlySet<string>;
 }) {
   const instanceBatches = useMemo(
-    () => buildInstanceBatches(pieces),
+    () => buildIntactInstanceBatches(pieces),
     [pieces],
   );
-  const jointBatches = useMemo(
-    () => buildSilicateJointBatches(pieces),
-    [pieces],
+  const lighting = useMemo(() => new WorldLightingBake(pieces), [pieces]);
+  const colliderPieces = useMemo(
+    () => pieces.filter((piece) => !hiddenPieceIds.has(piece.id)),
+    [hiddenPieceIds, pieces],
   );
+
+  // Destroyed pieces stop occluding: clear their cells and re-bake only the
+  // neighbourhood, so light falls into craters and breaches.
+  useEffect(() => {
+    lighting.applyHidden(hiddenPieceIds);
+  }, [hiddenPieceIds, lighting]);
 
   return (
     <>
       {instanceBatches.map((batch) => (
-        <IntactPieceBatch key={batch.id} batch={batch} />
+        <IntactPieceBatch
+          key={batch.id}
+          batch={batch}
+          hiddenPieceIds={hiddenPieceIds}
+          lighting={lighting}
+        />
       ))}
-      {jointBatches.map((batch) => (
-        <SilicateJointBatch key={`joint:${batch.id}`} batch={batch} />
-      ))}
-      <IntactPieceColliders pieces={pieces} />
+      <IntactPieceColliders pieces={colliderPieces} />
     </>
   );
 });

@@ -17,10 +17,6 @@ export function silicateJointBand(size: SceneVector3): number {
   return Math.max(0.0025, Math.min(0.015, 0.013 / longestSide));
 }
 
-export function silicateJointBandKey(size: SceneVector3): string {
-  return silicateJointBand(size).toFixed(3);
-}
-
 export function silicateJointTint(baseColor: string): string {
   const match = /^#([0-9a-f]{6})$/i.exec(baseColor);
   if (!match) {

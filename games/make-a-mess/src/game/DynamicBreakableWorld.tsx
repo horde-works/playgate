@@ -21,6 +21,7 @@ import {
   Vector3,
 } from "three";
 import {
+  litWindowColor,
   type BreakableMaterial,
   type BreakablePieceDefinition,
 } from "./destructionScene";
@@ -30,7 +31,6 @@ import type {
 } from "./destructionRuntime";
 import {
   getPieceMaterial,
-  getSilicateJointMaterial,
   pieceMaterialBaseColor,
 } from "./materialTextures";
 import { materialAnchor } from "./materialAppearance";
@@ -38,9 +38,9 @@ import {
   SILICATE_JOINT_EXPANSION,
   hasSilicateJoints,
   silicateJointBand,
-  silicateJointBandKey,
   silicateJointTint,
 } from "./silicateJoints";
+import { computeBoxFaceMasks } from "./boxFaceMasks";
 
 const UNIT_BOX = new BoxGeometry(1, 1, 1);
 
@@ -59,6 +59,13 @@ interface DynamicBreakableFragment {
   readonly color: string;
   readonly center: readonly [number, number, number];
   readonly size: readonly [number, number, number];
+  // Jointed masonry keeps the former joint-shell expansion so the baked
+  // silicate seams still close the authored air gaps between blocks.
+  readonly sizeExpansion: number;
+  // Which faces of this box are exposed surface (vs flush against a sibling
+  // box of the same carved body) — gates bevels/edge wear in the shader.
+  readonly faceMaskPositive: readonly [number, number, number];
+  readonly faceMaskNegative: readonly [number, number, number];
   readonly fallbackPosition: readonly [number, number, number];
   readonly fallbackQuaternion: readonly [number, number, number, number];
 }
@@ -70,10 +77,22 @@ interface DynamicBreakableBatch {
   readonly fragments: readonly DynamicBreakableFragment[];
 }
 
-interface DynamicSilicateJointBatch {
-  readonly id: string;
-  readonly normalizedBand: number;
-  readonly fragments: readonly DynamicBreakableFragment[];
+function fragmentHasJoints(fragment: DynamicBreakableFragment): boolean {
+  return (
+    fragment.kind === "piece" &&
+    hasSilicateJoints(fragment.sourceId, fragment.material)
+  );
+}
+
+// A broken light goes out: once a glowing fixture (sill lamp, street lamp
+// head, torch flame) is knocked loose or shattered, its glass renders as
+// plain extinguished glass instead of keeping the emissive glow.
+const extinguishedGlass = "#c3cdc9";
+
+function quenchedColor(material: BreakableMaterial, color: string): string {
+  return material === "glass" && color === litWindowColor
+    ? extinguishedGlass
+    : color;
 }
 
 export function getPieceRenderBoxes(
@@ -128,19 +147,28 @@ function sourceFragments(
 
   for (const piece of pieces) {
     const fallbackQuaternion = eulerQuaternion(piece.rotation);
-    for (const box of getPieceRenderBoxes(piece)) {
+    const sizeExpansion = hasSilicateJoints(piece.id, piece.material)
+      ? SILICATE_JOINT_EXPANSION
+      : 0;
+    const boxes = getPieceRenderBoxes(piece);
+    const faceMasks = computeBoxFaceMasks(boxes);
+    const pieceColor = quenchedColor(piece.material, piece.color);
+    boxes.forEach((box, boxIndex) => {
       fragments.push({
         sourceId: piece.id,
         kind: "piece",
         material: piece.material,
-        materialColor: pieceMaterialBaseColor(piece.material, piece.color),
-        color: piece.color,
+        materialColor: pieceMaterialBaseColor(piece.material, pieceColor),
+        color: pieceColor,
         center: box.center,
         size: box.size,
+        sizeExpansion,
+        faceMaskPositive: faceMasks[boxIndex].positive,
+        faceMaskNegative: faceMasks[boxIndex].negative,
         fallbackPosition: piece.position,
         fallbackQuaternion,
       });
-    }
+    });
   }
 
   for (const shard of shards) {
@@ -148,19 +176,24 @@ function sourceFragments(
       shard.boxes && shard.boxes.length > 0
         ? shard.boxes
         : [{ center: [0, 0, 0] as const, size: shard.size }];
-    for (const box of boxes) {
+    const faceMasks = computeBoxFaceMasks(boxes);
+    const shardColor = quenchedColor(shard.material, shard.color);
+    boxes.forEach((box, boxIndex) => {
       fragments.push({
         sourceId: shard.id,
         kind: "shard",
         material: shard.material,
-        materialColor: pieceMaterialBaseColor(shard.material, shard.color),
-        color: shard.color,
+        materialColor: pieceMaterialBaseColor(shard.material, shardColor),
+        color: shardColor,
         center: box.center,
         size: box.size,
+        sizeExpansion: 0,
+        faceMaskPositive: faceMasks[boxIndex].positive,
+        faceMaskNegative: faceMasks[boxIndex].negative,
         fallbackPosition: shard.position,
         fallbackQuaternion: shard.quaternion,
       });
-    }
+    });
   }
 
   for (const remnant of remnants) {
@@ -168,22 +201,27 @@ function sourceFragments(
       remnant.boxes && remnant.boxes.length > 0
         ? remnant.boxes
         : [{ center: [0, 0, 0] as const, size: remnant.size }];
-    for (const box of boxes) {
+    const faceMasks = computeBoxFaceMasks(boxes);
+    const remnantColor = quenchedColor(remnant.material, remnant.color);
+    boxes.forEach((box, boxIndex) => {
       fragments.push({
         sourceId: remnant.id,
         kind: "remnant",
         material: remnant.material,
         materialColor: pieceMaterialBaseColor(
           remnant.material,
-          remnant.color,
+          remnantColor,
         ),
-        color: remnant.color,
+        color: remnantColor,
         center: box.center,
         size: box.size,
+        sizeExpansion: 0,
+        faceMaskPositive: faceMasks[boxIndex].positive,
+        faceMaskNegative: faceMasks[boxIndex].negative,
         fallbackPosition: remnant.position,
         fallbackQuaternion: remnant.quaternion,
       });
-    }
+    });
   }
 
   return fragments;
@@ -212,41 +250,12 @@ function buildBatches(
   }));
 }
 
-function buildSilicateJointBatches(
-  fragments: readonly DynamicBreakableFragment[],
-): readonly DynamicSilicateJointBatch[] {
-  const batches = new Map<string, DynamicBreakableFragment[]>();
-
-  for (const fragment of fragments) {
-    if (
-      fragment.kind !== "piece" ||
-      !hasSilicateJoints(fragment.sourceId, fragment.material)
-    ) {
-      continue;
-    }
-    const key = silicateJointBandKey(fragment.size);
-    const current = batches.get(key);
-    if (current) {
-      current.push(fragment);
-    } else {
-      batches.set(key, [fragment]);
-    }
-  }
-
-  return [...batches].map(([id, batchFragments]) => ({
-    id,
-    normalizedBand: silicateJointBand(batchFragments[0].size),
-    fragments: batchFragments,
-  }));
-}
-
 function setFragmentMatrix(
   dummy: Object3D,
   fragment: DynamicBreakableFragment,
   body: RapierRigidBody | undefined,
   localCenter: Vector3,
   rotation: Quaternion,
-  sizeExpansion = 0,
 ): void {
   if (body) {
     const translation = body.translation();
@@ -279,9 +288,9 @@ function setFragmentMatrix(
 
   dummy.quaternion.copy(rotation);
   dummy.scale.set(
-    fragment.size[0] + sizeExpansion,
-    fragment.size[1] + sizeExpansion,
-    fragment.size[2] + sizeExpansion,
+    fragment.size[0] + fragment.sizeExpansion,
+    fragment.size[1] + fragment.sizeExpansion,
+    fragment.size[2] + fragment.sizeExpansion,
   );
   dummy.updateMatrix();
 }
@@ -307,6 +316,72 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
       "materialAnchor",
       new InstancedBufferAttribute(anchors, 3, false),
     );
+    // Moving debris gets neutral baked lighting (screen-space AO covers it);
+    // without these attributes the shader would read zeros and go black.
+    next.setAttribute(
+      "bakedAoA",
+      new InstancedBufferAttribute(
+        new Float32Array(batch.fragments.length * 4).fill(1),
+        4,
+        false,
+      ),
+    );
+    next.setAttribute(
+      "bakedAoB",
+      new InstancedBufferAttribute(
+        new Float32Array(batch.fragments.length * 4).fill(1),
+        4,
+        false,
+      ),
+    );
+    next.setAttribute(
+      "bakedSkyExposure",
+      new InstancedBufferAttribute(
+        new Float32Array(batch.fragments.length).fill(1),
+        1,
+        false,
+      ),
+    );
+    // Exposed-face masks: interior seams of multi-box bodies carry no edge
+    // decorations, only genuinely exposed faces do.
+    const facePos = new Float32Array(batch.fragments.length * 3);
+    const faceNeg = new Float32Array(batch.fragments.length * 3);
+    batch.fragments.forEach((fragment, index) => {
+      facePos.set(fragment.faceMaskPositive, index * 3);
+      faceNeg.set(fragment.faceMaskNegative, index * 3);
+    });
+    next.setAttribute(
+      "materialFaceMaskPos",
+      new InstancedBufferAttribute(facePos, 3, false),
+    );
+    next.setAttribute(
+      "materialFaceMaskNeg",
+      new InstancedBufferAttribute(faceNeg, 3, false),
+    );
+
+    if (batch.fragments.some(fragmentHasJoints)) {
+      const bands = new Float32Array(batch.fragments.length);
+      const tints = new Float32Array(batch.fragments.length * 3);
+      const tint = new Color();
+      batch.fragments.forEach((fragment, index) => {
+        if (!fragmentHasJoints(fragment)) {
+          return;
+        }
+        bands[index] = silicateJointBand(fragment.size);
+        tint.set(silicateJointTint(fragment.color));
+        tints[index * 3] = tint.r;
+        tints[index * 3 + 1] = tint.g;
+        tints[index * 3 + 2] = tint.b;
+      });
+      next.setAttribute(
+        "silicateJointBand",
+        new InstancedBufferAttribute(bands, 1, false),
+      );
+      next.setAttribute(
+        "silicateJointTint",
+        new InstancedBufferAttribute(tints, 3, false),
+      );
+    }
     return next;
   }, [batch.fragments]);
   const material = useMemo(
@@ -407,101 +482,6 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
   );
 });
 
-const DynamicSilicateJointBatch = memo(function DynamicSilicateJointBatch({
-  batch,
-  bodies,
-}: {
-  batch: DynamicSilicateJointBatch;
-  bodies: MutableRefObject<Map<string, RapierRigidBody>>;
-}) {
-  const mesh = useRef<InstancedMesh>(null);
-  const material = useMemo(
-    () => getSilicateJointMaterial(batch.normalizedBand),
-    [batch.normalizedBand],
-  );
-  const instanceIds = useMemo(
-    () => batch.fragments.map((fragment) => fragment.sourceId),
-    [batch.fragments],
-  );
-  const instanceKinds = useMemo(
-    () => batch.fragments.map((fragment) => fragment.kind),
-    [batch.fragments],
-  );
-  const dummy = useMemo(() => new Object3D(), []);
-  const localCenter = useMemo(() => new Vector3(), []);
-  const rotation = useMemo(() => new Quaternion(), []);
-
-  useLayoutEffect(() => {
-    const current = mesh.current;
-    if (!current) {
-      return;
-    }
-
-    const color = new Color();
-    batch.fragments.forEach((fragment, index) => {
-      setFragmentMatrix(
-        dummy,
-        fragment,
-        bodies.current.get(fragment.sourceId),
-        localCenter,
-        rotation,
-        SILICATE_JOINT_EXPANSION,
-      );
-      current.setMatrixAt(index, dummy.matrix);
-      current.setColorAt(index, color.set(silicateJointTint(fragment.color)));
-    });
-    current.instanceMatrix.setUsage(DynamicDrawUsage);
-    current.instanceMatrix.needsUpdate = true;
-    if (current.instanceColor) {
-      current.instanceColor.needsUpdate = true;
-    }
-  }, [batch.fragments, bodies, dummy, localCenter, rotation]);
-
-  useFrame(() => {
-    const current = mesh.current;
-    if (!current) {
-      return;
-    }
-
-    let changed = false;
-    batch.fragments.forEach((fragment, index) => {
-      const body = bodies.current.get(fragment.sourceId);
-      if (!body || body.isSleeping()) {
-        return;
-      }
-      setFragmentMatrix(
-        dummy,
-        fragment,
-        body,
-        localCenter,
-        rotation,
-        SILICATE_JOINT_EXPANSION,
-      );
-      current.setMatrixAt(index, dummy.matrix);
-      changed = true;
-    });
-
-    if (changed) {
-      current.instanceMatrix.needsUpdate = true;
-    }
-  });
-
-  return (
-    <instancedMesh
-      ref={mesh}
-      args={[UNIT_BOX, material, batch.fragments.length]}
-      castShadow={false}
-      receiveShadow
-      frustumCulled={false}
-      renderOrder={1}
-      userData={{
-        breakableInstanceIds: instanceIds,
-        breakableInstanceKinds: instanceKinds,
-      }}
-    />
-  );
-});
-
 export const DynamicBreakableWorld = memo(function DynamicBreakableWorld({
   pieces,
   shards,
@@ -518,23 +498,12 @@ export const DynamicBreakableWorld = memo(function DynamicBreakableWorld({
     [pieces, remnants, shards],
   );
   const batches = useMemo(() => buildBatches(fragments), [fragments]);
-  const jointBatches = useMemo(
-    () => buildSilicateJointBatches(fragments),
-    [fragments],
-  );
 
   return (
     <>
       {batches.map((batch) => (
         <DynamicBreakableBatch
           key={batch.id}
-          batch={batch}
-          bodies={bodies}
-        />
-      ))}
-      {jointBatches.map((batch) => (
-        <DynamicSilicateJointBatch
-          key={`joint:${batch.id}`}
           batch={batch}
           bodies={bodies}
         />

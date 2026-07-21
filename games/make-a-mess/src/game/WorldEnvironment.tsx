@@ -2,7 +2,14 @@
 
 import { Sky } from "@react-three/drei";
 import { useFrame, useThree } from "@react-three/fiber";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentRef,
+} from "react";
 import {
   Color,
   DirectionalLight,
@@ -11,10 +18,13 @@ import {
   MathUtils,
   PMREMGenerator,
   PointLight,
+  Scene,
+  type WebGLRenderTarget,
 } from "three";
-import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
+import { Sky as SkyImpl } from "three-stdlib";
 import type { LampDefinition } from "./destructionScene";
-import { setWindowGlow } from "./materialTextures";
+import { setWindowGlow, updateMaterialEnvironment } from "./materialTextures";
+import { environmentState } from "./environmentState";
 
 export type TimeOfDay = "day" | "sunset" | "night";
 
@@ -24,25 +34,69 @@ const timeOfDayTargets: Record<TimeOfDay, number> = {
   night: 0.75,
 };
 
-export function SceneEnvironment() {
+/**
+ * Ambient light and reflections come from the actual sky: a PMREM capture of
+ * the same atmosphere shader the visible dome uses, re-baked as the sun
+ * moves. At dusk the whole world warms up — walls, puddles and steel reflect
+ * the sky they actually stand under, which is most of what makes wet ground
+ * read as wet.
+ */
+export function SceneEnvironment({
+  theme = "town",
+}: {
+  theme?: "town" | "fortress";
+}) {
   const gl = useThree((state) => state.gl);
   const scene = useThree((state) => state.scene);
-  const envTexture = useMemo(() => {
-    const pmrem = new PMREMGenerator(gl);
-    const texture = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    pmrem.dispose();
-    return texture;
-  }, [gl]);
+  const fortress = theme === "fortress";
+  const pmrem = useMemo(() => new PMREMGenerator(gl), [gl]);
+  const skyScene = useMemo(() => {
+    const holder = new Scene();
+    const sky = new SkyImpl();
+    sky.scale.setScalar(48);
+    const uniforms = sky.material.uniforms;
+    uniforms.turbidity.value = fortress ? 10.5 : 6.2;
+    uniforms.rayleigh.value = fortress ? 1.25 : 1.6;
+    uniforms.mieCoefficient.value = fortress ? 0.011 : 0.005;
+    uniforms.mieDirectionalG.value = fortress ? 0.82 : 0.77;
+    holder.add(sky);
+    return { holder, sky };
+  }, [fortress]);
+  const currentTarget = useRef<WebGLRenderTarget | null>(null);
+  const lastBucket = useRef(Number.NaN);
 
   useEffect(() => {
-    scene.environmentIntensity = 0.62;
+    // The atmosphere shader is HDR-bright; a low multiplier keeps its PMREM
+    // as a tint-correct ambient rather than a wash.
+    scene.environmentIntensity = 0.22;
     return () => {
       scene.environmentIntensity = 1;
-      envTexture.dispose();
+      scene.environment = null;
+      currentTarget.current?.dispose();
+      currentTarget.current = null;
+      pmrem.dispose();
     };
-  }, [envTexture, scene]);
+  }, [pmrem, scene]);
 
-  return <primitive object={envTexture} attach="environment" />;
+  useFrame(() => {
+    // Re-bake the environment only when the sun has moved perceptibly.
+    const elevation = environmentState.sunPosition.y / 26;
+    const bucket = Math.round(elevation * 14);
+    if (bucket === lastBucket.current) {
+      return;
+    }
+    lastBucket.current = bucket;
+
+    skyScene.sky.material.uniforms.sunPosition.value
+      .copy(environmentState.sunPosition)
+      .normalize();
+    const target = pmrem.fromScene(skyScene.holder, 0.028, 1, 60);
+    scene.environment = target.texture;
+    currentTarget.current?.dispose();
+    currentTarget.current = target;
+  });
+
+  return null;
 }
 
 export function DayNightCycle({
@@ -84,6 +138,15 @@ export function DayNightCycle({
 
   const shadowThrottle = useRef(1);
   const sunWasMoving = useRef(false);
+  const skyRef = useRef<ComponentRef<typeof Sky>>(null);
+
+  // Drawn after the opaque world so the per-pixel scattering shader only runs
+  // where sky is actually visible instead of being overdrawn by the terrain.
+  useLayoutEffect(() => {
+    if (skyRef.current) {
+      skyRef.current.renderOrder = 1000;
+    }
+  }, []);
 
   useFrame((frameState, delta) => {
     const target = timeOfDayTargets[mode];
@@ -91,9 +154,13 @@ export function DayNightCycle({
     const step = Math.sign(diff) * Math.min(Math.abs(diff), delta * 0.22);
     const sunIsMoving = Math.abs(step) > 0.00001;
     shadowThrottle.current += delta;
+    // While the sun moves, refresh often; at rest, a slow heartbeat re-renders
+    // the cached map so a shadow pass that ran before the world finished
+    // mounting can never leave the scene shadowless.
     if (
       (sunIsMoving && shadowThrottle.current > 0.24) ||
-      (!sunIsMoving && sunWasMoving.current)
+      (!sunIsMoving && sunWasMoving.current) ||
+      shadowThrottle.current > 1.2
     ) {
       shadowThrottle.current = 0;
       frameState.gl.shadowMap.needsUpdate = true;
@@ -124,7 +191,7 @@ export function DayNightCycle({
       }
     }
     if (hemisphere.current) {
-      hemisphere.current.intensity = 0.11 + 0.47 * day;
+      hemisphere.current.intensity = 0.15 + 0.43 * day;
     }
 
     scratchColor
@@ -134,8 +201,31 @@ export function DayNightCycle({
     fogRef.current?.color.copy(scratchColor);
     backgroundRef.current?.copy(scratchColor);
 
-    setWindowGlow(night * 1.9);
+    // Fixtures are small now (sill lamps behind glass instead of whole
+    // glowing panes), so they burn brighter to read at street distance.
+    setWindowGlow(night * 2.7);
     nightRef.current = night;
+
+    // Publish the sun to everything that shades with it: sun-tinted fog in
+    // the piece materials, the sky-driven ambient PMREM, and the post
+    // pipeline's light shafts and lens effects.
+    environmentState.sunPosition.set(sunX, sunY, sunZ);
+    environmentState.sunDirection
+      .copy(environmentState.sunPosition)
+      .normalize();
+    if (directional.current) {
+      environmentState.sunColor.copy(directional.current.color);
+    }
+    environmentState.dayFactor = day;
+    environmentState.nightFactor = night;
+    environmentState.twilightFactor = twilight;
+    updateMaterialEnvironment({
+      sunDirection: environmentState.sunDirection,
+      sunColor: environmentState.sunColor,
+      sunStrength:
+        (0.32 + twilight * 1.2) * MathUtils.clamp(day + twilight, 0, 1),
+      wetness: environmentState.wetness,
+    });
 
     skyThrottle.current += delta;
     if (
@@ -158,9 +248,10 @@ export function DayNightCycle({
       <fog
         ref={fogRef}
         attach="fog"
-        args={[fortress ? "#84939d" : "#9cc0ce", fortress ? 48 : 42, fortress ? 182 : 128]}
+        args={[fortress ? "#84939d" : "#9cc0ce", fortress ? 58 : 42, fortress ? 196 : 128]}
       />
       <Sky
+        ref={skyRef}
         distance={fortress ? 170 : 110}
         sunPosition={[...skySun]}
         turbidity={fortress ? 10.5 : 6.2}
@@ -198,31 +289,125 @@ export function DayNightCycle({
   );
 }
 
-export function LampLight({
-  lamp,
-  broken,
+const LAMP_POOL_SIZE = 8;
+
+interface LampPoolSlot {
+  lampId: string | null;
+  intensity: number;
+}
+
+/**
+ * A fixed pool of point lights shared by every lamp on the map. three.js's
+ * forward renderer evaluates every visible point light for every fragment on
+ * screen, so 24 always-on lamps at night tripled the shading cost. A lamp
+ * with a 9 m range that is 40+ m away lights nothing a player can resolve —
+ * so each frame the pool is assigned to the nearest lit lamps only, with a
+ * short fade on reassignment. The flame glow itself is emissive + bloom and
+ * stays on every lamp regardless of the pool.
+ */
+export function LampLightPool({
+  lamps,
+  brokenPieces,
   nightRef,
 }: {
-  lamp: LampDefinition;
-  broken: boolean;
+  lamps: readonly LampDefinition[];
+  brokenPieces: ReadonlySet<string>;
   nightRef: { current: number };
 }) {
-  const light = useRef<PointLight>(null);
+  const camera = useThree((state) => state.camera);
+  const lights = useRef<(PointLight | null)[]>([]);
+  const slots = useRef<LampPoolSlot[]>(
+    Array.from({ length: LAMP_POOL_SIZE }, () => ({
+      lampId: null,
+      intensity: 0,
+    })),
+  );
+  const lampById = useMemo(
+    () => new Map(lamps.map((lamp) => [lamp.id, lamp])),
+    [lamps],
+  );
 
-  useFrame(() => {
-    if (light.current) {
-      light.current.intensity =
-        broken ? 0 : nightRef.current * (lamp.intensity ?? 2.6);
+  useFrame((_, delta) => {
+    const night = nightRef.current;
+
+    // Rank lit lamps by distance to the camera.
+    const candidates: { lamp: LampDefinition; distanceSq: number }[] = [];
+    if (night > 0.001) {
+      for (const lamp of lamps) {
+        if (brokenPieces.has(lamp.id)) {
+          continue;
+        }
+        const dx = lamp.position[0] - camera.position.x;
+        const dy = lamp.position[1] - camera.position.y;
+        const dz = lamp.position[2] - camera.position.z;
+        candidates.push({ lamp, distanceSq: dx * dx + dy * dy + dz * dz });
+      }
+      candidates.sort((left, right) => left.distanceSq - right.distanceSq);
     }
+    const chosen = candidates.slice(0, LAMP_POOL_SIZE);
+    // Hysteresis: a slot keeps its lamp while it stays in a slightly larger
+    // top set, so two lamps at similar range don't fight over a slot.
+    const keepSet = new Set(
+      candidates
+        .slice(0, LAMP_POOL_SIZE + 2)
+        .map((entry) => entry.lamp.id),
+    );
+    const assigned = new Set(
+      slots.current
+        .map((slot) => slot.lampId)
+        .filter((id): id is string => id !== null && keepSet.has(id)),
+    );
+    const waiting = chosen.filter((entry) => !assigned.has(entry.lamp.id));
+
+    const fade = 1 - Math.exp(-delta * 7);
+    slots.current.forEach((slot, index) => {
+      const light = lights.current[index];
+      if (!light) {
+        return;
+      }
+
+      const current = slot.lampId ? lampById.get(slot.lampId) : undefined;
+      const keep =
+        current !== undefined &&
+        keepSet.has(current.id) &&
+        !brokenPieces.has(current.id);
+
+      if (!keep) {
+        // Fade out, then hand the slot to the closest unassigned lamp.
+        slot.intensity += (0 - slot.intensity) * fade;
+        if (slot.intensity < 0.04) {
+          const next = waiting.shift();
+          slot.lampId = next ? next.lamp.id : null;
+          slot.intensity = 0;
+          if (next) {
+            light.position.set(...next.lamp.position);
+            light.color.set(next.lamp.color ?? "#ffd9a0");
+            light.distance = next.lamp.distance ?? 9;
+          }
+        }
+      } else {
+        const target = night * (current.intensity ?? 2.6);
+        slot.intensity += (target - slot.intensity) * fade;
+      }
+
+      light.intensity = slot.intensity;
+      light.visible = slot.intensity > 0.001;
+    });
   });
 
   return (
-    <pointLight
-      ref={light}
-      position={[...lamp.position]}
-      color={lamp.color ?? "#ffd9a0"}
-      distance={lamp.distance ?? 9}
-      decay={1.8}
-    />
+    <>
+      {Array.from({ length: LAMP_POOL_SIZE }, (_, index) => (
+        <pointLight
+          key={index}
+          ref={(light) => {
+            lights.current[index] = light;
+          }}
+          visible={false}
+          intensity={0}
+          decay={1.8}
+        />
+      ))}
+    </>
   );
 }

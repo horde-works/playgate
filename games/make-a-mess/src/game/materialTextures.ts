@@ -8,9 +8,11 @@ import {
   SRGBColorSpace,
   Texture,
   TextureLoader,
+  Vector3,
+  type WebGLProgramParametersWithUniforms,
 } from "three";
-import { litWindowColor, type BreakableMaterial } from "./destructionScene";
-import { materialAppearanceProfiles } from "./materialAppearance";
+import { litWindowColor, type BreakableMaterial } from "./destructionScene.ts";
+import { materialAppearanceProfiles } from "./materialAppearance.ts";
 
 const glowMaterials: MeshStandardMaterial[] = [];
 
@@ -19,6 +21,32 @@ const glowMaterials: MeshStandardMaterial[] = [];
 export function setWindowGlow(intensity: number): void {
   for (const material of glowMaterials) {
     material.emissiveIntensity = intensity;
+  }
+}
+
+// Compiled piece-material programs whose environment uniforms (sun-tinted
+// fog, scene wetness) are updated once per frame by the day/night cycle.
+const environmentShaders: WebGLProgramParametersWithUniforms[] = [];
+
+export interface MaterialEnvironmentUpdate {
+  readonly sunDirection: Vector3;
+  readonly sunColor: Color;
+  /** How strongly fog is tinted toward the sun (sunset haze). */
+  readonly sunStrength: number;
+  /** Scene-wide standing dampness 0..1. */
+  readonly wetness: number;
+}
+
+export function updateMaterialEnvironment(
+  update: MaterialEnvironmentUpdate,
+): void {
+  for (const shader of environmentShaders) {
+    (shader.uniforms.uFogSunDirection.value as Vector3).copy(
+      update.sunDirection,
+    );
+    (shader.uniforms.uFogSunColor.value as Color).copy(update.sunColor);
+    shader.uniforms.uFogSunStrength.value = update.sunStrength;
+    shader.uniforms.uWetness.value = update.wetness;
   }
 }
 
@@ -59,7 +87,6 @@ const bumpScaleByMaterial: Record<BreakableMaterial, number> = {
 const textureLoader = new TextureLoader();
 const textureCache = new Map<BreakableMaterial, Texture>();
 const materialCache = new Map<string, MeshStandardMaterial>();
-const silicateJointMaterialCache = new Map<number, MeshStandardMaterial>();
 
 function createRandom(seed: number): () => number {
   let state = seed;
@@ -453,19 +480,44 @@ export function getPieceMaterial(
       appearance.topLightening,
       ...appearance.sideTint,
       Number(appearance.directionalGrain),
+      appearance.wetness,
+      appearance.streaking,
     ].join(":");
 
     standardMaterial.onBeforeCompile = (shader) => {
+      shader.uniforms.uFogSunDirection = { value: new Vector3(0.4, 0.7, 0.5) };
+      shader.uniforms.uFogSunColor = { value: new Color("#ffd9a0") };
+      shader.uniforms.uFogSunStrength = { value: 0.0 };
+      shader.uniforms.uWetness = { value: 0.0 };
+      environmentShaders.push(shader);
+
       shader.vertexShader = shader.vertexShader
         .replace(
           "#include <common>",
           `#include <common>
 attribute vec3 materialAnchor;
+attribute float silicateJointBand;
+attribute vec3 silicateJointTint;
+attribute vec4 bakedAoA;
+attribute vec4 bakedAoB;
+attribute float bakedSkyExposure;
+attribute vec3 materialFaceMaskPos;
+attribute vec3 materialFaceMaskNeg;
 varying vec3 vMaterialCoordinate;
 varying vec3 vMaterialSurfaceNormal;
 varying vec3 vMaterialBoxPosition;
+varying vec3 vMaterialWorldScale;
 varying float vMaterialMacro;
 varying float vMaterialRoughnessNoise;
+varying float vSilicateJointBand;
+varying vec3 vSilicateJointTint;
+varying float vBakedAo;
+varying float vBakedSky;
+varying vec3 vMaterialFaceMaskPos;
+varying vec3 vMaterialFaceMaskNeg;
+varying vec3 vBevelAxisX;
+varying vec3 vBevelAxisY;
+varying vec3 vBevelAxisZ;
 
 float materialVertexMacroNoise(vec3 coordinate) {
   float broad = sin(dot(coordinate, vec3(0.173, 0.119, 0.137)) + 0.7);
@@ -485,8 +537,26 @@ vec3 materialInstanceScale = vec3(
 vMaterialCoordinate = materialAnchor + position * materialInstanceScale;
 vMaterialSurfaceNormal = normal;
 vMaterialBoxPosition = position;
+vMaterialWorldScale = materialInstanceScale;
 vMaterialMacro = materialVertexMacroNoise(vMaterialCoordinate);
 vMaterialRoughnessNoise = materialVertexMacroNoise(vMaterialCoordinate + vec3(5.7, 2.9, 8.3));
+vSilicateJointBand = silicateJointBand;
+vSilicateJointTint = silicateJointTint;
+
+// Baked corner ambient occlusion: this vertex IS one of the 8 box corners,
+// so sign-select its value; the rasterizer interpolates across each face.
+vec4 bakedAoGroup = mix(bakedAoA, bakedAoB, step(0.0, position.z));
+vec2 bakedAoPair = mix(bakedAoGroup.xz, bakedAoGroup.yw, step(0.0, position.x));
+vBakedAo = mix(bakedAoPair.x, bakedAoPair.y, step(0.0, position.y));
+vBakedSky = bakedSkyExposure;
+
+// Instance axes in view space, for screen-space edge bevels.
+mat3 materialInstanceRotation = mat3(instanceMatrix);
+vBevelAxisX = normalize(normalMatrix * (materialInstanceRotation * vec3(1.0, 0.0, 0.0)));
+vBevelAxisY = normalize(normalMatrix * (materialInstanceRotation * vec3(0.0, 1.0, 0.0)));
+vBevelAxisZ = normalize(normalMatrix * (materialInstanceRotation * vec3(0.0, 0.0, 1.0)));
+vMaterialFaceMaskPos = materialFaceMaskPos;
+vMaterialFaceMaskNeg = materialFaceMaskNeg;
 
 vec3 materialProjectionNormal = abs(normal);
 vec2 materialProjectedUv;
@@ -520,8 +590,42 @@ if (materialProjectionNormal.x >= materialProjectionNormal.y && materialProjecti
 varying vec3 vMaterialCoordinate;
 varying vec3 vMaterialSurfaceNormal;
 varying vec3 vMaterialBoxPosition;
+varying vec3 vMaterialWorldScale;
 varying float vMaterialMacro;
-varying float vMaterialRoughnessNoise;`,
+varying float vMaterialRoughnessNoise;
+varying float vSilicateJointBand;
+varying vec3 vSilicateJointTint;
+varying float vBakedAo;
+varying float vBakedSky;
+varying vec3 vMaterialFaceMaskPos;
+varying vec3 vMaterialFaceMaskNeg;
+varying vec3 vBevelAxisX;
+varying vec3 vBevelAxisY;
+varying vec3 vBevelAxisZ;
+uniform vec3 uFogSunDirection;
+uniform vec3 uFogSunColor;
+uniform float uFogSunStrength;
+uniform float uWetness;
+
+float materialValueNoise(vec2 p) {
+  vec2 cellIndex = floor(p);
+  vec2 cellFraction = fract(p);
+  cellFraction = cellFraction * cellFraction * (3.0 - 2.0 * cellFraction);
+  float a = fract(sin(dot(cellIndex, vec2(127.1, 311.7))) * 43758.5453);
+  float b = fract(sin(dot(cellIndex + vec2(1.0, 0.0), vec2(127.1, 311.7))) * 43758.5453);
+  float c = fract(sin(dot(cellIndex + vec2(0.0, 1.0), vec2(127.1, 311.7))) * 43758.5453);
+  float d = fract(sin(dot(cellIndex + vec2(1.0, 1.0), vec2(127.1, 311.7))) * 43758.5453);
+  return mix(mix(a, b, cellFraction.x), mix(c, d, cellFraction.x), cellFraction.y);
+}
+
+float materialColumnNoise(float h) {
+  float columnIndex = floor(h);
+  float columnFraction = fract(h);
+  columnFraction = columnFraction * columnFraction * (3.0 - 2.0 * columnFraction);
+  float a = fract(sin(columnIndex * 127.1) * 43758.5453);
+  float b = fract(sin((columnIndex + 1.0) * 127.1) * 43758.5453);
+  return mix(a, b, columnFraction);
+}`,
         )
         .replace(
           "#include <map_fragment>",
@@ -529,7 +633,19 @@ varying float vMaterialRoughnessNoise;`,
 float materialMacro = vMaterialMacro;
 float materialUp = smoothstep(0.35, 0.92, max(vMaterialSurfaceNormal.y, 0.0));
 float materialNearGround = 1.0 - smoothstep(-0.4, 3.2, vMaterialCoordinate.y);
-vec3 materialEdgeDistance = vec3(0.5) - abs(vMaterialBoxPosition);
+// Per-face exterior mask: faces flush against a sibling box of the same
+// carved body are interior surface, not real edges — no wear, no seams,
+// no bevel there.
+vec3 materialExternalMask = mix(
+  vMaterialFaceMaskNeg,
+  vMaterialFaceMaskPos,
+  step(0.0, vMaterialBoxPosition)
+);
+vec3 materialEdgeDistance = mix(
+  vec3(1.0),
+  vec3(0.5) - abs(vMaterialBoxPosition),
+  materialExternalMask
+);
 float materialEdgeInterior = max(
   max(min(materialEdgeDistance.x, materialEdgeDistance.y), min(materialEdgeDistance.y, materialEdgeDistance.z)),
   min(materialEdgeDistance.z, materialEdgeDistance.x)
@@ -540,7 +656,42 @@ diffuseColor.rgb *= mix(materialSideTint, vec3(1.0), materialUp);
 diffuseColor.rgb *= 1.0 + (materialMacro - 0.5) * ${(appearance.macroVariation * 2).toFixed(4)};
 diffuseColor.rgb *= 1.0 - materialNearGround * ${appearance.groundDampness.toFixed(4)};
 diffuseColor.rgb *= 1.0 + materialUp * ${appearance.topLightening.toFixed(4)};
-diffuseColor.rgb *= 1.0 + materialEdge * ${appearance.edgeWear.toFixed(4)};`,
+diffuseColor.rgb *= 1.0 + materialEdge * ${appearance.edgeWear.toFixed(4)};
+// Silicate mortar seams baked into the base pass. Instances without the
+// per-instance attributes read band 0.0 and skip the mix, so this replaces
+// the former second (transparent, expanded-shell) draw of the same blocks.
+float silicateJoint = vSilicateJointBand > 0.0001
+  ? (1.0 - smoothstep(vSilicateJointBand, vSilicateJointBand * 1.8, materialEdgeInterior)) * 0.92
+  : 0.0;
+diffuseColor.rgb = mix(diffuseColor.rgb, vSilicateJointTint, silicateJoint);
+
+// Weathering streaks: dust and rain residue running down vertical faces
+// from their top edges, in irregular columns.
+float materialStreakDepth = (0.5 - vMaterialBoxPosition.y) * vMaterialWorldScale.y;
+float materialStreakColumnCoord = dot(vMaterialCoordinate.xz, vec2(1.0, 0.83));
+float materialStreakNoise =
+  materialColumnNoise(materialStreakColumnCoord * 2.7) * 0.6 +
+  materialColumnNoise(materialStreakColumnCoord * 7.1) * 0.4;
+materialStreakNoise = smoothstep(0.48, 0.95, materialStreakNoise);
+float materialStreakAmount = materialStreakNoise
+  * exp(-max(materialStreakDepth, 0.0) * 2.1)
+  * (1.0 - smoothstep(0.25, 0.6, abs(vMaterialSurfaceNormal.y)))
+  * ${appearance.streaking.toFixed(4)};
+diffuseColor.rgb *= 1.0 - materialStreakAmount * 0.34;
+
+// Standing dampness: glossy splotches on upward, sky-exposed faces.
+// Roughness is lowered in the roughness stage below; here the albedo takes
+// the slight darkening wet ground shows in reality.
+vec3 materialWorldNormal = inverseTransformDirection(normalize(vNormal), viewMatrix);
+float materialPuddleNoise =
+  materialValueNoise(vMaterialCoordinate.xz * 0.55) * 0.65 +
+  materialValueNoise(vMaterialCoordinate.xz * 2.05 + vec2(13.7, 41.3)) * 0.35;
+float materialWet = smoothstep(0.56, 0.74, materialPuddleNoise)
+  * smoothstep(0.55, 0.85, materialWorldNormal.y)
+  * smoothstep(0.3, 0.7, vBakedSky)
+  * uWetness
+  * ${appearance.wetness.toFixed(4)};
+diffuseColor.rgb *= 1.0 - materialWet * 0.38;`,
         )
         .replace(
           "#include <roughnessmap_fragment>",
@@ -550,11 +701,69 @@ roughnessFactor = clamp(
   roughnessFactor + (materialRoughnessNoise - 0.5) * ${(appearance.roughnessVariation * 2).toFixed(4)},
   0.08,
   1.0
-);`,
+);
+// Wet splotches turn glossy: with the sky environment map this alone makes
+// puddles mirror the sky at grazing angles, the way Teardown's rain does.
+roughnessFactor = mix(roughnessFactor, 0.07, materialWet);`,
+        )
+        .replace(
+          "#include <normal_fragment_maps>",
+          `#include <normal_fragment_maps>
+// Fake bevels: bend the shading normal outward in a narrow band along box
+// edges. Blocks catch light on their edges like physical, slightly worn
+// objects instead of razor-sharp CG boxes (Teardown blurs its G-buffer
+// normals near the camera for the same reason).
+vec3 materialBevelEdge = (vec3(0.5) - abs(vMaterialBoxPosition)) * vMaterialWorldScale;
+float materialBevelWidth = min(
+  0.028,
+  0.3 * min(vMaterialWorldScale.x, min(vMaterialWorldScale.y, vMaterialWorldScale.z))
+);
+vec3 materialBevelT = clamp(1.0 - materialBevelEdge / materialBevelWidth, 0.0, 1.0);
+materialBevelT *= materialBevelT * (1.0 - abs(vMaterialSurfaceNormal));
+// Only exposed faces carry a chamfer: interior seams of carved bodies and
+// the flush seams of the ground-tile grid must stay optically flat.
+materialBevelT *= materialExternalMask;
+vec3 materialBevelBend =
+  vBevelAxisX * sign(vMaterialBoxPosition.x) * materialBevelT.x +
+  vBevelAxisY * sign(vMaterialBoxPosition.y) * materialBevelT.y +
+  vBevelAxisZ * sign(vMaterialBoxPosition.z) * materialBevelT.z;
+normal = normalize(normal + materialBevelBend * 0.6);`,
+        )
+        .replace(
+          "#include <aomap_fragment>",
+          `// Baked voxel-traced ambient occlusion (per-corner, interpolated per
+// face). Like Teardown, it darkens only ambient light: the sun keeps its
+// real shadow map.
+float materialBakedAo = clamp(vBakedAo, 0.0, 1.0);
+materialBakedAo = 1.0 - (1.0 - materialBakedAo) * 0.88;
+reflectedLight.indirectDiffuse *= materialBakedAo;
+#if defined( USE_ENVMAP )
+float materialAoDotNV = saturate(dot(normal, normalize(vViewPosition)));
+float materialSpecularOcclusion = clamp(
+  pow(materialAoDotNV + materialBakedAo, exp2(-16.0 * material.roughness - 1.0)) - 1.0 + materialBakedAo,
+  0.0,
+  1.0
+);
+reflectedLight.indirectSpecular *= materialSpecularOcclusion;
+#endif`,
+        )
+        .replace(
+          "#include <fog_fragment>",
+          `#ifdef USE_FOG
+// Depth fog tinted toward the sun: air glows around the light source the
+// way real haze in-scatters, instead of one flat fog color everywhere.
+float materialFogFactor = smoothstep(fogNear, fogFar, vFogDepth);
+float materialFogSunAmount = pow(
+  clamp(dot(normalize(vMaterialCoordinate - cameraPosition), uFogSunDirection), 0.0, 1.0),
+  8.0
+);
+vec3 materialFogTint = mix(fogColor, uFogSunColor, materialFogSunAmount * uFogSunStrength);
+gl_FragColor.rgb = mix(gl_FragColor.rgb, materialFogTint, materialFogFactor);
+#endif`,
         );
     };
     standardMaterial.customProgramCacheKey = () =>
-      `material-space-v2:${material}:${profileKey}`;
+      `material-space-v6:${material}:${profileKey}`;
   }
 
   if (isGlass && color === litWindowColor) {
@@ -572,63 +781,6 @@ roughnessFactor = clamp(
 
   materialCache.set(key, standardMaterial);
   return standardMaterial;
-}
-
-export function getSilicateJointMaterial(
-  normalizedBand: number,
-): MeshStandardMaterial {
-  const band = Number(normalizedBand.toFixed(3));
-  const cached = silicateJointMaterialCache.get(band);
-  if (cached) {
-    return cached;
-  }
-
-  const material = new MeshStandardMaterial({
-    color: "#ffffff",
-    emissive: new Color("#0b1113"),
-    emissiveIntensity: 0,
-    transparent: true,
-    opacity: 0.92,
-    depthWrite: false,
-    metalness: 0.01,
-    roughness: 0.9,
-    envMapIntensity: 0.1,
-  });
-
-  material.onBeforeCompile = (shader) => {
-    shader.vertexShader = shader.vertexShader
-      .replace(
-        "#include <common>",
-        "#include <common>\nvarying vec3 vSilicateLocalPosition;",
-      )
-      .replace(
-        "#include <begin_vertex>",
-        "#include <begin_vertex>\nvSilicateLocalPosition = position;",
-      );
-    shader.fragmentShader = shader.fragmentShader
-      .replace(
-        "#include <common>",
-        "#include <common>\nvarying vec3 vSilicateLocalPosition;",
-      )
-      .replace(
-        "#include <map_fragment>",
-        `#include <map_fragment>
-vec3 silicateDistance = vec3(0.5) - abs(vSilicateLocalPosition);
-float silicateEdgeDistance = max(
-  max(
-    min(silicateDistance.x, silicateDistance.y),
-    min(silicateDistance.y, silicateDistance.z)
-  ),
-  min(silicateDistance.z, silicateDistance.x)
-);
-float silicateJoint = 1.0 - smoothstep(${band.toFixed(4)}, ${(band * 1.8).toFixed(4)}, silicateEdgeDistance);
-if (silicateJoint < 0.015) discard;
-diffuseColor.a *= silicateJoint;`,
-      );
-  };
-  material.customProgramCacheKey = () => `silicate-joint:${band}`;
-  silicateJointMaterialCache.set(band, material);
-  return material;
 }
 
 export function isGlassMaterial(material: BreakableMaterial): boolean {
