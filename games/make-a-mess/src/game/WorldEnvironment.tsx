@@ -26,6 +26,7 @@ const timeOfDayTargets: Record<TimeOfDay, number> = {
 
 export function SceneEnvironment() {
   const gl = useThree((state) => state.gl);
+  const scene = useThree((state) => state.scene);
   const envTexture = useMemo(() => {
     const pmrem = new PMREMGenerator(gl);
     const texture = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
@@ -33,7 +34,13 @@ export function SceneEnvironment() {
     return texture;
   }, [gl]);
 
-  useEffect(() => () => envTexture.dispose(), [envTexture]);
+  useEffect(() => {
+    scene.environmentIntensity = 0.62;
+    return () => {
+      scene.environmentIntensity = 1;
+      envTexture.dispose();
+    };
+  }, [envTexture, scene]);
 
   return <primitive object={envTexture} attach="environment" />;
 }
@@ -106,7 +113,7 @@ export function DayNightCycle({
 
     if (directional.current) {
       directional.current.position.set(sunX, Math.max(sunY, 7), sunZ);
-      directional.current.intensity = 0.32 + 2.8 * day;
+      directional.current.intensity = 0.3 + 3.65 * day;
       if (day > 0.02) {
         scratchColor
           .copy(sunWarmColor)
@@ -117,7 +124,7 @@ export function DayNightCycle({
       }
     }
     if (hemisphere.current) {
-      hemisphere.current.intensity = 0.14 + 0.9 * day;
+      hemisphere.current.intensity = 0.11 + 0.47 * day;
     }
 
     scratchColor
@@ -151,22 +158,22 @@ export function DayNightCycle({
       <fog
         ref={fogRef}
         attach="fog"
-        args={[fortress ? "#84939d" : "#9cc0ce", fortress ? 64 : 50, fortress ? 190 : 128]}
+        args={[fortress ? "#84939d" : "#9cc0ce", fortress ? 48 : 42, fortress ? 182 : 128]}
       />
       <Sky
         distance={fortress ? 170 : 110}
         sunPosition={[...skySun]}
-        turbidity={fortress ? 8.2 : 5.5}
-        rayleigh={fortress ? 1.05 : 1.6}
-        mieCoefficient={fortress ? 0.007 : 0.004}
-        mieDirectionalG={0.75}
+        turbidity={fortress ? 10.5 : 6.2}
+        rayleigh={fortress ? 1.25 : 1.6}
+        mieCoefficient={fortress ? 0.011 : 0.005}
+        mieDirectionalG={fortress ? 0.82 : 0.77}
       />
       <hemisphereLight
         ref={hemisphere}
         args={[
           fortress ? "#c9d7df" : "#d8f0ff",
           fortress ? "#31352f" : "#4d5d38",
-          1.05,
+          0.58,
         ]}
       />
       <directionalLight
@@ -183,6 +190,9 @@ export function DayNightCycle({
         shadow-camera-right={fortress ? 95 : 70}
         shadow-camera-top={fortress ? 95 : 70}
         shadow-camera-bottom={fortress ? -95 : -70}
+        shadow-bias={-0.00035}
+        shadow-normalBias={0.035}
+        shadow-radius={3.2}
       />
     </>
   );

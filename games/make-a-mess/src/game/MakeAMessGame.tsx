@@ -29,6 +29,7 @@ import {
   type TouchEvent as ReactTouchEvent,
 } from "react";
 import {
+  AgXToneMapping,
   BoxGeometry,
   Color,
   Euler,
@@ -114,11 +115,16 @@ import { getPieceMaterial } from "./materialTextures";
 import { resolveRuntimeStructure } from "./runtimeStructure";
 import { createSpatialIndex } from "./spatialIndex";
 import {
+  autoStepLiftSpeed,
+  setFlightVelocityTarget,
+} from "./playerMovement";
+import {
   DayNightCycle,
   LampLight,
   SceneEnvironment,
   type TimeOfDay,
 } from "./WorldEnvironment";
+import { TeardownPostProcessing } from "./TeardownPostProcessing";
 
 type ControlName =
   | "forward"
@@ -205,6 +211,7 @@ const blastTransmissionByMaterial: Record<BreakableMaterial, number> = {
   darkGlass: 0.68,
   plaster: 0.36,
   wood: 0.24,
+  foliage: 0.58,
   grass: 0.11,
   soil: 0.1,
   earth: 0.09,
@@ -403,16 +410,20 @@ function Player({
   registerBody,
   mobileControls,
   spawn,
+  flightMode,
 }: {
   registerBody: (id: string, body: RapierRigidBody | null) => void;
   mobileControls: MobileControlsRef;
   spawn: readonly [number, number, number];
+  flightMode: boolean;
 }) {
   const body = useRef<RapierRigidBody>(null);
   const [, getControls] = useKeyboardControls<ControlName>();
   const { camera } = useThree();
   const { world, rapier } = useRapier();
   const movement = useMemo(() => new Vector3(), []);
+  const flightForward = useMemo(() => new Vector3(), []);
+  const flightRight = useMemo(() => new Vector3(), []);
   const up = useMemo(() => new Vector3(0, 1, 0), []);
   const groundRay = useRef<RapierRay | null>(null);
   const stepRay = useRef<RapierRay | null>(null);
@@ -423,6 +434,19 @@ function Player({
     registerBody("player", body.current);
     return () => registerBody("player", null);
   }, [registerBody]);
+
+  useEffect(() => {
+    const currentBody = body.current;
+    if (!currentBody) {
+      return;
+    }
+    currentBody.setGravityScale(flightMode ? 0 : 1, true);
+    const velocity = currentBody.linvel();
+    currentBody.setLinvel(
+      { x: velocity.x, y: flightMode ? 0 : Math.min(0, velocity.y), z: velocity.z },
+      true,
+    );
+  }, [flightMode]);
 
   useFrame((_, delta) => {
     if (!body.current) {
@@ -460,7 +484,37 @@ function Player({
       -1,
       1,
     );
-    const speed = run || touch.run ? 6.2 : 4.25;
+    const speed = flightMode
+      ? run || touch.run
+        ? 13
+        : 8.5
+      : run || touch.run
+        ? 6.2
+        : 4.25;
+
+    if (flightMode) {
+      camera.getWorldDirection(flightForward).normalize();
+      flightRight.set(1, 0, 0).applyQuaternion(camera.quaternion).normalize();
+      setFlightVelocityTarget(
+        movement,
+        flightForward,
+        flightRight,
+        inputX,
+        inputZ,
+        speed,
+      );
+      const control = 1 - Math.exp(-delta * 9);
+      body.current.setLinvel(
+        {
+          x: velocity.x + (movement.x - velocity.x) * control,
+          y: velocity.y + (movement.y - velocity.y) * control,
+          z: velocity.z + (movement.z - velocity.z) * control,
+        },
+        true,
+      );
+      camera.position.set(position.x, position.y + 0.54, position.z);
+      return;
+    }
 
     movement.set(inputX, 0, inputZ);
     if (movement.lengthSq() > 0) {
@@ -524,7 +578,7 @@ function Player({
       );
 
       if (lowHit) {
-        probe.origin.y = bottomY + 0.68;
+        probe.origin.y = bottomY + 1.25;
         const highHit = world.castRay(
           probe,
           0.92,
@@ -537,29 +591,30 @@ function Player({
 
         if (!highHit) {
           probe.origin.x = position.x + directionX * 0.72;
-          probe.origin.y = bottomY + 0.66;
+          probe.origin.y = bottomY + 0.9;
           probe.origin.z = position.z + directionZ * 0.72;
           probe.dir.x = 0;
           probe.dir.y = -1;
           probe.dir.z = 0;
-          const downHit = world.castRay(
+          const downHit = world.castRayAndGetNormal(
             probe,
-            0.7,
+            1.02,
             true,
             undefined,
             undefined,
             undefined,
             body.current ?? undefined,
           );
-          const stepHeight = downHit
-            ? 0.66 - downHit.timeOfImpact
-            : 0.42;
+          const stepHeight = downHit ? 0.9 - downHit.timeOfImpact : 0;
+          autoLift = autoStepLiftSpeed({
+            blockedAtFeet: true,
+            bodyClear: true,
+            landingFound: downHit !== null,
+            landingNormalY: downHit?.normal.y ?? 0,
+            stepHeight,
+          });
 
-          if (stepHeight > 0.04) {
-            autoLift = Math.min(
-              5.4,
-              Math.sqrt(2 * 14 * (stepHeight + 0.22)),
-            );
+          if (autoLift > 0) {
             stepCooldown.current = 0.3;
           }
         }
@@ -603,6 +658,7 @@ function Player({
     <RigidBody
       ref={body}
       position={[...spawn]}
+      gravityScale={flightMode ? 0 : 1}
       colliders={false}
       enabledRotations={[false, false, false]}
       friction={0.15}
@@ -1946,7 +2002,14 @@ function OpenWorldShell({
 }) {
   const [centerX, centerZ] = scene.worldCenter;
   const [halfX, halfZ] = scene.worldHalfExtents;
-  const wallY = scene.safetyFloorY + 9.8;
+  const wallHalfHeight = 80;
+  const wallY = scene.safetyFloorY + wallHalfHeight;
+  const circularSegments = scene.worldRadius
+    ? Math.max(32, Math.ceil((Math.PI * 2 * scene.worldRadius) / 11))
+    : 0;
+  const circularSegmentLength = scene.worldRadius
+    ? 2 * scene.worldRadius * Math.sin(Math.PI / circularSegments) + 0.5
+    : 0;
 
   return (
     <RigidBody type="fixed" colliders={false}>
@@ -1955,22 +2018,42 @@ function OpenWorldShell({
         position={[centerX, scene.safetyFloorY, centerZ]}
         friction={1}
       />
-      <CuboidCollider
-        args={[0.12, 12, halfZ]}
-        position={[centerX - halfX, wallY, centerZ]}
-      />
-      <CuboidCollider
-        args={[0.12, 12, halfZ]}
-        position={[centerX + halfX, wallY, centerZ]}
-      />
-      <CuboidCollider
-        args={[halfX, 12, 0.12]}
-        position={[centerX, wallY, centerZ - halfZ]}
-      />
-      <CuboidCollider
-        args={[halfX, 12, 0.12]}
-        position={[centerX, wallY, centerZ + halfZ]}
-      />
+      {scene.worldRadius
+        ? Array.from({ length: circularSegments }, (_, index) => {
+            const angle = (index / circularSegments) * Math.PI * 2;
+            return (
+              <CuboidCollider
+                key={`world-ring:${index}`}
+                args={[circularSegmentLength / 2, wallHalfHeight, 0.18]}
+                position={[
+                  centerX + Math.cos(angle) * scene.worldRadius!,
+                  wallY,
+                  centerZ + Math.sin(angle) * scene.worldRadius!,
+                ]}
+                rotation={[0, -angle - Math.PI / 2, 0]}
+              />
+            );
+          })
+        : (
+            <>
+              <CuboidCollider
+                args={[0.12, wallHalfHeight, halfZ]}
+                position={[centerX - halfX, wallY, centerZ]}
+              />
+              <CuboidCollider
+                args={[0.12, wallHalfHeight, halfZ]}
+                position={[centerX + halfX, wallY, centerZ]}
+              />
+              <CuboidCollider
+                args={[halfX, wallHalfHeight, 0.12]}
+                position={[centerX, wallY, centerZ - halfZ]}
+              />
+              <CuboidCollider
+                args={[halfX, wallHalfHeight, 0.12]}
+                position={[centerX, wallY, centerZ + halfZ]}
+              />
+            </>
+          )}
     </RigidBody>
   );
 }
@@ -1978,6 +2061,7 @@ function OpenWorldShell({
 interface OpenWorldSceneProps {
   scene: DestructionSceneDefinition;
   active: boolean;
+  flightMode: boolean;
   weapon: WeaponName;
   timeOfDay: TimeOfDay;
   fallbackLook: boolean;
@@ -1994,6 +2078,7 @@ interface OpenWorldSceneProps {
 function OpenWorldScene({
   scene,
   active,
+  flightMode,
   weapon,
   timeOfDay,
   fallbackLook,
@@ -4168,6 +4253,7 @@ function OpenWorldScene({
         registerBody={registerBody}
         mobileControls={mobileControls}
         spawn={scene.playerSpawn}
+        flightMode={flightMode}
       />
       {weapon === "hammer" ? (
         <FirstPersonHammer swing={swing} />
@@ -4203,6 +4289,66 @@ function OpenWorldScene({
       ))}
     </>
   );
+}
+
+const DESKTOP_PIXEL_BUDGET = 1_100_000;
+const COMPACT_PIXEL_BUDGET = 720_000;
+
+function AdaptiveRenderScale({ compact }: { compact: boolean }) {
+  const setDpr = useThree((state) => state.setDpr);
+  const size = useThree((state) => state.size);
+  const elapsed = useRef(0);
+  const frames = useRef(0);
+  const warmup = useRef(0);
+  const currentDpr = useRef(1);
+
+  useEffect(() => {
+    const pixelBudget = compact
+      ? COMPACT_PIXEL_BUDGET
+      : DESKTOP_PIXEL_BUDGET;
+    const minimumDpr = compact ? 0.72 : 0.58;
+    const nextDpr = MathUtils.clamp(
+      Math.sqrt(pixelBudget / Math.max(1, size.width * size.height)),
+      minimumDpr,
+      1,
+    );
+    currentDpr.current = nextDpr;
+    elapsed.current = 0;
+    frames.current = 0;
+    warmup.current = 0;
+    setDpr(nextDpr);
+  }, [compact, setDpr, size.height, size.width]);
+
+  useFrame((_, delta) => {
+    warmup.current += delta;
+    if (warmup.current < 2.5) {
+      return;
+    }
+
+    elapsed.current += delta;
+    frames.current += 1;
+    if (elapsed.current < 2) {
+      return;
+    }
+
+    const fps = frames.current / elapsed.current;
+    const minimumDpr = compact ? 0.62 : 0.52;
+    let nextDpr = currentDpr.current;
+    if (fps < (compact ? 31 : 38)) {
+      nextDpr = Math.max(minimumDpr, nextDpr - 0.06);
+    } else if (fps > (compact ? 47 : 54)) {
+      nextDpr = Math.min(1, nextDpr + 0.04);
+    }
+
+    if (Math.abs(nextDpr - currentDpr.current) > 0.001) {
+      currentDpr.current = nextDpr;
+      setDpr(nextDpr);
+    }
+    elapsed.current = 0;
+    frames.current = 0;
+  });
+
+  return null;
 }
 
 function PerformanceProbe({
@@ -4243,6 +4389,7 @@ function PerformanceProbe({
 
 function MobileGameControls({
   active,
+  flightMode,
   weapon,
   timeOfDay,
   controls,
@@ -4251,9 +4398,11 @@ function MobileGameControls({
   onStrikeEnd,
   onWeaponChange,
   onTimeChange,
+  onFlightChange,
   onReset,
 }: {
   active: boolean;
+  flightMode: boolean;
   weapon: WeaponName;
   timeOfDay: TimeOfDay;
   controls: MobileControlsRef;
@@ -4262,6 +4411,7 @@ function MobileGameControls({
   onStrikeEnd: () => void;
   onWeaponChange: (weapon: WeaponName) => void;
   onTimeChange: () => void;
+  onFlightChange: () => void;
   onReset: () => void;
 }) {
   const movePointer = useRef<number | null>(null);
@@ -4573,7 +4723,7 @@ function MobileGameControls({
           }}
         />
       </div>
-      <div className="mobile-actions" aria-label="Действия">
+      <div className={`mobile-actions${flightMode ? " is-flight" : ""}`} aria-label="Действия">
         <button
           className="mobile-fire"
           type="button"
@@ -4584,18 +4734,20 @@ function MobileGameControls({
         >
           {fireLabel}
         </button>
-        <button
-          type="button"
-          onPointerDown={(event) => {
-            event.preventDefault();
-            setJump(true);
-          }}
-          onPointerCancel={() => setJump(false)}
-          onPointerLeave={() => setJump(false)}
-          onPointerUp={() => setJump(false)}
-        >
-          Прыжок
-        </button>
+        {!flightMode ? (
+          <button
+            type="button"
+            onPointerDown={(event) => {
+              event.preventDefault();
+              setJump(true);
+            }}
+            onPointerCancel={() => setJump(false)}
+            onPointerLeave={() => setJump(false)}
+            onPointerUp={() => setJump(false)}
+          >
+            Прыжок
+          </button>
+        ) : null}
       </div>
       <div className="mobile-weapon-bar" aria-label="Оружие">
         {([
@@ -4616,6 +4768,13 @@ function MobileGameControls({
         ))}
       </div>
       <div className="mobile-utility-bar" aria-label="Сервис">
+        <button
+          type="button"
+          className={flightMode ? "is-active" : undefined}
+          onClick={onFlightChange}
+        >
+          {flightMode ? "Приземлиться" : "Полёт"}
+        </button>
         <button type="button" onClick={onTimeChange}>{timeLabel}</button>
         <button type="button" onClick={onReset}>Заново</button>
       </div>
@@ -4639,6 +4798,7 @@ export function MakeAMessGame({
   const [brokenCount, setBrokenCount] = useState(0);
   const [resetVersion, setResetVersion] = useState(0);
   const [weapon, setWeapon] = useState<WeaponName>("hammer");
+  const [flightMode, setFlightMode] = useState(false);
   const [timeOfDay, setTimeOfDay] = useState<TimeOfDay>("day");
   const [ready, setReady] = useState(false);
   const [showPerformance, setShowPerformance] = useState(false);
@@ -4651,6 +4811,7 @@ export function MakeAMessGame({
 
   const reset = useCallback(() => {
     setBrokenCount(0);
+    setFlightMode(false);
     setResetVersion((version) => version + 1);
     mobileControls.current = createMobileControlsState();
   }, []);
@@ -4659,6 +4820,11 @@ export function MakeAMessGame({
     setTimeOfDay((current) =>
       current === "day" ? "sunset" : current === "sunset" ? "night" : "day",
     );
+  }, []);
+
+  const toggleFlightMode = useCallback(() => {
+    mobileControls.current.jump = false;
+    setFlightMode((current) => !current);
   }, []);
 
   useEffect(() => {
@@ -4685,6 +4851,8 @@ export function MakeAMessGame({
         );
       } else if (event.code === "KeyN") {
         cycleTimeOfDay();
+      } else if (event.code === "KeyF" && !event.repeat) {
+        toggleFlightMode();
       } else if (event.code === "KeyP") {
         setShowPerformance((current) => !current);
       }
@@ -4692,7 +4860,7 @@ export function MakeAMessGame({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [cycleTimeOfDay, reset]);
+  }, [cycleTimeOfDay, reset, toggleFlightMode]);
 
   const progress =
     Math.round(
@@ -4730,7 +4898,7 @@ export function MakeAMessGame({
           <Canvas
             className="game-canvas"
             shadows="percentage"
-            dpr={[1, 1.25]}
+            dpr={1}
             camera={{
               position: [
                 scene.playerSpawn[0],
@@ -4751,6 +4919,8 @@ export function MakeAMessGame({
               </div>
             }
             onCreated={(state) => {
+              state.gl.toneMapping = AgXToneMapping;
+              state.gl.toneMappingExposure = 1.08;
               state.gl.shadowMap.autoUpdate = false;
               state.gl.shadowMap.needsUpdate = true;
               setReady(true);
@@ -4767,6 +4937,7 @@ export function MakeAMessGame({
                   key={resetVersion}
                   scene={scene}
                   active={active}
+                  flightMode={flightMode}
                   weapon={weapon}
                   timeOfDay={timeOfDay}
                   fallbackLook={fallbackLook}
@@ -4784,6 +4955,10 @@ export function MakeAMessGame({
                 enabled={showPerformance}
                 onSample={setPerformance}
               />
+              <AdaptiveRenderScale compact={fallbackLook} />
+              {!fallbackLook && timeOfDay !== "day" ? (
+                <TeardownPostProcessing compact={false} />
+              ) : null}
             </Suspense>
           </Canvas>
         </KeyboardControls>
@@ -4844,6 +5019,10 @@ export function MakeAMessGame({
                 : "Ночь"}
           </span>
         </div>
+        <div className="damage-copy">
+          <span>Режим [F]</span>
+          <span>{flightMode ? "Полёт" : "Пешком"}</span>
+        </div>
       </aside>
 
       <div className={`crosshair${active ? " is-active" : ""}`} aria-hidden="true">
@@ -4853,6 +5032,7 @@ export function MakeAMessGame({
 
       <MobileGameControls
         active={active}
+        flightMode={flightMode}
         weapon={weapon}
         timeOfDay={timeOfDay}
         controls={mobileControls}
@@ -4861,6 +5041,7 @@ export function MakeAMessGame({
         onStrikeEnd={() => mobileActions.current.strikeEnd()}
         onWeaponChange={setWeapon}
         onTimeChange={cycleTimeOfDay}
+        onFlightChange={toggleFlightMode}
         onReset={reset}
       />
 
@@ -4879,8 +5060,14 @@ export function MakeAMessGame({
         Оружие
         <span>N</span>
         Время суток
-        <span>Space</span>
-        Прыжок
+        <span>F</span>
+        {flightMode ? "Приземлиться" : "Режим полёта"}
+        {!flightMode ? (
+          <>
+            <span>Space</span>
+            Прыжок
+          </>
+        ) : null}
         <span>R</span>
         Заново
       </div>

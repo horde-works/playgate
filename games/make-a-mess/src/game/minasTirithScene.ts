@@ -9,9 +9,12 @@ import {
   type SceneVector3,
   type SupportMode,
 } from "./destructionScene.ts";
+import { createMinasTirithWorldbuilding } from "./minasTirithWorldbuilding.ts";
 
 const clusters: BreakableClusterDefinition[] = [];
 const lamps: LampDefinition[] = [];
+const PLAYFIELD_CENTER_Z = -18;
+const PLAYFIELD_RADIUS = 96;
 
 function piece(
   id: string,
@@ -69,7 +72,7 @@ function createHighlandGround(): void {
           "groundTile",
           [centerX, -0.09, centerZ],
           [6.04, 0.26, 6.04],
-          tone > 0.66 ? "#667c48" : tone > 0.32 ? "#526b3d" : "#455c35",
+          tone > 0.66 ? "#536a3e" : tone > 0.32 ? "#50663c" : "#4c6239",
         ),
       );
       earth.push(
@@ -80,7 +83,7 @@ function createHighlandGround(): void {
           "groundTile",
           [centerX, -1.08, centerZ],
           [6.04, 1.72, 6.04],
-          tone > 0.5 ? "#5b4934" : "#4e402f",
+          tone > 0.5 ? "#554431" : "#51402f",
         ),
       );
       index += 1;
@@ -103,42 +106,269 @@ function createHighlandGround(): void {
   );
 }
 
+function createCircularHighlandExtension(): void {
+  const grass: BreakablePieceDefinition[] = [];
+  const earth: BreakablePieceDefinition[] = [];
+  const cliff: BreakablePieceDefinition[] = [];
+  const outcrops: BreakablePieceDefinition[] = [];
+  const tile = 6;
+  const visibleRadius = PLAYFIELD_RADIUS - tile / 2;
+  let index = 0;
+
+  for (let x = -PLAYFIELD_RADIUS; x < PLAYFIELD_RADIUS; x += tile) {
+    for (
+      let z = PLAYFIELD_CENTER_Z - PLAYFIELD_RADIUS;
+      z < PLAYFIELD_CENTER_Z + PLAYFIELD_RADIUS;
+      z += tile
+    ) {
+      const centerX = x + tile / 2;
+      const centerZ = z + tile / 2;
+      const distance = Math.hypot(centerX, centerZ - PLAYFIELD_CENTER_Z);
+      const insideOriginalGround =
+        centerX >= -66 &&
+        centerX <= 66 &&
+        centerZ >= -78 &&
+        centerZ <= 42;
+
+      if (distance > visibleRadius || insideOriginalGround) {
+        continue;
+      }
+
+      const tone = seededNoise(x, z, 31);
+      const rim = Math.max(0, Math.min(1, (distance - 80) / 13));
+      const easedRim = rim * rim * (3 - 2 * rim);
+      const surfaceY = 0.04 - easedRim * (1.05 + tone * 0.42);
+      const grassCenterY = surfaceY - 0.13;
+      const grassColor =
+        tone > 0.72 ? "#566b40" : tone > 0.38 ? "#50653c" : "#4a6038";
+
+      grass.push(
+        piece(
+          `minas:circle:grass:${index}`,
+          "minas:circle:grass",
+          "grass",
+          "groundTile",
+          [centerX, grassCenterY, centerZ],
+          [6.04, 0.26, 6.04],
+          grassColor,
+        ),
+      );
+
+      if (distance < 86) {
+        const earthHeight = 1.72;
+        earth.push(
+          piece(
+            `minas:circle:earth:${index}`,
+            "minas:circle:earth",
+            "earth",
+            "groundTile",
+            [centerX, surfaceY - 0.26 - earthHeight / 2, centerZ],
+            [6.04, earthHeight, 6.04],
+            tone > 0.5 ? "#554432" : "#50402f",
+          ),
+        );
+      } else {
+        const rockHeight = 2.15 + easedRim * 1.1;
+        const earthHeight = 1.2;
+        const rockBottom = surfaceY - 0.26 - rockHeight;
+        const material = tone > 0.62 ? "graphiteStone" : "basalt";
+        cliff.push(
+          piece(
+            `minas:circle:cliff:${index}`,
+            "minas:circle:cliff",
+            material,
+            "stoneBlock",
+            [centerX, surfaceY - 0.26 - rockHeight / 2, centerZ],
+            [6.08, rockHeight, 6.08],
+            material === "basalt"
+              ? tone > 0.42
+                ? "#303538"
+                : "#252a2d"
+              : tone > 0.42
+                ? "#46494b"
+                : "#393d40",
+            [0, (tone - 0.5) * 0.04, 0],
+          ),
+        );
+        earth.push(
+          piece(
+            `minas:circle:earth:${index}`,
+            "minas:circle:earth",
+            "earth",
+            "groundTile",
+            [centerX, rockBottom - earthHeight / 2, centerZ],
+            [6.04, earthHeight, 6.04],
+            tone > 0.5 ? "#4b3c2e" : "#403428",
+          ),
+        );
+      }
+
+      const outcropNoise = seededNoise(x, z, 73);
+      if (distance > 68 && outcropNoise > 0.88) {
+        const height = 0.75 + outcropNoise * 1.35;
+        const width = 1.45 + seededNoise(x, z, 79) * 1.4;
+        const material = outcropNoise > 0.95 ? "graphiteStone" : "basalt";
+        outcrops.push(
+          piece(
+            `minas:circle:outcrop:${index}`,
+            "minas:circle:outcrops",
+            material,
+            "stoneBlock",
+            [
+              centerX + (seededNoise(x, z, 83) - 0.5) * 2.4,
+              surfaceY + height / 2 - 0.04,
+              centerZ + (seededNoise(x, z, 89) - 0.5) * 2.4,
+            ],
+            [width, height, width * (0.72 + tone * 0.25)],
+            material === "basalt" ? "#33383a" : "#494c4e",
+            [0, seededNoise(x, z, 97) * Math.PI, 0],
+          ),
+        );
+      }
+
+      index += 1;
+    }
+  }
+
+  addCluster(
+    "minas:circle:grass",
+    "Circular highland turf",
+    "grass",
+    "linked",
+    grass,
+  );
+  addCluster(
+    "minas:circle:earth",
+    "Circular highland earth",
+    "earth",
+    "linked",
+    earth,
+  );
+  addCluster(
+    "minas:circle:cliff",
+    "Rocky outer escarpment",
+    "basalt",
+    "stack",
+    cliff,
+  );
+  addCluster(
+    "minas:circle:outcrops",
+    "Wind-carved outer rocks",
+    "basalt",
+    "stack",
+    outcrops,
+  );
+}
+
+function highlandSurfaceYAt(x: number, z: number): number {
+  if (x >= -66 && x <= 66 && z >= -78 && z <= 42) {
+    return 0.04;
+  }
+
+  const tile = 6;
+  const tileX =
+    Math.floor((x + PLAYFIELD_RADIUS) / tile) * tile - PLAYFIELD_RADIUS;
+  const southernEdge = PLAYFIELD_CENTER_Z - PLAYFIELD_RADIUS;
+  const tileZ = Math.floor((z - southernEdge) / tile) * tile + southernEdge;
+  const distance = Math.hypot(x, z - PLAYFIELD_CENTER_Z);
+  const tone = seededNoise(tileX, tileZ, 31);
+  const rim = Math.max(0, Math.min(1, (distance - 80) / 13));
+  const easedRim = rim * rim * (3 - 2 * rim);
+  return 0.04 - easedRim * (1.05 + tone * 0.42);
+}
+
 function createMountainRidge(side: -1 | 1): void {
   const id = `minas:ridge:${side < 0 ? "west" : "east"}`;
   const rocks: BreakablePieceDefinition[] = [];
   const caps: BreakablePieceDefinition[] = [];
+  const highlandGrowth: BreakablePieceDefinition[] = [];
   const block = 5;
+  const ridgeRadius = PLAYFIELD_RADIUS - 7;
   let index = 0;
 
-  for (let xStep = 0; xStep < 8; xStep += 1) {
-    const x = side * (27.5 + xStep * block);
-    for (let zStep = 0; zStep < 23; zStep += 1) {
-      const z = 37 - zStep * 5;
-      const shoulder = xStep * 0.68;
-      const valleyLift = Math.max(0, 1 - Math.abs(z + 4) / 60) * 2.2;
-      const distantLift = Math.max(0, (-z - 30) * 0.045);
+  for (let zStep = -3; zStep < 29; zStep += 1) {
+    const z = 37 - zStep * block;
+    const relativeZ = z - PLAYFIELD_CENTER_Z;
+    const radialRoom = Math.sqrt(
+      Math.max(0, ridgeRadius * ridgeRadius - relativeZ * relativeZ),
+    );
+    if (radialRoom < 24) {
+      continue;
+    }
+
+    const rowNoise = seededNoise(zStep, side, 113);
+    const endErosion = Math.pow(Math.abs(relativeZ) / ridgeRadius, 1.8) * 8;
+    const innerEdge =
+      Math.abs(z) < 14
+        ? 27.1
+        : 23.2 + rowNoise * 5.4 + endErosion * 0.22;
+    const outerEdge = Math.min(
+      radialRoom - 1.5,
+      72 + rowNoise * 14 + Math.sin(zStep * 0.73 + side) * 3.5,
+    );
+
+    for (let xStep = -1; xStep < 14; xStep += 1) {
+      const absoluteX = 27.5 + xStep * block;
+      const x = side * absoluteX;
+      const edgeNoise = seededNoise(xStep, zStep, side * 17);
+      const originalCore =
+        xStep >= 0 && xStep < 8 && zStep >= 0 && zStep < 23;
+      const insideOrganicFootprint =
+        absoluteX >= innerEdge &&
+        absoluteX <= outerEdge + (edgeNoise - 0.5) * 5.5;
+
+      if (!originalCore && !insideOrganicFootprint) {
+        continue;
+      }
+
+      const span = Math.max(block, outerEdge - innerEdge);
+      const across = Math.max(0, Math.min(1, (absoluteX - innerEdge) / span));
+      const ridgeProfile = Math.sin(across * Math.PI);
+      const longitudinalMass =
+        0.45 + Math.max(0, 1 - Math.abs(relativeZ) / ridgeRadius) * 0.85;
       const noise = seededNoise(xStep, zStep, side);
       const height = Math.max(
         1,
-        Math.round(1.2 + shoulder + valleyLift + distantLift + noise * 1.8),
+        Math.round(
+          0.7 +
+            ridgeProfile * (3.65 + longitudinalMass * 0.75) +
+            noise * 1.65,
+        ),
       );
+      const columnX = x + side * (edgeNoise - 0.5) * 1.45;
+      const columnZ = z + (seededNoise(xStep, zStep, 107) - 0.5) * 1.75;
+      let columnTop = highlandSurfaceYAt(columnX, columnZ) - 0.04;
+      let topX = columnX;
+      let topZ = columnZ;
+      let topWidth = block;
+      let topDepth = block;
+      let topRotationY = 0;
 
       for (let level = 0; level < height; level += 1) {
-        const taper = Math.min(level * 0.035, 0.24);
-        const rockSize = block * (1 - taper);
-        const material = level % 4 === 0 ? "graphiteStone" : "basalt";
+        const layerNoise = seededNoise(level, zStep, xStep + side * 37);
+        const taper = Math.min(level * 0.035, 0.18);
+        const layerHeight = 1.84 + layerNoise * 0.66;
+        const layerWidth =
+          block * (1 - taper) * (1.02 + seededNoise(level, xStep, 131) * 0.18);
+        const layerDepth =
+          block *
+          (1 - taper * 0.72) *
+          (1.01 + seededNoise(level, zStep, 137) * 0.19);
+        const layerX =
+          columnX + side * (level * 0.075 + (layerNoise - 0.5) * 0.78);
+        const layerZ =
+          columnZ + (seededNoise(level, zStep, xStep + 149) - 0.5) * 1.42;
+        const rotationY = (layerNoise - 0.5) * 0.28;
+        const stratumNoise = seededNoise(xStep, zStep, level + side * 181);
+        const material = stratumNoise > 0.72 ? "graphiteStone" : "basalt";
         rocks.push(
           piece(
             `${id}:rock:${index}:${level}`,
             id,
             material,
             "stoneBlock",
-            [
-              x + side * level * 0.1,
-              0.94 + level * 1.82,
-              z + (seededNoise(level, zStep, xStep) - 0.5) * 0.22,
-            ],
-            [rockSize + 0.12, 1.8, 5.08],
+            [layerX, columnTop + layerHeight / 2, layerZ],
+            [layerWidth + 0.24, layerHeight, layerDepth + 0.24],
             material === "basalt"
               ? noise > 0.55
                 ? "#34383b"
@@ -146,9 +376,19 @@ function createMountainRidge(side: -1 | 1): void {
               : noise > 0.55
                 ? "#484b4e"
                 : "#3c3f43",
-            [0, (noise - 0.5) * 0.035, 0],
+            [
+              (seededNoise(level, xStep, 191) - 0.5) * 0.025,
+              rotationY,
+              (seededNoise(level, zStep, 197) - 0.5) * 0.025,
+            ],
           ),
         );
+        columnTop += layerHeight - 0.025;
+        topX = layerX;
+        topZ = layerZ;
+        topWidth = layerWidth;
+        topDepth = layerDepth;
+        topRotationY = rotationY;
       }
 
       caps.push(
@@ -157,18 +397,88 @@ function createMountainRidge(side: -1 | 1): void {
           `${id}:caps`,
           "grass",
           "groundTile",
-          [x + side * height * 0.1, 0.13 + height * 1.82, z],
-          [block * 0.94, 0.18, 4.75],
-          noise > 0.55 ? "#586e3e" : "#425936",
-          [0, (noise - 0.5) * 0.035, 0],
+          [topX, columnTop + 0.09, topZ],
+          [topWidth * 1.02, 0.18, topDepth * 1.02],
+          noise > 0.55 ? "#52683d" : "#4a6038",
+          [0, topRotationY, 0],
         ),
       );
+
+      if (index % 5 === 1 || index % 7 === 3) {
+        const growthCount = index % 7 === 3 ? 2 : 1;
+        for (let growth = 0; growth < growthCount; growth += 1) {
+          const offsetX =
+            (seededNoise(index, growth, side * 541) - 0.5) * topWidth * 0.52;
+          const offsetZ =
+            (seededNoise(index, growth, side * 547) - 0.5) * topDepth * 0.52;
+          const growthWidth =
+            0.72 + seededNoise(index, growth, side * 557) * 1.45;
+          const growthHeight =
+            0.26 + seededNoise(index, growth, side * 563) * 0.62;
+          highlandGrowth.push(
+            piece(
+              `${id}:heath:${index}:${growth}`,
+              `${id}:heath`,
+              "foliage",
+              "groundTile",
+              [
+                topX + offsetX,
+                columnTop + 0.17 + growthHeight / 2,
+                topZ + offsetZ,
+              ],
+              [growthWidth, growthHeight, growthWidth * 0.74],
+              (index + growth) % 3 === 0
+                ? "#263c2b"
+                : (index + growth) % 3 === 1
+                  ? "#3d5032"
+                  : "#46583a",
+              [
+                0,
+                seededNoise(index, growth, side * 569) * Math.PI,
+                (seededNoise(index, growth, side * 571) - 0.5) * 0.08,
+              ],
+            ),
+          );
+        }
+      }
+
+      if (index % 9 === 4) {
+        const looseWidth = 0.5 + seededNoise(index, side, 577) * 1.1;
+        const looseHeight = 0.32 + seededNoise(index, side, 587) * 0.7;
+        highlandGrowth.push(
+          piece(
+            `${id}:summit-rock:${index}`,
+            `${id}:heath`,
+            index % 18 === 4 ? "stone" : "basalt",
+            "stoneBlock",
+            [
+              topX + (seededNoise(index, side, 593) - 0.5) * topWidth * 0.42,
+              columnTop + 0.16 + looseHeight / 2,
+              topZ + (seededNoise(index, side, 599) - 0.5) * topDepth * 0.42,
+            ],
+            [looseWidth, looseHeight, looseWidth * 0.78],
+            index % 18 === 4 ? "#676963" : "#303538",
+            [
+              (seededNoise(index, side, 601) - 0.5) * 0.2,
+              seededNoise(index, side, 607) * Math.PI,
+              (seededNoise(index, side, 613) - 0.5) * 0.2,
+            ],
+          ),
+        );
+      }
       index += 1;
     }
   }
 
   addCluster(id, "Basalt mountain ridge", "basalt", "stack", rocks);
   addCluster(`${id}:caps`, "Mountain turf", "grass", "mounted", caps);
+  addCluster(
+    `${id}:heath`,
+    "Wind-shaped summit heath and loose rock",
+    "foliage",
+    "stack",
+    highlandGrowth,
+  );
 }
 
 function createCitadelWall(): void {
@@ -250,23 +560,110 @@ function createGatehouse(): void {
   const towerCenters = [-6.8, 6.8] as const;
 
   for (const [towerIndex, towerX] of towerCenters.entries()) {
+    const depth = 4.5;
     for (let row = 0; row < 15; row += 1) {
       const y = 0.5 + row * 0.78;
       const inset = Math.floor(row / 5) * 0.08;
       const width = 5.15 - inset;
       for (let segment = 0; segment < 3; segment += 1) {
+        const segmentWidth = width / 3;
+        const x = towerX + (segment - 1) * segmentWidth;
+        for (const face of [-1, 1] as const) {
+          const rearDoor = face === -1 && segment === 1 && row < 4;
+          if (rearDoor) {
+            continue;
+          }
+          const arrowSlit = segment === 1 && row >= 6 && row <= 8;
+          masonry.push(
+            piece(
+              `${id}:tower:${towerIndex}:face:${face}:${row}:${segment}`,
+              id,
+              arrowSlit ? "darkGlass" : row < 3 ? "basalt" : "graphiteStone",
+              arrowSlit ? "glassPane" : "stoneBlock",
+              [x, y, -0.42 + face * (depth / 2 - 0.36)],
+              [segmentWidth - 0.025, 0.75, arrowSlit ? 0.2 : 0.72],
+              arrowSlit
+                ? "#243940"
+                : (row + segment + face) % 3 === 0
+                  ? "#323638"
+                  : "#414548",
+            ),
+          );
+        }
+      }
+
+      for (let segment = 0; segment < 3; segment += 1) {
+        const segmentDepth = depth / 3;
+        const z = -0.42 - depth / 2 + (segment + 0.5) * segmentDepth;
+        for (const face of [-1, 1] as const) {
+          masonry.push(
+            piece(
+              `${id}:tower:${towerIndex}:side:${face}:${row}:${segment}`,
+              id,
+              row < 3 ? "basalt" : "graphiteStone",
+              "stoneBlock",
+              [towerX + face * (width / 2 - 0.36), y, z],
+              [0.72, 0.75, segmentDepth - 0.025],
+              (row + segment + face) % 3 === 0 ? "#303437" : "#43474a",
+            ),
+          );
+        }
+      }
+    }
+
+    masonry.push(
+      piece(
+        `${id}:tower:${towerIndex}:floor:0`,
+        id,
+        "basalt",
+        "stoneBlock",
+        [towerX, 0.18, -0.42],
+        [4.35, 0.36, 3.72],
+        "#272b2e",
+      ),
+    );
+    for (let floor = 1; floor < 4; floor += 1) {
+      const floorY = floor * 3.82;
+      for (const side of [-1, 1] as const) {
         masonry.push(
           piece(
-            `${id}:tower:${towerIndex}:${row}:${segment}`,
+            `${id}:tower:${towerIndex}:floor:${floor}:side:${side}`,
             id,
-            row < 3 ? "basalt" : "graphiteStone",
+            "basalt",
             "stoneBlock",
-            [towerX + (segment - 1) * (width / 3), y, -0.42],
-            [width / 3 - 0.025, 0.75, 4.5],
-            (row + segment) % 3 === 0 ? "#323638" : "#414548",
+            [towerX + side * 1.42, floorY, -0.42],
+            [1.5, 0.28, 3.72],
+            side < 0 ? "#262a2d" : "#303437",
           ),
         );
       }
+      masonry.push(
+        piece(
+          `${id}:tower:${towerIndex}:floor:${floor}:landing`,
+          id,
+          "basalt",
+          "stoneBlock",
+          [towerX, floorY, floor % 2 === 1 ? 1.33 : -1.55],
+          [1.78, 0.28, 1.45],
+          "#2c3033",
+        ),
+      );
+    }
+
+    // The upper guard room is a real post-and-slab structure. These inner
+    // piers keep the roof deck load off the thin decorative outer shell.
+    for (const side of [-1, 1] as const) {
+      masonry.push(
+        piece(
+          `${id}:tower:${towerIndex}:upper-pier:${side}`,
+          id,
+          "graphiteStone",
+          "stoneBlock",
+          [towerX + side * 1.42, 9.55, -0.42],
+          [0.42, 3.54, 0.42],
+          side < 0 ? "#35393c" : "#414548",
+        ),
+      );
     }
 
     for (let merlon = 0; merlon < 5; merlon += 1) {
@@ -759,7 +1156,119 @@ function createApproachDetails(): void {
   addCluster(id, "Ancient stone causeway", "stone", "stack", pieces);
 }
 
+function createWeatheredHighlandDetails(): void {
+  const rubble: BreakablePieceDefinition[] = [];
+  const timber: BreakablePieceDefinition[] = [];
+  const stakes: BreakablePieceDefinition[] = [];
+
+  for (let index = 0; index < 54; index += 1) {
+    const side = index % 2 === 0 ? -1 : 1;
+    const spread = 7.2 + seededNoise(index, side, 223) * 18;
+    const x = side * spread;
+    const z = 4 + seededNoise(index, side, 227) * 31;
+    const surfaceY = highlandSurfaceYAt(x, z);
+    const width = 0.36 + seededNoise(index, side, 229) * 0.82;
+    const height = 0.24 + seededNoise(index, side, 233) * 0.55;
+    const depth = 0.38 + seededNoise(index, side, 239) * 0.9;
+    const dark = seededNoise(index, side, 241) > 0.58;
+    rubble.push(
+      piece(
+        `minas:weather:rubble:${index}`,
+        "minas:weather:rubble",
+        dark ? "basalt" : "stone",
+        "stoneBlock",
+        [x, surfaceY + height / 2 - 0.015, z],
+        [width, height, depth],
+        dark
+          ? seededNoise(index, side, 251) > 0.5
+            ? "#2b3032"
+            : "#34393b"
+          : seededNoise(index, side, 257) > 0.5
+            ? "#62645f"
+            : "#74756e",
+        [
+          (seededNoise(index, side, 263) - 0.5) * 0.18,
+          seededNoise(index, side, 269) * Math.PI,
+          (seededNoise(index, side, 271) - 0.5) * 0.18,
+        ],
+      ),
+    );
+  }
+
+  for (let index = 0; index < 15; index += 1) {
+    const side = index % 2 === 0 ? -1 : 1;
+    const x = side * (8 + seededNoise(index, side, 277) * 15);
+    const z = 6 + seededNoise(index, side, 281) * 27;
+    const surfaceY = highlandSurfaceYAt(x, z);
+    const length = 1.8 + seededNoise(index, side, 283) * 2.6;
+    const thickness = 0.18 + seededNoise(index, side, 293) * 0.18;
+    timber.push(
+      piece(
+        `minas:weather:timber:${index}`,
+        "minas:weather:timber",
+        "wood",
+        "plank",
+        [x, surfaceY + thickness / 2, z],
+        [length, thickness, thickness * 0.9],
+        index % 3 === 0 ? "#3e2b1d" : "#543822",
+        [
+          (seededNoise(index, side, 307) - 0.5) * 0.08,
+          seededNoise(index, side, 311) * Math.PI,
+          (seededNoise(index, side, 313) - 0.5) * 0.08,
+        ],
+      ),
+    );
+  }
+
+  for (let index = 0; index < 12; index += 1) {
+    const side = index % 2 === 0 ? -1 : 1;
+    const x = side * (5.8 + Math.floor(index / 2) * 1.65);
+    const z = 25.5 - Math.floor(index / 2) * 3.45;
+    const surfaceY = highlandSurfaceYAt(x, z);
+    const height = 1.45 + seededNoise(index, side, 317) * 1.15;
+    stakes.push(
+      piece(
+        `minas:weather:stake:${index}`,
+        "minas:weather:stakes",
+        index % 4 === 0 ? "steel" : "wood",
+        index % 4 === 0 ? "steelSheet" : "plank",
+        [x, surfaceY + height / 2 - 0.04, z],
+        [index % 4 === 0 ? 0.12 : 0.2, height, index % 4 === 0 ? 0.12 : 0.2],
+        index % 4 === 0 ? "#2d3335" : index % 3 === 0 ? "#422b1c" : "#573823",
+        [
+          (seededNoise(index, side, 331) - 0.5) * 0.06,
+          (seededNoise(index, side, 337) - 0.5) * 0.18,
+          side * (0.035 + seededNoise(index, side, 347) * 0.045),
+        ],
+      ),
+    );
+  }
+
+  addCluster(
+    "minas:weather:rubble",
+    "Old wall scree",
+    "stone",
+    "stack",
+    rubble,
+  );
+  addCluster(
+    "minas:weather:timber",
+    "Weathered siege timber",
+    "wood",
+    "stack",
+    timber,
+  );
+  addCluster(
+    "minas:weather:stakes",
+    "Broken approach stakes",
+    "wood",
+    "stack",
+    stakes,
+  );
+}
+
 createHighlandGround();
+createCircularHighlandExtension();
 createMountainRidge(-1);
 createMountainRidge(1);
 createCitadelWall();
@@ -767,15 +1276,22 @@ createGatehouse();
 createWallWalk();
 createDarkTower();
 createApproachDetails();
+createWeatheredHighlandDetails();
+const inhabitedWorld = createMinasTirithWorldbuilding({
+  surfaceYAt: highlandSurfaceYAt,
+});
+clusters.push(...inhabitedWorld.clusters);
+lamps.push(...inhabitedWorld.lamps);
 
 export const minasTirithScene = createDestructionScene({
   id: "minas-tirith",
   title: "Make a Mess: Minas Tirith",
   environment: "fortress",
   playerSpawn: [0, 1.25, 31],
-  cameraFar: 210,
-  worldCenter: [0, -18],
-  worldHalfExtents: [70, 62],
+  cameraFar: 240,
+  worldCenter: [0, PLAYFIELD_CENTER_Z],
+  worldHalfExtents: [100, 100],
+  worldRadius: PLAYFIELD_RADIUS + 2,
   safetyFloorY: -2.2,
   copy: {
     status: "Make a Mess / Minas Tirith",
@@ -799,4 +1315,5 @@ export const minasTirithMaterials = [
   "basalt",
   "graphiteStone",
   "darkGlass",
+  "foliage",
 ] as const satisfies readonly BreakableMaterial[];

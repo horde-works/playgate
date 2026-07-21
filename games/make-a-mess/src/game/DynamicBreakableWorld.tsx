@@ -4,6 +4,7 @@ import { useFrame } from "@react-three/fiber";
 import type { RapierRigidBody } from "@react-three/rapier";
 import {
   memo,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -13,6 +14,7 @@ import {
   BoxGeometry,
   Color,
   DynamicDrawUsage,
+  InstancedBufferAttribute,
   InstancedMesh,
   Object3D,
   Quaternion,
@@ -28,8 +30,17 @@ import type {
 } from "./destructionRuntime";
 import {
   getPieceMaterial,
+  getSilicateJointMaterial,
   pieceMaterialBaseColor,
 } from "./materialTextures";
+import { materialAnchor } from "./materialAppearance";
+import {
+  SILICATE_JOINT_EXPANSION,
+  hasSilicateJoints,
+  silicateJointBand,
+  silicateJointBandKey,
+  silicateJointTint,
+} from "./silicateJoints";
 
 const UNIT_BOX = new BoxGeometry(1, 1, 1);
 
@@ -56,6 +67,12 @@ interface DynamicBreakableBatch {
   readonly id: string;
   readonly material: BreakableMaterial;
   readonly materialColor: string;
+  readonly fragments: readonly DynamicBreakableFragment[];
+}
+
+interface DynamicSilicateJointBatch {
+  readonly id: string;
+  readonly normalizedBand: number;
   readonly fragments: readonly DynamicBreakableFragment[];
 }
 
@@ -195,12 +212,41 @@ function buildBatches(
   }));
 }
 
+function buildSilicateJointBatches(
+  fragments: readonly DynamicBreakableFragment[],
+): readonly DynamicSilicateJointBatch[] {
+  const batches = new Map<string, DynamicBreakableFragment[]>();
+
+  for (const fragment of fragments) {
+    if (
+      fragment.kind !== "piece" ||
+      !hasSilicateJoints(fragment.sourceId, fragment.material)
+    ) {
+      continue;
+    }
+    const key = silicateJointBandKey(fragment.size);
+    const current = batches.get(key);
+    if (current) {
+      current.push(fragment);
+    } else {
+      batches.set(key, [fragment]);
+    }
+  }
+
+  return [...batches].map(([id, batchFragments]) => ({
+    id,
+    normalizedBand: silicateJointBand(batchFragments[0].size),
+    fragments: batchFragments,
+  }));
+}
+
 function setFragmentMatrix(
   dummy: Object3D,
   fragment: DynamicBreakableFragment,
   body: RapierRigidBody | undefined,
   localCenter: Vector3,
   rotation: Quaternion,
+  sizeExpansion = 0,
 ): void {
   if (body) {
     const translation = body.translation();
@@ -232,7 +278,11 @@ function setFragmentMatrix(
   }
 
   dummy.quaternion.copy(rotation);
-  dummy.scale.set(fragment.size[0], fragment.size[1], fragment.size[2]);
+  dummy.scale.set(
+    fragment.size[0] + sizeExpansion,
+    fragment.size[1] + sizeExpansion,
+    fragment.size[2] + sizeExpansion,
+  );
   dummy.updateMatrix();
 }
 
@@ -244,6 +294,21 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
   bodies: MutableRefObject<Map<string, RapierRigidBody>>;
 }) {
   const mesh = useRef<InstancedMesh>(null);
+  const geometry = useMemo(() => {
+    const next = UNIT_BOX.clone();
+    const anchors = new Float32Array(batch.fragments.length * 3);
+    batch.fragments.forEach((fragment, index) => {
+      anchors.set(
+        materialAnchor(fragment.fallbackPosition, fragment.center),
+        index * 3,
+      );
+    });
+    next.setAttribute(
+      "materialAnchor",
+      new InstancedBufferAttribute(anchors, 3, false),
+    );
+    return next;
+  }, [batch.fragments]);
   const material = useMemo(
     () =>
       getPieceMaterial(
@@ -263,6 +328,8 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
   const dummy = useMemo(() => new Object3D(), []);
   const localCenter = useMemo(() => new Vector3(), []);
   const rotation = useMemo(() => new Quaternion(), []);
+
+  useEffect(() => () => geometry.dispose(), [geometry]);
 
   useLayoutEffect(() => {
     const current = mesh.current;
@@ -327,7 +394,7 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
   return (
     <instancedMesh
       ref={mesh}
-      args={[UNIT_BOX, material, batch.fragments.length]}
+      args={[geometry, material, batch.fragments.length]}
       castShadow={false}
       receiveShadow
       frustumCulled={false}
@@ -335,6 +402,101 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
         breakableInstanceIds: instanceIds,
         breakableInstanceKinds: instanceKinds,
         breakableMaterial: batch.material,
+      }}
+    />
+  );
+});
+
+const DynamicSilicateJointBatch = memo(function DynamicSilicateJointBatch({
+  batch,
+  bodies,
+}: {
+  batch: DynamicSilicateJointBatch;
+  bodies: MutableRefObject<Map<string, RapierRigidBody>>;
+}) {
+  const mesh = useRef<InstancedMesh>(null);
+  const material = useMemo(
+    () => getSilicateJointMaterial(batch.normalizedBand),
+    [batch.normalizedBand],
+  );
+  const instanceIds = useMemo(
+    () => batch.fragments.map((fragment) => fragment.sourceId),
+    [batch.fragments],
+  );
+  const instanceKinds = useMemo(
+    () => batch.fragments.map((fragment) => fragment.kind),
+    [batch.fragments],
+  );
+  const dummy = useMemo(() => new Object3D(), []);
+  const localCenter = useMemo(() => new Vector3(), []);
+  const rotation = useMemo(() => new Quaternion(), []);
+
+  useLayoutEffect(() => {
+    const current = mesh.current;
+    if (!current) {
+      return;
+    }
+
+    const color = new Color();
+    batch.fragments.forEach((fragment, index) => {
+      setFragmentMatrix(
+        dummy,
+        fragment,
+        bodies.current.get(fragment.sourceId),
+        localCenter,
+        rotation,
+        SILICATE_JOINT_EXPANSION,
+      );
+      current.setMatrixAt(index, dummy.matrix);
+      current.setColorAt(index, color.set(silicateJointTint(fragment.color)));
+    });
+    current.instanceMatrix.setUsage(DynamicDrawUsage);
+    current.instanceMatrix.needsUpdate = true;
+    if (current.instanceColor) {
+      current.instanceColor.needsUpdate = true;
+    }
+  }, [batch.fragments, bodies, dummy, localCenter, rotation]);
+
+  useFrame(() => {
+    const current = mesh.current;
+    if (!current) {
+      return;
+    }
+
+    let changed = false;
+    batch.fragments.forEach((fragment, index) => {
+      const body = bodies.current.get(fragment.sourceId);
+      if (!body || body.isSleeping()) {
+        return;
+      }
+      setFragmentMatrix(
+        dummy,
+        fragment,
+        body,
+        localCenter,
+        rotation,
+        SILICATE_JOINT_EXPANSION,
+      );
+      current.setMatrixAt(index, dummy.matrix);
+      changed = true;
+    });
+
+    if (changed) {
+      current.instanceMatrix.needsUpdate = true;
+    }
+  });
+
+  return (
+    <instancedMesh
+      ref={mesh}
+      args={[UNIT_BOX, material, batch.fragments.length]}
+      castShadow={false}
+      receiveShadow
+      frustumCulled={false}
+      renderOrder={1}
+      userData={{
+        breakableInstanceIds: instanceIds,
+        breakableInstanceKinds: instanceKinds,
       }}
     />
   );
@@ -351,9 +513,14 @@ export const DynamicBreakableWorld = memo(function DynamicBreakableWorld({
   remnants: readonly RemnantDefinition[];
   bodies: MutableRefObject<Map<string, RapierRigidBody>>;
 }) {
-  const batches = useMemo(
-    () => buildBatches(sourceFragments(pieces, shards, remnants)),
+  const fragments = useMemo(
+    () => sourceFragments(pieces, shards, remnants),
     [pieces, remnants, shards],
+  );
+  const batches = useMemo(() => buildBatches(fragments), [fragments]);
+  const jointBatches = useMemo(
+    () => buildSilicateJointBatches(fragments),
+    [fragments],
   );
 
   return (
@@ -361,6 +528,13 @@ export const DynamicBreakableWorld = memo(function DynamicBreakableWorld({
       {batches.map((batch) => (
         <DynamicBreakableBatch
           key={batch.id}
+          batch={batch}
+          bodies={bodies}
+        />
+      ))}
+      {jointBatches.map((batch) => (
+        <DynamicSilicateJointBatch
+          key={`joint:${batch.id}`}
           batch={batch}
           bodies={bodies}
         />

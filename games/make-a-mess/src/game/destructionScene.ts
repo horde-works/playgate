@@ -14,6 +14,7 @@ export type BreakableMaterial =
   | "basalt"
   | "graphiteStone"
   | "darkGlass"
+  | "foliage"
   | "grass"
   | "soil"
   | "earth"
@@ -63,6 +64,10 @@ export interface BreakablePieceDefinition {
   readonly row?: number;
   readonly column?: number;
   readonly hinge?: DoorHingeDefinition;
+  readonly contactBoxes?: readonly {
+    readonly position: SceneVector3;
+    readonly size: SceneVector3;
+  }[];
 }
 
 export interface BreakableClusterDefinition {
@@ -196,6 +201,18 @@ export const materialRuntimeProfiles: Record<
     debrisColor: "#425b62",
     debrisCount: 7,
     restitution: 0.055,
+  },
+  foliage: {
+    density: 0.08,
+    impulse: 2.8,
+    lift: 1.25,
+    torque: 0.58,
+    fractureRadius: [1.42, 1.16],
+    neighborChance: 0.78,
+    dustColor: "#52633d",
+    debrisColor: "#2d432f",
+    debrisCount: 5,
+    restitution: 0.04,
   },
   grass: {
     density: 1.25,
@@ -2416,6 +2433,14 @@ export const structuralMaterialProfiles: Record<
     carriesAttachments: false,
     sideAttachmentReach: 0.22,
   },
+  foliage: {
+    density: materialRuntimeProfiles.foliage.density,
+    compressionStrength: 4,
+    cantilever: 0.38,
+    maximumVerticalGap: 0.24,
+    bearsLoad: false,
+    sideAttachmentReach: 0.38,
+  },
   grass: {
     density: materialRuntimeProfiles.grass.density,
     compressionStrength: Number.POSITIVE_INFINITY,
@@ -2479,6 +2504,7 @@ export interface DestructionSceneDefinition {
   readonly cameraFar: number;
   readonly worldCenter: readonly [x: number, z: number];
   readonly worldHalfExtents: readonly [x: number, z: number];
+  readonly worldRadius?: number;
   readonly safetyFloorY: number;
   readonly copy: DestructionSceneCopy;
   readonly breakableClusters: readonly BreakableClusterDefinition[];
@@ -2513,6 +2539,7 @@ interface DestructionSceneOptions {
   readonly cameraFar?: number;
   readonly worldCenter: readonly [x: number, z: number];
   readonly worldHalfExtents: readonly [x: number, z: number];
+  readonly worldRadius?: number;
   readonly safetyFloorY?: number;
   readonly copy: DestructionSceneCopy;
   readonly clusters: readonly BreakableClusterDefinition[];
@@ -2625,6 +2652,7 @@ export function createDestructionScene(
     cameraFar: options.cameraFar ?? 140,
     worldCenter: options.worldCenter,
     worldHalfExtents: options.worldHalfExtents,
+    worldRadius: options.worldRadius,
     safetyFloorY: options.safetyFloorY ?? -2.2,
     copy: options.copy,
     breakableClusters: options.clusters,

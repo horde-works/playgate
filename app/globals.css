@@ -1875,6 +1875,14 @@ button:focus-visible {
   box-shadow: 0 0 24px rgb(255 104 49 / 0.18);
 }
 
+.mobile-actions.is-flight {
+  grid-template-columns: 100px;
+}
+
+.mobile-actions.is-flight .mobile-fire {
+  width: 100px;
+}
+
 .mobile-weapon-bar {
   position: absolute;
   z-index: 4;
@@ -1920,6 +1928,11 @@ button:focus-visible {
   padding: 0 12px;
   border-radius: 12px;
   font-size: 7px;
+}
+
+.mobile-utility-bar button.is-active {
+  border-color: rgb(182 255 60 / 0.84);
+  background: rgb(182 255 60 / 0.18);
 }
 
 @media (max-width: 900px), (pointer: coarse) {

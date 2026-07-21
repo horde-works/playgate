@@ -10,6 +10,7 @@ import {
   TextureLoader,
 } from "three";
 import { litWindowColor, type BreakableMaterial } from "./destructionScene";
+import { materialAppearanceProfiles } from "./materialAppearance";
 
 const glowMaterials: MeshStandardMaterial[] = [];
 
@@ -48,6 +49,7 @@ const bumpScaleByMaterial: Record<BreakableMaterial, number> = {
   basalt: 0.052,
   graphiteStone: 0.04,
   darkGlass: 0,
+  foliage: 0.034,
   grass: 0.042,
   soil: 0.035,
   earth: 0.032,
@@ -57,6 +59,7 @@ const bumpScaleByMaterial: Record<BreakableMaterial, number> = {
 const textureLoader = new TextureLoader();
 const textureCache = new Map<BreakableMaterial, Texture>();
 const materialCache = new Map<string, MeshStandardMaterial>();
+const silicateJointMaterialCache = new Map<number, MeshStandardMaterial>();
 
 function createRandom(seed: number): () => number {
   let state = seed;
@@ -162,7 +165,8 @@ function paintMaterial(
       drawMortarBorder(context, random, 6);
       break;
     }
-    case "grass": {
+    case "grass":
+    case "foliage": {
       fillNoise(context, random, 156, 58, 3);
       for (let index = 0; index < 95; index += 1) {
         const shade = 92 + random() * 95;
@@ -415,6 +419,7 @@ export function getPieceMaterial(
     material === "darkGlass" &&
     (color === "#ff5a2f" || color === "#9f241a");
   const surfaceTexture = getMaterialTexture(material);
+  const appearance = materialAppearanceProfiles[material];
   const standardMaterial = new MeshStandardMaterial({
     color,
     map: surfaceTexture,
@@ -438,6 +443,120 @@ export function getPieceMaterial(
     envMapIntensity: isSteel ? 1.1 : isGlass ? 1.5 : 0.35,
   });
 
+  if (!isGlass) {
+    const profileKey = [
+      appearance.textureScale,
+      appearance.macroVariation,
+      appearance.roughnessVariation,
+      appearance.edgeWear,
+      appearance.groundDampness,
+      appearance.topLightening,
+      ...appearance.sideTint,
+      Number(appearance.directionalGrain),
+    ].join(":");
+
+    standardMaterial.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          "#include <common>",
+          `#include <common>
+attribute vec3 materialAnchor;
+varying vec3 vMaterialCoordinate;
+varying vec3 vMaterialSurfaceNormal;
+varying vec3 vMaterialBoxPosition;
+varying float vMaterialMacro;
+varying float vMaterialRoughnessNoise;
+
+float materialVertexMacroNoise(vec3 coordinate) {
+  float broad = sin(dot(coordinate, vec3(0.173, 0.119, 0.137)) + 0.7);
+  float crossBand = sin(dot(coordinate, vec3(-0.071, 0.193, 0.227)) + 2.1);
+  float fineBand = sin(dot(coordinate, vec3(0.311, -0.083, 0.149)) + 4.7);
+  return clamp(0.5 + broad * 0.22 + crossBand * 0.17 + fineBand * 0.08, 0.0, 1.0);
+}`,
+        )
+        .replace(
+          "#include <uv_vertex>",
+          `#include <uv_vertex>
+vec3 materialInstanceScale = vec3(
+  length(instanceMatrix[0].xyz),
+  length(instanceMatrix[1].xyz),
+  length(instanceMatrix[2].xyz)
+);
+vMaterialCoordinate = materialAnchor + position * materialInstanceScale;
+vMaterialSurfaceNormal = normal;
+vMaterialBoxPosition = position;
+vMaterialMacro = materialVertexMacroNoise(vMaterialCoordinate);
+vMaterialRoughnessNoise = materialVertexMacroNoise(vMaterialCoordinate + vec3(5.7, 2.9, 8.3));
+
+vec3 materialProjectionNormal = abs(normal);
+vec2 materialProjectedUv;
+${appearance.directionalGrain ? `
+if (materialInstanceScale.x >= materialInstanceScale.y && materialInstanceScale.x >= materialInstanceScale.z) {
+  materialProjectedUv = vec2(vMaterialCoordinate.x, materialProjectionNormal.y > materialProjectionNormal.z ? vMaterialCoordinate.z : vMaterialCoordinate.y);
+} else if (materialInstanceScale.y >= materialInstanceScale.z) {
+  materialProjectedUv = vec2(vMaterialCoordinate.y, materialProjectionNormal.x > materialProjectionNormal.z ? vMaterialCoordinate.z : vMaterialCoordinate.x);
+} else {
+  materialProjectedUv = vec2(vMaterialCoordinate.z, materialProjectionNormal.x > materialProjectionNormal.y ? vMaterialCoordinate.y : vMaterialCoordinate.x);
+}` : `
+if (materialProjectionNormal.x >= materialProjectionNormal.y && materialProjectionNormal.x >= materialProjectionNormal.z) {
+  materialProjectedUv = vec2(vMaterialCoordinate.z, vMaterialCoordinate.y);
+} else if (materialProjectionNormal.y >= materialProjectionNormal.z) {
+  materialProjectedUv = vec2(vMaterialCoordinate.x, vMaterialCoordinate.z);
+} else {
+  materialProjectedUv = vec2(vMaterialCoordinate.x, vMaterialCoordinate.y);
+}`}
+#ifdef USE_MAP
+  vMapUv = materialProjectedUv * ${appearance.textureScale.toFixed(4)};
+#endif
+#ifdef USE_BUMPMAP
+  vBumpMapUv = materialProjectedUv * ${appearance.textureScale.toFixed(4)};
+#endif`,
+        );
+
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          "#include <common>",
+          `#include <common>
+varying vec3 vMaterialCoordinate;
+varying vec3 vMaterialSurfaceNormal;
+varying vec3 vMaterialBoxPosition;
+varying float vMaterialMacro;
+varying float vMaterialRoughnessNoise;`,
+        )
+        .replace(
+          "#include <map_fragment>",
+          `#include <map_fragment>
+float materialMacro = vMaterialMacro;
+float materialUp = smoothstep(0.35, 0.92, max(vMaterialSurfaceNormal.y, 0.0));
+float materialNearGround = 1.0 - smoothstep(-0.4, 3.2, vMaterialCoordinate.y);
+vec3 materialEdgeDistance = vec3(0.5) - abs(vMaterialBoxPosition);
+float materialEdgeInterior = max(
+  max(min(materialEdgeDistance.x, materialEdgeDistance.y), min(materialEdgeDistance.y, materialEdgeDistance.z)),
+  min(materialEdgeDistance.z, materialEdgeDistance.x)
+);
+float materialEdge = 1.0 - smoothstep(0.012, 0.07, materialEdgeInterior);
+vec3 materialSideTint = vec3(${appearance.sideTint.map((value) => value.toFixed(4)).join(", ")});
+diffuseColor.rgb *= mix(materialSideTint, vec3(1.0), materialUp);
+diffuseColor.rgb *= 1.0 + (materialMacro - 0.5) * ${(appearance.macroVariation * 2).toFixed(4)};
+diffuseColor.rgb *= 1.0 - materialNearGround * ${appearance.groundDampness.toFixed(4)};
+diffuseColor.rgb *= 1.0 + materialUp * ${appearance.topLightening.toFixed(4)};
+diffuseColor.rgb *= 1.0 + materialEdge * ${appearance.edgeWear.toFixed(4)};`,
+        )
+        .replace(
+          "#include <roughnessmap_fragment>",
+          `#include <roughnessmap_fragment>
+float materialRoughnessNoise = vMaterialRoughnessNoise;
+roughnessFactor = clamp(
+  roughnessFactor + (materialRoughnessNoise - 0.5) * ${(appearance.roughnessVariation * 2).toFixed(4)},
+  0.08,
+  1.0
+);`,
+        );
+    };
+    standardMaterial.customProgramCacheKey = () =>
+      `material-space-v2:${material}:${profileKey}`;
+  }
+
   if (isGlass && color === litWindowColor) {
     standardMaterial.emissive = new Color("#ffc879");
     standardMaterial.emissiveIntensity = 0;
@@ -453,6 +572,63 @@ export function getPieceMaterial(
 
   materialCache.set(key, standardMaterial);
   return standardMaterial;
+}
+
+export function getSilicateJointMaterial(
+  normalizedBand: number,
+): MeshStandardMaterial {
+  const band = Number(normalizedBand.toFixed(3));
+  const cached = silicateJointMaterialCache.get(band);
+  if (cached) {
+    return cached;
+  }
+
+  const material = new MeshStandardMaterial({
+    color: "#ffffff",
+    emissive: new Color("#0b1113"),
+    emissiveIntensity: 0,
+    transparent: true,
+    opacity: 0.92,
+    depthWrite: false,
+    metalness: 0.01,
+    roughness: 0.9,
+    envMapIntensity: 0.1,
+  });
+
+  material.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        "#include <common>",
+        "#include <common>\nvarying vec3 vSilicateLocalPosition;",
+      )
+      .replace(
+        "#include <begin_vertex>",
+        "#include <begin_vertex>\nvSilicateLocalPosition = position;",
+      );
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        "#include <common>",
+        "#include <common>\nvarying vec3 vSilicateLocalPosition;",
+      )
+      .replace(
+        "#include <map_fragment>",
+        `#include <map_fragment>
+vec3 silicateDistance = vec3(0.5) - abs(vSilicateLocalPosition);
+float silicateEdgeDistance = max(
+  max(
+    min(silicateDistance.x, silicateDistance.y),
+    min(silicateDistance.y, silicateDistance.z)
+  ),
+  min(silicateDistance.z, silicateDistance.x)
+);
+float silicateJoint = 1.0 - smoothstep(${band.toFixed(4)}, ${(band * 1.8).toFixed(4)}, silicateEdgeDistance);
+if (silicateJoint < 0.015) discard;
+diffuseColor.a *= silicateJoint;`,
+      );
+  };
+  material.customProgramCacheKey = () => `silicate-joint:${band}`;
+  silicateJointMaterialCache.set(band, material);
+  return material;
 }
 
 export function isGlassMaterial(material: BreakableMaterial): boolean {
