@@ -15,6 +15,8 @@ import {
   ShaderMaterial,
   Vector3,
 } from "three";
+import type { BreakablePieceDefinition } from "./destructionScene";
+import { sampleVikingGroundTraffic } from "./materialTextures";
 
 /**
  * A field of instanced grass tufts scattered across a circular landscape.
@@ -64,17 +66,35 @@ function hash(index: number, salt: number): number {
   return value - Math.floor(value);
 }
 
+function smoothstep(edge0: number, edge1: number, x: number): number {
+  const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
+// Ring offsets (~1.8 m) used to look for a nearby path: grass thickens on the
+// verge just off a trodden route.
+const EDGE_RING: readonly (readonly [number, number])[] = [
+  [1.8, 0],
+  [-1.8, 0],
+  [0, 1.8],
+  [0, -1.8],
+  [1.3, 1.3],
+  [-1.3, -1.3],
+];
+
 export function GrassField({
   worldRadius,
   center,
   nightRef,
-  count = 12000,
+  pieces,
+  count = 26000,
   bladeColor = "#4f6a39",
   tipColor = "#8aa356",
 }: {
   worldRadius: number;
   center: readonly [number, number];
   nightRef: RefObject<number>;
+  pieces: readonly BreakablePieceDefinition[];
   count?: number;
   bladeColor?: string;
   tipColor?: string;
@@ -91,8 +111,8 @@ export function GrassField({
           uTime: { value: 0 },
           uCamera: { value: new Vector3() },
           uLight: { value: 1 },
-          uFadeStart: { value: 18 },
-          uFadeEnd: { value: 42 },
+          uFadeStart: { value: 13 },
+          uFadeEnd: { value: 27 },
           uBase: { value: new Color(bladeColor) },
           uTip: { value: new Color(tipColor) },
         },
@@ -147,14 +167,46 @@ export function GrassField({
     [bladeColor, tipColor],
   );
 
-  // Scatter the instances once. Tufts avoid the rim and thin out on the
-  // travelled paths implicitly (kept short so any clipping reads as trodden
-  // grass rather than error).
+  // Scatter the instances once.
   useEffect(() => {
     const mesh = meshRef.current;
     if (!mesh) {
       return;
     }
+
+    // Cover mask: 1 m cells where a solid object sits low enough that a blade
+    // would poke through it — floors, decks, foundations, wall footings. Grass
+    // skips these cells, so it never grows up through a wooden floor.
+    const blocked = new Set<string>();
+    for (const piece of pieces) {
+      if (
+        piece.shape === "groundTile" ||
+        piece.material === "grass" ||
+        piece.material === "earth" ||
+        piece.material === "soil"
+      ) {
+        continue;
+      }
+      const boxes =
+        piece.contactBoxes && piece.contactBoxes.length > 0
+          ? piece.contactBoxes
+          : [{ position: piece.position, size: piece.size }];
+      for (const box of boxes) {
+        const bottom = box.position[1] - box.size[1] / 2;
+        const top = box.position[1] + box.size[1] / 2;
+        if (bottom > 0.75 || top < 0.05) {
+          continue;
+        }
+        const hx = box.size[0] / 2 + 0.2;
+        const hz = box.size[2] / 2 + 0.2;
+        for (let gx = Math.floor(box.position[0] - hx); gx <= Math.ceil(box.position[0] + hx); gx += 1) {
+          for (let gz = Math.floor(box.position[2] - hz); gz <= Math.ceil(box.position[2] + hz); gz += 1) {
+            blocked.add(`${gx}:${gz}`);
+          }
+        }
+      }
+    }
+
     const matrix = new Matrix4();
     const position = new Vector3();
     const quaternion = new Quaternion();
@@ -163,13 +215,34 @@ export function GrassField({
     const phases = new Float32Array(count);
     const usableRadius = Math.max(4, worldRadius - 4);
     let placed = 0;
-    for (let index = 0; index < count; index += 1) {
+    // Oversample candidates and keep them by a traffic-aware probability, so the
+    // same instance budget lands denser on the grassy verges and sparser on the
+    // worn paths, without ever exceeding `count`.
+    const maxCandidates = count * 2;
+    for (let index = 0; index < maxCandidates && placed < count; index += 1) {
       const radius = Math.sqrt(hash(index, 1)) * usableRadius;
       const angle = hash(index, 2) * Math.PI * 2;
       const x = center[0] + Math.cos(angle) * radius;
       const z = center[1] + Math.sin(angle) * radius;
-      const height = 0.42 + hash(index, 3) * 0.5;
-      const width = 0.8 + hash(index, 4) * 0.6;
+      if (blocked.has(`${Math.floor(x)}:${Math.floor(z)}`)) {
+        continue;
+      }
+      // Trodden routes carry little grass; the verge just off them carries the
+      // most — grass grows thickest exactly where feet do not fall.
+      const traffic = sampleVikingGroundTraffic(x, z);
+      let edgeTraffic = traffic;
+      for (const [ox, oz] of EDGE_RING) {
+        edgeTraffic = Math.max(edgeTraffic, sampleVikingGroundTraffic(x + ox, z + oz));
+      }
+      const onPath = smoothstep(0.3, 0.56, traffic);
+      const edge = Math.min(1, Math.max(0, edgeTraffic - traffic) * 1.7);
+      const keep = Math.min(1.1, 0.6 * (1 - onPath * 0.94) + edge * 0.8);
+      if (hash(index, 7) > keep) {
+        continue;
+      }
+      const edgeBoost = 1 + edge * 0.45;
+      const height = (0.42 + hash(index, 3) * 0.5) * edgeBoost;
+      const width = 0.78 + hash(index, 4) * 0.6;
       euler.set(0, hash(index, 5) * Math.PI * 2, 0);
       quaternion.setFromEuler(euler);
       position.set(x, 0, z);
@@ -185,7 +258,7 @@ export function GrassField({
     // The bounding sphere spans the whole field (instances are not individually
     // culled), so it never wrongly disappears at the screen edge.
     mesh.frustumCulled = false;
-  }, [count, worldRadius, center, geometry]);
+  }, [pieces, count, worldRadius, center, geometry]);
 
   useFrame((state) => {
     const uniforms = material.uniforms;

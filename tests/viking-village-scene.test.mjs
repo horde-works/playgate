@@ -300,24 +300,27 @@ test("every log house is one founded, tied and roofed structure", () => {
       (piece) => piece.id.startsWith(prefix)
         && piece.id.includes(":wall:side:1:row:0"),
     );
-    const door = vikingVillageScene.breakablePieces.find(
-      (piece) => piece.id === `${prefix}door`,
+    // The door is a plank-board leaf: several vertical boards on one shared
+    // hinge, so the whole створка swings when the player approaches.
+    const doorBoards = vikingVillageScene.breakablePieces.filter(
+      (piece) => piece.id.startsWith(`${prefix}door:board:`),
     );
-    assert.ok(sideLog?.rotation, `${building} side wall orientation`);
-    assert.ok(door?.rotation, `${building} door orientation`);
+    assert.equal(sideLog !== undefined, true, `${building} side wall present`);
+    assert.equal(
+      doorBoards.length >= 4,
+      true,
+      `${building} door is a multi-board plank leaf`,
+    );
+    assert.equal(
+      doorBoards.every((board) => board.hinge !== undefined),
+      true,
+      `${building} door boards hang on a hinge`,
+    );
     const expectedSideAxis = [Math.sin(yaw), 0, Math.cos(yaw)];
     assert.equal(
       absoluteDot(rotationAxes(sideLog.rotation).y, expectedSideAxis) > 0.999999,
       true,
       `${building} side logs follow the building yaw`,
-    );
-    const expectedDoorNormal = building === "great-hall"
-      ? [1, 0, 0]
-      : expectedSideAxis;
-    assert.equal(
-      absoluteDot(rotationAxes(door.rotation).z, expectedDoorNormal) > 0.999999,
-      true,
-      `${building} door lies in its wall plane`,
     );
   }
 });

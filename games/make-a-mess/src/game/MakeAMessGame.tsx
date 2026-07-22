@@ -110,8 +110,10 @@ import {
   DynamicBreakableWorld,
   getPieceRenderBoxes,
 } from "./DynamicBreakableWorld";
+import { Birds } from "./Birds";
 import { GrassField } from "./GrassField";
 import { HingedDoorSystem } from "./HingedDoorSystem";
+import { SmokePlumes } from "./SmokePlumes";
 import { IntactBreakableWorld } from "./IntactBreakableWorld";
 import { resolveRuntimeStructure } from "./runtimeStructure";
 import { createSpatialIndex } from "./spatialIndex";
@@ -4265,11 +4267,16 @@ function OpenWorldScene({
       <SceneEnvironment theme={scene.environment} />
       <OpenWorldShell scene={scene} />
       {scene.id === "viking-village" && scene.worldRadius ? (
-        <GrassField
-          worldRadius={scene.worldRadius}
-          center={scene.worldCenter}
-          nightRef={nightRef}
-        />
+        <>
+          <GrassField
+            worldRadius={scene.worldRadius}
+            center={scene.worldCenter}
+            nightRef={nightRef}
+            pieces={breakablePieces}
+          />
+          <SmokePlumes nightRef={nightRef} />
+          <Birds center={scene.worldCenter} />
+        </>
       ) : null}
       <group ref={breakableRaycastRoot}>
         <BreakableObjects

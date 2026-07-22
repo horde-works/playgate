@@ -604,16 +604,22 @@ function sliceLog(
     });
   }
 
-  // Splinters: thin shards torn from the break, elongated along the grain
-  // (the log's Y axis) and scattered around the broken cross-section.
+  // Splinters: short, chunky shards torn from the break, elongated along the
+  // grain (the log's Y axis) and scattered around the broken cross-section.
+  // A splinter is always SHORTER than the broken band, so it can never read as
+  // a board longer than the log it came from.
+  const breakBand = removedEnd - removedStart;
   const seed = `log:${Math.round(hitY * 97)}:${Math.round(bodyRadius * 53)}`;
-  const splinterCount = 4 + Math.floor(blastNoise(seed, 2) * 3);
+  const splinterCount = 3 + Math.floor(blastNoise(seed, 2) * 3);
   for (let index = 0; index < splinterCount; index += 1) {
     const angle = (index / splinterCount) * Math.PI * 2 + blastNoise(seed, index) * 0.9;
     const ring = bodyRadius * (0.3 + blastNoise(seed, index + 11) * 0.55);
-    const splinterLength = cut * (1.1 + blastNoise(seed, index + 23) * 1.5);
-    const thickness = bodyRadius * (0.12 + blastNoise(seed, index + 37) * 0.16);
-    const along = hitY + (blastNoise(seed, index + 51) - 0.5) * cut * 1.2;
+    const splinterLength = Math.min(
+      breakBand * 0.85,
+      bodyRadius * (0.9 + blastNoise(seed, index + 23) * 1.4),
+    );
+    const thickness = bodyRadius * (0.16 + blastNoise(seed, index + 37) * 0.22);
+    const along = hitY + (blastNoise(seed, index + 51) - 0.5) * cut * 1.1;
     kept.push({
       size: [thickness, splinterLength, thickness * 0.7],
       localCenter: [

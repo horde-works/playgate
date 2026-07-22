@@ -174,6 +174,58 @@ function addLonghouseWall(
   }
 }
 
+// A plank door leaf: vertical boards over two iron straps, all sharing one
+// hinge so the whole leaf swings as one створка when the player approaches.
+// The boards reach the threshold (ground-supported); the straps side-attach to
+// them. `face` is the outward axis the leaf presents.
+function pushPlankDoor(
+  pieces: ScenePrefabPieceDefinition[],
+  face: "x" | "z",
+  center: readonly [number, number, number],
+  leafWidth: number,
+  height: number,
+  hinge: NonNullable<ScenePrefabPieceDefinition["hinge"]>,
+): void {
+  const [cx, cy, cz] = center;
+  const boardCount = 5;
+  const boardWidth = leafWidth / boardCount;
+  for (let board = 0; board < boardCount; board += 1) {
+    const offset = -leafWidth / 2 + boardWidth * (board + 0.5);
+    const position: readonly [number, number, number] =
+      face === "z" ? [cx + offset, cy, cz] : [cx, cy, cz + offset];
+    const size: readonly [number, number, number] =
+      face === "z" ? [boardWidth * 0.95, height, 0.14] : [0.14, height, boardWidth * 0.95];
+    pieces.push({
+      id: `door:board:${board}`,
+      material: "wood",
+      shape: "plank",
+      position,
+      size,
+      color: board % 2 === 0 ? darkTimber : "#4a382c",
+      colorSlot: "door",
+      carriesAttachments: true,
+      hinge,
+    });
+  }
+  for (const [strapIndex, strapY] of [cy - height * 0.28, cy + height * 0.3].entries()) {
+    const position: readonly [number, number, number] =
+      face === "z" ? [cx, strapY, cz + 0.1] : [cx + 0.1, strapY, cz];
+    const size: readonly [number, number, number] =
+      face === "z" ? [leafWidth * 0.98, 0.14, 0.06] : [0.06, 0.14, leafWidth * 0.98];
+    pieces.push({
+      id: `door:strap:${strapIndex}`,
+      material: "steel",
+      shape: "steelSheet",
+      position,
+      size,
+      color: iron,
+      bearsLoad: false,
+      sideAttachmentReach: 0.34,
+      hinge,
+    });
+  }
+}
+
 function longhouse(
   id: string,
   width: number,
@@ -496,20 +548,10 @@ function longhouse(
   }
 
   if (hall) {
-    pieces.push({
-      id: "door",
-      material: "wood",
-      shape: "panel",
-      position: [width / 2 + 0.05, 1.2, doorCenter],
-      rotation: [0, Math.PI / 2, 0],
-      size: [1.86, 2.4, 0.18],
-      color: darkTimber,
-      colorSlot: "door",
-      hinge: {
-        pivot: [width / 2 + 0.05, 1.2, doorCenter - 0.88],
-        direction: [0, 1, 0],
-        normal: [1, 0, 0],
-      },
+    pushPlankDoor(pieces, "x", [width / 2 + 0.05, 1.2, doorCenter], 1.86, 2.4, {
+      pivot: [width / 2 + 0.05, 1.2, doorCenter - 0.88],
+      direction: [0, 1, 0],
+      normal: [1, 0, 0],
     });
     for (let step = 0; step < 3; step += 1) {
       const height = 0.18 + step * 0.12;
@@ -524,19 +566,10 @@ function longhouse(
       });
     }
   } else {
-    pieces.push({
-      id: "door",
-      material: "wood",
-      shape: "panel",
-      position: [0, 1.15, length / 2 + 0.05],
-      size: [1.85, 2.3, 0.18],
-      color: darkTimber,
-      colorSlot: "door",
-      hinge: {
-        pivot: [-0.87, 1.15, length / 2 + 0.05],
-        direction: [0, 1, 0],
-        normal: [0, 0, 1],
-      },
+    pushPlankDoor(pieces, "z", [0, 1.15, length / 2 + 0.05], 1.85, 2.3, {
+      pivot: [-0.87, 1.15, length / 2 + 0.05],
+      direction: [0, 1, 0],
+      normal: [0, 0, 1],
     });
   }
 

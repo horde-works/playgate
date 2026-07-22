@@ -316,6 +316,35 @@ function getVikingTrafficTexture(): CanvasTexture {
   return vikingTrafficTexture;
 }
 
+let vikingTrafficPixels: { readonly data: Uint8ClampedArray; readonly size: number } | null = null;
+
+/**
+ * World-space traffic sample [0..1] from the same baked map the ground shader
+ * reads: the red channel is trodden routes, the green channel is worn yards.
+ * Returned as the strongest of the two, so decoration (e.g. grass) can thin out
+ * on the paths and thicken along their edges. Browser-only (uses a 2D canvas).
+ */
+export function sampleVikingGroundTraffic(x: number, z: number): number {
+  if (!vikingTrafficPixels) {
+    const canvas = getVikingTrafficTexture().image as HTMLCanvasElement;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) {
+      return 0;
+    }
+    const image = context.getImageData(0, 0, canvas.width, canvas.height);
+    vikingTrafficPixels = { data: image.data, size: canvas.width };
+  }
+  const { data, size } = vikingTrafficPixels;
+  const scale = size / VIKING_WORLD_SPAN;
+  const px = Math.round((x - VIKING_WORLD_MIN_X) * scale);
+  const py = Math.round(size - (z - VIKING_WORLD_MIN_Z) * scale);
+  if (px < 0 || py < 0 || px >= size || py >= size) {
+    return 0;
+  }
+  const index = (py * size + px) * 4;
+  return Math.max(data[index], data[index + 1]) / 255;
+}
+
 function createRandom(seed: number): () => number {
   let state = seed;
 
