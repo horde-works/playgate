@@ -1410,9 +1410,9 @@ function createLivedInDressing(): void {
       contactBoxes: [{ position: [0, 0, 0], size: [0.8, 2.3, 0.8] }],
       surface: [{ kind: "moss", amount: 0.4 }],
     });
-  for (const [index, [ox, oy, tilt]] of ([[-0.16, 1.15, 0.5], [0.05, 1.55, -0.4], [0.14, 0.85, 0.25]] as const).entries()) {
+  for (const [index, [ox, oy, tilt]] of ([[-0.13, 1.15, 0.5], [0.02, 1.55, -0.4], [0.09, 0.85, 0.25]] as const).entries()) {
     primitive(stones, `runestone:band:${index}`, "stone", "stoneBlock",
-      [5.2 + ox + Math.sin(0.52) * 0.24, oy, 26.5 + Math.cos(0.52) * 0.24], [0.62, 0.13, 0.06], "#a6b8bf", {
+      [5.2 + ox + Math.sin(0.52) * 0.24, oy, 26.5 + Math.cos(0.52) * 0.24], [0.5, 0.13, 0.06], "#a6b8bf", {
         rotation: [0, 0.52, tilt],
         bearsLoad: false,
         sideAttachmentReach: 0.35,

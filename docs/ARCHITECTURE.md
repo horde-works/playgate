@@ -277,6 +277,27 @@ radius, so far grass costs nothing and never pops; a `uLight` uniform dims it
 with the night factor. Cutout alpha keeps it depth-correct and sort-free. It is
 mounted per-scene (currently `viking-village`).
 
+### Scene dressing: props core, wires, undergrowth
+
+Three shared layers make maps read as USED places rather than dioramas:
+
+- **`coreProps.ts`** — the standard prop library (casks standing/toppled,
+  steel drums, crates, the iron-bound chest, pallets, sacks, spools, plank
+  stacks, buckets, tarps, tyres, dumpsters, caution boards). Local-space
+  breakable pieces with correct footprints; registered as `core:*` prefabs
+  for document scenes and translated via `placeProp` for programmatic ones.
+  Author clutter in NESTS where the work happens, never sprinkled.
+- **`WireSpans`** — catenary wires/ropes/ground cables merged into one
+  static mesh (one draw call). **`Undergrowth`** — instanced ivy on
+  authored wall runs and weed clumps at footings/seams. Both mounted via
+  **`SceneDressing`**, which holds the per-scene authored span/run/point
+  data keyed by scene id.
+- Solver rules that matter when adding dressed pieces: contact boxes are
+  WORLD-space in programmatic scenes but LOCAL in document primitives; a
+  wall can only carry a side-attached piece 1.5x shorter than itself
+  (segment tall pipes); supports must bear load and carry attachments;
+  cloth cannot bear cloth (ground every fold/sack separately).
+
 ### Wind, and shedding it under load (`WindController.tsx`, `windState.ts`)
 
 Cloth pieces (banners, laundry, bedding, a loom's warp) billow in the shared
