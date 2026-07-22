@@ -1,6 +1,6 @@
 export type GameStatus = "building" | "playable" | "archived";
 export type GameTheme = "safety-orange" | "electric-blue" | "acid-green";
-export type GameArt = "mess" | "minas-tirith";
+export type GameArt = "mess" | "minas-tirith" | "grand-terminal";
 
 export interface GameEntry {
   readonly slug: string;
@@ -38,6 +38,18 @@ export const games = [
     stageLabel: "Новая карта",
     theme: "electric-blue",
     art: "minas-tirith",
+  },
+  {
+    slug: "make-a-mess-grand-terminal",
+    title: "Make a Mess: Grand Terminal",
+    href: "/games/make-a-mess/grand-terminal",
+    summary:
+      "Европейский железнодорожный музей: большой вокзал, стеклянный дебаркадер, платформы, паровозы, вагоны и кассовый зал.",
+    genre: "Railway destruction sandbox",
+    status: "playable",
+    stageLabel: "Третья карта",
+    theme: "acid-green",
+    art: "grand-terminal",
   },
 ] as const satisfies readonly GameEntry[];
 

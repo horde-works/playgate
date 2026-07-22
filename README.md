@@ -4,6 +4,10 @@ A home for small, handcrafted browser games. The first game is
 **Make a Mess**, a destruction sandbox built around recognizable objects,
 materials, and structural failure.
 
+The full system — the destruction engine, rendering and physics pipelines, the
+map-authoring model and the internationalisation layer — is documented in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ## Prerequisites
 
 - Node.js `>=22.13.0`
@@ -30,9 +34,11 @@ npm run deploy:firebase
 ## Repository shape
 
 - `app`: hero page, catalog, and game routes
+- `app/i18n`: English/Spanish/Russian UI translations and the language switcher
 - `games/registry.ts`: one typed entry per game
 - `games/make-a-mess`: isolated game runtime, content, and tooling
 - `games/make-a-mess/src/content`: typed object and material contracts
+- `docs/ARCHITECTURE.md`: architecture and engine specification
 
 The Make a Mess destruction core stays independent from React and rendering.
 The intact visual asset, structural representation, physics body, and feedback

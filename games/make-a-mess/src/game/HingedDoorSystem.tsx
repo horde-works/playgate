@@ -4,13 +4,15 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { useRapier, type RapierRigidBody } from "@react-three/rapier";
 import { useEffect, useMemo, useRef } from "react";
 import { Quaternion, Vector3 } from "three";
-import { breakablePieces } from "./destructionScene";
+import type { BreakablePieceDefinition } from "./destructionScene";
 
 export function HingedDoorSystem({
+  pieces,
   bodies,
   brokenPieces,
   resetVersion,
 }: {
+  pieces: readonly BreakablePieceDefinition[];
   bodies: { current: Map<string, RapierRigidBody> };
   brokenPieces: { current: ReadonlySet<string> };
   resetVersion: number;
@@ -18,8 +20,8 @@ export function HingedDoorSystem({
   const { camera } = useThree();
   const { rapier } = useRapier();
   const hingedDoors = useMemo(
-    () => breakablePieces.filter((piece) => piece.hinge),
-    [],
+    () => pieces.filter((piece) => piece.hinge),
+    [pieces],
   );
   const states = useRef(new Map<string, { angle: number; sign: number }>());
   const cameraDirection = useRef(new Vector3());
@@ -55,14 +57,17 @@ export function HingedDoorSystem({
         states.current.set(door.id, state);
       }
 
-      const dx = camera.position.x - hinge.pivot[0];
+      // Proximity is measured to the door LEAF centre, not the hinge pivot:
+      // wide double doors would otherwise never trigger when approached
+      // head-on (the pivots sit far out at the leaf edges).
+      const dx = camera.position.x - door.position[0];
       const dy = camera.position.y - door.position[1];
-      const dz = camera.position.z - hinge.pivot[2];
+      const dz = camera.position.z - door.position[2];
       const distance = Math.hypot(dx, dy, dz);
       let open: boolean;
 
       if (state.angle > 0.05) {
-        open = distance < 3.2;
+        open = distance < 3.6;
       } else {
         directionToDoor.current
           .set(
@@ -72,7 +77,7 @@ export function HingedDoorSystem({
           )
           .normalize();
         open =
-          distance < 2.4 &&
+          distance < 2.8 &&
           directionToDoor.current.dot(cameraDirection.current) > 0.25;
       }
 

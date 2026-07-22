@@ -1,5 +1,9 @@
+"use client";
+
 import Link from "next/link";
 import type { GameEntry } from "../../games/registry";
+import { useLanguage } from "../i18n/LanguageProvider";
+import { gameCardCopy } from "../i18n/dictionary";
 
 interface GameCardProps {
   game: GameEntry;
@@ -7,6 +11,12 @@ interface GameCardProps {
 }
 
 export function GameCard({ game, featured = false }: GameCardProps) {
+  const { language, t } = useLanguage();
+  const copy = gameCardCopy[game.slug]?.[language] ?? {
+    stageLabel: game.stageLabel,
+    genre: game.genre,
+    summary: game.summary,
+  };
   return (
     <article
       className={`game-card${featured ? " game-card-featured" : ""}`}
@@ -14,13 +24,13 @@ export function GameCard({ game, featured = false }: GameCardProps) {
     >
       <div className="game-card-copy">
         <div className="game-card-meta">
-          <span>{game.stageLabel}</span>
-          <span>{game.genre}</span>
+          <span>{copy.stageLabel}</span>
+          <span>{copy.genre}</span>
         </div>
         <h3>{game.title}</h3>
-        <p>{game.summary}</p>
+        <p>{copy.summary}</p>
         <Link className="button button-dark" href={game.href}>
-          В игровую лабораторию
+          {t("card.cta")}
           <span aria-hidden="true">↗</span>
         </Link>
       </div>
@@ -46,6 +56,30 @@ export function GameCard({ game, featured = false }: GameCardProps) {
           </div>
           <div className="art-torch art-torch-1" />
           <div className="art-torch art-torch-2" />
+          <div className="art-spark art-spark-1" />
+          <div className="art-spark art-spark-2" />
+        </div>
+      ) : game.art === "grand-terminal" ? (
+        <div className="game-card-art game-card-art-terminal" aria-hidden="true">
+          <span className="art-word art-word-grand">GRAND</span>
+          <span className="art-word art-word-terminal">TERMINAL</span>
+          <div className="art-terminal-clock" />
+          <div className="art-terminal-roof">
+            <i />
+            <i />
+            <i />
+            <i />
+            <i />
+          </div>
+          <div className="art-terminal-platform" />
+          <div className="art-terminal-engine">
+            <div className="art-terminal-chimney" />
+            <div className="art-terminal-boiler" />
+            <div className="art-terminal-cab" />
+            <div className="art-terminal-wheel art-terminal-wheel-1" />
+            <div className="art-terminal-wheel art-terminal-wheel-2" />
+            <div className="art-terminal-wheel art-terminal-wheel-3" />
+          </div>
           <div className="art-spark art-spark-1" />
           <div className="art-spark art-spark-2" />
         </div>

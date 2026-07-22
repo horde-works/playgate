@@ -28,7 +28,12 @@ export type BreakableShape =
   | "glassPane"
   | "steelSheet"
   | "stoneBlock"
-  | "groundTile";
+  | "groundTile"
+  // A true cylinder: rendered as round geometry (size x/z are the diameters,
+  // y is the axis length; rotate the piece to lay it down). Physics carves
+  // and colliders treat it as its bounding volume, which reads fine for
+  // boilers, chimneys, wheels, columns, barrels and pipes.
+  | "cylinder";
 
 export type SupportMode = "stack" | "mounted" | "linked";
 export type SceneVector3 = readonly [x: number, y: number, z: number];
@@ -68,6 +73,8 @@ export interface BreakablePieceDefinition {
     readonly position: SceneVector3;
     readonly size: SceneVector3;
   }[];
+  readonly carriesAttachments?: boolean;
+  readonly bearsLoad?: boolean;
 }
 
 export interface BreakableClusterDefinition {
@@ -1880,8 +1887,11 @@ function createKhrushchevka(
     [33.6, -8.28],
   ] as const).entries()) {
     fixturePieces.push(
-      makePiece(`hru:downpipe:${index}`, "hru:fixtures", "steel", "steelSheet",
-        [px, 5.18, pz], [0.11, 10.4, 0.11], "#9aa19e"),
+      {
+        ...makePiece(`hru:downpipe:${index}`, "hru:fixtures", "steel", "steelSheet",
+          [px, 5.18, pz], [0.11, 10.4, 0.11], "#9aa19e"),
+        bearsLoad: false,
+      },
     );
   }
   clusters.push(cluster("hru:fixtures", "Building fixtures", "steel", "mounted", fixturePieces));
@@ -2565,6 +2575,7 @@ export const structuralMaterialProfiles: Record<
     compressionStrength: 220,
     cantilever: 2.1,
     maximumVerticalGap: 1.1,
+    carriesAttachments: true,
     sideAttachmentReach: 0.24,
   },
   stone: {

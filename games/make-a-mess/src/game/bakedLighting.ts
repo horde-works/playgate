@@ -2,7 +2,7 @@ import { OccupancyGrid, type OccupancyBox } from "./occupancyGrid.ts";
 
 /**
  * Baked ambient lighting for the static voxel world — the CPU twin of
- * Teardown's per-pixel voxel-traced ambient occlusion. For every piece we
+ * Per-pixel voxel-traced ambient occlusion. For every piece we
  * trace a small set of weighted rays from each of its 8 corners through the
  * world occupancy grid:
  *

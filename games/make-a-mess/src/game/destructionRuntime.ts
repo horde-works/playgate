@@ -1,5 +1,5 @@
 import { Euler, Quaternion, Vector3 } from "three";
-import type { BreakableMaterial } from "./destructionScene";
+import type { BreakableMaterial, BreakableShape } from "./destructionScene";
 import {
   applyVoxelDamage,
   createSolidVoxelBody,
@@ -14,6 +14,8 @@ export interface ShardDefinition {
   readonly id: string;
   readonly material: BreakableMaterial;
   readonly color: string;
+  /** Round debris (pipe/boiler segments, wheels) keeps its round shape. */
+  readonly shape?: BreakableShape;
   readonly size: readonly [number, number, number];
   readonly position: readonly [number, number, number];
   readonly quaternion: readonly [number, number, number, number];
@@ -28,6 +30,7 @@ export interface ShardSource {
   readonly id: string;
   readonly material: BreakableMaterial;
   readonly color: string;
+  readonly shape?: BreakableShape;
   readonly size: readonly [number, number, number];
   readonly voxelBody?: VoxelBody;
 }
@@ -40,6 +43,7 @@ export interface RemnantDefinition {
   readonly parentId: string;
   readonly material: BreakableMaterial;
   readonly color: string;
+  readonly shape?: BreakableShape;
   readonly size: readonly [number, number, number];
   readonly position: readonly [number, number, number];
   readonly quaternion: readonly [number, number, number, number];
@@ -342,9 +346,10 @@ const damageRoughnessByMaterial: Record<BreakableMaterial, number> = {
 interface RemnantSpec {
   readonly size: readonly [number, number, number];
   readonly localCenter: readonly [number, number, number];
-  readonly voxelBody: VoxelBody;
-  readonly boxes: readonly VoxelBox[];
+  readonly voxelBody?: VoxelBody;
+  readonly boxes?: readonly VoxelBox[];
   readonly volume: number;
+  readonly shape?: BreakableShape;
 }
 
 export interface CarveResult {
@@ -503,6 +508,54 @@ export function carveBox(
  * The single material-damage contract used for attached, falling and settled
  * bodies. Motion is merely input state: it never changes which voxels break.
  */
+/**
+ * Round bodies fracture along their axis: a hit removes a band of the
+ * cylinder and the remainder survives as SHORTER CYLINDERS, not as a box
+ * soup. Pipes break into pipe segments, wheels stay wheels.
+ */
+function sliceCylinder(
+  source: ShardSource,
+  localPoint: Vector3,
+  radius: number,
+): CarveResult | null {
+  const bodyRadius = Math.max(source.size[0], source.size[2]) / 2;
+  const length = source.size[1];
+  const cut = Math.min(
+    length * 0.45,
+    Math.max(bodyRadius * 0.55, radius),
+  );
+  const hitY = Math.max(-length / 2, Math.min(length / 2, localPoint.y));
+  const removedStart = Math.max(-length / 2, hitY - cut);
+  const removedEnd = Math.min(length / 2, hitY + cut);
+  if (removedEnd <= removedStart) {
+    return null;
+  }
+
+  const minimumSegment = Math.max(0.16, bodyRadius * 0.4);
+  const kept: RemnantSpec[] = [];
+  const crossSection = Math.PI * bodyRadius * bodyRadius;
+  for (const [from, to] of [
+    [-length / 2, removedStart],
+    [removedEnd, length / 2],
+  ] as const) {
+    const segmentLength = to - from;
+    if (segmentLength < minimumSegment) {
+      continue;
+    }
+    kept.push({
+      size: [source.size[0], segmentLength, source.size[2]],
+      localCenter: [0, (from + to) / 2, 0],
+      volume: crossSection * segmentLength,
+      shape: "cylinder",
+    });
+  }
+
+  return {
+    kept,
+    removedVolume: crossSection * (removedEnd - removedStart),
+  };
+}
+
 export function damageBody(
   source: ShardSource,
   state: DamageBodyState,
@@ -517,22 +570,29 @@ export function damageBody(
     ?.clone()
     .applyQuaternion(inverseRotation)
     .normalize();
-  const result = carveBox(
-    source.size,
-    localPoint,
-    request.radius * damageRadiusScaleByMaterial[source.material],
-    request.idPrefix,
-    {
-      material: source.material,
-      body: source.voxelBody,
-      direction: localDirection
-        ? [localDirection.x, localDirection.y, localDirection.z]
-        : undefined,
-      penetration: request.penetration,
-      roughness:
-        request.roughness ?? damageRoughnessByMaterial[source.material],
-    },
-  );
+  const result =
+    source.shape === "cylinder"
+      ? sliceCylinder(
+          source,
+          localPoint,
+          request.radius * damageRadiusScaleByMaterial[source.material],
+        )
+      : carveBox(
+          source.size,
+          localPoint,
+          request.radius * damageRadiusScaleByMaterial[source.material],
+          request.idPrefix,
+          {
+            material: source.material,
+            body: source.voxelBody,
+            direction: localDirection
+              ? [localDirection.x, localDirection.y, localDirection.z]
+              : undefined,
+            penetration: request.penetration,
+            roughness:
+              request.roughness ?? damageRoughnessByMaterial[source.material],
+          },
+        );
   if (!result) {
     return null;
   }
@@ -569,6 +629,7 @@ export function damageBody(
         id,
         material: source.material,
         color: source.color,
+        shape: fragment.shape,
         size: fragment.size,
         voxelBody: fragment.voxelBody,
         boxes: fragment.boxes,

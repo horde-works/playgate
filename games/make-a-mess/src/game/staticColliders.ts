@@ -34,6 +34,47 @@ const cubeIndices = [
   1, 2, 6, 1, 6, 5,
 ] as const;
 
+// Cylinders collide as a 10-sided prism in the same unit space.
+const PRISM_SIDES = 10;
+const prismCorners: readonly (readonly [number, number, number])[] = [
+  0,
+  1,
+].flatMap((ring) =>
+  Array.from({ length: PRISM_SIDES }, (_, index) => {
+    const angle = ((index + 0.5) / PRISM_SIDES) * Math.PI * 2;
+    return [
+      Math.cos(angle) * 0.5,
+      ring === 0 ? -0.5 : 0.5,
+      Math.sin(angle) * 0.5,
+    ] as const;
+  }),
+);
+const prismIndices: readonly number[] = (() => {
+  const indices: number[] = [];
+  for (let index = 0; index < PRISM_SIDES; index += 1) {
+    const next = (index + 1) % PRISM_SIDES;
+    const bottomA = index;
+    const bottomB = next;
+    const topA = PRISM_SIDES + index;
+    const topB = PRISM_SIDES + next;
+    indices.push(bottomA, topA, bottomB, bottomB, topA, topB);
+  }
+  for (let index = 1; index < PRISM_SIDES - 1; index += 1) {
+    indices.push(0, index + 1, index);
+    indices.push(PRISM_SIDES, PRISM_SIDES + index, PRISM_SIDES + index + 1);
+  }
+  return indices;
+})();
+
+function pieceColliderTemplate(piece: BreakablePieceDefinition): {
+  readonly corners: readonly (readonly [number, number, number])[];
+  readonly indices: readonly number[];
+} {
+  return piece.shape === "cylinder"
+    ? { corners: prismCorners, indices: prismIndices }
+    : { corners: cubeCorners, indices: cubeIndices };
+}
+
 function chunkKey(piece: BreakablePieceDefinition): string {
   return `${Math.floor(piece.position[0] / STATIC_COLLIDER_CHUNK_SIZE)}:${Math.floor(
     piece.position[2] / STATIC_COLLIDER_CHUNK_SIZE,
@@ -77,16 +118,27 @@ function buildChunkMesh(
     return cached;
   }
 
-  const vertices = new Float32Array(pieces.length * cubeCorners.length * 3);
-  const indices = new Uint32Array(pieces.length * cubeIndices.length);
+  const totalVertices = pieces.reduce(
+    (sum, piece) => sum + pieceColliderTemplate(piece).corners.length,
+    0,
+  );
+  const totalIndices = pieces.reduce(
+    (sum, piece) => sum + pieceColliderTemplate(piece).indices.length,
+    0,
+  );
+  const vertices = new Float32Array(totalVertices * 3);
+  const indices = new Uint32Array(totalIndices);
   const matrix = new Matrix4();
   const rotation = new Euler();
   const quaternion = new Quaternion();
   const corner = new Vector3();
   const position = new Vector3();
   const scale = new Vector3();
+  let vertexOffset = 0;
+  let indexOffset = 0;
 
-  pieces.forEach((piece, pieceIndex) => {
+  pieces.forEach((piece) => {
+    const template = pieceColliderTemplate(piece);
     position.set(...piece.position);
     rotation.set(
       piece.rotation?.[0] ?? 0,
@@ -98,18 +150,18 @@ function buildChunkMesh(
     quaternion.setFromEuler(rotation);
     matrix.compose(position, quaternion, scale);
 
-    const vertexOffset = pieceIndex * cubeCorners.length;
-    cubeCorners.forEach((source, cornerIndex) => {
+    template.corners.forEach((source, cornerIndex) => {
       corner.set(source[0], source[1], source[2]).applyMatrix4(matrix);
       const targetIndex = (vertexOffset + cornerIndex) * 3;
       vertices[targetIndex] = corner.x;
       vertices[targetIndex + 1] = corner.y;
       vertices[targetIndex + 2] = corner.z;
     });
-    cubeIndices.forEach((sourceIndex, index) => {
-      indices[pieceIndex * cubeIndices.length + index] =
-        vertexOffset + sourceIndex;
+    template.indices.forEach((sourceIndex, index) => {
+      indices[indexOffset + index] = vertexOffset + sourceIndex;
     });
+    vertexOffset += template.corners.length;
+    indexOffset += template.indices.length;
   });
 
   return cacheMesh(cacheKey, {

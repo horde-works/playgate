@@ -9,6 +9,7 @@ import {
   BallCollider,
   CapsuleCollider,
   CuboidCollider,
+  CylinderCollider,
   Physics,
   RigidBody,
   useBeforePhysicsStep,
@@ -123,7 +124,10 @@ import {
   SceneEnvironment,
   type TimeOfDay,
 } from "./WorldEnvironment";
-import { TeardownPostProcessing } from "./TeardownPostProcessing";
+import { CinematicPostProcessing } from "./CinematicPostProcessing";
+import { useLanguage } from "@/app/i18n/LanguageProvider";
+import { sceneCopy } from "@/app/i18n/dictionary";
+import { LanguageSwitcher } from "@/app/components/LanguageSwitcher";
 
 type ControlName =
   | "forward"
@@ -1037,17 +1041,27 @@ const BreakablePiece = memo(function BreakablePiece({
           : undefined
       }
     >
-      {colliderBoxes.map((box, index) => (
-        <CuboidCollider
-          key={index}
+      {piece.shape === "cylinder" ? (
+        // Real round collider: broken wheels and barrels actually roll.
+        <CylinderCollider
           args={[
-            Math.max(0.002, box.size[0] / 2 - 0.002),
-            Math.max(0.002, box.size[1] / 2 - 0.002),
-            Math.max(0.002, box.size[2] / 2 - 0.002),
+            Math.max(0.002, piece.size[1] / 2 - 0.002),
+            Math.max(0.002, (piece.size[0] + piece.size[2]) / 4 - 0.002),
           ]}
-          position={[...box.center]}
         />
-      ))}
+      ) : (
+        colliderBoxes.map((box, index) => (
+          <CuboidCollider
+            key={index}
+            args={[
+              Math.max(0.002, box.size[0] / 2 - 0.002),
+              Math.max(0.002, box.size[1] / 2 - 0.002),
+              Math.max(0.002, box.size[2] / 2 - 0.002),
+            ]}
+            position={[...box.center]}
+          />
+        ))
+      )}
     </RigidBody>
   );
 });
@@ -1214,17 +1228,26 @@ const Shard = memo(function Shard({
           : undefined
       }
     >
-      {colliderBoxes.map((box, index) => (
-        <CuboidCollider
-          key={`collider:${index}`}
+      {shard.shape === "cylinder" ? (
+        <CylinderCollider
           args={[
-            Math.max(0.002, box.size[0] / 2 - 0.002),
-            Math.max(0.002, box.size[1] / 2 - 0.002),
-            Math.max(0.002, box.size[2] / 2 - 0.002),
+            Math.max(0.002, shard.size[1] / 2 - 0.002),
+            Math.max(0.002, (shard.size[0] + shard.size[2]) / 4 - 0.002),
           ]}
-          position={[...box.center]}
         />
-      ))}
+      ) : (
+        colliderBoxes.map((box, index) => (
+          <CuboidCollider
+            key={`collider:${index}`}
+            args={[
+              Math.max(0.002, box.size[0] / 2 - 0.002),
+              Math.max(0.002, box.size[1] / 2 - 0.002),
+              Math.max(0.002, box.size[2] / 2 - 0.002),
+            ]}
+            position={[...box.center]}
+          />
+        ))
+      )}
     </RigidBody>
   );
 });
@@ -1625,17 +1648,26 @@ const Remnant = memo(function Remnant({
           : undefined
       }
     >
-      {colliderBoxes.map((box, index) => (
-        <CuboidCollider
-          key={`collider:${index}`}
+      {remnant.shape === "cylinder" ? (
+        <CylinderCollider
           args={[
-            Math.max(0.002, box.size[0] / 2 - 0.002),
-            Math.max(0.002, box.size[1] / 2 - 0.002),
-            Math.max(0.002, box.size[2] / 2 - 0.002),
+            Math.max(0.002, remnant.size[1] / 2 - 0.002),
+            Math.max(0.002, (remnant.size[0] + remnant.size[2]) / 4 - 0.002),
           ]}
-          position={[...box.center]}
         />
-      ))}
+      ) : (
+        colliderBoxes.map((box, index) => (
+          <CuboidCollider
+            key={`collider:${index}`}
+            args={[
+              Math.max(0.002, box.size[0] / 2 - 0.002),
+              Math.max(0.002, box.size[1] / 2 - 0.002),
+              Math.max(0.002, box.size[2] / 2 - 0.002),
+            ]}
+            position={[...box.center]}
+          />
+        ))
+      )}
     </RigidBody>
   );
 });
@@ -2919,7 +2951,7 @@ function OpenWorldScene({
   );
 
   // Carve a blocky hole out of a standing (fixed) piece or remnant, leaving
-  // the rest of it in place — Teardown-style holes in walls and fences.
+  // the rest of it in place — clean holes carved through walls and fences.
   const carveAt = useCallback(
     (
       targetId: string,
@@ -2995,6 +3027,7 @@ function OpenWorldScene({
           parentId,
           material: source.material,
           color: source.color,
+          shape: fragment.shape,
           size: fragment.size,
           position: fragment.position,
           quaternion: fragment.quaternion,
@@ -4220,6 +4253,7 @@ function OpenWorldScene({
         mode={timeOfDay}
         nightRef={nightRef}
         theme={scene.environment}
+        worldRadius={scene.worldRadius}
       />
       <LampLightPool
         lamps={lampDefinitions}
@@ -4276,6 +4310,7 @@ function OpenWorldScene({
         />
       ))}
       <HingedDoorSystem
+        pieces={breakablePieces}
         bodies={pieceBodies}
         brokenPieces={brokenPiecesRef}
         resetVersion={resetVersion}
@@ -4460,6 +4495,7 @@ function MobileGameControls({
   onFlightChange: () => void;
   onReset: () => void;
 }) {
+  const { t } = useLanguage();
   const movePointer = useRef<number | null>(null);
   const lookPointer = useRef<number | null>(null);
   const moveTouch = useRef<number | null>(null);
@@ -4738,14 +4774,22 @@ function MobileGameControls({
   );
 
   const fireLabel =
-    weapon === "hammer" ? "Удар" : weapon === "mg" ? "Огонь" : "Пуск";
+    weapon === "hammer"
+      ? t("fire.strike")
+      : weapon === "mg"
+        ? t("fire.fire")
+        : t("fire.launch");
   const timeLabel =
-    timeOfDay === "day" ? "День" : timeOfDay === "sunset" ? "Закат" : "Ночь";
+    timeOfDay === "day"
+      ? t("time.day")
+      : timeOfDay === "sunset"
+        ? t("time.sunset")
+        : t("time.night");
 
   return (
     <div
       className={`mobile-controls${active ? " is-active" : ""}`}
-      aria-label="Сенсорное управление"
+      aria-label={t("mobile.touchAria")}
     >
       <div
         className="mobile-look-zone"
@@ -4757,7 +4801,7 @@ function MobileGameControls({
       />
       <div
         className="mobile-stick"
-        aria-label="Движение"
+        aria-label={t("mobile.moveAria")}
         onPointerDown={handleMoveStart}
         onTouchStart={handleMoveTouchStart}
         onPointerCancel={stopMove}
@@ -4769,7 +4813,7 @@ function MobileGameControls({
           }}
         />
       </div>
-      <div className={`mobile-actions${flightMode ? " is-flight" : ""}`} aria-label="Действия">
+      <div className={`mobile-actions${flightMode ? " is-flight" : ""}`} aria-label={t("mobile.actionsAria")}>
         <button
           className="mobile-fire"
           type="button"
@@ -4791,16 +4835,16 @@ function MobileGameControls({
             onPointerLeave={() => setJump(false)}
             onPointerUp={() => setJump(false)}
           >
-            Прыжок
+            {t("mobile.jump")}
           </button>
         ) : null}
       </div>
-      <div className="mobile-weapon-bar" aria-label="Оружие">
+      <div className="mobile-weapon-bar" aria-label={t("mobile.weaponAria")}>
         {([
-          ["hammer", "1", "Молоток"],
-          ["launcher", "2", "Граната"],
-          ["mg", "3", "Пулемёт"],
-          ["rocket", "4", "Ракета"],
+          ["hammer", "1", t("weapon.hammer")],
+          ["launcher", "2", t("weapon.launcher.short")],
+          ["mg", "3", t("weapon.mg")],
+          ["rocket", "4", t("weapon.rocket.short")],
         ] as const).map(([nextWeapon, shortcut, label]) => (
           <button
             key={nextWeapon}
@@ -4813,26 +4857,46 @@ function MobileGameControls({
           </button>
         ))}
       </div>
-      <div className="mobile-utility-bar" aria-label="Сервис">
+      <div className="mobile-utility-bar" aria-label={t("mobile.serviceAria")}>
         <button
           type="button"
           className={flightMode ? "is-active" : undefined}
           onClick={onFlightChange}
         >
-          {flightMode ? "Приземлиться" : "Полёт"}
+          {flightMode ? t("controls.land") : t("mode.fly")}
         </button>
         <button type="button" onClick={onTimeChange}>{timeLabel}</button>
-        <button type="button" onClick={onReset}>Заново</button>
+        <button type="button" onClick={onReset}>{t("controls.reset")}</button>
       </div>
     </div>
   );
 }
 
 export function MakeAMessGame({
-  scene = openHouseScene,
+  scene: sceneProp = openHouseScene,
 }: {
   scene?: DestructionSceneDefinition;
 }) {
+  // Dev aid: `?spawn=x,y,z` drops the player anywhere on the map — handy
+  // for inspecting far corners without a long walk.
+  const scene = useMemo(() => {
+    if (typeof window === "undefined") {
+      return sceneProp;
+    }
+    const raw = new URLSearchParams(window.location.search).get("spawn");
+    const parts = raw?.split(",").map(Number);
+    if (parts?.length === 3 && parts.every(Number.isFinite)) {
+      return {
+        ...sceneProp,
+        playerSpawn: [parts[0], parts[1], parts[2]] as const,
+      };
+    }
+    return sceneProp;
+  }, [sceneProp]);
+  const { language, t } = useLanguage();
+  // The HUD copy is localized; in-world signage stays in the scene files. Fall
+  // back to the scene's own (Russian) copy if a scene has no translation yet.
+  const copy = sceneCopy[scene.id]?.[language] ?? scene.copy;
   const mobileControls = useRef<MobileControlsState>(createMobileControlsState());
   const mobileActions = useRef<MobileActionBridge>({
     strike: () => {},
@@ -5004,28 +5068,31 @@ export function MakeAMessGame({
                 onSample={setPerformance}
               />
               <AdaptiveRenderScale compact={fallbackLook} />
-              <TeardownPostProcessing compact={fallbackLook} />
+              <CinematicPostProcessing compact={fallbackLook} />
             </Suspense>
           </Canvas>
         </KeyboardControls>
       </div>
 
       <header className="play-topbar">
-        <Link href="/" className="play-brand" aria-label="На главную">
+        <Link href="/" className="play-brand" aria-label={t("hud.homeAria")}>
           Handmade Games
         </Link>
         <div className="prototype-status">
           <span />
-          {scene.copy.status}
+          {copy.status}
         </div>
-        <Link href="/games" className="play-exit">
-          Все игры
-          <span aria-hidden="true">↗</span>
-        </Link>
+        <div className="play-topbar-end">
+          <LanguageSwitcher className="language-switcher-play" />
+          <Link href="/games" className="play-exit">
+            {t("hud.allGames")}
+            <span aria-hidden="true">↗</span>
+          </Link>
+        </div>
       </header>
 
       {showPerformance ? (
-        <aside className="game-performance" aria-label="Производительность">
+        <aside className="game-performance" aria-label={t("hud.performanceAria")}>
           <span>{performance.fps} FPS</span>
           <span>{performance.calls} calls</span>
           <span>{performance.triangles.toLocaleString()} tris</span>
@@ -5034,40 +5101,44 @@ export function MakeAMessGame({
       ) : null}
 
       <aside className="game-objective" aria-live="polite">
-        <p>{scene.copy.eyebrow}</p>
-        <h1>{scene.copy.heading}</h1>
+        <p>{copy.eyebrow}</p>
+        <h1>{copy.heading}</h1>
         <div className="damage-meter">
           <span style={{ width: `${progress}%` }} />
         </div>
         <div className="damage-copy">
-          <span>{brokenCount} частей</span>
-          <span>{progress}% mess</span>
+          <span>
+            {brokenCount} {t("hud.parts")}
+          </span>
+          <span>
+            {progress}% {t("hud.mess")}
+          </span>
         </div>
         <div className="damage-copy">
-          <span>Оружие</span>
+          <span>{t("hud.weapon")}</span>
           <span>
             {weapon === "hammer"
-              ? "Молоток"
+              ? t("weapon.hammer")
               : weapon === "launcher"
-                ? "Гранатомёт"
+                ? t("weapon.launcher")
                 : weapon === "rocket"
-                  ? "Ракетомёт"
-                  : "Пулемёт"}
+                  ? t("weapon.rocket")
+                  : t("weapon.mg")}
           </span>
         </div>
         <div className="damage-copy">
-          <span>Время [N]</span>
+          <span>{t("hud.time")}</span>
           <span>
             {timeOfDay === "day"
-              ? "День"
+              ? t("time.day")
               : timeOfDay === "sunset"
-                ? "Закат"
-                : "Ночь"}
+                ? t("time.sunset")
+                : t("time.night")}
           </span>
         </div>
         <div className="damage-copy">
-          <span>Режим [F]</span>
-          <span>{flightMode ? "Полёт" : "Пешком"}</span>
+          <span>{t("hud.mode")}</span>
+          <span>{flightMode ? t("mode.fly") : t("mode.walk")}</span>
         </div>
       </aside>
 
@@ -5093,41 +5164,39 @@ export function MakeAMessGame({
 
       <div className="controls-hint" aria-hidden="true">
         <span>WASD</span>
-        Двигаться
+        {t("controls.move")}
         <span>{fallbackLook ? "Drag" : "Mouse"}</span>
-        Смотреть
+        {t("controls.look")}
         <span>Click</span>
         {weapon === "hammer"
-          ? "Удар"
+          ? t("fire.strike")
           : weapon === "launcher" || weapon === "rocket"
-            ? "Выстрел"
-            : "Огонь (держать)"}
+            ? t("fire.shoot")
+            : t("fire.hold")}
         <span>1·2·3·4</span>
-        Оружие
+        {t("controls.weapon")}
         <span>N</span>
-        Время суток
+        {t("controls.time")}
         <span>F</span>
-        {flightMode ? "Приземлиться" : "Режим полёта"}
+        {flightMode ? t("controls.land") : t("controls.fly")}
         {!flightMode ? (
           <>
             <span>Space</span>
-            Прыжок
+            {t("controls.jump")}
           </>
         ) : null}
         <span>R</span>
-        Заново
+        {t("controls.reset")}
       </div>
 
       {!active && (
-        <section className="game-gate" aria-label="Запуск трёхмерной сцены">
+        <section className="game-gate" aria-label={t("hud.launchAria")}>
           <div className="gate-card">
-            <p>{ready ? scene.copy.ready : scene.copy.loading}</p>
+            <p>{ready ? copy.ready : copy.loading}</p>
             <h2>
-              {brokenCount > 0 ? "Продолжим беспорядок?" : "Всё можно сломать."}
+              {brokenCount > 0 ? t("gate.continueTitle") : t("gate.startTitle")}
             </h2>
-            <p>
-              {scene.copy.description}
-            </p>
+            <p>{copy.description}</p>
             <button
               id="enter-game"
               className="enter-game"
@@ -5135,12 +5204,12 @@ export function MakeAMessGame({
               disabled={!ready}
               onClick={startPlaying}
             >
-              {brokenCount > 0 ? scene.copy.returnToGame : scene.copy.enter}
+              {brokenCount > 0 ? copy.returnToGame : copy.enter}
               <span aria-hidden="true">↗</span>
             </button>
             {brokenCount > 0 && (
               <button className="reset-game" type="button" onClick={reset}>
-                {scene.copy.reset}
+                {copy.reset}
               </button>
             )}
           </div>

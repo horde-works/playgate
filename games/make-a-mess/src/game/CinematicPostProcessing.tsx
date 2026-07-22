@@ -19,16 +19,15 @@ import { N8AOPass } from "n8ao";
 import { environmentState } from "./environmentState";
 
 /**
- * The always-on cinematic pipeline, assembled after Teardown's captured post
- * chain: screen-space AO on top of the baked corner AO, a soft wide bloom,
- * sun shafts marched toward the sun through the frame, a glare halo with a
- * lens-dirt overlay that lights up only when the sun itself is visible, and
- * a gentle grade. AgX tone mapping is applied by the OutputPass, SMAA
- * resolves edges (the composer path bypasses MSAA).
+ * The always-on cinematic pipeline: screen-space AO on top of the baked
+ * corner AO, a soft wide bloom, sun shafts marched toward the sun through the
+ * frame, a glare halo with a lens-dirt overlay that lights up only when the
+ * sun itself is visible, and a gentle grade. AgX tone mapping is applied by
+ * the OutputPass, SMAA resolves edges (the composer path bypasses MSAA).
  */
 
 const CinematicShader = {
-  name: "TeardownCinematicShader",
+  name: "CinematicGradeShader",
   uniforms: {
     tDiffuse: { value: null },
     tLensDirt: { value: null },
@@ -189,7 +188,7 @@ function createLensDirtTexture(): CanvasTexture {
   return texture;
 }
 
-export function TeardownPostProcessing({
+export function CinematicPostProcessing({
   compact,
 }: {
   compact: boolean;

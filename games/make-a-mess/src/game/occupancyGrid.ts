@@ -1,5 +1,5 @@
 /**
- * CPU bit-occupancy grid of the static world — the same idea as Teardown's
+ * CPU bit-occupancy grid of the static world — a classic voxel-occupancy
  * "volumetric shadow map" (a 1-bit voxelization of the level used to trace
  * ambient-occlusion and sky-visibility rays), except ours is traced once at
  * load on the CPU and baked into per-instance vertex data instead of being

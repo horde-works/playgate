@@ -103,10 +103,12 @@ export function DayNightCycle({
   mode,
   nightRef,
   theme = "town",
+  worldRadius,
 }: {
   mode: TimeOfDay;
   nightRef: { current: number };
   theme?: "town" | "fortress";
+  worldRadius?: number;
 }) {
   const directional = useRef<DirectionalLight>(null);
   const hemisphere = useRef<HemisphereLight>(null);
@@ -248,11 +250,17 @@ export function DayNightCycle({
       <fog
         ref={fogRef}
         attach="fog"
-        args={[fortress ? "#84939d" : "#9cc0ce", fortress ? 58 : 42, fortress ? 196 : 128]}
+        args={[
+          fortress ? "#84939d" : "#9cc0ce",
+          fortress ? 58 : Math.max(42, (worldRadius ?? 67) * 0.6),
+          fortress ? 196 : Math.max(128, (worldRadius ?? 67) * 2),
+        ]}
       />
+      {/* The sky dome must be larger than the map: a dome smaller than the
+          world radius shows its own edge as a band across the sky. */}
       <Sky
         ref={skyRef}
-        distance={fortress ? 170 : 110}
+        distance={fortress ? 170 : Math.max(110, (worldRadius ?? 58) * 1.9)}
         sunPosition={[...skySun]}
         turbidity={fortress ? 10.5 : 6.2}
         rayleigh={fortress ? 1.25 : 1.6}

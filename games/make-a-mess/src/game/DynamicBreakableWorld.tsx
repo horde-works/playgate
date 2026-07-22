@@ -13,6 +13,7 @@ import {
 import {
   BoxGeometry,
   Color,
+  CylinderGeometry,
   DynamicDrawUsage,
   InstancedBufferAttribute,
   InstancedMesh,
@@ -43,6 +44,7 @@ import {
 import { computeBoxFaceMasks } from "./boxFaceMasks";
 
 const UNIT_BOX = new BoxGeometry(1, 1, 1);
+const UNIT_CYLINDER = new CylinderGeometry(0.5, 0.5, 1, 20, 1);
 
 type DynamicBreakableKind = "piece" | "shard" | "remnant";
 
@@ -54,6 +56,7 @@ export interface BreakableRenderBox {
 interface DynamicBreakableFragment {
   readonly sourceId: string;
   readonly kind: DynamicBreakableKind;
+  readonly geometryKind: "box" | "cylinder";
   readonly material: BreakableMaterial;
   readonly materialColor: string;
   readonly color: string;
@@ -74,6 +77,7 @@ interface DynamicBreakableBatch {
   readonly id: string;
   readonly material: BreakableMaterial;
   readonly materialColor: string;
+  readonly geometryKind: "box" | "cylinder";
   readonly fragments: readonly DynamicBreakableFragment[];
 }
 
@@ -153,18 +157,26 @@ function sourceFragments(
     const boxes = getPieceRenderBoxes(piece);
     const faceMasks = computeBoxFaceMasks(boxes);
     const pieceColor = quenchedColor(piece.material, piece.color);
+    const geometryKind = piece.shape === "cylinder" ? "cylinder" as const : "box" as const;
     boxes.forEach((box, boxIndex) => {
       fragments.push({
         sourceId: piece.id,
         kind: "piece",
+        geometryKind,
         material: piece.material,
         materialColor: pieceMaterialBaseColor(piece.material, pieceColor),
         color: pieceColor,
         center: box.center,
         size: box.size,
         sizeExpansion,
-        faceMaskPositive: faceMasks[boxIndex].positive,
-        faceMaskNegative: faceMasks[boxIndex].negative,
+        faceMaskPositive:
+          geometryKind === "cylinder"
+            ? [0, faceMasks[boxIndex].positive[1], 0]
+            : faceMasks[boxIndex].positive,
+        faceMaskNegative:
+          geometryKind === "cylinder"
+            ? [0, faceMasks[boxIndex].negative[1], 0]
+            : faceMasks[boxIndex].negative,
         fallbackPosition: piece.position,
         fallbackQuaternion,
       });
@@ -178,18 +190,26 @@ function sourceFragments(
         : [{ center: [0, 0, 0] as const, size: shard.size }];
     const faceMasks = computeBoxFaceMasks(boxes);
     const shardColor = quenchedColor(shard.material, shard.color);
+    const shardGeometry = shard.shape === "cylinder" ? "cylinder" as const : "box" as const;
     boxes.forEach((box, boxIndex) => {
       fragments.push({
         sourceId: shard.id,
         kind: "shard",
+        geometryKind: shardGeometry,
         material: shard.material,
         materialColor: pieceMaterialBaseColor(shard.material, shardColor),
         color: shardColor,
         center: box.center,
         size: box.size,
         sizeExpansion: 0,
-        faceMaskPositive: faceMasks[boxIndex].positive,
-        faceMaskNegative: faceMasks[boxIndex].negative,
+        faceMaskPositive:
+          shardGeometry === "cylinder"
+            ? [0, faceMasks[boxIndex].positive[1], 0]
+            : faceMasks[boxIndex].positive,
+        faceMaskNegative:
+          shardGeometry === "cylinder"
+            ? [0, faceMasks[boxIndex].negative[1], 0]
+            : faceMasks[boxIndex].negative,
         fallbackPosition: shard.position,
         fallbackQuaternion: shard.quaternion,
       });
@@ -203,10 +223,12 @@ function sourceFragments(
         : [{ center: [0, 0, 0] as const, size: remnant.size }];
     const faceMasks = computeBoxFaceMasks(boxes);
     const remnantColor = quenchedColor(remnant.material, remnant.color);
+    const remnantGeometry = remnant.shape === "cylinder" ? "cylinder" as const : "box" as const;
     boxes.forEach((box, boxIndex) => {
       fragments.push({
         sourceId: remnant.id,
         kind: "remnant",
+        geometryKind: remnantGeometry,
         material: remnant.material,
         materialColor: pieceMaterialBaseColor(
           remnant.material,
@@ -216,8 +238,14 @@ function sourceFragments(
         center: box.center,
         size: box.size,
         sizeExpansion: 0,
-        faceMaskPositive: faceMasks[boxIndex].positive,
-        faceMaskNegative: faceMasks[boxIndex].negative,
+        faceMaskPositive:
+          remnantGeometry === "cylinder"
+            ? [0, faceMasks[boxIndex].positive[1], 0]
+            : faceMasks[boxIndex].positive,
+        faceMaskNegative:
+          remnantGeometry === "cylinder"
+            ? [0, faceMasks[boxIndex].negative[1], 0]
+            : faceMasks[boxIndex].negative,
         fallbackPosition: remnant.position,
         fallbackQuaternion: remnant.quaternion,
       });
@@ -233,7 +261,7 @@ function buildBatches(
   const batches = new Map<string, DynamicBreakableFragment[]>();
 
   for (const fragment of fragments) {
-    const key = `${fragment.material}:${fragment.materialColor}`;
+    const key = `${fragment.material}:${fragment.materialColor}:${fragment.geometryKind}`;
     const current = batches.get(key);
     if (current) {
       current.push(fragment);
@@ -246,6 +274,7 @@ function buildBatches(
     id,
     material: batchFragments[0].material,
     materialColor: batchFragments[0].materialColor,
+    geometryKind: batchFragments[0].geometryKind,
     fragments: batchFragments,
   }));
 }
@@ -304,7 +333,9 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
 }) {
   const mesh = useRef<InstancedMesh>(null);
   const geometry = useMemo(() => {
-    const next = UNIT_BOX.clone();
+    const next = (
+      batch.geometryKind === "cylinder" ? UNIT_CYLINDER : UNIT_BOX
+    ).clone();
     const anchors = new Float32Array(batch.fragments.length * 3);
     batch.fragments.forEach((fragment, index) => {
       anchors.set(
@@ -383,7 +414,7 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
       );
     }
     return next;
-  }, [batch.fragments]);
+  }, [batch]);
   const material = useMemo(
     () =>
       getPieceMaterial(

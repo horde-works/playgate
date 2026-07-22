@@ -703,7 +703,7 @@ roughnessFactor = clamp(
   1.0
 );
 // Wet splotches turn glossy: with the sky environment map this alone makes
-// puddles mirror the sky at grazing angles, the way Teardown's rain does.
+// puddles mirror the sky at grazing angles, the way wet ground does.
 roughnessFactor = mix(roughnessFactor, 0.07, materialWet);`,
         )
         .replace(
@@ -711,7 +711,7 @@ roughnessFactor = mix(roughnessFactor, 0.07, materialWet);`,
           `#include <normal_fragment_maps>
 // Fake bevels: bend the shading normal outward in a narrow band along box
 // edges. Blocks catch light on their edges like physical, slightly worn
-// objects instead of razor-sharp CG boxes (Teardown blurs its G-buffer
+// objects instead of razor-sharp CG boxes (a subtle edge softening
 // normals near the camera for the same reason).
 vec3 materialBevelEdge = (vec3(0.5) - abs(vMaterialBoxPosition)) * vMaterialWorldScale;
 float materialBevelWidth = min(
@@ -732,7 +732,7 @@ normal = normalize(normal + materialBevelBend * 0.6);`,
         .replace(
           "#include <aomap_fragment>",
           `// Baked voxel-traced ambient occlusion (per-corner, interpolated per
-// face). Like Teardown, it darkens only ambient light: the sun keeps its
+// face). It darkens only ambient light: the sun keeps its
 // real shadow map.
 float materialBakedAo = clamp(vBakedAo, 0.0, 1.0);
 materialBakedAo = 1.0 - (1.0 - materialBakedAo) * 0.88;

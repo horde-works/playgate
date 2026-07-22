@@ -28,7 +28,10 @@ test("server-renders the handmade games hero", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /Игры, которые/);
+  // The site renders in its default language (English) on the server; the
+  // language switcher swaps copy on the client.
+  assert.match(html, /Games we/);
+  assert.match(html, /make ourselves/);
   assert.match(html, /Make a Mess/);
   assert.match(html, /href="\/games"/);
   assert.match(html, /href="\/games\/make-a-mess"/);
@@ -52,16 +55,16 @@ test("server-renders the catalog and game space", async () => {
     fortressResponse.text(),
   ]);
 
-  assert.match(catalogHtml, /Каталог/);
+  assert.match(catalogHtml, /Catalogue/);
   assert.match(catalogHtml, /Make a Mess: Minas Tirith/);
   assert.match(catalogHtml, /href="\/games\/make-a-mess\/minas-tirith"/);
-  assert.match(catalogHtml, /Следующий слот/);
+  assert.match(catalogHtml, /Next slot/);
   assert.match(gameHtml, /Make a Mess \/ 004/);
-  assert.match(gameHtml, /Дом — объект/);
-  assert.match(gameHtml, /Всё можно сломать/);
-  assert.match(gameHtml, /панельных\s+четырёхэтажек/);
-  assert.match(gameHtml, /Взять молоток/);
+  assert.match(gameHtml, /The house is the toy/);
+  assert.match(gameHtml, /Everything can break/);
+  assert.match(gameHtml, /four-storey blocks/);
+  assert.match(gameHtml, /Grab the hammer/);
   assert.match(fortressHtml, /Make a Mess \/ Minas Tirith/);
-  assert.match(fortressHtml, /Крепость — объект/);
-  assert.match(fortressHtml, /Выйти к воротам/);
+  assert.match(fortressHtml, /The fortress is the toy/);
+  assert.match(fortressHtml, /Head for the gate/);
 });

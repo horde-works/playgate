@@ -163,3 +163,65 @@ test("compression follows the surviving bearing area", () => {
   assert.equal(holed.has("post"), true);
   assert.equal(holed.has("load"), true);
 });
+
+test("rotated members use their physical contact boxes for support lookup", () => {
+  const solver = createStructuralSolver(
+    [
+      {
+        id: "ground",
+        material: "ground",
+        position: [0, -0.1, 0],
+        size: [4, 0.2, 4],
+      },
+      {
+        id: "upright-rotated-member",
+        material: "wood",
+        position: [0, 3, 0],
+        size: [6, 0.2, 0.3],
+        contactBoxes: [
+          { position: [0, 3, 0], size: [0.3, 6, 0.3] },
+        ],
+      },
+    ],
+    profiles,
+  );
+
+  assert.equal(solver.resolve(new Set()).size, 0);
+});
+
+test("a decorative fixture cannot become a structural load path", () => {
+  const attachmentProfiles = {
+    ground: profiles.ground,
+    wood: {
+      ...profiles.wood,
+      sideAttachmentReach: 0.2,
+    },
+  };
+  const fixture = {
+    id: "fixture",
+    material: "wood",
+    position: [0, 1, 0],
+    size: [0.2, 2, 0.2],
+    bearsLoad: false,
+  };
+  const solver = createStructuralSolver(
+    [
+      {
+        id: "ground",
+        material: "ground",
+        position: [0, -0.1, 0],
+        size: [4, 0.2, 4],
+      },
+      fixture,
+      {
+        id: "hanging-panel",
+        material: "wood",
+        position: [0.25, 1.5, 0],
+        size: [0.2, 0.5, 0.2],
+      },
+    ],
+    attachmentProfiles,
+  );
+
+  assert.equal(solver.resolve(new Set()).has("hanging-panel"), true);
+});

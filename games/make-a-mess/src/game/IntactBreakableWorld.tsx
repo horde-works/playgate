@@ -11,6 +11,7 @@ import {
 import {
   BoxGeometry,
   Color,
+  CylinderGeometry,
   InstancedBufferAttribute,
   InstancedMesh,
   Matrix4,
@@ -45,6 +46,9 @@ import {
 } from "./staticColliders";
 
 const UNIT_BOX = new BoxGeometry(1, 1, 1);
+// Unit-diameter, unit-height cylinder along Y; instance scale sets the
+// diameters (x/z) and length (y), instance rotation lays it down.
+const UNIT_CYLINDER = new CylinderGeometry(0.5, 0.5, 1, 20, 1);
 const HIDDEN_MATRIX = new Matrix4().makeScale(0, 0, 0);
 
 // Jointed masonry is rendered expanded by the same margin the former joint
@@ -98,7 +102,9 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
     [batch.pieces],
   );
   const geometry = useMemo(() => {
-    const next = UNIT_BOX.clone();
+    const next = (
+      batch.geometryKind === "cylinder" ? UNIT_CYLINDER : UNIT_BOX
+    ).clone();
     const anchors = new Float32Array(batch.pieces.length * 3);
     const aoA = new Float32Array(batch.pieces.length * 4).fill(1);
     const aoB = new Float32Array(batch.pieces.length * 4).fill(1);
@@ -113,6 +119,12 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
       if (piece.shape === "groundTile") {
         facePos.fill(0, index * 3, index * 3 + 3);
         faceNeg.fill(0, index * 3, index * 3 + 3);
+      } else if (piece.shape === "cylinder") {
+        // Curved flanks must not get box-edge bevels — only the end caps.
+        facePos[index * 3] = 0;
+        facePos[index * 3 + 2] = 0;
+        faceNeg[index * 3] = 0;
+        faceNeg[index * 3 + 2] = 0;
       }
       const baked = lighting.resultFor(piece.id);
       if (baked) {

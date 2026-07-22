@@ -13,6 +13,8 @@ export interface StructuralPieceDefinition<Material extends string> {
   readonly volume?: number;
   readonly bearingArea?: number;
   readonly contactBoxes?: readonly StructuralContactBox[];
+  readonly carriesAttachments?: boolean;
+  readonly bearsLoad?: boolean;
 }
 
 export interface StructuralMaterialProfile {
@@ -106,6 +108,24 @@ function physicalContactBoxes(
     : [piece];
 }
 
+function physicalLowerBound<Material extends string>(
+  piece: StructuralPieceDefinition<Material>,
+  axis: 0 | 1 | 2,
+): number {
+  return Math.min(
+    ...physicalContactBoxes(piece).map((box) => lowerBound(box, axis)),
+  );
+}
+
+function physicalUpperBound<Material extends string>(
+  piece: StructuralPieceDefinition<Material>,
+  axis: 0 | 1 | 2,
+): number {
+  return Math.max(
+    ...physicalContactBoxes(piece).map((box) => upperBound(box, axis)),
+  );
+}
+
 function bearingContactPatches(
   piece: StructuralContactBox & {
     readonly contactBoxes?: readonly StructuralContactBox[];
@@ -175,9 +195,18 @@ export function createStructuralSolver<Material extends string>(
   const spatialBuckets = new Map<string, StructuralPieceDefinition<Material>[]>();
 
   for (const piece of pieces) {
-    const xCells = spatialCellRange(lowerBound(piece, 0), upperBound(piece, 0));
-    const yCells = spatialCellRange(lowerBound(piece, 1), upperBound(piece, 1));
-    const zCells = spatialCellRange(lowerBound(piece, 2), upperBound(piece, 2));
+    const xCells = spatialCellRange(
+      physicalLowerBound(piece, 0),
+      physicalUpperBound(piece, 0),
+    );
+    const yCells = spatialCellRange(
+      physicalLowerBound(piece, 1),
+      physicalUpperBound(piece, 1),
+    );
+    const zCells = spatialCellRange(
+      physicalLowerBound(piece, 2),
+      physicalUpperBound(piece, 2),
+    );
 
     for (const x of xCells) {
       for (const y of yCells) {
@@ -199,16 +228,16 @@ export function createStructuralSolver<Material extends string>(
   ): readonly StructuralPieceDefinition<Material>[] => {
     const nearby = new Map<string, StructuralPieceDefinition<Material>>();
     const xCells = spatialCellRange(
-      lowerBound(piece, 0) - maximumHorizontalReach,
-      upperBound(piece, 0) + maximumHorizontalReach,
+      physicalLowerBound(piece, 0) - maximumHorizontalReach,
+      physicalUpperBound(piece, 0) + maximumHorizontalReach,
     );
     const yCells = spatialCellRange(
-      lowerBound(piece, 1) - maximumVerticalReach,
-      upperBound(piece, 1) + maximumVerticalReach,
+      physicalLowerBound(piece, 1) - maximumVerticalReach,
+      physicalUpperBound(piece, 1) + maximumVerticalReach,
     );
     const zCells = spatialCellRange(
-      lowerBound(piece, 2) - maximumHorizontalReach,
-      upperBound(piece, 2) + maximumHorizontalReach,
+      physicalLowerBound(piece, 2) - maximumHorizontalReach,
+      physicalUpperBound(piece, 2) + maximumHorizontalReach,
     );
 
     for (const x of xCells) {
@@ -234,7 +263,7 @@ export function createStructuralSolver<Material extends string>(
 
     const pieceProfile = materialProfiles[piece.material];
     const supportProfile = materialProfiles[support.material];
-    if (supportProfile.bearsLoad === false) {
+    if ((support.bearsLoad ?? supportProfile.bearsLoad) === false) {
       return false;
     }
     if (
@@ -266,7 +295,8 @@ export function createStructuralSolver<Material extends string>(
     if (
       reach === undefined ||
       piece.id === support.id ||
-      !supportProfile.carriesAttachments
+      (support.bearsLoad ?? supportProfile.bearsLoad) === false ||
+      !(support.carriesAttachments ?? supportProfile.carriesAttachments)
     ) {
       return false;
     }
