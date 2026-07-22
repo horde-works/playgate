@@ -41,6 +41,10 @@ export interface MaterialEnvironmentUpdate {
   readonly sunStrength: number;
   /** Scene-wide standing dampness 0..1. */
   readonly wetness: number;
+  /** Seconds since start, drives cloth wind. */
+  readonly time: number;
+  /** Global wind strength 0..1 (0 disables cloth sway under load). */
+  readonly windStrength: number;
 }
 
 export function updateMaterialEnvironment(
@@ -53,6 +57,8 @@ export function updateMaterialEnvironment(
     (shader.uniforms.uFogSunColor.value as Color).copy(update.sunColor);
     shader.uniforms.uFogSunStrength.value = update.sunStrength;
     shader.uniforms.uWetness.value = update.wetness;
+    shader.uniforms.uTime.value = update.time;
+    shader.uniforms.uWindStrength.value = update.windStrength;
   }
 }
 
@@ -764,6 +770,8 @@ export function getPieceMaterial(
       shader.uniforms.uFogSunColor = { value: new Color("#ffd9a0") };
       shader.uniforms.uFogSunStrength = { value: 0.0 };
       shader.uniforms.uWetness = { value: 0.0 };
+      shader.uniforms.uTime = { value: 0.0 };
+      shader.uniforms.uWindStrength = { value: 1.0 };
       shader.uniforms.uLandscapeSoilMap = { value: getMaterialTexture("soil") };
       shader.uniforms.uVikingTrafficMap = { value: getVikingTrafficTexture() };
       environmentShaders.push(shader);
@@ -800,6 +808,8 @@ varying float vWeathering;
 varying vec3 vBevelAxisX;
 varying vec3 vBevelAxisY;
 varying vec3 vBevelAxisZ;
+uniform float uTime;
+uniform float uWindStrength;
 
 float materialVertexMacroNoise(vec3 coordinate) {
   float broad = sin(dot(coordinate, vec3(0.173, 0.119, 0.137)) + 0.7);
@@ -866,6 +876,26 @@ if (materialProjectionNormal.x >= materialProjectionNormal.y && materialProjecti
   vBumpMapUv = materialProjectedUv * ${appearance.textureScale.toFixed(4)};
 #endif`,
         );
+
+      // Cloth wind: only the cloth material sways. A gentle billow, strongest
+      // toward the free (lower) edge of a hanging panel, driven by uTime and
+      // scaled by uWindStrength — which the perf monitor drops to zero under
+      // load. Purely a render-space displacement; colliders never move.
+      if (material === "cloth") {
+        shader.vertexShader = shader.vertexShader.replace(
+          "#include <begin_vertex>",
+          `#include <begin_vertex>
+{
+  vec3 clothWindAnchor = materialAnchor.xyz;
+  float clothPhase = uTime * 1.7 + clothWindAnchor.x * 0.55 + clothWindAnchor.z * 0.4;
+  float clothBillow = sin(clothPhase) + 0.45 * sin(clothPhase * 2.3 + 1.1);
+  float clothFreeEdge = max(0.0, 0.6 - position.y);
+  float clothAmp = 0.09 * uWindStrength * clothFreeEdge;
+  transformed.x += clothBillow * clothAmp;
+  transformed.z += cos(clothPhase * 1.3) * clothAmp * 0.7;
+}`,
+        );
+      }
 
       shader.fragmentShader = shader.fragmentShader
         .replace(
@@ -1154,7 +1184,7 @@ gl_FragColor.rgb = mix(gl_FragColor.rgb, materialFogTint, materialFogFactor);
         );
     };
     standardMaterial.customProgramCacheKey = () =>
-      `material-space-v8:${material}:${profileKey}`;
+      `material-space-v9:${material}:${profileKey}`;
   }
 
   if (isGlass && color === litWindowColor) {

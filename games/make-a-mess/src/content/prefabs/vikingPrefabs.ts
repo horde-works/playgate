@@ -20,6 +20,28 @@ function prefab(
   return { schemaVersion: 1, id, displayName, tags, pieces };
 }
 
+// Furnishings are rotated by each house's arbitrary yaw. The structural solver
+// reads axis-aligned footprints, so give every furnishing piece an explicit
+// self-contact box: the compiler rotates it into a correct world AABB, keeping
+// stacked and offset pieces (cupboard shelves, loom beams) properly supported.
+function furnishing(
+  id: string,
+  displayName: string,
+  tags: readonly string[],
+  pieces: readonly ScenePrefabPieceDefinition[],
+): ScenePrefabDefinition {
+  return prefab(
+    id,
+    displayName,
+    tags,
+    pieces.map((piece) =>
+      piece.contactBoxes
+        ? piece
+        : { ...piece, contactBoxes: [{ position: piece.position, size: piece.size }] },
+    ),
+  );
+}
+
 function verticalLog(
   id: string,
   height: number,
@@ -858,6 +880,106 @@ const gateLeaf = prefab("viking:gate-leaf", "Timber gate leaf", ["viking", "gate
   { id: "brace:1", material: "wood", shape: "plank", position: [0, 1.8, 0.15], size: [3.15, 0.2, 0.18], color: freshTimber, rotation: [0, 0, -0.45], sideAttachmentReach: 0.34 },
 ]);
 
+
+// --- Domestic furnishings ---------------------------------------------------
+// Every piece either sits on the floor or stacks squarely on the one beneath,
+// so a furnished house still starts with zero unsupported bodies. Cloth pieces
+// (bedding, warp, hangings) also pick up the wind animation.
+const fur = "#6c5a44";
+const clay = "#8a6a4e";
+const linen = "#b3a684";
+
+const bed = furnishing("viking:bed", "Sleeping bench", ["viking", "furniture", "bed"], [
+  { id: "frame", material: "wood", shape: "plank", position: [0, 0.16, 0], size: [2.0, 0.32, 0.96], color: darkTimber },
+  { id: "head", material: "wood", shape: "plank", position: [-0.93, 0.6, 0], size: [0.14, 0.6, 0.96], color: timber },
+  { id: "mattress", material: "cloth", shape: "panel", position: [0.05, 0.37, 0], size: [1.72, 0.12, 0.84], color: linen, colorSlot: "bedding", bearsLoad: false },
+  { id: "fur", material: "cloth", shape: "panel", position: [0.3, 0.46, 0], size: [0.98, 0.08, 0.86], color: fur, colorSlot: "fur", bearsLoad: false },
+  { id: "pillow", material: "cloth", shape: "panel", position: [-0.72, 0.5, 0], size: [0.42, 0.14, 0.64], color: "#c3b590", bearsLoad: false },
+]);
+
+const chest = furnishing("viking:chest", "Iron-bound chest", ["viking", "furniture", "storage"], [
+  { id: "body", material: "wood", shape: "plank", position: [0, 0.23, 0], size: [0.86, 0.46, 0.52], color: timber, carriesAttachments: true },
+  { id: "lid", material: "wood", shape: "plank", position: [0, 0.52, 0], size: [0.9, 0.12, 0.56], color: darkTimber },
+  { id: "band:0", material: "steel", shape: "steelSheet", position: [-0.24, 0.34, 0.28], size: [0.09, 0.5, 0.05], color: iron, bearsLoad: false, sideAttachmentReach: 0.28 },
+  { id: "band:1", material: "steel", shape: "steelSheet", position: [0.24, 0.34, 0.28], size: [0.09, 0.5, 0.05], color: iron, bearsLoad: false, sideAttachmentReach: 0.28 },
+]);
+
+const cupboard = furnishing("viking:cupboard", "Kitchen cupboard", ["viking", "furniture", "storage"], [
+  { id: "cabinet", material: "wood", shape: "plank", position: [0, 0.29, 0], size: [1.4, 0.58, 0.46], color: timber, carriesAttachments: true },
+  { id: "end:0", material: "wood", shape: "plank", position: [-0.62, 0.82, 0], size: [0.12, 0.5, 0.44], color: darkTimber },
+  { id: "end:1", material: "wood", shape: "plank", position: [0.62, 0.82, 0], size: [0.12, 0.5, 0.44], color: darkTimber },
+  { id: "shelf", material: "wood", shape: "plank", position: [0, 1.09, 0], size: [1.5, 0.08, 0.48], color: freshTimber },
+  { id: "pot:0", material: "steel", shape: "steelSheet", position: [-0.34, 0.68, 0.02], size: [0.3, 0.24, 0.3], color: "#4a4033", bearsLoad: false },
+  { id: "bowl:0", material: "wood", shape: "plank", position: [0.28, 0.66, 0.03], size: [0.34, 0.18, 0.34], color: clay, bearsLoad: false },
+  { id: "jar:0", material: "wood", shape: "plank", position: [-0.35, 1.24, 0.0], size: [0.24, 0.28, 0.24], color: clay, bearsLoad: false },
+  { id: "jar:1", material: "wood", shape: "plank", position: [0.32, 1.25, 0.0], size: [0.22, 0.3, 0.22], color: "#75563b", bearsLoad: false },
+]);
+
+const cauldron = furnishing("viking:cauldron", "Cooking cauldron", ["viking", "furniture", "hearth", "light"], [
+  ...[0, 1, 2].map((leg): ScenePrefabPieceDefinition => {
+    const angle = (leg / 3) * Math.PI * 2;
+    return {
+      id: `leg:${leg}`,
+      material: "wood",
+      shape: "plank",
+      position: [Math.cos(angle) * 0.34, 0.62, Math.sin(angle) * 0.34],
+      rotation: [Math.cos(angle) * 0.32, 0, -Math.sin(angle) * 0.32],
+      size: [0.08, 1.3, 0.08],
+      color: darkTimber,
+    };
+  }),
+  { id: "pot", material: "steel", shape: "steelSheet", position: [0, 0.36, 0], size: [0.74, 0.56, 0.74], color: "#33302b" },
+  { id: "rim", material: "steel", shape: "steelSheet", position: [0, 0.64, 0], size: [0.8, 0.1, 0.8], color: iron, bearsLoad: false },
+  { id: "embers", material: "glass", shape: "glassPane", position: [0, 0.12, 0], size: [0.6, 0.16, 0.6], color: litWindowColor, bearsLoad: false, light: { position: [0, 0.2, 0], color: "#ff8a3c", distance: 8, intensity: 5.4 } },
+]);
+
+const loom = furnishing("viking:loom", "Warp-weighted loom", ["viking", "furniture", "craft", "weaver"], [
+  { id: "post:0", material: "wood", shape: "plank", position: [-0.82, 1.15, 0], size: [0.1, 2.3, 0.1], color: darkTimber, carriesAttachments: true },
+  { id: "post:1", material: "wood", shape: "plank", position: [0.82, 1.15, 0], size: [0.1, 2.3, 0.1], color: darkTimber, carriesAttachments: true },
+  { id: "beam", material: "wood", shape: "plank", position: [0, 2.24, 0], size: [1.9, 0.12, 0.12], color: timber },
+  { id: "warp", material: "cloth", shape: "panel", position: [0, 1.4, 0.03], size: [1.5, 1.6, 0.03], color: "#a99a76", colorSlot: "warp", bearsLoad: false, sideAttachmentReach: 0.3 },
+  { id: "cloth-beam", material: "wood", shape: "plank", position: [0, 0.58, 0.02], size: [1.6, 0.1, 0.1], color: freshTimber, bearsLoad: false, sideAttachmentReach: 0.3 },
+]);
+
+const anvil = furnishing("viking:anvil", "Smith's anvil", ["viking", "furniture", "craft", "smith"], [
+  { id: "stump", material: "wood", shape: "cylinder", position: [0, 0.35, 0], size: [0.62, 0.7, 0.62], color: "#4a3526" },
+  { id: "anvil", material: "steel", shape: "steelSheet", position: [0, 0.83, 0], size: [0.5, 0.24, 0.28], color: "#3b4042" },
+  { id: "horn", material: "steel", shape: "steelSheet", position: [0.34, 0.86, 0], size: [0.3, 0.16, 0.2], color: "#33383a", bearsLoad: false },
+  { id: "hammer-head", material: "steel", shape: "steelSheet", position: [-0.15, 0.99, 0.06], size: [0.22, 0.12, 0.12], color: iron, bearsLoad: false },
+  { id: "hammer-haft", material: "wood", shape: "plank", position: [-0.15, 0.83, 0.06], size: [0.06, 0.34, 0.06], color: timber, bearsLoad: false },
+]);
+
+const stool = furnishing("viking:stool", "Three-legged stool", ["viking", "furniture", "seat"], [
+  { id: "seat", material: "wood", shape: "cylinder", position: [0, 0.5, 0], size: [0.44, 0.1, 0.44], color: timber },
+  ...[0, 1, 2].map((leg): ScenePrefabPieceDefinition => {
+    const angle = (leg / 3) * Math.PI * 2 + 0.5;
+    return {
+      id: `leg:${leg}`,
+      material: "wood",
+      shape: "plank",
+      position: [Math.cos(angle) * 0.15, 0.24, Math.sin(angle) * 0.15],
+      size: [0.07, 0.48, 0.07],
+      color: darkTimber,
+    };
+  }),
+]);
+
+const baskets = furnishing("viking:baskets", "Woven baskets", ["viking", "storage", "basket"], [
+  { id: "big", material: "wood", shape: "cylinder", position: [0, 0.32, 0], size: [0.62, 0.64, 0.62], color: "#7a6034" },
+  { id: "big-rim", material: "wood", shape: "cylinder", position: [0, 0.62, 0], size: [0.68, 0.08, 0.68], color: "#5c481f", bearsLoad: false },
+  { id: "small", material: "wood", shape: "cylinder", position: [0.62, 0.22, 0.28], size: [0.46, 0.44, 0.46], color: "#836a3d" },
+  { id: "grain", material: "foliage", shape: "panel", position: [0, 0.66, 0], size: [0.5, 0.06, 0.5], color: "#c7b06a", bearsLoad: false },
+]);
+
+const toolWall = furnishing("viking:tool-wall", "Hanging tools and herbs", ["viking", "craft", "mounted"], [
+  { id: "rail", material: "wood", shape: "plank", position: [0, 1.9, 0], size: [1.8, 0.12, 0.12], color: darkTimber, carriesAttachments: true, sideAttachmentReach: 0.8 },
+  { id: "herb:0", material: "foliage", shape: "panel", position: [-0.6, 1.55, 0.02], size: [0.26, 0.6, 0.05], color: "#5f6d3f", bearsLoad: false, sideAttachmentReach: 0.6 },
+  { id: "herb:1", material: "foliage", shape: "panel", position: [-0.2, 1.5, 0.02], size: [0.24, 0.7, 0.05], color: "#4c5d38", bearsLoad: false, sideAttachmentReach: 0.6 },
+  { id: "axe-haft", material: "wood", shape: "plank", position: [0.35, 1.5, 0.03], size: [0.06, 0.78, 0.06], color: timber, bearsLoad: false, sideAttachmentReach: 0.5 },
+  { id: "axe-head", material: "steel", shape: "steelSheet", position: [0.35, 1.82, 0.05], size: [0.22, 0.2, 0.06], color: iron, bearsLoad: false, sideAttachmentReach: 0.5 },
+  { id: "coil", material: "cloth", shape: "panel", position: [0.7, 1.55, 0.02], size: [0.3, 0.5, 0.06], color: "#8a7a55", colorSlot: "coil", bearsLoad: false, sideAttachmentReach: 0.6 },
+]);
+
 const prefabs = [
   verticalLog("viking:post:3", 3, 0.28),
   verticalLog("viking:palisade", 4.8, 0.41, true),
@@ -882,6 +1004,15 @@ const prefabs = [
   hearth,
   mushroom,
   gateLeaf,
+  bed,
+  chest,
+  cupboard,
+  cauldron,
+  loom,
+  anvil,
+  stool,
+  baskets,
+  toolWall,
 ] as const;
 
 export const vikingPrefabLibrary: ScenePrefabLibrary = new Map(

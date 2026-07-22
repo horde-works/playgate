@@ -200,20 +200,35 @@ test("homes and the great hall carry authored wall firelight", () => {
   assert.equal(vikingVillageScene.lampDefinitions.length >= 48, true);
 });
 
-test("the jarl throne faces the feast tables", () => {
-  const throneSeat = vikingVillageScene.breakablePieces.find((piece) =>
-    piece.id.endsWith(":jarl-throne:seat"),
-  );
-  const throneBack = vikingVillageScene.breakablePieces.find((piece) =>
-    piece.id.endsWith(":jarl-throne:back"),
-  );
+test("the konung and consort thrones face the hall and flank the ridge post", () => {
+  for (const throne of ["konung-throne", "consort-throne"]) {
+    const seat = vikingVillageScene.breakablePieces.find((piece) =>
+      piece.id.endsWith(`:${throne}:seat`),
+    );
+    const back = vikingVillageScene.breakablePieces.find((piece) =>
+      piece.id.endsWith(`:${throne}:back`),
+    );
+    assert.ok(seat, `${throne} seat present`);
+    assert.ok(back, `${throne} back present`);
+    assert.equal(
+      back.position[2] < seat.position[2],
+      true,
+      `${throne} backrest stays behind the seat while it faces the hall`,
+    );
+  }
 
-  assert.ok(throneSeat);
-  assert.ok(throneBack);
+  const konung = vikingVillageScene.breakablePieces.find((piece) =>
+    piece.id.endsWith(":konung-throne:seat"),
+  );
+  const consort = vikingVillageScene.breakablePieces.find((piece) =>
+    piece.id.endsWith(":consort-throne:seat"),
+  );
+  // The high seats sit on opposite sides of the hall centre line, so the gable
+  // ridge post reads as the pillar between them rather than blocking one throne.
   assert.equal(
-    throneBack.position[2] < throneSeat.position[2],
+    Math.sign(konung.position[0]) !== Math.sign(consort.position[0]),
     true,
-    "the backrest stays behind the jarl while the seat faces the hall",
+    "the two thrones flank the centre line",
   );
 });
 

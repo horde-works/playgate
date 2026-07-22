@@ -17,6 +17,7 @@ import {
 } from "three";
 import type { BreakablePieceDefinition } from "./destructionScene";
 import { sampleVikingGroundTraffic } from "./materialTextures";
+import { windState } from "./windState";
 
 /**
  * A field of instanced grass tufts scattered across a circular landscape.
@@ -111,6 +112,7 @@ export function GrassField({
           uTime: { value: 0 },
           uCamera: { value: new Vector3() },
           uLight: { value: 1 },
+          uWind: { value: 1 },
           uFadeStart: { value: 13 },
           uFadeEnd: { value: 27 },
           uBase: { value: new Color(bladeColor) },
@@ -122,6 +124,7 @@ export function GrassField({
         vertexShader: /* glsl */ `
           uniform float uTime;
           uniform vec3 uCamera;
+          uniform float uWind;
           uniform float uFadeStart;
           uniform float uFadeEnd;
           attribute float aPhase;
@@ -137,7 +140,7 @@ export function GrassField({
             // Wind: only the tip (uv.y) sways; phase varies per tuft.
             float sway = sin(uTime * 1.6 + aPhase + world.x * 0.25 + world.z * 0.2);
             float gust = sin(uTime * 0.6 + world.x * 0.05) * 0.5 + 0.5;
-            float bend = uv.y * uv.y * (0.12 + gust * 0.16) * sway;
+            float bend = uv.y * uv.y * (0.12 + gust * 0.16) * sway * uWind;
             vec3 local = position;
             local.y *= fade;
             vec4 shifted = instanceMatrix * vec4(local, 1.0);
@@ -264,6 +267,7 @@ export function GrassField({
     const uniforms = material.uniforms;
     uniforms.uTime.value = state.clock.elapsedTime;
     uniforms.uCamera.value.copy(camera.position);
+    uniforms.uWind.value = windState.strength;
     const night = nightRef.current ?? 0;
     // Grass is unlit, so it must be dimmed hard at night to sit in the dark
     // ground rather than glow against it.

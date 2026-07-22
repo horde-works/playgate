@@ -130,7 +130,7 @@ export const vikingTrafficRoutes: readonly VikingTrafficRoute[] = [
   {
     id: "goat-pen",
     purpose: "East family yard to the animal pen",
-    points: [[11.5, 28], [17, 23]],
+    points: [[11.5, 28], [13, 20]],
     width: 0.88,
     wear: 0.58,
   },
@@ -291,7 +291,7 @@ export const vikingTrafficAreas: readonly VikingTrafficArea[] = [
   { id: "commons", purpose: "Communal hearth and benches", center: [-11.5, -1.5], radius: [5.2, 4.5], wear: 0.73 },
   { id: "north-armoury", purpose: "Weapon store work yard", center: [38, 16], radius: [4.8, 4], wear: 0.58 },
   { id: "smith-store", purpose: "Smithing and weapon store work yard", center: [40, -14], radius: [5.2, 4.1], wear: 0.66 },
-  { id: "goat-pen", purpose: "Churned ground at the goat pen", center: [17, 23], radius: [6.4, 5.3], wear: 0.6 },
+  { id: "goat-pen", purpose: "Churned ground at the goat pen", center: [13, 20], radius: [6.4, 5.3], wear: 0.6 },
   { id: "weaver-chopping", purpose: "Wood chopping yard", center: [-21, 13], radius: [3.5, 3], wear: 0.58 },
   { id: "brewer-chopping", purpose: "Wood chopping yard", center: [22, 1], radius: [3.5, 3], wear: 0.58 },
   { id: "south-chopping", purpose: "Wood chopping yard", center: [-23, -37], radius: [3.8, 3.2], wear: 0.6 },

@@ -25,6 +25,7 @@ import { Sky as SkyImpl } from "three-stdlib";
 import type { LampDefinition } from "./destructionScene";
 import { setWindowGlow, updateMaterialEnvironment } from "./materialTextures";
 import { environmentState } from "./environmentState";
+import { windState } from "./windState";
 
 export type TimeOfDay = "day" | "sunset" | "night";
 
@@ -227,6 +228,8 @@ export function DayNightCycle({
       sunStrength:
         (0.32 + twilight * 1.2) * MathUtils.clamp(day + twilight, 0, 1),
       wetness: environmentState.wetness,
+      time: frameState.clock.elapsedTime,
+      windStrength: windState.strength,
     });
 
     skyThrottle.current += delta;

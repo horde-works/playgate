@@ -95,6 +95,27 @@ function distanceToVillagePath(x: number, z: number): number {
   return Math.abs(x - windingCenter);
 }
 
+// True when a world point falls inside (or within `margin` of) any house
+// footprint. Used to keep yard clutter — barrels, woodpiles, pen posts —
+// from clipping through the walls of a dwelling.
+function insideAnyHome(x: number, z: number, margin = 0.6): boolean {
+  for (const home of vikingVillageHomes) {
+    const dx = x - home.position[0];
+    const dz = z - home.position[1];
+    const cosine = Math.cos(-home.yaw);
+    const sine = Math.sin(-home.yaw);
+    const localX = dx * cosine - dz * sine;
+    const localZ = dx * sine + dz * cosine;
+    if (
+      Math.abs(localX) < home.width / 2 + margin &&
+      Math.abs(localZ) < home.length / 2 + margin
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function palisadeRadius(angle: number): number {
   return 57
     + Math.sin(angle * 3.1) * 2.8
@@ -638,6 +659,75 @@ function addAnimalPen(target: MutableGroup, id: string, x: number, z: number, wi
   });
 }
 
+
+// Fill a dwelling with lived-in furnishings, themed by the household's trade.
+// Everything is floor-standing and placed in the house's local frame, so it
+// follows the building's position and yaw and never pokes through a wall.
+function furnishHome(
+  interiors: MutableGroup,
+  storage: MutableGroup,
+  lights: MutableGroup,
+  home: (typeof vikingVillageHomes)[number],
+): void {
+  const halfWidth = home.width / 2 - 0.55;
+  const halfLength = home.length / 2 - 0.7;
+  const put = (
+    target: MutableGroup,
+    id: string,
+    prefab: string,
+    localX: number,
+    localZ: number,
+    localYaw = 0,
+  ): void => {
+    const [x, z] = vikingPlanLocalPoint(home.position, home.yaw, localX, localZ);
+    place(target, `furnish:${home.id}:${id}`, prefab, {
+      position: [x, 0.24, z],
+      rotation: [0, home.yaw + localYaw, 0],
+    });
+  };
+
+  // Shared domestic core: a sleeping bench, a chest, a cupboard, a cooking
+  // cauldron (its embers also light the room) and a couple of stools.
+  put(interiors, "bed", "viking:bed", -halfWidth + 0.05, -halfLength + 1.5, Math.PI / 2);
+  put(interiors, "chest", "viking:chest", -halfWidth + 0.2, -halfLength + 3.5);
+  put(interiors, "cupboard", "viking:cupboard", halfWidth - 0.3, -halfLength + 0.9, -Math.PI / 2);
+  put(lights, "cauldron", "viking:cauldron", 0.35, 0.2);
+  put(interiors, "stool:0", "viking:stool", -1.2, 1.3);
+  put(interiors, "stool:1", "viking:stool", 1.3, 0.7);
+
+  switch (home.id) {
+    case "weaver":
+      put(interiors, "loom", "viking:loom", halfWidth - 0.35, -1.4, Math.PI / 2);
+      put(storage, "baskets", "viking:baskets", halfWidth - 0.7, 2.0);
+      break;
+    case "brewer":
+      for (const [index, [lx, lz]] of ([[halfWidth - 0.6, -1.6], [halfWidth - 0.6, -0.3], [halfWidth - 1.6, -1.0]] as const).entries()) {
+        const [x, z] = vikingPlanLocalPoint(home.position, home.yaw, lx, lz);
+        place(storage, `furnish:${home.id}:cask:${index}`, "viking:barrel", {
+          position: [x, 0.24, z],
+          rotation: [0, home.yaw, 0],
+          scale: [0.92, 0.92, 0.92],
+        });
+      }
+      break;
+    case "smith":
+      put(interiors, "anvil", "viking:anvil", halfWidth - 0.55, 0.4);
+      put(storage, "baskets", "viking:baskets", halfWidth - 0.7, 2.1);
+      break;
+    case "fisher":
+      put(storage, "baskets", "viking:baskets", halfWidth - 0.6, -1.2);
+      put(interiors, "baskets:2", "viking:baskets", halfWidth - 0.7, 1.9);
+      break;
+    case "elder":
+      put(storage, "baskets", "viking:baskets", halfWidth - 0.6, -1.4);
+      break;
+    default:
+      // Family houses get a second sleeping bench for the children.
+      put(interiors, "bed:2", "viking:bed", halfWidth - 0.05, -halfLength + 1.5, -Math.PI / 2);
+      break;
+  }
+}
+
 function createVillageLife(): void {
   const structures = group("working-yards", "Weapon shelters, drying racks and work yards", "wood");
   const interiors = group("hall-interior", "Great hall feast and household objects", "wood");
@@ -647,9 +737,17 @@ function createVillageLife(): void {
   const growth = group("growth", "Moss, fungus and mushrooms", "foliage", "mounted");
 
   // The great hall is laid out as a used communal room, not a symmetrical showroom.
-  place(interiors, "jarl-throne", "viking:throne", {
-    position: [0, 0.22, -28.2],
+  // A pair of high seats for the konung and his wife, set either side of the
+  // gable ridge-post so the post reads as the hall's centre pillar between them
+  // rather than blocking a lone throne.
+  place(interiors, "konung-throne", "viking:throne", {
+    position: [-1.95, 0.22, -28.2],
     rotation: [0, Math.PI, 0],
+  });
+  place(interiors, "consort-throne", "viking:throne", {
+    position: [1.95, 0.22, -28.2],
+    rotation: [0, Math.PI, 0],
+    scale: [0.9, 0.94, 0.9],
   });
   for (const [row, z] of [-22.5, -16.5, -10.5].entries()) {
     for (const side of [-1, 1] as const) {
@@ -695,7 +793,7 @@ function createVillageLife(): void {
   addShelter(structures, "smith-store", 40, -14, 0.18);
 
   addVillageWell(structures, "village-well", -10, 13);
-  addAnimalPen(structures, "goat-pen", 17, 23, 10, 8);
+  addAnimalPen(structures, "goat-pen", 13, 20, 10, 8);
   addChoppingYard(structures, "weaver-chopping", -21, 13, -0.3);
   addChoppingYard(structures, "brewer-chopping", 22, 1, 0.55);
   addChoppingYard(structures, "south-chopping", -23, -37, -0.82);
@@ -704,7 +802,7 @@ function createVillageLife(): void {
   addFirewoodPile(storage, "weaver-wood", -35, 0, 0.18);
   addFirewoodPile(storage, "brewer-wood", 33, 0, -0.24);
   addFirewoodPile(storage, "fisher-wood", -39, -34, 0.72);
-  addFirewoodPile(storage, "elder-wood", -18, -51, 0.1);
+  addFirewoodPile(storage, "elder-wood", -20, -54, 0.1);
   addDryingRack(structures, cloth, "hide-rack-west", -42, -12, 0.62, "#8a6245");
   addDryingRack(structures, cloth, "hide-rack-east", 43, 1, -0.4, "#9a795b");
   addDryingRack(structures, cloth, "fish-rack", -12, 39, 0.1, "#8c8a77");
@@ -745,8 +843,14 @@ function createVillageLife(): void {
     const site = index % 3;
     const baseX = site === 0 ? -30 : site === 1 ? 28 : 5;
     const baseZ = site === 0 ? 7 : site === 1 ? 7 : -35;
+    const barrelX = baseX + (noise(index, 2) - 0.5) * 9;
+    const barrelZ = baseZ + (noise(index, 6) - 0.5) * 7;
+    // A barrel that lands inside a dwelling would clip its wall — skip it.
+    if (insideAnyHome(barrelX, barrelZ, 0.8)) {
+      continue;
+    }
     place(storage, `yard-barrel:${index}`, "viking:barrel", {
-      position: [baseX + (noise(index, 2) - 0.5) * 9, 0, baseZ + (noise(index, 6) - 0.5) * 7],
+      position: [barrelX, 0, barrelZ],
       rotation: [0, noise(index, 7) * Math.PI, 0],
       scale: [0.78 + noise(index, 3) * 0.35, 0.78 + noise(index, 3) * 0.35, 0.78 + noise(index, 3) * 0.35],
     });
@@ -769,6 +873,8 @@ function createVillageLife(): void {
   // Every dwelling gets a pair of wall-mounted lights at its real door.
   // Their positions derive from the same authored house plan as the paths,
   // so moving a house does not leave its light or threshold behind.
+  vikingVillageHomes.forEach((home) => furnishHome(interiors, storage, lights, home));
+
   vikingVillageHomes.forEach((home) => {
     for (const side of [-1, 1] as const) {
       const [x, z] = vikingPlanLocalPoint(

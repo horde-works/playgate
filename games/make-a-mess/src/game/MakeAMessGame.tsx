@@ -114,6 +114,7 @@ import { Birds } from "./Birds";
 import { GrassField } from "./GrassField";
 import { HingedDoorSystem } from "./HingedDoorSystem";
 import { SmokePlumes } from "./SmokePlumes";
+import { WindController } from "./WindController";
 import { IntactBreakableWorld } from "./IntactBreakableWorld";
 import { resolveRuntimeStructure } from "./runtimeStructure";
 import { createSpatialIndex } from "./spatialIndex";
@@ -4265,6 +4266,7 @@ function OpenWorldScene({
         nightRef={nightRef}
       />
       <SceneEnvironment theme={scene.environment} />
+      <WindController />
       <OpenWorldShell scene={scene} />
       {scene.id === "viking-village" && scene.worldRadius ? (
         <>

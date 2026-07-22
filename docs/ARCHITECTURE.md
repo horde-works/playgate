@@ -277,6 +277,17 @@ radius, so far grass costs nothing and never pops; a `uLight` uniform dims it
 with the night factor. Cutout alpha keeps it depth-correct and sort-free. It is
 mounted per-scene (currently `viking-village`).
 
+### Wind, and shedding it under load (`WindController.tsx`, `windState.ts`)
+
+Cloth pieces (banners, laundry, bedding, a loom's warp) billow in the shared
+piece material: a vertex displacement gated to `material === "cloth"`, strongest
+toward a panel's free lower edge, driven by `uTime` and scaled by `uWindStrength`
+— a pure render-space wobble, colliders never move. Grass reads the same signal.
+Both are driven by a single module-level `windState.strength`, which
+`WindController` ramps from a smoothed frame rate: below 15 fps the wind fades
+to nothing (restored above 20, with hysteresis), so the most animation-heavy
+effects are the first thing a struggling machine stops paying for.
+
 ### Post-processing (`CinematicPostProcessing.tsx`)
 
 An always-on EffectComposer chain: `N8AOPass` (screen-space AO over the baked
