@@ -63,25 +63,70 @@ const homeEntrances = Object.fromEntries(
   vikingVillageHomes.map((home) => [home.id, vikingHomeEntrance(home)]),
 ) as Readonly<Record<string, VikingPlanPoint>>;
 
+const homesById = Object.fromEntries(
+  vikingVillageHomes.map((home) => [home.id, home]),
+) as Readonly<Record<string, VikingVillageHomePlan>>;
+
+// A connector that LEAVES a door: door -> just outside -> around the corner
+// toward `toward`, so it never starts by cutting through the house.
+function vikingDoorExit(
+  homeId: string,
+  toward: VikingPlanPoint,
+): VikingPlanPoint[] {
+  return [...vikingDoorPath(homesById[homeId], toward)].reverse();
+}
+
+// A short spur from the door out and around the nearest front corner, so a
+// route reaches the actual door from `from` by hugging the house rather than
+// cutting through it. Local +Z is the door wall.
+export function vikingDoorPath(
+  home: VikingVillageHomePlan,
+  from: VikingPlanPoint,
+): VikingPlanPoint[] {
+  const normalX = Math.sin(home.yaw);
+  const normalZ = Math.cos(home.yaw);
+  const tangentX = Math.cos(home.yaw);
+  const tangentZ = -Math.sin(home.yaw);
+  const entrance = vikingHomeEntrance(home);
+  const halfWidth = home.width / 2 + 1.2;
+  const approach: VikingPlanPoint = [
+    entrance[0] + normalX * 1.6,
+    entrance[1] + normalZ * 1.6,
+  ];
+  const cornerLeft: VikingPlanPoint = [
+    entrance[0] + normalX * 1.3 - tangentX * halfWidth,
+    entrance[1] + normalZ * 1.3 - tangentZ * halfWidth,
+  ];
+  const cornerRight: VikingPlanPoint = [
+    entrance[0] + normalX * 1.3 + tangentX * halfWidth,
+    entrance[1] + normalZ * 1.3 + tangentZ * halfWidth,
+  ];
+  const useLeft =
+    Math.hypot(from[0] - cornerLeft[0], from[1] - cornerLeft[1]) <
+    Math.hypot(from[0] - cornerRight[0], from[1] - cornerRight[1]);
+  return [useLeft ? cornerLeft : cornerRight, approach, entrance];
+}
+
 const homePlayLoops: readonly VikingTrafficRoute[] = vikingVillageHomes.map(
-  (home, index): VikingTrafficRoute => {
-    const halfWidth = home.width / 2;
-    const halfLength = home.length / 2;
-    const side = index % 2 === 0 ? 1 : -1;
+  (home): VikingTrafficRoute => {
+    const outsideX = home.width / 2 + 1.3;
+    const outsideZ = home.length / 2 + 1.3;
     const local = (x: number, z: number): VikingPlanPoint =>
       vikingPlanLocalPoint(home.position, home.yaw, x, z);
+    // A clean rectangle traced OUTSIDE the walls (people walk right around a
+    // lived-in house), entered and left at the door on the +Z side.
     return {
       id: `home-loop:${home.id}`,
       purpose: "Children, chores and firewood traffic around a lived-in house",
       points: [
         homeEntrances[home.id],
-        local(side * 2.1, halfLength + 1.4),
-        local(side * (halfWidth + 1.4), halfLength * 0.32),
-        local(side * (halfWidth + 1.65), -halfLength * 0.55),
-        local(side * 1.1, -halfLength - 1.15),
-        local(-side * (halfWidth + 1.25), -halfLength * 0.42),
-        local(-side * (halfWidth + 1.5), halfLength * 0.38),
-        local(-side * 1.35, halfLength + 1.1),
+        local(1.4, outsideZ),
+        local(outsideX, outsideZ),
+        local(outsideX, -outsideZ),
+        local(0, -outsideZ),
+        local(-outsideX, -outsideZ),
+        local(-outsideX, outsideZ),
+        local(-1.4, outsideZ),
         homeEntrances[home.id],
       ],
       width: home.prefabId === "viking:house:long" ? 0.62 : 0.52,
@@ -126,7 +171,7 @@ export const vikingTrafficRoutes: readonly VikingTrafficRoute[] = [
   {
     id: "east-family",
     purpose: "East family house to the village spine",
-    points: [[0.2, 27], [11.5, 28], homeEntrances["family-east"]],
+    points: [[0.2, 27], [11.5, 28], ...vikingDoorPath(homesById["family-east"], [11.5, 28])],
     width: 1.08,
     wear: 0.76,
   },
@@ -178,7 +223,7 @@ export const vikingTrafficRoutes: readonly VikingTrafficRoute[] = [
   {
     id: "weaver-stores",
     purpose: "Weaver house to the laundry and firewood",
-    points: [homeEntrances.weaver, [-34, 12], [-38, 15], [-35, 0]],
+    points: [...vikingDoorExit("weaver", [-34, 12]), [-34, 12], [-38, 15], [-35, 0]],
     width: 0.72,
     wear: 0.44,
   },
@@ -192,14 +237,14 @@ export const vikingTrafficRoutes: readonly VikingTrafficRoute[] = [
   {
     id: "brewer-workyard",
     purpose: "Brewer house to chopping, drying and fuel yards",
-    points: [homeEntrances.brewer, [22, 1], [33, 0], [43, 1]],
+    points: [...vikingDoorExit("brewer", [20, 10]), [20, 6], [21, 2], [22, 1], [27, -3], [33, 0], [43, 1]],
     width: 0.8,
     wear: 0.55,
   },
   {
     id: "armoury",
     purpose: "Brewer and east homes to the north armoury",
-    points: [homeEntrances.brewer, [31, 15], [38, 16]],
+    points: [...vikingDoorExit("brewer", [31, 15]), [31, 15], [38, 16]],
     width: 0.94,
     wear: 0.63,
   },
@@ -234,14 +279,14 @@ export const vikingTrafficRoutes: readonly VikingTrafficRoute[] = [
   {
     id: "fisher-workyard",
     purpose: "Fisher house to firewood and the south chopping yard",
-    points: [homeEntrances.fisher, [-38, -33], [-29, -38], [-23, -37]],
+    points: [...vikingDoorExit("fisher", [-38, -33]), [-38, -33], [-29, -38], [-23, -37]],
     width: 0.78,
     wear: 0.52,
   },
   {
     id: "elder",
     purpose: "South chopping yard to the elder house and fuel store",
-    points: [[-23, -37], [-18, -44], homeEntrances.elder, [-18, -51]],
+    points: [[-23, -37], [-20, -47], [-15, -54], ...vikingDoorPath(homesById.elder, [-15, -54])],
     width: 0.86,
     wear: 0.58,
   },
@@ -255,14 +300,14 @@ export const vikingTrafficRoutes: readonly VikingTrafficRoute[] = [
   {
     id: "smith-store",
     purpose: "Smith house and sledge to the covered weapon store",
-    points: [homeEntrances.smith, [33, -23], [29, -20], [40, -14]],
+    points: [...vikingDoorExit("smith", [33, -23]), [33, -23], [29, -20], [40, -14]],
     width: 0.88,
     wear: 0.68,
   },
   {
     id: "smith-firewood",
     purpose: "Smith house to the southern fuel stack",
-    points: [homeEntrances.smith, [32, -40], [34, -49]],
+    points: [...vikingDoorExit("smith", [32, -40]), [32, -40], [34, -49]],
     width: 0.72,
     wear: 0.48,
   },

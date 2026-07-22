@@ -15,6 +15,7 @@ import type {
 } from "../../game/destructionScene.ts";
 import {
   vikingPlanLocalPoint,
+  vikingTrafficRoutes,
   vikingVillageHomes,
 } from "./vikingVillagePlan.ts";
 
@@ -140,12 +141,26 @@ function createTerrain(): void {
       primitive(base, `earth:${key}`, "earth", "groundTile", [x, -0.62, z], [4.05, 1, 4.05], "#554432");
 
       const grassVariation = noise(x, z, 2);
-      const surfaceColor = grassVariation > 0.72
-        ? "#596b48"
-        : grassVariation < 0.22
-          ? "#4f6041"
-          : "#556645";
-      primitive(surface, `cover:${key}`, "grass", "groundTile", [x, -0.04, z], [4.06, 0.18, 4.06], surfaceColor, {
+      const grassPatch = noise(x, z, 8);
+      // Richer, patchier grass so the ground never reads as one flat colour.
+      const surfaceColor = grassVariation > 0.8
+        ? "#63704b"
+        : grassVariation > 0.6
+          ? "#5a6c46"
+          : grassVariation < 0.16
+            ? "#485a3b"
+            : grassVariation < 0.34
+              ? "#4f6042"
+              : grassPatch > 0.58
+                ? "#566848"
+                : "#546544";
+      // Gently rolling ground height (smooth between tiles, well within the
+      // player's auto-step) — the turf is uneven, not a billiard table.
+      const grassHeight =
+        -0.04 +
+        Math.sin(x * 0.31 + z * 0.12) * Math.cos(z * 0.27 - x * 0.09) * 0.05 +
+        (grassPatch - 0.5) * 0.03;
+      primitive(surface, `cover:${key}`, "grass", "groundTile", [x, grassHeight, z], [4.06, 0.2, 4.06], surfaceColor, {
         surface: grassVariation < 0.18 ? [{ kind: "damp", amount: 0.12 }] : undefined,
         landscapeSurface: "viking-ground",
       });
@@ -899,6 +914,9 @@ function createVillageLife(): void {
     const ridgeTop = (home.prefabId === "viking:house:long" ? 3.4 : 3.0) + 2.65;
     place(structures, `smoke-louver:${home.id}`, "viking:smoke-louver", {
       position: [home.position[0], ridgeTop, home.position[1]],
+      // Turn the louver to the house so its little ridge cap runs along the
+      // roof ridge, not across it.
+      rotation: [0, home.yaw, 0],
     });
   }
 
@@ -1010,10 +1028,95 @@ function createWoodland(): void {
   }
 }
 
+// Heaped fieldstones and gravel-strewn path edges — the stony Scandinavian
+// ground reads as lived-on, not swept. Piles are mossy cairns of clustered
+// boulders; pebbles line the busiest trodden routes where boots kick them clear.
+function createRockwork(): void {
+  const stones = group("terrain-stones", "Rocky Scandinavian ground", "stone");
+
+  const pileSites: readonly (readonly [number, number])[] = [
+    [46, 33], [-47, 22], [49, -24], [-44, -49], [38, 46],
+    [-39, 47], [47, 6], [-51, -8], [20, -53], [-27, 45], [12, 48], [-16, -58],
+  ];
+  pileSites.forEach(([cx, cz], pile) => {
+    if (insideAnyHome(cx, cz, 1.6)) {
+      return;
+    }
+    const count = 5 + Math.floor(noise(pile, cx, 2) * 4);
+    for (let index = 0; index < count; index += 1) {
+      const angle = noise(index, cx, pile) * Math.PI * 2;
+      const radius = noise(index, cz, pile + 1) * 1.35;
+      const sx = 0.42 + noise(index, cx, 7) * 0.85;
+      const sy = 0.34 + noise(index, cx, 9) * 0.6;
+      const sz = 0.44 + noise(index, cz, 11) * 0.85;
+      primitive(
+        stones,
+        `rock-pile:${pile}:${index}`,
+        index % 4 === 0 ? "basalt" : "stone",
+        "stoneBlock",
+        [cx + Math.cos(angle) * radius, sy / 2 - 0.03, cz + Math.sin(angle) * radius],
+        [sx, sy, sz],
+        index % 4 === 0 ? "#42474a" : index % 3 === 0 ? "#797a70" : "#63665f",
+        {
+          rotation: [noise(index, 1) * 0.28, noise(index, 2) * Math.PI, noise(index, 3) * 0.22],
+          surface: [{ kind: "moss", amount: 0.45 + noise(index, cx, 5) * 0.4 }],
+        },
+      );
+    }
+  });
+
+  let pebble = 0;
+  for (const route of vikingTrafficRoutes) {
+    if (route.wear < 0.58) {
+      continue; // only the busy routes shed gravel to their verges
+    }
+    for (let segment = 0; segment < route.points.length - 1; segment += 1) {
+      const a = route.points[segment];
+      const b = route.points[segment + 1];
+      const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      const steps = Math.max(1, Math.floor(length / 1.6));
+      const normalX = length > 0 ? -(b[1] - a[1]) / length : 0;
+      const normalZ = length > 0 ? (b[0] - a[0]) / length : 0;
+      for (let step = 0; step < steps; step += 1) {
+        const fraction = step / steps;
+        const px = a[0] + (b[0] - a[0]) * fraction;
+        const pz = a[1] + (b[1] - a[1]) * fraction;
+        for (const side of [-1, 1] as const) {
+          pebble += 1;
+          if (noise(pebble, segment, 3) > 0.5) {
+            continue; // scattered, not a kerb
+          }
+          const offset = route.width + 0.15 + noise(pebble, 1) * 0.45;
+          const ex = px + normalX * side * offset;
+          const ez = pz + normalZ * side * offset;
+          if (insideAnyHome(ex, ez, 0.3)) {
+            continue;
+          }
+          const size = 0.12 + noise(pebble, 7) * 0.24;
+          primitive(
+            stones,
+            `pebble:${pebble}`,
+            pebble % 5 === 0 ? "basalt" : "stone",
+            "stoneBlock",
+            [ex, size / 2 - 0.04, ez],
+            [size, size * 0.7, size * 1.15],
+            pebble % 3 === 0 ? "#6d6f68" : "#7d7e74",
+            {
+              rotation: [0, noise(pebble, 2) * Math.PI, 0],
+              surface: noise(pebble, 4) > 0.62 ? [{ kind: "moss", amount: 0.3 }] : undefined,
+            },
+          );
+        }
+      }
+    }
+  }
+}
+
 createTerrain();
 createPalisade();
 createBuildings();
 createVillageLife();
+createRockwork();
 createWoodland();
 
 export const vikingVillageDocument: AuthoredSceneDocument = {

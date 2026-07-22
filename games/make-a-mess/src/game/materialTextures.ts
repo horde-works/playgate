@@ -1037,6 +1037,32 @@ if (vWeathering > 0.001) {
   vec3 mouldTint = mix(vec3(0.22, 0.2, 0.16), vec3(0.14, 0.15, 0.13), biofilmFine);
   diffuseColor.rgb = mix(diffuseColor.rgb, mouldTint, materialBiofilmMould);
 }
+${
+  material === "wood" ||
+  material === "stone" ||
+  material === "basalt" ||
+  material === "graphiteStone" ||
+  material === "plaster" ||
+  material === "brick" ||
+  material === "concrete"
+    ? /* glsl */ `
+// Hairline cracks and crevice grime: thin darkened ridges along two crossed
+// high-frequency world-space noises, so large flat faces of timber and stone
+// read as aged and split, not moulded plastic. Base pass, negligible ALU, and
+// independent of weathering so even pristine scenes gain surface age.
+{
+  float crackA = materialValueNoise(vMaterialCoordinate.xz * 2.6 + vec2(vMaterialCoordinate.y * 1.3) + vec2(7.3, 51.7));
+  float crackB = materialValueNoise(vMaterialCoordinate.yz * 3.1 + vec2(vMaterialCoordinate.x * 1.1) + vec2(23.9, 4.2));
+  float crackRidge = max(
+    1.0 - smoothstep(0.0, 0.05, abs(crackA - 0.5)),
+    1.0 - smoothstep(0.0, 0.045, abs(crackB - 0.5))
+  );
+  float crackFine = materialValueNoise(vMaterialCoordinate.xz * 7.3 + vec2(3.3, 9.9));
+  float cracks = crackRidge * (0.45 + crackFine * 0.55) * ${appearance.streaking > 0.01 ? "0.26" : "0.16"};
+  diffuseColor.rgb *= 1.0 - cracks;
+}`
+    : ""
+}
 
 // Viking ground is one continuous, destructible surface. Paths, yards,
 // moss and wet soil are world-space material masks, never stacked panels.

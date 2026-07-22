@@ -991,7 +991,7 @@ const smokeLouver = prefab("viking:smoke-louver", "Roof smoke louver", ["viking"
   { id: "rim", material: "wood", shape: "plank", position: [0, 0.52, 0], size: [0.98, 0.12, 0.98], color: darkTimber },
   { id: "post", material: "wood", shape: "plank", position: [0, 0.78, 0], size: [0.14, 0.44, 0.14], color: darkTimber },
   { id: "cap", material: "wood", shape: "plank", position: [0, 1.0, 0], size: [1.06, 0.14, 1.06], color: timber },
-  { id: "cap-ridge", material: "wood", shape: "plank", position: [0, 1.11, 0], size: [1.12, 0.12, 0.4], color: darkTimber, bearsLoad: false },
+  { id: "cap-ridge", material: "wood", shape: "plank", position: [0, 1.11, 0], size: [0.4, 0.12, 1.12], color: darkTimber, bearsLoad: false },
 ]);
 
 const prefabs = [
