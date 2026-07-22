@@ -83,6 +83,24 @@ export function GameCard({ game, featured = false }: GameCardProps) {
           <div className="art-spark art-spark-1" />
           <div className="art-spark art-spark-2" />
         </div>
+      ) : game.art === "viking-village" ? (
+        <div className="game-card-art game-card-art-viking" aria-hidden="true">
+          <span className="art-word art-word-viking">VIKING</span>
+          <span className="art-word art-word-village">VILLAGE</span>
+          <div className="art-viking-hall">
+            <div className="art-viking-roof art-viking-roof-left" />
+            <div className="art-viking-roof art-viking-roof-right" />
+            <div className="art-viking-door" />
+          </div>
+          <div className="art-viking-palisade">
+            {Array.from({ length: 13 }, (_, index) => <i key={index} />)}
+          </div>
+          <div className="art-viking-shield">
+            <i />
+          </div>
+          <div className="art-viking-torch art-viking-torch-left" />
+          <div className="art-viking-torch art-viking-torch-right" />
+        </div>
       ) : (
         <div className="game-card-art" aria-hidden="true">
           <span className="art-word art-word-make">MAKE</span>

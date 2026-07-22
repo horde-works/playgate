@@ -39,6 +39,7 @@ npm run deploy:firebase
 - `games/make-a-mess`: isolated game runtime, content, and tooling
 - `games/make-a-mess/src/content`: typed object and material contracts
 - `docs/ARCHITECTURE.md`: architecture and engine specification
+- `docs/SCENE-AUTHORING.md`: serializable map and prefab pipeline used by Viking Village
 
 The Make a Mess destruction core stays independent from React and rendering.
 The intact visual asset, structural representation, physics body, and feedback

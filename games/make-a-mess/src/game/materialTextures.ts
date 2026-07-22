@@ -4,6 +4,7 @@ import {
   LinearFilter,
   LinearMipmapLinearFilter,
   MeshStandardMaterial,
+  NoColorSpace,
   RepeatWrapping,
   SRGBColorSpace,
   Texture,
@@ -13,6 +14,11 @@ import {
 } from "three";
 import { litWindowColor, type BreakableMaterial } from "./destructionScene.ts";
 import { materialAppearanceProfiles } from "./materialAppearance.ts";
+import {
+  vikingTrafficAreas,
+  vikingTrafficRoutes,
+  type VikingPlanPoint,
+} from "../content/scenes/vikingVillagePlan.ts";
 
 const glowMaterials: MeshStandardMaterial[] = [];
 
@@ -69,6 +75,7 @@ const photorealTextureUrls: Partial<Record<BreakableMaterial, string>> = {
 const bumpScaleByMaterial: Record<BreakableMaterial, number> = {
   brick: 0.035,
   wood: 0.018,
+  cloth: 0.008,
   plaster: 0.012,
   concrete: 0.026,
   glass: 0,
@@ -87,6 +94,227 @@ const bumpScaleByMaterial: Record<BreakableMaterial, number> = {
 const textureLoader = new TextureLoader();
 const textureCache = new Map<BreakableMaterial, Texture>();
 const materialCache = new Map<string, MeshStandardMaterial>();
+let vikingTrafficTexture: CanvasTexture | null = null;
+
+const VIKING_TRAFFIC_TEXTURE_SIZE = 512;
+const VIKING_WORLD_MIN_X = -96;
+const VIKING_WORLD_MIN_Z = -106;
+const VIKING_WORLD_SPAN = 192;
+
+function vikingTrafficCanvasPoint(point: VikingPlanPoint): readonly [number, number] {
+  const scale = VIKING_TRAFFIC_TEXTURE_SIZE / VIKING_WORLD_SPAN;
+  return [
+    (point[0] - VIKING_WORLD_MIN_X) * scale,
+    VIKING_TRAFFIC_TEXTURE_SIZE - (point[1] - VIKING_WORLD_MIN_Z) * scale,
+  ];
+}
+
+function sampleVikingTrafficRoute(
+  points: readonly VikingPlanPoint[],
+): readonly VikingPlanPoint[] {
+  const canvasPoints = points.map(vikingTrafficCanvasPoint);
+  const samples: VikingPlanPoint[] = [canvasPoints[0]];
+
+  const sampleLine = (start: VikingPlanPoint, end: VikingPlanPoint): void => {
+    const distance = Math.hypot(end[0] - start[0], end[1] - start[1]);
+    const steps = Math.max(2, Math.ceil(distance / 3));
+    for (let step = 1; step <= steps; step += 1) {
+      const t = step / steps;
+      samples.push([
+        start[0] + (end[0] - start[0]) * t,
+        start[1] + (end[1] - start[1]) * t,
+      ]);
+    }
+  };
+
+  if (canvasPoints.length === 2) {
+    sampleLine(canvasPoints[0], canvasPoints[1]);
+    return samples;
+  }
+
+  let start = canvasPoints[0];
+  for (let index = 1; index < canvasPoints.length - 1; index += 1) {
+    const control = canvasPoints[index];
+    const next = canvasPoints[index + 1];
+    const end: VikingPlanPoint = [
+      (control[0] + next[0]) / 2,
+      (control[1] + next[1]) / 2,
+    ];
+    const distance = Math.hypot(control[0] - start[0], control[1] - start[1])
+      + Math.hypot(end[0] - control[0], end[1] - control[1]);
+    const steps = Math.max(3, Math.ceil(distance / 3));
+    for (let step = 1; step <= steps; step += 1) {
+      const t = step / steps;
+      const inverse = 1 - t;
+      samples.push([
+        inverse * inverse * start[0] + 2 * inverse * t * control[0] + t * t * end[0],
+        inverse * inverse * start[1] + 2 * inverse * t * control[1] + t * t * end[1],
+      ]);
+    }
+    start = end;
+  }
+  sampleLine(start, canvasPoints[canvasPoints.length - 1]);
+  return samples;
+}
+
+function vikingTrafficPhase(routeId: string): number {
+  let hash = 2166136261;
+  for (let index = 0; index < routeId.length; index += 1) {
+    hash ^= routeId.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0) / 0xffffffff * Math.PI * 2;
+}
+
+function meanderVikingTrafficRoute(
+  samples: readonly VikingPlanPoint[],
+  routeId: string,
+  maximumOffset: number,
+): readonly VikingPlanPoint[] {
+  const phase = vikingTrafficPhase(routeId);
+  return samples.map((point, index): VikingPlanPoint => {
+    if (index === 0 || index === samples.length - 1) {
+      return point;
+    }
+    const previous = samples[index - 1];
+    const next = samples[index + 1];
+    const tangentX = next[0] - previous[0];
+    const tangentY = next[1] - previous[1];
+    const tangentLength = Math.max(0.001, Math.hypot(tangentX, tangentY));
+    const progress = index / (samples.length - 1);
+    const endpointFade = Math.pow(Math.sin(progress * Math.PI), 0.7);
+    const broad = Math.sin(progress * Math.PI * 4.6 + phase) * 0.67;
+    const footsteps = Math.sin(progress * Math.PI * 11.7 + phase * 1.83) * 0.23;
+    const offset = (broad + footsteps) * maximumOffset * endpointFade;
+    return [
+      point[0] - tangentY / tangentLength * offset,
+      point[1] + tangentX / tangentLength * offset,
+    ];
+  });
+}
+
+function vikingTrafficWidthFactor(routeId: string, progress: number): number {
+  const phase = vikingTrafficPhase(routeId);
+  const broad = Math.sin(progress * Math.PI * 3.4 + phase) * 0.17;
+  const irregular = Math.sin(progress * Math.PI * 9.2 + phase * 1.71) * 0.09;
+  return Math.max(0.68, Math.min(1.3, 0.94 + broad + irregular));
+}
+
+function fillVariableVikingTrafficRoute(
+  context: CanvasRenderingContext2D,
+  samples: readonly VikingPlanPoint[],
+  routeId: string,
+  halfWidth: number,
+  opacity: number,
+): void {
+  const left: VikingPlanPoint[] = [];
+  const right: VikingPlanPoint[] = [];
+  const widths: number[] = [];
+  for (let index = 0; index < samples.length; index += 1) {
+    const previous = samples[Math.max(0, index - 1)];
+    const next = samples[Math.min(samples.length - 1, index + 1)];
+    const tangentX = next[0] - previous[0];
+    const tangentY = next[1] - previous[1];
+    const tangentLength = Math.max(0.001, Math.hypot(tangentX, tangentY));
+    const width = halfWidth * vikingTrafficWidthFactor(
+      routeId,
+      index / Math.max(1, samples.length - 1),
+    );
+    const normalX = -tangentY / tangentLength;
+    const normalY = tangentX / tangentLength;
+    widths.push(width);
+    left.push([samples[index][0] + normalX * width, samples[index][1] + normalY * width]);
+    right.push([samples[index][0] - normalX * width, samples[index][1] - normalY * width]);
+  }
+
+  context.fillStyle = `rgba(255, 0, 0, ${opacity})`;
+  context.beginPath();
+  context.moveTo(left[0][0], left[0][1]);
+  for (let index = 1; index < left.length; index += 1) {
+    context.lineTo(left[index][0], left[index][1]);
+  }
+  for (let index = right.length - 1; index >= 0; index -= 1) {
+    context.lineTo(right[index][0], right[index][1]);
+  }
+  context.closePath();
+  context.fill();
+
+  for (const index of [0, samples.length - 1]) {
+    context.beginPath();
+    context.arc(samples[index][0], samples[index][1], widths[index], 0, Math.PI * 2);
+    context.fill();
+  }
+}
+
+/**
+ * Bakes the village's complete movement graph into two mask channels once:
+ * red is travelled routes, green is occupied yards. This replaces dozens of
+ * fragment-shader distance checks and creates no additional scene geometry.
+ */
+function getVikingTrafficTexture(): CanvasTexture {
+  if (vikingTrafficTexture) {
+    return vikingTrafficTexture;
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = VIKING_TRAFFIC_TEXTURE_SIZE;
+  canvas.height = VIKING_TRAFFIC_TEXTURE_SIZE;
+  const context = canvas.getContext("2d");
+  if (context) {
+    context.fillStyle = "#000";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.globalCompositeOperation = "lighter";
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    const scale = VIKING_TRAFFIC_TEXTURE_SIZE / VIKING_WORLD_SPAN;
+
+    for (const route of vikingTrafficRoutes) {
+      const samples = meanderVikingTrafficRoute(
+        sampleVikingTrafficRoute(route.points),
+        route.id,
+        scale * Math.min(0.92, 0.42 + route.width * 0.23),
+      );
+      for (const layer of [
+        { width: 2.25, opacity: 0.16 },
+        { width: 1.42, opacity: 0.34 },
+        { width: 0.72, opacity: 0.42 },
+      ] as const) {
+        fillVariableVikingTrafficRoute(
+          context,
+          samples,
+          route.id,
+          route.width * scale * layer.width,
+          route.wear * layer.opacity,
+        );
+      }
+    }
+
+    for (const area of vikingTrafficAreas) {
+      const [x, y] = vikingTrafficCanvasPoint(area.center);
+      context.save();
+      context.translate(x, y);
+      context.rotate(-(area.rotation ?? 0));
+      context.scale(area.radius[0] * scale, area.radius[1] * scale);
+      const gradient = context.createRadialGradient(0, 0, 0, 0, 0, 1);
+      gradient.addColorStop(0, `rgba(0, 255, 0, ${area.wear * 0.82})`);
+      gradient.addColorStop(0.48, `rgba(0, 255, 0, ${area.wear * 0.58})`);
+      gradient.addColorStop(0.78, `rgba(0, 255, 0, ${area.wear * 0.24})`);
+      gradient.addColorStop(1, "rgba(0, 255, 0, 0)");
+      context.fillStyle = gradient;
+      context.beginPath();
+      context.arc(0, 0, 1, 0, Math.PI * 2);
+      context.fill();
+      context.restore();
+    }
+  }
+
+  vikingTrafficTexture = new CanvasTexture(canvas);
+  vikingTrafficTexture.magFilter = LinearFilter;
+  vikingTrafficTexture.minFilter = LinearMipmapLinearFilter;
+  vikingTrafficTexture.anisotropy = 4;
+  vikingTrafficTexture.colorSpace = NoColorSpace;
+  return vikingTrafficTexture;
+}
 
 function createRandom(seed: number): () => number {
   let state = seed;
@@ -244,6 +472,22 @@ function paintMaterial(
           Math.PI * 2,
         );
         context.fill();
+      }
+      break;
+    }
+    case "cloth": {
+      fillNoise(context, random, 205, 24, 3);
+      context.lineWidth = 1;
+      for (let line = 0; line < TEXTURE_SIZE; line += 5) {
+        gray(context, 164 + random() * 32, 0.48);
+        context.fillRect(0, line, TEXTURE_SIZE, 1);
+        gray(context, 222 + random() * 18, 0.36);
+        context.fillRect(line, 0, 1, TEXTURE_SIZE);
+      }
+      for (let crease = 0; crease < 7; crease += 1) {
+        gray(context, 145 + random() * 28, 0.25);
+        const x = random() * TEXTURE_SIZE;
+        context.fillRect(x, 0, 1 + random() * 2, TEXTURE_SIZE);
       }
       break;
     }
@@ -462,6 +706,8 @@ export function getPieceMaterial(
         ? 0.16
         : isDarkStone
           ? 0.86
+        : material === "cloth"
+          ? 0.9
         : material === "wood"
           ? 0.76
           : material === "asphalt"
@@ -489,6 +735,8 @@ export function getPieceMaterial(
       shader.uniforms.uFogSunColor = { value: new Color("#ffd9a0") };
       shader.uniforms.uFogSunStrength = { value: 0.0 };
       shader.uniforms.uWetness = { value: 0.0 };
+      shader.uniforms.uLandscapeSoilMap = { value: getMaterialTexture("soil") };
+      shader.uniforms.uVikingTrafficMap = { value: getVikingTrafficTexture() };
       environmentShaders.push(shader);
 
       shader.vertexShader = shader.vertexShader
@@ -504,6 +752,7 @@ attribute float bakedSkyExposure;
 attribute vec3 materialFaceMaskPos;
 attribute vec3 materialFaceMaskNeg;
 varying vec3 vMaterialCoordinate;
+varying float vLandscapeSurfaceProfile;
 varying vec3 vMaterialSurfaceNormal;
 varying vec3 vMaterialBoxPosition;
 varying vec3 vMaterialWorldScale;
@@ -535,6 +784,7 @@ vec3 materialInstanceScale = vec3(
   length(instanceMatrix[2].xyz)
 );
 vMaterialCoordinate = materialAnchor + position * materialInstanceScale;
+vLandscapeSurfaceProfile = 1.0 - step(-0.5, silicateJointBand);
 vMaterialSurfaceNormal = normal;
 vMaterialBoxPosition = position;
 vMaterialWorldScale = materialInstanceScale;
@@ -588,6 +838,7 @@ if (materialProjectionNormal.x >= materialProjectionNormal.y && materialProjecti
           "#include <common>",
           `#include <common>
 varying vec3 vMaterialCoordinate;
+varying float vLandscapeSurfaceProfile;
 varying vec3 vMaterialSurfaceNormal;
 varying vec3 vMaterialBoxPosition;
 varying vec3 vMaterialWorldScale;
@@ -606,6 +857,8 @@ uniform vec3 uFogSunDirection;
 uniform vec3 uFogSunColor;
 uniform float uFogSunStrength;
 uniform float uWetness;
+uniform sampler2D uLandscapeSoilMap;
+uniform sampler2D uVikingTrafficMap;
 
 float materialValueNoise(vec2 p) {
   vec2 cellIndex = floor(p);
@@ -625,7 +878,8 @@ float materialColumnNoise(float h) {
   float a = fract(sin(columnIndex * 127.1) * 43758.5453);
   float b = fract(sin((columnIndex + 1.0) * 127.1) * 43758.5453);
   return mix(a, b, columnFraction);
-}`,
+}
+`,
         )
         .replace(
           "#include <map_fragment>",
@@ -679,6 +933,61 @@ float materialStreakAmount = materialStreakNoise
   * ${appearance.streaking.toFixed(4)};
 diffuseColor.rgb *= 1.0 - materialStreakAmount * 0.34;
 
+// Viking ground is one continuous, destructible surface. Paths, yards,
+// moss and wet soil are world-space material masks, never stacked panels.
+// The profile attribute keeps every other map visually unchanged.
+float vikingSurface = step(0.5, vLandscapeSurfaceProfile) * materialUp;
+vec2 vikingPoint = vMaterialCoordinate.xz;
+float vikingTravel = 0.0;
+float vikingYards = 0.0;
+float vikingDirt = 0.0;
+float vikingMoss = 0.0;
+if (vikingSurface > 0.5) {
+  vec2 vikingTrafficUv = clamp(
+    vec2(
+      (vikingPoint.x + 96.0) / 192.0,
+      (vikingPoint.y + 106.0) / 192.0
+    ),
+    vec2(0.001),
+    vec2(0.999)
+  );
+  vec2 vikingTrafficMask = texture2D(uVikingTrafficMap, vikingTrafficUv).rg;
+  float vikingBroadNoise =
+    materialValueNoise(vikingPoint * 0.075 + vec2(4.7, 18.2)) * 0.68 +
+    materialValueNoise(vikingPoint * 0.21 + vec2(27.4, 3.1)) * 0.32;
+  float vikingFineNoise = materialValueNoise(vikingPoint * 0.83 + vec2(11.9, 36.2));
+
+  // The authored traffic frequency is softened by ground-scale noise. This
+  // keeps route intent legible while preventing CAD-clean edges.
+  vikingTravel = clamp(
+    vikingTrafficMask.r * 1.35 + (vikingBroadNoise - 0.5) * 0.1,
+    0.0,
+    1.0
+  );
+  vikingYards = clamp(vikingTrafficMask.g * 1.22, 0.0, 1.0);
+  float vikingTrafficWear = clamp(0.73 + vikingFineNoise * 0.38, 0.0, 1.0);
+  vikingDirt = clamp(max(vikingTravel, vikingYards * 0.88) * vikingTrafficWear, 0.0, 1.0);
+
+  vec3 vikingSoil = sRGBTransferEOTF(
+    texture2D(uLandscapeSoilMap, vikingPoint * 0.32 + vec2(0.17, 0.43))
+  ).rgb;
+  vikingSoil *= mix(vec3(0.62, 0.40, 0.25), vec3(0.78, 0.56, 0.34), vikingFineNoise);
+  diffuseColor.rgb = mix(diffuseColor.rgb, vikingSoil, vikingDirt * 0.96);
+
+  float vikingMossNoise =
+    materialValueNoise(vikingPoint * 0.095 + vec2(41.3, 7.9)) * 0.7 +
+    materialValueNoise(vikingPoint * 0.37 + vec2(8.2, 59.1)) * 0.3;
+  vikingMoss = smoothstep(0.57, 0.78, vikingMossNoise)
+    * (1.0 - vikingTravel * 0.92)
+    * (1.0 - vikingYards * 0.58);
+  vec3 vikingMossTint = mix(vec3(0.46, 0.62, 0.39), vec3(0.31, 0.47, 0.28), vikingFineNoise);
+  diffuseColor.rgb *= mix(vec3(1.0), vikingMossTint, vikingMoss * 0.64);
+
+  float vikingOrganicDarkening = vikingMoss
+    * smoothstep(0.68, 0.86, materialValueNoise(vikingPoint * 0.61 + vec2(73.0, 12.0)));
+  diffuseColor.rgb *= 1.0 - vikingOrganicDarkening * 0.22;
+}
+
 // Standing dampness: glossy splotches on upward, sky-exposed faces.
 // Roughness is lowered in the roughness stage below; here the albedo takes
 // the slight darkening wet ground shows in reality.
@@ -691,6 +1000,12 @@ float materialWet = smoothstep(0.56, 0.74, materialPuddleNoise)
   * smoothstep(0.3, 0.7, vBakedSky)
   * uWetness
   * ${appearance.wetness.toFixed(4)};
+float vikingPuddle = vikingDirt
+  * smoothstep(0.5, 0.72, materialPuddleNoise)
+  * smoothstep(0.55, 0.85, materialWorldNormal.y)
+  * smoothstep(0.3, 0.7, vBakedSky)
+  * uWetness;
+materialWet = max(materialWet, vikingPuddle * 0.94);
 diffuseColor.rgb *= 1.0 - materialWet * 0.38;`,
         )
         .replace(
@@ -702,6 +1017,8 @@ roughnessFactor = clamp(
   0.08,
   1.0
 );
+roughnessFactor = mix(roughnessFactor, 0.78, vikingDirt * 0.36);
+roughnessFactor = mix(roughnessFactor, 0.98, vikingMoss * 0.52);
 // Wet splotches turn glossy: with the sky environment map this alone makes
 // puddles mirror the sky at grazing angles, the way wet ground does.
 roughnessFactor = mix(roughnessFactor, 0.07, materialWet);`,
@@ -763,7 +1080,7 @@ gl_FragColor.rgb = mix(gl_FragColor.rgb, materialFogTint, materialFogFactor);
         );
     };
     standardMaterial.customProgramCacheKey = () =>
-      `material-space-v6:${material}:${profileKey}`;
+      `material-space-v7:${material}:${profileKey}`;
   }
 
   if (isGlass && color === litWindowColor) {

@@ -56,6 +56,18 @@ export const materialAppearanceProfiles: Record<
     wetness: 0.15,
     streaking: 0.3,
   },
+  cloth: {
+    textureScale: 0.22,
+    macroVariation: 0.08,
+    roughnessVariation: 0.16,
+    edgeWear: 0.02,
+    groundDampness: 0.1,
+    topLightening: 0.018,
+    sideTint: [0.94, 0.9, 0.82],
+    directionalGrain: true,
+    wetness: 0.48,
+    streaking: 0.35,
+  },
   plaster: {
     textureScale: 0.5,
     macroVariation: 0.065,

@@ -71,6 +71,7 @@ interface DynamicBreakableFragment {
   readonly faceMaskNegative: readonly [number, number, number];
   readonly fallbackPosition: readonly [number, number, number];
   readonly fallbackQuaternion: readonly [number, number, number, number];
+  readonly landscapeSurface: boolean;
 }
 
 interface DynamicBreakableBatch {
@@ -179,6 +180,7 @@ function sourceFragments(
             : faceMasks[boxIndex].negative,
         fallbackPosition: piece.position,
         fallbackQuaternion,
+        landscapeSurface: piece.landscapeSurface === "viking-ground",
       });
     });
   }
@@ -212,6 +214,7 @@ function sourceFragments(
             : faceMasks[boxIndex].negative,
         fallbackPosition: shard.position,
         fallbackQuaternion: shard.quaternion,
+        landscapeSurface: false,
       });
     });
   }
@@ -248,6 +251,9 @@ function sourceFragments(
             : faceMasks[boxIndex].negative,
         fallbackPosition: remnant.position,
         fallbackQuaternion: remnant.quaternion,
+        landscapeSurface: remnant.parentId.startsWith(
+          "viking-village:terrain-surface:cover:",
+        ),
       });
     });
   }
@@ -390,29 +396,30 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
       new InstancedBufferAttribute(faceNeg, 3, false),
     );
 
-    if (batch.fragments.some(fragmentHasJoints)) {
-      const bands = new Float32Array(batch.fragments.length);
-      const tints = new Float32Array(batch.fragments.length * 3);
-      const tint = new Color();
-      batch.fragments.forEach((fragment, index) => {
-        if (!fragmentHasJoints(fragment)) {
-          return;
-        }
+    const bands = new Float32Array(batch.fragments.length);
+    const tints = new Float32Array(batch.fragments.length * 3);
+    const tint = new Color();
+    batch.fragments.forEach((fragment, index) => {
+      if (fragment.landscapeSurface) {
+        bands[index] = -1;
+        return;
+      }
+      if (fragmentHasJoints(fragment)) {
         bands[index] = silicateJointBand(fragment.size);
         tint.set(silicateJointTint(fragment.color));
         tints[index * 3] = tint.r;
         tints[index * 3 + 1] = tint.g;
         tints[index * 3 + 2] = tint.b;
-      });
-      next.setAttribute(
-        "silicateJointBand",
-        new InstancedBufferAttribute(bands, 1, false),
-      );
-      next.setAttribute(
-        "silicateJointTint",
-        new InstancedBufferAttribute(tints, 3, false),
-      );
-    }
+      }
+    });
+    next.setAttribute(
+      "silicateJointBand",
+      new InstancedBufferAttribute(bands, 1, false),
+    );
+    next.setAttribute(
+      "silicateJointTint",
+      new InstancedBufferAttribute(tints, 3, false),
+    );
     return next;
   }, [batch]);
   const material = useMemo(

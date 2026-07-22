@@ -28,6 +28,14 @@ const soundProfiles: Record<BreakableMaterial, SoundProfile> = {
     noiseFilter: 1650,
     duration: 0.17,
   },
+  cloth: {
+    tone: 118,
+    toneEnd: 52,
+    toneGain: 0.05,
+    noiseGain: 0.2,
+    noiseFilter: 980,
+    duration: 0.18,
+  },
   plaster: {
     tone: 188,
     toneEnd: 74,
@@ -147,6 +155,7 @@ function recordingVariants(prefix: string, count = 4): readonly string[] {
 const heavyRecordings: Record<BreakableMaterial, readonly string[]> = {
   brick: recordingVariants("impactMining"),
   wood: recordingVariants("impactWood_heavy"),
+  cloth: recordingVariants("impactSoft_heavy"),
   plaster: recordingVariants("impactGeneric_light"),
   concrete: recordingVariants("impactMining"),
   glass: recordingVariants("impactGlass_heavy"),
@@ -165,6 +174,7 @@ const heavyRecordings: Record<BreakableMaterial, readonly string[]> = {
 const lightRecordings: Record<BreakableMaterial, readonly string[]> = {
   brick: recordingVariants("impactGeneric_light"),
   wood: recordingVariants("impactPlank_medium"),
+  cloth: recordingVariants("impactSoft_heavy"),
   plaster: recordingVariants("impactGeneric_light"),
   concrete: recordingVariants("impactGeneric_light"),
   glass: recordingVariants("impactGlass_medium"),
@@ -183,6 +193,7 @@ const lightRecordings: Record<BreakableMaterial, readonly string[]> = {
 const lightRecordingTail: Record<BreakableMaterial, number> = {
   brick: 0.2,
   wood: 0.72,
+  cloth: 0.42,
   plaster: 0.2,
   concrete: 0.2,
   glass: 0.52,
@@ -201,6 +212,7 @@ const lightRecordingTail: Record<BreakableMaterial, number> = {
 const heavyRecordingTail: Record<BreakableMaterial, number> = {
   brick: 0.86,
   wood: 0.38,
+  cloth: 0.38,
   plaster: 0.24,
   concrete: 0.86,
   glass: 0.42,

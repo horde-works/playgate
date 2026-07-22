@@ -6,6 +6,7 @@ import {
 export type BreakableMaterial =
   | "brick"
   | "wood"
+  | "cloth"
   | "plaster"
   | "concrete"
   | "glass"
@@ -37,6 +38,7 @@ export type BreakableShape =
 
 export type SupportMode = "stack" | "mounted" | "linked";
 export type SceneVector3 = readonly [x: number, y: number, z: number];
+export type LandscapeSurfaceProfile = "viking-ground";
 
 export interface MaterialRuntimeProfile {
   readonly density: number;
@@ -65,6 +67,8 @@ export interface BreakablePieceDefinition {
   readonly position: SceneVector3;
   readonly rotation?: SceneVector3;
   readonly size: SceneVector3;
+  readonly volume?: number;
+  readonly bearingArea?: number;
   readonly color: string;
   readonly row?: number;
   readonly column?: number;
@@ -75,6 +79,11 @@ export interface BreakablePieceDefinition {
   }[];
   readonly carriesAttachments?: boolean;
   readonly bearsLoad?: boolean;
+  readonly attachmentSupportMode?: "wall" | "cable";
+  readonly sideAttachmentReach?: number;
+  readonly contactBearingOrder?: boolean;
+  /** World-space material mask; it follows this ground body when it breaks. */
+  readonly landscapeSurface?: LandscapeSurfaceProfile;
 }
 
 export interface BreakableClusterDefinition {
@@ -112,6 +121,18 @@ export const materialRuntimeProfiles: Record<
     debrisColor: "#956037",
     debrisCount: 4,
     restitution: 0.08,
+  },
+  cloth: {
+    density: 0.24,
+    impulse: 2.9,
+    lift: 1.2,
+    torque: 0.62,
+    fractureRadius: [1.48, 1.26],
+    neighborChance: 0.74,
+    dustColor: "#c8b894",
+    debrisColor: "#7f6d54",
+    debrisCount: 4,
+    restitution: 0.025,
   },
   plaster: {
     density: 0.9,
@@ -2546,6 +2567,15 @@ export const structuralMaterialProfiles: Record<
     cantilever: 0.4,
     maximumVerticalGap: 0.2,
     carriesAttachments: true,
+  },
+  cloth: {
+    density: materialRuntimeProfiles.cloth.density,
+    compressionStrength: 3,
+    cantilever: 0.12,
+    maximumVerticalGap: 0.28,
+    bearsLoad: false,
+    carriesAttachments: false,
+    sideAttachmentReach: 0.42,
   },
   plaster: {
     density: materialRuntimeProfiles.plaster.density,

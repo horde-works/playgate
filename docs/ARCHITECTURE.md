@@ -3,9 +3,10 @@
 Playgate is a home-made collection of small, hand-built games. Its centrepiece
 is **Make a Mess**, a real-time destruction sandbox: every wall, arch, rail and
 fitting is an individual body that knows what it is made of, what holds it up
-and how it should break. Three maps share one engine — an open block of houses
+and how it should break. Four maps share one engine — an open block of houses
 (`open-house`), a mountain fortress (`minas-tirith`) and a railway museum
-(`grand-terminal`).
+(`grand-terminal`), plus the data-first pilot Viking settlement
+(`viking-village`).
 
 This document describes the whole system: the web application, the destruction
 engine, the rendering and physics pipelines, the authoring model for maps, and
@@ -38,7 +39,8 @@ app/                     Web app (RSC): landing, catalogue, per-game routes
   globals.css            All styling
 games/
   registry.ts            The catalogue: one entry per game
-  make-a-mess/src/game/  The engine + the three scenes (see §3)
+  make-a-mess/src/content/ Serializable scene contracts and prefab libraries
+  make-a-mess/src/game/  The engine + compiled/runtime scenes (see §3)
 tests/                   Node test-runner specs (*.test.mjs), run against source and dist
 docs/                    This document
 ```
@@ -71,10 +73,12 @@ docs/                    This document
 | `impactAudio.ts` / `impactSoundPolicy.ts` | Impact sound synthesis and budgeting |
 | `MakeAMessGame.tsx` | The top-level game component, HUD and input |
 
-The scenes themselves are `destructionScene.ts` (`open-house`),
+The older scenes are `destructionScene.ts` (`open-house`),
 `minasTirithScene.ts` (+ `minasTirithWorldbuilding.ts`) and
 `grandTerminalScene.ts`, each wrapped by a thin `*Game.tsx` that binds the scene
-to `MakeAMessGame`.
+to `MakeAMessGame`. `viking-village` is the first scene authored through the
+serializable document + prefab compiler in `src/content`; the older maps remain
+unchanged until the pilot has proved the migration path.
 
 ---
 
@@ -91,11 +95,14 @@ interface BreakablePieceDefinition {
   shape: BreakableShape;       // brick, plank, panel, glassPane, steelSheet, stoneBlock, groundTile, cylinder
   position: [x, y, z];
   size: [x, y, z];
+  volume?: number;             // sparse/thin physical mass override
+  bearingArea?: number;        // rotated member capacity override
   color: string;
   rotation?: [x, y, z];
   contactBoxes?: { position; size }[]; // structural footprint override (see §4)
   bearsLoad?: boolean;         // per-piece override of the material default
   carriesAttachments?: boolean;
+  contactBearingOrder?: boolean; // pitched multi-height contact proxies
   hinge?: DoorHingeDefinition; // makes the piece a swinging door
 }
 ```
@@ -284,8 +291,25 @@ per scene.
 
 ## 8. Authoring a map
 
-Maps are written as data using a small `zone` builder that accumulates pieces,
-then `finish`ed into clusters. Guidelines that keep a map correct:
+The three original maps use small builder functions that accumulate pieces and
+finish them into clusters. Viking Village pilots the next authoring layer:
+
+```text
+serializable scene document + reusable prefab library
+                       ↓
+          compiler + intact-state validation
+                       ↓
+           existing destruction scene/runtime
+```
+
+The compiler is not a new renderer. It produces exactly the same immutable
+scene model consumed by the current instancing, Rapier and fracture pipelines.
+The document contains no functions and survives a JSON round trip, so a future
+visual editor can read and write it directly. Procedural layout remains useful,
+but it generates the same document rather than becoming the runtime format.
+See [SCENE-AUTHORING.md](SCENE-AUTHORING.md).
+
+Guidelines that keep either authoring path correct:
 
 1. **Everything stands on something.** After any change, run the scene through
    `resolveStructuralCollapse(new Set())` and require `0` unsupported. Use

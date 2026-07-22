@@ -413,6 +413,44 @@ export const sceneCopy: Record<string, Record<Language, SceneCopy>> = {
       reset: "Восстановить терминал",
     },
   },
+  "viking-village": {
+    en: {
+      status: "Make a Mess / Viking Village",
+      eyebrow: "North settlement test 001",
+      heading: "The village is the toy.",
+      ready: "The village is awake",
+      loading: "Lighting the hearths…",
+      description:
+        "An inhabited northern settlement inside an uneven palisade: a jarl's great hall, log houses, muddy paths, weapon shelters, shields, laundry, ale barrels, torches, wet stone, moss and fungi. It is the first map compiled from reusable, editor-ready objects into the same destruction engine.",
+      enter: "Enter through the gate",
+      returnToGame: "Back to the village",
+      reset: "Rebuild the settlement",
+    },
+    es: {
+      status: "Make a Mess / Viking Village",
+      eyebrow: "Prueba de poblado nórdico 001",
+      heading: "La aldea es el juguete.",
+      ready: "La aldea está despierta",
+      loading: "Encendiendo los hogares…",
+      description:
+        "Un poblado nórdico habitado dentro de una empalizada irregular: gran salón del jarl, casas de troncos, caminos de barro, cobertizos de armas, escudos, ropa tendida, barriles, antorchas, piedra húmeda, musgo y hongos. Es el primer mapa compilado desde objetos reutilizables y preparados para un editor.",
+      enter: "Entrar por la puerta",
+      returnToGame: "Volver a la aldea",
+      reset: "Reconstruir el poblado",
+    },
+    ru: {
+      status: "Make a Mess / Viking Village",
+      eyebrow: "North settlement test 001",
+      heading: "Деревня — объект.",
+      ready: "Деревня проснулась",
+      loading: "Разжигаем очаги…",
+      description:
+        "Обитаемая северная деревня внутри неровного частокола: большой зал конунга, бревенчатые дома, грязные тропы, оружейные навесы, щиты, бельё, бочки, факелы, влажный камень, мох и грибы. Это первая карта, собранная из переиспользуемых, готовых к редактору объектов и скомпилированная в общий движок разрушения.",
+      enter: "Войти через ворота",
+      returnToGame: "Вернуться в деревню",
+      reset: "Отстроить поселение заново",
+    },
+  },
 };
 
 export interface GameCardCopy {
@@ -482,6 +520,26 @@ export const gameCardCopy: Record<string, Record<Language, GameCardCopy>> = {
       genre: "Railway destruction sandbox",
       summary:
         "Европейский железнодорожный музей: большой вокзал, стеклянный дебаркадер, платформы, паровозы, вагоны и кассовый зал.",
+    },
+  },
+  "make-a-mess-viking-village": {
+    en: {
+      stageLabel: "New-model pilot",
+      genre: "Living-world destruction sandbox",
+      summary:
+        "An inhabited northern village: palisade, longhouses, a jarl's hall, weapon shelters, laundry, hearths, mud, moss and rocky woodland.",
+    },
+    es: {
+      stageLabel: "Piloto del nuevo modelo",
+      genre: "Sandbox de mundo vivo y destrucción",
+      summary:
+        "Una aldea nórdica habitada: empalizada, casas largas, salón del jarl, cobertizos de armas, ropa tendida, hogares, barro, musgo y bosque rocoso.",
+    },
+    ru: {
+      stageLabel: "Пилот новой модели",
+      genre: "Living-world destruction sandbox",
+      summary:
+        "Обитаемая северная деревня: частокол, длинные дома, зал конунга, оружейные навесы, бельё, очаги, грязь, мох и каменистый лес.",
     },
   },
 };

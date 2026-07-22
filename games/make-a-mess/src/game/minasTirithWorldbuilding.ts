@@ -384,8 +384,8 @@ function addWeaponRack(
   floorY: number,
   z: number,
   yaw = 0,
+  width = 2.4,
 ): void {
-  const width = 2.4;
   for (const [index, localX] of [-width * 0.42, width * 0.42].entries()) {
     const [dx, dz] = rotateXZ(localX, 0, yaw);
     builder.add(

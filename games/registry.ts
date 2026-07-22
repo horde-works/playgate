@@ -1,6 +1,6 @@
 export type GameStatus = "building" | "playable" | "archived";
 export type GameTheme = "safety-orange" | "electric-blue" | "acid-green";
-export type GameArt = "mess" | "minas-tirith" | "grand-terminal";
+export type GameArt = "mess" | "minas-tirith" | "grand-terminal" | "viking-village";
 
 export interface GameEntry {
   readonly slug: string;
@@ -50,6 +50,18 @@ export const games = [
     stageLabel: "Третья карта",
     theme: "acid-green",
     art: "grand-terminal",
+  },
+  {
+    slug: "make-a-mess-viking-village",
+    title: "Make a Mess: Viking Village",
+    href: "/games/make-a-mess/viking-village",
+    summary:
+      "Обитаемая северная деревня: частокол, длинные дома, зал конунга, оружейные навесы, бельё, очаги, грязь, мох и каменистый лес.",
+    genre: "Living-world destruction sandbox",
+    status: "playable",
+    stageLabel: "Пилот новой модели",
+    theme: "safety-orange",
+    art: "viking-village",
   },
 ] as const satisfies readonly GameEntry[];
 

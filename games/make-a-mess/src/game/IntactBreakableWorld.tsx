@@ -156,29 +156,32 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
       new InstancedBufferAttribute(faceNeg, 3, false),
     );
 
-    if (batch.jointed) {
-      const bands = new Float32Array(batch.pieces.length);
-      const tints = new Float32Array(batch.pieces.length * 3);
-      const tint = new Color();
-      batch.pieces.forEach((piece, index) => {
-        if (!hasSilicateJoints(piece.id, piece.material)) {
-          return;
-        }
+    const bands = new Float32Array(batch.pieces.length);
+    const tints = new Float32Array(batch.pieces.length * 3);
+    const tint = new Color();
+    batch.pieces.forEach((piece, index) => {
+      if (piece.landscapeSurface === "viking-ground") {
+        // Negative band is an otherwise unused sentinel. Reusing this
+        // existing attribute keeps the shader within WebGL's attribute cap.
+        bands[index] = -1;
+        return;
+      }
+      if (hasSilicateJoints(piece.id, piece.material)) {
         bands[index] = silicateJointBand(piece.size);
         tint.set(silicateJointTint(piece.color));
         tints[index * 3] = tint.r;
         tints[index * 3 + 1] = tint.g;
         tints[index * 3 + 2] = tint.b;
-      });
-      next.setAttribute(
-        "silicateJointBand",
-        new InstancedBufferAttribute(bands, 1, false),
-      );
-      next.setAttribute(
-        "silicateJointTint",
-        new InstancedBufferAttribute(tints, 3, false),
-      );
-    }
+      }
+    });
+    next.setAttribute(
+      "silicateJointBand",
+      new InstancedBufferAttribute(bands, 1, false),
+    );
+    next.setAttribute(
+      "silicateJointTint",
+      new InstancedBufferAttribute(tints, 3, false),
+    );
     return next;
   }, [batch, lighting]);
 

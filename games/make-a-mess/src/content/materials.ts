@@ -14,6 +14,7 @@ export const materialIds = {
   brick: materialId("brick"),
   ceramic: materialId("ceramic"),
   concrete: materialId("concrete"),
+  cloth: materialId("cloth"),
   glass: materialId("glass"),
   metal: materialId("metal"),
   plaster: materialId("plaster"),
@@ -41,6 +42,15 @@ export const destructionMaterials = {
     impactSoundSet: "concrete-impact",
     dustProfile: "concrete-grey",
     color: "#797A74",
+  },
+  cloth: {
+    id: materialIds.cloth,
+    density: 0.24,
+    hardness: 0.1,
+    fracture: "splinter",
+    impactSoundSet: "cloth-impact",
+    dustProfile: "cloth-fibres",
+    color: "#A98A64",
   },
   plaster: {
     id: materialIds.plaster,

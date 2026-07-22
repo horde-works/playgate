@@ -15,6 +15,9 @@ export interface StructuralPieceDefinition<Material extends string> {
   readonly contactBoxes?: readonly StructuralContactBox[];
   readonly carriesAttachments?: boolean;
   readonly bearsLoad?: boolean;
+  readonly attachmentSupportMode?: "wall" | "cable";
+  readonly sideAttachmentReach?: number;
+  readonly contactBearingOrder?: boolean;
 }
 
 export interface StructuralMaterialProfile {
@@ -126,6 +129,12 @@ function physicalUpperBound<Material extends string>(
   );
 }
 
+function physicalBearingArea<Material extends string>(
+  piece: StructuralPieceDefinition<Material>,
+): number {
+  return piece.bearingArea ?? piece.size[0] * piece.size[2];
+}
+
 function bearingContactPatches(
   piece: StructuralContactBox & {
     readonly contactBoxes?: readonly StructuralContactBox[];
@@ -187,6 +196,7 @@ export function createStructuralSolver<Material extends string>(
   const maximumHorizontalReach = Math.max(
     CONTACT_TOLERANCE,
     ...profiles.map((profile) => profile.sideAttachmentReach ?? 0),
+    ...pieces.map((piece) => piece.sideAttachmentReach ?? 0),
   );
   const maximumVerticalReach = Math.max(
     CONTACT_TOLERANCE,
@@ -276,6 +286,35 @@ export function createStructuralSolver<Material extends string>(
       return false;
     }
 
+    if (piece.contactBearingOrder) {
+      // A pitched surface can have bearing proxies at both its low eave and
+      // high ridge. In that explicit mode the proxy pair, not the render
+      // mesh centre, determines which body is above the other.
+      for (const pieceBox of physicalContactBoxes(piece)) {
+        for (const supportBox of physicalContactBoxes(support)) {
+          if (
+            bearingContactPatches(
+              { ...piece, contactBoxes: [pieceBox] },
+              { ...support, contactBoxes: [supportBox] },
+              pieceProfile.maximumVerticalGap,
+            ).length === 0
+          ) {
+            continue;
+          }
+          const centerDifference = pieceBox.position[1] - supportBox.position[1];
+          if (
+            centerDifference > MINIMUM_VERTICAL_ORDER ||
+            (centerDifference > -SAME_LEVEL_TOLERANCE &&
+              geometryBearingRank(support, supportProfile) >
+                geometryBearingRank(piece, pieceProfile))
+          ) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+
     const centerDifference = piece.position[1] - support.position[1];
     return (
       centerDifference > MINIMUM_VERTICAL_ORDER ||
@@ -291,7 +330,7 @@ export function createStructuralSolver<Material extends string>(
   ): boolean => {
     const pieceProfile = materialProfiles[piece.material];
     const supportProfile = materialProfiles[support.material];
-    const reach = pieceProfile.sideAttachmentReach;
+    const reach = piece.sideAttachmentReach ?? pieceProfile.sideAttachmentReach;
     if (
       reach === undefined ||
       piece.id === support.id ||
@@ -301,10 +340,13 @@ export function createStructuralSolver<Material extends string>(
       return false;
     }
 
-    // A piece can hang sideways only off something wall-like — noticeably
-    // taller than itself. Two thin plates cannot carry each other's weight
-    // through an edge weld.
-    if (support.size[1] < piece.size[1] * 1.5) {
+    // Ordinary attachments require a wall-like support. Explicit suspension
+    // members (ropes, rails, laundry lines) may carry light things along
+    // their edge without pretending to be vertical walls.
+    if (
+      (support.attachmentSupportMode ?? "wall") === "wall" &&
+      support.size[1] < piece.size[1] * 1.5
+    ) {
       return false;
     }
 
@@ -612,7 +654,7 @@ export function createStructuralSolver<Material extends string>(
       (piece.volume ?? boundingVolume) / Math.max(1e-6, boundingVolume),
     );
     return (
-      (piece.bearingArea ?? piece.size[0] * piece.size[2]) *
+      physicalBearingArea(piece) *
       profile.compressionStrength *
       columnFactor *
       Math.pow(fillFraction, 0.72)
@@ -660,8 +702,7 @@ export function createStructuralSolver<Material extends string>(
           ),
         );
         const fill =
-          (support.bearingArea ??
-            support.size[0] * support.size[2]) /
+          physicalBearingArea(support) /
           Math.max(1e-6, support.size[0] * support.size[2]);
         return {
           supportId,

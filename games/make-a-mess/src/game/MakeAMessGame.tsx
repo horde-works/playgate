@@ -214,6 +214,7 @@ const blastTransmissionByMaterial: Record<BreakableMaterial, number> = {
   darkGlass: 0.68,
   plaster: 0.36,
   wood: 0.24,
+  cloth: 0.7,
   foliage: 0.58,
   grass: 0.11,
   soil: 0.1,
