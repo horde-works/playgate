@@ -942,6 +942,20 @@ interface BreakablePieceProps {
   ) => void;
 }
 
+// Collision interaction groups (membership << 16 | filter). A freshly-broken
+// cluster's pieces settle WITHOUT colliding with each other for a short grace,
+// so authored interpenetration relaxes under gravity instead of the solver
+// launching overlapping siblings apart ("several bricks burst from one spot").
+// They still hit the world and player, and after the grace they collide with
+// each other normally and stack.
+const GROUP_WORLD = 0x0001;
+const GROUP_DEBRIS = 0x0002;
+const interactionGroups = (membership: number, filter: number): number =>
+  ((membership << 16) | filter) >>> 0;
+const DEBRIS_SETTLING = interactionGroups(GROUP_DEBRIS, GROUP_WORLD);
+const DEBRIS_NORMAL = interactionGroups(GROUP_DEBRIS, GROUP_WORLD | GROUP_DEBRIS);
+const DEBRIS_SETTLE_MS = 600;
+
 const BreakablePiece = memo(function BreakablePiece({
   piece,
   broken,
@@ -950,6 +964,7 @@ const BreakablePiece = memo(function BreakablePiece({
 }: BreakablePieceProps) {
   const body = useRef<RapierRigidBody>(null);
   const wasBroken = useRef(false);
+  const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { rapier } = useRapier();
   const profile = materialRuntimeProfiles[piece.material];
   const renderBoxes = useMemo(() => getPieceRenderBoxes(piece), [piece]);
@@ -962,6 +977,15 @@ const BreakablePiece = memo(function BreakablePiece({
     registerBody(piece.id, body.current);
     return () => registerBody(piece.id, null);
   }, [piece.id, registerBody]);
+
+  useEffect(
+    () => () => {
+      if (settleTimer.current !== null) {
+        clearTimeout(settleTimer.current);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     const currentBody = body.current;
@@ -996,10 +1020,25 @@ const BreakablePiece = memo(function BreakablePiece({
 
       const colliderCount = currentBody.numColliders();
       for (let index = 0; index < colliderCount; index += 1) {
-        currentBody
-          .collider(index)
-          .setContactForceEventThreshold(Math.max(0.4, mass * 55));
+        const collider = currentBody.collider(index);
+        collider.setContactForceEventThreshold(Math.max(0.4, mass * 55));
+        // Don't collide with sibling debris yet — let overlaps settle.
+        collider.setCollisionGroups(DEBRIS_SETTLING);
       }
+      if (settleTimer.current !== null) {
+        clearTimeout(settleTimer.current);
+      }
+      settleTimer.current = setTimeout(() => {
+        settleTimer.current = null;
+        const settledBody = body.current;
+        if (!settledBody || settledBody.bodyType() !== rapier.RigidBodyType.Dynamic) {
+          return;
+        }
+        const settledColliders = settledBody.numColliders();
+        for (let index = 0; index < settledColliders; index += 1) {
+          settledBody.collider(index).setCollisionGroups(DEBRIS_NORMAL);
+        }
+      }, DEBRIS_SETTLE_MS);
     }
 
     wasBroken.current = broken;
