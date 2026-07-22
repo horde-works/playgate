@@ -23,11 +23,14 @@ interface SmokeSource {
 // strongest from its louver; the outdoor commons hearth and the house roofs
 // trail thinner columns.
 function vikingSmokeSources(): readonly SmokeSource[] {
-  // The great hall's plume rises from the central hearth itself, columns up
-  // through the room and leaves by the roof louver (~7.9 m). House plumes rise
-  // from just above their roof louvers; the outdoor commons hearth from its embers.
+  // The great hall smokes in two stages so nothing seeps through the roof
+  // planks: an INDOOR plume that rises from the central hearth and thins out
+  // under the ridge (a smoky longhouse), and a separate OUTDOOR plume leaving
+  // the roof louver. House plumes rise from just above their roof louvers; the
+  // outdoor commons hearth from its embers.
   const sources: SmokeSource[] = [
-    { position: [0, 0.8, -16.5], puffs: 22, rise: 9.6, spread: 0.6 },
+    { position: [0, 0.8, -16.5], puffs: 16, rise: 5.0, spread: 0.5 },
+    { position: [0, 8.1, -17], puffs: 14, rise: 4.5, spread: 1.0 },
     { position: [-11.5, 0.9, -1.5], puffs: 14, rise: 6.5, spread: 0.9 },
   ];
   for (const home of vikingVillageHomes) {

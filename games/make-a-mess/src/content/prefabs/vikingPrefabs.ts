@@ -538,7 +538,9 @@ function longhouse(
         shape: "plank",
         position: [side * (width / 4 + 0.35), wallHeight + 1.3, z],
         rotation: [0, 0, -side * roofAngle],
-        size: [roofWidth, 0.18, 1.38],
+        // Flush with the 1.25 m strip pitch (a hair under) — the boards butt
+        // edge to edge instead of overlapping and z-fighting.
+        size: [roofWidth, 0.18, 1.24],
         color: strip % 4 === 0 ? "#46503a" : "#5b513c",
         colorSlot: strip % 4 === 0 ? "mossRoof" : "roof",
         contactBearingOrder: true,

@@ -3,12 +3,20 @@
 import { useFrame, useThree } from "@react-three/fiber";
 import { useRapier, type RapierRigidBody } from "@react-three/rapier";
 import { useEffect, useMemo, useRef } from "react";
-import { Quaternion, Vector3 } from "three";
+import { Euler, Quaternion, Vector3 } from "three";
 import type { BreakablePieceDefinition } from "./destructionScene";
+
+interface DoorMember {
+  readonly piece: BreakablePieceDefinition;
+  // The board's own resting orientation (the house yaw baked in at compile).
+  // The swing is composed ON TOP of this, so a rotated house's door stays one
+  // rigid leaf instead of snapping every board back to axis-aligned.
+  readonly baseQuaternion: Quaternion;
+}
 
 interface DoorGroup {
   readonly key: string;
-  readonly members: readonly BreakablePieceDefinition[];
+  readonly members: readonly DoorMember[];
   readonly hinge: NonNullable<BreakablePieceDefinition["hinge"]>;
   readonly center: readonly [number, number, number];
 }
@@ -58,7 +66,19 @@ export function HingedDoorSystem({
         sz += member.position[2];
       }
       const count = members.length;
-      return { key, members, hinge, center: [sx / count, sy / count, sz / count] as const };
+      const doorMembers: DoorMember[] = members.map((piece) => {
+        const [rx, ry, rz] = piece.rotation ?? [0, 0, 0];
+        return {
+          piece,
+          baseQuaternion: new Quaternion().setFromEuler(new Euler(rx, ry, rz)),
+        };
+      });
+      return {
+        key,
+        members: doorMembers,
+        hinge,
+        center: [sx / count, sy / count, sz / count] as const,
+      };
     });
   }, [pieces]);
 
@@ -66,6 +86,7 @@ export function HingedDoorSystem({
   const cameraDirection = useRef(new Vector3());
   const directionToDoor = useRef(new Vector3());
   const doorQuaternion = useRef(new Quaternion());
+  const composedQuaternion = useRef(new Quaternion());
   const doorRelative = useRef(new Vector3());
   const doorUpAxis = useRef(new Vector3(0, 1, 0));
   const shadowAccumulator = useRef(1);
@@ -136,10 +157,11 @@ export function HingedDoorSystem({
         state.sign * state.angle,
       );
       for (const member of group.members) {
-        if (brokenPieces.current.has(member.id)) {
+        const piece = member.piece;
+        if (brokenPieces.current.has(piece.id)) {
           continue;
         }
-        const body = bodies.current.get(member.id);
+        const body = bodies.current.get(piece.id);
         if (!body) {
           continue;
         }
@@ -147,10 +169,11 @@ export function HingedDoorSystem({
           if (body.bodyType() !== rapier.RigidBodyType.Fixed) {
             body.setBodyType(rapier.RigidBodyType.Fixed, true);
             body.setTranslation(
-              { x: member.position[0], y: member.position[1], z: member.position[2] },
+              { x: piece.position[0], y: piece.position[1], z: piece.position[2] },
               false,
             );
-            body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, false);
+            // Restore the board's OWN resting orientation, not identity.
+            body.setRotation(member.baseQuaternion, false);
           }
           continue;
         }
@@ -162,18 +185,24 @@ export function HingedDoorSystem({
           body.setBodyType(rapier.RigidBodyType.KinematicPositionBased, true);
         }
         doorRelative.current
-          .set(member.position[0] - hinge.pivot[0], 0, member.position[2] - hinge.pivot[2])
+          .set(piece.position[0] - hinge.pivot[0], 0, piece.position[2] - hinge.pivot[2])
           .applyQuaternion(doorQuaternion.current);
         body.setNextKinematicTranslation({
           x: hinge.pivot[0] + doorRelative.current.x,
-          y: member.position[1],
+          y: piece.position[1],
           z: hinge.pivot[2] + doorRelative.current.z,
         });
+        // Swing composed onto the board's resting orientation → the whole leaf
+        // turns as one rigid piece even on a yaw-rotated house.
+        composedQuaternion.current.multiplyQuaternions(
+          doorQuaternion.current,
+          member.baseQuaternion,
+        );
         body.setNextKinematicRotation({
-          x: doorQuaternion.current.x,
-          y: doorQuaternion.current.y,
-          z: doorQuaternion.current.z,
-          w: doorQuaternion.current.w,
+          x: composedQuaternion.current.x,
+          y: composedQuaternion.current.y,
+          z: composedQuaternion.current.z,
+          w: composedQuaternion.current.w,
         });
       }
     }

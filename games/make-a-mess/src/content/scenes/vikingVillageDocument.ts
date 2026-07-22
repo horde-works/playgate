@@ -117,6 +117,23 @@ function insideAnyHome(x: number, z: number, margin = 0.6): boolean {
   return false;
 }
 
+// True near any dwelling's doorway — used to keep the threshold clear so a
+// barrel, mushrooms or gravel never block the entrance.
+function nearAnyDoor(x: number, z: number, radius = 2.4): boolean {
+  for (const home of vikingVillageHomes) {
+    const [doorX, doorZ] = vikingPlanLocalPoint(
+      home.position,
+      home.yaw,
+      0,
+      home.length / 2,
+    );
+    if (Math.hypot(x - doorX, z - doorZ) < radius) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function palisadeRadius(angle: number): number {
   return 57
     + Math.sin(angle * 3.1) * 2.8
@@ -154,13 +171,9 @@ function createTerrain(): void {
               : grassPatch > 0.58
                 ? "#566848"
                 : "#546544";
-      // Gently rolling ground height (smooth between tiles, well within the
-      // player's auto-step) — the turf is uneven, not a billiard table.
-      const grassHeight =
-        -0.04 +
-        Math.sin(x * 0.31 + z * 0.12) * Math.cos(z * 0.27 - x * 0.09) * 0.05 +
-        (grassPatch - 0.5) * 0.03;
-      primitive(surface, `cover:${key}`, "grass", "groundTile", [x, grassHeight, z], [4.06, 0.2, 4.06], surfaceColor, {
+      // Tiles sit flush, edge to edge (no steps); the uneven-earth look is a
+      // cheap shader micro-relief on the ground itself, not geometry.
+      primitive(surface, `cover:${key}`, "grass", "groundTile", [x, -0.04, z], [4.06, 0.18, 4.06], surfaceColor, {
         surface: grassVariation < 0.18 ? [{ kind: "damp", amount: 0.12 }] : undefined,
         landscapeSurface: "viking-ground",
       });
@@ -870,7 +883,7 @@ function createVillageLife(): void {
     const barrelX = baseX + (noise(index, 2) - 0.5) * 9;
     const barrelZ = baseZ + (noise(index, 6) - 0.5) * 7;
     // A barrel that lands inside a dwelling would clip its wall — skip it.
-    if (insideAnyHome(barrelX, barrelZ, 0.8)) {
+    if (insideAnyHome(barrelX, barrelZ, 0.8) || nearAnyDoor(barrelX, barrelZ, 2.8)) {
       continue;
     }
     place(storage, `yard-barrel:${index}`, "viking:barrel", {
@@ -978,6 +991,9 @@ function createVillageLife(): void {
     const radius = 18 + noise(index, 7, 12) * 42;
     const x = Math.cos(angle) * radius;
     const z = WORLD_CENTER_Z + Math.sin(angle) * radius;
+    if (nearAnyDoor(x, z, 3.0) || insideAnyHome(x, z, 1.0)) {
+      continue;
+    }
     place(growth, `mushroom:${index}`, "viking:mushrooms", {
       position: [x, 0, z],
       rotation: [0, noise(index, 9) * Math.PI, 0],
@@ -991,7 +1007,7 @@ function createVillageLife(): void {
     const radius = 15 + Math.sqrt(noise(index, 5, 102)) * 42;
     const x = Math.cos(angle) * radius;
     const z = WORLD_CENTER_Z + Math.sin(angle) * radius;
-    if (distanceToVillagePath(x, z) < 3 || Math.hypot(x - 9, z + 9) < 5) {
+    if (distanceToVillagePath(x, z) < 3 || Math.hypot(x - 9, z + 9) < 5 || nearAnyDoor(x, z, 2.6) || insideAnyHome(x, z, 0.8)) {
       continue;
     }
     const height = 0.28 + noise(index, 7, 103) * 0.65;
@@ -1035,30 +1051,50 @@ function createRockwork(): void {
   const stones = group("terrain-stones", "Rocky Scandinavian ground", "stone");
 
   const pileSites: readonly (readonly [number, number])[] = [
-    [46, 33], [-47, 22], [49, -24], [-44, -49], [38, 46],
-    [-39, 47], [47, 6], [-51, -8], [20, -53], [-27, 45], [12, 48], [-16, -58],
+    [46, 33], [-47, 22], [49, -24], [-44, -49], [38, 46], [-39, 47], [47, 6],
+    [-51, -8], [20, -53], [-27, 45], [12, 48], [-16, -58], [52, 14], [-52, 34],
+    [43, -44], [-33, -55], [30, 40], [-45, -2], [8, 52], [51, -40], [-20, 50],
+    [36, -50], [-48, -28], [23, 44],
   ];
   pileSites.forEach(([cx, cz], pile) => {
-    if (insideAnyHome(cx, cz, 1.6)) {
+    if (insideAnyHome(cx, cz, 1.8)) {
       return;
     }
-    const count = 5 + Math.floor(noise(pile, cx, 2) * 4);
+    // Real heaps: a broad ring of boulders on the ground, then a second course
+    // stacked squarely onto those base stones, so it reads as a piled cairn.
+    const count = 9 + Math.floor(noise(pile, cx, 2) * 7);
+    const baseCount = Math.max(4, Math.floor(count * 0.62));
+    const bases: { x: number; z: number; top: number }[] = [];
     for (let index = 0; index < count; index += 1) {
-      const angle = noise(index, cx, pile) * Math.PI * 2;
-      const radius = noise(index, cz, pile + 1) * 1.35;
-      const sx = 0.42 + noise(index, cx, 7) * 0.85;
-      const sy = 0.34 + noise(index, cx, 9) * 0.6;
-      const sz = 0.44 + noise(index, cz, 11) * 0.85;
+      const sx = 0.5 + noise(index, cx, 7) * 1.1;
+      const sy = 0.42 + noise(index, cx, 9) * 0.78;
+      const sz = 0.52 + noise(index, cz, 11) * 1.1;
+      let x: number;
+      let z: number;
+      let y: number;
+      if (index < baseCount) {
+        const angle = noise(index, cx, pile) * Math.PI * 2;
+        const radius = 1.55 * Math.sqrt(noise(index, cz, pile + 1));
+        x = cx + Math.cos(angle) * radius;
+        z = cz + Math.sin(angle) * radius;
+        y = sy / 2 - 0.04;
+        bases.push({ x, z, top: y + sy / 2 });
+      } else {
+        const base = bases[index % bases.length];
+        x = base.x + (noise(index, 3) - 0.5) * 0.3;
+        z = base.z + (noise(index, 4) - 0.5) * 0.3;
+        y = base.top + sy / 2 - 0.14; // rests on the base stone, slightly sunk
+      }
       primitive(
         stones,
         `rock-pile:${pile}:${index}`,
         index % 4 === 0 ? "basalt" : "stone",
         "stoneBlock",
-        [cx + Math.cos(angle) * radius, sy / 2 - 0.03, cz + Math.sin(angle) * radius],
+        [x, y, z],
         [sx, sy, sz],
         index % 4 === 0 ? "#42474a" : index % 3 === 0 ? "#797a70" : "#63665f",
         {
-          rotation: [noise(index, 1) * 0.28, noise(index, 2) * Math.PI, noise(index, 3) * 0.22],
+          rotation: [noise(index, 1) * 0.3, noise(index, 2) * Math.PI, noise(index, 3) * 0.24],
           surface: [{ kind: "moss", amount: 0.45 + noise(index, cx, 5) * 0.4 }],
         },
       );
@@ -1089,7 +1125,7 @@ function createRockwork(): void {
           const offset = route.width + 0.15 + noise(pebble, 1) * 0.45;
           const ex = px + normalX * side * offset;
           const ez = pz + normalZ * side * offset;
-          if (insideAnyHome(ex, ez, 0.3)) {
+          if (insideAnyHome(ex, ez, 0.3) || nearAnyDoor(ex, ez, 1.8)) {
             continue;
           }
           const size = 0.12 + noise(pebble, 7) * 0.24;

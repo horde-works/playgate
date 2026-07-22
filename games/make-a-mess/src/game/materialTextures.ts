@@ -1117,6 +1117,14 @@ if (vikingSurface > 0.5) {
   float vikingOrganicDarkening = vikingMoss
     * smoothstep(0.68, 0.86, materialValueNoise(vikingPoint * 0.61 + vec2(73.0, 12.0)));
   diffuseColor.rgb *= 1.0 - vikingOrganicDarkening * 0.22;
+
+  // Cheap uneven-earth relief: two octaves of world-space noise light and
+  // shade the turf as if it dips and mounds a little, so the flush ground
+  // tiles never read as one dead-flat plane. Softened on trodden paths.
+  float vikingRelief =
+    materialValueNoise(vikingPoint * 0.5 + vec2(17.0, 44.0)) * 0.62 +
+    materialValueNoise(vikingPoint * 1.25 + vec2(5.0, 61.0)) * 0.38;
+  diffuseColor.rgb *= mix(1.0, 0.82 + vikingRelief * 0.32, 1.0 - vikingDirt * 0.6);
 }
 
 // Standing dampness: glossy splotches on upward, sky-exposed faces.
