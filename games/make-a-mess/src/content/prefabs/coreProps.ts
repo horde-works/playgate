@@ -311,6 +311,8 @@ export function propSpool(options: {
       rotation: [0, yaw, Math.PI / 2],
       size: [0.92 * s, 0.08 * s, 0.92 * s],
       color: "#a98e63",
+      carriesAttachments: true,
+      attachmentSupportMode: "cable",
       contactBoxes: [{ position: at(offset), size: [0.4 * s, 0.92 * s, 0.4 * s] }],
     })),
     {
@@ -514,6 +516,7 @@ export function propCautionBoard(options: {
       rotation: [0, yaw, 0],
       size: [0.09, 0.84, 0.09],
       color: "#5d5346",
+      carriesAttachments: true,
       contactBoxes: [{ position: [cos * offset, 0.42, -sin * offset], size: [0.09, 0.84, 0.09] }],
     });
   }
@@ -528,7 +531,7 @@ export function propCautionBoard(options: {
       size: [stripeWidth * 0.98, 0.3, 0.06],
       color: stripe % 2 === 0 ? "#d8b13a" : "#2b2b28",
       bearsLoad: false,
-      sideAttachmentReach: 0.3,
+      sideAttachmentReach: 0.62,
       contactBoxes: [{
         position: [cos * offset, 0.86, -sin * offset],
         size: [stripeWidth * 0.98, 0.3, 0.06],

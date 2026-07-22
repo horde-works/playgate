@@ -3,6 +3,20 @@ import {
   type StructuralMaterialProfile,
 } from "./structuralPhysics.ts";
 import { deinterpenetrateClusters } from "./deinterpenetrate.ts";
+import {
+  placeProp,
+  propCautionBoard,
+  propCrate,
+  propDumpster,
+  propPallet,
+  propPlankStack,
+  propSackPile,
+  propSpool,
+  propSteelDrum,
+  propTarpPile,
+  propTyreStack,
+  type PropPiece,
+} from "../content/prefabs/coreProps.ts";
 
 export type BreakableMaterial =
   | "brick"
@@ -1492,10 +1506,10 @@ function createKhrushchevka(
   for (let index = 0; index < 4; index += 1) {
     const cx = x0 + 2.75 + index * 5.5;
     plinthPieces.push(
-      makePiece(`hru:plinth:s:${index}`, "hru:plinth", "concrete", "panel",
-        [cx, 0.19, z1], [5.48, 0.42, 0.3], plinthColor),
-      makePiece(`hru:plinth:n:${index}`, "hru:plinth", "concrete", "panel",
-        [cx, 0.19, z0], [5.48, 0.42, 0.3], plinthColor),
+      { ...makePiece(`hru:plinth:s:${index}`, "hru:plinth", "concrete", "panel",
+        [cx, 0.19, z1], [5.48, 0.42, 0.3], plinthColor), weathering: 0.5 },
+      { ...makePiece(`hru:plinth:n:${index}`, "hru:plinth", "concrete", "panel",
+        [cx, 0.19, z0], [5.48, 0.42, 0.3], plinthColor), weathering: 0.5 },
     );
   }
   for (const ex of [x0, x1]) {
@@ -2123,10 +2137,12 @@ function createStreets(): BreakableClusterDefinition[] {
   for (let index = 0; index < 15; index += 1) {
     const cx = -12 + index * 6;
     roadPieces.push(
-      makePiece(`town:road:main:${index}`, "town:roads", "asphalt", "groundTile",
+      { ...makePiece(`town:road:main:${index}`, "town:roads", "asphalt", "groundTile",
         [cx, 0.03, -12], [6, 0.1, 6], index % 2 === 0 ? "#4a4a48" : "#4e4e4c"),
-      makePiece(`town:road:south:${index}`, "town:roads", "asphalt", "groundTile",
+        weathering: index % 4 === 1 ? 0.4 : 0.1 },
+      { ...makePiece(`town:road:south:${index}`, "town:roads", "asphalt", "groundTile",
         [cx, 0.03, -30], [6, 0.1, 6], index % 2 === 0 ? "#4e4e4c" : "#4a4a48"),
+        weathering: index % 4 === 3 ? 0.4 : 0.1 },
     );
     // The cross street joins at cx=42 — no curb across its mouth.
     if (cx !== 42) {
@@ -2205,18 +2221,18 @@ function createGarages(): BreakableClusterDefinition {
 
   for (let wall = 0; wall <= 6; wall += 1) {
     pieces.push(
-      makePiece(`${id}:side:${wall}`, id, "brick", "brick",
+      { ...makePiece(`${id}:side:${wall}`, id, "brick", "brick",
         [originX + pitch * wall, 1.08, -22.15], [0.24, 2.2, 5.55],
-        silicateBrick[wall % silicateBrick.length]),
+        silicateBrick[wall % silicateBrick.length]), weathering: 0.42 },
     );
   }
 
   for (let box = 0; box < 6; box += 1) {
     const cx = originX + pitch * (box + 0.5);
     pieces.push(
-      makePiece(`${id}:back:${box}`, id, "brick", "brick",
+      { ...makePiece(`${id}:back:${box}`, id, "brick", "brick",
         [cx, 1.08, -24.9], [3.04, 2.2, 0.22],
-        silicateBrick[(box + 1) % silicateBrick.length]),
+        silicateBrick[(box + 1) % silicateBrick.length]), weathering: 0.45 },
       makePiece(`${id}:lintel:${box}`, id, "concrete", "panel",
         [cx, 2.09, -19.3], [3.28, 0.3, 0.24], "#a9aca8"),
       makePiece(`${id}:roof:${box}`, id, "concrete", "stoneBlock",
@@ -2485,6 +2501,271 @@ function createOutskirts(): BreakableClusterDefinition[] {
   ];
 }
 
+
+/**
+ * The town's lived-in layer: working clutter in nests (garage row, courtyard,
+ * the abandoned shell), dumpsters by the entrances, air conditioners and
+ * downpipes growing on the buildings, boarded windows and plaster patches on
+ * the shells, heaped soil and gravel, a shop sign, graffiti on the concrete
+ * fence and garages, road signs and caution boards. Human marks everywhere —
+ * the difference between a model block and a place people use.
+ */
+function createTownClutter(): BreakableClusterDefinition[] {
+  const clusters: BreakableClusterDefinition[] = [];
+
+  const asPieces = (
+    clusterId: string,
+    prefix: string,
+    props: readonly PropPiece[],
+    anchor: readonly [number, number, number],
+  ): BreakablePieceDefinition[] =>
+    placeProp(prefix, props, anchor).map((piece) => ({ ...piece, clusterId }));
+
+  // --- Working clutter nests ----------------------------------------------
+  const junk: BreakablePieceDefinition[] = [
+    // Garage row frontage: what a row of garages always accretes.
+    ...asPieces("town:junk", "garage:tyres", propTyreStack({ count: 3 }), [-11.6, 0, -18.0]),
+    ...asPieces("town:junk", "garage:drum:0", propSteelDrum({ color: "#4c6178" }), [-7.7, 0, -18.25]),
+    ...asPieces("town:junk", "garage:drum:1", propSteelDrum({ color: "#7a4a35" }), [-7.1, 0, -17.7]),
+    ...asPieces("town:junk", "garage:pallet", propPallet({ yaw: 0.35 }), [-4.4, 0, -18.05]),
+    ...asPieces("town:junk", "garage:spool", propSpool({ yaw: 1.15 }), [1.9, 0, -18.2]),
+    ...asPieces("town:junk", "garage:crate", propCrate({ yaw: 0.2 }), [5.5, 0, -18.3]),
+    ...asPieces("town:junk", "garage:planks", propPlankStack({ yaw: 0.15 }), [8.9, 0, -18.6]),
+    // Courtyard life by the old house.
+    ...asPieces("town:junk", "yard:crate", propCrate({ yaw: 0.5 }), [-3.1, 0, 4.6]),
+    ...asPieces("town:junk", "yard:drum", propSteelDrum({ color: "#6e4a38" }), [-2.2, 0, 5.4]),
+    ...asPieces("town:junk", "yard:tarp", propTarpPile({ yaw: 1.2 }), [3.6, 0, 4.9]),
+    ...asPieces("town:junk", "yard:planks", propPlankStack({ yaw: 1.6, count: 4 }), [4.7, 0, 3.6]),
+    ...asPieces("town:junk", "yard:sacks", propSackPile({}), [23.8, 0, 5.6]),
+    // The abandoned shell k4 collects the neighbourhood's cast-offs.
+    ...asPieces("town:junk", "shell:pallet:0", propPallet({ yaw: 0.2 }), [-6.2, 0, -33.5]),
+    ...asPieces("town:junk", "shell:pallet:1", propPallet({ yaw: 0.34 }), [-6.15, 0.19, -33.45]),
+    ...asPieces("town:junk", "shell:tyres", propTyreStack({ count: 4 }), [-4.5, 0, -33.8]),
+    ...asPieces("town:junk", "shell:drum", propSteelDrum({ color: "#66463a" }), [-8.05, 0, -33.4]),
+    ...asPieces("town:junk", "shell:crate", propCrate({ yaw: 1.1 }), [-9.3, 0, -33.95]),
+  ];
+  clusters.push(cluster("town:junk", "Street and yard clutter", "wood", "mounted", junk));
+
+  // --- Dumpsters by the entrances -----------------------------------------
+  const bins: BreakablePieceDefinition[] = [
+    ...asPieces("town:bins", "bin:k1", propDumpster({ yaw: 0.12 }), [18.9, 0, 1.2]),
+    ...asPieces("town:bins", "bin:k2", propDumpster({ yaw: -0.08, color: "#5d5a46" }), [24.5, 0, -16.15]),
+  ];
+  clusters.push(cluster("town:bins", "Courtyard dumpsters", "steel", "mounted", bins));
+
+  // --- Air conditioners on the lived-in blocks ----------------------------
+  const fixtures: BreakablePieceDefinition[] = [];
+  const acUnit = (
+    name: string,
+    x: number,
+    y: number,
+    z: number,
+  ): void => {
+    fixtures.push({
+      ...makePiece(`town:ac:${name}`, "town:growth-fixtures", "steel", "steelSheet",
+        [x, y, z], [0.66, 0.5, 0.4], "#b9bdba"),
+      bearsLoad: false,
+      sideAttachmentReach: 0.55,
+      contactBoxes: [{ position: [x, y, z], size: [0.66, 0.5, 0.4] }],
+      weathering: 0.3,
+    });
+    fixtures.push({
+      ...makePiece(`town:ac:${name}:grille`, "town:growth-fixtures", "steel", "steelSheet",
+        [x, y, z > 0 || z < -8 ? z + (z < -8 ? -0.22 : 0.22) : z + 0.22], [0.6, 0.42, 0.05], "#8f948f"),
+      bearsLoad: false,
+      sideAttachmentReach: 0.4,
+      contactBoxes: [{ position: [x, y, z], size: [0.6, 0.42, 0.5] }],
+    });
+  };
+  // k1 yard side (z = -1 face) and street side (z = -8 face).
+  acUnit("k1:a", 13.5, 4.15, -0.58);
+  acUnit("k1:b", 20.9, 1.55, -0.58);
+  acUnit("k1:c", 31.8, 4.15, -0.58);
+  acUnit("k1:d", 17.6, 6.75, -8.42);
+  acUnit("k1:e", 26.1, 4.15, -8.42);
+  // k2 main-street side (z = -17 face).
+  acUnit("k2:a", 16.2, 4.15, -16.56);
+  acUnit("k2:b", 25.6, 1.55, -16.56);
+  acUnit("k2:c", 30.4, 6.75, -16.56);
+
+  // --- Gutters and downpipes on the three old houses ----------------------
+  const houses: readonly (readonly [string, number, number])[] = [
+    ["h1", 0, 0],
+    ["h2", 56, 0],
+    ["h3", 56, -38],
+  ];
+  for (const [houseId, hx, hz] of houses) {
+    fixtures.push({
+      ...makePiece(`town:gutter:${houseId}`, "town:growth-fixtures", "steel", "steelSheet",
+        [hx, 5.32, hz + 0.88], [8.5, 0.14, 0.14], "#868b88"),
+      bearsLoad: false,
+      sideAttachmentReach: 0.6,
+      contactBoxes: [{ position: [hx, 5.32, hz + 0.88], size: [8.5, 0.14, 0.4] }],
+    });
+    // Downpipes in short segments: each attaches to the wall course beside it
+    // (the solver only lets a wall carry pieces shorter than itself).
+    for (const side of [-1, 1] as const) {
+      for (let segment = 0; segment < 5; segment += 1) {
+        fixtures.push({
+          ...makePiece(`town:downpipe:${houseId}:${side}:${segment}`, "town:growth-fixtures", "steel", "cylinder",
+            [hx + side * 4.3, 0.66 + segment * 1.02, hz + 0.78], [0.13, 1.02, 0.13], "#7f8481"),
+          bearsLoad: false,
+          sideAttachmentReach: 0.55,
+          contactBoxes: [{ position: [hx + side * 4.3, 0.66 + segment * 1.02, hz + 0.78], size: [0.5, 1.02, 0.5] }],
+          weathering: 0.35,
+        });
+      }
+    }
+  }
+  clusters.push(cluster("town:growth-fixtures", "Building fixtures grown over time", "steel", "mounted", fixtures));
+
+  // --- Boarded windows and plaster patches on the shells ------------------
+  const patches: BreakablePieceDefinition[] = [];
+  const boardUp = (name: string, x: number, y: number, z: number): void => {
+    for (const [index, tilt] of [-0.42, 0.46].entries()) {
+      patches.push({
+        ...makePiece(`town:boards:${name}:${index}`, "town:patches", "wood", "plank",
+          [x, y, z], [1.55, 0.2, 0.06], "#8a6c47", [0, 0, tilt]),
+        bearsLoad: false,
+        sideAttachmentReach: 0.5,
+        weathering: 0.3,
+      });
+    }
+  };
+  boardUp("k3:a", 52.3, 1.9, -16.86);
+  boardUp("k3:b", 63.5, 4.5, -16.86);
+  boardUp("k4:a", -6.4, 1.9, -34.86);
+  boardUp("k4:b", 3.2, 4.5, -34.86);
+  boardUp("k5:a", 18.6, 1.9, -34.86);
+  boardUp("k6:a", 52.5, 1.9, 19.14);
+  for (const [index, [px, py, pz, tone]] of (
+    [
+      [-5.6, 1.05, -25.07, "#8a5a43"],
+      [2.2, 1.2, -25.07, "#7f5340"],
+      [6.4, 0.95, -25.07, "#93604a"],
+    ] as const
+  ).entries()) {
+    patches.push({
+      ...makePiece(`town:patch:${index}`, "town:patches", "brick", "panel",
+        [px, py, pz], [1.5, 1.1, 0.06], tone),
+      bearsLoad: false,
+      sideAttachmentReach: 0.4,
+      weathering: 0.45,
+    });
+  }
+  clusters.push(cluster("town:patches", "Boarded windows and wall patches", "wood", "mounted", patches));
+
+  // --- Heaped soil, gravel and sand ---------------------------------------
+  const heaps: BreakablePieceDefinition[] = [];
+  const heap = (
+    name: string,
+    x: number,
+    z: number,
+    material: BreakableMaterial,
+    base: string,
+    top: string,
+    spread: number,
+  ): void => {
+    heaps.push({
+      ...makePiece(`town:heap:${name}:base`, "town:heaps", material, "stoneBlock",
+        [x, 0.26, z], [spread, 0.55, spread * 0.72], base, [0, x * 0.7, 0]),
+      weathering: 0.25,
+    });
+    heaps.push({
+      ...makePiece(`town:heap:${name}:top`, "town:heaps", material, "stoneBlock",
+        [x + 0.1, 0.68, z - 0.06], [spread * 0.62, 0.42, spread * 0.45], top, [0, x * 0.7 + 0.5, 0]),
+    });
+  };
+  heap("construction", 32, -32.6, "earth", "#5f4c36", "#6a563e", 2.9);
+  heap("gravel", -13.4, -21.4, "stone", "#7d7f7b", "#8a8c86", 2.2);
+  heap("sand", 17.6, 6.4, "soil", "#c2a878", "#cdb384", 2.0);
+  // Loose bricks shed beside the construction heap.
+  for (let index = 0; index < 5; index += 1) {
+    heaps.push({
+      ...makePiece(`town:heap:brick:${index}`, "town:heaps", "brick", "brick",
+        [30.4 + (index % 3) * 0.5, 0.12, -31.2 + Math.floor(index / 3) * 0.45],
+        [0.42, 0.2, 0.24], index % 2 === 0 ? "#9f3e29" : "#853523",
+        [0, index * 0.6, 0]),
+    });
+  }
+  clusters.push(cluster("town:heaps", "Heaped soil and materials", "earth", "mounted", heaps));
+
+  // --- Human marks: sign, graffiti, road signs, caution boards ------------
+  const marks: BreakablePieceDefinition[] = [];
+  // A shop signboard over the h2 door.
+  marks.push({
+    ...makePiece("town:sign:h2:board", "town:marks", "wood", "panel",
+      [56, 3.4, 0.9], [3.3, 0.72, 0.09], "#7d2f26"),
+    bearsLoad: false,
+    sideAttachmentReach: 0.45,
+  });
+  for (let letter = 0; letter < 6; letter += 1) {
+    marks.push({
+      ...makePiece(`town:sign:h2:letter:${letter}`, "town:marks", "wood", "panel",
+        [54.9 + letter * 0.46, 3.4, 0.97], [0.3, 0.4, 0.03], "#e8ded0"),
+      bearsLoad: false,
+      sideAttachmentReach: 0.3,
+    });
+  }
+  // Graffiti colour tags on the concrete fence (street side) and garage backs.
+  const tags: readonly (readonly [number, number, number, number, string, number])[] = [
+    [-9.2, 0.95, -26.38, 1.3, "#bf4936", -0.06],
+    [-7.4, 0.8, -26.38, 0.9, "#3a7ac0", 0.08],
+    [-4.9, 1.05, -26.38, 1.5, "#c0a13a", 0.04],
+    [-1.1, 0.85, -26.38, 1.1, "#58b06a", -0.09],
+    [1.6, 1.0, -26.38, 0.8, "#b45db0", 0.06],
+    [-7.9, 1.0, -25.06, 1.6, "#c05a2e", 0.05],
+    [-1.4, 0.9, -25.06, 1.2, "#4a86b8", -0.07],
+    [4.3, 1.05, -25.06, 1.4, "#bcae4a", 0.08],
+  ];
+  for (const [index, [tx, ty, tz, width, color, tilt]] of tags.entries()) {
+    marks.push({
+      ...makePiece(`town:graffiti:${index}`, "town:marks", "concrete", "panel",
+        [tx, ty, tz], [width, 0.55, 0.03], color, [0, 0, tilt]),
+      bearsLoad: false,
+      sideAttachmentReach: 0.35,
+    });
+  }
+  // Road signs at the junction.
+  const roadSign = (
+    name: string,
+    x: number,
+    z: number,
+    plateColor: string,
+    diamond: boolean,
+  ): void => {
+    marks.push({
+      ...makePiece(`town:roadsign:${name}:pole`, "town:marks", "steel", "steelSheet",
+        [x, 1.3, z], [0.09, 2.6, 0.09], "#6a716e"),
+      carriesAttachments: true,
+    });
+    marks.push({
+      ...makePiece(`town:roadsign:${name}:plate`, "town:marks", "steel", "steelSheet",
+        [x, 2.42, z], [0.56, 0.56, 0.05], plateColor, diamond ? [0, 0, Math.PI / 4] : undefined),
+      carriesAttachments: true,
+      sideAttachmentReach: 0.3,
+    });
+    marks.push({
+      ...makePiece(`town:roadsign:${name}:mark`, "town:marks", "steel", "steelSheet",
+        [x, 2.42, z + 0.04], [0.3, 0.3, 0.02], "#e8e6df", diamond ? [0, 0, Math.PI / 4] : undefined),
+      bearsLoad: false,
+      sideAttachmentReach: 0.2,
+    });
+  };
+  roadSign("crosswalk", 36.4, -7.2, "#2b5fa8", false);
+  roadSign("priority", 47.4, -16.9, "#d8b13a", true);
+  clusters.push(cluster("town:marks", "Signs, graffiti and road marks", "steel", "mounted", marks));
+
+  // --- Caution boards at the work sites ------------------------------------
+  const caution: BreakablePieceDefinition[] = [
+    ...asPieces("town:caution", "caution:construction", propCautionBoard({ yaw: 0.3 }), [29.6, 0, -32.0]),
+    ...asPieces("town:caution", "caution:gravel", propCautionBoard({ yaw: 1.25, width: 1.3 }), [-12.4, 0, -20.2]),
+  ];
+  clusters.push(cluster("town:caution", "Caution boards", "wood", "mounted", caution));
+
+  return clusters;
+}
+
 export const breakableClusters = [
   ...createGroundTiles(),
   ...createOutskirts(),
@@ -2539,6 +2820,7 @@ export const breakableClusters = [
   createPlayground("playground:0", 21, 3.8),
   createPlayground("playground:1", 65, 7),
   createTownLamps(),
+  ...createTownClutter(),
 ] as const;
 
 export const lampDefinitions: readonly LampDefinition[] = lampCollector;
