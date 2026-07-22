@@ -4,6 +4,16 @@ import type {
   ScenePrefabLibrary,
   ScenePrefabPieceDefinition,
 } from "../scenes/sceneContract.ts";
+import {
+  propBucket,
+  propCask,
+  propCaskLying,
+  propChest,
+  propCrate,
+  propPlankStack,
+  propSackPile,
+  propTarpPile,
+} from "./coreProps.ts";
 
 const timber = "#725038";
 const darkTimber = "#3f3027";
@@ -649,34 +659,15 @@ const shield = prefab("viking:shield", "Painted round shield", ["viking", "shiel
   },
 ]);
 
-const barrelPieces: ScenePrefabPieceDefinition[] = [
-  {
-    id: "body",
-    material: "wood",
-    shape: "cylinder",
-    position: [0, 0.68, 0],
-    size: [1.05, 1.36, 1.05],
-    color: timber,
-  },
-];
-for (const [bandIndex, y] of [0.28, 0.68, 1.08].entries()) {
-  for (let segment = 0; segment < 8; segment += 1) {
-    const angle = (segment / 8) * Math.PI * 2;
-    barrelPieces.push({
-      id: `band:${bandIndex}:${segment}`,
-      material: "steel",
-      shape: "steelSheet",
-      position: [Math.cos(angle) * 0.52, y, Math.sin(angle) * 0.52],
-      // Lie each plate TANGENT to the barrel so the three hoops read as bands,
-      // not steel spokes radiating in every direction.
-      rotation: [0, -angle - Math.PI / 2, 0],
-      size: [0.42, 0.1, 0.07],
-      color: iron,
-      bearsLoad: false,
-    });
-  }
-}
-const barrel = prefab("viking:barrel", "Ale barrel", ["viking", "storage", "barrel"], barrelPieces);
+// The ale cask now comes from the shared core props, so every map uses the
+// same barrel (standing and toppled variants).
+const barrel = prefab("viking:barrel", "Ale barrel", ["viking", "storage", "barrel"], propCask({ timber: "#6f4f36" }));
+const barrelLying = prefab("core:barrel-lying", "Toppled cask", ["core", "storage", "barrel"], propCaskLying({}));
+const coreCrate = prefab("core:crate", "Slatted crate", ["core", "storage"], propCrate({}));
+const coreSacks = prefab("core:sacks", "Burlap sacks", ["core", "storage"], propSackPile({}));
+const coreBucket = prefab("core:bucket", "Wooden bucket", ["core", "domestic"], propBucket({}));
+const corePlankStack = prefab("core:plank-stack", "Plank stack", ["core", "lumber"], propPlankStack({}));
+const coreTarp = prefab("core:tarp", "Folded tarpaulin", ["core", "cloth"], propTarpPile({}));
 
 const torch = prefab("viking:torch", "Night torch", ["viking", "light", "torch"], [
   { id: "post", material: "wood", shape: "plank", position: [0, 1.25, 0], size: [0.18, 2.5, 0.18], color: darkTimber },
@@ -908,12 +899,7 @@ const bed = furnishing("viking:bed", "Sleeping bench", ["viking", "furniture", "
   { id: "pillow", material: "cloth", shape: "panel", position: [-0.72, 0.5, 0], size: [0.42, 0.14, 0.64], color: "#c3b590", bearsLoad: false },
 ]);
 
-const chest = furnishing("viking:chest", "Iron-bound chest", ["viking", "furniture", "storage"], [
-  { id: "body", material: "wood", shape: "plank", position: [0, 0.23, 0], size: [0.86, 0.46, 0.52], color: timber, carriesAttachments: true },
-  { id: "lid", material: "wood", shape: "plank", position: [0, 0.52, 0], size: [0.9, 0.12, 0.56], color: darkTimber },
-  { id: "band:0", material: "steel", shape: "steelSheet", position: [-0.24, 0.34, 0.28], size: [0.09, 0.5, 0.05], color: iron, bearsLoad: false, sideAttachmentReach: 0.28 },
-  { id: "band:1", material: "steel", shape: "steelSheet", position: [0.24, 0.34, 0.28], size: [0.09, 0.5, 0.05], color: iron, bearsLoad: false, sideAttachmentReach: 0.28 },
-]);
+const chest = prefab("viking:chest", "Iron-bound chest", ["viking", "furniture", "storage"], propChest({}));
 
 const cupboard = furnishing("viking:cupboard", "Kitchen cupboard", ["viking", "furniture", "storage"], [
   { id: "cabinet", material: "wood", shape: "plank", position: [0, 0.29, 0], size: [1.4, 0.58, 0.46], color: timber, carriesAttachments: true },
@@ -1050,6 +1036,12 @@ const prefabs = [
   baskets,
   toolWall,
   smokeLouver,
+  barrelLying,
+  coreCrate,
+  coreSacks,
+  coreBucket,
+  corePlankStack,
+  coreTarp,
 ] as const;
 
 export const vikingPrefabLibrary: ScenePrefabLibrary = new Map(

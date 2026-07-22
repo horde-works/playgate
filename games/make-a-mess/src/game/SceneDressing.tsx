@@ -1,0 +1,373 @@
+"use client";
+
+import { useMemo, type RefObject } from "react";
+import { WireSpans, type WireSpan } from "./WireSpans";
+import { IvyPatches, WeedClumps, type IvyRun, type WeedPoint } from "./Undergrowth";
+import {
+  vikingPlanLocalPoint,
+  vikingVillageHomes,
+} from "../content/scenes/vikingVillagePlan";
+
+/**
+ * Per-scene "connective tissue": wires and ropes strung between the authored
+ * structures, ivy climbing their walls and weeds pooling at their footings.
+ * All of it is decoration (three draw calls max), authored against the same
+ * coordinates the scenes build from — so it hugs the world instead of
+ * floating in it.
+ */
+
+interface DressingConfig {
+  readonly wires?: readonly WireSpan[];
+  readonly ivy?: readonly IvyRun[];
+  readonly weeds?: readonly WeedPoint[];
+}
+
+function hash(index: number, salt: number): number {
+  const value = Math.sin(index * 12.9898 + salt * 78.233) * 43758.5453;
+  return value - Math.floor(value);
+}
+
+// ---------------------------------------------------------------------------
+// Viking village
+
+// Mirrors palisadeRadius() in vikingVillageDocument.ts (kept inline so the
+// open-house route does not pull the whole viking document into its bundle).
+const VIKING_CENTER_Z = -10;
+function vikingPalisadeRadius(angle: number): number {
+  return (
+    57 +
+    Math.sin(angle * 3.1) * 2.8 +
+    Math.sin(angle * 7 + 1.4) * 0.85 +
+    Math.sin(angle * 13 - 0.5) * 0.32
+  );
+}
+
+const ROPE = "#66573c";
+
+function vikingDressing(): DressingConfig {
+  const northZ = VIKING_CENTER_Z + vikingPalisadeRadius(Math.PI / 2);
+  const southZ = VIKING_CENTER_Z - vikingPalisadeRadius(Math.PI * 1.5);
+
+  const wires: WireSpan[] = [];
+  // Pennant ropes across both gates, plus a taut guy-rope bracing each post.
+  for (const [gateZ, inward] of [
+    [northZ, -1],
+    [southZ, 1],
+  ] as const) {
+    wires.push({
+      from: [-3.72, 6.3, gateZ],
+      to: [3.72, 6.3, gateZ],
+      sag: 0.55,
+      thickness: 0.05,
+      color: ROPE,
+    });
+    for (const side of [-1, 1] as const) {
+      wires.push({
+        from: [side * 3.72, 6.35, gateZ],
+        to: [side * 5.9, 0.15, gateZ + inward * 3.4],
+        sag: 0.06,
+        thickness: 0.045,
+        color: "#59492f",
+      });
+    }
+  }
+  // A festoon line from the hall's south gable across the commons to the well.
+  wires.push({
+    from: [0, 7.05, -2.35],
+    to: [-10, 3.05, 13],
+    sag: 1.15,
+    thickness: 0.05,
+    color: ROPE,
+  });
+
+  const ivy: IvyRun[] = [];
+  // Short tangent arcs of ivy on the palisade's inner face, skipping the gates.
+  for (let arc = 0; arc < 12; arc += 1) {
+    const angle = (arc / 12) * Math.PI * 2 + 0.26;
+    const nearNorthGate = Math.abs(Math.sin(angle) - 1) < 0.035 && Math.cos(angle) < 0.25;
+    const nearSouthGate = Math.abs(Math.sin(angle) + 1) < 0.035 && Math.cos(angle) < 0.25;
+    if (nearNorthGate || nearSouthGate) {
+      continue;
+    }
+    if (hash(arc, 3) > 0.7) {
+      continue; // growth is patchy, not a hedge
+    }
+    const spread = 0.05 + hash(arc, 5) * 0.035;
+    const radius = vikingPalisadeRadius(angle) - 0.48;
+    const pointAt = (a: number): readonly [number, number, number] => [
+      Math.cos(a) * radius,
+      0.12,
+      VIKING_CENTER_Z + Math.sin(a) * radius,
+    ];
+    ivy.push({
+      a: pointAt(angle - spread),
+      b: pointAt(angle + spread),
+      height: 2.4 + hash(arc, 7) * 1.2,
+      normal: [-Math.cos(angle), -Math.sin(angle)],
+      density: 3.6,
+    });
+  }
+  // Back gables of a few dwellings and the hall's north gable.
+  for (const homeId of ["weaver", "fisher", "family-north", "elder"]) {
+    const home = vikingVillageHomes.find((entry) => entry.id === homeId);
+    if (!home) {
+      continue;
+    }
+    const a = vikingPlanLocalPoint(home.position, home.yaw, -home.width / 2 + 0.7, -home.length / 2 - 0.4);
+    const b = vikingPlanLocalPoint(home.position, home.yaw, home.width / 2 - 0.7, -home.length / 2 - 0.4);
+    const origin = vikingPlanLocalPoint(home.position, home.yaw, 0, 0);
+    const out = vikingPlanLocalPoint(home.position, home.yaw, 0, -1);
+    const normalLength = Math.hypot(out[0] - origin[0], out[1] - origin[1]) || 1;
+    ivy.push({
+      a: [a[0], 0.25, a[1]],
+      b: [b[0], 0.25, b[1]],
+      height: 2.3,
+      normal: [(out[0] - origin[0]) / normalLength, (out[1] - origin[1]) / normalLength],
+      density: 3.4,
+    });
+  }
+  ivy.push({
+    a: [-6, 0.25, -31.85],
+    b: [6, 0.25, -31.85],
+    height: 3.6,
+    normal: [0, -1],
+    density: 3,
+  });
+
+  const weeds: WeedPoint[] = [];
+  // Weeds pooling along the palisade footing…
+  for (let step = 0; step < 72; step += 1) {
+    const angle = (step / 72) * Math.PI * 2;
+    if (hash(step, 21) > 0.62) {
+      continue;
+    }
+    const radius = vikingPalisadeRadius(angle) - 1.05 - hash(step, 22) * 0.5;
+    weeds.push({
+      x: Math.cos(angle) * radius,
+      z: VIKING_CENTER_Z + Math.sin(angle) * radius,
+      scale: 0.8 + hash(step, 23) * 0.7,
+      dry: 0.25 + hash(step, 24) * 0.6,
+    });
+  }
+  // …and at every dwelling's wall footings.
+  for (const [homeIndex, home] of vikingVillageHomes.entries()) {
+    for (let sprout = 0; sprout < 7; sprout += 1) {
+      const seed = homeIndex * 13 + sprout;
+      const side = sprout % 2 === 0 ? 1 : -1;
+      const local = vikingPlanLocalPoint(
+        home.position,
+        home.yaw,
+        side * (home.width / 2 + 0.55 + hash(seed, 31) * 0.4),
+        (hash(seed, 32) - 0.5) * home.length * 0.85,
+      );
+      weeds.push({
+        x: local[0],
+        z: local[1],
+        scale: 0.7 + hash(seed, 33) * 0.6,
+        dry: 0.2 + hash(seed, 34) * 0.5,
+      });
+    }
+  }
+  // Hall footing and the base of the well.
+  for (let sprout = 0; sprout < 10; sprout += 1) {
+    const side = sprout % 2 === 0 ? 1 : -1;
+    weeds.push({
+      x: side * (7.6 + hash(sprout, 41) * 0.5),
+      z: -30 + hash(sprout, 42) * 26,
+      scale: 0.75 + hash(sprout, 43) * 0.6,
+      dry: 0.3 + hash(sprout, 44) * 0.5,
+    });
+  }
+
+  return { wires, ivy, weeds };
+}
+
+// ---------------------------------------------------------------------------
+// Open house (the town block)
+
+function openHouseDressing(): DressingConfig {
+  const wires: WireSpan[] = [];
+  const POWER = "#1d1e1c";
+
+  // Overhead lines pole-to-pole along all three streets.
+  const mainPoles = [-8, 10, 28, 58, 70];
+  for (let index = 0; index < mainPoles.length - 1; index += 1) {
+    wires.push({
+      from: [mainPoles[index], 4.62, -8.15],
+      to: [mainPoles[index + 1], 4.62, -8.15],
+      color: POWER,
+    });
+  }
+  const southPoles = [-2, 22, 52, 70];
+  for (let index = 0; index < southPoles.length - 1; index += 1) {
+    wires.push({
+      from: [southPoles[index], 4.62, -26.15],
+      to: [southPoles[index + 1], 4.62, -26.15],
+      color: POWER,
+    });
+  }
+  const crossPoles = [-44, -22, 4];
+  for (let index = 0; index < crossPoles.length - 1; index += 1) {
+    wires.push({
+      from: [45.85, 4.62, crossPoles[index]],
+      to: [45.85, 4.62, crossPoles[index + 1]],
+      color: POWER,
+    });
+  }
+  // Service drops from the street poles into the buildings.
+  const drops: readonly (readonly [WireSpan["from"], WireSpan["to"]])[] = [
+    [[10, 4.62, -8.15], [16, 6.2, -7.85]],
+    [[28, 4.62, -8.15], [30, 6.2, -7.85]],
+    [[-8, 4.62, -8.15], [2.8, 5.2, -6.75]],
+    [[10, 4.62, -8.15], [14, 6.2, -16.9]],
+    [[45.85, 4.62, -22], [48.2, 6.2, -20.5]],
+    [[-2, 4.62, -26.15], [-6, 2.45, -24.85]],
+  ];
+  for (const [from, to] of drops) {
+    wires.push({ from, to, color: POWER, thickness: 0.03 });
+  }
+  // Dead cables snaking on the ground by the garages and the k1 entrance.
+  const groundRuns: readonly (readonly (readonly [number, number, number])[])[] = [
+    [
+      [-10.8, 0.07, -19.0],
+      [-7.4, 0.06, -18.55],
+      [-4.2, 0.07, -19.15],
+      [-1.6, 0.06, -18.7],
+    ],
+    [
+      [21, 0.07, -0.8],
+      [24.5, 0.06, -1.55],
+      [27.6, 0.07, -0.85],
+    ],
+  ];
+  for (const run of groundRuns) {
+    for (let index = 0; index < run.length - 1; index += 1) {
+      wires.push({
+        from: run[index],
+        to: run[index + 1],
+        sag: 0,
+        thickness: 0.05,
+        color: "#161717",
+        segments: 3,
+      });
+    }
+  }
+
+  const ivy: IvyRun[] = [
+    // The garages' back wall — classic overgrowth territory.
+    { a: [-10.9, 0.2, -25.08], b: [8.9, 0.2, -25.08], height: 2.05, normal: [0, -1], density: 4.6 },
+    // Both faces of the concrete fence.
+    { a: [-11, 0.15, -26.16], b: [9.6, 0.15, -26.16], height: 1.85, normal: [0, 1], density: 3.2 },
+    { a: [-8.5, 0.15, -26.44], b: [2.5, 0.15, -26.44], height: 1.8, normal: [0, -1], density: 3.6 },
+    // The abandoned shell k4: ivy takes its east gable two floors up.
+    { a: [10.22, 0.3, -41.5], b: [10.22, 0.3, -35.5], height: 5.0, normal: [1, 0], density: 2.8 },
+    // The old house's west wall.
+    { a: [-4.28, 0.25, -6.35], b: [-4.28, 0.25, 0.35], height: 3.1, normal: [-1, 0], density: 3.4 },
+  ];
+
+  const weeds: WeedPoint[] = [];
+  // Seams along the main street curbs (skipping the junction mouth).
+  for (let step = 0; step < 52; step += 1) {
+    const x = -11 + step * 1.62;
+    if (x > 36 && x < 48) {
+      continue;
+    }
+    if (hash(step, 51) > 0.55) {
+      continue;
+    }
+    const north = hash(step, 52) > 0.5;
+    weeds.push({
+      x: x + (hash(step, 53) - 0.5) * 0.7,
+      z: north ? -8.62 + hash(step, 54) * 0.25 : -15.38 - hash(step, 54) * 0.25,
+      scale: 0.55 + hash(step, 55) * 0.5,
+      dry: 0.35 + hash(step, 56) * 0.5,
+    });
+  }
+  // Garage row: grass against the back and side walls.
+  for (let step = 0; step < 18; step += 1) {
+    weeds.push({
+      x: -11 + step * 1.18 + (hash(step, 61) - 0.5) * 0.5,
+      z: -25.35 - hash(step, 62) * 0.35,
+      scale: 0.7 + hash(step, 63) * 0.6,
+      dry: 0.3 + hash(step, 64) * 0.4,
+    });
+  }
+  // The concrete fence line collects the tallest weeds.
+  for (let step = 0; step < 16; step += 1) {
+    const side = step % 2 === 0 ? 1 : -1;
+    weeds.push({
+      x: -11 + step * 1.32 + (hash(step, 71) - 0.5) * 0.6,
+      z: -26.3 + side * (0.42 + hash(step, 72) * 0.3),
+      scale: 0.85 + hash(step, 73) * 0.75,
+      dry: 0.25 + hash(step, 74) * 0.55,
+    });
+  }
+  // Khrushchevka plinths (the strip mowers never reach).
+  for (const [buildingIndex, [bx0, bx1, bz]] of (
+    [
+      [12.6, 33.4, -0.55],
+      [12.6, 33.4, -8.45],
+      [12.6, 33.4, -16.55],
+      [-11.4, 9.4, -34.55],
+      [14.6, 35.4, -34.55],
+      [48.6, 69.4, 19.45],
+    ] as const
+  ).entries()) {
+    for (let sprout = 0; sprout < 7; sprout += 1) {
+      const seed = buildingIndex * 17 + sprout;
+      if (hash(seed, 81) > 0.72) {
+        continue;
+      }
+      weeds.push({
+        x: bx0 + hash(seed, 82) * (bx1 - bx0),
+        z: bz + (hash(seed, 83) - 0.5) * 0.3,
+        scale: 0.5 + hash(seed, 84) * 0.5,
+        dry: 0.3 + hash(seed, 85) * 0.5,
+      });
+    }
+  }
+  // Playground edges.
+  for (const [px, pz] of [
+    [21, 3.8],
+    [65, 7],
+  ] as const) {
+    for (let sprout = 0; sprout < 8; sprout += 1) {
+      const angle = (sprout / 8) * Math.PI * 2 + px;
+      weeds.push({
+        x: px + Math.cos(angle) * (4.1 + hash(sprout + px, 91) * 0.8),
+        z: pz + Math.sin(angle) * (3.6 + hash(sprout + px, 92) * 0.8),
+        scale: 0.6 + hash(sprout + px, 93) * 0.5,
+        dry: 0.25 + hash(sprout + px, 94) * 0.45,
+      });
+    }
+  }
+
+  return { wires, ivy, weeds };
+}
+
+// ---------------------------------------------------------------------------
+
+const configBuilders: Record<string, () => DressingConfig> = {
+  "viking-village": vikingDressing,
+  "open-house": openHouseDressing,
+};
+
+export function SceneDressing({
+  sceneId,
+  nightRef,
+}: {
+  sceneId: string;
+  nightRef: RefObject<number>;
+}) {
+  const config = useMemo(() => configBuilders[sceneId]?.(), [sceneId]);
+  if (!config) {
+    return null;
+  }
+  return (
+    <>
+      {config.wires?.length ? <WireSpans spans={config.wires} /> : null}
+      {config.ivy?.length ? <IvyPatches runs={config.ivy} nightRef={nightRef} /> : null}
+      {config.weeds?.length ? <WeedClumps points={config.weeds} nightRef={nightRef} /> : null}
+    </>
+  );
+}

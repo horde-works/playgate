@@ -112,6 +112,7 @@ import {
 } from "./DynamicBreakableWorld";
 import { Birds } from "./Birds";
 import { GrassField } from "./GrassField";
+import { SceneDressing } from "./SceneDressing";
 import { HingedDoorSystem } from "./HingedDoorSystem";
 import { SmokePlumes } from "./SmokePlumes";
 import { WindController } from "./WindController";
@@ -4307,6 +4308,7 @@ function OpenWorldScene({
       <SceneEnvironment theme={scene.environment} />
       <WindController />
       <OpenWorldShell scene={scene} />
+      <SceneDressing sceneId={scene.id} nightRef={nightRef} />
       {scene.id === "viking-village" && scene.worldRadius ? (
         <>
           <GrassField
