@@ -206,12 +206,19 @@ is dropped) so shattered windows and lamps go dark.
 
 ### Rounds are faceted, not sliced
 
-The `cylinder` shape exists, but the preferred way to build anything round that
-should break well is a **faceted stack of ordinary boxes** — a stepped octagonal
-silhouette (`addFacetedCylinder` in `grandTerminalScene.ts`). Boilers, chimneys,
-wheels, columns and barrels are built this way. A hit then carves the same cubic
-voxel debris as every wall, instead of an axial "slice" that reads as an error.
-This is the house pattern for round destructibles.
+The `cylinder` shape exists, but for rigid machine parts the preferred way to
+build anything round that should break well is a **faceted stack of ordinary
+boxes** — a stepped octagonal silhouette (`addFacetedCylinder` in
+`grandTerminalScene.ts`). Boilers, chimneys, wheels, columns and barrels are
+built this way. A hit then carves the same cubic voxel debris as every wall,
+instead of an axial "slice" that reads as an error.
+
+**Timber is the exception.** Logs stay true `cylinder`s (cheaper — thousands
+share one instanced batch — and a better silhouette than facets), and get their
+own break law: `sliceLog` in `destructionRuntime.ts` snaps a struck log into
+shorter round **billets** at the impact point and throws a burst of thin,
+grain-aligned **splinters**, so a broken beam reads as riven wood rather than a
+cut pipe or a box soup. Non-wood cylinders still use the generic `sliceCylinder`.
 
 ### Filling gaps between straight walls and curved roofs
 
@@ -250,6 +257,25 @@ angles, and baked-AO/sky-exposure sampling. The shader cache key
 don't collide. Lit glass (`litWindowColor`) carries an emissive that the day/night
 cycle ramps up after dusk — this drives glowing signage such as the terminal's
 departures board.
+
+**Organic weathering (biofilm).** The same base pass grows moss and mould at no
+extra draw cost. A per-instance `weathering` amount — compiled from a piece's
+`SurfaceTreatment` (`moss`/`mold`/`damp`) and packed into the spare `.w` of the
+`materialAnchor` vec4 to stay under WebGL's attribute cap — feeds a world-space
+noise mask: moss creeps onto up-facing and shaded surfaces, mould and damp rise
+from the ground, and both read matte. Metals, glass and cloth have zero
+receptivity, and a scene that authors no treatments is untouched. This ages the
+Viking village's logs, roofs, palisade and boulders.
+
+### Grass field (`GrassField.tsx`)
+
+Ground cover for landscape scenes is one instanced draw: thousands of tufts
+(each a fan of thin, tapered, cutout-alpha blades) scattered by deterministic
+hash over the circular world. The vertex shader sways blade tips with a cheap
+sine (per-tuft phase) and **shrinks distant tufts into the ground** past a fade
+radius, so far grass costs nothing and never pops; a `uLight` uniform dims it
+with the night factor. Cutout alpha keeps it depth-correct and sort-free. It is
+mounted per-scene (currently `viking-village`).
 
 ### Post-processing (`CinematicPostProcessing.tsx`)
 

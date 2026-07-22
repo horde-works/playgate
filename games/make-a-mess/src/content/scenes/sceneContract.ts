@@ -68,6 +68,8 @@ export interface ScenePrefabPieceDefinition {
   readonly hinge?: SceneHinge;
   readonly light?: SceneLightSource;
   readonly landscapeSurface?: LandscapeSurfaceProfile;
+  /** 0..1 organic weathering receptivity fed to the biofilm shader mask. */
+  readonly weathering?: number;
 }
 
 export interface ScenePrefabDefinition {
@@ -107,6 +109,8 @@ export interface ScenePrimitiveDefinition extends SceneObjectBase {
   readonly hinge?: SceneHinge;
   readonly light?: SceneLightSource;
   readonly landscapeSurface?: LandscapeSurfaceProfile;
+  /** 0..1 organic weathering receptivity fed to the biofilm shader mask. */
+  readonly weathering?: number;
 }
 
 export type SceneObjectDefinition =

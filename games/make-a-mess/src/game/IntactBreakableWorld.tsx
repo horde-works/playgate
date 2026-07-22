@@ -105,7 +105,9 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
     const next = (
       batch.geometryKind === "cylinder" ? UNIT_CYLINDER : UNIT_BOX
     ).clone();
-    const anchors = new Float32Array(batch.pieces.length * 3);
+    // xyz = world anchor, w = organic weathering amount (packed to avoid a
+    // separate instanced attribute — WebGL's attribute count is nearly full).
+    const anchors = new Float32Array(batch.pieces.length * 4);
     const aoA = new Float32Array(batch.pieces.length * 4).fill(1);
     const aoB = new Float32Array(batch.pieces.length * 4).fill(1);
     const sky = new Float32Array(batch.pieces.length).fill(1);
@@ -115,7 +117,10 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
     const facePos = new Float32Array(batch.pieces.length * 3).fill(1);
     const faceNeg = new Float32Array(batch.pieces.length * 3).fill(1);
     batch.pieces.forEach((piece, index) => {
-      anchors.set(materialAnchor(piece.position), index * 3);
+      anchors.set(materialAnchor(piece.position), index * 4);
+      // Organic weathering receptivity (0 = pristine): the shader turns it
+      // into moss on up-faces and mould near the ground.
+      anchors[index * 4 + 3] = piece.weathering ?? 0;
       if (piece.shape === "groundTile") {
         facePos.fill(0, index * 3, index * 3 + 3);
         faceNeg.fill(0, index * 3, index * 3 + 3);
@@ -133,7 +138,7 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
     });
     next.setAttribute(
       "materialAnchor",
-      new InstancedBufferAttribute(anchors, 3, false),
+      new InstancedBufferAttribute(anchors, 4, false),
     );
     next.setAttribute(
       "bakedAoA",

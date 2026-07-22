@@ -47,9 +47,12 @@ function treatedColor(
   color: string,
   treatments: readonly SurfaceTreatment[] | undefined,
 ): string {
+  // A gentle base tone only: the spatial biofilm pattern now lives in the
+  // shader (driven by the `weathering` attribute below), so this flat tint is
+  // kept subtle to avoid double-darkening a surface that the shader also ages.
   let next = color;
   for (const treatment of treatments ?? []) {
-    const amount = Math.max(0, Math.min(1, treatment.amount));
+    const amount = Math.max(0, Math.min(1, treatment.amount)) * 0.4;
     if (treatment.kind === "damp") {
       next = multiplyColor(next, [1 - amount * 0.3, 1 - amount * 0.25, 1 - amount * 0.22]);
     } else if (treatment.kind === "moss") {
@@ -59,6 +62,39 @@ function treatedColor(
     }
   }
   return next;
+}
+
+// Materials that can grow moss, hold mould or spall render. Metals, glass and
+// cloth stay clean, so their weathering receptivity is zero and the shader
+// biofilm skips them entirely.
+const weatheringReceptivity: Partial<Record<string, number>> = {
+  wood: 1,
+  stone: 1,
+  brick: 0.95,
+  concrete: 0.9,
+  plaster: 1,
+  basalt: 0.85,
+  graphiteStone: 0.7,
+  foliage: 1,
+};
+
+function weatheringAmount(
+  material: string,
+  treatments: readonly SurfaceTreatment[] | undefined,
+): number | undefined {
+  const receptivity = weatheringReceptivity[material] ?? 0;
+  if (receptivity === 0 || !treatments || treatments.length === 0) {
+    return undefined;
+  }
+  let amount = 0;
+  for (const treatment of treatments) {
+    const strength = Math.max(0, Math.min(1, treatment.amount));
+    // Moss reads strongest, mould a touch less, plain damp mostly as sheen.
+    const weight = treatment.kind === "moss" ? 1 : treatment.kind === "mold" ? 0.9 : 0.55;
+    amount = Math.max(amount, strength * weight);
+  }
+  const combined = amount * receptivity;
+  return combined > 0.001 ? Math.min(1, combined) : undefined;
 }
 
 function rotationMatrix(rotation: SceneEuler = [0, 0, 0]): RotationMatrix {
@@ -246,6 +282,7 @@ function compilePiece(
     sideAttachmentReach: source.sideAttachmentReach,
     contactBearingOrder: source.contactBearingOrder,
     landscapeSurface: source.landscapeSurface,
+    weathering: source.weathering ?? weatheringAmount(source.material, object.surface),
     hinge: transformedHinge(source.hinge, object.transform),
   };
   return {
@@ -289,6 +326,7 @@ function primitiveSource(object: Extract<SceneObjectDefinition, { kind: "primiti
     hinge: object.hinge,
     light: object.light,
     landscapeSurface: object.landscapeSurface,
+    weathering: object.weathering,
   };
 }
 

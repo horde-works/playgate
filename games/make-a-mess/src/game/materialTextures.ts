@@ -743,7 +743,10 @@ export function getPieceMaterial(
         .replace(
           "#include <common>",
           `#include <common>
-attribute vec3 materialAnchor;
+// materialAnchor.xyz is the world-space anchor; .w carries the organic
+// weathering amount. Packed into this vec4 so it costs no extra vertex
+// attribute slot (WebGL caps the count, and instanceMatrix already eats four).
+attribute vec4 materialAnchor;
 attribute float silicateJointBand;
 attribute vec3 silicateJointTint;
 attribute vec4 bakedAoA;
@@ -764,6 +767,7 @@ varying float vBakedAo;
 varying float vBakedSky;
 varying vec3 vMaterialFaceMaskPos;
 varying vec3 vMaterialFaceMaskNeg;
+varying float vWeathering;
 varying vec3 vBevelAxisX;
 varying vec3 vBevelAxisY;
 varying vec3 vBevelAxisZ;
@@ -783,7 +787,7 @@ vec3 materialInstanceScale = vec3(
   length(instanceMatrix[1].xyz),
   length(instanceMatrix[2].xyz)
 );
-vMaterialCoordinate = materialAnchor + position * materialInstanceScale;
+vMaterialCoordinate = materialAnchor.xyz + position * materialInstanceScale;
 vLandscapeSurfaceProfile = 1.0 - step(-0.5, silicateJointBand);
 vMaterialSurfaceNormal = normal;
 vMaterialBoxPosition = position;
@@ -807,6 +811,7 @@ vBevelAxisY = normalize(normalMatrix * (materialInstanceRotation * vec3(0.0, 1.0
 vBevelAxisZ = normalize(normalMatrix * (materialInstanceRotation * vec3(0.0, 0.0, 1.0)));
 vMaterialFaceMaskPos = materialFaceMaskPos;
 vMaterialFaceMaskNeg = materialFaceMaskNeg;
+vWeathering = materialAnchor.w;
 
 vec3 materialProjectionNormal = abs(normal);
 vec2 materialProjectedUv;
@@ -850,6 +855,7 @@ varying float vBakedAo;
 varying float vBakedSky;
 varying vec3 vMaterialFaceMaskPos;
 varying vec3 vMaterialFaceMaskNeg;
+varying float vWeathering;
 varying vec3 vBevelAxisX;
 varying vec3 vBevelAxisY;
 varying vec3 vBevelAxisZ;
@@ -932,6 +938,42 @@ float materialStreakAmount = materialStreakNoise
   * (1.0 - smoothstep(0.25, 0.6, abs(vMaterialSurfaceNormal.y)))
   * ${appearance.streaking.toFixed(4)};
 diffuseColor.rgb *= 1.0 - materialStreakAmount * 0.34;
+
+// Organic biofilm: moss creeps onto up-facing, shaded and sheltered surfaces,
+// while mould and rising damp darken the base of every wall. Driven by the
+// per-instance weathering amount, so pristine scenes (weathering == 0) are
+// untouched. World-space noise makes the growth patchy, never a flat wash.
+// Runs entirely in the base pass — no extra draw call, negligible ALU.
+float materialBiofilmMoss = 0.0;
+float materialBiofilmMould = 0.0;
+if (vWeathering > 0.001) {
+  vec3 biofilmNormal = inverseTransformDirection(normalize(vNormal), viewMatrix);
+  // Broad up-face weighting: the whole upper half of a round log or a pitched
+  // roof takes moss, not only the very crown.
+  float biofilmUp = smoothstep(-0.35, 0.5, biofilmNormal.y);
+  float biofilmNorth = smoothstep(0.3, -0.5, biofilmNormal.z);
+  float biofilmShelter = 1.0 - smoothstep(0.32, 0.86, vBakedSky);
+  float biofilmGround = 1.0 - smoothstep(0.15, 3.8, vMaterialCoordinate.y);
+  float biofilmBroad =
+    materialValueNoise(vMaterialCoordinate.xz * 0.14 + vec2(19.3, 5.1)) * 0.62 +
+    materialValueNoise(vMaterialCoordinate.xz * 0.52 + vec2(2.7, 44.9)) * 0.38;
+  float biofilmFine = materialValueNoise(vMaterialCoordinate.xz * 1.7 + vec2(31.1, 12.4));
+
+  // Moss favours tops, north/shaded flanks and sheltered corners.
+  float mossField = clamp(biofilmUp * 0.8 + biofilmNorth * 0.32 + biofilmShelter * 0.45, 0.0, 1.0);
+  float moss = smoothstep(0.4, 0.74, biofilmBroad) * mossField * vWeathering;
+  moss *= 0.62 + biofilmFine * 0.55;
+  materialBiofilmMoss = clamp(moss, 0.0, 0.88);
+  vec3 mossTint = mix(vec3(0.27, 0.46, 0.19), vec3(0.15, 0.33, 0.13), biofilmFine);
+  diffuseColor.rgb = mix(diffuseColor.rgb, mossTint, materialBiofilmMoss);
+
+  // Mould / rising damp: browner, hugging the ground on any face.
+  float mould = smoothstep(0.44, 0.86, biofilmBroad * 0.62 + biofilmFine * 0.38)
+    * biofilmGround * (0.5 + biofilmShelter * 0.7) * vWeathering;
+  materialBiofilmMould = clamp(mould, 0.0, 0.64);
+  vec3 mouldTint = mix(vec3(0.22, 0.2, 0.16), vec3(0.14, 0.15, 0.13), biofilmFine);
+  diffuseColor.rgb = mix(diffuseColor.rgb, mouldTint, materialBiofilmMould);
+}
 
 // Viking ground is one continuous, destructible surface. Paths, yards,
 // moss and wet soil are world-space material masks, never stacked panels.
@@ -1019,6 +1061,9 @@ roughnessFactor = clamp(
 );
 roughnessFactor = mix(roughnessFactor, 0.78, vikingDirt * 0.36);
 roughnessFactor = mix(roughnessFactor, 0.98, vikingMoss * 0.52);
+// Biofilm is matte: moss and mould kill any sheen the base surface had.
+roughnessFactor = mix(roughnessFactor, 0.95, materialBiofilmMoss * 0.7);
+roughnessFactor = mix(roughnessFactor, 0.9, materialBiofilmMould * 0.55);
 // Wet splotches turn glossy: with the sky environment map this alone makes
 // puddles mirror the sky at grazing angles, the way wet ground does.
 roughnessFactor = mix(roughnessFactor, 0.07, materialWet);`,
@@ -1080,7 +1125,7 @@ gl_FragColor.rgb = mix(gl_FragColor.rgb, materialFogTint, materialFogFactor);
         );
     };
     standardMaterial.customProgramCacheKey = () =>
-      `material-space-v7:${material}:${profileKey}`;
+      `material-space-v8:${material}:${profileKey}`;
   }
 
   if (isGlass && color === litWindowColor) {

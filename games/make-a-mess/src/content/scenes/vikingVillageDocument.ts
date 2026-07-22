@@ -150,7 +150,12 @@ function createTerrain(): void {
       [x, sy / 2 - 0.01, z],
       [sx, sy, sz],
       index % 4 === 0 ? "#42474a" : index % 3 === 0 ? "#797a70" : "#62655f",
-      { rotation: [noise(index, 3) * 0.25, noise(index, 4) * Math.PI, noise(index, 5) * 0.18] },
+      {
+        rotation: [noise(index, 3) * 0.25, noise(index, 4) * Math.PI, noise(index, 5) * 0.18],
+        // Mossy Scandinavian rocks: heavy moss on their crowns and shaded
+        // north sides, patterned by the shader.
+        surface: [{ kind: "moss", amount: 0.55 + noise(index, 6, 9) * 0.4 }],
+      },
     );
   }
 
@@ -207,7 +212,11 @@ function createPalisade(): void {
           timber: index % 7 === 0 ? "#49372c" : index % 5 === 0 ? "#816047" : "#674a36",
           cut: "#a4825d",
         },
-        surface: index % 4 === 0 ? [{ kind: "damp", amount: 0.2 }] : undefined,
+        // Weathered stockade: mossy tops, damp bases; a quarter of the stakes
+        // greener and mouldier so the wall reads as decades-old timber.
+        surface: index % 4 === 0
+          ? [{ kind: "moss", amount: 0.7 }, { kind: "mold", amount: 0.42 }]
+          : [{ kind: "moss", amount: 0.4 }, { kind: "damp", amount: 0.4 }],
       });
     }
   }
@@ -251,11 +260,15 @@ function createPalisade(): void {
   ] as const;
   for (const gate of gates) {
     for (const side of [-1, 1] as const) {
-      place(palisade, `${gate.id}:post:${side}`, "viking:gate-post", { position: [side * 3.72, 0, gate.z] });
+      place(palisade, `${gate.id}:post:${side}`, "viking:gate-post", { position: [side * 3.72, 0, gate.z] }, {
+        surface: [{ kind: "moss", amount: 0.5 }, { kind: "damp", amount: 0.45 }],
+      });
       place(palisade, `${gate.id}:leaf:${side}`, "viking:gate-leaf", {
         position: [side * 1.72, 0, gate.z - gate.outward * 0.15],
         rotation: [0, gate.outward < 0 ? Math.PI : 0, 0],
         scale: [1.14, 1.08, 1],
+      }, {
+        surface: [{ kind: "moss", amount: 0.32 }, { kind: "damp", amount: 0.4 }],
       });
       place(ornaments, `${gate.id}:shield:${side}`, "viking:shield", {
         position: [side * 3.72, 3.25, gate.z + gate.outward * 0.56],
@@ -266,6 +279,7 @@ function createPalisade(): void {
     }
     place(palisade, `${gate.id}:lintel`, "viking:log:12", { position: [0, 6.9, gate.z], scale: [0.72, 1, 1] }, {
       palette: { timber: "#463429" },
+      surface: [{ kind: "moss", amount: 0.55 }],
     });
 
     for (const side of [-1, 1] as const) {
@@ -289,9 +303,16 @@ function createPalisade(): void {
   }
 }
 
+// Weathering amounts now drive the spatial biofilm shader (moss on the
+// roofs and log tops, mould and damp rising from the sills), so they can be
+// authored at real strength — the shader keeps the growth patchy.
 const buildingTreatments: readonly SurfaceTreatment[] = [
-  { kind: "damp", amount: 0.1 },
-  { kind: "moss", amount: 0.06 },
+  { kind: "moss", amount: 0.6 },
+  { kind: "damp", amount: 0.4 },
+];
+const weatheredTreatments: readonly SurfaceTreatment[] = [
+  { kind: "moss", amount: 0.78 },
+  { kind: "mold", amount: 0.5 },
 ];
 
 function createBuildings(): void {
@@ -322,7 +343,7 @@ function createBuildings(): void {
         mossRoof: "#41503a",
         door: "#3a2b25",
       },
-      surface: index % 2 === 0 ? buildingTreatments : [{ kind: "damp", amount: 0.14 }],
+      surface: index % 3 === 0 ? weatheredTreatments : buildingTreatments,
     });
   });
 }

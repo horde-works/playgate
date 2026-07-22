@@ -84,6 +84,13 @@ export interface BreakablePieceDefinition {
   readonly contactBearingOrder?: boolean;
   /** World-space material mask; it follows this ground body when it breaks. */
   readonly landscapeSurface?: LandscapeSurfaceProfile;
+  /**
+   * 0..1 organic weathering receptivity. The shared material shader turns this
+   * into a spatial biofilm — moss on up-facing surfaces, mould/damp near the
+   * ground, plaster spall — patterned by world-space noise. 0 (the default)
+   * leaves the surface pristine, so untreated scenes are unchanged.
+   */
+  readonly weathering?: number;
 }
 
 export interface BreakableClusterDefinition {

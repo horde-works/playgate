@@ -342,16 +342,18 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
     const next = (
       batch.geometryKind === "cylinder" ? UNIT_CYLINDER : UNIT_BOX
     ).clone();
-    const anchors = new Float32Array(batch.fragments.length * 3);
+    // xyz = world anchor, w = weathering. Debris exposes fresh, unweathered
+    // material (a broken log's inner wood is pristine), so w stays 0.
+    const anchors = new Float32Array(batch.fragments.length * 4);
     batch.fragments.forEach((fragment, index) => {
       anchors.set(
         materialAnchor(fragment.fallbackPosition, fragment.center),
-        index * 3,
+        index * 4,
       );
     });
     next.setAttribute(
       "materialAnchor",
-      new InstancedBufferAttribute(anchors, 3, false),
+      new InstancedBufferAttribute(anchors, 4, false),
     );
     // Moving debris gets neutral baked lighting (screen-space AO covers it);
     // without these attributes the shader would read zeros and go black.

@@ -560,6 +560,80 @@ function sliceCylinder(
   };
 }
 
+/**
+ * Timber has its own break law, distinct from the generic axial slice. A log
+ * does not vaporise a clean band: it SNAPS. A narrow break at the impact point
+ * leaves the two ends as chunky billets (shorter round logs), and the break
+ * throws a burst of splinters — thin shards torn along the grain (the log's
+ * long axis), so a struck beam reads as riven wood rather than a cut pipe.
+ */
+function sliceLog(
+  source: ShardSource,
+  localPoint: Vector3,
+  radius: number,
+): CarveResult | null {
+  const bodyRadius = Math.max(source.size[0], source.size[2]) / 2;
+  const length = source.size[1];
+  // The snap is deliberately narrow — timber breaks, it does not dissolve.
+  const cut = Math.min(length * 0.3, Math.max(bodyRadius * 0.5, radius * 0.8));
+  const hitY = Math.max(-length / 2, Math.min(length / 2, localPoint.y));
+  const removedStart = Math.max(-length / 2, hitY - cut);
+  const removedEnd = Math.min(length / 2, hitY + cut);
+  if (removedEnd <= removedStart) {
+    return null;
+  }
+
+  const crossSection = Math.PI * bodyRadius * bodyRadius;
+  const minimumBillet = Math.max(0.24, bodyRadius * 0.8);
+  const kept: RemnantSpec[] = [];
+
+  // End billets: the surviving stumps of the log, kept round.
+  for (const [from, to] of [
+    [-length / 2, removedStart],
+    [removedEnd, length / 2],
+  ] as const) {
+    const segmentLength = to - from;
+    if (segmentLength < minimumBillet) {
+      continue;
+    }
+    kept.push({
+      size: [source.size[0], segmentLength, source.size[2]],
+      localCenter: [0, (from + to) / 2, 0],
+      volume: crossSection * segmentLength,
+      shape: "cylinder",
+    });
+  }
+
+  // Splinters: thin shards torn from the break, elongated along the grain
+  // (the log's Y axis) and scattered around the broken cross-section.
+  const seed = `log:${Math.round(hitY * 97)}:${Math.round(bodyRadius * 53)}`;
+  const splinterCount = 4 + Math.floor(blastNoise(seed, 2) * 3);
+  for (let index = 0; index < splinterCount; index += 1) {
+    const angle = (index / splinterCount) * Math.PI * 2 + blastNoise(seed, index) * 0.9;
+    const ring = bodyRadius * (0.3 + blastNoise(seed, index + 11) * 0.55);
+    const splinterLength = cut * (1.1 + blastNoise(seed, index + 23) * 1.5);
+    const thickness = bodyRadius * (0.12 + blastNoise(seed, index + 37) * 0.16);
+    const along = hitY + (blastNoise(seed, index + 51) - 0.5) * cut * 1.2;
+    kept.push({
+      size: [thickness, splinterLength, thickness * 0.7],
+      localCenter: [
+        Math.cos(angle) * ring * 0.7,
+        Math.max(-length / 2, Math.min(length / 2, along)),
+        Math.sin(angle) * ring * 0.7,
+      ],
+      volume: thickness * splinterLength * thickness * 0.7,
+      shape: "plank",
+    });
+  }
+
+  return {
+    kept,
+    // Timber loses little mass to the break — most becomes billets and
+    // splinters — so only a fraction of the swept band is truly removed.
+    removedVolume: crossSection * (removedEnd - removedStart) * 0.5,
+  };
+}
+
 export function damageBody(
   source: ShardSource,
   state: DamageBodyState,
@@ -574,13 +648,14 @@ export function damageBody(
     ?.clone()
     .applyQuaternion(inverseRotation)
     .normalize();
+  const cylinderRadius =
+    request.radius * damageRadiusScaleByMaterial[source.material];
   const result =
     source.shape === "cylinder"
-      ? sliceCylinder(
-          source,
-          localPoint,
-          request.radius * damageRadiusScaleByMaterial[source.material],
-        )
+      ? source.material === "wood"
+        ? // Logs and timber follow the grain-splitting break law.
+          sliceLog(source, localPoint, cylinderRadius)
+        : sliceCylinder(source, localPoint, cylinderRadius)
       : carveBox(
           source.size,
           localPoint,
