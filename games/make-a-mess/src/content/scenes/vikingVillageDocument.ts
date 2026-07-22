@@ -541,36 +541,47 @@ function addDryingRack(
   yaw: number,
   hideColor: string,
 ): void {
+  const postHeight = 2.7;
+  const railHeight = 2.42;
   for (const side of [-1, 1] as const) {
     const [px, pz] = localPoint(x, z, yaw, side * 1.65, 0);
-    primitive(cloth, `${id}:post:${side}`, "wood", "cylinder", [px, 1.45, pz], [0.28, 2.9, 0.28], "#4c382c", {
+    primitive(cloth, `${id}:post:${side}`, "wood", "cylinder", [px, postHeight / 2, pz], [0.26, postHeight, 0.26], "#4c382c", {
       carriesAttachments: true,
     });
   }
-  primitive(cloth, `${id}:rail`, "wood", "plank", [x, 2.62, z], [3.45, 0.2, 0.2], "#684a34", {
+  // A RIGID rail lashed between the two posts. The old "cable" support let it
+  // sag and hang crooked; a normal reach-based side-attach holds it straight
+  // and is rotation-agnostic (unlike a sit-on footprint the solver mis-reads).
+  primitive(cloth, `${id}:rail`, "wood", "plank", [x, railHeight, z], [3.6, 0.17, 0.19], "#684a34", {
     rotation: [0, yaw, 0],
     bearsLoad: true,
     carriesAttachments: true,
-    attachmentSupportMode: "cable",
-    sideAttachmentReach: 0.72,
+    sideAttachmentReach: 0.7,
+    contactBoxes: [{ position: [0, 0, 0], size: [3.6, 0.17, 0.19] }],
   });
-  primitive(cloth, `${id}:hide`, "cloth", "panel", [x, 1.72, z], [2.45, 1.96, 0.065], hideColor, {
+  primitive(cloth, `${id}:hide`, "cloth", "panel", [x, railHeight - 0.83, z], [2.45, 1.7, 0.06], hideColor, {
     rotation: [0, yaw, 0],
     bearsLoad: false,
+    sideAttachmentReach: 0.55,
+    contactBoxes: [{ position: [0, 0, 0], size: [2.45, 1.7, 0.06] }],
     surface: [{ kind: "damp", amount: 0.16 }],
   });
 }
 
 function addVillageWell(target: MutableGroup, id: string, x: number, z: number): void {
-  for (let index = 0; index < 14; index += 1) {
-    const angle = (index / 14) * Math.PI * 2;
+  // Ring stones sized to the inner arc so neighbours butt with a mortar gap
+  // instead of overlapping and z-fighting at the rim's inner edge.
+  const wellStoneCount = 12;
+  const wellRadius = 1.42;
+  for (let index = 0; index < wellStoneCount; index += 1) {
+    const angle = (index / wellStoneCount) * Math.PI * 2;
     primitive(
       target,
       `${id}:stone:${index}`,
       "stone",
       "stoneBlock",
-      [x + Math.cos(angle) * 1.35, 0.32, z + Math.sin(angle) * 1.35],
-      [0.92, 0.62, 0.58],
+      [x + Math.cos(angle) * wellRadius, 0.32, z + Math.sin(angle) * wellRadius],
+      [0.6, 0.62, 0.52],
       index % 3 === 0 ? "#77766e" : index % 2 === 0 ? "#666860" : "#858278",
       { rotation: [0, -angle, 0], surface: [{ kind: "moss", amount: 0.14 }] },
     );
@@ -591,7 +602,12 @@ function addVillageWell(target: MutableGroup, id: string, x: number, z: number):
     contactBoxes: [{ position: [0, 0, 0], size: [0.38, 3.1, 0.38] }],
     bearsLoad: false,
   });
-  primitive(target, `${id}:bucket`, "wood", "cylinder", [x + 0.25, 0.36, z], [0.68, 0.72, 0.68], "#5a4030");
+  // A taut rope from the windlass down to the bucket (a static line for now).
+  primitive(target, `${id}:rope`, "cloth", "cylinder", [x + 0.25, 0.62, z], [0.055, 0.5, 0.055], "#6a5b3f", {
+    bearsLoad: false,
+    surface: [{ kind: "damp", amount: 0.2 }],
+  });
+  primitive(target, `${id}:bucket`, "wood", "cylinder", [x + 0.25, 0.36, z], [0.5, 0.5, 0.5], "#5a4030");
 }
 
 function addSledge(target: MutableGroup, id: string, x: number, z: number, yaw: number): void {
