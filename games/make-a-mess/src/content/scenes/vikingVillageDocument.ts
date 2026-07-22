@@ -669,8 +669,15 @@ function furnishHome(
   lights: MutableGroup,
   home: (typeof vikingVillageHomes)[number],
 ): void {
-  const halfWidth = home.width / 2 - 0.55;
-  const halfLength = home.length / 2 - 0.7;
+  // Local frame (matches the house's real orientation now that the plan point
+  // helper is consistent): +Z is the door, -Z the back gable, ±X the side
+  // walls. Everything is kept a hand's width off the inner wall faces so no
+  // piece clips a wall, and the whole door end (high +Z) is left clear to walk
+  // in past an open floor.
+  const sideInner = home.width / 2 - 0.32;
+  const backInner = home.length / 2 - 0.32;
+  const leftWallX = -(sideInner - 0.6);
+  const rightWallX = sideInner - 0.6;
   const put = (
     target: MutableGroup,
     id: string,
@@ -686,44 +693,46 @@ function furnishHome(
     });
   };
 
-  // Shared domestic core: a sleeping bench, a chest, a cupboard, a cooking
-  // cauldron (its embers also light the room) and a couple of stools.
-  put(interiors, "bed", "viking:bed", -halfWidth + 0.05, -halfLength + 1.5, Math.PI / 2);
-  put(interiors, "chest", "viking:chest", -halfWidth + 0.2, -halfLength + 3.5);
-  put(interiors, "cupboard", "viking:cupboard", halfWidth - 0.3, -halfLength + 0.9, -Math.PI / 2);
-  put(lights, "cauldron", "viking:cauldron", 0.35, 0.2);
-  put(interiors, "stool:0", "viking:stool", -1.2, 1.3);
-  put(interiors, "stool:1", "viking:stool", 1.3, 0.7);
+  // Sleeping bench and chest along the left wall, headboard to the back gable;
+  // a cupboard against the back wall; a cooking cauldron (its embers light the
+  // room) just off the central axis with stools drawn up to it.
+  put(interiors, "bed", "viking:bed", leftWallX, -(backInner - 1.2), Math.PI / 2);
+  put(interiors, "chest", "viking:chest", leftWallX + 0.05, -(backInner - 3.3), Math.PI / 2);
+  put(interiors, "cupboard", "viking:cupboard", 1.15, -(backInner - 0.28), 0);
+  put(lights, "cauldron", "viking:cauldron", 0.4, -0.9);
+  put(interiors, "stool:0", "viking:stool", -1.35, 0.1);
+  put(interiors, "stool:1", "viking:stool", 1.45, -0.7);
 
   switch (home.id) {
     case "weaver":
-      put(interiors, "loom", "viking:loom", halfWidth - 0.35, -1.4, Math.PI / 2);
-      put(storage, "baskets", "viking:baskets", halfWidth - 0.7, 2.0);
+      put(interiors, "loom", "viking:loom", rightWallX - 0.05, -1.3, Math.PI / 2);
+      put(storage, "baskets", "viking:baskets", rightWallX - 0.1, 1.6);
       break;
     case "brewer":
-      for (const [index, [lx, lz]] of ([[halfWidth - 0.6, -1.6], [halfWidth - 0.6, -0.3], [halfWidth - 1.6, -1.0]] as const).entries()) {
+      for (const [index, [lx, lz]] of ([[rightWallX, -1.7], [rightWallX, -0.4], [rightWallX - 1.05, -1.05]] as const).entries()) {
         const [x, z] = vikingPlanLocalPoint(home.position, home.yaw, lx, lz);
         place(storage, `furnish:${home.id}:cask:${index}`, "viking:barrel", {
           position: [x, 0.24, z],
           rotation: [0, home.yaw, 0],
-          scale: [0.92, 0.92, 0.92],
+          scale: [0.9, 0.9, 0.9],
         });
       }
       break;
     case "smith":
-      put(interiors, "anvil", "viking:anvil", halfWidth - 0.55, 0.4);
-      put(storage, "baskets", "viking:baskets", halfWidth - 0.7, 2.1);
+      put(interiors, "anvil", "viking:anvil", rightWallX - 0.15, -0.2);
+      put(storage, "baskets", "viking:baskets", rightWallX - 0.1, 1.7);
       break;
     case "fisher":
-      put(storage, "baskets", "viking:baskets", halfWidth - 0.6, -1.2);
-      put(interiors, "baskets:2", "viking:baskets", halfWidth - 0.7, 1.9);
+      put(storage, "baskets", "viking:baskets", rightWallX - 0.1, -1.3);
+      put(interiors, "baskets:2", "viking:baskets", rightWallX - 0.1, 1.5);
       break;
     case "elder":
-      put(storage, "baskets", "viking:baskets", halfWidth - 0.6, -1.4);
+      put(storage, "baskets", "viking:baskets", rightWallX - 0.1, -1.4);
+      put(interiors, "elder-stool", "viking:stool", rightWallX - 0.1, 0.7);
       break;
     default:
       // Family houses get a second sleeping bench for the children.
-      put(interiors, "bed:2", "viking:bed", halfWidth - 0.05, -halfLength + 1.5, -Math.PI / 2);
+      put(interiors, "bed:2", "viking:bed", rightWallX, -(backInner - 1.2), Math.PI / 2);
       break;
   }
 }
@@ -874,6 +883,24 @@ function createVillageLife(): void {
   // Their positions derive from the same authored house plan as the paths,
   // so moving a house does not leave its light or threshold behind.
   vikingVillageHomes.forEach((home) => furnishHome(interiors, storage, lights, home));
+
+  // A smoke-hole louver on every roof with a lit hearth, so the plume leaves
+  // through a real vent instead of straight out of the thatch. The set matches
+  // the smoking sources in SmokePlumes (fisher and the east family keep cold
+  // hearths). The collar rests on the roof ridge-beam, whose bearing top sits
+  // at wallHeight + 2.7 (small 3.0 m walls, long 3.4 m, hall 5.2 m).
+  place(structures, "smoke-louver:great-hall", "viking:smoke-louver", {
+    position: [0, 5.2 + 2.65, -17],
+  });
+  for (const home of vikingVillageHomes) {
+    if (home.id === "fisher" || home.id === "family-east") {
+      continue;
+    }
+    const ridgeTop = (home.prefabId === "viking:house:long" ? 3.4 : 3.0) + 2.65;
+    place(structures, `smoke-louver:${home.id}`, "viking:smoke-louver", {
+      position: [home.position[0], ridgeTop, home.position[1]],
+    });
+  }
 
   vikingVillageHomes.forEach((home) => {
     for (const side of [-1, 1] as const) {

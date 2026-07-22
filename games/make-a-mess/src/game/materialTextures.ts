@@ -890,7 +890,11 @@ if (materialProjectionNormal.x >= materialProjectionNormal.y && materialProjecti
   float clothPhase = uTime * 1.7 + clothWindAnchor.x * 0.55 + clothWindAnchor.z * 0.4;
   float clothBillow = sin(clothPhase) + 0.45 * sin(clothPhase * 2.3 + 1.1);
   float clothFreeEdge = max(0.0, 0.6 - position.y);
-  float clothAmp = 0.09 * uWindStrength * clothFreeEdge;
+  // Only HANGING cloth catches the wind: a tall panel (banner, laundry, loom
+  // warp) sways; a flat, low panel lying indoors (bedding, a fur) does not.
+  float clothHangingHeight = length(instanceMatrix[1].xyz);
+  float clothHanging = smoothstep(0.5, 1.0, clothHangingHeight);
+  float clothAmp = 0.09 * uWindStrength * clothFreeEdge * clothHanging;
   transformed.x += clothBillow * clothAmp;
   transformed.z += cos(clothPhase * 1.3) * clothAmp * 0.7;
 }`,

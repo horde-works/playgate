@@ -23,15 +23,17 @@ interface SmokeSource {
 // strongest from its louver; the outdoor commons hearth and the house roofs
 // trail thinner columns.
 function vikingSmokeSources(): readonly SmokeSource[] {
+  // Plumes rise from just above the roof louvers (ridge-beam + ~0.9 m) and the
+  // outdoor hearth.
   const sources: SmokeSource[] = [
-    { position: [0, 8.1, -17], puffs: 20, rise: 9, spread: 1.1 },
+    { position: [0, 8.45, -17], puffs: 20, rise: 9, spread: 1.1 },
     { position: [-11.5, 0.9, -1.5], puffs: 14, rise: 6.5, spread: 0.9 },
   ];
   for (const home of vikingVillageHomes) {
     if (home.id === "fisher" || home.id === "family-east") {
       continue; // a couple of cold hearths keep the village from looking staged
     }
-    const roofY = home.prefabId === "viking:house:long" ? 5.9 : 5.2;
+    const roofY = home.prefabId === "viking:house:long" ? 6.55 : 6.15;
     sources.push({
       position: [home.position[0], roofY, home.position[1]],
       puffs: 11,

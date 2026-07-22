@@ -658,7 +658,9 @@ for (const [bandIndex, y] of [0.28, 0.68, 1.08].entries()) {
       material: "steel",
       shape: "steelSheet",
       position: [Math.cos(angle) * 0.52, y, Math.sin(angle) * 0.52],
-      rotation: [0, -angle, 0],
+      // Lie each plate TANGENT to the barrel so the three hoops read as bands,
+      // not steel spokes radiating in every direction.
+      rotation: [0, -angle - Math.PI / 2, 0],
       size: [0.42, 0.1, 0.07],
       color: iron,
       bearsLoad: false,
@@ -980,6 +982,18 @@ const toolWall = furnishing("viking:tool-wall", "Hanging tools and herbs", ["vik
   { id: "coil", material: "cloth", shape: "panel", position: [0.7, 1.55, 0.02], size: [0.3, 0.5, 0.06], color: "#8a7a55", colorSlot: "coil", bearsLoad: false, sideAttachmentReach: 0.6 },
 ]);
 
+
+// A roof smoke-hole (ljóri): a sooty collar around the vent with a little
+// raised rain-cover, so hearth smoke visibly leaves through a vent rather than
+// straight out of the thatch. Placed unrotated (square), stacked on the ridge.
+const smokeLouver = prefab("viking:smoke-louver", "Roof smoke louver", ["viking", "roof", "vent"], [
+  { id: "collar", material: "wood", shape: "plank", position: [0, 0.25, 0], size: [0.86, 0.5, 0.86], color: "#241812" },
+  { id: "rim", material: "wood", shape: "plank", position: [0, 0.52, 0], size: [0.98, 0.12, 0.98], color: darkTimber },
+  { id: "post", material: "wood", shape: "plank", position: [0, 0.78, 0], size: [0.14, 0.44, 0.14], color: darkTimber },
+  { id: "cap", material: "wood", shape: "plank", position: [0, 1.0, 0], size: [1.06, 0.14, 1.06], color: timber },
+  { id: "cap-ridge", material: "wood", shape: "plank", position: [0, 1.11, 0], size: [1.12, 0.12, 0.4], color: darkTimber, bearsLoad: false },
+]);
+
 const prefabs = [
   verticalLog("viking:post:3", 3, 0.28),
   verticalLog("viking:palisade", 4.8, 0.41, true),
@@ -1013,6 +1027,7 @@ const prefabs = [
   stool,
   baskets,
   toolWall,
+  smokeLouver,
 ] as const;
 
 export const vikingPrefabLibrary: ScenePrefabLibrary = new Map(

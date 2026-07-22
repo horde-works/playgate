@@ -46,9 +46,12 @@ export function vikingPlanLocalPoint(
 ): VikingPlanPoint {
   const cosine = Math.cos(yaw);
   const sine = Math.sin(yaw);
+  // Matches the three.js Euler-Y rotation the house prefab is placed with, so
+  // local +Z is the door side. (The earlier form mirrored Z, which put every
+  // entrance, threshold, path and wall torch on the wrong side of the house.)
   return [
-    origin[0] + localX * cosine - localZ * sine,
-    origin[1] + localX * sine + localZ * cosine,
+    origin[0] + localX * cosine + localZ * sine,
+    origin[1] - localX * sine + localZ * cosine,
   ];
 }
 

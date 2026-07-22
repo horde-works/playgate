@@ -6,6 +6,13 @@ import { useEffect, useMemo, useRef } from "react";
 import { Quaternion, Vector3 } from "three";
 import type { BreakablePieceDefinition } from "./destructionScene";
 
+interface DoorGroup {
+  readonly key: string;
+  readonly members: readonly BreakablePieceDefinition[];
+  readonly hinge: NonNullable<BreakablePieceDefinition["hinge"]>;
+  readonly center: readonly [number, number, number];
+}
+
 export function HingedDoorSystem({
   pieces,
   bodies,
@@ -19,10 +26,42 @@ export function HingedDoorSystem({
 }) {
   const { camera } = useThree();
   const { rapier } = useRapier();
-  const hingedDoors = useMemo(
-    () => pieces.filter((piece) => piece.hinge),
-    [pieces],
-  );
+
+  // A plank door is many boards (and iron straps) sharing one hinge. Group them
+  // so the whole leaf swings on ONE state — approaching it opens every board by
+  // the same angle at the same instant, instead of each board fanning open
+  // independently like an accordion.
+  const doorGroups = useMemo<DoorGroup[]>(() => {
+    const groups = new Map<
+      string,
+      { members: BreakablePieceDefinition[]; hinge: NonNullable<BreakablePieceDefinition["hinge"]> }
+    >();
+    for (const piece of pieces) {
+      if (!piece.hinge) {
+        continue;
+      }
+      const key = piece.id.replace(/:(board|strap):\d+$/, "");
+      const existing = groups.get(key);
+      if (existing) {
+        existing.members.push(piece);
+      } else {
+        groups.set(key, { members: [piece], hinge: piece.hinge });
+      }
+    }
+    return [...groups.entries()].map(([key, { members, hinge }]) => {
+      let sx = 0;
+      let sy = 0;
+      let sz = 0;
+      for (const member of members) {
+        sx += member.position[0];
+        sy += member.position[1];
+        sz += member.position[2];
+      }
+      const count = members.length;
+      return { key, members, hinge, center: [sx / count, sy / count, sz / count] as const };
+    });
+  }, [pieces]);
+
   const states = useRef(new Map<string, { angle: number; sign: number }>());
   const cameraDirection = useRef(new Vector3());
   const directionToDoor = useRef(new Vector3());
@@ -40,40 +79,28 @@ export function HingedDoorSystem({
     shadowAccumulator.current += delta;
     let doorMoved = false;
 
-    for (const door of hingedDoors) {
-      if (brokenPieces.current.has(door.id)) {
-        states.current.delete(door.id);
-        continue;
-      }
-      const body = bodies.current.get(door.id);
-      if (!body || body.bodyType() === rapier.RigidBodyType.Dynamic) {
-        continue;
-      }
-
-      const hinge = door.hinge!;
-      let state = states.current.get(door.id);
+    for (const group of doorGroups) {
+      const hinge = group.hinge;
+      let state = states.current.get(group.key);
       if (!state) {
         state = { angle: 0, sign: 0 };
-        states.current.set(door.id, state);
+        states.current.set(group.key, state);
       }
 
-      // Proximity is measured to the door LEAF centre, not the hinge pivot:
-      // wide double doors would otherwise never trigger when approached
-      // head-on (the pivots sit far out at the leaf edges).
-      const dx = camera.position.x - door.position[0];
-      const dy = camera.position.y - door.position[1];
-      const dz = camera.position.z - door.position[2];
+      // One open/close decision for the whole leaf, measured to the leaf centre.
+      const dx = camera.position.x - group.center[0];
+      const dy = camera.position.y - group.center[1];
+      const dz = camera.position.z - group.center[2];
       const distance = Math.hypot(dx, dy, dz);
       let open: boolean;
-
       if (state.angle > 0.05) {
         open = distance < 3.6;
       } else {
         directionToDoor.current
           .set(
-            door.position[0] - camera.position.x,
-            door.position[1] - camera.position.y,
-            door.position[2] - camera.position.z,
+            group.center[0] - camera.position.x,
+            group.center[1] - camera.position.y,
+            group.center[2] - camera.position.z,
           )
           .normalize();
         open =
@@ -96,50 +123,59 @@ export function HingedDoorSystem({
         (targetAngle - state.angle) * Math.min(1, delta * (open ? 5 : 3));
       doorMoved ||= Math.abs(state.angle - previousAngle) > 0.0005;
 
-      if (!open && state.angle < 0.02) {
+      const closedNow = !open && state.angle < 0.02;
+      if (closedNow) {
         state.angle = 0;
         state.sign = 0;
-        if (body.bodyType() !== rapier.RigidBodyType.Fixed) {
-          body.setBodyType(rapier.RigidBodyType.Fixed, true);
-          body.setTranslation(
-            {
-              x: door.position[0],
-              y: door.position[1],
-              z: door.position[2],
-            },
-            false,
-          );
-          body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, false);
-        }
-        continue;
       }
 
-      if (body.bodyType() !== rapier.RigidBodyType.KinematicPositionBased) {
-        body.setBodyType(rapier.RigidBodyType.KinematicPositionBased, true);
-      }
-
+      // The same rotation is applied to every surviving board and strap, each
+      // orbiting the shared pivot — so the leaf stays one rigid piece.
       doorQuaternion.current.setFromAxisAngle(
         doorUpAxis.current,
         state.sign * state.angle,
       );
-      doorRelative.current
-        .set(
-          door.position[0] - hinge.pivot[0],
-          0,
-          door.position[2] - hinge.pivot[2],
-        )
-        .applyQuaternion(doorQuaternion.current);
-      body.setNextKinematicTranslation({
-        x: hinge.pivot[0] + doorRelative.current.x,
-        y: door.position[1],
-        z: hinge.pivot[2] + doorRelative.current.z,
-      });
-      body.setNextKinematicRotation({
-        x: doorQuaternion.current.x,
-        y: doorQuaternion.current.y,
-        z: doorQuaternion.current.z,
-        w: doorQuaternion.current.w,
-      });
+      for (const member of group.members) {
+        if (brokenPieces.current.has(member.id)) {
+          continue;
+        }
+        const body = bodies.current.get(member.id);
+        if (!body) {
+          continue;
+        }
+        if (closedNow) {
+          if (body.bodyType() !== rapier.RigidBodyType.Fixed) {
+            body.setBodyType(rapier.RigidBodyType.Fixed, true);
+            body.setTranslation(
+              { x: member.position[0], y: member.position[1], z: member.position[2] },
+              false,
+            );
+            body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, false);
+          }
+          continue;
+        }
+        // A board that broke loose turns dynamic — leave it to the physics.
+        if (body.bodyType() === rapier.RigidBodyType.Dynamic) {
+          continue;
+        }
+        if (body.bodyType() !== rapier.RigidBodyType.KinematicPositionBased) {
+          body.setBodyType(rapier.RigidBodyType.KinematicPositionBased, true);
+        }
+        doorRelative.current
+          .set(member.position[0] - hinge.pivot[0], 0, member.position[2] - hinge.pivot[2])
+          .applyQuaternion(doorQuaternion.current);
+        body.setNextKinematicTranslation({
+          x: hinge.pivot[0] + doorRelative.current.x,
+          y: member.position[1],
+          z: hinge.pivot[2] + doorRelative.current.z,
+        });
+        body.setNextKinematicRotation({
+          x: doorQuaternion.current.x,
+          y: doorQuaternion.current.y,
+          z: doorQuaternion.current.z,
+          w: doorQuaternion.current.w,
+        });
+      }
     }
 
     if (doorMoved && shadowAccumulator.current > 0.18) {
