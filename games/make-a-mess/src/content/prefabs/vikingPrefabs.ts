@@ -616,8 +616,12 @@ const shield = prefab("viking:shield", "Painted round shield", ["viking", "shiel
     color: "#9b3429",
     colorSlot: "paint",
     bearsLoad: false,
+    // The board carries the boss and stripe and hangs from the wall itself, so
+    // the whole shield stays one unit even when mounted proud of the wall.
+    carriesAttachments: true,
     attachmentSupportMode: "cable",
-    sideAttachmentReach: 0.38,
+    sideAttachmentReach: 0.62,
+    contactBoxes: [{ position: [0, 0, 0], size: [1.45, 1.45, 0.16] }],
   },
   {
     id: "boss",
@@ -628,6 +632,8 @@ const shield = prefab("viking:shield", "Painted round shield", ["viking", "shiel
     size: [0.38, 0.18, 0.38],
     color: iron,
     bearsLoad: false,
+    sideAttachmentReach: 0.3,
+    contactBoxes: [{ position: [0, 0, 0.12], size: [0.38, 0.38, 0.18] }],
   },
   {
     id: "stripe",
@@ -638,7 +644,8 @@ const shield = prefab("viking:shield", "Painted round shield", ["viking", "shiel
     color: "#d4bd79",
     colorSlot: "stripe",
     bearsLoad: false,
-    sideAttachmentReach: 0.22,
+    sideAttachmentReach: 0.3,
+    contactBoxes: [{ position: [0, 0, 0.11], size: [0.14, 1.25, 0.08] }],
   },
 ]);
 

@@ -320,7 +320,9 @@ function createPalisade(): void {
         surface: [{ kind: "moss", amount: 0.32 }, { kind: "damp", amount: 0.4 }],
       });
       place(ornaments, `${gate.id}:shield:${side}`, "viking:shield", {
-        position: [side * 3.72, 3.25, gate.z + gate.outward * 0.56],
+        // Sit on the inner face of the gate post, toward the opening and away
+        // from the flanking palisade stakes that used to hide half the disc.
+        position: [side * 3.28, 3.35, gate.z + gate.outward * 0.66],
         rotation: [0, gate.outward < 0 ? Math.PI : 0, 0],
       }, {
         palette: { paint: side < 0 ? "#8f3028" : "#35566a", stripe: "#d2b56a" },
@@ -819,10 +821,13 @@ function createVillageLife(): void {
     place(storage, `hall-barrel:${index}`, "viking:barrel", { position: [x, 0.22, z], rotation: [0, noise(index, z) * Math.PI, 0] });
   }
   for (const side of [-1, 1] as const) {
-    place(interiors, `hall-shield:${side}`, "viking:shield", { position: [side * 6.2, 3.0, -2.36] }, {
+    // Mounted on the OUTSIDE face of the hall's south gable (z ≈ -2.05, the
+    // face is at -2.26) so the shields read from the commons instead of being
+    // buried between the gable logs. Spread to the wall edges.
+    place(interiors, `hall-shield:${side}`, "viking:shield", { position: [side * 5.4, 3.55, -2.02] }, {
       palette: { paint: side < 0 ? "#963b2e" : "#365f67", stripe: "#c7a95e" },
     });
-    primitive(cloth, `hall-banner:${side}`, "cloth", "panel", [side * 6.2, 2.55, -2.32], [1.15, 2.15, 0.06], side < 0 ? "#732d28" : "#344f61", {
+    primitive(cloth, `hall-banner:${side}`, "cloth", "panel", [side * 5.4, 2.25, -2.06], [1.15, 2.15, 0.06], side < 0 ? "#732d28" : "#344f61", {
       bearsLoad: false,
       sideAttachmentReach: 0.36,
       surface: [{ kind: "damp", amount: 0.08 }],
@@ -996,8 +1001,18 @@ function createVillageLife(): void {
     });
   }
   for (const side of [-1, 1] as const) {
+    // Spread to the wall edges (were clustered near the centre) so they flank
+    // the thrones instead of crowding the ridge post.
     place(lights, `hall-interior-torch:throne:${side}`, "viking:hall-wall-torch", {
-      position: [side * 3.8, 3.45, -31.28],
+      position: [side * 5.7, 3.45, -31.28],
+      rotation: [0, 0, 0],
+    });
+  }
+  // A pair on the south gable, at the wall edges just outside the shields, to
+  // light them without ever standing in front of them.
+  for (const side of [-1, 1] as const) {
+    place(lights, `hall-gable-torch:${side}`, "viking:hall-wall-torch", {
+      position: [side * 6.75, 2.7, -1.95],
       rotation: [0, 0, 0],
     });
   }
