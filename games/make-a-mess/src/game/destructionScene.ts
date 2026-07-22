@@ -2,6 +2,7 @@ import {
   createStructuralSolver,
   type StructuralMaterialProfile,
 } from "./structuralPhysics.ts";
+import { deinterpenetrateClusters } from "./deinterpenetrate.ts";
 
 export type BreakableMaterial =
   | "brick"
@@ -2755,20 +2756,29 @@ interface DestructionSceneOptions {
   readonly copy: DestructionSceneCopy;
   readonly clusters: readonly BreakableClusterDefinition[];
   readonly lamps?: readonly LampDefinition[];
+  /**
+   * Trim deep sibling interpenetration at build time (rim rings, faceted brick
+   * towers, cairns) so overlaps butt cleanly — killing z-fighting and the
+   * break-time shove — while every piece stays separately destructible.
+   */
+  readonly resolveInterpenetration?: boolean;
 }
 
 export function createDestructionScene(
   options: DestructionSceneOptions,
 ): DestructionSceneDefinition {
-  const pieces = options.clusters.flatMap(
-    (currentCluster) => currentCluster.pieces,
-  );
+  const clusters = options.resolveInterpenetration
+    ? deinterpenetrateClusters(options.clusters, (candidate) =>
+        createStructuralSolver(
+          candidate.flatMap((currentCluster) => currentCluster.pieces),
+          structuralMaterialProfiles,
+        ).resolve(new Set()),
+      )
+    : options.clusters;
+  const pieces = clusters.flatMap((currentCluster) => currentCluster.pieces);
   const pieceById = new Map(pieces.map((piece) => [piece.id, piece]));
   const clusterById = new Map(
-    options.clusters.map((currentCluster) => [
-      currentCluster.id,
-      currentCluster,
-    ]),
+    clusters.map((currentCluster) => [currentCluster.id, currentCluster]),
   );
   const structuralSolver = createStructuralSolver(
     pieces,
@@ -2866,7 +2876,7 @@ export function createDestructionScene(
     worldRadius: options.worldRadius,
     safetyFloorY: options.safetyFloorY ?? -2.2,
     copy: options.copy,
-    breakableClusters: options.clusters,
+    breakableClusters: clusters,
     breakablePieces: pieces,
     breakablePieceById: pieceById,
     breakableClusterById: clusterById,

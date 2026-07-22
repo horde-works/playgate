@@ -1388,6 +1388,9 @@ export const minasTirithScene = createDestructionScene({
   },
   clusters,
   lamps,
+  // Trim the deep sibling overlaps in the faceted basalt towers so they stop
+  // z-fighting (and stop shoving bricks out on impact) while staying breakable.
+  resolveInterpenetration: true,
 });
 
 export const minasTirithMaterials = [
