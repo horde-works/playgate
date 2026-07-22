@@ -30,33 +30,65 @@ import { windState } from "./windState";
  * distant grass costs nothing and there is no popping. Cutout alpha (no
  * blending) keeps it depth-correct and sort-free.
  */
+function bladeHash(seed: number): number {
+  const value = Math.sin(seed * 45.233 + 9.17) * 43758.5453;
+  return value - Math.floor(value);
+}
+
 function makeTuftGeometry(): BufferGeometry {
   const positions: number[] = [];
   const uvs: number[] = [];
   const indices: number[] = [];
-  const baseWidth = 0.13;
-  const tipWidth = 0.02;
+  const bladeVar: number[] = [];
   let vertex = 0;
-  // Several thin blades fanned around the tuft centre give it body while each
-  // stays as narrow as a real grass blade.
-  for (const [bladeIndex, yaw] of [0, 0.7, 1.5, 2.3, 2.9].entries()) {
-    const cos = Math.cos(yaw);
-    const sin = Math.sin(yaw);
-    const lean = (bladeIndex - 2) * 0.07;
-    const bl: [number, number, number] = [-baseWidth * cos, 0, -baseWidth * sin];
-    const br: [number, number, number] = [baseWidth * cos, 0, baseWidth * sin];
-    const tr: [number, number, number] = [tipWidth * cos + lean, 1, tipWidth * sin + lean];
-    const tl: [number, number, number] = [-tipWidth * cos + lean, 1, -tipWidth * sin + lean];
-    positions.push(...bl, ...br, ...tr, ...tl);
-    uvs.push(0, 0, 1, 0, 1, 1, 0, 1);
-    indices.push(vertex, vertex + 1, vertex + 2, vertex, vertex + 2, vertex + 3);
-    vertex += 4;
+  // Each blade is a curved two-quad strip (base → mid → tip) that arcs over in
+  // its own direction, so the tuft reads as bending grass, not straight spikes.
+  // Blades vary in lean, height, curve and width; a per-blade value drives
+  // colour and sway variation in the shaders.
+  const blades = [
+    { yaw: 0.15, height: 1.0, curve: 0.34, width: 0.12 },
+    { yaw: 0.95, height: 0.82, curve: 0.52, width: 0.1 },
+    { yaw: 1.75, height: 1.08, curve: 0.28, width: 0.13 },
+    { yaw: 2.55, height: 0.72, curve: 0.58, width: 0.095 },
+    { yaw: 3.45, height: 0.93, curve: 0.4, width: 0.115 },
+    { yaw: 4.7, height: 0.8, curve: 0.46, width: 0.105 },
+  ];
+  for (const [bladeIndex, blade] of blades.entries()) {
+    const dirX = Math.cos(blade.yaw);
+    const dirZ = Math.sin(blade.yaw);
+    const perpX = -dirZ;
+    const perpZ = dirX;
+    const midOffset = blade.curve * blade.height * 0.2;
+    const tipOffset = blade.curve * blade.height * 0.55;
+    const variance = bladeHash(bladeIndex + 1);
+    const pushRow = (
+      offsetX: number,
+      offsetY: number,
+      offsetZ: number,
+      halfWidth: number,
+      uvY: number,
+    ): void => {
+      positions.push(offsetX - perpX * halfWidth, offsetY, offsetZ - perpZ * halfWidth);
+      uvs.push(0, uvY);
+      bladeVar.push(variance);
+      positions.push(offsetX + perpX * halfWidth, offsetY, offsetZ + perpZ * halfWidth);
+      uvs.push(1, uvY);
+      bladeVar.push(variance);
+    };
+    pushRow(0, 0, 0, blade.width, 0);
+    pushRow(dirX * midOffset, blade.height * 0.52, dirZ * midOffset, blade.width * 0.9, 0.52);
+    pushRow(dirX * tipOffset, blade.height, dirZ * tipOffset, blade.width * 0.66, 1);
+    indices.push(
+      vertex, vertex + 1, vertex + 3, vertex, vertex + 3, vertex + 2,
+      vertex + 2, vertex + 3, vertex + 5, vertex + 2, vertex + 5, vertex + 4,
+    );
+    vertex += 6;
   }
   const geometry = new BufferGeometry();
   geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
   geometry.setAttribute("uv", new Float32BufferAttribute(uvs, 2));
+  geometry.setAttribute("aBladeVar", new Float32BufferAttribute(bladeVar, 1));
   geometry.setIndex(indices);
-  geometry.computeVertexNormals();
   return geometry;
 }
 
@@ -89,8 +121,8 @@ export function GrassField({
   nightRef,
   pieces,
   count = 26000,
-  bladeColor = "#4f6a39",
-  tipColor = "#8aa356",
+  bladeColor = "#43602c",
+  tipColor = "#8aa851",
 }: {
   worldRadius: number;
   center: readonly [number, number];
@@ -117,6 +149,8 @@ export function GrassField({
           uFadeEnd: { value: 27 },
           uBase: { value: new Color(bladeColor) },
           uTip: { value: new Color(tipColor) },
+          uBaseDry: { value: new Color("#6f6a37") },
+          uTipDry: { value: new Color("#bcae63") },
         },
         side: DoubleSide,
         transparent: false,
@@ -128,8 +162,11 @@ export function GrassField({
           uniform float uFadeStart;
           uniform float uFadeEnd;
           attribute float aPhase;
+          attribute float aBladeVar;
+          attribute float aTint;
           varying vec2 vUv;
           varying float vShade;
+          varying float vDryness;
           void main() {
             vUv = uv;
             vec4 world = instanceMatrix * vec4(position, 1.0);
@@ -137,16 +174,20 @@ export function GrassField({
             // far grass vanishes smoothly with zero overdraw and no pop.
             float dist = distance(world.xyz, uCamera);
             float fade = 1.0 - smoothstep(uFadeStart, uFadeEnd, dist);
-            // Wind: only the tip (uv.y) sways; phase varies per tuft.
-            float sway = sin(uTime * 1.6 + aPhase + world.x * 0.25 + world.z * 0.2);
-            float gust = sin(uTime * 0.6 + world.x * 0.05) * 0.5 + 0.5;
-            float bend = uv.y * uv.y * (0.12 + gust * 0.16) * sway * uWind;
-            vec3 local = position;
-            local.y *= fade;
+            // Wind: the free tip sways, each blade slightly out of phase, on top
+            // of the blade's own baked-in curve.
+            float sway = sin(uTime * 1.5 + aPhase + aBladeVar * 5.7 + world.x * 0.25 + world.z * 0.2);
+            float gust = sin(uTime * 0.55 + world.x * 0.05) * 0.5 + 0.5;
+            float bend = uv.y * uv.y * (0.1 + gust * 0.15) * sway * uWind;
+            vec3 local = position * fade;
             vec4 shifted = instanceMatrix * vec4(local, 1.0);
             shifted.x += bend;
             shifted.z += bend * 0.6;
-            vShade = 0.55 + uv.y * 0.45;
+            // Darker at the base (self-shadow), lifting to the tip; each blade a
+            // touch brighter or duller.
+            vShade = (0.5 + uv.y * 0.5) * (0.86 + aBladeVar * 0.28);
+            // Some tufts and some blades within them are drier and yellower.
+            vDryness = clamp(aTint * 0.78 + aBladeVar * 0.42 - 0.22, 0.0, 1.0);
             gl_Position = projectionMatrix * viewMatrix * shifted;
           }
         `,
@@ -154,15 +195,22 @@ export function GrassField({
           precision mediump float;
           uniform vec3 uBase;
           uniform vec3 uTip;
+          uniform vec3 uBaseDry;
+          uniform vec3 uTipDry;
           uniform float uLight;
           varying vec2 vUv;
           varying float vShade;
+          varying float vDryness;
           void main() {
             // Pointed-blade cutout: discard outside a triangle tapering to the
             // tip. No blending — depth-correct and sort-free.
             float halfWidth = (1.0 - vUv.y) * 0.5;
             if (abs(vUv.x - 0.5) > halfWidth) discard;
-            vec3 color = mix(uBase, uTip, vUv.y) * vShade * uLight;
+            // Lush green blends toward dry straw per blade; dry tips catch it
+            // strongest, so blades look sun-bleached at their ends.
+            vec3 base = mix(uBase, uBaseDry, vDryness);
+            vec3 tip = mix(uTip, uTipDry, vDryness * 1.15);
+            vec3 color = mix(base, tip, vUv.y) * vShade * uLight;
             gl_FragColor = vec4(color, 1.0);
           }
         `,
@@ -216,6 +264,7 @@ export function GrassField({
     const scale = new Vector3();
     const euler = new Euler();
     const phases = new Float32Array(count);
+    const tints = new Float32Array(count);
     const usableRadius = Math.max(4, worldRadius - 4);
     let placed = 0;
     // Oversample candidates and keep them by a traffic-aware probability, so the
@@ -253,11 +302,15 @@ export function GrassField({
       matrix.compose(position, quaternion, scale);
       mesh.setMatrixAt(placed, matrix);
       phases[placed] = hash(index, 6) * Math.PI * 2;
+      // Per-tuft colour: bias drier the further from the lush verges (less
+      // grass keep-probability → drier), so worn ground looks parched.
+      tints[placed] = Math.min(1, hash(index, 8) * (1.15 - edge * 0.5));
       placed += 1;
     }
     mesh.count = placed;
     mesh.instanceMatrix.needsUpdate = true;
     geometry.setAttribute("aPhase", new InstancedBufferAttribute(phases, 1));
+    geometry.setAttribute("aTint", new InstancedBufferAttribute(tints, 1));
     // The bounding sphere spans the whole field (instances are not individually
     // culled), so it never wrongly disappears at the screen edge.
     mesh.frustumCulled = false;
