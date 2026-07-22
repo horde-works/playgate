@@ -916,13 +916,13 @@ function createVillageLife(): void {
 
   // Standing lights mark the gates and commons. Domestic light is attached
   // to actual thresholds below, so it reads as part of inhabited buildings.
+  // Standing torches only mark the gates now. The commons pair sat right in
+  // front of the hall shields — redundant with the wall torches there.
   const standingTorchSites = [
     ["north-gate-west", -5, 45],
     ["north-gate-east", 5, 45],
     ["south-gate-west", -4.5, -64],
     ["south-gate-east", 4.5, -64],
-    ["commons-west", -6.2, -1.5],
-    ["commons-east", -3.7, -1.5],
   ] as const;
   standingTorchSites.forEach(([id, x, z]) => {
     place(lights, `standing-torch:${id}`, "viking:torch", { position: [x, 0, z] });
