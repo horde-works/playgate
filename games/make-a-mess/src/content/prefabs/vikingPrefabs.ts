@@ -927,21 +927,34 @@ const cupboard = furnishing("viking:cupboard", "Kitchen cupboard", ["viking", "f
 ]);
 
 const cauldron = furnishing("viking:cauldron", "Cooking cauldron", ["viking", "furniture", "hearth", "light"], [
+  // A round iron pot on a short three-leg stand over glowing embers — reads as
+  // a cauldron, not a box with poles.
   ...[0, 1, 2].map((leg): ScenePrefabPieceDefinition => {
-    const angle = (leg / 3) * Math.PI * 2;
+    const angle = (leg / 3) * Math.PI * 2 + 0.5;
     return {
-      id: `leg:${leg}`,
-      material: "wood",
-      shape: "plank",
-      position: [Math.cos(angle) * 0.34, 0.62, Math.sin(angle) * 0.34],
-      rotation: [Math.cos(angle) * 0.32, 0, -Math.sin(angle) * 0.32],
-      size: [0.08, 1.3, 0.08],
-      color: darkTimber,
+      id: `foot:${leg}`,
+      material: "steel",
+      shape: "cylinder",
+      position: [Math.cos(angle) * 0.27, 0.19, Math.sin(angle) * 0.27],
+      size: [0.09, 0.38, 0.09],
+      color: iron,
     };
   }),
-  { id: "pot", material: "steel", shape: "steelSheet", position: [0, 0.36, 0], size: [0.74, 0.56, 0.74], color: "#33302b" },
-  { id: "rim", material: "steel", shape: "steelSheet", position: [0, 0.64, 0], size: [0.8, 0.1, 0.8], color: iron, bearsLoad: false },
-  { id: "embers", material: "glass", shape: "glassPane", position: [0, 0.12, 0], size: [0.6, 0.16, 0.6], color: litWindowColor, bearsLoad: false, light: { position: [0, 0.2, 0], color: "#ff8a3c", distance: 8, intensity: 5.4 } },
+  { id: "base", material: "steel", shape: "cylinder", position: [0, 0.42, 0], size: [0.46, 0.18, 0.46], color: "#231f1b" },
+  { id: "belly", material: "steel", shape: "cylinder", position: [0, 0.56, 0], size: [0.72, 0.26, 0.72], color: "#26231f", bearsLoad: false },
+  { id: "shoulder", material: "steel", shape: "cylinder", position: [0, 0.74, 0], size: [0.52, 0.16, 0.52], color: "#2c2824", bearsLoad: false },
+  { id: "rim", material: "steel", shape: "cylinder", position: [0, 0.83, 0], size: [0.58, 0.07, 0.58], color: iron, bearsLoad: false },
+  ...[-1, 1].map((side): ScenePrefabPieceDefinition => ({
+    id: `bail-post:${side}`,
+    material: "steel",
+    shape: "cylinder",
+    position: [side * 0.27, 0.98, 0],
+    size: [0.04, 0.34, 0.04],
+    color: iron,
+    bearsLoad: false,
+  })),
+  { id: "bail", material: "steel", shape: "cylinder", position: [0, 1.14, 0], rotation: [0, 0, Math.PI / 2], size: [0.04, 0.58, 0.04], color: iron, bearsLoad: false },
+  { id: "embers", material: "glass", shape: "glassPane", position: [0, 0.12, 0], size: [0.44, 0.12, 0.44], color: litWindowColor, bearsLoad: false, light: { position: [0, 0.3, 0], color: "#ff8a3c", distance: 8, intensity: 5.4 } },
 ]);
 
 const loom = furnishing("viking:loom", "Warp-weighted loom", ["viking", "furniture", "craft", "weaver"], [
