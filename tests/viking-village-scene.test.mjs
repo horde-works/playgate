@@ -46,7 +46,7 @@ test("the pilot map is a serializable scene document compiled from prefabs", () 
   assert.equal(parsed.id, "viking-village");
   assert.equal(vikingVillageCompilation.artifact.objectCount > 4000, true);
   assert.equal(vikingVillageCompilation.artifact.prefabIds.length >= 17, true);
-  assert.equal(vikingVillageCompilation.artifact.groupCount, 13);
+  assert.equal(vikingVillageCompilation.artifact.groupCount, 14);
 });
 
 test("the village contains domestic life as physical, destructible objects", () => {

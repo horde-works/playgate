@@ -51,6 +51,7 @@ export function propCask(options: {
       size: [1.1 * s, 0.09 * s, 1.1 * s],
       color: IRON,
       bearsLoad: false,
+      sideAttachmentReach: 0.18,
       contactBoxes: [{ position: [0, y * s, 0], size: [1.1 * s, 0.09 * s, 1.1 * s] }],
     })),
   ];
@@ -91,6 +92,7 @@ export function propCaskLying(options: {
     size: [1.1 * s, 0.09 * s, 1.1 * s],
     color: IRON,
     bearsLoad: false,
+      sideAttachmentReach: 0.18,
     contactBoxes: [{
       position: [Math.cos(yaw) * offset * s, radius, -Math.sin(yaw) * offset * s],
       size: [0.5 * s, 1.02 * s, 0.5 * s],
@@ -123,6 +125,7 @@ export function propSteelDrum(options: {
       size: [0.64 * s, 0.05 * s, 0.64 * s],
       color: "#3d4d5e",
       bearsLoad: false,
+      sideAttachmentReach: 0.15,
       contactBoxes: [{ position: [0, y * s, 0], size: [0.64 * s, 0.05 * s, 0.64 * s] }],
     })),
   ];
@@ -157,6 +160,7 @@ export function propCrate(options: {
       rotation: [0, yaw, 0],
       size: [0.98 * s, 0.07 * s, 0.84 * s],
       color: "#75552f",
+      sideAttachmentReach: 0.16,
       contactBoxes: [{ position: [0, 0.71 * s, 0], size: [0.8 * s, 0.07 * s, 0.7 * s] }],
     },
     {
@@ -168,6 +172,7 @@ export function propCrate(options: {
       size: [0.96 * s, 0.1 * s, 0.82 * s],
       color: "#6d4d2b",
       bearsLoad: false,
+      sideAttachmentReach: 0.18,
       contactBoxes: [{ position: [0, 0.34 * s, 0], size: [0.8 * s, 0.1 * s, 0.7 * s] }],
     },
   ];
@@ -267,7 +272,7 @@ export function propSackPile(options: {
       : [
           [-0.3, 0, 0.14, 0.25, "#a89a77"],
           [0.28, 0, -0.12, -0.2, "#8f8161"],
-          [0, 0.4, 0, 0.55, "#9c8d6b"],
+          [0.02, 0, 0.42, 0.55, "#9c8d6b"],
         ];
   return layout.map(([x, y, z, yaw, color], index) => ({
     id: `sack:${index}`,
@@ -277,6 +282,8 @@ export function propSackPile(options: {
     rotation: [0, yaw, 0],
     size: [0.66 * s, 0.42 * s, 0.46 * s],
     color,
+    carriesAttachments: true,
+    sideAttachmentReach: 0.4,
     contactBoxes: [{ position: [x * s, (y + 0.22) * s, z * s], size: [0.5 * s, 0.42 * s, 0.4 * s] }],
   }));
 }
@@ -315,6 +322,7 @@ export function propSpool(options: {
       size: [0.52 * s, 0.52 * s, 0.52 * s],
       color: options.drumColor ?? "#2f3d33",
       bearsLoad: false,
+      sideAttachmentReach: 0.25,
       contactBoxes: [{ position: [0, radius, 0], size: [0.4 * s, 0.52 * s, 0.4 * s] }],
     },
   ];
@@ -371,6 +379,7 @@ export function propBucket(options: { readonly scale?: number } = {}): PropPiece
       size: [0.37 * s, 0.045 * s, 0.37 * s],
       color: IRON,
       bearsLoad: false,
+      sideAttachmentReach: 0.12,
       contactBoxes: [{ position: [0, 0.35 * s, 0], size: [0.37 * s, 0.045 * s, 0.37 * s] }],
     },
   ];
@@ -394,17 +403,19 @@ export function propTarpPile(options: {
       rotation: [0, yaw, 0],
       size: [1.4 * s, 0.34 * s, 1.05 * s],
       color,
+      carriesAttachments: true,
       contactBoxes: [{ position: [0, 0.17 * s, 0], size: [1.0 * s, 0.34 * s, 0.8 * s] }],
     },
     {
       id: "fold:1",
       material: "cloth",
       shape: "panel",
-      position: [0.1 * s, 0.44 * s, -0.06 * s],
+      position: [0.62 * s, 0.1 * s, -0.5 * s],
       rotation: [0, yaw + 0.35, 0],
       size: [0.9 * s, 0.2 * s, 0.68 * s],
       color: "#525d4f",
-      contactBoxes: [{ position: [0.1 * s, 0.44 * s, -0.06 * s], size: [0.6 * s, 0.2 * s, 0.5 * s] }],
+      sideAttachmentReach: 0.3,
+      contactBoxes: [{ position: [0.62 * s, 0.1 * s, -0.5 * s], size: [0.6 * s, 0.2 * s, 0.5 * s] }],
     },
   ];
 }
@@ -427,6 +438,7 @@ export function propTyreStack(options: {
       position: [jitterX, (0.11 + index * 0.22) * s, jitterZ],
       size: [0.68 * s, 0.22 * s, 0.68 * s],
       color: index % 2 === 0 ? "#26282a" : "#2d2f31",
+      sideAttachmentReach: 0.2,
       contactBoxes: [{
         position: [jitterX, (0.11 + index * 0.22) * s, jitterZ],
         size: [0.5 * s, 0.22 * s, 0.5 * s],

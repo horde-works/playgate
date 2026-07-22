@@ -1179,11 +1179,268 @@ function createRockwork(): void {
   }
 }
 
+
+/**
+ * The lived-in pass: working clutter in NESTS (not sprinkled), earth berms
+ * against the palisade, duckboard walkways over the churned mud, firewood
+ * stacked under the eaves, awnings and wall shields on the dwellings, antlers
+ * over the hall door, pennant streamers on the gate lintels and a runestone
+ * by the road — the human marks that make the village a place, not a diorama.
+ */
+function createLivedInDressing(): void {
+  const storage = group("storage", "Barrels, crates and winter stores", "wood");
+  const structures = group("working-yards", "Weapon shelters, drying racks and work yards", "wood");
+  const ornaments = group("gate-ornaments", "Gate shields and approach spikes", "wood", "mounted");
+  const earthworks = group("earthworks", "Berms, middens and heaped soil", "earth");
+  const stones = group("terrain-stones", "Rocky Scandinavian ground", "stone");
+
+  // --- Working clutter, clustered where the work happens -------------------
+  const nests: readonly (readonly [string, string, number, number, number, number?])[] = [
+    // [prefab, id, x, z, yaw?, y?]
+    ["viking:barrel", "hallside:cask", 8.75, -16.6, 0],
+    ["core:barrel-lying", "hallside:cask-down", 9.6, -18.3, 0.4],
+    ["core:crate", "hallside:crate:0", 8.65, -19.6, 0.3],
+    ["core:crate", "hallside:crate:1", 8.7, -19.62, 1.75, 0.75],
+    ["core:sacks", "hallside:sacks", 8.55, -21.6, 1.1],
+    ["core:bucket", "hallside:bucket", 8.5, -15.4, 0],
+    ["viking:barrel", "brewer:cask:0", 23.2, 3.6, 0],
+    ["viking:barrel", "brewer:cask:1", 24.35, 2.6, 0],
+    ["core:barrel-lying", "brewer:cask-down", 22.4, 4.45, 1.2],
+    ["core:sacks", "brewer:sacks", 24.9, 4.1, 2.2],
+    ["core:plank-stack", "smithy:planks", 38.2, -11.2, 0.6],
+    ["core:crate", "smithy:crate", 40.0, -12.3, 1.2],
+    ["core:barrel-lying", "smithy:cask-down", 37.2, -13.0, -0.5],
+    ["core:bucket", "smithy:bucket", 39.2, -10.4, 0],
+    ["core:crate", "gate:crate:0", 2.6, 39.8, 0.9],
+    ["core:crate", "gate:crate:1", 2.64, 39.78, 2.3, 0.75],
+    ["core:tarp", "gate:tarp", 4.15, 38.7, 0.5],
+    ["core:plank-stack", "gate:planks", 1.8, 37.6, 1.35],
+    ["core:sacks", "gate:sacks", 4.5, 40.6, 0.2],
+    ["core:bucket", "well:bucket:0", -8.6, 12.1, 0],
+    ["core:bucket", "well:bucket:1", -11.2, 14.35, 0],
+    ["core:tarp", "well:tarp", -12.6, 11.3, 1.9],
+    ["core:crate", "fishrack:crate", -13.6, 37.9, 0.7],
+    ["core:sacks", "fishrack:sacks", -10.6, 37.4, 1.5],
+  ] as const;
+  for (const [prefabId, id, x, z, yaw, y] of nests) {
+    place(storage, `nest:${id}`, prefabId, {
+      position: [x, y ?? 0, z],
+      rotation: [0, yaw ?? 0, 0],
+    });
+  }
+
+  // --- Earth berms against the palisade + a midden behind the hall ---------
+  const bermAngles = [0.45, 1.15, 2.35, 3.55, 5.35];
+  for (const [index, angle] of bermAngles.entries()) {
+    const radius = palisadeRadius(angle) - 1.5;
+    const x = Math.cos(angle) * radius;
+    const z = WORLD_CENTER_Z + Math.sin(angle) * radius;
+    const yaw = angle + Math.PI / 2;
+    primitive(earthworks, `berm:${index}:base`, "earth", "stoneBlock",
+      [x, 0.24, z], [3.1, 0.52, 1.7], "#5b4832", {
+        rotation: [0, yaw, 0],
+        contactBoxes: [{ position: [0, 0, 0], size: [1.7, 0.52, 1.7] }],
+        surface: [{ kind: "moss", amount: 0.55 }],
+      });
+    primitive(earthworks, `berm:${index}:top`, "earth", "stoneBlock",
+      [x, 0.66, z], [2.0, 0.4, 1.1], "#61503a", {
+        rotation: [0, yaw + 0.08, 0],
+        contactBoxes: [{ position: [0, 0, 0], size: [1.1, 0.4, 1.1] }],
+        surface: [{ kind: "moss", amount: 0.45 }],
+      });
+  }
+  primitive(earthworks, "midden:base", "earth", "stoneBlock",
+    [4.2, 0.26, -35.2], [2.7, 0.56, 2.1], "#4f4231", {
+      rotation: [0, 0.6, 0],
+      contactBoxes: [{ position: [0, 0, 0], size: [1.6, 0.56, 1.6] }],
+      surface: [{ kind: "damp", amount: 0.4 }],
+    });
+  primitive(earthworks, "midden:top", "earth", "stoneBlock",
+    [4.35, 0.65, -35.1], [1.6, 0.34, 1.2], "#57493a", {
+      rotation: [0, 0.95, 0],
+      contactBoxes: [{ position: [0, 0, 0], size: [1.0, 0.34, 1.0] }],
+      surface: [{ kind: "moss", amount: 0.3 }],
+    });
+
+  // --- Duckboard walkways over the busiest mud -----------------------------
+  const addDuckboard = (
+    id: string,
+    from: readonly [number, number],
+    to: readonly [number, number],
+  ): void => {
+    const dx = to[0] - from[0];
+    const dz = to[1] - from[1];
+    const length = Math.hypot(dx, dz);
+    const dirX = dx / length;
+    const dirZ = dz / length;
+    // Local X of a piece with rotation ry points at [cos ry, -sin ry].
+    const runnerYaw = Math.atan2(-dirZ, dirX);
+    const plankYaw = Math.atan2(dirX, dirZ);
+    for (const side of [-1, 1] as const) {
+      const ox = -dirZ * side * 0.52;
+      const oz = dirX * side * 0.52;
+      primitive(structures, `duckboard:${id}:runner:${side}`, "wood", "plank",
+        [from[0] + dx / 2 + ox, 0.055, from[1] + dz / 2 + oz],
+        [length + 0.3, 0.11, 0.16], "#5d4531", {
+          rotation: [0, runnerYaw, 0],
+          contactBoxes: [{
+            position: [0, 0, 0],
+            size: [length + 0.2, 0.12, 0.3],
+          }],
+          surface: [{ kind: "damp", amount: 0.35 }],
+        });
+    }
+    const steps = Math.floor(length / 0.58);
+    for (let step = 0; step <= steps; step += 1) {
+      const t = step / Math.max(steps, 1);
+      const x = from[0] + dx * t;
+      const z = from[1] + dz * t;
+      primitive(structures, `duckboard:${id}:plank:${step}`, "wood", "plank",
+        [x, 0.075, z], [1.5, 0.07, 0.4], step % 3 === 0 ? "#6d5138" : "#63492f", {
+          rotation: [0, plankYaw, 0],
+          contactBoxes: [{ position: [0, 0, 0], size: [0.9, 0.07, 0.9] }],
+          surface: step % 4 === 0 ? [{ kind: "damp", amount: 0.3 }] : undefined,
+        });
+    }
+  };
+  addDuckboard("well", [1.3, 13.8], [-3.9, 14.2]);
+  const gateApproachZ = WORLD_CENTER_Z + palisadeRadius(Math.PI / 2);
+  addDuckboard("gate", [0, gateApproachZ - 2.6], [0, gateApproachZ - 6.4]);
+
+  // --- Firewood stacked under the eaves ------------------------------------
+  for (const homeId of ["fisher", "family-east", "elder"]) {
+    const home = vikingVillageHomes.find((entry) => entry.id === homeId);
+    if (!home) {
+      continue;
+    }
+    const [x, z] = vikingPlanLocalPoint(home.position, home.yaw, home.width / 2 + 0.82, -1);
+    addFirewoodPile(storage, `eaves-wood-${homeId}`, x, z, Math.PI / 2 - home.yaw);
+  }
+
+  // --- Door awnings on two dwellings ---------------------------------------
+  for (const homeId of ["weaver", "family-east"]) {
+    const home = vikingVillageHomes.find((entry) => entry.id === homeId);
+    if (!home) {
+      continue;
+    }
+    const half = home.length / 2;
+    const post = (side: -1 | 1): readonly [number, number] =>
+      vikingPlanLocalPoint(home.position, home.yaw, side * 1.18, half + 0.95);
+    for (const side of [-1, 1] as const) {
+      const [px, pz] = post(side);
+      primitive(structures, `awning:${homeId}:post:${side}`, "wood", "cylinder",
+        [px, 1.16, pz], [0.16, 2.32, 0.16], "#4c382c");
+    }
+    const [bx, bz] = vikingPlanLocalPoint(home.position, home.yaw, 0, half + 0.95);
+    primitive(structures, `awning:${homeId}:beam`, "wood", "plank",
+      [bx, 2.38, bz], [2.72, 0.14, 0.14], "#5d4634", {
+        rotation: [0, home.yaw, 0],
+        contactBoxes: [{ position: [0, 0, 0], size: [2.6, 0.14, 2.6] }],
+      });
+    for (const offset of [-0.95, -0.32, 0.32, 0.95]) {
+      const [rx, rz] = vikingPlanLocalPoint(home.position, home.yaw, offset, half + 0.62);
+      primitive(structures, `awning:${homeId}:roof:${offset}`, "wood", "plank",
+        [rx, 2.5, rz], [0.58, 0.06, 1.5], "#6a4f38", {
+          rotation: [0, home.yaw, 0],
+          contactBoxes: [{ position: [0, 0, 0], size: [0.55, 0.06, 0.55] }],
+          sideAttachmentReach: 0.6,
+          surface: [{ kind: "moss", amount: 0.25 }],
+        });
+    }
+  }
+
+  // --- Painted shields hung on house walls ---------------------------------
+  const smith = vikingVillageHomes.find((entry) => entry.id === "smith");
+  if (smith) {
+    const [sx, sz] = vikingPlanLocalPoint(smith.position, smith.yaw, smith.width / 2 + 0.14, 1.2);
+    place(ornaments, "houseshield:smith", "viking:shield", {
+      position: [sx, 2.5, sz],
+      rotation: [0, smith.yaw + Math.PI / 2, 0],
+    }, { palette: { paint: "#7c3b2c", stripe: "#c9a95d" } });
+  }
+  const familyNorth = vikingVillageHomes.find((entry) => entry.id === "family-north");
+  if (familyNorth) {
+    const [sx, sz] = vikingPlanLocalPoint(familyNorth.position, familyNorth.yaw, -1.7, familyNorth.length / 2 + 0.14);
+    place(ornaments, "houseshield:family-north", "viking:shield", {
+      position: [sx, 2.35, sz],
+      rotation: [0, familyNorth.yaw, 0],
+    }, { palette: { paint: "#33566b", stripe: "#d2c08a" } });
+  }
+
+  // --- Antlers over the hall door ------------------------------------------
+  for (const side of [-1, 1] as const) {
+    primitive(ornaments, `hall-antler:${side}`, "wood", "plank",
+      [7.68, 3.92, -8.88 + side * 0.17], [0.07, 0.72, 0.07], "#d8cdb6", {
+        rotation: [side * 0.62, 0, 0],
+        bearsLoad: false,
+        sideAttachmentReach: 0.55,
+        contactBoxes: [{ position: [0, 0, 0], size: [0.07, 0.72, 0.5] }],
+      });
+  }
+
+  // --- Pennant streamers on both gate lintels ------------------------------
+  const pennantColors = ["#8f3a2d", "#c9a95d", "#33566b", "#cfc4a4"];
+  for (const [gateId, gateZ] of [
+    ["north", WORLD_CENTER_Z + palisadeRadius(Math.PI / 2)],
+    ["south", WORLD_CENTER_Z - palisadeRadius(Math.PI * 1.5)],
+  ] as const) {
+    for (const [index, x] of [-2.4, -0.8, 0.8, 2.4].entries()) {
+      primitive(ornaments, `pennant:${gateId}:${index}`, "cloth", "panel",
+        [x, 6.32, gateZ], [0.17, 0.92, 0.05], pennantColors[index % pennantColors.length], {
+          rotation: [0, 0, (index % 2 === 0 ? 1 : -1) * 0.06],
+          bearsLoad: false,
+          sideAttachmentReach: 0.8,
+          contactBoxes: [{ position: [0, 0, 0], size: [0.17, 0.92, 0.05] }],
+        });
+    }
+  }
+
+  // --- A runestone by the road and two carved waymarks ---------------------
+  for (const [index, [bx, bz, bw]] of ([[4.9, 26.2, 1.5], [5.6, 26.9, 1.2]] as const).entries()) {
+    primitive(stones, `runestone:base:${index}`, "stone", "stoneBlock",
+      [bx, 0.2, bz], [bw, 0.42, bw * 0.8], "#6e6f66", {
+        rotation: [0, 0.4 + index, 0],
+        contactBoxes: [{ position: [0, 0, 0], size: [bw * 0.8, 0.42, bw * 0.8] }],
+        surface: [{ kind: "moss", amount: 0.5 }],
+      });
+  }
+  primitive(stones, "runestone:slab", "stone", "stoneBlock",
+    [5.2, 1.42, 26.5], [1.18, 2.3, 0.44], "#787a71", {
+      rotation: [0.05, 0.52, 0.03],
+      contactBoxes: [{ position: [0, 0, 0], size: [0.8, 2.3, 0.8] }],
+      surface: [{ kind: "moss", amount: 0.4 }],
+    });
+  for (const [index, [ox, oy, tilt]] of ([[-0.16, 1.15, 0.5], [0.05, 1.55, -0.4], [0.14, 0.85, 0.25]] as const).entries()) {
+    primitive(stones, `runestone:band:${index}`, "stone", "stoneBlock",
+      [5.2 + ox + Math.sin(0.52) * 0.24, oy, 26.5 + Math.cos(0.52) * 0.24], [0.62, 0.13, 0.06], "#a6b8bf", {
+        rotation: [0, 0.52, tilt],
+        bearsLoad: false,
+        sideAttachmentReach: 0.35,
+        contactBoxes: [{ position: [0, 0, 0], size: [0.5, 0.13, 0.5] }],
+      });
+  }
+  for (const [index, [mx, mz]] of ([[-3.2, 18.5], [5.8, -2.0]] as const).entries()) {
+    primitive(structures, `waymark:${index}:post`, "wood", "cylinder",
+      [mx, 1.3, mz], [0.3, 2.6, 0.3], "#4d3a2c", {
+        surface: [{ kind: "moss", amount: 0.3 }],
+      });
+    for (const [bandIndex, y] of [1.9, 2.25].entries()) {
+      primitive(structures, `waymark:${index}:band:${bandIndex}`, "wood", "cylinder",
+        [mx, y, mz], [0.36, 0.13, 0.36], bandIndex === 0 ? "#8f3a2d" : "#c9a95d", {
+          bearsLoad: false,
+          sideAttachmentReach: 0.2,
+          contactBoxes: [{ position: [0, 0, 0], size: [0.36, 0.13, 0.36] }],
+        });
+    }
+  }
+}
+
 createTerrain();
 createPalisade();
 createBuildings();
 createVillageLife();
 createRockwork();
+createLivedInDressing();
 createWoodland();
 
 export const vikingVillageDocument: AuthoredSceneDocument = {
