@@ -208,9 +208,10 @@ function addLonghouseWall(
 }
 
 // A plank door leaf: vertical boards over two iron straps, all sharing one
-// hinge so the whole leaf swings as one створка when the player approaches.
-// The boards reach the threshold (ground-supported); the straps side-attach to
-// them. `face` is the outward axis the leaf presents.
+// hinge so the whole leaf swings as one створка. `bottomClearance` trims only
+// the foot of the boards: the lintel alignment stays fixed while the leaf
+// clears the timber floor or the taller hall porch instead of cutting through
+// it. `face` is the outward axis the leaf presents.
 function pushPlankDoor(
   pieces: ScenePrefabPieceDefinition[],
   face: "x" | "z",
@@ -218,8 +219,12 @@ function pushPlankDoor(
   leafWidth: number,
   height: number,
   hinge: NonNullable<ScenePrefabPieceDefinition["hinge"]>,
+  bottomClearance: number,
 ): void {
-  const [cx, cy, cz] = center;
+  const [cx, originalCenterY, cz] = center;
+  const top = originalCenterY + height / 2;
+  const trimmedHeight = top - bottomClearance;
+  const cy = bottomClearance + trimmedHeight / 2;
   const boardCount = 5;
   const boardWidth = leafWidth / boardCount;
   for (let board = 0; board < boardCount; board += 1) {
@@ -227,7 +232,9 @@ function pushPlankDoor(
     const position: readonly [number, number, number] =
       face === "z" ? [cx + offset, cy, cz] : [cx, cy, cz + offset];
     const size: readonly [number, number, number] =
-      face === "z" ? [boardWidth * 0.95, height, 0.14] : [0.14, height, boardWidth * 0.95];
+      face === "z"
+        ? [boardWidth * 0.95, trimmedHeight, 0.14]
+        : [0.14, trimmedHeight, boardWidth * 0.95];
     pieces.push({
       id: `door:board:${board}`,
       material: "wood",
@@ -237,10 +244,15 @@ function pushPlankDoor(
       color: board % 2 === 0 ? darkTimber : "#4a382c",
       colorSlot: "door",
       carriesAttachments: true,
+      // The outer board hangs from the jamb; the rest form one tied leaf.
+      sideAttachmentReach: 0.14,
       hinge,
     });
   }
-  for (const [strapIndex, strapY] of [cy - height * 0.28, cy + height * 0.3].entries()) {
+  for (const [strapIndex, strapY] of [
+    cy - trimmedHeight * 0.28,
+    cy + trimmedHeight * 0.3,
+  ].entries()) {
     const position: readonly [number, number, number] =
       face === "z" ? [cx, strapY, cz + 0.1] : [cx + 0.1, strapY, cz];
     const size: readonly [number, number, number] =
@@ -472,6 +484,8 @@ function longhouse(
       size: [sx, sy, sz],
       color: darkTimber,
       colorSlot: "darkTimber",
+      carriesAttachments: index < 2,
+      attachmentSupportMode: index < 2 ? "hinge" : undefined,
       contactBearingOrder: index === 2,
       contactBoxes: index === 2
         ? hall
@@ -584,10 +598,10 @@ function longhouse(
 
   if (hall) {
     pushPlankDoor(pieces, "x", [width / 2 + 0.05, 1.2, doorCenter], 1.86, 2.4, {
-      pivot: [width / 2 + 0.05, 1.2, doorCenter - 0.88],
+      pivot: [width / 2 + 0.05, 1.42, doorCenter - 0.88],
       direction: [0, 1, 0],
       normal: [1, 0, 0],
-    });
+    }, 0.44);
     for (let step = 0; step < 3; step += 1) {
       const height = 0.18 + step * 0.12;
       pieces.push({
@@ -602,10 +616,10 @@ function longhouse(
     }
   } else {
     pushPlankDoor(pieces, "z", [0, 1.15, length / 2 + 0.05], 1.85, 2.3, {
-      pivot: [-0.87, 1.15, length / 2 + 0.05],
+      pivot: [-0.87, 1.28, length / 2 + 0.05],
       direction: [0, 1, 0],
       normal: [0, 0, 1],
-    });
+    }, 0.26);
   }
 
   return prefab(
@@ -870,6 +884,12 @@ const mushroom = prefab("viking:mushrooms", "Mushroom cluster", ["viking", "grow
   { id: "cap:1", material: "foliage", shape: "panel", position: [0.2, 0.3, 0.08], size: [0.3, 0.1, 0.3], color: "#b07b49", bearsLoad: false },
 ]);
 
+const gateLeafHinge = {
+  pivot: [-1.5, 1.65, 0],
+  direction: [0, 1, 0],
+  normal: [0, 0, 1],
+} as const;
+
 const gateLeaf = prefab("viking:gate-leaf", "Timber gate leaf", ["viking", "gate", "hinged"], [
   ...Array.from({ length: 5 }, (_, index): ScenePrefabPieceDefinition => ({
     id: `board:${index}`,
@@ -878,9 +898,11 @@ const gateLeaf = prefab("viking:gate-leaf", "Timber gate leaf", ["viking", "gate
     position: [-1.2 + index * 0.6, 1.65, 0],
     size: [0.55, 3.3, 0.22],
     color: index % 2 === 0 ? timber : darkTimber,
+    carriesAttachments: true,
+    hinge: gateLeafHinge,
   })),
-  { id: "brace:0", material: "wood", shape: "plank", position: [0, 1.8, 0.15], size: [3.15, 0.2, 0.18], color: freshTimber, rotation: [0, 0, 0.45], sideAttachmentReach: 0.34 },
-  { id: "brace:1", material: "wood", shape: "plank", position: [0, 1.8, 0.15], size: [3.15, 0.2, 0.18], color: freshTimber, rotation: [0, 0, -0.45], sideAttachmentReach: 0.34 },
+  { id: "brace:0", material: "wood", shape: "plank", position: [0, 1.8, 0.15], size: [3.15, 0.2, 0.18], color: freshTimber, rotation: [0, 0, 0.45], sideAttachmentReach: 0.34, hinge: gateLeafHinge },
+  { id: "brace:1", material: "wood", shape: "plank", position: [0, 1.8, 0.15], size: [3.15, 0.2, 0.18], color: freshTimber, rotation: [0, 0, -0.45], sideAttachmentReach: 0.34, hinge: gateLeafHinge },
 ]);
 
 

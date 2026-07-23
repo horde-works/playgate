@@ -801,11 +801,20 @@ function fencePillarLamp(): ScenePrefabDefinition {
     part("lamp-stem", "steel", "steelSheet", [0, 2.98, 0], [0.16, 0.42, 0.16], DARK_STEEL, {
       carriesAttachments: true,
     }),
-    part("lamp-glass", "glass", "glassPane", [0, 3.32, 0], [0.48, 0.52, 0.48], litWindowColor, {
+    // Стекло не источник света: внутри плафона отдельная лампочка. Разбил
+    // стекло — лампочка горит дальше; разбил лампочку — фонарь погас.
+    // Позиция света обязательна: без неё источник падает в origin префаба,
+    // то есть в ОСНОВАНИЕ столба, и кирпич светится из-под земли.
+    part("lamp-glass", "glass", "glassPane", [0, 3.32, 0], [0.48, 0.52, 0.48], "#b9c2bd", {
       bearsLoad: false,
-      light: { color: "#ffd88a", distance: 8, intensity: 16 },
       sideAttachmentReach: 0.55,
       contactBoxes: [{ position: [0, 3.18, 0], size: [0.55, 0.8, 0.55] }],
+    }),
+    part("lamp-bulb", "glass", "glassPane", [0, 3.3, 0], [0.15, 0.2, 0.15], litWindowColor, {
+      bearsLoad: false,
+      light: { position: [0, 3.3, 0], color: "#ffd88a", distance: 8, intensity: 16 },
+      sideAttachmentReach: 0.4,
+      contactBoxes: [{ position: [0, 3.14, 0], size: [0.18, 0.5, 0.18] }],
     }),
     part("lamp-hat", "steel", "steelSheet", [0, 3.63, 0], [0.68, 0.09, 0.68], DARK_STEEL, {
       bearsLoad: false,
@@ -814,6 +823,38 @@ function fencePillarLamp(): ScenePrefabDefinition {
     }),
   );
   return prefab("city:fence:pillar-lamp", "Heavy red wall pillar with lantern", ["city", "fence", "lamp", "courtyard"], pieces);
+}
+
+// Настенный фонарик у входной двери. Origin префаба лежит НА плоскости
+// фасада (локальный -z уходит в стену), кронштейн цепляется контактом за
+// кладку — как кондиционеры на панельках. Светится лампочка внутри стекла,
+// не само стекло.
+function porchLantern(): ScenePrefabDefinition {
+  const pieces: Piece[] = [
+    part("bracket", "steel", "steelSheet", [0, 2.5, 0.14], [0.06, 0.06, 0.34], DARK_STEEL, {
+      bearsLoad: false,
+      carriesAttachments: true,
+      sideAttachmentReach: 0.5,
+      contactBoxes: [{ position: [0, 2.5, 0.02], size: [0.1, 0.12, 0.4] }],
+    }),
+    part("hat", "steel", "steelSheet", [0, 2.44, 0.28], [0.28, 0.05, 0.28], DARK_STEEL, {
+      bearsLoad: false,
+      sideAttachmentReach: 0.3,
+      contactBoxes: [{ position: [0, 2.48, 0.21], size: [0.3, 0.12, 0.34] }],
+    }),
+    part("glass", "glass", "glassPane", [0, 2.27, 0.28], [0.2, 0.3, 0.2], "#b9c2bd", {
+      bearsLoad: false,
+      sideAttachmentReach: 0.35,
+      contactBoxes: [{ position: [0, 2.38, 0.28], size: [0.24, 0.32, 0.24] }],
+    }),
+    part("bulb", "glass", "glassPane", [0, 2.27, 0.28], [0.09, 0.13, 0.09], litWindowColor, {
+      bearsLoad: false,
+      light: { position: [0, 2.27, 0.28], color: "#ffd88a", distance: 7, intensity: 10 },
+      sideAttachmentReach: 0.3,
+      contactBoxes: [{ position: [0, 2.36, 0.28], size: [0.12, 0.32, 0.12] }],
+    }),
+  ];
+  return prefab("city:lantern:porch", "Wall porch lantern with a bulb inside", ["city", "lamp", "yard", "light"], pieces);
 }
 
 function weatheredBlueGate(): ScenePrefabDefinition {
@@ -831,15 +872,22 @@ function weatheredBlueGate(): ScenePrefabDefinition {
     }
     pieces.push(part(`pillar-cap:${side}`, "concrete", "panel", [x, 2.48, 0], [1.05, 0.22, 0.92], "#bcb7ab", { weathering: 0.72 }));
   }
-  // The reference yard is entered through the open left half of the gateway;
-  // the weathered blue leaf remains shut on the service side.
-  for (const side of [1] as const) {
-    pieces.push(part(`leaf:${side}`, "steel", "steelSheet", [side * 1.25, 1.15, 0], [2.35, 2.2, 0.16], "#8da7ad", {
-      hinge: { pivot: [side * 2.4, 1.15, 0], direction: [0, 1, 0], normal: [0, 0, 1] },
+  // Обе створки, и каждая — ЕДИНЫЙ объект: HingedDoorSystem группирует
+  // куски по общему префиксу id до ":board:N", поэтому лист и его прутья
+  // названы board'ами одной створки и делят одну петлю. Створка
+  // поворачивается целиком (лист вместе с рёбрами), каждая на своём столбе —
+  // подходишь, и они распахиваются в противоположные стороны.
+  // hinge.direction — горизонтальный вектор ОТ петли К полотну (не ось!):
+  // из него HingedDoorSystem берёт знак распахивания, так что зеркальные
+  // створки открываются зеркально — обе ОТ подходящего игрока.
+  for (const side of [-1, 1] as const) {
+    pieces.push(part(`leaf:${side}:board:0`, "steel", "steelSheet", [side * 1.25, 1.15, 0], [2.35, 2.2, 0.16], "#8da7ad", {
+      hinge: { pivot: [side * 2.4, 1.15, 0], direction: [-side, 0, 0], normal: [0, 0, 1] },
       weathering: 0.48,
     }));
     for (let rib = 0; rib < 7; rib += 1) {
-      pieces.push(part(`leaf:${side}:rib:${rib}`, "steel", "steelSheet", [side * 1.25 - 0.88 + rib * 0.29, 1.15, 0.11], [0.045, 2.1, 0.06], "#718d94", {
+      pieces.push(part(`leaf:${side}:board:${rib + 1}`, "steel", "steelSheet", [side * (0.37 + rib * 0.29), 1.15, 0.11], [0.045, 2.1, 0.06], "#718d94", {
+        hinge: { pivot: [side * 2.4, 1.15, 0], direction: [-side, 0, 0], normal: [0, 0, 1] },
         bearsLoad: false,
         sideAttachmentReach: 0.24,
         contactBoxes: [{ position: [side * 1.25, 1.15, 0], size: [2.35, 2.2, 0.4] }],
@@ -2265,6 +2313,7 @@ const prefabs = [
   yellowCourtyardWing(),
   breezeFenceSection(),
   fencePillarLamp(),
+  porchLantern(),
   weatheredBlueGate(),
   bicycle(),
   streetLamp("city:lamp:street"),
@@ -2304,6 +2353,16 @@ const prefabs = [
   hipWhiteHouse(),
   birdhouse(),
   cardboardBoxes(),
+  yawQuarterPrefab(
+    weatheredBlueGate(),
+    "city:gate:weathered-blue-ns",
+    "Peeling white-brick gate across a north-south wall",
+  ),
+  yawQuarterPrefab(
+    profiledFenceSection(),
+    "city:fence:profiled-section-ns",
+    "Dark profiled fence section running north-south",
+  ),
   buildingSuppliesKiosk(),
   whitebrickFenceSection(),
   profiledFenceSection(),

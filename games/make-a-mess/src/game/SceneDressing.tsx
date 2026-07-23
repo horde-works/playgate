@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, type RefObject } from "react";
+import type { BreakablePieceDefinition } from "./destructionScene";
 import { WireSpans, type WireSpan } from "./WireSpans";
 import { IvyPatches, WeedClumps, type IvyRun, type WeedPoint } from "./Undergrowth";
 import { Puddles, type PuddleSpot } from "./Puddles";
@@ -374,6 +375,47 @@ function openHouseDressing(): DressingConfig {
     }
   }
 
+  // --- Старый квартал: воздушка, плющ, бурьян и лужи частного сектора ----
+  wires.push(
+    // Пролёты частного сектора. Все дома питаются ЧЕРЕЗ ДВОР, а не от
+    // уличных столбов напролом: старые пролёты «столб → белёный дом» и
+    // «столб → усадьба» проходили сквозь квартиры k1 и k5, а после сдвига
+    // домов их концы повисали в воздухе.
+    { from: [10, 4.62, -8.72], to: [12.1, 3.3, 5.4], sag: 0.7, thickness: 0.03, color: POWER },
+    { from: [12.1, 3.3, 5.4], to: [-7.6, 5.7, 12.1], sag: 0.75, thickness: 0.03, color: POWER },
+    { from: [12.1, 3.3, 5.4], to: [28.6, 5.1, 8.75], sag: 1.0, thickness: 0.03, color: POWER },
+    // Усадьба — от столба поперечной улицы вдоль проезда, мимо k5.
+    { from: [45.85, 4.62, -44], to: [31.6, 5.9, -50.9], sag: 0.85, thickness: 0.03, color: POWER },
+  );
+  const quarterIvy: IvyRun[] = [
+    // Белёное плечо у ворот и задняя стена сарая зарастают.
+    { a: [-7.5, 0.15, 8.88], b: [-5.4, 0.15, 8.88], height: 1.45, normal: [0, -1], density: 2.9 },
+    { a: [-13.2, 0.15, 6.32], b: [-7.0, 0.15, 6.32], height: 1.5, normal: [0, 1], density: 2.9 },
+  ];
+  ivy.push(...quarterIvy);
+  const quarterWeedRuns: readonly (readonly [number, number, number, number, number, number])[] = [
+    [-13.4, 18.0, -3.0, 17.6, 8, 421],
+    [25.0, 17.6, 34.4, 17.4, 8, 425],
+    [-7.6, 8.75, -4.9, 8.75, 6, 431],
+    [-13.6, 1.2, -6.8, 1.0, 8, 441],
+    [14.8, -50.6, 20.8, -50.8, 6, 451],
+    [20.4, -53.3, 31.8, -53.4, 10, 461],
+  ];
+  for (const [x0, z0, x1, z1, count, salt] of quarterWeedRuns) {
+    for (let index = 0; index < count; index += 1) {
+      if (hash(index, salt) > 0.72) {
+        continue;
+      }
+      const t = (index + hash(index, salt + 1) * 0.6) / count;
+      weeds.push({
+        x: x0 + (x1 - x0) * t + (hash(index, salt + 2) - 0.5) * 0.6,
+        z: z0 + (z1 - z0) * t + (hash(index, salt + 3) - 0.5) * 0.6,
+        scale: 0.5 + hash(index, salt + 4) * 0.75,
+        dry: 0.3 + hash(index, salt + 5) * 0.35,
+      });
+    }
+  }
+
   const puddles: PuddleSpot[] = [
     { x: 14.2, z: -13.4, r: 1.2, y: 0.09 },
     { x: 33.5, z: -10.6, r: 0.9, y: 0.09 },
@@ -385,6 +427,13 @@ function openHouseDressing(): DressingConfig {
     { x: 4.5, z: 1.4, r: 0.55, y: 0.055 },
     { x: 60.2, z: 1.5, r: 0.5, y: 0.055 },
     { x: 24.2, z: -32.9, r: 0.9, y: 0.055 },
+    // Лужи старого квартала: у ворот, у сарая, во дворе и на юге у навеса.
+    { x: -1.3, z: 8.4, r: 0.95, y: 0.055 },
+    { x: -5.4, z: 5.6, r: 0.85, y: 0.055 },
+    { x: -1.8, z: 12.4, r: 0.7, y: 0.055 },
+    { x: 13.9, z: 2.7, r: 0.85, y: 0.055 },
+    { x: 26.6, z: -44.6, r: 0.95, y: 0.09 },
+    { x: 17.9, z: -49.2, r: 0.75, y: 0.055 },
   ];
 
   return { wires, ivy, weeds, puddles };
@@ -484,9 +533,15 @@ const configBuilders: Record<string, () => DressingConfig> = {
 export function SceneDressing({
   sceneId,
   nightRef,
+  pieces,
+  brokenPieces,
 }: {
   sceneId: string;
   nightRef: RefObject<number>;
+  /** Куски сцены — для авто-привязки концов проводов к опорам. */
+  pieces?: readonly BreakablePieceDefinition[];
+  /** Сломанные куски: провод с потерянной опорой падает. */
+  brokenPieces?: ReadonlySet<string>;
 }) {
   const config = useMemo(() => configBuilders[sceneId]?.(), [sceneId]);
   if (!config) {
@@ -494,7 +549,9 @@ export function SceneDressing({
   }
   return (
     <>
-      {config.wires?.length ? <WireSpans spans={config.wires} /> : null}
+      {config.wires?.length ? (
+        <WireSpans spans={config.wires} pieces={pieces} brokenPieces={brokenPieces} />
+      ) : null}
       {config.ivy?.length ? <IvyPatches runs={config.ivy} nightRef={nightRef} /> : null}
       {config.weeds?.length ? <WeedClumps points={config.weeds} nightRef={nightRef} /> : null}
       {config.puddles?.length ? <Puddles spots={config.puddles} /> : null}

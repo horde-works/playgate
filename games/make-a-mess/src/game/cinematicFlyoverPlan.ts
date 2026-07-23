@@ -30,6 +30,7 @@ export interface CinematicFlyoverDefinition {
   readonly title: string;
   readonly locationLabel: string;
   readonly storyLabel: string;
+  readonly backLabel: string;
   readonly durationSeconds: number;
   readonly fileName: string;
   readonly keyframes: readonly FlyoverCameraKeyframe[];

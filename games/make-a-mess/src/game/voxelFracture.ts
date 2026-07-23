@@ -44,7 +44,11 @@ export interface VoxelFractureResult {
   readonly components: readonly VoxelComponent[];
 }
 
-const DEFAULT_MAX_VOXELS = 12_000;
+// Бюджет вокселей на тело. Влияет только на гигантов (корпус киоска
+// 7×3.1×4.9 м): их дробление на 12k вокселей стоило 60-90 мс за удар и
+// складывалось в секундные фризы при взрыве; на кирпичах и досках (десятки
+// вокселей) кламп не сказывается вовсе — осколки гигантов просто крупнее.
+const DEFAULT_MAX_VOXELS = 4_500;
 const MINIMUM_VOXEL_SIZE = 0.045;
 const NEIGHBOURS = [
   [-1, 0, 0],

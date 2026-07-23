@@ -1,25 +1,48 @@
 .launcher {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  margin-top: 16px;
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid rgb(23 23 21 / 0.28);
 }
 
-.launcher button {
-  min-height: 58px;
+.introCopy {
+  margin-bottom: 11px;
+}
+
+.introCopy > span,
+.extrasLabel {
+  flex: none;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 7px;
+  font-weight: 760;
+  letter-spacing: 0.13em;
+  opacity: 0.52;
+}
+
+.introActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.introActions button {
+  min-height: 54px;
   padding: 11px 13px;
   border: 1px solid #171715;
-  background: #171715;
-  color: #f4efe2;
+  background: transparent;
+  color: #171715;
   cursor: pointer;
   text-align: left;
   transition: background 160ms ease, color 160ms ease, transform 160ms ease;
 }
 
-.launcher button:hover:not(:disabled) {
-  background: #ff4f28;
+.introActions button:hover:not(:disabled) {
+  background: #d9ff3f;
   color: #171715;
   transform: translateY(-2px);
+}
+
+.introActions button:only-child {
+  grid-column: 1 / -1;
 }
 
 .launcher button:disabled {
@@ -27,15 +50,32 @@
   opacity: 0.42;
 }
 
-.launcher .galleryLauncher {
-  grid-column: 1 / -1;
-  min-height: 47px;
-  background: transparent;
-  color: #171715;
+.extras {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 11px;
+  padding-top: 9px;
+  border-top: 1px solid rgb(23 23 21 / 0.18);
 }
 
-.launcher .galleryLauncher:hover:not(:disabled) {
-  background: #d9ff3f;
+.recordLauncher {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 9px;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: #171715;
+  cursor: pointer;
+  text-align: right;
+  transition: color 160ms ease;
+}
+
+.recordLauncher:hover:not(:disabled) {
+  color: #d83a18;
 }
 
 .launcher span,
@@ -50,11 +90,14 @@
 }
 
 .launcher small {
-  margin-top: 5px;
   font-family: var(--font-geist-mono), monospace;
   font-size: 7px;
   letter-spacing: 0.09em;
   opacity: 0.62;
+}
+
+.introActions small {
+  margin-top: 5px;
 }
 
 .galleryShortcut {
@@ -416,7 +459,10 @@
 }
 
 @media (max-width: 760px) {
-  .launcher { grid-template-columns: 1fr; }
+  .introActions { grid-template-columns: 1fr; }
+  .introActions button:only-child { grid-column: auto; }
+  .recordLauncher { display: block; }
+  .recordLauncher small { margin-top: 4px; }
   .chapter { width: calc(100vw - 44px); }
   .chapter.left,
   .chapter.right { right: auto; left: 22px; text-align: left; }

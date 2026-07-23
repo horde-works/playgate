@@ -5,6 +5,23 @@ import { useRapier, type RapierRigidBody } from "@react-three/rapier";
 import { useEffect, useMemo, useRef } from "react";
 import { Euler, Quaternion, Vector3 } from "three";
 import type { BreakablePieceDefinition } from "./destructionScene";
+import {
+  horizontalGateDistance,
+  inwardDoorSwingSign,
+  VIKING_DOOR_APPROACH_RADIUS,
+  VIKING_DOOR_RELEASE_RADIUS,
+  VIKING_GATE_APPROACH_RADIUS,
+  VIKING_GATE_RELEASE_RADIUS,
+  vikingDoorPolicy,
+  vikingGateLeafPolicy,
+  type VikingDoorPolicy,
+  type VikingGateLeafPolicy,
+} from "./hingedGatePolicy";
+
+export interface HingedEntryApproach {
+  readonly id: string;
+  readonly kind: "door" | "gate";
+}
 
 interface DoorMember {
   readonly piece: BreakablePieceDefinition;
@@ -19,6 +36,14 @@ interface DoorGroup {
   readonly members: readonly DoorMember[];
   readonly hinge: NonNullable<BreakablePieceDefinition["hinge"]>;
   readonly center: readonly [number, number, number];
+  readonly gate: VikingGateLeafPolicy | null;
+  readonly vikingDoor: VikingDoorPolicy | null;
+}
+
+interface GateGroup {
+  readonly id: string;
+  readonly center: readonly [number, number, number];
+  readonly leaves: readonly DoorGroup[];
 }
 
 export function HingedDoorSystem({
@@ -26,19 +51,22 @@ export function HingedDoorSystem({
   bodies,
   brokenPieces,
   resetVersion,
+  entryOpenRequestVersion = 0,
+  onEntryApproachChange = () => {},
 }: {
   pieces: readonly BreakablePieceDefinition[];
   bodies: { current: Map<string, RapierRigidBody> };
   brokenPieces: { current: ReadonlySet<string> };
   resetVersion: number;
+  entryOpenRequestVersion?: number;
+  onEntryApproachChange?: (entry: HingedEntryApproach | null) => void;
 }) {
   const { camera } = useThree();
   const { rapier } = useRapier();
 
   // A plank door is many boards (and iron straps) sharing one hinge. Group them
-  // so the whole leaf swings on ONE state — approaching it opens every board by
-  // the same angle at the same instant, instead of each board fanning open
-  // independently like an accordion.
+  // so the whole leaf answers one interaction and swings every member by the
+  // same angle, instead of fanning open independently like an accordion.
   const doorGroups = useMemo<DoorGroup[]>(() => {
     const groups = new Map<
       string,
@@ -48,7 +76,7 @@ export function HingedDoorSystem({
       if (!piece.hinge) {
         continue;
       }
-      const key = piece.id.replace(/:(board|strap):\d+$/, "");
+      const key = piece.id.replace(/:(board|strap|brace):\d+$/, "");
       const existing = groups.get(key);
       if (existing) {
         existing.members.push(piece);
@@ -78,9 +106,32 @@ export function HingedDoorSystem({
         members: doorMembers,
         hinge,
         center: [sx / count, sy / count, sz / count] as const,
+        gate: vikingGateLeafPolicy(key),
+        vikingDoor: vikingDoorPolicy(key),
       };
     });
   }, [pieces]);
+
+  const gateGroups = useMemo<GateGroup[]>(() => {
+    const gates = new Map<string, DoorGroup[]>();
+    for (const group of doorGroups) {
+      if (!group.gate) {
+        continue;
+      }
+      const leaves = gates.get(group.gate.gateId) ?? [];
+      leaves.push(group);
+      gates.set(group.gate.gateId, leaves);
+    }
+    return [...gates.entries()].map(([id, leaves]) => ({
+      id,
+      leaves,
+      center: [
+        leaves.reduce((sum, leaf) => sum + leaf.center[0], 0) / leaves.length,
+        leaves.reduce((sum, leaf) => sum + leaf.center[1], 0) / leaves.length,
+        leaves.reduce((sum, leaf) => sum + leaf.center[2], 0) / leaves.length,
+      ] as const,
+    }));
+  }, [doorGroups]);
 
   const states = useRef(new Map<string, { angle: number; sign: number }>());
   const cameraDirection = useRef(new Vector3());
@@ -90,15 +141,82 @@ export function HingedDoorSystem({
   const doorRelative = useRef(new Vector3());
   const doorUpAxis = useRef(new Vector3(0, 1, 0));
   const shadowAccumulator = useRef(1);
+  const approachedEntry = useRef<HingedEntryApproach | null>(null);
+  const openedEntries = useRef(new Set<string>());
+  const handledEntryRequest = useRef(entryOpenRequestVersion);
 
   useEffect(() => {
     states.current.clear();
-  }, [resetVersion]);
+    openedEntries.current.clear();
+    approachedEntry.current = null;
+    onEntryApproachChange(null);
+  }, [onEntryApproachChange, resetVersion]);
 
   useFrame((frameState, delta) => {
     camera.getWorldDirection(cameraDirection.current);
     shadowAccumulator.current += delta;
     let doorMoved = false;
+
+    const cameraPosition = [
+      camera.position.x,
+      camera.position.y,
+      camera.position.z,
+    ] as const;
+    let nearestEntry: HingedEntryApproach | null = null;
+    let nearestEntryDistance = Number.POSITIVE_INFINITY;
+    for (const gate of gateGroups) {
+      const usable = gate.leaves.some((leaf) =>
+        leaf.members.some((member) => !brokenPieces.current.has(member.piece.id)),
+      );
+      if (!usable) {
+        openedEntries.current.delete(gate.id);
+        continue;
+      }
+      const distance = horizontalGateDistance(cameraPosition, gate.center);
+      if (distance <= VIKING_GATE_APPROACH_RADIUS && distance < nearestEntryDistance) {
+        nearestEntry = { id: gate.id, kind: "gate" };
+        nearestEntryDistance = distance;
+      }
+      if (distance > VIKING_GATE_RELEASE_RADIUS) {
+        openedEntries.current.delete(gate.id);
+      }
+    }
+
+    for (const group of doorGroups) {
+      if (!group.vikingDoor) {
+        continue;
+      }
+      const usable = group.members.some(
+        (member) => !brokenPieces.current.has(member.piece.id),
+      );
+      if (!usable) {
+        openedEntries.current.delete(group.vikingDoor.doorId);
+        continue;
+      }
+      const distance = horizontalGateDistance(cameraPosition, group.center);
+      if (distance <= VIKING_DOOR_APPROACH_RADIUS && distance < nearestEntryDistance) {
+        nearestEntry = { id: group.vikingDoor.doorId, kind: "door" };
+        nearestEntryDistance = distance;
+      }
+      if (distance > VIKING_DOOR_RELEASE_RADIUS) {
+        openedEntries.current.delete(group.vikingDoor.doorId);
+      }
+    }
+
+    const currentEntry = approachedEntry.current;
+    if (
+      nearestEntry?.id !== currentEntry?.id ||
+      nearestEntry?.kind !== currentEntry?.kind
+    ) {
+      approachedEntry.current = nearestEntry;
+      onEntryApproachChange(nearestEntry);
+    }
+    if (handledEntryRequest.current !== entryOpenRequestVersion) {
+      handledEntryRequest.current = entryOpenRequestVersion;
+      if (approachedEntry.current) {
+        openedEntries.current.add(approachedEntry.current.id);
+      }
+    }
 
     for (const group of doorGroups) {
       const hinge = group.hinge;
@@ -114,7 +232,21 @@ export function HingedDoorSystem({
       const dz = camera.position.z - group.center[2];
       const distance = Math.hypot(dx, dy, dz);
       let open: boolean;
-      if (state.angle > 0.05) {
+      const interactiveEntryId = group.gate?.gateId ?? group.vikingDoor?.doorId;
+      if (interactiveEntryId) {
+        open = openedEntries.current.has(interactiveEntryId);
+        if (open) {
+          if (group.gate) {
+            state.sign = group.gate.swingSign;
+          } else if (group.vikingDoor) {
+            state.sign = inwardDoorSwingSign(
+              group.center,
+              hinge.pivot,
+              hinge.normal,
+            );
+          }
+        }
+      } else if (state.angle > 0.05) {
         open = distance < 3.6;
       } else {
         directionToDoor.current
@@ -129,7 +261,7 @@ export function HingedDoorSystem({
           directionToDoor.current.dot(cameraDirection.current) > 0.25;
       }
 
-      if (open && state.sign === 0) {
+      if (!group.gate && !group.vikingDoor && open && state.sign === 0) {
         const side =
           Math.sign(dx * hinge.normal[0] + dz * hinge.normal[2]) || 1;
         const crossDotNormal =
@@ -138,10 +270,13 @@ export function HingedDoorSystem({
         state.sign = -side * Math.sign(crossDotNormal || 1);
       }
 
-      const targetAngle = open ? 1.8 : 0;
+      const targetAngle = open ? group.gate ? 1.45 : 1.8 : 0;
       const previousAngle = state.angle;
       state.angle +=
-        (targetAngle - state.angle) * Math.min(1, delta * (open ? 5 : 3));
+        (targetAngle - state.angle) * Math.min(
+          1,
+          delta * (group.gate ? open ? 2.7 : 2.1 : open ? 5 : 3),
+        );
       doorMoved ||= Math.abs(state.angle - previousAngle) > 0.0005;
 
       const closedNow = !open && state.angle < 0.02;

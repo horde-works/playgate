@@ -343,11 +343,19 @@ function readPrefab(
   return prefab;
 }
 
-export function compileSceneDocument(
-  document: AuthoredSceneDocument,
+export interface CompiledSceneGroups {
+  readonly clusters: readonly BreakableClusterDefinition[];
+  readonly lamps: readonly LampDefinition[];
+  readonly objectCount: number;
+  readonly usedPrefabs: readonly string[];
+}
+
+// Компиляция групп документа в кластеры без создания сцены: так готовый
+// квартал можно долить в уже существующий город, собранный старым путём.
+export function compileSceneGroups(
+  document: Pick<AuthoredSceneDocument, "schemaVersion" | "id" | "groups">,
   prefabs: ScenePrefabLibrary,
-  options: { readonly validateInitialStability?: boolean } = {},
-): SceneCompilationResult {
+): CompiledSceneGroups {
   if (document.schemaVersion !== 1) {
     throw new Error(`Unsupported scene schema ${String(document.schemaVersion)}`);
   }
@@ -398,6 +406,16 @@ export function compileSceneDocument(
       pieces,
     });
   }
+
+  return { clusters, lamps, objectCount, usedPrefabs: [...usedPrefabs].sort() };
+}
+
+export function compileSceneDocument(
+  document: AuthoredSceneDocument,
+  prefabs: ScenePrefabLibrary,
+  options: { readonly validateInitialStability?: boolean } = {},
+): SceneCompilationResult {
+  const { clusters, lamps, objectCount, usedPrefabs } = compileSceneGroups(document, prefabs);
 
   const scene = createDestructionScene({
     id: document.id,

@@ -5,6 +5,7 @@ export const vikingVillageFlyover: CinematicFlyoverDefinition = {
   title: "They Chose to Stay",
   locationLabel: "VIKING VILLAGE",
   storyLabel: "A VILLAGE STORY",
+  backLabel: "BACK TO VILLAGE",
   durationSeconds: 92,
   fileName: "viking-village-they-chose-to-stay",
   keyframes: [

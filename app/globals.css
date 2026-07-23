@@ -2409,6 +2409,119 @@ button:focus-visible {
   text-align: center;
 }
 
+.game-action-hint {
+  position: absolute;
+  bottom: 28px;
+  left: clamp(18px, 3vw, 48px);
+  z-index: 17;
+  width: min(620px, calc(100vw - 420px));
+  min-width: 360px;
+  padding: 14px 26px 15px 20px;
+  border-left: 2px solid var(--acid);
+  background: linear-gradient(90deg, rgb(8 10 9 / 0.86), rgb(8 10 9 / 0.42) 72%, transparent);
+  filter: drop-shadow(0 10px 24px rgb(0 0 0 / 0.32));
+  opacity: 0;
+  pointer-events: none;
+  transform: translate3d(-28px, 12px, 0);
+  animation-name: game-action-hint-life;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  animation-fill-mode: forwards;
+}
+
+.game-action-hint p {
+  margin: 0 0 7px;
+  color: var(--acid);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.game-action-hint h2 {
+  margin: 0;
+  color: var(--paper-bright);
+  font-size: clamp(25px, 2.5vw, 38px);
+  font-weight: 850;
+  letter-spacing: -0.05em;
+  line-height: 0.98;
+  text-shadow: 0 3px 18px rgb(0 0 0 / 0.52);
+}
+
+.game-action-hint-detail {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  margin-top: 10px;
+  color: rgb(247 243 232 / 0.68);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 8px;
+  font-weight: 620;
+  letter-spacing: 0.06em;
+}
+
+.game-action-hint-detail kbd {
+  min-width: 52px;
+  padding: 5px 8px;
+  border: 1px solid rgb(205 255 43 / 0.58);
+  border-radius: 2px;
+  background: rgb(205 255 43 / 0.1);
+  color: var(--acid);
+  font: inherit;
+  font-weight: 780;
+  letter-spacing: 0.08em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.game-action-hint.is-persistent {
+  animation-name: game-action-hint-in;
+  animation-duration: 600ms;
+}
+
+.game-action-hint.is-persistent.is-leaving {
+  animation-name: game-action-hint-out;
+  animation-duration: 320ms;
+}
+
+@keyframes game-action-hint-life {
+  0% {
+    opacity: 0;
+    transform: translate3d(-28px, 12px, 0);
+  }
+  12%,
+  78% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0);
+  }
+}
+
+@keyframes game-action-hint-in {
+  from {
+    opacity: 0;
+    transform: translate3d(-28px, 12px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes game-action-hint-out {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(-14px, 8px, 0);
+  }
+}
+
 .game-gate {
   position: absolute;
   inset: 0;
@@ -2589,6 +2702,13 @@ button:focus-visible {
   box-shadow: 0 0 24px rgb(255 104 49 / 0.18);
 }
 
+.mobile-actions button.is-entry-action {
+  border-color: rgb(205 255 43 / 0.78);
+  background: rgb(205 255 43 / 0.18);
+  box-shadow: 0 0 24px rgb(205 255 43 / 0.16);
+  color: var(--acid);
+}
+
 .mobile-actions.is-flight {
   grid-template-columns: 100px;
 }
@@ -2660,6 +2780,14 @@ button:focus-visible {
     display: none;
   }
 
+  .game-action-hint {
+    right: 18px;
+    bottom: 158px;
+    left: 18px;
+    width: auto;
+    min-width: 0;
+  }
+
   .mobile-controls.is-active {
     display: block;
   }
@@ -2698,5 +2826,11 @@ button:focus-visible {
   *::after {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
+  }
+
+  .game-action-hint {
+    opacity: 1;
+    transform: none;
+    animation: none;
   }
 }

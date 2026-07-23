@@ -405,12 +405,14 @@ function paintRecordedTypography(
 
 export function CinematicFlyoverLauncher({
   ready,
+  durationSeconds,
   galleryCount,
   onPlay,
   onRecord,
   onGallery,
 }: {
   readonly ready: boolean;
+  readonly durationSeconds: number;
   readonly galleryCount: number;
   readonly onPlay: () => void;
   readonly onRecord: () => void;
@@ -423,25 +425,34 @@ export function CinematicFlyoverLauncher({
   );
   return (
     <div className={styles.launcher}>
-      <button type="button" disabled={!ready} onClick={onPlay}>
-        <span>WATCH THE FILM</span>
-        <small>92 SEC · CINEMATIC FLYOVER</small>
-      </button>
-      <button
-        type="button"
-        disabled={!ready || !recordingSupported}
-        onClick={onRecord}
-        title={recordingSupported ? undefined : "Video recording is not supported by this browser"}
-      >
-        <span>RECORD THE FILM</span>
-        <small>WEBM · 1080P READY</small>
-      </button>
-      {galleryCount > 0 ? (
-        <button className={styles.galleryLauncher} type="button" onClick={onGallery}>
-          <span>STORY FRAMES</span>
-          <small>{galleryCount} CINEMATIC STILLS · PNG</small>
+      <div className={styles.introCopy}>
+        <span>LOOK AROUND FIRST</span>
+      </div>
+      <div className={styles.introActions}>
+        <button type="button" disabled={!ready} onClick={onPlay}>
+          <span>WATCH THE FILM</span>
+          <small>{durationSeconds} SEC · CINEMATIC FLYOVER</small>
         </button>
-      ) : null}
+        {galleryCount > 0 ? (
+          <button type="button" onClick={onGallery}>
+            <span>STORY FRAMES</span>
+            <small>{galleryCount} CINEMATIC STILLS · PNG</small>
+          </button>
+        ) : null}
+      </div>
+      <div className={styles.extras}>
+        <span className={styles.extrasLabel}>EXTRAS</span>
+        <button
+          className={styles.recordLauncher}
+          type="button"
+          disabled={!ready || !recordingSupported}
+          onClick={onRecord}
+          title={recordingSupported ? undefined : "Video recording is not supported by this browser"}
+        >
+          <span>RECORD THE FILM</span>
+          <small>WEBM · 1080P READY</small>
+        </button>
+      </div>
     </div>
   );
 }
@@ -527,7 +538,7 @@ export function CinematicFlyoverOverlay({
         onClick={onExit}
       >
         <span aria-hidden="true">←</span>
-        BACK TO VILLAGE
+        {definition.backLabel}
       </button>
       {running ? (
         <>

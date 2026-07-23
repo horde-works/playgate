@@ -102,7 +102,7 @@ export interface BreakablePieceDefinition {
   }[];
   readonly carriesAttachments?: boolean;
   readonly bearsLoad?: boolean;
-  readonly attachmentSupportMode?: "wall" | "cable";
+  readonly attachmentSupportMode?: "wall" | "cable" | "hinge";
   readonly sideAttachmentReach?: number;
   readonly contactBearingOrder?: boolean;
   /** Optional visual surface variant; structural material remains unchanged. */
@@ -586,7 +586,9 @@ function createHouseWalls(): BreakableClusterDefinition[] {
       depth: 0.38,
       palette: brickPalette,
       openings: [
-        { center: 0.36, width: 1.56, firstRow: 0, lastRow: 5 },
+        // Дверь по оси дома: крыльцо, конёк и фронтон делят одну ось x = 0,
+        // окна ±2.2 держат симметрию фасада.
+        { center: 0, width: 1.56, firstRow: 0, lastRow: 5 },
         { center: -2.2, width: 1.58, firstRow: 2, lastRow: 5 },
         { center: 2.2, width: 1.58, firstRow: 2, lastRow: 5 },
         { center: 0, width: 40, firstRow: 6, lastRow: 6 },
@@ -608,8 +610,11 @@ function createHouseWalls(): BreakableClusterDefinition[] {
       depth: 0.38,
       palette: brickPalette,
       openings: [
-        { center: 2.88, width: 1.56, firstRow: 0, lastRow: 5 },
-        { center: -1.85, width: 1.58, firstRow: 2, lastRow: 5 },
+        // Задняя дверь тоже по центру — выходит ровно на ступени террасы.
+        // Окно ушло на -2.2 (зеркало фасадного), иначе между проёмами
+        // оставался кирпичный простенок в четверть панели.
+        { center: 0, width: 1.56, firstRow: 0, lastRow: 5 },
+        { center: -2.2, width: 1.58, firstRow: 2, lastRow: 5 },
         { center: 0, width: 40, firstRow: 6, lastRow: 6 },
       ],
     }),
@@ -1050,7 +1055,9 @@ function createWindows(): BreakableClusterDefinition[] {
     createWindow({ id: "window:front:right:lower", position: [2.2, 1.48, 0.78], axis: "x" }),
     createWindow({ id: "window:front:left:upper", position: [-2.25, 4.02, 0.84], axis: "x", width: 1.55 }),
     createWindow({ id: "window:front:right:upper", position: [2.25, 4.02, 0.84], axis: "x", width: 1.55 }),
-    createWindow({ id: "window:back:lower", position: [-1.85, 1.48, -6.78], axis: "x" }),
+    // Рама сидит ровно в проёме кладки (−2.2 — зеркало фасадного окна);
+    // когда дверь переехала в центр, проём ушёл сюда же.
+    createWindow({ id: "window:back:lower", position: [-2.2, 1.48, -6.78], axis: "x" }),
     createWindow({ id: "window:back:left:upper", position: [-2.25, 4.02, -6.84], axis: "x", width: 1.55 }),
     createWindow({ id: "window:back:right:upper", position: [2.25, 4.02, -6.84], axis: "x", width: 1.55 }),
     createWindow({ id: "window:left:lower", position: [-4.08, 1.46, -3.55], axis: "z", width: 1.55 }),
@@ -1184,7 +1191,7 @@ function createTerrace(): BreakableClusterDefinition {
         id,
         "wood",
         "plank",
-        [0.4, 0.08 + index * 0.1, 4.05 - index * 0.3],
+        [0, 0.08 + index * 0.1, 4.05 - index * 0.3],
         [2.2, 0.13, 0.48],
         woodPalette[(index + 1) % woodPalette.length],
       ),
@@ -1354,8 +1361,10 @@ function createGroundTiles(): BreakableClusterDefinition[] {
     for (let zIndex = 0; zIndex < 12; zIndex += 1) {
       const cx = -12 + xIndex * 6;
       const cz = -48 + zIndex * 6;
-      grassPieces.push(
-        makePiece(
+      grassPieces.push({
+        // Газон размечен как городская поверхность: маски townSurfacePlan
+        // протаптывают по нему тропинки к домам старого квартала.
+        ...makePiece(
           `yard:ground:${xIndex}:${zIndex}`,
           "yard:ground",
           "soil",
@@ -1364,7 +1373,8 @@ function createGroundTiles(): BreakableClusterDefinition[] {
           [6, 0.24, 6],
           (xIndex + zIndex) % 2 === 0 ? "#607b43" : "#6b874a",
         ),
-      );
+        landscapeSurface: "city-ground",
+      });
       upperPieces.push(
         makePiece(
           `yard:earth:u:${xIndex}:${zIndex}`,
@@ -1388,6 +1398,38 @@ function createGroundTiles(): BreakableClusterDefinition[] {
         ),
       );
     }
+  }
+
+  // Пристройки к плите за пределами основной сетки. Южный «язык» за k4/k5 —
+  // двор усадьбы старого квартала (два ряда: дом отступил от панелек вглубь
+  // участка). Северо-восточная полоса — двор k6, отодвинутой от заднего
+  // двора h2. Всё это city-ground: маски townSurfacePlan протаптывают тропы.
+  const extensionTiles: readonly (readonly [number, number])[] = [
+    [12, -54], [18, -54], [24, -54], [30, -54], [36, -54],
+    [18, -60], [24, -60], [30, -60], [36, -60],
+    [48, 24], [54, 24], [60, 24], [66, 24], [72, 24],
+  ];
+  for (const [index, [cx, cz]] of extensionTiles.entries()) {
+    grassPieces.push({
+      ...makePiece(
+        `yard:ground:s:${index}`,
+        "yard:ground",
+        "soil",
+        "groundTile",
+        [cx, -0.14, cz],
+        [6, 0.24, 6],
+        index % 2 === 0 ? "#607b43" : "#6b874a",
+      ),
+      landscapeSurface: "city-ground",
+    });
+    upperPieces.push(
+      makePiece(`yard:earth:u:s:${index}`, "yard:earth:upper", "earth", "groundTile",
+        [cx, -0.71, cz], [6, 0.9, 6], index % 2 === 0 ? "#6d5a3e" : "#665336"),
+    );
+    lowerPieces.push(
+      makePiece(`yard:earth:l:s:${index}`, "yard:earth:lower", "earth", "groundTile",
+        [cx, -1.61, cz], [6, 0.9, 6], index % 2 === 0 ? "#5c4a33" : "#55442d"),
+    );
   }
 
   return [
@@ -2973,8 +3015,8 @@ function createOldHouse(
     createHouseFrame(),
     ...createFloorsAndStairs(),
     ...createWindows(),
-    createDoor("door:front", 0.36, 0.76, 1),
-    createDoor("door:back", 2.88, -6.76, -1),
+    createDoor("door:front", 0, 0.76, 1),
+    createDoor("door:back", 0, -6.76, -1),
     createSteelRoof(),
   ];
 
@@ -2984,6 +3026,43 @@ function createOldHouse(
   return clusters.map((entry) =>
     transformCluster(entry, prefix, dx, dz, recolor),
   );
+}
+
+// Зеркало готовых кластеров относительно плоскости z = mz. В отличие от
+// поворота на 180°, дверь и крыльцо переходят на противоположный фасад, не
+// съезжая вбок, а труба и прочие торцевые элементы остаются на своих местах —
+// дом «разворачивается к дороге», не пересобираясь. Оси боксов сохраняются
+// (решатель опор не страдает), XYZ-эйлеры отражаются как [-rx, -ry, rz].
+function mirrorClustersZ(
+  clusters: readonly BreakableClusterDefinition[],
+  mz: number,
+): BreakableClusterDefinition[] {
+  const flipPos = (p: SceneVector3): SceneVector3 => [p[0], p[1], 2 * mz - p[2]];
+  return clusters.map((entry) => ({
+    ...entry,
+    pieces: entry.pieces.map((piece) => ({
+      ...piece,
+      position: flipPos(piece.position),
+      rotation: piece.rotation
+        ? ([-piece.rotation[0], -piece.rotation[1], piece.rotation[2]] as SceneVector3)
+        : undefined,
+      hinge: piece.hinge
+        ? {
+            pivot: flipPos(piece.hinge.pivot),
+            direction: piece.hinge.direction,
+            normal: [
+              piece.hinge.normal[0],
+              piece.hinge.normal[1],
+              -piece.hinge.normal[2],
+            ] as SceneVector3,
+          }
+        : undefined,
+      contactBoxes: piece.contactBoxes?.map((box) => ({
+        position: flipPos(box.position),
+        size: box.size,
+      })),
+    })),
+  }));
 }
 
 function createStreets(): BreakableClusterDefinition[] {
@@ -3306,8 +3385,14 @@ function createOutskirts(): BreakableClusterDefinition[] {
     for (let cz = -78; cz <= 48; cz += tile) {
       const insideTown =
         cx >= -12 && cx <= 72 && cz >= -48 && cz <= 18;
+      // Вырезы под пристройки плиты: южный «язык» газона (двор усадьбы за
+      // панельками, два ряда) и северо-восточная полоса (двор k6).
+      const southYard =
+        (cz === -54 && cx >= 12 && cx <= 36) ||
+        (cz === -60 && cx >= 18 && cx <= 36);
+      const northEastYard = cz === 24 && cx >= 48 && cx <= 72;
       const distance = Math.hypot(cx - 30, cz + 15);
-      if (insideTown || distance > 57) {
+      if (insideTown || southYard || northEastYard || distance > 57) {
         continue;
       }
 
@@ -3554,7 +3639,7 @@ function createTownClutter(): BreakableClusterDefinition[] {
   };
   heap("construction", 32, -32.6, "earth", "#5f4c36", "#6a563e", 2.9);
   heap("gravel", -13.4, -21.4, "stone", "#7d7f7b", "#8a8c86", 2.2);
-  heap("sand", 17.6, 6.4, "soil", "#c2a878", "#cdb384", 2.0);
+  heap("sand", 21.5, 8.3, "soil", "#c2a878", "#cdb384", 2.0);
   // Loose bricks shed beside the construction heap.
   for (let index = 0; index < 5; index += 1) {
     heaps.push({
@@ -3568,17 +3653,25 @@ function createTownClutter(): BreakableClusterDefinition[] {
 
   // --- Courtyard and verge trees (composite flora core) -------------------
   const treePieces: BreakablePieceDefinition[] = [];
+  // Дерево — это место, а не заполнитель зазора: дворовое дерево держит
+  // центр двора, берёза у двери — палисадник, дубы на опушке отмечают край
+  // квартала. Запрещённый паттерн — ствол в углу «дом + устье дороги».
   const trees: readonly (readonly ["oak" | "birch" | "pine", number, number, number, number?])[] = [
     ["oak", 8.2, 4.2, 5, 1.05],
     ["birch", 29.8, 2.6, 3],
     ["birch", 12.9, 2.4, 4],
-    ["oak", 49, 8.5, 6],
+    // Дворовой дуб общего двора h2/k6 — тень над тропой жителей к площадке.
+    ["oak", 53.5, 10.2, 6],
     ["birch", 60.6, 4.2, 5],
-    ["oak", 69.4, 9.8, 7, 0.9],
+    // Опушечный дуб восточнее площадки, у кромки мира — раньше стоял прямо
+    // в горке.
+    ["oak", 72.8, 12.8, 7, 0.9],
     ["pine", -14.0, -24.5, 5, 1.1],
     ["pine", -13.5, -28.8, 6],
     ["birch", -13.8, -36.5, 6],
-    ["oak", 48.8, -35.5, 8],
+    // Задний двор h3: раньше дуб был зажат между её углом и поперечной
+    // улицей.
+    ["oak", 56.8, -48.4, 8],
   ];
   for (const [index, [kind, tx, tz, seed, scale]] of trees.entries()) {
     treePieces.push(
@@ -3708,7 +3801,9 @@ function createTownClutter(): BreakableClusterDefinition[] {
 export const breakableClusters = [
   ...createGroundTiles(),
   ...createOutskirts(),
-  ...createOldHouse(),
+  // Первый дом развёрнут дверью к главной улице — из спавна за его спиной
+  // виден задний двор с террасой, а вход смотрит на дорогу.
+  ...mirrorClustersZ(createOldHouse(), -3),
   ...createOldHouse("h2", 56, 0, houseRecolor(silicateHouseColors, "lit-h2")),
   ...createOldHouse("h3", 56, -38, houseRecolor(yellowHouseColors, "lit-h3")),
   createTerrace(),
@@ -3745,10 +3840,13 @@ export const breakableClusters = [
     shellOnly: true,
     includeLamps: false,
   }),
+  // k6 отодвинута на север (dz 24): между задним двором h2 и её фасадом —
+  // полноценный двор с площадкой, а не 11-метровая щель. Дальше нельзя:
+  // северо-восточный угол дома упрётся в кромку круглого мира (r = 57).
   ...createKhrushchevka({
     prefix: "k6",
     dx: 36,
-    dz: 20,
+    dz: 24,
     palette: ["#d3c493", "#c8b988", "#ddce9d", "#cdbe8d"],
     shellOnly: true,
     includeLamps: false,
@@ -3934,6 +4032,8 @@ export interface DestructionSceneDefinition {
   readonly title: string;
   readonly environment: "town" | "fortress";
   readonly playerSpawn: SceneVector3;
+  /** Начальный поворот взгляда (радианы вокруг Y); 0 — взгляд вдоль -Z. */
+  readonly playerSpawnYaw?: number;
   readonly cameraFar: number;
   readonly worldCenter: readonly [x: number, z: number];
   readonly worldHalfExtents: readonly [x: number, z: number];
@@ -3969,6 +4069,7 @@ interface DestructionSceneOptions {
   readonly title: string;
   readonly environment?: DestructionSceneDefinition["environment"];
   readonly playerSpawn: SceneVector3;
+  readonly playerSpawnYaw?: number;
   readonly cameraFar?: number;
   readonly worldCenter: readonly [x: number, z: number];
   readonly worldHalfExtents: readonly [x: number, z: number];
@@ -4091,6 +4192,7 @@ export function createDestructionScene(
     title: options.title,
     environment: options.environment ?? "town",
     playerSpawn: options.playerSpawn,
+    playerSpawnYaw: options.playerSpawnYaw,
     cameraFar: options.cameraFar ?? 140,
     worldCenter: options.worldCenter,
     worldHalfExtents: options.worldHalfExtents,
@@ -4109,11 +4211,20 @@ export function createDestructionScene(
   };
 }
 
-export const openHouseScene = createDestructionScene({
+// Опции городской сцены экспортируются отдельно: модуль townScene доливает
+// в этот же город квартал, скомпилированный из городских префабов, не
+// создавая циклического импорта (cityPrefabs зависит от этого файла).
+export const openHouseSceneOptions = {
   id: "open-house",
   title: "Make a Mess",
   environment: "town",
-  playerSpawn: [0, 1.25, 7.4],
+  // Спавн на протоптанной тропе за старым домом, лицом в глубину квартала:
+  // первый кадр — калитка, ива и оба дома частного сектора.
+  // Спавн во дворе чуть левее (западнее) первого дома, на хозяйской тропке
+  // к сараю: прямо перед игроком — крыльцо-терраса со стульями и задняя
+  // дверь по центру дома.
+  playerSpawn: [-5.2, 1.25, 6.8],
+  playerSpawnYaw: -0.71,
   worldCenter: [30, -15],
   worldHalfExtents: [62, 62],
   worldRadius: 60,
@@ -4132,7 +4243,9 @@ export const openHouseScene = createDestructionScene({
   },
   clusters: breakableClusters,
   lamps: lampDefinitions,
-});
+} as const satisfies Parameters<typeof createDestructionScene>[0];
+
+export const openHouseScene = createDestructionScene(openHouseSceneOptions);
 
 export function resolveStructuralCollapse(
   broken: ReadonlySet<string>,

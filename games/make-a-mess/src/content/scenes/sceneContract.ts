@@ -63,7 +63,7 @@ export interface ScenePrefabPieceDefinition {
   readonly contactBoxes?: readonly SceneContactBox[];
   readonly bearsLoad?: boolean;
   readonly carriesAttachments?: boolean;
-  readonly attachmentSupportMode?: "wall" | "cable";
+  readonly attachmentSupportMode?: "wall" | "cable" | "hinge";
   readonly sideAttachmentReach?: number;
   readonly contactBearingOrder?: boolean;
   readonly hinge?: SceneHinge;
@@ -105,7 +105,7 @@ export interface ScenePrimitiveDefinition extends SceneObjectBase {
   readonly contactBoxes?: readonly SceneContactBox[];
   readonly bearsLoad?: boolean;
   readonly carriesAttachments?: boolean;
-  readonly attachmentSupportMode?: "wall" | "cable";
+  readonly attachmentSupportMode?: "wall" | "cable" | "hinge";
   readonly sideAttachmentReach?: number;
   readonly contactBearingOrder?: boolean;
   readonly hinge?: SceneHinge;

@@ -800,6 +800,22 @@ export function impactDamageRadius(
   );
 }
 
+// Раскол, вернувший ЕДИНСТВЕННЫЙ фрагмент почти в полный объём — не раскол,
+// а полноразмерная копия исходника: сфера урона не разорвала воксельную
+// связность. Спавнить такую копию нельзя — со стороны это выглядит как
+// «из плиты выпала такая же плита», и её можно бить вечно без убыли.
+function isDegenerateShatter(result: BodyDamageResult | null): boolean {
+  if (!result) {
+    return true;
+  }
+  if (result.fragments.length !== 1) {
+    return false;
+  }
+  const fragmentVolume = result.fragments[0].volume ?? 0;
+  const totalVolume = fragmentVolume + result.removedVolume;
+  return totalVolume <= 0 || fragmentVolume > totalVolume * 0.82;
+}
+
 export function buildShards(
   source: ShardSource,
   idPrefix: string,
@@ -820,28 +836,52 @@ export function buildShards(
       source.size,
       voxelSizeByMaterial[source.material],
     );
-  const damageRadius = impactDamageRadius(source, cause, burstSpeed);
-  const result = damageBody(
-    { ...source, voxelBody: body },
-    {
-      position: bodyPosition,
-      quaternion: bodyQuaternion,
-      linearVelocity: baseLinearVelocity,
-      angularVelocity: baseAngularVelocity,
-    },
-    {
-      idPrefix,
-      worldPoint: burstCenter,
-      radius: damageRadius,
-      burstSpeed,
-      direction:
-        cause === "fall"
-          ? new Vector3(0, 1, 0).applyQuaternion(bodyQuaternion)
-          : undefined,
-      penetration: cause === "fall" ? source.size[1] : undefined,
-    },
-  );
-  if (!result) {
+  const state = {
+    position: bodyPosition,
+    quaternion: bodyQuaternion,
+    linearVelocity: baseLinearVelocity,
+    angularVelocity: baseAngularVelocity,
+  };
+  const requestFor = (radius: number) => ({
+    idPrefix,
+    worldPoint: burstCenter,
+    radius,
+    burstSpeed,
+    direction:
+      cause === "fall"
+        ? new Vector3(0, 1, 0).applyQuaternion(bodyQuaternion)
+        : undefined,
+    penetration: cause === "fall" ? source.size[1] : undefined,
+  });
+
+  let radius = impactDamageRadius(source, cause, burstSpeed);
+  let result = damageBody({ ...source, voxelBody: body }, state, requestFor(radius));
+
+  // Базовый радиус масштабируется от силы удара, а не от куска: на крупной
+  // плите он выбивает лишь лунку, связность не рвётся и раскол вырождается
+  // в копию. Дожимаем радиус к габариту куска, пока объём реально не
+  // разделится (или пока не станет ясно, что кусок дальше не делится).
+  const spans = [...source.size].toSorted((left, right) => right - left);
+  const maximumRadius = spans[1] * 0.55;
+  // Каждый повторный проход стоит O(вокселей): гигантским телам оставляем
+  // одну дополнительную попытку, чтобы ретраи не умножали цену удара.
+  const voxelCount =
+    body.dimensions[0] * body.dimensions[1] * body.dimensions[2];
+  const maximumAttempts = voxelCount > 2_500 ? 1 : 3;
+  for (
+    let attempt = 0;
+    attempt < maximumAttempts &&
+    isDegenerateShatter(result) &&
+    radius < maximumRadius;
+    attempt += 1
+  ) {
+    radius = Math.min(maximumRadius, radius * 1.9);
+    result = damageBody({ ...source, voxelBody: body }, state, requestFor(radius));
+  }
+
+  // Так и не разделился (или раскрошился в ничто) — пусть вызыватель
+  // отбрасывает кусок ЦЕЛЫМ, единым телом: никакой скрытой подмены копией.
+  if (!result || result.fragments.length === 0 || isDegenerateShatter(result)) {
     return null;
   }
   return [...result.fragments];

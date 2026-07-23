@@ -15,7 +15,7 @@ export interface StructuralPieceDefinition<Material extends string> {
   readonly contactBoxes?: readonly StructuralContactBox[];
   readonly carriesAttachments?: boolean;
   readonly bearsLoad?: boolean;
-  readonly attachmentSupportMode?: "wall" | "cable";
+  readonly attachmentSupportMode?: "wall" | "cable" | "hinge";
   readonly sideAttachmentReach?: number;
   readonly contactBearingOrder?: boolean;
 }
@@ -340,9 +340,9 @@ export function createStructuralSolver<Material extends string>(
       return false;
     }
 
-    // Ordinary attachments require a wall-like support. Explicit suspension
-    // members (ropes, rails, laundry lines) may carry light things along
-    // their edge without pretending to be vertical walls.
+    // Ordinary attachments require a wall-like support. Explicit connectors
+    // (ropes, rails, laundry lines and hinges) may carry a member along their
+    // edge without pretending to be a taller vertical wall.
     if (
       (support.attachmentSupportMode ?? "wall") === "wall" &&
       support.size[1] < piece.size[1] * 1.5

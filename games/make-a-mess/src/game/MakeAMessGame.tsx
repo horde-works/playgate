@@ -113,7 +113,10 @@ import {
 import { Birds } from "./Birds";
 import { GrassField } from "./GrassField";
 import { SceneDressing } from "./SceneDressing";
-import { HingedDoorSystem } from "./HingedDoorSystem";
+import {
+  HingedDoorSystem,
+  type HingedEntryApproach,
+} from "./HingedDoorSystem";
 import { SmokePlumes } from "./SmokePlumes";
 import { WindController } from "./WindController";
 import { IntactBreakableWorld } from "./IntactBreakableWorld";
@@ -147,6 +150,7 @@ import type {
   CinematicFlyoverDefinition,
   FlyoverChapter,
 } from "./cinematicFlyoverPlan";
+import { useGameActionHints } from "./gameActionHints";
 
 type ControlName =
   | "forward"
@@ -434,11 +438,13 @@ function Player({
   mobileControls,
   spawn,
   flightMode,
+  entryInteractionActive,
 }: {
   registerBody: (id: string, body: RapierRigidBody | null) => void;
   mobileControls: MobileControlsRef;
   spawn: readonly [number, number, number];
   flightMode: boolean;
+  entryInteractionActive: boolean;
 }) {
   const body = useRef<RapierRigidBody>(null);
   const [, getControls] = useKeyboardControls<ControlName>();
@@ -654,7 +660,7 @@ function Player({
       {
         x: velocity.x + (movement.x - velocity.x) * control,
         y:
-          (jump || touch.jump) && grounded
+          !entryInteractionActive && (jump || touch.jump) && grounded
             ? 5.4
             : autoLift > 0
               ? Math.max(velocity.y, autoLift)
@@ -697,6 +703,7 @@ function Player({
 interface MouseLookProps {
   active: boolean;
   requestVersion: number;
+  initialYaw: number;
   mobileControls: MobileControlsRef;
   onActiveChange: (active: boolean) => void;
   onFallbackChange: (fallback: boolean) => void;
@@ -707,6 +714,7 @@ interface MouseLookProps {
 function MouseLook({
   active,
   requestVersion,
+  initialYaw,
   mobileControls,
   onActiveChange,
   onFallbackChange,
@@ -733,9 +741,9 @@ function MouseLook({
   useFrame(() => {
     if (!initialized.current) {
       initialized.current = true;
-      yaw.current = 0;
+      yaw.current = initialYaw;
       pitch.current = 0;
-      cameraRef.current.rotation.set(0, 0, 0, "YXZ");
+      cameraRef.current.rotation.set(0, initialYaw, 0, "YXZ");
     }
 
     const touch = mobileControls.current;
@@ -2162,11 +2170,14 @@ interface OpenWorldSceneProps {
   mobileControls: MobileControlsRef;
   mobileActions: MutableRefObject<MobileActionBridge>;
   resetVersion: number;
+  entryOpenRequestVersion: number;
+  entryInteractionActive: boolean;
   cinematic: boolean;
   onActiveChange: (active: boolean) => void;
   onFallbackChange: (fallback: boolean) => void;
   onBrokenCountChange: (count: number) => void;
   onDynamicBodyCountChange: (count: number) => void;
+  onEntryApproachChange: (entry: HingedEntryApproach | null) => void;
 }
 
 function OpenWorldScene({
@@ -2180,11 +2191,14 @@ function OpenWorldScene({
   mobileControls,
   mobileActions,
   resetVersion,
+  entryOpenRequestVersion,
+  entryInteractionActive,
   cinematic,
   onActiveChange,
   onFallbackChange,
   onBrokenCountChange,
   onDynamicBodyCountChange,
+  onEntryApproachChange,
 }: OpenWorldSceneProps) {
   const {
     breakablePieceById,
@@ -2260,6 +2274,13 @@ function OpenWorldScene({
   const remnantCounter = useRef(0);
   const remainingVolumeRef = useRef(new Map<string, number>());
   const carvedPiecesRef = useRef(new Set<string>());
+  // Снимок состояния на момент последнего структурного пересчёта: следующий
+  // settle сеет зону пересчёта только из дельты против этого снимка.
+  const lastSettleSnapshot = useRef<{
+    broken: ReadonlySet<string>;
+    carved: ReadonlySet<string>;
+    remnantParents: ReadonlyMap<string, string>;
+  } | null>(null);
   const tracerId = useRef(0);
   const firing = useRef(false);
   const fireAccumulator = useRef(0);
@@ -2434,6 +2455,7 @@ function OpenWorldScene({
     remnantById.current.clear();
     remainingVolumeRef.current.clear();
     carvedPiecesRef.current.clear();
+    lastSettleSnapshot.current = null;
     firing.current = false;
     setGrenades([]);
     setExplosions([]);
@@ -2519,11 +2541,47 @@ function OpenWorldScene({
 
   const settleStructure = useCallback(
     (seedBroken: ReadonlySet<string>): ReadonlySet<string> => {
-      const scopeSeeds = new Set<string>([
-        ...seedBroken,
-        ...carvedPiecesRef.current,
-        ...remnantsRef.current.map((remnant) => remnant.parentId),
-      ]);
+      // Зона пересчёта — только компоненты, где что-то ИЗМЕНИЛОСЬ с
+      // прошлого пересчёта. Сеять всю историю сломанного/карвленного
+      // нельзя: к середине партии зона доросла бы до всей карты, и каждый
+      // settle стоил бы ~0.7 с вместо единиц миллисекунд.
+      const previous = lastSettleSnapshot.current;
+      const scopeSeeds = new Set<string>();
+      if (!previous) {
+        for (const id of seedBroken) {
+          scopeSeeds.add(id);
+        }
+        for (const id of carvedPiecesRef.current) {
+          scopeSeeds.add(id);
+        }
+        for (const remnant of remnantsRef.current) {
+          scopeSeeds.add(remnant.parentId);
+        }
+      } else {
+        for (const id of seedBroken) {
+          if (!previous.broken.has(id)) {
+            scopeSeeds.add(id);
+          }
+        }
+        for (const id of carvedPiecesRef.current) {
+          if (!previous.carved.has(id)) {
+            scopeSeeds.add(id);
+          }
+        }
+        // Обрубки: и появившиеся, и исчезнувшие меняют опоры родителя.
+        const currentRemnantIds = new Set<string>();
+        for (const remnant of remnantsRef.current) {
+          currentRemnantIds.add(remnant.id);
+          if (!previous.remnantParents.has(remnant.id)) {
+            scopeSeeds.add(remnant.parentId);
+          }
+        }
+        for (const [remnantId, parentId] of previous.remnantParents) {
+          if (!currentRemnantIds.has(remnantId)) {
+            scopeSeeds.add(parentId);
+          }
+        }
+      }
       const structuralScope = structuralScopeFor(scopeSeeds);
       let result = resolveRuntimeStructure(
         breakablePieces,
@@ -2600,6 +2658,13 @@ function OpenWorldScene({
         setRemnants(updatedRemnants);
       }
 
+      lastSettleSnapshot.current = {
+        broken: result.brokenPieceIds,
+        carved: new Set(carvedPiecesRef.current),
+        remnantParents: new Map(
+          remnantsRef.current.map((remnant) => [remnant.id, remnant.parentId]),
+        ),
+      };
       brokenPiecesRef.current = result.brokenPieceIds;
       setBrokenPieces(result.brokenPieceIds);
       onBrokenCountChange(result.brokenPieceIds.size);
@@ -4131,6 +4196,12 @@ function OpenWorldScene({
 
       const strikeSpeed = materialRuntimeProfiles[material].impulse * 2.1;
 
+      // Отцепленная деталь остаётся разрушаемой: молоток выгрызает из неё
+      // куски тем же carveLooseTarget, что и пулемёт, — иначе после отрыва
+      // деталь можно было лишь бесконечно пинать толчками.
+      const loosePenetration = (size: readonly [number, number, number]) =>
+        Math.min(0.85, Math.hypot(...size));
+
       if (piece && groundMaterials.has(piece.material)) {
         // The hammer digs a bite out of the ground instead of ripping a
         // whole tile loose.
@@ -4144,7 +4215,19 @@ function OpenWorldScene({
             return;
           }
         }
-        applyImpact(piece.id, material, point, direction, 0.5);
+        if (
+          !carveLooseTarget(
+            piece,
+            "piece",
+            point,
+            0.18,
+            1.4,
+            direction,
+            loosePenetration(piece.size),
+          )
+        ) {
+          applyImpact(piece.id, material, point, direction, 0.5);
+        }
       } else if (
         piece &&
         (piece.material === "concrete" || piece.material === "stone")
@@ -4160,15 +4243,40 @@ function OpenWorldScene({
             return;
           }
         }
-        applyImpact(piece.id, material, point, direction, 0.35);
+        if (
+          !carveLooseTarget(
+            piece,
+            "piece",
+            point,
+            chipRadius,
+            1.5,
+            direction,
+            loosePenetration(piece.size),
+          )
+        ) {
+          applyImpact(piece.id, material, point, direction, 0.35);
+        }
       } else if (piece) {
         if (!brokenPiecesRef.current.has(piece.id)) {
           breakAt(piece, currentImpact);
         }
         // A direct hammer hit crumbles the piece into real sub-pieces;
-        // pieces that cannot split any further just get knocked away.
+        // pieces that cannot split any further get a bite carved out, and
+        // only if even that fails they are knocked away whole.
         if (!shatterTarget(piece, "piece", point, strikeSpeed)) {
-          applyImpact(piece.id, material, point, direction);
+          if (
+            !carveLooseTarget(
+              piece,
+              "piece",
+              point,
+              0.24,
+              1.6,
+              direction,
+              loosePenetration(piece.size),
+            )
+          ) {
+            applyImpact(piece.id, material, point, direction);
+          }
         }
       } else if (shardId) {
         const shardDefinition = shardById.current.get(shardId);
@@ -4176,14 +4284,33 @@ function OpenWorldScene({
           !shardDefinition ||
           !shatterTarget(shardDefinition, "shard", point, strikeSpeed)
         ) {
-          // Too small to split — the hammer pulverizes loose crumbs.
-          if (shardDefinition) {
+          // Раскол отказал по двум разным причинам: крошку молоток
+          // распыляет, а КРУПНЫЙ неделимый кусок грызёт по месту удара —
+          // и лишь если и это не вышло, просто отбрасывает целым.
+          const crumb =
+            shardDefinition &&
+            shardDefinition.size[0] *
+              shardDefinition.size[1] *
+              shardDefinition.size[2] <
+              0.004;
+          if (shardDefinition && crumb) {
             shardsRef.current = shardsRef.current.filter(
               (shard) => shard.id !== shardId,
             );
             shardById.current.delete(shardId);
             setShards(shardsRef.current);
-          } else {
+          } else if (
+            !shardDefinition ||
+            !carveLooseTarget(
+              shardDefinition,
+              "shard",
+              point,
+              0.22,
+              1.5,
+              direction,
+              loosePenetration(shardDefinition.size),
+            )
+          ) {
             applyImpact(shardId, material, point, direction);
           }
         }
@@ -4247,9 +4374,38 @@ function OpenWorldScene({
           if (
             !shatterTarget(remnantDefinition, "remnant", point, strikeSpeed)
           ) {
-            commitRemnants(remnantDefinition.id, []);
+            const remnantVolume =
+              remnantDefinition.size[0] *
+              remnantDefinition.size[1] *
+              remnantDefinition.size[2];
+            if (remnantVolume < 0.004) {
+              commitRemnants(remnantDefinition.id, []);
+            } else if (
+              !carveLooseTarget(
+                remnantDefinition,
+                "remnant",
+                point,
+                0.2,
+                1.4,
+                direction,
+                loosePenetration(remnantDefinition.size),
+              )
+            ) {
+              applyImpact(remnantDefinition.id, material, point, direction);
+            }
           }
-        } else {
+        } else if (
+          !remnantDefinition ||
+          !carveLooseTarget(
+            remnantDefinition,
+            "remnant",
+            point,
+            0.2,
+            1.4,
+            direction,
+            loosePenetration(remnantDefinition.size),
+          )
+        ) {
           applyImpact(remnantId, material, point, direction);
         }
       }
@@ -4330,7 +4486,12 @@ function OpenWorldScene({
       <SceneEnvironment theme={scene.environment} />
       <WindController />
       <OpenWorldShell scene={scene} />
-      <SceneDressing sceneId={scene.id} nightRef={nightRef} />
+      <SceneDressing
+        sceneId={scene.id}
+        nightRef={nightRef}
+        pieces={breakablePieces}
+        brokenPieces={brokenPieces}
+      />
       {scene.id === "viking-village" && scene.worldRadius ? (
         <>
           <GrassField
@@ -4395,6 +4556,8 @@ function OpenWorldScene({
         bodies={pieceBodies}
         brokenPieces={brokenPiecesRef}
         resetVersion={resetVersion}
+        entryOpenRequestVersion={entryOpenRequestVersion}
+        onEntryApproachChange={onEntryApproachChange}
       />
       {!cinematic ? (
         <>
@@ -4403,6 +4566,7 @@ function OpenWorldScene({
             mobileControls={mobileControls}
             spawn={scene.playerSpawn}
             flightMode={flightMode}
+            entryInteractionActive={entryInteractionActive}
           />
           {weapon === "hammer" ? (
             <FirstPersonHammer swing={swing} />
@@ -4416,6 +4580,7 @@ function OpenWorldScene({
           <MouseLook
             active={active}
             requestVersion={controlRequest}
+            initialYaw={scene.playerSpawnYaw ?? 0}
             mobileControls={mobileControls}
             onActiveChange={onActiveChange}
             onFallbackChange={onFallbackChange}
@@ -4565,6 +4730,8 @@ function MobileGameControls({
   onWeaponChange,
   onTimeChange,
   onFlightChange,
+  entryAction,
+  onEntryAction,
   onReset,
 }: {
   active: boolean;
@@ -4578,6 +4745,8 @@ function MobileGameControls({
   onWeaponChange: (weapon: WeaponName) => void;
   onTimeChange: () => void;
   onFlightChange: () => void;
+  entryAction: HingedEntryApproach | null;
+  onEntryAction: () => void;
   onReset: () => void;
 }) {
   const { t } = useLanguage();
@@ -4912,15 +5081,24 @@ function MobileGameControls({
         {!flightMode ? (
           <button
             type="button"
+            className={entryAction ? "is-entry-action" : undefined}
             onPointerDown={(event) => {
               event.preventDefault();
-              setJump(true);
+              if (entryAction) {
+                onEntryAction();
+              } else {
+                setJump(true);
+              }
             }}
-            onPointerCancel={() => setJump(false)}
-            onPointerLeave={() => setJump(false)}
-            onPointerUp={() => setJump(false)}
+            onPointerCancel={() => !entryAction && setJump(false)}
+            onPointerLeave={() => !entryAction && setJump(false)}
+            onPointerUp={() => !entryAction && setJump(false)}
           >
-            {t("mobile.jump")}
+            {entryAction
+              ? t(entryAction.kind === "gate"
+                ? "hint.gate.actionTouch"
+                : "hint.door.actionTouch")
+              : t("mobile.jump")}
           </button>
         ) : null}
       </div>
@@ -5004,6 +5182,15 @@ export function MakeAMessGame({
   const [flyoverStills, setFlyoverStills] = useState<readonly CapturedFlyoverStill[]>([]);
   const [flyoverVideoUrl, setFlyoverVideoUrl] = useState<string | null>(null);
   const [flyoverRecordingError, setFlyoverRecordingError] = useState(false);
+  const {
+    activeHint,
+    hintLeaving,
+    emitAction: emitGameAction,
+    endAction: endGameAction,
+    clearHints: clearGameActionHints,
+  } = useGameActionHints();
+  const [approachedEntry, setApproachedEntry] = useState<HingedEntryApproach | null>(null);
+  const [entryOpenRequestVersion, setEntryOpenRequestVersion] = useState(0);
   const flyoverRecorder = useRef<MediaRecorder | null>(null);
   const flyoverChapterRef = useRef<FlyoverChapter | null>(null);
   const flyoverProgressRef = useRef(0);
@@ -5101,6 +5288,7 @@ export function MakeAMessGame({
       flyoverRecorder.current.stop();
     }
     clearFlyoverOutput();
+    clearGameActionHints();
     setActive(true);
     setFallbackLook(false);
     setFlyoverChapter(null);
@@ -5135,7 +5323,7 @@ export function MakeAMessGame({
       }
     }
     setFlyoverMode(record ? "recording" : "playing");
-  }, [clearFlyoverOutput, flyover]);
+  }, [clearFlyoverOutput, clearGameActionHints, flyover]);
 
   const openFlyoverGallery = useCallback(() => {
     if (!flyover) {
@@ -5147,6 +5335,7 @@ export function MakeAMessGame({
     if (flyoverRecorder.current?.state === "recording") {
       flyoverRecorder.current.stop();
     }
+    clearGameActionHints();
     setActive(true);
     setFallbackLook(false);
     setFlyoverChapter(null);
@@ -5154,7 +5343,7 @@ export function MakeAMessGame({
     flyoverChapterRef.current = null;
     flyoverProgressRef.current = 1;
     setFlyoverMode("gallery");
-  }, [flyover]);
+  }, [clearGameActionHints, flyover]);
 
   const exitFlyover = useCallback(() => {
     const recorder = flyoverRecorder.current;
@@ -5184,9 +5373,12 @@ export function MakeAMessGame({
   const reset = useCallback(() => {
     setBrokenCount(0);
     setFlightMode(false);
+    setApproachedEntry(null);
+    endGameAction("gate.approaching");
+    endGameAction("door.approaching");
     setResetVersion((version) => version + 1);
     mobileControls.current = createMobileControlsState();
-  }, []);
+  }, [endGameAction]);
 
   const cycleTimeOfDay = useCallback(() => {
     setTimeOfDay((current) =>
@@ -5199,9 +5391,33 @@ export function MakeAMessGame({
     setFlightMode((current) => !current);
   }, []);
 
+  const handleEntryApproachChange = useCallback((entry: HingedEntryApproach | null) => {
+    setApproachedEntry(entry);
+    mobileControls.current.jump = false;
+    endGameAction("gate.approaching");
+    endGameAction("door.approaching");
+    if (entry) {
+      emitGameAction(entry.kind === "gate" ? "gate.approaching" : "door.approaching");
+    }
+  }, [emitGameAction, endGameAction]);
+
+  const openApproachedEntry = useCallback(() => {
+    if (!approachedEntry) {
+      return;
+    }
+    mobileControls.current.jump = false;
+    setEntryOpenRequestVersion((version) => version + 1);
+    endGameAction(
+      approachedEntry.kind === "gate" ? "gate.approaching" : "door.approaching",
+    );
+  }, [approachedEntry, endGameAction]);
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.code === "KeyR") {
+      if (event.code === "Space" && approachedEntry && !event.repeat) {
+        event.preventDefault();
+        openApproachedEntry();
+      } else if (event.code === "KeyR") {
         reset();
       } else if (event.code === "Digit1") {
         setWeapon("hammer");
@@ -5232,7 +5448,7 @@ export function MakeAMessGame({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [cycleTimeOfDay, reset, toggleFlightMode]);
+  }, [approachedEntry, cycleTimeOfDay, openApproachedEntry, reset, toggleFlightMode]);
 
   const progress =
     Math.round(
@@ -5244,6 +5460,7 @@ export function MakeAMessGame({
     const touchLike = isTouchLikeDevice();
     setFallbackLook(touchLike);
     setControlRequest((version) => version + 1);
+    emitGameAction("player.spawned");
     if (touchLike) {
       return;
     }
@@ -5261,7 +5478,7 @@ export function MakeAMessGame({
     } catch {
       // MouseLook's fallback drag mode covers refusal.
     }
-  }, []);
+  }, [emitGameAction]);
 
   return (
     <main className="play-page">
@@ -5320,11 +5537,14 @@ export function MakeAMessGame({
                   mobileControls={mobileControls}
                   mobileActions={mobileActions}
                   resetVersion={resetVersion}
+                  entryOpenRequestVersion={entryOpenRequestVersion}
+                  entryInteractionActive={approachedEntry !== null}
                   cinematic={cinematicActive}
                   onActiveChange={setActive}
                   onFallbackChange={setFallbackLook}
                   onBrokenCountChange={setBrokenCount}
                   onDynamicBodyCountChange={setDynamicBodyCount}
+                  onEntryApproachChange={handleEntryApproachChange}
                 />
               </Physics>
               {flyover ? (
@@ -5431,6 +5651,30 @@ export function MakeAMessGame({
         <i />
       </div> : null}
 
+      {active && !cinematicActive && activeHint ? (
+        <aside
+          className={`game-action-hint${activeHint.durationMs === undefined ? " is-persistent" : ""}${hintLeaving ? " is-leaving" : ""}`}
+          role="status"
+          aria-live="polite"
+          style={activeHint.durationMs === undefined
+            ? undefined
+            : { animationDuration: `${activeHint.durationMs}ms` }}
+        >
+          <p>{t(activeHint.eyebrowKey)}</p>
+          <h2>{t(activeHint.titleKey)}</h2>
+          <div className="game-action-hint-detail">
+            {!fallbackLook && activeHint.keyLabelKey ? (
+              <kbd>{t(activeHint.keyLabelKey)}</kbd>
+            ) : null}
+            <span>
+              {t(fallbackLook && activeHint.touchDetailKey
+                ? activeHint.touchDetailKey
+                : activeHint.detailKey)}
+            </span>
+          </div>
+        </aside>
+      ) : null}
+
       {!cinematicActive ? <MobileGameControls
         active={active}
         flightMode={flightMode}
@@ -5443,6 +5687,8 @@ export function MakeAMessGame({
         onWeaponChange={setWeapon}
         onTimeChange={cycleTimeOfDay}
         onFlightChange={toggleFlightMode}
+        entryAction={approachedEntry}
+        onEntryAction={openApproachedEntry}
         onReset={reset}
       /> : null}
 
@@ -5466,7 +5712,11 @@ export function MakeAMessGame({
         {!flightMode ? (
           <>
             <span>Space</span>
-            {t("controls.jump")}
+            {approachedEntry
+              ? t(approachedEntry.kind === "gate"
+                ? "hint.gate.action"
+                : "hint.door.action")
+              : t("controls.jump")}
           </>
         ) : null}
         <span>R</span>
@@ -5494,6 +5744,7 @@ export function MakeAMessGame({
             {flyover ? (
               <CinematicFlyoverLauncher
                 ready={ready}
+                durationSeconds={flyover.durationSeconds}
                 galleryCount={flyover.chapters.filter((item) => Boolean(item.stillImage)).length}
                 onPlay={() => startFlyover(false)}
                 onRecord={() => startFlyover(true)}

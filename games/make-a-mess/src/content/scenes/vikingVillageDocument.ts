@@ -315,7 +315,9 @@ function createPalisade(): void {
       place(palisade, `${gate.id}:leaf:${side}`, "viking:gate-leaf", {
         position: [side * 1.72, 0, gate.z - gate.outward * 0.15],
         rotation: [0, gate.outward < 0 ? Math.PI : 0, 0],
-        scale: [1.14, 1.08, 1],
+        // Mirror the prefab around the outer post so each leaf keeps its hinge
+        // at the jamb. South is already yaw-rotated, hence the outward term.
+        scale: [-side * gate.outward * 1.14, 1.08, 1],
       }, {
         surface: [{ kind: "moss", amount: 0.32 }, { kind: "damp", amount: 0.4 }],
       });

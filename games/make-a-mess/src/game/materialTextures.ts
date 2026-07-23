@@ -25,10 +25,10 @@ import {
   type VikingPlanPoint,
 } from "../content/scenes/vikingVillagePlan.ts";
 import {
-  rainSeamSurfaceAreas,
-  rainSeamSurfaceRoutes,
-  type RainSeamPlanPoint,
-} from "../content/scenes/rainSeamPlan.ts";
+  townSurfaceAreas,
+  townSurfaceRoutes,
+  type TownPlanPoint,
+} from "../content/scenes/townSurfacePlan.ts";
 
 const glowMaterials: MeshStandardMaterial[] = [];
 
@@ -285,7 +285,7 @@ const CITY_WORLD_MIN = -96;
 const CITY_WORLD_SPAN = 192;
 
 function citySurfaceCanvasPoint(
-  point: RainSeamPlanPoint,
+  point: TownPlanPoint,
 ): readonly [number, number] {
   const scale = CITY_SURFACE_TEXTURE_SIZE / CITY_WORLD_SPAN;
   return [
@@ -295,7 +295,7 @@ function citySurfaceCanvasPoint(
 }
 
 function sampleCitySurfaceRoute(
-  points: readonly RainSeamPlanPoint[],
+  points: readonly TownPlanPoint[],
 ): readonly VikingPlanPoint[] {
   const canvasPoints = points.map(citySurfaceCanvasPoint);
   const samples: VikingPlanPoint[] = [canvasPoints[0]];
@@ -356,7 +356,7 @@ function getCitySurfaceTexture(): CanvasTexture {
     context.lineJoin = "round";
     const scale = CITY_SURFACE_TEXTURE_SIZE / CITY_WORLD_SPAN;
 
-    for (const route of rainSeamSurfaceRoutes) {
+    for (const route of townSurfaceRoutes) {
       const raw = sampleCitySurfaceRoute(route.points);
       const samples = meanderVikingTrafficRoute(
         raw,
@@ -391,7 +391,7 @@ function getCitySurfaceTexture(): CanvasTexture {
       }
     }
 
-    for (const area of rainSeamSurfaceAreas) {
+    for (const area of townSurfaceAreas) {
       const [x, y] = citySurfaceCanvasPoint(area.center);
       for (const [channel, amount] of [
         ["red", area.dirt],
