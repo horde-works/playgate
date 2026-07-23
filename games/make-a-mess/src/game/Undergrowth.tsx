@@ -133,9 +133,9 @@ function buildIvy(runs: readonly IvyRun[]): IvyBuild {
         const wander = Math.sin(y * 2.1 + wanderPhase) * wanderAmp * Math.min(1, y);
         const u = u0 + wander;
         return new Vector3(
-          run.a[0] + alongX * u + run.normal[0] * (0.05 + Math.sin(y * 3.1 + wanderPhase) * 0.015),
+          run.a[0] + alongX * u + run.normal[0] * (0.032 + Math.sin(y * 3.1 + wanderPhase) * 0.01),
           run.a[1] + y,
-          run.a[2] + alongZ * u + run.normal[1] * (0.05 + Math.cos(y * 2.7 + wanderPhase) * 0.015),
+          run.a[2] + alongZ * u + run.normal[1] * (0.032 + Math.cos(y * 2.7 + wanderPhase) * 0.01),
         );
       };
 
@@ -164,9 +164,9 @@ function buildIvy(runs: readonly IvyRun[]): IvyBuild {
           const spreadUp = (hash(seed, 12) - 0.5) * 0.2;
           const depth = hash(seed, 13);
           leaves.push({
-            x: point.x + alongX * spreadAlong + run.normal[0] * (0.02 + depth * 0.09),
+            x: point.x + alongX * spreadAlong + run.normal[0] * (0.012 + depth * 0.05),
             y: point.y + spreadUp,
-            z: point.z + alongZ * spreadAlong + run.normal[1] * (0.02 + depth * 0.09),
+            z: point.z + alongZ * spreadAlong + run.normal[1] * (0.012 + depth * 0.05),
             yaw: yawAlong + (hash(seed, 14) - 0.5) * 1.2,
             pitch: (hash(seed, 15) - 0.5) * 0.8,
             roll: (hash(seed, 16) - 0.5) * 0.9,
@@ -185,9 +185,9 @@ function buildIvy(runs: readonly IvyRun[]): IvyBuild {
         const spread = (hash(seed, 20) - 0.5) * 1.1;
         const depth = hash(seed, 21);
         leaves.push({
-          x: run.a[0] + alongX * (u0 + spread) + run.normal[0] * (0.04 + depth * 0.12),
+          x: run.a[0] + alongX * (u0 + spread) + run.normal[0] * (0.025 + depth * 0.07),
           y: run.a[1] + 0.04 + hash(seed, 22) * 0.3,
-          z: run.a[2] + alongZ * (u0 + spread) + run.normal[1] * (0.04 + depth * 0.12),
+          z: run.a[2] + alongZ * (u0 + spread) + run.normal[1] * (0.025 + depth * 0.07),
           yaw: yawAlong + (hash(seed, 23) - 0.5) * 1.6,
           pitch: (hash(seed, 24) - 0.5) * 1.1,
           roll: (hash(seed, 25) - 0.5) * 1.0,
@@ -257,10 +257,10 @@ export function IvyPatches({
           uTime: { value: 0 },
           uLight: { value: 1 },
           uWind: { value: 1 },
-          uShadow: { value: new Color("#1c2a12") },
-          uDeep: { value: new Color("#2a3f1b") },
-          uFresh: { value: new Color("#4a642c") },
-          uDry: { value: new Color("#6d7238") },
+          uShadow: { value: new Color("#131c0d") },
+          uDeep: { value: new Color("#223318") },
+          uFresh: { value: new Color("#33471f") },
+          uDry: { value: new Color("#6d5c2e") },
         },
         side: DoubleSide,
         transparent: false,
@@ -306,7 +306,7 @@ export function IvyPatches({
             // Inner leaves sit in their own shadow; outer canopy catches light.
             vec3 body = mix(uDeep, uFresh, vTone * 0.75 + vDepth * 0.25);
             vec3 color = mix(uShadow, body, 0.35 + vDepth * 0.65);
-            color = mix(color, uDry, step(0.93, vTone) * 0.55);
+            color = mix(color, uDry, smoothstep(0.6, 1.0, vTone) * 0.5);
             float rim = smoothstep(lobes, lobes * 0.45, radius);
             color *= (0.72 + rim * 0.28) * uLight;
             gl_FragColor = vec4(color, 1.0);

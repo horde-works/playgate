@@ -1042,9 +1042,7 @@ ${
   material === "stone" ||
   material === "basalt" ||
   material === "graphiteStone" ||
-  material === "plaster" ||
-  material === "brick" ||
-  material === "concrete"
+  material === "brick"
     ? /* glsl */ `
 // Hairline cracks and crevice grime: thin darkened ridges along two crossed
 // high-frequency world-space noises, so large flat faces of timber and stone

@@ -225,16 +225,16 @@ function openHouseDressing(): DressingConfig {
   const mainPoles = [-8, 10, 28, 58, 70];
   for (let index = 0; index < mainPoles.length - 1; index += 1) {
     wires.push({
-      from: [mainPoles[index], 4.62, -8.15],
-      to: [mainPoles[index + 1], 4.62, -8.15],
+      from: [mainPoles[index], 4.62, -8.72],
+      to: [mainPoles[index + 1], 4.62, -8.72],
       color: POWER,
     });
   }
   const southPoles = [-2, 22, 52, 70];
   for (let index = 0; index < southPoles.length - 1; index += 1) {
     wires.push({
-      from: [southPoles[index], 4.62, -26.15],
-      to: [southPoles[index + 1], 4.62, -26.15],
+      from: [southPoles[index], 4.62, -25.45],
+      to: [southPoles[index + 1], 4.62, -25.45],
       color: POWER,
     });
   }
@@ -248,12 +248,12 @@ function openHouseDressing(): DressingConfig {
   }
   // Service drops from the street poles into the buildings.
   const drops: readonly (readonly [WireSpan["from"], WireSpan["to"]])[] = [
-    [[10, 4.62, -8.15], [16, 6.2, -7.85]],
-    [[28, 4.62, -8.15], [30, 6.2, -7.85]],
-    [[-8, 4.62, -8.15], [2.8, 5.2, -6.75]],
-    [[10, 4.62, -8.15], [14, 6.2, -16.9]],
+    [[10, 4.62, -8.72], [16, 6.2, -7.85]],
+    [[28, 4.62, -8.72], [30, 6.2, -7.85]],
+    [[-8, 4.62, -8.72], [2.8, 5.2, -6.75]],
+    [[10, 4.62, -8.72], [14, 6.2, -16.9]],
     [[45.85, 4.62, -22], [48.2, 6.2, -20.5]],
-    [[-2, 4.62, -26.15], [-6, 2.45, -24.85]],
+    [[-2, 4.62, -25.45], [-6, 2.45, -24.85]],
   ];
   for (const [from, to] of drops) {
     wires.push({ from, to, color: POWER, thickness: 0.03 });

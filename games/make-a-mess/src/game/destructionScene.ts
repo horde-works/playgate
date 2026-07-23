@@ -2415,11 +2415,11 @@ function createTownLamps(): BreakableClusterDefinition {
 
   // Main street (z = -12): poles on the north verge, arms south over the road.
   for (const [index, lx] of [-8, 10, 28, 58, 70].entries()) {
-    addLamp(`main:${index}`, lx, -8.15, -1);
+    addLamp(`main:${index}`, lx, -8.72, -1);
   }
   // South street (z = -30): poles on its north verge.
   for (const [index, lx] of [-2, 22, 52, 70].entries()) {
-    addLamp(`south:${index}`, lx, -26.15, -1);
+    addLamp(`south:${index}`, lx, -25.45, -1);
   }
   // Cross street (x = 42): poles on the east verge.
   for (const [index, lz] of [-44, -22, 4].entries()) {
@@ -2622,25 +2622,6 @@ function createTownClutter(): BreakableClusterDefinition[] {
 
   // --- Boarded windows and plaster patches on the shells ------------------
   const patches: BreakablePieceDefinition[] = [];
-  const boardUp = (name: string, x: number, y: number, z: number): void => {
-    for (const [index, tilt] of [-0.42, 0.46].entries()) {
-      patches.push({
-        ...makePiece(`town:boards:${name}:${index}`, "town:patches", "wood", "plank",
-          [x, y, z], [1.55, 0.2, 0.06], "#8a6c47", [0, 0, tilt]),
-        bearsLoad: false,
-        sideAttachmentReach: 0.5,
-        weathering: 0.3,
-      });
-    }
-  };
-  // Bay-accurate: bayCenter(b) = x0 + 0.15 + 1.35625 * (b + 0.5) for each
-  // shell's own x0; y centred on the actual window rows.
-  boardUp("k3:a", 54.25, 1.75, -16.86);
-  boardUp("k3:b", 65.1, 4.35, -16.86);
-  boardUp("k4:a", -9.82, 1.75, -34.86);
-  boardUp("k4:b", -3.03, 4.35, -34.86);
-  boardUp("k5:a", 20.25, 1.75, -34.86);
-  boardUp("k6:a", 54.25, 1.75, 19.14);
   for (const [index, [px, py, pz, tone]] of (
     [
       [-5.6, 1.05, -25.07, "#8a5a43"],
@@ -2697,8 +2678,8 @@ function createTownClutter(): BreakableClusterDefinition[] {
   const treePieces: BreakablePieceDefinition[] = [];
   const trees: readonly (readonly ["oak" | "birch" | "pine", number, number, number, number?])[] = [
     ["oak", 8.2, 4.2, 5, 1.05],
-    ["birch", 25.6, 0.8, 3],
-    ["birch", 16.4, 1.0, 4],
+    ["birch", 29.8, 2.6, 3],
+    ["birch", 12.9, 2.4, 4],
     ["oak", 49, 8.5, 6],
     ["birch", 60.6, 4.2, 5],
     ["oak", 69.4, 9.8, 7, 0.9],
@@ -2755,6 +2736,86 @@ function createTownClutter(): BreakableClusterDefinition[] {
     ...asPieces("town:works", "works:caution", propCautionBoard({ yaw: 1.55, width: 1.4 }), [20.2, 0, -31.6]),
   );
   clusters.push(cluster("town:works", "Opened heating main", "earth", "mounted", works));
+
+  // --- Sparse, PLACED weathering: rust and water streaks where water and
+  // metal actually meet the wall, and spalled-plaster patches with the dark
+  // wall showing through. Never a wallpaper — each stain has a source.
+  const stains: BreakablePieceDefinition[] = [];
+  const streak = (
+    name: string,
+    x: number,
+    y: number,
+    z: number,
+    tone: string,
+    tail: number,
+  ): void => {
+    stains.push({
+      ...makePiece(`town:streak:${name}:head`, "town:stains", "concrete", "panel",
+        [x, y, z], [0.34, 0.42, 0.022], tone),
+      bearsLoad: false,
+      sideAttachmentReach: 0.4,
+    });
+    const tailHeight = Math.min(tail, 1.5);
+    stains.push({
+      ...makePiece(`town:streak:${name}:tail`, "town:stains", "concrete", "panel",
+        [x + 0.02, y - 0.21 - tailHeight / 2, z], [0.15, tailHeight, 0.02], tone),
+      bearsLoad: false,
+      sideAttachmentReach: 0.45,
+    });
+  };
+  const RUST_A = "#6e4a33";
+  const RUST_B = "#7a5238";
+  const RUST_C = "#5d4030";
+  const WATER_A = "#566058";
+  const WATER_B = "#4b5551";
+  const WATER_C = "#5a646d";
+  // k1 yard face (z = -0.83): water from window corners, rust under an AC.
+  streak("k1:w0", 16.22, 2.2, -0.83, WATER_A, 0.9);
+  streak("k1:w1", 22.6, 4.8, -0.83, WATER_B, 1.2);
+  streak("k1:w2", 27.06, 7.4, -0.83, WATER_C, 0.8);
+  streak("k1:r0", 13.35, 3.55, -0.83, RUST_A, 1.4);
+  streak("k1:r1", 20.75, 0.95, -0.83, RUST_C, 0.6);
+  // k1 street face (z = -8.42 + wall at -8.15... face -8.2): under the eave.
+  streak("k1:e1", 27.9, 9.9, -7.82, RUST_B, 1.8);
+  // k2 street face (z = -16.82): rust from the roof line, water at a window.
+  streak("k2:r0", 18.3, 9.9, -16.82, RUST_A, 2.0);
+  streak("k2:w0", 27.2, 4.8, -16.82, WATER_A, 1.0);
+  streak("k2:w1", 32.4, 2.2, -16.82, WATER_C, 0.7);
+  // Old houses: water below the roof edge, rust under the h2 sign.
+  streak("h1:w0", -2.6, 4.9, 0.88, WATER_B, 1.1);
+  streak("h2:r0", 55.2, 2.85, 0.92, RUST_B, 0.9);
+  streak("h3:w0", 54.4, 4.9, -37.12, WATER_A, 1.2);
+  // Spalled plaster: a dark wound with flake chips beside it.
+  const spall = (
+    name: string,
+    x: number,
+    y: number,
+    z: number,
+    w: number,
+    h: number,
+  ): void => {
+    stains.push({
+      ...makePiece(`town:spall:${name}:core`, "town:stains", "concrete", "panel",
+        [x, y, z], [w, h, 0.024], "#362f28"),
+      bearsLoad: false,
+      sideAttachmentReach: 0.4,
+      weathering: 0.3,
+    });
+    for (const [chipIndex, [cx, cy]] of ([[-w * 0.62, h * 0.3]] as const).entries()) {
+      stains.push({
+        ...makePiece(`town:spall:${name}:chip:${chipIndex}`, "town:stains", "plaster", "panel",
+          [x + cx, y + cy, z], [0.16, 0.11, 0.022], "#cfc8b6"),
+        bearsLoad: false,
+        sideAttachmentReach: 0.35,
+      });
+    }
+  };
+  spall("h1:a", -3.1, 1.4, 0.88, 0.72, 0.5);
+  spall("h1:b", 3.4, 3.1, 0.88, 0.5, 0.62);
+  spall("h3:a", 57.8, 1.6, -37.12, 0.8, 0.55);
+  spall("k4:a", -7.4, 2.3, -34.84, 0.9, 0.7);
+  spall("k5:a", 21.6, 5.0, -34.84, 0.66, 0.5);
+  clusters.push(cluster("town:stains", "Rust, water streaks and spalled plaster", "concrete", "mounted", stains));
 
   // --- Human marks: sign, graffiti, road signs, caution boards ------------
   const marks: BreakablePieceDefinition[] = [];
