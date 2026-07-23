@@ -101,6 +101,20 @@ export function GameCard({ game, featured = false }: GameCardProps) {
           <div className="art-viking-torch art-viking-torch-left" />
           <div className="art-viking-torch art-viking-torch-right" />
         </div>
+      ) : game.art === "rain-seam" ? (
+        <div className="game-card-art game-card-art-rain-seam" aria-hidden="true">
+          <span className="art-word art-word-rain">ДОЖДЕВОЙ</span>
+          <span className="art-word art-word-seam">ДВОР</span>
+          <div className="art-rain-old-house">
+            <i className="art-rain-door" />
+            <i className="art-rain-window" />
+          </div>
+          <div className="art-rain-outbuilding" />
+          <div className="art-rain-gate" />
+          <div className="art-rain-wall" />
+          <div className="art-rain-bike" />
+          <div className="art-rain-puddle" />
+        </div>
       ) : (
         <div className="game-card-art" aria-hidden="true">
           <span className="art-word art-word-make">MAKE</span>

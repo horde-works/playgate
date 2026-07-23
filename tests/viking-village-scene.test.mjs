@@ -70,6 +70,26 @@ test("the village contains domestic life as physical, destructible objects", () 
   assert.equal(vikingVillageScene.worldRadius, 96);
 });
 
+test("new longhouse timbers rest separately against the west wall frame", () => {
+  const timbers = vikingVillageScene.breakablePieces
+    .filter((piece) => piece.id.includes("newhouse:timber") && piece.id.endsWith(":body"))
+    .sort((left, right) => left.position[2] - right.position[2]);
+
+  assert.equal(timbers.length, 4);
+  for (let index = 1; index < timbers.length; index += 1) {
+    assert.equal(timbers[index].position[2] - timbers[index - 1].position[2] >= 1.7, true);
+  }
+  for (const timber of timbers) {
+    const axis = rotationAxes(timber.rotation).y;
+    const endpoints = [-1, 1].map((side) => ({
+      x: timber.position[0] + axis[0] * 4 * side,
+      y: timber.position[1] + axis[1] * 4 * side,
+    })).sort((left, right) => left.x - right.x);
+    assert.equal(endpoints[0].x < -39.8 && endpoints[0].y < 0.36, true, timber.id);
+    assert.equal(endpoints[1].x > -32.2 && endpoints[1].y > 1.4, true, timber.id);
+  }
+});
+
 test("mud, moss and wet tracks are masks on the destructible ground", () => {
   const landscape = vikingVillageScene.breakablePieces.filter(
     (piece) => piece.landscapeSurface === "viking-ground",

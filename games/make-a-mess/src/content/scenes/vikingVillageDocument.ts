@@ -1478,11 +1478,18 @@ function createStorySites(): void {
       position: [siteX + cx, 0, siteZ + cz],
     });
   }
-  // Timber stack: three logs down, two nested on top.
-  for (const [index, [ox, oy, oz]] of ([[-0.75, 0.32, 0], [0, 0.32, 0.75], [0.75, 0.32, -0.6], [-0.35, 0.86, 0.05], [0.4, 0.86, 0.1]] as const).entries()) {
+  // Fresh wall logs are staged as builders actually leave them: parallel and
+  // clear of one another, with their eastern ends resting on the west wall's
+  // top course and their western ends on the ground outside the footprint.
+  for (const [index, [ox, oy, oz, yaw, slope]] of ([
+    [-0.08, 0.84, -2.7, -0.018, 0.15],
+    [0.04, 0.87, -0.9, 0.012, 0.155],
+    [-0.04, 0.9, 0.9, -0.01, 0.16],
+    [0.08, 0.93, 2.7, 0.016, 0.165],
+  ] as const).entries()) {
     place(storage, `newhouse:timber:${index}`, "viking:log:8", {
-      position: [siteX - 6.5 + ox, oy, siteZ + 1.5 + oz],
-      rotation: [0, 0.12 * index, 0],
+      position: [siteX - 8 + ox, oy, siteZ + oz],
+      rotation: [0, yaw, slope],
     });
   }
   // Hewing trestle: a work log up on two chocks, chips everywhere.

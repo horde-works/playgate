@@ -25,6 +25,8 @@ import {
   litWindowColor,
   type BreakableMaterial,
   type BreakablePieceDefinition,
+  type LandscapeSurfaceProfile,
+  type SurfaceTextureProfile,
 } from "./destructionScene";
 import type {
   RemnantDefinition,
@@ -59,6 +61,7 @@ interface DynamicBreakableFragment {
   readonly geometryKind: "box" | "cylinder";
   readonly material: BreakableMaterial;
   readonly materialColor: string;
+  readonly textureProfile?: SurfaceTextureProfile;
   readonly color: string;
   readonly center: readonly [number, number, number];
   readonly size: readonly [number, number, number];
@@ -71,13 +74,14 @@ interface DynamicBreakableFragment {
   readonly faceMaskNegative: readonly [number, number, number];
   readonly fallbackPosition: readonly [number, number, number];
   readonly fallbackQuaternion: readonly [number, number, number, number];
-  readonly landscapeSurface: boolean;
+  readonly landscapeSurface?: LandscapeSurfaceProfile;
 }
 
 interface DynamicBreakableBatch {
   readonly id: string;
   readonly material: BreakableMaterial;
   readonly materialColor: string;
+  readonly textureProfile?: SurfaceTextureProfile;
   readonly geometryKind: "box" | "cylinder";
   readonly fragments: readonly DynamicBreakableFragment[];
 }
@@ -166,6 +170,7 @@ function sourceFragments(
         geometryKind,
         material: piece.material,
         materialColor: pieceMaterialBaseColor(piece.material, pieceColor),
+        textureProfile: piece.textureProfile,
         color: pieceColor,
         center: box.center,
         size: box.size,
@@ -180,7 +185,7 @@ function sourceFragments(
             : faceMasks[boxIndex].negative,
         fallbackPosition: piece.position,
         fallbackQuaternion,
-        landscapeSurface: piece.landscapeSurface === "viking-ground",
+        landscapeSurface: piece.landscapeSurface,
       });
     });
   }
@@ -200,6 +205,7 @@ function sourceFragments(
         geometryKind: shardGeometry,
         material: shard.material,
         materialColor: pieceMaterialBaseColor(shard.material, shardColor),
+        textureProfile: shard.textureProfile,
         color: shardColor,
         center: box.center,
         size: box.size,
@@ -214,7 +220,7 @@ function sourceFragments(
             : faceMasks[boxIndex].negative,
         fallbackPosition: shard.position,
         fallbackQuaternion: shard.quaternion,
-        landscapeSurface: false,
+        landscapeSurface: shard.landscapeSurface,
       });
     });
   }
@@ -237,6 +243,7 @@ function sourceFragments(
           remnant.material,
           remnantColor,
         ),
+        textureProfile: remnant.textureProfile,
         color: remnantColor,
         center: box.center,
         size: box.size,
@@ -251,9 +258,7 @@ function sourceFragments(
             : faceMasks[boxIndex].negative,
         fallbackPosition: remnant.position,
         fallbackQuaternion: remnant.quaternion,
-        landscapeSurface: remnant.parentId.startsWith(
-          "viking-village:terrain-surface:cover:",
-        ),
+        landscapeSurface: remnant.landscapeSurface,
       });
     });
   }
@@ -267,7 +272,7 @@ function buildBatches(
   const batches = new Map<string, DynamicBreakableFragment[]>();
 
   for (const fragment of fragments) {
-    const key = `${fragment.material}:${fragment.materialColor}:${fragment.geometryKind}`;
+    const key = `${fragment.material}:${fragment.materialColor}:${fragment.textureProfile ?? "default"}:${fragment.geometryKind}`;
     const current = batches.get(key);
     if (current) {
       current.push(fragment);
@@ -280,6 +285,7 @@ function buildBatches(
     id,
     material: batchFragments[0].material,
     materialColor: batchFragments[0].materialColor,
+    textureProfile: batchFragments[0].textureProfile,
     geometryKind: batchFragments[0].geometryKind,
     fragments: batchFragments,
   }));
@@ -403,7 +409,7 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
     const tint = new Color();
     batch.fragments.forEach((fragment, index) => {
       if (fragment.landscapeSurface) {
-        bands[index] = -1;
+        bands[index] = fragment.landscapeSurface === "viking-ground" ? -1 : -2;
         return;
       }
       if (fragmentHasJoints(fragment)) {
@@ -429,8 +435,9 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
       getPieceMaterial(
         batch.material,
         batch.materialColor,
+        batch.textureProfile,
       ),
-    [batch.material, batch.materialColor],
+    [batch.material, batch.materialColor, batch.textureProfile],
   );
   const instanceIds = useMemo(
     () => batch.fragments.map((fragment) => fragment.sourceId),

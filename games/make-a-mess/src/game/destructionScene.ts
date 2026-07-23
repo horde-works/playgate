@@ -54,7 +54,14 @@ export type BreakableShape =
 
 export type SupportMode = "stack" | "mounted" | "linked";
 export type SceneVector3 = readonly [x: number, y: number, z: number];
-export type LandscapeSurfaceProfile = "viking-ground";
+export type LandscapeSurfaceProfile = "viking-ground" | "city-ground";
+export type SurfaceTextureProfile =
+  | "city-gray-pavers"
+  | "city-red-pavers"
+  | "city-aged-stucco"
+  | "city-red-aggregate"
+  | "city-facade-cladding"
+  | "city-roof-tile";
 
 export interface MaterialRuntimeProfile {
   readonly density: number;
@@ -98,6 +105,8 @@ export interface BreakablePieceDefinition {
   readonly attachmentSupportMode?: "wall" | "cable";
   readonly sideAttachmentReach?: number;
   readonly contactBearingOrder?: boolean;
+  /** Optional visual surface variant; structural material remains unchanged. */
+  readonly textureProfile?: SurfaceTextureProfile;
   /** World-space material mask; it follows this ground body when it breaks. */
   readonly landscapeSurface?: LandscapeSurfaceProfile;
   /**
@@ -1388,10 +1397,92 @@ function createGroundTiles(): BreakableClusterDefinition[] {
   ];
 }
 
-const panelPalette = ["#c8c1b2", "#bfb8aa", "#d1cabc", "#c4bdb0"];
-const slabPalette = ["#b2aea3", "#a8a49a"];
-const plinthColor = "#7d7a72";
+// Тёплая грязная побелка вместо холодного серо-бежевого: реальные панельные
+// фасады — кремово-белёсые, а холод в кадр приносят тени и потёки.
+const panelPalette = ["#d8cdb2", "#cfc3a6", "#e0d6be", "#d2c7ab"];
+const slabPalette = ["#b7ad9c", "#aca293"];
+const plinthColor = "#6f6a60";
+const plinthBandColors = ["#736e63", "#6b665c"];
+const apronConcrete = ["#918d82", "#8a867b"];
 const stairConcrete = "#9d9a91";
+
+// Ремонтная перекраска никогда не попадает в тон фасада: чуть серее, желтее
+// или темнее базового. Индексы согласованы с panelColor в createKhrushchevka.
+const patchTints: readonly (readonly [number, number, number])[] = [
+  [0.9, 0.9, 0.93],
+  [1.03, 0.97, 0.82],
+  [0.85, 0.84, 0.8],
+];
+
+function shiftColor(hex: string, mr: number, mg: number, mb: number): string {
+  const value = parseInt(hex.slice(1), 16);
+  const clamp8 = (channel: number) =>
+    Math.max(0, Math.min(255, Math.round(channel)));
+  const r = clamp8(((value >> 16) & 255) * mr);
+  const g = clamp8(((value >> 8) & 255) * mg);
+  const b = clamp8((value & 255) * mb);
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, "0")}`;
+}
+
+// Столярка окон: белый ПВХ соседствует со старым крашеным деревом — рамы
+// соседних квартир почти никогда не совпадают.
+const windowFrameFinishes = ["#e8e7e1", "#d3cdbb", "#7d5b3c"] as const;
+// Дневное стекло тёмное: комната за ним не освещена. Светлый тон — редкое
+// зеркальное отражение неба.
+const windowGlassTints = [
+  "#31404a",
+  "#3c4b54",
+  "#46555e",
+  "#27333b",
+  "#51606a",
+] as const;
+const paleReflectionGlass = "#93a7b0";
+const curtainTints = ["#e8e2d3", "#e0d8c6", "#dbd2c8", "#e5e0d6"] as const;
+// Обшивка балконов: выцветшие сурик, голубой, зелёный, некрашеный лист.
+const balconyCladdingTints = [
+  "#8a4f41",
+  "#597186",
+  "#657455",
+  "#b9ac91",
+  "#6e5647",
+  "#787f84",
+] as const;
+const balconyWoodTints = ["#8a6a48", "#a3805a", "#6e5138", "#96714b"] as const;
+const rustSteel = "#6b5140";
+const zincSheet = "#9aa19b";
+
+// Кондиционеры жилых домов: один план положений питает и сами блоки
+// (createTownClutter), и ржавые подтёки под ними в карте потёков
+// (materialTextures). Все позиции — глухие простенки: чётные пролёты юга и
+// лестничные пояса севера, где блок не спорит ни с окнами, ни с балконами.
+export interface KhrushchevkaAcMount {
+  readonly x: number;
+  readonly y: number;
+  /** Плоскость стены (её центр по z), не наружная грань. */
+  readonly z: number;
+  readonly face: 1 | -1;
+}
+const HRU_INNER_X0 = 12.15;
+const HRU_SPAN = 21.7;
+const hruBayCenterX = (bay: number) =>
+  HRU_INNER_X0 + (HRU_SPAN / 16) * (bay + 0.5);
+const hruStripCenterX = (strip: number) =>
+  HRU_INNER_X0 + (HRU_SPAN / 8) * (strip + 0.5);
+const hruFloorBaseY = (floor: number) => 0.4 + floor * 2.6;
+export const khrushchevkaAcMounts: readonly KhrushchevkaAcMount[] = [
+  // k1, дворовый фасад (z = -1): глухие пролёты 4, 8, 14.
+  { x: hruBayCenterX(4), y: hruFloorBaseY(1) + 1.55, z: -1, face: 1 },
+  { x: hruBayCenterX(8) - 0.15, y: hruFloorBaseY(2) + 1.55, z: -1, face: 1 },
+  { x: hruBayCenterX(14) + 0.15, y: hruFloorBaseY(1) + 1.55, z: -1, face: 1 },
+  // k1, уличный фасад (z = -8): пояса лестничных клеток 1 и 5.
+  { x: hruStripCenterX(1) - 0.55, y: hruFloorBaseY(2) + 1.5, z: -8, face: -1 },
+  { x: hruStripCenterX(5) + 0.6, y: hruFloorBaseY(1) + 1.5, z: -8, face: -1 },
+  // k2 (сдвиг dz = -16), фасад к главной улице (z = -17). Блок пролёта 0
+  // сдвинут вправо, к окну: по оси пролёта висит водосточная труба.
+  { x: hruBayCenterX(0) + 0.2, y: hruFloorBaseY(1) + 1.55, z: -17, face: 1 },
+  { x: hruBayCenterX(6) + 0.15, y: hruFloorBaseY(2) + 1.55, z: -17, face: 1 },
+  { x: hruBayCenterX(12), y: hruFloorBaseY(3) + 1.55, z: -17, face: 1 },
+];
 
 // Glass with this exact color glows warmly at night (lived-in windows,
 // stairwell windows, lamp shades) — the renderer keys the emissive material
@@ -1413,7 +1504,6 @@ const lampCollector: LampDefinition[] = [];
 // and the room keeps glowing through the hole; break the lamp — the room
 // goes out. Unlit flats still get a lamp, just switched off.
 const unlitLampGlass = "#b9c2bd";
-const plainWindowGlass = "#9fd5dd";
 
 function windowLampColor(id: string, litChance: number): string {
   return deterministicNoise(`lit:${id}`) < litChance
@@ -1502,7 +1592,357 @@ function createKhrushchevka(
   const stripCenter = (strip: number) => innerX0 + stripWidth * (strip + 0.5);
   const bayCenter = (bay: number) => innerX0 + bayWidth * (bay + 0.5);
 
-  // Цоколь
+  // Каждое здание кидает собственные кости: рамы, балконы, шторы и заплаты
+  // не повторяются между шестью копиями одного шаблона.
+  const salt = config.prefix ?? "k1";
+  const pal = config.palette ?? panelPalette;
+  const noise = (key: string): number => deterministicNoise(`${salt}:${key}`);
+
+  // Ремонтные заплаты: прямоугольники в 2-4 панели, перекрашенные при
+  // латании швов. На реальных фасадах эти пятна видны с другого конца двора.
+  interface RepairPatch {
+    readonly side: "s" | "n";
+    readonly u0: number;
+    readonly u1: number;
+    readonly f0: number;
+    readonly f1: number;
+    readonly tint: number;
+  }
+  const patches: RepairPatch[] = [];
+  const patchCount = 2 + Math.floor(noise("patch:count") * 2);
+  for (let index = 0; index < patchCount; index += 1) {
+    const u0 = Math.floor(noise(`patch:u:${index}`) * 13);
+    const f0 = Math.floor(noise(`patch:f:${index}`) * 3);
+    patches.push({
+      side: noise(`patch:side:${index}`) < 0.5 ? "s" : "n",
+      u0,
+      u1: u0 + 2 + Math.floor(noise(`patch:w:${index}`) * 3),
+      f0,
+      f1: f0 + (noise(`patch:h:${index}`) < 0.4 ? 1 : 0),
+      tint: Math.floor(noise(`patch:tint:${index}`) * patchTints.length),
+    });
+  }
+  // Юг адресуется пролётами 0..15, север — полосами через unit = strip*2+1,
+  // так что заплата может лечь на оба фасада одинаковой логикой.
+  const panelColor = (
+    side: "s" | "n",
+    unit: number,
+    floor: number,
+    index: number,
+  ): string => {
+    const basePanel = pal[((index % pal.length) + pal.length) % pal.length];
+    for (const patch of patches) {
+      if (
+        patch.side === side &&
+        unit >= patch.u0 &&
+        unit <= patch.u1 &&
+        floor >= patch.f0 &&
+        floor <= patch.f1
+      ) {
+        const [mr, mg, mb] = patchTints[patch.tint];
+        return shiftColor(basePanel, mr, mg, mb);
+      }
+    }
+    return basePanel;
+  };
+  // Низ фасада живёт тяжелее верха: сырость, брызги, руки, ноги.
+  const facadeWeathering = (floor: number): number =>
+    floor === 0 ? 0.34 : floor === 1 ? 0.22 : 0.15;
+
+  // Полный оконный блок: рама с импостом и форточкой, тёмные стёкла с
+  // разнобоем, наружный отлив и тюль в глубине комнаты. Ставится на юг и на
+  // север (face = +1 / -1). Узкие проёмы (< 0.9 м) получают одну створку.
+  interface WindowUnitOptions {
+    readonly pieces: BreakablePieceDefinition[];
+    readonly clusterId: string;
+    readonly idBase: string;
+    readonly cx: number;
+    readonly b: number;
+    readonly wallZ: number;
+    readonly face: 1 | -1;
+    readonly width: number;
+    readonly curtains?: boolean;
+    readonly canOpen?: boolean;
+  }
+  const addWindowUnit = (options: WindowUnitOptions): void => {
+    const { pieces, clusterId, idBase, cx, b, wallZ, face, width } = options;
+    const y0 = b + 0.81;
+    const y1 = b + 1.97;
+    const t = 0.075;
+    const zf = wallZ + face * 0.045;
+    const frameRoll = noise(`frame:${idBase}`);
+    const frameFinish =
+      frameRoll < 0.52
+        ? windowFrameFinishes[0]
+        : frameRoll < 0.78
+          ? windowFrameFinishes[1]
+          : windowFrameFinishes[2];
+    const bar = (
+      id: string,
+      position: SceneVector3,
+      size: SceneVector3,
+    ): BreakablePieceDefinition => ({
+      ...makePiece(`${idBase}:${id}`, clusterId, "wood", "plank", position, size, frameFinish),
+      bearsLoad: false,
+      // Рама прибита к бетонному откосу сбоку, а не стоит на стекле.
+      sideAttachmentReach: 0.2,
+    });
+
+    pieces.push(
+      bar("frame:top", [cx, y1 - t / 2, zf], [width, t, 0.08]),
+      bar("frame:bottom", [cx, y0 + t / 2, zf], [width, t, 0.08]),
+      bar("frame:left", [cx - width / 2 + t / 2, (y0 + y1) / 2, zf], [t, y1 - y0 - 2 * t, 0.08]),
+      bar("frame:right", [cx + width / 2 - t / 2, (y0 + y1) / 2, zf], [t, y1 - y0 - 2 * t, 0.08]),
+    );
+
+    // Створки: узкая колонка с форточкой + одна-две широких.
+    const narrowW = width < 0.9 ? width - 2 * t : 0.42;
+    const wideCount = width < 0.9 ? 0 : width > 1.55 ? 2 : 1;
+    const wideW = wideCount > 0 ? (width - 2 * t - narrowW) / wideCount : 0;
+    const narrowOnLeft = noise(`hand:${idBase}`) < 0.5;
+    const columnWidths =
+      wideCount === 0
+        ? [narrowW]
+        : narrowOnLeft
+          ? [narrowW, ...Array<number>(wideCount).fill(wideW)]
+          : [...Array<number>(wideCount).fill(wideW), narrowW];
+    const glassBase = Math.floor(noise(`glass:${idBase}`) * windowGlassTints.length);
+
+    let xCursor = cx - width / 2 + t;
+    for (const [column, columnWidth] of columnWidths.entries()) {
+      const columnCx = xCursor + columnWidth / 2;
+      const isNarrow = columnWidth === narrowW;
+      if (column > 0) {
+        pieces.push(
+          bar(`mullion:${column}`, [xCursor, (y0 + y1) / 2, zf], [0.06, y1 - y0 - 2 * t, 0.08]),
+        );
+      }
+      const pale = noise(`pale:${idBase}:${column}`) > 0.86;
+      const tint = pale
+        ? paleReflectionGlass
+        : windowGlassTints[(glassBase + column) % windowGlassTints.length];
+      if (isNarrow) {
+        // Форточка в верхней трети узкой створки. Стёкла режутся точно по
+        // ячейкам обвязки — вписаны в раму, без щелей по периметру.
+        const ySplit = y1 - 0.42;
+        pieces.push(
+          bar("vent:bar", [columnCx, ySplit, zf], [columnWidth + 0.02, 0.055, 0.08]),
+        );
+        const ventOpen = noise(`ventopen:${idBase}`) < 0.12;
+        const ventY = (ySplit + 0.0275 + y1 - t) / 2;
+        const ventH = y1 - t - ySplit - 0.0375;
+        pieces.push(
+          makePiece(`${idBase}:vent:glass`, clusterId, "glass", "glassPane",
+            ventOpen
+              ? [columnCx, ventY - 0.02, wallZ + face * 0.1]
+              : [columnCx, ventY, wallZ],
+            [columnWidth - 0.01, ventH, 0.05], tint,
+            ventOpen ? [face * 0.5, 0, 0] : undefined),
+        );
+        const paneH = ySplit - 0.0375 - y0 - t;
+        const paneY = (y0 + t + ySplit - 0.0275) / 2;
+        const casementOpen =
+          options.canOpen !== false && noise(`open:${idBase}`) < 0.08;
+        if (casementOpen) {
+          const openAngle = 0.5 + noise(`openangle:${idBase}`) * 0.35;
+          const hingeX = columnCx - (columnWidth - 0.08) / 2;
+          const w = columnWidth - 0.01;
+          pieces.push({
+            ...makePiece(`${idBase}:casement`, clusterId, "glass", "glassPane",
+              [
+                hingeX + (w / 2) * Math.cos(openAngle),
+                paneY,
+                wallZ + face * (w / 2) * Math.sin(openAngle),
+              ],
+              [w, paneH, 0.05], tint,
+              [0, -face * openAngle, 0]),
+            hinge: {
+              pivot: [hingeX, paneY, wallZ],
+              direction: [1, 0, 0],
+              normal: [0, 0, face],
+            },
+          });
+        } else {
+          pieces.push(
+            makePiece(`${idBase}:casement`, clusterId, "glass", "glassPane",
+              [columnCx, paneY, wallZ], [columnWidth - 0.01, paneH, 0.05], tint),
+          );
+        }
+      } else {
+        pieces.push(
+          makePiece(`${idBase}:pane:${column}`, clusterId, "glass", "glassPane",
+            [columnCx, (y0 + y1) / 2, wallZ],
+            [columnWidth - 0.01, y1 - y0 - 2 * t - 0.01, 0.05], tint),
+        );
+      }
+      xCursor += columnWidth;
+    }
+
+    // Оцинкованный отлив с лёгким наклоном от стены.
+    pieces.push({
+      ...makePiece(`${idBase}:sill-flash`, clusterId, "steel", "steelSheet",
+        [cx, y0 - 0.01, wallZ + face * 0.235], [width + 0.1, 0.03, 0.15],
+        "#c9cdc9", [face * 0.12, 0, 0]),
+      bearsLoad: false,
+      weathering: 0.3,
+    });
+
+    // Тюль: висит в глубине комнаты, за лампой на подоконнике.
+    if (options.curtains !== false && noise(`curtain:${idBase}`) < 0.62) {
+      const pulled = noise(`pull:${idBase}`) < 0.35;
+      const fullW = width - 0.16;
+      const curtainWidth = pulled ? fullW * 0.55 : fullW;
+      const offset = pulled
+        ? ((noise(`pullside:${idBase}`) < 0.5 ? -1 : 1) * (fullW - curtainWidth)) / 2
+        : 0;
+      // Тюль до пола: опирается на плиту перекрытия, как настоящая штора.
+      pieces.push({
+        ...makePiece(`${idBase}:curtain`, clusterId, "cloth", "panel",
+          [cx + offset, (b + 0.03 + y1) / 2, wallZ - face * 0.45],
+          [curtainWidth, y1 - b - 0.03, 0.03],
+          curtainTints[Math.floor(noise(`curtaincolor:${idBase}`) * curtainTints.length)]),
+        bearsLoad: false,
+      });
+    }
+  };
+
+  // Балконный блок: дверь + окно в одном проёме, как в настоящей квартире.
+  const addBalconyDoorUnit = (
+    pieces: BreakablePieceDefinition[],
+    clusterId: string,
+    idBase: string,
+    cx: number,
+    b: number,
+    wallZ: number,
+    face: 1 | -1,
+    width: number,
+    sillColor: string,
+    doorAjar: boolean,
+  ): void => {
+    const doorW = 0.64;
+    const winW = width - doorW - 0.07;
+    const doorOnLeft = noise(`doorside:${idBase}`) < 0.5;
+    const doorCx = cx + (doorOnLeft ? -1 : 1) * (width / 2 - doorW / 2);
+    const winCx = cx + (doorOnLeft ? 1 : -1) * (width / 2 - winW / 2);
+    const frameRoll = noise(`frame:${idBase}`);
+    const frameFinish =
+      frameRoll < 0.52
+        ? windowFrameFinishes[0]
+        : frameRoll < 0.78
+          ? windowFrameFinishes[1]
+          : windowFrameFinishes[2];
+    const zf = wallZ + face * 0.045;
+    const y1 = b + 1.97;
+    const doorY0 = b + 0.02;
+    const t = 0.075;
+
+    // Подоконная панель остаётся только под окном; дверь выходит на плиту.
+    pieces.push({
+      ...makePiece(`${idBase}:sill`, clusterId, "concrete", "panel",
+        [winCx, b + 0.405, wallZ], [winW + 0.12, 0.79, 0.3], sillColor),
+      weathering: 0.3,
+    });
+    pieces.push({
+      ...makePiece(`${idBase}:threshold`, clusterId, "concrete", "panel",
+        [doorCx, b + 0.035, wallZ - face * 0.08], [doorW, 0.07, 0.14], sillColor),
+      bearsLoad: false,
+    });
+
+    // Дверная коробка. Все бруски прибиты к бетонному проёму сбоку.
+    const doorEdge = doorOnLeft ? -1 : 1;
+    pieces.push(
+      {
+        ...makePiece(`${idBase}:door:jamb:out`, clusterId, "wood", "plank",
+          [doorCx + doorEdge * (doorW / 2 - t / 2), (doorY0 + y1) / 2, zf],
+          [t, y1 - doorY0, 0.08], frameFinish),
+        bearsLoad: false,
+        sideAttachmentReach: 0.2,
+      },
+      {
+        ...makePiece(`${idBase}:door:jamb:in`, clusterId, "wood", "plank",
+          [doorCx - doorEdge * (doorW / 2 - t / 2), (doorY0 + y1) / 2, zf],
+          [t, y1 - doorY0, 0.08], frameFinish),
+        bearsLoad: false,
+        sideAttachmentReach: 0.2,
+      },
+      {
+        ...makePiece(`${idBase}:door:head`, clusterId, "wood", "plank",
+          [doorCx, y1 - t / 2, zf], [doorW, t, 0.08], frameFinish),
+        bearsLoad: false,
+        sideAttachmentReach: 0.2,
+      },
+      // Общая стойка между дверной коробкой и оконной рамой.
+      {
+        ...makePiece(`${idBase}:door:stile`, clusterId, "wood", "plank",
+          [doorCx - doorEdge * (doorW / 2 + 0.035), (doorY0 + y1) / 2, zf],
+          [0.09, y1 - doorY0, 0.08], frameFinish),
+        bearsLoad: false,
+        sideAttachmentReach: 0.2,
+      },
+    );
+
+    // Полотно: глухой низ, стекло сверху, средний брусок. При распахнутой
+    // двери все три куска поворачиваются вокруг общей петли.
+    const leafW = doorW - 0.17;
+    const midY = doorY0 + 1.08;
+    const hingeX = doorCx + doorEdge * (doorW / 2 - t);
+    const ajarAngle = doorAjar ? 0.45 + noise(`ajarangle:${idBase}`) * 0.4 : 0;
+    const leafPiece = (
+      id: string,
+      material: BreakableMaterial,
+      shape: BreakableShape,
+      centerY: number,
+      sizeY: number,
+      color: string,
+      depth: number,
+    ): BreakablePieceDefinition => {
+      const offset = leafW / 2;
+      const position: SceneVector3 = doorAjar
+        ? [
+            hingeX - doorEdge * offset * Math.cos(ajarAngle),
+            centerY,
+            wallZ + face * offset * Math.sin(ajarAngle),
+          ]
+        : [doorCx, centerY, wallZ];
+      return {
+        ...makePiece(`${idBase}:${id}`, clusterId, material, shape,
+          position, [leafW, sizeY, depth], color,
+          doorAjar ? [0, doorEdge * face * ajarAngle, 0] : undefined),
+        hinge: {
+          pivot: [hingeX, centerY, wallZ],
+          direction: [1, 0, 0],
+          normal: [0, 0, face],
+        },
+      };
+    };
+    pieces.push(
+      leafPiece("door:lower", "wood", "plank", doorY0 + 0.535, 1.05, frameFinish, 0.055),
+      leafPiece("door:mid", "wood", "plank", midY, 0.07, frameFinish, 0.06),
+      leafPiece(
+        "door:glass", "glass", "glassPane",
+        (midY + 0.035 + y1 - t) / 2, y1 - t - midY - 0.045,
+        windowGlassTints[Math.floor(noise(`doorglass:${idBase}`) * windowGlassTints.length)],
+        0.05,
+      ),
+    );
+
+    // Окно рядом с дверью — узкая створка с форточкой.
+    addWindowUnit({
+      pieces,
+      clusterId,
+      idBase: `${idBase}:win`,
+      cx: winCx,
+      b,
+      wallZ,
+      face,
+      width: winW,
+      canOpen: false,
+    });
+  };
+
+  // Цоколь: несущие полосы под стенами + высокий выступающий фартук поверх
+  // них. Фартук перекрывает низ стеновых панелей снаружи, как настоящий
+  // оштукатуренный цоколь, и разрывается только у крылец подъездов.
   const plinthPieces: BreakablePieceDefinition[] = [];
   for (let index = 0; index < 4; index += 1) {
     const cx = x0 + 2.75 + index * 5.5;
@@ -1519,7 +1959,61 @@ function createKhrushchevka(
         [ex, 0.19, (z0 + z1) / 2], [0.3, 0.42, 6.38], plinthColor),
     );
   }
+
+  const entryCenters = [2, 10].map((bay) => bayCenter(bay));
+  const overlapsEntry = (segCx: number, segHalf: number): boolean =>
+    entryCenters.some(
+      (entryCx) =>
+        Math.min(segCx + segHalf, entryCx + 0.85) -
+          Math.max(segCx - segHalf, entryCx - 0.85) >
+        0.3,
+    );
+  const apronPieces: BreakablePieceDefinition[] = [];
+  for (let index = 0; index < 8; index += 1) {
+    const cx = x0 + 1.375 + index * 2.75;
+    for (const [sideId, zc, faceDir] of [
+      ["s", z1, 1],
+      ["n", z0, -1],
+    ] as const) {
+      const nearEntry = sideId === "s" && overlapsEntry(cx, 1.34);
+      if (!nearEntry) {
+        plinthPieces.push({
+          ...makePiece(`hru:plinth:band:${sideId}:${index}`, "hru:plinth", "concrete", "panel",
+            [cx, 0.345, zc + faceDir * 0.225], [2.68, 0.67, 0.15],
+            plinthBandColors[index % plinthBandColors.length]),
+          bearsLoad: false,
+          weathering: 0.62,
+        });
+      }
+      // Бетонная отмостка: потрескавшаяся лента вдоль всего периметра.
+      if (!nearEntry) {
+        apronPieces.push({
+          ...makePiece(`hru:apron:${sideId}:${index}`, "hru:apron", "concrete", "groundTile",
+            [cx, 0.045, zc + faceDir * 0.76], [2.68, 0.09, 0.9],
+            apronConcrete[(index + (sideId === "n" ? 1 : 0)) % apronConcrete.length]),
+          weathering: 0.44 + noise(`apron:${sideId}:${index}`) * 0.3,
+        });
+      }
+    }
+  }
+  for (const [endIndex, ex] of [x0, x1].entries()) {
+    const faceDir = endIndex === 0 ? -1 : 1;
+    plinthPieces.push({
+      ...makePiece(`hru:plinth:band:e:${endIndex}`, "hru:plinth", "concrete", "panel",
+        [ex + faceDir * 0.225, 0.345, (z0 + z1) / 2], [0.15, 0.67, 6.66],
+        plinthBandColors[endIndex % plinthBandColors.length]),
+      bearsLoad: false,
+      weathering: 0.62,
+    });
+    apronPieces.push({
+      ...makePiece(`hru:apron:e:${endIndex}`, "hru:apron", "concrete", "groundTile",
+        [ex + faceDir * 0.76, 0.045, (z0 + z1) / 2], [0.9, 0.09, 6.66],
+        apronConcrete[endIndex % apronConcrete.length]),
+      weathering: 0.5,
+    });
+  }
   clusters.push(cluster("hru:plinth", "Khrushchevka plinth", "concrete", "mounted", plinthPieces));
+  clusters.push(cluster("hru:apron", "Concrete apron strip", "concrete", "mounted", apronPieces));
 
   // Плиты перекрытий (шахты лестниц открыты на этажах 1-3)
   for (let level = 0; level <= floors; level += 1) {
@@ -1557,16 +2051,267 @@ function createKhrushchevka(
     );
   }
 
-  // Южный фасад: чередование глухих панелей и оконных блоков, подъезды,
-  // балконы со второго этажа
+  // Южный фасад: чередование глухих панелей и полных оконных блоков,
+  // подъезды и балконная лотерея со второго этажа.
   const entryPieces: BreakablePieceDefinition[] = [];
   const balconyPieces: BreakablePieceDefinition[] = [];
   const balconyBays = [3, 5, 11, 13];
   const doorBays = [2, 10];
+
+  // Каждый балкон прожит по-своему: открытая ржавая решётка, обшивка
+  // крашеным железом или доской, остекление деревом или белым пластиком.
+  // Старые балконы едва заметно провисают наружу.
+  type BalconyVariant = "open" | "clad" | "wood" | "glazed-wood" | "glazed-pvc";
+  const addBalcony = (
+    floor: number,
+    bay: number,
+    cx: number,
+    b: number,
+  ): BalconyVariant => {
+    const id = `hru:balcony:${floor}:${bay}`;
+    const roll = noise(`balcony:${floor}:${bay}`);
+    const variant: BalconyVariant =
+      roll < 0.24
+        ? "open"
+        : roll < 0.52
+          ? "clad"
+          : roll < 0.64
+            ? "wood"
+            : roll < 0.84
+              ? "glazed-wood"
+              : "glazed-pvc";
+    const aged = variant === "open" || variant === "clad" || variant === "wood";
+    const sag =
+      (aged ? 0.016 : 0.005) +
+      noise(`sag:${floor}:${bay}`) * (aged ? 0.022 : 0.006);
+    const rot: SceneVector3 = [sag, 0, 0];
+
+    balconyPieces.push({
+      ...makePiece(`${id}:plate`, "hru:balcony", "concrete", "stoneBlock",
+        [cx, b - 0.06, -0.475], [1.9, 0.14, 1.15], slabPalette[1], rot),
+      weathering: 0.5,
+    });
+
+    if (variant === "open") {
+      const railColor =
+        noise(`railtone:${floor}:${bay}`) < 0.5 ? rustSteel : "#5d5348";
+      balconyPieces.push(
+        {
+          // Верхний поручень несёт навесные ящики как перекладина, не стена.
+          ...makePiece(`${id}:rail:top`, "hru:balcony", "steel", "steelSheet",
+            [cx, b + 0.84, 0.05], [1.86, 0.055, 0.055], railColor, rot),
+          weathering: 0.6,
+          attachmentSupportMode: "cable",
+          carriesAttachments: true,
+        },
+        {
+          ...makePiece(`${id}:rail:base`, "hru:balcony", "steel", "steelSheet",
+            [cx, b + 0.14, 0.05], [1.86, 0.045, 0.045], railColor, rot),
+          weathering: 0.6,
+          bearsLoad: false,
+        },
+      );
+      for (let post = 0; post < 5; post += 1) {
+        balconyPieces.push({
+          ...makePiece(`${id}:rail:post:${post}`, "hru:balcony", "steel", "steelSheet",
+            [cx - 0.74 + post * 0.37, b + 0.49, 0.05], [0.032, 0.66, 0.032],
+            railColor, rot),
+          weathering: 0.55,
+          bearsLoad: false,
+        });
+      }
+      for (const side of [-1, 1] as const) {
+        balconyPieces.push(
+          {
+            ...makePiece(`${id}:rail:side:${side}`, "hru:balcony", "steel", "steelSheet",
+              [cx + side * 0.92, b + 0.84, -0.46], [0.05, 0.055, 1.05],
+              railColor, rot),
+            weathering: 0.6,
+            bearsLoad: false,
+          },
+          {
+            ...makePiece(`${id}:rail:sidepost:${side}`, "hru:balcony", "steel", "steelSheet",
+              [cx + side * 0.92, b + 0.49, -0.75], [0.032, 0.66, 0.032],
+              railColor, rot),
+            weathering: 0.55,
+            bearsLoad: false,
+          },
+        );
+      }
+      // Хлам: ящики, оставшиеся с прошлого лета.
+      if (noise(`junk:${floor}:${bay}`) < 0.45) {
+        const jx = cx + (noise(`junkx:${floor}:${bay}`) - 0.5) * 0.9;
+        balconyPieces.push(
+          makePiece(`${id}:junk:crate`, "hru:balcony", "wood", "plank",
+            [jx, b + 0.16, -0.6], [0.44, 0.3, 0.36], "#7c5f40",
+            [0, noise(`junkyaw:${floor}:${bay}`) * 0.8, 0]),
+        );
+        if (noise(`junk2:${floor}:${bay}`) < 0.4) {
+          balconyPieces.push(
+            makePiece(`${id}:junk:box`, "hru:balcony", "wood", "plank",
+              [jx + 0.1, b + 0.42, -0.62], [0.34, 0.22, 0.28], "#93744e",
+              [0, -0.3, 0]),
+          );
+        }
+      }
+      // Цветочный ящик, повешенный на перила.
+      if (noise(`flowers:${floor}:${bay}`) < 0.3) {
+        const fx = cx + (noise(`flowerx:${floor}:${bay}`) - 0.5) * 0.7;
+        balconyPieces.push(
+          {
+            ...makePiece(`${id}:flowerbox`, "hru:balcony", "wood", "plank",
+              [fx, b + 0.76, 0.14], [0.66, 0.2, 0.22], "#6e5138", rot),
+            sideAttachmentReach: 0.14,
+          },
+          {
+            ...makePiece(`${id}:flowers`, "hru:balcony", "foliage", "panel",
+              [fx, b + 0.92, 0.14], [0.6, 0.16, 0.2], "#4c6b3a", rot),
+            bearsLoad: false,
+          },
+        );
+      }
+    } else if (variant === "clad") {
+      const cladColor = balconyCladdingTints[
+        Math.floor(noise(`cladtone:${floor}:${bay}`) * balconyCladdingTints.length)
+      ];
+      balconyPieces.push(
+        {
+          ...makePiece(`${id}:clad:front`, "hru:balcony", "steel", "steelSheet",
+            [cx, b + 0.45, 0.075], [1.86, 0.82, 0.045], cladColor, rot),
+          weathering: 0.42,
+          bearsLoad: false,
+        },
+        {
+          ...makePiece(`${id}:clad:rail`, "hru:balcony", "steel", "steelSheet",
+            [cx, b + 0.885, 0.075], [1.9, 0.05, 0.06], rustSteel, rot),
+          weathering: 0.6,
+          bearsLoad: false,
+        },
+        ...[-1, 1].map((side): BreakablePieceDefinition => ({
+          ...makePiece(`${id}:clad:side:${side}`, "hru:balcony", "steel", "steelSheet",
+            [cx + side * 0.9225, b + 0.45, -0.45], [0.045, 0.82, 1.06],
+            cladColor, rot),
+          weathering: 0.42,
+          bearsLoad: false,
+        })),
+      );
+    } else if (variant === "wood") {
+      const woodBase = Math.floor(
+        noise(`woodtone:${floor}:${bay}`) * balconyWoodTints.length,
+      );
+      // Доски набраны штабелем: нижняя стоит на плите, каждая следующая
+      // опирается на предыдущую — обшивка рушится доска за доской.
+      for (let plank = 0; plank < 4; plank += 1) {
+        balconyPieces.push({
+          ...makePiece(`${id}:plank:${plank}`, "hru:balcony", "wood", "plank",
+            [cx, b + 0.105 + plank * 0.205, 0.075], [1.86, 0.19, 0.04],
+            balconyWoodTints[(woodBase + plank) % balconyWoodTints.length], rot),
+          weathering: 0.5,
+        });
+      }
+      balconyPieces.push({
+        ...makePiece(`${id}:plank:rail`, "hru:balcony", "wood", "plank",
+          [cx, b + 0.9, 0.075], [1.9, 0.055, 0.055],
+          balconyWoodTints[woodBase], rot),
+        weathering: 0.5,
+      });
+      for (const side of [-1, 1] as const) {
+        for (let plank = 0; plank < 3; plank += 1) {
+          balconyPieces.push({
+            ...makePiece(`${id}:sideplank:${side}:${plank}`, "hru:balcony", "wood", "plank",
+              [cx + side * 0.9225, b + 0.105 + plank * 0.205, -0.45],
+              [0.04, 0.19, 1.04],
+              balconyWoodTints[(woodBase + plank + 1) % balconyWoodTints.length],
+              rot),
+            weathering: 0.5,
+          });
+        }
+      }
+    } else {
+      const pvc = variant === "glazed-pvc";
+      const frameColor = pvc
+        ? "#eceae4"
+        : noise(`glzframe:${floor}:${bay}`) < 0.5
+          ? "#a8854e"
+          : "#cdc6b2";
+      const cladColor = pvc
+        ? "#dcdcd6"
+        : balconyCladdingTints[
+            Math.floor(noise(`cladtone:${floor}:${bay}`) * balconyCladdingTints.length)
+          ];
+      const glassTint = pvc ? "#7f949e" : "#5b6d76";
+      const wear = pvc ? 0.12 : 0.42;
+      // Обшивка и каркас остекления — несущая цепочка от плиты: плита →
+      // фартук → стойки → верхний брус → самодельная крыша.
+      balconyPieces.push(
+        {
+          ...makePiece(`${id}:clad:front`, "hru:balcony", "steel", "steelSheet",
+            [cx, b + 0.45, 0.075], [1.86, 0.82, 0.045], cladColor, rot),
+          weathering: wear,
+        },
+        ...[-1, 1].map((side): BreakablePieceDefinition => ({
+          ...makePiece(`${id}:clad:side:${side}`, "hru:balcony", "steel", "steelSheet",
+            [cx + side * 0.9225, b + 0.45, -0.45], [0.045, 0.82, 1.06],
+            cladColor, rot),
+          weathering: wear,
+        })),
+      );
+      // Остекление: несущий каркас стоит НА ПЛИТЕ и уведён на пару
+      // сантиметров внутрь от плоскостей стальной обшивки — иначе фартук
+      // балкона этажом выше «садится» на деревянный брус (сталь ищет опору
+      // до 1.1 м вниз) и раздавливает самодельную раму. Стёкла режутся по
+      // ячейкам каркаса и сидят в его плоскости — держатся боковым
+      // креплением за стойки и перемычки, а опорой (стекло!) не служат.
+      for (const side of [-1, 1] as const) {
+        balconyPieces.push(
+          makePiece(`${id}:glz:post:${side}`, "hru:balcony", "wood", "plank",
+            [cx + side * 0.86, b + 1.115, -0.015], [0.055, 2.2, 0.055],
+            frameColor),
+          makePiece(`${id}:glz:mullion:${side}`, "hru:balcony", "wood", "plank",
+            [cx + side * 0.31, b + 1.11, -0.015], [0.05, 2.16, 0.05],
+            frameColor),
+          {
+            ...makePiece(`${id}:glz:sidebar:${side}`, "hru:balcony", "wood", "plank",
+              [cx + side * 0.86, b + 2.21, -0.475], [0.05, 0.055, 1.0],
+              frameColor),
+            sideAttachmentReach: 0.2,
+          },
+          // Торцевое стекло — в плоскости каркаса, не снаружи фартука.
+          makePiece(`${id}:glz:sidepane:${side}`, "hru:balcony", "glass", "glassPane",
+            [cx + side * 0.875, b + 1.52, -0.395], [0.04, 1.31, 0.87],
+            glassTint),
+        );
+      }
+      balconyPieces.push(
+        makePiece(`${id}:glz:top`, "hru:balcony", "wood", "plank",
+          [cx, b + 2.21, -0.015], [1.77, 0.055, 0.055], frameColor),
+        makePiece(`${id}:glz:pane:center`, "hru:balcony", "glass", "glassPane",
+          [cx, b + 1.52, -0.02], [0.56, 1.31, 0.04],
+          noise(`glzpale:${floor}:${bay}`) > 0.8 ? paleReflectionGlass : glassTint),
+        ...[-1, 1].map((side): BreakablePieceDefinition =>
+          makePiece(`${id}:glz:pane:${side}`, "hru:balcony", "glass", "glassPane",
+            [cx + side * 0.584, b + 1.52, -0.02], [0.49, 1.31, 0.04], glassTint),
+        ),
+      );
+      // Верхний этаж прикрывает остекление самодельной крышей.
+      if (floor === floors - 1) {
+        balconyPieces.push({
+          ...makePiece(`${id}:glz:roof`, "hru:balcony", "steel", "steelSheet",
+            [cx, b + 2.38, -0.35], [2.02, 0.05, 1.32],
+            pvc ? zincSheet : "#7a5a43", [0.16, 0, 0]),
+          weathering: 0.5,
+          bearsLoad: false,
+        });
+      }
+    }
+    return variant;
+  };
+
   for (let floor = 0; floor < floors; floor += 1) {
     const southPieces: BreakablePieceDefinition[] = [];
     const clusterId = `hru:south:${floor}`;
     const b = floorBase(floor);
+    const wear = facadeWeathering(floor);
 
     for (let bay = 0; bay < 16; bay += 1) {
       const cx = bayCenter(bay);
@@ -1574,15 +2319,24 @@ function createKhrushchevka(
 
       if (isDoorBay) {
         southPieces.push(
-          makePiece(`${clusterId}:${bay}:lintel`, clusterId, "concrete", "panel",
-            [cx, b + 2.2, z1], [bayWidth - 0.01, 0.38, 0.3],
-            panelPalette[bay % panelPalette.length]),
-          makePiece(`${clusterId}:${bay}:jamb:l`, clusterId, "concrete", "panel",
-            [cx - 0.5875, b + 1.0, z1], [0.155, 1.98, 0.3],
-            panelPalette[(bay + 1) % panelPalette.length]),
-          makePiece(`${clusterId}:${bay}:jamb:r`, clusterId, "concrete", "panel",
-            [cx + 0.5875, b + 1.0, z1], [0.155, 1.98, 0.3],
-            panelPalette[(bay + 1) % panelPalette.length]),
+          {
+            ...makePiece(`${clusterId}:${bay}:lintel`, clusterId, "concrete", "panel",
+              [cx, b + 2.2, z1], [bayWidth - 0.01, 0.38, 0.3],
+              panelColor("s", bay, floor, bay)),
+            weathering: wear,
+          },
+          {
+            ...makePiece(`${clusterId}:${bay}:jamb:l`, clusterId, "concrete", "panel",
+              [cx - 0.5875, b + 1.0, z1], [0.155, 1.98, 0.3],
+              panelColor("s", bay, floor, bay + 1)),
+            weathering: wear,
+          },
+          {
+            ...makePiece(`${clusterId}:${bay}:jamb:r`, clusterId, "concrete", "panel",
+              [cx + 0.5875, b + 1.0, z1], [0.155, 1.98, 0.3],
+              panelColor("s", bay, floor, bay + 1)),
+            weathering: wear,
+          },
         );
         entryPieces.push(
           {
@@ -1606,37 +2360,75 @@ function createKhrushchevka(
           position: [cx, b + 2.1, -0.25],
         });
       } else if (bay % 2 === 1) {
+        const hasBalcony = floor >= 1 && balconyBays.includes(bay);
         southPieces.push(
-          makePiece(`${clusterId}:${bay}:sill`, clusterId, "concrete", "panel",
-            [cx, b + 0.405, z1], [bayWidth - 0.01, 0.79, 0.3],
-            panelPalette[(bay + floor) % panelPalette.length]),
-          makePiece(`${clusterId}:${bay}:glass`, clusterId, "glass", "glassPane",
-            [cx, b + 1.39, z1], [bayWidth - 0.08, 1.14, 0.06],
-            plainWindowGlass),
+          {
+            ...makePiece(`${clusterId}:${bay}:lintel`, clusterId, "concrete", "panel",
+              [cx, b + 2.185, z1], [bayWidth - 0.01, 0.41, 0.3],
+              panelColor("s", bay, floor, bay + floor + 2)),
+            weathering: wear,
+          },
           // Люстра под потолком комнаты: висит на боковом креплении к
           // оконной перемычке, нижний край чуть виден в верху окна.
           makePiece(`${clusterId}:${bay}:winlamp`, clusterId, "glass", "glassPane",
             [cx, b + 2.05, z1 - 0.35], [0.42, 0.26, 0.3],
-            windowLampColor(`${clusterId}:${bay}`, 0.42)),
-          makePiece(`${clusterId}:${bay}:lintel`, clusterId, "concrete", "panel",
-            [cx, b + 2.185, z1], [bayWidth - 0.01, 0.41, 0.3],
-            panelPalette[(bay + floor + 2) % panelPalette.length]),
+            windowLampColor(`${salt}:${clusterId}:${bay}`, 0.42)),
         );
+        if (hasBalcony) {
+          const variant = addBalcony(floor, bay, cx, b);
+          const openable =
+            variant === "open" || variant === "clad" || variant === "wood";
+          // Узкие простенки по краям балконного проёма.
+          for (const side of [-1, 1] as const) {
+            southPieces.push({
+              ...makePiece(`${clusterId}:${bay}:reveal:${side}`, clusterId, "concrete", "panel",
+                [cx + side * ((bayWidth - 0.16) / 2 + 0.0375), b + 0.995, z1],
+                [0.075, 1.97, 0.3],
+                panelColor("s", bay, floor, bay + floor)),
+              weathering: wear,
+            });
+          }
+          addBalconyDoorUnit(
+            southPieces, clusterId, `${clusterId}:${bay}:bd`, cx, b, z1, 1,
+            bayWidth - 0.16, panelColor("s", bay, floor, bay + floor),
+            openable && noise(`ajar:${floor}:${bay}`) < 0.3,
+          );
+        } else {
+          const opening = 1.06;
+          const jambW = (bayWidth - 0.01 - opening) / 2;
+          southPieces.push(
+            {
+              ...makePiece(`${clusterId}:${bay}:sill`, clusterId, "concrete", "panel",
+                [cx, b + 0.405, z1], [bayWidth - 0.01, 0.79, 0.3],
+                panelColor("s", bay, floor, bay + floor)),
+              weathering: wear,
+            },
+            ...[-1, 1].map((side): BreakablePieceDefinition => ({
+              ...makePiece(`${clusterId}:${bay}:jamb:${side}`, clusterId, "concrete", "panel",
+                [cx + side * (opening / 2 + jambW / 2), b + 1.39, z1],
+                [jambW, 1.18, 0.3],
+                panelColor("s", bay, floor, bay + floor + 1)),
+              weathering: wear,
+            })),
+          );
+          addWindowUnit({
+            pieces: southPieces,
+            clusterId,
+            idBase: `${clusterId}:${bay}:win`,
+            cx,
+            b,
+            wallZ: z1,
+            face: 1,
+            width: opening,
+          });
+        }
       } else {
-        southPieces.push(
-          makePiece(`${clusterId}:${bay}`, clusterId, "concrete", "panel",
+        southPieces.push({
+          ...makePiece(`${clusterId}:${bay}`, clusterId, "concrete", "panel",
             [cx, b + 1.2, z1], [bayWidth - 0.01, wallHeight, 0.3],
-            panelPalette[(bay + floor) % panelPalette.length]),
-        );
-      }
-
-      if (floor >= 1 && balconyBays.includes(bay)) {
-        balconyPieces.push(
-          makePiece(`hru:balcony:${floor}:${bay}:plate`, "hru:balcony", "concrete", "stoneBlock",
-            [cx, b - 0.06, -0.475], [1.9, 0.14, 1.15], slabPalette[1]),
-          makePiece(`hru:balcony:${floor}:${bay}:rail`, "hru:balcony", "steel", "steelSheet",
-            [cx, b + 0.41, 0.06], [1.84, 0.78, 0.05], "#77848a"),
-        );
+            panelColor("s", bay, floor, bay + floor)),
+          weathering: wear,
+        });
       }
     }
     clusters.push(
@@ -1657,26 +2449,47 @@ function createKhrushchevka(
       }
       const cx = stripCenter(strip);
       const jambWidth = (stripWidth - 1.9) / 2 - 0.02;
+      const wear = facadeWeathering(floor);
+      const unit = strip * 2 + 1;
       northPieces.push(
-        makePiece(`${clusterId}:${strip}:sill`, clusterId, "concrete", "panel",
-          [cx, b + 0.405, z0], [stripWidth - 0.02, 0.79, 0.3],
-          panelPalette[(strip + floor) % panelPalette.length]),
-        makePiece(`${clusterId}:${strip}:glass`, clusterId, "glass", "glassPane",
-          [cx, b + 1.39, z0], [1.9, 1.14, 0.06],
-          plainWindowGlass),
+        {
+          ...makePiece(`${clusterId}:${strip}:sill`, clusterId, "concrete", "panel",
+            [cx, b + 0.405, z0], [stripWidth - 0.02, 0.79, 0.3],
+            panelColor("n", unit, floor, strip + floor)),
+          weathering: wear,
+        },
         makePiece(`${clusterId}:${strip}:winlamp`, clusterId, "glass", "glassPane",
           [cx, b + 2.05, z0 + 0.35], [0.42, 0.26, 0.3],
-          windowLampColor(`${clusterId}:${strip}`, 0.45)),
-        makePiece(`${clusterId}:${strip}:jamb:l`, clusterId, "concrete", "panel",
-          [cx - 0.95 - jambWidth / 2 - 0.01, b + 1.39, z0],
-          [jambWidth, 1.14, 0.3], panelPalette[(strip + floor + 1) % panelPalette.length]),
-        makePiece(`${clusterId}:${strip}:jamb:r`, clusterId, "concrete", "panel",
-          [cx + 0.95 + jambWidth / 2 + 0.01, b + 1.39, z0],
-          [jambWidth, 1.14, 0.3], panelPalette[(strip + floor + 1) % panelPalette.length]),
-        makePiece(`${clusterId}:${strip}:lintel`, clusterId, "concrete", "panel",
-          [cx, b + 2.185, z0], [stripWidth - 0.02, 0.41, 0.3],
-          panelPalette[(strip + floor + 2) % panelPalette.length]),
+          windowLampColor(`${salt}:${clusterId}:${strip}`, 0.45)),
+        {
+          ...makePiece(`${clusterId}:${strip}:jamb:l`, clusterId, "concrete", "panel",
+            [cx - 0.95 - jambWidth / 2 - 0.01, b + 1.39, z0],
+            [jambWidth, 1.14, 0.3], panelColor("n", unit, floor, strip + floor + 1)),
+          weathering: wear,
+        },
+        {
+          ...makePiece(`${clusterId}:${strip}:jamb:r`, clusterId, "concrete", "panel",
+            [cx + 0.95 + jambWidth / 2 + 0.01, b + 1.39, z0],
+            [jambWidth, 1.14, 0.3], panelColor("n", unit, floor, strip + floor + 1)),
+          weathering: wear,
+        },
+        {
+          ...makePiece(`${clusterId}:${strip}:lintel`, clusterId, "concrete", "panel",
+            [cx, b + 2.185, z0], [stripWidth - 0.02, 0.41, 0.3],
+            panelColor("n", unit, floor, strip + floor + 2)),
+          weathering: wear,
+        },
       );
+      addWindowUnit({
+        pieces: northPieces,
+        clusterId,
+        idBase: `${clusterId}:${strip}:win`,
+        cx,
+        b,
+        wallZ: z0,
+        face: -1,
+        width: 1.9,
+      });
     }
     clusters.push(
       cluster(`hru:north:${floor}`, `North facade ${floor}`, "concrete", "mounted", northPieces),
@@ -1688,30 +2501,63 @@ function createKhrushchevka(
     const pieces: BreakablePieceDefinition[] = [];
     const clusterId = `hru:stairwell:${sectionIndex}`;
     const cx = stripCenter(strip);
-    pieces.push(
-      makePiece(`${clusterId}:ground`, clusterId, "concrete", "panel",
-        [cx, 1.565, z0], [stripWidth - 0.02, 2.31, 0.3], panelPalette[0]),
-    );
+    const stairFrameColor = "#cfc9b8";
+    pieces.push({
+      ...makePiece(`${clusterId}:ground`, clusterId, "concrete", "panel",
+        [cx, 1.565, z0], [stripWidth - 0.02, 2.31, 0.3],
+        panelColor("n", strip * 2 + 1, 0, sectionIndex)),
+      weathering: 0.34,
+    });
     for (let window = 0; window < 3; window += 1) {
       // Stairwell glazing is plain: the landings inside carry their own
       // plafond fixtures, which is where the light actually lives.
+      const cy = 3.31 + window * floorHeight;
+      const glazeW = stripWidth - 0.05;
+      const zf = z0 - 0.045;
       pieces.push(
         makePiece(`${clusterId}:glass:${window}`, clusterId, "glass", "glassPane",
-          [cx, 3.31 + window * floorHeight, z0], [stripWidth - 0.05, 1.14, 0.06],
-          plainWindowGlass),
+          [cx, cy, z0], [glazeW, 1.14, 0.06], "#51606a"),
       );
+      // Старая крашеная рама лестничного окна: обвязка и две перемычки.
+      const stairBar = (
+        id: string,
+        position: SceneVector3,
+        size: SceneVector3,
+      ): BreakablePieceDefinition => ({
+        ...makePiece(`${clusterId}:frame:${window}:${id}`, clusterId, "wood", "plank",
+          position, size, stairFrameColor),
+        bearsLoad: false,
+      });
+      pieces.push(
+        stairBar("top", [cx, cy + 0.54, zf], [glazeW, 0.06, 0.07]),
+        stairBar("bottom", [cx, cy - 0.54, zf], [glazeW, 0.06, 0.07]),
+        stairBar("left", [cx - glazeW / 2 + 0.03, cy, zf], [0.06, 1.02, 0.07]),
+        stairBar("right", [cx + glazeW / 2 - 0.03, cy, zf], [0.06, 1.02, 0.07]),
+        stairBar("mullion:l", [cx - glazeW / 6, cy, zf], [0.055, 1.02, 0.07]),
+        stairBar("mullion:r", [cx + glazeW / 6, cy, zf], [0.055, 1.02, 0.07]),
+      );
+      pieces.push({
+        ...makePiece(`${clusterId}:flash:${window}`, clusterId, "steel", "steelSheet",
+          [cx, cy - 0.58, z0 - 0.235], [glazeW + 0.08, 0.03, 0.15],
+          "#c9cdc9", [-0.12, 0, 0]),
+        bearsLoad: false,
+        weathering: 0.35,
+      });
       if (window < 2) {
-        pieces.push(
-          makePiece(`${clusterId}:band:${window}`, clusterId, "concrete", "panel",
+        pieces.push({
+          ...makePiece(`${clusterId}:band:${window}`, clusterId, "concrete", "panel",
             [cx, 4.61 + window * floorHeight, z0], [stripWidth - 0.02, 1.42, 0.3],
-            panelPalette[(window + 1) % panelPalette.length]),
-        );
+            panelColor("n", strip * 2 + 1, window + 1, window + 1)),
+          weathering: 0.18,
+        });
       }
     }
-    pieces.push(
-      makePiece(`${clusterId}:top`, clusterId, "concrete", "panel",
-        [cx, 9.845, z0], [stripWidth - 0.02, 1.49, 0.3], panelPalette[2]),
-    );
+    pieces.push({
+      ...makePiece(`${clusterId}:top`, clusterId, "concrete", "panel",
+        [cx, 9.845, z0], [stripWidth - 0.02, 1.49, 0.3],
+        panelColor("n", strip * 2 + 1, 3, 2)),
+      weathering: 0.14,
+    });
     clusters.push(
       cluster(clusterId, `Stairwell wall ${sectionIndex}`, "concrete", "mounted", pieces),
     );
@@ -1725,11 +2571,12 @@ function createKhrushchevka(
       for (const [index, zc] of [-6.25, -2.75].entries()) {
         // Торцевые панели чуть выше этажа: каждая опирается на предыдущую,
         // цепочка несёт от цоколя, а не от нулевой кромки плиты.
-        pieces.push(
-          makePiece(`${clusterId}:${ex}:${index}`, clusterId, "concrete", "panel",
+        pieces.push({
+          ...makePiece(`${clusterId}:${ex}:${index}`, clusterId, "concrete", "panel",
             [ex, floorBase(floor) + 1.22, zc], [0.3, 2.42, 3.46],
-            panelPalette[(floor + index) % panelPalette.length]),
-        );
+            pal[(floor + index) % pal.length]),
+          weathering: facadeWeathering(floor),
+        });
       }
     }
     clusters.push(
@@ -1751,9 +2598,9 @@ function createKhrushchevka(
       for (const bx of [b1, b2]) {
         pieces.push(
           makePiece(`${clusterId}:${floor}:shaft:${bx}`, clusterId, "concrete", "panel",
-            [bx, wy, -6.17], [0.24, wallHeight, 3.33], panelPalette[3]),
+            [bx, wy, -6.17], [0.24, wallHeight, 3.33], pal[3 % pal.length]),
           makePiece(`${clusterId}:${floor}:flat:${bx}`, clusterId, "concrete", "panel",
-            [bx, wy, -2.32], [0.24, wallHeight, 2.26], panelPalette[3]),
+            [bx, wy, -2.32], [0.24, wallHeight, 2.26], pal[3 % pal.length]),
         );
       }
       pieces.push(
@@ -1809,21 +2656,44 @@ function createKhrushchevka(
     );
   }
 
-  // Парапет, вентшахты
+  // Парапет, вентшахты. Кромку парапета накрывает ржавый оцинкованный отлив.
   const roofPieces: BreakablePieceDefinition[] = [];
   for (let index = 0; index < 4; index += 1) {
     const cx = x0 + 2.75 + index * 5.5;
     roofPieces.push(
-      makePiece(`hru:parapet:s:${index}`, "hru:roof", "concrete", "panel",
-        [cx, 11.06, -1.32], [5.42, 0.5, 0.25], panelPalette[index % 4]),
-      makePiece(`hru:parapet:n:${index}`, "hru:roof", "concrete", "panel",
-        [cx, 11.06, -7.68], [5.42, 0.5, 0.25], panelPalette[(index + 1) % 4]),
+      { ...makePiece(`hru:parapet:s:${index}`, "hru:roof", "concrete", "panel",
+        [cx, 11.06, -1.32], [5.42, 0.5, 0.25], pal[index % pal.length]),
+        weathering: 0.3 },
+      { ...makePiece(`hru:parapet:n:${index}`, "hru:roof", "concrete", "panel",
+        [cx, 11.06, -7.68], [5.42, 0.5, 0.25], pal[(index + 1) % pal.length]),
+        weathering: 0.3 },
+      {
+        ...makePiece(`hru:parapet:cap:s:${index}`, "hru:roof", "steel", "steelSheet",
+          [cx, 11.33, -1.32], [5.44, 0.04, 0.33],
+          index % 2 === 0 ? rustSteel : zincSheet),
+        bearsLoad: false,
+        weathering: 0.6,
+      },
+      {
+        ...makePiece(`hru:parapet:cap:n:${index}`, "hru:roof", "steel", "steelSheet",
+          [cx, 11.33, -7.68], [5.44, 0.04, 0.33],
+          index % 2 === 1 ? rustSteel : zincSheet),
+        bearsLoad: false,
+        weathering: 0.6,
+      },
     );
   }
   for (const ex of [12.31, 33.69]) {
     roofPieces.push(
-      makePiece(`hru:parapet:e:${ex}`, "hru:roof", "concrete", "panel",
-        [ex, 11.06, (z0 + z1) / 2], [0.25, 0.5, 6.3], panelPalette[2]),
+      { ...makePiece(`hru:parapet:e:${ex}`, "hru:roof", "concrete", "panel",
+        [ex, 11.06, (z0 + z1) / 2], [0.25, 0.5, 6.3], pal[2 % pal.length]),
+        weathering: 0.3 },
+      {
+        ...makePiece(`hru:parapet:cap:e:${ex}`, "hru:roof", "steel", "steelSheet",
+          [ex, 11.33, (z0 + z1) / 2], [0.33, 0.04, 6.32], zincSheet),
+        bearsLoad: false,
+        weathering: 0.55,
+      },
     );
   }
   roofPieces.push(
@@ -1924,17 +2794,27 @@ function createKhrushchevka(
         [ax, 12.95, az], [0.55, 0.05, 0.05], "#78827f"),
     );
   }
-  for (const [index, [px, pz]] of ([
-    [12.4, -0.72],
-    [33.6, -0.72],
-    [12.4, -8.28],
-    [33.6, -8.28],
+  // Труба обрывается над цоколем-фартуком и заканчивается коленом-отмётом,
+  // выведенным поверх него на отмостку — как у настоящего водостока.
+  for (const [index, [px, pz, pipeFace]] of ([
+    [12.4, -0.72, 1],
+    [33.6, -0.72, 1],
+    [12.4, -8.28, -1],
+    [33.6, -8.28, -1],
   ] as const).entries()) {
     fixturePieces.push(
       {
         ...makePiece(`hru:downpipe:${index}`, "hru:fixtures", "steel", "steelSheet",
-          [px, 5.18, pz], [0.11, 10.4, 0.11], "#9aa19e"),
+          [px, 5.58, pz], [0.11, 9.6, 0.11], "#9aa19e"),
         bearsLoad: false,
+      },
+      {
+        ...makePiece(`hru:downpipe:${index}:outlet`, "hru:fixtures", "steel", "steelSheet",
+          [px, 0.52, pz + pipeFace * 0.13], [0.11, 0.5, 0.11], "#8d938f",
+          [pipeFace * 0.55, 0, 0]),
+        bearsLoad: false,
+        sideAttachmentReach: 0.35,
+        weathering: 0.45,
       },
     );
   }
@@ -2004,37 +2884,13 @@ function createKhrushchevka(
   const excluded = config.shellOnly ? shellExcluded : baseExcluded;
   let result = clusters.filter((entry) => !excluded.has(entry.id));
 
+  // Палитра, лампы, рамы и балконы уже разыграны от соли здания при
+  // создании кусков — экземплярам остаётся только сдвиг и префикс.
   const dx = config.dx ?? 0;
   const dz = config.dz ?? 0;
-  const paletteMap = new Map<string, string>();
-  if (config.palette) {
-    panelPalette.forEach((original, index) => {
-      paletteMap.set(
-        original,
-        config.palette![index % config.palette!.length],
-      );
-    });
-  }
-  const needsRecolor = config.palette !== undefined || config.prefix !== undefined;
-  const recolor: PieceRecolor | undefined = needsRecolor
-    ? (piece) => {
-        if (piece.material === "glass") {
-          // Re-roll the sill lamps so every building glows differently;
-          // window glass itself stays plain everywhere.
-          if (piece.id.includes(":winlamp")) {
-            return deterministicNoise(`lit:${piece.id}`) < 0.42
-              ? litWindowColor
-              : unlitLampGlass;
-          }
-          return piece.color;
-        }
-        return paletteMap.get(piece.color) ?? piece.color;
-      }
-    : undefined;
-
-  if (config.prefix || dx !== 0 || dz !== 0 || recolor) {
+  if (config.prefix || dx !== 0 || dz !== 0) {
     result = result.map((entry) =>
-      transformCluster(entry, config.prefix, dx, dz, recolor),
+      transformCluster(entry, config.prefix, dx, dz),
     );
   }
 
@@ -2555,39 +3411,73 @@ function createTownClutter(): BreakableClusterDefinition[] {
   clusters.push(cluster("town:bins", "Courtyard dumpsters", "steel", "mounted", bins));
 
   // --- Air conditioners on the lived-in blocks ----------------------------
+  // Наружный блок собран из деталей: корпус, кольцо вентилятора, рёбра
+  // решётки, ржавые кронштейны и дренажная трубка. Позиции — из
+  // khrushchevkaAcMounts, общего плана с картой потёков.
   const fixtures: BreakablePieceDefinition[] = [];
-  const acUnit = (
-    name: string,
-    x: number,
-    y: number,
-    z: number,
-  ): void => {
+  for (const [index, mount] of khrushchevkaAcMounts.entries()) {
+    const { x, y, face } = mount;
+    const wallFace = mount.z + face * 0.15;
+    const bodyZ = wallFace + face * 0.17;
+    const frontZ = bodyZ + face * 0.155;
     fixtures.push({
-      ...makePiece(`town:ac:${name}`, "town:growth-fixtures", "steel", "steelSheet",
-        [x, y, z], [0.66, 0.5, 0.4], "#b9bdba"),
-      bearsLoad: false,
-      sideAttachmentReach: 0.55,
-      contactBoxes: [{ position: [x, y, z], size: [0.66, 0.5, 0.4] }],
-      weathering: 0.3,
-    });
-    fixtures.push({
-      ...makePiece(`town:ac:${name}:grille`, "town:growth-fixtures", "steel", "steelSheet",
-        [x, y, z > 0 || z < -8 ? z + (z < -8 ? -0.22 : 0.22) : z + 0.22], [0.6, 0.42, 0.05], "#8f948f"),
-      bearsLoad: false,
+      ...makePiece(`town:ac:${index}`, "town:growth-fixtures", "steel", "steelSheet",
+        [x, y, bodyZ], [0.72, 0.5, 0.3], index % 3 === 2 ? "#c9cbc4" : "#dadbd6"),
       sideAttachmentReach: 0.4,
-      contactBoxes: [{ position: [x, y, z], size: [0.6, 0.42, 0.5] }],
+      carriesAttachments: true,
+      contactBoxes: [
+        { position: [x, y, wallFace + face * 0.2], size: [0.72, 0.5, 0.4] },
+      ],
+      weathering: 0.45,
     });
-  };
-  // k1 yard side (z = -1 face) and street side (z = -8 face).
-  acUnit("k1:a", 13.5, 4.15, -0.58);
-  acUnit("k1:b", 20.9, 1.55, -0.58);
-  acUnit("k1:c", 31.8, 4.15, -0.58);
-  acUnit("k1:d", 17.6, 6.75, -8.42);
-  acUnit("k1:e", 26.1, 4.15, -8.42);
-  // k2 main-street side (z = -17 face).
-  acUnit("k2:a", 16.2, 4.15, -16.56);
-  acUnit("k2:b", 25.6, 1.55, -16.56);
-  acUnit("k2:c", 30.4, 6.75, -16.56);
+    fixtures.push({
+      ...makePiece(`town:ac:${index}:fan`, "town:growth-fixtures", "steel", "cylinder",
+        [x - 0.13, y, frontZ], [0.3, 0.03, 0.3], "#494f50", [Math.PI / 2, 0, 0]),
+      bearsLoad: false,
+      sideAttachmentReach: 0.25,
+      contactBoxes: [
+        { position: [x - 0.13, y, bodyZ], size: [0.32, 0.32, 0.34] },
+      ],
+    });
+    for (const [slat, offsetY] of [-0.14, 0, 0.14].entries()) {
+      fixtures.push({
+        ...makePiece(`town:ac:${index}:slat:${slat}`, "town:growth-fixtures", "steel", "steelSheet",
+          [x + 0.22, y + offsetY, frontZ], [0.24, 0.05, 0.02], "#9ba09c"),
+        bearsLoad: false,
+        sideAttachmentReach: 0.25,
+        contactBoxes: [
+          { position: [x + 0.22, y + offsetY, bodyZ], size: [0.26, 0.07, 0.34] },
+        ],
+      });
+    }
+    for (const side of [-1, 1] as const) {
+      fixtures.push({
+        ...makePiece(`town:ac:${index}:bracket:${side}`, "town:growth-fixtures", "steel", "steelSheet",
+          [x + side * 0.24, y - 0.31, wallFace + face * 0.14],
+          [0.05, 0.12, 0.28], "#7a6a55"),
+        bearsLoad: false,
+        sideAttachmentReach: 0.3,
+        weathering: 0.6,
+        contactBoxes: [
+          {
+            position: [x + side * 0.24, y - 0.31, wallFace + face * 0.1],
+            size: [0.05, 0.12, 0.3],
+          },
+        ],
+      });
+    }
+    fixtures.push({
+      ...makePiece(`town:ac:${index}:pipe`, "town:growth-fixtures", "steel", "steelSheet",
+        [x + 0.3, y - 0.14, wallFace + face * 0.05], [0.045, 0.7, 0.045],
+        "#c4c6c0"),
+      bearsLoad: false,
+      sideAttachmentReach: 0.3,
+      weathering: 0.35,
+      contactBoxes: [
+        { position: [x + 0.3, y - 0.14, wallFace], size: [0.06, 0.7, 0.14] },
+      ],
+    });
+  }
 
   // --- Gutters and downpipes on the three old houses ----------------------
   const houses: readonly (readonly [string, number, number])[] = [
@@ -2596,12 +3486,14 @@ function createTownClutter(): BreakableClusterDefinition[] {
     ["h3", 56, -38],
   ];
   for (const [houseId, hx, hz] of houses) {
+    // Жёлоб и трубы вынесены за плоскость фронтона и угловые стойки
+    // фахверка — навесное железо висит НА доме, а не внутри его балок.
     fixtures.push({
       ...makePiece(`town:gutter:${houseId}`, "town:growth-fixtures", "steel", "steelSheet",
-        [hx, 5.32, hz + 0.88], [8.5, 0.14, 0.14], "#868b88"),
+        [hx, 5.24, hz + 1.28], [8.5, 0.14, 0.14], "#868b88"),
       bearsLoad: false,
       sideAttachmentReach: 0.6,
-      contactBoxes: [{ position: [hx, 5.32, hz + 0.88], size: [8.5, 0.14, 0.4] }],
+      contactBoxes: [{ position: [hx, 5.32, hz + 0.95], size: [8.5, 0.14, 0.5] }],
     });
     // Downpipes in short segments: each attaches to the wall course beside it
     // (the solver only lets a wall carry pieces shorter than itself).
@@ -2609,10 +3501,10 @@ function createTownClutter(): BreakableClusterDefinition[] {
       for (let segment = 0; segment < 5; segment += 1) {
         fixtures.push({
           ...makePiece(`town:downpipe:${houseId}:${side}:${segment}`, "town:growth-fixtures", "steel", "cylinder",
-            [hx + side * 4.3, 0.66 + segment * 1.02, hz + 0.78], [0.13, 1.02, 0.13], "#7f8481"),
+            [hx + side * 4.48, 0.66 + segment * 1.02, hz + 0.95], [0.13, 1.02, 0.13], "#7f8481"),
           bearsLoad: false,
           sideAttachmentReach: 0.55,
-          contactBoxes: [{ position: [hx + side * 4.3, 0.66 + segment * 1.02, hz + 0.78], size: [0.5, 1.02, 0.5] }],
+          contactBoxes: [{ position: [hx + side * 4.48, 0.66 + segment * 1.02, hz + 0.95], size: [0.5, 1.02, 0.5] }],
           weathering: 0.35,
         });
       }
@@ -2827,13 +3719,13 @@ export const breakableClusters = [
   ...createKhrushchevka({
     prefix: "k2",
     dz: -16,
-    palette: ["#b3c0ad", "#a8b5a2", "#bec9b8", "#adbaa7"],
+    palette: ["#bfc4a4", "#b4b999", "#c9ceae", "#b9be9e"],
   }),
   ...createKhrushchevka({
     prefix: "k3",
     dx: 36,
     dz: -16,
-    palette: ["#aeb9c2", "#a3aeb7", "#b9c3cc", "#a8b3bc"],
+    palette: ["#bcbfae", "#b1b4a3", "#c6c9b8", "#b6b9a8"],
     shellOnly: true,
     includeLamps: false,
   }),
@@ -2841,7 +3733,7 @@ export const breakableClusters = [
     prefix: "k4",
     dx: -24,
     dz: -34,
-    palette: ["#c9b3ae", "#bea8a3", "#d3bdb8", "#c3ada8"],
+    palette: ["#cfb5a2", "#c4aa97", "#d9bfac", "#c9af9c"],
     shellOnly: true,
     includeLamps: false,
   }),
@@ -2849,7 +3741,7 @@ export const breakableClusters = [
     prefix: "k5",
     dx: 2,
     dz: -34,
-    palette: ["#d5d2c9", "#cac7be", "#dfdcd3", "#cfccc3"],
+    palette: ["#dad4c2", "#cfc9b7", "#e4decc", "#d4cebc"],
     shellOnly: true,
     includeLamps: false,
   }),
@@ -2857,7 +3749,7 @@ export const breakableClusters = [
     prefix: "k6",
     dx: 36,
     dz: 20,
-    palette: ["#cdc49f", "#c2b994", "#d7cea9", "#c7be99"],
+    palette: ["#d3c493", "#c8b988", "#ddce9d", "#cdbe8d"],
     shellOnly: true,
     includeLamps: false,
   }),

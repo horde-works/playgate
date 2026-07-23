@@ -12,13 +12,23 @@ import {
   Vector3,
   type WebGLProgramParametersWithUniforms,
 } from "three";
-import { litWindowColor, type BreakableMaterial } from "./destructionScene.ts";
+import {
+  khrushchevkaAcMounts,
+  litWindowColor,
+  type BreakableMaterial,
+  type SurfaceTextureProfile,
+} from "./destructionScene.ts";
 import { materialAppearanceProfiles } from "./materialAppearance.ts";
 import {
   vikingTrafficAreas,
   vikingTrafficRoutes,
   type VikingPlanPoint,
 } from "../content/scenes/vikingVillagePlan.ts";
+import {
+  rainSeamSurfaceAreas,
+  rainSeamSurfaceRoutes,
+  type RainSeamPlanPoint,
+} from "../content/scenes/rainSeamPlan.ts";
 
 const glowMaterials: MeshStandardMaterial[] = [];
 
@@ -83,6 +93,15 @@ const photorealTextureUrls: Partial<Record<BreakableMaterial, string>> = {
   steel: "/games/make-a-mess/textures/steel.webp",
 };
 
+const surfaceTextureUrls: Record<SurfaceTextureProfile, string> = {
+  "city-gray-pavers": "/games/make-a-mess/textures/city-gray-pavers.webp",
+  "city-red-pavers": "/games/make-a-mess/textures/city-red-pavers.webp",
+  "city-aged-stucco": "/games/make-a-mess/textures/city-aged-stucco.webp",
+  "city-red-aggregate": "/games/make-a-mess/textures/city-red-aggregate.webp",
+  "city-facade-cladding": "/games/make-a-mess/textures/city-facade-cladding.webp",
+  "city-roof-tile": "/games/make-a-mess/textures/city-roof-tile.webp",
+};
+
 const bumpScaleByMaterial: Record<BreakableMaterial, number> = {
   brick: 0.035,
   wood: 0.018,
@@ -103,9 +122,10 @@ const bumpScaleByMaterial: Record<BreakableMaterial, number> = {
 };
 
 const textureLoader = new TextureLoader();
-const textureCache = new Map<BreakableMaterial, Texture>();
+const textureCache = new Map<string, Texture>();
 const materialCache = new Map<string, MeshStandardMaterial>();
 let vikingTrafficTexture: CanvasTexture | null = null;
+let citySurfaceTexture: CanvasTexture | null = null;
 
 const VIKING_TRAFFIC_TEXTURE_SIZE = 512;
 const VIKING_WORLD_MIN_X = -96;
@@ -217,6 +237,7 @@ function fillVariableVikingTrafficRoute(
   routeId: string,
   halfWidth: number,
   opacity: number,
+  channel: "red" | "green" = "red",
 ): void {
   const left: VikingPlanPoint[] = [];
   const right: VikingPlanPoint[] = [];
@@ -238,7 +259,9 @@ function fillVariableVikingTrafficRoute(
     right.push([samples[index][0] - normalX * width, samples[index][1] - normalY * width]);
   }
 
-  context.fillStyle = `rgba(255, 0, 0, ${opacity})`;
+  context.fillStyle = channel === "red"
+    ? `rgba(255, 0, 0, ${opacity})`
+    : `rgba(0, 255, 0, ${opacity})`;
   context.beginPath();
   context.moveTo(left[0][0], left[0][1]);
   for (let index = 1; index < left.length; index += 1) {
@@ -255,6 +278,152 @@ function fillVariableVikingTrafficRoute(
     context.arc(samples[index][0], samples[index][1], widths[index], 0, Math.PI * 2);
     context.fill();
   }
+}
+
+const CITY_SURFACE_TEXTURE_SIZE = 512;
+const CITY_WORLD_MIN = -96;
+const CITY_WORLD_SPAN = 192;
+
+function citySurfaceCanvasPoint(
+  point: RainSeamPlanPoint,
+): readonly [number, number] {
+  const scale = CITY_SURFACE_TEXTURE_SIZE / CITY_WORLD_SPAN;
+  return [
+    (point[0] - CITY_WORLD_MIN) * scale,
+    CITY_SURFACE_TEXTURE_SIZE - (point[1] - CITY_WORLD_MIN) * scale,
+  ];
+}
+
+function sampleCitySurfaceRoute(
+  points: readonly RainSeamPlanPoint[],
+): readonly VikingPlanPoint[] {
+  const canvasPoints = points.map(citySurfaceCanvasPoint);
+  const samples: VikingPlanPoint[] = [canvasPoints[0]];
+  const sampleLine = (start: VikingPlanPoint, end: VikingPlanPoint): void => {
+    const distance = Math.hypot(end[0] - start[0], end[1] - start[1]);
+    const steps = Math.max(2, Math.ceil(distance / 3));
+    for (let step = 1; step <= steps; step += 1) {
+      const t = step / steps;
+      samples.push([
+        start[0] + (end[0] - start[0]) * t,
+        start[1] + (end[1] - start[1]) * t,
+      ]);
+    }
+  };
+
+  if (canvasPoints.length === 2) {
+    sampleLine(canvasPoints[0], canvasPoints[1]);
+    return samples;
+  }
+  let start = canvasPoints[0];
+  for (let index = 1; index < canvasPoints.length - 1; index += 1) {
+    const control = canvasPoints[index];
+    const next = canvasPoints[index + 1];
+    const end: VikingPlanPoint = [
+      (control[0] + next[0]) / 2,
+      (control[1] + next[1]) / 2,
+    ];
+    const distance = Math.hypot(control[0] - start[0], control[1] - start[1])
+      + Math.hypot(end[0] - control[0], end[1] - control[1]);
+    const steps = Math.max(3, Math.ceil(distance / 3));
+    for (let step = 1; step <= steps; step += 1) {
+      const t = step / steps;
+      const inverse = 1 - t;
+      samples.push([
+        inverse * inverse * start[0] + 2 * inverse * t * control[0] + t * t * end[0],
+        inverse * inverse * start[1] + 2 * inverse * t * control[1] + t * t * end[1],
+      ]);
+    }
+    start = end;
+  }
+  sampleLine(start, canvasPoints[canvasPoints.length - 1]);
+  return samples;
+}
+
+function getCitySurfaceTexture(): CanvasTexture {
+  if (citySurfaceTexture) {
+    return citySurfaceTexture;
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = CITY_SURFACE_TEXTURE_SIZE;
+  canvas.height = CITY_SURFACE_TEXTURE_SIZE;
+  const context = canvas.getContext("2d");
+  if (context) {
+    context.fillStyle = "#000";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.globalCompositeOperation = "lighter";
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    const scale = CITY_SURFACE_TEXTURE_SIZE / CITY_WORLD_SPAN;
+
+    for (const route of rainSeamSurfaceRoutes) {
+      const raw = sampleCitySurfaceRoute(route.points);
+      const samples = meanderVikingTrafficRoute(
+        raw,
+        `city:${route.id}`,
+        scale * Math.min(0.55, 0.18 + route.width * 0.12),
+      );
+      for (const layer of [
+        { width: 1.9, opacity: 0.18 },
+        { width: 1.15, opacity: 0.42 },
+        { width: 0.64, opacity: 0.48 },
+      ] as const) {
+        if (route.dirt > 0) {
+          fillVariableVikingTrafficRoute(
+            context,
+            samples,
+            `city:${route.id}:dirt`,
+            route.width * scale * layer.width,
+            route.dirt * layer.opacity,
+            "red",
+          );
+        }
+        if (route.wetness > 0) {
+          fillVariableVikingTrafficRoute(
+            context,
+            samples,
+            `city:${route.id}:wet`,
+            route.width * scale * layer.width,
+            route.wetness * layer.opacity,
+            "green",
+          );
+        }
+      }
+    }
+
+    for (const area of rainSeamSurfaceAreas) {
+      const [x, y] = citySurfaceCanvasPoint(area.center);
+      for (const [channel, amount] of [
+        ["red", area.dirt],
+        ["green", area.wetness],
+      ] as const) {
+        if (amount <= 0) {
+          continue;
+        }
+        context.save();
+        context.translate(x, y);
+        context.rotate(-(area.rotation ?? 0));
+        context.scale(area.radius[0] * scale, area.radius[1] * scale);
+        const gradient = context.createRadialGradient(0, 0, 0, 0, 0, 1);
+        const rgb = channel === "red" ? "255, 0, 0" : "0, 255, 0";
+        gradient.addColorStop(0, `rgba(${rgb}, ${amount * 0.84})`);
+        gradient.addColorStop(0.5, `rgba(${rgb}, ${amount * 0.56})`);
+        gradient.addColorStop(0.8, `rgba(${rgb}, ${amount * 0.22})`);
+        gradient.addColorStop(1, `rgba(${rgb}, 0)`);
+        context.fillStyle = gradient;
+        context.beginPath();
+        context.arc(0, 0, 1, 0, Math.PI * 2);
+        context.fill();
+        context.restore();
+      }
+    }
+  }
+  citySurfaceTexture = new CanvasTexture(canvas);
+  citySurfaceTexture.magFilter = LinearFilter;
+  citySurfaceTexture.minFilter = LinearMipmapLinearFilter;
+  citySurfaceTexture.anisotropy = 4;
+  citySurfaceTexture.colorSpace = NoColorSpace;
+  return citySurfaceTexture;
 }
 
 /**
@@ -517,17 +686,37 @@ export function getTownStainTexture(): CanvasTexture {
     for (const block of blocks) {
       for (const zFace of [block.z0, block.z1]) {
         const shearU = (x: number): number => x + zFace * 0.37;
-        // Water runs from a sparse subset of window sill corners.
+        // Water runs from window sill corners — most sills weep somewhere,
+        // starting right under the zinc flashing.
         for (let floor = 0; floor < 4; floor += 1) {
           for (let bay = 0; bay < 16; bay += 1) {
-            if (next() > 0.09) continue;
-            const corner = next() > 0.5 ? 0.55 : -0.55;
+            if (next() > 0.3) continue;
+            const corner = next() > 0.5 ? 0.56 : -0.56;
             run("z",
               shearU(block.x0 + 0.15 + bayWidth * (bay + 0.5) + corner),
-              0.4 + floor * 2.6 + 1.0,
-              0.5 + next() * 1.6,
+              0.4 + floor * 2.6 + 0.78,
+              0.7 + next() * 2.0,
               0.3 + next() * 0.25,
-              WATER, 0.5 + next() * 0.4);
+              WATER, 0.45 + next() * 0.4);
+          }
+        }
+        // Rust weeps from the corners of every balcony plate; the balconies
+        // live on the z1 face only (bays 3/5/11/13, floors 1..3).
+        if (zFace === block.z1) {
+          for (const bay of [3, 5, 11, 13]) {
+            const cx = block.x0 + 0.15 + bayWidth * (bay + 0.5);
+            for (let floor = 1; floor < 4; floor += 1) {
+              const plateY = 0.4 + floor * 2.6 - 0.1;
+              for (const corner of [-0.82, 0.82]) {
+                if (next() > 0.85) continue;
+                run("z", shearU(cx + corner), plateY,
+                  0.7 + next() * 1.5, 0.3, RUST, 0.5 + next() * 0.35);
+              }
+              if (next() < 0.35) {
+                run("z", shearU(cx + (next() - 0.5) * 1.2), plateY,
+                  0.5 + next() * 0.9, 0.36, WATER, 0.45);
+              }
+            }
           }
         }
         // Door reveals (entrance bays 2 and 10): grime down both jambs and a
@@ -547,19 +736,25 @@ export function getTownStainTexture(): CanvasTexture {
         // Settlement cracks near the building ends.
         crack("z", shearU(block.x0 + 0.7), 9.5, 2.4 + next() * 1.6, 1.35, 0.3);
         crack("z", shearU(block.x0 + 21.3), 8.8, 2.0 + next() * 1.8, 1.75, 0.3);
-        // A couple of spalled patches low on the facade.
-        if (next() > 0.4) {
-          spall("z", shearU(block.x0 + 2 + next() * 18), 0.9 + next() * 1.6, 0.28 + next() * 0.22);
+        // The base of the facade is hit hardest: several low spalls, plus an
+        // occasional one at height where a panel seam let water in.
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          if (next() > 0.55) continue;
+          spall("z", shearU(block.x0 + 1.5 + next() * 19), 0.75 + next() * 1.6, 0.24 + next() * 0.24);
+        }
+        if (next() < 0.35) {
+          spall("z", shearU(block.x0 + 2 + next() * 18), 3.2 + next() * 4.5, 0.2 + next() * 0.18);
         }
       }
     }
-    // Rust bleeding from the AC units (they hang on k1/k2).
-    for (const [ax, ay, az] of [
-      [13.5, 4.15, -1], [20.9, 1.55, -1], [31.8, 4.15, -1],
-      [17.6, 6.75, -8], [26.1, 4.15, -8],
-      [16.2, 4.15, -17], [25.6, 1.55, -17], [30.4, 6.75, -17],
-    ] as const) {
-      run("z", ax + az * 0.37, ay - 0.28, 0.9 + next() * 0.9, 0.3, RUST, 0.75);
+    // Rust bleeding from the AC units — the mounts are shared with the
+    // town-clutter builder, so every streak sits under a real bracket.
+    for (const mount of khrushchevkaAcMounts) {
+      const u = mount.x + mount.z * 0.37;
+      run("z", u - 0.24, mount.y - 0.34, 0.9 + next() * 0.9, 0.3, RUST, 0.7);
+      if (next() > 0.45) {
+        run("z", u + 0.24, mount.y - 0.34, 0.5 + next() * 0.7, 0.26, RUST, 0.5);
+      }
     }
 
     // ---- Old houses h1..h3: window corners, downpipe rust, spall, cracks ----
@@ -932,13 +1127,17 @@ function configureTexture(texture: Texture): Texture {
 
 export function getMaterialTexture(
   material: BreakableMaterial,
+  textureProfile?: SurfaceTextureProfile,
 ): Texture {
-  const cached = textureCache.get(material);
+  const key = textureProfile ?? material;
+  const cached = textureCache.get(key);
   if (cached) {
     return cached;
   }
 
-  const sourceUrl = photorealTextureUrls[material];
+  const sourceUrl = textureProfile
+    ? surfaceTextureUrls[textureProfile]
+    : photorealTextureUrls[material];
   let texture: Texture;
   if (sourceUrl) {
     texture = configureTexture(
@@ -952,15 +1151,16 @@ export function getMaterialTexture(
     texture = createProceduralTexture(material);
   }
 
-  textureCache.set(material, texture);
+  textureCache.set(key, texture);
   return texture;
 }
 
 export function getPieceMaterial(
   material: BreakableMaterial,
   color: string,
+  textureProfile?: SurfaceTextureProfile,
 ): MeshStandardMaterial {
-  const key = `${material}:${color}`;
+  const key = `${material}:${color}:${textureProfile ?? "default"}`;
   const cached = materialCache.get(key);
   if (cached) {
     return cached;
@@ -973,7 +1173,7 @@ export function getPieceMaterial(
   const isEyeGlass =
     material === "darkGlass" &&
     (color === "#ff5a2f" || color === "#9f241a");
-  const surfaceTexture = getMaterialTexture(material);
+  const surfaceTexture = getMaterialTexture(material, textureProfile);
   const appearance = materialAppearanceProfiles[material];
   const standardMaterial = new MeshStandardMaterial({
     color,
@@ -1027,6 +1227,7 @@ export function getPieceMaterial(
       }
       shader.uniforms.uLandscapeSoilMap = { value: getMaterialTexture("soil") };
       shader.uniforms.uVikingTrafficMap = { value: getVikingTrafficTexture() };
+      shader.uniforms.uCitySurfaceMap = { value: getCitySurfaceTexture() };
       environmentShaders.push(shader);
 
       shader.vertexShader = shader.vertexShader
@@ -1080,7 +1281,7 @@ vec3 materialInstanceScale = vec3(
   length(instanceMatrix[2].xyz)
 );
 vMaterialCoordinate = materialAnchor.xyz + position * materialInstanceScale;
-vLandscapeSurfaceProfile = 1.0 - step(-0.5, silicateJointBand);
+vLandscapeSurfaceProfile = -min(silicateJointBand, 0.0);
 vMaterialSurfaceNormal = normal;
 vMaterialBoxPosition = position;
 vMaterialWorldScale = materialInstanceScale;
@@ -1186,6 +1387,7 @@ uniform float uFogSunStrength;
 uniform float uWetness;
 uniform sampler2D uLandscapeSoilMap;
 uniform sampler2D uVikingTrafficMap;
+uniform sampler2D uCitySurfaceMap;
 
 float materialValueNoise(vec2 p) {
   vec2 cellIndex = floor(p);
@@ -1347,7 +1549,7 @@ ${
 // Viking ground is one continuous, destructible surface. Paths, yards,
 // moss and wet soil are world-space material masks, never stacked panels.
 // The profile attribute keeps every other map visually unchanged.
-float vikingSurface = step(0.5, vLandscapeSurfaceProfile) * materialUp;
+float vikingSurface = (1.0 - step(0.5, abs(vLandscapeSurfaceProfile - 1.0))) * materialUp;
 vec2 vikingPoint = vMaterialCoordinate.xz;
 float vikingTravel = 0.0;
 float vikingYards = 0.0;
@@ -1407,6 +1609,38 @@ if (vikingSurface > 0.5) {
   diffuseColor.rgb *= mix(1.0, 0.82 + vikingRelief * 0.32, 1.0 - vikingDirt * 0.6);
 }
 
+// Rain Seam uses the same single destructible ground body model, but its mask
+// describes urban processes: red = soil/grit from feet and tyres, green =
+// water retained in gutters, low terraces and failed edges.
+float citySurface = (1.0 - step(0.5, abs(vLandscapeSurfaceProfile - 2.0))) * materialUp;
+float cityDirt = 0.0;
+float cityRetainedWater = 0.0;
+if (citySurface > 0.5) {
+  vec2 cityPoint = vMaterialCoordinate.xz;
+  vec2 cityUv = clamp(
+    vec2((cityPoint.x + 96.0) / 192.0, (cityPoint.y + 96.0) / 192.0),
+    vec2(0.001),
+    vec2(0.999)
+  );
+  vec2 cityMask = texture2D(uCitySurfaceMap, cityUv).rg;
+  float cityBroad =
+    materialValueNoise(cityPoint * 0.11 + vec2(14.7, 3.2)) * 0.68 +
+    materialValueNoise(cityPoint * 0.39 + vec2(2.4, 37.1)) * 0.32;
+  float cityFine = materialValueNoise(cityPoint * 1.27 + vec2(43.9, 8.3));
+  cityDirt = clamp(cityMask.r * (0.82 + cityBroad * 0.34), 0.0, 1.0);
+  cityRetainedWater = clamp(cityMask.g * (0.76 + cityFine * 0.42), 0.0, 1.0);
+
+  vec3 citySoil = sRGBTransferEOTF(
+    texture2D(uLandscapeSoilMap, cityPoint * 0.36 + vec2(0.31, 0.07))
+  ).rgb;
+  vec3 cityGrit = mix(vec3(0.44, 0.34, 0.25), vec3(0.26, 0.24, 0.21), cityFine);
+  citySoil *= cityGrit;
+  diffuseColor.rgb = mix(diffuseColor.rgb, citySoil, cityDirt * 0.9);
+  // Water-darkened curb and drain edges remain matte here; the physically
+  // glossy response is introduced below with the common wetness pass.
+  diffuseColor.rgb *= 1.0 - cityRetainedWater * 0.18;
+}
+
 // Standing dampness: glossy splotches on upward, sky-exposed faces.
 // Roughness is lowered in the roughness stage below; here the albedo takes
 // the slight darkening wet ground shows in reality.
@@ -1425,6 +1659,12 @@ float vikingPuddle = vikingDirt
   * smoothstep(0.3, 0.7, vBakedSky)
   * uWetness;
 materialWet = max(materialWet, vikingPuddle * 0.94);
+float cityPuddle = cityRetainedWater
+  * smoothstep(0.42, 0.7, materialPuddleNoise)
+  * smoothstep(0.55, 0.85, materialWorldNormal.y)
+  * smoothstep(0.3, 0.7, vBakedSky)
+  * uWetness;
+materialWet = max(materialWet, cityPuddle * 0.98);
 diffuseColor.rgb *= 1.0 - materialWet * 0.38;`,
         )
         .replace(
@@ -1437,6 +1677,7 @@ roughnessFactor = clamp(
   1.0
 );
 roughnessFactor = mix(roughnessFactor, 0.78, vikingDirt * 0.36);
+roughnessFactor = mix(roughnessFactor, 0.82, cityDirt * 0.3);
 roughnessFactor = mix(roughnessFactor, 0.98, vikingMoss * 0.52);
 // Biofilm is matte: moss and mould kill any sheen the base surface had.
 roughnessFactor = mix(roughnessFactor, 0.95, materialBiofilmMoss * 0.7);

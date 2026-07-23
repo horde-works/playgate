@@ -83,3 +83,21 @@ test("hiding and restoring pieces touches only the changed instances", () => {
   );
   assert.deepEqual(foreign, { hide: [], restore: [] });
 });
+
+test("visual texture variants never merge into one material batch", () => {
+  const pieces = [
+    piece("gray", "concrete", [0, 0, 0], {
+      textureProfile: "city-gray-pavers",
+    }),
+    piece("red", "concrete", [2, 0, 0], {
+      textureProfile: "city-red-pavers",
+    }),
+  ];
+
+  const batches = buildIntactInstanceBatches(pieces);
+  assert.equal(batches.length, 2);
+  assert.deepEqual(
+    batches.map((batch) => batch.textureProfile).toSorted(),
+    ["city-gray-pavers", "city-red-pavers"],
+  );
+});

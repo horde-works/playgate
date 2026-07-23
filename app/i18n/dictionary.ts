@@ -451,6 +451,44 @@ export const sceneCopy: Record<string, Record<Language, SceneCopy>> = {
       reset: "Отстроить поселение заново",
     },
   },
+  "rain-seam": {
+    en: {
+      status: "Make a Mess / Zadvorki",
+      eyebrow: "Study from life 001",
+      heading: "The backyards.",
+      ready: "The rain has just passed",
+      loading: "Settling into the backyards…",
+      description:
+        "A piece of a real city: a building-supplies kiosk trading straight into the mud, whitewashed gates, a tight lane along a yellow gas run, a yard with laundry and wheel ruts, a shed with an orange roof patch and kids' bikes — while new towers already stand over the back fence.",
+      enter: "Come in from the street",
+      returnToGame: "Back to the backyards",
+      reset: "Reassemble the yard",
+    },
+    es: {
+      status: "Make a Mess / Zadvorki",
+      eyebrow: "Estudio del natural 001",
+      heading: "Los traspatios.",
+      ready: "La lluvia acaba de pasar",
+      loading: "Habitando los traspatios…",
+      description:
+        "Un trozo de ciudad real: un kiosco de materiales que vende directo al barro, portones encalados, un callejón estrecho junto al tubo de gas, un patio con ropa tendida y rodadas, un cobertizo con un parche naranja en el techo y bicis de niños — mientras las torres nuevas ya asoman sobre la valla trasera.",
+      enter: "Entrar desde la calle",
+      returnToGame: "Volver a los traspatios",
+      reset: "Reconstruir el patio",
+    },
+    ru: {
+      status: "Make a Mess / Задворки",
+      eyebrow: "Этюд с натуры 001",
+      heading: "Задворки.",
+      ready: "Дождь только что прошёл",
+      loading: "Обживаем задворки…",
+      description:
+        "Кусок города, снятый с натуры: киоск стройматериалов торгует прямо в грязь, за белёными воротами — тесный проулок вдоль газовой трубы, двор с бельём и колеёй, сарай с оранжевой заплатой и детские велосипеды. А над задним забором уже стоят новостройки: город подступает к задворкам вплотную.",
+      enter: "Зайти с улицы",
+      returnToGame: "Вернуться на задворки",
+      reset: "Собрать двор заново",
+    },
+  },
 };
 
 export interface GameCardCopy {
@@ -540,6 +578,26 @@ export const gameCardCopy: Record<string, Record<Language, GameCardCopy>> = {
       genre: "Living-world destruction sandbox",
       summary:
         "Обитаемая северная деревня: частокол, длинные дома, зал конунга, оружейные навесы, бельё, очаги, грязь, мох и каменистый лес.",
+    },
+  },
+  "make-a-mess-rain-seam": {
+    en: {
+      stageLabel: "Experimental map",
+      genre: "Backyards destruction sandbox",
+      summary:
+        "A real city block from life: a kiosk trading into the mud, whitewashed gates, a gas-pipe lane, laundry, wheel ruts, kids' bikes — and new towers over the back fence.",
+    },
+    es: {
+      stageLabel: "Mapa experimental",
+      genre: "Sandbox de traspatios destructible",
+      summary:
+        "Un trozo de ciudad real: kiosco vendiendo al barro, portones encalados, callejón del gas, ropa tendida, rodadas, bicis — y torres nuevas sobre la valla trasera.",
+    },
+    ru: {
+      stageLabel: "Экспериментальная карта",
+      genre: "Backyards destruction sandbox",
+      summary:
+        "Кусок города с натуры: киоск в грязи, белёные ворота, проулок вдоль газовой трубы, бельё, колея, велосипеды — и новостройки над задним забором.",
     },
   },
 };

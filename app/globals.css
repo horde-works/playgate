@@ -1194,6 +1194,191 @@ button:focus-visible {
 .art-viking-torch-left { left: 13%; }
 .art-viking-torch-right { right: 14%; }
 
+/* Rain courtyard: one close, damp human enclosure. */
+.game-card-art-rain-seam {
+  background:
+    radial-gradient(ellipse at 50% 92%, rgb(38 34 29 / 0.72) 0 26%, transparent 27%),
+    linear-gradient(180deg, #78888a 0 42%, #665b49 43% 100%);
+}
+
+.game-card-art-rain-seam::before {
+  width: 470px;
+  height: 470px;
+  border-color: #8c4036;
+  opacity: 0.52;
+}
+
+.art-word-rain {
+  top: 8%;
+  left: 3%;
+  color: var(--paper-bright);
+  font-size: clamp(55px, 6.4vw, 102px);
+  transform: rotate(-4deg);
+}
+
+.art-word-seam {
+  right: 4%;
+  bottom: 7%;
+  color: #d3a84b;
+  text-shadow: 7px 7px 0 rgb(0 0 0 / 0.52);
+  transform: rotate(-3deg);
+}
+
+.art-rain-tower {
+  position: absolute;
+  z-index: 1;
+  bottom: 15%;
+  width: 112px;
+  border: 5px solid var(--ink);
+  background:
+    repeating-linear-gradient(0deg, transparent 0 25px, rgb(22 28 29 / 0.72) 26px 30px),
+    repeating-linear-gradient(90deg, #afc0c2 0 19px, #40545a 20px 31px),
+    #b7c2c0;
+  box-shadow: 7px 7px 0 rgb(0 0 0 / 0.42);
+}
+
+.art-rain-tower-left {
+  left: 7%;
+  height: 286px;
+  transform: rotate(-2deg);
+}
+
+.art-rain-tower-right {
+  right: 7%;
+  height: 330px;
+  background:
+    repeating-linear-gradient(0deg, transparent 0 25px, rgb(22 28 29 / 0.72) 26px 30px),
+    repeating-linear-gradient(90deg, #c8c5ba 0 20px, #53676c 21px 32px),
+    #c8c5ba;
+  transform: rotate(2deg);
+}
+
+.art-rain-old-house {
+  position: absolute;
+  bottom: 15%;
+  left: 59%;
+  z-index: 2;
+  width: 224px;
+  height: 132px;
+  border: 5px solid var(--ink);
+  background:
+    linear-gradient(105deg, transparent 0 68%, #8d5a48 69% 74%, transparent 75%),
+    #d2c3a7;
+  box-shadow: 7px 7px 0 rgb(0 0 0 / 0.42);
+  transform: translateX(-50%) rotate(-1deg);
+}
+
+.art-rain-outbuilding {
+  position: absolute;
+  bottom: 15%;
+  left: 10%;
+  z-index: 2;
+  width: 150px;
+  height: 92px;
+  border: 5px solid var(--ink);
+  background:
+    linear-gradient(90deg, transparent 0 52%, #875a34 53% 76%, transparent 77%),
+    #dedbd1;
+  box-shadow: 7px 7px 0 rgb(0 0 0 / 0.42);
+}
+
+.art-rain-outbuilding::before {
+  position: absolute;
+  top: -37px;
+  left: -8px;
+  width: 158px;
+  height: 40px;
+  border: 5px solid var(--ink);
+  background: repeating-linear-gradient(90deg, #414241 0 9px, #62615e 10px 12px);
+  clip-path: polygon(4% 100%, 12% 0, 88% 0, 96% 100%);
+  content: "";
+}
+
+.art-rain-gate {
+  position: absolute;
+  right: 8%;
+  bottom: 7%;
+  z-index: 5;
+  width: 86px;
+  height: 98px;
+  border: 8px solid #d9d4c8;
+  border-bottom-color: #8c4036;
+  background: repeating-linear-gradient(90deg, #78939a 0 8px, #92a9ae 9px 11px);
+  box-shadow: 5px 5px 0 var(--ink);
+}
+
+.art-rain-old-house::before {
+  position: absolute;
+  top: -56px;
+  left: -13px;
+  width: 240px;
+  height: 58px;
+  border: 5px solid var(--ink);
+  background: repeating-linear-gradient(90deg, #4c4642 0 12px, #6a5a52 13px 16px);
+  clip-path: polygon(8% 100%, 18% 0, 82% 0, 94% 100%);
+  content: "";
+}
+
+.art-rain-door,
+.art-rain-window {
+  position: absolute;
+  bottom: 0;
+  display: block;
+  border: 4px solid var(--ink);
+}
+
+.art-rain-door {
+  left: 92px;
+  width: 43px;
+  height: 78px;
+  background: #875a34;
+}
+
+.art-rain-window {
+  right: 24px;
+  bottom: 42px;
+  width: 42px;
+  height: 44px;
+  background: #536a73;
+}
+
+.art-rain-wall {
+  position: absolute;
+  right: 0;
+  bottom: 7%;
+  left: 0;
+  z-index: 3;
+  height: 52px;
+  border-block: 4px solid var(--ink);
+  background: repeating-linear-gradient(135deg, #8c4036 0 16px, transparent 17px 28px, #8c4036 29px 44px);
+}
+
+.art-rain-bike {
+  position: absolute;
+  bottom: 17%;
+  left: 29%;
+  z-index: 5;
+  width: 49px;
+  height: 49px;
+  border: 6px solid var(--ink);
+  border-radius: 50%;
+  box-shadow: 83px 0 0 -6px #42575d, 83px 0 0 0 var(--ink);
+}
+
+.art-rain-puddle {
+  position: absolute;
+  bottom: 2%;
+  left: 50%;
+  z-index: 4;
+  width: 230px;
+  height: 34px;
+  border: 4px solid var(--ink);
+  border-radius: 50%;
+  background: #6e9eac;
+  opacity: 0.82;
+  transform: translateX(-50%) rotate(-2deg);
+}
+
 .principles {
   display: grid;
   grid-template-columns: minmax(0, 0.85fr) minmax(480px, 1.15fr);

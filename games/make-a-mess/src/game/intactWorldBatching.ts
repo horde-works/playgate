@@ -1,6 +1,7 @@
 import type {
   BreakableMaterial,
   BreakablePieceDefinition,
+  SurfaceTextureProfile,
 } from "./destructionScene.ts";
 import {
   isGlassMaterial,
@@ -21,6 +22,7 @@ export interface IntactInstanceBatch {
   readonly id: string;
   readonly material: BreakableMaterial;
   readonly materialColor: string;
+  readonly textureProfile?: SurfaceTextureProfile;
   readonly castShadow: boolean;
   readonly jointed: boolean;
   readonly geometryKind: BatchGeometryKind;
@@ -55,7 +57,7 @@ export function buildIntactInstanceBatches(
     const materialColor = pieceMaterialBaseColor(piece.material, piece.color);
     const castShadow =
       !isGlassMaterial(piece.material) && piece.shape !== "groundTile";
-    const id = `${worldChunkKey(piece)}:${piece.material}:${materialColor}:${Number(
+    const id = `${worldChunkKey(piece)}:${piece.material}:${materialColor}:${piece.textureProfile ?? "default"}:${Number(
       castShadow,
     )}:${pieceGeometryKind(piece)}`;
     const batch = batches.get(id);
@@ -73,6 +75,7 @@ export function buildIntactInstanceBatches(
       batchPieces[0].material,
       batchPieces[0].color,
     ),
+    textureProfile: batchPieces[0].textureProfile,
     castShadow:
       !isGlassMaterial(batchPieces[0].material) &&
       batchPieces[0].shape !== "groundTile",

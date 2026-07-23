@@ -133,6 +133,20 @@ import { CinematicPostProcessing } from "./CinematicPostProcessing";
 import { useLanguage } from "@/app/i18n/LanguageProvider";
 import { sceneCopy } from "@/app/i18n/dictionary";
 import { LanguageSwitcher } from "@/app/components/LanguageSwitcher";
+import {
+  CinematicCameraRig,
+  CinematicFlyoverGalleryShortcut,
+  CinematicFlyoverLauncher,
+  CinematicFlyoverOverlay,
+  createFlyoverStoryFrame,
+  startFlyoverRecording,
+  type CapturedFlyoverStill,
+  type FlyoverMode,
+} from "./CinematicFlyover";
+import type {
+  CinematicFlyoverDefinition,
+  FlyoverChapter,
+} from "./cinematicFlyoverPlan";
 
 type ControlName =
   | "forward"
@@ -2148,6 +2162,7 @@ interface OpenWorldSceneProps {
   mobileControls: MobileControlsRef;
   mobileActions: MutableRefObject<MobileActionBridge>;
   resetVersion: number;
+  cinematic: boolean;
   onActiveChange: (active: boolean) => void;
   onFallbackChange: (fallback: boolean) => void;
   onBrokenCountChange: (count: number) => void;
@@ -2165,6 +2180,7 @@ function OpenWorldScene({
   mobileControls,
   mobileActions,
   resetVersion,
+  cinematic,
   onActiveChange,
   onFallbackChange,
   onBrokenCountChange,
@@ -2896,6 +2912,8 @@ function OpenWorldScene({
           id,
           material: source.material,
           color: source.color,
+          textureProfile: source.textureProfile,
+          landscapeSurface: source.landscapeSurface,
           size: [side, side, side],
           position: [
             worldPoint.x + (noiseA - 0.5) * 0.08,
@@ -3072,6 +3090,8 @@ function OpenWorldScene({
           parentId,
           material: source.material,
           color: source.color,
+          textureProfile: source.textureProfile,
+          landscapeSurface: source.landscapeSurface,
           shape: fragment.shape,
           size: fragment.size,
           position: fragment.position,
@@ -3113,6 +3133,8 @@ function OpenWorldScene({
           id,
           material: source.material,
           color: source.color,
+          textureProfile: source.textureProfile,
+          landscapeSurface: source.landscapeSurface,
           size: [side, side * (0.8 + noiseB * 0.5), side],
           position: [
             worldPoint.x + (noiseA - 0.5) * 0.1,
@@ -4374,30 +4396,34 @@ function OpenWorldScene({
         brokenPieces={brokenPiecesRef}
         resetVersion={resetVersion}
       />
-      <Player
-        registerBody={registerBody}
-        mobileControls={mobileControls}
-        spawn={scene.playerSpawn}
-        flightMode={flightMode}
-      />
-      {weapon === "hammer" ? (
-        <FirstPersonHammer swing={swing} />
-      ) : weapon === "launcher" ? (
-        <FirstPersonLauncher kick={launcherKick} />
-      ) : weapon === "rocket" ? (
-        <FirstPersonRocketLauncher kick={launcherKick} />
-      ) : (
-        <FirstPersonMachineGun shotsRef={mgShots} />
-      )}
-      <MouseLook
-        active={active}
-        requestVersion={controlRequest}
-        mobileControls={mobileControls}
-        onActiveChange={onActiveChange}
-        onFallbackChange={onFallbackChange}
-        onStrike={strike}
-        onStrikeEnd={strikeEnd}
-      />
+      {!cinematic ? (
+        <>
+          <Player
+            registerBody={registerBody}
+            mobileControls={mobileControls}
+            spawn={scene.playerSpawn}
+            flightMode={flightMode}
+          />
+          {weapon === "hammer" ? (
+            <FirstPersonHammer swing={swing} />
+          ) : weapon === "launcher" ? (
+            <FirstPersonLauncher kick={launcherKick} />
+          ) : weapon === "rocket" ? (
+            <FirstPersonRocketLauncher kick={launcherKick} />
+          ) : (
+            <FirstPersonMachineGun shotsRef={mgShots} />
+          )}
+          <MouseLook
+            active={active}
+            requestVersion={controlRequest}
+            mobileControls={mobileControls}
+            onActiveChange={onActiveChange}
+            onFallbackChange={onFallbackChange}
+            onStrike={strike}
+            onStrikeEnd={strikeEnd}
+          />
+        </>
+      ) : null}
       {bursts.map((burst) => (
         <DustBurst
           key={`burst:${burst.id}`}
@@ -4933,8 +4959,10 @@ function MobileGameControls({
 
 export function MakeAMessGame({
   scene: sceneProp = openHouseScene,
+  flyover,
 }: {
   scene?: DestructionSceneDefinition;
+  flyover?: CinematicFlyoverDefinition;
 }) {
   // Dev aid: `?spawn=x,y,z` drops the player anywhere on the map — handy
   // for inspecting far corners without a long walk.
@@ -4969,6 +4997,18 @@ export function MakeAMessGame({
   const [weapon, setWeapon] = useState<WeaponName>("hammer");
   const [flightMode, setFlightMode] = useState(false);
   const [timeOfDay, setTimeOfDay] = useState<TimeOfDay>("day");
+  const [flyoverMode, setFlyoverMode] = useState<FlyoverMode>("idle");
+  const [flyoverRunId, setFlyoverRunId] = useState(0);
+  const [flyoverChapter, setFlyoverChapter] = useState<FlyoverChapter | null>(null);
+  const [flyoverProgress, setFlyoverProgress] = useState(0);
+  const [flyoverStills, setFlyoverStills] = useState<readonly CapturedFlyoverStill[]>([]);
+  const [flyoverVideoUrl, setFlyoverVideoUrl] = useState<string | null>(null);
+  const [flyoverRecordingError, setFlyoverRecordingError] = useState(false);
+  const flyoverRecorder = useRef<MediaRecorder | null>(null);
+  const flyoverChapterRef = useRef<FlyoverChapter | null>(null);
+  const flyoverProgressRef = useRef(0);
+  const flyoverStillUrls = useRef<string[]>([]);
+  const flyoverVideoUrlRef = useRef<string | null>(null);
   const [ready, setReady] = useState(false);
   const [showPerformance, setShowPerformance] = useState(false);
   const [dynamicBodyCount, setDynamicBodyCount] = useState(0);
@@ -4977,6 +5017,169 @@ export function MakeAMessGame({
     calls: 0,
     triangles: 0,
   });
+  const flyoverRunning = flyoverMode === "playing" || flyoverMode === "recording";
+  const cinematicActive = flyover !== undefined && flyoverMode !== "idle";
+
+  const clearFlyoverOutput = useCallback(() => {
+    flyoverStillUrls.current.forEach((url) => URL.revokeObjectURL(url));
+    flyoverStillUrls.current = [];
+    if (flyoverVideoUrlRef.current) {
+      URL.revokeObjectURL(flyoverVideoUrlRef.current);
+      flyoverVideoUrlRef.current = null;
+    }
+    setFlyoverStills([]);
+    setFlyoverVideoUrl(null);
+    setFlyoverRecordingError(false);
+  }, []);
+
+  const captureFlyoverStill = useCallback((chapter: FlyoverChapter, canvas: HTMLCanvasElement) => {
+    if (!flyover) {
+      return;
+    }
+    void Promise.all([
+      createFlyoverStoryFrame(canvas, flyover, chapter, true),
+      createFlyoverStoryFrame(canvas, flyover, chapter, false),
+    ]).then(([captionedBlob, cleanBlob]) => {
+      if (!captionedBlob) {
+        return;
+      }
+      const url = URL.createObjectURL(captionedBlob);
+      const cleanUrl = cleanBlob ? URL.createObjectURL(cleanBlob) : undefined;
+      flyoverStillUrls.current.push(url, ...(cleanUrl ? [cleanUrl] : []));
+      setFlyoverStills((current) => {
+        if (current.some((still) => still.id === chapter.id)) {
+          URL.revokeObjectURL(url);
+          if (cleanUrl) {
+            URL.revokeObjectURL(cleanUrl);
+          }
+          return current;
+        }
+        return [...current, {
+          id: chapter.id,
+          title: chapter.title,
+          body: chapter.body,
+          url,
+          fileName: `${flyover.fileName}-${chapter.id}.png`,
+          cleanUrl,
+          cleanFileName: `${flyover.fileName}-${chapter.id}-clean.png`,
+        }];
+      });
+    });
+  }, [flyover]);
+
+  const handleFlyoverChapterChange = useCallback((chapter: FlyoverChapter | null) => {
+    flyoverChapterRef.current = chapter;
+    setFlyoverChapter(chapter);
+  }, []);
+
+  const handleFlyoverProgress = useCallback((progress: number) => {
+    flyoverProgressRef.current = progress;
+    setFlyoverProgress(progress);
+  }, []);
+
+  const finishFlyover = useCallback(() => {
+    const recorder = flyoverRecorder.current;
+    if (recorder && recorder.state !== "inactive") {
+      recorder.stop();
+    }
+    flyoverRecorder.current = null;
+    setFlyoverChapter(null);
+    flyoverChapterRef.current = null;
+    flyoverProgressRef.current = 1;
+    setFlyoverProgress(1);
+    setFlyoverMode("finished");
+  }, []);
+
+  const startFlyover = useCallback((record: boolean) => {
+    if (!flyover) {
+      return;
+    }
+    if (document.pointerLockElement) {
+      document.exitPointerLock();
+    }
+    if (flyoverRecorder.current?.state === "recording") {
+      flyoverRecorder.current.stop();
+    }
+    clearFlyoverOutput();
+    setActive(true);
+    setFallbackLook(false);
+    setFlyoverChapter(null);
+    setFlyoverProgress(0);
+    flyoverChapterRef.current = null;
+    flyoverProgressRef.current = 0;
+    setTimeOfDay(flyover.keyframes[0]?.timeOfDay ?? "day");
+    setFlyoverRunId((current) => current + 1);
+    if (record) {
+      const canvas = document.querySelector<HTMLCanvasElement>(".game-canvas canvas, canvas");
+      flyoverRecorder.current = canvas
+        ? startFlyoverRecording(
+            canvas,
+            () => ({
+              definition: flyover,
+              chapter: flyoverChapterRef.current,
+              progress: flyoverProgressRef.current,
+            }),
+            (blob) => {
+              const url = URL.createObjectURL(blob);
+              if (flyoverVideoUrlRef.current) {
+                URL.revokeObjectURL(flyoverVideoUrlRef.current);
+              }
+              flyoverVideoUrlRef.current = url;
+              setFlyoverVideoUrl(url);
+            },
+            () => setFlyoverRecordingError(true),
+          )
+        : null;
+      if (!flyoverRecorder.current) {
+        setFlyoverRecordingError(true);
+      }
+    }
+    setFlyoverMode(record ? "recording" : "playing");
+  }, [clearFlyoverOutput, flyover]);
+
+  const openFlyoverGallery = useCallback(() => {
+    if (!flyover) {
+      return;
+    }
+    if (document.pointerLockElement) {
+      document.exitPointerLock();
+    }
+    if (flyoverRecorder.current?.state === "recording") {
+      flyoverRecorder.current.stop();
+    }
+    setActive(true);
+    setFallbackLook(false);
+    setFlyoverChapter(null);
+    setFlyoverProgress(1);
+    flyoverChapterRef.current = null;
+    flyoverProgressRef.current = 1;
+    setFlyoverMode("gallery");
+  }, [flyover]);
+
+  const exitFlyover = useCallback(() => {
+    const recorder = flyoverRecorder.current;
+    if (recorder && recorder.state !== "inactive") {
+      recorder.stop();
+    }
+    flyoverRecorder.current = null;
+    setFlyoverMode("idle");
+    setFlyoverChapter(null);
+    setFlyoverProgress(0);
+    flyoverChapterRef.current = null;
+    flyoverProgressRef.current = 0;
+    setActive(false);
+    setTimeOfDay("day");
+  }, []);
+
+  useEffect(() => () => {
+    if (flyoverRecorder.current?.state === "recording") {
+      flyoverRecorder.current.stop();
+    }
+    flyoverStillUrls.current.forEach((url) => URL.revokeObjectURL(url));
+    if (flyoverVideoUrlRef.current) {
+      URL.revokeObjectURL(flyoverVideoUrlRef.current);
+    }
+  }, []);
 
   const reset = useCallback(() => {
     setBrokenCount(0);
@@ -5083,6 +5286,7 @@ export function MakeAMessGame({
               // chain resolves edges instead.
               antialias: false,
               powerPreference: "high-performance",
+              preserveDrawingBuffer: Boolean(flyover),
             }}
             fallback={
               <div className="webgl-fallback">
@@ -5116,12 +5320,25 @@ export function MakeAMessGame({
                   mobileControls={mobileControls}
                   mobileActions={mobileActions}
                   resetVersion={resetVersion}
+                  cinematic={cinematicActive}
                   onActiveChange={setActive}
                   onFallbackChange={setFallbackLook}
                   onBrokenCountChange={setBrokenCount}
                   onDynamicBodyCountChange={setDynamicBodyCount}
                 />
               </Physics>
+              {flyover ? (
+                <CinematicCameraRig
+                  definition={flyover}
+                  runId={flyoverRunId}
+                  running={flyoverRunning}
+                  onChapterChange={handleFlyoverChapterChange}
+                  onProgress={handleFlyoverProgress}
+                  onTimeOfDayChange={setTimeOfDay}
+                  onStill={captureFlyoverStill}
+                  onComplete={finishFlyover}
+                />
+              ) : null}
               <PerformanceProbe
                 enabled={showPerformance}
                 onSample={setPerformance}
@@ -5133,24 +5350,32 @@ export function MakeAMessGame({
         </KeyboardControls>
       </div>
 
-      <header className="play-topbar">
-        <Link href="/" className="play-brand" aria-label={t("hud.homeAria")}>
-          Handmade Games
-        </Link>
-        <div className="prototype-status">
-          <span />
-          {copy.status}
-        </div>
-        <div className="play-topbar-end">
-          <LanguageSwitcher className="language-switcher-play" />
-          <Link href="/games" className="play-exit">
-            {t("hud.allGames")}
-            <span aria-hidden="true">↗</span>
+      {!cinematicActive ? (
+        <header className="play-topbar">
+          <Link href="/" className="play-brand" aria-label={t("hud.homeAria")}>
+            Handmade Games
           </Link>
-        </div>
-      </header>
+          <div className="prototype-status">
+            <span />
+            {copy.status}
+          </div>
+          <div className="play-topbar-end">
+            {flyover ? (
+              <CinematicFlyoverGalleryShortcut
+                count={flyover.chapters.filter((item) => Boolean(item.stillImage)).length}
+                onOpen={openFlyoverGallery}
+              />
+            ) : null}
+            <LanguageSwitcher className="language-switcher-play" />
+            <Link href="/games" className="play-exit">
+              {t("hud.allGames")}
+              <span aria-hidden="true">↗</span>
+            </Link>
+          </div>
+        </header>
+      ) : null}
 
-      {showPerformance ? (
+      {showPerformance && !cinematicActive ? (
         <aside className="game-performance" aria-label={t("hud.performanceAria")}>
           <span>{performance.fps} FPS</span>
           <span>{performance.calls} calls</span>
@@ -5159,7 +5384,7 @@ export function MakeAMessGame({
         </aside>
       ) : null}
 
-      <aside className="game-objective" aria-live="polite">
+      {!cinematicActive ? <aside className="game-objective" aria-live="polite">
         <p>{copy.eyebrow}</p>
         <h1>{copy.heading}</h1>
         <div className="damage-meter">
@@ -5199,14 +5424,14 @@ export function MakeAMessGame({
           <span>{t("hud.mode")}</span>
           <span>{flightMode ? t("mode.fly") : t("mode.walk")}</span>
         </div>
-      </aside>
+      </aside> : null}
 
-      <div className={`crosshair${active ? " is-active" : ""}`} aria-hidden="true">
+      {!cinematicActive ? <div className={`crosshair${active ? " is-active" : ""}`} aria-hidden="true">
         <i />
         <i />
-      </div>
+      </div> : null}
 
-      <MobileGameControls
+      {!cinematicActive ? <MobileGameControls
         active={active}
         flightMode={flightMode}
         weapon={weapon}
@@ -5219,9 +5444,9 @@ export function MakeAMessGame({
         onTimeChange={cycleTimeOfDay}
         onFlightChange={toggleFlightMode}
         onReset={reset}
-      />
+      /> : null}
 
-      <div className="controls-hint" aria-hidden="true">
+      {!cinematicActive ? <div className="controls-hint" aria-hidden="true">
         <span>WASD</span>
         {t("controls.move")}
         <span>{fallbackLook ? "Drag" : "Mouse"}</span>
@@ -5246,7 +5471,7 @@ export function MakeAMessGame({
         ) : null}
         <span>R</span>
         {t("controls.reset")}
-      </div>
+      </div> : null}
 
       {!active && (
         <section className="game-gate" aria-label={t("hud.launchAria")}>
@@ -5266,6 +5491,15 @@ export function MakeAMessGame({
               {brokenCount > 0 ? copy.returnToGame : copy.enter}
               <span aria-hidden="true">↗</span>
             </button>
+            {flyover ? (
+              <CinematicFlyoverLauncher
+                ready={ready}
+                galleryCount={flyover.chapters.filter((item) => Boolean(item.stillImage)).length}
+                onPlay={() => startFlyover(false)}
+                onRecord={() => startFlyover(true)}
+                onGallery={openFlyoverGallery}
+              />
+            ) : null}
             {brokenCount > 0 && (
               <button className="reset-game" type="button" onClick={reset}>
                 {copy.reset}
@@ -5274,6 +5508,20 @@ export function MakeAMessGame({
           </div>
         </section>
       )}
+      {flyover ? (
+        <CinematicFlyoverOverlay
+          definition={flyover}
+          mode={flyoverMode}
+          chapter={flyoverChapter}
+          progress={flyoverProgress}
+          stills={flyoverStills}
+          videoUrl={flyoverVideoUrl}
+          recordingError={flyoverRecordingError}
+          onReplay={() => startFlyover(false)}
+          onRecordAgain={() => startFlyover(true)}
+          onExit={exitFlyover}
+        />
+      ) : null}
     </main>
   );
 }

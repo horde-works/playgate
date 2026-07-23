@@ -1,5 +1,10 @@
 import { Euler, Quaternion, Vector3 } from "three";
-import type { BreakableMaterial, BreakableShape } from "./destructionScene";
+import type {
+  BreakableMaterial,
+  BreakableShape,
+  LandscapeSurfaceProfile,
+  SurfaceTextureProfile,
+} from "./destructionScene";
 import {
   applyVoxelDamage,
   createSolidVoxelBody,
@@ -14,6 +19,8 @@ export interface ShardDefinition {
   readonly id: string;
   readonly material: BreakableMaterial;
   readonly color: string;
+  readonly textureProfile?: SurfaceTextureProfile;
+  readonly landscapeSurface?: LandscapeSurfaceProfile;
   /** Round debris (pipe/boiler segments, wheels) keeps its round shape. */
   readonly shape?: BreakableShape;
   readonly size: readonly [number, number, number];
@@ -30,6 +37,8 @@ export interface ShardSource {
   readonly id: string;
   readonly material: BreakableMaterial;
   readonly color: string;
+  readonly textureProfile?: SurfaceTextureProfile;
+  readonly landscapeSurface?: LandscapeSurfaceProfile;
   readonly shape?: BreakableShape;
   readonly size: readonly [number, number, number];
   readonly voxelBody?: VoxelBody;
@@ -43,6 +52,8 @@ export interface RemnantDefinition {
   readonly parentId: string;
   readonly material: BreakableMaterial;
   readonly color: string;
+  readonly textureProfile?: SurfaceTextureProfile;
+  readonly landscapeSurface?: LandscapeSurfaceProfile;
   readonly shape?: BreakableShape;
   readonly size: readonly [number, number, number];
   readonly position: readonly [number, number, number];
@@ -714,6 +725,8 @@ export function damageBody(
         id,
         material: source.material,
         color: source.color,
+        textureProfile: source.textureProfile,
+        landscapeSurface: source.landscapeSurface,
         shape: fragment.shape,
         size: fragment.size,
         voxelBody: fragment.voxelBody,

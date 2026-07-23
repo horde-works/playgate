@@ -165,10 +165,11 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
     const tints = new Float32Array(batch.pieces.length * 3);
     const tint = new Color();
     batch.pieces.forEach((piece, index) => {
-      if (piece.landscapeSurface === "viking-ground") {
-        // Negative band is an otherwise unused sentinel. Reusing this
-        // existing attribute keeps the shader within WebGL's attribute cap.
-        bands[index] = -1;
+      if (piece.landscapeSurface) {
+        // Negative bands are otherwise unused. -1 = village earth, -2 =
+        // authored city grime. Reusing this attribute stays within WebGL's
+        // instancing attribute cap.
+        bands[index] = piece.landscapeSurface === "viking-ground" ? -1 : -2;
         return;
       }
       if (hasSilicateJoints(piece.id, piece.material)) {
@@ -207,8 +208,9 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
       getPieceMaterial(
         batch.material,
         batch.materialColor,
+        batch.textureProfile,
       ),
-    [batch.material, batch.materialColor],
+    [batch.material, batch.materialColor, batch.textureProfile],
   );
   const instanceIds = useMemo(
     () => batch.pieces.map((piece) => piece.id),
