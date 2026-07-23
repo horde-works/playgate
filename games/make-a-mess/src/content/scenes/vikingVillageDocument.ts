@@ -1062,16 +1062,21 @@ function createWoodland(): void {
     if (Math.abs(x) < 12 && z > 35) {
       continue;
     }
-    const height = 5.5 + noise(index, 3, 24) * 5;
-    primitive(woodland, `tree:${index}:trunk`, "wood", "cylinder", [x, height / 2, z], [0.55 + noise(index, 2) * 0.45, height, 0.55 + noise(index, 2) * 0.45], index % 4 === 0 ? "#5a5445" : "#4d392d");
-    for (let crown = 0; crown < 3; crown += 1) {
-      const crownY = height - 1.1 + crown * 1.15;
-      primitive(woodland, `tree:${index}:crown:${crown}`, "foliage", "panel", [x, crownY, z], [4.8 - crown * 0.9, 2.0, 4.8 - crown * 0.9], crown % 2 === 0 ? "#304535" : "#3b503b", {
-        bearsLoad: false,
-        volume: 0.34 + crown * 0.05,
-        contactBoxes: [{ position: [0, -crownY + height, 0], size: [0.7, 0.25, 0.7] }],
-      });
-    }
+    // Composite trees from the shared flora core: pine forest with birches
+    // scattered through it, every tree a different seed and scale.
+    const birch = noise(index, 5, 25) > 0.72;
+    const variant = birch
+      ? `core:birch:${1 + (index % 2)}`
+      : `core:pine:${1 + (index % 4)}`;
+    place(woodland, `tree:${index}`, variant, {
+      position: [x, 0, z],
+      rotation: [0, noise(index, 6, 26) * Math.PI * 2, 0],
+      scale: [
+        0.85 + noise(index, 7, 27) * 0.5,
+        0.85 + noise(index, 7, 27) * 0.5,
+        0.85 + noise(index, 7, 27) * 0.5,
+      ],
+    });
   }
 }
 
@@ -1435,12 +1440,104 @@ function createLivedInDressing(): void {
   }
 }
 
+
+/**
+ * The village's STORY: it is growing. A new longhouse is going up on the
+ * south-west plot — three courses of the log frame laid, corner posts up,
+ * timber stacked beside a hewing trestle in fresh chips, stake-and-rope
+ * marking the plot. And the gate watch has just changed: spears lean by the
+ * palisade, a shield set down beside them.
+ */
+function createStorySites(): void {
+  const structures = group("working-yards", "Weapon shelters, drying racks and work yards", "wood");
+  const storage = group("storage", "Barrels, crates and winter stores", "wood");
+  const ornaments = group("gate-ornaments", "Gate shields and approach spikes", "wood", "mounted");
+  const siteX = -28;
+  const siteZ = -12;
+
+  // Three alternating courses of an 8x8 frame.
+  for (let course = 0; course < 3; course += 1) {
+    const y = 0.32 + course * 0.5;
+    if (course % 2 === 0) {
+      for (const side of [-1, 1] as const) {
+        place(structures, `newhouse:course:${course}:${side}`, "viking:log:8", {
+          position: [siteX, y, siteZ + side * 4],
+        });
+      }
+    } else {
+      for (const side of [-1, 1] as const) {
+        place(structures, `newhouse:course:${course}:${side}`, "viking:log:8", {
+          position: [siteX + side * 4, y, siteZ],
+          rotation: [0, Math.PI / 2, 0],
+        });
+      }
+    }
+  }
+  for (const [index, [cx, cz]] of ([[-4.2, -4.2], [4.2, -4.2], [-4.2, 4.2], [4.2, 4.2]] as const).entries()) {
+    place(structures, `newhouse:post:${index}`, "viking:post:3", {
+      position: [siteX + cx, 0, siteZ + cz],
+    });
+  }
+  // Timber stack: three logs down, two nested on top.
+  for (const [index, [ox, oy, oz]] of ([[-0.75, 0.32, 0], [0, 0.32, 0.75], [0.75, 0.32, -0.6], [-0.35, 0.86, 0.05], [0.4, 0.86, 0.1]] as const).entries()) {
+    place(storage, `newhouse:timber:${index}`, "viking:log:8", {
+      position: [siteX - 6.5 + ox, oy, siteZ + 1.5 + oz],
+      rotation: [0, 0.12 * index, 0],
+    });
+  }
+  // Hewing trestle: a work log up on two chocks, chips everywhere.
+  for (const side of [-1, 1] as const) {
+    primitive(structures, `newhouse:chock:${side}`, "wood", "cylinder",
+      [siteX + 1.2 + side * 1.4, 0.26, siteZ + 6.2], [0.52, 0.52, 0.52], "#4a3526");
+  }
+  place(structures, "newhouse:worklog", "viking:log:4", {
+    position: [siteX + 1.2, 0.78, siteZ + 6.2],
+  });
+  for (let chip = 0; chip < 9; chip += 1) {
+    primitive(structures, `newhouse:chip:${chip}`, "wood", "plank",
+      [siteX + 0.4 + noise(chip, 1, 61) * 2.2, 0.045, siteZ + 5.3 + noise(chip, 2, 62) * 1.9],
+      [0.3 + noise(chip, 3, 63) * 0.22, 0.05, 0.1], chip % 2 === 0 ? "#b08d5e" : "#9a7a4e", {
+        rotation: [0, noise(chip, 4, 64) * Math.PI, 0],
+      });
+  }
+  // Plot marking stakes (the rope between them is strung by SceneDressing).
+  for (const [index, [mx, mz]] of ([[-5.4, -5.4], [5.4, -5.4], [5.4, 5.4], [-5.4, 5.4]] as const).entries()) {
+    primitive(structures, `newhouse:stake:${index}`, "wood", "cylinder",
+      [siteX + mx, 0.55, siteZ + mz], [0.14, 1.1, 0.14], "#6b4f35");
+  }
+
+  // The gate watch just changed: spears lean on the palisade, a shield rests.
+  const gateZ = WORLD_CENTER_Z + palisadeRadius(Math.PI / 2);
+  for (const [index, lean] of ([[0.3], [0.24]] as const).entries()) {
+    const sx = -5.1 - index * 0.55;
+    primitive(ornaments, `watch:spear:${index}:shaft`, "wood", "cylinder",
+      [sx, 1.35, gateZ - 1.05], [0.09, 2.7, 0.09], "#6b503a", {
+        rotation: [lean[0], 0, 0.05 * (index === 0 ? 1 : -1)],
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.85,
+        contactBoxes: [{ position: [0, 0, 0], size: [0.4, 2.7, 1.1] }],
+      });
+    primitive(ornaments, `watch:spear:${index}:head`, "steel", "steelSheet",
+      [sx, 2.72, gateZ - 1.48], [0.09, 0.34, 0.05], "#8f979a", {
+        bearsLoad: false,
+        sideAttachmentReach: 0.5,
+        contactBoxes: [{ position: [0, 0, 0], size: [0.3, 0.5, 0.6] }],
+      });
+  }
+  place(ornaments, "watch:shield", "viking:shield", {
+    position: [-6.6, 0.8, gateZ - 0.95],
+    rotation: [0.42, 0.2, 0],
+  }, { palette: { paint: "#5e6a48", stripe: "#c9b06a" } });
+}
+
 createTerrain();
 createPalisade();
 createBuildings();
 createVillageLife();
 createRockwork();
 createLivedInDressing();
+createStorySites();
 createWoodland();
 
 export const vikingVillageDocument: AuthoredSceneDocument = {

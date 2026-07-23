@@ -3,6 +3,7 @@ import {
   type StructuralMaterialProfile,
 } from "./structuralPhysics.ts";
 import { deinterpenetrateClusters } from "./deinterpenetrate.ts";
+import { propTree } from "../content/prefabs/coreFlora.ts";
 import {
   placeProp,
   propCautionBoard,
@@ -2263,14 +2264,14 @@ function createConcreteFence(): BreakableClusterDefinition {
 
   for (let post = 0; post <= 8; post += 1) {
     pieces.push(
-      makePiece(`${id}:post:${post}`, id, "concrete", "panel",
-        [-11.2 + post * 2.6, 1.03, -26.3], [0.22, 2.1, 0.22], "#8f9595"),
+      { ...makePiece(`${id}:post:${post}`, id, "concrete", "panel",
+        [-11.2 + post * 2.6, 1.03, -26.3], [0.22, 2.1, 0.22], "#8f9595"), weathering: 0.45 },
     );
   }
   for (let panel = 0; panel < 8; panel += 1) {
     pieces.push(
-      makePiece(`${id}:panel:${panel}`, id, "concrete", "panel",
-        [-9.9 + panel * 2.6, 0.99, -26.3], [2.34, 1.86, 0.1], "#9aa0a0"),
+      { ...makePiece(`${id}:panel:${panel}`, id, "concrete", "panel",
+        [-9.9 + panel * 2.6, 0.99, -26.3], [2.34, 1.86, 0.1], "#9aa0a0"), weathering: 0.5 },
     );
   }
 
@@ -2632,12 +2633,14 @@ function createTownClutter(): BreakableClusterDefinition[] {
       });
     }
   };
-  boardUp("k3:a", 52.3, 1.9, -16.86);
-  boardUp("k3:b", 63.5, 4.5, -16.86);
-  boardUp("k4:a", -6.4, 1.9, -34.86);
-  boardUp("k4:b", 3.2, 4.5, -34.86);
-  boardUp("k5:a", 18.6, 1.9, -34.86);
-  boardUp("k6:a", 52.5, 1.9, 19.14);
+  // Bay-accurate: bayCenter(b) = x0 + 0.15 + 1.35625 * (b + 0.5) for each
+  // shell's own x0; y centred on the actual window rows.
+  boardUp("k3:a", 54.25, 1.75, -16.86);
+  boardUp("k3:b", 65.1, 4.35, -16.86);
+  boardUp("k4:a", -9.82, 1.75, -34.86);
+  boardUp("k4:b", -3.03, 4.35, -34.86);
+  boardUp("k5:a", 20.25, 1.75, -34.86);
+  boardUp("k6:a", 54.25, 1.75, 19.14);
   for (const [index, [px, py, pz, tone]] of (
     [
       [-5.6, 1.05, -25.07, "#8a5a43"],
@@ -2689,6 +2692,69 @@ function createTownClutter(): BreakableClusterDefinition[] {
     });
   }
   clusters.push(cluster("town:heaps", "Heaped soil and materials", "earth", "mounted", heaps));
+
+  // --- Courtyard and verge trees (composite flora core) -------------------
+  const treePieces: BreakablePieceDefinition[] = [];
+  const trees: readonly (readonly ["oak" | "birch" | "pine", number, number, number, number?])[] = [
+    ["oak", 8.2, 4.2, 5, 1.05],
+    ["birch", 25.6, 0.8, 3],
+    ["birch", 16.4, 1.0, 4],
+    ["oak", 49, 8.5, 6],
+    ["birch", 60.6, 4.2, 5],
+    ["oak", 69.4, 9.8, 7, 0.9],
+    ["pine", -14.0, -24.5, 5, 1.1],
+    ["pine", -13.5, -28.8, 6],
+    ["birch", -13.8, -36.5, 6],
+    ["oak", 48.8, -35.5, 8],
+  ];
+  for (const [index, [kind, tx, tz, seed, scale]] of trees.entries()) {
+    treePieces.push(
+      ...asPieces("town:trees", `tree:${index}`, propTree(kind, { seed, scale }), [tx, 0, tz]),
+    );
+  }
+  clusters.push(cluster("town:trees", "Courtyard trees", "wood", "mounted", treePieces));
+
+  // --- The block's STORY: the heating main to k5 is dug open --------------
+  // Spoil berms flank the cut, big steel pipes wait beside it, planks bridge
+  // the trench, a spool and tarp sit by the works — a job mid-way, not decor.
+  const works: BreakablePieceDefinition[] = [];
+  for (const [index, bz] of [-32.3, -34.1].entries()) {
+    for (let seg = 0; seg < 4; seg += 1) {
+      const bx = 21.5 + seg * 1.9;
+      works.push({
+        ...makePiece(`town:works:spoil:${index}:${seg}`, "town:works", "earth", "stoneBlock",
+          [bx, 0.26, bz + (seg % 2) * 0.18], [2.0, 0.55, 0.85], seg % 2 === 0 ? "#5b4834" : "#63503a",
+          [0, (seg * 0.7 + index) % 1.2, 0]),
+        contactBoxes: [{ position: [bx, 0.26, bz + (seg % 2) * 0.18], size: [1.2, 0.55, 0.85] }],
+        weathering: 0.3,
+      });
+    }
+  }
+  for (let pipe = 0; pipe < 3; pipe += 1) {
+    const px = 22.5 + pipe * 0.05;
+    const py = pipe === 2 ? 0.86 : 0.29;
+    const pz = pipe === 2 ? -35.35 : -35.1 - pipe * 0.52;
+    works.push({
+      ...makePiece(`town:works:pipe:${pipe}`, "town:works", "steel", "cylinder",
+        [px, py, pz], [0.58, 3.8, 0.58], pipe === 1 ? "#6e6f66" : "#75766c",
+        [0, 0, Math.PI / 2]),
+      contactBoxes: [{ position: [px, py, pz], size: [3.8, 0.58, 0.58] }],
+      weathering: 0.35,
+    });
+  }
+  for (const [plank, px] of [21.5, 23.4, 25.3].entries()) {
+    works.push({
+      ...makePiece(`town:works:bridge:${plank}`, "town:works", "wood", "plank",
+        [px, 0.6, -33.2], [0.42, 0.07, 3.0], plank % 2 === 0 ? "#9a7a50" : "#8a6a42"),
+      contactBoxes: [{ position: [px, 0.6, -33.2], size: [0.42, 0.07, 3.0] }],
+    });
+  }
+  works.push(
+    ...asPieces("town:works", "works:spool", propSpool({ yaw: 0.4 }), [19.4, 0, -33.3]),
+    ...asPieces("town:works", "works:tarp", propTarpPile({ yaw: 1.9, color: "#4e5a68" }), [28.6, 0, -33.0]),
+    ...asPieces("town:works", "works:caution", propCautionBoard({ yaw: 1.55, width: 1.4 }), [20.2, 0, -31.6]),
+  );
+  clusters.push(cluster("town:works", "Opened heating main", "earth", "mounted", works));
 
   // --- Human marks: sign, graffiti, road signs, caution boards ------------
   const marks: BreakablePieceDefinition[] = [];

@@ -311,6 +311,13 @@ export const vikingTrafficRoutes: readonly VikingTrafficRoute[] = [
     width: 0.72,
     wear: 0.48,
   },
+  {
+    id: "new-house",
+    purpose: "The commons to the new longhouse under construction",
+    points: [[-16.6, 4.6], [-21.5, -3.5], [-26.5, -10.2]],
+    width: 0.9,
+    wear: 0.5,
+  },
   ...homePlayLoops,
 ] as const;
 

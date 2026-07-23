@@ -3,6 +3,7 @@
 import { useMemo, type RefObject } from "react";
 import { WireSpans, type WireSpan } from "./WireSpans";
 import { IvyPatches, WeedClumps, type IvyRun, type WeedPoint } from "./Undergrowth";
+import { Puddles, type PuddleSpot } from "./Puddles";
 import {
   vikingPlanLocalPoint,
   vikingVillageHomes,
@@ -20,6 +21,7 @@ interface DressingConfig {
   readonly wires?: readonly WireSpan[];
   readonly ivy?: readonly IvyRun[];
   readonly weeds?: readonly WeedPoint[];
+  readonly puddles?: readonly PuddleSpot[];
 }
 
 function hash(index: number, salt: number): number {
@@ -179,7 +181,37 @@ function vikingDressing(): DressingConfig {
     });
   }
 
-  return { wires, ivy, weeds };
+  // Stake-and-rope marking around the new longhouse plot.
+  const plot: readonly (readonly [number, number])[] = [
+    [-33.4, -17.4],
+    [-22.6, -17.4],
+    [-22.6, -6.6],
+    [-33.4, -6.6],
+  ];
+  for (let corner = 0; corner < plot.length; corner += 1) {
+    const from = plot[corner];
+    const to = plot[(corner + 1) % plot.length];
+    wires.push({
+      from: [from[0], 1.02, from[1]],
+      to: [to[0], 1.02, to[1]],
+      sag: 0.09,
+      thickness: 0.035,
+      color: "#7a6a4a",
+    });
+  }
+
+  const puddles: PuddleSpot[] = [
+    { x: -7.6, z: 12.2, r: 0.9 },
+    { x: -4.6, z: 14.7, r: 0.7 },
+    { x: 0.4, z: 41.6, r: 1.15 },
+    { x: -12.8, z: -2.8, r: 0.8 },
+    { x: 37.4, z: -12.3, r: 0.7 },
+    { x: 23.4, z: 10.8, r: 0.85 },
+    { x: 2.1, z: -6.4, r: 0.95 },
+    { x: -27.2, z: -8.6, r: 0.8 },
+  ].map((spot) => ({ ...spot, y: 0.058 }));
+
+  return { wires, ivy, weeds, puddles };
 }
 
 // ---------------------------------------------------------------------------
@@ -342,7 +374,20 @@ function openHouseDressing(): DressingConfig {
     }
   }
 
-  return { wires, ivy, weeds };
+  const puddles: PuddleSpot[] = [
+    { x: 14.2, z: -13.4, r: 1.2, y: 0.09 },
+    { x: 33.5, z: -10.6, r: 0.9, y: 0.09 },
+    { x: 40.8, z: -14.2, r: 1.05, y: 0.09 },
+    { x: 52.2, z: -30.7, r: 1.25, y: 0.09 },
+    { x: 2.5, z: -31.3, r: 0.8, y: 0.09 },
+    { x: 23.2, z: 0.5, r: 0.8, y: 0.055 },
+    { x: -6.2, z: -18.6, r: 1.0, y: 0.055 },
+    { x: 4.5, z: 1.4, r: 0.55, y: 0.055 },
+    { x: 60.2, z: 1.5, r: 0.5, y: 0.055 },
+    { x: 24.2, z: -32.9, r: 0.9, y: 0.055 },
+  ];
+
+  return { wires, ivy, weeds, puddles };
 }
 
 // ---------------------------------------------------------------------------
@@ -368,6 +413,7 @@ export function SceneDressing({
       {config.wires?.length ? <WireSpans spans={config.wires} /> : null}
       {config.ivy?.length ? <IvyPatches runs={config.ivy} nightRef={nightRef} /> : null}
       {config.weeds?.length ? <WeedClumps points={config.weeds} nightRef={nightRef} /> : null}
+      {config.puddles?.length ? <Puddles spots={config.puddles} /> : null}
     </>
   );
 }

@@ -4,6 +4,7 @@ import type {
   ScenePrefabLibrary,
   ScenePrefabPieceDefinition,
 } from "../scenes/sceneContract.ts";
+import { propBirch, propPine } from "./coreFlora.ts";
 import {
   propBucket,
   propCask,
@@ -1002,6 +1003,13 @@ const smokeLouver = prefab("viking:smoke-louver", "Roof smoke louver", ["viking"
   { id: "cap-ridge", material: "wood", shape: "plank", position: [0, 1.11, 0], size: [0.4, 0.12, 1.12], color: darkTimber, bearsLoad: false },
 ]);
 
+const treeVariants = [
+  ...[1, 2, 3, 4].map((seed) =>
+    prefab(`core:pine:${seed}`, "Pine tree", ["core", "flora", "tree"], propPine({ seed }))),
+  ...[1, 2].map((seed) =>
+    prefab(`core:birch:${seed}`, "Birch tree", ["core", "flora", "tree"], propBirch({ seed }))),
+];
+
 const prefabs = [
   verticalLog("viking:post:3", 3, 0.28),
   verticalLog("viking:palisade", 4.8, 0.41, true),
@@ -1042,6 +1050,7 @@ const prefabs = [
   coreBucket,
   corePlankStack,
   coreTarp,
+  ...treeVariants,
 ] as const;
 
 export const vikingPrefabLibrary: ScenePrefabLibrary = new Map(
