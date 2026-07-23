@@ -45,6 +45,8 @@ export interface MaterialEnvironmentUpdate {
   readonly time: number;
   /** Global wind strength 0..1 (0 disables cloth sway under load). */
   readonly windStrength: number;
+  /** 1 enables the town stain map on walls; 0 elsewhere. */
+  readonly stains: number;
 }
 
 export function updateMaterialEnvironment(
@@ -59,6 +61,9 @@ export function updateMaterialEnvironment(
     shader.uniforms.uWetness.value = update.wetness;
     shader.uniforms.uTime.value = update.time;
     shader.uniforms.uWindStrength.value = update.windStrength;
+    if (shader.uniforms.uStainStrength) {
+      shader.uniforms.uStainStrength.value = update.stains;
+    }
   }
 }
 
@@ -349,6 +354,250 @@ export function sampleVikingGroundTraffic(x: number, z: number): number {
   }
   const index = (py * size + px) * 4;
   return Math.max(data[index], data[index + 1]) / 255;
+}
+
+
+// ---------------------------------------------------------------------------
+// Town stain map — weathering PAINTED into the wall texture, with sources.
+//
+// A 2048x1024 canvas holds two facade-space bands: the bottom half maps walls
+// facing +-Z as (x + 0.37*z, y), the top half walls facing +-X as
+// (z + 0.37*x, y). The shear decorrelates buildings that share an axis range,
+// so every facade gets its own stains. Channels: R = water/grime runs,
+// G = rust runs, B = damage (spalled plaster cores and cracks). The piece
+// shader samples this once and tints the wall itself — streaks BELONG to the
+// surface, they are not stickers in front of it.
+let townStainTexture: CanvasTexture | null = null;
+
+const STAIN_U_OFFSET = 60;
+const STAIN_U_SPAN = 200;
+const STAIN_Y_SPAN = 12;
+
+export function getTownStainTexture(): CanvasTexture {
+  if (townStainTexture) {
+    return townStainTexture;
+  }
+  const canvas = document.createElement("canvas");
+  canvas.width = 2048;
+  canvas.height = 1024;
+  const context = canvas.getContext("2d");
+  if (context) {
+    context.fillStyle = "#000";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.globalCompositeOperation = "lighter";
+    context.lineCap = "round";
+
+    const pxPerU = canvas.width / STAIN_U_SPAN;
+    const pxPerY = 512 / STAIN_Y_SPAN;
+    const toPx = (face: "z" | "x", u: number, y: number): readonly [number, number] => [
+      (u + STAIN_U_OFFSET) * pxPerU,
+      face === "z" ? 1024 - y * pxPerY : 512 - y * pxPerY,
+    ];
+    let stainSeed = 7;
+    const next = (): number => {
+      stainSeed = (stainSeed * 16807) % 2147483647;
+      return stainSeed / 2147483647;
+    };
+    const channel = (r: number, g: number, b: number, a: number): string =>
+      `rgba(${r}, ${g}, ${b}, ${a})`;
+
+    // A tapering, wavering run of water or rust from a point source.
+    const run = (
+      face: "z" | "x",
+      u: number,
+      yTop: number,
+      length: number,
+      width: number,
+      rgb: readonly [number, number, number],
+      strength: number,
+    ): void => {
+      const [sx, sy] = toPx(face, u, yTop);
+      const drop = length * pxPerY;
+      for (const [pass, alpha] of [
+        [width * 2.4, strength * 0.16],
+        [width * 1.2, strength * 0.3],
+        [width * 0.5, strength * 0.42],
+      ] as const) {
+        context.strokeStyle = channel(rgb[0], rgb[1], rgb[2], alpha);
+        context.beginPath();
+        context.moveTo(sx, sy);
+        const wobble = (next() - 0.5) * 3;
+        const segments = 7;
+        for (let seg = 1; seg <= segments; seg += 1) {
+          const t = seg / segments;
+          context.lineTo(
+            sx + Math.sin(t * 9 + u) * (1.6 + wobble) * (1 - t * 0.4),
+            sy + drop * t,
+          );
+        }
+        context.lineWidth = Math.max(1, pass * pxPerU * 0.06);
+        context.stroke();
+      }
+      // The source itself is darkest: a small pooled head.
+      context.fillStyle = channel(rgb[0], rgb[1], rgb[2], strength * 0.4);
+      context.beginPath();
+      context.ellipse(sx, sy, width * pxPerU * 0.09, 2.4, 0, 0, Math.PI * 2);
+      context.fill();
+    };
+
+    // A spalled patch: irregular dark core; the shader lifts a pale rim.
+    const spall = (face: "z" | "x", u: number, y: number, radius: number): void => {
+      const [sx, sy] = toPx(face, u, y);
+      context.fillStyle = channel(0, 0, 235, 0.85);
+      context.beginPath();
+      const lobes = 9;
+      for (let lobe = 0; lobe <= lobes; lobe += 1) {
+        const angle = (lobe / lobes) * Math.PI * 2;
+        const wob = radius * (0.65 + next() * 0.55);
+        const px = sx + Math.cos(angle) * wob * pxPerU;
+        const py = sy + Math.sin(angle) * wob * pxPerY * 0.8;
+        if (lobe === 0) context.moveTo(px, py);
+        else context.lineTo(px, py);
+      }
+      context.closePath();
+      context.fill();
+      // A couple of detached chips beside the wound.
+      for (let chip = 0; chip < 2; chip += 1) {
+        context.beginPath();
+        context.ellipse(
+          sx + (next() - 0.5) * radius * 3.4 * pxPerU,
+          sy + (next() - 0.5) * radius * 2.2 * pxPerY,
+          2.6, 2.0, next() * 3, 0, Math.PI * 2,
+        );
+        context.fill();
+      }
+    };
+
+    // A thin branching crack wandering out of a corner.
+    const crack = (
+      face: "z" | "x",
+      u: number,
+      y: number,
+      length: number,
+      angle: number,
+      branchChance = 0.5,
+    ): void => {
+      let [px, py] = toPx(face, u, y);
+      let heading = angle;
+      context.strokeStyle = channel(0, 0, 150, 0.8);
+      context.lineWidth = 1.6;
+      context.beginPath();
+      context.moveTo(px, py);
+      const segments = 6 + Math.floor(next() * 5);
+      const step = (length * pxPerY) / segments;
+      for (let seg = 0; seg < segments; seg += 1) {
+        heading += (next() - 0.5) * 0.9;
+        px += Math.cos(heading) * step;
+        py += Math.sin(heading) * step;
+        context.lineTo(px, py);
+        if (next() < branchChance * 0.3) {
+          const bx = px + Math.cos(heading + (next() > 0.5 ? 1.1 : -1.1)) * step * 1.6;
+          const by = py + Math.sin(heading + 0.9) * step * 1.4;
+          context.moveTo(px, py);
+          context.lineTo(bx, by);
+          context.moveTo(px, py);
+        }
+      }
+      context.stroke();
+    };
+
+    const WATER: readonly [number, number, number] = [235, 0, 0];
+    const RUST: readonly [number, number, number] = [0, 235, 0];
+
+    // ---- Khrushchevka blocks: sources derived from the real bay layout ----
+    const blocks = [
+      { x0: 12, z0: -8, z1: -1 },
+      { x0: 12, z0: -24, z1: -17 },
+      { x0: 48, z0: -24, z1: -17 },
+      { x0: -12, z0: -42, z1: -35 },
+      { x0: 14, z0: -42, z1: -35 },
+      { x0: 48, z0: 12, z1: 19 },
+    ];
+    const bayWidth = 21.7 / 16;
+    for (const block of blocks) {
+      for (const zFace of [block.z0, block.z1]) {
+        const shearU = (x: number): number => x + zFace * 0.37;
+        // Water runs from a sparse subset of window sill corners.
+        for (let floor = 0; floor < 4; floor += 1) {
+          for (let bay = 0; bay < 16; bay += 1) {
+            if (next() > 0.09) continue;
+            const corner = next() > 0.5 ? 0.55 : -0.55;
+            run("z",
+              shearU(block.x0 + 0.15 + bayWidth * (bay + 0.5) + corner),
+              0.4 + floor * 2.6 + 1.0,
+              0.5 + next() * 1.6,
+              0.3 + next() * 0.25,
+              WATER, 0.5 + next() * 0.4);
+          }
+        }
+        // Door reveals (entrance bays 2 and 10): grime down both jambs and a
+        // crack leaving a lintel corner.
+        for (const doorBay of [2, 10]) {
+          const cx = block.x0 + 0.15 + bayWidth * (doorBay + 0.5);
+          for (const jamb of [-0.72, 0.72]) {
+            run("z", shearU(cx + jamb), 2.35, 1.5 + next() * 0.7, 0.26, WATER, 0.55);
+          }
+          crack("z", shearU(cx - 0.75), 2.4, 0.7 + next() * 0.5, -1.1 + next() * 0.5);
+        }
+        // Under the roof line: longer parallel seep runs + one rust track.
+        for (let i = 0; i < 3; i += 1) {
+          run("z", shearU(block.x0 + 2.5 + next() * 17), 10.85, 1.2 + next() * 1.6, 0.4, WATER, 0.45);
+        }
+        run("z", shearU(block.x0 + 3 + next() * 16), 10.85, 1.8 + next() * 1.2, 0.3, RUST, 0.6);
+        // Settlement cracks near the building ends.
+        crack("z", shearU(block.x0 + 0.7), 9.5, 2.4 + next() * 1.6, 1.35, 0.3);
+        crack("z", shearU(block.x0 + 21.3), 8.8, 2.0 + next() * 1.8, 1.75, 0.3);
+        // A couple of spalled patches low on the facade.
+        if (next() > 0.4) {
+          spall("z", shearU(block.x0 + 2 + next() * 18), 0.9 + next() * 1.6, 0.28 + next() * 0.22);
+        }
+      }
+    }
+    // Rust bleeding from the AC units (they hang on k1/k2).
+    for (const [ax, ay, az] of [
+      [13.5, 4.15, -1], [20.9, 1.55, -1], [31.8, 4.15, -1],
+      [17.6, 6.75, -8], [26.1, 4.15, -8],
+      [16.2, 4.15, -17], [25.6, 1.55, -17], [30.4, 6.75, -17],
+    ] as const) {
+      run("z", ax + az * 0.37, ay - 0.28, 0.9 + next() * 0.9, 0.3, RUST, 0.75);
+    }
+
+    // ---- Old houses h1..h3: window corners, downpipe rust, spall, cracks ----
+    for (const [hx, hz] of [[0, 0], [56, 0], [56, -38]] as const) {
+      for (const zFace of [hz + 0.71, hz - 6.71]) {
+        const shearU = (x: number): number => x + zFace * 0.37;
+        for (const wx of [-2.6, -0.9, 1.1, 2.9]) {
+          if (next() > 0.45) continue;
+          run("z", shearU(hx + wx), 2.15 + (next() > 0.5 ? 2.3 : 0), 0.6 + next() * 1.1, 0.28, WATER, 0.55);
+        }
+        // Rust track behind each downpipe elbow.
+        for (const side of [-1, 1]) {
+          run("z", shearU(hx + side * 4.28), 4.9, 2.6, 0.34, RUST, 0.5);
+        }
+        spall("z", shearU(hx - 2.2 + next() * 4.4), 1.1 + next() * 1.8, 0.3 + next() * 0.25);
+        crack("z", shearU(hx + (next() - 0.5) * 6), 4.6, 1.4 + next() * 1.2, 1.3 + next() * 0.6, 0.6);
+      }
+      for (const xFace of [hx - 4.11, hx + 4.11]) {
+        const shearU = (z: number): number => z + xFace * 0.37;
+        run("x", shearU(hz - 3 + next() * 3), 4.7, 1.4 + next() * 1.4, 0.34, WATER, 0.5);
+        if (next() > 0.5) {
+          spall("x", shearU(hz - 4 + next() * 4.5), 0.9 + next() * 1.4, 0.3 + next() * 0.2);
+        }
+      }
+    }
+
+    // ---- Garage row: seepage under the roof slab on the long back wall ----
+    for (let i = 0; i < 5; i += 1) {
+      run("z", -11 + i * 4.2 + next() * 2 + -25 * 0.37, 2.28, 0.8 + next() * 0.9, 0.35, WATER, 0.5);
+    }
+  }
+
+  townStainTexture = new CanvasTexture(canvas);
+  townStainTexture.magFilter = LinearFilter;
+  townStainTexture.minFilter = LinearMipmapLinearFilter;
+  townStainTexture.anisotropy = 4;
+  townStainTexture.colorSpace = NoColorSpace;
+  return townStainTexture;
 }
 
 function createRandom(seed: number): () => number {
@@ -772,6 +1021,10 @@ export function getPieceMaterial(
       shader.uniforms.uWetness = { value: 0.0 };
       shader.uniforms.uTime = { value: 0.0 };
       shader.uniforms.uWindStrength = { value: 1.0 };
+      shader.uniforms.uStainStrength = { value: 0.0 };
+      if (material === "concrete" || material === "plaster" || material === "brick") {
+        shader.uniforms.uStainMap = { value: getTownStainTexture() };
+      }
       shader.uniforms.uLandscapeSoilMap = { value: getMaterialTexture("soil") };
       shader.uniforms.uVikingTrafficMap = { value: getVikingTrafficTexture() };
       environmentShaders.push(shader);
@@ -905,6 +1158,11 @@ if (materialProjectionNormal.x >= materialProjectionNormal.y && materialProjecti
         .replace(
           "#include <common>",
           `#include <common>
+${
+  material === "concrete" || material === "plaster" || material === "brick"
+    ? "uniform sampler2D uStainMap;\nuniform float uStainStrength;"
+    : ""
+}
 varying vec3 vMaterialCoordinate;
 varying float vLandscapeSurfaceProfile;
 varying vec3 vMaterialSurfaceNormal;
@@ -1038,26 +1296,50 @@ if (vWeathering > 0.001) {
   diffuseColor.rgb = mix(diffuseColor.rgb, mouldTint, materialBiofilmMould);
 }
 ${
-  material === "wood" ||
-  material === "stone" ||
-  material === "basalt" ||
-  material === "graphiteStone" ||
-  material === "brick"
+  material === "concrete" || material === "plaster" || material === "brick"
     ? /* glsl */ `
-// Hairline cracks and crevice grime: thin darkened ridges along two crossed
-// high-frequency world-space noises, so large flat faces of timber and stone
-// read as aged and split, not moulded plastic. Base pass, negligible ALU, and
-// independent of weathering so even pristine scenes gain surface age.
+// Painted weathering from the town stain map: water runs from window corners
+// and door reveals, rust tracks under fixtures and rooflines, spalled patches
+// with a pale chipped rim around a dark core, and branching cracks — all IN
+// the wall surface, each with a visible source.
 {
-  float crackA = materialValueNoise(vMaterialCoordinate.xz * 2.6 + vec2(vMaterialCoordinate.y * 1.3) + vec2(7.3, 51.7));
-  float crackB = materialValueNoise(vMaterialCoordinate.yz * 3.1 + vec2(vMaterialCoordinate.x * 1.1) + vec2(23.9, 4.2));
-  float crackRidge = max(
-    1.0 - smoothstep(0.0, 0.05, abs(crackA - 0.5)),
-    1.0 - smoothstep(0.0, 0.045, abs(crackB - 0.5))
-  );
-  float crackFine = materialValueNoise(vMaterialCoordinate.xz * 7.3 + vec2(3.3, 9.9));
-  float cracks = crackRidge * (0.45 + crackFine * 0.55) * ${appearance.streaking > 0.01 ? "0.26" : "0.16"};
-  diffuseColor.rgb *= 1.0 - cracks;
+  vec3 stainNormal = inverseTransformDirection(normalize(vNormal), viewMatrix);
+  if (uStainStrength > 0.5 && abs(stainNormal.y) < 0.45) {
+    vec3 stainAbs = abs(stainNormal);
+    float stainU = stainAbs.z >= stainAbs.x
+      ? vMaterialCoordinate.x + vMaterialCoordinate.z * 0.37
+      : vMaterialCoordinate.z + vMaterialCoordinate.x * 0.37;
+    float stainV = clamp(vMaterialCoordinate.y / 12.0, 0.0, 1.0) * 0.5;
+    vec2 stainUv = vec2(
+      (stainU + 60.0) / 200.0,
+      stainAbs.z >= stainAbs.x ? stainV : 0.5 + stainV
+    );
+    vec3 stainSample = texture2D(uStainMap, stainUv).rgb;
+    // Water and grime: darken and slightly cool the run.
+    vec3 stainGrime = mix(
+      diffuseColor.rgb,
+      vec3(dot(diffuseColor.rgb, vec3(0.333))) * vec3(0.7, 0.75, 0.78),
+      0.6
+    );
+    diffuseColor.rgb = mix(
+      diffuseColor.rgb,
+      stainGrime * 0.62,
+      clamp(stainSample.r * 1.15, 0.0, 0.8)
+    );
+    // Rust: iron-oxide wash, tone varied by the surface noise.
+    vec3 stainRust = mix(
+      vec3(0.4, 0.24, 0.14),
+      vec3(0.55, 0.32, 0.16),
+      vMaterialRoughnessNoise
+    );
+    diffuseColor.rgb = mix(diffuseColor.rgb, stainRust, clamp(stainSample.g, 0.0, 0.88));
+    // Damage: pale chipped rim, dark exposed core, thin cracks.
+    float stainDamage = stainSample.b;
+    float stainRim = smoothstep(0.05, 0.2, stainDamage) * (1.0 - smoothstep(0.28, 0.48, stainDamage));
+    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 1.3 + vec3(0.045), stainRim * 0.75);
+    float stainCore = smoothstep(0.34, 0.68, stainDamage);
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.125, 0.11, 0.095), stainCore * 0.92);
+  }
 }`
     : ""
 }

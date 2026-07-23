@@ -230,6 +230,7 @@ export function DayNightCycle({
       wetness: environmentState.wetness,
       time: frameState.clock.elapsedTime,
       windStrength: windState.strength,
+      stains: theme === "town" ? 1 : 0,
     });
 
     skyThrottle.current += delta;
