@@ -126,9 +126,14 @@ import {
 import { SmokePlumes } from "./SmokePlumes";
 import { WindController } from "./WindController";
 import { IntactBreakableWorld } from "./IntactBreakableWorld";
+import { buildIntactGroundRenderColors } from "./intactWorldBatching";
 import { resolveRuntimeStructure } from "./runtimeStructure";
 import { createSpatialIndex } from "./spatialIndex";
-import { expandBrokenTreeDescendants } from "./treeVisualModel";
+import {
+  detachedTreeFoliageSize,
+  expandBrokenTreeDescendants,
+  flattenDetachedTreeFoliage,
+} from "./treeVisualModel";
 import {
   autoClimbLiftSpeed,
   autoStepLiftSpeed,
@@ -142,7 +147,7 @@ import {
 } from "./WorldEnvironment";
 import { CinematicPostProcessing } from "./CinematicPostProcessing";
 import { useLanguage } from "@/app/i18n/LanguageProvider";
-import { sceneCopy } from "@/app/i18n/dictionary";
+import { sceneCopy, type TranslationKey } from "@/app/i18n/dictionary";
 import { LanguageSwitcher } from "@/app/components/LanguageSwitcher";
 import {
   CinematicCameraRig,
@@ -158,7 +163,7 @@ import type {
   CinematicFlyoverDefinition,
   FlyoverChapter,
 } from "./cinematicFlyoverPlan";
-import { useGameActionHints } from "./gameActionHints";
+import { useGameActionHints, type GameAction } from "./gameActionHints";
 
 type ControlName =
   | "forward"
@@ -170,6 +175,33 @@ type ControlName =
 
 type WeaponName = "hammer" | "launcher" | "mg" | "rocket";
 type ExplosiveKind = "grenade" | "rocket";
+
+const entryApproachActions: readonly GameAction[] = [
+  "gate.approaching",
+  "door.approaching",
+  "town-door.approaching",
+];
+
+function entryApproachAction(entry: HingedEntryApproach): GameAction {
+  return entry.kind === "gate"
+    ? "gate.approaching"
+    : entry.kind === "town-door"
+      ? "town-door.approaching"
+      : "door.approaching";
+}
+
+function entryActionKey(
+  entry: HingedEntryApproach,
+  touch: boolean,
+): TranslationKey {
+  if (entry.kind === "gate") {
+    return touch ? "hint.gate.actionTouch" : "hint.gate.action";
+  }
+  if (entry.kind === "town-door") {
+    return touch ? "hint.townDoor.actionTouch" : "hint.townDoor.action";
+  }
+  return touch ? "hint.door.actionTouch" : "hint.door.action";
+}
 
 interface MobileControlsState {
   moveX: number;
@@ -1091,6 +1123,7 @@ const BreakablePiece = memo(function BreakablePiece({
   const wasBroken = useRef(false);
   const { rapier } = useRapier();
   const profile = materialRuntimeProfiles[piece.material];
+  const fallingTreeFoliage = piece.treeVisual?.role === "foliage" && broken;
   const renderBoxes = useMemo(() => getPieceRenderBoxes(piece), [piece]);
   const colliderBoxes = broken
     ? debrisColliderBoxes(piece.size, renderBoxes)
@@ -1116,22 +1149,24 @@ const BreakablePiece = memo(function BreakablePiece({
       currentBody.wakeUp();
 
       const mass = Math.max(0.04, currentBody.mass());
-      currentBody.applyImpulse(
-        {
-          x: ((piece.column ?? 1) - 1) * 0.06 * mass,
-          y: (0.32 + (piece.row ?? 0) * 0.01) * mass,
-          z: ((piece.row ?? 0) % 2 === 0 ? 1 : -1) * 0.14 * mass,
-        },
-        true,
-      );
-      currentBody.applyTorqueImpulse(
-        {
-          x: ((piece.row ?? 0) % 2 === 0 ? 1 : -1) * 0.05 * mass,
-          y: ((piece.column ?? 0) % 2 === 0 ? 1 : -1) * 0.045 * mass,
-          z: (piece.material === "wood" ? 0.09 : 0.03) * mass,
-        },
-        true,
-      );
+      if (!fallingTreeFoliage) {
+        currentBody.applyImpulse(
+          {
+            x: ((piece.column ?? 1) - 1) * 0.06 * mass,
+            y: (0.32 + (piece.row ?? 0) * 0.01) * mass,
+            z: ((piece.row ?? 0) % 2 === 0 ? 1 : -1) * 0.14 * mass,
+          },
+          true,
+        );
+        currentBody.applyTorqueImpulse(
+          {
+            x: ((piece.row ?? 0) % 2 === 0 ? 1 : -1) * 0.05 * mass,
+            y: ((piece.column ?? 0) % 2 === 0 ? 1 : -1) * 0.045 * mass,
+            z: (piece.material === "wood" ? 0.09 : 0.03) * mass,
+          },
+          true,
+        );
+      }
 
       const colliderCount = currentBody.numColliders();
       for (let index = 0; index < colliderCount; index += 1) {
@@ -1152,6 +1187,7 @@ const BreakablePiece = memo(function BreakablePiece({
     piece.id,
     piece.material,
     piece.row,
+    fallingTreeFoliage,
     rapier,
     registerBody,
   ]);
@@ -1163,10 +1199,10 @@ const BreakablePiece = memo(function BreakablePiece({
       position={[...piece.position]}
       rotation={piece.rotation ? [...piece.rotation] : undefined}
       colliders={false}
-      friction={piece.material === "wood" ? 0.66 : 0.84}
+      friction={fallingTreeFoliage ? 0.96 : piece.material === "wood" ? 0.66 : 0.84}
       restitution={profile.restitution}
-      linearDamping={0.18}
-      angularDamping={0.24}
+      linearDamping={fallingTreeFoliage ? 0.72 : 0.18}
+      angularDamping={fallingTreeFoliage ? 2.4 : 0.24}
       density={profile.density}
       // ВАЖНО: проп нельзя передавать со значением undefined — react-three-
       // rapier проверяет `key in options` и вызывает setCollisionGroups(
@@ -1260,7 +1296,11 @@ function BreakableObjects({
         piece.shape === "cinderBlock"
       ) {
         hidden.add(piece.id);
-        bodies.push(piece);
+        bodies.push(
+          brokenPieces.has(piece.id)
+            ? flattenDetachedTreeFoliage(piece)
+            : piece,
+        );
       }
     }
     return {
@@ -2282,6 +2322,7 @@ interface OpenWorldSceneProps {
   flightMode: boolean;
   weapon: WeaponName;
   timeOfDay: TimeOfDay;
+  timeOfDaySnapVersion: number;
   fallbackLook: boolean;
   controlRequest: number;
   mobileControls: MobileControlsRef;
@@ -2303,6 +2344,7 @@ function OpenWorldScene({
   flightMode,
   weapon,
   timeOfDay,
+  timeOfDaySnapVersion,
   fallbackLook,
   controlRequest,
   mobileControls,
@@ -2325,6 +2367,10 @@ function OpenWorldScene({
     settleAfterBreak,
     structuralScopeFor,
   } = scene;
+  const intactGroundRenderColors = useMemo(
+    () => buildIntactGroundRenderColors(breakablePieces),
+    [breakablePieces],
+  );
   const pieceSpatialIndex = useMemo(
     () => createSpatialIndex(breakablePieces, 5),
     [breakablePieces],
@@ -3243,8 +3289,15 @@ function OpenWorldScene({
         : new Vector3();
 
       shardCounter.current += 1;
+      const fractureSource = source.treeVisual?.role === "foliage"
+        ? {
+            ...source,
+            shape: "panel" as const,
+            size: detachedTreeFoliageSize(source.size),
+          }
+        : source;
       const generated = buildShards(
-        source,
+        fractureSource,
         `shard:${shardCounter.current}`,
         bodyPosition,
         bodyQuaternion,
@@ -3387,8 +3440,12 @@ function OpenWorldScene({
           id,
           material: source.material,
           color: source.color,
+          renderColor: source.renderColor,
           textureProfile: source.textureProfile,
           landscapeSurface: source.landscapeSurface,
+          treeVisual: source.treeVisual,
+          treeVisualSourceId:
+            source.treeVisualSourceId ?? (source.treeVisual ? source.id : undefined),
           size: [side, side, side],
           position: [
             worldPoint.x + (noiseA - 0.5) * 0.08,
@@ -3542,6 +3599,9 @@ function OpenWorldScene({
       }
 
       const parentId = remnant ? remnant.parentId : targetId;
+      const sourceRenderColor = remnant?.renderColor
+        ?? intactGroundRenderColors.get(parentId)
+        ?? source.color;
       const translation = body?.translation();
       const rotation = body?.rotation();
       const bodyPosition = translation
@@ -3561,7 +3621,7 @@ function OpenWorldScene({
       remnantCounter.current += 1;
       const carveSalt = `carve:${remnantCounter.current}`;
       const result = damageBody(
-        source,
+        { ...source, renderColor: sourceRenderColor },
         {
           position: bodyPosition,
           quaternion: bodyQuaternion,
@@ -3592,8 +3652,12 @@ function OpenWorldScene({
           parentId,
           material: source.material,
           color: source.color,
+          renderColor: sourceRenderColor,
           textureProfile: source.textureProfile,
           landscapeSurface: source.landscapeSurface,
+          treeVisual: source.treeVisual,
+          treeVisualSourceId:
+            source.treeVisualSourceId ?? (source.treeVisual ? source.id : undefined),
           shape: fragment.shape,
           size: fragment.size,
           position: fragment.position,
@@ -3639,8 +3703,12 @@ function OpenWorldScene({
           id,
           material: source.material,
           color: source.color,
+          renderColor: sourceRenderColor,
           textureProfile: source.textureProfile,
           landscapeSurface: source.landscapeSurface,
+          treeVisual: source.treeVisual,
+          treeVisualSourceId:
+            source.treeVisualSourceId ?? (source.treeVisual ? source.id : undefined),
           size: [side, side * (0.8 + noiseB * 0.5), side],
           preferSoftCcd: true,
           position: [
@@ -3683,7 +3751,13 @@ function OpenWorldScene({
         : subtractParentVolume(parentId, result.removedVolume);
       return { carved: true, brokenParentId: crossed ? parentId : null };
     },
-    [commitRemnants, commitShards, rapier, subtractParentVolume],
+    [
+      commitRemnants,
+      commitShards,
+      intactGroundRenderColors,
+      rapier,
+      subtractParentVolume,
+    ],
   );
 
   // Original pieces and carved remnants are solved by the same load-path graph.
@@ -5117,6 +5191,8 @@ function OpenWorldScene({
         nightRef={nightRef}
         theme={scene.environment}
         worldRadius={scene.worldRadius}
+        snapVersion={timeOfDaySnapVersion}
+        cinematic={cinematic}
       />
       <LampLightPool
         lamps={lampDefinitions}
@@ -5734,11 +5810,7 @@ function MobileGameControls({
             onPointerLeave={() => !entryAction && setJump(false)}
             onPointerUp={() => !entryAction && setJump(false)}
           >
-            {entryAction
-              ? t(entryAction.kind === "gate"
-                ? "hint.gate.actionTouch"
-                : "hint.door.actionTouch")
-              : t("mobile.jump")}
+            {entryAction ? t(entryActionKey(entryAction, true)) : t("mobile.jump")}
           </button>
         ) : null}
       </div>
@@ -6014,8 +6086,7 @@ export function MakeAMessGame({
     setBrokenCount(0);
     setFlightMode(false);
     setApproachedEntry(null);
-    endGameAction("gate.approaching");
-    endGameAction("door.approaching");
+    entryApproachActions.forEach(endGameAction);
     setResetVersion((version) => version + 1);
     mobileControls.current = createMobileControlsState();
   }, [endGameAction]);
@@ -6034,10 +6105,9 @@ export function MakeAMessGame({
   const handleEntryApproachChange = useCallback((entry: HingedEntryApproach | null) => {
     setApproachedEntry(entry);
     mobileControls.current.jump = false;
-    endGameAction("gate.approaching");
-    endGameAction("door.approaching");
+    entryApproachActions.forEach(endGameAction);
     if (entry) {
-      emitGameAction(entry.kind === "gate" ? "gate.approaching" : "door.approaching");
+      emitGameAction(entryApproachAction(entry));
     }
   }, [emitGameAction, endGameAction]);
 
@@ -6047,9 +6117,7 @@ export function MakeAMessGame({
     }
     mobileControls.current.jump = false;
     setEntryOpenRequestVersion((version) => version + 1);
-    endGameAction(
-      approachedEntry.kind === "gate" ? "gate.approaching" : "door.approaching",
-    );
+    endGameAction(entryApproachAction(approachedEntry));
   }, [approachedEntry, endGameAction]);
 
   useEffect(() => {
@@ -6172,6 +6240,7 @@ export function MakeAMessGame({
                   flightMode={flightMode}
                   weapon={weapon}
                   timeOfDay={timeOfDay}
+                  timeOfDaySnapVersion={flyoverRunId}
                   fallbackLook={fallbackLook}
                   controlRequest={controlRequest}
                   mobileControls={mobileControls}
@@ -6189,6 +6258,7 @@ export function MakeAMessGame({
               </Physics>
               {flyover ? (
                 <CinematicCameraRig
+                  key={`${flyover.id}:${flyoverRunId}`}
                   definition={flyover}
                   runId={flyoverRunId}
                   running={flyoverRunning}
@@ -6353,9 +6423,7 @@ export function MakeAMessGame({
           <>
             <span>Space</span>
             {approachedEntry
-              ? t(approachedEntry.kind === "gate"
-                ? "hint.gate.action"
-                : "hint.door.action")
+              ? t(entryActionKey(approachedEntry, false))
               : t("controls.jump")}
           </>
         ) : null}

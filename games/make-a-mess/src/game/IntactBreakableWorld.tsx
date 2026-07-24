@@ -22,7 +22,6 @@ import {
   materialRuntimeProfiles,
   type BreakablePieceDefinition,
 } from "./destructionScene";
-import { groundMaterials } from "./destructionRuntime";
 import { getPieceMaterial } from "./materialTextures";
 import { materialAnchor } from "./materialAppearance";
 import {
@@ -33,6 +32,7 @@ import {
 } from "./silicateJoints";
 import {
   applyHiddenPieceDiff,
+  buildIntactGroundRenderColors,
   buildIntactInstanceBatches,
   type IntactInstanceBatch,
 } from "./intactWorldBatching";
@@ -218,28 +218,10 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
     () => batch.pieces.map((piece) => piece.id),
     [batch.pieces],
   );
-  // Ground tiles form one continuous surface out of many boxes; blending
-  // each tile's authored tone toward the batch average softens the hard
-  // 6 m color steps at the seams while the continuous world-space macro
-  // noise keeps the tonal variety.
-  const groundAverageColor = useMemo(() => {
-    let r = 0;
-    let g = 0;
-    let b = 0;
-    let count = 0;
-    const sample = new Color();
-    for (const piece of batch.pieces) {
-      if (piece.shape !== "groundTile" || !groundMaterials.has(piece.material)) {
-        continue;
-      }
-      sample.set(piece.color);
-      r += sample.r;
-      g += sample.g;
-      b += sample.b;
-      count += 1;
-    }
-    return count > 0 ? new Color(r / count, g / count, b / count) : null;
-  }, [batch.pieces]);
+  const groundRenderColors = useMemo(
+    () => buildIntactGroundRenderColors(batch.pieces),
+    [batch.pieces],
+  );
 
   useEffect(() => () => geometry.dispose(), [geometry]);
 
@@ -255,14 +237,10 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
     batch.pieces.forEach((piece, index) => {
       writePieceTransform(transform, piece);
       current.setMatrixAt(index, transform.matrix);
-      color.set(batch.materialColor === "#ffffff" ? piece.color : "#ffffff");
-      if (
-        groundAverageColor &&
-        piece.shape === "groundTile" &&
-        groundMaterials.has(piece.material)
-      ) {
-        color.lerp(groundAverageColor, 0.6);
-      }
+      color.set(
+        groundRenderColors.get(piece.id)
+          ?? (batch.materialColor === "#ffffff" ? piece.color : "#ffffff"),
+      );
       current.setColorAt(index, color);
     });
     current.instanceMatrix.setUsage(StaticDrawUsage);
@@ -272,7 +250,7 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
     }
     current.computeBoundingSphere();
     appliedHidden.current = new Set();
-  }, [batch, groundAverageColor]);
+  }, [batch, groundRenderColors]);
 
   // Incremental pass: touch only the instances whose hidden state changed.
   useLayoutEffect(() => {

@@ -441,93 +441,9 @@ function openHouseDressing(): DressingConfig {
 
 // ---------------------------------------------------------------------------
 
-function rainSeamDressing(): DressingConfig {
-  const wires: WireSpan[] = [];
-  const CABLE = "#202321";
-
-  // Воздушка расходится с деревянного столба на киоск, дом и участок
-  // частника; ещё одна нитка сшивает оба дома двора. Провисшие провода —
-  // те самые линии, которыми прошиты все четыре фотографии.
-  wires.push(
-    { from: [-2.4, 5.85, 40.3], to: [-7.1, 3.5, 44.1], sag: 0.5, thickness: 0.035, color: CABLE },
-    { from: [-2.4, 5.9, 40.3], to: [5.2, 5.75, 33.95], sag: 0.55, thickness: 0.035, color: CABLE },
-    { from: [-2.4, 5.8, 40.3], to: [7.05, 3.66, 41.05], sag: 0.62, thickness: 0.03, color: CABLE },
-    { from: [-2.4, 5.95, 40.3], to: [-18.4, 6.1, 43.5], sag: 0.85, thickness: 0.03, color: CABLE },
-    { from: [10.75, 5.6, 23.6], to: [11.5, 5.15, 12.3], sag: 0.42, thickness: 0.032, color: CABLE },
-    { from: [3.1, 5.55, 33.9], to: [-1.55, 2.2, 33.2], sag: 0.3, thickness: 0.028, color: "#514536" },
-  );
-
-  const ivy: IvyRun[] = [
-    // Белая стена проулка, задний профлист и западная решётка зарастают.
-    { a: [-1.32, 0.15, 24.2], b: [-1.32, 0.15, 32.6], height: 1.75, normal: [1, 0], density: 3.2 },
-    { a: [-8.2, 0.15, -25.5], b: [0.6, 0.15, -25.5], height: 1.6, normal: [0, 1], density: 3.0 },
-    { a: [-11.68, 0.15, 5], b: [-11.68, 0.15, 15], height: 1.7, normal: [1, 0], density: 3.1 },
-    { a: [17.68, 0.15, 8], b: [17.68, 0.15, -2], height: 1.5, normal: [-1, 0], density: 2.8 },
-  ];
-
-  const weeds: WeedPoint[] = [];
-  const addRun = (
-    start: readonly [number, number],
-    end: readonly [number, number],
-    count: number,
-    salt: number,
-    dry = 0.35,
-  ): void => {
-    for (let index = 0; index < count; index += 1) {
-      if (hash(index, salt) > 0.74) {
-        continue;
-      }
-      const t = (index + hash(index, salt + 1) * 0.6) / count;
-      weeds.push({
-        x: start[0] + (end[0] - start[0]) * t + (hash(index, salt + 2) - 0.5) * 0.65,
-        z: start[1] + (end[1] - start[1]) * t + (hash(index, salt + 3) - 0.5) * 0.65,
-        scale: 0.55 + hash(index, salt + 4) * 0.8,
-        dry: dry + hash(index, salt + 5) * 0.35,
-      });
-    }
-  };
-  // Бурьян живёт там, где не ходят: вдоль заборов, за сараем, на обочине
-  // и по кромке стройки. По центру двора его вытоптали.
-  addRun([-11.2, -23], [-11.2, 33], 40, 111, 0.34);
-  addRun([17.5, -22], [17.5, 30], 34, 121, 0.38);
-  addRun([-7.8, -17.7], [-0.8, -17.7], 14, 131, 0.26);
-  addRun([-7.6, -24.8], [3, -24.9], 16, 141, 0.42);
-  addRun([-11.2, 36.6], [-4.2, 36.6], 12, 151, 0.34);
-  addRun([4.2, 36.6], [17.4, 36.6], 16, 161, 0.34);
-  addRun([-12.6, 39.6], [-12.6, 47.5], 12, 171, 0.4);
-  addRun([-16, -27.6], [16, -27.6], 22, 181, 0.46);
-  addRun([2.9, 23], [2.9, 33.4], 10, 191, 0.22);
-  addRun([-2.9, 47.5], [-2.9, 53], 8, 201, 0.3);
-
-  const puddles: PuddleSpot[] = [
-    // Улица и киоск.
-    { x: -3.4, z: 45.9, r: 1.3, y: 0.075 },
-    { x: 8.8, z: 46.2, r: 0.92, y: 0.075 },
-    { x: -9.6, z: 44.4, r: 1.1, y: 0.055 },
-    // Ворота, проулок, двор.
-    { x: -0.2, z: 37.4, r: 1.15, y: 0.055 },
-    { x: 0.65, z: 27.3, r: 0.85, y: 0.055 },
-    { x: -2.5, z: 2.4, r: 1.0, y: 0.055 },
-    { x: -3.9, z: -9.6, r: 0.9, y: 0.055 },
-    { x: 12.7, z: 20.4, r: 0.72, y: 0.055 },
-    // Лужа у велосипедов, как на снимке.
-    { x: -3.3, z: -16.7, r: 1.05, y: 0.055 },
-    // Стройка и свежая плитка, отражающая башни.
-    { x: -2.2, z: -33.4, r: 1.5, y: 0.055 },
-    { x: 7.6, z: -35.6, r: 1.1, y: 0.055 },
-    { x: -4.2, z: -44.6, r: 1.05, y: 0.075 },
-    { x: 9.8, z: -46.2, r: 0.85, y: 0.075 },
-  ];
-
-  return { wires, ivy, weeds, puddles };
-}
-
-// ---------------------------------------------------------------------------
-
 const configBuilders: Record<string, () => DressingConfig> = {
   "viking-village": vikingDressing,
   "open-house": openHouseDressing,
-  "rain-seam": rainSeamDressing,
 };
 
 export function SceneDressing({

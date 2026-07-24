@@ -4,7 +4,8 @@ import type { TranslationKey } from "@/app/i18n/dictionary";
 export type GameAction =
   | "player.spawned"
   | "gate.approaching"
-  | "door.approaching";
+  | "door.approaching"
+  | "town-door.approaching";
 
 export interface GameActionHint {
   readonly id: string;
@@ -51,6 +52,17 @@ export const gameActionHints: readonly GameActionHint[] = [
     detailKey: "hint.door.action",
     touchDetailKey: "hint.door.actionTouch",
     keyLabelKey: "hint.door.key",
+    once: false,
+  },
+  {
+    id: "approaching-a-town-door",
+    action: "town-door.approaching",
+    delayMs: 180,
+    eyebrowKey: "hint.townDoor.eyebrow",
+    titleKey: "hint.townDoor.title",
+    detailKey: "hint.townDoor.action",
+    touchDetailKey: "hint.townDoor.actionTouch",
+    keyLabelKey: "hint.townDoor.key",
     once: false,
   },
 ];

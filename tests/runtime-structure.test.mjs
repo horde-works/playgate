@@ -218,3 +218,122 @@ test("empty space inside a voxel remnant cannot act as a hidden support", () => 
     true,
   );
 });
+
+test("sliced steel pipe remnants cannot brace each other across the cut", () => {
+  const steelProfiles = {
+    ...profiles,
+    steel: {
+      density: 7.8,
+      compressionStrength: 220,
+      cantilever: 2.1,
+      maximumVerticalGap: 1.1,
+      carriesAttachments: true,
+      sideAttachmentReach: 0.24,
+    },
+  };
+  const pieces = [
+    {
+      id: "ground",
+      material: "ground",
+      position: [0, -0.5, 0],
+      size: [8, 1, 8],
+    },
+    {
+      // Free-standing riser: no wall tie. Intact steel would still let the
+      // upper remnant "sit" on the lower one across a 0.35 m cut via the
+      // material's 1.1 m vertical gap.
+      id: "pipe",
+      material: "steel",
+      position: [0, 2, 0],
+      size: [0.12, 3.6, 0.12],
+    },
+  ];
+  const fragments = [
+    {
+      id: "pipe-lower",
+      parentId: "pipe",
+      material: "steel",
+      position: [0, 0.9, 0],
+      size: [0.12, 1.6, 0.12],
+      detached: false,
+    },
+    {
+      id: "pipe-upper",
+      parentId: "pipe",
+      material: "steel",
+      position: [0, 2.85, 0],
+      size: [0.12, 1.6, 0.12],
+      detached: false,
+    },
+  ];
+
+  const result = resolveRuntimeStructure(
+    pieces,
+    steelProfiles,
+    new Set(),
+    new Set(["pipe"]),
+    fragments,
+  );
+
+  assert.equal(result.detachedFragmentIds.has("pipe-upper"), true);
+  assert.equal(result.detachedFragmentIds.has("pipe-lower"), false);
+});
+
+test("carved non-bearing fixtures stay non-bearing as remnants", () => {
+  const steelProfiles = {
+    ...profiles,
+    steel: {
+      density: 7.8,
+      compressionStrength: 220,
+      cantilever: 2.1,
+      maximumVerticalGap: 1.1,
+      carriesAttachments: true,
+      sideAttachmentReach: 0.24,
+    },
+  };
+  const pieces = [
+    {
+      id: "ground",
+      material: "ground",
+      position: [0, -0.5, 0],
+      size: [8, 1, 8],
+    },
+    {
+      id: "pipe",
+      material: "steel",
+      position: [0, 2, 0],
+      size: [0.12, 3.6, 0.12],
+      bearsLoad: false,
+    },
+  ];
+  // Tiny gap that even the remnant clamp would accept — only bearsLoad:false
+  // inherited from the parent must stop the upper from using the lower.
+  const fragments = [
+    {
+      id: "pipe-lower",
+      parentId: "pipe",
+      material: "steel",
+      position: [0, 0.9, 0],
+      size: [0.12, 1.6, 0.12],
+      detached: false,
+    },
+    {
+      id: "pipe-upper",
+      parentId: "pipe",
+      material: "steel",
+      position: [0, 2.6, 0],
+      size: [0.12, 1.6, 0.12],
+      detached: false,
+    },
+  ];
+
+  const result = resolveRuntimeStructure(
+    pieces,
+    steelProfiles,
+    new Set(),
+    new Set(["pipe"]),
+    fragments,
+  );
+
+  assert.equal(result.detachedFragmentIds.has("pipe-upper"), true);
+});

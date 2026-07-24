@@ -10,6 +10,20 @@ test("a single box is fully exposed", () => {
   assert.deepEqual(masks.negative, [1, 1, 1]);
 });
 
+test("edge suppression keeps a damaged ground body optically flat", () => {
+  const masks = computeBoxFaceMasks([
+    box([0, 0, 0], [2, 0.3, 2]),
+    box([0.8, 0, 0], [0.4, 0.3, 0.4]),
+  ], true);
+  assert.deepEqual(
+    masks,
+    [
+      { positive: [0, 0, 0], negative: [0, 0, 0] },
+      { positive: [0, 0, 0], negative: [0, 0, 0] },
+    ],
+  );
+});
+
 test("two flush boxes hide only their shared faces", () => {
   // Side by side along X: A's +X face meets B's -X face.
   const [a, b] = computeBoxFaceMasks([

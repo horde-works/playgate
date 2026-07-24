@@ -42,7 +42,7 @@ test("server-renders the catalog and game space", async () => {
   const [catalogResponse, gameResponse, fortressResponse] = await Promise.all([
     render("/games"),
     render("/games/make-a-mess"),
-    render("/games/make-a-mess/minas-tirith"),
+    render("/games/make-a-mess/basalt-stronghold"),
   ]);
 
   assert.equal(catalogResponse.status, 200);
@@ -56,15 +56,15 @@ test("server-renders the catalog and game space", async () => {
   ]);
 
   assert.match(catalogHtml, /Catalogue/);
-  assert.match(catalogHtml, /Make a Mess: Minas Tirith/);
-  assert.match(catalogHtml, /href="\/games\/make-a-mess\/minas-tirith"/);
+  assert.match(catalogHtml, /Make a Mess: Basalt Stronghold/);
+  assert.match(catalogHtml, /href="\/games\/make-a-mess\/basalt-stronghold"/);
   assert.match(catalogHtml, /Next slot/);
   assert.match(gameHtml, /Make a Mess \/ 004/);
   assert.match(gameHtml, /The house is the toy/);
   assert.match(gameHtml, /Everything can break/);
   assert.match(gameHtml, /four-storey blocks/);
   assert.match(gameHtml, /Grab the hammer/);
-  assert.match(fortressHtml, /Make a Mess \/ Minas Tirith/);
+  assert.match(fortressHtml, /Make a Mess \/ Basalt Stronghold/);
   assert.match(fortressHtml, /The fortress is the toy/);
   assert.match(fortressHtml, /Head for the gate/);
 });

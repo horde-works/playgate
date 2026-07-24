@@ -1,32 +1,32 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  minasTirithMaterials,
-  minasTirithScene,
-} from "../games/make-a-mess/src/game/minasTirithScene.ts";
+  basaltStrongholdMaterials,
+  basaltStrongholdScene,
+} from "../games/make-a-mess/src/game/basaltStrongholdScene.ts";
 
-test("the Minas Tirith scene starts as one physically supported world", () => {
-  const unsupported = minasTirithScene.resolveStructuralCollapse(new Set());
+test("the Basalt Stronghold scene starts as one physically supported world", () => {
+  const unsupported = basaltStrongholdScene.resolveStructuralCollapse(new Set());
 
-  assert.equal(minasTirithScene.breakablePieces.length > 9000, true);
+  assert.equal(basaltStrongholdScene.breakablePieces.length > 9000, true);
   assert.equal(unsupported.size, 0);
 });
 
 test("the fortress uses every new material as a real breakable material", () => {
   const usedMaterials = new Set(
-    minasTirithScene.breakablePieces.map((piece) => piece.material),
+    basaltStrongholdScene.breakablePieces.map((piece) => piece.material),
   );
 
-  for (const material of minasTirithMaterials) {
+  for (const material of basaltStrongholdMaterials) {
     assert.equal(usedMaterials.has(material), true, material);
   }
 });
 
 test("the original fortress now sits inside a filled circular highland", () => {
-  const centerZ = minasTirithScene.worldCenter[1];
-  const radius = minasTirithScene.worldRadius;
-  const outerGrass = minasTirithScene.breakablePieces.filter((piece) =>
-    piece.id.startsWith("minas:circle:grass:"),
+  const centerZ = basaltStrongholdScene.worldCenter[1];
+  const radius = basaltStrongholdScene.worldRadius;
+  const outerGrass = basaltStrongholdScene.breakablePieces.filter((piece) =>
+    piece.id.startsWith("stronghold:circle:grass:"),
   );
   const occupiedSectors = new Set(
     outerGrass.map((piece) => {
@@ -49,8 +49,8 @@ test("the original fortress now sits inside a filled circular highland", () => {
 
 test("the mountain ridges spread organically instead of ending as rectangles", () => {
   for (const side of ["west", "east"]) {
-    const caps = minasTirithScene.breakablePieces.filter(
-      (piece) => piece.clusterId === `minas:ridge:${side}:caps`,
+    const caps = basaltStrongholdScene.breakablePieces.filter(
+      (piece) => piece.clusterId === `stronghold:ridge:${side}:caps`,
     );
     const rowWidths = new Map();
 
@@ -75,8 +75,8 @@ test("the mountain ridges spread organically instead of ending as rectangles", (
 
 test("the mountain summits carry their own heath and loose rock", () => {
   for (const side of ["west", "east"]) {
-    const highlandGrowth = minasTirithScene.breakablePieces.filter(
-      (piece) => piece.clusterId === `minas:ridge:${side}:heath`,
+    const highlandGrowth = basaltStrongholdScene.breakablePieces.filter(
+      (piece) => piece.clusterId === `stronghold:ridge:${side}:heath`,
     );
     const summitHeights = highlandGrowth.map((piece) => piece.position[1]);
 
@@ -88,14 +88,14 @@ test("the mountain summits carry their own heath and loose rock", () => {
 });
 
 test("the approach has destructible weathering details instead of an empty lawn", () => {
-  const rubble = minasTirithScene.breakablePieces.filter((piece) =>
-    piece.id.startsWith("minas:weather:rubble:"),
+  const rubble = basaltStrongholdScene.breakablePieces.filter((piece) =>
+    piece.id.startsWith("stronghold:weather:rubble:"),
   );
-  const timber = minasTirithScene.breakablePieces.filter((piece) =>
-    piece.id.startsWith("minas:weather:timber:"),
+  const timber = basaltStrongholdScene.breakablePieces.filter((piece) =>
+    piece.id.startsWith("stronghold:weather:timber:"),
   );
-  const stakes = minasTirithScene.breakablePieces.filter((piece) =>
-    piece.id.startsWith("minas:weather:stake:"),
+  const stakes = basaltStrongholdScene.breakablePieces.filter((piece) =>
+    piece.id.startsWith("stronghold:weather:stake:"),
   );
 
   assert.equal(rubble.length, 54);
@@ -103,15 +103,15 @@ test("the approach has destructible weathering details instead of an empty lawn"
   assert.equal(stakes.length, 12);
   assert.equal(
     [...rubble, ...timber, ...stakes].every((piece) =>
-      minasTirithScene.breakablePieceById.has(piece.id),
+      basaltStrongholdScene.breakablePieceById.has(piece.id),
     ),
     true,
   );
 });
 
 test("the dark tower is multi-storeyed and loses upper structure with its base", () => {
-  const towerPieces = minasTirithScene.breakablePieces.filter(
-    (piece) => piece.clusterId === "minas:dark-tower",
+  const towerPieces = basaltStrongholdScene.breakablePieces.filter(
+    (piece) => piece.clusterId === "stronghold:dark-tower",
   );
   const floors = new Set(
     towerPieces
@@ -123,19 +123,19 @@ test("the dark tower is multi-storeyed and loses upper structure with its base",
       .filter((piece) => piece.position[1] < 1.25)
       .map((piece) => piece.id),
   );
-  const collapsed = minasTirithScene.resolveStructuralCollapse(removedBase);
+  const collapsed = basaltStrongholdScene.resolveStructuralCollapse(removedBase);
 
   assert.equal(floors.size, 8);
   assert.equal(collapsed.size > removedBase.size + 500, true);
   assert.equal(
-    [...collapsed].some((id) => id.startsWith("minas:dark-tower:eye:")),
+    [...collapsed].some((id) => id.startsWith("stronghold:dark-tower:signal:")),
     true,
   );
 });
 
 test("all eight tower floors are furnished as different inhabited rooms", () => {
-  const towerLife = minasTirithScene.breakablePieces.filter(
-    (piece) => piece.clusterId === "minas:tower-life",
+  const towerLife = basaltStrongholdScene.breakablePieces.filter(
+    (piece) => piece.clusterId === "stronghold:tower-life",
   );
   const roomSignatures = [
     "guard-",
@@ -145,7 +145,7 @@ test("all eight tower floors are furnished as different inhabited rooms", () => 
     "archive-",
     "council-",
     "ritual-",
-    "eye-",
+    "signal-",
   ];
 
   assert.equal(towerLife.length > 450, true);
@@ -160,33 +160,33 @@ test("all eight tower floors are furnished as different inhabited rooms", () => 
 
 test("the fortress has distinct working zones inside and outside the wall", () => {
   const zoneMinimums = new Map([
-    ["minas:wall-life", 200],
-    ["minas:courtyard-smithy", 60],
-    ["minas:courtyard-storehouse", 100],
-    ["minas:courtyard-commons", 45],
-    ["minas:siege-workshop", 60],
-    ["minas:siege-supplies", 100],
-    ["minas:siege-engines", 45],
-    ["minas:occupation-traces", 55],
+    ["stronghold:wall-life", 200],
+    ["stronghold:courtyard-smithy", 60],
+    ["stronghold:courtyard-storehouse", 100],
+    ["stronghold:courtyard-commons", 45],
+    ["stronghold:siege-workshop", 60],
+    ["stronghold:siege-supplies", 100],
+    ["stronghold:siege-engines", 45],
+    ["stronghold:occupation-traces", 55],
     // Pine crowns are rendered as shared instanced sprays; the authored pieces
     // stay deliberately sparse and exist only as destruction proxies.
-    ["minas:living-forest", 144],
-    ["minas:undergrowth", 80],
-    ["minas:mountain-scree", 150],
+    ["stronghold:living-forest", 144],
+    ["stronghold:undergrowth", 80],
+    ["stronghold:mountain-scree", 150],
   ]);
 
   for (const [clusterId, minimum] of zoneMinimums) {
-    const cluster = minasTirithScene.breakableClusterById.get(clusterId);
+    const cluster = basaltStrongholdScene.breakableClusterById.get(clusterId);
     assert.ok(cluster, clusterId);
     assert.equal(cluster.pieces.length >= minimum, true, clusterId);
   }
 
-  assert.equal(minasTirithScene.lampDefinitions.length >= 18, true);
+  assert.equal(basaltStrongholdScene.lampDefinitions.length >= 18, true);
 });
 
 test("the gate towers are hollow rooms with stairs rather than solid blocks", () => {
-  const gatehouse = minasTirithScene.breakableClusterById.get("minas:gatehouse");
-  const wallLife = minasTirithScene.breakableClusterById.get("minas:wall-life");
+  const gatehouse = basaltStrongholdScene.breakableClusterById.get("stronghold:gatehouse");
+  const wallLife = basaltStrongholdScene.breakableClusterById.get("stronghold:wall-life");
 
   assert.ok(gatehouse);
   assert.ok(wallLife);

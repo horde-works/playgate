@@ -31,10 +31,12 @@ import {
   type BreakablePieceDefinition,
   type LandscapeSurfaceProfile,
   type SurfaceTextureProfile,
+  type TreeVisualDefinition,
 } from "./destructionScene";
-import type {
-  RemnantDefinition,
-  ShardDefinition,
+import {
+  groundMaterials,
+  type RemnantDefinition,
+  type ShardDefinition,
 } from "./destructionRuntime";
 import {
   getPieceMaterial,
@@ -48,7 +50,13 @@ import {
   silicateJointTint,
 } from "./silicateJoints";
 import { computeBoxFaceMasks } from "./boxFaceMasks";
-import { usesFoliageDebrisGeometry } from "./treeVisualModel";
+import {
+  treeBarkPhase,
+  treeWoodSpecies,
+  usesFoliageDebrisGeometry,
+  usesTreeBarkVisual,
+} from "./treeVisualModel";
+import { treeBarkAtlas } from "./treeBarkAtlas";
 
 const UNIT_BOX = new BoxGeometry(1, 1, 1);
 const UNIT_CYLINDER = new CylinderGeometry(0.5, 0.5, 1, 20, 1);
@@ -59,7 +67,7 @@ function detachedFoliageGeometry(): BufferGeometry {
   const indices: number[] = [];
   let vertex = 0;
 
-  for (let leaf = 0; leaf < 18; leaf += 1) {
+  for (let leaf = 0; leaf < 42; leaf += 1) {
     const phase = leaf * 12.9898;
     const random = (salt: number): number => {
       const value = Math.sin(phase + salt * 78.233) * 43758.5453;
@@ -135,6 +143,8 @@ interface DynamicBreakableFragment {
   readonly fallbackPosition: readonly [number, number, number];
   readonly fallbackQuaternion: readonly [number, number, number, number];
   readonly landscapeSurface?: LandscapeSurfaceProfile;
+  readonly treeVisual?: TreeVisualDefinition;
+  readonly treeVisualSourceId?: string;
 }
 
 interface DynamicBreakableBatch {
@@ -143,6 +153,7 @@ interface DynamicBreakableBatch {
   readonly materialColor: string;
   readonly textureProfile?: SurfaceTextureProfile;
   readonly geometryKind: "box" | "cylinder" | "foliage";
+  readonly treeBark: boolean;
   readonly fragments: readonly DynamicBreakableFragment[];
 }
 
@@ -220,7 +231,10 @@ function sourceFragments(
       ? SILICATE_JOINT_EXPANSION
       : 0;
     const boxes = getPieceRenderBoxes(piece);
-    const faceMasks = computeBoxFaceMasks(boxes);
+    const faceMasks = computeBoxFaceMasks(
+      boxes,
+      groundMaterials.has(piece.material),
+    );
     const pieceColor = quenchedColor(piece.material, piece.color);
     const geometryKind = usesFoliageDebrisGeometry(piece.material, piece)
       ? "foliage" as const
@@ -250,6 +264,8 @@ function sourceFragments(
         fallbackPosition: piece.position,
         fallbackQuaternion,
         landscapeSurface: piece.landscapeSurface,
+        treeVisual: piece.treeVisual,
+        treeVisualSourceId: piece.treeVisual ? piece.id : undefined,
       });
     });
   }
@@ -259,8 +275,14 @@ function sourceFragments(
       shard.boxes && shard.boxes.length > 0
         ? shard.boxes
         : [{ center: [0, 0, 0] as const, size: shard.size }];
-    const faceMasks = computeBoxFaceMasks(boxes);
-    const shardColor = quenchedColor(shard.material, shard.color);
+    const faceMasks = computeBoxFaceMasks(
+      boxes,
+      groundMaterials.has(shard.material),
+    );
+    const shardColor = quenchedColor(
+      shard.material,
+      shard.renderColor ?? shard.color,
+    );
     const shardGeometry = usesFoliageDebrisGeometry(shard.material)
       ? "foliage" as const
       : shard.shape === "cylinder"
@@ -289,6 +311,8 @@ function sourceFragments(
         fallbackPosition: shard.position,
         fallbackQuaternion: shard.quaternion,
         landscapeSurface: shard.landscapeSurface,
+        treeVisual: shard.treeVisual,
+        treeVisualSourceId: shard.treeVisualSourceId,
       });
     });
   }
@@ -298,8 +322,14 @@ function sourceFragments(
       remnant.boxes && remnant.boxes.length > 0
         ? remnant.boxes
         : [{ center: [0, 0, 0] as const, size: remnant.size }];
-    const faceMasks = computeBoxFaceMasks(boxes);
-    const remnantColor = quenchedColor(remnant.material, remnant.color);
+    const faceMasks = computeBoxFaceMasks(
+      boxes,
+      groundMaterials.has(remnant.material),
+    );
+    const remnantColor = quenchedColor(
+      remnant.material,
+      remnant.renderColor ?? remnant.color,
+    );
     const remnantGeometry = usesFoliageDebrisGeometry(remnant.material)
       ? "foliage" as const
       : remnant.shape === "cylinder"
@@ -331,6 +361,8 @@ function sourceFragments(
         fallbackPosition: remnant.position,
         fallbackQuaternion: remnant.quaternion,
         landscapeSurface: remnant.landscapeSurface,
+        treeVisual: remnant.treeVisual,
+        treeVisualSourceId: remnant.treeVisualSourceId,
       });
     });
   }
@@ -344,7 +376,8 @@ function buildBatches(
   const batches = new Map<string, DynamicBreakableFragment[]>();
 
   for (const fragment of fragments) {
-    const key = `${fragment.material}:${fragment.materialColor}:${fragment.textureProfile ?? "default"}:${fragment.geometryKind}`;
+    const treeBark = usesTreeBarkVisual(fragment.material, fragment.treeVisual);
+    const key = `${fragment.material}:${fragment.materialColor}:${fragment.textureProfile ?? "default"}:${fragment.geometryKind}:${treeBark ? "tree-bark" : "default-skin"}`;
     const current = batches.get(key);
     if (current) {
       current.push(fragment);
@@ -359,6 +392,10 @@ function buildBatches(
     materialColor: batchFragments[0].materialColor,
     textureProfile: batchFragments[0].textureProfile,
     geometryKind: batchFragments[0].geometryKind,
+    treeBark: usesTreeBarkVisual(
+      batchFragments[0].material,
+      batchFragments[0].treeVisual,
+    ),
     fragments: batchFragments,
   }));
 }
@@ -501,6 +538,18 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
     const tints = new Float32Array(batch.fragments.length * 3);
     const tint = new Color();
     batch.fragments.forEach((fragment, index) => {
+      // Dynamic batches already sit at WebGL's 16-attribute ceiling. Tree
+      // wood never uses silicate mortar, so its species and stable bark phase
+      // share that existing vec3 instead of allocating a seventeenth
+      // attribute (which makes the entire broken tree fail shader linking).
+      if (batch.treeBark && fragment.treeVisual) {
+        tints[index * 3] = treeWoodSpecies(fragment.treeVisual.kind);
+        tints[index * 3 + 1] = treeBarkPhase(
+          fragment.treeVisual.seed,
+          fragment.treeVisualSourceId ?? fragment.sourceId,
+        );
+        return;
+      }
       if (fragment.landscapeSurface) {
         bands[index] = fragment.landscapeSurface === "viking-ground" ? -1 : -2;
         return;
@@ -529,17 +578,75 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
       batch.materialColor,
       batch.textureProfile,
     );
-    if (batch.geometryKind !== "foliage") {
+    if (!batch.treeBark && batch.geometryKind !== "foliage") {
       return base;
     }
-    const foliage = base.clone();
-    foliage.side = DoubleSide;
-    return foliage;
+    const next = base.clone();
+    if (batch.geometryKind === "foliage") {
+      next.side = DoubleSide;
+    }
+    if (batch.treeBark) {
+      const baseCompile = base.onBeforeCompile;
+      const baseProgramKey = base.customProgramCacheKey();
+      const barkAtlas = treeBarkAtlas();
+      next.onBeforeCompile = (compiled, renderer) => {
+        baseCompile(compiled, renderer);
+        compiled.uniforms.uTreeBarkAtlas = { value: barkAtlas };
+        compiled.vertexShader = compiled.vertexShader
+          .replace(
+            "#include <common>",
+            `#include <common>
+varying vec2 vTreeBarkUv;
+varying float vTreeBarkSide;`,
+          )
+          .replace(
+            "#include <beginnormal_vertex>",
+            `#include <beginnormal_vertex>
+vTreeBarkSide = 1.0 - smoothstep(0.55, 0.9, abs(objectNormal.y));`,
+          )
+          .replace(
+            "#include <begin_vertex>",
+            `#include <begin_vertex>
+vTreeBarkUv = uv;`,
+          );
+        compiled.fragmentShader = compiled.fragmentShader
+          .replace(
+            "#include <common>",
+            `#include <common>
+uniform sampler2D uTreeBarkAtlas;
+varying vec2 vTreeBarkUv;
+varying float vTreeBarkSide;`,
+          )
+          .replace(
+            "#include <color_fragment>",
+            `#include <color_fragment>
+float barkColumn = clamp(floor(vSilicateJointTint.x + 0.5), 0.0, 2.0);
+float barkPadding = 0.006;
+float barkU = fract(vTreeBarkUv.x + vSilicateJointTint.y * 0.73);
+float atlasU = (
+  barkColumn + barkPadding + barkU * (1.0 - barkPadding * 2.0)
+) / 3.0;
+vec3 barkAlbedo = texture2D(
+  uTreeBarkAtlas,
+  vec2(atlasU, clamp(vTreeBarkUv.y, 0.002, 0.998))
+).rgb;
+diffuseColor.rgb = mix(
+  diffuseColor.rgb,
+  barkAlbedo,
+  0.94 * clamp(vTreeBarkSide, 0.0, 1.0)
+);`,
+          );
+      };
+      next.customProgramCacheKey = () =>
+        `${baseProgramKey}:dynamic-tree-bark-v1`;
+    }
+    return next;
   }, [
     batch.geometryKind,
     batch.material,
     batch.materialColor,
     batch.textureProfile,
+    batch.treeBark,
   ]);
   const instanceIds = useMemo(
     () => batch.fragments.map((fragment) => fragment.sourceId),
@@ -560,11 +667,11 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
   useEffect(
     () => () => {
       geometry.dispose();
-      if (batch.geometryKind === "foliage") {
+      if (batch.geometryKind === "foliage" || batch.treeBark) {
         material.dispose();
       }
     },
-    [batch.geometryKind, geometry, material],
+    [batch.geometryKind, batch.treeBark, geometry, material],
   );
 
   useLayoutEffect(() => {

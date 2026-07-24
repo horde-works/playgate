@@ -33,7 +33,7 @@ export const ui = {
       "If breaking things isn't fun, no amount of content will save it.",
     "home.p3.title": "With care",
     "home.p3.body": "Good light, things you recognise, and physics with character.",
-    "footer.place": "Almaty · 2026",
+    "footer.place": "IGOR KIRISIUK · ASTANA, KAZAKHSTAN · 2026",
 
     "catalog.eyebrow": "Catalogue",
     "catalog.title1": "Small games.",
@@ -101,6 +101,11 @@ export const ui = {
     "hint.door.key": "Space",
     "hint.door.action": "Ask to enter",
     "hint.door.actionTouch": "Enter the house",
+    "hint.townDoor.eyebrow": "House entrance",
+    "hint.townDoor.title": "Come on in.",
+    "hint.townDoor.key": "Space",
+    "hint.townDoor.action": "Open the door",
+    "hint.townDoor.actionTouch": "Open the door",
 
     "gate.continueTitle": "Carry on the mess?",
     "gate.startTitle": "Everything can break.",
@@ -140,7 +145,7 @@ export const ui = {
       "Si romper cosas no divierte, ningún contenido lo va a salvar.",
     "home.p3.title": "Con gusto",
     "home.p3.body": "Buena luz, objetos reconocibles y una física con carácter.",
-    "footer.place": "Almatý · 2026",
+    "footer.place": "IGOR KIRISIUK · ASTANA, KAZAKHSTAN · 2026",
 
     "catalog.eyebrow": "Catálogo",
     "catalog.title1": "Juegos pequeños.",
@@ -208,6 +213,11 @@ export const ui = {
     "hint.door.key": "Espacio",
     "hint.door.action": "Pedir entrar",
     "hint.door.actionTouch": "Entrar en la casa",
+    "hint.townDoor.eyebrow": "Entrada de la casa",
+    "hint.townDoor.title": "Puedes pasar.",
+    "hint.townDoor.key": "Espacio",
+    "hint.townDoor.action": "Abrir la puerta",
+    "hint.townDoor.actionTouch": "Abrir la puerta",
 
     "gate.continueTitle": "¿Seguimos el caos?",
     "gate.startTitle": "Todo se puede romper.",
@@ -246,7 +256,7 @@ export const ui = {
     "home.p2.body": "Если ломать не весело — никакой контент это не спасёт.",
     "home.p3.title": "По красоте",
     "home.p3.body": "Хороший свет, узнаваемые вещи и физика с характером.",
-    "footer.place": "Алматы · 2026",
+    "footer.place": "IGOR KIRISIUK · ASTANA, KAZAKHSTAN · 2026",
 
     "catalog.eyebrow": "Каталог",
     "catalog.title1": "Маленькие игры.",
@@ -314,6 +324,11 @@ export const ui = {
     "hint.door.key": "Пробел",
     "hint.door.action": "Попроситься войти",
     "hint.door.actionTouch": "Войти в дом",
+    "hint.townDoor.eyebrow": "Вход в дом",
+    "hint.townDoor.title": "Можно заходить.",
+    "hint.townDoor.key": "Пробел",
+    "hint.townDoor.action": "Открыть дверь",
+    "hint.townDoor.actionTouch": "Открыть дверь",
 
     "gate.continueTitle": "Продолжим беспорядок?",
     "gate.startTitle": "Всё можно сломать.",
@@ -382,9 +397,9 @@ export const sceneCopy: Record<string, Record<Language, SceneCopy>> = {
       reset: "Собрать дом заново",
     },
   },
-  "minas-tirith": {
+  "basalt-stronghold": {
     en: {
-      status: "Make a Mess / Minas Tirith",
+      status: "Make a Mess / Basalt Stronghold",
       eyebrow: "Citadel breach test 001",
       heading: "The fortress is the toy.",
       ready: "The mountain gate is ready",
@@ -396,7 +411,7 @@ export const sceneCopy: Record<string, Record<Language, SceneCopy>> = {
       reset: "Raise the fortress again",
     },
     es: {
-      status: "Make a Mess / Minas Tirith",
+      status: "Make a Mess / Basalt Stronghold",
       eyebrow: "Prueba de asalto a la ciudadela 001",
       heading: "La fortaleza es el juguete.",
       ready: "La puerta de la montaña está lista",
@@ -408,7 +423,7 @@ export const sceneCopy: Record<string, Record<Language, SceneCopy>> = {
       reset: "Levantar la fortaleza de nuevo",
     },
     ru: {
-      status: "Make a Mess / Minas Tirith",
+      status: "Make a Mess / Basalt Stronghold",
       eyebrow: "Citadel breach test 001",
       heading: "Крепость — объект.",
       ready: "The mountain gate is ready",
@@ -496,44 +511,6 @@ export const sceneCopy: Record<string, Record<Language, SceneCopy>> = {
       reset: "Отстроить поселение заново",
     },
   },
-  "rain-seam": {
-    en: {
-      status: "Make a Mess / Zadvorki",
-      eyebrow: "Study from life 001",
-      heading: "The backyards.",
-      ready: "The rain has just passed",
-      loading: "Settling into the backyards…",
-      description:
-        "A piece of a real city: a building-supplies kiosk trading straight into the mud, whitewashed gates, a tight lane along a yellow gas run, a yard with laundry and wheel ruts, a shed with an orange roof patch and kids' bikes — while new towers already stand over the back fence.",
-      enter: "Come in from the street",
-      returnToGame: "Back to the backyards",
-      reset: "Reassemble the yard",
-    },
-    es: {
-      status: "Make a Mess / Zadvorki",
-      eyebrow: "Estudio del natural 001",
-      heading: "Los traspatios.",
-      ready: "La lluvia acaba de pasar",
-      loading: "Habitando los traspatios…",
-      description:
-        "Un trozo de ciudad real: un kiosco de materiales que vende directo al barro, portones encalados, un callejón estrecho junto al tubo de gas, un patio con ropa tendida y rodadas, un cobertizo con un parche naranja en el techo y bicis de niños — mientras las torres nuevas ya asoman sobre la valla trasera.",
-      enter: "Entrar desde la calle",
-      returnToGame: "Volver a los traspatios",
-      reset: "Reconstruir el patio",
-    },
-    ru: {
-      status: "Make a Mess / Задворки",
-      eyebrow: "Этюд с натуры 001",
-      heading: "Задворки.",
-      ready: "Дождь только что прошёл",
-      loading: "Обживаем задворки…",
-      description:
-        "Кусок города, снятый с натуры: киоск стройматериалов торгует прямо в грязь, за белёными воротами — тесный проулок вдоль газовой трубы, двор с бельём и колеёй, сарай с оранжевой заплатой и детские велосипеды. А над задним забором уже стоят новостройки: город подступает к задворкам вплотную.",
-      enter: "Зайти с улицы",
-      returnToGame: "Вернуться на задворки",
-      reset: "Собрать двор заново",
-    },
-  },
 };
 
 export interface GameCardCopy {
@@ -565,7 +542,7 @@ export const gameCardCopy: Record<string, Record<Language, GameCardCopy>> = {
         "Разрушаемая песочница про материалы, опоры и радость хорошо устроенного беспорядка.",
     },
   },
-  "make-a-mess-minas-tirith": {
+  "make-a-mess-basalt-stronghold": {
     en: {
       stageLabel: "New map",
       genre: "Siege sandbox",
@@ -623,26 +600,6 @@ export const gameCardCopy: Record<string, Record<Language, GameCardCopy>> = {
       genre: "Living-world destruction sandbox",
       summary:
         "Обитаемая северная деревня: частокол, длинные дома, зал конунга, оружейные навесы, бельё, очаги, грязь, мох и каменистый лес.",
-    },
-  },
-  "make-a-mess-rain-seam": {
-    en: {
-      stageLabel: "Experimental map",
-      genre: "Backyards destruction sandbox",
-      summary:
-        "A real city block from life: a kiosk trading into the mud, whitewashed gates, a gas-pipe lane, laundry, wheel ruts, kids' bikes — and new towers over the back fence.",
-    },
-    es: {
-      stageLabel: "Mapa experimental",
-      genre: "Sandbox de traspatios destructible",
-      summary:
-        "Un trozo de ciudad real: kiosco vendiendo al barro, portones encalados, callejón del gas, ropa tendida, rodadas, bicis — y torres nuevas sobre la valla trasera.",
-    },
-    ru: {
-      stageLabel: "Экспериментальная карта",
-      genre: "Backyards destruction sandbox",
-      summary:
-        "Кусок города с натуры: киоск в грязи, белёные ворота, проулок вдоль газовой трубы, бельё, колея, велосипеды — и новостройки над задним забором.",
     },
   },
 };

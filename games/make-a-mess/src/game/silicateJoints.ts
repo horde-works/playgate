@@ -7,7 +7,7 @@ export function hasSilicateJoints(
   material: BreakableMaterial,
 ): boolean {
   return (
-    sourceId.startsWith("minas:dark-tower:") &&
+    sourceId.startsWith("stronghold:dark-tower:") &&
     (material === "basalt" || material === "graphiteStone")
   );
 }

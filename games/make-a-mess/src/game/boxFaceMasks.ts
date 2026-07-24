@@ -27,6 +27,11 @@ const FULLY_EXPOSED: BoxFaceMasks = {
   negative: [1, 1, 1],
 };
 
+const FULLY_FLAT: BoxFaceMasks = {
+  positive: [0, 0, 0],
+  negative: [0, 0, 0],
+};
+
 function overlapLength(
   centerA: number,
   sizeA: number,
@@ -92,7 +97,11 @@ function faceCoverage(
  */
 export function computeBoxFaceMasks(
   boxes: readonly FaceMaskBox[],
+  suppressExposedEdges = false,
 ): readonly BoxFaceMasks[] {
+  if (suppressExposedEdges) {
+    return boxes.map(() => FULLY_FLAT);
+  }
   if (boxes.length <= 1) {
     return boxes.map(() => FULLY_EXPOSED);
   }

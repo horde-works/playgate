@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { GameCard } from "./GameCard";
 import { SiteHeader } from "./SiteHeader";
+import { SiteFooter } from "./SiteFooter";
 import { games } from "../../games/registry";
 import { useLanguage } from "../i18n/LanguageProvider";
 
@@ -45,6 +46,7 @@ export function CatalogView() {
         <span aria-hidden="true">←</span>
         {t("catalog.back")}
       </Link>
+      <SiteFooter />
     </main>
   );
 }

@@ -2,6 +2,7 @@ import type {
   BreakableMaterial,
   BreakablePieceDefinition,
   SceneVector3,
+  TreeVisualDefinition,
   TreeVisualKind,
 } from "./destructionScene.ts";
 
@@ -32,6 +33,67 @@ export function proceduralWoodTubeProfile(
 
 export function treeWoodSpecies(kind: TreeVisualKind): number {
   return kind === "birch" ? 1 : kind === "pine" ? 2 : 0;
+}
+
+function treeVisualTextNoise(value: string): number {
+  let result = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    result ^= value.charCodeAt(index);
+    result = Math.imul(result, 16777619);
+  }
+  return (result >>> 0) / 0xffffffff;
+}
+
+/** Stable bark offset that survives piece -> remnant -> shard transitions. */
+export function treeBarkPhase(seed: number, sourceId: string): number {
+  const identityNoise = treeVisualTextNoise(sourceId);
+  const value = Math.sin(
+    (seed + identityNoise * 113) * 127.1 + 23 * 311.7,
+  ) * 43758.5453;
+  return value - Math.floor(value);
+}
+
+export function usesTreeBarkVisual(
+  material: BreakableMaterial,
+  visual: TreeVisualDefinition | undefined,
+): boolean {
+  return material === "wood" && visual !== undefined && visual.role !== "foliage";
+}
+
+export const detachedTreeFoliageThickness = 0.028;
+
+export function detachedTreeFoliageSize(
+  size: SceneVector3,
+): SceneVector3 {
+  return [
+    size[0] * 0.82,
+    Math.min(detachedTreeFoliageThickness, size[1] * 0.08),
+    size[2] * 0.82,
+  ];
+}
+
+/**
+ * Once a crown section loses its woody parent it becomes leaf litter, not a
+ * rigid three-dimensional canopy block. It starts horizontal, falls under
+ * gravity and settles as a thin porous patch on the surface below.
+ */
+export function flattenDetachedTreeFoliage(
+  piece: BreakablePieceDefinition,
+): BreakablePieceDefinition {
+  if (piece.treeVisual?.role !== "foliage") {
+    return piece;
+  }
+  const size = detachedTreeFoliageSize(piece.size);
+  return {
+    ...piece,
+    shape: "panel",
+    size,
+    rotation: [0, piece.rotation?.[1] ?? 0, 0],
+    volume: Math.min(
+      piece.volume ?? Number.POSITIVE_INFINITY,
+      size[0] * size[1] * size[2] * 0.16,
+    ),
+  };
 }
 
 /** Diameter of the low-poly knot that seals two tapered root sections. */

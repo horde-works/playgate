@@ -9,15 +9,15 @@ import {
 
 test("silicate joints belong only to the dark tower masonry", () => {
   assert.equal(
-    hasSilicateJoints("minas:dark-tower:wall:x:12", "graphiteStone"),
+    hasSilicateJoints("stronghold:dark-tower:wall:x:12", "graphiteStone"),
     true,
   );
   assert.equal(
-    hasSilicateJoints("minas:dark-tower:floor:2:1:1", "basalt"),
+    hasSilicateJoints("stronghold:dark-tower:floor:2:1:1", "basalt"),
     true,
   );
-  assert.equal(hasSilicateJoints("minas:ridge:east:rock:2:1", "basalt"), false);
-  assert.equal(hasSilicateJoints("minas:dark-tower:eye:0", "darkGlass"), false);
+  assert.equal(hasSilicateJoints("stronghold:ridge:east:rock:2:1", "basalt"), false);
+  assert.equal(hasSilicateJoints("stronghold:dark-tower:signal:0", "darkGlass"), false);
 });
 
 test("the joint skin closes the authored air gap without swallowing the stone", () => {

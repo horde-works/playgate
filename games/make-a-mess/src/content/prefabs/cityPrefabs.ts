@@ -273,8 +273,9 @@ function oldTwoStoreyHouse(): ScenePrefabDefinition {
   const wall = 0.34;
   const storey = 3;
   const total = 6;
+  const foundationProjection = 0.12;
 
-  pieces.push(selfContact(part("foundation", "concrete", "groundTile", [0, 0.2, 0], [width, 0.4, depth], OLD_PLINTH, {
+  pieces.push(selfContact(part("foundation", "concrete", "groundTile", [0, 0.2, 0], [width + foundationProjection * 2, 0.4, depth + foundationProjection * 2], OLD_PLINTH, {
     carriesAttachments: true,
     weathering: 0.45,
   })));
@@ -452,8 +453,9 @@ function oldTwoStoreyHouse(): ScenePrefabDefinition {
 }
 
 function courtyardOutbuilding(): ScenePrefabDefinition {
+  const foundationProjection = 0.12;
   const pieces: Piece[] = [
-    part("foundation", "concrete", "groundTile", [0, 0.15, 0], [7.2, 0.3, 4.8], "#6a665f", { carriesAttachments: true }),
+    part("foundation", "concrete", "groundTile", [0, 0.15, 0], [7.2 + foundationProjection * 2, 0.3, 4.8 + foundationProjection * 2], "#6a665f", { carriesAttachments: true }),
     part("front", "plaster", "panel", [0, 1.65, 2.25], [7, 3.1, 0.3], "#e1ded3", {
       textureProfile: "city-aged-stucco",
       weathering: 0.95,
@@ -1074,11 +1076,40 @@ function toolDisplay(): ScenePrefabDefinition {
 }
 
 function wheelbarrow(): ScenePrefabDefinition {
-  return prefab("city:wheelbarrow", "Green builder's wheelbarrow", ["city", "shop", "tool", "prop"], [
-    selfContact(part("wheel", "steel", "cylinder", [0, 0.38, 0.75], [0.54, 0.12, 0.54], "#242829", { rotation: [Math.PI / 2, 0, 0] }), [0.55, 0.55, 0.22]),
-    selfContact(part("tray", "steel", "panel", [0, 0.68, -0.05], [1.0, 0.35, 1.35], "#4b8b68", { rotation: [-0.12, 0, 0] }), [1.0, 0.48, 1.2]),
-    ...[-1, 1].map((side) => cylinder(`handle:${side}`, [side * 0.38, 0.55, -0.95], 0.055, 1.5, "#315b47", [Math.PI / 2 - 0.12, 0, 0])),
-    ...[-1, 1].map((side) => cylinder(`leg:${side}`, [side * 0.32, 0.28, -0.35], 0.05, 0.55, "#315b47", [0, 0, side * 0.16])),
+  const traySteel = "#7f8889";
+  const frameSteel = "#4e5758";
+  const trayRotation: SceneVector3 = [-0.12, 0, 0];
+
+  return prefab("city:wheelbarrow", "Galvanised steel builder's wheelbarrow", ["city", "shop", "tool", "prop"], [
+    selfContact(part("wheel", "steel", "cylinder", [0, 0.38, 0.75], [0.54, 0.12, 0.54], "#242829", { rotation: [0, 0, Math.PI / 2] }), [0.12, 0.54, 0.54]),
+    cylinder("wheel:hub", [0, 0.38, 0.75], 0.16, 0.2, "#929a99", [0, 0, Math.PI / 2]),
+
+    // Five real steel pieces form an open tray. Contact boxes below only keep
+    // the structure connected; the physical cavity remains genuinely empty.
+    selfContact(part("tray", "steel", "steelSheet", [0, 0.551, -0.034], [0.82, 0.07, 1.18], traySteel, {
+      rotation: trayRotation,
+      carriesAttachments: true,
+    }), [0.82, 0.22, 1.18]),
+    ...([-1, 1] as const).map((side) =>
+      selfContact(part(`tray:side:${side}`, "steel", "steelSheet", [side * 0.45, 0.72, -0.055], [0.08, 0.4, 1.34], side < 0 ? "#778183" : "#858e8d", {
+        rotation: trayRotation,
+        bearsLoad: false,
+        sideAttachmentReach: 0.18,
+      }), [0.12, 0.56, 1.38]),
+    ),
+    selfContact(part("tray:end:front", "steel", "steelSheet", [0, 0.795, 0.571], [1, 0.4, 0.08], "#858e8d", {
+      rotation: trayRotation,
+      bearsLoad: false,
+      sideAttachmentReach: 0.18,
+    }), [1, 0.41, 0.13]),
+    selfContact(part("tray:end:rear", "steel", "steelSheet", [0, 0.644, -0.68], [1, 0.4, 0.08], "#747e80", {
+      rotation: trayRotation,
+      bearsLoad: false,
+      sideAttachmentReach: 0.18,
+    }), [1, 0.41, 0.13]),
+
+    ...[-1, 1].map((side) => cylinder(`handle:${side}`, [side * 0.38, 0.55, -0.95], 0.055, 1.5, frameSteel, [Math.PI / 2 - 0.12, 0, 0])),
+    ...[-1, 1].map((side) => cylinder(`leg:${side}`, [side * 0.32, 0.28, -0.35], 0.05, 0.55, frameSteel, [0, 0, side * 0.16])),
   ]);
 }
 
@@ -1210,7 +1241,7 @@ function flowerBed(): ScenePrefabDefinition {
 }
 
 // ---------------------------------------------------------------------------
-// Задворки: киоск, заборы трёх пород, навес с гирляндой, бельё, самокат —
+// Старый городской двор: киоск, заборы трёх пород, навес с гирляндой, бельё, самокат —
 // предметы, снятые с натуры. Каждый отвечает на вопрос «кто это оставил».
 // ---------------------------------------------------------------------------
 
@@ -1259,8 +1290,10 @@ function stuccoHouse(options: StuccoHouseOptions): ScenePrefabDefinition {
   const wallT = 0.34;
   const base = 0.4;
   const top = base + storey * 2;
+  const foundationProjection = 0.06;
+  const plinthProjection = 0.12;
   const pieces: Piece[] = [
-    selfContact(part("foundation", "concrete", "groundTile", [0, base / 2, 0], [width, base, depth], "#6f6a60", {
+    selfContact(part("foundation", "concrete", "groundTile", [0, base / 2, 0], [width + foundationProjection * 2, base, depth + foundationProjection * 2], "#6f6a60", {
       carriesAttachments: true,
       weathering: 0.5,
     })),
@@ -1673,11 +1706,11 @@ function stuccoHouse(options: StuccoHouseOptions): ScenePrefabDefinition {
   for (const side of [-1, 1] as const) {
     const zFace = side > 0 ? "front" : "back";
     for (const [index, [from, to]] of plinthSegments(-width / 2 + 0.1, width / 2 - 0.1, options.openings[zFace][0]).entries()) {
-      pieces.push({ ...part(`plinth:z:${side}:${index}`, "concrete", "panel", [(from + to) / 2, base + 0.42, side * (depth / 2 + 0.02)], [to - from, 1.24, 0.1], plinthColor), bearsLoad: false, sideAttachmentReach: 0.35, weathering: 0.9, textureProfile: "city-aged-stucco" as const });
+      pieces.push({ ...part(`plinth:z:${side}:${index}`, "concrete", "panel", [(from + to) / 2, base + 0.42, side * (depth / 2 + plinthProjection / 2)], [to - from, 1.24, plinthProjection], plinthColor), bearsLoad: false, sideAttachmentReach: 0.35, weathering: 0.9, textureProfile: "city-aged-stucco" as const });
     }
     const xFace = side > 0 ? "east" : "west";
     for (const [index, [from, to]] of plinthSegments(-depth / 2 + 0.1, depth / 2 - 0.1, options.openings[xFace][0]).entries()) {
-      pieces.push({ ...part(`plinth:x:${side}:${index}`, "concrete", "panel", [side * (width / 2 + 0.02), base + 0.42, (from + to) / 2], [0.1, 1.24, to - from], plinthColor), bearsLoad: false, sideAttachmentReach: 0.35, weathering: 0.88, textureProfile: "city-aged-stucco" as const });
+      pieces.push({ ...part(`plinth:x:${side}:${index}`, "concrete", "panel", [side * (width / 2 + plinthProjection / 2), base + 0.42, (from + to) / 2], [plinthProjection, 1.24, to - from], plinthColor), bearsLoad: false, sideAttachmentReach: 0.35, weathering: 0.88, textureProfile: "city-aged-stucco" as const });
     }
   }
 

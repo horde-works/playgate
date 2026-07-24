@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { openHouseScene } from "../games/make-a-mess/src/game/destructionScene.ts";
-import { minasTirithScene } from "../games/make-a-mess/src/game/minasTirithScene.ts";
-import { rainSeamScene } from "../games/make-a-mess/src/game/rainSeamScene.ts";
+import { basaltStrongholdScene } from "../games/make-a-mess/src/game/basaltStrongholdScene.ts";
 import { vikingVillageScene } from "../games/make-a-mess/src/game/vikingVillageScene.ts";
 import {
   isProceduralFoliagePiece,
@@ -33,13 +32,12 @@ function assertProceduralCoverage(scene, minimum) {
 
 test("procedural vegetation is present on every map that authors trees or shrubs", () => {
   assertProceduralCoverage(openHouseScene, 35);
-  assertProceduralCoverage(rainSeamScene, 12);
   assertProceduralCoverage(vikingVillageScene, 80);
-  assertProceduralCoverage(minasTirithScene, 180);
+  assertProceduralCoverage(basaltStrongholdScene, 180);
 });
 
 test("all authored conifer forests use the shared pine visual contract", () => {
-  for (const scene of [openHouseScene, vikingVillageScene, minasTirithScene]) {
+  for (const scene of [openHouseScene, vikingVillageScene, basaltStrongholdScene]) {
     const pines = scenePieces(scene).filter(
       (piece) => piece.treeVisual?.kind === "pine",
     );
@@ -56,16 +54,12 @@ test("all authored conifer forests use the shared pine visual contract", () => {
 });
 
 test("shrub and hedge proxies are explicitly tagged instead of inferred from green color", () => {
-  const rainShrubs = scenePieces(rainSeamScene).filter(
-    (piece) => piece.vegetationVisual?.kind === "hedge",
-  );
-  const minasShrubs = scenePieces(minasTirithScene).filter(
+  const strongholdShrubs = scenePieces(basaltStrongholdScene).filter(
     (piece) => piece.vegetationVisual?.kind === "shrub",
   );
   const townShrubs = scenePieces(openHouseScene).filter(
     (piece) => piece.vegetationVisual?.kind === "shrub",
   );
-  assert.ok(rainShrubs.length >= 6);
-  assert.ok(minasShrubs.length >= 80);
+  assert.ok(strongholdShrubs.length >= 80);
   assert.ok(townShrubs.length >= 5);
 });

@@ -18,6 +18,10 @@ export interface StructuralPieceDefinition<Material extends string> {
   readonly attachmentSupportMode?: "wall" | "cable" | "hinge";
   readonly sideAttachmentReach?: number;
   readonly contactBearingOrder?: boolean;
+  /** Per-piece override of the material cantilever allowance. */
+  readonly cantilever?: number;
+  /** Per-piece override of the material vertical bearing gap. */
+  readonly maximumVerticalGap?: number;
 }
 
 export interface StructuralMaterialProfile {
@@ -185,6 +189,20 @@ function geometryBearingRank<Material extends string>(
   return materialBase + columnBonus + sectionBonus;
 }
 
+function pieceMaximumVerticalGap<Material extends string>(
+  piece: StructuralPieceDefinition<Material>,
+  profile: StructuralMaterialProfile,
+): number {
+  return piece.maximumVerticalGap ?? profile.maximumVerticalGap;
+}
+
+function pieceCantilever<Material extends string>(
+  piece: StructuralPieceDefinition<Material>,
+  profile: StructuralMaterialProfile,
+): number {
+  return piece.cantilever ?? profile.cantilever;
+}
+
 export function createStructuralSolver<Material extends string>(
   pieces: readonly StructuralPieceDefinition<Material>[],
   materialProfiles: Readonly<Record<Material, StructuralMaterialProfile>>,
@@ -201,6 +219,11 @@ export function createStructuralSolver<Material extends string>(
   const maximumVerticalReach = Math.max(
     CONTACT_TOLERANCE,
     ...profiles.map((profile) => profile.maximumVerticalGap),
+    ...pieces.map(
+      (piece) =>
+        piece.maximumVerticalGap ??
+        materialProfiles[piece.material].maximumVerticalGap,
+    ),
   );
   const spatialBuckets = new Map<string, StructuralPieceDefinition<Material>[]>();
 
@@ -276,13 +299,8 @@ export function createStructuralSolver<Material extends string>(
     if ((support.bearsLoad ?? supportProfile.bearsLoad) === false) {
       return false;
     }
-    if (
-      bearingContactPatches(
-        piece,
-        support,
-        pieceProfile.maximumVerticalGap,
-      ).length === 0
-    ) {
+    const verticalGap = pieceMaximumVerticalGap(piece, pieceProfile);
+    if (bearingContactPatches(piece, support, verticalGap).length === 0) {
       return false;
     }
 
@@ -296,7 +314,7 @@ export function createStructuralSolver<Material extends string>(
             bearingContactPatches(
               { ...piece, contactBoxes: [pieceBox] },
               { ...support, contactBoxes: [supportBox] },
-              pieceProfile.maximumVerticalGap,
+              verticalGap,
             ).length === 0
           ) {
             continue;
@@ -494,16 +512,16 @@ export function createStructuralSolver<Material extends string>(
       return false;
     }
 
-    const allowance = materialProfiles[piece.material].cantilever;
+    const pieceProfile = materialProfiles[piece.material];
+    const allowance = pieceCantilever(piece, pieceProfile);
+    const verticalGap = pieceMaximumVerticalGap(piece, pieceProfile);
 
     for (const axis of [0, 2] as const) {
       const contacts = supports
         .flatMap((support) =>
-          bearingContactPatches(
-            piece,
-            support,
-            materialProfiles[piece.material].maximumVerticalGap,
-          ).map((patch) => patch[axis === 0 ? "x" : "z"]),
+          bearingContactPatches(piece, support, verticalGap).map(
+            (patch) => patch[axis === 0 ? "x" : "z"],
+          ),
         );
       if (contacts.length === 0) {
         return false;
@@ -696,7 +714,10 @@ export function createStructuralSolver<Material extends string>(
           bearingContactPatches(
             piece,
             support,
-            materialProfiles[piece.material].maximumVerticalGap,
+            pieceMaximumVerticalGap(
+              piece,
+              materialProfiles[piece.material],
+            ),
           ).reduce(
             (area, patch) =>
               area +

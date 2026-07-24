@@ -1,8 +1,10 @@
+import { Color } from "three";
 import type {
   BreakableMaterial,
   BreakablePieceDefinition,
   SurfaceTextureProfile,
 } from "./destructionScene.ts";
+import { groundMaterials } from "./destructionRuntime.ts";
 import {
   isGlassMaterial,
   pieceMaterialBaseColor,
@@ -85,6 +87,46 @@ export function buildIntactInstanceBatches(
     geometryKind: pieceGeometryKind(batchPieces[0]),
     pieces: batchPieces,
   }));
+}
+
+/** Display colours used by intact ground batches, keyed by authored piece. */
+export function buildIntactGroundRenderColors(
+  pieces: readonly BreakablePieceDefinition[],
+): ReadonlyMap<string, string> {
+  const result = new Map<string, string>();
+  const sample = new Color();
+  const displayed = new Color();
+
+  for (const batch of buildIntactInstanceBatches(pieces)) {
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    let count = 0;
+    for (const piece of batch.pieces) {
+      if (piece.shape !== "groundTile" || !groundMaterials.has(piece.material)) {
+        continue;
+      }
+      sample.set(piece.color);
+      r += sample.r;
+      g += sample.g;
+      b += sample.b;
+      count += 1;
+    }
+    if (count === 0) {
+      continue;
+    }
+
+    const average = new Color(r / count, g / count, b / count);
+    for (const piece of batch.pieces) {
+      if (piece.shape !== "groundTile" || !groundMaterials.has(piece.material)) {
+        continue;
+      }
+      displayed.set(piece.color).lerp(average, 0.6);
+      result.set(piece.id, `#${displayed.getHexString()}`);
+    }
+  }
+
+  return result;
 }
 
 export interface HiddenInstanceChanges {

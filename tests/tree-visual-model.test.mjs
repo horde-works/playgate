@@ -3,17 +3,22 @@ import test from "node:test";
 import { Euler, Quaternion, Vector3 } from "three";
 import {
   buildProceduralRootNetwork,
+  detachedTreeFoliageSize,
   expandBrokenTreeDescendants,
+  flattenDetachedTreeFoliage,
   isEnhancedTreePiece,
   isProceduralFoliagePiece,
   isProceduralVegetationPiece,
   proceduralPineNeedleProfile,
   proceduralRootJointDiameter,
   proceduralWoodTubeProfile,
+  treeBarkPhase,
   treeWoodSpecies,
   treeVisualRootId,
   usesFoliageDebrisGeometry,
+  usesTreeBarkVisual,
 } from "../games/make-a-mess/src/game/treeVisualModel.ts";
+import { damageBody } from "../games/make-a-mess/src/game/destructionRuntime.ts";
 import {
   propBirch,
   propOak,
@@ -197,6 +202,52 @@ test("every trunk and branch uses one connected tapered tube contract", () => {
   );
 });
 
+test("tree bark identity survives the transition into broken fragments", () => {
+  const trunkSource = propBirch({ seed: 31 })
+    .map((piece) => runtimePiece("forest:tree:4", piece))
+    .find((piece) => piece.treeVisual?.role === "trunk");
+  assert.ok(trunkSource);
+  assert.equal(usesTreeBarkVisual(trunkSource.material, trunkSource.treeVisual), true);
+  assert.equal(usesTreeBarkVisual("wood", undefined), false);
+  assert.equal(
+    usesTreeBarkVisual("foliage", {
+      kind: "birch",
+      seed: 31,
+      role: "foliage",
+      localId: "leaf:0",
+    }),
+    false,
+  );
+
+  const result = damageBody(
+    trunkSource,
+    {
+      position: new Vector3(...trunkSource.position),
+      quaternion: new Quaternion().setFromEuler(
+        new Euler(...(trunkSource.rotation ?? [0, 0, 0])),
+      ),
+      linearVelocity: new Vector3(),
+      angularVelocity: new Vector3(),
+    },
+    {
+      idPrefix: "birch:fracture",
+      worldPoint: new Vector3(...trunkSource.position),
+      radius: 0.3,
+      burstSpeed: 3,
+    },
+  );
+  assert.ok(result);
+  assert.ok(result.fragments.length > 0);
+  for (const fragment of result.fragments) {
+    assert.deepEqual(fragment.treeVisual, trunkSource.treeVisual);
+    assert.equal(fragment.treeVisualSourceId, trunkSource.id);
+    assert.equal(
+      treeBarkPhase(fragment.treeVisual.seed, fragment.treeVisualSourceId),
+      treeBarkPhase(trunkSource.treeVisual.seed, trunkSource.id),
+    );
+  }
+});
+
 test("pine crowns use dense narrow needles instead of broad leaves", () => {
   const profile = proceduralPineNeedleProfile;
   const needleCount =
@@ -219,10 +270,27 @@ test("broadleaf crowns use many small foliage sections instead of one falling cl
     const foliage = pieces.filter((piece) => piece.treeVisual?.role === "foliage");
     assert.ok(foliage.length >= minimum, `${kind}: too few foliage sections`);
     assert.ok(
-      Math.max(...foliage.map((piece) => Math.max(...piece.size))) < 1.5,
+      Math.max(...foliage.map((piece) => Math.max(...piece.size))) < 1,
       `${kind}: a foliage proxy is still large enough to fall as one clump`,
     );
   }
+});
+
+test("detached tree foliage becomes thin horizontal leaf litter", () => {
+  const crown = propOak({ seed: 17 })
+    .find((piece) => piece.treeVisual?.role === "foliage");
+  const trunk = propOak({ seed: 17 })
+    .find((piece) => piece.treeVisual?.role === "trunk");
+  assert.ok(crown);
+  assert.ok(trunk);
+
+  const detached = flattenDetachedTreeFoliage(crown);
+  assert.deepEqual(detached.size, detachedTreeFoliageSize(crown.size));
+  assert.ok(detached.size[1] <= 0.028);
+  assert.ok(detached.size[0] < crown.size[0]);
+  assert.ok(detached.size[2] < crown.size[2]);
+  assert.deepEqual(detached.rotation, [0, crown.rotation?.[1] ?? 0, 0]);
+  assert.equal(flattenDetachedTreeFoliage(trunk), trunk);
 });
 
 test("breaking a woody parent releases every descendant but not its siblings", () => {

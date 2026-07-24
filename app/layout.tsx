@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { ConsentGate } from "./components/ConsentGate";
 import { LanguageProvider } from "./i18n/LanguageProvider";
 
 const geistSans = Geist({
@@ -32,7 +33,9 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <LanguageProvider>{children}</LanguageProvider>
+        <LanguageProvider>
+          <ConsentGate>{children}</ConsentGate>
+        </LanguageProvider>
       </body>
     </html>
   );

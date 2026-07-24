@@ -147,6 +147,16 @@
     linear-gradient(90deg, rgb(2 4 4 / 0.18), transparent 34%, transparent 66%, rgb(2 4 4 / 0.18));
 }
 
+.running::before {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  background: #050606;
+  content: "";
+  pointer-events: none;
+  animation: filmFadeIn 720ms ease-out both;
+}
+
 .letterboxTop,
 .letterboxBottom {
   position: absolute;
@@ -444,6 +454,11 @@
 @keyframes barsIn {
   from { transform: scaleY(0); }
   to { transform: scaleY(1); }
+}
+
+@keyframes filmFadeIn {
+  from { opacity: 1; }
+  to { opacity: 0; }
 }
 
 @keyframes wordFlight {

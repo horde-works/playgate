@@ -7,7 +7,6 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
-  useState,
   type ComponentRef,
 } from "react";
 import {
@@ -105,22 +104,22 @@ export function DayNightCycle({
   nightRef,
   theme = "town",
   worldRadius,
+  snapVersion = 0,
+  cinematic = false,
 }: {
   mode: TimeOfDay;
   nightRef: { current: number };
   theme?: "town" | "fortress";
   worldRadius?: number;
+  snapVersion?: number;
+  cinematic?: boolean;
 }) {
   const directional = useRef<DirectionalLight>(null);
   const hemisphere = useRef<HemisphereLight>(null);
   const fogRef = useRef<Fog>(null);
   const backgroundRef = useRef<Color>(null);
   const time = useRef(timeOfDayTargets.day);
-  const skyThrottle = useRef(10);
-  const lastSkyTime = useRef(-1);
-  const [skySun, setSkySun] = useState<readonly [number, number, number]>([
-    24, 12, 14,
-  ]);
+  const appliedSnapVersion = useRef(snapVersion);
   const fortress = theme === "fortress";
   const dayColor = useMemo(
     () => new Color(fortress ? "#84939d" : "#9cc0ce"),
@@ -150,6 +149,17 @@ export function DayNightCycle({
       skyRef.current.renderOrder = 1000;
     }
   }, []);
+
+  // A cinematic replay can begin while the previous run is still at night.
+  // Snap before the first rendered frame so recording never captures that
+  // stale lighting state. Ordinary N-key changes continue to glide smoothly.
+  useLayoutEffect(() => {
+    if (appliedSnapVersion.current === snapVersion) {
+      return;
+    }
+    appliedSnapVersion.current = snapVersion;
+    time.current = timeOfDayTargets[mode];
+  }, [mode, snapVersion]);
 
   useFrame((frameState, delta) => {
     const target = timeOfDayTargets[mode];
@@ -233,14 +243,12 @@ export function DayNightCycle({
       stains: theme === "town" ? 1 : 0,
     });
 
-    skyThrottle.current += delta;
-    if (
-      skyThrottle.current > 0.25 &&
-      Math.abs(time.current - lastSkyTime.current) > 0.003
-    ) {
-      skyThrottle.current = 0;
-      lastSkyTime.current = time.current;
-      setSkySun([sunX, sunY, sunZ]);
+    // Keep the visible sun on the exact same frame-coherent position used by
+    // glare and lens dirt. The old throttled React update left the sky disc a
+    // few frames behind the post effect, producing short flashes in flyovers.
+    const skyMaterial = skyRef.current?.material;
+    if (skyMaterial && "uniforms" in skyMaterial) {
+      skyMaterial.uniforms.sunPosition.value.set(sunX, sunY, sunZ);
     }
   });
 
@@ -265,11 +273,11 @@ export function DayNightCycle({
       <Sky
         ref={skyRef}
         distance={fortress ? 170 : Math.max(110, (worldRadius ?? 58) * 1.9)}
-        sunPosition={[...skySun]}
-        turbidity={fortress ? 10.5 : 6.2}
+        sunPosition={[24, 12, 14]}
+        turbidity={fortress ? 10.5 : cinematic ? 4.2 : 6.2}
         rayleigh={fortress ? 1.25 : 1.6}
-        mieCoefficient={fortress ? 0.011 : 0.005}
-        mieDirectionalG={fortress ? 0.82 : 0.77}
+        mieCoefficient={fortress ? 0.011 : cinematic ? 0.0012 : 0.005}
+        mieDirectionalG={fortress ? 0.82 : cinematic ? 0.68 : 0.77}
       />
       <hemisphereLight
         ref={hemisphere}

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { OccupancyGrid } from "../games/make-a-mess/src/game/occupancyGrid.ts";
 import { LightingBaker } from "../games/make-a-mess/src/game/bakedLighting.ts";
-import { minasTirithScene } from "../games/make-a-mess/src/game/minasTirithScene.ts";
+import { basaltStrongholdScene } from "../games/make-a-mess/src/game/basaltStrongholdScene.ts";
 
 function box(id, position, size, rotation) {
   return { id, position, size, rotation };
@@ -145,7 +145,7 @@ test("adjacent ground tiles bake identical AO at their shared seam", () => {
 });
 
 test("the full fortress bakes within a sane time and value range", () => {
-  const pieces = minasTirithScene.breakablePieces;
+  const pieces = basaltStrongholdScene.breakablePieces;
   const started = Date.now();
   const baker = new LightingBaker(pieces);
   const rasterMs = Date.now() - started;

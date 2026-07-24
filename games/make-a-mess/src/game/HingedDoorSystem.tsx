@@ -7,7 +7,9 @@ import { Euler, Quaternion, Vector3 } from "three";
 import type { BreakablePieceDefinition } from "./destructionScene";
 import {
   horizontalGateDistance,
+  hingedDoorGroupKey,
   inwardDoorSwingSign,
+  townHouseDoorPolicy,
   VIKING_DOOR_APPROACH_RADIUS,
   VIKING_DOOR_RELEASE_RADIUS,
   VIKING_GATE_APPROACH_RADIUS,
@@ -16,11 +18,12 @@ import {
   vikingGateLeafPolicy,
   type VikingDoorPolicy,
   type VikingGateLeafPolicy,
+  type TownHouseDoorPolicy,
 } from "./hingedGatePolicy";
 
 export interface HingedEntryApproach {
   readonly id: string;
-  readonly kind: "door" | "gate";
+  readonly kind: "door" | "gate" | "town-door";
 }
 
 interface DoorMember {
@@ -38,6 +41,7 @@ interface DoorGroup {
   readonly center: readonly [number, number, number];
   readonly gate: VikingGateLeafPolicy | null;
   readonly vikingDoor: VikingDoorPolicy | null;
+  readonly townHouseDoor: TownHouseDoorPolicy | null;
 }
 
 interface GateGroup {
@@ -76,7 +80,7 @@ export function HingedDoorSystem({
       if (!piece.hinge) {
         continue;
       }
-      const key = piece.id.replace(/:(board|strap|brace):\d+$/, "");
+      const key = hingedDoorGroupKey(piece.id, piece.clusterId);
       const existing = groups.get(key);
       if (existing) {
         existing.members.push(piece);
@@ -108,6 +112,7 @@ export function HingedDoorSystem({
         center: [sx / count, sy / count, sz / count] as const,
         gate: vikingGateLeafPolicy(key),
         vikingDoor: vikingDoorPolicy(key),
+        townHouseDoor: townHouseDoorPolicy(key),
       };
     });
   }, [pieces]);
@@ -183,23 +188,27 @@ export function HingedDoorSystem({
     }
 
     for (const group of doorGroups) {
-      if (!group.vikingDoor) {
+      const doorId = group.vikingDoor?.doorId ?? group.townHouseDoor?.doorId;
+      if (!doorId) {
         continue;
       }
       const usable = group.members.some(
         (member) => !brokenPieces.current.has(member.piece.id),
       );
       if (!usable) {
-        openedEntries.current.delete(group.vikingDoor.doorId);
+        openedEntries.current.delete(doorId);
         continue;
       }
       const distance = horizontalGateDistance(cameraPosition, group.center);
       if (distance <= VIKING_DOOR_APPROACH_RADIUS && distance < nearestEntryDistance) {
-        nearestEntry = { id: group.vikingDoor.doorId, kind: "door" };
+        nearestEntry = {
+          id: doorId,
+          kind: group.townHouseDoor ? "town-door" : "door",
+        };
         nearestEntryDistance = distance;
       }
       if (distance > VIKING_DOOR_RELEASE_RADIUS) {
-        openedEntries.current.delete(group.vikingDoor.doorId);
+        openedEntries.current.delete(doorId);
       }
     }
 
@@ -232,13 +241,15 @@ export function HingedDoorSystem({
       const dz = camera.position.z - group.center[2];
       const distance = Math.hypot(dx, dy, dz);
       let open: boolean;
-      const interactiveEntryId = group.gate?.gateId ?? group.vikingDoor?.doorId;
+      const interactiveEntryId = group.gate?.gateId
+        ?? group.vikingDoor?.doorId
+        ?? group.townHouseDoor?.doorId;
       if (interactiveEntryId) {
         open = openedEntries.current.has(interactiveEntryId);
         if (open) {
           if (group.gate) {
             state.sign = group.gate.swingSign;
-          } else if (group.vikingDoor) {
+          } else if (group.vikingDoor || group.townHouseDoor) {
             state.sign = inwardDoorSwingSign(
               group.center,
               hinge.pivot,
@@ -261,7 +272,13 @@ export function HingedDoorSystem({
           directionToDoor.current.dot(cameraDirection.current) > 0.25;
       }
 
-      if (!group.gate && !group.vikingDoor && open && state.sign === 0) {
+      if (
+        !group.gate &&
+        !group.vikingDoor &&
+        !group.townHouseDoor &&
+        open &&
+        state.sign === 0
+      ) {
         const side =
           Math.sign(dx * hinge.normal[0] + dz * hinge.normal[2]) || 1;
         const crossDotNormal =

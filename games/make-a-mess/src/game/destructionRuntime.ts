@@ -4,6 +4,7 @@ import type {
   BreakableShape,
   LandscapeSurfaceProfile,
   SurfaceTextureProfile,
+  TreeVisualDefinition,
 } from "./destructionScene";
 import {
   applyVoxelDamage,
@@ -20,8 +21,13 @@ export interface ShardDefinition {
   readonly id: string;
   readonly material: BreakableMaterial;
   readonly color: string;
+  /** Display colour inherited from the intact ground batch. */
+  readonly renderColor?: string;
   readonly textureProfile?: SurfaceTextureProfile;
   readonly landscapeSurface?: LandscapeSurfaceProfile;
+  readonly treeVisual?: TreeVisualDefinition;
+  /** Original authored member id keeps bark placement stable after re-fracture. */
+  readonly treeVisualSourceId?: string;
   /** Round debris (pipe/boiler segments, wheels) keeps its round shape. */
   readonly shape?: BreakableShape;
   readonly size: readonly [number, number, number];
@@ -40,8 +46,11 @@ export interface ShardSource {
   readonly id: string;
   readonly material: BreakableMaterial;
   readonly color: string;
+  readonly renderColor?: string;
   readonly textureProfile?: SurfaceTextureProfile;
   readonly landscapeSurface?: LandscapeSurfaceProfile;
+  readonly treeVisual?: TreeVisualDefinition;
+  readonly treeVisualSourceId?: string;
   readonly shape?: BreakableShape;
   readonly size: readonly [number, number, number];
   readonly voxelBody?: VoxelBody;
@@ -55,8 +64,11 @@ export interface RemnantDefinition {
   readonly parentId: string;
   readonly material: BreakableMaterial;
   readonly color: string;
+  readonly renderColor?: string;
   readonly textureProfile?: SurfaceTextureProfile;
   readonly landscapeSurface?: LandscapeSurfaceProfile;
+  readonly treeVisual?: TreeVisualDefinition;
+  readonly treeVisualSourceId?: string;
   readonly shape?: BreakableShape;
   readonly size: readonly [number, number, number];
   readonly position: readonly [number, number, number];
@@ -1005,8 +1017,12 @@ export function damageBody(
         id,
         material: source.material,
         color: source.color,
+        renderColor: source.renderColor,
         textureProfile: source.textureProfile,
         landscapeSurface: source.landscapeSurface,
+        treeVisual: source.treeVisual,
+        treeVisualSourceId:
+          source.treeVisualSourceId ?? (source.treeVisual ? source.id : undefined),
         shape: fragment.shape,
         size: fragment.size,
         voxelBody: fragment.voxelBody,

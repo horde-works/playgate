@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   applyHiddenPieceDiff,
+  buildIntactGroundRenderColors,
   buildIntactInstanceBatches,
 } from "../games/make-a-mess/src/game/intactWorldBatching.ts";
-import { minasTirithScene } from "../games/make-a-mess/src/game/minasTirithScene.ts";
+import { basaltStrongholdScene } from "../games/make-a-mess/src/game/basaltStrongholdScene.ts";
 
 function piece(id, material, position, overrides = {}) {
   return {
@@ -41,12 +42,12 @@ test("batch grouping does not depend on which pieces are broken", () => {
 });
 
 test("the whole fortress renders as a stable, small set of instanced batches", () => {
-  const batches = buildIntactInstanceBatches(minasTirithScene.breakablePieces);
+  const batches = buildIntactInstanceBatches(basaltStrongholdScene.breakablePieces);
 
   assert.equal(batches.length < 32, true);
   assert.equal(
     batches.reduce((total, batch) => total + batch.pieces.length, 0),
-    minasTirithScene.breakablePieces.length,
+    basaltStrongholdScene.breakablePieces.length,
   );
   // Dark-tower masonry carries baked silicate seams inside its base batches.
   assert.equal(
@@ -100,4 +101,21 @@ test("visual texture variants never merge into one material batch", () => {
     batches.map((batch) => batch.textureProfile).toSorted(),
     ["city-gray-pavers", "city-red-pavers"],
   );
+});
+
+test("ground render colours survive the transition to a damaged remnant", () => {
+  const pieces = [
+    piece("grass-dark", "grass", [0, 0, 0], {
+      shape: "groundTile",
+      color: "#284828",
+    }),
+    piece("grass-light", "grass", [2, 0, 0], {
+      shape: "groundTile",
+      color: "#507050",
+    }),
+  ];
+  const colors = buildIntactGroundRenderColors(pieces);
+  assert.equal(colors.size, 2);
+  assert.notEqual(colors.get("grass-dark"), pieces[0].color);
+  assert.notEqual(colors.get("grass-light"), pieces[1].color);
 });

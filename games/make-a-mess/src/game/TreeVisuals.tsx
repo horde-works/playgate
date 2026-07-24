@@ -15,10 +15,7 @@ import {
   MeshStandardMaterial,
   Quaternion,
   SphereGeometry,
-  SRGBColorSpace,
   StaticDrawUsage,
-  Texture,
-  TextureLoader,
   Vector3,
 } from "three";
 import type {
@@ -31,9 +28,11 @@ import {
   proceduralPineNeedleProfile,
   proceduralRootJointDiameter,
   proceduralWoodTubeProfile,
+  treeBarkPhase,
   treeWoodSpecies,
   treeVisualRootId,
 } from "./treeVisualModel";
+import { treeBarkAtlas } from "./treeBarkAtlas";
 import { windState } from "./windState";
 
 const UP = new Vector3(0, 1, 0);
@@ -71,19 +70,6 @@ interface TreeVisualBuild {
 interface TreeShader {
   readonly uniforms: Record<string, { value: unknown }>;
   vertexShader: string;
-}
-
-let sharedTreeBarkAtlas: Texture | undefined;
-
-function treeBarkAtlas(): Texture {
-  if (!sharedTreeBarkAtlas) {
-    sharedTreeBarkAtlas = new TextureLoader().load(
-      "/games/make-a-mess/textures/tree-bark-atlas-v1.png",
-    );
-    sharedTreeBarkAtlas.colorSpace = SRGBColorSpace;
-    sharedTreeBarkAtlas.anisotropy = 4;
-  }
-  return sharedTreeBarkAtlas;
 }
 
 function hash(seed: number, salt: number): number {
@@ -220,7 +206,7 @@ function pushCurvedPiece(
       ? new Color("#ded9c9")
       : new Color(piece.color),
     species,
-    phase: hash(seed + identityNoise * 113, 23),
+    phase: treeBarkPhase(seed, piece.id),
     bend:
       (bend / Math.max(piece.size[0] * 1.08, 0.001)) *
       (0.65 + identityNoise * 0.7),
@@ -522,10 +508,10 @@ function buildTreeVisuals(
       );
     }
     group.foliage.forEach((cluster, index) => {
-      // Two overlapping lobes keep the crown visually continuous without
-      // turning it back into a single large physics body. Both lobes still
-      // follow the same small destruction proxy and share one draw call.
-      for (let lobe = 0; lobe < 2; lobe += 1) {
+      // Three overlapping render lobes make a dense crown while the gameplay
+      // proxy remains small. All lobes address the same destructible section
+      // and still share one draw call.
+      for (let lobe = 0; lobe < 3; lobe += 1) {
         foliage.push({
           sourceId: cluster.id,
           matrix: treeFoliageLobeMatrix(cluster, lobe, group.seed + index * 7),
@@ -569,7 +555,7 @@ function treeFoliageLobeMatrix(
   const rotation = new Quaternion().setFromEuler(
     new Euler(...(piece.rotation ?? [0, 0, 0])),
   );
-  const side = index === 0 ? -1 : 1;
+  const side = index - 1;
   const center = new Vector3(...piece.position).add(
     new Vector3(
       side * piece.size[0] * (0.1 + hash(seed, 610 + index) * 0.04),

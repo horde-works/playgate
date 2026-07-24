@@ -35,14 +35,14 @@ export function GameCard({ game, featured = false }: GameCardProps) {
         </Link>
       </div>
 
-      {game.art === "minas-tirith" ? (
-        <div className="game-card-art game-card-art-minas" aria-hidden="true">
-          <span className="art-word art-word-minas">MINAS</span>
-          <span className="art-word art-word-tirith">TIRITH</span>
+      {game.art === "basalt-stronghold" ? (
+        <div className="game-card-art game-card-art-stronghold" aria-hidden="true">
+          <span className="art-word art-word-basalt">BASALT</span>
+          <span className="art-word art-word-stronghold">STRONGHOLD</span>
           <div className="art-mountain art-mountain-1" />
           <div className="art-mountain art-mountain-2" />
           <div className="art-tower">
-            <div className="art-tower-eye" />
+            <div className="art-tower-signal" />
             <div className="art-tower-tier art-tower-tier-1" />
             <div className="art-tower-tier art-tower-tier-2" />
             <div className="art-tower-tier art-tower-tier-3" />
@@ -100,20 +100,6 @@ export function GameCard({ game, featured = false }: GameCardProps) {
           </div>
           <div className="art-viking-torch art-viking-torch-left" />
           <div className="art-viking-torch art-viking-torch-right" />
-        </div>
-      ) : game.art === "rain-seam" ? (
-        <div className="game-card-art game-card-art-rain-seam" aria-hidden="true">
-          <span className="art-word art-word-rain">ДОЖДЕВОЙ</span>
-          <span className="art-word art-word-seam">ДВОР</span>
-          <div className="art-rain-old-house">
-            <i className="art-rain-door" />
-            <i className="art-rain-window" />
-          </div>
-          <div className="art-rain-outbuilding" />
-          <div className="art-rain-gate" />
-          <div className="art-rain-wall" />
-          <div className="art-rain-bike" />
-          <div className="art-rain-puddle" />
         </div>
       ) : (
         <div className="game-card-art" aria-hidden="true">

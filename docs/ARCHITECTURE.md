@@ -4,7 +4,7 @@ Playgate is a home-made collection of small, hand-built games. Its centrepiece
 is **Make a Mess**, a real-time destruction sandbox: every wall, arch, rail and
 fitting is an individual body that knows what it is made of, what holds it up
 and how it should break. Four maps share one engine — an open block of houses
-(`open-house`), a mountain fortress (`minas-tirith`) and a railway museum
+(`open-house`), a mountain fortress (`basalt-stronghold`) and a railway museum
 (`grand-terminal`), plus the data-first pilot Viking settlement
 (`viking-village`).
 
@@ -74,7 +74,7 @@ docs/                    This document
 | `MakeAMessGame.tsx` | The top-level game component, HUD and input |
 
 The older scenes are `destructionScene.ts` (`open-house`),
-`minasTirithScene.ts` (+ `minasTirithWorldbuilding.ts`) and
+`basaltStrongholdScene.ts` (+ `basaltStrongholdWorldbuilding.ts`) and
 `grandTerminalScene.ts`, each wrapped by a thin `*Game.tsx` that binds the scene
 to `MakeAMessGame`. `viking-village` is the first scene authored through the
 serializable document + prefab compiler in `src/content`; the older maps remain
@@ -418,7 +418,7 @@ scene's own copy if a scene has no translation yet.
   clusters, faceted-round and hinged-door invariants, reachability of side halls),
   box-face masks, and server-rendered HTML for the site and game routes.
 - **Type & build:** `tsc --noEmit` and the production `build` must be clean (two
-  pre-existing unrelated failures in `minasTirithWorldbuilding.ts` and
+  pre-existing unrelated failures in `basaltStrongholdWorldbuilding.ts` and
   `worker/index.ts` are known and ignored).
 - **Visual verification:** a headless Chrome driven over the DevTools protocol
   loads a route, enters the 3D scene, walks/looks/acts and captures screenshots.

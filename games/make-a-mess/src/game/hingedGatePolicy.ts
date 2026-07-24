@@ -14,6 +14,10 @@ export interface VikingDoorPolicy {
   readonly doorId: string;
 }
 
+export interface TownHouseDoorPolicy {
+  readonly doorId: string;
+}
+
 export function vikingGateLeafPolicy(groupKey: string): VikingGateLeafPolicy | null {
   const match = groupKey.match(
     /^(viking-village:palisade:(north|south)):leaf:(-1|1)$/,
@@ -38,6 +42,22 @@ export function vikingDoorPolicy(groupKey: string): VikingDoorPolicy | null {
     return null;
   }
   return { doorId: groupKey };
+}
+
+export function townHouseDoorPolicy(groupKey: string): TownHouseDoorPolicy | null {
+  if (!/^(?:(?:h2|h3):)?door:(?:front|back)$/.test(groupKey)) {
+    return null;
+  }
+  return { doorId: groupKey };
+}
+
+export function hingedDoorGroupKey(
+  pieceId: string,
+  clusterId: string,
+): string {
+  return townHouseDoorPolicy(clusterId)
+    ? clusterId
+    : pieceId.replace(/:(board|strap|brace):\d+$/, "");
 }
 
 export function inwardDoorSwingSign(

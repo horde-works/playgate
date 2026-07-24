@@ -11,11 +11,11 @@ import {
 } from "./destructionScene.ts";
 import { propPine } from "../content/prefabs/coreFlora.ts";
 
-interface MinasWorldbuildingOptions {
+interface BasaltStrongholdWorldbuildingOptions {
   readonly surfaceYAt: (x: number, z: number) => number;
 }
 
-interface MinasWorldbuildingResult {
+interface BasaltStrongholdWorldbuildingResult {
   readonly clusters: readonly BreakableClusterDefinition[];
   readonly lamps: readonly LampDefinition[];
 }
@@ -617,7 +617,7 @@ function addCart(
 }
 
 function createTowerInterior(lamps: LampDefinition[]): BreakableClusterDefinition {
-  const builder = zone("minas:tower-life");
+  const builder = zone("stronghold:tower-life");
 
   for (let floor = 0; floor < TOWER_FLOORS; floor += 1) {
     const baseY = floor * TOWER_FLOOR_HEIGHT;
@@ -764,7 +764,7 @@ function createTowerInterior(lamps: LampDefinition[]): BreakableClusterDefinitio
     } else {
       for (let brace = 0; brace < 6; brace += 1) {
         builder.add(
-          `eye-machinery:brace:${brace}`,
+          `signal-machinery:brace:${brace}`,
           "steel",
           "steelSheet",
           [-4.5 + brace * 1.8, floorY + 1.2 + (brace % 2) * 0.45, TOWER_CENTER_Z],
@@ -773,8 +773,8 @@ function createTowerInterior(lamps: LampDefinition[]): BreakableClusterDefinitio
           [0, 0, (brace - 2.5) * 0.035],
         );
       }
-      addTable(builder, "eye-console:0", -3.2, floorY, TOWER_CENTER_Z - 3, 0, 2.6, 1.1);
-      addTable(builder, "eye-console:1", 3.2, floorY, TOWER_CENTER_Z - 3, 0, 2.6, 1.1);
+      addTable(builder, "signal-console:0", -3.2, floorY, TOWER_CENTER_Z - 3, 0, 2.6, 1.1);
+      addTable(builder, "signal-console:1", 3.2, floorY, TOWER_CENTER_Z - 3, 0, 2.6, 1.1);
     }
 
     if (floor % 2 === 0) {
@@ -799,7 +799,7 @@ function createTowerInterior(lamps: LampDefinition[]): BreakableClusterDefinitio
 }
 
 function createWallLife(lamps: LampDefinition[]): BreakableClusterDefinition {
-  const builder = zone("minas:wall-life");
+  const builder = zone("stronghold:wall-life");
   const floorY = 0.04;
 
   for (const side of [-1, 1] as const) {
@@ -898,10 +898,10 @@ function createWallLife(lamps: LampDefinition[]): BreakableClusterDefinition {
 }
 
 function createCourtyard(lamps: LampDefinition[]): BreakableClusterDefinition[] {
-  const surfaces = zone("minas:courtyard-surfaces");
-  const smithy = zone("minas:courtyard-smithy");
-  const storehouse = zone("minas:courtyard-storehouse");
-  const commons = zone("minas:courtyard-commons");
+  const surfaces = zone("stronghold:courtyard-surfaces");
+  const smithy = zone("stronghold:courtyard-smithy");
+  const storehouse = zone("stronghold:courtyard-storehouse");
+  const commons = zone("stronghold:courtyard-commons");
   const floorY = 0.04;
 
   for (let segment = 0; segment < 9; segment += 1) {
@@ -1010,10 +1010,10 @@ function createCourtyard(lamps: LampDefinition[]): BreakableClusterDefinition[] 
 }
 
 function createSiegeCamp(lamps: LampDefinition[]): BreakableClusterDefinition[] {
-  const surfaces = zone("minas:siege-surfaces");
-  const west = zone("minas:siege-workshop");
-  const east = zone("minas:siege-supplies");
-  const engines = zone("minas:siege-engines");
+  const surfaces = zone("stronghold:siege-surfaces");
+  const west = zone("stronghold:siege-workshop");
+  const east = zone("stronghold:siege-supplies");
+  const engines = zone("stronghold:siege-engines");
   const floorY = 0.04;
 
   for (let patch = 0; patch < 24; patch += 1) {
@@ -1114,7 +1114,7 @@ function createSiegeCamp(lamps: LampDefinition[]): BreakableClusterDefinition[] 
 }
 
 function createSignsOfOccupation(): BreakableClusterDefinition {
-  const builder = zone("minas:occupation-traces");
+  const builder = zone("stronghold:occupation-traces");
   const floorY = 0.04;
 
   // Muted, patched tower banners: each strip remains an independent fragile
@@ -1257,9 +1257,9 @@ function addConifer(
 function createLivingLandscape(
   surfaceYAt: (x: number, z: number) => number,
 ): BreakableClusterDefinition[] {
-  const forest = zone("minas:living-forest");
-  const undergrowth = zone("minas:undergrowth");
-  const scree = zone("minas:mountain-scree");
+  const forest = zone("stronghold:living-forest");
+  const undergrowth = zone("stronghold:undergrowth");
+  const scree = zone("stronghold:mountain-scree");
   const treePositions: readonly [number, number][] = [
     [-20, 53], [-14, 59], [-7, 64], [6, 63], [14, 58], [21, 51],
     [-20, -70], [-14, -78], [-6, -82], [6, -82], [14, -77], [21, -68],
@@ -1341,9 +1341,9 @@ function createLivingLandscape(
   ];
 }
 
-export function createMinasTirithWorldbuilding({
+export function createBasaltStrongholdWorldbuilding({
   surfaceYAt,
-}: MinasWorldbuildingOptions): MinasWorldbuildingResult {
+}: BasaltStrongholdWorldbuildingOptions): BasaltStrongholdWorldbuildingResult {
   const lamps: LampDefinition[] = [];
   const clusters: BreakableClusterDefinition[] = [
     createTowerInterior(lamps),

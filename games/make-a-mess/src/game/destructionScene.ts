@@ -65,6 +65,9 @@ export type SurfaceTextureProfile =
   | "city-red-aggregate"
   | "city-facade-cladding"
   | "city-roof-tile"
+  // Крашеный цоколь: цвет детали — слой краски, шейдер слущивает его
+  // пластами до светлой шпаклёвки и тёмного кирпича (сильнее к земле).
+  | "city-painted-plinth"
   // Вывески и таблички: текстура ложится по родным UV грани ОДИН раз (без
   // мировой трипланарной проекции) — так на боксе читается надпись.
   | "city-shop-sign"
@@ -1123,41 +1126,55 @@ function createDoor(
   facing: 1 | -1,
 ): BreakableClusterDefinition {
   const pieces: BreakablePieceDefinition[] = [];
+  const hinge: NonNullable<BreakablePieceDefinition["hinge"]> = {
+    pivot: [x - 0.71, 1.12, z],
+    direction: [1, 0, 0],
+    normal: [0, 0, facing],
+  };
 
   for (let index = 0; index < 5; index += 1) {
     pieces.push(
-      makePiece(
-        `${id}:board:${index}`,
-        id,
-        "wood",
-        "plank",
-        [x - 0.58 + index * 0.29, 1.12, z],
-        [0.26, 2.15, 0.12],
-        woodPalette[index % woodPalette.length],
-      ),
+      {
+        ...makePiece(
+          `${id}:board:${index}`,
+          id,
+          "wood",
+          "plank",
+          [x - 0.58 + index * 0.29, 1.12, z],
+          [0.26, 2.15, 0.12],
+          woodPalette[index % woodPalette.length],
+        ),
+        hinge,
+      },
     );
   }
 
   pieces.push(
-    makePiece(
-      `${id}:brace:top`,
-      id,
-      "wood",
-      "plank",
-      [x, 1.72, z + facing * 0.075],
-      [1.55, 0.13, 0.13],
-      "#704228",
-    ),
-    makePiece(
-      `${id}:brace:diagonal`,
-      id,
-      "wood",
-      "plank",
-      [x, 1.04, z + facing * 0.08],
-      [1.65, 0.14, 0.13],
-      "#704228",
-      [0, 0, -0.62],
-    ),
+    {
+      ...makePiece(
+        `${id}:brace:top`,
+        id,
+        "wood",
+        "plank",
+        [x, 1.72, z + facing * 0.075],
+        [1.55, 0.13, 0.13],
+        "#704228",
+      ),
+      hinge,
+    },
+    {
+      ...makePiece(
+        `${id}:brace:diagonal`,
+        id,
+        "wood",
+        "plank",
+        [x, 1.04, z + facing * 0.08],
+        [1.65, 0.14, 0.13],
+        "#704228",
+        [0, 0, -0.62],
+      ),
+      hinge,
+    },
   );
 
   return cluster(id, "Plank door", "wood", "linked", pieces);
@@ -1494,6 +1511,12 @@ const panelPalette = ["#d8cdb2", "#cfc3a6", "#e0d6be", "#d2c7ab"];
 const slabPalette = ["#b7ad9c", "#aca293"];
 const plinthColor = "#6f6a60";
 const plinthBandColors = ["#736e63", "#6b665c"];
+// Крашеные цоколи: суриково-бордовая гамма. Цвет — верхний слой краски;
+// профиль city-painted-plinth слущивает его к земле до шпаклёвки и кирпича.
+const paintedPlinthTints = ["#6e3b31", "#7a4438", "#603831", "#84493a"];
+// Акцентный первый этаж: капремонт выделил нижний ярус охрой, и он всегда
+// идёт в паре с крашеным цоколем — как на живых домах.
+const groundAccentPalette = ["#c9a355", "#c09a4e", "#d2ac60", "#c4a057"];
 const apronConcrete = ["#918d82", "#8a867b"];
 const stairConcrete = "#9d9a91";
 
@@ -1689,6 +1712,15 @@ function createKhrushchevka(
   const pal = config.palette ?? panelPalette;
   const noise = (key: string): number => deterministicNoise(`${salt}:${key}`);
 
+  // Биография низа дома: у части домов цоколь перекрашен суриком и облупился,
+  // у части капремонт ещё и выделил весь первый этаж охрой. Жёлтый низ без
+  // крашеного цоколя не встречается — как в натуре.
+  const groundAccent = noise("accent:ground") < 0.34;
+  const plinthPainted = groundAccent || noise("plinth:paint") < 0.55;
+  const plinthPaint = paintedPlinthTints[
+    Math.floor(noise("plinth:tone") * paintedPlinthTints.length)
+  ];
+
   // Ремонтные заплаты: прямоугольники в 2-4 панели, перекрашенные при
   // латании швов. На реальных фасадах эти пятна видны с другого конца двора.
   interface RepairPatch {
@@ -1721,7 +1753,9 @@ function createKhrushchevka(
     floor: number,
     index: number,
   ): string => {
-    const basePanel = pal[((index % pal.length) + pal.length) % pal.length];
+    const activePal = groundAccent && floor === 0 ? groundAccentPalette : pal;
+    const basePanel =
+      activePal[((index % activePal.length) + activePal.length) % activePal.length];
     for (const patch of patches) {
       if (
         patch.side === side &&
@@ -1894,6 +1928,73 @@ function createKhrushchevka(
           curtainTints[Math.floor(noise(`curtaincolor:${idBase}`) * curtainTints.length)]),
         bearsLoad: false,
       });
+    }
+  };
+
+  // Решётка окна первого этажа: два пояса, вертикальные прутья, у «кованого»
+  // варианта — ряд косых завитков-волн. Висит снаружи на бетонных откосах
+  // (bearsLoad: false) и при ударе отрывается звенящей панелью.
+  const addWindowGrille = (
+    pieces: BreakablePieceDefinition[],
+    clusterId: string,
+    idBase: string,
+    cx: number,
+    b: number,
+    wallZ: number,
+    face: 1 | -1,
+    width: number,
+  ): void => {
+    const y0 = b + 0.86;
+    const y1 = b + 1.92;
+    const zg = wallZ + face * 0.19;
+    const tone = noise(`grilletone:${idBase}`) < 0.72 ? "#2e3132" : "#4c423a";
+    const wavy = noise(`grillewave:${idBase}`) < 0.55;
+  const bar = (
+    id: string,
+    position: SceneVector3,
+    size: SceneVector3,
+    rotation?: SceneVector3,
+    carriesGrille = false,
+  ): BreakablePieceDefinition => ({
+    ...makePiece(`${idBase}:${id}`, clusterId, "steel", "steelSheet",
+      position, size, tone, rotation),
+    bearsLoad: carriesGrille,
+    carriesAttachments: carriesGrille,
+    ...(carriesGrille
+      ? { attachmentSupportMode: "cable" as const }
+      : {}),
+    sideAttachmentReach: 0.3,
+    weathering: 0.4,
+  });
+  pieces.push(
+    bar("rail:top", [cx, y1, zg], [width - 0.04, 0.035, 0.035], undefined, true),
+    bar("rail:bottom", [cx, y0, zg], [width - 0.04, 0.035, 0.035], undefined, true),
+  );
+    const rodCount = Math.max(4, Math.round(width / 0.19));
+    const rodStep = (width - 0.1) / (rodCount - 1);
+    for (let rod = 0; rod < rodCount; rod += 1) {
+      pieces.push(
+        bar(`rod:${rod}`,
+          [cx - (width - 0.1) / 2 + rod * rodStep, (y0 + y1) / 2, zg],
+          [0.024, y1 - y0 - 0.02, 0.024], undefined, true),
+      );
+    }
+    if (wavy) {
+      const waveY =
+        y0 + (y1 - y0) * (noise(`grillewaveat:${idBase}`) < 0.5 ? 0.3 : 0.68);
+      for (let seg = 0; seg < rodCount - 1; seg += 1) {
+        pieces.push(
+          bar(`wave:${seg}`,
+            [cx - (width - 0.1) / 2 + (seg + 0.5) * rodStep, waveY, zg],
+            [rodStep + 0.02, 0.02, 0.02],
+            [0, 0, seg % 2 === 0 ? 0.5 : -0.5]),
+        );
+      }
+    } else {
+      pieces.push(
+        bar("rail:mid",
+          [cx, y0 + (y1 - y0) * 0.52, zg], [width - 0.04, 0.028, 0.028]),
+      );
     }
   };
 
@@ -2071,9 +2172,16 @@ function createKhrushchevka(
         plinthPieces.push({
           ...makePiece(`hru:plinth:band:${sideId}:${index}`, "hru:plinth", "concrete", "panel",
             [cx, 0.345, zc + faceDir * 0.225], [2.68, 0.67, 0.15],
-            plinthBandColors[index % plinthBandColors.length]),
+            plinthPainted
+              ? (index % 2 === 0
+                  ? plinthPaint
+                  : shiftColor(plinthPaint, 1.07, 1.05, 1.03))
+              : plinthBandColors[index % plinthBandColors.length]),
           bearsLoad: false,
           weathering: 0.62,
+          ...(plinthPainted
+            ? { textureProfile: "city-painted-plinth" as const }
+            : {}),
         });
       }
       // Бетонная отмостка: потрескавшаяся лента вдоль всего периметра.
@@ -2092,9 +2200,14 @@ function createKhrushchevka(
     plinthPieces.push({
       ...makePiece(`hru:plinth:band:e:${endIndex}`, "hru:plinth", "concrete", "panel",
         [ex + faceDir * 0.225, 0.345, (z0 + z1) / 2], [0.15, 0.67, 6.66],
-        plinthBandColors[endIndex % plinthBandColors.length]),
+        plinthPainted
+          ? plinthPaint
+          : plinthBandColors[endIndex % plinthBandColors.length]),
       bearsLoad: false,
       weathering: 0.62,
+      ...(plinthPainted
+        ? { textureProfile: "city-painted-plinth" as const }
+        : {}),
     });
     apronPieces.push({
       ...makePiece(`hru:apron:e:${endIndex}`, "hru:apron", "concrete", "groundTile",
@@ -2514,6 +2627,13 @@ function createKhrushchevka(
             face: 1,
             width: opening,
           });
+          // Первые этажи иногда прячутся за коваными решётками.
+          if (floor === 0 && noise(`grille:s:${bay}`) < 0.5) {
+            addWindowGrille(
+              southPieces, clusterId, `${clusterId}:${bay}:grille`,
+              cx, b, z1, 1, opening + 0.14,
+            );
+          }
         }
       } else {
         southPieces.push({
@@ -2583,6 +2703,13 @@ function createKhrushchevka(
         face: -1,
         width: 1.9,
       });
+      // Широкое северное окно — решётка реже: улица, а не двор.
+      if (floor === 0 && noise(`grille:n:${strip}`) < 0.32) {
+        addWindowGrille(
+          northPieces, clusterId, `${clusterId}:${strip}:grille`,
+          cx, b, z0, -1, 2.0,
+        );
+      }
     }
     clusters.push(
       cluster(`hru:north:${floor}`, `North facade ${floor}`, "concrete", "mounted", northPieces),
@@ -2667,7 +2794,9 @@ function createKhrushchevka(
         pieces.push({
           ...makePiece(`${clusterId}:${ex}:${index}`, clusterId, "concrete", "panel",
             [ex, floorBase(floor) + 1.22, zc], [0.3, 2.42, 3.46],
-            pal[(floor + index) % pal.length]),
+            groundAccent && floor === 0
+              ? groundAccentPalette[(floor + index) % groundAccentPalette.length]
+              : pal[(floor + index) % pal.length]),
           weathering: facadeWeathering(floor),
         });
       }

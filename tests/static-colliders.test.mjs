@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { minasTirithScene } from "../games/make-a-mess/src/game/minasTirithScene.ts";
+import { basaltStrongholdScene } from "../games/make-a-mess/src/game/basaltStrongholdScene.ts";
 import { buildStaticColliderMeshes } from "../games/make-a-mess/src/game/staticColliders.ts";
 
 test("the intact fortress exposes a few cached physics meshes, not one collider per voxel", () => {
-  const pieces = minasTirithScene.breakablePieces;
+  const pieces = basaltStrongholdScene.breakablePieces;
   const collidablePieces = pieces.filter((piece) => piece.material !== "foliage");
   const meshes = buildStaticColliderMeshes(pieces);
 
@@ -23,7 +23,7 @@ test("the intact fortress exposes a few cached physics meshes, not one collider 
 });
 
 test("breaking one voxel rebuilds only its local physics chunk", () => {
-  const pieces = minasTirithScene.breakablePieces;
+  const pieces = basaltStrongholdScene.breakablePieces;
   const target = pieces.find(
     (piece) => piece.material === "graphiteStone" && piece.position[1] > 3,
   );

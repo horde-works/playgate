@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { GameCard } from "./GameCard";
 import { SiteHeader } from "./SiteHeader";
+import { SiteFooter } from "./SiteFooter";
 import { featuredGame } from "../../games/registry";
 import { useLanguage } from "../i18n/LanguageProvider";
 
@@ -96,10 +97,7 @@ export function HomeView() {
         </ol>
       </section>
 
-      <footer className="site-footer">
-        <p>Handmade Games</p>
-        <p>{t("footer.place")}</p>
-      </footer>
+      <SiteFooter />
     </main>
   );
 }

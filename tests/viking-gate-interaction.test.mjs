@@ -28,7 +28,7 @@ test("both Viking gate leaves always swing inward", () => {
     assert.ok(policy);
     assert.equal(policy.swingSign, sign, key);
   }
-  assert.equal(vikingGateLeafPolicy("rain-seam:yard:gate"), null);
+  assert.equal(vikingGateLeafPolicy("unrelated-scene:yard:gate"), null);
 });
 
 test("approach works from either side and release has closing hysteresis", () => {
@@ -52,7 +52,7 @@ test("only Viking building doors opt into requested entry", () => {
     { doorId: "viking-village:buildings:weaver:door" },
   );
   assert.equal(vikingDoorPolicy("viking-village:palisade:north:leaf:-1"), null);
-  assert.equal(vikingDoorPolicy("rain-seam:buildings:house:door"), null);
+  assert.equal(vikingDoorPolicy("unrelated-scene:buildings:house:door"), null);
 });
 
 test("a house door swings inward regardless of approach side", () => {

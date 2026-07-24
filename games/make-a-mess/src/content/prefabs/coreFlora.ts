@@ -43,6 +43,11 @@ function clump(
   const stretchX = 0.8 + rand(clumpSeed, 1) * 0.55;
   const stretchY = 0.62 + rand(clumpSeed, 2) * 0.42;
   const stretchZ = 0.8 + rand(clumpSeed, 3) * 0.55;
+  const sectionSize = size * 0.68;
+
+  // Crown density lives in the procedural render lobes, not in one enormous
+  // gameplay block. Keeping this proxy below a metre makes every visible
+  // section directly damageable without multiplying rigid-body count.
   return {
     id,
     material: "foliage",
@@ -53,17 +58,18 @@ function clump(
       rand(clumpSeed, 5) * Math.PI,
       (rand(clumpSeed, 6) - 0.5) * 0.5,
     ],
-    size: [size * stretchX, size * stretchY, size * stretchZ],
+    size: [
+      sectionSize * stretchX,
+      sectionSize * stretchY,
+      sectionSize * stretchZ,
+    ],
     color: palette[Math.floor(rand(clumpSeed, 7) * palette.length)],
     bearsLoad: false,
-    // `volume` is the porous fill fraction. Scaling it by the authored lobe
-    // size keeps saplings light instead of giving a 30 cm crown the mass of a
-    // full-grown tree section.
-    volume: volume * size * size * size,
+    volume: volume * sectionSize * sectionSize * sectionSize,
     sideAttachmentReach: 0.95,
     contactBoxes: [{
       position: center,
-      size: [size * 0.7, size * 0.7, size * 0.7],
+      size: [sectionSize * 0.68, sectionSize * 0.68, sectionSize * 0.68],
     }],
     treeVisual: {
       kind,

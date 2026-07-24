@@ -8,7 +8,7 @@ import {
 
 test("the first-spawn guidance is a reusable game action cue", () => {
   const [hint] = hintsForGameAction("player.spawned");
-  assert.equal(gameActionHints.length, 3);
+  assert.equal(gameActionHints.length, 4);
   assert.equal(hint.id, "first-look");
   assert.equal(hint.once, true);
   assert.equal(hint.delayMs >= 2_000, true);
@@ -32,6 +32,15 @@ test("the Viking house threshold has its own entry request", () => {
   assert.equal(hint.once, false);
   assert.equal(hint.durationMs, undefined);
   assert.equal(hint.detailKey, "hint.door.action");
+});
+
+test("the town house threshold has its own entry request", () => {
+  const [hint] = hintsForGameAction("town-door.approaching");
+
+  assert.equal(hint.id, "approaching-a-town-door");
+  assert.equal(hint.once, false);
+  assert.equal(hint.durationMs, undefined);
+  assert.equal(hint.detailKey, "hint.townDoor.action");
 });
 
 test("game action guidance is complete in every interface language", () => {

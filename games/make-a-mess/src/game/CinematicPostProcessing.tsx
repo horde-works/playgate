@@ -1,11 +1,12 @@
 "use client";
 
 import { useFrame, useThree } from "@react-three/fiber";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import {
   CanvasTexture,
   Color,
   LinearFilter,
+  MathUtils,
   Vector2,
   Vector3,
 } from "three";
@@ -34,8 +35,8 @@ const CinematicShader = {
     uSunScreen: { value: new Vector2(0.5, 0.5) },
     uSunPresence: { value: 0 },
     uShaftColor: { value: new Color("#ffdfae") },
-    uShaftIntensity: { value: 0.5 },
-    uDirtStrength: { value: 0.4 },
+    uShaftIntensity: { value: 0.2 },
+    uDirtStrength: { value: 0.14 },
     uSaturation: { value: 0.97 },
     uColorBalance: { value: new Vector3(1.02, 1.0, 0.98) },
     uAspect: { value: 1 },
@@ -94,16 +95,20 @@ const CinematicShader = {
         // no glare or lens dirt when a wall stands in front of the sun.
         float sunVisible = 0.0;
         sunVisible += brightMask(texture2D(tDiffuse, uSunScreen).rgb);
-        sunVisible += brightMask(texture2D(tDiffuse, uSunScreen + vec2(0.011, 0.0)).rgb);
-        sunVisible += brightMask(texture2D(tDiffuse, uSunScreen - vec2(0.011, 0.0)).rgb);
-        sunVisible += brightMask(texture2D(tDiffuse, uSunScreen + vec2(0.0, 0.011)).rgb);
-        sunVisible += brightMask(texture2D(tDiffuse, uSunScreen - vec2(0.0, 0.011)).rgb);
-        sunVisible *= 0.2 * uSunPresence;
+        sunVisible += brightMask(texture2D(tDiffuse, uSunScreen + vec2(0.008, 0.0)).rgb);
+        sunVisible += brightMask(texture2D(tDiffuse, uSunScreen - vec2(0.008, 0.0)).rgb);
+        sunVisible += brightMask(texture2D(tDiffuse, uSunScreen + vec2(0.0, 0.008)).rgb);
+        sunVisible += brightMask(texture2D(tDiffuse, uSunScreen - vec2(0.0, 0.008)).rgb);
+        sunVisible += brightMask(texture2D(tDiffuse, uSunScreen + vec2(0.012, 0.012)).rgb);
+        sunVisible += brightMask(texture2D(tDiffuse, uSunScreen + vec2(0.012, -0.012)).rgb);
+        sunVisible += brightMask(texture2D(tDiffuse, uSunScreen + vec2(-0.012, 0.012)).rgb);
+        sunVisible += brightMask(texture2D(tDiffuse, uSunScreen - vec2(0.012, 0.012)).rgb);
+        sunVisible *= 0.111111 * uSunPresence;
 
         vec2 toSun = (vUv - uSunScreen) * vec2(uAspect, 1.0);
         float sunDistance = length(toSun);
-        float glare = exp(-sunDistance * sunDistance * 42.0) * 0.32
-          + exp(-sunDistance * 7.5) * 0.07;
+        float glare = exp(-sunDistance * sunDistance * 42.0) * 0.12
+          + exp(-sunDistance * 7.5) * 0.026;
         color += uShaftColor * glare * sunVisible;
 
         float dirtLight = shaft * 1.1 + exp(-sunDistance * 2.6) * 0.5;
@@ -198,6 +203,7 @@ export function CinematicPostProcessing({
   const sunWorld = useMemo(() => new Vector3(), []);
   const cameraForward = useMemo(() => new Vector3(), []);
   const duskShaftColor = useMemo(() => new Color("#ffb46a"), []);
+  const smoothedSunPresence = useRef(0);
 
   const pipeline = useMemo(() => {
     const composer = new EffectComposer(gl);
@@ -269,13 +275,19 @@ export function CinematicPostProcessing({
     [pipeline],
   );
 
-  useFrame(() => {
+  useFrame((_, delta) => {
     // Project the sun into screen space for the shafts/glare pass.
     const uniforms = pipeline.cinematicPass.uniforms;
     camera.getWorldDirection(cameraForward);
     const facing = cameraForward.dot(environmentState.sunDirection);
     if (facing <= 0.02) {
-      uniforms.uSunPresence.value = 0;
+      smoothedSunPresence.current = MathUtils.damp(
+        smoothedSunPresence.current,
+        0,
+        8,
+        delta,
+      );
+      uniforms.uSunPresence.value = smoothedSunPresence.current;
     } else {
       sunWorld
         .copy(camera.position)
@@ -296,12 +308,18 @@ export function CinematicPostProcessing({
         1,
         Math.max(0, (environmentState.sunDirection.y + 0.02) / 0.08),
       );
-      uniforms.uSunPresence.value = edgeFade * daylight * aboveHorizon;
+      smoothedSunPresence.current = MathUtils.damp(
+        smoothedSunPresence.current,
+        edgeFade * daylight * aboveHorizon,
+        8,
+        delta,
+      );
+      uniforms.uSunPresence.value = smoothedSunPresence.current;
       (uniforms.uShaftColor.value as Color)
         .copy(environmentState.sunColor)
         .lerp(duskShaftColor, environmentState.twilightFactor * 0.55);
       uniforms.uShaftIntensity.value =
-        0.15 + environmentState.twilightFactor * 0.32;
+        0.07 + environmentState.twilightFactor * 0.18;
     }
   });
 

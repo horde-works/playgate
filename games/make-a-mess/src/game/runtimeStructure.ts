@@ -32,6 +32,20 @@ export interface RuntimeStructuralResult {
   readonly detachedFragmentIds: ReadonlySet<string>;
 }
 
+/**
+ * Intact steel can bridge nearly a metre of air (frames, bolted risers). After
+ * a carve that gap tolerance turns sliced pipe/sheet remnants into false
+ * columns sitting on each other across the cut. Remnants only keep a
+ * contact-like vertical reach; authored intact pieces keep the material value.
+ */
+export const FRAGMENT_MAXIMUM_VERTICAL_GAP = 0.22;
+
+/**
+ * Same idea for cantilever: steel's 2.1 m allowance is for intact members. A
+ * carved remnant balancing on a stub should tip like ordinary debris.
+ */
+export const FRAGMENT_MAXIMUM_CANTILEVER = 0.55;
+
 export function fragmentBearingArea<Material extends string>(
   fragment: RuntimeStructuralFragment<Material>,
 ): number {
@@ -126,6 +140,7 @@ export function resolveRuntimeStructure<Material extends string>(
       !carvedPieceIds.has(piece.id),
   );
   const activePieceIds = new Set(activePieces.map((piece) => piece.id));
+  const parentById = new Map(pieces.map((piece) => [piece.id, piece]));
   const activeFragments = fragments.filter(
     (fragment) =>
       (scopePieceIds === undefined ||
@@ -158,6 +173,8 @@ export function resolveRuntimeStructure<Material extends string>(
           size: rotatedBoxAabbSize(box.size, fragment.quaternion),
         };
       });
+      const parent = parentById.get(fragment.parentId);
+      const profile = materialProfiles[fragment.material];
       return {
         id: fragment.id,
         material: fragment.material,
@@ -166,6 +183,17 @@ export function resolveRuntimeStructure<Material extends string>(
         volume: fragment.volume,
         bearingArea: size[0] * size[2] * bearingFill,
         contactBoxes,
+        // Preserve authored fixture rules (downpipes, sheets, fixtures) so a
+        // carve cannot promote a non-bearing remnant into a steel column.
+        bearsLoad: parent?.bearsLoad,
+        carriesAttachments: parent?.carriesAttachments,
+        attachmentSupportMode: parent?.attachmentSupportMode,
+        sideAttachmentReach: parent?.sideAttachmentReach,
+        maximumVerticalGap: Math.min(
+          profile.maximumVerticalGap,
+          FRAGMENT_MAXIMUM_VERTICAL_GAP,
+        ),
+        cantilever: Math.min(profile.cantilever, FRAGMENT_MAXIMUM_CANTILEVER),
       };
     });
   const structuralPieces = [...activePieces, ...structuralFragments];

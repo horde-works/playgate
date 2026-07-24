@@ -9,7 +9,7 @@ import {
   type SceneVector3,
   type SupportMode,
 } from "./destructionScene.ts";
-import { createMinasTirithWorldbuilding } from "./minasTirithWorldbuilding.ts";
+import { createBasaltStrongholdWorldbuilding } from "./basaltStrongholdWorldbuilding.ts";
 
 const clusters: BreakableClusterDefinition[] = [];
 const lamps: LampDefinition[] = [];
@@ -66,8 +66,8 @@ function createHighlandGround(): void {
       const tone = seededNoise(x, z);
       grass.push(
         piece(
-          `minas:ground:grass:${index}`,
-          "minas:ground:grass",
+          `stronghold:ground:grass:${index}`,
+          "stronghold:ground:grass",
           "grass",
           "groundTile",
           [centerX, -0.09, centerZ],
@@ -77,8 +77,8 @@ function createHighlandGround(): void {
       );
       earth.push(
         piece(
-          `minas:ground:earth:${index}`,
-          "minas:ground:earth",
+          `stronghold:ground:earth:${index}`,
+          "stronghold:ground:earth",
           "earth",
           "groundTile",
           [centerX, -1.08, centerZ],
@@ -91,14 +91,14 @@ function createHighlandGround(): void {
   }
 
   addCluster(
-    "minas:ground:grass",
+    "stronghold:ground:grass",
     "Highland grass",
     "grass",
     "linked",
     grass,
   );
   addCluster(
-    "minas:ground:earth",
+    "stronghold:ground:earth",
     "Highland earth",
     "earth",
     "linked",
@@ -144,8 +144,8 @@ function createCircularHighlandExtension(): void {
 
       grass.push(
         piece(
-          `minas:circle:grass:${index}`,
-          "minas:circle:grass",
+          `stronghold:circle:grass:${index}`,
+          "stronghold:circle:grass",
           "grass",
           "groundTile",
           [centerX, grassCenterY, centerZ],
@@ -158,8 +158,8 @@ function createCircularHighlandExtension(): void {
         const earthHeight = 1.72;
         earth.push(
           piece(
-            `minas:circle:earth:${index}`,
-            "minas:circle:earth",
+            `stronghold:circle:earth:${index}`,
+            "stronghold:circle:earth",
             "earth",
             "groundTile",
             [centerX, surfaceY - 0.26 - earthHeight / 2, centerZ],
@@ -174,8 +174,8 @@ function createCircularHighlandExtension(): void {
         const material = tone > 0.62 ? "graphiteStone" : "basalt";
         cliff.push(
           piece(
-            `minas:circle:cliff:${index}`,
-            "minas:circle:cliff",
+            `stronghold:circle:cliff:${index}`,
+            "stronghold:circle:cliff",
             material,
             "stoneBlock",
             [centerX, surfaceY - 0.26 - rockHeight / 2, centerZ],
@@ -192,8 +192,8 @@ function createCircularHighlandExtension(): void {
         );
         earth.push(
           piece(
-            `minas:circle:earth:${index}`,
-            "minas:circle:earth",
+            `stronghold:circle:earth:${index}`,
+            "stronghold:circle:earth",
             "earth",
             "groundTile",
             [centerX, rockBottom - earthHeight / 2, centerZ],
@@ -210,8 +210,8 @@ function createCircularHighlandExtension(): void {
         const material = outcropNoise > 0.95 ? "graphiteStone" : "basalt";
         outcrops.push(
           piece(
-            `minas:circle:outcrop:${index}`,
-            "minas:circle:outcrops",
+            `stronghold:circle:outcrop:${index}`,
+            "stronghold:circle:outcrops",
             material,
             "stoneBlock",
             [
@@ -231,28 +231,28 @@ function createCircularHighlandExtension(): void {
   }
 
   addCluster(
-    "minas:circle:grass",
+    "stronghold:circle:grass",
     "Circular highland turf",
     "grass",
     "linked",
     grass,
   );
   addCluster(
-    "minas:circle:earth",
+    "stronghold:circle:earth",
     "Circular highland earth",
     "earth",
     "linked",
     earth,
   );
   addCluster(
-    "minas:circle:cliff",
+    "stronghold:circle:cliff",
     "Rocky outer escarpment",
     "basalt",
     "stack",
     cliff,
   );
   addCluster(
-    "minas:circle:outcrops",
+    "stronghold:circle:outcrops",
     "Wind-carved outer rocks",
     "basalt",
     "stack",
@@ -278,7 +278,7 @@ function highlandSurfaceYAt(x: number, z: number): number {
 }
 
 function createMountainRidge(side: -1 | 1): void {
-  const id = `minas:ridge:${side < 0 ? "west" : "east"}`;
+  const id = `stronghold:ridge:${side < 0 ? "west" : "east"}`;
   const rocks: BreakablePieceDefinition[] = [];
   const caps: BreakablePieceDefinition[] = [];
   const highlandGrowth: BreakablePieceDefinition[] = [];
@@ -488,7 +488,7 @@ function createMountainRidge(side: -1 | 1): void {
 }
 
 function createCitadelWall(): void {
-  const wallId = "minas:wall";
+  const wallId = "stronghold:wall";
   const wall: BreakablePieceDefinition[] = [];
   const wallPalette = ["#3f4244", "#484b4c", "#34383a", "#505354"];
   const blockWidth = 1.48;
@@ -561,7 +561,7 @@ function createCitadelWall(): void {
 }
 
 function createGatehouse(): void {
-  const id = "minas:gatehouse";
+  const id = "stronghold:gatehouse";
   const masonry: BreakablePieceDefinition[] = [];
   const towerCenters = [-6.8, 6.8] as const;
 
@@ -719,7 +719,7 @@ function createGatehouse(): void {
   for (const [index, x] of [-4.1, 4.1].entries()) {
     masonry.push(
       piece(
-        `minas:gate:sconce:${index}`,
+        `stronghold:gate:sconce:${index}`,
         id,
         "steel",
         "steelSheet",
@@ -728,7 +728,7 @@ function createGatehouse(): void {
         "#292e31",
       ),
       piece(
-        `minas:gate:torch:${index}`,
+        `stronghold:gate:torch:${index}`,
         id,
         "glass",
         "glassPane",
@@ -745,8 +745,8 @@ function createGatehouse(): void {
     for (let plank = 0; plank < 5; plank += 1) {
       doors.push(
         piece(
-          `minas:gate:door:${side}:${plank}`,
-          "minas:gate:doors",
+          `stronghold:gate:door:${side}:${plank}`,
+          "stronghold:gate:doors",
           "wood",
           "plank",
           [side * (0.46 + plank * 0.72), 2.5, 1.08],
@@ -759,8 +759,8 @@ function createGatehouse(): void {
   for (const y of [1.05, 2.45, 3.85]) {
     doors.push(
       piece(
-        `minas:gate:brace:${y}`,
-        "minas:gate:doors",
+        `stronghold:gate:brace:${y}`,
+        "stronghold:gate:doors",
         "steel",
         "steelSheet",
         [0, y, 1.28],
@@ -769,14 +769,14 @@ function createGatehouse(): void {
       ),
     );
   }
-  addCluster("minas:gate:doors", "Iron-bound gates", "wood", "linked", doors);
+  addCluster("stronghold:gate:doors", "Iron-bound gates", "wood", "linked", doors);
 
   const portcullis: BreakablePieceDefinition[] = [];
   for (let column = -5; column <= 5; column += 1) {
     portcullis.push(
       piece(
-        `minas:gate:portcullis:v:${column}`,
-        "minas:gate:portcullis",
+        `stronghold:gate:portcullis:v:${column}`,
+        "stronghold:gate:portcullis",
         "steel",
         "steelSheet",
         [column * 0.65, 2.8, 0.72],
@@ -788,8 +788,8 @@ function createGatehouse(): void {
   for (let row = 0; row < 5; row += 1) {
     portcullis.push(
       piece(
-        `minas:gate:portcullis:h:${row}`,
-        "minas:gate:portcullis",
+        `stronghold:gate:portcullis:h:${row}`,
+        "stronghold:gate:portcullis",
         "steel",
         "steelSheet",
         [0, 0.8 + row * 1.02, 0.72],
@@ -799,7 +799,7 @@ function createGatehouse(): void {
     );
   }
   addCluster(
-    "minas:gate:portcullis",
+    "stronghold:gate:portcullis",
     "Portcullis",
     "steel",
     "linked",
@@ -808,14 +808,14 @@ function createGatehouse(): void {
 
   for (const [index, x] of [-4.1, 4.1].entries()) {
     lamps.push({
-      id: `minas:gate:torch:${index}`,
+      id: `stronghold:gate:torch:${index}`,
       position: [x, 4.6, 2.3],
     });
   }
 }
 
 function createWallWalk(): void {
-  const id = "minas:wall-walk";
+  const id = "stronghold:wall-walk";
   const pieces: BreakablePieceDefinition[] = [];
   for (let index = 0; index < 18; index += 1) {
     const x = -25.5 + index * 3;
@@ -835,7 +835,7 @@ function createWallWalk(): void {
 }
 
 function createWallTorches(): void {
-  const id = "minas:wall-torches";
+  const id = "stronghold:wall-torches";
   const pieces: BreakablePieceDefinition[] = [];
 
   // Iron sconces along the inner face of the wall; the flames are the same
@@ -915,7 +915,7 @@ function createWallTorches(): void {
 }
 
 function createDarkTower(): void {
-  const id = "minas:dark-tower";
+  const id = "stronghold:dark-tower";
   const pieces: BreakablePieceDefinition[] = [];
   const centerZ = -36;
   const floorHeight = 4.15;
@@ -1138,7 +1138,7 @@ function createDarkTower(): void {
   for (const x of [-2.8, 0, 2.8]) {
     pieces.push(
       piece(
-        `${id}:eye-frame:column:${x}`,
+        `${id}:signal-frame:column:${x}`,
         id,
         "graphiteStone",
         "stoneBlock",
@@ -1150,7 +1150,7 @@ function createDarkTower(): void {
   }
   pieces.push(
     piece(
-      `${id}:eye-frame:beam`,
+      `${id}:signal-frame:beam`,
       id,
       "steel",
       "steelSheet",
@@ -1163,7 +1163,7 @@ function createDarkTower(): void {
   for (let panel = -3; panel <= 3; panel += 1) {
     pieces.push(
       piece(
-        `${id}:eye:${panel}`,
+        `${id}:signal:${panel}`,
         id,
         "darkGlass",
         "glassPane",
@@ -1179,7 +1179,7 @@ function createDarkTower(): void {
     );
   }
   lamps.push({
-    id: `${id}:eye:0`,
+    id: `${id}:signal:0`,
     position: [0, crownY + 5.5, centerZ + 4.65],
     color: "#ff421c",
     distance: 16,
@@ -1190,7 +1190,7 @@ function createDarkTower(): void {
 }
 
 function createApproachDetails(): void {
-  const id = "minas:approach";
+  const id = "stronghold:approach";
   const pieces: BreakablePieceDefinition[] = [];
 
   for (let step = 0; step < 7; step += 1) {
@@ -1259,8 +1259,8 @@ function createWeatheredHighlandDetails(): void {
     const dark = seededNoise(index, side, 241) > 0.58;
     rubble.push(
       piece(
-        `minas:weather:rubble:${index}`,
-        "minas:weather:rubble",
+        `stronghold:weather:rubble:${index}`,
+        "stronghold:weather:rubble",
         dark ? "basalt" : "stone",
         "stoneBlock",
         [x, surfaceY + height / 2 - 0.015, z],
@@ -1290,8 +1290,8 @@ function createWeatheredHighlandDetails(): void {
     const thickness = 0.18 + seededNoise(index, side, 293) * 0.18;
     timber.push(
       piece(
-        `minas:weather:timber:${index}`,
-        "minas:weather:timber",
+        `stronghold:weather:timber:${index}`,
+        "stronghold:weather:timber",
         "wood",
         "plank",
         [x, surfaceY + thickness / 2, z],
@@ -1314,8 +1314,8 @@ function createWeatheredHighlandDetails(): void {
     const height = 1.45 + seededNoise(index, side, 317) * 1.15;
     stakes.push(
       piece(
-        `minas:weather:stake:${index}`,
-        "minas:weather:stakes",
+        `stronghold:weather:stake:${index}`,
+        "stronghold:weather:stakes",
         index % 4 === 0 ? "steel" : "wood",
         index % 4 === 0 ? "steelSheet" : "plank",
         [x, surfaceY + height / 2 - 0.04, z],
@@ -1331,21 +1331,21 @@ function createWeatheredHighlandDetails(): void {
   }
 
   addCluster(
-    "minas:weather:rubble",
+    "stronghold:weather:rubble",
     "Old wall scree",
     "stone",
     "stack",
     rubble,
   );
   addCluster(
-    "minas:weather:timber",
+    "stronghold:weather:timber",
     "Weathered siege timber",
     "wood",
     "stack",
     timber,
   );
   addCluster(
-    "minas:weather:stakes",
+    "stronghold:weather:stakes",
     "Broken approach stakes",
     "wood",
     "stack",
@@ -1364,15 +1364,15 @@ createWallTorches();
 createDarkTower();
 createApproachDetails();
 createWeatheredHighlandDetails();
-const inhabitedWorld = createMinasTirithWorldbuilding({
+const inhabitedWorld = createBasaltStrongholdWorldbuilding({
   surfaceYAt: highlandSurfaceYAt,
 });
 clusters.push(...inhabitedWorld.clusters);
 lamps.push(...inhabitedWorld.lamps);
 
-export const minasTirithScene = createDestructionScene({
-  id: "minas-tirith",
-  title: "Make a Mess: Minas Tirith",
+export const basaltStrongholdScene = createDestructionScene({
+  id: "basalt-stronghold",
+  title: "Make a Mess: Basalt Stronghold",
   environment: "fortress",
   playerSpawn: [0, 1.25, 31],
   cameraFar: 240,
@@ -1381,7 +1381,7 @@ export const minasTirithScene = createDestructionScene({
   worldRadius: PLAYFIELD_RADIUS + 2,
   safetyFloorY: -2.2,
   copy: {
-    status: "Make a Mess / Minas Tirith",
+    status: "Make a Mess / Basalt Stronghold",
     eyebrow: "Citadel breach test 001",
     heading: "Крепость — объект.",
     ready: "The mountain gate is ready",
@@ -1399,7 +1399,7 @@ export const minasTirithScene = createDestructionScene({
   resolveInterpenetration: true,
 });
 
-export const minasTirithMaterials = [
+export const basaltStrongholdMaterials = [
   "stone",
   "grass",
   "basalt",
