@@ -42,7 +42,7 @@ test("a cross-cut produces topology-defined fragments rather than a preset count
     point: [0.9, -0.12, 0],
     direction: [0, 1, 0],
     penetration: 0.24,
-    radius: 0.08,
+    radius: 0.04,
     roughness: 0,
     seed: "narrow",
   });
@@ -117,4 +117,69 @@ test("a detached component remains destructible after becoming its own body", ()
     countOccupiedVoxels(second.body) <
       countOccupiedVoxels(detached.body),
   );
+});
+
+test("a visible grazing hit damages the occupied voxel box, not only its center", () => {
+  const foundation = createSolidVoxelBody([12, 0.4, 8], 0.14, 4_500);
+  const result = applyVoxelDamage(foundation, {
+    point: [-0.9820359281437128, 0.2, 0.01596806387225591],
+    direction: [0, -1, 0],
+    penetration: 0.85,
+    radius: 0.18 * Math.cbrt(1 / 2.4),
+    roughness: 0.27,
+    seed: "carve:1",
+  });
+
+  assert.deepEqual(foundation.dimensions, [48, 2, 46]);
+  assert.ok(result.removedVoxelCount > 0);
+});
+
+test("a rocket-damaged coarse remnant accepts repeated visible hits", () => {
+  const concreteScale = Math.cbrt(1 / 2.4);
+  const foundation = createSolidVoxelBody([12, 0.4, 8], 0.14, 4_500);
+  const rocketDamage = applyVoxelDamage(foundation, {
+    point: [0, 0.2, 0],
+    radius: 1.05 * concreteScale,
+    roughness: 0.27,
+    seed: "rocket:center",
+  });
+  const remnant = createVoxelBodyFromComponent(
+    rocketDamage.body,
+    rocketDamage.components[0],
+  );
+  const firstBullet = applyVoxelDamage(remnant.body, {
+    point: [-0.9820359281437128, 0.2, 0.01596806387225591],
+    direction: [0, -1, 0],
+    penetration: 0.85,
+    radius: 0.18 * concreteScale,
+    roughness: 0.27,
+    seed: "carve:1",
+  });
+  const secondBullet = applyVoxelDamage(firstBullet.body, {
+    point: [2, 0.2, 0.02],
+    direction: [0, -1, 0],
+    penetration: 0.85,
+    radius: 0.18 * concreteScale,
+    roughness: 0.27,
+    seed: "carve:2",
+  });
+
+  assert.ok(firstBullet.removedVoxelCount > 0);
+  assert.ok(secondBullet.removedVoxelCount > 0);
+  assert.ok(
+    countOccupiedVoxels(secondBullet.body) <
+      countOccupiedVoxels(remnant.body),
+  );
+});
+
+test("sphere damage does not inflate diagonally past a voxel corner", () => {
+  const voxel = createSolidVoxelBody([1, 1, 1], 1);
+  const result = applyVoxelDamage(voxel, {
+    point: [0.59, 0.59, 0],
+    radius: 0.1,
+    roughness: 0,
+    seed: "rounded-corner",
+  });
+
+  assert.equal(result.removedVoxelCount, 0);
 });

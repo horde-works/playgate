@@ -7,6 +7,8 @@ import type {
   SceneVector3,
   SurfaceTextureProfile,
   SupportMode,
+  TreeVisualDefinition,
+  VegetationVisualDefinition,
 } from "../../game/destructionScene.ts";
 
 export type SceneEuler = SceneVector3;
@@ -70,6 +72,8 @@ export interface ScenePrefabPieceDefinition {
   readonly light?: SceneLightSource;
   readonly textureProfile?: SurfaceTextureProfile;
   readonly landscapeSurface?: LandscapeSurfaceProfile;
+  readonly treeVisual?: TreeVisualDefinition;
+  readonly vegetationVisual?: VegetationVisualDefinition;
   /** 0..1 organic weathering receptivity fed to the biofilm shader mask. */
   readonly weathering?: number;
 }
@@ -112,6 +116,8 @@ export interface ScenePrimitiveDefinition extends SceneObjectBase {
   readonly light?: SceneLightSource;
   readonly textureProfile?: SurfaceTextureProfile;
   readonly landscapeSurface?: LandscapeSurfaceProfile;
+  readonly treeVisual?: TreeVisualDefinition;
+  readonly vegetationVisual?: VegetationVisualDefinition;
   /** 0..1 organic weathering receptivity fed to the biofilm shader mask. */
   readonly weathering?: number;
 }

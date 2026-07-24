@@ -416,7 +416,8 @@ function createMountainRidge(side: -1 | 1): void {
           const growthHeight =
             0.26 + seededNoise(index, growth, side * 563) * 0.62;
           highlandGrowth.push(
-            piece(
+            {
+              ...piece(
               `${id}:heath:${index}:${growth}`,
               `${id}:heath`,
               "foliage",
@@ -437,7 +438,12 @@ function createMountainRidge(side: -1 | 1): void {
                 seededNoise(index, growth, side * 569) * Math.PI,
                 (seededNoise(index, growth, side * 571) - 0.5) * 0.08,
               ],
-            ),
+              ),
+              vegetationVisual: {
+                kind: "shrub",
+                seed: index * 7 + growth + 701,
+              },
+            },
           );
         }
       }

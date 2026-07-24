@@ -100,13 +100,25 @@ const surfaceTextureUrls: Record<SurfaceTextureProfile, string> = {
   "city-red-aggregate": "/games/make-a-mess/textures/city-red-aggregate.webp",
   "city-facade-cladding": "/games/make-a-mess/textures/city-facade-cladding.webp",
   "city-roof-tile": "/games/make-a-mess/textures/city-roof-tile.webp",
+  "city-shop-sign": "/games/make-a-mess/textures/city-shop-sign.png",
+  "city-chalk-sign-a": "/games/make-a-mess/textures/city-chalk-sign-a.png",
+  "city-chalk-sign-b": "/games/make-a-mess/textures/city-chalk-sign-b.png",
 };
+
+// Профили-«вывески» растягиваются по родным UV грани один раз: мировая
+// трипланарная проекция размазала бы надпись тайлингом.
+const faceFitTextureProfiles = new Set<SurfaceTextureProfile>([
+  "city-shop-sign",
+  "city-chalk-sign-a",
+  "city-chalk-sign-b",
+]);
 
 const bumpScaleByMaterial: Record<BreakableMaterial, number> = {
   brick: 0.035,
   wood: 0.018,
   cloth: 0.008,
   plaster: 0.012,
+  plastic: 0.005,
   concrete: 0.026,
   glass: 0,
   steel: 0.006,
@@ -1323,11 +1335,33 @@ if (materialProjectionNormal.x >= materialProjectionNormal.y && materialProjecti
 } else {
   materialProjectedUv = vec2(vMaterialCoordinate.x, vMaterialCoordinate.y);
 }`}
+${
+  textureProfile && faceFitTextureProfiles.has(textureProfile)
+    ? `// Face-fit: текстура натягивается на грань юнит-бокса ровно один раз.
+// Строится из ЛОКАЛЬНЫХ координат (position = ±0.5 до инстанс-матрицы),
+// поэтому не зависит от uv-атрибута и одинаково работает в статическом
+// батчере и в дебрис-инстансах; задняя грань отзеркалена, чтобы надпись
+// читалась с обеих сторон щита.
+vec2 materialFaceFitUv = abs(normal.z) > 0.5
+  ? vec2(normal.z > 0.0 ? position.x + 0.5 : 0.5 - position.x, position.y + 0.5)
+  : abs(normal.x) > 0.5
+    ? vec2(normal.x > 0.0 ? 0.5 - position.z : position.z + 0.5, position.y + 0.5)
+    : vec2(position.x + 0.5, 0.5 - position.z);`
+    : ""
+}
 #ifdef USE_MAP
-  vMapUv = materialProjectedUv * ${appearance.textureScale.toFixed(4)};
+  vMapUv = ${
+    textureProfile && faceFitTextureProfiles.has(textureProfile)
+      ? "materialFaceFitUv"
+      : `materialProjectedUv * ${appearance.textureScale.toFixed(4)}`
+  };
 #endif
 #ifdef USE_BUMPMAP
-  vBumpMapUv = materialProjectedUv * ${appearance.textureScale.toFixed(4)};
+  vBumpMapUv = ${
+    textureProfile && faceFitTextureProfiles.has(textureProfile)
+      ? "materialFaceFitUv"
+      : `materialProjectedUv * ${appearance.textureScale.toFixed(4)}`
+  };
 #endif`,
         );
 
@@ -1742,8 +1776,15 @@ gl_FragColor.rgb = mix(gl_FragColor.rgb, materialFogTint, materialFogFactor);
 #endif`,
         );
     };
+    // Face-fit меняет ТЕКСТ вершинника, значит обязан менять и ключ
+    // программы: иначе three переиспользует скомпилированный трипланарный
+    // шейдер того же материала, и вывеска остаётся тайлящейся.
     standardMaterial.customProgramCacheKey = () =>
-      `material-space-v9:${material}:${profileKey}`;
+      `material-space-v9:${material}:${profileKey}:${
+        textureProfile && faceFitTextureProfiles.has(textureProfile)
+          ? "face-fit"
+          : "projected"
+      }`;
   }
 
   if (isGlass && color === litWindowColor) {

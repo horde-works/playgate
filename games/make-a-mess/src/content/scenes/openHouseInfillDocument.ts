@@ -197,12 +197,14 @@ function createPlotB(): void {
 
 function createKioskCorner(): void {
   const kiosk = group("kiosk-corner", "Building-supplies kiosk trading to the playground path", "steel");
-  place(kiosk, "kiosk", "city:kiosk:building-supplies", {
+  place(kiosk, "kiosk", "city:shop:minimarket", {
     position: [14.9, 0, 8.0],
     rotation: [0, Math.PI, 0],
   }, { surface: damp });
+  // Ведро с мётлами — на краю входной плиты: черенки держатся аттачем к
+  // бетону (газон опорой для навесного не служит).
   place(kiosk, "brooms", "city:broom-bucket", {
-    position: [13.55, 0.68, 4.75],
+    position: [13.6, 0.34, 4.7],
     rotation: [0, 0.5, 0],
   });
   place(kiosk, "tools", "city:shop-tools", {
@@ -214,7 +216,7 @@ function createKioskCorner(): void {
     position: [11.55, 0, 3.35],
     rotation: [0, 2.6, 0],
   });
-  place(kiosk, "board:east", "city:sign:sandwich", {
+  place(kiosk, "board:east", "city:sign:sandwich-b", {
     position: [17.15, 0, 3.5],
     rotation: [0, -2.7, 0],
   });

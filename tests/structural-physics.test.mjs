@@ -105,6 +105,91 @@ test("shared terrain does not merge independent structural islands", () => {
   assert.equal(groundScope.has("right-structure"), true);
 });
 
+test("stacked foundation layers do not bridge independent structures", () => {
+  const layeredPieces = [
+    {
+      id: "upper-left",
+      material: "ground",
+      position: [0, -0.5, 0],
+      size: [6, 1, 6],
+    },
+    {
+      id: "upper-right",
+      material: "ground",
+      position: [6, -0.5, 0],
+      size: [6, 1, 6],
+    },
+    {
+      id: "lower-bridge",
+      material: "ground",
+      position: [3, -1.5, 0],
+      size: [6, 1, 6],
+    },
+    {
+      id: "left-structure",
+      material: "wood",
+      position: [0, 0.5, 0],
+      size: [0.4, 1, 0.4],
+    },
+    {
+      id: "right-structure",
+      material: "wood",
+      position: [6, 0.5, 0],
+      size: [0.4, 1, 0.4],
+    },
+  ];
+
+  for (const orderedPieces of [layeredPieces, [...layeredPieces].reverse()]) {
+    const solver = createStructuralSolver(orderedPieces, profiles);
+
+    assert.deepEqual(
+      [...solver.connectedPieceIds(["lower-bridge"])].sort(),
+      ["lower-bridge"],
+    );
+    assert.deepEqual(
+      [...solver.connectedPieceIds(["left-structure"])].sort(),
+      ["left-structure", "upper-left"],
+    );
+    assert.deepEqual(
+      [...solver.connectedPieceIds(["right-structure"])].sort(),
+      ["right-structure", "upper-right"],
+    );
+  }
+});
+
+test("one structure spanning foundation tiles keeps one collapse scope", () => {
+  const solver = createStructuralSolver(
+    [
+      {
+        id: "left-foundation",
+        material: "ground",
+        position: [-2, 0, 0],
+        size: [4, 0.2, 4],
+      },
+      {
+        id: "right-foundation",
+        material: "ground",
+        position: [2, 0, 0],
+        size: [4, 0.2, 4],
+      },
+      {
+        id: "spanning-structure",
+        material: "wood",
+        position: [0, 0.2, 0],
+        size: [6, 0.2, 1],
+      },
+    ],
+    profiles,
+  );
+
+  for (const seed of ["left-foundation", "right-foundation"]) {
+    assert.deepEqual(
+      [...solver.connectedPieceIds([seed])].sort(),
+      ["left-foundation", "right-foundation", "spanning-structure"],
+    );
+  }
+});
+
 test("compression follows the surviving bearing area", () => {
   const loadProfiles = {
     ground: profiles.ground,

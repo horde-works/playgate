@@ -321,10 +321,17 @@ function createPalisade(): void {
       }, {
         surface: [{ kind: "moss", amount: 0.32 }, { kind: "damp", amount: 0.4 }],
       });
+      // Левые (западные) щиты висят на фланговом коле частокола с его
+      // НАРУЖНОЙ грани — они встречают входящего, как и правые на столбах.
+      // На столбе ворот левый диск врезался в соседние колья.
+      const shieldOverride: Record<string, readonly [number, number, number]> = {
+        "north:-1": [-3.99, 3.35, 45.38],
+        "south:-1": [-4.4, 3.35, -70.69],
+      };
       place(ornaments, `${gate.id}:shield:${side}`, "viking:shield", {
-        // Sit on the inner face of the gate post, toward the opening and away
-        // from the flanking palisade stakes that used to hide half the disc.
-        position: [side * 3.28, 3.35, gate.z + gate.outward * 0.66],
+        position:
+          shieldOverride[`${gate.id}:${side}`] ??
+          [side * 3.28, 3.35, gate.z + gate.outward * 0.66],
         rotation: [0, gate.outward < 0 ? Math.PI : 0, 0],
       }, {
         palette: { paint: side < 0 ? "#8f3028" : "#35566a", stripe: "#d2b56a" },
@@ -522,16 +529,19 @@ function addChoppingYard(target: MutableGroup, id: string, x: number, z: number,
       contactBoxes: [{ position: [0, 0, 0], size: [0.32, 0.82, 0.32] }],
     });
   }
-  const [handleX, handleZ] = localPoint(x, z, yaw, 0.35, -0.08);
-  primitive(target, `${id}:axe-handle`, "wood", "plank", [handleX, 1.15, handleZ], [0.13, 1.45, 0.13], "#9a7048", {
-    rotation: [0.08, yaw, -0.42],
-    sideAttachmentReach: 0.4,
-    bearsLoad: false,
-  });
-  const [headX, headZ] = localPoint(x, z, yaw, 0.58, -0.08);
-  primitive(target, `${id}:axe-head`, "steel", "steelSheet", [headX, 1.78, headZ], [0.58, 0.32, 0.16], "#4a5050", {
+  // Колун ВОТКНУТ в колоду лезвием: тонкая голова сидит в дереве у верха
+  // чурбака, рукоять продолжает её ось вверх и в сторону. Раньше топор
+  // стоял обухом с головой на верхнем конце рукояти.
+  const [headX, headZ] = localPoint(x, z, yaw, 0.3, -0.08);
+  primitive(target, `${id}:axe-head`, "steel", "steelSheet", [headX, 1.0, headZ], [0.44, 0.36, 0.07], "#4a5050", {
     rotation: [0, yaw, -0.42],
     sideAttachmentReach: 0.35,
+    bearsLoad: false,
+  });
+  const [handleX, handleZ] = localPoint(x, z, yaw, 0.58, -0.08);
+  primitive(target, `${id}:axe-handle`, "wood", "plank", [handleX, 1.63, handleZ], [0.11, 1.35, 0.11], "#9a7048", {
+    rotation: [0.08, yaw, -0.42],
+    sideAttachmentReach: 0.4,
     bearsLoad: false,
   });
 }
@@ -921,7 +931,9 @@ function createVillageLife(): void {
   // Standing torches only mark the gates now. The commons pair sat right in
   // front of the hall shields — redundant with the wall torches there.
   const standingTorchSites = [
-    ["north-gate-west", -5, 45],
+    // Западный факел вынесен НАРУЖУ перед частоколом: он освещает подход к
+    // воротам; на z=45 его корзина сидела прямо в кольях.
+    ["north-gate-west", -5, 46],
     ["north-gate-east", 5, 45],
     ["south-gate-west", -4.5, -64],
     ["south-gate-east", 4.5, -64],
@@ -1139,6 +1151,17 @@ function createRockwork(): void {
     }
   });
 
+  // Дуги распахивания воротных створок держим чистыми: створки уходят
+  // внутрь деревни, и любой камушек на дуге они проходили бы насквозь.
+  const insideGateSwing = (x: number, z: number): boolean => {
+    const northZ = WORLD_CENTER_Z + palisadeRadius(Math.PI / 2);
+    const southZ = WORLD_CENTER_Z - palisadeRadius(Math.PI * 1.5);
+    return (
+      (Math.abs(x) < 4.6 && z > northZ - 4.4 && z < northZ + 0.8) ||
+      (Math.abs(x) < 4.6 && z < southZ + 4.4 && z > southZ - 0.8)
+    );
+  };
+
   let pebble = 0;
   for (const route of vikingTrafficRoutes) {
     if (route.wear < 0.58) {
@@ -1163,7 +1186,11 @@ function createRockwork(): void {
           const offset = route.width + 0.15 + noise(pebble, 1) * 0.45;
           const ex = px + normalX * side * offset;
           const ez = pz + normalZ * side * offset;
-          if (insideAnyHome(ex, ez, 0.3) || nearAnyDoor(ex, ez, 1.8)) {
+          if (
+            insideAnyHome(ex, ez, 0.3) ||
+            nearAnyDoor(ex, ez, 1.8) ||
+            insideGateSwing(ex, ez)
+          ) {
             continue;
           }
           const size = 0.12 + noise(pebble, 7) * 0.24;

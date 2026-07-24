@@ -27,6 +27,9 @@ export type BreakableMaterial =
   | "concrete"
   | "glass"
   | "steel"
+  // Пластиковая обшивка (экраны лоджий, сайдинг): легче и мягче стали,
+  // пробивается честно, но не крошится в пыль как штукатурка.
+  | "plastic"
   | "stone"
   | "basalt"
   | "graphiteStone"
@@ -61,7 +64,36 @@ export type SurfaceTextureProfile =
   | "city-aged-stucco"
   | "city-red-aggregate"
   | "city-facade-cladding"
-  | "city-roof-tile";
+  | "city-roof-tile"
+  // Вывески и таблички: текстура ложится по родным UV грани ОДИН раз (без
+  // мировой трипланарной проекции) — так на боксе читается надпись.
+  | "city-shop-sign"
+  | "city-chalk-sign-a"
+  | "city-chalk-sign-b";
+
+export type TreeVisualKind = "oak" | "birch" | "pine";
+export type TreeVisualRole = "trunk" | "branch" | "foliage" | "bark";
+
+/**
+ * Identifies the cheap structural proxy that belongs to a procedural tree.
+ * Rendering may replace these primitives, while hits, support and destruction
+ * continue to address the original piece id.
+ */
+export interface TreeVisualDefinition {
+  readonly kind: TreeVisualKind;
+  readonly seed: number;
+  readonly role: TreeVisualRole;
+  readonly localId: string;
+  /** Local id of the woody member that physically carries this piece. */
+  readonly parentLocalId?: string;
+}
+
+export type VegetationVisualKind = "shrub" | "hedge";
+
+export interface VegetationVisualDefinition {
+  readonly kind: VegetationVisualKind;
+  readonly seed: number;
+}
 
 export interface MaterialRuntimeProfile {
   readonly density: number;
@@ -109,6 +141,9 @@ export interface BreakablePieceDefinition {
   readonly textureProfile?: SurfaceTextureProfile;
   /** World-space material mask; it follows this ground body when it breaks. */
   readonly landscapeSurface?: LandscapeSurfaceProfile;
+  /** Optional procedural tree skin backed by this gameplay proxy. */
+  readonly treeVisual?: TreeVisualDefinition;
+  readonly vegetationVisual?: VegetationVisualDefinition;
   /**
    * 0..1 organic weathering receptivity. The shared material shader turns this
    * into a spatial biofilm — moss on up-facing surfaces, mould/damp near the
@@ -177,6 +212,20 @@ export const materialRuntimeProfiles: Record<
     debrisColor: "#d2cbbc",
     debrisCount: 6,
     restitution: 0.02,
+  },
+  // Пластиковая обшивка: лёгкая, упругая, трещит кусками панели, а не
+  // рассыпается пылью — сосед по листу отламывается редко.
+  plastic: {
+    density: 0.55,
+    impulse: 2.5,
+    lift: 0.6,
+    torque: 0.38,
+    fractureRadius: [0.9, 0.7],
+    neighborChance: 0.24,
+    dustColor: "#d9dad4",
+    debrisColor: "#c6c8c2",
+    debrisCount: 3,
+    restitution: 0.14,
   },
   concrete: {
     density: 2.4,
@@ -2218,7 +2267,9 @@ function createKhrushchevka(
       ];
       balconyPieces.push(
         {
-          ...makePiece(`${id}:clad:front`, "hru:balcony", "steel", "steelSheet",
+          // Экран лоджии — пластиковая обшивка, не бронелист: пробивается
+          // молотком и тем более ракетой, цвета прежние.
+          ...makePiece(`${id}:clad:front`, "hru:balcony", "plastic", "panel",
             [cx, b + 0.45, 0.075], [1.86, 0.82, 0.045], cladColor, rot),
           weathering: 0.42,
           bearsLoad: false,
@@ -2230,7 +2281,7 @@ function createKhrushchevka(
           bearsLoad: false,
         },
         ...[-1, 1].map((side): BreakablePieceDefinition => ({
-          ...makePiece(`${id}:clad:side:${side}`, "hru:balcony", "steel", "steelSheet",
+          ...makePiece(`${id}:clad:side:${side}`, "hru:balcony", "plastic", "panel",
             [cx + side * 0.9225, b + 0.45, -0.45], [0.045, 0.82, 1.06],
             cladColor, rot),
           weathering: 0.42,
@@ -2287,12 +2338,12 @@ function createKhrushchevka(
       // фартук → стойки → верхний брус → самодельная крыша.
       balconyPieces.push(
         {
-          ...makePiece(`${id}:clad:front`, "hru:balcony", "steel", "steelSheet",
+          ...makePiece(`${id}:clad:front`, "hru:balcony", "plastic", "panel",
             [cx, b + 0.45, 0.075], [1.86, 0.82, 0.045], cladColor, rot),
           weathering: wear,
         },
         ...[-1, 1].map((side): BreakablePieceDefinition => ({
-          ...makePiece(`${id}:clad:side:${side}`, "hru:balcony", "steel", "steelSheet",
+          ...makePiece(`${id}:clad:side:${side}`, "hru:balcony", "plastic", "panel",
             [cx + side * 0.9225, b + 0.45, -0.45], [0.045, 0.82, 1.06],
             cladColor, rot),
           weathering: wear,
@@ -2853,7 +2904,7 @@ function createKhrushchevka(
       {
         ...makePiece(`hru:downpipe:${index}:outlet`, "hru:fixtures", "steel", "steelSheet",
           [px, 0.52, pz + pipeFace * 0.13], [0.11, 0.5, 0.11], "#8d938f",
-          [pipeFace * 0.55, 0, 0]),
+          [-pipeFace * 0.55, 0, 0]),
         bearsLoad: false,
         sideAttachmentReach: 0.35,
         weathering: 0.45,
@@ -3414,13 +3465,14 @@ function createOutskirts(): BreakableClusterDefinition[] {
       if (dressing > 0.8) {
         const width = 0.9 + dressing * 1.5;
         const height = 0.5 + deterministicNoise(`outskirt:bh:${cx}:${cz}`) * 0.9;
-        floraPieces.push(
-          makePiece(`town:outskirt:bush:${index}`, "town:outskirts:flora", "foliage", "groundTile",
+        floraPieces.push({
+          ...makePiece(`town:outskirt:bush:${index}`, "town:outskirts:flora", "foliage", "groundTile",
             [cx + offsetX, -0.02 + height / 2, cz + offsetZ],
             [width, height, width * 0.82],
             index % 3 === 0 ? "#3c5230" : index % 3 === 1 ? "#49603a" : "#425934",
             [0, deterministicNoise(`outskirt:br:${cx}:${cz}`) * Math.PI, 0]),
-        );
+          vegetationVisual: { kind: "shrub", seed: index + 101 },
+        });
       } else if (dressing < 0.07) {
         const width = 0.5 + deterministicNoise(`outskirt:rw:${cx}:${cz}`) * 0.9;
         const height = 0.3 + deterministicNoise(`outskirt:rh:${cx}:${cz}`) * 0.5;
@@ -3910,6 +3962,14 @@ export const structuralMaterialProfiles: Record<
     cantilever: 0.3,
     maximumVerticalGap: 0.2,
     sideAttachmentReach: 0.34,
+  },
+  plastic: {
+    density: materialRuntimeProfiles.plastic.density,
+    compressionStrength: 30,
+    cantilever: 0.36,
+    maximumVerticalGap: 0.2,
+    carriesAttachments: true,
+    sideAttachmentReach: 0.36,
   },
   concrete: {
     density: materialRuntimeProfiles.concrete.density,

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  CONTACT_SEPARATION_MS,
+  CONTACT_SEPARATION_STEPS,
   isNewPhysicalContact,
   measureImpactApproachSpeed,
   shouldPlayDebrisImpact,
@@ -94,22 +94,25 @@ test("a rebound moving away from the contact is not a second impact", () => {
   assert.equal(approachSpeed, 0);
 });
 
-test("continuous solver force stays one physical contact", () => {
-  const firstContactAt = 1_000;
+test("continuous solver force stays one contact across slow render frames", () => {
+  const firstContactStep = 1_000;
 
-  assert.equal(isNewPhysicalContact(firstContactAt, undefined), true);
-  assert.equal(isNewPhysicalContact(firstContactAt + 16, firstContactAt), false);
+  assert.equal(isNewPhysicalContact(firstContactStep, undefined), true);
+  assert.equal(
+    isNewPhysicalContact(firstContactStep + 1, firstContactStep),
+    false,
+  );
   assert.equal(
     isNewPhysicalContact(
-      firstContactAt + CONTACT_SEPARATION_MS,
-      firstContactAt,
+      firstContactStep + CONTACT_SEPARATION_STEPS,
+      firstContactStep,
     ),
     false,
   );
   assert.equal(
     isNewPhysicalContact(
-      firstContactAt + CONTACT_SEPARATION_MS + 1,
-      firstContactAt,
+      firstContactStep + CONTACT_SEPARATION_STEPS + 1,
+      firstContactStep,
     ),
     true,
   );

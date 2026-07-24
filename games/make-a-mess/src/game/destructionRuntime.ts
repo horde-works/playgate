@@ -9,6 +9,7 @@ import {
   applyVoxelDamage,
   createSolidVoxelBody,
   createVoxelBodyFromComponent,
+  DEFAULT_MAX_VOXELS,
   splitVoxelComponents,
   type VoxelBody,
   type VoxelBox,
@@ -31,6 +32,8 @@ export interface ShardDefinition {
   readonly voxelBody?: VoxelBody;
   readonly boxes?: readonly VoxelBox[];
   readonly volume?: number;
+  /** Synthetic low-speed surface chips use predictive CCD, not shape casts. */
+  readonly preferSoftCcd?: boolean;
 }
 
 export interface ShardSource {
@@ -90,16 +93,44 @@ export interface DebrisColliderBox {
 }
 
 /**
+ * Returns the occupied boxes not represented by the cheap debris-to-world
+ * proxies. Those boxes still get actor-only colliders, so visible geometry
+ * blocks players and projectiles without joining debris-to-debris contact.
+ */
+export function omittedDebrisColliderBoxes(
+  boxes: readonly DebrisColliderBox[],
+  primaryBoxes: readonly DebrisColliderBox[],
+): readonly DebrisColliderBox[] {
+  if (boxes.length <= primaryBoxes.length) {
+    return [];
+  }
+
+  // Primary proxies are references selected from `boxes`. Consume matches so
+  // repeated equal boxes remain distinct occupied cells.
+  const remainingPrimary = [...primaryBoxes];
+  return boxes.filter((box) => {
+    const primaryIndex = remainingPrimary.indexOf(box);
+    if (primaryIndex < 0) {
+      return true;
+    }
+    remainingPrimary.splice(primaryIndex, 1);
+    return false;
+  });
+}
+
+/**
  * Full CCD shape-casts are reserved for genuinely small debris that could
  * cross a collider between fixed physics steps. Larger boards, slabs and wall
  * sections use Rapier's cheaper predictive constraints instead.
  */
 export function debrisCollisionTuning(
   size: readonly [number, number, number],
+  allowHardCcd = true,
 ): DebrisCollisionTuning {
   const volume = size[0] * size[1] * size[2];
   const largestExtent = Math.max(size[0], size[1], size[2]);
-  const hardCcd = volume <= 0.025 && largestExtent <= 0.48;
+  const hardCcd =
+    allowHardCcd && volume <= 0.025 && largestExtent <= 0.48;
 
   return {
     hardCcd,
@@ -167,6 +198,7 @@ export const bulletHoleRadius: Partial<Record<BreakableMaterial, number>> = {
   concrete: 0.18,
   plaster: 0.27,
   wood: 0.2,
+  plastic: 0.22,
   cloth: 0.32,
   foliage: 0.34,
   grass: 0.3,
@@ -188,6 +220,7 @@ export const fractureEnergyByMaterial: Record<
   darkGlass: 0.2,
   plaster: 0.38,
   wood: 0.72,
+  plastic: 0.58,
   cloth: 0.14,
   foliage: 0.16,
   grass: 0.78,
@@ -325,6 +358,7 @@ const voxelSizeByMaterial: Record<BreakableMaterial, number> = {
   darkGlass: 0.09,
   plaster: 0.11,
   wood: 0.12,
+  plastic: 0.12,
   cloth: 0.1,
   brick: 0.12,
   stone: 0.15,
@@ -339,11 +373,93 @@ const voxelSizeByMaterial: Record<BreakableMaterial, number> = {
   asphalt: 0.16,
 };
 
+// Грунт — гигантские плиты (6×0.9×6): на полном бюджете каждая стоит как
+// ~20 кирпичей за один carve. Кратер в земле прощает грубую сетку визуально,
+// поэтому у грунта свой, маленький воксельный потолок.
+const GROUND_CARVE_MAX_VOXELS = 1_200;
+
+export function carveVoxelBudget(material: BreakableMaterial): number {
+  return groundMaterials.has(material)
+    ? GROUND_CARVE_MAX_VOXELS
+    : DEFAULT_MAX_VOXELS;
+}
+
+/**
+ * Оценка стоимости одного carve в «воксельных юнитах» — та же формула
+ * сетки, что у createSolidVoxelBody (клампы по оси и по бюджету тела).
+ * Кирпич ≈ десятки-сотни юнитов, бюджетный гигант ≈ carveVoxelBudget.
+ */
+export function carveWorkUnits(
+  material: BreakableMaterial,
+  size: readonly [number, number, number],
+): number {
+  const cell = voxelSizeByMaterial[material];
+  const estimate =
+    Math.max(1, Math.min(48, Math.round(size[0] / cell))) *
+    Math.max(1, Math.min(48, Math.round(size[1] / cell))) *
+    Math.max(1, Math.min(48, Math.round(size[2] / cell)));
+  return Math.min(estimate, carveVoxelBudget(material));
+}
+
+export interface CarveWorkBudget {
+  readonly maxTargets: number;
+  /** Суммарная работа по НЕ-грунтовым целям. */
+  readonly workBudget: number;
+  /** Отдельный маленький срез для грунта — чтобы кратеры под ногами не
+   * вытесняли из бюджета настоящие цели (они всегда ближе всех к взрыву). */
+  readonly groundWorkBudget: number;
+}
+
+/**
+ * Адаптивный отбор carve-целей взрыва. targets приходят отсортированными по
+ * приоритету (расстоянию). В норме (кирпичи, панели) отбор совпадает со
+ * старым `slice(0, maxTargets)`; деградация включается только когда в blast
+ * попали дорогие гиганты. Грунт живёт на своём срезе бюджета и при переборе
+ * просто пропускается — НЕ блокируя цели дальше по списку; перебор общего
+ * бюджета останавливает отбор целиком (дальние цели ниже приоритетом).
+ */
+export function selectCarveTargetsWithinBudget<T>(
+  targets: readonly T[],
+  sourceOf: (target: T) => {
+    readonly material: BreakableMaterial;
+    readonly size: readonly [number, number, number];
+  },
+  budget: CarveWorkBudget,
+): T[] {
+  const selected: T[] = [];
+  let workSpent = 0;
+  let groundWorkSpent = 0;
+
+  for (const target of targets) {
+    if (selected.length >= budget.maxTargets) {
+      break;
+    }
+    const source = sourceOf(target);
+    const work = carveWorkUnits(source.material, source.size);
+    if (groundMaterials.has(source.material)) {
+      if (groundWorkSpent + work > budget.groundWorkBudget) {
+        continue;
+      }
+      groundWorkSpent += work;
+      selected.push(target);
+      continue;
+    }
+    if (workSpent + work > budget.workBudget && selected.length > 0) {
+      break;
+    }
+    workSpent += work;
+    selected.push(target);
+  }
+
+  return selected;
+}
+
 const damageRoughnessByMaterial: Record<BreakableMaterial, number> = {
   glass: 0.42,
   darkGlass: 0.4,
   plaster: 0.34,
   wood: 0.18,
+  plastic: 0.22,
   cloth: 0.36,
   brick: 0.3,
   stone: 0.26,
@@ -402,6 +518,72 @@ export interface BodyDamageResult {
   readonly removedVolume: number;
 }
 
+export type OccupiedGeometryBox = Pick<VoxelBox, "center" | "size">;
+
+function closestPointOnLocalBox(
+  point: Vector3,
+  center: readonly [number, number, number],
+  size: readonly [number, number, number],
+  target: Vector3,
+): Vector3 {
+  return target.set(
+    Math.max(
+      center[0] - size[0] / 2,
+      Math.min(center[0] + size[0] / 2, point.x),
+    ),
+    Math.max(
+      center[1] - size[1] / 2,
+      Math.min(center[1] + size[1] / 2, point.y),
+    ),
+    Math.max(
+      center[2] - size[2] / 2,
+      Math.min(center[2] + size[2] / 2, point.z),
+    ),
+  );
+}
+
+function segmentIntersectsLocalBox(
+  start: Vector3,
+  direction: Vector3,
+  center: readonly [number, number, number],
+  size: readonly [number, number, number],
+  padding: number,
+): boolean {
+  let tMin = 0;
+  let tMax = 1;
+
+  for (let axis = 0; axis < 3; axis += 1) {
+    const origin =
+      axis === 0 ? start.x : axis === 1 ? start.y : start.z;
+    const delta =
+      axis === 0 ? direction.x : axis === 1 ? direction.y : direction.z;
+    const halfSize = size[axis] / 2 + padding;
+    const minimum = center[axis] - halfSize;
+    const maximum = center[axis] + halfSize;
+
+    if (Math.abs(delta) < 1e-5) {
+      if (origin < minimum || origin > maximum) {
+        return false;
+      }
+      continue;
+    }
+
+    const inverse = 1 / delta;
+    let near = (minimum - origin) * inverse;
+    let far = (maximum - origin) * inverse;
+    if (near > far) {
+      [near, far] = [far, near];
+    }
+    tMin = Math.max(tMin, near);
+    tMax = Math.min(tMax, far);
+    if (tMin > tMax) {
+      return false;
+    }
+  }
+
+  return tMax > 0.015 && tMin < 0.985;
+}
+
 export function closestPointOnOrientedBox(
   point: Vector3,
   position: Vector3,
@@ -419,6 +601,93 @@ export function closestPointOnOrientedBox(
     Math.max(-size[2] / 2, Math.min(size[2] / 2, local.z)),
   );
   return local.applyQuaternion(quaternion).add(position);
+}
+
+export function closestPointOnOccupiedGeometry(
+  point: Vector3,
+  position: Vector3,
+  size: readonly [number, number, number],
+  quaternion: Quaternion,
+  boxes?: readonly OccupiedGeometryBox[],
+): Vector3 {
+  const inverseRotation = quaternion.clone().invert();
+  const localPoint = point
+    .clone()
+    .sub(position)
+    .applyQuaternion(inverseRotation);
+  const closest = new Vector3();
+
+  if (!boxes || boxes.length === 0) {
+    return closestPointOnLocalBox(
+      localPoint,
+      [0, 0, 0],
+      size,
+      closest,
+    )
+      .applyQuaternion(quaternion)
+      .add(position);
+  }
+
+  const candidate = new Vector3();
+  let closestDistanceSquared = Number.POSITIVE_INFINITY;
+
+  for (const box of boxes) {
+    closestPointOnLocalBox(localPoint, box.center, box.size, candidate);
+    const distanceSquared = candidate.distanceToSquared(localPoint);
+    if (distanceSquared < closestDistanceSquared) {
+      closestDistanceSquared = distanceSquared;
+      closest.copy(candidate);
+    }
+  }
+
+  return closest.applyQuaternion(quaternion).add(position);
+}
+
+export function segmentIntersectsOccupiedGeometry(
+  start: Vector3,
+  end: Vector3,
+  position: Vector3,
+  size: readonly [number, number, number],
+  quaternion: Quaternion,
+  boxes?: readonly OccupiedGeometryBox[],
+  padding = 0,
+): boolean {
+  const inverseRotation = quaternion.clone().invert();
+  const localStart = start
+    .clone()
+    .sub(position)
+    .applyQuaternion(inverseRotation);
+  const localEnd = end
+    .clone()
+    .sub(position)
+    .applyQuaternion(inverseRotation);
+  const direction = localEnd.sub(localStart);
+
+  if (
+    !segmentIntersectsLocalBox(
+      localStart,
+      direction,
+      [0, 0, 0],
+      size,
+      padding,
+    )
+  ) {
+    return false;
+  }
+
+  if (!boxes || boxes.length === 0) {
+    return true;
+  }
+
+  return boxes.some((box) =>
+    segmentIntersectsLocalBox(
+      localStart,
+      direction,
+      box.center,
+      box.size,
+      padding,
+    ),
+  );
 }
 
 export function distanceToOrientedBox(
@@ -486,7 +755,18 @@ export function carveBox(
   const material = options.material ?? "brick";
   const body =
     options.body ??
-    createSolidVoxelBody(size, voxelSizeByMaterial[material]);
+    createSolidVoxelBody(
+      size,
+      voxelSizeByMaterial[material],
+      carveVoxelBudget(material),
+    );
+  // Binary voxels cannot represent a physically meaningful crater below
+  // half of the authored material resolution. Keep that energy floor based
+  // on the material grid (not a budget-coarsened giant body's cell size), so
+  // direct hits still work on large bodies while weak hits cannot chip steel.
+  if (radius < voxelSizeByMaterial[material] * 0.5) {
+    return null;
+  }
   const result = applyVoxelDamage(body, {
     point: [localPoint.x, localPoint.y, localPoint.z],
     radius,

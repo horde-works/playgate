@@ -1,4 +1,7 @@
 export const MAX_AUTO_STEP_HEIGHT = 0.72;
+// Карабканье: выше обычного шага, но в пределах «подтянулся руками» —
+// пороги, кромки воронок, лежащие плиты. Дальше только полёт.
+export const MAX_AUTO_CLIMB_HEIGHT = 1.18;
 export const MIN_WALKABLE_SURFACE_NORMAL_Y = 0.64;
 
 export interface AutoStepProbe {
@@ -34,6 +37,26 @@ export function autoStepLiftSpeed(probe: AutoStepProbe): number {
   }
 
   return Math.min(5.4, Math.sqrt(2 * 14 * (probe.stepHeight + 0.2)));
+}
+
+/**
+ * Карабканье — «шагнуть или подпрыгнуть»: когда упёрся, а площадка выше
+ * обычного шага, игрок сам вытягивает себя на кромку (порог, стенка ямы,
+ * лежащая плита). Работает только там, где честный шаг уже отказал.
+ */
+export function autoClimbLiftSpeed(probe: AutoStepProbe): number {
+  if (
+    !probe.blockedAtFeet ||
+    !probe.bodyClear ||
+    !probe.landingFound ||
+    probe.landingNormalY < MIN_WALKABLE_SURFACE_NORMAL_Y ||
+    probe.stepHeight <= MAX_AUTO_STEP_HEIGHT ||
+    probe.stepHeight > MAX_AUTO_CLIMB_HEIGHT
+  ) {
+    return 0;
+  }
+
+  return Math.min(6.3, Math.sqrt(2 * 14 * (probe.stepHeight + 0.2)));
 }
 
 export function setFlightVelocityTarget(

@@ -79,6 +79,17 @@ export const materialAppearanceProfiles: Record<
     wetness: 0.2,
     streaking: 0.8,
   },
+  plastic: {
+    textureScale: 0.55,
+    macroVariation: 0.03,
+    roughnessVariation: 0.05,
+    edgeWear: 0.02,
+    groundDampness: 0.05,
+    topLightening: 0.02,
+    sideTint: neutralSideTint,
+    wetness: 0.5,
+    streaking: 0.25,
+  },
   concrete: {
     textureScale: 0.58,
     macroVariation: 0.075,

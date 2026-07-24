@@ -15,7 +15,10 @@ test("the intact fortress exposes a few cached physics meshes, not one collider 
   );
   assert.equal(
     meshes.reduce((total, mesh) => total + mesh.indices.length / 3, 0),
-    collidablePieces.length * 12,
+    collidablePieces.reduce(
+      (total, piece) => total + (piece.shape === "cylinder" ? 36 : 12),
+      0,
+    ),
   );
 });
 
@@ -38,4 +41,27 @@ test("breaking one voxel rebuilds only its local physics chunk", () => {
     after.reduce((total, mesh) => total + mesh.pieceCount, 0),
     before.reduce((total, mesh) => total + mesh.pieceCount, 0) - 1,
   );
+});
+
+test("a same-ID geometry edit cannot reuse a stale static collider", () => {
+  const piece = {
+    id: "cache-regression:wall",
+    material: "concrete",
+    position: [1, 2, 1],
+    size: [2, 3, 0.4],
+  };
+  const before = buildStaticColliderMeshes([piece])[0];
+  const moved = buildStaticColliderMeshes([
+    { ...piece, position: [1.25, 2, 1] },
+  ])[0];
+  const resized = buildStaticColliderMeshes([
+    { ...piece, size: [2.5, 3, 0.4] },
+  ])[0];
+  const cachedAgain = buildStaticColliderMeshes([piece])[0];
+
+  assert.notStrictEqual(moved, before);
+  assert.notStrictEqual(resized, before);
+  assert.notDeepEqual([...moved.vertices], [...before.vertices]);
+  assert.notDeepEqual([...resized.vertices], [...before.vertices]);
+  assert.strictEqual(cachedAgain, before);
 });

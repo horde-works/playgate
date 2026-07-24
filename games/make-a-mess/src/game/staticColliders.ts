@@ -81,15 +81,40 @@ function chunkKey(piece: BreakablePieceDefinition): string {
   )}:${piece.material}`;
 }
 
+function hashToken(hash: number, token: string): number {
+  let next = hash;
+  for (let index = 0; index < token.length; index += 1) {
+    next ^= token.charCodeAt(index);
+    next = Math.imul(next, 16777619);
+  }
+  // Keep adjacent fields distinct (for example [1, 23] and [12, 3]).
+  next ^= 0xff;
+  return Math.imul(next, 16777619);
+}
+
 function pieceSetHash(pieces: readonly BreakablePieceDefinition[]): string {
-  let hash = 2166136261;
+  // IDs alone are insufficient during HMR or prefab edits: a piece can keep
+  // its ID while its physical shape moves or changes size. Hash every field
+  // that pieceColliderTemplate/buildChunkMesh reads so a visible edit can
+  // never reuse the previous static collision mesh.
+  let primary = 2166136261;
+  let secondary = 2246822507;
   for (const piece of pieces) {
-    for (let index = 0; index < piece.id.length; index += 1) {
-      hash ^= piece.id.charCodeAt(index);
-      hash = Math.imul(hash, 16777619);
+    const rotation = piece.rotation ?? [0, 0, 0];
+    const tokens = [
+      piece.id,
+      piece.material,
+      piece.shape ?? "box",
+      ...piece.position.map(String),
+      ...rotation.map(String),
+      ...piece.size.map(String),
+    ];
+    for (const token of tokens) {
+      primary = hashToken(primary, token);
+      secondary = hashToken(secondary, token);
     }
   }
-  return `${pieces.length}:${hash >>> 0}:${pieces[0]?.id ?? "empty"}:${pieces.at(-1)?.id ?? "empty"}`;
+  return `${pieces.length}:${primary >>> 0}:${secondary >>> 0}`;
 }
 
 function cacheMesh(

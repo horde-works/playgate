@@ -18,15 +18,15 @@ interface DebrisImpactDecision {
 
 export const DEBRIS_SOUND_COOLDOWN_MS = 180;
 export const DEBRIS_SOUND_MIN_APPROACH_SPEED = 0.8;
-export const CONTACT_SEPARATION_MS = 320;
+export const CONTACT_SEPARATION_STEPS = 2;
 
 export function isNewPhysicalContact(
-  now: number,
-  previousContactAt: number | undefined,
+  currentStep: number,
+  previousContactStep: number | undefined,
 ): boolean {
   return (
-    previousContactAt === undefined ||
-    now - previousContactAt > CONTACT_SEPARATION_MS
+    previousContactStep === undefined ||
+    currentStep - previousContactStep > CONTACT_SEPARATION_STEPS
   );
 }
 

@@ -464,6 +464,10 @@ export function createStructuralSolver<Material extends string>(
 
     const adjacentComponentIds = new Set<number>();
     for (const neighborId of structuralNeighbors.get(piece.id) ?? []) {
+      const neighbor = pieceById.get(neighborId);
+      if (!neighbor || materialProfiles[neighbor.material].foundation) {
+        continue;
+      }
       for (const componentId of componentIdsByPieceId.get(neighborId) ?? []) {
         adjacentComponentIds.add(componentId);
       }

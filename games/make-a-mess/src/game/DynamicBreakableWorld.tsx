@@ -11,14 +11,18 @@ import {
   type MutableRefObject,
 } from "react";
 import {
+  BufferGeometry,
   BoxGeometry,
   Color,
   CylinderGeometry,
+  DoubleSide,
   DynamicDrawUsage,
+  Float32BufferAttribute,
   InstancedBufferAttribute,
   InstancedMesh,
   Object3D,
   Quaternion,
+  Sphere,
   Vector3,
 } from "three";
 import {
@@ -44,9 +48,65 @@ import {
   silicateJointTint,
 } from "./silicateJoints";
 import { computeBoxFaceMasks } from "./boxFaceMasks";
+import { usesFoliageDebrisGeometry } from "./treeVisualModel";
 
 const UNIT_BOX = new BoxGeometry(1, 1, 1);
 const UNIT_CYLINDER = new CylinderGeometry(0.5, 0.5, 1, 20, 1);
+
+function detachedFoliageGeometry(): BufferGeometry {
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+  let vertex = 0;
+
+  for (let leaf = 0; leaf < 18; leaf += 1) {
+    const phase = leaf * 12.9898;
+    const random = (salt: number): number => {
+      const value = Math.sin(phase + salt * 78.233) * 43758.5453;
+      return value - Math.floor(value);
+    };
+    const center = new Vector3(
+      (random(1) - 0.5) * 0.72,
+      (random(2) - 0.5) * 0.68,
+      (random(3) - 0.5) * 0.72,
+    );
+    const normal = new Vector3(
+      random(4) * 2 - 1,
+      0.25 + random(5),
+      random(6) * 2 - 1,
+    ).normalize();
+    let tangent = normal.clone().cross(new Vector3(0, 1, 0));
+    if (tangent.lengthSq() < 0.01) {
+      tangent = normal.clone().cross(new Vector3(1, 0, 0));
+    }
+    tangent.normalize();
+    const bitangent = normal.clone().cross(tangent).normalize();
+    const width = 0.035 + random(7) * 0.025;
+    const height = width * (1.35 + random(8) * 0.5);
+    const points = [
+      center.clone().addScaledVector(bitangent, -height),
+      center.clone().addScaledVector(tangent, width),
+      center.clone().addScaledVector(bitangent, height),
+      center.clone().addScaledVector(tangent, -width),
+    ];
+    for (const point of points) {
+      positions.push(point.x, point.y, point.z);
+    }
+    uvs.push(0.5, 0, 1, 0.5, 0.5, 1, 0, 0.5);
+    indices.push(vertex, vertex + 1, vertex + 2, vertex, vertex + 2, vertex + 3);
+    vertex += 4;
+  }
+
+  const geometry = new BufferGeometry();
+  geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("uv", new Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+const UNIT_FOLIAGE_DEBRIS = detachedFoliageGeometry();
 
 type DynamicBreakableKind = "piece" | "shard" | "remnant";
 
@@ -58,7 +118,7 @@ export interface BreakableRenderBox {
 interface DynamicBreakableFragment {
   readonly sourceId: string;
   readonly kind: DynamicBreakableKind;
-  readonly geometryKind: "box" | "cylinder";
+  readonly geometryKind: "box" | "cylinder" | "foliage";
   readonly material: BreakableMaterial;
   readonly materialColor: string;
   readonly textureProfile?: SurfaceTextureProfile;
@@ -82,7 +142,7 @@ interface DynamicBreakableBatch {
   readonly material: BreakableMaterial;
   readonly materialColor: string;
   readonly textureProfile?: SurfaceTextureProfile;
-  readonly geometryKind: "box" | "cylinder";
+  readonly geometryKind: "box" | "cylinder" | "foliage";
   readonly fragments: readonly DynamicBreakableFragment[];
 }
 
@@ -162,7 +222,11 @@ function sourceFragments(
     const boxes = getPieceRenderBoxes(piece);
     const faceMasks = computeBoxFaceMasks(boxes);
     const pieceColor = quenchedColor(piece.material, piece.color);
-    const geometryKind = piece.shape === "cylinder" ? "cylinder" as const : "box" as const;
+    const geometryKind = usesFoliageDebrisGeometry(piece.material, piece)
+      ? "foliage" as const
+      : piece.shape === "cylinder"
+        ? "cylinder" as const
+        : "box" as const;
     boxes.forEach((box, boxIndex) => {
       fragments.push({
         sourceId: piece.id,
@@ -176,11 +240,11 @@ function sourceFragments(
         size: box.size,
         sizeExpansion,
         faceMaskPositive:
-          geometryKind === "cylinder"
+          geometryKind !== "box"
             ? [0, faceMasks[boxIndex].positive[1], 0]
             : faceMasks[boxIndex].positive,
         faceMaskNegative:
-          geometryKind === "cylinder"
+          geometryKind !== "box"
             ? [0, faceMasks[boxIndex].negative[1], 0]
             : faceMasks[boxIndex].negative,
         fallbackPosition: piece.position,
@@ -197,7 +261,11 @@ function sourceFragments(
         : [{ center: [0, 0, 0] as const, size: shard.size }];
     const faceMasks = computeBoxFaceMasks(boxes);
     const shardColor = quenchedColor(shard.material, shard.color);
-    const shardGeometry = shard.shape === "cylinder" ? "cylinder" as const : "box" as const;
+    const shardGeometry = usesFoliageDebrisGeometry(shard.material)
+      ? "foliage" as const
+      : shard.shape === "cylinder"
+        ? "cylinder" as const
+        : "box" as const;
     boxes.forEach((box, boxIndex) => {
       fragments.push({
         sourceId: shard.id,
@@ -211,11 +279,11 @@ function sourceFragments(
         size: box.size,
         sizeExpansion: 0,
         faceMaskPositive:
-          shardGeometry === "cylinder"
+          shardGeometry !== "box"
             ? [0, faceMasks[boxIndex].positive[1], 0]
             : faceMasks[boxIndex].positive,
         faceMaskNegative:
-          shardGeometry === "cylinder"
+          shardGeometry !== "box"
             ? [0, faceMasks[boxIndex].negative[1], 0]
             : faceMasks[boxIndex].negative,
         fallbackPosition: shard.position,
@@ -232,7 +300,11 @@ function sourceFragments(
         : [{ center: [0, 0, 0] as const, size: remnant.size }];
     const faceMasks = computeBoxFaceMasks(boxes);
     const remnantColor = quenchedColor(remnant.material, remnant.color);
-    const remnantGeometry = remnant.shape === "cylinder" ? "cylinder" as const : "box" as const;
+    const remnantGeometry = usesFoliageDebrisGeometry(remnant.material)
+      ? "foliage" as const
+      : remnant.shape === "cylinder"
+        ? "cylinder" as const
+        : "box" as const;
     boxes.forEach((box, boxIndex) => {
       fragments.push({
         sourceId: remnant.id,
@@ -249,11 +321,11 @@ function sourceFragments(
         size: box.size,
         sizeExpansion: 0,
         faceMaskPositive:
-          remnantGeometry === "cylinder"
+          remnantGeometry !== "box"
             ? [0, faceMasks[boxIndex].positive[1], 0]
             : faceMasks[boxIndex].positive,
         faceMaskNegative:
-          remnantGeometry === "cylinder"
+          remnantGeometry !== "box"
             ? [0, faceMasks[boxIndex].negative[1], 0]
             : faceMasks[boxIndex].negative,
         fallbackPosition: remnant.position,
@@ -336,6 +408,23 @@ function setFragmentMatrix(
   dummy.updateMatrix();
 }
 
+function expandFragmentBounds(
+  bounds: Sphere,
+  fragmentBounds: Sphere,
+  dummy: Object3D,
+  fragment: DynamicBreakableFragment,
+): void {
+  const expansion = fragment.sizeExpansion;
+  fragmentBounds.center.copy(dummy.position);
+  fragmentBounds.radius =
+    Math.hypot(
+      fragment.size[0] + expansion,
+      fragment.size[1] + expansion,
+      fragment.size[2] + expansion,
+    ) / 2;
+  bounds.union(fragmentBounds);
+}
+
 const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
   batch,
   bodies,
@@ -346,7 +435,11 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
   const mesh = useRef<InstancedMesh>(null);
   const geometry = useMemo(() => {
     const next = (
-      batch.geometryKind === "cylinder" ? UNIT_CYLINDER : UNIT_BOX
+      batch.geometryKind === "cylinder"
+        ? UNIT_CYLINDER
+        : batch.geometryKind === "foliage"
+          ? UNIT_FOLIAGE_DEBRIS
+          : UNIT_BOX
     ).clone();
     // xyz = world anchor, w = weathering. Debris exposes fresh, unweathered
     // material (a broken log's inner wood is pristine), so w stays 0.
@@ -430,15 +523,24 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
     );
     return next;
   }, [batch]);
-  const material = useMemo(
-    () =>
-      getPieceMaterial(
-        batch.material,
-        batch.materialColor,
-        batch.textureProfile,
-      ),
-    [batch.material, batch.materialColor, batch.textureProfile],
-  );
+  const material = useMemo(() => {
+    const base = getPieceMaterial(
+      batch.material,
+      batch.materialColor,
+      batch.textureProfile,
+    );
+    if (batch.geometryKind !== "foliage") {
+      return base;
+    }
+    const foliage = base.clone();
+    foliage.side = DoubleSide;
+    return foliage;
+  }, [
+    batch.geometryKind,
+    batch.material,
+    batch.materialColor,
+    batch.textureProfile,
+  ]);
   const instanceIds = useMemo(
     () => batch.fragments.map((fragment) => fragment.sourceId),
     [batch.fragments],
@@ -450,8 +552,20 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
   const dummy = useMemo(() => new Object3D(), []);
   const localCenter = useMemo(() => new Vector3(), []);
   const rotation = useMemo(() => new Quaternion(), []);
+  const raycastBounds = useMemo(() => new Sphere(), []);
+  const fragmentBounds = useMemo(() => new Sphere(), []);
+  const sleepingSources = useRef(new Set<string>());
+  const observedSleepStates = useRef(new Map<string, boolean>());
 
-  useEffect(() => () => geometry.dispose(), [geometry]);
+  useEffect(
+    () => () => {
+      geometry.dispose();
+      if (batch.geometryKind === "foliage") {
+        material.dispose();
+      }
+    },
+    [batch.geometryKind, geometry, material],
+  );
 
   useLayoutEffect(() => {
     const current = mesh.current;
@@ -460,6 +574,8 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
     }
 
     const color = new Color();
+    raycastBounds.makeEmpty();
+    sleepingSources.current.clear();
     batch.fragments.forEach((fragment, index) => {
       setFragmentMatrix(
         dummy,
@@ -469,6 +585,12 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
         rotation,
       );
       current.setMatrixAt(index, dummy.matrix);
+      expandFragmentBounds(
+        raycastBounds,
+        fragmentBounds,
+        dummy,
+        fragment,
+      );
       current.setColorAt(
         index,
         color.set(
@@ -483,7 +605,19 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
     if (current.instanceColor) {
       current.instanceColor.needsUpdate = true;
     }
-  }, [batch.fragments, bodies, dummy, localCenter, rotation]);
+    // InstancedMesh caches this sphere after its first raycast. Keep our own
+    // conservative sphere instead: moving debris expands it incrementally, so
+    // raycasts stay valid without an O(instance count) bounds rebuild per frame.
+    current.boundingSphere = raycastBounds;
+  }, [
+    batch.fragments,
+    bodies,
+    dummy,
+    fragmentBounds,
+    localCenter,
+    raycastBounds,
+    rotation,
+  ]);
 
   useFrame(() => {
     const current = mesh.current;
@@ -492,9 +626,22 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
     }
 
     let changed = false;
+    const sleepStates = observedSleepStates.current;
+    sleepStates.clear();
     batch.fragments.forEach((fragment, index) => {
       const body = bodies?.current?.get(fragment.sourceId);
-      if (!body || body.isSleeping()) {
+      if (!body) {
+        return;
+      }
+      let sleeping = sleepStates.get(fragment.sourceId);
+      if (sleeping === undefined) {
+        sleeping = body.isSleeping();
+        sleepStates.set(fragment.sourceId, sleeping);
+      }
+      // Copy the pose once on the awake -> sleeping transition. The sleep
+      // manager may stop a body before this renderer's frame callback runs;
+      // skipping that transition left the visible fragment at its prior pose.
+      if (sleeping && sleepingSources.current.has(fragment.sourceId)) {
         return;
       }
       setFragmentMatrix(
@@ -505,8 +652,21 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
         rotation,
       );
       current.setMatrixAt(index, dummy.matrix);
+      expandFragmentBounds(
+        raycastBounds,
+        fragmentBounds,
+        dummy,
+        fragment,
+      );
       changed = true;
     });
+
+    sleepingSources.current.clear();
+    for (const [sourceId, sleeping] of sleepStates) {
+      if (sleeping) {
+        sleepingSources.current.add(sourceId);
+      }
+    }
 
     if (changed) {
       current.instanceMatrix.needsUpdate = true;

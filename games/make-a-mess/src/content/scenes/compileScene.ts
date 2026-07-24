@@ -283,6 +283,8 @@ function compilePiece(
     contactBearingOrder: source.contactBearingOrder,
     textureProfile: source.textureProfile,
     landscapeSurface: source.landscapeSurface,
+    treeVisual: source.treeVisual,
+    vegetationVisual: source.vegetationVisual,
     weathering: source.weathering ?? weatheringAmount(source.material, object.surface),
     hinge: transformedHinge(source.hinge, object.transform),
   };
@@ -328,6 +330,8 @@ function primitiveSource(object: Extract<SceneObjectDefinition, { kind: "primiti
     light: object.light,
     textureProfile: object.textureProfile,
     landscapeSurface: object.landscapeSurface,
+    treeVisual: object.treeVisual,
+    vegetationVisual: object.vegetationVisual,
     weathering: object.weathering,
   };
 }

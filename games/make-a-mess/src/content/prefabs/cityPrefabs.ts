@@ -1167,19 +1167,7 @@ function parkModule(
 }
 
 function streetTree(seed: number): ScenePrefabDefinition {
-  const pieces = propBirch({ seed, scale: 1.35 }).map((piece): Piece =>
-    piece.id === "trunk"
-      ? { ...piece, color: "#6d6253" }
-      : piece,
-  );
-  pieces.push(
-    part("whitewash", "plaster", "cylinder", [0, 0.72, 0], [0.36, 1.42, 0.36], "#d8d4c7", {
-      bearsLoad: false,
-      weathering: 0.5,
-      sideAttachmentReach: 0.3,
-      contactBoxes: [{ position: [0, 0.72, 0], size: [0.42, 1.45, 0.42] }],
-    }),
-  );
+  const pieces: Piece[] = [...propBirch({ seed, scale: 1.35 })];
   return prefab(`city:tree:whitewashed:${seed}`, "Whitewashed street tree", ["city", "flora", "tree", "whitewashed"], pieces);
 }
 
@@ -1187,8 +1175,18 @@ function hedge(): ScenePrefabDefinition {
   return prefab("city:hedge:segment", "Clipped rain-heavy hedge", ["city", "flora", "hedge", "landscape"], [
     selfContact(part("trunk-left", "wood", "cylinder", [-0.75, 0.55, 0], [0.12, 1.1, 0.12], "#4c3d31", { carriesAttachments: true })),
     selfContact(part("trunk-right", "wood", "cylinder", [0.75, 0.55, 0], [0.12, 1.1, 0.12], "#4c3d31", { carriesAttachments: true })),
-    selfContact(part("foliage-low", "foliage", "panel", [0, 0.62, 0], [2.05, 1.1, 0.72], "#34502f", { volume: 0.24, bearsLoad: false, sideAttachmentReach: 0.85 })),
-    selfContact(part("foliage-top", "foliage", "panel", [0, 1.18, 0], [1.9, 0.54, 0.68], "#41613a", { volume: 0.2, bearsLoad: false, sideAttachmentReach: 0.8 })),
+    selfContact(part("foliage-low", "foliage", "panel", [0, 0.62, 0], [2.05, 1.1, 0.72], "#34502f", {
+      volume: 0.24,
+      bearsLoad: false,
+      sideAttachmentReach: 0.85,
+      vegetationVisual: { kind: "hedge", seed: 17 },
+    })),
+    selfContact(part("foliage-top", "foliage", "panel", [0, 1.18, 0], [1.9, 0.54, 0.68], "#41613a", {
+      volume: 0.2,
+      bearsLoad: false,
+      sideAttachmentReach: 0.8,
+      vegetationVisual: { kind: "hedge", seed: 29 },
+    })),
   ]);
 }
 
@@ -1984,6 +1982,168 @@ function buildingSuppliesKiosk(): ScenePrefabDefinition {
   return prefab("city:kiosk:building-supplies", "Building-supplies kiosk with a lightbox sign", ["city", "building", "shop", "kiosk", "structural"], pieces);
 }
 
+function hyperminimarket(): ScenePrefabDefinition {
+  // НАСТОЯЩИЙ магазин, а не фальшивый куб: каркас из отдельных панелей,
+  // внутрь можно зайти — стеллаж с товаром, прилавок с кассой, лампа под
+  // потолком. Прежний корпус был цельным телом 7×3.1×4.9 — самым тяжёлым
+  // воксельным объектом карты; панели ломаются как весь остальной город.
+  const WALL = "#e2d4b6";
+  // Стены — БЕТОННЫЕ панели под штукатурку (цвет и фактура прежние):
+  // молоток выгрызает из них куски, как из панелек, а не разносит панель
+  // в пенопластовую труху, как это делала штукатурка.
+  const wallPart = (
+    name: string,
+    position: SceneVector3,
+    size: SceneVector3,
+  ): Piece =>
+    part(name, "concrete", "panel", position, size, WALL, {
+      colorSlot: "plaster",
+      textureProfile: "city-aged-stucco",
+      weathering: 0.58,
+      carriesAttachments: true,
+    });
+  const pieces: Piece[] = [
+    part("foundation", "concrete", "groundTile", [0, 0.16, 0], [7.4, 0.32, 5.2], "#6e6961", { carriesAttachments: true }),
+    // Задняя стена — три панели.
+    wallPart("wall:back:0", [-2.28, 1.62, -2.37], [2.28, 2.6, 0.16]),
+    wallPart("wall:back:1", [0, 1.62, -2.37], [2.28, 2.6, 0.16]),
+    wallPart("wall:back:2", [2.28, 1.62, -2.37], [2.28, 2.6, 0.16]),
+    // Боковые стены — по две панели.
+    wallPart("wall:west:0", [-3.34, 1.62, -1.145], [0.16, 2.6, 2.29]),
+    wallPart("wall:west:1", [-3.34, 1.62, 1.145], [0.16, 2.6, 2.29]),
+    wallPart("wall:east:0", [3.34, 1.62, -1.145], [0.16, 2.6, 2.29]),
+    wallPart("wall:east:1", [3.34, 1.62, 1.145], [0.16, 2.6, 2.29]),
+    // Фронт: простенки вокруг витрины и двери, подоконник, перемычка.
+    wallPart("wall:front:left", [-2.96, 1.62, 2.37], [0.92, 2.6, 0.16]),
+    wallPart("wall:front:mid", [-0.1, 1.41, 2.37], [0.4, 2.18, 0.16]),
+    wallPart("wall:front:right", [2.26, 1.62, 2.37], [2.32, 2.6, 0.16]),
+    wallPart("wall:front:sill", [-1.4, 0.66, 2.37], [2.2, 0.68, 0.16]),
+    wallPart("wall:front:lintel", [-0.7, 2.71, 2.37], [3.6, 0.42, 0.16]),
+    // Смолёный чёрный цоколь по низу фасада, по бокам крыльца.
+    part("tar-plinth:west", "concrete", "panel", [-2.55, 0.5, 2.47], [2.2, 0.8, 0.1], TAR_BLACK, {
+      bearsLoad: false,
+      sideAttachmentReach: 0.4,
+      weathering: 0.55,
+      contactBoxes: [{ position: [-2.55, 0.5, 2.25], size: [2.2, 0.9, 0.6] }],
+    }),
+    part("tar-plinth:east", "concrete", "panel", [2.5, 0.5, 2.47], [2.3, 0.8, 0.1], TAR_BLACK, {
+      bearsLoad: false,
+      sideAttachmentReach: 0.4,
+      weathering: 0.55,
+      contactBoxes: [{ position: [2.5, 0.5, 2.25], size: [2.3, 0.9, 0.6] }],
+    }),
+    // Плоская кровля двумя листами по стенам, ржавая капельница по фронту.
+    part("roof:front", "steel", "panel", [0, 3.0, 1.35], [7.5, 0.14, 2.85], "#5a5c5a", { weathering: 0.5 }),
+    part("roof:back", "steel", "panel", [0, 3.0, -1.4], [7.5, 0.14, 2.8], "#565855", { weathering: 0.5 }),
+    part("fascia", "steel", "steelSheet", [0, 2.94, 2.68], [7.55, 0.26, 0.08], RUST_FASCIA, {
+      bearsLoad: false,
+      sideAttachmentReach: 0.4,
+      weathering: 0.7,
+      contactBoxes: [{ position: [0, 2.94, 2.35], size: [7.55, 0.36, 0.7] }],
+    }),
+    // Настоящая дверь в настоящем проёме: полотно и стеклянная вставка —
+    // одна створка на одной петле (HingedDoorSystem группирует ...:board:N),
+    // распахивается при подходе.
+    part("door:board:0", "steel", "steelSheet", [0.6, 1.41, 2.37], [0.96, 2.18, 0.07], "#3b4a41", {
+      hinge: { pivot: [1.08, 1.41, 2.37], direction: [-1, 0, 0], normal: [0, 0, 1] },
+      weathering: 0.35,
+      contactBoxes: [{ position: [0.6, 1.41, 2.37], size: [1.2, 2.3, 0.6] }],
+    }),
+    part("door:board:1", "glass", "glassPane", [0.6, 1.82, 2.37], [0.62, 0.9, 0.09], GLASS, {
+      hinge: { pivot: [1.08, 1.41, 2.37], direction: [-1, 0, 0], normal: [0, 0, 1] },
+      bearsLoad: false,
+      contactBoxes: [{ position: [0.6, 1.6, 2.37], size: [0.9, 1.4, 0.5] }],
+    }),
+    // Витрина во всю ширину проёма, на подоконной панели.
+    part("window:display", "glass", "glassPane", [-1.4, 1.74, 2.37], [2.16, 1.46, 0.08], GLASS, {
+      bearsLoad: false,
+      sideAttachmentReach: 0.42,
+      contactBoxes: [{ position: [-1.4, 1.74, 2.3], size: [2.3, 1.6, 0.5] }],
+    }),
+    // Табличка HYPERMINIMARKET над входом: компактный щит, текстура ложится
+    // целиком (face-fit профиль).
+    part("sign", "steel", "steelSheet", [0.6, 3.42, 2.42], [2.7, 0.72, 0.14], "#ffffff", {
+      textureProfile: "city-shop-sign",
+      bearsLoad: false,
+      sideAttachmentReach: 0.5,
+      weathering: 0.25,
+      contactBoxes: [{ position: [0.6, 3.02, 2.2], size: [2.7, 0.5, 0.9] }],
+    }),
+    // Лампа на кронштейне от задней стены (как кондиционеры на панельках):
+    // вечером магазин светится изнутри через витрину.
+    part("ceiling-lamp", "glass", "glassPane", [-0.4, 2.6, -2.14], [0.22, 0.14, 0.22], litWindowColor, {
+      bearsLoad: false,
+      light: { position: [-0.4, 2.52, -2.0], color: "#ffe2b0", distance: 7, intensity: 9 },
+      sideAttachmentReach: 0.45,
+      contactBoxes: [{ position: [-0.4, 2.6, -2.3], size: [0.26, 0.2, 0.3] }],
+    }),
+  ];
+  // Стеллаж у задней стены: ярусы «тумба → доска», честные опоры для
+  // решателя; на досках — товар.
+  const shelfX = -0.9;
+  const shelfZ = -2.02;
+  const tierTops: number[] = [];
+  let tierBase = 0.32;
+  for (let tier = 0; tier < 3; tier += 1) {
+    const blockHeight = tier === 0 ? 0.56 : 0.44;
+    for (const side of [-1, 1] as const) {
+      pieces.push(part(`shelf:post:${tier}:${side}`, "wood", "plank",
+        [shelfX + side * 1.52, tierBase + blockHeight / 2, shelfZ],
+        [0.3, blockHeight, 0.4], "#7a5a3c", { weathering: 0.3 }));
+    }
+    const boardY = tierBase + blockHeight + 0.03;
+    pieces.push(part(`shelf:board:${tier}`, "wood", "plank",
+      [shelfX, boardY, shelfZ], [3.4, 0.06, 0.44], "#8a6a48", { weathering: 0.25 }));
+    tierTops.push(boardY + 0.03);
+    tierBase = boardY + 0.03;
+  }
+  const GOODS = ["#b8385a", "#3f7d52", "#d8a324", "#4a86b8", "#c77b3a", "#7a4a86"];
+  for (let tier = 0; tier < 3; tier += 1) {
+    for (let slot = 0; slot < 4; slot += 1) {
+      const colorIndex = (tier * 4 + slot) % GOODS.length;
+      pieces.push(part(`goods:${tier}:${slot}`, "wood", "plank",
+        [shelfX - 1.14 + slot * 0.76, tierTops[tier] + 0.16, shelfZ + 0.01],
+        [0.3, 0.32, 0.26], GOODS[colorIndex], { weathering: 0.15 }));
+    }
+  }
+  pieces.push(
+    // Прилавок с кассой у восточной стены, лицом к двери.
+    part("counter", "wood", "plank", [2.25, 0.77, 0.9], [1.7, 0.9, 0.62], "#6f5138", { weathering: 0.3 }),
+    part("counter:top", "wood", "plank", [2.25, 1.25, 0.9], [1.82, 0.06, 0.72], "#8a6a48", { weathering: 0.2 }),
+    part("register", "steel", "steelSheet", [2.6, 1.43, 0.78], [0.4, 0.3, 0.34], "#2f3438", { weathering: 0.2 }),
+    part("register:screen", "steel", "steelSheet", [2.6, 1.62, 0.9], [0.3, 0.2, 0.03], "#9fd5dd", {
+      bearsLoad: false,
+      sideAttachmentReach: 0.3,
+      rotation: [-0.3, 0, 0],
+      contactBoxes: [{ position: [2.6, 1.5, 0.82], size: [0.4, 0.4, 0.3] }],
+    }),
+    // Удобный вход: широкая плита заподлицо с полом и низкая ступень.
+    part("stoop", "concrete", "stoneBlock", [0.6, 0.17, 3.05], [2.0, 0.34, 1.1], "#8d887d", {
+      weathering: 0.55,
+      carriesAttachments: true,
+    }),
+    part("step", "concrete", "stoneBlock", [0.6, 0.08, 3.85], [1.4, 0.16, 0.5], "#84806f", { weathering: 0.6 }),
+    // Синяя табличка с QR-квадратом на простенке у витрины.
+    part("qr-plate", "steel", "steelSheet", [-3.1, 2.1, 2.48], [0.44, 0.6, 0.04], "#dfe3e6", {
+      carriesAttachments: true,
+      sideAttachmentReach: 0.4,
+    }),
+    part("qr-code", "steel", "steelSheet", [-3.1, 2.18, 2.51], [0.26, 0.26, 0.02], "#2b3f57", {
+      bearsLoad: false,
+      sideAttachmentReach: 0.3,
+    }),
+    // Оранжевая газовая труба по фасаду: лежит на двух стояках, дошедших
+    // до земли — так решатель несёт её честно, как настоящие кронштейны.
+    part("gas:run", "steel", "steelSheet", [0.3, 2.32, 2.52], [6.0, 0.07, 0.07], "#c77b3a", {
+      bearsLoad: false,
+      weathering: 0.35,
+    }),
+    part("gas:post:west", "steel", "steelSheet", [-2.35, 1.16, 2.52], [0.06, 2.32, 0.06], "#c77b3a"),
+    part("gas:post:east", "steel", "steelSheet", [2.95, 1.16, 2.52], [0.06, 2.32, 0.06], "#c77b3a"),
+  );
+  return prefab("city:shop:minimarket", "Hyperminimarket corner shop", ["city", "building", "shop", "structural"], pieces);
+}
+
 function whitebrickFenceSection(): ScenePrefabDefinition {
   const pieces: Piece[] = [];
   // Белёный силикатный кирпич с настоящей перевязкой: нечётные ряды идут
@@ -2165,27 +2325,26 @@ function kickScooter(): ScenePrefabDefinition {
   ]);
 }
 
-function sandwichBoard(): ScenePrefabDefinition {
+// Штендер-раскладушка: правильная «Λ» — верхние кромки панелей сходятся,
+// ноги расставлены. Вместо бутафорских плашек — меловая доска текстурой на
+// каждой панели (face-fit), надписи короткие и дурацкие, как в жизни.
+function sandwichBoard(
+  variant: "a" | "b",
+): ScenePrefabDefinition {
   const pieces: Piece[] = [];
   for (const lean of [-1, 1] as const) {
-    pieces.push(selfContact(part(`panel:${lean}`, "wood", "plank", [0, 0.46, lean * 0.19], [0.66, 0.94, 0.035], "#e6e1d4", {
-      rotation: [lean * 0.36, 0, 0],
-      weathering: 0.3,
-    }), [0.66, 0.9, 0.3]));
+    pieces.push(selfContact(part(`panel:${lean}`, "wood", "plank", [0, 0.47, lean * 0.2], [0.7, 0.98, 0.045], "#ffffff", {
+      rotation: [-lean * 0.34, 0, 0],
+      textureProfile: variant === "a" ? "city-chalk-sign-a" : "city-chalk-sign-b",
+      weathering: 0.2,
+    }), [0.7, 0.94, 0.3]));
   }
-  pieces.push(
-    part("headline", "wood", "plank", [0, 0.68, 0.315], [0.5, 0.16, 0.02], "#b8385a", {
-      bearsLoad: false,
-      sideAttachmentReach: 0.2,
-      contactBoxes: [{ position: [0, 0.62, 0.24], size: [0.6, 0.3, 0.2] }],
-    }),
-    part("lines", "wood", "plank", [0, 0.44, 0.395], [0.42, 0.2, 0.02], "#8b8578", {
-      bearsLoad: false,
-      sideAttachmentReach: 0.2,
-      contactBoxes: [{ position: [0, 0.44, 0.3], size: [0.5, 0.3, 0.25] }],
-    }),
+  return prefab(
+    variant === "a" ? "city:sign:sandwich" : "city:sign:sandwich-b",
+    "Chalkboard sandwich sign",
+    ["city", "shop", "sign", "prop"],
+    pieces,
   );
-  return prefab("city:sign:sandwich", "Leaning shop sandwich board", ["city", "shop", "sign", "prop"], pieces);
 }
 
 function broomBucket(): ScenePrefabDefinition {
@@ -2363,14 +2522,16 @@ const prefabs = [
     "city:fence:profiled-section-ns",
     "Dark profiled fence section running north-south",
   ),
-  buildingSuppliesKiosk(),
+  hyperminimarket(),
   whitebrickFenceSection(),
   profiledFenceSection(),
   fencePillarPlain(),
   carportStringLights(),
   clothesline(),
   kickScooter(),
-  sandwichBoard(),
+  buildingSuppliesKiosk(),
+  sandwichBoard("a"),
+  sandwichBoard("b"),
   broomBucket(),
   saplingWithStake(),
   ...coreClutter,

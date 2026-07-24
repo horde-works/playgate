@@ -1009,7 +1009,7 @@ const toolWall = furnishing("viking:tool-wall", "Hanging tools and herbs", ["vik
   { id: "herb:0", material: "foliage", shape: "panel", position: [-0.6, 1.55, 0.02], size: [0.26, 0.6, 0.05], color: "#5f6d3f", bearsLoad: false, sideAttachmentReach: 0.6 },
   { id: "herb:1", material: "foliage", shape: "panel", position: [-0.2, 1.5, 0.02], size: [0.24, 0.7, 0.05], color: "#4c5d38", bearsLoad: false, sideAttachmentReach: 0.6 },
   { id: "axe-haft", material: "wood", shape: "plank", position: [0.35, 1.5, 0.03], size: [0.06, 0.78, 0.06], color: timber, bearsLoad: false, sideAttachmentReach: 0.5 },
-  { id: "axe-head", material: "steel", shape: "steelSheet", position: [0.35, 1.82, 0.05], size: [0.22, 0.2, 0.06], color: iron, bearsLoad: false, sideAttachmentReach: 0.5 },
+  { id: "axe-head", material: "steel", shape: "steelSheet", position: [0.35, 1.82, 0.05], size: [0.22, 0.2, 0.04], color: iron, bearsLoad: false, sideAttachmentReach: 0.5 },
   { id: "coil", material: "cloth", shape: "panel", position: [0.7, 1.55, 0.02], size: [0.3, 0.5, 0.06], color: "#8a7a55", colorSlot: "coil", bearsLoad: false, sideAttachmentReach: 0.6 },
 ]);
 

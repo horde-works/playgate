@@ -7,7 +7,9 @@ import {
   type LampDefinition,
   type SceneVector3,
   type SupportMode,
+  type VegetationVisualDefinition,
 } from "./destructionScene.ts";
+import { propPine } from "../content/prefabs/coreFlora.ts";
 
 interface MinasWorldbuildingOptions {
   readonly surfaceYAt: (x: number, z: number) => number;
@@ -30,6 +32,7 @@ interface ZoneBuilder {
     color: string,
     rotation?: SceneVector3,
     contactSize?: SceneVector3,
+    vegetationVisual?: VegetationVisualDefinition,
   ): void;
 }
 
@@ -57,7 +60,17 @@ function zone(id: string): ZoneBuilder {
   return {
     id,
     pieces,
-    add(suffix, material, shape, position, size, color, rotation, contactSize) {
+    add(
+      suffix,
+      material,
+      shape,
+      position,
+      size,
+      color,
+      rotation,
+      contactSize,
+      vegetationVisual,
+    ) {
       pieces.push({
         id: `${id}:${suffix}`,
         clusterId: id,
@@ -68,6 +81,7 @@ function zone(id: string): ZoneBuilder {
         color,
         rotation,
         contactBoxes: contactSize ? [{ position, size: contactSize }] : undefined,
+        vegetationVisual,
       });
     },
   };
@@ -1214,58 +1228,29 @@ function addConifer(
   z: number,
   height: number,
   lean: number,
+  seed: number,
 ): void {
-  const trunkHeight = height * 0.62;
-  for (let segment = 0; segment < 4; segment += 1) {
-    const segmentHeight = trunkHeight / 4 + 0.06;
-    builder.add(
-      `${prefix}:trunk:${segment}`,
-      "wood",
-      "plank",
-      [x + lean * segment * 0.1, floorY + (trunkHeight / 4) * (segment + 0.5), z],
-      [0.48 - segment * 0.07, segmentHeight, 0.48 - segment * 0.07],
-      segment % 2 === 0 ? "#33291f" : "#453426",
-      [0, 0, lean * 0.02],
-    );
-  }
-  for (let tier = 0; tier < 4; tier += 1) {
-    const width = height * (0.42 - tier * 0.065);
-    const branchY = floorY + (trunkHeight / 4) * (tier + 1) + 0.1;
-    const y = branchY + 0.1 + height * 0.08;
-    builder.add(
-      `${prefix}:branch:${tier}:x`,
-      "wood",
-      "plank",
-      [x + lean * tier * 0.08, branchY, z],
-      [width * 1.05, 0.2, 0.32],
-      woodDark,
-      [0, tier * 0.36, 0],
-    );
-    builder.add(
-      `${prefix}:branch:${tier}:z`,
-      "wood",
-      "plank",
-      [x + lean * tier * 0.08, branchY, z],
-      [0.32, 0.2, width * 1.05],
-      woodMid,
-      [0, tier * 0.36, 0],
-    );
-    for (let lobe = 0; lobe < 4; lobe += 1) {
-      const angle = (lobe / 4) * Math.PI * 2 + tier * 0.36;
-      builder.add(
-        `${prefix}:crown:${tier}:${lobe}`,
-        "foliage",
-        "groundTile",
-        [
-          x + Math.cos(angle) * width * 0.25 + lean * tier * 0.08,
-          y,
-          z + Math.sin(angle) * width * 0.25,
-        ],
-        [width * 0.64, height * 0.16, width * 0.64],
-        tier % 2 === 0 ? "#263d2b" : lobe % 2 === 0 ? "#314a31" : "#203529",
-        [0, angle * 0.35, (lobe % 2 === 0 ? 1 : -1) * 0.035],
-      );
-    }
+  const pieces = propPine({ seed, scale: height / 6.6 });
+  for (const source of pieces) {
+    const leanOffset = lean * source.position[1] * 0.045;
+    const translate = (position: SceneVector3): SceneVector3 => [
+      x + position[0] + leanOffset,
+      floorY + position[1],
+      z + position[2],
+    ];
+    builder.pieces.push({
+      ...source,
+      id: `${builder.id}:${prefix}:${source.id}`,
+      clusterId: builder.id,
+      position: translate(source.position),
+      rotation: source.rotation
+        ? [source.rotation[0], source.rotation[1], source.rotation[2] + lean * 0.025]
+        : undefined,
+      contactBoxes: source.contactBoxes?.map((box) => ({
+        ...box,
+        position: translate(box.position),
+      })),
+    });
   }
 }
 
@@ -1293,6 +1278,7 @@ function createLivingLandscape(
       treeZ,
       7.2 + seededNoise(index, z, 419) * 4.8,
       seededNoise(index, x, 421) - 0.5,
+      index + 401,
     );
   });
 
@@ -1314,12 +1300,14 @@ function createLivingLandscape(
     const height = 0.35 + seededNoise(index, side, 461) * 0.85;
     undergrowth.add(
       `shrub:${index}`,
-      "grass",
+      "foliage",
       "groundTile",
       [x, floorY + height / 2, z],
       [width, height, width * (0.7 + seededNoise(index, side, 463) * 0.45)],
       index % 3 === 0 ? "#31472f" : index % 3 === 1 ? "#3d5133" : "#263c2b",
       [0, seededNoise(index, side, 467) * Math.PI, 0],
+      undefined,
+      { kind: "shrub", seed: index + 601 },
     );
   }
 

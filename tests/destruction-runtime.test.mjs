@@ -10,6 +10,7 @@ import {
   bulletHoleRadius,
   buildShards,
   classifyLandingDamage,
+  closestPointOnOccupiedGeometry,
   damageBody,
   damageRadiusScaleByMaterial,
   debrisColliderBoxes,
@@ -19,7 +20,9 @@ import {
   fractureEnergyByMaterial,
   grenadeEnergyAtDistance,
   impactDamageRadius,
+  omittedDebrisColliderBoxes,
   rocketEnergyAtDistance,
+  segmentIntersectsOccupiedGeometry,
   trimShardBudget,
 } from "../games/make-a-mess/src/game/destructionRuntime.ts";
 import {
@@ -45,6 +48,13 @@ test("only genuinely small debris pays for full continuous collision detection",
   assert.equal(slab.softCcdPrediction <= 0.7, true);
 });
 
+test("synthetic surface chips use predictive collision without losing world contact", () => {
+  assert.deepEqual(debrisCollisionTuning([0.18, 0.12, 0.1], false), {
+    hardCcd: false,
+    softCcdPrediction: 0.24,
+  });
+});
+
 test("debris collision proxies never fill an empty voxel gap", () => {
   const occupied = [
     { center: [-1.25, 0, 0], size: [1.5, 1, 0.4] },
@@ -59,6 +69,24 @@ test("debris collision proxies never fill an empty voxel gap", () => {
     proxies.map((box) => box.center[0]).toSorted((a, b) => a - b),
     [-1.25, 1.25],
   );
+});
+
+test("actor-only detail keeps every occupied box omitted by cheap proxies", () => {
+  const occupied = [
+    { center: [-1.25, 0, 0], size: [1.5, 1, 0.4] },
+    { center: [1.25, 0.5, 0], size: [0.5, 2, 0.4] },
+    { center: [0, -0.4, 0], size: [0.8, 0.2, 0.4] },
+  ];
+  const primary = debrisColliderBoxes([4, 2, 0.4], occupied, 1);
+  const omitted = omittedDebrisColliderBoxes(occupied, primary);
+
+  assert.equal(primary.length, 1);
+  assert.equal(omitted.length, 2);
+  assert.deepEqual([...primary, ...omitted].toSorted((a, b) =>
+    a.center[0] - b.center[0] || a.center[1] - b.center[1]
+  ), [...occupied].toSorted((a, b) =>
+    a.center[0] - b.center[0] || a.center[1] - b.center[1]
+  ));
 });
 
 test("debris cannot sleep in mid-air just because it briefly slows down", () => {
@@ -84,6 +112,114 @@ test("a blast reaches the end of a long board even when its centre is outside", 
       [4, 0.2, 0.2],
       [0, Math.PI / 2, 0],
     ) < 1e-6,
+    true,
+  );
+});
+
+test("occupied-geometry queries respect voxel holes under body transforms", () => {
+  const position = new Vector3(4, 2, -3);
+  const quaternion = new Quaternion().setFromAxisAngle(
+    new Vector3(0, 1, 0),
+    Math.PI / 3,
+  );
+  const size = [4, 2, 2];
+  const boxes = [
+    {
+      center: [-1.5, 0, 0],
+      size: [1, 2, 2],
+      voxelCount: 8,
+    },
+    {
+      center: [1.5, 0, 0],
+      size: [1, 2, 2],
+      voxelCount: 8,
+    },
+  ];
+  const toWorld = (local) =>
+    local.clone().applyQuaternion(quaternion).add(position);
+  const toLocal = (world) =>
+    world
+      .clone()
+      .sub(position)
+      .applyQuaternion(quaternion.clone().invert());
+
+  const closest = closestPointOnOccupiedGeometry(
+    toWorld(new Vector3(0.25, 0.3, 0)),
+    position,
+    size,
+    quaternion,
+    boxes,
+  );
+  assert.equal(
+    toLocal(closest).distanceTo(new Vector3(1, 0.3, 0)) < 1e-9,
+    true,
+  );
+
+  assert.equal(
+    segmentIntersectsOccupiedGeometry(
+      toWorld(new Vector3(0, -2, 0)),
+      toWorld(new Vector3(0, 2, 0)),
+      position,
+      size,
+      quaternion,
+      boxes,
+    ),
+    false,
+  );
+  assert.equal(
+    segmentIntersectsOccupiedGeometry(
+      toWorld(new Vector3(1.5, -2, 0)),
+      toWorld(new Vector3(1.5, 2, 0)),
+      position,
+      size,
+      quaternion,
+      boxes,
+    ),
+    true,
+  );
+});
+
+test("occupied-geometry queries fall back to the full body box", () => {
+  const position = new Vector3(4, 2, -3);
+  const quaternion = new Quaternion().setFromAxisAngle(
+    new Vector3(0, 1, 0),
+    Math.PI / 3,
+  );
+  const size = [4, 2, 2];
+  const toWorld = (local) =>
+    local.clone().applyQuaternion(quaternion).add(position);
+  const pointInCentralHole = toWorld(new Vector3(0.25, 0.3, 0));
+  const segmentStart = toWorld(new Vector3(0, -2, 0));
+  const segmentEnd = toWorld(new Vector3(0, 2, 0));
+
+  assert.equal(
+    closestPointOnOccupiedGeometry(
+      pointInCentralHole,
+      position,
+      size,
+      quaternion,
+    ).distanceTo(pointInCentralHole) < 1e-9,
+    true,
+  );
+  assert.equal(
+    segmentIntersectsOccupiedGeometry(
+      segmentStart,
+      segmentEnd,
+      position,
+      size,
+      quaternion,
+    ),
+    true,
+  );
+  assert.equal(
+    segmentIntersectsOccupiedGeometry(
+      segmentStart,
+      segmentEnd,
+      position,
+      size,
+      quaternion,
+      [],
+    ),
     true,
   );
 });

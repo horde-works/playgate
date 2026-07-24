@@ -48,7 +48,7 @@ export interface VoxelFractureResult {
 // 7×3.1×4.9 м): их дробление на 12k вокселей стоило 60-90 мс за удар и
 // складывалось в секундные фризы при взрыве; на кирпичах и досках (десятки
 // вокселей) кламп не сказывается вовсе — осколки гигантов просто крупнее.
-const DEFAULT_MAX_VOXELS = 4_500;
+export const DEFAULT_MAX_VOXELS = 4_500;
 const MINIMUM_VOXEL_SIZE = 0.045;
 const NEIGHBOURS = [
   [-1, 0, 0],
@@ -162,40 +162,135 @@ export function countOccupiedVoxels(body: VoxelBody): number {
   return count;
 }
 
+function pointToBoxDistanceSquared(
+  point: VoxelVector3,
+  minimum: VoxelVector3,
+  maximum: VoxelVector3,
+): number {
+  let distanceSquared = 0;
+  for (const axis of [0, 1, 2] as const) {
+    const delta =
+      point[axis] < minimum[axis]
+        ? minimum[axis] - point[axis]
+        : point[axis] > maximum[axis]
+          ? point[axis] - maximum[axis]
+          : 0;
+    distanceSquared += delta * delta;
+  }
+  return distanceSquared;
+}
+
 function pointToSegmentDistanceSquared(
   point: VoxelVector3,
   start: VoxelVector3,
   end: VoxelVector3,
 ): number {
-  const segment = [
-    end[0] - start[0],
-    end[1] - start[1],
-    end[2] - start[2],
-  ] as const;
-  const offset = [
-    point[0] - start[0],
-    point[1] - start[1],
-    point[2] - start[2],
-  ] as const;
+  const segmentX = end[0] - start[0];
+  const segmentY = end[1] - start[1];
+  const segmentZ = end[2] - start[2];
+  const offsetX = point[0] - start[0];
+  const offsetY = point[1] - start[1];
+  const offsetZ = point[2] - start[2];
   const lengthSquared =
-    segment[0] * segment[0] +
-    segment[1] * segment[1] +
-    segment[2] * segment[2];
+    segmentX * segmentX + segmentY * segmentY + segmentZ * segmentZ;
   const projection =
     lengthSquared > 1e-9
       ? clamp(
-          (offset[0] * segment[0] +
-            offset[1] * segment[1] +
-            offset[2] * segment[2]) /
+          (offsetX * segmentX +
+            offsetY * segmentY +
+            offsetZ * segmentZ) /
             lengthSquared,
           0,
           1,
         )
       : 0;
-  const dx = point[0] - (start[0] + segment[0] * projection);
-  const dy = point[1] - (start[1] + segment[1] * projection);
-  const dz = point[2] - (start[2] + segment[2] * projection);
+  const dx = point[0] - (start[0] + segmentX * projection);
+  const dy = point[1] - (start[1] + segmentY * projection);
+  const dz = point[2] - (start[2] + segmentZ * projection);
   return dx * dx + dy * dy + dz * dz;
+}
+
+/** Exact squared distance between a segment and an axis-aligned box. */
+function segmentToBoxDistanceSquared(
+  start: VoxelVector3,
+  end: VoxelVector3,
+  minimum: VoxelVector3,
+  maximum: VoxelVector3,
+): number {
+  const direction = [
+    end[0] - start[0],
+    end[1] - start[1],
+    end[2] - start[2],
+  ] as const;
+  const lengthSquared =
+    direction[0] * direction[0] +
+    direction[1] * direction[1] +
+    direction[2] * direction[2];
+  if (lengthSquared < 1e-12) {
+    return pointToBoxDistanceSquared(start, minimum, maximum);
+  }
+
+  // Distance to an AABB is a convex piecewise quadratic along the segment.
+  // Box-plane crossings delimit the pieces; inside each one, its exact minimum
+  // is either the quadratic stationary point or an interval boundary.
+  const crossings = [0, 1];
+  for (const axis of [0, 1, 2] as const) {
+    if (Math.abs(direction[axis]) < 1e-12) {
+      continue;
+    }
+    for (const boundary of [minimum[axis], maximum[axis]]) {
+      const crossing = (boundary - start[axis]) / direction[axis];
+      if (crossing > 0 && crossing < 1) {
+        crossings.push(crossing);
+      }
+    }
+  }
+  crossings.sort((left, right) => left - right);
+
+  let closestSquared = Math.min(
+    pointToBoxDistanceSquared(start, minimum, maximum),
+    pointToBoxDistanceSquared(end, minimum, maximum),
+  );
+  for (let index = 0; index < crossings.length - 1; index += 1) {
+    const intervalStart = crossings[index];
+    const intervalEnd = crossings[index + 1];
+    if (intervalEnd - intervalStart < 1e-12) {
+      continue;
+    }
+
+    const midpoint = (intervalStart + intervalEnd) / 2;
+    let numerator = 0;
+    let denominator = 0;
+    for (const axis of [0, 1, 2] as const) {
+      const coordinate = start[axis] + direction[axis] * midpoint;
+      const boundary =
+        coordinate < minimum[axis]
+          ? minimum[axis]
+          : coordinate > maximum[axis]
+            ? maximum[axis]
+            : null;
+      if (boundary === null) {
+        continue;
+      }
+      numerator += direction[axis] * (start[axis] - boundary);
+      denominator += direction[axis] * direction[axis];
+    }
+
+    const closestTime =
+      denominator > 0
+        ? clamp(-numerator / denominator, intervalStart, intervalEnd)
+        : midpoint;
+    const closestPoint = [
+      start[0] + direction[0] * closestTime,
+      start[1] + direction[1] * closestTime,
+      start[2] + direction[2] * closestTime,
+    ] as const;
+    closestSquared = Math.min(
+      closestSquared,
+      pointToBoxDistanceSquared(closestPoint, minimum, maximum),
+    );
+  }
+  return closestSquared;
 }
 
 function damageSegment(damage: VoxelDamage): {
@@ -411,6 +506,12 @@ export function applyVoxelDamage(
   const body: VoxelBody = { ...source, occupied };
   const { start, end } = damageSegment(damage);
   const roughness = clamp(damage.roughness ?? 0.22, 0, 0.48);
+  const halfCell = [
+    body.cellSize[0] / 2,
+    body.cellSize[1] / 2,
+    body.cellSize[2] / 2,
+  ] as const;
+  const cellBoundingRadius = Math.hypot(...halfCell);
   let removedVoxelCount = 0;
 
   for (let index = 0; index < occupied.length; index += 1) {
@@ -424,9 +525,33 @@ export function applyVoxelDamage(
     );
     const localRadius =
       damage.radius * (1 - roughness * 0.55 + noise * roughness);
+    // Preserve the tuned radial falloff for neighbouring voxels: their
+    // centres still decide the damage volume. The exact box test below is
+    // only the missing direct-hit guarantee — a ray that visibly traverses
+    // an occupied voxel must remove that voxel even when its centre is far
+    // from a grazing trajectory.
+    const broadRadius = Math.max(localRadius, cellBoundingRadius);
+    const centerDistanceSquared = pointToSegmentDistanceSquared(
+      center,
+      start,
+      end,
+    );
+    if (centerDistanceSquared > broadRadius * broadRadius) {
+      continue;
+    }
+    const minimum = [
+      center[0] - halfCell[0],
+      center[1] - halfCell[1],
+      center[2] - halfCell[2],
+    ] as const;
+    const maximum = [
+      center[0] + halfCell[0],
+      center[1] + halfCell[1],
+      center[2] + halfCell[2],
+    ] as const;
     if (
-      pointToSegmentDistanceSquared(center, start, end) <=
-      localRadius * localRadius
+      centerDistanceSquared <= localRadius * localRadius ||
+      segmentToBoxDistanceSquared(start, end, minimum, maximum) <= 1e-12
     ) {
       occupied[index] = 0;
       removedVoxelCount += 1;

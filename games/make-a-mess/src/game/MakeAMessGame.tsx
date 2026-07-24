@@ -68,7 +68,7 @@ import {
   buildShards,
   bulletHoleRadius,
   classifyLandingDamage,
-  closestPointOnOrientedBox,
+  closestPointOnOccupiedGeometry,
   crumbleOnLanding,
   damageBody,
   debrisColliderBoxes,
@@ -77,10 +77,15 @@ import {
   fractureEnergyByMaterial,
   grenadeEnergyAtDistance,
   groundMaterials,
+  selectCarveTargetsWithinBudget,
   impactDamageRadius,
+  omittedDebrisColliderBoxes,
   rocketEnergyAtDistance,
+  segmentIntersectsOccupiedGeometry,
   trimShardBudget,
   type FractureCause,
+  type DebrisColliderBox,
+  type OccupiedGeometryBox,
   type RemnantDefinition,
   type ShardDefinition,
   type ShardSource,
@@ -106,6 +111,7 @@ import {
   FirstPersonRocketLauncher,
   type SwingDefinition,
 } from "./FirstPersonWeapons";
+import { GrenadeProjectileVisual } from "./GrenadeProjectileVisual";
 import {
   DynamicBreakableWorld,
   getPieceRenderBoxes,
@@ -122,7 +128,9 @@ import { WindController } from "./WindController";
 import { IntactBreakableWorld } from "./IntactBreakableWorld";
 import { resolveRuntimeStructure } from "./runtimeStructure";
 import { createSpatialIndex } from "./spatialIndex";
+import { expandBrokenTreeDescendants } from "./treeVisualModel";
 import {
+  autoClimbLiftSpeed,
   autoStepLiftSpeed,
   setFlightVelocityTarget,
 } from "./playerMovement";
@@ -236,6 +244,7 @@ const blastTransmissionByMaterial: Record<BreakableMaterial, number> = {
   glass: 0.76,
   darkGlass: 0.68,
   plaster: 0.36,
+  plastic: 0.48,
   wood: 0.24,
   cloth: 0.7,
   foliage: 0.58,
@@ -256,6 +265,18 @@ type BlastOccluderSource =
   | RemnantDefinition
   | ShardDefinition;
 
+function occupiedBoxesForBlast(
+  source: BlastOccluderSource,
+): readonly OccupiedGeometryBox[] | undefined {
+  if ("boxes" in source && source.boxes?.length) {
+    return source.boxes;
+  }
+  if ("clusterId" in source && source.shape === "cinderBlock") {
+    return getPieceRenderBoxes(source);
+  }
+  return undefined;
+}
+
 interface BlastOccluder {
   readonly id: string;
   readonly parentId: string;
@@ -263,53 +284,8 @@ interface BlastOccluder {
   readonly position: Vector3;
   readonly quaternion: Quaternion;
   readonly size: readonly [number, number, number];
+  readonly boxes?: readonly OccupiedGeometryBox[];
   readonly surfaceDistance: number;
-}
-
-function segmentIntersectsOrientedBox(
-  start: Vector3,
-  end: Vector3,
-  position: Vector3,
-  size: readonly [number, number, number],
-  quaternion: Quaternion,
-  padding = 0.025,
-): boolean {
-  const inverseRotation = quaternion.clone().invert();
-  const localStart = start.clone().sub(position).applyQuaternion(inverseRotation);
-  const localEnd = end.clone().sub(position).applyQuaternion(inverseRotation);
-  const direction = localEnd.clone().sub(localStart);
-  let tMin = 0;
-  let tMax = 1;
-
-  for (const [axis, halfSize] of [
-    ["x", size[0] / 2 + padding],
-    ["y", size[1] / 2 + padding],
-    ["z", size[2] / 2 + padding],
-  ] as const) {
-    const origin = localStart[axis];
-    const delta = direction[axis];
-
-    if (Math.abs(delta) < 1e-5) {
-      if (origin < -halfSize || origin > halfSize) {
-        return false;
-      }
-      continue;
-    }
-
-    const inverse = 1 / delta;
-    let near = (-halfSize - origin) * inverse;
-    let far = (halfSize - origin) * inverse;
-    if (near > far) {
-      [near, far] = [far, near];
-    }
-    tMin = Math.max(tMin, near);
-    tMax = Math.min(tMax, far);
-    if (tMin > tMax) {
-      return false;
-    }
-  }
-
-  return tMax > 0.015 && tMin < 0.985;
 }
 
 function blastVisibilityFactor(
@@ -323,21 +299,27 @@ function blastVisibilityFactor(
   let factor = 1;
 
   for (const occluder of occluders) {
+    // Occluders are sorted by surface distance for this explosion. Once we
+    // reach the target plane, no later body can stand between blast and target.
+    if (occluder.surfaceDistance >= targetDistance - 0.08) {
+      break;
+    }
     if (
       occluder.id === targetId ||
-      occluder.parentId === targetParentId ||
-      occluder.surfaceDistance >= targetDistance - 0.08
+      occluder.parentId === targetParentId
     ) {
       continue;
     }
 
     if (
-      segmentIntersectsOrientedBox(
+      segmentIntersectsOccupiedGeometry(
         center,
         targetPoint,
         occluder.position,
         occluder.size,
         occluder.quaternion,
+        occluder.boxes,
+        0.025,
       )
     ) {
       factor *= blastTransmissionByMaterial[occluder.material];
@@ -570,81 +552,134 @@ function Player({
 
     // Auto-step: when running into a low obstacle (stair tread, kerb,
     // rubble), probe its height and hop exactly high enough to clear it.
+    // Blocked means "not making progress TOWARD the goal": sliding along a
+    // wall keeps raw speed high, so we compare the velocity projection on
+    // the desired direction, not the full magnitude.
     stepCooldown.current = Math.max(0, stepCooldown.current - delta);
     let autoLift = 0;
     const desiredSq = movement.lengthSq();
-    const horizontalSq = velocity.x * velocity.x + velocity.z * velocity.z;
-    if (
-      grounded &&
-      stepCooldown.current <= 0 &&
-      desiredSq > 1 &&
-      horizontalSq < desiredSq * 0.25
-    ) {
-      stepRay.current ??= new rapier.Ray(
-        { x: 0, y: 0, z: 0 },
-        { x: 0, y: 0, z: 0 },
-      );
-      const probe = stepRay.current;
-      const inverse = 1 / Math.sqrt(desiredSq);
-      const directionX = movement.x * inverse;
-      const directionZ = movement.z * inverse;
-      const bottomY = position.y - 0.79;
-
-      probe.origin.x = position.x;
-      probe.origin.y = bottomY + 0.18;
-      probe.origin.z = position.z;
-      probe.dir.x = directionX;
-      probe.dir.y = 0;
-      probe.dir.z = directionZ;
-      const lowHit = world.castRay(
-        probe,
-        0.82,
-        true,
-        undefined,
-        undefined,
-        undefined,
-        body.current ?? undefined,
-      );
-
-      if (lowHit) {
-        probe.origin.y = bottomY + 1.25;
-        const highHit = world.castRay(
-          probe,
-          0.92,
-          true,
-          undefined,
-          undefined,
-          undefined,
-          body.current ?? undefined,
+    if (grounded && stepCooldown.current <= 0 && desiredSq > 1) {
+      const desiredSpeed = Math.sqrt(desiredSq);
+      const progressSpeed =
+        (velocity.x * movement.x + velocity.z * movement.z) / desiredSpeed;
+      if (progressSpeed < desiredSpeed * 0.55) {
+        stepRay.current ??= new rapier.Ray(
+          { x: 0, y: 0, z: 0 },
+          { x: 0, y: 0, z: 0 },
         );
+        const probe = stepRay.current;
+        const directionX = movement.x / desiredSpeed;
+        const directionZ = movement.z / desiredSpeed;
+        const bottomY = position.y - 0.79;
 
-        if (!highHit) {
-          probe.origin.x = position.x + directionX * 0.72;
-          probe.origin.y = bottomY + 0.9;
-          probe.origin.z = position.z + directionZ * 0.72;
-          probe.dir.x = 0;
-          probe.dir.y = -1;
-          probe.dir.z = 0;
-          const downHit = world.castRayAndGetNormal(
+        // Двухъярусный нижний щуп: порог в ладонь высотой (8-15 см —
+        // фундаментная лента, бортик) луч на 0.18 просто не видел.
+        probe.origin.x = position.x;
+        probe.origin.z = position.z;
+        probe.dir.x = directionX;
+        probe.dir.y = 0;
+        probe.dir.z = directionZ;
+        let lowHit = null;
+        for (const feelerHeight of [0.08, 0.3]) {
+          probe.origin.y = bottomY + feelerHeight;
+          lowHit = world.castRay(
             probe,
-            1.02,
+            0.82,
             true,
             undefined,
             undefined,
             undefined,
             body.current ?? undefined,
           );
-          const stepHeight = downHit ? 0.9 - downHit.timeOfImpact : 0;
-          autoLift = autoStepLiftSpeed({
-            blockedAtFeet: true,
-            bodyClear: true,
-            landingFound: downHit !== null,
-            landingNormalY: downHit?.normal.y ?? 0,
-            stepHeight,
-          });
+          if (lowHit) {
+            break;
+          }
+        }
 
-          if (autoLift > 0) {
-            stepCooldown.current = 0.3;
+        if (lowHit) {
+          probe.origin.y = bottomY + 1.25;
+          const highHit = world.castRay(
+            probe,
+            0.92,
+            true,
+            undefined,
+            undefined,
+            undefined,
+            body.current ?? undefined,
+          );
+
+          if (!highHit) {
+            probe.origin.x = position.x + directionX * 0.72;
+            probe.origin.y = bottomY + 0.9;
+            probe.origin.z = position.z + directionZ * 0.72;
+            probe.dir.x = 0;
+            probe.dir.y = -1;
+            probe.dir.z = 0;
+            const downHit = world.castRayAndGetNormal(
+              probe,
+              1.02,
+              true,
+              undefined,
+              undefined,
+              undefined,
+              body.current ?? undefined,
+            );
+            const stepHeight = downHit ? 0.9 - downHit.timeOfImpact : 0;
+            autoLift = autoStepLiftSpeed({
+              blockedAtFeet: true,
+              bodyClear: true,
+              landingFound: downHit !== null,
+              landingNormalY: downHit?.normal.y ?? 0,
+              stepHeight,
+            });
+
+            // Шаг не дотянулся — пробуем карабканье: площадка выше шага,
+            // но в пределах «подтянулся» (кромка ямы, порог, плита).
+            if (autoLift === 0) {
+              probe.origin.x = position.x;
+              probe.origin.y = bottomY + 1.72;
+              probe.origin.z = position.z;
+              probe.dir.x = directionX;
+              probe.dir.y = 0;
+              probe.dir.z = directionZ;
+              const climbBlocked = world.castRay(
+                probe,
+                0.92,
+                true,
+                undefined,
+                undefined,
+                undefined,
+                body.current ?? undefined,
+              );
+              if (!climbBlocked) {
+                probe.origin.x = position.x + directionX * 0.72;
+                probe.origin.y = bottomY + 1.45;
+                probe.origin.z = position.z + directionZ * 0.72;
+                probe.dir.x = 0;
+                probe.dir.y = -1;
+                probe.dir.z = 0;
+                const climbHit = world.castRayAndGetNormal(
+                  probe,
+                  1.55,
+                  true,
+                  undefined,
+                  undefined,
+                  undefined,
+                  body.current ?? undefined,
+                );
+                autoLift = autoClimbLiftSpeed({
+                  blockedAtFeet: true,
+                  bodyClear: true,
+                  landingFound: climbHit !== null,
+                  landingNormalY: climbHit?.normal.y ?? 0,
+                  stepHeight: climbHit ? 1.45 - climbHit.timeOfImpact : 0,
+                });
+              }
+            }
+
+            if (autoLift > 0) {
+              stepCooldown.current = 0.3;
+            }
           }
         }
       }
@@ -694,6 +729,7 @@ function Player({
       linearDamping={0.35}
       canSleep={false}
       ccd
+      collisionGroups={ACTOR_NORMAL}
     >
       <CapsuleCollider args={[0.45, 0.36]} />
     </RigidBody>
@@ -962,6 +998,7 @@ interface BreakablePieceProps {
     magnitude: number,
     mass: number,
     forceDirection: { x: number; y: number; z: number },
+    otherColliderHandle: number,
   ) => void;
 }
 
@@ -973,11 +1010,76 @@ interface BreakablePieceProps {
 // each other normally and stack.
 const GROUP_WORLD = 0x0001;
 const GROUP_DEBRIS = 0x0002;
+const GROUP_ACTOR = 0x0004;
+const GROUP_ACTOR_DETAIL = 0x0008;
 const interactionGroups = (membership: number, filter: number): number =>
   ((membership << 16) | filter) >>> 0;
-const DEBRIS_SETTLING = interactionGroups(GROUP_DEBRIS, GROUP_WORLD);
-const DEBRIS_NORMAL = interactionGroups(GROUP_DEBRIS, GROUP_WORLD | GROUP_DEBRIS);
-const DEBRIS_SETTLE_MS = 600;
+const DEBRIS_SETTLING = interactionGroups(
+  GROUP_DEBRIS,
+  GROUP_WORLD | GROUP_ACTOR,
+);
+const DEBRIS_NORMAL = interactionGroups(
+  GROUP_DEBRIS,
+  GROUP_WORLD | GROUP_DEBRIS | GROUP_ACTOR,
+);
+const ACTOR_NORMAL = interactionGroups(
+  GROUP_ACTOR,
+  GROUP_WORLD | GROUP_DEBRIS | GROUP_ACTOR_DETAIL,
+);
+const DEBRIS_ACTOR_DETAIL = interactionGroups(
+  GROUP_ACTOR_DETAIL,
+  GROUP_ACTOR,
+);
+const DEBRIS_SETTLE_STEPS = 36;
+const DEBRIS_CONTACT_GRACE_STEPS = 30;
+const DEBRIS_RETRY_COOLDOWN_STEPS = 12;
+const MAX_ATTACHED_REMNANT_WORLD_COLLIDERS = 8;
+
+function OmittedDebrisInteractionColliders({
+  boxes,
+  primaryBoxes,
+  material,
+}: {
+  boxes: readonly DebrisColliderBox[];
+  primaryBoxes: readonly DebrisColliderBox[];
+  material: BreakableMaterial;
+}) {
+  const omittedBoxes = useMemo(
+    () => omittedDebrisColliderBoxes(boxes, primaryBoxes),
+    [boxes, primaryBoxes],
+  );
+
+  // Кратер в грунте терпит грубую коллизию: главных боксов достаточно, а
+  // детальный actor-суп на плите 6×6 — это десятки лишних кубоидов на каждую
+  // яму (главный источник «супа коллайдеров» при взрыве во дворе).
+  if (groundMaterials.has(material)) {
+    return null;
+  }
+
+  if (omittedBoxes.length === 0) {
+    return null;
+  }
+
+  return (
+    <>
+      {omittedBoxes.map((box, index) => (
+        <CuboidCollider
+          key={`actor-detail:${index}`}
+          args={[
+            Math.max(0.002, box.size[0] / 2 - 0.002),
+            Math.max(0.002, box.size[1] / 2 - 0.002),
+            Math.max(0.002, box.size[2] / 2 - 0.002),
+          ]}
+          position={[...box.center]}
+          density={0}
+          friction={0.76}
+          restitution={0}
+          collisionGroups={DEBRIS_ACTOR_DETAIL}
+        />
+      ))}
+    </>
+  );
+}
 
 const BreakablePiece = memo(function BreakablePiece({
   piece,
@@ -987,7 +1089,6 @@ const BreakablePiece = memo(function BreakablePiece({
 }: BreakablePieceProps) {
   const body = useRef<RapierRigidBody>(null);
   const wasBroken = useRef(false);
-  const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { rapier } = useRapier();
   const profile = materialRuntimeProfiles[piece.material];
   const renderBoxes = useMemo(() => getPieceRenderBoxes(piece), [piece]);
@@ -1000,15 +1101,6 @@ const BreakablePiece = memo(function BreakablePiece({
     registerBody(piece.id, body.current);
     return () => registerBody(piece.id, null);
   }, [piece.id, registerBody]);
-
-  useEffect(
-    () => () => {
-      if (settleTimer.current !== null) {
-        clearTimeout(settleTimer.current);
-      }
-    },
-    [],
-  );
 
   useEffect(() => {
     const currentBody = body.current;
@@ -1045,23 +1137,12 @@ const BreakablePiece = memo(function BreakablePiece({
       for (let index = 0; index < colliderCount; index += 1) {
         const collider = currentBody.collider(index);
         collider.setContactForceEventThreshold(Math.max(0.4, mass * 55));
+        if (collider.collisionGroups() === DEBRIS_ACTOR_DETAIL) {
+          continue;
+        }
         // Don't collide with sibling debris yet — let overlaps settle.
         collider.setCollisionGroups(DEBRIS_SETTLING);
       }
-      if (settleTimer.current !== null) {
-        clearTimeout(settleTimer.current);
-      }
-      settleTimer.current = setTimeout(() => {
-        settleTimer.current = null;
-        const settledBody = body.current;
-        if (!settledBody || settledBody.bodyType() !== rapier.RigidBodyType.Dynamic) {
-          return;
-        }
-        const settledColliders = settledBody.numColliders();
-        for (let index = 0; index < settledColliders; index += 1) {
-          settledBody.collider(index).setCollisionGroups(DEBRIS_NORMAL);
-        }
-      }, DEBRIS_SETTLE_MS);
     }
 
     wasBroken.current = broken;
@@ -1087,6 +1168,11 @@ const BreakablePiece = memo(function BreakablePiece({
       linearDamping={0.18}
       angularDamping={0.24}
       density={profile.density}
+      // ВАЖНО: проп нельзя передавать со значением undefined — react-three-
+      // rapier проверяет `key in options` и вызывает setCollisionGroups(
+      // undefined), wasm приводит это к 0, и коллайдер перестаёт сталкиваться
+      // со всем. Прикреплённый кусок должен остаться на дефолтных группах.
+      {...(broken ? { collisionGroups: DEBRIS_SETTLING } : {})}
       ccd={broken && collisionTuning.hardCcd}
       softCcdPrediction={
         broken ? collisionTuning.softCcdPrediction : 0
@@ -1103,6 +1189,7 @@ const BreakablePiece = memo(function BreakablePiece({
                 payload.totalForceMagnitude,
                 currentBody.mass(),
                 payload.maxForceDirection,
+                payload.other.collider.handle,
               );
             }
           : undefined
@@ -1129,6 +1216,11 @@ const BreakablePiece = memo(function BreakablePiece({
           />
         ))
       )}
+      <OmittedDebrisInteractionColliders
+        boxes={renderBoxes}
+        primaryBoxes={colliderBoxes}
+        material={piece.material}
+      />
     </RigidBody>
   );
 });
@@ -1151,6 +1243,7 @@ function BreakableObjects({
     magnitude: number,
     mass: number,
     forceDirection: { x: number; y: number; z: number },
+    otherColliderHandle: number,
   ) => void;
 }) {
   const { hiddenPieceIds, bodyPieces } = useMemo(() => {
@@ -1213,14 +1306,22 @@ const Shard = memo(function Shard({
     magnitude: number,
     mass: number,
     forceDirection: { x: number; y: number; z: number },
+    otherColliderHandle: number,
   ) => void;
 }) {
   const body = useRef<RapierRigidBody>(null);
   const profile = materialRuntimeProfiles[shard.material];
-  const colliderBoxes = debrisColliderBoxes(shard.size, shard.boxes);
+  const renderBoxes =
+    shard.boxes && shard.boxes.length > 0
+      ? shard.boxes
+      : [{ center: [0, 0, 0] as const, size: shard.size }];
+  const colliderBoxes = debrisColliderBoxes(shard.size, renderBoxes);
   const isChunky =
     shard.size[0] * shard.size[1] * shard.size[2] > 0.015;
-  const collisionTuning = debrisCollisionTuning(shard.size);
+  const collisionTuning = debrisCollisionTuning(
+    shard.size,
+    !shard.preferSoftCcd,
+  );
 
   useEffect(() => {
     const currentBody = body.current;
@@ -1276,6 +1377,7 @@ const Shard = memo(function Shard({
       restitution={profile.restitution}
       linearDamping={0.15}
       angularDamping={0.25}
+      collisionGroups={DEBRIS_SETTLING}
       ccd={collisionTuning.hardCcd}
       softCcdPrediction={collisionTuning.softCcdPrediction}
       onContactForce={
@@ -1290,6 +1392,7 @@ const Shard = memo(function Shard({
                 payload.totalForceMagnitude,
                 currentBody.mass(),
                 payload.maxForceDirection,
+                payload.other.collider.handle,
               );
             }
           : undefined
@@ -1315,6 +1418,11 @@ const Shard = memo(function Shard({
           />
         ))
       )}
+      <OmittedDebrisInteractionColliders
+        boxes={renderBoxes}
+        primaryBoxes={colliderBoxes}
+        material={shard.material}
+      />
     </RigidBody>
   );
 });
@@ -1535,21 +1643,18 @@ function Grenade({
         linearDamping={0.04}
         angularDamping={isRocket ? 0.95 : 0.35}
         ccd
+        collisionGroups={ACTOR_NORMAL}
         onCollisionEnter={trigger}
       >
-        <BallCollider args={[isRocket ? 0.14 : 0.09]} />
-        {!isRocket ? (
-          <>
-            <mesh castShadow>
-              <boxGeometry args={[0.13, 0.13, 0.2]} />
-              <meshStandardMaterial color="#3f4d33" metalness={0.35} roughness={0.55} />
-            </mesh>
-            <mesh position={[0, 0, 0.14]}>
-              <boxGeometry args={[0.05, 0.05, 0.09]} />
-              <meshStandardMaterial color="#c8ccc4" metalness={0.6} roughness={0.4} />
-            </mesh>
-          </>
-        ) : null}
+        {isRocket ? (
+          <BallCollider args={[0.14]} />
+        ) : (
+          <CapsuleCollider
+            args={[0.075, 0.062]}
+            rotation={[Math.PI / 2, 0, 0]}
+          />
+        )}
+        {!isRocket ? <GrenadeProjectileVisual /> : null}
       </RigidBody>
 
       {isRocket ? (
@@ -1619,6 +1724,7 @@ const Remnant = memo(function Remnant({
     magnitude: number,
     mass: number,
     forceDirection: { x: number; y: number; z: number },
+    otherColliderHandle: number,
   ) => void;
 }) {
   const body = useRef<RapierRigidBody>(null);
@@ -1629,9 +1735,11 @@ const Remnant = memo(function Remnant({
     remnant.boxes && remnant.boxes.length > 0
       ? remnant.boxes
       : [{ center: [0, 0, 0] as const, size: remnant.size }];
-  const colliderBoxes = freed
-    ? debrisColliderBoxes(remnant.size, boxes)
-    : boxes;
+  const colliderBoxes = debrisColliderBoxes(
+    remnant.size,
+    boxes,
+    freed ? 3 : MAX_ATTACHED_REMNANT_WORLD_COLLIDERS,
+  );
   const isChunky =
     remnant.size[0] * remnant.size[1] * remnant.size[2] > 0.015;
   const collisionTuning = debrisCollisionTuning(remnant.size);
@@ -1694,6 +1802,9 @@ const Remnant = memo(function Remnant({
       linearDamping={0.16}
       angularDamping={0.24}
       density={profile.density}
+      // См. BreakablePiece: collisionGroups={undefined} обнуляет группы в
+      // Rapier — у прикреплённого остатка коллизия должна остаться дефолтной.
+      {...(freed ? { collisionGroups: DEBRIS_SETTLING } : {})}
       ccd={freed && collisionTuning.hardCcd}
       softCcdPrediction={
         freed ? collisionTuning.softCcdPrediction : 0
@@ -1710,6 +1821,7 @@ const Remnant = memo(function Remnant({
                 payload.totalForceMagnitude,
                 currentBody.mass(),
                 payload.maxForceDirection,
+                payload.other.collider.handle,
               );
             }
           : undefined
@@ -1735,6 +1847,11 @@ const Remnant = memo(function Remnant({
           />
         ))
       )}
+      <OmittedDebrisInteractionColliders
+        boxes={boxes}
+        primaryBoxes={colliderBoxes}
+        material={remnant.material}
+      />
     </RigidBody>
   );
 });
@@ -2258,14 +2375,19 @@ function OpenWorldScene({
   const pendingBodyActions = useRef(new Map<string, BodyAction[]>());
   const preStepMotions = useRef(new Map<string, ImpactMotion>());
   const debrisSoundByBody = useRef(new Map<string, number>());
-  const lastContactAt = useRef(new Map<string, number>());
-  const contactDamageAfter = useRef(new Map<string, number>());
-  const dynamicStartedAt = useRef(new Map<string, number>());
+  const physicsStep = useRef(0);
+  const debrisSettlingUntilStep = useRef(new Map<string, number>());
+  const lastContactStepByBody = useRef(
+    new Map<string, Map<number, number>>(),
+  );
+  const contactDamageAfterStep = useRef(new Map<string, number>());
+  const dynamicStartedStep = useRef(new Map<string, number>());
   const restCounters = useRef(new Map<string, number>());
   const settleAccumulator = useRef(0);
   const strikeTimers = useRef<number[]>([]);
   const shardsRef = useRef<readonly ShardDefinition[]>([]);
   const shardById = useRef(new Map<string, ShardDefinition>());
+  const shatteredPiecesRef = useRef(new Set<string>());
   const shardCounter = useRef(0);
   const impactShatterTimes = useRef<number[]>([]);
   const chipTimes = useRef<number[]>([]);
@@ -2274,6 +2396,7 @@ function OpenWorldScene({
   const remnantCounter = useRef(0);
   const remainingVolumeRef = useRef(new Map<string, number>());
   const carvedPiecesRef = useRef(new Set<string>());
+  const forcedStructureSeeds = useRef(new Set<string>());
   // Снимок состояния на момент последнего структурного пересчёта: следующий
   // settle сеет зону пересчёта только из дельты против этого снимка.
   const lastSettleSnapshot = useRef<{
@@ -2307,22 +2430,188 @@ function OpenWorldScene({
     [],
   );
 
+  // Dev-only crosshair probe: casts the SAME ray through the render scene and
+  // through the Rapier world. A wall that renders but has no physics shows up
+  // as visual.distance << physics.distance. Published on <html data-*> so a
+  // CDP driver can read it without evaluating into the R3F closure.
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") {
+      return undefined;
+    }
+    const debugWindow = window as Window & {
+      __mamPhysicsProbe?: (
+        originOverride?: readonly [number, number, number],
+        directionOverride?: readonly [number, number, number],
+      ) => unknown;
+    };
+    debugWindow.__mamPhysicsProbe = (originOverride, directionOverride) => {
+      const origin = originOverride
+        ? new Vector3(...originOverride)
+        : camera.position.clone();
+      const direction = directionOverride
+        ? new Vector3(...directionOverride).normalize()
+        : camera.getWorldDirection(new Vector3());
+      raycaster.current.set(origin, direction);
+      const intersections = intersectBreakables(120);
+      const visual = intersections[0] ?? null;
+      const breakableIntersection = intersections.find((candidate) =>
+        Boolean(readBreakableHit(candidate)),
+      );
+      const breakableHit = breakableIntersection
+        ? readBreakableHit(breakableIntersection)
+        : null;
+      const visualId =
+        breakableHit?.pieceId ??
+        breakableHit?.shardId ??
+        breakableHit?.remnantId ??
+        null;
+
+      const playerBody = pieceBodies.current.get("player");
+      const ray = new rapier.Ray(
+        { x: origin.x, y: origin.y, z: origin.z },
+        { x: direction.x, y: direction.y, z: direction.z },
+      );
+      const physicsHit = world.castRayAndGetNormal(
+        ray,
+        120,
+        true,
+        undefined,
+        undefined,
+        undefined,
+        playerBody,
+      );
+      const physicsBody = physicsHit?.collider.parent() ?? null;
+      const physicsTranslation = physicsBody?.translation() ?? null;
+      const remnant = visualId ? remnantById.current.get(visualId) : null;
+      const registered = visualId
+        ? pieceBodies.current.get(visualId) ?? null
+        : null;
+
+      return {
+        origin: origin.toArray(),
+        direction: direction.toArray(),
+        visual: visual
+          ? {
+              distance: visual.distance,
+              point: visual.point.toArray(),
+              breakableId: visualId,
+              breakableKind: breakableHit
+                ? breakableHit.remnantId
+                  ? "remnant"
+                  : breakableHit.shardId
+                    ? "shard"
+                    : "piece"
+                : null,
+              breakableDistance: breakableIntersection?.distance ?? null,
+            }
+          : null,
+        physics: physicsHit
+          ? {
+              distance: physicsHit.timeOfImpact,
+              colliderHandle: physicsHit.collider.handle,
+              shapeType: physicsHit.collider.shapeType(),
+              groups: physicsHit.collider.collisionGroups(),
+              bodyType: physicsBody?.bodyType() ?? null,
+              bodyPosition: physicsTranslation
+                ? [
+                    physicsTranslation.x,
+                    physicsTranslation.y,
+                    physicsTranslation.z,
+                  ]
+                : null,
+            }
+          : null,
+        gapMeters:
+          visual && physicsHit
+            ? physicsHit.timeOfImpact - visual.distance
+            : null,
+        visualTarget: visualId
+          ? {
+              registeredBody: Boolean(registered),
+              registeredBodyType: registered?.bodyType() ?? null,
+              registeredSleeping: registered?.isSleeping() ?? null,
+              registeredPosition: registered
+                ? (() => {
+                    const translation = registered.translation();
+                    return [translation.x, translation.y, translation.z];
+                  })()
+                : null,
+              remnant: remnant
+                ? {
+                    detached: remnant.detached,
+                    parentId: remnant.parentId,
+                    boxes: remnant.boxes?.length ?? 0,
+                    size: remnant.size,
+                    position: remnant.position,
+                  }
+                : null,
+              carved: carvedPiecesRef.current.has(visualId),
+              broken: brokenPiecesRef.current.has(visualId),
+            }
+          : null,
+      };
+    };
+    const teleportWindow = window as Window & {
+      __mamTeleport?: (x: number, y: number, z: number) => boolean;
+      __mamRapierDebug?: { world: unknown; rapier: unknown };
+    };
+    teleportWindow.__mamRapierDebug = { world, rapier };
+    teleportWindow.__mamTeleport = (x, y, z) => {
+      const playerBody = pieceBodies.current.get("player");
+      if (!playerBody) {
+        return false;
+      }
+      playerBody.setTranslation({ x, y, z }, true);
+      playerBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      return true;
+    };
+    const publish = () => {
+      try {
+        document.documentElement.dataset.mamPhysicsProbe = JSON.stringify(
+          debugWindow.__mamPhysicsProbe?.() ?? null,
+        );
+      } catch {
+        document.documentElement.dataset.mamPhysicsProbe = "null";
+      }
+    };
+    publish();
+    const timer = window.setInterval(publish, 200);
+    return () => {
+      window.clearInterval(timer);
+      delete document.documentElement.dataset.mamPhysicsProbe;
+      delete debugWindow.__mamPhysicsProbe;
+      delete teleportWindow.__mamTeleport;
+    };
+  }, [camera, intersectBreakables, rapier, world]);
+
   const registerBody = useCallback(
     (id: string, body: RapierRigidBody | null) => {
       if (body) {
         pieceBodies.current.set(id, body);
         if (body.bodyType() === rapier.RigidBodyType.Dynamic) {
           dynamicBodies.current.set(id, body);
-          if (!dynamicStartedAt.current.has(id)) {
-            const now = performance.now();
-            dynamicStartedAt.current.set(id, now);
-            if (!contactDamageAfter.current.has(id)) {
-              contactDamageAfter.current.set(id, now + 400);
+          if (!dynamicStartedStep.current.has(id)) {
+            dynamicStartedStep.current.set(id, physicsStep.current);
+            contactDamageAfterStep.current.set(
+              id,
+              physicsStep.current + DEBRIS_CONTACT_GRACE_STEPS,
+            );
+            debrisSettlingUntilStep.current.set(
+              id,
+              physicsStep.current + DEBRIS_SETTLE_STEPS,
+            );
+            const colliderCount = body.numColliders();
+            for (let index = 0; index < colliderCount; index += 1) {
+              const collider = body.collider(index);
+              if (collider.collisionGroups() !== DEBRIS_ACTOR_DETAIL) {
+                collider.setCollisionGroups(DEBRIS_SETTLING);
+              }
             }
           }
         } else {
           dynamicBodies.current.delete(id);
-          dynamicStartedAt.current.delete(id);
+          dynamicStartedStep.current.delete(id);
+          debrisSettlingUntilStep.current.delete(id);
         }
         const pending = pendingBodyActions.current.get(id);
         if (pending) {
@@ -2336,9 +2625,10 @@ function OpenWorldScene({
         dynamicBodies.current.delete(id);
         preStepMotions.current.delete(id);
         debrisSoundByBody.current.delete(id);
-        lastContactAt.current.delete(id);
-        contactDamageAfter.current.delete(id);
-        dynamicStartedAt.current.delete(id);
+        lastContactStepByBody.current.delete(id);
+        contactDamageAfterStep.current.delete(id);
+        dynamicStartedStep.current.delete(id);
+        debrisSettlingUntilStep.current.delete(id);
       }
     },
     [rapier],
@@ -2360,6 +2650,25 @@ function OpenWorldScene({
   }, []);
 
   useBeforePhysicsStep(() => {
+    physicsStep.current += 1;
+    for (const [id, readyStep] of debrisSettlingUntilStep.current) {
+      if (physicsStep.current < readyStep) {
+        continue;
+      }
+      debrisSettlingUntilStep.current.delete(id);
+      const body = dynamicBodies.current.get(id);
+      if (!body || body.bodyType() !== rapier.RigidBodyType.Dynamic) {
+        continue;
+      }
+      const colliderCount = body.numColliders();
+      for (let index = 0; index < colliderCount; index += 1) {
+        const collider = body.collider(index);
+        if (collider.collisionGroups() !== DEBRIS_ACTOR_DETAIL) {
+          collider.setCollisionGroups(DEBRIS_NORMAL);
+        }
+      }
+    }
+
     for (const [id, body] of dynamicBodies.current) {
       if (body.isSleeping()) {
         preStepMotions.current.delete(id);
@@ -2375,28 +2684,53 @@ function OpenWorldScene({
     }
   });
 
+  const markRemnantDetached = useCallback((id: string) => {
+    const current = remnantById.current.get(id);
+    if (!current || current.detached) {
+      return;
+    }
+
+    const detached = { ...current, detached: true };
+    const next = remnantsRef.current.map((remnant) =>
+      remnant.id === id ? detached : remnant,
+    );
+    remnantsRef.current = next;
+    remnantById.current = new Map(
+      next.map((remnant) => [remnant.id, remnant]),
+    );
+    forcedStructureSeeds.current.add(current.parentId);
+    setRemnants(next);
+  }, []);
+
   const ensureDynamic = useCallback(
     (id: string, body: RapierRigidBody) => {
       if (body.bodyType() !== rapier.RigidBodyType.Dynamic) {
         body.setBodyType(rapier.RigidBodyType.Dynamic, true);
       }
-      dynamicBodies.current.set(id, body);
-      dynamicStartedAt.current.set(id, performance.now());
+      // Runtime body type is the source of truth. Keeping an attached
+      // remnant marked as fixed after an impact routes every later hit back
+      // into carveAt(), which must reject a dynamic body.
+      markRemnantDetached(id);
+      registerBody(id, body);
     },
-    [rapier],
+    [markRemnantDetached, rapier, registerBody],
   );
 
   const configureDebrisCollision = useCallback(
     (id: string, body: RapierRigidBody) => {
+      const shard = shardById.current.get(id);
       const source =
-        shardById.current.get(id) ??
+        shard ??
         remnantById.current.get(id) ??
         breakablePieceById.get(id);
       if (!source) {
         return;
       }
 
-      const tuning = debrisCollisionTuning(source.size);
+      const tuning = debrisCollisionTuning(
+        source.size,
+        !shard?.preferSoftCcd,
+      );
       body.enableCcd(tuning.hardCcd);
       body.setSoftCcdPrediction(tuning.softCcdPrediction);
     },
@@ -2446,6 +2780,7 @@ function OpenWorldScene({
     setBursts([]);
     setShards([]);
     setShatteredPieces(new Set());
+    shatteredPiecesRef.current.clear();
     shardsRef.current = [];
     shardById.current.clear();
     setRemnants([]);
@@ -2455,6 +2790,7 @@ function OpenWorldScene({
     remnantById.current.clear();
     remainingVolumeRef.current.clear();
     carvedPiecesRef.current.clear();
+    forcedStructureSeeds.current.clear();
     lastSettleSnapshot.current = null;
     firing.current = false;
     setGrenades([]);
@@ -2462,9 +2798,11 @@ function OpenWorldScene({
     restCounters.current.clear();
     preStepMotions.current.clear();
     debrisSoundByBody.current.clear();
-    lastContactAt.current.clear();
-    contactDamageAfter.current.clear();
-    dynamicStartedAt.current.clear();
+    physicsStep.current = 0;
+    debrisSettlingUntilStep.current.clear();
+    lastContactStepByBody.current.clear();
+    contactDamageAfterStep.current.clear();
+    dynamicStartedStep.current.clear();
     pendingBodyActions.current.clear();
     impactShatterTimes.current = [];
     chipTimes.current = [];
@@ -2500,7 +2838,10 @@ function OpenWorldScene({
         linvel.z * linvel.z +
         0.3 * (angvel.x * angvel.x + angvel.y * angvel.y + angvel.z * angvel.z);
       const dynamicAge =
-        performance.now() - (dynamicStartedAt.current.get(id) ?? 0);
+        ((physicsStep.current -
+          (dynamicStartedStep.current.get(id) ?? physicsStep.current)) *
+          1000) /
+        60;
 
       if (energy < 0.035 || (dynamicAge > 4500 && energy < 0.28)) {
         let hasPhysicalContact = false;
@@ -2541,14 +2882,22 @@ function OpenWorldScene({
 
   const settleStructure = useCallback(
     (seedBroken: ReadonlySet<string>): ReadonlySet<string> => {
+      const expandedSeedBroken = expandBrokenTreeDescendants(
+        breakablePieces,
+        seedBroken,
+      );
       // Зона пересчёта — только компоненты, где что-то ИЗМЕНИЛОСЬ с
       // прошлого пересчёта. Сеять всю историю сломанного/карвленного
       // нельзя: к середине партии зона доросла бы до всей карты, и каждый
       // settle стоил бы ~0.7 с вместо единиц миллисекунд.
       const previous = lastSettleSnapshot.current;
       const scopeSeeds = new Set<string>();
+      for (const id of forcedStructureSeeds.current) {
+        scopeSeeds.add(id);
+      }
+      forcedStructureSeeds.current.clear();
       if (!previous) {
-        for (const id of seedBroken) {
+        for (const id of expandedSeedBroken) {
           scopeSeeds.add(id);
         }
         for (const id of carvedPiecesRef.current) {
@@ -2558,7 +2907,7 @@ function OpenWorldScene({
           scopeSeeds.add(remnant.parentId);
         }
       } else {
-        for (const id of seedBroken) {
+        for (const id of expandedSeedBroken) {
           if (!previous.broken.has(id)) {
             scopeSeeds.add(id);
           }
@@ -2583,14 +2932,39 @@ function OpenWorldScene({
         }
       }
       const structuralScope = structuralScopeFor(scopeSeeds);
-      let result = resolveRuntimeStructure(
-        breakablePieces,
-        structuralMaterialProfiles,
-        seedBroken,
-        carvedPiecesRef.current,
-        remnantsRef.current,
-        structuralScope,
-      );
+      const resolveWithTreeCascade = (broken: ReadonlySet<string>) => {
+        let cascaded = expandBrokenTreeDescendants(breakablePieces, broken);
+        let resolved = resolveRuntimeStructure(
+          breakablePieces,
+          structuralMaterialProfiles,
+          cascaded,
+          carvedPiecesRef.current,
+          remnantsRef.current,
+          structuralScope,
+        );
+        // Structural failure may reveal another broken parent. A tree is only
+        // three authored levels deep, so this converges in at most three
+        // inexpensive passes and never expands the building scope.
+        for (let pass = 0; pass < 3; pass += 1) {
+          cascaded = expandBrokenTreeDescendants(
+            breakablePieces,
+            resolved.brokenPieceIds,
+          );
+          if (cascaded.size === resolved.brokenPieceIds.size) {
+            break;
+          }
+          resolved = resolveRuntimeStructure(
+            breakablePieces,
+            structuralMaterialProfiles,
+            cascaded,
+            carvedPiecesRef.current,
+            remnantsRef.current,
+            structuralScope,
+          );
+        }
+        return resolved;
+      };
+      let result = resolveWithTreeCascade(expandedSeedBroken);
       const sectionFailures = new Set(result.brokenPieceIds);
 
       for (const parentId of carvedPiecesRef.current) {
@@ -2628,14 +3002,7 @@ function OpenWorldScene({
       }
 
       if (sectionFailures.size > result.brokenPieceIds.size) {
-        result = resolveRuntimeStructure(
-          breakablePieces,
-          structuralMaterialProfiles,
-          sectionFailures,
-          carvedPiecesRef.current,
-          remnantsRef.current,
-          structuralScope,
-        );
+        result = resolveWithTreeCascade(sectionFailures);
       }
       let remnantsChanged = false;
       const updatedRemnants = remnantsRef.current.map((remnant) => {
@@ -2670,7 +3037,12 @@ function OpenWorldScene({
       onBrokenCountChange(result.brokenPieceIds.size);
       return result.brokenPieceIds;
     },
-    [onBrokenCountChange],
+    [
+      breakablePieceById,
+      breakablePieces,
+      onBrokenCountChange,
+      structuralScopeFor,
+    ],
   );
 
   const breakAt = useCallback(
@@ -2741,10 +3113,6 @@ function OpenWorldScene({
 
   const commitShards = useCallback(
     (additions: readonly ShardDefinition[]) => {
-      const contactReadyAt = performance.now() + 500;
-      for (const shard of additions) {
-        contactDamageAfter.current.set(shard.id, contactReadyAt);
-      }
       const merged = [...shardsRef.current, ...additions];
       const trimmed = trimShardBudget(merged);
       shardsRef.current = trimmed;
@@ -2756,13 +3124,16 @@ function OpenWorldScene({
 
   const commitRemnants = useCallback(
     (removeId: string | null, additions: readonly RemnantDefinition[]) => {
-      const contactReadyAt = performance.now() + 500;
-      for (const remnant of additions) {
-        contactDamageAfter.current.set(remnant.id, contactReadyAt);
-      }
+      const replacementParents = new Set(
+        additions.map((remnant) => remnant.parentId),
+      );
       const filtered = removeId
         ? remnantsRef.current.filter((remnant) => remnant.id !== removeId)
-        : remnantsRef.current;
+        : replacementParents.size > 0
+          ? remnantsRef.current.filter(
+              (remnant) => !replacementParents.has(remnant.parentId),
+            )
+          : remnantsRef.current;
       const nextList =
         additions.length > 0 ? [...filtered, ...additions] : filtered;
       remnantsRef.current = nextList;
@@ -2823,6 +3194,16 @@ function OpenWorldScene({
       burstSpeed: number,
       cause: FractureCause = "impact",
     ): boolean => {
+      if (
+        (origin === "piece" &&
+          (carvedPiecesRef.current.has(source.id) ||
+            shatteredPiecesRef.current.has(source.id))) ||
+        (origin === "shard" && !shardById.current.has(source.id)) ||
+        (origin === "remnant" && !remnantById.current.has(source.id))
+      ) {
+        return false;
+      }
+
       const body = pieceBodies.current.get(source.id);
       const staticPiece =
         origin === "piece" ? breakablePieceById.get(source.id) : undefined;
@@ -2884,11 +3265,10 @@ function OpenWorldScene({
       } else if (origin === "remnant") {
         commitRemnants(source.id, []);
       } else {
-        setShatteredPieces((current) => {
-          const next = new Set(current);
-          next.add(source.id);
-          return next;
-        });
+        const next = new Set(shatteredPiecesRef.current);
+        next.add(source.id);
+        shatteredPiecesRef.current = next;
+        setShatteredPieces(next);
       }
       commitShards(generated);
       return true;
@@ -2909,26 +3289,68 @@ function OpenWorldScene({
       direction?: Vector3,
       penetration?: number,
     ): boolean => {
-      const body = pieceBodies.current.get(source.id);
-      if (!body) {
+      if (
+        (origin === "piece" &&
+          (carvedPiecesRef.current.has(source.id) ||
+            shatteredPiecesRef.current.has(source.id))) ||
+        (origin === "shard" && !shardById.current.has(source.id)) ||
+        (origin === "remnant" && !remnantById.current.has(source.id))
+      ) {
         return false;
       }
 
-      const translation = body.translation();
-      const rotation = body.rotation();
-      const linearVelocity = body.linvel();
-      const angularVelocity = body.angvel();
-      const bodyPosition = new Vector3(
-        translation.x,
-        translation.y,
-        translation.z,
-      );
-      const bodyQuaternion = new Quaternion(
-        rotation.x,
-        rotation.y,
-        rotation.z,
-        rotation.w,
-      );
+      const body = pieceBodies.current.get(source.id);
+      const pieceState =
+        origin === "piece" ? breakablePieceById.get(source.id) : undefined;
+      const shardState =
+        origin === "shard" ? shardById.current.get(source.id) : undefined;
+      const remnantState =
+        origin === "remnant" ? remnantById.current.get(source.id) : undefined;
+      if (
+        !body &&
+        ((!pieceState && !shardState && !remnantState) ||
+          (origin === "piece" &&
+            !brokenPiecesRef.current.has(source.id) &&
+            !pieceState?.hinge) ||
+          (origin === "remnant" &&
+            !remnantState?.detached &&
+            !brokenPiecesRef.current.has(remnantState?.parentId ?? "")))
+      ) {
+        return false;
+      }
+
+      const translation = body?.translation();
+      const rotation = body?.rotation();
+      const linearVelocity = body?.linvel();
+      const angularVelocity = body?.angvel();
+      const fallbackPosition =
+        pieceState?.position ?? shardState?.position ?? remnantState?.position;
+      const fallbackQuaternion =
+        shardState?.quaternion ?? remnantState?.quaternion;
+      const bodyPosition = translation
+        ? new Vector3(translation.x, translation.y, translation.z)
+        : new Vector3(...fallbackPosition!);
+      const bodyQuaternion = rotation
+        ? new Quaternion(rotation.x, rotation.y, rotation.z, rotation.w)
+        : fallbackQuaternion
+          ? new Quaternion(...fallbackQuaternion)
+          : new Quaternion().setFromEuler(
+              new Euler(
+                pieceState?.rotation?.[0] ?? 0,
+                pieceState?.rotation?.[1] ?? 0,
+                pieceState?.rotation?.[2] ?? 0,
+              ),
+            );
+      const inheritedLinearVelocity = linearVelocity
+        ? new Vector3(linearVelocity.x, linearVelocity.y, linearVelocity.z)
+        : shardState
+          ? new Vector3(...shardState.linearVelocity)
+          : new Vector3();
+      const inheritedAngularVelocity = angularVelocity
+        ? new Vector3(angularVelocity.x, angularVelocity.y, angularVelocity.z)
+        : shardState
+          ? new Vector3(...shardState.angularVelocity)
+          : new Vector3();
       shardCounter.current += 1;
       const salt = `loose:${shardCounter.current}`;
       const result = damageBody(
@@ -2936,16 +3358,8 @@ function OpenWorldScene({
         {
           position: bodyPosition,
           quaternion: bodyQuaternion,
-          linearVelocity: new Vector3(
-            linearVelocity.x,
-            linearVelocity.y,
-            linearVelocity.z,
-          ),
-          angularVelocity: new Vector3(
-            angularVelocity.x,
-            angularVelocity.y,
-            angularVelocity.z,
-          ),
+          linearVelocity: inheritedLinearVelocity,
+          angularVelocity: inheritedAngularVelocity,
         },
         {
           idPrefix: salt,
@@ -2960,11 +3374,7 @@ function OpenWorldScene({
         return false;
       }
 
-      const baseLinear = new Vector3(
-        linearVelocity.x,
-        linearVelocity.y,
-        linearVelocity.z,
-      );
+      const baseLinear = inheritedLinearVelocity;
       const generated: ShardDefinition[] = [...result.fragments];
 
       // a couple of chips fly out of the removed volume
@@ -2996,11 +3406,16 @@ function OpenWorldScene({
       }
 
       if (origin === "piece") {
-        setShatteredPieces((current) => {
-          const next = new Set(current);
-          next.add(source.id);
-          return next;
-        });
+        if (!brokenPiecesRef.current.has(source.id)) {
+          const nextBroken = new Set(brokenPiecesRef.current);
+          nextBroken.add(source.id);
+          brokenPiecesRef.current = nextBroken;
+          setBrokenPieces(nextBroken);
+        }
+        const next = new Set(shatteredPiecesRef.current);
+        next.add(source.id);
+        shatteredPiecesRef.current = next;
+        setShatteredPieces(next);
       } else if (origin === "shard") {
         shardsRef.current = shardsRef.current.filter(
           (shard) => shard.id !== source.id,
@@ -3025,7 +3440,7 @@ function OpenWorldScene({
       playDebrisSound(source.material, 0.5);
       return true;
     },
-    [commitRemnants, commitShards],
+    [breakablePieceById, commitRemnants, commitShards],
   );
 
   // Knock a corner chip off a moving body at the point that struck: the
@@ -3086,11 +3501,27 @@ function OpenWorldScene({
       worldPoint: Vector3,
       radius: number,
       pushDirection: Vector3 | null,
+      physicalChipCount = 3,
     ): { carved: boolean; brokenParentId: string | null } => {
       const remnant = remnantById.current.get(targetId);
       const piece = remnant ? undefined : breakablePieceById.get(targetId);
       const source = remnant ?? piece;
       if (!source) {
+        return { carved: false, brokenParentId: null };
+      }
+      if (
+        remnant &&
+        (remnant.detached ||
+          brokenPiecesRef.current.has(remnant.parentId))
+      ) {
+        return { carved: false, brokenParentId: null };
+      }
+      if (
+        piece &&
+        (brokenPiecesRef.current.has(piece.id) ||
+          carvedPiecesRef.current.has(piece.id) ||
+          shatteredPiecesRef.current.has(piece.id))
+      ) {
         return { carved: false, brokenParentId: null };
       }
       const isGroundTarget = groundMaterials.has(source.material);
@@ -3102,7 +3533,11 @@ function OpenWorldScene({
       ) {
         return { carved: false, brokenParentId: null };
       }
-      if (!body && (!piece || brokenPiecesRef.current.has(piece.id))) {
+      if (
+        !body &&
+        ((!piece && (!remnant || remnant.detached)) ||
+          (piece && brokenPiecesRef.current.has(piece.id)))
+      ) {
         return { carved: false, brokenParentId: null };
       }
 
@@ -3111,16 +3546,18 @@ function OpenWorldScene({
       const rotation = body?.rotation();
       const bodyPosition = translation
         ? new Vector3(translation.x, translation.y, translation.z)
-        : new Vector3(...piece!.position);
+        : new Vector3(...(remnant?.position ?? piece!.position));
       const bodyQuaternion = rotation
         ? new Quaternion(rotation.x, rotation.y, rotation.z, rotation.w)
-        : new Quaternion().setFromEuler(
-            new Euler(
-              piece!.rotation?.[0] ?? 0,
-              piece!.rotation?.[1] ?? 0,
-              piece!.rotation?.[2] ?? 0,
-            ),
-          );
+        : remnant
+          ? new Quaternion(...remnant.quaternion)
+          : new Quaternion().setFromEuler(
+              new Euler(
+                piece!.rotation?.[0] ?? 0,
+                piece!.rotation?.[1] ?? 0,
+                piece!.rotation?.[2] ?? 0,
+              ),
+            );
       remnantCounter.current += 1;
       const carveSalt = `carve:${remnantCounter.current}`;
       const result = damageBody(
@@ -3188,7 +3625,11 @@ function OpenWorldScene({
 
       // The removed material flies off as a few small chips.
       const debris: ShardDefinition[] = [];
-      for (let index = 0; index < 3; index += 1) {
+      const chipCount = Math.max(
+        0,
+        Math.min(3, Math.floor(physicalChipCount)),
+      );
+      for (let index = 0; index < chipCount; index += 1) {
         shardCounter.current += 1;
         const id = `shard:c${shardCounter.current}`;
         const noiseA = blastNoise(id, 13);
@@ -3201,6 +3642,7 @@ function OpenWorldScene({
           textureProfile: source.textureProfile,
           landscapeSurface: source.landscapeSurface,
           size: [side, side * (0.8 + noiseB * 0.5), side],
+          preferSoftCcd: true,
           position: [
             worldPoint.x + (noiseA - 0.5) * 0.1,
             worldPoint.y + (noiseB - 0.5) * 0.1,
@@ -3219,7 +3661,9 @@ function OpenWorldScene({
           ],
         });
       }
-      commitShards(debris);
+      if (debris.length > 0) {
+        commitShards(debris);
+      }
 
       burstId.current += 1;
       const nextBurstId = burstId.current;
@@ -3259,11 +3703,33 @@ function OpenWorldScene({
     direction.normalize();
     raycaster.current.set(camera.position, direction);
     const intersections = intersectBreakables(MG_RANGE);
-    const hit = intersections.find(
-      (intersection) =>
-        readBreakableHit(intersection) !== null &&
-        intersection.distance <= MG_RANGE,
-    );
+    const hit = intersections.find((intersection) => {
+      if (intersection.distance > MG_RANGE) {
+        return false;
+      }
+      const data = readBreakableHit(intersection);
+      if (!data) {
+        return false;
+      }
+
+      if (data.pieceId) {
+        if (
+          !breakablePieceById.has(data.pieceId) ||
+          carvedPiecesRef.current.has(data.pieceId) ||
+          shatteredPiecesRef.current.has(data.pieceId)
+        ) {
+          return false;
+        }
+        return true;
+      }
+      if (data.shardId) {
+        return shardById.current.has(data.shardId);
+      }
+      if (data.remnantId) {
+        return remnantById.current.has(data.remnantId);
+      }
+      return false;
+    });
 
     const muzzle = new Vector3(0.36, -0.26, -0.8)
       .applyQuaternion(camera.quaternion)
@@ -3292,6 +3758,12 @@ function OpenWorldScene({
     }
     const { pieceId, shardId, remnantId } = hitData;
     const piece = pieceId ? breakablePieceById.get(pieceId) : undefined;
+    const shardDefinition = shardId
+      ? shardById.current.get(shardId)
+      : undefined;
+    const remnantDefinition = remnantId
+      ? remnantById.current.get(remnantId)
+      : undefined;
     const material =
       piece?.material ??
       hitData.material;
@@ -3302,9 +3774,40 @@ function OpenWorldScene({
     }
 
     const point = hit.point.clone();
+    const targetBroken = pieceId
+      ? brokenPiecesRef.current.has(pieceId)
+      : false;
+    const body = pieceBodies.current.get(targetId);
+    const bodyIsFixed =
+      body?.bodyType() === rapier.RigidBodyType.Fixed;
+    const semanticallyLoose = Boolean(
+      shardDefinition ||
+        (piece &&
+          (targetBroken ||
+            (piece.hinge && (!body || !bodyIsFixed)))) ||
+        (remnantDefinition &&
+          (remnantDefinition.detached ||
+            brokenPiecesRef.current.has(remnantDefinition.parentId))),
+    );
+    const isImplicitFixedTarget =
+      !body && Boolean(piece || remnantDefinition) && !semanticallyLoose;
+    const isFixedTarget =
+      !semanticallyLoose && (bodyIsFixed || isImplicitFixedTarget);
+    const isLooseTarget = Boolean(
+      semanticallyLoose || (body && !bodyIsFixed),
+    );
+    const isDetachedTarget = Boolean(
+      shardDefinition ||
+        (piece && targetBroken) ||
+        (remnantDefinition &&
+          (remnantDefinition.detached ||
+            brokenPiecesRef.current.has(remnantDefinition.parentId))) ||
+        body?.bodyType() === rapier.RigidBodyType.Dynamic,
+    );
 
     if (material === "steel") {
-      // Bullets don't pierce steel — sparks and a shove.
+      // Bullets don't pierce steel. A fixed structural member stays fixed;
+      // a loose one can still receive the physical kick.
       burstId.current += 1;
       const nextBurstId = burstId.current;
       setBursts((current) => [
@@ -3317,22 +3820,24 @@ function OpenWorldScene({
         },
       ]);
       playDebrisSound("steel", 0.6);
-      applyImpact(targetId, material, point, direction, 0.35);
+      if (isDetachedTarget) {
+        applyImpact(targetId, material, point, direction, 0.35);
+      }
       return;
     }
 
     const holeRadius = bulletHoleRadius[material];
-    const targetBroken = pieceId
-      ? brokenPiecesRef.current.has(pieceId)
-      : false;
-
-    if (holeRadius && !targetBroken && (pieceId || remnantId)) {
+    if (
+      holeRadius &&
+      isFixedTarget &&
+      (piece !== undefined || remnantDefinition !== undefined)
+    ) {
       const carve = carveAt(targetId, point, holeRadius, direction);
       if (carve.carved) {
         const glassParentId =
           material === "glass"
             ? pieceId ??
-              remnantById.current.get(targetId)?.parentId ??
+              remnantDefinition?.parentId ??
               null
             : null;
         const brokenParentId =
@@ -3341,94 +3846,71 @@ function OpenWorldScene({
           breakPieces([brokenParentId]);
         }
         settleWorld();
-        return;
       }
+      // A failed local carve is never upgraded to whole-body destruction.
+      return;
     }
 
-    // Displaced targets get the SAME carve geometry as standing ones: the
-    // bullet bites a chunk out and the remainder keeps its motion.
+    // Metadata and live physics jointly cover the short mount/unmount gap:
+    // a visible loose source remains damageable even before its body exists.
+    if (!isLooseTarget) {
+      return;
+    }
+
     const looseRadius = bulletHoleRadius[material] ?? 0.2;
+    let carvedLoose = false;
     if (piece) {
-      if (!brokenPiecesRef.current.has(piece.id)) {
-        impactId.current += 1;
-        breakAt(piece, impactId.current);
-      }
-      if (
-        carveLooseTarget(
-          piece,
-          "piece",
-          point,
-          looseRadius,
-          1.6,
-          direction,
-          Math.min(0.85, Math.hypot(...piece.size)),
-        )
-      ) {
-        settleWorld();
-        return;
-      }
-    } else if (shardId) {
-      const shardDefinition = shardById.current.get(shardId);
-      if (
-        shardDefinition &&
-        carveLooseTarget(
-          shardDefinition,
-          "shard",
-          point,
-          looseRadius,
-          1.4,
-          direction,
-          Math.min(0.85, Math.hypot(...shardDefinition.size)),
-        )
-      ) {
-        return;
-      }
-    } else if (remnantId) {
-      const remnantDefinition = remnantById.current.get(remnantId);
-      if (remnantDefinition) {
-        const wasStanding =
-          !remnantDefinition.detached &&
-          !brokenPiecesRef.current.has(remnantDefinition.parentId);
-        if (!wasStanding) {
-          if (
-            carveLooseTarget(
-              remnantDefinition,
-              "remnant",
-              point,
-              looseRadius,
-              1.4,
-              direction,
-              Math.min(0.85, Math.hypot(...remnantDefinition.size)),
-            )
-          ) {
-            return;
-          }
-        } else if (shatterTarget(remnantDefinition, "remnant", point, 3)) {
-          const volume =
-            remnantDefinition.size[0] *
-            remnantDefinition.size[1] *
-            remnantDefinition.size[2];
-          if (subtractParentVolume(remnantDefinition.parentId, volume)) {
-            breakPieces([remnantDefinition.parentId]);
-          }
-          settleWorld();
-          return;
-        }
-      }
+      carvedLoose = carveLooseTarget(
+        piece,
+        "piece",
+        point,
+        looseRadius,
+        1.6,
+        direction,
+        Math.min(0.85, Math.hypot(...piece.size)),
+      );
+    } else if (shardDefinition) {
+      carvedLoose = carveLooseTarget(
+        shardDefinition,
+        "shard",
+        point,
+        looseRadius,
+        1.4,
+        direction,
+        Math.min(0.85, Math.hypot(...shardDefinition.size)),
+      );
+    } else if (remnantDefinition) {
+      carvedLoose = carveLooseTarget(
+        remnantDefinition,
+        "remnant",
+        point,
+        looseRadius,
+        1.4,
+        direction,
+        Math.min(0.85, Math.hypot(...remnantDefinition.size)),
+      );
     }
 
+    if (carvedLoose) {
+      if (piece || remnantDefinition) {
+        settleWorld();
+      }
+      return;
+    }
+
+    // A failed carve may still kick an already-loose body, but can no
+    // longer detach or shatter a fixed one as a fallback side effect.
     applyImpact(targetId, material, point, direction, 0.4);
   }, [
     applyImpact,
-    breakAt,
+    breakablePieceById,
     breakPieces,
     camera,
     carveAt,
     carveLooseTarget,
     intersectBreakables,
+    rapier,
     settleWorld,
-    shatterTarget,
-    subtractParentVolume,
   ]);
 
   const strikeEnd = useCallback(() => {
@@ -3447,8 +3929,10 @@ function OpenWorldScene({
     }
 
     fireAccumulator.current += delta;
-    while (fireAccumulator.current >= MG_FIRE_INTERVAL) {
-      fireAccumulator.current -= MG_FIRE_INTERVAL;
+    if (fireAccumulator.current >= MG_FIRE_INTERVAL) {
+      // Never replay several overdue bullets into one stale render snapshot.
+      // A hitch may drop a round; it must not create duplicate generations.
+      fireAccumulator.current %= MG_FIRE_INTERVAL;
       fireRound();
     }
   });
@@ -3515,13 +3999,21 @@ function OpenWorldScene({
               );
         return { position, quaternion };
       };
+      const canBlastReachBounds = (
+        position: Vector3,
+        size: readonly [number, number, number],
+      ) => {
+        const reach = blastRadius + Math.hypot(...size) / 2;
+        return center3.distanceToSquared(position) < reach * reach;
+      };
 
       const solidOccluders: BlastOccluder[] = [
         ...blastPieceCandidates
           .filter(
             (piece) =>
               !previousBroken.has(piece.id) &&
-              !carvedPiecesRef.current.has(piece.id),
+              !carvedPiecesRef.current.has(piece.id) &&
+              !shatteredPiecesRef.current.has(piece.id),
           )
           .map((piece) => ({
             source: piece,
@@ -3539,11 +4031,16 @@ function OpenWorldScene({
             entry.id,
             entry.source,
           );
-          const impactPoint = closestPointOnOrientedBox(
+          if (!canBlastReachBounds(position, entry.source.size)) {
+            return null;
+          }
+          const boxes = occupiedBoxesForBlast(entry.source);
+          const impactPoint = closestPointOnOccupiedGeometry(
             center3,
             position,
             entry.source.size,
             quaternion,
+            boxes,
           );
           return {
             id: entry.id,
@@ -3552,38 +4049,79 @@ function OpenWorldScene({
             position,
             quaternion,
             size: entry.source.size,
+            boxes,
             surfaceDistance: center3.distanceTo(impactPoint),
           };
         })
-        .filter((entry) => entry.surfaceDistance <= blastRadius)
+        .filter(
+          (entry): entry is NonNullable<typeof entry> =>
+            entry !== null && entry.surfaceDistance <= blastRadius,
+        )
         .sort(
           (left, right) => left.surfaceDistance - right.surfaceDistance,
         );
 
-      // Capture moving bodies before this blast creates a new generation.
+      // Capture moving authored bodies by their CURRENT physics registry, not
+      // by the spatial index built from authored positions. This includes
+      // swinging kinematic doors and debris that travelled far from home.
+      const looseAuthoredIds = new Set<string>();
+      const looseAuthoredPieces: {
+        readonly source: BreakablePieceDefinition;
+        readonly origin: "piece";
+      }[] = [];
+      for (const [id, body] of pieceBodies.current) {
+        if (
+          (body.bodyType() === rapier.RigidBodyType.Fixed &&
+            !previousBroken.has(id)) ||
+          carvedPiecesRef.current.has(id) ||
+          shatteredPiecesRef.current.has(id)
+        ) {
+          continue;
+        }
+        const source = breakablePieceById.get(id);
+        if (!source) {
+          continue;
+        }
+        looseAuthoredIds.add(id);
+        looseAuthoredPieces.push({ source, origin: "piece" });
+      }
+
+      // A structural break can update refs one commit before its Rapier body
+      // mounts. Keep that short generation gap damageable too.
+      for (const source of blastPieceCandidates) {
+        if (
+          looseAuthoredIds.has(source.id) ||
+          pieceBodies.current.has(source.id) ||
+          (!previousBroken.has(source.id) && !source.hinge) ||
+          carvedPiecesRef.current.has(source.id) ||
+          shatteredPiecesRef.current.has(source.id)
+        ) {
+          continue;
+        }
+        looseAuthoredIds.add(source.id);
+        looseAuthoredPieces.push({ source, origin: "piece" });
+      }
+
       // Each body receives exactly one damage pass, regardless of whether it
       // started attached, falling or already settled on the ground.
       const looseBeforeBlast = [
-        ...blastPieceCandidates
-          .filter(
-            (piece) =>
-              pieceBodies.current.get(piece.id)?.bodyType() ===
-              rapier.RigidBodyType.Dynamic,
-          )
-          .map((source) => ({
-            source,
-            origin: "piece" as const,
-          })),
+        ...looseAuthoredPieces,
         ...shardsRef.current.map((source) => ({
           source,
           origin: "shard" as const,
         })),
         ...remnantsRef.current
-          .filter(
-            (source) =>
-              pieceBodies.current.get(source.id)?.bodyType() ===
-              rapier.RigidBodyType.Dynamic,
-          )
+          .filter((source) => {
+            const body = pieceBodies.current.get(source.id);
+            return (
+              source.detached ||
+              previousBroken.has(source.parentId) ||
+              Boolean(
+                body &&
+                  body.bodyType() !== rapier.RigidBodyType.Fixed,
+              )
+            );
+          })
           .map((source) => ({
             source,
             origin: "remnant" as const,
@@ -3595,7 +4133,7 @@ function OpenWorldScene({
       // Standing targets keep supported remnants; unsupported remnants become
       // debris through the same structural solver used everywhere else.
       const volumeBroken: string[] = [];
-      const attachedDamageCandidates = [
+      const sortedDamageCandidates = [
         ...blastPieceCandidates
           .filter(
             (piece) => {
@@ -3603,7 +4141,10 @@ function OpenWorldScene({
               return (
                 !previousBroken.has(piece.id) &&
                 !carvedPiecesRef.current.has(piece.id) &&
-                body?.bodyType() !== rapier.RigidBodyType.Dynamic
+                !shatteredPiecesRef.current.has(piece.id) &&
+                (body
+                  ? body.bodyType() === rapier.RigidBodyType.Fixed
+                  : !piece.hinge)
               );
             },
           )
@@ -3613,11 +4154,14 @@ function OpenWorldScene({
             source: piece,
           })),
         ...remnantsRef.current
-          .filter(
-            (remnant) =>
-              pieceBodies.current.get(remnant.id)?.bodyType() ===
-              rapier.RigidBodyType.Fixed,
-          )
+          .filter((remnant) => {
+            const body = pieceBodies.current.get(remnant.id);
+            return (
+              !remnant.detached &&
+              !previousBroken.has(remnant.parentId) &&
+              (!body || body.bodyType() === rapier.RigidBodyType.Fixed)
+            );
+          })
           .map((remnant) => ({
             targetId: remnant.id,
             parentId: remnant.parentId,
@@ -3625,57 +4169,83 @@ function OpenWorldScene({
           })),
       ]
         .map((target) => {
-            const { position, quaternion } = resolveBlastPose(
-              target.targetId,
-              target.source,
-            );
-            const impactPoint = closestPointOnOrientedBox(
-              center3,
-              position,
-              target.source.size,
-              quaternion,
-            );
-            const surfaceDistance = center3.distanceTo(impactPoint);
-            const visibility = blastVisibilityFactor(
-              center3,
-              impactPoint,
-              target.targetId,
-              target.parentId,
-              surfaceDistance,
-              solidOccluders,
-            );
-            const energy = energyAtDistance(surfaceDistance) * visibility;
-            return {
-              ...target,
-              impactPoint,
-              surfaceDistance,
-              visibility,
-              energy,
-            };
-          })
-          .filter(
-            (entry) =>
-              entry.energy >
+          const { position, quaternion } = resolveBlastPose(
+            target.targetId,
+            target.source,
+          );
+          if (!canBlastReachBounds(position, target.source.size)) {
+            return null;
+          }
+          const impactPoint = closestPointOnOccupiedGeometry(
+            center3,
+            position,
+            target.source.size,
+            quaternion,
+            occupiedBoxesForBlast(target.source),
+          );
+          const surfaceDistance = center3.distanceTo(impactPoint);
+          if (surfaceDistance >= blastRadius) {
+            return null;
+          }
+          const visibility = blastVisibilityFactor(
+            center3,
+            impactPoint,
+            target.targetId,
+            target.parentId,
+            surfaceDistance,
+            solidOccluders,
+          );
+          const energy = energyAtDistance(surfaceDistance) * visibility;
+          return {
+            ...target,
+            impactPoint,
+            surfaceDistance,
+            visibility,
+            energy,
+          };
+        })
+        .filter(
+          (entry): entry is NonNullable<typeof entry> =>
+            entry !== null &&
+            entry.energy >
               fractureEnergyByMaterial[entry.source.material] * 1.15,
-          )
-          .sort(
-            (left, right) =>
-              left.surfaceDistance - right.surfaceDistance,
-          )
-          .slice(0, 80);
+        )
+        .sort(
+          (left, right) => left.surfaceDistance - right.surfaceDistance,
+        );
+      // Адаптивный бюджет вместо плоского slice(0, 80): в норме отбор
+      // идентичен старому, но воксельные гиганты (земляные плиты двора)
+      // больше не съедают кадр и не вытесняют настоящие цели из бюджета —
+      // у грунта свой маленький срез работы.
+      const attachedDamageCandidates = selectCarveTargetsWithinBudget(
+        sortedDamageCandidates,
+        (entry) => entry.source,
+        isRocket
+          ? { maxTargets: 80, workBudget: 20_000, groundWorkBudget: 3_000 }
+          : { maxTargets: 80, workBudget: 9_000, groundWorkBudget: 1_600 },
+      );
 
+      // One explosion already has a dense particle burst and real structural
+      // fragments. Limit only the extra simulated surface chips so a blast
+      // through many adjacent facade parts cannot create a physics storm.
+      let physicalChipBudget = isRocket ? 24 : 12;
       for (const entry of attachedDamageCandidates) {
         const damageRadius = impactDamageRadius(
           entry.source,
           "blast",
           entry.energy,
         );
+        const physicalChipCount = Math.min(3, physicalChipBudget);
         const carve = carveAt(
           entry.targetId,
           entry.impactPoint,
           damageRadius,
           null,
+          physicalChipCount,
         );
+        if (carve.carved) {
+          physicalChipBudget -= physicalChipCount;
+        }
         if (carve.brokenParentId) {
           volumeBroken.push(carve.brokenParentId);
         }
@@ -3687,30 +4257,24 @@ function OpenWorldScene({
       const damagedNow = new Set<string>();
       const looseDamageCandidates = looseBeforeBlast
         .map((entry) => {
-          const body = pieceBodies.current.get(entry.source.id);
-          if (!body) {
+          const { position, quaternion } = resolveBlastPose(
+            entry.source.id,
+            entry.source,
+          );
+          if (!canBlastReachBounds(position, entry.source.size)) {
             return null;
           }
-          const translation = body.translation();
-          const rotation = body.rotation();
-          const position = new Vector3(
-            translation.x,
-            translation.y,
-            translation.z,
-          );
-          const quaternion = new Quaternion(
-            rotation.x,
-            rotation.y,
-            rotation.z,
-            rotation.w,
-          );
-          const impactPoint = closestPointOnOrientedBox(
+          const impactPoint = closestPointOnOccupiedGeometry(
             center3,
             position,
             entry.source.size,
             quaternion,
+            occupiedBoxesForBlast(entry.source),
           );
           const surfaceDistance = center3.distanceTo(impactPoint);
+          if (surfaceDistance >= blastRadius) {
+            return null;
+          }
           const parentId =
             entry.origin === "remnant"
               ? entry.source.parentId
@@ -3740,13 +4304,10 @@ function OpenWorldScene({
             : null;
         })
         .filter(
-          (
-            entry,
-          ): entry is NonNullable<typeof entry> => entry !== null,
+          (entry): entry is NonNullable<typeof entry> => entry !== null,
         )
         .sort(
-          (left, right) =>
-            left.surfaceDistance - right.surfaceDistance,
+          (left, right) => left.surfaceDistance - right.surfaceDistance,
         )
         .slice(0, 32);
 
@@ -3761,6 +4322,12 @@ function OpenWorldScene({
           )
         ) {
           damagedNow.add(entry.source.id);
+          if (
+            entry.origin === "piece" &&
+            !previousBroken.has(entry.source.id)
+          ) {
+            volumeBroken.push(entry.source.id);
+          }
         }
       }
 
@@ -3817,7 +4384,12 @@ function OpenWorldScene({
         }
 
         const isDynamic = body.bodyType() === rapier.RigidBodyType.Dynamic;
-        if (!isDynamic && !finalBroken.has(id)) {
+        const remnant = remnantById.current.get(id);
+        const isLooseRemnant = Boolean(
+          remnant &&
+            (remnant.detached || finalBroken.has(remnant.parentId)),
+        );
+        if (!isDynamic && !finalBroken.has(id) && !isLooseRemnant) {
           return;
         }
 
@@ -3848,32 +4420,68 @@ function OpenWorldScene({
         blastCenter,
         blastPushRadius,
       )) {
-        if (!finalBroken.has(piece.id) || damagedNow.has(piece.id)) {
+        if (
+          !finalBroken.has(piece.id) ||
+          damagedNow.has(piece.id) ||
+          carvedPiecesRef.current.has(piece.id) ||
+          shatteredPiecesRef.current.has(piece.id)
+        ) {
           continue;
         }
         pushedIds.add(piece.id);
         withBody(piece.id, (body) => pushBody(piece.id, body));
       }
 
-      for (const [id, body] of pieceBodies.current) {
-        if (pushedIds.has(id)) {
+      // A visible pre-blast shard can exist one commit before its body mounts.
+      // Queue exactly that old shard's impulse; newly generated blast debris
+      // already carries burst velocity and must not receive a second kick.
+      for (const entry of looseBeforeBlast) {
+        if (
+          entry.origin !== "shard" ||
+          damagedNow.has(entry.source.id) ||
+          pushedIds.has(entry.source.id) ||
+          !shardById.current.has(entry.source.id)
+        ) {
           continue;
         }
+        pushedIds.add(entry.source.id);
+        withBody(entry.source.id, (body) =>
+          pushBody(entry.source.id, body),
+        );
+      }
+
+      for (const [id, body] of pieceBodies.current) {
+        if (
+          pushedIds.has(id) ||
+          (breakablePieceById.has(id) &&
+            (carvedPiecesRef.current.has(id) ||
+              shatteredPiecesRef.current.has(id)))
+        ) {
+          continue;
+        }
+        pushedIds.add(id);
         pushBody(id, body);
       }
 
       for (const remnant of remnantsRef.current) {
-        if (!remnant.detached) {
+        if (
+          (!remnant.detached && !finalBroken.has(remnant.parentId)) ||
+          pushedIds.has(remnant.id)
+        ) {
           continue;
         }
+        pushedIds.add(remnant.id);
         withBody(remnant.id, (body) => pushBody(remnant.id, body));
       }
     },
     [
+      breakablePieceById,
       carveAt,
       carveLooseTarget,
       configureDebrisCollision,
       ensureDynamic,
+      maxPieceBoundingRadius,
+      pieceSpatialIndex,
       rapier,
       settleStructure,
       withBody,
@@ -3961,6 +4569,7 @@ function OpenWorldScene({
       magnitude: number,
       mass: number,
       forceDirection: { x: number; y: number; z: number },
+      otherColliderHandle: number,
     ) => {
       const intensity = magnitude / Math.max(0.001, mass * 320);
       const body = pieceBodies.current.get(source.id);
@@ -3975,11 +4584,24 @@ function OpenWorldScene({
         angular: currentAngular,
       };
       const now = performance.now();
+      const currentStep = physicsStep.current;
+      let contactSteps = lastContactStepByBody.current.get(source.id);
+      if (!contactSteps) {
+        contactSteps = new Map<number, number>();
+        lastContactStepByBody.current.set(source.id, contactSteps);
+      }
       const isNewContact = isNewPhysicalContact(
-        now,
-        lastContactAt.current.get(source.id),
+        currentStep,
+        contactSteps.get(otherColliderHandle),
       );
-      lastContactAt.current.set(source.id, now);
+      contactSteps.set(otherColliderHandle, currentStep);
+      if (contactSteps.size > 32) {
+        for (const [handle, lastStep] of contactSteps) {
+          if (currentStep - lastStep > 120) {
+            contactSteps.delete(handle);
+          }
+        }
+      }
       const approachSpeed = measureImpactApproachSpeed(
         motion,
         forceDirection,
@@ -4001,7 +4623,10 @@ function OpenWorldScene({
 
       // Fresh sibling fragments begin almost face-to-face. Solver separation
       // is not a second physical impact and must not recursively fracture them.
-      if (now < (contactDamageAfter.current.get(source.id) ?? 0)) {
+      if (
+        currentStep <
+        (contactDamageAfterStep.current.get(source.id) ?? 0)
+      ) {
         return;
       }
       if (!isNewContact) {
@@ -4033,16 +4658,12 @@ function OpenWorldScene({
         if (impactShatterTimes.current.length >= 2) {
           return;
         }
-        if (
-          shatterTarget(
-            source,
-            origin,
-            null,
-            approachSpeed,
-            "fall",
-          )
-        ) {
-          impactShatterTimes.current.push(now);
+        impactShatterTimes.current.push(now);
+        contactDamageAfterStep.current.set(
+          source.id,
+          currentStep + DEBRIS_RETRY_COOLDOWN_STEPS,
+        );
+        if (shatterTarget(source, origin, null, approachSpeed, "fall")) {
           settleWorld();
         }
         return;
@@ -4053,9 +4674,12 @@ function OpenWorldScene({
       if (chipTimes.current.length >= 2) {
         return;
       }
-      if (chipAtImpact(source, origin, forceDirection, intensity)) {
-        chipTimes.current.push(now);
-      }
+      chipTimes.current.push(now);
+      contactDamageAfterStep.current.set(
+        source.id,
+        currentStep + DEBRIS_RETRY_COOLDOWN_STEPS,
+      );
+      chipAtImpact(source, origin, forceDirection, intensity);
     },
     [chipAtImpact, settleWorld, shatterTarget],
   );
@@ -4066,6 +4690,7 @@ function OpenWorldScene({
       magnitude: number,
       mass: number,
       forceDirection: { x: number; y: number; z: number },
+      otherColliderHandle: number,
     ) =>
       handleBodyContact(
         piece,
@@ -4073,6 +4698,7 @@ function OpenWorldScene({
         magnitude,
         mass,
         forceDirection,
+        otherColliderHandle,
       ),
     [handleBodyContact],
   );
@@ -4083,6 +4709,7 @@ function OpenWorldScene({
       magnitude: number,
       mass: number,
       forceDirection: { x: number; y: number; z: number },
+      otherColliderHandle: number,
     ) =>
       handleBodyContact(
         shard,
@@ -4090,6 +4717,7 @@ function OpenWorldScene({
         magnitude,
         mass,
         forceDirection,
+        otherColliderHandle,
       ),
     [handleBodyContact],
   );
@@ -4100,6 +4728,7 @@ function OpenWorldScene({
       magnitude: number,
       mass: number,
       forceDirection: { x: number; y: number; z: number },
+      otherColliderHandle: number,
     ) =>
       handleBodyContact(
         remnant,
@@ -4107,6 +4736,7 @@ function OpenWorldScene({
         magnitude,
         mass,
         forceDirection,
+        otherColliderHandle,
       ),
     [handleBodyContact],
   );
@@ -4182,6 +4812,18 @@ function OpenWorldScene({
     playImpactSound(material);
 
     const contactTimer = window.setTimeout(() => {
+      // The 105 ms swing delay can outlive the geometry generation that was
+      // raycast above. Never mutate a source that has already been replaced.
+      if (
+        (primaryPieceId &&
+          (carvedPiecesRef.current.has(primaryPieceId) ||
+            shatteredPiecesRef.current.has(primaryPieceId))) ||
+        (shardId && !shardById.current.has(shardId)) ||
+        (remnantId && !remnantById.current.has(remnantId))
+      ) {
+        return;
+      }
+
       burstId.current += 1;
       const nextBurstId = burstId.current;
       setBursts((current) => [
@@ -4316,11 +4958,15 @@ function OpenWorldScene({
         }
       } else if (remnantId) {
         const remnantDefinition = remnantById.current.get(remnantId);
-        if (
+        const remnantBody = pieceBodies.current.get(remnantId);
+        const remnantIsFixed = Boolean(
           remnantDefinition &&
-          !remnantDefinition.detached &&
-          !brokenPiecesRef.current.has(remnantDefinition.parentId)
-        ) {
+            !remnantDefinition.detached &&
+            !brokenPiecesRef.current.has(remnantDefinition.parentId) &&
+            (!remnantBody ||
+              remnantBody.bodyType() === rapier.RigidBodyType.Fixed),
+        );
+        if (remnantDefinition && remnantIsFixed) {
           if (groundMaterials.has(remnantDefinition.material)) {
             // Ground stays ground: repeated hammer blows keep digging the
             // crater deeper instead of finishing the parent tile and
@@ -4330,14 +4976,6 @@ function OpenWorldScene({
               if (dig.brokenParentId) {
                 breakPieces([dig.brokenParentId]);
               }
-            } else {
-              applyImpact(
-                remnantDefinition.id,
-                material,
-                point,
-                direction,
-                0.4,
-              );
             }
             settleWorld();
             return;
@@ -4357,7 +4995,6 @@ function OpenWorldScene({
               settleWorld();
               return;
             }
-            applyImpact(remnantDefinition.id, material, point, direction, 0.25);
             settleWorld();
             return;
           }
@@ -4415,10 +5052,12 @@ function OpenWorldScene({
     strikeTimers.current.push(contactTimer);
   }, [
     applyImpact,
+    breakablePieceById,
     breakAt,
     breakPieces,
     camera,
     carveAt,
+    carveLooseTarget,
     center,
     commitRemnants,
     fallbackLook,
@@ -4426,6 +5065,7 @@ function OpenWorldScene({
     fireRocket,
     fireRound,
     intersectBreakables,
+    rapier,
     settleWorld,
     shatterTarget,
     weapon,

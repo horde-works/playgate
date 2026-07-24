@@ -168,7 +168,9 @@ test("the fortress has distinct working zones inside and outside the wall", () =
     ["minas:siege-supplies", 100],
     ["minas:siege-engines", 45],
     ["minas:occupation-traces", 55],
-    ["minas:living-forest", 400],
+    // Pine crowns are rendered as shared instanced sprays; the authored pieces
+    // stay deliberately sparse and exist only as destruction proxies.
+    ["minas:living-forest", 144],
     ["minas:undergrowth", 80],
     ["minas:mountain-scree", 150],
   ]);

@@ -44,6 +44,8 @@ import {
   buildStaticColliderMeshes,
   type StaticColliderMeshDefinition,
 } from "./staticColliders";
+import { TreeVisuals } from "./TreeVisuals";
+import { isProceduralVegetationPiece } from "./treeVisualModel";
 
 const UNIT_BOX = new BoxGeometry(1, 1, 1);
 // Unit-diameter, unit-height cylinder along Y; instance scale sets the
@@ -359,9 +361,13 @@ export const IntactBreakableWorld = memo(function IntactBreakableWorld({
   pieces: readonly BreakablePieceDefinition[];
   hiddenPieceIds: ReadonlySet<string>;
 }) {
-  const instanceBatches = useMemo(
-    () => buildIntactInstanceBatches(pieces),
+  const genericRenderPieces = useMemo(
+    () => pieces.filter((piece) => !isProceduralVegetationPiece(piece)),
     [pieces],
+  );
+  const instanceBatches = useMemo(
+    () => buildIntactInstanceBatches(genericRenderPieces),
+    [genericRenderPieces],
   );
   const lighting = useMemo(() => new WorldLightingBake(pieces), [pieces]);
   const colliderPieces = useMemo(
@@ -385,6 +391,7 @@ export const IntactBreakableWorld = memo(function IntactBreakableWorld({
           lighting={lighting}
         />
       ))}
+      <TreeVisuals pieces={pieces} hiddenPieceIds={hiddenPieceIds} />
       <IntactPieceColliders pieces={colliderPieces} />
     </>
   );
