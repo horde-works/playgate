@@ -1567,6 +1567,304 @@ function createStorySites(): void {
   }, { palette: { paint: "#5e6a48", stripe: "#c9b06a" } });
 }
 
+/**
+ * Фьордовый причал за южными воротами. Земля здесь выступает мысом до
+ * радиуса ~92 и обрывается в туман; мостки продолжают мыс: береговые
+ * прогоны лежат на земле, последняя секция уходит за кромку на боковых
+ * креплениях, сваи под ней висят прямо в тумане — вода не видна, но причал
+ * знает, где она. Перевёрнутая лодка и весло на берегу говорят, что отсюда
+ * ходят; фонарь на конце мостков — единственный огонь над «водой» ночью.
+ */
+function createFjordJetty(): void {
+  const jetty = group("fjord-jetty", "Jetty over the fog", "wood", "stack");
+  const centerX = -1.2;
+  const runnerXs = [centerX - 0.66, centerX + 0.66] as const;
+  const deckStartZ = -91.3;
+  const deckEndZ = -107.54;
+
+  // Прогоны: три береговые секции лежат на земле, четвёртая продолжает их
+  // за кромку — она держится боковым креплением за соседку, как перила
+  // частокола, а не опорой (под ней уже нечего подпирать).
+  const runnerCentersZ = [-93.0, -97.3, -101.6, -105.9] as const;
+  for (const [sideIndex, rx] of runnerXs.entries()) {
+    for (const [segment, cz] of runnerCentersZ.entries()) {
+      // Каждая секция найтована к соседке ("cable" обходит правило высоты
+      // настенного крепления — прогоны одной высоты). Береговые секции и
+      // так лежат на земле, но шумовая кромка тайлов дырявая, поэтому цепь
+      // до берега — единственная опора, которой можно верить.
+      primitive(jetty, `runner:${sideIndex}:${segment}`, "wood", "plank",
+        [rx, 0.105, cz], [0.18, 0.13, 4.34],
+        segment % 2 === 0 ? "#5d4531" : "#54402d", {
+          contactBoxes: [{ position: [0, 0, 0], size: [0.2, 0.14, 4.3] }],
+          carriesAttachments: true,
+          attachmentSupportMode: "cable",
+          sideAttachmentReach: 0.9,
+          surface: [{ kind: "damp", amount: 0.45 }],
+        });
+    }
+  }
+
+  // Настил: доски поперёк, с лёгким разнобоем — мостки, а не палуба.
+  const plankCount = Math.round((deckStartZ - deckEndZ) / 0.56);
+  for (let plank = 0; plank <= plankCount; plank += 1) {
+    const z = deckStartZ - plank * 0.56;
+    primitive(jetty, `deck:${plank}`, "wood", "plank",
+      [centerX, 0.205, z], [1.9, 0.07, 0.44],
+      plank % 3 === 0 ? "#6d5138" : plank % 3 === 1 ? "#63492f" : "#725039", {
+        rotation: [0, (noise(plank, 3, 21) - 0.5) * 0.05, 0],
+        contactBoxes: [{ position: [0, 0, 0], size: [1.6, 0.07, 0.44] }],
+        surface: plank % 4 === 0 ? [{ kind: "damp", amount: 0.4 }] : undefined,
+      });
+  }
+
+  // Сваи: несут не нагрузку, а рассказ — уходят из-под настила в туман.
+  for (const [pairIndex, pz] of [-96.2, -100.4, -104.6, -107.2].entries()) {
+    for (const side of [-1, 1] as const) {
+      primitive(jetty, `pile:${pairIndex}:${side}`, "wood", "cylinder",
+        [centerX + side * 0.98, -1.45, pz], [0.28, 3.4, 0.28],
+        pairIndex % 2 === 0 ? "#4a372c" : "#553f2e", {
+          rotation: [side * 0.03, 0, -side * 0.04],
+          contactBoxes: [{ position: [0, 0, 0], size: [0.28, 3.4, 0.28] }],
+          bearsLoad: false,
+          attachmentSupportMode: "cable",
+          sideAttachmentReach: 0.85,
+          surface: [{ kind: "damp", amount: 0.6 }, { kind: "moss", amount: 0.3 }],
+        });
+    }
+  }
+
+  // Конец мостков: кнехт для швартова и фонарный столб над туманом.
+  primitive(jetty, "bollard", "wood", "cylinder",
+    [centerX + 0.62, 0.72, -107.1], [0.3, 0.95, 0.3], "#4a372c", {
+      contactBoxes: [{ position: [0, 0, 0], size: [0.3, 0.95, 0.3] }],
+      surface: [{ kind: "damp", amount: 0.5 }],
+    });
+  primitive(jetty, "lamp-post", "wood", "cylinder",
+    [centerX - 0.68, 1.09, -107.15], [0.22, 1.7, 0.22], "#3f3027", {
+      contactBoxes: [{ position: [0, 0, 0], size: [0.22, 1.7, 0.22] }],
+      carriesAttachments: true,
+      surface: [{ kind: "damp", amount: 0.5 }],
+    });
+  primitive(jetty, "lamp-arm", "wood", "plank",
+    [centerX - 0.45, 1.98, -107.15], [0.56, 0.08, 0.08], "#3f3027", {
+      bearsLoad: false,
+      sideAttachmentReach: 0.5,
+      contactBoxes: [{ position: [0, 0, 0], size: [0.56, 0.08, 0.08] }],
+    });
+  primitive(jetty, "lamp-cap", "steel", "steelSheet",
+    [centerX - 0.2, 1.92, -107.15], [0.24, 0.05, 0.24], "#353a3b", {
+      bearsLoad: false,
+      sideAttachmentReach: 0.6,
+    });
+  primitive(jetty, "lamp-flame", "glass", "glassPane",
+    [centerX - 0.2, 1.78, -107.15], [0.15, 0.2, 0.15], "#f2dfa7", {
+      bearsLoad: false,
+      sideAttachmentReach: 0.6,
+      light: { color: "#ffb46a", distance: 9, intensity: 3 },
+    });
+
+  // Швартовый канат провис с кнехта к ближней свае.
+  primitive(jetty, "mooring-rope", "wood", "cylinder",
+    [centerX + 0.78, 0.15, -106.55], [0.05, 1.35, 0.05], "#7a6648", {
+      rotation: [0.6, 0, 0.25],
+      bearsLoad: false,
+      attachmentSupportMode: "cable",
+      sideAttachmentReach: 1.3,
+      contactBoxes: [{ position: [0, 0, 0], size: [0.05, 1.35, 0.05] }],
+    });
+
+  // Берег: перевёрнутая лодка на просушке и весло рядом. Корпус собран
+  // цепочкой опор: гунвалы на земле, борта на гунвалах, киль сверху.
+  const boatX = 2.6;
+  const boatZ = -89.8;
+  for (const side of [-1, 1] as const) {
+    primitive(jetty, `boat:gunwale:${side}`, "wood", "plank",
+      [boatX, 0.13, boatZ + side * 0.62], [3.3, 0.16, 0.24],
+      side < 0 ? "#5a4230" : "#63482f", {
+        contactBoxes: [{ position: [0, 0, 0], size: [3.3, 0.16, 0.24] }],
+        surface: [{ kind: "damp", amount: 0.4 }],
+      });
+    primitive(jetty, `boat:strake:${side}`, "wood", "panel",
+      [boatX, 0.4, boatZ + side * 0.44], [3.1, 0.42, 0.08],
+      side < 0 ? "#6b4c34" : "#725038", {
+        rotation: [-side * 0.6, 0, 0],
+        contactBoxes: [{ position: [0, 0, 0], size: [2.8, 0.5, 0.3] }],
+        surface: [{ kind: "damp", amount: 0.3 }],
+      });
+  }
+  primitive(jetty, "boat:keel", "wood", "plank",
+    [boatX, 0.64, boatZ], [3.4, 0.13, 0.16], "#3f3027", {
+      contactBoxes: [{ position: [0, 0, 0], size: [3.0, 0.14, 0.6] }],
+      surface: [{ kind: "moss", amount: 0.25 }],
+    });
+  for (const end of [-1, 1] as const) {
+    primitive(jetty, `boat:stem:${end}`, "wood", "plank",
+      [boatX + end * 1.78, 0.28, boatZ], [0.45, 0.35, 0.85], "#59402f", {
+        rotation: [0, end * 0.55, 0],
+        contactBoxes: [{ position: [0, 0, 0], size: [0.45, 0.35, 0.5] }],
+      });
+  }
+  primitive(jetty, "oar:shaft", "wood", "plank",
+    [4.9, 0.035, -91.6], [1.9, 0.05, 0.14], "#6d5138", {
+      rotation: [0, 1.0, 0],
+    });
+  primitive(jetty, "oar:blade", "wood", "plank",
+    [5.7, 0.04, -92.9], [0.42, 0.045, 0.22], "#63492f", {
+      rotation: [0, 1.0, 0],
+    });
+
+  // Бочка у корня мостков — причал живёт, сюда носят и отсюда уносят.
+  primitive(jetty, "barrel", "wood", "cylinder",
+    [0.6, 0.4, -91.6], [0.55, 0.8, 0.55], "#5b4331", {
+      contactBoxes: [{ position: [0, 0, 0], size: [0.5, 0.8, 0.5] }],
+      surface: [{ kind: "damp", amount: 0.35 }],
+    });
+
+  // Перила западной стороны настила: стойки стоят на досках, поручень
+  // навешен — на мостках над пропастью держатся за что-то.
+  const railPostsZ = [-94.2, -96.9, -99.6, -102.3, -105.0] as const;
+  for (const [postIndex, pz] of railPostsZ.entries()) {
+    primitive(jetty, `rail-post:${postIndex}`, "wood", "cylinder",
+      [centerX - 0.82, 0.73, pz], [0.11, 0.98, 0.11], "#4a372c", {
+        contactBoxes: [{ position: [0, 0, 0], size: [0.13, 0.98, 0.13] }],
+        carriesAttachments: true,
+        surface: [{ kind: "damp", amount: 0.5 }],
+      });
+  }
+  for (let railSegment = 0; railSegment < railPostsZ.length - 1; railSegment += 1) {
+    const midZ = (railPostsZ[railSegment] + railPostsZ[railSegment + 1]) / 2;
+    primitive(jetty, `rail:${railSegment}`, "wood", "plank",
+      [centerX - 0.82, 1.24, midZ], [0.09, 0.07, 2.85],
+      railSegment % 2 === 0 ? "#5d4531" : "#54402d", {
+        bearsLoad: false,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.6,
+        contactBoxes: [{ position: [0, 0, 0], size: [0.09, 0.07, 2.85] }],
+        surface: [{ kind: "damp", amount: 0.4 }],
+      });
+  }
+
+  // Береговые кнехты у корня причала и бухта каната на настиле.
+  for (const side of [-1, 1] as const) {
+    primitive(jetty, `shore-bollard:${side}`, "wood", "cylinder",
+      [centerX + side * 1.15, 0.44, -91.9], [0.26, 0.85, 0.26], "#4a372c", {
+        contactBoxes: [{ position: [0, 0, 0], size: [0.26, 0.85, 0.26] }],
+        surface: [{ kind: "damp", amount: 0.45 }, { kind: "moss", amount: 0.2 }],
+      });
+  }
+  primitive(jetty, "rope-coil", "wood", "cylinder",
+    [centerX + 0.45, 0.31, -103.9], [0.52, 0.13, 0.52], "#7a6648", {
+      contactBoxes: [{ position: [0, 0, 0], size: [0.5, 0.13, 0.5] }],
+      bearsLoad: false,
+    });
+
+  // Рыбацкие ящики на берегу: один под крышкой, второй брошен пустым.
+  primitive(jetty, "crate:a", "wood", "plank",
+    [1.9, 0.21, -92.7], [0.55, 0.38, 0.42], "#5f4834", {
+      surface: [{ kind: "damp", amount: 0.3 }],
+    });
+  primitive(jetty, "crate:a:lid", "wood", "plank",
+    [1.9, 0.43, -92.7], [0.58, 0.06, 0.45], "#6a5138", {
+      rotation: [0, 0.12, 0],
+    });
+  primitive(jetty, "crate:b", "wood", "plank",
+    [2.6, 0.18, -92.3], [0.46, 0.32, 0.38], "#564130", {
+      rotation: [0, 0.5, 0],
+      surface: [{ kind: "damp", amount: 0.35 }],
+    });
+}
+
+/**
+ * Прибрежная полоса: непрерывный периметр берега. Осока и жёсткая трава
+ * гуще всего у самой кромки, между ними плоские замшелые камни и плавник —
+ * брёвна, которые «вынесло» из тумана. Кромка читается берегом в любой
+ * точке круга, а не только у причала.
+ */
+function createShoreFringe(): void {
+  const fringe = group("shore-fringe", "Shoreline sedge and drift", "grass", "stack");
+
+  // Точная копия терраинной сетки: клетка есть, если её центр внутри
+  // шумовой кромки. Полоса ищет самый внешний существующий тайл на своём
+  // азимуте и отступает от него на метр внутрь.
+  const tileExists = (x: number, z: number): boolean => {
+    const cellX = Math.round(x / 4) * 4;
+    const cellZ = WORLD_CENTER_Z + Math.round((z - WORLD_CENTER_Z) / 4) * 4;
+    if (cellX < -96 || cellX > 96) {
+      return false;
+    }
+    const radius = Math.hypot(cellX, cellZ - WORLD_CENTER_Z);
+    const edge = 92 + (noise(cellX, cellZ, 4) - 0.5) * 8 + Math.sin(cellZ * 0.075) * 2.4;
+    return radius <= edge;
+  };
+
+  const steps = 112;
+  for (let step = 0; step < steps; step += 1) {
+    const seedA = noise(step, 4, 61);
+    const seedB = noise(step, 9, 67);
+    const angle = (step / steps) * Math.PI * 2 + (seedA - 0.5) * 0.04;
+    let radius = 93.5;
+    let x = Math.cos(angle) * radius;
+    let z = WORLD_CENTER_Z + Math.sin(angle) * radius;
+    for (let pull = 0; pull < 6 && !tileExists(x, z); pull += 1) {
+      radius -= 1.8;
+      x = Math.cos(angle) * radius;
+      z = WORLD_CENTER_Z + Math.sin(angle) * radius;
+    }
+    if (!tileExists(x, z)) {
+      continue;
+    }
+    radius -= 1.1;
+    x = Math.cos(angle) * radius;
+    z = WORLD_CENTER_Z + Math.sin(angle) * radius;
+
+    // У причала берег и так занят делом.
+    if (Math.abs(x) < 5.5 && z < -86) {
+      continue;
+    }
+
+    const kind = noise(step, 13, 71);
+    if (kind < 0.1) {
+      continue;
+    }
+    if (kind < 0.24) {
+      // Плавник: осклизлое бревно, вынесенное «водой».
+      const along = step % 2 === 0;
+      const length = 1.6 + seedB * 1.4;
+      primitive(fringe, `drift:${step}`, "wood", "cylinder",
+        [x, 0.16, z], [0.3, length, 0.3],
+        seedB > 0.5 ? "#544536" : "#4b3e31", {
+          rotation: along ? [Math.PI / 2, 0, 0] : [0, 0, Math.PI / 2],
+          contactBoxes: [{ position: [0, 0, 0], size: along ? [0.32, length, 0.3] : [0.32, length, 0.3] }],
+          surface: [{ kind: "damp", amount: 0.55 }, { kind: "moss", amount: 0.4 }],
+        });
+    } else if (kind < 0.42) {
+      const width = 0.7 + seedB * 1.1;
+      primitive(fringe, `shore-stone:${step}`, step % 5 === 0 ? "basalt" : "stone", "stoneBlock",
+        [x, 0.1 + width * 0.12, z], [width, 0.22 + width * 0.26, width * 0.78],
+        step % 5 === 0 ? "#42474a" : step % 2 === 0 ? "#6d6f68" : "#7a7b72", {
+          rotation: [0, seedA * Math.PI, 0.04],
+          surface: [{ kind: "moss", amount: 0.5 + seedB * 0.3 }, { kind: "damp", amount: 0.4 }],
+        });
+    } else {
+      // Осока: пучок из двух-трёх жёстких куп с наклоном от «воды».
+      const clumps = 2 + Math.floor(seedB * 1.99);
+      for (let clump = 0; clump < clumps; clump += 1) {
+        const clumpAngle = angle + (noise(step, clump, 73) - 0.5) * 1.6;
+        const cx = x + Math.cos(clumpAngle) * (0.35 + clump * 0.3);
+        const cz = z + Math.sin(clumpAngle) * (0.3 + clump * 0.28);
+        const height = 0.55 + noise(step, clump, 79) * 0.5;
+        primitive(fringe, `sedge:${step}:${clump}`, "foliage", "groundTile",
+          [cx, height / 2, cz], [0.3 + seedA * 0.2, height, 0.26],
+          clump % 2 === 0 ? "#5b6b44" : "#52633e", {
+            rotation: [(seedB - 0.5) * 0.2, noise(step, clump, 83) * Math.PI, (seedA - 0.5) * 0.24],
+            vegetationVisual: { kind: "shrub", seed: step * 7 + clump },
+            bearsLoad: false,
+          });
+      }
+    }
+  }
+}
+
 createTerrain();
 createPalisade();
 createBuildings();
@@ -1575,6 +1873,8 @@ createRockwork();
 createLivedInDressing();
 createStorySites();
 createWoodland();
+createFjordJetty();
+createShoreFringe();
 
 export const vikingVillageDocument: AuthoredSceneDocument = {
   schemaVersion: 1,

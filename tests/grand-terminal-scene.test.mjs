@@ -49,8 +49,11 @@ test("the terminal has a complete station, train shed and rolling stock", () => 
 });
 
 test("the terminal uses voxel-ready faceted rounds, hinged doors and lit fixtures", () => {
+  // The station park is planted with the composite flora core, whose trunks
+  // and branches are legitimately cylindrical; the no-cylinder rule guards
+  // the ARCHITECTURE (boiler, wheels, columns stay faceted voxel rounds).
   const cylinders = grandTerminalScene.breakablePieces.filter(
-    (piece) => piece.shape === "cylinder",
+    (piece) => piece.shape === "cylinder" && !piece.id.includes(":tree:"),
   );
   const facetedSlabs = grandTerminalScene.breakablePieces.filter((piece) =>
     piece.id.includes(":facet:"),
@@ -68,8 +71,10 @@ test("the terminal uses voxel-ready faceted rounds, hinged doors and lit fixture
   assert.equal(cylinders.length, 0);
   assert.equal(facetedSlabs.length >= 300, true, String(facetedSlabs.length));
   // Three main entrances plus a street door into each ticket wing, two
-  // leaves each, all swinging on hinges.
-  assert.equal(hingedDoors.length, 10);
+  // leaves each; the fog-siding hut door and the two barrier arms on the
+  // approach road; and the service belt gates (two goods-shed doorways and
+  // the workshop doorway, two leaves each) — all swinging on hinges.
+  assert.equal(hingedDoors.length, 19);
   // Coach windows lie flat in the carriage sides — no accidental yaw.
   assert.equal(
     coachWindows.every((piece) => piece.rotation === undefined),

@@ -155,6 +155,13 @@ export const vikingTrafficRoutes: readonly VikingTrafficRoute[] = [
     wear: 1,
   },
   {
+    id: "gate-to-jetty",
+    purpose: "South gate down the cape to the fog jetty",
+    points: [[-1.2, -91], [-0.4, -84.5], [0.6, -78], [-0.6, -72.5], [0, -66.5]],
+    width: 1.45,
+    wear: 0.66,
+  },
+  {
     id: "north-family",
     purpose: "Family house to the north sledge and village spine",
     points: [[-0.8, 34], [-8, 34], homeEntrances["family-north"]],

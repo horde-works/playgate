@@ -23,7 +23,7 @@ import {
   type BreakablePieceDefinition,
 } from "./destructionScene";
 import { getPieceMaterial } from "./materialTextures";
-import { materialAnchor } from "./materialAppearance";
+import { materialAnchorWithWeathering } from "./materialAppearance";
 import {
   SILICATE_JOINT_EXPANSION,
   hasSilicateJoints,
@@ -119,10 +119,16 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
     const facePos = new Float32Array(batch.pieces.length * 3).fill(1);
     const faceNeg = new Float32Array(batch.pieces.length * 3).fill(1);
     batch.pieces.forEach((piece, index) => {
-      anchors.set(materialAnchor(piece.position), index * 4);
       // Organic weathering receptivity (0 = pristine): the shader turns it
       // into moss on up-faces and mould near the ground.
-      anchors[index * 4 + 3] = piece.weathering ?? 0;
+      anchors.set(
+        materialAnchorWithWeathering(
+          piece.position,
+          [0, 0, 0],
+          piece.weathering,
+        ),
+        index * 4,
+      );
       if (piece.shape === "groundTile") {
         facePos.fill(0, index * 3, index * 3 + 3);
         faceNeg.fill(0, index * 3, index * 3 + 3);

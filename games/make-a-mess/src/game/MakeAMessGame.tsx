@@ -119,6 +119,7 @@ import {
 import { Birds } from "./Birds";
 import { GrassField } from "./GrassField";
 import { SceneDressing } from "./SceneDressing";
+import { WorldEdge } from "./WorldEdge";
 import {
   HingedDoorSystem,
   type HingedEntryApproach,
@@ -491,6 +492,21 @@ function Player({
     );
   }, [flightMode]);
 
+  // Dev-хук: телепорт игрока из консоли/CDP для скриншотов, без пилотирования.
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") {
+      return;
+    }
+    const scope = window as unknown as Record<string, unknown>;
+    scope.__mamTeleport = (x: number, y: number, z: number) => {
+      body.current?.setTranslation({ x, y, z }, true);
+      body.current?.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    };
+    return () => {
+      delete scope.__mamTeleport;
+    };
+  }, []);
+
   useFrame((_, delta) => {
     if (!body.current) {
       return;
@@ -805,6 +821,22 @@ function MouseLook({
     lastX: 0,
     lastY: 0,
   });
+
+  // Dev-хук: выставить взгляд из консоли/CDP (пара к __mamTeleport).
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") {
+      return;
+    }
+    const scope = window as unknown as Record<string, unknown>;
+    scope.__mamLook = (nextYaw: number, nextPitch: number) => {
+      yaw.current = nextYaw;
+      pitch.current = MathUtils.clamp(nextPitch, -Math.PI / 2.1, Math.PI / 2.1);
+      cameraRef.current.rotation.set(pitch.current, yaw.current, 0, "YXZ");
+    };
+    return () => {
+      delete scope.__mamLook;
+    };
+  }, []);
 
   useFrame(() => {
     if (!initialized.current) {
@@ -3442,6 +3474,7 @@ function OpenWorldScene({
           color: source.color,
           renderColor: source.renderColor,
           textureProfile: source.textureProfile,
+          weathering: source.weathering,
           landscapeSurface: source.landscapeSurface,
           treeVisual: source.treeVisual,
           treeVisualSourceId:
@@ -3658,6 +3691,7 @@ function OpenWorldScene({
           color: source.color,
           renderColor: sourceRenderColor,
           textureProfile: source.textureProfile,
+          weathering: source.weathering,
           landscapeSurface: source.landscapeSurface,
           treeVisual: source.treeVisual,
           treeVisualSourceId,
@@ -3708,6 +3742,7 @@ function OpenWorldScene({
           color: source.color,
           renderColor: sourceRenderColor,
           textureProfile: source.textureProfile,
+          weathering: source.weathering,
           landscapeSurface: source.landscapeSurface,
           treeVisual: source.treeVisual,
           treeVisualSourceId,
@@ -5193,6 +5228,8 @@ function OpenWorldScene({
         nightRef={nightRef}
         theme={scene.environment}
         worldRadius={scene.worldRadius}
+        worldCenter={scene.worldCenter}
+        cameraFar={scene.cameraFar}
         snapVersion={timeOfDaySnapVersion}
         cinematic={cinematic}
       />
@@ -5210,6 +5247,15 @@ function OpenWorldScene({
         pieces={breakablePieces}
         brokenPieces={brokenPieces}
       />
+      {scene.worldRadius ? (
+        <WorldEdge
+          sceneId={scene.id}
+          worldRadius={scene.worldRadius}
+          center={scene.worldCenter}
+          cameraFar={scene.cameraFar}
+          nightRef={nightRef}
+        />
+      ) : null}
       {scene.id === "viking-village" && scene.worldRadius ? (
         <>
           <GrassField
@@ -5219,7 +5265,7 @@ function OpenWorldScene({
             pieces={breakablePieces}
           />
           <SmokePlumes nightRef={nightRef} />
-          <Birds center={scene.worldCenter} />
+          <Birds center={scene.worldCenter} worldRadius={scene.worldRadius} />
         </>
       ) : null}
       <group ref={breakableRaycastRoot}>

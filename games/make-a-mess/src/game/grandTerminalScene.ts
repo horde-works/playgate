@@ -9,6 +9,8 @@ import {
   type SceneVector3,
   type SupportMode,
 } from "./destructionScene.ts";
+import { propTree } from "../content/prefabs/coreFlora.ts";
+import { placeProp } from "../content/prefabs/coreProps.ts";
 
 const clusters: BreakableClusterDefinition[] = [];
 const lamps: LampDefinition[] = [];
@@ -1649,21 +1651,27 @@ function createStationLife(): void {
     addCrate(life, `cart-crate:${index}`, x, y, z, size, yaw);
   }
 
-  // Trees and clipped hedges soften the edge of the railway museum grounds.
-  for (const [index, [x, z]] of [
-    [-66, 28], [-72, 8], [-68, -18], [-62, -48],
-    [66, 28], [72, 8], [68, -18], [62, -48],
-    [-40, 68], [40, 68],
-  ].entries()) {
-    landscape.add(`tree:${index}:trunk`, "wood", "plank", [x, 2.7, z], [0.85, 5.4, 0.85], oakDark);
-    for (const [crownIndex, [dx, dy, dz, size]] of [
-      [0, 4.8, 0, 4.1],
-      [-1.6, 3.9, 0.2, 3.1],
-      [1.5, 4.05, -0.3, 3.2],
-      [0.2, 5.9, 0.1, 3.0],
-    ].entries()) {
-      landscape.add(`tree:${index}:crown:${crownIndex}`, "foliage", "panel", [x + dx, dy, z + dz], [size, size, size], crownIndex % 2 === 0 ? "#36503a" : "#456044");
-    }
+  // The station park is planted with the same composite flora core as the
+  // town: real trunks, branches and crowns that chop and fall — not
+  // billboard cubes. Oaks carry the monumental frontage, birches loosen the
+  // side arcs, pines darken the yard end.
+  for (const [index, [kind, x, z, seed, scale]] of ([
+    ["oak", -66, 28, 51, 1.15],
+    ["birch", -72, 8, 52, 1.05],
+    ["oak", -68, -18, 53, 1.2],
+    ["pine", -62, -48, 54, 1.15],
+    ["oak", 66, 28, 55, 1.1],
+    ["birch", 72, 8, 56, 1.08],
+    ["oak", 68, -18, 57, 1.22],
+    ["pine", 62, -48, 58, 1.12],
+    ["oak", -40, 68, 59, 1.18],
+    ["oak", 40, 68, 60, 1.18],
+  ] as const).entries()) {
+    landscape.pieces.push(
+      ...placeProp(`${landscape.id}:tree:${index}`, propTree(kind, { seed, scale }), [x, 0, z]).map(
+        (piece) => ({ ...piece, clusterId: landscape.id }),
+      ),
+    );
   }
 
   // Cast-iron lamps lead from the round edge to the entrance.
@@ -1681,11 +1689,759 @@ function createStationLife(): void {
   finish(landscape, "Railway park trees", "foliage", "stack");
 }
 
+/**
+ * Терминал — конечная, но поезда сюда откуда-то приходят. Две средние колеи
+ * продолжаются за дебаркадер и уходят в туман за кромкой мира: рельсы ржавее
+ * вокзальных, шпалы реже (часть растащили), между ними трава. У горловины —
+ * пара семафоров и будка обходчика с тёплым окном; у депо — водонапорная
+ * башня; подъездную дорогу перед форкортом закрывает шлагбаум. Так у карты
+ * появляется открытая сторона: дальше есть куда — просто не сегодня.
+ */
+function createFogSiding(): void {
+  const siding = zone("terminal:fog-siding");
+  const fittings = zone("terminal:fog-siding:fittings");
+  const fogTracks = [-9, 9];
+
+  fogTracks.forEach((trackX, trackIndex) => {
+    // Балластная лента поверх луга; у самой кромки — собственное земляное
+    // основание, как у кольцевого бордюра: туман скрывает его целиком, но
+    // рельсам есть на чём закончиться.
+    for (let z = -74.5; z >= -104.5; z -= 6) {
+      const tone = seededNoise(trackX, z, 141);
+      siding.add(`ballast:${trackIndex}:${z}`, "concrete", "groundTile",
+        [trackX, 0.1, z], [4.3, 0.16, 6.04],
+        tone > 0.66 ? "#565751" : tone > 0.33 ? "#4e4f4a" : "#55584c");
+    }
+    siding.add(`footing:${trackIndex}`, "earth", "groundTile",
+      [trackX, -1.13, -107.5], [4.2, 1.9, 4.6], "#4d3f31");
+    // Балластная лента заканчивается ДО кольцевого бордюра — рельсы проходят
+    // над его камнем, но щебень на камень не заезжает.
+    siding.add(`ballast:end:${trackIndex}`, "concrete", "groundTile",
+      [trackX, 0.06, -106.9], [4.3, 0.2, 3.4], "#4e4f4a");
+
+    // Шпальная решётка непрерывна, тем же шагом, что на вокзале — колея
+    // старая (тон темнее, лёгкий перекос), но колея, а не руина.
+    let sleeperIndex = 0;
+    for (let z = -74.2; z >= -108.4; z -= 2.25) {
+      sleeperIndex += 1;
+      const tone = seededNoise(trackX, z, 143);
+      siding.add(`sleeper:${trackIndex}:${sleeperIndex}`, "wood", "plank",
+        [trackX, 0.26, z], [3.55, 0.16, 0.34],
+        tone > 0.62 ? "#46362a" : tone > 0.28 ? "#42332a" : "#3f3227",
+        [0, (tone - 0.5) * 0.04, 0]);
+      for (const side of [-1, 1]) {
+        siding.add(`chair:${trackIndex}:${sleeperIndex}:${side}`, "steel", "steelSheet",
+          [trackX + side * 0.78, 0.42, z], [0.28, 0.12, 0.25], iron);
+      }
+    }
+
+    for (let z = -76.5; z >= -106.5; z -= 6) {
+      for (const side of [-1, 1]) {
+        siding.add(`rail:${trackIndex}:${z}:${side}`, "steel", "steelSheet",
+          [trackX + side * 0.78, 0.53, z], [0.13, 0.18, 6.1], "#5d5348");
+      }
+    }
+    // Последний отрез короче и на метр повисает над туманом: колея не
+    // спрятана за упором, она просто уходит туда, куда не видно.
+    for (const side of [-1, 1]) {
+      siding.add(`rail:tip:${trackIndex}:${side}`, "steel", "steelSheet",
+        [trackX + side * 0.78, 0.53, -108.4], [0.13, 0.18, 4.0], "#665b4d");
+    }
+
+    // Трава пробилась между шпалами — по колее давно не ходили составы.
+    for (let tuft = 0; tuft < 12; tuft += 1) {
+      const tz = -76 - tuft * 2.55;
+      const tone = seededNoise(trackX * 3 + tuft, tz, 147);
+      if (tone < 0.3) {
+        continue;
+      }
+      siding.add(`tuft:${trackIndex}:${tuft}`, "foliage", "groundTile",
+        [trackX + (tone - 0.5) * 2.2, 0.33, tz],
+        [0.5 + tone * 0.4, 0.3 + tone * 0.25, 0.45], tone > 0.62 ? "#4d5f3d" : "#465939",
+        [0, tone * Math.PI, 0]);
+    }
+
+    // Пикетные столбики через равные интервалы — путейская разметка ведёт
+    // колею до самого тумана и обрывается вместе с ней.
+    const picketX = trackX + (trackIndex === 0 ? -2.7 : 2.7);
+    for (const [picketIndex, pz] of [-80, -92, -104].entries()) {
+      siding.add(`picket:${trackIndex}:${picketIndex}`, "stone", "stoneBlock",
+        [picketX, 0.4, pz], [0.14, 0.8, 0.14], "#ddd8cc");
+      siding.add(`picket-cap:${trackIndex}:${picketIndex}`, "steel", "steelSheet",
+        [picketX, 0.86, pz], [0.18, 0.11, 0.18], iron);
+    }
+  });
+
+  // Семафоры горловины — по образцу вокзальных, но смотрят в туман.
+  for (const [index, trackX] of fogTracks.entries()) {
+    const side = index === 0 ? -1 : 1;
+    const postX = trackX + side * 2.05;
+    fittings.add(`fog-signal:${index}:base`, "stone", "stoneBlock", [postX, 0.47, -100], [0.9, 0.9, 0.9], limestoneDark);
+    fittings.add(`fog-signal:${index}:post`, "steel", "steelSheet", [postX, 3.27, -100], [0.34, 5.6, 0.34], iron);
+    fittings.add(`fog-signal:${index}:finial`, "steel", "steelSheet", [postX, 6.2, -100], [0.5, 0.4, 0.5], "#2c3436");
+    fittings.add(`fog-signal:${index}:lamp-bracket`, "steel", "steelSheet", [postX + side * 0.24, 4.32, -100], [0.42, 0.14, 0.2], iron);
+    fittings.add(`fog-signal:${index}:arm`, "steel", "steelSheet",
+      [postX - side * 0.75, 5.27, -100], [1.65, 0.18, 0.25],
+      index === 0 ? "#a73b2e" : "#e1d0a0", [0, 0, index === 0 ? 0.18 : -0.18]);
+    fittings.add(`fog-signal:${index}:lamp`, "glass", "glassPane", [postX + side * 0.3, 4.55, -100], [0.36, 0.44, 0.34], litWindowColor);
+    lamps.push({
+      id: `${fittings.id}:fog-signal:${index}:lamp`,
+      position: [postX + side * 0.5, 4.55, -100],
+      color: index === 0 ? "#ff493b" : "#ffca68",
+      distance: 5,
+      intensity: 1.7,
+    });
+  }
+
+  // Будка обходчика: кирпичный путевой пост у горловины. Тёплое окно и
+  // дымоход — в тумане кто-то дежурит.
+  const hutX = 15.2;
+  const hutZ = -96;
+  fittings.add("hut:foundation", "stone", "stoneBlock", [hutX, 0.16, hutZ], [3.1, 0.3, 2.7], limestoneDark);
+  // Стены встык, как гаражный ряд: торцевые между боковыми, без нахлёста
+  // копланарных граней.
+  fittings.add("hut:wall:w", "brick", "brick", [hutX - 1.35, 1.38, hutZ], [0.24, 2.15, 2.4], brickRed);
+  fittings.add("hut:wall:e", "brick", "brick", [hutX + 1.35, 1.38, hutZ], [0.24, 2.15, 2.4], brickDark);
+  fittings.add("hut:wall:n", "brick", "brick", [hutX, 1.38, hutZ - 1.2], [2.44, 2.15, 0.24], brickRed);
+  // Простенки двери от боковой стены до полотна встык; над перемычкой —
+  // кирпичная вставка до верха кладки.
+  fittings.add("hut:wall:s:left", "brick", "brick", [hutX - 0.845, 1.38, hutZ + 1.2], [0.77, 2.15, 0.24], brickRed);
+  fittings.add("hut:wall:s:right", "brick", "brick", [hutX + 0.845, 1.38, hutZ + 1.2], [0.77, 2.15, 0.24], brickDark);
+  fittings.add("hut:door-lintel", "stone", "stoneBlock", [hutX, 2.31, hutZ + 1.2], [1.35, 0.28, 0.3], limestoneDark);
+  fittings.add("hut:door-head", "brick", "brick", [hutX, 2.95, hutZ + 1.2], [0.92, 1.0, 0.24], brickRed);
+  fittings.pieces.push({
+    id: `${fittings.id}:hut:door`,
+    clusterId: fittings.id,
+    material: "wood",
+    shape: "plank",
+    position: [hutX, 1.22, hutZ + 1.22],
+    size: [0.92, 1.85, 0.08],
+    color: oak,
+    hinge: {
+      pivot: [hutX - 0.46, 1.22, hutZ + 1.22],
+      direction: [1, 0, 0],
+      normal: [0, 0, 1],
+    },
+  });
+  // Кирпичные пилястры по углам — той же кладки, что углы вокзала.
+  for (const [pilasterIndex, [px, pz]] of ([
+    [hutX - 1.41, hutZ - 1.26],
+    [hutX + 1.41, hutZ - 1.26],
+    [hutX - 1.41, hutZ + 1.26],
+    [hutX + 1.41, hutZ + 1.26],
+  ] as const).entries()) {
+    fittings.add(`hut:pilaster:${pilasterIndex}`, "brick", "brick",
+      [px, 1.38, pz], [0.3, 2.15, 0.3], brickDark);
+  }
+  // Окно смотрит на колею — свет из него ложится прямо на рельсы. Рама,
+  // крестовый переплёт, каменный подоконник: окно, а не дыра со стеклом.
+  fittings.add("hut:window-frame", "wood", "plank", [hutX - 1.455, 1.62, hutZ], [0.1, 0.98, 0.88], oakDark);
+  fittings.add("hut:window", "glass", "glassPane", [hutX - 1.435, 1.62, hutZ], [0.05, 0.8, 0.7], litWindowColor);
+  const muntinVertical: BreakablePieceDefinition = {
+    id: `${fittings.id}:hut:muntin:v`,
+    clusterId: fittings.id,
+    material: "wood",
+    shape: "plank",
+    position: [hutX - 1.48, 1.62, hutZ],
+    size: [0.04, 0.78, 0.05],
+    color: oak,
+    bearsLoad: false,
+    attachmentSupportMode: "cable",
+    sideAttachmentReach: 0.3,
+  };
+  const muntinHorizontal: BreakablePieceDefinition = {
+    ...muntinVertical,
+    id: `${fittings.id}:hut:muntin:h`,
+    size: [0.04, 0.05, 0.68],
+  };
+  fittings.pieces.push(muntinVertical, muntinHorizontal);
+  fittings.pieces.push({
+    id: `${fittings.id}:hut:sill`,
+    clusterId: fittings.id,
+    material: "stone",
+    shape: "stoneBlock",
+    position: [hutX - 1.5, 1.08, hutZ],
+    size: [0.14, 0.08, 0.98],
+    color: limestoneDark,
+    bearsLoad: false,
+    sideAttachmentReach: 0.3,
+  });
+  lamps.push({
+    id: `${fittings.id}:hut:window`,
+    position: [hutX - 1.7, 1.62, hutZ],
+    color: "#ffd9a1",
+    distance: 8,
+    intensity: 2.4,
+  });
+  // Водосточная труба на северо-западном углу и ступень перед дверью.
+  fittings.add("hut:downpipe", "steel", "steelSheet", [hutX - 1.56, 1.22, hutZ - 1.05], [0.09, 2.4, 0.09], "#3a4245");
+  fittings.pieces.push({
+    id: `${fittings.id}:hut:downpipe-bend`,
+    clusterId: fittings.id,
+    material: "steel",
+    shape: "steelSheet",
+    position: [hutX - 1.44, 2.5, hutZ - 1.05],
+    size: [0.3, 0.09, 0.09],
+    color: "#3a4245",
+    bearsLoad: false,
+    sideAttachmentReach: 0.3,
+  });
+  fittings.add("hut:step", "stone", "stoneBlock", [hutX, 0.09, hutZ + 1.62], [1.15, 0.14, 0.5], limestone);
+  // Фонарь на кронштейне у двери — второй огонь поста, над ступенью.
+  fittings.pieces.push({
+    id: `${fittings.id}:hut:lamp-bracket`,
+    clusterId: fittings.id,
+    material: "steel",
+    shape: "steelSheet",
+    position: [hutX + 0.75, 2.14, hutZ + 1.38],
+    size: [0.08, 0.08, 0.4],
+    color: iron,
+    bearsLoad: false,
+    sideAttachmentReach: 0.35,
+  });
+  fittings.pieces.push({
+    id: `${fittings.id}:hut:lantern`,
+    clusterId: fittings.id,
+    material: "glass",
+    shape: "glassPane",
+    position: [hutX + 0.75, 1.92, hutZ + 1.52],
+    size: [0.22, 0.3, 0.22],
+    color: litWindowColor,
+    bearsLoad: false,
+    attachmentSupportMode: "cable",
+    sideAttachmentReach: 0.35,
+  });
+  lamps.push({
+    id: `${fittings.id}:hut:lantern`,
+    position: [hutX + 0.75, 1.92, hutZ + 1.62],
+    color: "#ffd49a",
+    distance: 7,
+    intensity: 2.2,
+  });
+  // Эмалированная табличка поста и дежурный инвентарь: ведро и лопата у
+  // стены — здесь работают, а не позируют.
+  fittings.pieces.push({
+    id: `${fittings.id}:hut:plate`,
+    clusterId: fittings.id,
+    material: "steel",
+    shape: "steelSheet",
+    position: [hutX - 0.75, 1.98, hutZ + 1.34],
+    size: [0.42, 0.28, 0.04],
+    color: "#2e4657",
+    bearsLoad: false,
+    sideAttachmentReach: 0.3,
+  });
+  addFacetedCylinder(fittings, "hut:bucket", "steel", "steelSheet", "y", [hutX + 1.75, 0.19, hutZ + 0.7], 0.34, 0.3, "#4a5357");
+  fittings.add("hut:shovel-shaft", "wood", "plank", [hutX + 1.62, 0.72, hutZ - 0.4], [0.05, 1.45, 0.05], oak, [0, 0, 0.24]);
+  fittings.pieces.push({
+    id: `${fittings.id}:hut:shovel-blade`,
+    clusterId: fittings.id,
+    material: "steel",
+    shape: "steelSheet",
+    position: [hutX + 1.79, 0.12, hutZ - 0.4],
+    size: [0.16, 0.26, 0.03],
+    color: "#4d5356",
+    bearsLoad: false,
+    attachmentSupportMode: "cable",
+    sideAttachmentReach: 0.3,
+  });
+  // Кирпичный карнизный поясок закрывает узел стена-кровля; крыша лежит на
+  // нём свесом, а не режет верх кладки.
+  fittings.add("hut:cornice", "brick", "brick", [hutX, 2.51, hutZ], [3.08, 0.11, 2.68], brickDark);
+  const hutRoofSize: SceneVector3 = [3.5, 0.14, 3.1];
+  fittings.add("hut:roof", "steel", "steelSheet", [hutX, 2.66, hutZ], hutRoofSize, "#3a4245",
+    [0.08, 0, 0], [3.0, 0.34, 2.6]);
+  // Труба несёт восточная стена — сквозь свес крыши, как и положено печной
+  // трубе; на наклонной кровле решателю не на что её опереть.
+  fittings.add("hut:chimney", "brick", "brick", [hutX + 1.32, 3.27, hutZ - 0.6], [0.36, 1.65, 0.36], brickDark);
+  fittings.add("hut:chimney-cap", "stone", "stoneBlock", [hutX + 1.32, 4.15, hutZ - 0.6], [0.46, 0.1, 0.46], limestoneDark);
+  addCrate(fittings, "hut:crate", hutX + 1.7, 0.02, hutZ + 1.1, 0.85, 0.4);
+  // Пикетный столбик: белый камень с чугунной шапкой у самой колеи.
+  fittings.add("hut:marker", "stone", "stoneBlock", [11.6, 0.44, hutZ], [0.16, 0.85, 0.16], "#ddd8cc");
+  fittings.add("hut:marker-cap", "steel", "steelSheet", [11.6, 0.92, hutZ], [0.2, 0.12, 0.2], iron);
+
+  // Водонапорная башня у депо: гидроколонке в конце платформ нужен запас
+  // воды — теперь видно, откуда он. Стоит восточнее крайней колоннады
+  // дебаркадера (x≈34.7) с запасом на палубу и раскосы.
+  const towerX = 38.6;
+  const towerZ = -58;
+  for (const [legIndex, [lx, lz]] of ([
+    [towerX - 1.15, towerZ - 1.15],
+    [towerX + 1.15, towerZ - 1.15],
+    [towerX - 1.15, towerZ + 1.15],
+    [towerX + 1.15, towerZ + 1.15],
+  ] as const).entries()) {
+    fittings.add(`tower:leg:${legIndex}`, "steel", "steelSheet", [lx, 2.32, lz], [0.3, 4.6, 0.3], iron);
+    fittings.add(`tower:shoe:${legIndex}`, "steel", "steelSheet", [lx, 0.14, lz], [0.5, 0.24, 0.5], "#2c3436");
+  }
+  fittings.add("tower:deck", "steel", "steelSheet", [towerX, 4.72, towerZ], [3.1, 0.2, 3.1], ironLight);
+  addFacetedCylinder(fittings, "tower:tank", "steel", "steelSheet", "y", [towerX, 6.6, towerZ], 3.5, 3.6, "#3d4549");
+  fittings.add("tower:lid", "steel", "steelSheet", [towerX, 8.42, towerZ], [2.7, 0.14, 2.7], "#2c3436");
+  fittings.add("tower:finial", "steel", "steelSheet", [towerX, 8.66, towerZ], [0.3, 0.34, 0.3], iron);
+  // Крестовые раскосы на всех четырёх гранях — клёпаная ферма, а не четыре
+  // палки с ящиком сверху.
+  for (const [faceIndex, face] of ([
+    { center: [towerX, 2.3, towerZ - 1.15] as SceneVector3, size: [2.5, 0.08, 0.08] as SceneVector3, tilt: [0, 0, 0.62] as SceneVector3 },
+    { center: [towerX, 2.3, towerZ - 1.15] as SceneVector3, size: [2.5, 0.08, 0.08] as SceneVector3, tilt: [0, 0, -0.62] as SceneVector3 },
+    { center: [towerX, 2.3, towerZ + 1.15] as SceneVector3, size: [2.5, 0.08, 0.08] as SceneVector3, tilt: [0, 0, 0.62] as SceneVector3 },
+    { center: [towerX, 2.3, towerZ + 1.15] as SceneVector3, size: [2.5, 0.08, 0.08] as SceneVector3, tilt: [0, 0, -0.62] as SceneVector3 },
+    { center: [towerX - 1.15, 2.3, towerZ] as SceneVector3, size: [0.08, 0.08, 2.5] as SceneVector3, tilt: [0.62, 0, 0] as SceneVector3 },
+    { center: [towerX - 1.15, 2.3, towerZ] as SceneVector3, size: [0.08, 0.08, 2.5] as SceneVector3, tilt: [-0.62, 0, 0] as SceneVector3 },
+    { center: [towerX + 1.15, 2.3, towerZ] as SceneVector3, size: [0.08, 0.08, 2.5] as SceneVector3, tilt: [0.62, 0, 0] as SceneVector3 },
+    { center: [towerX + 1.15, 2.3, towerZ] as SceneVector3, size: [0.08, 0.08, 2.5] as SceneVector3, tilt: [-0.62, 0, 0] as SceneVector3 },
+  ] as const).entries()) {
+    fittings.pieces.push({
+      id: `${fittings.id}:tower:brace:${faceIndex}`,
+      clusterId: fittings.id,
+      material: "steel",
+      shape: "steelSheet",
+      position: face.center,
+      size: face.size,
+      color: ironLight,
+      rotation: face.tilt,
+      bearsLoad: false,
+      attachmentSupportMode: "cable",
+      sideAttachmentReach: 0.7,
+    });
+  }
+  // Лесенка на бак: тетивы стоят на литых башмаках, перекладины навешены.
+  // Лестница отодвинута от палубы: если её верх касается настила, решатель
+  // отправляет вес бака через семисантиметровую жердь — и рушит её.
+  for (const [stringerIndex, sx] of [towerX - 0.26, towerX + 0.26].entries()) {
+    fittings.add(`tower:ladder:shoe:${stringerIndex}`, "steel", "steelSheet",
+      [sx, 0.09, towerZ - 2.0], [0.3, 0.14, 0.3], "#2c3436");
+    fittings.add(`tower:ladder:stringer:${stringerIndex}`, "steel", "steelSheet",
+      [sx, 2.72, towerZ - 2.0], [0.07, 5.3, 0.07], iron);
+  }
+  for (let rung = 0; rung < 7; rung += 1) {
+    fittings.pieces.push({
+      id: `${fittings.id}:tower:ladder:rung:${rung}`,
+      clusterId: fittings.id,
+      material: "steel",
+      shape: "steelSheet",
+      position: [towerX, 0.72 + rung * 0.64, towerZ - 2.0],
+      size: [0.46, 0.05, 0.05],
+      color: ironLight,
+      bearsLoad: false,
+      sideAttachmentReach: 0.35,
+    });
+  }
+  // Водоразборный стояк — отдельной опорой в землю, коленом к баку; под
+  // краном дежурит бочка.
+  fittings.add("tower:standpipe", "steel", "steelSheet", [towerX - 1.85, 1.32, towerZ], [0.24, 2.6, 0.24], "#3c4b4e");
+  fittings.add("tower:standpipe-bend", "steel", "steelSheet", [towerX - 1.55, 2.72, towerZ], [0.85, 0.2, 0.2], "#3c4b4e");
+  addFacetedCylinder(fittings, "tower:barrel", "wood", "plank", "y", [towerX - 2.5, 0.52, towerZ + 0.55], 1.0, 0.8, oakDark);
+
+  // Шлагбаум перед форкортом: полосатая стрела перекрывает подъездную
+  // дорогу с обеих сторон, при будке дежурного. Дальше дорога уходит в
+  // туман — но по ней не ездят.
+  for (const [boomIndex, side] of ([-1, 1] as const).entries()) {
+    const postX = side * 9.4;
+    fittings.add(`boom:post:${boomIndex}`, "steel", "steelSheet", [postX, 0.72, 73], [0.24, 1.4, 0.24], iron);
+    fittings.add(`boom:cap:${boomIndex}`, "steel", "steelSheet", [postX, 1.48, 73], [0.3, 0.12, 0.3], "#c8402f");
+    fittings.pieces.push({
+      id: `${fittings.id}:boom:arm:${boomIndex}`,
+      clusterId: fittings.id,
+      material: "steel",
+      shape: "steelSheet",
+      position: [postX - side * 2.85, 1.28, 73],
+      size: [5.4, 0.15, 0.2],
+      color: "#c8402f",
+      carriesAttachments: true,
+      hinge: {
+        pivot: [postX - side * 0.2, 1.28, 73],
+        direction: [-side, 0, 0],
+        normal: [0, 0, 1],
+      },
+    });
+    // Под белым концом стрелы — опорная стойка, как у настоящего
+    // шлагбаума: она же и путь нагрузки для решателя.
+    fittings.add(`boom:rest:${boomIndex}`, "steel", "steelSheet",
+      [postX - side * 8.35, 0.62, 73], [0.12, 1.2, 0.12], iron);
+    fittings.pieces.push({
+      id: `${fittings.id}:boom:tip:${boomIndex}`,
+      clusterId: fittings.id,
+      material: "steel",
+      shape: "steelSheet",
+      position: [postX - side * 7.1, 1.28, 73],
+      size: [3.1, 0.13, 0.18],
+      color: "#e8e6df",
+      attachmentSupportMode: "cable",
+      sideAttachmentReach: 0.6,
+    });
+    fittings.pieces.push({
+      id: `${fittings.id}:boom:counterweight:${boomIndex}`,
+      clusterId: fittings.id,
+      material: "steel",
+      shape: "steelSheet",
+      position: [postX + side * 0.75, 1.28, 73],
+      size: [0.8, 0.28, 0.28],
+      color: "#2f3335",
+      bearsLoad: false,
+      attachmentSupportMode: "cable",
+      sideAttachmentReach: 0.6,
+    });
+  }
+  // Будка дежурного: полосатая, как весь путевой инвентарь — каждая стена
+  // из красного низа и кремового верха, козырёк со свесом, окно в раме на
+  // весь фасад, ступенька и телефонный ящик на стене.
+  const boothX = -11.2;
+  const boothZ = 71.2;
+  const boothRed = "#b5473a";
+  const boothCream = "#ded8c8";
+  // Полосы стен встык (верх нижней = низ верхней), без просвета.
+  for (const [stripeIndex, [sy, tone]] of ([
+    [0.64, boothRed],
+    [1.68, boothCream],
+  ] as const).entries()) {
+    // Торцевые стены встык между боковыми — углы без нахлёста граней.
+    fittings.add(`booth:wall:w:${stripeIndex}`, "wood", "plank", [boothX - 0.75, sy, boothZ], [0.1, 1.04, 1.5], tone);
+    fittings.add(`booth:wall:n:${stripeIndex}`, "wood", "plank", [boothX, sy, boothZ - 0.75], [1.4, 1.04, 0.1], tone);
+    fittings.add(`booth:wall:e:${stripeIndex}`, "wood", "plank", [boothX + 0.75, sy, boothZ], [0.1, 1.04, 1.5], tone);
+    fittings.add(`booth:front:left:${stripeIndex}`, "wood", "plank", [boothX - 0.5, sy, boothZ + 0.75], [0.4, 1.04, 0.1], tone);
+  }
+  fittings.add("booth:front:top", "wood", "plank", [boothX + 0.25, 2.0, boothZ + 0.75], [1.1, 0.44, 0.1], boothCream);
+  fittings.add("booth:front:sill", "wood", "plank", [boothX + 0.25, 0.97, boothZ + 0.78], [1.1, 0.09, 0.14], boothRed);
+  fittings.add("booth:window", "glass", "glassPane", [boothX + 0.25, 1.4, boothZ + 0.76], [0.9, 0.72, 0.06], glassBlue);
+  for (const [jambIndex, jx] of [boothX - 0.19, boothX + 0.69].entries()) {
+    fittings.pieces.push({
+      id: `${fittings.id}:booth:jamb:${jambIndex}`,
+      clusterId: fittings.id,
+      material: "wood",
+      shape: "plank",
+      position: [jx, 1.4, boothZ + 0.78],
+      size: [0.07, 0.76, 0.08],
+      color: oakDark,
+      bearsLoad: false,
+      sideAttachmentReach: 0.25,
+    });
+  }
+  // Козырёк со свесом на все стороны и желобком по фасаду; желобок висит
+  // на козырьке, поэтому козырёк несёт крепления.
+  fittings.pieces.push({
+    id: `${fittings.id}:booth:roof`,
+    clusterId: fittings.id,
+    material: "steel",
+    shape: "steelSheet",
+    position: [boothX, 2.42, boothZ],
+    size: [2.3, 0.1, 2.3],
+    color: "#3a4245",
+    rotation: [0.05, 0, 0],
+    contactBoxes: [{ position: [boothX, 2.42, boothZ], size: [1.7, 0.26, 1.7] }],
+    carriesAttachments: true,
+    // Режим крепления объявляет ОПОРА: тонкий козырёк ниже полутора высот
+    // желобка, и настенное правило его бы отвергло.
+    attachmentSupportMode: "cable",
+  });
+  fittings.pieces.push({
+    id: `${fittings.id}:booth:gutter`,
+    clusterId: fittings.id,
+    material: "steel",
+    shape: "steelSheet",
+    // Крепление ищет перекрытие по высоте — желобок сидит вплотную под
+    // срезом козырька, а не парит на ладонь ниже.
+    position: [boothX, 2.4, boothZ + 1.18],
+    size: [2.3, 0.07, 0.1],
+    color: "#2f383b",
+    bearsLoad: false,
+    attachmentSupportMode: "cable",
+    sideAttachmentReach: 0.55,
+  });
+  fittings.add("booth:step", "stone", "stoneBlock", [boothX + 0.25, 0.09, boothZ + 1.15], [1.0, 0.14, 0.45], limestone);
+  fittings.pieces.push({
+    id: `${fittings.id}:booth:phone-box`,
+    clusterId: fittings.id,
+    material: "steel",
+    shape: "steelSheet",
+    position: [boothX - 0.83, 1.5, boothZ - 0.3],
+    size: [0.09, 0.36, 0.26],
+    color: "#40525c",
+    bearsLoad: false,
+    sideAttachmentReach: 0.3,
+  });
+  fittings.add("booth:glow", "glass", "glassPane", [boothX, 2.66, boothZ + 0.6], [0.3, 0.34, 0.3], litWindowColor);
+  lamps.push({
+    id: `${fittings.id}:booth:glow`,
+    position: [boothX, 2.66, boothZ + 0.7],
+    color: "#ffd49a",
+    distance: 8,
+    intensity: 2.4,
+  });
+  // Знак «стой»: красный диск с белой полосой на отдельной стойке у стрелы.
+  fittings.add("boom:sign-post", "steel", "steelSheet", [-10.1, 0.97, 73.9], [0.12, 1.9, 0.12], iron);
+  for (const [signPieceIndex, piece] of ([
+    { size: [0.06, 0.56, 0.56] as SceneVector3, color: "#c8402f", y: 1.62 },
+    { size: [0.07, 0.12, 0.42] as SceneVector3, color: "#e8e6df", y: 1.62 },
+  ] as const).entries()) {
+    fittings.pieces.push({
+      id: `${fittings.id}:boom:sign:${signPieceIndex}`,
+      clusterId: fittings.id,
+      material: "steel",
+      shape: "steelSheet",
+      position: [-10.1, piece.y, 73.9],
+      size: piece.size,
+      color: piece.color,
+      bearsLoad: false,
+      attachmentSupportMode: "cable",
+      sideAttachmentReach: 0.3,
+    });
+  }
+
+  finish(siding, "Overgrown siding into the fog", "steel", "stack");
+  finish(fittings, "Fog throat: signals, hut, tower and barrier", "steel", "mounted");
+}
+
+/**
+ * Служебный пояс вокзала. Музейный терминал не живёт один в поле: слева от
+ * путей — кирпичный пакгауз с погрузочной рампой и воротами, справа —
+ * мастерская с угольным закромом при водонапорной башне. Оба говорят
+ * языком головного здания: известняковый цоколь, красный кирпич с
+ * пилястрами, стальные рамы, арочные фронтоны.
+ */
+function createServiceBuildings(): void {
+  const depot = zone("terminal:service");
+
+  // --- Пакгауз (запад, вдоль путей) ---------------------------------------
+  // Геометрия сведена узлами: стены до карниза (top 3.9), карнизный пояс
+  // 3.9..4.14, скаты от свеса y 4.1 к коньку 4.95 (уклон 0.209 рад),
+  // фронтоны — ступенчатые треугольники ровно под этот уклон.
+  const wxC = -58;
+  const wzC = -26;
+  const wallTop = 3.9;
+  const wallH = wallTop - 0.48;
+  const wallY = 0.48 + wallH / 2;
+  depot.add("goods:foundation", "stone", "stoneBlock", [wxC, 0.24, wzC], [7.9, 0.5, 15.3], limestoneDark);
+
+  // Западная стена — честные оконные проёмы: подоконная лента, простенки,
+  // надоконная лента; рамы стоят В проёмах, не поверх кладки.
+  depot.add("goods:wall:w:sill-band", "brick", "brick", [wxC - 3.6, 1.29, wzC], [0.3, 1.62, 14.4], brickRed);
+  depot.add("goods:wall:w:head-band", "brick", "brick", [wxC - 3.6, 3.47, wzC], [0.3, 0.86, 14.4], brickRed);
+  // Раскладка стены: 1.83 + 2.44 + 1.71 + 2.44 + 1.71 + 2.44 + 1.83 = 14.4;
+  // рамы на сантиметр уже проёмов — в кладку не врезаются.
+  for (const [pier, [pz, pw]] of ([
+    [wzC - 6.285, 1.83], [wzC - 2.075, 1.71], [wzC + 2.075, 1.71], [wzC + 6.285, 1.83],
+  ] as const).entries()) {
+    depot.add(`goods:wall:w:pier:${pier}`, "brick", "brick",
+      [wxC - 3.6, 2.57, pz], [0.3, 0.94, pw], brickDark);
+  }
+  for (const [windowIndex, pz] of [wzC - 4.15, wzC, wzC + 4.15].entries()) {
+    depot.add(`goods:window-frame:${windowIndex}`, "steel", "steelSheet",
+      [wxC - 3.6, 2.57, pz], [0.24, 0.94, 2.42], iron);
+    depot.add(`goods:window:${windowIndex}`, "glass", "glassPane",
+      [wxC - 3.6, 2.57, pz], [0.08, 0.78, 2.2],
+      windowIndex === 1 ? litWindowColor : glassBlue);
+  }
+  lamps.push({
+    id: `${depot.id}:goods:window:1`,
+    position: [wxC - 3.95, 2.57, wzC],
+    color: "#ffd9a1",
+    distance: 8,
+    intensity: 2.2,
+  });
+
+  // Восточный фасад разбит точной раскладкой: простенок 2.6 — проём 3.24 —
+  // простенок 2.72 — проём 3.24 — простенок 2.6 = 14.4 м между торцами.
+  // Кромка каждого простенка совпадает с кромкой створки, петля стоит на
+  // косяке; перемычка перекрывает проём с опорой по 0.2 м на простенки.
+  for (const [pier, [pz, pw]] of ([
+    [wzC - 5.9, 2.6], [wzC, 2.72], [wzC + 5.9, 2.6],
+  ] as const).entries()) {
+    depot.add(`goods:wall:e:${pier}`, "brick", "brick",
+      [wxC + 3.6, wallY, pz], [0.3, wallH, pw], pier % 2 === 0 ? brickRed : brickDark);
+  }
+  for (const [gateIndex, gz] of [wzC - 2.98, wzC + 2.98].entries()) {
+    depot.add(`goods:lintel:${gateIndex}`, "concrete", "panel",
+      [wxC + 3.6, 3.69, gz], [0.36, 0.42, 3.64], "#a9aca8");
+    for (const side of [-1, 1] as const) {
+      depot.pieces.push({
+        id: `${depot.id}:goods:gate:${gateIndex}:${side}`,
+        clusterId: depot.id,
+        material: "wood",
+        shape: "plank",
+        position: [wxC + 3.62, 1.98, gz + side * 0.81],
+        size: [0.12, 2.96, 1.62],
+        color: side < 0 ? "#5d4a33" : "#55432e",
+        hinge: {
+          pivot: [wxC + 3.62, 1.98, gz + side * 1.62],
+          direction: [0, 0, -side],
+          normal: [1, 0, 0],
+        },
+      });
+    }
+  }
+
+  // Торцы и ступенчатые фронтоны под уклон кровли.
+  for (const [endIndex, ez] of [wzC - 7.35, wzC + 7.35].entries()) {
+    depot.add(`goods:wall:end:${endIndex}`, "brick", "brick",
+      [wxC, wallY, ez], [7.2, wallH, 0.3], endIndex === 0 ? brickRed : brickDark);
+    for (let step = 0; step < 4; step += 1) {
+      const frac = (step + 0.5) / 4;
+      depot.add(`goods:gable:${endIndex}:${step}`, "brick", "brick",
+        [wxC, wallTop + 0.125 + step * 0.25, ez],
+        [7.2 * (1 - frac), 0.25, 0.3], limestone);
+    }
+  }
+  for (const [pilaster, [px, pz]] of ([
+    [wxC - 3.6, wzC - 7.3], [wxC + 3.6, wzC - 7.3],
+    [wxC - 3.6, wzC + 7.3], [wxC + 3.6, wzC + 7.3],
+  ] as const).entries()) {
+    depot.add(`goods:pilaster:${pilaster}`, "brick", "brick",
+      [px, wallY, pz], [0.44, wallH, 0.44], brickDark);
+  }
+
+  // Карнизный пояс по периметру: закрывает узел стена-кровля.
+  depot.add("goods:cornice:e", "stone", "stoneBlock", [wxC + 3.6, 4.02, wzC], [0.48, 0.24, 15.2], limestone);
+  depot.add("goods:cornice:w", "stone", "stoneBlock", [wxC - 3.6, 4.02, wzC], [0.48, 0.24, 15.2], limestone);
+
+  // Скаты: свес y 4.1 у x = ±4.0, конёк 4.95 в оси. Контакт — по стенам.
+  for (const side of [-1, 1] as const) {
+    depot.add(`goods:roof:${side}`, "steel", "steelSheet",
+      [wxC + side * 2.0, 4.6, wzC], [4.09, 0.15, 15.9], "#3a4245",
+      [0, 0, -side * 0.209], [3.3, 0.5, 15.3]);
+  }
+  depot.add("goods:ridge", "wood", "plank", [wxC, 5.02, wzC], [0.36, 0.2, 15.9], oakDark,
+    undefined, [0.36, 0.5, 15.3]);
+
+  // Рампа: покрытие шире базы (капельник), пандус контактом на грунт.
+  depot.add("goods:ramp:base", "concrete", "panel", [wxC + 4.65, 0.47, wzC], [1.9, 0.86, 12.8], "#77756f");
+  depot.add("goods:ramp:surface", "stone", "groundTile", [wxC + 4.65, 0.96, wzC], [1.98, 0.12, 12.94], "#9d9789");
+  depot.add("goods:ramp:slope", "concrete", "panel",
+    [wxC + 4.65, 0.6, wzC - 7.7], [1.94, 0.14, 2.6], "#7d7b74", [0.34, 0, 0], [1.9, 0.3, 2.2]);
+
+  // Кронштейн лежит на карнизе, фонарь стоит на конце кронштейна.
+  depot.add("goods:lamp-bracket", "steel", "steelSheet", [wxC + 3.85, 4.24, wzC], [0.5, 0.08, 0.08], iron);
+  depot.add("goods:lamp", "glass", "glassPane", [wxC + 3.94, 4.44, wzC], [0.24, 0.3, 0.24], litWindowColor);
+  depot.add("goods:lamp-cap", "steel", "steelSheet", [wxC + 3.94, 4.63, wzC], [0.3, 0.08, 0.3], iron);
+  lamps.push({
+    id: `${depot.id}:goods:lamp`,
+    position: [wxC + 4.15, 4.44, wzC],
+    color: "#ffd49a",
+    distance: 9,
+    intensity: 2.6,
+  });
+  for (const [trackIndex, tx] of [-45.5, -49.5].entries()) {
+    depot.add(`goods:approach:${trackIndex}`, "earth", "groundTile",
+      [tx, 0.02, wzC], [4.2, 0.08, 5.2], trackIndex % 2 === 0 ? "#6a5a42" : "#63543d");
+  }
+
+  // --- Мастерская с угольным закромом (восток, при водонапорке) -----------
+  // Та же дисциплина узлов: стены до 3.94, карниз 3.94..4.18, скаты от
+  // свеса 4.14 к коньку 4.98, фронтоны-треугольники в торцах вдоль Z.
+  const mxC = 56;
+  const mzC = -30;
+  const shopWallTop = 3.94;
+  const shopH = shopWallTop - 0.44;
+  const shopY = 0.44 + shopH / 2;
+  depot.add("shop:foundation", "stone", "stoneBlock", [mxC, 0.22, mzC], [11.0, 0.46, 8.0], limestoneDark);
+
+  // Длинные стены между внутренними гранями торцов (9.8), углы встык.
+  depot.add("shop:wall:n", "brick", "brick", [mxC, shopY, mzC - 3.55], [9.8, shopH, 0.3], brickRed);
+  // Южная стена: подоконная и надоконная ленты + простенки, окна в проёмах.
+  depot.add("shop:wall:s:sill-band", "brick", "brick", [mxC, 1.27, mzC + 3.55], [9.8, 1.66, 0.3], brickRed);
+  depot.add("shop:wall:s:head-band", "brick", "brick", [mxC, 3.49, mzC + 3.55], [9.8, 0.9, 0.3], brickRed);
+  // Раскладка оконного яруса: 1.5 + 2.8 + 1.2 + 2.8 + 1.5 = 9.8 между
+  // торцами; рамы на сантиметр уже проёмов.
+  for (const [pier, [px, pw]] of ([
+    [mxC - 4.15, 1.5], [mxC, 1.2], [mxC + 4.15, 1.5],
+  ] as const).entries()) {
+    depot.add(`shop:wall:s:pier:${pier}`, "brick", "brick",
+      [px, 2.57, mzC + 3.55], [pw, 0.94, 0.3], brickDark);
+  }
+  for (const [windowIndex, px] of [mxC - 2, mxC + 2].entries()) {
+    depot.add(`shop:window-frame:${windowIndex}`, "steel", "steelSheet",
+      [px, 2.57, mzC + 3.55], [2.78, 0.94, 0.24], iron);
+    depot.add(`shop:window:${windowIndex}`, "glass", "glassPane",
+      [px, 2.57, mzC + 3.55], [2.5, 0.78, 0.08],
+      windowIndex === 0 ? litWindowColor : glassBlue);
+  }
+  lamps.push({
+    id: `${depot.id}:shop:window:0`,
+    position: [mxC - 2.35, 2.57, mzC + 3.95],
+    color: "#ffd9a1",
+    distance: 8,
+    intensity: 2.2,
+  });
+
+  depot.add("shop:wall:e", "brick", "brick", [mxC + 5.05, shopY, mzC], [0.3, shopH, 7.4], brickDark);
+  for (const [pier, pz] of [mzC - 2.75, mzC + 2.75].entries()) {
+    depot.add(`shop:wall:w:${pier}`, "brick", "brick",
+      [mxC - 5.05, shopY, pz], [0.3, shopH, 1.9], pier % 2 === 0 ? brickRed : brickDark);
+  }
+  depot.add("shop:lintel", "concrete", "panel", [mxC - 5.05, 3.67, mzC], [0.36, 0.54, 3.9], "#a9aca8");
+  for (const side of [-1, 1] as const) {
+    depot.pieces.push({
+      id: `${depot.id}:shop:gate:${side}`,
+      clusterId: depot.id,
+      material: "wood",
+      shape: "plank",
+      position: [mxC - 5.07, 1.94, mzC + side * 0.92],
+      size: [0.12, 2.92, 1.78],
+      color: side < 0 ? "#5d4a33" : "#55432e",
+      hinge: {
+        pivot: [mxC - 5.07, 1.94, mzC + side * 1.8],
+        direction: [0, 0, -side],
+        normal: [1, 0, 0],
+      },
+    });
+  }
+  // Фронтоны-треугольники в торцах, курсы вдоль Z, под уклон скатов.
+  for (const [endIndex, ex] of [mxC - 5.05, mxC + 5.05].entries()) {
+    for (let step = 0; step < 4; step += 1) {
+      const frac = (step + 0.5) / 4;
+      depot.add(`shop:gable:${endIndex}:${step}`, "brick", "brick",
+        [ex, shopWallTop + 0.125 + step * 0.25, mzC],
+        [0.3, 0.25, 7.4 * (1 - frac)], limestone);
+    }
+  }
+  depot.add("shop:cornice:n", "stone", "stoneBlock", [mxC, 4.06, mzC - 3.55], [10.8, 0.24, 0.48], limestone);
+  depot.add("shop:cornice:s", "stone", "stoneBlock", [mxC, 4.06, mzC + 3.55], [10.8, 0.24, 0.48], limestone);
+  for (const side of [-1, 1] as const) {
+    depot.add(`shop:roof:${side}`, "steel", "steelSheet",
+      [mxC, 4.62, mzC + side * 1.95], [11.4, 0.15, 4.0], "#3a4245",
+      [side * 0.212, 0, 0], [10.8, 0.5, 3.2]);
+  }
+  depot.add("shop:ridge", "wood", "plank", [mxC, 5.04, mzC], [11.4, 0.2, 0.36], oakDark,
+    undefined, [10.8, 0.5, 0.36]);
+  // Трубу несёт северная стена; ствол проходит сквозь свес ската и
+  // заканчивается выше конька.
+  depot.add("shop:chimney", "brick", "brick", [mxC + 3.4, 4.5, mzC - 3.4], [0.4, 2.6, 0.4], brickDark);
+  depot.add("shop:chimney-cap", "stone", "stoneBlock", [mxC + 3.4, 5.86, mzC - 3.4], [0.5, 0.12, 0.5], limestoneDark);
+
+  addCrate(depot, "shop:crate:a", mxC + 4.0, 0.02, mzC + 4.9, 0.9, 0.25);
+  addCrate(depot, "shop:crate:b", mxC + 4.7, 0.02, mzC + 4.5, 0.7, -0.4);
+  addFacetedCylinder(depot, "shop:drum", "steel", "steelSheet", "y", [mxC - 4.2, 0.62, mzC + 4.8], 1.1, 0.7, "#4c6178");
+
+  for (const [wallIndex, wall] of ([
+    { position: [47.4, 0.92, -49.4], size: [0.24, 1.8, 4.6] },
+    { position: [51.8, 0.92, -49.4], size: [0.24, 1.8, 4.6] },
+    { position: [49.6, 0.92, -51.6], size: [4.6, 1.8, 0.24] },
+  ] as const).entries()) {
+    depot.add(`coal:wall:${wallIndex}`, "concrete", "panel",
+      [...wall.position] as SceneVector3, [...wall.size] as SceneVector3, "#8f9595");
+  }
+  depot.pieces.push({
+    id: `${depot.id}:coal:heap`,
+    clusterId: depot.id,
+    material: "earth",
+    shape: "stoneBlock",
+    position: [49.6, 0.5, -49.9],
+    size: [3.8, 1.05, 3.4],
+    color: "#1e2022",
+    rotation: [0, 0.1, 0],
+    contactBoxes: [{ position: [49.6, 0.5, -49.9], size: [2.6, 1.05, 2.2] }],
+  });
+  depot.add("coal:spill", "earth", "stoneBlock", [49.7, 0.14, -46.9], [2.4, 0.3, 1.4], "#26282a");
+
+  finish(depot, "Goods shed, workshop and coal store", "brick", "mounted");
+}
+
 createCircularGround();
 createHeadhouse();
 createPublicInterior();
 createTrainShed();
 createTracksAndPlatforms();
+createFogSiding();
+createServiceBuildings();
 createSteamLocomotive();
 createPassengerTrain();
 createStationLife();

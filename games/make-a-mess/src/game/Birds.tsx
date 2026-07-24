@@ -13,11 +13,17 @@ import {
 // A loose flock wheeling over the settlement. Each bird is a camera-facing quad
 // with a flapping gull silhouette punched out in the fragment shader — dozens
 // of them in a single draw call, animated entirely on the GPU.
+//
+// With `worldRadius` set, every third bird joins a wandering flock that rides
+// a slow radial swell out past the rim and back — the world visibly continues
+// beyond the edge, because something alive keeps crossing it.
 export function Birds({
   center,
+  worldRadius,
   count = 16,
 }: {
   center: readonly [number, number];
+  worldRadius?: number;
   count?: number;
 }) {
   const meshRef = useRef<InstancedMesh>(null);
@@ -39,6 +45,8 @@ export function Birds({
           attribute float aSpeed;
           attribute float aPhase;
           attribute float aScale;
+          attribute float aSwing;
+          attribute float aExcursion;
           uniform float uTime;
           uniform vec2 uCenter;
           varying vec2 vUv;
@@ -46,10 +54,11 @@ export function Birds({
           void main() {
             vUv = uv;
             float ang = aAngle + uTime * aSpeed;
+            float radius = aRadius + sin(uTime * aSwing + aPhase * 3.7) * aExcursion;
             vec3 world = vec3(
-              uCenter.x + cos(ang) * aRadius,
+              uCenter.x + cos(ang) * radius,
               aAltitude + sin(uTime * 0.35 + aPhase) * 1.8,
-              uCenter.y + sin(ang) * aRadius
+              uCenter.y + sin(ang) * radius
             );
             vFlap = sin(uTime * 7.5 + aPhase * 6.2833);
             vec3 camRight = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
@@ -88,19 +97,32 @@ export function Birds({
     const aSpeed = new Float32Array(count);
     const aPhase = new Float32Array(count);
     const aScale = new Float32Array(count);
+    const aSwing = new Float32Array(count);
+    const aExcursion = new Float32Array(count);
     const rand = (index: number, salt: number) => {
       const value = Math.sin(index * 12.9898 + salt * 78.233) * 43758.5453;
       return value - Math.floor(value);
     };
     for (let index = 0; index < count; index += 1) {
-      // Two lazy flocks orbiting at slightly different radii and heights.
-      const flock = index % 2;
+      // Two lazy flocks orbiting at slightly different radii and heights;
+      // with a worldRadius, every third bird wanders out over the fog.
+      const flock = worldRadius ? index % 3 : index % 2;
       aAngle[index] = rand(index, 1) * Math.PI * 2;
-      aRadius[index] = 34 + flock * 20 + rand(index, 2) * 16;
-      aAltitude[index] = 24 + flock * 6 + rand(index, 3) * 7;
-      aSpeed[index] = (0.05 + rand(index, 4) * 0.045) * (flock === 0 ? 1 : -1);
       aPhase[index] = rand(index, 5) * Math.PI * 2;
       aScale[index] = 1.5 + rand(index, 6) * 1.2;
+      if (flock === 2 && worldRadius) {
+        aRadius[index] = worldRadius - 12 + rand(index, 2) * 8;
+        aAltitude[index] = 26 + rand(index, 3) * 10;
+        aSpeed[index] = (0.03 + rand(index, 4) * 0.02) * (index % 2 === 0 ? 1 : -1);
+        aSwing[index] = 0.035 + rand(index, 7) * 0.03;
+        aExcursion[index] = 18 + rand(index, 8) * 14;
+      } else {
+        aRadius[index] = 34 + flock * 20 + rand(index, 2) * 16;
+        aAltitude[index] = 24 + flock * 6 + rand(index, 3) * 7;
+        aSpeed[index] = (0.05 + rand(index, 4) * 0.045) * (flock === 0 ? 1 : -1);
+        aSwing[index] = 0;
+        aExcursion[index] = 0;
+      }
       mesh.setMatrixAt(index, identity);
     }
     mesh.instanceMatrix.needsUpdate = true;
@@ -110,8 +132,10 @@ export function Birds({
     geometry.setAttribute("aSpeed", new InstancedBufferAttribute(aSpeed, 1));
     geometry.setAttribute("aPhase", new InstancedBufferAttribute(aPhase, 1));
     geometry.setAttribute("aScale", new InstancedBufferAttribute(aScale, 1));
+    geometry.setAttribute("aSwing", new InstancedBufferAttribute(aSwing, 1));
+    geometry.setAttribute("aExcursion", new InstancedBufferAttribute(aExcursion, 1));
     mesh.frustumCulled = false;
-  }, [count, geometry]);
+  }, [count, geometry, worldRadius]);
 
   useFrame((state) => {
     material.uniforms.uTime.value = state.clock.elapsedTime;

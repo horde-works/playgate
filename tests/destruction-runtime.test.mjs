@@ -688,6 +688,7 @@ test("a damaged moving fragment can be damaged again", () => {
     material: "wood",
     color: "#805332",
     renderColor: "#6f5f45",
+    weathering: 0.82,
     size: [2.4, 0.36, 0.36],
   };
   const state = {
@@ -706,6 +707,7 @@ test("a damaged moving fragment can be damaged again", () => {
   assert.ok(first);
   const fragment = first.fragments[0];
   assert.equal(fragment.renderColor, source.renderColor);
+  assert.equal(fragment.weathering, source.weathering);
   assert.ok(fragment?.voxelBody);
   const before = countOccupiedVoxels(fragment.voxelBody);
   const second = damageBody(
@@ -727,6 +729,10 @@ test("a damaged moving fragment can be damaged again", () => {
   assert.ok(second);
   assert.equal(
     second.fragments.every((entry) => entry.renderColor === source.renderColor),
+    true,
+  );
+  assert.equal(
+    second.fragments.every((entry) => entry.weathering === source.weathering),
     true,
   );
   assert.equal(second.removedVolume > 0, true);

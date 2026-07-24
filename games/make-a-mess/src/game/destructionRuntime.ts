@@ -24,6 +24,8 @@ export interface ShardDefinition {
   /** Display colour inherited from the intact ground batch. */
   readonly renderColor?: string;
   readonly textureProfile?: SurfaceTextureProfile;
+  /** Authored exterior weathering retained while this fragment moves. */
+  readonly weathering?: number;
   readonly landscapeSurface?: LandscapeSurfaceProfile;
   readonly treeVisual?: TreeVisualDefinition;
   /** Original authored member id keeps bark placement stable after re-fracture. */
@@ -48,6 +50,7 @@ export interface ShardSource {
   readonly color: string;
   readonly renderColor?: string;
   readonly textureProfile?: SurfaceTextureProfile;
+  readonly weathering?: number;
   readonly landscapeSurface?: LandscapeSurfaceProfile;
   readonly treeVisual?: TreeVisualDefinition;
   readonly treeVisualSourceId?: string;
@@ -66,6 +69,8 @@ export interface RemnantDefinition {
   readonly color: string;
   readonly renderColor?: string;
   readonly textureProfile?: SurfaceTextureProfile;
+  /** Authored exterior weathering retained after carving. */
+  readonly weathering?: number;
   readonly landscapeSurface?: LandscapeSurfaceProfile;
   readonly treeVisual?: TreeVisualDefinition;
   readonly treeVisualSourceId?: string;
@@ -1019,6 +1024,7 @@ export function damageBody(
         color: source.color,
         renderColor: source.renderColor,
         textureProfile: source.textureProfile,
+        weathering: source.weathering,
         landscapeSurface: source.landscapeSurface,
         treeVisual: source.treeVisual,
         treeVisualSourceId:

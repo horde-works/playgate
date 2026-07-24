@@ -81,6 +81,43 @@ test("adjacent floor, deck, roof, and lawn cells meet without air gaps", () => {
   }
 });
 
+test("old-house stairs finish on a solid upper-floor landing", () => {
+  for (const prefix of ["", "h2:", "h3:"]) {
+    const topStep = breakablePieceById.get(`${prefix}house:stairs:9`);
+    const landingLeft = breakablePieceById.get(
+      `${prefix}house:upper-floor:8:landing`,
+    );
+    const landingRight = breakablePieceById.get(
+      `${prefix}house:upper-floor:9:landing`,
+    );
+
+    assert.ok(topStep);
+    assert.ok(landingLeft);
+    assert.ok(landingRight);
+    assert.equal(landingLeft.size[2], 2.15);
+    assert.deepEqual(landingLeft.size, landingRight.size);
+    assert.equal(
+      Math.abs(landingLeft.position[2] - landingRight.position[2]) < 1e-6,
+      true,
+    );
+
+    const stepEdges = [
+      topStep.position[2] - topStep.size[2] / 2,
+      topStep.position[2] + topStep.size[2] / 2,
+    ];
+    const landingEdges = [
+      landingLeft.position[2] - landingLeft.size[2] / 2,
+      landingLeft.position[2] + landingLeft.size[2] / 2,
+    ];
+    const nearestEdgeGap = Math.min(
+      ...stepEdges.flatMap((stepEdge) =>
+        landingEdges.map((landingEdge) => Math.abs(stepEdge - landingEdge)),
+      ),
+    );
+    assert.equal(nearestEdgeGap <= 0.021, true);
+  }
+});
+
 test("upper materials detach after the lower structure loses its load path", () => {
   const removedLowerStructure = new Set(
     breakablePieces

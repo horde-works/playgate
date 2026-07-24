@@ -42,7 +42,7 @@ import {
   getPieceMaterial,
   pieceMaterialBaseColor,
 } from "./materialTextures";
-import { materialAnchor } from "./materialAppearance";
+import { materialAnchorWithWeathering } from "./materialAppearance";
 import {
   SILICATE_JOINT_EXPANSION,
   hasSilicateJoints,
@@ -130,6 +130,7 @@ interface DynamicBreakableFragment {
   readonly material: BreakableMaterial;
   readonly materialColor: string;
   readonly textureProfile?: SurfaceTextureProfile;
+  readonly weathering?: number;
   readonly color: string;
   readonly center: readonly [number, number, number];
   readonly size: readonly [number, number, number];
@@ -249,6 +250,7 @@ function sourceFragments(
         material: piece.material,
         materialColor: pieceMaterialBaseColor(piece.material, pieceColor),
         textureProfile: piece.textureProfile,
+        weathering: piece.weathering,
         color: pieceColor,
         center: box.center,
         size: box.size,
@@ -296,6 +298,7 @@ function sourceFragments(
         material: shard.material,
         materialColor: pieceMaterialBaseColor(shard.material, shardColor),
         textureProfile: shard.textureProfile,
+        weathering: shard.weathering,
         color: shardColor,
         center: box.center,
         size: box.size,
@@ -346,6 +349,7 @@ function sourceFragments(
           remnantColor,
         ),
         textureProfile: remnant.textureProfile,
+        weathering: remnant.weathering,
         color: remnantColor,
         center: box.center,
         size: box.size,
@@ -478,12 +482,17 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
           ? UNIT_FOLIAGE_DEBRIS
           : UNIT_BOX
     ).clone();
-    // xyz = world anchor, w = weathering. Debris exposes fresh, unweathered
-    // material (a broken log's inner wood is pristine), so w stays 0.
+    // xyz = stable world anchor, w = authored exterior weathering. Keeping
+    // both values across the intact -> dynamic transition prevents painted,
+    // mossy or moulded masonry from flashing back to plain grey on impact.
     const anchors = new Float32Array(batch.fragments.length * 4);
     batch.fragments.forEach((fragment, index) => {
       anchors.set(
-        materialAnchor(fragment.fallbackPosition, fragment.center),
+        materialAnchorWithWeathering(
+          fragment.fallbackPosition,
+          fragment.center,
+          fragment.weathering,
+        ),
         index * 4,
       );
     });

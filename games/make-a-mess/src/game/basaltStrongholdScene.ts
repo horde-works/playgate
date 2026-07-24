@@ -1353,6 +1353,266 @@ function createWeatheredHighlandDetails(): void {
   );
 }
 
+/**
+ * Столбчатый базальт по ободу нагорья. Карта называется базальтовой — и её
+ * край выложен тем, чем настоящий базальт заканчивается у воды: пучками
+ * гранёных колонн разной высоты. Колонны стоят на опущенной кромочной полке
+ * (за спинами скал эскарпа, radius 90.5+), поэтому с плато читаются как
+ * зубчатый горизонт, а с кромки — как органная стена над туманом. Три
+ * фумаролы с тлеющими осколками тёмного стекла отвечают ночному свечению
+ * моря тумана: под облаком — жар.
+ */
+function createRimColumns(): void {
+  const columns: BreakablePieceDefinition[] = [];
+  const embers: BreakablePieceDefinition[] = [];
+
+  // Восточную и западную дуги кромки завершают горные хребты — колонны там
+  // втыкались бы прямо в их скалы. Реплика геометрии createMountainRidge с
+  // запасом в полблока: гряда живёт только там, где хребта нет.
+  const insideRidgeArc = (x: number, z: number): boolean => {
+    const relativeZ = z - PLAYFIELD_CENTER_Z;
+    const ridgeRadius = PLAYFIELD_RADIUS - 7;
+    if (Math.abs(relativeZ) >= ridgeRadius) {
+      return false;
+    }
+    const radialRoom = Math.sqrt(ridgeRadius * ridgeRadius - relativeZ * relativeZ);
+    if (radialRoom < 24) {
+      return false;
+    }
+    // Блоки хребта квантуются шагом 5 и вертятся, вылезая за расчётный
+    // внешний край — запас в семь метров покрывает и шаг, и поворот.
+    const inner = 20.5;
+    const outer = Math.min(radialRoom - 1.5, 89.5) + 10;
+    return Math.abs(x) > inner && Math.abs(x) < outer;
+  };
+
+  // Реплика рассева обветренных аутропов той же кромочной полосы: пенёк в
+  // полутора метрах от существующей скалы уступает ей место.
+  const nearOutcrop = (x: number, z: number): boolean => {
+    const cellX = Math.floor(x / 6) * 6 + 3;
+    const cellZ =
+      Math.floor((z - (PLAYFIELD_CENTER_Z - PLAYFIELD_RADIUS)) / 6) * 6 +
+      (PLAYFIELD_CENTER_Z - PLAYFIELD_RADIUS) + 3;
+    for (const [ox, oz] of [[cellX, cellZ], [cellX - 6, cellZ], [cellX + 6, cellZ], [cellX, cellZ - 6], [cellX, cellZ + 6]] as const) {
+      const cornerX = ox - 3;
+      const cornerZ = oz - 3;
+      const distance = Math.hypot(ox, oz - PLAYFIELD_CENTER_Z);
+      if (distance <= 68 || seededNoise(cornerX, cornerZ, 73) <= 0.88) {
+        continue;
+      }
+      const outcropX = ox + (seededNoise(cornerX, cornerZ, 83) - 0.5) * 2.4;
+      const outcropZ = oz + (seededNoise(cornerX, cornerZ, 89) - 0.5) * 2.4;
+      if (Math.hypot(x - outcropX, z - outcropZ) < 1.9) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  // Точная копия сетки createCircularHighlandExtension: колонну можно
+  // ставить только туда, где реально существует кромочный тайл травы.
+  const tileExists = (x: number, z: number): boolean => {
+    const cellX = Math.floor(x / 6) * 6 + 3;
+    const cellZ =
+      Math.floor((z - (PLAYFIELD_CENTER_Z - PLAYFIELD_RADIUS)) / 6) * 6 +
+      (PLAYFIELD_CENTER_Z - PLAYFIELD_RADIUS) + 3;
+    const distance = Math.hypot(cellX, cellZ - PLAYFIELD_CENTER_Z);
+    const insideOriginalGround =
+      cellX >= -66 && cellX <= 66 && cellZ >= -78 && cellZ <= 42;
+    return distance <= PLAYFIELD_RADIUS - 3 && !insideOriginalGround;
+  };
+
+  const basaltRamp = ["#303538", "#2b3033", "#252a2d"];
+  const capRamp = ["#383d40", "#343a3d", "#2f3437"];
+  let columnIndex = 0;
+  const towerSpots: [number, number][] = [];
+
+  for (let groupIndex = 0; groupIndex < 16; groupIndex += 1) {
+    const groupNoise = seededNoise(groupIndex, 7, 211);
+    const angle = (groupIndex / 16) * Math.PI * 2 + (groupNoise - 0.5) * 0.24;
+    const tangentX = -Math.sin(angle);
+    const tangentZ = Math.cos(angle);
+    const columnsInGroup = 2 + Math.floor(seededNoise(groupIndex, 3, 223) * 2.99);
+
+    for (let member = 0; member < columnsInGroup; member += 1) {
+      const memberNoise = seededNoise(groupIndex * 31 + member, 5, 227);
+      const along = (member - (columnsInGroup - 1) / 2) * (1.9 + memberNoise * 0.9);
+      let radius = 90.5 + seededNoise(groupIndex * 17 + member, 9, 229) * 2;
+      let x = Math.cos(angle) * radius + tangentX * along;
+      let z = PLAYFIELD_CENTER_Z + Math.sin(angle) * radius + tangentZ * along;
+      // Шумовая кромка тайлов дырявая — если клетки нет, колонна шагает
+      // внутрь, но не дальше скал эскарпа.
+      for (let pull = 0; pull < 2 && !tileExists(x, z); pull += 1) {
+        radius -= 3;
+        x = Math.cos(angle) * radius + tangentX * along;
+        z = PLAYFIELD_CENTER_Z + Math.sin(angle) * radius + tangentZ * along;
+      }
+      if (!tileExists(x, z) || insideRidgeArc(x, z) || nearOutcrop(x, z)) {
+        continue;
+      }
+
+      const surface = highlandSurfaceYAt(x, z);
+      // Высота пучка дышит по кольцу: сосед выше/ниже соседа, крайние —
+      // обломанные пеньки.
+      const tall = member === Math.floor(columnsInGroup / 2);
+      const height = tall
+        ? 3.4 + memberNoise * 3.2
+        : 1.4 + memberNoise * 2.1;
+      const width = 1.15 + seededNoise(groupIndex * 13 + member, 11, 233) * 0.4;
+      const yaw = memberNoise * Math.PI + member * 0.42;
+      const graphite = seededNoise(groupIndex * 7 + member, 13, 239) > 0.74;
+      const baseHeight = height * 0.62;
+      const capHeight = height - baseHeight;
+      const rampIndex = columnIndex % basaltRamp.length;
+      const lean = (seededNoise(groupIndex * 19 + member, 17, 241) - 0.5) * 0.06;
+
+      columns.push(
+        piece(
+          `stronghold:rim:column:${columnIndex}:base`,
+          "stronghold:rim:columns",
+          graphite ? "graphiteStone" : "basalt",
+          "stoneBlock",
+          [x, surface - 0.06 + baseHeight / 2, z],
+          [width, baseHeight, width],
+          graphite ? "#43474a" : basaltRamp[rampIndex],
+          [lean, yaw, -lean * 0.7],
+        ),
+      );
+      columns.push(
+        piece(
+          `stronghold:rim:column:${columnIndex}:cap`,
+          "stronghold:rim:columns",
+          graphite ? "graphiteStone" : "basalt",
+          "stoneBlock",
+          [x, surface - 0.06 + baseHeight + capHeight / 2, z],
+          [width * 0.86, capHeight, width * 0.86],
+          graphite ? "#4a4e50" : capRamp[rampIndex],
+          [lean * 1.3, yaw + 0.22, -lean],
+        ),
+      );
+      towerSpots.push([x, z]);
+      columnIndex += 1;
+    }
+  }
+
+  // Между пучками — непрерывная гряда обломанных пеньков той же породы:
+  // кольцо читается стеной органных труб в ЛЮБОЙ точке кромки, высокие
+  // пучки лишь задают ритм. Пеньки уступают им место, чтобы не сливаться.
+  for (let stump = 0; stump < 128; stump += 1) {
+    const stumpNoise = seededNoise(stump, 19, 251);
+    const angle = (stump / 128) * Math.PI * 2 + (stumpNoise - 0.5) * 0.05;
+    let radius = 90.8 + seededNoise(stump, 23, 257) * 1.8;
+    let x = Math.cos(angle) * radius;
+    let z = PLAYFIELD_CENTER_Z + Math.sin(angle) * radius;
+    for (let pull = 0; pull < 2 && !tileExists(x, z); pull += 1) {
+      radius -= 3;
+      x = Math.cos(angle) * radius;
+      z = PLAYFIELD_CENTER_Z + Math.sin(angle) * radius;
+    }
+    if (!tileExists(x, z) || insideRidgeArc(x, z) || nearOutcrop(x, z)) {
+      continue;
+    }
+    let nearTower = false;
+    for (const [tx, tz] of towerSpots) {
+      if (Math.hypot(x - tx, z - tz) < 2.1) {
+        nearTower = true;
+        break;
+      }
+    }
+    if (nearTower || stumpNoise < 0.08) {
+      continue;
+    }
+    const surface = highlandSurfaceYAt(x, z);
+    const tall = stump % 9 === 0;
+    const height = tall ? 1.7 + stumpNoise * 0.9 : 0.5 + stumpNoise * 1.0;
+    const width = 0.85 + seededNoise(stump, 29, 263) * 0.45;
+    const graphite = seededNoise(stump, 31, 269) > 0.78;
+    columns.push(
+      piece(
+        `stronghold:rim:stump:${stump}`,
+        "stronghold:rim:columns",
+        graphite ? "graphiteStone" : "basalt",
+        "stoneBlock",
+        [x, surface - 0.08 + height / 2, z],
+        [width, height, width * (0.9 + stumpNoise * 0.14)],
+        graphite ? "#45484a" : basaltRamp[stump % basaltRamp.length],
+        [(stumpNoise - 0.5) * 0.05, stumpNoise * Math.PI, (seededNoise(stump, 37, 271) - 0.5) * 0.05],
+      ),
+    );
+  }
+
+  // Фумаролы: тёмные осколки, тлеющие между колоннами. Свет привязан к
+  // осколку — разбил стекло, погасил жар.
+  const emberSpots: readonly (readonly [number, number])[] = [
+    [1.25, 91],
+    [1.83, 90.6],
+    [4.85, 91.2],
+  ];
+  for (const [emberIndex, [angle, radius]] of emberSpots.entries()) {
+    const x = Math.cos(angle) * radius;
+    const z = PLAYFIELD_CENTER_Z + Math.sin(angle) * radius;
+    if (!tileExists(x, z) || insideRidgeArc(x, z)) {
+      continue;
+    }
+    const surface = highlandSurfaceYAt(x, z);
+    embers.push(
+      piece(
+        `stronghold:rim:ember:${emberIndex}:rock`,
+        "stronghold:rim:embers",
+        "basalt",
+        "stoneBlock",
+        [x, surface + 0.24, z],
+        [1.7, 0.6, 1.3],
+        "#1f2426",
+        [0, angle * 1.7, 0.05],
+      ),
+    );
+    for (let shard = 0; shard < 3; shard += 1) {
+      const shardAngle = angle * 3.1 + shard * 2.1;
+      const sx = x + Math.cos(shardAngle) * (0.55 + shard * 0.22);
+      const sz = z + Math.sin(shardAngle) * (0.5 + shard * 0.18);
+      const shardId = `stronghold:rim:ember:${emberIndex}:glow:${shard}`;
+      embers.push({
+        ...piece(
+          shardId,
+          "stronghold:rim:embers",
+          "darkGlass",
+          "glassPane",
+          [sx, surface + 0.34 + shard * 0.05, sz],
+          [0.34, 0.66 + shard * 0.14, 0.09],
+          shard === 1 ? "#c23c1e" : "#ff5a2f",
+          [(shard - 1) * 0.14, shardAngle, 0.12],
+        ),
+        bearsLoad: false,
+      });
+      if (shard === 1) {
+        lamps.push({
+          id: shardId,
+          position: [sx, surface + 0.6, sz],
+          color: "#ff421c",
+          distance: 7,
+          intensity: 2.6,
+        });
+      }
+    }
+  }
+
+  addCluster(
+    "stronghold:rim:columns",
+    "Columnar basalt rim",
+    "basalt",
+    "stack",
+    columns,
+  );
+  addCluster(
+    "stronghold:rim:embers",
+    "Fumarole embers",
+    "basalt",
+    "stack",
+    embers,
+  );
+}
+
 createHighlandGround();
 createCircularHighlandExtension();
 createMountainRidge(-1);
@@ -1364,6 +1624,7 @@ createWallTorches();
 createDarkTower();
 createApproachDetails();
 createWeatheredHighlandDetails();
+createRimColumns();
 const inhabitedWorld = createBasaltStrongholdWorldbuilding({
   surfaceYAt: highlandSurfaceYAt,
 });

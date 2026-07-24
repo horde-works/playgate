@@ -4,6 +4,36 @@ import {
 } from "./structuralPhysics.ts";
 import { deinterpenetrateClusters } from "./deinterpenetrate.ts";
 import { propTree } from "../content/prefabs/coreFlora.ts";
+import { townSurfaceRoutes } from "../content/scenes/townSurfacePlan.ts";
+import {
+  propFridgeMoskva,
+  propFridgeRibbed,
+  propFridgeRusty,
+  propGasStove,
+  propKettle,
+  propStewPot,
+  propTvSharp,
+  propTvSoviet,
+  propVintageStove,
+} from "../content/prefabs/coreAppliances.ts";
+import {
+  propChannelArmchair,
+  propChannelSofa,
+  propChesterfield,
+  propCornerSofa,
+  propIronBed,
+  propOldTable,
+  propPaintedTable,
+  propPanelChair,
+  propSlatBed,
+  propSlatChair,
+  propSovietSofa,
+  propStoneTable,
+  propTrestleTable,
+  propWallUnit,
+  propWornChair,
+  propWriterDesk,
+} from "../content/prefabs/coreFurniture.ts";
 import {
   placeProp,
   propCautionBoard,
@@ -65,9 +95,9 @@ export type SurfaceTextureProfile =
   | "city-red-aggregate"
   | "city-facade-cladding"
   | "city-roof-tile"
-  // Крашеный цоколь: цвет детали — слой краски, шейдер слущивает его
-  // пластами до светлой шпаклёвки и тёмного кирпича (сильнее к земле).
-  | "city-painted-plinth"
+  // Растрескавшийся цоколь: шейдер режет по серой штукатурке связные жилы
+  // трещин с выкрошенной кромкой; у земли сетка гуще.
+  | "city-cracked-plinth"
   // Вывески и таблички: текстура ложится по родным UV грани ОДИН раз (без
   // мировой трипланарной проекции) — так на боксе читается надпись.
   | "city-shop-sign"
@@ -975,6 +1005,21 @@ function createFloorsAndStairs(): BreakableClusterDefinition[] {
 
   for (let index = 0; index < 10; index += 1) {
     if (index === 8 || index === 9) {
+      // The stair only needs an opening along its run. The old version
+      // removed both planks for the full depth of the house, leaving an open
+      // corner beyond the top step. Restore that front section as a proper
+      // landing while keeping a small clearance from the final tread.
+      upperPieces.push(
+        makePiece(
+          `house:upper-floor:${index}:landing`,
+          "house:upper-floor",
+          "wood",
+          "plank",
+          [-3.72 + index * 0.82, 2.84, -0.225],
+          [0.82, 0.16, 2.15],
+          woodPalette[index % woodPalette.length],
+        ),
+      );
       continue;
     }
     upperPieces.push(
@@ -1302,41 +1347,17 @@ function createTerrace(): BreakableClusterDefinition {
 // A proper terrace chair: four vertical legs standing ON the deck, a seat on
 // top of them, two back stiles rising from the seat and a back panel between
 // them — every part bears on the previous one for the structural solver.
-function createChair(id: string, x: number, z: number): BreakableClusterDefinition {
-  const deckTop = 0.41;
-  const pieces: BreakablePieceDefinition[] = [];
-
-  for (const [legX, legZ] of [
-    [-0.31, -0.24],
-    [0.31, -0.24],
-    [-0.31, 0.24],
-    [0.31, 0.24],
-  ] as const) {
-    pieces.push(
-      makePiece(
-        `${id}:leg:${legX}:${legZ}`,
-        id,
-        "wood",
-        "plank",
-        [x + legX, deckTop + 0.23, z + legZ],
-        [0.09, 0.45, 0.09],
-        "#70442a",
-      ),
-    );
-  }
-
-  pieces.push(
-    makePiece(`${id}:seat`, id, "wood", "plank",
-      [x, deckTop + 0.51, z], [0.8, 0.1, 0.64], "#a66a3b"),
-    makePiece(`${id}:stile:l`, id, "wood", "plank",
-      [x - 0.265, deckTop + 0.95, z - 0.245], [0.07, 0.78, 0.07], "#7e4d2c"),
-    makePiece(`${id}:stile:r`, id, "wood", "plank",
-      [x + 0.265, deckTop + 0.95, z - 0.245], [0.07, 0.78, 0.07], "#7e4d2c"),
-    makePiece(`${id}:back`, id, "wood", "plank",
-      [x, deckTop + 1.08, z - 0.245], [0.46, 0.44, 0.07], "#9a6036"),
-  );
-
-  return cluster(id, "Wood chair", "wood", "linked", pieces);
+// Дворовые стулья на настиле террасы: стандартный propSlatChair, лицом
+// друг к другу через дощатый стол.
+function createYardChairs(): BreakableClusterDefinition {
+  const deckTop = 0.415;
+  const chairs = [
+    ...placeProp("yard:furn:slat-chair:left",
+      propSlatChair({ yaw: Math.PI / 2 }), [-1.95, deckTop, 2.75]),
+    ...placeProp("yard:furn:slat-chair:right",
+      propSlatChair({ yaw: -Math.PI / 2, timber: "#9c6b3a" }), [2.3, deckTop, 2.75]),
+  ].map((piece) => ({ ...piece, clusterId: "yard:chairs" }));
+  return cluster("yard:chairs", "Terrace chairs", "wood", "mounted", chairs);
 }
 
 function createStoneGazebo(): BreakableClusterDefinition {
@@ -1511,11 +1532,7 @@ const panelPalette = ["#d8cdb2", "#cfc3a6", "#e0d6be", "#d2c7ab"];
 const slabPalette = ["#b7ad9c", "#aca293"];
 const plinthColor = "#6f6a60";
 const plinthBandColors = ["#736e63", "#6b665c"];
-// Крашеные цоколи: суриково-бордовая гамма. Цвет — верхний слой краски;
-// профиль city-painted-plinth слущивает его к земле до шпаклёвки и кирпича.
-const paintedPlinthTints = ["#6e3b31", "#7a4438", "#603831", "#84493a"];
-// Акцентный первый этаж: капремонт выделил нижний ярус охрой, и он всегда
-// идёт в паре с крашеным цоколем — как на живых домах.
+// Акцентный первый этаж: у части домов капремонт выделил нижний ярус охрой.
 const groundAccentPalette = ["#c9a355", "#c09a4e", "#d2ac60", "#c4a057"];
 const apronConcrete = ["#918d82", "#8a867b"];
 const stairConcrete = "#9d9a91";
@@ -1654,6 +1671,16 @@ function transformCluster(
         piece.position[1],
         piece.position[2] + dz,
       ] as SceneVector3,
+      // Контактные боксы — мировые координаты: копия здания обязана увезти
+      // их с собой, иначе опоры мебели остаются в исходном экземпляре.
+      contactBoxes: piece.contactBoxes?.map((box) => ({
+        position: [
+          box.position[0] + dx,
+          box.position[1],
+          box.position[2] + dz,
+        ] as SceneVector3,
+        size: box.size,
+      })),
       hinge: piece.hinge
         ? {
             ...piece.hinge,
@@ -1712,14 +1739,8 @@ function createKhrushchevka(
   const pal = config.palette ?? panelPalette;
   const noise = (key: string): number => deterministicNoise(`${salt}:${key}`);
 
-  // Биография низа дома: у части домов цоколь перекрашен суриком и облупился,
-  // у части капремонт ещё и выделил весь первый этаж охрой. Жёлтый низ без
-  // крашеного цоколя не встречается — как в натуре.
+  // Биография низа дома: у части домов капремонт выделил первый этаж охрой.
   const groundAccent = noise("accent:ground") < 0.34;
-  const plinthPainted = groundAccent || noise("plinth:paint") < 0.55;
-  const plinthPaint = paintedPlinthTints[
-    Math.floor(noise("plinth:tone") * paintedPlinthTints.length)
-  ];
 
   // Ремонтные заплаты: прямоугольники в 2-4 панели, перекрашенные при
   // латании швов. На реальных фасадах эти пятна видны с другого конца двора.
@@ -2172,16 +2193,10 @@ function createKhrushchevka(
         plinthPieces.push({
           ...makePiece(`hru:plinth:band:${sideId}:${index}`, "hru:plinth", "concrete", "panel",
             [cx, 0.345, zc + faceDir * 0.225], [2.68, 0.67, 0.15],
-            plinthPainted
-              ? (index % 2 === 0
-                  ? plinthPaint
-                  : shiftColor(plinthPaint, 1.07, 1.05, 1.03))
-              : plinthBandColors[index % plinthBandColors.length]),
+            plinthBandColors[index % plinthBandColors.length]),
           bearsLoad: false,
           weathering: 0.62,
-          ...(plinthPainted
-            ? { textureProfile: "city-painted-plinth" as const }
-            : {}),
+          textureProfile: "city-cracked-plinth",
         });
       }
       // Бетонная отмостка: потрескавшаяся лента вдоль всего периметра.
@@ -2191,6 +2206,7 @@ function createKhrushchevka(
             [cx, 0.045, zc + faceDir * 0.76], [2.68, 0.09, 0.9],
             apronConcrete[(index + (sideId === "n" ? 1 : 0)) % apronConcrete.length]),
           weathering: 0.44 + noise(`apron:${sideId}:${index}`) * 0.3,
+          textureProfile: "city-cracked-plinth",
         });
       }
     }
@@ -2200,20 +2216,17 @@ function createKhrushchevka(
     plinthPieces.push({
       ...makePiece(`hru:plinth:band:e:${endIndex}`, "hru:plinth", "concrete", "panel",
         [ex + faceDir * 0.225, 0.345, (z0 + z1) / 2], [0.15, 0.67, 6.66],
-        plinthPainted
-          ? plinthPaint
-          : plinthBandColors[endIndex % plinthBandColors.length]),
+        plinthBandColors[endIndex % plinthBandColors.length]),
       bearsLoad: false,
       weathering: 0.62,
-      ...(plinthPainted
-        ? { textureProfile: "city-painted-plinth" as const }
-        : {}),
+      textureProfile: "city-cracked-plinth",
     });
     apronPieces.push({
       ...makePiece(`hru:apron:e:${endIndex}`, "hru:apron", "concrete", "groundTile",
         [ex + faceDir * 0.76, 0.045, (z0 + z1) / 2], [0.9, 0.09, 6.66],
         apronConcrete[endIndex % apronConcrete.length]),
       weathering: 0.5,
+      textureProfile: "city-cracked-plinth",
     });
   }
   clusters.push(cluster("hru:plinth", "Khrushchevka plinth", "concrete", "mounted", plinthPieces));
@@ -2968,20 +2981,46 @@ function createKhrushchevka(
         );
       };
 
-      // однушка слева от лестницы
-      addFurniture("fridge:l", "steel", [xs + 0.5, fb + 0.75, -7.4], [0.6, 1.5, 0.6], "#e3e6e3");
+      // Собранная мебель из coreFurniture ставится через placeProp; id несут
+      // furn:<kind>:<instance> — по ним аудит уместности находит профили.
+      const addProp = (
+        name: string,
+        props: readonly PropPiece[],
+        anchor: SceneVector3,
+      ) => {
+        furniturePieces.push(
+          ...placeProp(`${furnitureId}:${floor}:${name}`, props, anchor).map(
+            (piece) => ({ ...piece, clusterId: furnitureId }),
+          ),
+        );
+      };
+
+      // однушка слева от лестницы. Холодильник — у глухой перегородки кухни:
+      // глухой массе выше подоконника перед окном не место (см. аудит).
+      addFurniture("fridge:l", "steel", [xs + 0.5, fb + 0.75, -4.95], [0.6, 1.5, 0.6], "#e3e6e3");
       addFurniture("counter:l", "wood", [xs + 1.6, fb + 0.425, -7.45], [1.3, 0.85, 0.55], "#c9c4ba");
-      addFurniture("bed:l", "wood", [xs + 0.55, fb + 0.225, -2.3], [0.85, 0.45, 1.8], "#8f5c39");
-      addFurniture("wardrobe:l", "wood", [b1 - 0.75, fb + 0.9, -1.55], [1.0, 1.8, 0.5], "#7e5233");
-      addFurniture("table:l", "wood", [xs + 1.9, fb + 0.36, -2.6], [0.8, 0.72, 0.8], "#a8763f");
+      addProp("furn:slat-bed:l", propSlatBed({}), [xs + 0.85, fb, -3.25]);
+      // Шкаф стоит у глухого простенка южной стены, не поперёк окна.
+      addFurniture("wardrobe:l", "wood",
+        [sectionIndex === 0 ? 13.02 : 23.66, fb + 0.9, -1.45], [1.0, 1.8, 0.5], "#7e5233");
+      if (sectionIndex === 0) {
+        addProp("furn:old-table:l", propOldTable({ seed: floor + 1 }), [xs + 1.9, fb, -2.72]);
+      } else {
+        addProp("furn:writer-desk:l", propWriterDesk({ seed: floor + 3 }), [xs + 1.8, fb, -2.62]);
+      }
+      addProp("furn:worn-chair:l", propWornChair({ seed: sectionIndex * 4 + floor }), [xs + 1.9, fb, -3.5]);
 
       // двушка справа
       addFurniture("counter:r", "wood", [b2 + 1.0, fb + 0.425, -7.45], [1.5, 0.85, 0.55], "#c9c4ba");
-      addFurniture("fridge:r", "steel", [b2 + 2.0, fb + 0.75, -7.4], [0.6, 1.5, 0.6], "#e3e6e3");
-      addFurniture("table:r", "wood", [b2 + 0.8, fb + 0.36, -5.9], [0.8, 0.72, 0.8], "#a8763f");
-      addFurniture("bed:r1", "wood", [b2 + 0.7, fb + 0.225, -2.2], [0.85, 0.45, 1.8], "#96613b");
-      addFurniture("bed:r2", "wood", [plasterX + 0.7, fb + 0.225, -2.3], [0.85, 0.45, 1.8], "#8f5c39");
-      addFurniture("wardrobe:r", "wood", [plasterX + 0.85, fb + 0.9, -7.5], [1.0, 1.8, 0.5], "#7e5233");
+      addFurniture("fridge:r", "steel", [b2 + 2.0, fb + 0.75, -4.95], [0.6, 1.5, 0.6], "#e3e6e3");
+      addProp("furn:old-table:r", propOldTable({ yaw: Math.PI / 2, seed: floor + 7 }), [b2 + 0.85, fb, -5.9]);
+      addProp("furn:panel-chair:r", propPanelChair({ yaw: -Math.PI / 2 }), [b2 + 1.75, fb, -5.85]);
+      // Кровать — вдоль межкомнатной перегородки: и входная, и балконная
+      // двери остаются в свободном створе.
+      addProp("furn:iron-bed:r1", propIronBed({}), [plasterX - 0.55, fb, -3.0]);
+      addProp("furn:slat-bed:r2", propSlatBed({ timber: "#7a5236" }), [plasterX + 0.8, fb, -3.25]);
+      addFurniture("wardrobe:r", "wood",
+        [sectionIndex === 0 ? 20.95 : 31.78, fb + 0.9, -1.45], [1.0, 1.8, 0.5], "#7e5233");
 
       // подъезд: плафон и электрощиток на каждой площадке
       fixturePieces.push(
@@ -3267,6 +3306,12 @@ function createStreets(): BreakableClusterDefinition[] {
           [cx, 0.06, -8.88], [5.96, 0.16, 0.22], "#b5b8b6"),
         makePiece(`town:curb:s:${index}`, "town:curbs", "concrete", "panel",
           [cx, 0.06, -15.12], [5.96, 0.16, 0.22], "#b5b8b6"),
+        // Южная улица обрамлена так же, как главная: бордюр по обеим
+        // кромкам, кроме устья поперечной.
+        makePiece(`town:curb:south:n:${index}`, "town:curbs", "concrete", "panel",
+          [cx, 0.06, -26.88], [5.96, 0.16, 0.22], "#b5b8b6"),
+        makePiece(`town:curb:south:s:${index}`, "town:curbs", "concrete", "panel",
+          [cx, 0.06, -33.12], [5.96, 0.16, 0.22], "#b5b8b6"),
       );
     }
   }
@@ -3279,6 +3324,45 @@ function createStreets(): BreakableClusterDefinition[] {
     roadPieces.push(
       makePiece(`town:road:cross:${index}`, "town:roads", "asphalt", "groundTile",
         [42, 0.03, cz], [6, 0.1, 6], index % 2 === 0 ? "#4a4a48" : "#4e4e4c"),
+    );
+    // Бордюры и осевая прерывистая — поперечная улица оформлена наравне с
+    // главными; устья перекрёстков остаются открытыми.
+    curbPieces.push(
+      makePiece(`town:curb:cross:w:${index}`, "town:curbs", "concrete", "panel",
+        [38.88, 0.06, cz], [0.22, 0.16, 5.96], "#b5b8b6"),
+      makePiece(`town:curb:cross:e:${index}`, "town:curbs", "concrete", "panel",
+        [45.12, 0.06, cz], [0.22, 0.16, 5.96], "#b5b8b6"),
+    );
+    if (cz !== -18 && cz !== -24 && cz !== -36) {
+      markingPieces.push(
+        makePiece(`town:mark:cross:${index}`, "town:markings", "concrete", "panel",
+          [42, 0.095, cz], [0.16, 0.03, 1.6], "#e8e6df"),
+      );
+    }
+  }
+  // Осевая на пролётах поперечной между перекрёстками.
+  for (const [index, cz] of [-18, -24, -36].entries()) {
+    markingPieces.push(
+      makePiece(`town:mark:cross:mid:${index}`, "town:markings", "concrete", "panel",
+        [42, 0.095, cz], [0.16, 0.03, 1.6], "#e8e6df"),
+    );
+  }
+  // Второй перекрёсток (42, -30): зебры на всех четырёх подходах, как на
+  // первом.
+  for (let stripe = 0; stripe < 6; stripe += 1) {
+    const acrossSouth = -32.5 + stripe * 1.0;
+    markingPieces.push(
+      makePiece(`town:zebra2:west:${stripe}`, "town:markings", "concrete", "panel",
+        [36.9, 0.095, acrossSouth], [3.0, 0.03, 0.4], "#e8e6df"),
+      makePiece(`town:zebra2:east:${stripe}`, "town:markings", "concrete", "panel",
+        [47.1, 0.095, acrossSouth], [3.0, 0.03, 0.4], "#e8e6df"),
+    );
+    const acrossCross = 39.5 + stripe * 1.0;
+    markingPieces.push(
+      makePiece(`town:zebra2:north:${stripe}`, "town:markings", "concrete", "panel",
+        [acrossCross, 0.095, -25.4], [0.4, 0.03, 3.0], "#e8e6df"),
+      makePiece(`town:zebra2:south:${stripe}`, "town:markings", "concrete", "panel",
+        [acrossCross, 0.095, -34.6], [0.4, 0.03, 3.0], "#e8e6df"),
     );
   }
 
@@ -3577,20 +3661,36 @@ function createOutskirts(): BreakableClusterDefinition[] {
       }
 
       const tone = deterministicNoise(`outskirt:${cx}:${cz}`);
-      meadowPieces.push(
-        makePiece(`town:outskirt:grass:${index}`, "town:outskirts", "soil", "groundTile",
+      meadowPieces.push({
+        // city-ground включает луг в систему поверхностного износа: тропа
+        // на запад и гаражная грунтовка на восток рисуются масками маршрутов
+        // поверх тайлов, как все дороги города.
+        ...makePiece(`town:outskirt:grass:${index}`, "town:outskirts", "soil", "groundTile",
           [cx, -0.14, cz], [6.04, 0.24, 6.04],
           tone > 0.66 ? "#5d7a41" : tone > 0.33 ? "#647f46" : "#587440"),
-      );
+        landscapeSurface: "city-ground",
+      });
       earthPieces.push(
         makePiece(`town:outskirt:earth:${index}`, "town:outskirts:earth", "earth", "groundTile",
           [cx, -0.71, cz], [6.04, 0.9, 6.04],
           tone > 0.5 ? "#665336" : "#5f4c31"),
       );
 
+      // Кромочная застройка (гаражный тупик, заборы, сараи, опушечная тропа)
+      // стоит на этих же луговых клетках — случайный куст внутри гаража или
+      // камень посреди тропы ломают место, поэтому рассев там молчит.
+      const insideRimStructure =
+        (cx >= 72 && cx <= 87 && cz >= -33 && cz <= 0) ||
+        (cx >= 69 && cx <= 81 && cz >= 9 && cz <= 21) ||
+        (cx >= 9 && cx <= 42 && cz >= -69 && cz <= -58) ||
+        (cx >= -30 && cx <= -9 && cz >= -18 && cz <= -6);
       const dressing = deterministicNoise(`outskirt:flora:${cx}:${cz}`);
       const offsetX = (deterministicNoise(`outskirt:ox:${cx}:${cz}`) - 0.5) * 3.4;
       const offsetZ = (deterministicNoise(`outskirt:oz:${cx}:${cz}`) - 0.5) * 3.4;
+      if (insideRimStructure) {
+        index += 1;
+        continue;
+      }
       if (dressing > 0.8) {
         const width = 0.9 + dressing * 1.5;
         const height = 0.5 + deterministicNoise(`outskirt:bh:${cx}:${cz}`) * 0.9;
@@ -3622,6 +3722,790 @@ function createOutskirts(): BreakableClusterDefinition[] {
     cluster("town:outskirts:earth", "Meadow subsoil", "earth", "linked", earthPieces),
     cluster("town:outskirts:flora", "Outskirt bushes and field stones", "foliage", "stack", floraPieces),
   ];
+}
+
+/**
+ * Западная кромка — выход к лесу. Город не обрывается: главная улица
+ * продолжается грунтовой тропой, тропа сужается и уходит в просвет между
+ * двумя большими соснами, а за ним — туман. Плотность деревьев растёт к
+ * краю, так что настоящего обрыва из-за стволов уже не видно.
+ */
+function createEdgewood(): BreakableClusterDefinition[] {
+  const asPieces = (
+    clusterId: string,
+    prefix: string,
+    props: readonly PropPiece[],
+    anchor: readonly [number, number, number],
+  ): BreakablePieceDefinition[] =>
+    placeProp(prefix, props, anchor).map((piece) => ({ ...piece, clusterId }));
+
+  // Тропа — продолжение главной улицы (z = -12) за асфальтом: земляные
+  // сегменты чуть уводят к югу и сужаются с 2.4 м до 0.9 м — дорога, по
+  // которой ходят реже, чем ездят по улице.
+  const pathPieces: BreakablePieceDefinition[] = [];
+  const pathRun: readonly (readonly [number, number, number, number, number])[] = [
+    [-13.6, -12.0, 2.4, 2.2, 0],
+    [-15.9, -12.2, 2.5, 2.0, 0.06],
+    [-18.2, -12.5, 2.4, 1.8, 0.1],
+    [-20.4, -12.9, 2.3, 1.6, 0.16],
+    [-22.5, -13.4, 2.2, 1.4, 0.2],
+    [-24.4, -13.9, 2.1, 1.15, 0.24],
+    [-26.1, -14.4, 1.9, 0.9, 0.28],
+  ];
+  for (const [index, [px, pz, length, width, yaw]] of pathRun.entries()) {
+    pathPieces.push(
+      makePiece(`town:edgewood:path:${index}`, "town:edgewood:path", "earth", "groundTile",
+        [px, 0.025, pz], [length, 0.09, width],
+        index % 3 === 0 ? "#7a6c55" : index % 3 === 1 ? "#6f6250" : "#75664f",
+        [0, yaw, 0]),
+    );
+  }
+
+  // Опушка: сосны и дубы держат внешний ряд, берёзы — прогалы ближе к
+  // домам. Две сосны с усиленным масштабом стоят рамкой по сторонам тропы.
+  const treePieces: BreakablePieceDefinition[] = [];
+  // Мы договаривались почти про лес: два с половиной ряда в шахматном
+  // порядке, дерево каждые 4-5 метров. Реальный обрыв за такой полосой не
+  // просматривается ни под каким углом, кроме просвета тропы.
+  // Стволы держат ≥1.8 м до видимого края сетки (корневые лапы propTree
+  // торчат на метр-полтора — с обрыва они свисать не должны) и ≥2.2 м до
+  // оси тропы. Проверено валидатором посадки, не прикидкой.
+  const belt: readonly (readonly ["oak" | "birch" | "pine", number, number, number, number?])[] = [
+    // Рамка тропы — две большие сосны, просвет между ними держит выход.
+    ["pine", -24.6, -10.4, 11, 1.15],
+    ["pine", -24.4, -17.9, 12, 1.2],
+    // Внешний ряд — сомкнутые кроны нависают над туманом, корни на земле.
+    ["pine", -24.5, -23.4, 15, 1.08],
+    ["oak", -24.4, -26.9, 17, 0.95],
+    ["pine", -24.7, -5.6, 18, 1.12],
+    ["pine", -24.5, -2.2, 21, 1.05],
+    ["oak", -23.0, 0.8, 22, 0.98],
+    ["pine", -21.6, -29.6, 23, 1.02],
+    ["pine", -18.2, -31.9, 24, 0.96],
+    // Средний ряд — дубы и берёзы в шахматке к внешнему.
+    ["oak", -21.8, -6.2, 13],
+    ["birch", -18.4, -3.0, 14],
+    ["birch", -16.2, -18.9, 16],
+    ["oak", -19.5, -25.8, 25, 0.95],
+    ["birch", -21.5, -2.0, 26],
+    ["oak", -22.7, -19.3, 27, 0.9],
+    ["birch", -21.6, -17.1, 28],
+    ["birch", -20.4, -22.6, 29],
+    ["oak", -14.9, -28.4, 30, 0.92],
+    // Внутренний редкий ряд — опушка сходит на нет к дворам.
+    ["birch", -19.4, 2.6, 19],
+    ["oak", -15.6, 8.3, 20],
+    ["birch", -15.1, -6.4, 46],
+    ["birch", -14.2, -24.2, 47],
+    ["oak", -16.5, 2.2, 48, 0.88],
+    ["birch", -13.9, -1.6, 49],
+  ];
+  for (const [index, [kind, tx, tz, seed, scale]] of belt.entries()) {
+    treePieces.push(
+      ...asPieces("town:edgewood", `edge:${index}`, propTree(kind, { seed, scale }), [tx, 0, tz]),
+    );
+  }
+
+  // Подлесок между стволами — кусты того же рассева, что на лугу, но гуще:
+  // опушка всегда зарастает первой.
+  const floraPieces: BreakablePieceDefinition[] = [];
+  const shrubs: readonly (readonly [number, number, number])[] = [
+    [-24.8, -8.2, 31],
+    [-25.6, -15.9, 32],
+    [-21.2, -19.6, 33],
+    [-17.5, -5.4, 34],
+    [-22.4, 2.1, 35],
+    [-16.8, -17.6, 36],
+    [-19.8, -10.9, 37],
+    [-16.4, -23.6, 61],
+    [-18.9, -22.9, 62],
+    [-23.3, -5.1, 63],
+    [-16.1, -0.8, 64],
+    [-20.6, -15.1, 65],
+    [-24.1, -12.3, 66],
+    [-17.9, -13.4, 67],
+    [-21.9, -8.9, 68],
+    [-15.9, -9.6, 69],
+    [-19.2, 0.7, 70],
+  ];
+  for (const [index, [sx, sz, seed]] of shrubs.entries()) {
+    const tone = deterministicNoise(`edgewood:shrub:${seed}`);
+    const width = 1.0 + tone * 1.3;
+    const height = 0.6 + deterministicNoise(`edgewood:sh:${seed}`) * 0.8;
+    floraPieces.push({
+      ...makePiece(`town:edgewood:shrub:${index}`, "town:edgewood:flora", "foliage", "groundTile",
+        [sx, -0.02 + height / 2, sz], [width, height, width * 0.85],
+        index % 3 === 0 ? "#3c5230" : index % 3 === 1 ? "#49603a" : "#425934",
+        [0, tone * Math.PI, 0]),
+      vegetationVisual: { kind: "shrub", seed: seed + 140 },
+    });
+  }
+
+  return [
+    cluster("town:edgewood", "Edge-of-town wood", "wood", "mounted", treePieces),
+    cluster("town:edgewood:path", "Footpath into the wood", "earth", "mounted", pathPieces),
+    cluster("town:edgewood:flora", "Edgewood undergrowth", "foliage", "stack", floraPieces),
+  ];
+}
+
+/**
+ * Куртины лугового кольца. Между кварталом и межевой полосой лежит
+ * пятнадцатиметровая ширина луга — голый газон на полкарты читался
+ * недоделкой. Рощицы по два-три дерева и кустарниковые гривы заполняют
+ * кольцо там, где его не заняли виньетки и дворы; запад не трогаем — там
+ * уже лес.
+ */
+function createMeadowGroves(): BreakableClusterDefinition[] {
+  const asPieces = (
+    clusterId: string,
+    prefix: string,
+    props: readonly PropPiece[],
+    anchor: readonly [number, number, number],
+  ): BreakablePieceDefinition[] =>
+    placeProp(prefix, props, anchor).map((piece) => ({ ...piece, clusterId }));
+
+  const trees: BreakablePieceDefinition[] = [];
+  const flora: BreakablePieceDefinition[] = [];
+  const kinds = ["birch", "oak", "birch", "pine"] as const;
+  let treeIndex = 0;
+
+  for (let grove = 0; grove < 32; grove += 1) {
+    const groveNoise = deterministicNoise(`grove:${grove}`);
+    const angle = (grove / 32) * Math.PI * 2 + (groveNoise - 0.5) * 0.18;
+    const radius = 44.5 + deterministicNoise(`grove:r:${grove}`) * 9;
+    const anchorX = 30 + Math.cos(angle) * radius;
+    const anchorZ = -15 + Math.sin(angle) * radius;
+    if (meadowKeepOut(anchorX, anchorZ)) {
+      continue;
+    }
+
+    // Колок растёт тесно: стволы в 2.5-4 метрах друг от друга, кроны
+    // внахлёст. Первый ствол — в якоре, остальные кольцом вокруг; если
+    // место не подошло, ствол пробует другой азимут, а не исчезает.
+    const treesInGrove = 2 + Math.floor(deterministicNoise(`grove:n:${grove}`) * 2.99);
+    for (let member = 0; member < treesInGrove; member += 1) {
+      const memberNoise = deterministicNoise(`grove:m:${grove}:${member}`);
+      let planted = false;
+      for (let attempt = 0; attempt < 3 && !planted; attempt += 1) {
+        const memberAngle =
+          deterministicNoise(`grove:ma:${grove}:${member}:${attempt}`) * Math.PI * 2;
+        const memberRadius = member === 0 ? 0 : 1.6 + memberNoise * 1.9 + member * 0.5;
+        const tx = anchorX + Math.cos(memberAngle) * memberRadius;
+        const tz = anchorZ + Math.sin(memberAngle) * memberRadius;
+        if (!treeStandFits(tx, tz) || meadowKeepOut(tx, tz) || distanceToRoutes(tx, tz) < 2.4) {
+          continue;
+        }
+        const kind = kinds[(grove + member) % kinds.length];
+        trees.push(
+          ...asPieces("town:groves", `grove:${treeIndex}`,
+            propTree(kind, {
+              seed: 80 + grove * 5 + member,
+              scale: 0.84 + memberNoise * 0.34,
+            }),
+            [tx, 0, tz]),
+        );
+        treeIndex += 1;
+        planted = true;
+      }
+    }
+
+    // Куртину всегда обступает подлесок — дерево на стриженом газоне
+    // выглядит воткнутым, дерево в зарослях — выросшим.
+    const shrubsInGrove = 2 + Math.floor(deterministicNoise(`grove:s:${grove}`) * 3);
+    for (let shrub = 0; shrub < shrubsInGrove; shrub += 1) {
+      const shrubAngle = deterministicNoise(`grove:sa:${grove}:${shrub}`) * Math.PI * 2;
+      const sx = anchorX + Math.cos(shrubAngle) * (2.2 + shrub * 1.1);
+      const sz = anchorZ + Math.sin(shrubAngle) * (2.0 + shrub * 1.0);
+      if (!meadowCellExists(sx, sz) || meadowKeepOut(sx, sz) || distanceToRoutes(sx, sz) < 1.2) {
+        continue;
+      }
+      const tone = deterministicNoise(`grove:st:${grove}:${shrub}`);
+      const width = 1.2 + tone * 1.4;
+      const height = 0.7 + deterministicNoise(`grove:sh:${grove}:${shrub}`) * 0.9;
+      flora.push({
+        ...makePiece(`town:groves:shrub:${grove}:${shrub}`, "town:groves:flora", "foliage", "groundTile",
+          [sx, -0.02 + height / 2, sz], [width, height, width * 0.82],
+          shrub % 3 === 0 ? "#3f5531" : shrub % 3 === 1 ? "#4a613a" : "#445c35",
+          [0, tone * Math.PI, 0]),
+        vegetationVisual: { kind: "shrub", seed: grove * 17 + shrub + 700 },
+      });
+    }
+  }
+
+  // Одиночки между колками: самосев, который однажды станет рощей.
+  for (let lone = 0; lone < 14; lone += 1) {
+    const loneNoise = deterministicNoise(`lone:${lone}`);
+    if (loneNoise < 0.25) {
+      continue;
+    }
+    const angle = ((lone + 0.5) / 14) * Math.PI * 2 + (loneNoise - 0.5) * 0.4;
+    const radius = 45 + deterministicNoise(`lone:r:${lone}`) * 9;
+    const tx = 30 + Math.cos(angle) * radius;
+    const tz = -15 + Math.sin(angle) * radius;
+    if (!treeStandFits(tx, tz) || meadowKeepOut(tx, tz) || distanceToRoutes(tx, tz) < 2.4) {
+      continue;
+    }
+    trees.push(
+      ...asPieces("town:groves", `lone:${lone}`,
+        propTree(lone % 3 === 0 ? "oak" : "birch", {
+          seed: 200 + lone,
+          scale: 0.78 + loneNoise * 0.28,
+        }),
+        [tx, 0, tz]),
+    );
+  }
+
+  // Гривы между куртинами: цепочки кустов вдоль кольца, чтобы луг дышал
+  // зарослями, а не точками.
+  for (let drift = 0; drift < 30; drift += 1) {
+    const driftNoise = deterministicNoise(`drift:${drift}`);
+    const angle = (drift / 30) * Math.PI * 2 + (driftNoise - 0.5) * 0.2;
+    const radius = 44 + deterministicNoise(`drift:r:${drift}`) * 10;
+    const dx = 30 + Math.cos(angle) * radius;
+    const dz = -15 + Math.sin(angle) * radius;
+    if (!meadowCellExists(dx, dz) || meadowKeepOut(dx, dz) || driftNoise < 0.22) {
+      continue;
+    }
+    const pair = driftNoise > 0.6 ? 2 : 1;
+    for (let bush = 0; bush < pair; bush += 1) {
+      const bx = dx + bush * (1.1 + driftNoise);
+      const bz = dz + bush * 0.7;
+      if (!meadowCellExists(bx, bz) || meadowKeepOut(bx, bz) || distanceToRoutes(bx, bz) < 1.2) {
+        continue;
+      }
+      const width = 1.0 + deterministicNoise(`drift:w:${drift}:${bush}`) * 1.2;
+      const height = 0.55 + deterministicNoise(`drift:h:${drift}:${bush}`) * 0.75;
+      flora.push({
+        ...makePiece(`town:groves:drift:${drift}:${bush}`, "town:groves:flora", "foliage", "groundTile",
+          [bx, -0.02 + height / 2, bz], [width, height, width * 0.85],
+          drift % 2 === 0 ? "#465d36" : "#405833",
+          [0, driftNoise * Math.PI, 0]),
+        vegetationVisual: { kind: "shrub", seed: drift * 13 + bush + 900 },
+      });
+    }
+  }
+
+  return [
+    cluster("town:groves", "Meadow copses", "wood", "mounted", trees),
+    cluster("town:groves:flora", "Meadow scrub drifts", "foliage", "stack", flora),
+  ];
+}
+
+/**
+ * Межевой периметр: непрерывная полоса «края участка» по всему кольцу.
+ * Виньетки (гаражи, стройка, опушка) — акценты, но кромка должна читаться
+ * завершённой в ЛЮБОЙ точке, а не только там, куда смотрели специально.
+ * Язык у неё дворовый: разросшийся бурьян, гнилые столбики старого
+ * межевого забора с обрывками перекладин, полевые камни. Столбики помнят
+ * границу, которой давно никто не проверял.
+ */
+// Точная копия сетки createOutskirts: луговая клетка существует, только
+// если её ЦЕНТР в радиусе 57 и вне вырезов. Точка на радиусе 55 запросто
+// попадает в клетку с центром за 57 — там земли нет, и куст бы висел.
+function meadowCellExists(x: number, z: number): boolean {
+  const cx = Math.round((x + 48) / 6) * 6 - 48;
+  const cz = Math.round((z + 78) / 6) * 6 - 78;
+  const insideTown = cx >= -12 && cx <= 72 && cz >= -48 && cz <= 18;
+  const southYard =
+    (cz === -54 && cx >= 12 && cx <= 36) ||
+    (cz === -60 && cx >= 18 && cx <= 36);
+  const northEastYard = cz === 24 && cx >= 48 && cx <= 72;
+  return !insideTown && !southYard && !northEastYard && Math.hypot(cx - 30, cz + 15) <= 57;
+}
+
+// Тропы главнее деревьев: люди уже решили, где ходят, и рассев обязан
+// уважать их маршруты.
+function distanceToRoutes(x: number, z: number): number {
+  let best = Infinity;
+  for (const route of townSurfaceRoutes) {
+    for (let index = 0; index < route.points.length - 1; index += 1) {
+      const [ax, az] = route.points[index];
+      const [bx, bz] = route.points[index + 1];
+      const dx = bx - ax;
+      const dz = bz - az;
+      const t = Math.max(0, Math.min(1,
+        ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz || 1)));
+      best = Math.min(best, Math.hypot(x - (ax + t * dx), z - (az + t * dz)));
+    }
+  }
+  return best;
+}
+
+// Дереву с корневыми лапами нужна земля вокруг ствола, не только под ним.
+function treeStandFits(x: number, z: number): boolean {
+  return (
+    meadowCellExists(x, z) &&
+    meadowCellExists(x + 1.8, z) &&
+    meadowCellExists(x - 1.8, z) &&
+    meadowCellExists(x, z + 1.8) &&
+    meadowCellExists(x, z - 1.8)
+  );
+}
+
+// Занятые куски луга: авторские виньетки, дворы старого квартала и
+// маршруты — куртинам туда нельзя.
+function meadowKeepOut(x: number, z: number): boolean {
+  // Габариты по факту объектов плюс два метра, не «с запасом в полдвора»:
+  // каждый лишний метр выреза — это дыра в лесном кольце.
+  const vignettes =
+    (x >= 73 && x <= 88 && z >= -30 && z <= -2) ||
+    (x >= 73 && x <= 83 && z >= 8 && z <= 17) ||
+    (x >= 9 && x <= 42 && z >= -70 && z <= -57) ||
+    (x <= -10 && z >= -32 && z <= 11) ||
+    (x < -9 && z > 9) ||
+    (x >= 16 && x <= 36 && z >= -62 && z <= -49);
+  return vignettes;
+}
+
+function createRimHedgerow(): BreakableClusterDefinition[] {
+  const bushes: BreakablePieceDefinition[] = [];
+  const posts: BreakablePieceDefinition[] = [];
+  const ringCount = 76;
+
+  for (let step = 0; step < ringCount; step += 1) {
+    const noiseA = deterministicNoise(`hedgerow:a:${step}`);
+    const noiseB = deterministicNoise(`hedgerow:b:${step}`);
+    const angle = (step / ringCount) * Math.PI * 2 + (noiseA - 0.5) * 0.055;
+    let radius = 54.6 + noiseB * 1.4;
+    let x = 30 + Math.cos(angle) * radius;
+    let z = -15 + Math.sin(angle) * radius;
+    for (let pull = 0; pull < 3 && !meadowCellExists(x, z); pull += 1) {
+      radius -= 2.4;
+      x = 30 + Math.cos(angle) * radius;
+      z = -15 + Math.sin(angle) * radius;
+    }
+    if (!meadowCellExists(x, z)) {
+      continue;
+    }
+
+    // Виньетки несут собственную кромку — за гаражами и забором стройки
+    // межевой полосе делать нечего; из коридора тропы она тоже уходит.
+    // Северо-западный сектор занят домами старого квартала: они стоят ВНЕ
+    // городского бокса, и сетка луга о них не знает.
+    const behindGarages = x > 74;
+    const behindSite = x >= 9 && x <= 42 && z < -58;
+    const onPath = x < -9 && z > -16.5 && z < -8.5;
+    const inOldQuarter = x < -8 && z > 8;
+    if (behindGarages || behindSite || onPath || inOldQuarter) {
+      continue;
+    }
+
+    const kind = deterministicNoise(`hedgerow:kind:${step}`);
+    if (kind < 0.12) {
+      continue;
+    }
+    if (kind < 0.3) {
+      // Столбик старой межи: покосился, но стоит; на некоторых — обрывок
+      // перекладины.
+      const tilt = (deterministicNoise(`hedgerow:tilt:${step}`) - 0.5) * 0.22;
+      posts.push({
+        ...makePiece(`town:rim:hedge-post:${step}`, "town:rim:posts", "wood", "plank",
+          [x, 0.62, z], [0.13, 1.3, 0.13],
+          step % 2 === 0 ? "#5c4a38" : "#544335",
+          [tilt * 0.6, noiseA * Math.PI, tilt]),
+        carriesAttachments: true,
+        weathering: 0.65,
+      });
+      if (noiseB > 0.55) {
+        posts.push({
+          ...makePiece(`town:rim:hedge-rail:${step}`, "town:rim:posts", "wood", "plank",
+            [x + Math.cos(angle + 1.57) * 0.4, 0.92, z + Math.sin(angle + 1.57) * 0.4],
+            [0.7, 0.07, 0.05], "#4e3e30",
+            [0.05, -angle + 1.57, (noiseA - 0.5) * 0.5]),
+          bearsLoad: false,
+          sideAttachmentReach: 0.5,
+          weathering: 0.7,
+        });
+      }
+    } else if (kind < 0.42) {
+      const width = 0.55 + noiseB * 0.8;
+      bushes.push(
+        makePiece(`town:rim:hedge-rock:${step}`, "town:rim:hedgerow", "stone", "stoneBlock",
+          [x, 0.14 + width * 0.16, z], [width, 0.28 + width * 0.3, width * 0.82],
+          step % 2 === 0 ? "#7b786f" : "#847f74",
+          [0, noiseA * Math.PI, 0.05]),
+      );
+    } else {
+      // Бурьян живёт парами: основной куст и малый застрельщик рядом —
+      // одиночные шары читаются как рассев, пары — как заросль.
+      const width = 1.5 + noiseB * 1.2;
+      const height = 0.9 + deterministicNoise(`hedgerow:h:${step}`) * 0.8;
+      bushes.push({
+        ...makePiece(`town:rim:hedge-bush:${step}`, "town:rim:hedgerow", "foliage", "groundTile",
+          [x, -0.02 + height / 2, z], [width, height, width * 0.8],
+          step % 3 === 0 ? "#3f5531" : step % 3 === 1 ? "#4a613a" : "#445c35",
+          [0, noiseA * Math.PI, 0]),
+        vegetationVisual: { kind: "shrub", seed: step + 300 },
+      });
+      if (noiseA > 0.4) {
+        const smallWidth = width * 0.55;
+        const smallHeight = height * 0.62;
+        const offsetAngle = angle + (noiseB - 0.5) * 2;
+        const smallX = x + Math.cos(offsetAngle) * (width * 0.7);
+        const smallZ = z + Math.sin(offsetAngle) * (width * 0.7);
+        // Спутник может отшагнуть с последней клетки — тогда его нет.
+        if (meadowCellExists(smallX, smallZ)) {
+          bushes.push({
+            ...makePiece(`town:rim:hedge-bush:sm:${step}`, "town:rim:hedgerow", "foliage", "groundTile",
+              [smallX, -0.02 + smallHeight / 2, smallZ],
+              [smallWidth, smallHeight, smallWidth * 0.85],
+              step % 2 === 0 ? "#465d36" : "#405833",
+              [0, noiseB * Math.PI, 0]),
+            vegetationVisual: { kind: "shrub", seed: step + 500 },
+          });
+        }
+      }
+    }
+  }
+
+  return [
+    cluster("town:rim:hedgerow", "Boundary scrub", "foliage", "stack", bushes),
+    cluster("town:rim:posts", "Old boundary posts", "wood", "stack", posts),
+  ];
+}
+
+/**
+ * Закрытые стороны кромки: город заканчивается там, где есть чувство
+ * завершения. Восток — гаражный тупик спиной к обрыву, за крышами торчат
+ * верхушки берёз. Юг — бетонный забор ПО-2, за ним стройка: недостроенная
+ * коробка, штабель плит, кучи песка и щебня. Северо-восток — сараи с
+ * поленницей. Невидимая стена мира везде совпадает с построенной причиной
+ * в неё не ходить.
+ */
+function createRimClosure(): BreakableClusterDefinition[] {
+  const asPieces = (
+    clusterId: string,
+    prefix: string,
+    props: readonly PropPiece[],
+    anchor: readonly [number, number, number],
+  ): BreakablePieceDefinition[] =>
+    placeProp(prefix, props, anchor).map((piece) => ({ ...piece, clusterId }));
+  const clusters: BreakableClusterDefinition[] = [];
+
+  // --- Восток: гаражный тупик, воротами к городу, спиной к краю ----------
+  const garages: BreakablePieceDefinition[] = [];
+  const garageId = "town:rim:garages";
+  const originZ = -25.9;
+  const pitch = 3.3;
+  const gateColors = ["#6a7b8c", "#79585c", "#5c7d5e", "#5d6a7d", "#7d6a54", "#6d7a58"];
+
+  for (let wall = 0; wall <= 6; wall += 1) {
+    garages.push(
+      { ...makePiece(`${garageId}:side:${wall}`, garageId, "brick", "brick",
+        [80.2, 1.08, originZ + pitch * wall], [5.55, 2.2, 0.24],
+        silicateBrick[wall % silicateBrick.length]), weathering: 0.48 },
+    );
+  }
+  for (let box = 0; box < 6; box += 1) {
+    const cz = originZ + pitch * (box + 0.5);
+    garages.push(
+      { ...makePiece(`${garageId}:back:${box}`, garageId, "brick", "brick",
+        [82.9, 1.08, cz], [0.22, 2.2, 3.04],
+        silicateBrick[(box + 1) % silicateBrick.length]), weathering: 0.52 },
+      makePiece(`${garageId}:lintel:${box}`, garageId, "concrete", "panel",
+        [77.55, 2.09, cz], [0.24, 0.3, 3.28], "#a9aca8"),
+      makePiece(`${garageId}:roof:${box}`, garageId, "concrete", "stoneBlock",
+        [80.2, 2.32, cz], [6.1, 0.15, 3.28], box % 2 === 0 ? "#84888c" : "#7d8286"),
+    );
+    for (const side of [-1, 1] as const) {
+      const pivotZ = cz + side * 1.52;
+      garages.push({
+        ...makePiece(`${garageId}:gate:${box}:${side}`, garageId, "steel", "steelSheet",
+          [77.45, 0.99, cz + side * 0.76], [0.08, 1.88, 1.5],
+          gateColors[box]),
+        hinge: {
+          pivot: [77.45, 0.99, pivotZ],
+          direction: [0, 0, -side],
+          normal: [1, 0, 0],
+        },
+      });
+    }
+  }
+  clusters.push(cluster(garageId, "Rim garage row", "brick", "mounted", garages));
+
+  // Накатанная машинами грунтовка вдоль ворот — гаражи живут, к ним ездят.
+  const track: BreakablePieceDefinition[] = [];
+  for (const [index, tz] of [-22.4, -16.0, -9.6].entries()) {
+    track.push(
+      makePiece(`town:rim:track:${index}`, "town:rim:track", "earth", "groundTile",
+        [75.5, 0.02, tz], [2.8, 0.08, 6.6], index % 2 === 0 ? "#6a5a42" : "#63543d"),
+    );
+  }
+  clusters.push(cluster("town:rim:track", "Garage track", "earth", "mounted", track));
+
+  // --- Юг: забор ПО-2 и стройка за ним -----------------------------------
+  const fence: BreakablePieceDefinition[] = [];
+  const fenceId = "town:rim:fence-south";
+  for (let post = 0; post <= 8; post += 1) {
+    fence.push(
+      { ...makePiece(`${fenceId}:post:${post}`, fenceId, "concrete", "panel",
+        [13.9 + post * 2.6, 1.03, -63.2], [0.22, 2.1, 0.22], "#8f9595"), weathering: 0.5 },
+    );
+  }
+  for (let panel = 0; panel < 8; panel += 1) {
+    fence.push(
+      { ...makePiece(`${fenceId}:panel:${panel}`, fenceId, "concrete", "panel",
+        [15.2 + panel * 2.6, 0.99, -63.2], [2.34, 1.86, 0.1],
+        panel % 3 === 0 ? "#9aa0a0" : "#959b9b"), weathering: 0.55 },
+    );
+  }
+  clusters.push(cluster(fenceId, "South rim fence", "concrete", "mounted", fence));
+
+  const site: BreakablePieceDefinition[] = [];
+  const siteId = "town:rim:site";
+  // Недостроенная коробка:四 стены без крыши, дверной проём на север — к
+  // забору, откуда её и видно.
+  site.push(
+    { ...makePiece(`${siteId}:shell:n:w`, siteId, "brick", "brick",
+      [22.6, 1.28, -65.2], [1.4, 2.6, 0.24], silicateBrick[0]), weathering: 0.35 },
+    { ...makePiece(`${siteId}:shell:n:e`, siteId, "brick", "brick",
+      [25.6, 1.28, -65.2], [1.4, 2.6, 0.24], silicateBrick[1]), weathering: 0.35 },
+    { ...makePiece(`${siteId}:shell:lintel`, siteId, "concrete", "panel",
+      [24.1, 2.42, -65.2], [1.9, 0.28, 0.26], "#a9aca8"), weathering: 0.3 },
+    { ...makePiece(`${siteId}:shell:s`, siteId, "brick", "brick",
+      [24.1, 1.28, -68.4], [4.2, 2.6, 0.24], silicateBrick[2]), weathering: 0.4 },
+    { ...makePiece(`${siteId}:shell:w`, siteId, "brick", "brick",
+      [21.9, 1.28, -66.8], [0.24, 2.6, 3.0], silicateBrick[1]), weathering: 0.4 },
+    { ...makePiece(`${siteId}:shell:e`, siteId, "brick", "brick",
+      [26.3, 1.28, -66.8], [0.24, 2.6, 3.0], silicateBrick[0]), weathering: 0.4 },
+  );
+  // Штабель дорожных плит и малый — рядом; плиты лежат чуть вразнобой.
+  const slabYaw = [0, 0.06, -0.04, 0.09];
+  for (let slab = 0; slab < 4; slab += 1) {
+    site.push(
+      makePiece(`${siteId}:slab:${slab}`, siteId, "concrete", "panel",
+        [30.5, 0.09 + slab * 0.22, -65.4], [3.0, 0.22, 1.5],
+        slab % 2 === 0 ? "#9aa0a0" : "#8f9595", [0, slabYaw[slab], 0]),
+    );
+  }
+  for (let slab = 0; slab < 2; slab += 1) {
+    site.push(
+      makePiece(`${siteId}:slab:sm:${slab}`, siteId, "concrete", "panel",
+        [27.6, 0.09 + slab * 0.22, -64.6], [2.2, 0.22, 1.2], "#a5aaa8",
+        [0, 0.5 - slab * 0.07, 0]),
+    );
+  }
+  // Кучи песка и щебня + пара блоков ФБС: стройка стоит, но не брошена.
+  site.push(
+    { ...makePiece(`${siteId}:sand`, siteId, "earth", "stoneBlock",
+      [19.4, 0.28, -65.2], [2.2, 0.6, 1.6], "#c8b280", [0, 0.4, 0]),
+      contactBoxes: [{ position: [19.4, 0.28, -65.2], size: [1.4, 0.6, 1.0] }],
+      weathering: 0.2 },
+    { ...makePiece(`${siteId}:gravel`, siteId, "stone", "stoneBlock",
+      [17.2, 0.23, -64.3], [1.8, 0.5, 1.3], "#75766c", [0, 1.1, 0]),
+      contactBoxes: [{ position: [17.2, 0.23, -64.3], size: [1.1, 0.5, 0.8] }],
+      weathering: 0.2 },
+    makePiece(`${siteId}:fbs:0`, siteId, "concrete", "cinderBlock",
+      [33.4, 0.27, -64.8], [1.18, 0.58, 0.58], "#9b9f9d"),
+    makePiece(`${siteId}:fbs:1`, siteId, "concrete", "cinderBlock",
+      [33.4, 0.85, -64.7], [1.18, 0.58, 0.58], "#939896", [0, 0.08, 0]),
+  );
+  // Леса у северной стены недостроя: стойки, поперечины, настил — кладку
+  // бросили, а леса разобрать не успели.
+  for (const [postIndex, px] of [22.5, 23.7, 24.5, 25.7].entries()) {
+    site.push({
+      ...makePiece(`${siteId}:scaffold:post:${postIndex}`, siteId, "wood", "plank",
+        [px, 1.28, -64.45], [0.1, 2.6, 0.1], postIndex % 2 === 0 ? "#6d5138" : "#63492f"),
+      carriesAttachments: true,
+      weathering: 0.4,
+    });
+  }
+  for (const [railIndex, ry] of [0.92, 1.66].entries()) {
+    site.push(
+      { ...makePiece(`${siteId}:scaffold:rail:${railIndex}:a`, siteId, "wood", "plank",
+        [23.1, ry, -64.45], [1.45, 0.09, 0.09], "#5d4531"),
+        bearsLoad: railIndex === 1, carriesAttachments: railIndex === 1,
+        attachmentSupportMode: "cable", sideAttachmentReach: 0.5, weathering: 0.45 },
+      { ...makePiece(`${siteId}:scaffold:rail:${railIndex}:b`, siteId, "wood", "plank",
+        [25.1, ry, -64.45], [1.45, 0.09, 0.09], "#54402d"),
+        bearsLoad: railIndex === 1, carriesAttachments: railIndex === 1,
+        attachmentSupportMode: "cable", sideAttachmentReach: 0.5, weathering: 0.45 },
+    );
+  }
+  site.push(
+    { ...makePiece(`${siteId}:scaffold:deck:0`, siteId, "wood", "plank",
+      [23.6, 1.75, -64.32], [2.5, 0.06, 0.26], "#6d5138"), weathering: 0.5 },
+    { ...makePiece(`${siteId}:scaffold:deck:1`, siteId, "wood", "plank",
+      [24.4, 1.75, -64.58], [2.7, 0.06, 0.26], "#63492f", [0, 0.02, 0]), weathering: 0.5 },
+  );
+  // Верхний ряд кладки брошен зубцами — стройка остановилась на полуслове.
+  for (const [toothIndex, tx] of [22.4, 23.1, 24.5, 25.4, 25.9].entries()) {
+    site.push(
+      makePiece(`${siteId}:tooth:${toothIndex}`, siteId, "brick", "brick",
+        [tx, 2.65, -68.4 + (toothIndex % 2) * 0.02], [0.25 + (toothIndex % 3) * 0.05, 0.13, 0.24],
+        silicateBrick[toothIndex % silicateBrick.length]),
+    );
+  }
+  // Поддон с кирпичом дожидается каменщиков.
+  site.push(...asPieces(siteId, "site:pallet", propPallet({ yaw: 0.2 }), [28.9, 0, -67.3]));
+  for (let brick = 0; brick < 6; brick += 1) {
+    site.push(
+      makePiece(`${siteId}:brickpile:${brick}`, siteId, "brick", "brick",
+        [28.55 + (brick % 3) * 0.34, 0.32 + Math.floor(brick / 3) * 0.14, -67.25 + (brick % 2) * 0.06],
+        [0.3, 0.13, 0.25], silicateBrick[brick % silicateBrick.length], [0, (brick % 3) * 0.06, 0]),
+    );
+  }
+  clusters.push(cluster(siteId, "Frozen building site", "concrete", "mounted", site));
+
+  // --- Северо-восток: сараи с поленницей ----------------------------------
+  // Дощатые по-настоящему: угловые стойки и стены доска к доске, с
+  // разнотоном и неровной глубиной — так собран весь остальной город, и
+  // сарай из четырёх «листов фанеры» рядом с ним читался как макет.
+  const sheds: BreakablePieceDefinition[] = [];
+  const shedId = "town:rim:sheds";
+  // Позиции выверены по луговой сетке (все углы на существующих клетках) И
+  // по соседям: во дворе к6 растёт опушечный дуб (72.8, 12.8) — сараи
+  // отступают от него к востоку, чтобы ствол не оказался в стене.
+  const shedPlans = [
+    { cx: 77.0, cz: 13.0, width: 2.6, depth: 2.0, tones: ["#6b5138", "#75593c", "#5f4834", "#715740"] },
+    { cx: 79.4, cz: 10.4, width: 2.2, depth: 1.8, tones: ["#5e4732", "#6a5138", "#564130", "#63492f"] },
+  ] as const;
+  for (const [index, plan] of shedPlans.entries()) {
+    const westX = plan.cx - plan.width / 2;
+    const eastX = plan.cx + plan.width / 2;
+    // Каркас: четыре угловые стойки.
+    for (const [cornerIndex, [sx, sz]] of ([
+      [westX, plan.cz - plan.depth / 2],
+      [eastX, plan.cz - plan.depth / 2],
+      [westX, plan.cz + plan.depth / 2],
+      [eastX, plan.cz + plan.depth / 2],
+    ] as const).entries()) {
+      sheds.push({
+        ...makePiece(`${shedId}:${index}:post:${cornerIndex}`, shedId, "wood", "plank",
+          [sx, 0.985, sz], [0.13, 2.01, 0.13], "#4a392b"),
+        carriesAttachments: true,
+        weathering: 0.6,
+      });
+    }
+    // Задняя стена — вертикальные доски с разнобоем глубины и высоты.
+    const backBoards = Math.round(plan.depth / 0.36);
+    for (let board = 0; board < backBoards; board += 1) {
+      const bz = plan.cz - plan.depth / 2 + (board + 0.5) * (plan.depth / backBoards);
+      const wobble = deterministicNoise(`shed:${index}:back:${board}`);
+      sheds.push({
+        ...makePiece(`${shedId}:${index}:back:${board}`, shedId, "wood", "plank",
+          [eastX + (wobble - 0.5) * 0.05, 0.94 + wobble * 0.05, bz],
+          [0.09, 1.9 + wobble * 0.08, plan.depth / backBoards - 0.015],
+          plan.tones[board % plan.tones.length]),
+        weathering: 0.55 },
+      );
+    }
+    // Боковые стены — та же доска, реже тон.
+    for (const [wallIndex, wz] of [plan.cz - plan.depth / 2, plan.cz + plan.depth / 2].entries()) {
+      const sideBoards = Math.round(plan.width / 0.37);
+      for (let board = 0; board < sideBoards; board += 1) {
+        const bx = westX + (board + 0.5) * (plan.width / sideBoards);
+        const wobble = deterministicNoise(`shed:${index}:side:${wallIndex}:${board}`);
+        sheds.push({
+          ...makePiece(`${shedId}:${index}:side:${wallIndex}:${board}`, shedId, "wood", "plank",
+            [bx, 0.94 + wobble * 0.05, wz + (wobble - 0.5) * 0.04],
+            [plan.width / sideBoards - 0.015, 1.88 + wobble * 0.1, 0.09],
+            plan.tones[(board + wallIndex + 1) % plan.tones.length]),
+          weathering: 0.52 },
+        );
+      }
+    }
+    // Перед: доска над дверью и узкий простенок, дверь на петле.
+    sheds.push(
+      { ...makePiece(`${shedId}:${index}:front:top`, shedId, "wood", "plank",
+        [westX, 1.78, plan.cz], [0.09, 0.42, plan.depth - 0.1], plan.tones[0]), weathering: 0.45 },
+      // Косяк доведён ровно до низа фрамуги — куски не пересекаются в
+      // объёме и не дробят одну плоскость на мерцающие слои.
+      { ...makePiece(`${shedId}:${index}:front:jamb`, shedId, "wood", "plank",
+        [westX, 0.79, plan.cz + plan.depth * 0.34], [0.09, 1.56, plan.depth * 0.3], plan.tones[2]),
+        weathering: 0.45 },
+    );
+    sheds.push({
+      ...makePiece(`${shedId}:${index}:door`, shedId, "wood", "plank",
+        [westX + 0.02, 0.85, plan.cz - plan.depth * 0.16], [0.08, 1.7, plan.depth * 0.58], "#7c5f40"),
+      hinge: {
+        pivot: [westX, 0.85, plan.cz - plan.depth * 0.44],
+        direction: [0, 0, 1],
+        normal: [1, 0, 0],
+      },
+    });
+    // Проушина с навесным замком на косяке — сарай заперт не «понарошку».
+    sheds.push(
+      { ...makePiece(`${shedId}:${index}:hasp`, shedId, "steel", "steelSheet",
+        [westX - 0.07, 1.05, plan.cz + plan.depth * 0.17], [0.05, 0.14, 0.2], "#4a4d4f"),
+        bearsLoad: false, sideAttachmentReach: 0.3 },
+      { ...makePiece(`${shedId}:${index}:padlock`, shedId, "steel", "steelSheet",
+        [westX - 0.11, 0.97, plan.cz + plan.depth * 0.17], [0.07, 0.13, 0.09], "#3b3e40"),
+        bearsLoad: false, attachmentSupportMode: "cable", sideAttachmentReach: 0.25 },
+    );
+    // Толевая крыша со свесом и прижимными досками поверх — против ветра.
+    sheds.push(
+      { ...makePiece(`${shedId}:${index}:roof`, shedId, "wood", "panel",
+        [plan.cx, 2.06, plan.cz], [plan.width + 0.5, 0.09, plan.depth + 0.45], "#3a3a38",
+        [0, 0, 0.055]),
+        contactBoxes: [{ position: [plan.cx, 2.06, plan.cz], size: [plan.width, 0.12, plan.depth] }],
+        weathering: 0.35 },
+      { ...makePiece(`${shedId}:${index}:roof-batten:0`, shedId, "wood", "plank",
+        [plan.cx, 2.15, plan.cz - plan.depth * 0.28], [plan.width + 0.42, 0.055, 0.16], "#55422f",
+        [0, 0, 0.055]),
+        bearsLoad: false, sideAttachmentReach: 0.3, weathering: 0.5 },
+      { ...makePiece(`${shedId}:${index}:roof-batten:1`, shedId, "wood", "plank",
+        [plan.cx, 2.15, plan.cz + plan.depth * 0.3], [plan.width + 0.42, 0.055, 0.16], "#4e3d2c",
+        [0, 0, 0.055]),
+        bearsLoad: false, sideAttachmentReach: 0.3, weathering: 0.5 },
+    );
+  }
+  // Окошко первого сарая: рамка крестом на южной стене, стекло мутное.
+  const winX = 77.0;
+  const winZ = 14.06;
+  sheds.push(
+    { ...makePiece(`${shedId}:win:sill`, shedId, "wood", "plank",
+      [winX, 1.06, winZ + 0.06], [0.5, 0.06, 0.1], "#4a392b"), bearsLoad: false, sideAttachmentReach: 0.3 },
+    { ...makePiece(`${shedId}:win:head`, shedId, "wood", "plank",
+      [winX, 1.54, winZ + 0.06], [0.5, 0.06, 0.1], "#4a392b"), bearsLoad: false, sideAttachmentReach: 0.3 },
+    { ...makePiece(`${shedId}:win:left`, shedId, "wood", "plank",
+      [winX - 0.22, 1.3, winZ + 0.06], [0.06, 0.42, 0.1], "#4a392b"), bearsLoad: false, sideAttachmentReach: 0.3 },
+    { ...makePiece(`${shedId}:win:right`, shedId, "wood", "plank",
+      [winX + 0.22, 1.3, winZ + 0.06], [0.06, 0.42, 0.1], "#4a392b"), bearsLoad: false, sideAttachmentReach: 0.3 },
+    { ...makePiece(`${shedId}:win:glass`, shedId, "glass", "glassPane",
+      [winX, 1.3, winZ + 0.04], [0.38, 0.42, 0.04], "#8fa5a0"), bearsLoad: false, sideAttachmentReach: 0.3 },
+  );
+  // Поленница вдоль южной стены первого сарая: два ряда лежачих чурбаков.
+  for (let log = 0; log < 4; log += 1) {
+    const lz = 14.62;
+    const lx = 76.14 + log * 0.28;
+    sheds.push({
+      ...makePiece(`${shedId}:logs:0:${log}`, shedId, "wood", "cylinder",
+        [lx, 0.11, lz], [0.26, 1.5, 0.26], log % 2 === 0 ? "#6f4b31" : "#7a5335",
+        [Math.PI / 2, 0, 0]),
+      contactBoxes: [{ position: [lx, 0.11, lz], size: [0.26, 0.22, 1.5] }],
+    });
+  }
+  for (let log = 0; log < 3; log += 1) {
+    const lx = 76.28 + log * 0.28;
+    sheds.push({
+      ...makePiece(`${shedId}:logs:1:${log}`, shedId, "wood", "cylinder",
+        [lx, 0.34, 14.62], [0.26, 1.46, 0.26], log % 2 === 0 ? "#67462e" : "#734f33",
+        [Math.PI / 2, 0, 0]),
+      contactBoxes: [{ position: [lx, 0.34, 14.62], size: [0.26, 0.22, 1.46] }],
+    });
+  }
+  clusters.push(cluster(shedId, "Back-lane sheds", "wood", "mounted", sheds));
+
+  // --- Силуэты за заборами: мир продолжается ------------------------------
+  // Верхушки берёз над гаражными крышами и за стройкой — то, что видно из
+  // города поверх кромочной застройки.
+  const screen: BreakablePieceDefinition[] = [];
+  const screenTrees: readonly (readonly ["oak" | "birch" | "pine", number, number, number, number?])[] = [
+    ["birch", 84.3, -14.6, 41, 1.25],
+    ["pine", 84.2, -29.8, 42, 1.1],
+    ["birch", 36.8, -64.9, 43, 1.3],
+    ["birch", 10.9, -64.2, 44, 1.2],
+    ["pine", 14.2, -67.1, 45],
+  ];
+  for (const [index, [kind, tx, tz, seed, scale]] of screenTrees.entries()) {
+    screen.push(
+      ...asPieces("town:rim:screen", `screen:${index}`, propTree(kind, { seed, scale }), [tx, 0, tz]),
+    );
+  }
+  clusters.push(cluster("town:rim:screen", "Treeline beyond the fences", "wood", "mounted", screen));
+
+  return clusters;
 }
 
 
@@ -3668,6 +4552,18 @@ function createTownClutter(): BreakableClusterDefinition[] {
     ...asPieces("town:junk", "shell:crate", propCrate({ yaw: 1.1 }), [-9.3, 0, -33.95]),
   ];
   clusters.push(cluster("town:junk", "Street and yard clutter", "wood", "mounted", junk));
+
+  // --- Стандартная мебель под открытым небом ------------------------------
+  // Каменный стол — под опушечным дубом у кромки мира; верстак — у гаражей,
+  // где им и место. Дворовые стулья террасы h1 живут в кластере террасы ниже.
+  const outdoorFurniture: BreakablePieceDefinition[] = [
+    ...asPieces("town:furniture", "yard:furn:stone-table:grove",
+      propStoneTable({ yaw: 0.5 }), [70.6, 0, 16.2]),
+    ...asPieces("town:furniture", "yard:furn:trestle-table:garages",
+      propTrestleTable({ yaw: 0.15 }), [11.9, 0, -18.45]),
+  ];
+  clusters.push(cluster("town:furniture", "Outdoor furniture", "wood", "mounted", outdoorFurniture));
+
 
   // --- Dumpsters by the entrances -----------------------------------------
   const bins: BreakablePieceDefinition[] = [
@@ -3855,8 +4751,10 @@ function createTownClutter(): BreakableClusterDefinition[] {
     ["oak", 56.8, -48.4, 8],
   ];
   for (const [index, [kind, tx, tz, seed, scale]] of trees.entries()) {
+    // Городские дворы знают полусухие деревья: часть крон (по сиду) несёт
+    // усохшие рыжие ветви — как тополь у площадки, который сохнет годами.
     treePieces.push(
-      ...asPieces("town:trees", `tree:${index}`, propTree(kind, { seed, scale }), [tx, 0, tz]),
+      ...asPieces("town:trees", `tree:${index}`, propTree(kind, { seed, scale, dry: true }), [tx, 0, tz]),
     );
   }
   clusters.push(cluster("town:trees", "Courtyard trees", "wood", "mounted", treePieces));
@@ -3982,14 +4880,17 @@ function createTownClutter(): BreakableClusterDefinition[] {
 export const breakableClusters = [
   ...createGroundTiles(),
   ...createOutskirts(),
+  ...createEdgewood(),
+  ...createMeadowGroves(),
+  ...createRimHedgerow(),
+  ...createRimClosure(),
   // Первый дом развёрнут дверью к главной улице — из спавна за его спиной
   // виден задний двор с террасой, а вход смотрит на дорогу.
   ...mirrorClustersZ(createOldHouse(), -3),
   ...createOldHouse("h2", 56, 0, houseRecolor(silicateHouseColors, "lit-h2")),
   ...createOldHouse("h3", 56, -38, houseRecolor(yellowHouseColors, "lit-h3")),
   createTerrace(),
-  createChair("yard:chair:left", -1.95, 2.75),
-  createChair("yard:chair:right", 2.3, 2.75),
+  createYardChairs(),
   createStoneGazebo(),
   ...createKhrushchevka(),
   ...createKhrushchevka({

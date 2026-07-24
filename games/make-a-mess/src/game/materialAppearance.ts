@@ -235,3 +235,17 @@ export function materialAnchor(
     position[2] + localCenter[2],
   ];
 }
+
+/**
+ * Packs the stable world-space surface origin and its authored weathering
+ * into the shared instanced-material attribute. Both intact and moving
+ * renderers use this so detaching a body cannot reset its exterior finish.
+ */
+export function materialAnchorWithWeathering(
+  position: readonly [number, number, number],
+  localCenter: readonly [number, number, number] = [0, 0, 0],
+  weathering = 0,
+): readonly [number, number, number, number] {
+  const anchor = materialAnchor(position, localCenter);
+  return [anchor[0], anchor[1], anchor[2], weathering];
+}

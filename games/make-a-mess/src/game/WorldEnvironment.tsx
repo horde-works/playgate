@@ -104,6 +104,8 @@ export function DayNightCycle({
   nightRef,
   theme = "town",
   worldRadius,
+  worldCenter,
+  cameraFar = 140,
   snapVersion = 0,
   cinematic = false,
 }: {
@@ -111,6 +113,8 @@ export function DayNightCycle({
   nightRef: { current: number };
   theme?: "town" | "fortress";
   worldRadius?: number;
+  worldCenter?: readonly [number, number];
+  cameraFar?: number;
   snapVersion?: number;
   cinematic?: boolean;
 }) {
@@ -268,11 +272,19 @@ export function DayNightCycle({
           fortress ? 196 : Math.max(128, (worldRadius ?? 67) * 2),
         ]}
       />
-      {/* The sky dome must be larger than the map: a dome smaller than the
-          world radius shows its own edge as a band across the sky. */}
+      {/* The sky dome must enclose everything that renders — including the
+          WorldEdge fog sea, which stretches far past the rim — or its edge
+          shows as a band across the sky. It must also stay inside the camera
+          far plane or the dome itself gets clipped. The dome is CENTERED on
+          the world centre: the town sits at (30, -15), and an origin-centred
+          dome left its eastern sea sticking out through the sky. */}
       <Sky
         ref={skyRef}
-        distance={fortress ? 170 : Math.max(110, (worldRadius ?? 58) * 1.9)}
+        position={[worldCenter?.[0] ?? 0, 0, worldCenter?.[1] ?? 0]}
+        distance={Math.min(
+          cameraFar * 0.92,
+          Math.max(fortress ? 170 : 110, (worldRadius ?? 58) * 2.6),
+        )}
         sunPosition={[24, 12, 14]}
         turbidity={fortress ? 10.5 : cinematic ? 4.2 : 6.2}
         rayleigh={fortress ? 1.25 : 1.6}

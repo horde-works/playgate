@@ -236,6 +236,7 @@ test("surface texture identity follows material into broken fragments", () => {
       material: "concrete",
       color: "#ffffff",
       textureProfile: "city-gray-pavers",
+      weathering: 0.82,
       shape: "groundTile",
       size: [2, 0.4, 2],
     },
@@ -256,6 +257,10 @@ test("surface texture identity follows material into broken fragments", () => {
   assert.equal(result.fragments.length > 0, true);
   assert.equal(
     result.fragments.every((fragment) => fragment.textureProfile === "city-gray-pavers"),
+    true,
+  );
+  assert.equal(
+    result.fragments.every((fragment) => fragment.weathering === 0.82),
     true,
   );
 });

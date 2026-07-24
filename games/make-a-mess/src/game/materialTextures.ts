@@ -100,9 +100,9 @@ const surfaceTextureUrls: Record<SurfaceTextureProfile, string> = {
   "city-red-aggregate": "/games/make-a-mess/textures/city-red-aggregate.webp",
   "city-facade-cladding": "/games/make-a-mess/textures/city-facade-cladding.webp",
   "city-roof-tile": "/games/make-a-mess/textures/city-roof-tile.webp",
-  // Основа под крашеный цоколь — та же старая штукатурка; слои краски и
-  // сколы рисует шейдерная ветка painted-plinth поверх неё.
-  "city-painted-plinth": "/games/make-a-mess/textures/city-aged-stucco.webp",
+  // Основа под растрескавшийся цоколь — та же старая штукатурка; жилы
+  // трещин рисует шейдерная ветка cracked-plinth поверх неё.
+  "city-cracked-plinth": "/games/make-a-mess/textures/city-aged-stucco.webp",
   "city-shop-sign": "/games/make-a-mess/textures/city-shop-sign.png",
   "city-chalk-sign-a": "/games/make-a-mess/textures/city-chalk-sign-a.png",
   "city-chalk-sign-b": "/games/make-a-mess/textures/city-chalk-sign-b.png",
@@ -1485,31 +1485,52 @@ float silicateJoint = vSilicateJointBand > 0.0001
   : 0.0;
 diffuseColor.rgb = mix(diffuseColor.rgb, vSilicateJointTint, silicateJoint);
 ${
-  textureProfile === "city-painted-plinth"
+  textureProfile === "city-cracked-plinth"
     ? /* glsl */ `
-// Крашеный цоколь: диффуз — верхний слой краски. Value-noise срезает его
-// пластами: сначала до старой светлой шпаклёвки, глубже — до кирпича с
-// раствором. К земле отслаивание сильнее (сырость тянет снизу), кромка
-// живой краски вокруг скола задирается и чуть светлеет.
+// Растрескавшийся цоколь: изолинии value-noise — связные блуждающие жилы,
+// а не пятна. Мелкий шум иззубривает линию, сердцевина трещины тёмная,
+// выкрошенная кромка вдоль неё чуть светлее основы. У земли к крупным
+// жилам добавляется мелкая сетка; часть панелей почти чистая.
 {
-  vec2 peelUv = vec2(
-    dot(vMaterialCoordinate.xz, vec2(1.0, 0.83)),
-    vMaterialCoordinate.y
+  // Вертикальные грани трескаются в фасадной развёртке, горизонтальная
+  // отмостка — в плане: иначе на плите жилы вырождались бы в полосы.
+  vec3 crackNormal = inverseTransformDirection(normalize(vNormal), viewMatrix);
+  vec2 crackUv = abs(crackNormal.y) > 0.6
+    ? vMaterialCoordinate.xz
+    : vec2(
+        dot(vMaterialCoordinate.xz, vec2(1.0, 0.83)),
+        vMaterialCoordinate.y
+      );
+  float crackJitter =
+    (materialValueNoise(crackUv * vec2(13.0, 9.0) + vec2(3.1, 15.8)) - 0.5) * 0.1;
+  float crackGround = 1.0 - smoothstep(0.0, 1.1, vMaterialCoordinate.y);
+  float crackPresence = smoothstep(
+    0.32,
+    0.58,
+    materialValueNoise(crackUv * vec2(0.35, 0.2) + vec2(41.0, 13.0)) * 0.72 +
+      crackGround * 0.28
   );
-  float peelBroad =
-    materialValueNoise(peelUv * vec2(0.9, 2.2) + vec2(7.3, 1.9)) * 0.55 +
-    materialValueNoise(peelUv * vec2(3.1, 6.4) + vec2(21.7, 9.1)) * 0.45;
-  float peelFine = materialValueNoise(peelUv * vec2(9.4, 17.0) + vec2(3.1, 15.8));
-  float peelGround = 1.0 - smoothstep(0.0, 0.9, vMaterialCoordinate.y);
-  float peelField = peelBroad * 0.66 + peelFine * 0.2 + peelGround * 0.3;
-  float peelPatch = smoothstep(0.58, 0.66, peelField);
-  float peelDeep = smoothstep(0.74, 0.84, peelField);
-  vec3 peelPlaster = mix(vec3(0.66, 0.58, 0.5), vec3(0.78, 0.72, 0.63), peelFine);
-  vec3 peelBrick = mix(vec3(0.34, 0.2, 0.14), vec3(0.45, 0.28, 0.18), peelFine);
-  float peelRim = smoothstep(0.5, 0.58, peelField) * (1.0 - peelPatch);
-  diffuseColor.rgb *= 1.0 + peelRim * 0.28;
-  diffuseColor.rgb = mix(diffuseColor.rgb, peelPlaster, peelPatch);
-  diffuseColor.rgb = mix(diffuseColor.rgb, peelBrick, peelDeep);
+  float crackMajor = abs(
+    materialValueNoise(crackUv * vec2(1.7, 0.8) + vec2(7.3, 1.9)) - 0.5 + crackJitter
+  );
+  float crackMinor = abs(
+    materialValueNoise(crackUv * vec2(4.4, 2.2) + vec2(21.7, 9.1)) - 0.5 + crackJitter
+  );
+  float crackCore = max(
+    1.0 - smoothstep(0.005, 0.03, crackMajor),
+    (1.0 - smoothstep(0.004, 0.022, crackMinor)) * (0.25 + crackGround * 0.75) * 0.85
+  ) * crackPresence;
+  float crackRim = max(
+    (1.0 - smoothstep(0.03, 0.09, crackMajor)) * smoothstep(0.022, 0.042, crackMajor),
+    (1.0 - smoothstep(0.024, 0.07, crackMinor)) * smoothstep(0.017, 0.032, crackMinor)
+      * (0.25 + crackGround * 0.75) * 0.8
+  ) * crackPresence;
+  diffuseColor.rgb *= 1.0 + crackRim * 0.24;
+  diffuseColor.rgb = mix(
+    diffuseColor.rgb,
+    diffuseColor.rgb * vec3(0.3, 0.3, 0.34),
+    crackCore * 0.95
+  );
 }`
     : ""
 }
@@ -1816,7 +1837,7 @@ gl_FragColor.rgb = mix(gl_FragColor.rgb, materialFogTint, materialFogFactor);
         textureProfile && faceFitTextureProfiles.has(textureProfile)
           ? "face-fit"
           : "projected"
-      }:${textureProfile === "city-painted-plinth" ? "peel" : "solid"}`;
+      }:${textureProfile === "city-cracked-plinth" ? "crack" : "solid"}`;
   }
 
   if (isGlass && color === litWindowColor) {
