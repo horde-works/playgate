@@ -3602,6 +3602,10 @@ function OpenWorldScene({
       const sourceRenderColor = remnant?.renderColor
         ?? intactGroundRenderColors.get(parentId)
         ?? source.color;
+      const treeVisualSourceId =
+        ("treeVisualSourceId" in source
+          ? source.treeVisualSourceId
+          : undefined) ?? (source.treeVisual ? source.id : undefined);
       const translation = body?.translation();
       const rotation = body?.rotation();
       const bodyPosition = translation
@@ -3656,8 +3660,7 @@ function OpenWorldScene({
           textureProfile: source.textureProfile,
           landscapeSurface: source.landscapeSurface,
           treeVisual: source.treeVisual,
-          treeVisualSourceId:
-            source.treeVisualSourceId ?? (source.treeVisual ? source.id : undefined),
+          treeVisualSourceId,
           shape: fragment.shape,
           size: fragment.size,
           position: fragment.position,
@@ -3707,8 +3710,7 @@ function OpenWorldScene({
           textureProfile: source.textureProfile,
           landscapeSurface: source.landscapeSurface,
           treeVisual: source.treeVisual,
-          treeVisualSourceId:
-            source.treeVisualSourceId ?? (source.treeVisual ? source.id : undefined),
+          treeVisualSourceId,
           size: [side, side * (0.8 + noiseB * 0.5), side],
           preferSoftCcd: true,
           position: [
