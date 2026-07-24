@@ -148,11 +148,15 @@ export function DayNightCycle({
 
   // Drawn after the opaque world so the per-pixel scattering shader only runs
   // where sky is actually visible instead of being overdrawn by the terrain.
+  // Центр купола — центр мира: пропсы drei Sky позицию не принимают, а
+  // купол в начале координат оставлял восточный край туманного моря первой
+  // карты снаружи неба.
   useLayoutEffect(() => {
     if (skyRef.current) {
       skyRef.current.renderOrder = 1000;
+      skyRef.current.position.set(worldCenter?.[0] ?? 0, 0, worldCenter?.[1] ?? 0);
     }
-  }, []);
+  }, [worldCenter]);
 
   // A cinematic replay can begin while the previous run is still at night.
   // Snap before the first rendered frame so recording never captures that
@@ -280,7 +284,6 @@ export function DayNightCycle({
           dome left its eastern sea sticking out through the sky. */}
       <Sky
         ref={skyRef}
-        position={[worldCenter?.[0] ?? 0, 0, worldCenter?.[1] ?? 0]}
         distance={Math.min(
           cameraFar * 0.92,
           Math.max(fortress ? 170 : 110, (worldRadius ?? 58) * 2.6),

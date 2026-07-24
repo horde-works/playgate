@@ -1775,6 +1775,829 @@ function createFjordJetty(): void {
 }
 
 /**
+ * Небесный драккар у фьордового причала. Единственный способ попасть на
+ * остров — корабль, который в каждом мире принимает форму этого мира: здесь
+ * это драккар, подвешенный под полосатым шерстяным баллоном на четырёх
+ * стропах. Внутри баллона — «подъёмное сердце» (материал earth: для
+ * решателя это фундамент, парящая точка опоры — баллон и есть то, что
+ * держит корабль). Вся цепочка нагрузок висит на сердце: стропы → планшири
+ * → пояса обшивки клинкером (каждый найтован к соседнему, cable) → киль;
+ * палуба лежит на стрингерах и шпангоутах. Порви полотнища, разбей сердце —
+ * и весь корабль уйдёт в туман. Сходни лежат одним концом на настиле
+ * причала, другим на палубе: по ним можно взойти на борт, а рушатся они
+ * вместе с любой из своих опор.
+ *
+ * Посадка выверена скриптом (scratchpad place/verify-skyship): центр
+ * (8.25, -102.5), курс +6°, нос — к пирсу. Под низкой серединой киля
+ * (локально a∈[-4.9, 4.6]) — только туман; оба конца корпуса задраны
+ * (как у настоящего драккара), поэтому корма может нависать над отмелью
+ * у x≥13, а нос — над голым берегом у корня причала. Весь корабль внутри
+ * стены мира r=96 (корпус ≤94.9, баллон ≤95.6) — до него честно достают
+ * и молот, и ракеты.
+ */
+function createSkyLongship(): void {
+  const ship = group("sky-longship", "Sky longship at the fog jetty", "wood", "stack");
+  const alpha = (6 * Math.PI) / 180;
+  const ca = Math.cos(alpha);
+  const sa = Math.sin(alpha);
+  const cx = 8.25;
+  const cz = -102.5;
+  // Локальные оси: a — вдоль киля (нос в -a, к пирсу), b — на правый борт
+  // (север). Мир: x = cx + a·ca - b·sa, z = cz + a·sa + b·ca.
+  const P = (a: number, b: number, y: number): SceneVector3 =>
+    [cx + a * ca - b * sa, y, cz + a * sa + b * ca];
+  // Контактные коробки авторятся в ЛОКАЛЬНЫХ координатах куска — компилятор
+  // сам поворачивает их в мировой AABB (transformedContactSize).
+  // Ориентация цилиндра осью вдоль вектора d. Эйлеры интринсические XYZ
+  // (как в three.js: R = Rx·Ry·Rz), поэтому образ локальной оси y —
+  // второй столбец матрицы; при ry = 0 система решается в два atan2.
+  const rodRotation = (dx: number, dy: number, dz: number): SceneVector3 =>
+    [Math.atan2(dz, dy), 0, Math.atan2(-dx, Math.hypot(dy, dz))];
+  const alongAxis = rodRotation(ca, 0, sa);
+  const acrossAxis = rodRotation(-sa, 0, ca);
+
+  // === Подъёмное сердце: парящий фундамент внутри баллона. Контактная
+  // коробка — весь объём баллона, чтобы полотнища, конусы и стропы честно
+  // находили опору; объём занижен — «газ», а не земля, и при разрушении
+  // не заваливает мир обломками.
+  primitive(ship, "heart", "earth", "cylinder",
+    P(0, 0, 8.1), [3.2, 9.0, 3.2], "#e6d3a0", {
+      rotation: alongAxis,
+      volume: 6,
+      contactBoxes: [{ position: [0, 0, 0], size: [4.75, 14.3, 4.75] }],
+      carriesAttachments: true,
+      attachmentSupportMode: "cable",
+      light: { color: "#ffc98a", distance: 14, intensity: 2.4 },
+    });
+
+  // === Оболочка: продольные полотнища крашеной шерсти, марена и овсяная
+  // некрашеная — 10 клиньев по кругу, между ними щели, сквозь которые ночью
+  // сочится свет сердца. Профиль сигары — по станциям.
+  const envelopeRadius = (a: number): number =>
+    2.35 * Math.pow(Math.max(0.04, 1 - Math.pow(Math.abs(a) / 7.15, 2.4)), 0.62);
+  // Клинья идут ровными продольными полосами без сдвига между станциями —
+  // иначе оболочка читается черепицей, а не шитым баллоном.
+  for (let station = 0; station < 10; station += 1) {
+    const a = -6.3 + station * 1.4;
+    const radius = envelopeRadius(a);
+    const width = ((2 * Math.PI * radius) / 10) * 0.96;
+    // Наклон панели по крутизне профиля: у концов сигары клин прижимается
+    // к оси — без этого плоские хорды торчат из силуэта сломанными досками.
+    const taper = Math.atan2(envelopeRadius(a + 0.69) - envelopeRadius(a - 0.69), 1.38);
+    // Наклонная панель короче в проекции на ось: у крутых концов сигары
+    // кольца расходились бы щелями — удлиняем хорду на 1/cos(наклона).
+    const goreLength = Math.min(2.1, 1.38 / Math.cos(taper)) + 0.08;
+    for (let gore = 0; gore < 10; gore += 1) {
+      const phi = (gore / 10) * Math.PI * 2;
+      const isBelly = Math.cos(phi) < -0.45;
+      primitive(ship, `gore:${station}:${gore}`, "cloth", "panel",
+        P(a, radius * Math.sin(phi), 8.1 + radius * Math.cos(phi)),
+        [goreLength, 0.08, width],
+        gore % 2 === 0 ? "#8e4a37" : "#c3ac8a", {
+          rotation: [phi, -alpha, taper],
+          surface: isBelly ? [{ kind: "damp", amount: 0.3 }] : undefined,
+        });
+    }
+  }
+  // Бронзовые оковки: носовой и кормовой конусы с тараном-шпилем впереди
+  // и три деревянных пера-стабилизатора у хвоста.
+  for (const end of [-1, 1] as const) {
+    const tag = end < 0 ? "bow" : "stern";
+    primitive(ship, `cone:${tag}:0`, "steel", "cylinder",
+      P(end * 6.9, 0, 8.1), [1.72, 0.85, 1.72], "#77653c", {
+        rotation: alongAxis,
+        contactBoxes: [{ position: [0, 0, 0], size: [1.9, 1.3, 1.9] }],
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+      });
+    primitive(ship, `cone:${tag}:1`, "steel", "cylinder",
+      P(end * 7.45, 0, 8.1), [1.0, 0.65, 1.0], "#6b5a36", {
+        rotation: alongAxis,
+        contactBoxes: [{ position: [0, 0, 0], size: [1.15, 1.5, 1.15] }],
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.3,
+      });
+  }
+  primitive(ship, "ram-spike", "steel", "cylinder",
+    P(-7.9, 0, 8.1), [0.28, 0.6, 0.28], "#8a7647", {
+      rotation: alongAxis,
+      contactBoxes: [{ position: [0, 0, 0], size: [0.4, 1.6, 0.4] }],
+      bearsLoad: false,
+      sideAttachmentReach: 0.3,
+    });
+  for (const [finIndex, roll] of [0, 2.0, -2.0].entries()) {
+    // Корень пера сидит в бронзовом конусе (радиус оболочки у хвоста мал),
+    // наружу выходит только лопасть.
+    const radius = 0.95;
+    primitive(ship, `fin:${finIndex}`, "wood", "panel",
+      P(6.95, radius * Math.sin(roll), 8.1 + radius * Math.cos(roll)),
+      [1.9, 1.05, 0.09], "#4a372c", {
+        rotation: [roll, -alpha, 0.35],
+        contactBoxes: [{ position: [0, 0, 0], size: [1.9, 1.15, 0.12] }],
+        bearsLoad: false,
+        sideAttachmentReach: 0.5,
+      });
+  }
+
+  // === Четыре несущие стропы: от сердца к планширям. bearingArea —
+  // «плетёный строп держит на разрыв», иначе решатель раздавит их весом
+  // корпуса.
+  for (const a of [-3.5, 3.5] as const) {
+    for (const side of [-1, 1] as const) {
+      primitive(ship, `sling:${a}:${side}`, "wood", "cylinder",
+        P(a, side * 1.72, 4.4), [0.09, 5.0, 0.09], "#7a6648", {
+          contactBoxes: [{ position: [0, 0, 0], size: [0.11, 5.0, 0.11] }],
+          carriesAttachments: true,
+          attachmentSupportMode: "cable",
+          sideAttachmentReach: 0.6,
+          bearingArea: 0.55,
+        });
+      primitive(ship, `deadeye:${a}:${side}`, "wood", "plank",
+        P(a, side * 1.72, 2.26), [0.16, 0.24, 0.16], "#41332a", {
+          bearsLoad: false,
+          sideAttachmentReach: 0.3,
+        });
+    }
+  }
+
+  // === Корпус. Клинкерная обшивка: каждый пояс найтован к соседнему выше,
+  // планширь — к стропам. Сегменты по три на пояс, правый борт с проёмом
+  // лацпорта у носа (a -5.0..-4.0) — туда приходят сходни.
+  const strakeBands = [
+    {
+      tag: "sheer", b: 1.58, y: 1.70, h: 0.56, roll: 0.22,
+      colors: ["#553f2c", "#4f3b2a"],
+      segments: [[-5.6, -1.9], [-1.9, 1.8], [1.8, 5.3]],
+    },
+    {
+      tag: "mid", b: 1.52, y: 1.28, h: 0.48, roll: 0.34,
+      colors: ["#4f3b2a", "#463527"],
+      segments: [[-5.4, -2.6], [-2.6, 0.2], [0.2, 2.9], [2.9, 5.1]],
+    },
+    {
+      tag: "garboard", b: 1.3, y: 0.91, h: 0.42, roll: 0.5,
+      colors: ["#463527", "#41332a"],
+      segments: [[-5.1, -3.2], [-3.2, -1.1], [-1.1, 1.0], [1.0, 3.0], [3.0, 4.8]],
+    },
+  ] as const;
+  for (const [sideTag, side] of [["port", -1], ["starboard", 1]] as const) {
+    for (const band of strakeBands) {
+      for (const [segment, [a1, a2]] of band.segments.entries()) {
+        const length = a2 - a1;
+        primitive(ship, `strake:${sideTag}:${band.tag}:${segment}`, "wood", "panel",
+          P((a1 + a2) / 2, side * band.b, band.y),
+          [length, band.h, 0.09],
+          band.colors[segment % 2], {
+            rotation: [side * band.roll, -alpha, 0],
+            contactBoxes: [{
+              position: [0, 0, 0],
+              size: [length, band.h + 0.04, 0.16],
+            }],
+            carriesAttachments: true,
+            attachmentSupportMode: "cable",
+            sideAttachmentReach: 0.42,
+            surface: band.tag === "garboard" ? [{ kind: "damp", amount: 0.35 }] : undefined,
+          });
+      }
+    }
+    // Планширь — брус поверх верхнего пояса, корень всей цепочки бортов.
+    const capSegments = [[-5.7, -2.0], [-2.0, 1.9], [1.9, 5.4]] as const;
+    for (const [segment, [a1, a2]] of capSegments.entries()) {
+      const length = a2 - a1;
+      primitive(ship, `gunwale:${sideTag}:${segment}`, "wood", "plank",
+        P((a1 + a2) / 2, side * 1.55, 2.02),
+        [length, 0.24, 0.3], segment % 2 === 0 ? "#54402d" : "#5d4531", {
+          rotation: [0, -alpha, 0],
+          contactBoxes: [{ position: [0, 0, 0], size: [length, 0.24, 0.34] }],
+          carriesAttachments: true,
+          attachmentSupportMode: "cable",
+          sideAttachmentReach: 0.5,
+        });
+    }
+  }
+  // Днищевые пояса и киль: низкая середина висит над чистым туманом.
+  for (const side of [-1, 1] as const) {
+    for (const [segment, [a1, a2]] of ([[-4.7, -1.7], [-1.7, 1.5], [1.5, 4.4]] as const).entries()) {
+      const length = a2 - a1;
+      primitive(ship, `bottom:${side}:${segment}`, "wood", "panel",
+        P((a1 + a2) / 2, side * 0.55, 0.575),
+        [length, 0.46, 0.09], segment % 2 === 0 ? "#41332a" : "#3a2d22", {
+          rotation: [side * 0.72, -alpha, 0],
+          contactBoxes: [{ position: [0, 0, 0], size: [length, 0.46, 0.14] }],
+          carriesAttachments: true,
+          attachmentSupportMode: "cable",
+          sideAttachmentReach: 0.42,
+          surface: [{ kind: "damp", amount: 0.4 }],
+        });
+    }
+  }
+  for (const [segment, [a1, a2]] of ([[-4.9, -1.8], [-1.8, 1.6], [1.6, 4.6]] as const).entries()) {
+    const length = a2 - a1;
+    primitive(ship, `keel:${segment}`, "wood", "plank",
+      P((a1 + a2) / 2, 0, 0.48),
+      [length, 0.36, 0.24], "#3a2d22", {
+        rotation: [0, -alpha, 0],
+        contactBoxes: [{ position: [0, 0, 0], size: [length, 0.36, 0.28] }],
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.5,
+        surface: [{ kind: "damp", amount: 0.45 }],
+      });
+  }
+
+  // Штевни: оба конца задраны. Нос несёт голову дракона над самым берегом
+  // у корня причала, корма завивается хвостом.
+  const stemPieces: readonly {
+    id: string; a: number; y: number; len: number; pitch: number; h: number;
+  }[] = [
+    { id: "stem:bow:0", a: -5.45, y: 1.0, len: 1.7, pitch: -0.68, h: 0.42 },
+    { id: "stem:bow:1", a: -6.3, y: 1.95, len: 1.05, pitch: -0.96, h: 0.36 },
+    { id: "stem:stern:0", a: 5.15, y: 1.05, len: 1.5, pitch: 0.62, h: 0.4 },
+    { id: "stem:stern:1", a: 6.0, y: 1.95, len: 0.95, pitch: 0.92, h: 0.34 },
+  ];
+  for (const stem of stemPieces) {
+    primitive(ship, stem.id, "wood", "plank",
+      P(stem.a, 0, stem.y), [stem.len, stem.h, 0.22], "#3a2d22", {
+        rotation: [0, -alpha, stem.pitch],
+        contactBoxes: [{ position: [0, 0, 0], size: [stem.len, stem.h + 0.06, 0.26] }],
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.5,
+      });
+  }
+  primitive(ship, "dragon:neck:0", "wood", "plank",
+    P(-6.68, 0, 2.55), [0.5, 0.58, 0.3], "#3a2d22", {
+      rotation: [0, -alpha, -0.38],
+      contactBoxes: [{ position: [0, 0, 0], size: [0.64, 0.72, 0.34] }],
+      carriesAttachments: true,
+      attachmentSupportMode: "cable",
+      sideAttachmentReach: 0.4,
+    });
+  primitive(ship, "dragon:neck:1", "wood", "plank",
+    P(-6.92, 0, 3.02), [0.42, 0.44, 0.26], "#3a2d22", {
+      rotation: [0, -alpha, -0.78],
+      contactBoxes: [{ position: [0, 0, 0], size: [0.56, 0.6, 0.3] }],
+      carriesAttachments: true,
+      attachmentSupportMode: "cable",
+      sideAttachmentReach: 0.4,
+    });
+  primitive(ship, "dragon:head", "wood", "plank",
+    P(-7.16, 0, 3.36), [0.66, 0.34, 0.34], "#41332a", {
+      rotation: [0, -alpha, 0.16],
+      contactBoxes: [{ position: [0, 0, 0], size: [0.74, 0.46, 0.38] }],
+      carriesAttachments: true,
+      attachmentSupportMode: "cable",
+      sideAttachmentReach: 0.4,
+    });
+  primitive(ship, "dragon:jaw", "wood", "plank",
+    P(-7.42, 0, 3.14), [0.44, 0.11, 0.24], "#3a2d22", {
+      rotation: [0, -alpha, 0.34],
+      bearsLoad: false,
+      sideAttachmentReach: 0.35,
+    });
+  primitive(ship, "dragon:crest", "wood", "plank",
+    P(-7.08, 0, 3.6), [0.4, 0.08, 0.38], "#c9a86a", {
+      rotation: [0, -alpha, 0.16],
+      bearsLoad: false,
+      sideAttachmentReach: 0.35,
+    });
+  for (const side of [-1, 1] as const) {
+    primitive(ship, `dragon:horn:${side}`, "wood", "plank",
+      P(-6.98, side * 0.18, 3.64), [0.28, 0.22, 0.07], "#3a2d22", {
+        rotation: [side * 0.5, -alpha, -0.6],
+        bearsLoad: false,
+        sideAttachmentReach: 0.35,
+      });
+  }
+  // Кормовой конёк: спираль из трёх сегментов, сужающихся к завитку —
+  // узнаваемый силуэт драккара с обоих концов.
+  primitive(ship, "tail:curl:0", "wood", "plank",
+    P(6.28, 0, 2.52), [0.42, 0.62, 0.2], "#3a2d22", {
+      rotation: [0, -alpha, 1.05],
+      contactBoxes: [{ position: [0, 0, 0], size: [0.6, 0.7, 0.24] }],
+      carriesAttachments: true,
+      attachmentSupportMode: "cable",
+      sideAttachmentReach: 0.4,
+    });
+  primitive(ship, "tail:curl:1", "wood", "plank",
+    P(6.12, 0, 3.0), [0.46, 0.24, 0.17], "#3a2d22", {
+      rotation: [0, -alpha, 0.35],
+      contactBoxes: [{ position: [0, 0, 0], size: [0.5, 0.32, 0.2] }],
+      carriesAttachments: true,
+      attachmentSupportMode: "cable",
+      sideAttachmentReach: 0.4,
+    });
+  primitive(ship, "tail:curl:2", "wood", "plank",
+    P(5.86, 0, 3.02), [0.3, 0.18, 0.14], "#c9a86a", {
+      rotation: [0, -alpha, -0.75],
+      bearsLoad: false,
+      sideAttachmentReach: 0.35,
+    });
+
+  // Носовые и кормовые скулы: диагональные доски, сводящие борта к штевням.
+  // Водорез: каждый пояс продолжается собственной полосой от своего торца
+  // к штевню — начало утоплено в пояс на четверть метра, конец в штевне,
+  // поэтому щелей между водорезом и бортами нет ни спереди, ни сзади.
+  for (const band of strakeBands) {
+    const bowEnd = band.segments[0][0];
+    const sternEnd = band.segments[band.segments.length - 1][1];
+    for (const side of [-1, 1] as const) {
+      for (const [end, endTag, bandEnd] of [[-1, "bow", bowEnd], [1, "stern", sternEnd]] as const) {
+        const from = P(bandEnd - end * 0.25, side * band.b, band.y);
+        const to = P(end * (endTag === "bow" ? 6.35 : 6.3), 0, band.y + 0.55);
+        const dx = to[0] - from[0];
+        const dy = to[1] - from[1];
+        const dz = to[2] - from[2];
+        const run = Math.hypot(dx, dz);
+        primitive(ship, `cutwater:${endTag}:${side}:${band.tag}`, "wood", "panel",
+          [(from[0] + to[0]) / 2, (from[1] + to[1]) / 2, (from[2] + to[2]) / 2],
+          [Math.hypot(dx, dy, dz) + 0.1, band.h, 0.09], "#4f3b2a", {
+            rotation: [0, Math.atan2(-dz, dx), Math.atan2(dy, run)],
+            contactBoxes: [{ position: [0, 0, 0], size: [Math.hypot(dx, dy, dz) + 0.1, band.h + 0.04, 0.15] }],
+            carriesAttachments: true,
+            attachmentSupportMode: "cable",
+            sideAttachmentReach: 0.5,
+          });
+      }
+    }
+  }
+
+  // Верх борта завершён: бревно планширя продолжается угловым бревном от
+  // каждого конца к коньку.
+  for (const side of [-1, 1] as const) {
+    for (const [end, endTag] of [[-1, "bow"], [1, "stern"]] as const) {
+      const from = P(end === -1 ? -5.55 : 5.25, side * 1.55, 2.02);
+      const to = P(end === -1 ? -6.5 : 6.4, 0, end === -1 ? 2.72 : 2.68);
+      const dx = to[0] - from[0];
+      const dy = to[1] - from[1];
+      const dz = to[2] - from[2];
+      const run = Math.hypot(dx, dz);
+      primitive(ship, `gunwale-finial:${endTag}:${side}`, "wood", "plank",
+        [(from[0] + to[0]) / 2, (from[1] + to[1]) / 2, (from[2] + to[2]) / 2],
+        [Math.hypot(dx, dy, dz) + 0.15, 0.2, 0.24], "#54402d", {
+          rotation: [0, Math.atan2(-dz, dx), Math.atan2(dy, run)],
+          contactBoxes: [{ position: [0, 0, 0], size: [Math.hypot(dx, dy, dz) + 0.15, 0.24, 0.3] }],
+          carriesAttachments: true,
+          attachmentSupportMode: "cable",
+          sideAttachmentReach: 0.5,
+        });
+    }
+  }
+
+  // === Внутренний набор: шпангоуты на обшивке, три стрингера, палуба.
+  for (const [ribIndex, a] of [-4.4, -2.2, 0, 2.2, 4.4].entries()) {
+    primitive(ship, `rib:${ribIndex}`, "wood", "plank",
+      P(a, 0, 0.68), [0.14, 0.36, 2.7], "#41332a", {
+        rotation: [0, -alpha, 0],
+        contactBoxes: [{ position: [0, 0, 0], size: [0.14, 0.36, 2.7] }],
+        sideAttachmentReach: 0.45,
+      });
+  }
+  for (const [stringerIndex, b] of [-0.83, 0, 0.83].entries()) {
+    primitive(ship, `stringer:${stringerIndex}`, "wood", "plank",
+      P(0, b, 0.92), [11.7, 0.12, 0.3], "#463527", {
+        rotation: [0, -alpha, 0],
+        contactBoxes: [{ position: [0, 0, 0], size: [11.7, 0.12, 0.3] }],
+      });
+  }
+  const deckRuns = [-0.83, 0, 0.83] as const;
+  const deckSegments = [[-4.95, -2.55], [-2.45, -0.05], [0.05, 2.45], [2.55, 4.95]] as const;
+  for (const [runIndex, b] of deckRuns.entries()) {
+    for (const [segment, [a1, a2]] of deckSegments.entries()) {
+      const length = a2 - a1;
+      primitive(ship, `deck:${runIndex}:${segment}`, "wood", "plank",
+        P((a1 + a2) / 2, b, 1.01), [length, 0.06, 0.76],
+        (runIndex + segment) % 2 === 0 ? "#5d4936" : "#66503a", {
+          rotation: [0, -alpha, 0],
+          contactBoxes: [{ position: [0, 0, 0], size: [length, 0.06, 0.76] }],
+        });
+    }
+  }
+  // Носовая и кормовая части пола зашиты целиком: поперечные доски
+  // сужаются вслед за бортами, отверстий в палубе нет.
+  for (const [end, endTag] of [[-1, "bow"], [1, "stern"]] as const) {
+    for (const [fillIndex, [fillA, halfWidth]] of ([
+      [5.12, 1.32], [5.46, 1.0], [5.8, 0.62],
+    ] as const).entries()) {
+      primitive(ship, `deck-fill:${endTag}:${fillIndex}`, "wood", "plank",
+        P(end * fillA, 0, 1.01), [0.6, 0.06, halfWidth * 2],
+        fillIndex % 2 === 0 ? "#66503a" : "#5d4936", {
+          rotation: [0, -alpha, 0],
+          contactBoxes: [{ position: [0, 0, 0], size: [0.6, 0.06, halfWidth * 2] }],
+        });
+    }
+  }
+
+  primitive(ship, "keelson", "wood", "plank",
+    P(0.15, 0, 0.96), [1.4, 0.2, 1.1], "#41332a", {
+      rotation: [0, -alpha, 0],
+      contactBoxes: [{ position: [0, 0, 0], size: [1.4, 0.2, 1.1] }],
+    });
+
+  // === Рангоут: мачта на кильсоне, рея, полуубранный полосатый парус —
+  // баллон над ним делает всю работу, парус остался из вежливости к ветру.
+  primitive(ship, "mast", "wood", "cylinder",
+    P(0.15, 0, 3.26), [0.36, 4.4, 0.36], "#4f3b2a", {
+      contactBoxes: [{ position: [0, 0, 0], size: [0.38, 4.4, 0.38] }],
+      carriesAttachments: true,
+      attachmentSupportMode: "cable",
+    });
+  primitive(ship, "yard", "wood", "cylinder",
+    P(0.15, 0, 4.42), [0.16, 4.6, 0.16], "#463527", {
+      rotation: acrossAxis,
+      contactBoxes: [{ position: [0, 0, 0], size: [0.18, 4.8, 0.18] }],
+      carriesAttachments: true,
+      attachmentSupportMode: "cable",
+      sideAttachmentReach: 0.35,
+    });
+  primitive(ship, "sail:roll", "cloth", "cylinder",
+    P(0.28, 0, 4.24), [0.42, 4.3, 0.42], "#b89f7d", {
+      rotation: acrossAxis,
+      contactBoxes: [{ position: [0, 0, 0], size: [0.44, 4.4, 0.44] }],
+    });
+  for (const [panelIndex, b] of [-1.42, 0, 1.42].entries()) {
+    primitive(ship, `sail:panel:${panelIndex}`, "cloth", "panel",
+      P(0.42, b, 3.35), [0.07, 2.2, 1.35],
+      panelIndex % 2 === 0 ? "#b89f7d" : "#8e4a37", {
+        rotation: [0, -alpha, panelIndex === 1 ? 0.05 : -0.04],
+        contactBoxes: [{ position: [0, 0, 0], size: [0.24, 2.2, 1.35] }],
+      });
+  }
+  primitive(ship, "pennant", "cloth", "panel",
+    P(0.55, 0, 5.24), [0.72, 0.26, 0.05], "#8e4a37", {
+      rotation: [0, -alpha + 0.35, 0],
+      contactBoxes: [{ position: [0, 0, 0], size: [0.8, 0.3, 0.1] }],
+    });
+  // Штаги к штевням — стоячий такелаж, чисто рассказ.
+  for (const [stayTag, aTip, yTip] of [["bow", -6.1, 2.3], ["stern", 5.9, 2.35]] as const) {
+    const dx = (aTip - 0.15) * ca;
+    const dz = (aTip - 0.15) * sa;
+    const dy = yTip - 5.3;
+    const length = Math.hypot(dx, dy, dz) - 0.3;
+    primitive(ship, `stay:${stayTag}`, "wood", "cylinder",
+      P((0.15 + aTip) / 2, 0, (5.3 + yTip) / 2), [0.05, length, 0.05], "#7a6648", {
+        rotation: rodRotation(dx, dy, dz),
+        contactBoxes: [{ position: [0, 0, 0], size: [0.2, length, 0.2] }],
+        bearsLoad: false,
+        sideAttachmentReach: 0.5,
+      });
+  }
+
+  // === Жизнь на палубе: груз принайтован ближе к корме, бухта каната и
+  // рулевое весло уложены — пришли и ошвартовались.
+  place(ship, "cargo:cask:0", "viking:barrel", {
+    position: P(1.35, -0.55, 1.04),
+    rotation: [0, 0.6, 0],
+  });
+  place(ship, "cargo:cask:1", "viking:barrel", {
+    position: P(2.0, -1.0, 1.04),
+    rotation: [0, -0.9, 0],
+  });
+  place(ship, "cargo:crate", "core:crate", {
+    position: P(-1.7, -0.8, 1.04),
+    rotation: [0, 0.35, 0],
+  });
+  place(ship, "cargo:sacks", "core:sacks", {
+    position: P(-2.7, 0.62, 1.04),
+    rotation: [0, -0.5, 0],
+  });
+  primitive(ship, "rope-coil", "wood", "cylinder",
+    P(-3.7, 0.72, 1.105), [0.5, 0.13, 0.5], "#7a6648", {
+      contactBoxes: [{ position: [0, 0, 0], size: [0.48, 0.13, 0.48] }],
+      bearsLoad: false,
+    });
+  // Рулевое весло навешено на правой раковине кормы и уходит лопастью
+  // в туман — фирменная черта, с мостков читается сразу.
+  primitive(ship, "rudder:mount", "wood", "plank",
+    P(4.55, 1.62, 2.02), [0.26, 0.3, 0.24], "#41332a", {
+      rotation: [0, -alpha, 0],
+      carriesAttachments: true,
+      attachmentSupportMode: "cable",
+      sideAttachmentReach: 0.4,
+    });
+  {
+    const rudderTop = P(4.35, 1.86, 2.85);
+    const rudderTip = P(5.65, 2.02, 1.15);
+    const dx = rudderTip[0] - rudderTop[0];
+    const dy = rudderTip[1] - rudderTop[1];
+    const dz = rudderTip[2] - rudderTop[2];
+    const rudderLength = Math.hypot(dx, dy, dz);
+    primitive(ship, "rudder:shaft", "wood", "cylinder",
+      [(rudderTop[0] + rudderTip[0]) / 2, (rudderTop[1] + rudderTip[1]) / 2, (rudderTop[2] + rudderTip[2]) / 2],
+      [0.12, rudderLength, 0.12], "#54402d", {
+        rotation: rodRotation(dx, dy, dz),
+        contactBoxes: [{ position: [0, 0, 0], size: [0.24, rudderLength, 0.24] }],
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.45,
+      });
+    primitive(ship, "rudder:blade", "wood", "plank",
+      [
+        rudderTip[0] + (dx / rudderLength) * 0.34,
+        rudderTip[1] + (dy / rudderLength) * 0.34,
+        rudderTip[2] + (dz / rudderLength) * 0.34,
+      ], [0.07, 0.95, 0.4], "#5d4531", {
+        rotation: rodRotation(dx, dy, dz),
+        contactBoxes: [{ position: [0, 0, 0], size: [0.35, 0.95, 0.45] }],
+        bearsLoad: false,
+        sideAttachmentReach: 0.4,
+      });
+    {
+      // Румпель выходит из головы валька внутрь корабля, к рулевому.
+      // Начало — точно на оси валька, чуть ниже его верхнего торца.
+      const tillerFrom: SceneVector3 = [
+        rudderTop[0] + (dx / rudderLength) * 0.1,
+        rudderTop[1] + (dy / rudderLength) * 0.1,
+        rudderTop[2] + (dz / rudderLength) * 0.1,
+      ];
+      const tillerTo = P(4.0, 0.8, 2.45);
+      const tx = tillerTo[0] - tillerFrom[0];
+      const ty = tillerTo[1] - tillerFrom[1];
+      const tz = tillerTo[2] - tillerFrom[2];
+      primitive(ship, "rudder:tiller", "wood", "cylinder",
+        [(tillerFrom[0] + tillerTo[0]) / 2, (tillerFrom[1] + tillerTo[1]) / 2, (tillerFrom[2] + tillerTo[2]) / 2],
+        [0.07, Math.hypot(tx, ty, tz), 0.07], "#5d4531", {
+          rotation: rodRotation(tx, ty, tz),
+          contactBoxes: [{ position: [0, 0, 0], size: [0.3, Math.hypot(tx, ty, tz), 0.3] }],
+          bearsLoad: false,
+          sideAttachmentReach: 0.5,
+        });
+    }
+  }
+
+  // Вёсла: по пять на борт, выпущены в небо чуть вразнобой — на земле
+  // грести не о что, но силуэт с крыльями вёсел и есть драккар.
+  for (const side of [-1, 1] as const) {
+    // Правый борт смотрит на отмель: там вёсла приподняты, чтобы лопасти
+    // висели над берегом, а не опирались о него. Левый борт — над туманом,
+    // эти распущены вниз во всю длину.
+    for (const [oarIndex, oarA] of [-3.6, -1.8, 0, 1.8, 3.6].entries()) {
+      const droop = (side > 0 ? 0.13 : 0.27) + 0.02 * oarIndex;
+      const outboard = side > 0 ? 1.9 : 2.4;
+      const sweep = 0.22;
+      const inboard = P(oarA, side * 1.18, 1.16);
+      const tip = P(oarA + sweep * outboard, side * (1.42 + outboard), 1.08 - droop * outboard);
+      const dx = tip[0] - inboard[0];
+      const dy = tip[1] - inboard[1];
+      const dz = tip[2] - inboard[2];
+      const length = Math.hypot(dx, dy, dz);
+      primitive(ship, `oar:${side}:${oarIndex}`, "wood", "cylinder",
+        [(inboard[0] + tip[0]) / 2, (inboard[1] + tip[1]) / 2, (inboard[2] + tip[2]) / 2],
+        [0.07, length, 0.07], oarIndex % 2 === 0 ? "#5d4936" : "#54402d", {
+          rotation: rodRotation(dx, dy, dz),
+          contactBoxes: [{ position: [0, 0, 0], size: [0.15, length, 0.15] }],
+          carriesAttachments: true,
+          attachmentSupportMode: "cable",
+          sideAttachmentReach: 0.5,
+          // Решатель вправе повести долю нагрузки днища через валёк —
+          // плетёный из ясеня, выдержит.
+          bearingArea: 0.6,
+        });
+      primitive(ship, `oar:${side}:${oarIndex}:blade`, "wood", "plank",
+        [tip[0] + dx / length * 0.45, tip[1] + dy / length * 0.45, tip[2] + dz / length * 0.45],
+        [0.05, 1.0, 0.3], "#63492f", {
+          rotation: rodRotation(dx, dy, dz),
+          contactBoxes: [{ position: [0, 0, 0], size: [0.3, 1.0, 0.3] }],
+          bearsLoad: false,
+          sideAttachmentReach: 0.4,
+        });
+    }
+  }
+
+  // Щиты по бортам — те же, что встречают у ворот деревни: тёмно-красный и
+  // стально-синий с золотой полосой. Каждому добавлены железный обод-подложка
+  // и золотая поперечина — крест поверх полосы префаба.
+  const shieldPalettes = [
+    { paint: "#8f3028", stripe: "#d2b56a" },
+    { paint: "#35566a", stripe: "#d2b56a" },
+  ] as const;
+  const shieldSpots: readonly (readonly [number, number])[] = [
+    [-3.9, -1], [-2.3, -1], [-0.7, -1], [0.9, -1], [2.5, -1],
+    [-3.3, 1], [-1.5, 1], [0.1, 1], [1.7, 1], [3.3, 1],
+  ];
+  for (const [shieldIndex, [a, side]] of shieldSpots.entries()) {
+    place(ship, `shield:${shieldIndex}`, "viking:shield", {
+      position: P(a, side * 1.8, 1.98),
+      rotation: [0, -alpha + (side < 0 ? 0 : Math.PI), 0],
+    }, { palette: shieldPalettes[shieldIndex % shieldPalettes.length] });
+    primitive(ship, `shield:${shieldIndex}:rim`, "steel", "cylinder",
+      P(a, side * 1.74, 1.98), [1.56, 0.05, 1.56], "#3d4145", {
+        rotation: acrossAxis,
+        contactBoxes: [{ position: [0, 0, 0], size: [1.56, 0.06, 1.56] }],
+        bearsLoad: false,
+        sideAttachmentReach: 0.5,
+      });
+    primitive(ship, `shield:${shieldIndex}:stripe`, "wood", "plank",
+      P(a, side * 1.92, 1.98), [0.16, 1.24, 0.06], "#d2b56a", {
+        rotation: [0, -alpha, 0],
+        bearsLoad: false,
+        sideAttachmentReach: 0.5,
+      });
+  }
+
+  // Кормовой фонарь на хвостовом штевне — второй огонь над туманом,
+  // перекликается с фонарём причала.
+  primitive(ship, "lantern:post", "wood", "cylinder",
+    P(5.6, -0.35, 2.6), [0.13, 1.5, 0.13], "#3f3027", {
+      contactBoxes: [{ position: [0, 0, 0], size: [0.14, 1.5, 0.14] }],
+      carriesAttachments: true,
+      sideAttachmentReach: 0.5,
+    });
+  primitive(ship, "lantern:arm", "wood", "plank",
+    P(5.85, -0.35, 3.28), [0.5, 0.07, 0.07], "#3f3027", {
+      rotation: [0, -alpha, 0],
+      bearsLoad: false,
+      sideAttachmentReach: 0.5,
+    });
+  primitive(ship, "lantern:cap", "steel", "steelSheet",
+    P(6.05, -0.35, 3.22), [0.22, 0.05, 0.22], "#353a3b", {
+      bearsLoad: false,
+      sideAttachmentReach: 0.6,
+    });
+  primitive(ship, "lantern:flame", "glass", "glassPane",
+    P(6.05, -0.35, 3.08), [0.13, 0.18, 0.13], "#f2dfa7", {
+      bearsLoad: false,
+      sideAttachmentReach: 0.6,
+      light: { color: "#ffb46a", distance: 9, intensity: 3 },
+    });
+
+  // Носовой фонарь висит под головой дракона, сдвинут на правую скулу,
+  // чтобы не спорить со швартовым канатом (тот идёт от шеи по центру).
+  primitive(ship, "lantern:bow:arm", "wood", "plank",
+    P(-6.82, 0.22, 2.42), [0.5, 0.07, 0.07], "#3f3027", {
+      rotation: [0, -alpha - 0.45, 0],
+      bearsLoad: false,
+      sideAttachmentReach: 0.5,
+    });
+  primitive(ship, "lantern:bow:cap", "steel", "steelSheet",
+    P(-7.02, 0.36, 2.36), [0.2, 0.05, 0.2], "#353a3b", {
+      bearsLoad: false,
+      sideAttachmentReach: 0.6,
+    });
+  primitive(ship, "lantern:bow:flame", "glass", "glassPane",
+    P(-7.02, 0.36, 2.22), [0.13, 0.18, 0.13], "#f2dfa7", {
+      bearsLoad: false,
+      sideAttachmentReach: 0.6,
+      light: { color: "#ffb46a", distance: 9, intensity: 3 },
+    });
+
+  // Топовый огонь: короткий кронштейн под самым топом мачты, фонарь висит
+  // впереди неё — ночью подсвечивает брюхо баллона и парус.
+  primitive(ship, "lantern:mast:arm", "wood", "plank",
+    P(-0.13, 0, 5.08), [0.5, 0.07, 0.07], "#3f3027", {
+      rotation: [0, -alpha, 0],
+      bearsLoad: false,
+      sideAttachmentReach: 0.5,
+    });
+  primitive(ship, "lantern:mast:cap", "steel", "steelSheet",
+    P(-0.35, 0, 5.02), [0.2, 0.05, 0.2], "#353a3b", {
+      bearsLoad: false,
+      sideAttachmentReach: 0.6,
+    });
+  primitive(ship, "lantern:mast:flame", "glass", "glassPane",
+    P(-0.35, 0, 4.88), [0.13, 0.18, 0.13], "#f2dfa7", {
+      bearsLoad: false,
+      sideAttachmentReach: 0.6,
+      light: { color: "#ffb46a", distance: 11, intensity: 3 },
+    });
+
+  // === Швартовка к пирсу. Носовой канат провисает к кнехту на конце
+  // мостков, шпринг — к новой утке у корня сходней. Оба — рассказ, не
+  // опора: корабль держит только сердце баллона.
+  const bowLinePoints: readonly SceneVector3[] = [
+    [1.35, 2.35, -103.2],
+    [0.25, 1.35, -105.3],
+    [-0.55, 1.1, -106.95],
+  ];
+  for (let segment = 0; segment < bowLinePoints.length - 1; segment += 1) {
+    const [x1, y1, z1] = bowLinePoints[segment];
+    const [x2, y2, z2] = bowLinePoints[segment + 1];
+    const length = Math.hypot(x2 - x1, y2 - y1, z2 - z1);
+    // Сегменты провиса держатся цепочкой за шею дракона; они «несущие»
+    // только друг для друга — кнехт пирса крепить не умеет (wall-режим).
+    primitive(ship, `bow-line:${segment}`, "wood", "cylinder",
+      [(x1 + x2) / 2, (y1 + y2) / 2, (z1 + z2) / 2], [0.055, length, 0.055], "#7a6648", {
+        rotation: rodRotation(x2 - x1, y2 - y1, z2 - z1),
+        contactBoxes: [{ position: [0, 0, 0], size: [0.15, length, 0.15] }],
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.6,
+      });
+  }
+  primitive(ship, "mooring-cleat", "wood", "cylinder",
+    [-0.7, 0.49, -101.05], [0.2, 0.5, 0.2], "#4a372c", {
+      contactBoxes: [{ position: [0, 0, 0], size: [0.2, 0.5, 0.2] }],
+      carriesAttachments: true,
+      attachmentSupportMode: "cable",
+      surface: [{ kind: "damp", amount: 0.4 }],
+    });
+  // Береговые буйки: нос и корма растянуты швартовами в распор — к
+  // полосатому бую на отмели северо-востока и к бую на языке мыса. Канаты
+  // натянуты (корабль рвётся вверх), буйки просто стоят на земле.
+  const moorBuoys: readonly {
+    tag: string; at: readonly [number, number];
+    shipPoint: SceneVector3;
+  }[] = [
+    { tag: "north", at: [13.6, -97.6], shipPoint: P(4.8, 1.55, 2.0) },
+    { tag: "west", at: [0.6, -103.6], shipPoint: P(-5.3, -1.5, 1.9) },
+  ];
+  for (const buoy of moorBuoys) {
+    const [bx, bz] = buoy.at;
+    primitive(ship, `buoy:${buoy.tag}:base`, "stone", "stoneBlock",
+      [bx, 0.19, bz], [0.62, 0.28, 0.56], "#62655f", {
+        rotation: [0, noise(bx, bz, 31) * Math.PI, 0],
+        surface: [{ kind: "moss", amount: 0.4 }],
+      });
+    primitive(ship, `buoy:${buoy.tag}:float`, "wood", "cylinder",
+      [bx, 0.61, bz], [0.44, 0.56, 0.44], "#8e4a37", {
+        contactBoxes: [{ position: [0, 0, 0], size: [0.44, 0.56, 0.44] }],
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+      });
+    primitive(ship, `buoy:${buoy.tag}:cap`, "wood", "cylinder",
+      [bx, 0.94, bz], [0.3, 0.1, 0.3], "#c3ac8a", {
+        bearsLoad: false,
+        sideAttachmentReach: 0.3,
+      });
+    const top: SceneVector3 = [bx, 0.94, bz];
+    const dx = top[0] - buoy.shipPoint[0];
+    const dy = top[1] - buoy.shipPoint[1];
+    const dz = top[2] - buoy.shipPoint[2];
+    const length = Math.hypot(dx, dy, dz) - 0.2;
+    primitive(ship, `moor-line:${buoy.tag}`, "wood", "cylinder",
+      [(top[0] + buoy.shipPoint[0]) / 2, (top[1] + buoy.shipPoint[1]) / 2, (top[2] + buoy.shipPoint[2]) / 2],
+      [0.05, length, 0.05], "#7a6648", {
+        rotation: rodRotation(dx, dy, dz),
+        contactBoxes: [{ position: [0, 0, 0], size: [0.18, length, 0.18] }],
+        bearsLoad: false,
+        sideAttachmentReach: 0.6,
+      });
+  }
+
+  {
+    const springFrom: SceneVector3 = [-0.7, 0.72, -101.08];
+    const springTo = P(-5.15, 1.55, 1.98);
+    const dx = springTo[0] - springFrom[0];
+    const dy = springTo[1] - springFrom[1];
+    const dz = springTo[2] - springFrom[2];
+    primitive(ship, "spring-line", "wood", "cylinder",
+      [(springFrom[0] + springTo[0]) / 2, (springFrom[1] + springTo[1]) / 2, (springFrom[2] + springTo[2]) / 2],
+      [0.05, Math.hypot(dx, dy, dz) - 0.15, 0.05], "#7a6648", {
+        rotation: rodRotation(dx, dy, dz),
+        contactBoxes: [{ position: [0, 0, 0], size: [0.15, Math.hypot(dx, dy, dz) - 0.15, 0.15] }],
+        bearsLoad: false,
+        sideAttachmentReach: 0.6,
+      });
+  }
+
+  // === Сходни: доска просто переброшена с настила через планширь —
+  // западный конец лежит на пирсе, точка опоры — сам планширь у a≈-4.1,
+  // хвост нависает над палубой. Никаких предметов на доске: взошёл — прыгай.
+  {
+    const railTop = 2.14;
+    const browJetty: SceneVector3 = [-0.8, 0.29, -99.15];
+    const railPoint = P(-4.75, 1.55, railTop + 0.04);
+    const runX = railPoint[0] - browJetty[0];
+    const runZ = railPoint[2] - browJetty[2];
+    const run = Math.hypot(runX, runZ);
+    const slope = (railPoint[1] - browJetty[1]) / run;
+    const dirX = runX / run;
+    const dirZ = runZ / run;
+    const westBack = 0.02;
+    const eastOver = 0.55;
+    const west: SceneVector3 = [
+      browJetty[0] - dirX * westBack, browJetty[1] - slope * westBack, browJetty[2] - dirZ * westBack,
+    ];
+    const east: SceneVector3 = [
+      railPoint[0] + dirX * eastOver, railPoint[1] + slope * eastOver, railPoint[2] + dirZ * eastOver,
+    ];
+    const browPitch = Math.atan(slope);
+    const browLength = (run + westBack + eastOver) / Math.cos(browPitch);
+    const center: SceneVector3 = [
+      (west[0] + east[0]) / 2, (west[1] + east[1]) / 2 - 0.045, (west[2] + east[2]) / 2,
+    ];
+    const localAlong = (point: SceneVector3): number =>
+      ((point[0] - center[0]) * dirX + (point[2] - center[2]) * dirZ) / Math.cos(browPitch);
+    primitive(ship, "brow", "wood", "plank",
+      center, [browLength, 0.09, 0.6], "#5d4531", {
+        rotation: [0, Math.atan2(-dirZ, dirX), browPitch],
+        contactBoxes: [
+          { position: [localAlong(browJetty), 0.04, 0], size: [0.6, 0.1, 0.55] },
+          { position: [localAlong(railPoint), -0.01, 0], size: [0.5, 0.1, 0.55] },
+          { position: [0, 0, 0], size: [browLength * 0.55, 0.09, 0.56] },
+        ],
+        // Наклонная доска: её центр ниже планширя, «кто на ком лежит»
+        // должны решать опорные пятна на концах, не центр рендера.
+        contactBearingOrder: true,
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        surface: [{ kind: "damp", amount: 0.35 }],
+      });
+  }
+}
+
+/**
  * Прибрежная полоса: непрерывный периметр берега. Осока и жёсткая трава
  * гуще всего у самой кромки, между ними плоские замшелые камни и плавник —
  * брёвна, которые «вынесло» из тумана. Кромка читается берегом в любой
@@ -1874,6 +2697,7 @@ createLivedInDressing();
 createStorySites();
 createWoodland();
 createFjordJetty();
+createSkyLongship();
 createShoreFringe();
 
 export const vikingVillageDocument: AuthoredSceneDocument = {

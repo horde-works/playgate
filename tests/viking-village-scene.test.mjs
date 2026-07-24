@@ -46,8 +46,9 @@ test("the pilot map is a serializable scene document compiled from prefabs", () 
   assert.equal(parsed.id, "viking-village");
   assert.equal(vikingVillageCompilation.artifact.objectCount > 4000, true);
   assert.equal(vikingVillageCompilation.artifact.prefabIds.length >= 17, true);
-  // 14 original groups plus the fjord jetty and the shoreline fringe.
-  assert.equal(vikingVillageCompilation.artifact.groupCount, 16);
+  // 14 original groups plus the fjord jetty, the sky longship moored to it
+  // and the shoreline fringe.
+  assert.equal(vikingVillageCompilation.artifact.groupCount, 17);
 });
 
 test("the village contains domestic life as physical, destructible objects", () => {

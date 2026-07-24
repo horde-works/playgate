@@ -426,10 +426,18 @@ function longhouse(
 
   // Close both gables with diminishing log courses around a central king
   // post. The roof, end walls and ridge now read as one timber structure.
+  // Каждый венец фронтона обязан прятаться ПОД кровельную плоскость: у
+  // узких домов (кузница, пивоварня) скат круче, и старая пирамида ширин
+  // высовывала концы брёвен сквозь крышу на углах.
   const gableLogDiameter = 0.48;
   const gableRise = 2.28;
   const gableStep = 0.46;
   const gableRows = Math.floor(gableRise / gableStep);
+  const gableRoofAngle = Math.atan2(2.25, width / 2 + 0.7);
+  const gableRoofTopAtRidge =
+    wallHeight + 1.3 +
+    Math.tan(gableRoofAngle) * (width / 4 + 0.35) +
+    0.09 / Math.cos(gableRoofAngle);
   for (const end of [-1, 1] as const) {
     pieces.push({
       id: `gable:${end}:king-post`,
@@ -442,9 +450,15 @@ function longhouse(
     });
     for (let row = 0; row < gableRows; row += 1) {
       const rise = gableLogDiameter / 2 + row * gableStep;
+      const rowTopY = wallTop + rise + gableLogDiameter / 2;
+      const halfUnderRoof =
+        (gableRoofTopAtRidge - rowTopY - 0.05) / Math.tan(gableRoofAngle);
       const span = Math.max(
         0.8,
-        (width - 0.45) * (1 - rise / (gableRise + 0.18)),
+        Math.min(
+          (width - 0.45) * (1 - rise / (gableRise + 0.18)),
+          halfUnderRoof * 2,
+        ),
       );
       pieces.push({
         id: `gable:${end}:row:${row}`,

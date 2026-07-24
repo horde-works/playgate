@@ -174,7 +174,8 @@ type ControlName =
   | "run"
   | "jump";
 
-type WeaponName = "hammer" | "launcher" | "mg" | "rocket";
+// "none" — фоторежим: пустые руки, клик ничего не делает; клавиша 0.
+type WeaponName = "none" | "hammer" | "launcher" | "mg" | "rocket";
 type ExplosiveKind = "grenade" | "rocket";
 
 const entryApproachActions: readonly GameAction[] = [
@@ -2407,6 +2408,25 @@ function OpenWorldScene({
     () => createSpatialIndex(breakablePieces, 5),
     [breakablePieces],
   );
+  // Точка интереса чаек: центр баллона небесного драккара, если он есть в
+  // сцене. Считается по кускам, поэтому переезд корабля стаю не потеряет.
+  const airshipInterest = useMemo(() => {
+    let sumX = 0;
+    let sumY = 0;
+    let sumZ = 0;
+    let goreCount = 0;
+    for (const piece of breakablePieces) {
+      if (piece.id.includes("sky-longship") && piece.id.includes("gore")) {
+        sumX += piece.position[0];
+        sumY += piece.position[1];
+        sumZ += piece.position[2];
+        goreCount += 1;
+      }
+    }
+    return goreCount > 0
+      ? ([sumX / goreCount, sumY / goreCount, sumZ / goreCount] as const)
+      : undefined;
+  }, [breakablePieces]);
   const maxPieceBoundingRadius = useMemo(
     () =>
       breakablePieces.reduce(
@@ -4853,6 +4873,9 @@ function OpenWorldScene({
   );
 
   const strike = useCallback(() => {
+    if (weapon === "none") {
+      return;
+    }
     if (weapon === "launcher") {
       fireGrenade();
       return;
@@ -5265,7 +5288,12 @@ function OpenWorldScene({
             pieces={breakablePieces}
           />
           <SmokePlumes nightRef={nightRef} />
-          <Birds center={scene.worldCenter} worldRadius={scene.worldRadius} />
+          <Birds
+            center={scene.worldCenter}
+            worldRadius={scene.worldRadius}
+            interest={airshipInterest}
+            count={20}
+          />
         </>
       ) : null}
       <group ref={breakableRaycastRoot}>
@@ -5332,7 +5360,7 @@ function OpenWorldScene({
             flightMode={flightMode}
             entryInteractionActive={entryInteractionActive}
           />
-          {weapon === "hammer" ? (
+          {weapon === "none" ? null : weapon === "hammer" ? (
             <FirstPersonHammer swing={swing} />
           ) : weapon === "launcher" ? (
             <FirstPersonLauncher kick={launcherKick} />
@@ -5792,11 +5820,13 @@ function MobileGameControls({
   );
 
   const fireLabel =
-    weapon === "hammer"
-      ? t("fire.strike")
-      : weapon === "mg"
-        ? t("fire.fire")
-        : t("fire.launch");
+    weapon === "none"
+      ? "—"
+      : weapon === "hammer"
+        ? t("fire.strike")
+        : weapon === "mg"
+          ? t("fire.fire")
+          : t("fire.launch");
   const timeLabel =
     timeOfDay === "day"
       ? t("time.day")
@@ -6175,6 +6205,8 @@ export function MakeAMessGame({
         openApproachedEntry();
       } else if (event.code === "KeyR") {
         reset();
+      } else if (event.code === "Digit0") {
+        setWeapon("none");
       } else if (event.code === "Digit1") {
         setWeapon("hammer");
       } else if (event.code === "Digit2") {
@@ -6379,13 +6411,15 @@ export function MakeAMessGame({
         <div className="damage-copy">
           <span>{t("hud.weapon")}</span>
           <span>
-            {weapon === "hammer"
-              ? t("weapon.hammer")
-              : weapon === "launcher"
-                ? t("weapon.launcher")
-                : weapon === "rocket"
-                  ? t("weapon.rocket")
-                  : t("weapon.mg")}
+            {weapon === "none"
+              ? "—"
+              : weapon === "hammer"
+                ? t("weapon.hammer")
+                : weapon === "launcher"
+                  ? t("weapon.launcher")
+                  : weapon === "rocket"
+                    ? t("weapon.rocket")
+                    : t("weapon.mg")}
           </span>
         </div>
         <div className="damage-copy">
@@ -6404,10 +6438,13 @@ export function MakeAMessGame({
         </div>
       </aside> : null}
 
-      {!cinematicActive ? <div className={`crosshair${active ? " is-active" : ""}`} aria-hidden="true">
-        <i />
-        <i />
-      </div> : null}
+      {/* В фоторежиме (пустые руки) прицел тоже прячется — кадр чистый. */}
+      {!cinematicActive && weapon !== "none" ? (
+        <div className={`crosshair${active ? " is-active" : ""}`} aria-hidden="true">
+          <i />
+          <i />
+        </div>
+      ) : null}
 
       {active && !cinematicActive && activeHint ? (
         <aside
@@ -6456,12 +6493,14 @@ export function MakeAMessGame({
         <span>{fallbackLook ? "Drag" : "Mouse"}</span>
         {t("controls.look")}
         <span>Click</span>
-        {weapon === "hammer"
-          ? t("fire.strike")
-          : weapon === "launcher" || weapon === "rocket"
-            ? t("fire.shoot")
-            : t("fire.hold")}
-        <span>1·2·3·4</span>
+        {weapon === "none"
+          ? "—"
+          : weapon === "hammer"
+            ? t("fire.strike")
+            : weapon === "launcher" || weapon === "rocket"
+              ? t("fire.shoot")
+              : t("fire.hold")}
+        <span>0·1·2·3·4</span>
         {t("controls.weapon")}
         <span>N</span>
         {t("controls.time")}

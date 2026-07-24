@@ -228,8 +228,33 @@ export function GrassField({
     // Cover mask: 1 m cells where a solid object sits low enough that a blade
     // would poke through it — floors, decks, foundations, wall footings. Grass
     // skips these cells, so it never grows up through a wooden floor.
+    //
+    // Ground mask: 1 m cells where a REAL grass/soil tile exists near y=0.
+    // Шумная кромка мира оставляет заливы без тайлов внутри круга рассева —
+    // без этой маски пучки висели над пустотой у края.
     const blocked = new Set<string>();
+    const ground = new Set<string>();
     for (const piece of pieces) {
+      if (
+        piece.shape === "groundTile" &&
+        (piece.material === "grass" || piece.material === "soil") &&
+        piece.position[1] > -0.6 &&
+        piece.position[1] < 0.4
+      ) {
+        // Ячейка зачисляется, только если ЦЕЛИКОМ внутри тайла: соседние
+        // тайлы перекрываются на 6 см и добирают межтайловые ячейки, а у
+        // внешней кромки трава не свисает корнями за край.
+        const minX = piece.position[0] - piece.size[0] / 2 - 0.01;
+        const maxX = piece.position[0] + piece.size[0] / 2 + 0.01;
+        const minZ = piece.position[2] - piece.size[2] / 2 - 0.01;
+        const maxZ = piece.position[2] + piece.size[2] / 2 + 0.01;
+        for (let gx = Math.ceil(minX); gx + 1 <= maxX; gx += 1) {
+          for (let gz = Math.ceil(minZ); gz + 1 <= maxZ; gz += 1) {
+            ground.add(`${gx}:${gz}`);
+          }
+        }
+        continue;
+      }
       if (
         piece.shape === "groundTile" ||
         piece.material === "grass" ||
@@ -276,7 +301,8 @@ export function GrassField({
       const angle = hash(index, 2) * Math.PI * 2;
       const x = center[0] + Math.cos(angle) * radius;
       const z = center[1] + Math.sin(angle) * radius;
-      if (blocked.has(`${Math.floor(x)}:${Math.floor(z)}`)) {
+      const cell = `${Math.floor(x)}:${Math.floor(z)}`;
+      if (blocked.has(cell) || !ground.has(cell)) {
         continue;
       }
       // Trodden routes carry little grass; the verge just off them carries the
