@@ -11,6 +11,35 @@ import type {
 } from "../scenes/sceneContract.ts";
 import { propBirch, propOak } from "./coreFlora.ts";
 import {
+  propFridgeMoskva,
+  propFridgeRibbed,
+  propFridgeRusty,
+  propGasStove,
+  propKettle,
+  propStewPot,
+  propTvSharp,
+  propTvSoviet,
+  propVintageStove,
+} from "./coreAppliances.ts";
+import {
+  propChannelArmchair,
+  propChannelSofa,
+  propChesterfield,
+  propCornerSofa,
+  propIronBed,
+  propOldTable,
+  propPaintedTable,
+  propPanelChair,
+  propSlatBed,
+  propSlatChair,
+  propSovietSofa,
+  propStoneTable,
+  propTrestleTable,
+  propWallUnit,
+  propWornChair,
+  propWriterDesk,
+} from "./coreFurniture.ts";
+import {
   propBucket,
   propCautionBoard,
   propCrate,
@@ -2457,6 +2486,36 @@ function saplingWithStake(): ScenePrefabDefinition {
   return prefab("city:tree:sapling", "Freshly planted staked sapling", ["city", "flora", "tree", "new-town"], pieces);
 }
 
+// Стандартная мебель: собранные предметы из coreFurniture, id вида
+// furn:<kind> — по нему же аудит правил размещения находит профиль вида.
+const coreFurniturePrefabs = [
+  prefab("furn:old-table", "Old joiner's table", ["core", "furniture", "table"], propOldTable({})),
+  prefab("furn:writer-desk", "Twin-pedestal writing desk", ["core", "furniture", "table"], propWriterDesk({})),
+  prefab("furn:stone-table", "Megalith garden table", ["core", "furniture", "table", "outdoor"], propStoneTable({})),
+  prefab("furn:trestle-table", "Trestle work table", ["core", "furniture", "table"], propTrestleTable({})),
+  prefab("furn:slat-chair", "Slat-back chair", ["core", "furniture", "chair"], propSlatChair({})),
+  prefab("furn:worn-chair", "Worn upholstered chair", ["core", "furniture", "chair"], propWornChair({})),
+  prefab("furn:panel-chair", "Black panel-back chair", ["core", "furniture", "chair"], propPanelChair({})),
+  prefab("furn:iron-bed", "Iron frame bed", ["core", "furniture", "bed"], propIronBed({})),
+  prefab("furn:slat-bed", "Wooden slat bed", ["core", "furniture", "bed"], propSlatBed({})),
+  prefab("furn:painted-table", "Painted kitchen table", ["core", "furniture", "table"], propPaintedTable({})),
+  prefab("furn:soviet-sofa", "Soviet straight sofa", ["core", "furniture", "sofa"], propSovietSofa({})),
+  prefab("furn:chesterfield", "Worn leather chesterfield", ["core", "furniture", "sofa"], propChesterfield({})),
+  prefab("furn:channel-sofa", "Channel-back lounge sofa", ["core", "furniture", "sofa"], propChannelSofa({})),
+  prefab("furn:channel-armchair", "Channel-back armchair", ["core", "furniture", "chair"], propChannelArmchair({})),
+  prefab("furn:corner-sofa", "Velour corner sofa", ["core", "furniture", "sofa"], propCornerSofa({})),
+  prefab("furn:wall-unit", "Soviet wall unit", ["core", "furniture", "cabinet"], propWallUnit({})),
+  prefab("furn:vintage-stove", "Vintage gas stove", ["core", "appliance", "kitchen"], propVintageStove({})),
+  prefab("furn:gas-stove", "Household gas stove", ["core", "appliance", "kitchen"], propGasStove({})),
+  prefab("furn:fridge-moskva", "Moskva fridge", ["core", "appliance", "kitchen"], propFridgeMoskva({})),
+  prefab("furn:fridge-ribbed", "Ribbed grey fridge", ["core", "appliance", "kitchen"], propFridgeRibbed({})),
+  prefab("furn:fridge-rusty", "Rusty yard fridge", ["core", "appliance", "outdoor"], propFridgeRusty({})),
+  prefab("furn:tv-soviet", "Soviet tube TV", ["core", "appliance", "media"], propTvSoviet({})),
+  prefab("furn:tv-sharp", "Nineties CRT TV", ["core", "appliance", "media"], propTvSharp({})),
+  prefab("furn:kettle", "Aluminium kettle", ["core", "kitchenware"], propKettle({})),
+  prefab("furn:stew-pot", "Enamel stew pot", ["core", "kitchenware"], propStewPot({})),
+];
+
 const coreClutter = [
   prefab("core:crate", "Slatted crate", ["core", "storage"], propCrate({})),
   prefab("core:pallet", "Shipping pallet", ["core", "storage"], propPallet({})),
@@ -2568,6 +2627,7 @@ const prefabs = [
   broomBucket(),
   saplingWithStake(),
   ...coreClutter,
+  ...coreFurniturePrefabs,
 ] as const;
 
 export const cityPrefabLibrary: ScenePrefabLibrary = new Map(

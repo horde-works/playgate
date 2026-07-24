@@ -565,5 +565,17 @@ export function placeProp(
       position: [box.position[0] + ax, box.position[1] + ay, box.position[2] + az],
       size: box.size,
     })),
+    // Петли (дверцы холодильников, духовок, шкафов) переезжают вместе с
+    // деталью — пивот задан в локальных координатах пропа.
+    hinge: piece.hinge
+      ? {
+          ...piece.hinge,
+          pivot: [
+            piece.hinge.pivot[0] + ax,
+            piece.hinge.pivot[1] + ay,
+            piece.hinge.pivot[2] + az,
+          ],
+        }
+      : undefined,
   }));
 }

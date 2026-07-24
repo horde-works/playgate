@@ -23,10 +23,27 @@ function rand(seed: number, salt: number): number {
 
 const CLUMP_GREENS = ["#2f4527", "#3a5230", "#44603a", "#2a3f24", "#4b6537", "#37503a"];
 const BIRCH_GREENS = ["#4c6532", "#5a7239", "#446030", "#65793f", "#52683a"];
+// Жухлая листва усохших ветвей: рыжие и бурые тона мёртвого листа, который
+// ещё держится на дереве.
+const CLUMP_DRY = ["#8a5a33", "#9c6b3c", "#7c4f2c", "#a4763f"];
+const BIRCH_DRY = ["#a5793d", "#96683a", "#b08a4a", "#8d6136"];
 
 interface TreeOptions {
   readonly seed?: number;
   readonly scale?: number;
+  /**
+   * Разрешить дереву быть полусухим. Часть разрешённых деревьев (по сиду)
+   * получает усохшие ветви: жухнет не конфетти по кроне, а целые подкроны —
+   * у мёртвой ветви умирает вся её листва разом.
+   */
+  readonly dry?: boolean;
+}
+
+/** 0 — здоровое дерево; иначе доля усохших ветвей, разыгранная от сида. */
+function treeDryness(options: TreeOptions, seed: number): number {
+  return options.dry && rand(seed, 777) > 0.7
+    ? 0.3 + rand(seed, 778) * 0.45
+    : 0;
 }
 
 function clump(
@@ -156,6 +173,7 @@ function branchPiece(
 export function propOak(options: TreeOptions = {}): FloraPiece[] {
   const seed = options.seed ?? 1;
   const s = options.scale ?? 1;
+  const dryness = treeDryness(options, seed);
   const trunkHeight = (2.6 + rand(seed, 10) * 0.9) * s;
   const lean = (rand(seed, 11) - 0.5) * 0.14;
   const leanYaw = rand(seed, 12) * Math.PI * 2;
@@ -204,6 +222,10 @@ export function propOak(options: TreeOptions = {}): FloraPiece[] {
     );
     const branchAttach = scaleVector(trunkAxis, attachHeight);
     const primaryId = `branch:p:${branch}`;
+    // Усохшая ветвь тянет за собой весь подкрон: и свой кламп, и клампы
+    // развилок ниже красятся жухлым разом.
+    const branchLeaves =
+      rand(seed, 500 + branch) < dryness ? CLUMP_DRY : CLUMP_GREENS;
     pieces.push(
       branchPiece(
         "oak",
@@ -227,7 +249,7 @@ export function propOak(options: TreeOptions = {}): FloraPiece[] {
         seed * 7 + branch * 19 + 1,
         primaryTip,
         (0.72 + rand(seed, 28 + branch) * 0.24) * s,
-        CLUMP_GREENS,
+        branchLeaves,
         0.2,
       ),
     );
@@ -273,7 +295,7 @@ export function propOak(options: TreeOptions = {}): FloraPiece[] {
           seed * 7 + branch * 19 + fork + 7,
           forkTip,
           (0.56 + rand(seed, 160 + branch * 2 + fork) * 0.23) * s,
-          CLUMP_GREENS,
+          branchLeaves,
           0.16,
         ),
       );
@@ -296,7 +318,7 @@ export function propOak(options: TreeOptions = {}): FloraPiece[] {
           trunkAxis[2] * height + (rand(seed, 190 + core) - 0.5) * 0.38 * s,
         ],
         (0.82 + rand(seed, 200 + core) * 0.2) * s,
-        CLUMP_GREENS,
+        rand(seed, 560 + core) < dryness * 0.4 ? CLUMP_DRY : CLUMP_GREENS,
         0.19,
       ),
     );
@@ -308,6 +330,7 @@ export function propOak(options: TreeOptions = {}): FloraPiece[] {
 export function propBirch(options: TreeOptions = {}): FloraPiece[] {
   const seed = options.seed ?? 1;
   const s = options.scale ?? 1;
+  const dryness = treeDryness(options, seed);
   const trunkHeight = (3.4 + rand(seed, 10) * 1.1) * s;
   const leanX = (rand(seed, 11) - 0.5) * 0.1;
   const leanZ = (rand(seed, 12) - 0.5) * 0.1;
@@ -349,6 +372,9 @@ export function propBirch(options: TreeOptions = {}): FloraPiece[] {
     );
     const length = (0.55 + rand(seed, 44 + level) * 0.48) * s;
     const primaryId = `branch:p:${level}`;
+    // Ярус сохнет целиком: обе ветви уровня несут одну и ту же жухлую листву.
+    const levelLeaves =
+      rand(seed, 500 + level) < dryness ? BIRCH_DRY : BIRCH_GREENS;
     pieces.push(
       branchPiece(
         "birch",
@@ -372,7 +398,7 @@ export function propBirch(options: TreeOptions = {}): FloraPiece[] {
         seed * 11 + level * 17,
         primaryTip,
         (0.52 + rand(seed, 64 + level) * 0.18) * s,
-        BIRCH_GREENS,
+        levelLeaves,
         0.14,
       ),
     );
@@ -404,7 +430,7 @@ export function propBirch(options: TreeOptions = {}): FloraPiece[] {
         seed * 11 + level * 17 + 7,
         addVector(forkStart, scaleVector(forkDirection, forkLength)),
         (0.46 + rand(seed, 114 + level) * 0.16) * s,
-        BIRCH_GREENS,
+        levelLeaves,
         0.12,
       ),
     );
@@ -418,7 +444,7 @@ export function propBirch(options: TreeOptions = {}): FloraPiece[] {
       seed * 11 + 95,
       addVector(scaleVector(trunkAxis, trunkHeight), [0, 0.28 * s, 0]),
       0.66 * s,
-      BIRCH_GREENS,
+      rand(seed, 599) < dryness * 0.6 ? BIRCH_DRY : BIRCH_GREENS,
       0.14,
     ),
   );
