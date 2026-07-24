@@ -6,6 +6,12 @@ import { deinterpenetrateClusters } from "./deinterpenetrate.ts";
 import { propTree } from "../content/prefabs/coreFlora.ts";
 import { townSurfaceRoutes } from "../content/scenes/townSurfacePlan.ts";
 import {
+  buildPlannedDoors,
+  buildPlannedPartitions,
+  furnishPlannedFlats,
+  khrushchevkaSectionPlan,
+} from "../content/scenes/khrushchevkaInterior.ts";
+import {
   propFridgeMoskva,
   propFridgeRibbed,
   propFridgeRusty,
@@ -963,8 +969,10 @@ function createHouseFrame(): BreakableClusterDefinition {
     [0, 2.88, -6.86, 8.8, 0.24, 0.3],
     [-4.22, 2.88, -3, 0.3, 0.24, 7.8],
     [4.22, 2.88, -3, 0.3, 0.24, 7.8],
-    [0, 5.48, 0.86, 8.8, 0.28, 0.34],
-    [0, 5.48, -6.86, 8.8, 0.28, 0.34],
+    // Верхние ригели короче нижних: на 5.48 их концы обязаны оставаться под
+    // скатами (кровля на x=±3.53 уже опустилась до их верха).
+    [0, 5.48, 0.86, 6.9, 0.28, 0.34],
+    [0, 5.48, -6.86, 6.9, 0.28, 0.34],
   ].forEach(([x, y, z, width, height, depth], index) => {
     pieces.push(
       makePiece(
@@ -1229,15 +1237,18 @@ function createSteelRoof(): BreakableClusterDefinition {
   const pieces: BreakablePieceDefinition[] = [];
   const id = "house:steel-roof";
 
+  // Шесть полос вместо пяти: кровля выступает за ОБА фронтона (z −7.13 и
+  // +1.13) с вылетом ~0.55 м — крыша перекрывает дом, ступени фронтона
+  // прячутся под свес, а не торчат голым торцом.
   for (const side of [-1, 1] as const) {
-    for (let index = 0; index < 5; index += 1) {
+    for (let index = 0; index < 6; index += 1) {
       pieces.push(
         makePiece(
           `${id}:${side}:${index}`,
           id,
           "steel",
           "steelSheet",
-          [side * 2.35, 6.08, -6.1 + index * 1.58],
+          [side * 2.35, 6.08, -6.87 + index * 1.58],
           [5.35, 0.1, 1.58],
           index % 2 === 0 ? "#68777a" : "#78898b",
           [0, 0, side * -0.38],
@@ -1246,14 +1257,14 @@ function createSteelRoof(): BreakableClusterDefinition {
     }
   }
 
-  for (let index = 0; index < 5; index += 1) {
+  for (let index = 0; index < 6; index += 1) {
     pieces.push(
       makePiece(
         `${id}:ridge:${index}`,
         id,
         "steel",
         "steelSheet",
-        [0, 7.21, -6.1 + index * 1.58],
+        [0, 7.21, -6.87 + index * 1.58],
         [0.8, 0.08, 1.56],
         index % 2 === 0 ? "#59686b" : "#4e5c5f",
       ),
@@ -1703,6 +1714,12 @@ interface KhrushchevkaConfig {
   readonly palette?: readonly string[];
   readonly shellOnly?: boolean;
   readonly includeLamps?: boolean;
+  /**
+   * Типовые планировки вместо легаси-кубиков: перегородки с проёмами,
+   * санузлы и прихожие из khrushchevkaSectionPlan, мебель — генератором
+   * по правилам комнат.
+   */
+  readonly plannedInterior?: boolean;
 }
 
 function createKhrushchevka(
@@ -2838,14 +2855,27 @@ function createKhrushchevka(
             [bx, wy, -2.32], [0.24, wallHeight, 2.26], pal[3 % pal.length]),
         );
       }
-      pieces.push(
-        makePiece(`${clusterId}:${floor}:room`, clusterId, "concrete", "panel",
-          [plasterX, wy, -2.35], [0.12, wallHeight, 2.3], "#d8d3c6"),
-        makePiece(`${clusterId}:${floor}:kitchen`, clusterId, "concrete", "panel",
-          [plasterX, wy, -6.55], [0.12, wallHeight, 2.4], "#d8d3c6"),
-        makePiece(`${clusterId}:${floor}:studio`, clusterId, "plaster", "panel",
-          [leftFlatMid - 0.5, wy, -4.0], [1.7, wallHeight, 0.12], "#e3ddcf"),
-      );
+      if (config.plannedInterior) {
+        // Перегородки из типовой планировки: сегменты с дверными проёмами,
+        // кафельные санузлы, надпроёмные пояса.
+        const plan = khrushchevkaSectionPlan(innerX0, stripWidth, sectionIndex);
+        for (const piece of buildPlannedPartitions(plan, floorBase(floor), wallHeight)) {
+          pieces.push({
+            ...piece,
+            id: `${clusterId}:${floor}:${piece.id}`,
+            clusterId,
+          });
+        }
+      } else {
+        pieces.push(
+          makePiece(`${clusterId}:${floor}:room`, clusterId, "concrete", "panel",
+            [plasterX, wy, -2.35], [0.12, wallHeight, 2.3], "#d8d3c6"),
+          makePiece(`${clusterId}:${floor}:kitchen`, clusterId, "concrete", "panel",
+            [plasterX, wy, -6.55], [0.12, wallHeight, 2.4], "#d8d3c6"),
+          makePiece(`${clusterId}:${floor}:studio`, clusterId, "plaster", "panel",
+            [leftFlatMid - 0.5, wy, -4.0], [1.7, wallHeight, 0.12], "#e3ddcf"),
+        );
+      }
     }
     clusters.push(
       cluster(clusterId, `Section walls ${sectionIndex}`, "concrete", "mounted", pieces),
@@ -2967,6 +2997,26 @@ function createKhrushchevka(
         });
       }
 
+      if (config.plannedInterior) {
+        // Типовая планировка: межкомнатные двери и мебель из генератора.
+        const plan = khrushchevkaSectionPlan(innerX0, stripWidth, sectionIndex);
+        const floorNoise = (key: string): number =>
+          noise(`flat:${sectionIndex}:${floor}:${key}`);
+        for (const piece of buildPlannedDoors(plan, fb - 0.01, floorNoise)) {
+          flatDoorPieces.push({
+            ...piece,
+            id: `hru:innerdoor:${sectionIndex}:${floor}:${piece.id}`,
+            clusterId: "hru:flatdoors",
+          });
+        }
+        for (const piece of furnishPlannedFlats(plan, fb, floorNoise)) {
+          furniturePieces.push({
+            ...piece,
+            id: `${furnitureId}:${floor}:${piece.id}`,
+            clusterId: furnitureId,
+          });
+        }
+      } else {
       const addFurniture = (
         name: string,
         material: BreakableMaterial,
@@ -3021,6 +3071,7 @@ function createKhrushchevka(
       addProp("furn:slat-bed:r2", propSlatBed({ timber: "#7a5236" }), [plasterX + 0.8, fb, -3.25]);
       addFurniture("wardrobe:r", "wood",
         [sectionIndex === 0 ? 20.95 : 31.78, fb + 0.9, -1.45], [1.0, 1.8, 0.5], "#7e5233");
+      }
 
       // подъезд: плафон и электрощиток на каждой площадке
       fixturePieces.push(
@@ -4892,7 +4943,7 @@ export const breakableClusters = [
   createTerrace(),
   createYardChairs(),
   createStoneGazebo(),
-  ...createKhrushchevka(),
+  ...createKhrushchevka({ plannedInterior: true }),
   ...createKhrushchevka({
     prefix: "k2",
     dz: -16,

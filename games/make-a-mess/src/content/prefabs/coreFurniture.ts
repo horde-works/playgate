@@ -1363,15 +1363,21 @@ export function propWallUnit(options: {
   readonly yaw?: number;
   readonly timber?: string;
   readonly seed?: number;
+  /** Трёхсекционный вариант (без шкафа с антресолью) для тесных комнат. */
+  readonly compact?: boolean;
 } = {}): FurniturePiece[] {
   const yaw = options.yaw ?? 0;
   const timber = options.timber ?? "#77492b";
   const seed = options.seed ?? 9;
+  const compact = options.compact ?? false;
   const spin = spinner(yaw);
   const facade = shade(timber, 1.12);
   const depth = 0.42;
   const height = 2.2;
-  const walls = [-1.5, -0.72, 0.03, 0.78, 1.5];
+  const walls = compact
+    ? [-1.14, -0.36, 0.39, 1.14]
+    : [-1.5, -0.72, 0.03, 0.78, 1.5];
+  const span = walls[walls.length - 1] - walls[0];
   const frontZ = depth / 2 - 0.02;
   const pieces: FurniturePiece[] = [];
   const bookColors = ["#7a2e24", "#2e4a6b", "#b08a3e", "#4a6b35", "#8a8a88", "#5b3350"];
@@ -1383,7 +1389,7 @@ export function propWallUnit(options: {
     shape: "plank",
     position: [0, 0.05, 0],
     rotation: [0, yaw, 0],
-    size: [3.04, 0.1, depth - 0.04],
+    size: [span + 0.04, 0.1, depth - 0.04],
     color: shade(timber, 0.85),
     carriesAttachments: true,
     weathering: 0.25,
@@ -1403,14 +1409,17 @@ export function propWallUnit(options: {
       weathering: 0.22,
     }));
   }
+  // Карниз — декор: bearsLoad false, иначе в комнате плита перекрытия
+  // (бетон прощает до ~0.2 м зазора) «садится» на него и давит стойки.
   pieces.push(selfContact({
     id: "crown",
     material: "wood",
     shape: "plank",
     position: [0, height - 0.03, 0],
     rotation: [0, yaw, 0],
-    size: [3.08, 0.06, depth + 0.02],
+    size: [span + 0.08, 0.06, depth + 0.02],
     color: shade(timber, 0.92),
+    bearsLoad: false,
     weathering: 0.22,
   }));
 
@@ -1594,8 +1603,8 @@ export function propWallUnit(options: {
     }));
   }
 
-  // --- Секция 3: шкаф с антресолью ---------------------------------------
-  {
+  // --- Секция 3: шкаф с антресолью (в компактном варианте отсутствует) ---
+  if (!compact) {
     const [cx, cw] = bay(3);
     const [dx, dz] = spin(cx, frontZ);
     for (const side of [-1, 1] as const) {

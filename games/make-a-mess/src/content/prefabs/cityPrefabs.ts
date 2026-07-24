@@ -566,11 +566,13 @@ function courtyardOutbuilding(): ScenePrefabDefinition {
   // Фронтоны и конёк: торцы под скатами закрыты, крыша не «дырявая».
   for (const side of [-1, 1] as const) {
     pieces.push(
-      part(`gable:${side}:0`, "plaster", "panel", [side * 3.35, 3.42, 0], [0.28, 0.44, 3.4], "#dbd8cd", {
+      // Ширины из уклона ската (0.38): верхние углы полос под кровлей, а не
+      // сквозь неё.
+      part(`gable:${side}:0`, "plaster", "panel", [side * 3.35, 3.42, 0], [0.28, 0.44, 2.44], "#dbd8cd", {
         textureProfile: "city-aged-stucco",
         weathering: 0.6,
       }),
-      part(`gable:${side}:1`, "plaster", "panel", [side * 3.35, 3.84, 0], [0.28, 0.4, 1.7], "#d6d3c8", {
+      part(`gable:${side}:1`, "plaster", "panel", [side * 3.35, 3.84, 0], [0.28, 0.4, 0.44], "#d6d3c8", {
         textureProfile: "city-aged-stucco",
         weathering: 0.55,
       }),
@@ -1640,13 +1642,19 @@ function stuccoHouse(options: StuccoHouseOptions): ScenePrefabDefinition {
         sideAttachmentReach: 0.4,
       });
     }
-    // Фронтоны: три убывающие полосы штукатурки на торцах.
+    // Фронтоны: три полосы штукатурки на торцах. Ширина каждой считается из
+    // уклона кровли: верхние углы полосы обязаны сидеть ПОД плоскостью
+    // ската. Линейная «пирамида» ширин здесь выпирала из-под крыши на
+    // десятки сантиметров и с воздуха читалась блоками, парящими на скате.
     const gh = rise - 0.1;
+    const bandH = gh / 3;
     for (const side of [-1, 1] as const) {
       for (let band = 0; band < 3; band += 1) {
-        const bw = (depth - 0.5) * (1 - band * 0.3);
+        const bandTop = top + bandH * (band + 1);
+        const halfUnderRoof = (ridgeY - bandTop - 0.08) / Math.tan(slope);
+        const bw = Math.max(0.24, Math.min(depth - 0.5, halfUnderRoof * 2));
         pieces.push(part(`gable:${side}:${band}`, "plaster", "panel",
-          [side * (width / 2 - wallT / 2), top + gh * (band + 0.5) / 3, 0], [wallT, gh / 3, bw], options.wall, {
+          [side * (width / 2 - wallT / 2), top + bandH * (band + 0.5), 0], [wallT, bandH, bw], options.wall, {
             colorSlot: "plaster",
             textureProfile: "city-aged-stucco",
             weathering: 0.4,

@@ -275,7 +275,7 @@ export function propGasStove(options: {
         size: [0.32, 0.24, 0.015],
         color: "#1d1b19",
         bearsLoad: false,
-        sideAttachmentReach: 0.06,
+        sideAttachmentReach: 0.08,
       },
       selfContact({
         id: "oven:handle",
@@ -336,7 +336,9 @@ function fridgeShell(options: FridgeShellOptions): AppliancePiece[] {
   // так внутренние полки честно опираются на боковины, а не тонут в боксе.
   for (const side of [-1, 1] as const) {
     const [px, pz] = spin(side * (width / 2 - 0.02), -0.03);
-    pieces.push(selfContact({
+    const cos = Math.abs(Math.cos(yaw));
+    const sin = Math.abs(Math.sin(yaw));
+    pieces.push({
       id: `wall:${side}`,
       material: "steel",
       shape: "steelSheet",
@@ -345,9 +347,19 @@ function fridgeShell(options: FridgeShellOptions): AppliancePiece[] {
       size: [0.04, height, depth - 0.06],
       color,
       carriesAttachments: true,
-    attachmentSupportMode: "hinge",
+      attachmentSupportMode: "hinge",
       weathering: wear,
-    }));
+      // Боковина — часть жёсткого короба: несущий след шире листа, иначе
+      // тонкая стенка «перегружается» навеской дверей в общей сцене.
+      contactBoxes: [{
+        position: [px, height / 2, pz],
+        size: [
+          0.09 * cos + (depth - 0.06) * sin,
+          height,
+          0.09 * sin + (depth - 0.06) * cos,
+        ],
+      }],
+    });
   }
   {
     const [px, pz] = spin(0, -depth / 2 + 0.02);
@@ -417,10 +429,12 @@ export function propFridgeMoskva(options: {
         position: [dx, height / 2 - 0.02, dz],
         rotation: [0, yaw, 0],
         size: [width, height - 0.09, 0.05],
+        // Полая жестяная дверца: треть объёма болванки.
+        volume: width * (height - 0.09) * 0.05 * 0.3,
         color: white,
         carriesAttachments: true,
     attachmentSupportMode: "hinge",
-        sideAttachmentReach: 0.1,
+        sideAttachmentReach: 0.18,
         weathering: 0.22,
       }),
     },
@@ -434,7 +448,7 @@ export function propFridgeMoskva(options: {
       size: [width - 0.06, 0.025, 0.012],
       color: "#c7ccc9",
       bearsLoad: false,
-      sideAttachmentReach: 0.06,
+      sideAttachmentReach: 0.14,
     }),
     selfContact({
       id: "handle",
@@ -445,7 +459,7 @@ export function propFridgeMoskva(options: {
       size: [0.2, 0.045, 0.04],
       color: "#cdd2cf",
       bearsLoad: false,
-      sideAttachmentReach: 0.07,
+      sideAttachmentReach: 0.14,
     }),
     selfContact({
       id: "badge",
@@ -456,7 +470,7 @@ export function propFridgeMoskva(options: {
       size: [0.14, 0.035, 0.012],
       color: "#a8873e",
       bearsLoad: false,
-      sideAttachmentReach: 0.06,
+      sideAttachmentReach: 0.14,
     }),
   );
   return pieces;
@@ -489,10 +503,12 @@ export function propFridgeRibbed(options: {
         position: [dx, (split + height - 0.06) / 2 + 0.02, dz],
         rotation: [0, yaw, 0],
         size: [width, height - 0.06 - split, 0.05],
+        // Полая жестяная дверца: треть объёма болванки.
+        volume: width * (height - 0.06 - split) * 0.05 * 0.3,
         color: shade(body, 1.04),
         carriesAttachments: true,
     attachmentSupportMode: "hinge",
-        sideAttachmentReach: 0.1,
+        sideAttachmentReach: 0.18,
         weathering: 0.5,
       }),
     },
@@ -504,10 +520,12 @@ export function propFridgeRibbed(options: {
         position: [dx, (split - 0.02 + 0.14) / 2, dz],
         rotation: [0, yaw, 0],
         size: [width, split - 0.16, 0.05],
+        // Полая жестяная дверца: треть объёма болванки.
+        volume: width * (split - 0.16) * 0.05 * 0.3,
         color: body,
         carriesAttachments: true,
     attachmentSupportMode: "hinge",
-        sideAttachmentReach: 0.1,
+        sideAttachmentReach: 0.18,
         weathering: 0.52,
       }),
     },
@@ -522,7 +540,7 @@ export function propFridgeRibbed(options: {
       size: [0.18, 0.04, 0.04],
       color: "#c9cecb",
       bearsLoad: false,
-      sideAttachmentReach: 0.07,
+      sideAttachmentReach: 0.14,
       weathering: 0.3,
     }));
   }
@@ -536,7 +554,7 @@ export function propFridgeRibbed(options: {
       size: [width - 0.05, 0.018, 0.012],
       color: shade(body, 0.9),
       bearsLoad: false,
-      sideAttachmentReach: 0.06,
+      sideAttachmentReach: 0.08,
       weathering: 0.45,
     }));
   }
@@ -585,10 +603,12 @@ export function propFridgeRusty(options: {
         position: [dx, height / 2 + 0.04, dz],
         rotation: [0, yaw, 0],
         size: [width, height - 0.34, 0.05],
+        // Полая жестяная дверца: треть объёма болванки.
+        volume: width * (height - 0.34) * 0.05 * 0.3,
         color: shade(body, 1.02),
         carriesAttachments: true,
     attachmentSupportMode: "hinge",
-        sideAttachmentReach: 0.1,
+        sideAttachmentReach: 0.18,
         weathering: 0.85,
       }),
     },
@@ -601,7 +621,7 @@ export function propFridgeRusty(options: {
       size: [0.1, 0.03, 0.1],
       color: "#b3b8b4",
       bearsLoad: false,
-      sideAttachmentReach: 0.08,
+      sideAttachmentReach: 0.14,
       weathering: 0.5,
     }),
     selfContact({
@@ -632,7 +652,7 @@ export function propFridgeRusty(options: {
       size: [w, h, 0.008],
       color: rust[patch % rust.length],
       bearsLoad: false,
-      sideAttachmentReach: 0.06,
+      sideAttachmentReach: 0.08,
       weathering: 0.6,
     }));
   }
@@ -689,7 +709,7 @@ export function propTvSoviet(options: {
       size: [0.1, 0.24, 0.025],
       color: "#392f26",
       bearsLoad: false,
-      sideAttachmentReach: 0.06,
+      sideAttachmentReach: 0.08,
     }),
   );
   for (const [index, knobY] of [0.1, 0.1].entries()) {
@@ -702,7 +722,7 @@ export function propTvSoviet(options: {
       size: [0.035, 0.025, 0.035],
       color: "#211f1c",
       bearsLoad: false,
-      sideAttachmentReach: 0.06,
+      sideAttachmentReach: 0.08,
     }));
   }
   return pieces;
@@ -738,7 +758,7 @@ export function propTvSharp(options: {
       size: [0.32, 0.24, 0.035],
       color: "#232a2c",
       bearsLoad: false,
-      sideAttachmentReach: 0.07,
+      sideAttachmentReach: 0.08,
       contactBoxes: [{
         position: [spin(0, 0.175)[0], 0.24, spin(0, 0.175)[1]],
         size: [0.32, 0.24, 0.05],
@@ -753,7 +773,7 @@ export function propTvSharp(options: {
       size: [0.34, 0.05, 0.02],
       color: "#2b2a28",
       bearsLoad: false,
-      sideAttachmentReach: 0.06,
+      sideAttachmentReach: 0.08,
     }),
   );
   return pieces;
@@ -798,7 +818,7 @@ export function propKettle(options: {
       size: [0.035 * s, 0.12 * s, 0.035 * s],
       color: "#aeb4b6",
       bearsLoad: false,
-      sideAttachmentReach: 0.06,
+      sideAttachmentReach: 0.08,
     }),
   ];
 }

@@ -238,6 +238,10 @@ export function collectWindowPanes(
     if (piece.material !== "glass" || piece.shape !== "glassPane") {
       continue;
     }
+    // Зеркала шкафов и стёкла витрин — стекло МЕБЕЛИ, а не окна здания.
+    if (/(?:^|:)furn:/.test(piece.id)) {
+      continue;
+    }
     const [sx, sy, sz] = piece.size;
     if (sy < 0.5) {
       continue; // форточки, плафоны, лампы на подоконниках
