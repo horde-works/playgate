@@ -3139,3 +3139,42 @@ button:focus-visible {
     animation-iteration-count: 1;
   }
 }
+
+/* Условия уже приняты — окно согласия не должно даже мелькнуть. Метку ставит
+   блокирующий скрипт в разметке ДО первой отрисовки, поэтому здесь нет ни
+   задержки, ни анимации: содержимое просто сразу открыто. */
+html[data-terms="accepted"] .consent-backdrop { display: none; }
+html[data-terms="accepted"] .consent-content-blocked {
+  filter: none;
+  pointer-events: auto;
+  user-select: auto;
+}
+
+/* Шторка сборки сцены: та же интонация, что у титров режима, но слова не
+   улетают — ожидание длится, пока длится, поэтому анимация одноразовая на
+   появление, а не на исчезновение. */
+.gate-loading { margin: 0 0 6px; }
+
+.gate-loading-title {
+  margin: 0;
+  font-size: clamp(22px, 2.6vw, 34px);
+  font-weight: 810;
+  letter-spacing: -0.05em;
+  line-height: 1.02;
+}
+
+.gate-loading-title span {
+  display: inline-block;
+  transform-origin: 50% 100%;
+  animation: modeAnnounceWordIn 0.9s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: calc(var(--word-index) * 60ms);
+}
+
+@keyframes modeAnnounceWordIn {
+  from { opacity: 0; transform: translateY(22px) rotateX(46deg); }
+  to { opacity: 1; transform: translateY(0) rotateX(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gate-loading-title span { animation-duration: 0.01ms; }
+}

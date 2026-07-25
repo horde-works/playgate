@@ -6644,7 +6644,30 @@ export function MakeAMessGame({
       {!active && (
         <section className="game-gate" aria-label={t("hud.launchAria")}>
           <div className="gate-card">
-            <p>{ready ? copy.ready : copy.loading}</p>
+            {ready ? (
+              <p>{copy.ready}</p>
+            ) : (
+              // Пока сцена собирается, ждать приходится по-настоящему — и здесь
+              // шторка честная, в отличие от согласия с условиями, где задержки
+              // нет вовсе. Оформлена как титры пролёта, чтобы ожидание было
+              // частью фильма, а не системным сообщением.
+              <div className="gate-loading">
+                <p className="mode-announce-kicker">{t("gate.loadingKicker")}</p>
+                <p className="gate-loading-title">
+                  {t("gate.loadingTitle")
+                    .split(" ")
+                    .map((word, index) => (
+                      <span
+                        key={`${word}:${index}`}
+                        style={{ "--word-index": index } as CSSProperties}
+                      >
+                        {word}
+                        {"\u00a0"}
+                      </span>
+                    ))}
+                </p>
+              </div>
+            )}
             <h2>
               {brokenCount > 0 ? t("gate.continueTitle") : t("gate.startTitle")}
             </h2>
