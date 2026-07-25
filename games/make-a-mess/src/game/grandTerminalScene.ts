@@ -3406,11 +3406,13 @@ function createSkyPlatform(): void {
       color: side < 0 ? "#6bff9c" : "#ff6f62",
       distance: 11,
       intensity: 2.6,
+      poolPriority: 4,
     });
   }
-  for (const [navTag, navX] of [["nose", HULL_FROM - 0.86], ["tail", HULL_TO + 0.35]] as const) {
+  for (const [navTag, navX] of [["nose", HULL_FROM - 1.03], ["tail", HULL_TO + 0.35]] as const) {
+    const lensDepth = navTag === "nose" ? 0.12 : 0.3;
     part(train, `nav-light:${navTag}`, "glass", "glassPane",
-      [navX, HULL_Y, TRACK_Z], [0.3, 0.3, 0.3], "#f4f1e2", {
+      [navX, HULL_Y, TRACK_Z], [lensDepth, 0.3, 0.3], "#f4f1e2", {
         bearsLoad: false,
         sideAttachmentReach: 0.6,
       });
@@ -3420,6 +3422,7 @@ function createSkyPlatform(): void {
       color: "#fff6dc",
       distance: 12,
       intensity: 2.4,
+      poolPriority: 4,
     });
   }
 

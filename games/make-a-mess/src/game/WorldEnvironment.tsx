@@ -365,8 +365,14 @@ export function LampLightPool({
   useFrame((_, delta) => {
     const night = nightRef.current;
 
-    // Rank lit lamps by distance to the camera.
-    const candidates: { lamp: LampDefinition; distanceSq: number }[] = [];
+    // Rank lit lamps by distance to the camera. Safety/signalling lights may
+    // read as nearer so their local cast does not disappear behind decorative
+    // fixtures while the player can still resolve the vehicle.
+    const candidates: {
+      lamp: LampDefinition;
+      distanceSq: number;
+      rank: number;
+    }[] = [];
     if (night > 0.001) {
       for (const lamp of lamps) {
         if (brokenPieces.has(lamp.id)) {
@@ -375,9 +381,14 @@ export function LampLightPool({
         const dx = lamp.position[0] - camera.position.x;
         const dy = lamp.position[1] - camera.position.y;
         const dz = lamp.position[2] - camera.position.z;
-        candidates.push({ lamp, distanceSq: dx * dx + dy * dy + dz * dz });
+        const distanceSq = dx * dx + dy * dy + dz * dz;
+        candidates.push({
+          lamp,
+          distanceSq,
+          rank: distanceSq / Math.max(1, lamp.poolPriority ?? 1),
+        });
       }
-      candidates.sort((left, right) => left.distanceSq - right.distanceSq);
+      candidates.sort((left, right) => left.rank - right.rank);
     }
     const chosen = candidates.slice(0, LAMP_POOL_SIZE);
     // Hysteresis: a slot keeps its lamp while it stays in a slightly larger

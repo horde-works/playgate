@@ -30,10 +30,16 @@ import {
   type TownPlanPoint,
 } from "../content/scenes/townSurfacePlan.ts";
 
-const glowMaterials: MeshStandardMaterial[] = [];
+interface GlowMaterial {
+  readonly material: MeshStandardMaterial;
+  readonly minimumIntensity: number;
+}
+
+const glowMaterials: GlowMaterial[] = [];
+export const SIGNAL_GLASS_DAY_GLOW = 1.6;
 
 /**
- * Цветное сигнальное стекло, которое ночной ramp зажигает наравне с окнами:
+ * Цветное сигнальное стекло. В отличие от окон, оно не гаснет днём:
  * зелёная линза семафора и аэронавигационные огни небесного поезда (правый
  * борт зелёный, левый красный, нос и корма белые).
  */
@@ -43,11 +49,25 @@ export function isSignalGlassColor(color: string): boolean {
   return signalGlassColors.has(color);
 }
 
+export function minimumGlassGlow(color: string): number {
+  return signalGlassColors.has(color) ? SIGNAL_GLASS_DAY_GLOW : 0;
+}
+
+export function resolveGlowIntensity(
+  intensity: number,
+  minimumIntensity: number,
+): number {
+  return Math.max(minimumIntensity, intensity);
+}
+
 // Night-time glow for "lived-in" windows and lamp shades; driven by the
 // day/night cycle.
 export function setWindowGlow(intensity: number): void {
-  for (const material of glowMaterials) {
-    material.emissiveIntensity = intensity;
+  for (const glow of glowMaterials) {
+    glow.material.emissiveIntensity = resolveGlowIntensity(
+      intensity,
+      glow.minimumIntensity,
+    );
   }
 }
 
@@ -1858,15 +1878,16 @@ gl_FragColor.rgb = mix(gl_FragColor.rgb, materialFogTint, materialFogFactor);
     standardMaterial.emissive = new Color(
       color === litWindowColor ? "#ffc879" : color,
     );
-    standardMaterial.emissiveIntensity = 0;
-    glowMaterials.push(standardMaterial);
+    const minimumIntensity = minimumGlassGlow(color);
+    standardMaterial.emissiveIntensity = minimumIntensity;
+    glowMaterials.push({ material: standardMaterial, minimumIntensity });
   }
   if (isEyeGlass) {
     standardMaterial.emissive = new Color(
       color === "#ff5a2f" ? "#ff3b16" : "#7a150d",
     );
     standardMaterial.emissiveIntensity = 0.35;
-    glowMaterials.push(standardMaterial);
+    glowMaterials.push({ material: standardMaterial, minimumIntensity: 0.35 });
   }
 
   materialCache.set(key, standardMaterial);

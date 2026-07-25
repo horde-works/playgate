@@ -222,6 +222,7 @@ function buildVillagerGeometry(): BufferGeometry {
 
 const GAIT_DECLARATIONS = /* glsl */ `
   attribute float aDye;
+  attribute float aWear;
   attribute vec2 aFlags;
   attribute vec3 aPivotA;
   attribute vec3 aPivotB;
@@ -542,6 +543,11 @@ export function Villagers({
     () => new InstancedBufferAttribute(new Float32Array(count * 4), 4),
     [count],
   );
+  // Своя затасканность у каждого: кузнец чумазее старейшины, ребёнок — всех.
+  const wearAttribute = useMemo(
+    () => new InstancedBufferAttribute(new Float32Array(count), 1),
+    [count],
+  );
 
   const material = useMemo(() => {
     const standard = new MeshStandardMaterial({
@@ -553,13 +559,13 @@ export function Villagers({
       shader.vertexShader = shader.vertexShader
         .replace(
           "#include <common>",
-          `#include <common>\n${GAIT_DECLARATIONS}\n  varying vec3 vDyeColor;\n  varying float vDyeMask;`,
+          `#include <common>\n${GAIT_DECLARATIONS}\n  varying vec3 vDyeColor;\n  varying float vDyeMask;\n  varying vec3 vBodyPos;\n  varying float vWear;`,
         )
         // Позы считаются ДО обработки нормалей, иначе конечности поворачиваются,
         // а свет на них остаётся от позы покоя.
         .replace(
           "#include <beginnormal_vertex>",
-          `#include <beginnormal_vertex>\n${GAIT_COMPUTE}\n  objectNormal = gRotB * gRotA * objectNormal;\n  vDyeColor = aDyeColor.rgb;\n  vDyeMask = aDye;`,
+          `#include <beginnormal_vertex>\n${GAIT_COMPUTE}\n  objectNormal = gRotB * gRotA * objectNormal;\n  vDyeColor = aDyeColor.rgb;\n  vDyeMask = aDye;\n  vBodyPos = position;\n  vWear = aWear;`,
         )
         .replace(
           "#include <begin_vertex>",
@@ -568,11 +574,34 @@ export function Villagers({
       shader.fragmentShader = shader.fragmentShader
         .replace(
           "#include <common>",
-          "#include <common>\n  varying vec3 vDyeColor;\n  varying float vDyeMask;",
+          "#include <common>\n  varying vec3 vDyeColor;\n  varying float vDyeMask;\n  varying vec3 vBodyPos;\n  varying float vWear;",
         )
         .replace(
           "#include <color_fragment>",
-          "#include <color_fragment>\n  diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vDyeColor * 1.55, vDyeMask);",
+          `#include <color_fragment>
+  // ТКАНЬ, А НЕ ЗАЛИВКА. Вокруг всё потрёпано: у досок волокно, у земли
+  // натоптанность, у травы выгоревшие кончики. Житель был единственным
+  // предметом с идеально ровной поверхностью — оттого и читался наклейкой.
+  // Здесь то же самое делается процедурно: плетение, грязь по подолу и
+  // коленям, выгоревшие плечи. Ни текстур, ни второго драв-колла.
+  diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vDyeColor * 1.38, vDyeMask);
+  if (vDyeMask > 0.5) {
+    // Плетение: две частоты поперёк и вдоль, чтобы читалась нить, а не шум.
+    float warp = sin(vBodyPos.y * 210.0) * sin(vBodyPos.x * 168.0 + vBodyPos.z * 143.0);
+    float weft = sin((vBodyPos.x + vBodyPos.z) * 96.0);
+    diffuseColor.rgb *= 1.0 + (warp * 0.055 + weft * 0.03) * (0.6 + vWear);
+    // Подол и колени в пыли, плечи и спина выгорели: одежду носят, а не надевают.
+    float hem = 1.0 - smoothstep(0.16, 0.92, vBodyPos.y);
+    float sun = smoothstep(1.02, 1.36, vBodyPos.y);
+    diffuseColor.rgb *= 1.0 - hem * (0.1 + 0.3 * vWear);
+    diffuseColor.rgb = mix(
+      diffuseColor.rgb,
+      diffuseColor.rgb * vec3(1.16, 1.13, 1.04),
+      sun * (0.22 + 0.36 * vWear)
+    );
+    // И общий тон чуть ниже среды: светлое пятно среди бурого выдаёт фигурку.
+    diffuseColor.rgb *= 0.9 - 0.08 * vWear;
+  }`,
         );
     };
     return standard;
@@ -600,6 +629,7 @@ export function Villagers({
     geometry.setAttribute("aGait", gaitAttribute);
     geometry.setAttribute("aDyeColor", dyeAttribute);
     geometry.setAttribute("aClimb", climbAttribute);
+    geometry.setAttribute("aWear", wearAttribute);
     for (const [index, villager] of population.current.villagers.entries()) {
       dyeAttribute.setXYZW(
         index,
@@ -610,11 +640,12 @@ export function Villagers({
       );
     }
     dyeAttribute.needsUpdate = true;
+    wearAttribute.needsUpdate = true;
     mesh.frustumCulled = false;
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.customDepthMaterial = depthMaterial;
-  }, [geometry, gaitAttribute, dyeAttribute, climbAttribute, depthMaterial]);
+  }, [geometry, gaitAttribute, dyeAttribute, climbAttribute, wearAttribute, depthMaterial]);
 
   // Прошлая «половина шага» каждого жителя: смена означает удар пяткой.
   const lastStep = useRef<Int32Array>(new Int32Array(count));
@@ -697,6 +728,7 @@ export function Villagers({
         stride,
         stride * 0.8 + 0.08,
       );
+      wearAttribute.setX(index, villager.wear);
       climbAttribute.setXYZW(
         index,
         villager.climbKind,

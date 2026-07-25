@@ -1643,6 +1643,8 @@ export interface LampDefinition {
   readonly color?: string;
   readonly distance?: number;
   readonly intensity?: number;
+  /** Multiplier used only when the shared point-light pool ranks nearby lamps. */
+  readonly poolPriority?: number;
 }
 
 const lampCollector: LampDefinition[] = [];

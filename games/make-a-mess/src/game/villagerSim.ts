@@ -330,6 +330,11 @@ export interface Villager {
   carryLinger: number;
   /** Ребёнок: мельче, шаг короче, держится дома и загона. */
   readonly child: boolean;
+  /**
+   * Насколько затаскана одежда: 0 — опрятный, 1 — рабочий в пыли. Дети мажутся
+   * сильнее всех, ремесло у огня и дерева — сильнее прочих занятий.
+   */
+  readonly wear: number;
   /** Жительница или девочка. Не перекраска: свои роли, шаг и силуэт. */
   readonly female: boolean;
   /** Склонность к хулиганству: перемахнуть там, где можно было обойти. */
@@ -862,6 +867,13 @@ export function createVillagerPopulation(
       carryLinger: 0,
       child,
       female,
+      wear: Math.min(
+        1,
+        (child ? 0.55 : 0.15) +
+          (role === "smith" || role === "fisher" || role === "brewer" ? 0.3 : 0) +
+          (role === "elder" ? -0.1 : 0) +
+          random() * 0.35,
+      ),
       // Дети лезут через всё; взрослые — по настроению и редко.
       mischief: child ? 0.5 + random() * 0.5 : random() * 0.3,
       lateralBias: (random() - 0.5) * 0.6,

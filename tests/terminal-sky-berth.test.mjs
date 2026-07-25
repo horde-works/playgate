@@ -91,6 +91,21 @@ test("the terminal still starts perfectly stable with the sky train in it", () =
   assert.equal(grandTerminalScene.resolveStructuralCollapse(new Set()).size, 0);
 });
 
+test("the sky train navigation lights stay legible and the nose lens clears its housing", () => {
+  const navigationLamps = grandTerminalScene.lampDefinitions.filter((lamp) =>
+    lamp.id.startsWith(`${TRAIN}:nav-light:`));
+  assert.equal(navigationLamps.length, 4);
+  assert.equal(navigationLamps.every((lamp) => lamp.poolPriority === 4), true);
+
+  const noseLens = trainPieces.find((piece) => piece.id === `${TRAIN}:nav-light:nose`);
+  const noseHousing = trainPieces.find((piece) => piece.id === `${TRAIN}:nose-cone`);
+  assert.notEqual(noseLens, undefined);
+  assert.notEqual(noseHousing, undefined);
+  const lensFront = noseLens.position[0] - noseLens.size[0] / 2;
+  const housingFront = noseHousing.position[0] - noseHousing.size[0] / 2;
+  assert.equal(housingFront - lensFront >= 0.08, true);
+});
+
 test("the berth reads as a station platform and the ship as a flying train", () => {
   const ids = pieces.map((piece) => piece.id);
 
