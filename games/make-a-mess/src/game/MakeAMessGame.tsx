@@ -117,6 +117,7 @@ import {
   getPieceRenderBoxes,
 } from "./DynamicBreakableWorld";
 import { Birds } from "./Birds";
+import { Villagers } from "./Villagers";
 import { GrassField } from "./GrassField";
 import { SceneDressing } from "./SceneDressing";
 import { WorldEdge } from "./WorldEdge";
@@ -2466,6 +2467,12 @@ function OpenWorldScene({
   );
   const [tracers, setTracers] = useState<readonly TracerDefinition[]>([]);
   const brokenPiecesRef = useRef<ReadonlySet<string>>(brokenPieces);
+  // Двери, которые прямо сейчас открывают жители: общий канал между их
+  // симуляцией и дверной системой.
+  const villagerDoorRequests = useRef<Set<string>>(new Set());
+  // Обратная связь от створок: какие входы уже распахнуты. Без неё житель
+  // просит открыть — и тут же проходит сквозь ещё закрытую дверь.
+  const villagerOpenDoors = useRef<Set<string>>(new Set());
   const nightRef = useRef(0);
   const breakableRaycastRoot = useRef<Group>(null);
   const pieceBodies = useRef(new Map<string, RapierRigidBody>());
@@ -5288,6 +5295,14 @@ function OpenWorldScene({
             pieces={breakablePieces}
           />
           <SmokePlumes nightRef={nightRef} />
+          <Villagers
+            nightRef={nightRef}
+            pieces={breakablePieces}
+            brokenPieces={brokenPiecesRef}
+            doorRequests={villagerDoorRequests}
+            openDoors={villagerOpenDoors}
+            count={24}
+          />
           <Birds
             center={scene.worldCenter}
             worldRadius={scene.worldRadius}
@@ -5349,6 +5364,8 @@ function OpenWorldScene({
         brokenPieces={brokenPiecesRef}
         resetVersion={resetVersion}
         entryOpenRequestVersion={entryOpenRequestVersion}
+        entryOpenRequests={villagerDoorRequests}
+        openEntries={villagerOpenDoors}
         onEntryApproachChange={onEntryApproachChange}
       />
       {!cinematic ? (

@@ -14,6 +14,7 @@ import type {
   SupportMode,
 } from "../../game/destructionScene.ts";
 import {
+  vikingHomeLayout,
   vikingPlanLocalPoint,
   vikingTrafficRoutes,
   vikingVillageHomes,
@@ -103,8 +104,11 @@ function insideAnyHome(x: number, z: number, margin = 0.6): boolean {
   for (const home of vikingVillageHomes) {
     const dx = x - home.position[0];
     const dz = z - home.position[1];
-    const cosine = Math.cos(-home.yaw);
-    const sine = Math.sin(-home.yaw);
+    // Обращение vikingPlanLocalPoint. Здесь поворот был ЗЕРКАЛЬНЫЙ, и для
+    // повёрнутых изб проверка накрывала не тот прямоугольник: бочка двора
+    // вставала внутри дома пивовара.
+    const cosine = Math.cos(home.yaw);
+    const sine = Math.sin(home.yaw);
     const localX = dx * cosine - dz * sine;
     const localZ = dx * sine + dz * cosine;
     if (
@@ -732,10 +736,10 @@ function furnishHome(
   // walls. Everything is kept a hand's width off the inner wall faces so no
   // piece clips a wall, and the whole door end (high +Z) is left clear to walk
   // in past an open floor.
-  const sideInner = home.width / 2 - 0.32;
-  const backInner = home.length / 2 - 0.32;
-  const leftWallX = -(sideInner - 0.6);
-  const rightWallX = sideInner - 0.6;
+  // Разметка жилья живёт в плане деревни: оттуда же строятся тропы внутрь
+  // дома, поэтому мебель и маршруты не могут разъехаться.
+  const layout = vikingHomeLayout(home);
+  const { backInner, leftWallX, rightWallX } = layout;
   const put = (
     target: MutableGroup,
     id: string,
@@ -754,16 +758,17 @@ function furnishHome(
   // Sleeping bench and chest along the left wall, headboard to the back gable;
   // a cupboard against the back wall; a cooking cauldron (its embers light the
   // room) just off the central axis with stools drawn up to it.
-  put(interiors, "bed", "viking:bed", leftWallX, -(backInner - 1.2), Math.PI / 2);
-  put(interiors, "chest", "viking:chest", leftWallX + 0.05, -(backInner - 3.3), Math.PI / 2);
-  put(interiors, "cupboard", "viking:cupboard", 1.15, -(backInner - 0.28), 0);
-  put(lights, "cauldron", "viking:cauldron", 0.4, -0.9);
-  put(interiors, "stool:0", "viking:stool", -1.35, 0.1);
-  put(interiors, "stool:1", "viking:stool", 1.45, -0.7);
+  put(interiors, "bed", "viking:bed", layout.bed[0], layout.bed[1], Math.PI / 2);
+  put(interiors, "chest", "viking:chest", layout.chest[0], layout.chest[1], Math.PI / 2);
+  put(interiors, "cupboard", "viking:cupboard", layout.cupboard[0], layout.cupboard[1], 0);
+  put(lights, "cauldron", "viking:cauldron", layout.cauldron[0], layout.cauldron[1]);
+  layout.stools.forEach(([lx, lz], index) => {
+    put(interiors, `stool:${index}`, "viking:stool", lx, lz);
+  });
 
   switch (home.id) {
     case "weaver":
-      put(interiors, "loom", "viking:loom", rightWallX - 0.05, -1.3, Math.PI / 2);
+      put(interiors, "loom", "viking:loom", layout.work![0], layout.work![1], Math.PI / 2);
       put(storage, "baskets", "viking:baskets", rightWallX - 0.1, 1.6);
       break;
     case "brewer":
@@ -777,7 +782,7 @@ function furnishHome(
       }
       break;
     case "smith":
-      put(interiors, "anvil", "viking:anvil", rightWallX - 0.15, -0.2);
+      put(interiors, "anvil", "viking:anvil", layout.work![0], layout.work![1]);
       put(storage, "baskets", "viking:baskets", rightWallX - 0.1, 1.7);
       break;
     case "fisher":
@@ -819,7 +824,12 @@ function createVillageLife(): void {
   for (const [row, z] of [-22.5, -16.5, -10.5].entries()) {
     for (const side of [-1, 1] as const) {
       place(interiors, `table:${row}:${side}`, "viking:feast-table", { position: [side * 3.15, 0.22, z], rotation: [0, Math.PI / 2, 0] });
-      place(interiors, `bench-inner:${row}:${side}`, "viking:bench", { position: [side * 1.7, 0.22, z], rotation: [0, Math.PI / 2, 0] });
+      // У очажного ряда внутренней лавки НЕТ. Между камнями очага (до 1.11 м
+      // от оси) и лавкой (от 1.425 м) оставалось 0.31 м — уже человека; люди
+      // упирались в неё и лезли по столам. У длинного огня и положено ходить.
+      if (row !== 1) {
+        place(interiors, `bench-inner:${row}:${side}`, "viking:bench", { position: [side * 1.7, 0.22, z], rotation: [0, Math.PI / 2, 0] });
+      }
       place(interiors, `bench-outer:${row}:${side}`, "viking:bench", { position: [side * 4.65, 0.22, z], rotation: [0, Math.PI / 2, 0] });
       if (row !== 1) {
         place(lights, `hall-table-lamp:${row}:${side}`, "viking:table-lamp", {
@@ -829,7 +839,9 @@ function createVillageLife(): void {
     }
   }
   place(lights, "hall-hearth", "viking:hearth", { position: [0, 0.22, -16.5] });
-  for (const [index, [x, z]] of [[-5.3, -27], [5.2, -26.2], [-5.5, -7.2], [5.2, -8.4]].entries()) {
+  // Бочки убраны в углы под фронтоны: на прежних местах они стояли ровно в
+  // боковых проходах (|x| = 6.0), и мимо них было не пройти.
+  for (const [index, [x, z]] of [[-6.5, -29.8], [6.5, -29.4], [-6.45, -4.3], [6.45, -4.0]].entries()) {
     place(storage, `hall-barrel:${index}`, "viking:barrel", { position: [x, 0.22, z], rotation: [0, noise(index, z) * Math.PI, 0] });
   }
   for (const side of [-1, 1] as const) {
@@ -851,9 +863,14 @@ function createVillageLife(): void {
   place(interiors, "commons-bench:north", "viking:bench", { position: [-11.5, 0, 1.4], rotation: [0, 0, 0] });
   place(interiors, "commons-bench:south", "viking:bench", { position: [-11.5, 0, -4.4], rotation: [0, Math.PI, 0] });
   place(interiors, "commons-bench:west", "viking:bench", { position: [-14.3, 0, -1.5], rotation: [0, Math.PI / 2, 0], scale: [0.72, 0.9, 0.9] });
+  // Четвёртая сторона у общинного огня: кольцо лавок было незамкнутым.
+  place(interiors, "commons-bench:east", "viking:bench", { position: [-8.7, 0, -1.5], rotation: [0, -Math.PI / 2, 0], scale: [0.72, 0.9, 0.9] });
   for (let index = 0; index < 6; index += 1) {
     place(storage, `commons-store:${index}`, "viking:barrel", {
-      position: [-18 + (index % 3) * 1.35, 0, 4 + Math.floor(index / 3) * 1.28],
+      // Бочки СДВИНУТЫ вплотную. С прежним шагом 1.35 × 1.28 между ними
+      // оставались карманы шириной с человека, но без выхода: житель заходил
+      // внутрь штабеля и запирался. Плотный штабель просто обходят.
+      position: [-18 + (index % 3) * 0.82, 0, 4 + Math.floor(index / 3) * 0.8],
       rotation: [0, noise(index, 4, 94) * Math.PI, 0],
       scale: [0.8 + (index % 2) * 0.12, 0.8 + (index % 2) * 0.12, 0.8 + (index % 2) * 0.12],
     });
@@ -940,6 +957,27 @@ function createVillageLife(): void {
   ] as const;
   standingTorchSites.forEach(([id, x, z]) => {
     place(lights, `standing-torch:${id}`, "viking:torch", { position: [x, 0, z] });
+  });
+
+  // Фонарные столбы по тропам: ночью деревня должна ЧИТАТЬСЯ, а не тонуть.
+  // Стоят у настоящих узлов маршрутов — колодец, общинный очаг, развилка к
+  // кузне, подходы к залу и к дальним подсобкам, — и слегка завалены: столб,
+  // вкопанный руками, не бывает по отвесу.
+  const pathLampSites = [
+    ["well-north", -10.4, 17.4, 0.05, -0.04],
+    ["well-south", -8.1, 8.2, -0.06, 0.03],
+    ["commons", -7.3, 3.6, 0.04, 0.05],
+    ["spine-east", 8.6, 6.8, -0.03, -0.05],
+    ["hall-approach", 4.6, -6.2, 0.05, 0.02],
+    ["south-junction", 11.6, -20.4, -0.05, 0.04],
+    ["smith-fork", 24.2, -20.6, 0.03, -0.06],
+    ["west-stores", -27.6, 5.4, -0.04, -0.03],
+  ] as const;
+  pathLampSites.forEach(([id, x, z, tiltX, tiltZ]) => {
+    place(lights, `path-lamp:${id}`, "viking:torch", {
+      position: [x, 0, z],
+      rotation: [tiltX, noise(x, z, 61) * Math.PI, tiltZ],
+    });
   });
 
   // Every dwelling gets a pair of wall-mounted lights at its real door.

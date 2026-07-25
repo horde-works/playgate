@@ -1,0 +1,686 @@
+"use client";
+
+import { useFrame } from "@react-three/fiber";
+import { useEffect, useMemo, useRef, type RefObject } from "react";
+import {
+  BufferGeometry,
+  Color,
+  Euler,
+  Float32BufferAttribute,
+  InstancedBufferAttribute,
+  InstancedMesh,
+  Matrix4,
+  MeshDepthMaterial,
+  MeshStandardMaterial,
+  Quaternion,
+  RGBADepthPacking,
+  Vector3,
+} from "three";
+import {
+  createVillagerPopulation,
+  stepVillagers,
+  type VillagerPopulation,
+} from "./villagerSim.ts";
+import { buildObstacleField, type NavPiece } from "./villagerNavigation.ts";
+
+/**
+ * Жители деревни: тела из тех же коробок, что и всё вокруг, шагающие по
+ * авторским тропам.
+ *
+ * Рендер — один инстансированный меш на всю деревню. Скелет анимируется в
+ * вершинном шейдере: у каждой вершины записаны два шарнира (бедро+колено,
+ * плечо+локоть) и признак конечности, поэтому «скиннинг» сводится к двум
+ * поворотам вокруг точек. Материал — обычный MeshStandardMaterial с
+ * инъекцией: жители бесплатно получают свет дня и ночи, туман и тени вместо
+ * отдельного мира со своими правилами освещения.
+ *
+ * Главная деталь ремесла — фаза шага приходит из ПРОЙДЕННОГО ПУТИ, а размах
+ * ноги выведен аналитически из длины шага (asin(S / 2L)). Поэтому стопа
+ * стоит на земле, пока на неё опираются: без этого фигурки «едут по льду»,
+ * и никакая проработка меша этого не спасает.
+ */
+
+// Пропорции взрослого жителя в метрах, от земли.
+const HIP_Y = 0.86;
+const KNEE_Y = 0.44;
+const ANKLE_Y = 0.1;
+const SHOULDER_Y = 1.36;
+const ELBOW_Y = 1.1;
+const WRIST_Y = 0.86;
+const HIP_HALF_WIDTH = 0.105;
+/** Бедро → пятка: из этой длины считается размах шага без скольжения. */
+const LEG_REACH = HIP_Y - ANKLE_Y * 0.4;
+
+const SKIN = new Color("#a87c58");
+const HAIR = new Color("#43301f");
+const LEATHER = new Color("#4b3a2a");
+const CLOTH = new Color("#ffffff");
+
+type PartKind =
+  | "body"
+  | "head"
+  | "legThigh"
+  | "legShin"
+  | "armUpper"
+  | "armFore"
+  | "bundle"
+  | "foot";
+
+const PART_KIND_ID: Record<PartKind, number> = {
+  body: 0,
+  legThigh: 1,
+  legShin: 2,
+  armUpper: 3,
+  armFore: 4,
+  bundle: 5,
+  head: 6,
+  foot: 7,
+};
+
+interface BoxSpec {
+  center: readonly [number, number, number];
+  size: readonly [number, number, number];
+  color: Color;
+  /** 1 — крашеная ткань (принимает цвет туники жителя), 0 — кожа/волосы. */
+  dye: number;
+  kind: PartKind;
+  /** -1 левая сторона, +1 правая, 0 по центру. */
+  side: number;
+  /** Дальний шарнир (колено/локоть); у цельных частей совпадает с pivotB. */
+  pivotA: readonly [number, number, number];
+  /** Ближний шарнир (бедро/плечо/шея). */
+  pivotB: readonly [number, number, number];
+}
+
+function villagerBoxes(): BoxSpec[] {
+  const boxes: BoxSpec[] = [];
+  const hips: readonly [number, number, number] = [0, HIP_Y, 0];
+  const neck: readonly [number, number, number] = [0, 1.42, 0];
+
+  boxes.push(
+    // Плечи шире пояса: без этого перепада фигура читается холодильником.
+    { center: [0, 1.28, 0], size: [0.44, 0.22, 0.26], color: CLOTH, dye: 1, kind: "body", side: 0, pivotA: hips, pivotB: hips },
+    { center: [0, 1.04, 0], size: [0.36, 0.32, 0.24], color: CLOTH, dye: 1, kind: "body", side: 0, pivotA: hips, pivotB: hips },
+    { center: [0, 0.87, 0], size: [0.38, 0.09, 0.25], color: LEATHER, dye: 0, kind: "body", side: 0, pivotA: hips, pivotB: hips },
+    { center: [0, 1.44, 0], size: [0.12, 0.1, 0.12], color: SKIN, dye: 0, kind: "head", side: 0, pivotA: neck, pivotB: neck },
+    // Голова чуть крупнее анатомической: в такой стилизации точная пропорция
+    // читается как «маленькая голова», а не как реализм.
+    { center: [0, 1.6, 0.01], size: [0.27, 0.27, 0.26], color: SKIN, dye: 0, kind: "head", side: 0, pivotA: neck, pivotB: neck },
+    { center: [0, 1.7, -0.03], size: [0.29, 0.15, 0.24], color: HAIR, dye: 0, kind: "head", side: 0, pivotA: neck, pivotB: neck },
+  );
+
+  for (const side of [-1, 1] as const) {
+    // Ширина шага у человека мала: стопы ставятся почти под таз, а не по
+    // ширине плеч. Поэтому нога слегка сходится внутрь от бедра к пятке.
+    const hipX = side * HIP_HALF_WIDTH;
+    const kneeX = side * 0.088;
+    const ankleX = side * 0.072;
+    const hip: readonly [number, number, number] = [hipX, HIP_Y, 0];
+    const knee: readonly [number, number, number] = [kneeX, KNEE_Y, 0];
+    const ankle: readonly [number, number, number] = [ankleX, ANKLE_Y, 0];
+    boxes.push(
+      { center: [(hipX + kneeX) / 2, (HIP_Y + KNEE_Y) / 2, 0], size: [0.16, HIP_Y - KNEE_Y, 0.17], color: CLOTH, dye: 1, kind: "legThigh", side, pivotA: hip, pivotB: hip },
+      { center: [(kneeX + ankleX) / 2, (KNEE_Y + ANKLE_Y) / 2, 0], size: [0.14, KNEE_Y - ANKLE_Y, 0.15], color: LEATHER, dye: 0, kind: "legShin", side, pivotA: knee, pivotB: hip },
+      // Стопа — третье звено: у неё свой шарнир, иначе не будет ни удара
+      // пяткой, ни толчка носком.
+      { center: [ankleX, ANKLE_Y / 2, 0.05], size: [0.15, ANKLE_Y, 0.26], color: LEATHER, dye: 0, kind: "foot", side, pivotA: ankle, pivotB: knee },
+    );
+
+    // Руки вынесены за габарит торса, иначе они тонут в силуэте и мах не виден.
+    const shoulderX = side * 0.255;
+    const shoulder: readonly [number, number, number] = [shoulderX, SHOULDER_Y, 0];
+    const elbow: readonly [number, number, number] = [shoulderX, ELBOW_Y, 0];
+    boxes.push(
+      { center: [shoulderX, (SHOULDER_Y + ELBOW_Y) / 2, 0], size: [0.13, SHOULDER_Y - ELBOW_Y, 0.14], color: CLOTH, dye: 1, kind: "armUpper", side, pivotA: shoulder, pivotB: shoulder },
+      { center: [shoulderX, (ELBOW_Y + WRIST_Y) / 2, 0.01], size: [0.12, ELBOW_Y - WRIST_Y, 0.13], color: SKIN, dye: 0, kind: "armFore", side, pivotA: elbow, pivotB: shoulder },
+    );
+  }
+
+  // Ноша в руках — только у части жителей; у прочих схлопывается в точку.
+  boxes.push({
+    center: [0, 1.0, 0.32],
+    size: [0.36, 0.28, 0.26],
+    color: new Color("#6b5138"),
+    dye: 0,
+    kind: "bundle",
+    side: 0,
+    pivotA: [0, 1.0, 0.32],
+    pivotB: [0, 1.0, 0.32],
+  });
+
+  return boxes;
+}
+
+// Грань куба: нормаль, «верх» и «право» в её плоскости.
+const CUBE_FACES: readonly (readonly [
+  readonly [number, number, number],
+  readonly [number, number, number],
+  readonly [number, number, number],
+])[] = [
+  [[1, 0, 0], [0, 1, 0], [0, 0, -1]],
+  [[-1, 0, 0], [0, 1, 0], [0, 0, 1]],
+  [[0, 1, 0], [0, 0, -1], [1, 0, 0]],
+  [[0, -1, 0], [0, 0, 1], [1, 0, 0]],
+  [[0, 0, 1], [0, 1, 0], [1, 0, 0]],
+  [[0, 0, -1], [0, 1, 0], [-1, 0, 0]],
+];
+
+const FACE_CORNERS: readonly (readonly [number, number])[] = [
+  [-1, -1],
+  [1, -1],
+  [1, 1],
+  [-1, -1],
+  [1, 1],
+  [-1, 1],
+];
+
+function buildVillagerGeometry(): BufferGeometry {
+  const positions: number[] = [];
+  const normals: number[] = [];
+  const colors: number[] = [];
+  const dyes: number[] = [];
+  const flags: number[] = [];
+  const pivotA: number[] = [];
+  const pivotB: number[] = [];
+
+  for (const box of villagerBoxes()) {
+    const half = [box.size[0] / 2, box.size[1] / 2, box.size[2] / 2] as const;
+    for (const [normal, up, right] of CUBE_FACES) {
+      for (const [u, v] of FACE_CORNERS) {
+        for (let axis = 0; axis < 3; axis += 1) {
+          positions.push(
+            box.center[axis] +
+              normal[axis] * half[axis] +
+              right[axis] * u * half[axis] +
+              up[axis] * v * half[axis],
+          );
+          normals.push(normal[axis]);
+        }
+        colors.push(box.color.r, box.color.g, box.color.b);
+        dyes.push(box.dye);
+        flags.push(box.side, PART_KIND_ID[box.kind]);
+        pivotA.push(box.pivotA[0], box.pivotA[1], box.pivotA[2]);
+        pivotB.push(box.pivotB[0], box.pivotB[1], box.pivotB[2]);
+      }
+    }
+  }
+
+  const geometry = new BufferGeometry();
+  geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("normal", new Float32BufferAttribute(normals, 3));
+  geometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
+  geometry.setAttribute("aDye", new Float32BufferAttribute(dyes, 1));
+  geometry.setAttribute("aFlags", new Float32BufferAttribute(flags, 2));
+  geometry.setAttribute("aPivotA", new Float32BufferAttribute(pivotA, 3));
+  geometry.setAttribute("aPivotB", new Float32BufferAttribute(pivotB, 3));
+  return geometry;
+}
+
+const GAIT_DECLARATIONS = /* glsl */ `
+  attribute float aDye;
+  attribute vec2 aFlags;
+  attribute vec3 aPivotA;
+  attribute vec3 aPivotB;
+  attribute vec4 aGait;
+  attribute vec4 aDyeColor;
+  attribute vec4 aClimb;
+
+  mat3 gaitRotX(float angle) {
+    float s = sin(angle);
+    float c = cos(angle);
+    return mat3(1.0, 0.0, 0.0, 0.0, c, s, 0.0, -s, c);
+  }
+  mat3 gaitRotY(float angle) {
+    float s = sin(angle);
+    float c = cos(angle);
+    return mat3(c, 0.0, -s, 0.0, 1.0, 0.0, s, 0.0, c);
+  }
+  // Колокол на кольце цикла: горб кривой сустава с оборачиванием через 0.
+  float gaitBump(float t, float center, float width) {
+    float d = abs(fract(t - center + 0.5) - 0.5);
+    return exp(-(d * d) / (width * width));
+  }
+`;
+
+// aGait = (фаза шага, доля движения 0..1, размах ноги, размах руки)
+// aDyeColor = (цвет туники rgb, несёт ли ношу)
+// Кривые суставов взяты по данным анализа походки, а не на глаз: цикл — 60%
+// опоры и 40% переноса; бедро качается почти синусоидой с пиком сгибания в
+// момент касания пяткой; колено даёт ДВА горба (малая волна принятия веса
+// ~17° сразу после пятки и большой пик ~60° на переносе); голеностоп рисует
+// M — шлепок стопы, тыльное сгибание над опорной стопой, толчок носком,
+// подъём носка для зазора. Таз колеблется по вертикали дважды за цикл (выше
+// всего в середине опоры) и переносится вбок на опорную ногу.
+const GAIT_COMPUTE = /* glsl */ `
+  float gPhase = aGait.x;
+  float gMove = aGait.y;
+  float gStride = aGait.z;
+  float gArm = aGait.w;
+  float gCarry = aDyeColor.w;
+  float side = aFlags.x;
+  float kind = aFlags.y;
+
+  const float GAIT_TAU = 6.2831853;
+  // Правая нога в противофазе левой; рука — в противофазе своей ноге.
+  float legPhase = gPhase + (side > 0.0 ? 3.14159265 : 0.0);
+  // t = 0 — касание пяткой (пик сгибания бедра), t = 0.6 — отрыв носка.
+  float tLeg = fract((legPhase - 1.5707963) / GAIT_TAU);
+  float tBody = fract((gPhase - 1.5707963) / GAIT_TAU);
+
+  // Дыхание на месте, чтобы стоящий житель не выглядел манекеном.
+  float idle = (1.0 - gMove) * sin(gPhase * 0.55) * 0.04;
+
+  float hipFlex = (gStride * sin(legPhase) + 0.12) * gMove;
+  float knee = (0.30 * gaitBump(tLeg, 0.16, 0.10)
+              + 1.05 * gaitBump(tLeg, 0.73, 0.13)) * gMove;
+  float ankle = (0.14 * gaitBump(tLeg, 0.05, 0.06)
+               - 0.12 * gaitBump(tLeg, 0.42, 0.16)
+               + 0.42 * gaitBump(tLeg, 0.60, 0.07)
+               - 0.20 * gaitBump(tLeg, 0.82, 0.14)) * gMove;
+  float armFlex = -gArm * sin(legPhase) * gMove + idle;
+  float torsoPitch = 0.0;
+
+  // --- Преодоление преграды: позы по механике движения, а не «проход» ---
+  float climbKind = aClimb.x;
+  float climbT = aClimb.y;
+  float restTop = aClimb.z;
+  float atTable = aClimb.w;
+  // Поза «всем телом»: наклон вокруг таза и просадка таза вниз. Без них лечь
+  // нельзя в принципе — поворачивать надо всю фигуру, а не отдельное звено.
+  float bodyPitch = 0.0;
+  float bodySink = 0.0;
+  if (climbKind > 0.5) {
+    float isLead = side < 0.0 ? 1.0 : 0.0;
+    if (climbKind < 1.5) {
+      // ПЕРЕСТУПАНИЕ через бревно: ноги по очереди, колено высоко, руки
+      // свободны и лишь балансируют. Обе стопы никогда не в воздухе разом.
+      float tLead = clamp(climbT / 0.55, 0.0, 1.0);
+      float tTrail = clamp((climbT - 0.45) / 0.55, 0.0, 1.0);
+      float lift = isLead > 0.5 ? sin(3.14159265 * tLead) : sin(3.14159265 * tTrail);
+      hipFlex = 1.15 * lift;
+      knee = 1.45 * lift;
+      ankle = -0.22 * lift;
+      armFlex = (side < 0.0 ? -0.4 : 0.4) * lift;
+      torsoPitch = 0.16 * sin(3.14159265 * climbT);
+    } else if (climbKind < 2.5) {
+      // ПЕРЕМАХ через преграду по пояс: опора рукой (плечо над кистью),
+      // корпус вперёд, колени поджаты, ноги проносятся под собой.
+      float support = smoothstep(0.08, 0.3, climbT) * (1.0 - smoothstep(0.6, 0.86, climbT));
+      float tuck = sin(3.14159265 * clamp((climbT - 0.1) / 0.7, 0.0, 1.0));
+      hipFlex = 1.05 * tuck;
+      knee = 1.75 * tuck;
+      ankle = 0.18 * tuck;
+      // Правая — опорная: уходит вниз и назад, принимая вес.
+      armFlex = side > 0.0 ? -1.5 * support : 0.6 * tuck;
+      torsoPitch = 0.52 * sin(3.14159265 * climbT);
+      // ПРИЗЕМЛЕНИЕ — не падение: тройное сгибание гасит удар, корпус идёт
+      // вперёд, руки вперёд-вверх для равновесия.
+      float land = smoothstep(0.76, 0.92, climbT) * (1.0 - smoothstep(0.94, 1.0, climbT));
+      knee += 0.9 * land;
+      hipFlex += 0.4 * land;
+      ankle -= 0.3 * land;
+      armFlex += 0.75 * land;
+      torsoPitch += 0.22 * land;
+    } else if (climbKind < 3.5) {
+      // ЧЕРЕЗ БЕДРО — для преграды выше пояса, но ниже груди: обе руки на
+      // край, таз подсаживается на него, ноги переносятся сидя, сход вниз.
+      float sit = smoothstep(0.1, 0.4, climbT) * (1.0 - smoothstep(0.55, 0.86, climbT));
+      float swing = smoothstep(0.34, 0.72, climbT) * (1.0 - smoothstep(0.8, 0.95, climbT));
+      float down = smoothstep(0.8, 1.0, climbT);
+      hipFlex = 1.35 * sit + 0.9 * swing + 0.3 * down;
+      knee = 1.1 * sit + 1.5 * swing + 0.9 * down;
+      ankle = 0.1 * sit - 0.28 * down;
+      armFlex = -1.3 * sit + 0.5 * down;
+      torsoPitch = 0.34 * sit + 0.12 * swing + 0.18 * down;
+    } else if (climbKind < 4.5) {
+      // ВЫХОД СИЛОЙ на преграду в рост: дотянуться, подтянуться, занести
+      // колено на край, встать и сойти. Ведущая нога идёт первой.
+      float reach = smoothstep(0.0, 0.2, climbT) * (1.0 - smoothstep(0.28, 0.5, climbT));
+      float pull = smoothstep(0.16, 0.48, climbT) * (1.0 - smoothstep(0.56, 0.76, climbT));
+      float kneeUp = smoothstep(0.42, 0.62, climbT) * (1.0 - smoothstep(0.7, 0.84, climbT));
+      float stand = smoothstep(0.74, 0.9, climbT);
+      float land = smoothstep(0.9, 1.0, climbT);
+      armFlex = -2.05 * reach - 1.6 * pull + 0.45 * land;
+      hipFlex = 0.5 * pull + 1.55 * kneeUp + 0.3 * land;
+      knee = 0.85 * pull + 1.95 * kneeUp + 0.75 * land;
+      ankle = -0.2 * kneeUp - 0.26 * land;
+      torsoPitch = 0.62 * pull + 0.28 * kneeUp - 0.12 * stand + 0.2 * land;
+      if (isLead < 0.5) {
+        hipFlex *= 0.45;
+        knee *= 0.55;
+      }
+    } else if (climbKind < 5.5) {
+      // СИДИТ: таз опускается ровно на высоту сиденья, бедро и колено около
+      // прямого угла, стопы на полу, корпус чуть вперёд, руки на коленях.
+      float t = clamp(climbT, 0.0, 1.0);
+      hipFlex = 1.52 * t;
+      knee = 1.46 * t;
+      ankle = 0.14 * t;
+      armFlex = 0.52 * t;
+      torsoPitch = 0.12 * t;
+      bodySink = t * clamp(${HIP_Y.toFixed(2)} - restTop, 0.0, 0.62);
+      if (atTable > 0.5) {
+        // ЗА СТОЛ садятся иначе, чем на лавку у огня: подошёл, оперся руками
+        // о сиденье, задвинул таз, подвинулся вперёд — и только тогда положил
+        // руки на столешницу. Опора руками и есть главное отличие.
+        float shuffle = sin(3.14159265 * clamp(t / 0.62, 0.0, 1.0));
+        float settled = smoothstep(0.55, 1.0, t);
+        armFlex = -1.05 * shuffle + 0.95 * settled;
+        torsoPitch = 0.3 * shuffle + 0.14 * settled;
+        hipFlex += 0.1 * shuffle;
+      }
+    } else {
+      // ЛЕЖИТ: корпус уходит в горизонталь, ноги чуть согнуты, руки вдоль тела.
+      float t = clamp(climbT, 0.0, 1.0);
+      hipFlex = 0.16 * t;
+      knee = 0.28 * t;
+      ankle = -0.14 * t;
+      armFlex = 0.08 * t;
+      bodyPitch = -1.48 * t;
+      bodySink = t * clamp(${HIP_Y.toFixed(2)} - restTop - 0.06, 0.0, 0.8);
+    }
+  }
+
+  mat3 gRotA = mat3(1.0);
+  mat3 gRotB = mat3(1.0);
+  vec3 gaitPos = position;
+
+  if (kind == 1.0) {
+    gRotB = gaitRotX(-hipFlex);
+    gaitPos = gRotB * (gaitPos - aPivotB) + aPivotB;
+  } else if (kind == 2.0) {
+    gRotA = gaitRotX(knee);
+    gRotB = gaitRotX(-hipFlex);
+    gaitPos = gRotA * (gaitPos - aPivotA) + aPivotA;
+    gaitPos = gRotB * (gaitPos - aPivotB) + aPivotB;
+  } else if (kind == 7.0) {
+    // Стопа — три звена: голеностоп, колено, бедро.
+    vec3 hipPivot = vec3(side * ${HIP_HALF_WIDTH.toFixed(3)}, ${HIP_Y.toFixed(2)}, 0.0);
+    mat3 rotAnkle = gaitRotX(ankle);
+    gRotA = gaitRotX(knee);
+    gRotB = gaitRotX(-hipFlex);
+    gaitPos = rotAnkle * (gaitPos - aPivotA) + aPivotA;
+    gaitPos = gRotA * (gaitPos - aPivotB) + aPivotB;
+    gaitPos = gRotB * (gaitPos - hipPivot) + hipPivot;
+    gRotA = gRotA * rotAnkle;
+  } else if (kind == 3.0 || kind == 4.0) {
+    // С ношей руки держат её впереди и почти не машут.
+    float shoulder = mix(armFlex, 0.95 + armFlex * 0.15, gCarry);
+    gRotB = gaitRotX(-shoulder);
+    if (kind == 4.0) {
+      gRotA = gaitRotX(mix(-0.32 - max(0.0, sin(legPhase)) * 0.28 * gMove, -0.8, gCarry));
+      gaitPos = gRotA * (gaitPos - aPivotA) + aPivotA;
+    }
+    gaitPos = gRotB * (gaitPos - aPivotB) + aPivotB;
+  } else if (kind == 0.0) {
+    // Плечевой пояс доворачивается против таза и наклоняется при перелезании.
+    gRotB = gaitRotY(sin(gPhase) * 0.07 * gMove) * gaitRotX(torsoPitch);
+    gaitPos = gRotB * (gaitPos - aPivotB) + aPivotB;
+  } else if (kind == 6.0) {
+    // Голова гасит доворот корпуса — взгляд держит направление.
+    gRotB = gaitRotY(-sin(gPhase) * 0.05 * gMove) * gaitRotX(torsoPitch * 0.6);
+    gaitPos = gRotB * (gaitPos - aPivotB) + aPivotB;
+  }
+
+  // Таз ниже всего в двойной опоре и выше всего в середине опоры.
+  float bob = -0.024 * cos(2.0 * GAIT_TAU * tBody) * gMove;
+  float sway = -0.018 * cos(GAIT_TAU * tBody) * gMove;
+  if (kind == 1.0 || kind == 2.0 || kind == 7.0) {
+    gaitPos.y += bob * 0.4;
+    gaitPos.x += sway * 0.5;
+  } else {
+    gaitPos.y += bob;
+    gaitPos.x += sway;
+  }
+
+  // Ноша есть не у всех: лишним она вырождается в точку.
+  if (kind == 5.0) {
+    gaitPos = mix(aPivotB, gaitPos, gCarry);
+  }
+
+  // Сесть и лечь — движения всего тела: сперва разворот вокруг таза, потом
+  // просадка на высоту сиденья или лежанки.
+  if (bodyPitch != 0.0) {
+    vec3 restPivot = vec3(0.0, ${HIP_Y.toFixed(2)}, 0.0);
+    gaitPos = gaitRotX(bodyPitch) * (gaitPos - restPivot) + restPivot;
+  }
+  gaitPos.y -= bodySink;
+`;
+
+export function Villagers({
+  nightRef,
+  pieces,
+  brokenPieces,
+  doorRequests,
+  openDoors,
+  count = 24,
+}: {
+  nightRef: RefObject<number>;
+  /** Куски сцены — из них строится поле препятствий. */
+  pieces?: readonly NavPiece[];
+  /** Сломанное перестаёт мешать в тот же кадр. */
+  brokenPieces?: { current: ReadonlySet<string> };
+  /** Сюда жители кладут двери, которые сейчас открывают. */
+  doorRequests?: { current: Set<string> };
+  /** Входы, чьи створки уже распахнуты. */
+  openDoors?: { current: Set<string> };
+  /** Приёмник следов: отпечаток ставится в момент удара пяткой. */
+  count?: number;
+}) {
+  const meshRef = useRef<InstancedMesh>(null);
+  const obstacleField = useMemo(
+    () => (pieces && pieces.length > 0 ? buildObstacleField(pieces) : null),
+    [pieces],
+  );
+  const population = useRef<VillagerPopulation | null>(null);
+  if (population.current === null) {
+    population.current = createVillagerPopulation(count, obstacleField);
+  }
+  useEffect(() => {
+    if (population.current) {
+      population.current.field = obstacleField;
+    }
+  }, [obstacleField]);
+
+  const geometry = useMemo(() => buildVillagerGeometry(), []);
+
+  const gaitAttribute = useMemo(
+    () => new InstancedBufferAttribute(new Float32Array(count * 4), 4),
+    [count],
+  );
+  const dyeAttribute = useMemo(
+    () => new InstancedBufferAttribute(new Float32Array(count * 4), 4),
+    [count],
+  );
+  const climbAttribute = useMemo(
+    () => new InstancedBufferAttribute(new Float32Array(count * 4), 4),
+    [count],
+  );
+
+  const material = useMemo(() => {
+    const standard = new MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.92,
+      metalness: 0,
+    });
+    standard.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          "#include <common>",
+          `#include <common>\n${GAIT_DECLARATIONS}\n  varying vec3 vDyeColor;\n  varying float vDyeMask;`,
+        )
+        // Позы считаются ДО обработки нормалей, иначе конечности поворачиваются,
+        // а свет на них остаётся от позы покоя.
+        .replace(
+          "#include <beginnormal_vertex>",
+          `#include <beginnormal_vertex>\n${GAIT_COMPUTE}\n  objectNormal = gRotB * gRotA * objectNormal;\n  vDyeColor = aDyeColor.rgb;\n  vDyeMask = aDye;`,
+        )
+        .replace(
+          "#include <begin_vertex>",
+          "#include <begin_vertex>\n  transformed = gaitPos;",
+        );
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          "#include <common>",
+          "#include <common>\n  varying vec3 vDyeColor;\n  varying float vDyeMask;",
+        )
+        .replace(
+          "#include <color_fragment>",
+          "#include <color_fragment>\n  diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vDyeColor * 1.55, vDyeMask);",
+        );
+    };
+    return standard;
+  }, []);
+
+  // Тень должна повторять позу, иначе на земле шагает другой человек.
+  const depthMaterial = useMemo(() => {
+    const depth = new MeshDepthMaterial({ depthPacking: RGBADepthPacking });
+    depth.onBeforeCompile = (shader) => {
+      shader.vertexShader = shader.vertexShader
+        .replace("#include <common>", `#include <common>\n${GAIT_DECLARATIONS}`)
+        .replace(
+          "#include <begin_vertex>",
+          `#include <begin_vertex>\n${GAIT_COMPUTE}\n  transformed = gaitPos;`,
+        );
+    };
+    return depth;
+  }, []);
+
+  useEffect(() => {
+    const mesh = meshRef.current;
+    if (!mesh || !population.current) {
+      return;
+    }
+    geometry.setAttribute("aGait", gaitAttribute);
+    geometry.setAttribute("aDyeColor", dyeAttribute);
+    geometry.setAttribute("aClimb", climbAttribute);
+    for (const [index, villager] of population.current.villagers.entries()) {
+      dyeAttribute.setXYZW(
+        index,
+        villager.dye[0],
+        villager.dye[1],
+        villager.dye[2],
+        villager.carries ? 1 : 0,
+      );
+    }
+    dyeAttribute.needsUpdate = true;
+    mesh.frustumCulled = false;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.customDepthMaterial = depthMaterial;
+  }, [geometry, gaitAttribute, dyeAttribute, climbAttribute, depthMaterial]);
+
+  // Прошлая «половина шага» каждого жителя: смена означает удар пяткой.
+  const lastStep = useRef<Int32Array>(new Int32Array(count));
+  const matrix = useMemo(() => new Matrix4(), []);
+  const position = useMemo(() => new Vector3(), []);
+  const quaternion = useMemo(() => new Quaternion(), []);
+  const scale = useMemo(() => new Vector3(), []);
+  const euler = useMemo(() => new Euler(), []);
+
+  useFrame((_, delta) => {
+    const mesh = meshRef.current;
+    const state = population.current;
+    if (!mesh || !state) {
+      return;
+    }
+    if (brokenPieces) {
+      state.broken = brokenPieces.current;
+    }
+    // Какие створки СЕЙЧАС распахнуты. Пока вход закрыт, его створка для
+    // жителя — стена: он останавливается перед ней и ждёт, а не проходит.
+    if (openDoors) {
+      state.externalOpenDoors = openDoors.current;
+    }
+    stepVillagers(state, delta, nightRef.current ?? 0);
+
+    // Житель у своей двери просит её открыть — тем же механизмом, каким это
+    // делает игрок: дверь распахивается по-настоящему, а не проходится
+    // насквозь.
+    if (doorRequests) {
+      doorRequests.current.clear();
+      // Ворота зала стоят распахнутыми весь день и вечер и затворяются на
+      // ночь сами — это распорядок дома, а не чья-то просьба.
+      // Днём и вечером ворота настежь. На ночь затворяются сами — но не
+      // раньше, чем последний житель уйдёт домой: иначе задержавшийся
+      // окажется заперт в зале до утра.
+      const stillOut = state.villagers.some((villager) => villager.visible);
+      if ((nightRef.current ?? 0) < 0.55 || stillOut) {
+        doorRequests.current.add("viking-village:buildings:great-hall:hall-gate");
+      }
+      for (const villager of state.villagers) {
+        if (villager.doorWait > 0) {
+          doorRequests.current.add(
+            `viking-village:buildings:${villager.homeId}:door`,
+          );
+        }
+      }
+      // Любой вход, в который житель упёрся по дороге, тоже просится открыть:
+      // это уже не «своя дверь», а общее правило — створка закрыта, значит
+      // стоит стеной, и надо попросить. Просьба ЖИВЁТ несколько секунд после
+      // последнего просящего — иначе створка хлопает: закрытую житель видит и
+      // просит открыть, открытую уже не видит и просить перестаёт.
+      for (const entry of state.doorRequests) {
+        doorRequests.current.add(entry);
+      }
+      for (const [entry, door] of state.doorState) {
+        if (door.hold > 0) {
+          doorRequests.current.add(entry);
+        }
+      }
+    }
+
+    for (const [index, villager] of state.villagers.entries()) {
+      position.set(villager.x, villager.y, villager.z);
+      euler.set(0, villager.yaw, 0);
+      quaternion.setFromEuler(euler);
+      scale.setScalar(villager.visible ? villager.build : 0);
+      matrix.compose(position, quaternion, scale);
+      mesh.setMatrixAt(index, matrix);
+
+      // Размах ноги выведен из длины шага: 2·L·sin(θ) = шаг. Так стопа
+      // остаётся на месте, пока нога опорная.
+      const stride = Math.asin(
+        Math.min(0.85, villager.strideLength / (2 * LEG_REACH * villager.build)),
+      );
+      const move = Math.min(1, villager.speed / 0.85);
+      gaitAttribute.setXYZW(
+        index,
+        villager.phase,
+        move,
+        stride,
+        stride * 0.8 + 0.08,
+      );
+      climbAttribute.setXYZW(
+        index,
+        villager.climbKind,
+        villager.climbProgress,
+        villager.restY,
+        villager.atTable ? 1 : 0,
+      );
+
+      // Момент постановки стопы берём из фазы шага (она растёт от пути, а не
+      // от времени) — поэтому следы ложатся ровно под шаг человека.
+      const half = Math.floor(villager.phase / Math.PI);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    gaitAttribute.needsUpdate = true;
+    climbAttribute.needsUpdate = true;
+  });
+
+  useEffect(() => {
+    return () => {
+      geometry.dispose();
+      material.dispose();
+      depthMaterial.dispose();
+    };
+  }, [geometry, material, depthMaterial]);
+
+  return (
+    <instancedMesh
+      ref={meshRef}
+      args={[geometry, material, count]}
+      frustumCulled={false}
+    />
+  );
+}

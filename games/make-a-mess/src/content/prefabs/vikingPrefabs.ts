@@ -113,6 +113,8 @@ function addLonghouseWall(
   wallHeight: number,
   doorWall: "end-positive" | "side-positive",
   doorCenter = 0,
+  /** Ширина проёма ворот в торце +Z (0 — торец глухой). */
+  endGateWidth = 0,
 ): void {
   const rows = Math.round(wallHeight / 0.5);
   const logDiameter = 0.58;
@@ -157,6 +159,19 @@ function addLonghouseWall(
             [direction * (doorWidth / 2 + segmentSpan / 2), y, side * length / 2],
             "x",
             segmentSpan,
+            row,
+            row % 3 === 0 ? "darkTimber" : "timber",
+          );
+        }
+      } else if (endGateWidth > 0 && side === 1 && row < doorRows + 2) {
+        // Торцевые ворота зала: венцы расходятся на две щеки проёма.
+        const cheek = (endSpan - endGateWidth) / 2;
+        for (const direction of [-1, 1] as const) {
+          pushHorizontalLog(
+            `${prefix}:end:${side}:row:${row}:gate:${direction}`,
+            [direction * (endGateWidth / 2 + cheek / 2), y, side * length / 2],
+            "x",
+            cheek,
             row,
             row % 3 === 0 ? "darkTimber" : "timber",
           );
@@ -220,6 +235,8 @@ function pushPlankDoor(
   height: number,
   hinge: NonNullable<ScenePrefabPieceDefinition["hinge"]>,
   bottomClearance: number,
+  /** Префикс id: у зала две створки, их нельзя звать одинаково. */
+  prefix = "door",
 ): void {
   const [cx, originalCenterY, cz] = center;
   const top = originalCenterY + height / 2;
@@ -236,7 +253,7 @@ function pushPlankDoor(
         ? [boardWidth * 0.95, trimmedHeight, 0.14]
         : [0.14, trimmedHeight, boardWidth * 0.95];
     pieces.push({
-      id: `door:board:${board}`,
+      id: `${prefix}:board:${board}`,
       material: "wood",
       shape: "plank",
       position,
@@ -258,7 +275,7 @@ function pushPlankDoor(
     const size: readonly [number, number, number] =
       face === "z" ? [leafWidth * 0.98, 0.14, 0.06] : [0.06, 0.14, leafWidth * 0.98];
     pieces.push({
-      id: `door:strap:${strapIndex}`,
+      id: `${prefix}:strap:${strapIndex}`,
       material: "steel",
       shape: "steelSheet",
       position,
@@ -341,7 +358,74 @@ function longhouse(
     );
   }
 
-  addLonghouseWall(pieces, "wall", width, length, wallHeight, doorWall, doorCenter);
+  // У зала торец +Z смотрит на деревню: там распашные ворота, а не глухая
+  // стена. Раньше жители упирались в этот торец, потому что тропа вела к
+  // залу, а входа с этой стороны не было.
+  const hallGateWidth = hall ? 3.4 : 0;
+  addLonghouseWall(
+    pieces,
+    "wall",
+    width,
+    length,
+    wallHeight,
+    doorWall,
+    doorCenter,
+    hallGateWidth,
+  );
+
+  if (hallGateWidth > 0) {
+    const gateZ = length / 2;
+    // Проём на два венца выше дверного: под низкой перемычкой люди
+    // толкутся, а зал — общий дом, в него входят не пригибаясь.
+    const gateHeight = 3.62;
+    // Перемычка над проёмом и косяки: ворота сидят в раме, а не в дыре.
+    pieces.push({
+      id: "hall-gate:lintel",
+      material: "wood",
+      shape: "cylinder",
+      position: [0, gateHeight + 0.24, gateZ],
+      rotation: [0, 0, Math.PI / 2],
+      size: [0.5, hallGateWidth + 1.1, 0.5],
+      bearingArea: (hallGateWidth + 1.1) * 0.5,
+      contactBoxes: [
+        { position: [0, gateHeight + 0.24, gateZ], size: [hallGateWidth + 1.1, 0.5, 0.5] },
+      ],
+      color: darkTimber,
+      colorSlot: "darkTimber",
+    });
+    for (const side of [-1, 1] as const) {
+      pieces.push({
+        id: `hall-gate:jamb:${side}`,
+        material: "wood",
+        shape: "cylinder",
+        position: [side * (hallGateWidth / 2 + 0.3), gateHeight / 2, gateZ],
+        size: [0.52, gateHeight, 0.52],
+        color: darkTimber,
+        colorSlot: "darkTimber",
+        carriesAttachments: true,
+      });
+      // Створка распахивается НАРУЖУ (в +Z), как ворота деревни, и висит на
+      // НАРУЖНОЙ грани торца. Прежде и полотно, и ось стояли на gateZ + 0.16,
+      // то есть ВНУТРИ венца (бревно занимает ±0.29 от gateZ): распахиваясь,
+      // створка обязана была резать брёвна — иначе ей просто некуда идти.
+      // Наружная грань венца — gateZ + 0.29, полутолщина полотна — 0.07.
+      const leafZ = gateZ + 0.38;
+      pushPlankDoor(
+        pieces,
+        "z",
+        [side * hallGateWidth / 4, gateHeight / 2 + 0.05, leafZ],
+        hallGateWidth / 2 - 0.06,
+        gateHeight - 0.1,
+        {
+          pivot: [side * (hallGateWidth / 2 + 0.06), gateHeight / 2 + 0.05, leafZ],
+          direction: [-side, 0, 0],
+          normal: [0, 0, 1],
+        },
+        0.16,
+        `hall-gate:leaf:${side}`,
+      );
+    }
+  }
   for (const x of [-width / 2, width / 2]) {
     for (const z of [-length / 2, length / 2]) {
       pieces.push({
@@ -612,7 +696,10 @@ function longhouse(
 
   if (hall) {
     pushPlankDoor(pieces, "x", [width / 2 + 0.05, 1.2, doorCenter], 1.86, 2.4, {
-      pivot: [width / 2 + 0.05, 1.42, doorCenter - 0.88],
+      // Петли перевешены на противоположный косяк: распахнутая створка
+      // прежде вставала поперёк хода вглубь зала и запирала проход. Теперь
+      // она отходит к передней стороне, где никто не идёт.
+      pivot: [width / 2 + 0.05, 1.42, doorCenter + 0.88],
       direction: [0, 1, 0],
       normal: [1, 0, 0],
     }, 0.44);
@@ -709,7 +796,9 @@ const torch = prefab("viking:torch", "Night torch", ["viking", "light", "torch"]
     size: [0.34, 0.52, 0.34],
     color: litWindowColor,
     bearsLoad: false,
-    light: { position: [0, 2.72, 0], color: "#ff9d52", distance: 17, intensity: 4.6 },
+    // Столбовой факел светит НАРАВНЕ с настенным у дома (18 / 18.5). Прежние
+    // 4.6 освещали только сам столб: ночью деревня от них не читалась.
+    light: { position: [0, 2.72, 0], color: "#ff9d52", distance: 18, intensity: 18.5 },
   },
 ]);
 

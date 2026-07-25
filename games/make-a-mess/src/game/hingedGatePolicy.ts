@@ -2,6 +2,13 @@ export const VIKING_GATE_APPROACH_RADIUS = 8;
 export const VIKING_GATE_RELEASE_RADIUS = 11;
 export const VIKING_DOOR_APPROACH_RADIUS = 3.2;
 export const VIKING_DOOR_RELEASE_RADIUS = 4.2;
+/**
+ * Дверь ищется по горизонтали, поэтому у поднятых дверей (гондола на
+ * причальной мачте) её открывал игрок, стоящий на земле под ними. Порог по
+ * высоте отсекает такие «вызовы снизу», оставляя запас на ступеньку,
+ * порог и рост камеры.
+ */
+export const DOOR_APPROACH_HEIGHT = 2.6;
 
 export interface VikingGateLeafPolicy {
   readonly gateId: string;
@@ -37,6 +44,28 @@ export function vikingGateLeafPolicy(groupKey: string): VikingGateLeafPolicy | n
   };
 }
 
+/**
+ * Торцевые ворота великого зала: распахиваются НАРУЖУ, днём стоят открытыми,
+ * на ночь затворяются сами. По запросу игрока не открываются — для этого
+ * есть боковой вход.
+ */
+export function vikingHallGatePolicy(groupKey: string): VikingGateLeafPolicy | null {
+  const match = groupKey.match(
+    /^(viking-village:buildings:great-hall:hall-gate):leaf:(-1|1)$/,
+  );
+  if (!match) {
+    return null;
+  }
+  const side = Number(match[2]) as -1 | 1;
+  return {
+    gateId: match[1],
+    side,
+    outward: 1,
+    // Обе створки уходят наружу, от центра зала.
+    swingSign: side as -1 | 1,
+  };
+}
+
 export function vikingDoorPolicy(groupKey: string): VikingDoorPolicy | null {
   if (!/^viking-village:buildings:[^:]+:door$/.test(groupKey)) {
     return null;
@@ -51,13 +80,29 @@ export function townHouseDoorPolicy(groupKey: string): TownHouseDoorPolicy | nul
   return { doorId: groupKey };
 }
 
+/**
+ * Дверь гондолы небесного причала: ведёт себя как обычная городская дверь —
+ * открывается по подходу и подсвечивается той же подсказкой. Створка и её
+ * ручка названы одной петлёй, поэтому едут вместе.
+ */
+export function skyMooringDoorPolicy(groupKey: string): TownHouseDoorPolicy | null {
+  return groupKey === "sky-mooring:airship:car:door"
+    ? { doorId: groupKey }
+    : null;
+}
+
 export function hingedDoorGroupKey(
   pieceId: string,
   clusterId: string,
 ): string {
-  return townHouseDoorPolicy(clusterId)
-    ? clusterId
-    : pieceId.replace(/:(board|strap|brace):\d+$/, "");
+  if (townHouseDoorPolicy(clusterId)) {
+    return clusterId;
+  }
+  // Примитивы из документов сцены компилируются с хвостом ":piece" — без
+  // его снятия полотно и ручка попадают в РАЗНЫЕ группы и едут порознь.
+  return pieceId
+    .replace(/:piece$/, "")
+    .replace(/:(board|strap|brace):\d+$/, "");
 }
 
 export function inwardDoorSwingSign(

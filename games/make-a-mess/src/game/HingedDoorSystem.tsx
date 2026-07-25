@@ -9,13 +9,16 @@ import {
   horizontalGateDistance,
   hingedDoorGroupKey,
   inwardDoorSwingSign,
+  skyMooringDoorPolicy,
   townHouseDoorPolicy,
+  DOOR_APPROACH_HEIGHT,
   VIKING_DOOR_APPROACH_RADIUS,
   VIKING_DOOR_RELEASE_RADIUS,
   VIKING_GATE_APPROACH_RADIUS,
   VIKING_GATE_RELEASE_RADIUS,
   vikingDoorPolicy,
   vikingGateLeafPolicy,
+  vikingHallGatePolicy,
   type VikingDoorPolicy,
   type VikingGateLeafPolicy,
   type TownHouseDoorPolicy,
@@ -40,6 +43,7 @@ interface DoorGroup {
   readonly hinge: NonNullable<BreakablePieceDefinition["hinge"]>;
   readonly center: readonly [number, number, number];
   readonly gate: VikingGateLeafPolicy | null;
+  readonly hallGate: VikingGateLeafPolicy | null;
   readonly vikingDoor: VikingDoorPolicy | null;
   readonly townHouseDoor: TownHouseDoorPolicy | null;
 }
@@ -51,11 +55,13 @@ interface GateGroup {
 }
 
 export function HingedDoorSystem({
+  openEntries,
   pieces,
   bodies,
   brokenPieces,
   resetVersion,
   entryOpenRequestVersion = 0,
+  entryOpenRequests,
   onEntryApproachChange = () => {},
 }: {
   pieces: readonly BreakablePieceDefinition[];
@@ -63,6 +69,10 @@ export function HingedDoorSystem({
   brokenPieces: { current: ReadonlySet<string> };
   resetVersion: number;
   entryOpenRequestVersion?: number;
+  /** Входы, которые прямо сейчас открывает кто-то, кроме игрока (жители). */
+  entryOpenRequests?: { current: ReadonlySet<string> };
+  /** Сюда кладутся входы, чьи створки РЕАЛЬНО распахнуты: жители ждут именно этого. */
+  openEntries?: { current: Set<string> };
   onEntryApproachChange?: (entry: HingedEntryApproach | null) => void;
 }) {
   const { camera } = useThree();
@@ -111,8 +121,9 @@ export function HingedDoorSystem({
         hinge,
         center: [sx / count, sy / count, sz / count] as const,
         gate: vikingGateLeafPolicy(key),
+        hallGate: vikingHallGatePolicy(key),
         vikingDoor: vikingDoorPolicy(key),
-        townHouseDoor: townHouseDoorPolicy(key),
+        townHouseDoor: townHouseDoorPolicy(key) ?? skyMooringDoorPolicy(key),
       };
     });
   }, [pieces]);
@@ -200,14 +211,21 @@ export function HingedDoorSystem({
         continue;
       }
       const distance = horizontalGateDistance(cameraPosition, group.center);
-      if (distance <= VIKING_DOOR_APPROACH_RADIUS && distance < nearestEntryDistance) {
+      // Одной горизонтальной дистанции мало: без порога по высоте дверь
+      // поднятой гондолы открывается с земли под ней.
+      const rise = Math.abs(cameraPosition[1] - group.center[1]);
+      if (
+        distance <= VIKING_DOOR_APPROACH_RADIUS &&
+        rise <= DOOR_APPROACH_HEIGHT &&
+        distance < nearestEntryDistance
+      ) {
         nearestEntry = {
           id: doorId,
           kind: group.townHouseDoor ? "town-door" : "door",
         };
         nearestEntryDistance = distance;
       }
-      if (distance > VIKING_DOOR_RELEASE_RADIUS) {
+      if (distance > VIKING_DOOR_RELEASE_RADIUS || rise > DOOR_APPROACH_HEIGHT + 1) {
         openedEntries.current.delete(doorId);
       }
     }
@@ -227,6 +245,8 @@ export function HingedDoorSystem({
       }
     }
 
+    openEntries?.current.clear();
+
     for (const group of doorGroups) {
       const hinge = group.hinge;
       let state = states.current.get(group.key);
@@ -241,11 +261,20 @@ export function HingedDoorSystem({
       const dz = camera.position.z - group.center[2];
       const distance = Math.hypot(dx, dy, dz);
       let open: boolean;
+      if (group.hallGate) {
+        // Ворота зала живут своим распорядком: днём настежь, на ночь сами
+        // затворяются. Запрос игрока их не касается — для этого боковой вход.
+        state.sign = group.hallGate.swingSign;
+        open = entryOpenRequests?.current.has(group.hallGate.gateId) ?? false;
+      } else {
       const interactiveEntryId = group.gate?.gateId
         ?? group.vikingDoor?.doorId
         ?? group.townHouseDoor?.doorId;
+      // (обычные двери и ворота деревни)
       if (interactiveEntryId) {
-        open = openedEntries.current.has(interactiveEntryId);
+        open =
+          openedEntries.current.has(interactiveEntryId) ||
+          (entryOpenRequests?.current.has(interactiveEntryId) ?? false);
         if (open) {
           if (group.gate) {
             state.sign = group.gate.swingSign;
@@ -271,8 +300,10 @@ export function HingedDoorSystem({
           distance < 2.8 &&
           directionToDoor.current.dot(cameraDirection.current) > 0.25;
       }
+      }
 
       if (
+        !group.hallGate &&
         !group.gate &&
         !group.vikingDoor &&
         !group.townHouseDoor &&
@@ -287,7 +318,29 @@ export function HingedDoorSystem({
         state.sign = -side * Math.sign(crossDotNormal || 1);
       }
 
-      const targetAngle = open ? group.gate ? 1.45 : 1.8 : 0;
+      // Житель проходит не тогда, когда попросил, а когда створ ДЕЙСТВИТЕЛЬНО
+      // ушёл в сторону. Порог в треть распаха — это уже проходимый проём.
+      if (openEntries) {
+        const entryId =
+          group.hallGate?.gateId ??
+          group.gate?.gateId ??
+          group.vikingDoor?.doorId ??
+          group.townHouseDoor?.doorId;
+        if (entryId && state.angle > 0.6) {
+          openEntries.current.add(entryId);
+        }
+      }
+
+      // Ворота зала стоят открытыми весь день, поэтому их отводят почти
+      // вплотную к торцу: створка под сто градусов торчала бы прямо в подход,
+      // и входящие обтирали бы её боками.
+      const targetAngle = open
+        ? group.hallGate
+          ? 2.9
+          : group.gate
+            ? 1.45
+            : 1.8
+        : 0;
       const previousAngle = state.angle;
       state.angle +=
         (targetAngle - state.angle) * Math.min(

@@ -135,6 +135,145 @@ const homePlayLoops: readonly VikingTrafficRoute[] = vikingVillageHomes.map(
   },
 );
 
+/**
+ * Обстановка дома в ЕГО координатах: +Z — дверь, −Z — задний фронтон.
+ *
+ * Это единственный источник правды и для расстановки мебели, и для троп
+ * внутри жилья. Раньше тропа внутрь шла по осевой линии «на глаз» — и
+ * упиралась в КОНЬКОВЫЙ СТОЛБ, который стоит ровно на оси при z = ±0.34·длины.
+ * Отсюда правило: внутренние тропы кладутся от координат мебели и столбов, а
+ * не от середины комнаты.
+ */
+export interface VikingHomeLayout {
+  /** Половина внутреннего пролёта до стен и до заднего фронтона. */
+  readonly sideInner: number;
+  readonly backInner: number;
+  /** Ось спальной лавки и сундука. */
+  readonly leftWallX: number;
+  readonly rightWallX: number;
+  /** Коньковые столбы: на оси, мешают идти прямо от двери. */
+  readonly postZ: number;
+  readonly bed: VikingPlanPoint;
+  readonly bedSecond: VikingPlanPoint;
+  readonly chest: VikingPlanPoint;
+  readonly cupboard: VikingPlanPoint;
+  readonly cauldron: VikingPlanPoint;
+  readonly stools: readonly VikingPlanPoint[];
+  /** Ремесленное место (станок, наковальня, бочки) и где перед ним стоят. */
+  readonly work: VikingPlanPoint | null;
+  readonly workStand: VikingPlanPoint | null;
+}
+
+// Ремесло стоит у правой стены, но каждое занимает своё место — стоянку перед
+// ним считаем от РЕАЛЬНОГО предмета, иначе житель встаёт в бочку.
+const HOME_WORK: Readonly<Record<string, { at: VikingPlanPoint; stand: VikingPlanPoint }>> = {
+  weaver: { at: [-0.05, -1.3], stand: [2.0, -1.3] },
+  // У пивовара третья бочка выдвинута в комнату (x = правая стена − 1.05),
+  // поэтому к бочкам подходят с дверной стороны, а не сквозь них.
+  brewer: { at: [0, -1.05], stand: [1.9, 0.5] },
+  smith: { at: [-0.15, -0.2], stand: [2.0, -0.2] },
+  fisher: { at: [-0.1, -1.3], stand: [1.95, -1.35] },
+};
+
+export function vikingHomeLayout(home: VikingVillageHomePlan): VikingHomeLayout {
+  const sideInner = home.width / 2 - 0.32;
+  const backInner = home.length / 2 - 0.32;
+  const leftWallX = -(sideInner - 0.6);
+  const rightWallX = sideInner - 0.6;
+  const work = HOME_WORK[home.id];
+  return {
+    sideInner,
+    backInner,
+    leftWallX,
+    rightWallX,
+    postZ: home.length * 0.34,
+    bed: [leftWallX, -(backInner - 1.2)],
+    bedSecond: [rightWallX, -(backInner - 1.2)],
+    chest: [leftWallX + 0.05, -(backInner - 3.3)],
+    cupboard: [1.15, -(backInner - 0.28)],
+    cauldron: [0.4, -0.9],
+    // Табуреты придвинуты к котлу с дверной стороны: раньше они стояли в
+    // полутора метрах от огня и ровно поперёк хода от очага к поставцу.
+    stools: [[-0.6, -0.15], [1.35, -0.35]],
+    work: work ? [rightWallX + work.at[0], work.at[1]] : null,
+    workStand: work ? work.stand : null,
+  };
+}
+
+/**
+ * Внутрь домов — через дверь мимо конькового столба к очагу, и дальше к
+ * лавке, поставцу и ремеслу. Под полом маску износа не видно, зато у графа
+ * появляются настоящие места ВНУТРИ жилья: дом становится целью, а не
+ * коробкой, у порога которой топчутся.
+ */
+const homeInteriors: readonly VikingTrafficRoute[] = vikingVillageHomes.flatMap(
+  (home): VikingTrafficRoute[] => {
+    const layout = vikingHomeLayout(home);
+    const local = (x: number, z: number): VikingPlanPoint =>
+      vikingPlanLocalPoint(home.position, home.yaw, x, z);
+    const doorZ = home.length / 2;
+    // Западная полоса вдоль стены: коньковый столб обходится слева, сундук и
+    // спальная лавка остаются справа от идущего, у огня — стоянка с запада.
+    const lane: VikingPlanPoint = local(-1.5, -0.55);
+    const fireStand: VikingPlanPoint = local(-0.78, layout.cauldron[1]);
+    const routes: VikingTrafficRoute[] = [
+      {
+        id: `home-inside:${home.id}`,
+        purpose: "Through the door past the ridge post to the cooking hearth",
+        points: [
+          homeEntrances[home.id],
+          local(-0.7, doorZ - 0.9),
+          local(-1.6, layout.postZ),
+          local(-1.95, layout.postZ - 1.6),
+          lane,
+          fireStand,
+        ],
+        width: 0.72,
+        wear: 0.4,
+      },
+      {
+        id: `home-bed:${home.id}`,
+        purpose: "From the hearth lane to the sleeping bench",
+        points: [
+          lane,
+          local(-1.85, -2.2),
+          local(layout.bed[0] + 1.05, layout.bed[1] + 0.25),
+        ],
+        width: 0.58,
+        wear: 0.3,
+      },
+      {
+        id: `home-store:${home.id}`,
+        purpose: "From the hearth to the cupboard at the back gable",
+        points: [
+          lane,
+          local(0.5, -2.6),
+          local(layout.cupboard[0], layout.cupboard[1] + 0.95),
+        ],
+        width: 0.55,
+        wear: 0.26,
+      },
+    ];
+    if (layout.workStand) {
+      // Ремесло стоит у правой стены — к нему идут сразу от порога по восточной
+      // стороне, не толкаясь у котла и табуретов.
+      routes.push({
+        id: `home-work:${home.id}`,
+        purpose: "From the threshold along the east side to the craft place",
+        points: [
+          homeEntrances[home.id],
+          local(0.9, doorZ - 0.8),
+          local(2.0, layout.postZ - 0.6),
+          local(layout.workStand[0], layout.workStand[1]),
+        ],
+        width: 0.58,
+        wear: 0.34,
+      });
+    }
+    return routes;
+  },
+);
+
 const WELL_CENTER: VikingPlanPoint = [-10, 13];
 const WELL_EAST: VikingPlanPoint = [-6.2, 13.1];
 const WELL_WEST: VikingPlanPoint = [-13.8, 13.2];
@@ -154,6 +293,94 @@ export const vikingTrafficRoutes: readonly VikingTrafficRoute[] = [
     width: 2.15,
     wear: 1,
   },
+  // --- Внутри зала: у жителей должно быть куда войти ---------------------
+  //
+  // Тропы здесь положены ПО КООРДИНАТАМ обстановки, а не на глаз. Что мерялось:
+  //   коньковые столбы на оси при z = −7.14 и −26.86 (Ø 0.55) — прямой ход от
+  //     ворот к престолам через середину невозможен, полосы идут в обход;
+  //   столы (|x| ∈ 2.34…3.96) рядами z ∈ [−12.4,−8.6], [−18.4,−14.6],
+  //     [−24.4,−20.6] — поперечные ходы ложатся строго в разрывы z ≈ −13.5
+  //     и −19.5, где по обе стороны 1.1 м чистого пола;
+  //   наружные лавки (|x| ∈ 4.375…4.925) и внутренняя грань стены (|x| = 7.21)
+  //     оставляют боковой проход шириной 2.3 м — ось по |x| = 6.0;
+  //   очаг (0, −16.5) с камнями до 1.11 м: у огня полосы идут по |x| = 1.72,
+  //     ради чего внутренние лавки очажного ряда сняты — у длинного огня
+  //     положено ходить, а не протискиваться.
+  {
+    id: "hall-nave-west",
+    purpose: "Gate to the high seats along the west side of the long fire",
+    points: [
+      [0, -3.4], [-0.9, -5.8], [-1.0, -9.6], [-1.3, -13.5], [-1.72, -16.5],
+      [-1.1, -19.6], [-0.85, -22.5], [-1.0, -25.4], [-1.95, -26.9],
+    ],
+    width: 0.72,
+    wear: 0.5,
+  },
+  {
+    id: "hall-nave-east",
+    purpose: "Gate to the high seats along the east side of the long fire",
+    points: [
+      [0, -3.4], [0.9, -5.8], [1.0, -9.6], [1.3, -13.5], [1.72, -16.5],
+      [1.1, -19.6], [0.85, -22.5], [1.0, -25.4], [1.95, -26.9],
+    ],
+    width: 0.72,
+    wear: 0.5,
+  },
+  {
+    id: "hall-front-bay",
+    purpose: "Inside the gate, spreading to both side aisles",
+    points: [[-6.0, -5.6], [-2.5, -4.5], [0, -3.4], [2.5, -4.5], [6.0, -5.6]],
+    width: 0.9,
+    wear: 0.44,
+  },
+  {
+    id: "hall-aisle-west",
+    purpose: "West aisle between the outer benches and the wall",
+    points: [
+      [-6.0, -5.6], [-6.0, -9.5], [-6.0, -13.5], [-6.0, -17.5], [-6.0, -21.5],
+      [-6.0, -25.2], [-4.2, -26.8],
+    ],
+    width: 0.8,
+    wear: 0.42,
+  },
+  {
+    id: "hall-aisle-east",
+    purpose: "East aisle from the side door down to the high seats",
+    points: [
+      [6.0, -5.6], [6.0, -8.9], [6.0, -13.5], [6.0, -17.5], [6.0, -21.5],
+      [6.0, -25.2], [4.2, -26.8],
+    ],
+    width: 0.8,
+    wear: 0.42,
+  },
+  {
+    id: "hall-side-door",
+    purpose: "Side door of the hall into the east aisle",
+    points: [[7.5, -8.9], [6.0, -8.9]],
+    width: 0.85,
+    wear: 0.6,
+  },
+  {
+    id: "hall-cross-front",
+    purpose: "Across the hall in the gap between the first and second table rows",
+    points: [[-6.0, -13.5], [-3.0, -13.45], [0, -13.4], [3.0, -13.45], [6.0, -13.5]],
+    width: 0.66,
+    wear: 0.34,
+  },
+  {
+    id: "hall-cross-rear",
+    purpose: "Across the hall in the gap before the high-seat tables",
+    points: [[-6.0, -19.6], [-3.0, -19.55], [0, -19.5], [3.0, -19.55], [6.0, -19.6]],
+    width: 0.66,
+    wear: 0.34,
+  },
+  {
+    id: "elder-to-south-gate",
+    purpose: "From the elder's end of the village out through the south gate",
+    points: [[-20, -47], [-14.5, -53.5], [-9.5, -58.5], [-4.5, -63], [-0.6, -66.2]],
+    width: 1.15,
+    wear: 0.5,
+  },
   {
     id: "gate-to-jetty",
     purpose: "South gate down the cape to the fog jetty",
@@ -171,7 +398,7 @@ export const vikingTrafficRoutes: readonly VikingTrafficRoute[] = [
   {
     id: "fish-rack",
     purpose: "North family yard to the fish drying rack",
-    points: [[-8, 34], [-12, 39]],
+    points: [[-8, 34], [-12.7, 37.3]],
     width: 0.82,
     wear: 0.52,
   },
@@ -185,7 +412,8 @@ export const vikingTrafficRoutes: readonly VikingTrafficRoute[] = [
   {
     id: "goat-pen",
     purpose: "East family yard to the animal pen",
-    points: [[11.5, 28], [13, 20]],
+    // Кончается ПЕРЕД жердями загона: раньше конец тропы был внутри ограды.
+    points: [[11.5, 28], [12.6, 24.8]],
     width: 0.88,
     wear: 0.58,
   },
@@ -244,7 +472,7 @@ export const vikingTrafficRoutes: readonly VikingTrafficRoute[] = [
   {
     id: "brewer-workyard",
     purpose: "Brewer house to chopping, drying and fuel yards",
-    points: [...vikingDoorExit("brewer", [20, 10]), [20, 6], [21, 2], [22, 1], [27, -3], [33, 0], [43, 1]],
+    points: [...vikingDoorExit("brewer", [20, 10]), [20, 6], [21, 2], [22, 1], [27, -3], [33, 0], [41.9, 2.5]],
     width: 0.8,
     wear: 0.55,
   },
@@ -257,10 +485,23 @@ export const vikingTrafficRoutes: readonly VikingTrafficRoute[] = [
   },
   {
     id: "commons",
-    purpose: "Main path to the communal hearth and barrel stores",
-    points: [[0.2, -0.5], [-7, 0], [-11.5, -1.5], [-16.6, 4.6]],
+    purpose: "Past the communal hearth to the barrel stores",
+    // Конец тропы стоял ровно в середине решётки из шести бочек — житель
+    // приходил туда и запирался между ними. Теперь подходит сбоку от штабеля.
+    // Тропа шла ЧЕРЕЗ ОЧАГ: точка [-11.5,-1.5] — это его центр. Житель идёт
+    // на неё, веер отводит его от камней, он заходит снова — и наматывает
+    // круги вокруг огня. Коридор обведён севернее кольца лавок, а к самому
+    // огню ведёт короткий отвод на стоянку между лавками.
+    points: [[0.2, -0.5], [-7, 0], [-8.6, 2.6], [-12.4, 3.4], [-15.0, 2.4]],
     width: 1.14,
     wear: 0.84,
+  },
+  {
+    id: "commons-fire",
+    purpose: "Off the commons track to the standing place at the fire",
+    points: [[-8.6, 2.6], [-9.6, 0.2]],
+    width: 0.7,
+    wear: 0.55,
   },
   {
     id: "hall-kitchen",
@@ -272,28 +513,32 @@ export const vikingTrafficRoutes: readonly VikingTrafficRoute[] = [
   {
     id: "south-junction",
     purpose: "Great hall to the southern household junction",
-    points: [[7.5, -8.9], [12.5, -19], [5, -30]],
+    // Перекрёсток был в точке (5, −30) — ВНУТРИ большого зала (он занимает
+    // x ∈ [−7.5, 7.5], z ∈ [−31.5, −2.5]). Тропы отсюда шли сквозь бревенчатую
+    // стену, и жители честно упирались в неё носом. Узел вынесен за восточную
+    // стену, а дальний конец зала обходится с юга.
+    points: [[7.5, -8.9], [12.5, -19], [11, -28]],
     width: 1.28,
     wear: 0.86,
   },
   {
     id: "fisher",
-    purpose: "Southern junction to the fisher house",
-    points: [[5, -30], [-10, -27], [-20, -26], homeEntrances.fisher],
+    purpose: "Southern junction around the hall gable to the fisher house",
+    points: [[11, -28], [7, -34], [-2, -35.2], [-12, -31], [-20, -26], homeEntrances.fisher],
     width: 1.05,
     wear: 0.7,
   },
   {
     id: "fisher-workyard",
     purpose: "Fisher house to firewood and the south chopping yard",
-    points: [...vikingDoorExit("fisher", [-38, -33]), [-38, -33], [-29, -38], [-23, -37]],
+    points: [...vikingDoorExit("fisher", [-38, -33]), [-38, -33], [-29, -38], [-22.1, -38.5]],
     width: 0.78,
     wear: 0.52,
   },
   {
     id: "elder",
     purpose: "South chopping yard to the elder house and fuel store",
-    points: [[-23, -37], [-20, -47], [-15, -54], ...vikingDoorPath(homesById.elder, [-15, -54])],
+    points: [[-22.1, -38.5], [-20, -47], [-15, -54], ...vikingDoorPath(homesById.elder, [-15, -54])],
     width: 0.86,
     wear: 0.58,
   },
@@ -314,18 +559,41 @@ export const vikingTrafficRoutes: readonly VikingTrafficRoute[] = [
   {
     id: "smith-firewood",
     purpose: "Smith house to the southern fuel stack",
-    points: [...vikingDoorExit("smith", [32, -40]), [32, -40], [34, -49]],
+    // Конец был внутри поленницы (x 31…36, z ≈ −49) — тупик без обхода.
+    points: [...vikingDoorExit("smith", [32, -40]), [32, -40], [33, -46.4]],
     width: 0.72,
     wear: 0.48,
   },
   {
     id: "new-house",
     purpose: "The commons to the new longhouse under construction",
-    points: [[-16.6, 4.6], [-21.5, -3.5], [-26.5, -10.2]],
+    points: [[-15.0, 2.4], [-21.5, -3.5], [-26.5, -10.2]],
     width: 0.9,
     wear: 0.5,
   },
+  {
+    id: "hide-rack-west",
+    purpose: "Building site and weaver stores out to the far hide racks",
+    points: [[-26.5, -10.2], [-29.5, -14.2], [-35, -15], [-40.7, -13.4]],
+    width: 0.7,
+    wear: 0.38,
+  },
+  {
+    id: "commons-drying",
+    purpose: "Village spine to the communal drying frames",
+    points: [[1.8, 10], [8, 7], [13, 4.4], [14.1, 4.4]],
+    width: 0.74,
+    wear: 0.46,
+  },
+  {
+    id: "brewer-laundry",
+    purpose: "Armoury track out to the brewer laundry line",
+    points: [[31, 15], [32.5, 17], [33, 18]],
+    width: 0.62,
+    wear: 0.34,
+  },
   ...homePlayLoops,
+  ...homeInteriors,
 ] as const;
 
 export const vikingTrafficAreas: readonly VikingTrafficArea[] = [
@@ -347,6 +615,21 @@ export const vikingTrafficAreas: readonly VikingTrafficArea[] = [
       rotation: home.yaw,
     },
   ]),
+  ...vikingVillageHomes.map((home) => ({
+    id: `${home.id}-inside`,
+    purpose: "Hearth room inside the house",
+    // Центр — на СТОЯНКЕ у котла, а не в геометрической середине комнаты:
+    // иначе площадка не накрывает ни одного узла и дом остаётся без цели.
+    center: vikingPlanLocalPoint(home.position, home.yaw, -0.78, vikingHomeLayout(home).cauldron[1]),
+    radius: [1.6, 1.6] as VikingPlanPoint,
+    wear: 0.18,
+  })),
+  // Площадки зала стоят на СВОБОДНОМ полу: центр очага (0,−16.5) и коньковый
+  // столб (0,−26.86) — это камень и бревно, туда встать нельзя.
+  { id: "hall-fire", purpose: "Open floor at the head of the long fire", center: [0, -13.7], radius: [1.7, 0.85], wear: 0.28 },
+  { id: "hall-high-seats", purpose: "Floor before the high seats", center: [0, -26.9], radius: [2.6, 1.2], wear: 0.22 },
+  { id: "hall-benches-west", purpose: "West bench aisle of the hall", center: [-6.0, -18.0], radius: [0.9, 3.4], wear: 0.2 },
+  { id: "hall-benches-east", purpose: "East bench aisle of the hall", center: [6.0, -18.0], radius: [0.9, 3.4], wear: 0.2 },
   { id: "great-hall-yard", purpose: "Communal traffic around the great hall", center: [0, -17], radius: [10.8, 8.8], wear: 0.3 },
   { id: "great-hall-threshold", purpose: "Crowded great hall side entrance", center: [7.5, -8.9], radius: [3.8, 3.2], wear: 0.9 },
   { id: "well", purpose: "Water collection around the well", center: WELL_CENTER, radius: [4.6, 4.25], wear: 0.54 },
@@ -356,8 +639,103 @@ export const vikingTrafficAreas: readonly VikingTrafficArea[] = [
   { id: "goat-pen", purpose: "Churned ground at the goat pen", center: [13, 20], radius: [6.4, 5.3], wear: 0.6 },
   { id: "weaver-chopping", purpose: "Wood chopping yard", center: [-21, 13], radius: [3.5, 3], wear: 0.58 },
   { id: "brewer-chopping", purpose: "Wood chopping yard", center: [22, 1], radius: [3.5, 3], wear: 0.58 },
-  { id: "south-chopping", purpose: "Wood chopping yard", center: [-23, -37], radius: [3.8, 3.2], wear: 0.6 },
+  { id: "south-chopping", purpose: "Wood chopping yard", center: [-22.4, -38.2], radius: [3.8, 3.2], wear: 0.6 },
   { id: "north-sledge", purpose: "Sledge loading ground", center: [-8, 34], radius: [3.8, 3], wear: 0.52 },
   { id: "smith-sledge", purpose: "Smithy sledge loading ground", center: [29, -20], radius: [4.2, 3.2], wear: 0.62 },
   { id: "kitchen-garden", purpose: "Worked soil around the kitchen garden", center: [15, -17], radius: [5, 4.2], wear: 0.45 },
+  // Места, у которых давно была тропа, но не было НАЗНАЧЕНИЯ: без площадки
+  // узел безымянный, а безымянный узел никому не цель — полкарты стояло
+  // построенным и незаселённым.
+  { id: "north-gate", purpose: "Watch and traffic at the north gate", center: [0, 46], radius: [4.2, 3.4], wear: 0.5 },
+  { id: "south-gate", purpose: "Watch and traffic at the south gate", center: [-0.6, -65], radius: [4, 3.4], wear: 0.42 },
+  { id: "fog-jetty", purpose: "The jetty out in the fog", center: [-1.2, -88], radius: [5, 5], wear: 0.36 },
+  { id: "new-house", purpose: "The longhouse going up: timber, pegs and argument", center: [-26.5, -10.2], radius: [4.6, 4], wear: 0.44 },
+  { id: "fish-rack", purpose: "Fish drying frames", center: [-12.6, 37.5], radius: [3.4, 3], wear: 0.4 },
+  { id: "hide-rack-west", purpose: "Far hide racks west of the village", center: [-40.8, -13.3], radius: [3.6, 3.2], wear: 0.34 },
+  { id: "hide-rack-east", purpose: "Hide racks by the brewer fuel yard", center: [42, 2.4], radius: [3.4, 3], wear: 0.34 },
+  { id: "commons-drying", purpose: "Communal drying frames on the spine", center: [14.2, 4.4], radius: [3.4, 3], wear: 0.42 },
+  { id: "laundry-weaver", purpose: "Washing line by the weaver", center: [-38, 15], radius: [3.4, 3], wear: 0.38 },
+  { id: "laundry-brewer", purpose: "Washing line by the brewer", center: [33, 18], radius: [3.2, 2.8], wear: 0.36 },
+  { id: "weaver-wood", purpose: "West firewood stack", center: [-35, 0], radius: [3, 2.8], wear: 0.36 },
+  { id: "brewer-wood", purpose: "East firewood stack", center: [33, 0], radius: [3, 2.8], wear: 0.36 },
+  { id: "fisher-wood", purpose: "Firewood by the fisher", center: [-39, -34], radius: [3, 2.8], wear: 0.34 },
+  { id: "elder-wood", purpose: "Firewood by the elder", center: [-20, -54], radius: [3, 2.8], wear: 0.32 },
+  { id: "smith-firewood", purpose: "Southern fuel stack", center: [33, -46.4], radius: [3.4, 3], wear: 0.34 },
 ] as const;
+
+/**
+ * ПРИТЯЖЕНИЕ МЕСТ — отдельный смысловой слой поверх геометрии.
+ *
+ * Пока у жителя нет собственных целей, он тянется туда, куда ведёт форма
+ * графа: чем больше троп сходится, тем чаще он там оказывается. Так большой
+ * зал стал центром деревни просто потому, что стоит посередине, а стоило
+ * добавить тропы внутрь домов — семь изб перевесили и кузню, и колодец.
+ *
+ * Поэтому вес места объявляется ЯВНО и живёт отдельно от карты. Он
+ * необязателен: место без записи получает малый вес по умолчанию, а если до
+ * цели не дойти — житель просто выберет другую. Здесь же указано, кого место
+ * зовёт сильнее прочих и в какую пору дня оно живо.
+ */
+export type VikingDayPart = "any" | "day" | "evening";
+
+export interface VikingPlaceInterest {
+  /** Идентификатор площадки из vikingTrafficAreas. */
+  readonly areaId: string;
+  /** Насколько место зовёт само по себе, независимо от числа троп. */
+  readonly pull: number;
+  /** Кого зовёт вдвойне: ремесло тянет к своему делу. */
+  readonly roles?: readonly string[];
+  /** Когда место живо. Вечером греются у огня, днём работают. */
+  readonly when?: VikingDayPart;
+  /** Что там делают. Нужно, чтобы житель у лавки садился, а не стоял столбом. */
+  readonly doing?: "stand" | "sit" | "work";
+}
+
+export const vikingPlaceInterest: readonly VikingPlaceInterest[] = [
+  { areaId: "well", pull: 3.4, doing: "work" },
+  { areaId: "commons", pull: 1.9, doing: "sit" },
+  { areaId: "great-hall-threshold", pull: 1.4 },
+  // Эллипс двора зала накрывает и его ВНУТРЕННОСТЬ: полтора десятка узлов
+  // внутри получали по 0.5 каждый и вместе перевешивали колодец. Двор — фон.
+  { areaId: "great-hall-yard", pull: 0.1 },
+  { areaId: "north-gate", pull: 2.4 },
+  { areaId: "south-gate", pull: 1.5 },
+  { areaId: "fog-jetty", pull: 1.6, roles: ["fisher"], when: "day" },
+  { areaId: "new-house", pull: 2.8, roles: ["smith", "weaver", "elder"], when: "day", doing: "work" },
+  { areaId: "fish-rack", pull: 2.4, roles: ["fisher", "herder"], when: "day", doing: "work" },
+  { areaId: "hide-rack-west", pull: 2.0, roles: ["weaver", "fisher"], when: "day", doing: "work" },
+  { areaId: "hide-rack-east", pull: 2.0, roles: ["brewer", "smith"], when: "day", doing: "work" },
+  { areaId: "commons-drying", pull: 2.2, roles: ["gardener", "weaver"], when: "day", doing: "work" },
+  { areaId: "laundry-weaver", pull: 2.0, roles: ["weaver"], when: "day", doing: "work" },
+  { areaId: "laundry-brewer", pull: 2.0, roles: ["brewer"], when: "day", doing: "work" },
+  { areaId: "weaver-wood", pull: 1.8, roles: ["weaver", "elder"], when: "day", doing: "work" },
+  { areaId: "brewer-wood", pull: 1.8, roles: ["brewer"], when: "day", doing: "work" },
+  { areaId: "fisher-wood", pull: 1.8, roles: ["fisher"], when: "day", doing: "work" },
+  { areaId: "elder-wood", pull: 1.8, roles: ["elder"], when: "day", doing: "work" },
+  { areaId: "smith-firewood", pull: 1.8, roles: ["smith"], when: "day", doing: "work" },
+  { areaId: "hall-fire", pull: 2.4, when: "evening" },
+  { areaId: "hall-benches-west", pull: 1.8, when: "evening", doing: "sit" },
+  { areaId: "hall-benches-east", pull: 1.8, when: "evening", doing: "sit" },
+  { areaId: "hall-high-seats", pull: 1.1, roles: ["elder"], when: "evening" },
+  { areaId: "smith-store", pull: 3.2, roles: ["smith"], when: "day", doing: "work" },
+  { areaId: "smith-sledge", pull: 2.1, roles: ["smith"], when: "day", doing: "work" },
+  { areaId: "weaver-chopping", pull: 3.2, roles: ["weaver"], when: "day", doing: "work" },
+  { areaId: "brewer-chopping", pull: 3.2, roles: ["brewer"], when: "day", doing: "work" },
+  { areaId: "south-chopping", pull: 2.4, roles: ["fisher", "elder"], when: "day", doing: "work" },
+  { areaId: "north-armoury", pull: 2.2, roles: ["brewer", "smith"], when: "day", doing: "work" },
+  { areaId: "goat-pen", pull: 3.0, roles: ["herder"], when: "day", doing: "work" },
+  { areaId: "kitchen-garden", pull: 3.0, roles: ["gardener"], when: "day", doing: "work" },
+  { areaId: "north-sledge", pull: 2.0, roles: ["fisher", "herder"], when: "day", doing: "work" },
+  { areaId: "smith-yard", pull: 0.12 },
+  ...vikingVillageHomes.flatMap((home): VikingPlaceInterest[] => [
+    // Двор и порог собственного дома — фон, а не цель: без малого веса семь
+    // дворов перетягивают на себя всю деревню.
+    { areaId: `${home.id}-yard`, pull: 0.12 },
+    { areaId: `${home.id}-threshold`, pull: 0.45 },
+    // А вот внутрь дома тянет своего хозяина, и ближе к вечеру.
+    { areaId: `${home.id}-inside`, pull: 1.7, roles: [`resident:${home.id}`], when: "evening", doing: "sit" },
+  ]),
+] as const;
+
+export const vikingPlaceInterestById: Readonly<Record<string, VikingPlaceInterest>> =
+  Object.fromEntries(vikingPlaceInterest.map((entry) => [entry.areaId, entry]));

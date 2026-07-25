@@ -143,7 +143,8 @@ export function GrassField({
         uniforms: {
           uTime: { value: 0 },
           uCamera: { value: new Vector3() },
-          uLight: { value: 1 },
+          uLightColor: { value: new Color(1, 1, 1) },
+          uSheen: { value: new Color(0, 0, 0) },
           uWind: { value: 1 },
           uFadeStart: { value: 13 },
           uFadeEnd: { value: 27 },
@@ -197,7 +198,8 @@ export function GrassField({
           uniform vec3 uTip;
           uniform vec3 uBaseDry;
           uniform vec3 uTipDry;
-          uniform float uLight;
+          uniform vec3 uLightColor;
+          uniform vec3 uSheen;
           varying vec2 vUv;
           varying float vShade;
           varying float vDryness;
@@ -210,7 +212,11 @@ export function GrassField({
             // strongest, so blades look sun-bleached at their ends.
             vec3 base = mix(uBase, uBaseDry, vDryness);
             vec3 tip = mix(uTip, uTipDry, vDryness * 1.15);
-            vec3 color = mix(base, tip, vUv.y) * vShade * uLight;
+            vec3 color = mix(base, tip, vUv.y) * vShade * uLightColor;
+            // Кончики ловят низкий свет: на закате трава отдаёт тёплым, под
+            // луной — холодным. Без этого она просто гасла множителем и
+            // одинаково висела и в сумерках, и в темноте.
+            color += uSheen * pow(vUv.y, 2.2) * (0.55 + 0.45 * vDryness);
             gl_FragColor = vec4(color, 1.0);
           }
         `,
@@ -348,9 +354,23 @@ export function GrassField({
     uniforms.uCamera.value.copy(camera.position);
     uniforms.uWind.value = windState.strength;
     const night = nightRef.current ?? 0;
-    // Grass is unlit, so it must be dimmed hard at night to sit in the dark
-    // ground rather than glow against it.
-    uniforms.uLight.value = 1 - night * 0.85;
+    // Трава не освещается сценой, поэтому свет дня ей задаётся вручную — и
+    // не одной яркостью, а ЦВЕТОМ: днём белый, в сумерках тёплый, ночью
+    // холодный и тёмный. Плюс блик на кончиках, который живёт только когда
+    // светило низко, — закатный и лунный.
+    const lit = 1 - night * 0.88;
+    const dusk = Math.max(0, 1 - Math.abs(night - 0.45) / 0.4);
+    const moon = Math.max(0, (night - 0.6) / 0.4);
+    uniforms.uLightColor.value.setRGB(
+      lit * (1 + 0.26 * dusk),
+      lit * (1 - 0.06 * dusk + 0.04 * moon),
+      lit * (1 - 0.19 * dusk + 0.24 * moon),
+    );
+    uniforms.uSheen.value.setRGB(
+      0.10 * dusk + 0.020 * moon,
+      0.07 * dusk + 0.026 * moon,
+      0.035 * dusk + 0.048 * moon,
+    );
   });
 
   useEffect(() => {
