@@ -2,6 +2,16 @@
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
 
+/**
+ * Привязка статики воркера. Глобальный тип рантайма Cloudflare сюда не
+ * приезжает: пакета @cloudflare/workers-types в проекте нет, а соседние Env и
+ * ExecutionContext по той же причине объявлены руками. Нам от неё нужен
+ * ровно fetch.
+ */
+interface Fetcher {
+  fetch(request: Request): Promise<Response>;
+}
+
 interface Env {
   ASSETS: Fetcher;
   IMAGES: {
