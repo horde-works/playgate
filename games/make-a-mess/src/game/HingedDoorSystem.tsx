@@ -9,6 +9,7 @@ import {
   horizontalGateDistance,
   hingedDoorGroupKey,
   inwardDoorSwingSign,
+  plugSlideDoorPolicy,
   skyMooringDoorPolicy,
   townHouseDoorPolicy,
   DOOR_APPROACH_HEIGHT,
@@ -19,6 +20,7 @@ import {
   vikingDoorPolicy,
   vikingGateLeafPolicy,
   vikingHallGatePolicy,
+  type PlugSlideDoorPolicy,
   type VikingDoorPolicy,
   type VikingGateLeafPolicy,
   type TownHouseDoorPolicy,
@@ -46,6 +48,8 @@ interface DoorGroup {
   readonly hallGate: VikingGateLeafPolicy | null;
   readonly vikingDoor: VikingDoorPolicy | null;
   readonly townHouseDoor: TownHouseDoorPolicy | null;
+  /** Створка не распахивается, а выходит из проёма и едет вдоль борта. */
+  readonly plugSlide: PlugSlideDoorPolicy | null;
 }
 
 interface GateGroup {
@@ -124,6 +128,7 @@ export function HingedDoorSystem({
         hallGate: vikingHallGatePolicy(key),
         vikingDoor: vikingDoorPolicy(key),
         townHouseDoor: townHouseDoorPolicy(key) ?? skyMooringDoorPolicy(key),
+        plugSlide: plugSlideDoorPolicy(key),
       };
     });
   }, [pieces]);
@@ -199,7 +204,9 @@ export function HingedDoorSystem({
     }
 
     for (const group of doorGroups) {
-      const doorId = group.vikingDoor?.doorId ?? group.townHouseDoor?.doorId;
+      const doorId = group.vikingDoor?.doorId
+        ?? group.townHouseDoor?.doorId
+        ?? group.plugSlide?.doorId;
       if (!doorId) {
         continue;
       }
@@ -221,7 +228,7 @@ export function HingedDoorSystem({
       ) {
         nearestEntry = {
           id: doorId,
-          kind: group.townHouseDoor ? "town-door" : "door",
+          kind: group.townHouseDoor || group.plugSlide ? "town-door" : "door",
         };
         nearestEntryDistance = distance;
       }
@@ -269,7 +276,8 @@ export function HingedDoorSystem({
       } else {
       const interactiveEntryId = group.gate?.gateId
         ?? group.vikingDoor?.doorId
-        ?? group.townHouseDoor?.doorId;
+        ?? group.townHouseDoor?.doorId
+        ?? group.plugSlide?.doorId;
       // (обычные двери и ворота деревни)
       if (interactiveEntryId) {
         open =
@@ -325,7 +333,8 @@ export function HingedDoorSystem({
           group.hallGate?.gateId ??
           group.gate?.gateId ??
           group.vikingDoor?.doorId ??
-          group.townHouseDoor?.doorId;
+          group.townHouseDoor?.doorId ??
+          group.plugSlide?.doorId;
         if (entryId && state.angle > 0.6) {
           openEntries.current.add(entryId);
         }
@@ -334,18 +343,23 @@ export function HingedDoorSystem({
       // Ворота зала стоят открытыми весь день, поэтому их отводят почти
       // вплотную к торцу: створка под сто градусов торчала бы прямо в подход,
       // и входящие обтирали бы её боками.
+      // У прислонно-сдвижной створки «угол» — это доля хода 0..1.
       const targetAngle = open
-        ? group.hallGate
-          ? 2.9
-          : group.gate
-            ? 1.45
-            : 1.8
+        ? group.plugSlide
+          ? 1
+          : group.hallGate
+            ? 2.9
+            : group.gate
+              ? 1.45
+              : 1.8
         : 0;
       const previousAngle = state.angle;
       state.angle +=
         (targetAngle - state.angle) * Math.min(
           1,
-          delta * (group.gate ? open ? 2.7 : 2.1 : open ? 5 : 3),
+          delta * (group.plugSlide
+            ? open ? 2.4 : 2.0
+            : group.gate ? open ? 2.7 : 2.1 : open ? 5 : 3),
         );
       doorMoved ||= Math.abs(state.angle - previousAngle) > 0.0005;
 
@@ -354,6 +368,22 @@ export function HingedDoorSystem({
         state.angle = 0;
         state.sign = 0;
       }
+
+      // Прислонно-сдвижная створка: сперва выходит из проёма по нормали, затем
+      // едет вдоль борта вправо (право = up × наружная нормаль). Поворота нет
+      // вовсе — полотно и ручка просто переносятся вместе.
+      const plug = group.plugSlide;
+      const plugOffset = plug
+        ? Math.min(1, state.angle / plug.plugShare) * plug.plugDepth
+        : 0;
+      const slideOffset = plug
+        ? Math.max(0, (state.angle - plug.plugShare) / (1 - plug.plugShare)) * plug.travel
+        : 0;
+      const slideRight: readonly [number, number, number] = [
+        hinge.normal[2],
+        0,
+        -hinge.normal[0],
+      ];
 
       // The same rotation is applied to every surviving board and strap, each
       // orbiting the shared pivot — so the leaf stays one rigid piece.
@@ -388,6 +418,20 @@ export function HingedDoorSystem({
         }
         if (body.bodyType() !== rapier.RigidBodyType.KinematicPositionBased) {
           body.setBodyType(rapier.RigidBodyType.KinematicPositionBased, true);
+        }
+        if (plug) {
+          body.setNextKinematicTranslation({
+            x: piece.position[0] + hinge.normal[0] * plugOffset + slideRight[0] * slideOffset,
+            y: piece.position[1],
+            z: piece.position[2] + hinge.normal[2] * plugOffset + slideRight[2] * slideOffset,
+          });
+          body.setNextKinematicRotation({
+            x: member.baseQuaternion.x,
+            y: member.baseQuaternion.y,
+            z: member.baseQuaternion.z,
+            w: member.baseQuaternion.w,
+          });
+          continue;
         }
         doorRelative.current
           .set(piece.position[0] - hinge.pivot[0], 0, piece.position[2] - hinge.pivot[2])

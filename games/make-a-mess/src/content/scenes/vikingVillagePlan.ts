@@ -692,7 +692,7 @@ export interface VikingPlaceInterest {
 }
 
 export const vikingPlaceInterest: readonly VikingPlaceInterest[] = [
-  { areaId: "well", pull: 3.4, doing: "work" },
+  { areaId: "well", pull: 3.4, roles: ["women"], doing: "work" },
   { areaId: "commons", pull: 1.9, doing: "sit" },
   { areaId: "great-hall-threshold", pull: 1.4 },
   // Эллипс двора зала накрывает и его ВНУТРЕННОСТЬ: полтора десятка узлов
@@ -702,12 +702,12 @@ export const vikingPlaceInterest: readonly VikingPlaceInterest[] = [
   { areaId: "south-gate", pull: 1.5 },
   { areaId: "fog-jetty", pull: 1.6, roles: ["fisher"], when: "day" },
   { areaId: "new-house", pull: 2.8, roles: ["smith", "weaver", "elder"], when: "day", doing: "work" },
-  { areaId: "fish-rack", pull: 2.4, roles: ["fisher", "herder"], when: "day", doing: "work" },
+  { areaId: "fish-rack", pull: 2.4, roles: ["fisher", "women"], when: "day", doing: "work" },
   { areaId: "hide-rack-west", pull: 2.0, roles: ["weaver", "fisher"], when: "day", doing: "work" },
   { areaId: "hide-rack-east", pull: 2.0, roles: ["brewer", "smith"], when: "day", doing: "work" },
-  { areaId: "commons-drying", pull: 2.2, roles: ["gardener", "weaver"], when: "day", doing: "work" },
-  { areaId: "laundry-weaver", pull: 2.0, roles: ["weaver"], when: "day", doing: "work" },
-  { areaId: "laundry-brewer", pull: 2.0, roles: ["brewer"], when: "day", doing: "work" },
+  { areaId: "commons-drying", pull: 2.4, roles: ["women"], when: "day", doing: "work" },
+  { areaId: "laundry-weaver", pull: 2.2, roles: ["women"], when: "day", doing: "work" },
+  { areaId: "laundry-brewer", pull: 2.2, roles: ["women"], when: "day", doing: "work" },
   { areaId: "weaver-wood", pull: 1.8, roles: ["weaver", "elder"], when: "day", doing: "work" },
   { areaId: "brewer-wood", pull: 1.8, roles: ["brewer"], when: "day", doing: "work" },
   { areaId: "fisher-wood", pull: 1.8, roles: ["fisher"], when: "day", doing: "work" },
@@ -717,14 +717,14 @@ export const vikingPlaceInterest: readonly VikingPlaceInterest[] = [
   { areaId: "hall-benches-west", pull: 1.8, when: "evening", doing: "sit" },
   { areaId: "hall-benches-east", pull: 1.8, when: "evening", doing: "sit" },
   { areaId: "hall-high-seats", pull: 1.1, roles: ["elder"], when: "evening" },
-  { areaId: "smith-store", pull: 3.2, roles: ["smith"], when: "day", doing: "work" },
+  { areaId: "smith-store", pull: 3.2, roles: ["smith", "men"], when: "day", doing: "work" },
   { areaId: "smith-sledge", pull: 2.1, roles: ["smith"], when: "day", doing: "work" },
   { areaId: "weaver-chopping", pull: 3.2, roles: ["weaver"], when: "day", doing: "work" },
   { areaId: "brewer-chopping", pull: 3.2, roles: ["brewer"], when: "day", doing: "work" },
   { areaId: "south-chopping", pull: 2.4, roles: ["fisher", "elder"], when: "day", doing: "work" },
-  { areaId: "north-armoury", pull: 2.2, roles: ["brewer", "smith"], when: "day", doing: "work" },
-  { areaId: "goat-pen", pull: 3.0, roles: ["herder"], when: "day", doing: "work" },
-  { areaId: "kitchen-garden", pull: 3.0, roles: ["gardener"], when: "day", doing: "work" },
+  { areaId: "north-armoury", pull: 2.2, roles: ["brewer", "smith", "men"], when: "day", doing: "work" },
+  { areaId: "goat-pen", pull: 3.0, roles: ["herder", "women"], when: "day", doing: "work" },
+  { areaId: "kitchen-garden", pull: 3.0, roles: ["gardener", "women"], when: "day", doing: "work" },
   { areaId: "north-sledge", pull: 2.0, roles: ["fisher", "herder"], when: "day", doing: "work" },
   { areaId: "smith-yard", pull: 0.12 },
   ...vikingVillageHomes.flatMap((home): VikingPlaceInterest[] => [
@@ -733,7 +733,7 @@ export const vikingPlaceInterest: readonly VikingPlaceInterest[] = [
     { areaId: `${home.id}-yard`, pull: 0.12 },
     { areaId: `${home.id}-threshold`, pull: 0.45 },
     // А вот внутрь дома тянет своего хозяина, и ближе к вечеру.
-    { areaId: `${home.id}-inside`, pull: 1.7, roles: [`resident:${home.id}`], when: "evening", doing: "sit" },
+    { areaId: `${home.id}-inside`, pull: 1.7, roles: [`resident:${home.id}`, "women"], when: "evening", doing: "sit" },
   ]),
 ] as const;
 

@@ -25,8 +25,10 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type MutableRefObject,
   type PointerEvent as ReactPointerEvent,
+  type ReactElement,
   type TouchEvent as ReactTouchEvent,
 } from "react";
 import {
@@ -5301,7 +5303,9 @@ function OpenWorldScene({
             brokenPieces={brokenPiecesRef}
             doorRequests={villagerDoorRequests}
             openDoors={villagerOpenDoors}
-            count={24}
+            // Деревня выросла: жительниц и девочек ДОБАВИЛИ, а не заменили
+            // ими часть мужчин.
+            count={34}
           />
           <Birds
             center={scene.worldCenter}
@@ -5942,6 +5946,104 @@ function MobileGameControls({
   );
 }
 
+/**
+ * Титр режима и дежурные чипы.
+ *
+ * Смена режима — событие, а не строка в панели: сперва титр по центру снизу в
+ * стиле наших пролётов, он сам уходит, а в правом верхнем углу остаётся чип,
+ * пока режим включён. Отсюда и правило: титр показывается на СМЕНУ значения, а
+ * чип живёт от значения.
+ */
+function ModeAnnounce({
+  flightMode,
+  weapon,
+}: {
+  flightMode: boolean;
+  weapon: WeaponName;
+}): ReactElement | null {
+  const { t } = useLanguage();
+  const [caption, setCaption] = useState<{ id: number; text: string } | null>(null);
+  const previous = useRef<{ flightMode: boolean; weapon: WeaponName } | null>(null);
+  const nextId = useRef(0);
+
+  useEffect(() => {
+    const before = previous.current;
+    previous.current = { flightMode, weapon };
+    // Первый кадр — это не смена режима, а его начальное состояние: молчим.
+    if (!before) {
+      return;
+    }
+    const text =
+      before.flightMode !== flightMode
+        ? flightMode
+          ? t("announce.flightOn")
+          : t("announce.flightOff")
+        : before.weapon !== weapon
+            ? weapon === "none"
+              ? t("announce.weaponNone")
+              : weapon === "hammer"
+                ? t("announce.weaponHammer")
+                : weapon === "launcher"
+                  ? t("announce.weaponLauncher")
+                  : weapon === "rocket"
+                    ? t("announce.weaponRocket")
+                    : t("announce.weaponMg")
+            : null;
+    if (!text) {
+      return;
+    }
+    nextId.current += 1;
+    setCaption({ id: nextId.current, text });
+  }, [flightMode, weapon, t]);
+
+  useEffect(() => {
+    if (!caption) {
+      return;
+    }
+    const timer = setTimeout(() => setCaption(null), 2600);
+    return () => clearTimeout(timer);
+  }, [caption]);
+
+  const weaponChip =
+    weapon === "none"
+      ? null
+      : weapon === "hammer"
+        ? t("weapon.hammer")
+        : weapon === "launcher"
+          ? t("weapon.launcher")
+          : weapon === "rocket"
+            ? t("weapon.rocket")
+            : t("weapon.mg");
+
+  return (
+    <>
+      {caption ? (
+        // key по id: одинаковый титр подряд обязан проиграться заново.
+        <div className="mode-announce" key={caption.id} aria-live="polite">
+          <p className="mode-announce-kicker">{t("announce.kicker")}</p>
+          <p className="mode-announce-title">
+            {caption.text.split(" ").map((word, index) => (
+              <span
+                key={`${word}:${index}`}
+                style={{ "--word-index": index } as CSSProperties}
+              >
+                {word}
+                {index < caption.text.split(" ").length - 1 ? "\u00a0" : ""}
+              </span>
+            ))}
+          </p>
+        </div>
+      ) : null}
+      {flightMode || weaponChip ? (
+        <div className="mode-chips" aria-hidden="true">
+          {flightMode ? <span className="mode-chip">{t("chip.flight")}</span> : null}
+          {weaponChip ? <span className="mode-chip">{weaponChip}</span> : null}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 export function MakeAMessGame({
   scene: sceneProp = openHouseScene,
   flyover,
@@ -6376,6 +6478,10 @@ export function MakeAMessGame({
           </Canvas>
         </KeyboardControls>
       </div>
+
+      {!cinematicActive ? (
+        <ModeAnnounce flightMode={flightMode} weapon={weapon} />
+      ) : null}
 
       {!cinematicActive ? (
         <header className="play-topbar">

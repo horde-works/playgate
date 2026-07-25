@@ -67,3 +67,22 @@ hidden air gaps.
 - `npm run build:firebase`: create the static Firebase Hosting bundle
 - `npm run deploy:firebase`: build and deploy to Firebase Hosting
 - `npm test`: build and verify the hero, catalog, and game routes
+
+## License
+
+Handmade Games is released under the **GNU Affero General Public License v3.0**
+([LICENSE](LICENSE)).
+
+Fork it, run it, take it apart, learn from it, build on it — freely and at no
+cost. The AGPL asks for one thing back: if you distribute a modified version, or
+run one as a network service, its complete source has to be open under the AGPL
+too.
+
+If that does not fit what you want to do — a closed-source product, a hosted
+commercial service — a commercial license is available instead. See
+[COMMERCIAL.md](COMMERCIAL.md).
+
+Contributions are welcome and require a one-line sign-off: [CLA.md](CLA.md).
+
+Bundled third-party software, fonts and audio keep their own licenses, listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

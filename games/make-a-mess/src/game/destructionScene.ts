@@ -176,6 +176,12 @@ export interface BreakablePieceDefinition {
   readonly attachmentSupportMode?: "wall" | "cable" | "hinge";
   readonly sideAttachmentReach?: number;
   readonly contactBearingOrder?: boolean;
+  /**
+   * Пер-кусочное сужение окна опоры (структурный решатель его уже читает).
+   * Нужно парящим объектам над твердью: у стали окно 1.1 м, и рама летающего
+   * вагона иначе «садится» на шпалы под собой.
+   */
+  readonly maximumVerticalGap?: number;
   /** Optional visual surface variant; structural material remains unchanged. */
   readonly textureProfile?: SurfaceTextureProfile;
   /** World-space material mask; it follows this ground body when it breaks. */

@@ -137,15 +137,19 @@ function villagerBoxes(): BoxSpec[] {
   }
 
   // Ноша в руках — только у части жителей; у прочих схлопывается в точку.
+  // Короб держат В РУКАХ, а не под ними. В позе переноски плечо уходит вперёд
+  // на 0.95 рад, предплечье ещё на 0.8: кисти оказываются на высоте около
+  // 1.25 м и вынесены на 0.45 м вперёд. Короб стоял на 1.0 / 0.32 — на четверть
+  // метра ниже кистей и позади них, будто висел сам по себе.
   boxes.push({
-    center: [0, 1.0, 0.32],
+    center: [0, 1.22, 0.41],
     size: [0.36, 0.28, 0.26],
     color: new Color("#6b5138"),
     dye: 0,
     kind: "bundle",
     side: 0,
-    pivotA: [0, 1.0, 0.32],
-    pivotB: [0, 1.0, 0.32],
+    pivotA: [0, 1.22, 0.41],
+    pivotB: [0, 1.22, 0.41],
   });
 
   return boxes;
@@ -256,7 +260,10 @@ const GAIT_COMPUTE = /* glsl */ `
   float gMove = aGait.y;
   float gStride = aGait.z;
   float gArm = aGait.w;
-  float gCarry = aDyeColor.w;
+  // В канале ноши: 0 — пусто, 1 — несёт, 1..2 — опускает на землю.
+  float carryRaw = aDyeColor.w;
+  float carryDrop = clamp(carryRaw - 1.0, 0.0, 1.0);
+  float gCarry = step(0.5, carryRaw) * (1.0 - carryDrop * 0.75);
   float side = aFlags.x;
   float kind = aFlags.y;
 
@@ -284,7 +291,11 @@ const GAIT_COMPUTE = /* glsl */ `
   float climbKind = aClimb.x;
   float climbT = aClimb.y;
   float restTop = aClimb.z;
-  float atTable = aClimb.w;
+  // В .w упакованы признаки: 1 — сидит за столом, 2 — жительница. Отдельного
+  // атрибута не заводим, чтобы не трогать раскладку буферов ради одного бита.
+  float flags = aClimb.w;
+  float female = step(1.5, flags);
+  float atTable = mod(flags, 2.0);
   // Поза «всем телом»: наклон вокруг таза и просадка таза вниз. Без них лечь
   // нельзя в принципе — поворачивать надо всю фигуру, а не отдельное звено.
   float bodyPitch = 0.0;
@@ -381,9 +392,40 @@ const GAIT_COMPUTE = /* glsl */ `
     }
   }
 
+  // ЖЕНСКАЯ ПОХОДКА отличается не «поменьше», а по существу: короче шаг при
+  // более частом каденсе, заметно больше разворот таза и вдвое меньше мах
+  // плечами. Каденс приходит из шага (фаза растёт от пути), остальное — здесь.
+  if (female > 0.5) {
+    armFlex *= 0.62;
+    hipFlex *= 1.06;
+  }
+
   mat3 gRotA = mat3(1.0);
   mat3 gRotB = mat3(1.0);
   vec3 gaitPos = position;
+
+  // СИЛУЭТ. Плечи уже, бёдра шире, подол расширяется книзу от бедра к колену,
+  // волосы длиннее по спине. Всё — сдвигом вершин, поэтому драв-колл прежний.
+  if (female > 0.5) {
+    if (kind == 0.0) {
+      float shoulders = smoothstep(1.06, 1.3, position.y);
+      float waist = 1.0 - smoothstep(0.78, 1.02, position.y);
+      gaitPos.x *= mix(1.0, 0.9, shoulders) * mix(1.0, 1.14, waist);
+      gaitPos.z *= mix(1.0, 0.94, shoulders);
+    } else if (kind == 1.0 || kind == 2.0) {
+      // Подол: чем ниже, тем шире, и книзу колокол не доходит до щиколоток.
+      float hem = clamp((${HIP_Y.toFixed(2)} - position.y) / 0.5, 0.0, 1.0);
+      float flare = 1.0 + hem * hem * 1.55;
+      gaitPos.x = gaitPos.x * flare + sign(gaitPos.x) * hem * 0.03;
+      gaitPos.z *= 1.0 + hem * hem * 1.25;
+    } else if (kind == 6.0 && position.y > 1.6) {
+      // Коса вдоль спины: затылочная коробка вытягивается вниз и назад.
+      float back = clamp(-position.z * 6.0, 0.0, 1.0);
+      gaitPos.y -= back * 0.3;
+      gaitPos.z -= back * 0.05;
+      gaitPos.x *= 1.0 + back * 0.06;
+    }
+  }
 
   if (kind == 1.0) {
     gRotB = gaitRotX(-hipFlex);
@@ -405,10 +447,11 @@ const GAIT_COMPUTE = /* glsl */ `
     gRotA = gRotA * rotAnkle;
   } else if (kind == 3.0 || kind == 4.0) {
     // С ношей руки держат её впереди и почти не машут.
-    float shoulder = mix(armFlex, 0.95 + armFlex * 0.15, gCarry);
+    float hold = step(0.5, carryRaw) * (1.0 - carryDrop);
+    float shoulder = mix(armFlex, 0.95 + armFlex * 0.15, hold);
     gRotB = gaitRotX(-shoulder);
     if (kind == 4.0) {
-      gRotA = gaitRotX(mix(-0.32 - max(0.0, sin(legPhase)) * 0.28 * gMove, -0.8, gCarry));
+      gRotA = gaitRotX(mix(-0.32 - max(0.0, sin(legPhase)) * 0.28 * gMove, -0.8, hold));
       gaitPos = gRotA * (gaitPos - aPivotA) + aPivotA;
     }
     gaitPos = gRotB * (gaitPos - aPivotB) + aPivotB;
@@ -433,9 +476,12 @@ const GAIT_COMPUTE = /* glsl */ `
     gaitPos.x += sway;
   }
 
-  // Ноша есть не у всех: лишним она вырождается в точку.
+  // Ноша есть не у всех: лишним она вырождается в точку. А тот, кто дошёл,
+  // ОПУСКАЕТ короб перед собой на землю — и дальше идёт налегке.
   if (kind == 5.0) {
-    gaitPos = mix(aPivotB, gaitPos, gCarry);
+    gaitPos = mix(aPivotB, gaitPos, step(0.5, carryRaw));
+    gaitPos.y -= carryDrop * 1.06;
+    gaitPos.z += carryDrop * 0.16;
   }
 
   // Сесть и лечь — движения всего тела: сперва разворот вокруг таза, потом
@@ -560,7 +606,7 @@ export function Villagers({
         villager.dye[0],
         villager.dye[1],
         villager.dye[2],
-        villager.carries ? 1 : 0,
+        villager.carries ? 1 + villager.carryDrop : 0,
       );
     }
     dyeAttribute.needsUpdate = true;
@@ -656,7 +702,7 @@ export function Villagers({
         villager.climbKind,
         villager.climbProgress,
         villager.restY,
-        villager.atTable ? 1 : 0,
+        (villager.atTable ? 1 : 0) + (villager.female ? 2 : 0),
       );
 
       // Момент постановки стопы берём из фазы шага (она растёт от пути, а не

@@ -81,13 +81,36 @@ export function townHouseDoorPolicy(groupKey: string): TownHouseDoorPolicy | nul
 }
 
 /**
- * Дверь гондолы небесного причала: ведёт себя как обычная городская дверь —
- * открывается по подходу и подсвечивается той же подсказкой. Створка и её
- * ручка названы одной петлёй, поэтому едут вместе.
+ * Дверь гондолы дирижабля у городской причальной мачты: ведёт себя как
+ * обычная городская дверь — распахивается по подходу и подсвечивается той же
+ * подсказкой. Створка и её ручка названы одной петлёй, поэтому едут вместе.
  */
 export function skyMooringDoorPolicy(groupKey: string): TownHouseDoorPolicy | null {
   return groupKey === "sky-mooring:airship:car:door"
     ? { doorId: groupKey }
+    : null;
+}
+
+export interface PlugSlideDoorPolicy {
+  readonly doorId: string;
+  /** На сколько створка выходит из проёма наружу, прежде чем поехать. */
+  readonly plugDepth: number;
+  /** Ход вдоль борта: вся ширина полотна. */
+  readonly travel: number;
+  /** Доля хода, отведённая на выход из проёма. */
+  readonly plugShare: number;
+}
+
+/**
+ * Дверь вагона небесного поезда открывается как в современном поезде:
+ * створка сначала выходит из проёма НА СЕБЯ на свою толщину, а потом уезжает
+ * вдоль борта вправо на всю свою ширину. Закрывается тем же порядком назад,
+ * когда пассажир отошёл. Направление «наружу» и ось борта берутся из тех же
+ * полей `hinge.normal` / `hinge.direction`, которыми задана створка.
+ */
+export function plugSlideDoorPolicy(groupKey: string): PlugSlideDoorPolicy | null {
+  return groupKey === "terminal:sky-train:head:door"
+    ? { doorId: groupKey, plugDepth: 0.26, travel: 1.78, plugShare: 0.34 }
     : null;
 }
 

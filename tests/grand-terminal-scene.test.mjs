@@ -71,9 +71,10 @@ test("the terminal uses voxel-ready faceted rounds, hinged doors and lit fixture
   assert.equal(cylinders.length, 0);
   assert.equal(facetedSlabs.length >= 300, true, String(facetedSlabs.length));
   // Three main entrances plus a street door into each ticket wing, two
-  // leaves each; the fog-siding hut door and the two barrier arms on the
-  // approach road; and the service belt gates (two goods-shed doorways and
-  // the workshop doorway, two leaves each) — all swinging on hinges.
+  // leaves each; the fog-siding hut door; the service belt gates (two
+  // goods-shed doorways and the workshop doorway, two leaves each); and the
+  // sky train's own door at platform 0, whose leaf and brass handle share one
+  // hinge. The two barrier arms are gone: platform 0 stands where they were.
   assert.equal(hingedDoors.length, 19);
   // Coach windows lie flat in the carriage sides — no accidental yaw.
   assert.equal(

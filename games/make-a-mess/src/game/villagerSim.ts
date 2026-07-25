@@ -322,9 +322,16 @@ export interface Villager {
   readonly strideLength: number;
   readonly baseSpeed: number;
   readonly dye: readonly [number, number, number];
-  readonly carries: boolean;
+  /** Несёт ношу. Роль ЧЕРЕДУЕТСЯ: донёс — поставил — пошёл налегке. */
+  carries: boolean;
+  /** 0 — держит, 1 — короб уже на земле. Дальше он гаснет. */
+  carryDrop: number;
+  /** Сколько ещё секунд короб лежит на виду, прежде чем исчезнуть. */
+  carryLinger: number;
   /** Ребёнок: мельче, шаг короче, держится дома и загона. */
   readonly child: boolean;
+  /** Жительница или девочка. Не перекраска: свои роли, шаг и силуэт. */
+  readonly female: boolean;
   /** Склонность к хулиганству: перемахнуть там, где можно было обойти. */
   readonly mischief: number;
   /** Своя привычная сторона тропы — двое не идут по одной нитке. */
@@ -575,7 +582,9 @@ function chooseGoal(
       if (interest?.roles?.length) {
         const called =
           interest.roles.includes(villager.role) ||
-          interest.roles.includes(`resident:${villager.homeId}`);
+          interest.roles.includes(`resident:${villager.homeId}`) ||
+          (villager.female && interest.roles.includes("women")) ||
+          (!villager.female && interest.roles.includes("men"));
         // Своё ремесло зовёт заметно сильнее чужого. Когда по карте
         // добавилось полтора десятка новых мест, прежнего перевеса в 2.2 уже
         // не хватало: кузнец мог за смену так и не дойти до кузни.
@@ -829,7 +838,12 @@ export function createVillagerPopulation(
     // Каждый пятый — ребёнок: домовые петли в плане так и подписаны —
     // «детская беготня и дрова вокруг обжитого дома».
     const child = index % 5 === 4;
-    const build = child ? 0.6 + random() * 0.12 : 0.88 + random() * 0.28;
+    // Деревня надвое. Не «разбавили», а ДОБАВИЛИ: жительниц и девочек столько
+    // же, сколько мужчин и мальчишек, оттого и население выросло.
+    const female = index % 2 === 1;
+    // Женский сложением уже, ребёнок — мельче обоих.
+    const build =
+      (child ? 0.6 + random() * 0.12 : 0.88 + random() * 0.28) * (female ? 0.955 : 1);
     const villager: Villager = {
       id: `${home.id}:${index}`,
       homeId: home.id,
@@ -838,11 +852,16 @@ export function createVillagerPopulation(
       // Длина шага следует за ростом: коротышка семенит, высокий шагает.
       // 0.65–0.85 м при скорости 1.05–1.5 м/с — это каденс около 100–115
       // шагов в минуту, то есть человеческий, а не мультяшный.
-      strideLength: (0.65 + random() * 0.2) * build,
+      // Женский шаг короче при более частом каденсе — это из тех же данных
+      // анализа походки, из которых выведен мужской размах бедра.
+      strideLength: (0.65 + random() * 0.2) * build * (female ? 0.9 : 1),
       baseSpeed: (1.05 + random() * 0.45) * (0.9 + build * 0.1),
       dye: DYES[Math.floor(random() * DYES.length)],
       carries: !child && random() > 0.68,
+      carryDrop: 0,
+      carryLinger: 0,
       child,
+      female,
       // Дети лезут через всё; взрослые — по настроению и редко.
       mischief: child ? 0.5 + random() * 0.5 : random() * 0.3,
       lateralBias: (random() - 0.5) * 0.6,
@@ -1109,6 +1128,21 @@ export function stepVillagers(
 
     if (villager.state === "dwelling") {
       villager.speed = 0;
+      // ДОНЁС — ПОСТАВИЛ. Короб опускается перед собой за 0.9 с, пару секунд
+      // лежит на виду и пропадает; дальше человек идёт обычным жителем, а
+      // ношу подхватит уже кто-то другой и в другой раз.
+      if (villager.carries) {
+        villager.carryDrop = Math.min(1, villager.carryDrop + step / 0.9);
+        if (villager.carryDrop >= 1) {
+          villager.carryLinger += step;
+          if (villager.carryLinger > 2.2) {
+            villager.carries = false;
+            villager.carryDrop = 0;
+            villager.carryLinger = 0;
+          }
+        }
+        villager.dwell = Math.max(villager.dwell, 0.35);
+      }
       // Сидящего и лежащего не толкаем: он уже устроился. Но доворачивается
       // он по-человечески плавно, а не щелчком.
       if (villager.rest > 0) {
@@ -1177,6 +1211,16 @@ export function stepVillagers(
           continue;
         }
         plan.push(options[Math.floor(villager.random() * options.length)]);
+      }
+      // Уходя с рабочего места, могут взять новую ношу — так роль и ходит по
+      // деревне, а не закрепляется за одними и теми же людьми навсегда.
+      if (!villager.carries && !villager.child && villager.random() < 0.22) {
+        const here = network.nodes[villager.nodeIndex];
+        if (here?.areaId && vikingPlaceInterestById[here.areaId]?.doing === "work") {
+          villager.carries = true;
+          villager.carryDrop = 0;
+          villager.carryLinger = 0;
+        }
       }
       villager.goalNode = goal;
       // Где встанем в конце — не в самой точке узла, а вокруг неё.

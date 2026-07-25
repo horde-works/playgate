@@ -32,6 +32,17 @@ import {
 
 const glowMaterials: MeshStandardMaterial[] = [];
 
+/**
+ * Цветное сигнальное стекло, которое ночной ramp зажигает наравне с окнами:
+ * зелёная линза семафора и аэронавигационные огни небесного поезда (правый
+ * борт зелёный, левый красный, нос и корма белые).
+ */
+const signalGlassColors = new Set(["#7fd0a0", "#7fe6a0", "#f08a80", "#f4f1e2"]);
+
+export function isSignalGlassColor(color: string): boolean {
+  return signalGlassColors.has(color);
+}
+
 // Night-time glow for "lived-in" windows and lamp shades; driven by the
 // day/night cycle.
 export function setWindowGlow(intensity: number): void {
@@ -1840,8 +1851,13 @@ gl_FragColor.rgb = mix(gl_FragColor.rgb, materialFogTint, materialFogFactor);
       }:${textureProfile === "city-cracked-plinth" ? "crack" : "solid"}`;
   }
 
-  if (isGlass && color === litWindowColor) {
-    standardMaterial.emissive = new Color("#ffc879");
+  if (isGlass && (color === litWindowColor || signalGlassColors.has(color))) {
+    // Сигнальное стекло горит СВОИМ цветом: линза семафора и аэронавигационные
+    // огни корабля иначе оставались тёмными стекляшками, а светил только
+    // невидимый источник рядом с ними.
+    standardMaterial.emissive = new Color(
+      color === litWindowColor ? "#ffc879" : color,
+    );
     standardMaterial.emissiveIntensity = 0;
     glowMaterials.push(standardMaterial);
   }

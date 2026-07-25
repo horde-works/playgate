@@ -397,7 +397,7 @@ function addSegmentedArch(
   }
 }
 
-const pixelFont: Readonly<Record<string, readonly string[]>> = {
+export const terminalPixelFont: Readonly<Record<string, readonly string[]>> = {
   A: ["01110", "10001", "10001", "11111", "10001", "10001", "10001"],
   B: ["11110", "10001", "10001", "11110", "10001", "10001", "11110"],
   C: ["01111", "10000", "10000", "10000", "10000", "10000", "01111"],
@@ -421,6 +421,7 @@ const pixelFont: Readonly<Record<string, readonly string[]>> = {
   V: ["10001", "10001", "10001", "10001", "10001", "01010", "00100"],
   W: ["10001", "10001", "10001", "10101", "10101", "10101", "01010"],
   Y: ["10001", "10001", "01010", "00100", "00100", "00100", "00100"],
+  "0": ["01110", "10011", "10101", "10101", "11001", "10001", "01110"],
   "1": ["00100", "01100", "00100", "00100", "00100", "00100", "01110"],
   "2": ["01110", "10001", "00001", "00010", "00100", "01000", "11111"],
   "3": ["11110", "00001", "00001", "01110", "00001", "00001", "11110"],
@@ -436,7 +437,13 @@ function addPixelText(
   z: number,
   pixel = 0.22,
   color = brass,
-  mirrored = false,
+  /**
+   * Куда смотрит лицевая сторона вывески по оси Z: -1 — на -z (её читают,
+   * глядя на +z), +1 — на +z. Раскладка глифов зависит от этого, и булев
+   * «mirrored» тут уже дважды приводил к зеркальным надписям — направление
+   * лица куска задавать честнее, чем помнить, кто на кого смотрит.
+   */
+  facing: -1 | 1 = 1,
   emissive = false,
 ): void {
   // Emissive glyphs are lit-glass cells: pale in daylight, self-lit at night
@@ -449,7 +456,7 @@ function addPixelText(
   const totalWidth = Math.max(0, text.length * glyphWidth - pixel);
   let pieceIndex = 0;
   [...text.toUpperCase()].forEach((character, characterIndex) => {
-    const rows = pixelFont[character];
+    const rows = terminalPixelFont[character];
     if (!rows) {
       return;
     }
@@ -458,8 +465,10 @@ function addPixelText(
         if (cell !== "1") {
           return;
         }
-        // Text reads left-to-right for a viewer facing -z. A sign face read
-        // from the other side (viewer facing +z) must be laid out mirrored.
+        // Глифы кладём слева направо для того, кто смотрит вдоль -z. Вывеска,
+        // повёрнутая лицом на -z, читается с другой стороны — её раскладку
+        // надо зеркалить.
+        const mirrored = facing < 0;
         const along = characterIndex * glyphWidth + columnIndex * pixel;
         builder.add(
           `${prefix}:${pieceIndex}`,
@@ -882,7 +891,7 @@ function createHeadhouse(): void {
   facade.add("clock-cap-base", "stone", "stoneBlock", [0, 23.4, FRONT_Z - 0.15], [12.2, 0.5, 3.8], limestoneDark);
 
   facade.add("name-board", "graphiteStone", "panel", [0, 13.55, FRONT_Z + 0.52], [30, 2.25, 0.3], "#202629");
-  addPixelText(facade, "name", "GRAND TERMINAL", 0, 13.55, FRONT_Z + 0.74, 0.26, "#d2ad55");
+  addPixelText(facade, "name", "GRAND TERMINAL", 0, 13.55, FRONT_Z + 0.74, 0.26, "#d2ad55", 1);
 
   finish(shell, "Grand Terminal structure", "brick", "stack");
   finish(facade, "Grand entrance and clock", "stone", "mounted");
@@ -956,7 +965,7 @@ function createPublicInterior(): void {
   // board so the solver carries it. Destinations are invented Nordic/Irish
   // towns — in-world signage, always in English.
   hall.add("departure-header-trim", "steel", "steelSheet", [0, 9.72, boardZ + 0.14], [12.6, 0.09, 0.14], brass);
-  addPixelText(hall, "departure-title", "DEPARTURES", 0, 10.45, boardZ + 0.2, 0.185, litWindowColor, false, true);
+  addPixelText(hall, "departure-title", "DEPARTURES", 0, 10.45, boardZ + 0.2, 0.185, litWindowColor, 1, true);
   const departures: readonly [string, string][] = [
     ["BALLYVOR", "1"],
     ["KORSVIK", "2"],
@@ -964,8 +973,8 @@ function createPublicInterior(): void {
   ];
   for (const [rowIndex, [city, platform]] of departures.entries()) {
     const rowY = 8.75 - rowIndex * 1.32;
-    addPixelText(hall, `departure-city:${rowIndex}`, city, -2.6, rowY, boardZ + 0.2, 0.14, litWindowColor, false, true);
-    addPixelText(hall, `departure-platform:${rowIndex}`, platform, 5.3, rowY, boardZ + 0.2, 0.16, litWindowColor, false, true);
+    addPixelText(hall, `departure-city:${rowIndex}`, city, -2.6, rowY, boardZ + 0.2, 0.14, litWindowColor, 1, true);
+    addPixelText(hall, `departure-platform:${rowIndex}`, platform, 5.3, rowY, boardZ + 0.2, 0.16, litWindowColor, 1, true);
     if (rowIndex < departures.length - 1) {
       hall.add(`departure-line:${rowIndex}`, "steel", "steelSheet", [0, rowY - 0.66, boardZ + 0.12], [11.9, 0.06, 0.12], "#3a4144");
     }
@@ -1251,8 +1260,8 @@ function createTracksAndPlatforms(): void {
         });
       }
       fittings.add(`${id}:board`, "graphiteStone", "panel", [platformX, 4.15, z], [3.7, 1.35, 0.2], "#1b2426");
-      addPixelText(fittings, `${id}:number`, String(platformIndex + 1), platformX, 4.15, z + 0.16, 0.16, "#f0deb0");
-      addPixelText(fittings, `${id}:number-back`, String(platformIndex + 1), platformX, 4.15, z - 0.16, 0.16, "#f0deb0", true);
+      addPixelText(fittings, `${id}:number`, String(platformIndex + 1), platformX, 4.15, z + 0.16, 0.16, "#f0deb0", 1);
+      addPixelText(fittings, `${id}:number-back`, String(platformIndex + 1), platformX, 4.15, z - 0.16, 0.16, "#f0deb0", -1);
     }
 
     // Three shallow stone steps connect the concourse to the platform head —
@@ -1565,12 +1574,33 @@ function createStationLife(): void {
   for (let index = 0; index < rimSegments; index += 1) {
     const angle = (index / rimSegments) * Math.PI * 2;
     const radius = WORLD_RADIUS - 2.1;
+    const baseX = Math.cos(angle) * radius;
+    const baseZ = WORLD_CENTER_Z + Math.sin(angle) * radius;
+    // Плиты кромки — радиальные: центр лежит на кольце, а концы уходят на
+    // 4.6 м внутрь и наружу. На севере внутренний конец накрыл причал
+    // «платформы 0» — там плита подрезана, иначе камень прошивает балласт
+    // пути и плиту перрона. Идём от наружного конца внутрь и обрываем плиту
+    // там, где начинается коридор причала.
+    let stop = 4.625;
+    for (let d = -4.625; d <= 4.625; d += 0.2) {
+      const px = baseX - Math.cos(angle) * d;
+      const pz = baseZ - Math.sin(angle) * d;
+      if (px > -16 && px < 34 && pz > 72.9 && pz < 80.3) {
+        stop = Math.min(stop, d - 0.35);
+        break;
+      }
+    }
+    const length = Math.min(9.25, stop + 4.275);
+    if (length < 1.6) {
+      continue;
+    }
+    const shift = (9.25 - length) / 2;
     forecourt.add(
       `rim:${index}`,
       "stone",
       "stoneBlock",
-      [Math.cos(angle) * radius, 0.05, WORLD_CENTER_Z + Math.sin(angle) * radius],
-      [9.25, 0.52, 1.05],
+      [baseX + Math.cos(angle) * shift, 0.05, baseZ + Math.sin(angle) * shift],
+      [length, 0.52, 1.05],
       index % 3 === 0 ? limestoneDark : "#77736a",
       [0, -angle, 0],
     );
@@ -1626,7 +1656,7 @@ function createStationLife(): void {
     }
     forecourt.add(`kiosk:${sideIndex}:roof-left`, "steel", "steelSheet", [x - 1.5, 3.35, 50], [3.3, 0.2, 5.0], side > 0 ? "#466d62" : "#98483a", [0, 0, 0.22]);
     forecourt.add(`kiosk:${sideIndex}:roof-right`, "steel", "steelSheet", [x + 1.5, 3.35, 50], [3.3, 0.2, 5.0], side > 0 ? "#466d62" : "#98483a", [0, 0, -0.22]);
-    addPixelText(forecourt, `kiosk:${sideIndex}:sign`, side > 0 ? "INFO" : "CAFE", x, 3.0, 47.64, 0.16, "#ead59b", true);
+    addPixelText(forecourt, `kiosk:${sideIndex}:sign`, side > 0 ? "INFO" : "CAFE", x, 3.0, 47.64, 0.16, "#ead59b", -1);
   }
 
   for (const [index, [x, z, yaw]] of [
@@ -1674,9 +1704,11 @@ function createStationLife(): void {
     );
   }
 
-  // Cast-iron lamps lead from the round edge to the entrance.
+  // Cast-iron lamps lead from the round edge to the entrance. Пары у самой
+  // платформы больше нет: её столбы примыкали к причалу и один приходился
+  // ровно на лестничный марш — там теперь перронные фонари.
   for (const [index, [x, z]] of [
-    [-8, 72], [8, 72], [-16, 62], [16, 62], [-22, 51], [22, 51], [-35, 39], [35, 39],
+    [-16, 62], [16, 62], [-22, 51], [22, 51], [-35, 39], [35, 39],
   ].entries()) {
     addFacetedCylinder(forecourt, `street-lamp:${index}:post`, "steel", "steelSheet", "y", [x, 3.0, z], 5.8, 0.22, iron);
     forecourt.add(`street-lamp:${index}:arm`, "steel", "steelSheet", [x, 5.72, z - 0.45], [0.18, 0.18, 1.05], iron, [0.12, 0, 0]);
@@ -2032,161 +2064,9 @@ function createFogSiding(): void {
   fittings.add("tower:standpipe-bend", "steel", "steelSheet", [towerX - 1.55, 2.72, towerZ], [0.85, 0.2, 0.2], "#3c4b4e");
   addFacetedCylinder(fittings, "tower:barrel", "wood", "plank", "y", [towerX - 2.5, 0.52, towerZ + 0.55], 1.0, 0.8, oakDark);
 
-  // Шлагбаум перед форкортом: полосатая стрела перекрывает подъездную
-  // дорогу с обеих сторон, при будке дежурного. Дальше дорога уходит в
-  // туман — но по ней не ездят.
-  for (const [boomIndex, side] of ([-1, 1] as const).entries()) {
-    const postX = side * 9.4;
-    fittings.add(`boom:post:${boomIndex}`, "steel", "steelSheet", [postX, 0.72, 73], [0.24, 1.4, 0.24], iron);
-    fittings.add(`boom:cap:${boomIndex}`, "steel", "steelSheet", [postX, 1.48, 73], [0.3, 0.12, 0.3], "#c8402f");
-    fittings.pieces.push({
-      id: `${fittings.id}:boom:arm:${boomIndex}`,
-      clusterId: fittings.id,
-      material: "steel",
-      shape: "steelSheet",
-      position: [postX - side * 2.85, 1.28, 73],
-      size: [5.4, 0.15, 0.2],
-      color: "#c8402f",
-      carriesAttachments: true,
-      hinge: {
-        pivot: [postX - side * 0.2, 1.28, 73],
-        direction: [-side, 0, 0],
-        normal: [0, 0, 1],
-      },
-    });
-    // Под белым концом стрелы — опорная стойка, как у настоящего
-    // шлагбаума: она же и путь нагрузки для решателя.
-    fittings.add(`boom:rest:${boomIndex}`, "steel", "steelSheet",
-      [postX - side * 8.35, 0.62, 73], [0.12, 1.2, 0.12], iron);
-    fittings.pieces.push({
-      id: `${fittings.id}:boom:tip:${boomIndex}`,
-      clusterId: fittings.id,
-      material: "steel",
-      shape: "steelSheet",
-      position: [postX - side * 7.1, 1.28, 73],
-      size: [3.1, 0.13, 0.18],
-      color: "#e8e6df",
-      attachmentSupportMode: "cable",
-      sideAttachmentReach: 0.6,
-    });
-    fittings.pieces.push({
-      id: `${fittings.id}:boom:counterweight:${boomIndex}`,
-      clusterId: fittings.id,
-      material: "steel",
-      shape: "steelSheet",
-      position: [postX + side * 0.75, 1.28, 73],
-      size: [0.8, 0.28, 0.28],
-      color: "#2f3335",
-      bearsLoad: false,
-      attachmentSupportMode: "cable",
-      sideAttachmentReach: 0.6,
-    });
-  }
-  // Будка дежурного: полосатая, как весь путевой инвентарь — каждая стена
-  // из красного низа и кремового верха, козырёк со свесом, окно в раме на
-  // весь фасад, ступенька и телефонный ящик на стене.
-  const boothX = -11.2;
-  const boothZ = 71.2;
-  const boothRed = "#b5473a";
-  const boothCream = "#ded8c8";
-  // Полосы стен встык (верх нижней = низ верхней), без просвета.
-  for (const [stripeIndex, [sy, tone]] of ([
-    [0.64, boothRed],
-    [1.68, boothCream],
-  ] as const).entries()) {
-    // Торцевые стены встык между боковыми — углы без нахлёста граней.
-    fittings.add(`booth:wall:w:${stripeIndex}`, "wood", "plank", [boothX - 0.75, sy, boothZ], [0.1, 1.04, 1.5], tone);
-    fittings.add(`booth:wall:n:${stripeIndex}`, "wood", "plank", [boothX, sy, boothZ - 0.75], [1.4, 1.04, 0.1], tone);
-    fittings.add(`booth:wall:e:${stripeIndex}`, "wood", "plank", [boothX + 0.75, sy, boothZ], [0.1, 1.04, 1.5], tone);
-    fittings.add(`booth:front:left:${stripeIndex}`, "wood", "plank", [boothX - 0.5, sy, boothZ + 0.75], [0.4, 1.04, 0.1], tone);
-  }
-  fittings.add("booth:front:top", "wood", "plank", [boothX + 0.25, 2.0, boothZ + 0.75], [1.1, 0.44, 0.1], boothCream);
-  fittings.add("booth:front:sill", "wood", "plank", [boothX + 0.25, 0.97, boothZ + 0.78], [1.1, 0.09, 0.14], boothRed);
-  fittings.add("booth:window", "glass", "glassPane", [boothX + 0.25, 1.4, boothZ + 0.76], [0.9, 0.72, 0.06], glassBlue);
-  for (const [jambIndex, jx] of [boothX - 0.19, boothX + 0.69].entries()) {
-    fittings.pieces.push({
-      id: `${fittings.id}:booth:jamb:${jambIndex}`,
-      clusterId: fittings.id,
-      material: "wood",
-      shape: "plank",
-      position: [jx, 1.4, boothZ + 0.78],
-      size: [0.07, 0.76, 0.08],
-      color: oakDark,
-      bearsLoad: false,
-      sideAttachmentReach: 0.25,
-    });
-  }
-  // Козырёк со свесом на все стороны и желобком по фасаду; желобок висит
-  // на козырьке, поэтому козырёк несёт крепления.
-  fittings.pieces.push({
-    id: `${fittings.id}:booth:roof`,
-    clusterId: fittings.id,
-    material: "steel",
-    shape: "steelSheet",
-    position: [boothX, 2.42, boothZ],
-    size: [2.3, 0.1, 2.3],
-    color: "#3a4245",
-    rotation: [0.05, 0, 0],
-    contactBoxes: [{ position: [boothX, 2.42, boothZ], size: [1.7, 0.26, 1.7] }],
-    carriesAttachments: true,
-    // Режим крепления объявляет ОПОРА: тонкий козырёк ниже полутора высот
-    // желобка, и настенное правило его бы отвергло.
-    attachmentSupportMode: "cable",
-  });
-  fittings.pieces.push({
-    id: `${fittings.id}:booth:gutter`,
-    clusterId: fittings.id,
-    material: "steel",
-    shape: "steelSheet",
-    // Крепление ищет перекрытие по высоте — желобок сидит вплотную под
-    // срезом козырька, а не парит на ладонь ниже.
-    position: [boothX, 2.4, boothZ + 1.18],
-    size: [2.3, 0.07, 0.1],
-    color: "#2f383b",
-    bearsLoad: false,
-    attachmentSupportMode: "cable",
-    sideAttachmentReach: 0.55,
-  });
-  fittings.add("booth:step", "stone", "stoneBlock", [boothX + 0.25, 0.09, boothZ + 1.15], [1.0, 0.14, 0.45], limestone);
-  fittings.pieces.push({
-    id: `${fittings.id}:booth:phone-box`,
-    clusterId: fittings.id,
-    material: "steel",
-    shape: "steelSheet",
-    position: [boothX - 0.83, 1.5, boothZ - 0.3],
-    size: [0.09, 0.36, 0.26],
-    color: "#40525c",
-    bearsLoad: false,
-    sideAttachmentReach: 0.3,
-  });
-  fittings.add("booth:glow", "glass", "glassPane", [boothX, 2.66, boothZ + 0.6], [0.3, 0.34, 0.3], litWindowColor);
-  lamps.push({
-    id: `${fittings.id}:booth:glow`,
-    position: [boothX, 2.66, boothZ + 0.7],
-    color: "#ffd49a",
-    distance: 8,
-    intensity: 2.4,
-  });
-  // Знак «стой»: красный диск с белой полосой на отдельной стойке у стрелы.
-  fittings.add("boom:sign-post", "steel", "steelSheet", [-10.1, 0.97, 73.9], [0.12, 1.9, 0.12], iron);
-  for (const [signPieceIndex, piece] of ([
-    { size: [0.06, 0.56, 0.56] as SceneVector3, color: "#c8402f", y: 1.62 },
-    { size: [0.07, 0.12, 0.42] as SceneVector3, color: "#e8e6df", y: 1.62 },
-  ] as const).entries()) {
-    fittings.pieces.push({
-      id: `${fittings.id}:boom:sign:${signPieceIndex}`,
-      clusterId: fittings.id,
-      material: "steel",
-      shape: "steelSheet",
-      position: [-10.1, piece.y, 73.9],
-      size: piece.size,
-      color: piece.color,
-      bearsLoad: false,
-      attachmentSupportMode: "cable",
-      sideAttachmentReach: 0.3,
-    });
-  }
-
+  // Ни шлагбаумов, ни будки дежурного здесь больше нет: место у оси входа
+  // отдано причалу «платформы 0» — стрелы перекрывали лестничные марши, а
+  // будка стояла ровно там, где теперь стоят пассажиры.
   finish(siding, "Overgrown siding into the fog", "steel", "stack");
   finish(fittings, "Fog throat: signals, hut, tower and barrier", "steel", "mounted");
 }
@@ -2435,6 +2315,1136 @@ function createServiceBuildings(): void {
   finish(depot, "Goods shed, workshop and coal store", "brick", "mounted");
 }
 
+
+/**
+ * ПЕРРОН 0 И ЛЕТАЮЩИЙ СОСТАВ. Тупиковый вокзал уверенно говорит одно слово —
+ * «перрон», поэтому причал для корабля-хамелеона здесь не мачта и не мостки,
+ * а ещё одна платформа: та же плита с каменной поверхностью, тот же чугунный
+ * навес, часы и табло, что внутри дебаркадера, только выставленные наружу, за
+ * шлагбаумы привокзальной площади.
+ *
+ * Путь идёт вдоль кромки мира: одним концом упирается в буферный упор, другим
+ * тает в тумане — небесная линия обходит мир по ободу, и вокзал у неё одна из
+ * станций. Состав двухвагонный, головной вагон стоит ровно напротив ворот
+ * (x = 0), и маршрут читается сам: вагон → перрон → шлагбаум → площадь →
+ * фасад.
+ *
+ * Правила сборки транспорта — games/make-a-mess/docs/transport-lessons.md.
+ * Что здесь важно:
+ *   - состав держит «подъёмное сердце» (earth) внутри оболочки: разбил его —
+ *     падает весь поезд, а перрон, навес, путь и упор остаются;
+ *   - перрон кораблю НЕ опора: между кромкой платформы и бортом вагона 45 см,
+ *     сходни принадлежат перрону и до вагона не достают;
+ *   - контактные коробки в ЭТОМ файле МИРОВЫЕ: сцена собирается кластерами
+ *     напрямую, без compileScene (в документах города — наоборот, локальные);
+ *   - оболочка лежит вдоль мировой оси X, поэтому кольцевой поворот
+ *     [phi, 0, 0] тут законен — Rx крутит ровно вокруг оси корпуса. В любой
+ *     другой ориентации так писать нельзя (см. §4.12 плейбука);
+ *   - габарит выверен по стене мира R = 98 вокруг (0, −14): хвостовые кили на
+ *     x ≈ 19 дают R = 97.5, поэтому путь идёт по z = 77.6, а не дальше к краю.
+ */
+/**
+ * Обмер «платформы 0» и небесного поезда: тесты проверяют проходимость,
+ * габарит и посадку по ЭТИМ числам, а не по своим копиям.
+ */
+export const skyBerthMetrics = {
+  trackZ: 77.6,
+  platformZ: 74.05,
+  platformHalf: 1.65,
+  platformTop: 1.3,
+  platformFrom: -10.5,
+  platformTo: 21,
+  stairSteps: 5,
+  stairTread: 0.36,
+  headX: -1.1,
+  tailX: 12.3,
+  carLength: 12.4,
+  carHalf: 1.55,
+  floorTop: 1.5,
+  hullY: 9.4,
+  hullRadius: 3,
+  hullFrom: -10.2,
+  hullTo: 21.4,
+  hullRadiusAt(x: number): number {
+    const length = this.hullTo - this.hullFrom;
+    const t = (x - this.hullFrom) / length;
+    if (t < 0.2) {
+      return this.hullRadius * Math.sqrt(Math.max(0, 1 - ((0.2 - t) / 0.2) ** 2));
+    }
+    if (t > 0.64) {
+      return this.hullRadius * Math.pow(Math.max(0, 1 - ((t - 0.64) / 0.36) ** 2), 0.55);
+    }
+    return this.hullRadius;
+  },
+} as const;
+
+function createSkyPlatform(): void {
+  const berth = zone("terminal:sky-berth");
+  const train = zone("terminal:sky-train");
+
+  // ZoneBuilder.add не умеет флаги решателя, а парящему составу они нужны.
+  function part(
+    builder: ZoneBuilder,
+    suffix: string,
+    material: BreakableMaterial,
+    shape: BreakableShape,
+    position: SceneVector3,
+    size: SceneVector3,
+    color: string,
+    options: Partial<BreakablePieceDefinition> = {},
+  ): void {
+    builder.pieces.push({
+      id: `${builder.id}:${suffix}`,
+      clusterId: builder.id,
+      material,
+      shape,
+      position,
+      size,
+      color,
+      ...options,
+    });
+  }
+
+  const TRACK_Z = 77.6;
+  const PLATFORM_Z = 74.05;
+  const PLATFORM_HALF = 1.65;
+  // Перрон высокий: его строили под небесный поезд, и его настил лежит на
+  // одну ступень ниже пола вагона — посадка в один шаг 20 см, а не прыжок.
+  const PLATFORM_TOP = 1.3;
+  const PLATFORM_FROM = -10.5;
+  const PLATFORM_TO = 21;
+  const BUFFER_X = -8.6;
+  const CAR_LENGTH = 12.4;
+  const CAR_HALF = 1.55;
+  const CAR_FLOOR = 1.34;
+  const HEAD_X = -1.1;
+  const TAIL_X = 12.3;
+  const HULL_Y = 9.4;
+  const HULL_RADIUS = 3.0;
+  const HULL_FROM = -10.2;
+  const HULL_TO = 21.4;
+  const HULL_LENGTH = HULL_TO - HULL_FROM;
+  const linen = "#cfc6ae";
+  const linenDark = "#c0b69d";
+  const linenShade = "#a89f89";
+
+  // --- Путь у самой кромки -------------------------------------------------
+  // Балласт лежит поверх плитки площади: перрон 0 пристроили позже, и он
+  // этого не скрывает.
+  for (let x = PLATFORM_FROM - 1.5; x <= 25; x += 6) {
+    const tone = seededNoise(x, TRACK_Z, 211);
+    berth.add(`ballast:${x.toFixed(0)}`, "concrete", "groundTile",
+      [x, 0.12, TRACK_Z], [6.04, 0.2, 3.8],
+      tone > 0.66 ? "#565751" : tone > 0.33 ? "#4e4f4a" : "#55584c");
+  }
+  let sleeperIndex = 0;
+  for (let x = PLATFORM_FROM - 1.2; x <= 26.5; x += 2.25) {
+    sleeperIndex += 1;
+    const tone = seededNoise(x, TRACK_Z, 213);
+    berth.add(`sleeper:${sleeperIndex}`, "wood", "plank",
+      [x, 0.28, TRACK_Z], [0.34, 0.16, 3.55],
+      tone > 0.62 ? "#46362a" : tone > 0.28 ? "#42332a" : "#3f3227");
+  }
+  for (const side of [-1, 1] as const) {
+    for (let x = PLATFORM_FROM - 1; x <= 24; x += 6.1) {
+      berth.add(`rail:${side}:${x.toFixed(0)}`, "steel", "steelSheet",
+        [x, 0.45, TRACK_Z + side * 0.78], [6.1, 0.18, 0.13], "#51595b");
+    }
+  }
+
+  // Буферный упор: тот же чугун, что у музейных тупиков, только развёрнутый —
+  // путь здесь идёт вдоль X.
+  for (const side of [-1, 1] as const) {
+    berth.add(`buffer-leg:${side}`, "steel", "steelSheet",
+      [BUFFER_X - 0.55, 0.92, TRACK_Z + side * 0.72], [1.25, 1.25, 0.22], iron, [0, 0, 0.55]);
+  }
+  berth.add("buffer-beam", "steel", "steelSheet",
+    [BUFFER_X + 0.02, 1.58, TRACK_Z], [0.34, 0.42, 2.1], "#2f3335");
+  berth.add("buffer-face", "steel", "steelSheet",
+    [BUFFER_X + 0.22, 1.58, TRACK_Z], [0.1, 0.44, 2.0], "#a43c2d");
+  berth.add("buffer-ring", "steel", "steelSheet",
+    [BUFFER_X + 0.26, 1.24, TRACK_Z], [0.12, 0.3, 0.3], brass);
+  berth.add("buffer-lamp", "glass", "glassPane",
+    [BUFFER_X - 0.1, 2.08, TRACK_Z], [0.24, 0.26, 0.24], litWindowColor);
+  lamps.push({ id: `${berth.id}:buffer-lamp`, position: [BUFFER_X - 0.35, 2.08, TRACK_Z], color: "#ffb08a", distance: 9, intensity: 2.2 });
+
+  // --- Платформа -----------------------------------------------------------
+  // Посадочная зона против двери головного вагона: жёлтая линия её обходит.
+  const BOARD_FROM = HEAD_X - 1.7;
+  const BOARD_TO = HEAD_X + 1.7;
+  const lineRuns = (from: number, to: number): readonly (readonly [string, number, number])[] => {
+    if (to <= BOARD_FROM || from >= BOARD_TO) {
+      return [["full", from, to]];
+    }
+    const runs: (readonly [string, number, number])[] = [];
+    if (from < BOARD_FROM - 0.2) {
+      runs.push(["fore", from, BOARD_FROM]);
+    }
+    if (to > BOARD_TO + 0.2) {
+      runs.push(["aft", BOARD_TO, to]);
+    }
+    return runs;
+  };
+  let deckIndex = 0;
+  for (let x = PLATFORM_FROM; x < PLATFORM_TO; x += 5) {
+    deckIndex += 1;
+    const length = Math.min(5, PLATFORM_TO - x);
+    const centerX = x + length / 2;
+    part(berth, `deck-base:${deckIndex}`, "concrete", "panel",
+      [centerX, PLATFORM_TOP / 2 - 0.09, PLATFORM_Z], [length, PLATFORM_TOP - 0.18, PLATFORM_HALF * 2],
+      "#77756f", { carriesAttachments: false });
+    part(berth, `deck:${deckIndex}`, "stone", "groundTile",
+      [centerX, PLATFORM_TOP - 0.08, PLATFORM_Z], [length - 0.04, 0.16, PLATFORM_HALF * 2 - 0.04],
+      deckIndex % 2 === 0 ? "#ada695" : "#9d9789", { carriesAttachments: false });
+    // Жёлтая линия безопасности вдоль путевой кромки. У двери она рвётся:
+    // там посадочная зона со своей разметкой, и линия не должна тонуть в
+    // мостике.
+    for (const [runTag, from, to] of lineRuns(centerX - length / 2 + 0.15, centerX + length / 2 - 0.15)) {
+      part(berth, `deck-line:${deckIndex}:${runTag}`, "stone", "groundTile",
+        [(from + to) / 2, PLATFORM_TOP + 0.01, PLATFORM_Z + PLATFORM_HALF - 0.3],
+        [to - from, 0.03, 0.16], "#c8a33f", { bearsLoad: false, carriesAttachments: false });
+    }
+  }
+
+  // --- Всходы с площади ----------------------------------------------------
+  // Кромка перрона — 0.94 м: игрок перешагивает 0.72, так что без ступеней
+  // на платформу просто не попасть. Оба всхода поставлены в середину
+  // пролётов навеса (колонны стоят через 6 м) и мимо стрел шлагбаумов.
+  // Главный всход — ровно по оси входа, в просвете между стрелами
+  // шлагбаумов (их подпорки стоят на x = ±1.05, между ними 1.9 м).
+  const STAIR_STEPS = 5;
+  const STAIR_RISE = PLATFORM_TOP / STAIR_STEPS;
+  const STAIR_TREAD = 0.36;
+  // Три одинаковых марша: по краям перрона и один точно посередине. Ими же
+  // задаются места колонн навеса — колонна встаёт против внешнего края
+  // крайнего марша и против обоих краёв среднего.
+  const STAIR_WIDTH = 2.8;
+  const stairs = [
+    { x: -8.0, width: STAIR_WIDTH },
+    { x: (PLATFORM_FROM + PLATFORM_TO) / 2, width: STAIR_WIDTH },
+    { x: 18.5, width: STAIR_WIDTH },
+  ] as const;
+  for (const [stairIndex, stair] of stairs.entries()) {
+    const stairX = stair.x;
+    const footZ = PLATFORM_Z - PLATFORM_HALF - STAIR_TREAD * (STAIR_STEPS - 0.5);
+    for (let step = 0; step < STAIR_STEPS - 1; step += 1) {
+      const top = STAIR_RISE * (step + 1);
+      berth.add(`stair:${stairIndex}:${step}`, "stone", "stoneBlock",
+        [stairX, top / 2, PLATFORM_Z - PLATFORM_HALF - STAIR_TREAD * (STAIR_STEPS - 1.5 - step)],
+        [stair.width, top, STAIR_TREAD], step % 2 === 0 ? "#a49d8d" : "#9a9384");
+    }
+    // Перила с ОБЕИХ сторон: метровый всход без них — не лестница. Стойки
+    // стоят по краям марша, проход между поручнями шире капсулы вдвое.
+    for (const railSide of [-1, 1] as const) {
+      const railX = stairX + railSide * (stair.width / 2 - 0.12);
+      const headZ = PLATFORM_Z - PLATFORM_HALF + 0.3;
+      const footTop = STAIR_RISE + 0.98;
+      const headTop = PLATFORM_TOP + 0.98;
+      berth.add(`stair-post:${stairIndex}:${railSide}:foot`, "steel", "steelSheet",
+        [railX, (STAIR_RISE + footTop) / 2, footZ], [0.09, footTop - STAIR_RISE, 0.09], iron);
+      berth.add(`stair-post:${stairIndex}:${railSide}:head`, "steel", "steelSheet",
+        [railX, (PLATFORM_TOP + headTop) / 2, headZ], [0.09, headTop - PLATFORM_TOP, 0.09], iron);
+      const rise = headTop - footTop;
+      const run = headZ - footZ;
+      berth.add(`stair-rail:${stairIndex}:${railSide}`, "steel", "steelSheet",
+        [railX, (footTop + headTop) / 2, (footZ + headZ) / 2],
+        [0.07, 0.07, Math.hypot(rise, run)], ironLight,
+        [-Math.atan2(rise, run), 0, 0]);
+    }
+  }
+
+  // --- Навес на литых колоннах --------------------------------------------
+  // Стекло идёт по ВСЕЙ длине перрона и ровно над ним, а держат его четыре
+  // колонны: по внешнему краю крайних маршей и по обоим краям среднего.
+  // Колонны стоят посреди ширины настила, поэтому проход остаётся с обеих
+  // сторон. Северный край кровли отведён от габарита состава.
+  const CANOPY_Z = PLATFORM_Z - 0.15;
+  const CANOPY_HALF = 1.4;
+  const CANOPY_FROM = PLATFORM_FROM + 0.4;
+  const CANOPY_TO = PLATFORM_TO - 0.4;
+  const canopyColumns = [
+    stairs[0].x - STAIR_WIDTH / 2,
+    stairs[1].x - STAIR_WIDTH / 2,
+    stairs[1].x + STAIR_WIDTH / 2,
+    stairs[2].x + STAIR_WIDTH / 2,
+  ];
+  for (const [columnIndex, x] of canopyColumns.entries()) {
+    addFacetedCylinder(berth, `canopy-column:${columnIndex}`, "steel", "steelSheet", "y",
+      [x, (PLATFORM_TOP + 0.22 + 3.9) / 2, CANOPY_Z], 3.9 - PLATFORM_TOP - 0.22, 0.36, iron);
+    berth.add(`canopy-base:${columnIndex}`, "steel", "steelSheet",
+      [x, PLATFORM_TOP + 0.11, CANOPY_Z], [0.66, 0.22, 0.66], ironLight);
+    berth.add(`canopy-capital:${columnIndex}`, "steel", "steelSheet",
+      [x, 4.0, CANOPY_Z], [0.7, 0.2, 0.7], brass);
+    // Поперечная траверса на капители несёт оба прогона.
+    berth.add(`canopy-crossbeam:${columnIndex}`, "steel", "steelSheet",
+      [x, 4.23, CANOPY_Z], [0.24, 0.26, CANOPY_HALF * 2 + 0.1], ironLight);
+    for (const side of [-1, 1] as const) {
+      berth.add(`canopy-bracket:${columnIndex}:${side}`, "steel", "steelSheet",
+        [x, 3.86, CANOPY_Z + side * 0.62], [0.16, 0.5, 1.0], ironLight, [side * 0.5, 0, 0]);
+    }
+    // Светильник на КАЖДОЙ колонне: под навесом иначе темно между парами.
+    // Он подвесной, с траверсы, и висит выше человеческого роста — консоль с
+    // колонны оказывалась в полутора метрах над проходом у путевой кромки.
+    part(berth, `canopy-lamp-arm:${columnIndex}`, "steel", "steelSheet",
+      [x, 3.98, CANOPY_Z + 0.55], [0.08, 0.5, 0.08], brass, {
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.35,
+      });
+    berth.add(`canopy-lamp:${columnIndex}`, "glass", "glassPane",
+      [x, 3.6, CANOPY_Z + 0.55], [0.42, 0.42, 0.42], litWindowColor);
+    lamps.push({
+      id: `${berth.id}:canopy-lamp:${columnIndex}`,
+      position: [x, 3.5, CANOPY_Z + 0.55],
+      color: "#ffe0ae",
+      distance: 13,
+      intensity: 2.6,
+    });
+  }
+  // Прогоны во всю длину перрона — они и делают кровлю сплошной.
+  for (const side of [-1, 1] as const) {
+    berth.add(`canopy-purlin:${side}`, "steel", "steelSheet",
+      [(CANOPY_FROM + CANOPY_TO) / 2, 4.49, CANOPY_Z + side * (CANOPY_HALF - 0.1)],
+      [CANOPY_TO - CANOPY_FROM, 0.28, 0.24], ironLight);
+  }
+  let rafterIndex = 0;
+  for (let x = CANOPY_FROM + 0.6; x <= CANOPY_TO - 0.4; x += 2.6) {
+    rafterIndex += 1;
+    berth.add(`canopy-rafter:${rafterIndex}`, "steel", "steelSheet",
+      [x, 4.71, CANOPY_Z], [0.16, 0.16, CANOPY_HALF * 2 - 0.1], iron);
+  }
+  let glassIndex = 0;
+  for (let x = CANOPY_FROM; x < CANOPY_TO - 0.2; x += 2.6) {
+    glassIndex += 1;
+    const length = Math.min(2.6, CANOPY_TO - x);
+    berth.add(`canopy-glass:${glassIndex}`, "glass", "glassPane",
+      [x + length / 2, 4.84, CANOPY_Z], [length - 0.05, 0.1, CANOPY_HALF * 2], glassBlue);
+  }
+  // Фестончатый подзор по путевой кромке — вокзальная деталь, которая
+  // читается издалека.
+  for (const side of [-1, 1] as const) {
+    berth.add(`canopy-valance:${side}`, "steel", "steelSheet",
+      [(CANOPY_FROM + CANOPY_TO) / 2, 4.44, CANOPY_Z + side * (CANOPY_HALF + 0.02)],
+      [CANOPY_TO - CANOPY_FROM, 0.34, 0.1], ironLight);
+  }
+
+  // --- Оборудование перрона ------------------------------------------------
+  // Часы на кронштейне: младший брат тех, что на фасаде.
+  const CLOCK_X = PLATFORM_TO - 0.3;
+  const CLOCK_Z = CANOPY_Z - 0.3;
+  const CLOCK_Y = 3.26;
+  berth.add("clock-post", "steel", "steelSheet",
+    [CLOCK_X, (PLATFORM_TOP + 4.3) / 2, CANOPY_Z], [0.18, 4.3 - PLATFORM_TOP, 0.18], iron);
+  // Кронштейн часов объявлен «тросовым»: иначе стеновое правило требует
+  // опору в полтора раза выше самого циферблата.
+  part(berth, "clock-bracket", "steel", "steelSheet",
+    [CLOCK_X, CLOCK_Y, CANOPY_Z - 0.14], [0.14, 0.14, 0.3], iron, {
+      carriesAttachments: true,
+      attachmentSupportMode: "cable",
+      sideAttachmentReach: 0.4,
+    });
+  berth.add("clock-body", "steel", "panel", [CLOCK_X, CLOCK_Y, CLOCK_Z], [1.15, 1.15, 0.34], iron);
+  berth.add("clock-face", "steel", "panel", [CLOCK_X, CLOCK_Y, CLOCK_Z - 0.19], [0.92, 0.92, 0.06], "#ddd3b8");
+  berth.add("clock-hand-hour", "steel", "steelSheet", [CLOCK_X - 0.14, CLOCK_Y + 0.08, CLOCK_Z - 0.24], [0.06, 0.3, 0.05], iron, [0, 0, 1.047]);
+  berth.add("clock-hand-minute", "steel", "steelSheet", [CLOCK_X + 0.18, CLOCK_Y + 0.12, CLOCK_Z - 0.25], [0.05, 0.44, 0.05], iron, [0, 0, -1.047]);
+
+  // Табло отправления: строка рейса набрана, строка назначения пуста —
+  // клапаны стоят тёмными.
+  const BENCH_Z = PLATFORM_Z - PLATFORM_HALF - 0.7;
+  const SIGN_Z = BENCH_Z - 1.3;
+  const BOARD_X = 11.9;
+  for (const [postIndex, postX] of [BOARD_X - 1.8, BOARD_X + 1.8].entries()) {
+    berth.add(`board-post:${postIndex}`, "steel", "steelSheet",
+      [postX, 1.7, SIGN_Z + 0.3], [0.12, 3.4, 0.12], iron);
+  }
+  berth.add("board-body", "steel", "panel", [BOARD_X, 3.4, SIGN_Z + 0.11], [4.7, 1.5, 0.22], "#20262a");
+  addPixelText(berth, "board-line", "DEPARTS 03", BOARD_X, 3.68, SIGN_Z - 0.04, 0.07, brass, -1, true);
+  // Строка назначения пуста: клапаны стоят тёмными — рейсу некуда объявлять.
+  for (let flap = 0; flap < 10; flap += 1) {
+    berth.add(`board-flap:${flap}`, "steel", "steelSheet",
+      [BOARD_X - 1.8 + flap * 0.4, 3.06, SIGN_Z - 0.04], [0.34, 0.3, 0.05], "#161b1e");
+  }
+  lamps.push({ id: `${berth.id}:board`, position: [BOARD_X, 3.4, SIGN_Z - 0.4], color: "#ffd9a0", distance: 8, intensity: 1.6 });
+
+  // Номер платформы на эмалированной табличке у головы перрона — в стороне
+  // от лестничного марша и выше человеческого роста: на оси входа она
+  // перекрывала и проход, и дверь вагона.
+  const NUMBER_X = -1.4;
+  for (const [postIndex, postX] of [NUMBER_X - 1.7, NUMBER_X + 1.7].entries()) {
+    berth.add(`number-post:${postIndex}`, "steel", "steelSheet",
+      [postX, 1.7, SIGN_Z + 0.3], [0.12, 3.4, 0.12], iron);
+  }
+  berth.add("number-plate", "steel", "panel",
+    [NUMBER_X, 3.4, SIGN_Z + 0.11], [4.3, 1.5, 0.22], "#20323c");
+  addPixelText(berth, "number-text", "PLATFORM 0", NUMBER_X, 3.68, SIGN_Z - 0.04, 0.065, "#e6e2d4", -1, true);
+  lamps.push({ id: `${berth.id}:number-plate`, position: [NUMBER_X, 3.4, SIGN_Z - 0.4], color: "#cfe4ff", distance: 7, intensity: 1.4 });
+
+  // Семафор в голове платформы: зелёная линза — путь свободен.
+  const SIGNAL_X = BUFFER_X - 3.9;
+  berth.add("signal-post", "steel", "steelSheet", [SIGNAL_X, 2.5, PLATFORM_Z + 0.5], [0.18, 5.0, 0.18], iron);
+  berth.add("signal-arm", "steel", "steelSheet", [SIGNAL_X + 0.7, 4.45, PLATFORM_Z + 0.5], [1.5, 0.22, 0.12], "#a43c2d", [0, 0, -0.3]);
+  berth.add("signal-lens", "glass", "glassPane", [SIGNAL_X, 4.0, PLATFORM_Z + 0.62], [0.3, 0.3, 0.14], "#7fd0a0");
+  lamps.push({ id: `${berth.id}:signal-lens`, position: [SIGNAL_X, 4.0, PLATFORM_Z + 0.9], color: "#6ff0a8", distance: 10, intensity: 2.0 });
+
+  // Фонари перед перроном: по одному с каждой стороны каждого марша — шесть
+  // чугунных столбов на площади. На колоннах навеса они оказывались ровно
+  // посреди лестницы.
+  const LANTERN_Z = PLATFORM_Z - PLATFORM_HALF - STAIR_TREAD * 2;
+  const lanternPositions = stairs.flatMap((stair) =>
+    [-1, 1].map((side) => stair.x + side * (stair.width / 2 + 0.75)));
+  for (const [lanternIndex, x] of lanternPositions.entries()) {
+    berth.add(`lantern-post:${lanternIndex}`, "steel", "steelSheet", [x, 1.55, LANTERN_Z], [0.16, 3.1, 0.16], iron);
+    berth.add(`lantern-arm:${lanternIndex}`, "steel", "steelSheet", [x, 3.16, LANTERN_Z], [0.26, 0.12, 0.26], brass);
+    berth.add(`lantern:${lanternIndex}`, "glass", "glassPane", [x, 3.48, LANTERN_Z], [0.34, 0.52, 0.34], litWindowColor);
+    berth.add(`lantern-cap:${lanternIndex}`, "steel", "steelSheet", [x, 3.8, LANTERN_Z], [0.4, 0.12, 0.4], iron);
+    lamps.push({ id: `${berth.id}:lantern:${lanternIndex}`, position: [x, 3.4, LANTERN_Z], color: "#ffe3ae", distance: 12, intensity: 2.4 });
+  }
+
+  addBench(berth, "bench:0", NUMBER_X, 0, BENCH_Z, 0, 2.2);
+  addBench(berth, "bench:1", BOARD_X, 0, BENCH_Z, 0, 2.2);
+
+  // Посадочный мостик: лежит на кромке настила и перекрывает щель до порога
+  // вагона, оставляя 10 см чистого зазора. Он НЕ несущий и НЕ держит
+  // навесок — иначе состав нашёл бы в нём опору и пережил бы гибель сердца,
+  // а игрок всё равно ходит по нему: коллайдеру эти флаги безразличны.
+  {
+    const bridgeFrom = PLATFORM_Z + PLATFORM_HALF - 0.35;
+    const bridgeTo = TRACK_Z - CAR_HALF - 0.23;
+    part(berth, "boarding-bridge", "wood", "plank",
+      [HEAD_X, PLATFORM_TOP + 0.04, (bridgeFrom + bridgeTo) / 2],
+      [2.6, 0.08, bridgeTo - bridgeFrom], oak, {
+        bearsLoad: false,
+        carriesAttachments: false,
+      });
+    part(berth, "boarding-bridge:tread", "steel", "steelSheet",
+      [HEAD_X, PLATFORM_TOP + 0.09, (bridgeFrom + bridgeTo) / 2],
+      [2.4, 0.03, bridgeTo - bridgeFrom - 0.06], ironLight, {
+        bearsLoad: false,
+        carriesAttachments: false,
+      });
+    // Разметка посадочной зоны на настиле — она заменяет разорванную
+    // жёлтую линию.
+    for (const edge of [-1, 1] as const) {
+      part(berth, `boarding-mark:${edge}`, "stone", "groundTile",
+        [HEAD_X + edge * 1.55, PLATFORM_TOP + 0.01, PLATFORM_Z + 0.55],
+        [0.16, 0.03, 1.5], "#c8a33f", { bearsLoad: false, carriesAttachments: false });
+    }
+    part(berth, "boarding-mark:head", "stone", "groundTile",
+      [HEAD_X, PLATFORM_TOP + 0.01, PLATFORM_Z - 0.18], [3.26, 0.03, 0.16], "#c8a33f",
+      { bearsLoad: false, carriesAttachments: false });
+  }
+  // Огрызок швартовой цепи на рыме упора: длинная часть уходит с составом.
+  berth.add("chain-stub", "steel", "steelSheet",
+    [BUFFER_X + 0.3, 1.16, TRACK_Z], [0.72, 0.1, 0.1], "#3a4043", [0, 0, -0.2]);
+
+  finish(berth, "Platform 0: track, deck and canopy", "stone", "stack");
+
+  // === ЛЕТАЮЩИЙ СОСТАВ ====================================================
+  // Подъёмное сердце: парящий фундамент внутри оболочки. Контактная коробка
+  // накрывает весь корпус, поэтому шпангоуты, полотнища и подвеска находят
+  // опору «зазор ноль». Объём занижен — это газ, а не земля.
+  part(train, "heart", "earth", "steelSheet",
+    [(HULL_FROM + HULL_TO) / 2, HULL_Y, TRACK_Z], [HULL_LENGTH * 0.6, 2.6, 2.6], "#e9dcb4", {
+      volume: 9,
+      contactBoxes: [{
+        position: [(HULL_FROM + HULL_TO) / 2, HULL_Y, TRACK_Z],
+        size: [HULL_LENGTH, HULL_RADIUS * 2.2, HULL_RADIUS * 2.2],
+      }],
+      carriesAttachments: true,
+      attachmentSupportMode: "cable",
+    });
+  lamps.push({ id: `${train.id}:heart`, position: [(HULL_FROM + HULL_TO) / 2, HULL_Y, TRACK_Z], color: "#ffcf92", distance: 16, intensity: 1.8 });
+
+  // Профиль жёсткого корабля: короткий эллиптический нос, длинная
+  // параллельная середина, вытянутая корма — не сигара-блимп, а каркасник.
+  const hullRadiusAt = (x: number): number => {
+    const t = (x - HULL_FROM) / HULL_LENGTH;
+    if (t < 0.2) {
+      return HULL_RADIUS * Math.sqrt(Math.max(0, 1 - ((0.2 - t) / 0.2) ** 2));
+    }
+    if (t > 0.64) {
+      return HULL_RADIUS * Math.pow(Math.max(0, 1 - ((t - 0.64) / 0.36) ** 2), 0.55);
+    }
+    return HULL_RADIUS;
+  };
+
+  // Шпангоуты и полотнища. Оболочка обтянута по клёпаным кольцам, как ферма
+  // дебаркадера, — двенадцать граней по кругу, между кольцами полотно.
+  const GORES = 12;
+  const BAY_FROM = HULL_FROM + 1.6;
+  const BAY_TO = HULL_TO - 2.6;
+  const BAYS = 9;
+  const bayStep = (BAY_TO - BAY_FROM) / BAYS;
+  for (let bay = 0; bay < BAYS; bay += 1) {
+    const x = BAY_FROM + (bay + 0.5) * bayStep;
+    const radius = hullRadiusAt(x);
+    if (radius < 0.5) {
+      continue;
+    }
+    const taper = Math.atan2(
+      hullRadiusAt(x + bayStep / 2) - hullRadiusAt(x - bayStep / 2),
+      bayStep,
+    );
+    const panelLength = bayStep / Math.cos(taper) + 0.12;
+    const width = ((2 * Math.PI * radius) / GORES) * 1.14;
+    for (let gore = 0; gore < GORES; gore += 1) {
+      const phi = (gore / GORES) * Math.PI * 2;
+      const belly = Math.cos(phi) < -0.5;
+      part(train, `skin:${bay}:${gore}`, "cloth", "panel",
+        [x, HULL_Y + radius * Math.cos(phi), TRACK_Z + radius * Math.sin(phi)],
+        [panelLength, 0.1, width],
+        belly ? linenShade : (bay + gore) % 2 === 0 ? linen : linenDark, {
+          rotation: [phi, 0, taper],
+        });
+    }
+  }
+  // Кольца-шпангоуты по границам отсеков: чугунные сегменты поверх полотна.
+  for (let ring = 0; ring <= BAYS; ring += 2) {
+    const x = BAY_FROM + ring * bayStep;
+    const radius = hullRadiusAt(x) + 0.07;
+    if (radius < 0.6) {
+      continue;
+    }
+    for (let gore = 0; gore < GORES; gore += 1) {
+      const phi = ((gore + 0.5) / GORES) * Math.PI * 2;
+      part(train, `frame:${ring}:${gore}`, "steel", "steelSheet",
+        [x, HULL_Y + radius * Math.cos(phi), TRACK_Z + radius * Math.sin(phi)],
+        [0.22, 0.14, (2 * Math.PI * radius) / GORES + 0.06], ironLight, {
+          rotation: [phi, 0, 0],
+          bearsLoad: false,
+          sideAttachmentReach: 0.4,
+        });
+    }
+  }
+  // Продольные стрингеры того же рисунка, что фермы дебаркадера, но
+  // ПОСЕКЦИОННО по профилю: сплошная рейка постоянного радиуса вылетала из
+  // сужающихся носа и кормы и висела в воздухе рядом с обшивкой.
+  for (const phi of [0, Math.PI / 2, Math.PI, -Math.PI / 2, Math.PI / 4, (3 * Math.PI) / 4, (-3 * Math.PI) / 4, -Math.PI / 4]) {
+    for (let bay = 0; bay < BAYS; bay += 1) {
+      const x = BAY_FROM + (bay + 0.5) * bayStep;
+      const radius = hullRadiusAt(x) + 0.06;
+      if (radius < 0.55) {
+        continue;
+      }
+      const taper = Math.atan2(
+        hullRadiusAt(x + bayStep / 2) - hullRadiusAt(x - bayStep / 2),
+        bayStep,
+      );
+      part(train, `stringer:${phi.toFixed(2)}:${bay}`, "steel", "steelSheet",
+        [x, HULL_Y + radius * Math.cos(phi), TRACK_Z + radius * Math.sin(phi)],
+        [bayStep / Math.cos(taper) + 0.06, 0.1, 0.16], ironLight, {
+          rotation: [phi, 0, taper],
+          bearsLoad: false,
+          sideAttachmentReach: 0.4,
+        });
+    }
+  }
+  // Носовой и кормовой обтекатели: ступени по местному радиусу профиля.
+  // Полотнищами эти концы крыть нельзя — плоские панели расходятся лепестками.
+  for (const [capTag, capX, capLength] of [
+    ["nose:0", HULL_FROM + 1.2, 1.0], ["nose:1", HULL_FROM + 0.55, 0.75],
+    ["nose:2", HULL_FROM + 0.16, 0.5],
+    ["tail:0", HULL_TO - 2.1, 1.2], ["tail:1", HULL_TO - 1.25, 0.9],
+    ["tail:2", HULL_TO - 0.55, 0.7],
+  ] as const) {
+    const diameter = Math.max(0.5, hullRadiusAt(capX) * 2 + 0.06);
+    addFacetedCylinder(train, `cap:${capTag}`, "steel", "steelSheet", "x",
+      [capX, HULL_Y, TRACK_Z], capLength, diameter, capTag.startsWith("nose") ? ironLight : "#8d9195");
+  }
+  // Носовой швартовый конус смотрит в буфер, куда упирается состав.
+  part(train, "nose-cone", "steel", "steelSheet",
+    [HULL_FROM - 0.45, HULL_Y, TRACK_Z], [1.1, 0.5, 0.5], iron, {
+      carriesAttachments: true,
+      attachmentSupportMode: "cable",
+      sideAttachmentReach: 0.4,
+    });
+
+  // Крестообразное оперение. Локальный y панели — размах наружу, локальный
+  // z — толщина; поворот на phi ставит их правильно, потому что корпус лежит
+  // вдоль мировой X.
+  const finFrom = HULL_TO - 4.3;
+  const finTo = HULL_TO - 1.2;
+  // Нижнего киля нет намеренно: под кормой висят вагон и его траверса.
+  for (const [finIndex, phi] of [0, Math.PI / 2, -Math.PI / 2].entries()) {
+    const rootRadius = hullRadiusAt((finFrom + finTo) / 2);
+    const span = 1.5;
+    const mid = rootRadius + span / 2 - 0.1;
+    part(train, `fin:${finIndex}`, "steel", "panel",
+      [(finFrom + finTo) / 2, HULL_Y + mid * Math.cos(phi), TRACK_Z + mid * Math.sin(phi)],
+      [finTo - finFrom, span, 0.12], "#9ea3a0", {
+        rotation: [phi, 0, 0],
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.5,
+      });
+    part(train, `fin:${finIndex}:rudder`, "steel", "panel",
+      [finTo + 0.55, HULL_Y + mid * Math.cos(phi), TRACK_Z + mid * Math.sin(phi)],
+      [0.9, span * 0.92, 0.1], "#8d9195", {
+        rotation: [phi, 0, 0],
+        bearsLoad: false,
+        sideAttachmentReach: 0.6,
+      });
+  }
+  // Бортовой номер продолжает серию: у городского корабля 07, у этого 03.
+  // Щит лежит на цилиндрической середине корпуса, и каждый пиксель уложен по
+  // местной кривизне: плоская строка в сужающейся корме отходила от обшивки
+  // на четверть метра и попадала под стрингер.
+  // Номер стоит РОВНО в середине секции между кольцами шпангоутов (кольца
+  // идут через отсек), в передней части цилиндрической середины: у моторных
+  // гондол он спорил с диском винта.
+  const HULL_NUMBER_X = BAY_FROM + 3 * bayStep;
+  const NUMBER_PIXEL = 0.2;
+  for (const side of [-1, 1] as const) {
+    const phi = side * (Math.PI / 2 + 0.35);
+    const radius = HULL_RADIUS + 0.05;
+    const onHull = (along: number, up: number, outward: number): SceneVector3 => [
+      HULL_NUMBER_X + along,
+      HULL_Y + (radius + outward) * Math.cos(phi) - up * Math.sin(phi),
+      TRACK_Z + (radius + outward) * Math.sin(phi) + up * Math.cos(phi),
+    ];
+    part(train, `number:${side}:band`, "steel", "panel",
+      onHull(0, 0, 0.03), [2.9, 0.08, 1.7], "#2a3136", {
+        rotation: [phi, 0, 0],
+        bearsLoad: false,
+        sideAttachmentReach: 0.4,
+      });
+    const glyphs = [..."03"];
+    const glyphWidth = NUMBER_PIXEL * 6;
+    const totalWidth = glyphs.length * glyphWidth - NUMBER_PIXEL;
+    let cellIndex = 0;
+    glyphs.forEach((character, characterIndex) => {
+      terminalPixelFont[character]?.forEach((row, rowIndex) => {
+        [...row].forEach((cell, columnIndex) => {
+          if (cell !== "1") {
+            return;
+          }
+          // Читается с той стороны, куда смотрит борт: южный борт зеркалим.
+          const along = characterIndex * glyphWidth + columnIndex * NUMBER_PIXEL;
+          const offset = side < 0
+            ? totalWidth / 2 - along
+            : -totalWidth / 2 + along;
+          part(train, `number:${side}:${cellIndex}`, "steel", "steelSheet",
+            onHull(offset, (3 - rowIndex) * NUMBER_PIXEL, 0.09),
+            [NUMBER_PIXEL * 0.82, 0.06, NUMBER_PIXEL * 0.82], brass, {
+              rotation: [phi, 0, 0],
+              bearsLoad: false,
+              sideAttachmentReach: 0.3,
+            });
+          cellIndex += 1;
+        });
+      });
+    });
+  }
+
+  // --- Вагоны --------------------------------------------------------------
+  // Кузов списан с музейного вагона этого же терминала: рама, глухой пояс
+  // борта до подоконника, ЛЕНТА ОКОН в дубовых простенках (стекло — сама
+  // стена, а не наклейка на глухой борт), кремовый поручень по верху,
+  // арочная крыша из семи сегментов, торцы с дверьми в переход. Отличия —
+  // латунная отбортовка вместо буферов и подвеска вместо тележек: этот вагон
+  // не катится, он висит.
+  const WAIST_TOP = 2.3;      // подоконник
+  const BAND_TOP = 3.44;      // верх ленты окон
+  const CANT_TOP = 3.6;       // верх обвязки над окнами (и притолока двери)
+  const EAVES = 4.1;          // карниз, от него начинается арка крыши
+  const ROOF_R = 1.8;
+  const PANE_PITCH = 1.9;
+  const PANE_HALF = 0.86;
+  const POST_HALF = 0.09;
+  const FLOOR_TOP = CAR_FLOOR + 0.16;
+  const DOOR_HALF = PANE_PITCH / 2;   // проём ровно в один оконный шаг
+
+  function addSkyCoach(
+    prefix: string,
+    centerX: number,
+    bodyColor: string,
+    withDoor: boolean,
+    passageEnd: -1 | 1,
+    coachNumber: string,
+  ): void {
+    const halfLength = CAR_LENGTH / 2;
+    const bodyHalf = halfLength - 0.12;
+    part(train, `${prefix}:frame`, "steel", "steelSheet",
+      [centerX, CAR_FLOOR - 0.3, TRACK_Z], [CAR_LENGTH - 0.26, 0.52, CAR_HALF * 2 - 0.1], iron, {
+        volume: 1.4,
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.4,
+      });
+    part(train, `${prefix}:floor`, "wood", "plank",
+      [centerX, CAR_FLOOR + 0.06, TRACK_Z], [CAR_LENGTH - 0.4, 0.2, CAR_HALF * 2 - 0.3], oakDark, {
+        volume: 1.2,
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.4,
+      });
+
+    const paneCenters = [-2, -1, 0, 1, 2].map((step) => centerX + step * PANE_PITCH);
+    for (const side of [-1, 1] as const) {
+      const wallZ = TRACK_Z + side * CAR_HALF;
+      const doorSide = withDoor && side < 0;
+      // Пояс борта рвётся на дверном проёме — как и всё, что идёт по борту.
+      const runs: readonly (readonly [string, number, number])[] = doorSide
+        ? [["fore", centerX - bodyHalf, centerX - DOOR_HALF],
+           ["aft", centerX + DOOR_HALF, centerX + bodyHalf]]
+        : [["full", centerX - bodyHalf, centerX + bodyHalf]];
+      for (const [runTag, x1, x2] of runs) {
+        part(train, `${prefix}:waist:${side}:${runTag}`, "steel", "steelSheet",
+          [(x1 + x2) / 2, (FLOOR_TOP + WAIST_TOP) / 2, wallZ],
+          [x2 - x1, WAIST_TOP - FLOOR_TOP, 0.2], bodyColor, {
+            volume: (x2 - x1) * 0.05,
+            carriesAttachments: true,
+            attachmentSupportMode: "cable",
+            sideAttachmentReach: 0.4,
+          });
+        // Латунная отбортовка по подоконнику — тем же куском, что и пояс.
+        part(train, `${prefix}:beading:${side}:${runTag}`, "steel", "steelSheet",
+          [(x1 + x2) / 2, WAIST_TOP - 0.05, wallZ + side * 0.06],
+          [x2 - x1 - 0.2, 0.09, 0.06], brass, {
+            bearsLoad: false,
+            sideAttachmentReach: 0.3,
+          });
+      }
+      // Лента окон: стекло на всю толщину стены, между стёклами — дубовые
+      // простенки, по углам кузова глухие панели.
+      for (const [paneIndex, paneX] of paneCenters.entries()) {
+        if (doorSide && Math.abs(paneX - centerX) < 0.01) {
+          continue;
+        }
+        part(train, `${prefix}:window:${side}:${paneIndex}`, "glass", "glassPane",
+          [paneX, (WAIST_TOP + BAND_TOP) / 2, wallZ], [PANE_HALF * 2, BAND_TOP - WAIST_TOP, 0.2],
+          glassBlue, {
+            bearsLoad: false,
+            sideAttachmentReach: 0.3,
+          });
+      }
+      for (const postX of [...paneCenters.map((x) => x - PANE_PITCH / 2), centerX + 2 * PANE_PITCH + PANE_PITCH / 2]) {
+        if (doorSide && Math.abs(Math.abs(postX - centerX) - DOOR_HALF) < 0.01) {
+          continue;   // на месте этих простенков стоят дверные косяки
+        }
+        part(train, `${prefix}:post:${side}:${postX.toFixed(2)}`, "wood", "plank",
+          [postX, (WAIST_TOP + BAND_TOP) / 2, wallZ], [POST_HALF * 2, BAND_TOP - WAIST_TOP, 0.22],
+          oakDark, {
+            carriesAttachments: true,
+            attachmentSupportMode: "cable",
+            sideAttachmentReach: 0.3,
+          });
+      }
+      for (const corner of [-1, 1] as const) {
+        const inner = centerX + corner * (2 * PANE_PITCH + PANE_PITCH / 2 + POST_HALF);
+        const outer = centerX + corner * bodyHalf;
+        part(train, `${prefix}:corner:${side}:${corner}`, "steel", "steelSheet",
+          [(inner + outer) / 2, (WAIST_TOP + BAND_TOP) / 2, wallZ],
+          [Math.abs(outer - inner), BAND_TOP - WAIST_TOP, 0.2], bodyColor, {
+            volume: Math.abs(outer - inner) * 0.05,
+            carriesAttachments: true,
+            attachmentSupportMode: "cable",
+            sideAttachmentReach: 0.4,
+          });
+      }
+      // Обвязка над окнами — она же притолока двери.
+      part(train, `${prefix}:cant:${side}`, "steel", "steelSheet",
+        [centerX, (BAND_TOP + CANT_TOP) / 2, wallZ],
+        [bodyHalf * 2, CANT_TOP - BAND_TOP, 0.2], bodyColor, {
+          volume: bodyHalf * 0.1,
+          carriesAttachments: true,
+          attachmentSupportMode: "cable",
+          sideAttachmentReach: 0.4,
+        });
+      part(train, `${prefix}:cream:${side}`, "wood", "plank",
+        [centerX, (CANT_TOP + EAVES) / 2, wallZ + side * 0.01],
+        [bodyHalf * 2 + 0.24, EAVES - CANT_TOP, 0.21], carriageCream, {
+          volume: bodyHalf * 0.1,
+          carriesAttachments: true,
+          attachmentSupportMode: "cable",
+          sideAttachmentReach: 0.35,
+        });
+    }
+
+    for (const end of [-1, 1] as const) {
+      const endX = centerX + end * halfLength;
+      if (end === passageEnd) {
+        // Торец с настоящим проходом в соседний вагон: два простенка и
+        // притолока, между ними — открытый проём 1.2 м.
+        for (const side of [-1, 1] as const) {
+          const inner = side * 0.6;
+          const outer = side * CAR_HALF;
+          part(train, `${prefix}:end:${end}:${side}`, "wood", "plank",
+            [endX, (CAR_FLOOR - 0.14 + EAVES) / 2, TRACK_Z + (inner + outer) / 2],
+            [0.24, EAVES - CAR_FLOOR + 0.14, Math.abs(outer - inner)], bodyColor, {
+              volume: 0.4,
+              bearingArea: 1.4,
+              carriesAttachments: true,
+              attachmentSupportMode: "cable",
+              sideAttachmentReach: 0.4,
+            });
+        }
+        part(train, `${prefix}:end-head:${end}`, "wood", "plank",
+          [endX, (BAND_TOP + EAVES) / 2, TRACK_Z], [0.24, EAVES - BAND_TOP, 1.2], bodyColor, {
+            carriesAttachments: true,
+            attachmentSupportMode: "cable",
+            sideAttachmentReach: 0.4,
+          });
+      } else {
+        part(train, `${prefix}:end:${end}`, "wood", "plank",
+          [endX, (CAR_FLOOR - 0.14 + EAVES) / 2, TRACK_Z],
+          [0.24, EAVES - CAR_FLOOR + 0.14, CAR_HALF * 2], bodyColor, {
+            volume: 0.9,
+            bearingArea: 2.8,
+            carriesAttachments: true,
+            attachmentSupportMode: "cable",
+            sideAttachmentReach: 0.4,
+          });
+        part(train, `${prefix}:end-window:${end}`, "glass", "glassPane",
+          [endX - end * 0.06, (WAIST_TOP + BAND_TOP) / 2, TRACK_Z], [0.16, BAND_TOP - WAIST_TOP, 1.1],
+          glassBlue, {
+            bearsLoad: false,
+            sideAttachmentReach: 0.3,
+          });
+      }
+      for (let course = 0; course < 6; course += 1) {
+        const height = ((course + 0.5) / 6) * 0.62;
+        const chord = ROOF_R * Math.sqrt(Math.max(0, 1 - (height / 0.62) ** 2));
+        // Венец идёт ДО арки: его дело — закрыть серп под кровлей, поэтому
+        // он с ней смыкается (это и есть узел, а не брак).
+        const width = 2 * Math.min(CAR_HALF, chord - 0.04);
+        if (width < 0.12) {
+          continue;
+        }
+        part(train, `${prefix}:gable:${end}:${course}`, "wood", "plank",
+          [endX, EAVES + height, TRACK_Z], [0.24, (0.62 / 6) * 1.25, width], bodyColor, {
+            volume: 0.05,
+            bearsLoad: false,
+            sideAttachmentReach: 0.3,
+          });
+      }
+    }
+
+    // Арочная крыша из семи сегментов — как у музейных вагонов.
+    for (let segment = 0; segment < 7; segment += 1) {
+      const angle = Math.PI * (0.15 + (segment / 6) * 0.7);
+      part(train, `${prefix}:roof:${segment}`, "steel", "steelSheet",
+        [centerX, EAVES + Math.sin(angle) * 0.62, TRACK_Z + Math.cos(angle) * ROOF_R],
+        [CAR_LENGTH + 0.18, 0.16, 0.7], "#343b3d", {
+          volume: 0.42,
+          rotation: [-(angle + Math.PI / 2), 0, 0],
+          carriesAttachments: true,
+          attachmentSupportMode: "cable",
+          // Вылет найтовки — только до собственной обвязки борта: с 0.4 крыша
+          // хваталась за подзор навеса и переживала гибель сердца.
+          sideAttachmentReach: 0.22,
+        });
+    }
+
+    // Лавки спинками к СТЕНАМ и сдвинуты наружу: центральный проход 1.3 м,
+    // вдвое шире капсулы игрока.
+    for (const localX of [-4.2, -1.4, 1.4, 4.2]) {
+      for (const side of [-1, 1] as const) {
+        if (withDoor && side < 0 && Math.abs(localX) === 1.4) {
+          continue;   // у двери тамбур: обе ближние лавки лезли в проём
+        }
+        addBench(train, `${prefix}:seat:${side}:${localX}`,
+          centerX + localX, FLOOR_TOP, TRACK_Z + side * 0.95, side > 0 ? 0 : Math.PI, 1.6);
+      }
+    }
+    // Вокзальная идентика: номер вагона на угловой панели, эмблема
+    // перевозчика между окон, у двери — служебная табличка с бортовым.
+    for (const side of [-1, 1] as const) {
+      const wallZ = TRACK_Z + side * (CAR_HALF + 0.04);
+      addPixelText(train, `${prefix}:mark:${side}`, coachNumber,
+        centerX - side * (2 * PANE_PITCH + 1.4), WAIST_TOP - 0.42, wallZ, 0.07,
+        "#e6e2d4", side);
+      const emblemX = centerX + side * (2 * PANE_PITCH + 1.4);
+      part(train, `${prefix}:emblem:${side}`, "steel", "panel",
+        [emblemX, WAIST_TOP - 0.42, wallZ], [0.46, 0.46, 0.05], brass, {
+          bearsLoad: false,
+          sideAttachmentReach: 0.3,
+        });
+      part(train, `${prefix}:emblem:${side}:eye`, "steel", "panel",
+        [emblemX, WAIST_TOP - 0.42, wallZ + side * 0.03], [0.2, 0.2, 0.05], "#20262a", {
+          bearsLoad: false,
+          sideAttachmentReach: 0.3,
+        });
+      part(train, `${prefix}:emblem:${side}:wing`, "steel", "steelSheet",
+        [emblemX, WAIST_TOP - 0.42, wallZ + side * 0.03], [0.62, 0.07, 0.05], "#20262a", {
+          bearsLoad: false,
+          sideAttachmentReach: 0.3,
+        });
+    }
+    part(train, `${prefix}:lamp`, "glass", "glassPane",
+      [centerX, EAVES + 0.45, TRACK_Z], [0.34, 0.34, 0.34], litWindowColor, {
+        bearsLoad: false,
+        sideAttachmentReach: 0.4,
+      });
+    lamps.push({ id: `${train.id}:${prefix}:lamp`, position: [centerX, EAVES - 0.2, TRACK_Z], color: "#ffd79b", distance: 10, intensity: 2.2 });
+  }
+
+  addSkyCoach("head", HEAD_X, carriageGreen, true, 1, "01");
+  addSkyCoach("tail", TAIL_X, "#33403a", false, -1, "02");
+
+  // --- Переход между вагонами ----------------------------------------------
+  // Гармошка обещает проход — значит проход должен быть: настил под ногами,
+  // мехи по бокам и сверху, сцепка внизу. Оба торца здесь с проёмами.
+  {
+    const gapFrom = HEAD_X + CAR_LENGTH / 2 + 0.12;
+    const gapTo = TAIL_X - CAR_LENGTH / 2 - 0.12;
+    const gapMid = (gapFrom + gapTo) / 2;
+    const gapLength = gapTo - gapFrom;
+    part(train, "coupler", "steel", "steelSheet",
+      [gapMid, CAR_FLOOR - 0.14, TRACK_Z], [gapLength + 0.4, 0.24, 0.24], iron, {
+        bearsLoad: false,
+        sideAttachmentReach: 0.4,
+      });
+    part(train, "gangway:floor", "steel", "steelSheet",
+      [gapMid, CAR_FLOOR + 0.06, TRACK_Z], [gapLength, 0.2, 1.3], iron, {
+        volume: 0.12,
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.4,
+      });
+    for (const side of [-1, 1] as const) {
+      part(train, `gangway:bellows:${side}`, "cloth", "panel",
+        [gapMid, (FLOOR_TOP + BAND_TOP) / 2, TRACK_Z + side * 0.68],
+        [gapLength, BAND_TOP - FLOOR_TOP, 0.14], "#2b3033", {
+          bearsLoad: false,
+          sideAttachmentReach: 0.4,
+        });
+    }
+    part(train, "gangway:bellows:top", "cloth", "panel",
+      [gapMid, BAND_TOP + 0.07, TRACK_Z], [gapLength, 0.14, 1.5], "#2b3033", {
+        bearsLoad: false,
+        sideAttachmentReach: 0.4,
+      });
+  }
+
+  // Дверь головного вагона на перронную сторону: порог, косяки, латунная
+  // ручка. Полотно и ручка — куски ОДНОЙ створки на общей петле.
+  {
+    const doorZ = TRACK_Z - CAR_HALF;
+    part(train, "head:door:sill", "steel", "steelSheet",
+      [HEAD_X, CAR_FLOOR + 0.06, doorZ], [DOOR_HALF * 2 + 0.3, 0.2, 0.26], brass, {
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.4,
+      });
+    for (const [jambTag, x] of [["fore", HEAD_X - DOOR_HALF], ["aft", HEAD_X + DOOR_HALF]] as const) {
+      part(train, `head:door:jamb:${jambTag}`, "wood", "plank",
+        [x, (FLOOR_TOP + BAND_TOP) / 2, doorZ], [0.18, BAND_TOP - FLOOR_TOP, 0.22], oakDark, {
+          carriesAttachments: true,
+          attachmentSupportMode: "cable",
+          sideAttachmentReach: 0.4,
+        });
+    }
+    // Притолока вынесена на 4 см наружу: заподлицо с обвязкой борта их грани
+    // совпадали, и над дверью рябило наложение текстур.
+    part(train, "head:door:lintel", "wood", "plank",
+      [HEAD_X, (BAND_TOP + CANT_TOP) / 2, doorZ - 0.05], [DOOR_HALF * 2, CANT_TOP - BAND_TOP, 0.2], oakDark, {
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.4,
+      });
+    const leafHeight = BAND_TOP - FLOOR_TOP;
+    const leafY = (FLOOR_TOP + BAND_TOP) / 2;
+    const pivot: SceneVector3 = [HEAD_X - DOOR_HALF + 0.08, leafY, doorZ - 0.1];
+    const hinge = {
+      pivot,
+      direction: [1, 0, 0] as SceneVector3,
+      normal: [0, 0, -1] as SceneVector3,
+    };
+    part(train, "head:door:board:0", "wood", "plank",
+      [HEAD_X, leafY, doorZ - 0.1], [DOOR_HALF * 2 - 0.2, leafHeight, 0.12], oak, {
+        hinge,
+        bearsLoad: false,
+        sideAttachmentReach: 0.4,
+      });
+    part(train, "head:door:plate", "steel", "panel",
+      [HEAD_X + DOOR_HALF + 0.32, WAIST_TOP + 0.34, doorZ - 0.13], [0.5, 0.34, 0.06], "#20323c", {
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.3,
+      });
+    addPixelText(train, "head:door:plate:text", "03",
+      HEAD_X + DOOR_HALF + 0.32, WAIST_TOP + 0.3, doorZ - 0.17, 0.045, "#e6e2d4", -1);
+    part(train, "head:door:board:1", "steel", "steelSheet",
+      [HEAD_X + DOOR_HALF - 0.3, leafY - 0.05, doorZ - 0.2], [0.1, 0.34, 0.1], brass, {
+        hinge,
+        bearsLoad: false,
+        sideAttachmentReach: 0.3,
+      });
+  }
+
+  // --- Подвеска ------------------------------------------------------------
+  // Вагоны висят на угловых тягах ЗА торцами: пройди тяга вдоль борта, она
+  // прошила бы карниз крыши. Тяги приходят на поперечные траверсы, поджатые
+  // под брюхо оболочки — их высота идёт по профилю, поэтому у носа и кормы
+  // тяги длиннее. Траверса нужна не только для вида: шпангоуты и стрингеры
+  // объявлены bearsLoad:false, единственный несущий предмет корабля — сердце,
+  // и только через неё тяги дотягиваются до его контактного объёма.
+  const HANGER_Z = 1.35;
+  const hangerStations: readonly (readonly [number, number, number])[] = [
+    [HEAD_X - CAR_LENGTH / 2 - 0.2, 0.3, -1],
+    [HEAD_X + CAR_LENGTH / 2 + 0.2, 0, 1],
+    [TAIL_X - CAR_LENGTH / 2 - 0.2, 0, -1],
+    [TAIL_X + CAR_LENGTH / 2 + 0.2, 0.3, 1],
+  ];
+  const yokeStations: readonly (readonly [number, number])[] = [
+    [HEAD_X - CAR_LENGTH / 2 - 0.42, 0.3],
+    [(HEAD_X + TAIL_X) / 2, 1.1],
+    [TAIL_X + CAR_LENGTH / 2 + 0.42, 0.3],
+  ];
+  const yokeYAt = (x: number): number => HULL_Y - hullRadiusAt(x) - 0.32;
+  for (const [yokeX, yokeWidth] of yokeStations) {
+    part(train, `yoke:${yokeX.toFixed(2)}`, "steel", "steelSheet",
+      [yokeX, yokeYAt(yokeX), TRACK_Z], [yokeWidth, 0.3, HANGER_Z * 2 + 0.26], ironLight, {
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.5,
+        bearingArea: 1.1,
+      });
+  }
+  for (const [hangerX, , inward] of hangerStations) {
+    const top = yokeYAt(hangerX) - 0.06;
+    for (const side of [-1, 1] as const) {
+      part(train, `hanger:${hangerX.toFixed(2)}:${side}`, "steel", "steelSheet",
+        [hangerX, (FLOOR_TOP + top) / 2, TRACK_Z + side * HANGER_Z],
+        [0.14, top - FLOOR_TOP, 0.14], ironLight, {
+          carriesAttachments: true,
+          attachmentSupportMode: "cable",
+          sideAttachmentReach: 0.45,
+          bearingArea: 0.9,
+        });
+      // Косынка на торцевой раме: узел крепления должен быть виден, иначе
+      // тяга читается висящей рядом с вагоном, а не держащей его.
+      part(train, `hanger-cleat:${hangerX.toFixed(2)}:${side}`, "steel", "steelSheet",
+        [hangerX - inward * 0.28, EAVES - 0.35, TRACK_Z + side * HANGER_Z],
+        [0.62, 0.5, 0.2], ironLight, {
+          bearsLoad: false,
+          sideAttachmentReach: 0.4,
+        });
+      part(train, `hanger-shoe:${hangerX.toFixed(2)}:${side}`, "steel", "steelSheet",
+        [hangerX - inward * 0.22, FLOOR_TOP + 0.05, TRACK_Z + side * HANGER_Z],
+        [0.5, 0.34, 0.2], iron, {
+          bearsLoad: false,
+          sideAttachmentReach: 0.4,
+        });
+    }
+    // Поперечная стяжка между тягами станции: она идёт ВЫШЕ конька крыши —
+    // подкос, уходивший к кузову наискось, просто резал кровлю.
+    part(train, `hanger-tie:${hangerX.toFixed(2)}`, "steel", "steelSheet",
+      [hangerX, top - 0.85, TRACK_Z], [0.1, 0.09, HANGER_Z * 2], "#7f8488", {
+        bearsLoad: false,
+        sideAttachmentReach: 0.5,
+      });
+  }
+
+  // --- Моторные гондолы ----------------------------------------------------
+  // Вынос 4.6 м выбран из круга винта: радиус 1.15 м плюс запас должен пройти
+  // мимо оболочки радиусом 3 м, иначе лопасти рубили бы обшивку.
+  const engineX = 5.6;
+  const engineY = 7.6;
+  const engineB = 4.6;
+  for (const side of [-1, 1] as const) {
+    const z = TRACK_Z + side * engineB;
+    addFacetedCylinder(train, `engine:${side}:body`, "steel", "steelSheet", "x",
+      [engineX, engineY, z], 2.6, 1.05, "#3f4a4c");
+    part(train, `engine:${side}:collar`, "steel", "steelSheet",
+      [engineX - 1.32, engineY, z], [0.22, 1.1, 1.1], brass, {
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.4,
+      });
+    part(train, `engine:${side}:hub`, "steel", "steelSheet",
+      [engineX - 1.55, engineY, z], [0.36, 0.34, 0.34], iron, {
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.35,
+      });
+    for (const blade of [-1, 1] as const) {
+      part(train, `engine:${side}:blade:${blade}`, "wood", "panel",
+        [engineX - 1.62, engineY + blade * 0.72, z], [0.12, 1.3, 0.32], oak, {
+          rotation: [0, 0, blade * 0.24],
+          bearsLoad: false,
+          sideAttachmentReach: 0.4,
+        });
+    }
+    part(train, `engine:${side}:stack`, "steel", "steelSheet",
+      [engineX + 0.55, engineY + 0.72, z], [0.22, 0.7, 0.22], iron, {
+        bearsLoad: false,
+        sideAttachmentReach: 0.4,
+      });
+    // Крыло выноса: несущий обтекатель от борта оболочки к мотору плюс подкос.
+    part(train, `engine:${side}:wing`, "steel", "panel",
+      [engineX, engineY + 0.45, TRACK_Z + side * ((engineB + 2.0) / 2)],
+      [1.7, 0.18, engineB - 2.0], "#83898d", {
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.55,
+        bearingArea: 0.8,
+      });
+    part(train, `engine:${side}:strut`, "steel", "steelSheet",
+      [engineX + 0.9, engineY + 0.4, TRACK_Z + side * ((engineB + 2.4) / 2)],
+      [0.12, 1.5, engineB - 2.4], ironLight, {
+        rotation: [side * 0.6, 0, 0],
+        bearsLoad: false,
+        sideAttachmentReach: 0.5,
+      });
+  }
+
+  // Аэронавигационные огни, как на самолёте: корабль идёт носом на -x,
+  // поэтому его ПРАВЫЙ борт — перронная сторона, и там зелёный; на левом
+  // красный. Нос и корма несут по белому.
+  for (const [side, tone] of [[-1, "#7fe6a0"], [1, "#f08a80"]] as const) {
+    const z = TRACK_Z + side * (engineB + 0.62);
+    part(train, `nav-light:${side}`, "glass", "glassPane",
+      [engineX, engineY, z], [0.3, 0.3, 0.34], tone, {
+        bearsLoad: false,
+        sideAttachmentReach: 0.4,
+      });
+    lamps.push({
+      id: `${train.id}:nav-light:${side}`,
+      position: [engineX, engineY, TRACK_Z + side * (engineB + 0.95)],
+      color: side < 0 ? "#6bff9c" : "#ff6f62",
+      distance: 11,
+      intensity: 2.6,
+    });
+  }
+  for (const [navTag, navX] of [["nose", HULL_FROM - 0.86], ["tail", HULL_TO + 0.35]] as const) {
+    part(train, `nav-light:${navTag}`, "glass", "glassPane",
+      [navX, HULL_Y, TRACK_Z], [0.3, 0.3, 0.3], "#f4f1e2", {
+        bearsLoad: false,
+        sideAttachmentReach: 0.6,
+      });
+    lamps.push({
+      id: `${train.id}:nav-light:${navTag}`,
+      position: [navX + (navTag === "nose" ? -0.3 : 0.3), HULL_Y, TRACK_Z],
+      color: "#fff6dc",
+      distance: 12,
+      intensity: 2.4,
+    });
+  }
+
+  // Швартовая цепь от головного вагона к рыму упора: длинная часть уходит
+  // вниз вместе с составом, огрызок остаётся на бетоне.
+  part(train, "chain", "steel", "steelSheet",
+    [BUFFER_X + 1.6, 1.2, TRACK_Z], [1.3, 0.1, 0.1], "#3a4043", {
+      rotation: [0, 0, 0.16],
+      bearsLoad: false,
+      sideAttachmentReach: 0.2,
+    });
+
+  // Состав висит на сердце и не опирается на путь ни одной точкой. У стали
+  // окно опоры 1.1 м — без этого рама вагона «садится» на шпалы, скамьи
+  // внутри находят под собой рельс, и разбитое сердце перестаёт ронять поезд.
+  for (let index = 0; index < train.pieces.length; index += 1) {
+    const piece = train.pieces[index];
+    if (piece.position[1] - piece.size[1] / 2 < 1.7) {
+      train.pieces[index] = { ...piece, maximumVerticalGap: 0.06 };
+    }
+  }
+
+  finish(train, "Sky train at platform 0", "steel", "linked");
+}
+
 createCircularGround();
 createHeadhouse();
 createPublicInterior();
@@ -2445,6 +3455,7 @@ createServiceBuildings();
 createSteamLocomotive();
 createPassengerTrain();
 createStationLife();
+createSkyPlatform();
 
 export const grandTerminalScene = createDestructionScene({
   id: "grand-terminal",

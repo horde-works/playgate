@@ -3042,3 +3042,100 @@ button:focus-visible {
     justify-content: flex-start;
   }
 }
+
+/* --- Титры режима: включил полёт или взял оружие — фильм на секунду ---------
+   Стиль взят у титров пролёта: лаймовый кикер моно-шрифтом с широкой
+   разрядкой и тяжёлый заголовок с плотным трекингом. Слова влетают по
+   очереди, потом всё уходит — как в кино, а не как всплывашка. */
+.mode-announce {
+  position: absolute;
+  left: 50%;
+  bottom: clamp(96px, 14vh, 168px);
+  z-index: 6;
+  width: min(760px, calc(100vw - 64px));
+  transform: translateX(-50%);
+  text-align: center;
+  pointer-events: none;
+  text-shadow: 0 3px 28px rgb(0 0 0 / 0.62);
+}
+
+.mode-announce-kicker {
+  margin: 0 0 12px;
+  color: #d9ff3f;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  animation: modeAnnounceCopy 2.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.mode-announce-title {
+  margin: 0;
+  color: #fff;
+  font-size: clamp(28px, 4.2vw, 58px);
+  font-weight: 810;
+  letter-spacing: -0.058em;
+  line-height: 0.94;
+}
+
+.mode-announce-title span {
+  display: inline-block;
+  transform-origin: 50% 100%;
+  animation: modeAnnounceWord 2.6s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation-delay: calc(var(--word-index) * 55ms);
+}
+
+@keyframes modeAnnounceCopy {
+  0% { opacity: 0; transform: translateY(14px); }
+  14%, 62% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-10px); }
+}
+
+@keyframes modeAnnounceWord {
+  0% { opacity: 0; transform: translateY(28px) rotateX(52deg); }
+  18%, 62% { opacity: 1; transform: translateY(0) rotateX(0); }
+  100% { opacity: 0; transform: translateY(-12px) rotateX(-18deg); }
+}
+
+/* Чип живёт в правом верхнем углу, под верхней панелью, — тот же дежурный
+   вид, что у подсказок управления. */
+.mode-chips {
+  position: absolute;
+  top: clamp(74px, 9vh, 108px);
+  right: clamp(18px, 3vw, 40px);
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-end;
+  pointer-events: none;
+}
+
+.mode-chip {
+  padding: 6px 11px;
+  border: 1px solid rgb(217 255 63 / 0.32);
+  border-radius: 4px;
+  background: rgb(12 14 10 / 0.66);
+  color: #d9ff3f;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  animation: modeChipIn 0.42s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes modeChipIn {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mode-announce-kicker,
+  .mode-announce-title span,
+  .mode-chip {
+    animation-duration: 0.01ms;
+    animation-iteration-count: 1;
+  }
+}

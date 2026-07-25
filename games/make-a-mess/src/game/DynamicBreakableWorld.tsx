@@ -40,6 +40,7 @@ import {
 } from "./destructionRuntime";
 import {
   getPieceMaterial,
+  isSignalGlassColor,
   pieceMaterialBaseColor,
 } from "./materialTextures";
 import { materialAnchorWithWeathering } from "./materialAppearance";
@@ -171,7 +172,7 @@ function fragmentHasJoints(fragment: DynamicBreakableFragment): boolean {
 const extinguishedGlass = "#c3cdc9";
 
 function quenchedColor(material: BreakableMaterial, color: string): string {
-  return material === "glass" && color === litWindowColor
+  return material === "glass" && (color === litWindowColor || isSignalGlassColor(color))
     ? extinguishedGlass
     : color;
 }
