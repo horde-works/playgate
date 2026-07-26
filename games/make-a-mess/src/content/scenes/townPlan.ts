@@ -214,9 +214,9 @@ export const townWays: readonly TownWay[] = [
     purpose: "Вдоль фасада к2 мимо обоих подъездов; бак обходят по кромке проезжей",
     kind: "pavement",
     points: [
-      [12.6, -16.0], [14.4, -16.05], [15.54, -15.95], [17.5, -16.1],
-      [20.0, -16.15], [22.6, -16.1], [24.5, -15.35], [26.39, -15.95],
-      [28.5, -16.1], [31.0, -16.05], [33.4, -15.95], [35.6, -15.9],
+      [12.6, -15.7], [14.4, -15.65], [15.54, -15.6], [17.5, -15.65],
+      [20.0, -15.7], [22.6, -15.65], [24.5, -15.35], [26.39, -15.6],
+      [28.5, -15.65], [31.0, -15.65], [33.4, -15.6], [35.6, -15.7],
     ],
     width: 0.6,
   },
@@ -232,9 +232,9 @@ export const townWays: readonly TownWay[] = [
     purpose: "Южный тротуар за перекрёстком вдоль заброшенной к3",
     kind: "pavement",
     points: [
-      [46.0, -15.6], [47.6, -16.1], [50.0, -16.0], [51.54, -15.9],
-      [54.0, -16.1], [58.0, -16.15], [62.39, -15.9], [65.0, -16.1],
-      [69.0, -16.0], [74.4, -16.1],
+      [46.0, -15.6], [47.6, -15.65], [50.0, -15.6], [51.54, -15.6],
+      [54.0, -15.65], [58.0, -15.7], [62.39, -15.6], [65.0, -15.65],
+      [69.0, -15.7], [74.4, -15.9],
     ],
     width: 0.6,
   },
@@ -428,9 +428,9 @@ export const townWays: readonly TownWay[] = [
     purpose: "Южный тротуар вдоль фасада к4 мимо обоих подъездов",
     kind: "pavement",
     points: [
-      [-14.4, -33.9], [-12.8, -33.85], [-11.0, -33.8], [-9.5, -33.25],
-      [-7.0, -33.2], [-5.6, -33.6], [-1.0, -33.85], [2.39, -33.7], [5.0, -33.8],
-      [9.0, -33.85], [11.0, -33.7], [13.0, -33.8],
+      [-14.4, -33.8], [-12.8, -33.75], [-11.0, -33.7], [-9.5, -33.25],
+      [-7.0, -33.2], [-5.6, -33.5], [-1.0, -33.6], [2.39, -33.6], [5.0, -33.6],
+      [9.0, -33.6], [11.0, -33.6], [13.0, -33.7],
     ],
     width: 0.6,
   },
@@ -438,7 +438,7 @@ export const townWays: readonly TownWay[] = [
     id: "k5-frontage-west",
     purpose: "Фасад к5 до раскопанной теплотрассы",
     kind: "pavement",
-    points: [[13.0, -33.8], [15.5, -33.85], [17.54, -33.7], [18.6, -33.4]],
+    points: [[13.0, -33.7], [15.5, -33.6], [17.54, -33.6], [18.6, -33.4]],
     width: 0.6,
   },
   {
@@ -458,6 +458,78 @@ export const townWays: readonly TownWay[] = [
     points: [[30.2, -34.3], [32.0, -34.45], [33.5, -34.45], [35.0, -34.2], [36.6, -33.7]],
     width: 0.6,
   },
+  // Двенадцать подходов к подъездам: каждый упирается в порог, и потому
+  // становится узлом-местом. Без них дверь оставалась серединой тротуара.
+  {
+    id: "k1-west-approach",
+    purpose: "С дворового прохода к западному подъезду к1",
+    kind: "approach",
+    points: [[15.54, 0.75], [15.54, -0.19]],
+    width: 0.5,
+  },
+  {
+    id: "k1-east-approach",
+    purpose: "С дворового прохода к восточному подъезду к1",
+    kind: "approach",
+    points: [[26.39, 0.75], [26.39, -0.19]],
+    width: 0.5,
+  },
+  {
+    id: "k2-west-approach",
+    purpose: "С тротуара к западному подъезду к2",
+    kind: "approach",
+    points: [[15.54, -15.6], [15.54, -16.19]],
+    width: 0.5,
+  },
+  {
+    id: "k2-east-approach",
+    purpose: "С тротуара к восточному подъезду к2",
+    kind: "approach",
+    points: [[26.39, -15.6], [26.39, -16.19]],
+    width: 0.5,
+  },
+  {
+    id: "k3-west-approach",
+    purpose: "С тротуара к западному подъезду брошенной к3",
+    kind: "approach",
+    points: [[51.54, -15.6], [51.54, -16.19]],
+    width: 0.5,
+  },
+  {
+    id: "k3-east-approach",
+    purpose: "С тротуара к восточному подъезду брошенной к3",
+    kind: "approach",
+    points: [[62.39, -15.6], [62.39, -16.19]],
+    width: 0.5,
+  },
+  {
+    id: "k4-east-approach",
+    purpose: "С тротуара к восточному подъезду к4",
+    kind: "approach",
+    points: [[2.39, -33.6], [2.39, -34.19]],
+    width: 0.5,
+  },
+  {
+    id: "k5-west-approach",
+    purpose: "С тротуара к западному подъезду к5",
+    kind: "approach",
+    points: [[17.54, -33.6], [17.54, -34.19]],
+    width: 0.5,
+  },
+  {
+    id: "k6-west-approach",
+    purpose: "С полосы у фасада к западному подъезду к6",
+    kind: "approach",
+    points: [[51.54, 24.4], [51.54, 23.81]],
+    width: 0.5,
+  },
+  {
+    id: "k6-east-approach",
+    purpose: "С полосы у фасада к восточному подъезду к6",
+    kind: "approach",
+    points: [[62.39, 24.4], [62.39, 23.81]],
+    width: 0.5,
+  },
   {
     id: "k4-west-approach",
     purpose: "К западному подъезду к4 вдоль стены: в лоб мешают бочка и ящик",
@@ -469,7 +541,7 @@ export const townWays: readonly TownWay[] = [
     id: "k5-east-approach",
     purpose: "К восточному подъезду к5 в карман между отвалом и брезентом",
     kind: "approach",
-    points: [[30.2, -34.3], [29.3, -34.25], [28.5, -34.2]],
+    points: [[30.2, -34.3], [29.4, -34.15], [28.75, -34.05]],
     width: 0.5,
   },
   {
@@ -535,9 +607,9 @@ export const townWays: readonly TownWay[] = [
     purpose: "Кольцо вокруг детской площадки между качелями и каруселью",
     kind: "yard",
     points: [
-      [19.6, 2.3], [19.4, 5.4], [19.6, 8.2], [23.0, 8.6], [26.5, 8.2],
+      [20.9, 2.4], [19.4, 5.4], [19.6, 8.2], [23.0, 8.6], [26.5, 8.2],
       [29.4, 6.6], [29.6, 4.0], [29.2, 2.4], [26.8, 2.6], [24.0, 2.4],
-      [21.5, 2.3], [19.6, 2.3],
+      [21.5, 2.3], [20.9, 2.4],
     ],
     width: 0.5,
   },
@@ -553,16 +625,10 @@ export const townWays: readonly TownWay[] = [
     purpose: "От площадки мимо прилавка киоска к синим воротам старого квартала",
     kind: "path",
     points: [
-      [19.6, 2.6], [16.0, 2.8], [13.2, 2.9], [9.6, 4.6], [6.0, 6.6], [2.6, 8.2],
+      [20.9, 2.4], [18.2, 2.9], [16.0, 2.8], [13.2, 2.9], [9.6, 4.6],
+      [6.0, 6.6], [2.6, 8.2],
     ],
     width: 0.6,
-  },
-  {
-    id: "k1-bins-spur",
-    purpose: "Крюк к мусорным бакам",
-    kind: "path",
-    points: [[18.9, -0.15], [18.9, 0.4]],
-    width: 0.4,
   },
 
   // === Старый квартал =====================================================
@@ -864,6 +930,8 @@ function khrushchevkaEntrances(
   eastX: number,
   doorZ: number,
   approachZ: number,
+  westApproach?: TownPlanPoint,
+  eastApproach?: TownPlanPoint,
 ): readonly TownEntrance[] {
   return [
     {
@@ -872,7 +940,7 @@ function khrushchevkaEntrances(
       label: `${label}, западный подъезд`,
       door: [westX, doorZ],
       doorPieceId: `${buildingId === "k1" ? "hru" : buildingId}:hru:entry:door:2`,
-      approach: [westX, approachZ],
+      approach: westApproach ?? [westX, approachZ],
       facing: Math.PI / 2,
       floors: KHRUSHCHEVKA_FLOORS,
       flats: FLATS_PER_ENTRANCE,
@@ -883,7 +951,7 @@ function khrushchevkaEntrances(
       label: `${label}, восточный подъезд`,
       door: [eastX, doorZ],
       doorPieceId: `${buildingId === "k1" ? "hru" : buildingId}:hru:entry:door:10`,
-      approach: [eastX, approachZ],
+      approach: eastApproach ?? [eastX, approachZ],
       facing: Math.PI / 2,
       floors: KHRUSHCHEVKA_FLOORS,
       flats: FLATS_PER_ENTRANCE,
@@ -892,12 +960,14 @@ function khrushchevkaEntrances(
 }
 
 export const townEntrances: readonly TownEntrance[] = [
-  ...khrushchevkaEntrances("k1", "Хрущёвка у площадки", 15.54, 26.39, -0.94, 0.75),
-  ...khrushchevkaEntrances("k2", "Хрущёвка на главной", 15.54, 26.39, -16.94, -15.95),
-  ...khrushchevkaEntrances("k3", "Заброшенная хрущёвка", 51.54, 62.39, -16.94, -15.9),
-  ...khrushchevkaEntrances("k4", "Хрущёвка у гаражей", -8.46, 2.39, -34.94, -34.6),
-  ...khrushchevkaEntrances("k5", "Хрущёвка у теплотрассы", 17.54, 28.39, -34.94, -33.7),
-  ...khrushchevkaEntrances("k6", "Северная хрущёвка", 51.54, 62.39, 23.06, 24.4),
+  ...khrushchevkaEntrances("k1", "Хрущёвка у площадки", 15.54, 26.39, -0.94, -0.19),
+  ...khrushchevkaEntrances("k2", "Хрущёвка на главной", 15.54, 26.39, -16.94, -16.19),
+  ...khrushchevkaEntrances("k3", "Заброшенная хрущёвка", 51.54, 62.39, -16.94, -16.19),
+  // У западного подъезда к4 в лоб мешают бочка и ящик: подход сдвинут вдоль
+  // стены, поэтому точка своя, а не по общему правилу.
+  ...khrushchevkaEntrances("k4", "Хрущёвка у гаражей", -8.46, 2.39, -34.94, -34.19, [-8.3, -34.6]),
+  ...khrushchevkaEntrances("k5", "Хрущёвка у теплотрассы", 17.54, 28.39, -34.94, -34.19, undefined, [28.75, -34.05]),
+  ...khrushchevkaEntrances("k6", "Северная хрущёвка", 51.54, 62.39, 23.06, 23.81),
   {
     id: "h1-front",
     buildingId: "h1",
@@ -986,7 +1056,7 @@ export const townAreas: readonly TownArea[] = [
   { id: "blue-gate", purpose: "Створ синих ворот старого квартала", center: [-1.6, 8.9], radius: [2.6, 1.3] },
   { id: "shed-corner", purpose: "Угол сарая, где дети бросают велосипеды", center: [-10.0, 0.7], radius: [2.6, 1.4] },
   { id: "garage-frontage", purpose: "Ворота гаражей: вечно кто-то возится", center: [-1.0, -19.0], radius: [10.0, 0.9] },
-  { id: "garage-table", purpose: "Стол у крайнего бокса; половина столешницы утоплена в цоколь к2", center: [11.0, -18.6], radius: [0.9, 0.8] },
+  { id: "garage-table", purpose: "Верстак у восточного торца гаражного ряда", center: [10.3, -17.6], radius: [1.1, 0.9] },
   { id: "works", purpose: "Раскопанная теплотрасса: отвалы, трубы, мостки", center: [24.2, -33.3], radius: [5.4, 2.2] },
   { id: "playground-1", purpose: "Восточная детская площадка у к6", center: [68.3, 7.9], radius: [4.4, 2.2] },
   { id: "grove-table", purpose: "Каменный стол в рощице за к6", center: [70.6, 16.4], radius: [1.6, 1.4] },
@@ -1001,6 +1071,14 @@ export const townAreas: readonly TownArea[] = [
   { id: "white-house-yard", purpose: "Двор белёного дома", center: [30.0, 12.6], radius: [5.0, 3.6] },
   { id: "cream-house-yard", purpose: "Двор кремового дома", center: [-9.5, 16.0], radius: [4.6, 4.0] },
   { id: "edgewood", purpose: "Опушка, где улица становится тропой", center: [-17.5, -12.6], radius: [4.0, 1.6] },
+  { id: "k2-bench-west", purpose: "Лавка у западного подъезда к2", center: [13.59, -16.35], radius: [1.0, 0.6] },
+  { id: "k2-bench-east", purpose: "Лавка у восточного подъезда к2", center: [28.34, -16.35], radius: [1.0, 0.6] },
+  { id: "k3-bench", purpose: "Рассохшаяся лавка у брошенной к3", center: [49.6, -16.35], radius: [1.0, 0.6] },
+  { id: "k4-bench", purpose: "Рассохшаяся лавка у брошенной к4", center: [4.3, -34.35], radius: [1.0, 0.6] },
+  { id: "k5-bench", purpose: "Единственный чистый кусок фасада к5: лавка у западного подъезда", center: [15.6, -34.35], radius: [1.0, 0.6] },
+  { id: "k6-bench-west", purpose: "Лавка у западного подъезда к6", center: [49.6, 23.65], radius: [1.0, 0.6] },
+  { id: "k6-bench-east", purpose: "Лавка у восточного подъезда к6", center: [64.3, 23.65], radius: [1.0, 0.6] },
+  { id: "k6-bins", purpose: "Бак в северном дворе к6", center: [66.6, 24.7], radius: [1.3, 0.9] },
 ] as const;
 
 export const townPlaceInterest: readonly TownPlaceInterest[] = [
@@ -1031,6 +1109,14 @@ export const townPlaceInterest: readonly TownPlaceInterest[] = [
   { areaId: "white-house-yard", pull: 1.3, roles: ["homemaker"], when: "day", doing: "work" },
   { areaId: "cream-house-yard", pull: 1.3, roles: ["homemaker"], when: "day", doing: "work" },
   { areaId: "edgewood", pull: 1.1, when: "day", doing: "stand" },
+  { areaId: "k2-bench-west", pull: 2.3, roles: ["pensioner", "homemaker"], when: "evening", doing: "sit" },
+  { areaId: "k2-bench-east", pull: 2.3, roles: ["pensioner", "homemaker"], when: "evening", doing: "sit" },
+  { areaId: "k3-bench", pull: 1.0, roles: ["teen"], when: "evening", doing: "sit" },
+  { areaId: "k4-bench", pull: 1.0, roles: ["teen"], when: "evening", doing: "sit" },
+  { areaId: "k5-bench", pull: 2.2, roles: ["pensioner", "homemaker"], when: "evening", doing: "sit" },
+  { areaId: "k6-bench-west", pull: 2.3, roles: ["pensioner", "homemaker"], when: "evening", doing: "sit" },
+  { areaId: "k6-bench-east", pull: 2.3, roles: ["pensioner", "homemaker"], when: "evening", doing: "sit" },
+  { areaId: "k6-bins", pull: 0.9, doing: "stand" },
 ] as const;
 
 export const townPlaceInterestById: Readonly<Record<string, TownPlaceInterest>> =

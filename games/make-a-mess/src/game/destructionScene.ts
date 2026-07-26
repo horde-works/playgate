@@ -4617,15 +4617,56 @@ function createTownClutter(): BreakableClusterDefinition[] {
     ...asPieces("town:furniture", "yard:furn:stone-table:grove",
       propStoneTable({ yaw: 0.5 }), [70.6, 0, 16.2]),
     ...asPieces("town:furniture", "yard:furn:trestle-table:garages",
-      propTrestleTable({ yaw: 0.15 }), [11.9, 0, -18.45]),
+      propTrestleTable({ yaw: 0.15 }), [10.3, 0, -17.6]),
   ];
   clusters.push(cluster("town:furniture", "Outdoor furniture", "wood", "mounted", outdoorFurniture));
 
+
+  // --- Лавки у подъездов ---------------------------------------------------
+  // Сидеть во дворе было негде нигде, кроме первой хрущёвки: вечерний двор
+  // без лавок не собирается. Ставим по лавке к каждому живому подъезду
+  // спинкой к фасаду; у брошенных к3 и к4 — по одной, рассохшейся.
+  const benches: BreakablePieceDefinition[] = [];
+  const courtyardBench = (
+    id: string,
+    x: number,
+    z: number,
+    /** Куда смотрит сидящий: +1 — от дома во двор. */
+    faceZ: 1 | -1,
+    weathering = 0.14,
+  ): void => {
+    const backZ = z - faceZ * 0.18;
+    benches.push(
+      { ...makePiece(`${id}:leg:0`, "town:benches", "wood", "plank",
+        [x - 0.55, 0.18, z], [0.34, 0.4, 0.38], "#70452a"), weathering },
+      { ...makePiece(`${id}:leg:1`, "town:benches", "wood", "plank",
+        [x + 0.55, 0.18, z], [0.34, 0.4, 0.38], "#70452a"), weathering },
+      { ...makePiece(`${id}:seat`, "town:benches", "wood", "plank",
+        [x, 0.42, z], [1.5, 0.07, 0.42], "#a8763f"), weathering },
+      { ...makePiece(`${id}:back`, "town:benches", "wood", "plank",
+        [x, 0.63, backZ], [1.5, 0.35, 0.06], "#9b6a3c"), weathering },
+    );
+  };
+  // Фасад с подъездами у всех корпусов смотрит в +z, но считать надо не от
+  // панели, а от ЦОКОЛЯ: его поясок выступает наружу до z = dz - 0.70 и
+  // верхом 0.68 м. Лавка спинкой к цоколю встаёт на 0.35 м дальше — иначе
+  // ножки уходят внутрь кладки.
+  courtyardBench("bench:k2:west", 13.59, -16.35, 1);
+  courtyardBench("bench:k2:east", 28.34, -16.35, 1);
+  courtyardBench("bench:k3:west", 49.6, -16.35, 1, 0.72);
+  courtyardBench("bench:k4:east", 4.3, -34.35, 1, 0.78);
+  // У к5 занят весь фасад восточнее западного подъезда: раскоп, отвалы и
+  // трубы. Лавка одна, зато на единственном чистом куске.
+  courtyardBench("bench:k5:west", 15.6, -34.35, 1);
+  courtyardBench("bench:k6:west", 49.6, 23.65, 1);
+  courtyardBench("bench:k6:east", 64.3, 23.65, 1);
+  clusters.push(cluster("town:benches", "Courtyard benches", "wood", "mounted", benches));
 
   // --- Dumpsters by the entrances -----------------------------------------
   const bins: BreakablePieceDefinition[] = [
     ...asPieces("town:bins", "bin:k1", propDumpster({ yaw: 0.12 }), [18.9, 0, 1.2]),
     ...asPieces("town:bins", "bin:k2", propDumpster({ yaw: -0.08, color: "#5d5a46" }), [24.5, 0, -16.15]),
+    ...asPieces("town:bins", "bin:k6", propDumpster({ yaw: 0.19, color: "#4f5b4a" }), [66.6, 0, 24.7]),
   ];
   clusters.push(cluster("town:bins", "Courtyard dumpsters", "steel", "mounted", bins));
 
@@ -4977,7 +5018,6 @@ export const breakableClusters = [
     dz: -34,
     palette: ["#dad4c2", "#cfc9b7", "#e4decc", "#d4cebc"],
     shellOnly: true,
-    includeLamps: false,
   }),
   // k6 отодвинута на север (dz 24): между задним двором h2 и её фасадом —
   // полноценный двор с площадкой, а не 11-метровая щель. Дальше нельзя:
@@ -4988,7 +5028,6 @@ export const breakableClusters = [
     dz: 24,
     palette: ["#d3c493", "#c8b988", "#ddce9d", "#cdbe8d"],
     shellOnly: true,
-    includeLamps: false,
   }),
   ...createStreets(),
   createGarages(),

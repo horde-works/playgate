@@ -22,6 +22,7 @@ import {
   type VillagerPopulation,
 } from "./villagerSim.ts";
 import { buildObstacleField, type NavPiece } from "./villagerNavigation.ts";
+import type { SettlementPlan } from "./settlementPlan.ts";
 
 /**
  * Жители деревни: тела из тех же коробок, что и всё вокруг, шагающие по
@@ -495,6 +496,7 @@ const GAIT_COMPUTE = /* glsl */ `
 `;
 
 export function Villagers({
+  settlement,
   nightRef,
   pieces,
   brokenPieces,
@@ -502,6 +504,8 @@ export function Villagers({
   openDoors,
   count = 24,
 }: {
+  /** Какое поселение здесь живёт: тропы, жильё, места, роли, одежда. */
+  settlement: SettlementPlan;
   nightRef: RefObject<number>;
   /** Куски сцены — из них строится поле препятствий. */
   pieces?: readonly NavPiece[];
@@ -521,7 +525,7 @@ export function Villagers({
   );
   const population = useRef<VillagerPopulation | null>(null);
   if (population.current === null) {
-    population.current = createVillagerPopulation(count, obstacleField);
+    population.current = createVillagerPopulation(settlement, count, obstacleField);
   }
   useEffect(() => {
     if (population.current) {
@@ -683,13 +687,18 @@ export function Villagers({
       // окажется заперт в зале до утра.
       const stillOut = state.villagers.some((villager) => villager.visible);
       if ((nightRef.current ?? 0) < 0.55 || stillOut) {
-        doorRequests.current.add("viking-village:buildings:great-hall:hall-gate");
+        for (const doorId of state.settlement.alwaysOpen ?? []) {
+          doorRequests.current.add(doorId);
+        }
       }
       for (const villager of state.villagers) {
         if (villager.doorWait > 0) {
-          doorRequests.current.add(
-            `viking-village:buildings:${villager.homeId}:door`,
-          );
+          const doorId = state.settlement.dwellings.find(
+            (dwelling) => dwelling.id === villager.homeId,
+          )?.doorId;
+          if (doorId) {
+            doorRequests.current.add(doorId);
+          }
         }
       }
       // Любой вход, в который житель упёрся по дороге, тоже просится открыть:

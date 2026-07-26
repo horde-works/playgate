@@ -1,10 +1,7 @@
-import {
-  vikingHomeEntrance,
-  vikingPlaceInterestById,
-  vikingTrafficAreas,
-  vikingTrafficRoutes,
-  vikingVillageHomes,
-} from "../content/scenes/vikingVillagePlan.ts";
+import type {
+  SettlementDwelling,
+  SettlementPlan,
+} from "./settlementPlan.ts";
 import {
   chooseFreeDirection,
   closestPointOnBox,
@@ -23,9 +20,12 @@ import {
  * Жители деревни как чистая симуляция — без three.js, чтобы её поведение
  * можно было проверять тестами, а не глазами.
  *
- * Ключевое решение: никакого поиска пути. Деревня уже описана СМЫСЛОВЫМ
- * графом — авторскими тропами (`vikingTrafficRoutes`), у которых есть
- * `purpose` и `wear`, и площадками (`vikingTrafficAreas`) с назначением.
+ * Поселение симуляция ПРИНИМАЕТ (SettlementPlan), а не знает: деревня и город
+ * различаются тропами, жильём, ролями и ритмом суток, но не поведением.
+ *
+ * Ключевое решение: никакого поиска пути. Поселение уже описано СМЫСЛОВЫМ
+ * графом — авторскими тропами, у которых есть назначение и износ, и
+ * площадками с назначением.
  * Эти тропы рисовались как маски износа: «от дома рыбака к сушилке», «вокруг
  * колодца». То есть кто-то уже решил, где ходят люди — жителю остаётся
  * ходить по ним. Отсюда два подарка даром:
@@ -36,14 +36,11 @@ import {
  *    натоптанная тропа выбирается чаще, как в жизни.
  */
 
-export type VillagerRole =
-  | "weaver"
-  | "brewer"
-  | "fisher"
-  | "smith"
-  | "herder"
-  | "gardener"
-  | "elder";
+/**
+ * Роль — токен из описания поселения, а не закрытый список: у деревни это
+ * ремёсла, у города — пенсионер, хозяйка, работяга, гаражник.
+ */
+export type VillagerRole = string;
 
 export interface VillageNode {
   readonly index: number;
@@ -84,8 +81,8 @@ function distance(ax: number, az: number, bx: number, bz: number): number {
  * становятся одним узлом-местом. Узлы подписываются смыслом — дверь такого-то
  * дома, пятно такой-то площадки, — и на этих подписях потом держатся роли.
  */
-export function buildVillageNetwork(): VillageNetwork {
-  const routes = vikingTrafficRoutes.filter((route) => route.points.length >= 2);
+export function buildSettlementNetwork(plan: SettlementPlan): VillageNetwork {
+  const routes = plan.routes.filter((route) => route.points.length >= 2);
 
   // 1. Кластеризуем ВСЕ вершины троп, а не только их концы: в деревне тропы
   // сходятся и серединами (у колодца, у зала, на развилке к кузне). Если
@@ -259,16 +256,16 @@ export function buildVillageNetwork(): VillageNetwork {
   // Подписи узлов: сначала двери (они точнее), потом площадки.
   const labelled = nodes.map((node): VillageNode => {
     let homeId: string | undefined;
-    for (const home of vikingVillageHomes) {
-      const entrance = vikingHomeEntrance(home);
+    for (const dwelling of plan.dwellings) {
+      const entrance = dwelling.entrance;
       if (distance(node.x, node.z, entrance[0], entrance[1]) <= NODE_SNAP) {
-        homeId = home.id;
+        homeId = dwelling.id;
         break;
       }
     }
     let areaId: string | undefined;
     if (!homeId) {
-      for (const area of vikingTrafficAreas) {
+      for (const area of plan.areas) {
         const dx = Math.abs(node.x - area.center[0]) / area.radius[0];
         const dz = Math.abs(node.z - area.center[1]) / area.radius[1];
         if (Math.hypot(dx, dz) <= 1.15) {
@@ -290,27 +287,6 @@ export function buildVillageNetwork(): VillageNetwork {
 
   return { nodes: labelled, edges, adjacency };
 }
-
-/** Куда тянет жителя его ремесло: узлы этих площадок он выбирает охотнее. */
-const ROLE_HAUNTS: Record<VillagerRole, readonly string[]> = {
-  weaver: ["weaver-chopping", "well", "commons"],
-  brewer: ["brewer-chopping", "north-armoury", "great-hall-threshold"],
-  fisher: ["north-sledge", "commons", "well"],
-  smith: ["smith-store", "smith-sledge", "great-hall-threshold"],
-  herder: ["goat-pen", "well", "north-sledge"],
-  gardener: ["kitchen-garden", "well", "great-hall-threshold"],
-  elder: ["commons", "great-hall-threshold", "great-hall-yard"],
-};
-
-const HOME_ROLES: Record<string, VillagerRole> = {
-  weaver: "weaver",
-  brewer: "brewer",
-  fisher: "fisher",
-  smith: "smith",
-  "family-north": "herder",
-  "family-east": "gardener",
-  elder: "elder",
-};
 
 export interface Villager {
   readonly id: string;
@@ -444,24 +420,6 @@ function mulberry32(seed: number): () => number {
   };
 }
 
-/**
- * Крашеная шерсть северной деревни: некрашеное сукно, земляные красители,
- * редкие дорогие цвета (марена, вайда). Дешёвых ярких тканей тут нет — и
- * бледно-белого «больничного» тоже: он выдаёт нерастворённый шаблон.
- */
-const DYES: readonly (readonly [number, number, number])[] = [
-  [0.24, 0.18, 0.13],
-  [0.38, 0.31, 0.22],
-  [0.2, 0.22, 0.23],
-  [0.3, 0.26, 0.17],
-  [0.47, 0.42, 0.32],
-  [0.36, 0.17, 0.13],
-  [0.22, 0.26, 0.2],
-  [0.17, 0.2, 0.27],
-  [0.32, 0.24, 0.15],
-  [0.14, 0.13, 0.12],
-];
-
 function sampleEdge(
   edge: VillageEdge,
   travelled: number,
@@ -563,6 +521,7 @@ export function planRoute(
  * пустуют.
  */
 function chooseGoal(
+  plan: SettlementPlan,
   network: VillageNetwork,
   villager: Villager,
   nightPull: number,
@@ -571,7 +530,7 @@ function chooseGoal(
   if (nightPull > 0.55 && homeNode !== undefined) {
     return homeNode;
   }
-  const haunts = ROLE_HAUNTS[villager.role];
+  const haunts = plan.haunts[villager.role] ?? [];
   // Вечер начинается задолго до темноты: к этому часу тянет к огню и домой.
   const evening = nightPull > 0.12;
   const weighted: { node: number; weight: number }[] = [];
@@ -581,8 +540,8 @@ function chooseGoal(
     }
     let weight = 0;
     if (node.areaId) {
-      // Вес места объявлен в плане деревни, а не выведен из формы графа.
-      const interest = vikingPlaceInterestById[node.areaId];
+      // Вес места объявлен в описании поселения, а не выведен из формы графа.
+      const interest = plan.interest[node.areaId];
       weight = interest ? interest.pull : haunts.includes(node.areaId) ? 3.2 : 0.7;
       if (interest?.roles?.length) {
         const called =
@@ -595,10 +554,16 @@ function chooseGoal(
         // не хватало: кузнец мог за смену так и не дойти до кузни.
         weight *= called ? 3.4 : 0.26;
       }
+      // Час места против часа суток. Ночь считаем по nightPull, утро — по
+      // его отсутствию: до вечера ещё далеко, значит день только начался.
       if (interest?.when === "evening") {
         weight *= evening ? 1.9 : 0.35;
       } else if (interest?.when === "day") {
         weight *= evening ? 0.45 : 1.35;
+      } else if (interest?.when === "morning") {
+        weight *= nightPull > 0.02 ? 0.4 : 1.5;
+      } else if (interest?.when === "night") {
+        weight *= nightPull > 0.35 ? 1.8 : 0.3;
       }
       // Детей тянет к загону и к воде — и почти не тянет в кузню.
       if (villager.child) {
@@ -648,6 +613,8 @@ function dwellTime(node: VillageNode, random: () => number): number {
 }
 
 export interface VillagerPopulation {
+  /** Описание поселения, по которому живёт это население. */
+  readonly settlement: SettlementPlan;
   readonly network: VillageNetwork;
   readonly villagers: Villager[];
   readonly homeNodes: Readonly<Record<string, number | undefined>>;
@@ -797,14 +764,15 @@ function buildPath(
 }
 
 export function createVillagerPopulation(
+  plan: SettlementPlan,
   count = 24,
   field: ObstacleField | null = null,
 ): VillagerPopulation {
-  const network = buildVillageNetwork();
+  const network = buildSettlementNetwork(plan);
   const homeNodes: Record<string, number | undefined> = {};
-  for (const home of vikingVillageHomes) {
-    const node = network.nodes.find((candidate) => candidate.homeId === home.id);
-    homeNodes[home.id] = node?.index;
+  for (const dwelling of plan.dwellings) {
+    const node = network.nodes.find((candidate) => candidate.homeId === dwelling.id);
+    homeNodes[dwelling.id] = node?.index;
   }
 
   // Расселяем только по той части сети, что связана с деревней: если тропа
@@ -831,21 +799,37 @@ export function createVillagerPopulation(
     .filter((node) => reachable.has(node.index))
     .map((node) => node.index);
 
+  // Список расселения: дверь повторяется столько раз, сколько за ней жильцов.
+  // Брошенный корпус с нулём жильцов в список не попадает вовсе — там некому
+  // жить, туда только заглядывают.
+  const roster: SettlementDwelling[] = [];
+  for (const dwelling of plan.dwellings) {
+    for (let slot = 0; slot < dwelling.residents; slot += 1) {
+      roster.push(dwelling);
+    }
+  }
+  const lodging = roster.length > 0 ? roster : plan.dwellings;
+
   const villagers: Villager[] = [];
   for (let index = 0; index < count; index += 1) {
-    const home = vikingVillageHomes[index % vikingVillageHomes.length];
+    const home = lodging[index % lodging.length];
     const random = mulberry32(index * 2654435761 + 17);
-    const role = HOME_ROLES[home.id] ?? "herder";
+    const role =
+      home.roles.length > 0
+        ? home.roles[Math.floor(index / lodging.length) % home.roles.length]
+        : "worker";
     const spawnNode = spawnNodes[Math.floor(random() * spawnNodes.length)];
     const spawnPoint = network.nodes[spawnNode];
     const spawnAngle = random() * Math.PI * 2;
     const spawnReach = 0.3 + random() * 0.7;
     // Каждый пятый — ребёнок: домовые петли в плане так и подписаны —
     // «детская беготня и дрова вокруг обжитого дома».
-    const child = index % 5 === 4;
+    const childEvery = plan.childEvery ?? 0;
+    const child = childEvery > 0 && index % childEvery === childEvery - 1;
     // Деревня надвое. Не «разбавили», а ДОБАВИЛИ: жительниц и девочек столько
     // же, сколько мужчин и мальчишек, оттого и население выросло.
-    const female = index % 2 === 1;
+    const femaleEvery = plan.femaleEvery ?? 0;
+    const female = femaleEvery > 0 && index % femaleEvery === femaleEvery - 1;
     // Женский сложением уже, ребёнок — мельче обоих.
     const build =
       (child ? 0.6 + random() * 0.12 : 0.88 + random() * 0.28) * (female ? 0.955 : 1);
@@ -861,18 +845,20 @@ export function createVillagerPopulation(
       // анализа походки, из которых выведен мужской размах бедра.
       strideLength: (0.65 + random() * 0.2) * build * (female ? 0.9 : 1),
       baseSpeed: (1.05 + random() * 0.45) * (0.9 + build * 0.1),
-      dye: DYES[Math.floor(random() * DYES.length)],
+      dye: plan.wardrobe.dyes[Math.floor(random() * plan.wardrobe.dyes.length)],
       carries: !child && random() > 0.68,
       carryDrop: 0,
       carryLinger: 0,
       child,
       female,
-      wear: Math.min(
-        1,
-        (child ? 0.55 : 0.15) +
-          (role === "smith" || role === "fisher" || role === "brewer" ? 0.3 : 0) +
-          (role === "elder" ? -0.1 : 0) +
-          random() * 0.35,
+      wear: Math.max(
+        0,
+        Math.min(
+          1,
+          (child ? 0.55 : 0.15) +
+            (plan.wardrobe.grimeByRole?.[role] ?? 0) +
+            random() * 0.35 * (plan.wardrobe.wearSpread ?? 1),
+        ),
       ),
       // Дети лезут через всё; взрослые — по настроению и редко.
       mischief: child ? 0.5 + random() * 0.5 : random() * 0.3,
@@ -940,6 +926,7 @@ export function createVillagerPopulation(
   }
 
   return {
+    settlement: plan,
     network,
     villagers,
     homeNodes,
@@ -1112,7 +1099,7 @@ export function stepVillagers(
   delta: number,
   night: number,
 ): void {
-  const { network, villagers, homeNodes } = population;
+  const { settlement, network, villagers, homeNodes } = population;
   const step = Math.min(delta, 0.1);
   const nightPull = Math.max(0, Math.min(1, (night - 0.3) / 0.45));
   // Створки стареют раньше всего: то, что открыто сейчас, определяет, где
@@ -1211,7 +1198,7 @@ export function stepVillagers(
         villager.visible = false;
         continue;
       }
-      const goal = chooseGoal(network, villager, nightPull, homeNode);
+      const goal = chooseGoal(settlement, network, villager, nightPull, homeNode);
       const plan =
         goal === undefined ? [] : planRoute(network, villager.nodeIndex, goal);
       if (plan.length === 0) {
@@ -1228,7 +1215,7 @@ export function stepVillagers(
       // деревне, а не закрепляется за одними и теми же людьми навсегда.
       if (!villager.carries && !villager.child && villager.random() < 0.22) {
         const here = network.nodes[villager.nodeIndex];
-        if (here?.areaId && vikingPlaceInterestById[here.areaId]?.doing === "work") {
+        if (here?.areaId && settlement.interest[here.areaId]?.doing === "work") {
           villager.carries = true;
           villager.carryDrop = 0;
           villager.carryLinger = 0;
@@ -1241,11 +1228,11 @@ export function stepVillagers(
       // К ДВЕРИ подходят по нормали, а не по диагонали сквозь стену: точка
       // остановки выносится прямо перед порогом, лицом к нему.
       const targetHome = target.homeId
-        ? vikingVillageHomes.find((home) => home.id === target.homeId)
+        ? settlement.dwellings.find((dwelling) => dwelling.id === target.homeId)
         : undefined;
       const spread = target.areaId ? 1.5 : target.homeId ? 0.7 : 0.5;
       const spot = targetHome
-        ? Math.atan2(Math.sin(targetHome.yaw), Math.cos(targetHome.yaw))
+        ? Math.atan2(Math.sin(targetHome.facing), Math.cos(targetHome.facing))
         : villager.random() * Math.PI * 2;
       let reach = targetHome
         ? 1.15
@@ -1807,8 +1794,11 @@ export function stepVillagers(
       // успевает дойти, и ему не приходится стоять перед закрытой доской.
       // Дверь просят открыть ещё на подходе, с доброго десятка метров: пока
       // створка идёт, человек как раз доходит и не топчется перед доской.
-      if (toOwnDoor < 11) {
-        requestDoor(population, `viking-village:buildings:${villager.homeId}:door`, step);
+      const ownDoorId = settlement.dwellings.find(
+        (dwelling) => dwelling.id === villager.homeId,
+      )?.doorId;
+      if (toOwnDoor < 11 && ownDoorId) {
+        requestDoor(population, ownDoorId, step);
       }
       if (toOwnDoor < 2.9) {
         // В дверь не вламываются: человек подходит, толкает её и ждёт, пока
@@ -1817,7 +1807,9 @@ export function stepVillagers(
         villager.faceYaw = Math.atan2(door.x - villager.x, door.z - villager.z);
         villager.yaw +=
           shortestAngleTo(villager.yaw, villager.faceYaw) * Math.min(1, step * 5);
-        requestDoor(population, `viking-village:buildings:${villager.homeId}:door`, step);
+        if (ownDoorId) {
+          requestDoor(population, ownDoorId, step);
+        }
         villager.doorWait = villager.doorWait > 0 ? villager.doorWait - step : 0.85;
         if (villager.doorWait <= 0) {
           villager.nodeIndex = homeNode;

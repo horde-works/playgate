@@ -315,12 +315,10 @@ test("у каждого места есть тропа и оно стоит на
 
 test("разметка не разошлась с масками грязи", () => {
   // Маска — это следы на газоне; если по ней никто не ходит, значит одно из
-  // двух врёт. Две маски старше построек (лесная тропа ушла под причальный
-  // барабан, луговая — под к4) и терпимы, остальные обязаны совпадать.
-  const stale = new Set(["west-wood-path", "meadow-stroll-south"]);
+  // двух врёт. Поблажек больше нет: обе маски, что были старше построек,
+  // перерисованы по живым тропам.
   const orphans = [];
   for (const route of townSurfaceRoutes) {
-    if (stale.has(route.id)) continue;
     let worst = 0;
     for (const [x, z] of route.points) worst = Math.max(worst, distanceToNetwork(x, z));
     if (worst > 3.0) orphans.push(`${route.id} — ${worst.toFixed(1)} м`);

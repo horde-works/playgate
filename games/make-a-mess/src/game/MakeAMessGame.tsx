@@ -119,6 +119,7 @@ import {
   getPieceRenderBoxes,
 } from "./DynamicBreakableWorld";
 import { Birds } from "./Birds";
+import { vikingSettlement } from "../content/scenes/vikingSettlement.ts";
 import { Villagers } from "./Villagers";
 import { GrassField } from "./GrassField";
 import { SceneDressing } from "./SceneDressing";
@@ -5547,6 +5548,7 @@ function MobileGameControls({
   onEntryAction,
   onReset,
 }: {
+            settlement={vikingSettlement}
   active: boolean;
   flightMode: boolean;
   weapon: WeaponName;
