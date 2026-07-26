@@ -2186,9 +2186,9 @@ function createKhrushchevka(
     const cx = x0 + 2.75 + index * 5.5;
     plinthPieces.push(
       { ...makePiece(`hru:plinth:s:${index}`, "hru:plinth", "concrete", "panel",
-        [cx, 0.19, z1], [5.48, 0.42, 0.3], plinthColor), weathering: 0.5 },
+        [cx, 0.19, z1], [5.5, 0.42, 0.3], plinthColor), weathering: 0.5 },
       { ...makePiece(`hru:plinth:n:${index}`, "hru:plinth", "concrete", "panel",
-        [cx, 0.19, z0], [5.48, 0.42, 0.3], plinthColor), weathering: 0.5 },
+        [cx, 0.19, z0], [5.5, 0.42, 0.3], plinthColor), weathering: 0.5 },
     );
   }
   for (const ex of [x0, x1]) {
@@ -2565,7 +2565,7 @@ function createKhrushchevka(
         southPieces.push(
           {
             ...makePiece(`${clusterId}:${bay}:lintel`, clusterId, "concrete", "panel",
-              [cx, b + 2.2, z1], [bayWidth - 0.01, 0.38, 0.3],
+              [cx, b + 2.2, z1], [bayWidth, 0.38, 0.3],
               panelColor("s", bay, floor, bay)),
             weathering: wear,
           },
@@ -2608,7 +2608,7 @@ function createKhrushchevka(
         southPieces.push(
           {
             ...makePiece(`${clusterId}:${bay}:lintel`, clusterId, "concrete", "panel",
-              [cx, b + 2.185, z1], [bayWidth - 0.01, 0.41, 0.3],
+              [cx, b + 2.185, z1], [bayWidth, 0.41, 0.3],
               panelColor("s", bay, floor, bay + floor + 2)),
             weathering: wear,
           },
@@ -2639,11 +2639,11 @@ function createKhrushchevka(
           );
         } else {
           const opening = 1.06;
-          const jambW = (bayWidth - 0.01 - opening) / 2;
+          const jambW = (bayWidth - opening) / 2;
           southPieces.push(
             {
               ...makePiece(`${clusterId}:${bay}:sill`, clusterId, "concrete", "panel",
-                [cx, b + 0.405, z1], [bayWidth - 0.01, 0.79, 0.3],
+                [cx, b + 0.405, z1], [bayWidth, 0.79, 0.3],
                 panelColor("s", bay, floor, bay + floor)),
               weathering: wear,
             },
@@ -2676,7 +2676,7 @@ function createKhrushchevka(
       } else {
         southPieces.push({
           ...makePiece(`${clusterId}:${bay}`, clusterId, "concrete", "panel",
-            [cx, b + 1.2, z1], [bayWidth - 0.01, wallHeight, 0.3],
+            [cx, b + 1.2, z1], [bayWidth, wallHeight, 0.3],
             panelColor("s", bay, floor, bay + floor)),
           weathering: wear,
         });
@@ -2699,13 +2699,13 @@ function createKhrushchevka(
         continue;
       }
       const cx = stripCenter(strip);
-      const jambWidth = (stripWidth - 1.9) / 2 - 0.02;
+      const jambWidth = (stripWidth - 1.9) / 2;
       const wear = facadeWeathering(floor);
       const unit = strip * 2 + 1;
       northPieces.push(
         {
           ...makePiece(`${clusterId}:${strip}:sill`, clusterId, "concrete", "panel",
-            [cx, b + 0.405, z0], [stripWidth - 0.02, 0.79, 0.3],
+            [cx, b + 0.405, z0], [stripWidth, 0.79, 0.3],
             panelColor("n", unit, floor, strip + floor)),
           weathering: wear,
         },
@@ -2726,7 +2726,7 @@ function createKhrushchevka(
         },
         {
           ...makePiece(`${clusterId}:${strip}:lintel`, clusterId, "concrete", "panel",
-            [cx, b + 2.185, z0], [stripWidth - 0.02, 0.41, 0.3],
+            [cx, b + 2.185, z0], [stripWidth, 0.41, 0.3],
             panelColor("n", unit, floor, strip + floor + 2)),
           weathering: wear,
         },
@@ -2762,7 +2762,7 @@ function createKhrushchevka(
     const stairFrameColor = "#cfc9b8";
     pieces.push({
       ...makePiece(`${clusterId}:ground`, clusterId, "concrete", "panel",
-        [cx, 1.565, z0], [stripWidth - 0.02, 2.31, 0.3],
+        [cx, 1.565, z0], [stripWidth, 2.31, 0.3],
         panelColor("n", strip * 2 + 1, 0, sectionIndex)),
       weathering: 0.34,
     });
@@ -2804,7 +2804,7 @@ function createKhrushchevka(
       if (window < 2) {
         pieces.push({
           ...makePiece(`${clusterId}:band:${window}`, clusterId, "concrete", "panel",
-            [cx, 4.61 + window * floorHeight, z0], [stripWidth - 0.02, 1.42, 0.3],
+            [cx, 4.61 + window * floorHeight, z0], [stripWidth, 1.42, 0.3],
             panelColor("n", strip * 2 + 1, window + 1, window + 1)),
           weathering: 0.18,
         });
@@ -2812,7 +2812,7 @@ function createKhrushchevka(
     }
     pieces.push({
       ...makePiece(`${clusterId}:top`, clusterId, "concrete", "panel",
-        [cx, 9.845, z0], [stripWidth - 0.02, 1.49, 0.3],
+        [cx, 9.845, z0], [stripWidth, 1.49, 0.3],
         panelColor("n", strip * 2 + 1, 3, 2)),
       weathering: 0.14,
     });
@@ -2831,7 +2831,7 @@ function createKhrushchevka(
         // цепочка несёт от цоколя, а не от нулевой кромки плиты.
         pieces.push({
           ...makePiece(`${clusterId}:${ex}:${index}`, clusterId, "concrete", "panel",
-            [ex, floorBase(floor) + 1.22, zc], [0.3, 2.42, 3.46],
+            [ex, floorBase(floor) + 1.22, zc], [0.3, 2.42, 3.5],
             groundAccent && floor === 0
               ? groundAccentPalette[(floor + index) % groundAccentPalette.length]
               : pal[(floor + index) % pal.length]),
