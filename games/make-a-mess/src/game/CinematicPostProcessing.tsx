@@ -61,7 +61,9 @@ const CinematicShader = {
     uniform float uAspect;
     varying vec2 vUv;
 
-    #define SHAFT_SAMPLES 28
+    // Fourteen taps retain the broad shaft shape at the adaptive render scale
+    // while halving the most expensive full-screen part of this pass.
+    #define SHAFT_SAMPLES 14
 
     float brightMask(vec3 color) {
       // Only genuinely HDR-bright sources (the sun core, strong glare) feed

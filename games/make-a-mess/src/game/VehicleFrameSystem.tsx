@@ -67,6 +67,7 @@ import {
   type EntryInteractionTarget,
 } from "./entryInteraction";
 import type { MotionTelemetryUpdate } from "./motionTelemetry";
+import { runtimeDiagnosticsEnabled } from "./runtimeDiagnostics";
 
 /** Кто отправляет рейс: пока единственный кадр, у которого есть расписание. */
 const SCHEDULED_FRAME = "sky-train";
@@ -301,6 +302,10 @@ export function VehicleFrameSystem({
   /** Яркость перронных огней в прошлом кадре: переключаем только по смене. */
   const departureGlow = useRef<number | null>(null);
   const debugTelemetryAt = useRef(0);
+  const vehicleDiagnostics = useMemo(
+    () => runtimeDiagnosticsEnabled("vehicle"),
+    [],
+  );
   const telemetryNextAt = useRef(new Map<string, number>());
   const telemetryActiveSources = useRef(new Set<string>());
   const handledDepartRequest = useRef(departRequestVersion);
@@ -593,7 +598,7 @@ export function VehicleFrameSystem({
         departureGlow.current = glow;
         setSignalGlassGlow(departureSignalColor, glow);
       }
-      if (process.env.NODE_ENV !== "production") {
+      if (vehicleDiagnostics) {
         const now = performance.now();
         if (now >= debugTelemetryAt.current) {
           debugTelemetryAt.current = now + 250;

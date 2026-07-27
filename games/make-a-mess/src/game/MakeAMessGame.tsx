@@ -25,6 +25,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
   type MutableRefObject,
   type PointerEvent as ReactPointerEvent,
@@ -214,12 +215,12 @@ import {
 } from "./sceneDynamics";
 import { nextTimeOfDay, TIME_OF_DAY_TARGETS } from "./timeOfDay";
 import {
-  applyMotionTelemetryUpdate,
-  selectMotionTelemetrySnapshot,
+  createMotionTelemetryStore,
   type MotionTelemetryMetric,
-  type MotionTelemetrySnapshot,
+  type MotionTelemetryStore,
   type MotionTelemetryUpdate,
 } from "./motionTelemetry";
+import { runtimeDiagnosticsEnabled } from "./runtimeDiagnostics";
 
 type ControlName =
   | "forward"
@@ -592,6 +593,10 @@ function Player({
   const movingSupportBoundaryPassThrough = useRef(false);
   const passengerYawVelocity = useRef(0);
   const passengerTelemetryAt = useRef(0);
+  const passengerDiagnostics = useMemo(
+    () => runtimeDiagnosticsEnabled("passenger"),
+    [],
+  );
   const stepRay = useRef<RapierRay | null>(null);
   const stepCooldown = useRef(0);
   /** Остаток подъёма, начатого автошагом: пока он идёт, ноги ещё толкают. */
@@ -768,7 +773,7 @@ function Player({
         collider.setCollisionGroups(actorGroups);
       }
     }
-    if (process.env.NODE_ENV !== "production") {
+    if (passengerDiagnostics) {
       const now = performance.now();
       if (now >= passengerTelemetryAt.current) {
         passengerTelemetryAt.current = now + 250;
@@ -2939,7 +2944,8 @@ function OpenWorldScene({
       __mamTeleport?: (x: number, y: number, z: number) => boolean;
       __mamRapierDebug?: { world: unknown; rapier: unknown };
     };
-    teleportWindow.__mamRapierDebug = { world, rapier };
+    const rapierDebug = { world, rapier };
+    teleportWindow.__mamRapierDebug = rapierDebug;
     const teleport = (x: number, y: number, z: number) => {
       const playerBody = pieceBodies.current.get("player");
       if (!playerBody) {
@@ -2950,13 +2956,17 @@ function OpenWorldScene({
       return true;
     };
     teleportWindow.__mamTeleport = teleport;
+    const query = new URLSearchParams(window.location.search);
+    const automaticProbe =
+      query.get("mamProbe") === "1" || runtimeDiagnosticsEnabled("scene");
+    const teleportRequest = query.get("mamTeleport") ?? "";
     let handledTeleportRequest = "";
     const teleportAvailableAt = performance.now() + 1_200;
+    let timer: number | undefined;
     const publish = () => {
       // Изолированный контекст браузерного теста не видит функции на window.
       // Одноразовая dev-команда в query string оставляет тот же физический
       // телепорт и не требует отдельного тестового UI.
-      const teleportRequest = new URLSearchParams(window.location.search).get("mamTeleport") ?? "";
       if (
         performance.now() >= teleportAvailableAt &&
         teleportRequest &&
@@ -2966,27 +2976,42 @@ function OpenWorldScene({
           const [x, y, z] = teleportRequest.split(",").map(Number) as [number, number, number];
           if ([x, y, z].every(Number.isFinite) && teleport(x, y, z)) {
             handledTeleportRequest = teleportRequest;
+            if (!automaticProbe && timer !== undefined) {
+              window.clearInterval(timer);
+              timer = undefined;
+            }
           }
         } catch {
           // Невалидная диагностическая команда не должна ронять игровой кадр.
         }
       }
-      try {
-        document.documentElement.dataset.mamPhysicsProbe = JSON.stringify(
-          debugWindow.__mamPhysicsProbe?.() ?? null,
-        );
-      } catch {
-        document.documentElement.dataset.mamPhysicsProbe = "null";
+      if (automaticProbe) {
+        try {
+          document.documentElement.dataset.mamPhysicsProbe = JSON.stringify(
+            debugWindow.__mamPhysicsProbe?.() ?? null,
+          );
+        } catch {
+          document.documentElement.dataset.mamPhysicsProbe = "null";
+        }
       }
     };
-    publish();
-    const timer = window.setInterval(publish, 200);
+    // The callable probe remains available in devtools. Continuous scene +
+    // physics raycasts are deliberately opt-in via `?mamProbe=1`.
+    if (automaticProbe || teleportRequest) {
+      publish();
+      timer = window.setInterval(publish, 200);
+    }
     return () => {
-      window.clearInterval(timer);
+      if (timer !== undefined) {
+        window.clearInterval(timer);
+      }
       delete document.documentElement.dataset.mamPhysicsProbe;
       delete debugWindow.__mamPhysicsProbe;
       if (teleportWindow.__mamTeleport === teleport) {
         delete teleportWindow.__mamTeleport;
+      }
+      if (teleportWindow.__mamRapierDebug === rapierDebug) {
+        delete teleportWindow.__mamRapierDebug;
       }
     };
   }, [camera, intersectBreakables, rapier, world]);
@@ -6435,13 +6460,28 @@ function telemetryValue(
 }
 
 function MotionTelemetryPanel({
-  snapshot,
+  store,
   timeOfDay,
+  onUnavailable,
 }: {
-  snapshot: MotionTelemetrySnapshot;
+  store: MotionTelemetryStore;
   timeOfDay: TimeOfDay;
-}): ReactElement {
+  onUnavailable: () => void;
+}): ReactElement | null {
   const { language, t } = useLanguage();
+  const snapshot = useSyncExternalStore(
+    store.subscribe,
+    store.getSnapshot,
+    store.getSnapshot,
+  );
+  useEffect(() => {
+    if (!snapshot) {
+      onUnavailable();
+    }
+  }, [onUnavailable, snapshot]);
+  if (!snapshot) {
+    return null;
+  }
   const locale = language === "ru" ? "ru-RU" : language === "es" ? "es-ES" : "en-GB";
   const phaseKey = telemetryPhaseLabels[snapshot.phase];
   return (
@@ -6669,8 +6709,7 @@ export function MakeAMessGame({
     calls: 0,
     triangles: 0,
   });
-  const telemetrySources = useRef(new Map<string, MotionTelemetrySnapshot>());
-  const [motionTelemetry, setMotionTelemetry] = useState<MotionTelemetrySnapshot | null>(null);
+  const [telemetryStore] = useState(createMotionTelemetryStore);
   const [telemetryVisible, setTelemetryVisible] = useState(false);
   const [hudAnnouncement, setHudAnnouncement] = useState<HudAnnouncementEvent | null>(null);
   const hudAnnouncementId = useRef(0);
@@ -6687,10 +6726,8 @@ export function MakeAMessGame({
   }, []);
 
   const handleMotionTelemetryUpdate = useCallback((update: MotionTelemetryUpdate) => {
-    const next = applyMotionTelemetryUpdate(telemetrySources.current, update);
-    telemetrySources.current = next;
-    setMotionTelemetry(selectMotionTelemetrySnapshot(next));
-  }, []);
+    telemetryStore.update(update);
+  }, [telemetryStore]);
 
   const toggleMotionTelemetry = useCallback(() => {
     if (telemetryVisible) {
@@ -6698,20 +6735,18 @@ export function MakeAMessGame({
       announceTelemetry("announce.telemetryOff");
       return;
     }
-    if (!motionTelemetry) {
+    if (!telemetryStore.getSnapshot()) {
       announceTelemetry("announce.telemetryUnavailable");
       return;
     }
     setTelemetryVisible(true);
     announceTelemetry("announce.telemetryOn");
-  }, [announceTelemetry, motionTelemetry, telemetryVisible]);
+  }, [announceTelemetry, telemetryStore, telemetryVisible]);
 
-  useEffect(() => {
-    if (telemetryVisible && !motionTelemetry) {
-      setTelemetryVisible(false);
-      announceTelemetry("announce.telemetryAutoOff");
-    }
-  }, [announceTelemetry, motionTelemetry, telemetryVisible]);
+  const handleTelemetryUnavailable = useCallback(() => {
+    setTelemetryVisible(false);
+    announceTelemetry("announce.telemetryAutoOff");
+  }, [announceTelemetry]);
 
   const clearFlyoverOutput = useCallback(() => {
     flyoverStillUrls.current.forEach((url) => URL.revokeObjectURL(url));
@@ -6880,12 +6915,11 @@ export function MakeAMessGame({
     setBrokenCount(0);
     setFlightMode(false);
     setApproachedEntry(null);
-    telemetrySources.current.clear();
-    setMotionTelemetry(null);
+    telemetryStore.clear();
     entryApproachActions.forEach(endGameAction);
     setResetVersion((version) => version + 1);
     mobileControls.current = createMobileControlsState();
-  }, [endGameAction]);
+  }, [endGameAction, telemetryStore]);
 
   const cycleTimeOfDay = useCallback(() => {
     setTimeOfDay(nextTimeOfDay);
@@ -7059,7 +7093,10 @@ export function MakeAMessGame({
             onCreated={(state) => {
               state.gl.toneMapping = AgXToneMapping;
               state.gl.toneMappingExposure = 1.08;
-              state.gl.shadowMap.autoUpdate = true;
+              // Shadows are invalidated by the sun, doors and destruction.
+              // Leaving autoUpdate enabled rendered the same atlas every frame
+              // and made all of that throttling ineffective.
+              state.gl.shadowMap.autoUpdate = false;
               state.gl.shadowMap.needsUpdate = true;
               setReady(true);
             }}
@@ -7164,8 +7201,12 @@ export function MakeAMessGame({
         </aside>
       ) : null}
 
-      {telemetryVisible && motionTelemetry && !cinematicActive ? (
-        <MotionTelemetryPanel snapshot={motionTelemetry} timeOfDay={timeOfDay} />
+      {telemetryVisible && !cinematicActive ? (
+        <MotionTelemetryPanel
+          store={telemetryStore}
+          timeOfDay={timeOfDay}
+          onUnavailable={handleTelemetryUnavailable}
+        />
       ) : null}
 
       {!cinematicActive ? <aside className="game-objective" aria-live="polite">

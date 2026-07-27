@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   applyMotionTelemetryUpdate,
+  createMotionTelemetryStore,
   selectMotionTelemetrySnapshot,
 } from "../games/make-a-mess/src/game/motionTelemetry.ts";
 
@@ -45,4 +46,31 @@ test("priority beats recency and a publisher cannot impersonate another source",
   assert.equal(sources.has("wrong-id"), false);
   assert.equal(sources.get("vehicle:a")?.sourceId, "vehicle:a");
   assert.equal(selectMotionTelemetrySnapshot(sources)?.sourceId, "vehicle:a");
+});
+
+test("the external telemetry store only wakes subscribers for the selected source", () => {
+  const store = createMotionTelemetryStore();
+  let notifications = 0;
+  const unsubscribe = store.subscribe(() => {
+    notifications += 1;
+  });
+
+  store.update({
+    sourceId: "airship",
+    snapshot: sample("airship", 10, 5),
+  });
+  assert.equal(store.getSnapshot()?.sourceId, "airship");
+  assert.equal(notifications, 1);
+
+  store.update({
+    sourceId: "train",
+    snapshot: sample("train", 20, 1),
+  });
+  assert.equal(store.getSnapshot()?.sourceId, "airship");
+  assert.equal(notifications, 1);
+
+  store.clear();
+  assert.equal(store.getSnapshot(), null);
+  assert.equal(notifications, 2);
+  unsubscribe();
 });

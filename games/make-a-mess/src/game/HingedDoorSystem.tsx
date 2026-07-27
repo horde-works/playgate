@@ -40,6 +40,7 @@ import {
   entryInteractionMatches,
   type EntryInteractionTarget,
 } from "./entryInteraction";
+import { runtimeDiagnosticsEnabled } from "./runtimeDiagnostics";
 
 export type HingedEntryApproach = EntryInteractionTarget;
 
@@ -188,6 +189,10 @@ export function HingedDoorSystem({
   const shadowAccumulator = useRef(1);
   const shadowRefreshRequested = useRef(false);
   const carrierDoorTelemetryAt = useRef(0);
+  const doorDiagnostics = useMemo(
+    () => runtimeDiagnosticsEnabled("door"),
+    [],
+  );
   const approachedEntry = useRef<HingedEntryApproach | null>(null);
   const openedEntries = useRef(new Set<string>());
   const handledEntryRequest = useRef(entryOpenRequestVersion);
@@ -451,7 +456,7 @@ export function HingedDoorSystem({
         -hinge.normal[0],
       ];
 
-      if (process.env.NODE_ENV !== "production" && plug) {
+      if (doorDiagnostics && plug) {
         carrierDoorTelemetry = {
           id: plug.doorId,
           angle: state.angle,
@@ -589,7 +594,7 @@ export function HingedDoorSystem({
       }
     }
 
-    if (process.env.NODE_ENV !== "production") {
+    if (doorDiagnostics) {
       const now = performance.now();
       if (now >= carrierDoorTelemetryAt.current) {
         carrierDoorTelemetryAt.current = now + 100;

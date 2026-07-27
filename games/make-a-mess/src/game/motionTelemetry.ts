@@ -69,3 +69,52 @@ export function selectMotionTelemetrySnapshot(
   }
   return selected;
 }
+
+export interface MotionTelemetryStore {
+  readonly update: (update: MotionTelemetryUpdate) => void;
+  readonly clear: () => void;
+  readonly getSnapshot: () => MotionTelemetrySnapshot | null;
+  readonly subscribe: (listener: () => void) => () => void;
+}
+
+/**
+ * A transport-neutral external store. Physics can publish at its own cadence
+ * without re-rendering the whole game shell; only a mounted telemetry HUD
+ * subscribes to the selected source.
+ */
+export function createMotionTelemetryStore(): MotionTelemetryStore {
+  let sources = new Map<string, MotionTelemetrySnapshot>();
+  let selected: MotionTelemetrySnapshot | null = null;
+  const listeners = new Set<() => void>();
+
+  const publishSelection = (next: MotionTelemetrySnapshot | null) => {
+    if (Object.is(selected, next)) {
+      return;
+    }
+    selected = next;
+    for (const listener of listeners) {
+      listener();
+    }
+  };
+
+  return {
+    update(update) {
+      sources = applyMotionTelemetryUpdate(sources, update);
+      publishSelection(selectMotionTelemetrySnapshot(sources));
+    },
+    clear() {
+      if (sources.size === 0 && selected === null) {
+        return;
+      }
+      sources = new Map();
+      publishSelection(null);
+    },
+    getSnapshot() {
+      return selected;
+    },
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+}

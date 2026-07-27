@@ -120,7 +120,11 @@ export function setWindowGlow(intensity: number): void {
 
 // Compiled piece-material programs whose environment uniforms (sun-tinted
 // fog, scene wetness) are updated once per frame by the day/night cycle.
-const environmentShaders: WebGLProgramParametersWithUniforms[] = [];
+const environmentShaders = new Set<WebGLProgramParametersWithUniforms>();
+const environmentShaderByMaterial = new WeakMap<
+  MeshStandardMaterial,
+  WebGLProgramParametersWithUniforms
+>();
 
 export interface MaterialEnvironmentUpdate {
   readonly sunDirection: Vector3;
@@ -1321,7 +1325,15 @@ export function getPieceMaterial(
       shader.uniforms.uLandscapeSoilMap = { value: getMaterialTexture("soil") };
       shader.uniforms.uVikingTrafficMap = { value: getVikingTrafficTexture() };
       shader.uniforms.uCitySurfaceMap = { value: getCitySurfaceTexture() };
-      environmentShaders.push(shader);
+      // A cached material may be compiled again for a recreated WebGL
+      // renderer. Keep only its current program so day/night updates do not
+      // retain dead renderers or grow linearly after every scene reset.
+      const previousShader = environmentShaderByMaterial.get(standardMaterial);
+      if (previousShader) {
+        environmentShaders.delete(previousShader);
+      }
+      environmentShaderByMaterial.set(standardMaterial, shader);
+      environmentShaders.add(shader);
 
       shader.vertexShader = shader.vertexShader
         .replace(
