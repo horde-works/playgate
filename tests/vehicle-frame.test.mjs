@@ -35,6 +35,7 @@ import {
   routePoint,
   DEPARTURE_LIGHT,
   departureLightGlow,
+  engineValuesPortToStarboard,
   skyTrainFlightEventState,
   SKY_TRAIN_CASTOFF_TIME,
 } from "../games/make-a-mess/src/game/vehicleFrames.ts";
@@ -176,6 +177,18 @@ test("pitch and roll are measured on the ship, not on the world axes", () => {
 
   // Рыскание — вокруг мировой вертикали: высота носа не меняется.
   assert.equal(Math.abs(up({ ...RESTING_POSE, yaw: 1.1 })) < 1e-9, true);
+});
+
+test("engine readouts are ordered left to right from the vehicle geometry", () => {
+  const frame = vehicleFrameForCluster(SKY_TRAIN);
+  const ordered = engineValuesPortToStarboard(
+    [11, 22],
+    SKY_TRAIN_LIMITS.enginePoints,
+    frame.origin,
+    frame.nose,
+  );
+  // Authored order is right, left; a human-facing L / R readout reverses it.
+  assert.deepEqual(ordered, [22, 11]);
 });
 
 test("the moved ship still clears the berth it left", () => {

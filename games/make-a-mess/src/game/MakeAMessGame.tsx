@@ -213,6 +213,13 @@ import {
   type MutablePieceVisualState,
 } from "./sceneDynamics";
 import { nextTimeOfDay, TIME_OF_DAY_TARGETS } from "./timeOfDay";
+import {
+  applyMotionTelemetryUpdate,
+  selectMotionTelemetrySnapshot,
+  type MotionTelemetryMetric,
+  type MotionTelemetrySnapshot,
+  type MotionTelemetryUpdate,
+} from "./motionTelemetry";
 
 type ControlName =
   | "forward"
@@ -2629,6 +2636,7 @@ interface OpenWorldSceneProps {
   onDynamicBodyCountChange: (count: number) => void;
   onEntryApproachChange: (entry: HingedEntryApproach | null) => void;
   onDepartureApproachChange: (approached: "board" | "ride" | null) => void;
+  onMotionTelemetryUpdate: (update: MotionTelemetryUpdate) => void;
 }
 
 function OpenWorldScene({
@@ -2653,6 +2661,7 @@ function OpenWorldScene({
   onDynamicBodyCountChange,
   onEntryApproachChange,
   onDepartureApproachChange,
+  onMotionTelemetryUpdate,
 }: OpenWorldSceneProps) {
   const {
     breakablePieceById,
@@ -5790,6 +5799,7 @@ function OpenWorldScene({
         clusterEventStates={clusterEventStates}
         clusterRegistry={compoundKinematicClusters}
         onFramePose={publishVehicleFramePose}
+        onMotionTelemetryUpdate={onMotionTelemetryUpdate}
       />
       <HingedDoorSystem
         pieces={breakablePieces}
@@ -6376,6 +6386,94 @@ function MobileGameControls({
   );
 }
 
+interface HudAnnouncementEvent {
+  readonly id: number;
+  readonly kickerKey: TranslationKey;
+  readonly textKey: TranslationKey;
+}
+
+const telemetryMetricLabels: Readonly<Record<string, TranslationKey>> = {
+  groundSpeed: "telemetry.metric.groundSpeed",
+  relativeAltitude: "telemetry.metric.relativeAltitude",
+  verticalSpeed: "telemetry.metric.verticalSpeed",
+  heading: "telemetry.metric.heading",
+  enginePower: "telemetry.metric.enginePower",
+  routeProgress: "telemetry.metric.routeProgress",
+  distanceRemaining: "telemetry.metric.distanceRemaining",
+};
+
+const telemetryPhaseLabels: Readonly<Record<string, TranslationKey>> = {
+  attention: "telemetry.phase.attention",
+  departure: "telemetry.phase.departure",
+  cruise: "telemetry.phase.cruise",
+  approach: "telemetry.phase.approach",
+  inTransit: "telemetry.phase.inTransit",
+};
+
+function telemetryValue(
+  metric: MotionTelemetryMetric,
+  locale: string,
+): string {
+  const values = typeof metric.value === "number" ? [metric.value] : metric.value;
+  const formatted = values.map((raw) => {
+    const value = Math.abs(raw) < 1e-9 ? 0 : raw;
+    if (metric.id === "heading") {
+      return String(Math.round(value) % 360).padStart(3, "0");
+    }
+    return new Intl.NumberFormat(locale, {
+      minimumFractionDigits: metric.precision ?? 0,
+      maximumFractionDigits: metric.precision ?? 0,
+      signDisplay: metric.signed ? "exceptZero" : "auto",
+    }).format(value);
+  });
+  const unit = metric.unit === "deg"
+    ? "°"
+    : metric.unit === "percent"
+      ? "%"
+      : metric.unit;
+  return `${formatted.join(" / ")}${unit === "°" ? "" : " "}${unit}`;
+}
+
+function MotionTelemetryPanel({
+  snapshot,
+  timeOfDay,
+}: {
+  snapshot: MotionTelemetrySnapshot;
+  timeOfDay: TimeOfDay;
+}): ReactElement {
+  const { language, t } = useLanguage();
+  const locale = language === "ru" ? "ru-RU" : language === "es" ? "es-ES" : "en-GB";
+  const phaseKey = telemetryPhaseLabels[snapshot.phase];
+  return (
+    <aside
+      className={`motion-telemetry is-${timeOfDay}`}
+      aria-label={t("telemetry.aria")}
+      data-testid="motion-telemetry"
+    >
+      <header>
+        <span className="motion-telemetry-signal" aria-hidden="true" />
+        <div>
+          <p>{t("telemetry.kicker")}</p>
+          <h2>{snapshot.sourceLabel}</h2>
+        </div>
+        <strong>{phaseKey ? t(phaseKey) : snapshot.phase}</strong>
+      </header>
+      <dl>
+        {snapshot.metrics.map((metric) => (
+          <div key={metric.id}>
+            <dt>
+              {telemetryMetricLabels[metric.id]
+                ? t(telemetryMetricLabels[metric.id])
+                : metric.id}
+            </dt>
+            <dd>{telemetryValue(metric, locale)}</dd>
+          </div>
+        ))}
+      </dl>
+    </aside>
+  );
+}
+
 /**
  * Титр режима и дежурные чипы.
  *
@@ -6388,10 +6486,12 @@ function ModeAnnounce({
   flightMode,
   weapon,
   timeOfDay,
+  announcement,
 }: {
   flightMode: boolean;
   weapon: WeaponName;
   timeOfDay: TimeOfDay;
+  announcement?: HudAnnouncementEvent | null;
 }): ReactElement | null {
   const { t } = useLanguage();
   const [caption, setCaption] = useState<{
@@ -6438,6 +6538,18 @@ function ModeAnnounce({
     nextId.current += 1;
     setCaption({ id: nextId.current, kicker, text });
   }, [flightMode, timeOfDay, weapon, t]);
+
+  useEffect(() => {
+    if (!announcement) {
+      return;
+    }
+    nextId.current += 1;
+    setCaption({
+      id: nextId.current,
+      kicker: t(announcement.kickerKey),
+      text: t(announcement.textKey),
+    });
+  }, [announcement, t]);
 
   useEffect(() => {
     if (!caption) {
@@ -6557,8 +6669,49 @@ export function MakeAMessGame({
     calls: 0,
     triangles: 0,
   });
+  const telemetrySources = useRef(new Map<string, MotionTelemetrySnapshot>());
+  const [motionTelemetry, setMotionTelemetry] = useState<MotionTelemetrySnapshot | null>(null);
+  const [telemetryVisible, setTelemetryVisible] = useState(false);
+  const [hudAnnouncement, setHudAnnouncement] = useState<HudAnnouncementEvent | null>(null);
+  const hudAnnouncementId = useRef(0);
   const flyoverRunning = flyoverMode === "playing" || flyoverMode === "recording";
   const cinematicActive = flyover !== undefined && flyoverMode !== "idle";
+
+  const announceTelemetry = useCallback((textKey: TranslationKey) => {
+    hudAnnouncementId.current += 1;
+    setHudAnnouncement({
+      id: hudAnnouncementId.current,
+      kickerKey: "announce.telemetryKicker",
+      textKey,
+    });
+  }, []);
+
+  const handleMotionTelemetryUpdate = useCallback((update: MotionTelemetryUpdate) => {
+    const next = applyMotionTelemetryUpdate(telemetrySources.current, update);
+    telemetrySources.current = next;
+    setMotionTelemetry(selectMotionTelemetrySnapshot(next));
+  }, []);
+
+  const toggleMotionTelemetry = useCallback(() => {
+    if (telemetryVisible) {
+      setTelemetryVisible(false);
+      announceTelemetry("announce.telemetryOff");
+      return;
+    }
+    if (!motionTelemetry) {
+      announceTelemetry("announce.telemetryUnavailable");
+      return;
+    }
+    setTelemetryVisible(true);
+    announceTelemetry("announce.telemetryOn");
+  }, [announceTelemetry, motionTelemetry, telemetryVisible]);
+
+  useEffect(() => {
+    if (telemetryVisible && !motionTelemetry) {
+      setTelemetryVisible(false);
+      announceTelemetry("announce.telemetryAutoOff");
+    }
+  }, [announceTelemetry, motionTelemetry, telemetryVisible]);
 
   const clearFlyoverOutput = useCallback(() => {
     flyoverStillUrls.current.forEach((url) => URL.revokeObjectURL(url));
@@ -6727,6 +6880,8 @@ export function MakeAMessGame({
     setBrokenCount(0);
     setFlightMode(false);
     setApproachedEntry(null);
+    telemetrySources.current.clear();
+    setMotionTelemetry(null);
     entryApproachActions.forEach(endGameAction);
     setResetVersion((version) => version + 1);
     mobileControls.current = createMobileControlsState();
@@ -6822,6 +6977,9 @@ export function MakeAMessGame({
         cycleTimeOfDay();
       } else if (event.code === "KeyF" && !event.repeat) {
         toggleFlightMode();
+      } else if (event.code === "KeyT" && !event.repeat) {
+        event.preventDefault();
+        toggleMotionTelemetry();
       } else if (event.code === "KeyP") {
         setShowPerformance((current) => !current);
       }
@@ -6829,7 +6987,14 @@ export function MakeAMessGame({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [approachedEntry, cycleTimeOfDay, openApproachedEntry, reset, toggleFlightMode]);
+  }, [
+    approachedEntry,
+    cycleTimeOfDay,
+    openApproachedEntry,
+    reset,
+    toggleFlightMode,
+    toggleMotionTelemetry,
+  ]);
 
   const progress =
     Math.round(
@@ -6929,6 +7094,7 @@ export function MakeAMessGame({
                   onDynamicBodyCountChange={setDynamicBodyCount}
                   onEntryApproachChange={handleEntryApproachChange}
                   onDepartureApproachChange={handleDepartureApproachChange}
+                  onMotionTelemetryUpdate={handleMotionTelemetryUpdate}
                 />
               </Physics>
               {flyover ? (
@@ -6960,6 +7126,7 @@ export function MakeAMessGame({
           flightMode={flightMode}
           weapon={weapon}
           timeOfDay={timeOfDay}
+          announcement={hudAnnouncement}
         />
       ) : null}
 
@@ -6995,6 +7162,10 @@ export function MakeAMessGame({
           <span>{performance.triangles.toLocaleString()} tris</span>
           <span>{dynamicBodyCount} bodies</span>
         </aside>
+      ) : null}
+
+      {telemetryVisible && motionTelemetry && !cinematicActive ? (
+        <MotionTelemetryPanel snapshot={motionTelemetry} timeOfDay={timeOfDay} />
       ) : null}
 
       {!cinematicActive ? <aside className="game-objective" aria-live="polite">
@@ -7111,6 +7282,8 @@ export function MakeAMessGame({
         {t("controls.time")}
         <span>F</span>
         {flightMode ? t("controls.land") : t("controls.fly")}
+        <span>T</span>
+        {t("controls.telemetry")}
         {!flightMode ? (
           <>
             <span>Space</span>

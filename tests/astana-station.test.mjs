@@ -90,27 +90,52 @@ test("the screen doors line up with the train, and the platform outlasts it", ()
   }
 });
 
-test("the climb to the platform is broken by a mezzanine, and every way up exists", () => {
-  // Двенадцать метров подъёма прямым маршем не берутся: марш ушёл бы за
-  // кромку платформы прямо над путём. Поэтому подъём в два плеча, и на
-  // каждом плече есть и лестница, и эскалатор, а лифт идёт насквозь.
+test("the climb is one continuous core, and every way up exists", () => {
+  // Схема сменилась по итогам аудита проходимости: разнесённый мезонин с
+  // разворотом заменён ОДНИМ непрерывным ядром вдоль платформы. Настоящая
+  // станция линии двухэтажная и читается одной фразой — касса и турникеты
+  // внизу, платформа наверху, между ними одна видимая группа подъёма.
   for (const station of astanaStations) {
-    for (const flight of ["stair-lower", "stair-upper", "escalator-lower", "escalator-upper"]) {
+    for (const flight of ["stair", "escalator"]) {
       const steps = ofStation(station.id, `:${flight}:step:`);
-      assert.ok(steps.length >= 14, `${station.id}: у марша ${flight} ступеней ${steps.length}`);
+      assert.ok(steps.length >= 40, `${station.id}: у марша ${flight} ступеней ${steps.length}`);
       const heights = steps.map((step) => step.position[1]);
+      // Один марш забирает весь подъём: от пола вестибюля до платформы.
       assert.ok(
-        Math.max(...heights) - Math.min(...heights) > 3,
-        `${station.id}: марш ${flight} никуда не поднимается`,
+        Math.max(...heights) - Math.min(...heights) > 10,
+        `${station.id}: марш ${flight} не забирает подъём целиком`,
       );
     }
-    assert.ok(ofStation(station.id, ":lift-car").length === 1);
-    assert.ok(ofStation(station.id, ":mezzanine:slab:").length >= 3);
-    assert.ok(ofStation(station.id, ":gallery:slab:").length >= 3);
-    // Верхняя площадка вровень с платформой, мезонин — примерно на полпути.
-    for (const slab of ofStation(station.id, ":gallery:slab:")) {
+    // Верхняя площадка вровень с платформой и примыкает к её задней кромке.
+    // Площадка примыкает к платформе, а отросток к лифту — отдельной плитой:
+    // шахта стоит РЯДОМ с площадкой, поэтому дырявить плиту не приходится.
+    const deck = [
+      ...ofStation(station.id, ":deck:slab:"),
+      ...ofStation(station.id, ":deck-lift:slab:"),
+    ];
+    assert.ok(deck.length >= 2, `${station.id}: площадки нет`);
+    for (const slab of deck) {
       assert.ok(Math.abs(slab.position[1] + 0.22 - PLATFORM_Y) < 0.01);
     }
+    // Лифт — объект с полом и потолком, а не сплошной блок.
+    assert.equal(ofStation(station.id, ":lift-floor").length, 1);
+    assert.equal(ofStation(station.id, ":lift-ceiling").length, 1);
+    assert.equal(ofStation(station.id, ":lift-call").length, 1);
+    // Линия оплаты: барьер с проходами, и один из них широкий.
+    assert.ok(ofStation(station.id, ":fare-barrier:").length >= 3);
+    assert.equal(ofStation(station.id, ":gate:").length, 8, "по две тумбы на проход");
+  }
+});
+
+test("the entrance is an opening, not a pane of glass", () => {
+  // Первый и достаточный стоппер прошлой сборки: все шесть пролётов фасада
+  // были заполнены стеклом, и станция начиналась с непроходимой стены.
+  for (const station of astanaStations) {
+    const mullions = ofStation(station.id, ":hall-mullion:");
+    const panes = ofStation(station.id, ":hall-glass:");
+    assert.ok(mullions.length > panes.length, `${station.id}: фасад запечатан`);
+    assert.equal(ofStation(station.id, ":hall-lintel").length, 1);
+    assert.equal(ofStation(station.id, ":hall-door:").length, 2);
   }
 });
 

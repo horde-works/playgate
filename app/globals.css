@@ -2129,6 +2129,139 @@ button:focus-visible {
   text-transform: uppercase;
 }
 
+.motion-telemetry {
+  --telemetry-ink: #f4f2e9;
+  --telemetry-muted: rgb(244 242 233 / 0.72);
+  --telemetry-accent: #e3ff79;
+  position: absolute;
+  top: 50%;
+  right: clamp(18px, 3vw, 48px);
+  z-index: 16;
+  width: min(248px, calc(100vw - 36px));
+  color: var(--telemetry-ink);
+  font-family: var(--font-geist-mono), monospace;
+  mix-blend-mode: difference;
+  pointer-events: none;
+  transform: translateY(-50%);
+  animation: motionTelemetryIn 340ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.motion-telemetry.is-dawn {
+  --telemetry-ink: #f6eadc;
+  --telemetry-muted: rgb(246 234 220 / 0.7);
+  --telemetry-accent: #ffe6a0;
+}
+
+.motion-telemetry.is-day {
+  --telemetry-ink: #f4f2e9;
+  --telemetry-muted: rgb(244 242 233 / 0.72);
+  --telemetry-accent: #e5ff80;
+}
+
+.motion-telemetry.is-sunset {
+  --telemetry-ink: #ffe9dd;
+  --telemetry-muted: rgb(255 233 221 / 0.72);
+  --telemetry-accent: #ffd08f;
+}
+
+.motion-telemetry.is-night {
+  --telemetry-ink: #e9f0e8;
+  --telemetry-muted: rgb(233 240 232 / 0.7);
+  --telemetry-accent: #d9ff70;
+}
+
+.motion-telemetry header {
+  display: grid;
+  grid-template-columns: 8px 1fr auto;
+  gap: 9px;
+  align-items: center;
+  padding: 4px 0 9px;
+}
+
+.motion-telemetry-signal {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--telemetry-accent);
+  animation: motionTelemetryPulse 1.4s ease-in-out infinite;
+}
+
+.motion-telemetry header p,
+.motion-telemetry header h2 {
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.motion-telemetry header p {
+  color: var(--telemetry-muted);
+  font-size: 6px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+}
+
+.motion-telemetry header h2 {
+  margin-top: 2px;
+  color: var(--telemetry-accent);
+  font-size: 10px;
+  font-weight: 820;
+  letter-spacing: 0.1em;
+}
+
+.motion-telemetry header strong {
+  color: var(--telemetry-accent);
+  font-size: 6px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.motion-telemetry dl {
+  margin: 0;
+  padding: 0;
+}
+
+.motion-telemetry dl div {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  align-items: baseline;
+  min-height: 23px;
+}
+
+.motion-telemetry dt,
+.motion-telemetry dd {
+  margin: 0;
+  font-size: 7px;
+  line-height: 23px;
+  text-transform: uppercase;
+}
+
+.motion-telemetry dt {
+  overflow: hidden;
+  color: var(--telemetry-muted);
+  font-weight: 650;
+  letter-spacing: 0.055em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.motion-telemetry dd {
+  flex: none;
+  color: var(--telemetry-ink);
+  font-weight: 820;
+  letter-spacing: 0.035em;
+}
+
+@keyframes motionTelemetryIn {
+  from { opacity: 0; transform: translate(18px, -50%); }
+  to { opacity: 1; transform: translate(0, -50%); }
+}
+
+@keyframes motionTelemetryPulse {
+  0%, 100% { opacity: 0.45; transform: scale(0.82); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
 .game-objective {
   position: absolute;
   top: 94px;
@@ -2626,6 +2759,12 @@ button:focus-visible {
   .game-objective,
   .controls-hint {
     display: none;
+  }
+
+  .motion-telemetry {
+    top: 46%;
+    right: 14px;
+    width: min(224px, calc(100vw - 28px));
   }
 
   .game-action-hint {
@@ -3134,7 +3273,9 @@ button:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   .mode-announce-kicker,
   .mode-announce-title span,
-  .mode-chip {
+  .mode-chip,
+  .motion-telemetry,
+  .motion-telemetry-signal {
     animation-duration: 0.01ms;
     animation-iteration-count: 1;
   }

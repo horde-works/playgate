@@ -32,6 +32,7 @@ import {
   RIDE_RELEASE_RADIUS,
   SKY_TRAIN_CASTOFF_TIME,
   departureLightGlow,
+  engineValuesPortToStarboard,
   SKY_TRAIN_DEPARTURE_BOARD,
   SKY_TRAIN_LIMITS,
   SKY_TRAIN_PLATFORM_DROP,
@@ -65,6 +66,7 @@ import {
   entryInteractionMatches,
   type EntryInteractionTarget,
 } from "./entryInteraction";
+import type { MotionTelemetryUpdate } from "./motionTelemetry";
 
 /** Кто отправляет рейс: пока единственный кадр, у которого есть расписание. */
 const SCHEDULED_FRAME = "sky-train";
@@ -144,6 +146,7 @@ interface FrameMember {
 interface VehicleFrameRuntime {
   readonly id: string;
   readonly clusterId: string;
+  readonly telemetryLabel: string | undefined;
   readonly independentMemberMatches?: readonly string[];
   readonly origin: readonly [number, number, number];
   readonly nose: readonly [number, number, number];
@@ -263,6 +266,7 @@ export function VehicleFrameSystem({
   clusterEventStates,
   clusterRegistry,
   onFramePose,
+  onMotionTelemetryUpdate,
 }: {
   pieces: readonly BreakablePieceDefinition[];
   bodies: { current: Map<string, RapierRigidBody> };
@@ -288,6 +292,8 @@ export function VehicleFrameSystem({
   clusterRegistry: CompoundKinematicClusterRegistry;
   /** Публикует физическую позу без переноса логики кадра наружу. */
   onFramePose?: (state: VehicleFramePoseState) => void;
+  /** Общий числовой канал для HUD любого движущегося объекта. */
+  onMotionTelemetryUpdate?: (update: MotionTelemetryUpdate) => void;
 }) {
   const { rapier, world: rapierWorld } = useRapier();
   const { camera } = useThree();
@@ -295,6 +301,8 @@ export function VehicleFrameSystem({
   /** Яркость перронных огней в прошлом кадре: переключаем только по смене. */
   const departureGlow = useRef<number | null>(null);
   const debugTelemetryAt = useRef(0);
+  const telemetryNextAt = useRef(new Map<string, number>());
+  const telemetryActiveSources = useRef(new Set<string>());
   const handledDepartRequest = useRef(departRequestVersion);
 
   const frames = useMemo<readonly VehicleFrameRuntime[]>(() => {
@@ -341,6 +349,7 @@ export function VehicleFrameSystem({
       .map((frame) => ({
         id: frame.id,
         clusterId: frame.clusterId,
+        telemetryLabel: frame.telemetryLabel,
         independentMemberMatches: frame.independentMemberMatches,
         origin: frame.origin,
         nose: frame.nose,
@@ -364,6 +373,11 @@ export function VehicleFrameSystem({
   }, []);
 
   useEffect(() => {
+    for (const sourceId of telemetryActiveSources.current) {
+      onMotionTelemetryUpdate?.({ sourceId, snapshot: null });
+    }
+    telemetryActiveSources.current.clear();
+    telemetryNextAt.current.clear();
     states.current.clear();
     movingVehicles?.current.clear();
     dockedVehicles?.current.clear();
@@ -385,7 +399,22 @@ export function VehicleFrameSystem({
         clusterEventStates?.current.set(frame.clusterId, eventState);
       }
     }
-  }, [clusterEventStates, dockedVehicles, frameState, frames, movingVehicles, resetVersion]);
+  }, [
+    clusterEventStates,
+    dockedVehicles,
+    frameState,
+    frames,
+    movingVehicles,
+    onMotionTelemetryUpdate,
+    resetVersion,
+  ]);
+
+  useEffect(() => () => {
+    for (const sourceId of telemetryActiveSources.current) {
+      onMotionTelemetryUpdate?.({ sourceId, snapshot: null });
+    }
+    telemetryActiveSources.current.clear();
+  }, [onMotionTelemetryUpdate]);
 
   // Dev-хук: поза кадра из консоли или по CDP — пара к __mamTeleport.
   useEffect(() => {
@@ -968,6 +997,96 @@ export function VehicleFrameSystem({
         nose: frame.nose,
         pose: state.pose,
       });
+
+      // A publisher exposes measurements, never presentation. The same
+      // callback can later receive a train, lift or another compound carrier.
+      const sourceId = frame.clusterId;
+      const telemetryFlight = state.flight;
+      if (!telemetryFlight?.castOff) {
+        if (telemetryActiveSources.current.delete(sourceId)) {
+          telemetryNextAt.current.delete(sourceId);
+          onMotionTelemetryUpdate?.({ sourceId, snapshot: null });
+        }
+      } else if (onMotionTelemetryUpdate) {
+        const now = performance.now();
+        const nextAt = telemetryNextAt.current.get(sourceId) ?? 0;
+        telemetryActiveSources.current.add(sourceId);
+        if (now >= nextAt) {
+          telemetryNextAt.current.set(sourceId, now + 125);
+          const forward = rotateByQuaternion(
+            state.body.orientation,
+            frame.nose as [number, number, number],
+          );
+          const heading = (
+            Math.atan2(forward[0], -forward[2]) * 180 / Math.PI + 360
+          ) % 360;
+          const plan = flightPlan(
+            telemetryFlight.kind,
+            (state.mass?.centre as [number, number, number] | undefined) ?? frame.origin,
+          );
+          onMotionTelemetryUpdate({
+            sourceId,
+            snapshot: {
+              sourceId,
+              sourceLabel: frame.telemetryLabel ?? frame.id.toUpperCase(),
+              capturedAt: now,
+              phase: skyTrainFlightEventState(telemetryFlight),
+              metrics: [
+                {
+                  id: "groundSpeed",
+                  value: Math.hypot(state.body.velocity[0], state.body.velocity[2]) * 3.6,
+                  unit: "km/h",
+                  precision: 0,
+                },
+                {
+                  id: "relativeAltitude",
+                  value: state.body.position[1],
+                  unit: "m",
+                  precision: 1,
+                  signed: true,
+                },
+                {
+                  id: "verticalSpeed",
+                  value: state.body.velocity[1],
+                  unit: "m/s",
+                  precision: 1,
+                  signed: true,
+                },
+                {
+                  id: "heading",
+                  value: heading,
+                  unit: "deg",
+                  precision: 0,
+                },
+                {
+                  id: "enginePower",
+                  value: engineValuesPortToStarboard(
+                    telemetryFlight.throttle,
+                    SKY_TRAIN_LIMITS.enginePoints,
+                    state.mass?.centre ?? frame.origin,
+                    frame.nose,
+                  ).map((value) => value * 100),
+                  unit: "percent",
+                  precision: 0,
+                  signed: true,
+                },
+                {
+                  id: "routeProgress",
+                  value: telemetryFlight.progress * 100,
+                  unit: "percent",
+                  precision: 0,
+                },
+                {
+                  id: "distanceRemaining",
+                  value: Math.max(0, (1 - telemetryFlight.progress) * plan.length),
+                  unit: "m",
+                  precision: 0,
+                },
+              ],
+            },
+          });
+        }
+      }
     }
 
     for (const frame of frames) {

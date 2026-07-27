@@ -42,6 +42,8 @@ export {
 export interface VehicleFrameDefinition {
   readonly id: string;
   readonly clusterId: string;
+  /** Human-readable callsign used by the generic movement telemetry HUD. */
+  readonly telemetryLabel?: string;
   /** Внутренние механизмы, которые двигаются относительно общего корпуса. */
   readonly independentMemberMatches?: readonly string[];
   /**
@@ -134,6 +136,7 @@ export const vehicleFrames: readonly VehicleFrameDefinition[] = [
   {
     id: "sky-train",
     clusterId: "terminal:sky-train",
+    telemetryLabel: "SKY TRAIN 01",
     independentMemberMatches: [":blade:"],
     // Нос корабля смотрит на −x: от этого зависит, вокруг чего он кренится,
     // а вокруг чего задирает нос.
@@ -243,6 +246,33 @@ export function pitchAxisOf(nose: SceneVector3): SceneVector3 {
   // nose × up, где up = (0, 1, 0). Прибавленный ноль убирает -0: он не влияет
   // на математику, но портит сравнения в тестах.
   return [-nose[2] + 0, 0, nose[0] + 0];
+}
+
+/**
+ * Values attached to engine points in physical port-to-starboard order.
+ * Authoring order is not a side contract: this keeps telemetry and future
+ * control panels correct even when engines are rearranged in the model.
+ */
+export function engineValuesPortToStarboard(
+  values: readonly number[],
+  enginePoints: readonly SceneVector3[],
+  bodyCentre: SceneVector3,
+  nose: SceneVector3,
+): readonly number[] {
+  const starboard = pitchAxisOf(nose);
+  const length = Math.hypot(starboard[0], starboard[2]) || 1;
+  const sx = starboard[0] / length;
+  const sz = starboard[2] / length;
+  return enginePoints
+    .map((point, index) => ({
+      index,
+      lateral:
+        (point[0] - bodyCentre[0]) * sx +
+        (point[2] - bodyCentre[2]) * sz,
+    }))
+    // Port is negative on the starboard axis, so ascending means L → R.
+    .sort((a, b) => a.lateral - b.lateral || a.index - b.index)
+    .map(({ index }) => values[index] ?? 0);
 }
 
 /**

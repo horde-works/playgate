@@ -101,6 +101,56 @@ function point(
   ];
 }
 
+/**
+ * ПРОФИЛЬ КУЗОВА. Прямая коробка постоянного сечения — главное, чем состав не
+ * похож на оригинал. У настоящего вагона борт поджимается к кабине на длине
+ * около двух с половиной метров, крыша уже борта, юбка подобрана, а у стыка
+ * секций кузов сужается и уходит в тёмную гармошку с теневым зазором.
+ *
+ * Всё это здесь — ОДНА функция полуширины по продольной координате, и по ней
+ * же режутся полосы обшивки. Так силуэт получается из одного параметра, а не
+ * из двух независимо слепленных морд.
+ */
+/** Сколько метров от торца кузов формируется в «каплю». */
+const NOSE_LENGTH = 2.6;
+/** Насколько борт поджат у самого торца. */
+const NOSE_TUCK = 0.52;
+/** Половина ширины теневого зазора между секциями. */
+const JOINT_GAP = 0.1;
+/** На какой длине кузов поджимается к стыку и насколько. */
+const JOINT_TAPER = 0.8;
+const JOINT_TUCK = 0.16;
+
+/** Расстояние до ближайшего межсекционного стыка. */
+function distanceToJoint(t: number): number {
+  let best = Infinity;
+  for (let joint = 1; joint < TRAIN_SECTIONS; joint += 1) {
+    const at = -TRAIN_LENGTH / 2 + SECTION_LENGTH * joint;
+    best = Math.min(best, Math.abs(t - at));
+  }
+  return best;
+}
+
+/** Полуширина борта в этой точке состава. */
+export function bodyHalfWidth(t: number): number {
+  const base = CAR_WIDTH / 2;
+  const fromEnd = Math.min(t + TRAIN_LENGTH / 2, TRAIN_LENGTH / 2 - t);
+  let half = base;
+  if (fromEnd < NOSE_LENGTH) {
+    half -= NOSE_TUCK * Math.pow(1 - smoothstep(fromEnd / NOSE_LENGTH), 1.3);
+  }
+  const toJoint = distanceToJoint(t);
+  if (toJoint < JOINT_TAPER) {
+    half -= JOINT_TUCK * (1 - smoothstep(toJoint / JOINT_TAPER));
+  }
+  return half;
+}
+
+/** Полуширина крыши: она заметно уже борта, плечи скруглены. */
+export function roofHalfWidth(t: number): number {
+  return bodyHalfWidth(t) - 0.22;
+}
+
 function smoothstep(value: number): number {
   const t = value <= 0 ? 0 : value >= 1 ? 1 : value;
   return t * t * (3 - 2 * t);
@@ -134,7 +184,7 @@ function sidePanel(
   fromEnd: number,
 ): void {
   const rotation: readonly [number, number, number] = [0, frame.yaw, 0];
-  const w = side * (CAR_WIDTH / 2 - 0.05);
+  const w = side * (bodyHalfWidth(t) - 0.05);
   const [px, pz] = point(frame, t, w);
   const wave = liveryWaveY(fromEnd);
   const paint = (
@@ -143,11 +193,13 @@ function sidePanel(
     to: number,
     colour: string,
   ): void => {
-    // Обшивка борта — работающая: на ней держится ливрея и орнамент, как на
-    // настоящем кузове, где обшивка часть силовой схемы.
-    primitive(target, id(`${name}:${suffix}`), "plastic", "panel",
+    // Обшивка борта — СТАЛЬНАЯ и работающая: у настоящего кузова она часть
+    // силовой схемы. Прямая замена пластика сталью утяжелила бы её в 6.55
+    // раза (плотности 0.55 против 3.6), поэтому объём пересчитан: тот же
+    // лист, та же масса, честный материал по виду, звуку и разрушению.
+    primitive(target, id(`${name}:${suffix}`), "steel", "panel",
       [px, (from + to) / 2, pz], [width, to - from, 0.1], colour,
-      { rotation, bearingArea: 1, volume: (to - from) * width * 0.02,
+      { rotation, bearingArea: 1, volume: (to - from) * width * 0.00306,
         carriesAttachments: true, attachmentSupportMode: "cable",
         sideAttachmentReach: 0.9 });
   };
@@ -324,34 +376,80 @@ function createCab(
   facing: 1 | -1,
 ): void {
   const rotation: readonly [number, number, number] = [0, frame.yaw, 0];
-  const [nx, nz] = point(frame, noseT - facing * 0.42, 0);
 
-  // Торцевая стенка: без неё головная секция — открытая с торца коробка, и
-  // это видно с платформы насквозь.
-  const [ex, ez] = point(frame, noseT - facing * 0.12, 0);
-  primitive(target, id(`${name}:bulkhead`), "plastic", "panel",
+  // МОРДА-«КАПЛЯ». Собирается слоями по высоте: чем выше слой, тем дальше
+  // назад уходит его передняя грань — так получается завал лба примерно в
+  // 38° от вертикали, а поджатие борта и крыши даёт скруглённые плечи.
+  // Одна наклонная панель на торце коробки давала «коробку с козырьком», и
+  // это было первым, что бросалось в глаза.
+  // Слоёв много: при девяти завал читался лестницей, а не каплей.
+  const layers = 18;
+  const layerHeight = (ROOF - CAR_FLOOR) / layers;
+  const bodyStartT = noseT - facing * NOSE_LENGTH;
+  for (let layer = 0; layer < layers; layer += 1) {
+    const y = CAR_FLOOR + layerHeight * (layer + 0.5);
+    const frac = (y - CAR_FLOOR) / (ROOF - CAR_FLOOR);
+    const setback = NOSE_LENGTH * 0.7 * smoothstep(frac);
+    const frontT = noseT - facing * setback;
+    const centreLayerT = (frontT + bodyStartT) / 2;
+    const length = Math.abs(frontT - bodyStartT);
+    if (length < 0.12) {
+      continue;
+    }
+    // Ширина слоя: борт по профилю, кверху дополнительно поджат под крышу.
+    const half = bodyHalfWidth(centreLayerT) - 0.22 * Math.pow(frac, 2.2);
+    const [lx, lz] = point(frame, centreLayerT, 0);
+    const wave = liveryWaveY(
+      Math.min(centreLayerT + TRAIN_LENGTH / 2, TRAIN_LENGTH / 2 - centreLayerT),
+    );
+    primitive(target, id(`${name}:shell:${layer}`), "steel", "panel",
+      [lx, y, lz], [length, layerHeight + 0.01, half * 2],
+      y < wave ? TURQUOISE : GREY,
+      { rotation, bearingArea: 2, volume: length * half * 0.05,
+        carriesAttachments: true, attachmentSupportMode: "cable",
+        sideAttachmentReach: 1.2 });
+    // Скругление плеча слоя — узкая фаска по борту.
+    if (frac > 0.55 && layer % 2 === 0) {
+      for (const side of [-1, 1] as const) {
+        const [sx, sz] = point(frame, centreLayerT, side * half);
+        primitive(target, id(`${name}:fillet:${layer}:${side > 0 ? "r" : "l"}`),
+          "steel", "panel",
+          [sx, y, sz], [length, layerHeight, 0.18],
+          y < wave ? TURQUOISE : GREY,
+          { rotation, bearsLoad: false, volume: 0.02, sideAttachmentReach: 0.5 });
+      }
+    }
+  }
+
+  // Торцевая стенка кузова в глубине морды: салон не должен просвечивать.
+  const [ex, ez] = point(frame, bodyStartT + facing * 0.1, 0);
+  primitive(target, id(`${name}:bulkhead`), "steel", "panel",
     [ex, (CAR_FLOOR + ROOF) / 2, ez],
-    [0.14, ROOF - CAR_FLOOR, CAR_WIDTH - 0.2], GREY,
+    [0.14, ROOF - CAR_FLOOR, bodyHalfWidth(bodyStartT) * 2 - 0.2], GREY,
     { rotation, bearsLoad: false, volume: 0.4, sideAttachmentReach: 1.2 });
 
-  // Лоб сильно завален: наклонная панель от подоконного пояса к крыше.
-  const browHeight = ROOF - SILL - 0.1;
-  const lean = facing * 0.42;
-  primitive(target, id(`${name}:brow`), "plastic", "panel",
-    [nx, (SILL + ROOF) / 2, nz], [0.5, browHeight, CAR_WIDTH - 0.24], GREY,
-    { rotation: [0, frame.yaw, lean], bearsLoad: false, volume: 0.5,
-      sideAttachmentReach: 1.4 });
-  // Лобовое стекло: тёмная трапеция в чёрной рамке. За ним пусто — GOA4,
-  // машиниста нет, и это видно в упор.
-  const [gx, gz] = point(frame, noseT - facing * 0.56, 0);
-  primitive(target, id(`${name}:windscreen-frame`), "plastic", "panel",
-    [gx, SILL + browHeight * 0.52, gz], [0.16, 1.24, CAR_WIDTH - 0.42], BLACK,
-    { rotation: [0, frame.yaw, lean], bearsLoad: false, volume: 0.1,
+  // Лобовое стекло по завалу лба: тёмная трапеция в чёрной рамке. За ним
+  // пусто — GOA4, машиниста нет, и это видно в упор.
+  const glassFrac = 0.72;
+  const glassY = CAR_FLOOR + (ROOF - CAR_FLOOR) * glassFrac;
+  const glassSetback = NOSE_LENGTH * 0.7 * smoothstep(glassFrac);
+  const lean = facing * Math.atan2(NOSE_LENGTH * 0.7, ROOF - CAR_FLOOR);
+  const [gx, gz] = point(frame, noseT - facing * (glassSetback - 0.06), 0);
+  // Ширину берём по слою, в котором стекло сидит, с поджатием под крышу:
+  // иначе рамка выпирает за борт отдельной коробкой.
+  const glassHalf =
+    bodyHalfWidth(noseT - facing * glassSetback) - 0.22 * Math.pow(glassFrac, 2.2);
+  primitive(target, id(`${name}:windscreen-frame`), "steel", "panel",
+    [gx, glassY, gz], [0.16, 1.3, glassHalf * 2 - 0.16],
+    BLACK,
+    { rotation: [0, frame.yaw, lean], bearsLoad: false, volume: 0.12,
       sideAttachmentReach: 1.2 });
-  primitive(target, id(`${name}:windscreen`), "glass", "glassPane",
-    [gx, SILL + browHeight * 0.52, gz], [0.1, 1.04, CAR_WIDTH - 0.72], DARK_GLASS,
+  primitive(target, id(`${name}:windscreen`), "darkGlass", "glassPane",
+    [gx, glassY, gz], [0.1, 1.06, glassHalf * 2 - 0.48],
+    DARK_GLASS,
     { rotation: [0, frame.yaw, lean], bearsLoad: false, volume: 0.08,
       sideAttachmentReach: 1.2 });
+
   // Маршрутное табло узкой чёрной полосой над стеклом.
   const [bx, bz] = point(frame, noseT - facing * 0.5, 0);
   primitive(target, id(`${name}:route-board`), "plastic", "panel",
@@ -471,8 +569,10 @@ function createSection(
     }
   }
 
-  // Борта полосами: волна, окна, двери и орнаментальный пояс.
-  const strips = 20;
+  // Борта полосами: волна, окна, двери и орнаментальный пояс. Полоса мельче
+  // прежней — иначе поджатие к голове и к стыку читается ступеньками, а не
+  // формой.
+  const strips = 30;
   const stripWidth = SECTION_LENGTH / strips;
   const doorCentres = [-1, 1].map((side) => centreT + side * (SECTION_LENGTH / 4));
   for (let strip = 0; strip < strips; strip += 1) {
@@ -484,6 +584,16 @@ function createSection(
     const inDoor = doorCentres.some(
       (centre) => Math.abs(t - centre) < DOOR_WIDTH / 2,
     );
+    // Настоящий разрыв кузова у стыка: без силуэтного провала и тени состав
+    // читается одним бруском, сколько его ни крась.
+    if (distanceToJoint(t) < JOINT_GAP + stripWidth / 2) {
+      continue;
+    }
+    // Зона морды формуется слоями по высоте, полосам борта там делать нечего.
+    if (Math.min(t + TRAIN_LENGTH / 2, TRAIN_LENGTH / 2 - t) < NOSE_LENGTH * 0.72) {
+      continue;
+    }
+    const half = bodyHalfWidth(t);
     for (const side of [-1, 1] as const) {
       const suffix = `${strip}:${side > 0 ? "r" : "l"}`;
       // Подоконный пояс: он и несёт волну.
@@ -495,20 +605,20 @@ function createSection(
       sidePanel(target, id, frame, `header:${suffix}`, t, stripWidth + 0.01,
         side, HEADER, ROOF, fromEnd);
       // Юбка под полом: под ней видны тележки.
-      const [kx, kz] = point(frame, t, side * (CAR_WIDTH / 2 - 0.12));
-      primitive(target, id(`skirt:${suffix}`), "plastic", "panel",
+      const [kx, kz] = point(frame, t, side * (half - 0.12));
+      primitive(target, id(`skirt:${suffix}`), "steel", "panel",
         [kx, (SKIRT_BOTTOM + CAR_FLOOR - 0.12) / 2, kz],
         [stripWidth + 0.01, CAR_FLOOR - 0.12 - SKIRT_BOTTOM, 0.1], SKIRT,
-        { rotation, bearsLoad: false, volume: 0.05, sideAttachmentReach: 0.9 });
+        { rotation, bearsLoad: false, volume: 0.008, sideAttachmentReach: 0.9 });
       // Оконная лента: тёмное стекло на всю толщину борта, между простенками.
-      if (!inDoor && strip % 5 !== 0) {
-        const [gx, gz] = point(frame, t, side * (CAR_WIDTH / 2 - 0.06));
-        primitive(target, id(`window:${suffix}`), "glass", "glassPane",
+      if (!inDoor && strip % 7 !== 0) {
+        const [gx, gz] = point(frame, t, side * (half - 0.06));
+        primitive(target, id(`window:${suffix}`), "darkGlass", "glassPane",
           [gx, (SILL + HEADER) / 2, gz],
           [stripWidth + 0.01, HEADER - SILL, 0.12], DARK_GLASS,
           { rotation, bearsLoad: false, volume: 0.1, sideAttachmentReach: 0.9 });
       } else if (!inDoor) {
-        const [px, pz] = point(frame, t, side * (CAR_WIDTH / 2 - 0.05));
+        const [px, pz] = point(frame, t, side * (half - 0.05));
         sidePanel(target, id, frame, `pier:${suffix}`, t, stripWidth + 0.01,
           side, SILL, HEADER, fromEnd);
         void px;
@@ -565,7 +675,7 @@ function createSection(
         const t = doorT + leaf * DOOR_WIDTH / 4;
         const [lx, lz] = point(frame, t, side * (CAR_WIDTH / 2 - 0.06));
         const suffix = `${doorIndex}:${side > 0 ? "r" : "l"}:${leaf > 0 ? "b" : "a"}`;
-        primitive(target, id(`door-glass:${suffix}`), "glass", "glassPane",
+        primitive(target, id(`door-glass:${suffix}`), "darkGlass", "glassPane",
           [lx, SILL + 0.62, lz], [DOOR_WIDTH / 2 - 0.03, 1.22, 0.1], DARK_GLASS,
           { rotation, bearsLoad: false, volume: 0.08, sideAttachmentReach: 0.9 });
         primitive(target, id(`door-panel:${suffix}`), "plastic", "panel",
@@ -591,18 +701,37 @@ function createSection(
 
   // Крыша: гладкая, без пантографа — питание от контактного рельса; сверху
   // плоские обтекатели климата.
-  const roofParts = 3;
+  // Крыша идёт теми же секциями, что борт, и повторяет его поджатие: у
+  // настоящего вагона она заметно уже борта и скруглена по плечам.
+  const roofParts = 10;
+  const roofStep = SECTION_LENGTH / roofParts;
   for (let part = 0; part < roofParts; part += 1) {
-    const t = centreT - SECTION_LENGTH / 2 + (SECTION_LENGTH * (part + 0.5)) / roofParts;
+    const t = centreT - SECTION_LENGTH / 2 + roofStep * (part + 0.5);
+    if (distanceToJoint(t) < JOINT_GAP + roofStep / 2) {
+      continue;
+    }
+    if (Math.min(t + TRAIN_LENGTH / 2, TRAIN_LENGTH / 2 - t) < NOSE_LENGTH * 0.72) {
+      continue;
+    }
     const [rx, rz] = point(frame, t, 0);
-    primitive(target, id(`roof:${part}`), "plastic", "panel",
+    primitive(target, id(`roof:${part}`), "steel", "panel",
       [rx, ROOF + 0.08, rz],
-      [SECTION_LENGTH / roofParts + 0.04, 0.16, CAR_WIDTH - 0.06], GREY,
-      { rotation, bearingArea: 5, volume: 0.7, carriesAttachments: true,
+      [roofStep + 0.02, 0.16, roofHalfWidth(t) * 2], GREY,
+      { rotation, bearingArea: 5, volume: 0.12, carriesAttachments: true,
         attachmentSupportMode: "cable", sideAttachmentReach: 1.5 });
-    primitive(target, id(`hvac:${part}`), "steel", "panel",
-      [rx, ROOF + 0.28, rz], [SECTION_LENGTH / roofParts - 1.4, 0.24, 1.7], GREY_LIGHT,
-      { rotation, bearingArea: 2, volume: 0.4 });
+    // Скруглённое плечо: узкая фаска между бортом и крышей.
+    for (const side of [-1, 1] as const) {
+      const [sx, sz] = point(frame, t, side * (bodyHalfWidth(t) - 0.12));
+      primitive(target, id(`shoulder:${part}:${side > 0 ? "r" : "l"}`),
+        "steel", "panel",
+        [sx, ROOF - 0.02, sz], [roofStep + 0.02, 0.2, 0.26], GREY,
+        { rotation, bearsLoad: false, volume: 0.02, sideAttachmentReach: 0.6 });
+    }
+    if (part % 3 === 1) {
+      primitive(target, id(`hvac:${part}`), "steel", "panel",
+        [rx, ROOF + 0.28, rz], [roofStep * 2.2, 0.24, 1.7], GREY_LIGHT,
+        { rotation, bearingArea: 2, volume: 0.4 });
+    }
   }
 
   // Торцы: у головной секции — морда, между секциями — гармошка перехода.
@@ -617,14 +746,26 @@ function createSection(
     if (Math.abs(t) >= TRAIN_LENGTH / 2 - 0.01) {
       continue;
     }
-    const [gx, gz] = point(frame, t - end * 0.24, 0);
-    for (let fold = 0; fold < 3; fold += 1) {
+    // Гармошка стоит В ЗАЗОРЕ и выходит НАРУЖУ поджатого кузова: снаружи она
+    // и читается как стык. Спрятанная внутри линии борта, она давала
+    // «сплошной объект» — состав без вагонов.
+    const bellows = 3;
+    for (let fold = 0; fold < bellows; fold += 1) {
+      const foldT = t + (fold - 1) * 0.09;
+      const [gx, gz] = point(frame, foldT, 0);
+      const half = CAR_WIDTH / 2 - JOINT_TUCK + 0.04;
       primitive(target, id(`gangway:${end > 0 ? "b" : "a"}:${fold}`),
         "cloth", "panel",
-        [gx, (CAR_FLOOR + ROOF) / 2, gz],
-        [0.12, ROOF - CAR_FLOOR - 0.1, CAR_WIDTH - 0.5 - fold * 0.12], "#3c4245",
-        { rotation, bearsLoad: false, volume: 0.06, sideAttachmentReach: 0.6 });
+        [gx, (CAR_FLOOR + ROOF) / 2 - 0.1, gz],
+        [0.08, ROOF - CAR_FLOOR - 0.3, half * 2], "#31363a",
+        { rotation, bearsLoad: false, volume: 0.05, sideAttachmentReach: 0.9 });
     }
+    // Переходный мостик по полу — по нему и переходят из секции в секцию.
+    const [bx, bz] = point(frame, t, 0);
+    primitive(target, id(`gangway-floor:${end > 0 ? "b" : "a"}`),
+      "steel", "panel",
+      [bx, CAR_FLOOR - 0.05, bz], [0.44, 0.1, CAR_WIDTH - 1.2], "#585f63",
+      { rotation, bearingArea: 0.6, volume: 0.1 });
   }
 
   createInterior(target, id, frame, "cabin", centreT);
