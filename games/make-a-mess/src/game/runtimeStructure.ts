@@ -189,6 +189,7 @@ export function resolveRuntimeStructure<Material extends string>(
         carriesAttachments: parent?.carriesAttachments,
         attachmentSupportMode: parent?.attachmentSupportMode,
         sideAttachmentReach: parent?.sideAttachmentReach,
+        attachmentSupportIds: parent?.attachmentSupportIds,
         maximumVerticalGap: Math.min(
           profile.maximumVerticalGap,
           FRAGMENT_MAXIMUM_VERTICAL_GAP,

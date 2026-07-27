@@ -59,7 +59,7 @@ test("legal pages and footer expose the governing documents", () => {
     "utf8",
   );
   assert.match(footer, /Terms of Usage/);
-  assert.match(footer, /Source code: MIT License/);
+  assert.match(footer, /Source code: AGPL v3/);
 });
 
 test("the application contains no code that writes cookies", () => {

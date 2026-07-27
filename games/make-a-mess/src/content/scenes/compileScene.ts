@@ -434,6 +434,9 @@ export function compileSceneDocument(
     copy: document.copy,
     clusters,
     lamps,
+    indestructible: document.indestructible,
+    contentLicense: document.contentLicense,
+    fogDistances: document.fogDistances,
   });
   const unsupported = scene.resolveStructuralCollapse(new Set());
   if (options.validateInitialStability !== false && unsupported.size > 0) {

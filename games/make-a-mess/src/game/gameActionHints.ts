@@ -5,7 +5,9 @@ export type GameAction =
   | "player.spawned"
   | "gate.approaching"
   | "door.approaching"
-  | "town-door.approaching";
+  | "town-door.approaching"
+  | "departure.approaching"
+  | "ride.approaching";
 
 export interface GameActionHint {
   readonly id: string;
@@ -52,6 +54,28 @@ export const gameActionHints: readonly GameActionHint[] = [
     detailKey: "hint.door.action",
     touchDetailKey: "hint.door.actionTouch",
     keyLabelKey: "hint.door.key",
+    once: false,
+  },
+  {
+    id: "approaching-the-departure-board",
+    action: "departure.approaching",
+    delayMs: 180,
+    eyebrowKey: "hint.departure.eyebrow",
+    titleKey: "hint.departure.title",
+    detailKey: "hint.departure.action",
+    touchDetailKey: "hint.departure.actionTouch",
+    keyLabelKey: "hint.departure.key",
+    once: false,
+  },
+  {
+    id: "boarding-the-sky-train",
+    action: "ride.approaching",
+    delayMs: 180,
+    eyebrowKey: "hint.ride.eyebrow",
+    titleKey: "hint.ride.title",
+    detailKey: "hint.ride.action",
+    touchDetailKey: "hint.ride.actionTouch",
+    keyLabelKey: "hint.ride.key",
     once: false,
   },
   {

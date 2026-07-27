@@ -1,7 +1,7 @@
 "use client";
 
 import { useFrame } from "@react-three/fiber";
-import type { RapierRigidBody } from "@react-three/rapier";
+import { useRapier, type RapierRigidBody } from "@react-three/rapier";
 import {
   memo,
   useEffect,
@@ -58,6 +58,8 @@ import {
   usesTreeBarkVisual,
 } from "./treeVisualModel";
 import { treeBarkAtlas } from "./treeBarkAtlas";
+import { getPieceRenderBoxes } from "./breakableGeometry";
+import type { CompoundKinematicClusterRegistry } from "./compoundKinematicCluster";
 
 const UNIT_BOX = new BoxGeometry(1, 1, 1);
 const UNIT_CYLINDER = new CylinderGeometry(0.5, 0.5, 1, 20, 1);
@@ -119,13 +121,9 @@ const UNIT_FOLIAGE_DEBRIS = detachedFoliageGeometry();
 
 type DynamicBreakableKind = "piece" | "shard" | "remnant";
 
-export interface BreakableRenderBox {
-  readonly center: readonly [number, number, number];
-  readonly size: readonly [number, number, number];
-}
-
 interface DynamicBreakableFragment {
   readonly sourceId: string;
+  readonly clusterId?: string;
   readonly kind: DynamicBreakableKind;
   readonly geometryKind: "box" | "cylinder" | "foliage";
   readonly material: BreakableMaterial;
@@ -177,32 +175,6 @@ function quenchedColor(material: BreakableMaterial, color: string): string {
     : color;
 }
 
-export function getPieceRenderBoxes(
-  piece: BreakablePieceDefinition,
-): readonly BreakableRenderBox[] {
-  if (piece.shape !== "cinderBlock") {
-    return [{ center: [0, 0, 0], size: piece.size }];
-  }
-
-  const [width, height, depth] = piece.size;
-  return [
-    {
-      center: [0, height * 0.36, 0],
-      size: [width, height * 0.28, depth],
-    },
-    {
-      center: [0, -height * 0.36, 0],
-      size: [width, height * 0.28, depth],
-    },
-    ...[-0.4, 0, 0.4].map(
-      (offset): BreakableRenderBox => ({
-        center: [width * offset, 0, 0],
-        size: [width * 0.18, height * 0.48, depth],
-      }),
-    ),
-  ];
-}
-
 function eulerQuaternion(
   rotation: readonly [number, number, number] | undefined,
 ): readonly [number, number, number, number] {
@@ -246,6 +218,7 @@ function sourceFragments(
     boxes.forEach((box, boxIndex) => {
       fragments.push({
         sourceId: piece.id,
+        clusterId: piece.clusterId,
         kind: "piece",
         geometryKind,
         material: piece.material,
@@ -450,6 +423,34 @@ function setFragmentMatrix(
   dummy.updateMatrix();
 }
 
+function setClusteredFragmentMatrix(
+  dummy: Object3D,
+  fragment: DynamicBreakableFragment,
+  clusterOrigin: readonly [number, number, number],
+  clusterObject: Object3D,
+  localCenter: Vector3,
+  rotation: Quaternion,
+): void {
+  const ownRotation = rotation.set(...fragment.fallbackQuaternion);
+  localCenter
+    .set(fragment.center[0], fragment.center[1], fragment.center[2])
+    .applyQuaternion(ownRotation);
+  localCenter.set(
+    localCenter.x + fragment.fallbackPosition[0] - clusterOrigin[0],
+    localCenter.y + fragment.fallbackPosition[1] - clusterOrigin[1],
+    localCenter.z + fragment.fallbackPosition[2] - clusterOrigin[2],
+  );
+  localCenter.applyQuaternion(clusterObject.quaternion);
+  dummy.position.copy(clusterObject.position).add(localCenter);
+  dummy.quaternion.copy(clusterObject.quaternion).multiply(ownRotation);
+  dummy.scale.set(
+    fragment.size[0] + fragment.sizeExpansion,
+    fragment.size[1] + fragment.sizeExpansion,
+    fragment.size[2] + fragment.sizeExpansion,
+  );
+  dummy.updateMatrix();
+}
+
 function expandFragmentBounds(
   bounds: Sphere,
   fragmentBounds: Sphere,
@@ -470,10 +471,13 @@ function expandFragmentBounds(
 const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
   batch,
   bodies,
+  kinematicClusters,
 }: {
   batch: DynamicBreakableBatch;
   bodies: MutableRefObject<Map<string, RapierRigidBody>>;
+  kinematicClusters?: CompoundKinematicClusterRegistry;
 }) {
+  const { rapier, rigidBodyStates } = useRapier();
   const mesh = useRef<InstancedMesh>(null);
   const geometry = useMemo(() => {
     const next = (
@@ -673,6 +677,27 @@ diffuseColor.rgb = mix(
   const fragmentBounds = useMemo(() => new Sphere(), []);
   const sleepingSources = useRef(new Set<string>());
   const observedSleepStates = useRef(new Map<string, boolean>());
+  const clusterObject = (
+    fragment: DynamicBreakableFragment,
+    body: RapierRigidBody | undefined,
+  ): { origin: readonly [number, number, number]; object: Object3D } | null => {
+    if (
+      !fragment.clusterId ||
+      body?.bodyType() === rapier.RigidBodyType.Dynamic
+    ) {
+      return null;
+    }
+    const runtime = kinematicClusters?.current.get(fragment.clusterId);
+    if (!runtime?.memberIds.has(fragment.sourceId)) {
+      return null;
+    }
+    const object = runtime
+      ? rigidBodyStates.get(runtime.body.handle)?.object
+      : undefined;
+    return object
+      ? { origin: runtime.definition.origin, object }
+      : null;
+  };
 
   useEffect(
     () => () => {
@@ -694,10 +719,11 @@ diffuseColor.rgb = mix(
     raycastBounds.makeEmpty();
     sleepingSources.current.clear();
     batch.fragments.forEach((fragment, index) => {
+      const fragmentBody = bodies?.current?.get(fragment.sourceId);
       setFragmentMatrix(
         dummy,
         fragment,
-        bodies?.current?.get(fragment.sourceId),
+        fragmentBody,
         localCenter,
         rotation,
       );
@@ -747,6 +773,29 @@ diffuseColor.rgb = mix(
     sleepStates.clear();
     batch.fragments.forEach((fragment, index) => {
       const body = bodies?.current?.get(fragment.sourceId);
+      const clustered = clusterObject(fragment, body);
+      if (!body && !clustered) {
+        return;
+      }
+      if (clustered) {
+        setClusteredFragmentMatrix(
+          dummy,
+          fragment,
+          clustered.origin,
+          clustered.object,
+          localCenter,
+          rotation,
+        );
+        current.setMatrixAt(index, dummy.matrix);
+        expandFragmentBounds(
+          raycastBounds,
+          fragmentBounds,
+          dummy,
+          fragment,
+        );
+        changed = true;
+        return;
+      }
       if (!body) {
         return;
       }
@@ -811,11 +860,13 @@ export const DynamicBreakableWorld = memo(function DynamicBreakableWorld({
   shards,
   remnants,
   bodies,
+  kinematicClusters,
 }: {
   pieces: readonly BreakablePieceDefinition[];
   shards: readonly ShardDefinition[];
   remnants: readonly RemnantDefinition[];
   bodies: MutableRefObject<Map<string, RapierRigidBody>>;
+  kinematicClusters?: CompoundKinematicClusterRegistry;
 }) {
   const fragments = useMemo(
     () => sourceFragments(pieces, shards, remnants),
@@ -830,6 +881,7 @@ export const DynamicBreakableWorld = memo(function DynamicBreakableWorld({
           key={batch.id}
           batch={batch}
           bodies={bodies}
+          kinematicClusters={kinematicClusters}
         />
       ))}
     </>

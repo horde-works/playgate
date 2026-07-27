@@ -70,6 +70,45 @@ test("a beam fails when its remaining support exceeds the material cantilever", 
   assert.equal(settled.has("beam"), true);
 });
 
+test("an explicitly mounted fixture cannot remain glued to another nearby support", () => {
+  const solver = createStructuralSolver(
+    [
+      {
+        id: "ground",
+        material: "ground",
+        position: [0, 0, 0],
+        size: [8, 0.2, 8],
+      },
+      {
+        id: "housing",
+        material: "wood",
+        position: [0, 1.1, 0],
+        size: [1, 2, 1],
+      },
+      {
+        id: "mount",
+        material: "wood",
+        position: [0.65, 1.1, 0],
+        size: [0.3, 0.4, 0.3],
+        sideAttachmentReach: 0.2,
+      },
+      {
+        id: "fixture",
+        material: "wood",
+        position: [0.9, 1.1, 0],
+        size: [0.3, 0.3, 0.3],
+        bearsLoad: false,
+        sideAttachmentReach: 0.2,
+        attachmentSupportIds: ["mount"],
+      },
+    ],
+    profiles,
+  );
+
+  assert.equal(solver.resolve(new Set()).has("fixture"), false);
+  assert.equal(solver.resolve(new Set(["mount"])).has("fixture"), true);
+});
+
 test("shared terrain does not merge independent structural islands", () => {
   const solver = createStructuralSolver(
     [

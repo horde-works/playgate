@@ -74,10 +74,33 @@ function useWeaponTextures(): {
   return { wood, steel };
 }
 
+/** Слой, на котором живёт подсветка вида от первого лица. */
+const VIEWMODEL_LAYER = 1;
+
 function ViewmodelLighting() {
+  const key = useRef<PointLight>(null);
+  const fill = useRef<PointLight>(null);
+
+  // Эти две лампы существуют ради инструмента в руке, но светят они в МИР:
+  // стоя в вагоне, игрок бликовал ими в собственных окнах. Уводим их на
+  // отдельный слой и включаем этот слой всей модели вида — тогда они
+  // освещают только её, а мир их не видит.
+  useEffect(() => {
+    const group = key.current?.parent;
+    if (!group) {
+      return;
+    }
+    group.traverse((object) => {
+      object.layers.enable(VIEWMODEL_LAYER);
+    });
+    key.current?.layers.set(VIEWMODEL_LAYER);
+    fill.current?.layers.set(VIEWMODEL_LAYER);
+  });
+
   return (
     <>
       <pointLight
+        ref={key}
         position={[-0.32, 0.5, 0.42]}
         color="#ffe5c0"
         intensity={2.1}
@@ -85,6 +108,7 @@ function ViewmodelLighting() {
         decay={2}
       />
       <pointLight
+        ref={fill}
         position={[0.38, 0.18, -0.28]}
         color="#a9cfff"
         intensity={0.75}

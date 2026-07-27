@@ -3,6 +3,7 @@ import {
   type StructuralMaterialProfile,
 } from "./structuralPhysics.ts";
 import { deinterpenetrateClusters } from "./deinterpenetrate.ts";
+import { forbidsDerivatives } from "./contentLicensing.ts";
 import { propTree } from "../content/prefabs/coreFlora.ts";
 import { townSurfaceRoutes } from "../content/scenes/townSurfacePlan.ts";
 import {
@@ -175,6 +176,8 @@ export interface BreakablePieceDefinition {
   readonly bearsLoad?: boolean;
   readonly attachmentSupportMode?: "wall" | "cable" | "hinge";
   readonly sideAttachmentReach?: number;
+  /** Restrict a fixture to its authored mount instead of any nearby surface. */
+  readonly attachmentSupportIds?: readonly string[];
   readonly contactBearingOrder?: boolean;
   /**
    * Пер-кусочное сужение окна опоры (структурный решатель его уже читает).
@@ -1637,14 +1640,234 @@ export const khrushchevkaAcMounts: readonly KhrushchevkaAcMount[] = [
 // off this constant.
 export const litWindowColor = "#f2dfa7";
 
+/** Self-lit information cells that remain readable in full daylight. */
+export const informationDisplayColor = "#f3d78b";
+
+/**
+ * Clear passenger glazing. Its exact colour selects the thinner visual glass
+ * material while structural behaviour remains ordinary breakable glass.
+ */
+export const clearPassengerGlassColor = "#a7d0d5";
+
+/**
+ * Стекло перронных огней отправления. Свой цвет — чтобы этими огнями можно
+ * было управлять отдельно от всего остального сигнального стекла на карте:
+ * материал в движке общий на цвет, и общий цвет означал бы, что вместе с
+ * перроном мигают и бортовые огни корабля.
+ */
+export const departureSignalColor = "#ff4b3a";
+
+/** Dedicated controllable glass for a route-driven mooring/search light. */
+export const mooringSignalColor = "#ffe1a8";
+
+/**
+ * Optional long-range visual representation of a safety or navigation light.
+ * The ordinary point light still illuminates nearby surfaces; this halo keeps
+ * the fixture itself legible after its physical lens becomes sub-pixel.
+ */
+export interface LampBeaconDefinition {
+  /** Physical halo diameter while the fixture is close to the camera. */
+  readonly physicalDiameter: number;
+  /** Smallest apparent diameter in CSS pixels at long range. */
+  readonly minScreenDiameter: number;
+  /** Prevents the angular-size correction from becoming a giant world object. */
+  readonly maxWorldDiameter: number;
+  readonly dayOpacity: number;
+  readonly nightOpacity: number;
+}
+
+/**
+ * Lifecycle published by a compound carrier. `inTransit` remains the generic
+ * fallback for consumers that do not care which part of a journey is active;
+ * authored routes may expose the three more precise moving phases.
+ */
+export type LampEventState =
+  | "docked"
+  | "attention"
+  | "inTransit"
+  | "departure"
+  | "cruise"
+  | "approach";
+
+/** Time source shared by analogue and piece-built digital clocks. */
+export type MutableClockTimeSource =
+  | {
+      readonly kind: "game";
+      /** Move the displayed game time without changing the world's sun. */
+      readonly offsetMinutes?: number;
+    }
+  | {
+      readonly kind: "real";
+      /** Omit for the player's local time; set for a fixed world-city clock. */
+      readonly utcOffsetMinutes?: number;
+    };
+
+export interface MutableAnalogClockDefinition {
+  readonly kind: "analogClock";
+  readonly id: string;
+  readonly hourHandPieceId: string;
+  readonly minuteHandPieceId: string;
+  /** Centre of rotation; the authored hand pieces supply length and depth. */
+  readonly pivot: SceneVector3;
+  readonly timeSource: MutableClockTimeSource;
+  /** Reverse for a clock face viewed from the opposite side. */
+  readonly clockwise?: 1 | -1;
+}
+
+/**
+ * One digit position in a digital clock. Each character is authored as a set
+ * of ordinary pieces, so seven-segment, split-flap and pixel faces all use
+ * the same runtime contract.
+ */
+export interface MutableDigitalClockSlotDefinition {
+  readonly characters: Readonly<Record<string, readonly string[]>>;
+}
+
+export interface MutableDigitalClockDefinition {
+  readonly kind: "digitalClock";
+  readonly id: string;
+  readonly slots: readonly MutableDigitalClockSlotDefinition[];
+  readonly timeSource: MutableClockTimeSource;
+  readonly format?: "HHMM" | "HH:MM";
+}
+
+export type MutableDisplayCondition = {
+  readonly kind: "clusterEvent";
+  readonly sourceClusterId: string;
+  readonly states: readonly LampEventState[];
+};
+
+/** A layer can be switched, or several alternative layers can change text. */
+export interface MutableDisplayLayerDefinition {
+  readonly id: string;
+  readonly pieceIds: readonly string[];
+  readonly condition?: MutableDisplayCondition;
+}
+
+export interface MutableDisplayTransitionDefinition {
+  readonly fadeInSeconds: number;
+  readonly fadeOutSeconds: number;
+}
+
+export interface MutableDisplayDefinition {
+  readonly kind: "display";
+  readonly id: string;
+  readonly layers: readonly MutableDisplayLayerDefinition[];
+  readonly transition?: MutableDisplayTransitionDefinition;
+}
+
+/**
+ * A physical matrix owns one reusable set of lamp cells. Frames only select
+ * which cells receive current, so changing a caption never swaps geometry or
+ * creates overlapping copies of the same light.
+ */
+export interface MutableMatrixDisplayFrameDefinition {
+  readonly id: string;
+  readonly activePieceIds: readonly string[];
+  readonly condition?: MutableDisplayCondition;
+}
+
+export interface MutableMatrixDisplayDefinition {
+  readonly kind: "matrixDisplay";
+  readonly id: string;
+  readonly cellPieceIds: readonly string[];
+  readonly frames: readonly MutableMatrixDisplayFrameDefinition[];
+  readonly transition?: MutableDisplayTransitionDefinition;
+}
+
+export type MutableSceneObjectDefinition =
+  | MutableAnalogClockDefinition
+  | MutableDigitalClockDefinition
+  | MutableDisplayDefinition
+  | MutableMatrixDisplayDefinition;
+
+export interface LampEventLevel {
+  readonly intensityMultiplier: number;
+  readonly distanceMultiplier: number;
+}
+
+/** A lamp may react to the lifecycle of its own or another compound cluster. */
+export interface LampEventLightingDefinition {
+  readonly sourceClusterId: string;
+  readonly levels: Readonly<
+    Pick<Record<LampEventState, LampEventLevel>, "docked" | "inTransit"> &
+      Partial<Record<Exclude<LampEventState, "docked" | "inTransit">, LampEventLevel>>
+  >;
+}
+
+/**
+ * Smooth electrical response shared by point lights and directed fixtures.
+ * Durations describe the time needed to cover roughly 95% of the change, so
+ * route events can switch discretely without producing a visible light jump.
+ */
+export interface LampTransitionDefinition {
+  readonly fadeInSeconds: number;
+  readonly fadeOutSeconds: number;
+}
+
 export interface LampDefinition {
   readonly id: string;
   readonly position: SceneVector3;
+  /** Подвижный кластер, в чьих авторских координатах задана позиция. */
+  readonly carrierClusterId?: string;
   readonly color?: string;
   readonly distance?: number;
   readonly intensity?: number;
   /** Multiplier used only when the shared point-light pool ranks nearby lamps. */
   readonly poolPriority?: number;
+  /** Local cap used while this is the nearest authored fixture area. */
+  readonly localPoolCapacity?: number;
+  /** Nearby selection treats every lamp in this group as one coherent fixture set. */
+  readonly poolGroupId?: string;
+  /** Camera-facing halo for lights that must remain identifiable at range. */
+  readonly beacon?: LampBeaconDefinition;
+  /** Fraction of full power retained at midday; ordinary outdoor lamps use 0. */
+  readonly dayIntensityFactor?: number;
+  readonly eventLighting?: LampEventLightingDefinition;
+  readonly transition?: LampTransitionDefinition;
+}
+
+/**
+ * A directed local light authored independently from its carrier/controller.
+ * Position and direction use the carrier's authored coordinate frame when
+ * `carrierClusterId` is present. The optional visual volume only represents
+ * light scattering in air; illumination of world surfaces comes from the
+ * actual spotlight.
+ */
+export interface SpotLightDefinition {
+  readonly id: string;
+  readonly position: SceneVector3;
+  readonly direction: SceneVector3;
+  readonly carrierClusterId?: string;
+  readonly color?: string;
+  readonly distance?: number;
+  readonly intensity?: number;
+  /** Spotlight half-angle in radians. */
+  readonly angle?: number;
+  readonly penumbra?: number;
+  readonly decay?: number;
+  readonly dayIntensityFactor?: number;
+  readonly eventLighting?: LampEventLightingDefinition;
+  readonly transition?: LampTransitionDefinition;
+  readonly visibleBeam?: {
+    /** Peak density of the shader-rendered scattering in air. */
+    readonly opacity: number;
+    /** Radius of the illuminated lens surface where the volume begins. */
+    readonly sourceRadius?: number;
+    /** Defaults to the light distance and may be shorter than its useful cast. */
+    readonly length?: number;
+    /** Distance over which the scattering fades; defaults to the beam length. */
+    readonly attenuation?: number;
+    /** Higher values concentrate the visible scattering around the beam axis. */
+    readonly anglePower?: number;
+  };
+  /** Emissive glass driven by the same lifecycle as the cast and beam. */
+  readonly fixtureGlow?: {
+    readonly color: string;
+    readonly intensity: number;
+    /** Camera-facing glare that keeps the powered lens visibly luminous. */
+    readonly halo?: LampBeaconDefinition;
+  };
 }
 
 const lampCollector: LampDefinition[] = [];
@@ -1838,7 +2061,9 @@ function createKhrushchevka(
   const addWindowUnit = (options: WindowUnitOptions): void => {
     const { pieces, clusterId, idBase, cx, b, wallZ, face, width } = options;
     const y0 = b + 0.81;
-    const y1 = b + 1.97;
+    // Верх проёма ложится на кромку перемычки: иначе поверху рамы остаётся
+    // сквозная щель на всю ширину окна.
+    const y1 = b + 1.98;
     const t = 0.075;
     const zf = wallZ + face * 0.045;
     const frameRoll = noise(`frame:${idBase}`);
@@ -2070,14 +2295,15 @@ function createKhrushchevka(
           ? windowFrameFinishes[1]
           : windowFrameFinishes[2];
     const zf = wallZ + face * 0.045;
-    const y1 = b + 1.97;
+    // Как и у окон, верх балконного проёма упирается в перемычку.
+    const y1 = b + 1.98;
     const doorY0 = b + 0.02;
     const t = 0.075;
 
     // Подоконная панель остаётся только под окном; дверь выходит на плиту.
     pieces.push({
       ...makePiece(`${idBase}:sill`, clusterId, "concrete", "panel",
-        [winCx, b + 0.405, wallZ], [winW + 0.12, 0.79, 0.3], sillColor),
+        [winCx, b + 0.40, wallZ], [winW + 0.12, 0.80, 0.3], sillColor),
       weathering: 0.3,
     });
     pieces.push({
@@ -2571,13 +2797,13 @@ function createKhrushchevka(
           },
           {
             ...makePiece(`${clusterId}:${bay}:jamb:l`, clusterId, "concrete", "panel",
-              [cx - 0.5875, b + 1.0, z1], [0.155, 1.98, 0.3],
+              [cx - 0.5875, b + 1.005, z1], [0.155, 2.01, 0.3],
               panelColor("s", bay, floor, bay + 1)),
             weathering: wear,
           },
           {
             ...makePiece(`${clusterId}:${bay}:jamb:r`, clusterId, "concrete", "panel",
-              [cx + 0.5875, b + 1.0, z1], [0.155, 1.98, 0.3],
+              [cx + 0.5875, b + 1.005, z1], [0.155, 2.01, 0.3],
               panelColor("s", bay, floor, bay + 1)),
             weathering: wear,
           },
@@ -2626,8 +2852,8 @@ function createKhrushchevka(
           for (const side of [-1, 1] as const) {
             southPieces.push({
               ...makePiece(`${clusterId}:${bay}:reveal:${side}`, clusterId, "concrete", "panel",
-                [cx + side * ((bayWidth - 0.16) / 2 + 0.0375), b + 0.995, z1],
-                [0.075, 1.97, 0.3],
+                [cx + side * ((bayWidth - 0.16) / 2 + 0.04), b + 0.99, z1],
+                [0.08, 1.98, 0.3],
                 panelColor("s", bay, floor, bay + floor)),
               weathering: wear,
             });
@@ -2643,7 +2869,7 @@ function createKhrushchevka(
           southPieces.push(
             {
               ...makePiece(`${clusterId}:${bay}:sill`, clusterId, "concrete", "panel",
-                [cx, b + 0.405, z1], [bayWidth, 0.79, 0.3],
+                [cx, b + 0.40, z1], [bayWidth, 0.80, 0.3],
                 panelColor("s", bay, floor, bay + floor)),
               weathering: wear,
             },
@@ -2705,7 +2931,7 @@ function createKhrushchevka(
       northPieces.push(
         {
           ...makePiece(`${clusterId}:${strip}:sill`, clusterId, "concrete", "panel",
-            [cx, b + 0.405, z0], [stripWidth, 0.79, 0.3],
+            [cx, b + 0.40, z0], [stripWidth, 0.80, 0.3],
             panelColor("n", unit, floor, strip + floor)),
           weathering: wear,
         },
@@ -2715,19 +2941,31 @@ function createKhrushchevka(
         {
           ...makePiece(`${clusterId}:${strip}:jamb:l`, clusterId, "concrete", "panel",
             [cx - 0.95 - jambWidth / 2 - 0.01, b + 1.39, z0],
-            [jambWidth, 1.14, 0.3], panelColor("n", unit, floor, strip + floor + 1)),
+            [jambWidth, 1.18, 0.3], panelColor("n", unit, floor, strip + floor + 1)),
           weathering: wear,
         },
         {
           ...makePiece(`${clusterId}:${strip}:jamb:r`, clusterId, "concrete", "panel",
             [cx + 0.95 + jambWidth / 2 + 0.01, b + 1.39, z0],
-            [jambWidth, 1.14, 0.3], panelColor("n", unit, floor, strip + floor + 1)),
+            [jambWidth, 1.18, 0.3], panelColor("n", unit, floor, strip + floor + 1)),
           weathering: wear,
         },
         {
           ...makePiece(`${clusterId}:${strip}:lintel`, clusterId, "concrete", "panel",
             [cx, b + 2.185, z0], [stripWidth, 0.41, 0.3],
             panelColor("n", unit, floor, strip + floor + 2)),
+          weathering: wear,
+        },
+        {
+          // Пояс перекрытия: раньше на его месте была сквозная щель во всю
+          // ширину фасада. Тонкая облицовка, а не полноценная панель: над
+          // перемычкой нельзя добавлять вес, потому что зазор от неё до
+          // оконной решётки меньше допуска бетона — перемычка «опирается»
+          // на прутья, и они складываются от лишней нагрузки.
+          ...makePiece(`${clusterId}:${strip}:slabband`, clusterId, "concrete", "panel",
+            [cx, b + 2.495, z0 - 0.07], [stripWidth, 0.21, 0.12],
+            slabPalette[(floor + strip) % slabPalette.length]),
+          bearsLoad: false,
           weathering: wear,
         },
       );
@@ -2761,8 +2999,10 @@ function createKhrushchevka(
     const cx = stripCenter(strip);
     const stairFrameColor = "#cfc9b8";
     pieces.push({
+      // Раскладка лестничной стены сходится с межэтажными окнами кромка
+      // в кромку: глухие участки тянутся точно до проёмов.
       ...makePiece(`${clusterId}:ground`, clusterId, "concrete", "panel",
-        [cx, 1.565, z0], [stripWidth, 2.31, 0.3],
+        [cx, 1.57, z0], [stripWidth, 2.34, 0.3],
         panelColor("n", strip * 2 + 1, 0, sectionIndex)),
       weathering: 0.34,
     });
@@ -2804,7 +3044,7 @@ function createKhrushchevka(
       if (window < 2) {
         pieces.push({
           ...makePiece(`${clusterId}:band:${window}`, clusterId, "concrete", "panel",
-            [cx, 4.61 + window * floorHeight, z0], [stripWidth, 1.42, 0.3],
+            [cx, 4.61 + window * floorHeight, z0], [stripWidth, 1.46, 0.3],
             panelColor("n", strip * 2 + 1, window + 1, window + 1)),
           weathering: 0.18,
         });
@@ -2812,7 +3052,7 @@ function createKhrushchevka(
     }
     pieces.push({
       ...makePiece(`${clusterId}:top`, clusterId, "concrete", "panel",
-        [cx, 9.845, z0], [stripWidth, 1.49, 0.3],
+        [cx, 9.84, z0], [stripWidth, 1.52, 0.3],
         panelColor("n", strip * 2 + 1, 3, 2)),
       weathering: 0.14,
     });
@@ -2827,11 +3067,12 @@ function createKhrushchevka(
     const clusterId = `hru:ends:${floor}`;
     for (const ex of [x0, x1]) {
       for (const [index, zc] of [-6.25, -2.75].entries()) {
-        // Торцевые панели чуть выше этажа: каждая опирается на предыдущую,
-        // цепочка несёт от цоколя, а не от нулевой кромки плиты.
+        // Торцевая панель — ровно на высоту этажа: соседние по вертикали
+        // сходятся кромка в кромку, цепочка несёт от цоколя. Панель короче
+        // этажа оставляла на торце сквозную тёмную прорезь на каждом уровне.
         pieces.push({
           ...makePiece(`${clusterId}:${ex}:${index}`, clusterId, "concrete", "panel",
-            [ex, floorBase(floor) + 1.22, zc], [0.3, 2.42, 3.5],
+            [ex, floorBase(floor) + floorHeight / 2, zc], [0.3, floorHeight, 3.5],
             groundAccent && floor === 0
               ? groundAccentPalette[(floor + index) % groundAccentPalette.length]
               : pal[(floor + index) % pal.length]),
@@ -5234,6 +5475,31 @@ export interface DestructionSceneDefinition {
     BreakableClusterDefinition
   >;
   readonly lampDefinitions: readonly LampDefinition[];
+  readonly spotLightDefinitions: readonly SpotLightDefinition[];
+  /** Piece-driven clocks and event displays authored independently of runtime. */
+  readonly mutableObjectDefinitions: readonly MutableSceneObjectDefinition[];
+  /** All pieces controlled by mutable objects, precomputed for render batching. */
+  readonly mutablePieceIds: ReadonlySet<string>;
+  /**
+   * Мир-заповедник: ломать нельзя ничего. Сцена отдаёт решателю пустые
+   * ответы, а рантайм глушит резку, скол и осыпание — см. §«неразрушимый
+   * мир» в docs/astana-brief.md. Двери, лифты и транспорт продолжают
+   * работать: они не разрушение, а интерактив.
+   */
+  readonly indestructible: boolean;
+  /**
+   * SPDX-идентификатор лицензии на КОНТЕНТ мира (не на код: код везде
+   * AGPL-3.0-or-later). Пусто — контент под общей лицензией репозитория.
+   * Лицензия с запретом производных (ND) обязана идти вместе с
+   * `indestructible`, иначе сборка падает: разрушимая версия такого мира —
+   * это и есть производное произведение. Подробности — LICENSING.md.
+   */
+  readonly contentLicense: string | null;
+  /**
+   * Дальности тумана [near, far] в метрах. По умолчанию считаются от радиуса
+   * мира; степной остров видно дальше, чем лесную деревню.
+   */
+  readonly fogDistances: readonly [near: number, far: number] | null;
   readonly resolveStructuralCollapse: (
     broken: ReadonlySet<string>,
   ) => ReadonlySet<string>;
@@ -5264,6 +5530,14 @@ interface DestructionSceneOptions {
   readonly copy: DestructionSceneCopy;
   readonly clusters: readonly BreakableClusterDefinition[];
   readonly lamps?: readonly LampDefinition[];
+  readonly spotLights?: readonly SpotLightDefinition[];
+  readonly mutableObjects?: readonly MutableSceneObjectDefinition[];
+  /** Мир, который нельзя разрушить (см. поле в определении сцены). */
+  readonly indestructible?: boolean;
+  /** SPDX-лицензия контента мира, если она отличается от лицензии репозитория. */
+  readonly contentLicense?: string;
+  /** Дальности тумана [near, far]; без них считаются от радиуса мира. */
+  readonly fogDistances?: readonly [near: number, far: number];
   /**
    * Trim deep sibling interpenetration at build time (rim rings, faceted brick
    * towers, cairns) so overlaps butt cleanly — killing z-fighting and the
@@ -5292,6 +5566,62 @@ export function createDestructionScene(
     pieces,
     structuralMaterialProfiles,
   );
+  const mutableObjectDefinitions = options.mutableObjects ?? [];
+  const mutablePieceIds = new Set<string>();
+  const mutablePieceOwners = new Map<string, string>();
+  const claimMutablePiece = (objectId: string, pieceId: string): void => {
+    if (!pieceById.has(pieceId)) {
+      throw new Error(
+        `Scene ${options.id}: mutable object ${objectId} references missing piece ${pieceId}`,
+      );
+    }
+    const owner = mutablePieceOwners.get(pieceId);
+    if (owner && owner !== objectId) {
+      throw new Error(
+        `Scene ${options.id}: mutable piece ${pieceId} is controlled by ${owner} and ${objectId}`,
+      );
+    }
+    mutablePieceOwners.set(pieceId, objectId);
+    mutablePieceIds.add(pieceId);
+  };
+  for (const object of mutableObjectDefinitions) {
+    if (object.kind === "analogClock") {
+      claimMutablePiece(object.id, object.hourHandPieceId);
+      claimMutablePiece(object.id, object.minuteHandPieceId);
+      continue;
+    }
+    if (object.kind === "digitalClock") {
+      for (const slot of object.slots) {
+        for (const pieceIds of Object.values(slot.characters)) {
+          for (const pieceId of pieceIds) {
+            claimMutablePiece(object.id, pieceId);
+          }
+        }
+      }
+      continue;
+    }
+    if (object.kind === "matrixDisplay") {
+      const cells = new Set(object.cellPieceIds);
+      for (const pieceId of cells) {
+        claimMutablePiece(object.id, pieceId);
+      }
+      for (const frame of object.frames) {
+        for (const pieceId of frame.activePieceIds) {
+          if (!cells.has(pieceId)) {
+            throw new Error(
+              `Scene ${options.id}: matrix display ${object.id} frame ${frame.id} references non-cell piece ${pieceId}`,
+            );
+          }
+        }
+      }
+      continue;
+    }
+    for (const layer of object.layers) {
+      for (const pieceId of layer.pieceIds) {
+        claimMutablePiece(object.id, pieceId);
+      }
+    }
+  }
 
   const resolveStructuralCollapse = (
     broken: ReadonlySet<string>,
@@ -5373,6 +5703,33 @@ export function createDestructionScene(
     broken: ReadonlySet<string>,
   ): ReadonlySet<string> => resolveStructuralCollapse(broken);
 
+  // Заповедник: удар не добавляет куска в множество сломанных, и осевшая
+  // сцена не роняет ничего — обрушение не начинается в принципе, а не
+  // гасится где-то ниже по течению. Рантайм глушит вторую половину (резку,
+  // скол, осыпание стекла) своим стражем.
+  const indestructible = options.indestructible === true;
+  const keepStanding = (broken: ReadonlySet<string>): ReadonlySet<string> =>
+    broken;
+  const nothingToRecheck = (): ReadonlySet<string> => new Set<string>();
+  const keepIntact = (
+    _target: BreakablePieceDefinition,
+    current: ReadonlySet<string>,
+  ): ReadonlySet<string> => current;
+
+  // Лицензионный контур. Мир, чей КОНТЕНТ выпущен с запретом производных
+  // (SPDX …-ND-…), обязан быть заповедником: разрушимая версия такого мира —
+  // производное произведение, а его лицензия этого не разрешает. Связку
+  // держит сборка, а не благие намерения: снять флаг «на минутку» нельзя.
+  // Кодовая часть остаётся AGPL-3.0-or-later и никаких ограничений на
+  // модификацию не несёт — см. LICENSING.md.
+  const contentLicense = options.contentLicense ?? null;
+  if (forbidsDerivatives(contentLicense) && !indestructible) {
+    throw new Error(
+      `Scene ${options.id}: content licence ${contentLicense} forbids derivative works, ` +
+        "so the world must be built with indestructible: true",
+    );
+  }
+
   return {
     id: options.id,
     title: options.title,
@@ -5390,10 +5747,19 @@ export function createDestructionScene(
     breakablePieceById: pieceById,
     breakableClusterById: clusterById,
     lampDefinitions: options.lamps ?? [],
+    spotLightDefinitions: options.spotLights ?? [],
+    mutableObjectDefinitions,
+    mutablePieceIds,
+    indestructible,
+    contentLicense,
+    fogDistances: options.fogDistances ?? null,
+    // Аудит остаётся честным даже в заповеднике: compileSceneDocument и
+    // scripts/check-structure.mjs зовут именно его, и неопёртый кусок обязан
+    // находиться на сборке, а не превращаться в «оно всё равно не падает».
     resolveStructuralCollapse,
-    structuralScopeFor,
-    fractureLocallyAt,
-    settleAfterBreak,
+    structuralScopeFor: indestructible ? nothingToRecheck : structuralScopeFor,
+    fractureLocallyAt: indestructible ? keepIntact : fractureLocallyAt,
+    settleAfterBreak: indestructible ? keepStanding : settleAfterBreak,
   };
 }
 

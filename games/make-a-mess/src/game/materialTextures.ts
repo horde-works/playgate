@@ -13,8 +13,12 @@ import {
   type WebGLProgramParametersWithUniforms,
 } from "three";
 import {
+  clearPassengerGlassColor,
+  departureSignalColor,
+  informationDisplayColor,
   khrushchevkaAcMounts,
   litWindowColor,
+  mooringSignalColor,
   type BreakableMaterial,
   type SurfaceTextureProfile,
 } from "./destructionScene.ts";
@@ -33,24 +37,66 @@ import {
 interface GlowMaterial {
   readonly material: MeshStandardMaterial;
   readonly minimumIntensity: number;
+  /** Цвет стекла: по нему сигнальным огнём можно управлять из игры. */
+  readonly color: string;
 }
 
 const glowMaterials: GlowMaterial[] = [];
-export const SIGNAL_GLASS_DAY_GLOW = 1.6;
+// Bloom starts at 1.6. The old minimum was exactly 1.6, so after the glass
+// texture and transparent blend the lens invariably fell BELOW the cutoff.
+export const SIGNAL_GLASS_DAY_GLOW = 3.8;
 
 /**
  * Цветное сигнальное стекло. В отличие от окон, оно не гаснет днём:
  * зелёная линза семафора и аэронавигационные огни небесного поезда (правый
  * борт зелёный, левый красный, нос и корма белые).
  */
-const signalGlassColors = new Set(["#7fd0a0", "#7fe6a0", "#f08a80", "#f4f1e2"]);
+const signalGlassColors = new Set([
+  "#7fd0a0",
+  "#7fe6a0",
+  "#f08a80",
+  "#f4f1e2",
+  departureSignalColor,
+  mooringSignalColor,
+  informationDisplayColor,
+]);
+const controlledSignalGlassColors = new Set([
+  departureSignalColor,
+  mooringSignalColor,
+]);
+
+/**
+ * Сигнальные огни, которыми управляет игра, а не время суток: перронные
+ * огни отправления горят по ходу рейса и гаснут после швартовки. Пока цвет
+ * есть в этой карте, суточный цикл его не трогает.
+ */
+const signalOverrides = new Map<string, number>();
+
+export function setSignalGlassGlow(color: string, intensity: number | null): void {
+  if (intensity === null) {
+    signalOverrides.delete(color);
+  } else {
+    signalOverrides.set(color, intensity);
+  }
+  for (const glow of glowMaterials) {
+    if (glow.color !== color) {
+      continue;
+    }
+    glow.material.emissiveIntensity =
+      intensity === null
+        ? resolveGlowIntensity(glow.material.emissiveIntensity, glow.minimumIntensity)
+        : intensity;
+  }
+}
 
 export function isSignalGlassColor(color: string): boolean {
   return signalGlassColors.has(color);
 }
 
 export function minimumGlassGlow(color: string): number {
-  return signalGlassColors.has(color) ? SIGNAL_GLASS_DAY_GLOW : 0;
+  return signalGlassColors.has(color) && !controlledSignalGlassColors.has(color)
+    ? SIGNAL_GLASS_DAY_GLOW
+    : 0;
 }
 
 export function resolveGlowIntensity(
@@ -64,10 +110,11 @@ export function resolveGlowIntensity(
 // day/night cycle.
 export function setWindowGlow(intensity: number): void {
   for (const glow of glowMaterials) {
-    glow.material.emissiveIntensity = resolveGlowIntensity(
-      intensity,
-      glow.minimumIntensity,
-    );
+    const override = signalOverrides.get(glow.color);
+    glow.material.emissiveIntensity =
+      override === undefined
+        ? resolveGlowIntensity(intensity, glow.minimumIntensity)
+        : override;
   }
 }
 
@@ -1227,7 +1274,7 @@ export function getPieceMaterial(
     bumpMap: isGlass ? null : surfaceTexture,
     bumpScale: bumpScaleByMaterial[material],
     transparent: isGlass,
-    opacity: material === "darkGlass" ? 0.68 : isGlass ? 0.45 : 1,
+    opacity: pieceMaterialOpacity(material, color),
     depthWrite: !isGlass,
     metalness: isSteel ? 0.78 : material === "graphiteStone" ? 0.08 : 0,
     roughness: isSteel
@@ -1880,14 +1927,18 @@ gl_FragColor.rgb = mix(gl_FragColor.rgb, materialFogTint, materialFogFactor);
     );
     const minimumIntensity = minimumGlassGlow(color);
     standardMaterial.emissiveIntensity = minimumIntensity;
-    glowMaterials.push({ material: standardMaterial, minimumIntensity });
+    glowMaterials.push({ material: standardMaterial, minimumIntensity, color });
+    const override = signalOverrides.get(color);
+    if (override !== undefined) {
+      standardMaterial.emissiveIntensity = override;
+    }
   }
   if (isEyeGlass) {
     standardMaterial.emissive = new Color(
       color === "#ff5a2f" ? "#ff3b16" : "#7a150d",
     );
     standardMaterial.emissiveIntensity = 0.35;
-    glowMaterials.push({ material: standardMaterial, minimumIntensity: 0.35 });
+    glowMaterials.push({ material: standardMaterial, minimumIntensity: 0.35, color });
   }
 
   materialCache.set(key, standardMaterial);
@@ -1898,12 +1949,34 @@ export function isGlassMaterial(material: BreakableMaterial): boolean {
   return material === "glass" || material === "darkGlass";
 }
 
+export function pieceMaterialOpacity(
+  material: BreakableMaterial,
+  color: string,
+): number {
+  if (material === "darkGlass") {
+    return 0.68;
+  }
+  if (material !== "glass") {
+    return 1;
+  }
+  return color === clearPassengerGlassColor ? 0.22 : 0.45;
+}
+
 export function pieceMaterialBaseColor(
   material: BreakableMaterial,
   color: string,
 ): string {
-  if (material === "glass" && color === litWindowColor) {
-    return litWindowColor;
+  if (
+    material === "glass" &&
+    (
+      color === clearPassengerGlassColor ||
+      color === litWindowColor ||
+      isSignalGlassColor(color)
+    )
+  ) {
+    // These colours affect material-level emissive or opacity state. Keeping
+    // them only as an instance tint would merge them into plain window glass.
+    return color;
   }
   if (
     material === "darkGlass" &&

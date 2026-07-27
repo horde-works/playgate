@@ -170,7 +170,7 @@ export function ConsentGate({ children }: { children: React.ReactNode }) {
                 Privacy
               </Link>
               <Link href="/license" target="_blank" rel="noopener noreferrer">
-                MIT License
+                Licensing
               </Link>
               <Link
                 href="/third-party-notices"

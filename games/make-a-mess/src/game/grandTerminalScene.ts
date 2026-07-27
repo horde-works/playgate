@@ -1,12 +1,19 @@
 import {
+  clearPassengerGlassColor,
   createDestructionScene,
+  departureSignalColor,
+  informationDisplayColor,
   litWindowColor,
+  mooringSignalColor,
   type BreakableClusterDefinition,
   type BreakableMaterial,
   type BreakablePieceDefinition,
   type BreakableShape,
   type LampDefinition,
+  type LampEventLightingDefinition,
+  type MutableSceneObjectDefinition,
   type SceneVector3,
+  type SpotLightDefinition,
   type SupportMode,
 } from "./destructionScene.ts";
 import { propTree } from "../content/prefabs/coreFlora.ts";
@@ -14,6 +21,8 @@ import { placeProp } from "../content/prefabs/coreProps.ts";
 
 const clusters: BreakableClusterDefinition[] = [];
 const lamps: LampDefinition[] = [];
+const spotLights: SpotLightDefinition[] = [];
+const mutableObjects: MutableSceneObjectDefinition[] = [];
 
 const WORLD_CENTER_Z = -14;
 const WORLD_RADIUS = 98;
@@ -21,6 +30,8 @@ const FLOOR_Y = 0.18;
 const FRONT_Z = 34;
 const REAR_Z = 8;
 const SHED_END_Z = -72;
+const STATION_LOCAL_LIGHT_CAPACITY = 8;
+const SKY_TRAIN_CLUSTER_ID = "terminal:sky-train";
 
 const brickRed = "#8f3f2f";
 const brickDark = "#6f3028";
@@ -445,7 +456,7 @@ function addPixelText(
    */
   facing: -1 | 1 = 1,
   emissive = false,
-): void {
+): readonly string[] {
   // Emissive glyphs are lit-glass cells: pale in daylight, self-lit at night
   // (the shared glow material ramps their emissive up after dusk), so a sign
   // reads as a back-lit split-flap board without any extra light source.
@@ -455,6 +466,7 @@ function addPixelText(
   const glyphWidth = pixel * 6;
   const totalWidth = Math.max(0, text.length * glyphWidth - pixel);
   let pieceIndex = 0;
+  const pieceIds: string[] = [];
   [...text.toUpperCase()].forEach((character, characterIndex) => {
     const rows = terminalPixelFont[character];
     if (!rows) {
@@ -484,10 +496,93 @@ function addPixelText(
           [pixel * 0.82, pixel * 0.82, 0.11],
           glyphColor,
         );
+        pieceIds.push(`${builder.id}:${prefix}:${pieceIndex}`);
         pieceIndex += 1;
       });
     });
   });
+  return pieceIds;
+}
+
+interface PixelLampMatrix {
+  readonly cellPieceIds: readonly string[];
+  activePieceIds(text: string): readonly string[];
+}
+
+/**
+ * A real lamp matrix: every address has one dark socket and one reusable
+ * luminous lens. Captions are only electrical masks over those same lenses.
+ */
+function addPixelLampMatrix(
+  builder: ZoneBuilder,
+  prefix: string,
+  characterSlots: number,
+  centerX: number,
+  centerY: number,
+  z: number,
+  pixel: number,
+  facing: -1 | 1 = 1,
+): PixelLampMatrix {
+  const columns = characterSlots * 6 - 1;
+  const width = (columns - 1) * pixel;
+  const cells: string[][] = Array.from({ length: 7 }, () => []);
+  const cellPieceIds: string[] = [];
+  for (let row = 0; row < 7; row += 1) {
+    for (let column = 0; column < columns; column += 1) {
+      const x = facing < 0
+        ? centerX + width / 2 - column * pixel
+        : centerX - width / 2 + column * pixel;
+      const y = centerY + (3 - row) * pixel;
+      builder.add(
+        `${prefix}:socket:${row}:${column}`,
+        "steel",
+        "steelSheet",
+        [x, y, z],
+        [pixel * 0.72, pixel * 0.72, 0.045],
+        "#171b1d",
+      );
+      const glowId = `${builder.id}:${prefix}:cell:${row}:${column}`;
+      builder.add(
+        `${prefix}:cell:${row}:${column}`,
+        "glass",
+        "glassPane",
+        [x, y, z + facing * 0.045],
+        [pixel * 0.58, pixel * 0.58, 0.035],
+        informationDisplayColor,
+      );
+      cells[row][column] = glowId;
+      cellPieceIds.push(glowId);
+    }
+  }
+
+  return {
+    cellPieceIds,
+    activePieceIds(text) {
+      const caption = text.toUpperCase().slice(0, characterSlots);
+      const captionColumns = Math.max(0, caption.length * 6 - 1);
+      const offset = Math.floor((columns - captionColumns) / 2);
+      const active: string[] = [];
+      [...caption].forEach((character, characterIndex) => {
+        const glyph = terminalPixelFont[character];
+        if (!glyph) {
+          return;
+        }
+        glyph.forEach((row, rowIndex) => {
+          [...row].forEach((cell, columnIndex) => {
+            if (cell !== "1") {
+              return;
+            }
+            const column = offset + characterIndex * 6 + columnIndex;
+            const pieceId = cells[rowIndex]?.[column];
+            if (pieceId) {
+              active.push(pieceId);
+            }
+          });
+        });
+      });
+      return active;
+    },
+  };
 }
 
 function createCircularGround(): void {
@@ -965,7 +1060,9 @@ function createPublicInterior(): void {
   // board so the solver carries it. Destinations are invented Nordic/Irish
   // towns — in-world signage, always in English.
   hall.add("departure-header-trim", "steel", "steelSheet", [0, 9.72, boardZ + 0.14], [12.6, 0.09, 0.14], brass);
-  addPixelText(hall, "departure-title", "DEPARTURES", 0, 10.45, boardZ + 0.2, 0.185, litWindowColor, 1, true);
+  const departureDisplayPieceIds = [
+    ...addPixelText(hall, "departure-title", "DEPARTURES", 0, 10.45, boardZ + 0.2, 0.185, litWindowColor, 1, true),
+  ];
   const departures: readonly [string, string][] = [
     ["BALLYVOR", "1"],
     ["KORSVIK", "2"],
@@ -973,12 +1070,30 @@ function createPublicInterior(): void {
   ];
   for (const [rowIndex, [city, platform]] of departures.entries()) {
     const rowY = 8.75 - rowIndex * 1.32;
-    addPixelText(hall, `departure-city:${rowIndex}`, city, -2.6, rowY, boardZ + 0.2, 0.14, litWindowColor, 1, true);
-    addPixelText(hall, `departure-platform:${rowIndex}`, platform, 5.3, rowY, boardZ + 0.2, 0.16, litWindowColor, 1, true);
+    departureDisplayPieceIds.push(
+      ...addPixelText(hall, `departure-city:${rowIndex}`, city, -2.6, rowY, boardZ + 0.2, 0.14, litWindowColor, 1, true),
+      ...addPixelText(hall, `departure-platform:${rowIndex}`, platform, 5.3, rowY, boardZ + 0.2, 0.16, litWindowColor, 1, true),
+    );
     if (rowIndex < departures.length - 1) {
       hall.add(`departure-line:${rowIndex}`, "steel", "steelSheet", [0, rowY - 0.66, boardZ + 0.12], [11.9, 0.06, 0.12], "#3a4144");
     }
   }
+  mutableObjects.push({
+    kind: "display",
+    id: "terminal:interior:departures",
+    transition: { fadeInSeconds: 0.55, fadeOutSeconds: 0.38 },
+    layers: [
+      {
+        id: "flight-list",
+        pieceIds: departureDisplayPieceIds,
+        condition: {
+          kind: "clusterEvent",
+          sourceClusterId: SKY_TRAIN_CLUSTER_ID,
+          states: ["docked"],
+        },
+      },
+    ],
+  });
 
   for (const [index, [x, z, yaw]] of [
     [-8, 24, 0],
@@ -1015,11 +1130,11 @@ function createPublicInterior(): void {
   // straight line from the entrance doors to the platform stairs.
   for (const [index, x] of [-10, -3.4, 3.4, 10].entries()) {
     addFacetedCylinder(hall, `hall-lamp-post:${index}`, "steel", "steelSheet", "y", [x, 6.9, 22], 13.8, 0.24, iron);
-    addLampFixture(hall, `hall-lamp:${index}`, [x, 13.8, 22], 13, 3.7);
+    addLampFixture(hall, `hall-lamp:${index}`, [x, 13.8, 22], 21, 5.2);
   }
   for (const [index, x] of [-27, -20, 20, 27].entries()) {
     hall.add(`wing-lamp-post:${index}`, "steel", "steelSheet", [x, 4.6, 22], [0.18, 9.2, 0.18], iron);
-    addLampFixture(hall, `wing-lamp:${index}`, [x, 9.2, 22], 9, 2.8);
+    addLampFixture(hall, `wing-lamp:${index}`, [x, 9.2, 22], 16, 3.8);
   }
 
   // Interior lining of the entrance wall — a proper lobby, not the raw back
@@ -1255,8 +1370,10 @@ function createTracksAndPlatforms(): void {
           id: `${fittings.id}:${id}:lantern-glass:${postIndex}`,
           position: [postX, 5.43, z],
           color: "#ffd49a",
-          distance: 9,
-          intensity: 2.6,
+          distance: 18,
+          intensity: 6.4,
+          poolPriority: 1.5,
+          poolGroupId: `${fittings.id}:${id}:lantern-pair`,
         });
       }
       fittings.add(`${id}:board`, "graphiteStone", "panel", [platformX, 4.15, z], [3.7, 1.35, 0.2], "#1b2426");
@@ -2380,7 +2497,31 @@ export const skyBerthMetrics = {
 
 function createSkyPlatform(): void {
   const berth = zone("terminal:sky-berth");
-  const train = zone("terminal:sky-train");
+  const train = zone(SKY_TRAIN_CLUSTER_ID);
+  const platformDockLighting: LampEventLightingDefinition = {
+    sourceClusterId: train.id,
+    levels: {
+      docked: { intensityMultiplier: 2, distanceMultiplier: 1.18 },
+      inTransit: { intensityMultiplier: 1, distanceMultiplier: 1 },
+    },
+  };
+  const cabinDockLighting: LampEventLightingDefinition = {
+    sourceClusterId: train.id,
+    levels: {
+      docked: { intensityMultiplier: 1, distanceMultiplier: 1 },
+      inTransit: { intensityMultiplier: 0.14, distanceMultiplier: 0.5 },
+    },
+  };
+  const mooringManeuverLighting: LampEventLightingDefinition = {
+    sourceClusterId: train.id,
+    levels: {
+      docked: { intensityMultiplier: 0, distanceMultiplier: 1 },
+      inTransit: { intensityMultiplier: 0, distanceMultiplier: 1 },
+      departure: { intensityMultiplier: 1, distanceMultiplier: 1 },
+      cruise: { intensityMultiplier: 0, distanceMultiplier: 1 },
+      approach: { intensityMultiplier: 1, distanceMultiplier: 1 },
+    },
+  };
 
   // ZoneBuilder.add не умеет флаги решателя, а парящему составу они нужны.
   function part(
@@ -2466,7 +2607,16 @@ function createSkyPlatform(): void {
     [BUFFER_X + 0.26, 1.24, TRACK_Z], [0.12, 0.3, 0.3], brass);
   berth.add("buffer-lamp", "glass", "glassPane",
     [BUFFER_X - 0.1, 2.08, TRACK_Z], [0.24, 0.26, 0.24], litWindowColor);
-  lamps.push({ id: `${berth.id}:buffer-lamp`, position: [BUFFER_X - 0.35, 2.08, TRACK_Z], color: "#ffb08a", distance: 9, intensity: 2.2 });
+  lamps.push({
+    id: `${berth.id}:buffer-lamp`,
+    position: [BUFFER_X - 0.35, 2.08, TRACK_Z],
+    color: "#ffb08a",
+    distance: 9,
+    intensity: 2.2,
+    poolPriority: 4,
+    dayIntensityFactor: 0.35,
+    eventLighting: platformDockLighting,
+  });
 
   // --- Платформа -----------------------------------------------------------
   // Посадочная зона против двери головного вагона: жёлтая линия её обходит.
@@ -2485,16 +2635,24 @@ function createSkyPlatform(): void {
     }
     return runs;
   };
+  // Каменная плита ЛЕЖИТ на бетонном основании и заходит в него, как на
+  // музейных перронах. Раньше основание не доставало до подошвы плиты двух
+  // сантиметров, и вдоль всей кромки шла сквозная щель. Стоя на верхней
+  // ступени, игрок бьёт нижним щупом автошага ровно в эту высоту — щуп уходил
+  // в щель, автошаг молчал, и последняя ступень становилась стеной.
+  const DECK_SLAB = 0.16;
+  const DECK_BASE_TOP = PLATFORM_TOP - DECK_SLAB + 0.03;
   let deckIndex = 0;
   for (let x = PLATFORM_FROM; x < PLATFORM_TO; x += 5) {
     deckIndex += 1;
     const length = Math.min(5, PLATFORM_TO - x);
     const centerX = x + length / 2;
     part(berth, `deck-base:${deckIndex}`, "concrete", "panel",
-      [centerX, PLATFORM_TOP / 2 - 0.09, PLATFORM_Z], [length, PLATFORM_TOP - 0.18, PLATFORM_HALF * 2],
+      [centerX, DECK_BASE_TOP / 2, PLATFORM_Z], [length, DECK_BASE_TOP, PLATFORM_HALF * 2],
       "#77756f", { carriesAttachments: false });
     part(berth, `deck:${deckIndex}`, "stone", "groundTile",
-      [centerX, PLATFORM_TOP - 0.08, PLATFORM_Z], [length - 0.04, 0.16, PLATFORM_HALF * 2 - 0.04],
+      [centerX, PLATFORM_TOP - DECK_SLAB / 2, PLATFORM_Z],
+      [length - 0.04, DECK_SLAB, PLATFORM_HALF * 2 - 0.04],
       deckIndex % 2 === 0 ? "#ada695" : "#9d9789", { carriesAttachments: false });
     // Жёлтая линия безопасности вдоль путевой кромки. У двери она рвётся:
     // там посадочная зона со своей разметкой, и линия не должна тонуть в
@@ -2504,6 +2662,23 @@ function createSkyPlatform(): void {
         [(from + to) / 2, PLATFORM_TOP + 0.01, PLATFORM_Z + PLATFORM_HALF - 0.3],
         [to - from, 0.03, 0.16], "#c8a33f", { bearsLoad: false, carriesAttachments: false });
     }
+  }
+
+  // --- Огни отправления ----------------------------------------------------
+  // Врезаны в кромку перрона между жёлтой линией и обрезом: почти вровень с
+  // полом, четыре сантиметра над плиткой — переступать нечего. Сигнальное
+  // стекло горит собственным цветом и не гаснет днём, а игра ведёт их
+  // яркость: мигают отсчёт отшвартовки, ровно горят весь рейс, гаснут в
+  // посадочном положении.
+  const MARKER_Z = PLATFORM_Z + PLATFORM_HALF - 0.12;
+  let markerIndex = 0;
+  for (let x = PLATFORM_FROM + 1.25; x < PLATFORM_TO; x += 2.5) {
+    markerIndex += 1;
+    part(berth, `departure-light:${markerIndex}`, "glass", "glassPane",
+      [x, PLATFORM_TOP + 0.015, MARKER_Z], [0.42, 0.07, 0.16], departureSignalColor, {
+        bearsLoad: false,
+        carriesAttachments: false,
+      });
   }
 
   // --- Всходы с площади ----------------------------------------------------
@@ -2599,6 +2774,9 @@ function createSkyPlatform(): void {
       color: "#ffe0ae",
       distance: 13,
       intensity: 2.6,
+      poolPriority: 4,
+      dayIntensityFactor: 0.35,
+      eventLighting: platformDockLighting,
     });
   }
   // Прогоны во всю длину перрона — они и делают кровлю сплошной.
@@ -2647,6 +2825,17 @@ function createSkyPlatform(): void {
   berth.add("clock-face", "steel", "panel", [CLOCK_X, CLOCK_Y, CLOCK_Z - 0.19], [0.92, 0.92, 0.06], "#ddd3b8");
   berth.add("clock-hand-hour", "steel", "steelSheet", [CLOCK_X - 0.14, CLOCK_Y + 0.08, CLOCK_Z - 0.24], [0.06, 0.3, 0.05], iron, [0, 0, 1.047]);
   berth.add("clock-hand-minute", "steel", "steelSheet", [CLOCK_X + 0.18, CLOCK_Y + 0.12, CLOCK_Z - 0.25], [0.05, 0.44, 0.05], iron, [0, 0, -1.047]);
+  mutableObjects.push({
+    kind: "analogClock",
+    id: `${berth.id}:clock`,
+    hourHandPieceId: `${berth.id}:clock-hand-hour`,
+    minuteHandPieceId: `${berth.id}:clock-hand-minute`,
+    pivot: [CLOCK_X, CLOCK_Y, CLOCK_Z - 0.25],
+    timeSource: { kind: "game" },
+    // The face is read from its -Z side, so its apparent screen direction is
+    // opposite the world-X convention used by a +Z-facing clock.
+    clockwise: -1,
+  });
 
   // Табло отправления: строка рейса набрана, строка назначения пуста —
   // клапаны стоят тёмными.
@@ -2658,13 +2847,83 @@ function createSkyPlatform(): void {
       [postX, 1.7, SIGN_Z + 0.3], [0.12, 3.4, 0.12], iron);
   }
   berth.add("board-body", "steel", "panel", [BOARD_X, 3.4, SIGN_Z + 0.11], [4.7, 1.5, 0.22], "#20262a");
-  addPixelText(berth, "board-line", "DEPARTS 03", BOARD_X, 3.68, SIGN_Z - 0.04, 0.07, brass, -1, true);
+  const skyDepartureMatrix = addPixelLampMatrix(
+    berth,
+    "board-line",
+    10,
+    BOARD_X,
+    3.68,
+    SIGN_Z - 0.04,
+    0.07,
+    -1,
+  );
+  mutableObjects.push({
+    kind: "matrixDisplay",
+    id: `${berth.id}:departures`,
+    cellPieceIds: skyDepartureMatrix.cellPieceIds,
+    transition: { fadeInSeconds: 0.48, fadeOutSeconds: 0.34 },
+    frames: [
+      {
+        id: "scheduled",
+        activePieceIds: skyDepartureMatrix.activePieceIds("DEPARTS 03"),
+        condition: {
+          kind: "clusterEvent",
+          sourceClusterId: train.id,
+          states: ["docked"],
+        },
+      },
+      {
+        id: "attention",
+        activePieceIds: skyDepartureMatrix.activePieceIds("ATTN"),
+        condition: {
+          kind: "clusterEvent",
+          sourceClusterId: train.id,
+          states: ["attention"],
+        },
+      },
+      {
+        id: "departing",
+        activePieceIds: skyDepartureMatrix.activePieceIds("DEPARTING"),
+        condition: {
+          kind: "clusterEvent",
+          sourceClusterId: train.id,
+          states: ["departure"],
+        },
+      },
+      {
+        id: "in-flight",
+        activePieceIds: skyDepartureMatrix.activePieceIds("IN FLIGHT"),
+        condition: {
+          kind: "clusterEvent",
+          sourceClusterId: train.id,
+          states: ["cruise", "inTransit"],
+        },
+      },
+      {
+        id: "arriving",
+        activePieceIds: skyDepartureMatrix.activePieceIds("ARRIVING"),
+        condition: {
+          kind: "clusterEvent",
+          sourceClusterId: train.id,
+          states: ["approach"],
+        },
+      },
+    ],
+  });
   // Строка назначения пуста: клапаны стоят тёмными — рейсу некуда объявлять.
   for (let flap = 0; flap < 10; flap += 1) {
     berth.add(`board-flap:${flap}`, "steel", "steelSheet",
       [BOARD_X - 1.8 + flap * 0.4, 3.06, SIGN_Z - 0.04], [0.34, 0.3, 0.05], "#161b1e");
   }
-  lamps.push({ id: `${berth.id}:board`, position: [BOARD_X, 3.4, SIGN_Z - 0.4], color: "#ffd9a0", distance: 8, intensity: 1.6 });
+  lamps.push({
+    id: `${berth.id}:board`,
+    position: [BOARD_X, 3.4, SIGN_Z - 0.4],
+    color: "#ffd9a0",
+    distance: 8,
+    intensity: 1.6,
+    dayIntensityFactor: 1,
+    transition: { fadeInSeconds: 0.45, fadeOutSeconds: 0.25 },
+  });
 
   // Номер платформы на эмалированной табличке у головы перрона — в стороне
   // от лестничного марша и выше человеческого роста: на оси входа она
@@ -2676,7 +2935,25 @@ function createSkyPlatform(): void {
   }
   berth.add("number-plate", "steel", "panel",
     [NUMBER_X, 3.4, SIGN_Z + 0.11], [4.3, 1.5, 0.22], "#20323c");
-  addPixelText(berth, "number-text", "PLATFORM 0", NUMBER_X, 3.68, SIGN_Z - 0.04, 0.065, "#e6e2d4", -1, true);
+  const platformMatrix = addPixelLampMatrix(
+    berth,
+    "number-text",
+    10,
+    NUMBER_X,
+    3.68,
+    SIGN_Z - 0.04,
+    0.065,
+    -1,
+  );
+  mutableObjects.push({
+    kind: "matrixDisplay",
+    id: `${berth.id}:platform-number`,
+    cellPieceIds: platformMatrix.cellPieceIds,
+    frames: [{
+      id: "platform",
+      activePieceIds: platformMatrix.activePieceIds("PLATFORM 0"),
+    }],
+  });
   lamps.push({ id: `${berth.id}:number-plate`, position: [NUMBER_X, 3.4, SIGN_Z - 0.4], color: "#cfe4ff", distance: 7, intensity: 1.4 });
 
   // Семафор в голове платформы: зелёная линза — путь свободен.
@@ -2697,7 +2974,16 @@ function createSkyPlatform(): void {
     berth.add(`lantern-arm:${lanternIndex}`, "steel", "steelSheet", [x, 3.16, LANTERN_Z], [0.26, 0.12, 0.26], brass);
     berth.add(`lantern:${lanternIndex}`, "glass", "glassPane", [x, 3.48, LANTERN_Z], [0.34, 0.52, 0.34], litWindowColor);
     berth.add(`lantern-cap:${lanternIndex}`, "steel", "steelSheet", [x, 3.8, LANTERN_Z], [0.4, 0.12, 0.4], iron);
-    lamps.push({ id: `${berth.id}:lantern:${lanternIndex}`, position: [x, 3.4, LANTERN_Z], color: "#ffe3ae", distance: 12, intensity: 2.4 });
+    lamps.push({
+      id: `${berth.id}:lantern:${lanternIndex}`,
+      position: [x, 3.4, LANTERN_Z],
+      color: "#ffe3ae",
+      distance: 12,
+      intensity: 2.4,
+      poolPriority: 4,
+      dayIntensityFactor: 0.35,
+      eventLighting: platformDockLighting,
+    });
   }
 
   addBench(berth, "bench:0", NUMBER_X, 0, BENCH_Z, 0, 2.2);
@@ -2753,7 +3039,37 @@ function createSkyPlatform(): void {
       carriesAttachments: true,
       attachmentSupportMode: "cable",
     });
-  lamps.push({ id: `${train.id}:heart`, position: [(HULL_FROM + HULL_TO) / 2, HULL_Y, TRACK_Z], color: "#ffcf92", distance: 16, intensity: 1.8 });
+  lamps.push({
+    id: `${train.id}:heart`,
+    position: [(HULL_FROM + HULL_TO) / 2, HULL_Y, TRACK_Z],
+    carrierClusterId: train.id,
+    color: "#ffcf92",
+    distance: 16,
+    intensity: 1.8,
+  });
+
+  // Носовой балласт. Он не украшение: без него центр масс висит на 0.42 м
+  // позади центра объёма оболочки, а плечо подъёма всего два метра — корабль
+  // стоял бы у причала с задранным носом градусов на двенадцать. Настоящие
+  // дирижабли развешивают балласт, и мы делаем то же: бак в носовой части,
+  // который можно увидеть, разбив обшивку, и потерять вместе с дифферентом.
+  const BALLAST_X = -6;
+  part(train, "ballast", "steel", "steelSheet",
+    [BALLAST_X, HULL_Y, TRACK_Z], [1.7, 1.25, 1.7], "#3d4448", {
+      volume: 3.0,
+      carriesAttachments: true,
+      attachmentSupportMode: "cable",
+      sideAttachmentReach: 0.5,
+      bearingArea: 1.2,
+    });
+  for (const strap of [-0.55, 0.55] as const) {
+    part(train, `ballast:strap:${strap}`, "steel", "steelSheet",
+      [BALLAST_X + strap, HULL_Y, TRACK_Z], [0.12, 1.45, 1.9], ironLight, {
+        volume: 0.1,
+        bearsLoad: false,
+        sideAttachmentReach: 0.4,
+      });
+  }
 
   // Профиль жёсткого корабля: короткий эллиптический нос, длинная
   // параллельная середина, вытянутая корма — не сигара-блимп, а каркасник.
@@ -2838,6 +3154,93 @@ function createSkyPlatform(): void {
           sideAttachmentReach: 0.4,
         });
     }
+  }
+
+  // Причальный прожектор сидит на нижнем носовом полотнище. Площадка
+  // повторяет низ оболочки, короткий литой корпус наклоняет линзу вперёд и
+  // вниз. Свет и видимый в воздухе сноп — не геометрия рейса: они слушают
+  // только опубликованную маршрутом фазу своего составного носителя.
+  {
+    const fixtureX = BAY_FROM + bayStep / 2;
+    const fixtureY = HULL_Y - hullRadiusAt(fixtureX);
+    const downAngle = 0.4;
+    const direction: SceneVector3 = [
+      -Math.cos(downAngle),
+      -Math.sin(downAngle),
+      0,
+    ];
+    const along = (distance: number): SceneVector3 => [
+      fixtureX + direction[0] * distance,
+      fixtureY - 0.08 + direction[1] * distance,
+      TRACK_Z,
+    ];
+    part(train, "mooring-light:mount", "steel", "steelSheet",
+      [fixtureX, fixtureY - 0.03, TRACK_Z], [0.9, 0.14, 0.62], ironLight, {
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.12,
+        // The shell is cloth and cannot carry load. The plate bolts through
+        // it into the internal frame/heart contact volume, like the other
+        // external equipment on this rigid airship.
+      });
+    part(train, "mooring-light:housing", "steel", "steelSheet",
+      along(0.28), [0.62, 0.32, 0.44], brass, {
+        rotation: [0, 0, downAngle],
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.12,
+        attachmentSupportIds: [`${train.id}:mooring-light:mount`],
+      });
+    const lensDepth = 0.13;
+    const lensPosition = along(0.62);
+    part(train, "mooring-light", "glass", "glassPane",
+      lensPosition, [lensDepth, 0.28, 0.34], mooringSignalColor, {
+        rotation: [0, 0, downAngle],
+        bearsLoad: false,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.08,
+        attachmentSupportIds: [`${train.id}:mooring-light:housing`],
+      });
+    spotLights.push({
+      id: `${train.id}:mooring-light`,
+      position: [
+        lensPosition[0] + direction[0] * (lensDepth / 2 + 0.015),
+        lensPosition[1] + direction[1] * (lensDepth / 2 + 0.015),
+        lensPosition[2],
+      ],
+      direction,
+      carrierClusterId: train.id,
+      color: "#ffe6b5",
+      distance: 72,
+      intensity: 620,
+      angle: 0.3,
+      penumbra: 0.48,
+      decay: 1.7,
+      dayIntensityFactor: 1,
+      eventLighting: mooringManeuverLighting,
+      transition: {
+        fadeInSeconds: 1.8,
+        fadeOutSeconds: 1.2,
+      },
+      visibleBeam: {
+        opacity: 0.16,
+        sourceRadius: 0.14,
+        length: 62,
+        attenuation: 56,
+        anglePower: 6,
+      },
+      fixtureGlow: {
+        color: mooringSignalColor,
+        intensity: 7.2,
+        halo: {
+          physicalDiameter: 0.58,
+          minScreenDiameter: 4.5,
+          maxWorldDiameter: 1.25,
+          dayOpacity: 0.72,
+          nightOpacity: 0.92,
+        },
+      },
+    });
   }
   // Носовой и кормовой обтекатели: ступени по местному радиусу профиля.
   // Полотнищами эти концы крыть нельзя — плоские панели расходятся лепестками.
@@ -3013,7 +3416,7 @@ function createSkyPlatform(): void {
         }
         part(train, `${prefix}:window:${side}:${paneIndex}`, "glass", "glassPane",
           [paneX, (WAIST_TOP + BAND_TOP) / 2, wallZ], [PANE_HALF * 2, BAND_TOP - WAIST_TOP, 0.2],
-          glassBlue, {
+          clearPassengerGlassColor, {
             bearsLoad: false,
             sideAttachmentReach: 0.3,
           });
@@ -3097,7 +3500,7 @@ function createSkyPlatform(): void {
           });
         part(train, `${prefix}:end-window:${end}`, "glass", "glassPane",
           [endX - end * 0.06, (WAIST_TOP + BAND_TOP) / 2, TRACK_Z], [0.16, BAND_TOP - WAIST_TOP, 1.1],
-          glassBlue, {
+          clearPassengerGlassColor, {
             bearsLoad: false,
             sideAttachmentReach: 0.3,
           });
@@ -3171,12 +3574,35 @@ function createSkyPlatform(): void {
           sideAttachmentReach: 0.3,
         });
     }
-    part(train, `${prefix}:lamp`, "glass", "glassPane",
-      [centerX, EAVES + 0.45, TRACK_Z], [0.34, 0.34, 0.34], litWindowColor, {
-        bearsLoad: false,
-        sideAttachmentReach: 0.4,
+    // Четыре потолочных плафона на вагон: каждый является разрушаемым членом
+    // состава и разрешает себе единственную опору — центральный лист крыши.
+    for (const [lampIndex, localX] of [-4.5, -1.5, 1.5, 4.5].entries()) {
+      const lampX = centerX + localX;
+      const lampId = `${train.id}:${prefix}:lamp:${lampIndex}`;
+      part(train, `${prefix}:lamp:${lampIndex}`, "glass", "glassPane",
+        [lampX, EAVES + 0.47, TRACK_Z], [0.64, 0.14, 0.34], litWindowColor, {
+          bearsLoad: false,
+          contactBoxes: [{
+            position: [lampX, EAVES + 0.58, TRACK_Z],
+            size: [0.56, 0.26, 0.28],
+          }],
+          attachmentSupportMode: "cable",
+          sideAttachmentReach: 0.18,
+          attachmentSupportIds: [`${train.id}:${prefix}:roof:3`],
+        });
+      lamps.push({
+        id: lampId,
+        position: [lampX, EAVES + 0.24, TRACK_Z],
+        carrierClusterId: train.id,
+        color: "#ffd79b",
+        distance: 14,
+        intensity: 7.2,
+        poolPriority: 12,
+        poolGroupId: `${train.id}:cabin`,
+        dayIntensityFactor: 1,
+        eventLighting: cabinDockLighting,
       });
-    lamps.push({ id: `${train.id}:${prefix}:lamp`, position: [centerX, EAVES - 0.2, TRACK_Z], color: "#ffd79b", distance: 10, intensity: 2.2 });
+    }
   }
 
   addSkyCoach("head", HEAD_X, carriageGreen, true, 1, "01");
@@ -3343,10 +3769,12 @@ function createSkyPlatform(): void {
   const engineX = 5.6;
   const engineY = 7.6;
   const engineB = 4.6;
+  const engineDiameter = 1.05;
+  const engineRadius = engineDiameter / 2;
   for (const side of [-1, 1] as const) {
     const z = TRACK_Z + side * engineB;
     addFacetedCylinder(train, `engine:${side}:body`, "steel", "steelSheet", "x",
-      [engineX, engineY, z], 2.6, 1.05, "#3f4a4c");
+      [engineX, engineY, z], 2.6, engineDiameter, "#3f4a4c");
     part(train, `engine:${side}:collar`, "steel", "steelSheet",
       [engineX - 1.32, engineY, z], [0.22, 1.1, 1.1], brass, {
         carriesAttachments: true,
@@ -3394,35 +3822,92 @@ function createSkyPlatform(): void {
   // поэтому его ПРАВЫЙ борт — перронная сторона, и там зелёный; на левом
   // красный. Нос и корма несут по белому.
   for (const [side, tone] of [[-1, "#7fe6a0"], [1, "#f08a80"]] as const) {
-    const z = TRACK_Z + side * (engineB + 0.62);
+    // Тонкая площадка сидит в центре НАРУЖНОГО борта гондолы и совпадает с ней
+    // цветом и материалом. Плоская линза лежит на площадке, а light source —
+    // сразу за её внешней гранью.
+    const engineZ = TRACK_Z + side * engineB;
+    const mountZ = engineZ + side * (engineRadius - 0.01);
+    const lensZ = engineZ + side * (engineRadius + 0.02);
+    part(train, `nav-light:${side}:mount`, "steel", "steelSheet",
+      [engineX, engineY, mountZ], [0.48, 0.48, 0.08], "#3f4a4c", {
+        carriesAttachments: true,
+        contactBoxes: [{
+          position: [engineX, engineY, engineZ + side * (engineRadius - 0.12)],
+          size: [0.44, 0.44, 0.26],
+        }],
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.12,
+      });
     part(train, `nav-light:${side}`, "glass", "glassPane",
-      [engineX, engineY, z], [0.3, 0.3, 0.34], tone, {
+      [engineX, engineY, lensZ], [0.34, 0.34, 0.1], tone, {
         bearsLoad: false,
-        sideAttachmentReach: 0.4,
+        contactBoxes: [{
+          position: [engineX, engineY, lensZ],
+          size: [0.3, 0.3, 0.08],
+        }],
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.08,
+        attachmentSupportIds: [`${train.id}:nav-light:${side}:mount`],
       });
     lamps.push({
       id: `${train.id}:nav-light:${side}`,
-      position: [engineX, engineY, TRACK_Z + side * (engineB + 0.95)],
+      position: [engineX, engineY, lensZ + side * 0.14],
+      carrierClusterId: train.id,
       color: side < 0 ? "#6bff9c" : "#ff6f62",
-      distance: 11,
-      intensity: 2.6,
-      poolPriority: 4,
+      distance: 24,
+      intensity: 5,
+      poolPriority: 8,
+      beacon: {
+        physicalDiameter: 0.9,
+        minScreenDiameter: 6,
+        maxWorldDiameter: 1.8,
+        dayOpacity: 0.72,
+        nightOpacity: 1,
+      },
     });
   }
-  for (const [navTag, navX] of [["nose", HULL_FROM - 1.03], ["tail", HULL_TO + 0.35]] as const) {
-    const lensDepth = navTag === "nose" ? 0.12 : 0.3;
+  const axialNavLights = [
+    ["nose", -1, HULL_FROM - 1.0],
+    ["tail", 1, HULL_TO - 0.2],
+  ] as const;
+  for (const [navTag, direction, housingSurfaceX] of axialNavLights) {
+    const mountX = housingSurfaceX + direction * 0.04;
+    const lensX = housingSurfaceX + direction * 0.23;
+    // Гнездо слегка утоплено в последний обтекатель, линза перекрывает его
+    // наружную кромку. Так физическая и структурная точки крепления совпадают.
+    part(train, `nav-light:${navTag}:mount`, "steel", "steelSheet",
+      [mountX, HULL_Y, TRACK_Z], [0.18, 0.5, 0.5], ironLight, {
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.22,
+      });
     part(train, `nav-light:${navTag}`, "glass", "glassPane",
-      [navX, HULL_Y, TRACK_Z], [lensDepth, 0.3, 0.3], "#f4f1e2", {
+      [lensX, HULL_Y, TRACK_Z], [0.2, 0.34, 0.34], "#f4f1e2", {
         bearsLoad: false,
-        sideAttachmentReach: 0.6,
+        contactBoxes: [{
+          position: [lensX + direction * 0.03, HULL_Y, TRACK_Z],
+          size: [0.12, 0.3, 0.3],
+        }],
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.08,
+        attachmentSupportIds: [`${train.id}:nav-light:${navTag}:mount`],
+        maximumVerticalGap: 0.02,
       });
     lamps.push({
       id: `${train.id}:nav-light:${navTag}`,
-      position: [navX + (navTag === "nose" ? -0.3 : 0.3), HULL_Y, TRACK_Z],
+      position: [lensX + direction * 0.27, HULL_Y, TRACK_Z],
+      carrierClusterId: train.id,
       color: "#fff6dc",
-      distance: 12,
-      intensity: 2.4,
-      poolPriority: 4,
+      distance: 18,
+      intensity: 3.4,
+      poolPriority: 6,
+      beacon: {
+        physicalDiameter: 0.75,
+        minScreenDiameter: 5,
+        maxWorldDiameter: 1.5,
+        dayOpacity: 0.64,
+        nightOpacity: 0.95,
+      },
     });
   }
 
@@ -3458,6 +3943,16 @@ createServiceBuildings();
 createSteamLocomotive();
 createPassengerTrain();
 createStationLife();
+
+// The terrestrial terminal reuses wider existing fixtures within a smaller
+// local budget. The sky berth and its train are authored afterwards and keep
+// their established twelve-light behaviour unchanged.
+for (let index = 0; index < lamps.length; index += 1) {
+  lamps[index] = {
+    ...lamps[index],
+    localPoolCapacity: STATION_LOCAL_LIGHT_CAPACITY,
+  };
+}
 createSkyPlatform();
 
 export const grandTerminalScene = createDestructionScene({
@@ -3484,6 +3979,8 @@ export const grandTerminalScene = createDestructionScene({
   },
   clusters,
   lamps,
+  spotLights,
+  mutableObjects,
 });
 
 export const grandTerminalMaterials = [

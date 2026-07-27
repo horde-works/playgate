@@ -8,7 +8,9 @@ import {
 
 test("the first-spawn guidance is a reusable game action cue", () => {
   const [hint] = hintsForGameAction("player.spawned");
-  assert.equal(gameActionHints.length, 4);
+  // Спавн, ворота, дверь усадьбы, посадка на облёт, дверь дома и табло
+  // отправления рейса.
+  assert.equal(gameActionHints.length, 6);
   assert.equal(hint.id, "first-look");
   assert.equal(hint.once, true);
   assert.equal(hint.delayMs >= 2_000, true);

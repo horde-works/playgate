@@ -16,7 +16,7 @@ export function SiteFooter() {
         <Link href="/terms-of-usage">Terms of Usage</Link>
         <Link href="/privacy">Privacy</Link>
         <Link href="/third-party-notices">Third-Party Notices</Link>
-        <Link href="/license">Source code: MIT License</Link>
+        <Link href="/license">Source code: AGPL v3</Link>
       </nav>
     </footer>
   );

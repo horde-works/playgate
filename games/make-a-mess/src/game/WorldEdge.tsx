@@ -98,6 +98,18 @@ const EDGE_PROFILES: Record<string, EdgeProfile> = {
     underglow: false,
     strata: ["#2e261c", "#463a2c", "#514537", "#5c5a52", "#54524b", "#454440", "#3a3936", "#302f2c"],
   },
+  // Степной остров: суша обрывается плотным лёссовым уступом, ниже —
+  // слоистая supesь и щебень. Юбка начинается внутри самой узкой точки
+  // шумной кромки (landRadiusAt колеблется около 104 ± 3.5).
+  astana: {
+    groundRadius: 99.5,
+    lipRadius: 102,
+    lipY: -2.2,
+    wallRadius: 108,
+    topY: -0.4,
+    underglow: false,
+    strata: ["#6d6249", "#7b6f53", "#867a5d", "#8f8467", "#7a7059", "#66604d", "#55503f", "#454133"],
+  },
   "basalt-stronghold": {
     // The rim terrain already eases down ~1.5 m, so the skirt starts deeper.
     groundRadius: 90,

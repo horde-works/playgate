@@ -1,3 +1,18 @@
+/**
+ * Капсула игрока. Всё, что ставит игрока на пол или щупает мир от его
+ * подошвы, считается ОТСЮДА. Высота капсулы уже один раз потерялась по
+ * дороге: точку высадки на перрон задали высотой настила, и проводник
+ * ссаживал пассажира на полметра внутрь бетона.
+ */
+export const PLAYER_CAPSULE_HALF_HEIGHT = 0.45;
+export const PLAYER_CAPSULE_RADIUS = 0.36;
+/** От центра капсулы до подошвы: центр = пол + это. */
+export const PLAYER_CAPSULE_FOOT_OFFSET =
+  PLAYER_CAPSULE_HALF_HEIGHT + PLAYER_CAPSULE_RADIUS;
+
+/** Тяжесть игры. Из неё считаются и подъём автошага, и время в воздухе. */
+export const PLAYER_GRAVITY = 14;
+
 export const MAX_AUTO_STEP_HEIGHT = 0.72;
 // Карабканье: выше обычного шага, но в пределах «подтянулся руками» —
 // пороги, кромки воронок, лежащие плиты. Дальше только полёт.
@@ -36,7 +51,25 @@ export function autoStepLiftSpeed(probe: AutoStepProbe): number {
     return 0;
   }
 
-  return Math.min(5.4, Math.sqrt(2 * 14 * (probe.stepHeight + 0.2)));
+  return Math.min(5.4, Math.sqrt(2 * PLAYER_GRAVITY * (probe.stepHeight + 0.2)));
+}
+
+/**
+ * Сколько длится подъём, начатый автошагом.
+ *
+ * Всё это время ноги продолжают толкать вперёд. Шаг — это ПЕРЕНОС ТЕЛА, а не
+ * подскок на месте: подъём прикладывается вертикально, а кромка держит
+ * капсулу в 0.35 м от себя, и без переноса игрок взлетает на 0.44 м строго
+ * вверх и падает на ту же ступень. Взойти получалось только с разбега —
+ * скорость приходилось приносить с собой, потому что сам шаг её не давал.
+ *
+ * Окно ровно на время полёта: это по-прежнему НЕ воздушное управление.
+ * Сорвавшийся с борта или падающий в яму игрок его не получает — оно
+ * открывается только тем шагом, который сам же и начался с найденной впереди
+ * площадки.
+ */
+export function stepCarryWindow(liftSpeed: number): number {
+  return liftSpeed > 0 ? (2 * liftSpeed) / PLAYER_GRAVITY : 0;
 }
 
 /**
@@ -56,7 +89,7 @@ export function autoClimbLiftSpeed(probe: AutoStepProbe): number {
     return 0;
   }
 
-  return Math.min(6.3, Math.sqrt(2 * 14 * (probe.stepHeight + 0.2)));
+  return Math.min(6.3, Math.sqrt(2 * PLAYER_GRAVITY * (probe.stepHeight + 0.2)));
 }
 
 export function setFlightVelocityTarget(

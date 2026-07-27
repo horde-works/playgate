@@ -151,6 +151,16 @@ export interface AuthoredSceneDocument {
   readonly world: SceneWorldDefinition;
   readonly copy: DestructionSceneCopy;
   readonly groups: readonly SceneGroupDefinition[];
+  /** Мир-заповедник: ломать нельзя ничего (см. LICENSING.md). */
+  readonly indestructible?: boolean;
+  /**
+   * SPDX-лицензия КОНТЕНТА мира, если она отличается от лицензии репозитория.
+   * Лицензия с запретом производных требует `indestructible: true` — связку
+   * проверяет `createDestructionScene` на сборке.
+   */
+  readonly contentLicense?: string;
+  /** Дальности тумана [near, far]; без них считаются от радиуса мира. */
+  readonly fogDistances?: readonly [near: number, far: number];
 }
 
 export interface CompiledSceneArtifact {

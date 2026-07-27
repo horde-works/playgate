@@ -23,7 +23,7 @@ export function LegalDocument({
           <Link href="/terms-of-usage">Terms</Link>
           <Link href="/privacy">Privacy</Link>
           <Link href="/third-party-notices">Notices</Link>
-          <Link href="/license">MIT</Link>
+          <Link href="/license">Licensing</Link>
         </nav>
       </header>
       <article className="legal-document">

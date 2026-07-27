@@ -66,6 +66,11 @@ export const ui = {
     "announce.weaponLauncher": "The launcher is on your shoulder.",
     "announce.weaponRocket": "The rocket is armed.",
     "announce.weaponMg": "The machine gun is warm.",
+    "announce.timeKicker": "Time of day",
+    "announce.timeDawn": "The sky is still making up its mind.",
+    "announce.timeDay": "Every flaw is now on display.",
+    "announce.timeSunset": "This is getting suspiciously beautiful.",
+    "announce.timeNight": "The lamps are in charge now.",
     "chip.flight": "Flight mode",
     "hud.launchAria": "Launch the 3D scene",
 
@@ -76,6 +81,7 @@ export const ui = {
     "weapon.rocket.short": "Rocket",
     "weapon.mg": "Machine gun",
 
+    "time.dawn": "Dawn",
     "time.day": "Day",
     "time.sunset": "Sunset",
     "time.night": "Night",
@@ -117,6 +123,18 @@ export const ui = {
     "hint.townDoor.key": "Space",
     "hint.townDoor.action": "Open the door",
     "hint.townDoor.actionTouch": "Open the door",
+
+    "hint.ride.eyebrow": "Head coach",
+    "hint.ride.title": "Take the sightseeing run.",
+    "hint.ride.key": "Space",
+    "hint.ride.action": "Ride the circuit",
+    "hint.ride.actionTouch": "Ride along",
+
+    "hint.departure.eyebrow": "Platform 0",
+    "hint.departure.title": "The board has no destination.",
+    "hint.departure.key": "Space",
+    "hint.departure.action": "Send the sky train off",
+    "hint.departure.actionTouch": "Send it off",
 
     "gate.continueTitle": "Carry on the mess?",
     "gate.startTitle": "Everything can break.",
@@ -189,6 +207,11 @@ export const ui = {
     "announce.weaponLauncher": "El lanzagranadas al hombro.",
     "announce.weaponRocket": "El cohete está listo.",
     "announce.weaponMg": "La ametralladora está caliente.",
+    "announce.timeKicker": "Hora del día",
+    "announce.timeDawn": "El cielo todavía no se decide.",
+    "announce.timeDay": "Todos los defectos quedan a la vista.",
+    "announce.timeSunset": "Esto se está poniendo sospechosamente bonito.",
+    "announce.timeNight": "Ahora mandan las farolas.",
     "chip.flight": "Modo vuelo",
     "hud.launchAria": "Iniciar la escena 3D",
 
@@ -199,6 +222,7 @@ export const ui = {
     "weapon.rocket.short": "Cohete",
     "weapon.mg": "Ametralladora",
 
+    "time.dawn": "Amanecer",
     "time.day": "Día",
     "time.sunset": "Atardecer",
     "time.night": "Noche",
@@ -235,6 +259,18 @@ export const ui = {
     "hint.door.key": "Espacio",
     "hint.door.action": "Pedir entrar",
     "hint.door.actionTouch": "Entrar en la casa",
+    "hint.ride.eyebrow": "Coche de cabeza",
+    "hint.ride.title": "Haz el vuelo panorámico.",
+    "hint.ride.key": "Espacio",
+    "hint.ride.action": "Volar el circuito",
+    "hint.ride.actionTouch": "Volar",
+
+    "hint.departure.eyebrow": "Andén 0",
+    "hint.departure.title": "El panel no anuncia destino.",
+    "hint.departure.key": "Espacio",
+    "hint.departure.action": "Despachar el tren del cielo",
+    "hint.departure.actionTouch": "Despacharlo",
+
     "hint.townDoor.eyebrow": "Entrada de la casa",
     "hint.townDoor.title": "Puedes pasar.",
     "hint.townDoor.key": "Espacio",
@@ -311,6 +347,11 @@ export const ui = {
     "announce.weaponLauncher": "Гранатомёт на плече.",
     "announce.weaponRocket": "Ракета готова.",
     "announce.weaponMg": "Пулемёт разогрет.",
+    "announce.timeKicker": "Время суток",
+    "announce.timeDawn": "Небо ещё не определилось.",
+    "announce.timeDay": "Все недостатки на виду.",
+    "announce.timeSunset": "Становится подозрительно красиво.",
+    "announce.timeNight": "Теперь всё держится на фонарях.",
     "chip.flight": "Режим полёта",
     "hud.launchAria": "Запуск трёхмерной сцены",
 
@@ -321,6 +362,7 @@ export const ui = {
     "weapon.rocket.short": "Ракета",
     "weapon.mg": "Пулемёт",
 
+    "time.dawn": "Рассвет",
     "time.day": "День",
     "time.sunset": "Закат",
     "time.night": "Ночь",
@@ -362,6 +404,18 @@ export const ui = {
     "hint.townDoor.key": "Пробел",
     "hint.townDoor.action": "Открыть дверь",
     "hint.townDoor.actionTouch": "Открыть дверь",
+
+    "hint.ride.eyebrow": "Головной вагон",
+    "hint.ride.title": "Можно уехать на облёт.",
+    "hint.ride.key": "Пробел",
+    "hint.ride.action": "Отправиться в облёт",
+    "hint.ride.actionTouch": "Поехать",
+
+    "hint.departure.eyebrow": "Платформа 0",
+    "hint.departure.title": "Строка назначения пуста.",
+    "hint.departure.key": "Пробел",
+    "hint.departure.action": "Отправить небесный поезд",
+    "hint.departure.actionTouch": "Отправить рейс",
 
     "gate.continueTitle": "Продолжим беспорядок?",
     "gate.startTitle": "Всё можно сломать.",

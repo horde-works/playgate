@@ -2,41 +2,69 @@ import type { Metadata } from "next";
 import { LegalDocument } from "../components/LegalDocument";
 
 export const metadata: Metadata = {
-  title: "MIT License",
-  description: "The MIT License for Handmade Games source code.",
+  title: "Licensing",
+  description:
+    "Handmade Games source code is licensed under the GNU AGPL v3; some game worlds carry their own content licence.",
 };
 
 export default function LicensePage() {
   return (
     <LegalDocument
-      eyebrow="Open-source software license"
-      title="MIT License"
-      summary="The source code and associated documentation are available under this license. Third-party components remain under their respective licenses."
+      eyebrow="Software and content licensing"
+      title="Licensing"
+      summary="The source code is free software under the GNU Affero General Public License v3. Game worlds are separate works: most share the code licence, and one — the Astana island — is published under a non-commercial, no-derivatives content licence."
     >
-      <section className="legal-license-text" aria-label="MIT License text">
-        <p>MIT License</p>
+      <section className="legal-license-text" aria-label="Source code licence">
+        <h2>Source code — GNU AGPL v3 or later</h2>
         <p>Copyright © 2026 Igor Kirisiuk</p>
         <p>
-          Permission is hereby granted, free of charge, to any person obtaining
-          a copy of this software and associated documentation files (the
-          “Software”), to deal in the Software without restriction, including
-          without limitation the rights to use, copy, modify, merge, publish,
-          distribute, sublicense, and/or sell copies of the Software, and to
-          permit persons to whom the Software is furnished to do so, subject to
-          the following conditions:
+          This program is free software: you can redistribute it and/or modify
+          it under the terms of the GNU Affero General Public License as
+          published by the Free Software Foundation, either version 3 of the
+          License, or (at your option) any later version.
         </p>
         <p>
-          The above copyright notice and this permission notice shall be
-          included in all copies or substantial portions of the Software.
+          This program is distributed in the hope that it will be useful, but
+          WITHOUT ANY WARRANTY; without even the implied warranty of
+          MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+          Affero General Public License for more details.
         </p>
         <p>
-          THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND,
-          EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-          MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-          IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-          CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
-          TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
-          SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+          You should have received a copy of the GNU Affero General Public
+          License along with this program. If not, see{" "}
+          <a
+            href="https://www.gnu.org/licenses/"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            gnu.org/licenses
+          </a>
+          .
+        </p>
+      </section>
+
+      <section className="legal-license-text" aria-label="World content licences">
+        <h2>Game worlds — content licences</h2>
+        <p>
+          A world is a work of its own: its layout, palette, texts and placement
+          are content rather than code. Open House, Viking Village, Grand
+          Terminal and Basalt Stronghold are published under the same AGPL
+          licence as the code.
+        </p>
+        <p>
+          The Astana island is different. It is a portrait of a real city —
+          Bayterek, the tent, the pyramid, the courtyards of the old railway
+          district — so its content is published under the Creative Commons
+          Attribution-NonCommercial-NoDerivatives 4.0 International licence
+          (CC BY-NC-ND 4.0). The world may be played and shared as it is; it may
+          not be redistributed in modified form, and it is not part of any
+          commercial release. The engine feature that keeps it unbreakable is
+          ordinary AGPL code and carries no such restriction.
+        </p>
+        <p>
+          The island is an artistic interpretation. It is not affiliated with,
+          endorsed by or sponsored by any of the organisations whose buildings
+          inspired it.
         </p>
       </section>
 
@@ -49,16 +77,34 @@ export default function LicensePage() {
               target="_blank"
               rel="noopener noreferrer"
             >
-              Repository license file
+              Repository license file — GNU AGPL v3
             </a>
           </li>
           <li>
             <a
-              href="https://opensource.org/license/mit"
+              href="https://github.com/horde-works/playgate/blob/main/LICENSING.md"
               target="_blank"
               rel="noopener noreferrer"
             >
-              Open Source Initiative — The MIT License
+              How code and world content are licensed
+            </a>
+          </li>
+          <li>
+            <a
+              href="https://www.gnu.org/licenses/agpl-3.0.html"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              GNU Affero General Public License v3.0
+            </a>
+          </li>
+          <li>
+            <a
+              href="https://creativecommons.org/licenses/by-nc-nd/4.0/"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Creative Commons BY-NC-ND 4.0
             </a>
           </li>
           <li>

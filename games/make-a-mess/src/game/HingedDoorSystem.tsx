@@ -1,10 +1,20 @@
 "use client";
 
 import { useFrame, useThree } from "@react-three/fiber";
-import { useRapier, type RapierRigidBody } from "@react-three/rapier";
+import {
+  useBeforePhysicsStep,
+  useRapier,
+  type RapierRigidBody,
+} from "@react-three/rapier";
 import { useEffect, useMemo, useRef } from "react";
 import { Euler, Quaternion, Vector3 } from "three";
 import type { BreakablePieceDefinition } from "./destructionScene";
+import type { VehicleFramePoseState } from "./VehicleFrameSystem";
+import {
+  multiplyQuaternions,
+  vehiclePiecePosition,
+  vehicleRotation,
+} from "./vehicleFrames";
 import {
   horizontalGateDistance,
   hingedDoorGroupKey,
@@ -25,11 +35,13 @@ import {
   type VikingGateLeafPolicy,
   type TownHouseDoorPolicy,
 } from "./hingedGatePolicy";
+import { PHYSICS_TIME_STEP } from "./compoundKinematicCluster";
+import {
+  entryInteractionMatches,
+  type EntryInteractionTarget,
+} from "./entryInteraction";
 
-export interface HingedEntryApproach {
-  readonly id: string;
-  readonly kind: "door" | "gate" | "town-door";
-}
+export type HingedEntryApproach = EntryInteractionTarget;
 
 interface DoorMember {
   readonly piece: BreakablePieceDefinition;
@@ -65,19 +77,31 @@ export function HingedDoorSystem({
   brokenPieces,
   resetVersion,
   entryOpenRequestVersion = 0,
+  entryOpenRequestTargetRef,
   entryOpenRequests,
   onEntryApproachChange = () => {},
+  movingVehicles,
+  dockedVehicles,
+  vehicleFramePoses,
 }: {
   pieces: readonly BreakablePieceDefinition[];
   bodies: { current: Map<string, RapierRigidBody> };
   brokenPieces: { current: ReadonlySet<string> };
   resetVersion: number;
   entryOpenRequestVersion?: number;
+  /** Точный адресат Space; соседний вход не должен принять ту же команду. */
+  entryOpenRequestTargetRef?: { current: EntryInteractionTarget | null };
   /** Входы, которые прямо сейчас открывает кто-то, кроме игрока (жители). */
   entryOpenRequests?: { current: ReadonlySet<string> };
   /** Сюда кладутся входы, чьи створки РЕАЛЬНО распахнуты: жители ждут именно этого. */
   openEntries?: { current: Set<string> };
   onEntryApproachChange?: (entry: HingedEntryApproach | null) => void;
+  /** Кластеры, которые сейчас везёт кадр транспорта: их створками правит он. */
+  movingVehicles?: { current: ReadonlySet<string> };
+  /** Кластеры, уже принятые швартовом и снова доступные для посадки. */
+  dockedVehicles?: { current: ReadonlySet<string> };
+  /** Их ещё не обнулённая физическая поза — дверь не должна прыгать в origin. */
+  vehicleFramePoses?: { current: ReadonlyMap<string, VehicleFramePoseState> };
 }) {
   const { camera } = useThree();
   const { rapier } = useRapier();
@@ -162,6 +186,8 @@ export function HingedDoorSystem({
   const doorRelative = useRef(new Vector3());
   const doorUpAxis = useRef(new Vector3(0, 1, 0));
   const shadowAccumulator = useRef(1);
+  const shadowRefreshRequested = useRef(false);
+  const carrierDoorTelemetryAt = useRef(0);
   const approachedEntry = useRef<HingedEntryApproach | null>(null);
   const openedEntries = useRef(new Set<string>());
   const handledEntryRequest = useRef(entryOpenRequestVersion);
@@ -173,16 +199,43 @@ export function HingedDoorSystem({
     onEntryApproachChange(null);
   }, [onEntryApproachChange, resetVersion]);
 
-  useFrame((frameState, delta) => {
+  useBeforePhysicsStep(() => {
+    const delta = PHYSICS_TIME_STEP;
     camera.getWorldDirection(cameraDirection.current);
     shadowAccumulator.current += delta;
     let doorMoved = false;
+    let carrierDoorTelemetry: {
+      id: string;
+      angle: number;
+      targetAngle: number;
+      open: boolean;
+      carrier: boolean;
+      bodyPositions: readonly (readonly [number, number, number])[];
+    } | null = null;
 
     const cameraPosition = [
       camera.position.x,
       camera.position.y,
       camera.position.z,
     ] as const;
+    const dockedCarrierFrame = (group: DoorGroup): VehicleFramePoseState | null => {
+      const clusterId = group.members[0]?.piece.clusterId;
+      if (!clusterId || !dockedVehicles?.current.has(clusterId)) {
+        return null;
+      }
+      return vehicleFramePoses?.current.get(clusterId) ?? null;
+    };
+    const groupWorldCenter = (group: DoorGroup): readonly [number, number, number] => {
+      const carrier = dockedCarrierFrame(group);
+      return carrier
+        ? vehiclePiecePosition(
+            carrier.origin,
+            group.center,
+            carrier.pose,
+            vehicleRotation(carrier.pose, carrier.nose),
+          )
+        : group.center;
+    };
     let nearestEntry: HingedEntryApproach | null = null;
     let nearestEntryDistance = Number.POSITIVE_INFINITY;
     for (const gate of gateGroups) {
@@ -217,10 +270,11 @@ export function HingedDoorSystem({
         openedEntries.current.delete(doorId);
         continue;
       }
-      const distance = horizontalGateDistance(cameraPosition, group.center);
+      const center = groupWorldCenter(group);
+      const distance = horizontalGateDistance(cameraPosition, center);
       // Одной горизонтальной дистанции мало: без порога по высоте дверь
       // поднятой гондолы открывается с земли под ней.
-      const rise = Math.abs(cameraPosition[1] - group.center[1]);
+      const rise = Math.abs(cameraPosition[1] - center[1]);
       if (
         distance <= VIKING_DOOR_APPROACH_RADIUS &&
         rise <= DOOR_APPROACH_HEIGHT &&
@@ -247,8 +301,15 @@ export function HingedDoorSystem({
     }
     if (handledEntryRequest.current !== entryOpenRequestVersion) {
       handledEntryRequest.current = entryOpenRequestVersion;
-      if (approachedEntry.current) {
-        openedEntries.current.add(approachedEntry.current.id);
+      const approached = approachedEntry.current;
+      if (
+        approached &&
+        entryInteractionMatches(
+          entryOpenRequestTargetRef?.current,
+          approached,
+        )
+      ) {
+        openedEntries.current.add(approached.id);
       }
     }
 
@@ -256,6 +317,11 @@ export function HingedDoorSystem({
 
     for (const group of doorGroups) {
       const hinge = group.hinge;
+      const center = groupWorldCenter(group);
+      const carrier = dockedCarrierFrame(group);
+      const carrierRotation = carrier
+        ? vehicleRotation(carrier.pose, carrier.nose)
+        : null;
       let state = states.current.get(group.key);
       if (!state) {
         state = { angle: 0, sign: 0 };
@@ -263,9 +329,9 @@ export function HingedDoorSystem({
       }
 
       // One open/close decision for the whole leaf, measured to the leaf centre.
-      const dx = camera.position.x - group.center[0];
-      const dy = camera.position.y - group.center[1];
-      const dz = camera.position.z - group.center[2];
+      const dx = camera.position.x - center[0];
+      const dy = camera.position.y - center[1];
+      const dz = camera.position.z - center[2];
       const distance = Math.hypot(dx, dy, dz);
       let open: boolean;
       if (group.hallGate) {
@@ -288,7 +354,7 @@ export function HingedDoorSystem({
             state.sign = group.gate.swingSign;
           } else if (group.vikingDoor || group.townHouseDoor) {
             state.sign = inwardDoorSwingSign(
-              group.center,
+              center,
               hinge.pivot,
               hinge.normal,
             );
@@ -299,9 +365,9 @@ export function HingedDoorSystem({
       } else {
         directionToDoor.current
           .set(
-            group.center[0] - camera.position.x,
-            group.center[1] - camera.position.y,
-            group.center[2] - camera.position.z,
+            center[0] - camera.position.x,
+            center[1] - camera.position.y,
+            center[2] - camera.position.z,
           )
           .normalize();
         open =
@@ -385,6 +451,24 @@ export function HingedDoorSystem({
         -hinge.normal[0],
       ];
 
+      if (process.env.NODE_ENV !== "production" && plug) {
+        carrierDoorTelemetry = {
+          id: plug.doorId,
+          angle: state.angle,
+          targetAngle,
+          open,
+          carrier: carrier !== null,
+          bodyPositions: group.members.flatMap((member) => {
+            const body = bodies.current.get(member.piece.id);
+            if (!body) {
+              return [];
+            }
+            const position = body.translation();
+            return [[position.x, position.y, position.z] as const];
+          }),
+        };
+      }
+
       // The same rotation is applied to every surviving board and strap, each
       // orbiting the shared pivot — so the leaf stays one rigid piece.
       doorQuaternion.current.setFromAxisAngle(
@@ -396,11 +480,39 @@ export function HingedDoorSystem({
         if (brokenPieces.current.has(piece.id)) {
           continue;
         }
+        // В полёте створка принадлежит кадру. После физического приёма
+        // швартовом она снова наша, но всё ещё преобразуется через текущую
+        // позу корабля, пока лебёдка выбирает последние сантиметры.
+        if (movingVehicles?.current.has(piece.clusterId) && !carrier) {
+          continue;
+        }
         const body = bodies.current.get(piece.id);
         if (!body) {
           continue;
         }
         if (closedNow) {
+          if (carrier && carrierRotation) {
+            const placed = vehiclePiecePosition(
+              carrier.origin,
+              piece.position,
+              carrier.pose,
+              carrierRotation,
+            );
+            const rotated = multiplyQuaternions(carrierRotation, [
+              member.baseQuaternion.x,
+              member.baseQuaternion.y,
+              member.baseQuaternion.z,
+              member.baseQuaternion.w,
+            ]);
+            if (body.bodyType() !== rapier.RigidBodyType.KinematicPositionBased) {
+              body.setBodyType(rapier.RigidBodyType.KinematicPositionBased, true);
+            }
+            body.setNextKinematicTranslation({ x: placed[0], y: placed[1], z: placed[2] });
+            body.setNextKinematicRotation({
+              x: rotated[0], y: rotated[1], z: rotated[2], w: rotated[3],
+            });
+            continue;
+          }
           if (body.bodyType() !== rapier.RigidBodyType.Fixed) {
             body.setBodyType(rapier.RigidBodyType.Fixed, true);
             body.setTranslation(
@@ -420,16 +532,37 @@ export function HingedDoorSystem({
           body.setBodyType(rapier.RigidBodyType.KinematicPositionBased, true);
         }
         if (plug) {
+          const localPosition: readonly [number, number, number] = [
+            piece.position[0] + hinge.normal[0] * plugOffset + slideRight[0] * slideOffset,
+            piece.position[1],
+            piece.position[2] + hinge.normal[2] * plugOffset + slideRight[2] * slideOffset,
+          ];
+          const placed = carrier && carrierRotation
+            ? vehiclePiecePosition(carrier.origin, localPosition, carrier.pose, carrierRotation)
+            : localPosition;
+          const rotated = carrierRotation
+            ? multiplyQuaternions(carrierRotation, [
+                member.baseQuaternion.x,
+                member.baseQuaternion.y,
+                member.baseQuaternion.z,
+                member.baseQuaternion.w,
+              ])
+            : [
+                member.baseQuaternion.x,
+                member.baseQuaternion.y,
+                member.baseQuaternion.z,
+                member.baseQuaternion.w,
+              ] as const;
           body.setNextKinematicTranslation({
-            x: piece.position[0] + hinge.normal[0] * plugOffset + slideRight[0] * slideOffset,
-            y: piece.position[1],
-            z: piece.position[2] + hinge.normal[2] * plugOffset + slideRight[2] * slideOffset,
+            x: placed[0],
+            y: placed[1],
+            z: placed[2],
           });
           body.setNextKinematicRotation({
-            x: member.baseQuaternion.x,
-            y: member.baseQuaternion.y,
-            z: member.baseQuaternion.z,
-            w: member.baseQuaternion.w,
+            x: rotated[0],
+            y: rotated[1],
+            z: rotated[2],
+            w: rotated[3],
           });
           continue;
         }
@@ -456,10 +589,33 @@ export function HingedDoorSystem({
       }
     }
 
+    if (process.env.NODE_ENV !== "production") {
+      const now = performance.now();
+      if (now >= carrierDoorTelemetryAt.current) {
+        carrierDoorTelemetryAt.current = now + 100;
+        document.documentElement.dataset.mamCarrierDoor = JSON.stringify(
+          carrierDoorTelemetry,
+        );
+      }
+    }
+
     if (doorMoved && shadowAccumulator.current > 0.18) {
       shadowAccumulator.current = 0;
-      frameState.gl.shadowMap.needsUpdate = true;
+      shadowRefreshRequested.current = true;
     }
+  });
+
+  useEffect(() => () => {
+    delete document.documentElement.dataset.mamCarrierDoor;
+  }, []);
+
+  // Shadow rendering belongs to the render clock; physical door poses do not.
+  useFrame((frameState) => {
+    if (!shadowRefreshRequested.current) {
+      return;
+    }
+    shadowRefreshRequested.current = false;
+    frameState.gl.shadowMap.needsUpdate = true;
   });
 
   return null;

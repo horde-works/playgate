@@ -17,6 +17,8 @@ export interface StructuralPieceDefinition<Material extends string> {
   readonly bearsLoad?: boolean;
   readonly attachmentSupportMode?: "wall" | "cable" | "hinge";
   readonly sideAttachmentReach?: number;
+  /** Optional whitelist for fixtures that have one authored physical mount. */
+  readonly attachmentSupportIds?: readonly string[];
   readonly contactBearingOrder?: boolean;
   /** Per-piece override of the material cantilever allowance. */
   readonly cantilever?: number;
@@ -293,6 +295,12 @@ export function createStructuralSolver<Material extends string>(
     if (piece.id === support.id) {
       return false;
     }
+    if (
+      piece.attachmentSupportIds !== undefined &&
+      !piece.attachmentSupportIds.includes(support.id)
+    ) {
+      return false;
+    }
 
     const pieceProfile = materialProfiles[piece.material];
     const supportProfile = materialProfiles[support.material];
@@ -352,6 +360,8 @@ export function createStructuralSolver<Material extends string>(
     if (
       reach === undefined ||
       piece.id === support.id ||
+      (piece.attachmentSupportIds !== undefined &&
+        !piece.attachmentSupportIds.includes(support.id)) ||
       (support.bearsLoad ?? supportProfile.bearsLoad) === false ||
       !(support.carriesAttachments ?? supportProfile.carriesAttachments)
     ) {

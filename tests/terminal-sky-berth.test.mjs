@@ -10,6 +10,10 @@ import {
   plugSlideDoorPolicy,
 } from "../games/make-a-mess/src/game/hingedGatePolicy.ts";
 import { MAX_AUTO_STEP_HEIGHT } from "../games/make-a-mess/src/game/playerMovement.ts";
+import {
+  clearPassengerGlassColor,
+  mooringSignalColor,
+} from "../games/make-a-mess/src/game/destructionScene.ts";
 
 // Круглая карта терминала: стена мира радиусом 98 вокруг (0, -14).
 const WORLD_CENTER = [0, -14];
@@ -87,23 +91,215 @@ test("platform 0 and the sky train are two clusters of the terminal", () => {
   assert.notEqual(trainPieces.find((piece) => piece.id === HEART_ID), undefined);
 });
 
+test("only the coach glazing selects the clearer passenger material", () => {
+  const coachGlass = trainPieces.filter((piece) =>
+    piece.material === "glass" &&
+    (piece.id.includes(":window:") || piece.id.includes(":end-window:"))
+  );
+  assert.equal(coachGlass.length > 10, true);
+  assert.equal(
+    coachGlass.every((piece) => piece.color === clearPassengerGlassColor),
+    true,
+  );
+  assert.equal(
+    berthPieces.some((piece) => piece.color === clearPassengerGlassColor),
+    false,
+  );
+});
+
 test("the terminal still starts perfectly stable with the sky train in it", () => {
   assert.equal(grandTerminalScene.resolveStructuralCollapse(new Set()).size, 0);
 });
 
-test("the sky train navigation lights stay legible and the nose lens clears its housing", () => {
+test("the sky train navigation lights have physical mounts and long-range halos", () => {
   const navigationLamps = grandTerminalScene.lampDefinitions.filter((lamp) =>
     lamp.id.startsWith(`${TRAIN}:nav-light:`));
   assert.equal(navigationLamps.length, 4);
-  assert.equal(navigationLamps.every((lamp) => lamp.poolPriority === 4), true);
+  const sideLamps = navigationLamps.filter((lamp) => /nav-light:-?1$/.test(lamp.id));
+  assert.equal(sideLamps.length, 2);
+  assert.equal(sideLamps.every((lamp) => lamp.poolPriority >= 8), true);
+  assert.equal(sideLamps.every((lamp) => lamp.distance >= 24), true);
+  assert.equal(navigationLamps.every((lamp) => lamp.carrierClusterId === TRAIN), true);
+  assert.equal(
+    navigationLamps.every((lamp) =>
+      lamp.beacon?.minScreenDiameter >= 5 &&
+      lamp.beacon?.dayOpacity > 0 &&
+      lamp.beacon?.nightOpacity >= lamp.beacon?.dayOpacity),
+    true,
+  );
 
-  const noseLens = trainPieces.find((piece) => piece.id === `${TRAIN}:nav-light:nose`);
-  const noseHousing = trainPieces.find((piece) => piece.id === `${TRAIN}:nose-cone`);
-  assert.notEqual(noseLens, undefined);
-  assert.notEqual(noseHousing, undefined);
-  const lensFront = noseLens.position[0] - noseLens.size[0] / 2;
-  const housingFront = noseHousing.position[0] - noseHousing.size[0] / 2;
-  assert.equal(housingFront - lensFront >= 0.08, true);
+  // На середине наружного борта мотора лежит тонкая площадка того же материала
+  // и цвета. Линза перекрывает её наружную грань, light source вынесен дальше.
+  for (const side of [-1, 1]) {
+    const lens = trainPieces.find((piece) => piece.id === `${TRAIN}:nav-light:${side}`);
+    const mount = trainPieces.find((piece) => piece.id === `${TRAIN}:nav-light:${side}:mount`);
+    const lamp = sideLamps.find((candidate) => candidate.id === lens?.id);
+    const engine = trainPieces.filter((piece) =>
+      piece.id.startsWith(`${TRAIN}:engine:${side}:body:`));
+    assert.notEqual(lens, undefined);
+    assert.notEqual(mount, undefined);
+    assert.notEqual(lamp, undefined);
+    assert.notEqual(engine.length, 0);
+    const engineCenter = [
+      engine[0].position[0],
+      engine.reduce((sum, piece) => sum + piece.position[1], 0) / engine.length,
+      engine[0].position[2],
+    ];
+    const engineOutside = Math.max(...engine.map((piece) =>
+      side * piece.position[2] + extentOf(piece)[2] / 2));
+    const mountInside = side * mount.position[2] - mount.size[2] / 2;
+    const mountOutside = side * mount.position[2] + mount.size[2] / 2;
+    const lensInside = side * lens.position[2] - lens.size[2] / 2;
+    const lensOutside = side * lens.position[2] + lens.size[2] / 2;
+    assert.equal(mount.material, engine[0].material);
+    assert.equal(mount.shape, engine[0].shape);
+    assert.equal(mount.color, engine[0].color);
+    assert.equal(mount.size[2] <= 0.1, true);
+    assert.equal(Math.abs(mount.position[1] - engineCenter[1]) < 1e-9, true);
+    assert.equal(Math.abs(lens.position[1] - engineCenter[1]) < 1e-9, true);
+    assert.equal(mountInside < engineOutside && mountOutside > engineOutside, true);
+    assert.equal(lensInside <= mountOutside && lensOutside > engineOutside, true);
+    assert.equal(
+      side * lamp.position[2] > lensOutside,
+      true,
+    );
+    assert.equal(
+      grandTerminalScene.resolveStructuralCollapse(new Set([mount.id])).has(lens.id),
+      true,
+    );
+  }
+
+  // Носовой и кормовой фонари посажены в металлические гнёзда без воздушного
+  // зазора. Удаление гнезда лишает линзу единственной разрешённой опоры.
+  for (const [tag, direction, housingPrefix] of [
+    ["nose", -1, `${TRAIN}:nose-cone`],
+    ["tail", 1, `${TRAIN}:cap:tail:2`],
+  ]) {
+    const lens = trainPieces.find((piece) => piece.id === `${TRAIN}:nav-light:${tag}`);
+    const mount = trainPieces.find((piece) => piece.id === `${TRAIN}:nav-light:${tag}:mount`);
+    const lamp = navigationLamps.find((candidate) => candidate.id === lens?.id);
+    const housing = trainPieces.filter((piece) => piece.id.startsWith(housingPrefix));
+    assert.notEqual(lens, undefined);
+    assert.notEqual(mount, undefined);
+    assert.notEqual(lamp, undefined);
+    assert.notEqual(housing.length, 0);
+
+    const housingOutside = Math.max(...housing.map((piece) =>
+      direction * piece.position[0] + extentOf(piece)[0] / 2));
+    const mountInside = direction * mount.position[0] - mount.size[0] / 2;
+    const mountOutside = direction * mount.position[0] + mount.size[0] / 2;
+    const lensInside = direction * lens.position[0] - lens.size[0] / 2;
+    assert.equal(mountInside <= housingOutside + 0.02, true);
+    assert.equal(Math.abs(lensInside - mountOutside) <= 0.02, true);
+    assert.equal(
+      direction * lamp.position[0] > direction * lens.position[0] + lens.size[0] / 2,
+      true,
+    );
+    assert.equal(
+      grandTerminalScene.resolveStructuralCollapse(new Set([mount.id])).has(lens.id),
+      true,
+    );
+  }
+});
+
+test("the nose owns a breakable route-driven mooring spotlight", () => {
+  const lens = trainPieces.find((piece) => piece.id === `${TRAIN}:mooring-light`);
+  const housing = trainPieces.find((piece) => piece.id === `${TRAIN}:mooring-light:housing`);
+  const mount = trainPieces.find((piece) => piece.id === `${TRAIN}:mooring-light:mount`);
+  const light = grandTerminalScene.spotLightDefinitions.find(
+    (candidate) => candidate.id === lens?.id,
+  );
+  assert.notEqual(lens, undefined);
+  assert.notEqual(housing, undefined);
+  assert.notEqual(mount, undefined);
+  assert.notEqual(light, undefined);
+  assert.equal(lens.color, mooringSignalColor);
+  assert.equal(light.fixtureGlow?.color, lens.color);
+  assert.equal(light.carrierClusterId, TRAIN);
+  assert.equal(light.direction[0] < -0.8, true, "beam must point ahead of the -x nose");
+  assert.equal(light.direction[1] < -0.25, true, "beam must point below the hull");
+  assert.equal(Math.abs(Math.hypot(...light.direction) - 1) < 1e-9, true);
+  assert.equal(light.distance >= 60, true);
+  assert.equal(light.visibleBeam?.length >= 50, true);
+  assert.equal(light.visibleBeam?.sourceRadius >= 0.1, true);
+  assert.equal(light.fixtureGlow?.halo?.physicalDiameter >= lens.size[1], true);
+  assert.equal(light.fixtureGlow?.halo?.dayOpacity > 0, true);
+  const lensToSource = light.position.map(
+    (value, axis) => value - lens.position[axis],
+  );
+  const sourceOffset = dot(lensToSource, light.direction);
+  assert.equal(sourceOffset >= lens.size[0] / 2, true);
+  assert.equal(sourceOffset <= lens.size[0] / 2 + 0.03, true);
+  assert.equal(light.dayIntensityFactor, 1);
+  assert.equal(light.eventLighting?.sourceClusterId, TRAIN);
+  assert.equal(light.eventLighting?.levels.docked.intensityMultiplier, 0);
+  assert.equal(light.eventLighting?.levels.departure.intensityMultiplier, 1);
+  assert.equal(light.eventLighting?.levels.cruise.intensityMultiplier, 0);
+  assert.equal(light.eventLighting?.levels.approach.intensityMultiplier, 1);
+  assert.equal(light.transition?.fadeInSeconds >= 1.5, true);
+  assert.equal(light.transition?.fadeOutSeconds >= 1, true);
+  assert.equal(light.visibleBeam?.anglePower >= 5, true);
+  assert.equal(
+    grandTerminalScene.resolveStructuralCollapse(new Set([mount.id])).has(lens.id),
+    true,
+  );
+  assert.equal(
+    grandTerminalScene.resolveStructuralCollapse(new Set([housing.id])).has(lens.id),
+    true,
+  );
+});
+
+test("platform lighting doubles when its linked ship is docked", () => {
+  const platformLamps = grandTerminalScene.lampDefinitions.filter((lamp) =>
+    lamp.id === `${BERTH}:buffer-lamp` ||
+    lamp.id.startsWith(`${BERTH}:canopy-lamp:`) ||
+    lamp.id.startsWith(`${BERTH}:lantern:`));
+  assert.equal(platformLamps.length >= 10, true);
+  for (const lamp of platformLamps) {
+    assert.equal(lamp.eventLighting?.sourceClusterId, TRAIN);
+    assert.equal(lamp.dayIntensityFactor > 0, true);
+    assert.equal(lamp.eventLighting?.levels.docked.intensityMultiplier, 2);
+    assert.equal(lamp.eventLighting?.levels.inTransit.intensityMultiplier, 1);
+  }
+});
+
+test("each coach owns a row of event-driven ceiling lights", () => {
+  const cabinLamps = grandTerminalScene.lampDefinitions.filter((lamp) =>
+    lamp.id.startsWith(`${TRAIN}:head:lamp:`) ||
+    lamp.id.startsWith(`${TRAIN}:tail:lamp:`));
+  assert.equal(cabinLamps.length, 8);
+  assert.deepEqual(
+    [...new Set(cabinLamps.map((lamp) => lamp.poolGroupId))],
+    [`${TRAIN}:cabin`],
+  );
+
+  for (const coach of ["head", "tail"]) {
+    const coachLamps = cabinLamps.filter((lamp) => lamp.id.includes(`:${coach}:lamp:`));
+    assert.equal(coachLamps.length, 4);
+    assert.equal(new Set(coachLamps.map((lamp) => lamp.position[0])).size, 4);
+  }
+
+  for (const lamp of cabinLamps) {
+    const fixture = trainPieces.find((piece) => piece.id === lamp.id);
+    assert.notEqual(fixture, undefined);
+    assert.equal(fixture.clusterId, TRAIN);
+    assert.equal(lamp.carrierClusterId, TRAIN);
+    assert.equal(lamp.position[1] < fixture.position[1], true);
+    assert.equal(lamp.intensity >= 7, true);
+    assert.equal(lamp.distance >= 14, true);
+    assert.equal(lamp.dayIntensityFactor, 1);
+    assert.equal(lamp.eventLighting?.sourceClusterId, TRAIN);
+    assert.equal(lamp.eventLighting?.levels.docked.intensityMultiplier, 1);
+    assert.equal(lamp.eventLighting?.levels.inTransit.intensityMultiplier <= 0.15, true);
+    assert.equal(lamp.eventLighting?.levels.inTransit.distanceMultiplier <= 0.5, true);
+
+    const supportIds = fixture.attachmentSupportIds ?? [];
+    assert.equal(supportIds.length, 1);
+    assert.equal(
+      grandTerminalScene.resolveStructuralCollapse(new Set(supportIds)).has(fixture.id),
+      true,
+    );
+  }
 });
 
 test("the berth reads as a station platform and the ship as a flying train", () => {
@@ -144,10 +340,10 @@ test("the berth reads as a station platform and the ship as a flying train", () 
 
   // Фонарь упора, подсветка табло и таблички, линза семафора, шесть перронных
   // фонарей, светильник на каждой из четырёх колонн навеса, свет сердца, по
-  // лампе в каждом вагоне и четыре аэронавигационных огня корабля.
+  // четыре потолочных лампы в каждом вагоне и четыре аэронавигационных огня.
   assert.equal(
     grandTerminalScene.lampDefinitions.filter((lamp) => lamp.id.startsWith("terminal:sky-")).length,
-    21,
+    27,
   );
 });
 
@@ -340,6 +536,10 @@ const ALLOWED_INNER_OVERLAPS = [
   ["gable", "roof"],                // щипец смыкается с аркой кровли
   ["nav-light", "nose-cone"],       // огонь утоплен в носовой обтекатель
   ["nav-light", "engine"],
+  ["mooring-light", "skin"],       // plate is bolted through the envelope
+  ["mooring-light", "stringer"],   // and straddles its lower longitudinal rib
+  ["mooring-light:mount", "mooring-light:housing"],
+  ["ballast", "ballast:strap"],     // хомуты обхватывают балластный бак
 ];
 
 test("nothing inside the berth or the train grows through its own neighbour", () => {
@@ -430,6 +630,48 @@ test("a passenger capsule fits the whole way from the square into the tail coach
   assert.deepEqual([...blockers.values()].slice(0, 6), []);
 });
 
+test("the platform edge is a solid riser, so the auto-step probe sees the last step", () => {
+  // Последний подъём — единственный, который делает не ступень, а КРОМКА
+  // ПЕРРОНА, собранная из двух кусков. Автошаг ищет препятствие
+  // горизонтальными лучами от подошвы; сквозной шов между основанием и
+  // плитой проваливает луч, и целая ступень читается как пустота — игрок
+  // упирается в неё и без прыжка на перрон не попадает.
+  //
+  // Проверяем не авторские высоты (они и со щелью были в допуске), а то, что
+  // видит щуп: стенка кромки должна быть сплошной от верхней ступени до
+  // настила.
+  const stairXs = [...new Set(pieces
+    .filter((piece) => /:stair:\d+:0$/.test(piece.id))
+    .map((piece) => piece.position[0]))];
+  assert.equal(stairXs.length, 3, String(stairXs));
+
+  const lastTread = M.platformTop - M.platformTop / M.stairSteps;
+  const edgeZ = M.platformZ - M.platformHalf;
+  const solidAt = (x, y, z) => berthPieces.some((piece) => {
+    const extent = extentOf(piece);
+    return [x, y, z].every((value, axis) =>
+      value > piece.position[axis] - extent[axis] / 2 &&
+      value < piece.position[axis] + extent[axis] / 2);
+  });
+
+  // Щупы автошага бьют от подошвы плюс 2 см. Проседание лежащего тела в
+  // решателе — доли миллиметра, но именно оно роняло луч в шов, поэтому
+  // проверяем и просевшую капсулу тоже.
+  const feelers = [0.08, 0.18, 0.3].flatMap((height) =>
+    [0, 0.003].map((sink) => lastTread + 0.02 + height - sink));
+  const heights = [
+    ...feelers.filter((y) => y < M.platformTop),
+    ...Array.from({ length: 53 }, (_, index) => lastTread + index * 0.005),
+  ].filter((y) => y > lastTread && y < M.platformTop);
+
+  for (const x of stairXs) {
+    for (const y of heights) {
+      assert.equal(solidAt(x, y, edgeZ + 0.03), true,
+        `дыра в кромке перрона на всходе x=${x}, высота ${y.toFixed(3)}`);
+    }
+  }
+});
+
 test("boarding is one shallow step over a narrow gap, not a jump", () => {
   const topOf = (id) => {
     const piece = pieces.find((candidate) => candidate.id === id);
@@ -464,9 +706,13 @@ test("boarding is one shallow step over a narrow gap, not a jump", () => {
 test("every sign reads the right way round from the side that faces the reader", () => {
   // Зеркальная раскладка уже дважды прокрадывалась в сцену, поэтому надписи
   // ДЕКОДИРУЕМ обратно: строим сетку из самих кусков и сверяем со шрифтом.
-  const decode = (prefix, text, pixel, facing) => {
-    const cells = pieces.filter((piece) =>
-      piece.id.startsWith(`${prefix}:`) && /:\d+$/.test(piece.id));
+  const decode = (source, text, pixel, facing) => {
+    const ids = Array.isArray(source) ? new Set(source) : null;
+    const prefix = Array.isArray(source) ? source[0]?.split(":cell:")[0] ?? "matrix" : source;
+    const cells = ids
+      ? pieces.filter((piece) => ids.has(piece.id))
+      : pieces.filter((piece) =>
+          piece.id.startsWith(`${prefix}:`) && /:\d+$/.test(piece.id));
     assert.equal(cells.length > 0, true, prefix);
     const xs = cells.map((cell) => cell.position[0]);
     const ys = cells.map((cell) => cell.position[1]);
@@ -500,8 +746,14 @@ test("every sign reads the right way round from the side that faces the reader",
     }
   };
 
-  decode(`${BERTH}:number-text`, "PLATFORM 0", 0.065, -1);
-  decode(`${BERTH}:board-line`, "DEPARTS 03", 0.07, -1);
+  const platformMatrix = grandTerminalScene.mutableObjectDefinitions.find(
+    (object) => object.kind === "matrixDisplay" && object.id === `${BERTH}:platform-number`,
+  );
+  const departureMatrix = grandTerminalScene.mutableObjectDefinitions.find(
+    (object) => object.kind === "matrixDisplay" && object.id === `${BERTH}:departures`,
+  );
+  decode(platformMatrix.frames[0].activePieceIds, "PLATFORM 0", 0.065, -1);
+  decode(departureMatrix.frames[0].activePieceIds, "DEPARTS 03", 0.07, -1);
   decode(`${TRAIN}:head:mark:-1`, "01", 0.07, -1);
   decode(`${TRAIN}:head:mark:1`, "01", 0.07, 1);
 });
@@ -539,4 +791,39 @@ test("the canopy keeps clear of the loading gauge", () => {
 
   assert.equal(coachEdge - canopyEdge > 0.3, true,
     `навес до ${canopyEdge.toFixed(2)}, крыша вагона от ${coachEdge.toFixed(2)}`);
+});
+
+test("the departure lights line the platform edge without becoming an obstacle", () => {
+  // Огни отправления врезаны в кромку: игрок ходит по ним, а не через них.
+  const lights = berthPieces.filter((piece) =>
+    piece.id.includes(":departure-light:"),
+  );
+  assert.equal(lights.length >= 12, true, `огней всего ${lights.length}`);
+
+  const edge = M.platformZ + M.platformHalf;
+  let minX = Infinity;
+  let maxX = -Infinity;
+  for (const light of lights) {
+    const top = light.position[1] + light.size[1] / 2;
+    assert.equal(
+      top - M.platformTop < MAX_AUTO_STEP_HEIGHT,
+      true,
+      `${light.id}: торчит на ${(top - M.platformTop).toFixed(2)} м — это уже порог`,
+    );
+    assert.equal(top > M.platformTop, true, `${light.id}: утоплен в плитку, его не видно`);
+    // Между жёлтой линией и обрезом перрона, не свисая с края.
+    const near = light.position[2] - light.size[2] / 2;
+    const far = light.position[2] + light.size[2] / 2;
+    assert.equal(near > M.platformZ + M.platformHalf - 0.3, true, `${light.id}: залез на линию безопасности`);
+    assert.equal(far <= edge + 1e-9, true, `${light.id}: свисает с кромки`);
+    // Разбитый огонь должен гаснуть, а не остаться светящейся стекляшкой:
+    // для этого он и стекло.
+    assert.equal(light.material, "glass", `${light.id}: не стекло, гаснуть не умеет`);
+    minX = Math.min(minX, light.position[0]);
+    maxX = Math.max(maxX, light.position[0]);
+  }
+  // Линейка идёт по всей длине перрона, а не кучкой у входа.
+  assert.equal(maxX - minX > (M.platformTo - M.platformFrom) * 0.85, true);
+  // Один цвет на всю линейку: игра управляет ими одним переключателем.
+  assert.equal(new Set(lights.map((light) => light.color)).size, 1);
 });

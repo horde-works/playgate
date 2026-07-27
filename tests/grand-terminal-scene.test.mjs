@@ -107,3 +107,130 @@ test("the side halls are reachable and lead to the side platforms", () => {
   );
   assert.equal(signLanterns.length, 18);
 });
+
+test("the station reuses its fixtures for continuous floor coverage", () => {
+  const skyLamps = grandTerminalScene.lampDefinitions.filter(
+    (lamp) => lamp.id.startsWith("terminal:sky-berth:") ||
+      lamp.carrierClusterId === "terminal:sky-train",
+  );
+  assert.equal(skyLamps.length > 10, true);
+  assert.equal(skyLamps.every((lamp) => lamp.localPoolCapacity === undefined), true);
+
+  const hallLamps = grandTerminalScene.lampDefinitions.filter((lamp) =>
+    lamp.id.includes("terminal:interior:hall:hall-lamp:"),
+  );
+  const wingLamps = grandTerminalScene.lampDefinitions.filter((lamp) =>
+    lamp.id.includes("terminal:interior:hall:wing-lamp:"),
+  );
+  assert.equal(hallLamps.length, 4);
+  assert.equal(wingLamps.length, 4);
+  assert.equal(
+    [...hallLamps, ...wingLamps].every((lamp) => lamp.localPoolCapacity === 8),
+    true,
+  );
+  assert.equal(hallLamps.every((lamp) => lamp.distance >= 20), true);
+  assert.equal(wingLamps.every((lamp) => lamp.distance >= 15), true);
+
+  const platformLamps = grandTerminalScene.lampDefinitions.filter((lamp) =>
+    lamp.id.startsWith("terminal:yard:fittings:platform-sign:") &&
+      lamp.id.includes(":lantern-glass:"),
+  );
+  assert.equal(platformLamps.length, 18);
+  assert.equal(
+    platformLamps.every((lamp) =>
+      lamp.distance >= 18 &&
+      lamp.intensity >= 6 &&
+      lamp.localPoolCapacity === 8),
+    true,
+  );
+  const pairs = Map.groupBy(platformLamps, (lamp) => lamp.poolGroupId);
+  assert.equal(pairs.size, 9);
+  for (const pair of pairs.values()) {
+    assert.equal(pair.length, 2);
+  }
+  assert.equal(
+    grandTerminalScene.lampDefinitions.some((lamp) =>
+      lamp.id.includes("terminal:shed:structure:work-light:")),
+    false,
+  );
+});
+
+test("only the sky berth clock follows game time", () => {
+  const clocks = grandTerminalScene.mutableObjectDefinitions.filter(
+    (object) => object.kind === "analogClock",
+  );
+  assert.equal(clocks.length, 1);
+  assert.equal(clocks[0].id, "terminal:sky-berth:clock");
+  assert.deepEqual(clocks[0].timeSource, { kind: "game" });
+  assert.equal(clocks[0].hourHandPieceId, "terminal:sky-berth:clock-hand-hour");
+  assert.equal(clocks[0].minuteHandPieceId, "terminal:sky-berth:clock-hand-minute");
+
+  const controlled = grandTerminalScene.mutablePieceIds;
+  const museumHands = grandTerminalScene.breakablePieces.filter(
+    (piece) => piece.id.includes("platform-clock:") && piece.id.includes(":hand-"),
+  );
+  assert.equal(museumHands.length > 0, true);
+  assert.equal(museumHands.every((piece) => !controlled.has(piece.id)), true);
+});
+
+test("the hall board fades while the berth matrix reports one shared journey state", () => {
+  const hallDisplay = grandTerminalScene.mutableObjectDefinitions.find(
+    (object) => object.kind === "display" && object.id === "terminal:interior:departures",
+  );
+  const berthDisplay = grandTerminalScene.mutableObjectDefinitions.find(
+    (object) => object.kind === "matrixDisplay" && object.id === "terminal:sky-berth:departures",
+  );
+  assert.notEqual(hallDisplay, undefined);
+  assert.notEqual(berthDisplay, undefined);
+  assert.deepEqual(hallDisplay.layers[0].condition, {
+    kind: "clusterEvent",
+    sourceClusterId: "terminal:sky-train",
+    states: ["docked"],
+  });
+  assert.equal(hallDisplay.transition.fadeInSeconds > 0, true);
+  assert.equal(hallDisplay.transition.fadeOutSeconds > 0, true);
+  assert.equal(hallDisplay.layers[0].pieceIds.length > 100, true);
+  assert.equal(
+    hallDisplay.layers[0].pieceIds.every((id) =>
+      id.startsWith("terminal:interior:hall:departure-title:") ||
+      id.startsWith("terminal:interior:hall:departure-city:") ||
+      id.startsWith("terminal:interior:hall:departure-platform:")),
+    true,
+  );
+  assert.equal(
+    berthDisplay.cellPieceIds.every((id) =>
+      id.startsWith("terminal:sky-berth:board-line:cell:")),
+    true,
+  );
+  assert.equal(berthDisplay.cellPieceIds.length, 59 * 7);
+  assert.deepEqual(
+    berthDisplay.frames.map((frame) => [frame.id, frame.condition.states]),
+    [
+      ["scheduled", ["docked"]],
+      ["attention", ["attention"]],
+      ["departing", ["departure"]],
+      ["in-flight", ["cruise", "inTransit"]],
+      ["arriving", ["approach"]],
+    ],
+  );
+  assert.equal(
+    berthDisplay.frames.every((frame) =>
+      frame.activePieceIds.every((id) => berthDisplay.cellPieceIds.includes(id))),
+    true,
+  );
+  assert.equal(berthDisplay.transition.fadeInSeconds > 0, true);
+  assert.equal(berthDisplay.transition.fadeOutSeconds > 0, true);
+
+  const berthBoardLight = grandTerminalScene.lampDefinitions.find(
+    (lamp) => lamp.id === "terminal:sky-berth:board",
+  );
+  assert.equal(berthBoardLight.eventLighting, undefined);
+  assert.equal(berthBoardLight.dayIntensityFactor, 1);
+
+  const platformDisplay = grandTerminalScene.mutableObjectDefinitions.find(
+    (object) => object.kind === "matrixDisplay" && object.id === "terminal:sky-berth:platform-number",
+  );
+  assert.notEqual(platformDisplay, undefined);
+  assert.equal(platformDisplay.frames.length, 1);
+  assert.equal(platformDisplay.frames[0].condition, undefined);
+});

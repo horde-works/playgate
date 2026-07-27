@@ -57,6 +57,9 @@ import {
   type BreakableMaterial,
   type BreakablePieceDefinition,
   type DestructionSceneDefinition,
+  type LampDefinition,
+  type LampEventState,
+  type SpotLightDefinition,
 } from "./destructionScene";
 import {
   BLAST_PUSH_RADIUS,
@@ -114,13 +117,11 @@ import {
   type SwingDefinition,
 } from "./FirstPersonWeapons";
 import { GrenadeProjectileVisual } from "./GrenadeProjectileVisual";
-import {
-  DynamicBreakableWorld,
-  getPieceRenderBoxes,
-} from "./DynamicBreakableWorld";
+import { DynamicBreakableWorld } from "./DynamicBreakableWorld";
+import { getPieceRenderBoxes } from "./breakableGeometry";
 import { Birds } from "./Birds";
-import { vikingSettlement } from "../content/scenes/vikingSettlement.ts";
 import { Villagers } from "./Villagers";
+import { vikingSettlement } from "../content/scenes/vikingSettlement.ts";
 import { GrassField } from "./GrassField";
 import { SceneDressing } from "./SceneDressing";
 import { WorldEdge } from "./WorldEdge";
@@ -131,23 +132,60 @@ import {
 import { SmokePlumes } from "./SmokePlumes";
 import { WindController } from "./WindController";
 import { IntactBreakableWorld } from "./IntactBreakableWorld";
+import {
+  VehicleFrameSystem,
+  type VehicleFramePoseState,
+} from "./VehicleFrameSystem";
+import {
+  isVehicleFramePiece,
+  vehicleFrameForCluster,
+  vehiclePiecePosition,
+  vehicleRotation,
+  rotateVector as rotateVehicleVector,
+} from "./vehicleFrames";
 import { buildIntactGroundRenderColors } from "./intactWorldBatching";
 import { resolveRuntimeStructure } from "./runtimeStructure";
 import { createSpatialIndex } from "./spatialIndex";
+import {
+  ACTOR_ABOARD,
+  ACTOR_NORMAL,
+  DEBRIS_ACTOR_DETAIL,
+  DEBRIS_NORMAL,
+  DEBRIS_SETTLING,
+  WORLD_BOUNDARY,
+} from "./physicsInteractionGroups";
 import {
   detachedTreeFoliageSize,
   expandBrokenTreeDescendants,
   flattenDetachedTreeFoliage,
 } from "./treeVisualModel";
 import {
+  PLAYER_CAPSULE_FOOT_OFFSET,
+  PLAYER_CAPSULE_HALF_HEIGHT,
+  PLAYER_CAPSULE_RADIUS,
+  PLAYER_GRAVITY,
   autoClimbLiftSpeed,
   autoStepLiftSpeed,
   setFlightVelocityTarget,
+  stepCarryWindow,
 } from "./playerMovement";
 import {
+  movingSupportBoundaryState,
+  passengerAngularVelocityDelta,
+  passengerControlVelocityDelta,
+  supportVelocityAtPoint,
+} from "./movingSupportDynamics";
+import {
+  compoundClusterOwnsPiece,
+  PHYSICS_TIME_STEP,
+  type CompoundKinematicClusterRuntime,
+} from "./compoundKinematicCluster";
+import {
   DayNightCycle,
+  LampBeaconField,
   LampLightPool,
   SceneEnvironment,
+  SpotLightPool,
   type TimeOfDay,
 } from "./WorldEnvironment";
 import { CinematicPostProcessing } from "./CinematicPostProcessing";
@@ -169,6 +207,12 @@ import type {
   FlyoverChapter,
 } from "./cinematicFlyoverPlan";
 import { useGameActionHints, type GameAction } from "./gameActionHints";
+import { SceneMutableObjectSystem } from "./SceneMutableObjectSystem";
+import {
+  pieceWithMutableState,
+  type MutablePieceVisualState,
+} from "./sceneDynamics";
+import { nextTimeOfDay, TIME_OF_DAY_TARGETS } from "./timeOfDay";
 
 type ControlName =
   | "forward"
@@ -182,6 +226,32 @@ type ControlName =
 type WeaponName = "none" | "hammer" | "launcher" | "mg" | "rocket";
 type ExplosiveKind = "grenade" | "rocket";
 
+function timeOfDayKey(timeOfDay: TimeOfDay): TranslationKey {
+  switch (timeOfDay) {
+    case "dawn":
+      return "time.dawn";
+    case "day":
+      return "time.day";
+    case "sunset":
+      return "time.sunset";
+    case "night":
+      return "time.night";
+  }
+}
+
+function timeOfDayAnnouncementKey(timeOfDay: TimeOfDay): TranslationKey {
+  switch (timeOfDay) {
+    case "dawn":
+      return "announce.timeDawn";
+    case "day":
+      return "announce.timeDay";
+    case "sunset":
+      return "announce.timeSunset";
+    case "night":
+      return "announce.timeNight";
+  }
+}
+
 const entryApproachActions: readonly GameAction[] = [
   "gate.approaching",
   "door.approaching",
@@ -193,7 +263,11 @@ function entryApproachAction(entry: HingedEntryApproach): GameAction {
     ? "gate.approaching"
     : entry.kind === "town-door"
       ? "town-door.approaching"
-      : "door.approaching";
+      : entry.kind === "departure"
+        ? "departure.approaching"
+        : entry.kind === "ride"
+          ? "ride.approaching"
+          : "door.approaching";
 }
 
 function entryActionKey(
@@ -205,6 +279,12 @@ function entryActionKey(
   }
   if (entry.kind === "town-door") {
     return touch ? "hint.townDoor.actionTouch" : "hint.townDoor.action";
+  }
+  if (entry.kind === "departure") {
+    return touch ? "hint.departure.actionTouch" : "hint.departure.action";
+  }
+  if (entry.kind === "ride") {
+    return touch ? "hint.ride.actionTouch" : "hint.ride.action";
   }
   return touch ? "hint.door.actionTouch" : "hint.door.action";
 }
@@ -453,15 +533,40 @@ function readBreakableHit(
   };
 }
 
+interface PassengerViewMotion {
+  addYaw: (delta: number) => void;
+  consumeYaw: () => number;
+  reset: () => void;
+}
+
+function createPassengerViewMotion(): PassengerViewMotion {
+  let pendingYaw = 0;
+  return {
+    addYaw(delta) {
+      pendingYaw += delta;
+    },
+    consumeYaw() {
+      const result = pendingYaw;
+      pendingYaw = 0;
+      return result;
+    },
+    reset() {
+      pendingYaw = 0;
+    },
+  };
+}
+
 function Player({
   registerBody,
   mobileControls,
+  passengerViewMotion,
   spawn,
   flightMode,
   entryInteractionActive,
 }: {
   registerBody: (id: string, body: RapierRigidBody | null) => void;
   mobileControls: MobileControlsRef;
+  passengerViewMotion: PassengerViewMotion;
   spawn: readonly [number, number, number];
   flightMode: boolean;
   entryInteractionActive: boolean;
@@ -469,14 +574,27 @@ function Player({
   const body = useRef<RapierRigidBody>(null);
   const [, getControls] = useKeyboardControls<ControlName>();
   const { camera } = useThree();
-  const { world, rapier } = useRapier();
+  const { world, rapier, rigidBodyStates } = useRapier();
   const movement = useMemo(() => new Vector3(), []);
   const flightForward = useMemo(() => new Vector3(), []);
   const flightRight = useMemo(() => new Vector3(), []);
   const up = useMemo(() => new Vector3(0, 1, 0), []);
   const groundRay = useRef<RapierRay | null>(null);
+  // Collision routing only: an airborne transfer may cross the ground map
+  // boundary until it touches ordinary terrain. This never transfers motion.
+  const movingSupportBoundaryPassThrough = useRef(false);
+  const passengerYawVelocity = useRef(0);
+  const passengerTelemetryAt = useRef(0);
   const stepRay = useRef<RapierRay | null>(null);
   const stepCooldown = useRef(0);
+  /** Остаток подъёма, начатого автошагом: пока он идёт, ноги ещё толкают. */
+  const stepCarry = useRef(0);
+  /** Опора, с которой шагнули: на ходу корабля шаг остаётся его шагом. */
+  const stepCarrySupport = useRef<{ x: number; y: number; z: number }>({
+    x: 0,
+    y: 0,
+    z: 0,
+  });
   const spawnFrames = useRef(0);
 
   useEffect(() => {
@@ -503,16 +621,21 @@ function Player({
       return;
     }
     const scope = window as unknown as Record<string, unknown>;
-    scope.__mamTeleport = (x: number, y: number, z: number) => {
+    const teleport = (x: number, y: number, z: number) => {
       body.current?.setTranslation({ x, y, z }, true);
       body.current?.setLinvel({ x: 0, y: 0, z: 0 }, true);
     };
+    scope.__mamTeleport = teleport;
     return () => {
-      delete scope.__mamTeleport;
+      if (scope.__mamTeleport === teleport) {
+        delete scope.__mamTeleport;
+      }
+      delete document.documentElement.dataset.mamPassenger;
     };
   }, []);
 
-  useFrame((_, delta) => {
+  useBeforePhysicsStep(() => {
+    const delta = PHYSICS_TIME_STEP;
     if (!body.current) {
       return;
     }
@@ -521,16 +644,13 @@ function Player({
     // load-time physics hiccups can never push them through the ground.
     if (spawnFrames.current < 40) {
       spawnFrames.current += 1;
+      passengerYawVelocity.current = 0;
+      passengerViewMotion.reset();
       body.current.setTranslation(
         { x: spawn[0], y: spawn[1], z: spawn[2] },
         true,
       );
       body.current.setLinvel({ x: 0, y: 0, z: 0 }, true);
-      camera.position.set(
-        spawn[0],
-        spawn[1] + 0.54,
-        spawn[2],
-      );
       return;
     }
 
@@ -576,7 +696,6 @@ function Player({
         },
         true,
       );
-      camera.position.set(position.x, position.y + 0.54, position.z);
       return;
     }
 
@@ -592,7 +711,7 @@ function Player({
     groundRay.current.origin.x = position.x;
     groundRay.current.origin.y = position.y;
     groundRay.current.origin.z = position.z;
-    const groundHit = world.castRay(
+    const groundHit = world.castRayAndGetNormal(
       groundRay.current,
       0.95,
       true,
@@ -602,6 +721,65 @@ function Player({
       body.current ?? undefined,
     );
     const grounded = groundHit !== null;
+    const supportBody = groundHit?.collider.parent() ?? null;
+    const supportLinearVelocity = supportBody?.linvel() ?? { x: 0, y: 0, z: 0 };
+    const supportAngularVelocity = supportBody?.angvel() ?? { x: 0, y: 0, z: 0 };
+    const supportVelocity = supportBody
+      ? supportVelocityAtPoint(
+          {
+            linearVelocity: supportLinearVelocity,
+            angularVelocity: supportAngularVelocity,
+            centreOfMass: supportBody.worldCom(),
+          },
+          position,
+        )
+      : { x: 0, y: 0, z: 0 };
+
+    // Any real moving body can be a support: a train, another airship, a
+    // falling slab. There is no authored "current carrier" identity.
+    const movingSupport =
+      supportBody !== null &&
+      (
+        Math.hypot(supportVelocity.x, supportVelocity.y, supportVelocity.z) > 0.02 ||
+        Math.hypot(
+          supportAngularVelocity.x,
+          supportAngularVelocity.y,
+          supportAngularVelocity.z,
+        ) > 0.002
+      );
+    movingSupportBoundaryPassThrough.current = movingSupportBoundaryState(
+      movingSupportBoundaryPassThrough.current,
+      grounded,
+      movingSupport,
+    );
+    const actorGroups = movingSupportBoundaryPassThrough.current
+      ? ACTOR_ABOARD
+      : ACTOR_NORMAL;
+    for (let index = 0; index < body.current.numColliders(); index += 1) {
+      const collider = body.current.collider(index);
+      if (collider.collisionGroups() !== actorGroups) {
+        collider.setCollisionGroups(actorGroups);
+      }
+    }
+    if (process.env.NODE_ENV !== "production") {
+      const now = performance.now();
+      if (now >= passengerTelemetryAt.current) {
+        passengerTelemetryAt.current = now + 250;
+        document.documentElement.dataset.mamPassenger = JSON.stringify({
+          position,
+          velocity,
+          grounded,
+          movingSupport,
+          supportHandle: supportBody ? String(supportBody.handle) : null,
+          supportVelocity,
+          relativeVelocity: {
+            x: velocity.x - supportVelocity.x,
+            y: velocity.y - supportVelocity.y,
+            z: velocity.z - supportVelocity.z,
+          },
+        });
+      }
+    }
 
     // Auto-step: when running into a low obstacle (stair tread, kerb,
     // rubble), probe its height and hop exactly high enough to clear it.
@@ -609,12 +787,16 @@ function Player({
     // wall keeps raw speed high, so we compare the velocity projection on
     // the desired direction, not the full magnitude.
     stepCooldown.current = Math.max(0, stepCooldown.current - delta);
+    stepCarry.current = grounded ? 0 : Math.max(0, stepCarry.current - delta);
     let autoLift = 0;
     const desiredSq = movement.lengthSq();
     if (grounded && stepCooldown.current <= 0 && desiredSq > 1) {
       const desiredSpeed = Math.sqrt(desiredSq);
       const progressSpeed =
-        (velocity.x * movement.x + velocity.z * movement.z) / desiredSpeed;
+        (
+          (velocity.x - supportVelocity.x) * movement.x +
+          (velocity.z - supportVelocity.z) * movement.z
+        ) / desiredSpeed;
       if (progressSpeed < desiredSpeed * 0.55) {
         stepRay.current ??= new rapier.Ray(
           { x: 0, y: 0, z: 0 },
@@ -623,17 +805,22 @@ function Player({
         const probe = stepRay.current;
         const directionX = movement.x / desiredSpeed;
         const directionZ = movement.z / desiredSpeed;
-        const bottomY = position.y - 0.79;
+        // Подошва плюс два сантиметра: щупы не должны скрести сам пол.
+        const bottomY = position.y - PLAYER_CAPSULE_FOOT_OFFSET + 0.02;
 
-        // Двухъярусный нижний щуп: порог в ладонь высотой (8-15 см —
-        // фундаментная лента, бортик) луч на 0.18 просто не видел.
+        // Трёхъярусный нижний щуп: порог в ладонь высотой (8-15 см —
+        // фундаментная лента, бортик) луч на 0.18 просто не видел, а один
+        // низкий луч слепнет на составной стенке — горизонтальный шов между
+        // основанием и плитой перрона проваливал ровно нижний ярус, и целая
+        // ступень читалась как пустота. Ярусы только ИЩУТ препятствие;
+        // разрешает подъём всё равно луч вниз на площадку.
         probe.origin.x = position.x;
         probe.origin.z = position.z;
         probe.dir.x = directionX;
         probe.dir.y = 0;
         probe.dir.z = directionZ;
         let lowHit = null;
-        for (const feelerHeight of [0.08, 0.3]) {
+        for (const feelerHeight of [0.08, 0.18, 0.3]) {
           probe.origin.y = bottomY + feelerHeight;
           lowHit = world.castRay(
             probe,
@@ -732,33 +919,69 @@ function Player({
 
             if (autoLift > 0) {
               stepCooldown.current = 0.3;
+              // Ноги толкают вперёд весь подъём, а не только в кадре отрыва:
+              // подъём идёт вертикально, кромка держит капсулу в 35 см от
+              // себя, и без переноса игрок взлетал на месте и падал на ту же
+              // ступень — взойти можно было только с разбега.
+              stepCarry.current = stepCarryWindow(autoLift);
+              stepCarrySupport.current = supportVelocity;
             }
           }
         }
       }
     }
 
-    // Blend control speed into the current velocity instead of overwriting it,
-    // so debris impacts and blasts can push the player around.
-    const control = grounded
-      ? 1 - Math.exp(-delta * 11)
-      : 1 - Math.exp(-delta * 3.2);
-
-    body.current.setLinvel(
-      {
-        x: velocity.x + (movement.x - velocity.x) * control,
-        y:
-          !entryInteractionActive && (jump || touch.jump) && grounded
-            ? 5.4
-            : autoLift > 0
-              ? Math.max(velocity.y, autoLift)
-              : velocity.y,
-        z: velocity.z + (movement.z - velocity.z) * control,
-      },
-      true,
-    );
-
-    camera.position.set(position.x, position.y + 0.54, position.z);
+    // Walking is a finite impulse relative to the body underfoot. It never
+    // overwrites momentum: once contact is lost, neither the ship nor input
+    // can change horizontal velocity in mid-air.
+    //
+    // Единственное исключение — начатый автошагом подъём: пока он длится,
+    // опора считается прежней. Это не воздушное управление: окно открывает
+    // сам шаг, найдя впереди площадку, и закрывается оно ровно к приземлению.
+    // Сорвавшийся с борта или падающий в яму его не получает.
+    const stepping = !grounded && stepCarry.current > 0;
+    const controlSupport = stepping ? stepCarrySupport.current : supportVelocity;
+    const controlled = passengerControlVelocityDelta({
+      velocity,
+      supportVelocity: controlSupport,
+      desiredRelativeVelocity: movement,
+      supportNormal: groundHit?.normal ?? { x: 0, y: 1, z: 0 },
+      grounded: grounded || stepping,
+      delta,
+    });
+    passengerYawVelocity.current += passengerAngularVelocityDelta({
+      angularVelocity: passengerYawVelocity.current,
+      supportAngularVelocity,
+      grounded,
+      delta,
+    });
+    passengerViewMotion.addYaw(passengerYawVelocity.current * delta);
+    const wantsJump =
+      !entryInteractionActive && (jump || touch.jump) && grounded;
+    const verticalTarget = wantsJump
+      ? supportVelocity.y + 5.4
+      : autoLift > 0
+        ? supportVelocity.y + autoLift
+        : null;
+    const verticalChange = verticalTarget === null
+      ? 0
+      : Math.max(0, verticalTarget - velocity.y);
+    const mass = Math.max(0.001, body.current.mass());
+    if (
+      controlled.x !== 0 ||
+      controlled.y !== 0 ||
+      controlled.z !== 0 ||
+      verticalChange !== 0
+    ) {
+      body.current.applyImpulse(
+        {
+          x: controlled.x * mass,
+          y: (controlled.y + verticalChange) * mass,
+          z: controlled.z * mass,
+        },
+        true,
+      );
+    }
 
     // Below the invisible safety floor means the player left the world
     // volume (deepest legit crater floor keeps the capsule center ≈ -1.3).
@@ -771,6 +994,19 @@ function Player({
     }
   });
 
+  // Rapier already interpolates every rigid body's render object with the
+  // exact same accumulator as the compound support below it. The camera must
+  // follow that object, not the raw 60 Hz simulation translation.
+  useFrame(() => {
+    const current = body.current;
+    if (!current) {
+      return;
+    }
+    const rendered = rigidBodyStates.get(current.handle)?.object.position;
+    const position = rendered ?? current.translation();
+    camera.position.set(position.x, position.y + 0.54, position.z);
+  });
+
   return (
     <RigidBody
       ref={body}
@@ -778,13 +1014,16 @@ function Player({
       gravityScale={flightMode ? 0 : 1}
       colliders={false}
       enabledRotations={[false, false, false]}
-      friction={0.15}
-      linearDamping={0.35}
+      linearDamping={0.02}
       canSleep={false}
       ccd
       collisionGroups={ACTOR_NORMAL}
     >
-      <CapsuleCollider args={[0.45, 0.36]} />
+      <CapsuleCollider
+        args={[PLAYER_CAPSULE_HALF_HEIGHT, PLAYER_CAPSULE_RADIUS]}
+        friction={0}
+        frictionCombineRule={rapier.CoefficientCombineRule.Min}
+      />
     </RigidBody>
   );
 }
@@ -794,6 +1033,7 @@ interface MouseLookProps {
   requestVersion: number;
   initialYaw: number;
   mobileControls: MobileControlsRef;
+  passengerViewMotion: PassengerViewMotion;
   onActiveChange: (active: boolean) => void;
   onFallbackChange: (fallback: boolean) => void;
   onStrike: () => void;
@@ -804,7 +1044,8 @@ function MouseLook({
   active,
   requestVersion,
   initialYaw,
-  mobileControls,
+  mobileControls: mobileControlsRef,
+  passengerViewMotion,
   onActiveChange,
   onFallbackChange,
   onStrike,
@@ -844,30 +1085,38 @@ function MouseLook({
   }, []);
 
   useFrame(() => {
+    let changed = false;
     if (!initialized.current) {
       initialized.current = true;
       yaw.current = initialYaw;
       pitch.current = 0;
-      cameraRef.current.rotation.set(0, initialYaw, 0, "YXZ");
+      changed = true;
     }
 
-    const touch = mobileControls.current;
-    if (!active || (touch.lookDeltaX === 0 && touch.lookDeltaY === 0)) {
-      return;
+    const carriedYaw = passengerViewMotion.consumeYaw();
+    if (carriedYaw !== 0) {
+      yaw.current += carriedYaw;
+      changed = true;
     }
 
-    const movementX = touch.lookDeltaX;
-    const movementY = touch.lookDeltaY;
-    touch.lookDeltaX = 0;
-    touch.lookDeltaY = 0;
+    const touch = mobileControlsRef.current;
+    if (active && (touch.lookDeltaX !== 0 || touch.lookDeltaY !== 0)) {
+      const movementX = touch.lookDeltaX;
+      const movementY = touch.lookDeltaY;
+      touch.lookDeltaX = 0;
+      touch.lookDeltaY = 0;
 
-    yaw.current -= movementX * 0.003;
-    pitch.current = MathUtils.clamp(
-      pitch.current - movementY * 0.0027,
-      -Math.PI / 2.1,
-      Math.PI / 2.1,
-    );
-    cameraRef.current.rotation.set(pitch.current, yaw.current, 0, "YXZ");
+      yaw.current -= movementX * 0.003;
+      pitch.current = MathUtils.clamp(
+        pitch.current - movementY * 0.0027,
+        -Math.PI / 2.1,
+        Math.PI / 2.1,
+      );
+      changed = true;
+    }
+    if (changed) {
+      cameraRef.current.rotation.set(pitch.current, yaw.current, 0, "YXZ");
+    }
   });
 
   useEffect(() => {
@@ -1071,34 +1320,8 @@ interface BreakablePieceProps {
   ) => void;
 }
 
-// Collision interaction groups (membership << 16 | filter). A freshly-broken
-// cluster's pieces settle WITHOUT colliding with each other for a short grace,
-// so authored interpenetration relaxes under gravity instead of the solver
-// launching overlapping siblings apart ("several bricks burst from one spot").
-// They still hit the world and player, and after the grace they collide with
-// each other normally and stack.
-const GROUP_WORLD = 0x0001;
-const GROUP_DEBRIS = 0x0002;
-const GROUP_ACTOR = 0x0004;
-const GROUP_ACTOR_DETAIL = 0x0008;
-const interactionGroups = (membership: number, filter: number): number =>
-  ((membership << 16) | filter) >>> 0;
-const DEBRIS_SETTLING = interactionGroups(
-  GROUP_DEBRIS,
-  GROUP_WORLD | GROUP_ACTOR,
-);
-const DEBRIS_NORMAL = interactionGroups(
-  GROUP_DEBRIS,
-  GROUP_WORLD | GROUP_DEBRIS | GROUP_ACTOR,
-);
-const ACTOR_NORMAL = interactionGroups(
-  GROUP_ACTOR,
-  GROUP_WORLD | GROUP_DEBRIS | GROUP_ACTOR_DETAIL,
-);
-const DEBRIS_ACTOR_DETAIL = interactionGroups(
-  GROUP_ACTOR_DETAIL,
-  GROUP_ACTOR,
-);
+// Свежие обломки короткое время не сталкиваются с соседями — подробные
+// маски взаимодействия лежат рядом с транспортом, который ими фильтрует щупы.
 const DEBRIS_SETTLE_STEPS = 36;
 const DEBRIS_CONTACT_GRACE_STEPS = 30;
 const DEBRIS_RETRY_COOLDOWN_STEPS = 12;
@@ -1165,6 +1388,11 @@ const BreakablePiece = memo(function BreakablePiece({
   const colliderBoxes = broken
     ? debrisColliderBoxes(piece.size, renderBoxes)
     : renderBoxes;
+  const clusterFrame = vehicleFrameForCluster(piece.clusterId);
+  const compoundClusterMember = clusterFrame
+    ? compoundClusterOwnsPiece(clusterFrame, piece)
+    : false;
+  const ownsContactShape = broken || !compoundClusterMember;
   const collisionTuning = debrisCollisionTuning(piece.size);
 
   useEffect(() => {
@@ -1268,7 +1496,7 @@ const BreakablePiece = memo(function BreakablePiece({
           : undefined
       }
     >
-      {piece.shape === "cylinder" ? (
+      {ownsContactShape && piece.shape === "cylinder" ? (
         // Real round collider: broken wheels and barrels actually roll.
         <CylinderCollider
           args={[
@@ -1276,7 +1504,7 @@ const BreakablePiece = memo(function BreakablePiece({
             Math.max(0.002, (piece.size[0] + piece.size[2]) / 4 - 0.002),
           ]}
         />
-      ) : (
+      ) : ownsContactShape ? (
         colliderBoxes.map((box, index) => (
           <CuboidCollider
             key={index}
@@ -1288,12 +1516,14 @@ const BreakablePiece = memo(function BreakablePiece({
             position={[...box.center]}
           />
         ))
-      )}
-      <OmittedDebrisInteractionColliders
-        boxes={renderBoxes}
-        primaryBoxes={colliderBoxes}
-        material={piece.material}
-      />
+      ) : null}
+      {ownsContactShape ? (
+        <OmittedDebrisInteractionColliders
+          boxes={renderBoxes}
+          primaryBoxes={colliderBoxes}
+          material={piece.material}
+        />
+      ) : null}
     </RigidBody>
   );
 });
@@ -1303,6 +1533,9 @@ function BreakableObjects({
   brokenPieces,
   shatteredPieces,
   bodies,
+  kinematicClusters,
+  mutablePieceIds,
+  mutablePieceStates,
   registerBody,
   onDebrisContact,
 }: {
@@ -1310,6 +1543,11 @@ function BreakableObjects({
   brokenPieces: ReadonlySet<string>;
   shatteredPieces: ReadonlySet<string>;
   bodies: MutableRefObject<Map<string, RapierRigidBody>>;
+  kinematicClusters: MutableRefObject<
+    Map<string, CompoundKinematicClusterRuntime>
+  >;
+  mutablePieceIds: ReadonlySet<string>;
+  mutablePieceStates: MutableRefObject<Map<string, MutablePieceVisualState>>;
   registerBody: (id: string, body: RapierRigidBody | null) => void;
   onDebrisContact: (
     piece: BreakablePieceDefinition,
@@ -1330,12 +1568,20 @@ function BreakableObjects({
       if (
         brokenPieces.has(piece.id) ||
         piece.hinge ||
+        // Кластер транспорта живёт своими телами: его куски двигает кадр
+        // отсчёта, а инстансная батчёвка целого мира неподвижна.
+        isVehicleFramePiece(piece) ||
         piece.shape === "cinderBlock"
       ) {
         hidden.add(piece.id);
         bodies.push(
           brokenPieces.has(piece.id)
-            ? flattenDetachedTreeFoliage(piece)
+            ? flattenDetachedTreeFoliage(
+                pieceWithMutableState(
+                  piece,
+                  mutablePieceStates.current.get(piece.id),
+                ),
+              )
             : piece,
         );
       }
@@ -1344,19 +1590,22 @@ function BreakableObjects({
       hiddenPieceIds: hidden,
       bodyPieces: bodies,
     };
-  }, [brokenPieces, pieces, shatteredPieces]);
+  }, [brokenPieces, mutablePieceStates, pieces, shatteredPieces]);
 
   return (
     <group>
       <IntactBreakableWorld
         pieces={pieces}
         hiddenPieceIds={hiddenPieceIds}
+        mutablePieceIds={mutablePieceIds}
+        mutablePieceStates={mutablePieceStates}
       />
       <DynamicBreakableWorld
         pieces={bodyPieces}
         shards={[]}
         remnants={[]}
         bodies={bodies}
+        kinematicClusters={kinematicClusters}
       />
       {bodyPieces.map((piece) => (
         <BreakablePiece
@@ -2320,6 +2569,7 @@ function OpenWorldShell({
               <CuboidCollider
                 key={`world-ring:${index}`}
                 args={[circularSegmentLength / 2, wallHalfHeight, 0.18]}
+                collisionGroups={WORLD_BOUNDARY}
                 position={[
                   centerX + Math.cos(angle) * scene.worldRadius!,
                   wallY,
@@ -2333,18 +2583,22 @@ function OpenWorldShell({
             <>
               <CuboidCollider
                 args={[0.12, wallHalfHeight, halfZ]}
+                collisionGroups={WORLD_BOUNDARY}
                 position={[centerX - halfX, wallY, centerZ]}
               />
               <CuboidCollider
                 args={[0.12, wallHalfHeight, halfZ]}
+                collisionGroups={WORLD_BOUNDARY}
                 position={[centerX + halfX, wallY, centerZ]}
               />
               <CuboidCollider
                 args={[halfX, wallHalfHeight, 0.12]}
+                collisionGroups={WORLD_BOUNDARY}
                 position={[centerX, wallY, centerZ - halfZ]}
               />
               <CuboidCollider
                 args={[halfX, wallHalfHeight, 0.12]}
+                collisionGroups={WORLD_BOUNDARY}
                 position={[centerX, wallY, centerZ + halfZ]}
               />
             </>
@@ -2366,6 +2620,7 @@ interface OpenWorldSceneProps {
   mobileActions: MutableRefObject<MobileActionBridge>;
   resetVersion: number;
   entryOpenRequestVersion: number;
+  entryOpenRequestTargetRef: MutableRefObject<HingedEntryApproach | null>;
   entryInteractionActive: boolean;
   cinematic: boolean;
   onActiveChange: (active: boolean) => void;
@@ -2373,6 +2628,7 @@ interface OpenWorldSceneProps {
   onBrokenCountChange: (count: number) => void;
   onDynamicBodyCountChange: (count: number) => void;
   onEntryApproachChange: (entry: HingedEntryApproach | null) => void;
+  onDepartureApproachChange: (approached: "board" | "ride" | null) => void;
 }
 
 function OpenWorldScene({
@@ -2388,6 +2644,7 @@ function OpenWorldScene({
   mobileActions,
   resetVersion,
   entryOpenRequestVersion,
+  entryOpenRequestTargetRef,
   entryInteractionActive,
   cinematic,
   onActiveChange,
@@ -2395,12 +2652,17 @@ function OpenWorldScene({
   onBrokenCountChange,
   onDynamicBodyCountChange,
   onEntryApproachChange,
+  onDepartureApproachChange,
 }: OpenWorldSceneProps) {
   const {
     breakablePieceById,
     breakablePieces,
     fractureLocallyAt,
+    indestructible,
     lampDefinitions,
+    mutableObjectDefinitions,
+    mutablePieceIds,
+    spotLightDefinitions,
     settleAfterBreak,
     structuralScopeFor,
   } = scene;
@@ -2445,6 +2707,7 @@ function OpenWorldScene({
   );
   const { camera } = useThree();
   const { rapier, world } = useRapier();
+  const passengerViewMotion = useMemo(() => createPassengerViewMotion(), []);
   const raycaster = useRef(new Raycaster());
   const center = useMemo(() => new Vector2(0, 0), []);
   const [brokenPieces, setBrokenPieces] = useState<ReadonlySet<string>>(
@@ -2477,6 +2740,10 @@ function OpenWorldScene({
   // просит открыть — и тут же проходит сквозь ещё закрытую дверь.
   const villagerOpenDoors = useRef<Set<string>>(new Set());
   const nightRef = useRef(0);
+  const worldTimeRef = useRef(TIME_OF_DAY_TARGETS.day);
+  const mutablePieceStates = useRef(
+    new Map<string, MutablePieceVisualState>(),
+  );
   const breakableRaycastRoot = useRef<Group>(null);
   const pieceBodies = useRef(new Map<string, RapierRigidBody>());
   const dynamicBodies = useRef(new Map<string, RapierRigidBody>());
@@ -2664,7 +2931,7 @@ function OpenWorldScene({
       __mamRapierDebug?: { world: unknown; rapier: unknown };
     };
     teleportWindow.__mamRapierDebug = { world, rapier };
-    teleportWindow.__mamTeleport = (x, y, z) => {
+    const teleport = (x: number, y: number, z: number) => {
       const playerBody = pieceBodies.current.get("player");
       if (!playerBody) {
         return false;
@@ -2673,7 +2940,28 @@ function OpenWorldScene({
       playerBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
       return true;
     };
+    teleportWindow.__mamTeleport = teleport;
+    let handledTeleportRequest = "";
+    const teleportAvailableAt = performance.now() + 1_200;
     const publish = () => {
+      // Изолированный контекст браузерного теста не видит функции на window.
+      // Одноразовая dev-команда в query string оставляет тот же физический
+      // телепорт и не требует отдельного тестового UI.
+      const teleportRequest = new URLSearchParams(window.location.search).get("mamTeleport") ?? "";
+      if (
+        performance.now() >= teleportAvailableAt &&
+        teleportRequest &&
+        teleportRequest !== handledTeleportRequest
+      ) {
+        try {
+          const [x, y, z] = teleportRequest.split(",").map(Number) as [number, number, number];
+          if ([x, y, z].every(Number.isFinite) && teleport(x, y, z)) {
+            handledTeleportRequest = teleportRequest;
+          }
+        } catch {
+          // Невалидная диагностическая команда не должна ронять игровой кадр.
+        }
+      }
       try {
         document.documentElement.dataset.mamPhysicsProbe = JSON.stringify(
           debugWindow.__mamPhysicsProbe?.() ?? null,
@@ -2688,7 +2976,9 @@ function OpenWorldScene({
       window.clearInterval(timer);
       delete document.documentElement.dataset.mamPhysicsProbe;
       delete debugWindow.__mamPhysicsProbe;
-      delete teleportWindow.__mamTeleport;
+      if (teleportWindow.__mamTeleport === teleport) {
+        delete teleportWindow.__mamTeleport;
+      }
     };
   }, [camera, intersectBreakables, rapier, world]);
 
@@ -3155,6 +3445,9 @@ function OpenWorldScene({
 
   const breakAt = useCallback(
     (target: BreakablePieceDefinition, currentImpact: number) => {
+      if (indestructible) {
+        return;
+      }
       const next = fractureLocallyAt(
         target,
         brokenPiecesRef.current,
@@ -3162,7 +3455,7 @@ function OpenWorldScene({
       );
       settleStructure(next);
     },
-    [settleStructure],
+    [fractureLocallyAt, indestructible, settleStructure],
   );
 
   const applyImpact = useCallback(
@@ -3302,6 +3595,9 @@ function OpenWorldScene({
       burstSpeed: number,
       cause: FractureCause = "impact",
     ): boolean => {
+      if (indestructible) {
+        return false;
+      }
       if (
         (origin === "piece" &&
           (carvedPiecesRef.current.has(source.id) ||
@@ -3388,7 +3684,7 @@ function OpenWorldScene({
       commitShards(generated);
       return true;
     },
-    [commitRemnants, commitShards],
+    [commitRemnants, commitShards, indestructible],
   );
 
   // Carve a chunk out of a MOVING body: same blocky hole geometry as for a
@@ -3404,6 +3700,9 @@ function OpenWorldScene({
       direction?: Vector3,
       penetration?: number,
     ): boolean => {
+      if (indestructible) {
+        return false;
+      }
       if (
         (origin === "piece" &&
           (carvedPiecesRef.current.has(source.id) ||
@@ -3560,7 +3859,7 @@ function OpenWorldScene({
       playDebrisSound(source.material, 0.5);
       return true;
     },
-    [breakablePieceById, commitRemnants, commitShards],
+    [breakablePieceById, commitRemnants, commitShards, indestructible],
   );
 
   // Knock a corner chip off a moving body at the point that struck: the
@@ -3572,6 +3871,9 @@ function OpenWorldScene({
       forceDirection: { x: number; y: number; z: number },
       intensity: number,
     ): boolean => {
+      if (indestructible) {
+        return false;
+      }
       const body = pieceBodies.current.get(source.id);
       if (!body) {
         return false;
@@ -3610,7 +3912,7 @@ function OpenWorldScene({
       const radius = MathUtils.clamp(0.09 + intensity * 0.11, 0.11, 0.24);
       return carveLooseTarget(source, origin, corner, radius, 1.1);
     },
-    [carveLooseTarget],
+    [carveLooseTarget, indestructible],
   );
 
   // Carve a blocky hole out of a standing (fixed) piece or remnant, leaving
@@ -3623,6 +3925,9 @@ function OpenWorldScene({
       pushDirection: Vector3 | null,
       physicalChipCount = 3,
     ): { carved: boolean; brokenParentId: string | null } => {
+      if (indestructible) {
+        return { carved: false, brokenParentId: null };
+      }
       const remnant = remnantById.current.get(targetId);
       const piece = remnant ? undefined : breakablePieceById.get(targetId);
       const source = remnant ?? piece;
@@ -3821,6 +4126,7 @@ function OpenWorldScene({
     [
       commitRemnants,
       commitShards,
+      indestructible,
       intactGroundRenderColors,
       rapier,
       subtractParentVolume,
@@ -5236,6 +5542,77 @@ function OpenWorldScene({
     };
   }, [mobileActions, strike, strikeEnd]);
 
+  // Кластеры, которые прямо сейчас везёт кадр транспорта: по нему система
+  // дверей понимает, что створка на борту больше не её забота.
+  const movingVehicles = useRef<Set<string>>(new Set());
+  // Принятые швартовом кадры ещё могут выбирать последние сантиметры, но
+  // их бортовые механизмы уже должны снова отвечать игроку.
+  const dockedVehicles = useRef<Set<string>>(new Set());
+  // Общая событийная шина составных объектов. Свет — первый потребитель;
+  // следующие системы могут читать те же состояния без знания типа машины.
+  const clusterEventStates = useRef<Map<string, LampEventState>>(new Map());
+  // One reusable authoritative contact body per moving compound object.
+  const compoundKinematicClusters = useRef(
+    new Map<string, CompoundKinematicClusterRuntime>(),
+  );
+  /** Физические позы для систем, которые живут вне транспортного кадра. */
+  const vehicleFramePoses = useRef<Map<string, VehicleFramePoseState>>(new Map());
+  const publishVehicleFramePose = useCallback((state: VehicleFramePoseState) => {
+    vehicleFramePoses.current.set(state.clusterId, state);
+  }, []);
+  const resolveLampPosition = useCallback((lamp: LampDefinition) => {
+    if (!lamp.carrierClusterId) {
+      return lamp.position;
+    }
+    const frame = vehicleFramePoses.current.get(lamp.carrierClusterId);
+    if (!frame) {
+      return lamp.position;
+    }
+    return vehiclePiecePosition(
+      frame.origin,
+      lamp.position,
+      frame.pose,
+      vehicleRotation(frame.pose, frame.nose),
+    );
+  }, []);
+  const resolveSpotLightPosition = useCallback((light: SpotLightDefinition) => {
+    if (!light.carrierClusterId) {
+      return light.position;
+    }
+    const frame = vehicleFramePoses.current.get(light.carrierClusterId);
+    if (!frame) {
+      return light.position;
+    }
+    return vehiclePiecePosition(
+      frame.origin,
+      light.position,
+      frame.pose,
+      vehicleRotation(frame.pose, frame.nose),
+    );
+  }, []);
+  const resolveSpotLightDirection = useCallback((light: SpotLightDefinition) => {
+    if (!light.carrierClusterId) {
+      return light.direction;
+    }
+    const frame = vehicleFramePoses.current.get(light.carrierClusterId);
+    if (!frame) {
+      return light.direction;
+    }
+    return rotateVehicleVector(
+      vehicleRotation(frame.pose, frame.nose),
+      light.direction,
+    );
+  }, []);
+  const resolveLampEventState = useCallback(
+    (sourceClusterId: string): LampEventState => {
+      // VehicleFrameSystem publishes this once and derives the door's docked
+      // set from the same value. Lights, boards and mechanisms therefore
+      // cannot disagree about the hand-off frame.
+      return clusterEventStates.current.get(sourceClusterId) ?? "inTransit";
+    },
+    [],
+  );
+
   const hiddenPieces = useMemo(() => {
     const next = new Set(shatteredPieces);
     for (const id of carvedPieces) {
@@ -5243,6 +5620,13 @@ function OpenWorldScene({
     }
     return next;
   }, [carvedPieces, shatteredPieces]);
+  const inactiveCompoundMembers = useMemo(() => {
+    const inactive = new Set(hiddenPieces);
+    for (const id of brokenPieces) {
+      inactive.add(id);
+    }
+    return inactive;
+  }, [brokenPieces, hiddenPieces]);
 
   // A light fixture counts as dead whether it broke loose, shattered or got
   // a hole carved through it.
@@ -5259,17 +5643,42 @@ function OpenWorldScene({
       <DayNightCycle
         mode={timeOfDay}
         nightRef={nightRef}
+        worldTimeRef={worldTimeRef}
         theme={scene.environment}
         worldRadius={scene.worldRadius}
+        fogDistances={scene.fogDistances}
         worldCenter={scene.worldCenter}
         cameraFar={scene.cameraFar}
         snapVersion={timeOfDaySnapVersion}
         cinematic={cinematic}
       />
+      <SceneMutableObjectSystem
+        definitions={mutableObjectDefinitions}
+        pieceById={breakablePieceById}
+        worldTimeRef={worldTimeRef}
+        resolveEventState={resolveLampEventState}
+        states={mutablePieceStates}
+      />
       <LampLightPool
         lamps={lampDefinitions}
         brokenPieces={deadLampPieces}
         nightRef={nightRef}
+        resolveLampPosition={resolveLampPosition}
+        resolveEventState={resolveLampEventState}
+      />
+      <LampBeaconField
+        lamps={lampDefinitions}
+        brokenPieces={deadLampPieces}
+        nightRef={nightRef}
+        resolveLampPosition={resolveLampPosition}
+      />
+      <SpotLightPool
+        lights={spotLightDefinitions}
+        brokenPieces={deadLampPieces}
+        nightRef={nightRef}
+        resolveLightPosition={resolveSpotLightPosition}
+        resolveLightDirection={resolveSpotLightDirection}
+        resolveEventState={resolveLampEventState}
       />
       <SceneEnvironment theme={scene.environment} />
       <WindController />
@@ -5299,6 +5708,7 @@ function OpenWorldScene({
           />
           <SmokePlumes nightRef={nightRef} />
           <Villagers
+            settlement={vikingSettlement}
             nightRef={nightRef}
             pieces={breakablePieces}
             brokenPieces={brokenPiecesRef}
@@ -5322,6 +5732,9 @@ function OpenWorldScene({
           brokenPieces={brokenPieces}
           shatteredPieces={hiddenPieces}
           bodies={pieceBodies}
+          kinematicClusters={compoundKinematicClusters}
+          mutablePieceIds={mutablePieceIds}
+          mutablePieceStates={mutablePieceStates}
           registerBody={registerBody}
           onDebrisContact={handleDebrisContact}
         />
@@ -5363,21 +5776,41 @@ function OpenWorldScene({
           onExplode={handleGrenadeExplode}
         />
       ))}
+      <VehicleFrameSystem
+        pieces={breakablePieces}
+        bodies={pieceBodies}
+        brokenPieces={brokenPiecesRef}
+        inactivePieces={inactiveCompoundMembers}
+        resetVersion={resetVersion}
+        departRequestVersion={entryOpenRequestVersion}
+        departRequestTargetRef={entryOpenRequestTargetRef}
+        onDepartureApproachChange={onDepartureApproachChange}
+        movingVehicles={movingVehicles}
+        dockedVehicles={dockedVehicles}
+        clusterEventStates={clusterEventStates}
+        clusterRegistry={compoundKinematicClusters}
+        onFramePose={publishVehicleFramePose}
+      />
       <HingedDoorSystem
         pieces={breakablePieces}
         bodies={pieceBodies}
         brokenPieces={brokenPiecesRef}
         resetVersion={resetVersion}
         entryOpenRequestVersion={entryOpenRequestVersion}
+        entryOpenRequestTargetRef={entryOpenRequestTargetRef}
         entryOpenRequests={villagerDoorRequests}
         openEntries={villagerOpenDoors}
         onEntryApproachChange={onEntryApproachChange}
+        movingVehicles={movingVehicles}
+        dockedVehicles={dockedVehicles}
+        vehicleFramePoses={vehicleFramePoses}
       />
       {!cinematic ? (
         <>
           <Player
             registerBody={registerBody}
             mobileControls={mobileControls}
+            passengerViewMotion={passengerViewMotion}
             spawn={scene.playerSpawn}
             flightMode={flightMode}
             entryInteractionActive={entryInteractionActive}
@@ -5396,6 +5829,7 @@ function OpenWorldScene({
             requestVersion={controlRequest}
             initialYaw={scene.playerSpawnYaw ?? 0}
             mobileControls={mobileControls}
+            passengerViewMotion={passengerViewMotion}
             onActiveChange={onActiveChange}
             onFallbackChange={onFallbackChange}
             onStrike={strike}
@@ -5548,7 +5982,6 @@ function MobileGameControls({
   onEntryAction,
   onReset,
 }: {
-            settlement={vikingSettlement}
   active: boolean;
   flightMode: boolean;
   weapon: WeaponName;
@@ -5850,12 +6283,7 @@ function MobileGameControls({
         : weapon === "mg"
           ? t("fire.fire")
           : t("fire.launch");
-  const timeLabel =
-    timeOfDay === "day"
-      ? t("time.day")
-      : timeOfDay === "sunset"
-        ? t("time.sunset")
-        : t("time.night");
+  const timeLabel = t(timeOfDayKey(timeOfDay));
 
   return (
     <div
@@ -5959,44 +6387,57 @@ function MobileGameControls({
 function ModeAnnounce({
   flightMode,
   weapon,
+  timeOfDay,
 }: {
   flightMode: boolean;
   weapon: WeaponName;
+  timeOfDay: TimeOfDay;
 }): ReactElement | null {
   const { t } = useLanguage();
-  const [caption, setCaption] = useState<{ id: number; text: string } | null>(null);
-  const previous = useRef<{ flightMode: boolean; weapon: WeaponName } | null>(null);
+  const [caption, setCaption] = useState<{
+    id: number;
+    kicker: string;
+    text: string;
+  } | null>(null);
+  const previous = useRef<{
+    flightMode: boolean;
+    weapon: WeaponName;
+    timeOfDay: TimeOfDay;
+  } | null>(null);
   const nextId = useRef(0);
 
   useEffect(() => {
     const before = previous.current;
-    previous.current = { flightMode, weapon };
+    previous.current = { flightMode, weapon, timeOfDay };
     // Первый кадр — это не смена режима, а его начальное состояние: молчим.
     if (!before) {
       return;
     }
-    const text =
-      before.flightMode !== flightMode
-        ? flightMode
-          ? t("announce.flightOn")
-          : t("announce.flightOff")
-        : before.weapon !== weapon
-            ? weapon === "none"
-              ? t("announce.weaponNone")
-              : weapon === "hammer"
-                ? t("announce.weaponHammer")
-                : weapon === "launcher"
-                  ? t("announce.weaponLauncher")
-                  : weapon === "rocket"
-                    ? t("announce.weaponRocket")
-                    : t("announce.weaponMg")
-            : null;
+    let kicker = t("announce.kicker");
+    let text: string | null = null;
+    if (before.flightMode !== flightMode) {
+      text = flightMode ? t("announce.flightOn") : t("announce.flightOff");
+    } else if (before.weapon !== weapon) {
+      text =
+        weapon === "none"
+          ? t("announce.weaponNone")
+          : weapon === "hammer"
+            ? t("announce.weaponHammer")
+            : weapon === "launcher"
+              ? t("announce.weaponLauncher")
+              : weapon === "rocket"
+                ? t("announce.weaponRocket")
+                : t("announce.weaponMg");
+    } else if (before.timeOfDay !== timeOfDay) {
+      kicker = t("announce.timeKicker");
+      text = t(timeOfDayAnnouncementKey(timeOfDay));
+    }
     if (!text) {
       return;
     }
     nextId.current += 1;
-    setCaption({ id: nextId.current, text });
-  }, [flightMode, weapon, t]);
+    setCaption({ id: nextId.current, kicker, text });
+  }, [flightMode, timeOfDay, weapon, t]);
 
   useEffect(() => {
     if (!caption) {
@@ -6022,7 +6463,7 @@ function ModeAnnounce({
       {caption ? (
         // key по id: одинаковый титр подряд обязан проиграться заново.
         <div className="mode-announce" key={caption.id} aria-live="polite">
-          <p className="mode-announce-kicker">{t("announce.kicker")}</p>
+          <p className="mode-announce-kicker">{caption.kicker}</p>
           <p className="mode-announce-title">
             {caption.text.split(" ").map((word, index) => (
               <span
@@ -6102,6 +6543,7 @@ export function MakeAMessGame({
   } = useGameActionHints();
   const [approachedEntry, setApproachedEntry] = useState<HingedEntryApproach | null>(null);
   const [entryOpenRequestVersion, setEntryOpenRequestVersion] = useState(0);
+  const entryOpenRequestTargetRef = useRef<HingedEntryApproach | null>(null);
   const flyoverRecorder = useRef<MediaRecorder | null>(null);
   const flyoverChapterRef = useRef<FlyoverChapter | null>(null);
   const flyoverProgressRef = useRef(0);
@@ -6291,9 +6733,7 @@ export function MakeAMessGame({
   }, [endGameAction]);
 
   const cycleTimeOfDay = useCallback(() => {
-    setTimeOfDay((current) =>
-      current === "day" ? "sunset" : current === "sunset" ? "night" : "day",
-    );
+    setTimeOfDay(nextTimeOfDay);
   }, []);
 
   const toggleFlightMode = useCallback(() => {
@@ -6301,20 +6741,52 @@ export function MakeAMessGame({
     setFlightMode((current) => !current);
   }, []);
 
-  const handleEntryApproachChange = useCallback((entry: HingedEntryApproach | null) => {
-    setApproachedEntry(entry);
-    mobileControls.current.jump = false;
-    entryApproachActions.forEach(endGameAction);
-    if (entry) {
-      emitGameAction(entryApproachAction(entry));
-    }
-  }, [emitGameAction, endGameAction]);
+  // Подходов два источника — двери и табло отправления, — а подсказка одна.
+  // Дверь ближе к телу, поэтому при споре побеждает она.
+  const approachSources = useRef<{
+    door: HingedEntryApproach | null;
+    departure: HingedEntryApproach | null;
+  }>({ door: null, departure: null });
+
+  const applyApproach = useCallback(
+    (source: "door" | "departure", entry: HingedEntryApproach | null) => {
+      approachSources.current[source] = entry;
+      const next =
+        approachSources.current.door ?? approachSources.current.departure;
+      setApproachedEntry(next);
+      mobileControls.current.jump = false;
+      entryApproachActions.forEach(endGameAction);
+      if (next) {
+        emitGameAction(entryApproachAction(next));
+      }
+    },
+    [emitGameAction, endGameAction],
+  );
+
+  const handleEntryApproachChange = useCallback(
+    (entry: HingedEntryApproach | null) => applyApproach("door", entry),
+    [applyApproach],
+  );
+
+  const handleDepartureApproachChange = useCallback(
+    (approached: "board" | "ride" | null) =>
+      applyApproach(
+        "departure",
+        approached === "board"
+          ? { id: "terminal:sky-train:departure", kind: "departure" }
+          : approached === "ride"
+            ? { id: "terminal:sky-train:ride", kind: "ride" }
+            : null,
+      ),
+    [applyApproach],
+  );
 
   const openApproachedEntry = useCallback(() => {
     if (!approachedEntry) {
       return;
     }
     mobileControls.current.jump = false;
+    entryOpenRequestTargetRef.current = approachedEntry;
     setEntryOpenRequestVersion((version) => version + 1);
     endGameAction(entryApproachAction(approachedEntry));
   }, [approachedEntry, endGameAction]);
@@ -6429,8 +6901,8 @@ export function MakeAMessGame({
           >
             <Suspense fallback={null}>
               <Physics
-                gravity={[0, -14, 0]}
-                timeStep={1 / 60}
+                gravity={[0, -PLAYER_GRAVITY, 0]}
+                timeStep={PHYSICS_TIME_STEP}
                 numSolverIterations={6}
                 maxCcdSubsteps={2}
               >
@@ -6448,6 +6920,7 @@ export function MakeAMessGame({
                   mobileActions={mobileActions}
                   resetVersion={resetVersion}
                   entryOpenRequestVersion={entryOpenRequestVersion}
+                  entryOpenRequestTargetRef={entryOpenRequestTargetRef}
                   entryInteractionActive={approachedEntry !== null}
                   cinematic={cinematicActive}
                   onActiveChange={setActive}
@@ -6455,6 +6928,7 @@ export function MakeAMessGame({
                   onBrokenCountChange={setBrokenCount}
                   onDynamicBodyCountChange={setDynamicBodyCount}
                   onEntryApproachChange={handleEntryApproachChange}
+                  onDepartureApproachChange={handleDepartureApproachChange}
                 />
               </Physics>
               {flyover ? (
@@ -6482,7 +6956,11 @@ export function MakeAMessGame({
       </div>
 
       {!cinematicActive ? (
-        <ModeAnnounce flightMode={flightMode} weapon={weapon} />
+        <ModeAnnounce
+          flightMode={flightMode}
+          weapon={weapon}
+          timeOfDay={timeOfDay}
+        />
       ) : null}
 
       {!cinematicActive ? (
@@ -6522,17 +7000,23 @@ export function MakeAMessGame({
       {!cinematicActive ? <aside className="game-objective" aria-live="polite">
         <p>{copy.eyebrow}</p>
         <h1>{copy.heading}</h1>
-        <div className="damage-meter">
-          <span style={{ width: `${progress}%` }} />
-        </div>
-        <div className="damage-copy">
-          <span>
-            {brokenCount} {t("hud.parts")}
-          </span>
-          <span>
-            {progress}% {t("hud.mess")}
-          </span>
-        </div>
+        {/* В заповеднике счётчик разрушенного всегда ноль — вместо мёртвой
+            шкалы её просто нет. */}
+        {scene.indestructible ? null : (
+          <>
+            <div className="damage-meter">
+              <span style={{ width: `${progress}%` }} />
+            </div>
+            <div className="damage-copy">
+              <span>
+                {brokenCount} {t("hud.parts")}
+              </span>
+              <span>
+                {progress}% {t("hud.mess")}
+              </span>
+            </div>
+          </>
+        )}
         <div className="damage-copy">
           <span>{t("hud.weapon")}</span>
           <span>
@@ -6550,11 +7034,7 @@ export function MakeAMessGame({
         <div className="damage-copy">
           <span>{t("hud.time")}</span>
           <span>
-            {timeOfDay === "day"
-              ? t("time.day")
-              : timeOfDay === "sunset"
-                ? t("time.sunset")
-                : t("time.night")}
+            {t(timeOfDayKey(timeOfDay))}
           </span>
         </div>
         <div className="damage-copy">

@@ -43,3 +43,6 @@ next-env.d.ts
 /outputs/
 /work/
 /artifacts/
+
+# Личные разрешения Claude Code — у каждого свои
+.claude/settings.local.json

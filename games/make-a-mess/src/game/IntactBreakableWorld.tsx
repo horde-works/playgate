@@ -1,17 +1,20 @@
 "use client";
 
 import { RigidBody, TrimeshCollider } from "@react-three/rapier";
+import { useFrame } from "@react-three/fiber";
 import {
   memo,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
+  type MutableRefObject,
 } from "react";
 import {
   BoxGeometry,
   Color,
   CylinderGeometry,
+  DynamicDrawUsage,
   InstancedBufferAttribute,
   InstancedMesh,
   Matrix4,
@@ -46,12 +49,14 @@ import {
 } from "./staticColliders";
 import { TreeVisuals } from "./TreeVisuals";
 import { isProceduralVegetationPiece } from "./treeVisualModel";
+import type { MutablePieceVisualState } from "./sceneDynamics";
 
 const UNIT_BOX = new BoxGeometry(1, 1, 1);
 // Unit-diameter, unit-height cylinder along Y; instance scale sets the
 // diameters (x/z) and length (y), instance rotation lays it down.
 const UNIT_CYLINDER = new CylinderGeometry(0.5, 0.5, 1, 20, 1);
 const HIDDEN_MATRIX = new Matrix4().makeScale(0, 0, 0);
+const EMPTY_MUTABLE_PIECE_IDS: ReadonlySet<string> = new Set();
 
 // Jointed masonry is rendered expanded by the same margin the former joint
 // shell used, so the silicate binder keeps closing the authored air gaps
@@ -66,18 +71,20 @@ function pieceRenderExpansion(piece: BreakablePieceDefinition): number {
 function writePieceTransform(
   transform: Object3D,
   piece: BreakablePieceDefinition,
+  state?: MutablePieceVisualState,
 ): void {
   const expansion = pieceRenderExpansion(piece);
-  transform.position.set(...piece.position);
+  transform.position.set(...(state?.position ?? piece.position));
+  const rotation = state?.rotation ?? piece.rotation;
   transform.rotation.set(
-    piece.rotation?.[0] ?? 0,
-    piece.rotation?.[1] ?? 0,
-    piece.rotation?.[2] ?? 0,
+    rotation?.[0] ?? 0,
+    rotation?.[1] ?? 0,
+    rotation?.[2] ?? 0,
   );
   transform.scale.set(
-    piece.size[0] + expansion,
-    piece.size[1] + expansion,
-    piece.size[2] + expansion,
+    (piece.size[0] + expansion) * (state?.scale ?? 1),
+    (piece.size[1] + expansion) * (state?.scale ?? 1),
+    (piece.size[2] + expansion) * (state?.scale ?? 1),
   );
   transform.updateMatrix();
 }
@@ -92,13 +99,25 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
   batch,
   hiddenPieceIds,
   lighting,
+  mutable,
+  mutablePieceStates,
 }: {
   batch: IntactInstanceBatch;
   hiddenPieceIds: ReadonlySet<string>;
   lighting: WorldLightingBake;
+  mutable: boolean;
+  mutablePieceStates: MutableRefObject<
+    ReadonlyMap<string, MutablePieceVisualState>
+  >;
 }) {
   const mesh = useRef<InstancedMesh>(null);
   const appliedHidden = useRef(new Set<string>());
+  const appliedMutable = useRef(
+    new Map<
+      string,
+      { readonly hidden: boolean; readonly state?: MutablePieceVisualState }
+    >(),
+  );
   const indexById = useMemo(
     () => new Map(batch.pieces.map((piece, index) => [piece.id, index])),
     [batch.pieces],
@@ -249,19 +268,22 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
       );
       current.setColorAt(index, color);
     });
-    current.instanceMatrix.setUsage(StaticDrawUsage);
+    current.instanceMatrix.setUsage(
+      mutable ? DynamicDrawUsage : StaticDrawUsage,
+    );
     current.instanceMatrix.needsUpdate = true;
     if (current.instanceColor) {
       current.instanceColor.needsUpdate = true;
     }
     current.computeBoundingSphere();
     appliedHidden.current = new Set();
-  }, [batch, groundRenderColors]);
+    appliedMutable.current.clear();
+  }, [batch, groundRenderColors, mutable]);
 
   // Incremental pass: touch only the instances whose hidden state changed.
   useLayoutEffect(() => {
     const current = mesh.current;
-    if (!current) {
+    if (!current || mutable) {
       return;
     }
 
@@ -285,7 +307,38 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
       current.instanceMatrix.addUpdateRange(index * 16, 16);
     }
     current.instanceMatrix.needsUpdate = true;
-  }, [batch, hiddenPieceIds]);
+  }, [batch, hiddenPieceIds, mutable]);
+
+  useFrame(() => {
+    const current = mesh.current;
+    if (!current || !mutable) {
+      return;
+    }
+
+    const transform = new Object3D();
+    let changed = false;
+    current.instanceMatrix.clearUpdateRanges();
+    batch.pieces.forEach((piece, index) => {
+      const state = mutablePieceStates.current.get(piece.id);
+      const hidden = hiddenPieceIds.has(piece.id) || state?.visible === false;
+      const previous = appliedMutable.current.get(piece.id);
+      if (previous?.hidden === hidden && previous.state === state) {
+        return;
+      }
+      appliedMutable.current.set(piece.id, { hidden, state });
+      if (hidden) {
+        current.setMatrixAt(index, HIDDEN_MATRIX);
+      } else {
+        writePieceTransform(transform, piece, state);
+        current.setMatrixAt(index, transform.matrix);
+      }
+      current.instanceMatrix.addUpdateRange(index * 16, 16);
+      changed = true;
+    });
+    if (changed) {
+      current.instanceMatrix.needsUpdate = true;
+    }
+  });
 
   return (
     <instancedMesh
@@ -293,6 +346,7 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
       args={[geometry, material, batch.pieces.length]}
       castShadow={batch.castShadow}
       receiveShadow
+      frustumCulled={!mutable}
       userData={{
         breakableInstanceIds: instanceIds,
         breakableMaterial: batch.material,
@@ -341,17 +395,41 @@ const IntactPieceColliders = memo(function IntactPieceColliders({
 export const IntactBreakableWorld = memo(function IntactBreakableWorld({
   pieces,
   hiddenPieceIds,
+  mutablePieceIds = EMPTY_MUTABLE_PIECE_IDS,
+  mutablePieceStates,
 }: {
   pieces: readonly BreakablePieceDefinition[];
   hiddenPieceIds: ReadonlySet<string>;
+  mutablePieceIds?: ReadonlySet<string>;
+  mutablePieceStates?: MutableRefObject<
+    ReadonlyMap<string, MutablePieceVisualState>
+  >;
 }) {
+  const emptyMutablePieceStates = useRef<
+    ReadonlyMap<string, MutablePieceVisualState>
+  >(new Map());
+  const resolvedMutablePieceStates =
+    mutablePieceStates ?? emptyMutablePieceStates;
   const genericRenderPieces = useMemo(
     () => pieces.filter((piece) => !isProceduralVegetationPiece(piece)),
     [pieces],
   );
   const instanceBatches = useMemo(
-    () => buildIntactInstanceBatches(genericRenderPieces),
-    [genericRenderPieces],
+    () => [
+      ...buildIntactInstanceBatches(
+        genericRenderPieces.filter((piece) => !mutablePieceIds.has(piece.id)),
+      ).map((batch) => ({
+        batch: { ...batch, id: `static:${batch.id}` },
+        mutable: false,
+      })),
+      ...buildIntactInstanceBatches(
+        genericRenderPieces.filter((piece) => mutablePieceIds.has(piece.id)),
+      ).map((batch) => ({
+        batch: { ...batch, id: `mutable:${batch.id}` },
+        mutable: true,
+      })),
+    ],
+    [genericRenderPieces, mutablePieceIds],
   );
   const lighting = useMemo(() => new WorldLightingBake(pieces), [pieces]);
   const colliderPieces = useMemo(
@@ -367,12 +445,14 @@ export const IntactBreakableWorld = memo(function IntactBreakableWorld({
 
   return (
     <>
-      {instanceBatches.map((batch) => (
+      {instanceBatches.map(({ batch, mutable }) => (
         <IntactPieceBatch
           key={batch.id}
           batch={batch}
           hiddenPieceIds={hiddenPieceIds}
           lighting={lighting}
+          mutable={mutable}
+          mutablePieceStates={resolvedMutablePieceStates}
         />
       ))}
       <TreeVisuals pieces={pieces} hiddenPieceIds={hiddenPieceIds} />
