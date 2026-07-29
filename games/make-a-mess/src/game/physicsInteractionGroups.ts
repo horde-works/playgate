@@ -13,12 +13,16 @@ const interactionGroups = (membership: number, filter: number): number =>
 // the player and debris remain contained by the invisible edge of the map.
 export const DEBRIS_SETTLING = interactionGroups(
   GROUP_DEBRIS,
-  GROUP_WORLD | GROUP_ACTOR | GROUP_BOUNDARY,
+  GROUP_WORLD | GROUP_ACTOR | GROUP_BOUNDARY | GROUP_VEHICLE_QUERY,
 );
 
 export const DEBRIS_NORMAL = interactionGroups(
   GROUP_DEBRIS,
-  GROUP_WORLD | GROUP_DEBRIS | GROUP_ACTOR | GROUP_BOUNDARY,
+  GROUP_WORLD |
+    GROUP_DEBRIS |
+    GROUP_ACTOR |
+    GROUP_BOUNDARY |
+    GROUP_VEHICLE_QUERY,
 );
 
 export const ACTOR_NORMAL = interactionGroups(
@@ -41,6 +45,15 @@ export const DEBRIS_ACTOR_DETAIL = interactionGroups(
 export const WORLD_BOUNDARY = interactionGroups(
   GROUP_BOUNDARY,
   GROUP_DEBRIS | GROUP_ACTOR,
+);
+
+/**
+ * Last-resort floor for the player only. Debris and airborne carriers must
+ * continue through the visual fog when there is no authored land below them.
+ */
+export const ACTOR_SAFETY_FLOOR = interactionGroups(
+  GROUP_BOUNDARY,
+  GROUP_ACTOR,
 );
 
 /** Query mask for physical vehicle contacts with structures and debris. */

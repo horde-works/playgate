@@ -4,6 +4,8 @@ import {
   grandTerminalMaterials,
   grandTerminalScene,
 } from "../games/make-a-mess/src/game/grandTerminalScene.ts";
+import { flightPlan } from "../games/make-a-mess/src/game/skyTrainRoutes.ts";
+import { vehicleFrames } from "../games/make-a-mess/src/game/vehicleFrames.ts";
 
 test("Grand Terminal is fully supported before the player touches it", () => {
   const unsupported = grandTerminalScene.resolveStructuralCollapse(new Set());
@@ -20,11 +22,43 @@ test("Grand Terminal is one round, destructible railway museum", () => {
 
   assert.equal(new Set(ids).size, ids.length);
   assert.equal(grandTerminalScene.worldRadius, 98);
+  assert.equal(grandTerminalScene.boundaryRadius, 240);
+  assert.equal(grandTerminalScene.skyRadius, 300);
   assert.equal(grandTerminalScene.lampDefinitions.length >= 25, true);
 
   for (const material of grandTerminalMaterials) {
     assert.equal(usedMaterials.has(material), true, material);
   }
+});
+
+test("the route, player boundary and sky are separate concentric envelopes", () => {
+  const frame = vehicleFrames.find((candidate) => candidate.id === "sky-train");
+  assert.ok(frame);
+  const [centerX, centerZ] = grandTerminalScene.worldCenter;
+  let routeRadius = 0;
+
+  for (const kind of ["circuit", "tour"]) {
+    const plan = flightPlan(kind, frame.origin);
+    for (let index = 0; index <= 4096; index += 1) {
+      const point = plan.point(index / 4096);
+      routeRadius = Math.max(
+        routeRadius,
+        Math.hypot(point[0] - centerX, point[2] - centerZ),
+      );
+    }
+  }
+
+  assert.equal(routeRadius < 193, true, String(routeRadius));
+  assert.equal(grandTerminalScene.boundaryRadius >= routeRadius + 40, true);
+  assert.equal(
+    grandTerminalScene.skyRadius >= grandTerminalScene.boundaryRadius + 50,
+    true,
+  );
+  assert.equal(
+    grandTerminalScene.cameraFar >=
+      grandTerminalScene.skyRadius + grandTerminalScene.boundaryRadius,
+    true,
+  );
 });
 
 test("the terminal has a complete station, train shed and rolling stock", () => {
@@ -211,6 +245,7 @@ test("the hall board fades while the berth matrix reports one shared journey sta
       ["departing", ["departure"]],
       ["in-flight", ["cruise", "inTransit"]],
       ["arriving", ["approach"]],
+      ["failed", ["failed"]],
     ],
   );
   assert.equal(

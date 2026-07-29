@@ -29,6 +29,23 @@ export interface PassengerAngularControlInput {
   readonly delta: number;
 }
 
+/** Below every legitimate crater floor: the passenger has left the world. */
+export const PASSENGER_FALL_RETURN_Y = -2.6;
+
+/**
+ * Resolve the scene's ordinary island spawn after an airborne passenger falls
+ * out of the playable volume. The return point belongs to the island, never
+ * to the carrier that has already flown on.
+ */
+export function passengerFallReturnPoint(
+  positionY: number,
+  islandSpawn: readonly [number, number, number],
+): MotionVector3 | null {
+  return positionY < PASSENGER_FALL_RETURN_Y
+    ? { x: islandSpawn[0], y: islandSpawn[1], z: islandSpawn[2] }
+    : null;
+}
+
 /** Maximum acceleration of a relaxed stance before the passenger starts sliding. */
 export const PASSENGER_STANCE_ACCELERATION = 2.2;
 /** Extra corrective acceleration per metre/second of relative speed error. */

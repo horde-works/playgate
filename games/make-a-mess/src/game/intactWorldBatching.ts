@@ -18,7 +18,12 @@ import { hasSilicateJoints } from "./silicateJoints.ts";
 // does not make structural work global.
 const WORLD_CHUNK_SIZE = 256;
 
-export type BatchGeometryKind = "box" | "cylinder";
+export type BatchGeometryKind =
+  | "box"
+  | "sphere"
+  | "cylinder"
+  | "triangularSheet"
+  | "hexagonalSheet";
 
 export interface IntactInstanceBatch {
   readonly id: string;
@@ -34,7 +39,11 @@ export interface IntactInstanceBatch {
 export function pieceGeometryKind(
   piece: BreakablePieceDefinition,
 ): BatchGeometryKind {
-  return piece.shape === "cylinder" ? "cylinder" : "box";
+  if (piece.shape === "sphere") return "sphere";
+  if (piece.shape === "cylinder") return "cylinder";
+  if (piece.shape === "triangularSheet") return "triangularSheet";
+  if (piece.shape === "hexagonalSheet") return "hexagonalSheet";
+  return "box";
 }
 
 function worldChunkKey(piece: BreakablePieceDefinition): string {

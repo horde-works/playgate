@@ -6,8 +6,14 @@ export type GameAction =
   | "gate.approaching"
   | "door.approaching"
   | "town-door.approaching"
-  | "departure.approaching"
-  | "ride.approaching";
+  | "terminal-departure.approaching"
+  | "viking-departure.approaching"
+  | "town-departure.approaching"
+  | "terminal-ride.approaching"
+  | "viking-ride.approaching"
+  | "town-ride.approaching"
+  | "seat.approaching"
+  | "stand.available";
 
 export interface GameActionHint {
   readonly id: string;
@@ -57,8 +63,8 @@ export const gameActionHints: readonly GameActionHint[] = [
     once: false,
   },
   {
-    id: "approaching-the-departure-board",
-    action: "departure.approaching",
+    id: "approaching-terminal-dispatch",
+    action: "terminal-departure.approaching",
     delayMs: 180,
     eyebrowKey: "hint.departure.eyebrow",
     titleKey: "hint.departure.title",
@@ -68,14 +74,80 @@ export const gameActionHints: readonly GameActionHint[] = [
     once: false,
   },
   {
+    id: "approaching-viking-watch",
+    action: "viking-departure.approaching",
+    delayMs: 180,
+    eyebrowKey: "hint.vikingDeparture.eyebrow",
+    titleKey: "hint.vikingDeparture.title",
+    detailKey: "hint.vikingDeparture.action",
+    touchDetailKey: "hint.vikingDeparture.actionTouch",
+    keyLabelKey: "hint.vikingDeparture.key",
+    once: false,
+  },
+  {
+    id: "approaching-town-airship-dispatch",
+    action: "town-departure.approaching",
+    delayMs: 180,
+    eyebrowKey: "hint.townDeparture.eyebrow",
+    titleKey: "hint.townDeparture.title",
+    detailKey: "hint.townDeparture.action",
+    touchDetailKey: "hint.townDeparture.actionTouch",
+    keyLabelKey: "hint.townDeparture.key",
+    once: false,
+  },
+  {
     id: "boarding-the-sky-train",
-    action: "ride.approaching",
+    action: "terminal-ride.approaching",
     delayMs: 180,
     eyebrowKey: "hint.ride.eyebrow",
     titleKey: "hint.ride.title",
     detailKey: "hint.ride.action",
     touchDetailKey: "hint.ride.actionTouch",
     keyLabelKey: "hint.ride.key",
+    once: false,
+  },
+  {
+    id: "boarding-the-sky-longship",
+    action: "viking-ride.approaching",
+    delayMs: 180,
+    eyebrowKey: "hint.vikingRide.eyebrow",
+    titleKey: "hint.vikingRide.title",
+    detailKey: "hint.vikingRide.action",
+    touchDetailKey: "hint.vikingRide.actionTouch",
+    keyLabelKey: "hint.vikingRide.key",
+    once: false,
+  },
+  {
+    id: "boarding-the-town-airship",
+    action: "town-ride.approaching",
+    delayMs: 180,
+    eyebrowKey: "hint.townRide.eyebrow",
+    titleKey: "hint.townRide.title",
+    detailKey: "hint.townRide.action",
+    touchDetailKey: "hint.townRide.actionTouch",
+    keyLabelKey: "hint.townRide.key",
+    once: false,
+  },
+  {
+    id: "taking-the-driver-seat",
+    action: "seat.approaching",
+    delayMs: 120,
+    eyebrowKey: "hint.seat.eyebrow",
+    titleKey: "hint.seat.title",
+    detailKey: "hint.seat.action",
+    touchDetailKey: "hint.seat.actionTouch",
+    keyLabelKey: "hint.seat.key",
+    once: false,
+  },
+  {
+    id: "leaving-the-driver-seat",
+    action: "stand.available",
+    delayMs: 80,
+    eyebrowKey: "hint.stand.eyebrow",
+    titleKey: "hint.stand.title",
+    detailKey: "hint.stand.action",
+    touchDetailKey: "hint.stand.actionTouch",
+    keyLabelKey: "hint.stand.key",
     once: false,
   },
   {

@@ -7,6 +7,7 @@ import {
 } from "../games/make-a-mess/src/game/walkableRoute.ts";
 import { PLATFORM_Y } from "../games/make-a-mess/src/content/scenes/astana/astanaRing.ts";
 import {
+  astanaStations,
   ringPathPoint,
   stationDistance,
 } from "../games/make-a-mess/src/content/scenes/astana/astanaPlan.ts";
@@ -23,6 +24,8 @@ import {
 // «Нұрлы жол» — иначе четыре поиска в ширину по сорок тысяч клеток каждый
 // превращают сюиту в минуты ради того же ответа.
 const STATION = "west";
+const STATION_ID = astanaStations.find((station) => station.compass === STATION)?.id;
+assert.ok(STATION_ID);
 
 function stationFrame() {
   const distance = stationDistance(STATION);
@@ -67,6 +70,20 @@ function laneBounds(lane, halfWidth) {
     maxX: Math.max(...xs),
     minZ: Math.min(...zs),
     maxZ: Math.max(...zs),
+  };
+}
+
+function localBounds(fromT, toT, fromW, toW) {
+  const corners = [
+    at(fromT, fromW), at(fromT, toW),
+    at(toT, fromW), at(toT, toW),
+  ];
+  return {
+    ...bounds,
+    minX: Math.min(...corners.map((corner) => corner.x)),
+    maxX: Math.max(...corners.map((corner) => corner.x)),
+    minZ: Math.min(...corners.map((corner) => corner.z)),
+    maxZ: Math.max(...corners.map((corner) => corner.z)),
   };
 }
 
@@ -121,4 +138,30 @@ test("the way up keeps a full standing height all along", () => {
     bounds, cell: 0.32, height: PLAYER_HEIGHT + 0.35,
   });
   assert.ok(result.reached, `с запасом по росту: ${describe(result)}`);
+});
+
+test("every turnstile has a traversable passenger lane", () => {
+  const gatePieces = astanaScene.breakablePieces.filter((piece) =>
+    piece.id.includes(`:station-concourse:${STATION_ID}:gate:`));
+  const hallFloor = astanaScene.breakablePieces.find((piece) =>
+    piece.id.includes(`:station-concourse:${STATION_ID}:hall-floor`));
+  assert.ok(hallFloor);
+  const floorY = hallFloor.position[1] + hallFloor.size[1] / 2;
+
+  for (let gate = 0; gate < 4; gate += 1) {
+    const pair = gatePieces.filter((piece) => piece.id.includes(`:gate:${gate}:`));
+    assert.equal(pair.length, 2);
+    const centre = pair.reduce((sum, piece) => {
+      const dx = piece.position[0] - frame.centre[0];
+      const dz = piece.position[2] - frame.centre[1];
+      return sum + dx * frame.along[0] + dz * frame.along[1];
+    }, 0) / pair.length;
+    const outside = { ...at(centre, 18), footY: floorY };
+    const inside = { ...at(centre, 14.4), footY: floorY };
+    const result = walkRoute(astanaScene.breakablePieces, outside, inside, {
+      bounds: localBounds(centre - 0.42, centre + 0.42, 14, 18.4),
+      cell: 0.12,
+    });
+    assert.ok(result.reached, `турникет ${gate}: ${describe(result)}`);
+  }
 });

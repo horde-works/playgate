@@ -4,26 +4,30 @@ import type {
   SceneVector3,
 } from "./destructionScene.ts";
 import { PLAYER_CAPSULE_FOOT_OFFSET } from "./playerMovement.ts";
+import type { VehicleRecoveryLifecycle } from "./vehicleFailure.ts";
+import type { VehicleSafetyAdvisory } from "./vehicleSafetyAutomation.ts";
 import {
-  routeLength,
-  routePoint,
+  flightPlan,
   skyTrainRoutePhase,
-  type FlightPlan,
   type SkyTrainFlightKind,
+  type VehicleRoutePlan,
 } from "./skyTrainRoutes.ts";
 
 // Kept as re-exports for callers while the authored routes themselves live in
 // their own artifact module.
 export {
   finalLegFrom,
+  emergencyEscapePlan,
   flightPlan,
   routeLength,
   routePoint,
   routeSpeed,
   skyTrainRoutePhase,
+  terminalArrivalPlan,
   SKY_TRAIN_UNSTICK_HEIGHT as UNSTICK_HEIGHT,
   type FlightPlan,
   type SkyTrainFlightKind,
+  type VehicleRoutePlan,
 } from "./skyTrainRoutes.ts";
 
 /**
@@ -55,6 +59,8 @@ export interface VehicleFrameDefinition {
   readonly origin: SceneVector3;
   /** Куда смотрит нос в покое. Продольная ось — она же ось крена. */
   readonly nose: SceneVector3;
+  /** Физическая точка носового узла, совпадающая с захватом причала в покое. */
+  readonly mooringPoint: SceneVector3;
   /**
    * Подъёмная сила: она приложена в центре объёма оболочки — ВЫШЕ центра
    * масс, и именно эта пара сама даёт кораблю маятник, отвисающую гондолу и
@@ -71,6 +77,8 @@ export interface VehicleFrameDefinition {
    * нескольких разнесённых точках, а не в одной.
    */
   readonly supports: readonly SceneVector3[];
+  /** Coulomb friction of the loaded underside against a contacted surface. */
+  readonly supportFriction: VehicleSupportFriction;
   /**
    * Обшивка корабля глазами физики. Куски кластера — кинематические тела, а
    * нетронутый мир — статические; такая пара контактов в движке не даёт
@@ -87,6 +95,129 @@ export interface VehicleFrameDefinition {
 export interface HullProbe {
   readonly point: SceneVector3;
   readonly normal: SceneVector3;
+}
+
+export interface VehicleSupportFriction {
+  readonly staticCoefficient: number;
+  readonly dynamicCoefficient: number;
+}
+
+/**
+ * Residual lift that keeps a friction-limited ground stop inside the support
+ * polygon. A short, tall gondola must load its skids more gradually than a
+ * long train; the final stable landing still dumps lift completely.
+ */
+export function vehicleGroundBrakingLiftFraction(
+  supports: readonly SceneVector3[],
+  massCentre: SceneVector3,
+  nose: SceneVector3,
+  friction: VehicleSupportFriction,
+): number {
+  const noseLength = Math.hypot(nose[0], nose[2]) || 1;
+  const longitudinal = supports.map((point) =>
+    (point[0] - massCentre[0]) * nose[0] / noseLength +
+    (point[2] - massCentre[2]) * nose[2] / noseLength,
+  );
+  const forwardArm = Math.max(0, ...longitudinal);
+  const aftArm = Math.max(0, ...longitudinal.map((value) => -value));
+  const shortestArm = Math.min(forwardArm, aftArm);
+  const supportY = Math.min(...supports.map((point) => point[1]));
+  const centreHeight = Math.max(0.1, massCentre[1] - supportY);
+  const dynamicFriction = Math.max(0.01, friction.dynamicCoefficient);
+  const stabilityMargin = 0.72;
+  const safeGroundLoadFraction = Math.min(
+    1,
+    stabilityMargin * shortestArm / (dynamicFriction * centreHeight),
+  );
+  return Math.max(0, Math.min(0.85, 1 - safeGroundLoadFraction));
+}
+
+/**
+ * A contact probe sweeps the clearance plus the distance its surface point
+ * can close during this fixed step. Positive speed means motion outwards from
+ * the hull and therefore towards an obstacle along the probe normal.
+ */
+export function vehicleProbeReach(
+  clearance: number,
+  relativeClosingSpeed: number,
+  deltaSeconds: number,
+): number {
+  return Math.max(0, clearance) +
+    Math.max(0, relativeClosingSpeed) * Math.max(0, deltaSeconds);
+}
+
+/** Spring/damper magnitude opposing penetration at one authored hull probe. */
+export function vehicleProbeReaction(
+  stiffness: number,
+  damping: number,
+  clearance: number,
+  surfaceGap: number,
+  relativeClosingSpeed: number,
+  deltaSeconds: number,
+): number {
+  const penetration = Math.max(
+    0,
+    vehicleProbeReach(clearance, relativeClosingSpeed, deltaSeconds) -
+      surfaceGap,
+  );
+  return Math.max(
+    0,
+    Math.max(0, stiffness) * penetration +
+      Math.max(0, damping) * relativeClosingSpeed,
+  );
+}
+
+/**
+ * Tangential Coulomb force at one loaded support probe. The normal reaction
+ * is the only source of available friction: in free air this returns zero.
+ * `supportedMass` is the share of the body carried by this contact and caps
+ * the discrete impulse at exactly stopping the slip, never reversing it.
+ */
+export function vehicleProbeFriction(
+  normalReaction: number,
+  relativeVelocity: SceneVector3,
+  normal: SceneVector3,
+  friction: VehicleSupportFriction,
+  supportedMass: number,
+  deltaSeconds: number,
+): SceneVector3 {
+  const normalLength = Math.hypot(normal[0], normal[1], normal[2]);
+  const delta = Math.max(0, deltaSeconds);
+  if (normalReaction <= 0 || normalLength <= 1e-9 || delta <= 0) {
+    return [0, 0, 0];
+  }
+  const unitNormal: SceneVector3 = [
+    normal[0] / normalLength,
+    normal[1] / normalLength,
+    normal[2] / normalLength,
+  ];
+  const normalSpeed =
+    relativeVelocity[0] * unitNormal[0] +
+    relativeVelocity[1] * unitNormal[1] +
+    relativeVelocity[2] * unitNormal[2];
+  const tangent: SceneVector3 = [
+    relativeVelocity[0] - unitNormal[0] * normalSpeed,
+    relativeVelocity[1] - unitNormal[1] * normalSpeed,
+    relativeVelocity[2] - unitNormal[2] * normalSpeed,
+  ];
+  const speed = Math.hypot(tangent[0], tangent[1], tangent[2]);
+  if (speed <= 1e-9) {
+    return [0, 0, 0];
+  }
+
+  const stoppingForce = Math.max(0, supportedMass) * speed / delta;
+  const staticLimit =
+    Math.max(0, friction.staticCoefficient) * normalReaction;
+  const dynamicLimit =
+    Math.max(0, friction.dynamicCoefficient) * normalReaction;
+  const magnitude = stoppingForce <= staticLimit
+    ? stoppingForce
+    : Math.min(stoppingForce, dynamicLimit);
+  return [
+    -tangent[0] / speed * magnitude,
+    -tangent[1] / speed * magnitude,
+    -tangent[2] / speed * magnitude,
+  ];
 }
 
 /**
@@ -129,6 +260,115 @@ function skyTrainHullProbes(): readonly HullProbe[] {
     probes.push({ point: [x, 2.6, HULL.z - 1.55], normal: [0, 0, -1] });
     probes.push({ point: [x, 2.6, HULL.z + 1.55], normal: [0, 0, 1] });
   }
+  // Низкая кабина выступает перед вагоном: оболочка над ней не заметит
+  // буфер или фасад на уровне стекла, поэтому у эркера свои щупы.
+  probes.push({ point: [-9.34, 2.78, HULL.z], normal: [-1, 0, 0] });
+  probes.push({ point: [-8.25, 2.78, HULL.z - 1.28], normal: [0, 0, -1] });
+  probes.push({ point: [-8.25, 2.78, HULL.z + 1.28], normal: [0, 0, 1] });
+  return probes;
+}
+
+const VIKING_LONGSHIP = {
+  centreX: 8.25,
+  centreZ: -102.5,
+  course: (6 * Math.PI) / 180,
+  liftY: 8.1,
+} as const;
+
+/** World-authored point in the longship's keel/starboard coordinate frame. */
+function vikingLongshipPoint(a: number, b: number, y: number): SceneVector3 {
+  const cosine = Math.cos(VIKING_LONGSHIP.course);
+  const sine = Math.sin(VIKING_LONGSHIP.course);
+  return [
+    VIKING_LONGSHIP.centreX + a * cosine - b * sine,
+    y,
+    VIKING_LONGSHIP.centreZ + a * sine + b * cosine,
+  ];
+}
+
+function vikingLongshipHullProbes(): readonly HullProbe[] {
+  const cosine = Math.cos(VIKING_LONGSHIP.course);
+  const sine = Math.sin(VIKING_LONGSHIP.course);
+  const nose: SceneVector3 = [-cosine, 0, -sine];
+  const tail: SceneVector3 = [cosine, 0, sine];
+  const starboard: SceneVector3 = [-sine, 0, cosine];
+  const port: SceneVector3 = [sine, 0, -cosine];
+  const probes: HullProbe[] = [
+    { point: vikingLongshipPoint(-7.95, 0, 8.1), normal: nose },
+    { point: vikingLongshipPoint(7.55, 0, 8.1), normal: tail },
+  ];
+  // Balloon skin: three stations per side plus crown and belly.
+  for (const a of [-4.2, 0, 4.2]) {
+    probes.push(
+      { point: vikingLongshipPoint(a, 2.38, 8.1), normal: starboard },
+      { point: vikingLongshipPoint(a, -2.38, 8.1), normal: port },
+      { point: vikingLongshipPoint(a, 0, 10.48), normal: [0, 1, 0] },
+      { point: vikingLongshipPoint(a, 0, 5.72), normal: [0, -1, 0] },
+    );
+  }
+  // Clinker hull and the outboard oars are the first low obstacles to touch.
+  for (const a of [-4.4, -2.2, 0, 2.2, 4.4]) {
+    probes.push(
+      { point: vikingLongshipPoint(a, 1.9, 1.55), normal: starboard },
+      { point: vikingLongshipPoint(a, -1.9, 1.55), normal: port },
+    );
+  }
+  return probes;
+}
+
+const TOWN_AIRSHIP = {
+  noseX: -22.6,
+  noseZ: -15.29,
+  heading: -1.451,
+  liftA: 6.25,
+  liftY: 12.7,
+} as const;
+
+/** World-authored point in the city airship's longitudinal/lateral frame. */
+export function townAirshipPoint(a: number, b: number, y: number): SceneVector3 {
+  const cosine = Math.cos(TOWN_AIRSHIP.heading);
+  const sine = Math.sin(TOWN_AIRSHIP.heading);
+  return [
+    TOWN_AIRSHIP.noseX + a * cosine - b * sine,
+    y,
+    TOWN_AIRSHIP.noseZ + a * sine + b * cosine,
+  ];
+}
+
+function townAirshipHullProbes(): readonly HullProbe[] {
+  const cosine = Math.cos(TOWN_AIRSHIP.heading);
+  const sine = Math.sin(TOWN_AIRSHIP.heading);
+  const nose: SceneVector3 = [-cosine, 0, -sine];
+  const tail: SceneVector3 = [cosine, 0, sine];
+  const positiveB: SceneVector3 = [-sine, 0, cosine];
+  const negativeB: SceneVector3 = [sine, 0, -cosine];
+  const probes: HullProbe[] = [
+    // The docking socket intentionally surrounds the mooring pin. Probe from
+    // the upper nose skin so the intended berth is not read as an obstacle.
+    { point: townAirshipPoint(0.8, 0, 13.75), normal: nose },
+    { point: townAirshipPoint(15.35, 0, 12.6), normal: tail },
+  ];
+  for (const a of [2.5, 7, 11.5]) {
+    probes.push(
+      { point: townAirshipPoint(a, 2.42, 12.6), normal: positiveB },
+      { point: townAirshipPoint(a, -2.42, 12.6), normal: negativeB },
+      { point: townAirshipPoint(a, 0, 15.02), normal: [0, 1, 0] },
+      { point: townAirshipPoint(a, 0, 10.18), normal: [0, -1, 0] },
+    );
+  }
+  // The motor circles and the low gondola meet obstacles before the skin.
+  for (const side of [-1, 1] as const) {
+    probes.push({
+      point: townAirshipPoint(7, side * 5.75, 11.4),
+      normal: side > 0 ? positiveB : negativeB,
+    });
+  }
+  for (const a of [3.4, 5.8, 8.2]) {
+    probes.push(
+      { point: townAirshipPoint(a, 1.25, 8.15), normal: positiveB },
+      { point: townAirshipPoint(a, -1.25, 8.15), normal: negativeB },
+    );
+  }
   return probes;
 }
 
@@ -145,16 +385,85 @@ export const vehicleFrames: readonly VehicleFrameDefinition[] = [
     // Совпадение проверяет тест: числа здесь дублируются намеренно, чтобы
     // политика транспорта не тянула за собой всю сцену терминала.
     origin: [5.6, 9.4, 77.6],
+    // Центр видимого носового конуса внутри швартовочного узла перрона.
+    mooringPoint: [-10.65, 9.4, 77.6],
     liftCentre: [5.6, 9.4, 77.6],
     envelopeMatch: ":skin:",
     // Углы рам обоих вагонов: низ рамы на 0.94.
     supports: [
+      [-9.0, 1.3, 76.68], [-9.0, 1.3, 78.52],
       [-6.3, 0.94, 76.2], [-6.3, 0.94, 79.0],
       [4.1, 0.94, 76.2], [4.1, 0.94, 79.0],
       [7.3, 0.94, 76.2], [7.3, 0.94, 79.0],
       [17.5, 0.94, 76.2], [17.5, 0.94, 79.0],
     ],
+    supportFriction: { staticCoefficient: 1.18, dynamicCoefficient: 1.05 },
     hullProbes: skyTrainHullProbes(),
+  },
+  {
+    id: "sky-longship",
+    clusterId: "viking-village:sky-longship",
+    telemetryLabel: "SKY LONGSHIP 01",
+    // Oars articulate around their own oarlocks instead of being baked into
+    // the rigid hull collider. Their shafts still remain live actuators.
+    independentMemberMatches: [":oar:-1:", ":oar:1:"],
+    origin: vikingLongshipPoint(0, 0, VIKING_LONGSHIP.liftY),
+    nose: [
+      -Math.cos(VIKING_LONGSHIP.course),
+      0,
+      -Math.sin(VIKING_LONGSHIP.course),
+    ],
+    // Точка носовой обвязки, от которой уходят причальные концы.
+    mooringPoint: vikingLongshipPoint(-6.1, 0, 2.3),
+    liftCentre: vikingLongshipPoint(0, 0, VIKING_LONGSHIP.liftY),
+    envelopeMatch: ":gore:",
+    // Keel and garboards: crash/landing contact follows the actual long hull.
+    supports: [
+      vikingLongshipPoint(-4.5, -0.55, 0.3),
+      vikingLongshipPoint(-4.5, 0.55, 0.3),
+      vikingLongshipPoint(-1.5, -0.55, 0.3),
+      vikingLongshipPoint(-1.5, 0.55, 0.3),
+      vikingLongshipPoint(1.5, -0.55, 0.3),
+      vikingLongshipPoint(1.5, 0.55, 0.3),
+      vikingLongshipPoint(4.3, -0.55, 0.3),
+      vikingLongshipPoint(4.3, 0.55, 0.3),
+    ],
+    supportFriction: { staticCoefficient: 0.78, dynamicCoefficient: 0.6 },
+    hullProbes: vikingLongshipHullProbes(),
+  },
+  {
+    id: "town-airship",
+    clusterId: "sky-mooring:airship",
+    telemetryLabel: "AIRSHIP 07",
+    independentMemberMatches: [":blade:"],
+    origin: townAirshipPoint(
+      TOWN_AIRSHIP.liftA,
+      0,
+      TOWN_AIRSHIP.liftY,
+    ),
+    nose: [
+      -Math.cos(TOWN_AIRSHIP.heading),
+      0,
+      -Math.sin(TOWN_AIRSHIP.heading),
+    ],
+    // Передний конец швартового конуса входит в вертикальный стакан мачты.
+    mooringPoint: townAirshipPoint(-1.65, 0, 12.6),
+    liftCentre: townAirshipPoint(
+      TOWN_AIRSHIP.liftA,
+      0,
+      TOWN_AIRSHIP.liftY,
+    ),
+    envelopeMatch: ":gore:",
+    supports: [
+      townAirshipPoint(3.35, -0.95, 6.88),
+      townAirshipPoint(3.35, 0.95, 6.88),
+      townAirshipPoint(5.8, -0.95, 6.88),
+      townAirshipPoint(5.8, 0.95, 6.88),
+      townAirshipPoint(8.25, -0.95, 6.88),
+      townAirshipPoint(8.25, 0.95, 6.88),
+    ],
+    supportFriction: { staticCoefficient: 1.18, dynamicCoefficient: 1.05 },
+    hullProbes: townAirshipHullProbes(),
   },
 ];
 
@@ -248,6 +557,23 @@ export function pitchAxisOf(nose: SceneVector3): SceneVector3 {
   return [-nose[2] + 0, 0, nose[0] + 0];
 }
 
+/** Longitudinal and transverse inclination in the carrier's own frame. */
+export function vehicleAttitude(
+  orientation: Quaternion,
+  nose: SceneVector3,
+): { readonly pitch: number; readonly roll: number } {
+  const forward = rotateVector(orientation, nose);
+  const forwardLength = Math.hypot(...forward) || 1;
+  const starboard = rotateVector(orientation, pitchAxisOf(nose));
+  const starboardLength = Math.hypot(...starboard) || 1;
+  return {
+    pitch: Math.asin(Math.max(-1, Math.min(1, forward[1] / forwardLength))),
+    // Positive roll means starboard down, matching VehiclePose and the
+    // authored controls. The starboard vector's world Y has the opposite sign.
+    roll: -Math.asin(Math.max(-1, Math.min(1, starboard[1] / starboardLength))),
+  };
+}
+
 /**
  * Values attached to engine points in physical port-to-starboard order.
  * Authoring order is not a side contract: this keeps telemetry and future
@@ -273,6 +599,53 @@ export function engineValuesPortToStarboard(
     // Port is negative on the starboard axis, so ascending means L → R.
     .sort((a, b) => a.lateral - b.lateral || a.index - b.index)
     .map(({ index }) => values[index] ?? 0);
+}
+
+export interface OarStrokePose {
+  /** -1 is the forward catch, +1 is the end of the power stroke. */
+  readonly sweep: number;
+  /** Negative immerses the blade; positive lifts it for the recovery. */
+  readonly lift: number;
+  /** 0 keeps the blade square; 1 feathers it through the air. */
+  readonly feather: number;
+}
+
+/** The visual drive can never outrun or lag behind its delivered command. */
+export function advanceDrivePhase(
+  phase: number,
+  phaseSpeed: number,
+  deliveredThrottle: number,
+  seconds: number,
+): number {
+  return phase + phaseSpeed * deliveredThrottle * seconds;
+}
+
+/**
+ * One honest rowing cycle. The loaded pull occupies more of the cycle than
+ * the light recovery; both ends ease into the oarlock instead of snapping.
+ */
+export function oarStrokePose(phase: number): OarStrokePose {
+  const turn = Math.PI * 2;
+  const wrapped = ((phase % turn) + turn) % turn;
+  const cycle = wrapped / turn;
+  const powerShare = 0.62;
+  if (cycle < powerShare) {
+    const linear = cycle / powerShare;
+    const eased = linear * linear * (3 - 2 * linear);
+    return {
+      sweep: -1 + 2 * eased,
+      lift: -Math.sin(Math.PI * linear),
+      feather: 0,
+    };
+  }
+  const linear = (cycle - powerShare) / (1 - powerShare);
+  const eased = linear * linear * (3 - 2 * linear);
+  const arch = Math.sin(Math.PI * linear);
+  return {
+    sweep: 1 - 2 * eased,
+    lift: arch,
+    feather: arch,
+  };
 }
 
 /**
@@ -336,6 +709,58 @@ export function vehiclePiecePosition(
   ];
 }
 
+export interface VehicleMooringState {
+  /** Фактическая мировая позиция носового узла. */
+  readonly point: SceneVector3;
+  /** Смещение узла от его авторской точки захвата в berth pose. */
+  readonly offset: SceneVector3;
+  /** Мировая скорость узла с учётом вращения корпуса. */
+  readonly velocity: SceneVector3;
+}
+
+/**
+ * Measured nose-capture state. Ground contact is intentionally absent: a
+ * vehicle may land anywhere, but it is moored only when this point reaches
+ * the authored berth capture.
+ */
+export function vehicleMooringState(
+  frame: Pick<VehicleFrameDefinition, "mooringPoint">,
+  bodyOffset: SceneVector3,
+  orientation: Quaternion,
+  linearVelocity: SceneVector3,
+  angularVelocity: SceneVector3,
+  bodyCentre: SceneVector3,
+): VehicleMooringState {
+  const arm = rotateVector(orientation, [
+    frame.mooringPoint[0] - bodyCentre[0],
+    frame.mooringPoint[1] - bodyCentre[1],
+    frame.mooringPoint[2] - bodyCentre[2],
+  ]);
+  const point: SceneVector3 = [
+    bodyCentre[0] + bodyOffset[0] + arm[0],
+    bodyCentre[1] + bodyOffset[1] + arm[1],
+    bodyCentre[2] + bodyOffset[2] + arm[2],
+  ];
+  const rotationalVelocity: SceneVector3 = [
+    angularVelocity[1] * arm[2] - angularVelocity[2] * arm[1],
+    angularVelocity[2] * arm[0] - angularVelocity[0] * arm[2],
+    angularVelocity[0] * arm[1] - angularVelocity[1] * arm[0],
+  ];
+  return {
+    point,
+    offset: [
+      point[0] - frame.mooringPoint[0],
+      point[1] - frame.mooringPoint[1],
+      point[2] - frame.mooringPoint[2],
+    ],
+    velocity: [
+      linearVelocity[0] + rotationalVelocity[0],
+      linearVelocity[1] + rotationalVelocity[1],
+      linearVelocity[2] + rotationalVelocity[2],
+    ],
+  };
+}
+
 /** Inverse frame transform used by authored systems attached to a vehicle. */
 export function shipLocalPoint(
   point: SceneVector3,
@@ -397,7 +822,11 @@ export interface SkyTrainFlightLifecycle {
 /** One journey state drives doors, boards, platform lamps and signals. */
 export function skyTrainFlightEventState(
   flight: SkyTrainFlightLifecycle | null,
+  recovery: Pick<VehicleRecoveryLifecycle, "phase"> | null = null,
 ): LampEventState {
+  if (recovery) {
+    return recovery.phase === "arrival" ? "approach" : "failed";
+  }
   if (!flight) {
     return "docked";
   }
@@ -451,15 +880,29 @@ export function advanceRouteProgress(
   centre: SceneVector3,
   travelled: number,
 ): number {
-  const window = Math.max(0.02, (travelled / routeLength(kind)) * 8);
+  return advanceVehicleRouteProgress(
+    flightPlan(kind, berth),
+    progress,
+    centre,
+    travelled,
+  );
+}
+
+export function advanceVehicleRouteProgress(
+  plan: VehicleRoutePlan,
+  progress: number,
+  centre: SceneVector3,
+  travelled: number,
+): number {
+  const window = Math.max(0.02, (travelled / plan.length) * 8);
   let nearest = progress;
   let bestDistance = Number.POSITIVE_INFINITY;
   for (let step = 0; step <= 24; step += 1) {
     const s = Math.max(0, Math.min(1, progress - 0.004 + (window * step) / 24));
-    const point = routePoint(kind, s);
+    const point = plan.point(s);
     const distance = Math.hypot(
-      berth[0] + point[0] - centre[0],
-      berth[2] + point[2] - centre[2],
+      point[0] - centre[0],
+      point[2] - centre[2],
     );
     if (distance < bestDistance) {
       bestDistance = distance;
@@ -467,6 +910,24 @@ export function advanceRouteProgress(
     }
   }
   return Math.max(progress, nearest);
+}
+
+/** Desired horizontal nose direction at a route position, including sternway. */
+export function vehicleRouteHeading(
+  plan: VehicleRoutePlan,
+  progress: number,
+): readonly [number, number] {
+  const sample = Math.max(0.001, Math.min(0.012, 5 / Math.max(1, plan.length)));
+  const before = plan.point(Math.max(0, progress - sample));
+  const after = plan.point(Math.min(1, progress + sample));
+  const routeX = after[0] - before[0];
+  const routeZ = after[2] - before[2];
+  const routeLength = Math.hypot(routeX, routeZ) || 1;
+  const travelDirection = plan.travelDirection?.(progress) ?? 1;
+  return [
+    (routeX / routeLength) * travelDirection,
+    (routeZ / routeLength) * travelDirection,
+  ];
 }
 
 /**
@@ -479,6 +940,28 @@ export const MOORING_REACH = 26;
 export const MOORING_SPEED = 1.6;
 
 /**
+ * The winch may take the nose only from the authored approach side. Position
+ * alone is insufficient: otherwise a craft that overshot the cup could be
+ * pulled back by its nose and settle facing exactly backwards.
+ */
+export function isMooringCaptureEligible(
+  captureOffset: SceneVector3,
+  orientation: Quaternion,
+  nose: SceneVector3 = [-1, 0, 0],
+  approach: ApproachGate = SKY_TRAIN_APPROACH,
+  reach = MOORING_REACH,
+): boolean {
+  const forward = rotateVector(orientation, nose);
+  const flat = Math.hypot(forward[0], forward[2]) || 1;
+  const alignment =
+    (forward[0] * approach.heading[0] + forward[2] * approach.heading[1]) / flat;
+  return (
+    Math.hypot(captureOffset[0], captureOffset[2]) <= reach &&
+    alignment >= Math.cos(approach.tolerance.heading)
+  );
+}
+
+/**
  * Швартовка — это ЛЕБЁДКА, а не пружина: она выбирает слабину с ограниченной
  * скоростью и придерживает корабль, когда тот идёт быстрее. Пружина с
  * ограничением по силе вела себя иначе и неправильно: у причала ограничитель
@@ -489,9 +972,10 @@ export function mooringForce(
   offset: SceneVector3,
   velocity: SceneVector3,
   mass: number,
+  reach = MOORING_REACH,
 ): SceneVector3 {
   const distance = Math.hypot(offset[0], offset[2]);
-  if (distance > MOORING_REACH || distance < 1e-4) {
+  if (distance > reach || distance < 1e-4) {
     return [0, 0, 0];
   }
   // Подходим тем медленнее, чем ближе: у самого причала скорость сходит в нуль.
@@ -670,6 +1154,195 @@ export interface ShipModel {
   readonly dragLateral: number;
   readonly dragAngular: number;
   readonly limits: ShipLimits;
+  /** Authority estimated by autopilot from its previous request and delivery. */
+  readonly engineAvailability?: readonly number[];
+}
+
+/**
+ * Autopilot control allocation for any number of longitudinal engines.
+ *
+ * Start from the common delivered thrust needed for speed, then make the
+ * smallest possible per-engine correction that produces the requested yaw
+ * moment inside each engine's actual authority. The result is a signed shaft
+ * command; the actuator layer only executes it and never reallocates it.
+ */
+export function allocateAutopilotEngineCommands(
+  commonThrust: number,
+  targetYawMomentPerPower: number,
+  yawArms: readonly number[],
+  availability: readonly number[] = yawArms.map(() => 1),
+): readonly number[] {
+  const count = yawArms.length;
+  const fractions = Array.from({ length: count }, (_, index) =>
+    clamp01(availability[index] ?? 1));
+  const delivered = fractions.map((fraction) =>
+    Math.max(-fraction, Math.min(fraction, clampSigned(commonThrust))));
+  const free = new Set(
+    fractions.map((fraction, index) => fraction > 1e-6 ? index : -1)
+      .filter((index) => index >= 0),
+  );
+
+  for (let iteration = 0; iteration <= count; iteration += 1) {
+    const currentMoment = delivered.reduce(
+      (sum, value, index) => sum + value * (yawArms[index] ?? 0),
+      0,
+    );
+    const residual = targetYawMomentPerPower - currentMoment;
+    if (Math.abs(residual) < 1e-7 || free.size === 0) {
+      break;
+    }
+    const denominator = [...free].reduce(
+      (sum, index) => sum + (yawArms[index] ?? 0) ** 2,
+      0,
+    );
+    if (denominator < 1e-9) {
+      break;
+    }
+    const proposals = new Map<number, number>();
+    const saturated: number[] = [];
+    for (const index of free) {
+      const proposal = delivered[index] +
+        residual * (yawArms[index] ?? 0) / denominator;
+      proposals.set(index, proposal);
+      if (Math.abs(proposal) > fractions[index] + 1e-9) {
+        saturated.push(index);
+      }
+    }
+    if (saturated.length === 0) {
+      for (const [index, proposal] of proposals) {
+        delivered[index] = proposal;
+      }
+      break;
+    }
+    for (const index of saturated) {
+      delivered[index] = Math.max(
+        -fractions[index],
+        Math.min(fractions[index], proposals.get(index) ?? delivered[index]),
+      );
+      free.delete(index);
+    }
+  }
+
+  // The requested yaw moment is now fixed. Inside that solution space, move
+  // total delivered thrust as close as possible to the speed controller's
+  // request. Corrections are projected onto the null-space of the authored
+  // yaw arms, so improving speed can never silently undo heading control.
+  const targetTotal = Math.max(
+    -fractions.reduce((sum, fraction) => sum + fraction, 0),
+    Math.min(
+      fractions.reduce((sum, fraction) => sum + fraction, 0),
+      clampSigned(commonThrust) * count,
+    ),
+  );
+  const totalFree = new Set(fractions.map((_, index) => index));
+  for (let iteration = 0; iteration <= count; iteration += 1) {
+    const residualTotal = targetTotal - delivered.reduce(
+      (sum, value) => sum + value,
+      0,
+    );
+    if (Math.abs(residualTotal) < 1e-7 || totalFree.size < 2) {
+      break;
+    }
+    const freeIndices = [...totalFree];
+    const armSum = freeIndices.reduce(
+      (sum, index) => sum + (yawArms[index] ?? 0),
+      0,
+    );
+    const armSquared = freeIndices.reduce(
+      (sum, index) => sum + (yawArms[index] ?? 0) ** 2,
+      0,
+    );
+    const direction = new Map<number, number>();
+    for (const index of freeIndices) {
+      const arm = yawArms[index] ?? 0;
+      direction.set(
+        index,
+        armSquared > 1e-9 ? 1 - arm * armSum / armSquared : 1,
+      );
+    }
+    const totalDirection = freeIndices.reduce(
+      (sum, index) => sum + (direction.get(index) ?? 0),
+      0,
+    );
+    if (Math.abs(totalDirection) < 1e-9) {
+      break;
+    }
+    const fullScale = residualTotal / totalDirection;
+    let stepFraction = 1;
+    const saturated: number[] = [];
+    for (const index of freeIndices) {
+      const delta = fullScale * (direction.get(index) ?? 0);
+      if (Math.abs(delta) < 1e-12) {
+        continue;
+      }
+      const room = delta > 0
+        ? fractions[index] - delivered[index]
+        : delivered[index] + fractions[index];
+      stepFraction = Math.min(
+        stepFraction,
+        Math.max(0, room / Math.abs(delta)),
+      );
+    }
+    const appliedScale = fullScale * stepFraction;
+    for (const index of freeIndices) {
+      delivered[index] += appliedScale * (direction.get(index) ?? 0);
+      if (
+        Math.abs(Math.abs(delivered[index]) - fractions[index]) < 1e-7
+      ) {
+        saturated.push(index);
+      }
+    }
+    if (stepFraction >= 1 - 1e-9) {
+      break;
+    }
+    for (const index of saturated) {
+      totalFree.delete(index);
+    }
+    if (saturated.length === 0) {
+      break;
+    }
+  }
+
+  return delivered.map((value, index) =>
+    fractions[index] > 1e-6 ? clampSigned(value / fractions[index]) : 0);
+}
+
+/**
+ * Differential yaw authority that does not create unwanted net thrust.
+ * Pairing the lowest and highest authored yaw arms keeps this generic for any
+ * engine count and prevents one unusually strong shaft from masquerading as
+ * extra turning authority by pushing the whole craft along the route.
+ */
+export function balancedEngineYawAuthority(
+  yawArms: readonly number[],
+  availability: readonly number[] = yawArms.map(() => 1),
+): number {
+  const channels = yawArms.map((arm, index) => ({
+    arm,
+    remaining: clamp01(availability[index] ?? 1),
+  })).sort((left, right) => left.arm - right.arm);
+  let low = 0;
+  let high = channels.length - 1;
+  let moment = 0;
+  while (low < high) {
+    const transfer = Math.min(
+      channels[low].remaining,
+      channels[high].remaining,
+    );
+    if (transfer <= 1e-9) {
+      if (channels[low].remaining <= 1e-9) {
+        low += 1;
+      }
+      if (channels[high].remaining <= 1e-9) {
+        high -= 1;
+      }
+      continue;
+    }
+    moment += transfer * (channels[high].arm - channels[low].arm);
+    channels[low].remaining -= transfer;
+    channels[high].remaining -= transfer;
+  }
+  return moment;
 }
 
 /**
@@ -734,14 +1407,58 @@ export const SKY_TRAIN_DOCKING = {
   angularSpeed: 0.035,
 } as const;
 
+export interface DockingTolerance {
+  readonly position: number;
+  readonly height: number;
+  readonly headingCos: number;
+  readonly speed: number;
+  readonly verticalSpeed: number;
+  readonly uprightCos: number;
+  readonly angularSpeed: number;
+}
+
 /**
- * Требование к посадочному положению, отдельно от маршрута и автопилота.
+ * A vehicle enters the settling timeout only after its nose point has entered
+ * the berth capture. This is deliberately wider than the completed mooring,
+ * but excludes both the approach and any ground-landing manoeuvre.
+ */
+export function isDockingSettleWindow(
+  progress: number,
+  captureOffset: SceneVector3,
+  orientation: Quaternion,
+  nose: SceneVector3 = [-1, 0, 0],
+  approach: ApproachGate = SKY_TRAIN_APPROACH,
+  tolerance: DockingTolerance = SKY_TRAIN_DOCKING,
+): boolean {
+  if (progress <= 0.985) {
+    return false;
+  }
+  const forward = rotateVector(orientation, nose);
+  const up = rotateVector(orientation, [0, 1, 0]);
+  const flat = Math.hypot(forward[0], forward[2]) || 1;
+  const alignment =
+    (forward[0] * approach.heading[0] + forward[2] * approach.heading[1]) / flat;
+  // Start the failure timer only after the craft enters the actual capture
+  // around its own completed-pose tolerance. A fixed 1.5 m circle started the
+  // city's ten-second timer 10.57 s before its soft mooring reached 0.48 m,
+  // so a healthy airship was declared failed half a second before docking.
+  const capturePosition = tolerance.position * 1.75;
+  return (
+    Math.hypot(captureOffset[0], captureOffset[2]) < capturePosition &&
+    Math.abs(captureOffset[1]) < Math.max(0.5, tolerance.height * 3) &&
+    alignment > 0.97 &&
+    up[1] > 0.97
+  );
+}
+
+/**
+ * Требование к захваченному носовому узлу, отдельно от маршрута и автопилота.
  * Никакого переноса в ноль здесь нет: функция только измеряет результат сил.
  */
 export function isDockedPose(
-  offset: SceneVector3,
+  captureOffset: SceneVector3,
   orientation: Quaternion,
-  velocity: SceneVector3,
+  captureVelocity: SceneVector3,
   angularVelocity: SceneVector3,
   nose: SceneVector3 = [-1, 0, 0],
   approach: ApproachGate = SKY_TRAIN_APPROACH,
@@ -753,36 +1470,39 @@ export function isDockedPose(
   const alignment =
     (forward[0] * approach.heading[0] + forward[2] * approach.heading[1]) / flat;
   return (
-    Math.hypot(offset[0], offset[2]) < tolerance.position &&
-    Math.abs(offset[1]) < tolerance.height &&
+    Math.hypot(captureOffset[0], captureOffset[2]) < tolerance.position &&
+    Math.abs(captureOffset[1]) < tolerance.height &&
     alignment > tolerance.headingCos &&
-    Math.hypot(velocity[0], velocity[2]) < tolerance.speed &&
-    Math.abs(velocity[1]) < tolerance.verticalSpeed &&
+    Math.hypot(captureVelocity[0], captureVelocity[2]) < tolerance.speed &&
+    Math.abs(captureVelocity[1]) < tolerance.verticalSpeed &&
     up[1] > tolerance.uprightCos &&
     Math.hypot(...angularVelocity) < tolerance.angularSpeed
   );
 }
 
 /**
- * Route completion is accepted from the settled vehicle state. A support-ray
- * hit is deliberately not part of the contract: it describes one collision
- * implementation, can miss a seam in the platform, and is not available to
- * every future moving object that will reuse this lifecycle.
+ * Route completion is accepted only after the measured nose capture has
+ * settled. A ground support hit is deliberately absent: landing on terrain
+ * and mooring to a berth are separate physical events.
  */
 export function isDockingComplete(
   progress: number,
-  offset: SceneVector3,
+  captureOffset: SceneVector3,
   orientation: Quaternion,
-  velocity: SceneVector3,
+  captureVelocity: SceneVector3,
   angularVelocity: SceneVector3,
   nose: SceneVector3 = [-1, 0, 0],
+  approach: ApproachGate = SKY_TRAIN_APPROACH,
+  tolerance: DockingTolerance = SKY_TRAIN_DOCKING,
 ): boolean {
   return progress > 0.985 && isDockedPose(
-    offset,
+    captureOffset,
     orientation,
-    velocity,
+    captureVelocity,
     angularVelocity,
     nose,
+    approach,
+    tolerance,
   );
 }
 
@@ -877,7 +1597,7 @@ export interface AutopilotOutput {
  * это место потом встанет игрок: ниже по течению ничего не изменится.
  */
 export function autopilot(
-  plan: FlightPlan,
+  plan: VehicleRoutePlan,
   progress: number,
   centre: SceneVector3,
   orientation: Quaternion,
@@ -888,6 +1608,7 @@ export function autopilot(
   startRamp = 1,
   nose: SceneVector3 = [-1, 0, 0],
   approach: ApproachGate = SKY_TRAIN_APPROACH,
+  safety: VehicleSafetyAdvisory | null = null,
 ): AutopilotOutput {
   const limits = model.limits;
   const forward = rotateVector(orientation, nose);
@@ -922,9 +1643,10 @@ export function autopilot(
   // На всём маршруте, включая посадочную прямую, ведём на следующую точку
   // самой линии. Целью захода раньше сразу становился причал: корабль резал
   // створ по диагонали и физическая швартовка потом дотягивала его боком.
+  const routeLookahead = plan.guidanceLookahead?.(progress) ?? ROUTE_LOOKAHEAD;
   const guidanceProgress = Math.min(
     1,
-    progress + (onApproach ? APPROACH_LOOKAHEAD : ROUTE_LOOKAHEAD) / plan.length,
+    progress + (onApproach ? APPROACH_LOOKAHEAD : routeLookahead) / plan.length,
   );
   const routeHere = plan.point(progress);
   const aim = plan.point(guidanceProgress);
@@ -948,6 +1670,13 @@ export function autopilot(
   ] as const;
   const reach = Math.hypot(toAim[0], toAim[1]) || 1;
   let wanted: readonly [number, number] = [toAim[0] / reach, toAim[1] / reach];
+  const travelDirection = plan.travelDirection?.(progress) ?? 1;
+  if (travelDirection < 0) {
+    // The path still points where the centre must travel; reversing changes
+    // only which end of the craft faces that tangent. Motors remain the sole
+    // source of the actual backwards motion.
+    wanted = [-wanted[0], -wanted[1]];
+  }
   if (onApproach) {
     // На оси причала последние метры — уже не навигация к точке, а
     // швартовочное положение. Подмешиваем требуемый курс только после
@@ -965,7 +1694,14 @@ export function autopilot(
     // all the way to the platform. Heading hold takes over only after the
     // centreline is genuinely captured.
     const captureBlend = clamp01(1 - finalCrossTrack / 1.5);
-    const blend = positionBlend * captureBlend;
+    // Once the route is effectively complete and the craft has lost way, it
+    // must still ask for the authored berth heading. Otherwise a small
+    // cross-track error makes it turn sideways toward the centre point while
+    // the zero endpoint speed leaves no translation to correct that error;
+    // a real nose capture can then never engage. Differential thrust performs
+    // the turn, after which the near-mast winch can finish the translation.
+    const settleHeadingBlend = progress > 0.985 && groundSpeed < 1 ? 1 : 0;
+    const blend = Math.max(positionBlend * captureBlend, settleHeadingBlend);
     const mixX = wanted[0] * (1 - blend) + approach.heading[0] * blend;
     const mixZ = wanted[1] * (1 - blend) + approach.heading[1] * blend;
     const mixLength = Math.hypot(mixX, mixZ) || 1;
@@ -996,15 +1732,26 @@ export function autopilot(
   const engineYawArms = limits.enginePoints.map((point) => yawArm(point, localNose));
   const authority = rudderEffectiveness(groundSpeed, limits);
   const rudderCapacity = limits.maxRudderForce * authority * rudderArm;
-  const engineYawCapacity =
-    limits.enginePower * engineYawArms.reduce((sum, arm) => sum + Math.abs(arm), 0);
+  const availableEngineYawCapacity = limits.enginePower *
+    balancedEngineYawAuthority(
+      engineYawArms,
+      model.engineAvailability,
+    );
   const holdableYawRate =
-    (rudderCapacity + engineYawCapacity) / Math.max(1, model.dragAngular);
+    (rudderCapacity + availableEngineYawCapacity) /
+    Math.max(1, model.dragAngular);
   // Геометрия pure pursuit: хорда остаётся конечной даже на точном маршруте,
   // поэтому кривизна не скачет от малой ошибки предсказания.
+  // Pure pursuit has a real singularity at a half-turn: sin(PI) is zero, so
+  // a craft that has just finished backing out would never ask for the pivot
+  // needed to leave forwards. At manoeuvring speed, use the signed bearing
+  // itself until the target returns to the forward hemisphere. Differential
+  // thrust and the rudder still create every newton of the turn.
   const pursuit =
-    (2 * Math.max(groundSpeed, 1.5) * Math.sin(bearingError)) /
-    Math.max(20, reach);
+    Math.abs(bearingError) > Math.PI / 2 && groundSpeed < 4
+      ? bearingError / 3
+      : (2 * Math.max(groundSpeed, 1.5) * Math.sin(bearingError)) /
+        Math.max(20, reach);
   const desiredYawRate = Math.max(-holdableYawRate, Math.min(holdableYawRate, pursuit));
   // Запрашиваем МОМЕНТ, а не безразмерный «поворот». Сначала его даёт руль
   // (он ничего не стоит по продольной тяге), остаток — двигатели вразнос.
@@ -1030,29 +1777,37 @@ export function autopilot(
   const braking = onApproach
     ? Math.max(0, speedAlong * speedAlong) / (2 * Math.max(1, berthDistance))
     : 0;
-  const allowed = onApproach
+  const routeAllowed = onApproach
     ? Math.min(
         plan.speedLimit(progress),
         Math.max(0.8, Math.sqrt(2 * 0.35 * berthDistance)),
       )
     : plan.speedLimit(progress);
-  const wantedSpeed = allowed * clamp01(startRamp);
+  const safetyIntervention = safety?.risk === "intervention";
+  const allowed = safetyIntervention
+    ? Math.min(routeAllowed, safety?.maximumSpeed ?? routeAllowed)
+    : routeAllowed;
+  const wantedSpeed = allowed * clamp01(startRamp) * travelDirection;
   // Реверс — настоящий орган управления: на торможении оба мотора могут дать
   // задний ход, а на малой скорости один работает вперёд, второй назад. Это
   // разворачивает судно без обязательного продвижения боком или вперёд.
   const base = Math.max(
-    -0.45,
+    safetyIntervention ? -1 : -0.45,
     Math.min(1, (wantedSpeed - speedAlong - braking * 0.15) * 0.22),
   );
   const engineMoment = wantedYawMoment - rudderMoment;
-  const differential = engineYawCapacity > 1e-6
-    ? Math.max(-1, Math.min(1, engineMoment / engineYawCapacity))
-    : 0;
-  const throttle = limits.enginePoints.map((_, index) =>
-    clampSigned(base + Math.sign(engineYawArms[index]) * differential));
+  const throttle = allocateAutopilotEngineCommands(
+    base,
+    limits.enginePower > 1e-6 ? engineMoment / limits.enginePower : 0,
+    engineYawArms,
+    model.engineAvailability,
+  );
 
   // Высота — тоже рычаг: подъём поддувают или стравливают.
-  const altitudeError = plan.altitude(progress) - centre[1];
+  const altitudeError =
+    plan.altitude(progress) +
+    (safetyIntervention ? safety?.altitudeOffset ?? 0 : 0) -
+    centre[1];
   const liftTrim = Math.max(
     -1,
     Math.min(1, (altitudeError * 0.06 - velocity[1] * 0.12) / limits.liftTrimRange),
@@ -1108,7 +1863,7 @@ export const RIDE_RELEASE_RADIUS = 3.4;
  * круг от табло уходит без людей. На обзорный облёт, наоборот, садятся.
  */
 export const SKY_TRAIN_CABIN = {
-  min: [-7.6, 1.2, 75.9] as SceneVector3,
+  min: [-9.34, 1.2, 75.9] as SceneVector3,
   max: [18.8, 4.4, 79.4] as SceneVector3,
 };
 /**

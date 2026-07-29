@@ -24,10 +24,18 @@ import {
   CAR_WIDTH,
   SECTION_LENGTH,
   TRAIN_SECTIONS,
+  bodyHalfWidth,
+  cabSectionAt,
   liveryWaveY,
   trainFrameAt,
   trainStopDistance,
 } from "../games/make-a-mess/src/content/scenes/astana/astanaTrain.ts";
+import {
+  astanaTrainClusterDefinitions,
+  astanaTrainSectionPose,
+  initialAstanaTrainState,
+} from "../games/make-a-mess/src/game/astanaTrainRuntime.ts";
+import { compoundClusterColliders } from "../games/make-a-mess/src/game/compoundKinematicCluster.ts";
 
 const pieces = astanaScene.breakablePieces;
 const train = pieces.filter((piece) => piece.id.includes("lrv-001"));
@@ -47,18 +55,57 @@ test("the train is built to its parts list, not sketched", () => {
   assert.equal(withPart("door-glass:").length, TRAIN_SECTIONS * 2 * 2 * 2);
   assert.equal(withPart("door-edge:").length, TRAIN_SECTIONS * 2 * 2 * 2);
   // Две головы: у обеих морда со стеклом, табло, фарами и одним дворником.
-  assert.equal(withPart("cab:windscreen:").length, 2);
   assert.equal(withPart("cab:route-board").length, 2);
   assert.equal(withPart("cab:headlight:").length, 4);
   assert.equal(withPart("cab:wiper").length, 2, "стеклоочиститель ровно один на морду");
-  // Ливрея, орнамент, номер.
-  assert.ok(withPart(":ornament:").length >= 50, "орнаментальный пояс");
-  assert.ok(withPart(":tent:").length >= 6, "шатёр на головной секции");
-  assert.equal(withPart(":number:").length, TRAIN_SECTIONS * 2);
+  // Ливрея НЕ геометрия. Орнаментальный пояс, завитки, шатёр, номер и
+  // маркировка стояли отдельными деталями, налепленными на борт, — это
+  // читалось наклейками и стоило 138 кусков. Их тут быть не должно.
+  for (const stuck of [":ornament:", ":curl:", ":tent:", ":number:", ":marking:"]) {
+    assert.equal(withPart(stuck).length, 0, `ливрея деталями: ${stuck}`);
+  }
+  // Морда собрана поверхностью, а не стопкой коробок: сетка «станция × клин»
+  // с секционным остеклением и раскладкой.
+  assert.ok(withPart("cab:shell:").length >= 300, "обвод морды");
+  assert.ok(withPart("cab:mullion:").length >= 8, "раскладка остекления");
   // Салон видно сквозь окна: кресла, стойки, петли, схема линии.
   assert.ok(withPart("cabin:seat:").length >= 24);
   assert.ok(withPart("cabin:strap:").length >= 12);
   assert.ok(withPart("cabin:linemap:").length >= 12);
+});
+
+test("the rebuilt body has the real broad cab, large glazing and aluminium skin", () => {
+  const tip = cabSectionAt(0);
+  const shoulder = cabSectionAt(1);
+  assert.ok(tip.halfWidth * 2 > CAR_WIDTH * 0.8, "морда снова сошлась в острый клин");
+  assert.ok(shoulder.halfWidth > tip.halfWidth, "кабина не расширяется к кузову");
+  assert.ok(bodyHalfWidth(-TRAIN_LENGTH / 2) > CAR_WIDTH / 2 - 0.3);
+
+  const sideWindows = withPart(":window:");
+  assert.ok(sideWindows.length >= 20 && sideWindows.length <= 40,
+    `борт снова нарезан пикселями: ${sideWindows.length}`);
+  assert.ok(sideWindows.every((piece) => piece.size[0] > 1.1));
+  assert.equal(withPart("window-mask:").length, sideWindows.length);
+  assert.ok(sideWindows.every((piece) => piece.size[2] >= 0.08),
+    "утолщённое акустическое стекло потеряно");
+
+  const aluminium = train.filter(
+    (piece) => piece.textureProfile === "matte-aluminium",
+  );
+  assert.ok(aluminium.length > 160, `алюминиевых панелей: ${aluminium.length}`);
+});
+
+test("the articulation is an open bellows portal with resilient wheels", () => {
+  const bellows = withPart(":gangway:");
+  assert.ok(bellows.some((piece) => piece.id.includes(":side:")));
+  assert.ok(bellows.some((piece) => piece.id.includes(":top:")));
+  assert.equal(
+    bellows.some((piece) => piece.size[1] > 1 && piece.size[2] > 1),
+    false,
+    "гармошка снова стала глухой стенкой",
+  );
+  assert.equal(withPart(":wheel-elastomer:").length, TRAIN_SECTIONS * 2 * 4);
+  assert.equal(withPart(":wheel-hub:").length, TRAIN_SECTIONS * 2 * 4);
 });
 
 test("the livery wave rises to the cab and stays low at the middle", () => {
@@ -92,6 +139,56 @@ test("the train fits the platform and clears the screen doors", () => {
   // Секции — отдельные кластеры: состав составной кинематический объект.
   const clusters = new Set(train.map((piece) => piece.clusterId));
   assert.equal(clusters.size, TRAIN_SECTIONS);
+});
+
+test("three section bodies start exactly at the authored west platform", () => {
+  const definitions = astanaTrainClusterDefinitions();
+  const state = initialAstanaTrainState();
+  assert.equal(definitions.length, 3);
+  assert.equal(new Set(definitions.map((definition) => definition.clusterId)).size, 3);
+
+  for (const [index, definition] of definitions.entries()) {
+    const pose = astanaTrainSectionPose(state.distance, index);
+    assert.equal(pose.clusterId, definition.clusterId);
+    assert.ok(Math.hypot(
+      pose.position[0] - definition.origin[0],
+      pose.position[2] - definition.origin[2],
+    ) < 1e-6, `секция ${index} сдвинута при старте`);
+    assert.ok(Math.abs(pose.deltaYaw) < 1e-6, `секция ${index} повёрнута при старте`);
+  }
+});
+
+test("the runtime articulates its three sections independently on a curve", () => {
+  const noseDistance = stationDistance("west") + TRAIN_LENGTH / 2 + 80;
+  const poses = Array.from(
+    { length: TRAIN_SECTIONS },
+    (_, index) => astanaTrainSectionPose(noseDistance, index),
+  );
+  for (let index = 1; index < poses.length; index += 1) {
+    const previous = poses[index - 1];
+    const current = poses[index];
+    const chord = Math.hypot(
+      current.position[0] - previous.position[0],
+      current.position[2] - previous.position[2],
+    );
+    assert.ok(chord > 14.8 && chord < SECTION_LENGTH, `хорда секций: ${chord}`);
+    assert.ok(
+      Math.abs(current.yaw - previous.yaw) > 0.1,
+      "секции остались одним негнущимся бруском",
+    );
+  }
+});
+
+test("train contact bodies use a structural envelope, not decorative geometry", () => {
+  for (const definition of astanaTrainClusterDefinitions()) {
+    const members = train.filter((piece) => piece.clusterId === definition.clusterId);
+    const colliders = compoundClusterColliders(definition, members, new Set());
+    assert.ok(colliders.length >= 60, `${definition.clusterId}: оболочка дырявая`);
+    assert.ok(
+      colliders.length < members.length / 2,
+      `${definition.clusterId}: декоративные детали попали в физику`,
+    );
+  }
 });
 
 test("odometry drifts and every balise wipes the error", () => {

@@ -4,11 +4,14 @@ import type {
   ScenePrimitiveDefinition,
   SurfaceTreatment,
 } from "./sceneContract.ts";
-import type {
-  BreakableMaterial,
-  BreakableShape,
-  SceneVector3,
-  SupportMode,
+import {
+  mooringSignalColor,
+  type BreakableMaterial,
+  type BreakableShape,
+  type LampEventLightingDefinition,
+  type SceneVector3,
+  type SpotLightDefinition,
+  type SupportMode,
 } from "../../game/destructionScene.ts";
 
 // ---------------------------------------------------------------------------
@@ -92,7 +95,8 @@ function primitive(
 
 // --- Система координат корабля ---------------------------------------------
 // Нос лежит в точке NOSE, ось +a идёт к хвосту (на юг), ось +b — на восток,
-// в сторону города. Всё, чем пользуются люди — лестница, трап, балкон,
+// в сторону города. Всё, чем пользуются люди — лестница, трап, посадочная
+// площадка,
 // дверь — живёт на восточной стороне.
 
 const NOSE_X = -22.6;
@@ -223,6 +227,35 @@ const MARK_RED = "#8e2f28";
 const DURAL = "#8d9195";
 const IRON = "#4a4f52";
 
+const AIRSHIP_CLUSTER_ID = "sky-mooring:airship";
+const mooringManeuverLighting: LampEventLightingDefinition = {
+  sourceClusterId: AIRSHIP_CLUSTER_ID,
+  levels: {
+    docked: { intensityMultiplier: 0, distanceMultiplier: 1 },
+    inTransit: { intensityMultiplier: 0, distanceMultiplier: 1 },
+    departure: { intensityMultiplier: 1, distanceMultiplier: 1 },
+    cruise: { intensityMultiplier: 0, distanceMultiplier: 1 },
+    approach: { intensityMultiplier: 1, distanceMultiplier: 1 },
+  },
+};
+const mastDockLighting: LampEventLightingDefinition = {
+  sourceClusterId: AIRSHIP_CLUSTER_ID,
+  levels: {
+    // The mast is a bright occupied berth only after a real nose capture.
+    docked: { intensityMultiplier: 1.9, distanceMultiplier: 1.18 },
+    // Countdown happens while the ship is still physically in the cup.
+    attention: { intensityMultiplier: 1.9, distanceMultiplier: 1.18 },
+    inTransit: { intensityMultiplier: 0.12, distanceMultiplier: 0.55 },
+    departure: { intensityMultiplier: 0.12, distanceMultiplier: 0.55 },
+    cruise: { intensityMultiplier: 0.12, distanceMultiplier: 0.55 },
+    approach: { intensityMultiplier: 0.12, distanceMultiplier: 0.55 },
+    failed: { intensityMultiplier: 0.12, distanceMultiplier: 0.55 },
+  },
+};
+
+/** Directed fixtures are exported beside the serializable scene document. */
+export const skyMooringSpotLights: SpotLightDefinition[] = [];
+
 // Гондола: размеры нужны и корпусу, и трапу, и балкону.
 const CAR_FROM = 3.0;
 const CAR_TO = 8.6;
@@ -242,7 +275,10 @@ function createAirship(): void {
   // коробка накрывает весь баллон, поэтому полотнища, кили и подвеска
   // находят опору «зазор ноль». Объём занижен — это газ, а не земля.
   primitive(ship, "heart", "earth", "cylinder",
-    P(7.5, 0, AXIS_Y), [2.6, 8.4, 2.6], "#e9dcb4", {
+    // The gondola and nose fittings pull the intact centre of mass forward.
+    // Keep the physical gas heart over that measured centre instead of
+    // relying on runtime trim to conceal an authored imbalance.
+    P(6.25, 0, AXIS_Y + 0.1), [2.6, 8.4, 2.6], "#e9dcb4", {
       rotation: HULL_AXIS,
       volume: 7,
       contactBoxes: [{ position: [0, 0, 0], size: [4.9, 15.6, 4.9] }],
@@ -318,7 +354,7 @@ function createAirship(): void {
       });
   }
 
-  // Швартовый конус, который входит в стакан мачты.
+  // Короткий корабельный швартовый конус входит в стакан мачты.
   primitive(ship, "nose:cone", "steel", "cylinder",
     P(-0.72, 0, AXIS_Y), [0.42, 1.85, 0.42], IRON, {
       rotation: HULL_AXIS,
@@ -327,7 +363,117 @@ function createAirship(): void {
       sideAttachmentReach: 0.5,
     });
 
-  // Хвостовой шпиль и габаритный огонь на нём.
+  // Белый носовой огонь вынесен над швартовым конусом: сам конус входит в
+  // стакан мачты, поэтому световой узел не должен занимать его ось.
+  primitive(ship, "nav-light:nose:mount", "steel", "steelSheet",
+    P(-0.04, 0, AXIS_Y + 0.42), [0.18, 0.5, 0.5], IRON, {
+      rotation: ALONG,
+      carriesAttachments: true,
+      attachmentSupportMode: "cable",
+      sideAttachmentReach: 0.22,
+    });
+  primitive(ship, "nav-light:nose", "glass", "glassPane",
+    P(-0.23, 0, AXIS_Y + 0.42), [0.2, 0.34, 0.34], "#f4f1e2", {
+      rotation: ALONG,
+      bearsLoad: false,
+      attachmentSupportMode: "cable",
+      sideAttachmentReach: 0.08,
+      light: {
+        position: [-0.27, 0, 0],
+        followsGroup: true,
+        color: "#fff6dc",
+        distance: 18,
+        intensity: 3.4,
+        poolPriority: 6,
+        beacon: {
+          physicalDiameter: 0.75,
+          minScreenDiameter: 5,
+          maxWorldDiameter: 1.5,
+          dayOpacity: 0.64,
+          nightOpacity: 0.95,
+        },
+      },
+    });
+
+  // Посадочный прожектор сидит под носовой оболочкой и смотрит вдоль оси
+  // швартовки вниз. Он слушает только общие departure/approach события.
+  {
+    const fixtureA = 1.25;
+    const fixture = P(fixtureA, 0, AXIS_Y - hullRadius(fixtureA) - 0.03);
+    const downAngle = 0.4;
+    const direction: SceneVector3 = [
+      -CA * Math.cos(downAngle),
+      -Math.sin(downAngle),
+      -SA * Math.cos(downAngle),
+    ];
+    const along = (distance: number): SceneVector3 => [
+      fixture[0] + direction[0] * distance,
+      fixture[1] + direction[1] * distance,
+      fixture[2] + direction[2] * distance,
+    ];
+    primitive(ship, "mooring-light:mount", "steel", "steelSheet",
+      fixture, [0.9, 0.14, 0.62], IRON, {
+        rotation: ALONG,
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.14,
+      });
+    primitive(ship, "mooring-light:housing", "steel", "steelSheet",
+      along(0.28), [0.62, 0.32, 0.44], DURAL, {
+        rotation: orient(direction, [0, 1, 0]),
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.14,
+      });
+    const lensDepth = 0.13;
+    const lensPosition = along(0.62);
+    primitive(ship, "mooring-light", "glass", "glassPane",
+      lensPosition, [lensDepth, 0.28, 0.34], mooringSignalColor, {
+        rotation: orient(direction, [0, 1, 0]),
+        bearsLoad: false,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.1,
+      });
+    skyMooringSpotLights.push({
+      id: `${AIRSHIP_CLUSTER_ID}:mooring-light:piece`,
+      position: [
+        lensPosition[0] + direction[0] * (lensDepth / 2 + 0.015),
+        lensPosition[1] + direction[1] * (lensDepth / 2 + 0.015),
+        lensPosition[2] + direction[2] * (lensDepth / 2 + 0.015),
+      ],
+      direction,
+      carrierClusterId: AIRSHIP_CLUSTER_ID,
+      color: "#ffe6b5",
+      distance: 72,
+      intensity: 620,
+      angle: 0.3,
+      penumbra: 0.48,
+      decay: 1.7,
+      dayIntensityFactor: 1,
+      eventLighting: mooringManeuverLighting,
+      transition: { fadeInSeconds: 1.8, fadeOutSeconds: 1.2 },
+      visibleBeam: {
+        opacity: 0.16,
+        sourceRadius: 0.14,
+        length: 62,
+        attenuation: 56,
+        anglePower: 6,
+      },
+      fixtureGlow: {
+        color: mooringSignalColor,
+        intensity: 7.2,
+        halo: {
+          physicalDiameter: 0.58,
+          minScreenDiameter: 4.5,
+          maxWorldDiameter: 1.25,
+          dayOpacity: 0.72,
+          nightOpacity: 0.92,
+        },
+      },
+    });
+  }
+
+  // Хвостовой шпиль и белый кормовой габаритный огонь на нём.
   primitive(ship, "tail:spike", "steel", "cylinder",
     P(14.85, 0, AXIS_Y), [0.16, 0.85, 0.16], DURAL, {
       rotation: HULL_AXIS,
@@ -336,11 +482,34 @@ function createAirship(): void {
       attachmentSupportMode: "cable",
       sideAttachmentReach: 0.5,
     });
-  primitive(ship, "tail:light", "glass", "glassPane",
-    P(15.24, 0, AXIS_Y), [0.16, 0.16, 0.16], "#f4e2b0", {
+  primitive(ship, "nav-light:tail:mount", "steel", "steelSheet",
+    P(14.98, 0, AXIS_Y), [0.18, 0.44, 0.44], DURAL, {
+      rotation: ALONG,
+      carriesAttachments: true,
+      attachmentSupportMode: "cable",
+      sideAttachmentReach: 0.22,
+    });
+  primitive(ship, "nav-light:tail", "glass", "glassPane",
+    P(15.24, 0, AXIS_Y), [0.2, 0.34, 0.34], "#f4f1e2", {
+      rotation: ALONG,
       bearsLoad: false,
-      sideAttachmentReach: 0.45,
-      light: { color: "#ffd08a", distance: 8, intensity: 2.4 },
+      attachmentSupportMode: "cable",
+      sideAttachmentReach: 0.08,
+      light: {
+        position: [0.27, 0, 0],
+        followsGroup: true,
+        color: "#fff6dc",
+        distance: 18,
+        intensity: 3.4,
+        poolPriority: 6,
+        beacon: {
+          physicalDiameter: 0.75,
+          minScreenDiameter: 5,
+          maxWorldDiameter: 1.5,
+          dayOpacity: 0.64,
+          nightOpacity: 0.95,
+        },
+      },
     });
 
   // === Крестообразное оперение. Поворот на phi уже разворачивает полотно
@@ -376,6 +545,11 @@ function createAirship(): void {
           radial(phi),
         ),
         contactBoxes: [{ position: [0, 0, 0], size: [1.0, span * 0.94, 0.16] }],
+        actuator: {
+          id: "town-airship:rudder",
+          commandChannel: "rudder",
+          contribution: vertical ? 1 : 0.35,
+        },
         bearsLoad: false,
         sideAttachmentReach: 0.6,
       });
@@ -454,58 +628,68 @@ function createAirship(): void {
     }
   }
 
-  // === Гондола-вагон. Западный борт глухой с окнами, восточный (городской)
-  // разрезан дверным проёмом: к нему приходят трап и балкон.
-  primitive(ship, "car:wall:west", "steel", "panel",
-    P((CAR_FROM + CAR_TO) / 2, -CAR_HALF, (CAR_FLOOR + CAR_ROOF) / 2),
-    [CAR_TO - CAR_FROM, CAR_ROOF - CAR_FLOOR, 0.1], "#8a9096", {
-      rotation: ALONG,
-      contactBoxes: [{
-        position: [0, 0, 0],
-        size: [CAR_TO - CAR_FROM, CAR_ROOF - CAR_FLOOR, 0.16],
-      }],
-      carriesAttachments: true,
-      attachmentSupportMode: "cable",
-      sideAttachmentReach: 0.4,
-      surface: damp,
-    });
-  for (const [wallTag, a1, a2] of [
-    ["fore", CAR_FROM, DOOR_FROM], ["aft", DOOR_TO, CAR_TO],
-  ] as const) {
-    primitive(ship, `car:wall:east:${wallTag}`, "steel", "panel",
-      P((a1 + a2) / 2, CAR_HALF, (CAR_FLOOR + CAR_ROOF) / 2),
-      [a2 - a1, CAR_ROOF - CAR_FLOOR, 0.1], "#868c92", {
+  // === Гондола-вагон. Стекло больше не наклеено поверх сплошной стенки:
+  // каждый борт собран нижним и верхним поясами с настоящими простенками.
+  // Между ними остаются физические оконные ниши на всю толщину борта.
+  const WINDOW_Y = 8.62;
+  const WINDOW_WIDTH = 0.62;
+  const WINDOW_HEIGHT = 0.66;
+  const windowBottom = WINDOW_Y - WINDOW_HEIGHT / 2;
+  const windowTop = WINDOW_Y + WINDOW_HEIGHT / 2;
+  const wallPanel = (
+    tag: string,
+    side: -1 | 1,
+    a1: number,
+    a2: number,
+    y1: number,
+    y2: number,
+  ): void => {
+    if (a2 - a1 < 0.04 || y2 - y1 < 0.04) {
+      return;
+    }
+    primitive(ship, `car:wall:${side < 0 ? "west" : "east"}:${tag}`, "steel", "panel",
+      P((a1 + a2) / 2, side * CAR_HALF, (y1 + y2) / 2),
+      [a2 - a1, y2 - y1, 0.1], side < 0 ? "#8a9096" : "#868c92", {
         rotation: ALONG,
-        contactBoxes: [{
-          position: [0, 0, 0],
-          size: [a2 - a1, CAR_ROOF - CAR_FLOOR, 0.16],
-        }],
+        contactBoxes: [{ position: [0, 0, 0], size: [a2 - a1, y2 - y1, 0.16] }],
         carriesAttachments: true,
         attachmentSupportMode: "cable",
         sideAttachmentReach: 0.4,
         surface: damp,
       });
-  }
-  // Окна: западный борт — пять, восточный — четыре в кормовой части.
-  const windowRuns: readonly (readonly [number, number, number])[] = [
-    [-1, CAR_FROM + 0.8, 5], [1, DOOR_TO + 0.62, 4],
+  };
+
+  // Глухая носовая четверть городского борта заканчивается у дверного
+  // проёма. Кормовая часть и весь противоположный борт — оконные ленты.
+  wallPanel("fore", 1, CAR_FROM, DOOR_FROM, CAR_FLOOR, CAR_ROOF);
+  const windowRuns = [
+    { side: -1 as const, from: CAR_FROM, to: CAR_TO, firstA: CAR_FROM + 0.8, count: 5 },
+    { side: 1 as const, from: DOOR_TO, to: CAR_TO, firstA: DOOR_TO + 0.62, count: 4 },
   ];
-  for (const [side, firstA, count] of windowRuns) {
-    for (let windowIndex = 0; windowIndex < count; windowIndex += 1) {
-      const a = firstA + windowIndex * 0.92;
+  for (const { side, from, to, firstA, count } of windowRuns) {
+    wallPanel("lower", side, from, to, CAR_FLOOR, windowBottom);
+    wallPanel("upper", side, from, to, windowTop, CAR_ROOF);
+    const centers = Array.from({ length: count }, (_, index) => firstA + index * 0.92);
+    let cursor = from;
+    centers.forEach((a, windowIndex) => {
+      wallPanel(`post:${windowIndex}`, side, cursor, a - WINDOW_WIDTH / 2, windowBottom, windowTop);
+      cursor = a + WINDOW_WIDTH / 2;
       primitive(ship, `car:window:${side}:${windowIndex}`, "glass", "glassPane",
-        P(a, side * (CAR_HALF + 0.03), 8.62), [0.62, 0.66, 0.06], "#9fb7bd", {
+        P(a, side * CAR_HALF, WINDOW_Y), [WINDOW_WIDTH, WINDOW_HEIGHT, 0.06], "#9fb7bd", {
           rotation: ALONG,
           bearsLoad: false,
           sideAttachmentReach: 0.3,
         });
-      primitive(ship, `car:sash:${side}:${windowIndex}`, "steel", "plank",
-        P(a, side * (CAR_HALF + 0.05), 8.27), [0.68, 0.08, 0.06], DURAL, {
-          rotation: ALONG,
-          bearsLoad: false,
-          sideAttachmentReach: 0.3,
-        });
-    }
+      for (const [frameTag, y] of [["sill", windowBottom], ["lintel", windowTop]] as const) {
+        primitive(ship, `car:sash:${side}:${windowIndex}:${frameTag}`, "steel", "plank",
+          P(a, side * (CAR_HALF + 0.055), y), [WINDOW_WIDTH + 0.08, 0.07, 0.06], DURAL, {
+            rotation: ALONG,
+            bearsLoad: false,
+            sideAttachmentReach: 0.3,
+          });
+      }
+    });
+    wallPanel("post:end", side, cursor, to, windowBottom, windowTop);
     // Поясной профиль вдоль борта. На восточном борту он РАЗРЕЗАН дверным
     // проёмом: цельная полоса шла на высоте 0.6 м над порогом и перекрывала
     // вход по нижней трети — в такую дверь не войти.
@@ -582,9 +766,9 @@ function createAirship(): void {
       sideAttachmentReach: 0.45,
     });
 
-  // === Дверной проём восточного борта: порог, косяки, перемычка и створка
-  // на петле. Створка стоит на пороге — навесной лист, который ни на что не
-  // опирается, физика распахнула бы на старте.
+  // === Дверной проём восточного борта: порог, косяки, перемычка и одна
+  // прислонно-сдвижная створка. По событию она сначала выходит наружу, затем
+  // уезжает вдоль борта тем же общим механизмом, что дверь небесного поезда.
   primitive(ship, "car:door:sill", "steel", "plank",
     P((DOOR_FROM + DOOR_TO) / 2, CAR_HALF, CAR_FLOOR + 0.09),
     [DOOR_TO - DOOR_FROM + 0.2, 0.18, 0.24], DURAL, {
@@ -615,12 +799,9 @@ function createAirship(): void {
       sideAttachmentReach: 0.4,
     });
   {
-    // Полотно и ручка — куски ОДНОЙ створки: HingedDoorSystem группирует их
-    // по общему префиксу до ":board:N", поэтому едут они вместе.
-    // hinge задаётся в ЛОКАЛЬНЫХ координатах куска (компилятор прибавит их
-    // к его позиции и повороту). Мировая точка здесь — частая ошибка: дверь
-    // начинает ходить по дуге вокруг чужого центра.
-    // direction — вектор ОТ петли К полотну, normal — наружная нормаль.
+    // Полотно и ручка — куски ОДНОЙ створки: система группирует их по общему
+    // префиксу до ":board:N". Поля hinge здесь являются локальным базисом
+    // механизма: direction идёт вдоль борта, normal смотрит наружу.
     const leafA = (DOOR_FROM + DOOR_TO) / 2 + 0.04;
     const leafB = CAR_HALF + 0.09;
     const leafY = 8.08;
@@ -656,60 +837,105 @@ function createAirship(): void {
       });
   }
 
-  // Балкон у двери: с него заходят в гондолу, на него приходит трап.
-  // Поручень поднят и вынесен на самую кромку, стойки стоят по углам —
-  // линия «трап → дверь» остаётся свободной.
+  // Посадочная площадка перед дверью принадлежит МАЧТЕ. Кабина только
+  // подходит к её внутренней кромке: после отхода площадка, подкосы и
+  // перила целиком остаются у трапа, а вместе с судном уходит одна дверь.
   {
+    const berth = group("mast", "Riveted mooring mast at the world's edge", "steel", "stack");
     const balconyA = (DOOR_FROM + DOOR_TO) / 2;
-    const balconyB = CAR_HALF + 0.95;
+    // Площадка доходит до подвижного порога, но не несёт его конструктивно:
+    // игрок проходит в дверь без щели, а корабль свободно отходит от причала.
+    const balconyB = CAR_HALF + 1.65;
     const balconyHalf = 1.45;
-    primitive(ship, "car:balcony", "steel", "steelSheet",
-      P(balconyA, balconyB, CAR_FLOOR + 0.04), [balconyHalf * 2, 0.14, 1.7], "#787569", {
+    const landingInnerB = CAR_HALF + 0.14;
+    const landingOuterB = balconyB + 0.85;
+    const landingDeckB = (landingInnerB + landingOuterB) / 2;
+    const landingWidth = landingOuterB - landingInnerB;
+    primitive(berth, "landing", "steel", "steelSheet",
+      P(balconyA, landingDeckB, CAR_FLOOR + 0.04),
+      [balconyHalf * 2, 0.14, landingWidth], "#787569", {
         rotation: ALONG,
-        contactBoxes: [{ position: [0, 0, 0], size: [balconyHalf * 2, 0.14, 1.7] }],
+        contactBoxes: [{
+          position: [0, 0, 0],
+          size: [balconyHalf * 2, 0.14, landingWidth],
+        }],
         carriesAttachments: true,
         attachmentSupportMode: "cable",
-        sideAttachmentReach: 0.55,
+        sideAttachmentReach: 0.3,
+        contactBearingOrder: true,
+        // A player can stand on the collider, but structurally this deck is
+        // never allowed to prop up the parked airship beside it.
+        bearsLoad: false,
         surface: damp,
       });
-    for (const end of [-1, 1] as const) {
-      strut(ship, `car:balcony:bracket:${end}`, "steel",
-        P(balconyA + end * (balconyHalf - 0.2), CAR_HALF + 0.06, CAR_FLOOR + 0.62),
-        P(balconyA + end * (balconyHalf - 0.2), balconyB + 0.7, CAR_FLOOR - 0.04),
-        0.07, "#6a675f", {
+    // Площадка имеет собственные ноги на земле — это буквально часть
+    // причала, а не консоль, которая тайком ищет опору в кабине или трапе.
+    for (const [legIndex, a] of [balconyA - 1.05, balconyA + 1.05].entries()) {
+      primitive(berth, `landing:footing:${legIndex}`, "concrete", "cinderBlock",
+        P(a, landingOuterB - 0.3, 0.16), [0.72, 0.36, 0.72], "#85837c", {
+          rotation: ALONG,
+          contactBoxes: [{ position: [0, 0, 0], size: [0.72, 0.36, 0.72] }],
+          carriesAttachments: true,
+          surface: damp,
+        });
+      primitive(berth, `landing:leg:${legIndex}`, "steel", "cylinder",
+        P(a, landingOuterB - 0.3, 3.58), [0.16, 6.68, 0.16], "#68655e", {
+          contactBoxes: [{ position: [0, 0, 0], size: [0.22, 6.68, 0.22] }],
           carriesAttachments: true,
           attachmentSupportMode: "cable",
-          sideAttachmentReach: 0.5,
-          bearingArea: 0.45,
+          sideAttachmentReach: 0.45,
+          bearingArea: 0.8,
+          surface: damp,
         });
-      // Стойки: два угла на внешней кромке и по одной у стены на торцах.
-      for (const [cornerIndex, cb] of [balconyB + 0.78, CAR_HALF + 0.12].entries()) {
-        primitive(ship, `car:balcony:post:${end}:${cornerIndex}`, "steel", "cylinder",
-          P(balconyA + end * (balconyHalf - 0.06), cb, CAR_FLOOR + 0.63), [0.07, 1.1, 0.07], "#6c6961", {
-            contactBoxes: [{ position: [0, 0, 0], size: [0.1, 1.1, 0.1] }],
-            carriesAttachments: true,
-            attachmentSupportMode: "cable",
-            sideAttachmentReach: 0.4,
-          });
-      }
+    }
+    for (const end of [-1, 1] as const) {
+      // Короткие распределяющие подкосы расходятся от конца уже
+      // раскреплённого трапа под оба конца площадки. Они не пересекают ни
+      // гондолу, ни лес и не ищут опору в стенке кабины.
+      strut(berth, `landing:brace:${end}`, "steel",
+        P(CAR_FROM - 0.05, CAR_HALF + 0.95, CAR_FLOOR - 0.02),
+        P(balconyA + end * (balconyHalf - 0.2), landingOuterB - 0.3, CAR_FLOOR - 0.04),
+        0.09, "#6a675f", {
+          bearsLoad: false,
+          carriesAttachments: true,
+          attachmentSupportMode: "cable",
+          sideAttachmentReach: 0.35,
+          bearingArea: 0.6,
+        });
+      // Стойки стоят прямо над собственными ногами площадки. Поэтому
+      // ограждение остаётся частью причала даже после ухода корабля.
+      const postA = balconyA + end * 1.05;
+      const postB = landingOuterB - 0.3;
+      primitive(berth, `landing:post:${end}:0`, "steel", "cylinder",
+        P(postA, postB, CAR_FLOOR + 0.63), [0.07, 1.1, 0.07], "#6c6961", {
+          contactBoxes: [{ position: [0, 0, 0], size: [0.1, 1.1, 0.1] }],
+          carriesAttachments: true,
+          attachmentSupportMode: "cable",
+          sideAttachmentReach: 0.4,
+        });
+      addMastLamp(
+        berth,
+        `landing:lamp:${end}`,
+        P(postA, postB, CAR_FLOOR + 1.5),
+      );
       // Торцевое ограждение — только на дальнем конце: на ближний приходит
       // трап, и поручень там перекрывал вход.
       if (end < 0) {
         continue;
       }
-      strut(ship, `car:balcony:rail:end:${end}`, "steel",
-        P(balconyA + end * (balconyHalf - 0.06), CAR_HALF + 0.12, CAR_FLOOR + 1.12),
-        P(balconyA + end * (balconyHalf - 0.06), balconyB + 0.78, CAR_FLOOR + 1.12),
+      strut(berth, `landing:rail:end:${end}`, "steel",
+        P(postA, landingInnerB + 0.08, CAR_FLOOR + 1.12),
+        P(postA, postB, CAR_FLOOR + 1.12),
         0.05, "#6c6961", {
           bearsLoad: false,
           attachmentSupportMode: "cable",
           sideAttachmentReach: 0.5,
         });
     }
-    // Внешний поручень во всю длину балкона.
-    strut(ship, "car:balcony:rail", "steel",
-      P(balconyA - balconyHalf + 0.06, balconyB + 0.78, CAR_FLOOR + 1.12),
-      P(balconyA + balconyHalf - 0.06, balconyB + 0.78, CAR_FLOOR + 1.12),
+    // Внешний поручень между двумя стойками площадки.
+    strut(berth, "landing:rail", "steel",
+      P(balconyA - 1.05, landingOuterB - 0.3, CAR_FLOOR + 1.12),
+      P(balconyA + 1.05, landingOuterB - 0.3, CAR_FLOOR + 1.12),
       0.05, "#6c6961", {
         bearsLoad: false,
         attachmentSupportMode: "cable",
@@ -746,22 +972,9 @@ function createAirship(): void {
       bearsLoad: false,
       sideAttachmentReach: 0.35,
     });
-  primitive(ship, "car:desk", "wood", "plank",
-    P(CAR_FROM + 0.8, 0.55, 7.98), [0.86, 0.09, 0.8], "#5f4c39", {
-      rotation: ALONG,
-      contactBoxes: [{ position: [0, 0, 0], size: [0.86, 0.09, 0.8] }],
-      carriesAttachments: true,
-      attachmentSupportMode: "cable",
-      sideAttachmentReach: 0.35,
-    });
-  for (const [dialIndex, offset] of [-0.26, 0, 0.26].entries()) {
-    primitive(ship, `car:dial:${dialIndex}`, "glass", "cylinder",
-      P(CAR_FROM + 0.8 + offset, 0.55, 8.12), [0.17, 0.14, 0.17], "#cdd6cf", {
-        rotation: [0, -HEADING, 0],
-        bearsLoad: false,
-        sideAttachmentReach: 0.3,
-      });
-  }
+  // Пространство сразу за дверью оставлено пустым на полную ширину прохода.
+  // Старый стол и три маленьких стеклянных цилиндра на нём читались чашками
+  // и физически заставляли пассажира протискиваться при входе.
   for (const [benchIndex, side] of [-1, 1].entries()) {
     primitive(ship, `car:bench:${benchIndex}`, "wood", "plank",
       P(CAR_TO - 1.9, side * 0.72, 7.58), [1.9, 0.11, 0.55], "#6b5941", {
@@ -803,6 +1016,11 @@ function createAirship(): void {
         attachmentSupportMode: "cable",
         sideAttachmentReach: 0.5,
         bearingArea: 0.7,
+        actuator: {
+          id: `town-airship:propulsor:${side}`,
+          commandChannel: `throttle:${side === -1 ? 0 : 1}`,
+          required: true,
+        },
       });
     primitive(ship, `engine:${side}:cowl`, "steel", "cylinder",
       P(engineA - 1.32, b, engineY), [0.74, 0.52, 0.74], DURAL, {
@@ -831,6 +1049,10 @@ function createAirship(): void {
             [0, 1, 0],
           ),
           contactBoxes: [{ position: [0, 0, 0], size: [0.34, 1.72, 0.46] }],
+          actuator: {
+            id: `town-airship:propulsor:${side}`,
+            commandChannel: `throttle:${side === -1 ? 0 : 1}`,
+          },
           bearsLoad: false,
           sideAttachmentReach: 0.4,
         });
@@ -880,6 +1102,39 @@ function createAirship(): void {
         bearsLoad: false,
         sideAttachmentReach: 0.4,
       });
+
+    // Бортовой аэронавигационный огонь сидит на внешней щеке двигателя,
+    // как у летающего поезда. Правый борт (-b) зелёный, левый (+b) красный.
+    const lensTone = side < 0 ? "#7fe6a0" : "#f08a80";
+    primitive(ship, `nav-light:${side}:mount`, "steel", "steelSheet",
+      P(engineA, b + side * 0.46, engineY), [0.48, 0.48, 0.08], "#3f4a4c", {
+        rotation: ALONG,
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.12,
+      });
+    primitive(ship, `nav-light:${side}`, "glass", "glassPane",
+      P(engineA, b + side * 0.52, engineY), [0.34, 0.34, 0.1], lensTone, {
+        rotation: ALONG,
+        bearsLoad: false,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.08,
+        light: {
+          position: [0, 0, side * 0.14],
+          followsGroup: true,
+          color: side < 0 ? "#6bff9c" : "#ff6f62",
+          distance: 24,
+          intensity: 5,
+          poolPriority: 8,
+          beacon: {
+            physicalDiameter: 0.9,
+            minScreenDiameter: 6,
+            maxWorldDiameter: 1.8,
+            dayOpacity: 0.72,
+            nightOpacity: 1,
+          },
+        },
+      });
   }
 }
 
@@ -901,10 +1156,36 @@ const STAIR_WIDTH = 1.32;
 const LOBE_B_FROM = 1.9;
 const LOBE_B_TO = 4.2;
 
+/** One physical warm fixture whose electrical state follows mast capture. */
+function addMastLamp(
+  mast: MutableGroup,
+  id: string,
+  lensPosition: SceneVector3,
+): void {
+  primitive(mast, `${id}:mount`, "steel", "steelSheet",
+    [lensPosition[0], lensPosition[1] - 0.22, lensPosition[2]],
+    [0.18, 0.22, 0.18], IRON, {
+      carriesAttachments: false,
+      sideAttachmentReach: 0.35,
+    });
+  primitive(mast, `${id}:lens`, "glass", "glassPane",
+    lensPosition, [0.3, 0.34, 0.3], "#f4e4bd", {
+      bearsLoad: false,
+      sideAttachmentReach: 0.35,
+      light: {
+        color: "#ffe0ae",
+        distance: 13,
+        intensity: 2.8,
+        dayIntensityFactor: 0.35,
+        poolPriority: 5,
+        eventLighting: mastDockLighting,
+        transition: { fadeInSeconds: 0.7, fadeOutSeconds: 1.1 },
+      },
+    });
+}
+
 function createMooringMast(): void {
   const mast = group("mast", "Riveted mooring mast at the world's edge", "steel", "stack");
-  // Часть поручня трапа принадлежит кораблю: она стоит на его балконе.
-  const ship = group("airship", "Moored airship over the west edgewood", "cloth", "linked");
   const baseHalf = 1.1;
   const topHalf = 0.45;
   // Ферма обрывается заметно ниже корпуса: у стали допустимый зазор опоры
@@ -985,7 +1266,7 @@ function createMooringMast(): void {
   }
 
   // Площадка: настил, на который приходят оба марша и с которого уходит
-  // трап на балкон гондолы. Южная грань открыта под трап, восточная — под
+  // трап к посадочной площадке у двери. Южная грань открыта под трап, восточная — под
   // лестницу.
   primitive(mast, "deck", "steel", "steelSheet",
     P(MAST_A, 0, DECK_Y), [DECK_A * 2, 0.12, DECK_B * 2], "#787569", {
@@ -1031,6 +1312,13 @@ function createMooringMast(): void {
           sideAttachmentReach: 0.4,
         });
     }
+  }
+  for (const [lampIndex, b] of [-DECK_B + 0.12, DECK_B - 0.12].entries()) {
+    addMastLamp(
+      mast,
+      `deck:lamp:${lampIndex}`,
+      P(MAST_A - DECK_A, b, DECK_Y + 1.45),
+    );
   }
 
   // Восточная доля настила: через неё верхний марш выходит на площадку.
@@ -1190,6 +1478,13 @@ function createMooringMast(): void {
   strut(mast, "stair:landing:rail:east", "steel",
     P(MAST_A + 4.4, landingB + 1.4, 4.66), P(MAST_A + 3.0, landingB + 1.4, 4.66),
     0.05, "#6c6961", { bearsLoad: false, attachmentSupportMode: "cable", sideAttachmentReach: 0.5 });
+  for (const [lampIndex, b] of [landingB - 1.4, landingB + 1.4].entries()) {
+    addMastLamp(
+      mast,
+      `stair:landing:lamp:${lampIndex}`,
+      P(MAST_A + 4.4, b, 4.98),
+    );
+  }
 
   // Оголовок — ОДИН кусок, инертный для решателя (bearsLoad и
   // carriesAttachments false). Иначе носовой конус садится на него сверху и
@@ -1213,18 +1508,24 @@ function createMooringMast(): void {
     P(MAST_A - 0.62, 0, 12.39), [0.24, 0.28, 0.24], "#c8544a", {
       bearsLoad: false,
       sideAttachmentReach: 0.4,
-      light: { color: "#ff6a55", distance: 16, intensity: 3.2 },
+      light: {
+        color: "#ff6a55",
+        distance: 16,
+        intensity: 3.2,
+        dayIntensityFactor: 0.35,
+        poolPriority: 6,
+        eventLighting: mastDockLighting,
+        transition: { fadeInSeconds: 0.7, fadeOutSeconds: 1.1 },
+      },
     });
 
-  // Трап с площадки на балкон гондолы. Контракт выбран явно: это НЕ
-  // свободно лежащая доска, а мостик мачты — он закреплён на настиле и
-  // раскреплён двумя подкосами от фермы, а дальним концом просто ложится
-  // на балкон. Поэтому после падения корабля мостик остаётся: это честная
-  // раскреплённая консоль, а не висящая в воздухе плита. Сам он ничего не
-  // держит (bearsLoad false), иначе гондола повисла бы на мачте.
+  // Трап с основной площадки к посадочной площадке у двери. Это мостик
+  // мачты: он закреплён на настиле и раскреплён двумя подкосами от фермы.
+  // Сам он ничего не держит (bearsLoad false), иначе гондола повисла бы
+  // на мачте.
   {
     const from: SceneVector3 = P(MAST_A + DECK_A - 0.2, 0.95, DECK_Y + 0.1);
-    const to: SceneVector3 = P(CAR_FROM + 0.2, CAR_HALF + 0.95, CAR_FLOOR + 0.15);
+    const to: SceneVector3 = P(CAR_FROM - 0.1, CAR_HALF + 0.95, CAR_FLOOR + 0.15);
     const dx = to[0] - from[0];
     const dy = to[1] - from[1];
     const dz = to[2] - from[2];
@@ -1242,6 +1543,8 @@ function createMooringMast(): void {
         ],
         contactBearingOrder: true,
         bearsLoad: false,
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
         surface: damp,
       });
     // Подкосы мостика: от верхнего пояса фермы к его середине снизу.
@@ -1259,9 +1562,8 @@ function createMooringMast(): void {
         });
     }
     // Поручень мостика — по ОБЕИМ кромкам, во всю длину, со стойками на
-    // настиле. Всё это часть мачты и остаётся вместе с мостиком; на балконе
-    // у корабля своё ограждение, поэтому стойка на его конце не нужна и не
-    // ломает контракт падения.
+    // настиле. Всё это часть мачты и остаётся вместе с мостиком; дальше его
+    // принимает собственное ограждение посадочной площадки.
     for (const [railIndex, side] of [-1, 1].entries()) {
       const offset = 0.72 * side;
       const railFrom: SceneVector3 = [

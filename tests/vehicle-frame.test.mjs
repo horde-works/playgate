@@ -13,14 +13,18 @@ import {
   pitchAxisOf,
   rotateVector,
   advanceRouteProgress,
+  advanceVehicleRouteProgress,
   IDLE_CONTROLS,
   SKY_TRAIN_APPROACH,
   SKY_TRAIN_DOCKING,
   hullDrag,
   isDockedPose,
+  isMooringCaptureEligible,
+  isDockingSettleWindow,
   isDockingComplete,
   autopilot,
   flightPlan,
+  terminalArrivalPlan,
   predictShip,
   shipForces,
   routeLength,
@@ -28,8 +32,12 @@ import {
   shipLocalPoint,
   vehicleFrameForCluster,
   vehicleFrames,
+  vehicleMooringState,
   vehiclePiecePosition,
+  vehicleProbeReach,
+  vehicleProbeReaction,
   vehicleRotation,
+  vehicleAttitude,
   rudderEffectiveness,
   finalLegFrom,
   routePoint,
@@ -58,12 +66,35 @@ const ship = grandTerminalScene.breakablePieces.filter(
   (piece) => piece.clusterId === SKY_TRAIN,
 );
 
-test("the sky train is the one cluster declared as a vehicle frame", () => {
-  assert.equal(vehicleFrames.length, 1);
+function mooringCapture(frame, state, properties) {
+  return vehicleMooringState(
+    frame,
+    [
+      state.position[0] - properties.centre[0],
+      state.position[1] - properties.centre[1],
+      state.position[2] - properties.centre[2],
+    ],
+    state.orientation,
+    state.velocity,
+    state.angularVelocity,
+    properties.centre,
+  );
+}
+
+test("all three airborne machines are declared as vehicle frames", () => {
+  assert.equal(vehicleFrames.length, 3);
   const frame = vehicleFrameForCluster(SKY_TRAIN);
   assert.notEqual(frame, null);
   assert.equal(frame.id, "sky-train");
   assert.equal(vehicleFrameForCluster("terminal:sky-berth"), null);
+  assert.equal(
+    vehicleFrameForCluster("viking-village:sky-longship")?.id,
+    "sky-longship",
+  );
+  assert.equal(
+    vehicleFrameForCluster("sky-mooring:airship")?.id,
+    "town-airship",
+  );
 
   const shipPiece = grandTerminalScene.breakablePieces.find(
     (piece) => piece.clusterId === SKY_TRAIN,
@@ -73,6 +104,23 @@ test("the sky train is the one cluster declared as a vehicle frame", () => {
   );
   assert.equal(isVehicleFramePiece(shipPiece), true);
   assert.equal(isVehicleFramePiece(berthPiece), false);
+});
+
+test("hull probes sweep one physics step and damp motion into obstacles", () => {
+  assert.equal(vehicleProbeReach(0.22, -4, 1 / 60), 0.22);
+  assert.equal(
+    Math.abs(vehicleProbeReach(0.22, 12, 1 / 60) - 0.42) < 1e-9,
+    true,
+  );
+
+  const staticCompression = vehicleProbeReaction(100, 10, 0.22, 0.1, 0, 0.1);
+  const closingImpact = vehicleProbeReaction(100, 10, 0.22, 0.1, 2, 0.1);
+  const separating = vehicleProbeReaction(100, 10, 0.22, 0.1, -2, 0.1);
+  assert.equal(staticCompression, 12);
+  assert.equal(Math.abs(closingImpact - 52) < 1e-9, true);
+  // Rebound is damped too, but the unilateral ground reaction never pulls.
+  assert.equal(separating, 0);
+  assert.equal(closingImpact > staticCompression, true);
 });
 
 test("the frame pivots on the lift heart, not on the middle of the train", () => {
@@ -177,6 +225,19 @@ test("pitch and roll are measured on the ship, not on the world axes", () => {
 
   // Рыскание — вокруг мировой вертикали: высота носа не меняется.
   assert.equal(Math.abs(up({ ...RESTING_POSE, yaw: 1.1 })) < 1e-9, true);
+
+  const pitched = vehicleAttitude(
+    vehicleRotation({ ...RESTING_POSE, pitch: 0.3 }, nose),
+    nose,
+  );
+  const rolled = vehicleAttitude(
+    vehicleRotation({ ...RESTING_POSE, roll: -0.4 }, nose),
+    nose,
+  );
+  assert.equal(Math.abs(pitched.pitch - 0.3) < 1e-9, true);
+  assert.equal(Math.abs(pitched.roll) < 1e-9, true);
+  assert.equal(Math.abs(rolled.roll + 0.4) < 1e-9, true);
+  assert.equal(Math.abs(rolled.pitch) < 1e-9, true);
 });
 
 test("engine readouts are ordered left to right from the vehicle geometry", () => {
@@ -220,6 +281,11 @@ test("the cabin sweep covers the coaches and drops the passenger on the platform
   // Внутри салона — ссаживаем.
   assert.equal(isInsideCabin([M.headX, M.floorTop + 0.9, M.trackZ]), true);
   assert.equal(isInsideCabin([M.tailX, M.floorTop + 0.9, M.trackZ]), true);
+  assert.equal(isInsideCabin([
+    (M.cabFront + M.cabRear) / 2,
+    M.floorTop + 0.9,
+    M.trackZ,
+  ]), true);
   // На перроне и под кораблём — нет.
   assert.equal(isInsideCabin([M.headX, M.platformTop + 1.6, M.platformZ]), false);
   assert.equal(isInsideCabin([M.headX, 0.5, M.trackZ]), false);
@@ -236,6 +302,18 @@ test("the cabin sweep covers the coaches and drops the passenger on the platform
     `подошва ${sole.toFixed(2)} ниже настила ${M.platformTop}`);
   assert.equal(sole - M.platformTop < 0.2, true,
     `высадка с высоты ${(sole - M.platformTop).toFixed(2)} — это падение, а не шаг`);
+});
+
+test("the driver's bay replaces most nose ballast without moving the lift centre", () => {
+  const frame = vehicleFrameForCluster(SKY_TRAIN);
+  const properties = massProperties(ship, densityOf);
+  const ballast = ship.find((piece) => piece.id === `${SKY_TRAIN}:ballast`);
+
+  assert.equal(ballast.volume > 1.5 && ballast.volume < 2, true, String(ballast.volume));
+  assert.equal(Math.abs(properties.centre[0] - frame.liftCentre[0]) < 0.08, true,
+    `longitudinal trim error ${(properties.centre[0] - frame.liftCentre[0]).toFixed(3)} m`);
+  assert.equal(Math.abs(properties.centre[2] - frame.liftCentre[2]) < 0.02, true,
+    `lateral trim error ${(properties.centre[2] - frame.liftCentre[2]).toFixed(3)} m`);
 });
 
 test("the departure board you press is the departure board you see", () => {
@@ -339,18 +417,16 @@ test("the ship flies the whole route on forces alone and comes home", () => {
     state.position[0] - properties.centre[0],
     state.position[2] - properties.centre[2],
   );
-  const docked = (state) =>
-    isDockedPose(
-      [
-        state.position[0] - properties.centre[0],
-        state.position[1] - properties.centre[1],
-        state.position[2] - properties.centre[2],
-      ],
+  const docked = (state) => {
+    const capture = mooringCapture(frame, state, properties);
+    return isDockedPose(
+      capture.offset,
       state.orientation,
-      state.velocity,
+      capture.velocity,
       state.angularVelocity,
       frame.nose,
     );
+  };
   const model = {
     mass: properties.mass,
     inertiaYaw: properties.inertia[4],
@@ -449,18 +525,21 @@ test("the ship flies the whole route on forces alone and comes home", () => {
       });
       // Последние метры — швартовка: подтягивает по горизонтали, как в игре.
       if (progress > 0.9) {
-        forces.push({
-          force: mooringForce(
-            [
-              centre[0] - properties.centre[0],
-              centre[1] - properties.centre[1],
-              centre[2] - properties.centre[2],
-            ],
-            state.velocity,
-            properties.mass,
-          ),
-          point: centre,
-        });
+        const capture = mooringCapture(frame, state, properties);
+        if (isMooringCaptureEligible(
+          capture.offset,
+          state.orientation,
+          frame.nose,
+        )) {
+          forces.push({
+            force: mooringForce(
+              capture.offset,
+              capture.velocity,
+              properties.mass,
+            ),
+            point: capture.point,
+          });
+        }
       }
       state = stepBody(
         state,
@@ -558,6 +637,171 @@ test("the ship flies the whole route on forces alone and comes home", () => {
     );
     assert.equal(goArounds, 0, `${kind}: штатный рейс потребовал второй круг`);
   }
+});
+
+test("a replacement from beyond the horizon flies the shared approach and docks", () => {
+  const frame = vehicleFrameForCluster(SKY_TRAIN);
+  const properties = massProperties(ship, densityOf);
+  const plan = terminalArrivalPlan(properties.centre);
+  const start = plan.point(0);
+  const ahead = plan.point(6 / plan.length);
+  const tangentLength = Math.hypot(ahead[0] - start[0], ahead[2] - start[2]) || 1;
+  const tangent = [
+    (ahead[0] - start[0]) / tangentLength,
+    (ahead[2] - start[2]) / tangentLength,
+  ];
+  const localNoseLength = Math.hypot(frame.nose[0], frame.nose[2]) || 1;
+  const localNose = [
+    frame.nose[0] / localNoseLength,
+    frame.nose[2] / localNoseLength,
+  ];
+  const yaw = Math.atan2(
+    localNose[1] * tangent[0] - localNose[0] * tangent[1],
+    localNose[0] * tangent[0] + localNose[1] * tangent[1],
+  );
+  const orientation = vehicleRotation(
+    { position: [0, 0, 0], yaw, pitch: 0, roll: 0 },
+    frame.nose,
+  );
+  assert.equal(Math.abs(start[0] - properties.centre[0] - 105) < 0.1, true);
+  assert.equal(start[2] - properties.centre[2] >= 280, true);
+  let state = {
+    ...RESTING_BODY,
+    position: start,
+    orientation,
+    velocity: [tangent[0] * 6.5, 0, tangent[1] * 6.5],
+  };
+  let progress = 0;
+  const gravity = 9.81;
+  const trim = [properties.centre[0], frame.liftCentre[1], properties.centre[2]];
+  const model = {
+    mass: properties.mass,
+    inertiaYaw: properties.inertia[4],
+    bodyCentre: properties.centre,
+    dragLinear: properties.mass * 0.22,
+    dragLateral: properties.mass * 0.22 * 7,
+    dragAngular: properties.inertia[4] * 0.5,
+    limits: SKY_TRAIN_LIMITS,
+  };
+  const dt = 1 / 60;
+  for (let step = 0; step < 60 * 300; step += 1) {
+    const piloted = autopilot(
+      plan,
+      progress,
+      state.position,
+      state.orientation,
+      state.velocity,
+      state.angularVelocity,
+      model,
+      1,
+      frame.nose,
+    );
+    const liftArm = rotateVector(state.orientation, [
+      trim[0] - properties.centre[0],
+      trim[1] - properties.centre[1],
+      trim[2] - properties.centre[2],
+    ]);
+    const forces = [
+      { force: [0, -properties.mass * gravity, 0], point: state.position },
+      {
+        force: [
+          0,
+          properties.mass * gravity *
+            (1 + piloted.controls.liftTrim * SKY_TRAIN_LIMITS.liftTrimRange),
+          0,
+        ],
+        point: [
+          state.position[0] + liftArm[0],
+          state.position[1] + liftArm[1],
+          state.position[2] + liftArm[2],
+        ],
+      },
+      ...shipForces(
+        piloted.controls,
+        state.position,
+        properties.centre,
+        state.orientation,
+        SKY_TRAIN_LIMITS,
+        frame.nose,
+        Math.hypot(state.velocity[0], state.velocity[2]),
+      ),
+    ];
+    const facing = rotateVector(state.orientation, frame.nose);
+    const flat = Math.hypot(facing[0], facing[2]) || 1;
+    forces.push({
+      force: hullDrag(
+        state.velocity,
+        [facing[0] / flat, facing[2] / flat],
+        model,
+      ),
+      point: state.position,
+    });
+    if (progress > 0.9) {
+      const capture = mooringCapture(frame, state, properties);
+      if (isMooringCaptureEligible(
+        capture.offset,
+        state.orientation,
+        frame.nose,
+      )) {
+        forces.push({
+          force: mooringForce(
+            capture.offset,
+            capture.velocity,
+            properties.mass,
+          ),
+          point: capture.point,
+        });
+      }
+    }
+    state = stepBody(
+      state,
+      properties,
+      forces,
+      { linear: 0, angular: properties.inertia[4] * 0.5 },
+      dt,
+    );
+    progress = advanceVehicleRouteProgress(
+      plan,
+      progress,
+      state.position,
+      Math.hypot(state.velocity[0], state.velocity[2]) * dt,
+    );
+    const capture = mooringCapture(frame, state, properties);
+    if (
+      progress > 0.985 &&
+      isDockedPose(
+        capture.offset,
+        state.orientation,
+        capture.velocity,
+        state.angularVelocity,
+        frame.nose,
+      )
+    ) {
+      break;
+    }
+  }
+
+  const capture = mooringCapture(frame, state, properties);
+  assert.equal(progress > 0.985, true, `arrival progress ${(progress * 100).toFixed(1)}%`);
+  assert.equal(
+    isDockedPose(
+      capture.offset,
+      state.orientation,
+      capture.velocity,
+      state.angularVelocity,
+      frame.nose,
+    ),
+    true,
+    `replacement stopped ${Math.hypot(
+      state.position[0] - properties.centre[0],
+      state.position[2] - properties.centre[2],
+    ).toFixed(2)} m from berth; capture ` +
+      `${capture.offset.map((value) => value.toFixed(2)).join(", ")}; ` +
+      `velocity ${capture.velocity.map((value) => value.toFixed(2)).join(", ")}; ` +
+      `nose ${rotateVector(state.orientation, frame.nose).map((value) => value.toFixed(2)).join(", ")}; ` +
+      `angular ${state.angularVelocity.map((value) => value.toFixed(3)).join(", ")}; ` +
+      `progress ${(progress * 100).toFixed(2)}%`,
+  );
 });
 
 test("the engines, not our taste, decide how briskly it can go", () => {
@@ -902,7 +1146,7 @@ test("the rudder works on dynamic pressure, so the approach is flown on engines"
 });
 
 
-test("one journey lifecycle drives the five public berth states", () => {
+test("one journey lifecycle drives every public berth state", () => {
   assert.equal(skyTrainFlightEventState(null), "docked");
   assert.equal(skyTrainFlightEventState({
     kind: "circuit",
@@ -928,11 +1172,73 @@ test("one journey lifecycle drives the five public berth states", () => {
     castOff: true,
     progress: 0.99,
   }), "approach");
+  const flight = {
+    kind: "circuit",
+    time: 100,
+    castOff: true,
+    progress: 0.7,
+  };
+  assert.equal(
+    skyTrainFlightEventState(flight, { phase: "escape" }),
+    "failed",
+  );
+  assert.equal(
+    skyTrainFlightEventState(flight, { phase: "waiting" }),
+    "failed",
+  );
+  assert.equal(
+    skyTrainFlightEventState(flight, { phase: "arrival" }),
+    "approach",
+  );
 });
 
 test("arrival requires a settled terminal pose without depending on one contact sensor", () => {
   const identity = [0, 0, 0, 1];
   const still = [0, 0, 0];
+  assert.equal(
+    isDockingSettleWindow(0.99, [0, 6.5, 0], identity),
+    false,
+    "the vertical landing shelf started the timeout",
+  );
+  assert.equal(
+    isDockingSettleWindow(0.99, [1, 0.5, 0], identity),
+    true,
+    "a vehicle already over the berth did not enter its settling window",
+  );
+  const cityTolerance = {
+    ...SKY_TRAIN_DOCKING,
+    position: 0.48,
+    height: 0.22,
+  };
+  assert.equal(
+    isDockingSettleWindow(
+      0.99,
+      [0.9, 0, 0],
+      identity,
+      [-1, 0, 0],
+      undefined,
+      cityTolerance,
+    ),
+    false,
+    "the city timer started while the nose was still outside capture",
+  );
+  assert.equal(
+    isDockingSettleWindow(
+      0.99,
+      [0.8, 0, 0],
+      identity,
+      [-1, 0, 0],
+      undefined,
+      cityTolerance,
+    ),
+    true,
+    "the city timer missed its real mooring capture",
+  );
+  assert.equal(
+    isDockingSettleWindow(0.99, [7, 0, 0], identity),
+    false,
+    "the approach was mistaken for a completed landing",
+  );
   assert.equal(isDockedPose(still, identity, still, still), true);
   assert.equal(isDockedPose([0, SKY_TRAIN_DOCKING.height + 0.01, 0], identity, still, still), false);
   assert.equal(isDockedPose(still, identity, [0, SKY_TRAIN_DOCKING.verticalSpeed + 0.01, 0], still), false);
@@ -942,6 +1248,86 @@ test("arrival requires a settled terminal pose without depending on one contact 
     "an unfinished route was accepted",
   );
   assert.equal(isDockingComplete(0.99, still, identity, still, still), true);
+});
+
+test("mooring measures the physical nose fitting, never the body centre or ground", () => {
+  const frame = vehicleFrameForCluster(SKY_TRAIN);
+  const properties = massProperties(ship, densityOf);
+  const still = [0, 0, 0];
+  const identity = [0, 0, 0, 1];
+  const atBerth = vehicleMooringState(
+    frame,
+    still,
+    identity,
+    still,
+    still,
+    properties.centre,
+  );
+  assert.equal(atBerth.offset.every((value) => Math.abs(value) < 1e-8), true);
+
+  const yaw = 0.12;
+  const turned = vehicleMooringState(
+    frame,
+    still,
+    [0, Math.sin(yaw / 2), 0, Math.cos(yaw / 2)],
+    still,
+    still,
+    properties.centre,
+  );
+  assert.equal(
+    Math.hypot(turned.offset[0], turned.offset[2]) > SKY_TRAIN_DOCKING.position,
+    true,
+    "a centred body falsely counted as a captured nose",
+  );
+
+  const backwards = [0, 1, 0, 0];
+  const backwardsAtCentre = vehicleMooringState(
+    frame,
+    still,
+    backwards,
+    still,
+    still,
+    properties.centre,
+  );
+  const backwardsAtCup = vehicleMooringState(
+    frame,
+    backwardsAtCentre.offset.map((value) => -value),
+    backwards,
+    still,
+    still,
+    properties.centre,
+  );
+  assert.equal(backwardsAtCup.offset.every((value) => Math.abs(value) < 1e-8), true);
+  assert.equal(
+    isMooringCaptureEligible(
+      backwardsAtCup.offset,
+      backwards,
+      frame.nose,
+    ),
+    false,
+    "the mast captured a nose presented from the wrong side",
+  );
+
+  const onGround = vehicleMooringState(
+    frame,
+    [0, -8, 0],
+    identity,
+    still,
+    still,
+    properties.centre,
+  );
+  assert.equal(
+    isDockingComplete(
+      1,
+      onGround.offset,
+      identity,
+      onGround.velocity,
+      still,
+      frame.nose,
+    ),
+    false,
+    "a ground landing was published as mast mooring",
+  );
 });
 
 test("the platform lights blink the count, burn the flight and go out on arrival", () => {

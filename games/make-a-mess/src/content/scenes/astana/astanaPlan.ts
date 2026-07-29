@@ -14,22 +14,34 @@
 
 import {
   WORLD_RADIUS,
+  RIVER_BANK_WIDTH,
+  RIVER_TERRACE_WIDTH,
+  RIVER_VALLEY_MARGIN,
   groundKindAt,
   riverAxisZ,
   riverHalfWidth,
 } from "./astanaShell.ts";
+import {
+  KHAN_SHATYR_YAW,
+  NURZHOL_END,
+  NURZHOL_PLAN_ROTATION,
+  NURZHOL_START,
+  astanaLandmarkSiteById,
+  nurzholPoint,
+  type AstanaSiteStatus,
+} from "./astanaLayout.ts";
 
 export type PlanPoint = readonly [x: number, z: number];
 
-/** Радиус кольца ЛРТ и проспекта под ним. */
+/** Радиус кольца ЛРТ. Будущая автодорога обязана лежать СНАРУЖИ него. */
 export const RING_RADIUS = 98;
 
 /** Полуширина долины: русло плюс береговой уступ плюс пойма. */
 export function valleyHalfWidth(x: number): number {
-  return riverHalfWidth(x) + 16;
+  return riverHalfWidth(x) + RIVER_VALLEY_MARGIN;
 }
 
-/** Точка на окружности кольца по азимуту: 0 — восток, π/2 — север (+z). */
+/** Точка кольца по сторонам макета: 0 — справа, π/2 — сверху (+z). */
 export function ringPoint(angle: number, radius = RING_RADIUS): PlanPoint {
   return [Math.cos(angle) * radius, Math.sin(angle) * radius];
 }
@@ -202,9 +214,16 @@ export interface AstanaWay {
   readonly points: readonly PlanPoint[];
   /** Полуширина коридора в метрах. */
   readonly width: number;
+  /** Мост бывает пешеходным: по нему не кладут асфальт и бордюр. */
+  readonly forVehicles?: boolean;
+  /** Семантическая линия, которую пока не надо превращать в покрытие. */
+  readonly renderSurface?: boolean;
 }
 
-/** Сторона света, на которой стоит станция кольца. */
+/**
+ * Сторона МАКЕТА, на которой стоит станция кольца. Это топологические имена,
+ * а не истинный географический компас из astanaLayout.ts.
+ */
 export type Compass = "north" | "east" | "south" | "west";
 
 /**
@@ -236,6 +255,37 @@ export interface AstanaArea {
   /** Полуразмеры пятна. */
   readonly radius: PlanPoint;
   readonly rotation?: number;
+  /** Форма пятна в его локальных координатах. */
+  readonly shape?: "rectangle" | "ellipse";
+  /** Общественное пространство может намеренно входить в резерв здания. */
+  readonly kind?: "landmark" | "public-space";
+  /**
+   * Полуразмеры действительно замощённой части. Само `radius` — резерв под
+   * здание и воздух вокруг него, а не приказ залить весь участок камнем.
+   * Нет значения — участок пока остаётся ландшафтом.
+   */
+  readonly pavingRadius?: PlanPoint;
+  /** `direct` означает одну плиту в точном азимуте, вне полуметрового растра. */
+  readonly surfaceMode?: "raster" | "direct";
+  /** Статус пятна управляет его временным материалом на карте. */
+  readonly status?: AstanaSiteStatus | "finished" | "ensemble";
+  /** Ограничение, которое нельзя менять при будущей посадке здания. */
+  readonly orientationRule?:
+    | "toward-baiterek"
+    | "qibla"
+    | "composition-tangent"
+    | "parallel-to-lrt-platform"
+    | "fronts-nurzhol"
+    | "opera-forecourt"
+    | "gateway-axis"
+    | "orthogonal-to-nurzhol"
+    | "river-crossing";
+  /** Азимут от истинного севера по часовой стрелке, если он обязателен. */
+  readonly bearingDegrees?: number;
+  /** Конструкция будет стоять над долиной на опорах, а не на грунте. */
+  readonly elevated?: boolean;
+  /** Неповторимый рисунок мощения, рассчитываемый внутри одного покрытия. */
+  readonly surfacePattern?: "baiterek-radial";
 }
 
 // --- Станции кольца --------------------------------------------------------
@@ -287,18 +337,86 @@ export const astanaStations: readonly AstanaStation[] = [
 export const astanaStationById: Readonly<Record<string, AstanaStation>> =
   Object.fromEntries(astanaStations.map((station) => [station.id, station]));
 
+export interface PlanFootprint {
+  readonly center: PlanPoint;
+  readonly radius: PlanPoint;
+  readonly rotation?: number;
+}
+
+export interface StationEntranceClearance extends PlanFootprint {
+  readonly stationId: string;
+}
+
+/**
+ * Свободный прямоугольник перед настоящим наземным порталом станции.
+ * Платформа и наклонный рукав уже являются зданием; эта зона начинается у
+ * дверей и обязана остаться проходом, а не «остатком места» между пятнами.
+ */
+export const stationEntranceClearances: readonly StationEntranceClearance[] =
+  astanaStations.map((station) => {
+    const distance = stationDistance(station.compass);
+    const centre = ringPathPoint(distance);
+    const ahead = ringPathPoint(distance + 1);
+    const behind = ringPathPoint(distance - 1);
+    const dx = ahead[0] - behind[0];
+    const dz = ahead[1] - behind[1];
+    const span = Math.hypot(dx, dz);
+    const along: PlanPoint = [dx / span, dz / span];
+    const radial = Math.hypot(...centre);
+    const inward: PlanPoint = [-centre[0] / radial, -centre[1] / radial];
+    const alongCentre = 13.8;
+    const inwardCentre = 24;
+    return {
+      stationId: station.id,
+      center: [
+        centre[0] + along[0] * alongCentre + inward[0] * inwardCentre,
+        centre[1] + along[1] * alongCentre + inward[1] * inwardCentre,
+      ],
+      radius: [8.5, 4.5],
+      rotation: Math.atan2(along[1], along[0]),
+    };
+  });
+
+/** SAT для двух повёрнутых прямоугольных габаритов в плане. */
+export function footprintsOverlap(
+  left: PlanFootprint,
+  right: PlanFootprint,
+  margin = 0,
+): boolean {
+  const axes = (rotation: number): readonly PlanPoint[] => [
+    [Math.cos(rotation), Math.sin(rotation)],
+    [-Math.sin(rotation), Math.cos(rotation)],
+  ];
+  const leftAxes = axes(left.rotation ?? 0);
+  const rightAxes = axes(right.rotation ?? 0);
+  const delta: PlanPoint = [
+    right.center[0] - left.center[0],
+    right.center[1] - left.center[1],
+  ];
+  for (const axis of [...leftAxes, ...rightAxes]) {
+    const centreDistance = Math.abs(delta[0] * axis[0] + delta[1] * axis[1]);
+    const projected = (footprint: PlanFootprint, basis: readonly PlanPoint[]): number =>
+      Math.abs(basis[0][0] * axis[0] + basis[0][1] * axis[1]) * footprint.radius[0]
+      + Math.abs(basis[1][0] * axis[0] + basis[1][1] * axis[1]) * footprint.radius[1];
+    if (centreDistance > projected(left, leftAxes) + projected(right, rightAxes) + margin) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // --- Мосты -----------------------------------------------------------------
-// Долина Есиля пересекается только в этих точках. Два городских моста и два
-// перехода эстакады ЛРТ — эстакада идёт своим уровнем и мостом для пешехода
-// не является.
+// Долина Есиля пересекается только в этих точках. Сейчас в живом плане один
+// городской мост — пешеходный Атырау — и два перехода эстакады ЛРТ.
+// Автомобильный мост снят до появления убедительной внешней связности.
 
 export interface AstanaBridge {
   readonly id: string;
   readonly purpose: string;
   /**
    * Осевая линия моста. У городских мостов это отрезок поперёк долины, у
-   * кольцевых — дуга самого кольца: эстакада ЛРТ и проспект Тұран идут над
-   * поймой общим сооружением, как на настоящей линии.
+   * кольцевых — дуга самого кольца: над поймой проходит только эстакада ЛРТ.
+   * Внешняя автодорога получит собственное решение после утверждения пятен.
    */
   readonly axis: readonly PlanPoint[];
   readonly halfWidth: number;
@@ -307,15 +425,26 @@ export interface AstanaBridge {
   readonly onRing?: boolean;
 }
 
-/** Осевая городского моста: поперёк всей долины, с выходом на сушу обоих берегов. */
-function valleyCrossing(x: number): readonly PlanPoint[] {
+/**
+ * Ось «Атырау» снята как последовательность контрольных смещений с плана,
+ * а не сочинена синусом. Несимметричная S-линия и центральное расширение
+ * поэтому читаются как одно сооружение, а оба конца остаются на берегу.
+ */
+function atyrauCrossing(x: number): readonly PlanPoint[] {
   const axis = riverAxisZ(x);
   const half = valleyHalfWidth(x);
-  const points: PlanPoint[] = [];
-  for (let step = 0; step <= 12; step += 1) {
-    points.push([x, axis - half - 4 + ((half * 2 + 8) * step) / 12]);
-  }
-  return points;
+  // Сужение Есиля не имеет права сжать уже принятую 21-метровую оболочку:
+  // концы моста просто глубже выходят на сушу.
+  const length = Math.max(50, half * 2 + 8);
+  const planOffsets = [
+    0, 0.15, 0.45, 0.9, 1.45, 2.05, 2.55, 2.85, 2.75, 2.35,
+    1.65, 0.75, -0.25, -1.05, -1.55, -1.7, -1.55, -1.1, -0.45,
+    0.2, 0.65, 0.75, 0.55, 0.25, 0,
+  ] as const;
+  return planOffsets.map((offset, step) => [
+    x + offset,
+    axis - length / 2 + length * step / (planOffsets.length - 1),
+  ]);
 }
 
 /**
@@ -366,29 +495,23 @@ function ringValleyArcs(): readonly (readonly PlanPoint[])[] {
 }
 
 const ringArcs = ringValleyArcs();
+// Место прежнего надречного резерва Нур Алема теперь занимает сам мост.
+const atyrauAxis = atyrauCrossing(49);
 
 export const astanaBridges: readonly AstanaBridge[] = [
   {
-    id: "dostyk",
-    purpose: "Главный мост: проспект с левого берега в старый город",
-    axis: valleyCrossing(0),
-    halfWidth: 9,
-    forVehicles: true,
-  },
-  {
     id: "footbridge",
-    purpose: "Пешеходный мост от набережной к дворам двухэтажек",
-    axis: valleyCrossing(-42),
-    halfWidth: 2.6,
+    purpose: "Пешеходный мост «Атырау»: волна и белая треугольная оболочка",
+    axis: atyrauAxis,
+    halfWidth: 2.8,
     forVehicles: false,
   },
   ...ringArcs.map((arc, index) => ({
     id: index === 0 ? "ring-east" : "ring-west",
-    purpose:
-      "Пролёт кольца над долиной: эстакада ЛРТ и проспект Тұран одним сооружением",
+    purpose: "Пролёт эстакады ЛРТ над долиной Есиля",
     axis: arc,
-    halfWidth: 7,
-    forVehicles: true,
+    halfWidth: 4.2,
+    forVehicles: false,
     onRing: true,
   })),
 ] as const;
@@ -429,7 +552,7 @@ function ringWay(id: string, purpose: string, width: number): AstanaWay {
   for (let step = 0; step <= steps; step += 1) {
     points.push(ringPathPoint((RING_PATH_LENGTH * step) / steps));
   }
-  return { id, purpose, kind: "roadway", points, width };
+  return { id, purpose, kind: "roadway", points, width, renderSurface: false };
 }
 
 /** Линия городского моста: его осевая и есть маршрут. */
@@ -440,6 +563,7 @@ function bridgeWay(bridge: AstanaBridge): AstanaWay {
     kind: "bridge",
     points: bridge.axis,
     width: bridge.halfWidth,
+    forVehicles: bridge.forVehicles,
   };
 }
 
@@ -452,12 +576,29 @@ function rampWay(id: string, x: number, side: 1 | -1): AstanaWay {
     purpose: "Съезд с поймы на дно русла",
     kind: "ramp",
     points: [
-      [x, axis + side * (half + 16 - 1)],
-      [x + side * 1.5, axis + side * (half + 9)],
-      [x + side * 2.5, axis + side * (half + 3.5)],
+      [x, axis + side * (half + RIVER_VALLEY_MARGIN - 1)],
+      [x + side * 1.5, axis + side * (half + RIVER_TERRACE_WIDTH + 1)],
+      [x + side * 2.5, axis + side * (half + RIVER_BANK_WIDTH * 0.45)],
       [x + side * 3, axis + side * (half - 1.5)],
     ],
     width: 1.8,
+  };
+}
+
+function atyrauFutureApproach(side: -1 | 1): AstanaWay {
+  const end = side < 0 ? atyrauAxis[0] : atyrauAxis[atyrauAxis.length - 1];
+  return {
+    id: side < 0 ? "atyrau-link-south" : "atyrau-link-north",
+    purpose: "Мягкий резерв связности от S-образного конца моста Атырау",
+    kind: "approach",
+    points: [
+      end,
+      [end[0] - 2, end[1] + side * 3],
+      [end[0] - 3, end[1] + side * 6],
+      [end[0] - 2, end[1] + side * 9],
+    ],
+    width: 1.8,
+    renderSurface: false,
   };
 }
 
@@ -465,20 +606,21 @@ export const astanaWays: readonly AstanaWay[] = [
   // === Кольцо ==============================================================
   ringWay(
     "turan-ring",
-    "Проспект Тұран: кольцо под эстакадой ЛРТ, связывает четыре станции",
-    5,
+    "Резерв внешней связности: прежняя дорога под ЛРТ больше не строится",
+    3.5,
   ),
 
   // === Ядро: бульвар Нұржол ================================================
   {
     id: "nurzhol-boulevard",
-    purpose: "Бульвар Нұржол: пешеходная ось от шатра через Байтерек к пирамиде",
+    purpose: "Цветочный бульвар Нұржол: пешеходная ось Байтерек — Хан Шатыр",
     kind: "promenade",
     points: [
-      [-46, 0], [-34, 0], [-22, 0], [-10, 0], [0, 0],
-      [10, 0], [22, 0], [34, 0], [46, 0],
+      [0, 0], [7, -5.86], [14, -11.71], [21, -17.57],
+      [28, -23.43], [34, -28.45],
     ],
-    width: 13,
+    width: 4.5,
+    renderSurface: false,
   },
 
   // === Радиальные проспекты к станциям =====================================
@@ -486,40 +628,47 @@ export const astanaWays: readonly AstanaWay[] = [
     id: "avenue-west",
     purpose: "Западный проспект: от партера Байтерека к станции Нұрлы жол",
     kind: "roadway",
-    points: [[-46, 0], [-58, 0], [-70, 0], [-82, 0], [-93, 0]],
-    width: 6,
+    points: [[-46, 0], [-52, -18], [-66, -29], [-82, -24], [-91, -10], [-93, 0]],
+    width: 3.75,
+    renderSurface: false,
   },
   {
     id: "avenue-east",
     purpose: "Восточный проспект: от пирамиды к станции Әуежай",
     kind: "roadway",
-    points: [[46, 0], [58, 0], [70, 0], [82, 0], [93, 0]],
-    width: 6,
+    points: [[46, 0], [52, -14], [70, -16], [84, -12], [92, -4], [93, 0]],
+    width: 3.75,
+    renderSurface: false,
   },
   {
     id: "avenue-south",
     purpose: "Южный проспект: от партера через Триумфальную арку к Астана Арене",
     kind: "roadway",
     points: [[0, -18], [0, -34], [0, -50], [0, -66], [0, -82], [0, -93]],
-    width: 6,
+    width: 3.75,
+    renderSurface: false,
   },
   {
     id: "avenue-north",
-    purpose: "Северный проспект: от партера к мосту Достык",
+    purpose: "Резерв мягкой северо-западной связности от партера",
     kind: "roadway",
-    points: [[0, 18], [0, 24], [0, 30]],
-    width: 6,
+    points: [[0, 0], [4, 3], [10, 5], [18, 6], [24, 8]],
+    width: 3.75,
+    renderSurface: false,
   },
   {
     id: "mangilik-el",
     purpose: "Проспект Мәңгілік Ел: диагональ к мечети, сфере и ЭКСПО-подиуму",
     kind: "roadway",
     points: [[8, -6], [20, -18], [32, -30], [44, -42], [56, -54], [64, -62]],
-    width: 6,
+    width: 3.5,
+    renderSurface: false,
   },
 
   // === Долина Есиля ========================================================
   ...astanaBridges.filter((bridge) => !bridge.onRing).map(bridgeWay),
+  atyrauFutureApproach(-1),
+  atyrauFutureApproach(1),
   {
     id: "quay-south",
     purpose: "Набережная Достық по южной пойме",
@@ -534,7 +683,7 @@ export const astanaWays: readonly AstanaWay[] = [
       [56, riverAxisZ(56) - valleyHalfWidth(56) + 3],
       [88, riverAxisZ(88) - valleyHalfWidth(88) + 3],
     ],
-    width: 3,
+    width: 2,
   },
   {
     id: "quay-north",
@@ -549,8 +698,11 @@ export const astanaWays: readonly AstanaWay[] = [
       [34, riverAxisZ(34) + valleyHalfWidth(34) - 3],
       [60, riverAxisZ(60) + valleyHalfWidth(60) - 3],
       [76, riverAxisZ(76) + valleyHalfWidth(76) - 3],
+      // Точный узел существующей связки к старому городу: набережная не
+      // распадается на отдельный северный остров после сужения долины.
+      [84.3, 49.9],
     ],
-    width: 3,
+    width: 2,
   },
   rampWay("ramp-south-east", 26, -1),
   rampWay("ramp-south-west", -64, -1),
@@ -565,35 +717,37 @@ export const astanaWays: readonly AstanaWay[] = [
       [-56, 72], [-46, 71.5], [-30, 71], [-6, 70],
       [18, 70], [22, 70], [42, 71], [64, 73],
     ],
-    width: 5,
+    width: 3.5,
+    renderSurface: false,
   },
   {
     id: "kenesary",
-    purpose: "Улица Кенесары: от моста Достык к привокзальной площади",
+    purpose: "Улица Кенесары: внутренняя ось к привокзальной площади",
     kind: "roadway",
     points: [[0, 62], [0, 70], [0, 78], [0, 86]],
-    width: 4,
+    width: 3,
+    renderSurface: false,
   },
   {
     id: "station-square-approach",
     purpose: "Выход с привокзальной площади к станции Жібек жолы",
     kind: "pavement",
     points: [[0, 86], [0, 90], [0, 94]],
-    width: 2.4,
+    width: 2,
   },
   {
     id: "old-yard-west",
     purpose: "Дворовый проезд между двухэтажками западного квартала",
     kind: "yard",
     points: [[-46, 70], [-46, 78], [-38, 82], [-26, 82], [-18, 78]],
-    width: 2.2,
+    width: 1.8,
   },
   {
     id: "old-yard-east",
     purpose: "Дворовый проезд восточного квартала: гаражи и голубятня",
     kind: "yard",
     points: [[22, 70], [26, 78], [36, 82], [48, 80], [54, 74]],
-    width: 2.2,
+    width: 1.8,
   },
 
   // === Связки кольца с городом ============================================
@@ -602,53 +756,73 @@ export const astanaWays: readonly AstanaWay[] = [
     purpose: "Съезд с кольца к привокзальной площади",
     kind: "roadway",
     points: [[0, 98], [0, 94]],
-    width: 4,
+    width: 3,
+    renderSurface: false,
   },
   {
     id: "ring-link-east",
     purpose: "Съезд с кольца на восточный проспект",
     kind: "roadway",
     points: [[93, 0], [96, 0]],
-    width: 4,
+    width: 3,
+    renderSurface: false,
   },
   {
     id: "ring-link-south",
     purpose: "Съезд с кольца на южный проспект",
     kind: "roadway",
     points: [[0, -93], [0, -96]],
-    width: 4,
+    width: 3,
+    renderSurface: false,
   },
   {
     id: "ring-link-west",
     purpose: "Съезд с кольца на западный проспект",
     kind: "roadway",
     points: [[-93, 0], [-96, 0]],
-    width: 4,
+    width: 3,
+    renderSurface: false,
   },
   {
     id: "respubliki-link",
     purpose: "Связка проспекта Республики с кольцом на востоке",
     kind: "roadway",
     points: [[64, 73], [72, 70], [79, 62], [84.3, 49.9]],
-    width: 4,
+    width: 3,
+    renderSurface: false,
   },
   {
     id: "quay-link-west",
     purpose: "Связка западной набережной с кольцом",
     kind: "promenade",
     points: [[-88, riverAxisZ(-88) - valleyHalfWidth(-88) + 3], [-92, 22], [-95, 12], [-96, 0]],
-    width: 2.4,
+    width: 2,
   },
   {
     id: "mangilik-ring-link",
     purpose: "Выход проспекта Мәңгілік Ел на кольцо",
     kind: "roadway",
     points: [[64, -62], [70, -63], [75.1, -63]],
-    width: 5,
+    width: 3.25,
+    renderSurface: false,
   },
 ] as const;
 
+/** Только эти линии становятся реальным покрытием в текущей итерации. */
+export const renderedAstanaWays: readonly AstanaWay[] = astanaWays.filter(
+  (way) => way.renderSurface !== false,
+);
+
 // --- Места -----------------------------------------------------------------
+
+const khanSite = astanaLandmarkSiteById["khan-shatyr-plot"];
+const pyramidSite = astanaLandmarkSiteById["pyramid-plot"];
+const nurAlemSite = astanaLandmarkSiteById["nur-alem-expo-plot"];
+const plazaSite = astanaLandmarkSiteById["abu-dhabi-plaza-plot"];
+const archSite = astanaLandmarkSiteById["arch-square"];
+const operaSite = astanaLandmarkSiteById["opera-plot"];
+const circusSite = astanaLandmarkSiteById["circus-plot"];
+const museumSite = astanaLandmarkSiteById["museum-plot"];
 
 export const astanaAreas: readonly AstanaArea[] = [
   {
@@ -656,104 +830,143 @@ export const astanaAreas: readonly AstanaArea[] = [
     purpose: "Партер Байтерека: гранитный круг в центре острова",
     center: [0, 0],
     radius: [18, 18],
+    pavingRadius: [16, 16],
+    status: "finished",
+    kind: "public-space",
+    shape: "ellipse",
+    surfacePattern: "baiterek-radial",
   },
   {
-    id: "boulevard-west",
-    purpose: "Западная половина бульвара: фонтаны и цветочные ковры",
-    center: [-24, 0],
-    radius: [22, 13],
-  },
-  {
-    id: "boulevard-east",
-    purpose: "Восточная половина бульвара: партер к пирамиде",
-    center: [24, 0],
-    radius: [22, 13],
+    id: "nurzhol-flower-boulevard",
+    purpose: "Композиционный резерв цветочного бульвара Байтерек — Хан Шатыр",
+    center: nurzholPoint((NURZHOL_START + NURZHOL_END) / 2),
+    radius: [(NURZHOL_END - NURZHOL_START) / 2, 4.6],
+    rotation: NURZHOL_PLAN_ROTATION,
+    status: "finished",
+    kind: "public-space",
   },
   {
     id: "khan-shatyr-plot",
-    purpose: "Площадка шатра на западном конце бульвара",
-    center: [-58, 0],
-    radius: [24, 24],
+    purpose: "Хан Шатыр на юго-восточном продолжении оси Атырау — Байтерек",
+    center: khanSite.center,
+    radius: khanSite.radius,
+    rotation: KHAN_SHATYR_YAW,
+    status: khanSite.status,
+    orientationRule: "toward-baiterek",
   },
   {
     id: "pyramid-plot",
-    purpose: "Стилобат пирамиды на восточном конце бульвара",
-    center: [58, 2],
-    radius: [16, 16],
+    purpose: "Дворец мира и согласия над Есилем на оси Хан Шатыр — Байтерек",
+    center: pyramidSite.center,
+    radius: pyramidSite.radius,
+    rotation: pyramidSite.rotation,
+    pavingRadius: [12, 12],
+    surfaceMode: "direct",
+    status: pyramidSite.status,
+    elevated: pyramidSite.elevated,
+    orientationRule: "orthogonal-to-nurzhol",
   },
   {
-    id: "mosque-plot",
-    purpose: "Площадь мечети Хазрет Султан",
-    center: [46, -44],
-    radius: [18, 18],
+    id: "nur-alem-expo-plot",
+    purpose: "Нур Алем в отдельной южной среде на бывшем резерве мечети",
+    center: nurAlemSite.center,
+    radius: nurAlemSite.radius,
+    rotation: nurAlemSite.rotation,
+    pavingRadius: [13, 13],
+    surfaceMode: "direct",
+    status: nurAlemSite.status,
+    shape: "ellipse",
+    orientationRule: "composition-tangent",
   },
   {
-    id: "expo-podium",
-    purpose: "Подиум ЭКСПО со сферой Нур Алем",
-    center: [66, -60],
-    radius: [18, 18],
+    id: "abu-dhabi-plaza-plot",
+    purpose: "Абу-Даби Плаза напротив тамбура западной станции ЛРТ",
+    center: plazaSite.center,
+    radius: plazaSite.radius,
+    rotation: plazaSite.rotation,
+    pavingRadius: [4, 2.5],
+    surfaceMode: "direct",
+    status: plazaSite.status,
+    orientationRule: "parallel-to-lrt-platform",
   },
   {
     id: "arch-square",
-    purpose: "Площадь Триумфальной арки на южном проспекте",
-    center: [0, -62],
-    radius: [12, 10],
+    purpose: "Триумфальная арка справа от Оперы на расстоянии Опера — Нуржол",
+    center: archSite.center,
+    radius: archSite.radius,
+    rotation: archSite.rotation,
+    pavingRadius: [7, 1.7],
+    surfaceMode: "direct",
+    status: archSite.status,
+    orientationRule: "opera-forecourt",
   },
   {
     id: "station-square",
     purpose: "Привокзальная площадь старого города",
-    center: [0, 88],
-    radius: [14, 8],
+    center: [0, 84],
+    radius: [12, 6],
+    pavingRadius: [11, 5],
+    status: "ensemble",
+    kind: "public-space",
   },
   {
     id: "old-square",
     purpose: "Старая площадь: гостиница «Ишим», ряды, драмтеатр",
-    center: [30, 74],
-    radius: [14, 8],
+    center: [25, 72],
+    radius: [10, 5],
+    pavingRadius: [9, 4],
+    status: "ensemble",
+    kind: "public-space",
   },
   {
     id: "old-yard-west-court",
     purpose: "Двор западного квартала двухэтажек: лавки, качели, тополя",
-    center: [-32, 80],
-    radius: [12, 7],
+    center: [-40, 82],
+    radius: [9, 5],
+    status: "ensemble",
+    kind: "public-space",
   },
   {
     id: "old-yard-east-court",
     purpose: "Двор восточного квартала: гаражи, голубятня, теплотрасса",
-    center: [38, 79],
-    radius: [12, 7],
-  },
-  {
-    id: "atameken-plot",
-    // Единственное место, размеченное В пойме: парк-миниатюра лежит у самой
-    // воды, как настоящий Атамекен у Ишима.
-    purpose: "Парк-миниатюра Атамекен на южной пойме",
-    center: [-52, 12],
-    radius: [14, 10],
+    center: [46, 81],
+    radius: [9, 5],
+    status: "ensemble",
+    kind: "public-space",
   },
   {
     id: "opera-plot",
-    purpose: "Площадка Оперы на западе левого берега",
-    center: [-42, -30],
-    radius: [16, 12],
+    purpose: "Астана Опера: южный фронтон точно в середину цветочного Нуржола",
+    center: operaSite.center,
+    radius: operaSite.radius,
+    rotation: operaSite.rotation,
+    pavingRadius: [11, 7],
+    surfaceMode: "direct",
+    status: operaSite.status,
+    orientationRule: "fronts-nurzhol",
   },
   {
     id: "circus-plot",
-    purpose: "Цирк-«тарелка» на левом берегу, за набережной",
-    center: [-30, -18],
-    radius: [12, 12],
-  },
-  {
-    id: "school-palace-plot",
-    purpose: "Дворец школьников на юго-западе",
-    center: [-56, -44],
-    radius: [16, 12],
+    purpose: "Вторичный резерв цирка-«тарелки»",
+    center: circusSite.center,
+    radius: circusSite.radius,
+    rotation: circusSite.rotation,
+    pavingRadius: [7, 7],
+    surfaceMode: "direct",
+    status: circusSite.status,
+    shape: "ellipse",
+    orientationRule: "composition-tangent",
   },
   {
     id: "museum-plot",
-    purpose: "Национальный музей на юго-востоке от партера",
-    center: [30, -34],
-    radius: [16, 12],
+    purpose: "Сжатый вторичный резерв Национального музея",
+    center: museumSite.center,
+    radius: museumSite.radius,
+    rotation: museumSite.rotation,
+    pavingRadius: [6, 4],
+    surfaceMode: "direct",
+    status: museumSite.status,
+    orientationRule: "composition-tangent",
   },
 ] as const;
 

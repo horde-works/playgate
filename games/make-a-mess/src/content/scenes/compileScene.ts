@@ -287,11 +287,17 @@ function compilePiece(
     vegetationVisual: source.vegetationVisual,
     weathering: source.weathering ?? weatheringAmount(source.material, object.surface),
     hinge: transformedHinge(source.hinge, object.transform),
+    actuator: source.actuator,
   };
   return {
     piece,
     light: source.light
-      ? compileLight(id, source.light, object.transform)
+      ? compileLight(
+          id,
+          source.light,
+          object.transform,
+          source.light.followsGroup ? `${sceneId}:${groupId}` : undefined,
+        )
       : undefined,
   };
 }
@@ -300,13 +306,22 @@ function compileLight(
   sourcePieceId: string,
   light: SceneLightSource,
   transform: SceneTransform,
+  carrierClusterId?: string,
 ): LampDefinition {
   return {
     id: sourcePieceId,
     position: transformedPosition(light.position ?? [0, 0, 0], transform),
+    carrierClusterId,
     color: light.color,
     distance: light.distance,
     intensity: light.intensity,
+    dayIntensityFactor: light.dayIntensityFactor,
+    poolPriority: light.poolPriority,
+    localPoolCapacity: light.localPoolCapacity,
+    poolGroupId: light.poolGroupId,
+    beacon: light.beacon,
+    eventLighting: light.eventLighting,
+    transition: light.transition,
   };
 }
 
@@ -327,6 +342,7 @@ function primitiveSource(object: Extract<SceneObjectDefinition, { kind: "primiti
     sideAttachmentReach: object.sideAttachmentReach,
     contactBearingOrder: object.contactBearingOrder,
     hinge: object.hinge,
+    actuator: object.actuator,
     light: object.light,
     textureProfile: object.textureProfile,
     landscapeSurface: object.landscapeSurface,
@@ -429,6 +445,8 @@ export function compileSceneDocument(
     cameraFar: document.world.cameraFar,
     worldCenter: document.world.center,
     worldHalfExtents: document.world.halfExtents,
+    boundaryRadius: document.world.boundaryRadius,
+    skyRadius: document.world.skyRadius,
     worldRadius: document.world.radius,
     safetyFloorY: document.world.safetyFloorY,
     copy: document.copy,
@@ -437,6 +455,7 @@ export function compileSceneDocument(
     indestructible: document.indestructible,
     contentLicense: document.contentLicense,
     fogDistances: document.fogDistances,
+    solarFrame: document.solarFrame ?? undefined,
   });
   const unsupported = scene.resolveStructuralCollapse(new Set());
   if (options.validateInitialStability !== false && unsupported.size > 0) {

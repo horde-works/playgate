@@ -66,13 +66,62 @@ const prismIndices: readonly number[] = (() => {
   return indices;
 })();
 
+// A modest lat/long mesh is enough for collision while preserving the actual
+// round envelope. Using the box template here creates invisible cube corners
+// several metres outside a large architectural sphere.
+const SPHERE_LONGITUDES = 16;
+const SPHERE_LATITUDES = 10;
+const sphereCorners: readonly (readonly [number, number, number])[] = (() => {
+  const vertices: (readonly [number, number, number])[] = [[0, 0.5, 0]];
+  for (let latitude = 1; latitude < SPHERE_LATITUDES; latitude += 1) {
+    const polar = Math.PI * latitude / SPHERE_LATITUDES;
+    const ring = 0.5 * Math.sin(polar);
+    const y = 0.5 * Math.cos(polar);
+    for (let longitude = 0; longitude < SPHERE_LONGITUDES; longitude += 1) {
+      const angle = 2 * Math.PI * longitude / SPHERE_LONGITUDES;
+      vertices.push([ring * Math.cos(angle), y, ring * Math.sin(angle)]);
+    }
+  }
+  vertices.push([0, -0.5, 0]);
+  return vertices;
+})();
+const sphereIndices: readonly number[] = (() => {
+  const indices: number[] = [];
+  const ringStart = (latitude: number): number =>
+    1 + (latitude - 1) * SPHERE_LONGITUDES;
+  for (let longitude = 0; longitude < SPHERE_LONGITUDES; longitude += 1) {
+    const next = (longitude + 1) % SPHERE_LONGITUDES;
+    indices.push(0, ringStart(1) + longitude, ringStart(1) + next);
+  }
+  for (let latitude = 1; latitude < SPHERE_LATITUDES - 1; latitude += 1) {
+    const upper = ringStart(latitude);
+    const lower = ringStart(latitude + 1);
+    for (let longitude = 0; longitude < SPHERE_LONGITUDES; longitude += 1) {
+      const next = (longitude + 1) % SPHERE_LONGITUDES;
+      indices.push(
+        upper + longitude, lower + longitude, upper + next,
+        upper + next, lower + longitude, lower + next,
+      );
+    }
+  }
+  const bottom = sphereCorners.length - 1;
+  const lastRing = ringStart(SPHERE_LATITUDES - 1);
+  for (let longitude = 0; longitude < SPHERE_LONGITUDES; longitude += 1) {
+    const next = (longitude + 1) % SPHERE_LONGITUDES;
+    indices.push(bottom, lastRing + next, lastRing + longitude);
+  }
+  return indices;
+})();
+
 function pieceColliderTemplate(piece: BreakablePieceDefinition): {
   readonly corners: readonly (readonly [number, number, number])[];
   readonly indices: readonly number[];
 } {
-  return piece.shape === "cylinder"
-    ? { corners: prismCorners, indices: prismIndices }
-    : { corners: cubeCorners, indices: cubeIndices };
+  return piece.shape === "sphere"
+    ? { corners: sphereCorners, indices: sphereIndices }
+    : piece.shape === "cylinder"
+      ? { corners: prismCorners, indices: prismIndices }
+      : { corners: cubeCorners, indices: cubeIndices };
 }
 
 function chunkKey(piece: BreakablePieceDefinition): string {

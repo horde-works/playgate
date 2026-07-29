@@ -37,6 +37,7 @@ import {
 interface GlowMaterial {
   readonly material: MeshStandardMaterial;
   readonly minimumIntensity: number;
+  readonly intensityScale?: number;
   /** Цвет стекла: по нему сигнальным огнём можно управлять из игры. */
   readonly color: string;
 }
@@ -113,7 +114,10 @@ export function setWindowGlow(intensity: number): void {
     const override = signalOverrides.get(glow.color);
     glow.material.emissiveIntensity =
       override === undefined
-        ? resolveGlowIntensity(intensity, glow.minimumIntensity)
+        ? resolveGlowIntensity(
+            intensity * (glow.intensityScale ?? 1),
+            glow.minimumIntensity,
+          )
         : override;
   }
 }
@@ -175,7 +179,7 @@ const photorealTextureUrls: Partial<Record<BreakableMaterial, string>> = {
   steel: "/games/make-a-mess/textures/steel.webp",
 };
 
-const surfaceTextureUrls: Record<SurfaceTextureProfile, string> = {
+const surfaceTextureUrls: Partial<Record<SurfaceTextureProfile, string>> = {
   "city-gray-pavers": "/games/make-a-mess/textures/city-gray-pavers.webp",
   "city-red-pavers": "/games/make-a-mess/textures/city-red-pavers.webp",
   "city-aged-stucco": "/games/make-a-mess/textures/city-aged-stucco.webp",
@@ -189,6 +193,39 @@ const surfaceTextureUrls: Record<SurfaceTextureProfile, string> = {
   "city-chalk-sign-a": "/games/make-a-mess/textures/city-chalk-sign-a.png",
   "city-chalk-sign-b": "/games/make-a-mess/textures/city-chalk-sign-b.png",
 };
+
+function createArchitecturalMetalTexture(
+  profile: "painted-steel" | "matte-aluminium" | "gold-mirror",
+): CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = TEXTURE_SIZE;
+  canvas.height = TEXTURE_SIZE;
+  const context = canvas.getContext("2d");
+  if (context) {
+    const base = profile === "gold-mirror" ? 252 : profile === "matte-aluminium" ? 242 : 247;
+    context.fillStyle = `rgb(${base}, ${base}, ${base})`;
+    context.fillRect(0, 0, TEXTURE_SIZE, TEXTURE_SIZE);
+    // Coated architectural metal is nearly uniform at landmark scale. A few
+    // broad, low-contrast bands keep highlights alive without importing the
+    // scratched grey plate texture used by machinery and weapons.
+    for (let band = 0; band < 8; band += 1) {
+      const value = base - 2 - (band % 3);
+      const bandOpacity = profile === "gold-mirror"
+        ? 0.08
+        : profile === "matte-aluminium" ? 0.11 : 0.16;
+      context.fillStyle = `rgba(${value}, ${value}, ${value}, ${bandOpacity})`;
+      context.fillRect(0, band * 16, TEXTURE_SIZE, 7);
+    }
+  }
+  const texture = new CanvasTexture(canvas);
+  texture.wrapS = RepeatWrapping;
+  texture.wrapT = RepeatWrapping;
+  texture.magFilter = LinearFilter;
+  texture.minFilter = LinearMipmapLinearFilter;
+  texture.anisotropy = 4;
+  texture.colorSpace = SRGBColorSpace;
+  return texture;
+}
 
 // Профили-«вывески» растягиваются по родным UV грани один раз: мировая
 // трипланарная проекция размазала бы надпись тайлингом.
@@ -1236,7 +1273,13 @@ export function getMaterialTexture(
     ? surfaceTextureUrls[textureProfile]
     : photorealTextureUrls[material];
   let texture: Texture;
-  if (sourceUrl) {
+  if (
+    textureProfile === "painted-steel"
+    || textureProfile === "matte-aluminium"
+    || textureProfile === "gold-mirror"
+  ) {
+    texture = createArchitecturalMetalTexture(textureProfile);
+  } else if (sourceUrl) {
     texture = configureTexture(
       textureLoader.load(sourceUrl, undefined, undefined, () => {
         const fallback = createProceduralTexture(material);
@@ -1264,7 +1307,12 @@ export function getPieceMaterial(
   }
 
   const isGlass = isGlassMaterial(material);
+  const isEtfeMembrane = material === "glass" && isEtfeMembraneColor(color);
+  const isTransparent = pieceMaterialIsTransparent(material, color);
   const isSteel = material === "steel";
+  const isPaintedSteel = isSteel && textureProfile === "painted-steel";
+  const isMatteAluminium = isSteel && textureProfile === "matte-aluminium";
+  const isGoldMirror = isSteel && textureProfile === "gold-mirror";
   const isDarkStone =
     material === "basalt" || material === "graphiteStone";
   const isEyeGlass =
@@ -1275,26 +1323,52 @@ export function getPieceMaterial(
   const standardMaterial = new MeshStandardMaterial({
     color,
     map: surfaceTexture,
-    bumpMap: isGlass ? null : surfaceTexture,
+    bumpMap: isGlass || isPaintedSteel || isMatteAluminium || isGoldMirror
+      ? null
+      : surfaceTexture,
     bumpScale: bumpScaleByMaterial[material],
-    transparent: isGlass,
+    transparent: isTransparent,
     opacity: pieceMaterialOpacity(material, color),
-    depthWrite: !isGlass,
-    metalness: isSteel ? 0.78 : material === "graphiteStone" ? 0.08 : 0,
-    roughness: isSteel
-      ? 0.38
-      : isGlass
-        ? 0.16
-        : isDarkStone
-          ? 0.86
-        : material === "cloth"
-          ? 0.9
-        : material === "wood"
-          ? 0.76
-          : material === "asphalt"
-            ? 0.88
-            : 0.94,
-    envMapIntensity: isSteel ? 1.1 : isGlass ? 1.5 : 0.35,
+    depthWrite: !isTransparent,
+    metalness: isGoldMirror
+      ? 0.92
+      : isMatteAluminium
+        ? 0.08
+        : isPaintedSteel
+          ? 0.16
+          : isSteel
+            ? 0.78
+            : material === "graphiteStone" ? 0.08 : 0,
+    roughness: isGoldMirror
+      ? 0.16
+      : isMatteAluminium
+        ? 0.74
+        : isPaintedSteel
+          ? 0.44
+          : isSteel
+            ? 0.38
+            : isEtfeMembrane
+              ? ETFE_MEMBRANE_ROUGHNESS
+              : isGlass
+              ? 0.16
+              : isDarkStone
+                ? 0.86
+                : material === "cloth"
+                  ? 0.9
+                  : material === "wood"
+                    ? 0.76
+                    : material === "asphalt"
+                      ? 0.88
+                      : 0.94,
+    envMapIntensity: isGoldMirror
+      ? 1.8
+      : isMatteAluminium
+        ? 0.45
+        : isSteel
+          ? 1.1
+          : isEtfeMembrane
+            ? ETFE_MEMBRANE_ENV_MAP_INTENSITY
+            : isGlass ? 1.5 : 0.35,
   });
 
   if (!isGlass) {
@@ -1930,16 +2004,23 @@ gl_FragColor.rgb = mix(gl_FragColor.rgb, materialFogTint, materialFogFactor);
       }:${textureProfile === "city-cracked-plinth" ? "crack" : "solid"}`;
   }
 
-  if (isGlass && (color === litWindowColor || signalGlassColors.has(color))) {
+  if (pieceMaterialHasEmissiveGlow(material, color)) {
     // Сигнальное стекло горит СВОИМ цветом: линза семафора и аэронавигационные
     // огни корабля иначе оставались тёмными стекляшками, а светил только
     // невидимый источник рядом с ними.
     standardMaterial.emissive = new Color(
-      color === litWindowColor ? "#ffc879" : color,
+      color === litWindowColor
+        ? "#ffc879"
+        : color,
     );
     const minimumIntensity = minimumGlassGlow(color);
     standardMaterial.emissiveIntensity = minimumIntensity;
-    glowMaterials.push({ material: standardMaterial, minimumIntensity, color });
+    glowMaterials.push({
+      material: standardMaterial,
+      minimumIntensity,
+      color,
+      intensityScale: 1,
+    });
     const override = signalOverrides.get(color);
     if (override !== undefined) {
       standardMaterial.emissiveIntensity = override;
@@ -1961,6 +2042,26 @@ export function isGlassMaterial(material: BreakableMaterial): boolean {
   return material === "glass" || material === "darkGlass";
 }
 
+export function pieceMaterialHasEmissiveGlow(
+  material: BreakableMaterial,
+  color: string,
+): boolean {
+  // ETFE is intentionally absent: Khan Shatyr is lit by actual local
+  // fixtures. The membrane receives their light but never glows by itself.
+  return isGlassMaterial(material)
+    && (color === litWindowColor || signalGlassColors.has(color));
+}
+
+export const ETFE_MEMBRANE_ROUGHNESS = 0.82;
+export const ETFE_MEMBRANE_ENV_MAP_INTENSITY = 0.32;
+
+export function pieceMaterialIsTransparent(
+  material: BreakableMaterial,
+  _color: string,
+): boolean {
+  return isGlassMaterial(material);
+}
+
 export function pieceMaterialOpacity(
   material: BreakableMaterial,
   color: string,
@@ -1971,7 +2072,17 @@ export function pieceMaterialOpacity(
   if (material !== "glass") {
     return 1;
   }
+  if (isEtfeMembraneColor(color)) {
+    // A dense milky diffuser rather than window glass: ten percent transmission
+    // lets illumination read across each cushion instead of only through seams,
+    // while interior geometry remains visually suppressed.
+    return 0.9;
+  }
   return color === clearPassengerGlassColor ? 0.22 : 0.45;
+}
+
+function isEtfeMembraneColor(color: string): boolean {
+  return color === "#eaf0f7" || color === "#e5edf6" || color === "#e1eaf4";
 }
 
 export function pieceMaterialBaseColor(
@@ -1983,7 +2094,8 @@ export function pieceMaterialBaseColor(
     (
       color === clearPassengerGlassColor ||
       color === litWindowColor ||
-      isSignalGlassColor(color)
+      isSignalGlassColor(color) ||
+      isEtfeMembraneColor(color)
     )
   ) {
     // These colours affect material-level emissive or opacity state. Keeping

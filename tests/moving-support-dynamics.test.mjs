@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   movingSupportBoundaryState,
+  passengerFallReturnPoint,
   passengerAngularVelocityDelta,
   passengerControlVelocityDelta,
   supportVelocityAtPoint,
@@ -195,5 +196,15 @@ test("an airborne transfer crosses the map edge until ordinary ground takes over
     movingSupportBoundaryState(false, false, false),
     false,
     "an ordinary jump at the map edge does not disable containment",
+  );
+});
+
+test("falling from a carrier returns to the island spawn, not the carrier", () => {
+  const villageSpawn = [-22, 2.25, -66];
+
+  assert.equal(passengerFallReturnPoint(-2.6, villageSpawn), null);
+  assert.deepEqual(
+    passengerFallReturnPoint(-2.61, villageSpawn),
+    { x: -22, y: 2.25, z: -66 },
   );
 });

@@ -30,6 +30,13 @@ interface MutableGroup {
 
 const WORLD_CENTER_Z = -10;
 const WORLD_RADIUS = 96;
+// The island remains 96 m across, but both honest longship routes leave that
+// circle. As at Grand Terminal, the passenger boundary, sky and far plane are
+// separate envelopes: route + hull + a useful overboard margin, then another
+// sixty metres of visible atmosphere beyond it.
+const ROUTE_BOUNDARY_RADIUS = 180;
+const ROUTE_SKY_RADIUS = 240;
+const ROUTE_CAMERA_FAR = 440;
 const groups = new Map<string, MutableGroup>();
 
 function group(
@@ -1835,6 +1842,12 @@ function createFjordJetty(): void {
  */
 function createSkyLongship(): void {
   const ship = group("sky-longship", "Sky longship at the fog jetty", "wood", "stack");
+  const dock = group(
+    "sky-longship-dock",
+    "Longship berth rigging and brow",
+    "wood",
+    "stack",
+  );
   const alpha = (6 * Math.PI) / 180;
   const ca = Math.cos(alpha);
   const sa = Math.sin(alpha);
@@ -1865,7 +1878,12 @@ function createSkyLongship(): void {
       contactBoxes: [{ position: [0, 0, 0], size: [4.75, 14.3, 4.75] }],
       carriesAttachments: true,
       attachmentSupportMode: "cable",
-      light: { color: "#ffc98a", distance: 14, intensity: 2.4 },
+      light: {
+        color: "#ffc98a",
+        distance: 14,
+        intensity: 2.4,
+        followsGroup: true,
+      },
     });
 
   // === Оболочка: продольные полотнища крашеной шерсти, марена и овсяная
@@ -2329,6 +2347,10 @@ function createSkyLongship(): void {
         carriesAttachments: true,
         attachmentSupportMode: "cable",
         sideAttachmentReach: 0.45,
+        actuator: {
+          id: "sky-longship:rudder",
+          commandChannel: "rudder",
+        },
       });
     primitive(ship, "rudder:blade", "wood", "plank",
       [
@@ -2364,8 +2386,9 @@ function createSkyLongship(): void {
     }
   }
 
-  // Вёсла: по пять на борт, выпущены в небо чуть вразнобой — на земле
-  // грести не о что, но силуэт с крыльями вёсел и есть драккар.
+  // Вёсла: по пять на борт. Рукоять каждого остаётся внутри корпуса, валёк
+  // проходит через настоящую уключину между двумя нагелями, а лопасть висит
+  // снаружи. Именно вокруг этой точки привод затем разыгрывает гребок.
   for (const side of [-1, 1] as const) {
     // Правый борт смотрит на отмель: там вёсла приподняты, чтобы лопасти
     // висели над берегом, а не опирались о него. Левый борт — над туманом,
@@ -2374,12 +2397,42 @@ function createSkyLongship(): void {
       const droop = (side > 0 ? 0.13 : 0.27) + 0.02 * oarIndex;
       const outboard = side > 0 ? 1.9 : 2.4;
       const sweep = 0.22;
-      const inboard = P(oarA, side * 1.18, 1.16);
-      const tip = P(oarA + sweep * outboard, side * (1.42 + outboard), 1.08 - droop * outboard);
+      const directionLength = Math.hypot(sweep, 1, droop);
+      const alongA = sweep / directionLength;
+      const alongB = side / directionLength;
+      const alongY = -droop / directionLength;
+      const gripLength = 0.86;
+      const pivot = P(oarA, side * 1.42, 1.2);
+      const inboard = P(
+        oarA - alongA * gripLength,
+        side * 1.42 - alongB * gripLength,
+        1.2 - alongY * gripLength,
+      );
+      const tip = P(
+        oarA + alongA * outboard,
+        side * 1.42 + alongB * outboard,
+        1.2 + alongY * outboard,
+      );
       const dx = tip[0] - inboard[0];
       const dy = tip[1] - inboard[1];
       const dz = tip[2] - inboard[2];
       const length = Math.hypot(dx, dy, dz);
+      primitive(ship, `oarlock:${side}:${oarIndex}:pivot`, "wood", "plank",
+        pivot, [0.3, 0.14, 0.28], "#47362a", {
+          rotation: [0, -alpha, 0],
+          contactBoxes: [{ position: [0, 0, 0], size: [0.3, 0.14, 0.28] }],
+          carriesAttachments: true,
+          sideAttachmentReach: 0.35,
+        });
+      for (const pinSide of [-1, 1] as const) {
+        primitive(ship, `oarlock:${side}:${oarIndex}:pin:${pinSide}`, "wood", "cylinder",
+          P(oarA + pinSide * 0.14, side * 1.42, 1.4),
+          [0.075, 0.44, 0.075], "#392c24", {
+            contactBoxes: [{ position: [0, 0, 0], size: [0.15, 0.44, 0.15] }],
+            bearsLoad: false,
+            sideAttachmentReach: 0.25,
+          });
+      }
       primitive(ship, `oar:${side}:${oarIndex}`, "wood", "cylinder",
         [(inboard[0] + tip[0]) / 2, (inboard[1] + tip[1]) / 2, (inboard[2] + tip[2]) / 2],
         [0.07, length, 0.07], oarIndex % 2 === 0 ? "#5d4936" : "#54402d", {
@@ -2391,6 +2444,10 @@ function createSkyLongship(): void {
           // Решатель вправе повести долю нагрузки днища через валёк —
           // плетёный из ясеня, выдержит.
           bearingArea: 0.6,
+          actuator: {
+            id: `sky-longship:oar-bank:${side}`,
+            commandChannel: `throttle:${side < 0 ? 0 : 1}`,
+          },
         });
       primitive(ship, `oar:${side}:${oarIndex}:blade`, "wood", "plank",
         [tip[0] + dx / length * 0.45, tip[1] + dy / length * 0.45, tip[2] + dz / length * 0.45],
@@ -2457,7 +2514,12 @@ function createSkyLongship(): void {
     P(6.05, -0.35, 3.08), [0.13, 0.18, 0.13], "#f2dfa7", {
       bearsLoad: false,
       sideAttachmentReach: 0.6,
-      light: { color: "#ffb46a", distance: 9, intensity: 3 },
+      light: {
+        color: "#ffb46a",
+        distance: 9,
+        intensity: 3,
+        followsGroup: true,
+      },
     });
 
   // Носовой фонарь висит под головой дракона, сдвинут на правую скулу,
@@ -2477,7 +2539,12 @@ function createSkyLongship(): void {
     P(-7.02, 0.36, 2.22), [0.13, 0.18, 0.13], "#f2dfa7", {
       bearsLoad: false,
       sideAttachmentReach: 0.6,
-      light: { color: "#ffb46a", distance: 9, intensity: 3 },
+      light: {
+        color: "#ffb46a",
+        distance: 9,
+        intensity: 3,
+        followsGroup: true,
+      },
     });
 
   // Топовый огонь: короткий кронштейн под самым топом мачты, фонарь висит
@@ -2497,7 +2564,12 @@ function createSkyLongship(): void {
     P(-0.35, 0, 4.88), [0.13, 0.18, 0.13], "#f2dfa7", {
       bearsLoad: false,
       sideAttachmentReach: 0.6,
-      light: { color: "#ffb46a", distance: 11, intensity: 3 },
+      light: {
+        color: "#ffb46a",
+        distance: 11,
+        intensity: 3,
+        followsGroup: true,
+      },
     });
 
   // === Швартовка к пирсу. Носовой канат провисает к кнехту на конце
@@ -2514,7 +2586,7 @@ function createSkyLongship(): void {
     const length = Math.hypot(x2 - x1, y2 - y1, z2 - z1);
     // Сегменты провиса держатся цепочкой за шею дракона; они «несущие»
     // только друг для друга — кнехт пирса крепить не умеет (wall-режим).
-    primitive(ship, `bow-line:${segment}`, "wood", "cylinder",
+    primitive(dock, `bow-line:${segment}`, "wood", "cylinder",
       [(x1 + x2) / 2, (y1 + y2) / 2, (z1 + z2) / 2], [0.055, length, 0.055], "#7a6648", {
         rotation: rodRotation(x2 - x1, y2 - y1, z2 - z1),
         contactBoxes: [{ position: [0, 0, 0], size: [0.15, length, 0.15] }],
@@ -2523,7 +2595,7 @@ function createSkyLongship(): void {
         sideAttachmentReach: 0.6,
       });
   }
-  primitive(ship, "mooring-cleat", "wood", "cylinder",
+  primitive(dock, "mooring-cleat", "wood", "cylinder",
     [-0.7, 0.49, -101.05], [0.2, 0.5, 0.2], "#4a372c", {
       contactBoxes: [{ position: [0, 0, 0], size: [0.2, 0.5, 0.2] }],
       carriesAttachments: true,
@@ -2542,18 +2614,18 @@ function createSkyLongship(): void {
   ];
   for (const buoy of moorBuoys) {
     const [bx, bz] = buoy.at;
-    primitive(ship, `buoy:${buoy.tag}:base`, "stone", "stoneBlock",
+    primitive(dock, `buoy:${buoy.tag}:base`, "stone", "stoneBlock",
       [bx, 0.19, bz], [0.62, 0.28, 0.56], "#62655f", {
         rotation: [0, noise(bx, bz, 31) * Math.PI, 0],
         surface: [{ kind: "moss", amount: 0.4 }],
       });
-    primitive(ship, `buoy:${buoy.tag}:float`, "wood", "cylinder",
+    primitive(dock, `buoy:${buoy.tag}:float`, "wood", "cylinder",
       [bx, 0.61, bz], [0.44, 0.56, 0.44], "#8e4a37", {
         contactBoxes: [{ position: [0, 0, 0], size: [0.44, 0.56, 0.44] }],
         carriesAttachments: true,
         attachmentSupportMode: "cable",
       });
-    primitive(ship, `buoy:${buoy.tag}:cap`, "wood", "cylinder",
+    primitive(dock, `buoy:${buoy.tag}:cap`, "wood", "cylinder",
       [bx, 0.94, bz], [0.3, 0.1, 0.3], "#c3ac8a", {
         bearsLoad: false,
         sideAttachmentReach: 0.3,
@@ -2563,7 +2635,7 @@ function createSkyLongship(): void {
     const dy = top[1] - buoy.shipPoint[1];
     const dz = top[2] - buoy.shipPoint[2];
     const length = Math.hypot(dx, dy, dz) - 0.2;
-    primitive(ship, `moor-line:${buoy.tag}`, "wood", "cylinder",
+    primitive(dock, `moor-line:${buoy.tag}`, "wood", "cylinder",
       [(top[0] + buoy.shipPoint[0]) / 2, (top[1] + buoy.shipPoint[1]) / 2, (top[2] + buoy.shipPoint[2]) / 2],
       [0.05, length, 0.05], "#7a6648", {
         rotation: rodRotation(dx, dy, dz),
@@ -2579,7 +2651,7 @@ function createSkyLongship(): void {
     const dx = springTo[0] - springFrom[0];
     const dy = springTo[1] - springFrom[1];
     const dz = springTo[2] - springFrom[2];
-    primitive(ship, "spring-line", "wood", "cylinder",
+    primitive(dock, "spring-line", "wood", "cylinder",
       [(springFrom[0] + springTo[0]) / 2, (springFrom[1] + springTo[1]) / 2, (springFrom[2] + springTo[2]) / 2],
       [0.05, Math.hypot(dx, dy, dz) - 0.15, 0.05], "#7a6648", {
         rotation: rodRotation(dx, dy, dz),
@@ -2617,7 +2689,7 @@ function createSkyLongship(): void {
     ];
     const localAlong = (point: SceneVector3): number =>
       ((point[0] - center[0]) * dirX + (point[2] - center[2]) * dirZ) / Math.cos(browPitch);
-    primitive(ship, "brow", "wood", "plank",
+    primitive(dock, "brow", "wood", "plank",
       center, [browLength, 0.09, 0.6], "#5d4531", {
         rotation: [0, Math.atan2(-dirZ, dirX), browPitch],
         contactBoxes: [
@@ -2745,9 +2817,11 @@ export const vikingVillageDocument: AuthoredSceneDocument = {
   environment: "fortress",
   world: {
     playerSpawn: [0, 1.3, 75],
-    cameraFar: 270,
+    cameraFar: ROUTE_CAMERA_FAR,
     center: [0, WORLD_CENTER_Z],
     halfExtents: [102, 102],
+    boundaryRadius: ROUTE_BOUNDARY_RADIUS,
+    skyRadius: ROUTE_SKY_RADIUS,
     radius: WORLD_RADIUS,
     safetyFloorY: -2.4,
   },

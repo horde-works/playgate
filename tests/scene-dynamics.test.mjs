@@ -8,7 +8,7 @@ import {
 } from "../games/make-a-mess/src/game/sceneDynamics.ts";
 import {
   TIME_OF_DAY_TARGETS,
-  gameClockFraction,
+  gameClockText,
   nextTimeOfDay,
 } from "../games/make-a-mess/src/game/timeOfDay.ts";
 
@@ -22,19 +22,46 @@ const piece = (id, position = [0, 0.5, 0]) => ({
   color: "#222222",
 });
 
-test("the four authored phases form one continuous solar day", () => {
+test("the eight authored phases form one continuous solar day", () => {
   assert.deepEqual(
-    ["day", "sunset", "night", "dawn"].map(nextTimeOfDay),
-    ["sunset", "night", "dawn", "day"],
+    [
+      "dawn",
+      "morning",
+      "day",
+      "afternoon",
+      "sunset",
+      "evening",
+      "night",
+      "predawn",
+    ].map(nextTimeOfDay),
+    [
+      "morning",
+      "day",
+      "afternoon",
+      "sunset",
+      "evening",
+      "night",
+      "predawn",
+      "dawn",
+    ],
   );
   assert.deepEqual(
     Object.fromEntries(
       Object.entries(TIME_OF_DAY_TARGETS).map(([phase, solarTime]) => [
         phase,
-        gameClockFraction(solarTime) * 24,
+        gameClockText(solarTime),
       ]),
     ),
-    { dawn: 6, day: 12, sunset: 18, night: 0 },
+    {
+      dawn: "06:00",
+      morning: "09:00",
+      day: "12:00",
+      afternoon: "15:00",
+      sunset: "18:00",
+      evening: "21:00",
+      night: "00:00",
+      predawn: "03:00",
+    },
   );
 });
 

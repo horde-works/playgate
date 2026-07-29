@@ -57,6 +57,8 @@ import { selectGroupedLampCandidates } from "./lampPoolSelection";
 import { windState } from "./windState";
 import {
   TIME_OF_DAY_TARGETS,
+  equinoxSunDirection,
+  type SolarFrameDefinition,
   type TimeOfDay,
 } from "./timeOfDay";
 
@@ -91,7 +93,7 @@ export function SceneEnvironment({
     return { holder, sky };
   }, [fortress]);
   const currentTarget = useRef<WebGLRenderTarget | null>(null);
-  const lastBucket = useRef(Number.NaN);
+  const lastBucket = useRef("");
 
   useEffect(() => {
     // The atmosphere shader is HDR-bright; a low multiplier keeps its PMREM
@@ -108,8 +110,12 @@ export function SceneEnvironment({
 
   useFrame(() => {
     // Re-bake the environment only when the sun has moved perceptibly.
-    const elevation = environmentState.sunPosition.y / 26;
-    const bucket = Math.round(elevation * 14);
+    const direction = environmentState.sunDirection;
+    const bucket = [
+      Math.round(direction.x * 10),
+      Math.round(direction.y * 14),
+      Math.round(direction.z * 10),
+    ].join(":");
     if (bucket === lastBucket.current) {
       return;
     }
@@ -133,7 +139,9 @@ export function DayNightCycle({
   worldTimeRef,
   theme = "town",
   worldRadius,
+  skyRadius,
   fogDistances,
+  solarFrame,
   worldCenter,
   cameraFar = 140,
   snapVersion = 0,
@@ -145,8 +153,11 @@ export function DayNightCycle({
   worldTimeRef?: { current: number };
   theme?: "town" | "fortress";
   worldRadius?: number;
+  /** Explicit dome radius for routes extending beyond the physical island. */
+  skyRadius?: number;
   /** Явные дальности тумана сцены; без них считаются от радиуса мира. */
   fogDistances?: readonly [near: number, far: number] | null;
+  solarFrame?: SolarFrameDefinition | null;
   worldCenter?: readonly [number, number];
   cameraFar?: number;
   snapVersion?: number;
@@ -230,14 +241,17 @@ export function DayNightCycle({
       worldTimeRef.current = time.current;
     }
     const angle = time.current * Math.PI * 2;
-    const elevation = Math.sin(angle);
+    const geographicSun = solarFrame
+      ? equinoxSunDirection(time.current, solarFrame)
+      : null;
+    const elevation = geographicSun?.[1] ?? Math.sin(angle);
     const azimuth = angle + Math.PI * 0.3;
     const day = MathUtils.clamp(elevation / 0.32, 0, 1);
     const night = 1 - day;
     const twilight = MathUtils.clamp(1 - Math.abs(elevation) * 3.4, 0, 1);
-    const sunX = Math.cos(azimuth) * 30;
-    const sunZ = Math.sin(azimuth) * 24;
-    const sunY = elevation * 26;
+    const sunX = geographicSun ? geographicSun[0] * 30 : Math.cos(azimuth) * 30;
+    const sunZ = geographicSun ? geographicSun[2] * 30 : Math.sin(azimuth) * 24;
+    const sunY = geographicSun ? geographicSun[1] * 30 : elevation * 26;
 
     if (directional.current) {
       directional.current.position.set(sunX, Math.max(sunY, 7), sunZ);
@@ -334,7 +348,7 @@ export function DayNightCycle({
         ref={skyRef}
         distance={Math.min(
           cameraFar * 0.92,
-          Math.max(fortress ? 170 : 110, (worldRadius ?? 58) * 2.6),
+          skyRadius ?? Math.max(fortress ? 170 : 110, (worldRadius ?? 58) * 2.6),
         )}
         sunPosition={[24, 12, 14]}
         turbidity={fortress ? 10.5 : cinematic ? 4.2 : 6.2}

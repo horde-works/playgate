@@ -46,9 +46,9 @@ test("the pilot map is a serializable scene document compiled from prefabs", () 
   assert.equal(parsed.id, "viking-village");
   assert.equal(vikingVillageCompilation.artifact.objectCount > 4000, true);
   assert.equal(vikingVillageCompilation.artifact.prefabIds.length >= 17, true);
-  // 14 original groups plus the fjord jetty, the sky longship moored to it
-  // and the shoreline fringe.
-  assert.equal(vikingVillageCompilation.artifact.groupCount, 17);
+  // 14 original groups plus the fjord jetty, the moving sky longship, its
+  // stationary berth rigging and the shoreline fringe.
+  assert.equal(vikingVillageCompilation.artifact.groupCount, 18);
 });
 
 test("the village contains domestic life as physical, destructible objects", () => {
@@ -70,6 +70,9 @@ test("the village contains domestic life as physical, destructible objects", () 
   assert.equal(materials.has("cloth"), true);
   assert.equal(vikingVillageScene.lampDefinitions.length >= 11, true);
   assert.equal(vikingVillageScene.worldRadius, 96);
+  assert.equal(vikingVillageScene.boundaryRadius, 180);
+  assert.equal(vikingVillageScene.skyRadius, 240);
+  assert.equal(vikingVillageScene.cameraFar, 440);
 });
 
 test("new longhouse timbers rest separately against the west wall frame", () => {

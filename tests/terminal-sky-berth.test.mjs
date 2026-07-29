@@ -347,6 +347,132 @@ test("the berth reads as a station platform and the ship as a flying train", () 
   );
 });
 
+test("the head coach opens into a framed panoramic driver's bay", () => {
+  const cab = trainPieces.filter((piece) => piece.id.startsWith(`${TRAIN}:cab:`));
+  const glass = cab.filter((piece) => piece.id.includes(":glass:"));
+  const rays = cab.filter((piece) => piece.id.includes(":frame:ray:"));
+
+  assert.equal(cab.length >= 30, true, `cab has only ${cab.length} members`);
+  assert.equal(glass.length, 13);
+  assert.equal(rays.length, 4);
+  assert.notEqual(cab.find((piece) => piece.id.endsWith(":glass:front")), undefined);
+  assert.equal(glass.every((piece) => piece.color === clearPassengerGlassColor), true);
+  assert.equal(cab.every((piece) => piece.clusterId === TRAIN), true);
+
+  // The former front wall is genuinely absent. The roof gable may close the
+  // outer arch, but no wall or decorative end-window blocks the shared room.
+  assert.equal(trainPieces.some((piece) => piece.id === `${TRAIN}:head:end:-1`), false);
+  assert.equal(trainPieces.some((piece) => piece.id === `${TRAIN}:head:end-window:-1`), false);
+  assert.equal(cab.some((piece) => piece.id.includes(":floor:")), false);
+  assert.equal(trainPieces.some((piece) => piece.id === `${TRAIN}:chain`), false);
+
+  // The lower windscreen is not hidden behind a dashboard cabinet. Controls
+  // hang from one chair-mounted bracket and look back toward the driver.
+  assert.equal(cab.some((piece) => piece.id.endsWith(":controls:desk")), false);
+  const controlArms = cab.filter((piece) => piece.id.includes(":controls:arm:"));
+  assert.equal(controlArms.length, 2);
+  const panel = cab.find((piece) => piece.id.endsWith(":controls:panel"));
+  assert.notEqual(panel, undefined);
+  assert.equal(Math.abs((panel.rotation?.[2] ?? 0) + Math.PI / 9) < 1e-6, true);
+  assert.equal(Math.abs(panel.position[2] - M.trackZ) > 0.2, true);
+  assert.equal(panel.size[1] < panel.size[0], true, "panel has a thin steel plate");
+  assert.equal(Math.abs(panel.size[2] - 0.51) < 1e-6, true, "panel extends 15 cm left");
+  assert.deepEqual(panel.attachmentSupportIds, [`${TRAIN}:cab:controls:arm:riser`]);
+
+  const lowerGlass = cab.find((piece) => piece.id.endsWith(":glass:lower:0"));
+  const lowerArm = cab.find((piece) => piece.id.endsWith(":controls:arm:forward"));
+  const riser = cab.find((piece) => piece.id.endsWith(":controls:arm:riser"));
+  assert.equal(
+    Math.abs(Math.abs(lowerArm.rotation?.[2] ?? 0) - Math.abs(lowerGlass.rotation?.[2] ?? 0)) < 1e-6,
+    true,
+    "lower arm follows the lower glazing pitch",
+  );
+  assert.equal(lowerArm.color, "#81898a");
+  assert.equal(controlArms.every((piece) => piece.color === lowerArm.color), true);
+  const panelTilt = panel.rotation?.[2] ?? 0;
+  const panelLowestUnderside = panel.position[1]
+    - Math.abs(Math.sin(panelTilt)) * panel.size[0] / 2
+    - Math.abs(Math.cos(panelTilt)) * panel.size[1] / 2;
+  const riserTop = riser.position[1] + riser.size[0] / 2;
+  assert.equal(riserTop <= panelLowestUnderside + 0.005, true,
+    `riser penetrates panel by ${(riserTop - panelLowestUnderside).toFixed(3)} m`);
+  assert.equal(panelLowestUnderside - riserTop < 0.02, true,
+    `panel floats ${(panelLowestUnderside - riserTop).toFixed(3)} m above bracket`);
+  const seat = cab.find((piece) => piece.id.endsWith(":driver-seat:cushion"));
+  assert.equal(Math.abs(panel.position[0] - seat.position[0]) < 0.9, true,
+    "panel remains within the driver's reach");
+  const instruments = grandTerminalScene.motionInstrumentDefinitions;
+  assert.equal(instruments.length, 1);
+  assert.equal(instruments[0].panelPieceId, panel.id);
+  assert.deepEqual(
+    instruments[0].indicators.map((indicator) => indicator.label),
+    ["READY", "DEPART", "CRUISE", "APPROACH", "FAIL", "L ENG", "R ENG"],
+  );
+  assert.equal(
+    instruments[0].indicators.filter((indicator) =>
+      indicator.condition.kind === "metric").length,
+    2,
+  );
+
+  // It remains a small appendage below the balloon, not a rival hull.
+  const cabLength = M.cabRear - M.cabFront;
+  assert.equal(cabLength < M.hullRadius, true, `cab length ${cabLength}`);
+  assert.equal(M.cabFrontHalf < M.carHalf, true);
+});
+
+test("cab rays meet the front rectangle and its panes slope toward the nose", () => {
+  const localX = (piece) => {
+    const [rx, ry, rz] = piece.rotation ?? [0, 0, 0];
+    const sx = Math.sin(rx), cx = Math.cos(rx);
+    const sy = Math.sin(ry), cy = Math.cos(ry);
+    const sz = Math.sin(rz), cz = Math.cos(rz);
+    return [
+      cy * cz,
+      sx * sy * cz + cx * sz,
+      -cx * sy * cz + sx * sz,
+    ];
+  };
+  const distance = (left, right) => Math.hypot(
+    left[0] - right[0], left[1] - right[1], left[2] - right[2]);
+
+  for (const level of ["upper", "lower"]) {
+    for (const side of [-1, 1]) {
+      const ray = pieces.find((piece) =>
+        piece.id === `${TRAIN}:cab:frame:ray:${level}:${side}`);
+      const frontBar = pieces.find((piece) =>
+        piece.id === `${TRAIN}:cab:frame:front:${level}`);
+      const frontSide = pieces.find((piece) =>
+        piece.id === `${TRAIN}:cab:frame:front:side:${side}`);
+      const rearBar = pieces.find((piece) =>
+        piece.id === `${TRAIN}:cab:frame:rear:${level}`);
+      const rearSide = pieces.find((piece) =>
+        piece.id === `${TRAIN}:cab:frame:rear:side:${side}`);
+      const axis = localX(ray);
+      const start = ray.position.map((value, index) => value - axis[index] * ray.size[0] / 2);
+      const end = ray.position.map((value, index) => value + axis[index] * ray.size[0] / 2);
+      assert.equal(distance(start, [frontBar.position[0], frontBar.position[1], frontSide.position[2]]) < 0.02,
+        true, `${ray.id} misses front frame`);
+      assert.equal(distance(end, [rearBar.position[0], rearBar.position[1], rearSide.position[2]]) < 0.02,
+        true, `${ray.id} misses coach frame`);
+    }
+  }
+
+  assert.equal(localX(pieces.find((piece) => piece.id === `${TRAIN}:cab:glass:upper:0`))[1] > 0, true);
+  assert.equal(localX(pieces.find((piece) => piece.id === `${TRAIN}:cab:glass:lower:0`))[1] < 0, true);
+  assert.equal(localX(pieces.find((piece) => piece.id === `${TRAIN}:cab:glass:side:1:0`))[2] > 0, true);
+  assert.equal(localX(pieces.find((piece) => piece.id === `${TRAIN}:cab:glass:side:-1:0`))[2] < 0, true);
+});
+
+test("the relocated rail stop clears the driver's bay at the dock", () => {
+  const cab = trainPieces.filter((piece) => piece.id.startsWith(`${TRAIN}:cab:`));
+  const stop = berthPieces.filter((piece) => piece.id.includes(":buffer-"));
+  const cabNose = Math.min(...cab.map((piece) => piece.position[0] - extentOf(piece)[0] / 2));
+  const stopFace = Math.max(...stop.map((piece) => piece.position[0] + extentOf(piece)[0] / 2));
+
+  assert.equal(cabNose - stopFace > 0.55, true,
+    `cab begins at ${cabNose.toFixed(2)}, stop ends at ${stopFace.toFixed(2)}`);
+});
+
 test("every piece of the berth and the train is inside the world wall", () => {
   // Путь нарочно уходит за каменную кромку в туман, поэтому меряем не радиус
   // центра, а самый дальний угол коробки.
@@ -540,6 +666,9 @@ const ALLOWED_INNER_OVERLAPS = [
   ["mooring-light", "stringer"],   // and straddles its lower longitudinal rib
   ["mooring-light:mount", "mooring-light:housing"],
   ["ballast", "ballast:strap"],     // хомуты обхватывают балластный бак
+  ["cab:glass", "cab:glass"],       // стёкла эркера сходятся на общей кромке
+  ["cab:frame:rear", "hanger-cleat"], // подвеска болтами входит в заднюю раму кабины
+  ["cab:frame:ray", "hanger:"],      // луч приходит в тот же силовой угол, что и подвеска
 ];
 
 test("nothing inside the berth or the train grows through its own neighbour", () => {
@@ -754,6 +883,12 @@ test("every sign reads the right way round from the side that faces the reader",
   );
   decode(platformMatrix.frames[0].activePieceIds, "PLATFORM 0", 0.065, -1);
   decode(departureMatrix.frames[0].activePieceIds, "DEPARTS 03", 0.07, -1);
+  decode(
+    departureMatrix.frames.find((frame) => frame.id === "failed").activePieceIds,
+    "FAIL",
+    0.07,
+    -1,
+  );
   decode(`${TRAIN}:head:mark:-1`, "01", 0.07, -1);
   decode(`${TRAIN}:head:mark:1`, "01", 0.07, 1);
 });

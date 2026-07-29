@@ -1,8 +1,11 @@
 import type {
   BreakableMaterial,
   BreakableShape,
+  CommandActuatorTag,
   DestructionSceneCopy,
   DestructionSceneDefinition,
+  LampBeaconDefinition,
+  LampEventLightingDefinition,
   LandscapeSurfaceProfile,
   SceneVector3,
   SurfaceTextureProfile,
@@ -43,6 +46,24 @@ export interface SceneLightSource {
   readonly color: string;
   readonly distance: number;
   readonly intensity: number;
+  /** Keep the light in the authored coordinate frame of its moving group. */
+  readonly followsGroup?: boolean;
+  /** Keep interior fixtures visibly powered even under daylight. */
+  readonly dayIntensityFactor?: number;
+  /** Bias safety and interior lighting ahead of decorative outdoor lamps. */
+  readonly poolPriority?: number;
+  /** Nearby fixtures may reserve a smaller share of the shared light pool. */
+  readonly localPoolCapacity?: number;
+  /** Fixtures in one room are selected as a coherent set. */
+  readonly poolGroupId?: string;
+  /** Long-range camera-facing signal halo. */
+  readonly beacon?: LampBeaconDefinition;
+  /** Optional carrier lifecycle which drives this fixture. */
+  readonly eventLighting?: LampEventLightingDefinition;
+  readonly transition?: {
+    readonly fadeInSeconds: number;
+    readonly fadeOutSeconds: number;
+  };
 }
 
 export interface SceneHinge {
@@ -69,6 +90,7 @@ export interface ScenePrefabPieceDefinition {
   readonly sideAttachmentReach?: number;
   readonly contactBearingOrder?: boolean;
   readonly hinge?: SceneHinge;
+  readonly actuator?: CommandActuatorTag;
   readonly light?: SceneLightSource;
   readonly textureProfile?: SurfaceTextureProfile;
   readonly landscapeSurface?: LandscapeSurfaceProfile;
@@ -113,6 +135,7 @@ export interface ScenePrimitiveDefinition extends SceneObjectBase {
   readonly sideAttachmentReach?: number;
   readonly contactBearingOrder?: boolean;
   readonly hinge?: SceneHinge;
+  readonly actuator?: CommandActuatorTag;
   readonly light?: SceneLightSource;
   readonly textureProfile?: SurfaceTextureProfile;
   readonly landscapeSurface?: LandscapeSurfaceProfile;
@@ -139,6 +162,8 @@ export interface SceneWorldDefinition {
   readonly cameraFar: number;
   readonly center: readonly [x: number, z: number];
   readonly halfExtents: readonly [x: number, z: number];
+  readonly boundaryRadius?: number;
+  readonly skyRadius?: number;
   readonly radius?: number;
   readonly safetyFloorY: number;
 }
@@ -161,6 +186,8 @@ export interface AuthoredSceneDocument {
   readonly contentLicense?: string;
   /** Дальности тумана [near, far]; без них считаются от радиуса мира. */
   readonly fogDistances?: readonly [near: number, far: number];
+  /** Географический базис сцены для физической солнечной траектории. */
+  readonly solarFrame?: DestructionSceneDefinition["solarFrame"];
 }
 
 export interface CompiledSceneArtifact {

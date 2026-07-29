@@ -266,16 +266,23 @@ export function treeVisualRootId(
     : `${piece.id}:tree`;
 }
 
-/**
- * A tree is a directed support graph, not a bag of nearby pieces. If a woody
- * parent comes free, every branch and foliage section growing from it must
- * come free as well. Expanding the broken set here keeps that rule independent
- * of broad structural contact heuristics used by buildings.
- */
-export function expandBrokenTreeDescendants(
+// The parent -> children graph depends only on the authored piece list, which
+// is stable for the lifetime of a scene, while expansion runs on every settle
+// (several times per hit). Rebuilding the graph each call cost ~2 ms per
+// settle on a 20k-piece map.
+const treeChildrenCache = new WeakMap<
+  readonly BreakablePieceDefinition[],
+  ReadonlyMap<string, readonly string[]>
+>();
+
+function treeChildrenByParent(
   pieces: readonly BreakablePieceDefinition[],
-  brokenPieceIds: ReadonlySet<string>,
-): ReadonlySet<string> {
+): ReadonlyMap<string, readonly string[]> {
+  const cached = treeChildrenCache.get(pieces);
+  if (cached) {
+    return cached;
+  }
+
   const childrenByParent = new Map<string, string[]>();
   for (const piece of pieces) {
     const visual = piece.treeVisual;
@@ -291,6 +298,21 @@ export function expandBrokenTreeDescendants(
       childrenByParent.set(parentId, [piece.id]);
     }
   }
+  treeChildrenCache.set(pieces, childrenByParent);
+  return childrenByParent;
+}
+
+/**
+ * A tree is a directed support graph, not a bag of nearby pieces. If a woody
+ * parent comes free, every branch and foliage section growing from it must
+ * come free as well. Expanding the broken set here keeps that rule independent
+ * of broad structural contact heuristics used by buildings.
+ */
+export function expandBrokenTreeDescendants(
+  pieces: readonly BreakablePieceDefinition[],
+  brokenPieceIds: ReadonlySet<string>,
+): ReadonlySet<string> {
+  const childrenByParent = treeChildrenByParent(pieces);
 
   const expanded = new Set(brokenPieceIds);
   const pending = [...brokenPieceIds];

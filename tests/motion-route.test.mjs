@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createMotionRoute } from "../games/make-a-mess/src/game/motionRoute.ts";
 import {
+  createSkyTrainEmergencyEscapeRoute,
   finalLegFrom,
   routeLength,
   routePoint,
@@ -10,6 +11,7 @@ import {
   SKY_TRAIN_VERTICAL_LANDING_DISTANCE,
   skyTrainRoutePhase,
   skyTrainRoute,
+  terminalArrivalRoute,
 } from "../games/make-a-mess/src/game/skyTrainRoutes.ts";
 
 test("a route artifact owns nodes, approach curves, requirements and markers", () => {
@@ -126,8 +128,80 @@ test("the boarded tour is a simple irregular orbit around the city", () => {
   assert.equal(northEast[2] > city[1] + 50, true);
 
   const finalEntry = routePoint("tour", finalLegFrom("tour"));
-  assert.equal(Math.abs(finalEntry[0] - 125) < 0.1, true);
+  assert.equal(Math.abs(finalEntry[0] - 64) < 0.1, true);
   assert.equal(Math.abs(finalEntry[2]) < 0.1, true);
+});
+
+test("external arrivals enter far left and share the terminal approach", () => {
+  const arrival = terminalArrivalRoute();
+  assert.equal(arrival.id, "sky-train:terminal-arrival");
+  assert.equal(arrival.requirement("altitude", 0), 26);
+  assert.equal(arrival.requirement("altitude", 1), 0);
+
+  const start = arrival.point(0);
+  const approach = arrival.nodeProgress("right-arc");
+  assert.equal(Math.abs(start[0] - 105) < 0.1, true);
+  assert.equal(start[2] >= 280, true);
+  for (let step = 0; step <= 20; step += 1) {
+    const leadIn = arrival.point(approach * step / 20);
+    assert.equal(
+      Math.abs(leadIn[0] - 105) < 1e-6,
+      true,
+      `external lead-in left the 105 m line at ${step / 20}`,
+    );
+  }
+
+  for (const kind of ["circuit", "tour"]) {
+    const route = skyTrainRoute(kind);
+    const routeApproach = route.nodeProgress("right-arc");
+    for (let step = 0; step <= 40; step += 1) {
+      const inboundProgress = step / 40;
+      const routePoint = route.point(
+        routeApproach + (1 - routeApproach) * inboundProgress,
+      );
+      const arrivalPoint = arrival.point(
+        approach + (1 - approach) * inboundProgress,
+      );
+      assert.equal(
+        Math.hypot(
+          routePoint[0] - arrivalPoint[0],
+          routePoint[2] - arrivalPoint[2],
+        ) < 1e-6,
+        true,
+        `${kind} diverged from shared terminal approach at ${inboundProgress}`,
+      );
+    }
+  }
+
+  // Looking towards the platform, +x is its left side.
+  const announced = arrival.point(arrival.markerProgress("arriving"));
+  assert.equal(Math.abs(announced[0] - 105) < 0.1, true);
+  assert.equal(Math.abs(announced[2] - 30) < 0.1, true);
+  const final = arrival.point(arrival.markerProgress("final"));
+  assert.equal(Math.abs(final[0] - 64) < 0.1, true);
+  assert.equal(Math.abs(final[2]) < 0.1, true);
+});
+
+test("emergency escape starts along the actual nose and exits through authored gates", () => {
+  const route = createSkyTrainEmergencyEscapeRoute({
+    start: [18, 14, -12],
+    forward: [3, 0, 4],
+  });
+  const start = route.point(0);
+  const next = route.point(0.001);
+  const tangent = [next[0] - start[0], next[2] - start[2]];
+  const tangentLength = Math.hypot(...tangent);
+  const alignment =
+    (tangent[0] * 0.6 + tangent[1] * 0.8) / tangentLength;
+
+  assert.equal(alignment > 0.995, true, `first tangent alignment=${alignment}`);
+  const gate = route.point(route.markerProgress("recoveryGate"));
+  assert.equal(Math.abs(gate[0] + 88) < 0.1, true);
+  assert.equal(Math.abs(gate[2] - 52) < 0.1, true);
+  assert.equal(route.markerProgress("disappear"), 1);
+  assert.equal(route.requirement("altitude", 0), 14);
+  assert.equal(route.requirement("altitude", 1), 38);
+  assert.equal(route.requirement("speedLimit", 1), 8.5);
 });
 
 test("both flight routes author reusable departure, cruise and approach phases", () => {

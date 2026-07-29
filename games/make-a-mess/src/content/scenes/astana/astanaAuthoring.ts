@@ -29,6 +29,15 @@ export interface MutableGroup {
 
 const groups = new Map<string, MutableGroup>();
 
+/**
+ * Vite сохраняет этот модуль между горячими обновлениями. Без очистки новый
+ * проход генератора дописывает второй остров в прежние массивы, после чего
+ * компилятор закономерно останавливается на повторяющихся id.
+ */
+export function resetGroups(): void {
+  groups.clear();
+}
+
 export function group(
   id: string,
   label: string,
@@ -160,4 +169,34 @@ export function collectGroups(): readonly SceneGroupDefinition[] {
     supportMode: entry.supportMode,
     objects: entry.objects,
   }));
+}
+
+/**
+ * Разложение БАЗИСА в эйлеры XYZ той конвенции, в которой их читает
+ * компилятор сцены (R = Rx·Ry·Rz). Локальный x ложится вдоль `xDir`,
+ * локальный y — вдоль `yDir` (после ортогонализации).
+ *
+ * Это единственный правильный способ поставить деталь на криволинейную
+ * поверхность. Запись «эйлерами-скорописью» работает, только пока объект
+ * лежит вдоль мировой оси, — тем же приёмом собраны полотнища оболочки
+ * дирижабля в терминале, см. skyMooringDocument.
+ */
+export function orient(xDir: SceneVector3, yDir: SceneVector3): SceneVector3 {
+  const norm = (v: SceneVector3): SceneVector3 => {
+    const length = Math.hypot(v[0], v[1], v[2]) || 1;
+    return [v[0] / length, v[1] / length, v[2] / length];
+  };
+  const x = norm(xDir);
+  const dot = yDir[0] * x[0] + yDir[1] * x[1] + yDir[2] * x[2];
+  const y = norm([yDir[0] - x[0] * dot, yDir[1] - x[1] * dot, yDir[2] - x[2] * dot]);
+  const z: SceneVector3 = [
+    x[1] * y[2] - x[2] * y[1],
+    x[2] * y[0] - x[0] * y[2],
+    x[0] * y[1] - x[1] * y[0],
+  ];
+  const ry = Math.asin(Math.max(-1, Math.min(1, z[0])));
+  if (Math.abs(z[0]) < 0.9999999) {
+    return [Math.atan2(-z[1], z[2]), ry, Math.atan2(-y[0], x[0])];
+  }
+  return [Math.atan2(y[2], y[1]), ry, 0];
 }

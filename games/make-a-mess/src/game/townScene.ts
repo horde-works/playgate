@@ -5,7 +5,10 @@ import {
 import { compileSceneGroups } from "../content/scenes/compileScene.ts";
 import { cityPrefabLibrary } from "../content/prefabs/cityPrefabs.ts";
 import { openHouseInfillDocument } from "../content/scenes/openHouseInfillDocument.ts";
-import { skyMooringDocument } from "../content/scenes/skyMooringDocument.ts";
+import {
+  skyMooringDocument,
+  skyMooringSpotLights,
+} from "../content/scenes/skyMooringDocument.ts";
 
 // ---------------------------------------------------------------------------
 // Боевая городская сцена: базовый город (destructionScene) плюс старый
@@ -37,4 +40,5 @@ export const townScene = createDestructionScene({
     ...oldQuarterCompilation.lamps,
     ...skyMooringCompilation.lamps,
   ],
+  spotLights: skyMooringSpotLights,
 });

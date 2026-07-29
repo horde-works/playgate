@@ -1,5 +1,6 @@
 import type { RapierRigidBody } from "@react-three/rapier";
 import type { MutableRefObject } from "react";
+import type { Group } from "three";
 import { getPieceRenderBoxes } from "./breakableGeometry.ts";
 import {
   materialRuntimeProfiles,
@@ -21,13 +22,22 @@ export interface CompoundKinematicClusterDefinition {
   readonly origin: SceneVector3;
   /** Articulated members keep their own contact body inside the moving frame. */
   readonly independentMemberMatches?: readonly string[];
+  /**
+   * Optional structural contact envelope. Every intact member still follows
+   * the frame visually, but decorative detail need not become a Rapier shape.
+   */
+  readonly contactMemberMatches?: readonly string[];
 }
 
 export interface CompoundKinematicClusterRuntime {
   readonly definition: CompoundKinematicClusterDefinition;
   readonly body: RapierRigidBody;
-  /** Members whose collision is currently owned by the compound body. */
+  /** Visual attachments inherit the exact rendered transform of the body. */
+  readonly visualRoot: Group;
+  /** Intact members whose rendered pose is owned by the compound frame. */
   readonly memberIds: ReadonlySet<string>;
+  /** Intact attachments, including articulated members with their own body. */
+  readonly attachedMemberIds: ReadonlySet<string>;
 }
 
 export type CompoundKinematicClusterRegistry = MutableRefObject<
@@ -37,10 +47,13 @@ export type CompoundKinematicClusterRegistry = MutableRefObject<
 export interface CompoundClusterColliderDefinition {
   readonly id: string;
   readonly sourceId: string;
-  readonly shape: "cuboid" | "cylinder";
+  readonly shape: "cuboid" | "sphere" | "cylinder";
   readonly position: SceneVector3;
   readonly rotation: SceneVector3;
-  readonly args: readonly [number, number, number] | readonly [number, number];
+  readonly args:
+    | readonly [number, number, number]
+    | readonly [number, number]
+    | readonly [number];
   readonly friction: number;
   readonly restitution: number;
 }
@@ -84,6 +97,8 @@ export function compoundClusterColliders(
   for (const piece of pieces) {
     if (
       !compoundClusterOwnsPiece(cluster, piece) ||
+      (cluster.contactMemberMatches &&
+        !cluster.contactMemberMatches.some((match) => piece.id.includes(match))) ||
       brokenPieces.has(piece.id)
     ) {
       continue;
@@ -101,11 +116,18 @@ export function compoundClusterColliders(
       colliders.push({
         id: `${piece.id}:${index}`,
         sourceId: piece.id,
-        shape: piece.shape === "cylinder" ? "cylinder" : "cuboid",
+        shape:
+          piece.shape === "sphere"
+            ? "sphere"
+            : piece.shape === "cylinder"
+              ? "cylinder"
+              : "cuboid",
         position,
         rotation,
         args:
-          piece.shape === "cylinder"
+          piece.shape === "sphere"
+            ? [Math.max(0.002, Math.min(...box.size) / 2 - 0.002)]
+            : piece.shape === "cylinder"
             ? [
                 Math.max(0.002, box.size[1] / 2 - 0.002),
                 Math.max(0.002, (box.size[0] + box.size[2]) / 4 - 0.002),

@@ -80,17 +80,6 @@ export function townHouseDoorPolicy(groupKey: string): TownHouseDoorPolicy | nul
   return { doorId: groupKey };
 }
 
-/**
- * Дверь гондолы дирижабля у городской причальной мачты: ведёт себя как
- * обычная городская дверь — распахивается по подходу и подсвечивается той же
- * подсказкой. Створка и её ручка названы одной петлёй, поэтому едут вместе.
- */
-export function skyMooringDoorPolicy(groupKey: string): TownHouseDoorPolicy | null {
-  return groupKey === "sky-mooring:airship:car:door"
-    ? { doorId: groupKey }
-    : null;
-}
-
 export interface PlugSlideDoorPolicy {
   readonly doorId: string;
   /** На сколько створка выходит из проёма наружу, прежде чем поехать. */
@@ -102,16 +91,19 @@ export interface PlugSlideDoorPolicy {
 }
 
 /**
- * Дверь вагона небесного поезда открывается как в современном поезде:
- * створка сначала выходит из проёма НА СЕБЯ на свою толщину, а потом уезжает
- * вдоль борта вправо на всю свою ширину. Закрывается тем же порядком назад,
- * когда пассажир отошёл. Направление «наружу» и ось борта берутся из тех же
- * полей `hinge.normal` / `hinge.direction`, которыми задана створка.
+ * Транспортная дверь сначала выходит из проёма НА СЕБЯ на свою толщину, а
+ * потом уезжает вдоль борта. Закрывается тем же порядком назад. Направление
+ * «наружу» и ось борта берутся из `hinge.normal` / `hinge.direction`.
+ * Конкретная машина задаёт только размерный профиль, механизм остаётся один.
  */
 export function plugSlideDoorPolicy(groupKey: string): PlugSlideDoorPolicy | null {
-  return groupKey === "terminal:sky-train:head:door"
-    ? { doorId: groupKey, plugDepth: 0.26, travel: 1.78, plugShare: 0.34 }
-    : null;
+  if (groupKey === "terminal:sky-train:head:door") {
+    return { doorId: groupKey, plugDepth: 0.26, travel: 1.78, plugShare: 0.34 };
+  }
+  if (groupKey === "sky-mooring:airship:car:door") {
+    return { doorId: groupKey, plugDepth: 0.22, travel: 1.42, plugShare: 0.34 };
+  }
+  return null;
 }
 
 export function hingedDoorGroupKey(

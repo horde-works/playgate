@@ -3,7 +3,11 @@ import test from "node:test";
 import { readFileSync, readdirSync } from "node:fs";
 import { astanaScene } from "../games/make-a-mess/src/game/astanaScene.ts";
 import {
+  FUTURE_ROAD_FULL_WIDTH,
   GROUND_PITCH,
+  LAND_BASE_RADIUS,
+  OUTER_LAYOUT_RESERVE,
+  RIVER_VALLEY_MARGIN,
   WORLD_RADIUS,
   groundKindAt,
   groundUnder,
@@ -18,7 +22,8 @@ const withPrefix = (prefix) =>
 
 test("the island is the largest world and carries its licence", () => {
   assert.equal(astanaScene.id, "astana");
-  assert.equal(WORLD_RADIUS, 112);
+  assert.equal(WORLD_RADIUS, 138);
+  assert.equal(WORLD_RADIUS, 112 + FUTURE_ROAD_FULL_WIDTH * 3 + OUTER_LAYOUT_RESERVE);
   assert.equal(astanaScene.contentLicense, "CC-BY-NC-ND-4.0");
   assert.equal(astanaScene.indestructible, true);
 });
@@ -28,14 +33,17 @@ test("nothing starts unsupported", () => {
 });
 
 test("the shell is built to its budget, not sketched", () => {
-  // Детектор упрощения: оболочка острова площадью 39 000 м² не может стоить
+  // Детектор упрощения: увеличенная оболочка площадью почти 60 000 м² не
+  // может стоить пару сотен деталей.
   // пару сотен деталей. Числа — нижние границы из паспорта мира.
   assert.ok(pieces.length >= 4600, `деталей всего: ${pieces.length}`);
-  assert.ok(withPrefix("terrain-base").length >= 1200);
-  assert.ok(withPrefix("terrain-surface").length >= 1200);
+  assert.ok(withPrefix("terrain-base").length >= 2000);
+  assert.ok(withPrefix("terrain-surface").length >= 2000);
   // Пояс прорежен просеками: кольцо и четыре станции с вестибюлями вырубают
   // из него по своей поляне, поэтому нижняя граница ниже двух тысяч.
-  assert.ok(withPrefix("green-belt").length >= 1900);
+  // Four stations plus the now full-size Nur Alem, Opera and Arch clear
+  // deliberate view and access corridors through the shelter belt.
+  assert.ok(withPrefix("green-belt").length >= 1500);
   assert.ok(withPrefix("steppe-tufts").length >= 500);
   assert.ok(withPrefix("river-bed").length >= 250);
 });
@@ -71,9 +79,9 @@ test("the river leaves a real channel, two steps deep", () => {
   const bed = withPrefix("terrain-surface:bed");
   const bank = withPrefix("terrain-surface:bank");
   const terrace = withPrefix("terrain-surface:terrace");
-  // Русло 22 м, берег и пойма по 8 м — при шаге сетки 5 м это примерно
-  // 160 / 130 / 115 тайлов; ниже сотни ступень перестаёт быть сплошной.
-  assert.ok(bed.length >= 140, `тайлов дна: ${bed.length}`);
+  // Весь поперечник долины уменьшен ровно на 30%, но каждая из трёх
+  // ступеней обязана оставаться непрерывной.
+  assert.ok(bed.length >= 115, `тайлов дна: ${bed.length}`);
   assert.ok(bank.length >= 100, `тайлов берега: ${bank.length}`);
   assert.ok(terrace.length >= 100, `тайлов поймы: ${terrace.length}`);
 
@@ -87,15 +95,30 @@ test("the river leaves a real channel, two steps deep", () => {
 
 test("the channel crosses the whole island", () => {
   // Река входит и выходит за кромку: это не пруд в середине.
-  for (const x of [-95, -40, 0, 40, 95]) {
+  for (const x of [-125, -95, -40, 0, 40, 95, 125]) {
     const z = riverAxisZ(x);
     assert.equal(groundKindAt(x, z), "bed", `на x=${x} русла нет`);
-    assert.ok(riverHalfWidth(x) > 8, `на x=${x} русло уже 16 м`);
+    assert.ok(riverHalfWidth(x) > 4.5, `на x=${x} русло исчезло`);
   }
   // Правый берег за поймой остаётся достаточно широким для целиноградского
   // квартала: дом 32×12 м, двор и улица перед ним.
-  const northShore = 104 - riverAxisZ(0) - riverHalfWidth(0) - 16;
-  assert.ok(northShore > 38, `правый берег всего ${northShore.toFixed(1)} м`);
+  const northShore = LAND_BASE_RADIUS - riverAxisZ(0)
+    - riverHalfWidth(0) - RIVER_VALLEY_MARGIN;
+  assert.ok(northShore > 70, `правый берег всего ${northShore.toFixed(1)} м`);
+
+  // Сужение всей долины, а не только песчаного дна, возвращает кругу
+  // Байтерека сплошную опору по всей окружности.
+  for (let step = 0; step < 64; step += 1) {
+    const angle = step / 64 * Math.PI * 2;
+    assert.equal(groundKindAt(Math.cos(angle) * 16, Math.sin(angle) * 16), "land");
+  }
+});
+
+test("the new annulus outside the LRT is bare soil reserved for later roads", () => {
+  const outer = withPrefix("terrain-surface:cover").filter((piece) =>
+    Math.hypot(piece.position[0], piece.position[2]) > 105);
+  assert.ok(outer.length >= 600, `внешних тайлов грунта: ${outer.length}`);
+  assert.ok(outer.every((piece) => piece.material === "soil"));
 });
 
 test("the shelter belt is planted on real tiles, clear of the rim", () => {

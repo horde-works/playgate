@@ -20,7 +20,6 @@ import {
   hingedDoorGroupKey,
   inwardDoorSwingSign,
   plugSlideDoorPolicy,
-  skyMooringDoorPolicy,
   townHouseDoorPolicy,
   DOOR_APPROACH_HEIGHT,
   VIKING_DOOR_APPROACH_RADIUS,
@@ -152,7 +151,7 @@ export function HingedDoorSystem({
         gate: vikingGateLeafPolicy(key),
         hallGate: vikingHallGatePolicy(key),
         vikingDoor: vikingDoorPolicy(key),
-        townHouseDoor: townHouseDoorPolicy(key) ?? skyMooringDoorPolicy(key),
+        townHouseDoor: townHouseDoorPolicy(key),
         plugSlide: plugSlideDoorPolicy(key),
       };
     });

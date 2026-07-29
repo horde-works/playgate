@@ -60,6 +60,7 @@ import {
   type DestructionSceneDefinition,
   type LampDefinition,
   type LampEventState,
+  type SceneVector3,
   type SpotLightDefinition,
 } from "./destructionScene";
 import {
@@ -130,6 +131,7 @@ import {
   HingedDoorSystem,
   type HingedEntryApproach,
 } from "./HingedDoorSystem";
+import { preferredEntryInteraction } from "./entryInteraction.ts";
 import { SmokePlumes } from "./SmokePlumes";
 import { WindController } from "./WindController";
 import { IntactBreakableWorld } from "./IntactBreakableWorld";
@@ -137,6 +139,8 @@ import {
   VehicleFrameSystem,
   type VehicleFramePoseState,
 } from "./VehicleFrameSystem";
+import { AstanaTrainSystem } from "./AstanaTrainSystem";
+import { astanaTrainClusterDefinitions } from "./astanaTrainRuntime";
 import {
   isVehicleFramePiece,
   vehicleFrameForCluster,
@@ -148,6 +152,7 @@ import { buildIntactGroundRenderColors } from "./intactWorldBatching";
 import { resolveRuntimeStructure } from "./runtimeStructure";
 import { createSpatialIndex } from "./spatialIndex";
 import {
+  ACTOR_SAFETY_FLOOR,
   ACTOR_ABOARD,
   ACTOR_NORMAL,
   DEBRIS_ACTOR_DETAIL,
@@ -171,14 +176,28 @@ import {
   stepCarryWindow,
 } from "./playerMovement";
 import {
+  isBelowWorldDisappearDepth,
+  worldDisappearY,
+} from "./worldFalloff";
+import {
   movingSupportBoundaryState,
+  passengerFallReturnPoint,
   passengerAngularVelocityDelta,
   passengerControlVelocityDelta,
   supportVelocityAtPoint,
 } from "./movingSupportDynamics";
 import {
+  passengerSeatForId,
+  passengerSeatIsIntact,
+  passengerSeatViewYaw,
+  passengerSeatWorldMotion,
+  passengerSeatWorldPoint,
+  type PassengerSeatDefinition,
+} from "./passengerSeats";
+import {
   compoundClusterOwnsPiece,
   PHYSICS_TIME_STEP,
+  type CompoundKinematicClusterDefinition,
   type CompoundKinematicClusterRuntime,
 } from "./compoundKinematicCluster";
 import {
@@ -190,9 +209,9 @@ import {
   type TimeOfDay,
 } from "./WorldEnvironment";
 import { CinematicPostProcessing } from "./CinematicPostProcessing";
-import { useLanguage } from "@/app/i18n/LanguageProvider";
-import { sceneCopy, type TranslationKey } from "@/app/i18n/dictionary";
-import { LanguageSwitcher } from "@/app/components/LanguageSwitcher";
+import { useLanguage } from "../../../../app/i18n/LanguageProvider";
+import { sceneCopy, type TranslationKey } from "../../../../app/i18n/dictionary";
+import { LanguageSwitcher } from "../../../../app/components/LanguageSwitcher";
 import {
   CinematicCameraRig,
   CinematicFlyoverGalleryShortcut,
@@ -209,18 +228,29 @@ import type {
 } from "./cinematicFlyoverPlan";
 import { useGameActionHints, type GameAction } from "./gameActionHints";
 import { SceneMutableObjectSystem } from "./SceneMutableObjectSystem";
+import { MotionInstrumentSystem } from "./MotionInstrumentSystem";
 import {
   pieceWithMutableState,
   type MutablePieceVisualState,
 } from "./sceneDynamics";
-import { nextTimeOfDay, TIME_OF_DAY_TARGETS } from "./timeOfDay";
+import {
+  gameClockText,
+  nextTimeOfDay,
+  TIME_OF_DAY_TARGETS,
+} from "./timeOfDay";
 import {
   createMotionTelemetryStore,
+  motionTelemetryMetricActivity,
   type MotionTelemetryMetric,
+  type MotionTelemetrySnapshot,
   type MotionTelemetryStore,
   type MotionTelemetryUpdate,
 } from "./motionTelemetry";
 import { runtimeDiagnosticsEnabled } from "./runtimeDiagnostics";
+import type {
+  VehicleFailureEvent,
+  VehicleFailureReason,
+} from "./vehicleFailure";
 
 type ControlName =
   | "forward"
@@ -238,12 +268,20 @@ function timeOfDayKey(timeOfDay: TimeOfDay): TranslationKey {
   switch (timeOfDay) {
     case "dawn":
       return "time.dawn";
+    case "morning":
+      return "time.morning";
     case "day":
       return "time.day";
+    case "afternoon":
+      return "time.afternoon";
     case "sunset":
       return "time.sunset";
+    case "evening":
+      return "time.evening";
     case "night":
       return "time.night";
+    case "predawn":
+      return "time.predawn";
   }
 }
 
@@ -251,12 +289,20 @@ function timeOfDayAnnouncementKey(timeOfDay: TimeOfDay): TranslationKey {
   switch (timeOfDay) {
     case "dawn":
       return "announce.timeDawn";
+    case "morning":
+      return "announce.timeMorning";
     case "day":
       return "announce.timeDay";
+    case "afternoon":
+      return "announce.timeAfternoon";
     case "sunset":
       return "announce.timeSunset";
+    case "evening":
+      return "announce.timeEvening";
     case "night":
       return "announce.timeNight";
+    case "predawn":
+      return "announce.timePredawn";
   }
 }
 
@@ -264,6 +310,14 @@ const entryApproachActions: readonly GameAction[] = [
   "gate.approaching",
   "door.approaching",
   "town-door.approaching",
+  "terminal-departure.approaching",
+  "viking-departure.approaching",
+  "town-departure.approaching",
+  "terminal-ride.approaching",
+  "viking-ride.approaching",
+  "town-ride.approaching",
+  "seat.approaching",
+  "stand.available",
 ];
 
 function entryApproachAction(entry: HingedEntryApproach): GameAction {
@@ -272,9 +326,21 @@ function entryApproachAction(entry: HingedEntryApproach): GameAction {
     : entry.kind === "town-door"
       ? "town-door.approaching"
       : entry.kind === "departure"
-        ? "departure.approaching"
+        ? entry.cue === "viking-uncrewed-flight"
+          ? "viking-departure.approaching"
+          : entry.cue === "town-uncrewed-flight"
+            ? "town-departure.approaching"
+            : "terminal-departure.approaching"
         : entry.kind === "ride"
-          ? "ride.approaching"
+          ? entry.cue === "viking-passenger-flight"
+            ? "viking-ride.approaching"
+            : entry.cue === "town-passenger-flight"
+              ? "town-ride.approaching"
+              : "terminal-ride.approaching"
+          : entry.kind === "seat"
+            ? "seat.approaching"
+            : entry.kind === "stand"
+              ? "stand.available"
           : "door.approaching";
 }
 
@@ -289,10 +355,36 @@ function entryActionKey(
     return touch ? "hint.townDoor.actionTouch" : "hint.townDoor.action";
   }
   if (entry.kind === "departure") {
-    return touch ? "hint.departure.actionTouch" : "hint.departure.action";
+    return entry.cue === "viking-uncrewed-flight"
+      ? touch
+        ? "hint.vikingDeparture.actionTouch"
+        : "hint.vikingDeparture.action"
+      : entry.cue === "town-uncrewed-flight"
+        ? touch
+          ? "hint.townDeparture.actionTouch"
+          : "hint.townDeparture.action"
+      : touch
+        ? "hint.departure.actionTouch"
+        : "hint.departure.action";
   }
   if (entry.kind === "ride") {
-    return touch ? "hint.ride.actionTouch" : "hint.ride.action";
+    return entry.cue === "viking-passenger-flight"
+      ? touch
+        ? "hint.vikingRide.actionTouch"
+        : "hint.vikingRide.action"
+      : entry.cue === "town-passenger-flight"
+        ? touch
+          ? "hint.townRide.actionTouch"
+          : "hint.townRide.action"
+      : touch
+        ? "hint.ride.actionTouch"
+        : "hint.ride.action";
+  }
+  if (entry.kind === "seat") {
+    return touch ? "hint.seat.actionTouch" : "hint.seat.action";
+  }
+  if (entry.kind === "stand") {
+    return touch ? "hint.stand.actionTouch" : "hint.stand.action";
   }
   return touch ? "hint.door.actionTouch" : "hint.door.action";
 }
@@ -544,11 +636,14 @@ function readBreakableHit(
 interface PassengerViewMotion {
   addYaw: (delta: number) => void;
   consumeYaw: () => number;
+  snapTo: (yaw: number, pitch: number) => void;
+  consumeSnap: () => { readonly yaw: number; readonly pitch: number } | null;
   reset: () => void;
 }
 
 function createPassengerViewMotion(): PassengerViewMotion {
   let pendingYaw = 0;
+  let pendingSnap: { readonly yaw: number; readonly pitch: number } | null = null;
   return {
     addYaw(delta) {
       pendingYaw += delta;
@@ -558,8 +653,18 @@ function createPassengerViewMotion(): PassengerViewMotion {
       pendingYaw = 0;
       return result;
     },
+    snapTo(yaw, pitch) {
+      pendingYaw = 0;
+      pendingSnap = { yaw, pitch };
+    },
+    consumeSnap() {
+      const result = pendingSnap;
+      pendingSnap = null;
+      return result;
+    },
     reset() {
       pendingYaw = 0;
+      pendingSnap = null;
     },
   };
 }
@@ -571,6 +676,8 @@ function Player({
   spawn,
   flightMode,
   entryInteractionActive,
+  occupiedSeatId,
+  vehicleFramePoses,
 }: {
   registerBody: (id: string, body: RapierRigidBody | null) => void;
   mobileControls: MobileControlsRef;
@@ -578,6 +685,8 @@ function Player({
   spawn: readonly [number, number, number];
   flightMode: boolean;
   entryInteractionActive: boolean;
+  occupiedSeatId: string | null;
+  vehicleFramePoses: MutableRefObject<ReadonlyMap<string, VehicleFramePoseState>>;
 }) {
   const body = useRef<RapierRigidBody>(null);
   const [, getControls] = useKeyboardControls<ControlName>();
@@ -608,6 +717,8 @@ function Player({
     z: 0,
   });
   const spawnFrames = useRef(0);
+  const previousSeat = useRef<PassengerSeatDefinition | null>(null);
+  const seatedYaw = useRef<number | null>(null);
 
   useEffect(() => {
     registerBody("player", body.current);
@@ -668,6 +779,75 @@ function Player({
 
     const position = body.current.translation();
     const velocity = body.current.linvel();
+
+    const occupiedSeat = passengerSeatForId(occupiedSeatId);
+    if (occupiedSeat) {
+      const carrier = vehicleFramePoses.current.get(occupiedSeat.carrierClusterId);
+      if (carrier) {
+        const occupantPoint = passengerSeatWorldPoint(
+          carrier,
+          occupiedSeat.occupantPoint,
+        );
+        const carrierMotion = passengerSeatWorldMotion(carrier, occupantPoint);
+        const viewYaw = passengerSeatViewYaw(occupiedSeat, carrier);
+        if (previousSeat.current?.id !== occupiedSeat.id) {
+          passengerViewMotion.snapTo(viewYaw, 0);
+        } else if (seatedYaw.current !== null) {
+          let yawDelta = viewYaw - seatedYaw.current;
+          while (yawDelta > Math.PI) yawDelta -= Math.PI * 2;
+          while (yawDelta < -Math.PI) yawDelta += Math.PI * 2;
+          passengerViewMotion.addYaw(yawDelta);
+        }
+        seatedYaw.current = viewYaw;
+        previousSeat.current = occupiedSeat;
+        body.current.setGravityScale(0, true);
+        for (let index = 0; index < body.current.numColliders(); index += 1) {
+          body.current.collider(index).setCollisionGroups(0);
+        }
+        body.current.setTranslation(
+          { x: occupantPoint[0], y: occupantPoint[1], z: occupantPoint[2] },
+          true,
+        );
+        body.current.setLinvel(carrierMotion.linearVelocity, true);
+        return;
+      }
+    }
+
+    // Leaving a place is calculated from the carrier's current pose, never
+    // from where the vehicle happened to be when the seat was authored.
+    const releasedSeat = previousSeat.current;
+    if (releasedSeat) {
+      const carrier = vehicleFramePoses.current.get(releasedSeat.carrierClusterId);
+      const exitPoint = carrier
+        ? passengerSeatWorldPoint(carrier, releasedSeat.exitPoint)
+        : releasedSeat.exitPoint;
+      const exitMotion = carrier
+        ? passengerSeatWorldMotion(carrier, exitPoint)
+        : { linearVelocity: { x: 0, y: 0, z: 0 }, yawVelocity: 0 };
+      previousSeat.current = null;
+      seatedYaw.current = null;
+      // The passenger leaves a constraint, not the carrier. Hand off both
+      // translation and yaw so the regular finite-traction model continues
+      // from the ship's current inertial state instead of rebuilding it.
+      passengerYawVelocity.current = exitMotion.yawVelocity;
+      movingSupportBoundaryPassThrough.current =
+        Math.hypot(
+          exitMotion.linearVelocity.x,
+          exitMotion.linearVelocity.y,
+          exitMotion.linearVelocity.z,
+        ) > 0.02 || Math.abs(exitMotion.yawVelocity) > 0.002;
+      body.current.setGravityScale(flightMode ? 0 : 1, true);
+      for (let index = 0; index < body.current.numColliders(); index += 1) {
+        body.current.collider(index).setCollisionGroups(ACTOR_ABOARD);
+      }
+      body.current.setTranslation(
+        { x: exitPoint[0], y: exitPoint[1], z: exitPoint[2] },
+        true,
+      );
+      body.current.setLinvel(exitMotion.linearVelocity, true);
+      return;
+    }
+
     const { forward, backward, left, right, run, jump } = getControls();
     const touch = mobileControls.current;
     const inputX = MathUtils.clamp(
@@ -995,11 +1175,12 @@ function Player({
       );
     }
 
-    // Below the invisible safety floor means the player left the world
-    // volume (deepest legit crater floor keeps the capsule center ≈ -1.3).
-    if (position.y < -2.6) {
+    // Falling off an airborne carrier returns to the scene's ordinary island
+    // spawn, never onto the carrier that has already flown away.
+    const fallReturn = passengerFallReturnPoint(position.y, spawn);
+    if (fallReturn) {
       body.current.setTranslation(
-        { x: spawn[0], y: spawn[1], z: spawn[2] },
+        fallReturn,
         true,
       );
       body.current.setLinvel({ x: 0, y: 0, z: 0 }, true);
@@ -1105,10 +1286,17 @@ function MouseLook({
       changed = true;
     }
 
-    const carriedYaw = passengerViewMotion.consumeYaw();
-    if (carriedYaw !== 0) {
-      yaw.current += carriedYaw;
+    const snappedView = passengerViewMotion.consumeSnap();
+    if (snappedView) {
+      yaw.current = snappedView.yaw;
+      pitch.current = snappedView.pitch;
       changed = true;
+    } else {
+      const carriedYaw = passengerViewMotion.consumeYaw();
+      if (carriedYaw !== 0) {
+        yaw.current += carriedYaw;
+        changed = true;
+      }
     }
 
     const touch = mobileControlsRef.current;
@@ -1457,6 +1645,20 @@ const BreakablePiece = memo(function BreakablePiece({
       }
     }
 
+    if (!broken && wasBroken.current) {
+      currentBody.setBodyType(rapier.RigidBodyType.Fixed, true);
+      currentBody.setTranslation(
+        { x: piece.position[0], y: piece.position[1], z: piece.position[2] },
+        true,
+      );
+      const [rx, ry, rz] = piece.rotation ?? [0, 0, 0];
+      const restored = new Quaternion().setFromEuler(new Euler(rx, ry, rz));
+      currentBody.setRotation(restored, true);
+      currentBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      currentBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      registerBody(piece.id, currentBody);
+    }
+
     wasBroken.current = broken;
   }, [
     broken,
@@ -1508,7 +1710,11 @@ const BreakablePiece = memo(function BreakablePiece({
           : undefined
       }
     >
-      {ownsContactShape && piece.shape === "cylinder" ? (
+      {ownsContactShape && piece.shape === "sphere" ? (
+        <BallCollider
+          args={[Math.max(0.002, Math.min(...piece.size) / 2 - 0.002)]}
+        />
+      ) : ownsContactShape && piece.shape === "cylinder" ? (
         // Real round collider: broken wheels and barrels actually roll.
         <CylinderCollider
           args={[
@@ -1546,6 +1752,7 @@ function BreakableObjects({
   shatteredPieces,
   bodies,
   kinematicClusters,
+  kinematicClusterDefinitions,
   mutablePieceIds,
   mutablePieceStates,
   registerBody,
@@ -1558,6 +1765,7 @@ function BreakableObjects({
   kinematicClusters: MutableRefObject<
     Map<string, CompoundKinematicClusterRuntime>
   >;
+  kinematicClusterDefinitions: readonly CompoundKinematicClusterDefinition[];
   mutablePieceIds: ReadonlySet<string>;
   mutablePieceStates: MutableRefObject<Map<string, MutablePieceVisualState>>;
   registerBody: (id: string, body: RapierRigidBody | null) => void;
@@ -1569,9 +1777,13 @@ function BreakableObjects({
     otherColliderHandle: number,
   ) => void;
 }) {
-  const { hiddenPieceIds, bodyPieces } = useMemo(() => {
+  const { hiddenPieceIds, bodyPieces, physicalBodyPieces } = useMemo(() => {
     const hidden = new Set<string>();
-    const bodies: BreakablePieceDefinition[] = [];
+    const dynamicVisuals: BreakablePieceDefinition[] = [];
+    const physicalBodies: BreakablePieceDefinition[] = [];
+    const kinematicClusterIds = new Set(
+      kinematicClusterDefinitions.map((definition) => definition.clusterId),
+    );
     for (const piece of pieces) {
       if (shatteredPieces.has(piece.id)) {
         hidden.add(piece.id);
@@ -1583,10 +1795,11 @@ function BreakableObjects({
         // Кластер транспорта живёт своими телами: его куски двигает кадр
         // отсчёта, а инстансная батчёвка целого мира неподвижна.
         isVehicleFramePiece(piece) ||
+        kinematicClusterIds.has(piece.clusterId) ||
         piece.shape === "cinderBlock"
       ) {
         hidden.add(piece.id);
-        bodies.push(
+        const visualPiece =
           brokenPieces.has(piece.id)
             ? flattenDetachedTreeFoliage(
                 pieceWithMutableState(
@@ -1594,15 +1807,31 @@ function BreakableObjects({
                   mutablePieceStates.current.get(piece.id),
                 ),
               )
-            : piece,
-        );
+            : piece;
+        dynamicVisuals.push(visualPiece);
+        // Intact articulated-train detail is rendered by the compound frame
+        // and contacts through its structural envelope. A separate rigid body
+        // is created only when a member actually detaches.
+        if (
+          !kinematicClusterIds.has(piece.clusterId) ||
+          brokenPieces.has(piece.id)
+        ) {
+          physicalBodies.push(visualPiece);
+        }
       }
     }
     return {
       hiddenPieceIds: hidden,
-      bodyPieces: bodies,
+      bodyPieces: dynamicVisuals,
+      physicalBodyPieces: physicalBodies,
     };
-  }, [brokenPieces, mutablePieceStates, pieces, shatteredPieces]);
+  }, [
+    brokenPieces,
+    kinematicClusterDefinitions,
+    mutablePieceStates,
+    pieces,
+    shatteredPieces,
+  ]);
 
   return (
     <group>
@@ -1619,7 +1848,7 @@ function BreakableObjects({
         bodies={bodies}
         kinematicClusters={kinematicClusters}
       />
-      {bodyPieces.map((piece) => (
+      {physicalBodyPieces.map((piece) => (
         <BreakablePiece
           key={piece.id}
           piece={piece}
@@ -1736,7 +1965,11 @@ const Shard = memo(function Shard({
           : undefined
       }
     >
-      {shard.shape === "cylinder" ? (
+      {shard.shape === "sphere" ? (
+        <BallCollider
+          args={[Math.max(0.002, Math.min(...shard.size) / 2 - 0.002)]}
+        />
+      ) : shard.shape === "cylinder" ? (
         <CylinderCollider
           args={[
             Math.max(0.002, shard.size[1] / 2 - 0.002),
@@ -2165,7 +2398,11 @@ const Remnant = memo(function Remnant({
           : undefined
       }
     >
-      {remnant.shape === "cylinder" ? (
+      {remnant.shape === "sphere" ? (
+        <BallCollider
+          args={[Math.max(0.002, Math.min(...remnant.size) / 2 - 0.002)]}
+        />
+      ) : remnant.shape === "cylinder" ? (
         <CylinderCollider
           args={[
             Math.max(0.002, remnant.size[1] / 2 - 0.002),
@@ -2558,23 +2795,27 @@ function OpenWorldShell({
 }) {
   const [centerX, centerZ] = scene.worldCenter;
   const [halfX, halfZ] = scene.worldHalfExtents;
+  const boundaryRadius = scene.boundaryRadius ?? scene.worldRadius;
+  const safetyHalfX = Math.max(halfX, boundaryRadius ?? 0);
+  const safetyHalfZ = Math.max(halfZ, boundaryRadius ?? 0);
   const wallHalfHeight = 80;
   const wallY = scene.safetyFloorY + wallHalfHeight;
-  const circularSegments = scene.worldRadius
-    ? Math.max(32, Math.ceil((Math.PI * 2 * scene.worldRadius) / 11))
+  const circularSegments = boundaryRadius
+    ? Math.max(32, Math.ceil((Math.PI * 2 * boundaryRadius) / 11))
     : 0;
-  const circularSegmentLength = scene.worldRadius
-    ? 2 * scene.worldRadius * Math.sin(Math.PI / circularSegments) + 0.5
+  const circularSegmentLength = boundaryRadius
+    ? 2 * boundaryRadius * Math.sin(Math.PI / circularSegments) + 0.5
     : 0;
 
   return (
     <RigidBody type="fixed" colliders={false}>
       <CuboidCollider
-        args={[halfX, 0.12, halfZ]}
+        args={[safetyHalfX, 0.12, safetyHalfZ]}
         position={[centerX, scene.safetyFloorY, centerZ]}
         friction={1}
+        collisionGroups={ACTOR_SAFETY_FLOOR}
       />
-      {scene.worldRadius
+      {boundaryRadius
         ? Array.from({ length: circularSegments }, (_, index) => {
             const angle = (index / circularSegments) * Math.PI * 2;
             return (
@@ -2583,9 +2824,9 @@ function OpenWorldShell({
                 args={[circularSegmentLength / 2, wallHalfHeight, 0.18]}
                 collisionGroups={WORLD_BOUNDARY}
                 position={[
-                  centerX + Math.cos(angle) * scene.worldRadius!,
+                  centerX + Math.cos(angle) * boundaryRadius,
                   wallY,
-                  centerZ + Math.sin(angle) * scene.worldRadius!,
+                  centerZ + Math.sin(angle) * boundaryRadius,
                 ]}
                 rotation={[0, -angle - Math.PI / 2, 0]}
               />
@@ -2640,8 +2881,14 @@ interface OpenWorldSceneProps {
   onBrokenCountChange: (count: number) => void;
   onDynamicBodyCountChange: (count: number) => void;
   onEntryApproachChange: (entry: HingedEntryApproach | null) => void;
-  onDepartureApproachChange: (approached: "board" | "ride" | null) => void;
+  onDepartureApproachChange: (
+    approached: HingedEntryApproach | null,
+  ) => void;
+  occupiedSeatId: string | null;
+  onOccupiedSeatChange: (seatId: string | null) => void;
   onMotionTelemetryUpdate: (update: MotionTelemetryUpdate) => void;
+  motionTelemetryStore: MotionTelemetryStore;
+  onVehicleFailure: (event: VehicleFailureEvent) => void;
 }
 
 function OpenWorldScene({
@@ -2666,7 +2913,11 @@ function OpenWorldScene({
   onDynamicBodyCountChange,
   onEntryApproachChange,
   onDepartureApproachChange,
+  occupiedSeatId,
+  onOccupiedSeatChange,
   onMotionTelemetryUpdate,
+  motionTelemetryStore,
+  onVehicleFailure,
 }: OpenWorldSceneProps) {
   const {
     breakablePieceById,
@@ -2676,6 +2927,7 @@ function OpenWorldScene({
     lampDefinitions,
     mutableObjectDefinitions,
     mutablePieceIds,
+    motionInstrumentDefinitions,
     spotLightDefinitions,
     settleAfterBreak,
     structuralScopeFor,
@@ -2745,6 +2997,11 @@ function OpenWorldScene({
   const [carvedPieces, setCarvedPieces] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
+  // Detached authored pieces which fell below the physical world remain
+  // structurally broken, but no longer own a body or a visible instance.
+  const [discardedPieces, setDiscardedPieces] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const [tracers, setTracers] = useState<readonly TracerDefinition[]>([]);
   const brokenPiecesRef = useRef<ReadonlySet<string>>(brokenPieces);
   // Двери, которые прямо сейчас открывают жители: общий канал между их
@@ -2785,6 +3042,7 @@ function OpenWorldScene({
   const remnantCounter = useRef(0);
   const remainingVolumeRef = useRef(new Map<string, number>());
   const carvedPiecesRef = useRef(new Set<string>());
+  const discardedPiecesRef = useRef(new Set<string>());
   const forcedStructureSeeds = useRef(new Set<string>());
   // Снимок состояния на момент последнего структурного пересчёта: следующий
   // settle сеет зону пересчёта только из дельты против этого снимка.
@@ -3188,6 +3446,7 @@ function OpenWorldScene({
   }, [
     brokenPieces,
     carvedPieces,
+    discardedPieces,
     resetVersion,
     shatteredPieces,
   ]);
@@ -3217,11 +3476,13 @@ function OpenWorldScene({
     shardById.current.clear();
     setRemnants([]);
     setCarvedPieces(new Set());
+    setDiscardedPieces(new Set());
     setTracers([]);
     remnantsRef.current = [];
     remnantById.current.clear();
     remainingVolumeRef.current.clear();
     carvedPiecesRef.current.clear();
+    discardedPiecesRef.current.clear();
     forcedStructureSeeds.current.clear();
     lastSettleSnapshot.current = null;
     firing.current = false;
@@ -3254,9 +3515,62 @@ function OpenWorldScene({
     settleAccumulator.current = 0;
     onDynamicBodyCountChange(dynamicBodies.current.size);
 
+    const discardedAuthored = new Set(discardedPiecesRef.current);
+    const vanishedShardIds = new Set<string>();
+    const vanishedRemnantIds = new Set<string>();
+    let discardedAuthoredChanged = false;
+
     for (const [id, body] of dynamicBodies.current) {
       if (
         id === "player" ||
+        !isBelowWorldDisappearDepth(body.translation().y, scene.safetyFloorY)
+      ) {
+        continue;
+      }
+      restCounters.current.delete(id);
+      if (shardById.current.has(id)) {
+        vanishedShardIds.add(id);
+      } else if (remnantById.current.has(id)) {
+        vanishedRemnantIds.add(id);
+      } else if (
+        breakablePieceById.has(id) &&
+        brokenPiecesRef.current.has(id) &&
+        !discardedAuthored.has(id)
+      ) {
+        discardedAuthored.add(id);
+        discardedAuthoredChanged = true;
+      }
+    }
+
+    if (discardedAuthoredChanged) {
+      discardedPiecesRef.current = discardedAuthored;
+      setDiscardedPieces(discardedAuthored);
+    }
+    if (vanishedShardIds.size > 0) {
+      shardsRef.current = shardsRef.current.filter(
+        (shard) => !vanishedShardIds.has(shard.id),
+      );
+      for (const id of vanishedShardIds) {
+        shardById.current.delete(id);
+      }
+      setShards(shardsRef.current);
+    }
+    if (vanishedRemnantIds.size > 0) {
+      remnantsRef.current = remnantsRef.current.filter(
+        (remnant) => !vanishedRemnantIds.has(remnant.id),
+      );
+      remnantById.current = new Map(
+        remnantsRef.current.map((remnant) => [remnant.id, remnant]),
+      );
+      setRemnants(remnantsRef.current);
+    }
+
+    for (const [id, body] of dynamicBodies.current) {
+      if (
+        id === "player" ||
+        discardedAuthored.has(id) ||
+        vanishedShardIds.has(id) ||
+        vanishedRemnantIds.has(id) ||
         body.isSleeping()
       ) {
         continue;
@@ -4613,8 +4927,11 @@ function OpenWorldScene({
       // material fracture profile converts that energy into removed voxels.
       // Standing targets keep supported remnants; unsupported remnants become
       // debris through the same structural solver used everywhere else.
+      // В заповеднике carve всё равно запрещён, поэтому аналитическую
+      // половину взрыва (позы целей, лучи видимости, сортировку) не считаем
+      // вовсе — остаётся только физический толчок ниже.
       const volumeBroken: string[] = [];
-      const sortedDamageCandidates = [
+      const sortedDamageCandidates = indestructible ? [] : [
         ...blastPieceCandidates
           .filter(
             (piece) => {
@@ -4736,7 +5053,7 @@ function OpenWorldScene({
       }
 
       const damagedNow = new Set<string>();
-      const looseDamageCandidates = looseBeforeBlast
+      const looseDamageCandidates = (indestructible ? [] : looseBeforeBlast)
         .map((entry) => {
           const { position, quaternion } = resolveBlastPose(
             entry.source.id,
@@ -4812,9 +5129,11 @@ function OpenWorldScene({
         }
       }
 
-      settleStructure(
-        new Set([...previousBroken, ...volumeBroken]),
-      );
+      if (!indestructible) {
+        settleStructure(
+          new Set([...previousBroken, ...volumeBroken]),
+        );
+      }
       const finalBroken = brokenPiecesRef.current;
       const pushedIds = new Set<string>();
 
@@ -4961,6 +5280,7 @@ function OpenWorldScene({
       carveLooseTarget,
       configureDebrisCollision,
       ensureDynamic,
+      indestructible,
       maxPieceBoundingRadius,
       pieceSpatialIndex,
       rapier,
@@ -5589,18 +5909,49 @@ function OpenWorldScene({
   const compoundKinematicClusters = useRef(
     new Map<string, CompoundKinematicClusterRuntime>(),
   );
+  const astanaTrainClusters = useMemo(() => {
+    const available = new Set(breakablePieces.map((piece) => piece.clusterId));
+    return astanaTrainClusterDefinitions().filter((definition) =>
+      available.has(definition.clusterId),
+    );
+  }, [breakablePieces]);
   /** Физические позы для систем, которые живут вне транспортного кадра. */
   const vehicleFramePoses = useRef<Map<string, VehicleFramePoseState>>(new Map());
   const publishVehicleFramePose = useCallback((state: VehicleFramePoseState) => {
     vehicleFramePoses.current.set(state.clusterId, state);
   }, []);
+  const compoundCarrierPosition = useCallback(
+    (clusterId: string, authored: SceneVector3): SceneVector3 | null => {
+      const runtime = compoundKinematicClusters.current.get(clusterId);
+      if (!runtime) {
+        return null;
+      }
+      const translation = runtime.body.translation();
+      const rotation = runtime.body.rotation();
+      const local = rotateVehicleVector(
+        [rotation.x, rotation.y, rotation.z, rotation.w],
+        [
+          authored[0] - runtime.definition.origin[0],
+          authored[1] - runtime.definition.origin[1],
+          authored[2] - runtime.definition.origin[2],
+        ],
+      );
+      return [
+        translation.x + local[0],
+        translation.y + local[1],
+        translation.z + local[2],
+      ];
+    },
+    [],
+  );
   const resolveLampPosition = useCallback((lamp: LampDefinition) => {
     if (!lamp.carrierClusterId) {
       return lamp.position;
     }
     const frame = vehicleFramePoses.current.get(lamp.carrierClusterId);
     if (!frame) {
-      return lamp.position;
+      return compoundCarrierPosition(lamp.carrierClusterId, lamp.position) ??
+        lamp.position;
     }
     return vehiclePiecePosition(
       frame.origin,
@@ -5608,14 +5959,15 @@ function OpenWorldScene({
       frame.pose,
       vehicleRotation(frame.pose, frame.nose),
     );
-  }, []);
+  }, [compoundCarrierPosition]);
   const resolveSpotLightPosition = useCallback((light: SpotLightDefinition) => {
     if (!light.carrierClusterId) {
       return light.position;
     }
     const frame = vehicleFramePoses.current.get(light.carrierClusterId);
     if (!frame) {
-      return light.position;
+      return compoundCarrierPosition(light.carrierClusterId, light.position) ??
+        light.position;
     }
     return vehiclePiecePosition(
       frame.origin,
@@ -5623,14 +5975,24 @@ function OpenWorldScene({
       frame.pose,
       vehicleRotation(frame.pose, frame.nose),
     );
-  }, []);
+  }, [compoundCarrierPosition]);
   const resolveSpotLightDirection = useCallback((light: SpotLightDefinition) => {
     if (!light.carrierClusterId) {
       return light.direction;
     }
     const frame = vehicleFramePoses.current.get(light.carrierClusterId);
     if (!frame) {
-      return light.direction;
+      const runtime = compoundKinematicClusters.current.get(
+        light.carrierClusterId,
+      );
+      if (!runtime) {
+        return light.direction;
+      }
+      const rotation = runtime.body.rotation();
+      return rotateVehicleVector(
+        [rotation.x, rotation.y, rotation.z, rotation.w],
+        light.direction,
+      );
     }
     return rotateVehicleVector(
       vehicleRotation(frame.pose, frame.nose),
@@ -5652,8 +6014,11 @@ function OpenWorldScene({
     for (const id of carvedPieces) {
       next.add(id);
     }
+    for (const id of discardedPieces) {
+      next.add(id);
+    }
     return next;
-  }, [carvedPieces, shatteredPieces]);
+  }, [carvedPieces, discardedPieces, shatteredPieces]);
   const inactiveCompoundMembers = useMemo(() => {
     const inactive = new Set(hiddenPieces);
     for (const id of brokenPieces) {
@@ -5661,6 +6026,16 @@ function OpenWorldScene({
     }
     return inactive;
   }, [brokenPieces, hiddenPieces]);
+
+  useEffect(() => {
+    const occupiedSeat = passengerSeatForId(occupiedSeatId);
+    if (
+      occupiedSeat &&
+      !passengerSeatIsIntact(occupiedSeat, inactiveCompoundMembers)
+    ) {
+      onOccupiedSeatChange(null);
+    }
+  }, [inactiveCompoundMembers, occupiedSeatId, onOccupiedSeatChange]);
 
   // A light fixture counts as dead whether it broke loose, shattered or got
   // a hole carved through it.
@@ -5672,6 +6047,57 @@ function OpenWorldScene({
     return next;
   }, [brokenPieces, hiddenPieces]);
 
+  const rebuildVehicleCluster = useCallback((clusterId: string) => {
+    const memberIds = new Set(
+      breakablePieces
+        .filter((piece) => piece.clusterId === clusterId)
+        .map((piece) => piece.id),
+    );
+    if (memberIds.size === 0) {
+      return;
+    }
+
+    const restoredBroken = new Set(
+      [...brokenPiecesRef.current].filter((id) => !memberIds.has(id)),
+    );
+    brokenPiecesRef.current = restoredBroken;
+    setBrokenPieces(restoredBroken);
+
+    const restoredShattered = new Set(
+      [...shatteredPiecesRef.current].filter((id) => !memberIds.has(id)),
+    );
+    shatteredPiecesRef.current = restoredShattered;
+    setShatteredPieces(restoredShattered);
+
+    const restoredCarved = new Set(
+      [...carvedPiecesRef.current].filter((id) => !memberIds.has(id)),
+    );
+    carvedPiecesRef.current = restoredCarved;
+    setCarvedPieces(restoredCarved);
+
+    const restoredDiscarded = new Set(
+      [...discardedPiecesRef.current].filter((id) => !memberIds.has(id)),
+    );
+    discardedPiecesRef.current = restoredDiscarded;
+    setDiscardedPieces(restoredDiscarded);
+
+    const restoredRemnants = remnantsRef.current.filter(
+      (remnant) => !memberIds.has(remnant.parentId),
+    );
+    remnantsRef.current = restoredRemnants;
+    remnantById.current = new Map(
+      restoredRemnants.map((remnant) => [remnant.id, remnant]),
+    );
+    setRemnants(restoredRemnants);
+
+    for (const id of memberIds) {
+      remainingVolumeRef.current.delete(id);
+      forcedStructureSeeds.current.delete(id);
+    }
+    lastSettleSnapshot.current = null;
+    onBrokenCountChange(restoredBroken.size);
+  }, [breakablePieces, onBrokenCountChange]);
+
   return (
     <>
       <DayNightCycle
@@ -5680,7 +6106,9 @@ function OpenWorldScene({
         worldTimeRef={worldTimeRef}
         theme={scene.environment}
         worldRadius={scene.worldRadius}
+        skyRadius={scene.skyRadius}
         fogDistances={scene.fogDistances}
+        solarFrame={scene.solarFrame}
         worldCenter={scene.worldCenter}
         cameraFar={scene.cameraFar}
         snapVersion={timeOfDaySnapVersion}
@@ -5767,6 +6195,7 @@ function OpenWorldScene({
           shatteredPieces={hiddenPieces}
           bodies={pieceBodies}
           kinematicClusters={compoundKinematicClusters}
+          kinematicClusterDefinitions={astanaTrainClusters}
           mutablePieceIds={mutablePieceIds}
           mutablePieceStates={mutablePieceStates}
           registerBody={registerBody}
@@ -5819,12 +6248,40 @@ function OpenWorldScene({
         departRequestVersion={entryOpenRequestVersion}
         departRequestTargetRef={entryOpenRequestTargetRef}
         onDepartureApproachChange={onDepartureApproachChange}
+        occupiedSeatId={occupiedSeatId}
+        onOccupiedSeatChange={onOccupiedSeatChange}
         movingVehicles={movingVehicles}
         dockedVehicles={dockedVehicles}
         clusterEventStates={clusterEventStates}
         clusterRegistry={compoundKinematicClusters}
+        recoveryServiceArea={{
+          center: scene.worldCenter,
+          radius: scene.worldRadius ?? Math.hypot(...scene.worldHalfExtents),
+          disappearY: worldDisappearY(scene.safetyFloorY),
+        }}
+        onVehicleRebuildRequest={rebuildVehicleCluster}
         onFramePose={publishVehicleFramePose}
         onMotionTelemetryUpdate={onMotionTelemetryUpdate}
+        onVehicleFailure={onVehicleFailure}
+      />
+      <AstanaTrainSystem
+        pieces={breakablePieces}
+        bodies={pieceBodies}
+        brokenPieces={brokenPiecesRef}
+        inactivePieces={inactiveCompoundMembers}
+        resetVersion={resetVersion}
+        movingVehicles={movingVehicles}
+        dockedVehicles={dockedVehicles}
+        clusterEventStates={clusterEventStates}
+        clusterRegistry={compoundKinematicClusters}
+      />
+      <MotionInstrumentSystem
+        definitions={motionInstrumentDefinitions}
+        pieceById={breakablePieceById}
+        store={motionTelemetryStore}
+        brokenPieces={brokenPieces}
+        clusterRegistry={compoundKinematicClusters}
+        resolveEventState={resolveLampEventState}
       />
       <HingedDoorSystem
         pieces={breakablePieces}
@@ -5849,6 +6306,8 @@ function OpenWorldScene({
             spawn={scene.playerSpawn}
             flightMode={flightMode}
             entryInteractionActive={entryInteractionActive}
+            occupiedSeatId={occupiedSeatId}
+            vehicleFramePoses={vehicleFramePoses}
           />
           {weapon === "none" ? null : weapon === "hammer" ? (
             <FirstPersonHammer swing={swing} />
@@ -6005,6 +6464,7 @@ function MobileGameControls({
   active,
   flightMode,
   weapon,
+  movementLocked,
   timeOfDay,
   controls,
   onStart,
@@ -6020,6 +6480,7 @@ function MobileGameControls({
   active: boolean;
   flightMode: boolean;
   weapon: WeaponName;
+  movementLocked: boolean;
   timeOfDay: TimeOfDay;
   controls: MobileControlsRef;
   onStart: () => void;
@@ -6333,31 +6794,35 @@ function MobileGameControls({
         onPointerCancel={handleLookEnd}
         onPointerUp={handleLookEnd}
       />
-      <div
-        className="mobile-stick"
-        aria-label={t("mobile.moveAria")}
-        onPointerDown={handleMoveStart}
-        onTouchStart={handleMoveTouchStart}
-        onPointerCancel={stopMove}
-        onPointerUp={stopMove}
-      >
-        <span
-          style={{
-            transform: `translate(${moveKnob.current.x}px, ${moveKnob.current.y}px)`,
-          }}
-        />
-      </div>
-      <div className={`mobile-actions${flightMode ? " is-flight" : ""}`} aria-label={t("mobile.actionsAria")}>
-        <button
-          className="mobile-fire"
-          type="button"
-          onPointerDown={handleFireStart}
-          onPointerCancel={handleFireEnd}
-          onPointerLeave={handleFireEnd}
-          onPointerUp={handleFireEnd}
+      {!movementLocked ? (
+        <div
+          className="mobile-stick"
+          aria-label={t("mobile.moveAria")}
+          onPointerDown={handleMoveStart}
+          onTouchStart={handleMoveTouchStart}
+          onPointerCancel={stopMove}
+          onPointerUp={stopMove}
         >
-          {fireLabel}
-        </button>
+          <span
+            style={{
+              transform: `translate(${moveKnob.current.x}px, ${moveKnob.current.y}px)`,
+            }}
+          />
+        </div>
+      ) : null}
+      <div className={`mobile-actions${flightMode ? " is-flight" : ""}`} aria-label={t("mobile.actionsAria")}>
+        {!movementLocked ? (
+          <button
+            className="mobile-fire"
+            type="button"
+            onPointerDown={handleFireStart}
+            onPointerCancel={handleFireEnd}
+            onPointerLeave={handleFireEnd}
+            onPointerUp={handleFireEnd}
+          >
+            {fireLabel}
+          </button>
+        ) : null}
         {!flightMode ? (
           <button
             type="button"
@@ -6378,7 +6843,7 @@ function MobileGameControls({
           </button>
         ) : null}
       </div>
-      <div className="mobile-weapon-bar" aria-label={t("mobile.weaponAria")}>
+      {!movementLocked ? <div className="mobile-weapon-bar" aria-label={t("mobile.weaponAria")}>
         {([
           ["hammer", "1", t("weapon.hammer")],
           ["launcher", "2", t("weapon.launcher.short")],
@@ -6395,15 +6860,17 @@ function MobileGameControls({
             {label}
           </button>
         ))}
-      </div>
+      </div> : null}
       <div className="mobile-utility-bar" aria-label={t("mobile.serviceAria")}>
-        <button
-          type="button"
-          className={flightMode ? "is-active" : undefined}
-          onClick={onFlightChange}
-        >
-          {flightMode ? t("controls.land") : t("mode.fly")}
-        </button>
+        {!movementLocked ? (
+          <button
+            type="button"
+            className={flightMode ? "is-active" : undefined}
+            onClick={onFlightChange}
+          >
+            {flightMode ? t("controls.land") : t("mode.fly")}
+          </button>
+        ) : null}
         <button type="button" onClick={onTimeChange}>{timeLabel}</button>
         <button type="button" onClick={onReset}>{t("controls.reset")}</button>
       </div>
@@ -6417,12 +6884,26 @@ interface HudAnnouncementEvent {
   readonly textKey: TranslationKey;
 }
 
+const vehicleFailureAnnouncementKeys = {
+  structureLost: "announce.vehicleFailure.structureLost",
+  invalidState: "announce.vehicleFailure.invalidState",
+  unsafeAltitude: "announce.vehicleFailure.unsafeAltitude",
+  criticalAttitude: "announce.vehicleFailure.criticalAttitude",
+  routeDivergence: "announce.vehicleFailure.routeDivergence",
+  controlMismatch: "announce.vehicleFailure.controlMismatch",
+  stalled: "announce.vehicleFailure.stalled",
+  goAroundLimit: "announce.vehicleFailure.goAroundLimit",
+  dockingTimeout: "announce.vehicleFailure.dockingTimeout",
+} as const satisfies Readonly<Record<VehicleFailureReason, TranslationKey>>;
+
 const telemetryMetricLabels: Readonly<Record<string, TranslationKey>> = {
   groundSpeed: "telemetry.metric.groundSpeed",
   relativeAltitude: "telemetry.metric.relativeAltitude",
   verticalSpeed: "telemetry.metric.verticalSpeed",
   heading: "telemetry.metric.heading",
-  enginePower: "telemetry.metric.enginePower",
+  pitch: "telemetry.metric.pitch",
+  roll: "telemetry.metric.roll",
+  propellerRevolutions: "telemetry.metric.propellerRevolutions",
   routeProgress: "telemetry.metric.routeProgress",
   distanceRemaining: "telemetry.metric.distanceRemaining",
 };
@@ -6433,12 +6914,21 @@ const telemetryPhaseLabels: Readonly<Record<string, TranslationKey>> = {
   cruise: "telemetry.phase.cruise",
   approach: "telemetry.phase.approach",
   inTransit: "telemetry.phase.inTransit",
+  failed: "telemetry.phase.failed",
 };
 
 function telemetryValue(
   metric: MotionTelemetryMetric,
   locale: string,
 ): string {
+  const { values, unit } = telemetryValueParts(metric, locale);
+  return `${values.join(" / ")}${unit === "°" ? "" : " "}${unit}`;
+}
+
+function telemetryValueParts(
+  metric: MotionTelemetryMetric,
+  locale: string,
+): { readonly values: readonly string[]; readonly unit: string } {
   const values = typeof metric.value === "number" ? [metric.value] : metric.value;
   const formatted = values.map((raw) => {
     const value = Math.abs(raw) < 1e-9 ? 0 : raw;
@@ -6456,7 +6946,7 @@ function telemetryValue(
     : metric.unit === "percent"
       ? "%"
       : metric.unit;
-  return `${formatted.join(" / ")}${unit === "°" ? "" : " "}${unit}`;
+  return { values: formatted, unit };
 }
 
 function MotionTelemetryPanel({
@@ -6479,11 +6969,105 @@ function MotionTelemetryPanel({
       onUnavailable();
     }
   }, [onUnavailable, snapshot]);
+  const previousSnapshot = useRef<MotionTelemetrySnapshot | null>(null);
+  const activityLastAt = useRef(new Map<string, number>());
+  const [activityTokens, setActivityTokens] = useState<Readonly<Record<string, number>>>({});
+  useEffect(() => {
+    const previous = previousSnapshot.current;
+    previousSnapshot.current = snapshot;
+    if (!snapshot || !previous || previous.sourceId !== snapshot.sourceId) {
+      activityLastAt.current.clear();
+      setActivityTokens({});
+      return;
+    }
+    const previousMetrics = new Map(previous.metrics.map((metric) => [metric.id, metric]));
+    const changed: string[] = [];
+    for (const metric of snapshot.metrics) {
+      motionTelemetryMetricActivity(previousMetrics.get(metric.id), metric)
+        .forEach((active, index) => {
+          if (!active) {
+            return;
+          }
+          const key = `${metric.id}:${index}`;
+          const lastAt = activityLastAt.current.get(key) ?? -Infinity;
+          if (snapshot.capturedAt - lastAt < 420) {
+            return;
+          }
+          activityLastAt.current.set(key, snapshot.capturedAt);
+          changed.push(key);
+        });
+    }
+    if (changed.length > 0) {
+      setActivityTokens((before) => {
+        const next = { ...before };
+        for (const key of changed) {
+          next[key] = (next[key] ?? 0) + 1;
+        }
+        return next;
+      });
+    }
+  }, [snapshot]);
   if (!snapshot) {
     return null;
   }
   const locale = language === "ru" ? "ru-RU" : language === "es" ? "es-ES" : "en-GB";
   const phaseKey = telemetryPhaseLabels[snapshot.phase];
+  const pitchMetric = snapshot.metrics.find(
+    (metric) => metric.id === "pitch" && typeof metric.value === "number",
+  );
+  const rollMetric = snapshot.metrics.find(
+    (metric) => metric.id === "roll" && typeof metric.value === "number",
+  );
+  const attitude = pitchMetric && rollMetric
+    ? {
+        pitch: pitchMetric.value as number,
+        roll: rollMetric.value as number,
+        pitchMetric,
+        rollMetric,
+      }
+    : null;
+  const visibleMetrics = attitude
+    ? snapshot.metrics.filter((metric) => metric.id !== "pitch" && metric.id !== "roll")
+    : snapshot.metrics;
+  const renderValue = (metric: MotionTelemetryMetric): ReactElement => {
+    const parts = telemetryValueParts(metric, locale);
+    const sideLabels = {
+      left: t("telemetry.side.left"),
+      right: t("telemetry.side.right"),
+    } as const;
+    return (
+      <span className="motion-telemetry-value" aria-label={telemetryValue(metric, locale)}>
+        {parts.values.map((value, index) => {
+          const activityKey = `${metric.id}:${index}`;
+          const token = activityTokens[activityKey] ?? 0;
+          const side = metric.valueSides?.[index];
+          const warning = metric.valueStates?.[index] === "warning";
+          return (
+            <span
+              key={activityKey}
+              className={`motion-telemetry-value-channel${warning ? " is-warning" : ""}`}
+            >
+              {index > 0 ? <span className="motion-telemetry-value-separator"> / </span> : null}
+              {side ? (
+                <span className="motion-telemetry-value-side">
+                  {sideLabels[side]}{" "}
+                </span>
+              ) : null}
+              <span
+                key={`${activityKey}:${token}`}
+                className={`motion-telemetry-reading${token > 0 ? " is-changing" : ""}`}
+              >
+                {value}
+              </span>
+            </span>
+          );
+        })}
+        <span className="motion-telemetry-value-unit">
+          {parts.unit === "°" ? parts.unit : ` ${parts.unit}`}
+        </span>
+      </span>
+    );
+  };
   return (
     <aside
       className={`motion-telemetry is-${timeOfDay}`}
@@ -6498,15 +7082,43 @@ function MotionTelemetryPanel({
         </div>
         <strong>{phaseKey ? t(phaseKey) : snapshot.phase}</strong>
       </header>
+      {attitude ? (
+        <section
+          className="motion-telemetry-attitude"
+          aria-label={t("telemetry.attitudeAria")}
+        >
+          <div
+            className="motion-telemetry-attitude-dial"
+            aria-hidden="true"
+            style={{
+              "--attitude-pitch": `${Math.max(-36, Math.min(36, attitude.pitch)) * 0.48}px`,
+              "--attitude-roll": `${-Math.max(-60, Math.min(60, attitude.roll))}deg`,
+            } as CSSProperties}
+          >
+            <span className="motion-telemetry-horizon" />
+            <span className="motion-telemetry-crosshair" />
+          </div>
+          <dl className="motion-telemetry-attitude-values">
+            <div>
+              <dt>{t("telemetry.metric.pitch")}</dt>
+              <dd>{renderValue(attitude.pitchMetric)}</dd>
+            </div>
+            <div>
+              <dt>{t("telemetry.metric.roll")}</dt>
+              <dd>{renderValue(attitude.rollMetric)}</dd>
+            </div>
+          </dl>
+        </section>
+      ) : null}
       <dl>
-        {snapshot.metrics.map((metric) => (
+        {visibleMetrics.map((metric) => (
           <div key={metric.id}>
             <dt>
               {telemetryMetricLabels[metric.id]
                 ? t(telemetryMetricLabels[metric.id])
                 : metric.id}
             </dt>
-            <dd>{telemetryValue(metric, locale)}</dd>
+            <dd>{renderValue(metric)}</dd>
           </div>
         ))}
       </dl>
@@ -6569,7 +7181,7 @@ function ModeAnnounce({
                 ? t("announce.weaponRocket")
                 : t("announce.weaponMg");
     } else if (before.timeOfDay !== timeOfDay) {
-      kicker = t("announce.timeKicker");
+      kicker = `${t(timeOfDayKey(timeOfDay))} · ${gameClockText(TIME_OF_DAY_TARGETS[timeOfDay])}`;
       text = t(timeOfDayAnnouncementKey(timeOfDay));
     }
     if (!text) {
@@ -6696,6 +7308,7 @@ export function MakeAMessGame({
   const [approachedEntry, setApproachedEntry] = useState<HingedEntryApproach | null>(null);
   const [entryOpenRequestVersion, setEntryOpenRequestVersion] = useState(0);
   const entryOpenRequestTargetRef = useRef<HingedEntryApproach | null>(null);
+  const [occupiedSeatId, setOccupiedSeatId] = useState<string | null>(null);
   const flyoverRecorder = useRef<MediaRecorder | null>(null);
   const flyoverChapterRef = useRef<FlyoverChapter | null>(null);
   const flyoverProgressRef = useRef(0);
@@ -6728,6 +7341,15 @@ export function MakeAMessGame({
   const handleMotionTelemetryUpdate = useCallback((update: MotionTelemetryUpdate) => {
     telemetryStore.update(update);
   }, [telemetryStore]);
+
+  const handleVehicleFailure = useCallback((event: VehicleFailureEvent) => {
+    hudAnnouncementId.current += 1;
+    setHudAnnouncement({
+      id: hudAnnouncementId.current,
+      kickerKey: "announce.vehicleFailureKicker",
+      textKey: vehicleFailureAnnouncementKeys[event.reason],
+    });
+  }, []);
 
   const toggleMotionTelemetry = useCallback(() => {
     if (telemetryVisible) {
@@ -6915,6 +7537,7 @@ export function MakeAMessGame({
     setBrokenCount(0);
     setFlightMode(false);
     setApproachedEntry(null);
+    setOccupiedSeatId(null);
     telemetryStore.clear();
     entryApproachActions.forEach(endGameAction);
     setResetVersion((version) => version + 1);
@@ -6930,8 +7553,8 @@ export function MakeAMessGame({
     setFlightMode((current) => !current);
   }, []);
 
-  // Подходов два источника — двери и табло отправления, — а подсказка одна.
-  // Дверь ближе к телу, поэтому при споре побеждает она.
+  // Подходов два источника — двери и транспорт, — а подсказка одна. Внутри
+  // судна обзорный рейс первичен; во всех остальных спорах побеждает дверь.
   const approachSources = useRef<{
     door: HingedEntryApproach | null;
     departure: HingedEntryApproach | null;
@@ -6940,8 +7563,10 @@ export function MakeAMessGame({
   const applyApproach = useCallback(
     (source: "door" | "departure", entry: HingedEntryApproach | null) => {
       approachSources.current[source] = entry;
-      const next =
-        approachSources.current.door ?? approachSources.current.departure;
+      const next = preferredEntryInteraction(
+        approachSources.current.door,
+        approachSources.current.departure,
+      );
       setApproachedEntry(next);
       mobileControls.current.jump = false;
       entryApproachActions.forEach(endGameAction);
@@ -6958,17 +7583,15 @@ export function MakeAMessGame({
   );
 
   const handleDepartureApproachChange = useCallback(
-    (approached: "board" | "ride" | null) =>
-      applyApproach(
-        "departure",
-        approached === "board"
-          ? { id: "terminal:sky-train:departure", kind: "departure" }
-          : approached === "ride"
-            ? { id: "terminal:sky-train:ride", kind: "ride" }
-            : null,
-      ),
+    (approached: HingedEntryApproach | null) =>
+      applyApproach("departure", approached),
     [applyApproach],
   );
+
+  const handleOccupiedSeatChange = useCallback((seatId: string | null) => {
+    mobileControls.current = createMobileControlsState();
+    setOccupiedSeatId(seatId);
+  }, []);
 
   const openApproachedEntry = useCallback(() => {
     if (!approachedEntry) {
@@ -6987,17 +7610,17 @@ export function MakeAMessGame({
         openApproachedEntry();
       } else if (event.code === "KeyR") {
         reset();
-      } else if (event.code === "Digit0") {
+      } else if (event.code === "Digit0" && !occupiedSeatId) {
         setWeapon("none");
-      } else if (event.code === "Digit1") {
+      } else if (event.code === "Digit1" && !occupiedSeatId) {
         setWeapon("hammer");
-      } else if (event.code === "Digit2") {
+      } else if (event.code === "Digit2" && !occupiedSeatId) {
         setWeapon("launcher");
-      } else if (event.code === "Digit3") {
+      } else if (event.code === "Digit3" && !occupiedSeatId) {
         setWeapon("mg");
-      } else if (event.code === "Digit4") {
+      } else if (event.code === "Digit4" && !occupiedSeatId) {
         setWeapon("rocket");
-      } else if (event.code === "KeyQ") {
+      } else if (event.code === "KeyQ" && !occupiedSeatId) {
         setWeapon((current) =>
           current === "hammer"
             ? "launcher"
@@ -7009,7 +7632,7 @@ export function MakeAMessGame({
         );
       } else if (event.code === "KeyN") {
         cycleTimeOfDay();
-      } else if (event.code === "KeyF" && !event.repeat) {
+      } else if (event.code === "KeyF" && !event.repeat && !occupiedSeatId) {
         toggleFlightMode();
       } else if (event.code === "KeyT" && !event.repeat) {
         event.preventDefault();
@@ -7024,6 +7647,7 @@ export function MakeAMessGame({
   }, [
     approachedEntry,
     cycleTimeOfDay,
+    occupiedSeatId,
     openApproachedEntry,
     reset,
     toggleFlightMode,
@@ -7034,6 +7658,7 @@ export function MakeAMessGame({
     Math.round(
       (brokenCount / scene.breakablePieces.length) * 1000,
     ) / 10;
+  const equippedWeapon: WeaponName = occupiedSeatId ? "none" : weapon;
   const startPlaying = useCallback(() => {
     prepareGameAudio();
     setActive(true);
@@ -7113,7 +7738,7 @@ export function MakeAMessGame({
                   scene={scene}
                   active={active}
                   flightMode={flightMode}
-                  weapon={weapon}
+                  weapon={equippedWeapon}
                   timeOfDay={timeOfDay}
                   timeOfDaySnapVersion={flyoverRunId}
                   fallbackLook={fallbackLook}
@@ -7131,7 +7756,11 @@ export function MakeAMessGame({
                   onDynamicBodyCountChange={setDynamicBodyCount}
                   onEntryApproachChange={handleEntryApproachChange}
                   onDepartureApproachChange={handleDepartureApproachChange}
+                  occupiedSeatId={occupiedSeatId}
+                  onOccupiedSeatChange={handleOccupiedSeatChange}
                   onMotionTelemetryUpdate={handleMotionTelemetryUpdate}
+                  motionTelemetryStore={telemetryStore}
+                  onVehicleFailure={handleVehicleFailure}
                 />
               </Physics>
               {flyover ? (
@@ -7232,13 +7861,13 @@ export function MakeAMessGame({
         <div className="damage-copy">
           <span>{t("hud.weapon")}</span>
           <span>
-            {weapon === "none"
+            {equippedWeapon === "none"
               ? "—"
-              : weapon === "hammer"
+              : equippedWeapon === "hammer"
                 ? t("weapon.hammer")
-                : weapon === "launcher"
+                : equippedWeapon === "launcher"
                   ? t("weapon.launcher")
-                  : weapon === "rocket"
+                  : equippedWeapon === "rocket"
                     ? t("weapon.rocket")
                     : t("weapon.mg")}
           </span>
@@ -7256,7 +7885,7 @@ export function MakeAMessGame({
       </aside> : null}
 
       {/* В фоторежиме (пустые руки) прицел тоже прячется — кадр чистый. */}
-      {!cinematicActive && weapon !== "none" ? (
+      {!cinematicActive && equippedWeapon !== "none" ? (
         <div className={`crosshair${active ? " is-active" : ""}`} aria-hidden="true">
           <i />
           <i />
@@ -7290,7 +7919,8 @@ export function MakeAMessGame({
       {!cinematicActive ? <MobileGameControls
         active={active}
         flightMode={flightMode}
-        weapon={weapon}
+        weapon={equippedWeapon}
+        movementLocked={occupiedSeatId !== null}
         timeOfDay={timeOfDay}
         controls={mobileControls}
         onStart={startPlaying}
@@ -7305,24 +7935,36 @@ export function MakeAMessGame({
       /> : null}
 
       {!cinematicActive ? <div className="controls-hint" aria-hidden="true">
-        <span>WASD</span>
-        {t("controls.move")}
+        {!occupiedSeatId ? (
+          <>
+            <span>WASD</span>
+            {t("controls.move")}
+          </>
+        ) : null}
         <span>{fallbackLook ? "Drag" : "Mouse"}</span>
         {t("controls.look")}
-        <span>Click</span>
-        {weapon === "none"
-          ? "—"
-          : weapon === "hammer"
-            ? t("fire.strike")
-            : weapon === "launcher" || weapon === "rocket"
-              ? t("fire.shoot")
-              : t("fire.hold")}
-        <span>0·1·2·3·4</span>
-        {t("controls.weapon")}
+        {!occupiedSeatId ? (
+          <>
+            <span>Click</span>
+            {equippedWeapon === "none"
+              ? "—"
+              : equippedWeapon === "hammer"
+                ? t("fire.strike")
+                : equippedWeapon === "launcher" || equippedWeapon === "rocket"
+                  ? t("fire.shoot")
+                  : t("fire.hold")}
+            <span>0·1·2·3·4</span>
+            {t("controls.weapon")}
+          </>
+        ) : null}
         <span>N</span>
         {t("controls.time")}
-        <span>F</span>
-        {flightMode ? t("controls.land") : t("controls.fly")}
+        {!occupiedSeatId ? (
+          <>
+            <span>F</span>
+            {flightMode ? t("controls.land") : t("controls.fly")}
+          </>
+        ) : null}
         <span>T</span>
         {t("controls.telemetry")}
         {!flightMode ? (

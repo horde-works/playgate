@@ -8,13 +8,43 @@ import {
 
 test("the first-spawn guidance is a reusable game action cue", () => {
   const [hint] = hintsForGameAction("player.spawned");
-  // Спавн, ворота, дверь усадьбы, посадка на облёт, дверь дома и табло
-  // отправления рейса.
-  assert.equal(gameActionHints.length, 6);
+  // General movement plus two distinct calls for each scheduled carrier:
+  // an uncrewed service flight ashore and a passenger flight aboard.
+  assert.equal(gameActionHints.length, 12);
   assert.equal(hint.id, "first-look");
   assert.equal(hint.once, true);
   assert.equal(hint.delayMs >= 2_000, true);
   assert.equal(hint.durationMs >= 6_000, true);
+});
+
+test("each map names its uncrewed flight in its own language", () => {
+  const [terminal] = hintsForGameAction("terminal-departure.approaching");
+  const [viking] = hintsForGameAction("viking-departure.approaching");
+  const [town] = hintsForGameAction("town-departure.approaching");
+
+  assert.equal(terminal.id, "approaching-terminal-dispatch");
+  assert.equal(viking.id, "approaching-viking-watch");
+  assert.equal(town.id, "approaching-town-airship-dispatch");
+  assert.equal(terminal.detailKey, "hint.departure.action");
+  assert.equal(viking.detailKey, "hint.vikingDeparture.action");
+  assert.notEqual(ui.ru[terminal.detailKey], ui.ru[viking.detailKey]);
+  assert.notEqual(ui.ru[town.detailKey], ui.ru[viking.detailKey]);
+  assert.match(ui.ru[terminal.titleKey], /Пустой состав/);
+  assert.match(ui.ru[viking.titleKey], /Пустой драккар/);
+  assert.match(ui.ru[town.titleKey], /Пустой дирижабль/);
+});
+
+test("passenger flights are advertised separately from empty service flights", () => {
+  const [terminal] = hintsForGameAction("terminal-ride.approaching");
+  const [viking] = hintsForGameAction("viking-ride.approaching");
+  const [town] = hintsForGameAction("town-ride.approaching");
+
+  assert.equal(terminal.detailKey, "hint.ride.action");
+  assert.equal(viking.detailKey, "hint.vikingRide.action");
+  assert.equal(town.detailKey, "hint.townRide.action");
+  assert.match(ui.ru[terminal.eyebrowKey], /Пассажирский/);
+  assert.match(ui.ru[viking.eyebrowKey], /На борту/);
+  assert.match(ui.ru[town.eyebrowKey], /На борту/);
 });
 
 test("the Viking gate requirement is persistent and repeatable", () => {

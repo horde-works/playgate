@@ -15,10 +15,13 @@ import {
   Color,
   CylinderGeometry,
   DynamicDrawUsage,
+  ExtrudeGeometry,
   InstancedBufferAttribute,
   InstancedMesh,
   Matrix4,
   Object3D,
+  Shape,
+  SphereGeometry,
   StaticDrawUsage,
 } from "three";
 import {
@@ -55,6 +58,28 @@ const UNIT_BOX = new BoxGeometry(1, 1, 1);
 // Unit-diameter, unit-height cylinder along Y; instance scale sets the
 // diameters (x/z) and length (y), instance rotation lays it down.
 const UNIT_CYLINDER = new CylinderGeometry(0.5, 0.5, 1, 20, 1);
+const UNIT_SPHERE = new SphereGeometry(0.5, 48, 32);
+const TRIANGULAR_SHEET_PROFILE = new Shape()
+  .moveTo(-0.5, -1 / 3)
+  .lineTo(0.5, -1 / 3)
+  .lineTo(0, 2 / 3)
+  .closePath();
+const UNIT_TRIANGULAR_SHEET = new ExtrudeGeometry(
+  TRIANGULAR_SHEET_PROFILE,
+  { depth: 1, steps: 1, bevelEnabled: false },
+).translate(0, 0, -0.5);
+const HEXAGONAL_SHEET_PROFILE = new Shape()
+  .moveTo(0, -0.5)
+  .lineTo(0.5, -0.22)
+  .lineTo(0.5, 0.22)
+  .lineTo(0, 0.5)
+  .lineTo(-0.5, 0.22)
+  .lineTo(-0.5, -0.22)
+  .closePath();
+const UNIT_HEXAGONAL_SHEET = new ExtrudeGeometry(
+  HEXAGONAL_SHEET_PROFILE,
+  { depth: 1, steps: 1, bevelEnabled: false },
+).translate(0, 0, -0.5);
 const HIDDEN_MATRIX = new Matrix4().makeScale(0, 0, 0);
 const EMPTY_MUTABLE_PIECE_IDS: ReadonlySet<string> = new Set();
 
@@ -124,7 +149,15 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
   );
   const geometry = useMemo(() => {
     const next = (
-      batch.geometryKind === "cylinder" ? UNIT_CYLINDER : UNIT_BOX
+      batch.geometryKind === "cylinder"
+        ? UNIT_CYLINDER
+        : batch.geometryKind === "sphere"
+          ? UNIT_SPHERE
+        : batch.geometryKind === "triangularSheet"
+          ? UNIT_TRIANGULAR_SHEET
+          : batch.geometryKind === "hexagonalSheet"
+            ? UNIT_HEXAGONAL_SHEET
+            : UNIT_BOX
     ).clone();
     // xyz = world anchor, w = organic weathering amount (packed to avoid a
     // separate instanced attribute — WebGL's attribute count is nearly full).
@@ -157,6 +190,11 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
         facePos[index * 3 + 2] = 0;
         faceNeg[index * 3] = 0;
         faceNeg[index * 3 + 2] = 0;
+      } else if (piece.shape === "sphere") {
+        // Curved surfaces have no box faces on which the masonry edge shader
+        // may draw seams or bevels.
+        facePos.fill(0, index * 3, index * 3 + 3);
+        faceNeg.fill(0, index * 3, index * 3 + 3);
       }
       const baked = lighting.resultFor(piece.id);
       if (baked) {

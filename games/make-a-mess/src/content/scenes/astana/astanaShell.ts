@@ -4,16 +4,18 @@
 // Оболочка острова «Астана»: грунт, русло Есиля, зелёный пояс и степная
 // кромка. Контент мира — лицензия отличается от лицензии кода, см. LICENSING.md.
 //
-// Остров — круг радиусом 112 м вокруг (0, 0), самый большой в проекте. Река
-// дугой отсекает северную треть: за ней правый берег, целиноградские дворы;
-// на левом — новый город с Байтереком в центре. Север здесь +z (yaw 0
-// смотрит на −z, то есть на юг).
+// Остров — круг радиусом 138 м вокруг (0, 0), самый большой в проекте. Река
+// дугой отсекает верхнюю треть макета: за ней правый берег и целиноградские
+// дворы, на левом — новый город с Байтереком. Геометрический верх остаётся
+// +z, но ИСТИННЫЙ север острова после композиционной посадки задан отдельно
+// в astanaLayout.ts: карту не вращаем, вращаем её географический компас.
 //
 // Воды пока нет — оставлено русло: два уступа берега и песчаное дно. Вода
 // наращивается отдельно.
 
 import type { MutableGroup } from "./astanaAuthoring.ts";
 import { noise, place, primitive } from "./astanaAuthoring.ts";
+import { insideLandmarkReserve } from "./astanaLayout.ts";
 
 /**
  * Просека под эстакадой кольца: ствол не имеет права стоять ближе этого
@@ -31,10 +33,23 @@ const RING_AXIS_RADIUS = 98;
  */
 const STATION_CLEARING = 26;
 
-export const WORLD_RADIUS = 112;
+/**
+ * Внутренний город и кольцо ЛРТ не растягиваются. Новая земля добавлена
+ * только снаружи: три будущих автомобильных полотна по 7.5 м и ещё 3.5 м
+ * свободного резерва. Так внешние арочные мосты смогут выйти за кольцо, не
+ * отнимая воздух у уже согласованной композиции.
+ */
+export const FUTURE_ROAD_FULL_WIDTH = 7.5;
+export const OUTER_LAYOUT_RESERVE = 3.5;
+export const WORLD_RADIUS = 112
+  + FUTURE_ROAD_FULL_WIDTH * 3
+  + OUTER_LAYOUT_RESERVE;
+export const LAND_BASE_RADIUS = WORLD_RADIUS - 8;
 /** Шаг сетки грунта. Тайл кладётся с нахлёстом 6 см, чтобы не было щелей. */
 export const GROUND_PITCH = 5;
-const TILE = GROUND_PITCH + 0.06;
+// Соседние тайлы имеют одну и ту же расчётную границу. Нахлёст здесь не
+// страхует от щели, а кладёт две верхние грани в одну плоскость и даёт рябь.
+const TILE = GROUND_PITCH;
 
 /**
  * Точка попадает в пятно станции. Центры считаются здесь же, а не берутся из
@@ -63,7 +78,7 @@ function nearStation(x: number, z: number, clearance: number): boolean {
 export function landRadiusAt(x: number, z: number): number {
   const angle = Math.atan2(z, x);
   return (
-    104
+    LAND_BASE_RADIUS
     + Math.sin(angle * 2.3) * 2.2
     + Math.sin(angle * 5.1 + 1.7) * 1.1
     + (noise(x, z, 11) - 0.5) * 2.4
@@ -75,12 +90,31 @@ export function landRadiusAt(x: number, z: number): number {
  * уходит на северо-восток.
  */
 export function riverAxisZ(x: number): number {
-  return 34 + (x * x) / (WORLD_RADIUS * WORLD_RADIUS) * 5.5;
+  // Середина русла почти прямая. Доворот начинается только в наружных 48%
+  // радиуса и плавно доходит у кромки до 5.1 м — ровно 15% от центральной
+  // отметки 34 м. Это изгиб выходов реки из острова, а не локальная вмятина
+  // возле станции ЛРТ.
+  const normalized = Math.min(1, Math.abs(x) / LAND_BASE_RADIUS);
+  const raw = Math.max(0, Math.min(1, (normalized - 0.52) / 0.48));
+  const edgeTurn = raw * raw * (3 - 2 * raw);
+  return 34 + edgeTurn * 5.1;
 }
 
-/** Полуширина русла по урезу берега. */
+/**
+ * Полуширина видимого русла по урезу берега. Прежние 11 м превращали реку
+ * в пустое поле и съедали место у обоих городских поясов. Русло сжато на
+ * 30% вместе с береговыми ступенями: Есиль остаётся преградой, но больше не
+ * срезает северный сектор круглого партера Байтерека.
+ */
+export const RIVER_WIDTH_SCALE = 0.7;
+export const RIVER_BASE_HALF_WIDTH = 8.5 * RIVER_WIDTH_SCALE;
+export const RIVER_BANK_WIDTH = 8 * RIVER_WIDTH_SCALE;
+export const RIVER_TERRACE_WIDTH = 8 * RIVER_WIDTH_SCALE;
+export const RIVER_VALLEY_MARGIN = RIVER_BANK_WIDTH + RIVER_TERRACE_WIDTH;
 export function riverHalfWidth(x: number): number {
-  return 11 + Math.sin(x * 0.052) * 1.3 + Math.sin(x * 0.017 + 0.7) * 0.9;
+  return RIVER_BASE_HALF_WIDTH
+    + Math.sin(x * 0.052) * RIVER_WIDTH_SCALE
+    + Math.sin(x * 0.017 + 0.7) * 0.7 * RIVER_WIDTH_SCALE;
 }
 
 /** Расстояние от точки до осевой реки со знаком: <0 — южный берег. */
@@ -105,10 +139,10 @@ export function groundKindAt(x: number, z: number): GroundKind {
   if (offset < half) {
     return "bed";
   }
-  if (offset < half + 8) {
+  if (offset < half + RIVER_BANK_WIDTH) {
     return "bank";
   }
-  if (offset < half + 16) {
+  if (offset < half + RIVER_VALLEY_MARGIN) {
     return "terrace";
   }
   return "land";
@@ -244,18 +278,23 @@ export function createGround(base: MutableGroup, surface: MutableGroup): void {
       // Степь читается пятнами по 15–20 м, а не рябью тайл-в-тайл: крупный
       // шум выбирает характер участка, мелкий — оттенок внутри него.
       const patch = steppePatch(x, z);
-      const salt = patch > 0.86 && radius < 96;
+      const outerReserve = radius > RING_AXIS_RADIUS + RING_CLEARING;
+      const salt = !outerReserve && patch > 0.86 && radius < 96;
       const burnt = radius > 88 || patch > 0.63 || dryness > 0.93;
-      const palette = salt ? SALT_FLAT : burnt ? DRY_STEPPE : LAND_GREENS;
+      const palette = salt ? SALT_FLAT : burnt || outerReserve ? DRY_STEPPE : LAND_GREENS;
       primitive(
         surface,
         `cover:${key}`,
-        salt ? "soil" : "grass",
+        salt || outerReserve ? "soil" : "grass",
         "groundTile",
         [x, top - 0.09, z],
         [TILE, 0.18, TILE],
         palette[Math.floor(noise(x, z, 2) * palette.length) % palette.length],
-        salt ? { surface: [{ kind: "damp", amount: 0.18 }] } : {},
+        salt
+          ? { surface: [{ kind: "damp", amount: 0.18 }] }
+          : outerReserve
+            ? { surface: [{ kind: "damp", amount: 0.04 }] }
+            : {},
       );
     }
   }
@@ -295,6 +334,9 @@ export function createGreenBelt(belt: MutableGroup): void {
     if (nearStation(x, z, STATION_CLEARING)) {
       continue;
     }
+    if (insideLandmarkReserve(x, z, 2.5)) {
+      continue;
+    }
     const birch = noise(index, 3, 33) > 0.68;
     const variant = birch
       ? `core:birch:${1 + (index % 3)}`
@@ -324,6 +366,9 @@ export function createGreenBelt(belt: MutableGroup): void {
       continue;
     }
     if (nearStation(x, z, STATION_CLEARING - 4)) {
+      continue;
+    }
+    if (insideLandmarkReserve(x, z, 1.5)) {
       continue;
     }
     const clumps = 3 + Math.floor(noise(index, 8, 38) * 3);
@@ -371,6 +416,9 @@ export function createSteppeTufts(tufts: MutableGroup): void {
       continue;
     }
     if (nearStation(x, z, 16)) {
+      continue;
+    }
+    if (insideLandmarkReserve(x, z, 0.8)) {
       continue;
     }
     const blades = 3 + Math.floor(noise(index, 8, 43) * 3);

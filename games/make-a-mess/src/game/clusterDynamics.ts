@@ -133,6 +133,42 @@ export interface MassProperties {
   readonly pieces: number;
 }
 
+/**
+ * Mass seen by an impulse at a body point along one world-space direction.
+ * This includes the angular acceleration created by the impulse arm, unlike
+ * a plain fraction of total mass.
+ */
+export function pointEffectiveMass(
+  properties: MassProperties,
+  orientation: Quaternion,
+  lever: SceneVector3,
+  direction: SceneVector3,
+): number {
+  const directionLength = Math.hypot(...direction);
+  if (properties.mass <= 0 || directionLength <= 1e-9) {
+    return 0;
+  }
+  const unitDirection: SceneVector3 = [
+    direction[0] / directionLength,
+    direction[1] / directionLength,
+    direction[2] / directionLength,
+  ];
+  const angularImpulseWorld = cross(lever, unitDirection);
+  const angularImpulseBody = rotateVector(
+    conjugateQuaternion(orientation),
+    angularImpulseWorld,
+  );
+  const angularResponseBody = applyMatrix(
+    properties.inverseInertia,
+    angularImpulseBody,
+  );
+  const inverseEffectiveMass = 1 / properties.mass +
+    angularImpulseBody[0] * angularResponseBody[0] +
+    angularImpulseBody[1] * angularResponseBody[1] +
+    angularImpulseBody[2] * angularResponseBody[2];
+  return inverseEffectiveMass > 1e-12 ? 1 / inverseEffectiveMass : 0;
+}
+
 export const EMPTY_MASS: MassProperties = {
   mass: 0,
   centre: [0, 0, 0],

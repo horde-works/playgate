@@ -18,14 +18,23 @@ import {
 } from "./destructionScene.ts";
 import { propTree } from "../content/prefabs/coreFlora.ts";
 import { placeProp } from "../content/prefabs/coreProps.ts";
+import type { MotionInstrumentDefinition } from "./motionTelemetry.ts";
 
 const clusters: BreakableClusterDefinition[] = [];
 const lamps: LampDefinition[] = [];
 const spotLights: SpotLightDefinition[] = [];
 const mutableObjects: MutableSceneObjectDefinition[] = [];
+const motionInstruments: MotionInstrumentDefinition[] = [];
 
 const WORLD_CENTER_Z = -14;
 const WORLD_RADIUS = 98;
+// Both public routes stay within 193 m of the scene centre. The containment
+// wall leaves room for the full 29 m craft and a useful free-flight margin;
+// the sky leaves another 60 m beyond the wall. The far plane must see the
+// opposite side of that off-centre dome while the camera rides the route.
+const ROUTE_BOUNDARY_RADIUS = 240;
+const ROUTE_SKY_RADIUS = 300;
+const ROUTE_CAMERA_FAR = 560;
 const FLOOR_Y = 0.18;
 const FRONT_Z = 34;
 const REAR_Z = 8;
@@ -39,6 +48,7 @@ const limestone = "#c1b7a2";
 const limestoneDark = "#918a7b";
 const iron = "#283033";
 const ironLight = "#4b5558";
+const instrumentSteel = "#81898a";
 const brass = "#b58a3a";
 const oak = "#684329";
 const oakDark = "#3d281d";
@@ -264,6 +274,7 @@ function addFacetedCylinder(
   length: number,
   diameter: number,
   color: string,
+  centreFacetOptions: Pick<BreakablePieceDefinition, "actuator"> = {},
 ): void {
   const profile =
     diameter >= 2
@@ -282,7 +293,18 @@ function addFacetedCylinder(
     size[long] = length;
     size[step] = diameter * slab.thickness;
     size[cross] = diameter * slab.width;
-    builder.add(`${prefix}:facet:${index}`, material, shape, slabPosition, size, color);
+    builder.pieces.push({
+      id: `${builder.id}:${prefix}:facet:${index}`,
+      clusterId: builder.id,
+      material,
+      shape,
+      position: slabPosition,
+      size,
+      color,
+      actuator: slab.offset === 0
+        ? centreFacetOptions.actuator
+        : undefined,
+    });
   }
 }
 
@@ -2478,6 +2500,9 @@ export const skyBerthMetrics = {
   carLength: 12.4,
   carHalf: 1.55,
   floorTop: 1.5,
+  cabFront: -9.25,
+  cabRear: -7.3,
+  cabFrontHalf: 1.05,
   hullY: 9.4,
   hullRadius: 3,
   hullFrom: -10.2,
@@ -2546,6 +2571,37 @@ function createSkyPlatform(): void {
     });
   }
 
+  /** Ordinary breakable box stretched between two authored points. */
+  function beamBetween(
+    builder: ZoneBuilder,
+    suffix: string,
+    material: BreakableMaterial,
+    shape: BreakableShape,
+    from: SceneVector3,
+    to: SceneVector3,
+    thickness: number,
+    color: string,
+    options: Partial<BreakablePieceDefinition> = {},
+  ): void {
+    const delta: SceneVector3 = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
+    const length = Math.hypot(...delta);
+    if (length < 1e-6) {
+      return;
+    }
+    // Three.js uses intrinsic XYZ Euler angles. With rx = 0 the local X axis
+    // becomes [cos(ry)cos(rz), sin(rz), -sin(ry)cos(rz)]. The signs matter:
+    // the opposite pair leaves the centre correct but points both beam ends
+    // away from their authored anchors.
+    const yRotation = Math.atan2(-delta[2], delta[0]);
+    const zRotation = Math.asin(Math.max(-1, Math.min(1, delta[1] / length)));
+    part(builder, suffix, material, shape,
+      [(from[0] + to[0]) / 2, (from[1] + to[1]) / 2, (from[2] + to[2]) / 2],
+      [length, thickness, thickness], color, {
+        ...options,
+        rotation: [0, yRotation, zRotation],
+      });
+  }
+
   const TRACK_Z = 77.6;
   const PLATFORM_Z = 74.05;
   const PLATFORM_HALF = 1.65;
@@ -2554,12 +2610,18 @@ function createSkyPlatform(): void {
   const PLATFORM_TOP = 1.3;
   const PLATFORM_FROM = -10.5;
   const PLATFORM_TO = 21;
-  const BUFFER_X = -8.6;
+  // The driver's bay now occupies the old empty metre ahead of the first
+  // coach. The stop remains a real obstacle, but sits beyond its glazing.
+  const BUFFER_X = -10.55;
   const CAR_LENGTH = 12.4;
   const CAR_HALF = 1.55;
   const CAR_FLOOR = 1.34;
   const HEAD_X = -1.1;
   const TAIL_X = 12.3;
+  const CAB_REAR_X = HEAD_X - CAR_LENGTH / 2;
+  const CAB_FRONT_X = -9.25;
+  const CAB_REAR_HALF = 1.42;
+  const CAB_FRONT_HALF = 1.05;
   const HULL_Y = 9.4;
   const HULL_RADIUS = 3.0;
   const HULL_FROM = -10.2;
@@ -2908,6 +2970,15 @@ function createSkyPlatform(): void {
           states: ["approach"],
         },
       },
+      {
+        id: "failed",
+        activePieceIds: skyDepartureMatrix.activePieceIds("FAIL"),
+        condition: {
+          kind: "clusterEvent",
+          sourceClusterId: train.id,
+          states: ["failed"],
+        },
+      },
     ],
   });
   // Строка назначения пуста: клапаны стоят тёмными — рейсу некуда объявлять.
@@ -3048,15 +3119,23 @@ function createSkyPlatform(): void {
     intensity: 1.8,
   });
 
-  // Носовой балласт. Он не украшение: без него центр масс висит на 0.42 м
-  // позади центра объёма оболочки, а плечо подъёма всего два метра — корабль
-  // стоял бы у причала с задранным носом градусов на двенадцать. Настоящие
-  // дирижабли развешивают балласт, и мы делаем то же: бак в носовой части,
-  // который можно увидеть, разбив обшивку, и потерять вместе с дифферентом.
+  // Кормовой ресивер исполнительной автоматики хранит рабочее давление для
+  // подъёмных клапанов. Это настоящий кусок оборудования и настоящая масса:
+  // вместе с появившейся далеко впереди кабиной он меняет продольный баланс.
+  part(train, "lift-control-reservoir", "steel", "steelSheet",
+    [16, HULL_Y, TRACK_Z], [1.3, 0.72, 0.72], "#596268", {
+      volume: 0.5,
+      bearsLoad: false,
+      sideAttachmentReach: 0.45,
+    });
+
+  // Носовой балласт компенсирует кабину и кормовое оборудование настоящей
+  // массой. Если бак потерять, состав заметно задерёт нос; точка приложения
+  // подъёмной силы при этом остаётся геометрическим центром оболочки.
   const BALLAST_X = -6;
   part(train, "ballast", "steel", "steelSheet",
     [BALLAST_X, HULL_Y, TRACK_Z], [1.7, 1.25, 1.7], "#3d4448", {
-      volume: 3.0,
+      volume: 1.93,
       carriesAttachments: true,
       attachmentSupportMode: "cable",
       sideAttachmentReach: 0.5,
@@ -3364,6 +3443,7 @@ function createSkyPlatform(): void {
     withDoor: boolean,
     passageEnd: -1 | 1,
     coachNumber: string,
+    openEnd: -1 | 1 | null = null,
   ): void {
     const halfLength = CAR_LENGTH / 2;
     const bodyHalf = halfLength - 0.12;
@@ -3466,7 +3546,11 @@ function createSkyPlatform(): void {
 
     for (const end of [-1, 1] as const) {
       const endX = centerX + end * halfLength;
-      if (end === passageEnd) {
+      if (end === openEnd) {
+        // The driver's bay shares the head coach's full interior. Its rear
+        // frame carries the glazing; another decorative partition here would
+        // only make a fake, impassable cab.
+      } else if (end === passageEnd) {
         // Торец с настоящим проходом в соседний вагон: два простенка и
         // притолока, между ними — открытый проём 1.2 м.
         for (const side of [-1, 1] as const) {
@@ -3605,8 +3689,251 @@ function createSkyPlatform(): void {
     }
   }
 
-  addSkyCoach("head", HEAD_X, carriageGreen, true, 1, "01");
+  addSkyCoach("head", HEAD_X, carriageGreen, true, 1, "01", -1);
   addSkyCoach("tail", TAIL_X, "#33403a", false, -1, "02");
+
+  // --- Кабина машиниста ----------------------------------------------------
+  // Центральная фронтальная рамка выступает вперёд; четыре луча расходятся от
+  // её углов к крепёжным углам головного вагона. Стёкла лежат между этими
+  // точками и наклонены к носу, поэтому рама действительно держит эркер.
+  {
+    const frontLower = 2.08;
+    const frontUpper = 3.52;
+    const rearLower = FLOOR_TOP;
+    const rearUpper = EAVES;
+    const frameThickness = 0.14;
+    const frameOptions: Partial<BreakablePieceDefinition> = {
+      carriesAttachments: true,
+      attachmentSupportMode: "cable",
+      sideAttachmentReach: 0.32,
+    };
+    const glassOptions: Partial<BreakablePieceDefinition> = {
+      bearsLoad: false,
+      attachmentSupportMode: "cable",
+      sideAttachmentReach: 0.22,
+    };
+    const lerp = (from: number, to: number, amount: number): number =>
+      from + (to - from) * amount;
+
+    // Центральная фронтальная рамка и открытый крепёжный контур у вагона.
+    for (const [tag, x, lower, upper, half] of [
+      ["front", CAB_FRONT_X, frontLower, frontUpper, CAB_FRONT_HALF],
+      ["rear", CAB_REAR_X, rearLower, rearUpper, CAB_REAR_HALF],
+    ] as const) {
+      for (const side of [-1, 1] as const) {
+        part(train, `cab:frame:${tag}:side:${side}`, "steel", "steelSheet",
+          [x, (lower + upper) / 2, TRACK_Z + side * half],
+          [0.16, upper - lower, frameThickness], ironLight, frameOptions);
+      }
+      for (const [edge, y] of [["lower", lower], ["upper", upper]] as const) {
+        part(train, `cab:frame:${tag}:${edge}`, "steel", "steelSheet",
+          [x, y, TRACK_Z], [0.16, frameThickness, half * 2 + frameThickness],
+          ironLight, frameOptions);
+      }
+    }
+
+    // Четыре силовых луча идут именно ОТ углов передней рамки К вагону.
+    for (const side of [-1, 1] as const) {
+      beamBetween(train, `cab:frame:ray:upper:${side}`, "steel", "steelSheet",
+        [CAB_FRONT_X, frontUpper, TRACK_Z + side * CAB_FRONT_HALF],
+        [CAB_REAR_X, rearUpper, TRACK_Z + side * CAB_REAR_HALF],
+        frameThickness, ironLight, frameOptions);
+      beamBetween(train, `cab:frame:ray:lower:${side}`, "steel", "steelSheet",
+        [CAB_FRONT_X, frontLower, TRACK_Z + side * CAB_FRONT_HALF],
+        [CAB_REAR_X, rearLower, TRACK_Z + side * CAB_REAR_HALF],
+        frameThickness, ironLight, frameOptions);
+    }
+
+    part(train, "cab:glass:front", "glass", "glassPane",
+      [CAB_FRONT_X - 0.015, (frontLower + frontUpper) / 2, TRACK_Z],
+      [0.09, frontUpper - frontLower - 0.18, CAB_FRONT_HALF * 2 - 0.2],
+      clearPassengerGlassColor, glassOptions);
+
+    // Верхнее и нижнее стекло наклоняются к передней рамке; три секции точно
+    // следуют расширению от неё к крепёжному контуру вагона.
+    for (const [surface, frontY, rearY] of [
+      ["upper", frontUpper, rearUpper],
+      ["lower", frontLower, rearLower],
+    ] as const) {
+      for (let section = 0; section < 3; section += 1) {
+        const t0 = section / 3;
+        const t1 = (section + 1) / 3;
+        const x0 = lerp(CAB_FRONT_X, CAB_REAR_X, t0);
+        const x1 = lerp(CAB_FRONT_X, CAB_REAR_X, t1);
+        const y0 = lerp(frontY, rearY, t0);
+        const y1 = lerp(frontY, rearY, t1);
+        const half0 = lerp(CAB_FRONT_HALF, CAB_REAR_HALF, t0);
+        const half1 = lerp(CAB_FRONT_HALF, CAB_REAR_HALF, t1);
+        part(train, `cab:glass:${surface}:${section}`, "glass", "glassPane",
+          [(x0 + x1) / 2, (y0 + y1) / 2, TRACK_Z],
+          [Math.hypot(x1 - x0, y1 - y0) + 0.025, 0.08, half0 + half1 - 0.16],
+          clearPassengerGlassColor, {
+            ...glassOptions,
+            sideAttachmentReach: 0.3,
+            rotation: [0, 0, Math.atan2(y1 - y0, x1 - x0)],
+            contactBoxes: [-1, 1].map((side) => ({
+              position: [
+                (x0 + x1) / 2,
+                (frontY + rearY) / 2,
+                TRACK_Z + side * ((half0 + half1) / 2 - 0.08),
+              ] as SceneVector3,
+              size: [Math.hypot(x1 - x0, y1 - y0), 0.1, 0.1] as SceneVector3,
+            })),
+            attachmentSupportIds: [-1, 1].map((side) =>
+              `${train.id}:cab:frame:ray:${surface}:${side}`),
+          });
+      }
+    }
+
+    for (const side of [-1, 1] as const) {
+      for (let section = 0; section < 3; section += 1) {
+        const t0 = section / 3;
+        const t1 = (section + 1) / 3;
+        const x0 = lerp(CAB_FRONT_X, CAB_REAR_X, t0);
+        const x1 = lerp(CAB_FRONT_X, CAB_REAR_X, t1);
+        const half0 = lerp(CAB_FRONT_HALF, CAB_REAR_HALF, t0);
+        const half1 = lerp(CAB_FRONT_HALF, CAB_REAR_HALF, t1);
+        // Стекло сидит внутри ребра и не задевает узел передней подвески.
+        const z0 = TRACK_Z + side * (half0 - 0.22);
+        const z1 = TRACK_Z + side * (half1 - 0.22);
+        const lower = (lerp(frontLower, rearLower, t0) + lerp(frontLower, rearLower, t1)) / 2;
+        const upper = (lerp(frontUpper, rearUpper, t0) + lerp(frontUpper, rearUpper, t1)) / 2;
+        part(train, `cab:glass:side:${side}:${section}`, "glass", "glassPane",
+          [(x0 + x1) / 2, (lower + upper) / 2, (z0 + z1) / 2],
+          [Math.hypot(x1 - x0, z1 - z0) + 0.025, upper - lower - 0.1, 0.08],
+          clearPassengerGlassColor, {
+            ...glassOptions,
+            sideAttachmentReach: 0.3,
+            rotation: [0, Math.atan2(-(z1 - z0), x1 - x0), 0],
+            contactBoxes: [{
+              position: [(x0 + x1) / 2, (frontUpper + rearUpper) / 2, (z0 + z1) / 2],
+              size: [Math.hypot(x1 - x0, z1 - z0), 0.12, 0.08],
+            }],
+            attachmentSupportIds: [`${train.id}:cab:frame:ray:upper:${side}`],
+          });
+      }
+    }
+
+    // Человеческий масштаб: кресло и невысокий пульт оставляют свободными
+    // оба края открытого стыка с вагоном.
+    part(train, "cab:driver-seat:pedestal", "steel", "steelSheet",
+      [-7.08, 1.67, TRACK_Z], [0.34, 0.34, 0.34], iron, {
+        volume: 0.06,
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.24,
+      });
+    part(train, "cab:driver-seat:cushion", "wood", "plank",
+      [-7.08, 1.91, TRACK_Z], [0.62, 0.18, 0.72], "#563b2e", {
+        volume: 0.08,
+        sideAttachmentReach: 0.28,
+      });
+    part(train, "cab:driver-seat:back", "wood", "plank",
+      [-6.77, 2.3, TRACK_Z], [0.14, 0.82, 0.72], "#563b2e", {
+        volume: 0.08,
+        sideAttachmentReach: 0.28,
+      });
+    // No dashboard cabinet: the lower glazing stays useful. A thin offset
+    // bracket grows from the chair at the exact pitch of the lower glass and
+    // then rises to the only thing the driver needs — the brass control plate.
+    const controlArmZ = TRACK_Z - 0.16;
+    const controlArmFrom: SceneVector3 = [-7.08, 1.75, controlArmZ];
+    const controlArmToX = -7.81;
+    const lowerGlassSlope = (frontLower - rearLower) / (CAB_FRONT_X - CAB_REAR_X);
+    const controlArmTo: SceneVector3 = [
+      controlArmToX,
+      controlArmFrom[1] + lowerGlassSlope * (controlArmToX - controlArmFrom[0]),
+      controlArmZ,
+    ];
+    beamBetween(train, "cab:controls:arm:forward", "steel", "steelSheet",
+      controlArmFrom, controlArmTo, 0.07, instrumentSteel, {
+        volume: 0.006,
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.18,
+        attachmentSupportIds: [`${train.id}:cab:driver-seat:pedestal`],
+      });
+    beamBetween(train, "cab:controls:arm:riser", "steel", "steelSheet",
+      controlArmTo, [controlArmToX, 2.425, controlArmZ],
+      0.07, instrumentSteel, {
+        volume: 0.004,
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.18,
+        attachmentSupportIds: [`${train.id}:cab:controls:arm:forward`],
+      });
+    part(train, "cab:controls:panel", "steel", "panel",
+      [-7.93, 2.5, TRACK_Z - 0.265], [0.28, 0.055, 0.51], brass, {
+        bearsLoad: false,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.3,
+        // Start level, then lower the driver-side edge by twenty degrees.
+        rotation: [0, 0, -Math.PI / 9],
+        attachmentSupportIds: [`${train.id}:cab:controls:arm:riser`],
+      });
+    motionInstruments.push({
+      id: `${train.id}:cab:flight-instruments`,
+      sourceId: train.id,
+      carrierClusterId: train.id,
+      panelPieceId: `${train.id}:cab:controls:panel`,
+      pitchMetricId: "pitch",
+      rollMetricId: "roll",
+      indicators: [
+        {
+          id: "ready",
+          label: "READY",
+          color: "#72f29a",
+          condition: { kind: "phase", phases: ["docked", "attention"] },
+        },
+        {
+          id: "departure",
+          label: "DEPART",
+          color: "#ffbf5f",
+          condition: { kind: "phase", phases: ["departure"] },
+        },
+        {
+          id: "cruise",
+          label: "CRUISE",
+          color: "#79d8ff",
+          condition: { kind: "phase", phases: ["cruise", "inTransit"] },
+        },
+        {
+          id: "approach",
+          label: "APPROACH",
+          color: "#ffd06d",
+          condition: { kind: "phase", phases: ["approach"] },
+        },
+        {
+          id: "failed",
+          label: "FAIL",
+          color: "#ff4d47",
+          condition: { kind: "phase", phases: ["failed"] },
+        },
+        {
+          id: "engine-left",
+          label: "L ENG",
+          color: "#f0f3d1",
+          condition: {
+            kind: "metric",
+            metricId: "propellerRevolutions",
+            valueIndex: 0,
+            fullScale: 100,
+          },
+        },
+        {
+          id: "engine-right",
+          label: "R ENG",
+          color: "#f0f3d1",
+          condition: {
+            kind: "metric",
+            metricId: "propellerRevolutions",
+            valueIndex: 1,
+            fullScale: 100,
+          },
+        },
+      ],
+    });
+  }
 
   // --- Переход между вагонами ----------------------------------------------
   // Гармошка обещает проход — значит проход должен быть: настил под ногами,
@@ -3774,7 +4101,13 @@ function createSkyPlatform(): void {
   for (const side of [-1, 1] as const) {
     const z = TRACK_Z + side * engineB;
     addFacetedCylinder(train, `engine:${side}:body`, "steel", "steelSheet", "x",
-      [engineX, engineY, z], 2.6, engineDiameter, "#3f4a4c");
+      [engineX, engineY, z], 2.6, engineDiameter, "#3f4a4c", {
+        actuator: {
+          id: `sky-train:propulsor:${side}`,
+          commandChannel: `throttle:${side === -1 ? 0 : 1}`,
+          required: true,
+        },
+      });
     part(train, `engine:${side}:collar`, "steel", "steelSheet",
       [engineX - 1.32, engineY, z], [0.22, 1.1, 1.1], brass, {
         carriesAttachments: true,
@@ -3791,6 +4124,10 @@ function createSkyPlatform(): void {
       part(train, `engine:${side}:blade:${blade}`, "wood", "panel",
         [engineX - 1.62, engineY + blade * 0.72, z], [0.12, 1.3, 0.32], oak, {
           rotation: [0, 0, blade * 0.24],
+          actuator: {
+            id: `sky-train:propulsor:${side}`,
+            commandChannel: `throttle:${side === -1 ? 0 : 1}`,
+          },
           bearsLoad: false,
           sideAttachmentReach: 0.4,
         });
@@ -3911,15 +4248,6 @@ function createSkyPlatform(): void {
     });
   }
 
-  // Швартовая цепь от головного вагона к рыму упора: длинная часть уходит
-  // вниз вместе с составом, огрызок остаётся на бетоне.
-  part(train, "chain", "steel", "steelSheet",
-    [BUFFER_X + 1.6, 1.2, TRACK_Z], [1.3, 0.1, 0.1], "#3a4043", {
-      rotation: [0, 0, 0.16],
-      bearsLoad: false,
-      sideAttachmentReach: 0.2,
-    });
-
   // Состав висит на сердце и не опирается на путь ни одной точкой. У стали
   // окно опоры 1.1 м — без этого рама вагона «садится» на шпалы, скамьи
   // внутри находят под собой рельс, и разбитое сердце перестаёт ронять поезд.
@@ -3960,9 +4288,11 @@ export const grandTerminalScene = createDestructionScene({
   title: "Make a Mess: Grand Terminal",
   environment: "town",
   playerSpawn: [0, 1.25, 63],
-  cameraFar: 260,
+  cameraFar: ROUTE_CAMERA_FAR,
   worldCenter: [0, WORLD_CENTER_Z],
   worldHalfExtents: [102, 102],
+  boundaryRadius: ROUTE_BOUNDARY_RADIUS,
+  skyRadius: ROUTE_SKY_RADIUS,
   worldRadius: WORLD_RADIUS,
   safetyFloorY: -2.2,
   copy: {
@@ -3981,6 +4311,7 @@ export const grandTerminalScene = createDestructionScene({
   lamps,
   spotLights,
   mutableObjects,
+  motionInstruments,
 });
 
 export const grandTerminalMaterials = [

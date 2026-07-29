@@ -23,6 +23,7 @@ import {
   Object3D,
   Quaternion,
   Sphere,
+  SphereGeometry,
   Vector3,
 } from "three";
 import {
@@ -63,6 +64,7 @@ import type { CompoundKinematicClusterRegistry } from "./compoundKinematicCluste
 
 const UNIT_BOX = new BoxGeometry(1, 1, 1);
 const UNIT_CYLINDER = new CylinderGeometry(0.5, 0.5, 1, 20, 1);
+const UNIT_SPHERE = new SphereGeometry(0.5, 32, 20);
 
 function detachedFoliageGeometry(): BufferGeometry {
   const positions: number[] = [];
@@ -119,13 +121,66 @@ function detachedFoliageGeometry(): BufferGeometry {
 
 const UNIT_FOLIAGE_DEBRIS = detachedFoliageGeometry();
 
+// Порог «покоя» несомого кластера. Пришвартованный корабль качается всё
+// слабее; когда его визуальная поза сдвигается меньше, чем на эти допуски
+// (0.01 мм / ~микрорадианы), матрицы его кусков перестают переписываться и
+// инстанс-буфер не перезаливается впустую. Сравнение идёт с последней
+// ЗАПИСАННОЙ позой, поэтому медленный дрейф не теряется — он накапливается
+// и переписывает матрицы, как только превысит допуск.
+const CLUSTER_POSITION_EPSILON = 1e-5;
+const CLUSTER_QUATERNION_EPSILON = 1e-6;
+// union() умеет только расширять сферу рейкастов: после перелёта корабля она
+// покрывала весь маршрут и переставала отсекать. Периодическая пересборка с
+// нуля по фактическим матрицам возвращает ей точный размер.
+const RAYCAST_BOUNDS_REBUILD_FRAMES = 240;
+
+interface ClusterRestPose {
+  readonly position: Vector3;
+  readonly quaternion: Quaternion;
+}
+
+function clusterPoseChanged(
+  poses: Map<string, ClusterRestPose>,
+  clusterId: string,
+  object: Object3D,
+): boolean {
+  const cached = poses.get(clusterId);
+  if (!cached) {
+    poses.set(clusterId, {
+      position: object.position.clone(),
+      quaternion: object.quaternion.clone(),
+    });
+    return true;
+  }
+  const moved =
+    Math.abs(object.position.x - cached.position.x) >
+      CLUSTER_POSITION_EPSILON ||
+    Math.abs(object.position.y - cached.position.y) >
+      CLUSTER_POSITION_EPSILON ||
+    Math.abs(object.position.z - cached.position.z) >
+      CLUSTER_POSITION_EPSILON ||
+    Math.abs(object.quaternion.x - cached.quaternion.x) >
+      CLUSTER_QUATERNION_EPSILON ||
+    Math.abs(object.quaternion.y - cached.quaternion.y) >
+      CLUSTER_QUATERNION_EPSILON ||
+    Math.abs(object.quaternion.z - cached.quaternion.z) >
+      CLUSTER_QUATERNION_EPSILON ||
+    Math.abs(object.quaternion.w - cached.quaternion.w) >
+      CLUSTER_QUATERNION_EPSILON;
+  if (moved) {
+    cached.position.copy(object.position);
+    cached.quaternion.copy(object.quaternion);
+  }
+  return moved;
+}
+
 type DynamicBreakableKind = "piece" | "shard" | "remnant";
 
 interface DynamicBreakableFragment {
   readonly sourceId: string;
   readonly clusterId?: string;
   readonly kind: DynamicBreakableKind;
-  readonly geometryKind: "box" | "cylinder" | "foliage";
+  readonly geometryKind: "box" | "sphere" | "cylinder" | "foliage";
   readonly material: BreakableMaterial;
   readonly materialColor: string;
   readonly textureProfile?: SurfaceTextureProfile;
@@ -152,7 +207,7 @@ interface DynamicBreakableBatch {
   readonly material: BreakableMaterial;
   readonly materialColor: string;
   readonly textureProfile?: SurfaceTextureProfile;
-  readonly geometryKind: "box" | "cylinder" | "foliage";
+  readonly geometryKind: "box" | "sphere" | "cylinder" | "foliage";
   readonly treeBark: boolean;
   readonly fragments: readonly DynamicBreakableFragment[];
 }
@@ -212,6 +267,8 @@ function sourceFragments(
     const pieceColor = quenchedColor(piece.material, piece.color);
     const geometryKind = usesFoliageDebrisGeometry(piece.material, piece)
       ? "foliage" as const
+      : piece.shape === "sphere"
+        ? "sphere" as const
       : piece.shape === "cylinder"
         ? "cylinder" as const
         : "box" as const;
@@ -261,6 +318,8 @@ function sourceFragments(
     );
     const shardGeometry = usesFoliageDebrisGeometry(shard.material)
       ? "foliage" as const
+      : shard.shape === "sphere"
+        ? "sphere" as const
       : shard.shape === "cylinder"
         ? "cylinder" as const
         : "box" as const;
@@ -309,6 +368,8 @@ function sourceFragments(
     );
     const remnantGeometry = usesFoliageDebrisGeometry(remnant.material)
       ? "foliage" as const
+      : remnant.shape === "sphere"
+        ? "sphere" as const
       : remnant.shape === "cylinder"
         ? "cylinder" as const
         : "box" as const;
@@ -483,6 +544,8 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
     const next = (
       batch.geometryKind === "cylinder"
         ? UNIT_CYLINDER
+        : batch.geometryKind === "sphere"
+          ? UNIT_SPHERE
         : batch.geometryKind === "foliage"
           ? UNIT_FOLIAGE_DEBRIS
           : UNIT_BOX
@@ -677,6 +740,9 @@ diffuseColor.rgb = mix(
   const fragmentBounds = useMemo(() => new Sphere(), []);
   const sleepingSources = useRef(new Set<string>());
   const observedSleepStates = useRef(new Map<string, boolean>());
+  const clusterRestPoses = useRef(new Map<string, ClusterRestPose>());
+  const observedClusterMotion = useRef(new Map<string, boolean>());
+  const boundsRebuildCountdown = useRef(RAYCAST_BOUNDS_REBUILD_FRAMES);
   const clusterObject = (
     fragment: DynamicBreakableFragment,
     body: RapierRigidBody | undefined,
@@ -771,6 +837,8 @@ diffuseColor.rgb = mix(
     let changed = false;
     const sleepStates = observedSleepStates.current;
     sleepStates.clear();
+    const clusterMotion = observedClusterMotion.current;
+    clusterMotion.clear();
     batch.fragments.forEach((fragment, index) => {
       const body = bodies?.current?.get(fragment.sourceId);
       const clustered = clusterObject(fragment, body);
@@ -778,6 +846,21 @@ diffuseColor.rgb = mix(
         return;
       }
       if (clustered) {
+        // Несомый кусок «спит» вместе со своим кластером: пока поза
+        // носителя не сдвинулась заметнее допуска, матрицу не переписываем.
+        const clusterId = fragment.clusterId ?? "";
+        let moved = clusterMotion.get(clusterId);
+        if (moved === undefined) {
+          moved = clusterPoseChanged(
+            clusterRestPoses.current,
+            clusterId,
+            clustered.object,
+          );
+          clusterMotion.set(clusterId, moved);
+        }
+        if (!moved) {
+          return;
+        }
         setClusteredFragmentMatrix(
           dummy,
           fragment,
@@ -832,6 +915,33 @@ diffuseColor.rgb = mix(
       if (sleeping) {
         sleepingSources.current.add(sourceId);
       }
+    }
+
+    // Инкрементальный union только расширяет сферу; периодически собираем её
+    // заново по фактическим матрицам (позиция — элементы 12..14), чтобы после
+    // перелёта носителя рейкасты не проверяли пол-маршрута. Спящие фрагменты
+    // при этом учитываются: их матрицы уже лежат в буфере.
+    boundsRebuildCountdown.current -= 1;
+    if (boundsRebuildCountdown.current <= 0) {
+      boundsRebuildCountdown.current = RAYCAST_BOUNDS_REBUILD_FRAMES;
+      const matrices = current.instanceMatrix.array;
+      raycastBounds.makeEmpty();
+      batch.fragments.forEach((fragment, index) => {
+        const base = index * 16;
+        fragmentBounds.center.set(
+          matrices[base + 12],
+          matrices[base + 13],
+          matrices[base + 14],
+        );
+        const expansion = fragment.sizeExpansion;
+        fragmentBounds.radius =
+          Math.hypot(
+            fragment.size[0] + expansion,
+            fragment.size[1] + expansion,
+            fragment.size[2] + expansion,
+          ) / 2;
+        raycastBounds.union(fragmentBounds);
+      });
     }
 
     if (changed) {

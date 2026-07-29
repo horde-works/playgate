@@ -103,6 +103,26 @@ test("visual texture variants never merge into one material batch", () => {
   );
 });
 
+test("triangular facade cassettes keep their exact intact geometry", () => {
+  const triangular = piece("triangle", "glass", [0, 0, 0], {
+    shape: "triangularSheet",
+    size: [4.8, 5.2, 0.05],
+    color: "#b7c8cc",
+  });
+  const [batch] = buildIntactInstanceBatches([triangular]);
+  assert.equal(batch.geometryKind, "triangularSheet");
+});
+
+test("architectural spheres never fall back to glass boxes", () => {
+  const sphere = piece("sphere", "darkGlass", [0, 0, 0], {
+    shape: "sphere",
+    size: [26, 26, 26],
+    color: "#2f7d8c",
+  });
+  const [batch] = buildIntactInstanceBatches([sphere]);
+  assert.equal(batch.geometryKind, "sphere");
+});
+
 test("ground render colours survive the transition to a damaged remnant", () => {
   const pieces = [
     piece("grass-dark", "grass", [0, 0, 0], {

@@ -100,12 +100,12 @@ const EDGE_PROFILES: Record<string, EdgeProfile> = {
   },
   // Степной остров: суша обрывается плотным лёссовым уступом, ниже —
   // слоистая supesь и щебень. Юбка начинается внутри самой узкой точки
-  // шумной кромки (landRadiusAt колеблется около 104 ± 3.5).
+  // шумной кромки (landRadiusAt колеблется около 130 ± 3.5).
   astana: {
-    groundRadius: 99.5,
-    lipRadius: 102,
+    groundRadius: 125.5,
+    lipRadius: 128,
     lipY: -2.2,
-    wallRadius: 108,
+    wallRadius: 134,
     topY: -0.4,
     underglow: false,
     strata: ["#6d6249", "#7b6f53", "#867a5d", "#8f8467", "#7a7059", "#66604d", "#55503f", "#454133"],

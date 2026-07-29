@@ -4,6 +4,8 @@ import {
 } from "./structuralPhysics.ts";
 import { deinterpenetrateClusters } from "./deinterpenetrate.ts";
 import { forbidsDerivatives } from "./contentLicensing.ts";
+import type { MotionInstrumentDefinition } from "./motionTelemetry.ts";
+import type { SolarFrameDefinition } from "./timeOfDay.ts";
 import { propTree } from "../content/prefabs/coreFlora.ts";
 import { townSurfaceRoutes } from "../content/scenes/townSurfacePlan.ts";
 import {
@@ -84,8 +86,18 @@ export type BreakableShape =
   | "cinderBlock"
   | "glassPane"
   | "steelSheet"
+  // Exact triangular façade cassette. Its local XY profile is centred on
+  // the centroid; size x/y set base and altitude, size z sets thickness.
+  | "triangularSheet"
+  // Pointed six-sided aluminium cassette used by parametric architectural
+  // shells. Physics still treats its authored size as a compact cuboid.
+  | "hexagonalSheet"
   | "stoneBlock"
   | "groundTile"
+  // A true round/ellipsoidal architectural volume. Size x/y/z are the
+  // diameters. It must never fall back to the box renderer: that turns a
+  // landmark sphere into a visible glass cube and a cuboid collider.
+  | "sphere"
   // A true cylinder: rendered as round geometry (size x/z are the diameters,
   // y is the axis length; rotate the piece to lay it down). Physics carves
   // and colliders treat it as its bounding volume, which reads fine for
@@ -96,6 +108,9 @@ export type SupportMode = "stack" | "mounted" | "linked";
 export type SceneVector3 = readonly [x: number, y: number, z: number];
 export type LandscapeSurfaceProfile = "viking-ground" | "city-ground";
 export type SurfaceTextureProfile =
+  | "painted-steel"
+  | "matte-aluminium"
+  | "gold-mirror"
   | "city-gray-pavers"
   | "city-red-pavers"
   | "city-aged-stucco"
@@ -154,6 +169,23 @@ export interface DoorHingeDefinition {
   readonly normal: SceneVector3;
 }
 
+/**
+ * A physical member which turns a control command into force. Membership in
+ * the carrier's live compound body decides whether the command reaches it;
+ * an actuator which tears away keeps its own physics but no longer acts on
+ * the carrier.
+ */
+export interface CommandActuatorTag {
+  /** One physical actuator may be represented by several breakable members. */
+  readonly id: string;
+  /** Transport-neutral command address, e.g. `throttle:0` or `brake:2`. */
+  readonly commandChannel: string;
+  /** Share of the actuator retained while this particular member is attached. */
+  readonly contribution?: number;
+  /** Losing this core member disables the whole actuator, regardless of output members. */
+  readonly required?: boolean;
+}
+
 export interface BreakablePieceDefinition {
   readonly id: string;
   readonly clusterId: string;
@@ -168,6 +200,7 @@ export interface BreakablePieceDefinition {
   readonly row?: number;
   readonly column?: number;
   readonly hinge?: DoorHingeDefinition;
+  readonly actuator?: CommandActuatorTag;
   readonly contactBoxes?: readonly {
     readonly position: SceneVector3;
     readonly size: SceneVector3;
@@ -1687,7 +1720,8 @@ export type LampEventState =
   | "inTransit"
   | "departure"
   | "cruise"
-  | "approach";
+  | "approach"
+  | "failed";
 
 /** Time source shared by analogue and piece-built digital clocks. */
 export type MutableClockTimeSource =
@@ -5464,6 +5498,10 @@ export interface DestructionSceneDefinition {
   readonly cameraFar: number;
   readonly worldCenter: readonly [x: number, z: number];
   readonly worldHalfExtents: readonly [x: number, z: number];
+  /** Invisible player, debris and physical-projectile containment boundary. */
+  readonly boundaryRadius?: number;
+  /** Radius of the visible sky dome, independent of the physical island. */
+  readonly skyRadius?: number;
   readonly worldRadius?: number;
   readonly safetyFloorY: number;
   readonly copy: DestructionSceneCopy;
@@ -5478,6 +5516,7 @@ export interface DestructionSceneDefinition {
   readonly spotLightDefinitions: readonly SpotLightDefinition[];
   /** Piece-driven clocks and event displays authored independently of runtime. */
   readonly mutableObjectDefinitions: readonly MutableSceneObjectDefinition[];
+  readonly motionInstrumentDefinitions: readonly MotionInstrumentDefinition[];
   /** All pieces controlled by mutable objects, precomputed for render batching. */
   readonly mutablePieceIds: ReadonlySet<string>;
   /**
@@ -5500,6 +5539,8 @@ export interface DestructionSceneDefinition {
    * мира; степной остров видно дальше, чем лесную деревню.
    */
   readonly fogDistances: readonly [near: number, far: number] | null;
+  /** Географический базис и физическая солнечная модель отдельной сцены. */
+  readonly solarFrame: SolarFrameDefinition | null;
   readonly resolveStructuralCollapse: (
     broken: ReadonlySet<string>,
   ) => ReadonlySet<string>;
@@ -5525,6 +5566,8 @@ interface DestructionSceneOptions {
   readonly cameraFar?: number;
   readonly worldCenter: readonly [x: number, z: number];
   readonly worldHalfExtents: readonly [x: number, z: number];
+  readonly boundaryRadius?: number;
+  readonly skyRadius?: number;
   readonly worldRadius?: number;
   readonly safetyFloorY?: number;
   readonly copy: DestructionSceneCopy;
@@ -5532,12 +5575,15 @@ interface DestructionSceneOptions {
   readonly lamps?: readonly LampDefinition[];
   readonly spotLights?: readonly SpotLightDefinition[];
   readonly mutableObjects?: readonly MutableSceneObjectDefinition[];
+  readonly motionInstruments?: readonly MotionInstrumentDefinition[];
   /** Мир, который нельзя разрушить (см. поле в определении сцены). */
   readonly indestructible?: boolean;
   /** SPDX-лицензия контента мира, если она отличается от лицензии репозитория. */
   readonly contentLicense?: string;
   /** Дальности тумана [near, far]; без них считаются от радиуса мира. */
   readonly fogDistances?: readonly [near: number, far: number];
+  /** Без значения сцена использует прежнюю художественную траекторию. */
+  readonly solarFrame?: SolarFrameDefinition;
   /**
    * Trim deep sibling interpenetration at build time (rim rings, faceted brick
    * towers, cairns) so overlaps butt cleanly — killing z-fighting and the
@@ -5567,6 +5613,7 @@ export function createDestructionScene(
     structuralMaterialProfiles,
   );
   const mutableObjectDefinitions = options.mutableObjects ?? [];
+  const motionInstrumentDefinitions = options.motionInstruments ?? [];
   const mutablePieceIds = new Set<string>();
   const mutablePieceOwners = new Map<string, string>();
   const claimMutablePiece = (objectId: string, pieceId: string): void => {
@@ -5620,6 +5667,19 @@ export function createDestructionScene(
       for (const pieceId of layer.pieceIds) {
         claimMutablePiece(object.id, pieceId);
       }
+    }
+  }
+  for (const instrument of motionInstrumentDefinitions) {
+    const panel = pieceById.get(instrument.panelPieceId);
+    if (!panel) {
+      throw new Error(
+        `Scene ${options.id}: motion instrument ${instrument.id} references missing panel ${instrument.panelPieceId}`,
+      );
+    }
+    if (panel.clusterId !== instrument.carrierClusterId) {
+      throw new Error(
+        `Scene ${options.id}: motion instrument ${instrument.id} panel belongs to ${panel.clusterId}, not ${instrument.carrierClusterId}`,
+      );
     }
   }
 
@@ -5739,6 +5799,8 @@ export function createDestructionScene(
     cameraFar: options.cameraFar ?? 140,
     worldCenter: options.worldCenter,
     worldHalfExtents: options.worldHalfExtents,
+    boundaryRadius: options.boundaryRadius,
+    skyRadius: options.skyRadius,
     worldRadius: options.worldRadius,
     safetyFloorY: options.safetyFloorY ?? -2.2,
     copy: options.copy,
@@ -5750,9 +5812,11 @@ export function createDestructionScene(
     spotLightDefinitions: options.spotLights ?? [],
     mutableObjectDefinitions,
     mutablePieceIds,
+    motionInstrumentDefinitions,
     indestructible,
     contentLicense,
     fogDistances: options.fogDistances ?? null,
+    solarFrame: options.solarFrame ?? null,
     // Аудит остаётся честным даже в заповеднике: compileSceneDocument и
     // scripts/check-structure.mjs зовут именно его, и неопёртый кусок обязан
     // находиться на сборке, а не превращаться в «оно всё равно не падает».
@@ -5780,6 +5844,9 @@ export const openHouseSceneOptions = {
   worldCenter: [30, -15],
   worldHalfExtents: [62, 62],
   worldRadius: 60,
+  boundaryRadius: 165,
+  skyRadius: 225,
+  cameraFar: 410,
   safetyFloorY: -2.2,
   copy: {
     status: "Make a Mess / 004",

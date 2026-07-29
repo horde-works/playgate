@@ -34,6 +34,11 @@ test("linked lights resolve reusable docked and transit levels", () => {
     lamp.eventLighting.levels.inTransit,
     "legacy transit profiles remain valid for precise route phases",
   );
+  assert.deepEqual(
+    lampEventLevel(lamp, "failed"),
+    lamp.eventLighting.levels.inTransit,
+    "failure keeps the safe transit lighting profile",
+  );
 });
 
 test("electrical lights can retain full power independently of daylight", () => {

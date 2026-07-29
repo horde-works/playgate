@@ -3,12 +3,57 @@ import test from "node:test";
 import { skyMooringDocument } from "../games/make-a-mess/src/content/scenes/skyMooringDocument.ts";
 import {
   hingedDoorGroupKey,
-  skyMooringDoorPolicy,
+  plugSlideDoorPolicy,
 } from "../games/make-a-mess/src/game/hingedGatePolicy.ts";
-import { skyMooringCompilation, townScene } from "../games/make-a-mess/src/game/townScene.ts";
+import {
+  skyMooringCompilation,
+  townScene,
+} from "../games/make-a-mess/src/game/townScene.ts";
 
 const WORLD_CENTER = [30, -15];
 const WORLD_WALL = 60;
+
+const axesOf = (piece) => {
+  const [rx, ry, rz] = piece.rotation ?? [0, 0, 0];
+  const sx = Math.sin(rx), cx = Math.cos(rx);
+  const sy = Math.sin(ry), cy = Math.cos(ry);
+  const sz = Math.sin(rz), cz = Math.cos(rz);
+  return [
+    [cy * cz, sx * sy * cz + cx * sz, -cx * sy * cz + sx * sz],
+    [-cy * sz, -sx * sy * sz + cx * cz, cx * sy * sz + sx * cz],
+    [sy, -sx * cy, cx * cy],
+  ];
+};
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const cross = (a, b) => [
+  a[1] * b[2] - a[2] * b[1],
+  a[2] * b[0] - a[0] * b[2],
+  a[0] * b[1] - a[1] * b[0],
+];
+function penetration(left, right) {
+  const A = axesOf(left);
+  const B = axesOf(right);
+  const delta = [0, 1, 2].map((axis) => right.position[axis] - left.position[axis]);
+  const candidates = [...A, ...B];
+  for (const a of A) {
+    for (const b of B) {
+      const c = cross(a, b);
+      const length = Math.hypot(...c);
+      if (length > 1e-4) candidates.push(c.map((value) => value / length));
+    }
+  }
+  let smallest = Infinity;
+  for (const axis of candidates) {
+    const ra = [0, 1, 2].reduce(
+      (sum, i) => sum + (left.size[i] / 2) * Math.abs(dot(axis, A[i])), 0);
+    const rb = [0, 1, 2].reduce(
+      (sum, i) => sum + (right.size[i] / 2) * Math.abs(dot(axis, B[i])), 0);
+    const overlap = ra + rb - Math.abs(dot(axis, delta));
+    if (overlap <= 0) return 0;
+    smallest = Math.min(smallest, overlap);
+  }
+  return smallest;
+}
 
 function mooringPieces() {
   return townScene.breakablePieces.filter((piece) =>
@@ -39,7 +84,7 @@ test("the airship reads as a moored ship of the thirties", () => {
     ":airship:number:",      // бортовой номер по борту
     ":airship:fin:mark:",    // опознавательный шеврон на киле
     ":airship:car:door",     // навесная дверь гондолы
-    ":airship:car:balcony",  // балкон, на который приходит трап
+    ":mast:landing",         // площадка у двери остаётся на причале
     ":airship:engine:",      // моторные гондолы с винтами
     ":airship:car:window:",  // окна гондолы-вагона
     ":mast:cup:",            // швартовый стакан
@@ -50,11 +95,39 @@ test("the airship reads as a moored ship of the thirties", () => {
   ]) {
     assert.equal(ids.some((id) => id.includes(signature)), true, signature);
   }
-  // Носовой, кормовой и мачтовый огни плюс свет гондолы и сердца.
+  // Четыре корабельных габарита, семь огней причальной мачты, свет гондолы
+  // и сердца, а также прожектор поля. Посадочный прожектор считается отдельно.
   assert.equal(
     townScene.lampDefinitions.filter((lamp) => lamp.id.startsWith("sky-mooring:")).length,
-    5,
+    14,
   );
+});
+
+test("the mast becomes a bright occupied berth only after nose capture", () => {
+  const mastLamps = townScene.lampDefinitions.filter((lamp) =>
+    lamp.id.startsWith("sky-mooring:mast:") &&
+    lamp.eventLighting?.sourceClusterId === "sky-mooring:airship");
+
+  assert.equal(mastLamps.length, 7);
+  for (const lamp of mastLamps) {
+    const levels = lamp.eventLighting.levels;
+    assert.equal(levels.docked.intensityMultiplier >= 1.8, true, lamp.id);
+    assert.equal(levels.attention.intensityMultiplier, levels.docked.intensityMultiplier);
+    for (const phase of ["inTransit", "departure", "cruise", "approach", "failed"]) {
+      assert.equal(
+        levels[phase].intensityMultiplier <= 0.12,
+        true,
+        `${lamp.id}:${phase}`,
+      );
+    }
+    assert.equal(lamp.transition.fadeInSeconds > 0, true, lamp.id);
+    assert.equal(lamp.transition.fadeOutSeconds > 0, true, lamp.id);
+  }
+
+  const addedFixtureIds = mooringPieces()
+    .filter((piece) => piece.id.includes(":lamp:") && piece.id.includes(":lens:piece"))
+    .map((piece) => piece.id);
+  assert.equal(addedFixtureIds.length, 6);
 });
 
 test("every piece of the mooring site is inside the world wall", () => {
@@ -97,10 +170,8 @@ test("bursting the lift heart drops the whole airship and spares the mast", () =
   const stillFlying = ship.filter((piece) => !collapsed.has(piece.id));
   assert.deepEqual(stillFlying.map((piece) => piece.id), []);
 
-  // Мачта и площадка целиком остаются на земле: к борту с земли ничего не
-  // привязано, корабль держится носом в стакане. Трап — мостик мачты на
-  // подкосах от фермы, дальним концом он лишь ложился на балкон, поэтому
-  // тоже остаётся (см. gangway:brace в документе).
+  // Мачта, трап и посадочная площадка у двери целиком остаются на земле:
+  // к борту с земли ничего не привязано, корабль держится носом в стакане.
   const lost = site.filter((piece) => collapsed.has(piece.id)).map((piece) => piece.id);
   assert.deepEqual(lost, []);
 
@@ -118,17 +189,17 @@ test("the ship lies broadside to the city with its stairs facing town", () => {
   const alongZ = Math.abs(tail.position[2] - nose.position[2]);
   assert.equal(alongZ > alongX * 4, true, `${alongX.toFixed(1)} x ${alongZ.toFixed(1)}`);
 
-  // Лестница, трап, балкон и дверь — на восточной (городской) стороне от
+  // Лестница, трап, площадка и дверь — на восточной (городской) стороне от
   // оси корабля.
   const axisX = (nose.position[0] + tail.position[0]) / 2;
-  for (const signature of [":mast:stair:lower:", ":mast:gangway", ":airship:car:balcony:piece", ":airship:car:door:board:0"]) {
+  for (const signature of [":mast:stair:lower:", ":mast:gangway", ":mast:landing:piece", ":airship:car:door:board:0"]) {
     const part = pieces.find((piece) => piece.id.includes(signature));
     assert.notEqual(part, undefined, signature);
     assert.equal(part.position[0] > axisX, true, `${signature} at x=${part.position[0].toFixed(1)}`);
   }
 });
 
-test("the gondola door is one hinged leaf with its handle", () => {
+test("the gondola door is one plug-sliding leaf with its handle", () => {
   const leaf = mooringPieces().find((piece) =>
     piece.id === "sky-mooring:airship:car:door:board:0:piece");
   const handle = mooringPieces().find((piece) =>
@@ -136,11 +207,14 @@ test("the gondola door is one hinged leaf with its handle", () => {
   assert.notEqual(leaf, undefined);
   assert.notEqual(handle, undefined);
 
-  // Полотно и ручка — ОДНА створка: система группирует их по общему ключу
-  // и вращает вместе вокруг одной петли.
+  // Полотно и ручка — ОДНА створка: общий транспортный привод сперва
+  // выводит её на себя, затем сдвигает вдоль борта.
   const leafKey = hingedDoorGroupKey(leaf.id, leaf.clusterId);
   assert.equal(hingedDoorGroupKey(handle.id, handle.clusterId), leafKey);
-  assert.equal(skyMooringDoorPolicy(leafKey)?.doorId, leafKey);
+  const policy = plugSlideDoorPolicy(leafKey);
+  assert.equal(policy?.doorId, leafKey);
+  assert.equal(policy.plugDepth > leaf.size[2], true);
+  assert.equal(policy.travel >= leaf.size[0], true);
 
   // Петля задана локально в документе; после компиляции обе половины
   // створки должны показывать на одну и ту же мировую точку.
@@ -148,9 +222,110 @@ test("the gondola door is one hinged leaf with its handle", () => {
     assert.equal(Math.abs(leaf.hinge.pivot[axis] - handle.hinge.pivot[axis]) < 0.02, true,
       `pivot axis ${axis}: ${leaf.hinge.pivot[axis]} vs ${handle.hinge.pivot[axis]}`);
   }
-  // Ось распахивания вертикальна, полотно уходит от петли в горизонтали.
+  // Локальный базис привода горизонтален; normal смотрит наружу.
   assert.equal(Math.abs(leaf.hinge.direction[1]) < 1e-6, true);
   assert.equal(Math.abs(leaf.hinge.normal[1]) < 1e-6, true);
+});
+
+test("the entrance furnishings no longer obstruct the gondola doorway", () => {
+  const ids = mooringPieces().map((piece) => piece.id);
+  assert.equal(ids.some((id) => id.includes(":airship:car:desk")), false);
+  assert.equal(ids.some((id) => id.includes(":airship:car:dial:")), false);
+});
+
+test("the gondola side glass sits in real framed openings", () => {
+  const ship = mooringPieces().filter((piece) => piece.clusterId === "sky-mooring:airship");
+  const panes = ship.filter((piece) => piece.id.includes(":airship:car:window:"));
+  assert.equal(panes.length, 9);
+
+  // Старых цельных стен за стеклом больше нет. У каждой оконной ленты есть
+  // лишь нижний/верхний пояса и простенки между отдельными проёмами.
+  assert.equal(ship.some((piece) => piece.id === "sky-mooring:airship:car:wall:west:piece"), false);
+  assert.equal(ship.some((piece) => piece.id === "sky-mooring:airship:car:wall:east:aft:piece"), false);
+  for (const side of [-1, 1]) {
+    const sideName = side < 0 ? "west" : "east";
+    for (const band of ["lower", "upper", "post:0"]) {
+      assert.equal(
+        ship.some((piece) => piece.id.includes(`:airship:car:wall:${sideName}:${band}:piece`)),
+        true,
+        `${sideName}:${band}`,
+      );
+    }
+  }
+  assert.equal(ship.some((piece) =>
+    piece.id.includes(":airship:car:wall:west:post:end:piece")), true);
+  // Последнее восточное окно подходит прямо к кормовой переборке: её торец
+  // и служит крайним вертикальным обрамлением, отдельный простенок не нужен.
+  assert.equal(ship.some((piece) => piece.id.includes(":airship:car:stern:piece")), true);
+  for (const pane of panes) {
+    const id = pane.id.replace(":window:", ":sash:").replace(":piece", "");
+    assert.equal(ship.some((piece) => piece.id === `${id}:sill:piece`), true, `${pane.id} sill`);
+    assert.equal(ship.some((piece) => piece.id === `${id}:lintel:piece`), true, `${pane.id} lintel`);
+  }
+});
+
+test("the open gondola door clears its doorway and outer wall", () => {
+  const ship = mooringPieces().filter((piece) => piece.clusterId === "sky-mooring:airship");
+  const leaf = ship.find((piece) =>
+    piece.id === "sky-mooring:airship:car:door:board:0:piece");
+  const policy = plugSlideDoorPolicy(hingedDoorGroupKey(leaf.id, leaf.clusterId));
+  const normal = leaf.hinge.normal;
+  const right = [normal[2], 0, -normal[0]];
+  const opened = {
+    ...leaf,
+    position: [0, 1, 2].map((axis) =>
+      leaf.position[axis] + normal[axis] * policy.plugDepth + right[axis] * policy.travel),
+  };
+
+  const blockers = ship.filter((piece) =>
+    !piece.id.includes(":car:door:board:") && penetration(opened, piece) > 0.06);
+  assert.deepEqual(blockers.map((piece) => piece.id).slice(0, 5), []);
+});
+
+test("the airship has train-grade navigation and mooring lights", () => {
+  const ship = mooringPieces().filter((piece) => piece.clusterId === "sky-mooring:airship");
+  const nav = townScene.lampDefinitions.filter((lamp) =>
+    lamp.id.startsWith("sky-mooring:airship:nav-light:"));
+  assert.equal(nav.length, 4);
+  assert.equal(nav.every((lamp) => lamp.carrierClusterId === "sky-mooring:airship"), true);
+
+  const sideLights = nav.filter((lamp) => /nav-light:-?1:piece$/.test(lamp.id));
+  assert.equal(sideLights.length, 2);
+  assert.deepEqual(sideLights.map((lamp) => lamp.color).sort(), ["#6bff9c", "#ff6f62"]);
+  for (const lamp of sideLights) {
+    assert.equal(lamp.distance, 24);
+    assert.equal(lamp.intensity, 5);
+    assert.equal(lamp.poolPriority, 8);
+    assert.equal(lamp.beacon?.minScreenDiameter, 6);
+    assert.equal(ship.some((piece) => piece.id === lamp.id), true, `${lamp.id} lens`);
+    assert.equal(ship.some((piece) => piece.id === lamp.id.replace(":piece", ":mount:piece")), true,
+      `${lamp.id} mount`);
+  }
+
+  for (const end of ["nose", "tail"]) {
+    const lamp = nav.find((candidate) => candidate.id.endsWith(`nav-light:${end}:piece`));
+    assert.notEqual(lamp, undefined, end);
+    assert.equal(lamp.color, "#fff6dc");
+    assert.equal(lamp.distance, 18);
+    assert.equal(lamp.intensity, 3.4);
+    assert.equal(lamp.beacon?.minScreenDiameter, 5);
+  }
+
+  assert.equal(townScene.spotLightDefinitions.length, 1);
+  const mooring = townScene.spotLightDefinitions[0];
+  assert.equal(mooring.id, "sky-mooring:airship:mooring-light:piece");
+  assert.equal(mooring.carrierClusterId, "sky-mooring:airship");
+  assert.equal(mooring.distance, 72);
+  assert.equal(mooring.intensity, 620);
+  assert.equal(mooring.eventLighting?.levels.docked.intensityMultiplier, 0);
+  assert.equal(mooring.eventLighting?.levels.departure?.intensityMultiplier, 1);
+  assert.equal(mooring.eventLighting?.levels.cruise?.intensityMultiplier, 0);
+  assert.equal(mooring.eventLighting?.levels.approach?.intensityMultiplier, 1);
+  assert.deepEqual(mooring.transition, { fadeInSeconds: 1.8, fadeOutSeconds: 1.2 });
+  assert.equal(mooring.visibleBeam?.length, 62);
+  assert.equal(ship.some((piece) => piece.id === mooring.id), true);
+  assert.equal(ship.some((piece) => piece.id.includes(":mooring-light:housing:piece")), true);
+  assert.equal(ship.some((piece) => piece.id.includes(":mooring-light:mount:piece")), true);
 });
 
 test("no tree grows through the mooring site", () => {
@@ -207,8 +382,8 @@ test("the boarding bridge is braced from the mast, not cantilevered on air", () 
   }
 });
 
-test("the doorway corridor is clear from the balcony into the cabin", () => {
-  // Проход в дверь: от балкона внутрь, шириной с проём и от порога до
+test("the doorway corridor is clear from the mast landing into the cabin", () => {
+  // Проход в дверь: от причальной площадки внутрь, шириной с проём и от порога до
   // перемычки. Кроме самой створки в нём не должно быть ничего — поясной
   // профиль борта однажды шёл сквозь него по нижней трети.
   const NOSE = [-22.6, -15.29];

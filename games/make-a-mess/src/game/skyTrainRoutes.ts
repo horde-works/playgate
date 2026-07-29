@@ -32,6 +32,13 @@ interface RoutePerformance {
   readonly cruiseSpeed: number;
 }
 
+export interface SkyTrainEmergencyEscapeInput {
+  /** Current craft centre in berth-local coordinates. */
+  readonly start: SceneVector3;
+  /** Current horizontal nose direction in the same coordinate frame. */
+  readonly forward: SceneVector3;
+}
+
 function smootherStep(value: number): number {
   const t = value <= 0 ? 0 : value >= 1 ? 1 : value;
   return t * t * t * (t * (t * 6 - 15) + 10);
@@ -81,38 +88,38 @@ function routeRequirements(
   return { altitude, speedLimit };
 }
 
+function terminalArrivalRequirements(
+  options: RoutePerformance,
+): Readonly<Record<string, MotionRouteRequirement>> {
+  const shared = routeRequirements(options);
+  return {
+    altitude: ({ remaining, length }) =>
+      shared.altitude({
+        progress: 1 - remaining / length,
+        distance: Math.max(options.transitionDistance, length - remaining),
+        remaining,
+        length,
+      }),
+    speedLimit: shared.speedLimit,
+  };
+}
+
+const TERMINAL_APPROACH = {
+  departure: 64,
+  outer: 105,
+  shoulder: 30,
+  horizon: 100,
+  externalArrival: 280,
+} as const;
+
 /**
- * The platform flight has one authored outbound half and its exact reflected
- * return. The straight legs, two soft bends and the unique horizon apex are
- * therefore geometry-identical in opposite directions; steering only has to
- * satisfy this path and never receives route-specific commands.
+ * The final curve and glide are authored once for every journey that docks at
+ * this terminal. Only the lead-in differs between a local flight and a craft
+ * arriving from beyond the visible scene.
  */
-function mirroredPlatformRoute(): MotionRouteDefinition {
-  const departure = 64;
-  const outer = 105;
-  const shoulder = 30;
-  const horizon = 100;
-  const nodes: readonly MotionRouteNode[] = [
-    { id: "berth", position: [0, 0, 0] },
-    {
-      id: "departure",
-      position: [-departure, 0, 0],
-      outgoing: [-departure - KAPPA * (outer - departure), 0, 0],
-    },
-    {
-      id: "left-arc",
-      position: [-outer, 0, shoulder],
-      incoming: [-outer, 0, shoulder - KAPPA * shoulder],
-      outgoing: [-outer, 0, shoulder + KAPPA * (horizon - shoulder)],
-      samples: 56,
-    },
-    {
-      id: "horizon",
-      position: [0, 0, horizon],
-      incoming: [-KAPPA * outer, 0, horizon],
-      outgoing: [KAPPA * outer, 0, horizon],
-      samples: 56,
-    },
+function terminalApproachNodes(): readonly MotionRouteNode[] {
+  const { departure, outer, shoulder, horizon } = TERMINAL_APPROACH;
+  return [
     {
       id: "right-arc",
       position: [outer, 0, shoulder],
@@ -128,6 +135,80 @@ function mirroredPlatformRoute(): MotionRouteDefinition {
     },
     { id: "dock", position: [0, 0, 0] },
   ];
+}
+
+function terminalInboundNodes(
+  horizonIncoming?: SceneVector3,
+): readonly MotionRouteNode[] {
+  const { outer, horizon } = TERMINAL_APPROACH;
+  return [
+    {
+      id: "horizon",
+      position: [0, 0, horizon],
+      ...(horizonIncoming ? { incoming: horizonIncoming, samples: 56 } : {}),
+      outgoing: [KAPPA * outer, 0, horizon],
+    },
+    ...terminalApproachNodes(),
+  ];
+}
+
+function externalTerminalArrivalNodes(): readonly MotionRouteNode[] {
+  const { outer, externalArrival } = TERMINAL_APPROACH;
+  return [
+    {
+      id: "remote-entry",
+      position: [outer, 0, externalArrival],
+      outgoing: [outer, 0, externalArrival - 60],
+    },
+    ...terminalApproachNodes(),
+  ];
+}
+
+const TERMINAL_ARRIVAL_ROUTE = createMotionRoute({
+  id: "sky-train:terminal-arrival",
+  nodes: externalTerminalArrivalNodes(),
+  measureAxes: [0, 2],
+  requirements: terminalArrivalRequirements({
+    ceiling: 26,
+    transitionDistance: 120,
+    cruiseSpeed: 9,
+  }),
+  markers: {
+    arrivalCapture: "remote-entry",
+    arriving: "right-arc",
+    final: "final-entry",
+  },
+});
+
+/** External arrival: distant straight lead-in, common curve and terminal glide. */
+export function terminalArrivalRoute(): MotionRouteArtifact {
+  return TERMINAL_ARRIVAL_ROUTE;
+}
+
+/**
+ * The platform flight has one authored outbound half and its exact reflected
+ * return. The straight legs, two soft bends and the unique horizon apex are
+ * therefore geometry-identical in opposite directions; steering only has to
+ * satisfy this path and never receives route-specific commands.
+ */
+function mirroredPlatformRoute(): MotionRouteDefinition {
+  const { departure, outer, shoulder, horizon } = TERMINAL_APPROACH;
+  const nodes: readonly MotionRouteNode[] = [
+    { id: "berth", position: [0, 0, 0] },
+    {
+      id: "departure",
+      position: [-departure, 0, 0],
+      outgoing: [-departure - KAPPA * (outer - departure), 0, 0],
+    },
+    {
+      id: "left-arc",
+      position: [-outer, 0, shoulder],
+      incoming: [-outer, 0, shoulder - KAPPA * shoulder],
+      outgoing: [-outer, 0, shoulder + KAPPA * (horizon - shoulder)],
+      samples: 56,
+    },
+    ...terminalInboundNodes([-KAPPA * outer, 0, horizon]),
+  ];
 
   return {
     id: "sky-train:circuit",
@@ -140,6 +221,8 @@ function mirroredPlatformRoute(): MotionRouteDefinition {
     }),
     markers: {
       departureComplete: "departure",
+      arrivalCapture: "horizon",
+      arriving: "right-arc",
       final: "final-entry",
     },
   };
@@ -193,16 +276,17 @@ function irregularCityOrbitRoute(): MotionRouteDefinition {
       id: "north-east",
       position: [165, 0, -30],
       incoming: [165, 0, -50],
-      outgoing: [170, 0, -8],
+      outgoing: [178, 0, 20],
       samples: 56,
     },
     {
-      id: "final-entry",
-      position: [125, 0, 0],
-      incoming: [150, 0, 0],
-      samples: 40,
+      id: "arrival-west",
+      position: [-95, 0, 45],
+      incoming: [-105, 0, 12],
+      outgoing: [-95, 0, 82],
+      samples: 64,
     },
-    { id: "dock", position: [0, 0, 0] },
+    ...terminalInboundNodes([-KAPPA * TERMINAL_APPROACH.outer, 0, TERMINAL_APPROACH.horizon]),
   ];
 
   return {
@@ -216,9 +300,68 @@ function irregularCityOrbitRoute(): MotionRouteDefinition {
     }),
     markers: {
       departureComplete: "departure",
+      arrivalCapture: "horizon",
+      arriving: "right-arc",
       final: "final-entry",
     },
   };
+}
+
+/**
+ * Compile an emergency escape from the actual pose. Its first derivative is
+ * the craft's current nose direction; after that the route owns the recovery
+ * gate and horizon exit like any other authored motion artifact.
+ */
+export function createSkyTrainEmergencyEscapeRoute(
+  input: SkyTrainEmergencyEscapeInput,
+): MotionRouteArtifact {
+  const horizontalLength = Math.hypot(input.forward[0], input.forward[2]);
+  const forward: SceneVector3 = horizontalLength > 1e-4
+    ? [input.forward[0] / horizontalLength, 0, input.forward[2] / horizontalLength]
+    : [-1, 0, 0];
+  const start: SceneVector3 = [input.start[0], 0, input.start[2]];
+  const startAltitude = input.start[1];
+  const escapeAltitude = Math.max(38, startAltitude + 12);
+
+  return createMotionRoute({
+    id: "sky-train:emergency-escape",
+    nodes: [
+      {
+        id: "failure-pose",
+        position: start,
+        outgoing: [
+          start[0] + forward[0] * 34,
+          0,
+          start[2] + forward[2] * 34,
+        ],
+      },
+      {
+        id: "recovery-gate",
+        position: [-88, 0, 52],
+        incoming: [-58, 0, 25],
+        outgoing: [-118, 0, 82],
+        samples: 64,
+      },
+      {
+        id: "horizon-exit",
+        position: [-175, 0, 195],
+        incoming: [-150, 0, 145],
+        samples: 64,
+      },
+    ],
+    measureAxes: [0, 2],
+    requirements: {
+      altitude: ({ progress }) =>
+        startAltitude + (escapeAltitude - startAltitude) * smootherStep(progress),
+      // The horizon is an exit, not a stop. Removal happens at its marker, so
+      // asking the controller to brake there would recreate the old hover.
+      speedLimit: () => 8.5,
+    },
+    markers: {
+      recoveryGate: "recovery-gate",
+      disappear: "horizon-exit",
+    },
+  });
 }
 
 const ROUTES: Readonly<Record<SkyTrainFlightKind, MotionRouteArtifact>> = {
@@ -255,14 +398,65 @@ export function skyTrainRoutePhase(
   return motionRoutePhase(skyTrainRoute(kind), progress);
 }
 
-export interface FlightPlan {
-  readonly kind: SkyTrainFlightKind;
+export interface VehicleRoutePlan {
+  readonly id: string;
   readonly length: number;
   point(progress: number): SceneVector3;
   speedLimit(progress: number): number;
   altitude(progress: number): number;
-  readonly departureUntil: number;
+  /** Signed longitudinal travel: -1 keeps the nose while backing out. */
+  travelDirection?(progress: number): -1 | 1;
+  /** Route-authored guidance horizon for confined manoeuvres. */
+  guidanceLookahead?(progress: number): number;
   readonly finalFrom: number;
+}
+
+export interface FlightPlan extends VehicleRoutePlan {
+  readonly kind: SkyTrainFlightKind;
+  readonly departureUntil: number;
+}
+
+function placeRoute(
+  route: MotionRouteArtifact,
+  berth: SceneVector3,
+  finalFrom: number,
+): VehicleRoutePlan {
+  return {
+    id: route.id,
+    length: route.length,
+    point(progress) {
+      const local = route.point(progress);
+      return [
+        berth[0] + local[0],
+        berth[1] + route.requirement("altitude", progress),
+        berth[2] + local[2],
+      ];
+    },
+    speedLimit(progress) {
+      return route.requirement("speedLimit", progress);
+    },
+    altitude(progress) {
+      return berth[1] + route.requirement("altitude", progress);
+    },
+    finalFrom,
+  };
+}
+
+export function terminalArrivalPlan(berth: SceneVector3): VehicleRoutePlan {
+  return placeRoute(
+    TERMINAL_ARRIVAL_ROUTE,
+    berth,
+    TERMINAL_ARRIVAL_ROUTE.markerProgress("final"),
+  );
+}
+
+export function emergencyEscapePlan(
+  berth: SceneVector3,
+  input: SkyTrainEmergencyEscapeInput,
+): VehicleRoutePlan {
+  const route = createSkyTrainEmergencyEscapeRoute(input);
+  // This route exits the scene at speed. It has no terminal approach gate.
+  return placeRoute(route, berth, Number.POSITIVE_INFINITY);
 }
 
 /** Place a reusable local route artifact at a concrete berth. */
@@ -271,20 +465,10 @@ export function flightPlan(
   berth: SceneVector3,
 ): FlightPlan {
   const route = skyTrainRoute(kind);
+  const placed = placeRoute(route, berth, route.markerProgress("final"));
   return {
+    ...placed,
     kind,
-    length: route.length,
-    point(progress) {
-      const local = routePoint(kind, progress);
-      return [berth[0] + local[0], berth[1] + local[1], berth[2] + local[2]];
-    },
-    speedLimit(progress) {
-      return route.requirement("speedLimit", progress);
-    },
-    altitude(progress) {
-      return berth[1] + route.requirement("altitude", progress);
-    },
     departureUntil: route.markerProgress("departureComplete"),
-    finalFrom: route.markerProgress("final"),
   };
 }
