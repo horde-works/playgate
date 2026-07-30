@@ -26,7 +26,7 @@ import {
 interface AstanaTrainSystemProps {
   readonly pieces: readonly BreakablePieceDefinition[];
   readonly bodies: MutableRefObject<Map<string, RapierRigidBody>>;
-  readonly brokenPieces: MutableRefObject<Set<string>>;
+  readonly brokenPieces: { current: ReadonlySet<string> };
   readonly inactivePieces: ReadonlySet<string>;
   readonly resetVersion: number;
   readonly movingVehicles: MutableRefObject<Set<string>>;

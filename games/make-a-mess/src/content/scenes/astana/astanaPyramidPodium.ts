@@ -18,6 +18,11 @@ import {
   type LayoutPoint,
 } from "./astanaLayout.ts";
 import { groundUnder } from "./astanaShell.ts";
+import {
+  ASTANA_LANDMARK_LIGHT_PRIORITY,
+  ASTANA_LANDMARK_LOCAL_POOL_CAPACITY,
+  ASTANA_PYRAMID_LIGHT_GROUP,
+} from "./astanaLighting.ts";
 
 export const PYRAMID_PODIUM_SIDE = 30;
 export const PYRAMID_PODIUM_HALF_SIZE = PYRAMID_PODIUM_SIDE / 2;
@@ -74,7 +79,6 @@ export const PYRAMID_ENTRANCE_LIGHT_COLOUR = "#ffd0a0";
 export const PYRAMID_ENTRANCE_LIGHT_DISTANCE = 32;
 export const PYRAMID_ENTRANCE_LIGHT_INTENSITY = 26;
 
-const PYRAMID_ENTRANCE_LIGHT_GROUP = "astana:pyramid:entrances";
 const PORTAL_DARK = "#111820";
 const PORTAL_SEGMENTS = 5;
 
@@ -594,9 +598,9 @@ function createPortalTunnel(
         intensity: PYRAMID_ENTRANCE_LIGHT_INTENSITY,
         position: [0, -0.5, 0],
         dayIntensityFactor: 0,
-        poolPriority: 30,
-        localPoolCapacity: 3,
-        poolGroupId: PYRAMID_ENTRANCE_LIGHT_GROUP,
+        poolPriority: ASTANA_LANDMARK_LIGHT_PRIORITY,
+        localPoolCapacity: ASTANA_LANDMARK_LOCAL_POOL_CAPACITY,
+        poolGroupId: ASTANA_PYRAMID_LIGHT_GROUP,
         transition: { fadeInSeconds: 1.8, fadeOutSeconds: 1.5 },
       },
     },

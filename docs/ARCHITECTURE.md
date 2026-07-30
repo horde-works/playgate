@@ -18,12 +18,12 @@ the internationalisation layer.
 
 | Layer            | Choice                                                             |
 | ---------------- | ----------------------------------------------------------------- |
-| App framework    | React Server Components on a Vite-based Next-compatible runtime (`vinext`) |
+| App framework    | Next.js App Router with React Server Components                  |
 | 3D               | three.js `0.185` via `@react-three/fiber` + `@react-three/drei`   |
 | Physics          | Rapier via `@react-three/rapier`                                  |
 | Post-processing  | `three/examples` EffectComposer, `n8ao`, custom shaders           |
 | Language         | TypeScript (strict), plain-JS ESM Node test runner                |
-| Deploy target    | A Cloudflare-style worker (`dist/server/index.js`)                |
+| Deploy target    | Firebase Hosting static export (`out/`)                           |
 
 There is no game server: a map is a **pure data description** compiled at import
 time into an immutable scene object. All simulation runs on the client.
@@ -417,9 +417,7 @@ scene's own copy if a scene has no translation yet.
   structural integrity (0 unsupported), scene composition (piece counts, required
   clusters, faceted-round and hinged-door invariants, reachability of side halls),
   box-face masks, and server-rendered HTML for the site and game routes.
-- **Type & build:** `tsc --noEmit` and the production `build` must be clean (two
-  pre-existing unrelated failures in `basaltStrongholdWorldbuilding.ts` and
-  `worker/index.ts` are known and ignored).
+- **Type & build:** `tsc --noEmit` and the production `build` must be clean.
 - **Visual verification:** a headless Chrome driven over the DevTools protocol
   loads a route, enters the 3D scene, walks/looks/acts and captures screenshots.
   `?spawn=x,y,z` and the in-game flight mode make far corners reachable for

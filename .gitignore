@@ -15,7 +15,6 @@
 
 # next.js
 /.next/
-/.vinext/
 /out/
 
 # misc
@@ -37,10 +36,7 @@ yarn-error.log*
 # typescript
 next-env.d.ts
 *.tsbuildinfo
-/dist/
-/.wrangler/
 /.firebase/
-/outputs/
 /work/
 /artifacts/
 

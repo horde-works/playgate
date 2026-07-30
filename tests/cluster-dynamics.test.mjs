@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   RESTING_BODY,
+  applyImpulseAtPoint,
   angularMomentum,
+  bodyPointVelocity,
   cross,
   kineticEnergy,
   linearMomentum,
   massProperties,
   pieceMass,
+  rebaseBodyMassProperties,
   rotateVector,
   stepBody,
 } from "../games/make-a-mess/src/game/clusterDynamics.ts";
@@ -144,6 +147,92 @@ test("momentum and kinetic energy are the numbers a collision will need", () => 
   const L = angularMomentum(properties, spin);
   assert.equal(L[1] > 0, true);
   assert.equal(kineticEnergy(properties, [0, 0, 0], [0, 0, 0]), 0);
+});
+
+test("an off-centre impulse transfers exactly one linear and angular momentum", () => {
+  const piece = [{
+    id: "impulse-body",
+    clusterId: "test",
+    material: "steel",
+    shape: "steelSheet",
+    position: [0, 0, 0],
+    size: [2, 2, 2],
+    color: "#fff",
+  }];
+  const properties = massProperties(piece, densityOf);
+  const impulse = [12, 0, 0];
+  const point = [0, 2, 0];
+  const next = applyImpulseAtPoint(
+    { ...RESTING_BODY, position: properties.centre },
+    properties,
+    { impulse, point },
+  );
+
+  assert.deepEqual(
+    next.velocity.map((value) => Math.round(value * properties.mass * 1e9) / 1e9),
+    impulse,
+  );
+  const transferredAngularMomentum = angularMomentum(
+    properties,
+    next.angularVelocity,
+  );
+  const expectedAngularMomentum = cross(point, impulse);
+  assert.deepEqual(
+    transferredAngularMomentum.map((value) => Math.round(value * 1e9) / 1e9),
+    expectedAngularMomentum,
+  );
+});
+
+test("fracture rebases the centre without teleporting retained material", () => {
+  const pieces = [
+    {
+      id: "left", clusterId: "test", material: "wood", shape: "plank",
+      position: [-2, 0, 0], size: [1, 1, 1], color: "#fff",
+    },
+    {
+      id: "right", clusterId: "test", material: "wood", shape: "plank",
+      position: [2, 0, 0], size: [1, 1, 1], color: "#fff",
+    },
+  ];
+  const whole = massProperties(pieces, densityOf);
+  const surviving = massProperties([pieces[1]], densityOf);
+  const orientation = [0, Math.sin(Math.PI / 8), 0, Math.cos(Math.PI / 8)];
+  const before = {
+    ...RESTING_BODY,
+    position: [10, 4, -3],
+    orientation,
+    velocity: [3, 0.5, -1],
+    angularVelocity: [0, 0.4, 0],
+  };
+  const retainedLeverBefore = rotateVector(orientation, [
+    pieces[1].position[0] - whole.centre[0],
+    pieces[1].position[1] - whole.centre[1],
+    pieces[1].position[2] - whole.centre[2],
+  ]);
+  const retainedPointBefore = before.position.map(
+    (value, axis) => value + retainedLeverBefore[axis],
+  );
+  const retainedVelocityBefore = bodyPointVelocity(before, retainedLeverBefore);
+
+  const after = rebaseBodyMassProperties(before, whole, surviving);
+  const retainedLeverAfter = rotateVector(orientation, [
+    pieces[1].position[0] - surviving.centre[0],
+    pieces[1].position[1] - surviving.centre[1],
+    pieces[1].position[2] - surviving.centre[2],
+  ]);
+  const retainedPointAfter = after.position.map(
+    (value, axis) => value + retainedLeverAfter[axis],
+  );
+  const retainedVelocityAfter = bodyPointVelocity(after, retainedLeverAfter);
+
+  assert.equal(
+    Math.hypot(...retainedPointAfter.map((value, axis) => value - retainedPointBefore[axis])) < 1e-9,
+    true,
+  );
+  assert.equal(
+    Math.hypot(...retainedVelocityAfter.map((value, axis) => value - retainedVelocityBefore[axis])) < 1e-9,
+    true,
+  );
 });
 
 test("a free body keeps its momentum and spins about its own axis", () => {

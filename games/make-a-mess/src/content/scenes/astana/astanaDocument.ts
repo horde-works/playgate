@@ -33,7 +33,11 @@ import { createAstanaPyramid } from "./astanaPyramid.ts";
 import { createAstanaTriumphalArch } from "./astanaTriumphalArch.ts";
 import { createAstanaNurAlem } from "./astanaNurAlem.ts";
 import { createAstanaOpera } from "./astanaOpera.ts";
-import { TRAIN_SECTIONS, createTrain } from "./astanaTrain.ts";
+import {
+  TRAIN_SECTIONS,
+  astanaTrainSpotLights,
+  createTrain,
+} from "./astanaTrain.ts";
 import {
   ASTANA_LATITUDE_DEGREES,
   ASTANA_TRUE_EAST_VECTOR,
@@ -148,7 +152,7 @@ createIsland();
 export const astanaDocument: AuthoredSceneDocument = {
   schemaVersion: 1,
   id: "astana",
-  title: "Make a Mess: Astana",
+  title: "Make a Mess: The Capital",
   environment: "town",
   indestructible: true,
   contentLicense: "CC-BY-NC-ND-4.0",
@@ -172,16 +176,17 @@ export const astanaDocument: AuthoredSceneDocument = {
     safetyFloorY: -2.6,
   },
   copy: {
-    status: "Make a Mess / Astana",
-    eyebrow: "Steppe capital test 001",
-    heading: "Город — дом.",
-    ready: "Astana is standing",
-    loading: "Раскатываем степь…",
+    status: "Make a Mess / The Capital",
+    eyebrow: "Heart of the Great Steppe",
+    heading: "Where roads meet.",
+    ready: "The Capital is awake",
+    loading: "Tracing the roads…",
     description:
-      "Остров-заповедник по мотивам Астаны: степь, река Есиль, лесозащитный пояс по кромке и кольцо ЛРТ на эстакаде вокруг всего острова. Здесь ничего нельзя сломать — это дом, а не полигон. Станции, Байтерек и целиноградские дворы строятся следующими этапами.",
-    enter: "Выйти в степь",
-    returnToGame: "Вернуться на остров",
-    reset: "Начать заново",
+      "The heart of the Great Steppe. Here the ancient Silk Road meets the new one, East meets West, and memory meets the future. The island connects cultures, roads and worlds.",
+    enter: "Enter the Capital",
+    returnToGame: "Return to the island",
+    reset: "Begin again",
   },
   groups: collectGroups(),
+  spotLights: astanaTrainSpotLights,
 };

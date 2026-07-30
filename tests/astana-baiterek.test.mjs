@@ -220,17 +220,17 @@ test("Baiterek repeats the original dusk lighting hierarchy", () => {
   assert.ok(crownLights.every((lamp) =>
     lamp.color === BAITEREK_CROWN_LIGHT_COLOR
       && lamp.intensity >= 12
-      && lamp.distance >= 18),
+      && lamp.distance >= 32),
   "the crown ring must be warmer and concentrated below the sphere");
 
   const groups = new Set(lamps.map((lamp) => lamp.poolGroupId));
   assert.equal(groups.size, 1,
     "the base and crown lighting must enter the shared pool as one monument");
   assert.ok(lamps.every((lamp) =>
-    lamp.poolPriority === 10
+    lamp.poolPriority >= 32
       && lamp.localPoolCapacity === 12
       && lamp.dayIntensityFactor === 0.06),
-  "architectural light must dominate nearby decorative lamps only after dusk");
+  "the complete landmark must keep its night lighting at Khan Shatyr range");
   assert.ok(lamps.every((lamp) =>
     lamp.transition?.fadeInSeconds === 0.35
       && lamp.transition?.fadeOutSeconds === 0.25),

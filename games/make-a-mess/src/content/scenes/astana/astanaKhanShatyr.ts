@@ -161,11 +161,12 @@ const cubicBezier = (
   t: number,
 ): SceneVector3 => {
   const q = 1 - t;
-  return [0, 1, 2].map((dimension) =>
+  const coordinate = (dimension: 0 | 1 | 2): number =>
     q * q * q * a[dimension]
       + 3 * q * q * t * b[dimension]
       + 3 * q * t * t * c[dimension]
-      + t * t * t * d[dimension]) as SceneVector3;
+      + t * t * t * d[dimension];
+  return [coordinate(0), coordinate(1), coordinate(2)];
 };
 
 const mastAxis: SceneVector3 = [-Math.sin(MAST_LEAN), Math.cos(MAST_LEAN), 0];
@@ -205,10 +206,18 @@ export function khanShatyrSurfacePoint(theta: number, t: number): SceneVector3 {
   const ring = ringPoint(theta);
   const anchor = perimeterPoint(theta);
   const height = ring[1] - anchor[1];
-  const first = mix(ring, anchor, 0.10);
-  first[1] = anchor[1] + height * 0.66;
-  const second = mix(ring, anchor, 0.60);
-  second[1] = anchor[1] + height * 0.01;
+  const firstMixed = mix(ring, anchor, 0.10);
+  const first: SceneVector3 = [
+    firstMixed[0],
+    anchor[1] + height * 0.66,
+    firstMixed[2],
+  ];
+  const secondMixed = mix(ring, anchor, 0.60);
+  const second: SceneVector3 = [
+    secondMixed[0],
+    anchor[1] + height * 0.01,
+    secondMixed[2],
+  ];
   return cubicBezier(ring, first, second, anchor, clamped);
 }
 

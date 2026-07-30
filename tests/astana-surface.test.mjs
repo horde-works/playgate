@@ -13,6 +13,7 @@ import {
   ATYRAU_SHELL_LENGTH,
   ATYRAU_SHELL_LEVELS,
   ATYRAU_SHELL_STATIONS,
+  atyrauDeckColourAt,
   atyrauNodeId,
   createAtyrauShellTopology,
 } from "../games/make-a-mess/src/content/scenes/astana/astanaAtyrau.ts";
@@ -349,4 +350,19 @@ test("Atyrau night light is warm, continuous and has no visible point emitters",
     && piece.textureProfile === "matte-aluminium"
     && piece.color !== ATYRAU_LIGHT_COLOR),
   "отражённая линия снова заменена светящейся геометрией");
+});
+
+test("Atyrau floor fades from the white civic core to the grey LRT edge", () => {
+  const luminance = (colour) => {
+    const channels = [1, 3, 5].map((offset) => Number.parseInt(
+      colour.slice(offset, offset + 2), 16,
+    ));
+    return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+  };
+  const whiteEnd = atyrauDeckColourAt(0);
+  const middle = atyrauDeckColourAt(0.5);
+  const greyEnd = atyrauDeckColourAt(1);
+  assert.ok(luminance(whiteEnd) > luminance(middle));
+  assert.ok(luminance(middle) > luminance(greyEnd));
+  assert.notEqual(whiteEnd, greyEnd);
 });

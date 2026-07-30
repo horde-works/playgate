@@ -26,9 +26,9 @@ import {
 const ASPHALT = "#4a4d51";
 const ASPHALT_WORN = "#505359";
 const KERB = "#b8bab7";
-const PAVING_A = "#b6b2a8";
-const PAVING_B = "#aca89e";
-const PROMENADE = "#c0bcaf";
+const PAVING_A = "#cbc8c0";
+const PAVING_B = "#c1beb6";
+const PROMENADE = "#bcbab2";
 const BRIDGE_STEEL = "#d7dadd";
 const BRIDGE_STEEL_SHADE = "#c2c6ca";
 const BRIDGE_CONCRETE = "#9fa4a8";
@@ -153,7 +153,7 @@ const EXPERIMENTAL_RESERVE_SKIN: WaySkin = {
 
 const BAITEREK_PALE_SKIN: WaySkin = {
   ...AREA_SKIN,
-  colours: ["#c7c2b7", "#beb9ae"],
+  colours: ["#ddd9cf", "#d4d0c7"],
 };
 
 const BAITEREK_WARM_SKIN: WaySkin = {
@@ -163,7 +163,7 @@ const BAITEREK_WARM_SKIN: WaySkin = {
 
 const BAITEREK_COOL_SKIN: WaySkin = {
   ...AREA_SKIN,
-  colours: ["#aaa9a3", "#a3a19b"],
+  colours: ["#cfcdc6", "#c7c5be"],
 };
 
 function skinOfArea(area: AstanaArea): WaySkin {

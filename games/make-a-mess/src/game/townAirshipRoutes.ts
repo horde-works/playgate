@@ -29,6 +29,7 @@ const TOWN_AIRSHIP_LATERAL: SceneVector3 = [
 const REVERSE_COMPLETE_DISTANCE = 38;
 const DEPARTURE_CLEAR_DISTANCE = 135;
 const FINAL_GLIDE_DISTANCE = 78;
+const BERTH_CORRIDOR_ALTITUDE = 13;
 
 function clamp01(value: number): number {
   return value <= 0 ? 0 : value >= 1 ? 1 : value;
@@ -55,16 +56,22 @@ function altitude(
     );
   }
   if (distance < DEPARTURE_CLEAR_DISTANCE) {
-    return 13 + (ceiling - 13) * smootherStep(
+    return BERTH_CORRIDOR_ALTITUDE +
+      (ceiling - BERTH_CORRIDOR_ALTITUDE) * smootherStep(
       (distance - REVERSE_COMPLETE_DISTANCE) /
         (DEPARTURE_CLEAR_DISTANCE - REVERSE_COMPLETE_DISTANCE),
     );
   }
   if (remaining < FINAL_GLIDE_DISTANCE) {
-    return ceiling * smootherStep(remaining / FINAL_GLIDE_DISTANCE);
+    // The return has already descended to the 13 m berth corridor. Continue
+    // from that same shelf to the mast; jumping back to cruise ceiling here
+    // used to demand an impossible +15/+23 m climb at the final-glide seam.
+    return BERTH_CORRIDOR_ALTITUDE *
+      smootherStep(remaining / FINAL_GLIDE_DISTANCE);
   }
   if (remaining < DEPARTURE_CLEAR_DISTANCE) {
-    return 13 + (ceiling - 13) * smootherStep(
+    return BERTH_CORRIDOR_ALTITUDE +
+      (ceiling - BERTH_CORRIDOR_ALTITUDE) * smootherStep(
       (remaining - FINAL_GLIDE_DISTANCE) /
         (DEPARTURE_CLEAR_DISTANCE - FINAL_GLIDE_DISTANCE),
     );

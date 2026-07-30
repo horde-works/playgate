@@ -1,0 +1,4 @@
+interface:
+  display_name: "World Building"
+  short_description: "Build and verify physical island worlds"
+  default_prompt: "Use $world-building to build or revise a physically coherent island world and verify structure, access, envelopes, and visual form."

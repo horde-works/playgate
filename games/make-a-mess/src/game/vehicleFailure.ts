@@ -282,6 +282,80 @@ export interface VehicleFailureObservation {
   /** The vehicle has reached its landing pose and is expected to settle. */
   readonly inDockingCapture: boolean;
   readonly dockingComplete: boolean;
+  /** A physically feasible stabilization manoeuvre currently owns the craft. */
+  readonly recoveringDisturbance?: boolean;
+}
+
+export interface VehicleDisturbanceRecoveryInput {
+  readonly pitch: number;
+  readonly roll: number;
+  readonly tiltAngularSpeed: number;
+  readonly rightingAngularAcceleration: number;
+  readonly liftToWeight: number;
+  readonly requiredControlAvailable: boolean;
+  readonly deliveredControlFraction: number;
+  readonly relativeAltitude: number;
+  readonly verticalSpeed: number;
+  readonly minimumRelativeAltitude: number;
+  readonly maximumRecoverySeconds?: number;
+}
+
+/**
+ * Predicts whether the surviving craft can arrest its present disturbance.
+ * Large attitude or altitude error is not itself a failure: the question is
+ * whether attached lift/control authority can stop the measured motion before
+ * inversion, the safety floor, or an unbounded recovery time.
+ */
+export function vehicleDisturbanceRecoveryFeasible(
+  input: VehicleDisturbanceRecoveryInput,
+): boolean {
+  if (
+    ![
+      input.pitch,
+      input.roll,
+      input.tiltAngularSpeed,
+      input.rightingAngularAcceleration,
+      input.liftToWeight,
+      input.deliveredControlFraction,
+      input.relativeAltitude,
+      input.verticalSpeed,
+      input.minimumRelativeAltitude,
+    ].every(Number.isFinite) ||
+    !input.requiredControlAvailable ||
+    input.deliveredControlFraction < 0.5 ||
+    input.liftToWeight < 0.82
+  ) {
+    return false;
+  }
+
+  const tilt = Math.hypot(input.pitch, input.roll);
+  const rightingAcceleration = Math.max(
+    0.015,
+    input.rightingAngularAcceleration,
+  );
+  const angularStopSeconds = input.tiltAngularSpeed / rightingAcceleration;
+  const angularStopAngle =
+    input.tiltAngularSpeed ** 2 / (2 * rightingAcceleration);
+  const maximumRecoverySeconds = input.maximumRecoverySeconds ?? 30;
+  if (
+    tilt >= Math.PI * 0.47 ||
+    tilt + angularStopAngle >= Math.PI * 0.49 ||
+    angularStopSeconds > maximumRecoverySeconds
+  ) {
+    return false;
+  }
+
+  if (input.verticalSpeed >= 0) {
+    return true;
+  }
+  const upwardAcceleration = 9.81 * Math.max(0, input.liftToWeight - 1);
+  if (upwardAcceleration <= 0.02) {
+    return false;
+  }
+  const verticalStopDistance =
+    input.verticalSpeed ** 2 / (2 * upwardAcceleration);
+  return input.relativeAltitude - verticalStopDistance >=
+    input.minimumRelativeAltitude;
 }
 
 export interface VehicleFailureEnvelope {
@@ -316,7 +390,9 @@ export const DEFAULT_VEHICLE_FAILURE_ENVELOPE: VehicleFailureEnvelope = {
   maneuverTimeoutSeconds: 45,
   finalManeuverTimeoutSeconds: 35,
   dockingTimeoutSeconds: 10,
-  maximumGoArounds: 2,
+  // Three missed approaches are allowed to become real go-arounds. The
+  // third one trips the common recovery chain before a fourth circuit starts.
+  maximumGoArounds: 3,
   minimumProgressPerSecond: 0.00008,
 };
 
@@ -387,14 +463,16 @@ export function advanceVehicleFailureWatchdog(
 
   const delta = Math.max(0, observation.deltaSeconds);
   const attitudeSeconds = heldSeconds(
-    Math.abs(observation.pitch) > envelope.maximumPitch ||
-      Math.abs(observation.roll) > envelope.maximumRoll ||
-      Math.abs(observation.yawRateError) > envelope.maximumYawRate,
+    !observation.recoveringDisturbance &&
+      (Math.abs(observation.pitch) > envelope.maximumPitch ||
+        Math.abs(observation.roll) > envelope.maximumRoll ||
+        Math.abs(observation.yawRateError) > envelope.maximumYawRate),
     current.attitudeSeconds,
     delta,
   );
   const routeSeconds = heldSeconds(
-    !observation.turning &&
+    !observation.recoveringDisturbance &&
+      !observation.turning &&
       (Math.abs(observation.headingError) > envelope.maximumHeadingError ||
         observation.crossTrackError > envelope.maximumCrossTrackError),
     current.routeSeconds,
@@ -409,7 +487,8 @@ export function advanceVehicleFailureWatchdog(
   );
   const progressDelta = observation.progress - current.previousProgress;
   const stalledSeconds = heldSeconds(
-    !observation.inFinalManeuver &&
+    !observation.recoveringDisturbance &&
+      !observation.inFinalManeuver &&
       !observation.turning &&
       observation.requestedControlEffort > 0.5 &&
       progressDelta >= 0 &&
@@ -418,7 +497,8 @@ export function advanceVehicleFailureWatchdog(
     delta,
   );
   const maneuverSeconds = heldSeconds(
-    observation.turning &&
+    !observation.recoveringDisturbance &&
+      observation.turning &&
       observation.requestedControlEffort > 0.35 &&
       progressDelta >= 0 &&
       progressDelta < envelope.minimumProgressPerSecond * delta,
@@ -426,12 +506,16 @@ export function advanceVehicleFailureWatchdog(
     delta,
   );
   const dockingSeconds = heldSeconds(
-    observation.inDockingCapture && !observation.dockingComplete,
+    !observation.recoveringDisturbance &&
+      observation.inDockingCapture && !observation.dockingComplete,
     current.dockingSeconds,
     delta,
   );
   const finalManeuverSeconds = heldSeconds(
-    observation.inFinalManeuver && !observation.dockingComplete,
+    !observation.recoveringDisturbance &&
+      observation.inFinalManeuver &&
+      !observation.inDockingCapture &&
+      !observation.dockingComplete,
     current.finalManeuverSeconds,
     delta,
   );

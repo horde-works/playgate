@@ -38,6 +38,23 @@ import {
   townAirshipRoutePhase,
   type TownAirshipFlightKind,
 } from "./townAirshipRoutes.ts";
+import {
+  basaltSkyRamArrivalPlan,
+  basaltSkyRamEscapePlan,
+  basaltSkyRamPlan,
+  basaltSkyRamRoutePhase,
+  type BasaltSkyRamFlightKind,
+} from "./basaltSkyRamRoutes.ts";
+import { basaltSkyRamPoint } from "./basaltSkyRam.ts";
+import {
+  interIslandArrivalOrigin,
+  interIslandArrivalPhase,
+  interIslandArrivalPlan,
+  interIslandDeparturePhase,
+  interIslandDeparturePlan,
+  interIslandTransferAction,
+  interIslandTransferDestination,
+} from "./interIslandRoutes.ts";
 
 /**
  * The controller understands only this contract. A train, longship or any
@@ -71,6 +88,7 @@ export interface AirVehicleDefinition extends VehicleFrameDefinition {
     readonly spoolSeconds: number;
     readonly underwaySeconds: number;
     readonly driveAnimation: VehicleDriveAnimation;
+    readonly exhaust?: VehicleExhaustDefinition;
     readonly linearDamping: number;
     readonly angularDamping: number;
     readonly lateralDragRatio: number;
@@ -86,6 +104,24 @@ export interface AirVehicleDefinition extends VehicleFrameDefinition {
   };
 }
 
+export interface VehicleExhaustSourceDefinition {
+  /** Authored emitter point; it follows the carrier only until a puff leaves. */
+  readonly point: SceneVector3;
+  readonly direction: SceneVector3;
+  readonly engineIndex: number;
+  /** Smoke stops if the physical outlet is detached. */
+  readonly outletPieceId: string;
+}
+
+export interface VehicleExhaustDefinition {
+  readonly sources: readonly VehicleExhaustSourceDefinition[];
+  readonly idleRate: number;
+  readonly fullRate: number;
+  readonly lifeSeconds: number;
+  readonly exitSpeed: number;
+  readonly spread: number;
+}
+
 export interface AirVehicleFlightSnapshot {
   readonly kind: string;
   readonly time: number;
@@ -95,9 +131,19 @@ export interface AirVehicleFlightSnapshot {
 
 export type VehicleDriveAnimation =
   | {
+      readonly kind: "none";
+      /** Keeps the shared phase integrator transport-neutral. */
+      readonly phaseSpeed: 0;
+    }
+  | {
       readonly kind: "propeller";
       /** Radians per second at full delivered throttle. */
       readonly phaseSpeed: number;
+    }
+  | {
+      readonly kind: "furnace";
+      /** Furnace power is read in smoke and light rather than a moving shaft. */
+      readonly phaseSpeed: 0;
     }
   | {
       readonly kind: "oars";
@@ -146,6 +192,13 @@ const townAirshipFrame = vehicleFrames.find(
 );
 if (!townAirshipFrame) {
   throw new Error("The town airship frame is missing from the vehicle catalog");
+}
+
+const basaltSkyRamFrame = vehicleFrames.find(
+  (frame) => frame.id === "basalt-sky-ram",
+);
+if (!basaltSkyRamFrame) {
+  throw new Error("The basalt sky-ram frame is missing from the vehicle catalog");
 }
 
 const SKY_LONGSHIP_COURSE = (6 * Math.PI) / 180;
@@ -220,6 +273,14 @@ export function isInsideTownAirship(point: SceneVector3): boolean {
     point[1] >= 7.12 && point[1] <= 9.34;
 }
 
+/** Standing volume inside the suspended armoured gallery. */
+export function isInsideBasaltSkyRam(point: SceneVector3): boolean {
+  const a = point[2] + 101.5;
+  const b = point[0];
+  return a >= -6.95 && a <= 7.05 && Math.abs(b) <= 1.5 &&
+    point[1] >= 5.08 && point[1] <= 8.06;
+}
+
 /** Terminal remains the reference machine; its behaviour is unchanged. */
 export const SKY_TRAIN_AIR_VEHICLE: AirVehicleDefinition = {
   ...skyTrainFrame,
@@ -288,6 +349,13 @@ export const SKY_LONGSHIP_AIR_VEHICLE: AirVehicleDefinition = {
       id: "viking-village:sky-longship:ride",
       kind: "ride",
       cue: "viking-passenger-flight",
+      actions: [
+        { id: "tour", labelKey: "hint.vikingRide.action" },
+        {
+          id: interIslandTransferAction("town"),
+          labelKey: "destination.town",
+        },
+      ],
     },
     // Bow deck, offset from the forestay. Initial acceleration carries a
     // standing passenger aft into the broad sail instead of over the stern.
@@ -336,14 +404,26 @@ export const SKY_LONGSHIP_AIR_VEHICLE: AirVehicleDefinition = {
     linearDamping: 0.22,
     angularDamping: 0.55,
     lateralDragRatio: 7,
-    routePlan: (kind, berth) =>
-      rotatePlacedPlan(
+    routePlan: (kind, berth) => {
+      const destination = interIslandTransferDestination(
+        "viking-village",
+        kind,
+      );
+      if (destination) {
+        return interIslandDeparturePlan("viking-village", destination, berth);
+      }
+      const origin = interIslandArrivalOrigin(kind);
+      if (origin) {
+        return interIslandArrivalPlan(origin, "viking-village", berth);
+      }
+      return rotatePlacedPlan(
         kind === "tour"
           ? vikingLongshipTourPlan(berth)
           : flightPlan("circuit", berth),
         berth,
         SKY_LONGSHIP_COURSE,
-      ),
+      );
+    },
     arrivalPlan: (berth) =>
       rotatePlacedPlan(
         terminalArrivalPlan(berth),
@@ -361,10 +441,30 @@ export const SKY_LONGSHIP_AIR_VEHICLE: AirVehicleDefinition = {
         SKY_LONGSHIP_COURSE,
       );
     },
-    routePhase: (kind, progress) =>
-      kind === "tour"
+    routePhase: (kind, progress) => {
+      const destination = interIslandTransferDestination(
+        "viking-village",
+        kind,
+      );
+      if (destination) {
+        return interIslandDeparturePhase(
+          "viking-village",
+          destination,
+          progress,
+        );
+      }
+      const origin = interIslandArrivalOrigin(kind);
+      if (origin) {
+        return interIslandArrivalPhase(
+          origin,
+          "viking-village",
+          progress,
+        );
+      }
+      return kind === "tour"
         ? vikingLongshipTourPhase(progress)
-        : skyTrainRoutePhase("circuit", progress),
+        : skyTrainRoutePhase("circuit", progress);
+    },
   },
 };
 
@@ -390,6 +490,13 @@ export const TOWN_AIRSHIP_AIR_VEHICLE: AirVehicleDefinition = {
       id: "town:airship:ride",
       kind: "ride",
       cue: "town-passenger-flight",
+      actions: [
+        { id: "tour", labelKey: "hint.townRide.action" },
+        {
+          id: interIslandTransferAction("viking-village"),
+          labelKey: "destination.vikingVillage",
+        },
+      ],
     },
     // The call lives down the central aisle near the stern. At the door the
     // passenger therefore sees only the real door request and can disembark
@@ -419,7 +526,13 @@ export const TOWN_AIRSHIP_AIR_VEHICLE: AirVehicleDefinition = {
       tolerance: { position: 4.8, heading: 0.34, speed: 3.8 },
     },
     docking: {
-      position: 0.48,
+      // The 0.42 m nose cone enters a 0.76 m mast cup, leaving only 0.17 m
+      // of radial clearance. A 0.48 m completion radius let the route end
+      // with the cone visibly outside the cup; the still-active winch then
+      // finished that motion during the next departure countdown. Fourteen
+      // centimetres is inside the real radial clearance while leaving the
+      // heavy craft enough room to settle before its watchdog expires.
+      position: 0.14,
       height: 0.22,
       headingCos: 0.992,
       speed: 0.18,
@@ -436,12 +549,116 @@ export const TOWN_AIRSHIP_AIR_VEHICLE: AirVehicleDefinition = {
     // The cup is on an exposed mast: guidance must finish the turn before
     // the short nose capture takes over.
     mooringReach: 12,
-    routePlan: (kind, berth) =>
-      townAirshipPlan(kind as TownAirshipFlightKind, berth),
+    routePlan: (kind, berth) => {
+      const destination = interIslandTransferDestination("town", kind);
+      if (destination) {
+        return interIslandDeparturePlan("town", destination, berth);
+      }
+      const origin = interIslandArrivalOrigin(kind);
+      return origin
+        ? interIslandArrivalPlan(origin, "town", berth)
+        : townAirshipPlan(kind as TownAirshipFlightKind, berth);
+    },
     arrivalPlan: townAirshipArrivalPlan,
     escapePlan: townAirshipEscapePlan,
+    routePhase: (kind, progress) => {
+      const destination = interIslandTransferDestination("town", kind);
+      if (destination) {
+        return interIslandDeparturePhase("town", destination, progress);
+      }
+      const origin = interIslandArrivalOrigin(kind);
+      return origin
+        ? interIslandArrivalPhase(origin, "town", progress)
+        : townAirshipRoutePhase(kind as TownAirshipFlightKind, progress);
+    },
+  },
+};
+
+/** The stronghold's carrier is deliberately slower and more inertial. */
+export const BASALT_SKY_RAM_AIR_VEHICLE: AirVehicleDefinition = {
+  ...basaltSkyRamFrame,
+  departure: {
+    target: {
+      id: "basalt-stronghold:sky-ram:departure",
+      kind: "departure",
+      cue: "stronghold-uncrewed-flight",
+    },
+    // The capstan is the only believable dispatch control on this berth.
+    point: [5.15, 5.78, -89.1],
+    flightKind: "circuit",
+    approachRadius: 3.15,
+    releaseRadius: 4.25,
+    heightTolerance: 2.7,
+    passengerDropPoint: [4.65, 5.18, -95.7],
+  },
+  passengerFlight: {
+    target: {
+      id: "basalt-stronghold:sky-ram:ride",
+      kind: "ride",
+      cue: "stronghold-passenger-flight",
+    },
+    // A call post inside the gallery, clear of the boarding opening and ram.
+    point: basaltSkyRamPoint(-4.7, 0, 5.72),
+    flightKind: "war-patrol",
+    approachRadius: 2.0,
+    releaseRadius: 2.65,
+    contains: isInsideBasaltSkyRam,
+  },
+  flight: {
+    limits: {
+      enginePower: 360,
+      enginePoints: [
+        basaltSkyRamPoint(-0.8, -1.65, 8.8),
+        basaltSkyRamPoint(-0.8, 1.65, 8.8),
+      ],
+      maxRudderForce: 130,
+      rudderReferenceSpeed: 6.4,
+      rudderPoint: basaltSkyRamPoint(-14.2, 0, 12.8),
+      liftTrimRange: 0.095,
+    },
+    approach: {
+      heading: [basaltSkyRamFrame.nose[0], basaltSkyRamFrame.nose[2]],
+      tolerance: { position: 5.8, heading: 0.32, speed: 3.2 },
+    },
+    docking: {
+      // 0.32 m point inside a 0.82 m jaw throat leaves 0.25 m per side.
+      position: 0.16,
+      height: 0.2,
+      headingCos: 0.994,
+      speed: 0.15,
+      verticalSpeed: 0.09,
+      uprightCos: 0.993,
+      angularSpeed: 0.026,
+    },
+    spoolSeconds: 6.5,
+    underwaySeconds: 11,
+    driveAnimation: {
+      kind: "furnace",
+      phaseSpeed: 0,
+    },
+    exhaust: {
+      sources: [-1, 1].map((side, engineIndex) => ({
+        point: basaltSkyRamPoint(-7.9, side * 1.65, 8.88),
+        direction: [0, 0, -1],
+        engineIndex,
+        outletPieceId: `stronghold:sky-ram:engine:${side}:outlet`,
+      })),
+      idleRate: 1.2,
+      fullRate: 48,
+      lifeSeconds: 6,
+      exitSpeed: 3.8,
+      spread: 1.15,
+    },
+    linearDamping: 0.18,
+    angularDamping: 0.48,
+    lateralDragRatio: 8.5,
+    mooringReach: 15,
+    routePlan: (kind, berth) =>
+      basaltSkyRamPlan(kind as BasaltSkyRamFlightKind, berth),
+    arrivalPlan: basaltSkyRamArrivalPlan,
+    escapePlan: basaltSkyRamEscapePlan,
     routePhase: (kind, progress) =>
-      townAirshipRoutePhase(kind as TownAirshipFlightKind, progress),
+      basaltSkyRamRoutePhase(kind as BasaltSkyRamFlightKind, progress),
   },
 };
 
@@ -449,4 +666,5 @@ export const airVehicles: readonly AirVehicleDefinition[] = [
   SKY_TRAIN_AIR_VEHICLE,
   SKY_LONGSHIP_AIR_VEHICLE,
   TOWN_AIRSHIP_AIR_VEHICLE,
+  BASALT_SKY_RAM_AIR_VEHICLE,
 ];

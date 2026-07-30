@@ -299,12 +299,106 @@ export interface BodyState {
   readonly angularVelocity: SceneVector3;
 }
 
+/** A finite momentum transfer at one world-space point. */
+export interface AppliedImpulse {
+  readonly impulse: SceneVector3;
+  readonly point: SceneVector3;
+}
+
 export const RESTING_BODY: BodyState = {
   position: [0, 0, 0],
   orientation: IDENTITY_QUATERNION,
   velocity: [0, 0, 0],
   angularVelocity: [0, 0, 0],
 };
+
+/**
+ * Transfers linear and angular momentum without routing a custom-integrated
+ * carrier through a second physics body. The impulse is applied in world
+ * space; inertia is evaluated in the body's current orientation.
+ */
+export function applyImpulseAtPoint(
+  state: BodyState,
+  properties: MassProperties,
+  applied: AppliedImpulse,
+): BodyState {
+  if (properties.mass <= 0) {
+    return state;
+  }
+  const velocity: SceneVector3 = [
+    state.velocity[0] + applied.impulse[0] / properties.mass,
+    state.velocity[1] + applied.impulse[1] / properties.mass,
+    state.velocity[2] + applied.impulse[2] / properties.mass,
+  ];
+  const lever: SceneVector3 = [
+    applied.point[0] - state.position[0],
+    applied.point[1] - state.position[1],
+    applied.point[2] - state.position[2],
+  ];
+  const angularImpulseWorld = cross(lever, applied.impulse);
+  const angularImpulseBody = rotateVector(
+    conjugateQuaternion(state.orientation),
+    angularImpulseWorld,
+  );
+  const deltaOmegaBody = applyMatrix(
+    properties.inverseInertia,
+    angularImpulseBody,
+  );
+  const deltaOmegaWorld = rotateVector(state.orientation, deltaOmegaBody);
+  return {
+    ...state,
+    velocity,
+    angularVelocity: [
+      state.angularVelocity[0] + deltaOmegaWorld[0],
+      state.angularVelocity[1] + deltaOmegaWorld[1],
+      state.angularVelocity[2] + deltaOmegaWorld[2],
+    ],
+  };
+}
+
+/** Velocity inherited by material separating from a rotating rigid carrier. */
+export function bodyPointVelocity(
+  state: Pick<BodyState, "velocity" | "angularVelocity">,
+  worldLever: SceneVector3,
+): SceneVector3 {
+  const spinVelocity = cross(state.angularVelocity, worldLever);
+  return [
+    state.velocity[0] + spinVelocity[0],
+    state.velocity[1] + spinVelocity[1],
+    state.velocity[2] + spinVelocity[2],
+  ];
+}
+
+/**
+ * Keeps the physical pose and velocity field continuous when a subset of a
+ * rigid cluster detaches. The new centre of mass is another material point
+ * of the same body, so it inherits v + omega x r instead of teleporting or
+ * retaining the old centre's velocity.
+ */
+export function rebaseBodyMassProperties(
+  stateAtOldCentre: BodyState,
+  previous: MassProperties,
+  next: MassProperties,
+): BodyState {
+  if (previous.mass <= 0 || next.mass <= 0) {
+    return stateAtOldCentre;
+  }
+  const localShift: SceneVector3 = [
+    next.centre[0] - previous.centre[0],
+    next.centre[1] - previous.centre[1],
+    next.centre[2] - previous.centre[2],
+  ];
+  const worldShift = rotateVector(stateAtOldCentre.orientation, localShift);
+  return {
+    ...stateAtOldCentre,
+    position: [
+      stateAtOldCentre.position[0] + worldShift[0],
+      stateAtOldCentre.position[1] + worldShift[1],
+      stateAtOldCentre.position[2] + worldShift[2],
+    ],
+    velocity: bodyPointVelocity(stateAtOldCentre, worldShift),
+  };
+}
 
 /** Сила, приложенная в точке (в мировых координатах). */
 export interface AppliedForce {

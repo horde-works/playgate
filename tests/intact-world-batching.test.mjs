@@ -113,6 +113,46 @@ test("triangular facade cassettes keep their exact intact geometry", () => {
   assert.equal(batch.geometryKind, "triangularSheet");
 });
 
+test("arbitrary surface polygons keep their outline and batch separately", () => {
+  const trapezoid = piece("trapezoid", "darkGlass", [0, 0, 0], {
+    shape: "glassPane",
+    visualProfile: {
+      vertices: [[-0.5, -0.5], [0.5, -0.5], [0.38, 0.5], [-0.32, 0.5]],
+    },
+  });
+  const triangle = piece("triangle", "darkGlass", [1, 0, 0], {
+    shape: "glassPane",
+    visualProfile: {
+      vertices: [[-0.5, -0.5], [0.5, -0.5], [0, 0.5]],
+    },
+  });
+  const batches = buildIntactInstanceBatches([trapezoid, triangle]);
+  assert.equal(batches.length, 2);
+  assert.ok(batches.every((batch) => batch.geometryKind === "surfacePolygon"));
+  assert.deepEqual(batches[0].visualProfile, trapezoid.visualProfile);
+  assert.deepEqual(batches[1].visualProfile, triangle.visualProfile);
+});
+
+test("compound surface meshes keep their topology and batch separately", () => {
+  const shallow = piece("shallow", "steel", [0, 0, 0], {
+    visualMesh: {
+      vertices: [[-0.5, -0.5, 0], [0.5, -0.5, 0], [0.5, 0.5, 0.1], [-0.5, 0.5, 0.1]],
+      indices: [0, 1, 2, 0, 2, 3],
+    },
+  });
+  const crowned = piece("crowned", "steel", [1, 0, 0], {
+    visualMesh: {
+      vertices: [[-0.5, -0.5, 0], [0.5, -0.5, 0], [0, 0.5, 0.25]],
+      indices: [0, 1, 2],
+    },
+  });
+  const batches = buildIntactInstanceBatches([shallow, crowned]);
+  assert.equal(batches.length, 2);
+  assert.ok(batches.every((batch) => batch.geometryKind === "surfaceMesh"));
+  assert.deepEqual(batches[0].visualMesh, shallow.visualMesh);
+  assert.deepEqual(batches[1].visualMesh, crowned.visualMesh);
+});
+
 test("architectural spheres never fall back to glass boxes", () => {
   const sphere = piece("sphere", "darkGlass", [0, 0, 0], {
     shape: "sphere",

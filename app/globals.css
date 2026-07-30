@@ -2606,6 +2606,365 @@ button:focus-visible {
   animation-duration: 320ms;
 }
 
+.game-entry-choice {
+  pointer-events: auto;
+}
+
+.game-entry-choice-options {
+  display: grid;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.game-entry-choice-options button {
+  display: grid;
+  grid-template-columns: 42px 1fr;
+  gap: 10px;
+  align-items: center;
+  width: min(420px, 100%);
+  padding: 7px 10px;
+  border: 1px solid rgb(247 243 232 / 0.25);
+  background: rgb(8 10 9 / 0.62);
+  color: var(--paper-bright);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10px;
+  font-weight: 680;
+  letter-spacing: 0.04em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.game-entry-choice-options button:hover,
+.game-entry-choice-options button:focus-visible {
+  border-color: rgb(205 255 43 / 0.7);
+  color: var(--acid);
+  outline: none;
+}
+
+.game-entry-choice-options kbd {
+  padding: 5px 7px;
+  border: 1px solid rgb(205 255 43 / 0.58);
+  background: rgb(205 255 43 / 0.1);
+  color: var(--acid);
+  text-align: center;
+}
+
+.journey-transition {
+  position: fixed;
+  z-index: 80;
+  inset: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 48% 54%, rgb(221 232 225 / 0.35), rgb(117 132 129 / 0.92) 58%, #56615f 100%);
+  pointer-events: none;
+}
+
+/* Server output cannot read the arrival query yet. This opaque first-paint
+   veil prevents the ordinary island gate from flashing before hydration can
+   identify an inter-island handoff. */
+.journey-bootstrap-veil {
+  position: fixed;
+  z-index: 90;
+  inset: 0;
+  background:
+    radial-gradient(circle at 48% 54%, rgb(221 232 225 / 0.35), rgb(117 132 129 / 0.92) 58%, #56615f 100%);
+  pointer-events: none;
+}
+
+.journey-transition i {
+  position: absolute;
+  width: 85vmax;
+  height: 85vmax;
+  border-radius: 48% 52% 44% 56%;
+  background: rgb(225 235 229 / 0.28);
+  filter: blur(48px);
+}
+
+.journey-transition i:nth-child(1) {
+  top: -42vmax;
+  left: -20vmax;
+}
+
+.journey-transition i:nth-child(2) {
+  right: -34vmax;
+  bottom: -45vmax;
+}
+
+.journey-transition i:nth-child(3) {
+  top: 12%;
+  left: 20%;
+  background: rgb(245 248 242 / 0.42);
+}
+
+.journey-transmutation {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(360px, 72vw);
+  aspect-ratio: 1.8;
+  opacity: 0;
+  transform: translate(-50%, -50%);
+}
+
+.journey-transmutation span {
+  position: absolute;
+  display: block;
+  box-sizing: border-box;
+}
+
+.journey-form-material {
+  inset: 0;
+  background:
+    radial-gradient(circle at 21% 42%, rgb(245 248 242 / 0.85) 0 1px, transparent 2px),
+    radial-gradient(circle at 67% 31%, rgb(205 255 43 / 0.66) 0 1px, transparent 2px),
+    radial-gradient(circle at 44% 72%, rgb(245 248 242 / 0.72) 0 1.5px, transparent 2.5px),
+    radial-gradient(circle at 81% 64%, rgb(205 255 43 / 0.5) 0 1px, transparent 2px);
+  background-size: 31px 29px, 43px 37px, 37px 41px, 53px 47px;
+  filter: blur(0.5px);
+  -webkit-mask-image: radial-gradient(ellipse at center, #000 0 34%, rgb(0 0 0 / 0.76) 52%, transparent 78%);
+  mask-image: radial-gradient(ellipse at center, #000 0 34%, rgb(0 0 0 / 0.76) 52%, transparent 78%);
+  opacity: 0;
+}
+
+.journey-form-envelope,
+.journey-form-hull,
+.journey-form-drive {
+  border: 1px solid rgb(245 248 242 / 0.5);
+  box-shadow: 0 0 18px rgb(233 241 235 / 0.22);
+  opacity: 0;
+}
+
+.journey-form-heart {
+  z-index: 3;
+  top: 47%;
+  left: 50%;
+  width: 17px;
+  height: 17px;
+  border: 1px solid rgb(255 232 150 / 0.92);
+  border-radius: 50%;
+  background: #ffc75c;
+  box-shadow:
+    0 0 12px #ffc75c,
+    0 0 42px rgb(255 199 92 / 0.82);
+  opacity: 0;
+  transform: translate(-50%, -50%);
+}
+
+/* The source silhouette dissolves before navigation; the destination shape
+   rebuilds after it. Both keep the same heart in the same carrier frame. */
+.journey-transition.is-departure[data-source-form="town-airship"] .journey-form-envelope,
+.journey-transition.is-arrival[data-destination-form="town-airship"] .journey-form-envelope {
+  top: 14%;
+  left: 15%;
+  width: 70%;
+  height: 39%;
+  border-radius: 50% 48% 46% 52%;
+  background: linear-gradient(180deg, rgb(225 231 228 / 0.62), rgb(104 116 118 / 0.42));
+}
+
+.journey-transition.is-departure[data-source-form="town-airship"] .journey-form-hull,
+.journey-transition.is-arrival[data-destination-form="town-airship"] .journey-form-hull {
+  top: 58%;
+  left: 31%;
+  width: 38%;
+  height: 20%;
+  border-radius: 3px 3px 9px 9px;
+  background: linear-gradient(180deg, rgb(150 161 161 / 0.7), rgb(57 67 68 / 0.72));
+}
+
+.journey-transition.is-departure[data-source-form="town-airship"] .journey-form-drive,
+.journey-transition.is-arrival[data-destination-form="town-airship"] .journey-form-drive {
+  top: 58%;
+  width: 11%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background:
+    linear-gradient(90deg, transparent 46%, rgb(245 248 242 / 0.7) 47% 53%, transparent 54%),
+    linear-gradient(0deg, transparent 46%, rgb(245 248 242 / 0.7) 47% 53%, transparent 54%);
+}
+
+.journey-transition.is-departure[data-source-form="town-airship"] .journey-form-drive.is-left,
+.journey-transition.is-arrival[data-destination-form="town-airship"] .journey-form-drive.is-left {
+  left: 17%;
+}
+
+.journey-transition.is-departure[data-source-form="town-airship"] .journey-form-drive.is-right,
+.journey-transition.is-arrival[data-destination-form="town-airship"] .journey-form-drive.is-right {
+  right: 17%;
+}
+
+.journey-transition.is-departure[data-source-form="sky-longship"] .journey-form-envelope,
+.journey-transition.is-arrival[data-destination-form="sky-longship"] .journey-form-envelope {
+  top: 8%;
+  left: 20%;
+  width: 60%;
+  height: 47%;
+  border-radius: 48% 52% 45% 55%;
+  background:
+    repeating-linear-gradient(83deg, rgb(117 91 65 / 0.58) 0 3px, rgb(178 151 111 / 0.44) 3px 7px);
+}
+
+.journey-transition.is-departure[data-source-form="sky-longship"] .journey-form-hull,
+.journey-transition.is-arrival[data-destination-form="sky-longship"] .journey-form-hull {
+  top: 58%;
+  left: 20%;
+  width: 60%;
+  height: 22%;
+  clip-path: polygon(0 5%, 8% 0, 18% 30%, 82% 30%, 92% 0, 100% 5%, 88% 72%, 65% 94%, 35% 94%, 12% 72%);
+  background: linear-gradient(180deg, rgb(157 104 59 / 0.78), rgb(68 40 24 / 0.82));
+}
+
+.journey-transition.is-departure[data-source-form="sky-longship"] .journey-form-drive,
+.journey-transition.is-arrival[data-destination-form="sky-longship"] .journey-form-drive {
+  top: 66%;
+  width: 42%;
+  height: 2px;
+  border: 0;
+  background: rgb(211 178 128 / 0.76);
+  box-shadow: 0 8px 0 rgb(211 178 128 / 0.58), 0 -8px 0 rgb(211 178 128 / 0.58);
+}
+
+.journey-transition.is-departure[data-source-form="sky-longship"] .journey-form-drive.is-left,
+.journey-transition.is-arrival[data-destination-form="sky-longship"] .journey-form-drive.is-left {
+  left: 3%;
+  transform: rotate(13deg);
+}
+
+.journey-transition.is-departure[data-source-form="sky-longship"] .journey-form-drive.is-right,
+.journey-transition.is-arrival[data-destination-form="sky-longship"] .journey-form-drive.is-right {
+  right: 3%;
+  transform: rotate(-13deg);
+}
+
+.journey-transition.is-departure .journey-transmutation {
+  animation: journey-transmutation-departure 2.2s ease-in forwards;
+}
+
+.journey-transition.is-departure .journey-form-envelope,
+.journey-transition.is-departure .journey-form-hull,
+.journey-transition.is-departure .journey-form-drive {
+  animation: journey-form-dissolve 2.2s ease-in forwards;
+}
+
+.journey-transition.is-departure .journey-form-material {
+  animation: journey-material-dissolve 2.2s ease-in forwards;
+}
+
+.journey-transition.is-departure .journey-form-heart {
+  animation: journey-heart-departure 2.2s ease-in forwards;
+}
+
+.journey-transition.is-arrival .journey-transmutation {
+  animation: journey-transmutation-arrival 4.2s ease-out forwards;
+}
+
+.journey-transition.is-arrival .journey-form-material {
+  animation: journey-material-arrival 4.2s ease-out forwards;
+}
+
+.journey-transition.is-arrival .journey-form-drive {
+  animation: journey-function-arrival 4.2s ease-out forwards;
+}
+
+.journey-transition.is-arrival .journey-form-envelope,
+.journey-transition.is-arrival .journey-form-hull {
+  animation: journey-silhouette-arrival 4.2s ease-out forwards;
+}
+
+.journey-transition.is-arrival .journey-form-heart {
+  animation: journey-heart-arrival 4.2s ease-out forwards;
+}
+
+.journey-transition.is-departure {
+  opacity: 0;
+  animation: journey-fog-in 2.2s ease-in forwards;
+}
+
+.journey-transition.is-arrival {
+  opacity: 1;
+}
+
+.journey-transition.is-arrival.arrival-is-revealing {
+  animation: journey-fog-out 1.6s ease-out forwards;
+}
+
+.journey-arrival-status {
+  position: absolute;
+  right: 32px;
+  bottom: clamp(82px, 12vh, 148px);
+  left: 32px;
+  margin: 0;
+  color: var(--paper-bright);
+  font-size: clamp(25px, 3vw, 44px);
+  font-weight: 840;
+  letter-spacing: -0.045em;
+  line-height: 1;
+  text-align: center;
+  text-shadow: 0 3px 28px rgb(0 0 0 / 0.62);
+}
+
+@keyframes journey-fog-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes journey-fog-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes journey-transmutation-departure {
+  0%, 28% { opacity: 0; filter: blur(0); }
+  55% { opacity: 0.7; filter: blur(1px); }
+  to { opacity: 0.34; filter: blur(11px); }
+}
+
+@keyframes journey-form-dissolve {
+  0%, 28% { opacity: 0; scale: 1; }
+  48% { opacity: 0.62; }
+  to { opacity: 0; scale: 0.92; }
+}
+
+@keyframes journey-material-dissolve {
+  0%, 40% { opacity: 0; transform: scale(0.85); }
+  70% { opacity: 0.9; }
+  to { opacity: 0.2; transform: scale(1.18); }
+}
+
+@keyframes journey-heart-departure {
+  0%, 30% { opacity: 0; transform: translate(-50%, -50%) scale(0.8); }
+  58%, to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+@keyframes journey-transmutation-arrival {
+  0% { opacity: 0.44; filter: blur(12px); }
+  22%, 72% { opacity: 0.9; filter: blur(1px); }
+  to { opacity: 0; filter: blur(0); }
+}
+
+@keyframes journey-material-arrival {
+  0% { opacity: 0.82; transform: scale(1.16); }
+  30% { opacity: 0.78; }
+  56%, to { opacity: 0; transform: scale(0.9); }
+}
+
+@keyframes journey-function-arrival {
+  0%, 22% { opacity: 0; }
+  38%, 67% { opacity: 0.8; }
+  88%, to { opacity: 0; }
+}
+
+@keyframes journey-silhouette-arrival {
+  0%, 48% { opacity: 0; scale: 0.94; }
+  64%, 82% { opacity: 0.72; scale: 1; }
+  to { opacity: 0; scale: 1.02; }
+}
+
+@keyframes journey-heart-arrival {
+  0%, 72% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  to { opacity: 0; transform: translate(-50%, -50%) scale(1.25); }
+}
+
 @keyframes game-action-hint-life {
   0% {
     opacity: 0;

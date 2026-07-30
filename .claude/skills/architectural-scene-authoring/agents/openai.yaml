@@ -1,0 +1,4 @@
+interface:
+  display_name: "Architectural Scene Authoring"
+  short_description: "Build exact architecture from real references"
+  default_prompt: "Use $architectural-scene-authoring to research, model, verify, and visually compare this architectural object."

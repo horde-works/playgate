@@ -10,11 +10,23 @@ import {
   type SupportMode,
 } from "./destructionScene.ts";
 import { createBasaltStrongholdWorldbuilding } from "./basaltStrongholdWorldbuilding.ts";
+import {
+  BASALT_SKY_RAM_BERTH_CLUSTER_ID,
+  BASALT_SKY_RAM_CLUSTER_ID,
+  createBasaltSkyRamScene,
+} from "./basaltSkyRam.ts";
 
 const clusters: BreakableClusterDefinition[] = [];
 const lamps: LampDefinition[] = [];
 const PLAYFIELD_CENTER_Z = -18;
 const PLAYFIELD_RADIUS = 96;
+// The fortress terrain stays compact, but the ram's honest landing circuit
+// needs a separate outer envelope. As in the terminal and Viking worlds, the
+// player boundary contains the route plus the whole craft and free-flight
+// margin; the sky and far plane remain larger concentric envelopes.
+const ROUTE_BOUNDARY_RADIUS = 245;
+const ROUTE_SKY_RADIUS = 305;
+const ROUTE_CAMERA_FAR = 560;
 
 function piece(
   id: string,
@@ -1630,16 +1642,21 @@ const inhabitedWorld = createBasaltStrongholdWorldbuilding({
 });
 clusters.push(...inhabitedWorld.clusters);
 lamps.push(...inhabitedWorld.lamps);
+const skyRamWorld = createBasaltSkyRamScene();
+clusters.push(...skyRamWorld.clusters);
+lamps.push(...skyRamWorld.lamps);
 
 export const basaltStrongholdScene = createDestructionScene({
   id: "basalt-stronghold",
   title: "Make a Mess: Basalt Stronghold",
   environment: "fortress",
   playerSpawn: [0, 1.25, 31],
-  cameraFar: 240,
+  cameraFar: ROUTE_CAMERA_FAR,
   worldCenter: [0, PLAYFIELD_CENTER_Z],
   worldHalfExtents: [100, 100],
   worldRadius: PLAYFIELD_RADIUS + 2,
+  boundaryRadius: ROUTE_BOUNDARY_RADIUS,
+  skyRadius: ROUTE_SKY_RADIUS,
   safetyFloorY: -2.2,
   copy: {
     status: "Make a Mess / Basalt Stronghold",
@@ -1648,7 +1665,7 @@ export const basaltStrongholdScene = createDestructionScene({
     ready: "The mountain gate is ready",
     loading: "Поднимаем крепость…",
     description:
-      "Горная гряда, тёмная средневековая стена с воротами и многоэтажная башня за ней. Камень, базальт, дерево, сталь и тёмное стекло держатся на реальных опорах и ломаются тем же движком. На компьютере — WASD и мышь; на телефоне или планшете — стик и зона обзора.",
+      "Горная гряда, тёмная средневековая стена с воротами, многоэтажная башня и задний воздушный барбакан с Небесным тараном. Камень, базальт, дерево, сталь и тёмное стекло держатся на реальных опорах и ломаются тем же движком. На компьютере — WASD и мышь; на телефоне или планшете — стик и зона обзора.",
     enter: "Выйти к воротам",
     returnToGame: "Продолжить осаду",
     reset: "Поднять крепость заново",
@@ -1658,6 +1675,10 @@ export const basaltStrongholdScene = createDestructionScene({
   // Trim the deep sibling overlaps in the faceted basalt towers so they stop
   // z-fighting (and stop shoving bricks out on impact) while staying breakable.
   resolveInterpenetration: true,
+  deinterpenetrationExemptClusterIds: [
+    BASALT_SKY_RAM_BERTH_CLUSTER_ID,
+    BASALT_SKY_RAM_CLUSTER_ID,
+  ],
 });
 
 export const basaltStrongholdMaterials = [

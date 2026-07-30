@@ -17,11 +17,13 @@ import {
   CylinderGeometry,
   DoubleSide,
   DynamicDrawUsage,
+  ExtrudeGeometry,
   Float32BufferAttribute,
   InstancedBufferAttribute,
   InstancedMesh,
   Object3D,
   Quaternion,
+  Shape,
   Sphere,
   SphereGeometry,
   Vector3,
@@ -65,6 +67,53 @@ import type { CompoundKinematicClusterRegistry } from "./compoundKinematicCluste
 const UNIT_BOX = new BoxGeometry(1, 1, 1);
 const UNIT_CYLINDER = new CylinderGeometry(0.5, 0.5, 1, 20, 1);
 const UNIT_SPHERE = new SphereGeometry(0.5, 32, 20);
+
+function dynamicSurfacePolygonGeometry(
+  profile: NonNullable<BreakablePieceDefinition["visualProfile"]>,
+): ExtrudeGeometry {
+  if (profile.vertices.length < 3) {
+    throw new Error("A dynamic surface polygon needs at least three vertices");
+  }
+  const [[firstX, firstY], ...rest] = profile.vertices;
+  const shape = new Shape().moveTo(firstX, firstY);
+  for (const [x, y] of rest) {
+    shape.lineTo(x, y);
+  }
+  shape.closePath();
+  return new ExtrudeGeometry(shape, {
+    depth: 1,
+    steps: 1,
+    bevelEnabled: false,
+  }).translate(0, 0, -0.5);
+}
+
+function dynamicSurfaceMeshGeometry(
+  profile: NonNullable<BreakablePieceDefinition["visualMesh"]>,
+): BufferGeometry {
+  if (profile.vertices.length < 3 || profile.indices.length < 3) {
+    throw new Error("A dynamic surface mesh needs vertices and triangle indices");
+  }
+  const geometry = new BufferGeometry();
+  geometry.setAttribute(
+    "position",
+    new Float32BufferAttribute(
+      profile.vertices.flatMap((vertex) => [...vertex]),
+      3,
+    ),
+  );
+  geometry.setAttribute(
+    "uv",
+    new Float32BufferAttribute(
+      profile.vertices.flatMap(([x, y]) => [x + 0.5, y + 0.5]),
+      2,
+    ),
+  );
+  geometry.setIndex([...profile.indices]);
+  geometry.computeVertexNormals();
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  return geometry;
+}
 
 function detachedFoliageGeometry(): BufferGeometry {
   const positions: number[] = [];
@@ -175,12 +224,21 @@ function clusterPoseChanged(
 }
 
 type DynamicBreakableKind = "piece" | "shard" | "remnant";
+type DynamicGeometryKind =
+  | "box"
+  | "sphere"
+  | "cylinder"
+  | "foliage"
+  | "surfacePolygon"
+  | "surfaceMesh";
 
 interface DynamicBreakableFragment {
   readonly sourceId: string;
   readonly clusterId?: string;
   readonly kind: DynamicBreakableKind;
-  readonly geometryKind: "box" | "sphere" | "cylinder" | "foliage";
+  readonly geometryKind: DynamicGeometryKind;
+  readonly visualProfile?: BreakablePieceDefinition["visualProfile"];
+  readonly visualMesh?: BreakablePieceDefinition["visualMesh"];
   readonly material: BreakableMaterial;
   readonly materialColor: string;
   readonly textureProfile?: SurfaceTextureProfile;
@@ -207,7 +265,9 @@ interface DynamicBreakableBatch {
   readonly material: BreakableMaterial;
   readonly materialColor: string;
   readonly textureProfile?: SurfaceTextureProfile;
-  readonly geometryKind: "box" | "sphere" | "cylinder" | "foliage";
+  readonly geometryKind: DynamicGeometryKind;
+  readonly visualProfile?: BreakablePieceDefinition["visualProfile"];
+  readonly visualMesh?: BreakablePieceDefinition["visualMesh"];
   readonly treeBark: boolean;
   readonly fragments: readonly DynamicBreakableFragment[];
 }
@@ -228,6 +288,37 @@ function quenchedColor(material: BreakableMaterial, color: string): string {
   return material === "glass" && (color === litWindowColor || isSignalGlassColor(color))
     ? extinguishedGlass
     : color;
+}
+
+function dynamicVisualProfileKey(
+  profile: BreakablePieceDefinition["visualProfile"],
+): string {
+  return profile
+    ? profile.vertices
+        .map(([x, y]) => `${x.toFixed(5)},${y.toFixed(5)}`)
+        .join(";")
+    : "default";
+}
+
+function dynamicVisualMeshKey(
+  profile: BreakablePieceDefinition["visualMesh"],
+): string {
+  if (!profile) return "default";
+  let hash = 2166136261;
+  const mix = (value: number): void => {
+    const text = value.toFixed(5);
+    for (let index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+  };
+  for (const vertex of profile.vertices) {
+    mix(vertex[0]);
+    mix(vertex[1]);
+    mix(vertex[2]);
+  }
+  for (const index of profile.indices) mix(index);
+  return `${profile.vertices.length}:${profile.indices.length}:${hash >>> 0}:${profile.doubleSided === false ? "front" : "double"}`;
 }
 
 function eulerQuaternion(
@@ -259,12 +350,43 @@ function sourceFragments(
     const sizeExpansion = hasSilicateJoints(piece.id, piece.material)
       ? SILICATE_JOINT_EXPANSION
       : 0;
+    const pieceColor = quenchedColor(piece.material, piece.color);
+    const exactGeometry = piece.visualMesh
+      ? "surfaceMesh" as const
+      : piece.visualProfile
+        ? "surfacePolygon" as const
+        : null;
+    if (exactGeometry) {
+      fragments.push({
+        sourceId: piece.id,
+        clusterId: piece.clusterId,
+        kind: "piece",
+        geometryKind: exactGeometry,
+        visualProfile: piece.visualProfile,
+        visualMesh: piece.visualMesh,
+        material: piece.material,
+        materialColor: pieceMaterialBaseColor(piece.material, pieceColor),
+        textureProfile: piece.textureProfile,
+        weathering: piece.weathering,
+        color: pieceColor,
+        center: [0, 0, 0],
+        size: piece.size,
+        sizeExpansion: 0,
+        faceMaskPositive: [0, 0, 0],
+        faceMaskNegative: [0, 0, 0],
+        fallbackPosition: piece.position,
+        fallbackQuaternion,
+        landscapeSurface: piece.landscapeSurface,
+        treeVisual: piece.treeVisual,
+        treeVisualSourceId: piece.treeVisual ? piece.id : undefined,
+      });
+      continue;
+    }
     const boxes = getPieceRenderBoxes(piece);
     const faceMasks = computeBoxFaceMasks(
       boxes,
       groundMaterials.has(piece.material),
     );
-    const pieceColor = quenchedColor(piece.material, piece.color);
     const geometryKind = usesFoliageDebrisGeometry(piece.material, piece)
       ? "foliage" as const
       : piece.shape === "sphere"
@@ -416,7 +538,12 @@ function buildBatches(
 
   for (const fragment of fragments) {
     const treeBark = usesTreeBarkVisual(fragment.material, fragment.treeVisual);
-    const key = `${fragment.material}:${fragment.materialColor}:${fragment.textureProfile ?? "default"}:${fragment.geometryKind}:${treeBark ? "tree-bark" : "default-skin"}`;
+    const exactGeometryKey = fragment.geometryKind === "surfaceMesh"
+      ? dynamicVisualMeshKey(fragment.visualMesh)
+      : fragment.geometryKind === "surfacePolygon"
+        ? dynamicVisualProfileKey(fragment.visualProfile)
+        : "default";
+    const key = `${fragment.material}:${fragment.materialColor}:${fragment.textureProfile ?? "default"}:${fragment.geometryKind}:${exactGeometryKey}:${treeBark ? "tree-bark" : "default-skin"}`;
     const current = batches.get(key);
     if (current) {
       current.push(fragment);
@@ -431,6 +558,8 @@ function buildBatches(
     materialColor: batchFragments[0].materialColor,
     textureProfile: batchFragments[0].textureProfile,
     geometryKind: batchFragments[0].geometryKind,
+    visualProfile: batchFragments[0].visualProfile,
+    visualMesh: batchFragments[0].visualMesh,
     treeBark: usesTreeBarkVisual(
       batchFragments[0].material,
       batchFragments[0].treeVisual,
@@ -541,15 +670,23 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
   const { rapier, rigidBodyStates } = useRapier();
   const mesh = useRef<InstancedMesh>(null);
   const geometry = useMemo(() => {
-    const next = (
-      batch.geometryKind === "cylinder"
+    const source = batch.geometryKind === "surfaceMesh"
+      ? dynamicSurfaceMeshGeometry(batch.visualMesh!)
+      : batch.geometryKind === "surfacePolygon"
+        ? dynamicSurfacePolygonGeometry(batch.visualProfile!)
+        : (
+        batch.geometryKind === "cylinder"
         ? UNIT_CYLINDER
         : batch.geometryKind === "sphere"
           ? UNIT_SPHERE
         : batch.geometryKind === "foliage"
           ? UNIT_FOLIAGE_DEBRIS
           : UNIT_BOX
-    ).clone();
+      );
+    const next = batch.geometryKind === "surfaceMesh" ||
+        batch.geometryKind === "surfacePolygon"
+      ? source
+      : source.clone();
     // xyz = stable world anchor, w = authored exterior weathering. Keeping
     // both values across the intact -> dynamic transition prevents painted,
     // mossy or moulded masonry from flashing back to plain grey on impact.
@@ -655,11 +792,17 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
       batch.materialColor,
       batch.textureProfile,
     );
-    if (!batch.treeBark && batch.geometryKind !== "foliage") {
+    const doubleSidedSurface = batch.geometryKind === "surfaceMesh" &&
+      batch.visualMesh?.doubleSided !== false;
+    if (
+      !batch.treeBark &&
+      batch.geometryKind !== "foliage" &&
+      !doubleSidedSurface
+    ) {
       return base;
     }
     const next = base.clone();
-    if (batch.geometryKind === "foliage") {
+    if (batch.geometryKind === "foliage" || doubleSidedSurface) {
       next.side = DoubleSide;
     }
     if (batch.treeBark) {
@@ -724,6 +867,7 @@ diffuseColor.rgb = mix(
     batch.materialColor,
     batch.textureProfile,
     batch.treeBark,
+    batch.visualMesh,
   ]);
   const instanceIds = useMemo(
     () => batch.fragments.map((fragment) => fragment.sourceId),
@@ -768,11 +912,16 @@ diffuseColor.rgb = mix(
   useEffect(
     () => () => {
       geometry.dispose();
-      if (batch.geometryKind === "foliage" || batch.treeBark) {
+      if (
+        batch.geometryKind === "foliage" ||
+        batch.treeBark ||
+        (batch.geometryKind === "surfaceMesh" &&
+          batch.visualMesh?.doubleSided !== false)
+      ) {
         material.dispose();
       }
     },
-    [batch.geometryKind, batch.treeBark, geometry, material],
+    [batch.geometryKind, batch.treeBark, batch.visualMesh, geometry, material],
   );
 
   useLayoutEffect(() => {

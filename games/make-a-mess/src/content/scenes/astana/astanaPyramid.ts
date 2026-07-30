@@ -10,6 +10,12 @@ import type { SceneVector3 } from "../../../game/destructionScene.ts";
 import type { MutableGroup } from "./astanaAuthoring.ts";
 import { orient, primitive } from "./astanaAuthoring.ts";
 import { PYRAMID_CENTRE, PYRAMID_YAW } from "./astanaLayout.ts";
+import {
+  ASTANA_LANDMARK_LIGHT_PRIORITY,
+  ASTANA_LANDMARK_LOCAL_POOL_CAPACITY,
+  ASTANA_LANDMARK_MIN_LIGHT_DISTANCE,
+  ASTANA_PYRAMID_LIGHT_GROUP,
+} from "./astanaLighting.ts";
 import { PYRAMID_MOUND_TOP } from "./astanaPyramidPodium.ts";
 
 export const PYRAMID_REAL_SIZE_METRES = 62;
@@ -34,7 +40,6 @@ const GLASS_FILL = 0.956;
 const GLASS_INSET = 0.035;
 const EPSILON = 1e-8;
 const INTERIOR_BAFFLE = "#131c24";
-const PYRAMID_UPPER_LIGHT_GROUP = "astana:pyramid:upper";
 export const PYRAMID_UPPER_LIGHT_COUNT = 9;
 export const PYRAMID_UPPER_LIGHT_COLOURS = [
   "#5d9fe8",
@@ -162,9 +167,9 @@ function addInteriorLighting(target: MutableGroup): void {
           intensity: light.intensity,
           position: [0, 0, 0],
           dayIntensityFactor: 0,
-          poolPriority: 26,
-          localPoolCapacity: PYRAMID_UPPER_LIGHT_COUNT,
-          poolGroupId: PYRAMID_UPPER_LIGHT_GROUP,
+          poolPriority: ASTANA_LANDMARK_LIGHT_PRIORITY,
+          localPoolCapacity: ASTANA_LANDMARK_LOCAL_POOL_CAPACITY,
+          poolGroupId: ASTANA_PYRAMID_LIGHT_GROUP,
           transition: { fadeInSeconds: 2.2, fadeOutSeconds: 1.8 },
         },
       },
@@ -198,13 +203,13 @@ function addInteriorLighting(target: MutableGroup): void {
         volume: 0.0002,
         light: {
           color: PYRAMID_UPPER_LIGHT_COLOURS[fill % PYRAMID_UPPER_LIGHT_COLOURS.length],
-          distance: 28,
+          distance: ASTANA_LANDMARK_MIN_LIGHT_DISTANCE,
           intensity: fill % 2 === 0 ? 21 : 18,
           position: [0, 0, 0],
           dayIntensityFactor: 0,
-          poolPriority: 26,
-          localPoolCapacity: PYRAMID_UPPER_LIGHT_COUNT,
-          poolGroupId: PYRAMID_UPPER_LIGHT_GROUP,
+          poolPriority: ASTANA_LANDMARK_LIGHT_PRIORITY,
+          localPoolCapacity: ASTANA_LANDMARK_LOCAL_POOL_CAPACITY,
+          poolGroupId: ASTANA_PYRAMID_LIGHT_GROUP,
           transition: { fadeInSeconds: 2.2, fadeOutSeconds: 1.8 },
         },
       },

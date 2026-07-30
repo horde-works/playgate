@@ -66,6 +66,9 @@ export const ui = {
     "announce.weaponLauncher": "The launcher is on your shoulder.",
     "announce.weaponRocket": "The rocket is armed.",
     "announce.weaponMg": "The machine gun is warm.",
+    "announce.interIslandRulesKicker": "Flight rules",
+    "announce.interIslandWeaponBlocked":
+      "Weapons are not permitted on inter-island flights.",
     "announce.timeKicker": "Time of day",
     "announce.timeDawn": "The sky is still making up its mind.",
     "announce.timeMorning": "The day has found its stride.",
@@ -147,7 +150,27 @@ export const ui = {
     "controls.fly": "Flight mode",
     "controls.telemetry": "Telemetry",
     "controls.jump": "Jump",
+    "controls.chooseAction": "Choose an action",
     "controls.reset": "Restart",
+
+    "hint.destination.eyebrow": "Flight controls",
+    "hint.destination.title": "Choose the next action.",
+    "destination.town": "Fly to the town",
+    "destination.vikingVillage": "Fly to Viking Village",
+    "interIsland.enteringAirspace.astana": "Entering the Capital airspace…",
+    "interIsland.enteringAirspace.basalt-stronghold":
+      "Entering Basalt Stronghold airspace…",
+    "interIsland.enteringAirspace.grand-terminal":
+      "Entering Grand Terminal airspace…",
+    "interIsland.enteringAirspace.town": "Entering the town airspace…",
+    "interIsland.enteringAirspace.viking-village":
+      "Entering the village airspace…",
+    "interIsland.welcome.astana": "Welcome to the Capital",
+    "interIsland.welcome.basalt-stronghold":
+      "Welcome to Basalt Stronghold",
+    "interIsland.welcome.grand-terminal": "Welcome to Grand Terminal",
+    "interIsland.welcome.town": "Welcome to the Town",
+    "interIsland.welcome.viking-village": "Welcome to Viking Village",
 
     "hint.spawn.eyebrow": "First move",
     "hint.spawn.title": "Look around. Try every tool.",
@@ -283,6 +306,9 @@ export const ui = {
     "announce.weaponLauncher": "El lanzagranadas al hombro.",
     "announce.weaponRocket": "El cohete está listo.",
     "announce.weaponMg": "La ametralladora está caliente.",
+    "announce.interIslandRulesKicker": "Normas de vuelo",
+    "announce.interIslandWeaponBlocked":
+      "No se permite usar armas en los vuelos entre islas.",
     "announce.timeKicker": "Hora del día",
     "announce.timeDawn": "El cielo todavía no se decide.",
     "announce.timeMorning": "El día ya ha tomado impulso.",
@@ -364,7 +390,29 @@ export const ui = {
     "controls.fly": "Modo vuelo",
     "controls.telemetry": "Telemetría",
     "controls.jump": "Saltar",
+    "controls.chooseAction": "Elegir una acción",
     "controls.reset": "Reiniciar",
+
+    "hint.destination.eyebrow": "Controles de vuelo",
+    "hint.destination.title": "Elige la siguiente acción.",
+    "destination.town": "Volar a la ciudad",
+    "destination.vikingVillage": "Volar a la aldea vikinga",
+    "interIsland.enteringAirspace.astana":
+      "Entrando en el espacio aéreo de la Capital…",
+    "interIsland.enteringAirspace.basalt-stronghold":
+      "Entrando en el espacio aéreo de la Fortaleza de Basalto…",
+    "interIsland.enteringAirspace.grand-terminal":
+      "Entrando en el espacio aéreo de la Gran Terminal…",
+    "interIsland.enteringAirspace.town":
+      "Entrando en el espacio aéreo de la ciudad…",
+    "interIsland.enteringAirspace.viking-village":
+      "Entrando en el espacio aéreo de la aldea vikinga…",
+    "interIsland.welcome.astana": "Bienvenido a la Capital",
+    "interIsland.welcome.basalt-stronghold":
+      "Bienvenido a la Fortaleza de Basalto",
+    "interIsland.welcome.grand-terminal": "Bienvenido a la Gran Terminal",
+    "interIsland.welcome.town": "Bienvenido a la ciudad",
+    "interIsland.welcome.viking-village": "Bienvenido a la aldea vikinga",
 
     "hint.spawn.eyebrow": "Primer paso",
     "hint.spawn.title": "Mira a tu alrededor. Prueba todas las herramientas.",
@@ -499,6 +547,9 @@ export const ui = {
     "announce.weaponLauncher": "Гранатомёт на плече.",
     "announce.weaponRocket": "Ракета готова.",
     "announce.weaponMg": "Пулемёт разогрет.",
+    "announce.interIslandRulesKicker": "Правила рейса",
+    "announce.interIslandWeaponBlocked":
+      "Оружие не разрешено использовать на межостровных рейсах.",
     "announce.timeKicker": "Время суток",
     "announce.timeDawn": "Небо ещё не определилось.",
     "announce.timeMorning": "День уже набрал ход.",
@@ -580,7 +631,31 @@ export const ui = {
     "controls.fly": "Режим полёта",
     "controls.telemetry": "Телеметрия",
     "controls.jump": "Прыжок",
+    "controls.chooseAction": "Выбрать действие",
     "controls.reset": "Заново",
+
+    "hint.destination.eyebrow": "Управление рейсом",
+    "hint.destination.title": "Что делаем дальше?",
+    "destination.town": "Лететь в город",
+    "destination.vikingVillage": "Лететь в деревню",
+    "interIsland.enteringAirspace.astana":
+      "Входим в воздушное пространство Столицы…",
+    "interIsland.enteringAirspace.basalt-stronghold":
+      "Входим в воздушное пространство Базальтовой крепости…",
+    "interIsland.enteringAirspace.grand-terminal":
+      "Входим в воздушное пространство Большого вокзала…",
+    "interIsland.enteringAirspace.town":
+      "Входим в воздушное пространство города…",
+    "interIsland.enteringAirspace.viking-village":
+      "Входим в воздушное пространство деревни викингов…",
+    "interIsland.welcome.astana": "Добро пожаловать в Столицу",
+    "interIsland.welcome.basalt-stronghold":
+      "Добро пожаловать в Базальтовую крепость",
+    "interIsland.welcome.grand-terminal":
+      "Добро пожаловать на Большой вокзал",
+    "interIsland.welcome.town": "Добро пожаловать в город",
+    "interIsland.welcome.viking-village":
+      "Добро пожаловать в деревню викингов",
 
     "hint.spawn.eyebrow": "Первый шаг",
     "hint.spawn.title": "Осмотрись. Попробуй весь инвентарь.",
@@ -665,6 +740,7 @@ export interface SceneCopy {
   readonly heading: string;
   readonly ready: string;
   readonly loading: string;
+  readonly startTitle?: string;
   readonly description: string;
   readonly enter: string;
   readonly returnToGame: string;
@@ -674,6 +750,47 @@ export interface SceneCopy {
 // Per-scene HUD copy, keyed by the scene id. In-world signs stay in the scene
 // files; this is the overlay text only.
 export const sceneCopy: Record<string, Record<Language, SceneCopy>> = {
+  astana: {
+    en: {
+      status: "Make a Mess / The Capital",
+      eyebrow: "Heart of the Great Steppe",
+      heading: "Where roads meet.",
+      ready: "The Capital is awake",
+      loading: "Tracing the roads…",
+      startTitle: "Welcome to the Capital island.",
+      description:
+        "The heart of the Great Steppe. Here the ancient Silk Road meets the new one, East meets West, and memory meets the future. The island connects cultures, roads and worlds.",
+      enter: "Enter the Capital",
+      returnToGame: "Return to the island",
+      reset: "Begin again",
+    },
+    es: {
+      status: "Make a Mess / The Capital",
+      eyebrow: "Corazón de la Gran Estepa",
+      heading: "Donde se cruzan los caminos.",
+      ready: "La Capital está despierta",
+      loading: "Trazando los caminos…",
+      startTitle: "Bienvenido a la isla Capital.",
+      description:
+        "El corazón de la Gran Estepa. Aquí la antigua Ruta de la Seda se encuentra con la nueva, Oriente con Occidente y la memoria con el futuro. La isla conecta culturas, caminos y mundos.",
+      enter: "Entrar en la Capital",
+      returnToGame: "Volver a la isla",
+      reset: "Empezar de nuevo",
+    },
+    ru: {
+      status: "Make a Mess / The Capital",
+      eyebrow: "Сердце Великой степи",
+      heading: "Место встречи дорог.",
+      ready: "Столица не спит",
+      loading: "Соединяем дороги…",
+      startTitle: "Добро пожаловать на остров-столицу.",
+      description:
+        "Сердце Великой степи. Здесь древний Шёлковый путь встречается с новым, Восток — с Западом, память — с будущим. Остров соединяет культуры, дороги и миры.",
+      enter: "Войти в Столицу",
+      returnToGame: "Вернуться на остров",
+      reset: "Начать заново",
+    },
+  },
   "open-house": {
     en: {
       status: "Make a Mess / 004",

@@ -11,6 +11,10 @@ import type { MutableGroup } from "./astanaAuthoring.ts";
 import { orient, primitive } from "./astanaAuthoring.ts";
 import { NUR_ALEM_CENTRE } from "./astanaLayout.ts";
 import { groundUnder } from "./astanaShell.ts";
+import {
+  ASTANA_LANDMARK_LIGHT_PRIORITY,
+  ASTANA_LANDMARK_LOCAL_POOL_CAPACITY,
+} from "./astanaLighting.ts";
 
 export const NUR_ALEM_REAL_SPHERE_DIAMETER = 80;
 export const NUR_ALEM_REAL_HEIGHT = 100;
@@ -579,8 +583,8 @@ function createLighting(target: MutableGroup): void {
             intensity: 28 - level * 2,
             position: [0, 0, 0],
             dayIntensityFactor: 0,
-            poolPriority: 25,
-            localPoolCapacity: 12,
+            poolPriority: ASTANA_LANDMARK_LIGHT_PRIORITY,
+            localPoolCapacity: ASTANA_LANDMARK_LOCAL_POOL_CAPACITY,
             poolGroupId: NUR_ALEM_LIGHT_GROUP,
             transition: { fadeInSeconds: 2.4, fadeOutSeconds: 2 },
           },

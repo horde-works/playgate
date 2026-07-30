@@ -11,6 +11,11 @@ import type { MutableGroup } from "./astanaAuthoring.ts";
 import { orient, primitive } from "./astanaAuthoring.ts";
 import { ARCH_CENTRE, ARCH_YAW } from "./astanaLayout.ts";
 import { groundUnder } from "./astanaShell.ts";
+import {
+  ASTANA_LANDMARK_LIGHT_PRIORITY,
+  ASTANA_LANDMARK_LOCAL_POOL_CAPACITY,
+  ASTANA_LANDMARK_MIN_LIGHT_DISTANCE,
+} from "./astanaLighting.ts";
 
 export const ARCH_REAL_HEIGHT = 20;
 export const ARCH_REAL_WIDTH = 13;
@@ -454,12 +459,12 @@ function createLighting(target: MutableGroup): void {
           volume: 0.001,
           light: {
             color: "#ffd2a3",
-            distance: 22,
+            distance: ASTANA_LANDMARK_MIN_LIGHT_DISTANCE,
             intensity: 12,
             position: [0, 3.4, facade * 0.35],
             dayIntensityFactor: 0,
-            poolPriority: 22,
-            localPoolCapacity: 4,
+            poolPriority: ASTANA_LANDMARK_LIGHT_PRIORITY,
+            localPoolCapacity: ASTANA_LANDMARK_LOCAL_POOL_CAPACITY,
             poolGroupId: ARCH_LIGHT_GROUP,
             transition: { fadeInSeconds: 1.8, fadeOutSeconds: 1.5 },
           },

@@ -11,6 +11,12 @@ import type { MutableGroup } from "./astanaAuthoring.ts";
 import { groundSeatBox, orient, primitive } from "./astanaAuthoring.ts";
 import { OPERA_CENTRE, OPERA_YAW } from "./astanaLayout.ts";
 import { groundUnder } from "./astanaShell.ts";
+import {
+  ASTANA_LANDMARK_LIGHT_PRIORITY,
+  ASTANA_LANDMARK_LOCAL_POOL_CAPACITY,
+  ASTANA_LANDMARK_MIN_LIGHT_DISTANCE,
+  ASTANA_OPERA_LIGHT_GROUP,
+} from "./astanaLighting.ts";
 
 export const OPERA_WIDTH = 24;
 export const OPERA_DEPTH = 16;
@@ -31,7 +37,6 @@ const BASE_Y = groundUnder(OPERA_CENTRE[0], OPERA_CENTRE[1]).top;
 const PLINTH_TOP = 0.46;
 const FRONT_Z = OPERA_DEPTH / 2;
 const PEDIMENT_BASE = 7.12;
-const OPERA_LIGHT_GROUP = "astana:opera:facade";
 
 function world(x: number, y: number, z: number): SceneVector3 {
   const yaw = -OPERA_YAW;
@@ -509,13 +514,13 @@ function createLighting(target: MutableGroup): void {
         volume: 0.001,
         light: {
           color: "#ffd2a1",
-          distance: 25,
+          distance: ASTANA_LANDMARK_MIN_LIGHT_DISTANCE,
           intensity: 14,
           position: [0, 3.4, -0.25],
           dayIntensityFactor: 0,
-          poolPriority: 24,
-          localPoolCapacity: 4,
-          poolGroupId: OPERA_LIGHT_GROUP,
+          poolPriority: ASTANA_LANDMARK_LIGHT_PRIORITY,
+          localPoolCapacity: ASTANA_LANDMARK_LOCAL_POOL_CAPACITY,
+          poolGroupId: ASTANA_OPERA_LIGHT_GROUP,
           transition: { fadeInSeconds: 2, fadeOutSeconds: 1.6 },
         },
       });
@@ -528,13 +533,13 @@ function createLighting(target: MutableGroup): void {
         volume: 0.001,
         light: {
           color: "#ffc78f",
-          distance: 16,
+          distance: ASTANA_LANDMARK_MIN_LIGHT_DISTANCE,
           intensity: 11,
           position: [0, 0, 0.6],
           dayIntensityFactor: 0,
-          poolPriority: 23,
-          localPoolCapacity: 3,
-          poolGroupId: "astana:opera:lobby",
+          poolPriority: ASTANA_LANDMARK_LIGHT_PRIORITY,
+          localPoolCapacity: ASTANA_LANDMARK_LOCAL_POOL_CAPACITY,
+          poolGroupId: ASTANA_OPERA_LIGHT_GROUP,
           transition: { fadeInSeconds: 1.7, fadeOutSeconds: 1.4 },
         },
       });

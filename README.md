@@ -11,6 +11,7 @@ map-authoring model and the internationalisation layer — is documented in
 ## Prerequisites
 
 - Node.js `>=22.13.0`
+- Firebase CLI (only for `npm run deploy:firebase`)
 
 ## Local development
 
@@ -23,8 +24,8 @@ npm run build
 ## Firebase Hosting
 
 The repository is linked to the `playgate-handmade-games` Firebase project.
-Firebase uses a separate static export, so the existing local Vinext workflow
-stays unchanged.
+Local development and production verification use Next.js directly. Firebase
+uses a separate static export.
 
 ```bash
 npm run build:firebase

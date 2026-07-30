@@ -90,6 +90,16 @@ export interface PlugSlideDoorPolicy {
   readonly plugShare: number;
 }
 
+export interface TailRampPolicy {
+  readonly doorId: string;
+  /** Signed rotation from the sealed tail to the deployed loading slope. */
+  readonly openAngle: number;
+  /** Ramp-only hinge axis; ordinary doors always keep their vertical axis. */
+  readonly rotationAxis: readonly [number, number, number];
+}
+
+export const STANDARD_DOOR_ROTATION_AXIS = [0, 1, 0] as const;
+
 /**
  * Транспортная дверь сначала выходит из проёма НА СЕБЯ на свою толщину, а
  * потом уезжает вдоль борта. Закрывается тем же порядком назад. Направление
@@ -104,6 +114,25 @@ export function plugSlideDoorPolicy(groupKey: string): PlugSlideDoorPolicy | nul
     return { doorId: groupKey, plugDepth: 0.22, travel: 1.42, plugShare: 0.34 };
   }
   return null;
+}
+
+/** The sky ram's stern armour doubles as a loading ramp while docked. */
+export function tailRampPolicy(groupKey: string): TailRampPolicy | null {
+  if (groupKey === "stronghold:sky-ram:gallery:ramp") {
+    return {
+      doorId: groupKey,
+      openAngle: -1.16,
+      rotationAxis: [1, 0, 0],
+    };
+  }
+  return null;
+}
+
+/** A cargo ramp may pitch; every other hinged leaf remains a yawing door. */
+export function hingedLeafRotationAxis(
+  groupKey: string,
+): readonly [number, number, number] {
+  return tailRampPolicy(groupKey)?.rotationAxis ?? STANDARD_DOOR_ROTATION_AXIS;
 }
 
 export function hingedDoorGroupKey(

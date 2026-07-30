@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   horizontalGateDistance,
+  hingedLeafRotationAxis,
   inwardDoorSwingSign,
   VIKING_DOOR_APPROACH_RADIUS,
   VIKING_DOOR_RELEASE_RADIUS,
@@ -65,6 +66,25 @@ test("a house door swings inward regardless of approach side", () => {
     inwardDoorSwingSign([0, 1.2, 0], [0, 1.2, -1], [1, 0, 0]),
     -1,
     "side door moves toward -X",
+  );
+});
+
+test("cargo-ramp pitch never changes the vertical axis of ordinary doors", () => {
+  for (const ordinaryDoor of [
+    "hru:entry:door:2",
+    "hru:flatdoors:0:0",
+    "viking-village:buildings:weaver:door",
+    "door:front",
+  ]) {
+    assert.deepEqual(
+      hingedLeafRotationAxis(ordinaryDoor),
+      [0, 1, 0],
+      ordinaryDoor,
+    );
+  }
+  assert.deepEqual(
+    hingedLeafRotationAxis("stronghold:sky-ram:gallery:ramp"),
+    [1, 0, 0],
   );
 });
 

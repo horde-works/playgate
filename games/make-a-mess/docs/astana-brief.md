@@ -4,8 +4,10 @@
 детализацию: то, чего нет здесь, не будет построено, а то, что здесь есть,
 проверяется тестом-детектором (§8).
 
-Правила стройки — `.claude/skills/world-building/SKILL.md`, транспорт —
-`transport-lessons.md`. Здесь только специфика Астаны.
+Правила оболочки мира — `.claude/skills/world-building/SKILL.md`; референсной
+архитектуры, остекления, света и визуальной приёмки —
+`.claude/skills/architectural-scene-authoring/SKILL.md` и `geometry-lessons.md`;
+транспорта — `transport-lessons.md`. Здесь только специфика Астаны.
 
 Мир **неразрушимый** (этап A2): это дом, а не полигон.
 

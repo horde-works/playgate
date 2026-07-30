@@ -12,12 +12,14 @@ import type { MutableGroup } from "./astanaAuthoring.ts";
 import { orient, primitive } from "./astanaAuthoring.ts";
 import { astanaWays, type AstanaWay, type PlanPoint } from "./astanaPlan.ts";
 import { groundUnder } from "./astanaShell.ts";
+import { ASTANA_LANDMARK_LIGHT_PRIORITY } from "./astanaLighting.ts";
 
 export const ATYRAU_FRAME_WHITE = "#e6e8e7";
 const FRAME_SHADE = "#c8cdcf";
 const ALUMINIUM_WHITE = "#f0f1ef";
 const ALUMINIUM_SILVER = "#c3c7c8";
-const DECK_GREY = "#bdbab1";
+const DECK_WHITE = "#ffffff";
+const DECK_GREY = "#92999b";
 const BIKE_RED = "#a34a48";
 const CONCRETE = "#9fa4a8";
 const LIGHT_BAFFLE = "#747a7d";
@@ -167,6 +169,20 @@ function deckHump(t: number): number {
 function smoothstep(t: number): number {
   const value = Math.max(0, Math.min(1, t));
   return value * value * (3 - 2 * value);
+}
+
+function blendColour(from: string, to: string, amount: number): string {
+  const channel = (value: string, offset: number): number =>
+    Number.parseInt(value.slice(offset, offset + 2), 16);
+  const blended = [1, 3, 5].map((offset) => Math.round(
+    channel(from, offset) + (channel(to, offset) - channel(from, offset)) * amount,
+  ));
+  return `#${blended.map((value) => value.toString(16).padStart(2, "0")).join("")}`;
+}
+
+/** Белый конец смотрит к Хан Шатыру, серый — к внешнему кольцу ЛРТ. */
+export function atyrauDeckColourAt(fraction: number): string {
+  return blendColour(DECK_WHITE, DECK_GREY, smoothstep(fraction));
 }
 
 function nodeKey([side, station, level]: AtyrauNodeRef): string {
@@ -476,7 +492,8 @@ function createDeckAndRailings(
       (from.point[1] + to.point[1]) / 2,
     ];
     primitive(roads, `atyrau:deck-finish:${index}`, "stone", "panel",
-      centre, [length, 0.024, halfWidth * 2], DECK_GREY,
+      centre, [length, 0.024, halfWidth * 2],
+      atyrauDeckColourAt(distance / measure.total),
       {
         rotation: [0, yaw, 0],
         textureProfile: "city-gray-pavers",
@@ -662,7 +679,7 @@ function createArchitecturalLighting(
             intensity: 4.2,
             position: [0, 0.62, 0],
             dayIntensityFactor: 0,
-            poolPriority: 8,
+            poolPriority: ASTANA_LANDMARK_LIGHT_PRIORITY,
             localPoolCapacity: ATYRAU_LIGHT_COUNT,
             poolGroupId: ATYRAU_LIGHT_GROUP,
             transition: ATYRAU_LIGHT_TRANSITION,

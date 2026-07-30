@@ -47,18 +47,24 @@ function authoredSectionOrigin(index: number): SceneVector3 {
 const TRAIN_CONTACT_MEMBER_MATCHES = [
   ":underframe:",
   ":floor:",
+  ":lower-side:",
   ":waist:",
   ":cant:",
   ":pillar:",
+  ":window-band:",
   ":window:",
   ":door-panel:",
   ":door-glass:",
   ":roof:",
   ":shoulder:",
   ":gangway-floor:",
-  ":cab:shell:0:",
-  ":cab:shell:4:",
-  ":cab:shell:9:",
+  ":cab:lower-shell:",
+  ":cab:upper-shell:",
+  ":cab:front-mask",
+  ":cab:chin",
+  ":cab:front-apron",
+  ":cab:apron-wrap:",
+  ":cab:windscreen",
 ] as const;
 
 const DEFINITIONS: readonly CompoundKinematicClusterDefinition[] = Array.from(

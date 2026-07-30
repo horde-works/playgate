@@ -9,6 +9,11 @@
 import type { MutableGroup } from "./astanaAuthoring.ts";
 import { groundSeatBox, orient, primitive } from "./astanaAuthoring.ts";
 import { groundUnder } from "./astanaShell.ts";
+import {
+  ASTANA_LANDMARK_LIGHT_PRIORITY,
+  ASTANA_LANDMARK_LOCAL_POOL_CAPACITY,
+  ASTANA_LANDMARK_MIN_LIGHT_DISTANCE,
+} from "./astanaLighting.ts";
 import type { SceneVector3 } from "../../../game/destructionScene.ts";
 
 /** Island scale: the complete monument, including the needle. */
@@ -279,12 +284,12 @@ export function createBaiterek(
         sideAttachmentReach: 0.35,
         light: {
           color: BAITEREK_SHAFT_LIGHT_COLOR,
-          distance: 34,
+          distance: 36,
           intensity: 13,
           position: [0, 0.2, 0],
           dayIntensityFactor: 0.06,
-          poolPriority: 10,
-          localPoolCapacity: 12,
+          poolPriority: ASTANA_LANDMARK_LIGHT_PRIORITY,
+          localPoolCapacity: ASTANA_LANDMARK_LOCAL_POOL_CAPACITY,
           poolGroupId: BAITEREK_LIGHT_GROUP,
           transition: BAITEREK_LIGHT_TRANSITION,
         },
@@ -763,12 +768,12 @@ export function createBaiterek(
         sideAttachmentReach: 0.4,
         light: {
           color: BAITEREK_CROWN_LIGHT_COLOR,
-          distance: 18,
+          distance: ASTANA_LANDMARK_MIN_LIGHT_DISTANCE,
           intensity: 12,
           position: [0, 0.04, 0],
           dayIntensityFactor: 0.06,
-          poolPriority: 10,
-          localPoolCapacity: 12,
+          poolPriority: ASTANA_LANDMARK_LIGHT_PRIORITY,
+          localPoolCapacity: ASTANA_LANDMARK_LOCAL_POOL_CAPACITY,
           poolGroupId: BAITEREK_LIGHT_GROUP,
           transition: BAITEREK_LIGHT_TRANSITION,
         },

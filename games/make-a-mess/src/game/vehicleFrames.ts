@@ -12,6 +12,14 @@ import {
   type SkyTrainFlightKind,
   type VehicleRoutePlan,
 } from "./skyTrainRoutes.ts";
+import {
+  BASALT_SKY_RAM_CLUSTER_ID,
+  BASALT_SKY_RAM_LIFT_CENTRE,
+  BASALT_SKY_RAM_MOORING_POINT,
+  BASALT_SKY_RAM_NOSE,
+  BASALT_SKY_RAM_ORIGIN,
+  basaltSkyRamPoint,
+} from "./basaltSkyRam.ts";
 
 // Kept as re-exports for callers while the authored routes themselves live in
 // their own artifact module.
@@ -372,6 +380,37 @@ function townAirshipHullProbes(): readonly HullProbe[] {
   return probes;
 }
 
+function basaltSkyRamHullProbes(): readonly HullProbe[] {
+  const probes: HullProbe[] = [
+    // The cast point sits inside its berth jaw. Its upper brace is the first
+    // forward obstacle probe, so the intended socket is not rejected.
+    { point: basaltSkyRamPoint(9.35, 0, 6.55), normal: [0, 0, 1] },
+    { point: basaltSkyRamPoint(-17.2, 0, 12.8), normal: [0, 0, -1] },
+  ];
+  for (const [a, lateral, top, bottom] of [
+    [-11.2, 3.15, 16.1, 9.55],
+    [-5.2, 3.92, 16.75, 9.0],
+    [0.5, 4.02, 16.85, 8.98],
+    [6.1, 3.68, 16.75, 9.18],
+  ] as const) {
+    probes.push(
+      { point: basaltSkyRamPoint(a, -lateral, 12.8), normal: [-1, 0, 0] },
+      { point: basaltSkyRamPoint(a, lateral, 12.8), normal: [1, 0, 0] },
+      { point: basaltSkyRamPoint(a, 0, top), normal: [0, 1, 0] },
+      { point: basaltSkyRamPoint(a, 0, bottom), normal: [0, -1, 0] },
+    );
+  }
+  for (const side of [-1, 1] as const) {
+    for (const a of [-5.6, 0, 5.4]) {
+      probes.push({
+        point: basaltSkyRamPoint(a, side * 1.98, 6.15),
+        normal: [side, 0, 0],
+      });
+    }
+  }
+  return probes;
+}
+
 export const vehicleFrames: readonly VehicleFrameDefinition[] = [
   {
     id: "sky-train",
@@ -464,6 +503,29 @@ export const vehicleFrames: readonly VehicleFrameDefinition[] = [
     ],
     supportFriction: { staticCoefficient: 1.18, dynamicCoefficient: 1.05 },
     hullProbes: townAirshipHullProbes(),
+  },
+  {
+    id: "basalt-sky-ram",
+    clusterId: BASALT_SKY_RAM_CLUSTER_ID,
+    telemetryLabel: "SKY RAM 01",
+    independentMemberMatches: [":gallery:ramp:"],
+    origin: BASALT_SKY_RAM_ORIGIN,
+    nose: BASALT_SKY_RAM_NOSE,
+    mooringPoint: BASALT_SKY_RAM_MOORING_POINT,
+    liftCentre: BASALT_SKY_RAM_LIFT_CENTRE,
+    envelopeMatch: ":skin:",
+    supports: [
+      basaltSkyRamPoint(-5.65, -1.1, 4.23),
+      basaltSkyRamPoint(-5.65, 1.1, 4.23),
+      basaltSkyRamPoint(-3.55, -1.1, 4.23),
+      basaltSkyRamPoint(-3.55, 1.1, 4.23),
+      basaltSkyRamPoint(3.15, -1.1, 4.23),
+      basaltSkyRamPoint(3.15, 1.1, 4.23),
+      basaltSkyRamPoint(5.25, -1.1, 4.23),
+      basaltSkyRamPoint(5.25, 1.1, 4.23),
+    ],
+    supportFriction: { staticCoefficient: 0.96, dynamicCoefficient: 0.78 },
+    hullProbes: basaltSkyRamHullProbes(),
   },
 ];
 
@@ -618,6 +680,19 @@ export function advanceDrivePhase(
   seconds: number,
 ): number {
   return phase + phaseSpeed * deliveredThrottle * seconds;
+}
+
+/** The berth run-up follows the first leg: a backing route must spool astern. */
+export function vehicleSpoolCommand(
+  plan: VehicleRoutePlan,
+  elapsedSeconds: number,
+  spoolSeconds: number,
+): number {
+  const direction = plan.travelDirection?.(0) ?? 1;
+  return direction * 0.42 * Math.min(
+    1,
+    Math.max(0, elapsedSeconds) / Math.max(0.001, spoolSeconds),
+  );
 }
 
 /**
@@ -910,6 +985,40 @@ export function advanceVehicleRouteProgress(
     }
   }
   return Math.max(progress, nearest);
+}
+
+/**
+ * Reacquires the nearest feasible part of a route after a disturbance hold.
+ * Unlike ordinary progress this may move a little backwards: a displaced
+ * craft must fly the line it can actually reach, not chase a stale percentage.
+ * The bounded window prevents one coincident loop crossing from skipping an
+ * entire circuit.
+ */
+export function rejoinVehicleRouteProgress(
+  plan: VehicleRoutePlan,
+  progress: number,
+  centre: SceneVector3,
+  backwardWindow = 0.04,
+  forwardWindow = 0.1,
+): number {
+  const from = Math.max(0, progress - Math.max(0, backwardWindow));
+  const to = Math.min(1, progress + Math.max(0, forwardWindow));
+  let nearest = progress;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (let sample = 0; sample <= 64; sample += 1) {
+    const candidate = from + (to - from) * sample / 64;
+    const point = plan.point(candidate);
+    const distance = Math.hypot(
+      point[0] - centre[0],
+      point[1] - centre[1],
+      point[2] - centre[2],
+    );
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      nearest = candidate;
+    }
+  }
+  return nearest;
 }
 
 /** Desired horizontal nose direction at a route position, including sternway. */
@@ -1462,7 +1571,7 @@ export function isDockedPose(
   angularVelocity: SceneVector3,
   nose: SceneVector3 = [-1, 0, 0],
   approach: ApproachGate = SKY_TRAIN_APPROACH,
-  tolerance = SKY_TRAIN_DOCKING,
+  tolerance: DockingTolerance = SKY_TRAIN_DOCKING,
 ): boolean {
   const forward = rotateVector(orientation, nose);
   const up = rotateVector(orientation, [0, 1, 0]);

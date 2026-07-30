@@ -4,6 +4,12 @@ Viking Village is the pilot for a data-first map pipeline. The three older
 maps remain on their current builders until the pilot proves the model in
 play; there is no risky all-at-once migration.
 
+For reference-faithful physical architecture, human access, materials,
+lighting and visual acceptance, use
+[`games/make-a-mess/docs/geometry-lessons.md`](../games/make-a-mess/docs/geometry-lessons.md)
+and the project skill
+`.claude/skills/architectural-scene-authoring/SKILL.md`.
+
 ## Flow
 
 ```text

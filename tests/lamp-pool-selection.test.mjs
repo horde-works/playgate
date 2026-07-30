@@ -4,8 +4,12 @@ import {
   selectGroupedLampCandidates,
 } from "../games/make-a-mess/src/game/lampPoolSelection.ts";
 
-const candidate = (id, rank, poolGroupId) => ({
-  lamp: { id, ...(poolGroupId ? { poolGroupId } : {}) },
+const candidate = (id, rank, poolGroupId, poolPriority) => ({
+  lamp: {
+    id,
+    ...(poolGroupId ? { poolGroupId } : {}),
+    ...(poolPriority ? { poolPriority } : {}),
+  },
   rank,
 });
 
@@ -25,4 +29,24 @@ test("a group is skipped instead of switching on only its nearest lamps", () => 
     candidate(`cabin:${index}`, index + 1, "cabin"));
   const selected = selectGroupedLampCandidates(cabin, 7);
   assert.deepEqual(selected, []);
+});
+
+test("persistent skyline groups each keep one source before nearby detail fills the pool", () => {
+  const groups = ["baiterek", "khan", "pyramid", "nur-alem", "opera", "arch", "atyrau"]
+    .map((group, groupIndex) => Array.from({ length: group === "arch" ? 4 : 12 },
+      (_, index) => candidate(
+        `${group}:${index}`,
+        groupIndex * 10 + index,
+        group,
+        32,
+      )))
+    .flat();
+  const selected = selectGroupedLampCandidates(groups, 16);
+  const selectedGroups = new Set(selected.map((entry) => entry.lamp.poolGroupId));
+  assert.deepEqual(selectedGroups, new Set([
+    "baiterek", "khan", "pyramid", "nur-alem", "opera", "arch", "atyrau",
+  ]));
+  assert.equal(selected.length, 16);
+  assert.equal(selected.filter((entry) => entry.lamp.poolGroupId === "baiterek").length, 10,
+    "оставшиеся места должны усиливать ближайшую доминанту");
 });

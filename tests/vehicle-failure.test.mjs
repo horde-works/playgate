@@ -27,6 +27,7 @@ import {
   createVehicleRecoveryLifecycle,
   VEHICLE_LANDING_STABLE_SECONDS,
   VEHICLE_REBUILD_DELAY_SECONDS,
+  vehicleDisturbanceRecoveryFeasible,
   vehicleFailureDisposition,
 } from "../games/make-a-mess/src/game/vehicleFailure.ts";
 
@@ -349,6 +350,83 @@ test("a required engine failure is reported even after commanded speed falls to 
   assert.equal(failure, "controlMismatch");
 });
 
+test("a feasible upset suspends failure timers while an unrecoverable one still fails", () => {
+  let watchdog = createVehicleFailureWatchdog(0.4);
+  for (let index = 0; index < 80; index += 1) {
+    const result = advanceVehicleFailureWatchdog(
+      watchdog,
+      observation({
+        pitch: 0.9,
+        crossTrackError: 40,
+        progress: 0.4,
+        recoveringDisturbance: true,
+      }),
+    );
+    watchdog = result.state;
+    assert.equal(result.failure, null);
+  }
+  assert.equal(watchdog.attitudeSeconds, 0);
+  assert.equal(watchdog.routeSeconds, 0);
+  assert.equal(watchdog.stalledSeconds, 0);
+
+  let failure = null;
+  for (let index = 0; index < 31; index += 1) {
+    const result = advanceVehicleFailureWatchdog(
+      watchdog,
+      observation({
+        pitch: 0.9,
+        progress: 0.4,
+        recoveringDisturbance: false,
+      }),
+    );
+    watchdog = result.state;
+    failure = result.failure;
+  }
+  assert.equal(failure, "criticalAttitude");
+});
+
+test("recovery feasibility predicts stopping authority, not deviation alone", () => {
+  const tossedButHealthy = {
+    pitch: 0.7,
+    roll: 0.12,
+    tiltAngularSpeed: 0.22,
+    rightingAngularAcceleration: 0.18,
+    liftToWeight: 1.12,
+    requiredControlAvailable: true,
+    deliveredControlFraction: 1,
+    relativeAltitude: 10,
+    verticalSpeed: 0,
+    minimumRelativeAltitude: -20,
+  };
+  assert.equal(
+    vehicleDisturbanceRecoveryFeasible(tossedButHealthy),
+    true,
+  );
+  assert.equal(
+    vehicleDisturbanceRecoveryFeasible({
+      ...tossedButHealthy,
+      requiredControlAvailable: false,
+    }),
+    false,
+  );
+  assert.equal(
+    vehicleDisturbanceRecoveryFeasible({
+      ...tossedButHealthy,
+      pitch: 1.48,
+      tiltAngularSpeed: 0.7,
+    }),
+    false,
+  );
+  assert.equal(
+    vehicleDisturbanceRecoveryFeasible({
+      ...tossedButHealthy,
+      relativeAltitude: -15,
+      verticalSpeed: -6,
+    }),
+    false,
+  );
+});
+
 test("arrival times out only after ten seconds inside the docking capture", () => {
   let watchdog = createVehicleFailureWatchdog(0.99);
   let failure = null;
@@ -365,6 +443,39 @@ test("arrival times out only after ten seconds inside the docking capture", () =
     failure = result.failure;
   }
   assert.equal(failure, "dockingTimeout");
+});
+
+test("entering the docking capture hands the final manoeuvre over to its own timer", () => {
+  let watchdog = createVehicleFailureWatchdog(0.99);
+  for (let index = 0; index < 340; index += 1) {
+    const result = advanceVehicleFailureWatchdog(
+      watchdog,
+      observation({
+        progress: 1,
+        requestedControlEffort: 0.1,
+        inFinalManeuver: true,
+      }),
+    );
+    watchdog = result.state;
+    assert.equal(result.failure, null);
+  }
+  assert.ok(watchdog.finalManeuverSeconds > 33.9);
+
+  for (let index = 0; index < 90; index += 1) {
+    const result = advanceVehicleFailureWatchdog(
+      watchdog,
+      observation({
+        progress: 1,
+        requestedControlEffort: 0.1,
+        inFinalManeuver: true,
+        inDockingCapture: true,
+      }),
+    );
+    watchdog = result.state;
+    assert.equal(result.failure, null);
+  }
+  assert.equal(watchdog.finalManeuverSeconds, 0);
+  assert.ok(watchdog.dockingSeconds > 8.9);
 });
 
 test("the vertical landing manoeuvre is not mistaken for a stalled route", () => {
@@ -456,15 +567,43 @@ test("recovery follows capability and geography instead of vehicle names", () =>
   assert.equal(vehicleFailureDisposition(engineGone, true), "settleInPlace");
 });
 
-test("two failed approaches and non-finite physics fail immediately", () => {
+test("the third failed approach triggers the common fly-away replacement recovery", () => {
   const watchdog = createVehicleFailureWatchdog(0.7);
   assert.equal(
     advanceVehicleFailureWatchdog(
       watchdog,
       observation({ goArounds: 2 }),
     ).failure,
+    null,
+    "the second go-around was mistaken for the common three-attempt limit",
+  );
+  const failure = advanceVehicleFailureWatchdog(
+    watchdog,
+    observation({ goArounds: 3 }),
+  ).failure;
+  assert.equal(
+    failure,
     "goAroundLimit",
   );
+  const disposition = vehicleFailureDisposition({
+    structureFlightworthy: true,
+    liftToWeight: 1.08,
+    requiredActuatorFractions: [1, 1],
+  }, true);
+  assert.equal(disposition, "escapeRoute");
+  assert.deepEqual(
+    createVehicleRecoveryLifecycle(failure, disposition),
+    {
+      reason: "goAroundLimit",
+      disposition: "escapeRoute",
+      phase: "escape",
+      phaseSeconds: 0,
+    },
+  );
+});
+
+test("non-finite physics fails immediately", () => {
+  const watchdog = createVehicleFailureWatchdog(0.7);
   assert.equal(
     advanceVehicleFailureWatchdog(
       watchdog,

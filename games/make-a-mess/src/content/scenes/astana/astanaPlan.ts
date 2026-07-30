@@ -75,6 +75,118 @@ export const RING_PATH_LENGTH = (ARC_LENGTH + RING_STRAIGHT_LENGTH) * 4;
 const SEGMENT_LENGTH = ARC_LENGTH + RING_STRAIGHT_LENGTH;
 
 /**
+ * Пять с четвертью метров с каждой стороны геометрического стыка отданы
+ * переходной кривой. В середине платформы остаётся 41.5 м абсолютно прямого
+ * пути — на нём при остановке стоят все колёсные пары трёх секций.
+ */
+const RING_TRANSITION_TRIM = 5.25;
+
+function arcPoint(sector: number, distance: number): PlanPoint {
+  const angle = sector * QUARTER + RING_STRAIGHT_HALF_ANGLE
+    + distance / RING_RADIUS;
+  return ringPoint(angle);
+}
+
+function arcTangent(sector: number, distance: number): PlanPoint {
+  const angle = sector * QUARTER + RING_STRAIGHT_HALF_ANGLE
+    + distance / RING_RADIUS;
+  return [-Math.sin(angle), Math.cos(angle)];
+}
+
+function arcAcceleration(sector: number, distance: number): PlanPoint {
+  const angle = sector * QUARTER + RING_STRAIGHT_HALF_ANGLE
+    + distance / RING_RADIUS;
+  return [-Math.cos(angle) / RING_RADIUS, -Math.sin(angle) / RING_RADIUS];
+}
+
+function straightEnds(sector: number): readonly [PlanPoint, PlanPoint] {
+  const startAngle = sector * QUARTER + RING_STRAIGHT_HALF_ANGLE + ARC_SWEEP;
+  return [
+    ringPoint(startAngle),
+    ringPoint(startAngle + RING_STRAIGHT_HALF_ANGLE * 2),
+  ];
+}
+
+function straightPoint(sector: number, distance: number): PlanPoint {
+  const [start, end] = straightEnds(sector);
+  const amount = distance / RING_STRAIGHT_LENGTH;
+  return [
+    start[0] + (end[0] - start[0]) * amount,
+    start[1] + (end[1] - start[1]) * amount,
+  ];
+}
+
+function straightTangent(sector: number): PlanPoint {
+  const [start, end] = straightEnds(sector);
+  return [
+    (end[0] - start[0]) / RING_STRAIGHT_LENGTH,
+    (end[1] - start[1]) / RING_STRAIGHT_LENGTH,
+  ];
+}
+
+/**
+ * Quintic Hermite transition. Position, tangent and curvature agree with
+ * both adjoining rail geometries, so a section cannot acquire an angular
+ * step while its centre crosses the join.
+ */
+function transitionPoint(
+  amount: number,
+  from: PlanPoint,
+  to: PlanPoint,
+  fromTangent: PlanPoint,
+  toTangent: PlanPoint,
+  fromAcceleration: PlanPoint,
+  toAcceleration: PlanPoint,
+): PlanPoint {
+  const span = RING_TRANSITION_TRIM * 2;
+  const coordinate = (axis: 0 | 1): number => {
+    const c0 = from[axis];
+    const c1 = fromTangent[axis] * span;
+    const c2 = fromAcceleration[axis] * span * span / 2;
+    const displacement = to[axis] - c0 - c1 - c2;
+    const velocity = toTangent[axis] * span - c1 - 2 * c2;
+    const acceleration = toAcceleration[axis] * span * span - 2 * c2;
+    const c3 = 10 * displacement - 4 * velocity + acceleration / 2;
+    const c4 = -15 * displacement + 7 * velocity - acceleration;
+    const c5 = 6 * displacement - 3 * velocity + acceleration / 2;
+    return c0 + amount * (c1 + amount * (c2 + amount * (
+      c3 + amount * (c4 + amount * c5)
+    )));
+  };
+  return [coordinate(0), coordinate(1)];
+}
+
+function arcToStraight(sector: number, local: number): PlanPoint {
+  const amount = (local - (ARC_LENGTH - RING_TRANSITION_TRIM))
+    / (RING_TRANSITION_TRIM * 2);
+  return transitionPoint(
+    amount,
+    arcPoint(sector, ARC_LENGTH - RING_TRANSITION_TRIM),
+    straightPoint(sector, RING_TRANSITION_TRIM),
+    arcTangent(sector, ARC_LENGTH - RING_TRANSITION_TRIM),
+    straightTangent(sector),
+    arcAcceleration(sector, ARC_LENGTH - RING_TRANSITION_TRIM),
+    [0, 0],
+  );
+}
+
+function straightToArc(
+  straightSector: number,
+  arcSector: number,
+  amount: number,
+): PlanPoint {
+  return transitionPoint(
+    amount,
+    straightPoint(straightSector, RING_STRAIGHT_LENGTH - RING_TRANSITION_TRIM),
+    arcPoint(arcSector, RING_TRANSITION_TRIM),
+    straightTangent(straightSector),
+    arcTangent(arcSector, RING_TRANSITION_TRIM),
+    [0, 0],
+    arcAcceleration(arcSector, RING_TRANSITION_TRIM),
+  );
+}
+
+/**
  * Точка пути кольца по пройденному расстоянию. Отсчёт от середины восточной
  * вставки против часовой стрелки; каждый сектор — половина вставки, дуга,
  * половина следующей вставки.
@@ -87,19 +199,30 @@ export function ringPathPoint(distance: number): PlanPoint {
   s = (s + total - RING_STRAIGHT_LENGTH / 2) % total;
   const sector = Math.floor(s / SEGMENT_LENGTH);
   const local = s - sector * SEGMENT_LENGTH;
-  const sectorStart = sector * QUARTER + RING_STRAIGHT_HALF_ANGLE;
 
-  if (local <= ARC_LENGTH) {
-    return ringPoint(sectorStart + local / RING_RADIUS);
+  if (local < RING_TRANSITION_TRIM) {
+    const previous = (sector + 3) % 4;
+    return straightToArc(
+      previous,
+      sector,
+      (local + RING_TRANSITION_TRIM) / (RING_TRANSITION_TRIM * 2),
+    );
   }
-  // Прямая: хорда между концами соседних дуг.
-  const straightStart = ringPoint(sectorStart + ARC_SWEEP);
-  const straightEnd = ringPoint(sectorStart + ARC_SWEEP + RING_STRAIGHT_HALF_ANGLE * 2);
-  const t = (local - ARC_LENGTH) / RING_STRAIGHT_LENGTH;
-  return [
-    straightStart[0] + (straightEnd[0] - straightStart[0]) * t,
-    straightStart[1] + (straightEnd[1] - straightStart[1]) * t,
-  ];
+  if (local < ARC_LENGTH - RING_TRANSITION_TRIM) {
+    return arcPoint(sector, local);
+  }
+  if (local <= ARC_LENGTH + RING_TRANSITION_TRIM) {
+    return arcToStraight(sector, local);
+  }
+  if (local < SEGMENT_LENGTH - RING_TRANSITION_TRIM) {
+    return straightPoint(sector, local - ARC_LENGTH);
+  }
+  return straightToArc(
+    sector,
+    (sector + 1) % 4,
+    (local - (SEGMENT_LENGTH - RING_TRANSITION_TRIM))
+      / (RING_TRANSITION_TRIM * 2),
+  );
 }
 
 /** Расстояние вдоль пути до середины вставки, на которой стоит станция. */
@@ -188,7 +311,8 @@ export function onRingStraight(distance: number): boolean {
   const total = RING_PATH_LENGTH;
   const s = (((distance % total) + total) % total + total - RING_STRAIGHT_LENGTH / 2) % total;
   const local = s - Math.floor(s / SEGMENT_LENGTH) * SEGMENT_LENGTH;
-  return local > ARC_LENGTH;
+  return local > ARC_LENGTH + RING_TRANSITION_TRIM
+    && local < SEGMENT_LENGTH - RING_TRANSITION_TRIM;
 }
 
 export type WayKind =

@@ -12,10 +12,13 @@ import {
 } from "react";
 import {
   BoxGeometry,
+  BufferGeometry,
   Color,
   CylinderGeometry,
+  DoubleSide,
   DynamicDrawUsage,
   ExtrudeGeometry,
+  Float32BufferAttribute,
   InstancedBufferAttribute,
   InstancedMesh,
   Matrix4,
@@ -80,6 +83,48 @@ const UNIT_HEXAGONAL_SHEET = new ExtrudeGeometry(
   HEXAGONAL_SHEET_PROFILE,
   { depth: 1, steps: 1, bevelEnabled: false },
 ).translate(0, 0, -0.5);
+function surfacePolygonGeometry(
+  profile: NonNullable<BreakablePieceDefinition["visualProfile"]>,
+): ExtrudeGeometry {
+  if (profile.vertices.length < 3) {
+    throw new Error("A surface polygon needs at least three vertices");
+  }
+  const [[firstX, firstY], ...rest] = profile.vertices;
+  const shape = new Shape().moveTo(firstX, firstY);
+  for (const [x, y] of rest) {
+    shape.lineTo(x, y);
+  }
+  shape.closePath();
+  return new ExtrudeGeometry(shape, {
+    depth: 1,
+    steps: 1,
+    bevelEnabled: false,
+  }).translate(0, 0, -0.5);
+}
+function surfaceMeshGeometry(
+  profile: NonNullable<BreakablePieceDefinition["visualMesh"]>,
+): BufferGeometry {
+  if (profile.vertices.length < 3 || profile.indices.length < 3) {
+    throw new Error("A surface mesh needs vertices and triangle indices");
+  }
+  const geometry = new BufferGeometry();
+  geometry.setAttribute(
+    "position",
+    new Float32BufferAttribute(profile.vertices.flatMap((vertex) => [...vertex]), 3),
+  );
+  geometry.setAttribute(
+    "uv",
+    new Float32BufferAttribute(
+      profile.vertices.flatMap(([x, y]) => [x + 0.5, y + 0.5]),
+      2,
+    ),
+  );
+  geometry.setIndex([...profile.indices]);
+  geometry.computeVertexNormals();
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  return geometry;
+}
 const HIDDEN_MATRIX = new Matrix4().makeScale(0, 0, 0);
 const EMPTY_MUTABLE_PIECE_IDS: ReadonlySet<string> = new Set();
 
@@ -148,8 +193,12 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
     [batch.pieces],
   );
   const geometry = useMemo(() => {
-    const next = (
-      batch.geometryKind === "cylinder"
+    const source = batch.geometryKind === "surfaceMesh"
+      ? surfaceMeshGeometry(batch.visualMesh!)
+      : batch.geometryKind === "surfacePolygon"
+      ? surfacePolygonGeometry(batch.visualProfile!)
+      : (
+        batch.geometryKind === "cylinder"
         ? UNIT_CYLINDER
         : batch.geometryKind === "sphere"
           ? UNIT_SPHERE
@@ -158,7 +207,10 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
           : batch.geometryKind === "hexagonalSheet"
             ? UNIT_HEXAGONAL_SHEET
             : UNIT_BOX
-    ).clone();
+      );
+    const next = batch.geometryKind === "surfacePolygon" || batch.geometryKind === "surfaceMesh"
+      ? source
+      : source.clone();
     // xyz = world anchor, w = organic weathering amount (packed to avoid a
     // separate instanced attribute — WebGL's attribute count is nearly full).
     const anchors = new Float32Array(batch.pieces.length * 4);
@@ -269,14 +321,26 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
     });
   }, [geometry, indexById, lighting]);
   const material = useMemo(
-    () =>
-      getPieceMaterial(
+    () => {
+      const base = getPieceMaterial(
         batch.material,
         batch.materialColor,
         batch.textureProfile,
-      ),
-    [batch.material, batch.materialColor, batch.textureProfile],
+      );
+      if (
+        batch.geometryKind !== "surfaceMesh" ||
+        batch.visualMesh?.doubleSided === false
+      ) return base;
+      const curvedShell = base.clone();
+      curvedShell.side = DoubleSide;
+      return curvedShell;
+    },
+    [batch.geometryKind, batch.material, batch.materialColor, batch.textureProfile],
   );
+  useEffect(() => {
+    if (batch.geometryKind !== "surfaceMesh") return;
+    return () => material.dispose();
+  }, [batch.geometryKind, material]);
   const instanceIds = useMemo(
     () => batch.pieces.map((piece) => piece.id),
     [batch.pieces],

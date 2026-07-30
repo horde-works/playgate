@@ -106,6 +106,24 @@ export type BreakableShape =
 
 export type SupportMode = "stack" | "mounted" | "linked";
 export type SceneVector3 = readonly [x: number, y: number, z: number];
+/**
+ * Exact local-XY outline used only by the intact renderer. Coordinates are
+ * normalised against `size[0]` and `size[1]`; `size[2]` remains the extrusion
+ * depth. Physics deliberately keeps the authored compact contact proxy.
+ */
+export interface SurfacePolygonProfile {
+  readonly vertices: readonly (readonly [x: number, y: number])[];
+}
+/**
+ * Exact intact-only shell for compound curved surfaces. Vertices are local
+ * coordinates normalised against the piece size and centred on its transform;
+ * physics deliberately keeps the authored compact contact proxy.
+ */
+export interface SurfaceMeshProfile {
+  readonly vertices: readonly SceneVector3[];
+  readonly indices: readonly number[];
+  readonly doubleSided?: boolean;
+}
 export type LandscapeSurfaceProfile = "viking-ground" | "city-ground";
 export type SurfaceTextureProfile =
   | "painted-steel"
@@ -194,6 +212,8 @@ export interface BreakablePieceDefinition {
   readonly position: SceneVector3;
   readonly rotation?: SceneVector3;
   readonly size: SceneVector3;
+  readonly visualProfile?: SurfacePolygonProfile;
+  readonly visualMesh?: SurfaceMeshProfile;
   readonly volume?: number;
   readonly bearingArea?: number;
   readonly color: string;
@@ -5590,18 +5610,33 @@ interface DestructionSceneOptions {
    * break-time shove — while every piece stays separately destructible.
    */
   readonly resolveInterpenetration?: boolean;
+  /**
+   * Rigid machines use deliberate skin/frame overlap and must retain their
+   * authored close tolerances while the surrounding masonry is trimmed.
+   */
+  readonly deinterpenetrationExemptClusterIds?: readonly string[];
 }
 
 export function createDestructionScene(
   options: DestructionSceneOptions,
 ): DestructionSceneDefinition {
+  const deinterpenetrationExempt = new Set(
+    options.deinterpenetrationExemptClusterIds ?? [],
+  );
   const clusters = options.resolveInterpenetration
-    ? deinterpenetrateClusters(options.clusters, (candidate) =>
-        createStructuralSolver(
-          candidate.flatMap((currentCluster) => currentCluster.pieces),
-          structuralMaterialProfiles,
-        ).resolve(new Set()),
-      )
+    ? (() => {
+        const candidates = options.clusters.filter(
+          (cluster) => !deinterpenetrationExempt.has(cluster.id),
+        );
+        const resolved = deinterpenetrateClusters(candidates, (candidate) =>
+          createStructuralSolver(
+            candidate.flatMap((currentCluster) => currentCluster.pieces),
+            structuralMaterialProfiles,
+          ).resolve(new Set()),
+        );
+        const byId = new Map(resolved.map((cluster) => [cluster.id, cluster]));
+        return options.clusters.map((cluster) => byId.get(cluster.id) ?? cluster);
+      })()
     : options.clusters;
   const pieces = clusters.flatMap((currentCluster) => currentCluster.pieces);
   const pieceById = new Map(pieces.map((piece) => [piece.id, piece]));

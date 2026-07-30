@@ -17,9 +17,11 @@ import {
 } from "./vehicleFrames";
 import {
   horizontalGateDistance,
+  hingedLeafRotationAxis,
   hingedDoorGroupKey,
   inwardDoorSwingSign,
   plugSlideDoorPolicy,
+  tailRampPolicy,
   townHouseDoorPolicy,
   DOOR_APPROACH_HEIGHT,
   VIKING_DOOR_APPROACH_RADIUS,
@@ -30,6 +32,7 @@ import {
   vikingGateLeafPolicy,
   vikingHallGatePolicy,
   type PlugSlideDoorPolicy,
+  type TailRampPolicy,
   type VikingDoorPolicy,
   type VikingGateLeafPolicy,
   type TownHouseDoorPolicy,
@@ -62,6 +65,8 @@ interface DoorGroup {
   readonly townHouseDoor: TownHouseDoorPolicy | null;
   /** Створка не распахивается, а выходит из проёма и едет вдоль борта. */
   readonly plugSlide: PlugSlideDoorPolicy | null;
+  /** Кормовой бронелист вращается вокруг поперечной оси и становится трапом. */
+  readonly tailRamp: TailRampPolicy | null;
 }
 
 interface GateGroup {
@@ -153,6 +158,7 @@ export function HingedDoorSystem({
         vikingDoor: vikingDoorPolicy(key),
         townHouseDoor: townHouseDoorPolicy(key),
         plugSlide: plugSlideDoorPolicy(key),
+        tailRamp: tailRampPolicy(key),
       };
     });
   }, [pieces]);
@@ -182,14 +188,20 @@ export function HingedDoorSystem({
   const cameraDirection = useRef(new Vector3());
   const directionToDoor = useRef(new Vector3());
   const doorQuaternion = useRef(new Quaternion());
+  const rampQuaternion = useRef(new Quaternion());
   const composedQuaternion = useRef(new Quaternion());
   const doorRelative = useRef(new Vector3());
   const doorUpAxis = useRef(new Vector3(0, 1, 0));
+  const rampAxis = useRef(new Vector3(1, 0, 0));
   const shadowAccumulator = useRef(1);
   const shadowRefreshRequested = useRef(false);
   const carrierDoorTelemetryAt = useRef(0);
   const doorDiagnostics = useMemo(
     () => runtimeDiagnosticsEnabled("door"),
+    [],
+  );
+  const doorDiagnosticTarget = useMemo(
+    () => new URLSearchParams(window.location.search).get("mamDoorTarget"),
     [],
   );
   const approachedEntry = useRef<HingedEntryApproach | null>(null);
@@ -215,6 +227,7 @@ export function HingedDoorSystem({
       open: boolean;
       carrier: boolean;
       bodyPositions: readonly (readonly [number, number, number])[];
+      bodyRotations: readonly (readonly [number, number, number, number])[];
     } | null = null;
 
     const cameraPosition = [
@@ -263,8 +276,18 @@ export function HingedDoorSystem({
     for (const group of doorGroups) {
       const doorId = group.vikingDoor?.doorId
         ?? group.townHouseDoor?.doorId
-        ?? group.plugSlide?.doorId;
+        ?? group.plugSlide?.doorId
+        ?? group.tailRamp?.doorId;
       if (!doorId) {
+        continue;
+      }
+      const clusterId = group.members[0]?.piece.clusterId;
+      if (
+        clusterId &&
+        movingVehicles?.current.has(clusterId) &&
+        !dockedVehicles?.current.has(clusterId)
+      ) {
+        openedEntries.current.delete(doorId);
         continue;
       }
       const usable = group.members.some(
@@ -344,40 +367,43 @@ export function HingedDoorSystem({
         state.sign = group.hallGate.swingSign;
         open = entryOpenRequests?.current.has(group.hallGate.gateId) ?? false;
       } else {
-      const interactiveEntryId = group.gate?.gateId
-        ?? group.vikingDoor?.doorId
-        ?? group.townHouseDoor?.doorId
-        ?? group.plugSlide?.doorId;
-      // (обычные двери и ворота деревни)
-      if (interactiveEntryId) {
-        open =
-          openedEntries.current.has(interactiveEntryId) ||
-          (entryOpenRequests?.current.has(interactiveEntryId) ?? false);
-        if (open) {
-          if (group.gate) {
-            state.sign = group.gate.swingSign;
-          } else if (group.vikingDoor || group.townHouseDoor) {
-            state.sign = inwardDoorSwingSign(
-              center,
-              hinge.pivot,
-              hinge.normal,
-            );
+        const interactiveEntryId = group.gate?.gateId
+          ?? group.vikingDoor?.doorId
+          ?? group.townHouseDoor?.doorId
+          ?? group.plugSlide?.doorId
+          ?? group.tailRamp?.doorId;
+        // (обычные двери и ворота деревни)
+        if (interactiveEntryId) {
+          open =
+            openedEntries.current.has(interactiveEntryId) ||
+            (entryOpenRequests?.current.has(interactiveEntryId) ?? false);
+          if (open) {
+            if (group.gate) {
+              state.sign = group.gate.swingSign;
+            } else if (group.tailRamp) {
+              state.sign = Math.sign(group.tailRamp.openAngle) || -1;
+            } else if (group.vikingDoor || group.townHouseDoor) {
+              state.sign = inwardDoorSwingSign(
+                center,
+                hinge.pivot,
+                hinge.normal,
+              );
+            }
           }
+        } else if (state.angle > 0.05) {
+          open = distance < 3.6;
+        } else {
+          directionToDoor.current
+            .set(
+              center[0] - camera.position.x,
+              center[1] - camera.position.y,
+              center[2] - camera.position.z,
+            )
+            .normalize();
+          open =
+            distance < 2.8 &&
+            directionToDoor.current.dot(cameraDirection.current) > 0.25;
         }
-      } else if (state.angle > 0.05) {
-        open = distance < 3.6;
-      } else {
-        directionToDoor.current
-          .set(
-            center[0] - camera.position.x,
-            center[1] - camera.position.y,
-            center[2] - camera.position.z,
-          )
-          .normalize();
-        open =
-          distance < 2.8 &&
-          directionToDoor.current.dot(cameraDirection.current) > 0.25;
-      }
       }
 
       if (
@@ -385,6 +411,7 @@ export function HingedDoorSystem({
         !group.gate &&
         !group.vikingDoor &&
         !group.townHouseDoor &&
+        !group.tailRamp &&
         open &&
         state.sign === 0
       ) {
@@ -404,7 +431,8 @@ export function HingedDoorSystem({
           group.gate?.gateId ??
           group.vikingDoor?.doorId ??
           group.townHouseDoor?.doorId ??
-          group.plugSlide?.doorId;
+          group.plugSlide?.doorId ??
+          group.tailRamp?.doorId;
         if (entryId && state.angle > 0.6) {
           openEntries.current.add(entryId);
         }
@@ -417,6 +445,8 @@ export function HingedDoorSystem({
       const targetAngle = open
         ? group.plugSlide
           ? 1
+          : group.tailRamp
+            ? Math.abs(group.tailRamp.openAngle)
           : group.hallGate
             ? 2.9
             : group.gate
@@ -429,6 +459,8 @@ export function HingedDoorSystem({
           1,
           delta * (group.plugSlide
             ? open ? 2.4 : 2.0
+            : group.tailRamp
+              ? open ? 0.9 : 0.72
             : group.gate ? open ? 2.7 : 2.1 : open ? 5 : 3),
         );
       doorMoved ||= Math.abs(state.angle - previousAngle) > 0.0005;
@@ -455,9 +487,15 @@ export function HingedDoorSystem({
         -hinge.normal[0],
       ];
 
-      if (doorDiagnostics && plug) {
+      if (
+        doorDiagnostics &&
+        (
+          doorDiagnosticTarget === group.key ||
+          (!doorDiagnosticTarget && (plug || group.tailRamp))
+        )
+      ) {
         carrierDoorTelemetry = {
-          id: plug.doorId,
+          id: plug?.doorId ?? group.tailRamp?.doorId ?? group.key,
           angle: state.angle,
           targetAngle,
           open,
@@ -470,13 +508,26 @@ export function HingedDoorSystem({
             const position = body.translation();
             return [[position.x, position.y, position.z] as const];
           }),
+          bodyRotations: group.members.flatMap((member) => {
+            const body = bodies.current.get(member.piece.id);
+            if (!body) {
+              return [];
+            }
+            const rotation = body.rotation();
+            return [[
+              rotation.x,
+              rotation.y,
+              rotation.z,
+              rotation.w,
+            ] as const];
+          }),
         };
       }
 
       // The same rotation is applied to every surviving board and strap, each
       // orbiting the shared pivot — so the leaf stays one rigid piece.
       doorQuaternion.current.setFromAxisAngle(
-        doorUpAxis.current,
+        doorUpAxis.current.set(...hingedLeafRotationAxis(group.key)),
         state.sign * state.angle,
       );
       for (const member of group.members) {
@@ -570,16 +621,74 @@ export function HingedDoorSystem({
           });
           continue;
         }
-        doorRelative.current
-          .set(piece.position[0] - hinge.pivot[0], 0, piece.position[2] - hinge.pivot[2])
-          .applyQuaternion(doorQuaternion.current);
+        if (group.tailRamp) {
+          rampQuaternion.current.setFromAxisAngle(
+            rampAxis.current
+              .set(...group.tailRamp.rotationAxis)
+              .normalize(),
+            state.sign * state.angle,
+          );
+          doorRelative.current.set(
+            piece.position[0] - hinge.pivot[0],
+            piece.position[1] - hinge.pivot[1],
+            piece.position[2] - hinge.pivot[2],
+          ).applyQuaternion(rampQuaternion.current);
+          const localPosition: readonly [number, number, number] = [
+            hinge.pivot[0] + doorRelative.current.x,
+            hinge.pivot[1] + doorRelative.current.y,
+            hinge.pivot[2] + doorRelative.current.z,
+          ];
+          const placed = carrier && carrierRotation
+            ? vehiclePiecePosition(
+                carrier.origin,
+                localPosition,
+                carrier.pose,
+                carrierRotation,
+              )
+            : localPosition;
+          const localRotation = multiplyQuaternions(
+            [
+              rampQuaternion.current.x,
+              rampQuaternion.current.y,
+              rampQuaternion.current.z,
+              rampQuaternion.current.w,
+            ],
+            [
+              member.baseQuaternion.x,
+              member.baseQuaternion.y,
+              member.baseQuaternion.z,
+              member.baseQuaternion.w,
+            ],
+          );
+          const rotated = carrierRotation
+            ? multiplyQuaternions(carrierRotation, localRotation)
+            : localRotation;
+          body.setNextKinematicTranslation({
+            x: placed[0],
+            y: placed[1],
+            z: placed[2],
+          });
+          body.setNextKinematicRotation({
+            x: rotated[0],
+            y: rotated[1],
+            z: rotated[2],
+            w: rotated[3],
+          });
+          continue;
+        }
+        doorRelative.current.set(
+          piece.position[0] - hinge.pivot[0],
+          0,
+          piece.position[2] - hinge.pivot[2],
+        ).applyQuaternion(doorQuaternion.current);
         body.setNextKinematicTranslation({
           x: hinge.pivot[0] + doorRelative.current.x,
           y: piece.position[1],
           z: hinge.pivot[2] + doorRelative.current.z,
         });
-        // Swing composed onto the board's resting orientation → the whole leaf
-        // turns as one rigid piece even on a yaw-rotated house.
+        // Ordinary doors retain the original vertical yaw mechanism. Ramp
+        // kinematics above must never reinterpret their authored leaf vector
+        // as a hinge axis.
         composedQuaternion.current.multiplyQuaternions(
           doorQuaternion.current,
           member.baseQuaternion,

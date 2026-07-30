@@ -14,6 +14,7 @@ import {
   rotateVector,
   advanceRouteProgress,
   advanceVehicleRouteProgress,
+  rejoinVehicleRouteProgress,
   IDLE_CONTROLS,
   SKY_TRAIN_APPROACH,
   SKY_TRAIN_DOCKING,
@@ -66,6 +67,28 @@ const ship = grandTerminalScene.breakablePieces.filter(
   (piece) => piece.clusterId === SKY_TRAIN,
 );
 
+test("disturbance recovery reacquires the nearest bounded route point", () => {
+  const plan = {
+    length: 100,
+    finalFrom: 0.9,
+    point(progress) {
+      return [progress * 100, progress * 10, 0];
+    },
+    speedLimit() {
+      return 10;
+    },
+  };
+  const behind = rejoinVehicleRouteProgress(plan, 0.6, [57, 5.7, 2]);
+  assert.equal(Math.abs(behind - 0.57) < 0.002, true, String(behind));
+
+  const farAhead = rejoinVehicleRouteProgress(plan, 0.6, [95, 9.5, 0]);
+  assert.equal(
+    farAhead <= 0.7 + 1e-9,
+    true,
+    "a coincident route section skipped beyond the bounded rejoin window",
+  );
+});
+
 function mooringCapture(frame, state, properties) {
   return vehicleMooringState(
     frame,
@@ -81,8 +104,8 @@ function mooringCapture(frame, state, properties) {
   );
 }
 
-test("all three airborne machines are declared as vehicle frames", () => {
-  assert.equal(vehicleFrames.length, 3);
+test("all four airborne machines are declared as vehicle frames", () => {
+  assert.equal(vehicleFrames.length, 4);
   const frame = vehicleFrameForCluster(SKY_TRAIN);
   assert.notEqual(frame, null);
   assert.equal(frame.id, "sky-train");
@@ -94,6 +117,10 @@ test("all three airborne machines are declared as vehicle frames", () => {
   assert.equal(
     vehicleFrameForCluster("sky-mooring:airship")?.id,
     "town-airship",
+  );
+  assert.equal(
+    vehicleFrameForCluster("stronghold:sky-ram")?.id,
+    "basalt-sky-ram",
   );
 
   const shipPiece = grandTerminalScene.breakablePieces.find(
@@ -1207,13 +1234,13 @@ test("arrival requires a settled terminal pose without depending on one contact 
   );
   const cityTolerance = {
     ...SKY_TRAIN_DOCKING,
-    position: 0.48,
+    position: 0.14,
     height: 0.22,
   };
   assert.equal(
     isDockingSettleWindow(
       0.99,
-      [0.9, 0, 0],
+      [0.26, 0, 0],
       identity,
       [-1, 0, 0],
       undefined,
@@ -1225,7 +1252,7 @@ test("arrival requires a settled terminal pose without depending on one contact 
   assert.equal(
     isDockingSettleWindow(
       0.99,
-      [0.8, 0, 0],
+      [0.24, 0, 0],
       identity,
       [-1, 0, 0],
       undefined,

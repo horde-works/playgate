@@ -1,13 +1,22 @@
 "use client";
 
-import { useThree } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
 import {
   useBeforePhysicsStep,
   useRapier,
   type RapierRigidBody,
 } from "@react-three/rapier";
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { Euler, Quaternion, Vector3 } from "three";
+import {
+  Euler,
+  InstancedBufferAttribute,
+  InstancedMesh,
+  NormalBlending,
+  PlaneGeometry,
+  Quaternion,
+  ShaderMaterial,
+  Vector3,
+} from "three";
 import {
   departureSignalColor,
   structuralMaterialProfiles,
@@ -18,8 +27,11 @@ import { setSignalGlassGlow } from "./materialTextures";
 import { VEHICLE_CONTACT_QUERY } from "./physicsInteractionGroups";
 import {
   RESTING_BODY,
+  applyImpulseAtPoint,
+  bodyPointVelocity,
   massProperties,
   pointEffectiveMass,
+  rebaseBodyMassProperties,
   rotateVector as rotateByQuaternion,
   stepBody,
   type BodyState,
@@ -31,6 +43,7 @@ import {
   engineValuesPortToStarboard,
   advanceDrivePhase,
   advanceVehicleRouteProgress,
+  rejoinVehicleRouteProgress,
   autopilot,
   shipForces,
   isDockingSettleWindow,
@@ -52,8 +65,10 @@ import {
   vehicleProbeReaction,
   vehicleRouteHeading,
   vehicleRotation,
+  vehicleSpoolCommand,
   type VehicleRoutePlan,
   type VehiclePose,
+  type ShipModel,
 } from "./vehicleFrames";
 import {
   airVehicleFlightEventState,
@@ -69,12 +84,24 @@ import { CompoundKinematicClusterBodies } from "./CompoundKinematicClusterBodies
 import {
   compoundCarrierOwnsMemberPose,
   PHYSICS_TIME_STEP,
+  queueCompoundKinematicImpulse,
   type CompoundKinematicClusterRegistry,
+  type CompoundKinematicImpulseRegistry,
 } from "./compoundKinematicCluster";
 import {
   entryInteractionMatches,
   type EntryInteractionTarget,
 } from "./entryInteraction";
+import {
+  isInterIslandArrivalKind,
+  isInterIslandTransferKind,
+} from "./interIslandRoutes.ts";
+import {
+  carrierVector,
+  vectorFromCarrier,
+  type InterIslandPassengerHandoff,
+  type InterIslandPassengerTransit,
+} from "./interIslandPassenger.ts";
 import type {
   MotionTelemetryMetric,
   MotionTelemetryUpdate,
@@ -110,8 +137,10 @@ import {
   createVehicleLandingStability,
   createVehicleFailureWatchdog,
   createVehicleRecoveryLifecycle,
+  DEFAULT_VEHICLE_FAILURE_ENVELOPE,
   VEHICLE_GROUND_CONTACT_CONFIRM_SECONDS,
   vehicleGroundLiftAutomationSettled,
+  vehicleDisturbanceRecoveryFeasible,
   vehicleFailureDisposition,
   type VehicleFailureWatchdogState,
   type VehicleFailureEvent,
@@ -188,6 +217,12 @@ function bladePropeller(pieceId: string): string | null {
   return match ? match[1] : null;
 }
 
+function driveUsesPropulsionFeedback(
+  drive: AirVehicleDefinition["flight"]["driveAnimation"],
+): boolean {
+  return drive.kind === "propeller" || drive.kind === "furnace";
+}
+
 interface OarMemberIdentity {
   readonly key: string;
   readonly side: -1 | 1;
@@ -245,6 +280,11 @@ interface VehicleFrameRuntime extends AirVehicleDefinition {
   /** Щупы обшивки: ими корабль чувствует целый мир, а не только пол. */
   readonly actuators: readonly CommandActuatorBinding[];
   readonly members: readonly FrameMember[];
+  /** Conservative local bounds used while own debris clears the hull. */
+  readonly localBounds: {
+    readonly minimum: readonly [number, number, number];
+    readonly maximum: readonly [number, number, number];
+  };
 }
 
 /** Поза подвижного кадра для внешних систем вроде общего пула света. */
@@ -281,6 +321,13 @@ interface FlightState {
   /** Счётчик для диагностики реального рейса. */
   goArounds: number;
   watchdog: VehicleFailureWatchdogState;
+  /** Route is paused while the physical carrier damps a recoverable upset. */
+  disturbanceRecovery: {
+    elapsedSeconds: number;
+    stableSeconds: number;
+  } | null;
+  /** Boundary handoff is emitted once while the page transition catches up. */
+  handoffRequested: boolean;
 }
 
 interface FrameRecoveryState {
@@ -306,6 +353,10 @@ interface FrameState {
   moving: boolean;
   suppressFrameVelocityOnce: boolean;
   released: Set<string>;
+  /** Once a fragment clears the old hull it becomes an ordinary obstacle. */
+  separated: Set<string>;
+  /** Recent contact/blast impulse may legitimately interrupt route tracking. */
+  disturbanceImpulseSeconds: number;
   /**
    * Текущая подъёмная сила. Она НЕ константа: автоматика ведёт её к весу
    * ТОГО, ЧТО ОСТАЛОСЬ, и делает это инерционно — стравить газ и сбросить
@@ -343,6 +394,239 @@ interface FrameState {
   envelopeLeft: number;
 }
 
+interface ExhaustParticle {
+  age: number;
+  life: number;
+  power: number;
+  readonly position: Vector3;
+  readonly velocity: Vector3;
+  seed: number;
+}
+
+// Full fire deliberately saturates the trail: each furnace can keep several
+// seconds of overlapping smoke alive without recycling the nearest puffs.
+const EXHAUST_PARTICLES_PER_SOURCE = 256;
+
+/** Detached soft puffs using the same camera-facing smoke shader as hearths. */
+function VehicleExhaustSmoke({
+  frames,
+  states,
+  inactivePieces,
+}: {
+  frames: readonly VehicleFrameRuntime[];
+  states: { current: Map<string, FrameState> };
+  inactivePieces: ReadonlySet<string>;
+}) {
+  const meshRef = useRef<InstancedMesh>(null);
+  const sources = useMemo(
+    () => frames.flatMap((frame) =>
+      (frame.flight.exhaust?.sources ?? []).map((source) => ({
+        frame,
+        profile: frame.flight.exhaust!,
+        source,
+      }))),
+    [frames],
+  );
+  const total = sources.length * EXHAUST_PARTICLES_PER_SOURCE;
+  // Buffers and their geometry must exist in the render that exposes a
+  // non-zero instance count. Initialising them in a passive effect left one
+  // legal render frame where useFrame saw the mesh but getAttribute() still
+  // returned undefined (especially under Strict Mode and hot reload).
+  const geometry = useMemo(() => {
+    const created = new PlaneGeometry(1, 1);
+    created.setAttribute(
+      "aSource",
+      new InstancedBufferAttribute(new Float32Array(total * 3), 3),
+    );
+    for (const name of ["aLife", "aSize", "aPower", "aSeed"] as const) {
+      created.setAttribute(
+        name,
+        new InstancedBufferAttribute(new Float32Array(total), 1),
+      );
+    }
+    return created;
+  }, [total]);
+  const material = useMemo(() => new ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    blending: NormalBlending,
+    vertexShader: /* glsl */ `
+      attribute vec3 aSource;
+      attribute float aLife;
+      attribute float aSize;
+      attribute float aPower;
+      attribute float aSeed;
+      varying vec2 vQuad;
+      varying float vLife;
+      varying float vPower;
+      varying float vSeed;
+      void main() {
+        vQuad = position.xy;
+        vLife = aLife;
+        vPower = aPower;
+        vSeed = aSeed;
+        vec3 camRight = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
+        vec3 camUp = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
+        vec3 world = aSource +
+          camRight * position.x * aSize * 1.18 +
+          camUp * position.y * aSize;
+        gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      precision mediump float;
+      varying vec2 vQuad;
+      varying float vLife;
+      varying float vPower;
+      varying float vSeed;
+      void main() {
+        float angle = atan(vQuad.y, vQuad.x);
+        float softNoise = 1.0 + 0.075 * sin(
+          angle * 5.0 + vSeed * 6.2832
+        );
+        float d = length(vQuad * 2.0) * softNoise;
+        float alpha = smoothstep(1.0, 0.12, d);
+        alpha *= smoothstep(0.0, 0.07, vLife) * smoothstep(1.0, 0.52, vLife);
+        alpha *= mix(0.28, 0.74, vPower);
+        vec3 smoke = mix(
+          vec3(0.075, 0.08, 0.085),
+          vec3(0.235, 0.24, 0.245),
+          smoothstep(0.12, 1.0, vLife)
+        );
+        gl_FragColor = vec4(smoke, alpha);
+      }
+    `,
+  }), []);
+  const particles = useRef<ExhaustParticle[]>(Array.from(
+    { length: total },
+    () => ({
+      age: Number.POSITIVE_INFINITY,
+      life: 1,
+      power: 0,
+      position: new Vector3(),
+      velocity: new Vector3(),
+      seed: 0,
+    }),
+  ));
+  const accumulators = useRef(new Float32Array(sources.length));
+  const cursors = useRef(new Uint16Array(sources.length));
+  const serials = useRef(new Uint32Array(sources.length));
+  const sourceValues = useRef(
+    (geometry.getAttribute("aSource") as InstancedBufferAttribute)
+      .array as Float32Array,
+  );
+  const lifeValues = useRef(
+    (geometry.getAttribute("aLife") as InstancedBufferAttribute)
+      .array as Float32Array,
+  );
+  const sizeValues = useRef(
+    (geometry.getAttribute("aSize") as InstancedBufferAttribute)
+      .array as Float32Array,
+  );
+  const powerValues = useRef(
+    (geometry.getAttribute("aPower") as InstancedBufferAttribute)
+      .array as Float32Array,
+  );
+  const seedValues = useRef(
+    (geometry.getAttribute("aSeed") as InstancedBufferAttribute)
+      .array as Float32Array,
+  );
+
+  useFrame((_, frameDelta) => {
+    const mesh = meshRef.current;
+    if (!mesh || total === 0) {
+      return;
+    }
+    const delta = Math.min(0.05, frameDelta);
+    for (const [sourceIndex, authored] of sources.entries()) {
+      const state = states.current.get(authored.frame.id);
+      if (!state || inactivePieces.has(authored.source.outletPieceId)) {
+        continue;
+      }
+      const power = state.flight
+        ? Math.abs(state.flight.throttle[authored.source.engineIndex] ?? 0)
+        : state.recovery
+          ? 0
+          : 0.035;
+      const rate = authored.profile.idleRate +
+        (authored.profile.fullRate - authored.profile.idleRate) *
+          Math.pow(Math.min(1, power), 1.35);
+      accumulators.current[sourceIndex] += rate * delta;
+      while (accumulators.current[sourceIndex] >= 1) {
+        accumulators.current[sourceIndex] -= 1;
+        const localIndex = cursors.current[sourceIndex] % EXHAUST_PARTICLES_PER_SOURCE;
+        cursors.current[sourceIndex] = localIndex + 1;
+        const particle = particles.current[
+          sourceIndex * EXHAUST_PARTICLES_PER_SOURCE + localIndex
+        ];
+        const serial = serials.current[sourceIndex]++;
+        const seed = ((Math.sin(serial * 19.19 + sourceIndex * 7.31) * 43758.5) % 1 + 1) % 1;
+        const seedB = ((Math.sin(serial * 43.17 + sourceIndex * 3.7) * 28641.3) % 1 + 1) % 1;
+        const carrierRotation = vehicleRotation(state.pose, authored.frame.nose);
+        const emitter = vehiclePiecePosition(
+          authored.frame.origin,
+          authored.source.point,
+          state.pose,
+          carrierRotation,
+        );
+        const direction = rotateByQuaternion(
+          state.body.orientation,
+          authored.source.direction,
+        );
+        particle.position.set(emitter[0], emitter[1], emitter[2]);
+        particle.velocity.set(
+          state.body.velocity[0] + direction[0] * authored.profile.exitSpeed * (0.65 + power * 0.65) + (seed - 0.5) * authored.profile.spread,
+          state.body.velocity[1] + 0.38 + seedB * 0.42,
+          state.body.velocity[2] + direction[2] * authored.profile.exitSpeed * (0.65 + power * 0.65) + (seedB - 0.5) * authored.profile.spread,
+        );
+        particle.age = 0;
+        particle.life = authored.profile.lifeSeconds * (0.82 + seed * 0.34);
+        particle.power = power;
+        particle.seed = seed;
+      }
+    }
+
+    for (const [index, particle] of particles.current.entries()) {
+      particle.age += delta;
+      if (particle.age >= particle.life) {
+        sizeValues.current[index] = 0;
+        continue;
+      }
+      const life = particle.age / particle.life;
+      particle.velocity.x *= Math.exp(-0.18 * delta);
+      particle.velocity.z *= Math.exp(-0.18 * delta);
+      particle.velocity.y += 0.22 * delta;
+      particle.position.addScaledVector(particle.velocity, delta);
+      const size = (0.3 + particle.power * 0.38) +
+        life * (1.35 + particle.power * 1.65);
+      sourceValues.current[index * 3] = particle.position.x;
+      sourceValues.current[index * 3 + 1] = particle.position.y;
+      sourceValues.current[index * 3 + 2] = particle.position.z;
+      lifeValues.current[index] = life;
+      sizeValues.current[index] = size;
+      powerValues.current[index] = particle.power;
+      seedValues.current[index] = particle.seed;
+    }
+    for (const name of ["aSource", "aLife", "aSize", "aPower", "aSeed"] as const) {
+      // Attributes are installed in the same render that creates geometry;
+      // unlike the former passive-effect setup, this lookup cannot race.
+      const attribute = geometry.getAttribute(name) as InstancedBufferAttribute;
+      attribute.needsUpdate = true;
+    }
+  });
+
+  if (total === 0) {
+    return null;
+  }
+  return (
+    <instancedMesh
+      ref={meshRef}
+      args={[geometry, material, total]}
+      frustumCulled={false}
+    />
+  );
+}
+
 function restingState(engineCount: number): FrameState {
   return {
     pose: RESTING_POSE,
@@ -351,6 +635,8 @@ function restingState(engineCount: number): FrameState {
     moving: false,
     suppressFrameVelocityOnce: false,
     released: new Set<string>(),
+    separated: new Set<string>(),
+    disturbanceImpulseSeconds: 0,
     liftNow: 0,
     spinAngles: Array.from({ length: engineCount }, () => 0),
     flight: null,
@@ -364,6 +650,31 @@ function restingState(engineCount: number): FrameState {
     brokenSeen: -1,
     aliveMembers: [],
     envelopeLeft: 0,
+  };
+}
+
+function createFlightState(
+  kind: string,
+  occupancy: FlightState["occupancy"],
+  engineCount: number,
+  underwayTime = 0,
+): FlightState {
+  const zeroThrottle = Array.from({ length: engineCount }, () => 0);
+  return {
+    kind,
+    occupancy,
+    time: underwayTime,
+    castOff: underwayTime > 0,
+    progress: 0,
+    throttle: zeroThrottle,
+    driveThrottle: zeroThrottle,
+    propulsionFeedback: Array.from({ length: engineCount }, () => 1),
+    safetyAdvisory: null,
+    lastGoAround: -1e9,
+    goArounds: 0,
+    watchdog: createVehicleFailureWatchdog(0),
+    disturbanceRecovery: null,
+    handoffRequested: false,
   };
 }
 
@@ -450,13 +761,21 @@ export function VehicleFrameSystem({
   resetVersion,
   departRequestVersion = 0,
   departRequestTargetRef,
+  initialArrivalFlightKind = null,
+  initialArrivalPassengerTransit = null,
   onDepartureApproachChange = () => {},
+  onInterIslandBoundary,
+  onInterIslandArrivalReady,
+  onInterIslandArrivalComplete,
+  onInterIslandPassengerStateChange,
+  onPassengerViewRestore,
   occupiedSeatId = null,
   onOccupiedSeatChange = () => {},
   movingVehicles,
   dockedVehicles,
   clusterEventStates,
   clusterRegistry,
+  externalImpulses,
   recoveryServiceArea,
   onVehicleRebuildRequest,
   onFramePose,
@@ -472,9 +791,25 @@ export function VehicleFrameSystem({
   /** Растёт, когда игрок нажал «отправить» у табло. */
   departRequestVersion?: number;
   departRequestTargetRef?: { current: EntryInteractionTarget | null };
+  /** Arrival kind restored after the destination scene has mounted. */
+  initialArrivalFlightKind?: string | null;
+  /** Passenger state expressed in carrier coordinates before transmutation. */
+  initialArrivalPassengerTransit?: InterIslandPassengerTransit | null;
   onDepartureApproachChange?: (
     approached: EntryInteractionTarget | null,
   ) => void;
+  onInterIslandBoundary?: (
+    flightKind: string,
+    passenger: InterIslandPassengerHandoff | null,
+  ) => void;
+  /** The carrier, passenger pose, momentum and view are ready to reveal. */
+  onInterIslandArrivalReady?: (flightKind: string) => void;
+  onInterIslandArrivalComplete?: (flightKind: string) => void;
+  onInterIslandPassengerStateChange?: (
+    flightActive: boolean,
+    passengerInsideCarrier: boolean,
+  ) => void;
+  onPassengerViewRestore?: (yaw: number, pitch: number) => void;
   /** Occupancy is UI/player state; the vehicle only offers and validates it. */
   occupiedSeatId?: string | null;
   onOccupiedSeatChange?: (seatId: string | null) => void;
@@ -490,6 +825,8 @@ export function VehicleFrameSystem({
   clusterEventStates?: { current: Map<string, LampEventState> };
   /** Общий реестр составных контактных тел, не привязанный к типу машины. */
   clusterRegistry: CompoundKinematicClusterRegistry;
+  /** Weapon/contact impulses consumed by the custom rigid-body integrator. */
+  externalImpulses: CompoundKinematicImpulseRegistry;
   recoveryServiceArea?: {
     readonly center: readonly [number, number];
     readonly radius: number;
@@ -516,6 +853,7 @@ export function VehicleFrameSystem({
   const telemetryNextAt = useRef(new Map<string, number>());
   const telemetryActiveSources = useRef(new Set<string>());
   const handledDepartRequest = useRef(departRequestVersion);
+  const handledArrivalRequest = useRef<string | null>(null);
 
   const frames = useMemo<readonly VehicleFrameRuntime[]>(() => {
     const vehicleByCluster = new Map(
@@ -598,13 +936,30 @@ export function VehicleFrameSystem({
     }
     return airVehicles
       .filter((vehicle) => byCluster.has(vehicle.clusterId))
-      .map((vehicle) => ({
-        ...vehicle,
-        members: byCluster.get(vehicle.clusterId) ?? [],
-        actuators: compileCommandActuators(
-          (byCluster.get(vehicle.clusterId) ?? []).map((member) => member.piece),
-        ),
-      }));
+      .map((vehicle) => {
+        const members = byCluster.get(vehicle.clusterId) ?? [];
+        const minimum: [number, number, number] = [Infinity, Infinity, Infinity];
+        const maximum: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+        for (const { piece } of members) {
+          // The half diagonal is deliberately conservative for rotated and
+          // custom-mesh members. Own debris is ignored a little too long,
+          // never reclassified while it is still inside the carrier.
+          const radius = Math.hypot(...piece.size) / 2;
+          for (let axis = 0; axis < 3; axis += 1) {
+            const local = piece.position[axis] - vehicle.origin[axis];
+            minimum[axis] = Math.min(minimum[axis], local - radius);
+            maximum[axis] = Math.max(maximum[axis], local + radius);
+          }
+        }
+        return {
+          ...vehicle,
+          members,
+          localBounds: { minimum, maximum },
+          actuators: compileCommandActuators(
+            members.map((member) => member.piece),
+          ),
+        };
+      });
   }, [pieces]);
 
   // Щупы кадра статичны (frames зависят только от pieces), поэтому общий
@@ -711,6 +1066,16 @@ export function VehicleFrameSystem({
         pitch?: number,
         roll?: number,
       ) => boolean;
+      __mamVehicleImpulse?: (
+        id: string,
+        impulseX: number,
+        impulseY: number,
+        impulseZ: number,
+        pointX: number,
+        pointY: number,
+        pointZ: number,
+      ) => boolean;
+      __mamVehicleDepart?: (id: string, kind?: string) => boolean;
     };
     const setPose = (
       id: string,
@@ -730,12 +1095,102 @@ export function VehicleFrameSystem({
     scope.__mamVehiclePose = setPose;
     scope.__mamShipPose = (x, y, z, yaw, pitch, roll) =>
       setPose("sky-train", x, y, z, yaw, pitch, roll);
+    const applyDiagnosticImpulse = (
+      id: string,
+      impulseX: number,
+      impulseY: number,
+      impulseZ: number,
+      pointX: number,
+      pointY: number,
+      pointZ: number,
+    ): boolean => {
+      const frame = frames.find((candidate) => candidate.id === id);
+      if (
+        !frame ||
+        ![
+          impulseX,
+          impulseY,
+          impulseZ,
+          pointX,
+          pointY,
+          pointZ,
+        ].every(Number.isFinite)
+      ) {
+        return false;
+      }
+      queueCompoundKinematicImpulse(externalImpulses, frame.clusterId, {
+        impulse: [impulseX, impulseY, impulseZ],
+        point: [pointX, pointY, pointZ],
+      });
+      return true;
+    };
+    scope.__mamVehicleImpulse = applyDiagnosticImpulse;
+    const departDiagnostic = (id: string, kind = "circuit"): boolean => {
+      const frame = frames.find((candidate) => candidate.id === id);
+      if (!frame?.departure) {
+        return false;
+      }
+      const state = frameState(id);
+      if (state.flight) {
+        return false;
+      }
+      state.flight = createFlightState(
+        kind,
+        "uncrewed",
+        frame.flight.limits.enginePoints.length,
+      );
+      return true;
+    };
+    scope.__mamVehicleDepart = departDiagnostic;
+    const query = new URLSearchParams(window.location.search);
+    const impulseRequest = query.get("mamVehicleImpulse");
+    const impulseDelay = Math.max(
+      0,
+      Number(query.get("mamVehicleImpulseAt") ?? 0),
+    );
+    let impulseTimer: number | undefined;
+    let departureTimer: number | undefined;
+    if (impulseRequest) {
+      const [id, ...values] = impulseRequest.split(",");
+      if (id && values.length === 6 && values.map(Number).every(Number.isFinite)) {
+        const numeric = values.map(Number) as [number, number, number, number, number, number];
+        impulseTimer = window.setTimeout(
+          () => applyDiagnosticImpulse(id, ...numeric),
+          impulseDelay * 1_000,
+        );
+      }
+    }
+    const departureRequest = query.get("mamVehicleDepart");
+    if (departureRequest) {
+      const [id, kind = "circuit"] = departureRequest.split(",");
+      const departureDelay = Math.max(
+        0,
+        Number(query.get("mamVehicleDepartAt") ?? 0),
+      );
+      departureTimer = window.setTimeout(
+        () => departDiagnostic(id, kind),
+        departureDelay * 1_000,
+      );
+    }
     return () => {
+      if (impulseTimer !== undefined) {
+        window.clearTimeout(impulseTimer);
+      }
+      if (departureTimer !== undefined) {
+        window.clearTimeout(departureTimer);
+      }
       delete scope.__mamVehiclePose;
       delete scope.__mamShipPose;
+      if (scope.__mamVehicleImpulse === applyDiagnosticImpulse) {
+        delete scope.__mamVehicleImpulse;
+      }
+      if (scope.__mamVehicleDepart === departDiagnostic) {
+        delete scope.__mamVehicleDepart;
+      }
       delete document.documentElement.dataset.mamSkyTrain;
+      delete document.documentElement.dataset.mamVehicle;
     };
-  }, [frameState, frames]);
+  }, [externalImpulses, frameState, frames]);
 
   const composedQuaternion = useRef(new Quaternion());
   const driveMemberQuaternion = useRef(new Quaternion());
@@ -750,6 +1205,10 @@ export function VehicleFrameSystem({
   const obstacleRay = useRef<InstanceType<typeof rapier.Ray> | null>(null);
   /** Тела корабля: чтобы луч опоры не принял его же куски за землю. */
   const shipBodies = useRef<Map<string, Set<number>>>(new Map());
+  const debrisLocalPoint = useRef(new Vector3());
+  const debrisCarrierRotation = useRef(new Quaternion());
+  const handoffLookDirection = useRef(new Vector3());
+  const interIslandPassengerStatus = useRef({ active: false, inside: false });
 
   useBeforePhysicsStep(() => {
     const step = PHYSICS_TIME_STEP;
@@ -773,7 +1232,9 @@ export function VehicleFrameSystem({
             !brokenPieces.current.has(pieceId) && !inactivePieces.has(pieceId),
         ),
       );
-      const launchPropulsionHealth = scheduledFrame.flight.driveAnimation.kind === "propeller"
+      const launchPropulsionHealth = driveUsesPropulsionFeedback(
+        scheduledFrame.flight.driveAnimation,
+      )
         ? propulsionHealth(
             scheduledFrame.actuators,
             launchMembers,
@@ -877,25 +1338,17 @@ export function VehicleFrameSystem({
         handledDepartRequest.current = departRequestVersion;
         if (post && entryInteractionMatches(departRequestTargetRef?.current, candidate)) {
           if ((post === "ride" || post === "board") && scheduled.flight === null) {
-            scheduled.flight = {
-              kind: post === "ride"
-                ? scheduledFrame.passengerFlight?.flightKind ?? "tour"
+            const requestedAction =
+              departRequestTargetRef?.current?.selectedActionId;
+            scheduled.flight = createFlightState(
+              post === "ride"
+                ? requestedAction ??
+                  scheduledFrame.passengerFlight?.flightKind ??
+                  "tour"
                 : departure?.flightKind ?? "circuit",
-              occupancy: post === "ride" ? "passenger" : "uncrewed",
-              time: 0,
-              castOff: false,
-              progress: 0,
-              throttle: scheduledFrame.flight.limits.enginePoints.map(() => 0),
-              driveThrottle: scheduledFrame.flight.limits.enginePoints.map(
-                () => 0,
-              ),
-              propulsionFeedback:
-                scheduledFrame.flight.limits.enginePoints.map(() => 1),
-              safetyAdvisory: null,
-              lastGoAround: -1e9,
-              goArounds: 0,
-              watchdog: createVehicleFailureWatchdog(0),
-            };
+              post === "ride" ? "passenger" : "uncrewed",
+              scheduledFrame.flight.limits.enginePoints.length,
+            );
           } else if (post === "seat" && scheduled.flight !== null && seatIntact) {
             onOccupiedSeatChange(SKY_TRAIN_DRIVER_SEAT.id);
           } else if (post === "stand" && occupiedSeatId === SKY_TRAIN_DRIVER_SEAT.id) {
@@ -907,6 +1360,38 @@ export function VehicleFrameSystem({
       }
 
       const flight = scheduled.flight;
+      const mooring = vehicleMooringState(
+        scheduledFrame,
+        scheduled.body.position,
+        scheduled.body.orientation,
+        scheduled.body.velocity,
+        scheduled.body.angularVelocity,
+        scheduled.mass?.centre ?? scheduledFrame.origin,
+      );
+      const interIslandKind = flight?.kind ?? initialArrivalFlightKind;
+      const interIslandActive = Boolean(
+        interIslandKind &&
+          (
+            isInterIslandTransferKind(interIslandKind) ||
+            isInterIslandArrivalKind(interIslandKind)
+          ),
+      );
+      const interIslandInside = interIslandActive && Boolean(
+        scheduledFrame.passengerFlight?.contains(eyeInShip),
+      );
+      if (
+        interIslandPassengerStatus.current.active !== interIslandActive ||
+        interIslandPassengerStatus.current.inside !== interIslandInside
+      ) {
+        interIslandPassengerStatus.current = {
+          active: interIslandActive,
+          inside: interIslandInside,
+        };
+        onInterIslandPassengerStateChange?.(
+          interIslandActive,
+          interIslandInside,
+        );
+      }
       if (flight) {
         flight.time += step;
         if (!flight.castOff && flight.time >= scheduledFrame.flight.spoolSeconds) {
@@ -946,27 +1431,22 @@ export function VehicleFrameSystem({
         // Рейс кончается не по таймеру, а когда корабль вернулся на место и
         // носовой узел вошёл в захват и успокоился: центр корпуса сам по себе
         // швартовкой не является.
-        const capture = vehicleMooringState(
-          scheduledFrame,
-          scheduled.body.position,
-          scheduled.body.orientation,
-          scheduled.body.velocity,
-          scheduled.body.angularVelocity,
-          scheduled.mass?.centre ?? scheduledFrame.origin,
-        );
         if (
           !scheduled.recovery &&
           isDockingComplete(
             flight.progress,
-            capture.offset,
+            mooring.offset,
             scheduled.body.orientation,
-            capture.velocity,
+            mooring.velocity,
             scheduled.body.angularVelocity as [number, number, number],
             scheduledFrame.nose,
             scheduledFrame.flight.approach,
             scheduledFrame.flight.docking,
           )
         ) {
+          if (isInterIslandArrivalKind(flight.kind)) {
+            onInterIslandArrivalComplete?.(flight.kind);
+          }
           scheduled.flight = null;
         }
       }
@@ -987,11 +1467,12 @@ export function VehicleFrameSystem({
         departureGlow.current = glow;
         setSignalGlassGlow(departureSignalColor, glow);
       }
-      if (isTerminal && vehicleDiagnostics) {
+      if (vehicleDiagnostics) {
         const now = performance.now();
         if (now >= debugTelemetryAt.current) {
           debugTelemetryAt.current = now + 250;
-          document.documentElement.dataset.mamSkyTrain = JSON.stringify({
+          const diagnostic = {
+            id: scheduledFrame.id,
             flight: scheduled.flight
               ? {
                   kind: scheduled.flight.kind,
@@ -1000,6 +1481,8 @@ export function VehicleFrameSystem({
                   goArounds: scheduled.flight.goArounds,
                   throttle: scheduled.flight.throttle,
                   safety: scheduled.flight.safetyAdvisory,
+                  disturbanceRecovery: scheduled.flight.disturbanceRecovery,
+                  watchdog: scheduled.flight.watchdog,
                 }
               : null,
             recovery: scheduled.recovery
@@ -1015,7 +1498,38 @@ export function VehicleFrameSystem({
             velocity: scheduled.body.velocity,
             angularVelocity: scheduled.body.angularVelocity,
             orientation: scheduled.body.orientation,
-          });
+            mooring,
+            docking: scheduled.flight
+              ? {
+                  complete: isDockingComplete(
+                    scheduled.flight.progress,
+                    mooring.offset,
+                    scheduled.body.orientation,
+                    mooring.velocity,
+                    scheduled.body.angularVelocity as [number, number, number],
+                    scheduledFrame.nose,
+                    scheduledFrame.flight.approach,
+                    scheduledFrame.flight.docking,
+                  ),
+                  settling: isDockingSettleWindow(
+                    scheduled.flight.progress,
+                    mooring.offset,
+                    scheduled.body.orientation,
+                    scheduledFrame.nose,
+                    scheduledFrame.flight.approach,
+                    scheduledFrame.flight.docking,
+                  ),
+                  tolerance: scheduledFrame.flight.docking,
+                }
+              : null,
+            brokenMembers: scheduledFrame.members
+              .filter((member) => brokenPieces.current.has(member.piece.id))
+              .map((member) => member.piece.id),
+          };
+          document.documentElement.dataset.mamVehicle = JSON.stringify(diagnostic);
+          if (isTerminal) {
+            document.documentElement.dataset.mamSkyTrain = JSON.stringify(diagnostic);
+          }
         }
       }
     }
@@ -1025,17 +1539,54 @@ export function VehicleFrameSystem({
     // принадлежат самому кораблю: щупы не должны принимать их за внешний мир.
     shipBodies.current.clear();
     for (const frame of frames) {
+      const state = frameState(frame.id);
       const ownBodies = new Set<number>();
       const runtime = clusterRegistry.current.get(frame.clusterId);
       if (runtime) {
         ownBodies.add(runtime.body.handle);
       }
       for (const member of frame.members) {
-        if (brokenPieces.current.has(member.piece.id)) {
+        const body = bodies.current.get(member.piece.id);
+        if (!body) {
           continue;
         }
-        const body = bodies.current.get(member.piece.id);
-        if (body) {
+        if (!brokenPieces.current.has(member.piece.id)) {
+          ownBodies.add(body.handle);
+          continue;
+        }
+        if (state.separated.has(member.piece.id) || !runtime) {
+          continue;
+        }
+        const carrierPosition = runtime.body.translation();
+        const carrierRotation = runtime.body.rotation();
+        const bodyPosition = body.translation();
+        const local = debrisLocalPoint.current
+          .set(
+            bodyPosition.x - carrierPosition.x,
+            bodyPosition.y - carrierPosition.y,
+            bodyPosition.z - carrierPosition.z,
+          )
+          .applyQuaternion(
+            debrisCarrierRotation.current
+              .set(
+                carrierRotation.x,
+                carrierRotation.y,
+                carrierRotation.z,
+                carrierRotation.w,
+              )
+              .invert(),
+          );
+        const margin = 0.45;
+        const outside =
+          local.x < frame.localBounds.minimum[0] - margin ||
+          local.x > frame.localBounds.maximum[0] + margin ||
+          local.y < frame.localBounds.minimum[1] - margin ||
+          local.y > frame.localBounds.maximum[1] + margin ||
+          local.z < frame.localBounds.minimum[2] - margin ||
+          local.z > frame.localBounds.maximum[2] + margin;
+        if (outside) {
+          state.separated.add(member.piece.id);
+        } else {
           ownBodies.add(body.handle);
         }
       }
@@ -1047,6 +1598,43 @@ export function VehicleFrameSystem({
     // снесли хвостовой вагон — центр масс уехал вперёд, и нос задрался сам.
     for (const frame of frames) {
       const state = frameState(frame.id);
+      state.disturbanceImpulseSeconds = Math.max(
+        0,
+        state.disturbanceImpulseSeconds - step,
+      );
+      const applyPendingImpulses = (properties: MassProperties) => {
+        const pending = externalImpulses.current.get(frame.clusterId);
+        if (!pending || pending.length === 0 || properties.mass <= 0) {
+          return;
+        }
+        let worldBody: BodyState = {
+          ...state.body,
+          position: [
+            state.body.position[0] + properties.centre[0],
+            state.body.position[1] + properties.centre[1],
+            state.body.position[2] + properties.centre[2],
+          ],
+        };
+        for (const applied of pending) {
+          worldBody = applyImpulseAtPoint(worldBody, properties, applied);
+        }
+        state.body = {
+          ...worldBody,
+          position: [
+            worldBody.position[0] - properties.centre[0],
+            worldBody.position[1] - properties.centre[1],
+            worldBody.position[2] - properties.centre[2],
+          ],
+        };
+        externalImpulses.current.delete(frame.clusterId);
+        state.disturbanceImpulseSeconds = 2.5;
+      };
+      // The blast reaches the intact rigid body first. Fracture is observed
+      // in the same simulation step below, where the surviving mass and every
+      // released member inherit this newly changed velocity field.
+      if (state.mass) {
+        applyPendingImpulses(state.mass);
+      }
       // Ключ пересчёта — сломанные ИМЕННО этого кадра. Глобальный счётчик
       // разрушенного менялся от любого попадания в мире и пересчитывал массу
       // всех кусков корабля на каждую чужую пробоину; заодно список живых
@@ -1058,16 +1646,44 @@ export function VehicleFrameSystem({
         }
       }
       if (state.brokenSeen !== frameBroken || !state.mass) {
+        const previousMass = state.mass;
         state.brokenSeen = frameBroken;
         state.aliveMembers = frame.members.filter(
           (member) => !brokenPieces.current.has(member.piece.id),
         );
         state.envelopeLeft = state.aliveMembers.filter((member) =>
           member.piece.id.includes(frame.envelopeMatch)).length;
-        state.mass = massProperties(
+        const nextMass = massProperties(
           state.aliveMembers.map((member) => member.piece),
           densityOf,
         );
+        if (previousMass && previousMass.mass > 0 && nextMass.mass > 0) {
+          const oldWorldBody: BodyState = {
+            ...state.body,
+            position: [
+              state.body.position[0] + previousMass.centre[0],
+              state.body.position[1] + previousMass.centre[1],
+              state.body.position[2] + previousMass.centre[2],
+            ],
+          };
+          const rebased = rebaseBodyMassProperties(
+            oldWorldBody,
+            previousMass,
+            nextMass,
+          );
+          state.body = {
+            ...rebased,
+            position: [
+              rebased.position[0] - nextMass.centre[0],
+              rebased.position[1] - nextMass.centre[1],
+              rebased.position[2] - nextMass.centre[2],
+            ],
+          };
+        }
+        state.mass = nextMass;
+        if (!previousMass) {
+          applyPendingImpulses(nextMass);
+        }
         if (state.intactMass === 0 && state.mass.mass > 0) {
           state.intactMass = state.mass.mass;
           state.intactEnvelope = frame.members.filter((member) =>
@@ -1081,7 +1697,7 @@ export function VehicleFrameSystem({
       }
       const alive = state.aliveMembers;
       const mass = state.mass;
-      if (!mass || mass.mass <= 0 || state.intactEnvelope === 0) {
+      if (!mass || mass.mass <= 0 || state.envelopeLeft === 0) {
         if (state.flight && !state.recovery) {
           state.recovery = {
             lifecycle: createVehicleRecoveryLifecycle(
@@ -1108,6 +1724,129 @@ export function VehicleFrameSystem({
           });
         }
         continue;
+      }
+      if (
+        initialArrivalFlightKind &&
+        handledArrivalRequest.current !== initialArrivalFlightKind &&
+        !state.flight &&
+        !state.recovery &&
+        frame.passengerFlight &&
+        // Player registration is a React effect. Never consume the one-shot
+        // arrival before there is a body to place aboard the carrier.
+        bodies.current.has("player")
+      ) {
+        handledArrivalRequest.current = initialArrivalFlightKind;
+        const berth = mass.centre as [number, number, number];
+        const plan = frame.flight.routePlan(initialArrivalFlightKind, berth);
+        const start = plan.point(0);
+        const ahead = plan.point(Math.min(1, 6 / plan.length));
+        const tangentLength = Math.hypot(
+          ahead[0] - start[0],
+          ahead[2] - start[2],
+        ) || 1;
+        const tangent: readonly [number, number] = [
+          (ahead[0] - start[0]) / tangentLength,
+          (ahead[2] - start[2]) / tangentLength,
+        ];
+        const noseLength = Math.hypot(frame.nose[0], frame.nose[2]) || 1;
+        const localNose: readonly [number, number] = [
+          frame.nose[0] / noseLength,
+          frame.nose[2] / noseLength,
+        ];
+        const yaw = Math.atan2(
+          localNose[1] * tangent[0] - localNose[0] * tangent[1],
+          localNose[0] * tangent[0] + localNose[1] * tangent[1],
+        );
+        const orientation = vehicleRotation(
+          { position: [0, 0, 0], yaw, pitch: 0, roll: 0 },
+          frame.nose,
+        );
+        state.body = {
+          position: [
+            start[0] - mass.centre[0],
+            start[1] - mass.centre[1],
+            start[2] - mass.centre[2],
+          ],
+          orientation,
+          velocity: [tangent[0] * 6.5, 0, tangent[1] * 6.5],
+          angularVelocity: [0, 0, 0],
+        };
+        state.flight = createFlightState(
+          initialArrivalFlightKind,
+          "passenger",
+          frame.flight.limits.enginePoints.length,
+          frame.flight.underwaySeconds + 8,
+        );
+        state.liftNow = mass.mass * GRAVITY;
+        state.released.clear();
+        state.separated.clear();
+        state.spinAngles.fill(0);
+        state.suppressFrameVelocityOnce = true;
+
+        const passenger = bodies.current.get("player");
+        if (passenger) {
+          const restoredEyeOffset = initialArrivalPassengerTransit
+            ? vectorFromCarrier(
+                initialArrivalPassengerTransit.eyeOffset,
+                frame.nose,
+              )
+            : ([0, 0, 0] as const);
+          const restoredEye: [number, number, number] = [
+            frame.passengerFlight.point[0] + restoredEyeOffset[0],
+            frame.passengerFlight.point[1] + restoredEyeOffset[1],
+            frame.passengerFlight.point[2] + restoredEyeOffset[2],
+          ];
+          const localEye: [number, number, number] = [
+            restoredEye[0] - mass.centre[0],
+            restoredEye[1] - mass.centre[1],
+            restoredEye[2] - mass.centre[2],
+          ];
+          const eyeOffset = rotateByQuaternion(orientation, localEye);
+          passenger.setTranslation(
+            {
+              x: start[0] + eyeOffset[0],
+              y: start[1] + eyeOffset[1] - 0.54,
+              z: start[2] + eyeOffset[2],
+            },
+            true,
+          );
+          const restoredRelativeVelocity = initialArrivalPassengerTransit
+            ? rotateByQuaternion(
+                orientation,
+                vectorFromCarrier(
+                  initialArrivalPassengerTransit.relativeVelocity,
+                  frame.nose,
+                ) as [number, number, number],
+              )
+            : ([0, 0, 0] as const);
+          passenger.setLinvel(
+            {
+              x: tangent[0] * 6.5 + restoredRelativeVelocity[0],
+              y: restoredRelativeVelocity[1],
+              z: tangent[1] * 6.5 + restoredRelativeVelocity[2],
+            },
+            true,
+          );
+          if (initialArrivalPassengerTransit) {
+            const localLook = vectorFromCarrier(
+              initialArrivalPassengerTransit.lookDirection,
+              frame.nose,
+            );
+            const worldLook = rotateByQuaternion(
+              orientation,
+              localLook as [number, number, number],
+            );
+            const lookLength = Math.hypot(...worldLook) || 1;
+            const lookX = worldLook[0] / lookLength;
+            const lookY = worldLook[1] / lookLength;
+            const lookZ = worldLook[2] / lookLength;
+            onPassengerViewRestore?.(
+              Math.atan2(-lookX, -lookZ),
+              Math.asin(clampUnit(lookY)),
+            );
+          }
+          onInterIslandArrivalReady?.(initialArrivalFlightKind);
+        }
       }
       // Оболочка задаёт ПОТОЛОК подъёма: порвали полотно — больше столько и
       // не поднимешь. А внутри этого потолка автоматика тянет подъём к весу
@@ -1272,6 +2011,7 @@ export function VehicleFrameSystem({
             };
             state.liftNow = neutral;
             state.released.clear();
+            state.separated.clear();
             state.spinAngles.fill(0);
             state.recovery.progress = 0;
             state.recovery.arrivalInitialized = true;
@@ -1336,11 +2076,13 @@ export function VehicleFrameSystem({
         frame.flight.limits.enginePoints.length,
       );
       const flightClearance = propulsionFlightClearance(propulsion);
-      const autopilotModel =
-        frame.flight.driveAnimation.kind === "propeller" && flight
+      const autopilotModel: ShipModel =
+        driveUsesPropulsionFeedback(frame.flight.driveAnimation) && flight
           ? { ...shipModel, engineAvailability: flight.propulsionFeedback }
           : shipModel;
-      const failureEnvelope = frame.flight.driveAnimation.kind === "propeller"
+      const failureEnvelope = driveUsesPropulsionFeedback(
+        frame.flight.driveAnimation,
+      )
         ? supervisedFailureEnvelope(flightClearance)
         : undefined;
       const senseObstacleSafety = (
@@ -1519,7 +2261,9 @@ export function VehicleFrameSystem({
         progress: number,
         startRamp: number,
       ) => {
-        const controlledPlan = frame.flight.driveAnimation.kind === "propeller"
+        const controlledPlan = driveUsesPropulsionFeedback(
+          frame.flight.driveAnimation,
+        )
           ? speedLimitedPlan(plan, flightClearance.speedFactor)
           : plan;
         const safetyAdvisory = senseObstacleSafety(controlledPlan, progress);
@@ -1559,7 +2303,7 @@ export function VehicleFrameSystem({
         if (flight) {
           flight.driveThrottle = driveThrottle;
           flight.throttle = deliveredThrottle;
-          if (frame.flight.driveAnimation.kind === "propeller") {
+          if (driveUsesPropulsionFeedback(frame.flight.driveAnimation)) {
             flight.propulsionFeedback = updatePropulsionFeedback(
               flight.propulsionFeedback,
               actuation,
@@ -1637,25 +2381,130 @@ export function VehicleFrameSystem({
         }
       } else if (flight && flight.castOff) {
         const plan = frame.flight.routePlan(flight.kind, berth);
+        const beforeRecoveryTracking = routeTrackingState(
+          plan,
+          flight.progress,
+          centreNow,
+          state.body.orientation,
+          frame.nose,
+        );
+        const tilt = Math.hypot(
+          beforeRecoveryTracking.pitch,
+          beforeRecoveryTracking.roll,
+        );
+        const tiltAngularSpeed = Math.hypot(
+          state.body.angularVelocity[0],
+          state.body.angularVelocity[2],
+        );
+        const routePoint = plan.point(flight.progress);
+        const altitudeError = centreNow[1] - routePoint[1];
+        const tiltInertia = Math.max(1, mass.inertia[0], mass.inertia[8]);
+        const rightingLever = Math.max(
+          0,
+          (state.trimCentre ?? frame.liftCentre)[1] - mass.centre[1],
+        );
+        const rightingAcceleration =
+          state.liftNow * rightingLever *
+            Math.max(0.12, Math.sin(Math.min(Math.PI / 2, tilt))) /
+            tiltInertia +
+          frame.flight.angularDamping * mass.inertia[4] *
+            tiltAngularSpeed / tiltInertia;
+        const previousDelivery = propulsion.mode === "inoperative"
+          ? 0
+          : deliveredControlFraction(
+              flight.driveThrottle,
+              flight.throttle,
+            );
+        const activeFailureEnvelope = failureEnvelope ??
+          DEFAULT_VEHICLE_FAILURE_ENVELOPE;
+        const disturbanceFeasible = vehicleDisturbanceRecoveryFeasible({
+          pitch: beforeRecoveryTracking.pitch,
+          roll: beforeRecoveryTracking.roll,
+          tiltAngularSpeed,
+          rightingAngularAcceleration: rightingAcceleration,
+          liftToWeight: liftCapacity / Math.max(1, neutral),
+          requiredControlAvailable: propulsion.mode !== "inoperative",
+          deliveredControlFraction: previousDelivery,
+          relativeAltitude: state.body.position[1],
+          verticalSpeed: state.body.velocity[1],
+          minimumRelativeAltitude:
+            activeFailureEnvelope.minimumRelativeAltitude,
+        });
+        const disturbanceObserved =
+          state.disturbanceImpulseSeconds > 0 &&
+          (
+            tilt > 0.28 ||
+            tiltAngularSpeed > 0.18 ||
+            Math.abs(altitudeError) > 4 ||
+            Math.abs(state.body.velocity[1]) > 2.2
+          );
+        if (
+          !flight.disturbanceRecovery &&
+          disturbanceObserved &&
+          disturbanceFeasible
+        ) {
+          flight.disturbanceRecovery = {
+            elapsedSeconds: 0,
+            stableSeconds: 0,
+          };
+        }
+        if (flight.disturbanceRecovery) {
+          const elapsedSeconds =
+            flight.disturbanceRecovery.elapsedSeconds + step;
+          const stable =
+            tilt < 0.14 &&
+            tiltAngularSpeed < 0.065 &&
+            Math.abs(altitudeError) < 2.5 &&
+            Math.abs(state.body.velocity[1]) < 0.75;
+          const stableSeconds = stable
+            ? flight.disturbanceRecovery.stableSeconds + step
+            : 0;
+          flight.disturbanceRecovery = {
+            elapsedSeconds,
+            stableSeconds,
+          };
+          if (
+            !disturbanceFeasible ||
+            elapsedSeconds >= 30
+          ) {
+            flight.disturbanceRecovery = null;
+          } else if (stableSeconds >= 1.2) {
+            flight.progress = rejoinVehicleRouteProgress(
+              plan,
+              flight.progress,
+              centreNow,
+            );
+            flight.watchdog = createVehicleFailureWatchdog(flight.progress);
+            flight.disturbanceRecovery = null;
+          }
+        }
+        const recoveringDisturbance = flight.disturbanceRecovery !== null;
         // Автопилоту передаём ПАСПОРТ машины — массу, момент инерции и
         // сопротивление, — чтобы он мог предсказать, где окажется, а не
         // догонять собственную ошибку.
         const piloted = flyRoutePlan(
-          plan,
+          recoveringDisturbance ? speedLimitedPlan(plan, 0) : plan,
           flight.progress,
           Math.max(
             0,
             Math.min(1, (flight.time - frame.flight.underwaySeconds) / 8),
           ),
         );
-        if (piloted.goAround && flight.time - flight.lastGoAround > 20) {
+        if (
+          !recoveringDisturbance &&
+          piloted.goAround &&
+          flight.time - flight.lastGoAround > 20
+        ) {
           flight.progress = 0;
           flight.lastGoAround = flight.time;
           flight.goArounds += 1;
         }
         // Ход по маршруту двигает сам корабль: сколько прошёл, на столько и
         // сдвинулась цель.
-        if (flight.time >= frame.flight.underwaySeconds) {
+        if (
+          !recoveringDisturbance &&
+          flight.time >= frame.flight.underwaySeconds
+        ) {
           const travelled =
             Math.hypot(state.body.velocity[0], state.body.velocity[2]) * step;
           flight.progress = advanceVehicleRouteProgress(
@@ -1664,6 +2513,84 @@ export function VehicleFrameSystem({
             centreNow,
             travelled,
           );
+          if (
+            !flight.handoffRequested &&
+            flight.progress >= 0.985 &&
+            isInterIslandTransferKind(flight.kind)
+          ) {
+            flight.handoffRequested = true;
+            const passenger = bodies.current.get("player");
+            const worldEye: [number, number, number] = [
+              camera.position.x,
+              camera.position.y,
+              camera.position.z,
+            ];
+            const localEye = shipLocalPoint(
+              worldEye,
+              frame.origin,
+              state.pose,
+              frame.nose,
+            );
+            const passengerInsideCarrier = Boolean(
+              passenger && frame.passengerFlight?.contains(localEye),
+            );
+            let passengerHandoff: InterIslandPassengerHandoff | null = null;
+            if (passenger && frame.passengerFlight && passengerInsideCarrier) {
+              const passengerPosition = passenger.translation();
+              const worldLever: [number, number, number] = [
+                passengerPosition.x - centreNow[0],
+                passengerPosition.y - centreNow[1],
+                passengerPosition.z - centreNow[2],
+              ];
+              const inheritedVelocity = bodyPointVelocity(
+                state.body,
+                worldLever,
+              );
+              const passengerVelocity = passenger.linvel();
+              const inverseOrientation: [number, number, number, number] = [
+                -state.body.orientation[0],
+                -state.body.orientation[1],
+                -state.body.orientation[2],
+                state.body.orientation[3],
+              ];
+              const relativeVelocity = rotateByQuaternion(
+                inverseOrientation,
+                [
+                  passengerVelocity.x - inheritedVelocity[0],
+                  passengerVelocity.y - inheritedVelocity[1],
+                  passengerVelocity.z - inheritedVelocity[2],
+                ],
+              );
+              camera.getWorldDirection(handoffLookDirection.current);
+              const localLookDirection = rotateByQuaternion(
+                inverseOrientation,
+                [
+                  handoffLookDirection.current.x,
+                  handoffLookDirection.current.y,
+                  handoffLookDirection.current.z,
+                ],
+              );
+              passengerHandoff = {
+                eyeOffset: carrierVector(
+                  [
+                    localEye[0] - frame.passengerFlight.point[0],
+                    localEye[1] - frame.passengerFlight.point[1],
+                    localEye[2] - frame.passengerFlight.point[2],
+                  ],
+                  frame.nose,
+                ),
+                relativeVelocity: carrierVector(
+                  relativeVelocity,
+                  frame.nose,
+                ),
+                lookDirection: carrierVector(
+                  localLookDirection,
+                  frame.nose,
+                ),
+              };
+            }
+            onInterIslandBoundary?.(flight.kind, passengerHandoff);
+          }
         }
 
         const tracking = routeTrackingState(
@@ -1722,6 +2649,7 @@ export function VehicleFrameSystem({
               frame.flight.docking,
             ),
             dockingComplete,
+            recoveringDisturbance,
           },
           failureEnvelope,
         );
@@ -1794,9 +2722,13 @@ export function VehicleFrameSystem({
           ),
         );
       } else if (flight) {
-        // На отрыве моторы раскручиваются одинаково: доворачивать нечего.
-        const spool =
-          0.42 * Math.min(1, flight.time / frame.flight.spoolSeconds);
+        // На отрыве моторы раскручиваются одинаково, но в направлении
+        // первого участка: задний ход нельзя начинать ударом тарана в захват.
+        const spool = vehicleSpoolCommand(
+          frame.flight.routePlan(flight.kind, berth),
+          flight.time,
+          frame.flight.spoolSeconds,
+        );
         const spoolRequest = frame.flight.limits.enginePoints.map(
           () => spool,
         );
@@ -1805,7 +2737,9 @@ export function VehicleFrameSystem({
           const rz = point[2] - mass.centre[2];
           return rz * frame.nose[0] - rx * frame.nose[2];
         });
-        flight.driveThrottle = frame.flight.driveAnimation.kind === "propeller"
+        flight.driveThrottle = driveUsesPropulsionFeedback(
+          frame.flight.driveAnimation,
+        )
           ? allocateAutopilotEngineCommands(
               spool,
               0,
@@ -1828,7 +2762,7 @@ export function VehicleFrameSystem({
         );
         flight.throttle = flight.driveThrottle.map((value, index) =>
           deliveredCommandValue(actuation, `throttle:${index}`, value));
-        if (frame.flight.driveAnimation.kind === "propeller") {
+        if (driveUsesPropulsionFeedback(frame.flight.driveAnimation)) {
           flight.propulsionFeedback = updatePropulsionFeedback(
             flight.propulsionFeedback,
             actuation,
@@ -1868,7 +2802,12 @@ export function VehicleFrameSystem({
       if (state.liftNow === 0) {
         state.liftNow = liftTarget;
       }
-      const liftRate = neutral * 0.25 * step;
+      // Lift belongs to gas volume that is still attached to the carrier.
+      // A torn-away cell cannot keep lifting a tiny surviving skeleton. Mass
+      // loss elsewhere is different: the intact gas remains, so the lighter
+      // craft genuinely rises while its valves work back toward trim.
+      state.liftNow = Math.min(state.liftNow, liftCapacity);
+      const liftRate = state.intactMass * GRAVITY * 0.25 * step;
       state.liftNow += Math.max(-liftRate, Math.min(liftRate, liftTarget - state.liftNow));
       const lift = state.liftNow;
 
@@ -1910,7 +2849,7 @@ export function VehicleFrameSystem({
       const loadedGroundContacts: {
         readonly normalReaction: number;
         readonly relativeVelocity: [number, number, number];
-        readonly normal: [number, number, number];
+        readonly normal: readonly [number, number, number];
         readonly point: [number, number, number];
       }[] = [];
       const probeCount = frame.supports.length + frame.hullProbes.length;
@@ -2405,11 +3344,30 @@ export function VehicleFrameSystem({
             state.released.add(piece.id);
             if (body.bodyType() === rapier.RigidBodyType.Dynamic) {
               const current = body.linvel();
+              const currentAngular = body.angvel();
+              const massCentre = state.mass?.centre ?? frame.origin;
+              const worldLever = rotateByQuaternion(
+                state.body.orientation,
+                [
+                  piece.position[0] - massCentre[0],
+                  piece.position[1] - massCentre[1],
+                  piece.position[2] - massCentre[2],
+                ],
+              );
+              const inherited = bodyPointVelocity(state.body, worldLever);
               body.setLinvel(
                 {
-                  x: current.x + state.velocity[0],
-                  y: current.y + state.velocity[1],
-                  z: current.z + state.velocity[2],
+                  x: current.x + inherited[0],
+                  y: current.y + inherited[1],
+                  z: current.z + inherited[2],
+                },
+                true,
+              );
+              body.setAngvel(
+                {
+                  x: currentAngular.x + state.body.angularVelocity[0],
+                  y: currentAngular.y + state.body.angularVelocity[1],
+                  z: currentAngular.z + state.body.angularVelocity[2],
                 },
                 true,
               );
@@ -2594,11 +3552,18 @@ export function VehicleFrameSystem({
   });
 
   return (
-    <CompoundKinematicClusterBodies
-      definitions={frames}
-      pieces={pieces}
-      brokenPieces={inactivePieces}
-      registry={clusterRegistry}
-    />
+    <>
+      <CompoundKinematicClusterBodies
+        definitions={frames}
+        pieces={pieces}
+        brokenPieces={inactivePieces}
+        registry={clusterRegistry}
+      />
+      <VehicleExhaustSmoke
+        frames={frames}
+        states={states}
+        inactivePieces={inactivePieces}
+      />
+    </>
   );
 }

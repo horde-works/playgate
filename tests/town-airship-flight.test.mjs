@@ -93,6 +93,40 @@ test("the town airship is one compound carrier and the mast stays ashore", () =>
   );
 });
 
+test("the city route cannot finish before the nose cone is inside the mast cup", () => {
+  const cone = townScene.breakablePieces.find(
+    (piece) => piece.id === `${SHIP}:nose:cone:piece`,
+  );
+  const cup = townScene.breakablePieces.find(
+    (piece) => piece.id === `${MAST}:cup:piece`,
+  );
+  assert.ok(cone);
+  assert.ok(cup);
+
+  const radialClearance = (cup.size[0] - cone.size[0]) / 2;
+  const vehicle = TOWN_AIRSHIP_AIR_VEHICLE;
+  assert.equal(
+    vehicle.flight.docking.position < radialClearance,
+    true,
+    `completion radius ${vehicle.flight.docking.position.toFixed(2)} m exceeds ` +
+      `the cup clearance ${radialClearance.toFixed(2)} m`,
+  );
+  assert.equal(
+    isDockingComplete(
+      0.99,
+      [radialClearance + 0.01, 0, 0],
+      [0, 0, 0, 1],
+      [0, 0, 0],
+      [0, 0, 0],
+      vehicle.nose,
+      vehicle.flight.approach,
+      vehicle.flight.docking,
+    ),
+    false,
+    "the autopilot declared docking while the cone was still outside the cup",
+  );
+});
+
 test("the measured mass hangs under the authored lift heart", () => {
   const vehicle = TOWN_AIRSHIP_AIR_VEHICLE;
   const properties = massProperties(ship, densityOf);
@@ -239,6 +273,38 @@ test("both city routes back out, climb clear and return along the mast nose", ()
       townAirshipRoutePhase(kind, route.nodeProgress("arrival-shoulder")),
       "approach",
     );
+
+    const glideSeam = route.length - 78;
+    const beforeSeam = route.requirement(
+      "altitude",
+      (glideSeam - 0.01) / route.length,
+    );
+    const afterSeam = route.requirement(
+      "altitude",
+      (glideSeam + 0.01) / route.length,
+    );
+    assert.equal(
+      Math.abs(beforeSeam - afterSeam) < 0.01,
+      true,
+      `${kind} introduces a vertical step at the final-glide seam`,
+    );
+    let previousArrivalAltitude = Number.POSITIVE_INFINITY;
+    for (
+      let distance = route.length - 135;
+      distance <= route.length;
+      distance += 0.25
+    ) {
+      const arrivalAltitude = route.requirement(
+        "altitude",
+        distance / route.length,
+      );
+      assert.equal(
+        arrivalAltitude <= previousArrivalAltitude + 1e-8,
+        true,
+        `${kind} asks the returning craft to climb again at ${distance.toFixed(1)} m`,
+      );
+      previousArrivalAltitude = arrivalAltitude;
+    }
 
     const end = plan.point(1);
     const before = plan.point(plan.finalFrom);
@@ -557,6 +623,7 @@ for (const kind of ["circuit", "tour"]) {
     let lastControls = null;
     let goArounds = 0;
     let lastGoAround = -1e9;
+    let liftNow = properties.mass * 9.81;
     let watchdog = createVehicleFailureWatchdog(0);
     let recoveryReason = null;
     const reverseUntil = townAirshipRoute(kind).markerProgress("reverseComplete");
@@ -586,18 +653,21 @@ for (const kind of ["circuit", "tour"]) {
         trim[1] - properties.centre[1],
         trim[2] - properties.centre[2],
       ]);
+      const neutralLift = properties.mass * 9.81;
+      const liftTarget = neutralLift *
+        (1 + piloted.controls.liftTrim * flight.limits.liftTrimRange);
+      const liftRate = neutralLift * 0.25 * dt;
+      liftNow += Math.max(
+        -liftRate,
+        Math.min(liftRate, liftTarget - liftNow),
+      );
       const forces = [
         {
           force: [0, -properties.mass * 9.81, 0],
           point: state.position,
         },
         {
-          force: [
-            0,
-            properties.mass * 9.81 *
-              (1 + piloted.controls.liftTrim * flight.limits.liftTrimRange),
-            0,
-          ],
+          force: [0, liftNow, 0],
           point: [
             state.position[0] + liftArm[0],
             state.position[1] + liftArm[1],

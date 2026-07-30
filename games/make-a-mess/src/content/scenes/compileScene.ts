@@ -261,6 +261,8 @@ function compilePiece(
     position: transformedPosition(source.position, object.transform),
     rotation: transformedRotation(source.rotation, object.transform),
     size,
+    visualProfile: source.visualProfile,
+    visualMesh: source.visualMesh,
     volume: source.volume === undefined
       ? undefined
       : source.volume * Math.abs(
@@ -332,6 +334,8 @@ function primitiveSource(object: Extract<SceneObjectDefinition, { kind: "primiti
     shape: object.shape,
     position: [0, 0, 0],
     size: object.size,
+    visualProfile: object.visualProfile,
+    visualMesh: object.visualMesh,
     volume: object.volume,
     bearingArea: object.bearingArea,
     color: object.color,
@@ -452,6 +456,7 @@ export function compileSceneDocument(
     copy: document.copy,
     clusters,
     lamps,
+    spotLights: document.spotLights,
     indestructible: document.indestructible,
     contentLicense: document.contentLicense,
     fogDistances: document.fogDistances,

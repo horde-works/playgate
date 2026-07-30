@@ -53,7 +53,10 @@ import {
   lampTimeFactor,
   smoothLampLevel,
 } from "./lampEventLighting";
-import { selectGroupedLampCandidates } from "./lampPoolSelection";
+import {
+  PERSISTENT_LAMP_GROUP_PRIORITY,
+  selectGroupedLampCandidates,
+} from "./lampPoolSelection";
 import { windState } from "./windState";
 import {
   TIME_OF_DAY_TARGETS,
@@ -386,10 +389,12 @@ export function DayNightCycle({
   );
 }
 
-// Twelve keeps one eight-lamp carriage group coherent while leaving four
-// sources for the surrounding platform. It is still half the old 24-light
-// setup that made forward shading prohibitively expensive.
-const LAMP_POOL_SIZE = 12;
+// Ordinary scenes still select at most twelve sources. Sixteen slots exist so
+// a skyline world can reserve one source per architectural landmark and keep
+// the nearest detailed group coherent; this remains well below the rejected
+// old 24-light setup.
+const DEFAULT_LAMP_POOL_CAPACITY = 12;
+const LAMP_POOL_SIZE = 16;
 
 function createLampBeaconTexture(): DataTexture {
   const size = 64;
@@ -585,10 +590,17 @@ export function LampLightPool({
         !closest || candidate.distanceSq < closest.distanceSq ? candidate : closest,
       undefined,
     );
-    const localCapacity = Math.max(
-      1,
-      Math.min(LAMP_POOL_SIZE, nearest?.lamp.localPoolCapacity ?? LAMP_POOL_SIZE),
-    );
+    const hasPersistentGroups = candidates.some((candidate) =>
+      (candidate.lamp.poolPriority ?? 0) >= PERSISTENT_LAMP_GROUP_PRIORITY);
+    const localCapacity = hasPersistentGroups
+      ? LAMP_POOL_SIZE
+      : Math.max(
+        1,
+        Math.min(
+          DEFAULT_LAMP_POOL_CAPACITY,
+          nearest?.lamp.localPoolCapacity ?? DEFAULT_LAMP_POOL_CAPACITY,
+        ),
+      );
     candidates.sort((left, right) => left.rank - right.rank);
     const chosen = selectGroupedLampCandidates(candidates, localCapacity);
     // Hysteresis: a slot keeps its lamp while it stays in a slightly larger

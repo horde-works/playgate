@@ -8,6 +8,9 @@ import type {
   LampEventLightingDefinition,
   LandscapeSurfaceProfile,
   SceneVector3,
+  SpotLightDefinition,
+  SurfaceMeshProfile,
+  SurfacePolygonProfile,
   SurfaceTextureProfile,
   SupportMode,
   TreeVisualDefinition,
@@ -79,6 +82,8 @@ export interface ScenePrefabPieceDefinition {
   readonly position: SceneVector3;
   readonly rotation?: SceneEuler;
   readonly size: SceneVector3;
+  readonly visualProfile?: SurfacePolygonProfile;
+  readonly visualMesh?: SurfaceMeshProfile;
   readonly volume?: number;
   readonly bearingArea?: number;
   readonly color: string;
@@ -125,6 +130,8 @@ export interface ScenePrimitiveDefinition extends SceneObjectBase {
   readonly material: BreakableMaterial;
   readonly shape: BreakableShape;
   readonly size: SceneVector3;
+  readonly visualProfile?: SurfacePolygonProfile;
+  readonly visualMesh?: SurfaceMeshProfile;
   readonly volume?: number;
   readonly bearingArea?: number;
   readonly color: string;
@@ -176,6 +183,8 @@ export interface AuthoredSceneDocument {
   readonly world: SceneWorldDefinition;
   readonly copy: DestructionSceneCopy;
   readonly groups: readonly SceneGroupDefinition[];
+  /** Directed fixtures with real surface light and optional volumetric beams. */
+  readonly spotLights?: readonly SpotLightDefinition[];
   /** Мир-заповедник: ломать нельзя ничего (см. LICENSING.md). */
   readonly indestructible?: boolean;
   /**

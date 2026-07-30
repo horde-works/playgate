@@ -44,6 +44,29 @@ export type CompoundKinematicClusterRegistry = MutableRefObject<
   Map<string, CompoundKinematicClusterRuntime>
 >;
 
+/** Momentum waiting for a custom-integrated compound carrier. */
+export interface CompoundKinematicImpulse {
+  readonly impulse: SceneVector3;
+  readonly point: SceneVector3;
+}
+
+export type CompoundKinematicImpulseRegistry = MutableRefObject<
+  Map<string, CompoundKinematicImpulse[]>
+>;
+
+export function queueCompoundKinematicImpulse(
+  registry: CompoundKinematicImpulseRegistry,
+  clusterId: string,
+  applied: CompoundKinematicImpulse,
+): void {
+  const pending = registry.current.get(clusterId);
+  if (pending) {
+    pending.push(applied);
+  } else {
+    registry.current.set(clusterId, [applied]);
+  }
+}
+
 export interface CompoundClusterColliderDefinition {
   readonly id: string;
   readonly sourceId: string;

@@ -134,7 +134,7 @@ test("all three trapezoidal entrance blocks have concealed warm night light", ()
       && lamp.distance === PYRAMID_ENTRANCE_LIGHT_DISTANCE
       && lamp.intensity === PYRAMID_ENTRANCE_LIGHT_INTENSITY
       && lamp.dayIntensityFactor === 0
-      && lamp.poolGroupId === "astana:pyramid:entrances"));
+      && lamp.poolGroupId === "astana:pyramid:architectural-lighting"));
 });
 
 test("three entrance ramps leave face centres along exact normals and flare outside", () => {

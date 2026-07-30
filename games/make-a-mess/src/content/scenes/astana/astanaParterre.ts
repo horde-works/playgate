@@ -20,8 +20,10 @@ import {
 } from "./astanaLayout.ts";
 import { groundUnder } from "./astanaShell.ts";
 
-const GRANITE = "#aaa69d";
-const GRANITE_EDGE = "#c3beb4";
+// Центральная ось должна читаться белой даже с высоты, а не сливаться с
+// серыми кольцами периферии. Теплоту ей дают цветники и вечерний свет.
+const GRANITE = "#ffffff";
+const GRANITE_EDGE = "#ffffff";
 const BED_SOIL = "#55483b";
 const LAMP_METAL = "#4d5558";
 const LAMP_LIGHT = "#f3f1e7";

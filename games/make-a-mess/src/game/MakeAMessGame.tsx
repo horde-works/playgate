@@ -131,7 +131,12 @@ import {
   HingedDoorSystem,
   type HingedEntryApproach,
 } from "./HingedDoorSystem";
-import { preferredEntryInteraction } from "./entryInteraction.ts";
+import {
+  entryInteractionActions,
+  numberedEntryInteractionAction,
+  preferredEntryInteraction,
+  type EntryInteractionAction,
+} from "./entryInteraction.ts";
 import { SmokePlumes } from "./SmokePlumes";
 import { WindController } from "./WindController";
 import { IntactBreakableWorld } from "./IntactBreakableWorld";
@@ -151,6 +156,25 @@ import {
 import { buildIntactGroundRenderColors } from "./intactWorldBatching";
 import { resolveRuntimeStructure } from "./runtimeStructure";
 import { createSpatialIndex } from "./spatialIndex";
+import {
+  ISLAND_CHART,
+  interIslandArrivalCopyKey,
+  islandIdForScene,
+  type IslandId,
+} from "./islandTopology.ts";
+import {
+  interIslandArrivalRequest,
+  interIslandTransferDestination,
+} from "./interIslandRoutes.ts";
+import {
+  INTER_ISLAND_PASSENGER_STORAGE_KEY,
+  interIslandPassengerAccess,
+  interIslandWeaponSelectionBlocked,
+  parseInterIslandPassengerTransit,
+  type InterIslandPassengerHandoff,
+  type InterIslandPassengerTransit,
+} from "./interIslandPassenger.ts";
+import { shipTransmutationPlan } from "./shipTransmutation.ts";
 import {
   ACTOR_SAFETY_FLOOR,
   ACTOR_ABOARD,
@@ -197,8 +221,10 @@ import {
 import {
   compoundClusterOwnsPiece,
   PHYSICS_TIME_STEP,
+  queueCompoundKinematicImpulse,
   type CompoundKinematicClusterDefinition,
   type CompoundKinematicClusterRuntime,
+  type CompoundKinematicImpulse,
 } from "./compoundKinematicCluster";
 import {
   DayNightCycle,
@@ -263,6 +289,16 @@ type ControlName =
 // "none" — фоторежим: пустые руки, клик ничего не делает; клавиша 0.
 type WeaponName = "none" | "hammer" | "launcher" | "mg" | "rocket";
 type ExplosiveKind = "grenade" | "rocket";
+
+function nextWeaponName(weapon: WeaponName): Exclude<WeaponName, "none"> {
+  return weapon === "hammer"
+    ? "launcher"
+    : weapon === "launcher"
+      ? "mg"
+      : weapon === "mg"
+        ? "rocket"
+        : "hammer";
+}
 
 function timeOfDayKey(timeOfDay: TimeOfDay): TranslationKey {
   switch (timeOfDay) {
@@ -457,6 +493,8 @@ const ROCKET_TRAIL_COUNT = 42;
 const ROCKET_TRAIL_LIFE = 0.58;
 const ROCKET_TRAIL_INTERVAL = 0.035;
 const ROCKET_TRAIL_COLORS = ["#ffcf67", "#f06a32", "#4b4d49"] as const;
+/** Momentum of one MG projectile after the weapon/recoil system has fired it. */
+const MG_PROJECTILE_IMPULSE = 2.4;
 
 const blastTransmissionByMaterial: Record<BreakableMaterial, number> = {
   glass: 0.76,
@@ -676,6 +714,8 @@ function Player({
   spawn,
   flightMode,
   entryInteractionActive,
+  interIslandArrivalActive,
+  interIslandBoundaryPassThrough,
   occupiedSeatId,
   vehicleFramePoses,
 }: {
@@ -685,6 +725,10 @@ function Player({
   spawn: readonly [number, number, number];
   flightMode: boolean;
   entryInteractionActive: boolean;
+  /** Arrival owns the player pose from the first physics step. */
+  interIslandArrivalActive: boolean;
+  /** Exact hull containment grants a temporary exception to the island ring. */
+  interIslandBoundaryPassThrough: boolean;
   occupiedSeatId: string | null;
   vehicleFramePoses: MutableRefObject<ReadonlyMap<string, VehicleFramePoseState>>;
 }) {
@@ -765,7 +809,9 @@ function Player({
 
     // Spawn grace: pin the player to the spawn point for the first frames so
     // load-time physics hiccups can never push them through the ground.
-    if (spawnFrames.current < 40) {
+    if (interIslandArrivalActive) {
+      spawnFrames.current = 40;
+    } else if (spawnFrames.current < 40) {
       spawnFrames.current += 1;
       passengerYawVelocity.current = 0;
       passengerViewMotion.reset();
@@ -869,6 +915,15 @@ function Player({
         : 4.25;
 
     if (flightMode) {
+      const flightActorGroups = interIslandBoundaryPassThrough
+        ? ACTOR_ABOARD
+        : ACTOR_NORMAL;
+      for (let index = 0; index < body.current.numColliders(); index += 1) {
+        const collider = body.current.collider(index);
+        if (collider.collisionGroups() !== flightActorGroups) {
+          collider.setCollisionGroups(flightActorGroups);
+        }
+      }
       camera.getWorldDirection(flightForward).normalize();
       flightRight.set(1, 0, 0).applyQuaternion(camera.quaternion).normalize();
       setFlightVelocityTarget(
@@ -944,7 +999,8 @@ function Player({
       grounded,
       movingSupport,
     );
-    const actorGroups = movingSupportBoundaryPassThrough.current
+    const actorGroups =
+      interIslandBoundaryPassThrough || movingSupportBoundaryPassThrough.current
       ? ACTOR_ABOARD
       : ACTOR_NORMAL;
     for (let index = 0; index < body.current.numColliders(); index += 1) {
@@ -1177,7 +1233,9 @@ function Player({
 
     // Falling off an airborne carrier returns to the scene's ordinary island
     // spawn, never onto the carrier that has already flown away.
-    const fallReturn = passengerFallReturnPoint(position.y, spawn);
+    const fallReturn = interIslandBoundaryPassThrough
+      ? null
+      : passengerFallReturnPoint(position.y, spawn);
     if (fallReturn) {
       body.current.setTranslation(
         fallReturn,
@@ -1203,7 +1261,12 @@ function Player({
   return (
     <RigidBody
       ref={body}
-      position={[...spawn]}
+      // An arriving passenger has no ordinary island spawn. Keep the body
+      // outside the playable world until VehicleFrameSystem places it aboard
+      // the carrier on the first physical step.
+      position={interIslandArrivalActive
+        ? [spawn[0], spawn[1] - 1_000, spawn[2]]
+        : [...spawn]}
       gravityScale={flightMode ? 0 : 1}
       colliders={false}
       enabledRotations={[false, false, false]}
@@ -1267,11 +1330,22 @@ function MouseLook({
       return;
     }
     const scope = window as unknown as Record<string, unknown>;
-    scope.__mamLook = (nextYaw: number, nextPitch: number) => {
+    const setLook = (nextYaw: number, nextPitch: number) => {
       yaw.current = nextYaw;
       pitch.current = MathUtils.clamp(nextPitch, -Math.PI / 2.1, Math.PI / 2.1);
       cameraRef.current.rotation.set(pitch.current, yaw.current, 0, "YXZ");
     };
+    scope.__mamLook = setLook;
+    // Browser automation runs in an isolated page realm and cannot call the
+    // dev hook directly. Match mamTeleport with a one-shot query command so
+    // a physical weapon test can still author an exact line of sight.
+    const lookRequest = new URLSearchParams(window.location.search).get("mamLook");
+    if (lookRequest) {
+      const [nextYaw, nextPitch] = lookRequest.split(",").map(Number);
+      if (Number.isFinite(nextYaw) && Number.isFinite(nextPitch)) {
+        setLook(nextYaw, nextPitch);
+      }
+    }
     return () => {
       delete scope.__mamLook;
     };
@@ -2874,7 +2948,11 @@ interface OpenWorldSceneProps {
   resetVersion: number;
   entryOpenRequestVersion: number;
   entryOpenRequestTargetRef: MutableRefObject<HingedEntryApproach | null>;
+  initialArrivalFlightKind: string | null;
+  initialArrivalPassengerTransit: InterIslandPassengerTransit | null;
+  interIslandArrivalActive: boolean;
   entryInteractionActive: boolean;
+  interIslandBoundaryPassThrough: boolean;
   cinematic: boolean;
   onActiveChange: (active: boolean) => void;
   onFallbackChange: (fallback: boolean) => void;
@@ -2883,6 +2961,16 @@ interface OpenWorldSceneProps {
   onEntryApproachChange: (entry: HingedEntryApproach | null) => void;
   onDepartureApproachChange: (
     approached: HingedEntryApproach | null,
+  ) => void;
+  onInterIslandBoundary: (
+    flightKind: string,
+    passenger: InterIslandPassengerHandoff | null,
+  ) => void;
+  onInterIslandArrivalReady: (flightKind: string) => void;
+  onInterIslandArrivalComplete: (flightKind: string) => void;
+  onInterIslandPassengerStateChange: (
+    flightActive: boolean,
+    passengerInsideCarrier: boolean,
   ) => void;
   occupiedSeatId: string | null;
   onOccupiedSeatChange: (seatId: string | null) => void;
@@ -2905,7 +2993,11 @@ function OpenWorldScene({
   resetVersion,
   entryOpenRequestVersion,
   entryOpenRequestTargetRef,
+  initialArrivalFlightKind,
+  initialArrivalPassengerTransit,
+  interIslandArrivalActive,
   entryInteractionActive,
+  interIslandBoundaryPassThrough,
   cinematic,
   onActiveChange,
   onFallbackChange,
@@ -2913,6 +3005,10 @@ function OpenWorldScene({
   onDynamicBodyCountChange,
   onEntryApproachChange,
   onDepartureApproachChange,
+  onInterIslandBoundary,
+  onInterIslandArrivalReady,
+  onInterIslandArrivalComplete,
+  onInterIslandPassengerStateChange,
   occupiedSeatId,
   onOccupiedSeatChange,
   onMotionTelemetryUpdate,
@@ -3017,6 +3113,15 @@ function OpenWorldScene({
   );
   const breakableRaycastRoot = useRef<Group>(null);
   const pieceBodies = useRef(new Map<string, RapierRigidBody>());
+  // One authoritative contact carrier and one momentum inbox per compound.
+  // Weapons may enqueue before the custom vehicle integrator runs its next
+  // fixed step; no Rapier dynamic-body surrogate is involved.
+  const compoundKinematicClusters = useRef(
+    new Map<string, CompoundKinematicClusterRuntime>(),
+  );
+  const compoundKinematicImpulses = useRef(
+    new Map<string, CompoundKinematicImpulse[]>(),
+  );
   const dynamicBodies = useRef(new Map<string, RapierRigidBody>());
   const pendingBodyActions = useRef(new Map<string, BodyAction[]>());
   const preStepMotions = useRef(new Map<string, ImpactMotion>());
@@ -3497,6 +3602,7 @@ function OpenWorldScene({
     contactDamageAfterStep.current.clear();
     dynamicStartedStep.current.clear();
     pendingBodyActions.current.clear();
+    compoundKinematicImpulses.current.clear();
     impactShatterTimes.current = [];
     chipTimes.current = [];
     for (const timer of strikeTimers.current) {
@@ -4600,6 +4706,30 @@ function OpenWorldScene({
         body?.bodyType() === rapier.RigidBodyType.Dynamic,
     );
 
+    // An attached plate is part of one rigid carrier at the instant of impact.
+    // Give the projectile's momentum to that carrier before any local fracture;
+    // if the plate separates on this hit it will inherit the resulting point
+    // velocity from VehicleFrameSystem exactly once.
+    if (
+      piece &&
+      !targetBroken &&
+      vehicleFrameForCluster(piece.clusterId) &&
+      compoundKinematicClusters.current.has(piece.clusterId)
+    ) {
+      queueCompoundKinematicImpulse(
+        compoundKinematicImpulses,
+        piece.clusterId,
+        {
+          impulse: [
+            direction.x * MG_PROJECTILE_IMPULSE,
+            direction.y * MG_PROJECTILE_IMPULSE,
+            direction.z * MG_PROJECTILE_IMPULSE,
+          ],
+          point: [point.x, point.y, point.z],
+        },
+      );
+    }
+
     if (material === "steel") {
       // Bullets don't pierce steel. A fixed structural member stays fixed;
       // a loose one can still receive the physical kick.
@@ -4855,6 +4985,107 @@ function OpenWorldScene({
         .sort(
           (left, right) => left.surfaceDistance - right.surfaceDistance,
         );
+
+      // Resolve one net pressure impulse for each intact compound carrier.
+      // Its attached members are remembered so the same blast is not applied
+      // again to a plate merely because fracture makes that plate dynamic a
+      // few lines later.
+      const attachedCompoundMemberIdsBeforeBlast = new Set<string>();
+      for (const [clusterId, runtime] of compoundKinematicClusters.current) {
+        let nearest: {
+          readonly id: string;
+          readonly centre: Vector3;
+          readonly radius: number;
+          readonly surfaceDistance: number;
+        } | null = null;
+        const carrierTranslation = runtime.body.translation();
+        const carrierRotation = runtime.body.rotation();
+        const carrierQuaternion = new Quaternion(
+          carrierRotation.x,
+          carrierRotation.y,
+          carrierRotation.z,
+          carrierRotation.w,
+        );
+        for (const memberId of runtime.attachedMemberIds) {
+          if (previousBroken.has(memberId)) {
+            continue;
+          }
+          attachedCompoundMemberIdsBeforeBlast.add(memberId);
+          const member = breakablePieceById.get(memberId);
+          if (!member) {
+            continue;
+          }
+          const centre = new Vector3(
+            member.position[0] - runtime.definition.origin[0],
+            member.position[1] - runtime.definition.origin[1],
+            member.position[2] - runtime.definition.origin[2],
+          )
+            .applyQuaternion(carrierQuaternion)
+            .add(new Vector3(
+              carrierTranslation.x,
+              carrierTranslation.y,
+              carrierTranslation.z,
+            ));
+          const radius = Math.hypot(...member.size) / 2;
+          const surfaceDistance = Math.max(
+            0,
+            center3.distanceTo(centre) - radius,
+          );
+          if (!nearest || surfaceDistance < nearest.surfaceDistance) {
+            nearest = { id: memberId, centre, radius, surfaceDistance };
+          }
+        }
+        if (!nearest || nearest.surfaceDistance > blastPushRadius) {
+          continue;
+        }
+        const outward = nearest.centre.clone().sub(center3);
+        if (outward.lengthSq() < 1e-8) {
+          outward.set(
+            carrierTranslation.x - center3.x,
+            carrierTranslation.y - center3.y,
+            carrierTranslation.z - center3.z,
+          );
+        }
+        if (outward.lengthSq() < 1e-8) {
+          outward.set(0, 1, 0);
+        }
+        outward.normalize();
+        const impactPoint = center3.clone().addScaledVector(
+          outward,
+          Math.max(0.05, nearest.surfaceDistance),
+        );
+        const visibility = blastVisibilityFactor(
+          center3,
+          impactPoint,
+          nearest.id,
+          nearest.id,
+          nearest.surfaceDistance,
+          solidOccluders,
+        );
+        if (visibility < 0.04) {
+          continue;
+        }
+        const falloff = Math.max(
+          0,
+          1 - nearest.surfaceDistance / blastPushRadius,
+        );
+        // Pressure impulse is a property of this explosion and exposed area,
+        // not of target mass. Mass only determines the resulting delta-v in
+        // the carrier integrator.
+        const magnitude = (isRocket ? 110 : 55) * falloff * visibility;
+        queueCompoundKinematicImpulse(
+          compoundKinematicImpulses,
+          clusterId,
+          {
+            impulse: [
+              outward.x * magnitude,
+              outward.y * magnitude,
+              outward.z * magnitude,
+            ],
+            point: [impactPoint.x, impactPoint.y, impactPoint.z],
+          },
+        );
+      }
 
       // Capture moving authored bodies by their CURRENT physics registry, not
       // by the spatial index built from authored positions. This includes
@@ -5138,7 +5369,10 @@ function OpenWorldScene({
       const pushedIds = new Set<string>();
 
       const pushBody = (id: string, body: RapierRigidBody) => {
-        if (damagedNow.has(id)) {
+        if (
+          damagedNow.has(id) ||
+          attachedCompoundMemberIdsBeforeBlast.has(id)
+        ) {
           return;
         }
         const translation = body.translation();
@@ -5905,10 +6139,6 @@ function OpenWorldScene({
   // Общая событийная шина составных объектов. Свет — первый потребитель;
   // следующие системы могут читать те же состояния без знания типа машины.
   const clusterEventStates = useRef<Map<string, LampEventState>>(new Map());
-  // One reusable authoritative contact body per moving compound object.
-  const compoundKinematicClusters = useRef(
-    new Map<string, CompoundKinematicClusterRuntime>(),
-  );
   const astanaTrainClusters = useMemo(() => {
     const available = new Set(breakablePieces.map((piece) => piece.clusterId));
     return astanaTrainClusterDefinitions().filter((definition) =>
@@ -6247,13 +6477,21 @@ function OpenWorldScene({
         resetVersion={resetVersion}
         departRequestVersion={entryOpenRequestVersion}
         departRequestTargetRef={entryOpenRequestTargetRef}
+        initialArrivalFlightKind={initialArrivalFlightKind}
+        initialArrivalPassengerTransit={initialArrivalPassengerTransit}
         onDepartureApproachChange={onDepartureApproachChange}
+        onInterIslandBoundary={onInterIslandBoundary}
+        onInterIslandArrivalReady={onInterIslandArrivalReady}
+        onInterIslandArrivalComplete={onInterIslandArrivalComplete}
+        onInterIslandPassengerStateChange={onInterIslandPassengerStateChange}
+        onPassengerViewRestore={passengerViewMotion.snapTo}
         occupiedSeatId={occupiedSeatId}
         onOccupiedSeatChange={onOccupiedSeatChange}
         movingVehicles={movingVehicles}
         dockedVehicles={dockedVehicles}
         clusterEventStates={clusterEventStates}
         clusterRegistry={compoundKinematicClusters}
+        externalImpulses={compoundKinematicImpulses}
         recoveryServiceArea={{
           center: scene.worldCenter,
           radius: scene.worldRadius ?? Math.hypot(...scene.worldHalfExtents),
@@ -6306,6 +6544,8 @@ function OpenWorldScene({
             spawn={scene.playerSpawn}
             flightMode={flightMode}
             entryInteractionActive={entryInteractionActive}
+            interIslandArrivalActive={interIslandArrivalActive}
+            interIslandBoundaryPassThrough={interIslandBoundaryPassThrough}
             occupiedSeatId={occupiedSeatId}
             vehicleFramePoses={vehicleFramePoses}
           />
@@ -6474,6 +6714,7 @@ function MobileGameControls({
   onTimeChange,
   onFlightChange,
   entryAction,
+  entryActions,
   onEntryAction,
   onReset,
 }: {
@@ -6490,7 +6731,8 @@ function MobileGameControls({
   onTimeChange: () => void;
   onFlightChange: () => void;
   entryAction: HingedEntryApproach | null;
-  onEntryAction: () => void;
+  entryActions: readonly EntryInteractionAction[];
+  onEntryAction: (actionId?: string) => void;
   onReset: () => void;
 }) {
   const { t } = useLanguage();
@@ -6823,7 +7065,7 @@ function MobileGameControls({
             {fireLabel}
           </button>
         ) : null}
-        {!flightMode ? (
+        {!flightMode && entryActions.length < 2 ? (
           <button
             type="button"
             className={entryAction ? "is-entry-action" : undefined}
@@ -7251,6 +7493,77 @@ function ModeAnnounce({
   );
 }
 
+interface InitialInterIslandArrival {
+  readonly origin: IslandId;
+  readonly destination: IslandId;
+  readonly flightKind: string;
+  readonly passengerTransit: InterIslandPassengerTransit | null;
+}
+
+function readInitialInterIslandArrival(
+  sceneId: string,
+  browserSnapshot: string,
+): InitialInterIslandArrival | null {
+  const separator = browserSnapshot.indexOf("\n");
+  const href = separator >= 0
+    ? browserSnapshot.slice(0, separator)
+    : browserSnapshot;
+  const storedPassenger = separator >= 0
+    ? browserSnapshot.slice(separator + 1) || null
+    : null;
+  const destination = islandIdForScene(sceneId);
+  if (!destination) {
+    return null;
+  }
+  const request = interIslandArrivalRequest(
+    destination,
+    new URL(href).searchParams.get("arrivalFrom"),
+  );
+  if (!request || !shipTransmutationPlan(request.origin, destination)) {
+    return null;
+  }
+
+  let passengerTransit: InterIslandPassengerTransit | null = null;
+  try {
+    const stored = parseInterIslandPassengerTransit(storedPassenger);
+    passengerTransit = stored?.origin === request.origin &&
+        stored.destination === destination
+      ? stored
+      : null;
+  } catch {
+    // The carrier still arrives; only the optional relative pose is absent.
+  }
+  return {
+    origin: request.origin,
+    destination,
+    flightKind: request.flightKind,
+    passengerTransit,
+  };
+}
+
+function subscribeInterIslandBootstrap(
+  onStoreChange: () => void,
+): () => void {
+  window.addEventListener("popstate", onStoreChange);
+  return () => window.removeEventListener("popstate", onStoreChange);
+}
+
+function interIslandBootstrapSnapshot(): string {
+  let passenger = "";
+  try {
+    passenger = window.sessionStorage.getItem(
+      INTER_ISLAND_PASSENGER_STORAGE_KEY,
+    ) ?? "";
+  } catch {
+    // Hardened browsers still support a default arrival pose.
+  }
+  return `${window.location.href}\n${passenger}`;
+}
+
+function serverInterIslandBootstrapSnapshot(): null {
+  return null;
+}
+
 export function MakeAMessGame({
   scene: sceneProp = openHouseScene,
   flyover,
@@ -7283,6 +7596,23 @@ export function MakeAMessGame({
     strike: () => {},
     strikeEnd: () => {},
   });
+  const arrivalBootstrapSnapshot = useSyncExternalStore(
+    subscribeInterIslandBootstrap,
+    interIslandBootstrapSnapshot,
+    serverInterIslandBootstrapSnapshot,
+  );
+  const [arrivalCompleted, setArrivalCompleted] = useState(false);
+  const resolvedInitialArrival = useMemo(
+    () => arrivalBootstrapSnapshot
+      ? readInitialInterIslandArrival(sceneProp.id, arrivalBootstrapSnapshot)
+      : null,
+    [arrivalBootstrapSnapshot, sceneProp.id],
+  );
+  const initialArrival = arrivalCompleted ? null : resolvedInitialArrival;
+  const arrivalBootstrapComplete = arrivalBootstrapSnapshot !== null;
+  const initialArrivalFlightKind = initialArrival?.flightKind ?? null;
+  const initialArrivalPassengerTransit =
+    initialArrival?.passengerTransit ?? null;
   const [active, setActive] = useState(false);
   const [fallbackLook, setFallbackLook] = useState(false);
   const [controlRequest, setControlRequest] = useState(0);
@@ -7306,8 +7636,35 @@ export function MakeAMessGame({
     clearHints: clearGameActionHints,
   } = useGameActionHints();
   const [approachedEntry, setApproachedEntry] = useState<HingedEntryApproach | null>(null);
+  const approachedEntryActions = useMemo(
+    () => entryInteractionActions(approachedEntry),
+    [approachedEntry],
+  );
+  const hasNumberedEntryActions = approachedEntryActions.length > 1;
   const [entryOpenRequestVersion, setEntryOpenRequestVersion] = useState(0);
   const entryOpenRequestTargetRef = useRef<HingedEntryApproach | null>(null);
+  const [reportedInterIslandPassengerState, setInterIslandPassengerState] =
+    useState({
+      flightActive: false,
+      passengerInsideCarrier: false,
+    });
+  const [
+    interIslandPassengerReportReceived,
+    setInterIslandPassengerReportReceived,
+  ] = useState(false);
+  const interIslandPassengerState = initialArrival &&
+      !interIslandPassengerReportReceived
+    ? { flightActive: true, passengerInsideCarrier: true }
+    : reportedInterIslandPassengerState;
+  const [journeyTransition, setJourneyTransition] = useState<{
+    readonly phase: "departure" | "arrival";
+    readonly origin: IslandId;
+    readonly destination: IslandId;
+  } | null>(null);
+  const [arrivalPresentationPhase, setArrivalPresentationPhase] = useState<
+    "loading" | "welcome" | "revealing" | "hidden"
+  >("loading");
+  const journeyNavigationStarted = useRef(false);
   const [occupiedSeatId, setOccupiedSeatId] = useState<string | null>(null);
   const flyoverRecorder = useRef<MediaRecorder | null>(null);
   const flyoverChapterRef = useRef<FlyoverChapter | null>(null);
@@ -7350,6 +7707,22 @@ export function MakeAMessGame({
       textKey: vehicleFailureAnnouncementKeys[event.reason],
     });
   }, []);
+
+  const requestWeaponChange = useCallback((nextWeapon: WeaponName) => {
+    if (interIslandWeaponSelectionBlocked(
+      interIslandPassengerState.flightActive,
+      nextWeapon,
+    )) {
+      hudAnnouncementId.current += 1;
+      setHudAnnouncement({
+        id: hudAnnouncementId.current,
+        kickerKey: "announce.interIslandRulesKicker",
+        textKey: "announce.interIslandWeaponBlocked",
+      });
+      return;
+    }
+    setWeapon(nextWeapon);
+  }, [interIslandPassengerState.flightActive]);
 
   const toggleMotionTelemetry = useCallback(() => {
     if (telemetryVisible) {
@@ -7538,6 +7911,10 @@ export function MakeAMessGame({
     setFlightMode(false);
     setApproachedEntry(null);
     setOccupiedSeatId(null);
+    setInterIslandPassengerState({
+      flightActive: false,
+      passengerInsideCarrier: false,
+    });
     telemetryStore.clear();
     entryApproachActions.forEach(endGameAction);
     setResetVersion((version) => version + 1);
@@ -7570,7 +7947,7 @@ export function MakeAMessGame({
       setApproachedEntry(next);
       mobileControls.current.jump = false;
       entryApproachActions.forEach(endGameAction);
-      if (next) {
+      if (next && entryInteractionActions(next).length === 1) {
         emitGameAction(entryApproachAction(next));
       }
     },
@@ -7593,43 +7970,206 @@ export function MakeAMessGame({
     setOccupiedSeatId(seatId);
   }, []);
 
-  const openApproachedEntry = useCallback(() => {
+  const handleInterIslandPassengerStateChange = useCallback(
+    (flightActive: boolean, passengerInsideCarrier: boolean) => {
+      setInterIslandPassengerReportReceived(true);
+      setInterIslandPassengerState((current) =>
+        current.flightActive === flightActive &&
+          current.passengerInsideCarrier === passengerInsideCarrier
+          ? current
+          : { flightActive, passengerInsideCarrier }
+      );
+    },
+    [],
+  );
+
+  const handleInterIslandBoundary = useCallback((
+    flightKind: string,
+    passenger: InterIslandPassengerHandoff | null,
+  ) => {
+    const origin = islandIdForScene(scene.id);
+    if (!origin || journeyNavigationStarted.current) {
+      return;
+    }
+    const destination = interIslandTransferDestination(origin, flightKind);
+    if (!destination || !shipTransmutationPlan(origin, destination)) {
+      return;
+    }
+    // A ship may cross the chart boundary without smuggling a passenger who
+    // already fell overboard into the destination scene.
+    if (!passenger) {
+      setInterIslandPassengerState({
+        flightActive: false,
+        passengerInsideCarrier: false,
+      });
+      return;
+    }
+    const transit: InterIslandPassengerTransit = {
+      version: 1,
+      origin,
+      destination,
+      ...passenger,
+    };
+    try {
+      window.sessionStorage.setItem(
+        INTER_ISLAND_PASSENGER_STORAGE_KEY,
+        JSON.stringify(transit),
+      );
+    } catch {
+      // Without a snapshot the next scene would silently change reference
+      // frames, so leave this passenger in the source world.
+      setInterIslandPassengerState({
+        flightActive: false,
+        passengerInsideCarrier: false,
+      });
+      return;
+    }
+    journeyNavigationStarted.current = true;
+    setJourneyTransition({ phase: "departure", origin, destination });
+    window.setTimeout(() => {
+      const url = new URL(ISLAND_CHART[destination].path, window.location.origin);
+      url.searchParams.set("arrivalFrom", origin);
+      window.location.assign(url.toString());
+    }, 2_200);
+  }, [scene.id]);
+
+  const handleInterIslandArrivalComplete = useCallback(() => {
+    setJourneyTransition(null);
+    setArrivalCompleted(true);
+    setInterIslandPassengerState({
+      flightActive: false,
+      passengerInsideCarrier: false,
+    });
+    try {
+      window.sessionStorage.removeItem(INTER_ISLAND_PASSENGER_STORAGE_KEY);
+    } catch {
+      // Storage may be unavailable in hardened browser contexts.
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.delete("arrivalFrom");
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  }, []);
+
+  const handleInterIslandArrivalReady = useCallback((flightKind: string) => {
+    if (flightKind !== initialArrivalFlightKind) {
+      return;
+    }
+    setArrivalPresentationPhase((current) =>
+      current === "loading" ? "welcome" : current
+    );
+  }, [initialArrivalFlightKind]);
+
+  useEffect(() => {
+    if (!initialArrival) {
+      return undefined;
+    }
+
+    prepareGameAudio();
+    setActive(true);
+    setArrivalPresentationPhase("loading");
+    return undefined;
+  }, [initialArrival]);
+
+  useEffect(() => {
+    if (!initialArrival || arrivalPresentationPhase !== "welcome") {
+      return undefined;
+    }
+    // The complete destination is already concealed behind the fog. Give the
+    // welcome line one clean beat before revealing the live arrival flight.
+    const revealTimer = window.setTimeout(() => {
+      setArrivalPresentationPhase("revealing");
+    }, 900);
+    return () => {
+      window.clearTimeout(revealTimer);
+    };
+  }, [arrivalPresentationPhase, initialArrival]);
+
+  useEffect(() => {
+    if (!initialArrival || arrivalPresentationPhase !== "revealing") {
+      return undefined;
+    }
+    const hideTimer = window.setTimeout(() => {
+      setArrivalPresentationPhase("hidden");
+    }, 1_600);
+    return () => {
+      window.clearTimeout(hideTimer);
+    };
+  }, [arrivalPresentationPhase, initialArrival]);
+
+  const openApproachedEntry = useCallback((actionId?: string) => {
     if (!approachedEntry) {
       return;
     }
+    const actions = entryInteractionActions(approachedEntry);
+    const selected = actionId
+      ? actions.find((action) => action.id === actionId) ?? null
+      : actions.length === 1
+        ? actions[0]
+        : null;
+    if (!selected) {
+      return;
+    }
     mobileControls.current.jump = false;
-    entryOpenRequestTargetRef.current = approachedEntry;
+    entryOpenRequestTargetRef.current = selected.id === "primary"
+      ? approachedEntry
+      : { ...approachedEntry, selectedActionId: selected.id };
     setEntryOpenRequestVersion((version) => version + 1);
     endGameAction(entryApproachAction(approachedEntry));
   }, [approachedEntry, endGameAction]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.code === "Space" && approachedEntry && !event.repeat) {
+      const numberedAction = event.code.startsWith("Digit")
+        ? numberedEntryInteractionAction(
+            approachedEntry,
+            Number(event.code.slice("Digit".length)),
+          )
+        : null;
+      if (numberedAction && !event.repeat) {
+        event.preventDefault();
+        openApproachedEntry(numberedAction.id);
+      } else if (
+        event.code === "Space" &&
+        approachedEntry &&
+        !hasNumberedEntryActions &&
+        !event.repeat
+      ) {
         event.preventDefault();
         openApproachedEntry();
       } else if (event.code === "KeyR") {
         reset();
-      } else if (event.code === "Digit0" && !occupiedSeatId) {
-        setWeapon("none");
-      } else if (event.code === "Digit1" && !occupiedSeatId) {
-        setWeapon("hammer");
-      } else if (event.code === "Digit2" && !occupiedSeatId) {
-        setWeapon("launcher");
-      } else if (event.code === "Digit3" && !occupiedSeatId) {
-        setWeapon("mg");
-      } else if (event.code === "Digit4" && !occupiedSeatId) {
-        setWeapon("rocket");
-      } else if (event.code === "KeyQ" && !occupiedSeatId) {
-        setWeapon((current) =>
-          current === "hammer"
-            ? "launcher"
-            : current === "launcher"
-              ? "mg"
-              : current === "mg"
-                ? "rocket"
-                : "hammer",
-        );
+      } else if (event.code === "Digit0" && !occupiedSeatId && !event.repeat) {
+        requestWeaponChange("none");
+      } else if (
+        event.code === "Digit1" &&
+        (!occupiedSeatId || interIslandPassengerState.flightActive) &&
+        !event.repeat
+      ) {
+        requestWeaponChange("hammer");
+      } else if (
+        event.code === "Digit2" &&
+        (!occupiedSeatId || interIslandPassengerState.flightActive) &&
+        !event.repeat
+      ) {
+        requestWeaponChange("launcher");
+      } else if (
+        event.code === "Digit3" &&
+        (!occupiedSeatId || interIslandPassengerState.flightActive) &&
+        !event.repeat
+      ) {
+        requestWeaponChange("mg");
+      } else if (
+        event.code === "Digit4" &&
+        (!occupiedSeatId || interIslandPassengerState.flightActive) &&
+        !event.repeat
+      ) {
+        requestWeaponChange("rocket");
+      } else if (
+        event.code === "KeyQ" &&
+        (!occupiedSeatId || interIslandPassengerState.flightActive) &&
+        !event.repeat
+      ) {
+        requestWeaponChange(nextWeaponName(weapon));
       } else if (event.code === "KeyN") {
         cycleTimeOfDay();
       } else if (event.code === "KeyF" && !event.repeat && !occupiedSeatId) {
@@ -7647,18 +8187,49 @@ export function MakeAMessGame({
   }, [
     approachedEntry,
     cycleTimeOfDay,
+    hasNumberedEntryActions,
+    interIslandPassengerState.flightActive,
     occupiedSeatId,
     openApproachedEntry,
+    requestWeaponChange,
     reset,
     toggleFlightMode,
     toggleMotionTelemetry,
+    weapon,
   ]);
 
   const progress =
     Math.round(
       (brokenCount / scene.breakablePieces.length) * 1000,
     ) / 10;
-  const equippedWeapon: WeaponName = occupiedSeatId ? "none" : weapon;
+  const passengerAccess = interIslandPassengerAccess(
+    interIslandPassengerState.flightActive,
+    interIslandPassengerState.passengerInsideCarrier,
+  );
+  const visibleJourneyTransition = journeyTransition ??
+    (initialArrival && arrivalPresentationPhase !== "hidden"
+      ? {
+          phase: "arrival" as const,
+          origin: initialArrival.origin,
+          destination: initialArrival.destination,
+        }
+      : null);
+  const arrivalStatus = visibleJourneyTransition?.phase === "arrival"
+    ? t(interIslandArrivalCopyKey(
+        visibleJourneyTransition.destination,
+        arrivalPresentationPhase === "loading"
+          ? "enteringAirspace"
+          : "welcome",
+      ))
+    : null;
+  const journeyTransmutation = visibleJourneyTransition
+    ? shipTransmutationPlan(
+        visibleJourneyTransition.origin,
+        visibleJourneyTransition.destination,
+      )
+    : null;
+  const equippedWeapon: WeaponName =
+    occupiedSeatId || !passengerAccess.weaponEnabled ? "none" : weapon;
   const startPlaying = useCallback(() => {
     prepareGameAudio();
     setActive(true);
@@ -7688,8 +8259,9 @@ export function MakeAMessGame({
   return (
     <main className="play-page">
       <div className="game-canvas-wrap">
-        <KeyboardControls map={[...keyboardMap]}>
-          <Canvas
+        {arrivalBootstrapComplete ? (
+          <KeyboardControls map={[...keyboardMap]}>
+            <Canvas
             className="game-canvas"
             shadows="percentage"
             dpr={1}
@@ -7748,7 +8320,13 @@ export function MakeAMessGame({
                   resetVersion={resetVersion}
                   entryOpenRequestVersion={entryOpenRequestVersion}
                   entryOpenRequestTargetRef={entryOpenRequestTargetRef}
+                  initialArrivalFlightKind={initialArrivalFlightKind}
+                  initialArrivalPassengerTransit={initialArrivalPassengerTransit}
+                  interIslandArrivalActive={initialArrival !== null}
                   entryInteractionActive={approachedEntry !== null}
+                  interIslandBoundaryPassThrough={
+                    passengerAccess.ignoreWorldBoundary
+                  }
                   cinematic={cinematicActive}
                   onActiveChange={setActive}
                   onFallbackChange={setFallbackLook}
@@ -7756,6 +8334,12 @@ export function MakeAMessGame({
                   onDynamicBodyCountChange={setDynamicBodyCount}
                   onEntryApproachChange={handleEntryApproachChange}
                   onDepartureApproachChange={handleDepartureApproachChange}
+                  onInterIslandBoundary={handleInterIslandBoundary}
+                  onInterIslandArrivalReady={handleInterIslandArrivalReady}
+                  onInterIslandArrivalComplete={handleInterIslandArrivalComplete}
+                  onInterIslandPassengerStateChange={
+                    handleInterIslandPassengerStateChange
+                  }
                   occupiedSeatId={occupiedSeatId}
                   onOccupiedSeatChange={handleOccupiedSeatChange}
                   onMotionTelemetryUpdate={handleMotionTelemetryUpdate}
@@ -7783,14 +8367,15 @@ export function MakeAMessGame({
               <AdaptiveRenderScale compact={fallbackLook} />
               <CinematicPostProcessing compact={fallbackLook} />
             </Suspense>
-          </Canvas>
-        </KeyboardControls>
+            </Canvas>
+          </KeyboardControls>
+        ) : null}
       </div>
 
       {!cinematicActive ? (
         <ModeAnnounce
           flightMode={flightMode}
-          weapon={weapon}
+          weapon={equippedWeapon}
           timeOfDay={timeOfDay}
           announcement={hudAnnouncement}
         />
@@ -7916,6 +8501,29 @@ export function MakeAMessGame({
         </aside>
       ) : null}
 
+      {active && !cinematicActive && approachedEntry && hasNumberedEntryActions ? (
+        <aside
+          className="game-action-hint game-entry-choice is-persistent"
+          role="status"
+          aria-live="polite"
+        >
+          <p>{t("hint.destination.eyebrow")}</p>
+          <h2>{t("hint.destination.title")}</h2>
+          <div className="game-entry-choice-options">
+            {approachedEntryActions.map((action, index) => (
+              <button
+                key={action.id}
+                type="button"
+                onClick={() => openApproachedEntry(action.id)}
+              >
+                <kbd>{index + 1}</kbd>
+                <span>{t(action.labelKey as TranslationKey)}</span>
+              </button>
+            ))}
+          </div>
+        </aside>
+      ) : null}
+
       {!cinematicActive ? <MobileGameControls
         active={active}
         flightMode={flightMode}
@@ -7926,10 +8534,11 @@ export function MakeAMessGame({
         onStart={startPlaying}
         onStrike={() => mobileActions.current.strike()}
         onStrikeEnd={() => mobileActions.current.strikeEnd()}
-        onWeaponChange={setWeapon}
+        onWeaponChange={requestWeaponChange}
         onTimeChange={cycleTimeOfDay}
         onFlightChange={toggleFlightMode}
         entryAction={approachedEntry}
+        entryActions={approachedEntryActions}
         onEntryAction={openApproachedEntry}
         onReset={reset}
       /> : null}
@@ -7969,17 +8578,58 @@ export function MakeAMessGame({
         {t("controls.telemetry")}
         {!flightMode ? (
           <>
-            <span>Space</span>
-            {approachedEntry
-              ? t(entryActionKey(approachedEntry, false))
-              : t("controls.jump")}
+            <span>
+              {hasNumberedEntryActions
+                ? approachedEntryActions.map((_, index) => index + 1).join("·")
+                : "Space"}
+            </span>
+            {hasNumberedEntryActions
+              ? t("controls.chooseAction")
+              : approachedEntry
+                ? t(entryActionKey(approachedEntry, false))
+                : t("controls.jump")}
           </>
         ) : null}
         <span>R</span>
         {t("controls.reset")}
       </div> : null}
 
-      {!active && (
+      {!arrivalBootstrapComplete ? (
+        <div className="journey-bootstrap-veil" aria-hidden="true" />
+      ) : null}
+
+      {visibleJourneyTransition && journeyTransmutation ? (
+        <div
+          className={`journey-transition is-${visibleJourneyTransition.phase}${
+            visibleJourneyTransition.phase === "arrival"
+              ? ` arrival-is-${arrivalPresentationPhase}`
+              : ""
+          }`}
+          data-ship-entity={journeyTransmutation.entityId}
+          data-source-form={journeyTransmutation.sourceForm}
+          data-destination-form={journeyTransmutation.destinationForm}
+          aria-hidden={visibleJourneyTransition.phase === "departure"}
+        >
+          <i />
+          <i />
+          <i />
+          <div className="journey-transmutation">
+            <span className="journey-form-material" />
+            <span className="journey-form-envelope" />
+            <span className="journey-form-heart" />
+            <span className="journey-form-hull" />
+            <span className="journey-form-drive is-left" />
+            <span className="journey-form-drive is-right" />
+          </div>
+          {arrivalStatus ? (
+            <p className="journey-arrival-status" role="status" aria-live="polite">
+              {arrivalStatus}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {arrivalBootstrapComplete && !active && initialArrival === null && (
         <section className="game-gate" aria-label={t("hud.launchAria")}>
           <div className="gate-card">
             {ready ? (
@@ -8007,7 +8657,9 @@ export function MakeAMessGame({
               </div>
             )}
             <h2>
-              {brokenCount > 0 ? t("gate.continueTitle") : t("gate.startTitle")}
+              {brokenCount > 0
+                ? t("gate.continueTitle")
+                : (copy.startTitle ?? t("gate.startTitle"))}
             </h2>
             <p>{copy.description}</p>
             <button

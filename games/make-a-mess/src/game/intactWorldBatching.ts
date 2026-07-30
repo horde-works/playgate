@@ -20,6 +20,8 @@ const WORLD_CHUNK_SIZE = 256;
 
 export type BatchGeometryKind =
   | "box"
+  | "surfaceMesh"
+  | "surfacePolygon"
   | "sphere"
   | "cylinder"
   | "triangularSheet"
@@ -33,17 +35,54 @@ export interface IntactInstanceBatch {
   readonly castShadow: boolean;
   readonly jointed: boolean;
   readonly geometryKind: BatchGeometryKind;
+  readonly visualProfile?: BreakablePieceDefinition["visualProfile"];
+  readonly visualMesh?: BreakablePieceDefinition["visualMesh"];
   readonly pieces: readonly BreakablePieceDefinition[];
 }
 
 export function pieceGeometryKind(
   piece: BreakablePieceDefinition,
 ): BatchGeometryKind {
+  if (piece.visualMesh) return "surfaceMesh";
+  if (piece.visualProfile) return "surfacePolygon";
   if (piece.shape === "sphere") return "sphere";
   if (piece.shape === "cylinder") return "cylinder";
   if (piece.shape === "triangularSheet") return "triangularSheet";
   if (piece.shape === "hexagonalSheet") return "hexagonalSheet";
   return "box";
+}
+
+function visualMeshKey(piece: BreakablePieceDefinition): string {
+  if (!piece.visualMesh) return "default";
+  // Flags share one instanced billow surface per tessellation. Their authored
+  // vertex offsets only vary the pose, while hard vehicle/architecture meshes
+  // must retain their exact topology and coordinates.
+  if (piece.material === "cloth") {
+    return `${piece.visualMesh.vertices.length}:${piece.visualMesh.indices.length}:cloth`;
+  }
+  let hash = 2166136261;
+  const mix = (value: number) => {
+    const text = value.toFixed(5);
+    for (let index = 0; index < text.length; index += 1) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+  };
+  for (const vertex of piece.visualMesh.vertices) {
+    mix(vertex[0]);
+    mix(vertex[1]);
+    mix(vertex[2]);
+  }
+  for (const index of piece.visualMesh.indices) mix(index);
+  return `${piece.visualMesh.vertices.length}:${piece.visualMesh.indices.length}:${hash >>> 0}:${piece.visualMesh.doubleSided === false ? "front" : "double"}`;
+}
+
+function visualProfileKey(piece: BreakablePieceDefinition): string {
+  return piece.visualProfile
+    ? piece.visualProfile.vertices
+        .map(([x, y]) => `${x.toFixed(5)},${y.toFixed(5)}`)
+        .join(";")
+    : "default";
 }
 
 function worldChunkKey(piece: BreakablePieceDefinition): string {
@@ -70,7 +109,7 @@ export function buildIntactInstanceBatches(
       !isGlassMaterial(piece.material) && piece.shape !== "groundTile";
     const id = `${worldChunkKey(piece)}:${piece.material}:${materialColor}:${piece.textureProfile ?? "default"}:${Number(
       castShadow,
-    )}:${pieceGeometryKind(piece)}`;
+    )}:${pieceGeometryKind(piece)}:${visualProfileKey(piece)}:${visualMeshKey(piece)}`;
     const batch = batches.get(id);
     if (batch) {
       batch.push(piece);
@@ -94,6 +133,8 @@ export function buildIntactInstanceBatches(
       hasSilicateJoints(piece.id, piece.material),
     ),
     geometryKind: pieceGeometryKind(batchPieces[0]),
+    visualProfile: batchPieces[0].visualProfile,
+    visualMesh: batchPieces[0].visualMesh,
     pieces: batchPieces,
   }));
 }
