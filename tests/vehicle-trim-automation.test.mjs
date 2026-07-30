@@ -375,7 +375,7 @@ test("a lost propulsor is physically trimmed out by moving real ballast", () => 
     // Whatever it manages, the machine keeps flying: the residual list stays
     // inside the corridor its own guidance envelope allows.
     assert.equal(
-      withTrim.tilt < guidance.cruise.tilt,
+      withTrim.tilt < guidance.flyableTilt,
       true,
       `${vehicle.id}: ${degrees(withTrim.tilt).toFixed(1)}° is outside its own corridor`,
     );
@@ -421,7 +421,7 @@ test("trim authority is bounded by geometry, and one carrier runs out", () => {
     true,
     `the airship should still be visibly listing, not ${degrees(listing.tilt).toFixed(1)}°`,
   );
-  assert.equal(listing.tilt < guidanceFor(airship).cruise.tilt, true);
+  assert.equal(listing.tilt < guidanceFor(airship).flyableTilt, true);
 });
 
 test("losing the weight is losing the control channel", () => {
@@ -471,7 +471,7 @@ test("exhausted trim is a declared failure, not an eternal list", () => {
   assert.equal(
     vehicleTrimAuthorityExhausted({
       tilt: listing.tilt,
-      flyableTilt: guidance.cruise.tilt,
+      flyableTilt: guidance.flyableTilt,
       tiltRate: listing.tiltRate,
       authorityRemaining: false,
     }),
@@ -492,13 +492,13 @@ test("exhausted trim is a declared failure, not an eternal list", () => {
   });
   assert.equal(beyond.railStates[rollIndex].atStop, true);
   assert.equal(
-    beyond.tilt > guidance.cruise.tilt,
+    beyond.tilt > guidance.flyableTilt,
     true,
-    `a ${degrees(beyond.tilt).toFixed(1)}° list must be outside the ${degrees(guidance.cruise.tilt).toFixed(1)}° corridor`,
+    `a ${degrees(beyond.tilt).toFixed(1)}° list must be outside the ${degrees(guidance.flyableTilt).toFixed(1)}° corridor`,
   );
   const exhausted = vehicleTrimAuthorityExhausted({
     tilt: beyond.tilt,
-    flyableTilt: guidance.cruise.tilt,
+    flyableTilt: guidance.flyableTilt,
     tiltRate: beyond.tiltRate,
     authorityRemaining: beyond.railStates.some(
       (railState, index) => beyond.available[index] && !railState.atStop,

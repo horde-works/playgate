@@ -195,6 +195,21 @@ export const ui = {
     "interIsland.welcome.grand-terminal": "Welcome to Grand Terminal",
     "interIsland.welcome.town": "Welcome to the Town",
     "interIsland.welcome.viking-village": "Welcome to Viking Village",
+    "interIsland.departingFor.astana": "Departing for the Capital",
+    "interIsland.departingFor.basalt-stronghold":
+      "Departing for Basalt Stronghold",
+    "interIsland.departingFor.grand-terminal": "Departing for Grand Terminal",
+    "interIsland.departingFor.town": "Departing for the town",
+    "interIsland.departingFor.viking-village": "Departing for Viking Village",
+    "interIsland.approach.astana": "On approach · the Capital",
+    "interIsland.approach.basalt-stronghold": "On approach · Basalt Stronghold",
+    "interIsland.approach.grand-terminal": "On approach · Grand Terminal",
+    "interIsland.approach.town": "On approach · the town",
+    "interIsland.approach.viking-village": "On approach · Viking Village",
+    "interIsland.transitEyebrow": "Inter-island flight",
+    "interIsland.aboard": "The crew is flying. You are a passenger.",
+    "hud.takeControl": "Click to take control",
+    "hud.takeControlTouch": "Tap to take control",
 
     "hint.spawn.eyebrow": "First move",
     "hint.spawn.title": "Look around. Try every tool.",
@@ -468,6 +483,24 @@ export const ui = {
     "interIsland.welcome.grand-terminal": "Bienvenido a la Gran Terminal",
     "interIsland.welcome.town": "Bienvenido a la ciudad",
     "interIsland.welcome.viking-village": "Bienvenido a la aldea vikinga",
+    "interIsland.departingFor.astana": "Partimos hacia la Capital",
+    "interIsland.departingFor.basalt-stronghold":
+      "Partimos hacia la Fortaleza de Basalto",
+    "interIsland.departingFor.grand-terminal":
+      "Partimos hacia la Gran Terminal",
+    "interIsland.departingFor.town": "Partimos hacia la ciudad",
+    "interIsland.departingFor.viking-village":
+      "Partimos hacia la aldea vikinga",
+    "interIsland.approach.astana": "En aproximación · la Capital",
+    "interIsland.approach.basalt-stronghold":
+      "En aproximación · Fortaleza de Basalto",
+    "interIsland.approach.grand-terminal": "En aproximación · Gran Terminal",
+    "interIsland.approach.town": "En aproximación · la ciudad",
+    "interIsland.approach.viking-village": "En aproximación · aldea vikinga",
+    "interIsland.transitEyebrow": "Vuelo entre islas",
+    "interIsland.aboard": "La tripulación vuela. Tú viajas de pasajero.",
+    "hud.takeControl": "Haz clic para tomar el control",
+    "hud.takeControlTouch": "Toca para tomar el control",
 
     "hint.spawn.eyebrow": "Primer paso",
     "hint.spawn.title": "Mira a tu alrededor. Prueba todas las herramientas.",
@@ -741,6 +774,24 @@ export const ui = {
     "interIsland.welcome.grand-terminal": "Добро пожаловать на Большой вокзал",
     "interIsland.welcome.town": "Добро пожаловать в город",
     "interIsland.welcome.viking-village": "Добро пожаловать в деревню викингов",
+    "interIsland.departingFor.astana": "Уходим на Столицу",
+    "interIsland.departingFor.basalt-stronghold":
+      "Уходим на Базальтовую крепость",
+    "interIsland.departingFor.grand-terminal": "Уходим на Большой вокзал",
+    "interIsland.departingFor.town": "Уходим на город",
+    "interIsland.departingFor.viking-village": "Уходим на деревню викингов",
+    "interIsland.approach.astana": "Заходим на швартовку · Столица",
+    "interIsland.approach.basalt-stronghold":
+      "Заходим на швартовку · Базальтовая крепость",
+    "interIsland.approach.grand-terminal":
+      "Заходим на швартовку · Большой вокзал",
+    "interIsland.approach.town": "Заходим на швартовку · город",
+    "interIsland.approach.viking-village":
+      "Заходим на швартовку · деревня викингов",
+    "interIsland.transitEyebrow": "Межостровной рейс",
+    "interIsland.aboard": "Ведёт команда. Ты пассажир.",
+    "hud.takeControl": "Кликните, чтобы взять управление",
+    "hud.takeControlTouch": "Коснитесь, чтобы взять управление",
 
     "hint.spawn.eyebrow": "Первый шаг",
     "hint.spawn.title": "Осмотрись. Попробуй весь инвентарь.",

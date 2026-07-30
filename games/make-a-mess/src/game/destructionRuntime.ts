@@ -757,28 +757,82 @@ export function blastNoise(value: string, salt: number): number {
   return ((hash >>> 0) % 1000) / 1000;
 }
 
+export interface ShardRetentionPolicy {
+  /**
+   * Чем больше, тем дольше осколок живёт при переполнении бюджета. Позволяет
+   * вытеснять сначала спящие и далёкие от игрока тела: FIFO выдёргивал
+   * осколок из-под кучи прямо перед игроком, и дальний выстрел «шевелил»
+   * давно улёгшиеся обломки.
+   */
+  readonly priority: (shard: ShardDefinition, index: number) => number;
+  /** Столько самых свежих осколков не вытесняются вовсе (виден их вброс). */
+  readonly protectedNewest?: number;
+}
+
 export function trimShardBudget(
   shards: readonly ShardDefinition[],
   maximumBodies = MAX_LIVE_SHARDS,
   maximumBoxes = MAX_LIVE_SHARD_BOXES,
+  retention?: ShardRetentionPolicy,
 ): readonly ShardDefinition[] {
-  const kept: ShardDefinition[] = [];
-  let boxCount = 0;
+  if (!retention) {
+    const kept: ShardDefinition[] = [];
+    let boxCount = 0;
 
-  for (let index = shards.length - 1; index >= 0; index -= 1) {
-    if (kept.length >= maximumBodies) {
+    for (let index = shards.length - 1; index >= 0; index -= 1) {
+      if (kept.length >= maximumBodies) {
+        break;
+      }
+      const shard = shards[index];
+      const cost = Math.max(1, shard.boxes?.length ?? 1);
+      if (boxCount + cost > maximumBoxes && kept.length > 0) {
+        continue;
+      }
+      kept.push(shard);
+      boxCount += cost;
+    }
+
+    return kept.reverse();
+  }
+
+  const totalBoxes = shards.reduce(
+    (sum, shard) => sum + Math.max(1, shard.boxes?.length ?? 1),
+    0,
+  );
+  if (shards.length <= maximumBodies && totalBoxes <= maximumBoxes) {
+    return shards;
+  }
+
+  const protectedFrom = shards.length - (retention.protectedNewest ?? 0);
+  const ranked = shards
+    .map((shard, index) => ({
+      shard,
+      index,
+      // Конечная константа: разность двух Infinity дала бы NaN в компараторе.
+      priority: index >= protectedFrom
+        ? Number.MAX_VALUE
+        : retention.priority(shard, index),
+    }))
+    .sort((left, right) =>
+      right.priority - left.priority || right.index - left.index);
+
+  const keptIndices = new Set<number>();
+  let bodyCount = 0;
+  let boxCount = 0;
+  for (const entry of ranked) {
+    if (bodyCount >= maximumBodies) {
       break;
     }
-    const shard = shards[index];
-    const cost = Math.max(1, shard.boxes?.length ?? 1);
-    if (boxCount + cost > maximumBoxes && kept.length > 0) {
+    const cost = Math.max(1, entry.shard.boxes?.length ?? 1);
+    if (boxCount + cost > maximumBoxes && bodyCount > 0) {
       continue;
     }
-    kept.push(shard);
+    keptIndices.add(entry.index);
+    bodyCount += 1;
     boxCount += cost;
   }
 
-  return kept.reverse();
+  return shards.filter((_, index) => keptIndices.has(index));
 }
 
 export function carveBox(

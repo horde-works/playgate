@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   BASALT_SKY_RAM_AIR_VEHICLE,
+  DEFAULT_VEHICLE_LIFT_RESERVE,
   isInsideBasaltSkyRam,
 } from "../games/make-a-mess/src/game/airVehicles.ts";
 import {
@@ -174,13 +175,10 @@ function simulateIntactFlight(kind) {
           angularVelocity: state.angularVelocity,
         },
         vehicle.nose,
-        false,
+        model,
         guidance,
       );
-      const requestedMode = requestedVehicleTrajectoryMode(
-        assessment,
-        guidance,
-      );
+      const requestedMode = requestedVehicleTrajectoryMode(assessment);
       maximumCrossTrackError = Math.max(
         maximumCrossTrackError,
         assessment.crossTrackError,
@@ -1360,13 +1358,19 @@ test("both intact patrols physically settle the nose into the berth", () => {
       `${kind}: max cross-track ${result.maximumCrossTrackError.toFixed(1)} m; ` +
         `requested ${JSON.stringify(result.firstCorrectionRequest)}`,
     );
+    // These are not style limits. The watchdog allows 35 s of final manoeuvre
+    // and a hard 10 s inside the capture window, and a profile that aims short
+    // of the berth spends almost all of both while the machine coasts in on
+    // the mooring servo alone. Passing just under the watchdog is what let a
+    // healthy ship fail in the live game, so the bar sits where an approach
+    // that still carries way lands: 12 s and 3 s.
     assert.equal(
-      result.finalManeuverSeconds < 34,
+      result.finalManeuverSeconds < 14,
       true,
       `${kind}: final eight metres took ${result.finalManeuverSeconds.toFixed(1)} s`,
     );
     assert.equal(
-      result.dockingSettleSeconds < 10,
+      result.dockingSettleSeconds < 4,
       true,
       `${kind}: physical capture took ${result.dockingSettleSeconds.toFixed(1)} s`,
     );
@@ -1399,5 +1403,40 @@ test("all onboard lights follow the ram while berth cressets stay on stone", () 
   assert.equal(
     berthLights.every((light) => !light.carrierClusterId),
     true,
+  );
+});
+
+
+test("the ram keeps flying until a sixth of its envelope is gone", () => {
+  // All the lift is carried by the skin panels, and they are featherweight —
+  // 5.3 kg of 290 — so shedding them frees almost no weight and the surviving
+  // share of the envelope decides everything. The reserve is what says how
+  // big a hole the machine survives, and the bow packs twenty of the panels
+  // into three metres, so a single rocket takes several at once.
+  const flight = BASALT_SKY_RAM_AIR_VEHICLE.flight;
+  const reserve = flight.liftReserve ?? DEFAULT_VEHICLE_LIFT_RESERVE;
+  const properties = massProperties(ship, densityOf);
+  const skin = ship.filter((piece) =>
+    piece.id.includes(BASALT_SKY_RAM_AIR_VEHICLE.envelopeMatch),
+  );
+  assert.equal(skin.length > 0, true);
+  const panelMass = skin
+    .map((piece) => massProperties([piece], densityOf).mass)
+    .sort((a, b) => a - b);
+
+  let neutralAt = null;
+  for (let lost = 0; lost <= skin.length && neutralAt === null; lost += 1) {
+    // Worst case: the lightest panels go, so the hull sheds the least weight.
+    const shed = panelMass.slice(0, lost).reduce((sum, mass) => sum + mass, 0);
+    const liftToWeight =
+      (properties.mass * reserve * ((skin.length - lost) / skin.length)) /
+      (properties.mass - shed);
+    if (liftToWeight < 1) neutralAt = lost / skin.length;
+  }
+  assert.equal(
+    neutralAt >= 0.15,
+    true,
+    `buoyancy is lost after only ${(neutralAt * 100).toFixed(1)}% of the ` +
+      `envelope; reserve ${reserve} is not enough for the authored bow`,
   );
 });

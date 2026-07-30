@@ -72,6 +72,7 @@ import {
   type ShipModel,
 } from "./vehicleFrames";
 import {
+  DEFAULT_VEHICLE_LIFT_RESERVE,
   airVehicleFlightEventState,
   airVehicles,
   type AirVehicleDefinition,
@@ -150,8 +151,10 @@ import {
   planVehicleTrajectoryCorrection,
   requestedVehicleTrajectoryMode,
   vehicleTrajectoryMergeReady,
+  vehicleCorrectionAllowanceSeconds,
   vehicleTrajectoryStabilizationPlan,
-  vehicleTrajectoryStabilized,
+  vehicleUnrecoverableDeviation,
+  vehicleUpsetSettled,
   type VehicleTrajectoryCorrectionPlan,
   type VehicleTrajectoryDeviationReason,
 } from "./vehicleTrajectoryCorrection";
@@ -171,6 +174,7 @@ import {
   vehicleGroundLiftAutomationSettled,
   vehicleDisturbanceRecoveryFeasible,
   vehicleFailureDisposition,
+  type VehicleFailureDisposition,
   type VehicleFailureWatchdogState,
   type VehicleFailureEvent,
   type VehicleGroundLiftAutomationState,
@@ -178,6 +182,12 @@ import {
   type VehicleRecoveryLifecycle,
 } from "./vehicleFailure";
 
+/** An intercept is flown for at least this long before anything may take it. */
+const INTERCEPT_COMMITMENT = 4;
+/** Continuous seconds of settled rates that end a hold. */
+const UPSET_SETTLE_SECONDS = 0.6;
+/** An escape that gains no route progress for this long is not an escape. */
+const ESCAPE_STALL_SECONDS = 18;
 /** Кто отправляет рейс: пока единственный кадр, у которого есть расписание. */
 const SCHEDULED_FRAME = "sky-train";
 type ScheduledInteraction = "board" | "ride" | "seat" | "stand";
@@ -371,8 +381,8 @@ interface FlightState {
     correction: VehicleTrajectoryCorrectionPlan | null;
     correctionProgress: number;
     goAroundCounted: boolean;
-    /** Inclination at the previous sample; the hold watches its trend. */
-    previousTilt: number;
+    /** Time this episode is allowed, derived from the plan it must fly. */
+    allowanceSeconds: number;
   } | null;
   /** Boundary handoff is emitted once while the page transition catches up. */
   handoffRequested: boolean;
@@ -384,6 +394,10 @@ interface FrameRecoveryState {
   escapePlan: VehicleRoutePlan | null;
   arrivalInitialized: boolean;
   landingStability: VehicleLandingStabilityState;
+  /** Seconds the escape has spent without gaining route progress. */
+  escapeStallSeconds: number;
+  /** Best escape progress reached so far. */
+  escapeBestProgress: number;
   /** Continuous underside contact awaiting lift-dump confirmation. */
   groundContactSeconds: number;
   /** Confirmed underside contact has opened the emergency lift-dump valve. */
@@ -403,8 +417,6 @@ interface FrameState {
   released: Set<string>;
   /** Once a fragment clears the old hull it becomes an ordinary obstacle. */
   separated: Set<string>;
-  /** Recent contact/blast impulse may legitimately interrupt route tracking. */
-  disturbanceImpulseSeconds: number;
   /** Where each trim car stands on its rail, in metres from zero. */
   trim: VehicleTrimRailState[];
   /** Previous attitude sample; trim rates are measured, not assumed. */
@@ -726,7 +738,6 @@ function restingState(engineCount: number): FrameState {
     suppressFrameVelocityOnce: false,
     released: new Set<string>(),
     separated: new Set<string>(),
-    disturbanceImpulseSeconds: 0,
     trim: [],
     trimAttitude: null,
     trimMassPositions: [],
@@ -916,6 +927,9 @@ export function VehicleFrameSystem({
   onInterIslandPassengerStateChange?: (
     flightActive: boolean,
     passengerInsideCarrier: boolean,
+    /** Кадру нужен не только факт рейса, но и какой именно: по нему он
+        отличает уход с этого острова от прилёта на него. */
+    flightKind: string | null,
   ) => void;
   onPassengerViewRestore?: (yaw: number, pitch: number) => void;
   /** Occupancy is UI/player state; the vehicle only offers and validates it. */
@@ -1532,6 +1546,7 @@ export function VehicleFrameSystem({
         onInterIslandPassengerStateChange?.(
           interIslandActive,
           interIslandInside,
+          interIslandActive ? interIslandKind : null,
         );
       }
       if (flight) {
@@ -1759,10 +1774,6 @@ export function VehicleFrameSystem({
     // снесли хвостовой вагон — центр масс уехал вперёд, и нос задрался сам.
     for (const frame of frames) {
       const state = frameState(frame.id);
-      state.disturbanceImpulseSeconds = Math.max(
-        0,
-        state.disturbanceImpulseSeconds - step,
-      );
       const applyPendingImpulses = (properties: MassProperties) => {
         const pending = externalImpulses.current.get(frame.clusterId);
         if (!pending || pending.length === 0 || properties.mass <= 0) {
@@ -1799,7 +1810,6 @@ export function VehicleFrameSystem({
           ],
         };
         externalImpulses.current.delete(frame.clusterId);
-        state.disturbanceImpulseSeconds = 2.5;
       };
       // The blast reaches the intact rigid body first. Fracture is observed
       // in the same simulation step below, where the surviving mass and every
@@ -1911,6 +1921,8 @@ export function VehicleFrameSystem({
             progress: 0,
             escapePlan: null,
             arrivalInitialized: false,
+            escapeStallSeconds: 0,
+            escapeBestProgress: 0,
             landingStability: createVehicleLandingStability(
               state.body.position,
               state.body.orientation,
@@ -2054,11 +2066,15 @@ export function VehicleFrameSystem({
       // не поднимешь. А внутри этого потолка автоматика тянет подъём к весу
       // уцелевшего, и тянет медленно.
       const envelopeLeft = state.envelopeLeft;
+      // How much gas volume this machine carries over its own weight is a
+      // property of the machine, not of the world: a taut little gondola and a
+      // fortress-sized ram do not survive the same hole. Carriers that author
+      // nothing keep the reserve every carrier had before.
       const liftCapacity =
         state.intactMass *
         GRAVITY *
         (envelopeLeft / state.intactEnvelope) *
-        1.12;
+        (frame.flight.liftReserve ?? DEFAULT_VEHICLE_LIFT_RESERVE);
       const neutral = mass.mass * GRAVITY;
       const berth = mass.centre as [number, number, number];
       let centreNow: [number, number, number] = [
@@ -2372,7 +2388,7 @@ export function VehicleFrameSystem({
           trimEngaged &&
           vehicleTrimAuthorityExhausted({
             tilt: trimTilt,
-            flyableTilt: guidance.cruise.tilt,
+            flyableTilt: guidance.flyableTilt,
             tiltRate: Math.hypot(
               state.body.angularVelocity[0],
               state.body.angularVelocity[2],
@@ -2673,6 +2689,8 @@ export function VehicleFrameSystem({
             progress: 0,
             escapePlan: null,
             arrivalInitialized: false,
+            escapeStallSeconds: 0,
+            escapeBestProgress: 0,
             landingStability: createVehicleLandingStability(
               state.body.position,
               state.body.orientation,
@@ -2689,8 +2707,65 @@ export function VehicleFrameSystem({
         }
       }
 
+      // "Can it still fly away" is a question about propulsion, steering,
+      // structure and lift. It is asked when a flight is lost — and asked
+      // again while an escape is being flown, because losing the last engine
+      // in the middle of one makes the original answer false.
+      const currentDisposition = (): VehicleFailureDisposition => {
+        const availability = executeCommandActuators(
+          frame.actuators,
+          attachedMembers,
+          Object.fromEntries(
+            frame.actuators.map((actuator) => [actuator.commandChannel, 1]),
+          ),
+        )
+          .filter(
+            (execution) => !isVehicleTrimChannel(execution.commandChannel),
+          )
+          .map((execution) => execution.attachedFraction);
+        const overServiceArea = recoveryServiceArea
+          ? Math.hypot(
+              centreNow[0] - recoveryServiceArea.center[0],
+              centreNow[2] - recoveryServiceArea.center[1],
+            ) <= recoveryServiceArea.radius
+          : true;
+        return vehicleFailureDisposition(
+          {
+            structureFlightworthy:
+              mass.mass / Math.max(1, state.intactMass) >= 0.55 &&
+              envelopeLeft / Math.max(1, state.intactEnvelope) >= 0.5,
+            liftToWeight: liftCapacity / Math.max(1, neutral),
+            requiredActuatorFractions: availability,
+          },
+          overServiceArea,
+        );
+      };
+
       const recovery = state.recovery;
       if (recovery && flight?.castOff) {
+        if (recovery.lifecycle.phase === "escape") {
+          // An escape is a claim that the machine can leave under its own
+          // power. Re-ask it: a carrier that has lost its engines mid-escape
+          // must come down, not hold the climb its route asks for.
+          const disposition = currentDisposition();
+          recovery.escapeStallSeconds =
+            recovery.progress > recovery.escapeBestProgress + 0.002
+              ? 0
+              : recovery.escapeStallSeconds + step;
+          recovery.escapeBestProgress = Math.max(
+            recovery.escapeBestProgress,
+            recovery.progress,
+          );
+          const goingNowhere =
+            recovery.escapeStallSeconds >= ESCAPE_STALL_SECONDS;
+          if (disposition !== "escapeRoute" || goingNowhere) {
+            recovery.lifecycle = createVehicleRecoveryLifecycle(
+              recovery.lifecycle.reason,
+              disposition === "escapeRoute" ? "descendBelowFog" : disposition,
+            );
+            recovery.escapePlan = null;
+          }
+        }
         const phase = recovery.lifecycle.phase;
         const plan =
           phase === "escape"
@@ -2786,26 +2861,22 @@ export function VehicleFrameSystem({
           velocity: state.body.velocity,
           angularVelocity: state.body.angularVelocity,
         };
-        const recentExternalImpulse = state.disturbanceImpulseSeconds > 0;
         const trajectoryAssessment = assessVehicleTrajectory(
           plan,
           flight.progress,
           navigationState,
           frame.nose,
-          recentExternalImpulse,
+          autopilotModel,
           guidance,
         );
-        const requestedTrajectoryMode = requestedVehicleTrajectoryMode(
-          trajectoryAssessment,
-          guidance,
-        );
-        if (
-          !flight.trajectoryCorrection &&
-          requestedTrajectoryMode !== "authoredRoute" &&
-          disturbanceFeasible
-        ) {
-          // This is one autopilot changing modes. A controllable displacement
-          // enters a moving intercept; an unsettled rigid body enters a hold.
+        const requestedTrajectoryMode =
+          requestedVehicleTrajectoryMode(trajectoryAssessment);
+        if (!flight.trajectoryCorrection && requestedTrajectoryMode !== "authoredRoute") {
+          // One autopilot changing modes. A route state ordinary guidance can
+          // no longer reach in the distance left asks for an intercept; a rate
+          // event large enough to own the craft asks for a hold. Being pushed
+          // off the line, by bullets or anything else, is neither by itself:
+          // the ordinary controls and the trim cars answer that all the time.
           const directCorrection =
             requestedTrajectoryMode === "intercepting"
               ? planVehicleTrajectoryCorrection(
@@ -2816,9 +2887,14 @@ export function VehicleFrameSystem({
                   frame.nose,
                 )
               : null;
-          // Without a feasible intercept the current mode remains active and
-          // the transition is reconsidered from fresh navigation data.
-          if (requestedTrajectoryMode === "stabilizing" || directCorrection) {
+          // An intercept is ordinary flying and needs no claim about arresting
+          // anything. A hold does: it asserts the craft can still stop what is
+          // happening to it. Without either, the present mode simply continues
+          // and the transition is reconsidered from fresh navigation data.
+          if (
+            directCorrection ||
+            (requestedTrajectoryMode === "stabilizing" && disturbanceFeasible)
+          ) {
             flight.trajectoryCorrection = {
               phase: directCorrection ? "intercepting" : "stabilizing",
               reason: trajectoryAssessment.reason ?? "track",
@@ -2828,14 +2904,19 @@ export function VehicleFrameSystem({
               correction: directCorrection,
               correctionProgress: 0,
               goAroundCounted: directCorrection?.countsAsGoAround ?? false,
-              previousTilt: trajectoryAssessment.tilt,
+              allowanceSeconds: vehicleCorrectionAllowanceSeconds(
+                directCorrection,
+                activeFailureEnvelope.correctionGraceSeconds,
+              ),
             };
-            // Every attempt is counted, on the circuit as well as on final.
-            // A correction without an exhaustion criterion is not an attempt.
-            flight.corrections += 1;
-            if (directCorrection?.countsAsGoAround) {
-              flight.lastGoAround = flight.time;
-              flight.goArounds += 1;
+            if (directCorrection) {
+              // Only a real re-approach is an attempt. Riding out an upset is
+              // not, and must not spend the flight's budget.
+              flight.corrections += 1;
+              if (directCorrection.countsAsGoAround) {
+                flight.lastGoAround = flight.time;
+                flight.goArounds += 1;
+              }
             }
           }
         }
@@ -2844,53 +2925,32 @@ export function VehicleFrameSystem({
           trajectoryCorrection.elapsedSeconds += step;
           if (
             trajectoryCorrection.phase === "intercepting" &&
-            requestedTrajectoryMode === "stabilizing"
+            trajectoryAssessment.upset
           ) {
-            trajectoryCorrection.phase = "stabilizing";
-            trajectoryCorrection.stableSeconds = 0;
-            trajectoryCorrection.correction = null;
-            trajectoryCorrection.correctionProgress = 0;
+            // Only a genuine upset may take an intercept away, and only after
+            // it has had time to be flown. Discarding a valid plan on every
+            // swing of the gondola is what made the machine change modes
+            // instead of correcting.
+            if (trajectoryCorrection.elapsedSeconds > INTERCEPT_COMMITMENT) {
+              trajectoryCorrection.phase = "stabilizing";
+              trajectoryCorrection.stableSeconds = 0;
+              trajectoryCorrection.correction = null;
+              trajectoryCorrection.correctionProgress = 0;
+            }
           }
           if (trajectoryCorrection.phase === "stabilizing") {
-            // A hull that is still righting itself gets more time; a hull that
-            // has settled at a permanent trim does not, or the hold would
-            // never end for a ship that physically cannot level itself.
-            const tiltImproving =
-              trajectoryCorrection.previousTilt - trajectoryAssessment.tilt >
-              0.002;
-            trajectoryCorrection.previousTilt = trajectoryAssessment.tilt;
-            trajectoryCorrection.stableSeconds = vehicleTrajectoryStabilized(
-              trajectoryAssessment,
+            // The upset is over when the rates say so. Nothing is asked about
+            // the attitude it left behind: the flight simply resumes, and the
+            // ordinary approach, go-around and failure machinery decide
+            // whether it can still be finished.
+            trajectoryCorrection.stableSeconds = vehicleUpsetSettled(
               navigationState,
               guidance,
-              tiltImproving,
             )
               ? trajectoryCorrection.stableSeconds + step
               : 0;
-            if (
-              trajectoryCorrection.stableSeconds >= 0.45 &&
-              disturbanceFeasible
-            ) {
-              const correction = planVehicleTrajectoryCorrection(
-                plan,
-                trajectoryCorrection.sourceProgress,
-                navigationState,
-                autopilotModel,
-                frame.nose,
-              );
-              if (correction) {
-                trajectoryCorrection.phase = "intercepting";
-                trajectoryCorrection.correction = correction;
-                trajectoryCorrection.correctionProgress = 0;
-                if (
-                  correction.countsAsGoAround &&
-                  !trajectoryCorrection.goAroundCounted
-                ) {
-                  trajectoryCorrection.goAroundCounted = true;
-                  flight.lastGoAround = flight.time;
-                  flight.goArounds += 1;
-                }
-              }
+            if (trajectoryCorrection.stableSeconds >= UPSET_SETTLE_SECONDS) {
+              flight.trajectoryCorrection = null;
             }
           }
         }
@@ -2984,15 +3044,19 @@ export function VehicleFrameSystem({
               correction: null,
               correctionProgress: 0,
               goAroundCounted: true,
-              previousTilt: trajectoryAssessment.tilt,
+              allowanceSeconds: vehicleCorrectionAllowanceSeconds(
+                null,
+                activeFailureEnvelope.correctionGraceSeconds,
+              ),
             };
           }
         }
+        // The episode owns its own allowance; the flight-wide grace budget in
+        // the watchdog remains the backstop against endless re-entry.
         const recoveringDisturbance =
           flight.trajectoryCorrection !== null &&
           flight.trajectoryCorrection.elapsedSeconds <
-            activeFailureEnvelope.correctionGraceSeconds &&
-          disturbanceFeasible;
+            flight.trajectoryCorrection.allowanceSeconds;
         // Ход по маршруту двигает сам корабль: сколько прошёл, на столько и
         // сдвинулась цель.
         if (
@@ -3106,6 +3170,11 @@ export function VehicleFrameSystem({
           frame.flight.limits.liftTrimRange,
           liftCapacity / Math.max(1, neutral),
         );
+        const unrecoverable = vehicleUnrecoverableDeviation(
+          trajectoryAssessment,
+          tracking.crossTrackError,
+          tracking.altitudeError,
+        );
         const watchdogResult = advanceVehicleFailureWatchdog(
           flight.watchdog,
           {
@@ -3116,8 +3185,11 @@ export function VehicleFrameSystem({
             headingError: tracking.headingError,
             yawRateError:
               state.body.angularVelocity[1] - piloted.desiredYawRate,
-            crossTrackError: tracking.crossTrackError,
-            altitudeError: tracking.altitudeError,
+            // What guidance cannot fix, not how far the burst pushed it.
+            // Both numbers now come from the question the corrector asks, so
+            // it always acts first by construction.
+            crossTrackError: unrecoverable.crossTrack,
+            altitudeError: unrecoverable.altitude,
             progress: flight.progress,
             requiredControlAvailable: propulsion.mode !== "inoperative",
             requestedControlEffort: requestedEffort,
@@ -3153,35 +3225,7 @@ export function VehicleFrameSystem({
         );
         flight.watchdog = watchdogResult.state;
         if (watchdogResult.failure) {
-          // "Can it still fly away" is a question about propulsion and steering.
-          // A dead trim car makes a damaged ship list; it does not ground it.
-          const availability = executeCommandActuators(
-            frame.actuators,
-            attachedMembers,
-            Object.fromEntries(
-              frame.actuators.map((actuator) => [actuator.commandChannel, 1]),
-            ),
-          )
-            .filter(
-              (execution) => !isVehicleTrimChannel(execution.commandChannel),
-            )
-            .map((execution) => execution.attachedFraction);
-          const overServiceArea = recoveryServiceArea
-            ? Math.hypot(
-                centreNow[0] - recoveryServiceArea.center[0],
-                centreNow[2] - recoveryServiceArea.center[1],
-              ) <= recoveryServiceArea.radius
-            : true;
-          const disposition = vehicleFailureDisposition(
-            {
-              structureFlightworthy:
-                mass.mass / Math.max(1, state.intactMass) >= 0.55 &&
-                envelopeLeft / Math.max(1, state.intactEnvelope) >= 0.5,
-              liftToWeight: liftCapacity / Math.max(1, neutral),
-              requiredActuatorFractions: availability,
-            },
-            overServiceArea,
-          );
+          const disposition = currentDisposition();
           const forward = rotateByQuaternion(
             state.body.orientation,
             frame.nose,
@@ -3200,6 +3244,8 @@ export function VehicleFrameSystem({
                   })
                 : null,
             arrivalInitialized: false,
+            escapeStallSeconds: 0,
+            escapeBestProgress: 0,
             landingStability: createVehicleLandingStability(
               state.body.position,
               state.body.orientation,

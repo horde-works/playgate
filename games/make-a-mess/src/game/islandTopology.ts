@@ -24,20 +24,29 @@ export interface IslandChartEntry {
   readonly position: NavigationPosition;
 }
 
-export type InterIslandArrivalMessage = "enteringAirspace" | "welcome";
-export type InterIslandArrivalCopyKey =
-  `interIsland.${InterIslandArrivalMessage}.${IslandId}`;
+/**
+ * The four beats of a crossing, in the order a passenger meets them:
+ * the shutter closes on the way out, seals while the destination is built,
+ * names the island as it opens, and keeps naming the leg still in progress.
+ */
+export type InterIslandJourneyMessage =
+  | "departingFor"
+  | "enteringAirspace"
+  | "welcome"
+  | "approach";
+export type InterIslandJourneyCopyKey =
+  `interIsland.${InterIslandJourneyMessage}.${IslandId}`;
 
 /**
- * Arrival presentation depends only on the destination, never on a bespoke
- * origin/destination pair. Each language still owns the complete phrase so
- * articles and grammatical cases remain correct.
+ * Journey presentation depends only on the island being named, never on a
+ * bespoke origin/destination pair. Each language still owns the complete
+ * phrase so articles and grammatical cases remain correct.
  */
-export function interIslandArrivalCopyKey(
-  destination: IslandId,
-  message: InterIslandArrivalMessage,
-): InterIslandArrivalCopyKey {
-  return `interIsland.${message}.${destination}`;
+export function interIslandJourneyCopyKey(
+  island: IslandId,
+  message: InterIslandJourneyMessage,
+): InterIslandJourneyCopyKey {
+  return `interIsland.${message}.${island}`;
 }
 
 export const ISLAND_CHART: Readonly<Record<IslandId, IslandChartEntry>> = {

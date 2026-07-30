@@ -275,8 +275,15 @@ export interface VehicleFailureObservation {
   readonly headingError: number;
   /** Actual yaw rate minus the turn rate explicitly requested by autopilot. */
   readonly yawRateError: number;
+  /**
+   * Lateral error guidance can NOT remove in the distance left before the
+   * stage has to be met, in metres. Raw distance from the line is not a
+   * failure: a craft thirty metres off with half a circuit to fly is doing
+   * fine, and the watchdog must not answer a question guidance already
+   * answered better.
+   */
   readonly crossTrackError: number;
-  /** Vertical distance from the active route state, in metres. */
+  /** Vertical error that cannot be removed in that distance, in metres. */
   readonly altitudeError?: number;
   readonly progress: number;
   /** False when a required control channel is physically inoperative. */
@@ -412,7 +419,9 @@ export interface VehicleFailureEnvelope {
   readonly maximumRoll: number;
   readonly maximumHeadingError: number;
   readonly maximumYawRate: number;
+  /** Unrecoverable lateral error that ends the flight, in metres. */
   readonly maximumCrossTrackError: number;
+  /** Unrecoverable vertical error that ends the flight, in metres. */
   readonly maximumAltitudeError: number;
   readonly attitudeGraceSeconds: number;
   readonly routeGraceSeconds: number;

@@ -907,3 +907,81 @@ test("rejoining the route rebases the watchdog without refunding it", () => {
     "a merge must not refund the correction grace already spent",
   );
 });
+
+test("a fly-away disposition dies with the last engine", () => {
+  const overIsland = true;
+  const healthy = {
+    structureFlightworthy: true,
+    liftToWeight: 1.15,
+    requiredActuatorFractions: [1, 1, 1],
+  };
+  assert.equal(vehicleFailureDisposition(healthy, overIsland), "escapeRoute");
+
+  // Both propellers shot away while the escape was already being flown. The
+  // claim "it can leave under its own power" is now false, and the machine
+  // has to come down instead of holding the climb its escape route asks for.
+  const enginesGone = { ...healthy, requiredActuatorFractions: [0, 0, 1] };
+  assert.equal(
+    vehicleFailureDisposition(enginesGone, overIsland),
+    "settleInPlace",
+  );
+  assert.equal(
+    vehicleFailureDisposition(enginesGone, false),
+    "descendBelowFog",
+  );
+  // And a landing disposition starts in the phase that actually descends.
+  assert.equal(
+    createVehicleRecoveryLifecycle("controlMismatch", "settleInPlace").phase,
+    "landing",
+  );
+  assert.equal(
+    createVehicleRecoveryLifecycle("controlMismatch", "descendBelowFog").phase,
+    "descent",
+  );
+});
+
+test("a recoverable deviation never reaches the watchdog as a divergence", () => {
+  // The runtime feeds the unrecoverable residual, so being far off the line
+  // with room to fix it accumulates nothing at all.
+  let state = createVehicleFailureWatchdog(0.4);
+  let failure = null;
+  for (let step = 0; step < 600 && failure === null; step += 1) {
+    const result = advanceVehicleFailureWatchdog(
+      state,
+      // Flying normally, just a long way off the line — the residual is zero
+      // because guidance owns it.
+      observation({
+        crossTrackError: 0,
+        altitudeError: 0,
+        progress: 0.4 + step * 0.0005,
+      }),
+    );
+    state = result.state;
+    failure = result.failure;
+  }
+  assert.equal(failure, null);
+  assert.equal(state.routeSeconds, 0);
+
+  // The same craft with nothing left to fix it in does trip, on time.
+  let stranded = createVehicleFailureWatchdog(0.4);
+  let seconds = 0;
+  let strandedFailure = null;
+  while (strandedFailure === null && seconds < 30) {
+    const result = advanceVehicleFailureWatchdog(
+      stranded,
+      observation({
+        crossTrackError:
+          DEFAULT_VEHICLE_FAILURE_ENVELOPE.maximumCrossTrackError + 3,
+        progress: 0.4 + seconds * 0.005,
+      }),
+    );
+    stranded = result.state;
+    strandedFailure = result.failure;
+    seconds += 0.1;
+  }
+  assert.equal(strandedFailure, "routeDivergence");
+  assert.equal(
+    Math.abs(seconds - DEFAULT_VEHICLE_FAILURE_ENVELOPE.routeGraceSeconds) < 0.3,
+    true,
+  );
+});

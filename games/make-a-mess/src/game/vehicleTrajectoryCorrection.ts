@@ -2,21 +2,20 @@ import type { SceneVector3 } from "./destructionScene.ts";
 import {
   vehicleGuidanceCorridor,
   type VehicleGuidanceEnvelope,
+  type VehicleGuidancePhase,
 } from "./vehicleGuidanceEnvelope.ts";
 import {
   balancedEngineYawAuthority,
   rejoinVehicleRouteProgress,
   rotateVector,
   rudderEffectiveness,
-  vehicleAttitude,
   vehicleRouteHeading,
   type Quaternion,
   type ShipModel,
   type VehicleRoutePlan,
 } from "./vehicleFrames.ts";
 
-export type VehicleTrajectoryDeviationReason =
-  "track" | "heading" | "velocity" | "altitude" | "attitude" | "angularRate";
+export type VehicleTrajectoryDeviationReason = "track" | "altitude" | "upset";
 
 export interface VehicleNavigationState {
   readonly position: SceneVector3;
@@ -26,23 +25,26 @@ export interface VehicleNavigationState {
 }
 
 export interface VehicleTrajectoryAssessment {
-  readonly correctionRequired: boolean;
   /**
-   * Minor errors can be intercepted while continuing the flight. A stop is
-   * reserved for a hull that is tumbling or leaving its controllable envelope.
+   * Ordinary guidance cannot meet the accuracy this stage requires by the
+   * time the stage ends. This is the only reason to leave the authored route:
+   * not "how far off am I" but "can I still get back in the distance left".
    */
-  readonly requiresStabilization: boolean;
+  readonly correctionRequired: boolean;
+  /** A rate event large enough to own the craft for a moment. */
+  readonly upset: boolean;
   readonly reason: VehicleTrajectoryDeviationReason | null;
+  readonly phase: VehicleGuidancePhase;
   readonly crossTrackError: number;
-  readonly predictedCrossTrackError: number;
-  readonly headingError: number;
-  readonly velocityDirectionError: number;
   readonly altitudeError: number;
-  readonly predictedAltitudeError: number;
-  /** Planned chord excursion inside the active guidance lookahead. */
-  readonly routeTurnExcursion: number;
-  readonly tilt: number;
-  readonly tiltAngularSpeed: number;
+  /** Route distance left before the present stage has to be met, in metres. */
+  readonly distanceToGate: number;
+  /** Lateral error ordinary turning can still remove in that distance. */
+  readonly reachableClosure: number;
+  /** Vertical error the trim can still remove in that distance. */
+  readonly reachableAltitudeClosure: number;
+  readonly tiltRate: number;
+  readonly yawRate: number;
 }
 
 export type VehicleTrajectoryRequestedMode =
@@ -117,213 +119,205 @@ function routeDistance(
   };
 }
 
-/**
- * Route following deliberately aims ahead. On a bend, the dynamically valid
- * flight corridor therefore includes part of the chord inside that lookahead;
- * judging it against the same tube as a straight line creates false mode
- * transitions for large, inertial hulls.
- */
-function routeTurnExcursion(plan: VehicleRoutePlan, progress: number): number {
-  const guidanceDistance = Math.max(
-    8,
-    plan.guidanceLookahead?.(progress) ??
-      (progress >= plan.finalFrom ? 30 : 52),
-  );
-  const window = Math.min(0.18, guidanceDistance / Math.max(1, plan.length));
-  const before = plan.point(Math.max(0, progress - window));
-  const current = plan.point(progress);
-  const after = plan.point(Math.min(1, progress + window));
-  const chordX = after[0] - before[0];
-  const chordZ = after[2] - before[2];
-  const chordLengthSquared = chordX * chordX + chordZ * chordZ;
-  if (chordLengthSquared < 1e-8) {
-    return 0;
+/** The first stretch after cast-off, where the craft is still gathering way. */
+const DEPARTURE_PROGRESS = 0.06;
+
+export function vehicleGuidancePhaseAt(
+  plan: VehicleRoutePlan,
+  progress: number,
+): VehicleGuidancePhase {
+  if (progress >= plan.finalFrom) {
+    return "approach";
   }
-  const projection = Math.max(
-    0,
-    Math.min(
-      1,
-      ((current[0] - before[0]) * chordX + (current[2] - before[2]) * chordZ) /
-        chordLengthSquared,
-    ),
-  );
+  return progress < DEPARTURE_PROGRESS ? "departure" : "cruise";
+}
+
+/**
+ * Route distance still available before the present stage must be met: the
+ * berth on final, the start of the approach otherwise.
+ */
+function distanceToGate(
+  plan: VehicleRoutePlan,
+  progress: number,
+  phase: VehicleGuidancePhase,
+): number {
+  const remaining =
+    phase === "approach"
+      ? (1 - progress) * plan.length
+      : (Math.max(0, plan.finalFrom - progress)) * plan.length;
+  return Math.max(1, remaining);
+}
+
+/**
+ * Lateral offset ordinary route following can still remove.
+ *
+ * A coordinated turn out and back gives `omega x d^2 / (4 v)` of sideways
+ * travel over a flown distance d. That is the whole reason a machine-gun
+ * burst on the circuit is a non-event while the same push on final is not:
+ * the physics is identical, the distance left to use it in is not.
+ */
+export function vehicleReachableClosure(
+  holdableRate: number,
+  distance: number,
+  speed: number,
+  margin: number,
+): number {
+  const flownSpeed = Math.max(0.6, speed);
   return Math.min(
-    32,
-    Math.hypot(
-      current[0] - (before[0] + chordX * projection),
-      current[2] - (before[2] + chordZ * projection),
-    ),
+    distance,
+    (margin * holdableRate * distance * distance) / (4 * flownSpeed),
   );
 }
 
 /**
- * Navigation-computer view of the route. A recent impact narrows the corridor,
- * but loss of the corridor is also detected without an impact event:
- * collisions, wind and damaged propulsion must all reach the same supervisor.
- *
- * Every threshold comes from the machine's guidance envelope, which is derived
- * from its failure envelope. Guidance therefore always reacts before the
- * watchdog declares the same deviation a loss.
+ * Navigation-computer view of the route. It asks one question — can ordinary
+ * guidance still meet this stage's requirement — and never asks who caused
+ * the error. Pitch and roll are not part of that question: they have their
+ * own continuous owners in the trim cars and the pendulum.
  */
 export function assessVehicleTrajectory(
   plan: VehicleRoutePlan,
   progress: number,
   state: VehicleNavigationState,
   nose: SceneVector3,
-  recentExternalImpulse: boolean,
+  model: ShipModel,
   guidance: VehicleGuidanceEnvelope,
 ): VehicleTrajectoryAssessment {
-  const forward = rotateVector(state.orientation, nose);
-  const requiredHeading = vehicleRouteHeading(plan, progress);
-  const actualHeading = horizontalDirection(forward, requiredHeading);
-  const movementHeading = routeMovementHeading(plan, progress);
   const groundSpeed = Math.hypot(state.velocity[0], state.velocity[2]);
-  const velocityHeading = horizontalDirection(state.velocity, movementHeading);
-  const headingError = angleBetween(actualHeading, requiredHeading);
-  const velocityDirectionError =
-    groundSpeed > 0.75 ? angleBetween(velocityHeading, movementHeading) : 0;
   const current = routeDistance(plan, progress, state.position, 0.025, 0.08);
-  const horizon = Math.max(1.5, Math.min(4, 1.4 + groundSpeed * 0.28));
-  const predictedPosition: SceneVector3 = [
-    state.position[0] + state.velocity[0] * horizon,
-    state.position[1] + state.velocity[1] * horizon,
-    state.position[2] + state.velocity[2] * horizon,
-  ];
-  const predicted = routeDistance(
-    plan,
-    progress,
-    predictedPosition,
-    0.02,
-    0.12,
+  const phase = vehicleGuidancePhaseAt(plan, progress);
+  const corridor = vehicleGuidanceCorridor(guidance, phase);
+  const gate = distanceToGate(plan, progress, phase);
+  const holdableRate = holdableYawRate(model, nose, Math.max(1.5, groundSpeed));
+  const reachableClosure = vehicleReachableClosure(
+    holdableRate,
+    gate,
+    groundSpeed,
+    guidance.closureMargin,
   );
-  const attitude = vehicleAttitude(state.orientation, nose);
-  const tilt = Math.hypot(attitude.pitch, attitude.roll);
-  const tiltAngularSpeed = Math.hypot(
+  // The trim channel answers altitude the same way, using the lift authority
+  // the machine actually has rather than a fixed tube.
+  const flownSeconds = gate / Math.max(0.6, groundSpeed);
+  const reachableAltitudeClosure =
+    guidance.closureMargin *
+    0.5 *
+    9.81 *
+    Math.max(0.02, model.limits.liftTrimRange) *
+    flownSeconds *
+    flownSeconds;
+
+  const trackResidual = Math.max(0, current.horizontal - reachableClosure);
+  const altitudeResidual = Math.max(
+    0,
+    Math.abs(current.vertical) - reachableAltitudeClosure,
+  );
+  const tiltRate = Math.hypot(
     state.angularVelocity[0],
     state.angularVelocity[2],
   );
-  const plannedTurnExcursion = routeTurnExcursion(plan, progress);
+  const yawRate = Math.abs(state.angularVelocity[1]);
+  const upset =
+    tiltRate > guidance.upsetEntry.tiltRate ||
+    yawRate > guidance.upsetEntry.yawRate;
 
-  // The corridor is the machine's; the widening terms are geometry and speed,
-  // which belong to the manoeuvre rather than to the passport.
-  const corridor = vehicleGuidanceCorridor(guidance, recentExternalImpulse);
-  const excursionGain = recentExternalImpulse ? 0.78 : 0.28;
-  const predictedExcursionGain = recentExternalImpulse ? 0.9 : 0.34;
-  const speedGain = recentExternalImpulse ? 0.72 : 1.9;
-  const predictedSpeedGain = recentExternalImpulse ? 1.05 : 2.8;
-  const trackLimit = Math.max(
-    corridor.crossTrack + plannedTurnExcursion * excursionGain,
-    groundSpeed * speedGain,
-  );
-  const predictedTrackLimit = Math.max(
-    corridor.predictedCrossTrack + plannedTurnExcursion * predictedExcursionGain,
-    groundSpeed * predictedSpeedGain,
-  );
-  const headingLimit = corridor.heading;
-  const velocityLimit = corridor.velocityHeading;
-  const altitudeLimit = corridor.altitude;
-  const predictedAltitudeLimit = corridor.predictedAltitude;
-  const tiltLimit = corridor.tilt;
-  const angularRateLimit = corridor.tiltRate;
-  const headingRelevant = groundSpeed > 1.2 || recentExternalImpulse;
-
-  const reason: VehicleTrajectoryDeviationReason | null =
-    current.horizontal > trackLimit
+  const reason: VehicleTrajectoryDeviationReason | null = upset
+    ? "upset"
+    : trackResidual > corridor.crossTrack
       ? "track"
-      : predicted.horizontal > predictedTrackLimit
-        ? "track"
-        : headingRelevant && headingError > headingLimit
-          ? "heading"
-          : velocityDirectionError > velocityLimit
-            ? "velocity"
-            : Math.abs(current.vertical) > altitudeLimit ||
-                Math.abs(predicted.vertical) > predictedAltitudeLimit
-              ? "altitude"
-              : tilt > tiltLimit
-                ? "attitude"
-                : tiltAngularSpeed > angularRateLimit
-                  ? "angularRate"
-                  : null;
-  // Horizontal position and yaw are not reasons to stop by themselves. The
-  // candidate search below knows the ship's turning/braking authority and can
-  // choose a broad intercept. Stabilization is reserved for a state that is
-  // changing too quickly to make one durable route prediction.
-  const entry = guidance.stabilizationEntry;
-  const requiresStabilization =
-    tilt > entry.tilt ||
-    tiltAngularSpeed > entry.tiltRate ||
-    Math.abs(state.velocity[1]) > entry.verticalSpeed ||
-    Math.abs(state.angularVelocity[1]) > entry.yawRate;
+      : altitudeResidual > corridor.altitude
+        ? "altitude"
+        : null;
 
   return {
-    correctionRequired: reason !== null,
-    requiresStabilization,
+    correctionRequired: reason === "track" || reason === "altitude",
+    upset,
     reason,
+    phase,
     crossTrackError: current.horizontal,
-    predictedCrossTrackError: predicted.horizontal,
-    headingError,
-    velocityDirectionError,
     altitudeError: current.vertical,
-    predictedAltitudeError: predicted.vertical,
-    routeTurnExcursion: plannedTurnExcursion,
-    tilt,
-    tiltAngularSpeed,
+    distanceToGate: gate,
+    reachableClosure,
+    reachableAltitudeClosure,
+    tiltRate,
+    yawRate,
   };
 }
 
 /**
- * Selects the mode requested from the one autopilot state machine. Course and
- * velocity errors alone do not justify leaving the authored-route mode: that
- * mode already closes both loops, including a scheduled sternway/forward
- * pivot. Spatial route loss requests an intercept; actual pitch/roll upset
- * requests stabilization.
+ * What the watchdog must judge: the part of the present error that ordinary
+ * guidance cannot remove before the stage has to be met. Raw distance from
+ * the line is not a failure — a craft thirty metres off with half a circuit
+ * ahead is doing fine — and feeding the watchdog the raw number makes it
+ * answer a question guidance has already answered better.
  */
-export function requestedVehicleTrajectoryMode(
+export function vehicleUnrecoverableDeviation(
   assessment: VehicleTrajectoryAssessment,
-  guidance: VehicleGuidanceEnvelope,
-): VehicleTrajectoryRequestedMode {
-  if (!assessment.correctionRequired) {
-    return "authoredRoute";
+  crossTrackError: number,
+  altitudeError: number,
+): { readonly crossTrack: number; readonly altitude: number } {
+  return {
+    crossTrack: Math.max(0, crossTrackError - assessment.reachableClosure),
+    altitude:
+      Math.sign(altitudeError) *
+      Math.max(
+        0,
+        Math.abs(altitudeError) - assessment.reachableAltitudeClosure,
+      ),
+  };
+}
+
+/** A hold rides out an upset; it is never a long manoeuvre. */
+export const VEHICLE_HOLD_ALLOWANCE_SECONDS = 12;
+
+/**
+ * Time an episode may run with the route timers suspended. An intercept knows
+ * its own length and speed, so the allowance follows the manoeuvre the machine
+ * actually has to fly instead of an unrelated constant.
+ */
+export function vehicleCorrectionAllowanceSeconds(
+  correction: VehicleTrajectoryCorrectionPlan | null,
+  graceSeconds: number,
+): number {
+  if (!correction) {
+    return Math.min(VEHICLE_HOLD_ALLOWANCE_SECONDS, graceSeconds);
   }
-  if (
-    assessment.tilt > guidance.stabilizationEntry.tilt ||
-    assessment.tiltAngularSpeed > guidance.stabilizationEntry.tiltRate
-  ) {
-    return "stabilizing";
-  }
-  if (assessment.reason === "attitude" || assessment.reason === "angularRate") {
-    return "authoredRoute";
-  }
-  return assessment.reason === "track" || assessment.reason === "altitude"
-    ? assessment.requiresStabilization
-      ? "stabilizing"
-      : "intercepting"
-    : "authoredRoute";
+  const speed = Math.max(0.5, correction.plan.speedLimit(0));
+  return Math.min(
+    graceSeconds,
+    Math.max(
+      VEHICLE_HOLD_ALLOWANCE_SECONDS,
+      (2 * correction.plan.length) / speed,
+    ),
+  );
 }
 
 /**
- * The hull has stopped tumbling enough to construct one stable intercept.
- *
- * A hold waits for a transient, not for a number. Structural loss moves the
- * live centre of mass permanently, and once the trim cars have done what they
- * can the hull hangs at a new equilibrium that is simply not level. Demanding
- * a small angle there would keep a perfectly controllable ship in a hold
- * forever, so a settled attitude ends the hold at whatever angle it settled.
- * Whether that angle is still flyable is the trim and watchdog's question.
+ * One autopilot, three modes. An upset owns the craft while it lasts; an
+ * unreachable route state asks for an intercept; everything else is ordinary
+ * route following, which is also where a small push gets corrected.
  */
-export function vehicleTrajectoryStabilized(
+export function requestedVehicleTrajectoryMode(
   assessment: VehicleTrajectoryAssessment,
+): VehicleTrajectoryRequestedMode {
+  if (assessment.upset) {
+    return "stabilizing";
+  }
+  return assessment.correctionRequired ? "intercepting" : "authoredRoute";
+}
+
+/**
+ * The upset has passed. Nothing is asked about the resulting attitude: the
+ * flight simply continues, and whether it can still be flown or landed is
+ * decided by the ordinary approach, go-around and failure machinery.
+ */
+export function vehicleUpsetSettled(
   state: VehicleNavigationState,
   guidance: VehicleGuidanceEnvelope,
-  /** The measured inclination is still falling; the transient is not over. */
-  tiltImproving = false,
 ): boolean {
-  const exit = guidance.stabilizationExit;
+  const exit = guidance.upsetExit;
   return (
-    (assessment.tilt < exit.tilt || !tiltImproving) &&
-    assessment.tiltAngularSpeed < exit.tiltRate &&
-    Math.abs(state.velocity[1]) < exit.verticalSpeed &&
-    Math.abs(state.angularVelocity[1]) < exit.yawRate
+    Math.hypot(state.angularVelocity[0], state.angularVelocity[2]) <
+      exit.tiltRate && Math.abs(state.angularVelocity[1]) < exit.yawRate
   );
 }
 
@@ -694,23 +688,25 @@ export function vehicleTrajectoryMergeReady(
   const movementHeading = routeMovementHeading(sourcePlan, mergeProgress);
   const groundSpeed = Math.hypot(state.velocity[0], state.velocity[2]);
   const velocityHeading = horizontalDirection(state.velocity, movementHeading);
-  const attitude = vehicleAttitude(state.orientation, nose);
   const merge = guidance.merge;
+  // Place, course and the direction of travel. How the gondola happens to be
+  // swinging is not part of being back on the line.
   return (
     Math.hypot(point[0] - state.position[0], point[2] - state.position[2]) <
       merge.position &&
     Math.abs(point[1] - state.position[1]) < merge.height &&
     angleBetween(actualHeading, requiredHeading) < merge.heading &&
     (groundSpeed < 0.8 ||
-      angleBetween(velocityHeading, movementHeading) < merge.velocityHeading) &&
-    Math.hypot(attitude.pitch, attitude.roll) < merge.tilt &&
-    Math.hypot(state.angularVelocity[0], state.angularVelocity[2]) <
-      merge.tiltRate
+      angleBetween(velocityHeading, movementHeading) < merge.velocityHeading)
   );
 }
 
-/** A zero-speed route lets the ordinary autopilot brake without inventing a
- * second set of actuators while the passive hull restores pitch and roll. */
+/**
+ * A zero-speed route while an upset runs its course. It invents no actuator:
+ * the ordinary autopilot brakes, the trim cars keep working as they always do,
+ * and the pendulum keeps righting the hull. Taking speed off is the whole
+ * point — it buys those continuous loops the seconds they need.
+ */
 export function vehicleTrajectoryStabilizationPlan(
   sourcePlan: VehicleRoutePlan,
   progress: number,

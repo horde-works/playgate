@@ -15,7 +15,17 @@ const TOWER_GRID_RADIUS = 0.9;
  */
 const GRID_FOOTING = -4.5;
 
-export type BasaltForceFieldNetwork = "wall" | "tower";
+/**
+ * A network is one continuous membrane. Blast rings only travel inside one,
+ * so the two sides of a hull must never share a network: a rocket on the port
+ * screen has no business weakening starboard plates through the ship.
+ */
+export type BasaltForceFieldNetwork =
+  | "wall"
+  | "tower"
+  | "ram-port"
+  | "ram-starboard"
+  | "ram-bow";
 
 export interface BasaltForceFieldCell {
   readonly index: number;
@@ -288,24 +298,12 @@ export function expireBasaltForceFieldImpacts(
   return changed;
 }
 
-function add(a: SceneVector3, b: SceneVector3): SceneVector3 {
-  return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
-}
-
 function scale(value: SceneVector3, multiplier: number): SceneVector3 {
   return [
     value[0] * multiplier,
     value[1] * multiplier,
     value[2] * multiplier,
   ];
-}
-
-function subtract(a: SceneVector3, b: SceneVector3): SceneVector3 {
-  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-}
-
-function dot(a: SceneVector3, b: SceneVector3): number {
-  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
 
 function cross(a: SceneVector3, b: SceneVector3): SceneVector3 {
@@ -321,7 +319,12 @@ function normalize(value: SceneVector3): SceneVector3 {
   return scale(value, 1 / length);
 }
 
-function projectedCell(
+/**
+ * One plate of a projection. The caller supplies where it sits and which way
+ * it faces; everything else — the tangent basis, the hidden collision overlap
+ * and the visible inset — is the same for a curtain wall and for a hull.
+ */
+export function projectedCell(
   network: BasaltForceFieldNetwork,
   q: number,
   r: number,
@@ -329,16 +332,24 @@ function projectedCell(
   centre: SceneVector3,
   normal: SceneVector3,
   gridRadius: number,
+  idPrefix = "stronghold:force-field",
 ): BasaltForceFieldCell {
   const outwardNormal = normalize(normal);
   // The local X axis follows the horizontal tangent. Cross order keeps local
   // Y pointing upward at the central cell while the normal points to spawn.
-  const tangentU = normalize([outwardNormal[2], 0, -outwardNormal[0]]);
+  // A wall never has a vertical face, but a dome capping a bow does, and there
+  // the horizontal tangent vanishes: fall back to a fixed reference axis so the
+  // plate keeps a real basis instead of a zero one, which would silently make
+  // its planar hexagon test pass everywhere.
+  const horizontal = Math.hypot(outwardNormal[0], outwardNormal[2]);
+  const tangentU = horizontal > 1e-6
+    ? normalize([outwardNormal[2], 0, -outwardNormal[0]])
+    : normalize(cross(outwardNormal, [0, 0, 1]));
   const tangentV = normalize(cross(outwardNormal, tangentU));
 
   return {
     index,
-    id: `stronghold:force-field:${network}:${q}:${r}`,
+    id: `${idPrefix}:${network}:${q}:${r}`,
     network,
     q,
     r,
@@ -443,8 +454,119 @@ export function createBasaltForceFieldCells(): readonly BasaltForceFieldCell[] {
 
 export const BASALT_FORCE_FIELD_CELLS = createBasaltForceFieldCells();
 
-export function emptyBasaltForceFieldDamage(): Float32Array {
-  return new Float32Array(BASALT_FORCE_FIELD_CELLS.length);
+/**
+ * A carrier's pose, when the projection it owns is not standing on the ground.
+ *
+ * The cells stay in the coordinates they were authored in and the QUERY is
+ * carried into them, never the other way round: one inverse transform per
+ * question instead of a thousand cell transforms per frame. That also makes
+ * it impossible for the projection to drift away from the hull, because it
+ * reads the very pose the hull pieces are drawn with.
+ */
+export interface BasaltForceFieldPose {
+  readonly position: SceneVector3;
+  /** Carrier orientation, x y z w. */
+  readonly orientation: readonly [number, number, number, number];
+}
+
+function rotateByPose(
+  orientation: readonly [number, number, number, number],
+  x: number,
+  y: number,
+  z: number,
+  inverse: boolean,
+): [number, number, number] {
+  const qx = inverse ? -orientation[0] : orientation[0];
+  const qy = inverse ? -orientation[1] : orientation[1];
+  const qz = inverse ? -orientation[2] : orientation[2];
+  const qw = orientation[3];
+  const tx = 2 * (qy * z - qz * y);
+  const ty = 2 * (qz * x - qx * z);
+  const tz = 2 * (qx * y - qy * x);
+  return [
+    x + qw * tx + qy * tz - qz * ty,
+    y + qw * ty + qz * tx - qx * tz,
+    z + qw * tz + qx * ty - qy * tx,
+  ];
+}
+
+/** World point into the projection's own frame. */
+export function basaltForceFieldPointToLocal(
+  pose: BasaltForceFieldPose,
+  point: SceneVector3,
+): SceneVector3 {
+  return poseToLocal(pose, point);
+}
+
+function poseToLocal(
+  pose: BasaltForceFieldPose,
+  point: SceneVector3,
+): [number, number, number] {
+  return rotateByPose(
+    pose.orientation,
+    point[0] - pose.position[0],
+    point[1] - pose.position[1],
+    point[2] - pose.position[2],
+    true,
+  );
+}
+
+/** Projection-frame point back out into the world. */
+function poseToWorld(
+  pose: BasaltForceFieldPose,
+  point: readonly [number, number, number],
+): SceneVector3 {
+  const rotated = rotateByPose(
+    pose.orientation,
+    point[0],
+    point[1],
+    point[2],
+    false,
+  );
+  return [
+    rotated[0] + pose.position[0],
+    rotated[1] + pose.position[1],
+    rotated[2] + pose.position[2],
+  ];
+}
+
+/** Projection-frame direction back out into the world; no translation. */
+function poseDirectionToWorld(
+  pose: BasaltForceFieldPose,
+  direction: SceneVector3,
+): SceneVector3 {
+  return rotateByPose(
+    pose.orientation,
+    direction[0],
+    direction[1],
+    direction[2],
+    false,
+  );
+}
+
+/**
+ * One projection: its cells and the flat mirrors the hot loops read.
+ *
+ * The fortress owns one and a flying carrier owns another. Everything below
+ * takes the projection as an argument, so neither the rules, the membrane nor
+ * the damage model can quietly become specific to a curtain wall.
+ */
+export interface BasaltForceFieldProjection {
+  readonly cells: readonly BasaltForceFieldCell[];
+  readonly count: number;
+  readonly centres: Float64Array;
+  readonly normals: Float64Array;
+  readonly tangentsU: Float64Array;
+  readonly tangentsV: Float64Array;
+  readonly radii: Float64Array;
+  readonly bounds: readonly [number, number, number, number, number, number];
+  readonly maxRadius: number;
+}
+
+export function emptyBasaltForceFieldDamage(
+  projection: BasaltForceFieldProjection = BASALT_FORCE_FIELD_PROJECTION,
+): Float32Array {
+  return new Float32Array(projection.count);
 }
 
 export function basaltForceFieldDamageFraction(
@@ -480,17 +602,18 @@ export function basaltForceFieldCellDistance(
  * unit to the directly struck plate; its blast weakens the first two rings.
  */
 export function damageBasaltForceField(
+  projection: BasaltForceFieldProjection,
   previous: ArrayLike<number>,
   cellIndex: number,
   kind: BasaltForceFieldImpactKind,
 ): Float32Array {
   const next = Float32Array.from(previous);
-  const struck = BASALT_FORCE_FIELD_CELLS[cellIndex];
+  const struck = projection.cells[cellIndex];
   if (!struck || !basaltForceFieldCellAlive(previous, cellIndex)) {
     return next;
   }
 
-  for (const cell of BASALT_FORCE_FIELD_CELLS) {
+  for (const cell of projection.cells) {
     const distance = basaltForceFieldCellDistance(struck, cell);
     const delivered = kind === "machineGun"
       ? distance === 0 ? 0.035 : 0
@@ -518,17 +641,96 @@ export function damageBasaltForceField(
   return next;
 }
 
-function pointInsideCell(
-  cell: BasaltForceFieldCell,
-  point: SceneVector3,
+/**
+ * Плоские зеркала решётки для горячих циклов. Взрыв опрашивает поле на
+ * каждую цель, игрок и каждый снаряд — каждый кадр; проход по 768 ячейкам
+ * с кортежем-аллокацией на ячейку стоил ~0.5 мс на вызов. Скалярная
+ * математика по этим массивам плюс AABB-отсечка сводят промах к микросекундам.
+ * Float64 — чтобы численно совпадать с прежним поведением один в один.
+ */
+export function createBasaltForceFieldProjection(
+  cells: readonly BasaltForceFieldCell[],
+): BasaltForceFieldProjection {
+  const count = cells.length;
+  const centres = new Float64Array(count * 3);
+  const normals = new Float64Array(count * 3);
+  const tangentsU = new Float64Array(count * 3);
+  const tangentsV = new Float64Array(count * 3);
+  const radii = new Float64Array(count);
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+  let maxRadius = 0;
+  cells.forEach((cell, index) => {
+    centres.set(cell.centre, index * 3);
+    normals.set(cell.normal, index * 3);
+    tangentsU.set(cell.tangentU, index * 3);
+    tangentsV.set(cell.tangentV, index * 3);
+    radii[index] = cell.collisionRadius;
+    minX = Math.min(minX, cell.centre[0]);
+    minY = Math.min(minY, cell.centre[1]);
+    minZ = Math.min(minZ, cell.centre[2]);
+    maxX = Math.max(maxX, cell.centre[0]);
+    maxY = Math.max(maxY, cell.centre[1]);
+    maxZ = Math.max(maxZ, cell.centre[2]);
+    maxRadius = Math.max(maxRadius, cell.collisionRadius);
+  });
+  return {
+    cells,
+    count,
+    centres,
+    normals,
+    tangentsU,
+    tangentsV,
+    radii,
+    bounds: [minX, minY, minZ, maxX, maxY, maxZ] as const,
+    maxRadius,
+  };
+}
+
+export const BASALT_FORCE_FIELD_PROJECTION = createBasaltForceFieldProjection(
+  BASALT_FORCE_FIELD_CELLS,
+);
+
+/** Slab-тест отрезка против AABB решётки, расширенного на margin. */
+function segmentTouchesLattice(
+  projection: BasaltForceFieldProjection,
+  fromX: number,
+  fromY: number,
+  fromZ: number,
+  directionX: number,
+  directionY: number,
+  directionZ: number,
+  margin: number,
 ): boolean {
-  const local = subtract(point, cell.centre);
-  const x = Math.abs(dot(local, cell.tangentU));
-  const y = Math.abs(dot(local, cell.tangentV));
-  const radius = cell.collisionRadius + 0.035;
-  const halfHeight = Math.sqrt(3) * radius / 2;
-  return x <= radius && y <= halfHeight &&
-    Math.sqrt(3) * x + y <= Math.sqrt(3) * radius;
+  const [minX, minY, minZ, maxX, maxY, maxZ] = projection.bounds;
+  let enter = 0;
+  let exit = 1;
+  for (let axis = 0; axis < 3; axis += 1) {
+    const origin = axis === 0 ? fromX : axis === 1 ? fromY : fromZ;
+    const speed = axis === 0 ? directionX : axis === 1 ? directionY : directionZ;
+    const low = (axis === 0 ? minX : axis === 1 ? minY : minZ) - margin;
+    const high = (axis === 0 ? maxX : axis === 1 ? maxY : maxZ) + margin;
+    if (Math.abs(speed) < 1e-12) {
+      if (origin < low || origin > high) return false;
+      continue;
+    }
+    const inverse = 1 / speed;
+    let near = (low - origin) * inverse;
+    let far = (high - origin) * inverse;
+    if (near > far) {
+      const swap = near;
+      near = far;
+      far = swap;
+    }
+    enter = Math.max(enter, near);
+    exit = Math.min(exit, far);
+    if (enter > exit) return false;
+  }
+  return true;
 }
 
 /**
@@ -536,39 +738,111 @@ function pointInsideCell(
  * normal (fortress -> spawn) is ignored even though it crosses the plane.
  */
 export function intersectBasaltForceField(
+  projection: BasaltForceFieldProjection,
   from: SceneVector3,
   to: SceneVector3,
   damage: ArrayLike<number>,
   clearance = 0,
+  pose: BasaltForceFieldPose | null = null,
 ): BasaltForceFieldHit | null {
-  const direction = subtract(to, from);
-  let nearest: BasaltForceFieldHit | null = null;
-
-  for (const cell of BASALT_FORCE_FIELD_CELLS) {
-    if (!basaltForceFieldCellAlive(damage, cell.index)) continue;
-    const denominator = dot(cell.normal, direction);
-    // Negative means travel from spawn-facing side toward the fortress.
-    if (denominator >= -1e-7) continue;
-    const progress = (
-      dot(cell.normal, subtract(cell.centre, from)) + Math.max(0, clearance)
-    ) / denominator;
-    if (progress < -1e-5 || progress > 1 + 1e-5) continue;
-    if (nearest && progress >= nearest.progress) continue;
-    const point = add(from, scale(direction, Math.max(0, progress)));
-    const surfacePoint = clearance > 0
-      ? add(point, scale(cell.normal, -clearance))
-      : point;
-    if (!pointInsideCell(cell, surfacePoint)) continue;
-    nearest = {
-      cellIndex: cell.index,
-      cellId: cell.id,
-      normal: cell.normal,
-      point,
-      progress: Math.max(0, progress),
-    };
+  // The segment travels into the projection's own frame; the answer travels
+  // back out. Everything between is the same mathematics a standing wall uses.
+  const localFrom = pose ? poseToLocal(pose, from) : from;
+  const localTo = pose ? poseToLocal(pose, to) : to;
+  const fromX = localFrom[0];
+  const fromY = localFrom[1];
+  const fromZ = localFrom[2];
+  const directionX = localTo[0] - fromX;
+  const directionY = localTo[1] - fromY;
+  const directionZ = localTo[2] - fromZ;
+  const paddedClearance = Math.max(0, clearance);
+  if (
+    !segmentTouchesLattice(
+      projection,
+      fromX,
+      fromY,
+      fromZ,
+      directionX,
+      directionY,
+      directionZ,
+      projection.maxRadius + 0.035 + paddedClearance,
+    )
+  ) {
+    return null;
   }
 
-  return nearest;
+  const { count, centres, normals, tangentsU, tangentsV, radii } = projection;
+  let nearestIndex = -1;
+  let nearestProgress = Infinity;
+
+  for (let index = 0; index < count; index += 1) {
+    if (!basaltForceFieldCellAlive(damage, index)) continue;
+    const base = index * 3;
+    const normalX = normals[base];
+    const normalY = normals[base + 1];
+    const normalZ = normals[base + 2];
+    const denominator =
+      normalX * directionX + normalY * directionY + normalZ * directionZ;
+    // Negative means travel from spawn-facing side toward the fortress.
+    if (denominator >= -1e-7) continue;
+    const offsetX = centres[base] - fromX;
+    const offsetY = centres[base + 1] - fromY;
+    const offsetZ = centres[base + 2] - fromZ;
+    const progress = (
+      normalX * offsetX + normalY * offsetY + normalZ * offsetZ +
+      paddedClearance
+    ) / denominator;
+    if (progress < -1e-5 || progress > 1 + 1e-5) continue;
+    if (progress >= nearestProgress) continue;
+    const travelled = Math.max(0, progress);
+    // Точка на самой плоскости проекции: обратный сдвиг clearance вдоль нормали.
+    const surfaceX =
+      fromX + directionX * travelled - normalX * paddedClearance;
+    const surfaceY =
+      fromY + directionY * travelled - normalY * paddedClearance;
+    const surfaceZ =
+      fromZ + directionZ * travelled - normalZ * paddedClearance;
+    const localX = surfaceX - centres[base];
+    const localY = surfaceY - centres[base + 1];
+    const localZ = surfaceZ - centres[base + 2];
+    const planarX = Math.abs(
+      localX * tangentsU[base] +
+      localY * tangentsU[base + 1] +
+      localZ * tangentsU[base + 2],
+    );
+    const planarY = Math.abs(
+      localX * tangentsV[base] +
+      localY * tangentsV[base + 1] +
+      localZ * tangentsV[base + 2],
+    );
+    const radius = radii[index] + 0.035;
+    const halfHeight = Math.sqrt(3) * radius / 2;
+    if (
+      planarX > radius ||
+      planarY > halfHeight ||
+      Math.sqrt(3) * planarX + planarY > Math.sqrt(3) * radius
+    ) {
+      continue;
+    }
+    nearestIndex = index;
+    nearestProgress = travelled;
+  }
+
+  if (nearestIndex < 0) return null;
+  const cell = projection.cells[nearestIndex];
+  const travelled = Math.max(0, nearestProgress);
+  const localPoint: [number, number, number] = [
+    fromX + directionX * travelled,
+    fromY + directionY * travelled,
+    fromZ + directionZ * travelled,
+  ];
+  return {
+    cellIndex: cell.index,
+    cellId: cell.id,
+    normal: pose ? poseDirectionToWorld(pose, cell.normal) : cell.normal,
+    point: pose ? poseToWorld(pose, localPoint) : localPoint,
+    progress: travelled,
+  };
 }
 
 export interface BasaltForceFieldProximity {
@@ -586,34 +860,99 @@ export interface BasaltForceFieldProximity {
  * a plate never sees it.
  */
 export function nearestBasaltForceFieldPlate(
+  projection: BasaltForceFieldProjection,
   from: SceneVector3,
   damage: ArrayLike<number>,
   range: number,
+  pose: BasaltForceFieldPose | null = null,
 ): BasaltForceFieldProximity | null {
-  let nearest: BasaltForceFieldProximity | null = null;
-
-  for (const cell of BASALT_FORCE_FIELD_CELLS) {
-    if (!basaltForceFieldCellAlive(damage, cell.index)) continue;
-    const distance = dot(cell.normal, subtract(from, cell.centre));
-    if (distance <= 0 || distance > range) continue;
-    if (nearest && distance >= nearest.distance) continue;
-    const point = subtract(from, scale(cell.normal, distance));
-    if (!pointInsideCell(cell, point)) continue;
-    nearest = {
-      cellIndex: cell.index,
-      distance,
-      point,
-      normal: cell.normal,
-    };
+  const localFrom = pose ? poseToLocal(pose, from) : from;
+  const fromX = localFrom[0];
+  const fromY = localFrom[1];
+  const fromZ = localFrom[2];
+  // Точечный запрос: вне AABB решётки, расширенного на дальность и радиус
+  // плиты, живой плиты быть не может.
+  const [minX, minY, minZ, maxX, maxY, maxZ] = projection.bounds;
+  const margin = range + projection.maxRadius + 0.035;
+  if (
+    fromX < minX - margin || fromX > maxX + margin ||
+    fromY < minY - margin || fromY > maxY + margin ||
+    fromZ < minZ - margin || fromZ > maxZ + margin
+  ) {
+    return null;
   }
 
-  return nearest;
+  const { count, centres, normals, tangentsU, tangentsV, radii } = projection;
+  let nearestIndex = -1;
+  let nearestDistance = Infinity;
+
+  for (let index = 0; index < count; index += 1) {
+    if (!basaltForceFieldCellAlive(damage, index)) continue;
+    const base = index * 3;
+    const offsetX = fromX - centres[base];
+    const offsetY = fromY - centres[base + 1];
+    const offsetZ = fromZ - centres[base + 2];
+    const normalX = normals[base];
+    const normalY = normals[base + 1];
+    const normalZ = normals[base + 2];
+    const distance =
+      normalX * offsetX + normalY * offsetY + normalZ * offsetZ;
+    if (distance <= 0 || distance > range) continue;
+    if (distance >= nearestDistance) continue;
+    const localX = offsetX - normalX * distance;
+    const localY = offsetY - normalY * distance;
+    const localZ = offsetZ - normalZ * distance;
+    const planarX = Math.abs(
+      localX * tangentsU[base] +
+      localY * tangentsU[base + 1] +
+      localZ * tangentsU[base + 2],
+    );
+    const planarY = Math.abs(
+      localX * tangentsV[base] +
+      localY * tangentsV[base + 1] +
+      localZ * tangentsV[base + 2],
+    );
+    const radius = radii[index] + 0.035;
+    const halfHeight = Math.sqrt(3) * radius / 2;
+    if (
+      planarX > radius ||
+      planarY > halfHeight ||
+      Math.sqrt(3) * planarX + planarY > Math.sqrt(3) * radius
+    ) {
+      continue;
+    }
+    nearestIndex = index;
+    nearestDistance = distance;
+  }
+
+  if (nearestIndex < 0) return null;
+  const cell = projection.cells[nearestIndex];
+  const localPoint: [number, number, number] = [
+    fromX - cell.normal[0] * nearestDistance,
+    fromY - cell.normal[1] * nearestDistance,
+    fromZ - cell.normal[2] * nearestDistance,
+  ];
+  return {
+    cellIndex: cell.index,
+    distance: nearestDistance,
+    point: pose ? poseToWorld(pose, localPoint) : localPoint,
+    normal: pose ? poseDirectionToWorld(pose, cell.normal) : cell.normal,
+  };
 }
 
 export function basaltForceFieldBlocksSegment(
+  projection: BasaltForceFieldProjection,
   from: SceneVector3,
   to: SceneVector3,
   damage: ArrayLike<number>,
+  pose: BasaltForceFieldPose | null = null,
 ): boolean {
-  return intersectBasaltForceField(from, to, damage) !== null;
+  return intersectBasaltForceField(
+    projection,
+    from,
+    to,
+    damage,
+    0,
+    pose,
+  ) !== null;
 }

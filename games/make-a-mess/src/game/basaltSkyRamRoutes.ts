@@ -125,10 +125,18 @@ function speedLimit(
   cruiseSpeed: number,
   { distance, remaining }: MotionRouteRequirementContext,
 ): number {
-  // Its stopping demand is deliberately conservative. With the gallery far
-  // below lift centre, late braking produces the right visible pendulum but
-  // must not turn every normal arrival into a porpoising go-around.
-  const stopping = Math.sqrt(2 * 0.24 * Math.max(0, remaining - 5));
+  // The deceleration stays deliberately gentle — with the gallery far below
+  // the lift centre, hard late braking swings the hull — but the profile aims
+  // at the berth itself. It used to aim five metres short of it, and that is
+  // not a safety margin: it demanded zero speed while the nose was still five
+  // metres out, so the machine arrived with no way on at all. From there only
+  // the mooring servo closed the gap, and its commanded speed is 0.25 x the
+  // remaining offset, so the approach went asymptotic exactly where a hard
+  // clock runs: 11 s for the last 72 cm, 32 s of the 35 s final-manoeuvre
+  // budget, and the ten-second capture timer expiring centimetres short of a
+  // docked pose. Braking authority is not the constraint — two engines carry
+  // 2.78 m/s^2 against the 0.24 asked for here, in reverse as well.
+  const stopping = Math.sqrt(2 * 0.24 * remaining);
   if (distance < REVERSE_COMPLETE_DISTANCE - 4) {
     return Math.min(2.35, stopping);
   }

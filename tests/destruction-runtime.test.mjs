@@ -777,3 +777,64 @@ test("fragment cleanup respects both body and compound-collider budgets", () => 
     ["middle", "new"],
   );
 });
+
+test("retention policy evicts low-priority shards and shields the newest", () => {
+  const makeShard = (id) => ({
+    id,
+    material: "brick",
+    color: "#a64a2f",
+    size: [1, 1, 1],
+    position: [0, 0, 0],
+    quaternion: [0, 0, 0, 1],
+    linearVelocity: [0, 0, 0],
+    angularVelocity: [0, 0, 0],
+    boxes: [{ center: [0, 0, 0], size: [0.1, 0.1, 0.1], voxelCount: 1 }],
+  });
+  const trimmed = trimShardBudget(
+    [
+      makeShard("sleeping-far"),
+      makeShard("awake-near"),
+      makeShard("sleeping-near"),
+      makeShard("awake-far"),
+      makeShard("fresh-burst"),
+    ],
+    3,
+    100,
+    {
+      protectedNewest: 1,
+      priority: (shard) =>
+        ({
+          "sleeping-far": -10_000,
+          "awake-near": 999_000,
+          "sleeping-near": -10,
+          "awake-far": 990_000,
+        })[shard.id],
+    },
+  );
+
+  // Спящие вытеснены первыми, свежий вброс защищён, исходный порядок сохранён.
+  assert.deepEqual(
+    trimmed.map((shard) => shard.id),
+    ["awake-near", "awake-far", "fresh-burst"],
+  );
+});
+
+test("retention policy keeps everything while budgets are not exceeded", () => {
+  const makeShard = (id) => ({
+    id,
+    material: "brick",
+    color: "#a64a2f",
+    size: [1, 1, 1],
+    position: [0, 0, 0],
+    quaternion: [0, 0, 0, 1],
+    linearVelocity: [0, 0, 0],
+    angularVelocity: [0, 0, 0],
+    boxes: [{ center: [0, 0, 0], size: [0.1, 0.1, 0.1], voxelCount: 1 }],
+  });
+  const shards = [makeShard("first"), makeShard("second")];
+  const trimmed = trimShardBudget(shards, 3, 100, {
+    protectedNewest: 1,
+    priority: () => 0,
+  });
+  assert.deepEqual(trimmed.map((shard) => shard.id), ["first", "second"]);
+});

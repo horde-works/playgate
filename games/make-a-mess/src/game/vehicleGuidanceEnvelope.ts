@@ -11,23 +11,33 @@ const GRAVITY = 9.81;
  */
 export const GUIDANCE_HEADROOM = 0.95;
 
-/** Deviation the navigation computer still owns without changing mode. */
+/**
+ * Where the machine has to be by the end of the stage it is flying.
+ *
+ * A carrier does not care who pushed it or how hard. It cares whether the
+ * push leaves it able to meet the next requirement, and that requirement is a
+ * property of the stage: leaving a berth tolerates tens of metres, arriving at
+ * one tolerates almost nothing. The corridor is therefore indexed by route
+ * phase, never by the impact that happened to cause the error.
+ */
+export type VehicleGuidancePhase = "departure" | "cruise" | "approach";
+
 export interface VehicleGuidanceCorridor {
+  /** Lateral accuracy required by the end of this stage, in metres. */
   readonly crossTrack: number;
-  readonly predictedCrossTrack: number;
+  /** Vertical accuracy required by the end of this stage, in metres. */
   readonly altitude: number;
-  readonly predictedAltitude: number;
-  readonly heading: number;
-  readonly velocityHeading: number;
-  readonly tilt: number;
-  readonly tiltRate: number;
 }
 
-/** Rigid-body state at which a hold begins, and at which it may end. */
-export interface VehicleGuidanceAttitudeGate {
-  readonly tilt: number;
+/**
+ * A rigid-body upset large enough to be its own event: the hull is changing
+ * attitude fast, ordinary control is not what answers it, and speed must come
+ * off while the ballast settles. Ordinary swinging never reaches this.
+ */
+export interface VehicleGuidanceUpsetGate {
+  /** Pitch/roll angular speed that marks a genuine upset, rad/s. */
   readonly tiltRate: number;
-  readonly verticalSpeed: number;
+  /** Yaw rate that marks a genuine upset, rad/s. */
   readonly yawRate: number;
 }
 
@@ -37,22 +47,34 @@ export interface VehicleGuidanceMergeGate {
   readonly height: number;
   readonly heading: number;
   readonly velocityHeading: number;
-  readonly tilt: number;
-  readonly tiltRate: number;
 }
 
 export interface VehicleGuidanceEnvelope {
+  readonly departure: VehicleGuidanceCorridor;
   readonly cruise: VehicleGuidanceCorridor;
-  readonly disturbed: VehicleGuidanceCorridor;
-  readonly stabilizationEntry: VehicleGuidanceAttitudeGate;
-  readonly stabilizationExit: VehicleGuidanceAttitudeGate;
+  readonly approach: VehicleGuidanceCorridor;
+  /** Entry into a hold; deliberately far above ordinary pendulum motion. */
+  readonly upsetEntry: VehicleGuidanceUpsetGate;
+  /** The upset has passed. Attitude itself is not asked about again. */
+  readonly upsetExit: VehicleGuidanceUpsetGate;
   readonly merge: VehicleGuidanceMergeGate;
+  /**
+   * Inclination the machine is still worth flying with. Attitude is no longer
+   * a reason to leave the route, but a hull that hangs past this after its
+   * trim has run out of travel is no longer executing the flight task.
+   */
+  readonly flyableTilt: number;
+  /**
+   * Share of the physically reachable closure that guidance is allowed to
+   * count on. The craft must also arrive aligned, not merely at the point.
+   */
+  readonly closureMargin: number;
 }
 
 /**
- * The three physical knobs a machine passport may need. Everything else is
- * derived, so a new carrier inherits a correct corridor from its own failure
- * envelope, approach gate and trim authority without authoring a table.
+ * The physical knobs a machine passport may need. Everything else is derived,
+ * so a new carrier inherits a correct corridor from its own failure envelope,
+ * approach gate and trim authority without authoring a table.
  */
 export interface VehicleGuidanceOverrides {
   /** Scales every corridor limit; a nimble hull may hold a tighter line. */
@@ -63,64 +85,35 @@ export interface VehicleGuidanceOverrides {
   readonly arrestableVerticalSpeed?: number;
 }
 
-interface CorridorFractions {
-  readonly crossTrack: number;
-  readonly predictedCrossTrack: number;
-  readonly altitude: number;
-  readonly predictedAltitude: number;
-  readonly heading: number;
-  readonly velocityHeading: number;
-  readonly tilt: number;
-  readonly tiltRate: number;
-}
+/**
+ * Cruise accuracy as a share of the failure envelope. Route following aims
+ * ahead and large hulls are inertial, so this is wide on purpose: it still
+ * has to close well before the watchdog gives up on the same quantity.
+ */
+const CRUISE_FRACTIONS = { crossTrack: 0.72, altitude: 0.83 } as const;
+/** Leaving a berth is the loosest stage: the craft is still gathering way. */
+const DEPARTURE_SCALE = 1.25;
 
 /**
- * Undisturbed flight. Route following aims ahead and large hulls are inertial,
- * so a wide corridor is normal; it still has to close well before the failure
- * envelope so that a correction is always attempted first.
+ * Arriving is judged by the machine's own approach gate rather than by the
+ * failure envelope: the gate is what the berth physically demands.
  */
-const CRUISE_FRACTIONS: CorridorFractions = {
-  crossTrack: 0.72,
-  predictedCrossTrack: 0.93,
-  altitude: 0.83,
-  predictedAltitude: 0.95,
-  heading: 0.55,
-  velocityHeading: 0.61,
-  tilt: 0.55,
-  tiltRate: 0.55,
-};
-
-/**
- * After a measured external impulse the same machine is held to a much
- * narrower corridor: the disturbance is known, so tracking error is evidence
- * of an upset rather than of ordinary guidance lag.
- */
-const DISTURBED_FRACTIONS: CorridorFractions = {
-  crossTrack: 0.115,
-  predictedCrossTrack: 0.16,
-  altitude: 0.23,
-  predictedAltitude: 0.33,
-  heading: 0.105,
-  velocityHeading: 0.175,
-  tilt: 0.16,
-  tiltRate: 0.13,
-};
-
-/** Attitude at which no durable intercept can be planned yet. */
-const STABILIZATION_ENTRY = {
-  tilt: 0.22,
-  tiltRate: 0.17,
-  verticalSpeed: 0.98,
-  yawRate: 0.36,
+const APPROACH_FRACTIONS = {
+  crossTrack: 0.55,
+  altitudeOfCrossTrack: 0.45,
 } as const;
 
+/**
+ * An upset is a rate event. These are far above the pendulum motion an
+ * airship shows all the time, so an ordinary swinging gondola never enters a
+ * hold — the trim cars and the ordinary controls simply keep working.
+ */
+// An upset is a rotation event. Climbing fast is a route requirement, not an
+// upset, and a vertical shove is answered by the lift and trim loops that run
+// all the time — so vertical speed is deliberately not part of this gate.
+const UPSET_ENTRY = { tiltRate: 0.55, yawRate: 0.62 } as const;
 /** Hysteresis out of the hold, as a share of the entry gate. */
-const STABILIZATION_EXIT = {
-  tilt: 0.75,
-  tiltRate: 0.59,
-  verticalSpeed: 0.61,
-  yawRate: 0.66,
-} as const;
+const UPSET_EXIT = { tiltRate: 0.3, yawRate: 0.32 } as const;
 
 /**
  * A merge is half an approach: the same authored gate that decides whether a
@@ -132,51 +125,10 @@ const MERGE_FRACTIONS = {
   heightOfPosition: 0.55,
   heading: 0.47,
   velocityHeading: 0.8,
-  tiltOfDisturbed: 1.3,
-  tiltRateOfDisturbed: 1.15,
 } as const;
 
 function capped(value: number, failureLimit: number): number {
   return Math.min(value, failureLimit * GUIDANCE_HEADROOM);
-}
-
-function corridor(
-  fractions: CorridorFractions,
-  failure: VehicleFailureEnvelope,
-  scale: number,
-): VehicleGuidanceCorridor {
-  const tiltCeiling = Math.min(failure.maximumPitch, failure.maximumRoll);
-  return {
-    crossTrack: capped(
-      failure.maximumCrossTrackError * fractions.crossTrack * scale,
-      failure.maximumCrossTrackError,
-    ),
-    predictedCrossTrack: capped(
-      failure.maximumCrossTrackError * fractions.predictedCrossTrack * scale,
-      failure.maximumCrossTrackError,
-    ),
-    altitude: capped(
-      failure.maximumAltitudeError * fractions.altitude * scale,
-      failure.maximumAltitudeError,
-    ),
-    predictedAltitude: capped(
-      failure.maximumAltitudeError * fractions.predictedAltitude * scale,
-      failure.maximumAltitudeError,
-    ),
-    heading: capped(
-      failure.maximumHeadingError * fractions.heading * scale,
-      failure.maximumHeadingError,
-    ),
-    velocityHeading: capped(
-      failure.maximumHeadingError * fractions.velocityHeading * scale,
-      failure.maximumHeadingError,
-    ),
-    tilt: capped(tiltCeiling * fractions.tilt * scale, tiltCeiling),
-    tiltRate: capped(
-      failure.maximumYawRate * fractions.tiltRate * scale,
-      failure.maximumYawRate,
-    ),
-  };
 }
 
 /**
@@ -192,38 +144,46 @@ export function vehicleGuidanceEnvelope(
 ): VehicleGuidanceEnvelope {
   const corridorScale = Math.max(0.05, overrides.corridorScale ?? 1);
   const mergeScale = Math.max(0.05, overrides.mergeScale ?? 1);
-  const cruise = corridor(CRUISE_FRACTIONS, failure, corridorScale);
-  const disturbed = corridor(DISTURBED_FRACTIONS, failure, corridorScale);
-  const tiltCeiling = Math.min(failure.maximumPitch, failure.maximumRoll);
-  const arrestableVerticalSpeed = Math.max(
-    0.2,
-    overrides.arrestableVerticalSpeed ?? GRAVITY * limits.liftTrimRange,
-  );
-  const stabilizationEntry: VehicleGuidanceAttitudeGate = {
-    tilt: capped(tiltCeiling * STABILIZATION_ENTRY.tilt, tiltCeiling),
-    tiltRate: capped(
-      failure.maximumYawRate * STABILIZATION_ENTRY.tiltRate,
-      failure.maximumYawRate,
+  const cruise: VehicleGuidanceCorridor = {
+    crossTrack: capped(
+      failure.maximumCrossTrackError * CRUISE_FRACTIONS.crossTrack *
+        corridorScale,
+      failure.maximumCrossTrackError,
     ),
-    verticalSpeed: arrestableVerticalSpeed * STABILIZATION_ENTRY.verticalSpeed,
-    yawRate: capped(
-      failure.maximumYawRate * STABILIZATION_ENTRY.yawRate,
-      failure.maximumYawRate,
+    altitude: capped(
+      failure.maximumAltitudeError * CRUISE_FRACTIONS.altitude * corridorScale,
+      failure.maximumAltitudeError,
     ),
   };
-  const mergePosition = approach.tolerance.position *
-    MERGE_FRACTIONS.position * mergeScale;
+  const approachCrossTrack =
+    approach.tolerance.position * APPROACH_FRACTIONS.crossTrack * corridorScale;
+  const mergePosition =
+    approach.tolerance.position * MERGE_FRACTIONS.position * mergeScale;
   return {
-    cruise,
-    disturbed,
-    stabilizationEntry,
-    stabilizationExit: {
-      tilt: stabilizationEntry.tilt * STABILIZATION_EXIT.tilt,
-      tiltRate: stabilizationEntry.tiltRate * STABILIZATION_EXIT.tiltRate,
-      verticalSpeed:
-        stabilizationEntry.verticalSpeed * STABILIZATION_EXIT.verticalSpeed,
-      yawRate: stabilizationEntry.yawRate * STABILIZATION_EXIT.yawRate,
+    departure: {
+      crossTrack: capped(
+        cruise.crossTrack * DEPARTURE_SCALE,
+        failure.maximumCrossTrackError,
+      ),
+      altitude: capped(
+        cruise.altitude * DEPARTURE_SCALE,
+        failure.maximumAltitudeError,
+      ),
     },
+    cruise,
+    approach: {
+      crossTrack: approachCrossTrack,
+      altitude: approachCrossTrack * APPROACH_FRACTIONS.altitudeOfCrossTrack,
+    },
+    upsetEntry: { ...UPSET_ENTRY },
+    upsetExit: {
+      tiltRate: UPSET_ENTRY.tiltRate * UPSET_EXIT.tiltRate,
+      yawRate: UPSET_ENTRY.yawRate * UPSET_EXIT.yawRate,
+    },
+    flyableTilt: capped(
+      Math.min(failure.maximumPitch, failure.maximumRoll) * 0.55,
+      Math.min(failure.maximumPitch, failure.maximumRoll),
+    ),
     merge: {
       position: mergePosition,
       height: mergePosition * MERGE_FRACTIONS.heightOfPosition,
@@ -231,16 +191,19 @@ export function vehicleGuidanceEnvelope(
       velocityHeading:
         approach.tolerance.heading * MERGE_FRACTIONS.velocityHeading *
         mergeScale,
-      tilt: disturbed.tilt * MERGE_FRACTIONS.tiltOfDisturbed,
-      tiltRate: disturbed.tiltRate * MERGE_FRACTIONS.tiltRateOfDisturbed,
     },
+    closureMargin: 0.55,
   };
 }
 
-/** The corridor in force right now; a known impulse narrows it. */
+/** Accuracy the stage in progress demands. */
 export function vehicleGuidanceCorridor(
   envelope: VehicleGuidanceEnvelope,
-  disturbed: boolean,
+  phase: VehicleGuidancePhase,
 ): VehicleGuidanceCorridor {
-  return disturbed ? envelope.disturbed : envelope.cruise;
+  return phase === "approach"
+    ? envelope.approach
+    : phase === "departure"
+      ? envelope.departure
+      : envelope.cruise;
 }

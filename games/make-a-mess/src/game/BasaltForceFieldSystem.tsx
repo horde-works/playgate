@@ -16,15 +16,18 @@ import {
   Color,
   DoubleSide,
   DynamicDrawUsage,
+  Group,
   InstancedBufferAttribute,
   InstancedMesh,
   Matrix4,
   ShaderMaterial,
   Vector3,
 } from "three";
+import { BASALT_SKY_RAM_SHIELD_PROJECTION } from "./basaltSkyRamShield.ts";
 import type { SceneVector3 } from "./destructionScene.ts";
 import {
   BASALT_FORCE_FIELD_CELLS,
+  BASALT_FORCE_FIELD_PROJECTION,
   BASALT_FORCE_FIELD_CORE_GAIN,
   BASALT_FORCE_FIELD_CORE_SIGMA,
   BASALT_FORCE_FIELD_DISH_DEPTH,
@@ -35,6 +38,7 @@ import {
   BASALT_FORCE_FIELD_RINGING,
   basaltForceFieldBlocksSegment,
   basaltForceFieldDamageFraction,
+  basaltForceFieldPointToLocal,
   clearBasaltForceFieldImpacts,
   clearBasaltForceFieldPresses,
   createBasaltForceFieldImpactBuffer,
@@ -47,7 +51,10 @@ import {
   recordBasaltForceFieldImpact,
   setBasaltForceFieldPress,
   type BasaltForceFieldHit,
+  type BasaltForceFieldNetwork,
   type BasaltForceFieldImpactKind,
+  type BasaltForceFieldPose,
+  type BasaltForceFieldProjection,
   type BasaltForceFieldProximity,
 } from "./basaltForceField.ts";
 
@@ -82,15 +89,23 @@ export interface BasaltForceFieldRuntime {
   damageFraction(cellIndex: number): number;
 }
 
+const NETWORK_RELIEF_SEED: Readonly<Record<BasaltForceFieldNetwork, number>> = {
+  wall: 0,
+  tower: 37.719,
+  "ram-port": 11.431,
+  "ram-starboard": 24.187,
+  "ram-bow": 52.903,
+};
+
 function cellVisualRelief(
-  network: "wall" | "tower",
+  network: BasaltForceFieldNetwork,
   q: number,
   r: number,
 ): number {
   // Visual relief only: keep the analytic shield perfectly stable while its
   // projection inherits the fortress's handmade, slightly uneven surface.
   const seed = Math.sin(
-    q * 12.9898 + r * 78.233 + (network === "tower" ? 37.719 : 0),
+    q * 12.9898 + r * 78.233 + NETWORK_RELIEF_SEED[network],
   ) * 43_758.5453;
   const signedNoise = (seed - Math.floor(seed)) * 2 - 1;
   return signedNoise * 0.095;
@@ -267,32 +282,52 @@ const fragmentShader = /* glsl */ `
  * in neither support solving nor vehicle mass: interception is an analytic
  * directed projection handled through the runtime ref.
  */
-export const BasaltForceFieldSystem = forwardRef<
+/**
+ * One projection and its membrane. A layer knows nothing about who owns it:
+ * standing on rock and riding a hull differ only by whether `pose` is null.
+ *
+ * When it is posed, the plates stay in their own coordinates and the group
+ * above carries them. Impacts and presses arrive in world coordinates and are
+ * pushed down into that frame, because the shader compares them against the
+ * instance positions it draws — so a dish stays where it was struck on the
+ * hull instead of being smeared across the sky as the ship flies on.
+ */
+const ForceFieldLayer = forwardRef<
   BasaltForceFieldRuntime,
-  { readonly resetVersion: number }
->(function BasaltForceFieldSystem({ resetVersion }, forwardedRef) {
+  {
+    readonly projection: BasaltForceFieldProjection;
+    readonly resetVersion: number;
+    readonly getPose?: () => BasaltForceFieldPose | null;
+  }
+>(function ForceFieldLayer({ projection, resetVersion, getPose }, forwardedRef) {
+  const cells = projection.cells;
   const mesh = useRef<InstancedMesh>(null);
-  const damageRef = useRef(emptyBasaltForceFieldDamage());
-  const hitTimes = useRef(
-    Float32Array.from(BASALT_FORCE_FIELD_CELLS, () => -1_000),
-  );
+  const group = useRef<Group>(null);
+  const damageRef = useRef(emptyBasaltForceFieldDamage(projection));
+  const hitTimes = useRef(Float32Array.from(cells, () => -1_000));
+  // World -> plate frame for everything the membrane is told about.
+  const intoFrame = useCallback((point: SceneVector3): SceneVector3 => {
+    const pose = getPose?.() ?? null;
+    if (!pose) return point;
+    return basaltForceFieldPointToLocal(pose, point);
+  }, [getPose]);
   const renderTime = useRef(0);
   const [damage, setDamage] = useState(() => damageRef.current);
 
   const geometry = useMemo(() => new CircleGeometry(1, 6), []);
   const damageAttribute = useMemo(
     () => new InstancedBufferAttribute(
-      new Float32Array(BASALT_FORCE_FIELD_CELLS.length),
+      new Float32Array(cells.length),
       1,
     ).setUsage(DynamicDrawUsage),
-    [],
+    [cells],
   );
   const hitTimeAttribute = useMemo(
     () => new InstancedBufferAttribute(
-      Float32Array.from(BASALT_FORCE_FIELD_CELLS, () => -1_000),
+      Float32Array.from(cells, () => -1_000),
       1,
     ).setUsage(DynamicDrawUsage),
-    [],
+    [cells],
   );
   const impacts = useMemo(() => createBasaltForceFieldImpactBuffer(), []);
   const presses = useMemo(() => createBasaltForceFieldPressBuffer(), []);
@@ -338,7 +373,7 @@ export const BasaltForceFieldSystem = forwardRef<
     const u = new Vector3();
     const v = new Vector3();
     const normal = new Vector3();
-    for (const cell of BASALT_FORCE_FIELD_CELLS) {
+    for (const cell of cells) {
       const relief = cellVisualRelief(cell.network, cell.q, cell.r);
       basis.makeBasis(
         u.set(...cell.tangentU),
@@ -355,10 +390,10 @@ export const BasaltForceFieldSystem = forwardRef<
       current.setMatrixAt(cell.index, basis);
     }
     current.instanceMatrix.needsUpdate = true;
-  }, []);
+  }, [cells]);
 
   useEffect(() => {
-    for (const cell of BASALT_FORCE_FIELD_CELLS) {
+    for (const cell of cells) {
       damageAttribute.setX(
         cell.index,
         basaltForceFieldDamageFraction(damage, cell.index),
@@ -367,16 +402,16 @@ export const BasaltForceFieldSystem = forwardRef<
     }
     damageAttribute.needsUpdate = true;
     hitTimeAttribute.needsUpdate = true;
-  }, [damage, damageAttribute, hitTimeAttribute]);
+  }, [cells, damage, damageAttribute, hitTimeAttribute]);
 
   useEffect(() => {
-    const empty = emptyBasaltForceFieldDamage();
+    const empty = emptyBasaltForceFieldDamage(projection);
     damageRef.current = empty;
     hitTimes.current.fill(-1_000);
     clearBasaltForceFieldImpacts(impacts);
     clearBasaltForceFieldPresses(presses);
     setDamage(empty);
-  }, [impacts, presses, resetVersion]);
+  }, [impacts, presses, projection, resetVersion]);
 
   const hitCell = useCallback((
     cellIndex: number,
@@ -384,27 +419,32 @@ export const BasaltForceFieldSystem = forwardRef<
     point?: SceneVector3,
   ) => {
     const previous = damageRef.current;
-    const next = damageBasaltForceField(previous, cellIndex, kind);
+    const next = damageBasaltForceField(
+      projection,
+      previous,
+      cellIndex,
+      kind,
+    );
     const now = renderTime.current;
-    for (const cell of BASALT_FORCE_FIELD_CELLS) {
+    for (const cell of cells) {
       if (next[cell.index] > previous[cell.index] + 1e-6) {
         hitTimes.current[cell.index] = now;
       }
     }
     // The membrane deforms even where nothing was damaged, so an absorbed
     // burst still moves the lattice.
-    const struck = BASALT_FORCE_FIELD_CELLS[cellIndex];
+    const struck = cells[cellIndex];
     if (struck) {
       recordBasaltForceFieldImpact(
         impacts,
-        point ?? struck.centre,
+        point ? intoFrame(point) : struck.centre,
         BASALT_FORCE_FIELD_IMPULSES[kind],
         now,
       );
     }
     damageRef.current = next;
     setDamage(next);
-  }, [impacts]);
+  }, [cells, impacts, intoFrame, projection]);
 
   const pulse = useCallback((
     point: SceneVector3,
@@ -413,26 +453,51 @@ export const BasaltForceFieldSystem = forwardRef<
   ) => {
     recordBasaltForceFieldImpact(
       impacts,
-      point,
+      intoFrame(point),
       { strength, reach },
       renderTime.current,
     );
-  }, [impacts]);
+  }, [impacts, intoFrame]);
 
   useImperativeHandle(forwardedRef, () => ({
     intersectSegment: (from, to, clearance = 0) =>
-      intersectBasaltForceField(from, to, damageRef.current, clearance),
+      intersectBasaltForceField(
+        projection,
+        from,
+        to,
+        damageRef.current,
+        clearance,
+        getPose?.() ?? null,
+      ),
     blocksSegment: (from, to) =>
-      basaltForceFieldBlocksSegment(from, to, damageRef.current),
+      basaltForceFieldBlocksSegment(
+        projection,
+        from,
+        to,
+        damageRef.current,
+        getPose?.() ?? null,
+      ),
     nearestPlate: (from, range) =>
-      nearestBasaltForceFieldPlate(from, damageRef.current, range),
+      nearestBasaltForceFieldPlate(
+        projection,
+        from,
+        damageRef.current,
+        range,
+        getPose?.() ?? null,
+      ),
     press: (slot, point, load, reach) =>
-      setBasaltForceFieldPress(presses, slot, point, load, reach),
+      setBasaltForceFieldPress(
+        presses,
+        slot,
+        point ? intoFrame(point) : null,
+        load,
+        reach,
+      ),
     pulse,
     hitCell,
     damageFraction: (cellIndex) =>
       basaltForceFieldDamageFraction(damageRef.current, cellIndex),
-  }), [hitCell, presses, pulse]);
+  }), [getPose, hitCell, intoFrame, presses, projection, pulse]);
 
   useFrame((state) => {
     const time = state.clock.elapsedTime;
@@ -440,6 +505,29 @@ export const BasaltForceFieldSystem = forwardRef<
     material.uniforms.uTime.value = time;
     // Retiring spent impulses keeps both shader loops a no-op at rest.
     expireBasaltForceFieldImpacts(impacts, time);
+    // The screen is drawn where the hull is, from the hull's own published
+    // pose. There is no second integration here to drift away from it.
+    const carried = group.current;
+    const pose = getPose?.() ?? null;
+    if (carried) {
+      if (pose) {
+        carried.visible = true;
+        carried.position.set(
+          pose.position[0],
+          pose.position[1],
+          pose.position[2],
+        );
+        carried.quaternion.set(
+          pose.orientation[0],
+          pose.orientation[1],
+          pose.orientation[2],
+          pose.orientation[3],
+        );
+      } else if (getPose) {
+        // No pose published yet: the carrier is not in the world.
+        carried.visible = false;
+      }
+    }
   });
 
   useEffect(() => () => {
@@ -448,11 +536,104 @@ export const BasaltForceFieldSystem = forwardRef<
   }, [geometry, material]);
 
   return (
-    <instancedMesh
-      ref={mesh}
-      args={[geometry, material, BASALT_FORCE_FIELD_CELLS.length]}
-      frustumCulled={false}
-      renderOrder={18}
-    />
+    <group ref={group}>
+      <instancedMesh
+        ref={mesh}
+        args={[geometry, material, cells.length]}
+        frustumCulled={false}
+        renderOrder={18}
+      />
+    </group>
+  );
+});
+
+
+/**
+ * Every projection in the scene behind one runtime.
+ *
+ * Callers ask about the world and do not care which membrane answered, so the
+ * cell index they receive is global: the fortress owns the first block, each
+ * carrier the next. Routing back by that index is what keeps the projectile,
+ * blast and player code identical to when there was only a wall.
+ */
+export const BasaltForceFieldSystem = forwardRef<
+  BasaltForceFieldRuntime,
+  {
+    readonly resetVersion: number;
+    /** Live pose of the sky ram, or null while it is not in the world. */
+    readonly skyRamPose?: () => BasaltForceFieldPose | null;
+  }
+>(function BasaltForceFieldSystem({ resetVersion, skyRamPose }, forwardedRef) {
+  const fortress = useRef<BasaltForceFieldRuntime>(null);
+  const skyRam = useRef<BasaltForceFieldRuntime>(null);
+  const skyRamOffset = BASALT_FORCE_FIELD_PROJECTION.count;
+
+  const layers = useCallback(() => [
+    { runtime: fortress.current, offset: 0 },
+    { runtime: skyRam.current, offset: skyRamOffset },
+  ], [skyRamOffset]);
+
+  useImperativeHandle(forwardedRef, () => ({
+    intersectSegment: (from, to, clearance = 0) => {
+      let nearest: BasaltForceFieldHit | null = null;
+      for (const { runtime, offset } of layers()) {
+        const hit = runtime?.intersectSegment(from, to, clearance);
+        if (!hit) continue;
+        if (nearest && hit.progress >= nearest.progress) continue;
+        nearest = { ...hit, cellIndex: hit.cellIndex + offset };
+      }
+      return nearest;
+    },
+    blocksSegment: (from, to) =>
+      layers().some(({ runtime }) => runtime?.blocksSegment(from, to)),
+    nearestPlate: (from, range) => {
+      let nearest: BasaltForceFieldProximity | null = null;
+      for (const { runtime, offset } of layers()) {
+        const plate = runtime?.nearestPlate(from, range);
+        if (!plate) continue;
+        if (nearest && plate.distance >= nearest.distance) continue;
+        nearest = { ...plate, cellIndex: plate.cellIndex + offset };
+      }
+      return nearest;
+    },
+    // A load and a touch are placed in the world; each membrane answers only
+    // for the part of it near its own plates, so both may safely hear them.
+    press: (slot, point, load, reach) => {
+      for (const { runtime } of layers()) {
+        runtime?.press(slot, point, load, reach);
+      }
+    },
+    pulse: (point, strength, reach) => {
+      for (const { runtime } of layers()) {
+        runtime?.pulse(point, strength, reach);
+      }
+    },
+    hitCell: (cellIndex, kind, point) => {
+      if (cellIndex >= skyRamOffset) {
+        skyRam.current?.hitCell(cellIndex - skyRamOffset, kind, point);
+        return;
+      }
+      fortress.current?.hitCell(cellIndex, kind, point);
+    },
+    damageFraction: (cellIndex) =>
+      cellIndex >= skyRamOffset
+        ? (skyRam.current?.damageFraction(cellIndex - skyRamOffset) ?? 0)
+        : (fortress.current?.damageFraction(cellIndex) ?? 0),
+  }), [layers, skyRamOffset]);
+
+  return (
+    <>
+      <ForceFieldLayer
+        ref={fortress}
+        projection={BASALT_FORCE_FIELD_PROJECTION}
+        resetVersion={resetVersion}
+      />
+      <ForceFieldLayer
+        ref={skyRam}
+        projection={BASALT_SKY_RAM_SHIELD_PROJECTION}
+        resetVersion={resetVersion}
+        getPose={skyRamPose}
+      />
+    </>
   );
 });

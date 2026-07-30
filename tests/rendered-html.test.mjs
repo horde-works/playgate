@@ -64,9 +64,20 @@ test("production-renders the catalog and game space", async () => {
   assert.match(catalog.html, /href="\/games\/make-a-mess\/basalt-stronghold"/);
   assert.match(catalog.html, /Next slot/);
   assert.match(game.html, /Make a Mess \/ 004/);
-  assert.match(game.html, /The house is the toy/);
-  assert.match(game.html, /Hammer/);
   assert.match(fortress.html, /Make a Mess \/ Basalt Stronghold/);
-  assert.match(fortress.html, /The fortress is the toy/);
-  assert.match(fortress.html, /Hammer/);
+
+  // Before the player enters, the page is the launch card and nothing else.
+  // The in-world interface used to be rendered behind it — a live objective
+  // panel counting nothing, a weapon chip for a weapon nobody is holding and a
+  // control strip for controls that do not respond yet. It is gone now, and
+  // the served HTML is what proves the frame owns that rule from the first
+  // byte rather than hiding the panels with a stylesheet.
+  for (const rendered of [game, fortress]) {
+    assert.match(rendered.html, /class="gate-card"/);
+    assert.match(rendered.html, /Everything can break/);
+    assert.match(rendered.html, /class="world-shutter is-boot"/);
+    assert.doesNotMatch(rendered.html, /class="game-objective"/);
+    assert.doesNotMatch(rendered.html, /class="controls-hint"/);
+    assert.doesNotMatch(rendered.html, /class="mode-chips"/);
+  }
 });

@@ -11,8 +11,19 @@ import {
   RigidBody,
   useBeforePhysicsStep,
   useRapier,
+  type ContactForceHandler,
   type RapierRigidBody,
 } from "@react-three/rapier";
+import {
+  remnantBodySpec,
+  shardBodySpec,
+  type DebrisColliderSpec,
+} from "./debrisBodyPool";
+import {
+  executeCarveKernel,
+  type CarveKernelRequest,
+  type CarveKernelResponse,
+} from "./carveKernel";
 import Link from "next/link";
 import {
   Suspense,
@@ -21,6 +32,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useReducer,
   useState,
   useSyncExternalStore,
   type CSSProperties,
@@ -144,6 +156,8 @@ import {
   BasaltForceFieldSystem,
   type BasaltForceFieldRuntime,
 } from "./BasaltForceFieldSystem";
+import type { BasaltForceFieldPose } from "./basaltForceField.ts";
+import { BASALT_SKY_RAM_CLUSTER_ID } from "./basaltSkyRam.ts";
 import {
   BASALT_FORCE_FIELD_APPROACH_BULGE,
   BASALT_FORCE_FIELD_APPROACH_RANGE,
@@ -163,10 +177,23 @@ import { resolveRuntimeStructure } from "./runtimeStructure";
 import { createSpatialIndex } from "./spatialIndex";
 import {
   ISLAND_CHART,
-  interIslandArrivalCopyKey,
+  interIslandJourneyCopyKey,
   islandIdForScene,
   type IslandId,
 } from "./islandTopology.ts";
+import {
+  WORLD_SEAL_TIMEOUT_MS,
+  announcesPlayerChoice,
+  captionAccepts,
+  frameSurfaces,
+  initialWorldEntryState,
+  reduceWorldEntry,
+  shutterCaptionMessage,
+  transitBannerMessage,
+  transitLeg,
+  type CaptionPriority,
+  type WorldEntryStage,
+} from "./worldEntryPresentation.ts";
 import {
   interIslandArrivalRequest,
   interIslandTransferDestination,
@@ -179,7 +206,10 @@ import {
   type InterIslandPassengerHandoff,
   type InterIslandPassengerTransit,
 } from "./interIslandPassenger.ts";
-import { shipTransmutationPlan } from "./shipTransmutation.ts";
+import {
+  shipFormForIsland,
+  shipTransmutationPlan,
+} from "./shipTransmutation.ts";
 import {
   ACTOR_SAFETY_FLOOR,
   ACTOR_ABOARD,
@@ -588,6 +618,16 @@ function createMobileControlsState(): MobileControlsState {
     jump: false,
     run: false,
   };
+}
+
+/**
+ * Тип устройства не меняется под нами, но прочитать его можно только на
+ * клиенте. Подписка-заглушка даёт значение через тот же канал, что и остальное
+ * окружение, — и без setState в эффекте, который иначе пришлось бы держать
+ * только ради первого кадра.
+ */
+function subscribeStaticEnvironment(): () => void {
+  return () => {};
 }
 
 function isTouchLikeDevice(): boolean {
@@ -1598,6 +1638,9 @@ interface MouseLookProps {
   passengerViewMotion: PassengerViewMotion;
   onActiveChange: (active: boolean) => void;
   onFallbackChange: (fallback: boolean) => void;
+  /** Кадр обязан знать, есть ли у него указатель: без этого он не может ни
+      попросить его, ни перестать обещать управление, которого нет. */
+  onPointerLockChange: (held: boolean) => void;
   onStrike: () => void;
   onStrikeEnd: () => void;
 }
@@ -1610,6 +1653,7 @@ function MouseLook({
   passengerViewMotion,
   onActiveChange,
   onFallbackChange,
+  onPointerLockChange,
   onStrike,
   onStrikeEnd,
 }: MouseLookProps) {
@@ -1728,6 +1772,7 @@ function MouseLook({
   useEffect(() => {
     const handlePointerLockChange = () => {
       const pointerLocked = document.pointerLockElement === gl.domElement;
+      onPointerLockChange(pointerLocked);
 
       if (pointerLocked) {
         wasPointerLocked.current = true;
@@ -1775,25 +1820,28 @@ function MouseLook({
     };
 
     const handleMouseDown = (event: MouseEvent) => {
-      if (!active) {
-        return;
-      }
-
       const pointerLocked = document.pointerLockElement === gl.domElement;
       if (pointerLocked && event.button === 0) {
-        onStrike();
+        if (active) {
+          onStrike();
+        }
         return;
       }
 
       // Fallback mode: retry pointer lock on every click gesture over the
-      // game — the moment the browser grants it, the cursor is captured.
+      // game — the moment the browser grants it, the cursor is captured. This
+      // is also the only way back after Escape, so it must not depend on the
+      // frame still considering itself active.
       if (!pointerLocked && event.target === gl.domElement) {
         try {
           const request = gl.domElement.requestPointerLock?.() as
             Promise<void> | undefined;
-          request?.catch?.(() => {});
+          // Отказ — это ответ. Кадр переходит в режим протяжки и перестаёт
+          // просить указатель, которого ему не дадут: иначе после прилёта, где
+          // захват не запрашивался жестом, запрос висел бы бесконечно.
+          request?.catch?.(() => onFallbackChange(true));
         } catch {
-          // stay in drag mode
+          onFallbackChange(true);
         }
       }
 
@@ -1879,6 +1927,7 @@ function MouseLook({
     gl.domElement,
     onActiveChange,
     onFallbackChange,
+    onPointerLockChange,
     onStrike,
     onStrikeEnd,
   ]);
@@ -1904,7 +1953,23 @@ interface BreakablePieceProps {
 const DEBRIS_SETTLE_STEPS = 36;
 const DEBRIS_CONTACT_GRACE_STEPS = 30;
 const DEBRIS_RETRY_COOLDOWN_STEPS = 12;
-const MAX_ATTACHED_REMNANT_WORLD_COLLIDERS = 8;
+
+/**
+ * Бюджет кадра на отложенные carve-шаги взрыва, мс. Анализ взрыва остаётся в
+ * кадре детонации, а резка целей исполняется отсюда порциями; финальный
+ * settle и волна давления закрывают взрыв, когда шаги исчерпаны.
+ */
+const BLAST_FRAME_BUDGET_MS = 6;
+
+interface PendingBlastJob {
+  readonly steps: (() => void)[];
+  cursor: number;
+  /** Carve-запросы этого взрыва, ожидающие ответа воркера. */
+  inFlight: number;
+  /** Сброс мира делает недействительными висящие ответы воркера. */
+  readonly epoch: number;
+  finish: () => void;
+}
 
 function OmittedDebrisInteractionColliders({
   boxes,
@@ -2239,139 +2304,282 @@ function BreakableObjects({
   );
 }
 
-const Shard = memo(function Shard({
-  shard,
+type DebrisContactReporter<Definition> = (
+  definition: Definition,
+  magnitude: number,
+  mass: number,
+  forceDirection: { x: number; y: number; z: number },
+  otherColliderHandle: number,
+) => void;
+
+/**
+ * Императивный пул тел дебриса (№4 плана оптимизаций). Осколки и остатки
+ * больше не монтируются React-компонентами: тела Rapier создаются и
+ * удаляются по диффу списков прямо в коммите, без реконсиляции и эффектов
+ * на каждое тело. Регистрация идёт через прежний registerBody, поэтому
+ * staging коллизионных групп, grace-окна контактного урона и сон работают
+ * как раньше; визуал по-прежнему рисует DynamicBreakableWorld по позам из
+ * реестра. События контакта регистрируются в rigidBodyEvents из контекста
+ * react-three-rapier — тем же механизмом, что у его <RigidBody>.
+ */
+function DebrisBodies({
+  shards,
+  remnants,
+  brokenPieces,
   registerBody,
-  onContact,
+  onShardContact,
+  onRemnantContact,
 }: {
-  shard: ShardDefinition;
+  shards: readonly ShardDefinition[];
+  remnants: readonly RemnantDefinition[];
+  brokenPieces: ReadonlySet<string>;
   registerBody: (id: string, body: RapierRigidBody | null) => void;
-  onContact: (
-    shard: ShardDefinition,
-    magnitude: number,
-    mass: number,
-    forceDirection: { x: number; y: number; z: number },
-    otherColliderHandle: number,
-  ) => void;
+  onShardContact: DebrisContactReporter<ShardDefinition>;
+  onRemnantContact: DebrisContactReporter<RemnantDefinition>;
 }) {
-  const body = useRef<RapierRigidBody>(null);
-  const profile = materialRuntimeProfiles[shard.material];
-  const renderBoxes =
-    shard.boxes && shard.boxes.length > 0
-      ? shard.boxes
-      : [{ center: [0, 0, 0] as const, size: shard.size }];
-  const colliderBoxes = debrisColliderBoxes(shard.size, renderBoxes);
-  const isChunky = shard.size[0] * shard.size[1] * shard.size[2] > 0.015;
-  const collisionTuning = debrisCollisionTuning(
-    shard.size,
-    !shard.preferSoftCcd,
+  const { world, rapier, rigidBodyEvents } = useRapier();
+  const entries = useRef(
+    new Map<string, { body: RapierRigidBody; freed: boolean }>(),
+  );
+  const shardContact = useRef(onShardContact);
+  const remnantContact = useRef(onRemnantContact);
+  useEffect(() => {
+    shardContact.current = onShardContact;
+    remnantContact.current = onRemnantContact;
+  }, [onRemnantContact, onShardContact]);
+
+  const buildColliders = useCallback(
+    (body: RapierRigidBody, specs: readonly DebrisColliderSpec[]) => {
+      for (const spec of specs) {
+        const desc =
+          spec.shape === "ball"
+            ? rapier.ColliderDesc.ball(spec.args[0])
+            : spec.shape === "cylinder"
+              ? rapier.ColliderDesc.cylinder(
+                  spec.args[0],
+                  spec.args[1] ?? spec.args[0],
+                )
+              : rapier.ColliderDesc.cuboid(
+                  spec.args[0],
+                  spec.args[1] ?? spec.args[0],
+                  spec.args[2] ?? spec.args[0],
+                );
+        desc
+          .setTranslation(spec.center[0], spec.center[1], spec.center[2])
+          .setDensity(spec.density)
+          .setFriction(spec.friction)
+          .setRestitution(spec.restitution);
+        if (spec.groups !== null) {
+          desc.setCollisionGroups(spec.groups);
+        }
+        world.createCollider(desc, body);
+      }
+    },
+    [rapier, world],
   );
 
-  useEffect(() => {
-    const currentBody = body.current;
-    if (!currentBody) {
-      return undefined;
-    }
+  // Порог контактных событий зависит от массы, а масса — от коллайдеров,
+  // поэтому вооружение идёт после их создания (как в прежнем эффекте).
+  const armDebris = useCallback(
+    (
+      body: RapierRigidBody,
+      onForce: ContactForceHandler | null,
+    ) => {
+      const threshold = Math.max(0.4, body.mass() * 55);
+      const colliderCount = body.numColliders();
+      for (let index = 0; index < colliderCount; index += 1) {
+        const collider = body.collider(index);
+        collider.setContactForceEventThreshold(threshold);
+        if (onForce) {
+          collider.setActiveEvents(rapier.ActiveEvents.CONTACT_FORCE_EVENTS);
+        }
+      }
+      if (onForce) {
+        rigidBodyEvents.set(body.handle, { onContactForce: onForce });
+      }
+    },
+    [rapier, rigidBodyEvents],
+  );
 
-    registerBody(shard.id, currentBody);
-    const colliderCount = currentBody.numColliders();
-    for (let index = 0; index < colliderCount; index += 1) {
-      currentBody
-        .collider(index)
-        .setContactForceEventThreshold(Math.max(0.4, currentBody.mass() * 55));
-    }
-    currentBody.setRotation(
-      {
-        x: shard.quaternion[0],
-        y: shard.quaternion[1],
-        z: shard.quaternion[2],
-        w: shard.quaternion[3],
-      },
-      true,
-    );
-    currentBody.setLinvel(
-      {
-        x: shard.linearVelocity[0],
-        y: shard.linearVelocity[1],
-        z: shard.linearVelocity[2],
-      },
-      true,
-    );
-    currentBody.setAngvel(
-      {
-        x: shard.angularVelocity[0],
-        y: shard.angularVelocity[1],
-        z: shard.angularVelocity[2],
-      },
-      true,
-    );
-
-    return () => registerBody(shard.id, null);
-  }, [registerBody, shard]);
-
-  return (
-    <RigidBody
-      ref={body}
-      position={[...shard.position]}
-      colliders={false}
-      density={profile.density * (shard.voxelBody?.volumeScale ?? 1)}
-      friction={0.78}
-      restitution={profile.restitution}
-      linearDamping={0.15}
-      angularDamping={0.25}
-      collisionGroups={DEBRIS_SETTLING}
-      ccd={collisionTuning.hardCcd}
-      softCcdPrediction={collisionTuning.softCcdPrediction}
-      onContactForce={
-        isChunky
+  const spawnShard = useCallback(
+    (shard: ShardDefinition) => {
+      const spec = shardBodySpec(shard);
+      const body = world.createRigidBody(
+        rapier.RigidBodyDesc.dynamic()
+          .setTranslation(
+            shard.position[0],
+            shard.position[1],
+            shard.position[2],
+          )
+          .setRotation({
+            x: shard.quaternion[0],
+            y: shard.quaternion[1],
+            z: shard.quaternion[2],
+            w: shard.quaternion[3],
+          })
+          .setLinvel(
+            shard.linearVelocity[0],
+            shard.linearVelocity[1],
+            shard.linearVelocity[2],
+          )
+          .setAngvel({
+            x: shard.angularVelocity[0],
+            y: shard.angularVelocity[1],
+            z: shard.angularVelocity[2],
+          })
+          .setLinearDamping(spec.linearDamping)
+          .setAngularDamping(spec.angularDamping)
+          .setCcdEnabled(spec.hardCcd),
+      );
+      body.setSoftCcdPrediction(spec.softCcdPrediction);
+      buildColliders(body, spec.colliders);
+      registerBody(shard.id, body);
+      armDebris(
+        body,
+        spec.chunky
           ? (payload) => {
-              const currentBody = body.current;
-              if (!currentBody) {
-                return;
-              }
-              onContact(
+              shardContact.current(
                 shard,
                 payload.totalForceMagnitude,
-                currentBody.mass(),
+                body.mass(),
                 payload.maxForceDirection,
                 payload.other.collider.handle,
               );
             }
-          : undefined
-      }
-    >
-      {shard.shape === "sphere" ? (
-        <BallCollider
-          args={[Math.max(0.002, Math.min(...shard.size) / 2 - 0.002)]}
-        />
-      ) : shard.shape === "cylinder" ? (
-        <CylinderCollider
-          args={[
-            Math.max(0.002, shard.size[1] / 2 - 0.002),
-            Math.max(0.002, (shard.size[0] + shard.size[2]) / 4 - 0.002),
-          ]}
-        />
-      ) : (
-        colliderBoxes.map((box, index) => (
-          <CuboidCollider
-            key={`collider:${index}`}
-            args={[
-              Math.max(0.002, box.size[0] / 2 - 0.002),
-              Math.max(0.002, box.size[1] / 2 - 0.002),
-              Math.max(0.002, box.size[2] / 2 - 0.002),
-            ]}
-            position={[...box.center]}
-          />
-        ))
-      )}
-      <OmittedDebrisInteractionColliders
-        boxes={renderBoxes}
-        primaryBoxes={colliderBoxes}
-        material={shard.material}
-      />
-    </RigidBody>
+          : null,
+      );
+      entries.current.set(shard.id, { body, freed: true });
+    },
+    [armDebris, buildColliders, rapier, registerBody, world],
   );
-});
+
+  const freeRemnant = useCallback(
+    (
+      remnant: RemnantDefinition,
+      entry: { body: RapierRigidBody; freed: boolean },
+    ) => {
+      const body = entry.body;
+      const spec = remnantBodySpec(remnant, true);
+      // Освобождённый остаток живёт по debris-паспорту: не больше трёх
+      // мировых коллайдеров, группа осадки, CCD — как делал JSX при смене
+      // freed-пропа.
+      while (body.numColliders() > 0) {
+        world.removeCollider(body.collider(0), true);
+      }
+      buildColliders(body, spec.colliders);
+      if (body.bodyType() !== rapier.RigidBodyType.Dynamic) {
+        body.setBodyType(rapier.RigidBodyType.Dynamic, true);
+      }
+      registerBody(remnant.id, body);
+      armDebris(
+        body,
+        spec.chunky
+          ? (payload) => {
+              remnantContact.current(
+                remnant,
+                payload.totalForceMagnitude,
+                body.mass(),
+                payload.maxForceDirection,
+                payload.other.collider.handle,
+              );
+            }
+          : null,
+      );
+      body.enableCcd(spec.hardCcd);
+      body.setSoftCcdPrediction(spec.softCcdPrediction);
+      body.wakeUp();
+      const mass = Math.max(0.02, body.mass());
+      body.applyImpulse({ x: 0, y: 0.18 * mass, z: 0 }, true);
+      entry.freed = true;
+    },
+    [armDebris, buildColliders, rapier, registerBody, world],
+  );
+
+  const spawnRemnant = useCallback(
+    (remnant: RemnantDefinition, freed: boolean) => {
+      const spec = remnantBodySpec(remnant, false);
+      const body = world.createRigidBody(
+        rapier.RigidBodyDesc.fixed()
+          .setTranslation(
+            remnant.position[0],
+            remnant.position[1],
+            remnant.position[2],
+          )
+          .setRotation({
+            x: remnant.quaternion[0],
+            y: remnant.quaternion[1],
+            z: remnant.quaternion[2],
+            w: remnant.quaternion[3],
+          })
+          .setLinearDamping(spec.linearDamping)
+          .setAngularDamping(spec.angularDamping),
+      );
+      buildColliders(body, spec.colliders);
+      registerBody(remnant.id, body);
+      armDebris(body, null);
+      const entry = { body, freed: false };
+      entries.current.set(remnant.id, entry);
+      if (freed) {
+        freeRemnant(remnant, entry);
+      }
+    },
+    [armDebris, buildColliders, freeRemnant, rapier, registerBody, world],
+  );
+
+  const removeEntry = useCallback(
+    (id: string, entry: { body: RapierRigidBody; freed: boolean }) => {
+      rigidBodyEvents.delete(entry.body.handle);
+      registerBody(id, null);
+      world.removeRigidBody(entry.body);
+      entries.current.delete(id);
+    },
+    [registerBody, rigidBodyEvents, world],
+  );
+
+  useEffect(() => {
+    const live = new Set<string>();
+    for (const shard of shards) {
+      live.add(shard.id);
+      if (!entries.current.has(shard.id)) {
+        spawnShard(shard);
+      }
+    }
+    for (const remnant of remnants) {
+      live.add(remnant.id);
+      const freed = remnant.detached || brokenPieces.has(remnant.parentId);
+      const entry = entries.current.get(remnant.id);
+      if (!entry) {
+        spawnRemnant(remnant, freed);
+      } else if (freed && !entry.freed) {
+        freeRemnant(remnant, entry);
+      }
+    }
+    for (const [id, entry] of entries.current) {
+      if (!live.has(id)) {
+        removeEntry(id, entry);
+      }
+    }
+  }, [
+    brokenPieces,
+    freeRemnant,
+    remnants,
+    removeEntry,
+    shards,
+    spawnRemnant,
+    spawnShard,
+  ]);
+
+  useEffect(
+    () => () => {
+      for (const [id, entry] of entries.current) {
+        removeEntry(id, entry);
+      }
+    },
+    [removeEntry],
+  );
+
+  return null;
+}
 
 function Grenade({
   grenade,
@@ -2714,151 +2922,6 @@ function Grenade({
 
 // A static leftover of a carved piece: stays fixed in place while its parent
 // piece is structurally alive, breaks loose when the parent gives way.
-const Remnant = memo(function Remnant({
-  remnant,
-  freed,
-  registerBody,
-  onContact,
-}: {
-  remnant: RemnantDefinition;
-  freed: boolean;
-  registerBody: (id: string, body: RapierRigidBody | null) => void;
-  onContact: (
-    remnant: RemnantDefinition,
-    magnitude: number,
-    mass: number,
-    forceDirection: { x: number; y: number; z: number },
-    otherColliderHandle: number,
-  ) => void;
-}) {
-  const body = useRef<RapierRigidBody>(null);
-  const wasFreed = useRef(false);
-  const { rapier } = useRapier();
-  const profile = materialRuntimeProfiles[remnant.material];
-  const boxes =
-    remnant.boxes && remnant.boxes.length > 0
-      ? remnant.boxes
-      : [{ center: [0, 0, 0] as const, size: remnant.size }];
-  const colliderBoxes = debrisColliderBoxes(
-    remnant.size,
-    boxes,
-    freed ? 3 : MAX_ATTACHED_REMNANT_WORLD_COLLIDERS,
-  );
-  const isChunky = remnant.size[0] * remnant.size[1] * remnant.size[2] > 0.015;
-  const collisionTuning = debrisCollisionTuning(remnant.size);
-
-  useEffect(() => {
-    const currentBody = body.current;
-    if (!currentBody) {
-      return undefined;
-    }
-
-    registerBody(remnant.id, currentBody);
-    currentBody.setRotation(
-      {
-        x: remnant.quaternion[0],
-        y: remnant.quaternion[1],
-        z: remnant.quaternion[2],
-        w: remnant.quaternion[3],
-      },
-      true,
-    );
-    const colliderCount = currentBody.numColliders();
-    for (let index = 0; index < colliderCount; index += 1) {
-      currentBody
-        .collider(index)
-        .setContactForceEventThreshold(Math.max(0.4, currentBody.mass() * 55));
-    }
-
-    return () => registerBody(remnant.id, null);
-  }, [registerBody, remnant]);
-
-  useEffect(() => {
-    const currentBody = body.current;
-    if (!currentBody) {
-      return;
-    }
-
-    if (freed && !wasFreed.current) {
-      if (currentBody.bodyType() !== rapier.RigidBodyType.Dynamic) {
-        currentBody.setBodyType(rapier.RigidBodyType.Dynamic, true);
-      }
-      registerBody(remnant.id, currentBody);
-      currentBody.wakeUp();
-      const mass = Math.max(0.02, currentBody.mass());
-      currentBody.applyImpulse({ x: 0, y: 0.18 * mass, z: 0 }, true);
-    }
-
-    wasFreed.current = freed;
-  }, [freed, rapier, registerBody, remnant.id]);
-
-  return (
-    <RigidBody
-      ref={body}
-      type={freed ? "dynamic" : "fixed"}
-      position={[...remnant.position]}
-      colliders={false}
-      friction={0.82}
-      restitution={profile.restitution}
-      linearDamping={0.16}
-      angularDamping={0.24}
-      density={profile.density * (remnant.voxelBody?.volumeScale ?? 1)}
-      // См. BreakablePiece: collisionGroups={undefined} обнуляет группы в
-      // Rapier — у прикреплённого остатка коллизия должна остаться дефолтной.
-      {...(freed ? { collisionGroups: DEBRIS_SETTLING } : {})}
-      ccd={freed && collisionTuning.hardCcd}
-      softCcdPrediction={freed ? collisionTuning.softCcdPrediction : 0}
-      onContactForce={
-        freed && isChunky
-          ? (payload) => {
-              const currentBody = body.current;
-              if (!currentBody) {
-                return;
-              }
-              onContact(
-                remnant,
-                payload.totalForceMagnitude,
-                currentBody.mass(),
-                payload.maxForceDirection,
-                payload.other.collider.handle,
-              );
-            }
-          : undefined
-      }
-    >
-      {remnant.shape === "sphere" ? (
-        <BallCollider
-          args={[Math.max(0.002, Math.min(...remnant.size) / 2 - 0.002)]}
-        />
-      ) : remnant.shape === "cylinder" ? (
-        <CylinderCollider
-          args={[
-            Math.max(0.002, remnant.size[1] / 2 - 0.002),
-            Math.max(0.002, (remnant.size[0] + remnant.size[2]) / 4 - 0.002),
-          ]}
-        />
-      ) : (
-        colliderBoxes.map((box, index) => (
-          <CuboidCollider
-            key={`collider:${index}`}
-            args={[
-              Math.max(0.002, box.size[0] / 2 - 0.002),
-              Math.max(0.002, box.size[1] / 2 - 0.002),
-              Math.max(0.002, box.size[2] / 2 - 0.002),
-            ]}
-            position={[...box.center]}
-          />
-        ))
-      )}
-      <OmittedDebrisInteractionColliders
-        boxes={boxes}
-        primaryBoxes={colliderBoxes}
-        material={remnant.material}
-      />
-    </RigidBody>
-  );
-});
-
 const TRACER_LIFE = 0.07;
 
 function Tracer({
@@ -3303,6 +3366,7 @@ interface OpenWorldSceneProps {
   cinematic: boolean;
   onActiveChange: (active: boolean) => void;
   onFallbackChange: (fallback: boolean) => void;
+  onPointerLockChange: (held: boolean) => void;
   onBrokenCountChange: (count: number) => void;
   onDynamicBodyCountChange: (count: number) => void;
   onEntryApproachChange: (entry: HingedEntryApproach | null) => void;
@@ -3316,6 +3380,7 @@ interface OpenWorldSceneProps {
   onInterIslandPassengerStateChange: (
     flightActive: boolean,
     passengerInsideCarrier: boolean,
+    flightKind: string | null,
   ) => void;
   occupiedSeatId: string | null;
   onOccupiedSeatChange: (seatId: string | null) => void;
@@ -3346,6 +3411,7 @@ function OpenWorldScene({
   cinematic,
   onActiveChange,
   onFallbackChange,
+  onPointerLockChange,
   onBrokenCountChange,
   onDynamicBodyCountChange,
   onEntryApproachChange,
@@ -3538,6 +3604,13 @@ function OpenWorldScene({
   const lastGrenadeTime = useRef(0);
   const lastRocketTime = useRef(0);
   const previousReset = useRef(resetVersion);
+  const pendingBlasts = useRef<PendingBlastJob[]>([]);
+  const blastEpoch = useRef(0);
+  const carveWorker = useRef<Worker | null>(null);
+  const carveJobs = useRef(
+    new Map<number, (response: CarveKernelResponse | null) => void>(),
+  );
+  const carveRequestId = useRef(0);
   const shadowInvalidation = useRef(1);
   const appliedShadowInvalidation = useRef(0);
 
@@ -3935,6 +4008,10 @@ function OpenWorldScene({
     }
 
     previousReset.current = resetVersion;
+    // Недоигранные очереди взрывов ссылаются на цели стёртого мира; эпоха
+    // обесценивает и ответы воркера, которые ещё в полёте.
+    pendingBlasts.current.length = 0;
+    blastEpoch.current += 1;
     const settled = settleAfterBreak(new Set());
     brokenPiecesRef.current = settled;
     setBrokenPieces(settled);
@@ -4327,7 +4404,29 @@ function OpenWorldScene({
 
   const commitShards = useCallback((additions: readonly ShardDefinition[]) => {
     const merged = [...shardsRef.current, ...additions];
-    const trimmed = trimShardBudget(merged);
+    // Вытеснение при переполнении: сначала спящие и далёкие от игрока.
+    // Удаление тела будит его контактный остров, поэтому чистый FIFO
+    // заставлял дальний выстрел шевелить давно улёгшуюся кучу перед игроком.
+    const playerTranslation = pieceBodies.current
+      .get("player")
+      ?.translation();
+    const trimmed = trimShardBudget(merged, undefined, undefined, {
+      protectedNewest: additions.length,
+      priority: (shard) => {
+        const body = pieceBodies.current.get(shard.id);
+        const awakeBonus = body && !body.isSleeping() ? 1_000_000 : 0;
+        const translation = body?.translation();
+        const x = translation?.x ?? shard.position[0];
+        const y = translation?.y ?? shard.position[1];
+        const z = translation?.z ?? shard.position[2];
+        const distanceSq = playerTranslation
+          ? (x - playerTranslation.x) ** 2 +
+            (y - playerTranslation.y) ** 2 +
+            (z - playerTranslation.z) ** 2
+          : 0;
+        return awakeBonus - distanceSq;
+      },
+    });
     shardsRef.current = trimmed;
     shardById.current = new Map(trimmed.map((shard) => [shard.id, shard]));
     setShards(trimmed);
@@ -4736,28 +4835,26 @@ function OpenWorldScene({
 
   // Carve a blocky hole out of a standing (fixed) piece or remnant, leaving
   // the rest of it in place — clean holes carved through walls and fences.
-  const carveAt = useCallback(
-    (
-      targetId: string,
-      worldPoint: Vector3,
-      radius: number,
-      pushDirection: Vector3 | null,
-      physicalChipCount = 3,
-    ): { carved: boolean; brokenParentId: string | null } => {
+  // Валидация и снимок позы цели carve. Используется и синхронным carveAt,
+  // и подготовкой запроса для воркера; в асинхронном пути вызывается ДВАЖДЫ
+  // (при подготовке и при применении) — между кадрами цель могла сломаться
+  // чужим оружием или чужим settle.
+  const resolveCarveTarget = useCallback(
+    (targetId: string) => {
       if (indestructible) {
-        return { carved: false, brokenParentId: null };
+        return null;
       }
       const remnant = remnantById.current.get(targetId);
       const piece = remnant ? undefined : breakablePieceById.get(targetId);
       const source = remnant ?? piece;
       if (!source) {
-        return { carved: false, brokenParentId: null };
+        return null;
       }
       if (
         remnant &&
         (remnant.detached || brokenPiecesRef.current.has(remnant.parentId))
       ) {
-        return { carved: false, brokenParentId: null };
+        return null;
       }
       if (
         piece &&
@@ -4765,20 +4862,19 @@ function OpenWorldScene({
           carvedPiecesRef.current.has(piece.id) ||
           shatteredPiecesRef.current.has(piece.id))
       ) {
-        return { carved: false, brokenParentId: null };
+        return null;
       }
-      const isGroundTarget = groundMaterials.has(source.material);
 
       const body = pieceBodies.current.get(targetId);
       if (body && body.bodyType() !== rapier.RigidBodyType.Fixed) {
-        return { carved: false, brokenParentId: null };
+        return null;
       }
       if (
         !body &&
         ((!piece && (!remnant || remnant.detached)) ||
           (piece && brokenPiecesRef.current.has(piece.id)))
       ) {
-        return { carved: false, brokenParentId: null };
+        return null;
       }
 
       const parentId = remnant ? remnant.parentId : targetId;
@@ -4806,28 +4902,120 @@ function OpenWorldScene({
                 piece!.rotation?.[2] ?? 0,
               ),
             );
+      return {
+        remnant,
+        piece,
+        source,
+        parentId,
+        isGroundTarget: groundMaterials.has(source.material),
+        sourceRenderColor,
+        treeVisualSourceId,
+        bodyPosition,
+        bodyQuaternion,
+      };
+    },
+    [breakablePieceById, indestructible, intactGroundRenderColors, rapier],
+  );
+
+  // Запрос для воркера: тот же снимок цели, что у синхронного пути, но в
+  // plain-данных. Соль отсчитывается здесь, чтобы шум разлома оставался
+  // детерминированным независимо от того, кто исполнит ядро.
+  const prepareBlastCarveRequest = useCallback(
+    (
+      targetId: string,
+      worldPoint: Vector3,
+      radius: number,
+    ): CarveKernelRequest | null => {
+      const target = resolveCarveTarget(targetId);
+      if (!target) {
+        return null;
+      }
       remnantCounter.current += 1;
-      const carveSalt = `carve:${remnantCounter.current}`;
-      const result = damageBody(
-        resolveDamageSource({ ...source, renderColor: sourceRenderColor }),
-        {
-          position: bodyPosition,
-          quaternion: bodyQuaternion,
-          linearVelocity: new Vector3(),
-          angularVelocity: new Vector3(),
-        },
-        {
-          idPrefix: carveSalt,
-          worldPoint,
+      carveRequestId.current += 1;
+      return {
+        requestId: carveRequestId.current,
+        source: resolveDamageSource({
+          ...target.source,
+          renderColor: target.sourceRenderColor,
+        }),
+        position: [
+          target.bodyPosition.x,
+          target.bodyPosition.y,
+          target.bodyPosition.z,
+        ],
+        quaternion: [
+          target.bodyQuaternion.x,
+          target.bodyQuaternion.y,
+          target.bodyQuaternion.z,
+          target.bodyQuaternion.w,
+        ],
+        idPrefix: `carve:${remnantCounter.current}`,
+        worldPoint: [worldPoint.x, worldPoint.y, worldPoint.z],
+        radius,
+      };
+    },
+    [resolveCarveTarget, resolveDamageSource],
+  );
+
+  const carveAt = useCallback(
+    (
+      targetId: string,
+      worldPoint: Vector3,
+      radius: number,
+      pushDirection: Vector3 | null,
+      physicalChipCount = 3,
+      precomputed?: CarveKernelResponse,
+    ): { carved: boolean; brokenParentId: string | null } => {
+      const target = resolveCarveTarget(targetId);
+      if (!target) {
+        return { carved: false, brokenParentId: null };
+      }
+      const {
+        remnant,
+        piece,
+        source,
+        parentId,
+        isGroundTarget,
+        sourceRenderColor,
+        treeVisualSourceId,
+        bodyPosition,
+        bodyQuaternion,
+      } = target;
+      let fragments: readonly ShardDefinition[] | null;
+      let removedVolume: number;
+      if (precomputed !== undefined) {
+        fragments = precomputed.fragments;
+        removedVolume = precomputed.removedVolume;
+      } else {
+        remnantCounter.current += 1;
+        carveRequestId.current += 1;
+        const response = executeCarveKernel({
+          requestId: carveRequestId.current,
+          source: resolveDamageSource({
+            ...source,
+            renderColor: sourceRenderColor,
+          }),
+          position: [bodyPosition.x, bodyPosition.y, bodyPosition.z],
+          quaternion: [
+            bodyQuaternion.x,
+            bodyQuaternion.y,
+            bodyQuaternion.z,
+            bodyQuaternion.w,
+          ],
+          idPrefix: `carve:${remnantCounter.current}`,
+          worldPoint: [worldPoint.x, worldPoint.y, worldPoint.z],
           radius,
-          burstSpeed: 0,
-          direction: pushDirection ?? undefined,
+          direction: pushDirection
+            ? [pushDirection.x, pushDirection.y, pushDirection.z]
+            : undefined,
           penetration: pushDirection
             ? Math.min(0.85, Math.hypot(...source.size))
             : undefined,
-        },
-      );
-      if (!result) {
+        });
+        fragments = response.fragments;
+        removedVolume = response.removedVolume;
+      }
+      if (fragments === null) {
         return { carved: false, brokenParentId: null };
       }
       const sourceVolume =
@@ -4835,7 +5023,7 @@ function OpenWorldScene({
         source.volume ??
         source.size[0] * source.size[1] * source.size[2];
 
-      const additions = result.fragments.map((fragment): RemnantDefinition => {
+      const additions = fragments.map((fragment): RemnantDefinition => {
         remnantCounter.current += 1;
         return {
           id: `remnant:${remnantCounter.current}`,
@@ -4860,7 +5048,7 @@ function OpenWorldScene({
       });
       if (
         isGroundTarget &&
-        (additions.length === 0 || result.removedVolume > sourceVolume * 0.38)
+        (additions.length === 0 || removedVolume > sourceVolume * 0.38)
       ) {
         return { carved: false, brokenParentId: null };
       }
@@ -4939,15 +5127,13 @@ function OpenWorldScene({
 
       const crossed = isGroundTarget
         ? false
-        : subtractParentVolume(parentId, result.removedVolume);
+        : subtractParentVolume(parentId, removedVolume);
       return { carved: true, brokenParentId: crossed ? parentId : null };
     },
     [
       commitRemnants,
       commitShards,
-      indestructible,
-      intactGroundRenderColors,
-      rapier,
+      resolveCarveTarget,
       resolveDamageSource,
       subtractParentVolume,
     ],
@@ -5244,6 +5430,95 @@ function OpenWorldScene({
       fireAccumulator.current %= MG_FIRE_INTERVAL;
       fireRound();
     }
+  });
+
+  // Воксельная резка взрыва уходит в Web Worker: главный поток готовит
+  // запрос и применяет результат, само ядро (детерминированное и чистое)
+  // считается вне кадра. Если воркеров нет или воркер умер — те же шаги
+  // исполняются синхронным ядром, поведение идентично.
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof Worker === "undefined") {
+      return undefined;
+    }
+    let worker: Worker;
+    try {
+      worker = new Worker(new URL("./carveWorker.ts", import.meta.url), {
+        type: "module",
+      });
+    } catch {
+      return undefined;
+    }
+    worker.onmessage = (event: MessageEvent<CarveKernelResponse>) => {
+      const settle = carveJobs.current.get(event.data.requestId);
+      if (!settle) {
+        return;
+      }
+      carveJobs.current.delete(event.data.requestId);
+      if (process.env.NODE_ENV !== "production") {
+        const scope = window as unknown as Record<string, unknown>;
+        scope.__mamCarveWorkerHits =
+          (Number(scope.__mamCarveWorkerHits) || 0) + 1;
+      }
+      settle(event.data);
+    };
+    worker.onerror = () => {
+      // Воркер умер: висящие запросы дорезаются синхронно, новые идут мимо.
+      carveWorker.current = null;
+      const pending = [...carveJobs.current.values()];
+      carveJobs.current.clear();
+      for (const settle of pending) {
+        settle(null);
+      }
+      worker.terminate();
+    };
+    carveWorker.current = worker;
+    if (process.env.NODE_ENV !== "production") {
+      (window as unknown as Record<string, unknown>).__mamCarveWorkerAlive =
+        true;
+    }
+    return () => {
+      carveWorker.current = null;
+      carveJobs.current.clear();
+      worker.terminate();
+    };
+  }, []);
+
+  // №2 плана оптимизаций: carve — самая дорогая часть взрыва — исполняется
+  // шагами из очереди с бюджетом времени на кадр. Анализ (позы, лучи
+  // видимости, отбор целей) остаётся в кадре детонации, поэтому энергии и
+  // окклюдеры соответствуют моменту взрыва; один settleStructure и push-фаза
+  // закрывают взрыв, когда его очередь исчерпана. Малый взрыв, уложившийся в
+  // бюджет, отрабатывает синхронно — как раньше.
+  const drainBlastQueue = useCallback(() => {
+    const queue = pendingBlasts.current;
+    if (queue.length === 0) {
+      return;
+    }
+    const deadline = performance.now() + BLAST_FRAME_BUDGET_MS;
+    while (queue.length > 0) {
+      const job = queue[0];
+      while (job.cursor < job.steps.length) {
+        const step = job.steps[job.cursor];
+        job.cursor += 1;
+        step();
+        if (performance.now() >= deadline) {
+          return;
+        }
+      }
+      if (job.inFlight > 0) {
+        // Ядро режет в воркере: финал (settle + волна) ждёт все ответы.
+        return;
+      }
+      queue.shift();
+      job.finish();
+      if (performance.now() >= deadline) {
+        return;
+      }
+    }
+  }, []);
+
+  useFrame(() => {
+    drainBlastQueue();
   });
 
   const explodeAt = useCallback(
@@ -5636,33 +5911,84 @@ function OpenWorldScene({
       // One explosion already has a dense particle burst and real structural
       // fragments. Limit only the extra simulated surface chips so a blast
       // through many adjacent facade parts cannot create a physics storm.
-      let physicalChipBudget = isRocket ? 24 : 12;
+      // Каждая цель — один шаг очереди; carveAt сам отбрасывает цели,
+      // которые между кадрами успели сломаться или отделиться.
+      const damagedNow = new Set<string>();
+      const carveSteps: (() => void)[] = [];
+      const blastJob: PendingBlastJob = {
+        steps: carveSteps,
+        cursor: 0,
+        inFlight: 0,
+        epoch: blastEpoch.current,
+        finish: () => {},
+      };
+      const chipState = { budget: isRocket ? 24 : 12 };
       for (const entry of attachedDamageCandidates) {
-        const damageRadius = impactDamageRadius(
-          resolveDamageSource(entry.source),
-          "blast",
-          entry.energy,
-        );
-        const physicalChipCount = Math.min(3, physicalChipBudget);
-        const carve = carveAt(
-          entry.targetId,
-          entry.impactPoint,
-          damageRadius,
-          null,
-          physicalChipCount,
-        );
-        if (carve.carved) {
-          physicalChipBudget -= physicalChipCount;
-        }
-        if (carve.brokenParentId) {
-          volumeBroken.push(carve.brokenParentId);
-        }
-        if (carve.carved && entry.source.material === "glass") {
-          volumeBroken.push(entry.parentId);
-        }
+        carveSteps.push(() => {
+          const damageRadius = impactDamageRadius(
+            resolveDamageSource(entry.source),
+            "blast",
+            entry.energy,
+          );
+          const physicalChipCount = Math.min(3, chipState.budget);
+          const applyOutcome = (carve: {
+            carved: boolean;
+            brokenParentId: string | null;
+          }) => {
+            if (carve.carved) {
+              chipState.budget -= physicalChipCount;
+            }
+            if (carve.brokenParentId) {
+              volumeBroken.push(carve.brokenParentId);
+            }
+            if (carve.carved && entry.source.material === "glass") {
+              volumeBroken.push(entry.parentId);
+            }
+          };
+          const worker = carveWorker.current;
+          const request = worker
+            ? prepareBlastCarveRequest(
+                entry.targetId,
+                entry.impactPoint,
+                damageRadius,
+              )
+            : null;
+          if (!worker || !request) {
+            // Нет воркера — синхронное ядро; нет запроса — цель уже
+            // невалидна, carveAt дёшево откажет при повторной проверке.
+            applyOutcome(
+              carveAt(
+                entry.targetId,
+                entry.impactPoint,
+                damageRadius,
+                null,
+                physicalChipCount,
+              ),
+            );
+            return;
+          }
+          blastJob.inFlight += 1;
+          carveJobs.current.set(request.requestId, (response) => {
+            blastJob.inFlight -= 1;
+            if (blastJob.epoch === blastEpoch.current) {
+              // null — воркер умер: дорезаем синхронным ядром.
+              applyOutcome(
+                carveAt(
+                  entry.targetId,
+                  entry.impactPoint,
+                  damageRadius,
+                  null,
+                  physicalChipCount,
+                  response ?? undefined,
+                ),
+              );
+            }
+            drainBlastQueue();
+          });
+          worker.postMessage(request);
+        });
       }
 
-      const damagedNow = new Set<string>();
       const looseDamageCandidates = (indestructible ? [] : looseBeforeBlast)
         .map((entry) => {
           const { position, quaternion } = resolveBlastPose(
@@ -5717,113 +6043,136 @@ function OpenWorldScene({
         .slice(0, 32);
 
       for (const entry of looseDamageCandidates) {
-        if (
-          carveLooseTarget(
-            entry.source,
-            entry.origin,
-            entry.impactPoint,
-            entry.damageRadius,
-            entry.burstSpeed,
-          )
-        ) {
-          damagedNow.add(entry.source.id);
+        carveSteps.push(() => {
+          // Между кадрами очереди цель могла исчезнуть чужими руками:
+          // вытеснение осколка, чужой carve, повторный взрыв.
           if (
-            entry.origin === "piece" &&
-            !previousBroken.has(entry.source.id)
+            (entry.origin === "shard" &&
+              !shardById.current.has(entry.source.id)) ||
+            (entry.origin === "remnant" &&
+              !remnantById.current.has(entry.source.id)) ||
+            shatteredPiecesRef.current.has(entry.source.id)
           ) {
-            volumeBroken.push(entry.source.id);
+            return;
           }
-        }
+          if (
+            carveLooseTarget(
+              entry.source,
+              entry.origin,
+              entry.impactPoint,
+              entry.damageRadius,
+              entry.burstSpeed,
+            )
+          ) {
+            damagedNow.add(entry.source.id);
+            if (
+              entry.origin === "piece" &&
+              !previousBroken.has(entry.source.id)
+            ) {
+              volumeBroken.push(entry.source.id);
+            }
+          }
+        });
       }
 
-      if (!indestructible) {
-        settleStructure(new Set([...previousBroken, ...volumeBroken]));
-      }
-      const finalBroken = brokenPiecesRef.current;
-      const pushedIds = new Set<string>();
+      const looseShardIds = looseBeforeBlast
+        .filter((entry) => entry.origin === "shard")
+        .map((entry) => entry.source.id);
 
-      const pushBody = (id: string, body: RapierRigidBody) => {
-        if (
-          damagedNow.has(id) ||
-          attachedCompoundMemberIdsBeforeBlast.has(id)
-        ) {
-          return;
+      const finishBlast = () => {
+        if (!indestructible) {
+          // Живое множество вместо снапшота кадра детонации: пока очередь
+          // шла, другие системы могли и ломать, и восстанавливать куски.
+          settleStructure(
+            new Set([...brokenPiecesRef.current, ...volumeBroken]),
+          );
         }
-        const translation = body.translation();
-        const dx = translation.x - center3.x;
-        const dy = translation.y - center3.y;
-        const dz = translation.z - center3.z;
-        const distance = Math.hypot(dx, dy, dz);
-        if (distance > blastPushRadius) {
-          return;
-        }
+        const finalBroken = brokenPiecesRef.current;
+        // Игрок уже получил волну в кадре детонации.
+        const pushedIds = new Set<string>(["player"]);
 
-        const targetParentId = remnantById.current.get(id)?.parentId ?? id;
-        const targetPosition = new Vector3(
-          translation.x,
-          translation.y,
-          translation.z,
-        );
-        const visibility =
-          blastVisibilityFactor(
-            center3,
-            targetPosition,
-            id,
-            targetParentId,
-            distance,
-            solidOccluders,
-          ) * fieldTransmissionTo(targetPosition);
-        if (visibility < 0.04) {
-          return;
-        }
+        const pushBody = (id: string, body: RapierRigidBody) => {
+          if (
+            damagedNow.has(id) ||
+            attachedCompoundMemberIdsBeforeBlast.has(id)
+          ) {
+            return;
+          }
+          const translation = body.translation();
+          const dx = translation.x - center3.x;
+          const dy = translation.y - center3.y;
+          const dz = translation.z - center3.z;
+          const distance = Math.hypot(dx, dy, dz);
+          if (distance > blastPushRadius) {
+            return;
+          }
 
-        const falloff = (1 - distance / blastPushRadius) * visibility;
-        const inverse = 1 / Math.max(0.25, distance);
-        const mass = Math.max(0.04, body.mass());
+          const targetParentId = remnantById.current.get(id)?.parentId ?? id;
+          const targetPosition = new Vector3(
+            translation.x,
+            translation.y,
+            translation.z,
+          );
+          const visibility =
+            blastVisibilityFactor(
+              center3,
+              targetPosition,
+              id,
+              targetParentId,
+              distance,
+              solidOccluders,
+            ) * fieldTransmissionTo(targetPosition);
+          if (visibility < 0.04) {
+            return;
+          }
 
-        if (id === "player") {
+          const falloff = (1 - distance / blastPushRadius) * visibility;
+          const inverse = 1 / Math.max(0.25, distance);
+          const mass = Math.max(0.04, body.mass());
+
+          if (id === "player") {
+            body.applyImpulse(
+              {
+                x: dx * inverse * (isRocket ? 9.4 : 6.4) * falloff * mass,
+                y: (dy * inverse + 0.8) * (isRocket ? 7.2 : 5.2) * falloff * mass,
+                z: dz * inverse * (isRocket ? 9.4 : 6.4) * falloff * mass,
+              },
+              true,
+            );
+            return;
+          }
+
+          const isDynamic = body.bodyType() === rapier.RigidBodyType.Dynamic;
+          const remnant = remnantById.current.get(id);
+          const isLooseRemnant = Boolean(
+            remnant && (remnant.detached || finalBroken.has(remnant.parentId)),
+          );
+          if (!isDynamic && !finalBroken.has(id) && !isLooseRemnant) {
+            return;
+          }
+
+          ensureDynamic(id, body);
+          configureDebrisCollision(id, body);
+          body.wakeUp();
+
+          const speed =
+            (isRocket ? 7.8 : 5.2) + (isRocket ? 10.5 : 6.5) * falloff;
           body.applyImpulse(
             {
-              x: dx * inverse * (isRocket ? 9.4 : 6.4) * falloff * mass,
-              y: (dy * inverse + 0.8) * (isRocket ? 7.2 : 5.2) * falloff * mass,
-              z: dz * inverse * (isRocket ? 9.4 : 6.4) * falloff * mass,
+              x: dx * inverse * speed * mass,
+              y: (dy * inverse + 0.6) * speed * mass * 0.85,
+              z: dz * inverse * speed * mass,
             },
             true,
           );
-          return;
-        }
-
-        const isDynamic = body.bodyType() === rapier.RigidBodyType.Dynamic;
-        const remnant = remnantById.current.get(id);
-        const isLooseRemnant = Boolean(
-          remnant && (remnant.detached || finalBroken.has(remnant.parentId)),
-        );
-        if (!isDynamic && !finalBroken.has(id) && !isLooseRemnant) {
-          return;
-        }
-
-        ensureDynamic(id, body);
-        configureDebrisCollision(id, body);
-        body.wakeUp();
-
-        const speed =
-          (isRocket ? 7.8 : 5.2) + (isRocket ? 10.5 : 6.5) * falloff;
-        body.applyImpulse(
-          {
-            x: dx * inverse * speed * mass,
-            y: (dy * inverse + 0.6) * speed * mass * 0.85,
-            z: dz * inverse * speed * mass,
-          },
-          true,
-        );
-        body.applyTorqueImpulse(
-          {
-            x: dz * inverse * 0.4 * mass,
-            y: dx * inverse * 0.5 * mass,
-            z: -dx * inverse * 0.35 * mass,
-          },
-          true,
-        );
+          body.applyTorqueImpulse(
+            {
+              x: dz * inverse * 0.4 * mass,
+              y: dx * inverse * 0.5 * mass,
+              z: -dx * inverse * 0.35 * mass,
+            },
+            true,
+          );
       };
 
       for (const piece of pieceSpatialIndex.querySphere(
@@ -5845,17 +6194,16 @@ function OpenWorldScene({
       // A visible pre-blast shard can exist one commit before its body mounts.
       // Queue exactly that old shard's impulse; newly generated blast debris
       // already carries burst velocity and must not receive a second kick.
-      for (const entry of looseBeforeBlast) {
+      for (const shardId of looseShardIds) {
         if (
-          entry.origin !== "shard" ||
-          damagedNow.has(entry.source.id) ||
-          pushedIds.has(entry.source.id) ||
-          !shardById.current.has(entry.source.id)
+          damagedNow.has(shardId) ||
+          pushedIds.has(shardId) ||
+          !shardById.current.has(shardId)
         ) {
           continue;
         }
-        pushedIds.add(entry.source.id);
-        withBody(entry.source.id, (body) => pushBody(entry.source.id, body));
+        pushedIds.add(shardId);
+        withBody(shardId, (body) => pushBody(shardId, body));
       }
 
       for (const [id, body] of pieceBodies.current) {
@@ -5881,12 +6229,59 @@ function OpenWorldScene({
         pushedIds.add(remnant.id);
         withBody(remnant.id, (body) => pushBody(remnant.id, body));
       }
+      };
+
+      // Игрок получает волну в кадре детонации: отложенный на несколько
+      // кадров пинок читался бы как лаг оружия. Формулы — из push-фазы.
+      withBody("player", (body) => {
+        const translation = body.translation();
+        const dx = translation.x - center3.x;
+        const dy = translation.y - center3.y;
+        const dz = translation.z - center3.z;
+        const distance = Math.hypot(dx, dy, dz);
+        if (distance > blastPushRadius) {
+          return;
+        }
+        const targetPosition = new Vector3(
+          translation.x,
+          translation.y,
+          translation.z,
+        );
+        const visibility =
+          blastVisibilityFactor(
+            center3,
+            targetPosition,
+            "player",
+            "player",
+            distance,
+            solidOccluders,
+          ) * fieldTransmissionTo(targetPosition);
+        if (visibility < 0.04) {
+          return;
+        }
+        const falloff = (1 - distance / blastPushRadius) * visibility;
+        const inverse = 1 / Math.max(0.25, distance);
+        const mass = Math.max(0.04, body.mass());
+        body.applyImpulse(
+          {
+            x: dx * inverse * (isRocket ? 9.4 : 6.4) * falloff * mass,
+            y: (dy * inverse + 0.8) * (isRocket ? 7.2 : 5.2) * falloff * mass,
+            z: dz * inverse * (isRocket ? 9.4 : 6.4) * falloff * mass,
+          },
+          true,
+        );
+      });
+
+      blastJob.finish = finishBlast;
+      pendingBlasts.current.push(blastJob);
+      drainBlastQueue();
     },
     [
       breakablePieceById,
       carveAt,
       carveLooseTarget,
       configureDebrisCollision,
+      drainBlastQueue,
       ensureDynamic,
       forceFieldTransmission,
       indestructible,
@@ -5898,6 +6293,31 @@ function OpenWorldScene({
       withBody,
     ],
   );
+
+  // Dev-хук: детонация из консоли/CDP (пара к __mamTeleport/__mamLook).
+  // Headless Chrome не даёт pointer lock, и физический выстрел из оружия
+  // оттуда ненадёжен; детерминированная точка взрыва позволяет проверять
+  // весь конвейер взрыва — очередь carve, settle, волну — одним вызовом.
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") {
+      return;
+    }
+    const scope = window as unknown as Record<string, unknown>;
+    const detonate = (
+      x: number,
+      y: number,
+      z: number,
+      kind: ExplosiveKind = "rocket",
+    ) => {
+      explodeAt(new Vector3(x, y, z), kind);
+    };
+    scope.__mamExplode = detonate;
+    return () => {
+      if (scope.__mamExplode === detonate) {
+        delete scope.__mamExplode;
+      }
+    };
+  }, [explodeAt]);
 
   const handleGrenadeExplode = useCallback(
     (
@@ -6559,6 +6979,26 @@ function OpenWorldScene({
     },
     [],
   );
+  /**
+   * The ram's screen is not attached to the hull, it is expressed in the
+   * hull's own frame — so it reads the very pose the cluster publishes, the
+   * same one the pieces and the onboard lamps are drawn with. No pose, no
+   * screen: an unspawned carrier must not leave a membrane in the sky.
+   */
+  const skyRamShieldPose = useCallback((): BasaltForceFieldPose | null => {
+    const frame = vehicleFramePoses.current.get(BASALT_SKY_RAM_CLUSTER_ID);
+    if (!frame) {
+      return null;
+    }
+    return {
+      position: [
+        frame.origin[0] + frame.pose.position[0],
+        frame.origin[1] + frame.pose.position[1],
+        frame.origin[2] + frame.pose.position[2],
+      ],
+      orientation: vehicleRotation(frame.pose, frame.nose),
+    };
+  }, []);
   const resolveLampPosition = useCallback(
     (lamp: LampDefinition) => {
       if (!lamp.carrierClusterId) {
@@ -6786,6 +7226,7 @@ function OpenWorldScene({
         <BasaltForceFieldSystem
           ref={basaltForceField}
           resetVersion={resetVersion}
+          skyRamPose={skyRamShieldPose}
         />
       ) : null}
       {scene.worldRadius ? (
@@ -6838,23 +7279,14 @@ function OpenWorldScene({
           registerBody={registerBody}
           onDebrisContact={handleDebrisContact}
         />
-        {remnants.map((remnant) => (
-          <Remnant
-            key={remnant.id}
-            remnant={remnant}
-            freed={remnant.detached || brokenPieces.has(remnant.parentId)}
-            registerBody={registerBody}
-            onContact={handleRemnantContact}
-          />
-        ))}
-        {shards.map((shard) => (
-          <Shard
-            key={shard.id}
-            shard={shard}
-            registerBody={registerBody}
-            onContact={handleShardContact}
-          />
-        ))}
+        <DebrisBodies
+          shards={shards}
+          remnants={remnants}
+          brokenPieces={brokenPieces}
+          registerBody={registerBody}
+          onShardContact={handleShardContact}
+          onRemnantContact={handleRemnantContact}
+        />
         <DynamicBreakableWorld
           pieces={[]}
           shards={shards}
@@ -6975,6 +7407,7 @@ function OpenWorldScene({
             passengerViewMotion={passengerViewMotion}
             onActiveChange={onActiveChange}
             onFallbackChange={onFallbackChange}
+            onPointerLockChange={onPointerLockChange}
             onStrike={strike}
             onStrikeEnd={strikeEnd}
           />
@@ -7547,11 +7980,13 @@ function siegeClockText(seconds: number): string {
     + `:${String(left % 60).padStart(2, "0")}`;
 }
 
-interface HudAnnouncementEvent {
-  readonly id: number;
-  readonly kickerKey: TranslationKey;
-  readonly textKey: TranslationKey;
-}
+/**
+ * Длительности перехода. Раскрытие должно совпадать с transition в
+ * `.world-shutter.is-opening`, уход — с анимацией распада формы: и то и другое
+ * ждёт кадр, а не наоборот.
+ */
+const SHUTTER_REVEAL_MS = 1_150;
+const DEPARTURE_SHUTTER_MS = 2_000;
 
 const vehicleFailureAnnouncementKeys = {
   structureLost: "announce.vehicleFailure.structureLost",
@@ -7829,43 +8264,132 @@ function MotionTelemetryPanel({
   );
 }
 
+interface FrameCaptionValue {
+  readonly id: number;
+  readonly priority: CaptionPriority;
+  readonly kicker: string;
+  readonly title: string;
+}
+
 /**
- * Титр режима и дежурные чипы.
+ * Единственный слот нижней подписи.
  *
- * Смена режима — событие, а не строка в панели: сперва титр по центру снизу в
- * стиле наших пролётов, он сам уходит, а в правом верхнем углу остаётся чип,
- * пока режим включён. Отсюда и правило: титр показывается на СМЕНУ значения, а
- * чип живёт от значения.
+ * Раньше здесь стояли два независимых элемента почти в одних координатах:
+ * титр смены режима и статус прилёта. Они честно накладывались друг на друга —
+ * «Пустые руки. Просто смотри» поверх «Входим в воздушное пространство…».
+ * Теперь координаты принадлежат слоту, а право говорить решает приоритет:
+ * подпись перехода вытесняет всё, что игрок может вызвать сам.
  */
-function ModeAnnounce({
+function useFrameCaption() {
+  const [caption, setCaption] = useState<FrameCaptionValue | null>(null);
+  const nextId = useRef(0);
+
+  const publishCaption = useCallback(
+    (priority: CaptionPriority, kicker: string, title: string) => {
+      nextId.current += 1;
+      const id = nextId.current;
+      setCaption((current) =>
+        captionAccepts(current?.priority ?? null, priority)
+          ? { id, priority, kicker, title }
+          : current,
+      );
+    },
+    [],
+  );
+
+  const withdrawCaption = useCallback((priority: CaptionPriority) => {
+    setCaption((current) => (current?.priority === priority ? null : current));
+  }, []);
+
+  useEffect(() => {
+    // Титр события уходит сам. Подпись перехода живёт своей причиной, а не
+    // таймером: снимет её тот, кто поставил, когда причина кончится.
+    if (!caption || caption.priority === "transit") {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      setCaption((current) => (current?.id === caption.id ? null : current));
+    }, 2_600);
+    return () => window.clearTimeout(timer);
+  }, [caption]);
+
+  return { caption, publishCaption, withdrawCaption } as const;
+}
+
+function FrameCaptionSlot({
+  caption,
+}: {
+  caption: FrameCaptionValue | null;
+}): ReactElement | null {
+  if (!caption) {
+    return null;
+  }
+  const held = caption.priority === "transit";
+  const words = caption.title.split(" ");
+  return (
+    // key по id: одинаковый титр подряд обязан проиграться заново.
+    <p
+      className={`frame-caption is-${held ? "transit" : "player"}`}
+      key={caption.id}
+      role="status"
+      aria-live="polite"
+    >
+      <span className="frame-caption-kicker">{caption.kicker}</span>
+      <span className="frame-caption-title">
+        {held
+          ? caption.title
+          : words.map((word, index) => (
+              <span
+                key={`${word}:${index}`}
+                style={{ "--word-index": index } as CSSProperties}
+              >
+                {word}
+                {index < words.length - 1 ? " " : ""}
+              </span>
+            ))}
+      </span>
+    </p>
+  );
+}
+
+/**
+ * Титр показывается на СМЕНУ значения, чип живёт ОТ значения — правило то же,
+ * что и было. Добавилось одно: титр говорит от лица игрока, поэтому смены,
+ * которые за него сделал переход между стадиями кадра (вход в рейс отбирает
+ * оружие, выход возвращает), титром не объявляются. Иначе кадр называет
+ * игрока автором чужого действия — и ровно это раньше выбрасывало
+ * «Пустые руки» поверх приветствия острова.
+ */
+function usePlayerModeCaption({
+  stage,
   flightMode,
   weapon,
   timeOfDay,
-  announcement,
+  publishCaption,
 }: {
+  stage: WorldEntryStage;
   flightMode: boolean;
   weapon: WeaponName;
   timeOfDay: TimeOfDay;
-  announcement?: HudAnnouncementEvent | null;
-}): ReactElement | null {
+  publishCaption: (
+    priority: CaptionPriority,
+    kicker: string,
+    title: string,
+  ) => void;
+}) {
   const { t } = useLanguage();
-  const [caption, setCaption] = useState<{
-    id: number;
-    kicker: string;
-    text: string;
-  } | null>(null);
   const previous = useRef<{
+    stage: WorldEntryStage;
     flightMode: boolean;
     weapon: WeaponName;
     timeOfDay: TimeOfDay;
   } | null>(null);
-  const nextId = useRef(0);
 
   useEffect(() => {
     const before = previous.current;
-    previous.current = { flightMode, weapon, timeOfDay };
+    previous.current = { stage, flightMode, weapon, timeOfDay };
     // Первый кадр — это не смена режима, а его начальное состояние: молчим.
-    if (!before) {
+    if (!before || !announcesPlayerChoice(stage, before.stage)) {
       return;
     }
     let kicker = t("announce.kicker");
@@ -7890,30 +8414,19 @@ function ModeAnnounce({
     if (!text) {
       return;
     }
-    nextId.current += 1;
-    setCaption({ id: nextId.current, kicker, text });
-  }, [flightMode, timeOfDay, weapon, t]);
+    publishCaption("player", kicker, text);
+  }, [flightMode, publishCaption, stage, timeOfDay, weapon, t]);
+}
 
-  useEffect(() => {
-    if (!announcement) {
-      return;
-    }
-    nextId.current += 1;
-    setCaption({
-      id: nextId.current,
-      kicker: t(announcement.kickerKey),
-      text: t(announcement.textKey),
-    });
-  }, [announcement, t]);
-
-  useEffect(() => {
-    if (!caption) {
-      return;
-    }
-    const timer = setTimeout(() => setCaption(null), 2600);
-    return () => clearTimeout(timer);
-  }, [caption]);
-
+/** Чип живёт от значения и принадлежит пешеходному интерфейсу. */
+function ModeChips({
+  flightMode,
+  weapon,
+}: {
+  flightMode: boolean;
+  weapon: WeaponName;
+}): ReactElement | null {
+  const { t } = useLanguage();
   const weaponChip =
     weapon === "none"
       ? null
@@ -7925,34 +8438,14 @@ function ModeAnnounce({
             ? t("weapon.rocket")
             : t("weapon.mg");
 
+  if (!flightMode && !weaponChip) {
+    return null;
+  }
   return (
-    <>
-      {caption ? (
-        // key по id: одинаковый титр подряд обязан проиграться заново.
-        <div className="mode-announce" key={caption.id} aria-live="polite">
-          <p className="mode-announce-kicker">{caption.kicker}</p>
-          <p className="mode-announce-title">
-            {caption.text.split(" ").map((word, index) => (
-              <span
-                key={`${word}:${index}`}
-                style={{ "--word-index": index } as CSSProperties}
-              >
-                {word}
-                {index < caption.text.split(" ").length - 1 ? "\u00a0" : ""}
-              </span>
-            ))}
-          </p>
-        </div>
-      ) : null}
-      {flightMode || weaponChip ? (
-        <div className="mode-chips" aria-hidden="true">
-          {flightMode ? (
-            <span className="mode-chip">{t("chip.flight")}</span>
-          ) : null}
-          {weaponChip ? <span className="mode-chip">{weaponChip}</span> : null}
-        </div>
-      ) : null}
-    </>
+    <div className="mode-chips" aria-hidden="true">
+      {flightMode ? <span className="mode-chip">{t("chip.flight")}</span> : null}
+      {weaponChip ? <span className="mode-chip">{weaponChip}</span> : null}
+    </div>
   );
 }
 
@@ -8061,7 +8554,20 @@ export function MakeAMessGame({
     interIslandBootstrapSnapshot,
     serverInterIslandBootstrapSnapshot,
   );
-  const [arrivalCompleted, setArrivalCompleted] = useState(false);
+  const [worldEntry, dispatchWorldEntry] = useReducer(
+    reduceWorldEntry,
+    undefined,
+    initialWorldEntryState,
+  );
+  const stage = worldEntry.stage;
+  const surfaces = frameSurfaces(stage);
+  /**
+   * Кадр «активен» либо потому, что игрок вошёл сам, либо потому, что его
+   * поставили в мир: прилёт и рейс происходят без нажатия кнопки, и выводить
+   * это из стадии честнее, чем выставлять флаг эффектом.
+   */
+  const framePlacesPlayer =
+    stage === "sealed" || stage === "revealing" || stage === "transit";
   const resolvedInitialArrival = useMemo(
     () =>
       arrivalBootstrapSnapshot
@@ -8069,13 +8575,27 @@ export function MakeAMessGame({
         : null,
     [arrivalBootstrapSnapshot, sceneProp.id],
   );
-  const initialArrival = arrivalCompleted ? null : resolvedInitialArrival;
+  // Прилёт владеет позой игрока ровно до швартовки. Стадия — единственный
+  // источник этого факта: раньше его хранили отдельным флагом, и он расходился
+  // с тем, что показывал экран.
+  const arrivalUnderway =
+    worldEntry.scenario === "arriving" && transitLeg(stage) === "arrival";
+  const initialArrival = arrivalUnderway ? resolvedInitialArrival : null;
   const arrivalBootstrapComplete = arrivalBootstrapSnapshot !== null;
   const initialArrivalFlightKind = initialArrival?.flightKind ?? null;
   const initialArrivalPassengerTransit =
     initialArrival?.passengerTransit ?? null;
-  const [active, setActive] = useState(false);
-  const [fallbackLook, setFallbackLook] = useState(false);
+  const [controlActive, setActive] = useState(false);
+  const touchLikeDevice = useSyncExternalStore(
+    subscribeStaticEnvironment,
+    isTouchLikeDevice,
+    () => false,
+  );
+  const [reportedFallbackLook, setFallbackLook] = useState<boolean | null>(
+    null,
+  );
+  const fallbackLook = reportedFallbackLook ?? touchLikeDevice;
+  const active = controlActive || framePlacesPlayer;
   const [controlRequest, setControlRequest] = useState(0);
   const [brokenCount, setBrokenCount] = useState(0);
   const [resetVersion, setResetVersion] = useState(0);
@@ -8122,15 +8642,9 @@ export function MakeAMessGame({
     initialArrival && !interIslandPassengerReportReceived
       ? { flightActive: true, passengerInsideCarrier: true }
       : reportedInterIslandPassengerState;
-  const [journeyTransition, setJourneyTransition] = useState<{
-    readonly phase: "departure" | "arrival";
-    readonly origin: IslandId;
-    readonly destination: IslandId;
-  } | null>(null);
-  const [arrivalPresentationPhase, setArrivalPresentationPhase] = useState<
-    "loading" | "welcome" | "revealing" | "hidden"
-  >("loading");
   const journeyNavigationStarted = useRef(false);
+  const { caption, publishCaption, withdrawCaption } = useFrameCaption();
+  const [pointerLockHeld, setPointerLockHeld] = useState(false);
   const [occupiedSeatId, setOccupiedSeatId] = useState<string | null>(null);
   const flyoverRecorder = useRef<MediaRecorder | null>(null);
   const flyoverChapterRef = useRef<FlyoverChapter | null>(null);
@@ -8147,16 +8661,25 @@ export function MakeAMessGame({
   });
   const [telemetryStore] = useState(createMotionTelemetryStore);
   const [telemetryVisible, setTelemetryVisible] = useState(false);
-  const [hudAnnouncement, setHudAnnouncement] =
-    useState<HudAnnouncementEvent | null>(null);
-  const hudAnnouncementId = useRef(0);
   const flyoverRunning =
     flyoverMode === "playing" || flyoverMode === "recording";
   const cinematicActive = flyover !== undefined && flyoverMode !== "idle";
 
+  useEffect(() => {
+    dispatchWorldEntry({
+      kind: cinematicActive ? "cinematicStarted" : "cinematicEnded",
+    });
+  }, [cinematicActive]);
+
   // A map rule, read from the scene: the first minutes are walked, not flown.
   const flightLockSeconds = scene.flightLockSeconds ?? 0;
   const [flightLockLifted, setFlightLockLifted] = useState(false);
+  /**
+   * The countdown stays out of sight until the player reaches for flight. A
+   * rule nobody has run into yet is not news — announcing it on arrival would
+   * only advertise a restriction most of the first five minutes never notice.
+   */
+  const [flightLockAsked, setFlightLockAsked] = useState(false);
   const [flightLockRemaining, setFlightLockRemaining] =
     useState(flightLockSeconds);
   const flightLockDeadline = useRef<number | null>(null);
@@ -8183,14 +8706,12 @@ export function MakeAMessGame({
     return () => clearInterval(timer);
   }, [active, flightLockLifted, flightLockSeconds]);
 
-  const announceTelemetry = useCallback((textKey: TranslationKey) => {
-    hudAnnouncementId.current += 1;
-    setHudAnnouncement({
-      id: hudAnnouncementId.current,
-      kickerKey: "announce.telemetryKicker",
-      textKey,
-    });
-  }, []);
+  const announceTelemetry = useCallback(
+    (textKey: TranslationKey) => {
+      publishCaption("telemetry", t("announce.telemetryKicker"), t(textKey));
+    },
+    [publishCaption, t],
+  );
 
   const handleMotionTelemetryUpdate = useCallback(
     (update: MotionTelemetryUpdate) => {
@@ -8199,14 +8720,16 @@ export function MakeAMessGame({
     [telemetryStore],
   );
 
-  const handleVehicleFailure = useCallback((event: VehicleFailureEvent) => {
-    hudAnnouncementId.current += 1;
-    setHudAnnouncement({
-      id: hudAnnouncementId.current,
-      kickerKey: "announce.vehicleFailureKicker",
-      textKey: vehicleFailureAnnouncementKeys[event.reason],
-    });
-  }, []);
+  const handleVehicleFailure = useCallback(
+    (event: VehicleFailureEvent) => {
+      publishCaption(
+        "telemetry",
+        t("announce.vehicleFailureKicker"),
+        t(vehicleFailureAnnouncementKeys[event.reason]),
+      );
+    },
+    [publishCaption, t],
+  );
 
   const requestWeaponChange = useCallback(
     (nextWeapon: WeaponName) => {
@@ -8216,17 +8739,16 @@ export function MakeAMessGame({
           nextWeapon,
         )
       ) {
-        hudAnnouncementId.current += 1;
-        setHudAnnouncement({
-          id: hudAnnouncementId.current,
-          kickerKey: "announce.interIslandRulesKicker",
-          textKey: "announce.interIslandWeaponBlocked",
-        });
+        publishCaption(
+          "telemetry",
+          t("announce.interIslandRulesKicker"),
+          t("announce.interIslandWeaponBlocked"),
+        );
         return;
       }
       setWeapon(nextWeapon);
     },
-    [interIslandPassengerState.flightActive],
+    [interIslandPassengerState.flightActive, publishCaption, t],
   );
 
   const toggleMotionTelemetry = useCallback(() => {
@@ -8449,18 +8971,19 @@ export function MakeAMessGame({
 
   const toggleFlightMode = useCallback(() => {
     if (flightLocked && !flightMode) {
-      // Refusing silently would read as a broken key, so the rule speaks.
-      hudAnnouncementId.current += 1;
-      setHudAnnouncement({
-        id: hudAnnouncementId.current,
-        kickerKey: "announce.flightLockedKicker",
-        textKey: "announce.flightLocked",
-      });
+      // Refusing silently would read as a broken key, so the rule speaks — and
+      // from here on the countdown is worth showing, because it was asked for.
+      setFlightLockAsked(true);
+      publishCaption(
+        "telemetry",
+        t("announce.flightLockedKicker"),
+        t("announce.flightLocked"),
+      );
       return;
     }
     mobileControls.current.jump = false;
     setFlightMode((current) => !current);
-  }, [flightLocked, flightMode]);
+  }, [flightLocked, flightMode, publishCaption, t]);
 
   useEffect(() => {
     if (flightLockSeconds <= 0 || flightLockLifted) {
@@ -8483,16 +9006,15 @@ export function MakeAMessGame({
       if (typed !== wanted) return;
       typed = "";
       setFlightLockLifted(true);
-      hudAnnouncementId.current += 1;
-      setHudAnnouncement({
-        id: hudAnnouncementId.current,
-        kickerKey: "announce.flightLockedKicker",
-        textKey: "announce.flightUnlocked",
-      });
+      publishCaption(
+        "telemetry",
+        t("announce.flightLockedKicker"),
+        t("announce.flightUnlocked"),
+      );
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [flightLockLifted, flightLockSeconds]);
+  }, [flightLockLifted, flightLockSeconds, publishCaption, t]);
 
   // Подходов два источника — двери и транспорт, — а подсказка одна. Внутри
   // судна обзорный рейс первичен; во всех остальных спорах побеждает дверь.
@@ -8535,7 +9057,11 @@ export function MakeAMessGame({
   }, []);
 
   const handleInterIslandPassengerStateChange = useCallback(
-    (flightActive: boolean, passengerInsideCarrier: boolean) => {
+    (
+      flightActive: boolean,
+      passengerInsideCarrier: boolean,
+      flightKind: string | null,
+    ) => {
       setInterIslandPassengerReportReceived(true);
       setInterIslandPassengerState((current) =>
         current.flightActive === flightActive &&
@@ -8543,8 +9069,23 @@ export function MakeAMessGame({
           ? current
           : { flightActive, passengerInsideCarrier },
       );
+      // Перелёт начинается здесь — на причале, когда судно приняло рейс, — а
+      // не на кромке карты. Прилётные рейсы сюда не попадают: у них другой
+      // вид, и назначения на этом острове для них нет.
+      const origin = flightActive ? islandIdForScene(scene.id) : null;
+      const destination =
+        origin && flightKind
+          ? interIslandTransferDestination(origin, flightKind)
+          : null;
+      if (origin && destination) {
+        dispatchWorldEntry({
+          kind: "interIslandBoarded",
+          origin,
+          destination,
+        });
+      }
     },
-    [],
+    [scene.id],
   );
 
   const handleInterIslandBoundary = useCallback(
@@ -8587,22 +9128,33 @@ export function MakeAMessGame({
         return;
       }
       journeyNavigationStarted.current = true;
-      setJourneyTransition({ phase: "departure", origin, destination });
-      window.setTimeout(() => {
-        const url = new URL(
-          ISLAND_CHART[destination].path,
-          window.location.origin,
-        );
-        url.searchParams.set("arrivalFrom", origin);
-        window.location.assign(url.toString());
-      }, 2_200);
+      dispatchWorldEntry({ kind: "departureRequested", origin, destination });
     },
     [scene.id],
   );
 
+  // Уход — это событие, а не фон, поверх которого можно ещё успеть махнуть
+  // молотом: ввод умирает вместе со стадией, а страница уходит по окончании
+  // анимации, а не параллельно ей.
+  useEffect(() => {
+    if (stage !== "departing" || !worldEntry.origin || !worldEntry.destination) {
+      return undefined;
+    }
+    const origin = worldEntry.origin;
+    const destination = worldEntry.destination;
+    const timer = window.setTimeout(() => {
+      const url = new URL(
+        ISLAND_CHART[destination].path,
+        window.location.origin,
+      );
+      url.searchParams.set("arrivalFrom", origin);
+      window.location.assign(url.toString());
+    }, DEPARTURE_SHUTTER_MS);
+    return () => window.clearTimeout(timer);
+  }, [stage, worldEntry.destination, worldEntry.origin]);
+
   const handleInterIslandArrivalComplete = useCallback(() => {
-    setJourneyTransition(null);
-    setArrivalCompleted(true);
+    dispatchWorldEntry({ kind: "flightDocked" });
     setInterIslandPassengerState({
       flightActive: false,
       passengerInsideCarrier: false,
@@ -8626,49 +9178,84 @@ export function MakeAMessGame({
       if (flightKind !== initialArrivalFlightKind) {
         return;
       }
-      setArrivalPresentationPhase((current) =>
-        current === "loading" ? "welcome" : current,
-      );
+      dispatchWorldEntry({ kind: "carrierBoarded" });
     },
     [initialArrivalFlightKind],
   );
 
+  // Сценарий входа читается ровно один раз, из того же снимка, что и сам
+  // прилёт: иначе кадр и физика могут разойтись в том, что происходит.
   useEffect(() => {
-    if (!initialArrival) {
-      return undefined;
+    if (!arrivalBootstrapComplete) {
+      return;
     }
-
-    prepareGameAudio();
-    setActive(true);
-    setArrivalPresentationPhase("loading");
-    return undefined;
-  }, [initialArrival]);
-
-  useEffect(() => {
-    if (!initialArrival || arrivalPresentationPhase !== "welcome") {
-      return undefined;
-    }
-    // The complete destination is already concealed behind the fog. Give the
-    // welcome line one clean beat before revealing the live arrival flight.
-    const revealTimer = window.setTimeout(() => {
-      setArrivalPresentationPhase("revealing");
-    }, 900);
-    return () => {
-      window.clearTimeout(revealTimer);
-    };
-  }, [arrivalPresentationPhase, initialArrival]);
+    dispatchWorldEntry(
+      resolvedInitialArrival
+        ? {
+            kind: "scenarioResolved",
+            scenario: "arriving",
+            origin: resolvedInitialArrival.origin,
+            destination: resolvedInitialArrival.destination,
+          }
+        : { kind: "scenarioResolved", scenario: "standing" },
+    );
+  }, [arrivalBootstrapComplete, resolvedInitialArrival]);
 
   useEffect(() => {
-    if (!initialArrival || arrivalPresentationPhase !== "revealing") {
+    if (ready) {
+      dispatchWorldEntry({ kind: "worldReady" });
+    }
+  }, [ready]);
+
+  // Прилёт не спрашивает разрешения войти: игрок уже в мире, на борту судна.
+  // Кнопки ворот здесь нет, поэтому звук готовит сама стадия.
+  useEffect(() => {
+    if (stage === "sealed") {
+      prepareGameAudio();
+    }
+  }, [stage]);
+
+  // Страховка от зависшей заслонки: носитель мог не собраться, и тогда
+  // единственный честный выход — впустить игрока как всех, через ворота.
+  useEffect(() => {
+    if (stage !== "sealed") {
       return undefined;
     }
-    const hideTimer = window.setTimeout(() => {
-      setArrivalPresentationPhase("hidden");
-    }, 1_600);
-    return () => {
-      window.clearTimeout(hideTimer);
-    };
-  }, [arrivalPresentationPhase, initialArrival]);
+    const timer = window.setTimeout(() => {
+      dispatchWorldEntry({ kind: "sealTimedOut" });
+    }, WORLD_SEAL_TIMEOUT_MS);
+    return () => window.clearTimeout(timer);
+  }, [stage]);
+
+  // Заслонка расходится прозрачностью, и её конец — конец перехода. Таймер
+  // здесь дублирует transitionend: событие не придёт, если элемент сняли
+  // раньше, а стадия обязана двинуться в любом случае.
+  useEffect(() => {
+    if (stage !== "revealing") {
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      dispatchWorldEntry({ kind: "shutterOpened" });
+    }, SHUTTER_REVEAL_MS + 250);
+    return () => window.clearTimeout(timer);
+  }, [stage]);
+
+  // Подпись перехода держится своей причиной: пока заслонка закрыта — именем
+  // острова, на раскрытии — приветствием, на уходе — тем, куда уходим.
+  const journeyIsland = worldEntry.destination;
+  const shutterMessage = shutterCaptionMessage(stage);
+  useEffect(() => {
+    if (!shutterMessage || !journeyIsland) {
+      withdrawCaption("transit");
+      return;
+    }
+    publishCaption(
+      "transit",
+      t("interIsland.transitEyebrow"),
+      t(interIslandJourneyCopyKey(journeyIsland, shutterMessage)),
+    );
+  }, [journeyIsland, publishCaption, shutterMessage, t, withdrawCaption]);
+
 
   const openApproachedEntry = useCallback(
     (actionId?: string) => {
@@ -8782,39 +9369,53 @@ export function MakeAMessGame({
     interIslandPassengerState.flightActive,
     interIslandPassengerState.passengerInsideCarrier,
   );
-  const visibleJourneyTransition =
-    journeyTransition ??
-    (initialArrival && arrivalPresentationPhase !== "hidden"
-      ? {
-          phase: "arrival" as const,
-          origin: initialArrival.origin,
-          destination: initialArrival.destination,
-        }
-      : null);
-  const arrivalStatus =
-    visibleJourneyTransition?.phase === "arrival"
-      ? t(
-          interIslandArrivalCopyKey(
-            visibleJourneyTransition.destination,
-            arrivalPresentationPhase === "loading"
-              ? "enteringAirspace"
-              : "welcome",
-          ),
-        )
+  const journeyPlan =
+    worldEntry.origin && worldEntry.destination
+      ? shipTransmutationPlan(worldEntry.origin, worldEntry.destination)
       : null;
-  const journeyTransmutation = visibleJourneyTransition
-    ? shipTransmutationPlan(
-        visibleJourneyTransition.origin,
-        visibleJourneyTransition.destination,
-      )
-    : null;
+  // Сущность корабля одна, форма зависит от плеча: на уходе на экране та форма,
+  // что растворяется, на прилёте — та, что собирается.
+  const shutterShipForm =
+    surfaces.shutter === "departure"
+      ? (journeyPlan?.sourceForm ??
+        (worldEntry.origin ? shipFormForIsland(worldEntry.origin) : null))
+      : surfaces.shutter === "arrival"
+        ? (journeyPlan?.destinationForm ??
+          (worldEntry.destination
+            ? shipFormForIsland(worldEntry.destination)
+            : null))
+        : null;
   const equippedWeapon: WeaponName =
     occupiedSeatId || !passengerAccess.weaponEnabled ? "none" : weapon;
+  const transitBanner = transitBannerMessage(stage, worldEntry.scenario);
+
+  usePlayerModeCaption({
+    stage,
+    flightMode,
+    weapon: equippedWeapon,
+    timeOfDay,
+    publishCaption,
+  });
+
+  /**
+   * Отпустить указатель — это стадия, а не флаг. В обычной игре Escape даёт
+   * паузу с карточкой; во время рейса карточки запуска быть не может — ты уже
+   * в мире, — поэтому там стадия не меняется, а кадр просто просит управление
+   * обратно. Раньше на этом месте был тупик: ворота не показывались, а клик по
+   * канве отсекался проверкой `active`, и вернуть управление было нечем.
+   */
+  const handleActiveChange = useCallback((next: boolean) => {
+    setActive(next);
+    if (!next) {
+      dispatchWorldEntry({ kind: "controlReleased" });
+    }
+  }, []);
+
   const startPlaying = useCallback(() => {
     prepareGameAudio();
     setActive(true);
+    dispatchWorldEntry({ kind: "playerEntered" });
     const touchLike = isTouchLikeDevice();
-    setFallbackLook(touchLike);
     setControlRequest((version) => version + 1);
     emitGameAction("player.spawned");
     if (touchLike) {
@@ -8909,8 +9510,9 @@ export function MakeAMessGame({
                       passengerAccess.ignoreWorldBoundary
                     }
                     cinematic={cinematicActive}
-                    onActiveChange={setActive}
+                    onActiveChange={handleActiveChange}
                     onFallbackChange={setFallbackLook}
+                    onPointerLockChange={setPointerLockHeld}
                     onBrokenCountChange={setBrokenCount}
                     onDynamicBodyCountChange={setDynamicBodyCount}
                     onEntryApproachChange={handleEntryApproachChange}
@@ -8955,16 +9557,18 @@ export function MakeAMessGame({
         ) : null}
       </div>
 
-      {!cinematicActive ? (
-        <ModeAnnounce
-          flightMode={flightMode}
-          weapon={equippedWeapon}
-          timeOfDay={timeOfDay}
-          announcement={hudAnnouncement}
-        />
+      {/* Слот один. Когда стоит заслонка, подпись живёт внутри неё — иначе
+        aria-live объявил бы одну и ту же строку дважды, а вторая копия лежала
+        бы под глухой поверхностью. */}
+      {surfaces.shutter === "none" ? (
+        <FrameCaptionSlot caption={caption} />
       ) : null}
 
-      {!cinematicActive && active && flightLocked ? (
+      {surfaces.worldHud ? (
+        <ModeChips flightMode={flightMode} weapon={equippedWeapon} />
+      ) : null}
+
+      {surfaces.worldHud && active && flightLocked && flightLockAsked ? (
         <p className="flight-lock-note" aria-live="polite">
           <span className="flight-lock-label">{t("flightLock.label")}</span>
           <span className="flight-lock-clock">
@@ -9014,7 +9618,7 @@ export function MakeAMessGame({
         </aside>
       ) : null}
 
-      {telemetryVisible && !cinematicActive ? (
+      {telemetryVisible && surfaces.worldHud ? (
         <MotionTelemetryPanel
           store={telemetryStore}
           timeOfDay={timeOfDay}
@@ -9022,7 +9626,7 @@ export function MakeAMessGame({
         />
       ) : null}
 
-      {!cinematicActive ? (
+      {surfaces.worldHud ? (
         <aside className="game-objective" aria-live="polite">
           <p>{copy.eyebrow}</p>
           <h1>{copy.heading}</h1>
@@ -9069,7 +9673,7 @@ export function MakeAMessGame({
       ) : null}
 
       {/* В фоторежиме (пустые руки) прицел тоже прячется — кадр чистый. */}
-      {!cinematicActive && equippedWeapon !== "none" ? (
+      {surfaces.worldHud && equippedWeapon !== "none" ? (
         <div
           className={`crosshair${active ? " is-active" : ""}`}
           aria-hidden="true"
@@ -9079,7 +9683,7 @@ export function MakeAMessGame({
         </div>
       ) : null}
 
-      {active && !cinematicActive && activeHint ? (
+      {active && surfaces.actionHints && activeHint ? (
         <aside
           className={`game-action-hint${activeHint.durationMs === undefined ? " is-persistent" : ""}${hintLeaving ? " is-leaving" : ""}`}
           role="status"
@@ -9108,7 +9712,7 @@ export function MakeAMessGame({
       ) : null}
 
       {active &&
-      !cinematicActive &&
+      surfaces.actionHints &&
       approachedEntry &&
       hasNumberedEntryActions ? (
         <aside
@@ -9133,7 +9737,7 @@ export function MakeAMessGame({
         </aside>
       ) : null}
 
-      {!cinematicActive ? (
+      {surfaces.worldHud || surfaces.gateCard ? (
         <MobileGameControls
           active={active}
           flightMode={flightMode}
@@ -9154,7 +9758,7 @@ export function MakeAMessGame({
         />
       ) : null}
 
-      {!cinematicActive ? (
+      {surfaces.worldHud ? (
         <div className="controls-hint" aria-hidden="true">
           {!occupiedSeatId ? (
             <>
@@ -9209,46 +9813,55 @@ export function MakeAMessGame({
         </div>
       ) : null}
 
-      {!arrivalBootstrapComplete ? (
-        <div className="journey-bootstrap-veil" aria-hidden="true" />
-      ) : null}
-
-      {visibleJourneyTransition && journeyTransmutation ? (
+      {/* Заслонка. Одна поверхность на все три случая: пока клиент не прочёл
+        URL, пока строится мир назначения и пока уходит текущий. Цвет тот же,
+        что у страницы, поэтому первый кадр стабилен ещё до того, как кадр
+        узнал, какой сценарий входа перед ним. */}
+      {surfaces.shutter !== "none" ? (
         <div
-          className={`journey-transition is-${visibleJourneyTransition.phase}${
-            visibleJourneyTransition.phase === "arrival"
-              ? ` arrival-is-${arrivalPresentationPhase}`
-              : ""
+          className={`world-shutter is-${surfaces.shutter}${
+            surfaces.shutterOpening ? " is-opening" : ""
           }`}
-          data-ship-entity={journeyTransmutation.entityId}
-          data-source-form={journeyTransmutation.sourceForm}
-          data-destination-form={journeyTransmutation.destinationForm}
-          aria-hidden={visibleJourneyTransition.phase === "departure"}
+          data-ship-entity={journeyPlan?.entityId}
+          data-form={shutterShipForm ?? undefined}
+          onTransitionEnd={
+            surfaces.shutterOpening
+              ? () => dispatchWorldEntry({ kind: "shutterOpened" })
+              : undefined
+          }
         >
-          <i />
-          <i />
-          <i />
-          <div className="journey-transmutation">
-            <span className="journey-form-material" />
-            <span className="journey-form-envelope" />
-            <span className="journey-form-heart" />
-            <span className="journey-form-hull" />
-            <span className="journey-form-drive is-left" />
-            <span className="journey-form-drive is-right" />
-          </div>
-          {arrivalStatus ? (
-            <p
-              className="journey-arrival-status"
-              role="status"
-              aria-live="polite"
-            >
-              {arrivalStatus}
-            </p>
+          {shutterShipForm ? (
+            <div className="world-shutter-motif" aria-hidden="true">
+              <span className="world-shutter-hull" />
+              <span className="world-shutter-envelope" />
+              <span className="world-shutter-drive is-left" />
+              <span className="world-shutter-drive is-right" />
+              <span className="world-shutter-heart" />
+            </div>
           ) : null}
+          <FrameCaptionSlot caption={caption} />
         </div>
       ) : null}
 
-      {arrivalBootstrapComplete && !active && initialArrival === null && (
+      {/* Рейс продолжается ещё около минуты после того, как заслонка ушла.
+        Пока он идёт, кадр обязан отвечать на вопрос «почему я не иду пешком» —
+        раньше на этом месте был обычный пешеходный интерфейс. */}
+      {surfaces.transitBanner && journeyIsland && transitBanner ? (
+        <p className="transit-banner" role="status" aria-live="polite">
+          <span className="transit-banner-leg">
+            {t(interIslandJourneyCopyKey(journeyIsland, transitBanner))}
+          </span>
+          <span className="transit-banner-note">{t("interIsland.aboard")}</span>
+        </p>
+      ) : null}
+
+      {/* Захват указателя требует жеста, а прилёт жестом не является. Этот же
+        запрос — единственный выход из отпущенного во время рейса указателя. */}
+      {surfaces.wantsPointerLock && !pointerLockHeld && !fallbackLook ? (
+        <p className="take-control">{t("hud.takeControl")}</p>
+      ) : null}
+
+      {surfaces.gateCard && (
         <section className="game-gate" aria-label={t("hud.launchAria")}>
           <div className="gate-card">
             {ready ? (
@@ -9259,7 +9872,7 @@ export function MakeAMessGame({
               // нет вовсе. Оформлена как титры пролёта, чтобы ожидание было
               // частью фильма, а не системным сообщением.
               <div className="gate-loading">
-                <p className="mode-announce-kicker">
+                <p className="gate-loading-kicker">
                   {t("gate.loadingKicker")}
                 </p>
                 <p className="gate-loading-title">

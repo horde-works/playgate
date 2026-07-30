@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  BASALT_FORCE_FIELD_PROJECTION,
   BASALT_FORCE_FIELD_APPROACH_BULGE,
   BASALT_FORCE_FIELD_APPROACH_RANGE,
   BASALT_FORCE_FIELD_BLOOM_THRESHOLD,
@@ -67,7 +68,9 @@ test("small directed hexes follow the battlement and the tower instead of a dome
     [0, 44, -36],
   ]) {
     assert.ok(
-      intersectBasaltForceField(SPAWN, protectedPoint, damage),
+      intersectBasaltForceField(
+    BASALT_FORCE_FIELD_PROJECTION,
+    SPAWN, protectedPoint, damage),
       `${protectedPoint.join(",")} is exposed from spawn`,
     );
   }
@@ -76,8 +79,12 @@ test("small directed hexes follow the battlement and the tower instead of a dome
 test("the same cell protects inward and deliberately passes outward", () => {
   const damage = emptyBasaltForceFieldDamage();
   const fortress = [0, 5, 0];
-  assert.equal(basaltForceFieldBlocksSegment(SPAWN, fortress, damage), true);
-  assert.equal(basaltForceFieldBlocksSegment(fortress, SPAWN, damage), false);
+  assert.equal(basaltForceFieldBlocksSegment(
+    BASALT_FORCE_FIELD_PROJECTION,
+    SPAWN, fortress, damage), true);
+  assert.equal(basaltForceFieldBlocksSegment(
+    BASALT_FORCE_FIELD_PROJECTION,
+    fortress, SPAWN, damage), false);
 });
 
 test("an arriving actor stops one capsule radius outside but can leave", () => {
@@ -86,6 +93,7 @@ test("an arriving actor stops one capsule radius outside but can leave", () => {
   const inside = [0, 1.25, 2.7];
   const clearance = 0.385;
   const inward = intersectBasaltForceField(
+    BASALT_FORCE_FIELD_PROJECTION,
     outside,
     inside,
     damage,
@@ -98,24 +106,35 @@ test("an arriving actor stops one capsule radius outside but can leave", () => {
     "the actor centre must stop before its capsule enters the projection",
   );
   assert.equal(
-    intersectBasaltForceField(inside, outside, damage, clearance),
+    intersectBasaltForceField(
+    BASALT_FORCE_FIELD_PROJECTION,
+    inside, outside, damage, clearance),
     null,
     "the same projected plate must not imprison an actor leaving the fortress",
   );
 
   damage = damageBasaltForceField(
+    BASALT_FORCE_FIELD_PROJECTION,
     damage,
     inward.cellIndex,
     "rocket",
   );
   assert.ok(
-    intersectBasaltForceField(outside, inside, damage, clearance),
+    intersectBasaltForceField(
+    BASALT_FORCE_FIELD_PROJECTION,
+    outside, inside, damage, clearance),
     "a visible but damaged cell must remain impassable",
   );
-  damage = damageBasaltForceField(damage, inward.cellIndex, "rocket");
-  damage = damageBasaltForceField(damage, inward.cellIndex, "rocket");
+  damage = damageBasaltForceField(
+    BASALT_FORCE_FIELD_PROJECTION,
+    damage, inward.cellIndex, "rocket");
+  damage = damageBasaltForceField(
+    BASALT_FORCE_FIELD_PROJECTION,
+    damage, inward.cellIndex, "rocket");
   assert.equal(
-    intersectBasaltForceField(outside, inside, damage, clearance),
+    intersectBasaltForceField(
+    BASALT_FORCE_FIELD_PROJECTION,
+    outside, inside, damage, clearance),
     null,
     "only a destroyed cell becomes a passage",
   );
@@ -124,13 +143,19 @@ test("an arriving actor stops one capsule radius outside but can leave", () => {
 test("three direct rockets open one real hole after absorbing the third blast", () => {
   const target = [0, 5, 0];
   let damage = emptyBasaltForceFieldDamage();
-  const originalHit = intersectBasaltForceField(SPAWN, target, damage);
+  const originalHit = intersectBasaltForceField(
+    BASALT_FORCE_FIELD_PROJECTION,
+    SPAWN, target, damage);
   assert.ok(originalHit);
 
   for (let strike = 1; strike <= 3; strike += 1) {
     // The cell is still alive when this strike arrives, including strike 3.
-    assert.ok(intersectBasaltForceField(SPAWN, target, damage));
-    damage = damageBasaltForceField(damage, originalHit.cellIndex, "rocket");
+    assert.ok(intersectBasaltForceField(
+    BASALT_FORCE_FIELD_PROJECTION,
+    SPAWN, target, damage));
+    damage = damageBasaltForceField(
+    BASALT_FORCE_FIELD_PROJECTION,
+    damage, originalHit.cellIndex, "rocket");
     assert.equal(
       damage[originalHit.cellIndex],
       strike,
@@ -142,7 +167,9 @@ test("three direct rockets open one real hole after absorbing the third blast", 
     damage[originalHit.cellIndex],
     BASALT_FORCE_FIELD_CELL_CAPACITY,
   );
-  assert.equal(intersectBasaltForceField(SPAWN, target, damage), null);
+  assert.equal(intersectBasaltForceField(
+    BASALT_FORCE_FIELD_PROJECTION,
+    SPAWN, target, damage), null);
 });
 
 test("rocket pressure reveals weaker first and second rings on shield topology", () => {
@@ -151,7 +178,9 @@ test("rocket pressure reveals weaker first and second rings on shield topology",
     (cell) => cell.network === "wall" && cell.q === 0 && cell.r === 3,
   );
   assert.ok(struck);
-  const next = damageBasaltForceField(damage, struck.index, "rocket");
+  const next = damageBasaltForceField(
+    BASALT_FORCE_FIELD_PROJECTION,
+    damage, struck.index, "rocket");
   const firstRing = BASALT_FORCE_FIELD_CELLS.find(
     (cell) => basaltForceFieldCellDistance(struck, cell) === 1,
   );
@@ -176,7 +205,9 @@ test("machine-gun energy marks only the directly struck projection", () => {
     (cell) => cell.network === "wall" && cell.q === 0 && cell.r === 3,
   );
   assert.ok(struck);
-  const next = damageBasaltForceField(damage, struck.index, "machineGun");
+  const next = damageBasaltForceField(
+    BASALT_FORCE_FIELD_PROJECTION,
+    damage, struck.index, "machineGun");
   assert.equal(Math.abs(next[struck.index] - 0.035) < 1e-6, true);
   assert.equal(
     BASALT_FORCE_FIELD_CELLS
@@ -229,7 +260,9 @@ test("no capsule height finds a notch along the foot of the curtain", () => {
   let leaks = 0;
   for (let x = -30; x <= 30; x += 0.25) {
     for (let y = 0.2; y <= 3; y += 0.1) {
-      if (!intersectBasaltForceField([x, y, 8], [x, y, -2], damage, capsule)) {
+      if (!intersectBasaltForceField(
+    BASALT_FORCE_FIELD_PROJECTION,
+    [x, y, 8], [x, y, -2], damage, capsule)) {
         leaks += 1;
       }
     }
@@ -242,6 +275,7 @@ test("the field answers an approach before it is ever touched", () => {
   // Standing short of the curtain, in front of the gatehouse.
   const outside = [0, 5, 3.45 + 0.4];
   const near = nearestBasaltForceFieldPlate(
+    BASALT_FORCE_FIELD_PROJECTION,
     outside,
     damage,
     BASALT_FORCE_FIELD_APPROACH_RANGE,
@@ -255,12 +289,16 @@ test("the field answers an approach before it is ever touched", () => {
   );
 
   assert.equal(
-    nearestBasaltForceFieldPlate(outside, damage, 0.2),
+    nearestBasaltForceFieldPlate(
+    BASALT_FORCE_FIELD_PROJECTION,
+    outside, damage, 0.2),
     null,
     "nothing may glow before the approach range is entered",
   );
   assert.equal(
-    nearestBasaltForceFieldPlate([0, 5, 3.45 - 0.4], damage, 2),
+    nearestBasaltForceFieldPlate(
+    BASALT_FORCE_FIELD_PROJECTION,
+    [0, 5, 3.45 - 0.4], damage, 2),
     null,
     "leaving the fortress must stay silent: the defended side only",
   );
@@ -284,7 +322,9 @@ test("a sustained load bends the membrane without spending capacity", () => {
   assert.equal(buffer.data[0], 0, "releasing must leave no bowl behind");
 
   // Leaning is not an attack: no amount of it opens a cell.
-  const cell = intersectBasaltForceField([0, 1.25, 31], point, damage);
+  const cell = intersectBasaltForceField(
+    BASALT_FORCE_FIELD_PROJECTION,
+    [0, 1.25, 31], point, damage);
   assert.ok(cell);
   for (let step = 0; step < 500; step += 1) {
     setBasaltForceFieldPress(buffer, 0, point, 1);
@@ -294,7 +334,9 @@ test("a sustained load bends the membrane without spending capacity", () => {
     0,
     "pressing must never spend the capacity that rockets are for",
   );
-  damage = damageBasaltForceField(damage, cell.cellIndex, "rocket");
+  damage = damageBasaltForceField(
+    BASALT_FORCE_FIELD_PROJECTION,
+    damage, cell.cellIndex, "rocket");
   assert.equal(damage[cell.cellIndex], 1, "only weapons spend it");
 });
 
@@ -341,7 +383,9 @@ test("a grenade is absorbed and marks the shield at its lower energy", () => {
     (cell) => cell.network === "wall" && cell.q === 0 && cell.r === 3,
   );
   assert.ok(struck);
-  const next = damageBasaltForceField(damage, struck.index, "grenade");
+  const next = damageBasaltForceField(
+    BASALT_FORCE_FIELD_PROJECTION,
+    damage, struck.index, "grenade");
   const firstRing = BASALT_FORCE_FIELD_CELLS.find(
     (cell) => basaltForceFieldCellDistance(struck, cell) === 1,
   );

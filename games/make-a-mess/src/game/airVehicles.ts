@@ -61,6 +61,12 @@ import {
  * The controller understands only this contract. A train, longship or any
  * later carrier supplies its own geometry, performance and routes here.
  */
+/**
+ * Lift reserve a carrier keeps when it authors none. Every airborne machine
+ * shipped before the reserve became a passport number flew with this one.
+ */
+export const DEFAULT_VEHICLE_LIFT_RESERVE = 1.12;
+
 export interface AirVehicleDefinition extends VehicleFrameDefinition {
   readonly departure?: {
     readonly target: EntryInteractionTarget;
@@ -99,6 +105,16 @@ export interface AirVehicleDefinition extends VehicleFrameDefinition {
     readonly linearDamping: number;
     readonly angularDamping: number;
     readonly lateralDragRatio: number;
+    /**
+     * Lift the intact envelope carries as a multiple of the intact weight.
+     *
+     * This is what a hole in the gas volume costs, so it is the machine's own
+     * number and not a constant of the world: lift falls with the surviving
+     * share of the envelope, and the craft sinks once the product drops below
+     * its weight. A reserve of R therefore keeps it flying until roughly
+     * `1 - 1/R` of the envelope is gone.
+     */
+    readonly liftReserve?: number;
     /** Physical reach of this berth's capture/winch, in metres. */
     readonly mooringReach?: number;
     routePlan(kind: string, berth: SceneVector3): VehicleRoutePlan;
@@ -662,6 +678,12 @@ export const BASALT_SKY_RAM_AIR_VEHICLE: AirVehicleDefinition = {
     linearDamping: 0.18,
     angularDamping: 0.48,
     lateralDragRatio: 8.5,
+    // Measured, not chosen: the envelope is 56 panels weighing 5.3 kg out of
+    // 290, so shedding them frees almost no weight and the surviving share
+    // decides everything. At the common 1.12 the ram went neutral after seven
+    // panels — 12.5%, and a single rocket into the crowded bow takes that
+    // many. 1.18 puts the loss of buoyancy at nine panels, 16.1%.
+    liftReserve: 1.18,
     mooringReach: 15,
     routePlan: (kind, berth) =>
       basaltSkyRamPlan(kind as BasaltSkyRamFlightKind, berth),
