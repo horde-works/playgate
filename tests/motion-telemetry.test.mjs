@@ -7,6 +7,8 @@ import {
   motionTelemetryAvailable,
   selectMotionTelemetrySnapshot,
 } from "../games/make-a-mess/src/game/motionTelemetry.ts";
+import { applyImpulseAtPoint } from "../games/make-a-mess/src/game/clusterDynamics.ts";
+import { createVehicleImpactTelemetry } from "../games/make-a-mess/src/game/vehicleImpactTelemetry.ts";
 
 const sample = (sourceId, capturedAt, priority = 0) => ({
   sourceId,
@@ -34,6 +36,19 @@ test("telemetry sources join and leave one reusable movement channel", () => {
     snapshot: null,
   });
   assert.equal(selectMotionTelemetrySnapshot(sources)?.sourceId, "airship");
+});
+
+test("a temporary autopilot mode does not erase the journey phase", () => {
+  const sources = applyMotionTelemetryUpdate(new Map(), {
+    sourceId: "airship",
+    snapshot: {
+      ...sample("airship", 10),
+      phase: "departure",
+      mode: "intercepting",
+    },
+  });
+  assert.equal(sources.get("airship")?.phase, "departure");
+  assert.equal(sources.get("airship")?.mode, "intercepting");
 });
 
 test("priority beats recency and a publisher cannot impersonate another source", () => {
@@ -103,6 +118,15 @@ test("any moving carrier uses the same telemetry availability rule", () => {
     motionTelemetryAvailable({ active: true, moving: false, airborne: false }),
     false,
   );
+  assert.equal(
+    motionTelemetryAvailable({
+      active: true,
+      moving: false,
+      airborne: false,
+      reportWhileStopped: true,
+    }),
+    true,
+  );
 });
 
 test("metric activity is generic and keeps paired values independent", () => {
@@ -116,10 +140,10 @@ test("metric activity is generic and keeps paired values independent", () => {
     motionTelemetryMetricActivity(previous, { ...previous, value: [28, 22] }),
     [true, false],
   );
-  assert.deepEqual(
-    motionTelemetryMetricActivity(undefined, previous),
-    [false, false],
-  );
+  assert.deepEqual(motionTelemetryMetricActivity(undefined, previous), [
+    false,
+    false,
+  ]);
 });
 
 test("circular telemetry does not mistake north crossing for a violent turn", () => {
@@ -137,5 +161,60 @@ test("circular telemetry does not mistake north crossing for a violent turn", ()
   assert.deepEqual(
     motionTelemetryMetricActivity(previous, { ...previous, value: 20 }),
     [true],
+  );
+});
+
+test("weapon telemetry keeps the impact point and response in carrier axes", () => {
+  const frame = {
+    origin: [0, 0, 0],
+    nose: [-1, 0, 0],
+    localBounds: {
+      minimum: [-5, -2, -1],
+      maximum: [5, 2, 1],
+    },
+  };
+  const properties = {
+    mass: 10,
+    centre: [0, 0, 0],
+    inertia: [10, 0, 0, 0, 10, 0, 0, 0, 10],
+    inverseInertia: [0.1, 0, 0, 0, 0.1, 0, 0, 0, 0.1],
+    pieces: 1,
+  };
+  const before = {
+    position: [0, 0, 0],
+    orientation: [0, 0, 0, 1],
+    velocity: [0, 0, 0],
+    angularVelocity: [0, 0, 0],
+  };
+  const applied = { impulse: [10, 0, 0], point: [-5, 2, 0] };
+  const after = applyImpulseAtPoint(before, properties, applied);
+  const impact = createVehicleImpactTelemetry({
+    frame,
+    properties,
+    before,
+    after,
+    impulses: [applied],
+    sequence: 3,
+    capturedAt: 120,
+  });
+
+  assert.ok(impact);
+  assert.equal(impact.sequence, 3);
+  assert.equal(
+    impact.pointOnHull[2] > 0,
+    true,
+    "the bow maps to the forward pole",
+  );
+  assert.equal(
+    impact.pointOnHull[1] > 0,
+    true,
+    "a high strike stays above centre",
+  );
+  assert.deepEqual(impact.impulseBody, [0, 0, -10]);
+  assert.deepEqual(impact.deltaVelocityBody, [0, 0, -1]);
+  assert.equal(
+    Math.abs(impact.deltaAngularVelocityBody[0] - 2) < 1e-9,
+    true,
+    "the off-centre bow strike records its pitch kick",
   );
 });

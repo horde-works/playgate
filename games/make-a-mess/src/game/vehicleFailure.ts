@@ -7,6 +7,8 @@ export type VehicleFailureReason =
   | "controlMismatch"
   | "stalled"
   | "goAroundLimit"
+  | "correctionLimit"
+  | "trimExhausted"
   | "dockingTimeout";
 
 /** One transport-neutral failure notification for HUDs, logs and dispatchers. */
@@ -17,9 +19,7 @@ export interface VehicleFailureEvent {
 }
 
 export type VehicleFailureDisposition =
-  | "escapeRoute"
-  | "descendBelowFog"
-  | "settleInPlace";
+  "escapeRoute" | "descendBelowFog" | "settleInPlace";
 
 export type VehicleRecoveryPhase =
   | "escape"
@@ -75,7 +75,10 @@ export function advanceVehicleGroundLiftAutomation(
   observation: VehicleGroundLiftAutomationObservation,
 ): VehicleGroundLiftAutomationState {
   const delta = Math.max(0, observation.deltaSeconds);
-  const tilt = Math.max(Math.abs(observation.pitch), Math.abs(observation.roll));
+  const tilt = Math.max(
+    Math.abs(observation.pitch),
+    Math.abs(observation.roll),
+  );
   if (!observation.contactConfirmed) {
     return {
       ...current,
@@ -113,9 +116,10 @@ export function advanceVehicleGroundLiftAutomation(
   // feedback starts learning only after actual lift reaches the geometric
   // feed-forward estimate. Once nearly stopped, every further reduction is
   // an intentional probe and can teach a higher floor.
-  const valveReductionIsBeingTested = observation.groundSpeed > 0.25
-    ? observation.liftFraction <= authoredMovingFloor + 0.08
-    : observation.liftFraction <= current.targetFraction + 0.05;
+  const valveReductionIsBeingTested =
+    observation.groundSpeed > 0.25
+      ? observation.liftFraction <= authoredMovingFloor + 0.08
+      : observation.liftFraction <= current.targetFraction + 0.05;
   if (
     unstable &&
     valveReductionIsBeingTested &&
@@ -136,13 +140,14 @@ export function advanceVehicleGroundLiftAutomation(
     };
   }
 
-  const movingFloor = observation.groundSpeed > 0.25
-    ? authoredMovingFloor
-    : 0;
+  const movingFloor = observation.groundSpeed > 0.25 ? authoredMovingFloor : 0;
   const floor = Math.max(current.learnedMinimumFraction, movingFloor);
   const searchRate = observation.groundSpeed > 0.25 ? 0.45 : 0.12;
   return {
-    targetFraction: Math.max(floor, current.targetFraction - searchRate * delta),
+    targetFraction: Math.max(
+      floor,
+      current.targetFraction - searchRate * delta,
+    ),
     learnedMinimumFraction: current.learnedMinimumFraction,
     previousTilt: tilt,
     recoveringFromTilt: false,
@@ -153,9 +158,11 @@ export function vehicleGroundLiftAutomationSettled(
   state: VehicleGroundLiftAutomationState,
   liftFraction: number,
 ): boolean {
-  return !state.recoveringFromTilt &&
+  return (
+    !state.recoveringFromTilt &&
     state.targetFraction <= state.learnedMinimumFraction + 0.01 &&
-    Math.abs(liftFraction - state.targetFraction) <= 0.03;
+    Math.abs(liftFraction - state.targetFraction) <= 0.03
+  );
 }
 
 export interface VehicleLandingStabilityState {
@@ -269,16 +276,32 @@ export interface VehicleFailureObservation {
   /** Actual yaw rate minus the turn rate explicitly requested by autopilot. */
   readonly yawRateError: number;
   readonly crossTrackError: number;
+  /** Vertical distance from the active route state, in metres. */
+  readonly altitudeError?: number;
   readonly progress: number;
   /** False when a required control channel is physically inoperative. */
   readonly requiredControlAvailable: boolean;
   readonly requestedControlEffort: number;
   readonly deliveredControlFraction: number;
+  /** Positive lift/ballonet command, independent of propulsive effort. */
+  readonly requestedLiftEffort?: number;
+  /** Reachable fraction of that lift command after envelope loss. */
+  readonly deliveredLiftFraction?: number;
   readonly goArounds: number;
+  /** Trajectory corrections attempted during this flight, of any kind. */
+  readonly corrections?: number;
+  /**
+   * Every trim car is at a stop or gone and the hull still hangs outside the
+   * corridor it must fly in. The machine has done everything it physically
+   * can about its own balance.
+   */
+  readonly trimAuthorityExhausted?: boolean;
   /** Route progress may pause while the craft deliberately pivots in place. */
   readonly turning: boolean;
   /** The vehicle is deliberately completing a low-speed terminal manoeuvre. */
   readonly inFinalManeuver: boolean;
+  /** Horizontal distance from the physical mooring capture, in metres. */
+  readonly dockingDistance?: number;
   /** The vehicle has reached its landing pose and is expected to settle. */
   readonly inDockingCapture: boolean;
   readonly dockingComplete: boolean;
@@ -345,6 +368,11 @@ export function vehicleDisturbanceRecoveryFeasible(
     return false;
   }
 
+  // A craft whose maximum lift is below its weight may still be level or
+  // moving upward for an instant, but it cannot hold the stabilization mode.
+  if (input.liftToWeight < 1) {
+    return false;
+  }
   if (input.verticalSpeed >= 0) {
     return true;
   }
@@ -354,8 +382,28 @@ export function vehicleDisturbanceRecoveryFeasible(
   }
   const verticalStopDistance =
     input.verticalSpeed ** 2 / (2 * upwardAcceleration);
-  return input.relativeAltitude - verticalStopDistance >=
-    input.minimumRelativeAltitude;
+  return (
+    input.relativeAltitude - verticalStopDistance >=
+    input.minimumRelativeAltitude
+  );
+}
+
+/**
+ * Delivery feedback for the lift channel. Reducing lift is always reachable;
+ * increasing it is capped by the surviving envelope's lift-to-weight ratio.
+ */
+export function deliveredLiftControlFraction(
+  requestedTrim: number,
+  liftTrimRange: number,
+  liftToWeight: number,
+): number {
+  const requestedAuthority =
+    Math.max(0, requestedTrim) * Math.max(0, liftTrimRange);
+  if (requestedAuthority < 1e-6) {
+    return 1;
+  }
+  const availableAuthority = Math.max(0, liftToWeight - 1);
+  return Math.max(0, Math.min(1, availableAuthority / requestedAuthority));
 }
 
 export interface VehicleFailureEnvelope {
@@ -365,6 +413,7 @@ export interface VehicleFailureEnvelope {
   readonly maximumHeadingError: number;
   readonly maximumYawRate: number;
   readonly maximumCrossTrackError: number;
+  readonly maximumAltitudeError: number;
   readonly attitudeGraceSeconds: number;
   readonly routeGraceSeconds: number;
   readonly controlMismatchGraceSeconds: number;
@@ -373,6 +422,16 @@ export interface VehicleFailureEnvelope {
   readonly finalManeuverTimeoutSeconds: number;
   readonly dockingTimeoutSeconds: number;
   readonly maximumGoArounds: number;
+  /** Trajectory corrections a single flight may attempt before it is a loss. */
+  readonly maximumCorrections: number;
+  /**
+   * Total time a flight may spend under correction with the ordinary route and
+   * attitude timers suspended. A corrector that keeps re-entering must not be
+   * able to starve the watchdog it is supposed to answer to.
+   */
+  readonly correctionGraceSeconds: number;
+  /** How long a fully deployed trim may fail to hold the hull before it is a loss. */
+  readonly trimGraceSeconds: number;
   readonly minimumProgressPerSecond: number;
 }
 
@@ -383,6 +442,7 @@ export const DEFAULT_VEHICLE_FAILURE_ENVELOPE: VehicleFailureEnvelope = {
   maximumHeadingError: Math.PI * 0.55,
   maximumYawRate: Math.PI * 0.16,
   maximumCrossTrackError: 28,
+  maximumAltitudeError: 12,
   attitudeGraceSeconds: 3,
   routeGraceSeconds: 5,
   controlMismatchGraceSeconds: 2,
@@ -393,6 +453,13 @@ export const DEFAULT_VEHICLE_FAILURE_ENVELOPE: VehicleFailureEnvelope = {
   // Three missed approaches are allowed to become real go-arounds. The
   // third one trips the common recovery chain before a fourth circuit starts.
   maximumGoArounds: 3,
+  // A flight that has needed six intercepts is not being disturbed, it is
+  // failing to hold its route; the sixth attempt hands the craft to recovery.
+  maximumCorrections: 6,
+  correctionGraceSeconds: 60,
+  // Long enough for the cars to reach their stops and for the hull to settle
+  // on whatever balance the survivors give it.
+  trimGraceSeconds: 6,
   minimumProgressPerSecond: 0.00008,
 };
 
@@ -404,7 +471,13 @@ export interface VehicleFailureWatchdogState {
   readonly maneuverSeconds: number;
   readonly finalManeuverSeconds: number;
   readonly dockingSeconds: number;
+  /** Time already spent under correction during this flight. */
+  readonly correctionSeconds: number;
+  /** How long trim has been exhausted without the hull coming back. */
+  readonly trimSeconds: number;
   readonly previousProgress: number;
+  /** Best distance reached during the present final manoeuvre. */
+  readonly bestFinalManeuverDistance: number | null;
 }
 
 export interface VehicleFailureWatchdogResult {
@@ -423,11 +496,34 @@ export function createVehicleFailureWatchdog(
     maneuverSeconds: 0,
     finalManeuverSeconds: 0,
     dockingSeconds: 0,
+    correctionSeconds: 0,
+    trimSeconds: 0,
     previousProgress: initialProgress,
+    bestFinalManeuverDistance: null,
   };
 }
 
-function heldSeconds(condition: boolean, current: number, delta: number): number {
+/**
+ * Rejoining the authored route moves the progress reference, and only that.
+ * Recreating the watchdog here would let a craft that keeps leaving its line
+ * clear every accumulated timer and every spent second of correction grace.
+ */
+export function rebaseVehicleFailureWatchdog(
+  current: VehicleFailureWatchdogState,
+  progress: number,
+): VehicleFailureWatchdogState {
+  return {
+    ...current,
+    previousProgress: progress,
+    bestFinalManeuverDistance: null,
+  };
+}
+
+function heldSeconds(
+  condition: boolean,
+  current: number,
+  delta: number,
+): number {
   return condition ? current + Math.max(0, delta) : 0;
 }
 
@@ -440,9 +536,13 @@ function observationIsFinite(observation: VehicleFailureObservation): boolean {
     observation.headingError,
     observation.yawRateError,
     observation.crossTrackError,
+    observation.altitudeError ?? 0,
     observation.progress,
     observation.requestedControlEffort,
     observation.deliveredControlFraction,
+    observation.requestedLiftEffort ?? 0,
+    observation.deliveredLiftFraction ?? 1,
+    observation.dockingDistance ?? 0,
   ].every(Number.isFinite);
 }
 
@@ -460,10 +560,23 @@ export function advanceVehicleFailureWatchdog(
   if (observation.goArounds >= envelope.maximumGoArounds) {
     return { state: current, failure: "goAroundLimit" };
   }
+  if ((observation.corrections ?? 0) >= envelope.maximumCorrections) {
+    return { state: current, failure: "correctionLimit" };
+  }
 
   const delta = Math.max(0, observation.deltaSeconds);
+  // Correction is a legitimate departure from the authored line, so the route
+  // and attitude timers stand down while it runs — but only for as long as
+  // this flight's grace budget lasts. Beyond it the ordinary watchdog resumes
+  // even though the corrector is still trying.
+  const correcting = observation.recoveringDisturbance === true;
+  const suspended =
+    correcting && current.correctionSeconds < envelope.correctionGraceSeconds;
+  const correctionSeconds = correcting
+    ? current.correctionSeconds + delta
+    : current.correctionSeconds;
   const attitudeSeconds = heldSeconds(
-    !observation.recoveringDisturbance &&
+    !suspended &&
       (Math.abs(observation.pitch) > envelope.maximumPitch ||
         Math.abs(observation.roll) > envelope.maximumRoll ||
         Math.abs(observation.yawRateError) > envelope.maximumYawRate),
@@ -471,23 +584,27 @@ export function advanceVehicleFailureWatchdog(
     delta,
   );
   const routeSeconds = heldSeconds(
-    !observation.recoveringDisturbance &&
+    !suspended &&
       !observation.turning &&
       (Math.abs(observation.headingError) > envelope.maximumHeadingError ||
-        observation.crossTrackError > envelope.maximumCrossTrackError),
+        observation.crossTrackError > envelope.maximumCrossTrackError ||
+        Math.abs(observation.altitudeError ?? 0) >
+          envelope.maximumAltitudeError),
     current.routeSeconds,
     delta,
   );
   const controlMismatchSeconds = heldSeconds(
     !observation.requiredControlAvailable ||
       (observation.requestedControlEffort > 0.35 &&
-        observation.deliveredControlFraction < 0.5),
+        observation.deliveredControlFraction < 0.5) ||
+      ((observation.requestedLiftEffort ?? 0) > 0.35 &&
+        (observation.deliveredLiftFraction ?? 1) < 0.5),
     current.controlMismatchSeconds,
     delta,
   );
   const progressDelta = observation.progress - current.previousProgress;
   const stalledSeconds = heldSeconds(
-    !observation.recoveringDisturbance &&
+    !suspended &&
       !observation.inFinalManeuver &&
       !observation.turning &&
       observation.requestedControlEffort > 0.5 &&
@@ -497,7 +614,7 @@ export function advanceVehicleFailureWatchdog(
     delta,
   );
   const maneuverSeconds = heldSeconds(
-    !observation.recoveringDisturbance &&
+    !suspended &&
       observation.turning &&
       observation.requestedControlEffort > 0.35 &&
       progressDelta >= 0 &&
@@ -505,20 +622,44 @@ export function advanceVehicleFailureWatchdog(
     current.maneuverSeconds,
     delta,
   );
+  // Trim exhaustion is never suspended by a correction: the corrector is what
+  // asked the hull to level in the first place, and it cannot answer for a
+  // balance the machine no longer has.
+  const trimSeconds = heldSeconds(
+    observation.trimAuthorityExhausted === true,
+    current.trimSeconds,
+    delta,
+  );
   const dockingSeconds = heldSeconds(
-    !observation.recoveringDisturbance &&
-      observation.inDockingCapture && !observation.dockingComplete,
+    !suspended &&
+      observation.inDockingCapture &&
+      !observation.dockingComplete,
     current.dockingSeconds,
     delta,
   );
+  const finalManeuverActive =
+    !suspended &&
+    observation.inFinalManeuver &&
+    !observation.inDockingCapture &&
+    !observation.dockingComplete;
+  const measuredDockingDistance = observation.dockingDistance;
+  const finalManeuverImproved =
+    finalManeuverActive &&
+    measuredDockingDistance !== undefined &&
+    (current.bestFinalManeuverDistance === null ||
+      measuredDockingDistance <= current.bestFinalManeuverDistance - 0.02);
   const finalManeuverSeconds = heldSeconds(
-    !observation.recoveringDisturbance &&
-      observation.inFinalManeuver &&
-      !observation.inDockingCapture &&
-      !observation.dockingComplete,
+    finalManeuverActive && !finalManeuverImproved,
     current.finalManeuverSeconds,
     delta,
   );
+  const bestFinalManeuverDistance = !finalManeuverActive
+    ? null
+    : measuredDockingDistance === undefined
+      ? current.bestFinalManeuverDistance
+      : current.bestFinalManeuverDistance === null || finalManeuverImproved
+        ? measuredDockingDistance
+        : current.bestFinalManeuverDistance;
   const state: VehicleFailureWatchdogState = {
     attitudeSeconds,
     routeSeconds,
@@ -527,13 +668,18 @@ export function advanceVehicleFailureWatchdog(
     maneuverSeconds,
     finalManeuverSeconds,
     dockingSeconds,
+    correctionSeconds,
+    trimSeconds,
     previousProgress: observation.progress,
+    bestFinalManeuverDistance,
   };
 
   const failure =
     attitudeSeconds >= envelope.attitudeGraceSeconds
       ? "criticalAttitude"
-      : routeSeconds >= envelope.routeGraceSeconds
+      : trimSeconds >= envelope.trimGraceSeconds
+        ? "trimExhausted"
+        : routeSeconds >= envelope.routeGraceSeconds
         ? "routeDivergence"
         : controlMismatchSeconds >= envelope.controlMismatchGraceSeconds
           ? "controlMismatch"
@@ -571,11 +717,12 @@ export function createVehicleRecoveryLifecycle(
   return {
     reason,
     disposition,
-    phase: disposition === "escapeRoute"
-      ? "escape"
-      : disposition === "descendBelowFog"
-        ? "descent"
-        : "landing",
+    phase:
+      disposition === "escapeRoute"
+        ? "escape"
+        : disposition === "descendBelowFog"
+          ? "descent"
+          : "landing",
     phaseSeconds: 0,
   };
 }

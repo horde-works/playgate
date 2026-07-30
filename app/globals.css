@@ -2137,7 +2137,7 @@ button:focus-visible {
   top: 50%;
   right: clamp(18px, 3vw, 48px);
   z-index: 16;
-  width: min(248px, calc(100vw - 36px));
+  width: min(334px, calc(100vw - 36px));
   color: var(--telemetry-ink);
   font-family: var(--font-geist-mono), monospace;
   mix-blend-mode: difference;
@@ -2219,12 +2219,21 @@ button:focus-visible {
   text-transform: uppercase;
 }
 
-.motion-telemetry-attitude {
+.motion-telemetry-instruments {
   display: grid;
-  grid-template-columns: 76px 1fr;
-  gap: 16px;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
   align-items: center;
   padding: 3px 0 10px;
+}
+
+.motion-telemetry-attitude,
+.motion-telemetry-impact {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  min-width: 0;
 }
 
 .motion-telemetry-attitude-dial {
@@ -2306,18 +2315,130 @@ button:focus-visible {
   display: grid;
   gap: 5px;
   margin: 0;
+  width: 100%;
 }
 
 .motion-telemetry .motion-telemetry-attitude-values div {
-  display: grid;
+  display: flex;
   gap: 1px;
-  justify-content: initial;
+  justify-content: space-between;
   min-height: 0;
 }
 
 .motion-telemetry .motion-telemetry-attitude-values dt,
 .motion-telemetry .motion-telemetry-attitude-values dd {
   line-height: 1.35;
+}
+
+.motion-impact-sphere {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  color: var(--telemetry-impact, #ff8a6d);
+}
+
+.motion-impact-sphere svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.motion-impact-sphere-boundary,
+.motion-impact-ring {
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.motion-impact-sphere-boundary {
+  stroke: var(--telemetry-muted);
+  stroke-width: 0.7;
+  opacity: 0.22;
+}
+
+.motion-impact-ring {
+  stroke: var(--telemetry-muted);
+  stroke-width: 0.9;
+}
+
+.motion-impact-ring.is-far {
+  stroke-dasharray: 2.3 2.8;
+  opacity: 0.3;
+}
+
+.motion-impact-ring.is-near {
+  opacity: 0.82;
+}
+
+.motion-impact-nose {
+  fill: var(--telemetry-accent);
+  opacity: 0.88;
+}
+
+.motion-impact-transient {
+  color: var(--telemetry-impact, #ff8a6d);
+  filter: drop-shadow(
+    0 0 var(--impact-glow, 1px)
+    color-mix(in srgb, currentcolor 72%, transparent)
+  );
+  animation: motionImpactDecay 1.9s cubic-bezier(0.22, 0.68, 0.22, 1) forwards;
+}
+
+.motion-impact-vector {
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-width: var(--impact-width, 1.2px);
+  vector-effect: non-scaling-stroke;
+}
+
+.motion-impact-vector + .motion-impact-point,
+.motion-impact-transient marker path {
+  fill: currentcolor;
+}
+
+.motion-impact-point {
+  fill: currentcolor;
+  stroke: var(--telemetry-ink);
+  stroke-width: 0.8;
+  vector-effect: non-scaling-stroke;
+}
+
+.motion-impact-point.is-far {
+  fill: none;
+  stroke: currentcolor;
+  stroke-dasharray: 1.4 1.2;
+}
+
+.motion-telemetry .motion-impact-values {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  width: 100%;
+}
+
+.motion-telemetry .motion-impact-values div {
+  display: flex;
+  gap: 1px;
+  justify-content: space-between;
+  min-height: 0;
+}
+
+.motion-telemetry .motion-impact-values dt,
+.motion-telemetry .motion-impact-values dd {
+  line-height: 1.35;
+}
+
+.motion-telemetry .motion-impact-values dd {
+  color: var(--telemetry-impact, #ff8a6d);
+  font-size: 10px;
+}
+
+.motion-impact-reading {
+  display: inline-block;
+}
+
+.motion-impact-reading.is-active {
+  animation: motionImpactDecay 1.9s cubic-bezier(0.22, 0.68, 0.22, 1) forwards;
 }
 
 .motion-telemetry .motion-telemetry-attitude-values dd {
@@ -2401,6 +2522,11 @@ button:focus-visible {
   0%, 100% { transform: scale(1); }
   34% { transform: scale(1.2); }
   62% { transform: scale(1.1); }
+}
+
+@keyframes motionImpactDecay {
+  0%, 18% { opacity: 1; }
+  100% { opacity: 0; }
 }
 
 .game-objective {
@@ -3267,6 +3393,11 @@ button:focus-visible {
     width: min(224px, calc(100vw - 28px));
   }
 
+  .motion-telemetry-instruments {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
   .game-action-hint {
     right: 18px;
     bottom: 158px;
@@ -3318,6 +3449,14 @@ button:focus-visible {
   .game-action-hint {
     opacity: 1;
     transform: none;
+    animation: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .motion-impact-transient,
+  .motion-impact-reading.is-active {
+    opacity: 0.86;
     animation: none;
   }
 }
@@ -3739,6 +3878,52 @@ button:focus-visible {
 
 /* Чип живёт в правом верхнем углу, под верхней панелью, — тот же дежурный
    вид, что у подсказок управления. */
+/* A standing rule of the map, not an event: it sits low, stays put and reads
+   the same in every interface language. */
+.flight-lock-note {
+  position: absolute;
+  left: 50%;
+  bottom: clamp(20px, 3.2vh, 38px);
+  z-index: 6;
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  margin: 0;
+  padding: 7px 14px;
+  transform: translateX(-50%);
+  border: 1px solid rgb(217 255 63 / 0.26);
+  border-radius: 4px;
+  background: rgb(12 14 10 / 0.62);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.flight-lock-label {
+  color: #d9ff3f;
+}
+
+.flight-lock-clock {
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.12em;
+}
+
+.flight-lock-copy {
+  color: rgb(255 255 255 / 0.62);
+  letter-spacing: 0.16em;
+}
+
+@media (max-width: 620px) {
+  .flight-lock-copy {
+    display: none;
+  }
+}
+
 .mode-chips {
   position: absolute;
   top: clamp(74px, 9vh, 108px);

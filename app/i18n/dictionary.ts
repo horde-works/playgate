@@ -32,7 +32,8 @@ export const ui = {
     "home.p2.body":
       "If breaking things isn't fun, no amount of content will save it.",
     "home.p3.title": "With care",
-    "home.p3.body": "Good light, things you recognise, and physics with character.",
+    "home.p3.body":
+      "Good light, things you recognise, and physics with character.",
     "footer.place": "IGOR KIRISIUK · ASTANA, KAZAKHSTAN · 2026",
 
     "catalog.eyebrow": "Catalogue",
@@ -84,16 +85,34 @@ export const ui = {
     "announce.telemetryAutoOff": "The ship has nothing more to report.",
     "announce.telemetryUnavailable": "Nothing moving is on the air.",
     "announce.vehicleFailureKicker": "Vehicle failure",
-    "announce.vehicleFailure.structureLost": "The load-bearing structure has failed.",
-    "announce.vehicleFailure.invalidState": "The physical state has become invalid.",
-    "announce.vehicleFailure.unsafeAltitude": "The vehicle has dropped below safe altitude.",
-    "announce.vehicleFailure.criticalAttitude": "Pitch, roll or yaw rate is critical.",
-    "announce.vehicleFailure.routeDivergence": "The vehicle has lost its route or approach line.",
-    "announce.vehicleFailure.controlMismatch": "The actuators are not following flight commands.",
-    "announce.vehicleFailure.stalled": "The vehicle has stopped progressing along its route.",
-    "announce.vehicleFailure.goAroundLimit": "Two landing approaches have failed.",
-    "announce.vehicleFailure.dockingTimeout": "The vehicle did not settle at the berth in time.",
+    "announce.vehicleFailure.structureLost":
+      "The load-bearing structure has failed.",
+    "announce.vehicleFailure.invalidState":
+      "The physical state has become invalid.",
+    "announce.vehicleFailure.unsafeAltitude":
+      "The vehicle has dropped below safe altitude.",
+    "announce.vehicleFailure.criticalAttitude":
+      "Pitch, roll or yaw rate is critical.",
+    "announce.vehicleFailure.routeDivergence":
+      "The vehicle has lost its route or approach line.",
+    "announce.vehicleFailure.controlMismatch":
+      "The actuators are not following flight commands.",
+    "announce.vehicleFailure.stalled":
+      "The vehicle has stopped progressing along its route.",
+    "announce.vehicleFailure.goAroundLimit":
+      "Every landing approach has failed.",
+    "announce.vehicleFailure.correctionLimit":
+      "The vehicle can no longer hold its route.",
+    "announce.vehicleFailure.trimExhausted":
+      "The trim weights are at their stops and the hull still hangs over.",
+    "announce.vehicleFailure.dockingTimeout":
+      "The vehicle did not settle at the berth in time.",
     "chip.flight": "Flight mode",
+    "flightLock.label": "Flight locked",
+    "flightLock.note": "The fortress is taken on foot first",
+    "announce.flightLockedKicker": "Flight rules",
+    "announce.flightLocked": "Not yet. Walk.",
+    "announce.flightUnlocked": "The old code still works. Fly.",
     "hud.launchAria": "Launch the 3D scene",
 
     "telemetry.aria": "Movement telemetry",
@@ -104,6 +123,8 @@ export const ui = {
     "telemetry.phase.approach": "Arriving",
     "telemetry.phase.inTransit": "In transit",
     "telemetry.phase.failed": "Failure",
+    "telemetry.mode.intercepting": "Route correction",
+    "telemetry.mode.stabilizing": "Stabilising",
     "telemetry.metric.groundSpeed": "Ground speed",
     "telemetry.metric.relativeAltitude": "Height over berth",
     "telemetry.metric.verticalSpeed": "Vertical speed",
@@ -111,9 +132,13 @@ export const ui = {
     "telemetry.metric.pitch": "Pitch",
     "telemetry.metric.roll": "Roll",
     "telemetry.attitudeAria": "Aircraft attitude",
+    "telemetry.impactAria": "External impulse on the hull",
+    "telemetry.impactKick": "Kick",
+    "telemetry.impactRotation": "Rotation",
     "telemetry.metric.propellerRevolutions": "Propeller revolutions",
     "telemetry.side.left": "L",
     "telemetry.side.right": "R",
+    "telemetry.metric.trimCar": "Trim weights",
     "telemetry.metric.routeProgress": "Route",
     "telemetry.metric.distanceRemaining": "Remaining",
 
@@ -166,8 +191,7 @@ export const ui = {
     "interIsland.enteringAirspace.viking-village":
       "Entering the village airspace…",
     "interIsland.welcome.astana": "Welcome to the Capital",
-    "interIsland.welcome.basalt-stronghold":
-      "Welcome to Basalt Stronghold",
+    "interIsland.welcome.basalt-stronghold": "Welcome to Basalt Stronghold",
     "interIsland.welcome.grand-terminal": "Welcome to Grand Terminal",
     "interIsland.welcome.town": "Welcome to the Town",
     "interIsland.welcome.viking-village": "Welcome to Viking Village",
@@ -198,12 +222,14 @@ export const ui = {
     "hint.ride.action": "Ride the circuit",
     "hint.ride.actionTouch": "Ride along",
     "hint.vikingRide.eyebrow": "Aboard the longship",
-    "hint.vikingRide.title": "The uneven circuit around the island starts here.",
+    "hint.vikingRide.title":
+      "The uneven circuit around the island starts here.",
     "hint.vikingRide.key": "Space",
     "hint.vikingRide.action": "Fly around the island",
     "hint.vikingRide.actionTouch": "Start the voyage",
     "hint.townRide.eyebrow": "Aboard Airship 07",
-    "hint.townRide.title": "The city sightseeing flight starts inside the gondola.",
+    "hint.townRide.title":
+      "The city sightseeing flight starts inside the gondola.",
     "hint.townRide.key": "Space",
     "hint.townRide.action": "Take the city tour",
     "hint.townRide.actionTouch": "Start the flight",
@@ -220,17 +246,20 @@ export const ui = {
     "hint.stand.actionTouch": "Stand up",
 
     "hint.departure.eyebrow": "Terminal dispatch",
-    "hint.departure.title": "The empty sky train is ready for an inspection circuit.",
+    "hint.departure.title":
+      "The empty sky train is ready for an inspection circuit.",
     "hint.departure.key": "Space",
     "hint.departure.action": "Start the dispatch circuit",
     "hint.departure.actionTouch": "Start inspection",
     "hint.vikingDeparture.eyebrow": "Watch pier",
-    "hint.vikingDeparture.title": "The empty longship can circle the island on watch.",
+    "hint.vikingDeparture.title":
+      "The empty longship can circle the island on watch.",
     "hint.vikingDeparture.key": "Space",
     "hint.vikingDeparture.action": "Send the longship on watch",
     "hint.vikingDeparture.actionTouch": "Start the watch",
     "hint.townDeparture.eyebrow": "Mooring mast",
-    "hint.townDeparture.title": "The empty airship is ready for a city survey circuit.",
+    "hint.townDeparture.title":
+      "The empty airship is ready for a city survey circuit.",
     "hint.townDeparture.key": "Space",
     "hint.townDeparture.action": "Dispatch Airship 07",
     "hint.townDeparture.actionTouch": "Start the survey",
@@ -272,7 +301,8 @@ export const ui = {
     "home.p2.body":
       "Si romper cosas no divierte, ningún contenido lo va a salvar.",
     "home.p3.title": "Con gusto",
-    "home.p3.body": "Buena luz, objetos reconocibles y una física con carácter.",
+    "home.p3.body":
+      "Buena luz, objetos reconocibles y una física con carácter.",
     "footer.place": "IGOR KIRISIUK · ASTANA, KAZAKHSTAN · 2026",
 
     "catalog.eyebrow": "Catálogo",
@@ -283,7 +313,8 @@ export const ui = {
     "catalog.gridAria": "Juegos",
     "catalog.nextIndex": "Siguiente hueco",
     "catalog.nextTitle": "Vacío por ahora",
-    "catalog.nextBody": "El próximo juego aparecerá aquí cuando tenga una idea.",
+    "catalog.nextBody":
+      "El próximo juego aparecerá aquí cuando tenga una idea.",
     "catalog.back": "Volver al inicio",
 
     "card.cta": "Al laboratorio de juegos",
@@ -324,16 +355,34 @@ export const ui = {
     "announce.telemetryAutoOff": "La nave ya no tiene nada que contar.",
     "announce.telemetryUnavailable": "No hay nada en movimiento en el aire.",
     "announce.vehicleFailureKicker": "Fallo del vehículo",
-    "announce.vehicleFailure.structureLost": "La estructura portante ha fallado.",
-    "announce.vehicleFailure.invalidState": "El estado físico ha dejado de ser válido.",
-    "announce.vehicleFailure.unsafeAltitude": "El vehículo ha bajado de la altitud segura.",
-    "announce.vehicleFailure.criticalAttitude": "El cabeceo, alabeo o guiñada es crítico.",
-    "announce.vehicleFailure.routeDivergence": "El vehículo ha perdido la ruta o la senda de aproximación.",
-    "announce.vehicleFailure.controlMismatch": "Los actuadores no responden a las órdenes de vuelo.",
-    "announce.vehicleFailure.stalled": "El vehículo ha dejado de avanzar por la ruta.",
-    "announce.vehicleFailure.goAroundLimit": "Han fallado dos aproximaciones de aterrizaje.",
-    "announce.vehicleFailure.dockingTimeout": "El vehículo no se estabilizó a tiempo en el andén.",
+    "announce.vehicleFailure.structureLost":
+      "La estructura portante ha fallado.",
+    "announce.vehicleFailure.invalidState":
+      "El estado físico ha dejado de ser válido.",
+    "announce.vehicleFailure.unsafeAltitude":
+      "El vehículo ha bajado de la altitud segura.",
+    "announce.vehicleFailure.criticalAttitude":
+      "El cabeceo, alabeo o guiñada es crítico.",
+    "announce.vehicleFailure.routeDivergence":
+      "El vehículo ha perdido la ruta o la senda de aproximación.",
+    "announce.vehicleFailure.controlMismatch":
+      "Los actuadores no responden a las órdenes de vuelo.",
+    "announce.vehicleFailure.stalled":
+      "El vehículo ha dejado de avanzar por la ruta.",
+    "announce.vehicleFailure.goAroundLimit":
+      "Han fallado todas las aproximaciones de aterrizaje.",
+    "announce.vehicleFailure.correctionLimit":
+      "El vehículo ya no puede mantener su ruta.",
+    "announce.vehicleFailure.trimExhausted":
+      "Los lastres móviles llegaron al tope y el casco sigue inclinado.",
+    "announce.vehicleFailure.dockingTimeout":
+      "El vehículo no se estabilizó a tiempo en el andén.",
     "chip.flight": "Modo vuelo",
+    "flightLock.label": "Vuelo bloqueado",
+    "flightLock.note": "La fortaleza se toma primero a pie",
+    "announce.flightLockedKicker": "Reglas de vuelo",
+    "announce.flightLocked": "Todavía no. Camina.",
+    "announce.flightUnlocked": "El viejo código sigue funcionando. Vuela.",
     "hud.launchAria": "Iniciar la escena 3D",
 
     "telemetry.aria": "Telemetría de movimiento",
@@ -344,6 +393,8 @@ export const ui = {
     "telemetry.phase.approach": "Llegando",
     "telemetry.phase.inTransit": "En tránsito",
     "telemetry.phase.failed": "Fallo",
+    "telemetry.mode.intercepting": "Corrección de ruta",
+    "telemetry.mode.stabilizing": "Estabilización",
     "telemetry.metric.groundSpeed": "Velocidad",
     "telemetry.metric.relativeAltitude": "Altura sobre andén",
     "telemetry.metric.verticalSpeed": "Velocidad vertical",
@@ -351,9 +402,13 @@ export const ui = {
     "telemetry.metric.pitch": "Cabeceo",
     "telemetry.metric.roll": "Alabeo",
     "telemetry.attitudeAria": "Actitud de la aeronave",
+    "telemetry.impactAria": "Impulso externo sobre el casco",
+    "telemetry.impactKick": "Golpe",
+    "telemetry.impactRotation": "Giro",
     "telemetry.metric.propellerRevolutions": "Revoluciones de hélice",
     "telemetry.side.left": "I",
     "telemetry.side.right": "D",
+    "telemetry.metric.trimCar": "Lastres móviles",
     "telemetry.metric.routeProgress": "Ruta",
     "telemetry.metric.distanceRemaining": "Restante",
 
@@ -416,8 +471,10 @@ export const ui = {
 
     "hint.spawn.eyebrow": "Primer paso",
     "hint.spawn.title": "Mira a tu alrededor. Prueba todas las herramientas.",
-    "hint.spawn.controls": "La lista completa de controles está siempre a la derecha.",
-    "hint.spawn.controlsTouch": "Todos los controles están disponibles en pantalla.",
+    "hint.spawn.controls":
+      "La lista completa de controles está siempre a la derecha.",
+    "hint.spawn.controlsTouch":
+      "Todos los controles están disponibles en pantalla.",
     "hint.gate.eyebrow": "La antigua ley",
     "hint.gate.title": "Ningún extraño cruza sin ser llamado.",
     "hint.gate.key": "Espacio",
@@ -429,17 +486,20 @@ export const ui = {
     "hint.door.action": "Pedir entrar",
     "hint.door.actionTouch": "Entrar en la casa",
     "hint.ride.eyebrow": "Circuito de pasajeros",
-    "hint.ride.title": "El coche de cabeza está listo para el vuelo panorámico.",
+    "hint.ride.title":
+      "El coche de cabeza está listo para el vuelo panorámico.",
     "hint.ride.key": "Espacio",
     "hint.ride.action": "Volar el circuito",
     "hint.ride.actionTouch": "Volar",
     "hint.vikingRide.eyebrow": "A bordo del drakkar",
-    "hint.vikingRide.title": "Aquí empieza la vuelta irregular alrededor de la isla.",
+    "hint.vikingRide.title":
+      "Aquí empieza la vuelta irregular alrededor de la isla.",
     "hint.vikingRide.key": "Espacio",
     "hint.vikingRide.action": "Volar alrededor de la isla",
     "hint.vikingRide.actionTouch": "Iniciar el viaje",
     "hint.townRide.eyebrow": "A bordo del dirigible 07",
-    "hint.townRide.title": "El vuelo panorámico de la ciudad empieza dentro de la góndola.",
+    "hint.townRide.title":
+      "El vuelo panorámico de la ciudad empieza dentro de la góndola.",
     "hint.townRide.key": "Espacio",
     "hint.townRide.action": "Sobrevolar la ciudad",
     "hint.townRide.actionTouch": "Iniciar el vuelo",
@@ -456,17 +516,20 @@ export const ui = {
     "hint.stand.actionTouch": "Levantarse",
 
     "hint.departure.eyebrow": "Despacho de la terminal",
-    "hint.departure.title": "El tren vacío está listo para su circuito de inspección.",
+    "hint.departure.title":
+      "El tren vacío está listo para su circuito de inspección.",
     "hint.departure.key": "Espacio",
     "hint.departure.action": "Iniciar el circuito de control",
     "hint.departure.actionTouch": "Iniciar inspección",
     "hint.vikingDeparture.eyebrow": "Muelle de vigilancia",
-    "hint.vikingDeparture.title": "El drakkar vacío puede rodear la isla de guardia.",
+    "hint.vikingDeparture.title":
+      "El drakkar vacío puede rodear la isla de guardia.",
     "hint.vikingDeparture.key": "Espacio",
     "hint.vikingDeparture.action": "Enviar el drakkar de guardia",
     "hint.vikingDeparture.actionTouch": "Iniciar la guardia",
     "hint.townDeparture.eyebrow": "Mástil de amarre",
-    "hint.townDeparture.title": "El dirigible vacío está listo para inspeccionar la ciudad.",
+    "hint.townDeparture.title":
+      "El dirigible vacío está listo para inspeccionar la ciudad.",
     "hint.townDeparture.key": "Espacio",
     "hint.townDeparture.action": "Despachar el dirigible 07",
     "hint.townDeparture.actionTouch": "Iniciar inspección",
@@ -524,7 +587,8 @@ export const ui = {
     "catalog.gridAria": "Игры",
     "catalog.nextIndex": "Следующий слот",
     "catalog.nextTitle": "Пока пусто",
-    "catalog.nextBody": "Здесь появится следующая игра, когда у неё появится идея.",
+    "catalog.nextBody":
+      "Здесь появится следующая игра, когда у неё появится идея.",
     "catalog.back": "На главную",
 
     "card.cta": "В игровую лабораторию",
@@ -566,15 +630,32 @@ export const ui = {
     "announce.telemetryUnavailable": "В эфире пока никто не движется.",
     "announce.vehicleFailureKicker": "Сбой корабля",
     "announce.vehicleFailure.structureLost": "Несущая конструкция разрушена.",
-    "announce.vehicleFailure.invalidState": "Физическое состояние корабля стало некорректным.",
-    "announce.vehicleFailure.unsafeAltitude": "Корабль ушёл ниже безопасной высоты.",
-    "announce.vehicleFailure.criticalAttitude": "Критический тангаж, крен или скорость рыскания.",
-    "announce.vehicleFailure.routeDivergence": "Корабль потерял маршрут или посадочный створ.",
-    "announce.vehicleFailure.controlMismatch": "Движители не исполняют команды автоматики.",
-    "announce.vehicleFailure.stalled": "Корабль перестал продвигаться по маршруту.",
-    "announce.vehicleFailure.goAroundLimit": "Два захода на посадку не удались.",
-    "announce.vehicleFailure.dockingTimeout": "Корабль не успел стабилизироваться у причала.",
+    "announce.vehicleFailure.invalidState":
+      "Физическое состояние корабля стало некорректным.",
+    "announce.vehicleFailure.unsafeAltitude":
+      "Корабль ушёл ниже безопасной высоты.",
+    "announce.vehicleFailure.criticalAttitude":
+      "Критический тангаж, крен или скорость рыскания.",
+    "announce.vehicleFailure.routeDivergence":
+      "Корабль потерял маршрут или посадочный створ.",
+    "announce.vehicleFailure.controlMismatch":
+      "Движители не исполняют команды автоматики.",
+    "announce.vehicleFailure.stalled":
+      "Корабль перестал продвигаться по маршруту.",
+    "announce.vehicleFailure.goAroundLimit":
+      "Все заходы на посадку не удались.",
+    "announce.vehicleFailure.correctionLimit":
+      "Корабль больше не удерживает маршрут.",
+    "announce.vehicleFailure.trimExhausted":
+      "Грузы дифферентовки на упоре, корпус остался с креном.",
+    "announce.vehicleFailure.dockingTimeout":
+      "Корабль не успел стабилизироваться у причала.",
     "chip.flight": "Режим полёта",
+    "flightLock.label": "Полёт закрыт",
+    "flightLock.note": "Крепость сначала берут пешком",
+    "announce.flightLockedKicker": "Правила полёта",
+    "announce.flightLocked": "Ещё нет. Ногами.",
+    "announce.flightUnlocked": "Старый код всё ещё работает. Лети.",
     "hud.launchAria": "Запуск трёхмерной сцены",
 
     "telemetry.aria": "Телеметрия движения",
@@ -585,6 +666,8 @@ export const ui = {
     "telemetry.phase.approach": "Прибытие",
     "telemetry.phase.inTransit": "В пути",
     "telemetry.phase.failed": "Сбой",
+    "telemetry.mode.intercepting": "Коррекция маршрута",
+    "telemetry.mode.stabilizing": "Стабилизация",
     "telemetry.metric.groundSpeed": "Путевая скорость",
     "telemetry.metric.relativeAltitude": "Высота над перроном",
     "telemetry.metric.verticalSpeed": "Вертикальная скорость",
@@ -592,9 +675,13 @@ export const ui = {
     "telemetry.metric.pitch": "Тангаж",
     "telemetry.metric.roll": "Крен",
     "telemetry.attitudeAria": "Положение корабля в пространстве",
+    "telemetry.impactAria": "Внешний импульс по корпусу",
+    "telemetry.impactKick": "Толчок",
+    "telemetry.impactRotation": "Вращение",
     "telemetry.metric.propellerRevolutions": "Обороты винтов",
     "telemetry.side.left": "Л",
     "telemetry.side.right": "П",
+    "telemetry.metric.trimCar": "Грузы дифферентовки",
     "telemetry.metric.routeProgress": "Маршрут",
     "telemetry.metric.distanceRemaining": "Осталось",
 
@@ -651,11 +738,9 @@ export const ui = {
     "interIsland.welcome.astana": "Добро пожаловать в Столицу",
     "interIsland.welcome.basalt-stronghold":
       "Добро пожаловать в Базальтовую крепость",
-    "interIsland.welcome.grand-terminal":
-      "Добро пожаловать на Большой вокзал",
+    "interIsland.welcome.grand-terminal": "Добро пожаловать на Большой вокзал",
     "interIsland.welcome.town": "Добро пожаловать в город",
-    "interIsland.welcome.viking-village":
-      "Добро пожаловать в деревню викингов",
+    "interIsland.welcome.viking-village": "Добро пожаловать в деревню викингов",
 
     "hint.spawn.eyebrow": "Первый шаг",
     "hint.spawn.title": "Осмотрись. Попробуй весь инвентарь.",
@@ -710,12 +795,14 @@ export const ui = {
     "hint.departure.action": "Запустить диспетчерский облёт",
     "hint.departure.actionTouch": "Начать облёт",
     "hint.vikingDeparture.eyebrow": "Дозорный причал",
-    "hint.vikingDeparture.title": "Пустой драккар может облететь остров дозором.",
+    "hint.vikingDeparture.title":
+      "Пустой драккар может облететь остров дозором.",
     "hint.vikingDeparture.key": "Пробел",
     "hint.vikingDeparture.action": "Отправить драккар в дозор",
     "hint.vikingDeparture.actionTouch": "Начать дозор",
     "hint.townDeparture.eyebrow": "Причальная мачта",
-    "hint.townDeparture.title": "Пустой дирижабль готов к контрольному облёту города.",
+    "hint.townDeparture.title":
+      "Пустой дирижабль готов к контрольному облёту города.",
     "hint.townDeparture.key": "Пробел",
     "hint.townDeparture.action": "Отправить дирижабль в облёт",
     "hint.townDeparture.actionTouch": "Начать облёт",

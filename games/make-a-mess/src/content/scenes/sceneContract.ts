@@ -2,6 +2,7 @@ import type {
   BreakableMaterial,
   BreakableShape,
   CommandActuatorTag,
+  DamageVoxelizationDefinition,
   DestructionSceneCopy,
   DestructionSceneDefinition,
   LampBeaconDefinition,
@@ -84,6 +85,7 @@ export interface ScenePrefabPieceDefinition {
   readonly size: SceneVector3;
   readonly visualProfile?: SurfacePolygonProfile;
   readonly visualMesh?: SurfaceMeshProfile;
+  readonly voxelization?: DamageVoxelizationDefinition;
   readonly volume?: number;
   readonly bearingArea?: number;
   readonly color: string;
@@ -132,6 +134,7 @@ export interface ScenePrimitiveDefinition extends SceneObjectBase {
   readonly size: SceneVector3;
   readonly visualProfile?: SurfacePolygonProfile;
   readonly visualMesh?: SurfaceMeshProfile;
+  readonly voxelization?: DamageVoxelizationDefinition;
   readonly volume?: number;
   readonly bearingArea?: number;
   readonly color: string;

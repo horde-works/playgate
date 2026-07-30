@@ -124,6 +124,14 @@ export interface SurfaceMeshProfile {
   readonly indices: readonly number[];
   readonly doubleSided?: boolean;
 }
+export interface DamageVoxelizationDefinition {
+  /** Closed material volume or a thin surface-following material layer. */
+  readonly mode: "solid" | "shell";
+  /** Authored shell thickness in metres; mass may still be fixed by volume. */
+  readonly thickness?: number;
+  /** Optional per-piece damage resolution override. */
+  readonly voxelSize?: number;
+}
 export type LandscapeSurfaceProfile = "viking-ground" | "city-ground";
 export type SurfaceTextureProfile =
   | "painted-steel"
@@ -214,6 +222,7 @@ export interface BreakablePieceDefinition {
   readonly size: SceneVector3;
   readonly visualProfile?: SurfacePolygonProfile;
   readonly visualMesh?: SurfaceMeshProfile;
+  readonly voxelization?: DamageVoxelizationDefinition;
   readonly volume?: number;
   readonly bearingArea?: number;
   readonly color: string;
@@ -5523,6 +5532,13 @@ export interface DestructionSceneDefinition {
   /** Radius of the visible sky dome, independent of the physical island. */
   readonly skyRadius?: number;
   readonly worldRadius?: number;
+  /**
+   * Seconds after entering the world during which flight is refused. A rule of
+   * the map, not a special case of one fortress: a siege only means anything
+   * while the walls still have to be walked up to. Absent or zero — free from
+   * the first step.
+   */
+  readonly flightLockSeconds?: number;
   readonly safetyFloorY: number;
   readonly copy: DestructionSceneCopy;
   readonly breakableClusters: readonly BreakableClusterDefinition[];
@@ -5589,6 +5605,8 @@ interface DestructionSceneOptions {
   readonly boundaryRadius?: number;
   readonly skyRadius?: number;
   readonly worldRadius?: number;
+  /** Seconds of enforced walking after entry (see the scene definition). */
+  readonly flightLockSeconds?: number;
   readonly safetyFloorY?: number;
   readonly copy: DestructionSceneCopy;
   readonly clusters: readonly BreakableClusterDefinition[];
@@ -5837,6 +5855,7 @@ export function createDestructionScene(
     boundaryRadius: options.boundaryRadius,
     skyRadius: options.skyRadius,
     worldRadius: options.worldRadius,
+    flightLockSeconds: options.flightLockSeconds,
     safetyFloorY: options.safetyFloorY ?? -2.2,
     copy: options.copy,
     breakableClusters: clusters,

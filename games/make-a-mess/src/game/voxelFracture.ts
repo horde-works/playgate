@@ -5,6 +5,12 @@ export interface VoxelBody {
   readonly dimensions: readonly [x: number, y: number, z: number];
   readonly cellSize: VoxelVector3;
   readonly occupied: Uint8Array;
+  /**
+   * Converts geometric grid volume to authored material volume. Thin shells
+   * need a one-cell damage lattice without acquiring the mass of that whole
+   * coarse cell layer.
+   */
+  readonly volumeScale?: number;
 }
 
 export interface VoxelDamage {
@@ -417,7 +423,8 @@ export function splitVoxelComponents(
   const visited = new Uint8Array(body.occupied.length);
   const components: VoxelComponent[] = [];
   const cellVolume =
-    body.cellSize[0] * body.cellSize[1] * body.cellSize[2];
+    body.cellSize[0] * body.cellSize[1] * body.cellSize[2] *
+    (body.volumeScale ?? 1);
 
   for (let start = 0; start < body.occupied.length; start += 1) {
     if (!body.occupied[start] || visited[start]) {
@@ -559,7 +566,8 @@ export function applyVoxelDamage(
   }
 
   const cellVolume =
-    body.cellSize[0] * body.cellSize[1] * body.cellSize[2];
+    body.cellSize[0] * body.cellSize[1] * body.cellSize[2] *
+    (body.volumeScale ?? 1);
   return {
     body,
     removedVoxelCount,
@@ -613,6 +621,7 @@ export function createVoxelBodyFromComponent(
       dimensions,
       cellSize: source.cellSize,
       occupied,
+      volumeScale: source.volumeScale,
     },
     localCenter: [
       (first[0] + last[0]) / 2,

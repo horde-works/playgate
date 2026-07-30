@@ -135,7 +135,8 @@ test("the measured mass hangs under the authored lift heart", () => {
     properties.centre[2] - vehicle.liftCentre[2],
   );
 
-  assert.equal(properties.mass > 140 && properties.mass < 155, true);
+  // The trim cars and their rails add 4.8 kg of real ballast machinery.
+  assert.equal(properties.mass > 146 && properties.mass < 152, true);
   assert.equal(horizontalOffset < 0.15, true, `${horizontalOffset.toFixed(3)} m`);
   assert.equal(
     vehicle.liftCentre[1] - properties.centre[1] > 1,
@@ -163,7 +164,8 @@ test("both propellers and the tail are real breakable control channels", () => {
   const bindings = compileCommandActuators(ship);
   assert.deepEqual(
     bindings.map((binding) => binding.commandChannel).sort(),
-    ["rudder", "throttle:0", "throttle:1"],
+    // Trim is a control channel like any other: real parts, real loss.
+    ["rudder", "throttle:0", "throttle:1", "trim:pitch", "trim:roll"],
   );
 
   const all = new Set(ship.map((piece) => piece.id));
@@ -774,6 +776,7 @@ for (const kind of ["circuit", "tour"]) {
         headingError: 0,
         yawRateError: 0,
         crossTrackError: 0,
+        altitudeError: state.position[1] - plan.altitude(progress),
         progress,
         requiredControlAvailable: true,
         requestedControlEffort: 0,

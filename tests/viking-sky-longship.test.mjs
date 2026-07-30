@@ -64,11 +64,13 @@ test("the longship flies as one compound object while its berth stays ashore", (
   );
   const colliders = compoundClusterColliders(frame, ship, new Set());
 
-  assert.equal(ship.length, 349);
+  assert.equal(ship.length, 353);
   assert.equal(dock.length, 13);
   // Ten shafts and ten blades articulate on their own bodies; the rigid hull
   // keeps every oarlock but does not retain twenty ghost oar colliders.
-  assert.equal(colliders.length, ship.length - 20);
+  // Two trim cars and their two rails travel inside the hull as well, so
+  // twenty-four members stay out of the rigid collider.
+  assert.equal(colliders.length, ship.length - 24);
   assert.equal(
     ship.some((piece) => /bow-line|moor-line|buoy|spring-line|:brow:/.test(piece.id)),
     false,
@@ -93,7 +95,8 @@ test("the authored longship is honestly balanced below its lift heart", () => {
     true,
     "the lift heart must hang the hull as a pendulum",
   );
-  assert.equal(mass.mass > 55 && mass.mass < 60, true, `${mass.mass.toFixed(2)}`);
+  // The two stone trim cars and their oak rails weigh 6.8 kg together.
+  assert.equal(mass.mass > 62 && mass.mass < 68, true, `${mass.mass.toFixed(2)}`);
 });
 
 test("asymmetric damage moves the live centre of mass away from intact trim", () => {
@@ -147,7 +150,12 @@ test("every flying oar has an inboard handle and a physical oarlock", () => {
   assert.equal(shafts.length, 10);
   assert.equal(blades.length, 10);
   assert.equal(pivots.length, 10);
-  assert.deepEqual(frame.independentMemberMatches, [":oar:-1:", ":oar:1:"]);
+  assert.deepEqual(frame.independentMemberMatches, [
+    ":oar:-1:",
+    ":oar:1:",
+    // The trim cars travel inside the hull under their own pose owner.
+    ":trim:",
+  ]);
 
   for (const shaft of shafts) {
     const match = shaft.id.match(/:oar:(-1|1):(\d+):piece$/);

@@ -46,6 +46,7 @@ export function supervisedFailureEnvelope(
     finalManeuverTimeoutSeconds:
       base.finalManeuverTimeoutSeconds / factor,
     dockingTimeoutSeconds: base.dockingTimeoutSeconds / factor,
+    correctionGraceSeconds: base.correctionGraceSeconds / factor,
     minimumProgressPerSecond: base.minimumProgressPerSecond * factor,
   };
 }

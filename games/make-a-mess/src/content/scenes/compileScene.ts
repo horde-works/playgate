@@ -263,6 +263,7 @@ function compilePiece(
     size,
     visualProfile: source.visualProfile,
     visualMesh: source.visualMesh,
+    voxelization: source.voxelization,
     volume: source.volume === undefined
       ? undefined
       : source.volume * Math.abs(
@@ -336,6 +337,7 @@ function primitiveSource(object: Extract<SceneObjectDefinition, { kind: "primiti
     size: object.size,
     visualProfile: object.visualProfile,
     visualMesh: object.visualMesh,
+    voxelization: object.voxelization,
     volume: object.volume,
     bearingArea: object.bearingArea,
     color: object.color,

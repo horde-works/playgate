@@ -3119,6 +3119,60 @@ function createSkyPlatform(): void {
     intensity: 1.8,
   });
 
+  // === Дифферентовочные тележки в килевом коридоре внутри оболочки. Это
+  // единственный орган состава, создающий момент по крену и тангажу: он не
+  // прикладывает силу, а возит настоящий балласт, и живой центр масс уезжает
+  // вместе с ним. Обе стоят над измеренным центром масс целой машины
+  // (x = 5.6, z = 77.6), поэтому сами по себе развесовку не меняют: рельс
+  // симметричен, груз в нуле. Снаружи не видны, но куски настоящие: пробьёт
+  // оболочку — тележку унесёт вместе с балластом, и дифферентовать станет
+  // нечем. Числа продублированы в паспорте кадра, тест их сверяет.
+  const TRIM_X = (HULL_FROM + HULL_TO) / 2;
+  for (const [axis, y, travel, mass, along] of [
+    ["pitch", 7.2, 6.0, 11.0, true],
+    ["roll", 8.0, 2.15, 25.0, false],
+  ] as const) {
+    const railLength = travel * 2 + 0.8;
+    // The car hangs under its rail on a short yoke, the way a real trolley
+    // does, so neither piece grows through the other or through the gas cell.
+    const carY = y - 0.32;
+    part(train, `trim:${axis}:rail`, "steel", "steelSheet",
+      [TRIM_X, y, TRACK_Z],
+      along ? [railLength, 0.12, 0.12] : [0.12, 0.12, railLength], "#7d8489", {
+        contactBoxes: [{
+          position: [TRIM_X, y, TRACK_Z],
+          size: along
+            ? [railLength, 0.2, 0.2]
+            : [0.2, 0.2, railLength],
+        }],
+        // Привод и есть обязательное ядро органа: рельс перебит — тележка
+        // больше не едет, даже если сама цела.
+        actuator: {
+          id: `sky-train:trim:${axis}`,
+          commandChannel: `trim:${axis}`,
+          required: true,
+        },
+        bearsLoad: false,
+      });
+    // Балласт в стальном коробе: объём задан отдельно, иначе коробка такого
+    // размера весила бы как пустая жестянка.
+    part(train, `trim:${axis}:car`, "steel", "steelSheet",
+      [TRIM_X, carY, TRACK_Z],
+      along ? [0.86, 0.46, 0.7] : [0.7, 0.46, 0.86], "#5f6469", {
+        volume: mass / 3.6,
+        contactBoxes: [{
+          position: [TRIM_X, carY, TRACK_Z],
+          size: [0.95, 0.55, 0.95],
+        }],
+        actuator: {
+          id: `sky-train:trim:${axis}`,
+          commandChannel: `trim:${axis}`,
+          required: true,
+        },
+        bearsLoad: false,
+      });
+  }
+
   // Кормовой ресивер исполнительной автоматики хранит рабочее давление для
   // подъёмных клапанов. Это настоящий кусок оборудования и настоящая масса:
   // вместе с появившейся далеко впереди кабиной он меняет продольный баланс.

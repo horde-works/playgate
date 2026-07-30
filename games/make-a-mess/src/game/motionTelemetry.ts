@@ -69,8 +69,26 @@ export interface MotionTelemetrySnapshot {
   readonly capturedAt: number;
   /** Higher priority wins when several moving objects are transmitting. */
   readonly priority?: number;
+  /** Temporary controller mode; the journey phase remains independently true. */
+  readonly mode?: string;
   readonly phase: string;
   readonly metrics: readonly MotionTelemetryMetric[];
+  /** Latest finite external impulse, captured before automation reacts. */
+  readonly impact?: MotionTelemetryImpact;
+}
+
+export type MotionTelemetryVector3 = readonly [number, number, number];
+
+export interface MotionTelemetryImpact {
+  readonly sequence: number;
+  readonly capturedAt: number;
+  /** Impact point mapped from the current hull ellipsoid onto a unit sphere. */
+  readonly pointOnHull: MotionTelemetryVector3;
+  /** Starboard, up and forward components in the carrier's own frame. */
+  readonly impulseBody: MotionTelemetryVector3;
+  readonly deltaVelocityBody: MotionTelemetryVector3;
+  readonly deltaAngularVelocityBody: MotionTelemetryVector3;
+  readonly impulseMagnitude: number;
 }
 
 export type MotionInstrumentIndicatorCondition =
@@ -122,13 +140,19 @@ export interface MotionTelemetryAvailability {
   readonly airborne: boolean;
   /** Off-screen waits and rebuild transactions deliberately stay silent. */
   readonly suppressed?: boolean;
+  /** A completed emergency landing remains an active reported flight state. */
+  readonly reportWhileStopped?: boolean;
 }
 
 /** Shared eligibility rule for airships, trains and future moving clusters. */
 export function motionTelemetryAvailable(
   state: MotionTelemetryAvailability,
 ): boolean {
-  return state.active && !state.suppressed && (state.moving || state.airborne);
+  return (
+    state.active &&
+    !state.suppressed &&
+    (state.moving || state.airborne || state.reportWhileStopped === true)
+  );
 }
 
 export function applyMotionTelemetryUpdate(
@@ -162,7 +186,8 @@ export function selectMotionTelemetrySnapshot(
     const selectedPriority = selected.priority ?? 0;
     if (
       priority > selectedPriority ||
-      (priority === selectedPriority && snapshot.capturedAt > selected.capturedAt)
+      (priority === selectedPriority &&
+        snapshot.capturedAt > selected.capturedAt)
     ) {
       selected = snapshot;
     }
@@ -174,7 +199,9 @@ export interface MotionTelemetryStore {
   readonly update: (update: MotionTelemetryUpdate) => void;
   readonly clear: () => void;
   readonly getSnapshot: () => MotionTelemetrySnapshot | null;
-  readonly getSourceSnapshot: (sourceId: string) => MotionTelemetrySnapshot | null;
+  readonly getSourceSnapshot: (
+    sourceId: string,
+  ) => MotionTelemetrySnapshot | null;
   readonly subscribe: (listener: () => void) => () => void;
 }
 

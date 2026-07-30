@@ -16,7 +16,13 @@ test("the intact fortress exposes a few cached physics meshes, not one collider 
   assert.equal(
     meshes.reduce((total, mesh) => total + mesh.indices.length / 3, 0),
     collidablePieces.reduce(
-      (total, piece) => total + (piece.shape === "cylinder" ? 36 : 12),
+      (total, piece) =>
+        total +
+        (piece.shape === "sphere"
+          ? 288
+          : piece.shape === "cylinder"
+            ? 36
+            : 12),
       0,
     ),
   );

@@ -173,9 +173,17 @@ function addSurfaceMeshPiece(
   const localVertices = vertices.map((vertex) =>
     [0, 1, 2].map((axis) =>
       (vertex[axis] - centre[axis]) / size[axis]) as unknown as SceneVector3);
+  const area = indexedSurfaceArea(vertices, indices);
+  const inferredThickness = options.volume && area > 1e-8
+    ? options.volume / area
+    : undefined;
 
   addPiece(pieces, id, clusterId, material, shape, centre, size, color, {
     ...options,
+    voxelization: options.voxelization ?? {
+      mode: "shell",
+      ...(inferredThickness ? { thickness: inferredThickness } : {}),
+    },
     visualMesh: { vertices: localVertices, indices },
   });
 }
@@ -750,6 +758,74 @@ function createSkyRam(lamps: LampDefinition[]): BreakableClusterDefinition {
       },
     );
   }
+  // Дифферентовочные тележки под настилом боевой галереи, рядом с её
+  // постоянным балластом: у этой машины киль галереи и есть трюм. Это
+  // единственный орган корабля, создающий момент по крену и тангажу: он не
+  // прикладывает силу, а возит настоящий балласт, и живой центр масс уезжает
+  // вместе с ним. Обе стоят над измеренным центром масс целой машины, поэтому
+  // сами по себе развесовку не меняют. Снаружи не видны, но куски настоящие:
+  // вскроют обшивку — тележку унесёт вместе с балластом.
+  for (const [axis, y, travel, mass, along] of [
+    ["pitch", 5.3, 5.5, 9.1, true],
+    ["roll", 5.62, 1.05, 20.8, false],
+  ] as const) {
+    const railLength = travel * 2 + 0.8;
+    const railPosition = basaltSkyRamPoint(-0.68, -0.02, y);
+    addPiece(
+      pieces,
+      `${clusterId}:trim:${axis}:rail`,
+      clusterId,
+      "steel",
+      "cylinder",
+      railPosition,
+      [0.12, railLength, 0.12],
+      SOOT,
+      {
+        // Корпус лежит вдоль мировой Z, поэтому продольный рельс кладётся по
+        // z, а поперечный — по x.
+        rotation: along ? [Math.PI / 2, 0, 0] : [0, 0, Math.PI / 2],
+        contactBoxes: [{
+          position: railPosition,
+          size: along ? [0.2, 0.2, railLength] : [railLength, 0.2, 0.2],
+        }],
+        // Привод и есть обязательное ядро органа: рельс перебит — тележка
+        // больше не едет, даже если сама цела.
+        actuator: {
+          id: `basalt-sky-ram:trim:${axis}`,
+          commandChannel: `trim:${axis}`,
+          required: true,
+        },
+        bearsLoad: false,
+      },
+    );
+    // Балласт в кованом коробе: объём задан отдельно, иначе короб такого
+    // размера весил бы как пустая жестянка.
+    addPiece(
+      pieces,
+      `${clusterId}:trim:${axis}:car`,
+      clusterId,
+      "steel",
+      "steelSheet",
+      // Тележка висит под рельсом на короткой серьге, а не сидит в нём.
+      [railPosition[0], railPosition[1] - 0.3, railPosition[2]],
+      along ? [0.66, 0.44, 0.82] : [0.82, 0.44, 0.66],
+      "#5f5a55",
+      {
+        volume: mass / 3.6,
+        contactBoxes: [{
+          position: [railPosition[0], railPosition[1] - 0.3, railPosition[2]],
+          size: [0.9, 0.52, 0.9],
+        }],
+        actuator: {
+          id: `basalt-sky-ram:trim:${axis}`,
+          commandChannel: `trim:${axis}`,
+          required: true,
+        },
+        bearsLoad: false,
+      },
+    );
+  }
+
   lamps.push({
     id: "stronghold:sky-ram:core-glow",
     position: BASALT_SKY_RAM_ORIGIN,

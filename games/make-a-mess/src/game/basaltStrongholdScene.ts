@@ -1657,6 +1657,9 @@ export const basaltStrongholdScene = createDestructionScene({
   worldRadius: PLAYFIELD_RADIUS + 2,
   boundaryRadius: ROUTE_BOUNDARY_RADIUS,
   skyRadius: ROUTE_SKY_RADIUS,
+  // The first five minutes are a siege: the curtain has to be met on foot
+  // before the world opens up vertically.
+  flightLockSeconds: 300,
   safetyFloorY: -2.2,
   copy: {
     status: "Make a Mess / Basalt Stronghold",

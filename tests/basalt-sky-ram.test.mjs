@@ -33,6 +33,7 @@ import {
   balancedEngineYawAuthority,
   hullDrag,
   isDockingComplete,
+  isDockingSettleWindow,
   isMooringCaptureEligible,
   mooringForce,
   rotateVector,
@@ -47,6 +48,12 @@ import {
   compileCommandActuators,
   executeCommandActuators,
 } from "../games/make-a-mess/src/game/vehicleActuation.ts";
+import {
+  assessVehicleTrajectory,
+  requestedVehicleTrajectoryMode,
+} from "../games/make-a-mess/src/game/vehicleTrajectoryCorrection.ts";
+import { vehicleGuidanceEnvelope } from "../games/make-a-mess/src/game/vehicleGuidanceEnvelope.ts";
+import { DEFAULT_VEHICLE_FAILURE_ENVELOPE } from "../games/make-a-mess/src/game/vehicleFailure.ts";
 import {
   hingedDoorGroupKey,
   tailRampPolicy,
@@ -63,6 +70,12 @@ const berth = basaltStrongholdScene.breakablePieces.filter(
 function simulateIntactFlight(kind) {
   const vehicle = BASALT_SKY_RAM_AIR_VEHICLE;
   const flight = vehicle.flight;
+  const guidance = vehicleGuidanceEnvelope(
+    DEFAULT_VEHICLE_FAILURE_ENVELOPE,
+    flight.approach,
+    flight.limits,
+    flight.guidance,
+  );
   const properties = massProperties(ship, densityOf);
   const plan = flight.routePlan(kind, properties.centre);
   const model = {
@@ -80,6 +93,10 @@ function simulateIntactFlight(kind) {
   let liftNow = properties.mass * 9.81;
   let goArounds = 0;
   let lastGoAround = Number.NEGATIVE_INFINITY;
+  let firstCorrectionRequest = null;
+  let maximumCrossTrackError = 0;
+  let finalManeuverStartedAt = null;
+  let dockingSettleStartedAt = null;
   const dt = 1 / 60;
 
   for (let step = 0; step < 60 * 500; step += 1) {
@@ -97,22 +114,87 @@ function simulateIntactFlight(kind) {
       state.angularVelocity,
       properties.centre,
     );
-    if (isDockingComplete(
-      progress,
-      capture.offset,
-      state.orientation,
-      capture.velocity,
-      state.angularVelocity,
-      vehicle.nose,
-      flight.approach,
-      flight.docking,
-    )) {
-      return { completed: true, seconds: time, goArounds, capture };
+    const berthDistance = Math.hypot(capture.offset[0], capture.offset[2]);
+    if (
+      progress > 0.97 &&
+      berthDistance < 8 &&
+      finalManeuverStartedAt === null
+    ) {
+      finalManeuverStartedAt = time;
+    }
+    if (
+      isDockingSettleWindow(
+        progress,
+        capture.offset,
+        state.orientation,
+        vehicle.nose,
+        flight.approach,
+        flight.docking,
+      ) &&
+      dockingSettleStartedAt === null
+    ) {
+      dockingSettleStartedAt = time;
+    }
+    if (
+      isDockingComplete(
+        progress,
+        capture.offset,
+        state.orientation,
+        capture.velocity,
+        state.angularVelocity,
+        vehicle.nose,
+        flight.approach,
+        flight.docking,
+      )
+    ) {
+      return {
+        completed: true,
+        seconds: time,
+        goArounds,
+        capture,
+        firstCorrectionRequest,
+        maximumCrossTrackError,
+        finalManeuverSeconds:
+          finalManeuverStartedAt === null ? 0 : time - finalManeuverStartedAt,
+        dockingSettleSeconds:
+          dockingSettleStartedAt === null ? 0 : time - dockingSettleStartedAt,
+      };
     }
 
     let controls;
     let liftCommand = 0;
     if (castOff) {
+      const assessment = assessVehicleTrajectory(
+        plan,
+        progress,
+        {
+          position: centre,
+          orientation: state.orientation,
+          velocity: state.velocity,
+          angularVelocity: state.angularVelocity,
+        },
+        vehicle.nose,
+        false,
+        guidance,
+      );
+      const requestedMode = requestedVehicleTrajectoryMode(
+        assessment,
+        guidance,
+      );
+      maximumCrossTrackError = Math.max(
+        maximumCrossTrackError,
+        assessment.crossTrackError,
+      );
+      if (requestedMode !== "authoredRoute" && !firstCorrectionRequest) {
+        firstCorrectionRequest = {
+          time,
+          progress,
+          position: [...centre],
+          routePoint: plan.point(progress),
+          requestedMode,
+          assessment,
+        };
+      }
       const piloted = autopilot(
         plan,
         progress,
@@ -163,13 +245,10 @@ function simulateIntactFlight(kind) {
       ),
     ];
     const neutral = properties.mass * 9.81;
-    const liftTarget = neutral *
-      (1 + liftCommand * flight.limits.liftTrimRange);
+    const liftTarget =
+      neutral * (1 + liftCommand * flight.limits.liftTrimRange);
     const liftRate = neutral * 0.25 * dt;
-    liftNow += Math.max(
-      -liftRate,
-      Math.min(liftRate, liftTarget - liftNow),
-    );
+    liftNow += Math.max(-liftRate, Math.min(liftRate, liftTarget - liftNow));
     const liftArm = rotateVector(state.orientation, [
       vehicle.liftCentre[0] - properties.centre[0],
       vehicle.liftCentre[1] - properties.centre[1],
@@ -229,6 +308,12 @@ function simulateIntactFlight(kind) {
     completed: false,
     seconds: 500,
     goArounds,
+    firstCorrectionRequest,
+    maximumCrossTrackError,
+    finalManeuverSeconds:
+      finalManeuverStartedAt === null ? 0 : 500 - finalManeuverStartedAt,
+    dockingSettleSeconds:
+      dockingSettleStartedAt === null ? 0 : 500 - dockingSettleStartedAt,
     capture: vehicleMooringState(
       vehicle,
       bodyOffset,
@@ -244,7 +329,7 @@ test("the rear barbican and the sky ram are separate supported structures", () =
   const frame = vehicleFrameForCluster(BASALT_SKY_RAM_CLUSTER_ID);
   assert.equal(frame?.id, "basalt-sky-ram");
   assert.equal(vehicleFrameForCluster(BASALT_SKY_RAM_BERTH_CLUSTER_ID), null);
-  assert.equal(ship.length, 1129);
+  assert.equal(ship.length, 1133);
   assert.equal(berth.length >= 80, true);
   assert.equal(
     basaltStrongholdScene.resolveStructuralCollapse(new Set()).size,
@@ -255,10 +340,13 @@ test("the rear barbican and the sky ram are separate supported structures", () =
   const articulated = ship.filter((piece) =>
     frame.independentMemberMatches.some((match) => piece.id.includes(match)),
   );
-  assert.equal(articulated.length, 11);
+  // Seven ramp members plus two trim cars and their two rails.
+  assert.equal(articulated.length, 15);
   assert.equal(colliders.length, ship.length - articulated.length);
   assert.equal(
-    colliders.every((collider) => collider.sourceId.startsWith(`${BASALT_SKY_RAM_CLUSTER_ID}:`)),
+    colliders.every((collider) =>
+      collider.sourceId.startsWith(`${BASALT_SKY_RAM_CLUSTER_ID}:`),
+    ),
     true,
   );
 });
@@ -268,20 +356,31 @@ test("the dorsal awning breaks the square front without smothering the skin", ()
     /^stronghold:sky-ram:dorsal-awning:(-1|1):/.test(piece.id),
   );
   const angle = (25 * Math.PI) / 180;
-  const halfSpan = Math.max(...plates.map((piece) =>
-    Math.abs(piece.position[0]) + Math.cos(angle) * piece.size[0] / 2));
-  const lowerRoofEdge = Math.min(...plates.map((piece) =>
-    piece.position[1] -
-      Math.abs(Math.sin(piece.rotation[2])) * piece.size[0] / 2 -
-      Math.abs(Math.cos(piece.rotation[2])) * piece.size[1] / 2));
-  const sideArmourTop = Math.max(...ship
-    .filter((piece) => piece.id.includes(":armour:"))
-    .map((piece) => piece.position[1] + piece.size[1] / 2));
+  const halfSpan = Math.max(
+    ...plates.map(
+      (piece) =>
+        Math.abs(piece.position[0]) + (Math.cos(angle) * piece.size[0]) / 2,
+    ),
+  );
+  const lowerRoofEdge = Math.min(
+    ...plates.map(
+      (piece) =>
+        piece.position[1] -
+        (Math.abs(Math.sin(piece.rotation[2])) * piece.size[0]) / 2 -
+        (Math.abs(Math.cos(piece.rotation[2])) * piece.size[1]) / 2,
+    ),
+  );
+  const sideArmourTop = Math.max(
+    ...ship
+      .filter((piece) => piece.id.includes(":armour:"))
+      .map((piece) => piece.position[1] + piece.size[1] / 2),
+  );
 
   assert.equal(plates.length, 32);
   assert.equal(
-    plates.every((piece) =>
-      Math.abs(Math.abs(piece.rotation[2]) - angle) < 1e-9),
+    plates.every(
+      (piece) => Math.abs(Math.abs(piece.rotation[2]) - angle) < 1e-9,
+    ),
     true,
   );
   assert.equal(halfSpan > 3.7, true);
@@ -299,31 +398,43 @@ test("the dorsal awning breaks the square front without smothering the skin", ()
 
 test("a continuous high riveted citadel belt stands outside the breathing hull", () => {
   const plates = ship.filter((piece) =>
-    /^stronghold:sky-ram:citadel-belt:(-1|1):\d+:\d+$/.test(piece.id));
+    /^stronghold:sky-ram:citadel-belt:(-1|1):\d+:\d+$/.test(piece.id),
+  );
   const trusses = ship.filter((piece) =>
-    /^stronghold:sky-ram:citadel-truss:(-1|1):\d+:\d+$/.test(piece.id));
-  const heads = ship.filter((piece) => piece.id.includes(":citadel-belt:") &&
-    piece.id.endsWith(":truss-head"));
-  const rivets = ship.filter((piece) => piece.id.includes(":citadel-belt:") &&
-    piece.id.includes(":rivet:"));
+    /^stronghold:sky-ram:citadel-truss:(-1|1):\d+:\d+$/.test(piece.id),
+  );
+  const heads = ship.filter(
+    (piece) =>
+      piece.id.includes(":citadel-belt:") && piece.id.endsWith(":truss-head"),
+  );
+  const rivets = ship.filter(
+    (piece) =>
+      piece.id.includes(":citadel-belt:") && piece.id.includes(":rivet:"),
+  );
 
   assert.equal(plates.length, 42);
   assert.equal(trusses.length, 42);
   assert.equal(heads.length, 42);
   assert.equal(rivets.length, 168);
-  assert.equal(plates.every((piece) => piece.size[2] >= 1.48), true);
+  assert.equal(
+    plates.every((piece) => piece.size[2] >= 1.48),
+    true,
+  );
 
   const halfExtent = (piece, worldAxis) => {
     const matrix = rotationMatrixFromEuler(piece.rotation);
-    return Math.abs(matrix[worldAxis * 3]) * piece.size[0] / 2 +
-      Math.abs(matrix[worldAxis * 3 + 1]) * piece.size[1] / 2 +
-      Math.abs(matrix[worldAxis * 3 + 2]) * piece.size[2] / 2;
+    return (
+      (Math.abs(matrix[worldAxis * 3]) * piece.size[0]) / 2 +
+      (Math.abs(matrix[worldAxis * 3 + 1]) * piece.size[1]) / 2 +
+      (Math.abs(matrix[worldAxis * 3 + 2]) * piece.size[2]) / 2
+    );
   };
   for (const side of [-1, 1]) {
     for (const course of [0, 1, 2]) {
       const coursePlates = plates
         .filter((piece) =>
-          piece.id.includes(`:citadel-belt:${side}:${course}:`))
+          piece.id.includes(`:citadel-belt:${side}:${course}:`),
+        )
         .sort((left, right) => left.position[2] - right.position[2]);
       assert.equal(coursePlates.length, 7);
       for (let index = 0; index < coursePlates.length - 1; index += 1) {
@@ -342,8 +453,13 @@ test("a continuous high riveted citadel belt stands outside the breathing hull",
 
   for (const side of [-1, 1]) {
     for (let panel = 0; panel < 7; panel += 1) {
-      const courses = [0, 1, 2].map((course) => plates.find((piece) =>
-        piece.id === `stronghold:sky-ram:citadel-belt:${side}:${course}:${panel}`));
+      const courses = [0, 1, 2].map((course) =>
+        plates.find(
+          (piece) =>
+            piece.id ===
+            `stronghold:sky-ram:citadel-belt:${side}:${course}:${panel}`,
+        ),
+      );
       assert.equal(courses.every(Boolean), true);
       for (let course = 0; course < courses.length - 1; course += 1) {
         const upper = courses[course];
@@ -362,20 +478,23 @@ test("a continuous high riveted citadel belt stands outside the breathing hull",
     const match = plate.id.match(/citadel-belt:(-?1):(\d+):/);
     const side = Number(match?.[1]);
     const course = Number(match?.[2]);
-    const stringerIndex = side < 0
-      ? [10, 9, 9][course]
-      : [2, 3, 3][course];
+    const stringerIndex = side < 0 ? [10, 9, 9][course] : [2, 3, 3][course];
     const stringers = ship.filter((piece) =>
-      piece.id.startsWith(`stronghold:sky-ram:stringer:${stringerIndex}:`));
+      piece.id.startsWith(`stronghold:sky-ram:stringer:${stringerIndex}:`),
+    );
     const support = stringers.reduce((closest, piece) =>
       Math.abs(piece.position[2] - plate.position[2]) <
-          Math.abs(closest.position[2] - plate.position[2])
+      Math.abs(closest.position[2] - plate.position[2])
         ? piece
-        : closest);
+        : closest,
+    );
     const matrix = rotationMatrixFromEuler(plate.rotation);
     const outward = [matrix[1], matrix[4], matrix[7]];
-    const separation = plate.position.reduce((sum, coordinate, axis) =>
-      sum + (coordinate - support.position[axis]) * outward[axis], 0);
+    const separation = plate.position.reduce(
+      (sum, coordinate, axis) =>
+        sum + (coordinate - support.position[axis]) * outward[axis],
+      0,
+    );
     assert.equal(
       separation > 0.36,
       true,
@@ -386,28 +505,38 @@ test("a continuous high riveted citadel belt stands outside the breathing hull",
 
 test("the riveted belt closes into a continuous compound bow glacis", () => {
   const plates = ship.filter((piece) =>
-    /^stronghold:sky-ram:bow-glacis:(-1|1):\d+:\d+$/.test(piece.id));
+    /^stronghold:sky-ram:bow-glacis:(-1|1):\d+:\d+$/.test(piece.id),
+  );
   const trusses = ship.filter((piece) =>
-    /^stronghold:sky-ram:bow-glacis-truss:(-1|1):\d+:\d+$/.test(piece.id));
-  const rivets = ship.filter((piece) =>
-    piece.id.includes(":bow-glacis:") && piece.id.includes(":rivet:"));
+    /^stronghold:sky-ram:bow-glacis-truss:(-1|1):\d+:\d+$/.test(piece.id),
+  );
+  const rivets = ship.filter(
+    (piece) =>
+      piece.id.includes(":bow-glacis:") && piece.id.includes(":rivet:"),
+  );
 
   assert.equal(plates.length, 30);
   assert.equal(trusses.length, 30);
   assert.equal(rivets.length, 120);
   assert.equal(
     trusses.every((piece) =>
-      piece.attachmentSupportIds?.includes("stronghold:sky-ram:keel-cell:4")),
+      piece.attachmentSupportIds?.includes("stronghold:sky-ram:keel-cell:4"),
+    ),
     true,
   );
 
   for (const side of [-1, 1]) {
     for (const course of [0, 1, 2]) {
-      const broadside = ship.find((piece) =>
-        piece.id === `stronghold:sky-ram:citadel-belt:${side}:${course}:6`);
+      const broadside = ship.find(
+        (piece) =>
+          piece.id === `stronghold:sky-ram:citadel-belt:${side}:${course}:6`,
+      );
       const bow = plates
         .filter((piece) =>
-          piece.id.startsWith(`stronghold:sky-ram:bow-glacis:${side}:${course}:`))
+          piece.id.startsWith(
+            `stronghold:sky-ram:bow-glacis:${side}:${course}:`,
+          ),
+        )
         .sort((left, right) => left.position[2] - right.position[2]);
       assert.ok(broadside);
       assert.equal(bow.length, 5);
@@ -439,12 +568,15 @@ test("the riveted belt closes into a continuous compound bow glacis", () => {
 
 test("red dorsal embers burn behind real armour seams at patrol distance", () => {
   const emberPieces = ship.filter((piece) =>
-    piece.id.startsWith("stronghold:sky-ram:dorsal-ember:"));
+    piece.id.startsWith("stronghold:sky-ram:dorsal-ember:"),
+  );
   const emberLights = basaltStrongholdScene.lampDefinitions.filter((light) =>
-    light.id.startsWith("stronghold:sky-ram:dorsal-ember:"));
+    light.id.startsWith("stronghold:sky-ram:dorsal-ember:"),
+  );
   const innerAwningCourse = ship
     .filter((piece) =>
-      /^stronghold:sky-ram:dorsal-awning:1:.*:0$/.test(piece.id))
+      /^stronghold:sky-ram:dorsal-awning:1:.*:0$/.test(piece.id),
+    )
     .sort((left, right) => left.position[2] - right.position[2]);
 
   assert.equal(emberPieces.length, 4);
@@ -472,9 +604,10 @@ test("red dorsal embers burn behind real armour seams at patrol distance", () =>
       return light.position[2] > gapStart && light.position[2] < gapEnd;
     });
     assert.ok(seam, `${light.id} must sit in a real longitudinal roof gap`);
-    const ridgeEdgeY = seam.position[1] +
-      Math.abs(Math.sin(seam.rotation[2])) * seam.size[0] / 2 +
-      Math.abs(Math.cos(seam.rotation[2])) * seam.size[1] / 2;
+    const ridgeEdgeY =
+      seam.position[1] +
+      (Math.abs(Math.sin(seam.rotation[2])) * seam.size[0]) / 2 +
+      (Math.abs(Math.cos(seam.rotation[2])) * seam.size[1]) / 2;
     assert.equal(
       light.position[1] < ridgeEdgeY - 0.12,
       true,
@@ -485,36 +618,48 @@ test("red dorsal embers burn behind real armour seams at patrol distance", () =>
 
 test("the raised gallery is a true inverted trapezoid, not a narrower box", () => {
   const floors = ship.filter((piece) => piece.id.includes(":gallery:floor:"));
-  const roofs = ship.filter((piece) => /^stronghold:sky-ram:gallery:roof:\d+$/.test(piece.id));
-  const lowerWalls = ship.filter((piece) =>
-    piece.id.includes(":gallery:wall:") && piece.id.endsWith(":lower"));
-  const upperWalls = ship.filter((piece) =>
-    piece.id.includes(":gallery:wall:") && piece.id.endsWith(":upper"));
-  const envelopeBottom = Math.min(...ship
-    .filter((piece) => piece.id.includes(":skin:"))
-    .flatMap((piece) => piece.visualMesh.vertices.map((vertex) =>
-      piece.position[1] + vertex[1] * piece.size[1])));
-  const roofTop = Math.max(...roofs.map((piece) =>
-    piece.position[1] + piece.size[1] / 2));
+  const roofs = ship.filter((piece) =>
+    /^stronghold:sky-ram:gallery:roof:\d+$/.test(piece.id),
+  );
+  const lowerWalls = ship.filter(
+    (piece) =>
+      piece.id.includes(":gallery:wall:") && piece.id.endsWith(":lower"),
+  );
+  const upperWalls = ship.filter(
+    (piece) =>
+      piece.id.includes(":gallery:wall:") && piece.id.endsWith(":upper"),
+  );
+  const envelopeBottom = Math.min(
+    ...ship
+      .filter((piece) => piece.id.includes(":skin:"))
+      .flatMap((piece) =>
+        piece.visualMesh.vertices.map(
+          (vertex) => piece.position[1] + vertex[1] * piece.size[1],
+        ),
+      ),
+  );
+  const roofTop = Math.max(
+    ...roofs.map((piece) => piece.position[1] + piece.size[1] / 2),
+  );
 
   assert.equal(BASALT_SKY_RAM_GALLERY_FLOOR_Y >= 5.1, true);
   assert.equal(
     BASALT_SKY_RAM_GALLERY_TOP_HALF_WIDTH -
-        BASALT_SKY_RAM_GALLERY_BOTTOM_HALF_WIDTH >
+      BASALT_SKY_RAM_GALLERY_BOTTOM_HALF_WIDTH >
       0.5,
     true,
   );
   assert.equal(
-    floors.every((piece) =>
-      Math.abs(
-        piece.size[0] -
-          (BASALT_SKY_RAM_GALLERY_BOTTOM_HALF_WIDTH * 2 + 0.08),
-      ) < 1e-9),
+    floors.every(
+      (piece) =>
+        Math.abs(
+          piece.size[0] - (BASALT_SKY_RAM_GALLERY_BOTTOM_HALF_WIDTH * 2 + 0.08),
+        ) < 1e-9,
+    ),
     true,
   );
   assert.equal(
-    roofs.every((piece) =>
-      piece.size[0] > floors[0].size[0] + 0.9),
+    roofs.every((piece) => piece.size[0] > floors[0].size[0] + 0.9),
     true,
   );
   assert.equal(
@@ -524,8 +669,9 @@ test("the raised gallery is a true inverted trapezoid, not a narrower box", () =
     "the upper armour must visibly flare beyond the lower armour",
   );
   assert.equal(
-    [...lowerWalls, ...upperWalls].every((piece) =>
-      Math.abs(piece.rotation?.[2] ?? 0) > 0.15),
+    [...lowerWalls, ...upperWalls].every(
+      (piece) => Math.abs(piece.rotation?.[2] ?? 0) > 0.15,
+    ),
     true,
     "the side armour itself must slope; offsets alone would still read as a box",
   );
@@ -543,8 +689,12 @@ test("the raised gallery is a true inverted trapezoid, not a narrower box", () =
 test("the tapered stern is a single armoured ramp that reaches skid level", () => {
   const ramp = ship.filter((piece) => piece.id.includes(":gallery:ramp:"));
   const boards = ramp.filter((piece) => piece.id.includes(":ramp:board:"));
-  const cheeks = ship.filter((piece) => piece.id.includes(":gallery:tail-cheek:"));
-  const tailRoof = ship.filter((piece) => piece.id.includes(":gallery:tail-roof:"));
+  const cheeks = ship.filter((piece) =>
+    piece.id.includes(":gallery:tail-cheek:"),
+  );
+  const tailRoof = ship.filter((piece) =>
+    piece.id.includes(":gallery:tail-roof:"),
+  );
   const groupKeys = new Set(
     ramp.map((piece) => hingedDoorGroupKey(piece.id, piece.clusterId)),
   );
@@ -559,12 +709,17 @@ test("the tapered stern is a single armoured ramp that reaches skid level", () =
   assert.ok(policy);
   assert.equal(policy.openAngle < -1.1, true);
   assert.deepEqual(policy.rotationAxis, [1, 0, 0]);
-  assert.equal(ramp.every((piece) => piece.hinge), true);
   assert.equal(
-    ramp.every((piece) =>
-      piece.hinge.direction[0] === 1 &&
-      piece.hinge.direction[1] === 0 &&
-      piece.hinge.direction[2] === 0),
+    ramp.every((piece) => piece.hinge),
+    true,
+  );
+  assert.equal(
+    ramp.every(
+      (piece) =>
+        piece.hinge.direction[0] === 1 &&
+        piece.hinge.direction[1] === 0 &&
+        piece.hinge.direction[2] === 0,
+    ),
     true,
     "the ramp must turn around a physical transverse hinge",
   );
@@ -581,8 +736,10 @@ test("the tapered stern is a single armoured ramp that reaches skid level", () =
   ];
   const dy = closedTip[1] - pivot[1];
   const dz = closedTip[2] - pivot[2];
-  const openedTipY = pivot[1] +
-    dy * Math.cos(policy.openAngle) - dz * Math.sin(policy.openAngle);
+  const openedTipY =
+    pivot[1] +
+    dy * Math.cos(policy.openAngle) -
+    dz * Math.sin(policy.openAngle);
   assert.equal(closedTip[1] > BASALT_SKY_RAM_GALLERY_ROOF_Y - 0.2, true);
   assert.equal(
     openedTipY >= 3.95 && openedTipY <= 4.3,
@@ -594,28 +751,41 @@ test("the tapered stern is a single armoured ramp that reaches skid level", () =
 test("the furnace ducts are long, low, armoured and visibly powered", () => {
   const enginePieces = ship.filter((piece) => piece.id.includes(":engine:"));
   const armour = enginePieces.filter((piece) => piece.id.includes(":armour:"));
-  const glass = enginePieces.filter((piece) => piece.id.endsWith(":furnace-glass"));
+  const glass = enginePieces.filter((piece) =>
+    piece.id.endsWith(":furnace-glass"),
+  );
   const lips = enginePieces.filter((piece) => piece.id.includes(":glass-lip:"));
   const exhaust = BASALT_SKY_RAM_AIR_VEHICLE.flight.exhaust;
-  const envelopeBottom = Math.min(...ship
-    .filter((piece) => piece.id.includes(":skin:"))
-    .flatMap((piece) => piece.visualMesh.vertices.map((vertex) =>
-      piece.position[1] + vertex[1] * piece.size[1])));
-  const ductBottom = Math.min(...armour.map((piece) =>
-    piece.position[1] - piece.size[1] / 2));
-  const ductTop = Math.max(...armour.map((piece) =>
-    piece.position[1] + piece.size[1] / 2));
+  const envelopeBottom = Math.min(
+    ...ship
+      .filter((piece) => piece.id.includes(":skin:"))
+      .flatMap((piece) =>
+        piece.visualMesh.vertices.map(
+          (vertex) => piece.position[1] + vertex[1] * piece.size[1],
+        ),
+      ),
+  );
+  const ductBottom = Math.min(
+    ...armour.map((piece) => piece.position[1] - piece.size[1] / 2),
+  );
+  const ductTop = Math.max(
+    ...armour.map((piece) => piece.position[1] + piece.size[1] / 2),
+  );
 
   assert.equal(enginePieces.length, 92);
   assert.equal(armour.length, 14);
   assert.equal(glass.length, 2);
   assert.equal(lips.length, 8);
   const steelShields = enginePieces.filter((piece) =>
-    /^stronghold:sky-ram:engine:(-1|1):steel-shield:\d+$/.test(piece.id));
+    /^stronghold:sky-ram:engine:(-1|1):steel-shield:\d+$/.test(piece.id),
+  );
   const shieldRails = enginePieces.filter((piece) =>
-    piece.id.endsWith(":steel-shield-rail"));
-  const shieldRivets = enginePieces.filter((piece) =>
-    piece.id.includes(":steel-shield:") && piece.id.includes(":rivet:"));
+    piece.id.endsWith(":steel-shield-rail"),
+  );
+  const shieldRivets = enginePieces.filter(
+    (piece) =>
+      piece.id.includes(":steel-shield:") && piece.id.includes(":rivet:"),
+  );
   assert.equal(steelShields.length, 10);
   assert.equal(shieldRails.length, 2);
   assert.equal(shieldRivets.length, 40);
@@ -627,8 +797,10 @@ test("the furnace ducts are long, low, armoured and visibly powered", () => {
       const aft = sideShields[index];
       const forward = sideShields[index + 1];
       assert.equal(
-        aft.position[2] + aft.size[2] / 2 -
-          (forward.position[2] - forward.size[2] / 2) > 0.08,
+        aft.position[2] +
+          aft.size[2] / 2 -
+          (forward.position[2] - forward.size[2] / 2) >
+          0.08,
         true,
         `${aft.id} and ${forward.id} leave an engine-armour gap`,
       );
@@ -637,8 +809,10 @@ test("the furnace ducts are long, low, armoured and visibly powered", () => {
   for (const shield of steelShields) {
     const side = shield.id.includes(":engine:-1:") ? -1 : 1;
     const index = Number(shield.id.split(":").at(-1)) + 1;
-    const backing = ship.find((piece) =>
-      piece.id === `stronghold:sky-ram:engine:${side}:armour:${index}`);
+    const backing = ship.find(
+      (piece) =>
+        piece.id === `stronghold:sky-ram:engine:${side}:armour:${index}`,
+    );
     assert.ok(backing);
     assert.equal(
       Math.abs(shield.position[0]) - shield.size[0] / 2 >
@@ -646,12 +820,16 @@ test("the furnace ducts are long, low, armoured and visibly powered", () => {
       true,
       `${shield.id} intersects the furnace armour instead of shielding it`,
     );
-    const nozzleCollar = ship.find((piece) =>
-      piece.id === `stronghold:sky-ram:engine:${side}:outlet-collar`);
+    const nozzleCollar = ship.find(
+      (piece) => piece.id === `stronghold:sky-ram:engine:${side}:outlet-collar`,
+    );
     assert.ok(nozzleCollar);
     assert.equal(Math.abs(shield.size[1] - nozzleCollar.size[0]) < 0.01, true);
   }
-  assert.equal(Math.max(...armour.map((piece) => piece.position[1])) < 10.0, true);
+  assert.equal(
+    Math.max(...armour.map((piece) => piece.position[1])) < 10.0,
+    true,
+  );
   assert.equal(
     envelopeBottom - ductBottom > 0.85,
     true,
@@ -669,16 +847,19 @@ test("the furnace ducts are long, low, armoured and visibly powered", () => {
   );
   assert.equal(
     Math.max(...armour.map((piece) => piece.position[2])) -
-        Math.min(...armour.map((piece) => piece.position[2])) >
+      Math.min(...armour.map((piece) => piece.position[2])) >
       10.5,
     true,
   );
   for (const pane of glass) {
     const side = pane.id.includes(":engine:-1:") ? -1 : 1;
     const protectingLips = lips.filter((piece) =>
-      piece.id.includes(`:engine:${side}:glass-lip:`));
+      piece.id.includes(`:engine:${side}:glass-lip:`),
+    );
     assert.equal(
-      protectingLips.every((piece) => piece.position[2] > pane.position[2] + 0.1),
+      protectingLips.every(
+        (piece) => piece.position[2] > pane.position[2] + 0.1,
+      ),
       true,
       `${pane.id} is not recessed behind armour`,
     );
@@ -694,17 +875,23 @@ test("the furnace ducts are long, low, armoured and visibly powered", () => {
   assert.equal(exhaust.fullRate / exhaust.idleRate > 25, true);
   assert.equal(
     exhaust.sources.every((source) =>
-      ship.some((piece) => piece.id === source.outletPieceId)),
+      ship.some((piece) => piece.id === source.outletPieceId),
+    ),
     true,
   );
 });
 
 test("the envelope has a long asymmetric whale profile, not a bomb body", () => {
   const skin = ship.filter((piece) => piece.id.includes(":skin:"));
-  const renderVertices = (pieces) => pieces.flatMap((piece) =>
-    piece.visualMesh.vertices.map((vertex) =>
-      vertex.map((coordinate, axis) =>
-        piece.position[axis] + coordinate * piece.size[axis])));
+  const renderVertices = (pieces) =>
+    pieces.flatMap((piece) =>
+      piece.visualMesh.vertices.map((vertex) =>
+        vertex.map(
+          (coordinate, axis) =>
+            piece.position[axis] + coordinate * piece.size[axis],
+        ),
+      ),
+    );
   const range = (vertices, axis) => {
     const values = vertices.map((vertex) => vertex[axis]);
     return Math.max(...values) - Math.min(...values);
@@ -720,14 +907,24 @@ test("the envelope has a long asymmetric whale profile, not a bomb body", () => 
   const lower = vertices.filter((vertex) => vertex[1] < 13.0);
   const capRims = ship
     .filter((piece) => piece.id.includes(":cap:") && piece.visualMesh)
-    .flatMap((piece) => piece.visualMesh.vertices.slice(0, -1).map((vertex) =>
-      vertex.map((coordinate, axis) =>
-        piece.position[axis] + coordinate * piece.size[axis])));
+    .flatMap((piece) =>
+      piece.visualMesh.vertices
+        .slice(0, -1)
+        .map((vertex) =>
+          vertex.map(
+            (coordinate, axis) =>
+              piece.position[axis] + coordinate * piece.size[axis],
+          ),
+        ),
+    );
 
   const appearances = new Map();
   for (const vertex of [...vertices, ...capRims]) {
-    const key = vertex.map((coordinate) =>
-      (Math.abs(coordinate) < 1e-6 ? 0 : coordinate).toFixed(5)).join(":");
+    const key = vertex
+      .map((coordinate) =>
+        (Math.abs(coordinate) < 1e-6 ? 0 : coordinate).toFixed(5),
+      )
+      .join(":");
     appearances.set(key, (appearances.get(key) ?? 0) + 1);
   }
 
@@ -735,7 +932,7 @@ test("the envelope has a long asymmetric whale profile, not a bomb body", () => 
   assert.equal(range(tail, 0) < range(shoulder, 0) * 0.4, true);
   assert.equal(
     Math.max(...upper.map((vertex) => vertex[2])) -
-        Math.max(...lower.map((vertex) => vertex[2])) >
+      Math.max(...lower.map((vertex) => vertex[2])) >
       1.0,
     true,
     "the crown must project forward beyond the lower bow",
@@ -751,28 +948,36 @@ test("the armoured gallery hangs as a balanced heavy pendulum", () => {
   const vehicle = BASALT_SKY_RAM_AIR_VEHICLE;
   const properties = massProperties(ship, densityOf);
   const ballast = ship.filter((piece) =>
-    piece.id.includes(":gallery:trim-ballast:"));
+    piece.id.includes(":gallery:trim-ballast:"),
+  );
   const horizontalOffset = Math.hypot(
     properties.centre[0] - vehicle.liftCentre[0],
     properties.centre[2] - vehicle.liftCentre[2],
   );
 
-  assert.equal(properties.mass > 259 && properties.mass < 261, true);
+  // The two trim cars and their rails are 30 kg of real ballast machinery.
+  assert.equal(properties.mass > 289 && properties.mass < 292, true);
   assert.deepEqual(vehicle.liftCentre, [0, 13.1, -102.19]);
   assert.equal(ballast.length, 2);
-  assert.equal(ballast.every((piece) => piece.material === "steel"), true);
+  assert.equal(
+    ballast.every((piece) => piece.material === "steel"),
+    true,
+  );
   assert.deepEqual(
     ballast.map((piece) => piece.position[0]).sort((a, b) => a - b),
     [-0.61, 0.61],
   );
   assert.equal(
     ballast.every((piece) =>
-      piece.attachmentSupportIds?.includes(
-        "stronghold:sky-ram:gallery:keel:0",
-      )),
+      piece.attachmentSupportIds?.includes("stronghold:sky-ram:gallery:keel:0"),
+    ),
     true,
   );
-  assert.equal(horizontalOffset < 0.08, true, `${horizontalOffset.toFixed(3)} m`);
+  assert.equal(
+    horizontalOffset < 0.08,
+    true,
+    `${horizontalOffset.toFixed(3)} m`,
+  );
   assert.equal(
     vehicle.liftCentre[1] - properties.centre[1] > 3.75,
     true,
@@ -801,24 +1006,43 @@ test("distributed keel cells fail by bay instead of acting as one kill switch", 
       true,
       `${cell.id} vented most of the independent gas cassettes`,
     );
-    assert.equal(berth.some((piece) => collapsed.has(piece.id)), false);
+    assert.equal(
+      berth.some((piece) => collapsed.has(piece.id)),
+      false,
+    );
   }
 
   const allLoadPathsLost = basaltStrongholdScene.resolveStructuralCollapse(
     new Set(keelCells.map((piece) => piece.id)),
   );
-  assert.equal(ship.every((piece) => allLoadPathsLost.has(piece.id)), true);
-  assert.equal(berth.some((piece) => allLoadPathsLost.has(piece.id)), false);
+  assert.equal(
+    ship.every((piece) => allLoadPathsLost.has(piece.id)),
+    true,
+  );
+  assert.equal(
+    berth.some((piece) => allLoadPathsLost.has(piece.id)),
+    false,
+  );
 });
 
 test("the armoured furnaces and tail remain physical actuators", () => {
   const bindings = compileCommandActuators(ship);
-  assert.deepEqual(
-    bindings.map((binding) => binding.commandChannel).sort(),
-    ["rudder", "throttle:0", "throttle:1"],
+  assert.deepEqual(bindings.map((binding) => binding.commandChannel).sort(), [
+    "rudder",
+    "throttle:0",
+    "throttle:1",
+    // Trim is a control channel like any other: real parts, real loss.
+    "trim:pitch",
+    "trim:roll",
+  ]);
+  assert.equal(
+    BASALT_SKY_RAM_AIR_VEHICLE.flight.driveAnimation.kind,
+    "furnace",
   );
-  assert.equal(BASALT_SKY_RAM_AIR_VEHICLE.flight.driveAnimation.kind, "furnace");
-  assert.equal(ship.some((piece) => piece.id.includes(":bellows:")), false);
+  assert.equal(
+    ship.some((piece) => piece.id.includes(":bellows:")),
+    false,
+  );
 
   const intactIds = new Set(ship.map((piece) => piece.id));
   const intact = executeCommandActuators(bindings, intactIds, {
@@ -832,7 +1056,9 @@ test("the armoured furnaces and tail remain physical actuators", () => {
   );
 
   const withoutOneChamber = new Set(
-    [...intactIds].filter((id) => id !== "stronghold:sky-ram:engine:-1:chamber:3"),
+    [...intactIds].filter(
+      (id) => id !== "stronghold:sky-ram:engine:-1:chamber:3",
+    ),
   );
   const degraded = executeCommandActuators(bindings, withoutOneChamber, {
     "throttle:0": 1,
@@ -884,7 +1110,8 @@ test("the cast ram physically enters a tighter berth jaw than the docking tolera
     "stronghold:sky-ram:ram:mantlet",
   );
   const mantletRivets = ship.filter((piece) =>
-    piece.id.startsWith("stronghold:sky-ram:ram:mantlet:rivet:"));
+    piece.id.startsWith("stronghold:sky-ram:ram:mantlet:rivet:"),
+  );
   const leftCheek = basaltStrongholdScene.breakablePieceById.get(
     "stronghold:berth:capture:cheek:-1",
   );
@@ -901,7 +1128,9 @@ test("the cast ram physically enters a tighter berth jaw than the docking tolera
   assert.equal(mantletRivets.length, 6);
   assert.equal(mantlet.position[2] < tip.position[2] - 2.5, true);
 
-  const throat = rightCheek.position[0] - rightCheek.size[0] / 2 -
+  const throat =
+    rightCheek.position[0] -
+    rightCheek.size[0] / 2 -
     (leftCheek.position[0] + leftCheek.size[0] / 2);
   const radialClearance = (throat - tip.size[0]) / 2;
   assert.equal(radialClearance > 0.24 && radialClearance < 0.26, true);
@@ -955,7 +1184,11 @@ test("both patrols back clear, climb outside the fortress and dock nose-first", 
     const plan = vehicle.flight.routePlan(kind, properties.centre);
     assert.equal(plan.travelDirection(0), -1);
     assert.equal(
-      vehicleSpoolCommand(plan, vehicle.flight.spoolSeconds, vehicle.flight.spoolSeconds),
+      vehicleSpoolCommand(
+        plan,
+        vehicle.flight.spoolSeconds,
+        vehicle.flight.spoolSeconds,
+      ),
       -0.42,
       "the run-up must pull the ram out of its jaw instead of driving into it",
     );
@@ -973,7 +1206,8 @@ test("both patrols back clear, climb outside the fortress and dock nose-first", 
 
     const finalHeading = vehicleRouteHeading(plan, plan.finalFrom + 0.01);
     assert.equal(
-      finalHeading[0] * vehicle.nose[0] + finalHeading[1] * vehicle.nose[2] > 0.995,
+      finalHeading[0] * vehicle.nose[0] + finalHeading[1] * vehicle.nose[2] >
+        0.995,
       true,
       "the final glide must point the ram into the jaw",
     );
@@ -996,7 +1230,8 @@ test("both patrols back clear, climb outside the fortress and dock nose-first", 
     `the ram leaves no hull/passenger margin at ${farthestRoutePoint.toFixed(1)} m`,
   );
   assert.equal(
-    basaltStrongholdScene.boundaryRadius + 60 <= basaltStrongholdScene.skyRadius,
+    basaltStrongholdScene.boundaryRadius + 60 <=
+      basaltStrongholdScene.skyRadius,
     true,
   );
   assert.equal(
@@ -1024,9 +1259,10 @@ test("the ram returns through a continuous turn its real actuators can hold", ()
   };
   const rudderArm = Math.abs(yawArm(limits.rudderPoint, rudderDirection));
   const engineArms = limits.enginePoints.map((point) =>
-    yawArm(point, localNose));
-  const engineMoment = limits.enginePower *
-    balancedEngineYawAuthority(engineArms);
+    yawArm(point, localNose),
+  );
+  const engineMoment =
+    limits.enginePower * balancedEngineYawAuthority(engineArms);
   const angularDrag = vehicle.flight.angularDamping * properties.inertia[4];
 
   for (const kind of ["circuit", "war-patrol"]) {
@@ -1050,35 +1286,39 @@ test("the ram returns through a continuous turn its real actuators can hold", ()
       const after = route.point((distance + 0.25) / route.length);
       const incoming = [at[0] - before[0], at[2] - before[2]];
       const outgoing = [after[0] - at[0], after[2] - at[2]];
-      const cosine = (
-        incoming[0] * outgoing[0] + incoming[1] * outgoing[1]
-      ) / (Math.hypot(...incoming) * Math.hypot(...outgoing));
+      const cosine =
+        (incoming[0] * outgoing[0] + incoming[1] * outgoing[1]) /
+        (Math.hypot(...incoming) * Math.hypot(...outgoing));
       const corner = Math.acos(Math.max(-1, Math.min(1, cosine)));
       assert.equal(
         corner < 0.04,
         true,
-        `${kind}:${nodeId} introduces a ${(corner * 180 / Math.PI).toFixed(2)}° corner`,
+        `${kind}:${nodeId} introduces a ${((corner * 180) / Math.PI).toFixed(2)}° corner`,
       );
     }
 
     let worstDemand = 0;
     let narrowestRadius = Number.POSITIVE_INFINITY;
     const arrivalDistance = route.nodeProgress("west-south") * route.length;
-    for (let distance = arrivalDistance + 1; distance < route.length - 1; distance += 0.25) {
+    for (
+      let distance = arrivalDistance + 1;
+      distance < route.length - 1;
+      distance += 0.25
+    ) {
       const before = route.point((distance - 1) / route.length);
       const at = route.point(distance / route.length);
       const after = route.point((distance + 1) / route.length);
       const incoming = [at[0] - before[0], at[2] - before[2]];
       const outgoing = [after[0] - at[0], after[2] - at[2]];
-      const cosine = (
-        incoming[0] * outgoing[0] + incoming[1] * outgoing[1]
-      ) / (Math.hypot(...incoming) * Math.hypot(...outgoing));
+      const cosine =
+        (incoming[0] * outgoing[0] + incoming[1] * outgoing[1]) /
+        (Math.hypot(...incoming) * Math.hypot(...outgoing));
       const headingChange = Math.acos(Math.max(-1, Math.min(1, cosine)));
       const curvature = headingChange;
       const speed = route.requirement("speedLimit", distance / route.length);
       const demandedYawRate = curvature * speed;
-      const rudderMoment = limits.maxRudderForce *
-        rudderEffectiveness(speed, limits) * rudderArm;
+      const rudderMoment =
+        limits.maxRudderForce * rudderEffectiveness(speed, limits) * rudderArm;
       const holdableYawRate = (rudderMoment + engineMoment) / angularDrag;
       worstDemand = Math.max(worstDemand, demandedYawRate / holdableYawRate);
       if (curvature > 1e-6) {
@@ -1114,15 +1354,31 @@ test("both intact patrols physically settle the nose into the berth", () => {
       0,
       `${kind}: an intact approach must not be rejected`,
     );
+    assert.equal(
+      result.firstCorrectionRequest,
+      null,
+      `${kind}: max cross-track ${result.maximumCrossTrackError.toFixed(1)} m; ` +
+        `requested ${JSON.stringify(result.firstCorrectionRequest)}`,
+    );
+    assert.equal(
+      result.finalManeuverSeconds < 34,
+      true,
+      `${kind}: final eight metres took ${result.finalManeuverSeconds.toFixed(1)} s`,
+    );
+    assert.equal(
+      result.dockingSettleSeconds < 10,
+      true,
+      `${kind}: physical capture took ${result.dockingSettleSeconds.toFixed(1)} s`,
+    );
   }
 });
 
 test("all onboard lights follow the ram while berth cressets stay on stone", () => {
-  const onboard = basaltStrongholdScene.lampDefinitions.filter(
-    (light) => light.id.startsWith(`${BASALT_SKY_RAM_CLUSTER_ID}:`),
+  const onboard = basaltStrongholdScene.lampDefinitions.filter((light) =>
+    light.id.startsWith(`${BASALT_SKY_RAM_CLUSTER_ID}:`),
   );
-  const berthLights = basaltStrongholdScene.lampDefinitions.filter(
-    (light) => light.id.startsWith("stronghold:berth:cresset:"),
+  const berthLights = basaltStrongholdScene.lampDefinitions.filter((light) =>
+    light.id.startsWith("stronghold:berth:cresset:"),
   );
   assert.equal(onboard.length, 7);
   assert.equal(
@@ -1134,9 +1390,14 @@ test("all onboard lights follow the ram while berth cressets stay on stone", () 
     false,
   );
   assert.equal(
-    onboard.every((light) => light.carrierClusterId === BASALT_SKY_RAM_CLUSTER_ID),
+    onboard.every(
+      (light) => light.carrierClusterId === BASALT_SKY_RAM_CLUSTER_ID,
+    ),
     true,
   );
   assert.equal(berthLights.length, 2);
-  assert.equal(berthLights.every((light) => !light.carrierClusterId), true);
+  assert.equal(
+    berthLights.every((light) => !light.carrierClusterId),
+    true,
+  );
 });

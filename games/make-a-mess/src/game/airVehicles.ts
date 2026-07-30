@@ -1,6 +1,7 @@
 import type { LampEventState, SceneVector3 } from "./destructionScene.ts";
 import type { EntryInteractionTarget } from "./entryInteraction.ts";
 import type { VehicleRecoveryLifecycle } from "./vehicleFailure.ts";
+import type { VehicleGuidanceOverrides } from "./vehicleGuidanceEnvelope.ts";
 import {
   emergencyEscapePlan,
   flightPlan,
@@ -85,6 +86,12 @@ export interface AirVehicleDefinition extends VehicleFrameDefinition {
     readonly limits: ShipLimits;
     readonly approach: ApproachGate;
     readonly docking: DockingTolerance;
+    /**
+     * Physical deviations of this machine from the derived guidance corridor.
+     * The corridor itself comes from the failure envelope, the approach gate
+     * and the trim authority, so an ordinary carrier authors nothing here.
+     */
+    readonly guidance?: VehicleGuidanceOverrides;
     readonly spoolSeconds: number;
     readonly underwaySeconds: number;
     readonly driveAnimation: VehicleDriveAnimation;
@@ -369,7 +376,8 @@ export const SKY_LONGSHIP_AIR_VEHICLE: AirVehicleDefinition = {
     limits: {
       // Two oar banks provide the same modest acceleration per tonne as the
       // much heavier train. Their lateral spacing also gives docking yaw.
-      enginePower: 105,
+      // Пересчитано вместе с массой каменных чушек дифферентовки.
+      enginePower: 117,
       enginePoints: [
         longshipPoint(0, -2.4, 1.2),
         longshipPoint(0, 2.4, 1.2),
@@ -510,7 +518,8 @@ export const TOWN_AIRSHIP_AIR_VEHICLE: AirVehicleDefinition = {
   flight: {
     limits: {
       // Same reversible twin-engine control surface as the sky train, scaled
-      // to the measured 146 kg body rather than copied by appearance.
+      // to the measured body rather than copied by appearance. The trim cars
+      // are part of that body, so the powerplant carries them too.
       enginePower: 220,
       enginePoints: [
         townAirshipPoint(7, -4.3, 11.4),
@@ -606,7 +615,8 @@ export const BASALT_SKY_RAM_AIR_VEHICLE: AirVehicleDefinition = {
   },
   flight: {
     limits: {
-      enginePower: 360,
+      // Пересчитано вместе с массой дифферентовочного балласта галереи.
+      enginePower: 403,
       enginePoints: [
         basaltSkyRamPoint(-0.8, -1.65, 8.8),
         basaltSkyRamPoint(-0.8, 1.65, 8.8),

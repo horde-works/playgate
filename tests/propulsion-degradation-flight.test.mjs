@@ -357,14 +357,13 @@ for (const carrier of carriers) {
           crossTrackError: Math.abs(
             routeOffsetX * tangentZ - routeOffsetZ * tangentX,
           ),
+          altitudeError: state.position[1] - plan.altitude(progress),
           progress,
           requiredControlAvailable: health.mode !== "inoperative",
           requestedControlEffort: Math.max(0, ...drive.map(Math.abs)),
           deliveredControlFraction: deliveredFraction(drive, delivered),
           goArounds,
-          turning:
-            Math.abs(piloted.desiredYawRate) > 0.1 ||
-            Math.abs(state.angularVelocity[1]) > 0.1,
+          turning: Math.abs(state.angularVelocity[1]) > 0.1,
           inFinalManeuver: progress > 0.97 && berthDistance < 8,
           inDockingCapture: isDockingSettleWindow(
             progress,

@@ -1136,6 +1136,57 @@ function createAirship(): void {
         },
       });
   }
+
+  // === Дифферентовочные тележки в килевом коридоре под газовым баллоном.
+  // Это единственный орган корабля, создающий момент по крену и тангажу: он
+  // не прикладывает силу, а возит настоящий свинец, и живой центр масс
+  // уезжает вместе с ним. Снаружи не видно, но кусок настоящий: пробьёт
+  // оболочку взрывом — тележку унесёт вместе с балластом и управлять
+  // развесовкой станет нечем.
+  //
+  // Обе стоят над измеренным центром масс целой машины (a = 6.17), поэтому
+  // сами по себе они его не сдвигают: рельс симметричен, груз в нуле.
+  // У этой машины короткое маятниковое плечо и моторы на дальних выносах —
+  // трима намеренно не хватает на потерю целой мотогондолы.
+  const TRIM_A = 6.17;
+  for (const [axis, y, travel, mass, along] of [
+    // Самый лёгкий корпус из четырёх: установка намеренно скромная, иначе
+    // она заметно меняет лётные запасы самой машины.
+    ["pitch", 10.55, 3.0, 1.4, true],
+    ["roll", 11.15, 1.25, 3.0, false],
+  ] as const) {
+    primitive(ship, `trim:${axis}:rail`, "steel", "cylinder",
+      P(TRIM_A, 0, y), [0.1, travel * 2 + 0.6, 0.1], "#7d8489", {
+        rotation: along ? HULL_AXIS : ACROSS_AXIS,
+        contactBoxes: [{ position: [0, 0, 0], size: [0.16, travel * 2 + 0.6, 0.16] }],
+        // Привод и есть обязательное ядро органа: рельс перебит — тележка
+        // больше никуда не едет, даже если сама цела.
+        actuator: {
+          id: `town-airship:trim:${axis}`,
+          commandChannel: `trim:${axis}`,
+          required: true,
+        },
+        bearsLoad: false,
+        sideAttachmentReach: 0.4,
+      });
+    // Свинец в стальном коробе: объём задан отдельно, иначе коробка такого
+    // размера весила бы как пустая жестянка.
+    // The car hangs under its rail on a short yoke, the way a real trolley
+    // does, so neither piece grows through the other.
+    primitive(ship, `trim:${axis}:car`, "steel", "steelSheet",
+      P(TRIM_A, 0, y - 0.28), along ? [0.62, 0.34, 0.5] : [0.5, 0.34, 0.74], "#5f6469", {
+        rotation: ALONG,
+        volume: mass / 3.6,
+        contactBoxes: [{ position: [0, 0, 0], size: [0.68, 0.4, 0.8] }],
+        actuator: {
+          id: `town-airship:trim:${axis}`,
+          commandChannel: `trim:${axis}`,
+          required: true,
+        },
+        bearsLoad: false,
+        sideAttachmentReach: 0.3,
+      });
+  }
 }
 
 // --- Причальная мачта -------------------------------------------------------

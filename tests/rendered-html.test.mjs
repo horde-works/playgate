@@ -1,33 +1,43 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 async function render(pathname = "/") {
-  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
-  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
-  const { default: worker } = await import(workerUrl.href);
+  const route = pathname === "/"
+    ? "index"
+    : pathname.replace(/^\/+|\/+$/g, "");
+  if (!/^[a-z0-9/-]+$/.test(route)) {
+    throw new Error(`Unsafe production route: ${pathname}`);
+  }
 
-  return worker.fetch(
-    new Request(`http://localhost${pathname}`, {
-      headers: { accept: "text/html" },
-    }),
-    {
-      ASSETS: {
-        fetch: async () => new Response("Not found", { status: 404 }),
-      },
-    },
-    {
-      waitUntil() {},
-      passThroughOnException() {},
-    },
+  const artifact = new URL(
+    `../.next/server/app/${route}.html`,
+    import.meta.url,
   );
+  const metadataArtifact = new URL(
+    `../.next/server/app/${route}.meta`,
+    import.meta.url,
+  );
+  try {
+    const [html, metadata] = await Promise.all([
+      readFile(artifact, "utf8"),
+      readFile(metadataArtifact, "utf8").then(JSON.parse),
+    ]);
+    return { html, metadata };
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      throw new Error(
+        `Missing Next.js production output for ${pathname}; run npm run build first`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
 }
 
-test("server-renders the handmade games hero", async () => {
-  const response = await render();
-  assert.equal(response.status, 200);
-  assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
-
-  const html = await response.text();
+test("production-renders the handmade games hero", async () => {
+  const { html, metadata } = await render();
+  assert.equal(metadata.headers["x-nextjs-prerender"], "1");
   // The site renders in its default language (English) on the server; the
   // language switcher swaps copy on the client.
   assert.match(html, /Games we/);
@@ -38,33 +48,25 @@ test("server-renders the handmade games hero", async () => {
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/i);
 });
 
-test("server-renders the catalog and game space", async () => {
-  const [catalogResponse, gameResponse, fortressResponse] = await Promise.all([
+test("production-renders the catalog and game space", async () => {
+  const [catalog, game, fortress] = await Promise.all([
     render("/games"),
     render("/games/make-a-mess"),
     render("/games/make-a-mess/basalt-stronghold"),
   ]);
 
-  assert.equal(catalogResponse.status, 200);
-  assert.equal(gameResponse.status, 200);
-  assert.equal(fortressResponse.status, 200);
+  for (const rendered of [catalog, game, fortress]) {
+    assert.equal(rendered.metadata.headers["x-nextjs-prerender"], "1");
+  }
 
-  const [catalogHtml, gameHtml, fortressHtml] = await Promise.all([
-    catalogResponse.text(),
-    gameResponse.text(),
-    fortressResponse.text(),
-  ]);
-
-  assert.match(catalogHtml, /Catalogue/);
-  assert.match(catalogHtml, /Make a Mess: Basalt Stronghold/);
-  assert.match(catalogHtml, /href="\/games\/make-a-mess\/basalt-stronghold"/);
-  assert.match(catalogHtml, /Next slot/);
-  assert.match(gameHtml, /Make a Mess \/ 004/);
-  assert.match(gameHtml, /The house is the toy/);
-  assert.match(gameHtml, /Everything can break/);
-  assert.match(gameHtml, /four-storey blocks/);
-  assert.match(gameHtml, /Grab the hammer/);
-  assert.match(fortressHtml, /Make a Mess \/ Basalt Stronghold/);
-  assert.match(fortressHtml, /The fortress is the toy/);
-  assert.match(fortressHtml, /Head for the gate/);
+  assert.match(catalog.html, /Catalogue/);
+  assert.match(catalog.html, /Make a Mess: Basalt Stronghold/);
+  assert.match(catalog.html, /href="\/games\/make-a-mess\/basalt-stronghold"/);
+  assert.match(catalog.html, /Next slot/);
+  assert.match(game.html, /Make a Mess \/ 004/);
+  assert.match(game.html, /The house is the toy/);
+  assert.match(game.html, /Hammer/);
+  assert.match(fortress.html, /Make a Mess \/ Basalt Stronghold/);
+  assert.match(fortress.html, /The fortress is the toy/);
+  assert.match(fortress.html, /Hammer/);
 });

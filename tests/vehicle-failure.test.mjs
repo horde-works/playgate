@@ -10,9 +10,7 @@ import {
   propulsionHealth,
   updatePropulsionFeedback,
 } from "../games/make-a-mess/src/game/vehiclePropulsionAutomation.ts";
-import {
-  propulsionFlightClearance,
-} from "../games/make-a-mess/src/game/vehicleFlightSupervisor.ts";
+import { propulsionFlightClearance } from "../games/make-a-mess/src/game/vehicleFlightSupervisor.ts";
 import {
   allocateAutopilotEngineCommands,
   balancedEngineYawAuthority,
@@ -25,6 +23,9 @@ import {
   createVehicleFailureWatchdog,
   createVehicleLandingStability,
   createVehicleRecoveryLifecycle,
+  DEFAULT_VEHICLE_FAILURE_ENVELOPE,
+  deliveredLiftControlFraction,
+  rebaseVehicleFailureWatchdog,
   VEHICLE_LANDING_STABLE_SECONDS,
   VEHICLE_REBUILD_DELAY_SECONDS,
   vehicleDisturbanceRecoveryFeasible,
@@ -45,6 +46,7 @@ function observation(overrides = {}) {
     headingError: 0,
     yawRateError: 0,
     crossTrackError: 0,
+    altitudeError: 0,
     progress: 0.4,
     requiredControlAvailable: true,
     requestedControlEffort: 0.8,
@@ -60,7 +62,8 @@ function observation(overrides = {}) {
 
 test("only actuators still carried by the compound body execute commands", () => {
   const bindings = compileCommandActuators(pieces);
-  assert.equal(bindings.length, 2);
+  // Two propellers and the two trim rails: every one of them a real part.
+  assert.equal(bindings.length, 4);
   const intactMembers = new Set(pieces.map((piece) => piece.id));
   const intact = executeCommandActuators(bindings, intactMembers, {
     "throttle:0": 0.8,
@@ -87,7 +90,11 @@ test("only actuators still carried by the compound body execute commands", () =>
   assert.equal(deliveredCommandValue(damaged, "throttle:0", 0.8), 0.4);
   assert.equal(deliveredCommandValue(damaged, "throttle:1", -0.4), -0.4);
 
-  const leftCore = bindings[0].members.find((member) => member.required);
+  // Actuator order now includes the trim rails; ask for a propulsion group
+  // by channel instead of by position.
+  const leftCore = bindings
+    .find((binding) => binding.commandChannel === "throttle:0")
+    .members.find((member) => member.required);
   assert.ok(leftCore?.pieceId.includes(":body:"));
   const withoutCore = new Set(
     [...intactMembers].filter((pieceId) => pieceId !== leftCore.pieceId),
@@ -119,17 +126,22 @@ test("both airships share required engine cores, blade sensing, compensation, an
     ),
   ];
   for (const carrier of carriers) {
-    const bindings = compileCommandActuators(carrier).filter(
-      (binding) => binding.commandChannel.startsWith("throttle:"),
+    const bindings = compileCommandActuators(carrier).filter((binding) =>
+      binding.commandChannel.startsWith("throttle:"),
     );
     assert.equal(bindings.length, 2);
-    assert.equal(bindings.every((binding) => binding.members.length === 3), true);
     assert.equal(
-      bindings.every((binding) =>
-        binding.members.filter((member) => !member.required).length === 2 &&
-        binding.members
-          .filter((member) => !member.required)
-          .every((member) => member.pieceId.includes(":blade:"))),
+      bindings.every((binding) => binding.members.length === 3),
+      true,
+    );
+    assert.equal(
+      bindings.every(
+        (binding) =>
+          binding.members.filter((member) => !member.required).length === 2 &&
+          binding.members
+            .filter((member) => !member.required)
+            .every((member) => member.pieceId.includes(":blade:")),
+      ),
       true,
     );
     assert.equal(
@@ -170,28 +182,20 @@ test("both airships share required engine cores, blade sensing, compensation, an
 
     // The first command is honest: the autopilot does not know about the
     // missing blade until the actuator layer returns the short delivery.
-    const firstDrive = allocateAutopilotEngineCommands(
-      0.8,
-      0,
-      [-1, 1],
-      [1, 1],
-    );
+    const firstDrive = allocateAutopilotEngineCommands(0.8, 0, [-1, 1], [1, 1]);
     assert.deepEqual(firstDrive, [0.8, 0.8]);
-    const firstExecution = executeCommandActuators(
-      bindings,
-      degradedMembers,
-      {
-        "throttle:0": firstDrive[0],
-        "throttle:1": firstDrive[1],
-      },
-    );
+    const firstExecution = executeCommandActuators(bindings, degradedMembers, {
+      "throttle:0": firstDrive[0],
+      "throttle:1": firstDrive[1],
+    });
     assert.deepEqual(
       [0, 1].map((index) =>
         deliveredCommandValue(
           firstExecution,
           `throttle:${index}`,
           firstDrive[index],
-        )),
+        ),
+      ),
       [0.4, 0.8],
     );
     const feedback = updatePropulsionFeedback([1, 1], firstExecution, 2);
@@ -207,7 +211,8 @@ test("both airships share required engine cores, blade sensing, compensation, an
     });
     assert.deepEqual(
       [0, 1].map((index) =>
-        deliveredCommandValue(execution, `throttle:${index}`, drive[index])),
+        deliveredCommandValue(execution, `throttle:${index}`, drive[index]),
+      ),
       [0.5, 0.5],
     );
     const reverseDrive = allocateAutopilotEngineCommands(
@@ -231,13 +236,15 @@ test("both airships share required engine cores, blade sensing, compensation, an
           reverseExecution,
           `throttle:${index}`,
           reverseDrive[index],
-        )),
+        ),
+      ),
       [-0.5, -0.5],
     );
 
     const failedMembers = new Set(
       [...intact].filter(
-        (pieceId) => !bindings[0].members.some((member) => member.pieceId === pieceId),
+        (pieceId) =>
+          !bindings[0].members.some((member) => member.pieceId === pieceId),
       ),
     );
     const inoperative = propulsionHealth(bindings, failedMembers, 2);
@@ -273,7 +280,10 @@ test("autopilot allocation supports the authored arms of any engine count", () =
     dragAngular: 100,
     limits: {
       enginePower: 300,
-      enginePoints: [[0, 0, -4], [0, 0, 4]],
+      enginePoints: [
+        [0, 0, -4],
+        [0, 0, 4],
+      ],
       maxRudderForce: 60,
       rudderReferenceSpeed: 7,
       rudderPoint: [5, 0, 0],
@@ -288,9 +298,7 @@ test("autopilot allocation supports the authored arms of any engine count", () =
     yawArms,
     availability,
   );
-  const delivered = command.map(
-    (value, index) => value * availability[index],
-  );
+  const delivered = command.map((value, index) => value * availability[index]);
   const moment = delivered.reduce(
     (sum, value, index) => sum + value * yawArms[index],
     0,
@@ -299,7 +307,9 @@ test("autopilot allocation supports the authored arms of any engine count", () =
   assert.equal(command.length, 3);
   assert.ok(command.every((value) => Math.abs(value) <= 1));
   assert.ok(Math.abs(moment - 0.2) < 1e-9);
-  assert.ok(Math.abs(delivered.reduce((sum, value) => sum + value, 0) - 1.2) < 1e-9);
+  assert.ok(
+    Math.abs(delivered.reduce((sum, value) => sum + value, 0) - 1.2) < 1e-9,
+  );
   assert.equal(balancedEngineYawAuthority([-1, 1], [0.5, 1]), 1);
 });
 
@@ -308,7 +318,10 @@ test("a short control interruption recovers but a detached actuator trips the wa
   for (let index = 0; index < 10; index += 1) {
     const result = advanceVehicleFailureWatchdog(
       watchdog,
-      observation({ deliveredControlFraction: 0, progress: 0.4 + index * 0.001 }),
+      observation({
+        deliveredControlFraction: 0,
+        progress: 0.4 + index * 0.001,
+      }),
     );
     watchdog = result.state;
     assert.equal(result.failure, null);
@@ -323,7 +336,10 @@ test("a short control interruption recovers but a detached actuator trips the wa
   for (let index = 0; index < 21; index += 1) {
     const result = advanceVehicleFailureWatchdog(
       watchdog,
-      observation({ deliveredControlFraction: 0, progress: 0.42 + index * 0.001 }),
+      observation({
+        deliveredControlFraction: 0,
+        progress: 0.42 + index * 0.001,
+      }),
     );
     watchdog = result.state;
     failure = result.failure;
@@ -348,6 +364,47 @@ test("a required engine failure is reported even after commanded speed falls to 
     failure = result.failure;
   }
   assert.equal(failure, "controlMismatch");
+});
+
+test("an unavailable lift request trips the same physical control watchdog", () => {
+  assert.equal(deliveredLiftControlFraction(1, 0.1, 1.1), 1);
+  assert.equal(deliveredLiftControlFraction(-1, 0.1, 0.7), 1);
+  assert.equal(deliveredLiftControlFraction(1, 0.1, 0.96), 0);
+
+  let watchdog = createVehicleFailureWatchdog(0.4);
+  let failure = null;
+  for (let index = 0; index < 21; index += 1) {
+    const result = advanceVehicleFailureWatchdog(
+      watchdog,
+      observation({
+        requestedControlEffort: 0,
+        deliveredControlFraction: 1,
+        requestedLiftEffort: 1,
+        deliveredLiftFraction: 0,
+      }),
+    );
+    watchdog = result.state;
+    failure = result.failure;
+  }
+  assert.equal(failure, "controlMismatch");
+});
+
+test("persistent route-altitude loss is a route divergence", () => {
+  let watchdog = createVehicleFailureWatchdog(0.4);
+  let failure = null;
+  for (let index = 0; index < 51; index += 1) {
+    const result = advanceVehicleFailureWatchdog(
+      watchdog,
+      observation({
+        altitudeError: 18,
+        requestedControlEffort: 0.2,
+        progress: 0.4 + index * 0.001,
+      }),
+    );
+    watchdog = result.state;
+    failure = result.failure;
+  }
+  assert.equal(failure, "routeDivergence");
 });
 
 test("a feasible upset suspends failure timers while an unrecoverable one still fails", () => {
@@ -398,9 +455,14 @@ test("recovery feasibility predicts stopping authority, not deviation alone", ()
     verticalSpeed: 0,
     minimumRelativeAltitude: -20,
   };
+  assert.equal(vehicleDisturbanceRecoveryFeasible(tossedButHealthy), true);
   assert.equal(
-    vehicleDisturbanceRecoveryFeasible(tossedButHealthy),
-    true,
+    vehicleDisturbanceRecoveryFeasible({
+      ...tossedButHealthy,
+      liftToWeight: 0.96,
+    }),
+    false,
+    "a level craft with less lift than weight cannot hold stabilization",
   );
   assert.equal(
     vehicleDisturbanceRecoveryFeasible({
@@ -544,6 +606,41 @@ test("a final manoeuvre can descend normally but cannot hang forever", () => {
   assert.equal(watchdog.stalledSeconds, 0);
 });
 
+test("a slow final approach is progress, not a docking timeout", () => {
+  let watchdog = createVehicleFailureWatchdog(0.99);
+  let failure = null;
+  for (let index = 0; index < 500; index += 1) {
+    const result = advanceVehicleFailureWatchdog(
+      watchdog,
+      observation({
+        progress: 0.99,
+        requestedControlEffort: 0.2,
+        inFinalManeuver: true,
+        dockingDistance: 8 - index * 0.01,
+      }),
+    );
+    watchdog = result.state;
+    failure = result.failure;
+  }
+  assert.equal(failure, null);
+  assert.equal(watchdog.finalManeuverSeconds < 1, true);
+
+  for (let index = 0; index < 351; index += 1) {
+    const result = advanceVehicleFailureWatchdog(
+      watchdog,
+      observation({
+        progress: 0.99,
+        requestedControlEffort: 0.2,
+        inFinalManeuver: true,
+        dockingDistance: 3,
+      }),
+    );
+    watchdog = result.state;
+    failure = result.failure;
+  }
+  assert.equal(failure, "dockingTimeout");
+});
+
 test("recovery follows capability and geography instead of vehicle names", () => {
   const healthy = {
     structureFlightworthy: true,
@@ -560,20 +657,15 @@ test("recovery follows capability and geography instead of vehicle names", () =>
   };
   assert.equal(vehicleFailureDisposition(healthy, true), "escapeRoute");
   assert.equal(vehicleFailureDisposition(halfEngine, true), "escapeRoute");
-  assert.equal(
-    vehicleFailureDisposition(engineGone, false),
-    "descendBelowFog",
-  );
+  assert.equal(vehicleFailureDisposition(engineGone, false), "descendBelowFog");
   assert.equal(vehicleFailureDisposition(engineGone, true), "settleInPlace");
 });
 
 test("the third failed approach triggers the common fly-away replacement recovery", () => {
   const watchdog = createVehicleFailureWatchdog(0.7);
   assert.equal(
-    advanceVehicleFailureWatchdog(
-      watchdog,
-      observation({ goArounds: 2 }),
-    ).failure,
+    advanceVehicleFailureWatchdog(watchdog, observation({ goArounds: 2 }))
+      .failure,
     null,
     "the second go-around was mistaken for the common three-attempt limit",
   );
@@ -581,25 +673,22 @@ test("the third failed approach triggers the common fly-away replacement recover
     watchdog,
     observation({ goArounds: 3 }),
   ).failure;
-  assert.equal(
-    failure,
-    "goAroundLimit",
-  );
-  const disposition = vehicleFailureDisposition({
-    structureFlightworthy: true,
-    liftToWeight: 1.08,
-    requiredActuatorFractions: [1, 1],
-  }, true);
-  assert.equal(disposition, "escapeRoute");
-  assert.deepEqual(
-    createVehicleRecoveryLifecycle(failure, disposition),
+  assert.equal(failure, "goAroundLimit");
+  const disposition = vehicleFailureDisposition(
     {
-      reason: "goAroundLimit",
-      disposition: "escapeRoute",
-      phase: "escape",
-      phaseSeconds: 0,
+      structureFlightworthy: true,
+      liftToWeight: 1.08,
+      requiredActuatorFractions: [1, 1],
     },
+    true,
   );
+  assert.equal(disposition, "escapeRoute");
+  assert.deepEqual(createVehicleRecoveryLifecycle(failure, disposition), {
+    reason: "goAroundLimit",
+    disposition: "escapeRoute",
+    phase: "escape",
+    phaseSeconds: 0,
+  });
 });
 
 test("non-finite physics fails immediately", () => {
@@ -718,7 +807,11 @@ test("landing needs sustained support and a stable pose, then latches", () => {
     ...overrides,
   });
 
-  for (let elapsed = 0; elapsed < VEHICLE_LANDING_STABLE_SECONDS; elapsed += 0.5) {
+  for (
+    let elapsed = 0;
+    elapsed < VEHICLE_LANDING_STABLE_SECONDS;
+    elapsed += 0.5
+  ) {
     state = advanceVehicleLandingStability(state, sample());
   }
   assert.equal(state.landed, true);
@@ -737,4 +830,80 @@ test("landing needs sustained support and a stable pose, then latches", () => {
     );
   }
   assert.equal(hovering.landed, false, "a motionless hover is not ground");
+});
+
+test("a correction cannot starve the watchdog it answers to", () => {
+  const inverted = observation({
+    recoveringDisturbance: true,
+    pitch: DEFAULT_VEHICLE_FAILURE_ENVELOPE.maximumPitch + 0.2,
+  });
+  let state = createVehicleFailureWatchdog(0.4);
+  let failure = null;
+  let seconds = 0;
+  for (let step = 0; step < 2000 && failure === null; step += 1) {
+    const result = advanceVehicleFailureWatchdog(state, inverted);
+    state = result.state;
+    failure = result.failure;
+    seconds += inverted.deltaSeconds;
+    if (
+      seconds <
+      DEFAULT_VEHICLE_FAILURE_ENVELOPE.correctionGraceSeconds * 0.5
+    ) {
+      assert.equal(
+        failure,
+        null,
+        "a live correction must own an attitude excursion it is fixing",
+      );
+    }
+  }
+  assert.equal(failure, "criticalAttitude");
+  assert.equal(
+    seconds >= DEFAULT_VEHICLE_FAILURE_ENVELOPE.correctionGraceSeconds,
+    true,
+    "the grace budget was not honoured before the watchdog resumed",
+  );
+  assert.equal(
+    seconds <
+      DEFAULT_VEHICLE_FAILURE_ENVELOPE.correctionGraceSeconds +
+        DEFAULT_VEHICLE_FAILURE_ENVELOPE.attitudeGraceSeconds +
+        1,
+    true,
+    `the suspended watchdog resumed too late, after ${seconds.toFixed(1)} s`,
+  );
+});
+
+test("correction attempts are budgeted like go-arounds", () => {
+  const almost = advanceVehicleFailureWatchdog(
+    createVehicleFailureWatchdog(0.4),
+    observation({
+      corrections: DEFAULT_VEHICLE_FAILURE_ENVELOPE.maximumCorrections - 1,
+    }),
+  );
+  assert.equal(almost.failure, null);
+  const exhausted = advanceVehicleFailureWatchdog(
+    createVehicleFailureWatchdog(0.4),
+    observation({
+      corrections: DEFAULT_VEHICLE_FAILURE_ENVELOPE.maximumCorrections,
+    }),
+  );
+  assert.equal(exhausted.failure, "correctionLimit");
+});
+
+test("rejoining the route rebases the watchdog without refunding it", () => {
+  let state = createVehicleFailureWatchdog(0.4);
+  for (let step = 0; step < 100; step += 1) {
+    state = advanceVehicleFailureWatchdog(
+      state,
+      observation({ recoveringDisturbance: true, progress: 0.4 }),
+    ).state;
+  }
+  assert.equal(state.correctionSeconds > 9.5, true);
+  const rebased = rebaseVehicleFailureWatchdog(state, 0.31);
+  assert.equal(rebased.previousProgress, 0.31);
+  assert.equal(rebased.bestFinalManeuverDistance, null);
+  assert.equal(
+    rebased.correctionSeconds,
+    state.correctionSeconds,
+    "a merge must not refund the correction grace already spent",
+  );
 });

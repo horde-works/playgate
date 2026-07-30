@@ -518,7 +518,9 @@ test("the ship is balanced by real ballast, not by a fudge factor", () => {
   const wrongTrim =
     (Math.atan2(withoutBallast.centre[0] - hullCentre, M.hullY - withoutBallast.centre[1]) * 180) /
     Math.PI;
-  assert.equal(wrongTrim > 8, true, `без балласта дифферент всего ${wrongTrim.toFixed(1)}°`);
+  // Состав потяжелел на дифферентовочную установку, поэтому та же потеря
+  // носового балласта разворачивает его чуть мягче — но всё так же честно.
+  assert.equal(wrongTrim > 7, true, `без балласта дифферент всего ${wrongTrim.toFixed(1)}°`);
 });
 
 test("ground support levels a ship that has lost its lift", () => {

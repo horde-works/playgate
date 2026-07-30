@@ -20,6 +20,33 @@ export interface VehicleSafetyAdvisory {
 
 const COLLISION_MARGIN = 1.5;
 
+/** Authored berth structures are expected geometry within this radius. */
+export const BERTH_SENSING_RADIUS = 30;
+
+/**
+ * Where predictive intervention stands down. This is always a question about
+ * the authored plan that owns the berth: a temporary intercept ends at a route
+ * join and knows nothing about the mast it may be passing, so answering it
+ * from the flown plan would make the machine's own berth an obstacle.
+ */
+export interface VehicleBerthSensingContext {
+  /** Progress along the authored plan, not along a temporary correction. */
+  readonly progress: number;
+  readonly finalFrom: number;
+  /** Distance from the craft to the berth that authored plan ends at. */
+  readonly berthDistance: number;
+}
+
+export function vehicleSafetySensingSuppressed(
+  context: VehicleBerthSensingContext,
+): boolean {
+  return (
+    context.progress >= context.finalFrom ||
+    ((context.progress < 0.06 || context.progress > 0.94) &&
+      context.berthDistance < BERTH_SENSING_RADIUS)
+  );
+}
+
 /**
  * Sensor fusion only. It reports what is physically becoming unsafe and never
  * writes thrust, lift, route progress or pose.

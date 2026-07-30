@@ -1,6 +1,7 @@
 import { Euler, Quaternion, Vector3 } from "three";
 import type {
   BreakableMaterial,
+  BreakablePieceDefinition,
   BreakableShape,
   LandscapeSurfaceProfile,
   SurfaceTextureProfile,
@@ -16,6 +17,10 @@ import {
   type VoxelBox,
   type VoxelVector3,
 } from "./voxelFracture.ts";
+import {
+  compileCustomVoxelGeometry,
+  type CompiledCustomVoxelGeometry,
+} from "./customVoxelization.ts";
 
 export interface ShardDefinition {
   readonly id: string;
@@ -57,6 +62,8 @@ export interface ShardSource {
   readonly shape?: BreakableShape;
   readonly size: readonly [number, number, number];
   readonly voxelBody?: VoxelBody;
+  readonly boxes?: readonly VoxelBox[];
+  readonly volume?: number;
 }
 
 export type FractureCause = "impact" | "blast" | "fall";
@@ -399,6 +406,18 @@ export function carveVoxelBudget(material: BreakableMaterial): number {
   return groundMaterials.has(material)
     ? GROUND_CARVE_MAX_VOXELS
     : DEFAULT_MAX_VOXELS;
+}
+
+/** Dormant custom damage data; callers decide when it becomes a live body. */
+export function compilePieceDamageGeometry(
+  piece: BreakablePieceDefinition,
+): CompiledCustomVoxelGeometry | null {
+  if (!piece.visualMesh && !piece.visualProfile) return null;
+  return compileCustomVoxelGeometry(
+    piece,
+    voxelSizeByMaterial[piece.material],
+    carveVoxelBudget(piece.material),
+  );
 }
 
 /**

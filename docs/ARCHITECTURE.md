@@ -204,6 +204,13 @@ Fragments and remnants become dynamic Rapier bodies rendered by
 `DynamicBreakableWorld`. A broken lit-glass fixture is **quenched** (its emissive
 is dropped) so shattered windows and lamps go dark.
 
+Custom `visualMesh` and `visualProfile` pieces use the same fracture pipeline.
+Their damage lattice is compiled from the authored surface at scene load, but
+stays data-only until the first hit. Only the damaged piece switches from its
+exact mesh to occupied voxel boxes; neighbouring custom pieces remain exact.
+The authored `volume` is carried through the conversion, so this render/damage
+LOD transition does not change mass or structural capacity.
+
 ### Rounds are faceted, not sliced
 
 The `cylinder` shape exists, but for rigid machine parts the preferred way to

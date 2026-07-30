@@ -44,7 +44,9 @@ test("batch grouping does not depend on which pieces are broken", () => {
 test("the whole fortress renders as a stable, small set of instanced batches", () => {
   const batches = buildIntactInstanceBatches(basaltStrongholdScene.breakablePieces);
 
-  assert.equal(batches.length < 32, true);
+  // Exact custom hull surfaces add a handful of topology-specific batches,
+  // while the complete fortress still remains a tiny fixed batch set.
+  assert.equal(batches.length < 40, true);
   assert.equal(
     batches.reduce((total, batch) => total + batch.pieces.length, 0),
     basaltStrongholdScene.breakablePieces.length,

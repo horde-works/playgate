@@ -47,26 +47,35 @@ function smootherStep(value: number): number {
 function routeRequirements(
   options: RoutePerformance,
 ): Readonly<Record<string, MotionRouteRequirement>> {
-  const altitude = ({ distance, remaining }: MotionRouteRequirementContext): number => {
+  const altitude = ({
+    distance,
+    remaining,
+  }: MotionRouteRequirementContext): number => {
     if (distance < options.transitionDistance) {
-      return SKY_TRAIN_UNSTICK_HEIGHT +
+      return (
+        SKY_TRAIN_UNSTICK_HEIGHT +
         (options.ceiling - SKY_TRAIN_UNSTICK_HEIGHT) *
           smootherStep(
             (distance - SKY_TRAIN_FINAL_HEIGHT_SHELF) /
               (options.transitionDistance - SKY_TRAIN_FINAL_HEIGHT_SHELF),
-          );
+          )
+      );
     }
     if (remaining < options.transitionDistance) {
       if (remaining < SKY_TRAIN_VERTICAL_LANDING_DISTANCE) {
-        return SKY_TRAIN_UNSTICK_HEIGHT *
-          smootherStep(remaining / SKY_TRAIN_VERTICAL_LANDING_DISTANCE);
+        return (
+          SKY_TRAIN_UNSTICK_HEIGHT *
+          smootherStep(remaining / SKY_TRAIN_VERTICAL_LANDING_DISTANCE)
+        );
       }
-      return SKY_TRAIN_UNSTICK_HEIGHT +
+      return (
+        SKY_TRAIN_UNSTICK_HEIGHT +
         (options.ceiling - SKY_TRAIN_UNSTICK_HEIGHT) *
           smootherStep(
             (remaining - SKY_TRAIN_FINAL_HEIGHT_SHELF) /
               (options.transitionDistance - SKY_TRAIN_FINAL_HEIGHT_SHELF),
-          );
+          )
+      );
     }
     return options.ceiling;
   };
@@ -286,7 +295,11 @@ function irregularCityOrbitRoute(): MotionRouteDefinition {
       outgoing: [-95, 0, 82],
       samples: 64,
     },
-    ...terminalInboundNodes([-KAPPA * TERMINAL_APPROACH.outer, 0, TERMINAL_APPROACH.horizon]),
+    ...terminalInboundNodes([
+      -KAPPA * TERMINAL_APPROACH.outer,
+      0,
+      TERMINAL_APPROACH.horizon,
+    ]),
   ];
 
   return {
@@ -316,9 +329,14 @@ export function createSkyTrainEmergencyEscapeRoute(
   input: SkyTrainEmergencyEscapeInput,
 ): MotionRouteArtifact {
   const horizontalLength = Math.hypot(input.forward[0], input.forward[2]);
-  const forward: SceneVector3 = horizontalLength > 1e-4
-    ? [input.forward[0] / horizontalLength, 0, input.forward[2] / horizontalLength]
-    : [-1, 0, 0];
+  const forward: SceneVector3 =
+    horizontalLength > 1e-4
+      ? [
+          input.forward[0] / horizontalLength,
+          0,
+          input.forward[2] / horizontalLength,
+        ]
+      : [-1, 0, 0];
   const start: SceneVector3 = [input.start[0], 0, input.start[2]];
   const startAltitude = input.start[1];
   const escapeAltitude = Math.max(38, startAltitude + 12);
@@ -329,11 +347,7 @@ export function createSkyTrainEmergencyEscapeRoute(
       {
         id: "failure-pose",
         position: start,
-        outgoing: [
-          start[0] + forward[0] * 34,
-          0,
-          start[2] + forward[2] * 34,
-        ],
+        outgoing: [start[0] + forward[0] * 34, 0, start[2] + forward[2] * 34],
       },
       {
         id: "recovery-gate",
@@ -352,7 +366,8 @@ export function createSkyTrainEmergencyEscapeRoute(
     measureAxes: [0, 2],
     requirements: {
       altitude: ({ progress }) =>
-        startAltitude + (escapeAltitude - startAltitude) * smootherStep(progress),
+        startAltitude +
+        (escapeAltitude - startAltitude) * smootherStep(progress),
       // The horizon is an exit, not a stop. Removal happens at its marker, so
       // asking the controller to brake there would recreate the old hover.
       speedLimit: () => 8.5,
@@ -373,7 +388,10 @@ export function skyTrainRoute(kind: SkyTrainFlightKind): MotionRouteArtifact {
   return ROUTES[kind];
 }
 
-export function routePoint(kind: SkyTrainFlightKind, progress: number): SceneVector3 {
+export function routePoint(
+  kind: SkyTrainFlightKind,
+  progress: number,
+): SceneVector3 {
   const route = skyTrainRoute(kind);
   const point = route.point(progress);
   return [point[0], route.requirement("altitude", progress), point[2]];
@@ -408,6 +426,13 @@ export interface VehicleRoutePlan {
   travelDirection?(progress: number): -1 | 1;
   /** Route-authored guidance horizon for confined manoeuvres. */
   guidanceLookahead?(progress: number): number;
+  /**
+   * Movement direction beyond a temporary plan's endpoint. An intercept ends
+   * at a route join, not at a place where the craft should stop or turn back.
+   */
+  readonly terminalGuidanceHeading?: readonly [number, number];
+  /** Source-route point beyond a temporary plan's endpoint, by flown metres. */
+  terminalGuidancePoint?(distance: number): SceneVector3;
   readonly finalFrom: number;
 }
 

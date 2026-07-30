@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   safetyInterventionForMode,
   vehicleSafetyAdvisory,
+  vehicleSafetySensingSuppressed,
 } from "../games/make-a-mess/src/game/vehicleSafetyAutomation.ts";
 import { autopilot } from "../games/make-a-mess/src/game/vehicleFrames.ts";
 
@@ -103,4 +104,43 @@ test("the advisory changes autopilot requests, never actuator output directly", 
   assert.equal(mean(assisted.controls.throttle) < mean(normal.controls.throttle), true);
   assert.equal(assisted.controls.throttle.every((value) => value < 0), true);
   assert.equal(assisted.controls.liftTrim > normal.controls.liftTrim, true);
+});
+
+test("berth sensing is answered by the authored plan, not by an intercept", () => {
+  // Approaching its own mast on the authored final: expected geometry.
+  assert.equal(
+    vehicleSafetySensingSuppressed({
+      progress: 0.97,
+      finalFrom: 0.94,
+      berthDistance: 18,
+    }),
+    true,
+  );
+  // A temporary intercept ends at a route join and declares no final at all.
+  // Asked about itself, it reports open sky while the mast is 18 m away.
+  const interceptOwnAnswer = vehicleSafetySensingSuppressed({
+    progress: 0.4,
+    finalFrom: Number.POSITIVE_INFINITY,
+    berthDistance: 18,
+  });
+  assert.equal(interceptOwnAnswer, false);
+  // Flown from the authored plan's state, the same moment stays suppressed.
+  assert.equal(
+    vehicleSafetySensingSuppressed({
+      progress: 0.97,
+      finalFrom: 0.94,
+      berthDistance: 18,
+    }),
+    true,
+    "a correction near the berth must not turn the mast into an obstacle",
+  );
+  // Away from any berth the sensors stay live for both.
+  assert.equal(
+    vehicleSafetySensingSuppressed({
+      progress: 0.5,
+      finalFrom: 0.94,
+      berthDistance: 120,
+    }),
+    false,
+  );
 });

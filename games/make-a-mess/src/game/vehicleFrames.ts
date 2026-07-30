@@ -7,6 +7,10 @@ import { PLAYER_CAPSULE_FOOT_OFFSET } from "./playerMovement.ts";
 import type { VehicleRecoveryLifecycle } from "./vehicleFailure.ts";
 import type { VehicleSafetyAdvisory } from "./vehicleSafetyAutomation.ts";
 import {
+  trimCommandChannel,
+  type VehicleTrimRailDefinition,
+} from "./vehicleTrimAutomation.ts";
+import {
   flightPlan,
   skyTrainRoutePhase,
   type SkyTrainFlightKind,
@@ -97,6 +101,60 @@ export interface VehicleFrameDefinition {
    * поэтому удар носом разворачивает, а не только тормозит.
    */
   readonly hullProbes: readonly HullProbe[];
+  /**
+   * Подвижные грузы дифферентовки внутри оболочки. Единственный орган, который
+   * вообще создаёт момент по крену и тангажу: своей массой, а не силой.
+   */
+  readonly trimRails?: readonly VehicleTrimRailDefinition[];
+}
+
+/**
+ * Пара рельсов в килевом коридоре: продольный ведёт груз к носу, поперечный —
+ * на правый борт. Направления берутся из носа кадра, поэтому знаки закона
+ * управления в `vehicleTrimAutomation` верны для любой машины.
+ */
+interface KeelTrimRail {
+  /** Exact scene piece id of the travelling car. */
+  readonly carPieceId: string;
+  readonly zero: SceneVector3;
+  readonly travel: number;
+  readonly speed: number;
+}
+
+function keelTrimRails(
+  nose: SceneVector3,
+  pitch: KeelTrimRail,
+  roll: KeelTrimRail,
+): readonly VehicleTrimRailDefinition[] {
+  const noseLength = Math.hypot(nose[0], nose[2]) || 1;
+  const forward: SceneVector3 = [nose[0] / noseLength, 0, nose[2] / noseLength];
+  const starboardAxis = pitchAxisOf(forward);
+  const starboardLength = Math.hypot(starboardAxis[0], starboardAxis[2]) || 1;
+  const starboard: SceneVector3 = [
+    starboardAxis[0] / starboardLength,
+    0,
+    starboardAxis[2] / starboardLength,
+  ];
+  return [
+    {
+      axis: "pitch",
+      commandChannel: trimCommandChannel("pitch"),
+      carPieceId: pitch.carPieceId,
+      zero: pitch.zero,
+      direction: forward,
+      travel: pitch.travel,
+      speed: pitch.speed,
+    },
+    {
+      axis: "roll",
+      commandChannel: trimCommandChannel("roll"),
+      carPieceId: roll.carPieceId,
+      zero: roll.zero,
+      direction: starboard,
+      travel: roll.travel,
+      speed: roll.speed,
+    },
+  ];
 }
 
 /** Точка обшивки и наружная нормаль в ней, в авторских координатах. */
@@ -122,9 +180,10 @@ export function vehicleGroundBrakingLiftFraction(
   friction: VehicleSupportFriction,
 ): number {
   const noseLength = Math.hypot(nose[0], nose[2]) || 1;
-  const longitudinal = supports.map((point) =>
-    (point[0] - massCentre[0]) * nose[0] / noseLength +
-    (point[2] - massCentre[2]) * nose[2] / noseLength,
+  const longitudinal = supports.map(
+    (point) =>
+      ((point[0] - massCentre[0]) * nose[0]) / noseLength +
+      ((point[2] - massCentre[2]) * nose[2]) / noseLength,
   );
   const forwardArm = Math.max(0, ...longitudinal);
   const aftArm = Math.max(0, ...longitudinal.map((value) => -value));
@@ -135,7 +194,7 @@ export function vehicleGroundBrakingLiftFraction(
   const stabilityMargin = 0.72;
   const safeGroundLoadFraction = Math.min(
     1,
-    stabilityMargin * shortestArm / (dynamicFriction * centreHeight),
+    (stabilityMargin * shortestArm) / (dynamicFriction * centreHeight),
   );
   return Math.max(0, Math.min(0.85, 1 - safeGroundLoadFraction));
 }
@@ -150,8 +209,10 @@ export function vehicleProbeReach(
   relativeClosingSpeed: number,
   deltaSeconds: number,
 ): number {
-  return Math.max(0, clearance) +
-    Math.max(0, relativeClosingSpeed) * Math.max(0, deltaSeconds);
+  return (
+    Math.max(0, clearance) +
+    Math.max(0, relativeClosingSpeed) * Math.max(0, deltaSeconds)
+  );
 }
 
 /** Spring/damper magnitude opposing penetration at one authored hull probe. */
@@ -213,18 +274,18 @@ export function vehicleProbeFriction(
     return [0, 0, 0];
   }
 
-  const stoppingForce = Math.max(0, supportedMass) * speed / delta;
-  const staticLimit =
-    Math.max(0, friction.staticCoefficient) * normalReaction;
+  const stoppingForce = (Math.max(0, supportedMass) * speed) / delta;
+  const staticLimit = Math.max(0, friction.staticCoefficient) * normalReaction;
   const dynamicLimit =
     Math.max(0, friction.dynamicCoefficient) * normalReaction;
-  const magnitude = stoppingForce <= staticLimit
-    ? stoppingForce
-    : Math.min(stoppingForce, dynamicLimit);
+  const magnitude =
+    stoppingForce <= staticLimit
+      ? stoppingForce
+      : Math.min(stoppingForce, dynamicLimit);
   return [
-    -tangent[0] / speed * magnitude,
-    -tangent[1] / speed * magnitude,
-    -tangent[2] / speed * magnitude,
+    (-tangent[0] / speed) * magnitude,
+    (-tangent[1] / speed) * magnitude,
+    (-tangent[2] / speed) * magnitude,
   ];
 }
 
@@ -242,7 +303,9 @@ export function skyTrainHullRadiusAt(x: number): number {
     return HULL.radius * Math.sqrt(Math.max(0, 1 - ((0.2 - t) / 0.2) ** 2));
   }
   if (t > 0.64) {
-    return HULL.radius * Math.pow(Math.max(0, 1 - ((t - 0.64) / 0.36) ** 2), 0.55);
+    return (
+      HULL.radius * Math.pow(Math.max(0, 1 - ((t - 0.64) / 0.36) ** 2), 0.55)
+    );
   }
   return HULL.radius;
 }
@@ -261,7 +324,10 @@ function skyTrainHullProbes(): readonly HullProbe[] {
   }
   // Круги винтов: они вынесены дальше бортов оболочки и цепляют первыми.
   for (const side of [-1, 1] as const) {
-    probes.push({ point: [5.6, 7.6, HULL.z + side * 5.75], normal: [0, 0, side] });
+    probes.push({
+      point: [5.6, 7.6, HULL.z + side * 5.75],
+      normal: [0, 0, side],
+    });
   }
   // Борта вагонов: ими корабль трётся о перрон.
   for (const x of [-6, -1.5, 3.5, 8.5, 13.5, 17.5]) {
@@ -333,7 +399,11 @@ const TOWN_AIRSHIP = {
 } as const;
 
 /** World-authored point in the city airship's longitudinal/lateral frame. */
-export function townAirshipPoint(a: number, b: number, y: number): SceneVector3 {
+export function townAirshipPoint(
+  a: number,
+  b: number,
+  y: number,
+): SceneVector3 {
   const cosine = Math.cos(TOWN_AIRSHIP.heading);
   const sine = Math.sin(TOWN_AIRSHIP.heading);
   return [
@@ -416,7 +486,7 @@ export const vehicleFrames: readonly VehicleFrameDefinition[] = [
     id: "sky-train",
     clusterId: "terminal:sky-train",
     telemetryLabel: "SKY TRAIN 01",
-    independentMemberMatches: [":blade:"],
+    independentMemberMatches: [":blade:", ":trim:"],
     // Нос корабля смотрит на −x: от этого зависит, вокруг чего он кренится,
     // а вокруг чего задирает нос.
     nose: [-1, 0, 0],
@@ -430,14 +500,37 @@ export const vehicleFrames: readonly VehicleFrameDefinition[] = [
     envelopeMatch: ":skin:",
     // Углы рам обоих вагонов: низ рамы на 0.94.
     supports: [
-      [-9.0, 1.3, 76.68], [-9.0, 1.3, 78.52],
-      [-6.3, 0.94, 76.2], [-6.3, 0.94, 79.0],
-      [4.1, 0.94, 76.2], [4.1, 0.94, 79.0],
-      [7.3, 0.94, 76.2], [7.3, 0.94, 79.0],
-      [17.5, 0.94, 76.2], [17.5, 0.94, 79.0],
+      [-9.0, 1.3, 76.68],
+      [-9.0, 1.3, 78.52],
+      [-6.3, 0.94, 76.2],
+      [-6.3, 0.94, 79.0],
+      [4.1, 0.94, 76.2],
+      [4.1, 0.94, 79.0],
+      [7.3, 0.94, 76.2],
+      [7.3, 0.94, 79.0],
+      [17.5, 0.94, 76.2],
+      [17.5, 0.94, 79.0],
     ],
     supportFriction: { staticCoefficient: 1.18, dynamicCoefficient: 1.05 },
     hullProbes: skyTrainHullProbes(),
+    // Килевой коридор внутри оболочки: продольная тележка низко под газовым
+    // сердцем, поперечная — выше, у самой широкой хорды. Обе стоят над
+    // измеренным центром масс, поэтому целая машина остаётся сбалансированной.
+    trimRails: keelTrimRails(
+      [-1, 0, 0],
+      {
+        carPieceId: "terminal:sky-train:trim:pitch:car",
+        zero: [5.6, 6.88, 77.6],
+        travel: 6,
+        speed: 0.32,
+      },
+      {
+        carPieceId: "terminal:sky-train:trim:roll:car",
+        zero: [5.6, 7.68, 77.6],
+        travel: 2.15,
+        speed: 0.26,
+      },
+    ),
   },
   {
     id: "sky-longship",
@@ -445,7 +538,7 @@ export const vehicleFrames: readonly VehicleFrameDefinition[] = [
     telemetryLabel: "SKY LONGSHIP 01",
     // Oars articulate around their own oarlocks instead of being baked into
     // the rigid hull collider. Their shafts still remain live actuators.
-    independentMemberMatches: [":oar:-1:", ":oar:1:"],
+    independentMemberMatches: [":oar:-1:", ":oar:1:", ":trim:"],
     origin: vikingLongshipPoint(0, 0, VIKING_LONGSHIP.liftY),
     nose: [
       -Math.cos(VIKING_LONGSHIP.course),
@@ -469,29 +562,36 @@ export const vehicleFrames: readonly VehicleFrameDefinition[] = [
     ],
     supportFriction: { staticCoefficient: 0.78, dynamicCoefficient: 0.6 },
     hullProbes: vikingLongshipHullProbes(),
+    trimRails: keelTrimRails(
+      [
+        -Math.cos(VIKING_LONGSHIP.course),
+        0,
+        -Math.sin(VIKING_LONGSHIP.course),
+      ],
+      {
+        carPieceId: "viking-village:sky-longship:trim:pitch:car:piece",
+        zero: vikingLongshipPoint(0.05, -0.05, 5.74),
+        travel: 4,
+        speed: 0.3,
+      },
+      {
+        carPieceId: "viking-village:sky-longship:trim:roll:car:piece",
+        zero: vikingLongshipPoint(0.05, -0.05, 6.14),
+        travel: 1.25,
+        speed: 0.24,
+      },
+    ),
   },
   {
     id: "town-airship",
     clusterId: "sky-mooring:airship",
     telemetryLabel: "AIRSHIP 07",
-    independentMemberMatches: [":blade:"],
-    origin: townAirshipPoint(
-      TOWN_AIRSHIP.liftA,
-      0,
-      TOWN_AIRSHIP.liftY,
-    ),
-    nose: [
-      -Math.cos(TOWN_AIRSHIP.heading),
-      0,
-      -Math.sin(TOWN_AIRSHIP.heading),
-    ],
+    independentMemberMatches: [":blade:", ":trim:"],
+    origin: townAirshipPoint(TOWN_AIRSHIP.liftA, 0, TOWN_AIRSHIP.liftY),
+    nose: [-Math.cos(TOWN_AIRSHIP.heading), 0, -Math.sin(TOWN_AIRSHIP.heading)],
     // Передний конец швартового конуса входит в вертикальный стакан мачты.
     mooringPoint: townAirshipPoint(-1.65, 0, 12.6),
-    liftCentre: townAirshipPoint(
-      TOWN_AIRSHIP.liftA,
-      0,
-      TOWN_AIRSHIP.liftY,
-    ),
+    liftCentre: townAirshipPoint(TOWN_AIRSHIP.liftA, 0, TOWN_AIRSHIP.liftY),
     envelopeMatch: ":gore:",
     supports: [
       townAirshipPoint(3.35, -0.95, 6.88),
@@ -503,12 +603,29 @@ export const vehicleFrames: readonly VehicleFrameDefinition[] = [
     ],
     supportFriction: { staticCoefficient: 1.18, dynamicCoefficient: 1.05 },
     hullProbes: townAirshipHullProbes(),
+    // Короткое маятниковое плечо и моторы на выносах: этой машине трима не
+    // хватит на потерю целой мотогондолы, и она честно повиснет с креном.
+    trimRails: keelTrimRails(
+      [-Math.cos(TOWN_AIRSHIP.heading), 0, -Math.sin(TOWN_AIRSHIP.heading)],
+      {
+        carPieceId: "sky-mooring:airship:trim:pitch:car:piece",
+        zero: townAirshipPoint(6.17, 0, 10.27),
+        travel: 3,
+        speed: 0.3,
+      },
+      {
+        carPieceId: "sky-mooring:airship:trim:roll:car:piece",
+        zero: townAirshipPoint(6.17, 0, 10.87),
+        travel: 1.25,
+        speed: 0.22,
+      },
+    ),
   },
   {
     id: "basalt-sky-ram",
     clusterId: BASALT_SKY_RAM_CLUSTER_ID,
     telemetryLabel: "SKY RAM 01",
-    independentMemberMatches: [":gallery:ramp:"],
+    independentMemberMatches: [":gallery:ramp:", ":trim:"],
     origin: BASALT_SKY_RAM_ORIGIN,
     nose: BASALT_SKY_RAM_NOSE,
     mooringPoint: BASALT_SKY_RAM_MOORING_POINT,
@@ -526,6 +643,21 @@ export const vehicleFrames: readonly VehicleFrameDefinition[] = [
     ],
     supportFriction: { staticCoefficient: 0.96, dynamicCoefficient: 0.78 },
     hullProbes: basaltSkyRamHullProbes(),
+    trimRails: keelTrimRails(
+      BASALT_SKY_RAM_NOSE,
+      {
+        carPieceId: `${BASALT_SKY_RAM_CLUSTER_ID}:trim:pitch:car`,
+        zero: basaltSkyRamPoint(-0.68, -0.02, 5.0),
+        travel: 5.5,
+        speed: 0.28,
+      },
+      {
+        carPieceId: `${BASALT_SKY_RAM_CLUSTER_ID}:trim:roll:car`,
+        zero: basaltSkyRamPoint(-0.68, -0.02, 5.32),
+        travel: 1.05,
+        speed: 0.22,
+      },
+    ),
   },
 ];
 
@@ -576,7 +708,10 @@ export const RESTING_POSE: VehiclePose = {
 export function isRestingPose(pose: VehiclePose): boolean {
   if (pose.rotation) {
     const [x, y, z, w] = pose.rotation;
-    if (Math.abs(x) + Math.abs(y) + Math.abs(z) > 1e-4 || Math.abs(w) < 0.999999) {
+    if (
+      Math.abs(x) + Math.abs(y) + Math.abs(z) > 1e-4 ||
+      Math.abs(w) < 0.999999
+    ) {
       return false;
     }
   }
@@ -651,16 +786,17 @@ export function engineValuesPortToStarboard(
   const length = Math.hypot(starboard[0], starboard[2]) || 1;
   const sx = starboard[0] / length;
   const sz = starboard[2] / length;
-  return enginePoints
-    .map((point, index) => ({
-      index,
-      lateral:
-        (point[0] - bodyCentre[0]) * sx +
-        (point[2] - bodyCentre[2]) * sz,
-    }))
-    // Port is negative on the starboard axis, so ascending means L → R.
-    .sort((a, b) => a.lateral - b.lateral || a.index - b.index)
-    .map(({ index }) => values[index] ?? 0);
+  return (
+    enginePoints
+      .map((point, index) => ({
+        index,
+        lateral:
+          (point[0] - bodyCentre[0]) * sx + (point[2] - bodyCentre[2]) * sz,
+      }))
+      // Port is negative on the starboard axis, so ascending means L → R.
+      .sort((a, b) => a.lateral - b.lateral || a.index - b.index)
+      .map(({ index }) => values[index] ?? 0)
+  );
 }
 
 export interface OarStrokePose {
@@ -689,9 +825,10 @@ export function vehicleSpoolCommand(
   spoolSeconds: number,
 ): number {
   const direction = plan.travelDirection?.(0) ?? 1;
-  return direction * 0.42 * Math.min(
-    1,
-    Math.max(0, elapsedSeconds) / Math.max(0.001, spoolSeconds),
+  return (
+    direction *
+    0.42 *
+    Math.min(1, Math.max(0, elapsedSeconds) / Math.max(0.001, spoolSeconds))
   );
 }
 
@@ -844,7 +981,12 @@ export function shipLocalPoint(
   nose: SceneVector3 = [-1, 0, 0],
 ): SceneVector3 {
   const rotation = vehicleRotation(pose, nose);
-  const inverse: Quaternion = [-rotation[0], -rotation[1], -rotation[2], rotation[3]];
+  const inverse: Quaternion = [
+    -rotation[0],
+    -rotation[1],
+    -rotation[2],
+    rotation[3],
+  ];
   const turned = rotateVector(inverse, [
     point[0] - origin[0] - pose.position[0],
     point[1] - origin[1] - pose.position[1],
@@ -919,7 +1061,9 @@ export function departureLightGlow(
     return 0;
   }
   if (state === "attention") {
-    const phase = (elapsedSeconds % DEPARTURE_LIGHT.blinkPeriod) / DEPARTURE_LIGHT.blinkPeriod;
+    const phase =
+      (elapsedSeconds % DEPARTURE_LIGHT.blinkPeriod) /
+      DEPARTURE_LIGHT.blinkPeriod;
     return phase < DEPARTURE_LIGHT.blinkDuty ? DEPARTURE_LIGHT.glow : 0;
   }
   // Не гасим огни только потому, что корабль оказался рядом с причалом:
@@ -975,10 +1119,7 @@ export function advanceVehicleRouteProgress(
   for (let step = 0; step <= 24; step += 1) {
     const s = Math.max(0, Math.min(1, progress - 0.004 + (window * step) / 24));
     const point = plan.point(s);
-    const distance = Math.hypot(
-      point[0] - centre[0],
-      point[2] - centre[2],
-    );
+    const distance = Math.hypot(point[0] - centre[0], point[2] - centre[2]);
     if (distance < bestDistance) {
       bestDistance = distance;
       nearest = s;
@@ -1006,7 +1147,7 @@ export function rejoinVehicleRouteProgress(
   let nearest = progress;
   let bestDistance = Number.POSITIVE_INFINITY;
   for (let sample = 0; sample <= 64; sample += 1) {
-    const candidate = from + (to - from) * sample / 64;
+    const candidate = from + ((to - from) * sample) / 64;
     const point = plan.point(candidate);
     const distance = Math.hypot(
       point[0] - centre[0],
@@ -1063,7 +1204,8 @@ export function isMooringCaptureEligible(
   const forward = rotateVector(orientation, nose);
   const flat = Math.hypot(forward[0], forward[2]) || 1;
   const alignment =
-    (forward[0] * approach.heading[0] + forward[2] * approach.heading[1]) / flat;
+    (forward[0] * approach.heading[0] + forward[2] * approach.heading[1]) /
+    flat;
   return (
     Math.hypot(captureOffset[0], captureOffset[2]) <= reach &&
     alignment >= Math.cos(approach.tolerance.heading)
@@ -1136,7 +1278,13 @@ export const SKY_TRAIN_LIMITS: ShipLimits = {
   // Машина тяжёлая и тихоходная: полная тяга на её массу даёт разгон в
   // десятые доли g — ровно то, что имелось в виду под «с каким моментом
   // такая махина способна двигаться».
-  enginePower: 450,
+  // Пересчитано вместе с массой: дифферентовочные тележки — настоящие 36 кг
+  // внутри оболочки, и тяга поднята ровно на их долю, чтобы располагаемое
+  // ускорение осталось авторским. Оперение при этом НЕ трогали: тележки стоят
+  // на самом центре масс, момент инерции по рысканию вырос на 0.05%, и
+  // масштабировать руль по массе значило бы подарить машине лишнюю
+  // управляемость на заходе.
+  enginePower: 504,
   enginePoints: [
     [5.6, 7.6, 73.0],
     [5.6, 7.6, 82.2],
@@ -1169,7 +1317,11 @@ export interface ShipControls {
   readonly liftTrim: number;
 }
 
-export const IDLE_CONTROLS: ShipControls = { throttle: [0, 0], rudder: 0, liftTrim: 0 };
+export const IDLE_CONTROLS: ShipControls = {
+  throttle: [0, 0],
+  rudder: 0,
+  liftTrim: 0,
+};
 
 export interface ForceAtPoint {
   readonly force: SceneVector3;
@@ -1208,7 +1360,10 @@ export function shipForces(
 ): readonly ForceAtPoint[] {
   const forward = rotateVector(orientation, nose);
   const flatLength = Math.hypot(forward[0], forward[2]) || 1;
-  const heading: readonly [number, number] = [forward[0] / flatLength, forward[2] / flatLength];
+  const heading: readonly [number, number] = [
+    forward[0] / flatLength,
+    forward[2] / flatLength,
+  ];
 
   const place = (point: SceneVector3): SceneVector3 => {
     const arm = rotateVector(orientation, [
@@ -1220,7 +1375,8 @@ export function shipForces(
   };
 
   const forces: ForceAtPoint[] = limits.enginePoints.map((point, index) => {
-    const power = limits.enginePower * clampSigned(controls.throttle[index] ?? 0);
+    const power =
+      limits.enginePower * clampSigned(controls.throttle[index] ?? 0);
     return {
       force: [forward[0] * power, forward[1] * power, forward[2] * power],
       point: place(point),
@@ -1283,11 +1439,14 @@ export function allocateAutopilotEngineCommands(
 ): readonly number[] {
   const count = yawArms.length;
   const fractions = Array.from({ length: count }, (_, index) =>
-    clamp01(availability[index] ?? 1));
+    clamp01(availability[index] ?? 1),
+  );
   const delivered = fractions.map((fraction) =>
-    Math.max(-fraction, Math.min(fraction, clampSigned(commonThrust))));
+    Math.max(-fraction, Math.min(fraction, clampSigned(commonThrust))),
+  );
   const free = new Set(
-    fractions.map((fraction, index) => fraction > 1e-6 ? index : -1)
+    fractions
+      .map((fraction, index) => (fraction > 1e-6 ? index : -1))
       .filter((index) => index >= 0),
   );
 
@@ -1310,8 +1469,8 @@ export function allocateAutopilotEngineCommands(
     const proposals = new Map<number, number>();
     const saturated: number[] = [];
     for (const index of free) {
-      const proposal = delivered[index] +
-        residual * (yawArms[index] ?? 0) / denominator;
+      const proposal =
+        delivered[index] + (residual * (yawArms[index] ?? 0)) / denominator;
       proposals.set(index, proposal);
       if (Math.abs(proposal) > fractions[index] + 1e-9) {
         saturated.push(index);
@@ -1345,10 +1504,8 @@ export function allocateAutopilotEngineCommands(
   );
   const totalFree = new Set(fractions.map((_, index) => index));
   for (let iteration = 0; iteration <= count; iteration += 1) {
-    const residualTotal = targetTotal - delivered.reduce(
-      (sum, value) => sum + value,
-      0,
-    );
+    const residualTotal =
+      targetTotal - delivered.reduce((sum, value) => sum + value, 0);
     if (Math.abs(residualTotal) < 1e-7 || totalFree.size < 2) {
       break;
     }
@@ -1366,7 +1523,7 @@ export function allocateAutopilotEngineCommands(
       const arm = yawArms[index] ?? 0;
       direction.set(
         index,
-        armSquared > 1e-9 ? 1 - arm * armSum / armSquared : 1,
+        armSquared > 1e-9 ? 1 - (arm * armSum) / armSquared : 1,
       );
     }
     const totalDirection = freeIndices.reduce(
@@ -1384,9 +1541,10 @@ export function allocateAutopilotEngineCommands(
       if (Math.abs(delta) < 1e-12) {
         continue;
       }
-      const room = delta > 0
-        ? fractions[index] - delivered[index]
-        : delivered[index] + fractions[index];
+      const room =
+        delta > 0
+          ? fractions[index] - delivered[index]
+          : delivered[index] + fractions[index];
       stepFraction = Math.min(
         stepFraction,
         Math.max(0, room / Math.abs(delta)),
@@ -1395,9 +1553,7 @@ export function allocateAutopilotEngineCommands(
     const appliedScale = fullScale * stepFraction;
     for (const index of freeIndices) {
       delivered[index] += appliedScale * (direction.get(index) ?? 0);
-      if (
-        Math.abs(Math.abs(delivered[index]) - fractions[index]) < 1e-7
-      ) {
+      if (Math.abs(Math.abs(delivered[index]) - fractions[index]) < 1e-7) {
         saturated.push(index);
       }
     }
@@ -1413,7 +1569,8 @@ export function allocateAutopilotEngineCommands(
   }
 
   return delivered.map((value, index) =>
-    fractions[index] > 1e-6 ? clampSigned(value / fractions[index]) : 0);
+    fractions[index] > 1e-6 ? clampSigned(value / fractions[index]) : 0,
+  );
 }
 
 /**
@@ -1426,10 +1583,12 @@ export function balancedEngineYawAuthority(
   yawArms: readonly number[],
   availability: readonly number[] = yawArms.map(() => 1),
 ): number {
-  const channels = yawArms.map((arm, index) => ({
-    arm,
-    remaining: clamp01(availability[index] ?? 1),
-  })).sort((left, right) => left.arm - right.arm);
+  const channels = yawArms
+    .map((arm, index) => ({
+      arm,
+      remaining: clamp01(availability[index] ?? 1),
+    }))
+    .sort((left, right) => left.arm - right.arm);
   let low = 0;
   let high = channels.length - 1;
   let moment = 0;
@@ -1546,7 +1705,8 @@ export function isDockingSettleWindow(
   const up = rotateVector(orientation, [0, 1, 0]);
   const flat = Math.hypot(forward[0], forward[2]) || 1;
   const alignment =
-    (forward[0] * approach.heading[0] + forward[2] * approach.heading[1]) / flat;
+    (forward[0] * approach.heading[0] + forward[2] * approach.heading[1]) /
+    flat;
   // Start the failure timer only after the craft enters the actual capture
   // around its own completed-pose tolerance. A fixed 1.5 m circle started the
   // city's ten-second timer 10.57 s before its soft mooring reached 0.48 m,
@@ -1577,7 +1737,8 @@ export function isDockedPose(
   const up = rotateVector(orientation, [0, 1, 0]);
   const flat = Math.hypot(forward[0], forward[2]) || 1;
   const alignment =
-    (forward[0] * approach.heading[0] + forward[2] * approach.heading[1]) / flat;
+    (forward[0] * approach.heading[0] + forward[2] * approach.heading[1]) /
+    flat;
   return (
     Math.hypot(captureOffset[0], captureOffset[2]) < tolerance.position &&
     Math.abs(captureOffset[1]) < tolerance.height &&
@@ -1604,14 +1765,17 @@ export function isDockingComplete(
   approach: ApproachGate = SKY_TRAIN_APPROACH,
   tolerance: DockingTolerance = SKY_TRAIN_DOCKING,
 ): boolean {
-  return progress > 0.985 && isDockedPose(
-    captureOffset,
-    orientation,
-    captureVelocity,
-    angularVelocity,
-    nose,
-    approach,
-    tolerance,
+  return (
+    progress > 0.985 &&
+    isDockedPose(
+      captureOffset,
+      orientation,
+      captureVelocity,
+      angularVelocity,
+      nose,
+      approach,
+      tolerance,
+    )
   );
 }
 
@@ -1653,17 +1817,25 @@ export function predictShip(
     return rz * direction[0] - rx * direction[1];
   };
   const engineCommands = model.limits.enginePoints.map((_, index) =>
-    clampSigned(controls.throttle[index] ?? 0));
-  const engineYawArms = model.limits.enginePoints.map((point) =>
-    yawArm(point, localNose));
-  const thrust =
-    model.limits.enginePower * engineCommands.reduce((sum, value) => sum + value, 0);
-  const engineMoment = model.limits.enginePower * engineCommands.reduce(
-    (sum, value, index) => sum + value * engineYawArms[index],
-    0,
+    clampSigned(controls.throttle[index] ?? 0),
   );
+  const engineYawArms = model.limits.enginePoints.map((point) =>
+    yawArm(point, localNose),
+  );
+  const thrust =
+    model.limits.enginePower *
+    engineCommands.reduce((sum, value) => sum + value, 0);
+  const engineMoment =
+    model.limits.enginePower *
+    engineCommands.reduce(
+      (sum, value, index) => sum + value * engineYawArms[index],
+      0,
+    );
   const rudderCommand = Math.max(-1, Math.min(1, controls.rudder));
-  const localRudderDirection: readonly [number, number] = [-localNose[1], localNose[0]];
+  const localRudderDirection: readonly [number, number] = [
+    -localNose[1],
+    localNose[0],
+  ];
   const rudderArm = yawArm(model.limits.rudderPoint, localRudderDirection);
 
   for (let step = 0; step < steps; step += 1) {
@@ -1680,7 +1852,8 @@ export function predictShip(
       rudderCommand *
       model.limits.maxRudderForce *
       rudderEffectiveness(Math.hypot(vx, vz), model.limits);
-    const moment = engineMoment + rudder * rudderArm - model.dragAngular * omega;
+    const moment =
+      engineMoment + rudder * rudderArm - model.dragAngular * omega;
     omega += (moment / model.inertiaYaw) * dt;
     const turn = omega * dt;
     const nx = hx * Math.cos(turn) - hz * Math.sin(turn);
@@ -1722,7 +1895,10 @@ export function autopilot(
   const limits = model.limits;
   const forward = rotateVector(orientation, nose);
   const flatLength = Math.hypot(forward[0], forward[2]) || 1;
-  const heading: readonly [number, number] = [forward[0] / flatLength, forward[2] / flatLength];
+  const heading: readonly [number, number] = [
+    forward[0] / flatLength,
+    forward[2] / flatLength,
+  ];
   const groundSpeed = Math.hypot(velocity[0], velocity[2]);
 
   // Смотрим ВПЕРЁД: где мы окажемся через несколько секунд, если ничего не
@@ -1758,7 +1934,40 @@ export function autopilot(
     progress + (onApproach ? APPROACH_LOOKAHEAD : routeLookahead) / plan.length,
   );
   const routeHere = plan.point(progress);
-  const aim = plan.point(guidanceProgress);
+  let aim = plan.point(guidanceProgress);
+  if (plan.terminalGuidanceHeading) {
+    // A correction route ends at a join, not at a stopping point. Preserve
+    // the ordinary look-ahead beyond that join so the predictive controller
+    // keeps the source-route course instead of orbiting a consumed endpoint.
+    const remaining = Math.max(0, (1 - progress) * plan.length);
+    const terminalLength = Math.hypot(...plan.terminalGuidanceHeading) || 1;
+    const terminalHeading: readonly [number, number] = [
+      plan.terminalGuidanceHeading[0] / terminalLength,
+      plan.terminalGuidanceHeading[1] / terminalLength,
+    ];
+    const endpoint = plan.point(1);
+    // Once the predicted craft has passed the authored join, keep the target
+    // one look-ahead ahead of that projection. A fixed virtual point merely
+    // moves the orbit a few metres downstream.
+    const predictedBeyond = Math.max(
+      0,
+      (guess.position[0] - endpoint[0]) * terminalHeading[0] +
+        (guess.position[1] - endpoint[2]) * terminalHeading[1],
+    );
+    const extension = Math.max(
+      0,
+      routeLookahead - remaining,
+      predictedBeyond + routeLookahead,
+    );
+    aim =
+      plan.terminalGuidancePoint && extension > 0
+        ? plan.terminalGuidancePoint(extension)
+        : [
+            aim[0] + terminalHeading[0] * extension,
+            aim[1],
+            aim[2] + terminalHeading[1] * extension,
+          ];
+  }
   const segmentX = aim[0] - routeHere[0];
   const segmentZ = aim[2] - routeHere[2];
   const segmentLength = Math.hypot(segmentX, segmentZ) || 1;
@@ -1836,16 +2045,19 @@ export function autopilot(
     const rz = point[2] - model.bodyCentre[2];
     return rz * direction[0] - rx * direction[1];
   };
-  const localRudderDirection: readonly [number, number] = [-localNose[1], localNose[0]];
+  const localRudderDirection: readonly [number, number] = [
+    -localNose[1],
+    localNose[0],
+  ];
   const rudderArm = Math.abs(yawArm(limits.rudderPoint, localRudderDirection));
-  const engineYawArms = limits.enginePoints.map((point) => yawArm(point, localNose));
+  const engineYawArms = limits.enginePoints.map((point) =>
+    yawArm(point, localNose),
+  );
   const authority = rudderEffectiveness(groundSpeed, limits);
   const rudderCapacity = limits.maxRudderForce * authority * rudderArm;
-  const availableEngineYawCapacity = limits.enginePower *
-    balancedEngineYawAuthority(
-      engineYawArms,
-      model.engineAvailability,
-    );
+  const availableEngineYawCapacity =
+    limits.enginePower *
+    balancedEngineYawAuthority(engineYawArms, model.engineAvailability);
   const holdableYawRate =
     (rudderCapacity + availableEngineYawCapacity) /
     Math.max(1, model.dragAngular);
@@ -1861,21 +2073,28 @@ export function autopilot(
       ? bearingError / 3
       : (2 * Math.max(groundSpeed, 1.5) * Math.sin(bearingError)) /
         Math.max(20, reach);
-  const desiredYawRate = Math.max(-holdableYawRate, Math.min(holdableYawRate, pursuit));
+  const desiredYawRate = Math.max(
+    -holdableYawRate,
+    Math.min(holdableYawRate, pursuit),
+  );
   // Запрашиваем МОМЕНТ, а не безразмерный «поворот». Сначала его даёт руль
   // (он ничего не стоит по продольной тяге), остаток — двигатели вразнос.
   const wantedYawAcceleration = (desiredYawRate - angularVelocity[1]) / 3;
   const wantedYawMoment =
-    model.dragAngular * desiredYawRate + model.inertiaYaw * wantedYawAcceleration;
+    model.dragAngular * desiredYawRate +
+    model.inertiaYaw * wantedYawAcceleration;
   const rudderMoment = Math.max(
     -rudderCapacity,
     Math.min(rudderCapacity, wantedYawMoment),
   );
   const signedRudderCapacity =
-    limits.maxRudderForce * authority * yawArm(limits.rudderPoint, localRudderDirection);
-  const rudder = Math.abs(signedRudderCapacity) > 1e-6
-    ? rudderMoment / signedRudderCapacity
-    : 0;
+    limits.maxRudderForce *
+    authority *
+    yawArm(limits.rudderPoint, localRudderDirection);
+  const rudder =
+    Math.abs(signedRudderCapacity) > 1e-6
+      ? rudderMoment / signedRudderCapacity
+      : 0;
 
   // Тяга: держим разрешённую скорость участка, считая по ПРЕДСКАЗАННОМУ
   // ходу — иначе на торможении машина проскакивает.
@@ -1915,11 +2134,14 @@ export function autopilot(
   // Высота — тоже рычаг: подъём поддувают или стравливают.
   const altitudeError =
     plan.altitude(progress) +
-    (safetyIntervention ? safety?.altitudeOffset ?? 0 : 0) -
+    (safetyIntervention ? (safety?.altitudeOffset ?? 0) : 0) -
     centre[1];
   const liftTrim = Math.max(
     -1,
-    Math.min(1, (altitudeError * 0.06 - velocity[1] * 0.12) / limits.liftTrimRange),
+    Math.min(
+      1,
+      (altitudeError * 0.06 - velocity[1] * 0.12) / limits.liftTrimRange,
+    ),
   );
 
   // Промах на заходе: не по месту, не по курсу или не по скорости — уходим на
@@ -1929,7 +2151,10 @@ export function autopilot(
   // окажется у причала.
   // В зоне мы или нет — вопрос о том, где корабль СЕЙЧАС; а вот в каком он
   // будет положении — о том, где он ОКАЖЕТСЯ.
-  const routeSample = Math.max(0.001, Math.min(0.012, 5 / Math.max(1, plan.length)));
+  const routeSample = Math.max(
+    0.001,
+    Math.min(0.012, 5 / Math.max(1, plan.length)),
+  );
   const routeBefore = plan.point(Math.max(0, progress - routeSample));
   const routeAfter = plan.point(Math.min(1, progress + routeSample));
   const routeDx = routeAfter[0] - routeBefore[0];
@@ -1939,7 +2164,9 @@ export function autopilot(
   const routeTangentZ = routeDz / routeLength;
   const offsetX = centre[0] - routeHere[0];
   const offsetZ = centre[2] - routeHere[2];
-  const crossTrack = Math.abs(offsetX * routeTangentZ - offsetZ * routeTangentX);
+  const crossTrack = Math.abs(
+    offsetX * routeTangentZ - offsetZ * routeTangentX,
+  );
   let goAround = false;
   if (onApproach && berthDistance < approach.tolerance.position * 2.5) {
     const headingOff = Math.acos(
@@ -1947,7 +2174,8 @@ export function autopilot(
         -1,
         Math.min(
           1,
-          guess.heading[0] * approach.heading[0] + guess.heading[1] * approach.heading[1],
+          guess.heading[0] * approach.heading[0] +
+            guess.heading[1] * approach.heading[1],
         ),
       ),
     );
