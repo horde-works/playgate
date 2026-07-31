@@ -70,6 +70,7 @@ type PartKind =
   | "armFore"
   | "bundle"
   | "tool"
+  | "spade"
   | "foot";
 
 const PART_KIND_ID: Record<PartKind, number> = {
@@ -82,6 +83,7 @@ const PART_KIND_ID: Record<PartKind, number> = {
   head: 6,
   foot: 7,
   tool: 8,
+  spade: 9,
 };
 
 interface BoxSpec {
@@ -165,6 +167,31 @@ function villagerBoxes(): BoxSpec[] {
       color: new Color("#4a5050"),
       dye: 0,
       kind: "tool",
+      side: 0,
+      pivotA: toolElbow,
+      pivotB: toolShoulder,
+    },
+  );
+
+  // ЛОПАТА (и мотыга): черенок в руках, полотно внизу-впереди. Тот же подвес,
+  // что у топора, — инструмент продолжает руку, а не висит в воздухе.
+  boxes.push(
+    {
+      center: [0, 0.52, 0.26],
+      size: [0.06, 0.94, 0.06],
+      color: new Color("#9a7048"),
+      dye: 0,
+      kind: "spade",
+      side: 0,
+      pivotA: toolElbow,
+      pivotB: toolShoulder,
+    },
+    {
+      center: [0, 0.1, 0.3],
+      size: [0.2, 0.26, 0.04],
+      color: new Color("#4a5050"),
+      dye: 0,
+      kind: "spade",
       side: 0,
       pivotA: toolElbow,
       pivotB: toolShoulder,
@@ -466,6 +493,11 @@ const GAIT_COMPUTE = /* glsl */ `
       float lean = 0.0;
       float sink = 0.0;
       float squat = 0.0;
+      // СТОЙКА И ВЕС. Работают всем телом: одна нога впереди, вес ходит с
+      // ноги на ногу в такт движению. Без этого любое дело читается
+      // «приседанием на месте» независимо от того, что делают руки.
+      float stance = 0.0;
+      float shift = 0.0;
       // Вторая рука: 0 — там же, где первая (двуручный хват), 1 — своя работа.
       float split = 0.0;
       vec2 other = vec2(0.0);
@@ -486,6 +518,10 @@ const GAIT_COMPUTE = /* glsl */ `
         hand = mix(hand, ready, back);
         lean = 0.16 * wind + 0.46 * fall - 0.3 * back;
         squat = 0.10 + 0.28 * fall;
+        // Ноги на ширине плеч, вес уходит назад на замахе и переносится
+        // вперёд вместе с ударом.
+        stance = 0.12;
+        shift = -0.5 * wind + 0.8 * fall - 0.4 * back;
       } else if (climbKind < 8.5) {
         // УКЛАДКА: присед с прямой спиной, руки идут к земле и обратно.
         float down = smoothstep(0.0, 0.34, t) * (1.0 - smoothstep(0.62, 0.94, t));
@@ -493,6 +529,8 @@ const GAIT_COMPUTE = /* glsl */ `
         lean = 0.42 * down;
         squat = 1.15 * down;
         sink = 0.3 * down;
+        stance = 0.22 * down;
+        shift = 0.5 * down;
       } else if (climbKind < 9.5) {
         // СТИРКА И ТОЧИЛО: доска наклонена к работающему, бельё комкают в
         // руках и трут ВВЕРХ-ВНИЗ ПО НАКЛОННОЙ. Рабочий ход на себя дольше
@@ -502,7 +540,10 @@ const GAIT_COMPUTE = /* glsl */ `
         vec2 near = vec2(0.16, 0.28);
         hand = mix(far, near, pull);
         lean = 0.48;
+        // Выпад: одна нога впереди, вес ходит вперёд-назад в такт ходу рук.
+        stance = 0.34;
         squat = 0.18;
+        shift = 0.7 * pull - 0.35;
       } else if (climbKind < 10.5) {
         // ВОРОТ: кисть идёт ПО ОКРУЖНОСТИ рукоятки. Руки не синхронны —
         // одна ведёт, вторая догоняет на пол-оборота.
@@ -513,6 +554,8 @@ const GAIT_COMPUTE = /* glsl */ `
         other = vec2(0.30 + 0.15 * sin(otherTurn), 0.34 + 0.15 * cos(otherTurn));
         lean = 0.2;
         squat = 0.08;
+        stance = 0.18;
+        shift = 0.35 * sin(turn);
       } else if (climbKind < 11.5) {
         // КОПКА: вход полотна, отрыв РАЗГИБАНИЕМ НОГ с прямой спиной,
         // перенос поворотом корпуса. Цикл 4 с — 15 движений в минуту.
@@ -524,6 +567,10 @@ const GAIT_COMPUTE = /* glsl */ `
         hand = mix(hand, vec2(0.20, 0.06), toss);
         lean = 0.34 + 0.28 * bite - 0.2 * lift;
         squat = 0.3 + 0.5 * bite;
+        // Копают с выпадом: передняя нога дожимает полотно, вес переходит на
+        // заднюю при отрыве и уходит в сторону броска.
+        stance = 0.4;
+        shift = 0.9 * bite - 0.5 * lift - 0.3 * toss;
       } else if (climbKind < 12.5) {
         // РАЗВЕШИВАНИЕ: от корзины у ног до жерди над головой. Кисть уходит
         // ВЫШЕ ПЛЕЧА — это и есть признак движения.
@@ -533,6 +580,8 @@ const GAIT_COMPUTE = /* glsl */ `
         hand = mix(hand, vec2(0.16, -0.44), up);
         lean = 0.4 * down - 0.12 * up;
         squat = 0.9 * down;
+        stance = 0.16;
+        shift = 0.6 * down - 0.4 * up;
         ankle = -0.26 * up;
       } else {
         // КОВКА: молот поднимают РОВНО ДО УХА и роняют на наковальню; вторая
@@ -548,13 +597,19 @@ const GAIT_COMPUTE = /* glsl */ `
         split = 1.0;
         other = vec2(0.30, 0.34);
         lean = 0.18 + 0.06 * hit;
+        stance = 0.2;
+        shift = -0.25 * wind + 0.35 * hit;
       }
 
       // Наклон корпуса ПРИБЛИЖАЕТ плечо к вещи: без этого рука не достаёт до
       // низкой работы и повисает в воздухе.
       float shoulderDrop = (1.0 - cos(lean)) * 0.5;
       float shoulderForward = sin(lean) * 0.5;
-      vec2 target = mix(hand, other, split * step(0.0, side));
+      // Правая рука — рабочая (левшей в деревне нет): она машет молотом и
+      // ведёт по кругу ворот, левая держит заготовку или догоняет на пол-
+      // оборота. Инструмент (side = 0) следует за РАБОЧЕЙ рукой; раньше он
+      // цеплялся за придерживающую, отчего в левой руке болталось невнятное.
+      vec2 target = mix(hand, other, split * (1.0 - step(0.0, side)));
       vec2 solved = villagerArm(
         max(0.02, target.x - shoulderForward),
         target.y - shoulderDrop
@@ -562,9 +617,14 @@ const GAIT_COMPUTE = /* glsl */ `
       armFlex = solved.x;
       elbowFlex = solved.y;
       torsoPitch = lean;
-      hipFlex = squat * 0.62;
-      knee = squat * 0.86;
-      bodySink = sink + squat * 0.12;
+      // Передняя нога выносится вперёд, задняя остаётся сзади; перенос веса
+      // догружает то одну, то другую — колено загруженной сгибается сильнее.
+      float leadLeg = isLead * 2.0 - 1.0;
+      float load = clamp(0.5 + shift * 0.5 * leadLeg, 0.0, 1.0);
+      hipFlex = squat * 0.62 + stance * leadLeg;
+      knee = squat * 0.86 + stance * 0.5 + load * 0.22;
+      ankle += stance * 0.12 * leadLeg;
+      bodySink = sink + squat * 0.12 + load * 0.03;
     }
   }
 
@@ -633,21 +693,38 @@ const GAIT_COMPUTE = /* glsl */ `
       gaitPos = gRotA * (gaitPos - aPivotA) + aPivotA;
     }
     gaitPos = gRotB * (gaitPos - aPivotB) + aPivotB;
-  } else if (kind == 8.0) {
+    // РУКА РАСТЁТ ИЗ КОРПУСА. Наклон считался вокруг таза только для торса, а
+    // плечевые шарниры оставались на месте — руки висели там, где плеч уже
+    // нет, и любое рабочее движение читалось «приседанием с маханием».
+    // Теперь весь узел руки доворачивается вместе с корпусом.
+    if (torsoPitch != 0.0) {
+      vec3 hipPivot = vec3(0.0, ${HIP_Y.toFixed(2)}, 0.0);
+      gRotB = gaitRotX(torsoPitch) * gRotB;
+      gaitPos = gaitRotX(torsoPitch) * (gaitPos - hipPivot) + hipPivot;
+    }
+  } else if (kind == 8.0 || kind == 9.0) {
     // ИНСТРУМЕНТ. Те же два шарнира, что у предплечья: топор не «прилеплен к
     // кадру», он продолжает руку. Нет в руках — схлопывается в точку.
     gRotA = gaitRotX(elbowFlex >= 0.0 ? -elbowFlex : -0.55);
     gRotB = gaitRotX(-armFlex);
     gaitPos = gRotA * (gaitPos - aPivotA) + aPivotA;
     gaitPos = gRotB * (gaitPos - aPivotB) + aPivotB;
+    if (torsoPitch != 0.0) {
+      vec3 toolHip = vec3(0.0, ${HIP_Y.toFixed(2)}, 0.0);
+      gRotB = gaitRotX(torsoPitch) * gRotB;
+      gaitPos = gaitRotX(torsoPitch) * (gaitPos - toolHip) + toolHip;
+    }
     // Топор и молот — один подвес, разные пропорции: у молота рукоять короче,
     // а голова тяжелее и ближе к кистям.
     float isAxe = step(0.5, handKind) * (1.0 - step(1.5, handKind));
     float isHammer = step(4.5, handKind) * (1.0 - step(5.5, handKind));
+    float isSpade = step(5.5, handKind) * (1.0 - step(6.5, handKind));
     vec3 heldShape = gaitPos - aPivotB;
     heldShape *= mix(vec3(1.0), vec3(1.0, 0.62, 1.0), isHammer);
     gaitPos = aPivotB + heldShape;
-    gaitPos = mix(aPivotB, gaitPos, clamp(isAxe + isHammer, 0.0, 1.0));
+    // Рукоять и лопата — разные части: показываем ту, что сейчас в руках.
+    float showTool = kind == 8.0 ? clamp(isAxe + isHammer, 0.0, 1.0) : isSpade;
+    gaitPos = mix(aPivotB, gaitPos, showTool);
   } else if (kind == 0.0) {
     // Плечевой пояс доворачивается против таза и наклоняется при перелезании.
     gRotB = gaitRotY(sin(gPhase) * 0.07 * gMove) * gaitRotX(torsoPitch);
@@ -1011,7 +1088,9 @@ export function Villagers({
           4 *
             (villager.climbKind === 13
               ? 5
-              : villager.climbKind === 7
+              : villager.climbKind === 11
+                ? 6
+                : villager.climbKind === 7
               ? 1
               : villager.cargo === "log"
                 ? 2

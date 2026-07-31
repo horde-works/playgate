@@ -338,6 +338,8 @@ export interface Villager {
   workVerb: SettlementWorkVerb | null;
   /** Занятое рабочее место у предмета: индекс в списке мест поселения. */
   stationIndex: number | null;
+  /** Смена на этом месте уже отработана — можно уступать его другому. */
+  stationWorked: boolean;
   /** 0 — держит, 1 — короб уже на земле. Дальше он гаснет. */
   carryDrop: number;
   /** Сколько ещё секунд короб лежит на виду, прежде чем исчезнуть. */
@@ -581,7 +583,15 @@ function chooseGoal(
     if (node.areaId) {
       // Вес места объявлен в описании поселения, а не выведен из формы графа.
       const interest = plan.interest[node.areaId];
-      weight = interest ? interest.pull : haunts.includes(node.areaId) ? 3.2 : 0.7;
+      const haunted = haunts.includes(node.areaId);
+      weight = interest ? interest.pull : haunted ? 3.2 : 0.7;
+      // Занятие тянет к СВОЕМУ делу поверх общего веса места. Пока это была
+      // только замена веса, поле работало лишь там, где вес не объявлен, —
+      // то есть почти нигде: пастух за смену ни разу не доходил до коз,
+      // потому что склад оружия весил столько же, сколько его загон.
+      if (interest && haunted) {
+        weight *= 2.2;
+      }
       if (interest?.roles?.length) {
         const called =
           interest.roles.includes(villager.role) ||
@@ -813,12 +823,15 @@ function workVerbSeconds(verb: SettlementWorkVerb, random: () => number): number
     return 24 + random() * 14;
   }
   if (verb === "stack") {
-    return 5 + random() * 4;
+    // Уложить — ОДИН наклон, а не серия приседаний: нагнулся, положил, встал.
+    // Цикл позы 2.2 с, поэтому и время дела около одного цикла.
+    return 2.4 + random() * 0.8;
   }
   if (verb === "feed") {
-    return 4 + random() * 3;
+    return 2.2 + random() * 0.8;
   }
-  return 2.5 + random() * 2;
+  // Взять ношу — тоже одно движение: взял и понёс.
+  return 1.6 + random() * 0.6;
 }
 
 /**
@@ -1495,6 +1508,7 @@ export function createVillagerPopulation(
       job: null,
       workVerb: null,
       stationIndex: null,
+      stationWorked: false,
       carryLinger: 0,
       child,
       female,
@@ -1902,6 +1916,21 @@ export function stepVillagers(
         villager.climbProgress = 0;
       }
       villager.workVerb = null;
+      // ОТРАБОТАЛ — ОСВОБОДИЛ МЕСТО. Пока смена не отпускалась, человек по
+      // окончании тут же начинал её заново у того же предмета: замер показал
+      // 370 секунд подряд на одной точке и четыре выбора цели за смену на всю
+      // деревню. Со стороны это и выглядело «стоят и тупят». Но отпускать
+      // надо ПОСЛЕ отработанной смены, а не по приходу — иначе работать
+      // никто не начинает вовсе.
+      if (villager.stationWorked) {
+        villager.stationWorked = false;
+        // Одну смену подряд отрабатывают редко: кузнец не уходит от горна
+        // через двадцать секунд. Но и не залипает навсегда — каждый раз
+        // бросается монета, поэтому место рано или поздно освобождается.
+        if (villager.random() < 0.45) {
+          releaseStation(population, villager);
+        }
+      }
       const node = network.nodes[villager.nodeIndex];
       // Ночью, дойдя до своей двери, житель уходит в дом.
       // Уйти в дом можно, только СТОЯ у своей двери. Раньше проверялся лишь
@@ -1946,6 +1975,7 @@ export function stepVillagers(
         if (reach < 1.5) {
           const [from, to] = station.spell ?? [14, 26];
           population.stationOccupant.set(villager.stationIndex, villager.id);
+          villager.stationWorked = true;
           villager.workVerb = station.verb;
           villager.climbKind = workPoseKind(station.verb);
           villager.climbProgress = 0;
