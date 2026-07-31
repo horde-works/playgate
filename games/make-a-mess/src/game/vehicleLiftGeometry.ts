@@ -265,3 +265,146 @@ export function isRotorLandingComplete(
     motion.angularSpeed <= tolerance.angularSpeed
   );
 }
+
+// ---------------------------------------------------------------------------
+// ПОТОЛОК РОВНОГО ПОДЪЁМА
+// ---------------------------------------------------------------------------
+
+/**
+ * Сколько тяги машина может дать, ОСТАВАЯСЬ РОВНОЙ, — доля располагаемой.
+ *
+ * Наивная дробь «уцелело пять колец из шести, значит осталось пять шестых
+ * тяги» неверна, и это главный урок винтокрылой машины. Винт умеет только
+ * толкать. Чтобы суммарный момент был нулевым, машине приходится пригасить и
+ * кольцо НАПРОТИВ выбитого: их разность иначе её опрокидывает. Потолок ровного
+ * подъёма гексакоптера с одним выбитым кольцом — не 0.83, а 0.68.
+ *
+ * Формально это задача линейного программирования: максимум ΣT при ΣT·r = 0 и
+ * 0 ≤ T ≤ предел. Ограничений всего два, поэтому оптимум лежит в вершине, где
+ * не на своём пределе стоят самое большее два винта, — их и перебираем. Ответ
+ * точный, а не сеточный.
+ *
+ * Кому это нужно: отсюда берётся ответ «машина ещё летит или уже снижается»
+ * после потери движителей, и он зависит не от ЧИСЛА потерянных, а от того,
+ * КАКИЕ потеряны. Два кольца напротив друг друга машина переживает почти как
+ * одно, два соседних — вдвое хуже.
+ */
+export function levelLiftCeiling(
+  points: readonly SceneVector3[],
+  centreOfMass: SceneVector3,
+  availability: readonly number[],
+): number {
+  const count = points.length;
+  if (count === 0) return 0;
+  const arms = points.map((point) => [
+    point[0] - centreOfMass[0],
+    point[2] - centreOfMass[2],
+  ]);
+  const limits = points.map((_, index) =>
+    Math.max(0, Math.min(1, availability[index] ?? 0)),
+  );
+  const total = limits.reduce((sum, value) => sum + value, 0);
+  if (total <= 1e-9) return 0;
+
+  // Порог «момент считается нулевым» — ОТНОСИТЕЛЬНЫЙ, доля от суммы плеч.
+  //
+  // Абсолютный порог здесь стоит ошибочного вердикта: у гексакоптера центр масс
+  // отстоит от центра колец на четырнадцать миллиметров, поэтому пара колец
+  // напротив друг друга гасит момент не в точности. С жёстким порогом решатель
+  // объявлял такую раскладку неспособной держать вес вовсе — а это как раз тот
+  // случай, ради которого запас тяги и поднимали. Остаток в тысячную долю
+  // плеча контур угла добирает не замечая.
+  const scale = arms.reduce(
+    (sum, arm) => sum + Math.hypot(arm[0], arm[1]),
+    0,
+  );
+  const tolerance = Math.max(1e-9, scale * 3e-3);
+  const balanced = (thrust: readonly number[]): boolean => {
+    let mx = 0;
+    let mz = 0;
+    for (let index = 0; index < count; index += 1) {
+      mx += thrust[index] * arms[index][0];
+      mz += thrust[index] * arms[index][1];
+    }
+    return Math.hypot(mx, mz) < tolerance;
+  };
+  // Вершину не отбрасываем из-за выхода за предел на процент, а ПРИЖИМАЕМ винт
+  // к его пределу и проверяем, остался ли момент нулевым. У этой машины кольца
+  // стоят напротив друг друга не идеально — 180.4° и плечи разной длины, —
+  // поэтому строгий отказ вычёркивал ровно ту раскладку «пара напротив», ради
+  // которой запас тяги и поднимали.
+  const clamped = (thrust: readonly number[]): number[] =>
+    thrust.map((value, index) =>
+      Math.max(0, Math.min(limits[index], value)),
+    );
+  const sum = (thrust: readonly number[]): number =>
+    thrust.reduce((accumulated, value) => accumulated + value, 0);
+
+  let best = 0;
+  // Все винты на своих пределах — вершина без свободных переменных.
+  if (balanced(limits)) best = sum(limits);
+
+  // Одна свободная переменная: её значение задаётся моментом остальных.
+  for (let free = 0; free < count; free += 1) {
+    for (let mask = 0; mask < 1 << (count - 1); mask += 1) {
+      const fixed = limits.map((limit, index) => {
+        if (index === free) return 0;
+        const bit = index < free ? index : index - 1;
+        return (mask >> bit) & 1 ? limit : 0;
+      });
+      let mx = 0;
+      let mz = 0;
+      for (let index = 0; index < count; index += 1) {
+        mx += fixed[index] * arms[index][0];
+        mz += fixed[index] * arms[index][1];
+      }
+      const [ax, az] = arms[free];
+      const norm = ax * ax + az * az;
+      if (norm < 1e-12) continue;
+      const value = -(mx * ax + mz * az) / norm;
+      const candidate = clamped(
+        fixed.map((thrust, index) => (index === free ? value : thrust)),
+      );
+      if (!balanced(candidate)) continue;
+      best = Math.max(best, sum(candidate));
+    }
+  }
+
+  // Две свободные переменные: система два на два по обеим осям момента.
+  for (let first = 0; first < count; first += 1) {
+    for (let second = first + 1; second < count; second += 1) {
+      for (let mask = 0; mask < 1 << (count - 2); mask += 1) {
+        const fixed = limits.map((limit, index) => {
+          if (index === first || index === second) return 0;
+          let bit = index;
+          if (index > first) bit -= 1;
+          if (index > second) bit -= 1;
+          return (mask >> bit) & 1 ? limit : 0;
+        });
+        let mx = 0;
+        let mz = 0;
+        for (let index = 0; index < count; index += 1) {
+          mx += fixed[index] * arms[index][0];
+          mz += fixed[index] * arms[index][1];
+        }
+        const [ax, az] = arms[first];
+        const [bx, bz] = arms[second];
+        const determinant = ax * bz - az * bx;
+        if (Math.abs(determinant) < 1e-9) continue;
+        const valueFirst = (-mx * bz + mz * bx) / determinant;
+        const valueSecond = (-az * -mx + ax * -mz) / determinant;
+        const candidate = clamped(
+          fixed.map((thrust, index) => {
+            if (index === first) return valueFirst;
+            if (index === second) return valueSecond;
+            return thrust;
+          }),
+        );
+        if (!balanced(candidate)) continue;
+        best = Math.max(best, sum(candidate));
+      }
+    }
+  }
+
+  return best / count;
+}

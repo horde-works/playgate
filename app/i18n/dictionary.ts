@@ -143,6 +143,7 @@ export const ui = {
     "telemetry.metric.distanceRemaining": "Remaining",
 
     "weapon.hammer": "Hammer",
+    "villager.kicker": "Resident data",
     "villager.role.weaver": "Weaver",
     "villager.role.brewer": "Brewer",
     "villager.role.fisher": "Fisher",
@@ -512,6 +513,7 @@ export const ui = {
     "telemetry.metric.distanceRemaining": "Restante",
 
     "weapon.hammer": "Martillo",
+    "villager.kicker": "Datos del residente",
     "villager.role.weaver": "Tejedora",
     "villager.role.brewer": "Cervecero",
     "villager.role.fisher": "Pescador",
@@ -887,6 +889,7 @@ export const ui = {
     "telemetry.metric.distanceRemaining": "Осталось",
 
     "weapon.hammer": "Молоток",
+    "villager.kicker": "Данные жителя",
     "villager.role.weaver": "Ткачиха",
     "villager.role.brewer": "Пивовар",
     "villager.role.fisher": "Рыбак",

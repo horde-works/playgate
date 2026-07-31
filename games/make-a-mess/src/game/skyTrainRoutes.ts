@@ -422,6 +422,31 @@ export interface VehicleRoutePlan {
   point(progress: number): SceneVector3;
   speedLimit(progress: number): number;
   altitude(progress: number): number;
+  /**
+   * Route-authored vertical departure before horizontal motion is released.
+   *
+   * The route keeps its ordinary ground point at progress zero, so a machine
+   * standing on supports is not mistaken for a route loss. Guidance holds the
+   * authored altitude until the craft has climbed there, then preserves that
+   * shelf until `until` joins the ordinary altitude profile continuously.
+   */
+  readonly verticalDeparture?: {
+    /** Absolute world altitude of the clearance shelf. */
+    readonly altitude: number;
+    /** Route progress where the ordinary altitude profile owns height again. */
+    readonly until: number;
+    /** Height error allowed before horizontal motion is released. */
+    readonly tolerance: number;
+  };
+  /** Route-authored vertical landing after the horizontal berth is captured. */
+  readonly verticalArrival?: {
+    /** Clearance shelf held while the craft approaches the berth in plan. */
+    readonly altitude: number;
+    /** Route progress where the vertical-arrival policy takes ownership. */
+    readonly from: number;
+    /** Horizontal distance at which descent over the berth is released. */
+    readonly horizontalTolerance: number;
+  };
   /** Signed longitudinal travel: -1 keeps the nose while backing out. */
   travelDirection?(progress: number): -1 | 1;
   /** Route-authored guidance horizon for confined manoeuvres. */

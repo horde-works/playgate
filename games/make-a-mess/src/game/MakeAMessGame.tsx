@@ -3281,8 +3281,9 @@ function VillagerProbe({
 }) {
   const timer = useRef(0);
   const shownId = useRef<string | null>(null);
+  const lastSeenAt = useRef(-Infinity);
   const direction = useRef(new Vector3());
-  useFrame(({ camera }, delta) => {
+  useFrame(({ camera, clock }, delta) => {
     timer.current -= delta;
     if (timer.current > 0) {
       return;
@@ -3299,10 +3300,20 @@ function VillagerProbe({
           ],
         )
       : null;
-    // Карточку перерисовываем, только когда она правда изменилась.
-    if (report?.id !== shownId.current || report) {
-      shownId.current = report?.id ?? null;
+    if (report) {
+      // Другой житель заменяет карточку сразу; данные текущего
+      // продолжают обновляться, пока он под перекрестьем.
+      lastSeenAt.current = clock.elapsedTime;
+      shownId.current = report.id;
       onChange(report);
+      return;
+    }
+    if (
+      shownId.current !== null &&
+      clock.elapsedTime - lastSeenAt.current >= 3
+    ) {
+      shownId.current = null;
+      onChange(null);
     }
   });
   return null;
@@ -9749,12 +9760,45 @@ export function MakeAMessGame({
         </aside>
       ) : null}
 
-      {telemetryVisible && surfaces.worldHud ? (
+      {telemetryVisible && surfaces.worldHud && (!active || !inspectedVillager) ? (
         <MotionTelemetryPanel
           store={telemetryStore}
           timeOfDay={timeOfDay}
           onUnavailable={handleTelemetryUnavailable}
         />
+      ) : null}
+
+      {active && surfaces.worldHud && inspectedVillager ? (
+        <aside
+          className={`motion-telemetry villager-card is-${timeOfDay}`}
+          aria-live="off"
+        >
+          <div className="villager-card-avatar" aria-hidden="true">
+            <svg viewBox="0 0 48 48">
+              <circle cx="24" cy="10" r="5" />
+              <path d="M24 16v15M15 23l9-7 9 7M18 42l6-11 6 11" />
+            </svg>
+          </div>
+          <div className="villager-card-copy">
+            <p>{t("villager.kicker")}</p>
+            <b>
+              {inspectedVillager.name
+                ? `${inspectedVillager.name} ${inspectedVillager.patronymic}`.trim()
+                : inspectedVillager.id}
+            </b>
+            <span>
+              {t(
+                (inspectedVillager.child
+                  ? "villager.role.child"
+                  : `villager.role.${inspectedVillager.role}`) as TranslationKey,
+              )}
+            </span>
+            <em>{describeVillagerIntent(inspectedVillager, t)}</em>
+            <em>
+              {t(`villager.act.${inspectedVillager.action}` as TranslationKey)}
+            </em>
+          </div>
+        </aside>
       ) : null}
 
       {surfaces.worldHud ? (
@@ -9811,25 +9855,6 @@ export function MakeAMessGame({
         >
           <i />
           <i />
-        </div>
-      ) : null}
-
-      {active && surfaces.worldHud && inspectedVillager ? (
-        <div className="villager-card" aria-live="off">
-          <b>
-            {inspectedVillager.name
-              ? `${inspectedVillager.name} ${inspectedVillager.patronymic}`.trim()
-              : inspectedVillager.id}
-          </b>
-          <span>
-            {t(
-              (inspectedVillager.child
-                ? "villager.role.child"
-                : `villager.role.${inspectedVillager.role}`) as TranslationKey,
-            )}
-          </span>
-          <em>{describeVillagerIntent(inspectedVillager, t)}</em>
-          <em>{t(`villager.act.${inspectedVillager.action}` as TranslationKey)}</em>
         </div>
       ) : null}
 

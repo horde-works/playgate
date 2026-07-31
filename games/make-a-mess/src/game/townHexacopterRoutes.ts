@@ -221,6 +221,7 @@ function routeDefinition(
       speedLimit: (context) => speedLimit(compact ? 9 : 10.5, context),
     },
     markers: {
+      verticalDepartureComplete: "yard-clear",
       departureComplete: "circuit-entry",
       arriving: "arrival-shoulder",
       final: "final-entry",
@@ -289,6 +290,16 @@ export function townHexacopterPlan(
   const departureComplete = route.markerProgress("departureComplete");
   return {
     ...placed,
+    verticalDeparture: {
+      altitude: berth[1] + YARD_CLEAR_ALTITUDE,
+      until: route.markerProgress("verticalDepartureComplete"),
+      tolerance: 0.8,
+    },
+    verticalArrival: {
+      altitude: berth[1] + YARD_CLEAR_ALTITUDE,
+      from: route.markerProgress("final"),
+      horizontalTolerance: 0.9,
+    },
     // Упреждение соразмерно ЭТОЙ машине: круз 9 м/с и три секунды вперёд —
     // 27 м. Общие 52 м, разумные для длинного дирижабля, на круге радиусом
     // 46 м срезают дугу и уводят машину внутрь круга. В колодце двора

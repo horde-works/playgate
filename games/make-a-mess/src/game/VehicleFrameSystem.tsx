@@ -64,11 +64,14 @@ import {
   vehicleProbeFriction,
   vehicleProbeReaction,
   vehicleRouteHeading,
+  vehicleRouteAltitudeTarget,
+  vehicleVerticalArrivalCaptured,
   vehicleRotation,
   vehicleSpoolCommand,
   type VehicleRoutePlan,
   type VehiclePose,
   type ApproachGate,
+  type VehicleGuidanceDemand,
   type ShipModel,
 } from "./vehicleFrames";
 import {
@@ -126,6 +129,14 @@ import {
   rotorLiftState,
   type RotorLiftState,
 } from "./vehicleLiftGeometry.ts";
+import {
+  advanceRotorMotorOutput,
+  NEUTRAL_ROTORCRAFT_TRIM,
+  rotorcraftCommandsExecute,
+  rotorcraftFlightStep,
+  type RotorcraftAuthority,
+  type RotorcraftTrimState,
+} from "./rotorcraftDynamics.ts";
 import {
   propulsionHealth,
   updatePropulsionFeedback,
@@ -201,6 +212,148 @@ type ScheduledInteraction = "board" | "ride" | "seat" | "stand";
 
 /** Тяжесть. Плотности в движке свои, но она одна для всех. */
 const GRAVITY = 9.81;
+
+/** Предельный наклон винтокрылой машины, если паспорт молчит. */
+const DEFAULT_ROTOR_TILT = (30 * Math.PI) / 180;
+/** Наибольшая угловая скорость рыскания по полному рулю, рад/с. */
+const ROTOR_YAW_RATE = 0.9;
+
+/**
+ * ВИНТЫ ВМЕСТО ОБОЛОЧКИ И БОКОВЫХ МОТОРОВ.
+ *
+ * Переходник между общим guidance и винтовой моделью. Слои выше не меняются:
+ * маршрут остаётся требованием, автопилот просит скорость, подъём и темп
+ * рыскания. Здесь собственный каскад коптера переводит их в наклон и моменты,
+ * mixer — в шесть throttle-команд, актуаторы — в доставленную команду, а
+ * инерционные моторы — в реальные силы.
+ *
+ * У дирижабля две независимых силы: моторы толкают вбок, оболочка держит вес,
+ * и поза корпуса — их побочный результат. У коптера горизонтальной силы нет
+ * вовсе. Он умеет ровно одно — наклониться и подставить под себя винты.
+ * Корабельных органов здесь нет: горизонтальная сила появляется только после
+ * наклона общей оси винтов, а рыскание — из реактивного момента встречных пар.
+ */
+function rotorcraftFlightForces(
+  frame: VehicleFrameRuntime,
+  state: FrameState,
+  mass: MassProperties,
+  centre: readonly [number, number, number],
+  liftCommand: number,
+  guidance: VehicleGuidanceDemand | null,
+  availability: readonly number[],
+  attachedMembers: ReadonlySet<string>,
+  enabled: boolean,
+  step: number,
+): {
+  readonly forces: readonly {
+    readonly force: [number, number, number];
+    readonly point: [number, number, number];
+  }[];
+} | null {
+  const limits = frame.flight.limits;
+  const points = limits.enginePoints;
+  if (points.length === 0) {
+    return null;
+  }
+  const trim = state.rotorTrim ?? NEUTRAL_ROTORCRAFT_TRIM;
+  const flightStep = rotorcraftFlightStep(
+    {
+      points,
+      centreOfMass: mass.centre,
+      nose: frame.nose,
+      mass: mass.mass,
+      inertia: [mass.inertia[0], mass.inertia[4], mass.inertia[8]],
+      availability: points.map((_, index) => availability[index] ?? 1),
+      motorOutput: points.map((_, index) => state.rotorMotorOutput[index] ?? 0),
+      liftCapacity: mass.mass * GRAVITY * (frame.flight.liftReserve ?? 1.35),
+      maximumTilt: frame.flight.maximumTilt ?? DEFAULT_ROTOR_TILT,
+    },
+    {
+      orientation: state.body.orientation,
+      centre,
+      velocity: state.body.velocity,
+      angularVelocity: state.body.angularVelocity,
+    },
+    {
+      forwardSpeed: guidance?.forwardSpeed ?? 0,
+      lateralSpeed: guidance?.lateralSpeed ?? 0,
+      yawRate: guidance?.yawRate ?? 0,
+      collective:
+        guidance?.liftFraction ?? liftCommand * limits.liftTrimRange,
+    },
+    trim,
+    step,
+    ROTOR_YAW_RATE,
+  );
+  const requestedThrottle = enabled
+    ? [...flightStep.result.commandedThrottle]
+    : points.map(() => 0);
+  const actuation = executeCommandActuators(
+    frame.actuators,
+    attachedMembers,
+    Object.fromEntries(
+      requestedThrottle.map((value, index) => [`throttle:${index}`, value]),
+    ),
+  );
+  const deliveredTargets = requestedThrottle.map((value, index) =>
+    deliveredCommandValue(actuation, `throttle:${index}`, value),
+  );
+  const runUpFraction =
+    state.flight && !state.flight.castOff
+      ? Math.max(
+          0,
+          Math.min(1, state.flight.time / Math.max(0.001, frame.flight.spoolSeconds)),
+        )
+      : 1;
+  state.rotorMotorOutput = points.map((_, index) =>
+    advanceRotorMotorOutput(
+      state.rotorMotorOutput[index] ?? 0,
+      (deliveredTargets[index] ?? 0) * runUpFraction,
+      step,
+      frame.flight.spoolSeconds,
+    ),
+  );
+  state.rotorTrim = enabled ? flightStep.trim : NEUTRAL_ROTORCRAFT_TRIM;
+  state.rotorAuthority = enabled ? flightStep.result.authority : null;
+  state.rotorAcceptedYawRate = enabled
+    ? flightStep.result.acceptedYawRate
+    : null;
+  state.rotorYawRateLimits = enabled
+    ? flightStep.result.yawRateLimits
+    : null;
+
+  for (let engine = 0; engine < state.spinAngles.length; engine += 1) {
+    state.spinAngles[engine] = advanceDrivePhase(
+      state.spinAngles[engine] ?? 0,
+      frame.flight.driveAnimation.phaseSpeed,
+      state.rotorMotorOutput[engine] ?? 0,
+      step,
+    );
+  }
+  if (state.flight) {
+    state.flight.driveThrottle = requestedThrottle;
+    state.flight.throttle = [...state.rotorMotorOutput];
+    state.flight.propulsionFeedback = updatePropulsionFeedback(
+      state.flight.propulsionFeedback,
+      actuation,
+      points.length,
+    );
+  }
+  return {
+    forces: flightStep.forces.map((entry) => ({
+      force: [entry.force[0], entry.force[1], entry.force[2]] as [
+        number,
+        number,
+        number,
+      ],
+      point: [entry.point[0], entry.point[1], entry.point[2]] as [
+        number,
+        number,
+        number,
+      ],
+    })),
+  };
+}
 
 /**
  * Успокоение свободно висящего корабля. Гасит качку и снос, но не «в ноль»
@@ -471,6 +624,24 @@ interface FrameState {
   trim: VehicleTrimRailState[];
   /** Previous attitude sample; trim rates are measured, not assumed. */
   trimAttitude: { readonly pitch: number; readonly roll: number } | null;
+  /**
+   * Накопленный перекос винтокрылой машины, рад/с². Живёт между кадрами:
+   * это ответ на «какой момент приходится держать постоянно, чтобы стоять
+   * ровно» — криво положенный груз, выбитое кольцо. Плавучим машинам не
+   * нужен и остаётся null.
+   */
+  rotorTrim: RotorcraftTrimState | null;
+  /** Actual per-motor output after actuator delivery and spool inertia. */
+  rotorMotorOutput: number[];
+  /** Previous physical step, consumed by the common failure watchdog. */
+  rotorAuthority: RotorcraftAuthority | null;
+  /** Command the bounded rotor allocator actually accepted last step. */
+  rotorAcceptedYawRate: number | null;
+  /** Directional yaw envelope reported to the common autopilot. */
+  rotorYawRateLimits: {
+    readonly minimum: number;
+    readonly maximum: number;
+  } | null;
   /** Car positions the present mass model was built from. */
   trimMassPositions: number[];
   /** True while the car and its drive are still carried by this carrier. */
@@ -790,6 +961,11 @@ function restingState(engineCount: number): FrameState {
     separated: new Set<string>(),
     trim: [],
     trimAttitude: null,
+    rotorTrim: null,
+    rotorMotorOutput: Array.from({ length: engineCount }, () => 0),
+    rotorAuthority: null,
+    rotorAcceptedYawRate: null,
+    rotorYawRateLimits: null,
     trimMassPositions: [],
     trimAvailable: [],
     trimExhaustedSeconds: 0,
@@ -870,11 +1046,25 @@ function routeTrackingState(
       (forward[2] / forwardLength) * tangentZ,
   );
   const attitude = vehicleAttitude(orientation, nose);
+  const verticalArrivalCaptured = vehicleVerticalArrivalCaptured(
+    plan,
+    progress,
+    centre as [number, number, number],
+  );
   return {
     ...attitude,
     headingError: Math.acos(headingDot),
     crossTrackError: Math.abs(offsetX * tangentZ - offsetZ * tangentX),
-    altitudeError: centre[1] - plan.altitude(progress),
+    // A captured vertical arrival is timed as a landing manoeuvre below. It
+    // is not a route-altitude divergence while the machine descends in place.
+    altitudeError: verticalArrivalCaptured
+      ? 0
+      : centre[1] -
+        vehicleRouteAltitudeTarget(
+          plan,
+          progress,
+          centre as [number, number, number],
+        ),
   };
 }
 
@@ -2138,6 +2328,11 @@ export function VehicleFrameSystem({
         state.released.clear();
         state.separated.clear();
         state.spinAngles.fill(0);
+        state.rotorMotorOutput.fill(
+          (frame.flight.liftSource ?? "buoyant") === "rotor"
+            ? 1 / (frame.flight.liftReserve ?? 1.35)
+            : 0,
+        );
         state.suppressFrameVelocityOnce = true;
 
         const passenger = bodies.current.get("player");
@@ -2378,6 +2573,11 @@ export function VehicleFrameSystem({
             state.released.clear();
             state.separated.clear();
             state.spinAngles.fill(0);
+            state.rotorMotorOutput.fill(
+              (frame.flight.liftSource ?? "buoyant") === "rotor"
+                ? 1 / (frame.flight.liftReserve ?? 1.35)
+                : 0,
+            );
             state.recovery.progress = 0;
             state.recovery.arrivalInitialized = true;
             state.suppressFrameVelocityOnce = true;
@@ -2395,6 +2595,21 @@ export function VehicleFrameSystem({
         point: [number, number, number];
       }[] = [];
       let liftCommand = 0;
+      /**
+       * У ВИНТОКРЫЛОЙ МАШИНЫ СИЛЫ РЕАЛИЗУЮТСЯ ИНАЧЕ.
+       *
+       * Маршрут, регулятор и органы управления общие — меняется только то, ЧЕМ
+       * просьба исполняется. Дирижабль толкают моторы вбок, а подъём держит
+       * оболочка: две независимые силы, и поза корабля — их побочный результат.
+       * У коптера горизонтальной силы нет вовсе. Он умеет ровно одно —
+       * наклониться и подставить под себя винты, поэтому НАКЛОН У НЕГО НЕ
+       * СЛЕДСТВИЕ, А СПОСОБ ДВИГАТЬСЯ.
+       *
+       * Поэтому здесь корабельные силы не берутся: команда откладывается и
+       * ниже раскладывается по кольцам вместе с подъёмом.
+       */
+      const usesRotorDynamics = frame.flight.liftSource === "rotor";
+      let rotorGuidance: VehicleGuidanceDemand | null = null;
       const capture = vehicleMooringState(
         frame,
         state.body.position,
@@ -2449,10 +2664,14 @@ export function VehicleFrameSystem({
         ? rotorHoldState(frame, state.intactMass, state.mass, propulsion.fractions)
         : null;
       const flightClearance = propulsionFlightClearance(propulsion, liftHold);
-      const autopilotModel: ShipModel =
+      const feedbackModel: ShipModel =
         driveUsesPropulsionFeedback(frame.flight.driveAnimation) && flight
           ? { ...shipModel, engineAvailability: flight.propulsionFeedback }
           : shipModel;
+      const autopilotModel: ShipModel =
+        frame.flight.liftSource === "rotor" && state.rotorYawRateLimits
+          ? { ...feedbackModel, yawRateLimits: state.rotorYawRateLimits }
+          : feedbackModel;
       const failureEnvelope = driveUsesPropulsionFeedback(
         frame.flight.driveAnimation,
       )
@@ -2763,6 +2982,14 @@ export function VehicleFrameSystem({
           safetyInterventionForMode("assisted", safetyAdvisory),
         );
         liftCommand = piloted.controls.liftTrim;
+        if (usesRotorDynamics) {
+          // Общий автопилот заканчивается здесь. Mixer коптера ниже сам
+          // создаст шесть throttle-команд, проведёт их через физические
+          // актуаторы и только затем превратит фактические обороты в силы.
+          // Корабельные throttle/rudder к этим каналам больше не прикасаются.
+          rotorGuidance = piloted.guidance;
+          return piloted;
+        }
         const driveThrottle = piloted.controls.throttle;
         const actuation = executeCommandActuators(
           frame.actuators,
@@ -3353,6 +3580,17 @@ export function VehicleFrameSystem({
           0,
           ...flight.driveThrottle.map(Math.abs),
         );
+        const rotorControlAvailable =
+          !usesRotorDynamics ||
+          (state.rotorAuthority !== null &&
+            rotorcraftCommandsExecute(state.rotorAuthority));
+        const rotorDeliveredControlFraction = state.rotorAuthority
+          ? Math.min(
+              state.rotorAuthority.thrust,
+              state.rotorAuthority.pitch,
+              state.rotorAuthority.roll,
+            )
+          : 0;
         const requestedLiftEffort = Math.max(0, liftCommand);
         const liftDelivery = deliveredLiftControlFraction(
           liftCommand,
@@ -3373,17 +3611,25 @@ export function VehicleFrameSystem({
             roll: tracking.roll,
             headingError: tracking.headingError,
             yawRateError:
-              state.body.angularVelocity[1] - piloted.desiredYawRate,
+              state.body.angularVelocity[1] -
+              (usesRotorDynamics
+                ? (state.rotorAcceptedYawRate ?? piloted.guidance.yawRate)
+                : piloted.desiredYawRate),
             // What guidance cannot fix, not how far the burst pushed it.
             // Both numbers now come from the question the corrector asks, so
             // it always acts first by construction.
             crossTrackError: unrecoverable.crossTrack,
             altitudeError: unrecoverable.altitude,
             progress: flight.progress,
-            requiredControlAvailable: propulsion.mode !== "inoperative",
+            requiredControlAvailable:
+              usesRotorDynamics
+                ? rotorControlAvailable
+                : propulsion.mode !== "inoperative",
             requestedControlEffort: requestedEffort,
             deliveredControlFraction:
-              propulsion.mode === "inoperative"
+              usesRotorDynamics
+                ? rotorDeliveredControlFraction
+                : propulsion.mode === "inoperative"
                 ? 0
                 : deliveredControlFraction(
                     flight.driveThrottle,
@@ -3463,49 +3709,48 @@ export function VehicleFrameSystem({
       } else if (flight) {
         // На отрыве моторы раскручиваются одинаково, но в направлении
         // первого участка: задний ход нельзя начинать ударом тарана в захват.
-        const spool = vehicleSpoolCommand(
-          frame.flight.routePlan(flight.kind, berth),
-          flight.time,
-          frame.flight.spoolSeconds,
-        );
-        const spoolRequest = frame.flight.limits.enginePoints.map(() => spool);
-        const spoolYawArms = frame.flight.limits.enginePoints.map((point) => {
-          const rx = point[0] - mass.centre[0];
-          const rz = point[2] - mass.centre[2];
-          return rz * frame.nose[0] - rx * frame.nose[2];
-        });
-        flight.driveThrottle = driveUsesPropulsionFeedback(
-          frame.flight.driveAnimation,
-        )
-          ? allocateAutopilotEngineCommands(
-              spool,
-              0,
-              spoolYawArms,
-              flight.propulsionFeedback,
-            )
-          : spoolRequest;
-        const attachedMembers =
-          clusterRegistry.current.get(frame.clusterId)?.attachedMemberIds ??
-          new Set(alive.map((member) => member.piece.id));
-        const actuation = executeCommandActuators(
-          frame.actuators,
-          attachedMembers,
-          Object.fromEntries(
-            flight.driveThrottle.map((value, index) => [
-              `throttle:${index}`,
-              value,
-            ]),
-          ),
-        );
-        flight.throttle = flight.driveThrottle.map((value, index) =>
-          deliveredCommandValue(actuation, `throttle:${index}`, value),
-        );
-        if (driveUsesPropulsionFeedback(frame.flight.driveAnimation)) {
-          flight.propulsionFeedback = updatePropulsionFeedback(
-            flight.propulsionFeedback,
-            actuation,
-            frame.flight.limits.enginePoints.length,
+        if (!usesRotorDynamics) {
+          const spool = vehicleSpoolCommand(
+            frame.flight.routePlan(flight.kind, berth),
+            flight.time,
+            frame.flight.spoolSeconds,
           );
+          const spoolRequest = frame.flight.limits.enginePoints.map(() => spool);
+          const spoolYawArms = frame.flight.limits.enginePoints.map((point) => {
+            const rx = point[0] - mass.centre[0];
+            const rz = point[2] - mass.centre[2];
+            return rz * frame.nose[0] - rx * frame.nose[2];
+          });
+          flight.driveThrottle = driveUsesPropulsionFeedback(
+            frame.flight.driveAnimation,
+          )
+            ? allocateAutopilotEngineCommands(
+                spool,
+                0,
+                spoolYawArms,
+                flight.propulsionFeedback,
+              )
+            : spoolRequest;
+          const actuation = executeCommandActuators(
+            frame.actuators,
+            attachedMembers,
+            Object.fromEntries(
+              flight.driveThrottle.map((value, index) => [
+                `throttle:${index}`,
+                value,
+              ]),
+            ),
+          );
+          flight.throttle = flight.driveThrottle.map((value, index) =>
+            deliveredCommandValue(actuation, `throttle:${index}`, value),
+          );
+          if (driveUsesPropulsionFeedback(frame.flight.driveAnimation)) {
+            flight.propulsionFeedback = updatePropulsionFeedback(
+              flight.propulsionFeedback,
+              actuation,
+              frame.flight.limits.enginePoints.length,
+            );
+          }
         }
         // ОТСЧЁТ. Пока швартов не отдан, тот же регулятор держит причальную
         // высоту. После отдачи концов маршрутный регулятор выше сразу получает
@@ -3834,19 +4079,55 @@ export function VehicleFrameSystem({
         }
       }
       state.supportContacts = supportContacts;
+      // Винтокрылая машина несёт себя КОЛЬЦАМИ, а не одной вертикалью в точке
+      // подъёма. Отсюда всё её поведение: тяга каждого кольца своя, суммарный
+      // вектор наклоняется вместе с корпусом, и разностью тяг рождаются момент
+      // и рыскание. Дирижабль этой ветки не касается.
+      //
+      // Берётся ПРОСЬБА (`liftCommand` — после арбитража автоматики), а не
+      // `lift`. `lift` уже прополз через балластную рампу оболочки: «стравить
+      // газ и сбросить балласт мгновенно нельзя» — это про дирижабль. У винтов
+      // балласта нет, их инерция — это запаздывание раскрутки, и жить ей
+      // внутри винтовой модели, а не в клапане чужой оболочки.
+      const rotorRecoveryPhase = state.recovery?.lifecycle.phase ?? null;
+      const rotorEnabled =
+        Boolean(flight) &&
+        (rotorRecoveryPhase === null ||
+          rotorRecoveryPhase === "escape" ||
+          rotorRecoveryPhase === "descent" ||
+          rotorRecoveryPhase === "landing" ||
+          rotorRecoveryPhase === "arrival");
+      const rotorLift = usesRotorDynamics
+        ? rotorcraftFlightForces(
+            frame,
+            state,
+            mass,
+            centre,
+            liftCommand,
+            rotorGuidance,
+            flight?.propulsionFeedback ?? propulsion.fractions,
+            attachedMembers,
+            rotorEnabled,
+            step,
+          )
+        : null;
       const stepped = stepBody(
         { ...state.body, position: centre },
         mass,
         [
           { force: [0, -mass.mass * GRAVITY, 0], point: centre },
-          {
-            force: [0, lift, 0],
-            point: [
-              centre[0] + liftArm[0],
-              centre[1] + liftArm[1],
-              centre[2] + liftArm[2],
-            ],
-          },
+          ...(rotorLift
+            ? rotorLift.forces
+            : [
+                {
+                  force: [0, lift, 0] as [number, number, number],
+                  point: [
+                    centre[0] + liftArm[0],
+                    centre[1] + liftArm[1],
+                    centre[2] + liftArm[2],
+                  ] as [number, number, number],
+                },
+              ]),
           // Швартовка работает и на подходе: последние метры корабль
           // добирает тросом, а не моторами.
           // Швартов держит на отсчёте, отпускает на отходе и снова
@@ -4029,7 +4310,9 @@ export function VehicleFrameSystem({
             {
               id: "propellerRevolutions",
               value: engineValuesPortToStarboard(
-                telemetryFlight.driveThrottle,
+                usesRotorDynamics
+                  ? state.rotorMotorOutput
+                  : telemetryFlight.driveThrottle,
                 frame.flight.limits.enginePoints,
                 state.mass?.centre ?? frame.origin,
                 frame.nose,

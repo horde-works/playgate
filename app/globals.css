@@ -2657,43 +2657,93 @@ button:focus-visible {
   text-align: center;
 }
 
-/* Карточка жителя под перекрестьем: кто он и чем сейчас занят. */
+/* Карточка жителя занимает тот же правый слот, что и телеметрия. */
 .villager-card {
-  position: absolute;
-  top: calc(50% + 26px);
-  left: 50%;
-  z-index: 16;
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+}
+
+.villager-card-avatar {
+  display: grid;
+  width: 72px;
+  height: 72px;
+  place-items: center;
+  border: 1px solid var(--telemetry-muted);
+  border-radius: 50%;
+}
+
+.villager-card-avatar svg {
+  width: 42px;
+  height: 42px;
+  overflow: visible;
+  fill: none;
+  stroke: var(--telemetry-accent);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--telemetry-accent) 55%, transparent));
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: villagerScanTurn 2.4s linear infinite;
+}
+
+.villager-card-avatar circle {
+  fill: var(--telemetry-accent);
+  stroke: none;
+}
+
+.villager-card-copy {
   display: grid;
   gap: 3px;
-  padding: 9px 14px 10px;
-  border-left: 2px solid var(--acid);
-  background: rgb(8 10 9 / 0.72);
-  pointer-events: none;
-  transform: translateX(-50%);
-  white-space: nowrap;
+  min-width: 0;
 }
 
-.villager-card b {
-  color: var(--paper-bright);
-  font-size: 15px;
-  font-weight: 800;
-  letter-spacing: -0.01em;
-}
-
-.villager-card span {
-  color: var(--acid);
-  font-family: var(--font-geist-mono), monospace;
-  font-size: 9px;
+.villager-card p {
+  margin: 0 0 2px;
+  color: var(--telemetry-muted);
+  font-size: 6px;
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
 }
 
+.villager-card b {
+  overflow: hidden;
+  color: var(--telemetry-accent);
+  font-size: 14px;
+  font-weight: 820;
+  letter-spacing: -0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.villager-card span {
+  overflow: hidden;
+  color: var(--telemetry-ink);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 .villager-card em {
-  color: rgb(235 238 233 / 0.78);
-  font-size: 11px;
+  overflow: hidden;
+  color: var(--telemetry-muted);
+  font-size: 8px;
   font-style: normal;
-  letter-spacing: 0.01em;
+  letter-spacing: 0.025em;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes villagerScanTurn {
+  from { transform: rotateY(0deg); }
+  to { transform: rotateY(360deg); }
 }
 
 .game-action-hint {
@@ -3469,44 +3519,20 @@ button:focus-visible {
     gap: 8px;
   }
 
-  /* Карточка жителя под перекрестьем: кто он и чем сейчас занят. */
-.villager-card {
-  position: absolute;
-  top: calc(50% + 26px);
-  left: 50%;
-  z-index: 16;
-  display: grid;
-  gap: 3px;
-  padding: 9px 14px 10px;
-  border-left: 2px solid var(--acid);
-  background: rgb(8 10 9 / 0.72);
-  pointer-events: none;
-  transform: translateX(-50%);
-  white-space: nowrap;
-}
+  .villager-card {
+    grid-template-columns: 56px minmax(0, 1fr);
+    gap: 10px;
+  }
 
-.villager-card b {
-  color: var(--paper-bright);
-  font-size: 15px;
-  font-weight: 800;
-  letter-spacing: -0.01em;
-}
+  .villager-card-avatar {
+    width: 56px;
+    height: 56px;
+  }
 
-.villager-card span {
-  color: var(--acid);
-  font-family: var(--font-geist-mono), monospace;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.villager-card em {
-  color: rgb(235 238 233 / 0.78);
-  font-size: 11px;
-  font-style: normal;
-  letter-spacing: 0.01em;
-}
+  .villager-card-avatar svg {
+    width: 32px;
+    height: 32px;
+  }
 
 .game-action-hint {
     right: 18px;
@@ -3556,44 +3582,9 @@ button:focus-visible {
     transition-duration: 0.01ms !important;
   }
 
-  /* Карточка жителя под перекрестьем: кто он и чем сейчас занят. */
-.villager-card {
-  position: absolute;
-  top: calc(50% + 26px);
-  left: 50%;
-  z-index: 16;
-  display: grid;
-  gap: 3px;
-  padding: 9px 14px 10px;
-  border-left: 2px solid var(--acid);
-  background: rgb(8 10 9 / 0.72);
-  pointer-events: none;
-  transform: translateX(-50%);
-  white-space: nowrap;
-}
-
-.villager-card b {
-  color: var(--paper-bright);
-  font-size: 15px;
-  font-weight: 800;
-  letter-spacing: -0.01em;
-}
-
-.villager-card span {
-  color: var(--acid);
-  font-family: var(--font-geist-mono), monospace;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.villager-card em {
-  color: rgb(235 238 233 / 0.78);
-  font-size: 11px;
-  font-style: normal;
-  letter-spacing: 0.01em;
-}
+  .villager-card-avatar svg {
+    animation: none;
+  }
 
 .game-action-hint {
     opacity: 1;

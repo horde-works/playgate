@@ -37,11 +37,9 @@ import {
   HEX_FOOT_BOTTOM_Y,
   HEX_GONDOLA_BOTTOM_Y,
   HEX_KEEL_BOTTOM_Y,
-  HEX_KEEL_TOP_Y,
   HEX_LIP_OUTER_RADIUS,
   HEX_LIP_TOP_Y,
   HEX_SHROUD_BOTTOM_Y,
-  HEX_SHROUD_TOP_Y,
   TOWN_HEXACOPTER_CLUSTER_ID,
   hexacopterPoint,
 } from "./townHexacopter.ts";
@@ -1227,6 +1225,61 @@ export function advanceVehicleRouteProgress(
   return Math.max(progress, nearest);
 }
 
+/** The route has handed navigation to its hover-and-land final manoeuvre. */
+export function vehicleVerticalArrivalActive(
+  plan: VehicleRoutePlan,
+  progress: number,
+): boolean {
+  return Boolean(plan.verticalArrival && progress >= plan.verticalArrival.from);
+}
+
+/** The berth has been captured in plan and the route now owns a descent. */
+export function vehicleVerticalArrivalCaptured(
+  plan: VehicleRoutePlan,
+  progress: number,
+  centre: SceneVector3,
+): boolean {
+  const arrival = plan.verticalArrival;
+  if (!arrival || !vehicleVerticalArrivalActive(plan, progress)) {
+    return false;
+  }
+  const berth = plan.point(1);
+  return (
+    Math.hypot(centre[0] - berth[0], centre[2] - berth[2]) <=
+    arrival.horizontalTolerance
+  );
+}
+
+/**
+ * Height currently owned by route guidance.
+ *
+ * A vertical departure and the horizontal half of a vertical arrival fly a
+ * clearance shelf instead of the sloping profile stored in `point()`. Every
+ * consumer must judge the same height the autopilot is actually commanding;
+ * otherwise correction tries to put a correctly held craft back onto the
+ * obsolete glide below it.
+ */
+export function vehicleRouteAltitudeTarget(
+  plan: VehicleRoutePlan,
+  progress: number,
+  centre: SceneVector3,
+): number {
+  const routeAltitude = plan.altitude(progress);
+  const departure = plan.verticalDeparture;
+  if (departure && progress < departure.until) {
+    return Math.max(routeAltitude, departure.altitude);
+  }
+  const arrival = plan.verticalArrival;
+  if (
+    arrival &&
+    progress >= arrival.from &&
+    !vehicleVerticalArrivalCaptured(plan, progress, centre)
+  ) {
+    return Math.max(routeAltitude, arrival.altitude);
+  }
+  return routeAltitude;
+}
+
 /**
  * Reacquires the nearest feasible part of a route after a disturbance hold.
  * Unlike ordinary progress this may move a little backwards: a displaced
@@ -1243,14 +1296,28 @@ export function rejoinVehicleRouteProgress(
 ): number {
   const from = Math.max(0, progress - Math.max(0, backwardWindow));
   const to = Math.min(1, progress + Math.max(0, forwardWindow));
+  const verticalArrivalCaptured = vehicleVerticalArrivalCaptured(
+    plan,
+    progress,
+    centre,
+  );
   let nearest = progress;
   let bestDistance = Number.POSITIVE_INFINITY;
   for (let sample = 0; sample <= 64; sample += 1) {
     const candidate = from + ((to - from) * sample) / 64;
     const point = plan.point(candidate);
+    // During the vertical branch, height cannot select a point behind the
+    // craft on the obsolete glide. In the preceding shelf phase, compare
+    // against the shelf the autopilot really holds, not `point().y`.
+    const verticalDistance =
+      verticalArrivalCaptured &&
+      plan.verticalArrival &&
+      candidate >= plan.verticalArrival.from
+        ? 0
+        : vehicleRouteAltitudeTarget(plan, candidate, centre) - centre[1];
     const distance = Math.hypot(
       point[0] - centre[0],
-      point[1] - centre[1],
+      verticalDistance,
       point[2] - centre[2],
     );
     if (distance < bestDistance) {
@@ -1546,6 +1613,14 @@ export interface ShipModel {
   readonly limits: ShipLimits;
   /** Authority estimated by autopilot from its previous request and delivery. */
   readonly engineAvailability?: readonly number[];
+  /**
+   * Directional yaw rates the machine controller can accept while preserving
+   * its present thrust and attitude. Damage may make them asymmetric.
+   */
+  readonly yawRateLimits?: {
+    readonly minimum: number;
+    readonly maximum: number;
+  };
 }
 
 /**
@@ -1990,18 +2065,143 @@ export function predictShip(
   return { position: [x, z], heading: [hx, hz] };
 }
 
-/** Что автопилот доложил о себе: рычаги плюс то, что нужно успокоению. */
+/**
+ * Единое требование guidance. В нём нет ни моторов, ни руля, ни углов корпуса:
+ * только желаемое движение в осях машины и вертикальный баланс сверх веса.
+ */
+export interface VehicleGuidanceDemand {
+  /** Желаемая путевая скорость вдоль носа, м/с. */
+  readonly forwardSpeed: number;
+  /** Желаемая скорость на правый борт, м/с. */
+  readonly lateralSpeed: number;
+  /** Требуемая угловая скорость рыскания, рад/с. */
+  readonly yawRate: number;
+  /** Требуемая вертикальная сила сверх веса, доля веса. */
+  readonly liftFraction: number;
+}
+
+/** Что общий автопилот доложил о себе. */
 export interface AutopilotOutput {
+  /** Корабельный контроллер: совместимый выход для плавучих машин. */
   readonly controls: ShipControls;
-  /** Угловая скорость, которую машина сейчас держит в развороте. */
+  /** Угловая скорость, которую корабельный контроллер реально запросил. */
   readonly desiredYawRate: number;
   /** Заход не сложился: в окно захвата не попадаем, идём на второй круг. */
   readonly goAround: boolean;
+  /** Нейтральное требование, которое каждый вид машины исполняет сам. */
+  readonly guidance: VehicleGuidanceDemand;
+}
+
+function shipControlsForGuidance(
+  guidance: VehicleGuidanceDemand,
+  heading: readonly [number, number],
+  groundSpeed: number,
+  velocity: SceneVector3,
+  angularVelocity: SceneVector3,
+  model: ShipModel,
+  nose: SceneVector3,
+  braking: number,
+  allowFullReverse: boolean,
+): { readonly controls: ShipControls; readonly desiredYawRate: number } {
+  const limits = model.limits;
+  const localNoseLength = Math.hypot(nose[0], nose[2]) || 1;
+  const localNose: readonly [number, number] = [
+    nose[0] / localNoseLength,
+    nose[2] / localNoseLength,
+  ];
+  const yawArm = (
+    point: SceneVector3,
+    direction: readonly [number, number],
+  ): number => {
+    const rx = point[0] - model.bodyCentre[0];
+    const rz = point[2] - model.bodyCentre[2];
+    return rz * direction[0] - rx * direction[1];
+  };
+  const rudderDirection: readonly [number, number] = [
+    -localNose[1],
+    localNose[0],
+  ];
+  const rudderArm = Math.abs(yawArm(limits.rudderPoint, rudderDirection));
+  const engineYawArms = limits.enginePoints.map((point) =>
+    yawArm(point, localNose),
+  );
+  const rudderAuthority = rudderEffectiveness(groundSpeed, limits);
+  const rudderCapacity =
+    limits.maxRudderForce * rudderAuthority * rudderArm;
+  const engineYawCapacity =
+    limits.enginePower *
+    balancedEngineYawAuthority(engineYawArms, model.engineAvailability);
+  const holdableYawRate =
+    (rudderCapacity + engineYawCapacity) / Math.max(1, model.dragAngular);
+  const desiredYawRate = Math.max(
+    -holdableYawRate,
+    Math.min(holdableYawRate, guidance.yawRate),
+  );
+  const wantedYawAcceleration =
+    (desiredYawRate - angularVelocity[1]) / 3;
+  const wantedYawMoment =
+    model.dragAngular * desiredYawRate +
+    model.inertiaYaw * wantedYawAcceleration;
+  const rudderMoment = Math.max(
+    -rudderCapacity,
+    Math.min(rudderCapacity, wantedYawMoment),
+  );
+  const signedRudderCapacity =
+    limits.maxRudderForce *
+    rudderAuthority *
+    yawArm(limits.rudderPoint, rudderDirection);
+  const rudder =
+    Math.abs(signedRudderCapacity) > 1e-6
+      ? rudderMoment / signedRudderCapacity
+      : 0;
+  const speedAlong = velocity[0] * heading[0] + velocity[2] * heading[1];
+  const base = Math.max(
+    allowFullReverse ? -1 : -0.45,
+    Math.min(
+      1,
+      (guidance.forwardSpeed - speedAlong - braking * 0.15) * 0.22,
+    ),
+  );
+  const engineMoment = wantedYawMoment - rudderMoment;
+  const throttle = allocateAutopilotEngineCommands(
+    base,
+    limits.enginePower > 1e-6 ? engineMoment / limits.enginePower : 0,
+    engineYawArms,
+    model.engineAvailability,
+  );
+  const liftTrim =
+    limits.liftTrimRange > 1e-6
+      ? Math.max(-1, Math.min(1, guidance.liftFraction / limits.liftTrimRange))
+      : 0;
+  const swayCapacity =
+    (limits.lateralThrust ?? 0) * limits.enginePoints.length;
+  const starboardAxis: readonly [number, number] = [-heading[1], heading[0]];
+  const lateralSpeed =
+    velocity[0] * starboardAxis[0] + velocity[2] * starboardAxis[1];
+  const sway =
+    swayCapacity > 1e-6
+      ? Math.max(
+          -1,
+          Math.min(
+            1,
+            (model.mass *
+              (guidance.lateralSpeed - lateralSpeed) *
+              1.6) /
+              swayCapacity,
+          ),
+        )
+      : 0;
+  return {
+    controls: { throttle, rudder, liftTrim, sway },
+    desiredYawRate,
+  };
 }
 
 /**
- * АВТОПИЛОТ. Читает маршрут и состояние корабля — двигает рычаги. Ровно на
- * это место потом встанет игрок: ниже по течению ничего не изменится.
+ * ОБЩИЙ АВТОПИЛОТ. Читает маршрут и состояние машины, формирует нейтральное
+ * требование движения, затем корабельный контроллер переводит его в совместимые
+ * рычаги. Винтокрылая машина берёт `guidance` и исполняет его своим каскадом;
+ * раскладки её моторов здесь нет.
  */
 export function autopilot(
   plan: VehicleRoutePlan,
@@ -2172,38 +2372,6 @@ export function autopilot(
   const turn = guess.heading[1] * wanted[0] - guess.heading[0] * wanted[1];
   const facing = guess.heading[0] * wanted[0] + guess.heading[1] * wanted[1];
   const bearingError = Math.atan2(turn, facing);
-  // Просить у машины больше, чем она может держать, — верный путь к вилянию:
-  // руль выбирается до упора и работает как переключатель. Ограничиваем
-  // задание тем, что даёт установившийся разворот при полном руле.
-  const localNoseLength = Math.hypot(nose[0], nose[2]) || 1;
-  const localNose: readonly [number, number] = [
-    nose[0] / localNoseLength,
-    nose[2] / localNoseLength,
-  ];
-  const yawArm = (
-    point: SceneVector3,
-    direction: readonly [number, number],
-  ): number => {
-    const rx = point[0] - model.bodyCentre[0];
-    const rz = point[2] - model.bodyCentre[2];
-    return rz * direction[0] - rx * direction[1];
-  };
-  const localRudderDirection: readonly [number, number] = [
-    -localNose[1],
-    localNose[0],
-  ];
-  const rudderArm = Math.abs(yawArm(limits.rudderPoint, localRudderDirection));
-  const engineYawArms = limits.enginePoints.map((point) =>
-    yawArm(point, localNose),
-  );
-  const authority = rudderEffectiveness(groundSpeed, limits);
-  const rudderCapacity = limits.maxRudderForce * authority * rudderArm;
-  const availableEngineYawCapacity =
-    limits.enginePower *
-    balancedEngineYawAuthority(engineYawArms, model.engineAvailability);
-  const holdableYawRate =
-    (rudderCapacity + availableEngineYawCapacity) /
-    Math.max(1, model.dragAngular);
   // Геометрия pure pursuit: хорда остаётся конечной даже на точном маршруте,
   // поэтому кривизна не скачет от малой ошибки предсказания.
   // Pure pursuit has a real singularity at a half-turn: sin(PI) is zero, so
@@ -2232,28 +2400,36 @@ export function autopilot(
       ? bearingError / 3
       : (2 * Math.max(groundSpeed, 1.5) * Math.sin(bearingError)) /
         Math.max(20, reach);
-  const desiredYawRate = Math.max(
-    -holdableYawRate,
-    Math.min(holdableYawRate, pursuit),
-  );
-  // Запрашиваем МОМЕНТ, а не безразмерный «поворот». Сначала его даёт руль
-  // (он ничего не стоит по продольной тяге), остаток — двигатели вразнос.
-  const wantedYawAcceleration = (desiredYawRate - angularVelocity[1]) / 3;
-  const wantedYawMoment =
-    model.dragAngular * desiredYawRate +
-    model.inertiaYaw * wantedYawAcceleration;
-  const rudderMoment = Math.max(
-    -rudderCapacity,
-    Math.min(rudderCapacity, wantedYawMoment),
-  );
-  const signedRudderCapacity =
-    limits.maxRudderForce *
-    authority *
-    yawArm(limits.rudderPoint, localRudderDirection);
-  const rudder =
-    Math.abs(signedRudderCapacity) > 1e-6
-      ? rudderMoment / signedRudderCapacity
-      : 0;
+  // Guidance просит темп без знания органа управления. Корабельный контроллер
+  // ниже зажмёт его располагаемым рулём и разнотягом; коптер — собственным
+  // реактивным моментом винтов.
+  let requestedYawRate = pursuit;
+  const yawRateLimits = model.yawRateLimits;
+  if (yawRateLimits) {
+    const minimum = Math.min(yawRateLimits.minimum, yawRateLimits.maximum);
+    const maximum = Math.max(yawRateLimits.minimum, yawRateLimits.maximum);
+    const directionFloor = 0.025;
+    if (
+      requestedYawRate < -directionFloor &&
+      minimum >= -directionFloor &&
+      maximum > directionFloor
+    ) {
+      // The short turn is no longer physically available. A multirotor with
+      // one spin direction depleted must take the long way around instead of
+      // asking forever for the impossible sign and blaming its actuators.
+      requestedYawRate = (bearingError + Math.PI * 2) / 3;
+    } else if (
+      requestedYawRate > directionFloor &&
+      maximum <= directionFloor &&
+      minimum < -directionFloor
+    ) {
+      requestedYawRate = (bearingError - Math.PI * 2) / 3;
+    }
+    requestedYawRate = Math.max(
+      minimum,
+      Math.min(maximum, requestedYawRate),
+    );
+  }
 
   // Тяга: держим разрешённую скорость участка, считая по ПРЕДСКАЗАННОМУ
   // ходу — иначе на торможении машина проскакивает.
@@ -2274,6 +2450,15 @@ export function autopilot(
   const allowed = safetyIntervention
     ? Math.min(routeAllowed, safety?.maximumSpeed ?? routeAllowed)
     : routeAllowed;
+  const verticalDeparture = plan.verticalDeparture;
+  const onVerticalDeparture = Boolean(
+    verticalDeparture && progress < verticalDeparture.until,
+  );
+  const verticalDepartureCleared = Boolean(
+    !onVerticalDeparture ||
+      (verticalDeparture &&
+        centre[1] >= verticalDeparture.altitude - verticalDeparture.tolerance),
+  );
   // ГОЛОНОМНАЯ МАШИНА У ПРИЧАЛА ДЕРЖИТ НЕ СКОРОСТЬ, А МЕСТО.
   //
   // Общий регулятор продольного хода — это регулятор СКОРОСТИ: маршрут ведёт
@@ -2296,15 +2481,10 @@ export function autopilot(
   // манёвренный предел, иначе машина честно останавливается ровно там, где
   // профиль кончился, и не доходит последние полметра до стакана.
   const berthHoldSpeed = Math.max(allowed, 0.6);
-  const wantedSpeed = allowed * clamp01(startRamp) * travelDirection;
-  // Реверс — настоящий орган управления: на торможении оба мотора могут дать
-  // задний ход, а на малой скорости один работает вперёд, второй назад. Это
-  // разворачивает судно без обязательного продвижения боком или вперёд.
-  const routeBase = Math.max(
-    safetyIntervention ? -1 : -0.45,
-    Math.min(1, (wantedSpeed - speedAlong - braking * 0.15) * 0.22),
-  );
-
+  const wantedSpeed =
+    (verticalDepartureCleared ? allowed : 0) *
+    clamp01(startRamp) *
+    travelDirection;
   // Удержание места у причала: продольная команда выводится из оставшегося
   // расстояния до причальной точки, а не из скоростного профиля маршрута.
   //
@@ -2315,35 +2495,24 @@ export function autopilot(
   // приложена ниже центра масс, и на быстром вращении корпус опрокидывался.
   // Правильный закон посадки всенаправленной машины — отдельная работа, а не
   // подбор коэффициентов.
-  const base = holonomicBerthHold
-    ? clampSigned(
-        (Math.max(
-          -berthHoldSpeed,
-          Math.min(berthHoldSpeed, berthAlong * 0.7),
-        ) -
-          speedAlong) *
-          0.22,
-      )
-    : routeBase;
-
-  const engineMoment = wantedYawMoment - rudderMoment;
-  const throttle = allocateAutopilotEngineCommands(
-    base,
-    limits.enginePower > 1e-6 ? engineMoment / limits.enginePower : 0,
-    engineYawArms,
-    model.engineAvailability,
-  );
-
-  // Высота — тоже рычаг: подъём поддувают или стравливают.
+  // Желаемый ход вдоль носа — то, о чём автопилот на самом деле просит. Ниже
+  // он сплющивается в тягу, но само требование остаётся и отдаётся наружу.
+  const requestedForwardSpeed = holonomicBerthHold
+    ? Math.max(-berthHoldSpeed, Math.min(berthHoldSpeed, berthAlong * 0.7))
+    : wantedSpeed;
+  // Высота остаётся требованием сверх веса. Чем его выполнить — клапаном
+  // оболочки или общим газом винтов — решает видовой контроллер.
+  const wantedAltitude =
+    vehicleRouteAltitudeTarget(plan, progress, centre);
   const altitudeError =
-    plan.altitude(progress) +
+    wantedAltitude +
     (safetyIntervention ? (safety?.altitudeOffset ?? 0) : 0) -
     centre[1];
-  const liftTrim = Math.max(
-    -1,
+  const liftFraction = Math.max(
+    -limits.liftTrimRange,
     Math.min(
-      1,
-      (altitudeError * 0.06 - velocity[1] * 0.12) / limits.liftTrimRange,
+      limits.liftTrimRange,
+      altitudeError * 0.06 - velocity[1] * 0.12,
     ),
   );
 
@@ -2392,8 +2561,6 @@ export function autopilot(
   // боковой скорости. Рыскания в нём нет вовсе — тем он и отличается от
   // общего. Ноль у машины без векторируемых движителей: сдвинуться вбок ей
   // нечем, и просить об этом бессмысленно.
-  const swayCapacity =
-    (limits.lateralThrust ?? 0) * limits.enginePoints.length;
   const starboardAxis: readonly [number, number] = [-heading[1], heading[0]];
   // Опора бокового контура. На маршруте это касательная, а У ПРИЧАЛА —
   // причальный курс: в последней точке маршрута касательная ВЫРОЖДАЕТСЯ
@@ -2408,24 +2575,36 @@ export function autopilot(
   const swayCrossZ = errorZ - swayReferenceZ * swayAlong;
   const lateralOffset =
     swayCrossX * starboardAxis[0] + swayCrossZ * starboardAxis[1];
-  const lateralSpeed =
-    velocity[0] * starboardAxis[0] + velocity[2] * starboardAxis[1];
-  const sway =
-    swayCapacity > 1e-6
+  const requestedLateralSpeed =
+    (limits.lateralThrust ?? 0) > 1e-6
       ? Math.max(
-          -1,
-          Math.min(
-            1,
-            (model.mass * (lateralOffset * 0.9 - lateralSpeed * 1.6)) /
-              swayCapacity,
-          ),
+          -berthHoldSpeed,
+          Math.min(berthHoldSpeed, (lateralOffset * 0.9) / 1.6),
         )
       : 0;
+  const guidance: VehicleGuidanceDemand = {
+    forwardSpeed: requestedForwardSpeed,
+    lateralSpeed: requestedLateralSpeed,
+    yawRate: requestedYawRate,
+    liftFraction,
+  };
+  const shipControl = shipControlsForGuidance(
+    guidance,
+    heading,
+    groundSpeed,
+    velocity,
+    angularVelocity,
+    model,
+    nose,
+    braking,
+    safetyIntervention || holonomicBerthHold,
+  );
 
   return {
-    controls: { throttle, rudder, liftTrim, sway },
-    desiredYawRate,
+    controls: shipControl.controls,
+    desiredYawRate: shipControl.desiredYawRate,
     goAround,
+    guidance,
   };
 }
 

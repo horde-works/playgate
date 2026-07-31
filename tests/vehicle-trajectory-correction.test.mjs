@@ -192,6 +192,94 @@ test("a swinging gondola is not a reason to stop flying", () => {
   );
 });
 
+test("a hexacopter does not mistake its own sharp manoeuvre for an upset", () => {
+  const hexacopter = airVehicles.find(({ id }) => id === "town-hexacopter");
+  assert.ok(hexacopter);
+  const hexacopterGuidance = guidanceFor(hexacopter);
+  const sharpManoeuvre = state({ angularVelocity: [1, 0.8, 0] });
+
+  // These rates really did trip the old airship gate and replace the route
+  // with a zero-speed stabilization plan.
+  const genericAssessment = assessVehicleTrajectory(
+    ROUTE,
+    0.4,
+    sharpManoeuvre,
+    NOSE,
+    MODEL,
+    GUIDANCE,
+  );
+  assert.equal(genericAssessment.upset, true);
+
+  // They are inside the rotorcraft's own commanded manoeuvre envelope, so
+  // the same common autopilot must leave the authored route in charge.
+  const manoeuvreAssessment = assessVehicleTrajectory(
+    ROUTE,
+    0.4,
+    sharpManoeuvre,
+    NOSE,
+    MODEL,
+    hexacopterGuidance,
+  );
+  assert.equal(manoeuvreAssessment.upset, false);
+  assert.equal(
+    requestedVehicleTrajectoryMode(manoeuvreAssessment),
+    "authoredRoute",
+  );
+
+  // The gate has not been disabled: rotation outside the machine passport is
+  // still a genuine event owned by stabilization.
+  const tumbling = assessVehicleTrajectory(
+    ROUTE,
+    0.4,
+    state({ angularVelocity: [1.8, 1.4, 0] }),
+    NOSE,
+    MODEL,
+    hexacopterGuidance,
+  );
+  assert.equal(tumbling.upset, true);
+  assert.equal(requestedVehicleTrajectoryMode(tumbling), "stabilizing");
+});
+
+test("a vertical arrival is not corrected back onto its sloping route profile", () => {
+  const hexacopter = airVehicles.find(({ id }) => id === "town-hexacopter");
+  assert.ok(hexacopter);
+  const plan = hexacopter.flight.routePlan("circuit", [0, 0, 0]);
+  const guidance = guidanceFor(hexacopter);
+  const model = { ...MODEL, limits: hexacopter.flight.limits };
+
+  // The authored profile already slopes to the ground here, but the vertical
+  // arrival deliberately holds the 24 m clearance shelf until the pad itself
+  // is horizontally captured. That shelf is the route requirement now.
+  const shelfProgress = 0.995;
+  const shelfPoint = plan.point(shelfProgress);
+  const onShelf = assessVehicleTrajectory(
+    plan,
+    shelfProgress,
+    state({
+      position: [shelfPoint[0], plan.verticalArrival.altitude, shelfPoint[2]],
+      velocity: [0.3, 0, 0],
+    }),
+    hexacopter.nose,
+    model,
+    guidance,
+  );
+  assert.equal(onShelf.correctionRequired, false);
+  assert.equal(requestedVehicleTrajectoryMode(onShelf), "authoredRoute");
+
+  // Once horizontally captured, altitude belongs to the vertical landing
+  // manoeuvre and its timeout, not to a route intercept back up the glide.
+  const descending = assessVehicleTrajectory(
+    plan,
+    0.999,
+    state({ position: [0.5, 12, 0], velocity: [0, -0.8, 0] }),
+    hexacopter.nose,
+    model,
+    guidance,
+  );
+  assert.equal(descending.correctionRequired, false);
+  assert.equal(requestedVehicleTrajectoryMode(descending), "authoredRoute");
+});
+
 test("a scheduled sternway pivot is never a deviation", () => {
   const reversed = assessVehicleTrajectory(
     REVERSING_ROUTE,
@@ -439,6 +527,34 @@ function orientationForHeading(nose, heading) {
   );
   return vehicleRotation({ position: [0, 0, 0], yaw, pitch: 0, roll: 0 }, nose);
 }
+
+test("autopilot takes the reachable long yaw after an asymmetric rotor failure", () => {
+  const offset = 0.5;
+  const heading = [Math.cos(offset), Math.sin(offset)];
+  const piloted = autopilot(
+    ROUTE,
+    0.4,
+    [40, 10, 0],
+    orientationForHeading(NOSE, heading),
+    [heading[0] * 2, 0, heading[1] * 2],
+    [0, 0, 0],
+    {
+      ...MODEL,
+      // The short positive turn is unavailable while the opposite spin group
+      // still has authority. The route stays common; only this live physical
+      // envelope comes from the rotor controller.
+      yawRateLimits: { minimum: -0.4, maximum: 0.01 },
+    },
+    1,
+    NOSE,
+  );
+  assert.equal(
+    piloted.guidance.yawRate < -0.025,
+    true,
+    `autopilot kept asking for the unavailable sign: ${piloted.guidance.yawRate}`,
+  );
+  assert.equal(piloted.guidance.yawRate >= -0.4, true);
+});
 
 test("the basalt departure pivot does not enter trajectory correction", () => {
   const vehicle = airVehicles.find(({ id }) => id === "basalt-sky-ram");

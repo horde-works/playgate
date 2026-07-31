@@ -4,7 +4,9 @@ import {
   mixRotorThrust,
   rotorcraftAttitudeMoment,
   rotorcraftAttitudeTarget,
+  rotorcraftForces,
   rotorcraftMaximumAcceleration,
+  rotorcraftVelocityDemand,
 } from "../games/make-a-mess/src/game/rotorcraftDynamics.ts";
 import {
   HEXACOPTER_DUCTS,
@@ -38,14 +40,30 @@ test("горизонт у коптера рождается наклоном, и
   assert.equal(target.roll, 0);
 });
 
-test("наклон ограничен паспортным, сколько ускорения ни проси", () => {
+test("паспорт ограничивает общий наклон, а не крен и тангаж по отдельности", () => {
   const tilt = (20 * Math.PI) / 180;
   const target = rotorcraftAttitudeTarget(
     { forward: 100, lateral: -100 },
     tilt,
   );
-  assert.equal(Math.abs(target.pitch - tilt) < 1e-9, true);
-  assert.equal(Math.abs(target.roll + tilt) < 1e-9, true);
+  const totalTilt = Math.acos(
+    Math.sqrt(
+      1 - Math.sin(target.pitch) ** 2 - Math.sin(target.roll) ** 2,
+    ),
+  );
+  assert.equal(Math.abs(totalTilt - tilt) < 1e-9, true);
+  assert.equal(Math.abs(target.pitch + target.roll) < 1e-9, true);
+  assert.equal(Math.abs(target.pitch) < tilt, true);
+});
+
+test("контур скорости сохраняет направление при векторном насыщении", () => {
+  const demand = rotorcraftVelocityDemand(
+    { forward: 10, lateral: 5 },
+    { forward: 0, lateral: 0 },
+    3,
+  );
+  assert.equal(Math.abs(Math.hypot(demand.forward, demand.lateral) - 3) < 1e-9, true);
+  assert.equal(Math.abs(demand.forward / demand.lateral - 2) < 1e-9, true);
 });
 
 test("микшер держит висение: ровная тяга, нулевые моменты", () => {
@@ -148,7 +166,7 @@ test("винт не тянет вниз и не даёт больше своег
   assert.equal(mix.deliveredPitchMoment < 100000, true);
 });
 
-test("потерянное кольцо не даёт тяги, а остальные добирают своё", () => {
+test("потерянное кольцо: тяга остаётся заказанной, а моменты нулевыми", () => {
   const damaged = {
     ...base,
     availability: base.availability.map((value, index) => (index === 3 ? 0 : value)),
@@ -158,13 +176,122 @@ test("потерянное кольцо не даёт тяги, а осталь�
     pitchMoment: 0,
     rollMoment: 0,
   });
-  assert.equal(mix.thrust[3], 0);
-  assert.equal(mix.deliveredThrust < 500, true);
-  // И перекос теперь настоящий: пять винтов вокруг центра масс дают момент.
+  assert.equal(mix.thrust[3], 0, "выбитое кольцо тянет");
+  // Живые добирают долю выбитого: суммарная тяга — ровно заказанная. Иначе
+  // машина ровно и управляемо снижается, ни разу не пожаловавшись.
   assert.equal(
-    Math.abs(mix.deliveredRollMoment) + Math.abs(mix.deliveredPitchMoment) > 1,
+    Math.abs(mix.deliveredThrust - 500) < 1,
+    true,
+    `сумма ${mix.deliveredThrust.toFixed(1)} вместо 500`,
+  );
+  // И добирают НЕ ПОРОВНУ. Раздать поровну нельзя: сумма плеч у машины с
+  // дырой не нулевая, и равная добавка сама создала бы момент. Поэтому одни
+  // винты идут заметно выше своей доли, другие ниже.
+  const evenly = 500 / 5;
+  assert.equal(Math.max(...mix.thrust) > evenly * 1.3, true);
+  assert.equal(
+    Math.min(...mix.thrust.filter((_, index) => index !== 3)) < evenly * 0.7,
     true,
   );
+  // Ради чего всё: заказанный НУЛЕВОЙ момент должен остаться нулевым. Машина
+  // с выбитым кольцом обязана висеть ровно, а не «примерно ровно».
+  assert.equal(Math.abs(mix.deliveredPitchMoment) < 1, true);
+  assert.equal(Math.abs(mix.deliveredRollMoment) < 1, true);
+});
+
+test("пять винтов распределяют рыскание вместе с тягой и позой", () => {
+  const damaged = {
+    ...base,
+    availability: base.availability.map((value, index) =>
+      index === 3 ? 0 : value,
+    ),
+  };
+  const mix = mixRotorThrust(damaged, {
+    collective: 0.5,
+    pitchMoment: 0,
+    rollMoment: 0,
+    yawMoment: 35,
+  });
+  assert.equal(mix.thrust[3], 0);
+  assert.equal(Math.abs(mix.deliveredThrust - 500) < 1, true);
+  assert.equal(Math.abs(mix.deliveredPitchMoment) < 1, true);
+  assert.equal(Math.abs(mix.deliveredRollMoment) < 1, true);
+  assert.equal(
+    Math.abs(mix.deliveredYawMoment - 35) < 1,
+    true,
+    `рыскание доставлено ${mix.deliveredYawMoment.toFixed(1)} вместо 35`,
+  );
+});
+
+test("докручивающийся выбитый винт входит в баланс как известная сила", () => {
+  const damaged = {
+    ...base,
+    availability: base.availability.map((value, index) =>
+      index === 3 ? 0 : value,
+    ),
+    biasThrust: base.points.map((_, index) => (index === 3 ? 45 : 0)),
+  };
+  const mix = mixRotorThrust(damaged, {
+    collective: 0.5,
+    pitchMoment: 0,
+    rollMoment: 0,
+    yawMoment: 0,
+  });
+  assert.equal(mix.thrust[3], 0, "оторванному каналу отправлена команда");
+  assert.equal(Math.abs(mix.deliveredThrust - 500) < 1, true);
+  assert.equal(Math.abs(mix.deliveredPitchMoment) < 1, true);
+  assert.equal(Math.abs(mix.deliveredRollMoment) < 1, true);
+  assert.equal(
+    Math.abs(mix.deliveredYawMoment) < 1,
+    true,
+    `остаточный винт раскручивает корпус моментом ${mix.deliveredYawMoment.toFixed(1)}`,
+  );
+});
+
+test("после отказа автомат принимает только выполнимую часть резкого манёвра", () => {
+  const machine = {
+    points,
+    centreOfMass: centre,
+    nose,
+    mass: 95,
+    inertia: [180, 280, 180],
+    availability: base.availability.map((value, index) =>
+      index === 1 ? 0 : value,
+    ),
+    liftCapacity: 95 * 9.81 * 3.2,
+    maximumTilt: Math.PI / 6,
+  };
+  const state = {
+    orientation: [0, 0, 0, 1],
+    centre: [0, 0, 0],
+    velocity: [0, 0, 0],
+    angularVelocity: [0, 0, 0],
+  };
+  const ordinary = rotorcraftForces(machine, state, {
+    forward: 100,
+    lateral: 0,
+    yaw: 0,
+    collective: 0,
+  });
+  assert.equal(ordinary.maneuverScale, 1, "автомат зря сделал живую машину вялой");
+
+  // Одновременно потребовать максимальный наклон и удвоенный вес — уже не
+  // тот приказ, который эта асимметричная пятёрка может честно выполнить.
+  // Автомат обязан урезать позу ДО mixer, а не насытить моторы и потом
+  // обвинить корпус в том, что он не достиг невозможных 30 градусов.
+  const overloaded = rotorcraftForces(machine, state, {
+    forward: 100,
+    lateral: 0,
+    yaw: 0,
+    collective: 1,
+  });
+  assert.equal(overloaded.maneuverScale > 0 && overloaded.maneuverScale < 1, true);
+  assert.equal(
+    Math.abs(overloaded.targetPitch) < Math.abs(overloaded.requestedTargetPitch),
+    true,
+  );
+  assert.equal(overloaded.authority.pitch > 0.98, true);
+  assert.equal(overloaded.authority.roll > 0.98, true);
 });
 
 test("контур угловой скорости тянет к цели и гасит вращение", () => {

@@ -83,6 +83,10 @@ export interface VehicleGuidanceOverrides {
   readonly mergeScale?: number;
   /** Vertical speed the trim can arrest; defaults to g × liftTrimRange. */
   readonly arrestableVerticalSpeed?: number;
+  /** Pitch/roll rate beyond this machine's own manoeuvre envelope, rad/s. */
+  readonly upsetTiltRate?: number;
+  /** Yaw rate beyond this machine's own manoeuvre envelope, rad/s. */
+  readonly upsetYawRate?: number;
 }
 
 /**
@@ -144,6 +148,10 @@ export function vehicleGuidanceEnvelope(
 ): VehicleGuidanceEnvelope {
   const corridorScale = Math.max(0.05, overrides.corridorScale ?? 1);
   const mergeScale = Math.max(0.05, overrides.mergeScale ?? 1);
+  const upsetEntry: VehicleGuidanceUpsetGate = {
+    tiltRate: Math.max(0.05, overrides.upsetTiltRate ?? UPSET_ENTRY.tiltRate),
+    yawRate: Math.max(0.05, overrides.upsetYawRate ?? UPSET_ENTRY.yawRate),
+  };
   const cruise: VehicleGuidanceCorridor = {
     crossTrack: capped(
       failure.maximumCrossTrackError * CRUISE_FRACTIONS.crossTrack *
@@ -175,10 +183,10 @@ export function vehicleGuidanceEnvelope(
       crossTrack: approachCrossTrack,
       altitude: approachCrossTrack * APPROACH_FRACTIONS.altitudeOfCrossTrack,
     },
-    upsetEntry: { ...UPSET_ENTRY },
+    upsetEntry,
     upsetExit: {
-      tiltRate: UPSET_ENTRY.tiltRate * UPSET_EXIT.tiltRate,
-      yawRate: UPSET_ENTRY.yawRate * UPSET_EXIT.yawRate,
+      tiltRate: upsetEntry.tiltRate * UPSET_EXIT.tiltRate,
+      yawRate: upsetEntry.yawRate * UPSET_EXIT.yawRate,
     },
     flyableTilt: capped(
       Math.min(failure.maximumPitch, failure.maximumRoll) * 0.55,

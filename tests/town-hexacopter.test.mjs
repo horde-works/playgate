@@ -11,6 +11,7 @@ import {
 import { structuralMaterialProfiles } from "../games/make-a-mess/src/game/destructionScene.ts";
 import {
   compileCommandActuators,
+  deliveredCommandValue,
   executeCommandActuators,
 } from "../games/make-a-mess/src/game/vehicleActuation.ts";
 import {
@@ -21,18 +22,34 @@ import {
   isMooringCaptureEligible,
   mooringForce,
   rotateVector,
-  shipForces,
   advanceVehicleRouteProgress,
   vehicleRouteHeading,
   vehicleRotation,
 } from "../games/make-a-mess/src/game/vehicleFrames.ts";
-import { isRotorLandingComplete } from "../games/make-a-mess/src/game/vehicleLiftGeometry.ts";
+import {
+  advanceRotorMotorOutput,
+  NEUTRAL_ROTORCRAFT_TRIM,
+  rotorcraftCommandsExecute,
+  rotorcraftFlightStep,
+} from "../games/make-a-mess/src/game/rotorcraftDynamics.ts";
+import { updatePropulsionFeedback } from "../games/make-a-mess/src/game/vehiclePropulsionAutomation.ts";
+import {
+  assessVehicleTrajectory,
+  requestedVehicleTrajectoryMode,
+} from "../games/make-a-mess/src/game/vehicleTrajectoryCorrection.ts";
+import { DEFAULT_VEHICLE_FAILURE_ENVELOPE } from "../games/make-a-mess/src/game/vehicleFailure.ts";
+import { vehicleGuidanceEnvelope } from "../games/make-a-mess/src/game/vehicleGuidanceEnvelope.ts";
+import {
+  isRotorLandingComplete,
+  levelLiftCeiling,
+} from "../games/make-a-mess/src/game/vehicleLiftGeometry.ts";
 import {
   townHexacopterRoute,
   townHexacopterPlan,
 } from "../games/make-a-mess/src/game/townHexacopterRoutes.ts";
 import {
   HEXACOPTER_DUCTS,
+  hexacopterDuctPoint,
   HEXACOPTER_PAD_X,
   HEXACOPTER_PAD_Z,
   HEXACOPTER_SPAN,
@@ -222,6 +239,99 @@ test("потеря лопасти уменьшает доставленную т
   assert.equal(short > 0, true, "кольцо с двумя лопастями обязано ещё тянуть");
 });
 
+test("mixer проходит через повреждённый актуатор и мотор, затем добирает недостачу", () => {
+  const brokenBlade = ship.find((piece) =>
+    piece.id.includes(":engine:2:blade:0"),
+  );
+  assert.ok(brokenBlade);
+  const alive = new Set(
+    [...attachedIds].filter((pieceId) => pieceId !== brokenBlade.id),
+  );
+  let feedback = flight.limits.enginePoints.map(() => 1);
+  let motorOutput = flight.limits.enginePoints.map(() => 0);
+  let trim = NEUTRAL_ROTORCRAFT_TRIM;
+  let last = null;
+  for (let frame = 0; frame < 60 * 12; frame += 1) {
+    last = rotorcraftFlightStep(
+      {
+        points: flight.limits.enginePoints,
+        centreOfMass: properties.centre,
+        nose: vehicle.nose,
+        mass: properties.mass,
+        inertia: [
+          properties.inertia[0],
+          properties.inertia[4],
+          properties.inertia[8],
+        ],
+        availability: feedback,
+        motorOutput,
+        liftCapacity: properties.mass * 9.81 * flight.liftReserve,
+        maximumTilt: flight.maximumTilt,
+      },
+      {
+        orientation: vehicleRotation(
+          { position: [0, 0, 0], yaw: 0, pitch: 0, roll: 0 },
+          vehicle.nose,
+        ),
+        centre: properties.centre,
+        velocity: [0, 0, 0],
+        angularVelocity: [0, 0, 0],
+      },
+      { forwardSpeed: 0, lateralSpeed: 0, yawRate: 0, collective: 0 },
+      trim,
+      1 / 60,
+    );
+    const executions = executeCommandActuators(
+      actuators,
+      alive,
+      Object.fromEntries(
+        last.result.commandedThrottle.map((value, index) => [
+          `throttle:${index}`,
+          value,
+        ]),
+      ),
+    );
+    const targets = last.result.commandedThrottle.map((value, index) =>
+      deliveredCommandValue(executions, `throttle:${index}`, value),
+    );
+    motorOutput = motorOutput.map((value, index) =>
+      advanceRotorMotorOutput(
+        value,
+        targets[index],
+        1 / 60,
+        flight.spoolSeconds,
+      ),
+    );
+    feedback = updatePropulsionFeedback(feedback, executions, motorOutput.length);
+    trim = last.trim;
+  }
+  assert.equal(
+    feedback[2] > 0.6 && feedback[2] < 0.7,
+    true,
+    `актуатор доложил ${feedback[2]}`,
+  );
+  const healthyCommand =
+    last.result.commandedThrottle.reduce(
+      (sum, value, index) => sum + (index === 2 ? 0 : value),
+      0,
+    ) / 5;
+  assert.equal(
+    last.result.commandedThrottle[2] > healthyCommand,
+    true,
+    "mixer не компенсировал короткую доставку повреждённого кольца",
+  );
+  assert.equal(
+    last.result.motorOutput[2] < last.result.commandedThrottle[2],
+    true,
+    "физическая тяга обошла актуатор",
+  );
+  assert.equal(
+    rotorcraftCommandsExecute(last.result.authority),
+    true,
+    "частичная потеря лопасти ошибочно объявлена потерей управления",
+  );
+});
+
 test("потеря цапфы обнуляет канал целиком", () => {
   const trunnion = ship.find((piece) => piece.id.includes("yoke:2:trunnion"));
   assert.ok(trunnion, "цапфа не найдена");
@@ -260,16 +370,46 @@ test("лестниц и подножек на машине нет", () => {
 // 4. Подъём: доля уцелевших лопастей и есть тяговооружённость
 // ---------------------------------------------------------------------------
 
-test("одно кольцо долой — машина летит, два — снижается", () => {
+test("важно не сколько колец потеряно, а какие", () => {
+  // Наивная дробь «уцелело пять из шести — осталось пять шестых тяги» неверна.
+  // Винт умеет только толкать, поэтому ради нулевого момента машина обязана
+  // пригасить и кольцо НАПРОТИВ выбитого. Потолок ровного подъёма считается
+  // точно, и из него выходит настоящая история отказов.
   const reserve = flight.liftReserve;
   const blades = ship.filter((piece) => piece.id.includes(vehicle.envelopeMatch));
   assert.equal(blades.length, 18);
-  const ratio = (lostDucts) => ((18 - lostDucts * 3) / 18) * reserve;
-  assert.equal(ratio(0) > 1.2, true, `целая: ${ratio(0).toFixed(2)}`);
-  assert.equal(ratio(1) > 1, true, `без одного кольца: ${ratio(1).toFixed(2)}`);
-  assert.equal(ratio(2) < 1, true, `без двух колец: ${ratio(2).toFixed(2)}`);
-});
+  const alive = (...dead) =>
+    HEXACOPTER_DUCTS.map((_, index) => (dead.includes(index) ? 0 : 1));
+  const ratio = (...dead) =>
+    levelLiftCeiling(
+      HEXACOPTER_DUCTS.map((station) => hexacopterDuctPoint(station)),
+      properties.centre,
+      alive(...dead),
+    ) * reserve;
 
+  assert.equal(ratio() > 3, true, `целая: ${ratio().toFixed(2)}`);
+  assert.equal(ratio(0) > 2, true, `минус одно кольцо: ${ratio(0).toFixed(2)}`);
+  // Два НАПРОТИВ друг друга машина переносит почти как одно: оставшаяся
+  // четвёрка — две уравновешенные пары, и гасить ради момента нечего.
+  assert.equal(ratio(0, 3) > 2, true, `минус два напротив: ${ratio(0, 3).toFixed(2)}`);
+  // Два рядом обходятся вдвое дороже — но машина всё ещё летит, ради чего
+  // тяговооружённость и поднята.
+  assert.equal(ratio(0, 1) > 1, true, `минус два рядом: ${ratio(0, 1).toFixed(2)}`);
+  // Три через одно, по сто двадцать градусов, — самая живучая тройка.
+  assert.equal(ratio(1, 3, 5) > 1.4, true, `три через одно: ${ratio(1, 3, 5).toFixed(2)}`);
+  // Худшая рабочая тройка — пара напротив плюс сосед: садиться ещё может.
+  assert.equal(ratio(2, 4, 5) > 1, true, `пара напротив плюс сосед: ${ratio(2, 4, 5).toFixed(2)}`);
+
+  // А вот НАСТОЯЩАЯ граница, и она не про число: если все живые кольца лежат в
+  // одной половине круга, центр масс выходит за опору. Ровного подъёма нет
+  // вовсе, и никакая мощность этого не купит.
+  // Критерий ровно тот же, что у опоры: центр масс должен лежать внутри
+  // выпуклой оболочки живых колец. Кольца 2, 3 и 4 стоят в одном секторе —
+  // центр вне их треугольника, и ровного подъёма нет вовсе.
+  assert.equal(ratio(0, 1, 5) < 0.01, true, `живые в одном секторе: ${ratio(0, 1, 5).toFixed(2)}`);
+  // А четвёрка с парой напротив центр накрывает — и держит вес.
+  assert.equal(ratio(4, 5) > 1, true, `минус два рядом: ${ratio(4, 5).toFixed(2)}`);
+});
 // ---------------------------------------------------------------------------
 // 5. Маршрут
 // ---------------------------------------------------------------------------
@@ -441,11 +581,7 @@ function flyCircuit(kind) {
     ),
   };
   let progress = 0;
-  const trim = [
-    properties.centre[0],
-    vehicle.liftCentre[1],
-    properties.centre[2],
-  ];
+  let rotorTrim = NEUTRAL_ROTORCRAFT_TRIM;
   const model = {
     mass: properties.mass,
     inertiaYaw: properties.inertia[4],
@@ -455,9 +591,41 @@ function flyCircuit(kind) {
       properties.mass * flight.linearDamping * flight.lateralDragRatio,
     dragAngular: properties.inertia[4] * flight.angularDamping,
     limits: flight.limits,
+    engineAvailability: flight.limits.enginePoints.map(() => 1),
   };
+  const machine = {
+    points: flight.limits.enginePoints,
+    centreOfMass: properties.centre,
+    nose: vehicle.nose,
+    mass: properties.mass,
+    inertia: [
+      properties.inertia[0],
+      properties.inertia[4],
+      properties.inertia[8],
+    ],
+    liftCapacity: properties.mass * 9.81 * flight.liftReserve,
+    maximumTilt: flight.maximumTilt,
+  };
+  const guidance = vehicleGuidanceEnvelope(
+    DEFAULT_VEHICLE_FAILURE_ENVELOPE,
+    flight.approach,
+    flight.limits,
+    flight.guidance,
+  );
   const dt = 1 / 60;
+  let propulsionFeedback = flight.limits.enginePoints.map(() => 1);
+  // Рейс начинается после физической предполётной раскрутки. Отдельный тест
+  // выше проверяет сам переход от нуля; здесь проверяется весь маршрут через
+  // уже работающие актуаторы и инерционные моторы.
+  let motorOutput = flight.limits.enginePoints.map(
+    () => 1 / flight.liftReserve,
+  );
+  let flightTime = flight.spoolSeconds;
   let maximumCrossTrack = 0;
+  let takeoffClearance = null;
+  let arrivalCaptureAltitude = null;
+  let finalCorrectionRequest = null;
+  let finalGoAroundRequest = null;
   let docked = false;
   for (let step = 0; step < 60 * 420 && !docked; step += 1) {
     const centreNow = [
@@ -465,6 +633,25 @@ function flyCircuit(kind) {
       properties.centre[1] + state.position[1],
       properties.centre[2] + state.position[2],
     ];
+    if (plan.verticalArrival && progress >= plan.verticalArrival.from) {
+      const assessment = assessVehicleTrajectory(
+        plan,
+        progress,
+        {
+          position: centreNow,
+          orientation: state.orientation,
+          velocity: state.velocity,
+          angularVelocity: state.angularVelocity,
+        },
+        vehicle.nose,
+        model,
+        guidance,
+      );
+      const mode = requestedVehicleTrajectoryMode(assessment);
+      if (mode !== "authoredRoute" && finalCorrectionRequest === null) {
+        finalCorrectionRequest = { mode, assessment };
+      }
+    }
     const piloted = autopilot(
       plan,
       progress,
@@ -472,47 +659,80 @@ function flyCircuit(kind) {
       state.orientation,
       state.velocity,
       state.angularVelocity,
-      model,
-      1,
+      { ...model, engineAvailability: propulsionFeedback },
+      Math.max(
+        0,
+        Math.min(1, (flightTime - flight.underwaySeconds) / 8),
+      ),
       vehicle.nose,
       flight.approach,
     );
-    const liftArm = rotateVector(state.orientation, [
-      trim[0] - properties.centre[0],
-      trim[1] - properties.centre[1],
-      trim[2] - properties.centre[2],
-    ]);
-    const forces = [
-      { force: [0, -properties.mass * 9.81, 0], point: state.position },
+    if (
+      plan.verticalArrival &&
+      progress >= plan.verticalArrival.from &&
+      piloted.goAround &&
+      finalGoAroundRequest === null
+    ) {
+      finalGoAroundRequest = {
+        progress,
+        position: centreNow,
+        velocity: state.velocity,
+      };
+    }
+    const rotor = rotorcraftFlightStep(
+      { ...machine, availability: propulsionFeedback, motorOutput },
       {
-        force: [
-          0,
-          properties.mass *
-            9.81 *
-            (1 + piloted.controls.liftTrim * flight.limits.liftTrimRange),
-          0,
-        ],
-        point: [
-          state.position[0] + liftArm[0],
-          state.position[1] + liftArm[1],
-          state.position[2] + liftArm[2],
-        ],
+        orientation: state.orientation,
+        centre: centreNow,
+        velocity: state.velocity,
+        angularVelocity: state.angularVelocity,
       },
-      ...shipForces(
-        piloted.controls,
-        state.position,
-        properties.centre,
-        state.orientation,
-        flight.limits,
-        vehicle.nose,
-        Math.hypot(state.velocity[0], state.velocity[2]),
+      {
+        forwardSpeed: piloted.guidance.forwardSpeed,
+        lateralSpeed: piloted.guidance.lateralSpeed,
+        yawRate: piloted.guidance.yawRate,
+        collective: piloted.guidance.liftFraction,
+      },
+      rotorTrim,
+      dt,
+      0.9,
+    );
+    rotorTrim = rotor.trim;
+    const actuation = executeCommandActuators(
+      actuators,
+      attachedIds,
+      Object.fromEntries(
+        rotor.result.commandedThrottle.map((value, index) => [
+          `throttle:${index}`,
+          value,
+        ]),
       ),
+    );
+    const motorTargets = rotor.result.commandedThrottle.map((value, index) =>
+      deliveredCommandValue(actuation, `throttle:${index}`, value),
+    );
+    motorOutput = motorOutput.map((value, index) =>
+      advanceRotorMotorOutput(
+        value,
+        motorTargets[index],
+        dt,
+        flight.spoolSeconds,
+      ),
+    );
+    propulsionFeedback = updatePropulsionFeedback(
+      propulsionFeedback,
+      actuation,
+      motorOutput.length,
+    );
+    const forces = [
+      { force: [0, -properties.mass * 9.81, 0], point: centreNow },
+      ...rotor.forces,
     ];
     const facing = rotateVector(state.orientation, vehicle.nose);
     const flat = Math.hypot(facing[0], facing[2]) || 1;
     forces.push({
       force: hullDrag(state.velocity, [facing[0] / flat, facing[2] / flat], model),
-      point: state.position,
+      point: centreNow,
     });
     if (progress > 0.9) {
       const capture = mooringCapture(state);
@@ -536,19 +756,40 @@ function flyCircuit(kind) {
         });
       }
     }
-    state = stepBody(
-      state,
+    const stepped = stepBody(
+      { ...state, position: centreNow },
       properties,
       forces,
       { linear: 0, angular: properties.inertia[4] * flight.angularDamping },
       dt,
     );
-    progress = advanceVehicleRouteProgress(
-      plan,
-      progress,
-      centreNow,
-      Math.hypot(state.velocity[0], state.velocity[2]) * dt,
-    );
+    state = {
+      ...stepped,
+      position: stepped.position.map(
+        (value, index) => value - properties.centre[index],
+      ),
+    };
+    flightTime += dt;
+    if (flightTime >= flight.underwaySeconds) {
+      progress = advanceVehicleRouteProgress(
+        plan,
+        progress,
+        centreNow,
+        Math.hypot(state.velocity[0], state.velocity[2]) * dt,
+      );
+    }
+    if (takeoffClearance === null && -state.position[0] >= 5.7) {
+      takeoffClearance = state.position[1];
+    }
+    if (
+      arrivalCaptureAltitude === null &&
+      plan.verticalArrival &&
+      progress >= plan.verticalArrival.from &&
+      Math.hypot(state.position[0], state.position[2]) <=
+        plan.verticalArrival.horizontalTolerance
+    ) {
+      arrivalCaptureAltitude = state.position[1];
+    }
     const target = plan.point(progress);
     maximumCrossTrack = Math.max(
       maximumCrossTrack,
@@ -582,6 +823,10 @@ function flyCircuit(kind) {
     progress,
     docked,
     maximumCrossTrack,
+    takeoffClearance,
+    arrivalCaptureAltitude,
+    finalCorrectionRequest,
+    finalGoAroundRequest,
     state,
     // Матрица предикатов швартовки — то, что контракт требует записывать
     // вместо «не сел».
@@ -626,6 +871,38 @@ test("целая машина проходит весь круг силами и
   assert.equal(
     circuit.predicates.angularSpeed <= flight.landing.angularSpeed,
     true,
+  );
+  assert.equal(
+    circuit.finalCorrectionRequest,
+    null,
+    `посадку отобрал ${JSON.stringify(circuit.finalCorrectionRequest)}`,
+  );
+  assert.equal(
+    circuit.finalGoAroundRequest,
+    null,
+    `штатная посадка запросила второй круг ${JSON.stringify(circuit.finalGoAroundRequest)}`,
+  );
+});
+
+test("до движения к дому машина набирает безопасную высоту", () => {
+  assert.notEqual(circuit.takeoffClearance, null, "машина не покинула пятно");
+  assert.equal(
+    circuit.takeoffClearance > 11,
+    true,
+    `при пересечении стены набрано только ${circuit.takeoffClearance.toFixed(2)} м`,
+  );
+});
+
+test("на возвращении машина сначала захватывает пятно, затем садится вертикально", () => {
+  assert.notEqual(
+    circuit.arrivalCaptureAltitude,
+    null,
+    "машина не захватила пятно перед снижением",
+  );
+  assert.equal(
+    circuit.arrivalCaptureAltitude > 20,
+    true,
+    `пятно захвачено уже на высоте ${circuit.arrivalCaptureAltitude.toFixed(2)} м`,
   );
 });
 

@@ -9,7 +9,10 @@ import {
   rejoinVehicleRouteProgress,
   rotateVector,
   rudderEffectiveness,
+  vehicleRouteAltitudeTarget,
   vehicleRouteHeading,
+  vehicleVerticalArrivalActive,
+  vehicleVerticalArrivalCaptured,
   type Quaternion,
   type ShipModel,
   type VehicleRoutePlan,
@@ -112,10 +115,20 @@ function routeDistance(
     forwardWindow,
   );
   const routePoint = plan.point(nearest);
+  const verticalArrivalCaptured = vehicleVerticalArrivalCaptured(
+    plan,
+    progress,
+    point,
+  );
   return {
     progress: nearest,
     horizontal: Math.hypot(point[0] - routePoint[0], point[2] - routePoint[2]),
-    vertical: point[1] - routePoint[1],
+    // Once the pad is captured, altitude belongs to the dedicated vertical
+    // landing manoeuvre and its timeout. A route intercept cannot improve it:
+    // it would only climb back to the sloping profile and lose the pad.
+    vertical: verticalArrivalCaptured
+      ? 0
+      : point[1] - vehicleRouteAltitudeTarget(plan, nearest, point),
   };
 }
 
@@ -206,10 +219,27 @@ export function assessVehicleTrajectory(
     flownSeconds *
     flownSeconds;
 
-  const trackResidual = Math.max(0, current.horizontal - reachableClosure);
+  // A vertical arrival is already a complete terminal correction law: hold
+  // the clearance shelf, translate onto the berth, then descend in place.
+  // Replacing it with a route intercept because the craft cannot cross the
+  // final line before its endpoint removes exactly the hover authority that
+  // makes the landing possible. The final manoeuvre, approach gate and
+  // watchdog timeout remain its independent success/failure criteria.
+  const verticalArrivalActive = vehicleVerticalArrivalActive(plan, progress);
+  const effectiveReachableClosure = verticalArrivalActive
+    ? Math.max(reachableClosure, current.horizontal)
+    : reachableClosure;
+  const effectiveReachableAltitudeClosure = verticalArrivalActive
+    ? Math.max(reachableAltitudeClosure, Math.abs(current.vertical))
+    : reachableAltitudeClosure;
+
+  const trackResidual = Math.max(
+    0,
+    current.horizontal - effectiveReachableClosure,
+  );
   const altitudeResidual = Math.max(
     0,
-    Math.abs(current.vertical) - reachableAltitudeClosure,
+    Math.abs(current.vertical) - effectiveReachableAltitudeClosure,
   );
   const tiltRate = Math.hypot(
     state.angularVelocity[0],
@@ -236,8 +266,8 @@ export function assessVehicleTrajectory(
     crossTrackError: current.horizontal,
     altitudeError: current.vertical,
     distanceToGate: gate,
-    reachableClosure,
-    reachableAltitudeClosure,
+    reachableClosure: effectiveReachableClosure,
+    reachableAltitudeClosure: effectiveReachableAltitudeClosure,
     tiltRate,
     yawRate,
   };
@@ -326,6 +356,13 @@ function holdableYawRate(
   nose: SceneVector3,
   speed: number,
 ): number {
+  if (model.yawRateLimits) {
+    return Math.max(
+      0,
+      Math.abs(model.yawRateLimits.minimum),
+      Math.abs(model.yawRateLimits.maximum),
+    );
+  }
   const noseLength = Math.hypot(nose[0], nose[2]) || 1;
   const localNose: readonly [number, number] = [
     nose[0] / noseLength,
