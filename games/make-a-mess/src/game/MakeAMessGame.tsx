@@ -107,6 +107,8 @@ import {
   type ShardDefinition,
   type ShardSource,
 } from "./destructionRuntime";
+import { createBreakablePieceIndex } from "./breakablePieceIndex";
+import type { VehicleContactDamageRequest } from "./vehicleContactDamage";
 import {
   playDebrisSound,
   playExplosionSound,
@@ -5268,6 +5270,126 @@ function OpenWorldScene({
     settleStructure(brokenPiecesRef.current);
   }, [settleStructure]);
 
+  // ---------------------------------------------------------------------
+  // УДАР МАШИНЫ О МИР
+  //
+  // Мир видит машину обычным объектом, поэтому и урон идёт тем же входом,
+  // которым бьют ракета и молоток. Разница ровно одна: сторон две, и вердикт
+  // у каждой свой. Дом судится тем же законом материалов, каким судится
+  // падающий обломок — он откалиброван в настоящих м/с. Машина не крошится:
+  // у неё отказывает крепление, и кусок уходит из компаунда обломком.
+  // ---------------------------------------------------------------------
+  const worldContactIndex = useMemo(
+    () =>
+      createBreakablePieceIndex(
+        breakablePieces.filter(
+          (piece) => !vehicleFrameForCluster(piece.clusterId),
+        ),
+      ),
+    [breakablePieces],
+  );
+
+  const worldContactPieceAt = useCallback(
+    (point: readonly [number, number, number], reach: number) => {
+      const piece = worldContactIndex.at(
+        point,
+        reach,
+        (candidate: BreakablePieceDefinition) =>
+          !brokenPiecesRef.current.has(candidate.id) &&
+          !carvedPiecesRef.current.has(candidate.id),
+      );
+      if (!piece) {
+        return null;
+      }
+      return {
+        pieceId: piece.id,
+        material: piece.material,
+        volume:
+          piece.volume ?? piece.size[0] * piece.size[1] * piece.size[2],
+      };
+    },
+    [worldContactIndex],
+  );
+
+  const contactMaterialOf = useCallback(
+    (material: string) => ({
+      restitution:
+        materialRuntimeProfiles[material as BreakableMaterial]?.restitution ??
+        0.05,
+      fractureEnergy:
+        fractureEnergyByMaterial[material as BreakableMaterial] ?? 1,
+    }),
+    [],
+  );
+
+  const handleContactDamage = useCallback(
+    (request: VehicleContactDamageRequest) => {
+      if (indestructible) {
+        return;
+      }
+      const point = new Vector3(...request.point);
+      const direction = {
+        x: request.direction[0],
+        y: request.direction[1],
+        z: request.direction[2],
+      };
+      let changed = false;
+
+      // Сторона МИРА. Тот же закон, что у падающего обломка: решает скорость.
+      const worldPiece = request.worldPieceId
+        ? breakablePieceById.get(request.worldPieceId)
+        : undefined;
+      if (worldPiece && crumbleOnLanding.has(worldPiece.material)) {
+        const verdict = classifyLandingDamage(
+          worldPiece.material,
+          request.closingSpeed,
+          request.worldIntensity,
+        );
+        if (verdict === "shatter") {
+          impactId.current += 1;
+          if (!brokenPiecesRef.current.has(worldPiece.id)) {
+            breakAt(worldPiece, impactId.current);
+          }
+          shatterTarget(
+            worldPiece,
+            "piece",
+            point,
+            request.closingSpeed,
+            "fall",
+          );
+          changed = true;
+        } else if (verdict === "chip") {
+          chipAtImpact(worldPiece, "piece", direction, 1);
+        }
+      }
+
+      // Сторона МАШИНЫ. Сталь не крошится — отказывает узел, и кусок улетает
+      // обломком, унося свою массу, коллайдер и вклад в органы управления.
+      const vehiclePiece = request.vehiclePieceId
+        ? breakablePieceById.get(request.vehiclePieceId)
+        : undefined;
+      if (vehiclePiece && !brokenPiecesRef.current.has(vehiclePiece.id)) {
+        impactId.current += 1;
+        breakAt(vehiclePiece, impactId.current);
+        playImpactSound(vehiclePiece.material);
+        changed = true;
+      }
+
+      if (changed) {
+        settleWorld();
+      }
+    },
+    [
+      breakAt,
+      breakablePieceById,
+      chipAtImpact,
+      indestructible,
+      playImpactSound,
+      settleWorld,
+      shatterTarget,
+    ],
+  );
+
   const fireRound = useCallback(() => {
     playGunshotSound();
     mgShots.current += 1;
@@ -7470,6 +7592,9 @@ function OpenWorldScene({
         onFramePose={publishVehicleFramePose}
         onMotionTelemetryUpdate={onMotionTelemetryUpdate}
         onRotorcraftPilotStatusChange={onRotorcraftPilotStatusChange}
+        worldContactPieceAt={worldContactPieceAt}
+        contactMaterialOf={contactMaterialOf}
+        onContactDamage={handleContactDamage}
         onVehicleFailure={onVehicleFailure}
       />
       <AstanaTrainSystem

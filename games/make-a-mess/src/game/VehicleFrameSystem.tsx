@@ -151,6 +151,13 @@ import {
   type RotorcraftPilotState,
 } from "./rotorcraftPilot.ts";
 import {
+  resolveVehicleContact,
+  type ContactMaterialProfile,
+  type VehicleContactBody,
+  type VehicleContactDamageRequest,
+} from "./vehicleContactDamage.ts";
+import type { CompoundClusterContact } from "./CompoundKinematicClusterBodies";
+import {
   propulsionHealth,
   updatePropulsionFeedback,
 } from "./vehiclePropulsionAutomation";
@@ -242,6 +249,20 @@ const DEFAULT_ROTOR_TILT = (30 * Math.PI) / 180;
 const ROTOR_YAW_RATE = 0.9;
 /** Spinning visibly while leaving more than four fifths of the weight on gear. */
 const ROTOR_GROUND_IDLE_THROTTLE = 0.04;
+/**
+ * Один и тот же кусок не может ломаться каждый кадр: сразу после отрыва пара
+ * коллайдеров ещё расходится, и повторные события — это тот же удар, а не
+ * новый. Столько физических шагов кусок неприкосновенен после своего события.
+ */
+const CONTACT_DAMAGE_COOLDOWN_STEPS = 24;
+/**
+ * Сколько креплений один удар вправе оторвать за шаг. Ограничение не про
+ * реализм, а про кадр: сотня одновременных пар не должна разбирать машину
+ * целиком за один физический шаг, пока автоматика ещё не увидела первую потерю.
+ */
+const CONTACT_DAMAGE_PER_STEP = 3;
+/** Ниже этой скорости сближения удар не рассматривается вовсе. */
+const CONTACT_MINIMUM_CLOSING_SPEED = 0.35;
 
 /**
  * ВИНТЫ ВМЕСТО ОБОЛОЧКИ И БОКОВЫХ МОТОРОВ.
@@ -1193,6 +1214,9 @@ export function VehicleFrameSystem({
   onFramePose,
   onMotionTelemetryUpdate,
   onRotorcraftPilotStatusChange,
+  worldContactPieceAt,
+  contactMaterialOf,
+  onContactDamage,
   onVehicleFailure,
 }: {
   pieces: readonly BreakablePieceDefinition[];
@@ -1256,6 +1280,14 @@ export function VehicleFrameSystem({
   onRotorcraftPilotStatusChange?: (
     status: RotorcraftPilotStatus | null,
   ) => void;
+  /** Опознание встреченного куска мира по точке контакта. */
+  worldContactPieceAt?: (
+    point: readonly [number, number, number],
+    reach: number,
+  ) => VehicleContactBody | null;
+  contactMaterialOf?: (material: string) => ContactMaterialProfile;
+  /** Заявка на разрушение обеим сторонам через общий вход игры. */
+  onContactDamage?: (request: VehicleContactDamageRequest) => void;
   /** One-shot failure fact; presentation stays outside the physics system. */
   onVehicleFailure?: (event: VehicleFailureEvent) => void;
 }) {
@@ -1275,6 +1307,18 @@ export function VehicleFrameSystem({
   const pilotStatusPublished = useRef<string | null>(null);
   const pilotStatusMode = useRef<RotorcraftPilotState["mode"] | null>(null);
   const pilotStatusNextAt = useRef(0);
+  /** Счётчик физических шагов: по нему живёт неприкосновенность после удара. */
+  const contactStep = useRef(0);
+  const contactCooldown = useRef(new Map<string, number>());
+  /** Удары, накопленные движком с прошлого физического шага. */
+  const contactEvents = useRef<CompoundClusterContact[]>([]);
+  const collectContact = useCallback((contact: CompoundClusterContact) => {
+    // Очередь ограничена: один кадр не должен уносить память, если машина
+    // легла бортом на длинную конструкцию и пар контактов сотни.
+    if (contactEvents.current.length < 256) {
+      contactEvents.current.push(contact);
+    }
+  }, []);
   const handledDepartRequest = useRef(departRequestVersion);
   const handledArrivalRequest = useRef<string | null>(null);
   const pilotCommands = useRef(createRotorcraftPilotCommandBuffer());
@@ -1342,6 +1386,12 @@ export function VehicleFrameSystem({
       window.removeEventListener("mousedown", handleMouseDown);
     };
   }, [occupiedSeatId, onPassengerViewRestore]);
+
+  /** Слушать удары стоит только когда в сцене есть машина, которая их несёт. */
+  const contactDamageEnabled = useMemo(
+    () => airVehicles.some((vehicle) => vehicle.flight.contactDamage === true),
+    [],
+  );
 
   const frames = useMemo<readonly VehicleFrameRuntime[]>(() => {
     const vehicleByCluster = new Map(
@@ -2265,12 +2315,139 @@ export function VehicleFrameSystem({
       }
       shipBodies.current.set(frame.clusterId, ownBodies);
     }
+    // Удары, накопленные движком с прошлого шага. Очередь забирается целиком
+    // и один раз: событие принадлежит шагу, а не кадру рендера.
+    const contactsThisStep = contactEvents.current.splice(0);
+    contactStep.current += 1;
     // Пока корабль не идёт по маршруту, его поза — не кривая, а следствие сил:
     // тяжесть в центре масс, подъём ВЫШЕ него в центре объёма оболочки, мягкая
     // швартовка и успокоение. Отсюда и маятник, и реакция на повреждения:
     // снесли хвостовой вагон — центр масс уехал вперёд, и нос задрался сам.
     for (const frame of frames) {
       const state = frameState(frame.id);
+      // УДАР О МИР.
+      //
+      // Мир увидел машину обычным физическим объектом — и здесь этот факт
+      // становится импульсом (всегда) и заявкой на разрушение (условно).
+      // Автоматике полёта об ударе не сообщается ничем: она узнает о нём так
+      // же, как о попадании ракеты — по собственному изменившемуся движению.
+      if (
+        contactsThisStep.length > 0 &&
+        state.mass &&
+        state.mass.mass > 0 &&
+        frame.flight.contactDamage === true &&
+        contactMaterialOf
+      ) {
+        const properties = state.mass;
+        const worldCentre: [number, number, number] = [
+          properties.centre[0] + state.body.position[0],
+          properties.centre[1] + state.body.position[1],
+          properties.centre[2] + state.body.position[2],
+        ];
+        let detachedThisStep = 0;
+        for (const contact of contactsThisStep) {
+          if (contact.clusterId !== frame.clusterId) {
+            continue;
+          }
+          const cooldownUntil =
+            contactCooldown.current.get(contact.pieceId) ?? 0;
+          if (contactStep.current < cooldownUntil) {
+            continue;
+          }
+          const member = frame.members.find(
+            (candidate) => candidate.piece.id === contact.pieceId,
+          );
+          if (!member || brokenPieces.current.has(contact.pieceId)) {
+            continue;
+          }
+          const lever: [number, number, number] = [
+            contact.point[0] - worldCentre[0],
+            contact.point[1] - worldCentre[1],
+            contact.point[2] - worldCentre[2],
+          ];
+          // Скорость ИМЕННО ЭТОЙ точки: вращающийся корпус может встретить
+          // стену краем, пока центр почти стоит.
+          const spin: [number, number, number] = [
+            state.body.angularVelocity[1] * lever[2] -
+              state.body.angularVelocity[2] * lever[1],
+            state.body.angularVelocity[2] * lever[0] -
+              state.body.angularVelocity[0] * lever[2],
+            state.body.angularVelocity[0] * lever[1] -
+              state.body.angularVelocity[1] * lever[0],
+          ];
+          const relativeVelocity: [number, number, number] = [
+            state.body.velocity[0] + spin[0],
+            state.body.velocity[1] + spin[1],
+            state.body.velocity[2] + spin[2],
+          ];
+          const obstacle =
+            worldContactPieceAt?.(
+              [
+                contact.point[0] - contact.normal[0] * 0.3,
+                contact.point[1] - contact.normal[1] * 0.3,
+                contact.point[2] - contact.normal[2] * 0.3,
+              ],
+              1.1,
+            ) ?? null;
+          const resolution = resolveVehicleContact(
+            {
+              point: contact.point as [number, number, number],
+              normal: contact.normal as [number, number, number],
+              relativeVelocity,
+              effectiveMass: pointEffectiveMass(
+                properties,
+                state.body.orientation,
+                lever,
+                contact.normal as [number, number, number],
+              ),
+              vehicle: {
+                pieceId: member.piece.id,
+                material: member.piece.material,
+                volume:
+                  member.piece.volume ??
+                  member.piece.size[0] *
+                    member.piece.size[1] *
+                    member.piece.size[2],
+              },
+              obstacle,
+            },
+            contactMaterialOf,
+          );
+          if (resolution.closingSpeed < CONTACT_MINIMUM_CLOSING_SPEED) {
+            continue;
+          }
+          // Импульс идёт тем же путём, что импульс от ракеты: в компаунд, в
+          // точке, с плечом. Ничего специального для удара здесь нет.
+          queueCompoundKinematicImpulse(externalImpulses, frame.clusterId, {
+            impulse: resolution.impulse as [number, number, number],
+            point: contact.point as [number, number, number],
+          });
+          const detaches =
+            resolution.detachesVehiclePiece &&
+            detachedThisStep < CONTACT_DAMAGE_PER_STEP;
+          if (detaches) {
+            detachedThisStep += 1;
+          }
+          if (detaches || obstacle) {
+            contactCooldown.current.set(
+              contact.pieceId,
+              contactStep.current + CONTACT_DAMAGE_COOLDOWN_STEPS,
+            );
+            onContactDamage?.({
+              point: contact.point as [number, number, number],
+              direction: [
+                -contact.normal[0],
+                -contact.normal[1],
+                -contact.normal[2],
+              ],
+              closingSpeed: resolution.closingSpeed,
+              vehiclePieceId: detaches ? member.piece.id : null,
+              worldPieceId: obstacle?.pieceId ?? null,
+              worldIntensity: resolution.obstacleIntensity,
+            });
+          }
+        }
+      }
       const applyPendingImpulses = (properties: MassProperties) => {
         const pending = externalImpulses.current.get(frame.clusterId);
         if (!pending || pending.length === 0 || properties.mass <= 0) {
@@ -5267,6 +5444,7 @@ export function VehicleFrameSystem({
         pieces={pieces}
         brokenPieces={inactivePieces}
         registry={clusterRegistry}
+        onContact={contactDamageEnabled ? collectContact : undefined}
       />
       <VehicleExhaustSmoke
         frames={frames}

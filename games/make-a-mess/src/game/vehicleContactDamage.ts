@@ -88,6 +88,24 @@ export interface VehicleContactResolution {
   readonly obstacleIntensity: number;
 }
 
+/**
+ * Заявка на разрушение, которую удар отдаёт наружу. Она НЕ содержит вердикта
+ * «сломать»: она содержит замер, а закон материалов у каждой стороны свой и
+ * применяется там, где он живёт.
+ */
+export interface VehicleContactDamageRequest {
+  readonly point: SceneVector3;
+  /** Куда шёл удар: по ней разлетаются осколки. */
+  readonly direction: SceneVector3;
+  readonly closingSpeed: number;
+  /** Кусок машины, чьё крепление не выдержало. */
+  readonly vehiclePieceId: string | null;
+  /** Встреченный кусок мира, если он опознан. */
+  readonly worldPieceId: string | null;
+  /** Интенсивность для закона обломков на стороне мира. */
+  readonly worldIntensity: number;
+}
+
 const GRAVITY = 9.81;
 
 /**
