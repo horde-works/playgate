@@ -36,6 +36,35 @@ export function lampTimeFactor(
 }
 
 /**
+ * The exterior still sees a powered vehicle; only light which would reflect
+ * in the occupant's own glazing is blacked out while that carrier is occupied.
+ */
+export function lampInteriorFactor(
+  lamp: Pick<LampDefinition | SpotLightDefinition, "carrierClusterId" | "interior">,
+  occupiedCarrierClusterId: string | null | undefined,
+): number {
+  return lamp.interior === true &&
+    lamp.carrierClusterId === occupiedCarrierClusterId
+    ? 0
+    : 1;
+}
+
+/**
+ * Pooled point lights do not cast shadows. A lamp fixed to the occupied
+ * carrier would therefore shine backwards through its own hull and wash out
+ * the cockpit. Its visible lens/beacon remains independent from this cast.
+ */
+export function lampSelfCastFactor(
+  lamp: Pick<LampDefinition, "carrierClusterId">,
+  occupiedCarrierClusterId: string | null | undefined,
+): number {
+  return lamp.carrierClusterId !== undefined &&
+    lamp.carrierClusterId === occupiedCarrierClusterId
+    ? 0
+    : 1;
+}
+
+/**
  * Frame-rate independent smoothing for every visual part of a lamp. The
  * configured duration is the time in which an exponential response covers
  * approximately 95% of the requested change.

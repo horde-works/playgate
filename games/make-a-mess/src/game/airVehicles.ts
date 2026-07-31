@@ -810,6 +810,16 @@ export const TOWN_HEXACOPTER_AIR_VEHICLE: AirVehicleDefinition = {
       id: "town:hexacopter:departure",
       kind: "departure",
       cue: "town-hexacopter-uncrewed-flight",
+      actions: [
+        {
+          id: "circuit",
+          labelKey: "hint.hexacopterDeparture.uncrewed",
+        },
+        {
+          id: "manual",
+          labelKey: "hint.hexacopterDeparture.manual",
+        },
+      ],
     },
     // Стойка с табло у кромки пятна — единственный физический интерфейс
     // площадки. Мачт у этой машины нет.

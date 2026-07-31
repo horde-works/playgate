@@ -288,6 +288,7 @@ test("each coach owns a row of event-driven ceiling lights", () => {
     assert.equal(lamp.intensity >= 7, true);
     assert.equal(lamp.distance >= 14, true);
     assert.equal(lamp.dayIntensityFactor, 1);
+    assert.equal(lamp.interior, true);
     assert.equal(lamp.eventLighting?.sourceClusterId, TRAIN);
     assert.equal(lamp.eventLighting?.levels.docked.intensityMultiplier, 1);
     assert.equal(lamp.eventLighting?.levels.inTransit.intensityMultiplier <= 0.15, true);

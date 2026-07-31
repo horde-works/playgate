@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  constrainRotorcraftGuidance,
   safetyInterventionForMode,
+  vehicleSafeClosingSpeed,
   vehicleSafetyAdvisory,
   vehicleSafetySensingSuppressed,
 } from "../games/make-a-mess/src/game/vehicleSafetyAutomation.ts";
@@ -143,4 +145,85 @@ test("berth sensing is answered by the authored plan, not by an intercept", () =
     }),
     false,
   );
+});
+
+const reading = (overrides = {}) => ({
+  probeIndex: 0,
+  localNormal: [1, 0, 0],
+  worldNormal: [1, 0, 0],
+  lever: [3, 0, 0],
+  distance: 3,
+  relativeClosingSpeed: 0,
+  ...overrides,
+});
+
+const safetyContext = (overrides = {}) => ({
+  forward: [1, 0],
+  starboard: [0, 1],
+  verticalSpeed: 0,
+  horizontalDeceleration: 2.5,
+  verticalDeceleration: 2.7,
+  liftTrimRange: 0.28,
+  grounded: false,
+  landingIntent: false,
+  ...overrides,
+});
+
+test("manual assistance caps only velocity into the obstacle", () => {
+  const toward = constrainRotorcraftGuidance(
+    { forwardSpeed: 8, lateralSpeed: 4, yawRate: 0, liftFraction: 0 },
+    [reading()],
+    safetyContext(),
+  );
+  assert.equal(toward.guidance.forwardSpeed < 2.5, true);
+  assert.equal(toward.guidance.lateralSpeed, 4);
+  assert.deepEqual(toward.intervenedProbeIndices, [0]);
+
+  const away = constrainRotorcraftGuidance(
+    { forwardSpeed: -5, lateralSpeed: 4, yawRate: 0, liftFraction: 0 },
+    [reading()],
+    safetyContext(),
+  );
+  assert.equal(away.guidance.forwardSpeed, -5);
+  assert.equal(away.guidance.lateralSpeed, 4);
+  assert.deepEqual(away.intervenedProbeIndices, []);
+});
+
+test("a rotating outer probe is protected even while the centre hovers", () => {
+  const turn = constrainRotorcraftGuidance(
+    { forwardSpeed: 0, lateralSpeed: 0, yawRate: 0.9, liftFraction: 0 },
+    [reading({ worldNormal: [0, 0, 1], lever: [3, 0, 0], distance: 1.7 })],
+    safetyContext(),
+  );
+  // Positive yaw moves this +X probe towards -Z, so the opposite command is
+  // deliberately used here to close it on the +Z wall.
+  assert.equal(turn.guidance.yawRate, 0.9);
+  const closingTurn = constrainRotorcraftGuidance(
+    { forwardSpeed: 0, lateralSpeed: 0, yawRate: -0.9, liftFraction: 0 },
+    [reading({ worldNormal: [0, 0, 1], lever: [3, 0, 0], distance: 1.7 })],
+    safetyContext(),
+  );
+  assert.equal(Math.abs(closingTurn.guidance.yawRate) < 0.9, true);
+});
+
+test("lower sensing brakes a fall but intentionally permits a controlled landing", () => {
+  const below = reading({
+    localNormal: [0, -1, 0],
+    worldNormal: [0, -1, 0],
+    lever: [0, -1, 0],
+    distance: 0.8,
+    relativeClosingSpeed: 2,
+  });
+  const protectedFlight = constrainRotorcraftGuidance(
+    { forwardSpeed: 0, lateralSpeed: 0, yawRate: 0, liftFraction: -0.28 },
+    [below],
+    safetyContext({ verticalSpeed: -2 }),
+  );
+  const landing = constrainRotorcraftGuidance(
+    { forwardSpeed: 0, lateralSpeed: 0, yawRate: 0, liftFraction: -0.28 },
+    [below],
+    safetyContext({ verticalSpeed: -0.4, landingIntent: true }),
+  );
+  assert.equal(protectedFlight.guidance.liftFraction > landing.guidance.liftFraction, true);
+  assert.equal(vehicleSafeClosingSpeed(0.08, 2.7, 0.08), 0);
 });

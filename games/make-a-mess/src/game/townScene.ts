@@ -9,7 +9,10 @@ import {
   skyMooringDocument,
   skyMooringSpotLights,
 } from "../content/scenes/skyMooringDocument.ts";
-import { townVertipadDocument } from "../content/scenes/townVertipadDocument.ts";
+import {
+  townVertipadDocument,
+  townVertipadSpotLights,
+} from "../content/scenes/townVertipadDocument.ts";
 
 // ---------------------------------------------------------------------------
 // Боевая городская сцена: базовый город (destructionScene) плюс старый
@@ -48,5 +51,5 @@ export const townScene = createDestructionScene({
     ...skyMooringCompilation.lamps,
     ...vertipadCompilation.lamps,
   ],
-  spotLights: skyMooringSpotLights,
+  spotLights: [...skyMooringSpotLights, ...townVertipadSpotLights],
 });

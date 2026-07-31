@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   lampEventLevel,
+  lampInteriorFactor,
+  lampSelfCastFactor,
   lampTimeFactor,
   smoothLampLevel,
 } from "../games/make-a-mess/src/game/lampEventLighting.ts";
@@ -46,6 +48,37 @@ test("electrical lights can retain full power independently of daylight", () => 
   assert.equal(lampTimeFactor(lamp, 1), 1);
   assert.equal(lampTimeFactor({ id: "street", position: [0, 0, 0] }, 0), 0);
   assert.equal(lampTimeFactor({ id: "street", position: [0, 0, 0] }, 1), 1);
+});
+
+test("only the occupied carrier's interior light is blacked out", () => {
+  const cabin = {
+    carrierClusterId: "vehicle:a",
+    interior: true,
+  };
+  assert.equal(lampInteriorFactor(cabin, "vehicle:a"), 0);
+  assert.equal(lampInteriorFactor(cabin, "vehicle:b"), 1);
+  assert.equal(
+    lampInteriorFactor(
+      { carrierClusterId: "vehicle:a", interior: false },
+      "vehicle:a",
+    ),
+    1,
+    "headlights and navigation lights remain powered",
+  );
+});
+
+test("an occupied vehicle cannot illuminate itself through its own hull", () => {
+  const navigationLight = {
+    carrierClusterId: "vehicle:a",
+    interior: false,
+  };
+  assert.equal(lampSelfCastFactor(navigationLight, "vehicle:a"), 0);
+  assert.equal(lampSelfCastFactor(navigationLight, "vehicle:b"), 1);
+  assert.equal(
+    lampInteriorFactor(navigationLight, "vehicle:a"),
+    1,
+    "the navigation lens remains visible while its shadowless local cast is suppressed",
+  );
 });
 
 test("lamp transitions are smooth and independent of frame subdivision", () => {

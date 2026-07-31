@@ -28,6 +28,10 @@ import {
   rotorcraftFlightStep,
   rotorcraftHeadingRate,
 } from "../games/make-a-mess/src/game/rotorcraftDynamics.ts";
+import {
+  advanceRotorcraftPilot,
+  createRotorcraftPilotState,
+} from "../games/make-a-mess/src/game/rotorcraftPilot.ts";
 
 // ---------------------------------------------------------------------------
 // ЛЕТАЕТ ЛИ ОНА НА САМОМ ДЕЛЕ
@@ -737,4 +741,46 @@ test("«вбок вправо» — это вправо в мировых ося
     true,
     `крен по соглашению проекта вышел ${(attitude.roll * 57.3).toFixed(1)}°`,
   );
+});
+
+test("правая стрелка физически поворачивает нос вправо, левая — влево", () => {
+  const command = (horizontalAxis) =>
+    advanceRotorcraftPilot(
+      createRotorcraftPilotState(8),
+      {
+        forwardAxis: 0,
+        horizontalAxis,
+        translationModifier: false,
+        altitudeDelta: 0,
+        brake: false,
+        requestSafeClimb: false,
+        requestReturn: false,
+      },
+      {
+        relativeAltitude: 8,
+        verticalSpeed: 0,
+        deltaSeconds: STEP,
+        liftTrimRange: flight.limits.liftTrimRange,
+      },
+    ).guidance;
+  const starboard = pitchAxisOf(vehicle.nose);
+
+  for (const [horizontalAxis, side, label] of [
+    [1, 1, "вправо"],
+    [-1, -1, "влево"],
+  ]) {
+    const simulation = newFlight();
+    const guidance = command(horizontalAxis);
+    for (let step = 0; step < 60; step += 1) {
+      advance(simulation, { forward: 0, yawRate: guidance.yawRate });
+    }
+    const turnedNose = rotate(simulation.body.orientation, NOSE);
+    const towardStarboard =
+      turnedNose[0] * starboard[0] + turnedNose[2] * starboard[2];
+    assert.equal(
+      towardStarboard * side > 0.12,
+      true,
+      `${label}: нос ушёл на ${towardStarboard.toFixed(2)} вдоль правого борта`,
+    );
+  }
 });

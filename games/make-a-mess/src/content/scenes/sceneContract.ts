@@ -61,6 +61,8 @@ export interface SceneLightSource {
   readonly localPoolCapacity?: number;
   /** Fixtures in one room are selected as a coherent set. */
   readonly poolGroupId?: string;
+  /** Suppress this interior light for a player seated in its moving group. */
+  readonly interior?: boolean;
   /** Long-range camera-facing signal halo. */
   readonly beacon?: LampBeaconDefinition;
   /** Optional carrier lifecycle which drives this fixture. */

@@ -311,8 +311,11 @@ test("the airship has train-grade navigation and mooring lights", () => {
     assert.equal(lamp.beacon?.minScreenDiameter, 5);
   }
 
-  assert.equal(townScene.spotLightDefinitions.length, 1);
-  const mooring = townScene.spotLightDefinitions[0];
+  const mooringLights = townScene.spotLightDefinitions.filter(
+    (light) => light.carrierClusterId === "sky-mooring:airship",
+  );
+  assert.equal(mooringLights.length, 1);
+  const mooring = mooringLights[0];
   assert.equal(mooring.id, "sky-mooring:airship:mooring-light:piece");
   assert.equal(mooring.carrierClusterId, "sky-mooring:airship");
   assert.equal(mooring.distance, 72);

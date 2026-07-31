@@ -25,6 +25,7 @@ import {
   createVehicleRecoveryLifecycle,
   DEFAULT_VEHICLE_FAILURE_ENVELOPE,
   deliveredLiftControlFraction,
+  normalizedLiftTrimRequest,
   rebaseVehicleFailureWatchdog,
   VEHICLE_LANDING_STABLE_SECONDS,
   VEHICLE_REBUILD_DELAY_SECONDS,
@@ -59,6 +60,44 @@ function observation(overrides = {}) {
     ...overrides,
   };
 }
+
+test("manual flight never feeds synthetic progress into route-stall timers", () => {
+  for (const turning of [false, true]) {
+    let watchdog = createVehicleFailureWatchdog(0.5);
+    for (let frame = 0; frame < 60 * 60; frame += 1) {
+      const result = advanceVehicleFailureWatchdog(
+        watchdog,
+        observation({
+          deltaSeconds: 1 / 60,
+          progress: 0.5,
+          routeProgressTracked: false,
+          requestedControlEffort: 1,
+          turning,
+        }),
+      );
+      assert.equal(result.failure, null);
+      watchdog = result.state;
+    }
+    assert.equal(watchdog.stalledSeconds, 0);
+    assert.equal(watchdog.maneuverSeconds, 0);
+  }
+});
+
+test("manual lift guidance is normalized before lift-delivery supervision", () => {
+  assert.equal(normalizedLiftTrimRequest(0.28, 0.28), 1);
+  assert.equal(normalizedLiftTrimRequest(0.14, 0.28), 0.5);
+  assert.equal(normalizedLiftTrimRequest(-0.28, 0.28), -1);
+  assert.ok(
+    Math.abs(
+      deliveredLiftControlFraction(
+        normalizedLiftTrimRequest(0.28, 0.28),
+        0.28,
+        1.08,
+      ) -
+        0.08 / 0.28,
+    ) < 1e-12,
+  );
+});
 
 test("only actuators still carried by the compound body execute commands", () => {
   const bindings = compileCommandActuators(pieces);

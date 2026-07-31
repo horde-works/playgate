@@ -4,6 +4,10 @@ import {
   TOWN_HEXACOPTER_AIR_VEHICLE,
 } from "../games/make-a-mess/src/game/airVehicles.ts";
 import {
+  TOWN_HEXACOPTER_PILOT_SEAT,
+  TOWN_HEXACOPTER_PILOT_SEAT_ID,
+} from "../games/make-a-mess/src/game/passengerSeats.ts";
+import {
   RESTING_BODY,
   massProperties,
   stepBody,
@@ -55,6 +59,7 @@ import {
   HEXACOPTER_SPAN,
   HEX_CANOPY_TOP_Y,
   HEX_FLOOR_Y,
+  HEX_TRUNNION_Y,
   TOWN_HEXACOPTER_CLUSTER_ID,
   TOWN_VERTIPAD_CLUSTER_ID,
   hexacopterPoint,
@@ -87,6 +92,124 @@ test("машина и площадка — разные кластеры, и о�
     ship.some((piece) => piece.clusterId === TOWN_VERTIPAD_CLUSTER_ID),
     false,
   );
+});
+
+test("табличка предлагает пустой облёт или ручное управление из целого кресла", () => {
+  assert.deepEqual(
+    vehicle.departure?.target.actions?.map((action) => action.id),
+    ["circuit", "manual"],
+  );
+  assert.equal(TOWN_HEXACOPTER_PILOT_SEAT.id, TOWN_HEXACOPTER_PILOT_SEAT_ID);
+  assert.equal(
+    TOWN_HEXACOPTER_PILOT_SEAT.carrierClusterId,
+    TOWN_HEXACOPTER_CLUSTER_ID,
+  );
+  const shipIds = new Set(ship.map((piece) => piece.id));
+  for (const pieceId of TOWN_HEXACOPTER_PILOT_SEAT.requiredPieceIds) {
+    assert.equal(shipIds.has(pieceId), true, `в кресле нет ${pieceId}`);
+  }
+});
+
+test("внутри гаснет только свет кабины, а аэронавигационные огни работают всегда", () => {
+  const carrierLamps = townScene.lampDefinitions.filter(
+    (lamp) => lamp.carrierClusterId === TOWN_HEXACOPTER_CLUSTER_ID,
+  );
+  const cabinLights = carrierLamps.filter((lamp) => lamp.interior);
+  assert.deepEqual(
+    cabinLights.map((lamp) => lamp.id),
+    ["town-vertipad:hexacopter:console:screen:piece"],
+  );
+
+  const navigationLights = carrierLamps.filter((lamp) =>
+    lamp.id.includes(":nav-light:") || lamp.id.includes(":canopy:beacon:"),
+  );
+  assert.equal(navigationLights.length, 4);
+  assert.equal(
+    navigationLights.some((lamp) => lamp.id.includes(":nav-light:fore:")),
+    false,
+    "центральный белый огонь снова выглядит третьей фарой",
+  );
+  for (const lamp of navigationLights) {
+    assert.equal(lamp.interior === true, false, `${lamp.id} помечен как свет кабины`);
+    assert.equal(lamp.dayIntensityFactor, 1, `${lamp.id} гаснет днём`);
+  }
+});
+
+test("передние два двигателя несут яркие перекрывающиеся прожекторы", () => {
+  const headlights = townScene.spotLightDefinitions.filter(
+    (light) =>
+      light.carrierClusterId === TOWN_HEXACOPTER_CLUSTER_ID &&
+      light.id.includes(":headlight:"),
+  );
+  assert.equal(headlights.length, 2);
+  assert.deepEqual(
+    headlights.map((light) => light.id).sort(),
+    [
+      "town-vertipad:hexacopter:duct:0:headlight:piece",
+      "town-vertipad:hexacopter:duct:5:headlight:piece",
+    ],
+  );
+  for (const light of headlights) {
+    assert.equal(light.direction[0] < -0.95, true, `${light.id} не смотрит вперёд`);
+    assert.equal(
+      light.direction[1] < -0.1 && light.direction[1] > -0.25,
+      true,
+      `${light.id} имеет неавтомобильный наклон`,
+    );
+    assert.equal(light.dayIntensityFactor, 0);
+    assert.equal(
+      Math.abs(light.position[1] - (HEX_TRUNNION_Y - 0.06)) < 0.02,
+      true,
+      `${light.id} не стоит на передней грани двигателя`,
+    );
+    assert.equal((light.transition?.fadeInSeconds ?? 0) >= 0.5, true);
+    assert.equal((light.angle ?? 0) >= 0.3, true, `${light.id} слишком узкая`);
+    assert.equal((light.intensity ?? 0) >= 480, true, `${light.id} слишком тусклая`);
+    assert.equal((light.distance ?? 0) >= 65, true, `${light.id} светит недалеко`);
+    assert.equal(
+      (light.visibleBeam?.sourceRadius ?? 0) >= 0.08,
+      true,
+      `${light.id} начинается остриём, а не раструбом линзы`,
+    );
+  }
+  const separation = Math.hypot(
+    headlights[0].position[0] - headlights[1].position[0],
+    headlights[0].position[2] - headlights[1].position[2],
+  );
+  const radiusAtFiveMetres = Math.tan(headlights[0].angle) * 5;
+  assert.equal(
+    radiusAtFiveMetres * 2 > separation,
+    true,
+    "конусы прожекторов не перекрываются перед машиной",
+  );
+});
+
+test("нижнее силовое ребро остаётся стальным, а передняя ванна становится стеклом", () => {
+  const lowerFrontGlass = ship.filter((piece) =>
+    piece.id.includes(":canopy:lower-glass:"),
+  );
+  assert.equal(lowerFrontGlass.length, 4);
+  assert.equal(
+    lowerFrontGlass.every(
+      (piece) => piece.material === "darkGlass" && piece.shape === "glassPane",
+    ),
+    true,
+  );
+  assert.deepEqual(
+    lowerFrontGlass.map((piece) =>
+      piece.id.match(/lower-glass:(\d+):(\d+):piece$/)?.slice(1).map(Number),
+    ),
+    [
+      [0, 0],
+      [0, 1],
+      [11, 0],
+      [11, 1],
+    ],
+  );
+
+  const lowerRing = ship.filter((piece) => piece.id.includes(":floor:sill:"));
+  assert.equal(lowerRing.length, 16);
+  assert.equal(lowerRing.every((piece) => piece.material === "steel"), true);
 });
 
 test("площадка стоит строго справа от дома h2, а не по диагонали к гаражу", () => {

@@ -1,5 +1,6 @@
 "use client";
 
+import { useKeyboardControls } from "@react-three/drei";
 import { useFrame, useThree } from "@react-three/fiber";
 import {
   useBeforePhysicsStep,
@@ -82,6 +83,8 @@ import {
 } from "./airVehicles";
 import {
   SKY_TRAIN_DRIVER_SEAT,
+  TOWN_HEXACOPTER_PILOT_SEAT,
+  TOWN_HEXACOPTER_PILOT_SEAT_ID,
   passengerSeatContextAction,
   passengerSeatIsIntact,
 } from "./passengerSeats";
@@ -138,6 +141,16 @@ import {
   type RotorcraftTrimState,
 } from "./rotorcraftDynamics.ts";
 import {
+  advanceRotorcraftPilot,
+  consumeRotorcraftPilotCommands,
+  createRotorcraftPilotCommandBuffer,
+  createRotorcraftPilotReturnPlan,
+  createRotorcraftPilotState,
+  rotorcraftPilotNeedsFlightSupervision,
+  ROTORCRAFT_PILOT_SAFE_ALTITUDE,
+  type RotorcraftPilotState,
+} from "./rotorcraftPilot.ts";
+import {
   propulsionHealth,
   updatePropulsionFeedback,
 } from "./vehiclePropulsionAutomation";
@@ -146,9 +159,11 @@ import {
   supervisedFailureEnvelope,
 } from "./vehicleFlightSupervisor";
 import {
+  constrainRotorcraftGuidance,
   safetyInterventionForMode,
   vehicleSafetyAdvisory,
   vehicleSafetySensingSuppressed,
+  type VehicleObstacleReading,
   type VehicleObstacleSample,
   type VehicleSafetyAdvisory,
 } from "./vehicleSafetyAutomation";
@@ -187,6 +202,7 @@ import {
   createVehicleRecoveryLifecycle,
   DEFAULT_VEHICLE_FAILURE_ENVELOPE,
   deliveredLiftControlFraction,
+  normalizedLiftTrimRequest,
   rebaseVehicleFailureWatchdog,
   VEHICLE_GROUND_CONTACT_CONFIRM_SECONDS,
   vehicleGroundLiftAutomationSettled,
@@ -209,6 +225,13 @@ const ESCAPE_STALL_SECONDS = 18;
 /** Кто отправляет рейс: пока единственный кадр, у которого есть расписание. */
 const SCHEDULED_FRAME = "sky-train";
 type ScheduledInteraction = "board" | "ride" | "seat" | "stand";
+type PilotControlName =
+  | "forward"
+  | "backward"
+  | "left"
+  | "right"
+  | "run"
+  | "jump";
 
 /** Тяжесть. Плотности в движке свои, но она одна для всех. */
 const GRAVITY = 9.81;
@@ -217,6 +240,8 @@ const GRAVITY = 9.81;
 const DEFAULT_ROTOR_TILT = (30 * Math.PI) / 180;
 /** Наибольшая угловая скорость рыскания по полному рулю, рад/с. */
 const ROTOR_YAW_RATE = 0.9;
+/** Spinning visibly while leaving more than four fifths of the weight on gear. */
+const ROTOR_GROUND_IDLE_THROTTLE = 0.04;
 
 /**
  * ВИНТЫ ВМЕСТО ОБОЛОЧКИ И БОКОВЫХ МОТОРОВ.
@@ -279,14 +304,19 @@ function rotorcraftFlightForces(
       lateralSpeed: guidance?.lateralSpeed ?? 0,
       yawRate: guidance?.yawRate ?? 0,
       collective:
-        guidance?.liftFraction ?? liftCommand * limits.liftTrimRange,
+        state.flight?.pilot && !state.flight.castOff
+          ? -limits.liftTrimRange
+          : (guidance?.liftFraction ?? liftCommand * limits.liftTrimRange),
     },
     trim,
     step,
     ROTOR_YAW_RATE,
   );
+  const pilotGroundIdle = Boolean(state.flight?.pilot && !state.flight.castOff);
   const requestedThrottle = enabled
-    ? [...flightStep.result.commandedThrottle]
+    ? pilotGroundIdle
+      ? points.map(() => ROTOR_GROUND_IDLE_THROTTLE)
+      : [...flightStep.result.commandedThrottle]
     : points.map(() => 0);
   const actuation = executeCommandActuators(
     frame.actuators,
@@ -313,7 +343,19 @@ function rotorcraftFlightForces(
       frame.flight.spoolSeconds,
     ),
   );
-  state.rotorTrim = enabled ? flightStep.trim : NEUTRAL_ROTORCRAFT_TRIM;
+  // The adaptive balance term may learn only from a freely responding craft.
+  // During run-up the gear/mast answers the attitude error while motor output
+  // is deliberately attenuated; integrating that error stores a false moment
+  // which is released all at once on lift-off (classic controller wind-up).
+  const trimMayLearn =
+    enabled &&
+    state.supportContacts === 0 &&
+    (state.flight?.castOff ?? false);
+  state.rotorTrim = !enabled
+    ? NEUTRAL_ROTORCRAFT_TRIM
+    : trimMayLearn
+      ? flightStep.trim
+      : trim;
   state.rotorAuthority = enabled ? flightStep.result.authority : null;
   state.rotorAcceptedYawRate = enabled
     ? flightStep.result.acceptedYawRate
@@ -381,7 +423,9 @@ const RECOVERY_LANDING_DESCENT_SPEED = -0.8;
 const RECOVERY_LANDING_VERTICAL_RESPONSE = 0.8;
 /** Extra query horizon used only to discover an obstacle moving at the hull. */
 const CONTACT_RELATIVE_SPEED_MARGIN = 18;
-const OBSTACLE_SENSOR_RANGE = 18;
+// Full-speed forward flight needs roughly 32 m after sensing latency with the
+// rotorcraft's weakest intact horizontal axis. Range must exceed that claim.
+const OBSTACLE_SENSOR_RANGE = 42;
 const OBSTACLE_ESCAPE_CLEARANCE = 8;
 /**
  * Высота, ниже которой маршрут считается ИДУЩИМ ПО ЗЕМЛЕ и контакт опор с ней
@@ -550,6 +594,8 @@ interface FlightState {
   kind: string;
   /** How this flight was called; route kind alone does not imply occupancy. */
   occupancy: "uncrewed" | "passenger";
+  /** Present only when a seated pilot, rather than a route, owns guidance. */
+  pilot: RotorcraftPilotState | null;
   time: number;
   castOff: boolean;
   /** Доля пройденного маршрута: её двигает сам корабль, а не таймер. */
@@ -562,6 +608,9 @@ interface FlightState {
   propulsionFeedback: readonly number[];
   /** Sensor report; only the autopilot may turn it into control requests. */
   safetyAdvisory: VehicleSafetyAdvisory | null;
+  /** Full proximity field is retained only for an occupied manual cockpit. */
+  pilotObstacleReadings: readonly VehicleObstacleReading[];
+  readonly pilotIntervenedProbes: Set<number>;
   /** Когда последний раз уходили на второй круг: решение принимается один раз. */
   lastGoAround: number;
   /** Счётчик для диагностики реального рейса. */
@@ -993,11 +1042,13 @@ function createFlightState(
   occupancy: FlightState["occupancy"],
   engineCount: number,
   underwayTime = 0,
+  pilot: RotorcraftPilotState | null = null,
 ): FlightState {
   const zeroThrottle = Array.from({ length: engineCount }, () => 0);
   return {
     kind,
     occupancy,
+    pilot,
     time: underwayTime,
     castOff: underwayTime > 0,
     progress: 0,
@@ -1005,6 +1056,8 @@ function createFlightState(
     driveThrottle: zeroThrottle,
     propulsionFeedback: Array.from({ length: engineCount }, () => 1),
     safetyAdvisory: null,
+    pilotObstacleReadings: [],
+    pilotIntervenedProbes: new Set<number>(),
     lastGoAround: -1e9,
     goArounds: 0,
     corrections: 0,
@@ -1139,6 +1192,7 @@ export function VehicleFrameSystem({
   onVehicleRebuildRequest,
   onFramePose,
   onMotionTelemetryUpdate,
+  onRotorcraftPilotStatusChange,
   onVehicleFailure,
 }: {
   pieces: readonly BreakablePieceDefinition[];
@@ -1199,11 +1253,15 @@ export function VehicleFrameSystem({
   onFramePose?: (state: VehicleFramePoseState) => void;
   /** Общий числовой канал для HUD любого движущегося объекта. */
   onMotionTelemetryUpdate?: (update: MotionTelemetryUpdate) => void;
+  onRotorcraftPilotStatusChange?: (
+    status: RotorcraftPilotStatus | null,
+  ) => void;
   /** One-shot failure fact; presentation stays outside the physics system. */
   onVehicleFailure?: (event: VehicleFailureEvent) => void;
 }) {
   const { rapier, world: rapierWorld } = useRapier();
   const { camera } = useThree();
+  const [, getPilotControls] = useKeyboardControls<PilotControlName>();
   const approachedPost = useRef<ScheduledInteraction | null>(null);
   /** Яркость перронных огней в прошлом кадре: переключаем только по смене. */
   const departureGlow = useRef<number | null>(null);
@@ -1214,8 +1272,76 @@ export function VehicleFrameSystem({
   );
   const telemetryNextAt = useRef(new Map<string, number>());
   const telemetryActiveSources = useRef(new Set<string>());
+  const pilotStatusPublished = useRef<string | null>(null);
+  const pilotStatusMode = useRef<RotorcraftPilotState["mode"] | null>(null);
+  const pilotStatusNextAt = useRef(0);
   const handledDepartRequest = useRef(departRequestVersion);
   const handledArrivalRequest = useRef<string | null>(null);
+  const pilotCommands = useRef(createRotorcraftPilotCommandBuffer());
+
+  useEffect(() => {
+    if (occupiedSeatId === TOWN_HEXACOPTER_PILOT_SEAT_ID) {
+      return;
+    }
+    pilotStatusPublished.current = null;
+    pilotStatusMode.current = null;
+    onRotorcraftPilotStatusChange?.(null);
+  }, [occupiedSeatId, onRotorcraftPilotStatusChange]);
+
+  useEffect(() => {
+    pilotCommands.current = createRotorcraftPilotCommandBuffer();
+    if (occupiedSeatId !== TOWN_HEXACOPTER_PILOT_SEAT_ID) {
+      return undefined;
+    }
+    const handleWheel = (event: WheelEvent) => {
+      // A conventional wheel notch is roughly 100 pixels; trackpads emit
+      // smaller deltas and therefore accumulate smoothly instead of turning
+      // every tiny event into a whole metre.
+      const pixels =
+        event.deltaMode === WheelEvent.DOM_DELTA_LINE
+          ? event.deltaY * 16
+          : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+            ? event.deltaY * window.innerHeight
+            : event.deltaY;
+      pilotCommands.current.altitudeDelta += Math.max(
+        -3,
+        Math.min(3, -pixels / 100),
+      );
+      event.preventDefault();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.repeat) return;
+      if (event.code === "KeyF") {
+        pilotCommands.current.requestSafeClimb = true;
+        event.preventDefault();
+      } else if (event.code === "KeyH") {
+        pilotCommands.current.requestReturn = true;
+        event.preventDefault();
+      } else if (event.code === "KeyO") {
+        pilotCommands.current.requestToggleSensors = true;
+        event.preventDefault();
+      } else if (
+        event.shiftKey &&
+        (event.code === "ArrowDown" || event.code === "KeyS")
+      ) {
+        pilotCommands.current.requestDisarm = true;
+      }
+    };
+    const handleMouseDown = (event: MouseEvent) => {
+      if (event.button === 1) {
+        pilotCommands.current.recenterView = true;
+        event.preventDefault();
+      }
+    };
+    window.addEventListener("wheel", handleWheel, { passive: false });
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("mousedown", handleMouseDown);
+    return () => {
+      window.removeEventListener("wheel", handleWheel);
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("mousedown", handleMouseDown);
+    };
+  }, [occupiedSeatId, onPassengerViewRestore]);
 
   const frames = useMemo<readonly VehicleFrameRuntime[]>(() => {
     const vehicleByCluster = new Map(
@@ -1697,19 +1823,31 @@ export function VehicleFrameSystem({
         interaction.pose,
         interactionFrame.nose,
       );
+      const interactionSeat = isTerminal
+        ? SKY_TRAIN_DRIVER_SEAT
+        : interactionFrame.clusterId === TOWN_HEXACOPTER_PILOT_SEAT.carrierClusterId
+          ? TOWN_HEXACOPTER_PILOT_SEAT
+          : null;
       const seatIntact =
-        isTerminal &&
-        passengerSeatIsIntact(SKY_TRAIN_DRIVER_SEAT, inactivePieces);
-      const seatDistance = Math.hypot(
-        eyeInShip[0] - SKY_TRAIN_DRIVER_SEAT.interactionPoint[0],
-        eyeInShip[1] - SKY_TRAIN_DRIVER_SEAT.interactionPoint[1],
-        eyeInShip[2] - SKY_TRAIN_DRIVER_SEAT.interactionPoint[2],
-      );
+        interactionSeat !== null &&
+        passengerSeatIsIntact(interactionSeat, inactivePieces);
+      const seatDistance = interactionSeat
+        ? Math.hypot(
+            eyeInShip[0] - interactionSeat.interactionPoint[0],
+            eyeInShip[1] - interactionSeat.interactionPoint[1],
+            eyeInShip[2] - interactionSeat.interactionPoint[2],
+          )
+        : Number.POSITIVE_INFINITY;
+      const hexacopterPilotMayStand =
+        interactionSeat?.id !== TOWN_HEXACOPTER_PILOT_SEAT_ID ||
+        (occupiedSeatId === TOWN_HEXACOPTER_PILOT_SEAT_ID &&
+          interaction.flight === null);
       const seatAction =
-        isTerminal &&
-        (passengerLaunchAllowed || occupiedSeatId === SKY_TRAIN_DRIVER_SEAT.id)
+        interactionSeat &&
+        hexacopterPilotMayStand &&
+        (passengerLaunchAllowed || occupiedSeatId === interactionSeat.id)
           ? passengerSeatContextAction({
-              seat: SKY_TRAIN_DRIVER_SEAT,
+              seat: interactionSeat,
               occupiedSeatId,
               carrierActive: interaction.flight !== null,
               passengerInsideCarrier:
@@ -1757,15 +1895,24 @@ export function VehicleFrameSystem({
       } else if (isTerminal) {
         post = seatAction;
       }
+      const departureTarget =
+        departure?.target.actions && !passengerLaunchAllowed
+          ? {
+              ...departure.target,
+              actions: departure.target.actions.filter(
+                (action) => action.id !== "manual",
+              ),
+            }
+          : (departure?.target ?? null);
       const candidate: EntryInteractionTarget | null =
         post === "ride"
           ? (interactionFrame.passengerFlight?.target ?? null)
           : post === "board"
-            ? (departure?.target ?? null)
+            ? departureTarget
             : post === "seat"
-              ? { id: SKY_TRAIN_DRIVER_SEAT.id, kind: "seat" }
+              ? { id: interactionSeat?.id ?? "seat", kind: "seat" }
               : post === "stand"
-                ? { id: SKY_TRAIN_DRIVER_SEAT.id, kind: "stand" }
+                ? { id: interactionSeat?.id ?? "seat", kind: "stand" }
                 : null;
       if (post !== approachedPost.current) {
         approachedPost.current = post;
@@ -1783,24 +1930,40 @@ export function VehicleFrameSystem({
           ) {
             const requestedAction =
               departRequestTargetRef?.current?.selectedActionId;
+            const manualPilotLaunch =
+              post === "board" &&
+              requestedAction === "manual" &&
+              interactionSeat?.id === TOWN_HEXACOPTER_PILOT_SEAT_ID &&
+              passengerLaunchAllowed &&
+              seatIntact;
             interaction.flight = createFlightState(
               post === "ride"
                 ? (requestedAction ??
                     interactionFrame.passengerFlight?.flightKind ??
                     "tour")
                 : (departure?.flightKind ?? "circuit"),
-              post === "ride" ? "passenger" : "uncrewed",
+              post === "ride" || manualPilotLaunch
+                ? "passenger"
+                : "uncrewed",
               interactionFrame.flight.limits.enginePoints.length,
+              0,
+              manualPilotLaunch
+                ? createRotorcraftPilotState(interaction.body.position[1], true)
+                : null,
             );
+            if (manualPilotLaunch) {
+              onOccupiedSeatChange(TOWN_HEXACOPTER_PILOT_SEAT_ID);
+            }
           } else if (
             post === "seat" &&
             interaction.flight !== null &&
-            seatIntact
+            seatIntact &&
+            interactionSeat
           ) {
-            onOccupiedSeatChange(SKY_TRAIN_DRIVER_SEAT.id);
+            onOccupiedSeatChange(interactionSeat.id);
           } else if (
             post === "stand" &&
-            occupiedSeatId === SKY_TRAIN_DRIVER_SEAT.id
+            occupiedSeatId === interactionSeat?.id
           ) {
             onOccupiedSeatChange(null);
           }
@@ -1861,7 +2024,8 @@ export function VehicleFrameSystem({
         liveFlight.time += step;
         if (
           !liveFlight.castOff &&
-          liveFlight.time >= liveFrame.flight.spoolSeconds
+          liveFlight.time >= liveFrame.flight.spoolSeconds &&
+          (!liveFlight.pilot || liveFlight.pilot.takeoffAuthorized)
         ) {
           liveFlight.castOff = true;
           // Empty service flights cannot smuggle a player out of the map.
@@ -2652,6 +2816,55 @@ export function VehicleFrameSystem({
         });
       }
       const flight = state.flight;
+      const pilotControlsNow =
+        flight?.pilot &&
+        occupiedSeatId === TOWN_HEXACOPTER_PILOT_SEAT_ID
+          ? getPilotControls()
+          : {
+              forward: false,
+              backward: false,
+              left: false,
+              right: false,
+              run: false,
+              jump: false,
+            };
+      const commands =
+        flight?.pilot &&
+        occupiedSeatId === TOWN_HEXACOPTER_PILOT_SEAT_ID
+          ? consumeRotorcraftPilotCommands(pilotCommands.current)
+          : null;
+      const pilotManualOverride = Boolean(
+        flight?.pilot &&
+          (pilotControlsNow.forward ||
+            pilotControlsNow.backward ||
+            pilotControlsNow.left ||
+            pilotControlsNow.right ||
+            pilotControlsNow.jump ||
+            Math.abs(commands?.altitudeDelta ?? 0) > 1e-6),
+      );
+      // Sensor presentation remains a pilot choice while H owns guidance.
+      // The other one-shot flight-mode requests are intentionally consumed
+      // above: replaying them after a later takeover would be stale input.
+      if (
+        flight?.pilot?.mode === "return" &&
+        !pilotManualOverride &&
+        commands?.requestToggleSensors
+      ) {
+        flight.pilot = {
+          ...flight.pilot,
+          sensorAssistEnabled: !flight.pilot.sensorAssistEnabled,
+        };
+      }
+      if (flight?.pilot && commands?.recenterView) {
+        const forward = rotateByQuaternion(
+          state.body.orientation,
+          frame.nose,
+        );
+        onPassengerViewRestore?.(
+          Math.atan2(-forward[0], -forward[2]),
+          0,
+        );
+      }
       const attachedMembers =
         clusterRegistry.current.get(frame.clusterId)?.attachedMemberIds ??
         new Set(alive.map((member) => member.piece.id));
@@ -2771,36 +2984,22 @@ export function VehicleFrameSystem({
       // Predictive sensing is judged against the authored plan that owns the
       // berth. A temporary intercept ends at a route join, so asking it where
       // the berth is would let the mast read as an unexpected obstacle.
-      const senseObstacleSafety = (
-        plan: VehicleRoutePlan,
-        progress: number,
-      ): VehicleSafetyAdvisory | null => {
-        const berthPoint = plan.point(1);
-        // A mast, platform or pier is expected geometry while casting off and
-        // on final. Near-contact probes remain active there; only predictive
-        // intervention is suppressed.
-        if (
-          vehicleSafetySensingSuppressed({
-            progress,
-            finalFrom: plan.finalFrom,
-            berthDistance: Math.hypot(
-              centreNow[0] - berthPoint[0],
-              centreNow[1] - berthPoint[1],
-              centreNow[2] - berthPoint[2],
-            ),
-          })
-        ) {
-          return null;
-        }
-
+      const senseObstacleField = (
+        scanClearDirections: boolean,
+      ): {
+        readonly readings: readonly VehicleObstacleReading[];
+        readonly availableDeceleration: number;
+        readonly climbClearance: number;
+        readonly descentClearance: number;
+      } => {
         const carrierBody = clusterRegistry.current.get(frame.clusterId)?.body;
         const ownBodyHandles = shipBodies.current.get(frame.clusterId);
         const rotationNow = vehicleRotation(state.pose, frame.nose);
-        const samples: VehicleObstacleSample[] = [];
+        const readings: VehicleObstacleReading[] = [];
         let topPoint: readonly [number, number, number] | null = null;
         let bottomPoint: readonly [number, number, number] | null = null;
 
-        for (const probe of frame.hullProbes) {
+        for (const [probeIndex, probe] of frame.hullProbes.entries()) {
           const point = vehiclePiecePosition(
             frame.origin,
             probe.point as [number, number, number],
@@ -2832,7 +3031,7 @@ export function VehicleFrameSystem({
             pointVelocity[0] * normal[0] +
             pointVelocity[1] * normal[1] +
             pointVelocity[2] * normal[2];
-          if (staticClosing <= 0.2) {
+          if (!scanClearDirections && staticClosing <= 0.2) {
             continue;
           }
 
@@ -2892,17 +3091,17 @@ export function VehicleFrameSystem({
               angular.x * obstacleLever[1] -
               angular.y * obstacleLever[0];
           }
-          samples.push({
+          readings.push({
+            probeIndex,
+            localNormal: probe.normal as [number, number, number],
+            worldNormal: normal,
+            lever,
             distance: hit.timeOfImpact,
             relativeClosingSpeed:
               (pointVelocity[0] - obstacleVelocity[0]) * normal[0] +
               (pointVelocity[1] - obstacleVelocity[1]) * normal[1] +
               (pointVelocity[2] - obstacleVelocity[2]) * normal[2],
           });
-        }
-
-        if (samples.length === 0) {
-          return null;
         }
 
         const verticalClearance = (
@@ -2940,16 +3139,79 @@ export function VehicleFrameSystem({
         const availability =
           autopilotModel.engineAvailability ??
           frame.flight.limits.enginePoints.map(() => 1);
-        const availableDeceleration =
-          (frame.flight.limits.enginePower *
-            availability.reduce((sum, fraction) => sum + fraction, 0)) /
-          Math.max(1, mass.mass);
-        return vehicleSafetyAdvisory(
-          samples,
-          availableDeceleration,
-          verticalClearance(topPoint, 1),
-          verticalClearance(bottomPoint, -1),
+        const summedAvailability = availability.reduce(
+          (sum, fraction) => sum + fraction,
+          0,
         );
+        const directionalPower = usesRotorDynamics
+          ? Math.min(
+              frame.flight.limits.enginePower,
+              frame.flight.limits.lateralThrust ??
+                frame.flight.limits.enginePower,
+            )
+          : frame.flight.limits.enginePower;
+        return {
+          readings,
+          availableDeceleration:
+            (directionalPower * summedAvailability) / Math.max(1, mass.mass),
+          climbClearance: verticalClearance(topPoint, 1),
+          descentClearance: verticalClearance(bottomPoint, -1),
+        };
+      };
+      const senseObstacleSafety = (
+        plan: VehicleRoutePlan,
+        progress: number,
+      ): VehicleSafetyAdvisory | null => {
+        const berthPoint = plan.point(1);
+        // A mast, platform or pier is expected geometry while casting off and
+        // on final. Near-contact probes remain active there; only predictive
+        // intervention is suppressed.
+        if (
+          vehicleSafetySensingSuppressed({
+            progress,
+            finalFrom: plan.finalFrom,
+            berthDistance: Math.hypot(
+              centreNow[0] - berthPoint[0],
+              centreNow[1] - berthPoint[1],
+              centreNow[2] - berthPoint[2],
+            ),
+          })
+        ) {
+          return null;
+        }
+        const field = senseObstacleField(
+          flight?.pilot?.sensorAssistEnabled === true,
+        );
+        if (field.readings.length === 0) {
+          if (flight?.pilot) {
+            flight.pilotObstacleReadings = [];
+            flight.pilotIntervenedProbes.clear();
+          }
+          return null;
+        }
+        const advisory = vehicleSafetyAdvisory(
+          field.readings as readonly VehicleObstacleSample[],
+          field.availableDeceleration,
+          field.climbClearance,
+          field.descentClearance,
+        );
+        if (flight?.pilot?.sensorAssistEnabled) {
+          flight.pilotObstacleReadings = field.readings;
+          flight.pilotIntervenedProbes.clear();
+          if (advisory?.risk === "intervention") {
+            const threat = field.readings
+              .filter((reading) => reading.relativeClosingSpeed > 0.2)
+              .sort(
+                (left, right) =>
+                  left.distance / left.relativeClosingSpeed -
+                  right.distance / right.relativeClosingSpeed,
+              )[0];
+            if (threat) {
+              flight.pilotIntervenedProbes.add(threat.probeIndex);
+            }
+          }
+        }
+        return advisory;
       };
       const flyRoutePlan = (
         plan: VehicleRoutePlan,
@@ -2964,7 +3226,14 @@ export function VehicleFrameSystem({
         )
           ? speedLimitedPlan(plan, flightClearance.speedFactor)
           : plan;
-        const safetyAdvisory = senseObstacleSafety(berthPlan, berthProgress);
+        const sensedSafety = senseObstacleSafety(berthPlan, berthProgress);
+        // H owns a deliberately direct return. Proximity assistance may stop
+        // that request, but climbing or diving around the obstruction would
+        // already be route planning — a separate future capability.
+        const safetyAdvisory =
+          sensedSafety && flight?.pilot?.returnPlan === berthPlan
+            ? { ...sensedSafety, altitudeOffset: 0 }
+            : sensedSafety;
         if (flight) {
           flight.safetyAdvisory = safetyAdvisory;
         }
@@ -3068,7 +3337,12 @@ export function VehicleFrameSystem({
       // A route-following aircraft has no legitimate reason to remain loaded
       // on terrain. Confirm contact long enough to reject a bounce, then let
       // the ground-recovery lifecycle own an unconditional propulsion cutoff.
-      if (flight?.castOff && !state.recovery) {
+      if (
+        flight?.castOff &&
+        !state.recovery &&
+        (!flight.pilot ||
+          (flight.pilot.mode === "return" && !pilotManualOverride))
+      ) {
         // «Неожиданный контакт с грунтом» — это контакт там, где его не
         // предполагает МАРШРУТ. Спрашивать надо у него: профиль высоты он уже
         // несёт, и на взлётном и посадочном участках требуемая высота равна
@@ -3083,9 +3357,11 @@ export function VehicleFrameSystem({
         //
         // То же самое даром получают все будущие классы: у поезда на рельсах
         // и у судна на воде требуемая высота нулевая на всём маршруте.
+        const groundPlan =
+          flight.pilot?.returnPlan ??
+          frame.flight.routePlan(flight.kind, berth);
         const requiredAltitude =
-          frame.flight.routePlan(flight.kind, berth).altitude(flight.progress) -
-          berth[1];
+          groundPlan.altitude(flight.progress) - berth[1];
         flight.unexpectedGroundContactSeconds =
           state.supportContacts > 0 &&
           requiredAltitude > ROUTE_GROUND_ALTITUDE
@@ -3223,8 +3499,232 @@ export function VehicleFrameSystem({
             liftCommand = -1;
           }
         }
+      } else if (
+        flight &&
+        flight.pilot &&
+        (flight.pilot.mode !== "return" || pilotManualOverride)
+      ) {
+        const forwardAxis =
+          Number(pilotControlsNow.forward) -
+          Number(pilotControlsNow.backward);
+        const horizontalAxis =
+          Number(pilotControlsNow.right) - Number(pilotControlsNow.left);
+        const manualDescent =
+          (pilotControlsNow.run && forwardAxis < -1e-6) ||
+          (commands?.altitudeDelta ?? 0) < -1e-6;
+        const pilotAttitude = vehicleAttitude(
+          state.body.orientation,
+          frame.nose,
+        );
+        const pilotStep = advanceRotorcraftPilot(
+          flight.pilot,
+          {
+            forwardAxis,
+            horizontalAxis,
+            translationModifier: pilotControlsNow.run,
+            altitudeDelta: commands?.altitudeDelta ?? 0,
+            brake: pilotControlsNow.jump,
+            requestSafeClimb: commands?.requestSafeClimb ?? false,
+            requestReturn: commands?.requestReturn ?? false,
+            requestToggleSensors: commands?.requestToggleSensors ?? false,
+            requestDisarm: commands?.requestDisarm ?? false,
+          },
+          {
+            relativeAltitude: state.body.position[1],
+            verticalSpeed: state.body.velocity[1],
+            grounded: state.supportContacts > 0,
+            groundSpeed: Math.hypot(
+              state.body.velocity[0],
+              state.body.velocity[2],
+            ),
+            uprightCos: Math.cos(pilotAttitude.pitch) * Math.cos(pilotAttitude.roll),
+            angularSpeed: Math.hypot(...state.body.angularVelocity),
+            deltaSeconds: step,
+            liftTrimRange: frame.flight.limits.liftTrimRange,
+            safeAltitude: ROTORCRAFT_PILOT_SAFE_ALTITUDE,
+          },
+        );
+        flight.pilot = pilotStep.state;
+        let manualGuidance = pilotStep.guidance;
+        if (pilotStep.state.sensorAssistEnabled) {
+          const field = senseObstacleField(true);
+          const forward = rotateByQuaternion(
+            state.body.orientation,
+            frame.nose,
+          );
+          const forwardLength = Math.hypot(forward[0], forward[2]) || 1;
+          const forwardFlat = [
+            forward[0] / forwardLength,
+            forward[2] / forwardLength,
+          ] as const;
+          const assisted = constrainRotorcraftGuidance(
+            manualGuidance,
+            field.readings,
+            {
+              forward: forwardFlat,
+              starboard: [-forwardFlat[1], forwardFlat[0]],
+              verticalSpeed: state.body.velocity[1],
+              horizontalDeceleration: field.availableDeceleration,
+              verticalDeceleration:
+                GRAVITY * frame.flight.limits.liftTrimRange,
+              liftTrimRange: frame.flight.limits.liftTrimRange,
+              grounded: state.supportContacts > 0,
+              landingIntent: manualDescent,
+            },
+          );
+          manualGuidance = assisted.guidance;
+          flight.pilotObstacleReadings = field.readings;
+          flight.pilotIntervenedProbes.clear();
+          for (const probeIndex of assisted.intervenedProbeIndices) {
+            flight.pilotIntervenedProbes.add(probeIndex);
+          }
+        } else {
+          flight.pilotObstacleReadings = [];
+          flight.pilotIntervenedProbes.clear();
+        }
+        rotorGuidance = manualGuidance;
+        liftCommand = manualGuidance.liftFraction;
+        flight.safetyAdvisory = null;
+
+        if (pilotStep.disarmRequested) {
+          // Ending a manual flight is allowed on any stable physical support,
+          // not only on the authored pad. The ordinary occupied-seat action
+          // then becomes `stand`, so Space releases the pilot beside the craft.
+          state.flight = null;
+          liftCommand = -frame.flight.limits.liftTrimRange;
+        }
+
+        if (pilotStep.readyToBuildReturn) {
+          const returnPlan = createRotorcraftPilotReturnPlan(
+            centreNow,
+            berth,
+            ROTORCRAFT_PILOT_SAFE_ALTITUDE,
+          );
+          flight.pilot = {
+            ...pilotStep.state,
+            mode: "return",
+            returnPlan,
+          };
+          flight.progress = 0;
+          flight.watchdog = rebaseVehicleFailureWatchdog(
+            flight.watchdog,
+            0,
+          );
+        }
+
+        // Manual guidance has no route deviation, but it has exactly the same
+        // physical failure supervision as an automatic flight. Losing command
+        // authority must still hand the craft to emergency recovery.
+        const attitude = pilotAttitude;
+        const rotorControlAvailable =
+          state.rotorAuthority !== null &&
+          rotorcraftCommandsExecute(state.rotorAuthority);
+        const deliveredFraction = state.rotorAuthority
+          ? Math.min(
+              state.rotorAuthority.thrust,
+              state.rotorAuthority.pitch,
+              state.rotorAuthority.roll,
+            )
+          : 0;
+        const requestedEffort = Math.max(
+          Math.abs(manualGuidance.forwardSpeed) / 12,
+          Math.abs(manualGuidance.lateralSpeed) / 8,
+          Math.abs(manualGuidance.yawRate) / ROTOR_YAW_RATE,
+        );
+        const requestedLiftTrim = normalizedLiftTrimRequest(
+          manualGuidance.liftFraction,
+          frame.flight.limits.liftTrimRange,
+        );
+        const supervisingManualFlight =
+          !pilotStep.disarmRequested && rotorcraftPilotNeedsFlightSupervision(
+            pilotStep.state,
+            flight.castOff,
+            state.supportContacts > 0,
+          );
+        const watchdogResult = supervisingManualFlight
+          ? advanceVehicleFailureWatchdog(
+              flight.watchdog,
+              {
+                deltaSeconds: step,
+                relativeAltitude: state.body.position[1],
+                pitch: attitude.pitch,
+                roll: attitude.roll,
+                headingError: 0,
+                yawRateError:
+                  state.body.angularVelocity[1] -
+                  (state.rotorAcceptedYawRate ?? manualGuidance.yawRate),
+                crossTrackError: 0,
+                altitudeError: 0,
+                progress: 0.5,
+                routeProgressTracked: false,
+                requiredControlAvailable: rotorControlAvailable,
+                requestedControlEffort: requestedEffort,
+                deliveredControlFraction: deliveredFraction,
+                requestedLiftEffort: Math.max(0, requestedLiftTrim),
+                deliveredLiftFraction: deliveredLiftControlFraction(
+                  requestedLiftTrim,
+                  frame.flight.limits.liftTrimRange,
+                  liftCapacity / Math.max(1, neutral),
+                ),
+                goArounds: 0,
+                corrections: 0,
+                trimAuthorityExhausted: state.trimExhaustedSeconds > 0,
+                turning: Math.abs(state.body.angularVelocity[1]) > 0.1,
+                inFinalManeuver: false,
+                // Manual flight has no docking objective. Zero is a finite
+                // inactive value; Infinity is an invalid physical state.
+                dockingDistance: 0,
+                inDockingCapture: false,
+                dockingComplete: false,
+                recoveringDisturbance: false,
+              },
+              failureEnvelope,
+            )
+          : {
+              state: rebaseVehicleFailureWatchdog(flight.watchdog, 0.5),
+              failure: null,
+            };
+        flight.watchdog = watchdogResult.state;
+        if (watchdogResult.failure) {
+          const disposition = currentDisposition();
+          const forward = rotateByQuaternion(
+            state.body.orientation,
+            frame.nose,
+          );
+          state.recovery = {
+            lifecycle: createVehicleRecoveryLifecycle(
+              watchdogResult.failure,
+              disposition,
+            ),
+            progress: 0,
+            escapePlan:
+              disposition === "escapeRoute"
+                ? frame.flight.escapePlan(berth, {
+                    start: state.body.position,
+                    forward,
+                  })
+                : null,
+            arrivalInitialized: false,
+            escapeStallSeconds: 0,
+            escapeBestProgress: 0,
+            landingStability: createVehicleLandingStability(
+              state.body.position,
+              state.body.orientation,
+            ),
+            groundContactSeconds: 0,
+            groundContactLatched: false,
+            groundLiftAutomation: createVehicleGroundLiftAutomation(),
+          };
+          onVehicleFailure?.({
+            sourceId: frame.clusterId,
+            sourceLabel: frame.telemetryLabel ?? frame.id.toUpperCase(),
+            reason: watchdogResult.failure,
+          });
+        }
       } else if (flight && flight.castOff) {
-        const plan = frame.flight.routePlan(flight.kind, berth);
+        const plan =
+          flight.pilot?.returnPlan ??
+          frame.flight.routePlan(flight.kind, berth);
         const beforeRecoveryTracking = routeTrackingState(
           plan,
           flight.progress,
@@ -4091,7 +4591,7 @@ export function VehicleFrameSystem({
       // внутри винтовой модели, а не в клапане чужой оболочки.
       const rotorRecoveryPhase = state.recovery?.lifecycle.phase ?? null;
       const rotorEnabled =
-        Boolean(flight) &&
+        Boolean(state.flight) &&
         (rotorRecoveryPhase === null ||
           rotorRecoveryPhase === "escape" ||
           rotorRecoveryPhase === "descent" ||
@@ -4250,10 +4750,12 @@ export function VehicleFrameSystem({
                 ? frame.flight.arrivalPlan(telemetryBerth)
                 : telemetryRecoveryPhase
                   ? null
-                  : frame.flight.routePlan(
-                      telemetryFlight.kind,
-                      telemetryBerth,
-                    );
+                  : telemetryFlight.pilot
+                    ? telemetryFlight.pilot.returnPlan
+                    : frame.flight.routePlan(
+                        telemetryFlight.kind,
+                        telemetryBerth,
+                      );
           const telemetryProgress =
             telemetryRecoveryPhase === "escape" ||
             telemetryRecoveryPhase === "arrival"
@@ -4678,6 +5180,84 @@ export function VehicleFrameSystem({
         state.released.clear();
       }
     }
+
+    if (
+      onRotorcraftPilotStatusChange &&
+      occupiedSeatId === TOWN_HEXACOPTER_PILOT_SEAT_ID
+    ) {
+      const pilotRuntime = frames
+        .map((frame) => ({ frame, state: frameState(frame.id) }))
+        .find(({ state }) => state.flight?.pilot !== null && state.flight?.pilot !== undefined);
+      const pilot = pilotRuntime?.state.flight?.pilot ?? null;
+      if (pilot && pilotRuntime) {
+        const now = performance.now();
+        const targetAltitude = Math.round(pilot.targetAltitude * 10) / 10;
+        const { frame, state } = pilotRuntime;
+        const attitude = vehicleAttitude(state.body.orientation, frame.nose);
+        const forward = rotateByQuaternion(state.body.orientation, frame.nose);
+        const heading =
+          ((Math.atan2(forward[0], -forward[2]) * 180) / Math.PI + 360) % 360;
+        const currentAltitude = Math.round(state.body.position[1] * 10) / 10;
+        const verticalSpeed = Math.round(state.body.velocity[1] * 10) / 10;
+        const groundSpeed =
+          Math.round(Math.hypot(state.body.velocity[0], state.body.velocity[2]) * 10) /
+          10;
+        const proximity = rotorcraftProximitySectors(
+          frame.nose,
+          state.flight?.pilotObstacleReadings ?? [],
+          state.flight?.pilotIntervenedProbes ?? new Set<number>(),
+        );
+        const motorOutput = state.rotorMotorOutput.map(
+          (value) => Math.round(value * 100) / 100,
+        );
+        const motorAvailability = (
+          state.flight?.propulsionFeedback ?? motorOutput.map(() => 0)
+        ).map((value) => Math.round(value * 100) / 100);
+        const key = JSON.stringify([
+          pilot.mode,
+          targetAltitude,
+          currentAltitude,
+          verticalSpeed,
+          groundSpeed,
+          Math.round(heading),
+          Math.round((attitude.pitch * 180) / Math.PI),
+          Math.round((attitude.roll * 180) / Math.PI),
+          pilot.sensorAssistEnabled,
+          pilot.landingStableSeconds >= 0.45,
+          proximity,
+          motorOutput,
+          motorAvailability,
+        ]);
+        const modeChanged = pilotStatusMode.current !== pilot.mode;
+        if (
+          key !== pilotStatusPublished.current &&
+          (modeChanged || now >= pilotStatusNextAt.current)
+        ) {
+          pilotStatusPublished.current = key;
+          pilotStatusMode.current = pilot.mode;
+          pilotStatusNextAt.current = now + 100;
+          onRotorcraftPilotStatusChange({
+            mode: pilot.mode,
+            targetAltitude,
+            currentAltitude,
+            verticalSpeed,
+            groundSpeed,
+            heading,
+            pitch: attitude.pitch,
+            roll: attitude.roll,
+            sensorAssistEnabled: pilot.sensorAssistEnabled,
+            landingReady: pilot.landingStableSeconds >= 0.45,
+            proximity,
+            motorOutput,
+            motorAvailability,
+          });
+        }
+      } else if (pilotStatusPublished.current !== null) {
+        pilotStatusPublished.current = null;
+        pilotStatusMode.current = null;
+        onRotorcraftPilotStatusChange(null);
+      }
+    }
   });
 
   return (
@@ -4695,4 +5275,80 @@ export function VehicleFrameSystem({
       />
     </>
   );
+}
+
+export interface RotorcraftPilotStatus {
+  readonly mode: RotorcraftPilotState["mode"];
+  readonly targetAltitude: number;
+  readonly currentAltitude: number;
+  readonly verticalSpeed: number;
+  readonly groundSpeed: number;
+  readonly heading: number;
+  readonly pitch: number;
+  readonly roll: number;
+  readonly sensorAssistEnabled: boolean;
+  readonly landingReady: boolean;
+  readonly proximity: Readonly<Record<RotorcraftProximitySector, RotorcraftProximityReading>>;
+  readonly motorOutput: readonly number[];
+  readonly motorAvailability: readonly number[];
+}
+
+export type RotorcraftProximitySector =
+  | "fore"
+  | "aft"
+  | "port"
+  | "starboard"
+  | "above"
+  | "below";
+
+export interface RotorcraftProximityReading {
+  readonly distance: number | null;
+  readonly intervening: boolean;
+}
+
+function rotorcraftProximitySectors(
+  nose: readonly [number, number, number],
+  readings: readonly VehicleObstacleReading[],
+  intervened: ReadonlySet<number>,
+): Readonly<Record<RotorcraftProximitySector, RotorcraftProximityReading>> {
+  const empty = (): RotorcraftProximityReading => ({
+    distance: null,
+    intervening: false,
+  });
+  const sectors: Record<RotorcraftProximitySector, RotorcraftProximityReading> = {
+    fore: empty(),
+    aft: empty(),
+    port: empty(),
+    starboard: empty(),
+    above: empty(),
+    below: empty(),
+  };
+  const noseLength = Math.hypot(nose[0], nose[2]) || 1;
+  const fore = [nose[0] / noseLength, nose[2] / noseLength] as const;
+  const starboard = [-fore[1], fore[0]] as const;
+  for (const reading of readings) {
+    const normal = reading.localNormal;
+    let sector: RotorcraftProximitySector;
+    if (normal[1] >= 0.65) {
+      sector = "above";
+    } else if (normal[1] <= -0.65) {
+      sector = "below";
+    } else {
+      const longitudinal = normal[0] * fore[0] + normal[2] * fore[1];
+      const lateral = normal[0] * starboard[0] + normal[2] * starboard[1];
+      sector = Math.abs(longitudinal) >= Math.abs(lateral)
+        ? longitudinal >= 0 ? "fore" : "aft"
+        : lateral >= 0 ? "starboard" : "port";
+    }
+    const previous = sectors[sector];
+    if (previous.distance === null || reading.distance < previous.distance) {
+      sectors[sector] = {
+        distance: Math.round(reading.distance * 10) / 10,
+        intervening: intervened.has(reading.probeIndex),
+      };
+    } else if (intervened.has(reading.probeIndex) && !previous.intervening) {
+      sectors[sector] = { ...previous, intervening: true };
+    }
+  }
+  return sectors;
 }

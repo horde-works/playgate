@@ -50,6 +50,8 @@ import { environmentState } from "./environmentState";
 import { lampBeaconOpacity, lampBeaconWorldDiameter } from "./lampBeacon";
 import {
   lampEventLevel,
+  lampInteriorFactor,
+  lampSelfCastFactor,
   lampTimeFactor,
   smoothLampLevel,
 } from "./lampEventLighting";
@@ -431,11 +433,13 @@ export function LampBeaconField({
   lamps,
   brokenPieces,
   nightRef,
+  occupiedCarrierClusterId = null,
   resolveLampPosition = (lamp) => lamp.position,
 }: {
   lamps: readonly LampDefinition[];
   brokenPieces: ReadonlySet<string>;
   nightRef: { current: number };
+  occupiedCarrierClusterId?: string | null;
   resolveLampPosition?: (lamp: LampDefinition) => LampDefinition["position"];
 }) {
   const camera = useThree((state) => state.camera);
@@ -472,7 +476,9 @@ export function LampBeaconField({
       );
       sprite.scale.set(diameter, diameter, 1);
       const material = sprite.material as SpriteMaterial;
-      material.opacity = lampBeaconOpacity(definition, nightRef.current);
+      material.opacity =
+        lampBeaconOpacity(definition, nightRef.current) *
+        lampInteriorFactor(lamp, occupiedCarrierClusterId);
       sprite.visible = material.opacity > 0.001;
     });
   });
@@ -513,6 +519,7 @@ interface LampLightPoolProps {
   readonly lamps: readonly LampDefinition[];
   readonly brokenPieces: ReadonlySet<string>;
   readonly nightRef: { current: number };
+  readonly occupiedCarrierClusterId?: string | null;
   readonly resolveLampPosition?: (lamp: LampDefinition) => LampDefinition["position"];
   readonly resolveEventState?: (sourceClusterId: string) => LampEventState;
 }
@@ -530,6 +537,7 @@ export function LampLightPool({
   lamps,
   brokenPieces,
   nightRef,
+  occupiedCarrierClusterId = null,
   resolveLampPosition = (lamp) => lamp.position,
   resolveEventState = () => "inTransit",
 }: LampLightPoolProps) {
@@ -563,11 +571,15 @@ export function LampLightPool({
         continue;
       }
       const timeFactor = lampTimeFactor(lamp, night);
+      const selfCastFactor = lampSelfCastFactor(
+        lamp,
+        occupiedCarrierClusterId,
+      );
       const eventState = lamp.eventLighting
         ? resolveEventState(lamp.eventLighting.sourceClusterId)
         : "inTransit";
       const level = lampEventLevel(lamp, eventState);
-      if (timeFactor * level.intensityMultiplier <= 0.001) {
+      if (timeFactor * selfCastFactor * level.intensityMultiplier <= 0.001) {
         continue;
       }
       const position = resolveLampPosition(lamp);
@@ -664,6 +676,7 @@ export function LampLightPool({
         light.distance = (current.distance ?? 9) * level.distanceMultiplier;
         const target =
           lampTimeFactor(current, night) *
+          lampSelfCastFactor(current, occupiedCarrierClusterId) *
           (current.intensity ?? 2.6) *
           level.intensityMultiplier;
         slot.intensity = smoothLampLevel(
@@ -751,6 +764,7 @@ export function SpotLightPool({
   lights: definitions,
   brokenPieces,
   nightRef,
+  occupiedCarrierClusterId = null,
   resolveLightPosition = (light) => light.position,
   resolveLightDirection = (light) => light.direction,
   resolveEventState = () => "inTransit",
@@ -758,6 +772,7 @@ export function SpotLightPool({
   lights: readonly SpotLightDefinition[];
   brokenPieces: ReadonlySet<string>;
   nightRef: { current: number };
+  occupiedCarrierClusterId?: string | null;
   resolveLightPosition?: (
     light: SpotLightDefinition,
   ) => SpotLightDefinition["position"];
@@ -826,7 +841,12 @@ export function SpotLightPool({
       const level = lampEventLevel(definition, state);
       const glow =
         fixtureGlow.intensity *
-        Math.min(1, lampTimeFactor(definition, night) * level.intensityMultiplier);
+        Math.min(
+          1,
+          lampTimeFactor(definition, night) *
+            lampInteriorFactor(definition, occupiedCarrierClusterId) *
+            level.intensityMultiplier,
+        );
       desiredFixtureGlow.set(
         fixtureGlow.color,
         Math.max(desiredFixtureGlow.get(fixtureGlow.color) ?? 0, glow),
@@ -857,7 +877,12 @@ export function SpotLightPool({
           ? resolveEventState(definition.eventLighting.sourceClusterId)
           : "inTransit";
         const level = lampEventLevel(definition, state);
-        return lampTimeFactor(definition, night) * level.intensityMultiplier > 0.001;
+        return (
+          lampTimeFactor(definition, night) *
+            lampInteriorFactor(definition, occupiedCarrierClusterId) *
+            level.intensityMultiplier >
+          0.001
+        );
       })
       .map((definition) => {
         const position = resolveLightPosition(definition);
@@ -911,7 +936,10 @@ export function SpotLightPool({
       const timeFactor = lampTimeFactor(definition, night);
       const selected = wanted.has(definition.id) && !brokenPieces.has(definition.id);
       const desiredIntensity = selected
-        ? timeFactor * (definition.intensity ?? 80) * level.intensityMultiplier
+        ? timeFactor *
+          lampInteriorFactor(definition, occupiedCarrierClusterId) *
+          (definition.intensity ?? 80) *
+          level.intensityMultiplier
         : 0;
       slot.intensity = smoothLampLevel(
         definition,

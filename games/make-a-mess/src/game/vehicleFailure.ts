@@ -301,6 +301,12 @@ export interface VehicleFailureObservation {
   /** Vertical error that cannot be removed in that distance, in metres. */
   readonly altitudeError?: number;
   readonly progress: number;
+  /**
+   * False when the current controller has no route at all. Manual flight may
+   * still use attitude and actuator supervision, but a synthetic progress
+   * value must never feed the route-stall timers.
+   */
+  readonly routeProgressTracked?: boolean;
   /** False when a required control channel is physically inoperative. */
   readonly requiredControlAvailable: boolean;
   readonly requestedControlEffort: number;
@@ -426,6 +432,20 @@ export function deliveredLiftControlFraction(
   }
   const availableAuthority = Math.max(0, liftToWeight - 1);
   return Math.max(0, Math.min(1, availableAuthority / requestedAuthority));
+}
+
+/** Converts guidance's fraction-of-weight request to the normalized trim channel. */
+export function normalizedLiftTrimRequest(
+  requestedLiftFraction: number,
+  liftTrimRange: number,
+): number {
+  if (liftTrimRange <= 1e-6) {
+    return 0;
+  }
+  return Math.max(
+    -1,
+    Math.min(1, requestedLiftFraction / liftTrimRange),
+  );
 }
 
 export interface VehicleFailureEnvelope {
@@ -627,8 +647,10 @@ export function advanceVehicleFailureWatchdog(
     delta,
   );
   const progressDelta = observation.progress - current.previousProgress;
+  const routeProgressTracked = observation.routeProgressTracked !== false;
   const stalledSeconds = heldSeconds(
     !suspended &&
+      routeProgressTracked &&
       !observation.inFinalManeuver &&
       !observation.turning &&
       observation.requestedControlEffort > 0.5 &&
@@ -639,6 +661,7 @@ export function advanceVehicleFailureWatchdog(
   );
   const maneuverSeconds = heldSeconds(
     !suspended &&
+      routeProgressTracked &&
       observation.turning &&
       observation.requestedControlEffort > 0.35 &&
       progressDelta >= 0 &&

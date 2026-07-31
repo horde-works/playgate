@@ -74,6 +74,9 @@ test("disturbance recovery reacquires the nearest bounded route point", () => {
     point(progress) {
       return [progress * 100, progress * 10, 0];
     },
+    altitude(progress) {
+      return progress * 10;
+    },
     speedLimit() {
       return 10;
     },

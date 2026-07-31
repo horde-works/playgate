@@ -150,6 +150,7 @@ import { WindController } from "./WindController";
 import { IntactBreakableWorld } from "./IntactBreakableWorld";
 import {
   VehicleFrameSystem,
+  type RotorcraftPilotStatus,
   type VehicleFramePoseState,
 } from "./VehicleFrameSystem";
 import { AstanaTrainSystem } from "./AstanaTrainSystem";
@@ -3494,6 +3495,9 @@ interface OpenWorldSceneProps {
   occupiedSeatId: string | null;
   onOccupiedSeatChange: (seatId: string | null) => void;
   onMotionTelemetryUpdate: (update: MotionTelemetryUpdate) => void;
+  onRotorcraftPilotStatusChange: (
+    status: RotorcraftPilotStatus | null,
+  ) => void;
   motionTelemetryStore: MotionTelemetryStore;
   onVehicleFailure: (event: VehicleFailureEvent) => void;
 }
@@ -3532,6 +3536,7 @@ function OpenWorldScene({
   occupiedSeatId,
   onOccupiedSeatChange,
   onMotionTelemetryUpdate,
+  onRotorcraftPilotStatusChange,
   motionTelemetryStore,
   onVehicleFailure,
 }: OpenWorldSceneProps) {
@@ -3548,6 +3553,8 @@ function OpenWorldScene({
     settleAfterBreak,
     structuralScopeFor,
   } = scene;
+  const occupiedCarrierClusterId =
+    passengerSeatForId(occupiedSeatId)?.carrierClusterId ?? null;
   const intactGroundRenderColors = useMemo(
     () => buildIntactGroundRenderColors(breakablePieces),
     [breakablePieces],
@@ -7312,6 +7319,7 @@ function OpenWorldScene({
         lamps={lampDefinitions}
         brokenPieces={deadLampPieces}
         nightRef={nightRef}
+        occupiedCarrierClusterId={occupiedCarrierClusterId}
         resolveLampPosition={resolveLampPosition}
         resolveEventState={resolveLampEventState}
       />
@@ -7319,12 +7327,14 @@ function OpenWorldScene({
         lamps={lampDefinitions}
         brokenPieces={deadLampPieces}
         nightRef={nightRef}
+        occupiedCarrierClusterId={occupiedCarrierClusterId}
         resolveLampPosition={resolveLampPosition}
       />
       <SpotLightPool
         lights={spotLightDefinitions}
         brokenPieces={deadLampPieces}
         nightRef={nightRef}
+        occupiedCarrierClusterId={occupiedCarrierClusterId}
         resolveLightPosition={resolveSpotLightPosition}
         resolveLightDirection={resolveSpotLightDirection}
         resolveEventState={resolveLampEventState}
@@ -7459,6 +7469,7 @@ function OpenWorldScene({
         onVehicleRebuildRequest={rebuildVehicleCluster}
         onFramePose={publishVehicleFramePose}
         onMotionTelemetryUpdate={onMotionTelemetryUpdate}
+        onRotorcraftPilotStatusChange={onRotorcraftPilotStatusChange}
         onVehicleFailure={onVehicleFailure}
       />
       <AstanaTrainSystem
@@ -8567,6 +8578,194 @@ function ModeChips({
   );
 }
 
+function RotorcraftPilotHud({
+  status,
+  timeOfDay,
+}: {
+  status: RotorcraftPilotStatus;
+  timeOfDay: TimeOfDay;
+}): ReactElement {
+  const { t } = useLanguage();
+  const modeKey = `rotorcraftPilot.mode.${status.mode}` as TranslationKey;
+  const pitchDegrees = (status.pitch * 180) / Math.PI;
+  const rollDegrees = (status.roll * 180) / Math.PI;
+  const braking = Object.values(status.proximity).some(
+    (reading) => reading.intervening,
+  );
+  const distance = (
+    sector: keyof RotorcraftPilotStatus["proximity"],
+  ): string => {
+    const reading = status.proximity[sector];
+    return status.sensorAssistEnabled && reading.distance !== null
+      ? reading.distance.toFixed(1)
+      : "—";
+  };
+  const measured = Object.entries(status.proximity)
+    .filter((entry): entry is [
+      keyof RotorcraftPilotStatus["proximity"],
+      { readonly distance: number; readonly intervening: boolean },
+    ] => entry[1].distance !== null)
+    .sort((left, right) => left[1].distance - right[1].distance);
+  const closest = measured[0] ?? null;
+  const radarPositions: Readonly<
+    Record<keyof RotorcraftPilotStatus["proximity"], readonly [number, number]>
+  > = {
+    fore: [36, 10],
+    aft: [36, 62],
+    port: [10, 36],
+    starboard: [62, 36],
+    above: [24, 18],
+    below: [48, 54],
+  };
+  const closestPoint = closest ? radarPositions[closest[0]] : null;
+  const pairedReading = (
+    first: keyof RotorcraftPilotStatus["proximity"],
+    second: keyof RotorcraftPilotStatus["proximity"],
+  ): ReactElement => (
+    <span>
+      <span
+        className={status.proximity[first].intervening ? "is-warning" : undefined}
+      >
+        {distance(first)}
+      </span>
+      <span className="motion-telemetry-value-separator"> / </span>
+      <span
+        className={status.proximity[second].intervening ? "is-warning" : undefined}
+      >
+        {distance(second)}
+      </span>
+      <span className="motion-telemetry-value-unit"> m</span>
+    </span>
+  );
+  return (
+    <aside
+      className={`motion-telemetry rotorcraft-pilot-hud is-${timeOfDay}${
+        braking ? " is-braking" : ""
+      }`}
+      aria-label={t("rotorcraftPilot.heading")}
+    >
+      <header>
+        <span className="motion-telemetry-signal" aria-hidden="true" />
+        <div>
+          <p>{t("rotorcraftPilot.heading")}</p>
+          <h2>HX-6</h2>
+        </div>
+        <strong>{t(modeKey)}</strong>
+      </header>
+      <div className="motion-telemetry-instruments">
+        <section className="motion-telemetry-attitude">
+          <div
+            className="motion-telemetry-attitude-dial"
+            aria-hidden="true"
+            style={
+              {
+                "--attitude-pitch": `${Math.max(-36, Math.min(36, pitchDegrees)) * 0.48}px`,
+                "--attitude-roll": `${-Math.max(-60, Math.min(60, rollDegrees))}deg`,
+              } as CSSProperties
+            }
+          >
+            <span className="motion-telemetry-horizon" />
+            <span className="motion-telemetry-crosshair" />
+          </div>
+          <dl className="motion-telemetry-attitude-values">
+            <div>
+              <dt>{t("telemetry.metric.pitch")}</dt>
+              <dd>{pitchDegrees.toFixed(1)}°</dd>
+            </div>
+            <div>
+              <dt>{t("telemetry.metric.roll")}</dt>
+              <dd>{rollDegrees.toFixed(1)}°</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section className="motion-telemetry-impact rotorcraft-proximity-instrument">
+          <div className="motion-impact-sphere" aria-hidden="true">
+            <svg viewBox="0 0 72 72">
+              <circle className="motion-impact-sphere-boundary" cx="36" cy="36" r="31" />
+              <ellipse className="motion-impact-ring is-far" cx="36" cy="36" rx="31" ry="12" />
+              <ellipse className="motion-impact-ring is-near" cx="36" cy="36" rx="16" ry="31" />
+              <path className="motion-impact-nose" d="M36 5l-2.5 4.5h5z" />
+              <circle className="rotorcraft-proximity-craft-dot" cx="36" cy="36" r="2.2" />
+              {status.sensorAssistEnabled && closestPoint ? (
+                <circle
+                  className={closest?.[1].intervening
+                    ? "rotorcraft-proximity-contact is-warning"
+                    : "rotorcraft-proximity-contact"}
+                  cx={closestPoint[0]}
+                  cy={closestPoint[1]}
+                  r="3"
+                />
+              ) : null}
+            </svg>
+          </div>
+          <dl className="motion-impact-values">
+            <div>
+              <dt>{t("rotorcraftPilot.proximityMinimum")}</dt>
+              <dd>{status.sensorAssistEnabled && closest ? `${closest[1].distance.toFixed(1)} m` : "—"}</dd>
+            </div>
+            <div>
+              <dt>{t("rotorcraftPilot.sensors")}</dt>
+              <dd>{braking ? t("rotorcraftPilot.sensors.braking") : status.sensorAssistEnabled ? "ON" : "OFF"}</dd>
+            </div>
+          </dl>
+        </section>
+      </div>
+      <dl className="rotorcraft-telemetry-values">
+        <div>
+          <dt>{t("rotorcraftPilot.groundSpeed")}</dt>
+          <dd>{status.groundSpeed.toFixed(1)} m/s</dd>
+        </div>
+        <div>
+          <dt>{t("rotorcraftPilot.currentAltitude")} / {t("rotorcraftPilot.targetAltitude")}</dt>
+          <dd>{status.currentAltitude.toFixed(1)} / {status.targetAltitude.toFixed(1)} m</dd>
+        </div>
+        <div>
+          <dt>{t("rotorcraftPilot.verticalSpeed")}</dt>
+          <dd>{status.verticalSpeed.toFixed(1)} m/s</dd>
+        </div>
+        <div>
+          <dt>{t("rotorcraftPilot.headingShort")}</dt>
+          <dd>{Math.round(status.heading).toString().padStart(3, "0")}°</dd>
+        </div>
+        <div>
+          <dt>{t("rotorcraftPilot.motors")}</dt>
+          <dd className="rotorcraft-motor-values">
+            {status.motorOutput.map((output, index) => (
+              <span
+                key={index}
+                className={(status.motorAvailability[index] ?? 0) < 0.55 ? "is-warning" : undefined}
+              >
+                {index > 0 ? <span className="motion-telemetry-value-separator"> / </span> : null}
+                {Math.round(output * 100)}
+              </span>
+            ))}
+            <span className="motion-telemetry-value-unit"> %</span>
+          </dd>
+        </div>
+        <div>
+          <dt>{t("rotorcraftPilot.sector.fore")} / {t("rotorcraftPilot.sector.aft")}</dt>
+          <dd>{pairedReading("fore", "aft")}</dd>
+        </div>
+        <div>
+          <dt>{t("rotorcraftPilot.sector.port")} / {t("rotorcraftPilot.sector.starboard")}</dt>
+          <dd>{pairedReading("port", "starboard")}</dd>
+        </div>
+        <div>
+          <dt>{t("rotorcraftPilot.sector.above")} / {t("rotorcraftPilot.sector.below")}</dt>
+          <dd>{pairedReading("above", "below")}</dd>
+        </div>
+        {status.landingReady ? (
+          <div className="rotorcraft-landing-ready" aria-live="polite">
+            <dt>{t("rotorcraftPilot.sensors")}</dt>
+            <dd>{t("rotorcraftPilot.landingReady")}</dd>
+          </div>
+        ) : null}
+      </dl>
+    </aside>
+  );
+}
+
 interface InitialInterIslandArrival {
   readonly origin: IslandId;
   readonly destination: IslandId;
@@ -8778,6 +8977,8 @@ export function MakeAMessGame({
     setPointerGestureGiven(held);
   }, []);
   const [occupiedSeatId, setOccupiedSeatId] = useState<string | null>(null);
+  const [rotorcraftPilotStatus, setRotorcraftPilotStatus] =
+    useState<RotorcraftPilotStatus | null>(null);
   const flyoverRecorder = useRef<MediaRecorder | null>(null);
   const flyoverChapterRef = useRef<FlyoverChapter | null>(null);
   const flyoverProgressRef = useRef(0);
@@ -9670,6 +9871,7 @@ export function MakeAMessGame({
                     occupiedSeatId={occupiedSeatId}
                     onOccupiedSeatChange={handleOccupiedSeatChange}
                     onMotionTelemetryUpdate={handleMotionTelemetryUpdate}
+                    onRotorcraftPilotStatusChange={setRotorcraftPilotStatus}
                     motionTelemetryStore={telemetryStore}
                     onVehicleFailure={handleVehicleFailure}
                   />
@@ -9708,6 +9910,13 @@ export function MakeAMessGame({
 
       {surfaces.worldHud ? (
         <ModeChips flightMode={flightMode} weapon={equippedWeapon} />
+      ) : null}
+
+      {surfaces.worldHud && active && rotorcraftPilotStatus ? (
+        <RotorcraftPilotHud
+          status={rotorcraftPilotStatus}
+          timeOfDay={timeOfDay}
+        />
       ) : null}
 
       {surfaces.worldHud && active && flightLocked && flightLockAsked ? (

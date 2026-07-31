@@ -323,6 +323,7 @@ function compileLight(
     poolPriority: light.poolPriority,
     localPoolCapacity: light.localPoolCapacity,
     poolGroupId: light.poolGroupId,
+    interior: light.interior,
     beacon: light.beacon,
     eventLighting: light.eventLighting,
     transition: light.transition,

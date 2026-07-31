@@ -4036,6 +4036,378 @@ button:focus-visible {
   }
 }
 
+.rotorcraft-pilot-hud {
+  position: absolute;
+  top: 50%;
+  right: auto;
+  left: clamp(18px, 3vw, 48px);
+  bottom: auto;
+  z-index: 16;
+  width: min(334px, calc(100vw - 36px));
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  transform: translateY(-50%);
+  animation: rotorcraftHudIn 340ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.rotorcraft-pilot-hud.is-braking {
+  --telemetry-accent: #ff9b48;
+}
+
+.rotorcraft-pilot-hud header {
+  display: grid;
+  grid-template-columns: 8px 1fr auto;
+  gap: 9px;
+  align-items: center;
+  padding: 4px 0 9px;
+}
+
+.rotorcraft-pilot-hud header strong {
+  color: var(--telemetry-accent);
+  text-align: right;
+}
+
+.rotorcraft-pilot-hud header p {
+  margin: 0;
+  color: var(--telemetry-muted);
+  font-size: 6px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  line-height: normal;
+  text-transform: uppercase;
+}
+
+.rotorcraft-pilot-instruments {
+  display: grid;
+  grid-template-columns: 118px 1fr;
+  gap: 12px;
+  align-items: center;
+  padding: 3px 0 8px;
+}
+
+.rotorcraft-instrument-label,
+.rotorcraft-section-heading span,
+.rotorcraft-flight-values span {
+  color: var(--telemetry-muted);
+  font-size: 7px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.rotorcraft-attitude {
+  min-width: 0;
+}
+
+.rotorcraft-attitude-dial {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  margin: 7px auto 0;
+  overflow: hidden;
+  border: 1px solid var(--telemetry-muted);
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: none;
+}
+
+.rotorcraft-attitude-plane {
+  position: absolute;
+  inset: -32px;
+  background: transparent;
+  transform-origin: center;
+}
+
+.rotorcraft-attitude-plane span {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  left: 0;
+  height: 2px;
+  background: var(--telemetry-muted);
+  box-shadow: 0 -10px 0 -0.5px color-mix(in srgb, var(--telemetry-muted) 30%, transparent), 0 10px 0 -0.5px color-mix(in srgb, var(--telemetry-muted) 30%, transparent);
+}
+
+.rotorcraft-attitude-dial::before,
+.rotorcraft-attitude-dial::after,
+.rotorcraft-attitude-dial > i {
+  position: absolute;
+  z-index: 2;
+  content: "";
+  background: var(--telemetry-accent);
+}
+
+.rotorcraft-attitude-dial::before {
+  top: 35px;
+  left: 14px;
+  width: 21px;
+  height: 2px;
+}
+
+.rotorcraft-attitude-dial::after {
+  top: 35px;
+  right: 14px;
+  width: 21px;
+  height: 2px;
+}
+
+.rotorcraft-attitude-dial > i {
+  top: 33px;
+  left: 33px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.rotorcraft-attitude-values {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 5px;
+  color: var(--telemetry-muted);
+  font-size: 7px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rotorcraft-flight-values {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px 11px;
+  align-content: start;
+}
+
+.rotorcraft-flight-values div {
+  min-width: 0;
+  padding-bottom: 5px;
+  border-bottom: 0;
+}
+
+.rotorcraft-flight-values div:first-child {
+  grid-column: span 2;
+}
+
+.rotorcraft-flight-values span,
+.rotorcraft-flight-values b {
+  display: block;
+}
+
+.rotorcraft-flight-values b {
+  margin-top: 2px;
+  color: var(--telemetry-ink);
+  font-size: 14px;
+  font-weight: 720;
+  font-variant-numeric: tabular-nums;
+}
+
+.rotorcraft-flight-values div:first-child b {
+  color: var(--telemetry-accent);
+  font-size: 22px;
+}
+
+.rotorcraft-proximity,
+.rotorcraft-motors {
+  margin-top: 5px;
+  padding-top: 5px;
+  border-top: 0;
+}
+
+.rotorcraft-section-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.rotorcraft-section-heading strong {
+  color: var(--telemetry-accent);
+  font-size: 7px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.rotorcraft-section-heading strong.is-warning {
+  color: #ff9b48;
+}
+
+.rotorcraft-proximity-map {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-areas:
+    ". above ."
+    ". fore ."
+    "port craft starboard"
+    ". aft ."
+    ". below .";
+  gap: 2px 8px;
+  align-items: center;
+  margin-top: 5px;
+}
+
+.rotorcraft-proximity-sector {
+  min-width: 0;
+  padding: 2px 4px;
+  color: var(--telemetry-muted);
+  text-align: center;
+}
+
+.rotorcraft-proximity-sector small,
+.rotorcraft-proximity-sector b {
+  display: block;
+}
+
+.rotorcraft-proximity-sector small {
+  font-size: 6px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.rotorcraft-proximity-sector b {
+  margin-top: 1px;
+  color: var(--telemetry-accent);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.rotorcraft-proximity-sector.is-intervening b {
+  color: #ff9b48;
+}
+
+.rotorcraft-proximity-sector.is-fore { grid-area: fore; }
+.rotorcraft-proximity-sector.is-aft { grid-area: aft; }
+.rotorcraft-proximity-sector.is-port { grid-area: port; }
+.rotorcraft-proximity-sector.is-starboard { grid-area: starboard; }
+.rotorcraft-proximity-sector.is-above { grid-area: above; }
+.rotorcraft-proximity-sector.is-below { grid-area: below; }
+
+.rotorcraft-proximity-craft {
+  position: relative;
+  grid-area: craft;
+  width: 35px;
+  height: 24px;
+  margin: 0 auto;
+  border: 1px solid var(--telemetry-muted);
+  border-radius: 45%;
+}
+
+.rotorcraft-proximity-craft::before,
+.rotorcraft-proximity-craft::after,
+.rotorcraft-proximity-craft i::before,
+.rotorcraft-proximity-craft i::after {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--telemetry-muted);
+  border-radius: 50%;
+  content: "";
+}
+
+.rotorcraft-proximity-craft::before { top: -4px; left: -6px; }
+.rotorcraft-proximity-craft::after { top: -4px; right: -6px; }
+.rotorcraft-proximity-craft i::before { bottom: -4px; left: -6px; }
+.rotorcraft-proximity-craft i::after { right: -6px; bottom: -4px; }
+
+.rotorcraft-motors > div {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 5px;
+  height: 29px;
+  margin-top: 6px;
+}
+
+.rotorcraft-motors > div > span {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--telemetry-muted);
+  background: transparent;
+}
+
+.rotorcraft-motors > div > span i {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  background: var(--telemetry-accent);
+}
+
+.rotorcraft-motors > div > span b {
+  position: absolute;
+  right: 3px;
+  bottom: 1px;
+  z-index: 1;
+  color: var(--telemetry-ink);
+  font-size: 7px;
+}
+
+.rotorcraft-motors > div > span.is-damaged {
+  border-color: rgb(255 111 72 / 0.68);
+}
+
+.rotorcraft-motors > div > span.is-damaged i {
+  background: rgb(255 111 72 / 0.55);
+}
+
+.rotorcraft-landing-ready {
+  display: flex;
+  margin: 0;
+  padding: 0;
+  color: var(--telemetry-accent);
+}
+
+.rotorcraft-proximity-instrument .motion-impact-values dd {
+  color: var(--telemetry-accent);
+}
+
+.rotorcraft-proximity-craft-dot {
+  fill: var(--telemetry-accent);
+}
+
+.rotorcraft-proximity-contact {
+  fill: var(--telemetry-accent);
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--telemetry-accent) 70%, transparent));
+}
+
+.rotorcraft-proximity-contact.is-warning,
+.rotorcraft-telemetry-values .is-warning,
+.rotorcraft-motor-values .is-warning {
+  color: #ff6259;
+  fill: #ff6259;
+  text-shadow: 0 0 7px rgb(255 62 52 / 0.46);
+}
+
+.rotorcraft-motor-values {
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes rotorcraftHudIn {
+  from { opacity: 0; transform: translate(-18px, -50%); }
+  to { opacity: 1; transform: translate(0, -50%); }
+}
+
+.rotorcraft-pilot-hud > p {
+  margin: 7px 0 0;
+  color: rgb(247 243 232 / 0.54);
+  font-size: 7px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+
+@media (max-width: 900px), (pointer: coarse) {
+  .rotorcraft-pilot-hud {
+    right: auto;
+    bottom: auto;
+    left: 14px;
+    width: min(224px, calc(100vw - 28px));
+  }
+
+  .rotorcraft-pilot-hud > p,
+  .rotorcraft-motors {
+    display: none;
+  }
+}
+
 .mode-chips {
   position: absolute;
   top: clamp(74px, 9vh, 108px);

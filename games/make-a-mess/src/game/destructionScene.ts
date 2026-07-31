@@ -1895,6 +1895,8 @@ export interface LampDefinition {
   readonly localPoolCapacity?: number;
   /** Nearby selection treats every lamp in this group as one coherent fixture set. */
   readonly poolGroupId?: string;
+  /** Interior illumination is suppressed for a player seated in this carrier. */
+  readonly interior?: boolean;
   /** Camera-facing halo for lights that must remain identifiable at range. */
   readonly beacon?: LampBeaconDefinition;
   /** Fraction of full power retained at midday; ordinary outdoor lamps use 0. */
@@ -1915,6 +1917,8 @@ export interface SpotLightDefinition {
   readonly position: SceneVector3;
   readonly direction: SceneVector3;
   readonly carrierClusterId?: string;
+  /** Interior illumination is suppressed for a player seated in this carrier. */
+  readonly interior?: boolean;
   readonly color?: string;
   readonly distance?: number;
   readonly intensity?: number;

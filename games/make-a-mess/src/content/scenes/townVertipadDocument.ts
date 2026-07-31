@@ -7,6 +7,7 @@ import type {
   BreakableMaterial,
   BreakableShape,
   SceneVector3,
+  SpotLightDefinition,
   SupportMode,
 } from "../../game/destructionScene.ts";
 import {
@@ -73,6 +74,7 @@ interface MutableGroup {
 }
 
 const groups = new Map<string, MutableGroup>();
+export const townVertipadSpotLights: SpotLightDefinition[] = [];
 
 function group(
   id: string,
@@ -731,16 +733,19 @@ function createCanopy(ship: MutableGroup): void {
       const high1 = cabinPoint(psi1, course.to);
       const high0 = cabinPoint(psi0, course.to);
       const isHull = courseIndex < HULL_COURSES;
+      const isLowerFrontGlass = isHull && Math.cos(psi) > 0.8;
       surfacePatch(
         ship,
-        isHull
+        isLowerFrontGlass
+          ? `canopy:lower-glass:${facet}:${courseIndex}`
+          : isHull
           ? `canopy:hull:${facet}:${courseIndex}`
           : `canopy:glass:${facet}:${courseIndex}`,
-        isHull ? "steel" : "darkGlass",
-        isHull ? "panel" : "glassPane",
+        isHull && !isLowerFrontGlass ? "steel" : "darkGlass",
+        isHull && !isLowerFrontGlass ? "panel" : "glassPane",
         [low0, low1, high1, high0],
         [0, 1, 2, 0, 2, 3],
-        isHull
+        isHull && !isLowerFrontGlass
           ? courseIndex === 0
             ? GRAPHITE
             : POLISHED
@@ -748,12 +753,13 @@ function createCanopy(ship: MutableGroup): void {
             ? GLASS_DEEP
             : GLASS_TINT,
         {
-          volume: isHull
+          volume: isHull && !isLowerFrontGlass
             ? massVolume("steel", 0.1353)
             : massVolume("darkGlass", 0.1107),
           bearsLoad: false,
-          carriesAttachments: isHull,
-          attachmentSupportMode: isHull ? "cable" : undefined,
+          carriesAttachments: isHull && !isLowerFrontGlass,
+          attachmentSupportMode:
+            isHull && !isLowerFrontGlass ? "cable" : undefined,
           sideAttachmentReach: 0.5,
         },
       );
@@ -906,6 +912,7 @@ function createCanopy(ship: MutableGroup): void {
         color: "#ff5a48",
         distance: 26,
         intensity: 4.4,
+        dayIntensityFactor: 1,
         poolPriority: 8,
         beacon: {
           physicalDiameter: 0.7,
@@ -1031,14 +1038,15 @@ function createCabinFittings(ship: MutableGroup): void {
       bearsLoad: false,
       sideAttachmentReach: 0.3,
       contactBoxes: [{ position: [0, 0, 0], size: [0.42, 0.07, 0.24] }],
-      light: {
-        followsGroup: true,
-        color: ACCENT,
-        distance: 4.5,
-        intensity: 1.4,
-        dayIntensityFactor: 0.8,
-        poolPriority: 6,
-      },
+        light: {
+          followsGroup: true,
+          color: ACCENT,
+          distance: 4.5,
+          intensity: 1.4,
+          dayIntensityFactor: 0.8,
+          poolPriority: 6,
+          interior: true,
+        },
     },
   );
   primitive(
@@ -1182,6 +1190,103 @@ function createDuct(ship: MutableGroup, station: HexacopterDuctStation): void {
         bearingArea: 0.5,
       },
     );
+  }
+
+  // Передние два кольца несут посадочные прожекторы прямо на наружной грани
+  // обечайки. Широкие лучи слегка сведены к оси машины: их поля перекрываются
+  // перед носом, но источники не светят назад на кабину или верх кольца.
+  if (station.a > HEX_ARM_RADIUS * 0.8) {
+    const lampName = `duct:${station.index}:headlight`;
+    const frontPsi = 0;
+    const mountingY = HEX_TRUNNION_Y - 0.06;
+    const mountPosition = at(
+      HEX_SHROUD_OUTER_RADIUS + 0.012,
+      frontPsi,
+      mountingY,
+    );
+    const lensPosition = at(
+      HEX_SHROUD_OUTER_RADIUS + 0.065,
+      frontPsi,
+      mountingY,
+    );
+    const downAngle = 0.12;
+    const inward = station.b > 0 ? -0.055 : 0.055;
+    const direction = dir(Math.cos(downAngle), inward, -Math.sin(downAngle));
+    primitive(
+      ship,
+      `${lampName}:mount`,
+      "steel",
+      "steelSheet",
+      mountPosition,
+      [0.32, 0.18, 0.08],
+      GRAPHITE,
+      {
+        rotation: orient(STARBOARD, UP),
+        volume: massVolume("steel", 0.0738),
+        bearsLoad: false,
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.2,
+        contactBoxes: [{ position: [0, 0, 0], size: [0.34, 0.2, 0.1] }],
+      },
+    );
+    primitive(
+      ship,
+      lampName,
+      "glass",
+      "glassPane",
+      lensPosition,
+      [0.26, 0.13, 0.055],
+      "#fff2cf",
+      {
+        rotation: orient(STARBOARD, UP),
+        volume: massVolume("glass", 0.0246),
+        bearsLoad: false,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.12,
+        contactBoxes: [{ position: [0, 0, 0], size: [0.28, 0.15, 0.075] }],
+      },
+    );
+    const sourceOffset = 0.055 / 2 + 0.012;
+    townVertipadSpotLights.push({
+      id: `${CLUSTER_SCENE}:${HEXACOPTER_GROUP}:${lampName}:piece`,
+      position: [
+        lensPosition[0] + direction[0] * sourceOffset,
+        lensPosition[1] + direction[1] * sourceOffset,
+        lensPosition[2] + direction[2] * sourceOffset,
+      ],
+      direction,
+      carrierClusterId: `${CLUSTER_SCENE}:${HEXACOPTER_GROUP}`,
+      color: "#ffeec6",
+      distance: 68,
+      intensity: 480,
+      angle: 0.31,
+      penumbra: 0.72,
+      decay: 1.75,
+      dayIntensityFactor: 0,
+      transition: {
+        fadeInSeconds: 0.7,
+        fadeOutSeconds: 0.45,
+      },
+      visibleBeam: {
+        opacity: 0.11,
+        sourceRadius: 0.085,
+        length: 58,
+        attenuation: 50,
+        anglePower: 5,
+      },
+      fixtureGlow: {
+        color: "#fff2cf",
+        intensity: 6.5,
+        halo: {
+          physicalDiameter: 0.2,
+          minScreenDiameter: 2.8,
+          maxWorldDiameter: 0.42,
+          dayOpacity: 0,
+          nightOpacity: 0.92,
+        },
+      },
+    });
   }
 
   // Нижняя кромка-диффузор: тонкий обод, он закрывает торцы обечайки снизу.
@@ -1520,6 +1625,7 @@ function createDuct(ship: MutableGroup, station: HexacopterDuctStation): void {
           color: starboard ? "#6bff9c" : "#ff6f62",
           distance: 16,
           intensity: 3.2,
+          dayIntensityFactor: 1,
           poolPriority: 8,
           beacon: {
             physicalDiameter: 0.6,
@@ -1671,10 +1777,10 @@ function createLiveryAndLights(ship: MutableGroup): void {
     });
   }
 
-  // Белые носовой и кормовой габариты повторяют световой модуль городского
-  // дирижабля: отдельная тёмная оправа, тёпло-белая линза и дальний beacon.
-  // Они сидят на непрозрачном нижнем поясе капсулы, а не на стекле.
-  const addWhiteNavigationLight = (name: "fore" | "aft", psi: number): void => {
+  // Кормовой белый габарит повторяет световой модуль городского дирижабля:
+  // отдельная тёмная оправа, тёпло-белая линза и дальний beacon. Носового
+  // центрального огня нет — впереди читается только пара прожекторов колец.
+  const addWhiteNavigationLight = (name: "aft", psi: number): void => {
     const surface = cabinPoint(psi, HEX_FLOOR_Y + 0.2);
     const outward = cabinNormal(psi);
     const tangent = dir(-Math.sin(psi), Math.cos(psi));
@@ -1721,6 +1827,7 @@ function createLiveryAndLights(ship: MutableGroup): void {
           color: "#fff6dc",
           distance: 15,
           intensity: 2.8,
+          dayIntensityFactor: 1,
           poolPriority: 6,
           beacon: {
             physicalDiameter: 0.52,
@@ -1733,35 +1840,7 @@ function createLiveryAndLights(ship: MutableGroup): void {
       },
     );
   };
-  addWhiteNavigationLight("fore", 0);
   addWhiteNavigationLight("aft", Math.PI);
-  // Парные посадочные фары утоплены в носовой пояс. Одна центральная лампа
-  // делала аппарат бытовым дроном; разнесённая пара задаёт масштаб кабины.
-  for (const side of [-1, 1] as const) {
-    primitive(
-      ship,
-      side < 0 ? "lamp:landing" : "lamp:landing:starboard",
-      "glass",
-      "glassPane",
-      P(0.91, side * 0.31, HEX_GONDOLA_TOP_Y + 0.18),
-      [0.18, 0.11, 0.055],
-      "#fff2cf",
-      {
-        volume: massVolume("glass", 0.0246),
-        rotation: orient(dir(0, 1), dir(1, 0, -0.28)),
-        bearsLoad: false,
-        sideAttachmentReach: 0.3,
-        contactBoxes: [{ position: [0, 0, 0], size: [0.22, 0.15, 0.09] }],
-        light: {
-          followsGroup: true,
-          color: "#ffeec6",
-          distance: 22,
-          intensity: 2.4,
-          poolPriority: 7,
-        },
-      },
-    );
-  }
 }
 
 // ===========================================================================

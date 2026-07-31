@@ -3737,6 +3737,7 @@ function createSkyPlatform(): void {
         intensity: 7.2,
         poolPriority: 12,
         poolGroupId: `${train.id}:cabin`,
+        interior: true,
         dayIntensityFactor: 1,
         eventLighting: cabinDockLighting,
       });

@@ -6,6 +6,11 @@ import {
   type VehiclePose,
 } from "./vehicleFrames.ts";
 import { supportVelocityAtPoint } from "./movingSupportDynamics.ts";
+import {
+  HEX_SEAT_Y,
+  TOWN_HEXACOPTER_CLUSTER_ID,
+  hexacopterPoint,
+} from "./townHexacopter.ts";
 
 /**
  * A reusable place occupied inside a moving compound object.
@@ -42,6 +47,8 @@ export interface PassengerSeatCarrierPose {
 }
 
 export const SKY_TRAIN_DRIVER_SEAT_ID = "terminal:sky-train:driver-seat";
+export const TOWN_HEXACOPTER_PILOT_SEAT_ID =
+  "town:hexacopter:pilot-seat";
 
 export const SKY_TRAIN_DRIVER_SEAT: PassengerSeatDefinition = {
   id: SKY_TRAIN_DRIVER_SEAT_ID,
@@ -63,8 +70,27 @@ export const SKY_TRAIN_DRIVER_SEAT: PassengerSeatDefinition = {
   releaseRadius: 3.4,
 };
 
+export const TOWN_HEXACOPTER_PILOT_SEAT: PassengerSeatDefinition = {
+  id: TOWN_HEXACOPTER_PILOT_SEAT_ID,
+  carrierClusterId: TOWN_HEXACOPTER_CLUSTER_ID,
+  interactionPoint: hexacopterPoint(-0.15, 0, HEX_SEAT_Y + 0.42),
+  // Collision is muted while seated. The camera rides 0.54 m above this
+  // point, at eye height behind the instrument screen and below the canopy.
+  occupantPoint: hexacopterPoint(-0.18, 0, HEX_SEAT_Y + 0.16),
+  exitPoint: hexacopterPoint(-0.2, -0.38, 1.98),
+  facing: [-1, 0, 0],
+  requiredPieceIds: [
+    "town-vertipad:hexacopter:seat:pedestal:piece",
+    "town-vertipad:hexacopter:seat:cushion:piece",
+    "town-vertipad:hexacopter:seat:back:piece",
+  ],
+  approachRadius: 1.2,
+  releaseRadius: 1.6,
+};
+
 export const passengerSeats: readonly PassengerSeatDefinition[] = [
   SKY_TRAIN_DRIVER_SEAT,
+  TOWN_HEXACOPTER_PILOT_SEAT,
 ];
 
 const seatsById = new Map(passengerSeats.map((seat) => [seat.id, seat] as const));
