@@ -253,6 +253,11 @@ export function updateMutableSceneObjects(
       updateMatrixDisplay(definition, context);
       continue;
     }
+    if (definition.kind === "stockpile") {
+      // Склад сцена не трогает: его уровень пишет симуляция жителей. Здесь
+      // объявление нужно только затем, чтобы куски попали в изменяемую пачку.
+      continue;
+    }
     const active = new Set<string>();
     const controlled = new Set<string>();
     for (const layer of definition.layers) {

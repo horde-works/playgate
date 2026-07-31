@@ -2,6 +2,10 @@ import type { LampEventState, SceneVector3 } from "./destructionScene.ts";
 import type { EntryInteractionTarget } from "./entryInteraction.ts";
 import type { VehicleRecoveryLifecycle } from "./vehicleFailure.ts";
 import type { VehicleGuidanceOverrides } from "./vehicleGuidanceEnvelope.ts";
+import type {
+  RotorLandingTolerance,
+  VehicleLiftSource,
+} from "./vehicleLiftGeometry.ts";
 import {
   emergencyEscapePlan,
   flightPlan,
@@ -48,6 +52,21 @@ import {
 } from "./basaltSkyRamRoutes.ts";
 import { basaltSkyRamPoint } from "./basaltSkyRam.ts";
 import {
+  HEXACOPTER_DUCTS,
+  HEXACOPTER_RUDDER_POINT,
+  HEX_DISC_Y,
+  hexacopterDuctPoint,
+  hexacopterPoint,
+  isInsideHexacopter,
+} from "./townHexacopter.ts";
+import {
+  townHexacopterArrivalPlan,
+  townHexacopterEscapePlan,
+  townHexacopterPlan,
+  townHexacopterRoutePhase,
+  type TownHexacopterFlightKind,
+} from "./townHexacopterRoutes.ts";
+import {
   interIslandArrivalOrigin,
   interIslandArrivalPhase,
   interIslandArrivalPlan,
@@ -90,6 +109,30 @@ export interface AirVehicleDefinition extends VehicleFrameDefinition {
   };
   readonly flight: {
     readonly limits: ShipLimits;
+    /**
+     * ЧЕМ МАШИНА ДЕРЖИТСЯ В ВОЗДУХЕ. Свойство вида судна, а не его имени, и
+     * от него зависит смысл половины остальных правил:
+     *
+     *   "buoyant" — объём газа. Сила есть всегда, даже когда управлять нечем,
+     *               поэтому плавно опуститься вниз машина может при любом
+     *               отказе. Так устроены все три корабля-дирижабля карты;
+     *   "rotor"   — сами движители. Нет тяги — нет подъёма, и «мягко сесть с
+     *               выключенными винтами» физически невозможно. Отказ у такой
+     *               машины определяется не долей уцелевших каналов, а тем,
+     *               накрывает ли выпуклая оболочка уцелевших точек тяги её
+     *               центр масс;
+     *   "none"    — подъёма нет вовсе: поезд, судно, автомобиль держит опора.
+     *
+     * Не задан — "buoyant": ровно то, чем жили все машины до появления
+     * винтокрылой.
+     */
+    readonly liftSource?: VehicleLiftSource;
+    /**
+     * Допуск ПОСАДКИ вместо швартовки. Есть только у машины, которая садится
+     * на грунт: у неё нет ни мачты, ни носового узла, и рейс кончается тем,
+     * что она встала на опоры и выключила моторы.
+     */
+    readonly landing?: RotorLandingTolerance;
     readonly approach: ApproachGate;
     readonly docking: DockingTolerance;
     /**
@@ -162,6 +205,12 @@ export type VehicleDriveAnimation =
       readonly kind: "propeller";
       /** Radians per second at full delivered throttle. */
       readonly phaseSpeed: number;
+      /**
+       * Ось вала в авторской позе покоя. Не задана — вращение идёт вокруг
+       * продольной оси кадра, как у тянущего винта дирижабля. Подъёмному
+       * винту нужна вертикаль: ось принадлежит МАШИНЕ, а не миру.
+       */
+      readonly shaftAxis?: SceneVector3;
     }
   | {
       readonly kind: "furnace";
@@ -222,6 +271,13 @@ const basaltSkyRamFrame = vehicleFrames.find(
 );
 if (!basaltSkyRamFrame) {
   throw new Error("The basalt sky-ram frame is missing from the vehicle catalog");
+}
+
+const townHexacopterFrame = vehicleFrames.find(
+  (frame) => frame.id === "town-hexacopter",
+);
+if (!townHexacopterFrame) {
+  throw new Error("The town hexacopter frame is missing from the vehicle catalog");
 }
 
 const SKY_LONGSHIP_COURSE = (6 * Math.PI) / 180;
@@ -694,9 +750,158 @@ export const BASALT_SKY_RAM_AIR_VEHICLE: AirVehicleDefinition = {
   },
 };
 
+/**
+ * ГЕКСАКОПТЕР ВО ДВОРЕ. Первая машина проекта, у которой подъём делают не
+ * оболочка, а движители, и это меняет смысл двух паспортных чисел, не меняя
+ * ни строчки общего контроллера:
+ *
+ *  - `envelopeMatch` указывает на ЛОПАСТИ, поэтому «доля уцелевшей оболочки»
+ *    становится долей уцелевших лопастей;
+ *  - `liftReserve` перестаёт быть запасом газа и становится честной
+ *    тяговооружённостью 1.35.
+ *
+ * Отсюда сама собой выходит история гексакоптера, ради которой он и нужен:
+ * потеря одного кольца оставляет 5/6 × 1.35 = 1.13 — машина летит; потеря
+ * второго даёт 0.90 — она уже снижается. Ни одного специального правила для
+ * этого писать не пришлось.
+ */
+export const TOWN_HEXACOPTER_AIR_VEHICLE: AirVehicleDefinition = {
+  ...townHexacopterFrame,
+  departure: {
+    target: {
+      id: "town:hexacopter:departure",
+      kind: "departure",
+      cue: "town-hexacopter-uncrewed-flight",
+    },
+    // Стойка с табло у кромки пятна — единственный физический интерфейс
+    // площадки. Мачт у этой машины нет.
+    point: hexacopterPoint(2.9, -3.32, 1),
+    flightKind: "circuit",
+    approachRadius: 2.6,
+    releaseRadius: 3.5,
+    heightTolerance: 2.4,
+    passengerDropPoint: hexacopterPoint(2.4, -3.1, 1),
+  },
+  passengerFlight: {
+    target: {
+      id: "town:hexacopter:ride",
+      kind: "ride",
+      cue: "town-hexacopter-passenger-flight",
+    },
+    // Точка вызова стоит у кресла: человек, вошедший в дверь левого борта,
+    // делает полшага к оси и получает предложение лететь.
+    point: hexacopterPoint(-0.15, 0, 1.98),
+    flightKind: "tour",
+    approachRadius: 1.15,
+    releaseRadius: 1.6,
+    contains: isInsideHexacopter,
+  },
+  flight: {
+    limits: {
+      // Тяга ОДНОГО кольца вдоль корпуса. Кольцо наклоняется в вилке примерно
+      // на 12°, и горизонтальной составляющей ему достаётся около восьмой
+      // части подъёма. Шесть колец дают 260 единиц на массу 95 — это 0.28 g,
+      // чуть бодрее дирижабля № 07 (0.30 g при вчетверо большей массе даёт
+      // ему вялый разгон), и ровно то, чего ждёшь от лёгкой машины.
+      enginePower: 58,
+      enginePoints: HEXACOPTER_DUCTS.map((station) =>
+        hexacopterDuctPoint(station, HEX_DISC_Y),
+      ),
+      // РУЛЯ НЕТ. Гексакоптер разворачивается разнотягом колец — и на
+      // крейсере, и вися на месте, одинаково. Оперение ему не нужно, и врать
+      // о нём в паспорте нельзя: общий аллокатор и так считает располагаемое
+      // рыскание по шести настоящим плечам, а нулевая сила пера означает, что
+      // весь момент придётся взять моторам. Именно этого мы и хотим.
+      maxRudderForce: 0,
+      rudderReferenceSpeed: 9,
+      rudderPoint: HEXACOPTER_RUDDER_POINT,
+      // Вертикальный запас у винтокрылой машины больше, чем у дирижабля: она
+      // не стравливает газ, а прибавляет обороты.
+      liftTrimRange: 0.28,
+      // БОКОВАЯ ТЯГА одного кольца. Кардан наклоняет кольцо не только
+      // вперёд-назад, поэтому машина умеет сместиться вбок, не разворачиваясь.
+      // Шесть колец дают 240 единиц на массу 94 — 0.26 g вбок, чуть меньше
+      // продольных 0.28 g: наклон вбок ограничен щеками вилки, и это честно.
+      lateralThrust: 40,
+    },
+    approach: {
+      heading: [townHexacopterFrame.nose[0], townHexacopterFrame.nose[2]],
+      // Створ по курсу шире, чем у дирижаблей, и это замер, а не щедрость:
+      // машина приходит на площадку почти без хода, и последние градусы ей
+      // доворачивает причальный захват, приложенный к носовому штырю. При
+      // допуске 0.30 рад захват не вооружался на 0.950 против нужных 0.955 —
+      // машина замирала в полутора метрах от стакана и стояла так вечно.
+      tolerance: { position: 4.2, heading: 0.36, speed: 3 },
+    },
+    // Швартовки у коптера нет: поле оставлено потому, что общий контракт его
+    // требует, и намеренно широкое — оно ничего не решает.
+    docking: {
+      position: 1.4,
+      height: 0.4,
+      headingCos: 0,
+      speed: 0.3,
+      verticalSpeed: 0.2,
+      uprightCos: 0.9,
+      angularSpeed: 0.15,
+    },
+    // А решает ПОСАДКА, и ровно по тем признакам, по которым её определяет
+    // автоматика настоящего дрона: я над своим пятном, подо мной опора, я не
+    // еду вбок и стою ровно — выключаю моторы. Радиус взят от разметки: пятно
+    // 6 м, машина 5.8 м, попадание в метр от центра — это попадание.
+    landing: {
+      radius: 1,
+      height: 0.5,
+      speed: 0.35,
+      verticalSpeed: 0.5,
+      uprightCos: 0.985,
+      angularSpeed: 0.2,
+    },
+    // Раскрутка шести колец с нуля до режима висения. Столько же занимает и
+    // выход подъёма на вес: общая автоматика меняет его не быстрее четверти
+    // живого веса в секунду.
+    spoolSeconds: 5,
+    underwaySeconds: 7,
+    driveAnimation: {
+      kind: "propeller",
+      phaseSpeed: 26,
+      // Валы этой машины ВЕРТИКАЛЬНЫ. Без этого общая анимация крутила бы
+      // подъёмные винты вокруг продольной оси корпуса, как у дирижабля.
+      shaftAxis: [0, 1, 0],
+    },
+    linearDamping: 0.22,
+    angularDamping: 0.55,
+    // Боковое сопротивление. Считано от манёвра, а не «на глаз»: на круге
+    // радиусом 46 м при 9 м/с машине нужна центростремительная сила
+    // m·v²/R ≈ 167 единиц, а взять её неоткуда, кроме бокового сопротивления —
+    // тяга у неё всего 260. При отношении 6 это 1.1 м/с сноса, то есть крен
+    // курса около 7°; при 3 получалось 20° и машина уезжала с трассы на
+    // полсотни метров. Шесть кольцевых кожухов и киль — вполне настоящая
+    // боковая площадь для такого числа.
+    lateralDragRatio: 6,
+    // Подъём делают ДВИЖИТЕЛИ. Отсюда и три следствия: точка приложения
+    // уезжает к уцелевшим кольцам, потеря одного кольца из шести не является
+    // отказом, а потеря удержания — это падение, а не мягкая посадка.
+    liftSource: "rotor",
+    // Тяговооружённость. 1.35 — это подъём при ЦЕЛЫХ восемнадцати лопастях;
+    // деление на доли уцелевших и даёт поведение при потере колец.
+    liftReserve: 1.35,
+    // Захват — КОНУС стакана, а не лебёдка: он центрует штырь, когда тот уже
+    // почти над ним, и не имеет права тянуть машину за нос через полдвора.
+    // Длинный радиус разворачивал лёгкий корпус рывком за носовой узел.
+    mooringReach: 0.6,
+    routePlan: (kind, berth) =>
+      townHexacopterPlan(kind as TownHexacopterFlightKind, berth),
+    arrivalPlan: townHexacopterArrivalPlan,
+    escapePlan: townHexacopterEscapePlan,
+    routePhase: (kind, progress) =>
+      townHexacopterRoutePhase(kind as TownHexacopterFlightKind, progress),
+  },
+};
+
 export const airVehicles: readonly AirVehicleDefinition[] = [
   SKY_TRAIN_AIR_VEHICLE,
   SKY_LONGSHIP_AIR_VEHICLE,
   TOWN_AIRSHIP_AIR_VEHICLE,
   BASALT_SKY_RAM_AIR_VEHICLE,
+  TOWN_HEXACOPTER_AIR_VEHICLE,
 ];

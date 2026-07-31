@@ -19,6 +19,9 @@ import {
   vikingTrafficRoutes,
   vikingVillageHomes,
 } from "./vikingVillagePlan.ts";
+// Список складов живёт в описании поселения: сцена берёт оттуда, какие куски
+// объявить изменяемыми, чтобы уровень было чем показать.
+import { vikingSettlementStores } from "./vikingSettlement.ts";
 
 interface MutableGroup {
   readonly id: string;
@@ -529,6 +532,22 @@ function localPoint(
   ];
 }
 
+/**
+ * Мировой поворот куска, разложенного через `localPoint`, — ОБРАТНЫЙ.
+ *
+ * `localPoint` уводит местную ось +X в направление (cos yaw, sin yaw), а
+ * three.js при `rotation.y = yaw` уводит её в (cos yaw, −sin yaw): это разные
+ * знаки, то есть зеркало. Пока функции реквизита писали `rotation: [0, yaw, 0]`
+ * рядом с `localPoint(..., yaw, ...)`, кусок разворачивало на 2·yaw мимо своей
+ * же раскладки — у южной колоды поленья ложились поперёк ряда (94°), плаха
+ * вешал висела наискось между столбами (71°), сани стояли ромбом (44°).
+ * Ошибка не видна в списке координат и не роняет ни один тест: её ловит только
+ * сравнение направления раскладки с направлением куска.
+ */
+function propYaw(yaw: number): number {
+  return -yaw;
+}
+
 function addChoppingYard(target: MutableGroup, id: string, x: number, z: number, yaw: number): void {
   primitive(target, `${id}:block`, "wood", "cylinder", [x, 0.46, z], [1.15, 0.92, 1.15], "#624631", {
     surface: [{ kind: "damp", amount: 0.18 }],
@@ -536,7 +555,7 @@ function addChoppingYard(target: MutableGroup, id: string, x: number, z: number,
   for (let index = 0; index < 7; index += 1) {
     const [px, pz] = localPoint(x, z, yaw, -2.1 + (index % 4) * 0.9, 1.25 + Math.floor(index / 4) * 0.55);
     primitive(target, `${id}:split-log:${index}`, "wood", "cylinder", [px, 0.18, pz], [0.32, 0.82, 0.32], index % 2 === 0 ? "#8c6545" : "#5e422f", {
-      rotation: [0, yaw, Math.PI / 2],
+      rotation: [0, propYaw(yaw), Math.PI / 2],
       contactBoxes: [{ position: [0, 0, 0], size: [0.32, 0.82, 0.32] }],
     });
   }
@@ -545,13 +564,13 @@ function addChoppingYard(target: MutableGroup, id: string, x: number, z: number,
   // стоял обухом с головой на верхнем конце рукояти.
   const [headX, headZ] = localPoint(x, z, yaw, 0.3, -0.08);
   primitive(target, `${id}:axe-head`, "steel", "steelSheet", [headX, 1.0, headZ], [0.44, 0.36, 0.07], "#4a5050", {
-    rotation: [0, yaw, -0.42],
+    rotation: [0, propYaw(yaw), -0.42],
     sideAttachmentReach: 0.35,
     bearsLoad: false,
   });
   const [handleX, handleZ] = localPoint(x, z, yaw, 0.58, -0.08);
   primitive(target, `${id}:axe-handle`, "wood", "plank", [handleX, 1.63, handleZ], [0.11, 1.35, 0.11], "#9a7048", {
-    rotation: [0.08, yaw, -0.42],
+    rotation: [0.08, propYaw(yaw), -0.42],
     sideAttachmentReach: 0.4,
     bearsLoad: false,
   });
@@ -565,6 +584,7 @@ function addDryingRack(
   z: number,
   yaw: number,
   hideColor: string,
+  hang: "hide" | "fish" = "hide",
 ): void {
   const postHeight = 2.7;
   const railHeight = 2.42;
@@ -578,19 +598,52 @@ function addDryingRack(
   // sag and hang crooked; a normal reach-based side-attach holds it straight
   // and is rotation-agnostic (unlike a sit-on footprint the solver mis-reads).
   primitive(cloth, `${id}:rail`, "wood", "plank", [x, railHeight, z], [3.6, 0.17, 0.19], "#684a34", {
-    rotation: [0, yaw, 0],
+    rotation: [0, propYaw(yaw), 0],
     bearsLoad: true,
     carriesAttachments: true,
+    attachmentSupportMode: "cable",
     sideAttachmentReach: 0.7,
     contactBoxes: [{ position: [0, 0, 0], size: [3.6, 0.17, 0.19] }],
   });
-  primitive(cloth, `${id}:hide`, "cloth", "panel", [x, railHeight - 0.83, z], [2.45, 1.7, 0.06], hideColor, {
-    rotation: [0, yaw, 0],
-    bearsLoad: false,
-    sideAttachmentReach: 0.55,
-    contactBoxes: [{ position: [0, 0, 0], size: [2.45, 1.7, 0.06] }],
-    surface: [{ kind: "damp", amount: 0.16 }],
-  });
+  if (hang === "hide") {
+    primitive(cloth, `${id}:hide`, "cloth", "panel", [x, railHeight - 0.83, z], [2.45, 1.7, 0.06], hideColor, {
+      rotation: [0, propYaw(yaw), 0],
+      bearsLoad: false,
+      sideAttachmentReach: 0.55,
+      contactBoxes: [{ position: [0, 0, 0], size: [2.45, 1.7, 0.06] }],
+      surface: [{ kind: "damp", amount: 0.16 }],
+    });
+    return;
+  }
+  // Вяленая рыба висит не полотном, а поштучно: распластанная тушка
+  // перекинута через жердь и сохнет хвостом вниз. Ряд идёт по всей жерди с
+  // разной длиной и лёгким разворотом — так рама читается как работа, а не
+  // как ещё одно сохнущее сукно.
+  for (let index = 0; index < 9; index += 1) {
+    const [fishX, fishZ] = localPoint(x, z, yaw, -1.44 + index * 0.36, 0);
+    const body = 0.4 + ((index * 7) % 5) * 0.03;
+    const tail = 0.3 + ((index * 3) % 4) * 0.03;
+    const tilt = index % 2 === 0 ? 0.05 : -0.06;
+    const colour = index % 3 === 0 ? "#9a8b6f" : index % 3 === 1 ? "#847258" : "#6f6552";
+    // Плечи тушки — у жерди, хвост уже и ниже: без сужения ряд читается
+    // полотенцами на верёвке, а не вяленой рыбой.
+    primitive(cloth, `${id}:fish:${index}`, "cloth", "panel", [fishX, railHeight - body / 2 + 0.04, fishZ], [0.23, body, 0.06], colour, {
+      rotation: [0, propYaw(yaw), tilt],
+      bearsLoad: true,
+      carriesAttachments: true,
+      attachmentSupportMode: "cable",
+      sideAttachmentReach: 0.55,
+      contactBoxes: [{ position: [0, 0, 0], size: [0.23, body, 0.06] }],
+      surface: [{ kind: "damp", amount: 0.22 }],
+    });
+    primitive(cloth, `${id}:fish-tail:${index}`, "cloth", "panel", [fishX + Math.sin(tilt) * body, railHeight - body - tail / 2 + 0.12, fishZ], [0.12, tail, 0.05], colour, {
+      rotation: [0, propYaw(yaw), tilt],
+      bearsLoad: false,
+      sideAttachmentReach: 0.4,
+      contactBoxes: [{ position: [0, 0, 0], size: [0.12, tail, 0.05] }],
+      surface: [{ kind: "damp", amount: 0.26 }],
+    });
+  }
 }
 
 function addVillageWell(target: MutableGroup, id: string, x: number, z: number): void {
@@ -639,19 +692,23 @@ function addSledge(target: MutableGroup, id: string, x: number, z: number, yaw: 
   for (const side of [-1, 1] as const) {
     const [runnerX, runnerZ] = localPoint(x, z, yaw, side * 0.78, 0);
     primitive(target, `${id}:runner:${side}`, "wood", "plank", [runnerX, 0.14, runnerZ], [0.18, 0.22, 3.65], "#4a352a", {
-      rotation: [0, yaw, 0],
+      rotation: [0, propYaw(yaw), 0],
     });
   }
   for (let slat = 0; slat < 5; slat += 1) {
     const [slatX, slatZ] = localPoint(x, z, yaw, 0, -1.25 + slat * 0.62);
     primitive(target, `${id}:slat:${slat}`, "wood", "plank", [slatX, 0.34, slatZ], [1.85, 0.16, 0.48], slat % 2 === 0 ? "#876044" : "#6c4b36", {
-      rotation: [0, yaw, 0],
+      rotation: [0, propYaw(yaw), 0],
     });
   }
   for (const side of [-1, 1] as const) {
     const [shaftX, shaftZ] = localPoint(x, z, yaw, side * 0.62, 3.0);
+    // Оглобля лежит вдоль оси саней. Рыскание ей задаёт ТРЕТИЙ угол: после
+    // Rx(π/2) ось y-поворота совпадает с осью самого цилиндра и на него уже
+    // не влияет (обычный gimbal), поэтому [π/2, yaw, 0] оставляло оглоблю
+    // строго по +Z независимо от поворота саней.
     primitive(target, `${id}:shaft:${side}`, "wood", "cylinder", [shaftX, 0.12, shaftZ], [0.18, 3.4, 0.18], "#5b3f2e", {
-      rotation: [Math.PI / 2, yaw, 0],
+      rotation: [Math.PI / 2, 0, yaw],
       contactBoxes: [{ position: [0, 0, 0], size: [0.18, 3.4, 0.18] }],
     });
   }
@@ -662,7 +719,7 @@ function addFirewoodPile(target: MutableGroup, id: string, x: number, z: number,
     const row = Math.floor(index / 5);
     const [px, pz] = localPoint(x, z, yaw, -1.7 + (index % 5) * 0.82, row * 0.48);
     primitive(target, `${id}:log:${index}`, "wood", "cylinder", [px, 0.19, pz], [0.34, 0.76, 0.34], index % 3 === 0 ? "#825c3d" : "#5d402e", {
-      rotation: [0, yaw, Math.PI / 2],
+      rotation: [0, propYaw(yaw), Math.PI / 2],
       contactBoxes: [{ position: [0, 0, 0], size: [0.34, 0.76, 0.34] }],
       surface: index % 4 === 0 ? [{ kind: "damp", amount: 0.16 }] : undefined,
     });
@@ -680,14 +737,14 @@ function addHerbGarden(
   for (let bed = 0; bed < 4; bed += 1) {
     const [bedX, bedZ] = localPoint(x, z, yaw, -2.1 + bed * 1.4, 0);
     primitive(growth, `${id}:soil:${bed}`, "earth", "panel", [bedX, 0.07, bedZ], [0.9, 0.05, 4.4], bed % 2 === 0 ? "#4f3d30" : "#594435", {
-      rotation: [0, yaw, 0],
+      rotation: [0, propYaw(yaw), 0],
       bearsLoad: false,
       surface: [{ kind: "damp", amount: 0.38 }],
     });
     for (let plant = 0; plant < 7; plant += 1) {
       const [plantX, plantZ] = localPoint(x, z, yaw, -2.1 + bed * 1.4, -1.7 + plant * 0.56);
       primitive(growth, `${id}:plant:${bed}:${plant}`, "foliage", "panel", [plantX, 0.26, plantZ], [0.34, 0.5, 0.04], (bed + plant) % 3 === 0 ? "#687347" : "#435b3d", {
-        rotation: [0, yaw + (plant % 2) * Math.PI / 2, 0],
+        rotation: [0, propYaw(yaw) + (plant % 2) * Math.PI / 2, 0],
         bearsLoad: false,
       });
     }
@@ -695,7 +752,7 @@ function addHerbGarden(
   for (const side of [-1, 1] as const) {
     const [edgeX, edgeZ] = localPoint(x, z, yaw, side * 2.85, 0);
     primitive(structures, `${id}:edge:${side}`, "wood", "plank", [edgeX, 0.13, edgeZ], [0.16, 0.22, 4.8], "#514033", {
-      rotation: [0, yaw, 0],
+      rotation: [0, propYaw(yaw), 0],
     });
   }
 }
@@ -728,6 +785,725 @@ function addAnimalPen(target: MutableGroup, id: string, x: number, z: number, wi
   });
 }
 
+/**
+ * КУЗНИЦА. До сих пор в деревне было два одинаковых склада мечей и ни одного
+ * горна: ковать было негде, наковальня стояла в доме кузнеца.
+ *
+ * Образ: низкое каменное гнездо с углями под наклонным дымником, слева мехи с
+ * коромыслом, справа наковальня на дубовой колоде и бадья для закалки, перед
+ * ними мокрый круг точила. Ночью деревня получает второй живой огонь.
+ *
+ * Размеры взяты по работе, а не на глаз: под горна на 0.78 (кузнец работает
+ * стоя, не наклоняясь), наковальня на 0.83 — по костяшкам опущенной руки,
+ * расстояние горн → наковальня 1.5 м, то есть один шаг с заготовкой в клещах.
+ * Открытая сторона смотрит на подход от саней, дымник — с подветренной.
+ */
+function addSmithy(
+  structures: MutableGroup,
+  lights: MutableGroup,
+  storage: MutableGroup,
+  id: string,
+  x: number,
+  z: number,
+  yaw: number,
+): void {
+  const at = (lx: number, lz: number): readonly [number, number] => localPoint(x, z, yaw, lx, lz);
+  const facing = propYaw(yaw);
+
+  // --- Горн: два ряда камня, глиняный под, задняя стенка-отражатель --------
+  const hearthStones: Array<readonly [number, number, number]> = [
+    [-0.85, -0.5, 0], [-0.85, 0.15, 1], [-0.85, 0.55, 2],
+    [0.85, -0.5, 3], [0.85, 0.15, 4], [0.85, 0.55, 5],
+    [-0.3, -0.62, 6], [0.3, -0.62, 7],
+  ];
+  for (const [lx, lz, index] of hearthStones) {
+    const [sx, sz] = at(lx, lz);
+    primitive(structures, `${id}:hearth-stone:${index}`, "stone", "stoneBlock", [sx, 0.28, sz], [0.62, 0.56, 0.58], index % 3 === 0 ? "#6d6a62" : index % 2 === 0 ? "#7b776c" : "#5f5d57", {
+      rotation: [0, facing, 0],
+      surface: [{ kind: "moss", amount: 0.08 }],
+    });
+  }
+  const [bedX, bedZ] = at(0, -0.05);
+  primitive(structures, `${id}:hearth-bed`, "stone", "stoneBlock", [bedX, 0.66, bedZ], [1.85, 0.24, 1.15], "#4b433a", {
+    rotation: [0, facing, 0],
+    carriesAttachments: true,
+    sideAttachmentReach: 0.6,
+    contactBoxes: [{ position: [0, 0, 0], size: [1.85, 0.24, 1.15] }],
+  });
+  // Заднюю стенку кладут, чтобы жар шёл на заготовку, а не в спину помощнику.
+  for (const [index, lx] of [-0.62, 0, 0.62].entries()) {
+    const [wx, wz] = at(lx, -0.52);
+    primitive(structures, `${id}:hearth-back:${index}`, "stone", "stoneBlock", [wx, 0.98, wz], [0.6, 0.4, 0.3], index === 1 ? "#5a564e" : "#6a665d", {
+      rotation: [0, facing, 0],
+      bearsLoad: false,
+      sideAttachmentReach: 0.45,
+      contactBoxes: [{ position: [0, 0, 0], size: [0.6, 0.4, 0.3] }],
+    });
+  }
+  const [coalX, coalZ] = at(0, 0.02);
+  primitive(structures, `${id}:coal-bed`, "stone", "stoneBlock", [coalX, 0.8, coalZ], [1.15, 0.06, 0.72], "#1d1a17", {
+    rotation: [0, facing, 0],
+    bearsLoad: false,
+  });
+  primitive(lights, `${id}:fire`, "glass", "glassPane", [coalX, 0.85, coalZ], [0.78, 0.16, 0.5], "#ffb066", {
+    rotation: [0, facing, 0],
+    bearsLoad: false,
+    light: { position: [0, 0.35, 0], color: "#ff7a2a", distance: 15, intensity: 7.6 },
+  });
+
+  // --- Дымник: наклонная доска на двух задних стойках ----------------------
+  for (const [index, lx] of [-1.05, 1.05].entries()) {
+    const [px, pz] = at(lx, -1.05);
+    primitive(structures, `${id}:hood-post:${index}`, "wood", "cylinder", [px, 1.22, pz], [0.24, 2.44, 0.24], "#4a372c", {
+      carriesAttachments: true,
+    });
+  }
+  const [hoodX, hoodZ] = at(0, -0.66);
+  primitive(structures, `${id}:hood`, "wood", "plank", [hoodX, 2.14, hoodZ], [2.3, 0.16, 1.35], "#3b2f26", {
+    rotation: [-0.52, facing, 0],
+    bearsLoad: false,
+    attachmentSupportMode: "wall",
+    sideAttachmentReach: 1.3,
+    surface: [{ kind: "damp", amount: 0.1 }],
+  });
+  const [flueX, flueZ] = at(0, -1.08);
+  primitive(structures, `${id}:flue`, "wood", "cylinder", [flueX, 2.72, flueZ], [0.52, 0.9, 0.52], "#2f2620", {
+    bearsLoad: false,
+    sideAttachmentReach: 0.6,
+  });
+
+  // --- Мехи: станина, два щита, кожаная гармошка, сопло, коромысло ---------
+  const [frameX, frameZ] = at(-1.62, -0.15);
+  primitive(structures, `${id}:bellows-frame`, "wood", "plank", [frameX, 0.42, frameZ], [1.25, 0.84, 0.5], "#54402f", {
+    rotation: [0, facing, 0],
+    carriesAttachments: true,
+    sideAttachmentReach: 0.5,
+    contactBoxes: [{ position: [0, 0, 0], size: [1.25, 0.84, 0.5] }],
+  });
+  const [lowerX, lowerZ] = at(-1.62, -0.15);
+  primitive(structures, `${id}:bellows-lower`, "wood", "plank", [lowerX, 0.9, lowerZ], [1.1, 0.1, 0.62], "#6b4c35", {
+    rotation: [0, facing, 0],
+    carriesAttachments: true,
+    contactBoxes: [{ position: [0, 0, 0], size: [1.1, 0.1, 0.62] }],
+  });
+  primitive(structures, `${id}:bellows-bag`, "cloth", "panel", [lowerX, 1.06, lowerZ], [1.0, 0.24, 0.56], "#5d4630", {
+    rotation: [0, facing, 0],
+    bearsLoad: false,
+    sideAttachmentReach: 0.4,
+    surface: [{ kind: "damp", amount: 0.14 }],
+  });
+  primitive(structures, `${id}:bellows-upper`, "wood", "plank", [lowerX, 1.24, lowerZ], [1.1, 0.1, 0.62], "#7a5539", {
+    rotation: [-0.07, facing, 0],
+    bearsLoad: false,
+    sideAttachmentReach: 0.4,
+  });
+  // Сопло входит в БОК горна на уровне углей — иначе дуть некуда.
+  const [nozzleX, nozzleZ] = at(-0.98, -0.12);
+  primitive(structures, `${id}:tuyere`, "steel", "cylinder", [nozzleX, 0.84, nozzleZ], [0.11, 0.72, 0.11], "#3d4143", {
+    rotation: [0, propYaw(yaw), Math.PI / 2],
+    contactBoxes: [{ position: [0, 0, 0], size: [0.11, 0.72, 0.11] }],
+    bearsLoad: false,
+  });
+  const [leverPostX, leverPostZ] = at(-2.25, -0.15);
+  primitive(structures, `${id}:lever-post`, "wood", "cylinder", [leverPostX, 0.95, leverPostZ], [0.18, 1.9, 0.18], "#4f3a2c", {
+    carriesAttachments: true,
+  });
+  const [leverX, leverZ] = at(-1.75, -0.15);
+  primitive(structures, `${id}:lever`, "wood", "plank", [leverX, 1.82, leverZ], [1.5, 0.1, 0.12], "#6f5138", {
+    rotation: [0, facing, 0.12],
+    bearsLoad: false,
+    attachmentSupportMode: "wall",
+    sideAttachmentReach: 0.8,
+  });
+  const [ropeX, ropeZ] = at(-1.62, -0.15);
+  primitive(structures, `${id}:lever-rope`, "cloth", "cylinder", [ropeX, 1.52, ropeZ], [0.05, 0.5, 0.05], "#6a5b3f", {
+    bearsLoad: false,
+    attachmentSupportMode: "wall",
+    sideAttachmentReach: 0.6,
+  });
+
+  // --- Наковальня, закалочная бадья, точило, уголь и шлак ------------------
+  const [anvilX, anvilZ] = at(1.5, 0.62);
+  place(structures, `${id}:anvil`, "viking:anvil", {
+    position: [anvilX, 0, anvilZ],
+    rotation: [0, facing - 0.35, 0],
+  });
+  const [tubX, tubZ] = at(2.15, -0.5);
+  primitive(structures, `${id}:quench-tub`, "wood", "cylinder", [tubX, 0.34, tubZ], [0.86, 0.68, 0.86], "#4d3729");
+  primitive(structures, `${id}:quench-hoop`, "steel", "cylinder", [tubX, 0.62, tubZ], [0.9, 0.07, 0.9], "#3b3f40", {
+    bearsLoad: false,
+  });
+  primitive(structures, `${id}:quench-water`, "glass", "glassPane", [tubX, 0.66, tubZ], [0.74, 0.05, 0.74], "#3d4c4a", {
+    bearsLoad: false,
+  });
+
+  // Точило: круг на оси между двух стоек, кривошип сбоку, корытце под ним —
+  // камень точат МОКРЫМ, иначе он греет и садит закалку.
+  const [stoneX, stoneZ] = at(-0.35, 1.95);
+  for (const [index, lx] of [-0.42, 0.42].entries()) {
+    const [px, pz] = at(-0.35 + lx, 1.95);
+    primitive(structures, `${id}:grind-post:${index}`, "wood", "plank", [px, 0.36, pz], [0.16, 0.72, 0.2], "#54402f", {
+      rotation: [0, facing, 0],
+      carriesAttachments: true,
+      sideAttachmentReach: 0.6,
+      contactBoxes: [{ position: [0, 0, 0], size: [0.16, 0.72, 0.2] }],
+    });
+  }
+  primitive(structures, `${id}:grind-axle`, "wood", "cylinder", [stoneX, 0.70, stoneZ], [0.09, 1.05, 0.09], "#6a4c34", {
+    rotation: [0, propYaw(yaw), Math.PI / 2],
+    contactBoxes: [{ position: [0, 0, 0], size: [0.09, 1.05, 0.09] }],
+    bearsLoad: false,
+    sideAttachmentReach: 0.45,
+  });
+  primitive(structures, `${id}:grindstone`, "stone", "cylinder", [stoneX, 0.70, stoneZ], [0.66, 0.14, 0.66], "#7d7468", {
+    rotation: [0, propYaw(yaw), Math.PI / 2],
+    contactBoxes: [{ position: [0, 0, 0], size: [0.66, 0.14, 0.66] }],
+    bearsLoad: false,
+    sideAttachmentReach: 0.35,
+    surface: [{ kind: "damp", amount: 0.3 }],
+  });
+  const [crankX, crankZ] = at(0.16, 1.95);
+  primitive(structures, `${id}:grind-crank`, "wood", "plank", [crankX, 0.56, crankZ], [0.08, 0.3, 0.08], "#7c5a3c", {
+    rotation: [0, facing, 0.5],
+    bearsLoad: false,
+    sideAttachmentReach: 0.35,
+  });
+  const [troughX, troughZ] = at(-0.35, 1.95);
+  primitive(structures, `${id}:grind-trough`, "wood", "plank", [troughX, 0.19, troughZ], [1.0, 0.34, 0.42], "#4a382b", {
+    rotation: [0, facing, 0],
+    carriesAttachments: true,
+    contactBoxes: [{ position: [0, 0, 0], size: [1.0, 0.28, 0.42] }],
+  });
+  primitive(structures, `${id}:grind-water`, "glass", "glassPane", [troughX, 0.34, troughZ], [0.86, 0.04, 0.32], "#3f4c4b", {
+    rotation: [0, facing, 0],
+    bearsLoad: false,
+  });
+
+  const [basketX, basketZ] = at(-2.2, 0.85);
+  place(storage, `${id}:coal-basket`, "viking:baskets", {
+    position: [basketX, 0, basketZ],
+    rotation: [0, facing + 0.3, 0],
+    scale: [0.9, 0.85, 0.9],
+  }, { palette: { grain: "#221c18" } });
+  for (let index = 0; index < 5; index += 1) {
+    const [slagX, slagZ] = at(2.05 + (index % 2) * 0.42, 1.35 + Math.floor(index / 2) * 0.38);
+    primitive(storage, `${id}:slag:${index}`, "stone", "stoneBlock", [slagX, 0.05 + (index % 2) * 0.02, slagZ], [0.19, 0.1, 0.16], index % 2 === 0 ? "#2c2724" : "#3a332d", {
+      rotation: [0, facing + index * 0.5, 0],
+      bearsLoad: false,
+    });
+  }
+  // Клещи лежат на краю горна: инструмент никогда не убирают далеко от огня.
+  const [tongX, tongZ] = at(0.62, 0.42);
+  for (const [index, offset] of [-0.05, 0.05].entries()) {
+    primitive(structures, `${id}:tongs:${index}`, "steel", "cylinder", [tongX + offset * 0.6, 0.82, tongZ], [0.05, 0.82, 0.05], "#3a3f41", {
+      rotation: [Math.PI / 2, 0, yaw + offset * 1.6],
+      contactBoxes: [{ position: [0, 0, 0], size: [0.05, 0.82, 0.05] }],
+      bearsLoad: false,
+      sideAttachmentReach: 0.3,
+    });
+  }
+}
+
+/**
+ * ПИВОВАРНЯ. Бочки в деревне были, а варить пиво было не в чем.
+ *
+ * Образ: широкий деревянный чан на камнях над огнём, рядом заторная бочка с
+ * деревянной втулкой и подставленным ведром, мешки солода и мешалка-весло.
+ * Стоит во дворе пивовара между его колодой и поленницей — огню нужны дрова,
+ * а чану нужен огонь: место выбрано этой связью, а не свободным пятном.
+ */
+function addBrewery(
+  structures: MutableGroup,
+  storage: MutableGroup,
+  lights: MutableGroup,
+  id: string,
+  x: number,
+  z: number,
+  yaw: number,
+): void {
+  const at = (lx: number, lz: number): readonly [number, number] => localPoint(x, z, yaw, lx, lz);
+  const facing = propYaw(yaw);
+
+  for (let index = 0; index < 8; index += 1) {
+    const angle = (index / 8) * Math.PI * 2;
+    const [sx, sz] = at(Math.cos(angle) * 0.95, Math.sin(angle) * 0.95);
+    primitive(structures, `${id}:fire-stone:${index}`, "stone", "stoneBlock", [sx, 0.22, sz], [0.5, 0.44, 0.42], index % 3 === 0 ? "#6f6b63" : "#5c5952", {
+      rotation: [0, -angle, 0],
+      surface: [{ kind: "moss", amount: 0.06 }],
+    });
+  }
+  primitive(lights, `${id}:fire`, "glass", "glassPane", [x, 0.3, z], [0.9, 0.14, 0.9], "#ff9a4a", {
+    bearsLoad: false,
+    light: { position: [0, 0.3, 0], color: "#ff7f33", distance: 12, intensity: 5.2 },
+  });
+
+  // Чан стоит НА камнях очага, а не рядом: пиво варят над огнём.
+  primitive(structures, `${id}:vat`, "wood", "cylinder", [x, 0.92, z], [1.72, 0.96, 1.72], "#6b4d35", {
+    carriesAttachments: true,
+    contactBoxes: [{ position: [0, 0, 0], size: [1.72, 0.96, 1.72] }],
+  });
+  for (const [index, hoopY] of [0.62, 1.24].entries()) {
+    primitive(structures, `${id}:vat-hoop:${index}`, "steel", "cylinder", [x, hoopY, z], [1.8, 0.09, 1.8], "#3f4344", {
+      bearsLoad: false,
+      sideAttachmentReach: 0.3,
+    });
+  }
+  primitive(structures, `${id}:wort`, "glass", "glassPane", [x, 1.3, z], [1.5, 0.06, 1.5], "#8a6a34", {
+    bearsLoad: false,
+    surface: [{ kind: "damp", amount: 0.3 }],
+  });
+  // Мешалка-весло воткнута в сусло и упирается в край чана.
+  const [paddleX, paddleZ] = at(0.1, 0.1);
+  primitive(structures, `${id}:paddle`, "wood", "plank", [paddleX, 1.46, paddleZ], [2.3, 0.1, 0.16], "#8a6743", {
+    rotation: [0, facing + 0.35, 0.05],
+    bearsLoad: false,
+    sideAttachmentReach: 0.5,
+    contactBoxes: [{ position: [0, 0, 0], size: [2.3, 0.1, 0.16] }],
+  });
+  primitive(structures, `${id}:paddle-blade`, "wood", "plank", [paddleX, 1.44, paddleZ], [0.5, 0.06, 0.3], "#9c7749", {
+    rotation: [0, facing + 0.35, 0.05],
+    bearsLoad: false,
+    sideAttachmentReach: 0.5,
+  });
+
+  // Заторная бочка на подставке: из неё цедят через втулку в ведро.
+  const [standX, standZ] = at(-2.35, 0.15);
+  for (const [index, lx] of [-0.55, 0.55].entries()) {
+    const [px, pz] = at(-2.35 + lx, 0.15);
+    primitive(structures, `${id}:tun-stand:${index}`, "wood", "plank", [px, 0.26, pz], [0.2, 0.52, 0.62], "#4d3928", {
+      rotation: [0, facing, 0],
+      carriesAttachments: true,
+      sideAttachmentReach: 0.6,
+      contactBoxes: [{ position: [0, 0, 0], size: [0.2, 0.52, 0.62] }],
+    });
+  }
+  primitive(structures, `${id}:tun`, "wood", "cylinder", [standX, 1.12, standZ], [1.05, 1.2, 1.05], "#6a4a33", {
+    contactBoxes: [{ position: [0, 0, 0], size: [1.05, 1.2, 1.05] }],
+    carriesAttachments: true,
+  });
+  for (const [index, hoopY] of [0.82, 1.52].entries()) {
+    primitive(structures, `${id}:tun-hoop:${index}`, "steel", "cylinder", [standX, hoopY, standZ], [1.11, 0.08, 1.11], "#3f4344", {
+      bearsLoad: false,
+      sideAttachmentReach: 0.25,
+    });
+  }
+  const [tapX, tapZ] = at(-2.35, 0.72);
+  primitive(structures, `${id}:tap`, "wood", "cylinder", [tapX, 0.76, tapZ], [0.09, 0.34, 0.09], "#8a6743", {
+    rotation: [Math.PI / 2, 0, yaw],
+    contactBoxes: [{ position: [0, 0, 0], size: [0.09, 0.34, 0.09] }],
+    bearsLoad: false,
+    attachmentSupportMode: "wall",
+    sideAttachmentReach: 0.5,
+  });
+  const [pailX, pailZ] = at(-2.35, 1.05);
+  primitive(storage, `${id}:pail`, "wood", "cylinder", [pailX, 0.21, pailZ], [0.44, 0.42, 0.44], "#5b4230");
+  primitive(storage, `${id}:pail-rim`, "wood", "cylinder", [pailX, 0.42, pailZ], [0.48, 0.06, 0.48], "#75543a", {
+    bearsLoad: false,
+  });
+
+  const [maltX, maltZ] = at(-1.5, -1.45);
+  place(storage, `${id}:malt`, "viking:baskets", {
+    position: [maltX, 0, maltZ],
+    rotation: [0, facing - 0.4, 0],
+  }, { palette: { grain: "#c4a763" } });
+  for (let index = 0; index < 3; index += 1) {
+    const [sackX, sackZ] = at(1.5 + (index % 2) * 0.5, -1.55 - index * 0.44);
+    primitive(storage, `${id}:sack:${index}`, "cloth", "cylinder", [sackX, 0.22, sackZ], [0.56, 0.44, 0.5], index % 2 === 0 ? "#9c8b66" : "#8a7a58", {
+      rotation: [0, facing + index * 0.4, 0],
+      bearsLoad: true,
+      carriesAttachments: true,
+    });
+    primitive(storage, `${id}:sack-neck:${index}`, "cloth", "cylinder", [sackX, 0.5, sackZ], [0.32, 0.16, 0.3], index % 2 === 0 ? "#8e7f5c" : "#7d6f4f", {
+      rotation: [0.12, facing + index * 0.4, 0.1],
+      bearsLoad: false,
+      sideAttachmentReach: 0.3,
+    });
+  }
+}
+
+
+/**
+ * СТИРАЛЬНОЕ МЕСТО у бельевой верёвки: долблёное корыто на козлах, валёк,
+ * ведро и корзина с бельём. Верёвки в деревне были, а стирать было не в чем —
+ * бельё появлялось на них само.
+ *
+ * Корыто ставится ПЕРЕД линией, со стороны подхода: женщина стоит спиной к
+ * тропе и лицом к верёвке, отжатое бельё перекидывает через плечо, не обходя
+ * корыто. Высота борта 0.62 — над корытом работают наклонившись, а не сидя.
+ */
+function addWashStand(
+  structures: MutableGroup,
+  storage: MutableGroup,
+  id: string,
+  x: number,
+  z: number,
+  yaw: number,
+): void {
+  const at = (lx: number, lz: number): readonly [number, number] => localPoint(x, z, yaw, lx, lz);
+  const facing = propYaw(yaw);
+
+  for (const [index, lx] of [-0.68, 0.68].entries()) {
+    const [px, pz] = at(lx, 0);
+    primitive(structures, `${id}:trestle:${index}`, "wood", "plank", [px, 0.18, pz], [0.16, 0.36, 0.62], "#4b3729", {
+      rotation: [0, facing, 0],
+      carriesAttachments: true,
+    });
+  }
+  const [troughX, troughZ] = at(0, 0);
+  primitive(structures, `${id}:trough`, "wood", "plank", [troughX, 0.5, troughZ], [1.75, 0.28, 0.66], "#5a4230", {
+    rotation: [0, facing, 0],
+    carriesAttachments: true,
+    contactBoxes: [{ position: [0, 0, 0], size: [1.75, 0.28, 0.66] }],
+  });
+  for (const [index, lz] of [-0.32, 0.32].entries()) {
+    const [sideX, sideZ] = at(0, lz);
+    primitive(structures, `${id}:trough-side:${index}`, "wood", "plank", [sideX, 0.66, sideZ], [1.75, 0.2, 0.08], "#6b4e37", {
+      rotation: [0, facing, 0],
+      bearsLoad: false,
+      sideAttachmentReach: 0.3,
+    });
+  }
+  primitive(structures, `${id}:water`, "glass", "glassPane", [troughX, 0.63, troughZ], [1.6, 0.05, 0.52], "#495d5c", {
+    rotation: [0, facing, 0],
+    bearsLoad: false,
+    surface: [{ kind: "damp", amount: 0.4 }],
+  });
+  // Валёк лежит поперёк борта — им бельё колотят, а не трут.
+  const [batX, batZ] = at(0.55, -0.3);
+  primitive(structures, `${id}:beetle`, "wood", "plank", [batX, 0.74, batZ], [0.5, 0.09, 0.14], "#8a6743", {
+    rotation: [0, facing + 0.6, 0],
+    bearsLoad: false,
+    sideAttachmentReach: 0.3,
+  });
+  const [pailX, pailZ] = at(-1.25, 0.5);
+  primitive(storage, `${id}:pail`, "wood", "cylinder", [pailX, 0.2, pailZ], [0.42, 0.4, 0.42], "#5b4230");
+  primitive(storage, `${id}:pail-rim`, "wood", "cylinder", [pailX, 0.4, pailZ], [0.46, 0.06, 0.46], "#75543a", {
+    bearsLoad: false,
+  });
+  const [basketX, basketZ] = at(1.35, 0.55);
+  place(storage, `${id}:basket`, "viking:baskets", {
+    position: [basketX, 0, basketZ],
+    rotation: [0, facing + 0.5, 0],
+    scale: [0.85, 0.8, 0.85],
+  }, { palette: { grain: "#b9ae92" } });
+}
+
+/**
+ * ЯСЛИ И ПОИЛКА у загона. Сено в загоне лежало копнами прямо на земле, а пить
+ * козам было негде.
+ *
+ * Кормушку ставят У ЖЕРДИ и наполняют СНАРУЖИ — так и сделано: ясли стоят
+ * вплотную к северному прогону, куда приходит тропа от восточного двора, и
+ * человеку не нужно лезть в загон, чтобы задать корм.
+ */
+function addPenFeeders(
+  structures: MutableGroup,
+  storage: MutableGroup,
+  id: string,
+  x: number,
+  z: number,
+): void {
+  // Ясли: две наклонные доски в виде «V» на четырёх ножках.
+  for (const [index, lx] of [-0.95, 0.95].entries()) {
+    primitive(structures, `${id}:manger-leg:${index}`, "wood", "plank", [x + lx, 0.24, z], [0.14, 0.48, 0.52], "#4b3729", {
+      carriesAttachments: true,
+    });
+  }
+  for (const [index, side] of [-1, 1].entries()) {
+    primitive(structures, `${id}:manger-board:${index}`, "wood", "plank", [x, 0.62, z + side * 0.28], [2.2, 0.5, 0.1], "#6b4e37", {
+      rotation: [side * 0.55, 0, 0],
+      bearsLoad: false,
+      sideAttachmentReach: 0.5,
+      // Доска ложится на ножки нижней кромкой: пятна опирания описаны там,
+      // где дерево правда касается дерева, а не по габариту наклонной доски.
+      contactBoxes: [
+        { position: [-0.95, -0.16, -side * 0.12], size: [0.34, 0.16, 0.5] },
+        { position: [0.95, -0.16, -side * 0.12], size: [0.34, 0.16, 0.5] },
+      ],
+    });
+  }
+  primitive(structures, `${id}:manger-end:0`, "wood", "plank", [x - 1.08, 0.62, z], [0.1, 0.46, 0.6], "#59412e", {
+    bearsLoad: false,
+    sideAttachmentReach: 0.4,
+  });
+  primitive(structures, `${id}:manger-end:1`, "wood", "plank", [x + 1.08, 0.62, z], [0.1, 0.46, 0.6], "#59412e", {
+    bearsLoad: false,
+    sideAttachmentReach: 0.4,
+  });
+  primitive(storage, `${id}:manger-hay`, "foliage", "panel", [x, 0.74, z], [1.9, 0.22, 0.42], "#8c824f", {
+    bearsLoad: false,
+    sideAttachmentReach: 0.4,
+  });
+
+  // Поилка: долблёный ствол рядом, с водой.
+  primitive(structures, `${id}:trough`, "wood", "cylinder", [x + 3.1, 0.33, z], [0.62, 1.6, 0.62], "#4d3928", {
+    rotation: [0, 0, Math.PI / 2],
+    contactBoxes: [{ position: [0, 0, 0], size: [0.62, 1.6, 0.62] }],
+    carriesAttachments: true,
+  });
+  primitive(structures, `${id}:trough-water`, "glass", "glassPane", [x + 3.1, 0.56, z], [1.42, 0.05, 0.42], "#465a58", {
+    bearsLoad: false,
+    surface: [{ kind: "damp", amount: 0.45 }],
+  });
+}
+
+/**
+ * ВИЛЫ ИЛИ ГРАБЛИ, воткнутые в землю (в копну, в грядку) и стоящие наклонно.
+ * Инструмент, брошенный там, где им работали, — самый дешёвый признак труда.
+ */
+function addHandTool(
+  target: MutableGroup,
+  id: string,
+  x: number,
+  z: number,
+  yaw: number,
+  kind: "fork" | "rake",
+): void {
+  const lean = 0.34;
+  const facing = propYaw(yaw);
+  // Черенок наклонён от земли: низ у пятки, верх уходит в сторону наклона.
+  const topOffset = Math.sin(lean) * 0.9;
+  const [shaftX, shaftZ] = localPoint(x, z, yaw, 0, topOffset / 2);
+  primitive(target, `${id}:shaft`, "wood", "cylinder", [shaftX, 0.92, shaftZ], [0.07, 1.9, 0.07], "#8a6743", {
+    rotation: [lean, facing, 0],
+    contactBoxes: [{ position: [0, 0, 0], size: [0.07, 1.9, 0.07] }],
+  });
+  const [headX, headZ] = localPoint(x, z, yaw, 0, -0.02);
+  if (kind === "fork") {
+    for (const [index, lx] of [-0.13, 0, 0.13].entries()) {
+      const [tineX, tineZ] = localPoint(x, z, yaw, lx, -0.02);
+      primitive(target, `${id}:tine:${index}`, "steel", "cylinder", [tineX, 0.24, tineZ], [0.045, 0.5, 0.045], "#454a4b", {
+        rotation: [lean, facing, 0],
+        bearsLoad: false,
+        sideAttachmentReach: 0.3,
+      });
+    }
+    return;
+  }
+  primitive(target, `${id}:head`, "wood", "plank", [headX, 0.22, headZ], [0.72, 0.09, 0.1], "#6f5138", {
+    rotation: [0, facing, 0],
+    bearsLoad: false,
+    sideAttachmentReach: 0.35,
+  });
+  for (let index = 0; index < 5; index += 1) {
+    const [toothX, toothZ] = localPoint(x, z, yaw, -0.28 + index * 0.14, -0.02);
+    primitive(target, `${id}:tooth:${index}`, "wood", "cylinder", [toothX, 0.1, toothZ], [0.04, 0.24, 0.04], "#5d4430", {
+      bearsLoad: false,
+      sideAttachmentReach: 0.25,
+    });
+  }
+}
+
+/**
+ * ПОСУДА НА СТОЛЕ: кружки, кувшин и деревянное блюдо. Пить в зале было не из
+ * чего — стояли столы, лавки и бочки, а рука гостя оставалась пустой.
+ *
+ * Столы зала несут вес НЕ всей столешницей: у пиршественного стола пятна
+ * опирания описаны только над ножками (0.5 × 0.34 на каждом из четырёх углов).
+ * Поэтому посуда ставится по углам стола, а не по всей доске: там она и стоит
+ * в жизни — перед сидящим, а не посреди пустой столешницы. Дно поднято на
+ * сантиметр над доской: ниже начинается пятно опирания, и кружка тонет в нём.
+ */
+function addTableware(
+  target: MutableGroup,
+  id: string,
+  x: number,
+  z: number,
+  seed: number,
+): void {
+  const seat = 1.4;
+  const corners = [
+    [-0.22, -1.35], [0.22, -1.35], [-0.22, 1.35], [0.22, 1.35],
+  ] as const;
+  corners.forEach(([dx, dz], corner) => {
+    const jitterX = (noise(seed, corner, 31) - 0.5) * 0.26;
+    const jitterZ = (noise(seed, corner, 47) - 0.5) * 0.18;
+    const cornerX = x + dx + jitterX;
+    const cornerZ = z + dz + jitterZ;
+    if (corner % 2 === 0) {
+      primitive(target, `${id}:mug:${corner}`, "wood", "cylinder", [cornerX, seat + 0.08, cornerZ], [0.13, 0.16, 0.13], corner % 4 === 0 ? "#6d4f36" : "#7d5b3d", {
+        bearsLoad: false,
+      });
+      primitive(target, `${id}:mug-handle:${corner}`, "wood", "plank", [cornerX + 0.08, seat + 0.08, cornerZ], [0.04, 0.1, 0.04], "#5d4430", {
+        bearsLoad: false,
+        sideAttachmentReach: 0.2,
+      });
+      return;
+    }
+    if (corner === 1) {
+      primitive(target, `${id}:jug`, "wood", "cylinder", [cornerX, seat + 0.14, cornerZ], [0.22, 0.28, 0.22], "#5a4a35", {
+        carriesAttachments: true,
+      });
+      primitive(target, `${id}:jug-neck`, "wood", "cylinder", [cornerX, seat + 0.31, cornerZ], [0.11, 0.08, 0.11], "#6b5a40", {
+        bearsLoad: false,
+        sideAttachmentReach: 0.2,
+      });
+      return;
+    }
+    primitive(target, `${id}:platter`, "wood", "plank", [cornerX, seat + 0.03, cornerZ], [0.42, 0.06, 0.3], "#87683f", {
+      bearsLoad: false,
+    });
+    primitive(target, `${id}:mug:${corner}`, "wood", "cylinder", [cornerX - 0.26, seat + 0.08, cornerZ + 0.06], [0.13, 0.16, 0.13], "#6d4f36", {
+      bearsLoad: false,
+    });
+  });
+}
+
+/**
+ * РОГ ДЛЯ ПИТЬЯ на подставке: без подставки его не поставить, поэтому рог и
+ * подставка — одна вещь. Стоит над ножкой стола у почётного конца.
+ */
+function addDrinkingHorn(
+  target: MutableGroup,
+  id: string,
+  x: number,
+  z: number,
+  yaw: number,
+): void {
+  const seat = 1.4;
+  primitive(target, `${id}:stand`, "wood", "cylinder", [x, seat + 0.05, z], [0.2, 0.1, 0.2], "#5d4430", {
+    bearsLoad: false,
+    carriesAttachments: true,
+    attachmentSupportMode: "cable",
+    sideAttachmentReach: 0.25,
+  });
+  primitive(target, `${id}:horn`, "wood", "cylinder", [x, seat + 0.21, z], [0.11, 0.34, 0.11], "#d8cba6", {
+    rotation: [0.42, propYaw(yaw), 0.3],
+    bearsLoad: false,
+    sideAttachmentReach: 0.3,
+  });
+  primitive(target, `${id}:horn-rim`, "steel", "cylinder", [x + 0.07, seat + 0.35, z + 0.05], [0.12, 0.05, 0.12], "#9b7b43", {
+    rotation: [0.42, propYaw(yaw), 0.3],
+    bearsLoad: false,
+    sideAttachmentReach: 0.3,
+  });
+}
+
+/**
+ * СТОЙКА С ПИВОМ у восточной стены зала: бочка лежит на козлах, из втулки
+ * цедят в кружки, под втулкой стоит ушат для перелива, рядом полка с посудой.
+ *
+ * Место выбрано ходом людей: гость входит боковой дверью (7.5, −8.9), стойка
+ * стоит в нише между восточным проходом (|x| = 6.0) и внутренней гранью стены
+ * (|x| = 7.21) — наливающий не перегораживает проход, а очередь стоит вдоль
+ * стены, а не поперёк зала.
+ */
+function addAleStand(
+  structures: MutableGroup,
+  storage: MutableGroup,
+  id: string,
+  x: number,
+  z: number,
+): void {
+  const floor = 0.24;
+  for (const [index, dz] of [-0.62, 0.62].entries()) {
+    primitive(structures, `${id}:trestle:${index}`, "wood", "plank", [x, floor + 0.24, z + dz], [0.46, 0.48, 0.16], "#4b3729", {
+      carriesAttachments: true,
+    });
+  }
+  primitive(structures, `${id}:cask`, "wood", "cylinder", [x, floor + 0.72, z], [0.62, 1.5, 0.62], "#6a4a33", {
+    rotation: [Math.PI / 2, 0, 0],
+    contactBoxes: [{ position: [0, 0, 0], size: [0.62, 1.5, 0.62] }],
+    carriesAttachments: true,
+  });
+  for (const [index, dz] of [-0.5, 0.5].entries()) {
+    primitive(structures, `${id}:cask-hoop:${index}`, "steel", "cylinder", [x, floor + 0.72, z + dz], [0.66, 0.07, 0.66], "#3f4344", {
+      rotation: [Math.PI / 2, 0, 0],
+      contactBoxes: [{ position: [0, 0, 0], size: [0.66, 0.07, 0.66] }],
+      bearsLoad: false,
+      sideAttachmentReach: 0.3,
+    });
+  }
+  // Втулка смотрит В ЗАЛ, а не в стену: под неё и подставляют кружку.
+  primitive(structures, `${id}:tap`, "wood", "cylinder", [x - 0.3, floor + 0.6, z], [0.08, 0.26, 0.08], "#8a6743", {
+    rotation: [0, 0, Math.PI / 2],
+    contactBoxes: [{ position: [0, 0, 0], size: [0.08, 0.26, 0.08] }],
+    bearsLoad: false,
+    sideAttachmentReach: 0.25,
+  });
+  primitive(storage, `${id}:pail`, "wood", "cylinder", [x - 0.26, floor + 0.2, z + 0.56], [0.4, 0.4, 0.4], "#5b4230");
+  // Полка с кружками: чистые стоят донцем вверх, как их и сушат.
+  primitive(structures, `${id}:shelf`, "wood", "plank", [x + 0.16, floor + 1.28, z], [0.34, 0.08, 1.5], "#6f5138", {
+    carriesAttachments: true,
+    attachmentSupportMode: "wall",
+    sideAttachmentReach: 0.6,
+  });
+  for (let index = 0; index < 4; index += 1) {
+    primitive(storage, `${id}:mug:${index}`, "wood", "cylinder", [x + 0.16, floor + 1.4, z - 0.54 + index * 0.36], [0.13, 0.15, 0.13], index % 2 === 0 ? "#6d4f36" : "#7d5b3d", {
+      bearsLoad: false,
+      sideAttachmentReach: 0.2,
+    });
+  }
+}
+
+/**
+ * СЕТИ НА БЕРЕГУ у тропы к причалу: рама с растянутой сетью, свёрнутая вторая
+ * сеть, вёсла и корзина под улов. Рыбак ходил на пристань без единой снасти.
+ */
+function addNetFrame(
+  structures: MutableGroup,
+  cloth: MutableGroup,
+  storage: MutableGroup,
+  id: string,
+  x: number,
+  z: number,
+  yaw: number,
+): void {
+  const at = (lx: number, lz: number): readonly [number, number] => localPoint(x, z, yaw, lx, lz);
+  const facing = propYaw(yaw);
+
+  for (const [index, lx] of [-1.9, 1.9].entries()) {
+    const [px, pz] = at(lx, 0);
+    primitive(structures, `${id}:post:${index}`, "wood", "cylinder", [px, 1.24, pz], [0.24, 2.48, 0.24], index === 0 ? "#4c382c" : "#573f2f", {
+      carriesAttachments: true,
+    });
+  }
+  primitive(structures, `${id}:rail`, "wood", "plank", [x, 2.3, z], [4.1, 0.15, 0.17], "#65482f", {
+    rotation: [0, facing, 0],
+    carriesAttachments: true,
+    attachmentSupportMode: "cable",
+    sideAttachmentReach: 0.7,
+    contactBoxes: [{ position: [0, 0, 0], size: [4.1, 0.15, 0.17] }],
+  });
+  // Сеть висит от жерди почти до земли и провисает — снизу она шире.
+  primitive(cloth, `${id}:net`, "cloth", "panel", [x, 1.42, z], [3.5, 1.78, 0.05], "#7c7a63", {
+    rotation: [0, facing, 0],
+    bearsLoad: false,
+    sideAttachmentReach: 0.6,
+    contactBoxes: [{ position: [0, 0, 0], size: [3.5, 1.78, 0.05] }],
+    surface: [{ kind: "damp", amount: 0.34 }],
+  });
+  for (let index = 0; index < 6; index += 1) {
+    const [floatX, floatZ] = at(-1.5 + index * 0.6, 0);
+    primitive(cloth, `${id}:float:${index}`, "wood", "cylinder", [floatX, 2.24, floatZ], [0.14, 0.2, 0.14], index % 2 === 0 ? "#8a6b45" : "#6f5538", {
+      rotation: [0, facing, Math.PI / 2],
+      contactBoxes: [{ position: [0, 0, 0], size: [0.14, 0.2, 0.14] }],
+      bearsLoad: false,
+      sideAttachmentReach: 0.3,
+    });
+  }
+  // Вторая сеть свёрнута в бухту у ноги столба.
+  const [coilX, coilZ] = at(-2.35, 0.75);
+  primitive(cloth, `${id}:coil`, "cloth", "cylinder", [coilX, 0.19, coilZ], [0.86, 0.38, 0.86], "#6e6c57", {
+    rotation: [Math.PI / 2, 0, yaw],
+    contactBoxes: [{ position: [0, 0, 0], size: [0.86, 0.38, 0.86] }],
+    surface: [{ kind: "damp", amount: 0.3 }],
+  });
+  for (const [index, lx] of [1.65, 2.05].entries()) {
+    const [oarX, oarZ] = at(lx, 0.35);
+    primitive(structures, `${id}:oar:${index}`, "wood", "plank", [oarX, 1.12, oarZ], [0.11, 2.35, 0.11], "#7d5a3c", {
+      rotation: [0.3, facing, index === 0 ? 0.12 : -0.1],
+      bearsLoad: false,
+      sideAttachmentReach: 0.5,
+    });
+  }
+  const [creelX, creelZ] = at(2.55, 1.05);
+  place(storage, `${id}:creel`, "viking:baskets", {
+    position: [creelX, 0, creelZ],
+    rotation: [0, facing + 0.6, 0],
+    scale: [0.9, 0.85, 0.9],
+  }, { palette: { grain: "#8d8a72" } });
+}
 
 // Fill a dwelling with lived-in furnishings, themed by the household's trade.
 // Everything is floor-standing and placed in the house's local frame, so it
@@ -837,15 +1613,30 @@ function createVillageLife(): void {
       if (row !== 1) {
         place(interiors, `bench-inner:${row}:${side}`, "viking:bench", { position: [side * 1.7, 0.22, z], rotation: [0, Math.PI / 2, 0] });
       }
-      place(interiors, `bench-outer:${row}:${side}`, "viking:bench", { position: [side * 4.65, 0.22, z], rotation: [0, Math.PI / 2, 0] });
+      // Наружная лавка ПРИДВИНУТА к столу. На прежнем месте между кромкой
+      // столешницы (|x| = 3.96) и лавкой (4.375) оставался жёлоб 0.42 м —
+      // уже человека, но достаточный, чтобы туда затолкали: житель, попавший
+      // в него, до утра не мог выбраться и не уходил домой. Теперь просвет
+      // 0.12 м — туда просто не войти, а сидящему колени всё так же под столом.
+      place(interiors, `bench-outer:${row}:${side}`, "viking:bench", { position: [side * 4.35, 0.22, z], rotation: [0, Math.PI / 2, 0] });
       if (row !== 1) {
         place(lights, `hall-table-lamp:${row}:${side}`, "viking:table-lamp", {
           position: [side * 3.15, 1.34, z],
         });
       }
+      // Посуда стоит по ВНЕШНЕЙ стороне столешницы — по ту, где лавка: до
+      // середины стола сидящему не дотянуться, а внутренний край у очажного
+      // ряда вообще проход.
+      addTableware(interiors, `tableware:${row}:${side}`, side * 3.15, z, row * 3 + (side + 1));
     }
   }
   place(lights, "hall-hearth", "viking:hearth", { position: [0, 0.22, -16.5] });
+  // Рога — у почётного конца, где сидят ближе к престолам.
+  addDrinkingHorn(interiors, "hall-horn:west", -3.37, -23.85, 0.4);
+  addDrinkingHorn(interiors, "hall-horn:east", 3.37, -23.85, -0.5);
+  // Стойка с пивом — в нише восточной стены между боковой дверью и первым
+  // поперечным ходом: наливающий не встаёт в проход, очередь идёт вдоль стены.
+  addAleStand(interiors, storage, "ale-stand", 6.85, -11.4);
   // Бочки убраны в углы под фронтоны: на прежних местах они стояли ровно в
   // боковых проходах (|x| = 6.0), и мимо них было не пройти.
   for (const [index, [x, z]] of [[-6.5, -29.8], [6.5, -29.4], [-6.45, -4.3], [6.45, -4.0]].entries()) {
@@ -886,8 +1677,17 @@ function createVillageLife(): void {
   addShelter(structures, "north-armoury", 38, 16, -0.2);
   addShelter(structures, "smith-store", 40, -14, 0.18);
 
+  // Кузница стоит ОТДЕЛЬНО от жилья и от склада: открытый горн — единственный
+  // постоянный огонь под открытым небом, и его держат в стороне от кровель.
+  // Пятачок между санной площадкой и складом оружия: кузнец идёт от дома к
+  // саням, от саней к горну, от горна к складу — одной дорогой.
+  addSmithy(structures, lights, storage, "smithy", 37, -20, 2.2);
+  addBrewery(structures, storage, lights, "brewery", 25, -3.5, 0.28);
+
   addVillageWell(structures, "village-well", -10, 13);
   addAnimalPen(structures, "goat-pen", 13, 20, 10, 8);
+  // Ясли — у северного прогона, куда приходит тропа от восточного двора.
+  addPenFeeders(structures, storage, "goat-feed", 11.6, 23.3);
   addChoppingYard(structures, "weaver-chopping", -21, 13, -0.3);
   addChoppingYard(structures, "brewer-chopping", 22, 1, 0.55);
   addChoppingYard(structures, "south-chopping", -23, -37, -0.82);
@@ -899,9 +1699,14 @@ function createVillageLife(): void {
   addFirewoodPile(storage, "elder-wood", -20, -54, 0.1);
   addDryingRack(structures, cloth, "hide-rack-west", -42, -12, 0.62, "#8a6245");
   addDryingRack(structures, cloth, "hide-rack-east", 43, 1, -0.4, "#9a795b");
-  addDryingRack(structures, cloth, "fish-rack", -12, 39, 0.1, "#8c8a77");
+  // На рыбной раме до сих пор сушилась ШКУРА. Теперь на ней рыба.
+  addDryingRack(structures, cloth, "fish-rack", -12, 39, 0.1, "#8c8a77", "fish");
   addDryingRack(structures, cloth, "commons-drying", 15, 3, -0.18, "#866349");
   addHerbGarden(structures, growth, "kitchen-garden", 15, -17, 0.16);
+  // Грабли брошены у крайней гряды, вилы воткнуты в копну сена у загона.
+  addHandTool(structures, "garden-rake", 17.9, -14.6, -1.2, "rake");
+  addHandTool(structures, "hay-fork", 16.9, 21.4, 0.5, "fork");
+  addNetFrame(structures, cloth, storage, "shore-nets", -5.1, -85.2, 1.15);
   for (let bale = 0; bale < 9; bale += 1) {
     primitive(storage, `goat-hay:${bale}`, "foliage", "plank", [14.5 + (bale % 3) * 1.05, 0.34, 20 + Math.floor(bale / 3) * 0.9], [0.92, 0.62, 0.72], bale % 2 === 0 ? "#8c824f" : "#756d43", {
       rotation: [0, (noise(bale, 3, 111) - 0.5) * 0.18, 0],
@@ -931,6 +1736,22 @@ function createVillageLife(): void {
         clothD: "#c8c0a7",
       },
     });
+    // Корыто выносится в сторону от линии (верёвка идёт по (cos yaw, −sin yaw),
+    // см. propYaw), а сторона и сдвиг вдоль верёвки выбраны так, чтобы не встать
+    // в коридор тропы: у ткачихи мимо идёт дорога к поленнице, у пивовара —
+    // дорога к оружейной. Проверено замером расстояния до полилиний, а не на
+    // глаз: первое размещение поставило корыто ровно на тропу.
+    const [washSide, washAlong] = index === 0 ? [-1, -1.5] : index === 1 ? [1, 0] : [1, 0];
+    const normalX = Math.sin(yaw) * washSide;
+    const normalZ = Math.cos(yaw) * washSide;
+    addWashStand(
+      structures,
+      storage,
+      `wash:${id}`,
+      x + normalX * 2.1 + Math.cos(yaw) * washAlong,
+      z + normalZ * 2.1 - Math.sin(yaw) * washAlong,
+      yaw,
+    );
   });
 
   for (let index = 0; index < 24; index += 1) {
@@ -1555,11 +2376,17 @@ function createStorySites(): void {
   // Fresh wall logs are staged as builders actually leave them: parallel and
   // clear of one another, with their eastern ends resting on the west wall's
   // top course and their western ends on the ground outside the footprint.
+  // Штабель отодвинут от северной стены сруба на метр: между верхним бревном
+  // (верх 1.9 — не перелезть) и венцом оставался тупиковый карман шириной
+  // 0.7 м. Он уже человека, и это вечная ловушка: житель заходил в него,
+  // выталкивание гасило любой шаг, и до дому он не доходил вовсе. Замер:
+  // ночной прогон при 8 размерах деревни, «не дома» 4/8 → 0/8. Теперь между
+  // штабелем и срубом 1.7 м — проход, а не щель.
   for (const [index, [ox, oy, oz, yaw, slope]] of ([
-    [-0.08, 0.84, -2.7, -0.018, 0.15],
-    [0.04, 0.87, -0.9, 0.012, 0.155],
-    [-0.04, 0.9, 0.9, -0.01, 0.16],
-    [0.08, 0.93, 2.7, 0.016, 0.165],
+    [-0.08, 0.84, -3.7, -0.018, 0.15],
+    [0.04, 0.87, -1.9, 0.012, 0.155],
+    [-0.04, 0.9, -0.1, -0.01, 0.16],
+    [0.08, 0.93, 1.7, 0.016, 0.165],
   ] as const).entries()) {
     place(storage, `newhouse:timber:${index}`, "viking:log:8", {
       position: [siteX - 8 + ox, oy, siteZ + oz],
@@ -2852,6 +3679,18 @@ createFjordJetty();
 createSkyLongship();
 createShoreFringe();
 
+/**
+ * Куски, которыми показан уровень складов. Список выведен ИЗ ОПИСАНИЯ
+ * ПОСЕЛЕНИЯ, а не переписан руками: разъехаться они не могут.
+ */
+const vikingStorePiles = vikingSettlementStores
+  .filter((store) => (store.pieces?.length ?? 0) > 0)
+  .map((store) => ({
+    kind: "stockpile" as const,
+    id: `stockpile:${store.id}`,
+    pieceIds: store.pieces ?? [],
+  }));
+
 export const vikingVillageDocument: AuthoredSceneDocument = {
   schemaVersion: 1,
   id: "viking-village",
@@ -2883,4 +3722,7 @@ export const vikingVillageDocument: AuthoredSceneDocument = {
     ...current,
     objects: current.objects,
   })),
+  // Склады с видимым уровнем. Сцена только объявляет эти куски изменяемыми —
+  // гасит их симуляция жителей, когда дрова унесли, а не расписание.
+  mutableObjects: vikingStorePiles,
 };

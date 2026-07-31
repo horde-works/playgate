@@ -9,8 +9,10 @@ import {
 test("the first-spawn guidance is a reusable game action cue", () => {
   const [hint] = hintsForGameAction("player.spawned");
   // General movement plus two distinct calls for each scheduled carrier:
-  // an uncrewed service flight ashore and a passenger flight aboard.
-  assert.equal(gameActionHints.length, 12);
+  // an uncrewed service flight ashore and a passenger flight aboard. Город
+  // держит две машины — дирижабль у мачты и гексакоптер во дворе, — поэтому
+  // пар не четыре, а пять.
+  assert.equal(gameActionHints.length, 14);
   assert.equal(hint.id, "first-look");
   assert.equal(hint.once, true);
   assert.equal(hint.delayMs >= 2_000, true);

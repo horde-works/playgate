@@ -19,7 +19,17 @@ export interface VehicleFailureEvent {
 }
 
 export type VehicleFailureDisposition =
-  "escapeRoute" | "descendBelowFog" | "settleInPlace";
+  | "escapeRoute"
+  | "descendBelowFog"
+  | "settleInPlace"
+  /**
+   * Уцелевшие движители физически не могут удержать машину горизонтально:
+   * её центр масс вышел за выпуклую оболочку оставшихся точек тяги. Мягкой
+   * посадки не будет — машина падает. Исход возможен только там, где подъём
+   * делают сами движители: газовая оболочка держит корабль без всякого
+   * управления и опускает его плавно при любом отказе.
+   */
+  | "tumble";
 
 export type VehicleRecoveryPhase =
   | "escape"
@@ -265,6 +275,11 @@ export interface VehicleRecoveryCapability {
   readonly liftToWeight: number;
   /** Fractions of commanded authority still attached to this carrier. */
   readonly requiredActuatorFractions: readonly number[];
+  /**
+   * Способность уцелевших ДВИЖИТЕЛЕЙ держать машину, если подъём делают они.
+   * У плавучей машины поля нет: её держит газ, и вопрос не возникает.
+   */
+  readonly rotorLift?: "flying" | "sinking" | "tumbling";
 }
 
 export interface VehicleFailureObservation {
@@ -709,10 +724,16 @@ export function vehicleFailureDisposition(
   const actuatorsAvailable =
     capability.requiredActuatorFractions.length > 0 &&
     capability.requiredActuatorFractions.every((fraction) => fraction >= 0.5);
+  // Винтокрылая машина, потерявшая удержание, не выбирает исход: её роняет
+  // физика. Ни ухода, ни мягкой посадки — она падает там, где была.
+  if (capability.rotorLift === "tumbling") {
+    return "tumble";
+  }
   const canFlyAway =
     capability.structureFlightworthy &&
     capability.liftToWeight >= 1.02 &&
-    actuatorsAvailable;
+    actuatorsAvailable &&
+    capability.rotorLift !== "sinking";
   if (canFlyAway) {
     return "escapeRoute";
   }

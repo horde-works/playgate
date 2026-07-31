@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 import {
   WORLD_SEAL_TIMEOUT_MS,
   announcesPlayerChoice,
+  asksForPointerGesture,
   captionAccepts,
   frameSurfaces,
   initialWorldEntryState,
@@ -97,6 +98,77 @@ test("the frame only asks for the pointer once it has something to show", () => 
       assert.equal(surfaces.acceptsInput, true);
     }
   }
+});
+
+test("an ordinary spawn is never asked for the click it just made", () => {
+  // The button press IS the gesture. Between it and the browser's answer the
+  // frame holds no pointer lock — and that gap used to put a request for a
+  // click in the middle of the screen of a player who had just clicked.
+  assert.equal(
+    asksForPointerGesture("playing", {
+      pointerLockHeld: false,
+      gestureGiven: true,
+      fallbackLook: false,
+    }),
+    false,
+  );
+});
+
+test("the frame asks only when nobody made the gesture for it", () => {
+  const owed = {
+    pointerLockHeld: false,
+    gestureGiven: false,
+    fallbackLook: false,
+  };
+  // Placed in the world by an arrival, and after a flyover handed the frame
+  // back: both leave the player inside a world nobody clicked into.
+  assert.equal(asksForPointerGesture("transit", owed), true);
+  assert.equal(asksForPointerGesture("playing", owed), true);
+
+  // A held pointer answers the question, and a refusal answers it too: the
+  // frame is looked around by dragging, so asking for a click promises a mode
+  // this browser has already declined to give.
+  assert.equal(
+    asksForPointerGesture("playing", { ...owed, pointerLockHeld: true }),
+    false,
+  );
+  assert.equal(
+    asksForPointerGesture("playing", { ...owed, fallbackLook: true }),
+    false,
+  );
+});
+
+test("no stage asks for a pointer it would not use", () => {
+  const owed = {
+    pointerLockHeld: false,
+    gestureGiven: false,
+    fallbackLook: false,
+  };
+  for (const stage of STAGES) {
+    assert.equal(
+      asksForPointerGesture(stage, owed),
+      frameSurfaces(stage).wantsPointerLock,
+      `${stage} disagrees with its own surfaces`,
+    );
+  }
+});
+
+test("the pointer lock is read at subscription, not only from its event", () => {
+  // `pointerlockchange` reports a CHANGE. A frame rebuilt while the canvas
+  // still holds the lock (hot reload) never sees one, so a frame that learns
+  // the state from the event alone believes it has no pointer forever: the
+  // request to click stays up and every click goes into a hammer swing,
+  // because there is nothing left to change.
+  const source = readFileSync(
+    new URL("../games/make-a-mess/src/game/MakeAMessGame.tsx", import.meta.url),
+    "utf8",
+  );
+  const subscription = source.indexOf(
+    'document.addEventListener("pointerlockchange"',
+  );
+  assert.ok(subscription > 0, "the frame must subscribe to pointer lock");
+  const preamble = source.slice(subscription - 900, subscription);
+  assert.match(preamble, /\n\s*handlePointerLockChange\(\);/);
 });
 
 test("mode captions belong to gameplay alone", () => {

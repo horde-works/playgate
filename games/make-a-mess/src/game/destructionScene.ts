@@ -1838,11 +1838,24 @@ export interface MutableMatrixDisplayDefinition {
   readonly transition?: MutableDisplayTransitionDefinition;
 }
 
+/**
+ * Склад, у которого виден уровень: поленница, куча наколотых дров, полено в
+ * очаге. Сама сцена его НЕ анимирует — она лишь объявляет куски изменяемыми,
+ * чтобы их можно было гасить по одному. Уровень приходит из симуляции жителей:
+ * склад пустеет, потому что дрова унесли, а не потому что настало время.
+ */
+export interface MutableStockpileDefinition {
+  readonly kind: "stockpile";
+  readonly id: string;
+  readonly pieceIds: readonly string[];
+}
+
 export type MutableSceneObjectDefinition =
   | MutableAnalogClockDefinition
   | MutableDigitalClockDefinition
   | MutableDisplayDefinition
-  | MutableMatrixDisplayDefinition;
+  | MutableMatrixDisplayDefinition
+  | MutableStockpileDefinition;
 
 export interface LampEventLevel {
   readonly intensityMultiplier: number;
@@ -5685,6 +5698,12 @@ export function createDestructionScene(
     mutablePieceIds.add(pieceId);
   };
   for (const object of mutableObjectDefinitions) {
+    if (object.kind === "stockpile") {
+      for (const pieceId of object.pieceIds) {
+        claimMutablePiece(object.id, pieceId);
+      }
+      continue;
+    }
     if (object.kind === "analogClock") {
       claimMutablePiece(object.id, object.hourHandPieceId);
       claimMutablePiece(object.id, object.minuteHandPieceId);

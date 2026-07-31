@@ -184,6 +184,7 @@ import {
 import {
   WORLD_SEAL_TIMEOUT_MS,
   announcesPlayerChoice,
+  asksForPointerGesture,
   captionAccepts,
   frameSurfaces,
   initialWorldEntryState,
@@ -378,6 +379,8 @@ const entryApproachActions: readonly GameAction[] = [
   "terminal-ride.approaching",
   "viking-ride.approaching",
   "town-ride.approaching",
+  "hexacopter-departure.approaching",
+  "hexacopter-ride.approaching",
   "seat.approaching",
   "stand.available",
 ];
@@ -392,13 +395,17 @@ function entryApproachAction(entry: HingedEntryApproach): GameAction {
           ? "viking-departure.approaching"
           : entry.cue === "town-uncrewed-flight"
             ? "town-departure.approaching"
-            : "terminal-departure.approaching"
+            : entry.cue === "town-hexacopter-uncrewed-flight"
+              ? "hexacopter-departure.approaching"
+              : "terminal-departure.approaching"
         : entry.kind === "ride"
           ? entry.cue === "viking-passenger-flight"
             ? "viking-ride.approaching"
             : entry.cue === "town-passenger-flight"
               ? "town-ride.approaching"
-              : "terminal-ride.approaching"
+              : entry.cue === "town-hexacopter-passenger-flight"
+                ? "hexacopter-ride.approaching"
+                : "terminal-ride.approaching"
           : entry.kind === "seat"
             ? "seat.approaching"
             : entry.kind === "stand"
@@ -425,9 +432,13 @@ function entryActionKey(
         ? touch
           ? "hint.townDeparture.actionTouch"
           : "hint.townDeparture.action"
-        : touch
-          ? "hint.departure.actionTouch"
-          : "hint.departure.action";
+        : entry.cue === "town-hexacopter-uncrewed-flight"
+          ? touch
+            ? "hint.hexacopterDeparture.actionTouch"
+            : "hint.hexacopterDeparture.action"
+          : touch
+            ? "hint.departure.actionTouch"
+            : "hint.departure.action";
   }
   if (entry.kind === "ride") {
     return entry.cue === "viking-passenger-flight"
@@ -438,9 +449,13 @@ function entryActionKey(
         ? touch
           ? "hint.townRide.actionTouch"
           : "hint.townRide.action"
-        : touch
-          ? "hint.ride.actionTouch"
-          : "hint.ride.action";
+        : entry.cue === "town-hexacopter-passenger-flight"
+          ? touch
+            ? "hint.hexacopterRide.actionTouch"
+            : "hint.hexacopterRide.action"
+          : touch
+            ? "hint.ride.actionTouch"
+            : "hint.ride.action";
   }
   if (entry.kind === "seat") {
     return touch ? "hint.seat.actionTouch" : "hint.seat.action";
@@ -1632,7 +1647,6 @@ function Player({
 
 interface MouseLookProps {
   active: boolean;
-  requestVersion: number;
   initialYaw: number;
   mobileControls: MobileControlsRef;
   passengerViewMotion: PassengerViewMotion;
@@ -1647,7 +1661,6 @@ interface MouseLookProps {
 
 function MouseLook({
   active,
-  requestVersion,
   initialYaw,
   mobileControls: mobileControlsRef,
   passengerViewMotion,
@@ -1662,7 +1675,6 @@ function MouseLook({
   const yaw = useRef(camera.rotation.y);
   const pitch = useRef(camera.rotation.x);
   const wasPointerLocked = useRef(false);
-  const previousRequest = useRef(requestVersion);
   const initialized = useRef(false);
   const drag = useRef({
     active: false,
@@ -1744,30 +1756,6 @@ function MouseLook({
       cameraRef.current.rotation.set(pitch.current, yaw.current, 0, "YXZ");
     }
   });
-
-  useEffect(() => {
-    if (previousRequest.current === requestVersion || requestVersion === 0) {
-      return;
-    }
-
-    previousRequest.current = requestVersion;
-    try {
-      const request = gl.domElement.requestPointerLock?.();
-
-      if (request && "catch" in request) {
-        request.catch(() => {
-          onFallbackChange(true);
-          onActiveChange(true);
-        });
-      } else if (!request) {
-        onFallbackChange(true);
-        onActiveChange(true);
-      }
-    } catch {
-      onFallbackChange(true);
-      onActiveChange(true);
-    }
-  }, [gl.domElement, onActiveChange, onFallbackChange, requestVersion]);
 
   useEffect(() => {
     const handlePointerLockChange = () => {
@@ -1903,6 +1891,21 @@ function MouseLook({
     };
 
     const preventContextMenu = (event: MouseEvent) => event.preventDefault();
+
+    // Захват читается при подписке, а не только из события. Событие сообщает
+    // об ИЗМЕНЕНИИ, а кадр может родиться уже с захваченным указателем: любое
+    // пересоздание дерева (горячая перезагрузка в разработке) оставляет захват
+    // на той же канве, и никакого `pointerlockchange` больше не будет. Кадр,
+    // который знает о захвате только из события, в этом случае навсегда
+    // остаётся с просьбой кликнуть — и клики уходят в удар, потому что менять
+    // нечего.
+    //
+    // Читается только захват, но не его отсутствие: подписка переигрывается на
+    // каждую смену обработчиков, и «указателя нет» в этот момент означает лишь
+    // то, что ответ на запрос ещё не пришёл.
+    if (document.pointerLockElement === gl.domElement) {
+      handlePointerLockChange();
+    }
 
     document.addEventListener("pointerlockchange", handlePointerLockChange);
     document.addEventListener("mousedown", handleMouseDown);
@@ -3352,7 +3355,6 @@ interface OpenWorldSceneProps {
   timeOfDay: TimeOfDay;
   timeOfDaySnapVersion: number;
   fallbackLook: boolean;
-  controlRequest: number;
   mobileControls: MobileControlsRef;
   mobileActions: MutableRefObject<MobileActionBridge>;
   resetVersion: number;
@@ -3397,7 +3399,6 @@ function OpenWorldScene({
   timeOfDay,
   timeOfDaySnapVersion,
   fallbackLook,
-  controlRequest,
   mobileControls,
   mobileActions,
   resetVersion,
@@ -7254,6 +7255,7 @@ function OpenWorldScene({
             brokenPieces={brokenPiecesRef}
             doorRequests={villagerDoorRequests}
             openDoors={villagerOpenDoors}
+            stockStates={mutablePieceStates}
             // Деревня выросла: жительниц и девочек ДОБАВИЛИ, а не заменили
             // ими часть мужчин.
             count={34}
@@ -7401,7 +7403,6 @@ function OpenWorldScene({
           )}
           <MouseLook
             active={active}
-            requestVersion={controlRequest}
             initialYaw={scene.playerSpawnYaw ?? 0}
             mobileControls={mobileControls}
             passengerViewMotion={passengerViewMotion}
@@ -8596,7 +8597,6 @@ export function MakeAMessGame({
   );
   const fallbackLook = reportedFallbackLook ?? touchLikeDevice;
   const active = controlActive || framePlacesPlayer;
-  const [controlRequest, setControlRequest] = useState(0);
   const [brokenCount, setBrokenCount] = useState(0);
   const [resetVersion, setResetVersion] = useState(0);
   const [weapon, setWeapon] = useState<WeaponName>("hammer");
@@ -8645,6 +8645,18 @@ export function MakeAMessGame({
   const journeyNavigationStarted = useRef(false);
   const { caption, publishCaption, withdrawCaption } = useFrameCaption();
   const [pointerLockHeld, setPointerLockHeld] = useState(false);
+  /**
+   * Жест, за который браузер даёт захват, уже сделан. Кадр начинает жизнь без
+   * него: прилёт ставит игрока в мир, кнопку при этом никто не нажимал — вот
+   * тогда и только тогда есть что просить. Жест засчитывается нажатием «войти»
+   * и удавшимся захватом, а теряется вместе с указателем: конец пролёта и
+   * отпущенный во время рейса указатель снова оставляют кадр без него.
+   */
+  const [pointerGestureGiven, setPointerGestureGiven] = useState(false);
+  const handlePointerLockChange = useCallback((held: boolean) => {
+    setPointerLockHeld(held);
+    setPointerGestureGiven(held);
+  }, []);
   const [occupiedSeatId, setOccupiedSeatId] = useState<string | null>(null);
   const flyoverRecorder = useRef<MediaRecorder | null>(null);
   const flyoverChapterRef = useRef<FlyoverChapter | null>(null);
@@ -9415,8 +9427,12 @@ export function MakeAMessGame({
     prepareGameAudio();
     setActive(true);
     dispatchWorldEntry({ kind: "playerEntered" });
+    // Жест сделан — просить его больше не за чем, даже если захват ещё летит.
+    // Именно на этом месте раньше и вылезала просьба кликнуть: игрок нажимал
+    // кнопку, кадр входил в мир, а строка успевала появиться в зазоре между
+    // нажатием и ответом браузера.
+    setPointerGestureGiven(true);
     const touchLike = isTouchLikeDevice();
-    setControlRequest((version) => version + 1);
     emitGameAction("player.spawned");
     if (touchLike) {
       return;
@@ -9427,12 +9443,18 @@ export function MakeAMessGame({
     const canvas = document.querySelector<HTMLCanvasElement>(
       ".game-canvas canvas, canvas",
     );
+    // Отказ — это ответ, и его нельзя глотать: без него кадр не знает, что
+    // смотреть придётся протяжкой, и остаётся обещать мышь, которой нет.
     try {
       const request = canvas?.requestPointerLock?.() as
         Promise<void> | undefined;
-      request?.catch?.(() => {});
+      if (request) {
+        request.catch?.(() => setFallbackLook(true));
+      } else if (!canvas?.requestPointerLock) {
+        setFallbackLook(true);
+      }
     } catch {
-      // MouseLook's fallback drag mode covers refusal.
+      setFallbackLook(true);
     }
   }, [emitGameAction]);
 
@@ -9494,7 +9516,6 @@ export function MakeAMessGame({
                     timeOfDay={timeOfDay}
                     timeOfDaySnapVersion={flyoverRunId}
                     fallbackLook={fallbackLook}
-                    controlRequest={controlRequest}
                     mobileControls={mobileControls}
                     mobileActions={mobileActions}
                     resetVersion={resetVersion}
@@ -9512,7 +9533,7 @@ export function MakeAMessGame({
                     cinematic={cinematicActive}
                     onActiveChange={handleActiveChange}
                     onFallbackChange={setFallbackLook}
-                    onPointerLockChange={setPointerLockHeld}
+                    onPointerLockChange={handlePointerLockChange}
                     onBrokenCountChange={setBrokenCount}
                     onDynamicBodyCountChange={setDynamicBodyCount}
                     onEntryApproachChange={handleEntryApproachChange}
@@ -9856,8 +9877,13 @@ export function MakeAMessGame({
       ) : null}
 
       {/* Захват указателя требует жеста, а прилёт жестом не является. Этот же
-        запрос — единственный выход из отпущенного во время рейса указателя. */}
-      {surfaces.wantsPointerLock && !pointerLockHeld && !fallbackLook ? (
+        запрос — единственный выход из отпущенного во время рейса указателя.
+        Спрашивать разрешено только про долг: обычный спавн жест уже дал. */}
+      {asksForPointerGesture(stage, {
+        pointerLockHeld,
+        gestureGiven: pointerGestureGiven,
+        fallbackLook,
+      }) ? (
         <p className="take-control">{t("hud.takeControl")}</p>
       ) : null}
 

@@ -120,6 +120,13 @@ import {
   type CommandActuatorBinding,
 } from "./vehicleActuation";
 import {
+  isRotorLandingComplete,
+  liftApplicationPoint,
+  liftHoldVerdict,
+  rotorLiftState,
+  type RotorLiftState,
+} from "./vehicleLiftGeometry.ts";
+import {
   propulsionHealth,
   updatePropulsionFeedback,
 } from "./vehiclePropulsionAutomation";
@@ -223,6 +230,12 @@ const RECOVERY_LANDING_VERTICAL_RESPONSE = 0.8;
 const CONTACT_RELATIVE_SPEED_MARGIN = 18;
 const OBSTACLE_SENSOR_RANGE = 18;
 const OBSTACLE_ESCAPE_CLEARANCE = 8;
+/**
+ * Высота, ниже которой маршрут считается ИДУЩИМ ПО ЗЕМЛЕ и контакт опор с ней
+ * штатен. Взлётный и посадочный участки любой машины требуют нуля, поэтому
+ * порог отделяет их от настоящего полёта, а не назначает допуск.
+ */
+const ROUTE_GROUND_ALTITUDE = 1.5;
 
 const densityOf = (material: BreakablePieceDefinition["material"]): number =>
   structuralMaterialProfiles[material].density;
@@ -328,6 +341,43 @@ interface VehicleFrameRuntime extends AirVehicleDefinition {
     readonly minimum: readonly [number, number, number];
     readonly maximum: readonly [number, number, number];
   };
+}
+
+
+/**
+ * Может ли уцелевший набор движителей ещё держать ЭТУ машину.
+ *
+ * Вопрос имеет смысл только там, где подъём делают сами движители. Для
+ * плавучей машины возвращается null, и всё выше по течению работает ровно
+ * так, как работало до появления винтокрылой.
+ */
+function rotorHoldState(
+  frame: VehicleFrameRuntime,
+  intactMass: number,
+  mass: MassProperties,
+  fractions: readonly number[],
+): RotorLiftState | null {
+  if ((frame.flight.liftSource ?? "buoyant") !== "rotor") {
+    return null;
+  }
+  const points = frame.flight.limits.enginePoints;
+  const capacity =
+    (intactMass *
+      GRAVITY *
+      (frame.flight.liftReserve ?? DEFAULT_VEHICLE_LIFT_RESERVE)) /
+    Math.max(1, points.length);
+  return rotorLiftState(
+    liftHoldVerdict(
+      "rotor",
+      points.map((point, index) => ({
+        point,
+        available: fractions[index] ?? 0,
+      })),
+      mass.centre as [number, number, number],
+      capacity,
+      mass.mass * GRAVITY,
+    ),
+  );
 }
 
 /** Поза подвижного кадра для внешних систем вроде общего пула света. */
@@ -1359,51 +1409,103 @@ export function VehicleFrameSystem({
   useBeforePhysicsStep(() => {
     const step = PHYSICS_TIME_STEP;
 
-    // Every scene currently exposes one scheduled carrier. Its departure
-    // point is data; the controller does not care whether it is a terminal
-    // board or a coil of mooring rope on a wooden jetty.
+    // Кто ВЕДЁТ РЕЙС на этой карте: у него лампы причала, межостровная
+    // передача и швартовка. Он один, и это осознанное ограничение.
     const scheduledFrame = frames.find((frame) => frame.departure);
     const scheduled = scheduledFrame ? frameState(scheduledFrame.id) : null;
     if (scheduled && scheduledFrame) {
-      const departure = scheduledFrame.departure;
-      const isTerminal = scheduledFrame.id === SCHEDULED_FRAME;
+      const eyeNow: readonly [number, number, number] = [
+        camera.position.x,
+        camera.position.y,
+        camera.position.z,
+      ];
+      // А вот ВЗАИМОДЕЙСТВИЕ принадлежит той машине, рядом с которой человек
+      // стоит. Раньше здесь была та же `frames.find`, и она молча съедала
+      // вторую машину карты: в городе рядом с гексакоптером не появлялось
+      // никакой подсказки, потому что первым в каталоге шёл дирижабль.
+      //
+      // Правило простое и без дребезга: если глаз внутри объёма какой-то
+      // машины — она и есть выбранная (внутри двух машин сразу не бывает);
+      // иначе берётся ближайшая по её собственной точке отправления. На
+      // картах с одним кораблём выбор тождественно совпадает с прежним.
+      const insideFrame = frames.find((frame) => {
+        if (!frame.passengerFlight) {
+          return false;
+        }
+        const state = frameState(frame.id);
+        return frame.passengerFlight.contains(
+          shipLocalPoint(
+            eyeNow as [number, number, number],
+            frame.origin,
+            state.pose,
+            frame.nose,
+          ),
+        );
+      });
+      let nearestFrame = insideFrame ?? null;
+      if (!nearestFrame) {
+        let nearestDistance = Number.POSITIVE_INFINITY;
+        for (const frame of frames) {
+          if (!frame.departure) {
+            continue;
+          }
+          const distance = Math.hypot(
+            eyeNow[0] - frame.departure.point[0],
+            eyeNow[2] - frame.departure.point[2],
+          );
+          if (distance < nearestDistance) {
+            nearestDistance = distance;
+            nearestFrame = frame;
+          }
+        }
+      }
+      const interactionFrame = nearestFrame ?? scheduledFrame;
+      const interaction = frameState(interactionFrame.id);
+      const departure = interactionFrame.departure;
+      const isTerminal = interactionFrame.id === SCHEDULED_FRAME;
       const registeredLaunchMembers = clusterRegistry.current.get(
-        scheduledFrame.clusterId,
+        interactionFrame.clusterId,
       )?.attachedMemberIds;
       const launchMembers = new Set(
         (registeredLaunchMembers
           ? [...registeredLaunchMembers]
-          : scheduledFrame.members.map((member) => member.piece.id)
+          : interactionFrame.members.map((member) => member.piece.id)
         ).filter(
           (pieceId) =>
             !brokenPieces.current.has(pieceId) && !inactivePieces.has(pieceId),
         ),
       );
       const launchPropulsionHealth = driveUsesPropulsionFeedback(
-        scheduledFrame.flight.driveAnimation,
+        interactionFrame.flight.driveAnimation,
       )
         ? propulsionHealth(
-            scheduledFrame.actuators,
+            interactionFrame.actuators,
             launchMembers,
-            scheduledFrame.flight.limits.enginePoints.length,
+            interactionFrame.flight.limits.enginePoints.length,
           )
         : null;
       const launchClearance = launchPropulsionHealth
-        ? propulsionFlightClearance(launchPropulsionHealth)
+        ? propulsionFlightClearance(
+            launchPropulsionHealth,
+            interaction.mass
+              ? rotorHoldState(
+                  interactionFrame,
+                  interaction.intactMass,
+                  interaction.mass,
+                  launchPropulsionHealth.fractions,
+                )
+              : null,
+          )
         : null;
       const uncrewedLaunchAllowed = launchClearance?.uncrewedAllowed ?? true;
       const passengerLaunchAllowed = launchClearance?.passengerAllowed ?? true;
-      const eye: readonly [number, number, number] = [
-        camera.position.x,
-        camera.position.y,
-        camera.position.z,
-      ];
+      const eye = eyeNow;
       let post: ScheduledInteraction | null = null;
       const eyeInShip = shipLocalPoint(
         eye,
-        scheduledFrame.origin,
-        scheduled.pose,
-        scheduledFrame.nose,
+        interactionFrame.origin,
+        interaction.pose,
+        interactionFrame.nose,
       );
       const seatIntact =
         isTerminal &&
@@ -1419,9 +1521,9 @@ export function VehicleFrameSystem({
           ? passengerSeatContextAction({
               seat: SKY_TRAIN_DRIVER_SEAT,
               occupiedSeatId,
-              carrierActive: scheduled.flight !== null,
+              carrierActive: interaction.flight !== null,
               passengerInsideCarrier:
-                scheduledFrame.passengerFlight?.contains(eyeInShip) ?? false,
+                interactionFrame.passengerFlight?.contains(eyeInShip) ?? false,
               distance: seatDistance,
               keepApproach: approachedPost.current === "seat",
               intact: seatIntact,
@@ -1429,11 +1531,11 @@ export function VehicleFrameSystem({
           : null;
       if (seatAction === "stand") {
         post = seatAction;
-      } else if (scheduled.flight === null) {
+      } else if (interaction.flight === null) {
         const boardDistance = departure
           ? Math.hypot(eye[0] - departure.point[0], eye[2] - departure.point[2])
           : Number.POSITIVE_INFINITY;
-        const passengerFlight = scheduledFrame.passengerFlight;
+        const passengerFlight = interactionFrame.passengerFlight;
         const rideDistance = passengerFlight
           ? Math.hypot(
               eyeInShip[0] - passengerFlight.point[0],
@@ -1467,7 +1569,7 @@ export function VehicleFrameSystem({
       }
       const candidate: EntryInteractionTarget | null =
         post === "ride"
-          ? (scheduledFrame.passengerFlight?.target ?? null)
+          ? (interactionFrame.passengerFlight?.target ?? null)
           : post === "board"
             ? (departure?.target ?? null)
             : post === "seat"
@@ -1487,22 +1589,22 @@ export function VehicleFrameSystem({
         ) {
           if (
             (post === "ride" || post === "board") &&
-            scheduled.flight === null
+            interaction.flight === null
           ) {
             const requestedAction =
               departRequestTargetRef?.current?.selectedActionId;
-            scheduled.flight = createFlightState(
+            interaction.flight = createFlightState(
               post === "ride"
                 ? (requestedAction ??
-                    scheduledFrame.passengerFlight?.flightKind ??
+                    interactionFrame.passengerFlight?.flightKind ??
                     "tour")
                 : (departure?.flightKind ?? "circuit"),
               post === "ride" ? "passenger" : "uncrewed",
-              scheduledFrame.flight.limits.enginePoints.length,
+              interactionFrame.flight.limits.enginePoints.length,
             );
           } else if (
             post === "seat" &&
-            scheduled.flight !== null &&
+            interaction.flight !== null &&
             seatIntact
           ) {
             onOccupiedSeatChange(SKY_TRAIN_DRIVER_SEAT.id);
@@ -1549,69 +1651,110 @@ export function VehicleFrameSystem({
           interIslandActive ? interIslandKind : null,
         );
       }
-      if (flight) {
-        flight.time += step;
+      // ЖИЗНЕННЫЙ ЦИКЛ РЕЙСА ПРИНАДЛЕЖИТ ТОЙ МАШИНЕ, У КОТОРОЙ РЕЙС.
+      //
+      // Раньше раскрутка, отдача концов, фаза винтов и завершение швартовки
+      // висели на единственном «запланированном» carrier-е карты. Пока машина
+      // была одна, разницы не было. Как только в городе появилась вторая,
+      // дефект стал наблюдаемым и злым: пробел у её таблички принимался, рейс
+      // заводился — и навсегда оставался с `time = 0`, потому что тикали
+      // чужой. Человек видит подсказку, жмёт, и ничего не происходит.
+      //
+      // Причал, огни и межостровная передача ниже по-прежнему принадлежат
+      // одному carrier-у карты: это свойство МЕСТА, а не рейса.
+      for (const liveFrame of frames) {
+        const liveState = frameState(liveFrame.id);
+        const liveFlight = liveState.flight;
+        if (!liveFlight) {
+          continue;
+        }
+        liveFlight.time += step;
         if (
-          !flight.castOff &&
-          flight.time >= scheduledFrame.flight.spoolSeconds
+          !liveFlight.castOff &&
+          liveFlight.time >= liveFrame.flight.spoolSeconds
         ) {
-          flight.castOff = true;
+          liveFlight.castOff = true;
           // Empty service flights cannot smuggle a player out of the map.
           const player = bodies.current.get("player");
+          const liveEyeInShip = shipLocalPoint(
+            eyeNow as [number, number, number],
+            liveFrame.origin,
+            liveState.pose,
+            liveFrame.nose,
+          );
           if (
-            flight.occupancy === "uncrewed" &&
-            scheduledFrame.passengerFlight &&
-            departure?.passengerDropPoint &&
+            liveFlight.occupancy === "uncrewed" &&
+            liveFrame.passengerFlight &&
+            liveFrame.departure?.passengerDropPoint &&
             player &&
-            scheduledFrame.passengerFlight.contains(eyeInShip)
+            liveFrame.passengerFlight.contains(liveEyeInShip)
           ) {
-            player.setTranslation(
-              {
-                x: departure.passengerDropPoint[0],
-                y: departure.passengerDropPoint[1],
-                z: departure.passengerDropPoint[2],
-              },
-              true,
-            );
+            const drop = liveFrame.departure.passengerDropPoint;
+            player.setTranslation({ x: drop[0], y: drop[1], z: drop[2] }, true);
             player.setLinvel({ x: 0, y: 0, z: 0 }, true);
           }
-        }
-        // Фаза видимого движителя идёт за фактически дошедшей командой ЕГО
-        // мотора: винт вращается, а вёсельный борт ускоряет свои гребки.
-        for (
-          let engine = 0;
-          engine < scheduled.spinAngles.length;
-          engine += 1
-        ) {
-          scheduled.spinAngles[engine] = advanceDrivePhase(
-            scheduled.spinAngles[engine] ?? 0,
-            scheduledFrame.flight.driveAnimation.phaseSpeed,
-            (scheduledFrame.flight.driveAnimation.kind === "propeller"
-              ? flight.driveThrottle[engine]
-              : flight.throttle[engine]) ?? 0,
-            step,
-          );
         }
         // Рейс кончается не по таймеру, а когда корабль вернулся на место и
         // носовой узел вошёл в захват и успокоился: центр корпуса сам по себе
         // швартовкой не является.
-        if (
-          !scheduled.recovery &&
-          isDockingComplete(
-            flight.progress,
-            mooring.offset,
-            scheduled.body.orientation,
-            mooring.velocity,
-            scheduled.body.angularVelocity as [number, number, number],
-            scheduledFrame.nose,
-            scheduledFrame.flight.approach,
-            scheduledFrame.flight.docking,
-          )
-        ) {
-          if (isInterIslandArrivalKind(flight.kind)) {
-            onInterIslandArrivalComplete?.(flight.kind);
+        const liveMooring = vehicleMooringState(
+          liveFrame,
+          liveState.body.position,
+          liveState.body.orientation,
+          liveState.body.velocity,
+          liveState.body.angularVelocity,
+          liveState.mass?.centre ?? liveFrame.origin,
+        );
+        // КОПТЕР НЕ ШВАРТУЕТСЯ. У него нет ни мачты, ни носового узла: рейс
+        // кончается посадкой, и признаки её ровно те, по которым её признаёт
+        // автоматика настоящего дрона — я над своим пятном, подо мной опора,
+        // я не еду вбок и стою ровно. Курс не проверяется вовсе: коптеру
+        // безразлично, каким боком он сел.
+        const landingTolerance = liveFrame.flight.landing;
+        const up = rotateByQuaternion(liveState.body.orientation, [0, 1, 0]);
+        // Прогресс маршрута — обязательное условие: машина, стоящая на своём
+        // пятне и никуда не летавшая, всем признакам посадки удовлетворяет.
+        const arrived = landingTolerance
+          ? liveFlight.progress > 0.985 &&
+            isRotorLandingComplete(
+              landingTolerance,
+              {
+                horizontal: Math.hypot(
+                  liveState.body.position[0],
+                  liveState.body.position[2],
+                ),
+                height: Math.abs(liveState.body.position[1]),
+              },
+              {
+                speed: Math.hypot(
+                  liveState.body.velocity[0],
+                  liveState.body.velocity[2],
+                ),
+                verticalSpeed: liveState.body.velocity[1],
+                uprightCos: up[1],
+                angularSpeed: Math.hypot(
+                  liveState.body.angularVelocity[0],
+                  liveState.body.angularVelocity[1],
+                  liveState.body.angularVelocity[2],
+                ),
+              },
+              liveState.supportContacts,
+            )
+          : isDockingComplete(
+              liveFlight.progress,
+              liveMooring.offset,
+              liveState.body.orientation,
+              liveMooring.velocity,
+              liveState.body.angularVelocity as [number, number, number],
+              liveFrame.nose,
+              liveFrame.flight.approach,
+              liveFrame.flight.docking,
+            );
+        if (!liveState.recovery && arrived) {
+          if (isInterIslandArrivalKind(liveFlight.kind)) {
+            onInterIslandArrivalComplete?.(liveFlight.kind);
           }
-          scheduled.flight = null;
+          liveState.flight = null;
         }
       }
 
@@ -2302,7 +2445,10 @@ export function VehicleFrameSystem({
         attachedMembers,
         frame.flight.limits.enginePoints.length,
       );
-      const flightClearance = propulsionFlightClearance(propulsion);
+      const liftHold = state.mass
+        ? rotorHoldState(frame, state.intactMass, state.mass, propulsion.fractions)
+        : null;
+      const flightClearance = propulsionFlightClearance(propulsion, liftHold);
       const autopilotModel: ShipModel =
         driveUsesPropulsionFeedback(frame.flight.driveAnimation) && flight
           ? { ...shipModel, engineAvailability: flight.propulsionFeedback }
@@ -2631,6 +2777,22 @@ export function VehicleFrameSystem({
         const deliveredThrottle = driveThrottle.map((value, index) =>
           deliveredCommandValue(actuation, `throttle:${index}`, value),
         );
+        // Фаза винтов идёт за ДОСТАВЛЕННОЙ командой всегда, а не только в
+        // рейсе. Пока это жило внутри `if (flight)`, машина на аварийном
+        // снижении спускалась С ВЫКЛЮЧЕННЫМИ ВИНТАМИ: рейса уже нет, а
+        // восстановление винты крутить не умело. Для плавучей машины это
+        // всего лишь некрасиво, для винтокрылой — физически невозможно: она
+        // снижается именно потому, что винты работают.
+        for (let engine = 0; engine < state.spinAngles.length; engine += 1) {
+          state.spinAngles[engine] = advanceDrivePhase(
+            state.spinAngles[engine] ?? 0,
+            frame.flight.driveAnimation.phaseSpeed,
+            (frame.flight.driveAnimation.kind === "propeller"
+              ? driveThrottle[engine]
+              : deliveredThrottle[engine]) ?? 0,
+            step,
+          );
+        }
         if (flight) {
           flight.driveThrottle = driveThrottle;
           flight.throttle = deliveredThrottle;
@@ -2642,6 +2804,13 @@ export function VehicleFrameSystem({
             );
           }
         }
+        // Боковая власть падает вместе с кольцами: она рождается теми же
+        // движителями, поэтому масштабируется их средней уцелевшей долей.
+        const swayAvailability =
+          propulsion.fractions.length > 0
+            ? propulsion.fractions.reduce((sum, value) => sum + value, 0) /
+              propulsion.fractions.length
+            : 1;
         const executedControls = {
           ...piloted.controls,
           throttle: deliveredThrottle,
@@ -2650,6 +2819,7 @@ export function VehicleFrameSystem({
             "rudder",
             piloted.controls.rudder,
           ),
+          sway: (piloted.controls.sway ?? 0) * swayAvailability,
         };
         for (const applied of shipForces(
           executedControls,
@@ -2672,8 +2842,26 @@ export function VehicleFrameSystem({
       // on terrain. Confirm contact long enough to reject a bounce, then let
       // the ground-recovery lifecycle own an unconditional propulsion cutoff.
       if (flight?.castOff && !state.recovery) {
+        // «Неожиданный контакт с грунтом» — это контакт там, где его не
+        // предполагает МАРШРУТ. Спрашивать надо у него: профиль высоты он уже
+        // несёт, и на взлётном и посадочном участках требуемая высота равна
+        // нулю. Стоящая там на шасси машина не теряет маршрут — она взлетает.
+        //
+        // Пока карта возила только плавучие машины, разницы не было: дирижабль
+        // висит у мачты и земли не касается вовсе. Винтокрылый аппарат стоит
+        // на шасси и первые секунды после отдачи концов физически обязан
+        // опираться на землю, пока подъём выходит на вес, — и правило,
+        // спрашивавшее вместо маршрута сам факт контакта, объявляло ему
+        // «потерял маршрут» прямо на площадке.
+        //
+        // То же самое даром получают все будущие классы: у поезда на рельсах
+        // и у судна на воде требуемая высота нулевая на всём маршруте.
+        const requiredAltitude =
+          frame.flight.routePlan(flight.kind, berth).altitude(flight.progress) -
+          berth[1];
         flight.unexpectedGroundContactSeconds =
-          state.supportContacts > 0
+          state.supportContacts > 0 &&
+          requiredAltitude > ROUTE_GROUND_ALTITUDE
             ? flight.unexpectedGroundContactSeconds + step
             : 0;
         if (
@@ -2736,6 +2924,7 @@ export function VehicleFrameSystem({
               envelopeLeft / Math.max(1, state.intactEnvelope) >= 0.5,
             liftToWeight: liftCapacity / Math.max(1, neutral),
             requiredActuatorFractions: availability,
+            rotorLift: liftHold ?? undefined,
           },
           overServiceArea,
         );
@@ -3342,12 +3531,34 @@ export function VehicleFrameSystem({
       // Ground recovery is not mooring. A real underside contact opens the
       // lift-dump valve; the usual rate limit transfers weight to the terrain
       // gradually, and only the resulting contact friction removes momentum.
-      const liftTarget = state.recovery?.groundContactLatched
+      let liftTarget = state.recovery?.groundContactLatched
         ? Math.min(
             commandedLiftTarget,
             neutral * state.recovery.groundLiftAutomation.targetFraction,
           )
         : commandedLiftTarget;
+      // Потерявшая удержание машина падает: держать её нечем, и никакой
+      // «мягкий клапан» тут не поможет — уцелевшие кольца не могут дать
+      // вертикальную силу без опрокидывающего момента.
+      if (state.recovery?.lifecycle.disposition === "tumble") {
+        // Не «стравливаем газ», а теряем силу: подъёма больше нет и рампа
+        // здесь неуместна. Общая рампа в четверть веса в секунду описывает
+        // КЛАПАН, а у винтокрылой машины клапана нет — есть винты, которые
+        // уже не могут дать вертикаль без опрокидывающего момента. Машина
+        // падает камнем, а не опускается.
+        liftTarget = 0;
+        state.liftNow = 0;
+      }
+      // СЕВШАЯ МАШИНА ГЛУШИТ МОТОРЫ. Дирижабль у мачты обязан держать газ —
+      // он на нём висит; коптер, стоящий на опорах, обязан их выключить.
+      if (
+        (frame.flight.liftSource ?? "buoyant") === "rotor" &&
+        !state.flight &&
+        !state.recovery &&
+        state.supportContacts > 0
+      ) {
+        liftTarget = 0;
+      }
       if (state.liftNow === 0) {
         state.liftNow = liftTarget;
       }
@@ -3363,7 +3574,21 @@ export function VehicleFrameSystem({
       );
       const lift = state.liftNow;
 
-      const liftCentre = state.trimCentre ?? frame.liftCentre;
+      // ГДЕ ПРИЛОЖЕН ПОДЪЁМ. У газовой оболочки — в центре её объёма, и он
+      // намеренно заморожен (§6.2: бегать за центром масс запрещено, иначе
+      // повреждение перестаёт быть наблюдаемым). У винтокрылой машины сила
+      // рождается в самих кольцах, поэтому потеря одного из шести уводит
+      // точку приложения к оставшимся пяти — и машина получает настоящий
+      // момент от асимметрии, с которым потом дерётся дифферентовка.
+      // Высота при этом остаётся паспортной: маятник задан геометрией машины.
+      const liftCentre = liftApplicationPoint(
+        frame.flight.liftSource ?? "buoyant",
+        state.trimCentre ?? frame.liftCentre,
+        frame.flight.limits.enginePoints.map((point, index) => ({
+          point,
+          available: propulsion.fractions[index] ?? 0,
+        })),
+      );
       const liftArm = rotateByQuaternion(state.body.orientation, [
         liftCentre[0] - mass.centre[0],
         liftCentre[1] - mass.centre[1],
@@ -4016,12 +4241,23 @@ export function VehicleFrameSystem({
         if (member.spinHub && spinAngle !== 0) {
           const hub = member.spinHub;
           const angle = spinAngle;
+          // Ось вала принадлежит машине. У тянущего винта она продольная, у
+          // подъёмного — вертикальная; паспорт говорит какая, и общий код
+          // остаётся один для обеих.
+          const authoredShaft =
+            frame.flight.driveAnimation.kind === "propeller"
+              ? frame.flight.driveAnimation.shaftAxis
+              : undefined;
           const tailwardLength = Math.hypot(frame.nose[0], frame.nose[2]) || 1;
-          const shaft = oarTailwardAxis.current.set(
-            -frame.nose[0] / tailwardLength,
-            0,
-            -frame.nose[2] / tailwardLength,
-          );
+          const shaft = authoredShaft
+            ? oarTailwardAxis.current
+                .set(authoredShaft[0], authoredShaft[1], authoredShaft[2])
+                .normalize()
+            : oarTailwardAxis.current.set(
+                -frame.nose[0] / tailwardLength,
+                0,
+                -frame.nose[2] / tailwardLength,
+              );
           const offset = driveMemberOffset.current
             .set(
               piece.position[0] - hub[0],

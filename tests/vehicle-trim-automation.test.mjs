@@ -294,6 +294,17 @@ test("a trim car is inertial: it cannot answer an upset instantly", () => {
 
 test("every carrier carries real trim machinery inside its envelope", () => {
   for (const vehicle of airVehicles) {
+    // Подвижный груз — орган ГАЗОВОЙ машины: у неё момент по крену и тангажу
+    // больше взять неоткуда. Винтокрылая создаёт его разнотягом винтов, и
+    // возить ради этого свинец по рельсам значит противоречить её физике.
+    if ((vehicle.flight.liftSource ?? "buoyant") === "rotor") {
+      assert.equal(
+        vehicle.trimRails ?? null,
+        null,
+        `${vehicle.id}: у коптера не должно быть балансиров`,
+      );
+      continue;
+    }
     const pieces = shipPieces(vehicle);
     const rails = vehicle.trimRails ?? [];
     assert.equal(rails.length, 2, `${vehicle.id} has no trim rails`);
@@ -334,8 +345,16 @@ test("every carrier carries real trim machinery inside its envelope", () => {
       true,
       `${vehicle.id}: intact balance is ${offset.toFixed(3)} m off the lift centre`,
     );
+    // Плечо маятника. У плавучей машины подъём приложен в центре объёма
+    // газа — метрами выше гондолы, и метр здесь взят с огромным запасом. У
+    // винтокрылой он приложен в плоскости собственных колец: требовать от
+    // неё метра значило бы требовать поднять винты на метр над кабиной, то
+    // есть построить другую машину. Различает их не имя, а физика подъёма —
+    // `envelopeMatch` указывает на лопасти.
+    const liftFromRotors = vehicle.envelopeMatch.includes("blade");
+    const minimumLever = liftFromRotors ? 0.18 : 1;
     assert.equal(
-      vehicle.liftCentre[1] - intact.centre[1] > 1,
+      vehicle.liftCentre[1] - intact.centre[1] > minimumLever,
       true,
       `${vehicle.id}: trim gear must not eat the pendulum lever`,
     );
@@ -345,6 +364,9 @@ test("every carrier carries real trim machinery inside its envelope", () => {
 test("a lost propulsor is physically trimmed out by moving real ballast", () => {
   const report = [];
   for (const vehicle of airVehicles) {
+    if ((vehicle.flight.liftSource ?? "buoyant") === "rotor") {
+      continue;
+    }
     const lost = oneSidedPropulsor(vehicle);
     assert.equal(lost.size > 0, true, `${vehicle.id} has no outboard propulsor`);
     const guidance = guidanceFor(vehicle);

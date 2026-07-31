@@ -1,4 +1,8 @@
-import type { SettlementPlan } from "../../game/settlementPlan.ts";
+import type {
+  SettlementFlow,
+  SettlementPlan,
+  SettlementStore,
+} from "../../game/settlementPlan.ts";
 import {
   vikingHomeEntrance,
   vikingPlaceInterest,
@@ -28,9 +32,9 @@ const HOME_ROLES: Readonly<Record<string, string>> = {
 /** Куда тянет жителя его ремесло помимо объявленного веса площадок. */
 const ROLE_HAUNTS: Readonly<Record<string, readonly string[]>> = {
   weaver: ["weaver-chopping", "well", "commons"],
-  brewer: ["brewer-chopping", "north-armoury", "great-hall-threshold"],
+  brewer: ["brewery", "brewer-chopping", "north-armoury"],
   fisher: ["north-sledge", "commons", "well"],
-  smith: ["smith-store", "smith-sledge", "great-hall-threshold"],
+  smith: ["smithy", "smith-store", "smith-sledge"],
   herder: ["goat-pen", "well", "north-sledge"],
   gardener: ["kitchen-garden", "well", "great-hall-threshold"],
   elder: ["commons", "great-hall-threshold", "great-hall-yard"],
@@ -52,6 +56,107 @@ const VILLAGE_DYES: readonly (readonly [number, number, number])[] = [
   [0.17, 0.2, 0.27],
   [0.32, 0.24, 0.15],
   [0.14, 0.13, 0.12],
+];
+
+/**
+ * СКЛАДЫ И ПОТОКИ. Цепочка «лес → колода → поленница → очаг» здесь нигде не
+ * записана: есть четыре склада со своими уровнями и три потока между ними.
+ * Порядок работ складывается сам из градиента уровней — очаг сжёг дрова,
+ * поленница просела, появилась работа носить; куча у колоды просела, появилась
+ * работа колоть; лес отрос, появилась работа валить.
+ *
+ * Уровни показаны кусками сцены: поленья у колоды, брёвна в поленнице, полено
+ * в очаге. Гаснут с конца — полный склад виден целиком.
+ */
+export const vikingSettlementStores: readonly SettlementStore[] = [
+  {
+    id: "north-copse",
+    at: [-30.4, 63.6],
+    capacity: 10,
+    initial: 10,
+    // Лес отрастает: без этого остров лысеет за час игры.
+    growthPerMinute: 0.22,
+  },
+  {
+    id: "weaver-chopping",
+    at: [-21, 13],
+    capacity: 7,
+    initial: 3,
+    pieces: [
+      "viking-village:working-yards:weaver-chopping:split-log:0:piece",
+      "viking-village:working-yards:weaver-chopping:split-log:1:piece",
+      "viking-village:working-yards:weaver-chopping:split-log:2:piece",
+      "viking-village:working-yards:weaver-chopping:split-log:3:piece",
+      "viking-village:working-yards:weaver-chopping:split-log:4:piece",
+      "viking-village:working-yards:weaver-chopping:split-log:5:piece",
+      "viking-village:working-yards:weaver-chopping:split-log:6:piece",
+    ],
+  },
+  {
+    id: "weaver-wood",
+    at: [-35, 0],
+    capacity: 10,
+    initial: 6,
+    pieces: [
+      "viking-village:storage:weaver-wood:log:0:piece",
+      "viking-village:storage:weaver-wood:log:1:piece",
+      "viking-village:storage:weaver-wood:log:2:piece",
+      "viking-village:storage:weaver-wood:log:3:piece",
+      "viking-village:storage:weaver-wood:log:4:piece",
+      "viking-village:storage:weaver-wood:log:5:piece",
+      "viking-village:storage:weaver-wood:log:6:piece",
+      "viking-village:storage:weaver-wood:log:7:piece",
+      "viking-village:storage:weaver-wood:log:8:piece",
+      "viking-village:storage:weaver-wood:log:9:piece",
+    ],
+  },
+  {
+    id: "commons-hearth",
+    at: [-11.5, -1.5],
+    capacity: 4,
+    initial: 2,
+    // Общинный огонь горит весь день — он и создаёт спрос на всю цепочку.
+    burnPerMinute: 0.22,
+    pieces: ["viking-village:firelight:commons-hearth:log:0"],
+  },
+];
+
+const VILLAGE_FLOWS: readonly SettlementFlow[] = [
+  {
+    id: "fell",
+    from: "north-copse",
+    to: "weaver-chopping",
+    cargo: "log" as const,
+    take: "chop" as const,
+    put: "chop" as const,
+    // Бревно колют на два полена — оттого поток вверх по цепочке реже.
+    yield: 2,
+    roles: ["weaver", "elder"],
+    when: "day" as const,
+    pull: 3.4,
+  },
+  {
+    id: "stack-weaver",
+    from: "weaver-chopping",
+    to: "weaver-wood",
+    cargo: "firewood" as const,
+    take: "carry" as const,
+    put: "stack" as const,
+    roles: ["weaver", "elder", "herder"],
+    when: "day" as const,
+    pull: 3.0,
+  },
+  {
+    id: "feed-commons",
+    from: "weaver-wood",
+    to: "commons-hearth",
+    cargo: "firewood" as const,
+    take: "carry" as const,
+    put: "feed" as const,
+    // Огонь общий, и подкладывает в него кто угодно, а не только хозяева дров.
+    when: "any" as const,
+    pull: 3.6,
+  },
 ];
 
 export const vikingSettlement: SettlementPlan = {
@@ -81,6 +186,8 @@ export const vikingSettlement: SettlementPlan = {
     vikingPlaceInterest.map((place) => [place.areaId, place]),
   ),
   haunts: ROLE_HAUNTS,
+  stores: vikingSettlementStores,
+  flows: VILLAGE_FLOWS,
   wardrobe: {
     dyes: VILLAGE_DYES,
     wearSpread: 1,

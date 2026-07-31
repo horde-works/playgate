@@ -76,6 +76,60 @@ export interface SettlementInterest {
   readonly doing?: "stand" | "sit" | "work";
 }
 
+/**
+ * Что человек несёт в руках. ТИП, а не предмет мира: у полена нет личности,
+ * учёт ведут склады, а рукам достаточно знать, что именно они держат.
+ */
+export type SettlementCargo = "log" | "firewood";
+
+/** Чем берут и чем кладут. Глагол задаёт позу и длительность работы. */
+export type SettlementWorkVerb = "chop" | "carry" | "stack" | "feed";
+
+/**
+ * Склад: место, где чего-то СТОЛЬКО-ТО. Лес, куча наколотых поленьев,
+ * поленница, очаг — всё это один тип с разной ёмкостью и разным поведением.
+ *
+ * Работа не назначается человеку списком: она РОЖДАЕТСЯ из пары «в источнике
+ * есть — у приёмника место». Поэтому склад не знает ни про людей, ни про
+ * профессии; он знает только свой уровень.
+ */
+export interface SettlementStore {
+  readonly id: string;
+  /** Где стоит. К нему подходят через ближайший узел графа троп. */
+  readonly at: SettlementPoint;
+  readonly capacity: number;
+  readonly initial: number;
+  /** Отрастает само: лес. Единиц в минуту. */
+  readonly growthPerMinute?: number;
+  /** Расходуется само: очаг жжёт дрова. Единиц в минуту. */
+  readonly burnPerMinute?: number;
+  /**
+   * Куски сцены, которыми показан уровень. Гаснут с конца: последний кусок
+   * исчезает первым, полный склад показан целиком.
+   */
+  readonly pieces?: readonly string[];
+}
+
+/**
+ * Поток: откуда, куда, чем берут и чем кладут. Цепочка «лес → колода →
+ * поленница → очаг» нигде не записана — она складывается сама из градиента
+ * уровней, потому что каждое звено это отдельный поток.
+ */
+export interface SettlementFlow {
+  readonly id: string;
+  readonly from: string;
+  readonly to: string;
+  readonly cargo: SettlementCargo;
+  readonly take: SettlementWorkVerb;
+  readonly put: SettlementWorkVerb;
+  readonly roles?: readonly string[];
+  readonly when?: SettlementDayPart;
+  /** Сколько единиц появляется у приёмника за одну ходку: бревно даёт два полена. */
+  readonly yield?: number;
+  /** Насколько охотно берутся за это дело по сравнению с прогулкой по площадкам. */
+  readonly pull?: number;
+}
+
 /** Одежда поселения: палитра крашеной ткани, из которой набирают жителей. */
 export interface SettlementWardrobe {
   readonly dyes: readonly (readonly [number, number, number])[];
@@ -94,6 +148,10 @@ export interface SettlementPlan {
   readonly interest: Readonly<Record<string, SettlementInterest>>;
   /** Куда тянет человека его занятие помимо объявленного притяжения. */
   readonly haunts: Readonly<Record<string, readonly string[]>>;
+  /** Склады поселения. Без них жители ходят по делам, но ничего не делают. */
+  readonly stores?: readonly SettlementStore[];
+  /** Потоки между складами: из них и получается работа. */
+  readonly flows?: readonly SettlementFlow[];
   readonly wardrobe: SettlementWardrobe;
   /** Каждый n-й житель — ребёнок. 0 — детей нет. */
   readonly childEvery?: number;

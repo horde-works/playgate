@@ -9,9 +9,11 @@ export type GameAction =
   | "terminal-departure.approaching"
   | "viking-departure.approaching"
   | "town-departure.approaching"
+  | "hexacopter-departure.approaching"
   | "terminal-ride.approaching"
   | "viking-ride.approaching"
   | "town-ride.approaching"
+  | "hexacopter-ride.approaching"
   | "seat.approaching"
   | "stand.available";
 
@@ -126,6 +128,28 @@ export const gameActionHints: readonly GameActionHint[] = [
     detailKey: "hint.townRide.action",
     touchDetailKey: "hint.townRide.actionTouch",
     keyLabelKey: "hint.townRide.key",
+    once: false,
+  },
+  {
+    id: "dispatching-the-hexacopter",
+    action: "hexacopter-departure.approaching",
+    delayMs: 180,
+    eyebrowKey: "hint.hexacopterDeparture.eyebrow",
+    titleKey: "hint.hexacopterDeparture.title",
+    detailKey: "hint.hexacopterDeparture.action",
+    touchDetailKey: "hint.hexacopterDeparture.actionTouch",
+    keyLabelKey: "hint.hexacopterDeparture.key",
+    once: false,
+  },
+  {
+    id: "boarding-the-hexacopter",
+    action: "hexacopter-ride.approaching",
+    delayMs: 180,
+    eyebrowKey: "hint.hexacopterRide.eyebrow",
+    titleKey: "hint.hexacopterRide.title",
+    detailKey: "hint.hexacopterRide.action",
+    touchDetailKey: "hint.hexacopterRide.actionTouch",
+    keyLabelKey: "hint.hexacopterRide.key",
     once: false,
   },
   {

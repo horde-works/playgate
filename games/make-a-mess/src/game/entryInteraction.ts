@@ -11,10 +11,12 @@ export type EntryInteractionCue =
   | "terminal-uncrewed-flight"
   | "viking-uncrewed-flight"
   | "town-uncrewed-flight"
+  | "town-hexacopter-uncrewed-flight"
   | "stronghold-uncrewed-flight"
   | "terminal-passenger-flight"
   | "viking-passenger-flight"
   | "town-passenger-flight"
+  | "town-hexacopter-passenger-flight"
   | "stronghold-passenger-flight";
 
 export interface EntryInteractionAction {

@@ -557,6 +557,35 @@ export const vikingTrafficRoutes: readonly VikingTrafficRoute[] = [
     wear: 0.68,
   },
   {
+    id: "woodcut",
+    purpose: "North road out to the copse where the village takes its timber",
+    // Дрова в деревне не появляются сами: за ними ходят В ЛЕС, а лес растёт
+    // за частоколом. Тропа отходит от северной дороги и кончается ПЕРЕД
+    // рощей — валить дерево встают перед ним, а не внутри него.
+    points: [[0, 60], [-11, 62.5], [-22, 63.2], [-27.4, 63.4]],
+    width: 0.92,
+    wear: 0.5,
+  },
+  {
+    id: "smithy",
+    purpose: "Sledge yard to the open forge",
+    // Отвод от санной площадки. Тропа НЕ идёт насквозь через двор кузницы к
+    // складу: у склада своя дорога от тех же саней, а сквозной ход пришлось бы
+    // вести прямо через горн. Конец вынесен ПЕРЕД горном, в 2.6 м, и в стороне
+    // от точила: путевая точка внутри твёрдого — это хоровод вокруг предмета,
+    // уже проходили.
+    points: [[29, -20], [31.8, -20.6], [34.5, -21.05]],
+    width: 0.86,
+    wear: 0.6,
+  },
+  {
+    id: "elder-wood",
+    purpose: "Elder track to his fuel stack",
+    points: [[-20, -47], [-19.8, -51.4]],
+    width: 0.64,
+    wear: 0.36,
+  },
+  {
     id: "smith-firewood",
     purpose: "Smith house to the southern fuel stack",
     // Конец был внутри поленницы (x 31…36, z ≈ −49) — тупик без обхода.
@@ -643,6 +672,11 @@ export const vikingTrafficAreas: readonly VikingTrafficArea[] = [
   { id: "north-sledge", purpose: "Sledge loading ground", center: [-8, 34], radius: [3.8, 3], wear: 0.52 },
   { id: "smith-sledge", purpose: "Smithy sledge loading ground", center: [29, -20], radius: [4.2, 3.2], wear: 0.62 },
   { id: "kitchen-garden", purpose: "Worked soil around the kitchen garden", center: [15, -17], radius: [5, 4.2], wear: 0.45 },
+  // Кузница и пивоварня: единственные два постоянных огня под открытым небом.
+  // Пятно смещено ПЕРЕД горном и чаном — туда, где стоит работающий.
+  { id: "woodcut", purpose: "Felling ground at the northern copse", center: [-28.6, 63.4], radius: [3.6, 3.2], wear: 0.42 },
+  { id: "smithy", purpose: "Open forge, anvil and grindstone", center: [36.1, -19.2], radius: [3.4, 3.0], wear: 0.66 },
+  { id: "brewery", purpose: "Brewing vat over its fire", center: [26.3, -3.0], radius: [2.6, 2.4], wear: 0.5 },
   // Места, у которых давно была тропа, но не было НАЗНАЧЕНИЯ: без площадки
   // узел безымянный, а безымянный узел никому не цель — полкарты стояло
   // построенным и незаселённым.
@@ -717,6 +751,10 @@ export const vikingPlaceInterest: readonly VikingPlaceInterest[] = [
   { areaId: "hall-benches-west", pull: 1.8, when: "evening", doing: "sit" },
   { areaId: "hall-benches-east", pull: 1.8, when: "evening", doing: "sit" },
   { areaId: "hall-high-seats", pull: 1.1, roles: ["elder"], when: "evening" },
+  { areaId: "woodcut", pull: 2.6, roles: ["weaver", "elder", "men"], when: "day", doing: "work" },
+  // Горн перевешивает склад: кузнец у огня, а не среди стоек с готовым.
+  { areaId: "smithy", pull: 3.6, roles: ["smith"], when: "day", doing: "work" },
+  { areaId: "brewery", pull: 3.4, roles: ["brewer"], when: "day", doing: "work" },
   { areaId: "smith-store", pull: 3.2, roles: ["smith", "men"], when: "day", doing: "work" },
   { areaId: "smith-sledge", pull: 2.1, roles: ["smith"], when: "day", doing: "work" },
   { areaId: "weaver-chopping", pull: 3.2, roles: ["weaver"], when: "day", doing: "work" },

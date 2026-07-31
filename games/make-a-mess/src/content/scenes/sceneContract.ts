@@ -8,6 +8,7 @@ import type {
   LampBeaconDefinition,
   LampEventLightingDefinition,
   LandscapeSurfaceProfile,
+  MutableSceneObjectDefinition,
   SceneVector3,
   SpotLightDefinition,
   SurfaceMeshProfile,
@@ -96,6 +97,13 @@ export interface ScenePrefabPieceDefinition {
   readonly attachmentSupportMode?: "wall" | "cable" | "hinge";
   readonly sideAttachmentReach?: number;
   readonly contactBearingOrder?: boolean;
+  /**
+   * Сужение окна опоры для этого куска. Нужно парящей машине над твердью:
+   * у стали окно 1.1 м, и любая её деталь в метре над асфальтом иначе
+   * «садится» на него, получая второй корень устойчивости мимо собственного
+   * силового узла (transport-lessons §21).
+   */
+  readonly maximumVerticalGap?: number;
   readonly hinge?: SceneHinge;
   readonly actuator?: CommandActuatorTag;
   readonly light?: SceneLightSource;
@@ -144,6 +152,13 @@ export interface ScenePrimitiveDefinition extends SceneObjectBase {
   readonly attachmentSupportMode?: "wall" | "cable" | "hinge";
   readonly sideAttachmentReach?: number;
   readonly contactBearingOrder?: boolean;
+  /**
+   * Сужение окна опоры для этого куска. Нужно парящей машине над твердью:
+   * у стали окно 1.1 м, и любая её деталь в метре над асфальтом иначе
+   * «садится» на него, получая второй корень устойчивости мимо собственного
+   * силового узла (transport-lessons §21).
+   */
+  readonly maximumVerticalGap?: number;
   readonly hinge?: SceneHinge;
   readonly actuator?: CommandActuatorTag;
   readonly light?: SceneLightSource;
@@ -188,6 +203,11 @@ export interface AuthoredSceneDocument {
   readonly groups: readonly SceneGroupDefinition[];
   /** Directed fixtures with real surface light and optional volumetric beams. */
   readonly spotLights?: readonly SpotLightDefinition[];
+  /**
+   * Изменяемые объекты сцены: часы, табло и СКЛАДЫ с видимым уровнем. Сцена
+   * лишь объявляет их куски изменяемыми; кто и когда их гасит — дело рантайма.
+   */
+  readonly mutableObjects?: readonly MutableSceneObjectDefinition[];
   /** Мир-заповедник: ломать нельзя ничего (см. LICENSING.md). */
   readonly indestructible?: boolean;
   /**

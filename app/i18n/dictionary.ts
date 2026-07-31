@@ -278,6 +278,18 @@ export const ui = {
     "hint.townDeparture.key": "Space",
     "hint.townDeparture.action": "Dispatch Airship 07",
     "hint.townDeparture.actionTouch": "Start the survey",
+    "hint.hexacopterDeparture.eyebrow": "Yard vertipad",
+    "hint.hexacopterDeparture.title":
+      "HX-6 can fly the island circuit with the cabin empty.",
+    "hint.hexacopterDeparture.key": "Space",
+    "hint.hexacopterDeparture.action": "Send HX-6 around the island",
+    "hint.hexacopterDeparture.actionTouch": "Send it up",
+    "hint.hexacopterRide.eyebrow": "Inside HX-6",
+    "hint.hexacopterRide.title":
+      "One seat, six ducted rotors, and the whole island below.",
+    "hint.hexacopterRide.key": "Space",
+    "hint.hexacopterRide.action": "Fly the island circuit",
+    "hint.hexacopterRide.actionTouch": "Lift off",
 
     "gate.continueTitle": "Carry on the mess?",
     "gate.startTitle": "Everything can break.",
@@ -566,6 +578,18 @@ export const ui = {
     "hint.townDeparture.key": "Espacio",
     "hint.townDeparture.action": "Despachar el dirigible 07",
     "hint.townDeparture.actionTouch": "Iniciar inspección",
+    "hint.hexacopterDeparture.eyebrow": "Vertipuerto del patio",
+    "hint.hexacopterDeparture.title":
+      "El HX-6 puede dar la vuelta a la isla con la cabina vacía.",
+    "hint.hexacopterDeparture.key": "Espacio",
+    "hint.hexacopterDeparture.action": "Enviar el HX-6 a la vuelta",
+    "hint.hexacopterDeparture.actionTouch": "Despegar sin nadie",
+    "hint.hexacopterRide.eyebrow": "Dentro del HX-6",
+    "hint.hexacopterRide.title":
+      "Una plaza, seis rotores carenados y toda la isla abajo.",
+    "hint.hexacopterRide.key": "Espacio",
+    "hint.hexacopterRide.action": "Volar alrededor de la isla",
+    "hint.hexacopterRide.actionTouch": "Despegar",
 
     "hint.townDoor.eyebrow": "Entrada de la casa",
     "hint.townDoor.title": "Puedes pasar.",
@@ -857,6 +881,18 @@ export const ui = {
     "hint.townDeparture.key": "Пробел",
     "hint.townDeparture.action": "Отправить дирижабль в облёт",
     "hint.townDeparture.actionTouch": "Начать облёт",
+    "hint.hexacopterDeparture.eyebrow": "Площадка во дворе",
+    "hint.hexacopterDeparture.title":
+      "HX-6 может облететь остров с пустой кабиной.",
+    "hint.hexacopterDeparture.key": "Пробел",
+    "hint.hexacopterDeparture.action": "Отправить HX-6 в облёт",
+    "hint.hexacopterDeparture.actionTouch": "Отправить пустым",
+    "hint.hexacopterRide.eyebrow": "В кабине HX-6",
+    "hint.hexacopterRide.title":
+      "Одно место, шесть колец и весь остров внизу.",
+    "hint.hexacopterRide.key": "Пробел",
+    "hint.hexacopterRide.action": "Облететь остров",
+    "hint.hexacopterRide.actionTouch": "Взлететь",
 
     "gate.continueTitle": "Продолжим беспорядок?",
     "gate.startTitle": "Всё можно сломать.",

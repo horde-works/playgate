@@ -19,6 +19,7 @@ import {
 import {
   createVillagerPopulation,
   stepVillagers,
+  storePieceVisibility,
   type VillagerPopulation,
 } from "./villagerSim.ts";
 import { buildObstacleField, type NavPiece } from "./villagerNavigation.ts";
@@ -382,7 +383,7 @@ const GAIT_COMPUTE = /* glsl */ `
         torsoPitch = 0.3 * shuffle + 0.14 * settled;
         hipFlex += 0.1 * shuffle;
       }
-    } else {
+    } else if (climbKind < 6.5) {
       // ЛЕЖИТ: корпус уходит в горизонталь, ноги чуть согнуты, руки вдоль тела.
       float t = clamp(climbT, 0.0, 1.0);
       hipFlex = 0.16 * t;
@@ -391,6 +392,35 @@ const GAIT_COMPUTE = /* glsl */ `
       armFlex = 0.08 * t;
       bodyPitch = -1.48 * t;
       bodySink = t * clamp(${HIP_Y.toFixed(2)} - restTop - 0.06, 0.0, 0.8);
+    } else if (climbKind < 7.5) {
+      // РУБИТ. Цикл по механике удара (docs/work-motion-mechanics.md §2):
+      // замах ведут ПЛЕЧИ (руки уходят вверх-назад за голову), удар идёт
+      // сверху вниз раскрытием таз → корпус → плечо, колени принимают отдачу,
+      // и только потом человек распрямляется. Обе руки работают ВМЕСТЕ — это
+      // двуручный инструмент, поэтому side здесь не участвует.
+      float t = climbT;
+      float wind = smoothstep(0.04, 0.40, t) * (1.0 - smoothstep(0.42, 0.52, t));
+      float strike = smoothstep(0.44, 0.58, t) * (1.0 - smoothstep(0.60, 0.76, t));
+      float rise = smoothstep(0.72, 1.0, t);
+      armFlex = -2.15 * wind + 0.62 * strike - 0.12 * rise;
+      torsoPitch = -0.14 * wind + 0.46 * strike + 0.16 * (1.0 - rise) * strike;
+      hipFlex = 0.10 * wind + 0.34 * strike;
+      knee = 0.16 * wind + 0.46 * strike;
+      ankle = -0.05 * wind + 0.14 * strike;
+      // Топор ВЯЗНЕТ в колоде: после удара корпус ещё мгновение внизу.
+      bodySink = 0.05 * strike;
+    } else {
+      // КЛАДЁТ: присед с прямой спиной, укладка двумя руками и пауза на
+      // подравнивание — именно она отличает укладку от бросания.
+      float t = climbT;
+      float down = smoothstep(0.0, 0.34, t) * (1.0 - smoothstep(0.62, 0.94, t));
+      float settle = smoothstep(0.34, 0.52, t) * (1.0 - smoothstep(0.56, 0.7, t));
+      hipFlex = 1.05 * down;
+      knee = 1.30 * down;
+      ankle = 0.16 * down;
+      armFlex = 0.85 * down + 0.18 * settle;
+      torsoPitch = 0.5 * down;
+      bodySink = 0.3 * down;
     }
   }
 
@@ -495,6 +525,10 @@ const GAIT_COMPUTE = /* glsl */ `
   gaitPos.y -= bodySink;
 `;
 
+/** Две ссылки на состояние вместо новых объектов каждый кадр. */
+const VISIBLE_PIECE = { visible: true } as const;
+const HIDDEN_PIECE = { visible: false } as const;
+
 export function Villagers({
   settlement,
   nightRef,
@@ -502,6 +536,7 @@ export function Villagers({
   brokenPieces,
   doorRequests,
   openDoors,
+  stockStates,
   count = 24,
 }: {
   /** Какое поселение здесь живёт: тропы, жильё, места, роли, одежда. */
@@ -515,6 +550,12 @@ export function Villagers({
   doorRequests?: { current: Set<string> };
   /** Входы, чьи створки уже распахнуты. */
   openDoors?: { current: Set<string> };
+  /**
+   * Сюда пишется видимость кусков складов. Поленница пустеет не по расписанию,
+   * а потому что дрова унесли: уровень склада — это то же число, по которому
+   * житель решает, есть ли работа.
+   */
+  stockStates?: { current: Map<string, { readonly visible: boolean }> };
   /** Приёмник следов: отпечаток ставится в момент удара пяткой. */
   count?: number;
 }) {
@@ -658,6 +699,7 @@ export function Villagers({
   const quaternion = useMemo(() => new Quaternion(), []);
   const scale = useMemo(() => new Vector3(), []);
   const euler = useMemo(() => new Euler(), []);
+  const stockTimer = useRef(0);
 
   useFrame((_, delta) => {
     const mesh = meshRef.current;
@@ -674,6 +716,21 @@ export function Villagers({
       state.externalOpenDoors = openDoors.current;
     }
     stepVillagers(state, delta, nightRef.current ?? 0);
+
+    // Уровни складов — в изменяемые куски сцены. Раз в четверть секунды:
+    // чаще не нужно, а карта состояний общая с часами и табло.
+    if (stockStates) {
+      stockTimer.current -= delta;
+      if (stockTimer.current <= 0) {
+        stockTimer.current = 0.25;
+        for (const [pieceId, visible] of storePieceVisibility(state)) {
+          const previous = stockStates.current.get(pieceId);
+          if (previous?.visible !== visible) {
+            stockStates.current.set(pieceId, visible ? VISIBLE_PIECE : HIDDEN_PIECE);
+          }
+        }
+      }
+    }
 
     // Житель у своей двери просит её открыть — тем же механизмом, каким это
     // делает игрок: дверь распахивается по-настоящему, а не проходится

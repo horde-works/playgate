@@ -24,6 +24,27 @@ import {
   BASALT_SKY_RAM_ORIGIN,
   basaltSkyRamPoint,
 } from "./basaltSkyRam.ts";
+import {
+  HEXACOPTER_DUCTS,
+  HEXACOPTER_GEAR_STATIONS,
+  HEXACOPTER_LIFT_CENTRE,
+  HEXACOPTER_MOORING_POINT,
+  HEXACOPTER_NOSE,
+  HEXACOPTER_ORIGIN,
+  HEX_ARM_RADIUS,
+  HEX_CANOPY_TOP_Y,
+  HEX_DISC_Y,
+  HEX_FOOT_BOTTOM_Y,
+  HEX_GONDOLA_BOTTOM_Y,
+  HEX_KEEL_BOTTOM_Y,
+  HEX_KEEL_TOP_Y,
+  HEX_LIP_OUTER_RADIUS,
+  HEX_LIP_TOP_Y,
+  HEX_SHROUD_BOTTOM_Y,
+  HEX_SHROUD_TOP_Y,
+  TOWN_HEXACOPTER_CLUSTER_ID,
+  hexacopterPoint,
+} from "./townHexacopter.ts";
 
 // Kept as re-exports for callers while the authored routes themselves live in
 // their own artifact module.
@@ -450,6 +471,53 @@ function townAirshipHullProbes(): readonly HullProbe[] {
   return probes;
 }
 
+
+/**
+ * Щупы гексакоптера. Машина широкая и низкая, поэтому главные её «плечи» —
+ * шесть колец: именно ими она задевает мир. Каждому кольцу дан наружный щуп,
+ * верхний по губе и нижний по юбке; отдельно вынесены нос гондолы, корма с
+ * килем и макушка фонаря.
+ */
+function hexacopterHullProbes(): readonly HullProbe[] {
+  const fore: SceneVector3 = HEXACOPTER_NOSE;
+  const aft: SceneVector3 = [-fore[0], 0, -fore[2]];
+  const probes: HullProbe[] = [
+    // Нос гондолы. Приёмный стакан площадки стоит НИЖЕ этой точки, поэтому
+    // штатный причал не читается как внезапное препятствие.
+    { point: hexacopterPoint(1.16, 0, HEX_GONDOLA_BOTTOM_Y + 0.12), normal: fore },
+    { point: hexacopterPoint(-1.1, 0, HEX_GONDOLA_BOTTOM_Y + 0.12), normal: aft },
+    { point: hexacopterPoint(0, 0, HEX_CANOPY_TOP_Y), normal: [0, 1, 0] },
+    { point: hexacopterPoint(0, 0, HEX_KEEL_BOTTOM_Y), normal: [0, -1, 0] },
+  ];
+  for (const station of HEXACOPTER_DUCTS) {
+    const outward: SceneVector3 = [
+      -Math.cos(station.angle),
+      0,
+      -Math.sin(station.angle),
+    ];
+    const rim = HEX_ARM_RADIUS + HEX_LIP_OUTER_RADIUS;
+    probes.push(
+      {
+        point: hexacopterPoint(
+          rim * Math.cos(station.angle),
+          rim * Math.sin(station.angle),
+          HEX_DISC_Y,
+        ),
+        normal: outward,
+      },
+      {
+        point: hexacopterPoint(station.a, station.b, HEX_LIP_TOP_Y),
+        normal: [0, 1, 0],
+      },
+      {
+        point: hexacopterPoint(station.a, station.b, HEX_SHROUD_BOTTOM_Y),
+        normal: [0, -1, 0],
+      },
+    );
+  }
+  return probes;
+}
+
 function basaltSkyRamHullProbes(): readonly HullProbe[] {
   const probes: HullProbe[] = [
     // The cast point sits inside its berth jaw. Its upper brace is the first
@@ -658,6 +726,37 @@ export const vehicleFrames: readonly VehicleFrameDefinition[] = [
         speed: 0.22,
       },
     ),
+  },
+
+  {
+    id: "town-hexacopter",
+    clusterId: TOWN_HEXACOPTER_CLUSTER_ID,
+    telemetryLabel: "HX-6",
+    independentMemberMatches: [":blade:", ":trim:"],
+    origin: HEXACOPTER_ORIGIN,
+    nose: HEXACOPTER_NOSE,
+    // Носовой штырь под гондолой входит в приёмный стакан площадки.
+    mooringPoint: HEXACOPTER_MOORING_POINT,
+    // Подъём приложен в плоскости входных губ — единственной точке машины,
+    // которая выше центра масс. Это и есть весь её маятник: у винтокрылой
+    // машины он короткий, и таким он и должен быть.
+    liftCentre: HEXACOPTER_LIFT_CENTRE,
+    // Подъём этой машины делают ЛОПАСТИ, а не оболочка. Поэтому доля
+    // уцелевших лопастей и есть доля располагаемого подъёма: восемнадцать
+    // лопастей в шести кольцах, потеря кольца — минус 1/6 подъёма.
+    envelopeMatch: ":blade:",
+    supports: HEXACOPTER_GEAR_STATIONS.map((station) =>
+      hexacopterPoint(station.a, station.b, HEX_FOOT_BOTTOM_Y),
+    ),
+    supportFriction: { staticCoefficient: 1.05, dynamicCoefficient: 0.86 },
+    hullProbes: hexacopterHullProbes(),
+    // ДИФФЕРЕНТОВКИ У КОПТЕРА НЕТ И БЫТЬ НЕ ДОЛЖНО.
+    //
+    // Подвижный груз — орган ГАЗОВОЙ машины: у неё момент по крену и тангажу
+    // больше взять неоткуда, тяга идёт вдоль корпуса, а подъём приложен в
+    // одной точке. Винтокрылая машина создаёт тот же момент разнотягом
+    // винтов — быстро, непрерывно и в обе стороны, — и возить ради этого
+    // свинец по рельсам значит противоречить её собственной физике.
   },
 ];
 
@@ -1272,6 +1371,16 @@ export interface ShipLimits {
   readonly rudderPoint: SceneVector3;
   /** Пределы дифферентовки подъёма: ±доля веса. */
   readonly liftTrimRange: number;
+  /**
+   * БОКОВАЯ ТЯГА одного движителя, Н. Ноль (или отсутствие) означает машину,
+   * которая едет только туда, куда смотрит нос: дирижабль, драккар, состав.
+   *
+   * Ненулевая появляется у машины с векторируемыми движителями — кольцо в
+   * кардане наклоняется не только вперёд-назад. Такая машина ГОЛОНОМНА: она
+   * может сместиться вбок, не разворачиваясь, и автопилот обязан этим
+   * пользоваться, а не превращать боковую ошибку в команду рыскания.
+   */
+  readonly lateralThrust?: number;
 }
 
 export const SKY_TRAIN_LIMITS: ShipLimits = {
@@ -1313,6 +1422,11 @@ export interface ShipControls {
   readonly throttle: readonly number[];
   /** Руль, −1..1. */
   readonly rudder: number;
+  /**
+   * Боковая тяга, −1..1, плюс — на правый борт. У неголономной машины это
+   * поле не задаётся вовсе: сдвинуться вбок ей нечем.
+   */
+  readonly sway?: number;
   /** Дифферентовка подъёма, −1..1 от предела. */
   readonly liftTrim: number;
 }
@@ -1374,11 +1488,22 @@ export function shipForces(
     return [centre[0] + arm[0], centre[1] + arm[1], centre[2] + arm[2]];
   };
 
+  // Боковая составляющая раскладывается по ТЕМ ЖЕ точкам: у машины с
+  // векторируемыми кольцами вбок толкает каждое кольцо, а не выдуманный
+  // подруливающий агрегат. Для симметричной раскладки суммарного момента
+  // рыскания это не даёт; для несимметричной даёт, и это честно.
+  const lateralPower =
+    (limits.lateralThrust ?? 0) * clampSigned(controls.sway ?? 0);
+  const starboard: readonly [number, number] = [-heading[1], heading[0]];
   const forces: ForceAtPoint[] = limits.enginePoints.map((point, index) => {
     const power =
       limits.enginePower * clampSigned(controls.throttle[index] ?? 0);
     return {
-      force: [forward[0] * power, forward[1] * power, forward[2] * power],
+      force: [
+        forward[0] * power + starboard[0] * lateralPower,
+        forward[1] * power,
+        forward[2] * power + starboard[1] * lateralPower,
+      ],
       point: place(point),
     };
   });
@@ -2026,6 +2151,24 @@ export function autopilot(
     wanted = [mixX / mixLength, mixZ / mixLength];
   }
 
+  // ГОЛОНОМНАЯ МАШИНА ПРАВИТ ПОЛОЖЕНИЕ ТЯГОЙ, А НЕ НОСОМ.
+  //
+  // Общий контур неголономный: он превращает ошибку положения в требование к
+  // КУРСУ, потому что корпус едет туда, куда смотрит. Для машины с
+  // векторируемыми движителями это ложь, и ложь дорогая: любой боковой снос
+  // становился командой рыскания, машина доворачивала, тяга вдоль нового носа
+  // тащила её вбок, следовал перелёт и доворот обратно — те самые непрерывные
+  // коррекции. На посадке было хуже: причальный курс и направление на пятно
+  // требовали от носа разного, а усиления pure pursuit на нулевой скорости
+  // почти нет, и машина замирала в метре от стакана, развернувшись боком.
+  //
+  // Поэтому у неё нос идёт по касательной маршрута, а у причала — по
+  // причальному курсу, и никакой связи с ошибкой положения у него нет.
+  if ((limits.lateralThrust ?? 0) > 1e-6) {
+    wanted = onApproach
+      ? [approach.heading[0], approach.heading[1]]
+      : [tangentX, tangentZ];
+  }
   const turn = guess.heading[1] * wanted[0] - guess.heading[0] * wanted[1];
   const facing = guess.heading[0] * wanted[0] + guess.heading[1] * wanted[1];
   const bearingError = Math.atan2(turn, facing);
@@ -2068,6 +2211,22 @@ export function autopilot(
   // needed to leave forwards. At manoeuvring speed, use the signed bearing
   // itself until the target returns to the forward hemisphere. Differential
   // thrust and the rudder still create every newton of the turn.
+  // Геометрия pure pursuit: хорда остаётся конечной даже на точном маршруте,
+  // поэтому кривизна не скачет от малой ошибки предсказания.
+  // Pure pursuit has a real singularity at a half-turn: sin(PI) is zero, so
+  // a craft that has just finished backing out would never ask for the pivot
+  // needed to leave forwards. At manoeuvring speed, use the signed bearing
+  // itself until the target returns to the forward hemisphere. Differential
+  // thrust and the rudder still create every newton of the turn.
+  //
+  // ОТКРЫТО для всенаправленной машины: усиление этого закона пропорционально
+  // ходу, потому что неголономный корпус и поворачивает только на ходу. Машина,
+  // которая держит место сама, у причала почти стоит — и доворачивает на
+  // причальный курс мучительно медленно, оставаясь боком. Прямой захват курса
+  // вместо погони пробовался: он доворачивает быстро, но на располагаемом
+  // моменте шести колец раскручивает машину до нескольких рад/с, и корпус
+  // опрокидывается тягой, приложенной ниже центра масс. Нужен закон посадки,
+  // который ведёт МЕСТО и КУРС согласованно, а не два контура порознь.
   const pursuit =
     Math.abs(bearingError) > Math.PI / 2 && groundSpeed < 4
       ? bearingError / 3
@@ -2115,14 +2274,58 @@ export function autopilot(
   const allowed = safetyIntervention
     ? Math.min(routeAllowed, safety?.maximumSpeed ?? routeAllowed)
     : routeAllowed;
+  // ГОЛОНОМНАЯ МАШИНА У ПРИЧАЛА ДЕРЖИТ НЕ СКОРОСТЬ, А МЕСТО.
+  //
+  // Общий регулятор продольного хода — это регулятор СКОРОСТИ: маршрут ведёт
+  // профиль к нулю, и машина останавливается там, где профиль кончился. Для
+  // корабля, который дотягивает лебёдка причала, этого достаточно. Машина,
+  // садящаяся на пятно, обязана держать САМО МЕСТО: иначе она замирает в
+  // нескольких метрах, а недостающее приходится добирать захватом, который
+  // тянет за нос и разворачивает лёгкий корпус рывком.
+  //
+  // Поэтому на финальном участке продольная команда выводится из оставшегося
+  // расстояния до причальной точки вдоль причального курса, а не из профиля.
+  const holonomicBerthHold =
+    onApproach && (limits.lateralThrust ?? 0) > 1e-6;
+  const berthAlong = holonomicBerthHold
+    ? (berthPoint[0] - centre[0]) * approach.heading[0] +
+      (berthPoint[2] - centre[2]) * approach.heading[1]
+    : 0;
+  // Профиль маршрута в самом конце требует НУЛЯ скорости — он описывает рейс,
+  // а не установку на место. Позиционной команде нужен собственный, малый
+  // манёвренный предел, иначе машина честно останавливается ровно там, где
+  // профиль кончился, и не доходит последние полметра до стакана.
+  const berthHoldSpeed = Math.max(allowed, 0.6);
   const wantedSpeed = allowed * clamp01(startRamp) * travelDirection;
   // Реверс — настоящий орган управления: на торможении оба мотора могут дать
   // задний ход, а на малой скорости один работает вперёд, второй назад. Это
   // разворачивает судно без обязательного продвижения боком или вперёд.
-  const base = Math.max(
+  const routeBase = Math.max(
     safetyIntervention ? -1 : -0.45,
     Math.min(1, (wantedSpeed - speedAlong - braking * 0.15) * 0.22),
   );
+
+  // Удержание места у причала: продольная команда выводится из оставшегося
+  // расстояния до причальной точки, а не из скоростного профиля маршрута.
+  //
+  // ОТКРЫТО: контур считается в осях КОРПУСА, и доворот на курс частично сам
+  // себя сбивает — нос повернулся, обе команды повернулись вместе с ним.
+  // Попытка перевести его в оси причала (жёсткая PD по месту с проекцией на
+  // органы) машину разносила: при насыщении обеих команд горизонтальная сила
+  // приложена ниже центра масс, и на быстром вращении корпус опрокидывался.
+  // Правильный закон посадки всенаправленной машины — отдельная работа, а не
+  // подбор коэффициентов.
+  const base = holonomicBerthHold
+    ? clampSigned(
+        (Math.max(
+          -berthHoldSpeed,
+          Math.min(berthHoldSpeed, berthAlong * 0.7),
+        ) -
+          speedAlong) *
+          0.22,
+      )
+    : routeBase;
+
   const engineMoment = wantedYawMoment - rudderMoment;
   const throttle = allocateAutopilotEngineCommands(
     base,
@@ -2185,7 +2388,45 @@ export function autopilot(
       groundSpeed > approach.tolerance.speed;
   }
 
-  return { controls: { throttle, rudder, liftTrim }, desiredYawRate, goAround };
+  // Боковой контур: ошибка ПОПЕРЁК линии маршрута и демпфер по фактической
+  // боковой скорости. Рыскания в нём нет вовсе — тем он и отличается от
+  // общего. Ноль у машины без векторируемых движителей: сдвинуться вбок ей
+  // нечем, и просить об этом бессмысленно.
+  const swayCapacity =
+    (limits.lateralThrust ?? 0) * limits.enginePoints.length;
+  const starboardAxis: readonly [number, number] = [-heading[1], heading[0]];
+  // Опора бокового контура. На маршруте это касательная, а У ПРИЧАЛА —
+  // причальный курс: в последней точке маршрута касательная ВЫРОЖДАЕТСЯ
+  // (сегмент схлопывается в ноль), её направление начинает скакать, и боковой
+  // контур раскачивает машину вокруг случайной оси. В прогоне это выглядело
+  // как разнос: 37 рад/с и корпус вверх ногами у самого пятна.
+  const swayReferenceX = onApproach ? approach.heading[0] : tangentX;
+  const swayReferenceZ = onApproach ? approach.heading[1] : tangentZ;
+  const swayAlong =
+    errorX * swayReferenceX + errorZ * swayReferenceZ;
+  const swayCrossX = errorX - swayReferenceX * swayAlong;
+  const swayCrossZ = errorZ - swayReferenceZ * swayAlong;
+  const lateralOffset =
+    swayCrossX * starboardAxis[0] + swayCrossZ * starboardAxis[1];
+  const lateralSpeed =
+    velocity[0] * starboardAxis[0] + velocity[2] * starboardAxis[1];
+  const sway =
+    swayCapacity > 1e-6
+      ? Math.max(
+          -1,
+          Math.min(
+            1,
+            (model.mass * (lateralOffset * 0.9 - lateralSpeed * 1.6)) /
+              swayCapacity,
+          ),
+        )
+      : 0;
+
+  return {
+    controls: { throttle, rudder, liftTrim, sway },
+    desiredYawRate,
+    goAround,
+  };
 }
 
 /**
