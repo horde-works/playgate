@@ -20,6 +20,7 @@ import {
   TOWN_HEXACOPTER_CLUSTER_ID,
   hexacopterPoint,
 } from "../games/make-a-mess/src/game/townHexacopter.ts";
+import { airVehicles } from "../games/make-a-mess/src/game/airVehicles.ts";
 import {
   contactEnergyShare,
   contactRestitution,
@@ -283,4 +284,27 @@ test("стеклу узел даётся слабее, чем стали тог�
     vehicleJointCapacity(sample, materialOf("glass")) <
       vehicleJointCapacity(sample, materialOf("steel")),
   );
+});
+
+// ---------------------------------------------------------------------------
+// 5. Область действия возможности
+// ---------------------------------------------------------------------------
+
+test("двусторонний удар включён только машине, которая живёт среди препятствий", () => {
+  const enabled = airVehicles.filter(
+    (vehicle) => vehicle.flight.contactDamage === true,
+  );
+  assert.deepEqual(
+    enabled.map((vehicle) => vehicle.id),
+    ["town-hexacopter"],
+    "корабль с причалом швартуется в сантиметрах от мачты: удар ему включать нельзя",
+  );
+});
+
+test("у машины с ударом есть посадочный допуск, а не только швартовочный", () => {
+  const hexacopter = airVehicles.find(
+    (vehicle) => vehicle.flight.contactDamage === true,
+  );
+  assert.ok(hexacopter?.flight.landing, "садящаяся машина обязана объявить посадку");
+  assert.equal(hexacopter?.flight.liftSource, "rotor");
 });

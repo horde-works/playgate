@@ -1,12 +1,12 @@
 "use client";
 
-import { ActiveCollisionTypes } from "@dimforge/rapier3d-compat";
 import {
   BallCollider,
   CollisionEnterPayload,
   CuboidCollider,
   CylinderCollider,
   RigidBody,
+  useRapier,
   type RapierRigidBody,
 } from "@react-three/rapier";
 import { useCallback, useEffect, useMemo, useRef } from "react";
@@ -51,6 +51,9 @@ function CompoundKinematicClusterBody({
   const body = useRef<RapierRigidBody>(null);
   const visualRoot = useRef<Group>(null);
   const contactPoint = useRef(new Vector3());
+  // Значение берётся у самого движка, а не прямым импортом: пакет rapier —
+  // транзитивная зависимость react-three-rapier и в package.json не объявлен.
+  const { rapier } = useRapier();
   // Полный список кусков сцены сканируется один раз на сцену, а не на каждое
   // разрушение где угодно в мире.
   const memberPieces = useMemo(
@@ -239,7 +242,8 @@ function CompoundKinematicClusterBody({
       // поэтому целый мир машину не видел. Без этого флага удара о дом нет как
       // события, а не как урона.
       activeCollisionTypes={
-        ActiveCollisionTypes.DEFAULT | ActiveCollisionTypes.KINEMATIC_FIXED
+        rapier.ActiveCollisionTypes.DEFAULT |
+        rapier.ActiveCollisionTypes.KINEMATIC_FIXED
       }
       onCollisionEnter={onContact ? handleCollision : undefined}
       userData={{ compoundKinematicCluster: definition.clusterId }}

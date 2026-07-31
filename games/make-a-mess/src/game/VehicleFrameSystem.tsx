@@ -1312,6 +1312,18 @@ export function VehicleFrameSystem({
   const contactCooldown = useRef(new Map<string, number>());
   /** Удары, накопленные движком с прошлого физического шага. */
   const contactEvents = useRef<CompoundClusterContact[]>([]);
+  /**
+   * Наблюдение за ударом для проверки в живой сцене. Считаются ФАКТЫ, а не
+   * намерения: сколько пар движок вообще дал, сколько из них оказались
+   * сближением, сколько сорвали крепление и сколько нашли кусок мира.
+   */
+  const contactStats = useRef({
+    seen: 0,
+    closing: 0,
+    detached: 0,
+    worldHits: 0,
+    lastSpeed: 0,
+  });
   const collectContact = useCallback((contact: CompoundClusterContact) => {
     // Очередь ограничена: один кадр не должен уносить память, если машина
     // легла бортом на длинную конструкцию и пар контактов сотни.
@@ -1632,6 +1644,13 @@ export function VehicleFrameSystem({
         pointZ: number,
       ) => boolean;
       __mamVehicleDepart?: (id: string, kind?: string) => boolean;
+      __mamVehicleContacts?: () => {
+        readonly seen: number;
+        readonly closing: number;
+        readonly detached: number;
+        readonly worldHits: number;
+        readonly lastSpeed: number;
+      };
     };
     const setPose = (
       id: string,
@@ -1676,6 +1695,7 @@ export function VehicleFrameSystem({
       return true;
     };
     scope.__mamVehicleImpulse = applyDiagnosticImpulse;
+    scope.__mamVehicleContacts = () => ({ ...contactStats.current });
     const departDiagnostic = (id: string, kind = "circuit"): boolean => {
       const frame = frames.find((candidate) => candidate.id === id);
       if (!frame?.departure) {
@@ -1746,6 +1766,7 @@ export function VehicleFrameSystem({
       if (scope.__mamVehicleImpulse === applyDiagnosticImpulse) {
         delete scope.__mamVehicleImpulse;
       }
+      delete scope.__mamVehicleContacts;
       if (scope.__mamVehicleDepart === departDiagnostic) {
         delete scope.__mamVehicleDepart;
       }
@@ -2389,6 +2410,7 @@ export function VehicleFrameSystem({
               ],
               1.1,
             ) ?? null;
+          contactStats.current.seen += 1;
           const resolution = resolveVehicleContact(
             {
               point: contact.point as [number, number, number],
@@ -2416,6 +2438,8 @@ export function VehicleFrameSystem({
           if (resolution.closingSpeed < CONTACT_MINIMUM_CLOSING_SPEED) {
             continue;
           }
+          contactStats.current.closing += 1;
+          contactStats.current.lastSpeed = resolution.closingSpeed;
           // Импульс идёт тем же путём, что импульс от ракеты: в компаунд, в
           // точке, с плечом. Ничего специального для удара здесь нет.
           queueCompoundKinematicImpulse(externalImpulses, frame.clusterId, {
@@ -2427,6 +2451,10 @@ export function VehicleFrameSystem({
             detachedThisStep < CONTACT_DAMAGE_PER_STEP;
           if (detaches) {
             detachedThisStep += 1;
+            contactStats.current.detached += 1;
+          }
+          if (obstacle) {
+            contactStats.current.worldHits += 1;
           }
           if (detaches || obstacle) {
             contactCooldown.current.set(
