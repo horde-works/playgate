@@ -46,7 +46,7 @@ import {
 } from "../../game/townHexacopter.ts";
 
 // ---------------------------------------------------------------------------
-// ПЛОЩАДКА И ГЕКСАКОПТЕР ВО ДВОРЕ ХРУЩЁВОК
+// ПЛОЩАДКА И ГЕКСАКОПТЕР ВО ДВОРЕ ЧАСТНОГО ДОМА
 //
 // Полный паспорт образа и физики — в шапке `game/townHexacopter.ts`. Здесь
 // только сборка. Порядок, в котором собрано и в котором стоит читать:
@@ -1471,34 +1471,67 @@ function createDuct(ship: MutableGroup, station: HexacopterDuctStation): void {
     { volume: massVolume("steel", 0.0738), bearsLoad: false, sideAttachmentReach: 0.4 },
   );
 
-  // Огонёк по внешнему ободу: машина читается кольцами и ночью.
-  const outerPsi = Math.atan2(station.b, station.a);
-  primitive(
-    ship,
-    `duct:${station.index}:lamp`,
-    "glass",
-    "glassPane",
-    at(HEX_SHROUD_OUTER_RADIUS + 0.03, outerPsi, HEX_SHROUD_TOP_Y - 0.14),
-    [0.22, 0.06, 0.09],
-    ACCENT,
-    {
-      volume: massVolume("glass", 0.0369),
-      rotation: orient(
-        dir(-Math.sin(outerPsi), Math.cos(outerPsi)),
-        dir(Math.cos(outerPsi), Math.sin(outerPsi)),
-      ),
-      bearsLoad: false,
-      sideAttachmentReach: 0.3,
-      contactBoxes: [{ position: [0, 0, 0], size: [0.22, 0.1, 0.13] }],
-      light: {
-        followsGroup: true,
-        color: ACCENT,
-        distance: 12,
-        intensity: 2.2,
-        poolPriority: 7,
+  // Бортовые аэронавигационные огни стоят на самых разнесённых кольцах,
+  // как на внешних щеках двигателей городского дирижабля. Остальные четыре
+  // диффузора не получают декоративных огоньков: красный/зелёный габарит
+  // должен читаться однозначно. +b — правый борт (зелёный), -b — левый
+  // (красный).
+  if (Math.abs(station.a) < 0.01) {
+    const outerPsi = Math.atan2(station.b, station.a);
+    const starboard = station.b > 0;
+    const sideName = starboard ? "starboard" : "port";
+    const outward = dir(Math.cos(outerPsi), Math.sin(outerPsi));
+    const tangent = dir(-Math.sin(outerPsi), Math.cos(outerPsi));
+    primitive(
+      ship,
+      `nav-light:${sideName}:mount`,
+      "steel",
+      "steelSheet",
+      at(HEX_SHROUD_OUTER_RADIUS + 0.012, outerPsi, HEX_TRUNNION_Y),
+      [0.28, 0.08, 0.2],
+      GRAPHITE,
+      {
+        rotation: orient(tangent, outward),
+        volume: massVolume("steel", 0.0615),
+        bearsLoad: false,
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.28,
+        contactBoxes: [{ position: [0, 0, 0], size: [0.3, 0.12, 0.22] }],
       },
-    },
-  );
+    );
+    primitive(
+      ship,
+      `nav-light:${sideName}`,
+      "glass",
+      "glassPane",
+      at(HEX_SHROUD_OUTER_RADIUS + 0.075, outerPsi, HEX_TRUNNION_Y),
+      [0.2, 0.07, 0.13],
+      starboard ? "#7fe6a0" : "#f08a80",
+      {
+        volume: massVolume("glass", 0.0287),
+        rotation: orient(tangent, outward),
+        bearsLoad: false,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.12,
+        contactBoxes: [{ position: [0, 0, 0], size: [0.22, 0.11, 0.15] }],
+        light: {
+          followsGroup: true,
+          color: starboard ? "#6bff9c" : "#ff6f62",
+          distance: 16,
+          intensity: 3.2,
+          poolPriority: 8,
+          beacon: {
+            physicalDiameter: 0.6,
+            minScreenDiameter: 4,
+            maxWorldDiameter: 1.15,
+            dayOpacity: 0.62,
+            nightOpacity: 1,
+          },
+        },
+      },
+    );
+  }
 }
 
 // --- Шасси -------------------------------------------------------------------
@@ -1638,64 +1671,70 @@ function createLiveryAndLights(ship: MutableGroup): void {
     });
   }
 
-  // Аэронавигационные огни: левый красный, правый зелёный, хвостовой белый.
-  // Сидят на кромке палубы по траверзу, где эллипс шире всего.
-  for (const side of [-1, 1] as const) {
-    const at = cabinPoint((side > 0 ? 0.25 : 0.75) * Math.PI * 2, HEX_FLOOR_Y - 0.06);
+  // Белые носовой и кормовой габариты повторяют световой модуль городского
+  // дирижабля: отдельная тёмная оправа, тёпло-белая линза и дальний beacon.
+  // Они сидят на непрозрачном нижнем поясе капсулы, а не на стекле.
+  const addWhiteNavigationLight = (name: "fore" | "aft", psi: number): void => {
+    const surface = cabinPoint(psi, HEX_FLOOR_Y + 0.2);
+    const outward = cabinNormal(psi);
+    const tangent = dir(-Math.sin(psi), Math.cos(psi));
+    const lens: SceneVector3 = [
+      surface[0] + outward[0] * 0.065,
+      surface[1],
+      surface[2] + outward[2] * 0.065,
+    ];
     primitive(
       ship,
-      `nav:${side}`,
+      `nav-light:${name}:mount`,
+      "steel",
+      "steelSheet",
+      surface,
+      [0.24, 0.08, 0.18],
+      GRAPHITE,
+      {
+        rotation: orient(tangent, outward),
+        volume: massVolume("steel", 0.0615),
+        bearsLoad: false,
+        carriesAttachments: true,
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.25,
+        contactBoxes: [{ position: [0, 0, 0], size: [0.26, 0.12, 0.2] }],
+      },
+    );
+    primitive(
+      ship,
+      `nav-light:${name}`,
       "glass",
       "glassPane",
-      [at[0], at[1], at[2]],
-      [0.13, 0.09, 0.09],
-      side < 0 ? "#ff7a6c" : "#7ff0a6",
+      lens,
+      [0.17, 0.07, 0.12],
+      "#f4f1e2",
       {
-        volume: massVolume("glass", 0.0246),
-        rotation: orient(dir(1, 0), dir(0, side)),
+        rotation: orient(tangent, outward),
+        volume: massVolume("glass", 0.0287),
         bearsLoad: false,
-        sideAttachmentReach: 0.3,
-        contactBoxes: [{ position: [0, 0, 0], size: [0.15, 0.13, 0.13] }],
+        attachmentSupportMode: "cable",
+        sideAttachmentReach: 0.12,
+        contactBoxes: [{ position: [0, 0, 0], size: [0.19, 0.11, 0.14] }],
         light: {
           followsGroup: true,
-          color: side < 0 ? "#ff6252" : "#63ff9c",
-          distance: 20,
-          intensity: 3.6,
-          poolPriority: 8,
+          color: "#fff6dc",
+          distance: 15,
+          intensity: 2.8,
+          poolPriority: 6,
           beacon: {
-            physicalDiameter: 0.6,
-            minScreenDiameter: 4,
-            maxWorldDiameter: 1.1,
-            dayOpacity: 0.6,
-            nightOpacity: 1,
+            physicalDiameter: 0.52,
+            minScreenDiameter: 3.5,
+            maxWorldDiameter: 1,
+            dayOpacity: 0.58,
+            nightOpacity: 0.95,
           },
         },
       },
     );
-  }
-  primitive(
-    ship,
-    "nav:aft",
-    "glass",
-    "glassPane",
-    cabinPoint(Math.PI, HEX_FLOOR_Y - 0.06),
-    [0.12, 0.09, 0.09],
-    "#f2f4f0",
-    {
-      volume: massVolume("glass", 0.0246),
-      rotation: orient(dir(0, 1), dir(-1, 0)),
-      bearsLoad: false,
-      sideAttachmentReach: 0.3,
-      contactBoxes: [{ position: [0, 0, 0], size: [0.14, 0.13, 0.13] }],
-      light: {
-        followsGroup: true,
-        color: "#eef2ee",
-        distance: 16,
-        intensity: 2.4,
-        poolPriority: 6,
-      },
-    },
-  );
+  };
+  addWhiteNavigationLight("fore", 0);
+  addWhiteNavigationLight("aft", Math.PI);
   // Парные посадочные фары утоплены в носовой пояс. Одна центральная лампа
   // делала аппарат бытовым дроном; разнесённая пара задаёт масштаб кабины.
   for (const side of [-1, 1] as const) {
@@ -1733,7 +1772,7 @@ function createLiveryAndLights(ship: MutableGroup): void {
 // кусков bearsLoad и carriesAttachments false, поэтому «разбил шпангоут»
 // роняет машину целиком, а разметка остаётся лежать.
 
-/** Пятно ровно по ширине проезда: 6 м асфальта, ни сантиметром больше. */
+/** Компактная шестиметровая железобетонная плита в газоне частного двора. */
 const PAD_RADIUS = 3;
 
 function createVertipad(): void {

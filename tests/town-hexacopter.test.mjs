@@ -72,6 +72,17 @@ test("машина и площадка — разные кластеры, и о�
   );
 });
 
+test("площадка стоит строго справа от дома h2, а не по диагонали к гаражу", () => {
+  // Дом h2 — копия исходного дома со сдвигом +56; его продольный центр z=-3.
+  assert.equal(HEXACOPTER_PAD_Z, -3);
+  // Восточная стена дома x=60.35, ворота гаражного ряда x=77.45. Центр
+  // шестиметровой плиты лежит в свободном промежутке с рабочим зазором с обеих
+  // сторон, а не у одного из углов.
+  assert.equal(HEXACOPTER_PAD_X, 69);
+  assert.equal(HEXACOPTER_PAD_X - 3 > 60.35, true);
+  assert.equal(HEXACOPTER_PAD_X + 3 < 77.45, true);
+});
+
 test("сцена стартует без единого неопёртого куска", () => {
   const unsupported = [...townScene.resolveStructuralCollapse(new Set())];
   assert.deepEqual(unsupported, []);
@@ -277,7 +288,7 @@ test("маршрут начинается и кончается на площа�
 
 test("взлётный коридор набирает высоту раньше, чем упирается в дома", () => {
   const plan = townHexacopterPlan("circuit", BERTH);
-  // Ближайшая постройка двора — цоколь k3 в 6.98 м; парапеты 11.5 м.
+  // Восточная стена h2 находится в 8.65 м по курсу; конёк — на 6.1 м.
   for (let step = 0; step <= 40; step += 1) {
     const progress = (step / 40) * 0.08;
     const point = plan.point(progress);
