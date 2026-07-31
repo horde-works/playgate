@@ -586,8 +586,10 @@ function addDryingRack(
   hideColor: string,
   hang: "hide" | "fish" = "hide",
 ): void {
-  const postHeight = 2.7;
-  const railHeight = 2.42;
+  // Высота жерди — по вытянутой руке жителя: плечо 1.36 + рука 0.5 = 1.86,
+  // с подъёмом на носки ~2.0. Прежние 2.42 было не достать физически.
+  const postHeight = 2.25;
+  const railHeight = 1.98;
   for (const side of [-1, 1] as const) {
     const [px, pz] = localPoint(x, z, yaw, side * 1.65, 0);
     primitive(cloth, `${id}:post:${side}`, "wood", "cylinder", [px, postHeight / 2, pz], [0.26, postHeight, 0.26], "#4c382c", {
@@ -675,13 +677,27 @@ function addVillageWell(target: MutableGroup, id: string, x: number, z: number):
     attachmentSupportMode: "wall",
     sideAttachmentReach: 2,
   });
-  primitive(target, `${id}:windlass`, "wood", "cylinder", [x, 0.84, z], [0.38, 3.1, 0.38], "#7c573b", {
+  primitive(target, `${id}:windlass`, "wood", "cylinder", [x, 1.02, z], [0.38, 3.1, 0.38], "#7c573b", {
     rotation: [0, 0, Math.PI / 2],
     contactBoxes: [{ position: [0, 0, 0], size: [0.38, 3.1, 0.38] }],
     bearsLoad: false,
   });
+  // РУКОЯТКА ворота: колено на торце вала и поперечная ручка на нём. Радиус
+  // 0.15 и ось на 1.02 — это круг, по которому реально ходит кисть стоящего
+  // человека (плечо на 1.36, длина руки 0.5).
+  primitive(target, `${id}:crank-arm`, "wood", "plank", [x + 1.62, 1.02, z + 0.08], [0.09, 0.34, 0.09], "#6a4c34", {
+    bearsLoad: false,
+    attachmentSupportMode: "wall",
+    sideAttachmentReach: 0.4,
+  });
+  primitive(target, `${id}:crank-grip`, "wood", "cylinder", [x + 1.62, 1.17, z + 0.24], [0.07, 0.26, 0.07], "#8a6743", {
+    rotation: [Math.PI / 2, 0, 0],
+    contactBoxes: [{ position: [0, 0, 0], size: [0.07, 0.26, 0.07] }],
+    bearsLoad: false,
+    sideAttachmentReach: 0.35,
+  });
   // A taut rope from the windlass down to the bucket (a static line for now).
-  primitive(target, `${id}:rope`, "cloth", "cylinder", [x + 0.25, 0.62, z], [0.055, 0.5, 0.055], "#6a5b3f", {
+  primitive(target, `${id}:rope`, "cloth", "cylinder", [x + 0.25, 0.71, z], [0.055, 0.62, 0.055], "#6a5b3f", {
     bearsLoad: false,
     surface: [{ kind: "damp", amount: 0.2 }],
   });

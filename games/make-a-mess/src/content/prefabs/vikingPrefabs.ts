@@ -951,24 +951,26 @@ for (let index = 0; index < 6; index += 1) {
 }
 const swordRack = prefab("viking:sword-rack", "Sword rack", ["viking", "weapon", "storage"], swordRackPieces);
 
+// Верёвку вешают на высоту вытянутой руки: житель достаёт до 1.86, на носках
+// до 2.0. Прежние 2.72 висели выше любого человека в деревне.
 const laundry = prefab("viking:laundry", "Laundry line", ["viking", "cloth", "domestic"], [
-  { id: "post:0", material: "wood", shape: "cylinder", position: [-3.2, 1.45, 0], size: [0.26, 2.9, 0.26], color: darkTimber },
-  { id: "post:1", material: "wood", shape: "cylinder", position: [3.2, 1.45, 0], size: [0.26, 2.9, 0.26], color: darkTimber },
+  { id: "post:0", material: "wood", shape: "cylinder", position: [-3.2, 1.1, 0], size: [0.26, 2.2, 0.26], color: darkTimber },
+  { id: "post:1", material: "wood", shape: "cylinder", position: [3.2, 1.1, 0], size: [0.26, 2.2, 0.26], color: darkTimber },
   {
-    id: "line", material: "wood", shape: "plank", position: [0, 2.72, 0], size: [6.4, 0.1, 0.1], color: "#6b5944",
+    id: "line", material: "wood", shape: "plank", position: [0, 2.02, 0], size: [6.4, 0.1, 0.1], color: "#6b5944",
     carriesAttachments: true,
     attachmentSupportMode: "cable",
     sideAttachmentReach: 0.42,
     contactBoxes: [
-      { position: [-3.07, 2.8, 0], size: [0.26, 0.16, 0.26] },
-      { position: [3.07, 2.8, 0], size: [0.26, 0.16, 0.26] },
-      { position: [0, 2.68, 0], size: [6.14, 0.14, 0.14] },
+      { position: [-3.07, 2.1, 0], size: [0.26, 0.16, 0.26] },
+      { position: [3.07, 2.1, 0], size: [0.26, 0.16, 0.26] },
+      { position: [0, 1.98, 0], size: [6.14, 0.14, 0.14] },
     ],
   },
-  { id: "cloth:0", material: "cloth", shape: "panel", position: [-2.05, 2.17, 0], size: [1.25, 1.05, 0.06], color: "#b6a47f", colorSlot: "clothA", bearsLoad: false },
-  { id: "cloth:1", material: "cloth", shape: "panel", position: [-0.55, 2.05, 0], size: [1.12, 1.3, 0.06], color: "#84433a", colorSlot: "clothB", bearsLoad: false, rotation: [0, 0, 0.05] },
-  { id: "cloth:2", material: "cloth", shape: "panel", position: [0.85, 2.22, 0], size: [1.35, 0.96, 0.06], color: "#68766b", colorSlot: "clothC", bearsLoad: false, rotation: [0, 0, -0.04] },
-  { id: "cloth:3", material: "cloth", shape: "panel", position: [2.25, 2.12, 0], size: [1.0, 1.16, 0.06], color: "#c1b89d", colorSlot: "clothD", bearsLoad: false },
+  { id: "cloth:0", material: "cloth", shape: "panel", position: [-2.05, 1.47, 0], size: [1.25, 1.05, 0.06], color: "#b6a47f", colorSlot: "clothA", bearsLoad: false },
+  { id: "cloth:1", material: "cloth", shape: "panel", position: [-0.55, 1.35, 0], size: [1.12, 1.3, 0.06], color: "#84433a", colorSlot: "clothB", bearsLoad: false, rotation: [0, 0, 0.05] },
+  { id: "cloth:2", material: "cloth", shape: "panel", position: [0.85, 1.52, 0], size: [1.35, 0.96, 0.06], color: "#68766b", colorSlot: "clothC", bearsLoad: false, rotation: [0, 0, -0.04] },
+  { id: "cloth:3", material: "cloth", shape: "panel", position: [2.25, 1.42, 0], size: [1.0, 1.16, 0.06], color: "#c1b89d", colorSlot: "clothD", bearsLoad: false },
 ]);
 
 const hearth = prefab("viking:hearth", "Stone hearth", ["viking", "hearth", "light"], [

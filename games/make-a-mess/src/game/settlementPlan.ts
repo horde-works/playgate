@@ -91,8 +91,51 @@ export interface SettlementInterest {
  */
 export type SettlementCargo = "log" | "firewood";
 
-/** Чем берут и чем кладут. Глагол задаёт позу и длительность работы. */
-export type SettlementWorkVerb = "chop" | "carry" | "stack" | "feed";
+/**
+ * Чем работают. Глагол задаёт ПОЗУ и длительность, поэтому список выведен из
+ * механики движений (docs/work-motion-mechanics.md), а не из названий дел:
+ * стирка, точило и скребок по шкуре — одно движение, а не три.
+ */
+export type SettlementWorkVerb =
+  /** Двуручный замах сверху: колка, валка, тёска. */
+  | "chop"
+  /** Короткий частый замах на наковальне. */
+  | "forge"
+  /** Возвратно-поступательное над низкой поверхностью: стирка, точило. */
+  | "scrub"
+  /** Подъём на верёвке и вычерпывание: колодец, чан. */
+  | "haul"
+  /** Наклон к земле, работа руками внизу: огород, навоз. */
+  | "dig"
+  /** Руки над головой: бельё, рыба, шкуры. */
+  | "hang"
+  /** Присед с прямой спиной и укладка: поленница, сани, сруб. */
+  | "stack"
+  /** Просто взять и понести. */
+  | "carry"
+  /** Подложить в огонь. */
+  | "feed";
+
+/**
+ * РАБОЧЕЕ МЕСТО У ПРЕДМЕТА. Узел тропы — это «примерно тут»; работать надо
+ * У ВОРОТА колодца, НАД корытом, ПЕРЕД колодой. Поэтому у места есть точка
+ * стояния и точка, на которую смотрят: человек встаёт к предмету так, как к
+ * нему встают в жизни, а не туда, куда привела дорога.
+ */
+export interface SettlementStation {
+  readonly id: string;
+  /** Площадка, к которой относится место работы. */
+  readonly areaId: string;
+  /** Где именно стоит работник. */
+  readonly stand: SettlementPoint;
+  /** На что он смотрит — предмет, а не узел. */
+  readonly face: SettlementPoint;
+  readonly verb: SettlementWorkVerb;
+  /** Сколько длится смена, секунды [от, до]. */
+  readonly spell?: readonly [number, number];
+  readonly roles?: readonly string[];
+  readonly when?: SettlementDayPart;
+}
 
 /**
  * Склад: место, где чего-то СТОЛЬКО-ТО. Лес, куча наколотых поленьев,
@@ -173,6 +216,8 @@ export interface SettlementPlan {
   readonly haunts: Readonly<Record<string, readonly string[]>>;
   /** Кто здесь живёт поимённо. Без переписи людей набирают по счёту. */
   readonly roster?: readonly SettlementResident[];
+  /** Места работы у предметов: где встать и на что смотреть. */
+  readonly stations?: readonly SettlementStation[];
   /** Склады поселения. Без них жители ходят по делам, но ничего не делают. */
   readonly stores?: readonly SettlementStore[];
   /** Потоки между складами: из них и получается работа. */

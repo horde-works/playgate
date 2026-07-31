@@ -5,6 +5,7 @@ import type {
   SettlementStore,
   SettlementWorkVerb,
   SettlementPlan,
+  SettlementStation,
 } from "./settlementPlan.ts";
 import {
   chooseFreeDirection,
@@ -335,6 +336,8 @@ export interface Villager {
   job: VillagerJob | null;
   /** Каким глаголом человек сейчас занят у склада (для позы). */
   workVerb: SettlementWorkVerb | null;
+  /** Занятое рабочее место у предмета: индекс в списке мест поселения. */
+  stationIndex: number | null;
   /** 0 — держит, 1 — короб уже на земле. Дальше он гаснет. */
   carryDrop: number;
   /** Сколько ещё секунд короб лежит на виду, прежде чем исчезнуть. */
@@ -383,9 +386,10 @@ export interface Villager {
   /** Преодоление преграды: 0 — нет, 1 — переступает, 2 — перемахивает. */
   /**
    * 0 — идёт; 1 переступает; 2 перемах с опорой; 3 через бедро; 4 выход
-   * силой; 5 сидит; 6 лежит; 7 рубит; 8 кладёт.
+   * силой; 5 сидит; 6 лежит. Дальше — работа: 7 рубит, 8 кладёт, 9 трёт,
+   * 10 тянет на верёвке, 11 копает, 12 вешает, 13 кует.
    */
-  climbKind: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+  climbKind: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13;
   /** Прогресс движения 0→1; из него шейдер строит позу. */
   climbProgress: number;
   climbFromX: number;
@@ -659,6 +663,10 @@ export interface VillagerPopulation {
   readonly delivered: Map<string, number>;
   /** Секунды до следующей сверки обещаний. */
   reconcileIn: number;
+  /** Места работы у предметов и кто их сейчас занимает. */
+  readonly stations: readonly SettlementStation[];
+  readonly stationsByArea: ReadonlyMap<string, readonly number[]>;
+  readonly stationOccupant: Map<number, string>;
   readonly network: VillageNetwork;
   readonly villagers: Villager[];
   readonly homeNodes: Readonly<Record<string, number | undefined>>;
@@ -771,6 +779,31 @@ export interface VillagerJob {
   age: number;
 }
 
+/**
+ * Поза и период движения по глаголу. Числа — из справочника механики
+ * (docs/work-motion-mechanics.md §1.2): тяжёлое движение всем телом не бывает
+ * частым, кистевое — наоборот.
+ */
+export function workPoseKind(verb: SettlementWorkVerb): 7 | 8 | 9 | 10 | 11 | 12 | 13 {
+  if (verb === "chop") return 7;
+  if (verb === "scrub") return 9;
+  if (verb === "haul") return 10;
+  if (verb === "dig") return 11;
+  if (verb === "hang") return 12;
+  if (verb === "forge") return 13;
+  return 8;
+}
+
+export function workCycleSeconds(verb: SettlementWorkVerb): number {
+  if (verb === "chop") return 2.9;
+  if (verb === "forge") return 1.1;
+  if (verb === "scrub") return 0.8;
+  if (verb === "haul") return 1.5;
+  if (verb === "dig") return 4;
+  if (verb === "hang") return 3.2;
+  return 2.2;
+}
+
 /** Сколько длится само действие у склада. Ходьба сюда не входит. */
 function workVerbSeconds(verb: SettlementWorkVerb, random: () => number): number {
   if (verb === "chop") {
@@ -786,6 +819,56 @@ function workVerbSeconds(verb: SettlementWorkVerb, random: () => number): number
     return 4 + random() * 3;
   }
   return 2.5 + random() * 2;
+}
+
+/**
+ * Свободное место работы у предмета на этой площадке. Занятость — такой же
+ * счётчик, как резерв склада: двое не встают к одному вороту.
+ */
+function claimStation(
+  population: VillagerPopulation,
+  villager: Villager,
+  areaId: string,
+  nightPull: number,
+): number | null {
+  const indices = population.stationsByArea.get(areaId);
+  if (!indices) {
+    return null;
+  }
+  for (const index of indices) {
+    const station = population.stations[index];
+    const occupant = population.stationOccupant.get(index);
+    if (occupant !== undefined && occupant !== villager.id) {
+      continue;
+    }
+    if (station.roles?.length) {
+      const called =
+        station.roles.includes(villager.role) ||
+        (villager.female && station.roles.includes("women")) ||
+        (!villager.female && station.roles.includes("men"));
+      if (!called) {
+        continue;
+      }
+    }
+    if (station.when === "day" && nightPull > 0.12) {
+      continue;
+    }
+    if (station.when === "evening" && nightPull <= 0.12) {
+      continue;
+    }
+    return index;
+  }
+  return null;
+}
+
+function releaseStation(population: VillagerPopulation, villager: Villager): void {
+  if (villager.stationIndex === null) {
+    return;
+  }
+  if (population.stationOccupant.get(villager.stationIndex) === villager.id) {
+    population.stationOccupant.delete(villager.stationIndex);
+  }
+  villager.stationIndex = null;
 }
 
 /** Дело брошено: обещанное надо вернуть, иначе склад «занят» навсегда. */
@@ -986,7 +1069,7 @@ function advanceWork(population: VillagerPopulation, villager: Villager): boolea
   // стоит столбом, а со стороны это читается как заминка.
   const startPose = (verb: SettlementWorkVerb): void => {
     villager.workVerb = verb;
-    villager.climbKind = verb === "chop" ? 7 : 8;
+    villager.climbKind = workPoseKind(verb);
     villager.climbProgress = 0;
   };
 
@@ -1070,12 +1153,19 @@ export interface VillagerReport {
     | "asleep"
     | "chopping"
     | "stacking"
+    | "scrubbing"
+    | "hauling"
+    | "digging"
+    | "hanging"
+    | "forging"
     | "sitting"
     | "lying"
     | "climbing"
     | "door"
     | "walking"
     | "standing";
+  /** Где именно работает прямо сейчас: площадка или склад. */
+  readonly at: string | null;
   /** Зачем: своё дело, место или дорога домой. */
   readonly intent:
     | { readonly kind: "flow"; readonly flowId: string; readonly toStore: string; readonly carrying: boolean }
@@ -1089,30 +1179,41 @@ export function describeVillager(
   population: VillagerPopulation,
   villager: Villager,
 ): VillagerReport {
+  // Поза и есть действие: чем человек занят, видно по тому, как он движется.
+  const WORK_ACTION: Record<number, VillagerReport["action"]> = {
+    5: "sitting",
+    6: "lying",
+    7: "chopping",
+    8: "stacking",
+    9: "scrubbing",
+    10: "hauling",
+    11: "digging",
+    12: "hanging",
+    13: "forging",
+  };
   const action: VillagerReport["action"] = !villager.visible
     ? "asleep"
-    : villager.climbKind === 7
-      ? "chopping"
-      : villager.climbKind === 8
-        ? "stacking"
-        : villager.climbKind === 5
-          ? "sitting"
-          : villager.climbKind === 6
-            ? "lying"
-            : villager.climbKind > 0
-              ? "climbing"
-              : villager.doorWait > 0
-                ? "door"
-                : villager.state === "walking"
-                  ? "walking"
-                  : "standing";
+    : (WORK_ACTION[villager.climbKind] ??
+      (villager.climbKind > 0
+        ? "climbing"
+        : villager.doorWait > 0
+          ? "door"
+          : villager.state === "walking"
+            ? "walking"
+            : "standing"));
 
+  let at: string | null = null;
   let intent: VillagerReport["intent"] = { kind: "idle" };
   const job = villager.job;
   if (job) {
     const flow = population.flowById.get(job.flowId);
     if (flow) {
       const toSource = job.phase === "toSource" || job.phase === "working";
+      if (job.phase === "working") {
+        at = flow.from;
+      } else if (job.phase === "delivering") {
+        at = flow.to;
+      }
       intent = {
         kind: "flow",
         flowId: flow.id,
@@ -1129,8 +1230,13 @@ export function describeVillager(
     }
   }
 
+  if (at === null && villager.workVerb) {
+    at = population.network.nodes[villager.nodeIndex]?.areaId ?? null;
+  }
+
   return {
     id: villager.id,
+    at,
     name: villager.name,
     patronymic: villager.patronymic,
     role: villager.role,
@@ -1353,13 +1459,18 @@ export function createVillagerPopulation(
     // Каждый пятый — ребёнок: домовые петли в плане так и подписаны —
     // «детская беготня и дрова вокруг обжитого дома».
     const childEvery = plan.childEvery ?? 0;
-    const child =
-      person?.child ?? (childEvery > 0 && index % childEvery === childEvery - 1);
+    // При переписи признак берётся ТОЛЬКО из неё. Через `??` мужчина без
+    // поля `female` проваливался в счётное правило «каждый второй» — и две
+    // трети деревни оказывались женщинами вопреки списку.
+    const child = person
+      ? person.child === true
+      : childEvery > 0 && index % childEvery === childEvery - 1;
     // Деревня надвое. Не «разбавили», а ДОБАВИЛИ: жительниц и девочек столько
     // же, сколько мужчин и мальчишек, оттого и население выросло.
     const femaleEvery = plan.femaleEvery ?? 0;
-    const female =
-      person?.female ?? (femaleEvery > 0 && index % femaleEvery === femaleEvery - 1);
+    const female = person
+      ? person.female === true
+      : femaleEvery > 0 && index % femaleEvery === femaleEvery - 1;
     // Женский сложением уже, ребёнок — мельче обоих.
     const build =
       (child ? 0.6 + random() * 0.12 : 0.88 + random() * 0.28) * (female ? 0.955 : 1);
@@ -1383,6 +1494,7 @@ export function createVillagerPopulation(
       cargo: null,
       job: null,
       workVerb: null,
+      stationIndex: null,
       carryLinger: 0,
       child,
       female,
@@ -1474,11 +1586,22 @@ export function createVillagerPopulation(
     storeNode.set(store.id, nearestNodeTo(network, store.at[0], store.at[1]));
   }
 
+  const stations = plan.stations ?? [];
+  const stationsByArea = new Map<string, number[]>();
+  for (const [index, station] of stations.entries()) {
+    const list = stationsByArea.get(station.areaId) ?? [];
+    list.push(index);
+    stationsByArea.set(station.areaId, list);
+  }
+
   return {
     settlement: plan,
     network,
     villagers,
     homeNodes,
+    stations,
+    stationsByArea,
+    stationOccupant: new Map<number, string>(),
     stores,
     storeById,
     storeNode,
@@ -1751,8 +1874,8 @@ export function stepVillagers(
       // укладка — серия наклонов. Период взят из справочника механики
       // (docs/work-motion-mechanics.md): тяжёлое движение не бывает частым.
       if (villager.workVerb && villager.rest <= 0) {
-        const cycle = villager.workVerb === "chop" ? 2.9 : 2.2;
-        villager.climbKind = villager.workVerb === "chop" ? 7 : 8;
+        const cycle = workCycleSeconds(villager.workVerb);
+        villager.climbKind = workPoseKind(villager.workVerb);
         villager.climbProgress = (villager.climbProgress + step / cycle) % 1;
         villager.yaw +=
           shortestAngleTo(villager.yaw, villager.faceYaw) * Math.min(1, step * 3);
@@ -1810,37 +1933,31 @@ export function stepVillagers(
       // Возня на месте — то, чем занимаются, когда НЕСТИ НЕЧЕГО. Настоящее
       // поручение важнее: иначе люди залипают у ближайшего верстака, а дрова
       // до очага никто не доносит (замер: поток «валить» упал в ноль).
-      // РАБОТА НА МЕСТЕ. Большая часть труда деревни ничего не переносит между
-      // складами: кузнец кует, женщина стирает, огородник копает. Пришёл на
-      // такое место — работает столько, сколько это дело длится, а не стоит
-      // истуканом рядом с наковальней.
-      if (!villager.job && !villager.child && nightPull < 0.5) {
-        const here = node.areaId ? settlement.interest[node.areaId] : undefined;
-        if (here?.doing === "work" && here.verb) {
-          const called =
-            !here.roles?.length ||
-            here.roles.includes(villager.role) ||
-            here.roles.includes(`resident:${villager.homeId}`) ||
-            (villager.female && here.roles.includes("women")) ||
-            (!villager.female && here.roles.includes("men"));
-          const nearEnough =
-            Math.hypot(villager.x - node.x, villager.z - node.z) < 3.2;
-          // Работа — ВОЗМОЖНОСТЬ, а не обязанность: примерно каждый второй
-          // приход на место оборачивается делом, остальные — постоять,
-          // посмотреть, поговорить. Иначе деревня выглядит заводом: замер
-          // показал 23 работающих из 34 одновременно.
-          if (called && nearEnough && villager.random() < 0.68) {
-            const [from, to] = here.spell ?? [14, 26];
-            villager.workVerb = here.verb;
-            villager.climbKind = here.verb === "chop" ? 7 : 8;
-            villager.climbProgress = 0;
-            villager.dwell = from + villager.random() * Math.max(0, to - from);
-            villager.faceYaw = Math.atan2(node.x - villager.x, node.z - villager.z);
-            continue;
-          }
+      // РАБОТА У ПРЕДМЕТА. Человек встаёт туда, откуда за эту вещь берутся:
+      // у ворота колодца, над корытом, перед колодой — и лицом к ней. Пока
+      // местом работы был узел тропы, женщина «черпала воду» в трёх метрах от
+      // сруба и спиной к нему, а движение было общим приседанием.
+      if (!villager.job && !villager.child && nightPull < 0.5 && villager.stationIndex !== null) {
+        const station = population.stations[villager.stationIndex];
+        const reach = Math.hypot(
+          villager.x - station.stand[0],
+          villager.z - station.stand[1],
+        );
+        if (reach < 1.5) {
+          const [from, to] = station.spell ?? [14, 26];
+          population.stationOccupant.set(villager.stationIndex, villager.id);
+          villager.workVerb = station.verb;
+          villager.climbKind = workPoseKind(station.verb);
+          villager.climbProgress = 0;
+          villager.dwell = from + villager.random() * Math.max(0, to - from);
+          villager.faceYaw = Math.atan2(
+            station.face[0] - villager.x,
+            station.face[1] - villager.z,
+          );
+          continue;
         }
+        releaseStation(population, villager);
       }
-      // Работа — КАНДИДАТ, а не перехват: если дела нет, всё идёт как прежде.
       const goal =
         workGoalNode(population, villager) ??
         chooseGoal(settlement, network, villager, nightPull, homeNode);
@@ -1870,6 +1987,18 @@ export function stepVillagers(
       // Где встанем в конце — не в самой точке узла, а вокруг неё.
       const finalNode = destinationOf(network, villager.nodeIndex, plan);
       const target = network.nodes[finalNode];
+      // Идём НА РАБОЧЕЕ МЕСТО, если оно там есть и свободно. Место занимается
+      // сразу при выходе — иначе к одному вороту сходятся трое, — а точка
+      // остановки берётся у предмета (ниже она перекроет случайную).
+      releaseStation(population, villager);
+      const stationHere =
+        !villager.job && !villager.child && target.areaId && nightPull < 0.5
+          ? claimStation(population, villager, target.areaId, nightPull)
+          : null;
+      if (stationHere !== null) {
+        villager.stationIndex = stationHere;
+        population.stationOccupant.set(stationHere, villager.id);
+      }
       // К ДВЕРИ подходят по нормали, а не по диагонали сквозь стену: точка
       // остановки выносится прямо перед порогом, лицом к нему.
       const targetHome = target.homeId
@@ -1901,8 +2030,16 @@ export function stepVillagers(
           reach *= 0.45;
         }
       }
-      villager.arriveOffsetX = Math.cos(spot) * reach;
-      villager.arriveOffsetZ = Math.sin(spot) * reach;
+      if (stationHere !== null) {
+        // Точка остановки — у предмета: к вороту встают вплотную, а не «где-то
+        // рядом с колодцем».
+        const station = population.stations[stationHere];
+        villager.arriveOffsetX = station.stand[0] - target.x;
+        villager.arriveOffsetZ = station.stand[1] - target.z;
+      } else {
+        villager.arriveOffsetX = Math.cos(spot) * reach;
+        villager.arriveOffsetZ = Math.sin(spot) * reach;
+      }
       buildPath(network, villager, plan, finalNode);
       // Дважды не дошёл по тропам, а на дворе ночь — человек плюёт на тропы
       // и идёт домой напрямик через поле. Обход препятствий никуда не

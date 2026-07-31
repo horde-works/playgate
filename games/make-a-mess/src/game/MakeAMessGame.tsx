@@ -3243,6 +3243,12 @@ function describeVillagerIntent(
     }
     return t("villager.place.other");
   };
+  // Работающий человек описывается МЕСТОМ, а не следующей целью: «идёт к
+  // горну», пока он машет топором у поленницы, — это и есть та неувязка,
+  // которую видно первым делом.
+  if (report.at) {
+    return fill("villager.intent.at", { place: placeName(report.at) });
+  }
   if (report.intent.kind === "flow") {
     const place = placeName(report.intent.toStore);
     const cargo = t(`villager.cargo.${report.cargo ?? "firewood"}` as TranslationKey);

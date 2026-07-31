@@ -133,8 +133,10 @@ test("работают в рабочей позе, и тяжёлое движе�
     for (const villager of population.villagers) {
       if (villager.workVerb) {
         seen.add(villager.climbKind);
+        // Поз работы теперь семь: рубка, укладка, тёрка, ворот, копка,
+        // развешивание, ковка.
         assert.equal(
-          villager.climbKind === 7 || villager.climbKind === 8,
+          villager.climbKind >= 7 && villager.climbKind <= 13,
           true,
           `${villager.id} работает глаголом ${villager.workVerb} в позе ${villager.climbKind}`,
         );
