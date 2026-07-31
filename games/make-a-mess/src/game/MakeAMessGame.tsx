@@ -133,6 +133,7 @@ import { DynamicBreakableWorld } from "./DynamicBreakableWorld";
 import { getPieceRenderBoxes } from "./breakableGeometry";
 import { Birds } from "./Birds";
 import { Villagers } from "./Villagers";
+import type { VillagerReport } from "./villagerSim";
 import { vikingSettlement } from "../content/scenes/vikingSettlement.ts";
 import { GrassField } from "./GrassField";
 import { SceneDressing } from "./SceneDressing";
@@ -3213,6 +3214,94 @@ function VoxelExplosion({
   );
 }
 
+/**
+ * Намерение человека одной строкой. Склад и площадка переводятся по своим
+ * ключам, а незнакомое место — общим словом: карточка не должна ломаться от
+ * того, что в мире появилось новое имя.
+ */
+function describeVillagerIntent(
+  report: VillagerReport,
+  t: (key: TranslationKey) => string,
+): string {
+  // Подстановка своя: словарь отдаёт строку с {place} и {cargo}, а сам
+  // подставлять не умеет.
+  const fill = (key: TranslationKey, values: Record<string, string>): string =>
+    t(key).replace(/\{(\w+)\}/g, (_match, name: string) => values[name] ?? "");
+  const placeName = (id: string): string => {
+    const key = `villager.place.${id}` as TranslationKey;
+    const text = t(key);
+    if (text !== key) {
+      return text;
+    }
+    // Дворы и пороги домов подписаны общим словом: их семь штук, и называть
+    // каждый по имени хозяина карточке ни к чему.
+    if (id.endsWith("-yard")) {
+      return t("villager.place.yard");
+    }
+    if (id.endsWith("-threshold")) {
+      return t("villager.place.threshold");
+    }
+    return t("villager.place.other");
+  };
+  if (report.intent.kind === "flow") {
+    const place = placeName(report.intent.toStore);
+    const cargo = t(`villager.cargo.${report.cargo ?? "firewood"}` as TranslationKey);
+    return report.intent.carrying
+      ? fill("villager.intent.deliver", { cargo, place })
+      : fill("villager.intent.fetch", { cargo });
+  }
+  if (report.intent.kind === "place") {
+    return fill("villager.intent.place", { place: placeName(report.intent.areaId) });
+  }
+  if (report.intent.kind === "home") {
+    return t("villager.intent.home");
+  }
+  return t("villager.intent.idle");
+}
+
+function VillagerProbe({
+  lookup,
+  onChange,
+}: {
+  lookup: {
+    current:
+      | ((
+          origin: readonly [number, number, number],
+          direction: readonly [number, number, number],
+        ) => VillagerReport | null)
+      | null;
+  };
+  onChange: (report: VillagerReport | null) => void;
+}) {
+  const timer = useRef(0);
+  const shownId = useRef<string | null>(null);
+  const direction = useRef(new Vector3());
+  useFrame(({ camera }, delta) => {
+    timer.current -= delta;
+    if (timer.current > 0) {
+      return;
+    }
+    timer.current = 0.25;
+    const probe = lookup.current;
+    const report = probe
+      ? probe(
+          [camera.position.x, camera.position.y, camera.position.z],
+          camera.getWorldDirection(direction.current).toArray() as [
+            number,
+            number,
+            number,
+          ],
+        )
+      : null;
+    // Карточку перерисовываем, только когда она правда изменилась.
+    if (report?.id !== shownId.current || report) {
+      shownId.current = report?.id ?? null;
+      onChange(report);
+    }
+  });
+  return null;
+}
+
 function DustBurst({
   burst,
   onDone,
@@ -3372,6 +3461,7 @@ interface OpenWorldSceneProps {
   onBrokenCountChange: (count: number) => void;
   onDynamicBodyCountChange: (count: number) => void;
   onEntryApproachChange: (entry: HingedEntryApproach | null) => void;
+  onVillagerInspect: (report: VillagerReport | null) => void;
   onDepartureApproachChange: (approached: HingedEntryApproach | null) => void;
   onInterIslandBoundary: (
     flightKind: string,
@@ -3416,6 +3506,7 @@ function OpenWorldScene({
   onBrokenCountChange,
   onDynamicBodyCountChange,
   onEntryApproachChange,
+  onVillagerInspect,
   onDepartureApproachChange,
   onInterIslandBoundary,
   onInterIslandArrivalReady,
@@ -3544,6 +3635,13 @@ function OpenWorldScene({
   const brokenPiecesRef = useRef<ReadonlySet<string>>(brokenPieces);
   // Двери, которые прямо сейчас открывают жители: общий канал между их
   // симуляцией и дверной системой.
+  const villagerInspect = useRef<
+    | ((
+        origin: readonly [number, number, number],
+        direction: readonly [number, number, number],
+      ) => VillagerReport | null)
+    | null
+  >(null);
   const villagerDoorRequests = useRef<Set<string>>(new Set());
   // Обратная связь от створок: какие входы уже распахнуты. Без неё житель
   // просит открыть — и тут же проходит сквозь ещё закрытую дверь.
@@ -7256,10 +7354,12 @@ function OpenWorldScene({
             doorRequests={villagerDoorRequests}
             openDoors={villagerOpenDoors}
             stockStates={mutablePieceStates}
+            inspectRef={villagerInspect}
             // Деревня выросла: жительниц и девочек ДОБАВИЛИ, а не заменили
             // ими часть мужчин.
             count={34}
           />
+          <VillagerProbe lookup={villagerInspect} onChange={onVillagerInspect} />
           <Birds
             center={scene.worldCenter}
             worldRadius={scene.worldRadius}
@@ -8622,6 +8722,9 @@ export function MakeAMessGame({
   } = useGameActionHints();
   const [approachedEntry, setApproachedEntry] =
     useState<HingedEntryApproach | null>(null);
+  // Кто сейчас под перекрестьем: имя, ремесло, намерение и действие.
+  const [inspectedVillager, setInspectedVillager] =
+    useState<VillagerReport | null>(null);
   const approachedEntryActions = useMemo(
     () => entryInteractionActions(approachedEntry),
     [approachedEntry],
@@ -9509,6 +9612,7 @@ export function MakeAMessGame({
                 >
                   <OpenWorldScene
                     key={resetVersion}
+                    onVillagerInspect={setInspectedVillager}
                     scene={scene}
                     active={active}
                     flightMode={flightMode}
@@ -9701,6 +9805,25 @@ export function MakeAMessGame({
         >
           <i />
           <i />
+        </div>
+      ) : null}
+
+      {active && surfaces.worldHud && inspectedVillager ? (
+        <div className="villager-card" aria-live="off">
+          <b>
+            {inspectedVillager.name
+              ? `${inspectedVillager.name} ${inspectedVillager.patronymic}`.trim()
+              : inspectedVillager.id}
+          </b>
+          <span>
+            {t(
+              (inspectedVillager.child
+                ? "villager.role.child"
+                : `villager.role.${inspectedVillager.role}`) as TranslationKey,
+            )}
+          </span>
+          <em>{describeVillagerIntent(inspectedVillager, t)}</em>
+          <em>{t(`villager.act.${inspectedVillager.action}` as TranslationKey)}</em>
         </div>
       ) : null}
 

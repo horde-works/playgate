@@ -723,10 +723,13 @@ export interface VikingPlaceInterest {
   readonly when?: VikingDayPart;
   /** Что там делают. Нужно, чтобы житель у лавки садился, а не стоял столбом. */
   readonly doing?: "stand" | "sit" | "work";
+  /** Каким движением тут работают и сколько это длится, секунды [от, до]. */
+  readonly verb?: "chop" | "carry" | "stack" | "feed";
+  readonly spell?: readonly [number, number];
 }
 
 export const vikingPlaceInterest: readonly VikingPlaceInterest[] = [
-  { areaId: "well", pull: 3.4, roles: ["women"], doing: "work" },
+  { areaId: "well", pull: 3.4, roles: ["women"], doing: "work", verb: "stack", spell: [12, 22] },
   { areaId: "commons", pull: 1.9, doing: "sit" },
   { areaId: "great-hall-threshold", pull: 1.4 },
   // Эллипс двора зала накрывает и его ВНУТРЕННОСТЬ: полтора десятка узлов
@@ -734,36 +737,36 @@ export const vikingPlaceInterest: readonly VikingPlaceInterest[] = [
   { areaId: "great-hall-yard", pull: 0.1 },
   { areaId: "north-gate", pull: 2.4 },
   { areaId: "south-gate", pull: 1.5 },
-  { areaId: "fog-jetty", pull: 1.6, roles: ["fisher"], when: "day" },
-  { areaId: "new-house", pull: 2.8, roles: ["smith", "weaver", "elder"], when: "day", doing: "work" },
-  { areaId: "fish-rack", pull: 2.4, roles: ["fisher", "women"], when: "day", doing: "work" },
-  { areaId: "hide-rack-west", pull: 2.0, roles: ["weaver", "fisher"], when: "day", doing: "work" },
-  { areaId: "hide-rack-east", pull: 2.0, roles: ["brewer", "smith"], when: "day", doing: "work" },
-  { areaId: "commons-drying", pull: 2.4, roles: ["women"], when: "day", doing: "work" },
-  { areaId: "laundry-weaver", pull: 2.2, roles: ["women"], when: "day", doing: "work" },
-  { areaId: "laundry-brewer", pull: 2.2, roles: ["women"], when: "day", doing: "work" },
-  { areaId: "weaver-wood", pull: 1.8, roles: ["weaver", "elder"], when: "day", doing: "work" },
-  { areaId: "brewer-wood", pull: 1.8, roles: ["brewer"], when: "day", doing: "work" },
-  { areaId: "fisher-wood", pull: 1.8, roles: ["fisher"], when: "day", doing: "work" },
-  { areaId: "elder-wood", pull: 1.8, roles: ["elder"], when: "day", doing: "work" },
-  { areaId: "smith-firewood", pull: 1.8, roles: ["smith"], when: "day", doing: "work" },
+  { areaId: "fog-jetty", pull: 1.6, roles: ["fisher"], when: "day", verb: "stack", spell: [16, 28] },
+  { areaId: "new-house", pull: 2.8, roles: ["smith", "weaver", "elder"], when: "day", doing: "work", verb: "chop", spell: [18, 30] },
+  { areaId: "fish-rack", pull: 2.4, roles: ["fisher", "women"], when: "day", doing: "work", verb: "stack", spell: [14, 25] },
+  { areaId: "hide-rack-west", pull: 2.0, roles: ["weaver", "fisher"], when: "day", doing: "work", verb: "stack", spell: [14, 25] },
+  { areaId: "hide-rack-east", pull: 2.0, roles: ["brewer", "smith"], when: "day", doing: "work", verb: "stack", spell: [14, 25] },
+  { areaId: "commons-drying", pull: 2.4, roles: ["women"], when: "day", doing: "work", verb: "stack", spell: [14, 25] },
+  { areaId: "laundry-weaver", pull: 2.2, roles: ["women"], when: "day", doing: "work", verb: "stack", spell: [18, 30] },
+  { areaId: "laundry-brewer", pull: 2.2, roles: ["women"], when: "day", doing: "work", verb: "stack", spell: [18, 30] },
+  { areaId: "weaver-wood", pull: 1.8, roles: ["weaver", "elder"], when: "day", doing: "work", verb: "stack", spell: [10, 18] },
+  { areaId: "brewer-wood", pull: 1.8, roles: ["brewer"], when: "day", doing: "work", verb: "stack", spell: [10, 18] },
+  { areaId: "fisher-wood", pull: 1.8, roles: ["fisher"], when: "day", doing: "work", verb: "stack", spell: [10, 18] },
+  { areaId: "elder-wood", pull: 1.8, roles: ["elder"], when: "day", doing: "work", verb: "stack", spell: [10, 18] },
+  { areaId: "smith-firewood", pull: 1.8, roles: ["smith"], when: "day", doing: "work", verb: "stack", spell: [10, 18] },
   { areaId: "hall-fire", pull: 2.4, when: "evening" },
   { areaId: "hall-benches-west", pull: 1.8, when: "evening", doing: "sit" },
   { areaId: "hall-benches-east", pull: 1.8, when: "evening", doing: "sit" },
   { areaId: "hall-high-seats", pull: 1.1, roles: ["elder"], when: "evening" },
-  { areaId: "woodcut", pull: 2.6, roles: ["weaver", "elder", "men"], when: "day", doing: "work" },
+  { areaId: "woodcut", pull: 2.6, roles: ["weaver", "elder", "men"], when: "day", doing: "work", verb: "chop", spell: [16, 28] },
   // Горн перевешивает склад: кузнец у огня, а не среди стоек с готовым.
-  { areaId: "smithy", pull: 3.6, roles: ["smith"], when: "day", doing: "work" },
-  { areaId: "brewery", pull: 3.4, roles: ["brewer"], when: "day", doing: "work" },
-  { areaId: "smith-store", pull: 3.2, roles: ["smith", "men"], when: "day", doing: "work" },
-  { areaId: "smith-sledge", pull: 2.1, roles: ["smith"], when: "day", doing: "work" },
-  { areaId: "weaver-chopping", pull: 3.2, roles: ["weaver"], when: "day", doing: "work" },
-  { areaId: "brewer-chopping", pull: 3.2, roles: ["brewer"], when: "day", doing: "work" },
-  { areaId: "south-chopping", pull: 2.4, roles: ["fisher", "elder"], when: "day", doing: "work" },
-  { areaId: "north-armoury", pull: 2.2, roles: ["brewer", "smith", "men"], when: "day", doing: "work" },
-  { areaId: "goat-pen", pull: 3.0, roles: ["herder", "women"], when: "day", doing: "work" },
-  { areaId: "kitchen-garden", pull: 3.0, roles: ["gardener", "women"], when: "day", doing: "work" },
-  { areaId: "north-sledge", pull: 2.0, roles: ["fisher", "herder"], when: "day", doing: "work" },
+  { areaId: "smithy", pull: 3.6, roles: ["smith"], when: "day", doing: "work", verb: "chop", spell: [16, 28] },
+  { areaId: "brewery", pull: 3.4, roles: ["brewer"], when: "day", doing: "work", verb: "stack", spell: [16, 28] },
+  { areaId: "smith-store", pull: 3.2, roles: ["smith", "men"], when: "day", doing: "work", verb: "stack", spell: [11, 20] },
+  { areaId: "smith-sledge", pull: 2.1, roles: ["smith"], when: "day", doing: "work", verb: "stack", spell: [10, 18] },
+  { areaId: "weaver-chopping", pull: 3.2, roles: ["weaver"], when: "day", doing: "work", verb: "chop", spell: [20, 34] },
+  { areaId: "brewer-chopping", pull: 3.2, roles: ["brewer"], when: "day", doing: "work", verb: "chop", spell: [20, 34] },
+  { areaId: "south-chopping", pull: 2.4, roles: ["fisher", "elder"], when: "day", doing: "work", verb: "chop", spell: [20, 34] },
+  { areaId: "north-armoury", pull: 2.2, roles: ["brewer", "smith", "men"], when: "day", doing: "work", verb: "stack", spell: [11, 20] },
+  { areaId: "goat-pen", pull: 3.0, roles: ["herder", "women"], when: "day", doing: "work", verb: "stack", spell: [13, 24] },
+  { areaId: "kitchen-garden", pull: 3.0, roles: ["gardener", "women"], when: "day", doing: "work", verb: "stack", spell: [18, 30] },
+  { areaId: "north-sledge", pull: 2.0, roles: ["fisher", "herder"], when: "day", doing: "work", verb: "stack", spell: [10, 18] },
   { areaId: "smith-yard", pull: 0.12 },
   ...vikingVillageHomes.flatMap((home): VikingPlaceInterest[] => [
     // Двор и порог собственного дома — фон, а не цель: без малого веса семь

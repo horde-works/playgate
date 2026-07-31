@@ -74,6 +74,15 @@ export interface SettlementInterest {
   readonly roles?: readonly string[];
   readonly when?: SettlementDayPart;
   readonly doing?: "stand" | "sit" | "work";
+  /**
+   * Каким движением тут работают, когда никуда ничего не несут. Большая часть
+   * труда деревни НЕ перемещает вещи между складами: кузнец кует, женщина
+   * стирает, огородник копает. Без этого поля место с `doing: "work"` остаётся
+   * местом, где человек просто стоит.
+   */
+  readonly verb?: SettlementWorkVerb;
+  /** Сколько длится такая работа за один приход, секунды [от, до]. */
+  readonly spell?: readonly [number, number];
 }
 
 /**
@@ -130,6 +139,20 @@ export interface SettlementFlow {
   readonly pull?: number;
 }
 
+/**
+ * Поимённая перепись. Жители перестают быть «каждым вторым» и «каждым пятым»:
+ * пол, возраст и ремесло приходят из списка, а не из номера в цикле.
+ * Отчество настоящее — у детей от отца, у жён от своего отца.
+ */
+export interface SettlementResident {
+  readonly home: string;
+  readonly name: string;
+  readonly patronymic: string;
+  readonly role?: string;
+  readonly female?: boolean;
+  readonly child?: boolean;
+}
+
 /** Одежда поселения: палитра крашеной ткани, из которой набирают жителей. */
 export interface SettlementWardrobe {
   readonly dyes: readonly (readonly [number, number, number])[];
@@ -148,6 +171,8 @@ export interface SettlementPlan {
   readonly interest: Readonly<Record<string, SettlementInterest>>;
   /** Куда тянет человека его занятие помимо объявленного притяжения. */
   readonly haunts: Readonly<Record<string, readonly string[]>>;
+  /** Кто здесь живёт поимённо. Без переписи людей набирают по счёту. */
+  readonly roster?: readonly SettlementResident[];
   /** Склады поселения. Без них жители ходят по делам, но ничего не делают. */
   readonly stores?: readonly SettlementStore[];
   /** Потоки между складами: из них и получается работа. */

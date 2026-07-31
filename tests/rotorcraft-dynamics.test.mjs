@@ -62,19 +62,41 @@ test("микшер держит висение: ровная тяга, нуле�
   assert.equal(Math.abs(mix.deliveredRollMoment) < 1e-6, true);
 });
 
-test("на полном газе у машины НЕТ власти по углу — и это правда", () => {
-  // Винт уже на пределе и может только убавить. Поэтому коптер и висит
-  // вполсилы: запас оборотов — это и есть его запас управляемости.
+test("момент доступен и на полном газе — убавлением противоположной стороны", () => {
+  // Прибавить нельзя, но убавить встречной стороне можно всегда. Поэтому
+  // управляемость на полном газе не пропадает; пропадает часть суммарной
+  // тяги, и машина на манёвре проседает. Ужимать ради момента общий газ —
+  // ошибка: это отнимает подъём ровно тогда, когда он нужнее всего.
   const saturated = mixRotorThrust(base, {
     collective: 1,
     pitchMoment: 200,
     rollMoment: 0,
   });
   assert.equal(
-    saturated.deliveredPitchMoment < 200 * 0.6,
+    saturated.deliveredPitchMoment > 200 * 0.4,
     true,
-    `на полном газе выдано ${saturated.deliveredPitchMoment.toFixed(1)} из 200`,
+    `на полном газе выдано всего ${saturated.deliveredPitchMoment.toFixed(1)} из 200`,
   );
+  assert.equal(
+    saturated.deliveredThrust < 1000,
+    true,
+    "момент не стоил машине ни грамма тяги — так не бывает",
+  );
+});
+
+test("рыскание — перекос реактивных моментов, а не отдельный орган", () => {
+  const mix = mixRotorThrust(base, {
+    collective: 0.5,
+    pitchMoment: 0,
+    rollMoment: 0,
+    yawMoment: 40,
+  });
+  // Одна пара ускоряется, встречная замедляется: суммарная тяга та же.
+  assert.equal(Math.abs(mix.deliveredThrust - 500) < 1, true);
+  assert.equal(Math.abs(mix.deliveredYawMoment - 40) < 1, true);
+  // И ни крена, ни тангажа это не создаёт: винты чередуются по кругу.
+  assert.equal(Math.abs(mix.deliveredPitchMoment) < 1, true);
+  assert.equal(Math.abs(mix.deliveredRollMoment) < 1, true);
 });
 
 test("нос вниз — это больше тяги СЗАДИ, а не спереди", () => {
@@ -96,8 +118,16 @@ test("крен поднимает один борт и опускает друг
     pitchMoment: 0,
     rollMoment: 150,
   });
-  const starboard = mix.thrust.filter((_, index) => HEXACOPTER_DUCTS[index].b > 0);
-  const port = mix.thrust.filter((_, index) => HEXACOPTER_DUCTS[index].b < 0);
+  // Борт определяется ТАК ЖЕ, как его считает физика: правый = up × forward
+  // в правой системе координат. Опираться здесь на авторскую ось документа
+  // нельзя — она у машины оказалась зеркальной, и тест бы это скрыл.
+  const lateralArm = (point) => {
+    const dx = point[0] - centre[0];
+    const dz = point[2] - centre[2];
+    return dx * nose[2] - dz * nose[0];
+  };
+  const starboard = mix.thrust.filter((_, index) => lateralArm(points[index]) > 0);
+  const port = mix.thrust.filter((_, index) => lateralArm(points[index]) < 0);
   const mean = (values) => values.reduce((s, v) => s + v, 0) / values.length;
   assert.equal(mean(port) > mean(starboard), true);
   assert.equal(Math.abs(mix.deliveredRollMoment - 150) < 1, true);

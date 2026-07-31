@@ -251,6 +251,12 @@ test("craft pulls villagers to their own work yards", () => {
     }
   }
   // Кузнец бывает у кузни, пастух — у загона: тропы ведут по ремеслу.
-  assert.equal((visits.get("smith:smith-store") ?? 0) > 0, true, "smith visits the smithy");
+  // «Кузня» — это теперь горн (`smithy`); склад оружия рядом остался складом,
+  // и кузнец бывает то там, то там.
+  assert.equal(
+    (visits.get("smith:smithy") ?? 0) + (visits.get("smith:smith-store") ?? 0) > 0,
+    true,
+    "smith visits the forge or its store",
+  );
   assert.equal((visits.get("herder:goat-pen") ?? 0) > 0, true, "herder visits the goats");
 });

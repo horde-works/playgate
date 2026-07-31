@@ -313,6 +313,9 @@ export function buildSettlementNetwork(plan: SettlementPlan): VillageNetwork {
 
 export interface Villager {
   readonly id: string;
+  /** Имя и отчество: у деревни есть перепись, а не порядковые номера. */
+  readonly name: string;
+  readonly patronymic: string;
   readonly homeId: string;
   readonly role: VillagerRole;
   /** Рост, ширина плеч, длина шага, размах рук — все разные. */
@@ -771,16 +774,18 @@ export interface VillagerJob {
 /** Сколько длится само действие у склада. Ходьба сюда не входит. */
 function workVerbSeconds(verb: SettlementWorkVerb, random: () => number): number {
   if (verb === "chop") {
-    // Свалить или расколоть — это серия ударов, а не один взмах.
-    return 7 + random() * 4;
+    // Расколоть бревно — 8–12 ударов по 2.9 с, свалить дерево дольше. Прежние
+    // 7–11 с были короче собственного справочника: человек шёл к колоде
+    // полминуты и делал три взмаха, отчего работы в деревне не было видно.
+    return 24 + random() * 14;
   }
   if (verb === "stack") {
-    return 2.6 + random() * 1.8;
+    return 5 + random() * 4;
   }
   if (verb === "feed") {
-    return 2 + random() * 1.4;
+    return 4 + random() * 3;
   }
-  return 1 + random() * 1.2;
+  return 2.5 + random() * 2;
 }
 
 /** Дело брошено: обещанное надо вернуть, иначе склад «занят» навсегда. */
@@ -1049,6 +1054,131 @@ function advanceWork(population: VillagerPopulation, villager: Villager): boolea
 }
 
 /**
+ * ЧТО ЭТОТ ЧЕЛОВЕК ДЕЛАЕТ. Отдельная функция, а не поле: состояние жителя
+ * размазано по десятку признаков (поза, дело, ноша, дверь, сон), и собрать из
+ * них одну понятную строчку — задача наблюдателя, а не симуляции.
+ */
+export interface VillagerReport {
+  readonly id: string;
+  readonly name: string;
+  readonly patronymic: string;
+  readonly role: string;
+  readonly child: boolean;
+  readonly female: boolean;
+  /** Что делает прямо сейчас. */
+  readonly action:
+    | "asleep"
+    | "chopping"
+    | "stacking"
+    | "sitting"
+    | "lying"
+    | "climbing"
+    | "door"
+    | "walking"
+    | "standing";
+  /** Зачем: своё дело, место или дорога домой. */
+  readonly intent:
+    | { readonly kind: "flow"; readonly flowId: string; readonly toStore: string; readonly carrying: boolean }
+    | { readonly kind: "place"; readonly areaId: string }
+    | { readonly kind: "home" }
+    | { readonly kind: "idle" };
+  readonly cargo: SettlementCargo | null;
+}
+
+export function describeVillager(
+  population: VillagerPopulation,
+  villager: Villager,
+): VillagerReport {
+  const action: VillagerReport["action"] = !villager.visible
+    ? "asleep"
+    : villager.climbKind === 7
+      ? "chopping"
+      : villager.climbKind === 8
+        ? "stacking"
+        : villager.climbKind === 5
+          ? "sitting"
+          : villager.climbKind === 6
+            ? "lying"
+            : villager.climbKind > 0
+              ? "climbing"
+              : villager.doorWait > 0
+                ? "door"
+                : villager.state === "walking"
+                  ? "walking"
+                  : "standing";
+
+  let intent: VillagerReport["intent"] = { kind: "idle" };
+  const job = villager.job;
+  if (job) {
+    const flow = population.flowById.get(job.flowId);
+    if (flow) {
+      const toSource = job.phase === "toSource" || job.phase === "working";
+      intent = {
+        kind: "flow",
+        flowId: flow.id,
+        toStore: toSource ? flow.from : flow.to,
+        carrying: villager.cargo !== null,
+      };
+    }
+  } else if (villager.goalNode !== undefined) {
+    const goal = population.network.nodes[villager.goalNode];
+    if (goal?.homeId === villager.homeId) {
+      intent = { kind: "home" };
+    } else if (goal?.areaId) {
+      intent = { kind: "place", areaId: goal.areaId };
+    }
+  }
+
+  return {
+    id: villager.id,
+    name: villager.name,
+    patronymic: villager.patronymic,
+    role: villager.role,
+    child: villager.child,
+    female: villager.female,
+    action,
+    intent,
+    cargo: villager.cargo,
+  };
+}
+
+/**
+ * Кого поймало перекрестье. Луч против ТЕЛА, а не против инстансной сетки:
+ * человек — капсула, и промахнуться по ней краем сетки нельзя.
+ */
+export function pickVillager(
+  population: VillagerPopulation,
+  origin: readonly [number, number, number],
+  direction: readonly [number, number, number],
+  maxDistance = 26,
+): Villager | null {
+  let best: Villager | null = null;
+  let bestAlong = Infinity;
+  for (const villager of population.villagers) {
+    if (!villager.visible) {
+      continue;
+    }
+    const dx = villager.x - origin[0];
+    const dy = villager.y + 0.95 - origin[1];
+    const dz = villager.z - origin[2];
+    const along = dx * direction[0] + dy * direction[1] + dz * direction[2];
+    if (along <= 0.4 || along > maxDistance || along >= bestAlong) {
+      continue;
+    }
+    const offX = dx - direction[0] * along;
+    const offY = dy - direction[1] * along;
+    const offZ = dz - direction[2] * along;
+    // Полметра поперёк луча — это ширина человека, а не «примерно туда».
+    if (Math.hypot(offX, offY, offZ) > 0.55) {
+      continue;
+    }
+    best = villager;
+    bestAlong = along;
+  }
+  return best;
+}
+
+/**
  * Видимость кусков, которыми показан уровень складов: полная поленница видна
  * целиком, пустая не видна вовсе. Гасим С КОНЦА — верхние поленья уносят
  * первыми, как и в жизни.
@@ -1201,13 +1331,21 @@ export function createVillagerPopulation(
   const lodging = roster.length > 0 ? roster : plan.dwellings;
 
   const villagers: Villager[] = [];
+  // Поимённая перепись, если она есть: пол, возраст и ремесло приходят из
+  // списка живых людей, а не из остатка от деления номера.
+  const census = plan.roster ?? [];
   for (let index = 0; index < count; index += 1) {
-    const home = lodging[index % lodging.length];
+    const person = census.length > 0 ? census[index % census.length] : undefined;
+    const home = person
+      ? (plan.dwellings.find((dwelling) => dwelling.id === person.home) ??
+        lodging[index % lodging.length])
+      : lodging[index % lodging.length];
     const random = mulberry32(index * 2654435761 + 17);
     const role =
-      home.roles.length > 0
+      person?.role ??
+      (home.roles.length > 0
         ? home.roles[Math.floor(index / lodging.length) % home.roles.length]
-        : "worker";
+        : "worker");
     const spawnNode = spawnNodes[Math.floor(random() * spawnNodes.length)];
     const spawnPoint = network.nodes[spawnNode];
     const spawnAngle = random() * Math.PI * 2;
@@ -1215,16 +1353,20 @@ export function createVillagerPopulation(
     // Каждый пятый — ребёнок: домовые петли в плане так и подписаны —
     // «детская беготня и дрова вокруг обжитого дома».
     const childEvery = plan.childEvery ?? 0;
-    const child = childEvery > 0 && index % childEvery === childEvery - 1;
+    const child =
+      person?.child ?? (childEvery > 0 && index % childEvery === childEvery - 1);
     // Деревня надвое. Не «разбавили», а ДОБАВИЛИ: жительниц и девочек столько
     // же, сколько мужчин и мальчишек, оттого и население выросло.
     const femaleEvery = plan.femaleEvery ?? 0;
-    const female = femaleEvery > 0 && index % femaleEvery === femaleEvery - 1;
+    const female =
+      person?.female ?? (femaleEvery > 0 && index % femaleEvery === femaleEvery - 1);
     // Женский сложением уже, ребёнок — мельче обоих.
     const build =
       (child ? 0.6 + random() * 0.12 : 0.88 + random() * 0.28) * (female ? 0.955 : 1);
     const villager: Villager = {
       id: `${home.id}:${index}`,
+      name: person?.name ?? "",
+      patronymic: person?.patronymic ?? "",
       homeId: home.id,
       role,
       build,
@@ -1550,7 +1692,12 @@ export function stepVillagers(
     // вернуть, иначе склад считается занятым до конца дня.
     if (villager.job) {
       villager.job.age += step;
-      if (villager.job.age > 260) {
+      // Срок дела должен быть длиннее САМОГО ДЛИННОГО дела деревни: до рощи и
+      // обратно — сотня метров, это четыре-пять минут ходьбы. Прежние 260 с
+      // обрывали дровосека на полпути с бревном в руках, и поток «валить» не
+      // доставлял ничего. За настоящие затыки отвечает бюджет ноги пути, а
+      // этот срок — только страховка от вечного обещания.
+      if (villager.job.age > 900) {
         releaseJob(population, villager);
       }
     }
@@ -1660,6 +1807,39 @@ export function stepVillagers(
         villager.workVerb = null;
       }
       chooseWork(population, villager, nightPull);
+      // Возня на месте — то, чем занимаются, когда НЕСТИ НЕЧЕГО. Настоящее
+      // поручение важнее: иначе люди залипают у ближайшего верстака, а дрова
+      // до очага никто не доносит (замер: поток «валить» упал в ноль).
+      // РАБОТА НА МЕСТЕ. Большая часть труда деревни ничего не переносит между
+      // складами: кузнец кует, женщина стирает, огородник копает. Пришёл на
+      // такое место — работает столько, сколько это дело длится, а не стоит
+      // истуканом рядом с наковальней.
+      if (!villager.job && !villager.child && nightPull < 0.5) {
+        const here = node.areaId ? settlement.interest[node.areaId] : undefined;
+        if (here?.doing === "work" && here.verb) {
+          const called =
+            !here.roles?.length ||
+            here.roles.includes(villager.role) ||
+            here.roles.includes(`resident:${villager.homeId}`) ||
+            (villager.female && here.roles.includes("women")) ||
+            (!villager.female && here.roles.includes("men"));
+          const nearEnough =
+            Math.hypot(villager.x - node.x, villager.z - node.z) < 3.2;
+          // Работа — ВОЗМОЖНОСТЬ, а не обязанность: примерно каждый второй
+          // приход на место оборачивается делом, остальные — постоять,
+          // посмотреть, поговорить. Иначе деревня выглядит заводом: замер
+          // показал 23 работающих из 34 одновременно.
+          if (called && nearEnough && villager.random() < 0.68) {
+            const [from, to] = here.spell ?? [14, 26];
+            villager.workVerb = here.verb;
+            villager.climbKind = here.verb === "chop" ? 7 : 8;
+            villager.climbProgress = 0;
+            villager.dwell = from + villager.random() * Math.max(0, to - from);
+            villager.faceYaw = Math.atan2(node.x - villager.x, node.z - villager.z);
+            continue;
+          }
+        }
+      }
       // Работа — КАНДИДАТ, а не перехват: если дела нет, всё идёт как прежде.
       const goal =
         workGoalNode(population, villager) ??

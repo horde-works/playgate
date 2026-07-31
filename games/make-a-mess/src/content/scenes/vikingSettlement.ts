@@ -1,6 +1,7 @@
 import type {
   SettlementFlow,
   SettlementPlan,
+  SettlementResident,
   SettlementStore,
 } from "../../game/settlementPlan.ts";
 import {
@@ -159,6 +160,55 @@ const VILLAGE_FLOWS: readonly SettlementFlow[] = [
   },
 ];
 
+/**
+ * ПЕРЕПИСЬ. Семь дворов, тридцать четыре человека. Отчества настоящие: дети
+ * зовутся по отцу, жёны — по своему отцу, поэтому фамилий здесь нет и быть не
+ * может. Ремесло у главы двора, остальные — та же семья.
+ */
+const VILLAGE_ROSTER: readonly SettlementResident[] = [
+  // Двор ткачихи: ремесло женское, и держит его хозяйка.
+  { home: "weaver", name: "Sigrid", patronymic: "Hallsdottir", role: "weaver", female: true },
+  { home: "weaver", name: "Hakon", patronymic: "Ormsson" },
+  { home: "weaver", name: "Thora", patronymic: "Hakonsdottir", female: true },
+  { home: "weaver", name: "Leif", patronymic: "Hakonsson" },
+  { home: "weaver", name: "Dis", patronymic: "Hakonsdottir", female: true, child: true },
+
+  { home: "brewer", name: "Egil", patronymic: "Grimsson", role: "brewer" },
+  { home: "brewer", name: "Gudrun", patronymic: "Steinsdottir", female: true },
+  { home: "brewer", name: "Torstein", patronymic: "Egilsson" },
+  { home: "brewer", name: "Ragnhild", patronymic: "Egilsdottir", female: true },
+  { home: "brewer", name: "Sunniva", patronymic: "Egilsdottir", female: true, child: true },
+
+  { home: "fisher", name: "Bjorn", patronymic: "Ivarsson", role: "fisher" },
+  { home: "fisher", name: "Solveig", patronymic: "Arnesdottir", female: true },
+  { home: "fisher", name: "Ivar", patronymic: "Bjornsson" },
+  { home: "fisher", name: "Helga", patronymic: "Bjornsdottir", female: true },
+  { home: "fisher", name: "Ottar", patronymic: "Bjornsson", child: true },
+
+  { home: "smith", name: "Ulf", patronymic: "Kolsson", role: "smith" },
+  { home: "smith", name: "Halldis", patronymic: "Torsdottir", female: true },
+  { home: "smith", name: "Kolbein", patronymic: "Ulfsson" },
+  { home: "smith", name: "Asta", patronymic: "Ulfsdottir", female: true },
+  { home: "smith", name: "Vigi", patronymic: "Ulfsson", child: true },
+
+  { home: "family-north", name: "Sigurd", patronymic: "Ottarsson", role: "herder" },
+  { home: "family-north", name: "Astrid", patronymic: "Leifsdottir", female: true },
+  { home: "family-north", name: "Gyda", patronymic: "Sigurdsdottir", female: true },
+  { home: "family-north", name: "Rannveig", patronymic: "Sigurdsdottir", female: true },
+  { home: "family-north", name: "Sveinn", patronymic: "Sigurdsson", child: true },
+
+  { home: "family-east", name: "Orm", patronymic: "Vesteinsson", role: "gardener" },
+  { home: "family-east", name: "Ingrid", patronymic: "Bergsdottir", female: true },
+  { home: "family-east", name: "Freydis", patronymic: "Ormsdottir", female: true },
+  { home: "family-east", name: "Vestein", patronymic: "Ormsson" },
+  { home: "family-east", name: "Alof", patronymic: "Ormsdottir", female: true, child: true },
+
+  { home: "elder", name: "Torvald", patronymic: "Steinarsson", role: "elder" },
+  { home: "elder", name: "Bergljot", patronymic: "Halldorsdottir", female: true },
+  { home: "elder", name: "Steinar", patronymic: "Torvaldsson" },
+  { home: "elder", name: "Yngvild", patronymic: "Steinarsdottir", female: true },
+];
+
 export const vikingSettlement: SettlementPlan = {
   id: "viking-village",
   routes: vikingTrafficRoutes.map((route) => ({
@@ -186,6 +236,7 @@ export const vikingSettlement: SettlementPlan = {
     vikingPlaceInterest.map((place) => [place.areaId, place]),
   ),
   haunts: ROLE_HAUNTS,
+  roster: VILLAGE_ROSTER,
   stores: vikingSettlementStores,
   flows: VILLAGE_FLOWS,
   wardrobe: {

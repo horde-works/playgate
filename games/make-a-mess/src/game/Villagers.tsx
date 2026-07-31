@@ -18,9 +18,12 @@ import {
 } from "three";
 import {
   createVillagerPopulation,
+  describeVillager,
+  pickVillager,
   stepVillagers,
   storePieceVisibility,
   type VillagerPopulation,
+  type VillagerReport,
 } from "./villagerSim.ts";
 import { buildObstacleField, type NavPiece } from "./villagerNavigation.ts";
 import type { SettlementPlan } from "./settlementPlan.ts";
@@ -537,6 +540,7 @@ export function Villagers({
   doorRequests,
   openDoors,
   stockStates,
+  inspectRef,
   count = 24,
 }: {
   /** Какое поселение здесь живёт: тропы, жильё, места, роли, одежда. */
@@ -556,6 +560,19 @@ export function Villagers({
    * житель решает, есть ли работа.
    */
   stockStates?: { current: Map<string, { readonly visible: boolean }> };
+  /**
+   * Сюда кладётся опросчик «кто под перекрестьем». Наведясь на человека, можно
+   * узнать, кто он и чем занят — это и приёмка работы, и способ увидеть, что
+   * житель на самом деле думает.
+   */
+  inspectRef?: {
+    current:
+      | ((
+          origin: readonly [number, number, number],
+          direction: readonly [number, number, number],
+        ) => VillagerReport | null)
+      | null;
+  };
   /** Приёмник следов: отпечаток ставится в момент удара пяткой. */
   count?: number;
 }) {
@@ -573,6 +590,23 @@ export function Villagers({
       population.current.field = obstacleField;
     }
   }, [obstacleField]);
+
+  useEffect(() => {
+    if (!inspectRef) {
+      return undefined;
+    }
+    inspectRef.current = (origin, direction) => {
+      const state = population.current;
+      if (!state) {
+        return null;
+      }
+      const villager = pickVillager(state, origin, direction);
+      return villager ? describeVillager(state, villager) : null;
+    };
+    return () => {
+      inspectRef.current = null;
+    };
+  }, [inspectRef]);
 
   const geometry = useMemo(() => buildVillagerGeometry(), []);
 
