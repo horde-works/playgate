@@ -235,6 +235,11 @@ function CompoundKinematicClusterBody({
     [brokenPieces, definition.clusterId, pieces],
   );
 
+  // Свежайший состав для регистрации: сам объект регистрации не должен
+  // зависеть от него, иначе кластер исчезает из реестра на каждое разрушение.
+  const latestMembership = useRef({ memberIds, attachedMemberIds });
+  latestMembership.current = { memberIds, attachedMemberIds };
+
   useEffect(() => {
     const current = body.current;
     const currentVisualRoot = visualRoot.current;
@@ -246,8 +251,8 @@ function CompoundKinematicClusterBody({
       definition,
       body: current,
       visualRoot: currentVisualRoot,
-      memberIds,
-      attachedMemberIds,
+      memberIds: latestMembership.current.memberIds,
+      attachedMemberIds: latestMembership.current.attachedMemberIds,
       activePhysicalContacts,
     });
     return () => {
@@ -255,13 +260,29 @@ function CompoundKinematicClusterBody({
         registrations.delete(definition.clusterId);
       }
     };
-  }, [
-    activePhysicalContacts,
-    attachedMemberIds,
-    definition,
-    memberIds,
-    registry,
-  ]);
+    // РЕЕСТР ЖИВЁТ, ПОКА ЖИВО ТЕЛО.
+    //
+    // Раньше сюда входили и множества членов, а они рождаются заново от
+    // ЛЮБОГО разрушения. Эффект перезапускался, его cleanup на мгновение
+    // убирал кластер из реестра — и всё, что рождалось в это окно, кластера
+    // не находило: обрубки летящей машины вставали в авторскую позу, то есть
+    // сыпались на её стоянку за километр от неё самой. Состав обновляется
+    // мутацией ниже, поэтому окна пустоты больше нет.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePhysicalContacts, definition, registry]);
+
+  // Состав меняется часто; запись в реестре живая и правится на месте.
+  useEffect(() => {
+    latestMembership.current = { memberIds, attachedMemberIds };
+    const runtime = registry.current.get(definition.clusterId);
+    if (runtime && runtime.body === body.current) {
+      registry.current.set(definition.clusterId, {
+        ...runtime,
+        memberIds,
+        attachedMemberIds,
+      });
+    }
+  }, [attachedMemberIds, definition.clusterId, memberIds, registry]);
 
   useEffect(
     () => () => activePhysicalContacts.clear(),

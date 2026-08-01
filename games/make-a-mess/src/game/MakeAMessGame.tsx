@@ -2807,6 +2807,21 @@ function DebrisBodies({
       }
       live.add(remnant.id);
       const entry = entries.current.get(remnant.id);
+      if (process.env.NODE_ENV !== "production" && remnant.clusterId) {
+        const scope = window as unknown as Record<string, unknown>;
+        const spawns = (scope.__mamRemnantSpawns ??= {}) as Record<
+          string,
+          number
+        >;
+        const path = !entry
+          ? clusterRuntime
+            ? "spawnCluster"
+            : "spawnPlain(noRuntime)"
+          : freed && !entry.freed
+            ? "freeExisting"
+            : "noop";
+        spawns[path] = (spawns[path] ?? 0) + 1;
+      }
       if (!entry) {
         if (clusterRuntime) {
           spawnClusterRemnant(remnant, clusterRuntime);
@@ -8080,6 +8095,8 @@ function OpenWorldScene({
         remnantsCarried: 0,
         remnantsAtHome: 0,
         remnantsAtMachine: 0,
+        homeKinds: {} as Record<string, number>,
+        homeSamples: [] as string[],
         memberBodiesAtHome: [] as string[],
         memberBodiesAtMachine: 0,
       };
@@ -8108,8 +8125,19 @@ function OpenWorldScene({
           continue;
         }
         const p = t ? [t.x, t.y, t.z] : remnant.position;
-        if (near(p[0], p[1], p[2], home)) buckets.remnantsAtHome += 1;
-        else if (near(p[0], p[1], p[2], machinePoint))
+        if (near(p[0], p[1], p[2], home)) {
+          buckets.remnantsAtHome += 1;
+          // Улика должна называть себя: с кластером или без, с телом или
+          // без, отделён или нет — по этим четырём признакам видно, каким
+          // именно путём обрубок оказался дома.
+          const tag = `${remnant.clusterId ? "cluster" : "NOCLUSTER"}/${
+            body ? "body" : "nobody"
+          }/${remnant.detached ? "detached" : "attached"}`;
+          buckets.homeKinds[tag] = (buckets.homeKinds[tag] ?? 0) + 1;
+          if (buckets.homeSamples.length < 6) {
+            buckets.homeSamples.push(`${remnant.id}<-${remnant.parentId}`);
+          }
+        } else if (near(p[0], p[1], p[2], machinePoint))
           buckets.remnantsAtMachine += 1;
       }
       for (const piece of breakablePieces) {
