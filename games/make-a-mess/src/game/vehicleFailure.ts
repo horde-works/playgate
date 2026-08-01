@@ -741,12 +741,18 @@ export function advanceVehicleFailureWatchdog(
     bestFinalManeuverDistance,
   };
 
+  // ПОТЕРЯ ДИФФЕРЕНТОВКИ — НЕ ПРИГОВОР, А ОБСТОЯТЕЛЬСТВО.
+  //
+  // Грузило на рельсе выбито — двигать дифферент нечем, и это правда. Но
+  // сам по себе этот факт рейса не отменяет: корабль остаётся в воздухе и
+  // идёт дальше с тем креном, который у него получается. Приговор выносит
+  // физика — критический угол в полёте или задетая платформа на посадке.
+  // Не рухнул, значит долетел. Наблюдение сохраняется в состоянии и видно
+  // в разборе отказа, приговором оно больше не является.
   const failure =
     attitudeSeconds >= envelope.attitudeGraceSeconds
       ? "criticalAttitude"
-      : trimSeconds >= envelope.trimGraceSeconds
-        ? "trimExhausted"
-        : routeSeconds >= envelope.routeGraceSeconds
+      : routeSeconds >= envelope.routeGraceSeconds
         ? "routeDivergence"
         : controlMismatchSeconds >= envelope.controlMismatchGraceSeconds
           ? "controlMismatch"

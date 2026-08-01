@@ -528,7 +528,13 @@ test("exhausted trim is a declared failure, not an eternal list", () => {
   });
   assert.equal(exhausted, true);
 
-  // The watchdog turns that measured fact into an ordinary failure.
+  // ВЕРДИКТ БОЛЬШЕ НЕ ВЫНОСИТСЯ ПО ОДНОЙ ЛИШЬ ДИФФЕРЕНТОВКЕ.
+  //
+  // Грузило выбито — двигать дифферент нечем, и это правда, которую видно
+  // в разборе отказа. Но сам факт рейса не отменяет: корабль остаётся в
+  // воздухе и идёт дальше с тем креном, который у него получается.
+  // Приговор выносит физика — критический угол в полёте или задетая
+  // платформа на посадке. Не рухнул, значит долетел.
   let watchdog = createVehicleFailureWatchdog(0.4);
   let failure = null;
   let seconds = 0;
@@ -561,9 +567,17 @@ test("exhausted trim is a declared failure, not an eternal list", () => {
     failure = step.failure;
     seconds += 0.1;
   }
-  assert.equal(failure, "trimExhausted");
+  assert.notEqual(
+    failure,
+    "trimExhausted",
+    "исчерпанная дифферентовка сама по себе больше не снимает рейс",
+  );
+  // Крен вне лётного коридора продолжает копить настоящий вердикт позы:
+  // машина падает тогда, когда физически не удержалась, а не когда
+  // потеряла железку.
   assert.equal(
-    seconds >= DEFAULT_VEHICLE_FAILURE_ENVELOPE.trimGraceSeconds,
+    failure === null || failure === "criticalAttitude",
     true,
+    `ожидался либо продолжённый полёт, либо критический угол, а получено ${failure}`,
   );
 });
