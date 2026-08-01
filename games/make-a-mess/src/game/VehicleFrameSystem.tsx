@@ -5073,14 +5073,53 @@ export function VehicleFrameSystem({
             rapierWorld.narrowPhase,
             physicalRuntime.body,
             physicalRuntime.activePhysicalContacts,
-            ownDebrisBodies && ownDebrisBodies.size > 0
-              ? (otherCollider) => {
-                  const parent = rapierWorld
-                    .getCollider(otherCollider)
-                    ?.parent();
-                  return parent ? ownDebrisBodies.has(parent.handle) : false;
-                }
-              : undefined,
+            (otherCollider) => {
+              const parent = rapierWorld.getCollider(otherCollider)?.parent();
+              if (!parent) {
+                return false;
+              }
+              if (ownDebrisBodies?.has(parent.handle)) {
+                return true;
+              }
+              // ГРУНТА ВНУТРИ СОБСТВЕННОГО КОРПУСА НЕ БЫВАЕТ.
+              //
+              // Реестр своих тел знает только ЧЛЕНОВ машины, а разбитое
+              // стекло рассыпается ОСКОЛКАМИ: у них собственные тела и
+              // никакой связи с кластером. Осколки оседали на полу гондолы,
+              // упирались в корпус снизу — и одна пулевая дырка в стекле
+              // снимала исправный дирижабль с рейса «неожиданным контактом с
+              // грунтом». Признак «своего» поэтому геометрический и покрывает
+              // любой обломок: тело, чей центр внутри габарита корпуса, для
+              // этой машины опорой быть не может. Настоящая земля, крыша или
+              // мачта лежат снаружи габарита и опорой остаются.
+              const carrierPosition = physicalRuntime.body.translation();
+              const carrierRotation = physicalRuntime.body.rotation();
+              const otherPosition = parent.translation();
+              const local = debrisLocalPoint.current
+                .set(
+                  otherPosition.x - carrierPosition.x,
+                  otherPosition.y - carrierPosition.y,
+                  otherPosition.z - carrierPosition.z,
+                )
+                .applyQuaternion(
+                  debrisCarrierRotation.current
+                    .set(
+                      carrierRotation.x,
+                      carrierRotation.y,
+                      carrierRotation.z,
+                      carrierRotation.w,
+                    )
+                    .invert(),
+                );
+              return (
+                local.x > frame.localBounds.minimum[0] &&
+                local.x < frame.localBounds.maximum[0] &&
+                local.y > frame.localBounds.minimum[1] &&
+                local.y < frame.localBounds.maximum[1] &&
+                local.z > frame.localBounds.minimum[2] &&
+                local.z < frame.localBounds.maximum[2]
+              );
+            },
           )
         : 0;
       // Винтокрылая машина несёт себя КОЛЬЦАМИ, а не одной вертикалью в точке
