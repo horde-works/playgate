@@ -27,6 +27,7 @@ import {
   ShaderMaterial,
   UnsignedByteType,
   Vector3,
+  Vector4,
 } from "three";
 import {
   materialRuntimeProfiles,
@@ -39,6 +40,7 @@ const FIREBALL_CAPACITY = 2;
 const MAX_ACTIVE_BLASTS = 4;
 const MAX_TRAILED_DEBRIS_PER_BLAST = 10;
 const LIGHT_CAPACITY = 2;
+const MAX_FIREBALL_LOBES = 8;
 
 export interface ExplosionFxDefinition {
   readonly id: number;
@@ -106,12 +108,13 @@ interface ActiveBlast {
 interface FireballSlot {
   readonly position: Vector3;
   readonly dustColor: Color;
-  readonly ventDirection: Vector3;
   readonly noiseOffset: Vector3;
+  readonly lobeDirectionWeights: Vector4[];
+  readonly lobeTimingShapes: Vector4[];
   birth: number;
   life: number;
   diameter: number;
-  ventStrength: number;
+  lobeCount: number;
   rocket: boolean;
 }
 
@@ -248,8 +251,19 @@ function createFireballMaterial(noise: Data3DTexture): ShaderMaterial {
       uRocket: { value: 0 },
       uSteps: { value: 24 },
       uDustColor: { value: new Color("#766653") },
-      uVentDirection: { value: new Vector3(0, 1, 0) },
-      uVentStrength: { value: 0 },
+      uLobeCount: { value: 0 },
+      uLobeDirectionWeight: {
+        value: Array.from(
+          { length: MAX_FIREBALL_LOBES },
+          () => new Vector4(),
+        ),
+      },
+      uLobeTimingShape: {
+        value: Array.from(
+          { length: MAX_FIREBALL_LOBES },
+          () => new Vector4(),
+        ),
+      },
       uNoiseOffset: { value: new Vector3() },
     },
     vertexShader: /* glsl */ `
@@ -271,14 +285,16 @@ function createFireballMaterial(noise: Data3DTexture): ShaderMaterial {
       uniform float uRocket;
       uniform float uSteps;
       uniform vec3 uDustColor;
-      uniform vec3 uVentDirection;
-      uniform float uVentStrength;
+      uniform int uLobeCount;
+      uniform vec4 uLobeDirectionWeight[${MAX_FIREBALL_LOBES}];
+      uniform vec4 uLobeTimingShape[${MAX_FIREBALL_LOBES}];
       uniform vec3 uNoiseOffset;
 
       in vec3 vLocalPosition;
       out vec4 fragColor;
 
       const int MAX_STEPS = 32;
+      const int MAX_LOBES = ${MAX_FIREBALL_LOBES};
 
       vec2 intersectBox(vec3 origin, vec3 direction) {
         vec3 safeDirection = sign(direction + vec3(0.00001))
@@ -319,12 +335,11 @@ function createFireballMaterial(noise: Data3DTexture): ShaderMaterial {
         if (rayEnd <= rayStart) discard;
 
         float ignition = smoothstep(0.0, 0.014, uAge);
-        float expansion = 1.0 - exp(-uAge * mix(15.0, 11.0, uRocket));
-        float late = smoothstep(0.32, uLife, uAge);
-        float radius = mix(0.055, 0.405, expansion) + late * 0.035;
-        float heatTime = exp(-uAge * mix(4.2, 3.35, uRocket));
-        float smokeArrival = smoothstep(0.12, 0.48, uAge);
-        float lift = smoothstep(0.32, uLife, uAge) * 0.11;
+        float coreExpansion = 1.0 - exp(-uAge * mix(24.0, 18.0, uRocket));
+        float coreCooling = smoothstep(0.1, mix(0.62, 0.82, uRocket), uAge);
+        float coreRadius = mix(0.035, 0.13, coreExpansion)
+          * mix(1.0, 0.7, coreCooling);
+        float globalLift = smoothstep(0.24, uLife, uAge) * 0.075;
 
         float segment = (rayEnd - rayStart) / max(1.0, uSteps);
         float cursor = rayStart + segment * pixelNoise(gl_FragCoord.xy + uNoiseOffset.xy * 97.0);
@@ -335,10 +350,7 @@ function createFireballMaterial(noise: Data3DTexture): ShaderMaterial {
           if (float(index) >= uSteps || cursor > rayEnd || opacity > 0.992) break;
 
           vec3 point = rayOrigin + rayDirection * cursor;
-          vec3 centered = point - vec3(0.0, lift, 0.0);
-          float pointLength = length(centered);
-          vec3 pointDirection = centered / max(0.0001, pointLength);
-          float vent = max(0.0, dot(pointDirection, uVentDirection));
+          vec3 centered = point - vec3(0.0, globalLift, 0.0);
 
           float broadNoise = texture(
             uNoise,
@@ -348,25 +360,100 @@ function createFireballMaterial(noise: Data3DTexture): ShaderMaterial {
             uNoise,
             centered * 1.85 + uNoiseOffset.yzx * 1.7 - vec3(0.0, uAge * 0.06, 0.0)
           ).r;
-          float boundary = radius
-            + (broadNoise - 0.5) * 0.105
-            + (detailNoise - 0.5) * 0.038
-            + vent * uVentStrength * 0.075;
-          float density = 1.0
-            - smoothstep(-0.055, 0.035, pointLength - boundary);
-          density *= ignition;
+          float erosion = (broadNoise - 0.5) * 0.038
+            + (detailNoise - 0.5) * 0.018;
+          float coreBoundary = coreRadius + erosion * 0.65;
+          float coreLength = length(centered);
+          float coreDensity = 1.0
+            - smoothstep(-0.026, 0.022, coreLength - coreBoundary);
+          coreDensity *= ignition * mix(1.0, 0.42, coreCooling);
+          float coreInterior = clamp(
+            1.0 - coreLength / max(0.001, coreBoundary),
+            0.0,
+            1.0
+          );
+
+          float density = coreDensity;
+          float temperature = coreDensity
+            * exp(-uAge * mix(4.7, 3.7, uRocket))
+            * (1.05 + coreInterior * 0.72);
+          float smokeSignal = coreDensity
+            * smoothstep(0.11, mix(0.42, 0.58, uRocket), uAge);
+
+          for (int lobeIndex = 0; lobeIndex < MAX_LOBES; lobeIndex += 1) {
+            if (lobeIndex >= uLobeCount) break;
+            vec4 directionWeight = uLobeDirectionWeight[lobeIndex];
+            vec4 timingShape = uLobeTimingShape[lobeIndex];
+            float localAge = uAge - timingShape.x;
+            if (localAge <= 0.0 || directionWeight.w <= 0.0) continue;
+
+            vec3 lobeDirection = directionWeight.xyz;
+            float lobeWeight = directionWeight.w;
+            float lobeExpansion = 1.0 - exp(
+              -localAge * mix(17.0, 12.5, uRocket)
+            );
+            float travel = timingShape.y * lobeExpansion
+              + localAge * mix(0.018, 0.026, uRocket);
+            vec3 lobeCenter = lobeDirection * travel;
+            lobeCenter.y += localAge * localAge * 0.018;
+
+            vec3 relative = centered - lobeCenter;
+            float axial = dot(relative, lobeDirection);
+            vec3 perpendicular = relative - lobeDirection * axial;
+            float stretch = mix(1.08, 1.42, timingShape.w);
+            float lobeDistance = sqrt(
+              dot(perpendicular, perpendicular)
+              + axial * axial / (stretch * stretch)
+            );
+            float lobeRadius = timingShape.z
+              * mix(0.18, 1.0, lobeExpansion)
+              * mix(0.86, 1.08, lobeWeight);
+            float lobeBoundary = lobeRadius
+              + erosion * mix(0.75, 1.25, timingShape.w);
+            float lobeDensity = 1.0
+              - smoothstep(-0.032, 0.024, lobeDistance - lobeBoundary);
+            lobeDensity *= ignition;
+
+            // A probabilistic union keeps the dense centre connected but
+            // preserves genuine voids between independently moving lobes.
+            density = 1.0 - (1.0 - density) * (1.0 - lobeDensity);
+            float lobeHeat = exp(
+              -localAge * mix(4.3, 3.15, uRocket)
+            ) * mix(0.62, 1.12, timingShape.w);
+            float lobeCore = clamp(
+              1.0 - lobeDistance / max(0.001, lobeBoundary),
+              0.0,
+              1.0
+            );
+            temperature = max(
+              temperature,
+              lobeDensity * lobeHeat
+                * (0.12 + pow(lobeCore, 0.58) * 0.9)
+            );
+            smokeSignal = max(
+              smokeSignal,
+              lobeDensity * smoothstep(
+                0.1 + timingShape.w * 0.07,
+                mix(0.4, 0.58, uRocket),
+                localAge
+              )
+            );
+          }
 
           if (density > 0.001) {
-            float core = clamp(1.0 - pointLength / max(0.001, boundary), 0.0, 1.0);
-            float thermalBreakup = mix(0.74, 1.15, broadNoise)
-              * mix(0.86, 1.08, detailNoise);
-            float temperature = clamp(
-              heatTime * thermalBreakup * (0.38 + core * 0.9),
-              0.0,
-              1.15
+            float thermalPattern = broadNoise * 0.68 + detailNoise * 0.32;
+            float thermalBreakup = mix(
+              0.32,
+              1.28,
+              smoothstep(0.18, 0.82, thermalPattern)
             );
-            float soot = smokeArrival * (0.42 + 0.58 * (1.0 - temperature));
-            float extinction = density * mix(12.0, 18.0, soot);
+            temperature = clamp(temperature * thermalBreakup, 0.0, 1.15);
+            float soot = clamp(smokeSignal, 0.0, 1.0)
+              * (0.38 + 0.62 * (1.0 - temperature));
+            // Hot gas emits strongly but absorbs little. The previous fixed
+            // extinction made the nearest lobe opaque, hiding the white core
+            // and flattening every cluster into a camera-facing patch.
+            float extinction = density * mix(2.2, 17.0, soot);
             float sampleAlpha = 1.0 - exp(-extinction * segment);
 
             vec3 smokeColor = mix(
@@ -510,14 +597,93 @@ function createFireballSlot(): FireballSlot {
   return {
     position: new Vector3(),
     dustColor: new Color("#766653"),
-    ventDirection: new Vector3(0, 1, 0),
     noiseOffset: new Vector3(),
+    lobeDirectionWeights: Array.from(
+      { length: MAX_FIREBALL_LOBES },
+      () => new Vector4(),
+    ),
+    lobeTimingShapes: Array.from(
+      { length: MAX_FIREBALL_LOBES },
+      () => new Vector4(),
+    ),
     birth: Number.NEGATIVE_INFINITY,
     life: 0,
     diameter: 1,
-    ventStrength: 0,
+    lobeCount: 0,
     rocket: false,
   };
+}
+
+function configureFireballLobes(
+  slot: FireballSlot,
+  definition: ExplosionFxDefinition,
+  seed: number,
+): void {
+  const candidates = definition.lobes
+    .map((lobe, index) => {
+      const direction = new Vector3(...lobe.direction);
+      if (direction.lengthSq() < 0.0001) direction.set(0, 1, 0);
+      direction.normalize();
+      const variation = 0.86 + random01(seed, index, 71) * 0.28;
+      return {
+        direction,
+        weight: Math.max(0, Math.min(1, lobe.weight)),
+        delay: Math.max(0, lobe.delay),
+        score: lobe.weight * variation,
+        sourceIndex: index,
+      };
+    })
+    .filter((candidate) => candidate.weight > 0.035)
+    .sort((left, right) => right.score - left.score);
+
+  const selected: typeof candidates = [];
+  for (const candidate of candidates) {
+    // Nearby probes describe one macroscopic vent. Keep the strongest one,
+    // then spend the remaining budget on genuinely different directions.
+    const overlaps = selected.some(
+      (existing) => existing.direction.dot(candidate.direction) > 0.82,
+    );
+    if (overlaps) continue;
+    selected.push(candidate);
+    if (selected.length >= MAX_FIREBALL_LOBES) break;
+  }
+
+  // A highly enclosed blast can leave too few transmitted probes. Retain its
+  // strongest remaining directions at reduced size instead of reverting to a
+  // perfect sphere.
+  for (const candidate of candidates) {
+    if (selected.length >= Math.min(4, MAX_FIREBALL_LOBES)) break;
+    if (selected.includes(candidate)) continue;
+    selected.push(candidate);
+  }
+
+  slot.lobeCount = selected.length;
+  for (let index = 0; index < MAX_FIREBALL_LOBES; index += 1) {
+    const directionWeight = slot.lobeDirectionWeights[index];
+    const timingShape = slot.lobeTimingShapes[index];
+    const candidate = selected[index];
+    if (!candidate) {
+      directionWeight.set(0, 1, 0, 0);
+      timingShape.set(0, 0, 0, 0);
+      continue;
+    }
+    const randomRadius = 0.88 + random01(seed, candidate.sourceIndex, 79) * 0.24;
+    const randomTravel = 0.86 + random01(seed, candidate.sourceIndex, 83) * 0.3;
+    const shapeSeed = random01(seed, candidate.sourceIndex, 89);
+    const visibleWeight = Math.sqrt(Math.max(0.04, candidate.weight));
+    directionWeight.set(
+      candidate.direction.x,
+      candidate.direction.y,
+      candidate.direction.z,
+      visibleWeight,
+    );
+    timingShape.set(
+      candidate.delay + shapeSeed * 0.025,
+      (0.115 + visibleWeight * 0.085) * randomTravel,
+      (0.105 + visibleWeight * 0.105) * randomRadius,
+      shapeSeed,
+    );
+  }
 }
 
 export function ExplosionFxSystem({
@@ -606,23 +772,7 @@ export function ExplosionFxSystem({
       random01(seed, 1, 17) * 9,
       random01(seed, 2, 19) * 9,
     );
-    fireball.ventDirection.set(0, 0, 0);
-    let ventWeight = 0;
-    for (const lobe of definition.lobes) {
-      const openness = Math.max(0, lobe.weight - 0.18);
-      fireball.ventDirection.x += lobe.direction[0] * openness;
-      fireball.ventDirection.y += lobe.direction[1] * openness;
-      fireball.ventDirection.z += lobe.direction[2] * openness;
-      ventWeight += openness;
-    }
-    const ventSignal = fireball.ventDirection.length();
-    fireball.ventStrength =
-      ventWeight > 0 ? Math.min(0.28, (ventSignal / ventWeight) * 0.24) : 0;
-    if (ventSignal > 0.0001) {
-      fireball.ventDirection.multiplyScalar(1 / ventSignal);
-    } else {
-      fireball.ventDirection.set(0, 1, 0);
-    }
+    configureFireballLobes(fireball, definition, seed);
     activeBlasts.current = [
       ...activeBlasts.current.filter((blast) => blast.expiresAt > now),
       {
@@ -719,10 +869,23 @@ export function ExplosionFxSystem({
       material.uniforms.uAge.value = age;
       material.uniforms.uLife.value = slot.life;
       material.uniforms.uRocket.value = slot.rocket ? 1 : 0;
-      material.uniforms.uSteps.value = [14, 22, 30][quality];
+      material.uniforms.uSteps.value = [12, 18, 24][quality];
       material.uniforms.uDustColor.value.copy(slot.dustColor);
-      material.uniforms.uVentDirection.value.copy(slot.ventDirection);
-      material.uniforms.uVentStrength.value = slot.ventStrength;
+      const qualityLobeCount = [4, 6, MAX_FIREBALL_LOBES][quality];
+      material.uniforms.uLobeCount.value = Math.min(
+        slot.lobeCount,
+        qualityLobeCount,
+      );
+      const uniformDirectionWeights = material.uniforms.uLobeDirectionWeight
+        .value as Vector4[];
+      const uniformTimingShapes = material.uniforms.uLobeTimingShape
+        .value as Vector4[];
+      for (let lobeIndex = 0; lobeIndex < slot.lobeCount; lobeIndex += 1) {
+        uniformDirectionWeights[lobeIndex].copy(
+          slot.lobeDirectionWeights[lobeIndex],
+        );
+        uniformTimingShapes[lobeIndex].copy(slot.lobeTimingShapes[lobeIndex]);
+      }
       material.uniforms.uNoiseOffset.value.copy(slot.noiseOffset);
     }
 
