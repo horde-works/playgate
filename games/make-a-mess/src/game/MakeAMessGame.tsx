@@ -2068,6 +2068,10 @@ function MouseLook({
 interface BreakablePieceProps {
   piece: BreakablePieceDefinition;
   broken: boolean;
+  /** Живые кластеры: отломанный член рождается в позе машины, не дома. */
+  kinematicClusters?: MutableRefObject<
+    Map<string, CompoundKinematicClusterRuntime>
+  >;
   registerBody: (id: string, body: RapierRigidBody | null) => void;
   onDebrisContact: (
     piece: BreakablePieceDefinition,
@@ -2152,6 +2156,7 @@ function OmittedDebrisInteractionColliders({
 const BreakablePiece = memo(function BreakablePiece({
   piece,
   broken,
+  kinematicClusters,
   registerBody,
   onDebrisContact,
 }: BreakablePieceProps) {
@@ -2184,6 +2189,34 @@ const BreakablePiece = memo(function BreakablePiece({
     }
 
     if (broken && !wasBroken.current) {
+      // Член составного кластера отламывается ТАМ, где машина сейчас. Тело
+      // монтируется в авторской точке рождения, и без переноса ДО включения
+      // динамики обломок кадр-другой жил бы (и бился бы о землю) в домашней
+      // точке стоянки, а потом телепортировался к машине.
+      if (compoundClusterMember && kinematicClusters) {
+        const runtime = kinematicClusters.current.get(piece.clusterId);
+        if (runtime) {
+          const pose = compoundMemberWorldPose(
+            runtime.definition.origin,
+            compoundClusterWorldTransform(runtime.body),
+            piece.position,
+            piece.rotation,
+          );
+          currentBody.setTranslation(
+            { x: pose.position[0], y: pose.position[1], z: pose.position[2] },
+            false,
+          );
+          currentBody.setRotation(
+            {
+              x: pose.quaternion[0],
+              y: pose.quaternion[1],
+              z: pose.quaternion[2],
+              w: pose.quaternion[3],
+            },
+            false,
+          );
+        }
+      }
       if (currentBody.bodyType() !== rapier.RigidBodyType.Dynamic) {
         currentBody.setBodyType(rapier.RigidBodyType.Dynamic, true);
       }
@@ -2239,6 +2272,8 @@ const BreakablePiece = memo(function BreakablePiece({
     wasBroken.current = broken;
   }, [
     broken,
+    compoundClusterMember,
+    kinematicClusters,
     piece.column,
     piece.id,
     piece.material,
@@ -2442,6 +2477,7 @@ function BreakableObjects({
           key={piece.id}
           piece={piece}
           broken={brokenPieces.has(piece.id)}
+          kinematicClusters={kinematicClusters}
           registerBody={registerBody}
           onDebrisContact={onDebrisContact}
         />
@@ -4088,6 +4124,19 @@ function OpenWorldScene({
       return clusterId ? liveCompoundFrame(clusterId) : null;
     },
     [compoundOwnedPieceClusters, liveCompoundFrame],
+  );
+  /** То же для любой цели урона: кусок или его обрубок. */
+  const liveCompoundFrameOfTarget = useCallback(
+    (targetId: string) => {
+      const remnant = remnantById.current.get(targetId);
+      if (remnant) {
+        return remnant.clusterId && !remnant.detached
+          ? liveCompoundFrame(remnant.clusterId)
+          : null;
+      }
+      return liveCompoundFrameOfPiece(targetId);
+    },
+    [liveCompoundFrame, liveCompoundFrameOfPiece],
   );
   const dynamicBodies = useRef(new Map<string, RapierRigidBody>());
   const pendingBodyActions = useRef(new Map<string, BodyAction[]>());
@@ -6105,10 +6154,25 @@ function OpenWorldScene({
         direction,
       );
       if (!request) return;
+      // Пачка попаданий идёт в ядро В СИСТЕМЕ ЦЕЛИ. У члена летящего кластера
+      // это его авторская система: мировые точки очереди переводятся туда
+      // текущей позой тела, иначе ядро режет мимо (пуля не берёт машину,
+      // пока та не стоит ровно на своей стоянке).
+      const targetFrame = liveCompoundFrameOfTarget(targetId);
+      const toTargetFrame = (
+        worldPoint: readonly [number, number, number],
+      ): readonly [number, number, number] =>
+        targetFrame
+          ? compoundClusterPointToLocal(
+              targetFrame.runtime.definition.origin,
+              targetFrame.transform,
+              worldPoint,
+            )
+          : worldPoint;
       const coalescedRequest: CarveKernelRequest = {
         ...request,
         impacts: batch.hits.map((hit) => ({
-          worldPoint: hit.point,
+          worldPoint: toTargetFrame(hit.point),
           radius: hit.radius,
           direction: hit.direction,
           penetration: request.penetration,
@@ -6247,7 +6311,13 @@ function OpenWorldScene({
       carveJobs.current.set(request.requestId, applyResult);
       worker.postMessage(coalescedRequest);
     },
-    [breakPieces, carveAt, prepareCarveRequest, settleWorld],
+    [
+      breakPieces,
+      carveAt,
+      liveCompoundFrameOfTarget,
+      prepareCarveRequest,
+      settleWorld,
+    ],
   );
 
   const queueBulletCarve = useCallback(
@@ -7963,6 +8033,27 @@ function OpenWorldScene({
       };
     };
     scope.__mamClusterPose = clusterPose;
+    // Детерминированный урон без оружия: сломать ИМЕННО этот кусок и увидеть
+    // последствия (что ещё унесло каскадом, что сказала автоматика).
+    const breakPiece = (pieceId: string) => {
+      const piece = breakablePieceById.get(pieceId);
+      if (!piece) {
+        return null;
+      }
+      const before = brokenPiecesRef.current.size;
+      breakPieces([pieceId]);
+      return {
+        pieceId,
+        clusterId: piece.clusterId,
+        brokenBefore: before,
+        brokenAfter: brokenPiecesRef.current.size,
+      };
+    };
+    const failures = () =>
+      ((window as unknown as Record<string, unknown>)
+        .__mamVehicleFailureLog as unknown[]) ?? [];
+    scope.__mamBreakPiece = breakPiece;
+    scope.__mamVehicleFailures = failures;
     return () => {
       if (scope.__mamExplode === detonate) {
         delete scope.__mamExplode;
@@ -7970,8 +8061,14 @@ function OpenWorldScene({
       if (scope.__mamClusterPose === clusterPose) {
         delete scope.__mamClusterPose;
       }
+      if (scope.__mamBreakPiece === breakPiece) {
+        delete scope.__mamBreakPiece;
+      }
+      if (scope.__mamVehicleFailures === failures) {
+        delete scope.__mamVehicleFailures;
+      }
     };
-  }, [explodeAt]);
+  }, [breakPieces, breakablePieceById, explodeAt]);
 
   const handleGrenadeExplode = useCallback(
     (
@@ -10661,6 +10758,24 @@ export function MakeAMessGame({
 
   const handleVehicleFailure = useCallback(
     (event: VehicleFailureEvent) => {
+      if (process.env.NODE_ENV !== "production") {
+        // Журнал отказов для headless-диагностики: ПРИЧИНА, а не только
+        // подпись на экране. Читается через __mamVehicleFailures().
+        const scope = window as unknown as Record<string, unknown>;
+        const log = (scope.__mamVehicleFailureLog ??= []) as {
+          sourceId: string;
+          reason: string;
+          at: number;
+        }[];
+        log.push({
+          sourceId: event.sourceId,
+          reason: event.reason,
+          at: window.performance.now(),
+        });
+        if (log.length > 64) {
+          log.splice(0, log.length - 64);
+        }
+      }
       publishCaption(
         "telemetry",
         t("announce.vehicleFailureKicker"),
@@ -11226,6 +11341,43 @@ export function MakeAMessGame({
     },
     [approachedEntry, endGameAction],
   );
+
+  // Dev-хуки: состояние и запуск действия поста из headless-проверок — пара к
+  // __mamTeleport/__mamExplode. Синтетические Digit-клавиши в CDP исполняют
+  // смену оружия раньше, чем до них доберётся численное действие поста.
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") {
+      return;
+    }
+    const scope = window as unknown as Record<string, unknown>;
+    const entryState = () =>
+      approachedEntry
+        ? {
+            id: approachedEntry.id,
+            kind: approachedEntry.kind,
+            actions: entryInteractionActions(approachedEntry).map(
+              (action) => action.id,
+            ),
+          }
+        : null;
+    const openEntry = (actionId?: string) => {
+      if (!approachedEntry) {
+        return null;
+      }
+      openApproachedEntry(actionId);
+      return approachedEntry.id;
+    };
+    scope.__mamEntryState = entryState;
+    scope.__mamEntryOpen = openEntry;
+    return () => {
+      if (scope.__mamEntryState === entryState) {
+        delete scope.__mamEntryState;
+      }
+      if (scope.__mamEntryOpen === openEntry) {
+        delete scope.__mamEntryOpen;
+      }
+    };
+  }, [approachedEntry, openApproachedEntry]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {

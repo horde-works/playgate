@@ -80,15 +80,27 @@ export function createActivePhysicalContactRegistry(): ActivePhysicalContactRegi
   };
 }
 
-/** Count supports by refreshing only manifolds which are currently active. */
+/**
+ * Count supports by refreshing only manifolds which are currently active.
+ *
+ * `isSelfDebris` excludes the carrier's OWN freshly detached parts. A piece
+ * that just broke off materialises inside the hull and leans on it; counted as
+ * ground, it makes a flying machine believe it has landed — one broken window
+ * was enough to end a healthy flight. Membership ends where the fragment
+ * leaves the hull envelope: from there it is an ordinary obstacle again.
+ */
 export function countActiveUpwardSupportContacts(
   narrowPhase: NarrowPhaseLike,
   body: ContactBodyLike,
   contacts: Pick<ActivePhysicalContactRegistry, "forEach">,
+  isSelfDebris?: (otherCollider: number) => boolean,
 ): number {
   const bodyCentre = body.worldCom();
   let supportCount = 0;
   contacts.forEach((ownCollider, otherCollider) => {
+    if (isSelfDebris?.(otherCollider)) {
+      return;
+    }
     narrowPhase.contactPair(ownCollider, otherCollider, (manifold) => {
       if (manifold.numSolverContacts() === 0) {
         return;

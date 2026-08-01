@@ -2118,6 +2118,24 @@ export function VehicleFrameSystem({
         ) {
           post = "board";
         }
+        if (
+          process.env.NODE_ENV !== "production" &&
+          typeof window !== "undefined"
+        ) {
+          // Диагноз поста для headless-проверок: какие ворота не пустили.
+          (window as unknown as Record<string, unknown>).__mamDepartureDebug = {
+            frame: interactionFrame.id,
+            post,
+            uncrewedLaunchAllowed,
+            vehicleHome,
+            boardDistance,
+            approachRadius: departure?.approachRadius ?? null,
+            eyeHeightDelta: departure
+              ? Math.abs(eye[1] - departure.point[1])
+              : null,
+            eye: [eye[0], eye[1], eye[2]],
+          };
+        }
       } else if (isTerminal) {
         post = seatAction;
       }
@@ -4883,15 +4901,70 @@ export function VehicleFrameSystem({
         point: capture.point,
       };
 
+      if (
+        process.env.NODE_ENV !== "production" &&
+        typeof window !== "undefined"
+      ) {
+        // Самописец: что реально держит машину в момент отказа. Гадать по
+        // симптому «мгновенный fail» дороже, чем прочитать ленту.
+        const scope = window as unknown as Record<string, unknown>;
+        const trace = (scope.__mamVehicleTraceLog ??= []) as unknown[];
+        const sampler = (scope.__mamVehicleTraceAt ??= {}) as Record<
+          string,
+          number
+        >;
+        const nowMs = window.performance.now();
+        if ((sampler[frame.id] ?? 0) + 250 <= nowMs) {
+          sampler[frame.id] = nowMs;
+          trace.push({
+            at: Math.round(nowMs),
+            frame: frame.id,
+            alt: Number(state.body.position[1].toFixed(2)),
+            vy: Number(state.body.velocity[1].toFixed(2)),
+            mass: Number(mass.mass.toFixed(1)),
+            intactMass: Number(state.intactMass.toFixed(1)),
+            envelopeLeft: state.envelopeLeft,
+            intactEnvelope: state.intactEnvelope,
+            liftNow: Number(state.liftNow.toFixed(1)),
+            liftCapacity: Number(liftCapacity.toFixed(1)),
+            neutral: Number(neutral.toFixed(1)),
+            broken: state.brokenSeen,
+            damaged: state.damagedSeen,
+            flight: state.flight ? state.flight.kind : null,
+            progress: state.flight
+              ? Number(state.flight.progress.toFixed(3))
+              : null,
+            recovery: state.recovery?.lifecycle.phase ?? null,
+          });
+          if (trace.length > 400) {
+            trace.splice(0, trace.length - 400);
+          }
+        }
+      }
+
       // Stable support is measured from Rapier contacts. The solver owns the
       // normal reaction and Coulomb friction; this channel reports only that
       // an upward-facing surface is persistently carrying the vehicle.
       const physicalRuntime = clusterRegistry.current.get(frame.clusterId);
+      // Собственный свежий обломок ЗЕМЛЁЙ не является. Он рождается внутри
+      // корпуса и упирается в него; засчитанный опорой, он убеждал летящую
+      // машину, что она стоит на грунте, — и одно разбитое стекло обрывало
+      // исправный рейс детектором «неожиданного контакта». Тот же реестр
+      // собственных тел уже отсекает свои куски для лучей опоры.
+      const ownDebrisBodies = shipBodies.current.get(frame.clusterId);
       state.supportContacts = physicalRuntime
         ? countActiveUpwardSupportContacts(
             rapierWorld.narrowPhase,
             physicalRuntime.body,
             physicalRuntime.activePhysicalContacts,
+            ownDebrisBodies && ownDebrisBodies.size > 0
+              ? (otherCollider) => {
+                  const parent = rapierWorld
+                    .getCollider(otherCollider)
+                    ?.parent();
+                  return parent ? ownDebrisBodies.has(parent.handle) : false;
+                }
+              : undefined,
           )
         : 0;
       // Винтокрылая машина несёт себя КОЛЬЦАМИ, а не одной вертикалью в точке
