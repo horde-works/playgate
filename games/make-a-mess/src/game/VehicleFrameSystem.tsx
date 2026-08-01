@@ -1511,6 +1511,69 @@ export function VehicleFrameSystem({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [damagedPieces, inactivePieces]);
 
+  /**
+   * Снимок органов для ЛЮБОЙ точки отказа. Разбор нужен одинаково, кто бы
+   * ни снял машину с рейса: сторож, детектор контакта или потеря набора.
+   */
+  const controlReadings = useCallback(
+    (
+      frame: VehicleFrameRuntime,
+      state: FrameState,
+    ): readonly VehicleControlReading[] => {
+      const flight = state.flight;
+      const readings: VehicleControlReading[] = (
+        flight?.driveThrottle ?? frame.flight.limits.enginePoints.map(() => 0)
+      ).map((requested, index) => {
+        const delivered = flight?.throttle[index] ?? 0;
+        return {
+          organ: `тяга ${index}`,
+          expected: Number(requested.toFixed(2)),
+          actual: Number(delivered.toFixed(2)),
+          required: true,
+          note:
+            Math.abs(requested) > 0.05 &&
+            Math.abs(delivered) < Math.abs(requested) * 0.5
+              ? "не отвечает"
+              : undefined,
+        };
+      });
+      readings.push({
+        organ: "оболочка",
+        expected: state.intactEnvelope,
+        actual: state.envelopeLeft,
+        required: true,
+        note:
+          state.envelopeLeft < state.intactEnvelope
+            ? "потеряны полотнища"
+            : undefined,
+      });
+      readings.push({
+        organ: "масса",
+        expected: Number(state.intactMass.toFixed(1)),
+        actual: Number((state.mass?.mass ?? 0).toFixed(1)),
+        required: false,
+      });
+      readings.push({
+        organ: "опора под днищем",
+        expected: 0,
+        actual: state.supportContacts,
+        required: false,
+        note: state.supportContacts > 0 ? "машина считает, что села" : undefined,
+      });
+      for (const [index, rail] of (frame.trimRails ?? []).entries()) {
+        readings.push({
+          organ: `дифферент ${rail.commandChannel}`,
+          expected: 1,
+          actual: state.trimAvailable[index] ? 1 : 0,
+          required: true,
+          note: state.trimAvailable[index] ? undefined : "тележка потеряна",
+        });
+      }
+      return readings;
+    },
+    [],
+  );
+
   /** Обрубки, носимые кластерами, по id кластера. */
   const clusterRemnants = useMemo(() => {
     const byCluster = new Map<string, RemnantDefinition[]>();
@@ -4064,6 +4127,7 @@ export function VehicleFrameSystem({
             sourceId: frame.clusterId,
             sourceLabel: frame.telemetryLabel ?? frame.id.toUpperCase(),
             reason: "routeDivergence",
+            readings: controlReadings(frame, state),
           });
         }
       }
@@ -4386,6 +4450,7 @@ export function VehicleFrameSystem({
             sourceId: frame.clusterId,
             sourceLabel: frame.telemetryLabel ?? frame.id.toUpperCase(),
             reason: watchdogResult.failure,
+            readings: controlReadings(frame, state),
           });
         }
       } else if (flight && flight.castOff) {

@@ -11897,9 +11897,7 @@ export function MakeAMessGame({
         <ModeChips flightMode={flightMode} weapon={equippedWeapon} />
       ) : null}
 
-      {surfaces.worldHud && failureReport ? (
-        <VehicleFailureReport report={failureReport} />
-      ) : null}
+      {failureReport ? <VehicleFailureReport report={failureReport} /> : null}
 
       {surfaces.worldHud && active && rotorcraftPilotStatus ? (
         <RotorcraftPilotHud
