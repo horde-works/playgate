@@ -238,7 +238,6 @@ function CompoundKinematicClusterBody({
   // Свежайший состав для регистрации: сам объект регистрации не должен
   // зависеть от него, иначе кластер исчезает из реестра на каждое разрушение.
   const latestMembership = useRef({ memberIds, attachedMemberIds });
-  latestMembership.current = { memberIds, attachedMemberIds };
 
   useEffect(() => {
     const current = body.current;
@@ -267,8 +266,7 @@ function CompoundKinematicClusterBody({
     // убирал кластер из реестра — и всё, что рождалось в это окно, кластера
     // не находило: обрубки летящей машины вставали в авторскую позу, то есть
     // сыпались на её стоянку за километр от неё самой. Состав обновляется
-    // мутацией ниже, поэтому окна пустоты больше нет.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // эффектом ниже, поэтому окна пустоты больше нет.
   }, [activePhysicalContacts, definition, registry]);
 
   // Состав меняется часто; запись в реестре живая и правится на месте.
