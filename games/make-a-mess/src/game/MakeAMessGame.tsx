@@ -222,6 +222,7 @@ import {
   DEBRIS_ACTOR_DETAIL,
   DEBRIS_NORMAL,
   DEBRIS_SETTLING,
+  VEHICLE_ATTACHMENT,
   WORLD_BOUNDARY,
 } from "./physicsInteractionGroups";
 import {
@@ -2052,6 +2053,7 @@ const BreakablePiece = memo(function BreakablePiece({
   const compoundClusterMember = clusterFrame
     ? compoundClusterOwnsPiece(clusterFrame, piece)
     : false;
+  const vehicleAttachment = Boolean(clusterFrame && !compoundClusterMember);
   const ownsContactShape = broken || !compoundClusterMember;
   const collisionTuning = debrisCollisionTuning(piece.size);
 
@@ -2147,9 +2149,13 @@ const BreakablePiece = memo(function BreakablePiece({
       density={profile.density}
       // ВАЖНО: проп нельзя передавать со значением undefined — react-three-
       // rapier проверяет `key in options` и вызывает setCollisionGroups(
-      // undefined), wasm приводит это к 0, и коллайдер перестаёт сталкиваться
-      // со всем. Прикреплённый кусок должен остаться на дефолтных группах.
-      {...(broken ? { collisionGroups: DEBRIS_SETTLING } : {})}
+      // undefined). Отдельный механизм получает явную маску: с миром он
+      // взаимодействует, со своим составным корпусом — нет.
+      {...(broken
+        ? { collisionGroups: DEBRIS_SETTLING }
+        : vehicleAttachment
+          ? { collisionGroups: VEHICLE_ATTACHMENT }
+          : {})}
       ccd={broken && collisionTuning.hardCcd}
       softCcdPrediction={broken ? collisionTuning.softCcdPrediction : 0}
       onContactForce={

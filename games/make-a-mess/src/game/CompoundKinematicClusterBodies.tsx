@@ -11,6 +11,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Quaternion, Vector3, type Group } from "three";
 import type { BreakablePieceDefinition } from "./destructionScene";
+import { VEHICLE_CARRIER } from "./physicsInteractionGroups";
 import {
   compoundClusterColliders,
   compoundClusterOwnsPiece,
@@ -371,9 +372,10 @@ function CompoundKinematicClusterBody({
       type="dynamic"
       position={[...definition.origin]}
       colliders={false}
+      collisionGroups={VEHICLE_CARRIER}
       ccd
       gravityScale={0}
-      canSleep={false}
+      canSleep
       additionalSolverIterations={4}
       onCollisionEnter={onContact ? handleCollision : undefined}
       userData={{ compoundKinematicCluster: definition.clusterId }}

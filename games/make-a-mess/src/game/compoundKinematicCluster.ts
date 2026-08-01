@@ -27,6 +27,12 @@ export interface CompoundKinematicClusterDefinition {
    * the frame visually, but decorative detail need not become a Rapier shape.
    */
   readonly contactMemberMatches?: readonly string[];
+  /**
+   * Members intentionally inside a hollow berth or mechanism proxy. The
+   * surrounding hull remains physical; only the inserted fitting is omitted
+   * from the carrier's outer contact envelope.
+   */
+  readonly contactMemberExcludes?: readonly string[];
   /** Visible, non-contact proximity equipment carried by the rigid frame. */
   readonly proximitySensors?: readonly {
     readonly point: SceneVector3;
@@ -128,6 +134,7 @@ export function compoundClusterColliders(
       !compoundClusterOwnsPiece(cluster, piece) ||
       (cluster.contactMemberMatches &&
         !cluster.contactMemberMatches.some((match) => piece.id.includes(match))) ||
+      cluster.contactMemberExcludes?.some((match) => piece.id.includes(match)) ||
       brokenPieces.has(piece.id)
     ) {
       continue;

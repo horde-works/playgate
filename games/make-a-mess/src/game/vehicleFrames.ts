@@ -79,6 +79,8 @@ export interface VehicleFrameDefinition {
   readonly telemetryLabel?: string;
   /** Внутренние механизмы, которые двигаются относительно общего корпуса. */
   readonly independentMemberMatches?: readonly string[];
+  /** Inserted fittings omitted from the carrier's outer contact envelope. */
+  readonly contactMemberExcludes?: readonly string[];
   /**
    * Точка, вокруг которой кадр кренится и разворачивается. Для небесного
    * поезда это центр подъёмного сердца — центр объёма оболочки, а не
@@ -492,6 +494,10 @@ export const vehicleFrames: readonly VehicleFrameDefinition[] = [
     clusterId: "sky-mooring:airship",
     telemetryLabel: "AIRSHIP 07",
     independentMemberMatches: [":blade:", ":trim:"],
+    // The authored mast cup is a visible solid proxy for a hollow socket.
+    // Its inserted nose fitting must not become part of the outer envelope;
+    // the cap immediately behind it remains a normal physical collider.
+    contactMemberExcludes: [":nose:cone:"],
     origin: townAirshipPoint(TOWN_AIRSHIP.liftA, 0, TOWN_AIRSHIP.liftY),
     nose: [-Math.cos(TOWN_AIRSHIP.heading), 0, -Math.sin(TOWN_AIRSHIP.heading)],
     // Передний конец швартового конуса входит в вертикальный стакан мачты.

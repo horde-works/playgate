@@ -6,6 +6,8 @@ import {
   ACTOR_SAFETY_FLOOR,
   DEBRIS_NORMAL,
   DEBRIS_SETTLING,
+  VEHICLE_ATTACHMENT,
+  VEHICLE_CARRIER,
   VEHICLE_CONTACT_QUERY,
   WORLD_BOUNDARY,
 } from "../games/make-a-mess/src/game/physicsInteractionGroups.ts";
@@ -35,6 +37,18 @@ test("the map edge contains people and debris, not airborne carriers", () => {
   // Ordinary scene colliders use Rapier's default all-to-all group.
   assert.equal(interacts(VEHICLE_CONTACT_QUERY, 0xffff_ffff), true);
   assert.equal(interacts(ACTOR_ABOARD, 0xffff_ffff), true);
+});
+
+test("a carrier never collides with its own attached pose bodies", () => {
+  assert.equal(interacts(VEHICLE_CARRIER, VEHICLE_ATTACHMENT), false);
+  assert.equal(interacts(VEHICLE_CARRIER, VEHICLE_CARRIER), true);
+  assert.equal(interacts(VEHICLE_CARRIER, DEBRIS_SETTLING), true);
+  assert.equal(interacts(VEHICLE_CARRIER, DEBRIS_NORMAL), true);
+  assert.equal(interacts(VEHICLE_CARRIER, ACTOR_NORMAL), true);
+  assert.equal(interacts(VEHICLE_ATTACHMENT, ACTOR_NORMAL), true);
+  assert.equal(interacts(VEHICLE_CONTACT_QUERY, VEHICLE_ATTACHMENT), false);
+  assert.equal(interacts(VEHICLE_CARRIER, 0xffff_ffff), true);
+  assert.equal(interacts(VEHICLE_ATTACHMENT, 0xffff_ffff), true);
 });
 
 test("falling debris is retired only below the shared fog depth", () => {

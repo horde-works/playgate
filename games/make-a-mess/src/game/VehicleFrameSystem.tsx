@@ -4798,6 +4798,7 @@ export function VehicleFrameSystem({
         ...controls,
       ] as const;
       if (physicalCarrier) {
+        const wakeForAppliedForces = Boolean(state.flight || state.recovery);
         for (const applied of physicalForces) {
           physicalCarrier.addForceAtPoint(
             {
@@ -4806,7 +4807,7 @@ export function VehicleFrameSystem({
               z: applied.force[2],
             },
             { x: applied.point[0], y: applied.point[1], z: applied.point[2] },
-            true,
+            wakeForAppliedForces,
           );
         }
         // Medium damping remains a real torque. Rapier owns the angular
@@ -4818,7 +4819,7 @@ export function VehicleFrameSystem({
             y: -angularDamping * state.body.angularVelocity[1],
             z: -angularDamping * state.body.angularVelocity[2],
           },
-          true,
+          wakeForAppliedForces,
         );
       }
       onFramePose?.({

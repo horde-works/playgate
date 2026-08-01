@@ -5,6 +5,8 @@ const GROUP_ACTOR = 0x0004;
 const GROUP_ACTOR_DETAIL = 0x0008;
 const GROUP_BOUNDARY = 0x0010;
 const GROUP_VEHICLE_QUERY = 0x0020;
+const GROUP_VEHICLE = 0x0040;
+const GROUP_VEHICLE_ATTACHMENT = 0x0080;
 
 const interactionGroups = (membership: number, filter: number): number =>
   ((membership << 16) | filter) >>> 0;
@@ -13,7 +15,11 @@ const interactionGroups = (membership: number, filter: number): number =>
 // the player and debris remain contained by the invisible edge of the map.
 export const DEBRIS_SETTLING = interactionGroups(
   GROUP_DEBRIS,
-  GROUP_WORLD | GROUP_ACTOR | GROUP_BOUNDARY | GROUP_VEHICLE_QUERY,
+  GROUP_WORLD |
+    GROUP_ACTOR |
+    GROUP_BOUNDARY |
+    GROUP_VEHICLE_QUERY |
+    GROUP_VEHICLE,
 );
 
 export const DEBRIS_NORMAL = interactionGroups(
@@ -22,12 +28,18 @@ export const DEBRIS_NORMAL = interactionGroups(
     GROUP_DEBRIS |
     GROUP_ACTOR |
     GROUP_BOUNDARY |
-    GROUP_VEHICLE_QUERY,
+    GROUP_VEHICLE_QUERY |
+    GROUP_VEHICLE,
 );
 
 export const ACTOR_NORMAL = interactionGroups(
   GROUP_ACTOR,
-  GROUP_WORLD | GROUP_DEBRIS | GROUP_ACTOR_DETAIL | GROUP_BOUNDARY,
+  GROUP_WORLD |
+    GROUP_DEBRIS |
+    GROUP_ACTOR_DETAIL |
+    GROUP_BOUNDARY |
+    GROUP_VEHICLE |
+    GROUP_VEHICLE_ATTACHMENT,
 );
 
 /** Passenger on an airborne carrier may cross the ground-player boundary. */
@@ -60,4 +72,19 @@ export const ACTOR_SAFETY_FLOOR = interactionGroups(
 export const VEHICLE_CONTACT_QUERY = interactionGroups(
   GROUP_VEHICLE_QUERY,
   GROUP_WORLD | GROUP_DEBRIS,
+);
+
+/** Dynamic contact body shared by the whole intact carrier. */
+export const VEHICLE_CARRIER = interactionGroups(
+  GROUP_VEHICLE,
+  GROUP_WORLD | GROUP_DEBRIS | GROUP_ACTOR | GROUP_VEHICLE,
+);
+
+/**
+ * Authored mechanisms carried by a vehicle have their own pose body but must
+ * never become an obstacle to their own compound carrier.
+ */
+export const VEHICLE_ATTACHMENT = interactionGroups(
+  GROUP_VEHICLE_ATTACHMENT,
+  GROUP_WORLD | GROUP_DEBRIS | GROUP_ACTOR,
 );
