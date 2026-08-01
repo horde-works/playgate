@@ -20,6 +20,14 @@ import type { SceneVector3 } from "./destructionScene.ts";
  *   разрушение   — условно и спрашивается у каждой стороны отдельно, каждой
  *                  со своим материалом.
  *
+ * ЗАКОНА РАЗРУШЕНИЯ ЗДЕСЬ НЕТ. Обе стороны судятся одним и тем же законом
+ * материалов проекта — `classifyLandingDamage`, которым уже судится падающий
+ * обломок. Он откалиброван в настоящих м/с, поэтому масштаб масс проекта его
+ * не касается. Этот модуль только ИЗМЕРЯЕТ удар: скорость сближения, импульс
+ * и интенсивность каждой стороне — в той же калибровке, в которой закон
+ * получает их от обломков. Собственная шкала прочности машины была бы вторым
+ * законом, а второго закона быть не должно.
+ *
  * Модуль намеренно чистый: ни three, ни rapier, ни каталога материалов —
  * свойства приходят функцией, как плотности в `massProperties`.
  */
@@ -29,17 +37,17 @@ export interface ContactMaterialProfile {
   /** Коэффициент восстановления: какая доля скорости вернётся отскоком. */
   readonly restitution: number;
   /**
-   * Относительное сопротивление разрушению в шкале урона проекта. Это не
-   * Дж/м³, а порядковая стойкость материала: сталь 24 против бетона 2.4.
+   * Плотность в шкале проекта: масса куска = volume × density. Нужна не для
+   * вердикта, а для интенсивности — импульс сравнивается с весом куска.
    */
-  readonly fractureEnergy: number;
+  readonly density: number;
 }
 
 /** Одна из двух встретившихся сторон. */
 export interface VehicleContactBody {
   readonly pieceId: string;
   readonly material: string;
-  /** Объём материала куска: через него считается сечение его крепления. */
+  /** Объём материала куска — авторская ручка массы, а не геометрия. */
   readonly volume: number;
 }
 
@@ -62,12 +70,12 @@ export interface VehicleContactEvent {
   /**
    * ДОЛЯ ЭТОГО КОНТАКТА В ОДНОМ УДАРЕ, 0…1.
    *
-   * У удара одна энергия, и она делится, а не размножается. Машина, легшая
-   * бортом на стену, даёт десятки пар одновременно; если каждой отдать полную
-   * кинетическую энергию корпуса, суммарно из удара выйдет её десятикратный
-   * запас, и корабль рассыплется от собственного касания. Поэтому широкий
-   * плашмя удар размазывает энергию тонко и не ломает ничего, а удар углом
-   * собирает её в одну точку и рвёт крепление. Ровно так и бывает.
+   * У удара один импульс, и он делится, а не размножается. Машина, легшая
+   * бортом на стену, даёт десятки пар одновременно; если каждой отдать полный
+   * останавливающий импульс, корабль отскочит от собственного касания быстрее,
+   * чем летел. Это сохранение, а не настройка. Скорость сближения долей НЕ
+   * делится: она интенсивная величина, у всех пар одного удара она своя и
+   * настоящая.
    *
    * Не задана — единица: одиночный контакт получает весь удар.
    */
@@ -80,30 +88,18 @@ export interface VehicleContactResolution {
   readonly restitution: number;
   /** Импульс машине в точке контакта. Есть ВСЕГДА, когда есть сближение. */
   readonly impulse: SceneVector3;
-  /** Энергия, ушедшая в смятие обеих сторон. */
-  readonly absorbedEnergy: number;
-  /** Доля этой энергии, доставшаяся машине. */
-  readonly vehicleShare: number;
-  readonly vehicleEnergy: number;
-  readonly obstacleEnergy: number;
-  /** Крепление куска машины не выдержало: он покидает compound body. */
-  readonly detachesVehiclePiece: boolean;
   /**
-   * Насколько кусок машины близок к отрыву, 0…1. Наблюдаемая величина для
-   * телеметрии и тестов: по ней видно, что порог не «почти сработал».
+   * Интенсивность для закона материалов на стороне МАШИНЫ: средняя сила
+   * этого контакта за шаг против веса её куска, в калибровке закона обломков.
    */
-  readonly vehicleJointLoad: number;
-  /**
-   * Нормированная интенсивность для закона материалов мира. Считается тем же
-   * способом, что у падающего обломка: доставленное ускорение против веса
-   * встреченного куска.
-   */
+  readonly vehicleIntensity: number;
+  /** То же для встреченного куска мира. Ноль, когда кусок не опознан. */
   readonly obstacleIntensity: number;
 }
 
 /**
  * Заявка на разрушение, которую удар отдаёт наружу. Она НЕ содержит вердикта
- * «сломать»: она содержит замер, а закон материалов у каждой стороны свой и
+ * «сломать»: она содержит замер, а закон материалов один на обе стороны и
  * применяется там, где он живёт.
  */
 export interface VehicleContactDamageRequest {
@@ -111,15 +107,30 @@ export interface VehicleContactDamageRequest {
   /** Куда шёл удар: по ней разлетаются осколки. */
   readonly direction: SceneVector3;
   readonly closingSpeed: number;
-  /** Кусок машины, чьё крепление не выдержало. */
-  readonly vehiclePieceId: string | null;
-  /** Встреченный кусок мира, если он опознан. */
+  /** Кусок машины, встретивший мир. Судится своим материалом. */
+  readonly vehiclePieceId: string;
+  readonly vehicleIntensity: number;
+  /** Встреченный кусок мира, если он опознан. Судится своим материалом. */
   readonly worldPieceId: string | null;
-  /** Интенсивность для закона обломков на стороне мира. */
   readonly worldIntensity: number;
 }
 
-const GRAVITY = 9.81;
+/**
+ * Калибровка интенсивности закона обломков: у лежащего обломка intensity =
+ * сила контакта / (масса × 320), а «сила» у rapier — это импульс, умноженный
+ * на частоту шага. Удар обязан мерить ровно в этой шкале, иначе один закон
+ * получит два разных термометра. Обе константы — свойства существующего
+ * замера, а не ручки этого модуля.
+ */
+const PHYSICS_STEP_HZ = 60;
+const LANDING_INTENSITY_FORCE_SCALE = 320;
+
+function contactIntensity(impulseMagnitude: number, mass: number): number {
+  return (
+    (impulseMagnitude * PHYSICS_STEP_HZ) /
+    Math.max(1e-6, mass * LANDING_INTENSITY_FORCE_SCALE)
+  );
+}
 
 /**
  * Восстановление пары. Берётся среднее, и это осознанное приближение: у всех
@@ -140,69 +151,15 @@ export function contactRestitution(
 }
 
 /**
- * Как энергия смятия делится между сторонами.
+ * Один удар: одно измерение, два замера.
  *
- * Мнётся сильнее тот, кто податливее, поэтому доля обратна стойкости. Сталь
- * (24) о бетон (2.4) отдаёт машине девять процентов: дом рассыпается, а
- * машине достаётся десятая часть — которой, впрочем, хватает на крепление.
- */
-export function contactEnergyShare(
-  vehicle: ContactMaterialProfile,
-  obstacle: ContactMaterialProfile | null,
-): number {
-  const own = Math.max(1e-6, vehicle.fractureEnergy);
-  if (!obstacle) {
-    // Встречена неразрушаемая геометрия: мяться больше некому.
-    return 1;
-  }
-  const other = Math.max(1e-6, obstacle.fractureEnergy);
-  return other / (own + other);
-}
-
-/**
- * СТОЙКОСТЬ КРЕПЛЕНИЯ. Сталь не крошится — отказывает узел, которым кусок
- * держится за корпус, и это другое, гораздо меньшее число, чем прочность
- * самого материала.
- *
- * Сечение крепления растёт как площадь, то есть как `V^(2/3)`: у маленького
- * ребра фонаря узел во много раз слабее, чем у килевого поддона, хотя сталь
- * одна и та же. Множитель — единственное авторское число этого модуля, и оно
- * выведено из ТРЕБОВАНИЯ, а не назначено: посадка на собственные опоры на
- * всей эксплуатационной вертикальной скорости не должна отрывать ничего, а
- * удар на маршевой скорости обязан отрывать встреченное. См.
- * `tests/vehicle-contact-damage.test.mjs`, где обе границы проверяются.
- *
- * Порядок между сторонами тоже требование, и он был перевёрнут: бетонная
- * панель рассыпается с 10.5 м/с, а машина теряла обшивку с трёх. Стальной
- * набор обязан переживать то, от чего разрушается бетон, поэтому порог
- * крепления стоит ВЫШЕ материального порога стены, в которую она врезалась.
- */
-export const JOINT_ENERGY_SCALE = 65;
-
-export function vehicleJointCapacity(
-  body: VehicleContactBody,
-  profile: ContactMaterialProfile,
-): number {
-  const volume = Math.max(1e-9, body.volume);
-  return (
-    JOINT_ENERGY_SCALE *
-    Math.max(1e-6, profile.fractureEnergy) *
-    Math.cbrt(volume * volume)
-  );
-}
-
-/**
- * Один удар: одно измерение, два вердикта.
- *
- * Импульс возвращается всегда. Разрушение — только там, где энергия смятия
- * превысила то, что сторона способна принять; вопрос задаётся каждой стороне
- * своим материалом, поэтому дом может рассыпаться, а машина уцелеть, и
- * наоборот.
+ * Импульс возвращается всегда. Вердикты здесь не выносятся: замер каждой
+ * стороны уходит одному закону материалов, где сторона отвечает своим
+ * материалом — поэтому дом может рассыпаться, а машина уцелеть, и наоборот.
  */
 export function resolveVehicleContact(
   event: VehicleContactEvent,
   materialOf: (material: string) => ContactMaterialProfile,
-  obstacleMassOf?: (obstacle: VehicleContactBody) => number,
 ): VehicleContactResolution {
   const length = Math.hypot(event.normal[0], event.normal[1], event.normal[2]);
   const vehicleProfile = materialOf(event.vehicle.material);
@@ -214,12 +171,7 @@ export function resolveVehicleContact(
     closingSpeed: 0,
     restitution,
     impulse: [0, 0, 0],
-    absorbedEnergy: 0,
-    vehicleShare: contactEnergyShare(vehicleProfile, obstacleProfile),
-    vehicleEnergy: 0,
-    obstacleEnergy: 0,
-    detachesVehiclePiece: false,
-    vehicleJointLoad: 0,
+    vehicleIntensity: 0,
     obstacleIntensity: 0,
   };
   if (length <= 1e-9 || event.effectiveMass <= 0) {
@@ -245,20 +197,12 @@ export function resolveVehicleContact(
   const share = Math.max(0, Math.min(1, event.share ?? 1));
   const magnitude =
     event.effectiveMass * closingSpeed * (1 + restitution) * share;
-  const absorbedEnergy =
-    0.5 *
-    event.effectiveMass *
-    closingSpeed *
-    closingSpeed *
-    (1 - restitution * restitution) *
-    share;
-  const vehicleShare = contactEnergyShare(vehicleProfile, obstacleProfile);
-  const vehicleEnergy = absorbedEnergy * vehicleShare;
-  const obstacleEnergy = absorbedEnergy * (1 - vehicleShare);
-  const capacity = vehicleJointCapacity(event.vehicle, vehicleProfile);
-  const obstacleMass = event.obstacle
-    ? Math.max(1e-6, obstacleMassOf?.(event.obstacle) ?? 1)
-    : 1;
+  const vehicleMass = Math.max(1e-9, event.vehicle.volume) *
+    Math.max(1e-6, vehicleProfile.density);
+  const obstacleMass = event.obstacle && obstacleProfile
+    ? Math.max(1e-9, event.obstacle.volume) *
+      Math.max(1e-6, obstacleProfile.density)
+    : null;
   return {
     closingSpeed,
     restitution,
@@ -268,15 +212,8 @@ export function resolveVehicleContact(
       unit[1] * magnitude,
       unit[2] * magnitude,
     ],
-    absorbedEnergy,
-    vehicleShare,
-    vehicleEnergy,
-    obstacleEnergy,
-    detachesVehiclePiece: vehicleEnergy > capacity,
-    vehicleJointLoad: capacity > 0 ? vehicleEnergy / capacity : 0,
-    // Тот же смысл, что у обломка: доставленное ускорение против собственного
-    // веса встреченного куска. Для машины против панели дома оно заведомо
-    // велико, и решать будет СКОРОСТЬ — как и задумано.
-    obstacleIntensity: magnitude / Math.max(1e-6, obstacleMass * GRAVITY),
+    vehicleIntensity: contactIntensity(magnitude, vehicleMass),
+    obstacleIntensity:
+      obstacleMass === null ? 0 : contactIntensity(magnitude, obstacleMass),
   };
 }

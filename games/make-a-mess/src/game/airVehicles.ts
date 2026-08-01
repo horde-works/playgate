@@ -169,16 +169,6 @@ export interface AirVehicleDefinition extends VehicleFrameDefinition {
     readonly maximumTilt?: number;
     /** Physical reach of this berth's capture/winch, in metres. */
     readonly mooringReach?: number;
-    /**
-     * Машина участвует в двусторонних ударах о мир.
-     *
-     * Это возможность конкретной машины, а не общее правило: у корабля с
-     * причалом штатная швартовка проходит в сантиметрах от жёсткой мачты, и
-     * включать ей контактное разрушение значит калечить её нормальным рейсом.
-     * Винтокрылая машина садится на открытое пятно и летает низко между домов,
-     * поэтому удар для неё — обычная часть жизни.
-     */
-    readonly contactDamage?: boolean;
     routePlan(kind: string, berth: SceneVector3): VehicleRoutePlan;
     arrivalPlan(berth: SceneVector3): VehicleRoutePlan;
     escapePlan(
@@ -961,9 +951,6 @@ export const TOWN_HEXACOPTER_AIR_VEHICLE: AirVehicleDefinition = {
     // почти над ним, и не имеет права тянуть машину за нос через полдвора.
     // Длинный радиус разворачивал лёгкий корпус рывком за носовой узел.
     mooringReach: 0.6,
-    // Единственная машина проекта, которая живёт среди препятствий: садится на
-    // открытое пятно, летает низко между домов и попадает в руки человеку.
-    contactDamage: true,
     routePlan: (kind, berth) =>
       townHexacopterPlan(kind as TownHexacopterFlightKind, berth),
     arrivalPlan: townHexacopterArrivalPlan,

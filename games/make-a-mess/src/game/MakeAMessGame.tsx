@@ -5316,8 +5316,8 @@ function OpenWorldScene({
       restitution:
         materialRuntimeProfiles[material as BreakableMaterial]?.restitution ??
         0.05,
-      fractureEnergy:
-        fractureEnergyByMaterial[material as BreakableMaterial] ?? 1,
+      density:
+        materialRuntimeProfiles[material as BreakableMaterial]?.density ?? 1,
     }),
     [],
   );
@@ -5335,7 +5335,11 @@ function OpenWorldScene({
       };
       let changed = false;
 
-      // Сторона МИРА. Тот же закон, что у падающего обломка: решает скорость.
+      // ОДИН ЗАКОН — ДВА ВЕРДИКТА. Обе стороны удара судятся законом
+      // падающего обломка, каждая своим материалом и своей интенсивностью.
+      // Собственной шкалы прочности нет ни у машины, ни у мира.
+
+      // Сторона МИРА.
       const worldPiece = request.worldPieceId
         ? breakablePieceById.get(request.worldPieceId)
         : undefined;
@@ -5363,22 +5367,40 @@ function OpenWorldScene({
         }
       }
 
-      // Сторона МАШИНЫ. Здесь НЕЛЬЗЯ звать `breakAt`: это примитив кладки, он
-      // раскалывает соседей в радиусе `fractureRadius` материала. На стене это
-      // правда, на машине из шестисот плотно уложенных деталей одно попадание
-      // так сносит половину корпуса, и корабль рассыпается конструктором.
+      // Сторона МАШИНЫ. Сталь и пластик в таблице обломков не значатся —
+      // конструкция из них переживает контактный удар на любой скорости, и
+      // это правильно: стальной набор не крошится о кирпич. Стекло лопается,
+      // потому что оно стекло: кусок выходит из compound body (§5.2) и
+      // рассыпается осколками в ТЕКУЩЕЙ позе — его кинематическое тело стоит
+      // там, где машина, а не где она родилась.
       //
-      // Сталь не крошится. Отказывает КРЕПЛЕНИЕ, и уходит ровно один кусок —
-      // со своей массой, своим коллайдером и своим вкладом в органы
-      // управления. Соседей это не касается.
-      const vehiclePiece = request.vehiclePieceId
-        ? breakablePieceById.get(request.vehiclePieceId)
-        : undefined;
-      if (vehiclePiece && !brokenPiecesRef.current.has(vehiclePiece.id)) {
-        const detached = new Set(brokenPiecesRef.current);
-        detached.add(vehiclePiece.id);
-        settleStructure(detached);
-        playImpactSound(vehiclePiece.material);
+      // `breakAt` здесь по-прежнему запрещён: это примитив кладки, он колет
+      // соседей в радиусе материала, и машина из шестисот плотно уложенных
+      // деталей рассыпалась бы конструктором. «Скол» машине пока не
+      // исполняется: carve с обрубками живёт в авторской позе статики и на
+      // летящем компаунде лгал бы геометрией.
+      const vehiclePiece = breakablePieceById.get(request.vehiclePieceId);
+      if (
+        vehiclePiece &&
+        !brokenPiecesRef.current.has(vehiclePiece.id) &&
+        crumbleOnLanding.has(vehiclePiece.material)
+      ) {
+        const verdict = classifyLandingDamage(
+          vehiclePiece.material,
+          request.closingSpeed,
+          request.vehicleIntensity,
+        );
+        if (verdict === "shatter") {
+          breakPieces([vehiclePiece.id]);
+          shatterTarget(
+            vehiclePiece,
+            "piece",
+            point,
+            request.closingSpeed,
+            "fall",
+          );
+          playImpactSound(vehiclePiece.material);
+        }
       }
 
       if (changed) {
@@ -5387,11 +5409,11 @@ function OpenWorldScene({
     },
     [
       breakAt,
+      breakPieces,
       breakablePieceById,
       chipAtImpact,
       indestructible,
       playImpactSound,
-      settleStructure,
       settleWorld,
       shatterTarget,
     ],

@@ -249,17 +249,6 @@ const DEFAULT_ROTOR_TILT = (30 * Math.PI) / 180;
 const ROTOR_YAW_RATE = 0.9;
 /** Spinning visibly while leaving more than four fifths of the weight on gear. */
 const ROTOR_GROUND_IDLE_THROTTLE = 0.04;
-/**
- * Один и тот же кусок не может ломаться каждый кадр: сразу после отрыва пара
- * коллайдеров ещё расходится, и повторные события — это тот же удар, а не
- * новый. Столько физических шагов кусок неприкосновенен после своего события.
- */
-const CONTACT_DAMAGE_COOLDOWN_STEPS = 24;
-/**
- * Сколько креплений один удар вправе оторвать за шаг. Один: у удара одна
- * энергия, и если она хватило на узел, то на второй в тот же миг уже нет.
- */
-const CONTACT_DAMAGE_PER_STEP = 1;
 /** Ниже этой скорости сближения удар не рассматривается вовсе. */
 const CONTACT_MINIMUM_CLOSING_SPEED = 0.35;
 
@@ -1306,20 +1295,18 @@ export function VehicleFrameSystem({
   const pilotStatusPublished = useRef<string | null>(null);
   const pilotStatusMode = useRef<RotorcraftPilotState["mode"] | null>(null);
   const pilotStatusNextAt = useRef(0);
-  /** Счётчик физических шагов: по нему живёт неприкосновенность после удара. */
-  const contactStep = useRef(0);
-  const contactCooldown = useRef(new Map<string, number>());
   /** Удары, накопленные движком с прошлого физического шага. */
   const contactEvents = useRef<CompoundClusterContact[]>([]);
   /**
    * Наблюдение за ударом для проверки в живой сцене. Считаются ФАКТЫ, а не
    * намерения: сколько пар движок вообще дал, сколько из них оказались
-   * сближением, сколько сорвали крепление и сколько нашли кусок мира.
+   * сближением, сколько ушли заявкой на суд закона материалов и сколько
+   * нашли кусок мира.
    */
   const contactStats = useRef({
     seen: 0,
     closing: 0,
-    detached: 0,
+    requests: 0,
     worldHits: 0,
     lastSpeed: 0,
   });
@@ -1397,12 +1384,6 @@ export function VehicleFrameSystem({
       window.removeEventListener("mousedown", handleMouseDown);
     };
   }, [occupiedSeatId, onPassengerViewRestore]);
-
-  /** Слушать удары стоит только когда в сцене есть машина, которая их несёт. */
-  const contactDamageEnabled = useMemo(
-    () => airVehicles.some((vehicle) => vehicle.flight.contactDamage === true),
-    [],
-  );
 
   const frames = useMemo<readonly VehicleFrameRuntime[]>(() => {
     const vehicleByCluster = new Map(
@@ -1646,7 +1627,7 @@ export function VehicleFrameSystem({
       __mamVehicleContacts?: () => {
         readonly seen: number;
         readonly closing: number;
-        readonly detached: number;
+        readonly requests: number;
         readonly worldHits: number;
         readonly lastSpeed: number;
       };
@@ -2338,7 +2319,6 @@ export function VehicleFrameSystem({
     // Удары, накопленные движком с прошлого шага. Очередь забирается целиком
     // и один раз: событие принадлежит шагу, а не кадру рендера.
     const contactsThisStep = contactEvents.current.splice(0);
-    contactStep.current += 1;
     // Пока корабль не идёт по маршруту, его поза — не кривая, а следствие сил:
     // тяжесть в центре масс, подъём ВЫШЕ него в центре объёма оболочки, мягкая
     // швартовка и успокоение. Отсюда и маятник, и реакция на повреждения:
@@ -2347,15 +2327,17 @@ export function VehicleFrameSystem({
       const state = frameState(frame.id);
       // УДАР О МИР.
       //
-      // Мир увидел машину обычным физическим объектом — и здесь этот факт
-      // становится импульсом (всегда) и заявкой на разрушение (условно).
-      // Автоматике полёта об ударе не сообщается ничем: она узнает о нём так
-      // же, как о попадании ракеты — по собственному изменившемуся движению.
+      // Мир видит КАЖДУЮ машину обычным физическим объектом — участие в
+      // ударах не является возможностью и не выключается паспортом. Здесь
+      // факт встречи становится импульсом (всегда) и заявкой на суд закона
+      // материалов (обеим сторонам, каждой своим материалом). Штатную
+      // швартовку и посадку от удара защищает сам закон: на их скоростях он
+      // молчит. Автоматике полёта об ударе не сообщается ничем: она узнает о
+      // нём так же, как о попадании ракеты — по изменившемуся движению.
       if (
         contactsThisStep.length > 0 &&
         state.mass &&
         state.mass.mass > 0 &&
-        frame.flight.contactDamage === true &&
         contactMaterialOf
       ) {
         const properties = state.mass;
@@ -2366,9 +2348,9 @@ export function VehicleFrameSystem({
         ];
         // ПЕРВЫЙ ПРОХОД: чей это удар и какая доля кому.
         //
-        // У удара одна энергия. Раздать её каждой паре целиком означало бы
+        // У удара один импульс. Раздать его каждой паре целиком означало бы
         // достать из корпуса вдесятеро больше, чем в нём было, и машина
-        // рассыпалась бы от собственного касания. Доли считаются по вкладу
+        // отскочила бы от собственного касания. Доли считаются по вкладу
         // каждого контакта в общее сближение.
         const own = contactsThisStep.filter(
           (contact) => contact.clusterId === frame.clusterId,
@@ -2397,13 +2379,7 @@ export function VehicleFrameSystem({
           (sum, contact) => sum + Math.max(0, closingOf(contact)),
           0,
         );
-        let detachedThisStep = 0;
         for (const contact of own) {
-          const cooldownUntil =
-            contactCooldown.current.get(contact.pieceId) ?? 0;
-          if (contactStep.current < cooldownUntil) {
-            continue;
-          }
           const member = frame.members.find(
             (candidate) => candidate.piece.id === contact.pieceId,
           );
@@ -2479,34 +2455,25 @@ export function VehicleFrameSystem({
             impulse: resolution.impulse as [number, number, number],
             point: contact.point as [number, number, number],
           });
-          const detaches =
-            resolution.detachesVehiclePiece &&
-            detachedThisStep < CONTACT_DAMAGE_PER_STEP;
-          if (detaches) {
-            detachedThisStep += 1;
-            contactStats.current.detached += 1;
-          }
           if (obstacle) {
             contactStats.current.worldHits += 1;
           }
-          if (detaches || obstacle) {
-            contactCooldown.current.set(
-              contact.pieceId,
-              contactStep.current + CONTACT_DAMAGE_COOLDOWN_STEPS,
-            );
-            onContactDamage?.({
-              point: contact.point as [number, number, number],
-              direction: [
-                -contact.normal[0],
-                -contact.normal[1],
-                -contact.normal[2],
-              ],
-              closingSpeed: resolution.closingSpeed,
-              vehiclePieceId: detaches ? member.piece.id : null,
-              worldPieceId: obstacle?.pieceId ?? null,
-              worldIntensity: resolution.obstacleIntensity,
-            });
-          }
+          // Вердикта здесь нет — только замер. Обе стороны судятся одним
+          // законом материалов там, где он живёт, каждая своим материалом.
+          contactStats.current.requests += 1;
+          onContactDamage?.({
+            point: contact.point as [number, number, number],
+            direction: [
+              -contact.normal[0],
+              -contact.normal[1],
+              -contact.normal[2],
+            ],
+            closingSpeed: resolution.closingSpeed,
+            vehiclePieceId: member.piece.id,
+            vehicleIntensity: resolution.vehicleIntensity,
+            worldPieceId: obstacle?.pieceId ?? null,
+            worldIntensity: resolution.obstacleIntensity,
+          });
         }
       }
       const applyPendingImpulses = (properties: MassProperties) => {
@@ -5505,7 +5472,7 @@ export function VehicleFrameSystem({
         pieces={pieces}
         brokenPieces={inactivePieces}
         registry={clusterRegistry}
-        onContact={contactDamageEnabled ? collectContact : undefined}
+        onContact={collectContact}
       />
       <VehicleExhaustSmoke
         frames={frames}
