@@ -741,6 +741,8 @@ interface FrameState {
   damagedSeen: number;
   /** Обрубки кластера, вошедшие в текущую модель массы. */
   memberRemnantsSeen: readonly RemnantDefinition[] | null;
+  /** Снимок условий watchdog для живой диагностики (dev-режим). */
+  watchdogProbe: Record<string, unknown> | null;
   /** Уцелевшие члены кадра; пересчитываются только со сменой brokenSeen. */
   aliveMembers: readonly FrameMember[];
   /** Сколько кусков оболочки уцелело — кэш от aliveMembers. */
@@ -1180,6 +1182,7 @@ function restingState(engineCount: number): FrameState {
     brokenSeen: -1,
     damagedSeen: -1,
     memberRemnantsSeen: null,
+    watchdogProbe: null,
     aliveMembers: [],
     envelopeLeft: 0,
   };
@@ -4747,6 +4750,27 @@ export function VehicleFrameSystem({
           tracking.crossTrackError,
           tracking.altitudeError,
         );
+        if (process.env.NODE_ENV !== "production") {
+          // Снимок ровно тех величин, по которым watchdog решает
+          // «управление не доставлено». Три повода, и они различимы только
+          // числами: нет органа, не доставлена тяга, не доставлен подъём.
+          state.watchdogProbe = {
+            requiredControlAvailable: propulsion.mode !== "inoperative",
+            propulsionMode: propulsion.mode,
+            requestedEffort: Number(requestedEffort.toFixed(2)),
+            deliveredControl: Number(
+              deliveredControlFraction(
+                flight.driveThrottle,
+                flight.throttle,
+              ).toFixed(2),
+            ),
+            requestedLift: Number(requestedLiftEffort.toFixed(2)),
+            deliveredLift: Number(liftDelivery.toFixed(2)),
+            mismatchSeconds: Number(
+              flight.watchdog.controlMismatchSeconds.toFixed(2),
+            ),
+          };
+        }
         const watchdogResult = advanceVehicleFailureWatchdog(
           flight.watchdog,
           {
@@ -5042,6 +5066,9 @@ export function VehicleFrameSystem({
               : null,
             recovery: state.recovery?.lifecycle.phase ?? null,
             disposition: state.recovery?.lifecycle.disposition ?? null,
+            // Условия controlMismatch поимённо: вердикт один, а поводов три,
+            // и по симптому «машина визуально цела» их не различить.
+            mismatch: state.watchdogProbe,
             // Вес машины прикладывает НАШ код: у составного тела
             // gravityScale = 0. Нет носителя в реестре — нет ни веса, ни
             // подъёма, и тело летит по инерции «невзирая на тяжесть».

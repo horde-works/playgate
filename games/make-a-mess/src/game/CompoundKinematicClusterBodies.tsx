@@ -222,17 +222,27 @@ function CompoundKinematicClusterBody({
     [definition.clusterId, definition.origin, definition.proximitySensors],
   );
   const attachedMemberIds = useMemo(
-    () =>
-      new Set(
+    () => {
+      // ЧТО ЕЩЁ НА МАШИНЕ, А НЕ ЧТО ЕЩЁ ЦЕЛО.
+      //
+      // Состав читают актуаторы: жив ли двигатель, есть ли руль, цело ли
+      // кресло. Прогрызенный ракетой кусок с машины НЕ УХОДИТ — его обрубки
+      // летят с ней и держат ту же нагрузку, — поэтому исключать его из
+      // состава нельзя. Раньше исключался, и дырка в корпусе мотора при
+      // внешне исправной машине обрывала рейс вердиктом controlMismatch.
+      // Уходят только те, кто действительно покинул судно: отломанные,
+      // распылённые и потерянные.
+      const gone = detachedPieces ?? brokenPieces;
+      return new Set(
         pieces
           .filter(
             (piece) =>
-              piece.clusterId === definition.clusterId &&
-              !brokenPieces.has(piece.id),
+              piece.clusterId === definition.clusterId && !gone.has(piece.id),
           )
           .map((piece) => piece.id),
-      ),
-    [brokenPieces, definition.clusterId, pieces],
+      );
+    },
+    [brokenPieces, definition.clusterId, detachedPieces, pieces],
   );
 
   // Свежайший состав для регистрации: сам объект регистрации не должен
