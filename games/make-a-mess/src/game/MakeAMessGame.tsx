@@ -5875,6 +5875,20 @@ function OpenWorldScene({
         source.volume ??
         source.size[0] * source.size[1] * source.size[2];
 
+      // ОБРУБОК НАСЛЕДУЕТ ВЕС СВОЕГО КУСКА, А НЕ СВОЙ ГАБАРИТ.
+      //
+      // Панели летающего кузова авторятся с ЗАНИЖЕННЫМ volume: лист обшивки
+      // не весит как монолит стали того же габарита. Ядро carve считает
+      // объём огрызка по воксельной сетке, то есть по геометрии, и без этой
+      // поправки огрызок лёгкой панели оказывался тяжелее всей панели
+      // целиком — корабль после дырки в борту весил больше исправного и
+      // снимался с рейса «исчерпанным запасом подъёма».
+      const parentBoundingVolume =
+        source.size[0] * source.size[1] * source.size[2];
+      const authoredDensityScale =
+        sourceVolume > 0 && parentBoundingVolume > 1e-9
+          ? Math.min(1, sourceVolume / parentBoundingVolume)
+          : 1;
       const additions = fragments.map((fragment): RemnantDefinition => {
         remnantCounter.current += 1;
         return {
@@ -5896,7 +5910,10 @@ function OpenWorldScene({
           detached: false,
           voxelBody: fragment.voxelBody,
           boxes: fragment.boxes,
-          volume: fragment.volume,
+          volume:
+            fragment.volume === undefined
+              ? undefined
+              : fragment.volume * authoredDensityScale,
         };
       });
       if (
