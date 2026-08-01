@@ -979,8 +979,11 @@ export function FirstPersonLauncher({
 
 export function FirstPersonRocketLauncher({
   kickRef,
+  slim = false,
 }: {
   kickRef: { current: number };
+  /** Игломёт: та же труба, но заметно тоньше — оружие видно в руках. */
+  slim?: boolean;
 }) {
   const group = useRef<Group>(null);
   const sight = useRef<Group>(null);
@@ -1074,8 +1077,20 @@ export function FirstPersonRocketLauncher({
   });
 
   return (
-    <group ref={group} renderOrder={20}>
+    <group ref={group} renderOrder={20} scale={slim ? [0.72, 0.72, 1.06] : 1}>
       <ViewmodelLighting />
+      {/* Золотое навершие: единственный способ отличить игломёт от тяжёлого
+          ствола, не глядя на подпись. Латунь на дульном срезе. */}
+      {slim ? (
+        <mesh position={[0, 0.015, -0.63]} rotation={[Math.PI / 2, 0, 0]} castShadow>
+          <cylinderGeometry args={[0.108, 0.1, 0.12, 22]} />
+          <meshStandardMaterial
+            color="#d8a24a"
+            metalness={0.92}
+            roughness={0.24}
+          />
+        </mesh>
+      ) : null}
       <mesh
         position={[0, 0.015, -0.08]}
         rotation={[Math.PI / 2, 0, 0]}

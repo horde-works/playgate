@@ -94,6 +94,9 @@ import {
 import {
   BLAST_PUSH_RADIUS,
   BLAST_RADIUS,
+  blastEnergyAtDistance,
+  explosiveProfile,
+  type ExplosiveKind,
   MG_FIRE_INTERVAL,
   MG_RANGE,
   ROCKET_BLAST_PUSH_RADIUS,
@@ -356,8 +359,7 @@ import type {
 type ControlName = "forward" | "backward" | "left" | "right" | "run" | "jump";
 
 // "none" — фоторежим: пустые руки, клик ничего не делает; клавиша 0.
-type WeaponName = "none" | "hammer" | "launcher" | "mg" | "rocket";
-type ExplosiveKind = "grenade" | "rocket";
+type WeaponName = "none" | "hammer" | "launcher" | "mg" | "rocket" | "lance";
 
 function nextWeaponName(weapon: WeaponName): Exclude<WeaponName, "none"> {
   return weapon === "hammer"
@@ -366,7 +368,25 @@ function nextWeaponName(weapon: WeaponName): Exclude<WeaponName, "none"> {
       ? "mg"
       : weapon === "mg"
         ? "rocket"
-        : "hammer";
+        : weapon === "rocket"
+          ? "lance"
+          : "hammer";
+}
+
+/**
+ * Ракетомёты чередуются одной клавишей: тяжёлый — по стенам и домам, игла —
+ * по машинам. Выбор боеприпаса и есть решение игрока перед выстрелом.
+ */
+function nextLauncherWeapon(weapon: WeaponName): Extract<
+  WeaponName,
+  "rocket" | "lance"
+> {
+  return weapon === "rocket" ? "lance" : "rocket";
+}
+
+/** Каким боеприпасом стреляет этот ракетомёт. */
+function launcherExplosive(weapon: WeaponName): ExplosiveKind {
+  return weapon === "lance" ? "lance" : "rocket";
 }
 
 function timeOfDayKey(timeOfDay: TimeOfDay): TranslationKey {
@@ -2914,7 +2934,11 @@ function Grenade({
   }, [grenade.velocity]);
   const rocketQuaternion = useMemo(() => new Quaternion(), []);
   const rocketForward = useMemo(() => new Vector3(0, 0, 1), []);
-  const isRocket = grenade.kind === "rocket";
+  // Снаряд живёт по своему паспорту. «Похож на ракету» (есть корпус, след и
+  // управляемый полёт) — свойство ВИДА боеприпаса, а не имени: игла тоже
+  // ракета, только тоньше и быстрее.
+  const profile = explosiveProfile(grenade.kind);
+  const isRocket = grenade.kind !== "grenade";
 
   useEffect(() => {
     const mesh = rocketTrailMesh.current;
@@ -2985,13 +3009,13 @@ function Grenade({
       true,
     );
     body.current.setAngvel(
-      grenade.kind === "rocket" ? { x: 0, y: 0, z: 0 } : { x: 7, y: 3, z: 9 },
+      profile.projectile.spin,
       true,
     );
 
     const fuse = window.setTimeout(
       trigger,
-      grenade.kind === "rocket" ? 2600 : 3500,
+      profile.projectile.fuseMs,
     );
     return () => window.clearTimeout(fuse);
   }, [grenade, trigger]);
@@ -3106,16 +3130,16 @@ function Grenade({
         ref={body}
         position={[...grenade.position]}
         colliders={false}
-        density={isRocket ? 3.4 : 2.2}
-        gravityScale={isRocket ? 0 : 1}
+        density={profile.projectile.density}
+        gravityScale={profile.projectile.gravityScale}
         linearDamping={0.04}
-        angularDamping={isRocket ? 0.95 : 0.35}
+        angularDamping={profile.projectile.angularDamping}
         ccd
         collisionGroups={ACTOR_NORMAL}
         onCollisionEnter={() => trigger()}
       >
         {isRocket ? (
-          <BallCollider args={[0.14]} />
+          <BallCollider args={[grenade.kind === "lance" ? 0.085 : 0.14]} />
         ) : (
           <CapsuleCollider
             args={[0.075, 0.062]}
@@ -6879,14 +6903,13 @@ function OpenWorldScene({
 
   const explodeAt = useCallback(
     (center3: Vector3, kind: ExplosiveKind = "grenade") => {
-      const isRocket = kind === "rocket";
-      const blastRadius = isRocket ? ROCKET_BLAST_RADIUS : BLAST_RADIUS;
-      const blastPushRadius = isRocket
-        ? ROCKET_BLAST_PUSH_RADIUS
-        : BLAST_PUSH_RADIUS;
-      const energyAtDistance = isRocket
-        ? rocketEnergyAtDistance
-        : grenadeEnergyAtDistance;
+      // Снаряд — это данные: радиусы, энергия, импульс и бюджеты приходят
+      // из его паспорта, а не из ветки «ракета или граната».
+      const profile = explosiveProfile(kind);
+      const blastRadius = profile.blastRadius;
+      const blastPushRadius = profile.blastPushRadius;
+      const energyAtDistance = (surfaceDistance: number) =>
+        blastEnergyAtDistance(surfaceDistance, blastRadius, profile.damageEnergy);
       playExplosionSound();
       explosionId.current += 1;
       const nextExplosionId = explosionId.current;
@@ -7083,10 +7106,10 @@ function OpenWorldScene({
       // the bright, opaque core remains close to the charge. Real frames and
       // debris displaced at the remote exit produce their own local dust.
       const visualLobes: ExplosionFxLobe[] = [];
-      const visualDirectionCount = isRocket ? 24 : 18;
+      const visualDirectionCount = profile.visualDirections;
       const visualProbeDistance = Math.min(
         blastRadius * 1.05,
-        isRocket ? 10 : 4.2,
+        profile.visualProbeDistance,
       );
       const visualTarget = new Vector3();
       for (let index = 0; index < visualDirectionCount; index += 1) {
@@ -7219,7 +7242,7 @@ function OpenWorldScene({
         // Pressure impulse is a property of this explosion and exposed area,
         // not of target mass. Mass only determines the resulting delta-v in
         // the carrier integrator.
-        const magnitude = (isRocket ? 110 : 55) * falloff * visibility;
+        const magnitude = profile.pressureImpulse * falloff * visibility;
         queueCompoundKinematicImpulse(compoundKinematicImpulses, clusterId, {
           impulse: [
             outward.x * magnitude,
@@ -7599,9 +7622,7 @@ function OpenWorldScene({
       const attachedDamageCandidates = selectCarveTargetsWithinBudget(
         sortedDamageCandidates,
         (entry) => entry.source,
-        isRocket
-          ? { maxTargets: 80, workBudget: 20_000, groundWorkBudget: 3_000 }
-          : { maxTargets: 80, workBudget: 9_000, groundWorkBudget: 1_600 },
+        profile.carveBudget,
       );
 
       // One explosion already has a dense particle burst and real structural
@@ -7621,7 +7642,7 @@ function OpenWorldScene({
       const physicsQuality = performanceGovernor.getSnapshot().physicsQuality;
       const chipBudgetScale = [0, 0.5, 1][physicsQuality];
       const chipState = {
-        budget: Math.floor((isRocket ? 24 : 12) * chipBudgetScale),
+        budget: Math.floor(profile.chipBudget * chipBudgetScale),
       };
       const loosePhysicalChipCount = [0, 1, 2][physicsQuality];
       for (const entry of attachedDamageCandidates) {
@@ -7742,7 +7763,7 @@ function OpenWorldScene({
                   "blast",
                   energy,
                 ),
-                burstSpeed: Math.max(isRocket ? 7 : 3.5, energy * 0.72),
+                burstSpeed: Math.max(profile.looseBurstSpeed, energy * 0.72),
               }
             : null;
         })
@@ -7844,13 +7865,13 @@ function OpenWorldScene({
           if (id === "player") {
             body.applyImpulse(
               {
-                x: dx * inverse * (isRocket ? 9.4 : 6.4) * falloff * mass,
+                x: dx * inverse * profile.playerPush.horizontal * falloff * mass,
                 y:
                   (dy * inverse + 0.8) *
-                  (isRocket ? 7.2 : 5.2) *
+                  profile.playerPush.vertical *
                   falloff *
                   mass,
-                z: dz * inverse * (isRocket ? 9.4 : 6.4) * falloff * mass,
+                z: dz * inverse * profile.playerPush.horizontal * falloff * mass,
               },
               true,
             );
@@ -7871,7 +7892,7 @@ function OpenWorldScene({
           body.wakeUp();
 
           const speed =
-            (isRocket ? 7.8 : 5.2) + (isRocket ? 10.5 : 6.5) * falloff;
+            profile.debrisPush.base + profile.debrisPush.falloff * falloff;
           body.applyImpulse(
             {
               x: dx * inverse * speed * mass,
@@ -7979,9 +8000,10 @@ function OpenWorldScene({
         const mass = Math.max(0.04, body.mass());
         body.applyImpulse(
           {
-            x: dx * inverse * (isRocket ? 9.4 : 6.4) * falloff * mass,
-            y: (dy * inverse + 0.8) * (isRocket ? 7.2 : 5.2) * falloff * mass,
-            z: dz * inverse * (isRocket ? 9.4 : 6.4) * falloff * mass,
+            x: dx * inverse * profile.playerPush.horizontal * falloff * mass,
+            y:
+              (dy * inverse + 0.8) * profile.playerPush.vertical * falloff * mass,
+            z: dz * inverse * profile.playerPush.horizontal * falloff * mass,
           },
           true,
         );
@@ -8222,9 +8244,12 @@ function OpenWorldScene({
     });
   }, [camera]);
 
-  const fireRocket = useCallback(() => {
+  const fireRocket = useCallback((kind: ExplosiveKind = "rocket") => {
     const now = performance.now();
-    if (now - lastRocketTime.current < 1650) {
+    // Игла легче и заряжается быстрее — это часть её роли: по маневрирующей
+    // машине нужен второй шанс, а не один выстрел раз в две секунды.
+    const reloadMs = kind === "lance" ? 900 : 1650;
+    if (now - lastRocketTime.current < reloadMs) {
       return;
     }
     lastRocketTime.current = now;
@@ -8240,11 +8265,16 @@ function OpenWorldScene({
 
     grenadeId.current += 1;
     const nextGrenadeId = grenadeId.current;
+    const speed = explosiveProfile(kind).projectile.speed;
     projectileRuntime.current?.spawn({
       id: nextGrenadeId,
-      kind: "rocket",
+      kind,
       position: [origin.x, origin.y, origin.z],
-      velocity: [direction.x * 32, direction.y * 32 + 0.55, direction.z * 32],
+      velocity: [
+        direction.x * speed,
+        direction.y * speed + 0.55,
+        direction.z * speed,
+      ],
     });
   }, [camera]);
 
@@ -8432,8 +8462,8 @@ function OpenWorldScene({
       fireGrenade();
       return;
     }
-    if (weapon === "rocket") {
-      fireRocket();
+    if (weapon === "rocket" || weapon === "lance") {
+      fireRocket(launcherExplosive(weapon));
       return;
     }
 
@@ -9245,8 +9275,11 @@ function OpenWorldScene({
             <FirstPersonHammer swing={swing} />
           ) : weapon === "launcher" ? (
             <FirstPersonLauncher kickRef={launcherKick} />
-          ) : weapon === "rocket" ? (
-            <FirstPersonRocketLauncher kickRef={launcherKick} />
+          ) : weapon === "rocket" || weapon === "lance" ? (
+            <FirstPersonRocketLauncher
+              kickRef={launcherKick}
+              slim={weapon === "lance"}
+            />
           ) : (
             <FirstPersonMachineGun shotsRef={mgShots} />
           )}
@@ -9806,7 +9839,13 @@ function MobileGameControls({
               ["hammer", "1", t("weapon.hammer")],
               ["launcher", "2", t("weapon.launcher.short")],
               ["mg", "3", t("weapon.mg")],
-              ["rocket", "4", t("weapon.rocket.short")],
+              [
+                weapon === "lance" ? "lance" : "rocket",
+                "4",
+                weapon === "lance"
+                  ? t("weapon.lance.short")
+                  : t("weapon.rocket.short"),
+              ],
             ] as const
           ).map(([nextWeapon, shortcut, label]) => (
             <button
@@ -10277,7 +10316,9 @@ function usePlayerModeCaption({
               ? t("announce.weaponLauncher")
               : weapon === "rocket"
                 ? t("announce.weaponRocket")
-                : t("announce.weaponMg");
+                : weapon === "lance"
+                  ? t("announce.weaponLance")
+                  : t("announce.weaponMg");
     } else if (before.timeOfDay !== timeOfDay) {
       kicker = `${t(timeOfDayKey(timeOfDay))} · ${gameClockText(TIME_OF_DAY_TARGETS[timeOfDay])}`;
       text = t(timeOfDayAnnouncementKey(timeOfDay));
@@ -10307,7 +10348,9 @@ function ModeChips({
           ? t("weapon.launcher")
           : weapon === "rocket"
             ? t("weapon.rocket")
-            : t("weapon.mg");
+            : weapon === "lance"
+              ? t("weapon.lance")
+              : t("weapon.mg");
 
   if (!flightMode && !weaponChip) {
     return null;
@@ -11528,7 +11571,8 @@ export function MakeAMessGame({
         (!occupiedSeatId || interIslandPassengerState.flightActive) &&
         !event.repeat
       ) {
-        requestWeaponChange("rocket");
+        // Одна клавиша, два ракетомёта: повторное нажатие меняет боеприпас.
+        requestWeaponChange(nextLauncherWeapon(weapon));
       } else if (
         event.code === "KeyQ" &&
         (!occupiedSeatId || interIslandPassengerState.flightActive) &&
@@ -12040,7 +12084,9 @@ export function MakeAMessGame({
                 ? "—"
                 : equippedWeapon === "hammer"
                   ? t("fire.strike")
-                  : equippedWeapon === "launcher" || equippedWeapon === "rocket"
+                  : equippedWeapon === "launcher" ||
+                      equippedWeapon === "rocket" ||
+                      equippedWeapon === "lance"
                     ? t("fire.shoot")
                     : t("fire.hold")}
               <span>0·1·2·3·4</span>

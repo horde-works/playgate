@@ -106,7 +106,160 @@ const ROCKET_VOLUME_SCALE = Math.cbrt(ROCKET_VOLUME_MULTIPLIER);
 export const ROCKET_BLAST_RADIUS = BLAST_RADIUS * ROCKET_VOLUME_SCALE;
 export const ROCKET_BLAST_PUSH_RADIUS = BLAST_PUSH_RADIUS * ROCKET_VOLUME_SCALE;
 export const ROCKET_DAMAGE_ENERGY = GRENADE_DAMAGE_ENERGY * ROCKET_VOLUME_MULTIPLIER;
+
+/**
+ * ЛЁГКАЯ РАКЕТА («игла»): тонкий скоростной боеприпас против МАШИН.
+ *
+ * Тяжёлая ракета несёт 550 единиц на радиусе 9.5 м — она перебивает порог
+ * стали (27.6) по всему габариту летящей машины везде, где есть прямая
+ * видимость, и потому снимает силовую установку целиком. Это её честное
+ * свойство, и оно остаётся: против стен и домов нужна именно такая.
+ *
+ * Игла считается от ЗАДАЧИ: снять по сумме тяги примерно один двигатель.
+ * У кольцевого движителя тяга живёт в лопастях, лопасть тонкая и от любого
+ * состоявшегося carve гибнет целиком, поэтому вся калибровка сводится к
+ * дальности, на которой боеприпас ещё пробивает сталь:
+ *
+ *   E(d) = E0·(1 − d/R)^1.15 > 27.6
+ *
+ * ГЛАВНОЕ ТРЕБОВАНИЕ — НЕ ЗАДЕТЬ СОСЕДНЕЕ КОЛЬЦО. Машину роняет не сумма
+ * снятой тяги, а ПОТЕРЯ СТОРОНЫ: два соседних кольца выводят центр масс за
+ * выпуклую оболочку уцелевших точек тяги, и держать позу становится нечем
+ * (потолок ровного подъёма падает с 0.68 до 0.34, вердикт — падение). Два
+ * кольца НАПРОТИВ при той же потерянной тяге машина переживает спокойно.
+ *
+ * Кольца стоят в 2.15 м друг от друга, поэтому игла считается «проникающей»:
+ *
+ *   E(d) = 90·(1 − d/1.6)^1.15 > 27.6  ⇒  d < 1.02 м
+ *
+ * Радиус поражения стали вдвое меньше межкольцевого шага — попадание уносит
+ * своё кольцо и физически не достаёт до соседнего. Сбить машину одним
+ * выстрелом всё ещё можно, но для этого надо попасть между колец, а не
+ * просто «в машину».
+ */
+export const LANCE_BLAST_RADIUS = 1.6;
+export const LANCE_BLAST_PUSH_RADIUS = 2.4;
+export const LANCE_DAMAGE_ENERGY = 90;
+
 export const MAX_BLAST_RADIUS = Math.max(BLAST_RADIUS, ROCKET_BLAST_RADIUS);
+
+/**
+ * Паспорт боеприпаса. Раньше все различия жили в двадцати шести ветках
+ * `isRocket ? a : b`, и третий тип пришлось бы вписывать в каждую. Теперь
+ * снаряд — это данные.
+ */
+export interface ExplosiveProfile {
+  readonly kind: ExplosiveKind;
+  readonly blastRadius: number;
+  readonly blastPushRadius: number;
+  readonly damageEnergy: number;
+  /** Импульс давления на составное тело, единицы силы·с. */
+  readonly pressureImpulse: number;
+  /** Сколько направлений сэмплится для формы видимого облака. */
+  readonly visualDirections: number;
+  readonly visualProbeDistance: number;
+  /** Бюджеты carve и синтетических чипов: цена кадра, не физика. */
+  readonly carveBudget: {
+    readonly maxTargets: number;
+    readonly workBudget: number;
+    readonly groundWorkBudget: number;
+  };
+  readonly chipBudget: number;
+  /** Минимальная скорость разлёта свободного куска. */
+  readonly looseBurstSpeed: number;
+  /** Волна по телам: горизонталь, вертикаль и разгон обломка. */
+  readonly playerPush: { readonly horizontal: number; readonly vertical: number };
+  readonly debrisPush: { readonly base: number; readonly falloff: number };
+  /** Снаряд как физическое тело. */
+  readonly projectile: {
+    readonly speed: number;
+    readonly density: number;
+    readonly gravityScale: number;
+    readonly angularDamping: number;
+    readonly fuseMs: number;
+    readonly spin: { readonly x: number; readonly y: number; readonly z: number };
+  };
+}
+
+export type ExplosiveKind = "grenade" | "rocket" | "lance";
+
+export const explosiveProfiles: Record<ExplosiveKind, ExplosiveProfile> = {
+  grenade: {
+    kind: "grenade",
+    blastRadius: BLAST_RADIUS,
+    blastPushRadius: BLAST_PUSH_RADIUS,
+    damageEnergy: GRENADE_DAMAGE_ENERGY,
+    pressureImpulse: 55,
+    visualDirections: 18,
+    visualProbeDistance: 4.2,
+    carveBudget: { maxTargets: 80, workBudget: 9_000, groundWorkBudget: 1_600 },
+    chipBudget: 12,
+    looseBurstSpeed: 3.5,
+    playerPush: { horizontal: 6.4, vertical: 5.2 },
+    debrisPush: { base: 5.2, falloff: 6.5 },
+    projectile: {
+      speed: 18,
+      density: 2.2,
+      gravityScale: 1,
+      angularDamping: 0.35,
+      fuseMs: 3500,
+      spin: { x: 7, y: 3, z: 9 },
+    },
+  },
+  rocket: {
+    kind: "rocket",
+    blastRadius: ROCKET_BLAST_RADIUS,
+    blastPushRadius: ROCKET_BLAST_PUSH_RADIUS,
+    damageEnergy: ROCKET_DAMAGE_ENERGY,
+    pressureImpulse: 110,
+    visualDirections: 24,
+    visualProbeDistance: 10,
+    carveBudget: { maxTargets: 80, workBudget: 20_000, groundWorkBudget: 3_000 },
+    chipBudget: 24,
+    looseBurstSpeed: 7,
+    playerPush: { horizontal: 9.4, vertical: 7.2 },
+    debrisPush: { base: 7.8, falloff: 10.5 },
+    projectile: {
+      speed: 32,
+      density: 3.4,
+      gravityScale: 0,
+      angularDamping: 0.95,
+      fuseMs: 2600,
+      spin: { x: 0, y: 0, z: 0 },
+    },
+  },
+  lance: {
+    kind: "lance",
+    blastRadius: LANCE_BLAST_RADIUS,
+    blastPushRadius: LANCE_BLAST_PUSH_RADIUS,
+    damageEnergy: LANCE_DAMAGE_ENERGY,
+    // Лёгкая боевая часть толкает соразмерно: машину она качнёт, но не
+    // отшвырнёт, и это заметная разница в поведении цели после попадания.
+    pressureImpulse: 38,
+    visualDirections: 16,
+    visualProbeDistance: 3.4,
+    carveBudget: { maxTargets: 48, workBudget: 7_000, groundWorkBudget: 1_200 },
+    chipBudget: 10,
+    looseBurstSpeed: 4.5,
+    playerPush: { horizontal: 5.6, vertical: 4.4 },
+    debrisPush: { base: 5.6, falloff: 7 },
+    projectile: {
+      // Вчетверо быстрее тяжёлой: тонкая игла и есть её главный признак.
+      // На такой скорости упреждение по маневрирующей машине практически
+      // не берётся — попадание решает наводка, а не предсказание манёвра.
+      speed: 124,
+      density: 1.6,
+      gravityScale: 0,
+      angularDamping: 0.9,
+      fuseMs: 2200,
+      spin: { x: 0, y: 0, z: 0 },
+    },
+  },
+};
+
+export function explosiveProfile(kind: ExplosiveKind): ExplosiveProfile {
+  return explosiveProfiles[kind];
+}
 export const MAX_LIVE_SHARDS = 180;
 export const MAX_LIVE_SHARD_BOXES = 900;
 export const VOLUME_BREAK_FRACTION = 0.45;

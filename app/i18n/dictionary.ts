@@ -66,6 +66,7 @@ export const ui = {
     "announce.weaponHammer": "The sledgehammer is in your hands.",
     "announce.weaponLauncher": "The launcher is on your shoulder.",
     "announce.weaponRocket": "The rocket is armed.",
+    "announce.weaponLance": "Lance loaded. Aim for the engines.",
     "announce.weaponMg": "The machine gun is warm.",
     "announce.interIslandRulesKicker": "Flight rules",
     "announce.interIslandWeaponBlocked":
@@ -220,6 +221,8 @@ export const ui = {
     "weapon.launcher.short": "Grenade",
     "weapon.rocket": "Rocket launcher",
     "weapon.rocket.short": "Rocket",
+    "weapon.lance": "Lance launcher",
+    "weapon.lance.short": "Lance",
     "weapon.mg": "Machine gun",
 
     "time.dawn": "Dawn",
@@ -473,6 +476,7 @@ export const ui = {
     "announce.weaponHammer": "El martillo está en tus manos.",
     "announce.weaponLauncher": "El lanzagranadas al hombro.",
     "announce.weaponRocket": "El cohete está listo.",
+    "announce.weaponLance": "Dardo cargado. Apunta a los motores.",
     "announce.weaponMg": "La ametralladora está caliente.",
     "announce.interIslandRulesKicker": "Normas de vuelo",
     "announce.interIslandWeaponBlocked":
@@ -627,6 +631,8 @@ export const ui = {
     "weapon.launcher.short": "Granada",
     "weapon.rocket": "Lanzacohetes",
     "weapon.rocket.short": "Cohete",
+    "weapon.lance": "Lanzador de dardos",
+    "weapon.lance.short": "Dardo",
     "weapon.mg": "Ametralladora",
 
     "time.dawn": "Amanecer",
@@ -887,6 +893,7 @@ export const ui = {
     "announce.weaponHammer": "В руках кувалда.",
     "announce.weaponLauncher": "Гранатомёт на плече.",
     "announce.weaponRocket": "Ракета готова.",
+    "announce.weaponLance": "Игла в стволе. Целься по движкам.",
     "announce.weaponMg": "Пулемёт разогрет.",
     "announce.interIslandRulesKicker": "Правила рейса",
     "announce.interIslandWeaponBlocked":
@@ -1040,6 +1047,8 @@ export const ui = {
     "weapon.launcher.short": "Граната",
     "weapon.rocket": "Ракетомёт",
     "weapon.rocket.short": "Ракета",
+    "weapon.lance": "Игломёт",
+    "weapon.lance.short": "Игла",
     "weapon.mg": "Пулемёт",
 
     "time.dawn": "Рассвет",

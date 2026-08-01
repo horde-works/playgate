@@ -17,7 +17,7 @@ export interface ExplosionFxLobeInput {
 
 export interface ExplosionFxInput {
   readonly id: number;
-  readonly kind: "grenade" | "rocket";
+  readonly kind: "grenade" | "rocket" | "lance";
   readonly position: readonly [number, number, number];
   readonly lobes: readonly ExplosionFxLobeInput[];
   readonly dustColor: readonly [number, number, number];
@@ -77,7 +77,10 @@ export interface ExplosionLightPlan {
   readonly exposureKick: number;
 }
 
-export const EXPLOSION_LIGHT: Record<"grenade" | "rocket", ExplosionLightPlan> =
+export const EXPLOSION_LIGHT: Record<
+  "grenade" | "rocket" | "lance",
+  ExplosionLightPlan
+> =
   {
     grenade: {
       peak: 240,
@@ -94,6 +97,16 @@ export const EXPLOSION_LIGHT: Record<"grenade" | "rocket", ExplosionLightPlan> =
       emberLife: 1.5,
       emberFraction: 0.14,
       exposureKick: 0.5,
+    },
+    // Игла: короткая резкая вспышка. Света меньше, чем у тяжёлой, и он
+    // быстро гаснет — боевая часть маленькая, гореть в ней нечему.
+    lance: {
+      peak: 300,
+      distance: 12,
+      life: 0.26,
+      emberLife: 0.7,
+      emberFraction: 0.09,
+      exposureKick: 0.3,
     },
   };
 
