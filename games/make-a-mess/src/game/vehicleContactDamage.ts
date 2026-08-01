@@ -3,12 +3,10 @@ import type { SceneVector3 } from "./destructionScene.ts";
 /**
  * УДАР ДВУХ ОБЪЕКТОВ. Не контакт.
  *
- * Контакт — это ограничение «не проникай»: непрерывная штрафная реакция и
- * трение под лежащим корпусом. Им занимаются щупы, и урона они не производят
- * никогда. Удар — событие: два куска встретились в точке с относительной
- * скоростью. Вывести одно из другого нельзя, и это не вкусовое решение:
- * величина силы штрафной пружины зависит от её жёсткости и размера шага, то
- * есть ею измеряется настройка интегратора, а не физика.
+ * Контакт — это ограничение «не проникай», нормальная реакция и трение
+ * Rapier. Удар — измеренное событие того же солвера: два куска встретились и
+ * передали конечный импульс. Код ниже не создаёт второй ответ на
+ * столкновение, а переводит измерение в шкалу общего закона разрушения.
  *
  * С точки зрения мира машина — обычный объект, как летящая в дом ракета. Вся
  * разница в том, что ракета после попадания исчезает, а машина остаётся и
@@ -64,6 +62,11 @@ export interface VehicleContactEvent {
    * завысила бы импульс в разы.
    */
   readonly effectiveMass: number;
+  /**
+   * Normal impulse measured by the real contact solver. When present it is
+   * authoritative: no second synthetic collision response is generated.
+   */
+  readonly normalImpulse?: number;
   readonly vehicle: VehicleContactBody;
   /** Null, когда встреченная геометрия не является разрушаемым куском. */
   readonly obstacle: VehicleContactBody | null;
@@ -185,18 +188,22 @@ export function resolveVehicleContact(
   // Нормаль смотрит в машину, поэтому сближение — это движение машины ПРОТИВ
   // неё. Скользящая составляющая сюда не входит вовсе: полёт вдоль стены не
   // является ударом, сколько бы он ни длился.
-  const closingSpeed = -(
+  const measuredClosingSpeed = -(
     event.relativeVelocity[0] * unit[0] +
     event.relativeVelocity[1] * unit[1] +
     event.relativeVelocity[2] * unit[2]
   );
+  const share = Math.max(0, Math.min(1, event.share ?? 1));
+  const measuredImpulse = Math.max(0, event.normalImpulse ?? 0);
+  const closingSpeed = event.normalImpulse === undefined
+    ? measuredClosingSpeed
+    : measuredImpulse / Math.max(1e-9, event.effectiveMass * (1 + restitution));
   if (closingSpeed <= 0) {
     return idle;
   }
-
-  const share = Math.max(0, Math.min(1, event.share ?? 1));
-  const magnitude =
-    event.effectiveMass * closingSpeed * (1 + restitution) * share;
+  const magnitude = event.normalImpulse === undefined
+    ? event.effectiveMass * closingSpeed * (1 + restitution) * share
+    : measuredImpulse;
   const vehicleMass = Math.max(1e-9, event.vehicle.volume) *
     Math.max(1e-6, vehicleProfile.density);
   const obstacleMass = event.obstacle && obstacleProfile

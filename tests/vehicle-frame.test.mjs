@@ -35,8 +35,6 @@ import {
   vehicleFrames,
   vehicleMooringState,
   vehiclePiecePosition,
-  vehicleProbeReach,
-  vehicleProbeReaction,
   vehicleRotation,
   vehicleAttitude,
   rudderEffectiveness,
@@ -138,23 +136,6 @@ test("all five airborne machines are declared as vehicle frames", () => {
   );
   assert.equal(isVehicleFramePiece(shipPiece), true);
   assert.equal(isVehicleFramePiece(berthPiece), false);
-});
-
-test("hull probes sweep one physics step and damp motion into obstacles", () => {
-  assert.equal(vehicleProbeReach(0.22, -4, 1 / 60), 0.22);
-  assert.equal(
-    Math.abs(vehicleProbeReach(0.22, 12, 1 / 60) - 0.42) < 1e-9,
-    true,
-  );
-
-  const staticCompression = vehicleProbeReaction(100, 10, 0.22, 0.1, 0, 0.1);
-  const closingImpact = vehicleProbeReaction(100, 10, 0.22, 0.1, 2, 0.1);
-  const separating = vehicleProbeReaction(100, 10, 0.22, 0.1, -2, 0.1);
-  assert.equal(staticCompression, 12);
-  assert.equal(Math.abs(closingImpact - 52) < 1e-9, true);
-  // Rebound is damped too, but the unilateral ground reaction never pulls.
-  assert.equal(separating, 0);
-  assert.equal(closingImpact > staticCompression, true);
 });
 
 test("the frame pivots on the lift heart, not on the middle of the train", () => {
@@ -1532,42 +1513,6 @@ test("the route never drags the ship through the berth it just left", () => {
         BELLY + point[1] > TALLEST + 1,
         true,
         `${kind}: на ${(step / 200).toFixed(2)} проходит над перроном, а низ вагона на ${(BELLY + point[1]).toFixed(1)} м`,
-      );
-    }
-  }
-});
-
-test("parked at the berth, nothing touches the ship's skin", () => {
-  // Щупы обшивки толкают корабль от всего, во что упрутся. Если у причала
-  // какой-то из них уже касается перрона или навеса, корабль будет вечно
-  // отпихиваться от собственной стоянки.
-  const frame = vehicleFrameForCluster(SKY_TRAIN);
-  const others = grandTerminalScene.breakablePieces.filter(
-    (piece) => piece.clusterId !== SKY_TRAIN,
-  );
-  const REACH = 0.28;   // SUPPORT_GIVE + запас, как в системе
-  for (const probe of frame.hullProbes) {
-    for (const piece of others) {
-      if (piece.rotation) {
-        continue;   // повёрнутые считаем отдельно, коробкой по осям не выйдет
-      }
-      let inside = true;
-      let gap = 0;
-      for (let axis = 0; axis < 3; axis += 1) {
-        const half = piece.size[axis] / 2;
-        const delta = probe.point[axis] - piece.position[axis];
-        const outside = Math.abs(delta) - half;
-        if (outside > REACH) {
-          inside = false;
-          break;
-        }
-        gap = Math.max(gap, outside);
-      }
-      if (!inside) {
-        continue;
-      }
-      assert.fail(
-        `щуп [${probe.point.join(", ")}] упирается в ${piece.id} на ${gap.toFixed(2)} м`,
       );
     }
   }

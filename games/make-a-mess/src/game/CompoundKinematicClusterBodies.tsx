@@ -6,11 +6,10 @@ import {
   CuboidCollider,
   CylinderCollider,
   RigidBody,
-  useRapier,
   type RapierRigidBody,
 } from "@react-three/rapier";
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { Vector3, type Group } from "three";
+import { Quaternion, Vector3, type Group } from "three";
 import type { BreakablePieceDefinition } from "./destructionScene";
 import {
   compoundClusterColliders,
@@ -33,6 +32,8 @@ export interface CompoundClusterContact {
   readonly point: readonly [number, number, number];
   /** Unit normal pointing from the obstacle surface toward the carrier. */
   readonly normal: readonly [number, number, number];
+  /** Normal impulse actually accepted by Rapier's contact solver. */
+  readonly normalImpulse: number;
 }
 
 /** Мировая точка локальной точки коллайдера rapier. */
@@ -79,9 +80,6 @@ function CompoundKinematicClusterBody({
   const body = useRef<RapierRigidBody>(null);
   const visualRoot = useRef<Group>(null);
   const contactPoint = useRef(new Vector3());
-  // Значение берётся у самого движка, а не прямым импортом: пакет rapier —
-  // транзитивная зависимость react-three-rapier и в package.json не объявлен.
-  const { rapier } = useRapier();
   // Полный список кусков сцены сканируется один раз на сцену, а не на каждое
   // разрушение где угодно в мире.
   const memberPieces = useMemo(
@@ -118,6 +116,48 @@ function CompoundKinematicClusterBody({
           .map((piece) => piece.id),
       ),
     [brokenPieces, memberPieces],
+  );
+  const sensorElements = useMemo(
+    () =>
+      (definition.proximitySensors ?? []).map((sensor, index) => {
+        const enabled = sensor.enabledByDefault ?? sensor.normal[1] < -0.35;
+        const direction = new Vector3(...sensor.normal).normalize();
+        const orientation = new Quaternion().setFromUnitVectors(
+          new Vector3(0, -1, 0),
+          direction,
+        );
+        return (
+          <group
+            key={`${definition.clusterId}:sensor:${index}`}
+            position={[
+              sensor.point[0] - definition.origin[0],
+              sensor.point[1] - definition.origin[1],
+              sensor.point[2] - definition.origin[2],
+            ]}
+            quaternion={orientation}
+          >
+            <mesh position={[0, 0.035, 0]}>
+              <cylinderGeometry args={[0.045, 0.06, 0.07, 8]} />
+              <meshStandardMaterial
+                color="#26343b"
+                roughness={0.42}
+                metalness={0.72}
+              />
+            </mesh>
+            <mesh>
+              <sphereGeometry args={[0.055, 8, 6]} />
+              <meshStandardMaterial
+                color={enabled ? "#80eaff" : "#25333a"}
+                emissive={enabled ? "#30cfee" : "#000000"}
+                emissiveIntensity={enabled ? 2.4 : 0}
+                roughness={0.3}
+                metalness={0.55}
+              />
+            </mesh>
+          </group>
+        );
+      }),
+    [definition.clusterId, definition.origin, definition.proximitySensors],
   );
   const attachedMemberIds = useMemo(
     () =>
@@ -156,13 +196,12 @@ function CompoundKinematicClusterBody({
 
   /**
    * УДАР. Мир видит машину обычным объектом, поэтому событие приходит из
-   * движка, а не из щупов. Здесь только опознание: какой кусок, где именно и
-   * куда смотрит поверхность. Импульс и вердикты — у владельца тела.
+   * физического движка. Здесь только опознание: какой кусок, где именно и
+   * куда смотрит поверхность. Импульс уже применён солвером, а вердикт о
+   * разрушении принимает владелец тела.
    *
    * Точка берётся из ГЕОМЕТРИЧЕСКИХ контактов манифолда: они живут в narrow
-   * phase независимо от солверных (которых у пары «кинематическое ↔
-   * статическое» действительно нет — но нормаль-то приходит из того же
-   * манифолда). Центр коллайдера годился мелкому куску коптера, где ошибка —
+   * phase. Центр коллайдера годился мелкому куску коптера, где ошибка —
    * сантиметры; у метровой плиты дирижабля он врёт и плечом, и адресом
    * встреченной панели. Локальные точки манифолда отдаются в осях сторон
    * ПАРЫ, чей порядок относительно target/other не гарантирован, поэтому обе
@@ -274,6 +313,10 @@ function CompoundKinematicClusterBody({
           contactPoint.current.z,
         ],
         normal: [nx, ny, nz],
+        normalImpulse: Array.from(
+          { length: manifold.numSolverContacts() },
+          (_, index) => Math.max(0, manifold.contactImpulse(index)),
+        ).reduce((sum, impulse) => sum + impulse, 0),
       });
     },
     [definition.clusterId, onContact],
@@ -291,6 +334,7 @@ function CompoundKinematicClusterBody({
             name={collider.sourceId}
             args={collider.args as [number]}
             position={[...collider.position]}
+            density={0}
             friction={collider.friction}
             restitution={collider.restitution}
           />
@@ -301,6 +345,7 @@ function CompoundKinematicClusterBody({
             args={collider.args as [number, number]}
             position={[...collider.position]}
             rotation={[...collider.rotation]}
+            density={0}
             friction={collider.friction}
             restitution={collider.restitution}
           />
@@ -311,6 +356,7 @@ function CompoundKinematicClusterBody({
             args={collider.args as [number, number, number]}
             position={[...collider.position]}
             rotation={[...collider.rotation]}
+            density={0}
             friction={collider.friction}
             restitution={collider.restitution}
           />
@@ -322,22 +368,18 @@ function CompoundKinematicClusterBody({
   return (
     <RigidBody
       ref={body}
-      type="kinematicPosition"
+      type="dynamic"
       position={[...definition.origin]}
       colliders={false}
+      ccd
+      gravityScale={0}
       canSleep={false}
       additionalSolverIterations={4}
-      // Пара «кинематическое ↔ статическое» по умолчанию не считается вовсе,
-      // поэтому целый мир машину не видел. Без этого флага удара о дом нет как
-      // события, а не как урона.
-      activeCollisionTypes={
-        rapier.ActiveCollisionTypes.DEFAULT |
-        rapier.ActiveCollisionTypes.KINEMATIC_FIXED
-      }
       onCollisionEnter={onContact ? handleCollision : undefined}
       userData={{ compoundKinematicCluster: definition.clusterId }}
     >
       {colliderElements}
+      {sensorElements}
       <group ref={visualRoot} />
     </RigidBody>
   );

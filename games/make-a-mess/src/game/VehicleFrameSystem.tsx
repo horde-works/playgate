@@ -32,9 +32,9 @@ import {
   bodyPointVelocity,
   massProperties,
   pointEffectiveMass,
+  principalMassProperties,
   rebaseBodyMassProperties,
   rotateVector as rotateByQuaternion,
-  stepBody,
   type BodyState,
   type MassProperties,
 } from "./clusterDynamics";
@@ -58,12 +58,9 @@ import {
   rejoinVehicleRouteProgress,
   shipLocalPoint,
   vehicleAttitude,
-  vehicleGroundBrakingLiftFraction,
   vehicleMooringState,
   vehiclePiecePosition,
-  vehicleProbeReach,
-  vehicleProbeFriction,
-  vehicleProbeReaction,
+  vehicleProximitySensorEnabled,
   vehicleRouteHeading,
   vehicleRouteAltitudeTarget,
   vehicleVerticalArrivalCaptured,
@@ -119,6 +116,7 @@ import type {
 import { motionTelemetryAvailable } from "./motionTelemetry";
 import { createVehicleImpactTelemetry } from "./vehicleImpactTelemetry";
 import { runtimeDiagnosticsEnabled } from "./runtimeDiagnostics";
+import { countUpwardSupportContacts } from "./vehiclePhysicalContact";
 import {
   compileCommandActuators,
   deliveredCommandValue,
@@ -425,20 +423,8 @@ function rotorcraftFlightForces(
  * только по горизонтали — цепь тянет, но не подпирает, поэтому потерявший
  * подъём корабль спокойно садится на путь.
  */
-/** Днище: те же щупы, только смотрят вниз. */
-const DOWNWARD_PROBES = (
-  supports: readonly (readonly [number, number, number])[],
-): readonly {
-  point: readonly [number, number, number];
-  normal: readonly [number, number, number];
-}[] => supports.map((point) => ({ point, normal: [0, -1, 0] as const }));
-
-/** Как глубоко продавливается опора, приняв полный вес. */
-const SUPPORT_GIVE = 0.22;
 const RECOVERY_LANDING_DESCENT_SPEED = -0.8;
 const RECOVERY_LANDING_VERTICAL_RESPONSE = 0.8;
-/** Extra query horizon used only to discover an obstacle moving at the hull. */
-const CONTACT_RELATIVE_SPEED_MARGIN = 18;
 // Full-speed forward flight needs roughly 32 m after sensing latency with the
 // rotorcraft's weakest intact horizontal axis. Range must exceed that claim.
 const OBSTACLE_SENSOR_RANGE = 42;
@@ -546,7 +532,6 @@ interface FrameMember {
 }
 
 interface VehicleFrameRuntime extends AirVehicleDefinition {
-  /** Щупы обшивки: ими корабль чувствует целый мир, а не только пол. */
   readonly actuators: readonly CommandActuatorBinding[];
   readonly members: readonly FrameMember[];
   /** Conservative local bounds used while own debris clears the hull. */
@@ -626,7 +611,7 @@ interface FlightState {
   safetyAdvisory: VehicleSafetyAdvisory | null;
   /** Full proximity field is retained only for an occupied manual cockpit. */
   pilotObstacleReadings: readonly VehicleObstacleReading[];
-  readonly pilotIntervenedProbes: Set<number>;
+  readonly pilotIntervenedSensors: Set<number>;
   /** Когда последний раз уходили на второй круг: решение принимается один раз. */
   lastGoAround: number;
   /** Счётчик для диагностики реального рейса. */
@@ -734,7 +719,7 @@ interface FrameState {
   spinAngles: number[];
   flight: FlightState | null;
   recovery: FrameRecoveryState | null;
-  /** Number of load-bearing underside probes touching the world last step. */
+  /** Number of upward-facing physical contact manifolds last step. */
   supportContacts: number;
   /** Свободное тело: им корабль живёт, пока не летит по маршруту. */
   body: BodyState;
@@ -754,6 +739,91 @@ interface FrameState {
   aliveMembers: readonly FrameMember[];
   /** Сколько кусков оболочки уцелело — кэш от aliveMembers. */
   envelopeLeft: number;
+}
+
+function readCarrierBody(
+  frame: VehicleFrameRuntime,
+  mass: MassProperties,
+  body: RapierRigidBody,
+): Pick<FrameState, "body" | "pose"> {
+  const translation = body.translation();
+  const rotation = body.rotation();
+  const centre = body.worldCom();
+  const linear = body.linvel();
+  const angular = body.angvel();
+  const orientation = [
+    rotation.x,
+    rotation.y,
+    rotation.z,
+    rotation.w,
+  ] as const;
+  return {
+    body: {
+      position: [
+        centre.x - mass.centre[0],
+        centre.y - mass.centre[1],
+        centre.z - mass.centre[2],
+      ],
+      orientation,
+      velocity: [linear.x, linear.y, linear.z],
+      angularVelocity: [angular.x, angular.y, angular.z],
+    },
+    pose: {
+      position: [
+        translation.x - frame.origin[0],
+        translation.y - frame.origin[1],
+        translation.z - frame.origin[2],
+      ],
+      yaw: 0,
+      pitch: 0,
+      roll: 0,
+      rotation: orientation,
+    },
+  };
+}
+
+/** Explicit scene transitions may place a body; ordinary flight never does. */
+function placeCarrierBody(
+  frame: VehicleFrameRuntime,
+  mass: MassProperties,
+  state: BodyState,
+  body: RapierRigidBody,
+): void {
+  const localCentre: [number, number, number] = [
+    mass.centre[0] - frame.origin[0],
+    mass.centre[1] - frame.origin[1],
+    mass.centre[2] - frame.origin[2],
+  ];
+  const turnedCentre = rotateByQuaternion(state.orientation, localCentre);
+  body.setTranslation(
+    {
+      x: mass.centre[0] + state.position[0] - turnedCentre[0],
+      y: mass.centre[1] + state.position[1] - turnedCentre[1],
+      z: mass.centre[2] + state.position[2] - turnedCentre[2],
+    },
+    true,
+  );
+  body.setRotation(
+    {
+      x: state.orientation[0],
+      y: state.orientation[1],
+      z: state.orientation[2],
+      w: state.orientation[3],
+    },
+    true,
+  );
+  body.setLinvel(
+    { x: state.velocity[0], y: state.velocity[1], z: state.velocity[2] },
+    true,
+  );
+  body.setAngvel(
+    {
+      x: state.angularVelocity[0],
+      y: state.angularVelocity[1],
+      z: state.angularVelocity[2],
+    },
+    true,
+  );
 }
 
 interface ExhaustParticle {
@@ -1073,7 +1143,7 @@ function createFlightState(
     propulsionFeedback: Array.from({ length: engineCount }, () => 1),
     safetyAdvisory: null,
     pilotObstacleReadings: [],
-    pilotIntervenedProbes: new Set<number>(),
+    pilotIntervenedSensors: new Set<number>(),
     lastGoAround: -1e9,
     goArounds: 0,
     corrections: 0,
@@ -1510,26 +1580,6 @@ export function VehicleFrameSystem({
       });
   }, [pieces]);
 
-  // Щупы кадра статичны (frames зависят только от pieces), поэтому общий
-  // массив «днище + обшивка» собирается один раз, а не заново на каждый
-  // физический шаг.
-  const frameProbes = useMemo(
-    () =>
-      new Map(
-        frames.map((frame) => {
-          const supportProbes = DOWNWARD_PROBES(frame.supports);
-          return [
-            frame.id,
-            {
-              list: [...supportProbes, ...frame.hullProbes],
-              supportCount: supportProbes.length,
-            },
-          ] as const;
-        }),
-      ),
-    [frames],
-  );
-
   const states = useRef(new Map<string, FrameState>());
   const frameState = useCallback(
     (id: string): FrameState => {
@@ -1771,7 +1821,6 @@ export function VehicleFrameSystem({
   const oarFeatherQuaternion = useRef(new Quaternion());
   const oarTailwardAxis = useRef(new Vector3());
   const oarPivotOffset = useRef(new Vector3());
-  const supportRay = useRef<InstanceType<typeof rapier.Ray> | null>(null);
   const obstacleRay = useRef<InstanceType<typeof rapier.Ray> | null>(null);
   /** Тела корабля: чтобы луч опоры не принял его же куски за землю. */
   const shipBodies = useRef<Map<string, Set<number>>>(new Map());
@@ -2286,7 +2335,7 @@ export function VehicleFrameSystem({
 
     // --- Тело корабля --------------------------------------------------
     // Контактный корпус кластера и его ещё не отделившиеся визуальные тела
-    // принадлежат самому кораблю: щупы не должны принимать их за внешний мир.
+    // принадлежат самому кораблю: сенсоры не принимают их за внешний мир.
     shipBodies.current.clear();
     for (const frame of frames) {
       const state = frameState(frame.id);
@@ -2351,6 +2400,16 @@ export function VehicleFrameSystem({
     // снесли хвостовой вагон — центр масс уехал вперёд, и нос задрался сам.
     for (const frame of frames) {
       const state = frameState(frame.id);
+      const physicalCarrier = clusterRegistry.current.get(frame.clusterId)?.body;
+      if (
+        physicalCarrier &&
+        state.mass &&
+        physicalCarrier.bodyType() === rapier.RigidBodyType.Dynamic
+      ) {
+        const measured = readCarrierBody(frame, state.mass, physicalCarrier);
+        state.body = measured.body;
+        state.pose = measured.pose;
+      }
       // УДАР О МИР.
       //
       // Мир видит КАЖДУЮ машину обычным физическим объектом — участие в
@@ -2405,6 +2464,7 @@ export function VehicleFrameSystem({
           (sum, contact) => sum + Math.max(0, closingOf(contact)),
           0,
         );
+        const contactImpulses: CompoundKinematicImpulse[] = [];
         for (const contact of own) {
           const member = frame.members.find(
             (candidate) => candidate.piece.id === contact.pieceId,
@@ -2453,6 +2513,7 @@ export function VehicleFrameSystem({
                 lever,
                 contact.normal as [number, number, number],
               ),
+              normalImpulse: contact.normalImpulse,
               vehicle: {
                 pieceId: member.piece.id,
                 material: member.piece.material,
@@ -2475,9 +2536,10 @@ export function VehicleFrameSystem({
           }
           contactStats.current.closing += 1;
           contactStats.current.lastSpeed = resolution.closingSpeed;
-          // Импульс идёт тем же путём, что импульс от ракеты: в компаунд, в
-          // точке, с плечом. Ничего специального для удара здесь нет.
-          queueCompoundKinematicImpulse(externalImpulses, frame.clusterId, {
+          // Rapier уже передал этот импульс в contact solver. Здесь он только
+          // измеряется для разрушения и телеметрии; повторное применение
+          // удвоило бы физический удар.
+          contactImpulses.push({
             impulse: resolution.impulse as [number, number, number],
             point: contact.point as [number, number, number],
           });
@@ -2501,10 +2563,31 @@ export function VehicleFrameSystem({
             worldIntensity: resolution.obstacleIntensity,
           });
         }
+        if (contactImpulses.length > 0) {
+          const before: BodyState = { ...state.body, position: worldCentre };
+          const after = contactImpulses.reduce<BodyState>(
+            (body, impulse) => applyImpulseAtPoint(body, properties, impulse),
+            before,
+          );
+          const impact = createVehicleImpactTelemetry({
+            frame,
+            properties,
+            before,
+            after,
+            impulses: contactImpulses,
+            sequence: (state.telemetryImpact?.sequence ?? 0) + 1,
+            capturedAt: performance.now(),
+          });
+          if (impact) state.telemetryImpact = impact;
+        }
       }
       const applyPendingImpulses = (properties: MassProperties) => {
         const pending = externalImpulses.current.get(frame.clusterId);
         if (!pending || pending.length === 0 || properties.mass <= 0) {
+          return;
+        }
+        const physicalBody = clusterRegistry.current.get(frame.clusterId)?.body;
+        if (!physicalBody) {
           return;
         }
         let worldBody: BodyState = {
@@ -2518,6 +2601,15 @@ export function VehicleFrameSystem({
         const beforeImpulse = worldBody;
         for (const applied of pending) {
           worldBody = applyImpulseAtPoint(worldBody, properties, applied);
+          physicalBody.applyImpulseAtPoint(
+            {
+              x: applied.impulse[0],
+              y: applied.impulse[1],
+              z: applied.impulse[2],
+            },
+            { x: applied.point[0], y: applied.point[1], z: applied.point[2] },
+            true,
+          );
         }
         const impact = createVehicleImpactTelemetry({
           frame,
@@ -2622,6 +2714,48 @@ export function VehicleFrameSystem({
           };
         }
         state.mass = nextMass;
+        if (physicalCarrier && nextMass.mass > 0) {
+          const principal = principalMassProperties(nextMass, frame.origin);
+          physicalCarrier.setAdditionalMassProperties(
+            principal.mass,
+            {
+              x: principal.centre[0],
+              y: principal.centre[1],
+              z: principal.centre[2],
+            },
+            {
+              x: principal.principalInertia[0],
+              y: principal.principalInertia[1],
+              z: principal.principalInertia[2],
+            },
+            {
+              x: principal.inertiaFrame[0],
+              y: principal.inertiaFrame[1],
+              z: principal.inertiaFrame[2],
+              w: principal.inertiaFrame[3],
+            },
+            true,
+          );
+          physicalCarrier.recomputeMassPropertiesFromColliders();
+          if (previousMass) {
+            physicalCarrier.setLinvel(
+              {
+                x: state.body.velocity[0],
+                y: state.body.velocity[1],
+                z: state.body.velocity[2],
+              },
+              true,
+            );
+            physicalCarrier.setAngvel(
+              {
+                x: state.body.angularVelocity[0],
+                y: state.body.angularVelocity[1],
+                z: state.body.angularVelocity[2],
+              },
+              true,
+            );
+          }
+        }
         if (!previousMass) {
           applyPendingImpulses(nextMass);
         }
@@ -2713,6 +2847,9 @@ export function VehicleFrameSystem({
           velocity: [tangent[0] * 6.5, 0, tangent[1] * 6.5],
           angularVelocity: [0, 0, 0],
         };
+        if (physicalCarrier) {
+          placeCarrierBody(frame, mass, state.body, physicalCarrier);
+        }
         state.flight = createFlightState(
           initialArrivalFlightKind,
           "passenger",
@@ -2850,12 +2987,7 @@ export function VehicleFrameSystem({
                   state.body.angularVelocity[2],
                 ),
                 liftFraction: state.liftNow / Math.max(1, neutral),
-                movingLiftFloor: vehicleGroundBrakingLiftFraction(
-                  frame.supports,
-                  mass.centre,
-                  frame.nose,
-                  frame.supportFriction,
-                ),
+                movingLiftFloor: 0,
               },
             );
         }
@@ -2964,6 +3096,9 @@ export function VehicleFrameSystem({
               velocity: [tangent[0] * 6.5, 0, tangent[1] * 6.5],
               angularVelocity: [0, 0, 0],
             };
+            if (physicalCarrier) {
+              placeCarrierBody(frame, mass, state.body, physicalCarrier);
+            }
             state.liftNow = neutral;
             state.released.clear();
             state.separated.clear();
@@ -3230,10 +3365,13 @@ export function VehicleFrameSystem({
         let topPoint: readonly [number, number, number] | null = null;
         let bottomPoint: readonly [number, number, number] | null = null;
 
-        for (const [probeIndex, probe] of frame.hullProbes.entries()) {
+        for (const [sensorIndex, sensor] of frame.proximitySensors.entries()) {
+          if (!vehicleProximitySensorEnabled(sensor)) {
+            continue;
+          }
           const point = vehiclePiecePosition(
             frame.origin,
-            probe.point as [number, number, number],
+            sensor.point as [number, number, number],
             state.pose,
             rotationNow,
           );
@@ -3245,7 +3383,7 @@ export function VehicleFrameSystem({
           }
           const normal = rotateByQuaternion(
             state.body.orientation,
-            probe.normal as [number, number, number],
+            sensor.normal as [number, number, number],
           );
           const lever = [
             point[0] - centreNow[0],
@@ -3323,8 +3461,8 @@ export function VehicleFrameSystem({
               angular.y * obstacleLever[0];
           }
           readings.push({
-            probeIndex,
-            localNormal: probe.normal as [number, number, number],
+            sensorIndex: sensorIndex,
+            localNormal: sensor.normal as [number, number, number],
             worldNormal: normal,
             lever,
             distance: hit.timeOfImpact,
@@ -3395,7 +3533,7 @@ export function VehicleFrameSystem({
       ): VehicleSafetyAdvisory | null => {
         const berthPoint = plan.point(1);
         // A mast, platform or pier is expected geometry while casting off and
-        // on final. Near-contact probes remain active there; only predictive
+        // on final. Near-contact sensors remain active there; only predictive
         // intervention is suppressed.
         if (
           vehicleSafetySensingSuppressed({
@@ -3416,7 +3554,7 @@ export function VehicleFrameSystem({
         if (field.readings.length === 0) {
           if (flight?.pilot) {
             flight.pilotObstacleReadings = [];
-            flight.pilotIntervenedProbes.clear();
+            flight.pilotIntervenedSensors.clear();
           }
           return null;
         }
@@ -3428,7 +3566,7 @@ export function VehicleFrameSystem({
         );
         if (flight?.pilot?.sensorAssistEnabled) {
           flight.pilotObstacleReadings = field.readings;
-          flight.pilotIntervenedProbes.clear();
+          flight.pilotIntervenedSensors.clear();
           if (advisory?.risk === "intervention") {
             const threat = field.readings
               .filter((reading) => reading.relativeClosingSpeed > 0.2)
@@ -3438,7 +3576,7 @@ export function VehicleFrameSystem({
                   right.distance / right.relativeClosingSpeed,
               )[0];
             if (threat) {
-              flight.pilotIntervenedProbes.add(threat.probeIndex);
+              flight.pilotIntervenedSensors.add(threat.sensorIndex);
             }
           }
         }
@@ -3805,13 +3943,13 @@ export function VehicleFrameSystem({
           );
           manualGuidance = assisted.guidance;
           flight.pilotObstacleReadings = field.readings;
-          flight.pilotIntervenedProbes.clear();
-          for (const probeIndex of assisted.intervenedProbeIndices) {
-            flight.pilotIntervenedProbes.add(probeIndex);
+          flight.pilotIntervenedSensors.clear();
+          for (const sensorIndex of assisted.intervenedSensorIndices) {
+            flight.pilotIntervenedSensors.add(sensorIndex);
           }
         } else {
           flight.pilotObstacleReadings = [];
-          flight.pilotIntervenedProbes.clear();
+          flight.pilotIntervenedSensors.clear();
         }
         rotorGuidance = manualGuidance;
         liftCommand = manualGuidance.liftFraction;
@@ -4593,223 +4731,12 @@ export function VehicleFrameSystem({
         point: capture.point,
       };
 
-      // Касание настоящего мира. Днище щупает землю под собой, обшивка —
-      // всё, во что можно упереться бортом, носом или крышей. Точка
-      // приложения — сам щуп: поэтому упершийся нос разворачивает корабль, а
-      // принявшая вес опора его выравнивает. Одна и та же пружина с
-      // демпфером, разные направления.
-      const contacts: {
-        force: [number, number, number];
-        point: [number, number, number];
-      }[] = [];
-      const loadedGroundContacts: {
-        readonly normalReaction: number;
-        readonly relativeVelocity: [number, number, number];
-        readonly normal: readonly [number, number, number];
-        readonly point: [number, number, number];
-      }[] = [];
-      const probeCount = frame.supports.length + frame.hullProbes.length;
-      const supportStiffness =
-        (mass.mass * GRAVITY) / SUPPORT_GIVE / frame.supports.length;
-      // A landing support carries one share of the body. Using every dormant
-      // side/roof probe in this divisor under-damped the vertical suspension
-      // and let a landing carrier bounce back out of frictional contact.
-      const supportProbeDamping =
-        2 * Math.sqrt((supportStiffness * mass.mass) / frame.supports.length);
-      const hullProbeDamping =
-        2 * Math.sqrt((supportStiffness * mass.mass) / probeCount);
-      const rotationNow = vehicleRotation(state.pose, frame.nose);
-      const probeSet = frameProbes.get(frame.id);
-      const carrierBody = clusterRegistry.current.get(frame.clusterId)?.body;
-      const ownBodyHandles = shipBodies.current.get(frame.clusterId);
-      let supportContacts = 0;
-      for (const [probeIndex, probe] of (probeSet?.list ?? []).entries()) {
-        const world = vehiclePiecePosition(
-          frame.origin,
-          probe.point as [number, number, number],
-          state.pose,
-          rotationNow,
-        );
-        // Нормаль поворачивается вместе с кораблём: накренившись, он и
-        // касается миром накренившимся бортом.
-        const normal = rotateByQuaternion(
-          state.body.orientation,
-          probe.normal as [number, number, number],
-        );
-        // Speed at this exact point: a yawing nose can close on a wall while
-        // the centre of mass is almost stationary.
-        const lever: [number, number, number] = [
-          world[0] - centre[0],
-          world[1] - centre[1],
-          world[2] - centre[2],
-        ];
-        const spin = state.body.angularVelocity;
-        const pointVelocity: [number, number, number] = [
-          state.body.velocity[0] + spin[1] * lever[2] - spin[2] * lever[1],
-          state.body.velocity[1] + spin[2] * lever[0] - spin[0] * lever[2],
-          state.body.velocity[2] + spin[0] * lever[1] - spin[1] * lever[0],
-        ];
-        const pointClosing =
-          pointVelocity[0] * normal[0] +
-          pointVelocity[1] * normal[1] +
-          pointVelocity[2] * normal[2];
-        supportRay.current ??= new rapier.Ray(
-          { x: 0, y: 0, z: 0 },
-          { x: 0, y: -1, z: 0 },
-        );
-        // Start one suspension travel inside the hull. The resulting hit
-        // distance can then be converted to a signed surface gap, so a probe
-        // that has crossed the surface gets a stronger reaction instead of
-        // becoming blind inside the collider.
-        supportRay.current.origin.x = world[0] - normal[0] * SUPPORT_GIVE;
-        supportRay.current.origin.y = world[1] - normal[1] * SUPPORT_GIVE;
-        supportRay.current.origin.z = world[2] - normal[2] * SUPPORT_GIVE;
-        supportRay.current.dir.x = normal[0];
-        supportRay.current.dir.y = normal[1];
-        supportRay.current.dir.z = normal[2];
-        const hit = rapierWorld.castRay(
-          supportRay.current,
-          vehicleProbeReach(
-            SUPPORT_GIVE * 2,
-            pointClosing + CONTACT_RELATIVE_SPEED_MARGIN,
-            step,
-          ),
-          true,
-          undefined,
-          VEHICLE_CONTACT_QUERY,
-          undefined,
-          carrierBody,
-          (collider) => {
-            const handle = collider.parent()?.handle;
-            return handle === undefined || !ownBodyHandles?.has(handle);
-          },
-        );
-        if (!hit) {
-          continue;
-        }
-        const obstacleBody = hit.collider.parent();
-        const obstacleVelocity: [number, number, number] = [0, 0, 0];
-        if (obstacleBody) {
-          const linear = obstacleBody.linvel();
-          const angular = obstacleBody.angvel();
-          const obstacleCentre = obstacleBody.worldCom();
-          const hitPoint = [
-            supportRay.current.origin.x + normal[0] * hit.timeOfImpact,
-            supportRay.current.origin.y + normal[1] * hit.timeOfImpact,
-            supportRay.current.origin.z + normal[2] * hit.timeOfImpact,
-          ] as const;
-          const obstacleLever = [
-            hitPoint[0] - obstacleCentre.x,
-            hitPoint[1] - obstacleCentre.y,
-            hitPoint[2] - obstacleCentre.z,
-          ] as const;
-          obstacleVelocity[0] =
-            linear.x +
-            angular.y * obstacleLever[2] -
-            angular.z * obstacleLever[1];
-          obstacleVelocity[1] =
-            linear.y +
-            angular.z * obstacleLever[0] -
-            angular.x * obstacleLever[2];
-          obstacleVelocity[2] =
-            linear.z +
-            angular.x * obstacleLever[1] -
-            angular.y * obstacleLever[0];
-        }
-        const closing =
-          (pointVelocity[0] - obstacleVelocity[0]) * normal[0] +
-          (pointVelocity[1] - obstacleVelocity[1]) * normal[1] +
-          (pointVelocity[2] - obstacleVelocity[2]) * normal[2];
-        const push = vehicleProbeReaction(
-          supportStiffness,
-          probeIndex < (probeSet?.supportCount ?? 0)
-            ? supportProbeDamping
-            : hullProbeDamping,
-          SUPPORT_GIVE,
-          hit.timeOfImpact - SUPPORT_GIVE,
-          closing,
-          step,
-        );
-        if (push <= 0) {
-          continue;
-        }
-        // Any actual part of the carrier can become its support after a hard
-        // landing. Downward-facing hull probes therefore keep a tipped craft
-        // on the terrain instead of letting it roll through the world.
-        if (normal[1] < -0.35) {
-          supportContacts += 1;
-          loadedGroundContacts.push({
-            normalReaction: push,
-            relativeVelocity: [
-              pointVelocity[0] - obstacleVelocity[0],
-              pointVelocity[1] - obstacleVelocity[1],
-              pointVelocity[2] - obstacleVelocity[2],
-            ],
-            normal,
-            point: [world[0], world[1], world[2]],
-          });
-        }
-        contacts.push({
-          force: [-normal[0] * push, -normal[1] * push, -normal[2] * push],
-          point: [world[0], world[1], world[2]],
-        });
-      }
-      const totalSupportReaction = loadedGroundContacts.reduce(
-        (sum, contact) => sum + contact.normalReaction,
-        0,
-      );
-      if (totalSupportReaction > 0) {
-        const weighted = loadedGroundContacts.reduce(
-          (sum, contact) => {
-            const weight = contact.normalReaction / totalSupportReaction;
-            return {
-              point: sum.point.map(
-                (value, index) => value + contact.point[index] * weight,
-              ) as [number, number, number],
-              velocity: sum.velocity.map(
-                (value, index) =>
-                  value + contact.relativeVelocity[index] * weight,
-              ) as [number, number, number],
-              normal: sum.normal.map(
-                (value, index) => value + contact.normal[index] * weight,
-              ) as [number, number, number],
-            };
-          },
-          {
-            point: [0, 0, 0] as [number, number, number],
-            velocity: [0, 0, 0] as [number, number, number],
-            normal: [0, 0, 0] as [number, number, number],
-          },
-        );
-        const normalLength = Math.hypot(...weighted.normal) || 1;
-        const normalSpeed = weighted.velocity.reduce(
-          (sum, value, index) =>
-            sum + (value * weighted.normal[index]) / normalLength,
-          0,
-        );
-        const tangent = weighted.velocity.map(
-          (value, index) =>
-            value - (weighted.normal[index] / normalLength) * normalSpeed,
-        ) as [number, number, number];
-        const lever = weighted.point.map(
-          (value, index) => value - centre[index],
-        ) as [number, number, number];
-        const frictionForce = vehicleProbeFriction(
-          totalSupportReaction,
-          weighted.velocity,
-          weighted.normal,
-          frame.supportFriction,
-          pointEffectiveMass(mass, state.body.orientation, lever, tangent),
-          step,
-        );
-        if (Math.hypot(...frictionForce) > 0) {
-          contacts.push({
-            force: frictionForce as [number, number, number],
-            point: weighted.point,
-          });
-        }
-      }
-      state.supportContacts = supportContacts;
+      // Stable support is measured from Rapier contacts. The solver owns the
+      // normal reaction and Coulomb friction; this channel reports only that
+      // an upward-facing surface is persistently carrying the vehicle.
+      state.supportContacts = physicalCarrier
+        ? countUpwardSupportContacts(rapierWorld.narrowPhase, physicalCarrier)
+        : 0;
       // Винтокрылая машина несёт себя КОЛЬЦАМИ, а не одной вертикалью в точке
       // подъёма. Отсюда всё её поведение: тяга каждого кольца своя, суммарный
       // вектор наклоняется вместе с корпусом, и разностью тяг рождаются момент
@@ -4842,80 +4769,58 @@ export function VehicleFrameSystem({
             step,
           )
         : null;
-      const stepped = stepBody(
-        { ...state.body, position: centre },
-        mass,
-        [
-          { force: [0, -mass.mass * GRAVITY, 0], point: centre },
-          ...(rotorLift
-            ? rotorLift.forces
-            : [
-                {
-                  force: [0, lift, 0] as [number, number, number],
-                  point: [
-                    centre[0] + liftArm[0],
-                    centre[1] + liftArm[1],
-                    centre[2] + liftArm[2],
-                  ] as [number, number, number],
-                },
-              ]),
-          // Швартовка работает и на подходе: последние метры корабль
-          // добирает тросом, а не моторами.
-          // Швартов держит на отсчёте, отпускает на отходе и снова
-          // принимает корабль на подходе.
-          ...(state.recovery
-            ? state.recovery.lifecycle.phase === "arrival" &&
-              state.recovery.progress >= 0.9
-              ? [mooring]
-              : []
-            : flight && flight.castOff && flight.progress < 0.9
-              ? []
-              : [mooring]),
-          ...contacts,
-          ...controls,
-        ],
-        {
-          // Продольное и боковое сопротивление уже приложены силой выше.
-          linear: 0,
-          angular: frame.flight.angularDamping * mass.inertia[4],
-          // Демпфирование ФИЗИЧЕСКОЕ, к нулю: разворот удерживает руль,
-          // преодолевая его. Раньше демпфер тянул к той же желаемой скорости,
-          // что и руль, — два канала на одну ошибку, и машину раскачивало.
-        },
-        Math.min(step, 1 / 45),
-      );
-      state.body = {
-        ...stepped,
-        position: [
-          stepped.position[0] - mass.centre[0],
-          stepped.position[1] - mass.centre[1],
-          stepped.position[2] - mass.centre[2],
-        ],
-      };
-
-      // Поворот идёт вокруг ЦЕНТРА МАСС, а кадр вращает вокруг своей точки —
-      // переводим одно в другое.
-      const arm: readonly [number, number, number] = [
-        mass.centre[0] - frame.origin[0],
-        mass.centre[1] - frame.origin[1],
-        mass.centre[2] - frame.origin[2],
-      ];
-      const turnedArm = rotateByQuaternion(state.body.orientation, [
-        arm[0],
-        arm[1],
-        arm[2],
-      ]);
-      state.pose = {
-        position: [
-          arm[0] - turnedArm[0] + state.body.position[0],
-          arm[1] - turnedArm[1] + state.body.position[1],
-          arm[2] - turnedArm[2] + state.body.position[2],
-        ],
-        yaw: 0,
-        pitch: 0,
-        roll: 0,
-        rotation: state.body.orientation,
-      };
+      const physicalForces = [
+        { force: [0, -mass.mass * GRAVITY, 0], point: centre },
+        ...(rotorLift
+          ? rotorLift.forces
+          : [
+              {
+                force: [0, lift, 0] as [number, number, number],
+                point: [
+                  centre[0] + liftArm[0],
+                  centre[1] + liftArm[1],
+                  centre[2] + liftArm[2],
+                ] as [number, number, number],
+              },
+            ]),
+        // Швартовка работает и на подходе: последние метры корабль
+        // добирает тросом, а не моторами.
+        // Швартов держит на отсчёте, отпускает на отходе и снова
+        // принимает корабль на подходе.
+        ...(state.recovery
+          ? state.recovery.lifecycle.phase === "arrival" &&
+            state.recovery.progress >= 0.9
+            ? [mooring]
+            : []
+          : flight && flight.castOff && flight.progress < 0.9
+            ? []
+            : [mooring]),
+        ...controls,
+      ] as const;
+      if (physicalCarrier) {
+        for (const applied of physicalForces) {
+          physicalCarrier.addForceAtPoint(
+            {
+              x: applied.force[0],
+              y: applied.force[1],
+              z: applied.force[2],
+            },
+            { x: applied.point[0], y: applied.point[1], z: applied.point[2] },
+            true,
+          );
+        }
+        // Medium damping remains a real torque. Rapier owns the angular
+        // integration, including gyroscopic response and collision moments.
+        const angularDamping = frame.flight.angularDamping * mass.inertia[4];
+        physicalCarrier.addTorque(
+          {
+            x: -angularDamping * state.body.angularVelocity[0],
+            y: -angularDamping * state.body.angularVelocity[1],
+            z: -angularDamping * state.body.angularVelocity[2],
+          },
+          true,
+        );
+      }
       onFramePose?.({
         clusterId: frame.clusterId,
         origin: frame.origin,
@@ -5142,31 +5047,11 @@ export function VehicleFrameSystem({
         continue;
       }
 
-      state.velocity = state.suppressFrameVelocityOnce
-        ? state.body.velocity
-        : [
-            (pose.position[0] - state.previousPose.position[0]) / step,
-            (pose.position[1] - state.previousPose.position[1]) / step,
-            (pose.position[2] - state.previousPose.position[2]) / step,
-          ];
+      state.velocity = state.body.velocity;
       state.suppressFrameVelocityOnce = false;
       state.previousPose = pose;
 
       const rotation = vehicleRotation(pose, frame.nose);
-      const clusterBody = clusterRegistry.current.get(frame.clusterId)?.body;
-      if (clusterBody) {
-        clusterBody.setNextKinematicTranslation({
-          x: frame.origin[0] + pose.position[0],
-          y: frame.origin[1] + pose.position[1],
-          z: frame.origin[2] + pose.position[2],
-        });
-        clusterBody.setNextKinematicRotation({
-          x: rotation[0],
-          y: rotation[1],
-          z: rotation[2],
-          w: rotation[3],
-        });
-      }
       for (const member of frame.members) {
         const piece = member.piece;
         const body = bodies.current.get(piece.id);
@@ -5436,7 +5321,7 @@ export function VehicleFrameSystem({
         const proximity = rotorcraftProximitySectors(
           frame.nose,
           state.flight?.pilotObstacleReadings ?? [],
-          state.flight?.pilotIntervenedProbes ?? new Set<number>(),
+          state.flight?.pilotIntervenedSensors ?? new Set<number>(),
         );
         const motorOutput = state.rotorMotorOutput.map(
           (value) => Math.round(value * 100) / 100,
@@ -5576,9 +5461,9 @@ function rotorcraftProximitySectors(
     if (previous.distance === null || reading.distance < previous.distance) {
       sectors[sector] = {
         distance: Math.round(reading.distance * 10) / 10,
-        intervening: intervened.has(reading.probeIndex),
+        intervening: intervened.has(reading.sensorIndex),
       };
-    } else if (intervened.has(reading.probeIndex) && !previous.intervening) {
+    } else if (intervened.has(reading.sensorIndex) && !previous.intervening) {
       sectors[sector] = { ...previous, intervening: true };
     }
   }

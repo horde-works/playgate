@@ -148,7 +148,7 @@ test("berth sensing is answered by the authored plan, not by an intercept", () =
 });
 
 const reading = (overrides = {}) => ({
-  probeIndex: 0,
+  sensorIndex: 0,
   localNormal: [1, 0, 0],
   worldNormal: [1, 0, 0],
   lever: [3, 0, 0],
@@ -177,7 +177,7 @@ test("manual assistance caps only velocity into the obstacle", () => {
   );
   assert.equal(toward.guidance.forwardSpeed < 2.5, true);
   assert.equal(toward.guidance.lateralSpeed, 4);
-  assert.deepEqual(toward.intervenedProbeIndices, [0]);
+  assert.deepEqual(toward.intervenedSensorIndices, [0]);
 
   const away = constrainRotorcraftGuidance(
     { forwardSpeed: -5, lateralSpeed: 4, yawRate: 0, liftFraction: 0 },
@@ -186,16 +186,16 @@ test("manual assistance caps only velocity into the obstacle", () => {
   );
   assert.equal(away.guidance.forwardSpeed, -5);
   assert.equal(away.guidance.lateralSpeed, 4);
-  assert.deepEqual(away.intervenedProbeIndices, []);
+  assert.deepEqual(away.intervenedSensorIndices, []);
 });
 
-test("a rotating outer probe is protected even while the centre hovers", () => {
+test("a rotating outer sensor is protected even while the centre hovers", () => {
   const turn = constrainRotorcraftGuidance(
     { forwardSpeed: 0, lateralSpeed: 0, yawRate: 0.9, liftFraction: 0 },
     [reading({ worldNormal: [0, 0, 1], lever: [3, 0, 0], distance: 1.7 })],
     safetyContext(),
   );
-  // Positive yaw moves this +X probe towards -Z, so the opposite command is
+  // Positive yaw moves this +X sensor towards -Z, so the opposite command is
   // deliberately used here to close it on the +Z wall.
   assert.equal(turn.guidance.yawRate, 0.9);
   const closingTurn = constrainRotorcraftGuidance(

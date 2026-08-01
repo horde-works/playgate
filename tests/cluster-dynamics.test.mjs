@@ -10,6 +10,7 @@ import {
   linearMomentum,
   massProperties,
   pieceMass,
+  principalMassProperties,
   rebaseBodyMassProperties,
   rotateVector,
   stepBody,
@@ -96,6 +97,40 @@ test("the sky train hangs its mass below the hull axis", () => {
   // Корабль длинный: вокруг продольной оси (X) вертеться легче всего.
   assert.equal(properties.inertia[0] < properties.inertia[4], true);
   assert.equal(properties.inertia[0] < properties.inertia[8], true);
+});
+
+test("principal mass properties reconstruct the authored inertia tensor", () => {
+  const authored = massProperties(ship, densityOf);
+  const principal = principalMassProperties(authored, [10, 20, 30]);
+  const [x, y, z, w] = principal.inertiaFrame;
+  const rotation = [
+    1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w),
+    2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w),
+    2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y),
+  ];
+  const diagonal = principal.principalInertia;
+  const reconstructed = new Array(9).fill(0);
+  for (let row = 0; row < 3; row += 1) {
+    for (let column = 0; column < 3; column += 1) {
+      for (let axis = 0; axis < 3; axis += 1) {
+        reconstructed[row * 3 + column] +=
+          rotation[row * 3 + axis] * diagonal[axis] * rotation[column * 3 + axis];
+      }
+    }
+  }
+  assert.equal(principal.mass, authored.mass);
+  assert.deepEqual(principal.centre, [
+    authored.centre[0] - 10,
+    authored.centre[1] - 20,
+    authored.centre[2] - 30,
+  ]);
+  for (let index = 0; index < 9; index += 1) {
+    const tolerance = Math.max(1, Math.abs(authored.inertia[index])) * 1e-9;
+    assert.ok(
+      Math.abs(reconstructed[index] - authored.inertia[index]) <= tolerance,
+      `inertia[${index}] ${reconstructed[index]} != ${authored.inertia[index]}`,
+    );
+  }
 });
 
 test("losing the tail coach moves the centre of mass forward", () => {
@@ -521,49 +556,4 @@ test("the ship is balanced by real ballast, not by a fudge factor", () => {
   // Состав потяжелел на дифферентовочную установку, поэтому та же потеря
   // носового балласта разворачивает его чуть мягче — но всё так же честно.
   assert.equal(wrongTrim > 7, true, `без балласта дифферент всего ${wrongTrim.toFixed(1)}°`);
-});
-
-test("ground support levels a ship that has lost its lift", () => {
-  // Чувствительность к настоящему миру: опоры под днищем принимают вес и,
-  // будучи разнесены по длине, сами выравнивают севший корабль.
-  const frame = vehicleFrameForCluster(SKY_TRAIN);
-  assert.equal(frame.supports.length >= 4, true, "опор должно быть несколько");
-  const properties = massProperties(ship, densityOf);
-  const gravity = 9.81;
-
-  // Садим наклонённый корабль на ровную «землю» под точками опоры.
-  let state = {
-    ...RESTING_BODY,
-    position: properties.centre,
-    orientation: [0, 0, Math.sin(0.09), Math.cos(0.09)],
-  };
-  const groundY = 0.94;
-  const stiffness = (properties.mass * gravity) / 0.22 / frame.supports.length;
-  for (let step = 0; step < 2400; step += 1) {
-    const forces = [{ force: [0, -properties.mass * gravity, 0], point: state.position }];
-    for (const support of frame.supports) {
-      const arm = rotateVector(state.orientation, [
-        support[0] - properties.centre[0],
-        support[1] - properties.centre[1],
-        support[2] - properties.centre[2],
-      ]);
-      const point = [
-        state.position[0] + arm[0],
-        state.position[1] + arm[1],
-        state.position[2] + arm[2],
-      ];
-      const penetration = groundY - point[1];
-      if (penetration > 0) {
-        forces.push({
-          force: [0, stiffness * penetration - 40 * Math.min(0, state.velocity[1]), 0],
-          point,
-        });
-      }
-    }
-    state = stepBody(state, properties, forces, { linear: 3, angular: properties.inertia[8] * 1.2 }, 1 / 240);
-  }
-
-  const nose = rotateVector(state.orientation, [-1, 0, 0]);
-  assert.equal(Math.abs(nose[1]) < 0.05, true, `севший корабль остался с креном ${nose[1].toFixed(3)}`);
-  assert.equal(Math.abs(state.velocity[1]) < 0.2, true, "и должен успокоиться");
 });

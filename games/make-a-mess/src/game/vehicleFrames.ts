@@ -26,7 +26,6 @@ import {
 } from "./basaltSkyRam.ts";
 import {
   HEXACOPTER_DUCTS,
-  HEXACOPTER_GEAR_STATIONS,
   HEXACOPTER_LIFT_CENTRE,
   HEXACOPTER_MOORING_POINT,
   HEXACOPTER_NOSE,
@@ -34,7 +33,6 @@ import {
   HEX_ARM_RADIUS,
   HEX_CANOPY_TOP_Y,
   HEX_DISC_Y,
-  HEX_FOOT_BOTTOM_Y,
   HEX_GONDOLA_BOTTOM_Y,
   HEX_KEEL_BOTTOM_Y,
   HEX_LIP_OUTER_RADIUS,
@@ -102,24 +100,11 @@ export interface VehicleFrameDefinition {
   /** Кусок оболочки, по доле уцелевших считается подъём. */
   readonly envelopeMatch: string;
   /**
-   * Точки опоры на днище, в авторских координатах. Через них кластер
-   * чувствует настоящий мир: потеряв подъём, он садится на путь и
-   * выравнивается, потому что земля принимает нагрузку — и принимает её в
-   * нескольких разнесённых точках, а не в одной.
+   * Physical proximity sensors mounted on the carrier. They never create a
+   * force or contact. Downward sensors are powered by default for height and
+   * landing estimation; every other direction is opt-in equipment.
    */
-  readonly supports: readonly SceneVector3[];
-  /** Coulomb friction of the loaded underside against a contacted surface. */
-  readonly supportFriction: VehicleSupportFriction;
-  /**
-   * Обшивка корабля глазами физики. Куски кластера — кинематические тела, а
-   * нетронутый мир — статические; такая пара контактов в движке не даёт
-   * ВООБЩЕ, поэтому раньше корабль замечал только выбитые из конструкций
-   * (динамические) куски, а сквозь целый навес проходил насквозь. Щупы это
-   * чинят: каждый смотрит наружу из своей точки борта и, наткнувшись на
-   * что-либо, толкает корабль от препятствия. Точка приложения — сам щуп,
-   * поэтому удар носом разворачивает, а не только тормозит.
-   */
-  readonly hullProbes: readonly HullProbe[];
+  readonly proximitySensors: readonly VehicleProximitySensor[];
   /**
    * Подвижные грузы дифферентовки внутри оболочки. Единственный орган, который
    * вообще создаёт момент по крену и тангажу: своей массой, а не силой.
@@ -176,136 +161,17 @@ function keelTrimRails(
   ];
 }
 
-/** Точка обшивки и наружная нормаль в ней, в авторских координатах. */
-export interface HullProbe {
+/** Physical sensor mount and viewing direction in authored coordinates. */
+export interface VehicleProximitySensor {
   readonly point: SceneVector3;
   readonly normal: SceneVector3;
+  readonly enabledByDefault?: boolean;
 }
 
-export interface VehicleSupportFriction {
-  readonly staticCoefficient: number;
-  readonly dynamicCoefficient: number;
-}
-
-/**
- * Residual lift that keeps a friction-limited ground stop inside the support
- * polygon. A short, tall gondola must load its skids more gradually than a
- * long train; the final stable landing still dumps lift completely.
- */
-export function vehicleGroundBrakingLiftFraction(
-  supports: readonly SceneVector3[],
-  massCentre: SceneVector3,
-  nose: SceneVector3,
-  friction: VehicleSupportFriction,
-): number {
-  const noseLength = Math.hypot(nose[0], nose[2]) || 1;
-  const longitudinal = supports.map(
-    (point) =>
-      ((point[0] - massCentre[0]) * nose[0]) / noseLength +
-      ((point[2] - massCentre[2]) * nose[2]) / noseLength,
-  );
-  const forwardArm = Math.max(0, ...longitudinal);
-  const aftArm = Math.max(0, ...longitudinal.map((value) => -value));
-  const shortestArm = Math.min(forwardArm, aftArm);
-  const supportY = Math.min(...supports.map((point) => point[1]));
-  const centreHeight = Math.max(0.1, massCentre[1] - supportY);
-  const dynamicFriction = Math.max(0.01, friction.dynamicCoefficient);
-  const stabilityMargin = 0.72;
-  const safeGroundLoadFraction = Math.min(
-    1,
-    (stabilityMargin * shortestArm) / (dynamicFriction * centreHeight),
-  );
-  return Math.max(0, Math.min(0.85, 1 - safeGroundLoadFraction));
-}
-
-/**
- * A contact probe sweeps the clearance plus the distance its surface point
- * can close during this fixed step. Positive speed means motion outwards from
- * the hull and therefore towards an obstacle along the probe normal.
- */
-export function vehicleProbeReach(
-  clearance: number,
-  relativeClosingSpeed: number,
-  deltaSeconds: number,
-): number {
-  return (
-    Math.max(0, clearance) +
-    Math.max(0, relativeClosingSpeed) * Math.max(0, deltaSeconds)
-  );
-}
-
-/** Spring/damper magnitude opposing penetration at one authored hull probe. */
-export function vehicleProbeReaction(
-  stiffness: number,
-  damping: number,
-  clearance: number,
-  surfaceGap: number,
-  relativeClosingSpeed: number,
-  deltaSeconds: number,
-): number {
-  const penetration = Math.max(
-    0,
-    vehicleProbeReach(clearance, relativeClosingSpeed, deltaSeconds) -
-      surfaceGap,
-  );
-  return Math.max(
-    0,
-    Math.max(0, stiffness) * penetration +
-      Math.max(0, damping) * relativeClosingSpeed,
-  );
-}
-
-/**
- * Tangential Coulomb force at one loaded support probe. The normal reaction
- * is the only source of available friction: in free air this returns zero.
- * `supportedMass` is the share of the body carried by this contact and caps
- * the discrete impulse at exactly stopping the slip, never reversing it.
- */
-export function vehicleProbeFriction(
-  normalReaction: number,
-  relativeVelocity: SceneVector3,
-  normal: SceneVector3,
-  friction: VehicleSupportFriction,
-  supportedMass: number,
-  deltaSeconds: number,
-): SceneVector3 {
-  const normalLength = Math.hypot(normal[0], normal[1], normal[2]);
-  const delta = Math.max(0, deltaSeconds);
-  if (normalReaction <= 0 || normalLength <= 1e-9 || delta <= 0) {
-    return [0, 0, 0];
-  }
-  const unitNormal: SceneVector3 = [
-    normal[0] / normalLength,
-    normal[1] / normalLength,
-    normal[2] / normalLength,
-  ];
-  const normalSpeed =
-    relativeVelocity[0] * unitNormal[0] +
-    relativeVelocity[1] * unitNormal[1] +
-    relativeVelocity[2] * unitNormal[2];
-  const tangent: SceneVector3 = [
-    relativeVelocity[0] - unitNormal[0] * normalSpeed,
-    relativeVelocity[1] - unitNormal[1] * normalSpeed,
-    relativeVelocity[2] - unitNormal[2] * normalSpeed,
-  ];
-  const speed = Math.hypot(tangent[0], tangent[1], tangent[2]);
-  if (speed <= 1e-9) {
-    return [0, 0, 0];
-  }
-
-  const stoppingForce = (Math.max(0, supportedMass) * speed) / delta;
-  const staticLimit = Math.max(0, friction.staticCoefficient) * normalReaction;
-  const dynamicLimit =
-    Math.max(0, friction.dynamicCoefficient) * normalReaction;
-  const magnitude =
-    stoppingForce <= staticLimit
-      ? stoppingForce
-      : Math.min(stoppingForce, dynamicLimit);
-  return [
-    (-tangent[0] / speed) * magnitude,
-    (-tangent[1] / speed) * magnitude,
-    (-tangent[2] / speed) * magnitude,
-  ];
+export function vehicleProximitySensorEnabled(
+  sensor: VehicleProximitySensor,
+): boolean {
+  return sensor.enabledByDefault ?? sensor.normal[1] < -0.35;
 }
 
 /**
@@ -329,36 +195,40 @@ export function skyTrainHullRadiusAt(x: number): number {
   return HULL.radius;
 }
 
-function skyTrainHullProbes(): readonly HullProbe[] {
-  const probes: HullProbe[] = [];
+function skyTrainProximitySensors(): readonly VehicleProximitySensor[] {
+  const sensors: VehicleProximitySensor[] = [];
   // Нос и корма: ими он и въедет во что-нибудь первым делом.
-  probes.push({ point: [HULL.from - 0.2, HULL.y, HULL.z], normal: [-1, 0, 0] });
-  probes.push({ point: [HULL.to + 0.2, HULL.y, HULL.z], normal: [1, 0, 0] });
+  sensors.push({ point: [HULL.from - 0.2, HULL.y, HULL.z], normal: [-1, 0, 0] });
+  sensors.push({ point: [HULL.to + 0.2, HULL.y, HULL.z], normal: [1, 0, 0] });
   // Борта и верх оболочки по станциям.
   for (const x of [-6, -1, 4, 9, 14, 18.5]) {
     const radius = skyTrainHullRadiusAt(x);
-    probes.push({ point: [x, HULL.y, HULL.z - radius], normal: [0, 0, -1] });
-    probes.push({ point: [x, HULL.y, HULL.z + radius], normal: [0, 0, 1] });
-    probes.push({ point: [x, HULL.y + radius, HULL.z], normal: [0, 1, 0] });
+    sensors.push({ point: [x, HULL.y, HULL.z - radius], normal: [0, 0, -1] });
+    sensors.push({ point: [x, HULL.y, HULL.z + radius], normal: [0, 0, 1] });
+    sensors.push({ point: [x, HULL.y + radius, HULL.z], normal: [0, 1, 0] });
   }
   // Круги винтов: они вынесены дальше бортов оболочки и цепляют первыми.
   for (const side of [-1, 1] as const) {
-    probes.push({
+    sensors.push({
       point: [5.6, 7.6, HULL.z + side * 5.75],
       normal: [0, 0, side],
     });
   }
   // Борта вагонов: ими корабль трётся о перрон.
   for (const x of [-6, -1.5, 3.5, 8.5, 13.5, 17.5]) {
-    probes.push({ point: [x, 2.6, HULL.z - 1.55], normal: [0, 0, -1] });
-    probes.push({ point: [x, 2.6, HULL.z + 1.55], normal: [0, 0, 1] });
+    sensors.push({ point: [x, 2.6, HULL.z - 1.55], normal: [0, 0, -1] });
+    sensors.push({ point: [x, 2.6, HULL.z + 1.55], normal: [0, 0, 1] });
   }
   // Низкая кабина выступает перед вагоном: оболочка над ней не заметит
-  // буфер или фасад на уровне стекла, поэтому у эркера свои щупы.
-  probes.push({ point: [-9.34, 2.78, HULL.z], normal: [-1, 0, 0] });
-  probes.push({ point: [-8.25, 2.78, HULL.z - 1.28], normal: [0, 0, -1] });
-  probes.push({ point: [-8.25, 2.78, HULL.z + 1.28], normal: [0, 0, 1] });
-  return probes;
+  // буфер или фасад на уровне стекла, поэтому у эркера свои сенсоры.
+  sensors.push({ point: [-9.34, 2.78, HULL.z], normal: [-1, 0, 0] });
+  sensors.push({ point: [-8.25, 2.78, HULL.z - 1.28], normal: [0, 0, -1] });
+  sensors.push({ point: [-8.25, 2.78, HULL.z + 1.28], normal: [0, 0, 1] });
+  // Dedicated landing altimeters. These are measurements, not suspension.
+  for (const x of [-6.3, 4.1, 17.5]) {
+    sensors.push({ point: [x, 0.94, HULL.z], normal: [0, -1, 0] });
+  }
+  return sensors;
 }
 
 const VIKING_LONGSHIP = {
@@ -379,20 +249,20 @@ function vikingLongshipPoint(a: number, b: number, y: number): SceneVector3 {
   ];
 }
 
-function vikingLongshipHullProbes(): readonly HullProbe[] {
+function vikingLongshipProximitySensors(): readonly VehicleProximitySensor[] {
   const cosine = Math.cos(VIKING_LONGSHIP.course);
   const sine = Math.sin(VIKING_LONGSHIP.course);
   const nose: SceneVector3 = [-cosine, 0, -sine];
   const tail: SceneVector3 = [cosine, 0, sine];
   const starboard: SceneVector3 = [-sine, 0, cosine];
   const port: SceneVector3 = [sine, 0, -cosine];
-  const probes: HullProbe[] = [
+  const sensors: VehicleProximitySensor[] = [
     { point: vikingLongshipPoint(-7.95, 0, 8.1), normal: nose },
     { point: vikingLongshipPoint(7.55, 0, 8.1), normal: tail },
   ];
   // Balloon skin: three stations per side plus crown and belly.
   for (const a of [-4.2, 0, 4.2]) {
-    probes.push(
+    sensors.push(
       { point: vikingLongshipPoint(a, 2.38, 8.1), normal: starboard },
       { point: vikingLongshipPoint(a, -2.38, 8.1), normal: port },
       { point: vikingLongshipPoint(a, 0, 10.48), normal: [0, 1, 0] },
@@ -401,12 +271,12 @@ function vikingLongshipHullProbes(): readonly HullProbe[] {
   }
   // Clinker hull and the outboard oars are the first low obstacles to touch.
   for (const a of [-4.4, -2.2, 0, 2.2, 4.4]) {
-    probes.push(
+    sensors.push(
       { point: vikingLongshipPoint(a, 1.9, 1.55), normal: starboard },
       { point: vikingLongshipPoint(a, -1.9, 1.55), normal: port },
     );
   }
-  return probes;
+  return sensors;
 }
 
 const TOWN_AIRSHIP = {
@@ -432,21 +302,21 @@ export function townAirshipPoint(
   ];
 }
 
-function townAirshipHullProbes(): readonly HullProbe[] {
+function townAirshipProximitySensors(): readonly VehicleProximitySensor[] {
   const cosine = Math.cos(TOWN_AIRSHIP.heading);
   const sine = Math.sin(TOWN_AIRSHIP.heading);
   const nose: SceneVector3 = [-cosine, 0, -sine];
   const tail: SceneVector3 = [cosine, 0, sine];
   const positiveB: SceneVector3 = [-sine, 0, cosine];
   const negativeB: SceneVector3 = [sine, 0, -cosine];
-  const probes: HullProbe[] = [
-    // The docking socket intentionally surrounds the mooring pin. Probe from
+  const sensors: VehicleProximitySensor[] = [
+    // The docking socket intentionally surrounds the mooring pin. Sensor from
     // the upper nose skin so the intended berth is not read as an obstacle.
     { point: townAirshipPoint(0.8, 0, 13.75), normal: nose },
     { point: townAirshipPoint(15.35, 0, 12.6), normal: tail },
   ];
   for (const a of [2.5, 7, 11.5]) {
-    probes.push(
+    sensors.push(
       { point: townAirshipPoint(a, 2.42, 12.6), normal: positiveB },
       { point: townAirshipPoint(a, -2.42, 12.6), normal: negativeB },
       { point: townAirshipPoint(a, 0, 15.02), normal: [0, 1, 0] },
@@ -455,31 +325,26 @@ function townAirshipHullProbes(): readonly HullProbe[] {
   }
   // The motor circles and the low gondola meet obstacles before the skin.
   for (const side of [-1, 1] as const) {
-    probes.push({
+    sensors.push({
       point: townAirshipPoint(7, side * 5.75, 11.4),
       normal: side > 0 ? positiveB : negativeB,
     });
   }
   for (const a of [3.4, 5.8, 8.2]) {
-    probes.push(
+    sensors.push(
       { point: townAirshipPoint(a, 1.25, 8.15), normal: positiveB },
       { point: townAirshipPoint(a, -1.25, 8.15), normal: negativeB },
     );
   }
-  return probes;
+  return sensors;
 }
 
 
-/**
- * Щупы гексакоптера. Машина широкая и низкая, поэтому главные её «плечи» —
- * шесть колец: именно ими она задевает мир. Каждому кольцу дан наружный щуп,
- * верхний по губе и нижний по юбке; отдельно вынесены нос гондолы, корма с
- * килем и макушка фонаря.
- */
-function hexacopterHullProbes(): readonly HullProbe[] {
+/** Physical sensor layout of the wide, low hexacopter. */
+function hexacopterProximitySensors(): readonly VehicleProximitySensor[] {
   const fore: SceneVector3 = HEXACOPTER_NOSE;
   const aft: SceneVector3 = [-fore[0], 0, -fore[2]];
-  const probes: HullProbe[] = [
+  const sensors: VehicleProximitySensor[] = [
     // Нос гондолы. Приёмный стакан площадки стоит НИЖЕ этой точки, поэтому
     // штатный причал не читается как внезапное препятствие.
     { point: hexacopterPoint(1.16, 0, HEX_GONDOLA_BOTTOM_Y + 0.12), normal: fore },
@@ -494,7 +359,7 @@ function hexacopterHullProbes(): readonly HullProbe[] {
       -Math.sin(station.angle),
     ];
     const rim = HEX_ARM_RADIUS + HEX_LIP_OUTER_RADIUS;
-    probes.push(
+    sensors.push(
       {
         point: hexacopterPoint(
           rim * Math.cos(station.angle),
@@ -513,13 +378,13 @@ function hexacopterHullProbes(): readonly HullProbe[] {
       },
     );
   }
-  return probes;
+  return sensors;
 }
 
-function basaltSkyRamHullProbes(): readonly HullProbe[] {
-  const probes: HullProbe[] = [
+function basaltSkyRamProximitySensors(): readonly VehicleProximitySensor[] {
+  const sensors: VehicleProximitySensor[] = [
     // The cast point sits inside its berth jaw. Its upper brace is the first
-    // forward obstacle probe, so the intended socket is not rejected.
+    // forward obstacle sensor, so the intended socket is not rejected.
     { point: basaltSkyRamPoint(9.35, 0, 6.55), normal: [0, 0, 1] },
     { point: basaltSkyRamPoint(-17.2, 0, 12.8), normal: [0, 0, -1] },
   ];
@@ -529,7 +394,7 @@ function basaltSkyRamHullProbes(): readonly HullProbe[] {
     [0.5, 4.02, 16.85, 8.98],
     [6.1, 3.68, 16.75, 9.18],
   ] as const) {
-    probes.push(
+    sensors.push(
       { point: basaltSkyRamPoint(a, -lateral, 12.8), normal: [-1, 0, 0] },
       { point: basaltSkyRamPoint(a, lateral, 12.8), normal: [1, 0, 0] },
       { point: basaltSkyRamPoint(a, 0, top), normal: [0, 1, 0] },
@@ -538,13 +403,13 @@ function basaltSkyRamHullProbes(): readonly HullProbe[] {
   }
   for (const side of [-1, 1] as const) {
     for (const a of [-5.6, 0, 5.4]) {
-      probes.push({
+      sensors.push({
         point: basaltSkyRamPoint(a, side * 1.98, 6.15),
         normal: [side, 0, 0],
       });
     }
   }
-  return probes;
+  return sensors;
 }
 
 export const vehicleFrames: readonly VehicleFrameDefinition[] = [
@@ -564,21 +429,7 @@ export const vehicleFrames: readonly VehicleFrameDefinition[] = [
     mooringPoint: [-10.65, 9.4, 77.6],
     liftCentre: [5.6, 9.4, 77.6],
     envelopeMatch: ":skin:",
-    // Углы рам обоих вагонов: низ рамы на 0.94.
-    supports: [
-      [-9.0, 1.3, 76.68],
-      [-9.0, 1.3, 78.52],
-      [-6.3, 0.94, 76.2],
-      [-6.3, 0.94, 79.0],
-      [4.1, 0.94, 76.2],
-      [4.1, 0.94, 79.0],
-      [7.3, 0.94, 76.2],
-      [7.3, 0.94, 79.0],
-      [17.5, 0.94, 76.2],
-      [17.5, 0.94, 79.0],
-    ],
-    supportFriction: { staticCoefficient: 1.18, dynamicCoefficient: 1.05 },
-    hullProbes: skyTrainHullProbes(),
+    proximitySensors: skyTrainProximitySensors(),
     // Килевой коридор внутри оболочки: продольная тележка низко под газовым
     // сердцем, поперечная — выше, у самой широкой хорды. Обе стоят над
     // измеренным центром масс, поэтому целая машина остаётся сбалансированной.
@@ -615,19 +466,7 @@ export const vehicleFrames: readonly VehicleFrameDefinition[] = [
     mooringPoint: vikingLongshipPoint(-6.1, 0, 2.3),
     liftCentre: vikingLongshipPoint(0, 0, VIKING_LONGSHIP.liftY),
     envelopeMatch: ":gore:",
-    // Keel and garboards: crash/landing contact follows the actual long hull.
-    supports: [
-      vikingLongshipPoint(-4.5, -0.55, 0.3),
-      vikingLongshipPoint(-4.5, 0.55, 0.3),
-      vikingLongshipPoint(-1.5, -0.55, 0.3),
-      vikingLongshipPoint(-1.5, 0.55, 0.3),
-      vikingLongshipPoint(1.5, -0.55, 0.3),
-      vikingLongshipPoint(1.5, 0.55, 0.3),
-      vikingLongshipPoint(4.3, -0.55, 0.3),
-      vikingLongshipPoint(4.3, 0.55, 0.3),
-    ],
-    supportFriction: { staticCoefficient: 0.78, dynamicCoefficient: 0.6 },
-    hullProbes: vikingLongshipHullProbes(),
+    proximitySensors: vikingLongshipProximitySensors(),
     trimRails: keelTrimRails(
       [
         -Math.cos(VIKING_LONGSHIP.course),
@@ -659,16 +498,7 @@ export const vehicleFrames: readonly VehicleFrameDefinition[] = [
     mooringPoint: townAirshipPoint(-1.65, 0, 12.6),
     liftCentre: townAirshipPoint(TOWN_AIRSHIP.liftA, 0, TOWN_AIRSHIP.liftY),
     envelopeMatch: ":gore:",
-    supports: [
-      townAirshipPoint(3.35, -0.95, 6.88),
-      townAirshipPoint(3.35, 0.95, 6.88),
-      townAirshipPoint(5.8, -0.95, 6.88),
-      townAirshipPoint(5.8, 0.95, 6.88),
-      townAirshipPoint(8.25, -0.95, 6.88),
-      townAirshipPoint(8.25, 0.95, 6.88),
-    ],
-    supportFriction: { staticCoefficient: 1.18, dynamicCoefficient: 1.05 },
-    hullProbes: townAirshipHullProbes(),
+    proximitySensors: townAirshipProximitySensors(),
     // Короткое маятниковое плечо и моторы на выносах: этой машине трима не
     // хватит на потерю целой мотогондолы, и она честно повиснет с креном.
     trimRails: keelTrimRails(
@@ -697,18 +527,7 @@ export const vehicleFrames: readonly VehicleFrameDefinition[] = [
     mooringPoint: BASALT_SKY_RAM_MOORING_POINT,
     liftCentre: BASALT_SKY_RAM_LIFT_CENTRE,
     envelopeMatch: ":skin:",
-    supports: [
-      basaltSkyRamPoint(-5.65, -1.1, 4.23),
-      basaltSkyRamPoint(-5.65, 1.1, 4.23),
-      basaltSkyRamPoint(-3.55, -1.1, 4.23),
-      basaltSkyRamPoint(-3.55, 1.1, 4.23),
-      basaltSkyRamPoint(3.15, -1.1, 4.23),
-      basaltSkyRamPoint(3.15, 1.1, 4.23),
-      basaltSkyRamPoint(5.25, -1.1, 4.23),
-      basaltSkyRamPoint(5.25, 1.1, 4.23),
-    ],
-    supportFriction: { staticCoefficient: 0.96, dynamicCoefficient: 0.78 },
-    hullProbes: basaltSkyRamHullProbes(),
+    proximitySensors: basaltSkyRamProximitySensors(),
     trimRails: keelTrimRails(
       BASALT_SKY_RAM_NOSE,
       {
@@ -743,11 +562,7 @@ export const vehicleFrames: readonly VehicleFrameDefinition[] = [
     // уцелевших лопастей и есть доля располагаемого подъёма: восемнадцать
     // лопастей в шести кольцах, потеря кольца — минус 1/6 подъёма.
     envelopeMatch: ":blade:",
-    supports: HEXACOPTER_GEAR_STATIONS.map((station) =>
-      hexacopterPoint(station.a, station.b, HEX_FOOT_BOTTOM_Y),
-    ),
-    supportFriction: { staticCoefficient: 1.05, dynamicCoefficient: 0.86 },
-    hullProbes: hexacopterHullProbes(),
+    proximitySensors: hexacopterProximitySensors(),
     // ДИФФЕРЕНТОВКИ У КОПТЕРА НЕТ И БЫТЬ НЕ ДОЛЖНО.
     //
     // Подвижный груз — орган ГАЗОВОЙ машины: у неё момент по крену и тангажу

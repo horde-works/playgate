@@ -4,7 +4,10 @@ import test from "node:test";
 import RAPIER from "@dimforge/rapier3d-compat";
 import { Euler, Quaternion, Vector3 } from "three";
 
-import { massProperties } from "../games/make-a-mess/src/game/clusterDynamics.ts";
+import {
+  massProperties,
+  principalMassProperties,
+} from "../games/make-a-mess/src/game/clusterDynamics.ts";
 import { compoundClusterColliders } from "../games/make-a-mess/src/game/compoundKinematicCluster.ts";
 import {
   materialRuntimeProfiles,
@@ -27,7 +30,6 @@ assert.ok(frame, "hexacopter frame is missing");
 const pieces = townScene.breakablePieces.filter(
   (piece) => piece.clusterId === TOWN_HEXACOPTER_CLUSTER_ID,
 );
-const pieceById = new Map(pieces.map((piece) => [piece.id, piece]));
 const colliders = compoundClusterColliders(frame, pieces, new Set());
 const properties = massProperties(
   pieces,
@@ -115,7 +117,6 @@ function createScenario(kind) {
     kind === "dynamic"
       ? RAPIER.RigidBodyDesc.dynamic()
           .setCcdEnabled(true)
-          .setAdditionalMass(properties.mass)
           // This fixture isolates the translational non-penetration contract.
           // Rotation and damage response receive their own tests.
           .lockRotations()
@@ -130,6 +131,30 @@ function createScenario(kind) {
       );
     }
     world.createCollider(desc, body);
+  }
+  if (kind === "dynamic") {
+    const principal = principalMassProperties(properties, frame.origin);
+    body.setAdditionalMassProperties(
+      principal.mass,
+      { x: principal.centre[0], y: principal.centre[1], z: principal.centre[2] },
+      {
+        x: principal.principalInertia[0],
+        y: principal.principalInertia[1],
+        z: principal.principalInertia[2],
+      },
+      {
+        x: principal.inertiaFrame[0],
+        y: principal.inertiaFrame[1],
+        z: principal.inertiaFrame[2],
+        w: principal.inertiaFrame[3],
+      },
+      true,
+    );
+    body.recomputeMassPropertiesFromColliders();
+    assert.ok(
+      Math.abs(body.mass() - properties.mass) < 1e-4,
+      `Rapier mass ${body.mass()} != authored mass ${properties.mass}`,
+    );
   }
 
   const initialGap = 0.18;

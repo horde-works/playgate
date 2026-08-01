@@ -193,6 +193,27 @@ test("расхождение после удара второй раз не бь
   assert.deepEqual([...separating.impulse], [0, 0, 0]);
 });
 
+test("solver impulse is measured but never synthesized a second time", () => {
+  const measured = 37;
+  const hit = resolveVehicleContact(
+    {
+      point: RIM_POINT,
+      normal: RIM_INWARD,
+      // Collision callbacks observe post-solver separation; the accepted
+      // impulse remains the authoritative measurement of the impact.
+      relativeVelocity: RIM_INWARD,
+      effectiveMass: effectiveMassAt(RIM_POINT, RIM_INWARD),
+      normalImpulse: measured,
+      vehicle: bodyOf(SHROUD),
+      obstacle: { pieceId: "world:panel", material: "brick", volume: 0.25 },
+      share: 0.01,
+    },
+    materialOf,
+  );
+  assert.ok(hit.closingSpeed > 0);
+  assert.ok(Math.abs(Math.hypot(...hit.impulse) - measured) < 1e-9);
+});
+
 // ---------------------------------------------------------------------------
 // 2. Один закон обеим сторонам, каждая своим материалом
 // ---------------------------------------------------------------------------

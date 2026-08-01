@@ -1965,7 +1965,7 @@ interface BreakablePieceProps {
 }
 
 // Свежие обломки короткое время не сталкиваются с соседями — подробные
-// маски взаимодействия лежат рядом с транспортом, который ими фильтрует щупы.
+// маски взаимодействия также используются датчиками транспорта.
 const DEBRIS_SETTLE_STEPS = 36;
 const DEBRIS_CONTACT_GRACE_STEPS = 30;
 const DEBRIS_RETRY_COOLDOWN_STEPS = 12;

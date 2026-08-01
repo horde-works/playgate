@@ -41,7 +41,7 @@ export const DEBRIS_ACTOR_DETAIL = interactionGroups(
   GROUP_ACTOR,
 );
 
-/** Player/debris containment. Airborne vehicle probes deliberately ignore it. */
+/** Player/debris containment. Airborne vehicle sensors deliberately ignore it. */
 export const WORLD_BOUNDARY = interactionGroups(
   GROUP_BOUNDARY,
   GROUP_DEBRIS | GROUP_ACTOR,

@@ -8,12 +8,12 @@ export interface VehicleObstacleSample {
 }
 
 export interface VehicleObstacleReading extends VehicleObstacleSample {
-  readonly probeIndex: number;
+  readonly sensorIndex: number;
   /** Authored hull direction, used by the cockpit display. */
   readonly localNormal: readonly [number, number, number];
   /** Present direction after the carrier attitude has been applied. */
   readonly worldNormal: readonly [number, number, number];
-  /** Probe point relative to the current centre of mass, in world axes. */
+  /** Sensor point relative to the current centre of mass, in world axes. */
   readonly lever: readonly [number, number, number];
 }
 
@@ -38,7 +38,7 @@ export interface RotorcraftSafetyContext {
 
 export interface RotorcraftSafetyResult {
   readonly guidance: VehicleDirectionalGuidance;
-  readonly intervenedProbeIndices: readonly number[];
+  readonly intervenedSensorIndices: readonly number[];
 }
 
 export interface VehicleSafetyAdvisory {
@@ -113,11 +113,11 @@ export function constrainRotorcraftGuidance(
         const excess = translationClosing - safeClosing;
         worldX -= hx * excess;
         worldZ -= hz * excess;
-        intervened.add(reading.probeIndex);
+        intervened.add(reading.sensorIndex);
       }
 
       // A rotating duct can hit a wall while the centre is stationary. Clamp
-      // only yaw which closes this particular probe; never reverse the turn.
+      // only yaw which closes this particular sensor; never reverse the turn.
       const yawClosingPerRate =
         reading.lever[2] * hx - reading.lever[0] * hz;
       const translated = worldX * hx + worldZ * hz;
@@ -127,7 +127,7 @@ export function constrainRotorcraftGuidance(
         yawRate = Math.abs(yawClosingPerRate) > 1e-6
           ? yawAllowance / yawClosingPerRate
           : 0;
-        intervened.add(reading.probeIndex);
+        intervened.add(reading.sensorIndex);
       }
     }
 
@@ -155,7 +155,7 @@ export function constrainRotorcraftGuidance(
           liftFraction,
           Math.min(context.liftTrimRange, neededFraction),
         );
-        intervened.add(reading.probeIndex);
+        intervened.add(reading.sensorIndex);
       }
     } else if (ny >= 0.65) {
       const safeUp = vehicleSafeClosingSpeed(
@@ -175,7 +175,7 @@ export function constrainRotorcraftGuidance(
           liftFraction,
           Math.max(-context.liftTrimRange, neededFraction),
         );
-        intervened.add(reading.probeIndex);
+        intervened.add(reading.sensorIndex);
       }
     }
   }
@@ -189,7 +189,7 @@ export function constrainRotorcraftGuidance(
       yawRate,
       liftFraction,
     },
-    intervenedProbeIndices: [...intervened],
+    intervenedSensorIndices: [...intervened],
   };
 }
 

@@ -133,6 +133,142 @@ export interface MassProperties {
   readonly pieces: number;
 }
 
+/** Mass properties in the representation expected by Rapier. */
+export interface PrincipalMassProperties {
+  readonly mass: number;
+  readonly centre: SceneVector3;
+  readonly principalInertia: SceneVector3;
+  readonly inertiaFrame: Quaternion;
+}
+
+/** Converts a rotation matrix (principal axes in columns) to a quaternion. */
+function quaternionFromRotationMatrix(matrix: Matrix3): Quaternion {
+  const trace = matrix[0] + matrix[4] + matrix[8];
+  let x: number;
+  let y: number;
+  let z: number;
+  let w: number;
+  if (trace > 0) {
+    const scale = Math.sqrt(trace + 1) * 2;
+    w = scale / 4;
+    x = (matrix[7] - matrix[5]) / scale;
+    y = (matrix[2] - matrix[6]) / scale;
+    z = (matrix[3] - matrix[1]) / scale;
+  } else if (matrix[0] > matrix[4] && matrix[0] > matrix[8]) {
+    const scale = Math.sqrt(1 + matrix[0] - matrix[4] - matrix[8]) * 2;
+    w = (matrix[7] - matrix[5]) / scale;
+    x = scale / 4;
+    y = (matrix[1] + matrix[3]) / scale;
+    z = (matrix[2] + matrix[6]) / scale;
+  } else if (matrix[4] > matrix[8]) {
+    const scale = Math.sqrt(1 + matrix[4] - matrix[0] - matrix[8]) * 2;
+    w = (matrix[2] - matrix[6]) / scale;
+    x = (matrix[1] + matrix[3]) / scale;
+    y = scale / 4;
+    z = (matrix[5] + matrix[7]) / scale;
+  } else {
+    const scale = Math.sqrt(1 + matrix[8] - matrix[0] - matrix[4]) * 2;
+    w = (matrix[3] - matrix[1]) / scale;
+    x = (matrix[2] + matrix[6]) / scale;
+    y = (matrix[5] + matrix[7]) / scale;
+    z = scale / 4;
+  }
+  return normalizeQuaternion([x, y, z, w]);
+}
+
+/**
+ * Diagonalises the authored symmetric inertia tensor for Rapier.
+ *
+ * Jacobi rotations are deterministic for a 3x3 tensor and avoid replacing
+ * the authored mass model with collider-volume mass. Columns of `axes` are
+ * the principal axes in the carrier's local frame.
+ */
+export function principalMassProperties(
+  properties: MassProperties,
+  origin: SceneVector3 = [0, 0, 0],
+): PrincipalMassProperties {
+  const tensor = [...properties.inertia];
+  const axes = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  for (let iteration = 0; iteration < 24; iteration += 1) {
+    let p = 0;
+    let q = 1;
+    let largest = Math.abs(tensor[1]);
+    for (const [row, column] of [[0, 2], [1, 2]] as const) {
+      const value = Math.abs(tensor[row * 3 + column]);
+      if (value > largest) {
+        largest = value;
+        p = row;
+        q = column;
+      }
+    }
+    const scale = Math.max(
+      1,
+      Math.abs(tensor[0]),
+      Math.abs(tensor[4]),
+      Math.abs(tensor[8]),
+    );
+    if (largest <= scale * 1e-12) {
+      break;
+    }
+    const app = tensor[p * 3 + p];
+    const aqq = tensor[q * 3 + q];
+    const apq = tensor[p * 3 + q];
+    const angle = 0.5 * Math.atan2(2 * apq, aqq - app);
+    const cosine = Math.cos(angle);
+    const sine = Math.sin(angle);
+
+    for (let index = 0; index < 3; index += 1) {
+      const aip = tensor[index * 3 + p];
+      const aiq = tensor[index * 3 + q];
+      tensor[index * 3 + p] = cosine * aip - sine * aiq;
+      tensor[index * 3 + q] = sine * aip + cosine * aiq;
+    }
+    for (let index = 0; index < 3; index += 1) {
+      const api = tensor[p * 3 + index];
+      const aqi = tensor[q * 3 + index];
+      tensor[p * 3 + index] = cosine * api - sine * aqi;
+      tensor[q * 3 + index] = sine * api + cosine * aqi;
+    }
+    // Remove round-off asymmetry after A' = J^T A J.
+    tensor[p * 3 + q] = 0;
+    tensor[q * 3 + p] = 0;
+
+    for (let row = 0; row < 3; row += 1) {
+      const vip = axes[row * 3 + p];
+      const viq = axes[row * 3 + q];
+      axes[row * 3 + p] = cosine * vip - sine * viq;
+      axes[row * 3 + q] = sine * vip + cosine * viq;
+    }
+  }
+
+  // A quaternion represents only a proper rotation. Eigenvector signs are
+  // arbitrary, so flip one column when Jacobi produced a reflection.
+  const determinant =
+    axes[0] * (axes[4] * axes[8] - axes[5] * axes[7]) -
+    axes[1] * (axes[3] * axes[8] - axes[5] * axes[6]) +
+    axes[2] * (axes[3] * axes[7] - axes[4] * axes[6]);
+  if (determinant < 0) {
+    axes[2] *= -1;
+    axes[5] *= -1;
+    axes[8] *= -1;
+  }
+
+  return {
+    mass: properties.mass,
+    centre: [
+      properties.centre[0] - origin[0],
+      properties.centre[1] - origin[1],
+      properties.centre[2] - origin[2],
+    ],
+    principalInertia: [
+      Math.max(1e-9, tensor[0]),
+      Math.max(1e-9, tensor[4]),
+      Math.max(1e-9, tensor[8]),
+    ],
+    inertiaFrame: quaternionFromRotationMatrix(axes),
+  };
+}
+
 /**
  * Mass seen by an impulse at a body point along one world-space direction.
  * This includes the angular acceleration created by the impulse arm, unlike

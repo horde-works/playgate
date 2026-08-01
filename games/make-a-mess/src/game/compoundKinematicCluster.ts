@@ -27,6 +27,12 @@ export interface CompoundKinematicClusterDefinition {
    * the frame visually, but decorative detail need not become a Rapier shape.
    */
   readonly contactMemberMatches?: readonly string[];
+  /** Visible, non-contact proximity equipment carried by the rigid frame. */
+  readonly proximitySensors?: readonly {
+    readonly point: SceneVector3;
+    readonly normal: SceneVector3;
+    readonly enabledByDefault?: boolean;
+  }[];
 }
 
 export interface CompoundKinematicClusterRuntime {
