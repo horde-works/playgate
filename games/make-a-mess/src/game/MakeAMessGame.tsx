@@ -5363,16 +5363,22 @@ function OpenWorldScene({
         }
       }
 
-      // Сторона МАШИНЫ. Сталь не крошится — отказывает узел, и кусок улетает
-      // обломком, унося свою массу, коллайдер и вклад в органы управления.
+      // Сторона МАШИНЫ. Здесь НЕЛЬЗЯ звать `breakAt`: это примитив кладки, он
+      // раскалывает соседей в радиусе `fractureRadius` материала. На стене это
+      // правда, на машине из шестисот плотно уложенных деталей одно попадание
+      // так сносит половину корпуса, и корабль рассыпается конструктором.
+      //
+      // Сталь не крошится. Отказывает КРЕПЛЕНИЕ, и уходит ровно один кусок —
+      // со своей массой, своим коллайдером и своим вкладом в органы
+      // управления. Соседей это не касается.
       const vehiclePiece = request.vehiclePieceId
         ? breakablePieceById.get(request.vehiclePieceId)
         : undefined;
       if (vehiclePiece && !brokenPiecesRef.current.has(vehiclePiece.id)) {
-        impactId.current += 1;
-        breakAt(vehiclePiece, impactId.current);
+        const detached = new Set(brokenPiecesRef.current);
+        detached.add(vehiclePiece.id);
+        settleStructure(detached);
         playImpactSound(vehiclePiece.material);
-        changed = true;
       }
 
       if (changed) {
@@ -5385,6 +5391,7 @@ function OpenWorldScene({
       chipAtImpact,
       indestructible,
       playImpactSound,
+      settleStructure,
       settleWorld,
       shatterTarget,
     ],

@@ -256,11 +256,10 @@ const ROTOR_GROUND_IDLE_THROTTLE = 0.04;
  */
 const CONTACT_DAMAGE_COOLDOWN_STEPS = 24;
 /**
- * Сколько креплений один удар вправе оторвать за шаг. Ограничение не про
- * реализм, а про кадр: сотня одновременных пар не должна разбирать машину
- * целиком за один физический шаг, пока автоматика ещё не увидела первую потерю.
+ * Сколько креплений один удар вправе оторвать за шаг. Один: у удара одна
+ * энергия, и если она хватило на узел, то на второй в тот же миг уже нет.
  */
-const CONTACT_DAMAGE_PER_STEP = 3;
+const CONTACT_DAMAGE_PER_STEP = 1;
 /** Ниже этой скорости сближения удар не рассматривается вовсе. */
 const CONTACT_MINIMUM_CLOSING_SPEED = 0.35;
 
@@ -2365,11 +2364,41 @@ export function VehicleFrameSystem({
           properties.centre[1] + state.body.position[1],
           properties.centre[2] + state.body.position[2],
         ];
+        // ПЕРВЫЙ ПРОХОД: чей это удар и какая доля кому.
+        //
+        // У удара одна энергия. Раздать её каждой паре целиком означало бы
+        // достать из корпуса вдесятеро больше, чем в нём было, и машина
+        // рассыпалась бы от собственного касания. Доли считаются по вкладу
+        // каждого контакта в общее сближение.
+        const own = contactsThisStep.filter(
+          (contact) => contact.clusterId === frame.clusterId,
+        );
+        const closingOf = (contact: CompoundClusterContact): number => {
+          const lever = [
+            contact.point[0] - worldCentre[0],
+            contact.point[1] - worldCentre[1],
+            contact.point[2] - worldCentre[2],
+          ] as const;
+          const spin = [
+            state.body.angularVelocity[1] * lever[2] -
+              state.body.angularVelocity[2] * lever[1],
+            state.body.angularVelocity[2] * lever[0] -
+              state.body.angularVelocity[0] * lever[2],
+            state.body.angularVelocity[0] * lever[1] -
+              state.body.angularVelocity[1] * lever[0],
+          ] as const;
+          return -(
+            (state.body.velocity[0] + spin[0]) * contact.normal[0] +
+            (state.body.velocity[1] + spin[1]) * contact.normal[1] +
+            (state.body.velocity[2] + spin[2]) * contact.normal[2]
+          );
+        };
+        const closingTotal = own.reduce(
+          (sum, contact) => sum + Math.max(0, closingOf(contact)),
+          0,
+        );
         let detachedThisStep = 0;
-        for (const contact of contactsThisStep) {
-          if (contact.clusterId !== frame.clusterId) {
-            continue;
-          }
+        for (const contact of own) {
           const cooldownUntil =
             contactCooldown.current.get(contact.pieceId) ?? 0;
           if (contactStep.current < cooldownUntil) {
@@ -2432,6 +2461,10 @@ export function VehicleFrameSystem({
                     member.piece.size[2],
               },
               obstacle,
+              share:
+                closingTotal > 1e-6
+                  ? Math.max(0, closingOf(contact)) / closingTotal
+                  : 1,
             },
             contactMaterialOf,
           );

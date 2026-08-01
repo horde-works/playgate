@@ -170,7 +170,7 @@ test("расхождение после удара второй раз не бь
 // ---------------------------------------------------------------------------
 
 test("штатная и жёсткая посадка на опоры не отрывает ничего", () => {
-  for (const speed of [0.5, 1, 2, 3, 4, 5]) {
+  for (const speed of [0.5, 1, 2, 3, 4, 5, 8, 12]) {
     const landing = strike(GEAR, GEAR_POINT, [0, 1, 0], speed, "concrete");
     assert.equal(
       landing.detachesVehiclePiece,
@@ -180,16 +180,22 @@ test("штатная и жёсткая посадка на опоры не от�
   }
 });
 
-test("падение на опоры выше эксплуатационного всё же ломает стойку", () => {
-  const crash = strike(GEAR, GEAR_POINT, [0, 1, 0], 6, "concrete");
+test("падение на опоры выше любого выживаемого всё же ломает стойку", () => {
+  const crash = strike(GEAR, GEAR_POINT, [0, 1, 0], 20, "concrete");
   assert.equal(crash.detachesVehiclePiece, true);
   assert.ok(crash.vehicleJointLoad > 1);
 });
 
 test("лобовой удар о дом рвёт крепление кольца, лёгкое касание — нет", () => {
-  const nudge = strike(SHROUD, RIM_POINT, RIM_INWARD, 2, "brick");
-  assert.equal(nudge.detachesVehiclePiece, false);
-  for (const speed of [4, 8, 12]) {
+  for (const speed of [2, 4, 6]) {
+    const nudge = strike(SHROUD, RIM_POINT, RIM_INWARD, speed, "brick");
+    assert.equal(
+      nudge.detachesVehiclePiece,
+      false,
+      `касание на ${speed} м/с не должно ничего отрывать`,
+    );
+  }
+  for (const speed of [10, 12]) {
     const hit = strike(SHROUD, RIM_POINT, RIM_INWARD, speed, "brick");
     assert.equal(
       hit.detachesVehiclePiece,
@@ -199,11 +205,59 @@ test("лобовой удар о дом рвёт крепление кольца
   }
 });
 
-test("скользящий удар на маршевой скорости отрывает сегмент кольца", () => {
+test("скользящий удар закручивает, но обшивку не срывает", () => {
+  // Плечо забирает большую часть в поворот, поэтому в крепление приходит
+  // много меньше. Машину развернёт, а сегмент кольца устоит — и это правда:
+  // чиркнуть углом дома не то же самое, что въехать в него.
   const cruise = strike(SHROUD, RIM_POINT, RIM_TANGENT, 9, "brick");
-  assert.equal(cruise.detachesVehiclePiece, true);
-  const slow = strike(SHROUD, RIM_POINT, RIM_TANGENT, 4, "brick");
-  assert.equal(slow.detachesVehiclePiece, false);
+  assert.equal(cruise.detachesVehiclePiece, false);
+  assert.ok(Math.hypot(...cruise.impulse) > 100, "закрутить всё равно обязан");
+});
+
+test("ОДИН УДАР — ОДНА ЭНЕРГИЯ: плашмя не сыпется, углом рвёт", () => {
+  const at = (share) =>
+    resolveVehicleContact(
+      {
+        point: RIM_POINT,
+        normal: RIM_INWARD,
+        relativeVelocity: [-RIM_INWARD[0] * 12, 0, -RIM_INWARD[2] * 12],
+        effectiveMass: effectiveMassAt(RIM_POINT, RIM_INWARD),
+        vehicle: bodyOf(SHROUD),
+        obstacle: { pieceId: "world:panel", material: "brick", volume: 0.25 },
+        share,
+      },
+      materialOf,
+    );
+  assert.equal(at(1).detachesVehiclePiece, true);
+  for (const contacts of [8, 20, 40]) {
+    assert.equal(
+      at(1 / contacts).detachesVehiclePiece,
+      false,
+      `${contacts} одновременных пар всё равно разобрали корпус`,
+    );
+  }
+});
+
+test("доли одного удара в сумме дают ровно один удар", () => {
+  const whole = strike(SHROUD, RIM_POINT, RIM_INWARD, 9, "brick");
+  const parts = [0.5, 0.3, 0.2].map((share) =>
+    resolveVehicleContact(
+      {
+        point: RIM_POINT,
+        normal: RIM_INWARD,
+        relativeVelocity: [-RIM_INWARD[0] * 9, 0, -RIM_INWARD[2] * 9],
+        effectiveMass: effectiveMassAt(RIM_POINT, RIM_INWARD),
+        vehicle: bodyOf(SHROUD),
+        obstacle: { pieceId: "world:panel", material: "brick", volume: 0.25 },
+        share,
+      },
+      materialOf,
+    ),
+  );
+  const summed = parts.reduce((sum, part) => sum + part.absorbedEnergy, 0);
+  assert.ok(Math.abs(summed - whole.absorbedEnergy) < whole.absorbedEnergy * 1e-9);
+  const impulse = parts.reduce((sum, part) => sum + Math.hypot(...part.impulse), 0);
+  assert.ok(Math.abs(impulse - Math.hypot(...whole.impulse)) < 1e-6);
 });
 
 test("скользящий удар легче лобового: плечо забирает часть в поворот", () => {

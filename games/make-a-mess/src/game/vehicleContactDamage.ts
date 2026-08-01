@@ -59,6 +59,19 @@ export interface VehicleContactEvent {
   readonly vehicle: VehicleContactBody;
   /** Null, когда встреченная геометрия не является разрушаемым куском. */
   readonly obstacle: VehicleContactBody | null;
+  /**
+   * ДОЛЯ ЭТОГО КОНТАКТА В ОДНОМ УДАРЕ, 0…1.
+   *
+   * У удара одна энергия, и она делится, а не размножается. Машина, легшая
+   * бортом на стену, даёт десятки пар одновременно; если каждой отдать полную
+   * кинетическую энергию корпуса, суммарно из удара выйдет её десятикратный
+   * запас, и корабль рассыплется от собственного касания. Поэтому широкий
+   * плашмя удар размазывает энергию тонко и не ломает ничего, а удар углом
+   * собирает её в одну точку и рвёт крепление. Ровно так и бывает.
+   *
+   * Не задана — единица: одиночный контакт получает весь удар.
+   */
+  readonly share?: number;
 }
 
 export interface VehicleContactResolution {
@@ -158,8 +171,13 @@ export function contactEnergyShare(
  * всей эксплуатационной вертикальной скорости не должна отрывать ничего, а
  * удар на маршевой скорости обязан отрывать встреченное. См.
  * `tests/vehicle-contact-damage.test.mjs`, где обе границы проверяются.
+ *
+ * Порядок между сторонами тоже требование, и он был перевёрнут: бетонная
+ * панель рассыпается с 10.5 м/с, а машина теряла обшивку с трёх. Стальной
+ * набор обязан переживать то, от чего разрушается бетон, поэтому порог
+ * крепления стоит ВЫШЕ материального порога стены, в которую она врезалась.
  */
-export const JOINT_ENERGY_SCALE = 7;
+export const JOINT_ENERGY_SCALE = 65;
 
 export function vehicleJointCapacity(
   body: VehicleContactBody,
@@ -224,13 +242,16 @@ export function resolveVehicleContact(
     return idle;
   }
 
-  const magnitude = event.effectiveMass * closingSpeed * (1 + restitution);
+  const share = Math.max(0, Math.min(1, event.share ?? 1));
+  const magnitude =
+    event.effectiveMass * closingSpeed * (1 + restitution) * share;
   const absorbedEnergy =
     0.5 *
     event.effectiveMass *
     closingSpeed *
     closingSpeed *
-    (1 - restitution * restitution);
+    (1 - restitution * restitution) *
+    share;
   const vehicleShare = contactEnergyShare(vehicleProfile, obstacleProfile);
   const vehicleEnergy = absorbedEnergy * vehicleShare;
   const obstacleEnergy = absorbedEnergy * (1 - vehicleShare);
