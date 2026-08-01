@@ -35,6 +35,34 @@ export interface CompoundClusterContact {
   readonly normal: readonly [number, number, number];
 }
 
+/** Мировая точка локальной точки коллайдера rapier. */
+function colliderWorldPoint(
+  collider: { translation(): Vector3Like; rotation(): QuaternionLike },
+  local: Vector3Like,
+): [number, number, number] {
+  const t = collider.translation();
+  const q = collider.rotation();
+  // v' = v + 2·q_vec × (q_vec × v + w·v) — поворот кватернионом без three.
+  const cx = q.y * local.z - q.z * local.y + q.w * local.x;
+  const cy = q.z * local.x - q.x * local.z + q.w * local.y;
+  const cz = q.x * local.y - q.y * local.x + q.w * local.z;
+  return [
+    t.x + local.x + 2 * (q.y * cz - q.z * cy),
+    t.y + local.y + 2 * (q.z * cx - q.x * cz),
+    t.z + local.z + 2 * (q.x * cy - q.y * cx),
+  ];
+}
+
+interface Vector3Like {
+  x: number;
+  y: number;
+  z: number;
+}
+
+interface QuaternionLike extends Vector3Like {
+  w: number;
+}
+
 function CompoundKinematicClusterBody({
   definition,
   pieces,
@@ -128,13 +156,18 @@ function CompoundKinematicClusterBody({
 
   /**
    * УДАР. Мир видит машину обычным объектом, поэтому событие приходит из
-   * движка, а не из щупов. Здесь только опознание: какой кусок и куда смотрит
-   * поверхность. Импульс, энергия и вердикты — у владельца тела.
+   * движка, а не из щупов. Здесь только опознание: какой кусок, где именно и
+   * куда смотрит поверхность. Импульс и вердикты — у владельца тела.
    *
-   * Точка берётся по коллайдеру, а не по манифольду: у пары «кинематическое ↔
-   * статическое» солвер не работает, solver-контактов может не быть вовсе, а
-   * куски машины мелкие — сантиметры разницы не меняют ни плечо, ни адрес
-   * встреченной панели.
+   * Точка берётся из ГЕОМЕТРИЧЕСКИХ контактов манифолда: они живут в narrow
+   * phase независимо от солверных (которых у пары «кинематическое ↔
+   * статическое» действительно нет — но нормаль-то приходит из того же
+   * манифолда). Центр коллайдера годился мелкому куску коптера, где ошибка —
+   * сантиметры; у метровой плиты дирижабля он врёт и плечом, и адресом
+   * встреченной панели. Локальные точки манифолда отдаются в осях сторон
+   * ПАРЫ, чей порядок относительно target/other не гарантирован, поэтому обе
+   * интерпретации проверяются совпадением мировых точек; пустой манифолд
+   * оставляет центр коллайдера как честный фолбэк.
    */
   const handleCollision = useCallback(
     (payload: CollisionEnterPayload) => {
@@ -148,6 +181,62 @@ function CompoundKinematicClusterBody({
         return;
       }
       object.getWorldPosition(contactPoint.current);
+      const manifold = payload.manifold;
+      const contactCount = manifold.numContacts();
+      // Центр контактного патча: у плоского касания первая точка манифолда —
+      // угол полигона, а плечо честнее мерить от центра.
+      let first: Vector3Like | null = null;
+      let second: Vector3Like | null = null;
+      let validPairs = 0;
+      for (let index = 0; index < contactCount; index += 1) {
+        const one = manifold.localContactPoint1(index);
+        const two = manifold.localContactPoint2(index);
+        if (!one || !two) {
+          continue;
+        }
+        if (validPairs === 0) {
+          first = { x: one.x, y: one.y, z: one.z };
+          second = { x: two.x, y: two.y, z: two.z };
+        } else if (first && second) {
+          first.x += one.x;
+          first.y += one.y;
+          first.z += one.z;
+          second.x += two.x;
+          second.y += two.y;
+          second.z += two.z;
+        }
+        validPairs += 1;
+      }
+      if (first && second && validPairs > 1) {
+        first.x /= validPairs;
+        first.y /= validPairs;
+        first.z /= validPairs;
+        second.x /= validPairs;
+        second.y /= validPairs;
+        second.z /= validPairs;
+      }
+      const targetCollider = payload.target.collider;
+      const otherCollider = payload.other.collider;
+      if (first && second && targetCollider && otherCollider) {
+        // Вариант А: target — первая сторона пары; вариант Б — вторая. У
+        // настоящего контакта мировые точки обеих сторон совпадают с точностью
+        // до проникновения, поэтому верна та интерпретация, где они сошлись.
+        const aVehicle = colliderWorldPoint(targetCollider, first);
+        const aWorld = colliderWorldPoint(otherCollider, second);
+        const bVehicle = colliderWorldPoint(targetCollider, second);
+        const bWorld = colliderWorldPoint(otherCollider, first);
+        const gap = (v: readonly number[], w: readonly number[]) =>
+          (v[0] - w[0]) ** 2 + (v[1] - w[1]) ** 2 + (v[2] - w[2]) ** 2;
+        const [vehiclePoint, worldPoint] =
+          gap(aVehicle, aWorld) <= gap(bVehicle, bWorld)
+            ? [aVehicle, aWorld]
+            : [bVehicle, bWorld];
+        contactPoint.current.set(
+          (vehiclePoint[0] + worldPoint[0]) / 2,
+          (vehiclePoint[1] + worldPoint[1]) / 2,
+          (vehiclePoint[2] + worldPoint[2]) / 2,
+        );
+      }
       const raw = payload.manifold.normal();
       let nx = raw.x;
       let ny = raw.y;
