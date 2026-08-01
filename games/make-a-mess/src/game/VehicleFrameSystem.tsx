@@ -253,6 +253,13 @@ const ROTOR_GROUND_IDLE_THROTTLE = 0.04;
 const CONTACT_MINIMUM_CLOSING_SPEED = 0.35;
 
 /**
+ * Насколько машина может отстоять от авторской стоянки, чтобы пост площадки
+ * всё ещё считал её «домашней». Покрывает разброс штатной парковки после
+ * рейса; машина, заглушенная пилотом на крыше, в него заведомо не попадает.
+ */
+const DEPARTURE_HOME_RADIUS = 6;
+
+/**
  * ВИНТЫ ВМЕСТО ОБОЛОЧКИ И БОКОВЫХ МОТОРОВ.
  *
  * Переходник между общим guidance и винтовой моделью. Слои выше не меняются:
@@ -1924,6 +1931,16 @@ export function VehicleFrameSystem({
           : Number.POSITIVE_INFINITY;
         const keepRide = approachedPost.current === "ride";
         const keepBoard = approachedPost.current === "board";
+        // Стойка на паде — интерфейс ПЛОЩАДКИ, и она видит машину только
+        // когда машина дома. Пульт без машины — призрак: он телепортировал
+        // пилота в кресло через полкарты. За улетевшей машиной идут пешком;
+        // вход в управление ждёт у самого кресла и едет вместе с ней.
+        const vehicleHome =
+          Math.hypot(
+            interaction.pose.position[0],
+            interaction.pose.position[1],
+            interaction.pose.position[2],
+          ) <= DEPARTURE_HOME_RADIUS;
         if (
           passengerFlight &&
           passengerLaunchAllowed &&
@@ -1937,6 +1954,7 @@ export function VehicleFrameSystem({
         } else if (
           departure &&
           uncrewedLaunchAllowed &&
+          vehicleHome &&
           Math.abs(eye[1] - departure.point[1]) < departure.heightTolerance &&
           boardDistance <=
             (keepBoard ? departure.releaseRadius : departure.approachRadius)
@@ -1985,18 +2003,22 @@ export function VehicleFrameSystem({
           ) {
             const requestedAction =
               departRequestTargetRef?.current?.selectedActionId;
+            // За управление садятся с двух постов: со стойки площадки, пока
+            // машина дома, и прямо у кресла — тогда машина может ждать
+            // пилота где угодно, хоть на крыше.
             const manualPilotLaunch =
-              post === "board" &&
               requestedAction === "manual" &&
               interactionSeat?.id === TOWN_HEXACOPTER_PILOT_SEAT_ID &&
               passengerLaunchAllowed &&
               seatIntact;
             interaction.flight = createFlightState(
-              post === "ride"
-                ? (requestedAction ??
-                    interactionFrame.passengerFlight?.flightKind ??
-                    "tour")
-                : (departure?.flightKind ?? "circuit"),
+              manualPilotLaunch
+                ? (departure?.flightKind ?? "circuit")
+                : post === "ride"
+                  ? (requestedAction ??
+                      interactionFrame.passengerFlight?.flightKind ??
+                      "tour")
+                  : (departure?.flightKind ?? "circuit"),
               post === "ride" || manualPilotLaunch
                 ? "passenger"
                 : "uncrewed",

@@ -835,6 +835,19 @@ export const TOWN_HEXACOPTER_AIR_VEHICLE: AirVehicleDefinition = {
       id: "town:hexacopter:ride",
       kind: "ride",
       cue: "town-hexacopter-passenger-flight",
+      // Пост едет с машиной, поэтому именно он замыкает цикл «сел на крыше —
+      // вышел — вернулся»: за управление садятся у кресла, где бы машина ни
+      // стояла. Стойка на паде — интерфейс площадки, не машины.
+      actions: [
+        {
+          id: "tour",
+          labelKey: "hint.hexacopterRide.action",
+        },
+        {
+          id: "manual",
+          labelKey: "hint.hexacopterRide.manual",
+        },
+      ],
     },
     // Точка вызова стоит у кресла: человек, вошедший в дверь левого борта,
     // делает полшага к оси и получает предложение лететь.

@@ -97,7 +97,11 @@ export function createRotorcraftPilotState(
 ): RotorcraftPilotState {
   return {
     mode: "manual",
-    targetAltitude: grounded ? 0 : Math.max(0, relativeAltitude),
+    // ВСЕГДА от текущей высоты. «Стоим — значит ноль» было верно только на
+    // родном паде: машина, принятая пилотом на крыше, с нулевой заданной
+    // высотой после первой же команды вверх прижимала коллектив вниз и
+    // вжималась в опору, пока набор не перерастал высоту крыши.
+    targetAltitude: Math.max(0, relativeAltitude),
     takeoffAuthorized: !grounded,
     sensorAssistEnabled: false,
     landingStableSeconds: 0,

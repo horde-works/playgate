@@ -398,6 +398,7 @@ export const ui = {
       "One seat, six ducted rotors, and the whole island below.",
     "hint.hexacopterRide.key": "Space",
     "hint.hexacopterRide.action": "Fly the island circuit",
+    "hint.hexacopterRide.manual": "Take the controls",
     "hint.hexacopterRide.actionTouch": "Lift off",
 
     "gate.continueTitle": "Carry on the mess?",
@@ -807,6 +808,7 @@ export const ui = {
       "Una plaza, seis rotores carenados y toda la isla abajo.",
     "hint.hexacopterRide.key": "Espacio",
     "hint.hexacopterRide.action": "Volar alrededor de la isla",
+    "hint.hexacopterRide.manual": "Tomar los mandos",
     "hint.hexacopterRide.actionTouch": "Despegar",
 
     "hint.townDoor.eyebrow": "Entrada de la casa",
@@ -1219,6 +1221,7 @@ export const ui = {
       "Одно место, шесть колец и весь остров внизу.",
     "hint.hexacopterRide.key": "Пробел",
     "hint.hexacopterRide.action": "Облететь остров",
+    "hint.hexacopterRide.manual": "Сесть за управление",
     "hint.hexacopterRide.actionTouch": "Взлететь",
 
     "gate.continueTitle": "Продолжим беспорядок?",

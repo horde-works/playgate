@@ -310,3 +310,35 @@ test("landing readiness follows a real roof contact, not the home-pad height", (
     false,
   );
 });
+
+test("пилот, принявший машину на крыше, не получает нулевую заданную высоту", () => {
+  // Раньше «на опорах» означало «заданная высота 0» — верно только на родном
+  // паде. Машина, заглушенная на крыше в 12 м, после первой команды вверх
+  // получала цель ~1 м и прижимала коллектив вниз, вжимаясь в крышу.
+  const roof = createRotorcraftPilotState(12, true);
+  assert.equal(roof.targetAltitude, 12);
+  assert.equal(roof.takeoffAuthorized, false);
+
+  // До команды вверх — прижим, как и на паде.
+  const idle = advanceRotorcraftPilot(
+    roof,
+    input(),
+    navigation({ relativeAltitude: 12, grounded: true }),
+  );
+  assert.equal(idle.guidance.liftFraction, -0.28);
+
+  // Первая команда вверх поднимает цель ОТ крыши и требует подъёма, а не
+  // снижения к паду.
+  const takeoff = advanceRotorcraftPilot(
+    roof,
+    input({ altitudeDelta: 1 }),
+    navigation({ relativeAltitude: 12, grounded: true }),
+  );
+  assert.equal(takeoff.state.targetAltitude, 13);
+  assert.equal(takeoff.state.takeoffAuthorized, true);
+  assert.equal(
+    takeoff.guidance.liftFraction > 0,
+    true,
+    `подъём с крыши начался с коллектива ${takeoff.guidance.liftFraction}`,
+  );
+});

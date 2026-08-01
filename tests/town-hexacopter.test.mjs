@@ -1089,3 +1089,18 @@ test("беспилотный запуск стоит у площадки, а н�
   assert.notEqual(vehicle.departure.target.id, vehicle.passengerFlight.target.id);
   assert.notEqual(vehicle.departure.target.cue, vehicle.passengerFlight.target.cue);
 });
+
+test("за управление садятся у кресла: пост машины несёт оба действия", () => {
+  // Стойка на паде — интерфейс площадки и не едет с машиной. Цикл «сел на
+  // крыше — вышел — вернулся — полетел» замыкает пост у кресла, поэтому
+  // ручной вход обязан жить именно на нём, где бы машина ни стояла.
+  const actions = vehicle.passengerFlight.target.actions;
+  assert.ok(actions, "у поста в кабине должен быть выбор действий");
+  assert.deepEqual(
+    actions.map((action) => action.id),
+    ["tour", "manual"],
+  );
+  // Тур первым: привычное действие остаётся под клавишей 1.
+  assert.equal(actions[0].labelKey, "hint.hexacopterRide.action");
+  assert.equal(actions[1].labelKey, "hint.hexacopterRide.manual");
+});
