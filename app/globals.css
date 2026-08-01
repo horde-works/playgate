@@ -4556,3 +4556,11 @@ html[data-terms="accepted"] .consent-content-blocked {
 .vehicle-failure-report__table tr.is-culprit td {
   color: #ff8f6b;
 }
+
+/* В телеметрии табло встаёт слева под её панель, а не по центру кадра. */
+.vehicle-failure-report.is-embedded {
+  top: auto;
+  bottom: 6.5rem;
+  left: 1.5rem;
+  transform: none;
+}

@@ -9904,12 +9904,22 @@ const DEPARTURE_SHUTTER_MS = 2_000;
  * просила, и тем, что получила. Табло показывает весь набор органов разом,
  * поэтому причина видна прямо в игре, без консоли и догадок.
  */
-function VehicleFailureReport({ report }: { report: VehicleFailureEvent }) {
+function VehicleFailureReport({
+  report,
+  embedded = false,
+}: {
+  report: VehicleFailureEvent;
+  /** В телеметрии табло встаёт под её панель, а не по центру экрана. */
+  embedded?: boolean;
+}) {
   const rows = report.readings ?? [];
   const metrics = report.metrics ?? [];
   const culprits = rows.filter((row) => row.note);
   return (
-    <div className="vehicle-failure-report" aria-live="polite">
+    <div
+      className={`vehicle-failure-report${embedded ? " is-embedded" : ""}`}
+      aria-live="polite"
+    >
       <div className="vehicle-failure-report__head">
         <span className="vehicle-failure-report__source">
           {report.sourceLabel}
@@ -11974,6 +11984,12 @@ export function MakeAMessGame({
           timeOfDay={timeOfDay}
           onUnavailable={handleTelemetryUnavailable}
         />
+      ) : null}
+
+      {/* Разбор отказа живёт и в телеметрии: она вызывается по требованию и
+          не гаснет сама, поэтому кадр успевает снять даже длинный список. */}
+      {telemetryVisible && failureReport ? (
+        <VehicleFailureReport report={failureReport} embedded />
       ) : null}
 
       {active && surfaces.worldHud && inspectedVillager ? (

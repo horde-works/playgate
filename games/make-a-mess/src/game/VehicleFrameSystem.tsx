@@ -3014,6 +3014,19 @@ export function VehicleFrameSystem({
           ) {
             continue;
           }
+          // ДЫРКА НЕ ПРИБАВЛЯЕТ ВЕСА. У обрубка объём считается по его
+          // настоящим коробкам: габаритная коробка воксельного огрызка
+          // заметно больше самого огрызка, и без этого попадание делало
+          // корабль ТЯЖЕЛЕЕ целого — вес перерастал подъём, и машина
+          // снималась с рейса «исчерпанным запасом» при целой оболочке.
+          const remnantVolume =
+            remnant.volume ??
+            (remnant.boxes && remnant.boxes.length > 0
+              ? remnant.boxes.reduce(
+                  (sum, box) => sum + box.size[0] * box.size[1] * box.size[2],
+                  0,
+                )
+              : remnant.size[0] * remnant.size[1] * remnant.size[2]);
           massPieces.push({
             id: remnant.id,
             clusterId: frame.clusterId,
@@ -3021,7 +3034,7 @@ export function VehicleFrameSystem({
             position: remnant.position,
             rotation: eulerFromQuaternion(remnant.quaternion),
             size: remnant.size,
-            volume: remnant.volume,
+            volume: remnantVolume,
             color: remnant.color,
           } as BreakablePieceDefinition);
         }
