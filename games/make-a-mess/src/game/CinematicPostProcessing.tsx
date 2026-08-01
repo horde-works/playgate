@@ -18,6 +18,7 @@ import { SMAAPass } from "three/examples/jsm/postprocessing/SMAAPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { N8AOPass } from "n8ao";
 import { environmentState } from "./environmentState";
+import { performanceGovernor } from "./performanceGovernor";
 
 /**
  * The always-on cinematic pipeline: screen-space AO on top of the baked
@@ -127,6 +128,75 @@ const CinematicShader = {
   `,
 };
 
+interface DisjointTimerQueryExtension {
+  readonly TIME_ELAPSED_EXT: number;
+  readonly GPU_DISJOINT_EXT: number;
+}
+
+class GpuFrameTimer {
+  private readonly context: WebGL2RenderingContext | null;
+  private readonly extension: DisjointTimerQueryExtension | null;
+  private active: WebGLQuery | null = null;
+  private readonly pending: WebGLQuery[] = [];
+
+  constructor(context: WebGLRenderingContext | WebGL2RenderingContext) {
+    this.context = "createQuery" in context ? context : null;
+    this.extension = this.context?.getExtension(
+      "EXT_disjoint_timer_query_webgl2",
+    ) as DisjointTimerQueryExtension | null;
+  }
+
+  begin(): void {
+    this.poll();
+    if (!this.context || !this.extension || this.active || this.pending.length > 8) {
+      return;
+    }
+    const query = this.context.createQuery();
+    if (!query) return;
+    this.context.beginQuery(this.extension.TIME_ELAPSED_EXT, query);
+    this.active = query;
+  }
+
+  end(): void {
+    if (!this.context || !this.extension || !this.active) return;
+    this.context.endQuery(this.extension.TIME_ELAPSED_EXT);
+    this.pending.push(this.active);
+    this.active = null;
+  }
+
+  poll(): void {
+    if (!this.context || !this.extension) return;
+    while (this.pending.length > 0) {
+      const query = this.pending[0];
+      const available = this.context.getQueryParameter(
+        query,
+        this.context.QUERY_RESULT_AVAILABLE,
+      ) as boolean;
+      if (!available) break;
+      this.pending.shift();
+      const disjoint = this.context.getParameter(
+        this.extension.GPU_DISJOINT_EXT,
+      ) as boolean;
+      if (!disjoint) {
+        const nanoseconds = this.context.getQueryParameter(
+          query,
+          this.context.QUERY_RESULT,
+        ) as number;
+        performanceGovernor.recordGpu(nanoseconds / 1_000_000);
+      }
+      this.context.deleteQuery(query);
+    }
+  }
+
+  dispose(): void {
+    if (!this.context) return;
+    if (this.active) this.context.deleteQuery(this.active);
+    for (const query of this.pending) this.context.deleteQuery(query);
+    this.active = null;
+    this.pending.length = 0;
+  }
+}
+
 function createLensDirtTexture(): CanvasTexture {
   const size = 512;
   const canvas = document.createElement("canvas");
@@ -206,6 +276,7 @@ export function CinematicPostProcessing({
   const cameraForward = useMemo(() => new Vector3(), []);
   const duskShaftColor = useMemo(() => new Color("#ffb46a"), []);
   const smoothedSunPresence = useRef(0);
+  const gpuTimer = useMemo(() => new GpuFrameTimer(gl.getContext()), [gl]);
 
   const pipeline = useMemo(() => {
     const composer = new EffectComposer(gl);
@@ -266,6 +337,7 @@ export function CinematicPostProcessing({
 
   useEffect(
     () => () => {
+      gpuTimer.dispose();
       pipeline.lensDirt.dispose();
       pipeline.aoPass?.dispose();
       pipeline.bloomPass.dispose();
@@ -274,7 +346,7 @@ export function CinematicPostProcessing({
       pipeline.smaaPass.dispose();
       pipeline.composer.dispose();
     },
-    [pipeline],
+    [gpuTimer, pipeline],
   );
 
   useFrame((_, delta) => {
@@ -326,7 +398,22 @@ export function CinematicPostProcessing({
   });
 
   useFrame((_, delta) => {
-    pipeline.composer.render(delta);
+    const gpuQuality = performanceGovernor.getSnapshot().gpuQuality;
+    // Keep the pass graph stable. EffectComposer/N8AO can leave the final
+    // screen target unwritten when passes are disabled after construction on
+    // some Chrome/WebGL combinations, producing a live but flat-grey canvas.
+    // DPR is the safe adaptive GPU lever; cheaper shader details below never
+    // change which pass owns the screen buffer.
+    const sunPresence = pipeline.cinematicPass.uniforms.uSunPresence;
+    const restoredSunPresence = sunPresence.value;
+    if (gpuQuality === 0) sunPresence.value = 0;
+    gpuTimer.begin();
+    try {
+      pipeline.composer.render(delta);
+    } finally {
+      gpuTimer.end();
+      sunPresence.value = restoredSunPresence;
+    }
   }, 1);
 
   return null;

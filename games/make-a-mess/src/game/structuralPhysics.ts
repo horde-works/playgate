@@ -39,7 +39,17 @@ export interface StructuralMaterialProfile {
 
 export interface StructuralSolver {
   resolve(broken: ReadonlySet<string>): ReadonlySet<string>;
+  /** Resolve only precompiled components selected by the caller. */
+  resolveScoped(
+    broken: ReadonlySet<string>,
+    activePieceIds: ReadonlySet<string>,
+  ): ReadonlySet<string>;
   connectedPieceIds(seedIds: Iterable<string>): ReadonlySet<string>;
+  /**
+   * Minimal causal invalidation scope: every member that may depend on a
+   * changed seed, plus the support paths needed to decide their stability.
+   */
+  affectedPieceIds(seedIds: Iterable<string>): ReadonlySet<string>;
 }
 
 type HorizontalAxis = 0 | 2;
@@ -431,6 +441,9 @@ export function createStructuralSolver<Material extends string>(
   const structuralNeighbors = new Map<string, Set<string>>(
     pieces.map((piece) => [piece.id, new Set<string>()]),
   );
+  const dependentsBySupportId = new Map<string, Set<string>>(
+    pieces.map((piece) => [piece.id, new Set<string>()]),
+  );
   for (const piece of pieces) {
     const neighbors = [
       ...(verticalSupportCandidates.get(piece.id) ?? []),
@@ -439,6 +452,7 @@ export function createStructuralSolver<Material extends string>(
     for (const neighborId of neighbors) {
       structuralNeighbors.get(piece.id)?.add(neighborId);
       structuralNeighbors.get(neighborId)?.add(piece.id);
+      dependentsBySupportId.get(neighborId)?.add(piece.id);
     }
   }
 
@@ -559,9 +573,10 @@ export function createStructuralSolver<Material extends string>(
 
   const findStableStructure = (
     broken: ReadonlySet<string>,
+    activePieces: readonly StructuralPieceDefinition<Material>[],
   ): StableStructure => {
     const stable = new Set(
-      pieces
+      activePieces
         .filter(
           (piece) =>
             materialProfiles[piece.material].foundation &&
@@ -578,7 +593,7 @@ export function createStructuralSolver<Material extends string>(
     while (changed) {
       changed = false;
 
-      for (const piece of pieces) {
+      for (const piece of activePieces) {
         if (broken.has(piece.id) || stable.has(piece.id)) {
           continue;
         }
@@ -637,7 +652,7 @@ export function createStructuralSolver<Material extends string>(
     // A side tie may share load only toward an already shorter path to the
     // foundation. This keeps useful wall bracing without allowing equal-level
     // pieces to form a self-supporting cycle.
-    for (const piece of pieces) {
+    for (const piece of activePieces) {
       const pieceDepth = supportDepthByPiece.get(piece.id);
       if (
         pieceDepth === undefined ||
@@ -695,9 +710,10 @@ export function createStructuralSolver<Material extends string>(
 
   const findOverloadedPieces = (
     structure: StableStructure,
+    activePieces: readonly StructuralPieceDefinition<Material>[],
   ): readonly string[] => {
     const loadByPiece = new Map<string, number>();
-    const ordered = pieces
+    const ordered = activePieces
       .filter(
         (piece) =>
           structure.stable.has(piece.id) &&
@@ -768,7 +784,78 @@ export function createStructuralSolver<Material extends string>(
       .map((piece) => piece.id);
   };
 
+  const resolveActive = (
+    broken: ReadonlySet<string>,
+    activePieces: readonly StructuralPieceDefinition<Material>[],
+  ): ReadonlySet<string> => {
+    const next = new Set(broken);
+    let structure = findStableStructure(next, activePieces);
+
+    for (let pass = 0; pass < MAXIMUM_OVERLOAD_PASSES; pass += 1) {
+      const overloaded = findOverloadedPieces(structure, activePieces).filter(
+        (id) => !next.has(id),
+      );
+      if (overloaded.length === 0) {
+        break;
+      }
+
+      for (const id of overloaded) {
+        next.add(id);
+      }
+      structure = findStableStructure(next, activePieces);
+    }
+
+    for (const piece of activePieces) {
+      if (!structure.stable.has(piece.id)) {
+        next.add(piece.id);
+      }
+    }
+    return next;
+  };
+
   return {
+    affectedPieceIds(seedIds: Iterable<string>): ReadonlySet<string> {
+      const affected = new Set<string>();
+      const pendingDependents: string[] = [];
+      for (const seedId of seedIds) {
+        if (!pieceById.has(seedId) || affected.has(seedId)) continue;
+        affected.add(seedId);
+        pendingDependents.push(seedId);
+      }
+
+      // Only load paths above the changed member can acquire a new failure.
+      // The old undirected component walk crossed every shared foundation and
+      // turned one road chip into a near-global fortress recalculation.
+      while (pendingDependents.length > 0) {
+        const supportId = pendingDependents.pop();
+        if (!supportId) continue;
+        for (const dependentId of dependentsBySupportId.get(supportId) ?? []) {
+          if (affected.has(dependentId)) continue;
+          affected.add(dependentId);
+          pendingDependents.push(dependentId);
+        }
+      }
+
+      // Scoped resolution also needs every alternative path down to a stable
+      // foundation; otherwise a member with two supports would falsely fall
+      // merely because its untouched support was outside the active set.
+      const scope = new Set(affected);
+      const pendingSupports = [...affected];
+      while (pendingSupports.length > 0) {
+        const pieceId = pendingSupports.pop();
+        if (!pieceId) continue;
+        const supportIds = [
+          ...(verticalSupportCandidates.get(pieceId) ?? []),
+          ...(sideAttachmentCandidates.get(pieceId) ?? []),
+        ];
+        for (const supportId of supportIds) {
+          if (scope.has(supportId)) continue;
+          scope.add(supportId);
+          pendingSupports.push(supportId);
+        }
+      }
+      return scope;
+    },
     connectedPieceIds(seedIds: Iterable<string>): ReadonlySet<string> {
       const componentIds = new Set<number>();
       for (const seedId of seedIds) {
@@ -786,30 +873,20 @@ export function createStructuralSolver<Material extends string>(
       return connected;
     },
     resolve(broken: ReadonlySet<string>): ReadonlySet<string> {
-      const next = new Set(broken);
-      let structure = findStableStructure(next);
-
-      for (let pass = 0; pass < MAXIMUM_OVERLOAD_PASSES; pass += 1) {
-        const overloaded = findOverloadedPieces(structure).filter(
-          (id) => !next.has(id),
-        );
-        if (overloaded.length === 0) {
-          break;
-        }
-
-        for (const id of overloaded) {
-          next.add(id);
-        }
-        structure = findStableStructure(next);
-      }
-
-      for (const piece of pieces) {
-        if (!structure.stable.has(piece.id)) {
-          next.add(piece.id);
-        }
-      }
-
-      return next;
+      return resolveActive(broken, pieces);
+    },
+    resolveScoped(broken, activePieceIds): ReadonlySet<string> {
+      return resolveActive(
+        broken,
+        [...activePieceIds]
+          .map((id) => pieceById.get(id))
+          .filter(
+            (
+              piece,
+            ): piece is StructuralPieceDefinition<Material> =>
+              piece !== undefined,
+          ),
+      );
     },
   };
 }

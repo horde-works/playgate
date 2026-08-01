@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { basaltStrongholdScene } from "../games/make-a-mess/src/game/basaltStrongholdScene.ts";
-import { buildStaticColliderMeshes } from "../games/make-a-mess/src/game/staticColliders.ts";
+import {
+  buildStaticColliderMeshes,
+  createStaticColliderMeshStore,
+} from "../games/make-a-mess/src/game/staticColliders.ts";
 
 test("the intact fortress exposes a few cached physics meshes, not one collider per voxel", () => {
   const pieces = basaltStrongholdScene.breakablePieces;
@@ -47,6 +50,28 @@ test("breaking one voxel rebuilds only its local physics chunk", () => {
     after.reduce((total, mesh) => total + mesh.pieceCount, 0),
     before.reduce((total, mesh) => total + mesh.pieceCount, 0) - 1,
   );
+});
+
+test("persistent collider store touches only a broken piece's local chunk", () => {
+  const pieces = basaltStrongholdScene.breakablePieces;
+  const target = pieces.find(
+    (piece) => piece.material === "graphiteStone" && piece.position[1] > 3,
+  );
+  assert.ok(target);
+  const store = createStaticColliderMeshStore(pieces);
+  const before = store.updateHidden(new Set());
+  const after = store.updateHidden(new Set([target.id]));
+  const beforeById = new Map(before.map((mesh) => [mesh.id, mesh]));
+
+  assert.equal(
+    after.filter((mesh) => beforeById.get(mesh.id) !== mesh).length,
+    1,
+  );
+  assert.equal(
+    after.reduce((total, mesh) => total + mesh.pieceCount, 0),
+    before.reduce((total, mesh) => total + mesh.pieceCount, 0) - 1,
+  );
+  assert.strictEqual(store.updateHidden(new Set([target.id])), after);
 });
 
 test("a same-ID geometry edit cannot reuse a stale static collider", () => {

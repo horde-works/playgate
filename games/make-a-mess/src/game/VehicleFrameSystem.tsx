@@ -12,10 +12,8 @@ import {
   Euler,
   InstancedBufferAttribute,
   InstancedMesh,
-  NormalBlending,
   PlaneGeometry,
   Quaternion,
-  ShaderMaterial,
   Vector3,
 } from "three";
 import {
@@ -26,6 +24,11 @@ import {
 } from "./destructionScene";
 import { setSignalGlassGlow } from "./materialTextures";
 import { VEHICLE_CONTACT_QUERY } from "./physicsInteractionGroups";
+import { createSoftSmokeMaterial } from "./softSmokeMaterial";
+import {
+  vehicleDamageSmokeRate,
+  vehicleEngineDamageSmoke,
+} from "./vehicleDamageSmoke";
 import {
   RESTING_BODY,
   applyImpulseAtPoint,
@@ -117,7 +120,7 @@ import type {
 import { motionTelemetryAvailable } from "./motionTelemetry";
 import { createVehicleImpactTelemetry } from "./vehicleImpactTelemetry";
 import { runtimeDiagnosticsEnabled } from "./runtimeDiagnostics";
-import { countUpwardSupportContacts } from "./vehiclePhysicalContact";
+import { countActiveUpwardSupportContacts } from "./vehiclePhysicalContact";
 import {
   compileCommandActuators,
   deliveredCommandValue,
@@ -232,12 +235,7 @@ const ESCAPE_STALL_SECONDS = 18;
 const SCHEDULED_FRAME = "sky-train";
 type ScheduledInteraction = "board" | "ride" | "seat" | "stand";
 type PilotControlName =
-  | "forward"
-  | "backward"
-  | "left"
-  | "right"
-  | "run"
-  | "jump";
+  "forward" | "backward" | "left" | "right" | "run" | "jump";
 
 /** Тяжесть. Плотности в движке свои, но она одна для всех. */
 const GRAVITY = 9.81;
@@ -347,7 +345,10 @@ function rotorcraftFlightForces(
     state.flight && !state.flight.castOff
       ? Math.max(
           0,
-          Math.min(1, state.flight.time / Math.max(0.001, frame.flight.spoolSeconds)),
+          Math.min(
+            1,
+            state.flight.time / Math.max(0.001, frame.flight.spoolSeconds),
+          ),
         )
       : 1;
   state.rotorMotorOutput = points.map((_, index) =>
@@ -363,9 +364,7 @@ function rotorcraftFlightForces(
   // is deliberately attenuated; integrating that error stores a false moment
   // which is released all at once on lift-off (classic controller wind-up).
   const trimMayLearn =
-    enabled &&
-    state.supportContacts === 0 &&
-    (state.flight?.castOff ?? false);
+    enabled && state.supportContacts === 0 && (state.flight?.castOff ?? false);
   state.rotorTrim = !enabled
     ? NEUTRAL_ROTORCRAFT_TRIM
     : trimMayLearn
@@ -375,9 +374,7 @@ function rotorcraftFlightForces(
   state.rotorAcceptedYawRate = enabled
     ? flightStep.result.acceptedYawRate
     : null;
-  state.rotorYawRateLimits = enabled
-    ? flightStep.result.yawRateLimits
-    : null;
+  state.rotorYawRateLimits = enabled ? flightStep.result.yawRateLimits : null;
 
   for (let engine = 0; engine < state.spinAngles.length; engine += 1) {
     state.spinAngles[engine] = advanceDrivePhase(
@@ -541,7 +538,6 @@ interface VehicleFrameRuntime extends AirVehicleDefinition {
     readonly maximum: readonly [number, number, number];
   };
 }
-
 
 /**
  * Может ли уцелевший набор движителей ещё держать ЭТУ машину.
@@ -752,12 +748,7 @@ function readCarrierBody(
   const centre = body.worldCom();
   const linear = body.linvel();
   const angular = body.angvel();
-  const orientation = [
-    rotation.x,
-    rotation.y,
-    rotation.z,
-    rotation.w,
-  ] as const;
+  const orientation = [rotation.x, rotation.y, rotation.z, rotation.w] as const;
   return {
     body: {
       position: [
@@ -839,30 +830,92 @@ interface ExhaustParticle {
 // Full fire deliberately saturates the trail: each furnace can keep several
 // seconds of overlapping smoke alive without recycling the nearest puffs.
 const EXHAUST_PARTICLES_PER_SOURCE = 256;
+const DAMAGE_PARTICLES_PER_SOURCE = 192;
+
+type VehicleSmokeSource =
+  | {
+      readonly kind: "exhaust";
+      readonly frame: VehicleFrameRuntime;
+      readonly profile: NonNullable<AirVehicleDefinition["flight"]["exhaust"]>;
+      readonly source: NonNullable<
+        AirVehicleDefinition["flight"]["exhaust"]
+      >["sources"][number];
+      readonly offset: number;
+      readonly capacity: number;
+    }
+  | {
+      readonly kind: "damage";
+      readonly frame: VehicleFrameRuntime;
+      readonly engineIndex: number;
+      readonly point: readonly [number, number, number];
+      readonly electric: boolean;
+      readonly offset: number;
+      readonly capacity: number;
+    };
 
 /** Detached soft puffs using the same camera-facing smoke shader as hearths. */
 function VehicleExhaustSmoke({
   frames,
   states,
   inactivePieces,
+  bodies,
 }: {
   frames: readonly VehicleFrameRuntime[];
   states: { current: Map<string, FrameState> };
   inactivePieces: ReadonlySet<string>;
+  bodies: { current: Map<string, RapierRigidBody> };
 }) {
   const meshRef = useRef<InstancedMesh>(null);
   const sources = useMemo(
-    () =>
-      frames.flatMap((frame) =>
-        (frame.flight.exhaust?.sources ?? []).map((source) => ({
-          frame,
-          profile: frame.flight.exhaust!,
-          source,
-        })),
-      ),
+    () => {
+      const collected: VehicleSmokeSource[] = [];
+      let offset = 0;
+      for (const frame of frames) {
+        for (const source of frame.flight.exhaust?.sources ?? []) {
+          collected.push({
+            kind: "exhaust",
+            frame,
+            profile: frame.flight.exhaust!,
+            source,
+            offset,
+            capacity: EXHAUST_PARTICLES_PER_SOURCE,
+          });
+          offset += EXHAUST_PARTICLES_PER_SOURCE;
+        }
+        const smokeFromDamage =
+          frame.flight.driveAnimation.kind === "propeller" ||
+          frame.flight.driveAnimation.kind === "furnace";
+        if (!smokeFromDamage) {
+          continue;
+        }
+        frame.flight.limits.enginePoints.forEach((point, engineIndex) => {
+          if (
+            !frame.actuators.some(
+              (binding) => binding.commandChannel === `throttle:${engineIndex}`,
+            )
+          ) {
+            return;
+          }
+          collected.push({
+            kind: "damage",
+            frame,
+            engineIndex,
+            point,
+            electric: frame.flight.liftSource === "rotor",
+            offset,
+            capacity: DAMAGE_PARTICLES_PER_SOURCE,
+          });
+          offset += DAMAGE_PARTICLES_PER_SOURCE;
+        });
+      }
+      return collected;
+    },
     [frames],
   );
-  const total = sources.length * EXHAUST_PARTICLES_PER_SOURCE;
+  const total = sources.reduce(
+    (count, source) => count + source.capacity,
+    0,
+  );
   // Buffers and their geometry must exist in the render that exposes a
   // non-zero instance count. Initialising them in a passive effect left one
   // legal render frame where useFrame saw the mesh but getAttribute() still
@@ -883,56 +936,11 @@ function VehicleExhaustSmoke({
   }, [total]);
   const material = useMemo(
     () =>
-      new ShaderMaterial({
-        transparent: true,
-        depthWrite: false,
-        blending: NormalBlending,
-        vertexShader: /* glsl */ `
-      attribute vec3 aSource;
-      attribute float aLife;
-      attribute float aSize;
-      attribute float aPower;
-      attribute float aSeed;
-      varying vec2 vQuad;
-      varying float vLife;
-      varying float vPower;
-      varying float vSeed;
-      void main() {
-        vQuad = position.xy;
-        vLife = aLife;
-        vPower = aPower;
-        vSeed = aSeed;
-        vec3 camRight = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
-        vec3 camUp = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
-        vec3 world = aSource +
-          camRight * position.x * aSize * 1.18 +
-          camUp * position.y * aSize;
-        gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
-      }
-    `,
-        fragmentShader: /* glsl */ `
-      precision mediump float;
-      varying vec2 vQuad;
-      varying float vLife;
-      varying float vPower;
-      varying float vSeed;
-      void main() {
-        float angle = atan(vQuad.y, vQuad.x);
-        float softNoise = 1.0 + 0.075 * sin(
-          angle * 5.0 + vSeed * 6.2832
-        );
-        float d = length(vQuad * 2.0) * softNoise;
-        float alpha = smoothstep(1.0, 0.12, d);
-        alpha *= smoothstep(0.0, 0.07, vLife) * smoothstep(1.0, 0.52, vLife);
-        alpha *= mix(0.28, 0.74, vPower);
-        vec3 smoke = mix(
-          vec3(0.075, 0.08, 0.085),
-          vec3(0.235, 0.24, 0.245),
-          smoothstep(0.12, 1.0, vLife)
-        );
-        gl_FragColor = vec4(smoke, alpha);
-      }
-    `,
+      createSoftSmokeMaterial({
+        denseColor: [0.075, 0.08, 0.085],
+        agedColor: [0.235, 0.24, 0.245],
+        minimumOpacity: 0.28,
+        maximumOpacity: 0.74,
       }),
     [],
   );
@@ -949,6 +957,7 @@ function VehicleExhaustSmoke({
   const accumulators = useRef(new Float32Array(sources.length));
   const cursors = useRef(new Uint16Array(sources.length));
   const serials = useRef(new Uint32Array(sources.length));
+  const damageAges = useRef(new Float32Array(sources.length));
   const sourceValues = useRef(
     (geometry.getAttribute("aSource") as InstancedBufferAttribute)
       .array as Float32Array,
@@ -978,28 +987,85 @@ function VehicleExhaustSmoke({
     const delta = Math.min(0.05, frameDelta);
     for (const [sourceIndex, authored] of sources.entries()) {
       const state = states.current.get(authored.frame.id);
-      if (!state || inactivePieces.has(authored.source.outletPieceId)) {
+      if (!state) {
         continue;
       }
-      const power = state.flight
-        ? Math.abs(state.flight.throttle[authored.source.engineIndex] ?? 0)
-        : state.recovery
-          ? 0
-          : 0.035;
-      const rate =
-        authored.profile.idleRate +
-        (authored.profile.fullRate - authored.profile.idleRate) *
-          Math.pow(Math.min(1, power), 1.35);
+      let power: number;
+      let rate: number;
+      let emitter: readonly [number, number, number];
+      let sourceVelocity: readonly [number, number, number] = state.body.velocity;
+      let direction: readonly [number, number, number] = [0, 0, 0];
+      let exitSpeed = 0;
+      let spread: number;
+      let lifeSeconds: number;
+      if (authored.kind === "exhaust") {
+        if (inactivePieces.has(authored.source.outletPieceId)) {
+          continue;
+        }
+        power = state.flight
+          ? Math.abs(state.flight.throttle[authored.source.engineIndex] ?? 0)
+          : state.recovery
+            ? 0
+            : 0.035;
+        rate =
+          authored.profile.idleRate +
+          (authored.profile.fullRate - authored.profile.idleRate) *
+            Math.pow(Math.min(1, power), 1.35);
+        emitter = vehiclePiecePosition(
+          authored.frame.origin,
+          authored.source.point,
+          state.pose,
+          vehicleRotation(state.pose, authored.frame.nose),
+        );
+        direction = rotateByQuaternion(
+          state.body.orientation,
+          authored.source.direction,
+        );
+        exitSpeed = authored.profile.exitSpeed * (0.65 + power * 0.65);
+        spread = authored.profile.spread;
+        lifeSeconds = authored.profile.lifeSeconds;
+      } else {
+        const damage = vehicleEngineDamageSmoke(
+          authored.frame.actuators,
+          inactivePieces,
+          authored.engineIndex,
+        );
+        if (damage.severity <= 1e-6) {
+          damageAges.current[sourceIndex] = 0;
+          continue;
+        }
+        damageAges.current[sourceIndex] += delta;
+        rate = vehicleDamageSmokeRate(
+          damage.severity,
+          damageAges.current[sourceIndex],
+          authored.electric,
+        );
+        power = 0.72 + damage.severity * 0.28;
+        emitter = vehiclePiecePosition(
+          authored.frame.origin,
+          authored.point,
+          state.pose,
+          vehicleRotation(state.pose, authored.frame.nose),
+        );
+        const detachedBody = damage.detachedAnchorPieceId
+          ? bodies.current.get(damage.detachedAnchorPieceId)
+          : null;
+        if (detachedBody) {
+          const position = detachedBody.translation();
+          const velocity = detachedBody.linvel();
+          emitter = [position.x, position.y, position.z];
+          sourceVelocity = [velocity.x, velocity.y, velocity.z];
+        }
+        spread = authored.electric ? 0.62 : 0.95;
+        lifeSeconds = authored.electric ? 3.8 : 5.4;
+      }
       accumulators.current[sourceIndex] += rate * delta;
       while (accumulators.current[sourceIndex] >= 1) {
         accumulators.current[sourceIndex] -= 1;
         const localIndex =
-          cursors.current[sourceIndex] % EXHAUST_PARTICLES_PER_SOURCE;
+          cursors.current[sourceIndex] % authored.capacity;
         cursors.current[sourceIndex] = localIndex + 1;
-        const particle =
-          particles.current[
-            sourceIndex * EXHAUST_PARTICLES_PER_SOURCE + localIndex
-          ];
+        const particle = particles.current[authored.offset + localIndex];
         const serial = serials.current[sourceIndex]++;
         const seed =
           (((Math.sin(serial * 19.19 + sourceIndex * 7.31) * 43758.5) % 1) +
@@ -1008,32 +1074,14 @@ function VehicleExhaustSmoke({
         const seedB =
           (((Math.sin(serial * 43.17 + sourceIndex * 3.7) * 28641.3) % 1) + 1) %
           1;
-        const carrierRotation = vehicleRotation(
-          state.pose,
-          authored.frame.nose,
-        );
-        const emitter = vehiclePiecePosition(
-          authored.frame.origin,
-          authored.source.point,
-          state.pose,
-          carrierRotation,
-        );
-        const direction = rotateByQuaternion(
-          state.body.orientation,
-          authored.source.direction,
-        );
         particle.position.set(emitter[0], emitter[1], emitter[2]);
         particle.velocity.set(
-          state.body.velocity[0] +
-            direction[0] * authored.profile.exitSpeed * (0.65 + power * 0.65) +
-            (seed - 0.5) * authored.profile.spread,
-          state.body.velocity[1] + 0.38 + seedB * 0.42,
-          state.body.velocity[2] +
-            direction[2] * authored.profile.exitSpeed * (0.65 + power * 0.65) +
-            (seedB - 0.5) * authored.profile.spread,
+          sourceVelocity[0] + direction[0] * exitSpeed + (seed - 0.5) * spread,
+          sourceVelocity[1] + 0.38 + seedB * 0.42,
+          sourceVelocity[2] + direction[2] * exitSpeed + (seedB - 0.5) * spread,
         );
         particle.age = 0;
-        particle.life = authored.profile.lifeSeconds * (0.82 + seed * 0.34);
+        particle.life = lifeSeconds * (0.82 + seed * 0.34);
         particle.power = power;
         particle.seed = seed;
       }
@@ -1517,7 +1565,9 @@ export function VehicleFrameSystem({
         baseQuaternion: new Quaternion().setFromEuler(new Euler(rx, ry, rz)),
         spinHub: engine ? (hubs.get(engine) ?? null) : null,
         trimRailIndex:
-          trimRailIndex === undefined || trimRailIndex < 0 ? null : trimRailIndex,
+          trimRailIndex === undefined || trimRailIndex < 0
+            ? null
+            : trimRailIndex,
         engineIndex: engine
           ? engineIndexOf(
               hubs.get(engine),
@@ -1933,7 +1983,8 @@ export function VehicleFrameSystem({
       );
       const interactionSeat = isTerminal
         ? SKY_TRAIN_DRIVER_SEAT
-        : interactionFrame.clusterId === TOWN_HEXACOPTER_PILOT_SEAT.carrierClusterId
+        : interactionFrame.clusterId ===
+            TOWN_HEXACOPTER_PILOT_SEAT.carrierClusterId
           ? TOWN_HEXACOPTER_PILOT_SEAT
           : null;
       const seatIntact =
@@ -2066,12 +2117,10 @@ export function VehicleFrameSystem({
                 ? (departure?.flightKind ?? "circuit")
                 : post === "ride"
                   ? (requestedAction ??
-                      interactionFrame.passengerFlight?.flightKind ??
-                      "tour")
+                    interactionFrame.passengerFlight?.flightKind ??
+                    "tour")
                   : (departure?.flightKind ?? "circuit"),
-              post === "ride" || manualPilotLaunch
-                ? "passenger"
-                : "uncrewed",
+              post === "ride" || manualPilotLaunch ? "passenger" : "uncrewed",
               interactionFrame.flight.limits.enginePoints.length,
               0,
               manualPilotLaunch
@@ -2401,7 +2450,9 @@ export function VehicleFrameSystem({
     // снесли хвостовой вагон — центр масс уехал вперёд, и нос задрался сам.
     for (const frame of frames) {
       const state = frameState(frame.id);
-      const physicalCarrier = clusterRegistry.current.get(frame.clusterId)?.body;
+      const physicalCarrier = clusterRegistry.current.get(
+        frame.clusterId,
+      )?.body;
       if (
         physicalCarrier &&
         state.mass &&
@@ -3191,8 +3242,7 @@ export function VehicleFrameSystem({
       }
       const flight = state.flight;
       const pilotControlsNow =
-        flight?.pilot &&
-        occupiedSeatId === TOWN_HEXACOPTER_PILOT_SEAT_ID
+        flight?.pilot && occupiedSeatId === TOWN_HEXACOPTER_PILOT_SEAT_ID
           ? getPilotControls()
           : {
               forward: false,
@@ -3203,18 +3253,17 @@ export function VehicleFrameSystem({
               jump: false,
             };
       const commands =
-        flight?.pilot &&
-        occupiedSeatId === TOWN_HEXACOPTER_PILOT_SEAT_ID
+        flight?.pilot && occupiedSeatId === TOWN_HEXACOPTER_PILOT_SEAT_ID
           ? consumeRotorcraftPilotCommands(pilotCommands.current)
           : null;
       const pilotManualOverride = Boolean(
         flight?.pilot &&
-          (pilotControlsNow.forward ||
-            pilotControlsNow.backward ||
-            pilotControlsNow.left ||
-            pilotControlsNow.right ||
-            pilotControlsNow.jump ||
-            Math.abs(commands?.altitudeDelta ?? 0) > 1e-6),
+        (pilotControlsNow.forward ||
+          pilotControlsNow.backward ||
+          pilotControlsNow.left ||
+          pilotControlsNow.right ||
+          pilotControlsNow.jump ||
+          Math.abs(commands?.altitudeDelta ?? 0) > 1e-6),
       );
       // Sensor presentation remains a pilot choice while H owns guidance.
       // The other one-shot flight-mode requests are intentionally consumed
@@ -3230,14 +3279,8 @@ export function VehicleFrameSystem({
         };
       }
       if (flight?.pilot && commands?.recenterView) {
-        const forward = rotateByQuaternion(
-          state.body.orientation,
-          frame.nose,
-        );
-        onPassengerViewRestore?.(
-          Math.atan2(-forward[0], -forward[2]),
-          0,
-        );
+        const forward = rotateByQuaternion(state.body.orientation, frame.nose);
+        onPassengerViewRestore?.(Math.atan2(-forward[0], -forward[2]), 0);
       }
       const attachedMembers =
         clusterRegistry.current.get(frame.clusterId)?.attachedMemberIds ??
@@ -3248,7 +3291,12 @@ export function VehicleFrameSystem({
         frame.flight.limits.enginePoints.length,
       );
       const liftHold = state.mass
-        ? rotorHoldState(frame, state.intactMass, state.mass, propulsion.fractions)
+        ? rotorHoldState(
+            frame,
+            state.intactMass,
+            state.mass,
+            propulsion.fractions,
+          )
         : null;
       const flightClearance = propulsionFlightClearance(propulsion, liftHold);
       const feedbackModel: ShipModel =
@@ -3740,8 +3788,7 @@ export function VehicleFrameSystem({
         const requiredAltitude =
           groundPlan.altitude(flight.progress) - berth[1];
         flight.unexpectedGroundContactSeconds =
-          state.supportContacts > 0 &&
-          requiredAltitude > ROUTE_GROUND_ALTITUDE
+          state.supportContacts > 0 && requiredAltitude > ROUTE_GROUND_ALTITUDE
             ? flight.unexpectedGroundContactSeconds + step
             : 0;
         if (
@@ -3882,8 +3929,7 @@ export function VehicleFrameSystem({
         (flight.pilot.mode !== "return" || pilotManualOverride)
       ) {
         const forwardAxis =
-          Number(pilotControlsNow.forward) -
-          Number(pilotControlsNow.backward);
+          Number(pilotControlsNow.forward) - Number(pilotControlsNow.backward);
         const horizontalAxis =
           Number(pilotControlsNow.right) - Number(pilotControlsNow.left);
         const manualDescent =
@@ -3914,7 +3960,8 @@ export function VehicleFrameSystem({
               state.body.velocity[0],
               state.body.velocity[2],
             ),
-            uprightCos: Math.cos(pilotAttitude.pitch) * Math.cos(pilotAttitude.roll),
+            uprightCos:
+              Math.cos(pilotAttitude.pitch) * Math.cos(pilotAttitude.roll),
             angularSpeed: Math.hypot(...state.body.angularVelocity),
             deltaSeconds: step,
             liftTrimRange: frame.flight.limits.liftTrimRange,
@@ -3942,8 +3989,7 @@ export function VehicleFrameSystem({
               starboard: [-forwardFlat[1], forwardFlat[0]],
               verticalSpeed: state.body.velocity[1],
               horizontalDeceleration: field.availableDeceleration,
-              verticalDeceleration:
-                GRAVITY * frame.flight.limits.liftTrimRange,
+              verticalDeceleration: GRAVITY * frame.flight.limits.liftTrimRange,
               liftTrimRange: frame.flight.limits.liftTrimRange,
               grounded: state.supportContacts > 0,
               landingIntent: manualDescent,
@@ -3983,10 +4029,7 @@ export function VehicleFrameSystem({
             returnPlan,
           };
           flight.progress = 0;
-          flight.watchdog = rebaseVehicleFailureWatchdog(
-            flight.watchdog,
-            0,
-          );
+          flight.watchdog = rebaseVehicleFailureWatchdog(flight.watchdog, 0);
         }
 
         // Manual guidance has no route deviation, but it has exactly the same
@@ -4013,7 +4056,8 @@ export function VehicleFrameSystem({
           frame.flight.limits.liftTrimRange,
         );
         const supervisingManualFlight =
-          !pilotStep.disarmRequested && rotorcraftPilotNeedsFlightSupervision(
+          !pilotStep.disarmRequested &&
+          rotorcraftPilotNeedsFlightSupervision(
             pilotStep.state,
             flight.castOff,
             state.supportContacts > 0,
@@ -4164,7 +4208,10 @@ export function VehicleFrameSystem({
         );
         const requestedTrajectoryMode =
           requestedVehicleTrajectoryMode(trajectoryAssessment);
-        if (!flight.trajectoryCorrection && requestedTrajectoryMode !== "authoredRoute") {
+        if (
+          !flight.trajectoryCorrection &&
+          requestedTrajectoryMode !== "authoredRoute"
+        ) {
           // One autopilot changing modes. A route state ordinary guidance can
           // no longer reach in the distance left asks for an intercept; a rate
           // event large enough to own the craft asks for a hold. Being pushed
@@ -4498,15 +4545,13 @@ export function VehicleFrameSystem({
             crossTrackError: unrecoverable.crossTrack,
             altitudeError: unrecoverable.altitude,
             progress: flight.progress,
-            requiredControlAvailable:
-              usesRotorDynamics
-                ? rotorControlAvailable
-                : propulsion.mode !== "inoperative",
+            requiredControlAvailable: usesRotorDynamics
+              ? rotorControlAvailable
+              : propulsion.mode !== "inoperative",
             requestedControlEffort: requestedEffort,
-            deliveredControlFraction:
-              usesRotorDynamics
-                ? rotorDeliveredControlFraction
-                : propulsion.mode === "inoperative"
+            deliveredControlFraction: usesRotorDynamics
+              ? rotorDeliveredControlFraction
+              : propulsion.mode === "inoperative"
                 ? 0
                 : deliveredControlFraction(
                     flight.driveThrottle,
@@ -4592,7 +4637,9 @@ export function VehicleFrameSystem({
             flight.time,
             frame.flight.spoolSeconds,
           );
-          const spoolRequest = frame.flight.limits.enginePoints.map(() => spool);
+          const spoolRequest = frame.flight.limits.enginePoints.map(
+            () => spool,
+          );
           const spoolYawArms = frame.flight.limits.enginePoints.map((point) => {
             const rx = point[0] - mass.centre[0];
             const rz = point[2] - mass.centre[2];
@@ -4742,8 +4789,13 @@ export function VehicleFrameSystem({
       // Stable support is measured from Rapier contacts. The solver owns the
       // normal reaction and Coulomb friction; this channel reports only that
       // an upward-facing surface is persistently carrying the vehicle.
-      state.supportContacts = physicalCarrier
-        ? countUpwardSupportContacts(rapierWorld.narrowPhase, physicalCarrier)
+      const physicalRuntime = clusterRegistry.current.get(frame.clusterId);
+      state.supportContacts = physicalRuntime
+        ? countActiveUpwardSupportContacts(
+            rapierWorld.narrowPhase,
+            physicalRuntime.body,
+            physicalRuntime.activePhysicalContacts,
+          )
         : 0;
       // Винтокрылая машина несёт себя КОЛЬЦАМИ, а не одной вертикалью в точке
       // подъёма. Отсюда всё её поведение: тяга каждого кольца своя, суммарный
@@ -4807,6 +4859,12 @@ export function VehicleFrameSystem({
       ] as const;
       if (physicalCarrier) {
         const wakeForAppliedForces = Boolean(state.flight || state.recovery);
+        // Rapier user forces are persistent, not per-step accumulators. Every
+        // force below is a fresh measurement for this physics step, so keeping
+        // the previous step would integrate the controller output a second
+        // time and release the accumulated load when a sleeping berth wakes.
+        physicalCarrier.resetForces(false);
+        physicalCarrier.resetTorques(false);
         for (const applied of physicalForces) {
           physicalCarrier.addForceAtPoint(
             {
@@ -5052,7 +5110,9 @@ export function VehicleFrameSystem({
       const state = frameState(frame.id);
       const pose = state.pose;
       const authoredRest = isRestingPose(pose);
-      const physicalCarrier = clusterRegistry.current.get(frame.clusterId)?.body;
+      const physicalCarrier = clusterRegistry.current.get(
+        frame.clusterId,
+      )?.body;
       const carrierSleeping = physicalCarrier?.isSleeping() ?? authoredRest;
       const pendingMemberRelease = state.brokenSeen > state.released.size;
       if (carrierSleeping && !state.moving && !pendingMemberRelease) {
@@ -5349,7 +5409,10 @@ export function VehicleFrameSystem({
     ) {
       const pilotRuntime = frames
         .map((frame) => ({ frame, state: frameState(frame.id) }))
-        .find(({ state }) => state.flight?.pilot !== null && state.flight?.pilot !== undefined);
+        .find(
+          ({ state }) =>
+            state.flight?.pilot !== null && state.flight?.pilot !== undefined,
+        );
       const pilot = pilotRuntime?.state.flight?.pilot ?? null;
       if (pilot && pilotRuntime) {
         const now = performance.now();
@@ -5362,8 +5425,9 @@ export function VehicleFrameSystem({
         const currentAltitude = Math.round(state.body.position[1] * 10) / 10;
         const verticalSpeed = Math.round(state.body.velocity[1] * 10) / 10;
         const groundSpeed =
-          Math.round(Math.hypot(state.body.velocity[0], state.body.velocity[2]) * 10) /
-          10;
+          Math.round(
+            Math.hypot(state.body.velocity[0], state.body.velocity[2]) * 10,
+          ) / 10;
         const proximity = rotorcraftProximitySectors(
           frame.nose,
           state.flight?.pilotObstacleReadings ?? [],
@@ -5435,6 +5499,7 @@ export function VehicleFrameSystem({
         frames={frames}
         states={states}
         inactivePieces={inactivePieces}
+        bodies={bodies}
       />
     </>
   );
@@ -5451,18 +5516,15 @@ export interface RotorcraftPilotStatus {
   readonly roll: number;
   readonly sensorAssistEnabled: boolean;
   readonly landingReady: boolean;
-  readonly proximity: Readonly<Record<RotorcraftProximitySector, RotorcraftProximityReading>>;
+  readonly proximity: Readonly<
+    Record<RotorcraftProximitySector, RotorcraftProximityReading>
+  >;
   readonly motorOutput: readonly number[];
   readonly motorAvailability: readonly number[];
 }
 
 export type RotorcraftProximitySector =
-  | "fore"
-  | "aft"
-  | "port"
-  | "starboard"
-  | "above"
-  | "below";
+  "fore" | "aft" | "port" | "starboard" | "above" | "below";
 
 export interface RotorcraftProximityReading {
   readonly distance: number | null;
@@ -5478,14 +5540,15 @@ function rotorcraftProximitySectors(
     distance: null,
     intervening: false,
   });
-  const sectors: Record<RotorcraftProximitySector, RotorcraftProximityReading> = {
-    fore: empty(),
-    aft: empty(),
-    port: empty(),
-    starboard: empty(),
-    above: empty(),
-    below: empty(),
-  };
+  const sectors: Record<RotorcraftProximitySector, RotorcraftProximityReading> =
+    {
+      fore: empty(),
+      aft: empty(),
+      port: empty(),
+      starboard: empty(),
+      above: empty(),
+      below: empty(),
+    };
   const noseLength = Math.hypot(nose[0], nose[2]) || 1;
   const fore = [nose[0] / noseLength, nose[2] / noseLength] as const;
   const starboard = [-fore[1], fore[0]] as const;
@@ -5499,9 +5562,14 @@ function rotorcraftProximitySectors(
     } else {
       const longitudinal = normal[0] * fore[0] + normal[2] * fore[1];
       const lateral = normal[0] * starboard[0] + normal[2] * starboard[1];
-      sector = Math.abs(longitudinal) >= Math.abs(lateral)
-        ? longitudinal >= 0 ? "fore" : "aft"
-        : lateral >= 0 ? "starboard" : "port";
+      sector =
+        Math.abs(longitudinal) >= Math.abs(lateral)
+          ? longitudinal >= 0
+            ? "fore"
+            : "aft"
+          : lateral >= 0
+            ? "starboard"
+            : "port";
     }
     const previous = sectors[sector];
     if (previous.distance === null || reading.distance < previous.distance) {

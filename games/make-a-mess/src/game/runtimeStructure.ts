@@ -32,6 +32,10 @@ export interface RuntimeStructuralResult {
   readonly detachedFragmentIds: ReadonlySet<string>;
 }
 
+export interface RuntimeStructureResolver {
+  resolve(brokenPieceIds: ReadonlySet<string>): RuntimeStructuralResult;
+}
+
 /**
  * Intact steel can bridge nearly a metre of air (frames, bolted risers). After
  * a carve that gap tolerance turns sliced pipe/sheet remnants into false
@@ -126,14 +130,13 @@ function rotateStructuralVector(
   ];
 }
 
-export function resolveRuntimeStructure<Material extends string>(
+export function createRuntimeStructureResolver<Material extends string>(
   pieces: readonly StructuralPieceDefinition<Material>[],
   materialProfiles: Readonly<Record<Material, StructuralMaterialProfile>>,
-  brokenPieceIds: ReadonlySet<string>,
   carvedPieceIds: ReadonlySet<string>,
   fragments: readonly RuntimeStructuralFragment<Material>[],
   scopePieceIds?: ReadonlySet<string>,
-): RuntimeStructuralResult {
+): RuntimeStructureResolver {
   const activePieces = pieces.filter(
     (piece) =>
       (scopePieceIds === undefined || scopePieceIds.has(piece.id)) &&
@@ -145,7 +148,7 @@ export function resolveRuntimeStructure<Material extends string>(
     (fragment) =>
       (scopePieceIds === undefined ||
         scopePieceIds.has(fragment.parentId)) &&
-      !fragment.detached && !brokenPieceIds.has(fragment.parentId),
+      !fragment.detached,
   );
   const fragmentById = new Map(
     activeFragments.map((fragment) => [fragment.id, fragment]),
@@ -198,54 +201,81 @@ export function resolveRuntimeStructure<Material extends string>(
       };
     });
   const structuralPieces = [...activePieces, ...structuralFragments];
-  const structuralBroken = new Set(
-    [...brokenPieceIds].filter((id) => activePieceIds.has(id)),
-  );
-  const resolved = createStructuralSolver(
+  const solver = createStructuralSolver(
     structuralPieces,
     materialProfiles,
-  ).resolve(structuralBroken);
-  const nextBrokenPieces = new Set(brokenPieceIds);
-  const detachedFragmentIds = new Set(
-    fragments
-      .filter(
-        (fragment) =>
-          fragment.detached || brokenPieceIds.has(fragment.parentId),
-      )
-      .map((fragment) => fragment.id),
   );
-
-  for (const id of resolved) {
-    if (activePieceIds.has(id)) {
-      nextBrokenPieces.add(id);
-    } else if (fragmentById.has(id)) {
-      detachedFragmentIds.add(id);
-    }
-  }
-
-  for (const parentId of carvedPieceIds) {
-    if (nextBrokenPieces.has(parentId)) {
-      continue;
-    }
-
-    const hasStableMaterial = fragments.some(
-      (fragment) =>
-        fragment.parentId === parentId &&
-        !detachedFragmentIds.has(fragment.id),
-    );
-    if (!hasStableMaterial) {
-      nextBrokenPieces.add(parentId);
-    }
-  }
-
-  for (const fragment of fragments) {
-    if (nextBrokenPieces.has(fragment.parentId)) {
-      detachedFragmentIds.add(fragment.id);
-    }
-  }
-
   return {
-    brokenPieceIds: nextBrokenPieces,
-    detachedFragmentIds,
+    resolve(brokenPieceIds) {
+      const structuralBroken = new Set(
+        [...brokenPieceIds].filter((id) => activePieceIds.has(id)),
+      );
+      for (const fragment of activeFragments) {
+        if (brokenPieceIds.has(fragment.parentId)) {
+          structuralBroken.add(fragment.id);
+        }
+      }
+      const resolved = solver.resolve(structuralBroken);
+      const nextBrokenPieces = new Set(brokenPieceIds);
+      const detachedFragmentIds = new Set(
+        fragments
+          .filter(
+            (fragment) =>
+              fragment.detached || brokenPieceIds.has(fragment.parentId),
+          )
+          .map((fragment) => fragment.id),
+      );
+
+      for (const id of resolved) {
+        if (activePieceIds.has(id)) {
+          nextBrokenPieces.add(id);
+        } else if (fragmentById.has(id)) {
+          detachedFragmentIds.add(id);
+        }
+      }
+
+      for (const parentId of carvedPieceIds) {
+        if (nextBrokenPieces.has(parentId)) {
+          continue;
+        }
+
+        const hasStableMaterial = fragments.some(
+          (fragment) =>
+            fragment.parentId === parentId &&
+            !detachedFragmentIds.has(fragment.id),
+        );
+        if (!hasStableMaterial) {
+          nextBrokenPieces.add(parentId);
+        }
+      }
+
+      for (const fragment of fragments) {
+        if (nextBrokenPieces.has(fragment.parentId)) {
+          detachedFragmentIds.add(fragment.id);
+        }
+      }
+
+      return {
+        brokenPieceIds: nextBrokenPieces,
+        detachedFragmentIds,
+      };
+    },
   };
+}
+
+export function resolveRuntimeStructure<Material extends string>(
+  pieces: readonly StructuralPieceDefinition<Material>[],
+  materialProfiles: Readonly<Record<Material, StructuralMaterialProfile>>,
+  brokenPieceIds: ReadonlySet<string>,
+  carvedPieceIds: ReadonlySet<string>,
+  fragments: readonly RuntimeStructuralFragment<Material>[],
+  scopePieceIds?: ReadonlySet<string>,
+): RuntimeStructuralResult {
+  return createRuntimeStructureResolver(
+    pieces,
+    materialProfiles,
+    carvedPieceIds,
+    fragments,
+    scopePieceIds,
+  ).resolve(brokenPieceIds);
 }

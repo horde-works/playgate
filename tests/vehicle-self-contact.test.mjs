@@ -253,6 +253,8 @@ function idleBerthResult(clusterId, berthClusterId) {
   let supportSeen = false;
   const berthContacts = new Set();
   for (let step = 0; step < 600; step += 1) {
+    carrier.resetForces(false);
+    carrier.resetTorques(false);
     const centre = carrier.worldCom();
     carrier.addForceAtPoint(
       { x: 0, y: -properties.mass * 9.81, z: 0 },

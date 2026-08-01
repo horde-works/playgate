@@ -50,6 +50,7 @@ import {
 } from "./treeVisualModel";
 import { treeBarkAtlas } from "./treeBarkAtlas";
 import type { CompoundKinematicClusterRegistry } from "./compoundKinematicCluster";
+import { markActiveShotPerformance } from "./shotPerformanceTrace";
 
 const UNIT_BOX = new BoxGeometry(1, 1, 1);
 const UNIT_CYLINDER = new CylinderGeometry(0.5, 0.5, 1, 20, 1);
@@ -216,7 +217,13 @@ import {
   sourceFragments,
   type DynamicBreakableBatch,
   type DynamicBreakableFragment,
+  type DynamicBreakableKind,
 } from "./dynamicWorldBatching.ts";
+import {
+  appendDynamicSlots,
+  createDynamicSlotState,
+  removeDynamicSlots,
+} from "./dynamicBatchSlots.ts";
 
 
 function setFragmentMatrix(
@@ -309,6 +316,72 @@ function expandFragmentBounds(
   bounds.union(fragmentBounds);
 }
 
+function writeFragmentAttributes(
+  geometry: BufferGeometry,
+  fragment: DynamicBreakableFragment,
+  slot: number,
+  treeBark: boolean,
+  tint: Color,
+): void {
+  const anchor = materialAnchorWithWeathering(
+    fragment.fallbackPosition,
+    fragment.center,
+    fragment.weathering,
+  );
+  const anchors = geometry.getAttribute("materialAnchor") as InstancedBufferAttribute;
+  const facePos = geometry.getAttribute("materialFaceMaskPos") as InstancedBufferAttribute;
+  const faceNeg = geometry.getAttribute("materialFaceMaskNeg") as InstancedBufferAttribute;
+  const bands = geometry.getAttribute("silicateJointBand") as InstancedBufferAttribute;
+  const tints = geometry.getAttribute("silicateJointTint") as InstancedBufferAttribute;
+  anchors.setXYZW(slot, anchor[0], anchor[1], anchor[2], anchor[3]);
+  facePos.setXYZ(slot, ...fragment.faceMaskPositive);
+  faceNeg.setXYZ(slot, ...fragment.faceMaskNegative);
+
+  let band = 0;
+  let tintR = 0;
+  let tintG = 0;
+  let tintB = 0;
+  if (treeBark && fragment.treeVisual) {
+    tintR = treeWoodSpecies(fragment.treeVisual.kind);
+    tintG = treeBarkPhase(
+      fragment.treeVisual.seed,
+      fragment.treeVisualSourceId ?? fragment.sourceId,
+    );
+  } else if (fragment.landscapeSurface) {
+    band = fragment.landscapeSurface === "viking-ground" ? -1 : -2;
+  } else if (fragmentHasJoints(fragment)) {
+    band = silicateJointBand(fragment.size);
+    tint.set(silicateJointTint(fragment.color));
+    tintR = tint.r;
+    tintG = tint.g;
+    tintB = tint.b;
+  }
+  bands.setX(slot, band);
+  tints.setXYZ(slot, tintR, tintG, tintB);
+}
+
+function markFragmentAttributesUpdated(
+  geometry: BufferGeometry,
+  firstSlot: number,
+  slotCount: number,
+): void {
+  if (slotCount <= 0) return;
+  for (const attributeName of [
+    "materialAnchor",
+    "materialFaceMaskPos",
+    "materialFaceMaskNeg",
+    "silicateJointBand",
+    "silicateJointTint",
+  ]) {
+    const attribute = geometry.getAttribute(attributeName) as InstancedBufferAttribute;
+    attribute.addUpdateRange(
+      firstSlot * attribute.itemSize,
+      slotCount * attribute.itemSize,
+    );
+    attribute.needsUpdate = true;
+  }
+}
+
 const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
   batch,
   bodies,
@@ -320,6 +393,11 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
 }) {
   const { rapier, rigidBodyStates } = useRapier();
   const mesh = useRef<InstancedMesh>(null);
+  const initialCapacity = Math.max(64, Math.ceil(batch.fragments.length * 1.5));
+  const [capacity, setCapacity] = useState(initialCapacity);
+  const [slots] = useState(() => createDynamicSlotState(initialCapacity));
+  const slotFragments = useRef<DynamicBreakableFragment[]>([]);
+  const writtenGeometry = useRef<BufferGeometry | null>(null);
   const geometry = useMemo(() => {
     const source = batch.geometryKind === "surfaceMesh"
       ? dynamicSurfaceMeshGeometry(batch.visualMesh!)
@@ -341,17 +419,7 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
     // xyz = stable world anchor, w = authored exterior weathering. Keeping
     // both values across the intact -> dynamic transition prevents painted,
     // mossy or moulded masonry from flashing back to plain grey on impact.
-    const anchors = new Float32Array(batch.fragments.length * 4);
-    batch.fragments.forEach((fragment, index) => {
-      anchors.set(
-        materialAnchorWithWeathering(
-          fragment.fallbackPosition,
-          fragment.center,
-          fragment.weathering,
-        ),
-        index * 4,
-      );
-    });
+    const anchors = new Float32Array(capacity * 4);
     next.setAttribute(
       "materialAnchor",
       new InstancedBufferAttribute(anchors, 4, false),
@@ -361,7 +429,7 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
     next.setAttribute(
       "bakedAoA",
       new InstancedBufferAttribute(
-        new Float32Array(batch.fragments.length * 4).fill(1),
+        new Float32Array(capacity * 4).fill(1),
         4,
         false,
       ),
@@ -369,7 +437,7 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
     next.setAttribute(
       "bakedAoB",
       new InstancedBufferAttribute(
-        new Float32Array(batch.fragments.length * 4).fill(1),
+        new Float32Array(capacity * 4).fill(1),
         4,
         false,
       ),
@@ -377,19 +445,15 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
     next.setAttribute(
       "bakedSkyExposure",
       new InstancedBufferAttribute(
-        new Float32Array(batch.fragments.length).fill(1),
+        new Float32Array(capacity).fill(1),
         1,
         false,
       ),
     );
     // Exposed-face masks: interior seams of multi-box bodies carry no edge
     // decorations, only genuinely exposed faces do.
-    const facePos = new Float32Array(batch.fragments.length * 3);
-    const faceNeg = new Float32Array(batch.fragments.length * 3);
-    batch.fragments.forEach((fragment, index) => {
-      facePos.set(fragment.faceMaskPositive, index * 3);
-      faceNeg.set(fragment.faceMaskNegative, index * 3);
-    });
+    const facePos = new Float32Array(capacity * 3);
+    const faceNeg = new Float32Array(capacity * 3);
     next.setAttribute(
       "materialFaceMaskPos",
       new InstancedBufferAttribute(facePos, 3, false),
@@ -399,34 +463,8 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
       new InstancedBufferAttribute(faceNeg, 3, false),
     );
 
-    const bands = new Float32Array(batch.fragments.length);
-    const tints = new Float32Array(batch.fragments.length * 3);
-    const tint = new Color();
-    batch.fragments.forEach((fragment, index) => {
-      // Dynamic batches already sit at WebGL's 16-attribute ceiling. Tree
-      // wood never uses silicate mortar, so its species and stable bark phase
-      // share that existing vec3 instead of allocating a seventeenth
-      // attribute (which makes the entire broken tree fail shader linking).
-      if (batch.treeBark && fragment.treeVisual) {
-        tints[index * 3] = treeWoodSpecies(fragment.treeVisual.kind);
-        tints[index * 3 + 1] = treeBarkPhase(
-          fragment.treeVisual.seed,
-          fragment.treeVisualSourceId ?? fragment.sourceId,
-        );
-        return;
-      }
-      if (fragment.landscapeSurface) {
-        bands[index] = fragment.landscapeSurface === "viking-ground" ? -1 : -2;
-        return;
-      }
-      if (fragmentHasJoints(fragment)) {
-        bands[index] = silicateJointBand(fragment.size);
-        tint.set(silicateJointTint(fragment.color));
-        tints[index * 3] = tint.r;
-        tints[index * 3 + 1] = tint.g;
-        tints[index * 3 + 2] = tint.b;
-      }
-    });
+    const bands = new Float32Array(capacity);
+    const tints = new Float32Array(capacity * 3);
     next.setAttribute(
       "silicateJointBand",
       new InstancedBufferAttribute(bands, 1, false),
@@ -436,7 +474,12 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
       new InstancedBufferAttribute(tints, 3, false),
     );
     return next;
-  }, [batch]);
+  }, [
+    batch.geometryKind,
+    batch.visualMesh,
+    batch.visualProfile,
+    capacity,
+  ]);
   const material = useMemo(() => {
     const base = getPieceMaterial(
       batch.material,
@@ -520,14 +563,8 @@ diffuseColor.rgb = mix(
     batch.treeBark,
     batch.visualMesh,
   ]);
-  const instanceIds = useMemo(
-    () => batch.fragments.map((fragment) => fragment.sourceId),
-    [batch.fragments],
-  );
-  const instanceKinds = useMemo(
-    () => batch.fragments.map((fragment) => fragment.kind),
-    [batch.fragments],
-  );
+  const instanceIds = useMemo<string[]>(() => [], []);
+  const instanceKinds = useMemo<DynamicBreakableKind[]>(() => [], []);
   const dummy = useMemo(() => new Object3D(), []);
   const localCenter = useMemo(() => new Vector3(), []);
   const rotation = useMemo(() => new Quaternion(), []);
@@ -560,9 +597,9 @@ diffuseColor.rgb = mix(
       : null;
   };
 
+  useEffect(() => () => geometry.dispose(), [geometry]);
   useEffect(
     () => () => {
-      geometry.dispose();
       if (
         batch.geometryKind === "foliage" ||
         batch.treeBark ||
@@ -572,19 +609,88 @@ diffuseColor.rgb = mix(
         material.dispose();
       }
     },
-    [batch.geometryKind, batch.treeBark, batch.visualMesh, geometry, material],
+    [batch.geometryKind, batch.treeBark, batch.visualMesh, material],
   );
 
   useLayoutEffect(() => {
+    const startedAt = performance.now();
     const current = mesh.current;
     if (!current) {
       return;
     }
 
+    const incoming = new Map<string, DynamicBreakableFragment[]>();
+    for (const fragment of batch.fragments) {
+      const source = incoming.get(fragment.sourceId);
+      if (source) source.push(fragment);
+      else incoming.set(fragment.sourceId, [fragment]);
+    }
+
+    const changedSlots = new Set<number>();
+    for (const sourceId of [...slots.slotsBySource.keys()]) {
+      const nextFragments = incoming.get(sourceId);
+      const occupied = slots.slotsBySource.get(sourceId) ?? [];
+      if (nextFragments && nextFragments.length === occupied.length) {
+        continue;
+      }
+      const removal = removeDynamicSlots(slots, sourceId);
+      for (const move of removal.moves) {
+        changedSlots.add(move.to);
+      }
+    }
+
+    const previousRows = slotFragments.current;
+    const nextRows = new Array<DynamicBreakableFragment>(slots.slotSources.length);
+    for (const [sourceId, sourceFragments] of incoming) {
+      let occupied = slots.slotsBySource.get(sourceId);
+      if (!occupied) {
+        const append = appendDynamicSlots(
+          slots,
+          sourceId,
+          sourceFragments.length,
+        );
+        occupied = [...append.slots];
+      }
+      occupied.forEach((slot, index) => {
+        const fragment = sourceFragments[index];
+        nextRows[slot] = fragment;
+        if (previousRows[slot] !== fragment) {
+          changedSlots.add(slot);
+        }
+      });
+    }
+    // The fragment array is derived from the authoritative slot ledger on
+    // every changed batch. This makes Fast Refresh and multi-source removals
+    // unable to leave a sparse/stale row behind in the persistent GPU buffer.
+    slotFragments.current = nextRows;
+
+    if (slots.capacity > capacity) {
+      setCapacity(slots.capacity);
+      markActiveShotPerformance(
+        "dynamic_batch_capacity_growth",
+        performance.now() - startedAt,
+        { previousCapacity: capacity, nextCapacity: slots.capacity },
+      );
+      return;
+    }
+
+    const fullRewrite = writtenGeometry.current !== geometry;
+    const rows = nextRows;
+    const rowsToWrite = fullRewrite
+      ? rows.map((_, index) => index)
+      // A later source removal in the same reconciliation may truncate a
+      // slot that an earlier swap marked dirty. It no longer has a GPU row;
+      // lowering mesh.count is the whole removal operation for that tail.
+      : [...changedSlots].filter((index) => index < rows.length);
     const color = new Color();
-    raycastBounds.makeEmpty();
-    sleepingSources.current.clear();
-    batch.fragments.forEach((fragment, index) => {
+    const tint = new Color();
+    if (fullRewrite) {
+      raycastBounds.makeEmpty();
+      sleepingSources.current.clear();
+    }
+    rowsToWrite.forEach((index) => {
+      const fragment = rows[index];
+      writeFragmentAttributes(geometry, fragment, index, batch.treeBark, tint);
       const fragmentBody = bodies?.current?.get(fragment.sourceId);
       setFragmentMatrix(
         dummy,
@@ -594,6 +700,9 @@ diffuseColor.rgb = mix(
         rotation,
       );
       current.setMatrixAt(index, dummy.matrix);
+      if (!fullRewrite) {
+        current.instanceMatrix.addUpdateRange(index * 16, 16);
+      }
       expandFragmentBounds(
         raycastBounds,
         fragmentBounds,
@@ -608,9 +717,27 @@ diffuseColor.rgb = mix(
             : "#ffffff",
         ),
       );
+      if (!fullRewrite) {
+        current.instanceColor?.addUpdateRange(index * 3, 3);
+        markFragmentAttributesUpdated(geometry, index, 1);
+      }
+    });
+    if (fullRewrite && rows.length > 0) {
+      current.instanceMatrix.addUpdateRange(0, rows.length * 16);
+      current.instanceColor?.addUpdateRange(0, rows.length * 3);
+      markFragmentAttributesUpdated(geometry, 0, rows.length);
+    }
+    current.count = rows.length;
+    instanceIds.length = rows.length;
+    instanceKinds.length = rows.length;
+    rows.forEach((fragment, index) => {
+      instanceIds[index] = fragment.sourceId;
+      instanceKinds[index] = fragment.kind;
     });
     current.instanceMatrix.setUsage(DynamicDrawUsage);
-    current.instanceMatrix.needsUpdate = true;
+    if (rowsToWrite.length > 0) {
+      current.instanceMatrix.needsUpdate = true;
+    }
     if (current.instanceColor) {
       current.instanceColor.needsUpdate = true;
     }
@@ -618,14 +745,32 @@ diffuseColor.rgb = mix(
     // conservative sphere instead: moving debris expands it incrementally, so
     // raycasts stay valid without an O(instance count) bounds rebuild per frame.
     current.boundingSphere = raycastBounds;
+    writtenGeometry.current = geometry;
+    markActiveShotPerformance(
+      "dynamic_batch_gpu_publication",
+      performance.now() - startedAt,
+      {
+        fragmentCount: rows.length,
+        changedSlotCount: rowsToWrite.length,
+        fullRewrite,
+        geometryKind: batch.geometryKind,
+        material: batch.material,
+      },
+    );
   }, [
     batch.fragments,
+    batch.treeBark,
     bodies,
+    capacity,
     dummy,
     fragmentBounds,
+    geometry,
+    instanceIds,
+    instanceKinds,
     localCenter,
     raycastBounds,
     rotation,
+    slots,
   ]);
 
   useFrame(() => {
@@ -635,11 +780,13 @@ diffuseColor.rgb = mix(
     }
 
     let changed = false;
+    let firstChangedSlot = Infinity;
+    let lastChangedSlot = -1;
     const sleepStates = observedSleepStates.current;
     sleepStates.clear();
     const clusterMotion = observedClusterMotion.current;
     clusterMotion.clear();
-    batch.fragments.forEach((fragment, index) => {
+    slotFragments.current.forEach((fragment, index) => {
       const body = bodies?.current?.get(fragment.sourceId);
       const clustered = clusterObject(fragment, body);
       if (!body && !clustered) {
@@ -670,6 +817,8 @@ diffuseColor.rgb = mix(
           rotation,
         );
         current.setMatrixAt(index, dummy.matrix);
+        firstChangedSlot = Math.min(firstChangedSlot, index);
+        lastChangedSlot = Math.max(lastChangedSlot, index);
         expandFragmentBounds(
           raycastBounds,
           fragmentBounds,
@@ -701,6 +850,8 @@ diffuseColor.rgb = mix(
         rotation,
       );
       current.setMatrixAt(index, dummy.matrix);
+      firstChangedSlot = Math.min(firstChangedSlot, index);
+      lastChangedSlot = Math.max(lastChangedSlot, index);
       expandFragmentBounds(
         raycastBounds,
         fragmentBounds,
@@ -726,7 +877,7 @@ diffuseColor.rgb = mix(
       boundsRebuildCountdown.current = RAYCAST_BOUNDS_REBUILD_FRAMES;
       const matrices = current.instanceMatrix.array;
       raycastBounds.makeEmpty();
-      batch.fragments.forEach((fragment, index) => {
+      slotFragments.current.forEach((fragment, index) => {
         const base = index * 16;
         fragmentBounds.center.set(
           matrices[base + 12],
@@ -745,6 +896,10 @@ diffuseColor.rgb = mix(
     }
 
     if (changed) {
+      current.instanceMatrix.addUpdateRange(
+        firstChangedSlot * 16,
+        (lastChangedSlot - firstChangedSlot + 1) * 16,
+      );
       current.instanceMatrix.needsUpdate = true;
     }
   });
@@ -752,10 +907,10 @@ diffuseColor.rgb = mix(
   return (
     <instancedMesh
       ref={mesh}
-      args={[geometry, material, batch.fragments.length]}
+      args={[geometry, material, capacity]}
       castShadow={false}
       receiveShadow
-      frustumCulled={false}
+      frustumCulled
       userData={{
         breakableInstanceIds: instanceIds,
         breakableInstanceKinds: instanceKinds,

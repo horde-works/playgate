@@ -4,20 +4,28 @@ import { RoundedBox, useTexture } from "@react-three/drei";
 import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef, type RefObject } from "react";
 import {
+  AdditiveBlending,
   BoxGeometry,
+  DoubleSide,
   Euler,
   ExtrudeGeometry,
   Group,
+  InstancedBufferAttribute,
+  InstancedMesh,
   Mesh,
   MeshBasicMaterial,
+  PlaneGeometry,
   PointLight,
   Quaternion,
   RepeatWrapping,
   SRGBColorSpace,
+  ShaderMaterial,
   Shape,
   Texture,
   Vector3,
 } from "three";
+import { performanceGovernor } from "./performanceGovernor";
+import { createSoftSmokeMaterial } from "./softSmokeMaterial";
 
 export interface SwingDefinition {
   readonly id: number;
@@ -76,6 +84,18 @@ function useWeaponTextures(): {
 
 /** Слой, на котором живёт подсветка вида от первого лица. */
 const VIEWMODEL_LAYER = 1;
+
+function viewmodelIdleScale(): number {
+  const pressure = performanceGovernor.getSnapshot();
+  const quality = Math.min(
+    pressure.cpuQuality,
+    pressure.gpuQuality,
+    pressure.physicsQuality,
+  );
+  if (pressure.fps < 30 || quality === 0) return 0;
+  if (pressure.fps < 50 || quality === 1) return 0.22;
+  return 1;
+}
 
 function ViewmodelLighting() {
   const key = useRef<PointLight>(null);
@@ -173,6 +193,101 @@ function FlashBurst({
   );
 }
 
+function MachineGunMuzzleFlash({
+  flashRef,
+  materialRef,
+  lightRef,
+}: {
+  flashRef: RefObject<Group | null>;
+  materialRef: RefObject<ShaderMaterial | null>;
+  lightRef: RefObject<PointLight | null>;
+}) {
+  const uniforms = useMemo(
+    () => ({
+      uStrength: { value: 0 },
+      uSeed: { value: 0 },
+    }),
+    [],
+  );
+
+  return (
+    <group ref={flashRef} visible={false}>
+      <mesh scale={[0.34, 0.29, 1]}>
+        <planeGeometry args={[1, 1]} />
+        <shaderMaterial
+          ref={materialRef}
+          uniforms={uniforms}
+          transparent
+          depthWrite={false}
+          blending={AdditiveBlending}
+          toneMapped={false}
+          side={DoubleSide}
+          vertexShader={
+            /* glsl */ `
+            varying vec2 vUv;
+            void main() {
+              vUv = uv;
+              gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+          `
+          }
+          fragmentShader={
+            /* glsl */ `
+            precision highp float;
+            uniform float uStrength;
+            uniform float uSeed;
+            varying vec2 vUv;
+
+            void main() {
+              vec2 p = (vUv - 0.5) * 2.0;
+              float radius = length(p);
+              float angle = atan(p.y, p.x);
+              float irregular =
+                1.0 +
+                0.10 * sin(angle * 5.0 + uSeed * 11.7) +
+                0.055 * sin(angle * 9.0 - uSeed * 7.3);
+              float shapedRadius = radius * irregular;
+
+              float core = exp(-shapedRadius * shapedRadius * 42.0);
+              float halo = exp(-shapedRadius * shapedRadius * 8.5) * 0.26;
+              float rayA = pow(
+                max(0.0, cos(angle * 4.0 + uSeed * 9.1)),
+                18.0
+              );
+              float rayB = pow(
+                max(0.0, cos(angle * 7.0 - uSeed * 5.7)),
+                26.0
+              );
+              float rayMask =
+                smoothstep(0.92, 0.08, shapedRadius) *
+                smoothstep(0.025, 0.18, shapedRadius);
+              float tongues = (rayA * 0.72 + rayB * 0.34) * rayMask;
+              float alpha =
+                clamp(core * 0.94 + halo + tongues, 0.0, 1.0) * uStrength;
+              if (alpha < 0.003) discard;
+
+              vec3 ember = vec3(1.35, 0.20, 0.018);
+              vec3 hot = vec3(2.8, 1.05, 0.16);
+              vec3 whiteHot = vec3(4.6, 3.25, 1.4);
+              vec3 color = mix(ember, hot, clamp(halo * 3.2 + tongues, 0.0, 1.0));
+              color = mix(color, whiteHot, clamp(core * 1.45, 0.0, 1.0));
+              gl_FragColor = vec4(color, alpha);
+            }
+          `
+          }
+        />
+      </mesh>
+      <pointLight
+        ref={lightRef}
+        color="#ffc46e"
+        intensity={0}
+        distance={5}
+        decay={2}
+      />
+    </group>
+  );
+}
+
 function SmokeCloud({
   smokeRef,
   color = "#a8aaa5",
@@ -239,6 +354,21 @@ interface MachineGunCasingSlot {
 }
 
 const MACHINE_GUN_CASING_COUNT = 12;
+const MACHINE_GUN_SMOKE_COUNT = 24;
+const MACHINE_GUN_MUZZLE = new Vector3(0, 0.015, -1.205);
+// Parked for a separate weapon-FX pass. Keep the implementation close to the
+// weapon, but pay neither its render nor per-frame update cost for now.
+const MACHINE_GUN_MUZZLE_FLASH_ENABLED = false;
+const MACHINE_GUN_CASINGS_ENABLED = false;
+
+interface MachineGunSmokeParticle {
+  age: number;
+  life: number;
+  power: number;
+  seed: number;
+  readonly position: Vector3;
+  readonly velocity: Vector3;
+}
 
 function createMachineGunCasingSlots(): MachineGunCasingSlot[] {
   return Array.from({ length: MACHINE_GUN_CASING_COUNT }, () => ({
@@ -247,6 +377,17 @@ function createMachineGunCasingSlots(): MachineGunCasingSlot[] {
     velocity: new Vector3(),
     rotation: new Vector3(),
     spin: new Vector3(),
+  }));
+}
+
+function createMachineGunSmokeParticles(): MachineGunSmokeParticle[] {
+  return Array.from({ length: MACHINE_GUN_SMOKE_COUNT }, () => ({
+    age: Number.POSITIVE_INFINITY,
+    life: 1,
+    power: 0,
+    seed: 0,
+    position: new Vector3(),
+    velocity: new Vector3(),
   }));
 }
 
@@ -490,8 +631,9 @@ export function FirstPersonHammer({ swing }: { swing: SwingDefinition }) {
     const impactArc = Math.sin(Math.pow(progress, 0.78) * Math.PI);
     const recoil = Math.sin(Math.min(1, progress * 1.7) * Math.PI);
     const idle = state.clock.elapsedTime;
-    const idleX = Math.sin(idle * 1.45) * 0.007;
-    const idleY = Math.sin(idle * 2.9 + 0.6) * 0.005;
+    const idleScale = viewmodelIdleScale();
+    const idleX = Math.sin(idle * 1.45) * 0.007 * idleScale;
+    const idleY = Math.sin(idle * 2.9 + 0.6) * 0.005 * idleScale;
 
     group.current.position.copy(camera.position);
     group.current.quaternion.copy(camera.getWorldQuaternion(cameraQuaternion));
@@ -579,7 +721,11 @@ export function FirstPersonHammer({ swing }: { swing: SwingDefinition }) {
   );
 }
 
-export function FirstPersonLauncher({ kick }: { kick: number }) {
+export function FirstPersonLauncher({
+  kickRef,
+}: {
+  kickRef: { current: number };
+}) {
   const group = useRef<Group>(null);
   const action = useRef<Group>(null);
   const flash = useRef<Group>(null);
@@ -591,7 +737,7 @@ export function FirstPersonLauncher({ kick }: { kick: number }) {
   const kickProgress = useRef(1);
   const flashTime = useRef(1);
   const smokeTime = useRef(1);
-  const previousKick = useRef(kick);
+  const previousKick = useRef<number | null>(null);
   const localOffset = useMemo(() => new Vector3(), []);
   const cameraQuaternion = useMemo(() => new Quaternion(), []);
   const toolEuler = useMemo(() => new Euler(), []);
@@ -601,8 +747,10 @@ export function FirstPersonLauncher({ kick }: { kick: number }) {
       return;
     }
 
-    if (previousKick.current !== kick) {
-      previousKick.current = kick;
+    if (previousKick.current === null) {
+      previousKick.current = kickRef.current;
+    } else if (previousKick.current !== kickRef.current) {
+      previousKick.current = kickRef.current;
       kickProgress.current = 0;
       flashTime.current = 0;
       smokeTime.current = 0;
@@ -616,8 +764,9 @@ export function FirstPersonLauncher({ kick }: { kick: number }) {
     const draw = 1 - equip;
     const recoil = Math.sin(Math.min(1, kickProgress.current) * Math.PI);
     const idle = state.clock.elapsedTime;
-    const idleX = Math.sin(idle * 1.35) * 0.005;
-    const idleY = Math.sin(idle * 2.7 + 0.4) * 0.004;
+    const idleScale = viewmodelIdleScale();
+    const idleX = Math.sin(idle * 1.35) * 0.005 * idleScale;
+    const idleY = Math.sin(idle * 2.7 + 0.4) * 0.004 * idleScale;
 
     group.current.position.copy(camera.position);
     group.current.quaternion.copy(camera.getWorldQuaternion(cameraQuaternion));
@@ -828,7 +977,11 @@ export function FirstPersonLauncher({ kick }: { kick: number }) {
   );
 }
 
-export function FirstPersonRocketLauncher({ kick }: { kick: number }) {
+export function FirstPersonRocketLauncher({
+  kickRef,
+}: {
+  kickRef: { current: number };
+}) {
   const group = useRef<Group>(null);
   const sight = useRef<Group>(null);
   const frontFlash = useRef<Group>(null);
@@ -843,7 +996,7 @@ export function FirstPersonRocketLauncher({ kick }: { kick: number }) {
   const kickProgress = useRef(1);
   const flashTime = useRef(1);
   const smokeTime = useRef(1);
-  const previousKick = useRef(kick);
+  const previousKick = useRef<number | null>(null);
   const localOffset = useMemo(() => new Vector3(), []);
   const cameraQuaternion = useMemo(() => new Quaternion(), []);
   const toolEuler = useMemo(() => new Euler(), []);
@@ -853,8 +1006,10 @@ export function FirstPersonRocketLauncher({ kick }: { kick: number }) {
       return;
     }
 
-    if (previousKick.current !== kick) {
-      previousKick.current = kick;
+    if (previousKick.current === null) {
+      previousKick.current = kickRef.current;
+    } else if (previousKick.current !== kickRef.current) {
+      previousKick.current = kickRef.current;
       kickProgress.current = 0;
       flashTime.current = 0;
       smokeTime.current = 0;
@@ -868,8 +1023,9 @@ export function FirstPersonRocketLauncher({ kick }: { kick: number }) {
     const draw = 1 - equip;
     const recoil = Math.sin(Math.min(1, kickProgress.current) * Math.PI);
     const idle = state.clock.elapsedTime;
-    const idleX = Math.sin(idle * 1.18) * 0.005;
-    const idleY = Math.sin(idle * 2.36 + 0.9) * 0.004;
+    const idleScale = viewmodelIdleScale();
+    const idleX = Math.sin(idle * 1.18) * 0.005 * idleScale;
+    const idleY = Math.sin(idle * 2.36 + 0.9) * 0.004 * idleScale;
 
     group.current.position.copy(camera.position);
     group.current.quaternion.copy(camera.getWorldQuaternion(cameraQuaternion));
@@ -1127,21 +1283,64 @@ export function FirstPersonMachineGun({
   const group = useRef<Group>(null);
   const bolt = useRef<Group>(null);
   const flash = useRef<Group>(null);
+  const flashMaterial = useRef<ShaderMaterial>(null);
   const light = useRef<PointLight>(null);
-  const smoke = useRef<Group>(null);
+  const smokeMesh = useRef<InstancedMesh>(null);
   const casingGroup = useRef<Group>(null);
   const { camera } = useThree();
   const textures = useWeaponTextures();
   const equipProgress = useRef(0);
   const kickProgress = useRef(1);
   const flashTime = useRef(1);
-  const smokeTime = useRef(1);
   const seenShots = useRef<number | null>(null);
   const nextCasing = useRef(0);
-  const casingSlots = useRef(createMachineGunCasingSlots());
+  const casingSlots = useRef(
+    MACHINE_GUN_CASINGS_ENABLED ? createMachineGunCasingSlots() : [],
+  );
+  const nextSmoke = useRef(0);
+  const pendingSmokeShots = useRef(0);
+  const smokeSerial = useRef(0);
+  const smokeParticles = useRef(createMachineGunSmokeParticles());
   const localOffset = useMemo(() => new Vector3(), []);
   const cameraQuaternion = useMemo(() => new Quaternion(), []);
+  const toolQuaternion = useMemo(() => new Quaternion(), []);
   const toolEuler = useMemo(() => new Euler(), []);
+  const muzzlePosition = useMemo(() => new Vector3(), []);
+  const muzzleDirection = useMemo(() => new Vector3(), []);
+  const muzzleRight = useMemo(() => new Vector3(), []);
+  const muzzleUp = useMemo(() => new Vector3(), []);
+  const smokeBuffers = useMemo(() => {
+    const geometry = new PlaneGeometry(1, 1);
+    const source = new Float32Array(MACHINE_GUN_SMOKE_COUNT * 3);
+    const life = new Float32Array(MACHINE_GUN_SMOKE_COUNT);
+    const size = new Float32Array(MACHINE_GUN_SMOKE_COUNT);
+    const power = new Float32Array(MACHINE_GUN_SMOKE_COUNT);
+    const seed = new Float32Array(MACHINE_GUN_SMOKE_COUNT);
+    geometry.setAttribute("aSource", new InstancedBufferAttribute(source, 3));
+    geometry.setAttribute("aLife", new InstancedBufferAttribute(life, 1));
+    geometry.setAttribute("aSize", new InstancedBufferAttribute(size, 1));
+    geometry.setAttribute("aPower", new InstancedBufferAttribute(power, 1));
+    geometry.setAttribute("aSeed", new InstancedBufferAttribute(seed, 1));
+    return { geometry, source, life, size, power, seed };
+  }, []);
+  const smokeMaterial = useMemo(
+    () =>
+      createSoftSmokeMaterial({
+        denseColor: [0.26, 0.27, 0.265],
+        agedColor: [0.52, 0.535, 0.52],
+        minimumOpacity: 0.16,
+        maximumOpacity: 0.43,
+      }),
+    [],
+  );
+
+  useEffect(
+    () => () => {
+      smokeBuffers.geometry.dispose();
+      smokeMaterial.dispose();
+    },
+    [smokeBuffers, smokeMaterial],
+  );
 
   useFrame((state, delta) => {
     if (!group.current) {
@@ -1155,10 +1354,24 @@ export function FirstPersonMachineGun({
       seenShots.current = shotsRef.current;
       if (shotDelta > 0) {
         kickProgress.current = 0;
-        flashTime.current = 0;
-        smokeTime.current = 0;
+        // Preserve a full peak frame even when the shot is observed late in
+        // the render tick. The old 65 ms rotating flare read as an animation.
+        if (MACHINE_GUN_MUZZLE_FLASH_ENABLED) {
+          flashTime.current = -Math.min(0.02, delta);
+        }
+        pendingSmokeShots.current += Math.min(2, shotDelta);
+        if (MACHINE_GUN_MUZZLE_FLASH_ENABLED && flash.current) {
+          flash.current.rotation.z =
+            (shotsRef.current * 2.399963229728653) % (Math.PI * 2);
+        }
+        if (MACHINE_GUN_MUZZLE_FLASH_ENABLED && flashMaterial.current) {
+          flashMaterial.current.uniforms.uSeed.value =
+            (((shotsRef.current * 0.61803398875) % 1) + 1) % 1;
+        }
 
-        const casingCount = Math.min(3, shotDelta);
+        const casingCount = MACHINE_GUN_CASINGS_ENABLED
+          ? Math.min(3, shotDelta)
+          : 0;
         for (let index = 0; index < casingCount; index += 1) {
           const slotIndex = nextCasing.current;
           nextCasing.current =
@@ -1180,14 +1393,16 @@ export function FirstPersonMachineGun({
 
     equipProgress.current = Math.min(1, equipProgress.current + delta * 4.8);
     kickProgress.current = Math.min(1, kickProgress.current + delta * 11);
-    flashTime.current += delta;
-    smokeTime.current += delta;
+    if (MACHINE_GUN_MUZZLE_FLASH_ENABLED) {
+      flashTime.current += delta;
+    }
     const equip = 1 - Math.pow(1 - equipProgress.current, 3);
     const draw = 1 - equip;
     const recoil = Math.sin(Math.min(1, kickProgress.current) * Math.PI);
     const idle = state.clock.elapsedTime;
-    const idleX = Math.sin(idle * 1.55) * 0.004;
-    const idleY = Math.sin(idle * 3.1 + 0.7) * 0.003;
+    const idleScale = viewmodelIdleScale();
+    const idleX = Math.sin(idle * 1.55) * 0.004 * idleScale;
+    const idleY = Math.sin(idle * 3.1 + 0.7) * 0.003 * idleScale;
 
     group.current.position.copy(camera.position);
     group.current.quaternion.copy(camera.getWorldQuaternion(cameraQuaternion));
@@ -1205,41 +1420,140 @@ export function FirstPersonMachineGun({
       0.085 + idleX,
       0.018 + idleX + draw * 0.2,
     );
-    group.current.quaternion.multiply(new Quaternion().setFromEuler(toolEuler));
+    group.current.quaternion.multiply(toolQuaternion.setFromEuler(toolEuler));
 
     if (bolt.current) {
       bolt.current.position.z = recoil * 0.055;
       bolt.current.rotation.x = recoil * -0.06;
     }
-    const flashVisible = flashTime.current < 0.065;
-    if (flash.current) {
-      flash.current.visible = flashVisible;
-      flash.current.rotation.z = flashTime.current * 46;
-    }
-    if (light.current) {
-      light.current.intensity = flashVisible
-        ? 9 * (1 - flashTime.current / 0.065)
+    if (MACHINE_GUN_MUZZLE_FLASH_ENABLED) {
+      const flashAge = Math.max(0, flashTime.current);
+      const flashLifetime = 0.045;
+      const flashVisible = flashAge < flashLifetime;
+      const flashEnvelope = flashVisible
+        ? Math.pow(1 - flashAge / flashLifetime, 1.65)
         : 0;
+      if (flash.current) {
+        flash.current.visible = flashVisible;
+      }
+      if (flashMaterial.current) {
+        flashMaterial.current.uniforms.uStrength.value = flashEnvelope;
+      }
+      if (light.current) {
+        const pressure = performanceGovernor.getSnapshot();
+        const constrained =
+          pressure.fps < 30 ||
+          Math.min(pressure.cpuQuality, pressure.gpuQuality) === 0;
+        light.current.intensity = flashVisible
+          ? (constrained ? 10 : 18) * Math.exp(-flashAge / 0.014)
+          : 0;
+        light.current.distance = constrained ? 3.4 : 5.2;
+      }
     }
-    animateSmoke(smoke.current, smokeTime.current, 0.48, -0.28, 0.11, 0.8);
 
-    for (let index = 0; index < casingSlots.current.length; index += 1) {
-      const slot = casingSlots.current[index];
-      const casing = casingGroup.current?.children[index];
-      if (!(casing instanceof Mesh)) {
-        continue;
+    group.current.updateMatrixWorld(true);
+    const pendingPuffs = pendingSmokeShots.current;
+    if (pendingPuffs > 0) {
+      pendingSmokeShots.current = 0;
+      const pressure = performanceGovernor.getSnapshot();
+      const puffsPerShot =
+        pressure.fps < 35 ||
+        Math.min(pressure.cpuQuality, pressure.gpuQuality) === 0
+          ? 1
+          : 2;
+      muzzlePosition
+        .copy(MACHINE_GUN_MUZZLE)
+        .applyMatrix4(group.current.matrixWorld);
+      muzzleDirection
+        .set(0, 0, -1)
+        .transformDirection(group.current.matrixWorld);
+      muzzleRight.set(1, 0, 0).transformDirection(group.current.matrixWorld);
+      muzzleUp.set(0, 1, 0).transformDirection(group.current.matrixWorld);
+      const spawnCount = Math.min(4, pendingPuffs * puffsPerShot);
+      for (let index = 0; index < spawnCount; index += 1) {
+        const particle = smokeParticles.current[nextSmoke.current];
+        nextSmoke.current = (nextSmoke.current + 1) % MACHINE_GUN_SMOKE_COUNT;
+        const serial = smokeSerial.current++;
+        const seed =
+          (((Math.sin(serial * 19.19 + 3.17) * 43758.5) % 1) + 1) % 1;
+        const seedB =
+          (((Math.sin(serial * 43.17 + 7.91) * 28641.3) % 1) + 1) % 1;
+        particle.age = 0;
+        particle.life = 0.42 + seed * 0.16;
+        particle.power = 0.28 + seedB * 0.3;
+        particle.seed = seed;
+        particle.position
+          .copy(muzzlePosition)
+          .addScaledVector(muzzleDirection, 0.055 + index * 0.018)
+          .addScaledVector(muzzleRight, (seed - 0.5) * 0.025)
+          .addScaledVector(muzzleUp, (seedB - 0.5) * 0.018);
+        particle.velocity
+          .copy(muzzleDirection)
+          .multiplyScalar(0.34 + seed * 0.24)
+          .addScaledVector(muzzleRight, (seed - 0.5) * 0.12)
+          .addScaledVector(muzzleUp, 0.08 + seedB * 0.08);
       }
-      slot.age += delta;
-      const visible = slot.age < 0.82;
-      casing.visible = visible;
-      if (!visible) {
-        continue;
+    }
+
+    const smoke = smokeMesh.current;
+    if (smoke && (smoke.visible || pendingPuffs > 0)) {
+      let activeSmoke = 0;
+      const smokeDelta = Math.min(0.05, delta);
+      for (const [index, particle] of smokeParticles.current.entries()) {
+        particle.age += smokeDelta;
+        if (particle.age >= particle.life) {
+          smokeBuffers.size[index] = 0;
+          continue;
+        }
+        activeSmoke += 1;
+        const life = particle.age / particle.life;
+        const drag = Math.exp(-1.35 * smokeDelta);
+        particle.velocity.x *= drag;
+        particle.velocity.z *= drag;
+        particle.velocity.y += 0.15 * smokeDelta;
+        particle.position.addScaledVector(particle.velocity, smokeDelta);
+        smokeBuffers.source[index * 3] = particle.position.x;
+        smokeBuffers.source[index * 3 + 1] = particle.position.y;
+        smokeBuffers.source[index * 3 + 2] = particle.position.z;
+        smokeBuffers.life[index] = life;
+        smokeBuffers.size[index] = 0.075 + life * 0.31;
+        smokeBuffers.power[index] = particle.power;
+        smokeBuffers.seed[index] = particle.seed;
       }
-      slot.velocity.y -= delta * 2.45;
-      slot.position.addScaledVector(slot.velocity, delta);
-      slot.rotation.addScaledVector(slot.spin, delta);
-      casing.position.copy(slot.position);
-      casing.rotation.set(slot.rotation.x, slot.rotation.y, slot.rotation.z);
+      smoke.visible = activeSmoke > 0;
+      for (const name of [
+        "aSource",
+        "aLife",
+        "aSize",
+        "aPower",
+        "aSeed",
+      ] as const) {
+        const attribute = smokeBuffers.geometry.getAttribute(
+          name,
+        ) as InstancedBufferAttribute;
+        attribute.needsUpdate = true;
+      }
+    }
+
+    if (MACHINE_GUN_CASINGS_ENABLED) {
+      for (let index = 0; index < casingSlots.current.length; index += 1) {
+        const slot = casingSlots.current[index];
+        const casing = casingGroup.current?.children[index];
+        if (!(casing instanceof Mesh)) {
+          continue;
+        }
+        slot.age += delta;
+        const visible = slot.age < 0.82;
+        casing.visible = visible;
+        if (!visible) {
+          continue;
+        }
+        slot.velocity.y -= delta * 2.45;
+        slot.position.addScaledVector(slot.velocity, delta);
+        slot.rotation.addScaledVector(slot.spin, delta);
+        casing.position.copy(slot.position);
+        casing.rotation.set(slot.rotation.x, slot.rotation.y, slot.rotation.z);
+      }
     }
   });
 
@@ -1527,22 +1841,36 @@ export function FirstPersonMachineGun({
         rotation={[0.04, -0.03, -0.02]}
         scale={0.87}
       />
-      <group ref={casingGroup}>
-        {Array.from({ length: MACHINE_GUN_CASING_COUNT }, (_, index) => (
-          <mesh key={index} visible={false} castShadow>
-            <cylinderGeometry args={[0.008, 0.0095, 0.035, 10]} />
-            <meshStandardMaterial
-              color="#b98c45"
-              metalness={0.84}
-              roughness={0.28}
-            />
-          </mesh>
-        ))}
-      </group>
-      <group position={[0, 0.015, -1.205]}>
-        <FlashBurst flashRef={flash} lightRef={light} size={0.92} />
-        <SmokeCloud smokeRef={smoke} color="#a9aca7" />
-      </group>
+      {MACHINE_GUN_CASINGS_ENABLED && (
+        <group ref={casingGroup}>
+          {Array.from({ length: MACHINE_GUN_CASING_COUNT }, (_, index) => (
+            <mesh key={index} visible={false} castShadow>
+              <cylinderGeometry args={[0.008, 0.0095, 0.035, 10]} />
+              <meshStandardMaterial
+                color="#b98c45"
+                metalness={0.84}
+                roughness={0.28}
+              />
+            </mesh>
+          ))}
+        </group>
+      )}
+      {MACHINE_GUN_MUZZLE_FLASH_ENABLED && (
+        <group position={[0, 0.015, -1.205]}>
+          <MachineGunMuzzleFlash
+            flashRef={flash}
+            materialRef={flashMaterial}
+            lightRef={light}
+          />
+        </group>
+      )}
+      <instancedMesh
+        ref={smokeMesh}
+        args={[smokeBuffers.geometry, smokeMaterial, MACHINE_GUN_SMOKE_COUNT]}
+        visible={false}
+        frustumCulled={false}
+        renderOrder={19}
+      />
     </group>
   );
 }

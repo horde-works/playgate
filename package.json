@@ -12,6 +12,7 @@
     "build:firebase": "FIREBASE_STATIC_EXPORT=1 next build",
     "deploy:firebase": "npm run build:firebase && firebase deploy --only hosting",
     "start": "next start",
+    "postinstall": "patch-package",
     "test": "npm run build && node --test tests/*.test.mjs",
     "lint": "eslint . --ignore-pattern .next --ignore-pattern out"
   },
@@ -32,6 +33,7 @@
     "@types/react-dom": "19.2.3",
     "eslint": "9.39.4",
     "eslint-config-next": "16.2.6",
+    "patch-package": "^8.0.1",
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3"
   },

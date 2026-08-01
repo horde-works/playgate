@@ -2,6 +2,7 @@ import type {
   BreakablePieceDefinition,
   SceneVector3,
 } from "./destructionScene.ts";
+import { getPieceRenderBoxes } from "./breakableGeometry.ts";
 
 /**
  * ПРОСТРАНСТВЕННЫЙ ПОИСК КУСКА ПО ТОЧКЕ.
@@ -34,7 +35,20 @@ export interface BreakablePieceIndex {
     reach?: number,
     accept?: (piece: BreakablePieceDefinition) => boolean,
   ): BreakablePieceDefinition | null;
+  /** First authored occupied volume crossed by a normalized world ray. */
+  raycast(
+    origin: SceneVector3,
+    direction: SceneVector3,
+    maximumDistance: number,
+    accept?: (piece: BreakablePieceDefinition) => boolean,
+  ): BreakablePieceRayHit | null;
   readonly size: number;
+}
+
+export interface BreakablePieceRayHit {
+  readonly piece: BreakablePieceDefinition;
+  readonly distance: number;
+  readonly point: SceneVector3;
 }
 
 const DEFAULT_CELL_SIZE = 2;
@@ -86,6 +100,64 @@ export function distanceToPiece(
     }
   }
   return Math.sqrt(squared);
+}
+
+function rayDistanceToPiece(
+  piece: BreakablePieceDefinition,
+  origin: SceneVector3,
+  direction: SceneVector3,
+  maximumDistance: number,
+): number {
+  const rows = rotationRows(piece.rotation);
+  const dx = origin[0] - piece.position[0];
+  const dy = origin[1] - piece.position[1];
+  const dz = origin[2] - piece.position[2];
+  const localOrigin: SceneVector3 = [
+    dx * rows[0][0] + dy * rows[1][0] + dz * rows[2][0],
+    dx * rows[0][1] + dy * rows[1][1] + dz * rows[2][1],
+    dx * rows[0][2] + dy * rows[1][2] + dz * rows[2][2],
+  ];
+  const localDirection: SceneVector3 = [
+    direction[0] * rows[0][0] +
+      direction[1] * rows[1][0] +
+      direction[2] * rows[2][0],
+    direction[0] * rows[0][1] +
+      direction[1] * rows[1][1] +
+      direction[2] * rows[2][1],
+    direction[0] * rows[0][2] +
+      direction[1] * rows[1][2] +
+      direction[2] * rows[2][2],
+  ];
+  let closest = Number.POSITIVE_INFINITY;
+  for (const box of getPieceRenderBoxes(piece)) {
+    let near = 0;
+    let far = Math.min(maximumDistance, closest);
+    let intersects = true;
+    for (let axis = 0; axis < 3; axis += 1) {
+      const relativeOrigin = localOrigin[axis] - box.center[axis];
+      const half = box.size[axis] / 2;
+      const rayAxis = localDirection[axis];
+      if (Math.abs(rayAxis) < 1e-9) {
+        if (relativeOrigin < -half || relativeOrigin > half) {
+          intersects = false;
+          break;
+        }
+        continue;
+      }
+      const first = (-half - relativeOrigin) / rayAxis;
+      const second = (half - relativeOrigin) / rayAxis;
+      near = Math.max(near, Math.min(first, second));
+      far = Math.min(far, Math.max(first, second));
+      if (near > far) {
+        intersects = false;
+        break;
+      }
+    }
+    if (intersects && near <= maximumDistance) {
+      closest = Math.min(closest, near);
+    }
+  }
+  return closest;
 }
 
 export function createBreakablePieceIndex(
@@ -152,6 +224,101 @@ export function createBreakablePieceIndex(
         }
       }
       return bestDistance <= reach ? best : null;
+    },
+    raycast(origin, direction, maximumDistance, accept) {
+      const directionLength = Math.hypot(...direction);
+      if (directionLength < 1e-9 || maximumDistance <= 0) {
+        return null;
+      }
+      const normalized: SceneVector3 = [
+        direction[0] / directionLength,
+        direction[1] / directionLength,
+        direction[2] / directionLength,
+      ];
+      let ix = cellOf(origin[0]);
+      let iy = cellOf(origin[1]);
+      let iz = cellOf(origin[2]);
+      const steps = normalized.map((component) =>
+        component > 0 ? 1 : component < 0 ? -1 : 0,
+      );
+      const deltas = normalized.map((component) =>
+        component === 0
+          ? Number.POSITIVE_INFINITY
+          : Math.abs(cellSize / component),
+      );
+      const nextBoundary = (cell: number, step: number): number =>
+        (cell + (step > 0 ? 1 : 0)) * cellSize;
+      const maxima = [
+        steps[0] === 0
+          ? Number.POSITIVE_INFINITY
+          : (nextBoundary(ix, steps[0]) - origin[0]) / normalized[0],
+        steps[1] === 0
+          ? Number.POSITIVE_INFINITY
+          : (nextBoundary(iy, steps[1]) - origin[1]) / normalized[1],
+        steps[2] === 0
+          ? Number.POSITIVE_INFINITY
+          : (nextBoundary(iz, steps[2]) - origin[2]) / normalized[2],
+      ];
+      const seen = new Set<string>();
+      let best: BreakablePieceDefinition | null = null;
+      let bestDistance = Number.POSITIVE_INFINITY;
+      const maximumCells = Math.ceil(maximumDistance / cellSize) * 3 + 6;
+
+      for (let guard = 0; guard < maximumCells; guard += 1) {
+        const bucket = buckets.get(key(ix, iy, iz));
+        if (bucket) {
+          for (const piece of bucket) {
+            if (seen.has(piece.id)) continue;
+            seen.add(piece.id);
+            if (accept && !accept(piece)) continue;
+            const distance = rayDistanceToPiece(
+              piece,
+              origin,
+              normalized,
+              Math.min(maximumDistance, bestDistance),
+            );
+            if (distance < bestDistance) {
+              best = piece;
+              bestDistance = distance;
+            }
+          }
+        }
+
+        const nextDistance = Math.min(maxima[0], maxima[1], maxima[2]);
+        if (best && bestDistance <= nextDistance + 1e-8) {
+          return {
+            piece: best,
+            distance: bestDistance,
+            point: [
+              origin[0] + normalized[0] * bestDistance,
+              origin[1] + normalized[1] * bestDistance,
+              origin[2] + normalized[2] * bestDistance,
+            ],
+          };
+        }
+        if (nextDistance > maximumDistance) break;
+        if (maxima[0] <= maxima[1] && maxima[0] <= maxima[2]) {
+          ix += steps[0];
+          maxima[0] += deltas[0];
+        } else if (maxima[1] <= maxima[2]) {
+          iy += steps[1];
+          maxima[1] += deltas[1];
+        } else {
+          iz += steps[2];
+          maxima[2] += deltas[2];
+        }
+      }
+      return best && bestDistance <= maximumDistance
+        ? {
+            piece: best,
+            distance: bestDistance,
+            point: [
+              origin[0] + normalized[0] * bestDistance,
+              origin[1] + normalized[1] * bestDistance,
+              origin[2] + normalized[2] * bestDistance,
+            ],
+          }
+        : null;
     },
   };
 }

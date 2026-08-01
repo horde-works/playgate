@@ -3,6 +3,7 @@
 import {
   BallCollider,
   CollisionEnterPayload,
+  CollisionExitPayload,
   CuboidCollider,
   CylinderCollider,
   RigidBody,
@@ -12,6 +13,7 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Quaternion, Vector3, type Group } from "three";
 import type { BreakablePieceDefinition } from "./destructionScene";
 import { VEHICLE_CARRIER } from "./physicsInteractionGroups";
+import { createActivePhysicalContactRegistry } from "./vehiclePhysicalContact";
 import {
   compoundClusterColliders,
   compoundClusterOwnsPiece,
@@ -81,6 +83,10 @@ function CompoundKinematicClusterBody({
   const body = useRef<RapierRigidBody>(null);
   const visualRoot = useRef<Group>(null);
   const contactPoint = useRef(new Vector3());
+  const activePhysicalContacts = useMemo(
+    () => createActivePhysicalContactRegistry(),
+    [],
+  );
   // Полный список кусков сцены сканируется один раз на сцену, а не на каждое
   // разрушение где угодно в мире.
   const memberPieces = useMemo(
@@ -187,13 +193,39 @@ function CompoundKinematicClusterBody({
       visualRoot: currentVisualRoot,
       memberIds,
       attachedMemberIds,
+      activePhysicalContacts,
     });
     return () => {
       if (registrations.get(definition.clusterId)?.body === current) {
         registrations.delete(definition.clusterId);
       }
     };
-  }, [attachedMemberIds, definition, memberIds, registry]);
+  }, [
+    activePhysicalContacts,
+    attachedMemberIds,
+    definition,
+    memberIds,
+    registry,
+  ]);
+
+  useEffect(
+    () => () => activePhysicalContacts.clear(),
+    [activePhysicalContacts],
+  );
+
+  const contactPairHandles = useCallback(
+    (
+      payload: CollisionEnterPayload | CollisionExitPayload,
+    ): readonly [number, number] | null => {
+      const own = payload.target.collider?.handle;
+      const other = payload.other.collider?.handle;
+      if (own === undefined || other === undefined) {
+        return null;
+      }
+      return [own, other];
+    },
+    [],
+  );
 
   /**
    * УДАР. Мир видит машину обычным объектом, поэтому событие приходит из
@@ -305,6 +337,10 @@ function CompoundKinematicClusterBody({
         ny = -ny;
         nz = -nz;
       }
+      const pair = contactPairHandles(payload);
+      if (pair) {
+        activePhysicalContacts.enter(pair[0], pair[1]);
+      }
       handler({
         clusterId: definition.clusterId,
         pieceId,
@@ -320,7 +356,22 @@ function CompoundKinematicClusterBody({
         ).reduce((sum, impulse) => sum + impulse, 0),
       });
     },
-    [definition.clusterId, onContact],
+    [
+      activePhysicalContacts,
+      contactPairHandles,
+      definition.clusterId,
+      onContact,
+    ],
+  );
+
+  const handleCollisionExit = useCallback(
+    (payload: CollisionExitPayload) => {
+      const pair = contactPairHandles(payload);
+      if (pair) {
+        activePhysicalContacts.exit(pair[0], pair[1]);
+      }
+    },
+    [activePhysicalContacts, contactPairHandles],
   );
 
   // Стабильные элементы: при ре-рендере родителя по чужому поводу React
@@ -378,6 +429,7 @@ function CompoundKinematicClusterBody({
       canSleep
       additionalSolverIterations={4}
       onCollisionEnter={onContact ? handleCollision : undefined}
+      onCollisionExit={handleCollisionExit}
       userData={{ compoundKinematicCluster: definition.clusterId }}
     >
       {colliderElements}

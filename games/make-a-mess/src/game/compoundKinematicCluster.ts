@@ -1,6 +1,7 @@
 import type { RapierRigidBody } from "@react-three/rapier";
 import type { MutableRefObject } from "react";
 import type { Group } from "three";
+import type { ActivePhysicalContactRegistry } from "./vehiclePhysicalContact.ts";
 import { getPieceRenderBoxes } from "./breakableGeometry.ts";
 import {
   materialRuntimeProfiles,
@@ -50,6 +51,8 @@ export interface CompoundKinematicClusterRuntime {
   readonly memberIds: ReadonlySet<string>;
   /** Intact attachments, including articulated members with their own body. */
   readonly attachedMemberIds: ReadonlySet<string>;
+  /** Only collider pairs currently touching this carrier. */
+  readonly activePhysicalContacts: ActivePhysicalContactRegistry;
 }
 
 export type CompoundKinematicClusterRegistry = MutableRefObject<

@@ -50,12 +50,14 @@ import {
   writeBakeResult,
 } from "./worldLightingBake";
 import {
-  buildStaticColliderMeshes,
+  createStaticColliderMeshStore,
   type StaticColliderMeshDefinition,
 } from "./staticColliders";
 import { TreeVisuals } from "./TreeVisuals";
 import { isProceduralVegetationPiece } from "./treeVisualModel";
 import type { MutablePieceVisualState } from "./sceneDynamics";
+import { performanceGovernor } from "./performanceGovernor";
+import { markActiveShotPerformance } from "./shotPerformanceTrace";
 
 const UNIT_BOX = new BoxGeometry(1, 1, 1);
 // Unit-diameter, unit-height cylinder along Y; instance scale sets the
@@ -384,6 +386,7 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
 
   // Incremental pass: touch only the instances whose hidden state changed.
   useLayoutEffect(() => {
+    const startedAt = performance.now();
     const current = mesh.current;
     if (!current || mutable) {
       return;
@@ -409,6 +412,11 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
       current.instanceMatrix.addUpdateRange(index * 16, 16);
     }
     current.instanceMatrix.needsUpdate = true;
+    markActiveShotPerformance(
+      "intact_instance_visibility",
+      performance.now() - startedAt,
+      { hidden: hide.length, restored: restore.length, batchSize: batch.pieces.length },
+    );
   }, [batch, hiddenPieceIds, mutable]);
 
   useFrame(() => {
@@ -462,10 +470,18 @@ const StaticColliderMesh = memo(function StaticColliderMesh({
 }: {
   mesh: StaticColliderMeshDefinition;
 }) {
+  const renderStartedAt = performance.now();
   const args = useMemo(
     () => [mesh.vertices, mesh.indices] as [Float32Array, Uint32Array],
     [mesh],
   );
+  useLayoutEffect(() => {
+    markActiveShotPerformance(
+      "static_trimesh_replacement",
+      performance.now() - renderStartedAt,
+      { pieceCount: mesh.pieceCount, triangleCount: mesh.indices.length / 3 },
+    );
+  }, [mesh, renderStartedAt]);
   return (
     <TrimeshCollider
       args={args}
@@ -477,13 +493,25 @@ const StaticColliderMesh = memo(function StaticColliderMesh({
 
 const IntactPieceColliders = memo(function IntactPieceColliders({
   pieces,
+  hiddenPieceIds,
 }: {
   pieces: readonly BreakablePieceDefinition[];
+  hiddenPieceIds: ReadonlySet<string>;
 }) {
-  const meshes = useMemo(
-    () => buildStaticColliderMeshes(pieces),
+  const meshStore = useMemo(
+    () => createStaticColliderMeshStore(pieces),
     [pieces],
   );
+  const meshes = useMemo(() => {
+    const startedAt = performance.now();
+    const next = meshStore.updateHidden(hiddenPieceIds);
+    markActiveShotPerformance(
+      "static_collider_mesh_diff",
+      performance.now() - startedAt,
+      { meshCount: next.length, hiddenPieceCount: hiddenPieceIds.size },
+    );
+    return next;
+  }, [hiddenPieceIds, meshStore]);
 
   return (
     <RigidBody type="fixed" colliders={false}>
@@ -534,11 +562,13 @@ export const IntactBreakableWorld = memo(function IntactBreakableWorld({
     [genericRenderPieces, mutablePieceIds],
   );
   const lighting = useMemo(() => new WorldLightingBake(pieces), [pieces]);
-  const colliderPieces = useMemo(
-    () => pieces.filter((piece) => !hiddenPieceIds.has(piece.id)),
-    [hiddenPieceIds, pieces],
-  );
 
+  // Initial AO and destruction updates are streamed in small slices. The
+  // previous synchronous pass could hold the main thread for hundreds of ms.
+  useFrame(() => {
+    const cpuQuality = performanceGovernor.getSnapshot().cpuQuality;
+    lighting.processPending(cpuQuality === 2 ? 1.25 : cpuQuality === 1 ? 0.7 : 0.3);
+  });
   // Destroyed pieces stop occluding: clear their cells and re-bake only the
   // neighbourhood, so light falls into craters and breaches.
   useEffect(() => {
@@ -558,7 +588,10 @@ export const IntactBreakableWorld = memo(function IntactBreakableWorld({
         />
       ))}
       <TreeVisuals pieces={pieces} hiddenPieceIds={hiddenPieceIds} />
-      <IntactPieceColliders pieces={colliderPieces} />
+      <IntactPieceColliders
+        pieces={pieces}
+        hiddenPieceIds={hiddenPieceIds}
+      />
     </>
   );
 });

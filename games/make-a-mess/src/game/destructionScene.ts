@@ -5597,6 +5597,10 @@ export interface DestructionSceneDefinition {
   readonly resolveStructuralCollapse: (
     broken: ReadonlySet<string>,
   ) => ReadonlySet<string>;
+  readonly resolveStructuralScope: (
+    broken: ReadonlySet<string>,
+    activePieceIds: ReadonlySet<string>,
+  ) => ReadonlySet<string>;
   readonly structuralScopeFor: (
     pieceIds: Iterable<string>,
   ) => ReadonlySet<string>;
@@ -5762,9 +5766,16 @@ export function createDestructionScene(
   const resolveStructuralCollapse = (
     broken: ReadonlySet<string>,
   ): ReadonlySet<string> => structuralSolver.resolve(broken);
+  const resolveStructuralScope = (
+    broken: ReadonlySet<string>,
+    activePieceIds: ReadonlySet<string>,
+  ): ReadonlySet<string> => structuralSolver.resolveScoped(
+    broken,
+    activePieceIds,
+  );
   const structuralScopeFor = (
     pieceIds: Iterable<string>,
-  ): ReadonlySet<string> => structuralSolver.connectedPieceIds(pieceIds);
+  ): ReadonlySet<string> => structuralSolver.affectedPieceIds(pieceIds);
   const fractureLocallyAt = (
     target: BreakablePieceDefinition,
     current: ReadonlySet<string>,
@@ -5898,6 +5909,9 @@ export function createDestructionScene(
     // scripts/check-structure.mjs зовут именно его, и неопёртый кусок обязан
     // находиться на сборке, а не превращаться в «оно всё равно не падает».
     resolveStructuralCollapse,
+    resolveStructuralScope: indestructible
+      ? keepStanding
+      : resolveStructuralScope,
     structuralScopeFor: indestructible ? nothingToRecheck : structuralScopeFor,
     fractureLocallyAt: indestructible ? keepIntact : fractureLocallyAt,
     settleAfterBreak: indestructible ? keepStanding : settleAfterBreak,

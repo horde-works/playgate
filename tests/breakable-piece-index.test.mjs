@@ -42,3 +42,56 @@ test("фильтр отсекает нежелательные куски", () =
   const found = index.at(sample.position, 0.05, (piece) => piece.id !== sample.id);
   assert.notEqual(found?.id, sample.id);
 });
+
+test("луч находит первый занятый объём без обхода render mesh", () => {
+  const pieces = [
+    {
+      id: "near",
+      clusterId: "test",
+      material: "brick",
+      color: "#fff",
+      shape: "box",
+      position: [0, 0, 4],
+      size: [2, 2, 2],
+    },
+    {
+      id: "far",
+      clusterId: "test",
+      material: "brick",
+      color: "#fff",
+      shape: "box",
+      position: [0, 0, 9],
+      size: [2, 2, 2],
+    },
+  ];
+  const rayIndex = createBreakablePieceIndex(pieces);
+  const hit = rayIndex.raycast([0, 0, 0], [0, 0, 1], 20);
+  assert.equal(hit?.piece.id, "near");
+  assert.equal(hit?.distance, 3);
+  assert.deepEqual(hit?.point, [0, 0, 3]);
+});
+
+test("луч учитывает фильтр, поворот и пустое пространство", () => {
+  const pieces = [
+    {
+      id: "turned",
+      clusterId: "test",
+      material: "wood",
+      color: "#fff",
+      shape: "box",
+      position: [0, 0, 6],
+      size: [4, 1, 0.5],
+      rotation: [0, Math.PI / 2, 0],
+    },
+  ];
+  const rayIndex = createBreakablePieceIndex(pieces);
+  assert.equal(
+    rayIndex.raycast([0, 0, 0], [0, 0, 1], 20)?.piece.id,
+    "turned",
+  );
+  assert.equal(
+    rayIndex.raycast([0, 0, 0], [0, 0, 1], 20, () => false),
+    null,
+  );
+  assert.equal(rayIndex.raycast([20, 20, 20], [1, 0, 0], 5), null);
+});

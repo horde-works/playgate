@@ -1,6 +1,10 @@
 import type { BreakableMaterial } from "./destructionScene";
 
 let audioContext: AudioContext | null = null;
+const synthesizedNoise = new WeakMap<
+  AudioContext,
+  Map<string, AudioBuffer>
+>();
 
 interface SoundProfile {
   readonly tone: number;
@@ -380,6 +384,21 @@ export function prepareGameAudio(): void {
   for (const url of urls) {
     void loadRecording(context, url);
   }
+
+  // Build the short procedural layers while we are still inside the entry
+  // gesture. A weapon shot must only connect already-created buffers: filling
+  // tens of thousands of random samples on the first rocket or every MG round
+  // belongs outside the frame that launches the projectile.
+  for (const [duration, decay] of [
+    [0.16, 2.1],
+    [0.045, 3.4],
+    [0.085, 2.4],
+    [0.12, 1.7],
+    [0.04, 3.2],
+    [0.21, 1.9],
+  ] as const) {
+    createNoiseBuffer(context, duration, decay);
+  }
 }
 
 function createNoiseBuffer(
@@ -387,7 +406,20 @@ function createNoiseBuffer(
   duration: number,
   decay = 0,
 ): AudioBuffer {
-  const length = Math.ceil(context.sampleRate * duration);
+  let cache = synthesizedNoise.get(context);
+  if (!cache) {
+    cache = new Map();
+    synthesizedNoise.set(context, cache);
+  }
+  // Impact intensity produces continuous durations. Quantise them so the
+  // cache cannot turn into one permanent buffer per collision.
+  const cachedDuration = Math.max(0.01, Math.round(duration * 100) / 100);
+  const key = `${cachedDuration}:${decay}`;
+  const cached = cache.get(key);
+  if (cached) {
+    return cached;
+  }
+  const length = Math.ceil(context.sampleRate * cachedDuration);
   const buffer = context.createBuffer(1, length, context.sampleRate);
   const channel = buffer.getChannelData(0);
 
@@ -397,6 +429,7 @@ function createNoiseBuffer(
     channel[index] = (Math.random() * 2 - 1) * envelope;
   }
 
+  cache.set(key, buffer);
   return buffer;
 }
 

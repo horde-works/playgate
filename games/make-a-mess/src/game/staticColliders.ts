@@ -274,3 +274,82 @@ export function buildStaticColliderMeshes(
     buildChunkMesh(id, chunkPieces),
   );
 }
+
+export interface StaticColliderMeshStore {
+  /** Apply the current hidden set and rebuild only chunks whose membership changed. */
+  updateHidden(
+    hiddenPieceIds: ReadonlySet<string>,
+  ): readonly StaticColliderMeshDefinition[];
+}
+
+/**
+ * Persistent collider index for a scene. Destruction commonly hides one piece
+ * at a time; rebuilding the chunk map and hashing every surviving piece made
+ * that local edit an O(world) main-thread pause. This store indexes pieces
+ * once, diffs hidden IDs, and only regenerates affected 24 m chunks.
+ */
+export function createStaticColliderMeshStore(
+  pieces: readonly BreakablePieceDefinition[],
+): StaticColliderMeshStore {
+  const chunks = new Map<string, BreakablePieceDefinition[]>();
+  const pieceChunk = new Map<string, string>();
+  for (const piece of pieces) {
+    if (piece.material === "foliage") {
+      continue;
+    }
+    const key = chunkKey(piece);
+    pieceChunk.set(piece.id, key);
+    const chunk = chunks.get(key);
+    if (chunk) {
+      chunk.push(piece);
+    } else {
+      chunks.set(key, [piece]);
+    }
+  }
+
+  const chunkOrder = [...chunks.keys()];
+  const meshes = new Map(
+    chunkOrder.map((id) => [id, buildChunkMesh(id, chunks.get(id) ?? [])]),
+  );
+  let appliedHidden = new Set<string>();
+  let result: readonly StaticColliderMeshDefinition[] = chunkOrder
+    .map((id) => meshes.get(id))
+    .filter((mesh): mesh is StaticColliderMeshDefinition => Boolean(mesh));
+
+  return {
+    updateHidden(hiddenPieceIds) {
+      const dirtyChunks = new Set<string>();
+      for (const pieceId of hiddenPieceIds) {
+        if (!appliedHidden.has(pieceId)) {
+          const key = pieceChunk.get(pieceId);
+          if (key) dirtyChunks.add(key);
+        }
+      }
+      for (const pieceId of appliedHidden) {
+        if (!hiddenPieceIds.has(pieceId)) {
+          const key = pieceChunk.get(pieceId);
+          if (key) dirtyChunks.add(key);
+        }
+      }
+      appliedHidden = new Set(hiddenPieceIds);
+      if (dirtyChunks.size === 0) {
+        return result;
+      }
+
+      dirtyChunks.forEach((id) => {
+        const visiblePieces = (chunks.get(id) ?? []).filter(
+          (piece) => !hiddenPieceIds.has(piece.id),
+        );
+        if (visiblePieces.length === 0) {
+          meshes.delete(id);
+        } else {
+          meshes.set(id, buildChunkMesh(id, visiblePieces));
+        }
+      });
+      result = chunkOrder
+        .map((id) => meshes.get(id))
+        .filter((mesh): mesh is StaticColliderMeshDefinition => Boolean(mesh));
+      return result;
+    },
+  };
+}

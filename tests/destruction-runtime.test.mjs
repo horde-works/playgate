@@ -12,6 +12,7 @@ import {
   classifyLandingDamage,
   closestPointOnOccupiedGeometry,
   damageBody,
+  damageBodyBatch,
   damageRadiusScaleByMaterial,
   debrisColliderBoxes,
   debrisCollisionTuning,
@@ -679,6 +680,39 @@ test("attached and moving bodies use identical voxel damage", () => {
       occupied: [...fragment.voxelBody.occupied],
       boxes: fragment.boxes,
     })),
+  );
+});
+
+test("batched machine-gun hits preserve a topological cut", () => {
+  const source = {
+    id: "batched-plank",
+    material: "wood",
+    color: "#805332",
+    shape: "plank",
+    size: [2.4, 1.2, 0.24],
+  };
+  const state = {
+    position: new Vector3(),
+    quaternion: new Quaternion(),
+    linearVelocity: new Vector3(),
+    angularVelocity: new Vector3(),
+  };
+  const requests = [-0.42, 0, 0.42].map((y, index) => ({
+    idPrefix: `batch:${index}`,
+    worldPoint: new Vector3(0, y, 0.12),
+    radius: bulletHoleRadius.wood,
+    burstSpeed: 0,
+    direction: new Vector3(0, 0, -1),
+    penetration: 0.85,
+  }));
+  const result = damageBodyBatch(source, state, requests);
+
+  assert.ok(result);
+  assert.equal(result.removedVolume > 0, true);
+  assert.equal(
+    result.fragments.length >= 2,
+    true,
+    "the connected-components pass must split the cut plank",
   );
 });
 

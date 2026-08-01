@@ -842,8 +842,38 @@ export function carveBox(
   salt: string,
   options: CarveOptions = {},
 ): CarveResult | null {
+  return carveBoxCuts(
+    size,
+    [
+      {
+        point: localPoint,
+        radius,
+        salt,
+        direction: options.direction,
+        penetration: options.penetration,
+        roughness: options.roughness,
+      },
+    ],
+    options,
+  );
+}
+
+interface BoxDamageCut {
+  readonly point: Vector3;
+  readonly radius: number;
+  readonly salt: string;
+  readonly direction?: VoxelVector3;
+  readonly penetration?: number;
+  readonly roughness?: number;
+}
+
+function carveBoxCuts(
+  size: readonly [number, number, number],
+  cuts: readonly BoxDamageCut[],
+  options: CarveOptions = {},
+): CarveResult | null {
   const material = options.material ?? "brick";
-  const body =
+  let body =
     options.body ??
     createSolidVoxelBody(
       size,
@@ -854,25 +884,34 @@ export function carveBox(
   // half of the authored material resolution. Keep that energy floor based
   // on the material grid (not a budget-coarsened giant body's cell size), so
   // direct hits still work on large bodies while weak hits cannot chip steel.
-  if (radius < voxelSizeByMaterial[material] * 0.5) {
-    return null;
+  let finalResult: ReturnType<typeof applyVoxelDamage> | null = null;
+  let removedVolume = 0;
+  for (const cut of cuts) {
+    if (cut.radius < voxelSizeByMaterial[material] * 0.5) continue;
+    const result = applyVoxelDamage(body, {
+      point: [cut.point.x, cut.point.y, cut.point.z],
+      radius: cut.radius,
+      seed: cut.salt,
+      roughness: cut.roughness ?? options.roughness ?? 0.26,
+      direction: cut.direction ?? options.direction,
+      penetration: cut.penetration ?? options.penetration,
+    });
+    if (result.removedVoxelCount === 0) continue;
+    body = result.body;
+    removedVolume += result.removedVolume;
+    finalResult = result;
   }
-  const result = applyVoxelDamage(body, {
-    point: [localPoint.x, localPoint.y, localPoint.z],
-    radius,
-    seed: salt,
-    roughness: options.roughness ?? 0.26,
-    direction: options.direction,
-    penetration: options.penetration,
-  });
-  if (result.removedVoxelCount === 0) {
+  if (!finalResult) {
     return null;
   }
 
-  const kept = result.components
+  const kept = finalResult.components
     .filter((component) => component.voxelCount >= MIN_REMNANT_VOXELS)
     .map((component): RemnantSpec => {
-      const extracted = createVoxelBodyFromComponent(result.body, component);
+      const extracted = createVoxelBodyFromComponent(
+        finalResult.body,
+        component,
+      );
       const localComponent = splitVoxelComponents(extracted.body)[0];
       return {
         size: extracted.body.size,
@@ -885,7 +924,7 @@ export function carveBox(
 
   return {
     kept,
-    removedVolume: result.removedVolume,
+    removedVolume,
   };
 }
 
@@ -1062,6 +1101,65 @@ export function damageBody(
   if (!result) {
     return null;
   }
+
+  return damageFragments(source, state, request, result);
+}
+
+/**
+ * Applies several hits to one voxel snapshot and extracts connected remnants
+ * once. This preserves topology (a row of bullets may cut a plank in two)
+ * without publishing a new geometry/body graph for every round.
+ */
+export function damageBodyBatch(
+  source: ShardSource,
+  state: DamageBodyState,
+  requests: readonly DamageBodyRequest[],
+): BodyDamageResult | null {
+  if (requests.length === 0) return null;
+  if (requests.length === 1 || source.shape === "cylinder") {
+    return damageBody(source, state, requests[requests.length - 1]);
+  }
+  const inverseRotation = state.quaternion.clone().invert();
+  const cuts = requests.map((request) => {
+    const localDirection = request.direction
+      ?.clone()
+      .applyQuaternion(inverseRotation)
+      .normalize();
+    return {
+      point: request.worldPoint
+        .clone()
+        .sub(state.position)
+        .applyQuaternion(inverseRotation),
+      radius:
+        request.radius * damageRadiusScaleByMaterial[source.material],
+      salt: request.idPrefix,
+      direction: localDirection
+        ? ([localDirection.x, localDirection.y, localDirection.z] as const)
+        : undefined,
+      penetration: request.penetration,
+      roughness:
+        request.roughness ?? damageRoughnessByMaterial[source.material],
+    };
+  });
+  const result = carveBoxCuts(source.size, cuts, {
+    material: source.material,
+    body: source.voxelBody,
+  });
+  if (!result) return null;
+  return damageFragments(
+    source,
+    state,
+    requests[requests.length - 1],
+    result,
+  );
+}
+
+function damageFragments(
+  source: ShardSource,
+  state: DamageBodyState,
+  request: DamageBodyRequest,
+  result: CarveResult,
+): BodyDamageResult {
 
   const relative = new Vector3();
   const spinVelocity = new Vector3();

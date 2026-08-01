@@ -3,6 +3,7 @@
 import { useFrame } from "@react-three/fiber";
 import { useRef } from "react";
 import { windState } from "./windState";
+import { performanceGovernor } from "./performanceGovernor";
 
 /**
  * Watches the frame rate and drives the shared {@link windState}. Wind stays at
@@ -23,8 +24,15 @@ export function WindController() {
     smoothedFps.current += (instantaneous - smoothedFps.current) * Math.min(1, delta * 2.5);
 
     // Hysteresis: cut wind below 15 fps, only restore it once comfortably above 20.
+    const cpuQuality = performanceGovernor.getSnapshot().cpuQuality;
     const target =
-      smoothedFps.current < 15 ? 0 : smoothedFps.current > 20 ? 1 : windState.strength > 0.5 ? 1 : 0;
+      cpuQuality === 0 || smoothedFps.current < 15
+        ? 0
+        : cpuQuality === 2 && smoothedFps.current > 20
+          ? 1
+          : windState.strength > 0.5
+            ? 1
+            : 0;
     windState.strength += (target - windState.strength) * Math.min(1, delta * 1.8);
     if (windState.strength < 0.001) {
       windState.strength = 0;

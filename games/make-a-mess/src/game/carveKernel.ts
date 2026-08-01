@@ -1,6 +1,7 @@
 import { Quaternion, Vector3 } from "three";
 import {
   damageBody,
+  damageBodyBatch,
   type ShardDefinition,
   type ShardSource,
 } from "./destructionRuntime.ts";
@@ -24,6 +25,13 @@ export interface CarveKernelRequest {
   readonly radius: number;
   readonly direction?: readonly [number, number, number];
   readonly penetration?: number;
+  /** Optional coalesced hits against the same source snapshot. */
+  readonly impacts?: readonly {
+    readonly worldPoint: readonly [number, number, number];
+    readonly radius: number;
+    readonly direction?: readonly [number, number, number];
+    readonly penetration?: number;
+  }[];
 }
 
 export interface CarveKernelResponse {
@@ -31,34 +39,69 @@ export interface CarveKernelResponse {
   /** null — материал не отделился (например, слишком слабый удар). */
   readonly fragments: readonly ShardDefinition[] | null;
   readonly removedVolume: number;
+  readonly telemetry?: {
+    readonly totalMs: number;
+    readonly damageMs: number;
+    readonly impactCount: number;
+    readonly fragmentCount: number;
+    readonly fragmentBoxCount: number;
+    readonly sourceVoxelCount: number;
+  };
 }
 
 export function executeCarveKernel(
   request: CarveKernelRequest,
 ): CarveKernelResponse {
-  const result = damageBody(
-    request.source,
-    {
-      position: new Vector3(...request.position),
-      quaternion: new Quaternion(...request.quaternion),
-      linearVelocity: new Vector3(),
-      angularVelocity: new Vector3(),
-    },
-    {
-      idPrefix: request.idPrefix,
-      worldPoint: new Vector3(...request.worldPoint),
-      radius: request.radius,
-      burstSpeed: 0,
-      direction: request.direction
-        ? new Vector3(...request.direction)
-        : undefined,
-      penetration: request.penetration,
-    },
-  );
+  const startedAt = performance.now();
+  const state = {
+    position: new Vector3(...request.position),
+    quaternion: new Quaternion(...request.quaternion),
+    linearVelocity: new Vector3(),
+    angularVelocity: new Vector3(),
+  };
+  const impacts = request.impacts?.length
+    ? request.impacts
+    : [
+        {
+          worldPoint: request.worldPoint,
+          radius: request.radius,
+          direction: request.direction,
+          penetration: request.penetration,
+        },
+      ];
+  const damageRequests = impacts.map((impact, index) => ({
+    idPrefix: `${request.idPrefix}:${index}`,
+    worldPoint: new Vector3(...impact.worldPoint),
+    radius: impact.radius,
+    burstSpeed: 0,
+    direction: impact.direction
+      ? new Vector3(...impact.direction)
+      : undefined,
+    penetration: impact.penetration,
+  }));
+  const damageStartedAt = performance.now();
+  const result =
+    damageRequests.length > 1
+      ? damageBodyBatch(request.source, state, damageRequests)
+      : damageBody(request.source, state, damageRequests[0]);
+  const damageMs = performance.now() - damageStartedAt;
+  const fragments = result ? result.fragments : null;
   return {
     requestId: request.requestId,
-    fragments: result ? result.fragments : null,
+    fragments,
     removedVolume: result?.removedVolume ?? 0,
+    telemetry: {
+      totalMs: performance.now() - startedAt,
+      damageMs,
+      impactCount: impacts.length,
+      fragmentCount: fragments?.length ?? 0,
+      fragmentBoxCount:
+        fragments?.reduce(
+          (sum, fragment) => sum + (fragment.boxes?.length ?? 1),
+          0,
+        ) ?? 0,
+      sourceVoxelCount: request.source.voxelBody?.occupied.length ?? 0,
+    },
   };
 }
 

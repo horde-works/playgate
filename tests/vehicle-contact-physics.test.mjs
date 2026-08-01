@@ -4,9 +4,31 @@ import test from "node:test";
 import RAPIER from "@dimforge/rapier3d-compat";
 
 import * as vehicleFrameModule from "../games/make-a-mess/src/game/vehicleFrames.ts";
-import { countUpwardSupportContacts } from "../games/make-a-mess/src/game/vehiclePhysicalContact.ts";
+import {
+  countUpwardSupportContacts,
+  createActivePhysicalContactRegistry,
+} from "../games/make-a-mess/src/game/vehiclePhysicalContact.ts";
 
 await RAPIER.init();
+
+test("support registry makes the 60 Hz read independent of collider count", () => {
+  const contacts = createActivePhysicalContactRegistry();
+  assert.equal(contacts.size(), 0);
+  contacts.enter(2, 11);
+  contacts.enter(2, 17);
+  contacts.enter(2, 11);
+  assert.equal(contacts.size(), 2);
+  const visited = [];
+  contacts.forEach((own, other) => visited.push([own, other]));
+  assert.deepEqual(visited, [
+    [2, 11],
+    [2, 17],
+  ]);
+  contacts.exit(11, 2);
+  assert.equal(contacts.size(), 1);
+  contacts.clear();
+  assert.equal(contacts.size(), 0);
+});
 
 test("Rapier contact and friction stop a loaded vehicle without support forces", () => {
   const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });

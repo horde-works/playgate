@@ -22,6 +22,11 @@ export interface RegisteredLightingBatch {
   readonly indexById: ReadonlyMap<string, number>;
 }
 
+interface LightingDestination {
+  readonly batch: RegisteredLightingBatch;
+  readonly index: number;
+}
+
 export function writeBakeResult(
   result: PieceBakeResult,
   index: number,
@@ -43,13 +48,20 @@ export class WorldLightingBake {
   private readonly spatial: SpatialIndex<BreakablePieceDefinition>;
   private readonly hidden = new Set<string>();
   private readonly batches = new Set<RegisteredLightingBatch>();
+  private readonly destinationByPieceId = new Map<string, LightingDestination>();
+  private readonly pendingBatchWrites = new Map<RegisteredLightingBatch, number[]>();
+  private readonly initialQueue: readonly BreakablePieceDefinition[];
+  private initialCursor = 0;
+  private readonly removalQueue: BreakablePieceDefinition[] = [];
+  private removalCursor = 0;
+  private readonly affected = new Map<string, BreakablePieceDefinition>();
 
   constructor(pieces: readonly BreakablePieceDefinition[]) {
     this.baker = new LightingBaker(pieces);
     this.spatial = createSpatialIndex(pieces, 5);
+    this.initialQueue = pieces;
     for (const piece of pieces) {
       this.pieceById.set(piece.id, piece);
-      this.results.set(piece.id, this.baker.bakePiece(piece));
     }
   }
 
@@ -59,63 +71,11 @@ export class WorldLightingBake {
 
   registerBatch(batch: RegisteredLightingBatch): () => void {
     this.batches.add(batch);
-    return () => {
-      this.batches.delete(batch);
-    };
-  }
-
-  /**
-   * Sync the bake with the set of destroyed/hidden pieces. Only additions
-   * are processed (a session never un-breaks pieces; resets remount the
-   * world and rebuild the bake from scratch).
-   */
-  applyHidden(hiddenPieceIds: ReadonlySet<string>): void {
-    const removed: BreakablePieceDefinition[] = [];
-    for (const id of hiddenPieceIds) {
-      if (this.hidden.has(id)) {
-        continue;
-      }
-      this.hidden.add(id);
-      const piece = this.pieceById.get(id);
-      if (piece) {
-        removed.push(piece);
-      }
-    }
-    if (removed.length === 0) {
-      return;
-    }
-
-    const affected = new Map<string, BreakablePieceDefinition>();
-    for (const piece of removed) {
-      const pieceRadius = Math.hypot(...piece.size) / 2;
-      const neighbors = this.spatial.querySphere(
-        piece.position,
-        pieceRadius + AO_MAX_DISTANCE + 3,
-      );
-      const survivors: BreakablePieceDefinition[] = [];
-      for (const neighbor of neighbors) {
-        if (neighbor.id === piece.id || this.hidden.has(neighbor.id)) {
-          continue;
-        }
-        survivors.push(neighbor);
-        affected.set(neighbor.id, neighbor);
-      }
-      this.baker.removePiece(piece, survivors);
-    }
-
-    for (const piece of affected.values()) {
-      const result = this.baker.bakePiece(piece);
-      this.results.set(piece.id, result);
-      this.writeToBatches(piece.id, result);
-    }
-  }
-
-  private writeToBatches(pieceId: string, result: PieceBakeResult): void {
-    for (const batch of this.batches) {
-      const index = batch.indexById.get(pieceId);
-      if (index === undefined) {
-        continue;
-      }
+    const restored: number[] = [];
+    for (const [pieceId, index] of batch.indexById) {
+      this.destinationByPieceId.set(pieceId, { batch, index });
+      const result = this.results.get(pieceId);
+      if (!result) continue;
       writeBakeResult(
         result,
         index,
@@ -123,13 +83,157 @@ export class WorldLightingBake {
         batch.aoB.array as Float32Array,
         batch.sky.array as Float32Array,
       );
-      batch.aoA.addUpdateRange(index * 4, 4);
-      batch.aoB.addUpdateRange(index * 4, 4);
-      batch.sky.addUpdateRange(index, 1);
-      batch.aoA.needsUpdate = true;
-      batch.aoB.needsUpdate = true;
-      batch.sky.needsUpdate = true;
-      return;
+      restored.push(index);
     }
+    this.flushBatch(batch, restored);
+    return () => {
+      this.batches.delete(batch);
+      for (const pieceId of batch.indexById.keys()) {
+        if (this.destinationByPieceId.get(pieceId)?.batch === batch) {
+          this.destinationByPieceId.delete(pieceId);
+        }
+      }
+    };
+  }
+
+  /**
+   * Queue newly destroyed pieces. Expensive occupancy repair and neighbour
+   * bakes are deliberately performed by processPending under a frame budget.
+   */
+  applyHidden(hiddenPieceIds: ReadonlySet<string>): void {
+    for (const id of hiddenPieceIds) {
+      if (this.hidden.has(id)) {
+        continue;
+      }
+      this.hidden.add(id);
+      const piece = this.pieceById.get(id);
+      if (piece) {
+        this.removalQueue.push(piece);
+      }
+    }
+  }
+
+  /**
+   * Advance lighting work without monopolising a rendered frame. At least one
+   * item is processed so progress cannot stall under a very small budget.
+   * Returns the number of pieces handled during this call.
+   */
+  processPending(timeBudgetMs = 1.25): number {
+    this.pendingBatchWrites.clear();
+    const deadline = performance.now() + Math.max(0, timeBudgetMs);
+    let processed = 0;
+    const hasBudget = () => processed === 0 || performance.now() < deadline;
+    try {
+      // All queued removals update occupancy first. Otherwise a neighbour could
+      // be baked against an intermediate world and immediately become stale.
+      while (this.removalCursor < this.removalQueue.length && hasBudget()) {
+        const piece = this.removalQueue[this.removalCursor];
+        this.removalCursor += 1;
+        const pieceRadius = Math.hypot(...piece.size) / 2;
+        const neighbors = this.spatial.querySphere(
+          piece.position,
+          pieceRadius + AO_MAX_DISTANCE + 3,
+        );
+        const survivors: BreakablePieceDefinition[] = [];
+        for (const neighbor of neighbors) {
+          if (neighbor.id === piece.id || this.hidden.has(neighbor.id)) {
+            continue;
+          }
+          survivors.push(neighbor);
+          this.affected.set(neighbor.id, neighbor);
+        }
+        this.baker.removePiece(piece, survivors);
+        this.results.delete(piece.id);
+        processed += 1;
+      }
+      if (this.removalCursor < this.removalQueue.length) {
+        return processed;
+      }
+      this.removalQueue.length = 0;
+      this.removalCursor = 0;
+
+      while (this.affected.size > 0 && hasBudget()) {
+        const entry = this.affected.entries().next().value as
+          | [string, BreakablePieceDefinition]
+          | undefined;
+        if (!entry) break;
+        const [pieceId, piece] = entry;
+        this.affected.delete(pieceId);
+        const result = this.baker.bakePiece(piece);
+        this.results.set(piece.id, result);
+        this.writeToBatch(piece.id, result);
+        processed += 1;
+      }
+      if (this.affected.size > 0) {
+        return processed;
+      }
+
+      while (this.initialCursor < this.initialQueue.length && hasBudget()) {
+        const piece = this.initialQueue[this.initialCursor];
+        this.initialCursor += 1;
+        if (this.hidden.has(piece.id) || this.results.has(piece.id)) {
+          continue;
+        }
+        const result = this.baker.bakePiece(piece);
+        this.results.set(piece.id, result);
+        this.writeToBatch(piece.id, result);
+        processed += 1;
+      }
+      return processed;
+    } finally {
+      for (const [batch, indices] of this.pendingBatchWrites) {
+        this.flushBatch(batch, indices);
+      }
+      this.pendingBatchWrites.clear();
+    }
+  }
+
+  private writeToBatch(pieceId: string, result: PieceBakeResult): void {
+    const destination = this.destinationByPieceId.get(pieceId);
+    if (!destination) return;
+    const { batch, index } = destination;
+    writeBakeResult(
+      result,
+      index,
+      batch.aoA.array as Float32Array,
+      batch.aoB.array as Float32Array,
+      batch.sky.array as Float32Array,
+    );
+    const pending = this.pendingBatchWrites.get(batch);
+    if (pending) pending.push(index);
+    else this.pendingBatchWrites.set(batch, [index]);
+  }
+
+  private flushBatch(batch: RegisteredLightingBatch, indices: number[]): void {
+    if (indices.length === 0) return;
+    indices.sort((left, right) => left - right);
+    const ranges: Array<readonly [number, number]> = [];
+    let start = indices[0];
+    let end = start;
+    for (let cursor = 1; cursor < indices.length; cursor += 1) {
+      const index = indices[cursor];
+      if (index <= end + 1) {
+        end = Math.max(end, index);
+      } else {
+        ranges.push([start, end]);
+        start = index;
+        end = index;
+      }
+    }
+    ranges.push([start, end]);
+    // WebGL issues one bufferSubData call per range. If a time slice touched
+    // many scattered rows, one wider upload is cheaper than dozens of calls.
+    const uploads = ranges.length > 8
+      ? [[ranges[0][0], ranges[ranges.length - 1][1]] as const]
+      : ranges;
+    for (const [first, last] of uploads) {
+      const count = last - first + 1;
+      batch.aoA.addUpdateRange(first * 4, count * 4);
+      batch.aoB.addUpdateRange(first * 4, count * 4);
+      batch.sky.addUpdateRange(first, count);
+    }
+    batch.aoA.needsUpdate = true;
+    batch.aoB.needsUpdate = true;
+    batch.sky.needsUpdate = true;
   }
 }

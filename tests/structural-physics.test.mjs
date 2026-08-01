@@ -144,6 +144,56 @@ test("shared terrain does not merge independent structural islands", () => {
   assert.equal(groundScope.has("right-structure"), true);
 });
 
+test("causal scope follows dependents and alternative supports, not the whole island", () => {
+  const solver = createStructuralSolver(
+    [
+      {
+        id: "ground",
+        material: "ground",
+        position: [0, 0, 0],
+        size: [20, 0.2, 8],
+      },
+      {
+        id: "left-post",
+        material: "wood",
+        position: [-1, 1.1, 0],
+        size: [0.3, 2, 0.3],
+      },
+      {
+        id: "right-post",
+        material: "wood",
+        position: [1, 1.1, 0],
+        size: [0.3, 2, 0.3],
+      },
+      {
+        id: "beam",
+        material: "wood",
+        position: [0, 2.2, 0],
+        size: [2.4, 0.2, 0.3],
+      },
+      {
+        id: "load",
+        material: "wood",
+        position: [0, 2.45, 0],
+        size: [0.3, 0.3, 0.3],
+      },
+      {
+        id: "unrelated-post",
+        material: "wood",
+        position: [7, 1.1, 0],
+        size: [0.3, 2, 0.3],
+      },
+    ],
+    profiles,
+  );
+
+  const scope = solver.affectedPieceIds(["left-post"]);
+  assert.deepEqual(
+    [...scope].sort(),
+    ["beam", "ground", "left-post", "load", "right-post"],
+  );
+});
+
 test("stacked foundation layers do not bridge independent structures", () => {
   const layeredPieces = [
     {

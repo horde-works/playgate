@@ -1,0 +1,124 @@
+diff --git a/node_modules/@react-three/rapier/dist/declarations/src/components/Physics.d.ts b/node_modules/@react-three/rapier/dist/declarations/src/components/Physics.d.ts
+index 464f0d0..75b3216 100644
+--- a/node_modules/@react-three/rapier/dist/declarations/src/components/Physics.d.ts
++++ b/node_modules/@react-three/rapier/dist/declarations/src/components/Physics.d.ts
+@@ -241,6 +241,14 @@ export interface PhysicsProps {
+      * @defaultValue 1/60
+      */
+     timeStep?: number | "vary";
++    /**
++     * Maximum fixed simulation steps allowed during one rendered frame.
++     * Excess whole-step debt is discarded while the interpolation remainder
++     * is preserved, preventing a low-FPS catch-up spiral.
++     *
++     * @defaultValue Infinity
++     */
++    maxStepsPerFrame?: number;
+     /**
+      * Pause the physics simulation
+      *
+diff --git a/node_modules/@react-three/rapier/dist/react-three-rapier.cjs.dev.js b/node_modules/@react-three/rapier/dist/react-three-rapier.cjs.dev.js
+index 5457a71..87235e0 100644
+--- a/node_modules/@react-three/rapier/dist/react-three-rapier.cjs.dev.js
++++ b/node_modules/@react-three/rapier/dist/react-three-rapier.cjs.dev.js
+@@ -791,6 +791,7 @@ const Physics = props => {
+     colliders = "cuboid",
+     children,
+     timeStep = 1 / 60,
++    maxStepsPerFrame = Infinity,
+     paused = false,
+     interpolate = true,
+     updatePriority,
+@@ -925,7 +926,8 @@ const Physics = props => {
+       // don't step time forwards if paused
+       // Increase accumulator
+       steppingState.accumulator += clampedDelta;
+-      while (steppingState.accumulator >= timeStep) {
++      let steps = 0;
++      while (steppingState.accumulator >= timeStep && steps < maxStepsPerFrame) {
+         // Set up previous state
+         // needed for accurate interpolations if the world steps more than once
+         if (interpolate) {
+@@ -939,6 +941,12 @@ const Physics = props => {
+         }
+         stepWorld(timeStep);
+         steppingState.accumulator -= timeStep;
++        steps += 1;
++      }
++      // Do not let a slow frame create an ever-growing simulation debt. Keep
++      // only the fractional remainder used for render interpolation.
++      if (steppingState.accumulator >= timeStep) {
++        steppingState.accumulator %= timeStep;
+       }
+     }
+     const interpolationAlpha = timeStepVariable || !interpolate || paused ? 1 : steppingState.accumulator / timeStep;
+diff --git a/node_modules/@react-three/rapier/dist/react-three-rapier.cjs.prod.js b/node_modules/@react-three/rapier/dist/react-three-rapier.cjs.prod.js
+index 5457a71..87235e0 100644
+--- a/node_modules/@react-three/rapier/dist/react-three-rapier.cjs.prod.js
++++ b/node_modules/@react-three/rapier/dist/react-three-rapier.cjs.prod.js
+@@ -791,6 +791,7 @@ const Physics = props => {
+     colliders = "cuboid",
+     children,
+     timeStep = 1 / 60,
++    maxStepsPerFrame = Infinity,
+     paused = false,
+     interpolate = true,
+     updatePriority,
+@@ -925,7 +926,8 @@ const Physics = props => {
+       // don't step time forwards if paused
+       // Increase accumulator
+       steppingState.accumulator += clampedDelta;
+-      while (steppingState.accumulator >= timeStep) {
++      let steps = 0;
++      while (steppingState.accumulator >= timeStep && steps < maxStepsPerFrame) {
+         // Set up previous state
+         // needed for accurate interpolations if the world steps more than once
+         if (interpolate) {
+@@ -939,6 +941,12 @@ const Physics = props => {
+         }
+         stepWorld(timeStep);
+         steppingState.accumulator -= timeStep;
++        steps += 1;
++      }
++      // Do not let a slow frame create an ever-growing simulation debt. Keep
++      // only the fractional remainder used for render interpolation.
++      if (steppingState.accumulator >= timeStep) {
++        steppingState.accumulator %= timeStep;
+       }
+     }
+     const interpolationAlpha = timeStepVariable || !interpolate || paused ? 1 : steppingState.accumulator / timeStep;
+diff --git a/node_modules/@react-three/rapier/dist/react-three-rapier.esm.js b/node_modules/@react-three/rapier/dist/react-three-rapier.esm.js
+index f3f41fb..424be7e 100644
+--- a/node_modules/@react-three/rapier/dist/react-three-rapier.esm.js
++++ b/node_modules/@react-three/rapier/dist/react-three-rapier.esm.js
+@@ -766,6 +766,7 @@ const Physics = props => {
+     colliders = "cuboid",
+     children,
+     timeStep = 1 / 60,
++    maxStepsPerFrame = Infinity,
+     paused = false,
+     interpolate = true,
+     updatePriority,
+@@ -900,7 +901,8 @@ const Physics = props => {
+       // don't step time forwards if paused
+       // Increase accumulator
+       steppingState.accumulator += clampedDelta;
+-      while (steppingState.accumulator >= timeStep) {
++      let steps = 0;
++      while (steppingState.accumulator >= timeStep && steps < maxStepsPerFrame) {
+         // Set up previous state
+         // needed for accurate interpolations if the world steps more than once
+         if (interpolate) {
+@@ -914,6 +916,12 @@ const Physics = props => {
+         }
+         stepWorld(timeStep);
+         steppingState.accumulator -= timeStep;
++        steps += 1;
++      }
++      // Do not let a slow frame create an ever-growing simulation debt. Keep
++      // only the fractional remainder used for render interpolation.
++      if (steppingState.accumulator >= timeStep) {
++        steppingState.accumulator %= timeStep;
+       }
+     }
+     const interpolationAlpha = timeStepVariable || !interpolate || paused ? 1 : steppingState.accumulator / timeStep;
