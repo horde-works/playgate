@@ -744,6 +744,14 @@ interface FrameState {
   memberRemnantsSeen: readonly RemnantDefinition[] | null;
   /** Снимок условий watchdog для живой диагностики (dev-режим). */
   watchdogProbe: Record<string, unknown> | null;
+  /** Из чего набралась масса: члены, обрубки, исключённые. */
+  massBreakdown: {
+    members: number;
+    stumps: number;
+    alive: number;
+    skippedDamaged: number;
+    remnantsSeen: number;
+  } | null;
   /** Уцелевшие члены кадра; пересчитываются только со сменой brokenSeen. */
   aliveMembers: readonly FrameMember[];
   /** Сколько кусков оболочки уцелело — кэш от aliveMembers. */
@@ -1184,6 +1192,7 @@ function restingState(engineCount: number): FrameState {
     damagedSeen: -1,
     memberRemnantsSeen: null,
     watchdogProbe: null,
+    massBreakdown: null,
     aliveMembers: [],
     envelopeLeft: 0,
   };
@@ -3038,6 +3047,18 @@ export function VehicleFrameSystem({
             color: remnant.color,
           } as BreakablePieceDefinition);
         }
+        // Разбор состава массы: из чего она набралась. Прирост веса от
+        // локальной дырки означает двойной счёт, и увидеть его можно только
+        // по числам «членов / обрубков / исключено».
+        state.massBreakdown = {
+          members: massPieces.length - frameRemnants.length,
+          stumps: massPieces.length - (state.aliveMembers.length - 0),
+          alive: state.aliveMembers.length,
+          skippedDamaged: state.aliveMembers.filter((member) =>
+            damagedPieces.has(member.piece.id),
+          ).length,
+          remnantsSeen: frameRemnants.length,
+        };
         const nextMass = massProperties(massPieces, densityOf);
         if (previousMass && previousMass.mass > 0 && nextMass.mass > 0) {
           const oldWorldBody: BodyState = {
@@ -5001,7 +5022,36 @@ export function VehicleFrameSystem({
             expected: Number(state.intactMass.toFixed(1)),
             actual: Number(mass.mass.toFixed(1)),
             required: false,
+            note:
+              mass.mass > state.intactMass * 1.01
+                ? "ТЯЖЕЛЕЕ ЦЕЛОГО"
+                : undefined,
           });
+          if (state.massBreakdown) {
+            readings.push({
+              organ: "в массе: члены",
+              expected: state.massBreakdown.alive,
+              actual: state.massBreakdown.members,
+              required: false,
+            });
+            readings.push({
+              organ: "в массе: обрубки",
+              expected: 0,
+              actual: state.massBreakdown.remnantsSeen,
+              required: false,
+            });
+            readings.push({
+              organ: "исключено повреждённых",
+              expected: state.massBreakdown.remnantsSeen > 0 ? 1 : 0,
+              actual: state.massBreakdown.skippedDamaged,
+              required: false,
+              note:
+                state.massBreakdown.remnantsSeen > 0 &&
+                state.massBreakdown.skippedDamaged === 0
+                  ? "ДВОЙНОЙ СЧЁТ"
+                  : undefined,
+            });
+          }
           for (const [index, rail] of (frame.trimRails ?? []).entries()) {
             readings.push({
               organ: `дифферент ${rail.commandChannel}`,
