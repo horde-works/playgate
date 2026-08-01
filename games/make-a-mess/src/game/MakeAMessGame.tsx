@@ -171,6 +171,7 @@ import {
 import { astanaTrainClusterDefinitions } from "./astanaTrainRuntime";
 import {
   isVehicleFramePiece,
+  vehicleFrames,
   vehicleFrameForCluster,
   vehiclePiecePosition,
   vehicleRotation,
@@ -258,6 +259,7 @@ import {
 } from "./passengerSeats";
 import {
   compoundClusterOwnsPiece,
+  compoundMemberNeedsIndividualBody,
   PHYSICS_TIME_STEP,
   queueCompoundKinematicImpulse,
   type CompoundKinematicClusterDefinition,
@@ -2247,8 +2249,11 @@ function BreakableObjects({
     const hidden = new Set<string>();
     const dynamicVisuals: BreakablePieceDefinition[] = [];
     const physicalBodies: BreakablePieceDefinition[] = [];
-    const kinematicClusterIds = new Set(
-      kinematicClusterDefinitions.map((definition) => definition.clusterId),
+    const compoundDefinitionByCluster = new Map(
+      kinematicClusterDefinitions.map((definition) => [
+        definition.clusterId,
+        definition,
+      ] as const),
     );
     for (const piece of pieces) {
       if (shatteredPieces.has(piece.id)) {
@@ -2261,7 +2266,7 @@ function BreakableObjects({
         // Кластер транспорта живёт своими телами: его куски двигает кадр
         // отсчёта, а инстансная батчёвка целого мира неподвижна.
         isVehicleFramePiece(piece) ||
-        kinematicClusterIds.has(piece.clusterId) ||
+        compoundDefinitionByCluster.has(piece.clusterId) ||
         piece.shape === "cinderBlock"
       ) {
         hidden.add(piece.id);
@@ -2274,12 +2279,19 @@ function BreakableObjects({
             )
           : piece;
         dynamicVisuals.push(visualPiece);
-        // Intact articulated-train detail is rendered by the compound frame
-        // and contacts through its structural envelope. A separate rigid body
-        // is created only when a member actually detaches.
+        const compoundDefinition = compoundDefinitionByCluster.get(
+          piece.clusterId,
+        );
+        // The carrier already owns ordinary intact members completely. Only
+        // articulated attachments keep an individual pose body; every other
+        // member materialises one at the instant it detaches.
         if (
-          !kinematicClusterIds.has(piece.clusterId) ||
-          brokenPieces.has(piece.id)
+          !compoundDefinition ||
+          compoundMemberNeedsIndividualBody(
+            compoundDefinition,
+            piece,
+            brokenPieces.has(piece.id),
+          )
         ) {
           physicalBodies.push(visualPiece);
         }
@@ -7228,10 +7240,10 @@ function OpenWorldScene({
   // Общая событийная шина составных объектов. Свет — первый потребитель;
   // следующие системы могут читать те же состояния без знания типа машины.
   const clusterEventStates = useRef<Map<string, LampEventState>>(new Map());
-  const astanaTrainClusters = useMemo(() => {
+  const compoundClusterDefinitions = useMemo(() => {
     const available = new Set(breakablePieces.map((piece) => piece.clusterId));
-    return astanaTrainClusterDefinitions().filter((definition) =>
-      available.has(definition.clusterId),
+    return [...astanaTrainClusterDefinitions(), ...vehicleFrames].filter(
+      (definition) => available.has(definition.clusterId),
     );
   }, [breakablePieces]);
   /** Физические позы для систем, которые живут вне транспортного кадра. */
@@ -7568,7 +7580,7 @@ function OpenWorldScene({
           shatteredPieces={hiddenPieces}
           bodies={pieceBodies}
           kinematicClusters={compoundKinematicClusters}
-          kinematicClusterDefinitions={astanaTrainClusters}
+          kinematicClusterDefinitions={compoundClusterDefinitions}
           mutablePieceIds={mutablePieceIds}
           mutablePieceStates={mutablePieceStates}
           registerBody={registerBody}

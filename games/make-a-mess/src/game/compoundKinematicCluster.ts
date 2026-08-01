@@ -107,6 +107,31 @@ export function compoundClusterOwnsPiece(
 }
 
 /**
+ * Only articulated or independently animated members need their own pose
+ * body while intact. Every ordinary member is rendered by the carrier and
+ * materialises its individual dynamic body only when it breaks away.
+ */
+export function compoundMemberNeedsPoseBody(
+  cluster: CompoundKinematicClusterDefinition,
+  piece: BreakablePieceDefinition,
+): boolean {
+  return !compoundClusterOwnsPiece(cluster, piece);
+}
+
+/**
+ * Ordinary intact members need no individual Rapier body at all: the carrier
+ * owns their contact shape and rendered pose. A body is materialised only for
+ * an articulated attachment or for a member which has actually detached.
+ */
+export function compoundMemberNeedsIndividualBody(
+  cluster: CompoundKinematicClusterDefinition,
+  piece: BreakablePieceDefinition,
+  detached: boolean,
+): boolean {
+  return detached || compoundMemberNeedsPoseBody(cluster, piece);
+}
+
+/**
  * Selects the single pose writer for an articulated cluster member.
  * The carrier locks and transports hinges while underway; when an independent
  * mechanism is active (for example at a dock), that mechanism owns the body.

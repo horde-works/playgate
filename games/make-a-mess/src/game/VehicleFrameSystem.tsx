@@ -88,6 +88,7 @@ import {
 import { CompoundKinematicClusterBodies } from "./CompoundKinematicClusterBodies";
 import {
   compoundCarrierOwnsMemberPose,
+  compoundMemberNeedsPoseBody,
   PHYSICS_TIME_STEP,
   queueCompoundKinematicImpulse,
   type CompoundKinematicClusterRegistry,
@@ -2665,6 +2666,13 @@ export function VehicleFrameSystem({
         const previousMass = state.mass;
         state.brokenSeen = frameBroken;
         if (membershipChanged) {
+          // A repaired/reset member may detach again later and must inherit
+          // the carrier's then-current motion as a fresh release.
+          for (const releasedId of state.released) {
+            if (!brokenPieces.current.has(releasedId)) {
+              state.released.delete(releasedId);
+            }
+          }
           state.aliveMembers = frame.members.filter(
             (member) => !brokenPieces.current.has(member.piece.id),
           );
@@ -5043,8 +5051,11 @@ export function VehicleFrameSystem({
     for (const frame of frames) {
       const state = frameState(frame.id);
       const pose = state.pose;
-      const resting = isRestingPose(pose);
-      if (resting && !state.moving) {
+      const authoredRest = isRestingPose(pose);
+      const physicalCarrier = clusterRegistry.current.get(frame.clusterId)?.body;
+      const carrierSleeping = physicalCarrier?.isSleeping() ?? authoredRest;
+      const pendingMemberRelease = state.brokenSeen > state.released.size;
+      if (carrierSleeping && !state.moving && !pendingMemberRelease) {
         continue;
       }
 
@@ -5059,39 +5070,74 @@ export function VehicleFrameSystem({
         if (!body) {
           continue;
         }
+        const needsPoseBody = compoundMemberNeedsPoseBody(frame, piece);
         if (brokenPieces.current.has(piece.id)) {
           // Отломанный кусок живёт своей жизнью — но улетает он ВМЕСТЕ с
           // кораблём: скорость кадра дарим ровно один раз.
-          if (!state.released.has(piece.id)) {
-            state.released.add(piece.id);
-            if (body.bodyType() === rapier.RigidBodyType.Dynamic) {
-              const current = body.linvel();
-              const currentAngular = body.angvel();
-              const massCentre = state.mass?.centre ?? frame.origin;
-              const worldLever = rotateByQuaternion(state.body.orientation, [
-                piece.position[0] - massCentre[0],
-                piece.position[1] - massCentre[1],
-                piece.position[2] - massCentre[2],
-              ]);
-              const inherited = bodyPointVelocity(state.body, worldLever);
-              body.setLinvel(
-                {
-                  x: current.x + inherited[0],
-                  y: current.y + inherited[1],
-                  z: current.z + inherited[2],
-                },
-                true,
+          if (
+            !state.released.has(piece.id) &&
+            body.bodyType() === rapier.RigidBodyType.Dynamic
+          ) {
+            // Ordinary members never spent the flight writing an empty
+            // kinematic body. Materialise one at the carrier's exact current
+            // pose only now, when the member has actually detached.
+            if (!needsPoseBody) {
+              const placed = vehiclePiecePosition(
+                frame.origin,
+                piece.position,
+                pose,
+                rotation,
               );
-              body.setAngvel(
+              body.setTranslation(
+                { x: placed[0], y: placed[1], z: placed[2] },
+                false,
+              );
+              const composed = multiplyQuaternions(rotation, [
+                member.baseQuaternion.x,
+                member.baseQuaternion.y,
+                member.baseQuaternion.z,
+                member.baseQuaternion.w,
+              ]);
+              body.setRotation(
                 {
-                  x: currentAngular.x + state.body.angularVelocity[0],
-                  y: currentAngular.y + state.body.angularVelocity[1],
-                  z: currentAngular.z + state.body.angularVelocity[2],
+                  x: composed[0],
+                  y: composed[1],
+                  z: composed[2],
+                  w: composed[3],
                 },
-                true,
+                false,
               );
             }
+            const current = body.linvel();
+            const currentAngular = body.angvel();
+            const massCentre = state.mass?.centre ?? frame.origin;
+            const worldLever = rotateByQuaternion(state.body.orientation, [
+              piece.position[0] - massCentre[0],
+              piece.position[1] - massCentre[1],
+              piece.position[2] - massCentre[2],
+            ]);
+            const inherited = bodyPointVelocity(state.body, worldLever);
+            body.setLinvel(
+              {
+                x: current.x + inherited[0],
+                y: current.y + inherited[1],
+                z: current.z + inherited[2],
+              },
+              true,
+            );
+            body.setAngvel(
+              {
+                x: currentAngular.x + state.body.angularVelocity[0],
+                y: currentAngular.y + state.body.angularVelocity[1],
+                z: currentAngular.z + state.body.angularVelocity[2],
+              },
+              true,
+            );
+            state.released.add(piece.id);
           }
+          continue;
+        }
+        if (!needsPoseBody) {
           continue;
         }
         // A docked articulated member has its own mechanism controller. The
@@ -5106,7 +5152,7 @@ export function VehicleFrameSystem({
           continue;
         }
 
-        if (resting) {
+        if (authoredRest) {
           // Кадр вернулся в покой: возвращаем куску его авторское место и
           // снова делаем его частью неподвижного мира.
           if (body.bodyType() !== rapier.RigidBodyType.Fixed) {
@@ -5268,7 +5314,7 @@ export function VehicleFrameSystem({
         });
       }
 
-      state.moving = !resting;
+      state.moving = !carrierSleeping;
       const clusterId = frame.clusterId;
       if (clusterId) {
         const eventState = airVehicleFlightEventState(
@@ -5277,7 +5323,7 @@ export function VehicleFrameSystem({
           state.recovery?.lifecycle ?? null,
         );
         if (movingVehicles) {
-          if (resting) {
+          if (carrierSleeping) {
             movingVehicles.current.delete(clusterId);
           } else {
             movingVehicles.current.add(clusterId);
@@ -5292,9 +5338,8 @@ export function VehicleFrameSystem({
         }
         clusterEventStates?.current.set(clusterId, eventState);
       }
-      if (resting) {
+      if (carrierSleeping) {
         state.velocity = [0, 0, 0];
-        state.released.clear();
       }
     }
 

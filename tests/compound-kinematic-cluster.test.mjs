@@ -3,8 +3,12 @@ import test from "node:test";
 import {
   compoundCarrierOwnsMemberPose,
   compoundClusterColliders,
+  compoundMemberNeedsIndividualBody,
+  compoundMemberNeedsPoseBody,
 } from "../games/make-a-mess/src/game/compoundKinematicCluster.ts";
 import { grandTerminalScene } from "../games/make-a-mess/src/game/grandTerminalScene.ts";
+import { townScene } from "../games/make-a-mess/src/game/townScene.ts";
+import { TOWN_HEXACOPTER_CLUSTER_ID } from "../games/make-a-mess/src/game/townHexacopter.ts";
 import { vehicleFrameForCluster } from "../games/make-a-mess/src/game/vehicleFrames.ts";
 
 const SKY_TRAIN = "terminal:sky-train";
@@ -29,6 +33,59 @@ test("a compound cluster owns one contact body worth of member colliders", () =>
     colliders.every((collider) => pieces.some((piece) => piece.id === collider.sourceId)),
     true,
   );
+});
+
+test("intact compound members do not need hundreds of empty pose bodies", () => {
+  const frame = vehicleFrameForCluster(SKY_TRAIN);
+  const pieces = grandTerminalScene.breakablePieces.filter(
+    (piece) => piece.clusterId === SKY_TRAIN,
+  );
+  const independent = pieces.filter((piece) =>
+    compoundMemberNeedsPoseBody(frame, piece),
+  );
+
+  assert.ok(independent.length > 0);
+  assert.ok(independent.length < pieces.length / 8, {
+    pieces: pieces.length,
+    independent: independent.length,
+  });
+  assert.equal(
+    independent.every(
+      (piece) =>
+        piece.hinge ||
+        frame.independentMemberMatches.some((match) => piece.id.includes(match)),
+    ),
+    true,
+  );
+});
+
+test("town vehicles materialise only articulated bodies until pieces detach", () => {
+  const expected = new Map([
+    ["sky-mooring:airship", 10],
+    [TOWN_HEXACOPTER_CLUSTER_ID, 18],
+  ]);
+
+  for (const [clusterId, expectedBodies] of expected) {
+    const frame = vehicleFrameForCluster(clusterId);
+    assert.ok(frame, `missing frame ${clusterId}`);
+    const pieces = townScene.breakablePieces.filter(
+      (piece) => piece.clusterId === clusterId,
+    );
+    const intactBodies = pieces.filter((piece) =>
+      compoundMemberNeedsIndividualBody(frame, piece, false),
+    );
+    assert.equal(intactBodies.length, expectedBodies, clusterId);
+
+    const carried = pieces.find(
+      (piece) => !compoundMemberNeedsIndividualBody(frame, piece, false),
+    );
+    assert.ok(carried, `missing ordinary carrier member for ${clusterId}`);
+    assert.equal(
+      compoundMemberNeedsIndividualBody(frame, carried, true),
+      true,
+      `${clusterId} detached member did not materialise`,
+    );
+  }
 });
 
 test("detaching a member removes exactly its contact shape from the cluster", () => {
