@@ -8054,6 +8054,81 @@ function OpenWorldScene({
         .__mamVehicleFailureLog as unknown[]) ?? [];
     scope.__mamBreakPiece = breakPiece;
     scope.__mamVehicleFailures = failures;
+    // Перепись обломков по МЕСТУ: сколько тел стоит у авторской стоянки
+    // машины и сколько рядом с ней самой. Отвечает на «почему куски
+    // оказались дома» фактом, а не осмотром кадра.
+    const debrisCensus = (clusterId: string, radius = 12) => {
+      const runtime = compoundKinematicClusters.current.get(clusterId);
+      if (!runtime) {
+        return null;
+      }
+      const home = runtime.definition.origin;
+      const translation = runtime.body.translation();
+      const near = (
+        x: number,
+        y: number,
+        z: number,
+        point: readonly [number, number, number],
+      ) =>
+        Math.hypot(x - point[0], y - point[1], z - point[2]) <= radius;
+      const buckets = {
+        clusterId,
+        home,
+        machine: [translation.x, translation.y, translation.z],
+        shardsAtHome: 0,
+        shardsAtMachine: 0,
+        remnantsCarried: 0,
+        remnantsAtHome: 0,
+        remnantsAtMachine: 0,
+        memberBodiesAtHome: [] as string[],
+        memberBodiesAtMachine: 0,
+      };
+      const machinePoint = [
+        translation.x,
+        translation.y,
+        translation.z,
+      ] as const;
+      for (const shard of shardsRef.current) {
+        const body = pieceBodies.current.get(shard.id);
+        const t = body?.translation();
+        const p = t ? [t.x, t.y, t.z] : shard.position;
+        if (near(p[0], p[1], p[2], home)) buckets.shardsAtHome += 1;
+        else if (near(p[0], p[1], p[2], machinePoint))
+          buckets.shardsAtMachine += 1;
+      }
+      for (const remnant of remnantsRef.current) {
+        const body = pieceBodies.current.get(remnant.id);
+        const t = body?.translation();
+        // Носимый обрубок живёт в АВТОРСКИХ координатах кластера и рисуется
+        // его позой — его «дом» не улика. Уликой является брошенный: у него
+        // есть собственное тело, и стоять оно обязано у машины.
+        const carried = Boolean(remnant.clusterId) && !body;
+        if (carried) {
+          buckets.remnantsCarried += 1;
+          continue;
+        }
+        const p = t ? [t.x, t.y, t.z] : remnant.position;
+        if (near(p[0], p[1], p[2], home)) buckets.remnantsAtHome += 1;
+        else if (near(p[0], p[1], p[2], machinePoint))
+          buckets.remnantsAtMachine += 1;
+      }
+      for (const piece of breakablePieces) {
+        if (piece.clusterId !== clusterId) continue;
+        const body = pieceBodies.current.get(piece.id);
+        const t = body?.translation();
+        if (!t) continue;
+        if (near(t.x, t.y, t.z, home)) {
+          if (buckets.memberBodiesAtHome.length < 8) {
+            buckets.memberBodiesAtHome.push(piece.id);
+          }
+        } else if (near(t.x, t.y, t.z, machinePoint)) {
+          buckets.memberBodiesAtMachine += 1;
+        }
+      }
+      return buckets;
+    };
+    scope.__mamDebrisCensus = (clusterId = "town-vertipad:hexacopter") =>
+      debrisCensus(clusterId);
     return () => {
       if (scope.__mamExplode === detonate) {
         delete scope.__mamExplode;

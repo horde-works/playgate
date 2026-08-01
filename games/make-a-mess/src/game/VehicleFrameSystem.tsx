@@ -1512,6 +1512,7 @@ export function VehicleFrameSystem({
     onRotorcraftPilotStatusChange?.(null);
   }, [occupiedSeatId, onRotorcraftPilotStatusChange]);
 
+
   useEffect(() => {
     pilotCommands.current = createRotorcraftPilotCommandBuffer();
     if (occupiedSeatId !== TOWN_HEXACOPTER_PILOT_SEAT_ID) {
@@ -1935,6 +1936,80 @@ export function VehicleFrameSystem({
   const debrisCarrierRotation = useRef(new Quaternion());
   const handoffLookDirection = useRef(new Vector3());
   const interIslandPassengerStatus = useRef({ active: false, inside: false });
+
+  // Dev-прибор двигателей: по каждому каналу — РЕАЛЬНАЯ доставленная тяга,
+  // состояние каждого его члена (цел / надкусан carve / отломан) и severity
+  // дыма. Отвечает на вопрос «умерли двигатели или врёт дым» числом.
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") {
+      return;
+    }
+    const scope = window as unknown as Record<string, unknown>;
+    const report = (frameId?: string) =>
+      frames
+        .filter((frame) => !frameId || frame.id === frameId)
+        .map((frame) => {
+          const attached =
+            clusterRegistry.current.get(frame.clusterId)?.attachedMemberIds ??
+            new Set(frame.members.map((member) => member.piece.id));
+          const health = propulsionHealth(
+            frame.actuators,
+            attached,
+            frame.flight.limits.enginePoints.length,
+          );
+          return {
+            frame: frame.id,
+            mode: health.mode,
+            fractions: health.fractions.map((value) =>
+              Number(value.toFixed(3)),
+            ),
+            channels: frame.flight.limits.enginePoints.map((_, index) => {
+              const smoke = vehicleEngineDamageSmoke(
+                frame.actuators,
+                damagedPieces,
+                index,
+              );
+              const members = frame.actuators
+                .filter(
+                  (binding) => binding.commandChannel === `throttle:${index}`,
+                )
+                .flatMap((binding) => binding.members);
+              return {
+                channel: index,
+                thrust: Number((health.fractions[index] ?? 0).toFixed(3)),
+                smokeSeverity: Number(smoke.severity.toFixed(3)),
+                required: members.filter((member) => member.required).length,
+                requiredBroken: members.filter(
+                  (member) =>
+                    member.required && brokenPieces.current.has(member.pieceId),
+                ).length,
+                requiredDamagedOnly: members.filter(
+                  (member) =>
+                    member.required &&
+                    damagedPieces.has(member.pieceId) &&
+                    !brokenPieces.current.has(member.pieceId),
+                ).length,
+                sparesBroken: members.filter(
+                  (member) =>
+                    !member.required && brokenPieces.current.has(member.pieceId),
+                ).length,
+                sparesDamagedOnly: members.filter(
+                  (member) =>
+                    !member.required &&
+                    damagedPieces.has(member.pieceId) &&
+                    !brokenPieces.current.has(member.pieceId),
+                ).length,
+              };
+            }),
+          };
+        });
+    scope.__mamPropulsionReport = report;
+    return () => {
+      if (scope.__mamPropulsionReport === report) {
+        delete scope.__mamPropulsionReport;
+      }
+    };
+  }, [brokenPieces, clusterRegistry, damagedPieces, frames]);
 
   useBeforePhysicsStep(() => {
     const step = PHYSICS_TIME_STEP;
@@ -2813,12 +2888,11 @@ export function VehicleFrameSystem({
           state.aliveMembers = frame.members.filter(
             (member) => !brokenPieces.current.has(member.piece.id),
           );
-          // Съеденный кусок оболочки — потерянная газовая ячейка или лопасть:
-          // повреждённый член не считается уцелевшей частью подъёма.
-          state.envelopeLeft = state.aliveMembers.filter(
-            (member) =>
-              member.piece.id.includes(frame.envelopeMatch) &&
-              !damagedPieces.has(member.piece.id),
+          // Уцелевшая оболочка — это то, что ещё НА машине. Надкусанное
+          // carve полотнище или щербатая лопасть работают дальше: обнулять
+          // их вклад значит объявлять машину без подъёма от царапины.
+          state.envelopeLeft = state.aliveMembers.filter((member) =>
+            member.piece.id.includes(frame.envelopeMatch),
           ).length;
         }
         state.trimMassPositions = trimRails.map(
@@ -2974,6 +3048,38 @@ export function VehicleFrameSystem({
             sourceId: frame.clusterId,
             snapshot: null,
           });
+        }
+        // ТЯЖЕСТЬ НЕ ОТМЕНЯЕТСЯ ПОТЕРЕЙ ОБОЛОЧКИ.
+        //
+        // У составного тела gravityScale = 0: вес прикладывает этот код и
+        // только он. Прежний ранний выход уносил вместе с управлением и
+        // тяжесть — машина, потерявшая оболочку, продолжала лететь по
+        // инерции «в закат», кувыркаясь от полученного момента, вместо того
+        // чтобы упасть. Пока carrier существует, вес прикладывается всегда;
+        // подъёма и управления у такой машины действительно больше нет.
+        if (physicalCarrier && mass && mass.mass > 0) {
+          const deadCentre: [number, number, number] = [
+            mass.centre[0] + state.body.position[0],
+            mass.centre[1] + state.body.position[1],
+            mass.centre[2] + state.body.position[2],
+          ];
+          physicalCarrier.resetForces(false);
+          physicalCarrier.resetTorques(false);
+          physicalCarrier.addForceAtPoint(
+            { x: 0, y: -mass.mass * GRAVITY, z: 0 },
+            { x: deadCentre[0], y: deadCentre[1], z: deadCentre[2] },
+            true,
+          );
+          const deadDamping =
+            frame.flight.angularDamping * mass.inertia[4] * 0.35;
+          physicalCarrier.addTorque(
+            {
+              x: -deadDamping * state.body.angularVelocity[0],
+              y: -deadDamping * state.body.angularVelocity[1],
+              z: -deadDamping * state.body.angularVelocity[2],
+            },
+            true,
+          );
         }
         continue;
       }
@@ -4935,6 +5041,16 @@ export function VehicleFrameSystem({
               ? Number(state.flight.progress.toFixed(3))
               : null,
             recovery: state.recovery?.lifecycle.phase ?? null,
+            disposition: state.recovery?.lifecycle.disposition ?? null,
+            // Вес машины прикладывает НАШ код: у составного тела
+            // gravityScale = 0. Нет носителя в реестре — нет ни веса, ни
+            // подъёма, и тело летит по инерции «невзирая на тяжесть».
+            hasCarrier: Boolean(
+              clusterRegistry.current.get(frame.clusterId)?.body,
+            ),
+            vx: Number(state.body.velocity[0].toFixed(2)),
+            vz: Number(state.body.velocity[2].toFixed(2)),
+            spin: Number(Math.hypot(...state.body.angularVelocity).toFixed(2)),
           });
           if (trace.length > 400) {
             trace.splice(0, trace.length - 400);
