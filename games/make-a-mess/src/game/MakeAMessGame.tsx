@@ -288,9 +288,15 @@ import {
 } from "./passengerSeats";
 import {
   compoundClusterOwnsPiece,
+  compoundClusterPointToLocal,
+  compoundClusterPointToWorld,
+  compoundClusterPointWorldVelocity,
+  compoundClusterWorldTransform,
   compoundMemberNeedsIndividualBody,
+  compoundMemberWorldPose,
   PHYSICS_TIME_STEP,
   queueCompoundKinematicImpulse,
+  type CompoundClusterWorldTransform,
   type CompoundKinematicClusterDefinition,
   type CompoundKinematicClusterRuntime,
   type CompoundKinematicImpulse,
@@ -667,13 +673,27 @@ const blastTransmissionByMaterial: Record<BreakableMaterial, number> = {
 type BlastOccluderSource =
   BreakablePieceDefinition | RemnantDefinition | ShardDefinition;
 
+/**
+ * В какой системе координат передана точка удара carve. «world» — обычная
+ * мировая точка; «cluster» — точка уже переведена в авторскую систему
+ * кластера-владельца цели (так стреляет взрыв: перевод фиксируется в кадре
+ * детонации, а не в кадре исполнения шага очереди).
+ */
+type CarveImpactFrame = "world" | "cluster";
+
 function occupiedBoxesForBlast(
   source: BlastOccluderSource | ShardSource,
 ): readonly OccupiedGeometryBox[] | undefined {
   if ("boxes" in source && source.boxes?.length) {
     return source.boxes;
   }
-  if ("clusterId" in source && source.shape === "cinderBlock") {
+  // Авторский кусок отличается от обрубка отсутствием parentId: clusterId
+  // теперь есть и у носимых кластером обрубков.
+  if (
+    !("parentId" in source) &&
+    "clusterId" in source &&
+    source.shape === "cinderBlock"
+  ) {
     return getPieceRenderBoxes(source);
   }
   return undefined;
@@ -2455,6 +2475,7 @@ function DebrisBodies({
   registerBody,
   onShardContact,
   onRemnantContact,
+  kinematicClusters,
 }: {
   shards: readonly ShardDefinition[];
   remnants: readonly RemnantDefinition[];
@@ -2462,6 +2483,9 @@ function DebrisBodies({
   registerBody: (id: string, body: RapierRigidBody | null) => void;
   onShardContact: DebrisContactReporter<ShardDefinition>;
   onRemnantContact: DebrisContactReporter<RemnantDefinition>;
+  kinematicClusters?: MutableRefObject<
+    Map<string, CompoundKinematicClusterRuntime>
+  >;
 }) {
   const { world, rapier, rigidBodyEvents } = useRapier();
   const entries = useRef(
@@ -2649,6 +2673,67 @@ function DebrisBodies({
     [armDebris, buildColliders, freeRemnant, rapier, registerBody, world],
   );
 
+  /**
+   * Обрубок, отломившийся от ЛЕТЯЩЕГО кластера, рождается сразу свободным
+   * обломком: в текущей мировой позе своей авторской точки и со скоростью
+   * этой точки на корпусе. Fixed-этапа в авторской позе у него не бывает —
+   * там, где машина родилась, его больше нет.
+   */
+  const spawnClusterRemnant = useCallback(
+    (remnant: RemnantDefinition, runtime: CompoundKinematicClusterRuntime) => {
+      const transform = compoundClusterWorldTransform(runtime.body);
+      const origin = runtime.definition.origin;
+      const worldPosition = compoundClusterPointToWorld(
+        origin,
+        transform,
+        remnant.position,
+      );
+      const worldQuaternion = new Quaternion(...transform.rotation).multiply(
+        new Quaternion(...remnant.quaternion),
+      );
+      const velocity = compoundClusterPointWorldVelocity(
+        runtime.body,
+        worldPosition,
+      );
+      const angular = runtime.body.angvel();
+      const spec = remnantBodySpec(remnant, true);
+      const body = world.createRigidBody(
+        rapier.RigidBodyDesc.dynamic()
+          .setTranslation(worldPosition[0], worldPosition[1], worldPosition[2])
+          .setRotation({
+            x: worldQuaternion.x,
+            y: worldQuaternion.y,
+            z: worldQuaternion.z,
+            w: worldQuaternion.w,
+          })
+          .setLinvel(velocity[0], velocity[1], velocity[2])
+          .setAngvel({ x: angular.x, y: angular.y, z: angular.z })
+          .setLinearDamping(spec.linearDamping)
+          .setAngularDamping(spec.angularDamping)
+          .setCcdEnabled(spec.hardCcd),
+      );
+      body.setSoftCcdPrediction(spec.softCcdPrediction);
+      buildColliders(body, spec.colliders);
+      registerBody(remnant.id, body);
+      armDebris(
+        body,
+        spec.chunky
+          ? (payload) => {
+              remnantContact.current(
+                remnant,
+                payload.totalForceMagnitude,
+                body.mass(),
+                payload.maxForceDirection,
+                payload.other.collider.handle,
+              );
+            }
+          : null,
+      );
+      entries.current.set(remnant.id, { body, freed: true });
+    },
+    [armDebris, buildColliders, rapier, registerBody, world],
+  );
+
   const removeEntry = useCallback(
     (id: string, entry: { body: RapierRigidBody; freed: boolean }) => {
       rigidBodyEvents.delete(entry.body.handle);
@@ -2675,11 +2760,23 @@ function DebrisBodies({
       }
     }
     for (const remnant of remnants) {
-      live.add(remnant.id);
       const freed = remnant.detached || brokenPieces.has(remnant.parentId);
+      const clusterRuntime = remnant.clusterId
+        ? kinematicClusters?.current.get(remnant.clusterId)
+        : undefined;
+      if (clusterRuntime && !freed) {
+        // Обрубок ещё летит в составе кластера: контактную форму даёт
+        // компаунд, отдельного тела в мире у обрубка нет.
+        continue;
+      }
+      live.add(remnant.id);
       const entry = entries.current.get(remnant.id);
       if (!entry) {
-        spawnRemnant(remnant, freed);
+        if (clusterRuntime) {
+          spawnClusterRemnant(remnant, clusterRuntime);
+        } else {
+          spawnRemnant(remnant, freed);
+        }
       } else if (freed && !entry.freed) {
         freeRemnant(remnant, entry);
       }
@@ -2692,9 +2789,11 @@ function DebrisBodies({
   }, [
     brokenPieces,
     freeRemnant,
+    kinematicClusters,
     remnants,
     removeEntry,
     shards,
+    spawnClusterRemnant,
     spawnRemnant,
     spawnShard,
   ]);
@@ -3889,6 +3988,107 @@ function OpenWorldScene({
   const compoundKinematicImpulses = useRef(
     new Map<string, CompoundKinematicImpulse[]>(),
   );
+  const compoundClusterDefinitions = useMemo(() => {
+    const available = new Set(breakablePieces.map((piece) => piece.clusterId));
+    return [...astanaTrainClusterDefinitions(), ...vehicleFrames].filter(
+      (definition) => available.has(definition.clusterId),
+    );
+  }, [breakablePieces]);
+  /**
+   * Кто из кусков — член составного кластера. Такие куски авторятся в
+   * системе координат кластера и СУДЯТСЯ в ней же: любой урон обязан
+   * переводить точку удара текущей позой тела кластера, а не верить
+   * авторской позиции («призраку» на стоянке).
+   */
+  const compoundOwnedPieceClusters = useMemo(() => {
+    const owned = new Map<string, string>();
+    const definitionByCluster = new Map(
+      compoundClusterDefinitions.map(
+        (definition) => [definition.clusterId, definition] as const,
+      ),
+    );
+    for (const piece of breakablePieces) {
+      const definition = definitionByCluster.get(piece.clusterId);
+      if (definition && compoundClusterOwnsPiece(definition, piece)) {
+        owned.set(piece.id, piece.clusterId);
+      }
+    }
+    return owned;
+  }, [breakablePieces, compoundClusterDefinitions]);
+  const compoundMemberPiecesByCluster = useMemo(() => {
+    const byCluster = new Map<string, BreakablePieceDefinition[]>();
+    for (const piece of breakablePieces) {
+      if (compoundOwnedPieceClusters.get(piece.id) !== piece.clusterId) {
+        continue;
+      }
+      const members = byCluster.get(piece.clusterId);
+      if (members) {
+        members.push(piece);
+      } else {
+        byCluster.set(piece.clusterId, [piece]);
+      }
+    }
+    return byCluster;
+  }, [breakablePieces, compoundOwnedPieceClusters]);
+  /** Авторский габарит кластера — дешёвая отсечка дальних взрывов. */
+  const compoundClusterBounds = useMemo(() => {
+    const bounds = new Map<
+      string,
+      { readonly centre: SceneVector3; readonly radius: number }
+    >();
+    for (const [clusterId, members] of compoundMemberPiecesByCluster) {
+      let sumX = 0;
+      let sumY = 0;
+      let sumZ = 0;
+      for (const member of members) {
+        sumX += member.position[0];
+        sumY += member.position[1];
+        sumZ += member.position[2];
+      }
+      const centre: SceneVector3 = [
+        sumX / members.length,
+        sumY / members.length,
+        sumZ / members.length,
+      ];
+      let radius = 0;
+      for (const member of members) {
+        radius = Math.max(
+          radius,
+          Math.hypot(
+            member.position[0] - centre[0],
+            member.position[1] - centre[1],
+            member.position[2] - centre[2],
+          ) +
+            Math.hypot(...member.size) / 2,
+        );
+      }
+      bounds.set(clusterId, { centre, radius });
+    }
+    return bounds;
+  }, [compoundMemberPiecesByCluster]);
+  /** Живая система координат кластера; null — кластер не смонтирован. */
+  const liveCompoundFrame = useCallback(
+    (
+      clusterId: string,
+    ): {
+      readonly runtime: CompoundKinematicClusterRuntime;
+      readonly transform: CompoundClusterWorldTransform;
+    } | null => {
+      const runtime = compoundKinematicClusters.current.get(clusterId);
+      return runtime
+        ? { runtime, transform: compoundClusterWorldTransform(runtime.body) }
+        : null;
+    },
+    [],
+  );
+  /** Система координат кластера-владельца куска, если кластер смонтирован. */
+  const liveCompoundFrameOfPiece = useCallback(
+    (pieceId: string) => {
+      const clusterId = compoundOwnedPieceClusters.get(pieceId);
+      return clusterId ? liveCompoundFrame(clusterId) : null;
+    },
+    [compoundOwnedPieceClusters, liveCompoundFrame],
+  );
   const dynamicBodies = useRef(new Map<string, RapierRigidBody>());
   const pendingBodyActions = useRef(new Map<string, BodyAction[]>());
   const preStepMotions = useRef(new Map<string, ImpactMotion>());
@@ -4983,16 +5183,33 @@ function OpenWorldScene({
         return false;
       }
 
+      // Член составного кластера без собственного тела живёт в позе кластера:
+      // осколки обязаны родиться там, где кусок ЛЕТИТ, и с его скоростью.
+      const memberFrame =
+        !body && staticPiece ? liveCompoundFrameOfPiece(staticPiece.id) : null;
+      const memberPose = memberFrame
+        ? compoundMemberWorldPose(
+            memberFrame.runtime.definition.origin,
+            memberFrame.transform,
+            staticPiece!.position,
+            staticPiece!.rotation,
+          )
+        : null;
+
       const translation = body?.translation();
       const rotation = body?.rotation();
       const linearVelocity = body?.linvel();
       const angularVelocity = body?.angvel();
       const bodyPosition = translation
         ? new Vector3(translation.x, translation.y, translation.z)
-        : new Vector3(...staticPiece!.position);
+        : memberPose
+          ? new Vector3(...memberPose.position)
+          : new Vector3(...staticPiece!.position);
       const bodyQuaternion = rotation
         ? new Quaternion(rotation.x, rotation.y, rotation.z, rotation.w)
-        : new Quaternion().setFromEuler(
+        : memberPose
+          ? new Quaternion(...memberPose.quaternion)
+          : new Quaternion().setFromEuler(
             new Euler(
               staticPiece!.rotation?.[0] ?? 0,
               staticPiece!.rotation?.[1] ?? 0,
@@ -5001,10 +5218,20 @@ function OpenWorldScene({
           );
       const bodyLinearVelocity = linearVelocity
         ? new Vector3(linearVelocity.x, linearVelocity.y, linearVelocity.z)
-        : new Vector3();
+        : memberFrame && memberPose
+          ? new Vector3(
+              ...compoundClusterPointWorldVelocity(
+                memberFrame.runtime.body,
+                memberPose.position,
+              ),
+            )
+          : new Vector3();
+      const clusterAngular = memberFrame?.runtime.body.angvel();
       const bodyAngularVelocity = angularVelocity
         ? new Vector3(angularVelocity.x, angularVelocity.y, angularVelocity.z)
-        : new Vector3();
+        : clusterAngular
+          ? new Vector3(clusterAngular.x, clusterAngular.y, clusterAngular.z)
+          : new Vector3();
 
       shardCounter.current += 1;
       const fractureSource =
@@ -5045,7 +5272,14 @@ function OpenWorldScene({
       commitShards(generated);
       return true;
     },
-    [commitRemnants, commitShards, indestructible, resolveDamageSource],
+    [
+      breakablePieceById,
+      commitRemnants,
+      commitShards,
+      indestructible,
+      liveCompoundFrameOfPiece,
+      resolveDamageSource,
+    ],
   );
 
   // Carve a chunk out of a MOVING body: same blocky hole geometry as for a
@@ -5351,6 +5585,12 @@ function OpenWorldScene({
           : undefined) ?? (source.treeVisual ? source.id : undefined);
       const translation = body?.translation();
       const rotation = body?.rotation();
+      // У члена составного кластера авторская поза — это его поза в СИСТЕМЕ
+      // КЛАСТЕРА, и ядро carve работает именно в ней. Точку удара переводит
+      // туда вызывающий; здесь фиксируется только принадлежность.
+      const clusterId = remnant
+        ? (remnant.clusterId ?? null)
+        : (compoundOwnedPieceClusters.get(targetId) ?? null);
       const bodyPosition = translation
         ? new Vector3(translation.x, translation.y, translation.z)
         : new Vector3(...(remnant?.position ?? piece!.position));
@@ -5370,6 +5610,7 @@ function OpenWorldScene({
         piece,
         source,
         parentId,
+        clusterId,
         isGroundTarget: groundMaterials.has(source.material),
         sourceRenderColor,
         treeVisualSourceId,
@@ -5377,7 +5618,13 @@ function OpenWorldScene({
         bodyQuaternion,
       };
     },
-    [breakablePieceById, indestructible, intactGroundRenderColors, rapier],
+    [
+      breakablePieceById,
+      compoundOwnedPieceClusters,
+      indestructible,
+      intactGroundRenderColors,
+      rapier,
+    ],
   );
 
   // Запрос для воркера: тот же снимок цели, что у синхронного пути, но в
@@ -5389,10 +5636,29 @@ function OpenWorldScene({
       worldPoint: Vector3,
       radius: number,
       pushDirection: Vector3 | null = null,
+      impactPointFrame: CarveImpactFrame = "world",
     ): CarveKernelRequest | null => {
       const target = resolveCarveTarget(targetId);
       if (!target) {
         return null;
+      }
+      // Ядро работает в авторской системе цели. Для члена летящего кластера
+      // мировую точку переводит текущая поза его тела; точка, уже переведён-
+      // ная вызывающим («cluster»), уходит в ядро как есть.
+      let kernelPoint: readonly [number, number, number] = [
+        worldPoint.x,
+        worldPoint.y,
+        worldPoint.z,
+      ];
+      if (target.clusterId && impactPointFrame === "world") {
+        const frame = liveCompoundFrame(target.clusterId);
+        if (frame) {
+          kernelPoint = compoundClusterPointToLocal(
+            frame.runtime.definition.origin,
+            frame.transform,
+            kernelPoint,
+          );
+        }
       }
       remnantCounter.current += 1;
       carveRequestId.current += 1;
@@ -5414,7 +5680,7 @@ function OpenWorldScene({
           target.bodyQuaternion.w,
         ],
         idPrefix: `carve:${remnantCounter.current}`,
-        worldPoint: [worldPoint.x, worldPoint.y, worldPoint.z],
+        worldPoint: kernelPoint,
         radius,
         direction: pushDirection
           ? [pushDirection.x, pushDirection.y, pushDirection.z]
@@ -5424,7 +5690,7 @@ function OpenWorldScene({
           : undefined,
       };
     },
-    [resolveCarveTarget, resolveDamageSource],
+    [liveCompoundFrame, resolveCarveTarget, resolveDamageSource],
   );
 
   const carveAt = useCallback(
@@ -5436,6 +5702,7 @@ function OpenWorldScene({
       physicalChipCount = 3,
       precomputed?: CarveKernelResponse,
       emitImpactBurst = true,
+      impactPointFrame: CarveImpactFrame = "world",
     ): { carved: boolean; brokenParentId: string | null } => {
       const target = resolveCarveTarget(targetId);
       if (!target) {
@@ -5446,12 +5713,38 @@ function OpenWorldScene({
         piece,
         source,
         parentId,
+        clusterId,
         isGroundTarget,
         sourceRenderColor,
         treeVisualSourceId,
         bodyPosition,
         bodyQuaternion,
       } = target;
+      // Член кластера судится в системе кластера: ядру — точка в авторской
+      // системе, а стружке и вспышке — настоящее мировое место удара и
+      // скорость этой точки на корпусе.
+      const clusterFrame = clusterId ? liveCompoundFrame(clusterId) : null;
+      const kernelPoint =
+        clusterFrame && impactPointFrame === "world"
+          ? compoundClusterPointToLocal(
+              clusterFrame.runtime.definition.origin,
+              clusterFrame.transform,
+              [worldPoint.x, worldPoint.y, worldPoint.z],
+            )
+          : ([worldPoint.x, worldPoint.y, worldPoint.z] as const);
+      const debrisAnchor = clusterFrame
+        ? compoundClusterPointToWorld(
+            clusterFrame.runtime.definition.origin,
+            clusterFrame.transform,
+            kernelPoint,
+          )
+        : kernelPoint;
+      const debrisVelocity = clusterFrame
+        ? compoundClusterPointWorldVelocity(
+            clusterFrame.runtime.body,
+            debrisAnchor,
+          )
+        : ([0, 0, 0] as const);
       let fragments: readonly ShardDefinition[] | null;
       let removedVolume: number;
       if (precomputed !== undefined) {
@@ -5474,7 +5767,7 @@ function OpenWorldScene({
             bodyQuaternion.w,
           ],
           idPrefix: `carve:${remnantCounter.current}`,
-          worldPoint: [worldPoint.x, worldPoint.y, worldPoint.z],
+          worldPoint: kernelPoint,
           radius,
           direction: pushDirection
             ? [pushDirection.x, pushDirection.y, pushDirection.z]
@@ -5499,6 +5792,7 @@ function OpenWorldScene({
         return {
           id: `remnant:${remnantCounter.current}`,
           parentId,
+          clusterId: clusterId ?? undefined,
           material: source.material,
           color: source.color,
           renderColor: sourceRenderColor,
@@ -5562,15 +5856,19 @@ function OpenWorldScene({
           size: [side, side * (0.8 + noiseB * 0.5), side],
           preferSoftCcd: true,
           position: [
-            worldPoint.x + (noiseA - 0.5) * 0.1,
-            worldPoint.y + (noiseB - 0.5) * 0.1,
-            worldPoint.z + (noiseA - noiseB) * 0.1,
+            debrisAnchor[0] + (noiseA - 0.5) * 0.1,
+            debrisAnchor[1] + (noiseB - 0.5) * 0.1,
+            debrisAnchor[2] + (noiseA - noiseB) * 0.1,
           ],
           quaternion: [0, 0, 0, 1],
           linearVelocity: [
-            (pushDirection?.x ?? 0) * 3 + (noiseA - 0.5) * 2.4,
-            1.1 + noiseB * 1.5,
-            (pushDirection?.z ?? 0) * 3 + (noiseB - 0.5) * 2.4,
+            debrisVelocity[0] +
+              (pushDirection?.x ?? 0) * 3 +
+              (noiseA - 0.5) * 2.4,
+            debrisVelocity[1] + 1.1 + noiseB * 1.5,
+            debrisVelocity[2] +
+              (pushDirection?.z ?? 0) * 3 +
+              (noiseB - 0.5) * 2.4,
           ],
           angularVelocity: [
             (noiseA - 0.5) * 14,
@@ -5590,7 +5888,7 @@ function OpenWorldScene({
           ...current,
           {
             id: nextBurstId,
-            position: [worldPoint.x, worldPoint.y, worldPoint.z],
+            position: [debrisAnchor[0], debrisAnchor[1], debrisAnchor[2]],
             direction: [0, 1, 0],
             material: source.material,
           },
@@ -5606,6 +5904,7 @@ function OpenWorldScene({
     [
       commitRemnants,
       commitShards,
+      liveCompoundFrame,
       resolveCarveTarget,
       resolveDamageSource,
       subtractParentVolume,
@@ -6511,10 +6810,36 @@ function OpenWorldScene({
       const blastCenter = [center3.x, center3.y, center3.z] as const;
       const fieldTransmissionTo = (target: Vector3): number =>
         forceFieldTransmission(blastCenter, [target.x, target.y, target.z]);
-      const blastPieceCandidates = pieceSpatialIndex.querySphere(
-        blastCenter,
-        blastRadius + maxPieceBoundingRadius,
-      );
+      // Живые составные кластеры судятся в СВОЕЙ системе координат: их
+      // куски исключаются из авторского отбора целиком — авторский «призрак»
+      // машины на стоянке не получает урона и не заслоняет взрыв.
+      const liveClusterFrames = new Map<
+        string,
+        {
+          readonly runtime: CompoundKinematicClusterRuntime;
+          readonly transform: CompoundClusterWorldTransform;
+        }
+      >();
+      for (const [clusterId, runtime] of compoundKinematicClusters.current) {
+        liveClusterFrames.set(clusterId, {
+          runtime,
+          transform: compoundClusterWorldTransform(runtime.body),
+        });
+      }
+      const judgedInClusterFrame = (pieceId: string): boolean => {
+        const clusterId = compoundOwnedPieceClusters.get(pieceId);
+        return clusterId !== undefined && liveClusterFrames.has(clusterId);
+      };
+      const remnantJudgedInClusterFrame = (
+        remnant: RemnantDefinition,
+      ): boolean =>
+        remnant.clusterId !== undefined &&
+        liveClusterFrames.has(remnant.clusterId) &&
+        !remnant.detached &&
+        !previousBroken.has(remnant.parentId);
+      const blastPieceCandidates = pieceSpatialIndex
+        .querySphere(blastCenter, blastRadius + maxPieceBoundingRadius)
+        .filter((piece) => !judgedInClusterFrame(piece.id));
       // Reuse the physical candidate query to shape the visual blast. Nearby
       // mass pushes the cheap particle field toward open space: a facade
       // vents outward, open ground vents upward, a free-air burst stays broad.
@@ -6601,11 +6926,13 @@ function OpenWorldScene({
             id: piece.id,
             parentId: piece.id,
           })),
-        ...remnantsRef.current.map((remnant) => ({
-          source: remnant,
-          id: remnant.id,
-          parentId: remnant.parentId,
-        })),
+        ...remnantsRef.current
+          .filter((remnant) => !remnantJudgedInClusterFrame(remnant))
+          .map((remnant) => ({
+            source: remnant,
+            id: remnant.id,
+            parentId: remnant.parentId,
+          })),
       ]
         .map((entry) => {
           const { position, quaternion } = resolveBlastPose(
@@ -6890,7 +7217,7 @@ function OpenWorldScene({
       // половину взрыва (позы целей, лучи видимости, сортировку) не считаем
       // вовсе — остаётся только физический толчок ниже.
       const volumeBroken: string[] = [];
-      const sortedDamageCandidates = indestructible
+      const staticDamageCandidates = indestructible
         ? []
         : [
             ...blastPieceCandidates
@@ -6916,6 +7243,7 @@ function OpenWorldScene({
                 return (
                   !remnant.detached &&
                   !previousBroken.has(remnant.parentId) &&
+                  !remnantJudgedInClusterFrame(remnant) &&
                   (!body || body.bodyType() === rapier.RigidBodyType.Fixed)
                 );
               })
@@ -6960,6 +7288,7 @@ function OpenWorldScene({
                 surfaceDistance,
                 visibility,
                 energy,
+                pointFrame: "world" as CarveImpactFrame,
               };
             })
             .filter(
@@ -6967,10 +7296,217 @@ function OpenWorldScene({
                 entry !== null &&
                 entry.energy >
                   fractureEnergyByMaterial[entry.source.material] * 1.15,
-            )
-            .sort(
-              (left, right) => left.surfaceDistance - right.surfaceDistance,
             );
+
+      // ЧЛЕНЫ ЖИВЫХ КЛАСТЕРОВ. Судятся в системе своего кластера: центр
+      // взрыва переводится текущей позой тела в авторскую систему, дистанции
+      // при этом честны (твёрдое тело сохраняет расстояния). Окклюзию внутри
+      // машины дают её собственные члены и обрубки; тень остального мира
+      // считается по НАСТОЯЩЕМУ мировому лучу к фактическому месту куска.
+      // Стоящая машина — частный случай с единичным переводом.
+      const clusterDamageCandidates: {
+        targetId: string;
+        parentId: string;
+        source: BreakablePieceDefinition | RemnantDefinition;
+        impactPoint: Vector3;
+        surfaceDistance: number;
+        visibility: number;
+        energy: number;
+        pointFrame: CarveImpactFrame;
+      }[] = [];
+      if (!indestructible) {
+        for (const [clusterId, frame] of liveClusterFrames) {
+          const members = compoundMemberPiecesByCluster.get(clusterId);
+          if (!members || members.length === 0) {
+            continue;
+          }
+          const origin = frame.runtime.definition.origin;
+          const virtualCenter = compoundClusterPointToLocal(
+            origin,
+            frame.transform,
+            blastCenter,
+          );
+          const bounds = compoundClusterBounds.get(clusterId);
+          if (bounds) {
+            const reach = blastRadius + bounds.radius;
+            const dx = virtualCenter[0] - bounds.centre[0];
+            const dy = virtualCenter[1] - bounds.centre[1];
+            const dz = virtualCenter[2] - bounds.centre[2];
+            if (dx * dx + dy * dy + dz * dz > reach * reach) {
+              continue;
+            }
+          }
+          const virtualCenter3 = new Vector3(...virtualCenter);
+          const localEntries: (BlastOccluder & {
+            readonly source: BreakablePieceDefinition | RemnantDefinition;
+          })[] = [];
+          for (const member of members) {
+            if (
+              previousBroken.has(member.id) ||
+              carvedPiecesRef.current.has(member.id) ||
+              shatteredPiecesRef.current.has(member.id)
+            ) {
+              // Форму съеденного члена дают его обрубки ниже.
+              continue;
+            }
+            const reach = blastRadius + Math.hypot(...member.size) / 2;
+            const position = new Vector3(...member.position);
+            if (virtualCenter3.distanceToSquared(position) > reach * reach) {
+              continue;
+            }
+            const quaternion = new Quaternion().setFromEuler(
+              new Euler(
+                member.rotation?.[0] ?? 0,
+                member.rotation?.[1] ?? 0,
+                member.rotation?.[2] ?? 0,
+              ),
+            );
+            const boxes = occupiedBoxesForBlast(resolveDamageSource(member));
+            const impactPoint = closestPointOnOccupiedGeometry(
+              virtualCenter3,
+              position,
+              member.size,
+              quaternion,
+              boxes,
+            );
+            const surfaceDistance = virtualCenter3.distanceTo(impactPoint);
+            if (surfaceDistance >= blastRadius) {
+              continue;
+            }
+            localEntries.push({
+              id: member.id,
+              parentId: member.id,
+              source: member,
+              material: member.material,
+              position,
+              quaternion,
+              size: member.size,
+              boxes,
+              surfaceDistance,
+            });
+          }
+          for (const remnant of remnantsRef.current) {
+            if (
+              remnant.clusterId !== clusterId ||
+              !remnantJudgedInClusterFrame(remnant)
+            ) {
+              continue;
+            }
+            const reach = blastRadius + Math.hypot(...remnant.size) / 2;
+            const position = new Vector3(...remnant.position);
+            if (virtualCenter3.distanceToSquared(position) > reach * reach) {
+              continue;
+            }
+            const quaternion = new Quaternion(...remnant.quaternion);
+            const boxes = occupiedBoxesForBlast(remnant);
+            const impactPoint = closestPointOnOccupiedGeometry(
+              virtualCenter3,
+              position,
+              remnant.size,
+              quaternion,
+              boxes,
+            );
+            const surfaceDistance = virtualCenter3.distanceTo(impactPoint);
+            if (surfaceDistance >= blastRadius) {
+              continue;
+            }
+            localEntries.push({
+              id: remnant.id,
+              parentId: remnant.parentId,
+              source: remnant,
+              material: remnant.material,
+              position,
+              quaternion,
+              size: remnant.size,
+              boxes,
+              surfaceDistance,
+            });
+          }
+          if (localEntries.length === 0) {
+            continue;
+          }
+          localEntries.sort(
+            (left, right) => left.surfaceDistance - right.surfaceDistance,
+          );
+          const localOccluderIndex = createSegmentBoundsIndex(
+            localEntries,
+            (occluder) => ({
+              center: [
+                occluder.position.x,
+                occluder.position.y,
+                occluder.position.z,
+              ],
+              size: occluder.size,
+              quaternion: [
+                occluder.quaternion.x,
+                occluder.quaternion.y,
+                occluder.quaternion.z,
+                occluder.quaternion.w,
+              ],
+            }),
+          );
+          for (const entry of localEntries) {
+            const impactPoint = closestPointOnOccupiedGeometry(
+              virtualCenter3,
+              entry.position,
+              entry.size,
+              entry.quaternion,
+              entry.boxes,
+            );
+            const worldImpact = compoundClusterPointToWorld(
+              origin,
+              frame.transform,
+              [impactPoint.x, impactPoint.y, impactPoint.z],
+            );
+            const worldImpact3 = new Vector3(...worldImpact);
+            const visibility =
+              blastVisibilityFactor(
+                virtualCenter3,
+                impactPoint,
+                entry.id,
+                entry.parentId,
+                entry.surfaceDistance,
+                localOccluderIndex.candidatesAlong(virtualCenter, [
+                  impactPoint.x,
+                  impactPoint.y,
+                  impactPoint.z,
+                ]),
+              ) *
+              blastVisibilityFactor(
+                center3,
+                worldImpact3,
+                entry.id,
+                entry.parentId,
+                entry.surfaceDistance,
+                occludersAlong(worldImpact3),
+              ) *
+              fieldTransmissionTo(worldImpact3);
+            const energy =
+              energyAtDistance(entry.surfaceDistance) * visibility;
+            if (
+              energy <=
+              fractureEnergyByMaterial[entry.material] * 1.15
+            ) {
+              continue;
+            }
+            clusterDamageCandidates.push({
+              targetId: entry.id,
+              parentId: entry.parentId,
+              source: entry.source,
+              impactPoint,
+              surfaceDistance: entry.surfaceDistance,
+              visibility,
+              energy,
+              pointFrame: "cluster",
+            });
+          }
+        }
+      }
+
+      const sortedDamageCandidates = [
+        ...staticDamageCandidates,
+        ...clusterDamageCandidates,
+      ].sort((left, right) => left.surfaceDistance - right.surfaceDistance);
       // Адаптивный бюджет вместо плоского slice(0, 80): в норме отбор
       // идентичен старому, но воксельные гиганты (земляные плиты двора)
       // больше не съедают кадр и не вытесняют настоящие цели из бюджета —
@@ -7031,6 +7567,8 @@ function OpenWorldScene({
                 entry.targetId,
                 entry.impactPoint,
                 damageRadius,
+                null,
+                entry.pointFrame,
               )
             : null;
           if (!worker || !request) {
@@ -7043,6 +7581,9 @@ function OpenWorldScene({
                 damageRadius,
                 null,
                 physicalChipCount,
+                undefined,
+                true,
+                entry.pointFrame,
               ),
             );
             return;
@@ -7060,6 +7601,8 @@ function OpenWorldScene({
                   null,
                   physicalChipCount,
                   response ?? undefined,
+                  true,
+                  entry.pointFrame,
                 ),
               );
             }
@@ -7367,6 +7910,9 @@ function OpenWorldScene({
       breakablePieceById,
       carveAt,
       carveLooseTarget,
+      compoundClusterBounds,
+      compoundMemberPiecesByCluster,
+      compoundOwnedPieceClusters,
       configureDebrisCollision,
       drainBlastQueue,
       ensureDynamic,
@@ -7374,6 +7920,7 @@ function OpenWorldScene({
       indestructible,
       maxPieceBoundingRadius,
       pieceSpatialIndex,
+      prepareCarveRequest,
       rapier,
       resolveDamageSource,
       settleStructure,
@@ -7399,9 +7946,29 @@ function OpenWorldScene({
       explodeAt(new Vector3(x, y, z), kind);
     };
     scope.__mamExplode = detonate;
+    // Пара к детонации: текущая поза составного кластера, чтобы headless
+    // проверка могла целиться по ЛЕТЯЩЕЙ машине, а не по авторской стоянке.
+    const clusterPose = (clusterId: string) => {
+      const runtime = compoundKinematicClusters.current.get(clusterId);
+      if (!runtime) {
+        return null;
+      }
+      const translation = runtime.body.translation();
+      const rotation = runtime.body.rotation();
+      return {
+        origin: runtime.definition.origin,
+        position: [translation.x, translation.y, translation.z],
+        rotation: [rotation.x, rotation.y, rotation.z, rotation.w],
+        attachedMembers: runtime.attachedMemberIds.size,
+      };
+    };
+    scope.__mamClusterPose = clusterPose;
     return () => {
       if (scope.__mamExplode === detonate) {
         delete scope.__mamExplode;
+      }
+      if (scope.__mamClusterPose === clusterPose) {
+        delete scope.__mamClusterPose;
       }
     };
   }, [explodeAt]);
@@ -8009,12 +8576,6 @@ function OpenWorldScene({
   // Общая событийная шина составных объектов. Свет — первый потребитель;
   // следующие системы могут читать те же состояния без знания типа машины.
   const clusterEventStates = useRef<Map<string, LampEventState>>(new Map());
-  const compoundClusterDefinitions = useMemo(() => {
-    const available = new Set(breakablePieces.map((piece) => piece.clusterId));
-    return [...astanaTrainClusterDefinitions(), ...vehicleFrames].filter(
-      (definition) => available.has(definition.clusterId),
-    );
-  }, [breakablePieces]);
   /** Физические позы для систем, которые живут вне транспортного кадра. */
   const vehicleFramePoses = useRef<Map<string, VehicleFramePoseState>>(
     new Map(),
@@ -8157,6 +8718,10 @@ function OpenWorldScene({
     }
     return next;
   }, [carvedPieces, discardedPieces, shatteredPieces]);
+  const directlyDamagedPieces = useMemo(
+    () => new Set([...carvedPieces, ...shatteredPieces]),
+    [carvedPieces, shatteredPieces],
+  );
   const inactiveCompoundMembers = useMemo(() => {
     const inactive = new Set(hiddenPieces);
     for (const id of brokenPieces) {
@@ -8365,12 +8930,14 @@ function OpenWorldScene({
           registerBody={registerBody}
           onShardContact={handleShardContact}
           onRemnantContact={handleRemnantContact}
+          kinematicClusters={compoundKinematicClusters}
         />
         <DynamicBreakableWorld
           pieces={[]}
           shards={shards}
           remnants={remnants}
           bodies={pieceBodies}
+          kinematicClusters={compoundKinematicClusters}
         />
       </group>
       <ProjectileWarmup />
@@ -8391,6 +8958,9 @@ function OpenWorldScene({
         bodies={pieceBodies}
         brokenPieces={brokenPiecesRef}
         inactivePieces={inactiveCompoundMembers}
+        damagedPieces={directlyDamagedPieces}
+        carvedPieces={carvedPieces}
+        remnants={remnants}
         resetVersion={resetVersion}
         departRequestVersion={entryOpenRequestVersion}
         departRequestTargetRef={entryOpenRequestTargetRef}

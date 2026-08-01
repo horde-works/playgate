@@ -12,6 +12,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { Quaternion, Vector3, type Group } from "three";
 import type { BreakablePieceDefinition } from "./destructionScene";
+import type { RemnantDefinition } from "./destructionRuntime";
 import { VEHICLE_CARRIER } from "./physicsInteractionGroups";
 import { createActivePhysicalContactRegistry } from "./vehiclePhysicalContact";
 import {
@@ -19,6 +20,7 @@ import {
   compoundClusterOwnsPiece,
   type CompoundKinematicClusterDefinition,
   type CompoundKinematicClusterRegistry,
+  type CompoundMemberRemnantShape,
 } from "./compoundKinematicCluster";
 
 /**
@@ -71,12 +73,20 @@ function CompoundKinematicClusterBody({
   definition,
   pieces,
   brokenPieces,
+  detachedPieces,
+  consumedPieces,
+  remnants,
   registry,
   onContact,
 }: {
   definition: CompoundKinematicClusterDefinition;
   pieces: readonly BreakablePieceDefinition[];
   brokenPieces: ReadonlySet<string>;
+  /** Члены, ушедшие из компаунда НАСОВСЕМ (отлом, распыление, пропажа). */
+  detachedPieces?: ReadonlySet<string>;
+  /** Члены, съеденные carve: их контактную форму дают обрубки. */
+  consumedPieces?: ReadonlySet<string>;
+  remnants?: readonly RemnantDefinition[];
   registry: CompoundKinematicClusterRegistry;
   onContact?: (contact: CompoundClusterContact) => void;
 }) {
@@ -98,22 +108,67 @@ function CompoundKinematicClusterBody({
   // проекция на них кодируется примитивным ключом: пока свои куски целы,
   // ключ не меняется — и пересборка сотен коллайдеров не запускается от
   // чужой пулевой дырки на другом конце карты.
-  const brokenMemberKey = useMemo(() => {
+  // Для контактной формы «ушёл насовсем» и «съеден carve» — разные судьбы:
+  // у первого нет ничего, у второго форму дают обрубки. Оба множества
+  // проецируются на своих членов тем же примитивным ключом, что и broken.
+  const detachedMemberKey = useMemo(() => {
+    const source = detachedPieces ?? brokenPieces;
     const ids: string[] = [];
     for (const piece of memberPieces) {
-      if (brokenPieces.has(piece.id)) {
+      if (source.has(piece.id)) {
         ids.push(piece.id);
       }
     }
     return ids.join("|");
-  }, [brokenPieces, memberPieces]);
-  const brokenMembers = useMemo(
-    () => new Set(brokenMemberKey ? brokenMemberKey.split("|") : []),
-    [brokenMemberKey],
+  }, [brokenPieces, detachedPieces, memberPieces]);
+  const detachedMembers = useMemo(
+    () => new Set(detachedMemberKey ? detachedMemberKey.split("|") : []),
+    [detachedMemberKey],
+  );
+  const consumedMemberKey = useMemo(() => {
+    if (!consumedPieces) {
+      return "";
+    }
+    const ids: string[] = [];
+    for (const piece of memberPieces) {
+      if (consumedPieces.has(piece.id)) {
+        ids.push(piece.id);
+      }
+    }
+    return ids.join("|");
+  }, [consumedPieces, memberPieces]);
+  const consumedMembers = useMemo(
+    () => new Set(consumedMemberKey ? consumedMemberKey.split("|") : []),
+    [consumedMemberKey],
+  );
+  const memberRemnantKey = useMemo(
+    () =>
+      (remnants ?? [])
+        .filter((remnant) => remnant.clusterId === definition.clusterId)
+        .map((remnant) => remnant.id)
+        .join("|"),
+    [definition.clusterId, remnants],
+  );
+  const memberRemnants = useMemo<readonly CompoundMemberRemnantShape[]>(
+    () =>
+      (remnants ?? []).filter(
+        (remnant) => remnant.clusterId === definition.clusterId,
+      ),
+    // Ключ по id: обрубок неизменен по содержимому, а чужой carve на другом
+    // конце карты не должен пересобирать сотни коллайдеров этой машины.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [memberRemnantKey],
   );
   const colliders = useMemo(
-    () => compoundClusterColliders(definition, memberPieces, brokenMembers),
-    [brokenMembers, definition, memberPieces],
+    () =>
+      compoundClusterColliders(
+        definition,
+        memberPieces,
+        detachedMembers,
+        consumedMembers,
+        memberRemnants,
+      ),
+    [consumedMembers, definition, detachedMembers, memberPieces, memberRemnants],
   );
   const memberIds = useMemo(
     () =>
@@ -444,12 +499,18 @@ export function CompoundKinematicClusterBodies({
   definitions,
   pieces,
   brokenPieces,
+  detachedPieces,
+  consumedPieces,
+  remnants,
   registry,
   onContact,
 }: {
   definitions: readonly CompoundKinematicClusterDefinition[];
   pieces: readonly BreakablePieceDefinition[];
   brokenPieces: ReadonlySet<string>;
+  detachedPieces?: ReadonlySet<string>;
+  consumedPieces?: ReadonlySet<string>;
+  remnants?: readonly RemnantDefinition[];
   registry: CompoundKinematicClusterRegistry;
   onContact?: (contact: CompoundClusterContact) => void;
 }) {
@@ -461,6 +522,9 @@ export function CompoundKinematicClusterBodies({
           definition={definition}
           pieces={pieces}
           brokenPieces={brokenPieces}
+          detachedPieces={detachedPieces}
+          consumedPieces={consumedPieces}
+          remnants={remnants}
           registry={registry}
           onContact={onContact}
         />

@@ -33,6 +33,7 @@ import {
   RESTING_BODY,
   applyImpulseAtPoint,
   bodyPointVelocity,
+  eulerFromQuaternion,
   massProperties,
   pointEffectiveMass,
   principalMassProperties,
@@ -41,6 +42,7 @@ import {
   type BodyState,
   type MassProperties,
 } from "./clusterDynamics";
+import type { RemnantDefinition } from "./destructionRuntime";
 import {
   RESTING_POSE,
   departureLightGlow,
@@ -437,6 +439,9 @@ const ROUTE_GROUND_ALTITUDE = 1.5;
 const densityOf = (material: BreakablePieceDefinition["material"]): number =>
   structuralMaterialProfiles[material].density;
 
+/** Стабильная пустота: машина без обрубков не пересчитывает массу зря. */
+const EMPTY_FRAME_REMNANTS: readonly RemnantDefinition[] = [];
+
 /**
  * Чей это винт. Считаем по ближайшей точке приложения тяги из паспорта: ось
  * винта и есть мотор, и сопоставление не сломается, если гондолу подвинут
@@ -732,6 +737,10 @@ interface FrameState {
    */
   trimCentre: readonly [number, number, number] | null;
   brokenSeen: number;
+  /** Члены, съеденные carve/shatter, на последнем пересчёте массы. */
+  damagedSeen: number;
+  /** Обрубки кластера, вошедшие в текущую модель массы. */
+  memberRemnantsSeen: readonly RemnantDefinition[] | null;
   /** Уцелевшие члены кадра; пересчитываются только со сменой brokenSeen. */
   aliveMembers: readonly FrameMember[];
   /** Сколько кусков оболочки уцелело — кэш от aliveMembers. */
@@ -858,11 +867,13 @@ function VehicleExhaustSmoke({
   frames,
   states,
   inactivePieces,
+  damagedPieces,
   bodies,
 }: {
   frames: readonly VehicleFrameRuntime[];
   states: { current: Map<string, FrameState> };
   inactivePieces: ReadonlySet<string>;
+  damagedPieces: ReadonlySet<string>;
   bodies: { current: Map<string, RapierRigidBody> };
 }) {
   const meshRef = useRef<InstancedMesh>(null);
@@ -1027,7 +1038,7 @@ function VehicleExhaustSmoke({
       } else {
         const damage = vehicleEngineDamageSmoke(
           authored.frame.actuators,
-          inactivePieces,
+          damagedPieces,
           authored.engineIndex,
         );
         if (damage.severity <= 1e-6) {
@@ -1167,6 +1178,8 @@ function restingState(engineCount: number): FrameState {
     intactEnvelope: 0,
     trimCentre: null,
     brokenSeen: -1,
+    damagedSeen: -1,
+    memberRemnantsSeen: null,
     aliveMembers: [],
     envelopeLeft: 0,
   };
@@ -1305,6 +1318,9 @@ export function VehicleFrameSystem({
   bodies,
   brokenPieces,
   inactivePieces,
+  damagedPieces,
+  carvedPieces,
+  remnants,
   resetVersion,
   departRequestVersion = 0,
   departRequestTargetRef,
@@ -1338,6 +1354,12 @@ export function VehicleFrameSystem({
   brokenPieces: { current: ReadonlySet<string> };
   /** Detached, shattered or carved members no longer owned by the compound. */
   inactivePieces: ReadonlySet<string>;
+  /** Members physically consumed by damage, excluding healthy structural fallout. */
+  damagedPieces: ReadonlySet<string>;
+  /** Члены, съеденные carve: их масса и контактная форма — их обрубки. */
+  carvedPieces?: ReadonlySet<string>;
+  /** Обрубки мира; носимые этим кадром отбираются по clusterId. */
+  remnants?: readonly RemnantDefinition[];
   resetVersion: number;
   /** Растёт, когда игрок нажал «отправить» у табло. */
   departRequestVersion?: number;
@@ -1446,6 +1468,40 @@ export function VehicleFrameSystem({
   const handledDepartRequest = useRef(departRequestVersion);
   const handledArrivalRequest = useRef<string | null>(null);
   const pilotCommands = useRef(createRotorcraftPilotCommandBuffer());
+  /**
+   * «Ушёл насовсем» для контактной формы компаунда: всё inactive, КРОМЕ
+   * carved-но-не-отломанных членов — их форму дают обрубки. inactive
+   * пересчитывается корнем игры на каждую смену broken, поэтому ref здесь
+   * заведомо свеж.
+   */
+  const clusterDetachedPieces = useMemo(() => {
+    if (!carvedPieces || carvedPieces.size === 0) {
+      return inactivePieces;
+    }
+    const gone = new Set<string>();
+    for (const id of inactivePieces) {
+      if (!carvedPieces.has(id) || brokenPieces.current.has(id)) {
+        gone.add(id);
+      }
+    }
+    return gone;
+  }, [brokenPieces, carvedPieces, inactivePieces]);
+  /** Обрубки, носимые кластерами, по id кластера. */
+  const clusterRemnants = useMemo(() => {
+    const byCluster = new Map<string, RemnantDefinition[]>();
+    for (const remnant of remnants ?? []) {
+      if (!remnant.clusterId) {
+        continue;
+      }
+      const list = byCluster.get(remnant.clusterId);
+      if (list) {
+        list.push(remnant);
+      } else {
+        byCluster.set(remnant.clusterId, [remnant]);
+      }
+    }
+    return byCluster;
+  }, [remnants]);
 
   useEffect(() => {
     if (occupiedSeatId === TOWN_HEXACOPTER_PILOT_SEAT_ID) {
@@ -2694,11 +2750,17 @@ export function VehicleFrameSystem({
       // всех кусков корабля на каждую чужую пробоину; заодно список живых
       // членов собирался заново каждый физический шаг.
       let frameBroken = 0;
+      let frameDamaged = 0;
       for (const member of frame.members) {
         if (brokenPieces.current.has(member.piece.id)) {
           frameBroken += 1;
         }
+        if (damagedPieces.has(member.piece.id)) {
+          frameDamaged += 1;
+        }
       }
+      const frameRemnants =
+        clusterRemnants.get(frame.clusterId) ?? EMPTY_FRAME_REMNANTS;
       // A trim car is real mass on a real rail: where it stands changes the
       // live centre of mass, so the mass model has to follow it. The car is
       // slow, so recomputing on every measurable centimetre of travel is
@@ -2712,10 +2774,16 @@ export function VehicleFrameSystem({
         }
         void rail;
       }
-      const membershipChanged = state.brokenSeen !== frameBroken || !state.mass;
+      const membershipChanged =
+        state.brokenSeen !== frameBroken ||
+        state.damagedSeen !== frameDamaged ||
+        state.memberRemnantsSeen !== frameRemnants ||
+        !state.mass;
       if (membershipChanged || trimMoved) {
         const previousMass = state.mass;
         state.brokenSeen = frameBroken;
+        state.damagedSeen = frameDamaged;
+        state.memberRemnantsSeen = frameRemnants;
         if (membershipChanged) {
           // A repaired/reset member may detach again later and must inherit
           // the carrier's then-current motion as a fresh release.
@@ -2727,15 +2795,26 @@ export function VehicleFrameSystem({
           state.aliveMembers = frame.members.filter(
             (member) => !brokenPieces.current.has(member.piece.id),
           );
-          state.envelopeLeft = state.aliveMembers.filter((member) =>
-            member.piece.id.includes(frame.envelopeMatch),
+          // Съеденный кусок оболочки — потерянная газовая ячейка или лопасть:
+          // повреждённый член не считается уцелевшей частью подъёма.
+          state.envelopeLeft = state.aliveMembers.filter(
+            (member) =>
+              member.piece.id.includes(frame.envelopeMatch) &&
+              !damagedPieces.has(member.piece.id),
           ).length;
         }
         state.trimMassPositions = trimRails.map(
           (_, index) => state.trim[index]?.position ?? 0,
         );
-        const nextMass = massProperties(
-          state.aliveMembers.map((member) =>
+        // Масса машины — уцелевшие члены плюс ОБРУБКИ съеденных: дырка от
+        // ракеты реально облегчает борт и сдвигает центр масс, а недобитый
+        // кусок продолжает лететь с машиной своим настоящим остатком.
+        const massPieces: BreakablePieceDefinition[] = [];
+        for (const member of state.aliveMembers) {
+          if (damagedPieces.has(member.piece.id)) {
+            continue;
+          }
+          massPieces.push(
             member.trimRailIndex === null
               ? member.piece
               : {
@@ -2746,9 +2825,27 @@ export function VehicleFrameSystem({
                       createVehicleTrimRailState(),
                   ),
                 },
-          ),
-          densityOf,
-        );
+          );
+        }
+        for (const remnant of frameRemnants) {
+          if (
+            remnant.detached ||
+            brokenPieces.current.has(remnant.parentId)
+          ) {
+            continue;
+          }
+          massPieces.push({
+            id: remnant.id,
+            clusterId: frame.clusterId,
+            material: remnant.material,
+            position: remnant.position,
+            rotation: eulerFromQuaternion(remnant.quaternion),
+            size: remnant.size,
+            volume: remnant.volume,
+            color: remnant.color,
+          } as BreakablePieceDefinition);
+        }
+        const nextMass = massProperties(massPieces, densityOf);
         if (previousMass && previousMass.mass > 0 && nextMass.mass > 0) {
           const oldWorldBody: BodyState = {
             ...state.body,
@@ -5492,6 +5589,9 @@ export function VehicleFrameSystem({
         definitions={frames}
         pieces={pieces}
         brokenPieces={inactivePieces}
+        detachedPieces={clusterDetachedPieces}
+        consumedPieces={carvedPieces}
+        remnants={remnants}
         registry={clusterRegistry}
         onContact={collectContact}
       />
@@ -5499,6 +5599,7 @@ export function VehicleFrameSystem({
         frames={frames}
         states={states}
         inactivePieces={inactivePieces}
+        damagedPieces={damagedPieces}
         bodies={bodies}
       />
     </>

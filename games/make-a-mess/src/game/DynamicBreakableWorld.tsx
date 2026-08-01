@@ -4,6 +4,7 @@ import { useFrame } from "@react-three/fiber";
 import { useRapier, type RapierRigidBody } from "@react-three/rapier";
 import {
   memo,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -575,27 +576,44 @@ diffuseColor.rgb = mix(
   const clusterRestPoses = useRef(new Map<string, ClusterRestPose>());
   const observedClusterMotion = useRef(new Map<string, boolean>());
   const boundsRebuildCountdown = useRef(RAYCAST_BOUNDS_REBUILD_FRAMES);
-  const clusterObject = (
-    fragment: DynamicBreakableFragment,
-    body: RapierRigidBody | undefined,
-  ): { origin: readonly [number, number, number]; object: Object3D } | null => {
-    if (
-      !fragment.clusterId ||
-      body?.bodyType() === rapier.RigidBodyType.Dynamic
-    ) {
-      return null;
-    }
-    const runtime = kinematicClusters?.current.get(fragment.clusterId);
-    if (!runtime?.memberIds.has(fragment.sourceId)) {
-      return null;
-    }
-    const object = runtime
-      ? rigidBodyStates.get(runtime.body.handle)?.object
-      : undefined;
-    return object
-      ? { origin: runtime.definition.origin, object }
-      : null;
-  };
+  const clusterObject = useCallback(
+    (
+      fragment: DynamicBreakableFragment,
+      body: RapierRigidBody | undefined,
+    ): {
+      origin: readonly [number, number, number];
+      object: Object3D;
+    } | null => {
+      if (
+        !fragment.clusterId ||
+        body?.bodyType() === rapier.RigidBodyType.Dynamic
+      ) {
+        return null;
+      }
+      const runtime = kinematicClusters?.current.get(fragment.clusterId);
+      if (!runtime) {
+        return null;
+      }
+      // Кусок носится кластером, пока он его член; обрубок — пока родитель не
+      // отломан. У отломанного обрубка сразу рождается собственное
+      // динамическое тело, поэтому «нет тела» и означает «ещё летит с
+      // машиной».
+      if (
+        fragment.kind === "remnant"
+          ? body !== undefined
+          : !runtime.memberIds.has(
+              fragment.clusterMemberId ?? fragment.sourceId,
+            )
+      ) {
+        return null;
+      }
+      const object = rigidBodyStates.get(runtime.body.handle)?.object;
+      return object
+        ? { origin: runtime.definition.origin, object }
+        : null;
+    },
+    [kinematicClusters, rapier, rigidBodyStates],
+  );
 
   useEffect(() => () => geometry.dispose(), [geometry]);
   useEffect(
@@ -692,13 +710,27 @@ diffuseColor.rgb = mix(
       const fragment = rows[index];
       writeFragmentAttributes(geometry, fragment, index, batch.treeBark, tint);
       const fragmentBody = bodies?.current?.get(fragment.sourceId);
-      setFragmentMatrix(
-        dummy,
-        fragment,
-        fragmentBody,
-        localCenter,
-        rotation,
-      );
+      // Свежий обрубок летящей машины обязан появиться сразу в её позе, а не
+      // мигнуть один кадр в авторской точке рождения.
+      const carried = clusterObject(fragment, fragmentBody);
+      if (carried) {
+        setClusteredFragmentMatrix(
+          dummy,
+          fragment,
+          carried.origin,
+          carried.object,
+          localCenter,
+          rotation,
+        );
+      } else {
+        setFragmentMatrix(
+          dummy,
+          fragment,
+          fragmentBody,
+          localCenter,
+          rotation,
+        );
+      }
       current.setMatrixAt(index, dummy.matrix);
       if (!fullRewrite) {
         current.instanceMatrix.addUpdateRange(index * 16, 16);
@@ -762,6 +794,7 @@ diffuseColor.rgb = mix(
     batch.treeBark,
     bodies,
     capacity,
+    clusterObject,
     dummy,
     fragmentBounds,
     geometry,

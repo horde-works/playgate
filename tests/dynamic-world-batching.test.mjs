@@ -87,3 +87,37 @@ test("a batch untouched by the change keeps an identical fragment list", () => {
     brickBefore.fragments.length + 1,
   );
 });
+
+test("a carried remnant fragment names its cluster and its parent member", () => {
+  const clusterRemnant = {
+    id: "remnant:9",
+    parentId: "town-vertipad:hexacopter:arm:2:piece",
+    clusterId: "town-vertipad:hexacopter",
+    material: "steel",
+    color: "#9aa3a8",
+    size: [0.8, 0.2, 0.4],
+    position: [68, 1.2, -3],
+    quaternion: [0, 0, 0, 1],
+    detached: false,
+  };
+  const staticRemnant = {
+    id: "remnant:10",
+    parentId: "wall:brick:1",
+    material: "brick",
+    color: "#a64a2f",
+    size: [0.3, 0.2, 0.2],
+    position: [0, 1, 0],
+    quaternion: [0, 0, 0, 1],
+    detached: false,
+  };
+  const fragments = sourceFragments([], [], [clusterRemnant, staticRemnant]);
+
+  const carried = fragments.find((fragment) => fragment.sourceId === "remnant:9");
+  assert.equal(carried.clusterId, "town-vertipad:hexacopter");
+  assert.equal(carried.clusterMemberId, "town-vertipad:hexacopter:arm:2:piece");
+
+  const grounded = fragments.find(
+    (fragment) => fragment.sourceId === "remnant:10",
+  );
+  assert.equal(grounded.clusterId, undefined);
+});

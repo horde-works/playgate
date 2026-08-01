@@ -39,6 +39,12 @@ export type DynamicGeometryKind =
 export interface DynamicBreakableFragment {
   readonly sourceId: string;
   readonly clusterId?: string;
+  /**
+   * Чьим членом кластера является фрагмент: сам кусок — собой, обрубок —
+   * своим родителем. По этому id проверяется, носит ли кластер фрагмент
+   * до сих пор.
+   */
+  readonly clusterMemberId?: string;
   readonly kind: DynamicBreakableKind;
   readonly geometryKind: DynamicGeometryKind;
   readonly visualProfile?: BreakablePieceDefinition["visualProfile"];
@@ -362,6 +368,8 @@ function remnantFragments(
     boxes.forEach((box, boxIndex) => {
       fragments.push({
         sourceId: remnant.id,
+        clusterId: remnant.clusterId,
+        clusterMemberId: remnant.parentId,
         kind: "remnant",
         geometryKind: remnantGeometry,
         material: remnant.material,

@@ -72,6 +72,13 @@ export type LandingDamage = "none" | "chip" | "shatter";
 export interface RemnantDefinition {
   readonly id: string;
   readonly parentId: string;
+  /**
+   * Обрубок члена составного кластера остаётся ЧЛЕНОМ этого кластера:
+   * его position/quaternion живут в авторской системе кластера, рендер и
+   * контактная форма едут с телом кластера, а мирового Fixed-тела у него
+   * нет, пока родитель не отломан.
+   */
+  readonly clusterId?: string;
   readonly material: BreakableMaterial;
   readonly color: string;
   readonly renderColor?: string;

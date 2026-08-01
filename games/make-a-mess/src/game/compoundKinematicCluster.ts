@@ -8,7 +8,16 @@ import {
   type BreakablePieceDefinition,
   type SceneVector3,
 } from "./destructionScene.ts";
-import { applyMatrix, rotationMatrixFromEuler } from "./clusterDynamics.ts";
+import {
+  applyMatrix,
+  conjugateQuaternion,
+  eulerFromQuaternion,
+  multiplyQuaternions,
+  quaternionFromEuler,
+  rotateVector,
+  rotationMatrixFromEuler,
+  type Quaternion,
+} from "./clusterDynamics.ts";
 
 /** The simulation clock shared by every controller that feeds Rapier. */
 export const PHYSICS_TIME_STEP = 1 / 60;
@@ -82,6 +91,119 @@ export function queueCompoundKinematicImpulse(
   }
 }
 
+/**
+ * ТЕКУЩАЯ ПОЗА КЛАСТЕРА КАК СИСТЕМА КООРДИНАТ.
+ *
+ * Все куски кластера авторятся в мировых координатах его места рождения
+ * («авторская система»). Пока кластер целиком движется твёрдым телом, его
+ * авторская система жива: авторская точка p видна в мире как
+ * `T + R·(p − origin)`, где (T, R) — поза тела Rapier, а origin — авторская
+ * точка привязки тела. Урон члену кластера судится ИМЕННО в авторской
+ * системе: точка удара переводится сюда, воксельная сетка члена честна в
+ * любой позе, а стоящая машина — частный случай T=origin, R=1.
+ */
+export interface CompoundClusterWorldTransform {
+  readonly position: SceneVector3;
+  readonly rotation: Quaternion;
+}
+
+export function compoundClusterWorldTransform(
+  body: Pick<RapierRigidBody, "translation" | "rotation">,
+): CompoundClusterWorldTransform {
+  const translation = body.translation();
+  const rotation = body.rotation();
+  return {
+    position: [translation.x, translation.y, translation.z],
+    rotation: [rotation.x, rotation.y, rotation.z, rotation.w],
+  };
+}
+
+export function compoundClusterPointToWorld(
+  origin: SceneVector3,
+  transform: CompoundClusterWorldTransform,
+  point: SceneVector3,
+): SceneVector3 {
+  const turned = rotateVector(transform.rotation, [
+    point[0] - origin[0],
+    point[1] - origin[1],
+    point[2] - origin[2],
+  ]);
+  return [
+    transform.position[0] + turned[0],
+    transform.position[1] + turned[1],
+    transform.position[2] + turned[2],
+  ];
+}
+
+export function compoundClusterPointToLocal(
+  origin: SceneVector3,
+  transform: CompoundClusterWorldTransform,
+  world: SceneVector3,
+): SceneVector3 {
+  const turned = rotateVector(conjugateQuaternion(transform.rotation), [
+    world[0] - transform.position[0],
+    world[1] - transform.position[1],
+    world[2] - transform.position[2],
+  ]);
+  return [origin[0] + turned[0], origin[1] + turned[1], origin[2] + turned[2]];
+}
+
+/** Мировая поза члена кластера: авторская поза, прокачанная позой тела. */
+export function compoundMemberWorldPose(
+  origin: SceneVector3,
+  transform: CompoundClusterWorldTransform,
+  authoredPosition: SceneVector3,
+  authoredRotation: SceneVector3 | undefined,
+): { readonly position: SceneVector3; readonly quaternion: Quaternion } {
+  return {
+    position: compoundClusterPointToWorld(origin, transform, authoredPosition),
+    quaternion: multiplyQuaternions(
+      transform.rotation,
+      quaternionFromEuler(authoredRotation ?? [0, 0, 0]),
+    ),
+  };
+}
+
+/**
+ * Скорость мировой точки, принадлежащей телу кластера: то, что наследуют
+ * стружка, осколки и отделившиеся обрубки, рождённые в этой точке.
+ */
+export function compoundClusterPointWorldVelocity(
+  body: Pick<RapierRigidBody, "linvel" | "angvel" | "worldCom">,
+  worldPoint: SceneVector3,
+): SceneVector3 {
+  const linear = body.linvel();
+  const angular = body.angvel();
+  const centre = body.worldCom();
+  const lever: SceneVector3 = [
+    worldPoint[0] - centre.x,
+    worldPoint[1] - centre.y,
+    worldPoint[2] - centre.z,
+  ];
+  return [
+    linear.x + angular.y * lever[2] - angular.z * lever[1],
+    linear.y + angular.z * lever[0] - angular.x * lever[2],
+    linear.z + angular.x * lever[1] - angular.y * lever[0],
+  ];
+}
+
+/**
+ * Обрубок члена кластера: результат carve, живущий в авторской системе
+ * кластера и продолжающий быть его частью, пока родитель не отломан.
+ */
+export interface CompoundMemberRemnantShape {
+  readonly id: string;
+  readonly parentId: string;
+  readonly material: BreakablePieceDefinition["material"];
+  readonly position: SceneVector3;
+  readonly quaternion: Quaternion;
+  readonly size: readonly [number, number, number];
+  readonly boxes?: readonly {
+    readonly center: SceneVector3;
+    readonly size: readonly [number, number, number];
+  }[];
+}
+
 export interface CompoundClusterColliderDefinition {
   readonly id: string;
   readonly sourceId: string;
@@ -146,30 +268,58 @@ export function compoundCarrierOwnsMemberPose(
   return !piece.hinge || !independentMechanismActive;
 }
 
+const EMPTY_PIECE_ID_SET: ReadonlySet<string> = new Set();
+
+/** Один и тот же закон трения/упругости для куска и его обрубка. */
+function memberContactSurface(
+  material: BreakablePieceDefinition["material"],
+): { readonly friction: number; readonly restitution: number } {
+  return {
+    friction: material === "wood" ? 0.66 : 0.84,
+    restitution: materialRuntimeProfiles[material].restitution,
+  };
+}
+
+function memberAcceptsContact(
+  cluster: CompoundKinematicClusterDefinition,
+  piece: BreakablePieceDefinition,
+): boolean {
+  return (
+    compoundClusterOwnsPiece(cluster, piece) &&
+    (!cluster.contactMemberMatches ||
+      cluster.contactMemberMatches.some((match) => piece.id.includes(match))) &&
+    !cluster.contactMemberExcludes?.some((match) => piece.id.includes(match))
+  );
+}
+
 /**
  * Builds one compound contact shape from all intact members. A removed member
  * simply disappears from the compound; its detached rigid body can then take
- * over without leaving a duplicate contact surface behind.
+ * over without leaving a duplicate contact surface behind. A CARVED member is
+ * replaced by its remnants: the hole is real for contacts too, and the
+ * surviving stumps keep flying as part of the same rigid frame.
  */
 export function compoundClusterColliders(
   cluster: CompoundKinematicClusterDefinition,
   pieces: readonly BreakablePieceDefinition[],
   brokenPieces: ReadonlySet<string>,
+  consumedPieces: ReadonlySet<string> = EMPTY_PIECE_ID_SET,
+  memberRemnants: readonly CompoundMemberRemnantShape[] = [],
 ): readonly CompoundClusterColliderDefinition[] {
   const colliders: CompoundClusterColliderDefinition[] = [];
+  const contactPieceById = new Map<string, BreakablePieceDefinition>();
   for (const piece of pieces) {
-    if (
-      !compoundClusterOwnsPiece(cluster, piece) ||
-      (cluster.contactMemberMatches &&
-        !cluster.contactMemberMatches.some((match) => piece.id.includes(match))) ||
-      cluster.contactMemberExcludes?.some((match) => piece.id.includes(match)) ||
-      brokenPieces.has(piece.id)
-    ) {
+    if (!memberAcceptsContact(cluster, piece) || brokenPieces.has(piece.id)) {
+      continue;
+    }
+    contactPieceById.set(piece.id, piece);
+    if (consumedPieces.has(piece.id)) {
+      // Кусок съеден carve/shatter: его форму в компаунде дают обрубки ниже.
       continue;
     }
     const rotation = piece.rotation ?? ([0, 0, 0] as const);
     const rotationMatrix = rotationMatrixFromEuler(rotation);
-    const profile = materialRuntimeProfiles[piece.material];
+    const surface = memberContactSurface(piece.material);
     for (const [index, box] of getPieceRenderBoxes(piece).entries()) {
       const turnedCenter = applyMatrix(rotationMatrix, box.center);
       const position: SceneVector3 = [
@@ -201,8 +351,41 @@ export function compoundClusterColliders(
                 Math.max(0.002, box.size[1] / 2 - 0.002),
                 Math.max(0.002, box.size[2] / 2 - 0.002),
               ],
-        friction: piece.material === "wood" ? 0.66 : 0.84,
-        restitution: profile.restitution,
+        friction: surface.friction,
+        restitution: surface.restitution,
+      });
+    }
+  }
+  for (const remnant of memberRemnants) {
+    const parent = contactPieceById.get(remnant.parentId);
+    if (!parent || !consumedPieces.has(remnant.parentId)) {
+      continue;
+    }
+    const rotation = eulerFromQuaternion(remnant.quaternion);
+    const surface = memberContactSurface(remnant.material);
+    const boxes =
+      remnant.boxes && remnant.boxes.length > 0
+        ? remnant.boxes
+        : [{ center: [0, 0, 0] as const, size: remnant.size }];
+    for (const [index, box] of boxes.entries()) {
+      const turnedCenter = rotateVector(remnant.quaternion, box.center);
+      colliders.push({
+        id: `${remnant.id}:${index}`,
+        sourceId: remnant.parentId,
+        shape: "cuboid",
+        position: [
+          remnant.position[0] - cluster.origin[0] + turnedCenter[0],
+          remnant.position[1] - cluster.origin[1] + turnedCenter[1],
+          remnant.position[2] - cluster.origin[2] + turnedCenter[2],
+        ],
+        rotation,
+        args: [
+          Math.max(0.002, box.size[0] / 2 - 0.002),
+          Math.max(0.002, box.size[1] / 2 - 0.002),
+          Math.max(0.002, box.size[2] / 2 - 0.002),
+        ],
+        friction: surface.friction,
+        restitution: surface.restitution,
       });
     }
   }

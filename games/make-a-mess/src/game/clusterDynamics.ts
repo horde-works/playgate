@@ -59,6 +59,37 @@ export function conjugateQuaternion(q: Quaternion): Quaternion {
   return [-q[0], -q[1], -q[2], q[3]];
 }
 
+/** Кватернион из эйлеров сцены — тот же интринсический XYZ, что и матрица. */
+export function quaternionFromEuler(euler: SceneVector3): Quaternion {
+  const [rx, ry, rz] = euler;
+  const qx: Quaternion = [Math.sin(rx / 2), 0, 0, Math.cos(rx / 2)];
+  const qy: Quaternion = [0, Math.sin(ry / 2), 0, Math.cos(ry / 2)];
+  const qz: Quaternion = [0, 0, Math.sin(rz / 2), Math.cos(rz / 2)];
+  return multiplyQuaternions(multiplyQuaternions(qx, qy), qz);
+}
+
+/**
+ * Эйлеры сцены из кватерниона — обратная к `quaternionFromEuler`. Нужна там,
+ * где повёрнутый кватернионом кусок приходится отдавать API, говорящему
+ * только эйлерами (коллайдеры компаунда).
+ */
+export function eulerFromQuaternion(q: Quaternion): SceneVector3 {
+  const [x, y, z, w] = q;
+  const m00 = 1 - 2 * (y * y + z * z);
+  const m01 = 2 * (x * y - w * z);
+  const m02 = 2 * (x * z + w * y);
+  const m12 = 2 * (y * z - w * x);
+  const m22 = 1 - 2 * (x * x + y * y);
+  const m10 = 2 * (x * y + w * z);
+  const m11 = 1 - 2 * (x * x + z * z);
+  const sy = Math.max(-1, Math.min(1, m02));
+  if (Math.abs(sy) < 0.9999999) {
+    return [Math.atan2(-m12, m22), Math.asin(sy), Math.atan2(-m01, m00)];
+  }
+  // Замок: ось y смотрит вдоль мировой x, ролл и рысканье слились.
+  return [Math.atan2(m10, m11), Math.asin(sy), 0];
+}
+
 /** Матрица поворота из эйлеров сцены (интринсический XYZ, как в компиляторе). */
 export function rotationMatrixFromEuler(euler: SceneVector3): Matrix3 {
   const [rx, ry, rz] = euler;
