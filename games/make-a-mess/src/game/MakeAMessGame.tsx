@@ -10924,7 +10924,10 @@ export function MakeAMessGame({
       }
       publishCaption(
         "telemetry",
-        t("announce.vehicleFailureKicker"),
+        // Экипажу сообщают, ЧТО именно сняло машину с рейса: сама подпись
+        // остаётся человеческой, код причины стоит рядом и позволяет
+        // сверить наблюдение с логикой, не залезая в консоль.
+        `${t("announce.vehicleFailureKicker")} · ${event.reason}`,
         t(vehicleFailureAnnouncementKeys[event.reason]),
       );
     },
