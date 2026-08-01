@@ -12,10 +12,30 @@ export type VehicleFailureReason =
   | "dockingTimeout";
 
 /** One transport-neutral failure notification for HUDs, logs and dispatchers. */
+/**
+ * Один орган управления глазами автоматики: чего от него ждали и что он
+ * дал. Именно этот разрыв и снимает машину с рейса, поэтому он должен быть
+ * читаемым, а не выводиться постфактум из симптома.
+ */
+export interface VehicleControlReading {
+  /** Что это за орган: «тяга 0», «руль», «подъём», «дифферент». */
+  readonly organ: string;
+  readonly expected: number;
+  readonly actual: number;
+  /** Обязателен ли орган для продолжения рейса. */
+  readonly required: boolean;
+  /** Короткая причина, если орган не отвечает. */
+  readonly note?: string;
+}
+
 export interface VehicleFailureEvent {
   readonly sourceId: string;
   readonly sourceLabel: string;
   readonly reason: VehicleFailureReason;
+  /** Полный набор органов на момент отказа. */
+  readonly readings?: readonly VehicleControlReading[];
+  /** Числа маршрута и позы, по которым судили. */
+  readonly metrics?: readonly VehicleControlReading[];
 }
 
 export type VehicleFailureDisposition =

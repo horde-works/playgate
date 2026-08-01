@@ -55,3 +55,18 @@ test("combustion smoke persists while electrical smoke cools after the burst", (
   assert.ok(vehicleDamageSmokeRate(1, 20, true) < 8);
   assert.equal(vehicleDamageSmokeRate(0, 0, false), 0);
 });
+
+test("оторванный узел дымит так же, как прогрызенный", () => {
+  // Дым обязан показывать ту же утрату, что видит тяга: канал, потерявший
+  // обязательный член ОТЛОМОМ, замолкал молча, и понять, почему машина не
+  // слушает управления, было не по чему.
+  const torn = vehicleEngineDamageSmoke(bindings, new Set(["core"]), 0);
+  assert.equal(torn.severity, 1);
+  assert.equal(torn.detachedAnchorPieceId, "core");
+
+  // Потеря половины вспомогательных даёт половину дыма — двигатель ещё тянет.
+  assert.equal(
+    vehicleEngineDamageSmoke(bindings, new Set(["left"]), 0).severity,
+    0.5,
+  );
+});

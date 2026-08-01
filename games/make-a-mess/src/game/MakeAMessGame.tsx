@@ -9898,6 +9898,61 @@ function siegeClockText(seconds: number): string {
 const SHUTTER_REVEAL_MS = 1_150;
 const DEPARTURE_SHUTTER_MS = 2_000;
 
+/**
+ * ТАБЛО ОТКАЗА. Вердикт называет класс беды («не слушает органов»), но
+ * снимает машину с рейса конкретный разрыв между тем, что автоматика
+ * просила, и тем, что получила. Табло показывает весь набор органов разом,
+ * поэтому причина видна прямо в игре, без консоли и догадок.
+ */
+function VehicleFailureReport({ report }: { report: VehicleFailureEvent }) {
+  const rows = report.readings ?? [];
+  const metrics = report.metrics ?? [];
+  const culprits = rows.filter((row) => row.note);
+  return (
+    <div className="vehicle-failure-report" aria-live="polite">
+      <div className="vehicle-failure-report__head">
+        <span className="vehicle-failure-report__source">
+          {report.sourceLabel}
+        </span>
+        <span className="vehicle-failure-report__reason">{report.reason}</span>
+      </div>
+      {culprits.length > 0 ? (
+        <div className="vehicle-failure-report__culprit">
+          {culprits.map((row) => `${row.organ}: ${row.note}`).join(" · ")}
+        </div>
+      ) : (
+        <div className="vehicle-failure-report__culprit">
+          органы отвечают — причина в маршруте или позе
+        </div>
+      )}
+      <table className="vehicle-failure-report__table">
+        <thead>
+          <tr>
+            <th>орган</th>
+            <th>ожидалось</th>
+            <th>получено</th>
+          </tr>
+        </thead>
+        <tbody>
+          {[...rows, ...metrics].map((row) => (
+            <tr
+              key={row.organ}
+              className={row.note ? "is-culprit" : undefined}
+            >
+              <td>
+                {row.organ}
+                {row.required ? " *" : ""}
+              </td>
+              <td>{row.expected}</td>
+              <td>{row.actual}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 const vehicleFailureAnnouncementKeys = {
   structureLost: "announce.vehicleFailure.structureLost",
   invalidState: "announce.vehicleFailure.invalidState",
@@ -10902,8 +10957,22 @@ export function MakeAMessGame({
     [telemetryStore],
   );
 
+  const [failureReport, setFailureReport] = useState<VehicleFailureEvent | null>(
+    null,
+  );
+  const failureReportTimer = useRef<number | null>(null);
   const handleVehicleFailure = useCallback(
     (event: VehicleFailureEvent) => {
+      // Разбор висит двадцать секунд: этого хватает, чтобы прочитать все
+      // органы и не мешает следующему рейсу.
+      setFailureReport(event);
+      if (failureReportTimer.current !== null) {
+        window.clearTimeout(failureReportTimer.current);
+      }
+      failureReportTimer.current = window.setTimeout(() => {
+        setFailureReport(null);
+        failureReportTimer.current = null;
+      }, 20_000);
       if (process.env.NODE_ENV !== "production") {
         // Журнал отказов для headless-диагностики: ПРИЧИНА, а не только
         // подпись на экране. Читается через __mamVehicleFailures().
@@ -11826,6 +11895,10 @@ export function MakeAMessGame({
 
       {surfaces.worldHud ? (
         <ModeChips flightMode={flightMode} weapon={equippedWeapon} />
+      ) : null}
+
+      {surfaces.worldHud && failureReport ? (
+        <VehicleFailureReport report={failureReport} />
       ) : null}
 
       {surfaces.worldHud && active && rotorcraftPilotStatus ? (

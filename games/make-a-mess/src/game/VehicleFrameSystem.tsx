@@ -220,6 +220,7 @@ import {
   vehicleDisturbanceRecoveryFeasible,
   vehicleFailureDisposition,
   type VehicleFailureDisposition,
+  type VehicleControlReading,
   type VehicleFailureWatchdogState,
   type VehicleFailureEvent,
   type VehicleGroundLiftAutomationState,
@@ -1489,6 +1490,27 @@ export function VehicleFrameSystem({
     }
     return gone;
   }, [brokenPieces, carvedPieces, inactivePieces]);
+  /**
+   * ЧЕМ ДЫМИТ ДВИГАТЕЛЬ — ТЕМ ЖЕ, ЧЕГО ЕМУ НЕ ХВАТАЕТ.
+   *
+   * Тяга канала считается по составу машины, а дым читал только
+   * прогрызенное и разбитое. Оторванный узел в этот список не попадал, и
+   * двигатель, потерявший обязательную деталь ОТЛОМОМ, замолкал молча:
+   * тяга ноль, автоматика снимает рейс по «не слушает органов управления»,
+   * а на машине ни струйки — догадаться не по чему. Дым обязан показывать
+   * ту же утрату, что видит тяга.
+   */
+  const smokingDamage = useMemo(() => {
+    const gone = new Set(damagedPieces);
+    for (const id of brokenPieces.current) {
+      gone.add(id);
+    }
+    return gone;
+    // brokenPieces — ref, его содержимое меняет тот же поток разрушения,
+    // что и damagedPieces; пересчёт по damagedPieces накрывает оба.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [damagedPieces, inactivePieces]);
+
   /** Обрубки, носимые кластерами, по id кластера. */
   const clusterRemnants = useMemo(() => {
     const byCluster = new Map<string, RemnantDefinition[]>();
@@ -4856,10 +4878,99 @@ export function VehicleFrameSystem({
             groundContactLatched: false,
             groundLiftAutomation: createVehicleGroundLiftAutomation(),
           };
+          // ПОЛНЫЙ РАЗБОР ОТКАЗА. Вердикт называет класс беды, но снимает
+          // машину с рейса конкретный разрыв «ожидалось / получено». Он
+          // собирается по всем обязательным органам прямо в момент решения:
+          // через полсекунды этих чисел уже не восстановить.
+          const readings: VehicleControlReading[] = flight.driveThrottle.map(
+            (requested, index) => {
+              const delivered = flight.throttle[index] ?? 0;
+              return {
+                organ: `тяга ${index}`,
+                expected: Number(requested.toFixed(2)),
+                actual: Number(delivered.toFixed(2)),
+                required: true,
+                note:
+                  Math.abs(requested) > 0.05 &&
+                  Math.abs(delivered) < Math.abs(requested) * 0.5
+                    ? "не отвечает"
+                    : undefined,
+              };
+            },
+          );
+          readings.push({
+            organ: "подъём",
+            expected: Number(requestedLiftEffort.toFixed(2)),
+            actual: Number(liftDelivery.toFixed(2)),
+            required: true,
+            note:
+              requestedLiftEffort > 0.35 && liftDelivery < 0.5
+                ? "запас исчерпан"
+                : undefined,
+          });
+          readings.push({
+            organ: "оболочка",
+            expected: state.intactEnvelope,
+            actual: state.envelopeLeft,
+            required: true,
+            note:
+              state.envelopeLeft < state.intactEnvelope
+                ? "потеряны полотнища"
+                : undefined,
+          });
+          readings.push({
+            organ: "масса",
+            expected: Number(state.intactMass.toFixed(1)),
+            actual: Number(mass.mass.toFixed(1)),
+            required: false,
+          });
+          for (const [index, rail] of (frame.trimRails ?? []).entries()) {
+            readings.push({
+              organ: `дифферент ${rail.commandChannel}`,
+              expected: 1,
+              actual: state.trimAvailable[index] ? 1 : 0,
+              required: true,
+              note: state.trimAvailable[index]
+                ? undefined
+                : "тележка потеряна",
+            });
+          }
+          const metrics: VehicleControlReading[] = [
+            {
+              organ: "курс, град",
+              expected: 0,
+              actual: Number(
+                ((tracking.headingError * 180) / Math.PI).toFixed(1),
+              ),
+              required: false,
+            },
+            {
+              organ: "уклонение, м",
+              expected: 0,
+              actual: Number(tracking.crossTrackError.toFixed(1)),
+              required: false,
+            },
+            {
+              organ: "высота, м",
+              expected: 0,
+              actual: Number(tracking.altitudeError.toFixed(1)),
+              required: false,
+            },
+            {
+              organ: "тангаж/крен, град",
+              expected: 0,
+              actual: Number(
+                ((Math.hypot(tracking.pitch, tracking.roll) * 180) / Math.PI).toFixed(1),
+              ),
+              required: false,
+            },
+          ];
           onVehicleFailure?.({
             sourceId: frame.clusterId,
             sourceLabel: frame.telemetryLabel ?? frame.id.toUpperCase(),
             reason: watchdogResult.failure,
+            readings,
+            metrics,
           });
         }
       } else if (!flight) {
@@ -5854,7 +5965,7 @@ export function VehicleFrameSystem({
         frames={frames}
         states={states}
         inactivePieces={inactivePieces}
-        damagedPieces={damagedPieces}
+        damagedPieces={smokingDamage}
         bodies={bodies}
       />
     </>
