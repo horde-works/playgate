@@ -1963,7 +1963,11 @@ export function VehicleFrameSystem({
             : post === "seat"
               ? { id: interactionSeat?.id ?? "seat", kind: "seat" }
               : post === "stand"
-                ? { id: interactionSeat?.id ?? "seat", kind: "stand" }
+                ? {
+                    id: interactionSeat?.id ?? "seat",
+                    kind: "stand",
+                    cue: interactionSeat?.hintCue,
+                  }
                 : null;
       if (post !== approachedPost.current) {
         approachedPost.current = post;

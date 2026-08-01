@@ -333,6 +333,12 @@ export const ui = {
     "hint.stand.action": "Stand up",
     "hint.stand.actionTouch": "Stand up",
 
+    "hint.hexacopterStand.eyebrow": "Pilot's seat",
+    "hint.hexacopterStand.title": "Rotors are disarmed.",
+    "hint.hexacopterStand.key": "Space",
+    "hint.hexacopterStand.action": "Leave the copter",
+    "hint.hexacopterStand.actionTouch": "Leave the copter",
+
     "hint.departure.eyebrow": "Terminal dispatch",
     "hint.departure.title":
       "The empty sky train is ready for an inspection circuit.",
@@ -735,6 +741,12 @@ export const ui = {
     "hint.stand.key": "Espacio",
     "hint.stand.action": "Levantarse",
     "hint.stand.actionTouch": "Levantarse",
+
+    "hint.hexacopterStand.eyebrow": "Asiento del piloto",
+    "hint.hexacopterStand.title": "Rotores apagados.",
+    "hint.hexacopterStand.key": "Espacio",
+    "hint.hexacopterStand.action": "Salir del HX-6",
+    "hint.hexacopterStand.actionTouch": "Salir del HX-6",
 
     "hint.departure.eyebrow": "Despacho de la terminal",
     "hint.departure.title":
@@ -1142,6 +1154,12 @@ export const ui = {
     "hint.stand.key": "Пробел",
     "hint.stand.action": "Встать",
     "hint.stand.actionTouch": "Встать",
+
+    "hint.hexacopterStand.eyebrow": "Место пилота",
+    "hint.hexacopterStand.title": "Винты заглушены.",
+    "hint.hexacopterStand.key": "Пробел",
+    "hint.hexacopterStand.action": "Покинуть коптер",
+    "hint.hexacopterStand.actionTouch": "Покинуть коптер",
 
     "hint.departure.eyebrow": "Диспетчерская Терминала",
     "hint.departure.title": "Пустой состав готов к контрольному кругу.",

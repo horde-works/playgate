@@ -11,8 +11,9 @@ test("the first-spawn guidance is a reusable game action cue", () => {
   // General movement plus two distinct calls for each scheduled carrier:
   // an uncrewed service flight ashore and a passenger flight aboard. Город
   // держит две машины — дирижабль у мачты и гексакоптер во дворе, — поэтому
-  // пар не четыре, а пять.
-  assert.equal(gameActionHints.length, 14);
+  // пар не четыре, а пять. Плюс два разных «встать»: из кресла машиниста в
+  // вагон и из кресла пилота наружу к коптеру.
+  assert.equal(gameActionHints.length, 15);
   assert.equal(hint.id, "first-look");
   assert.equal(hint.once, true);
   assert.equal(hint.delayMs >= 2_000, true);
@@ -91,4 +92,19 @@ test("game action guidance is complete in every interface language", () => {
       }
     }
   }
+});
+
+test("покинуть коптер — не то же действие, что встать в вагон", () => {
+  const [driver] = hintsForGameAction("stand.available");
+  const [pilot] = hintsForGameAction("hexacopter-stand.available");
+
+  assert.equal(driver.id, "leaving-the-driver-seat");
+  assert.equal(pilot.id, "leaving-the-pilot-seat");
+  assert.notEqual(ui.ru[pilot.detailKey], ui.ru[driver.detailKey]);
+  assert.notEqual(ui.ru[pilot.titleKey], ui.ru[driver.titleKey]);
+  assert.match(ui.ru[pilot.detailKey], /Покинуть коптер/);
+  assert.match(ui.ru[pilot.eyebrowKey], /пилота/);
+  // Ни в одном языке пилоту не рассказывают про вагон.
+  assert.doesNotMatch(ui.en[pilot.titleKey], /aisle|coach/i);
+  assert.doesNotMatch(ui.ru[pilot.titleKey], /[Вв]агон/);
 });

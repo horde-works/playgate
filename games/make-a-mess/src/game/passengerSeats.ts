@@ -1,4 +1,5 @@
 import type { SceneVector3 } from "./destructionScene.ts";
+import type { EntryInteractionCue } from "./entryInteraction.ts";
 import {
   rotateVector,
   vehiclePiecePosition,
@@ -7,10 +8,14 @@ import {
 } from "./vehicleFrames.ts";
 import { supportVelocityAtPoint } from "./movingSupportDynamics.ts";
 import {
+  HEX_ARM_RADIUS,
+  HEX_FOOT_BOTTOM_Y,
+  HEX_LIP_OUTER_RADIUS,
   HEX_SEAT_Y,
   TOWN_HEXACOPTER_CLUSTER_ID,
   hexacopterPoint,
 } from "./townHexacopter.ts";
+import { PLAYER_CAPSULE_FOOT_OFFSET, PLAYER_CAPSULE_RADIUS } from "./playerMovement.ts";
 
 /**
  * A reusable place occupied inside a moving compound object.
@@ -28,6 +33,8 @@ export interface PassengerSeatDefinition {
   readonly occupantPoint: SceneVector3;
   /** Safe capsule centre used when the passenger stands up. */
   readonly exitPoint: SceneVector3;
+  /** Presentation-only cue for the stand hint; mechanics stay seat-neutral. */
+  readonly hintCue?: EntryInteractionCue;
   /** Direction the passenger faces on taking the seat. */
   readonly facing: SceneVector3;
   /** Losing any of these physical members makes the place unusable. */
@@ -70,6 +77,16 @@ export const SKY_TRAIN_DRIVER_SEAT: PassengerSeatDefinition = {
   releaseRadius: 3.4,
 };
 
+/**
+ * Пилот встаёт РЯДОМ с машиной, а не в кабине: фонарь закрыт, изнутри делать
+ * нечего. Выход идёт через дверной просвет 300° левого борта (ровно под ним
+ * стоит нога — см. townHexacopter) и заканчивается за габаритом колец, чтобы
+ * капсула не родилась в губе кольца. Высота — подошвы на земле под машиной.
+ */
+const HEX_EXIT_ANGLE = (300 * Math.PI) / 180;
+const HEX_EXIT_RADIUS =
+  HEX_ARM_RADIUS + HEX_LIP_OUTER_RADIUS + PLAYER_CAPSULE_RADIUS + 0.2;
+
 export const TOWN_HEXACOPTER_PILOT_SEAT: PassengerSeatDefinition = {
   id: TOWN_HEXACOPTER_PILOT_SEAT_ID,
   carrierClusterId: TOWN_HEXACOPTER_CLUSTER_ID,
@@ -77,7 +94,12 @@ export const TOWN_HEXACOPTER_PILOT_SEAT: PassengerSeatDefinition = {
   // Collision is muted while seated. The camera rides 0.54 m above this
   // point, at eye height behind the instrument screen and below the canopy.
   occupantPoint: hexacopterPoint(-0.18, 0, HEX_SEAT_Y + 0.16),
-  exitPoint: hexacopterPoint(-0.2, -0.38, 1.98),
+  exitPoint: hexacopterPoint(
+    HEX_EXIT_RADIUS * Math.cos(HEX_EXIT_ANGLE),
+    HEX_EXIT_RADIUS * Math.sin(HEX_EXIT_ANGLE),
+    HEX_FOOT_BOTTOM_Y + PLAYER_CAPSULE_FOOT_OFFSET + 0.04,
+  ),
+  hintCue: "town-hexacopter-pilot-seat",
   facing: [-1, 0, 0],
   requiredPieceIds: [
     "town-vertipad:hexacopter:seat:pedestal:piece",

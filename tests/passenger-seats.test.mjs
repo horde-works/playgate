@@ -108,3 +108,61 @@ test("one contextual seat action replaces the previous one as state changes", ()
     intact: false,
   }), null);
 });
+
+test("пилот покидает коптер наружу: за габарит колец, подошвы на землю", async () => {
+  const { TOWN_HEXACOPTER_PILOT_SEAT } = await import(
+    "../games/make-a-mess/src/game/passengerSeats.ts"
+  );
+  const {
+    HEXACOPTER_PAD_X,
+    HEXACOPTER_PAD_Z,
+    HEXACOPTER_DUCTS,
+    HEXACOPTER_GEAR_STATIONS,
+    HEX_ARM_RADIUS,
+    HEX_LIP_OUTER_RADIUS,
+    HEX_FOOT_BOTTOM_Y,
+    hexacopterPoint,
+  } = await import("../games/make-a-mess/src/game/townHexacopter.ts");
+  const { PLAYER_CAPSULE_FOOT_OFFSET, PLAYER_CAPSULE_RADIUS } = await import(
+    "../games/make-a-mess/src/game/playerMovement.ts"
+  );
+
+  const exit = TOWN_HEXACOPTER_PILOT_SEAT.exitPoint;
+  // Снаружи машины: дальше внешней кромки колец плюс радиус капсулы.
+  const fromCentre = Math.hypot(
+    exit[0] - HEXACOPTER_PAD_X,
+    exit[2] - HEXACOPTER_PAD_Z,
+  );
+  assert.ok(
+    fromCentre > HEX_ARM_RADIUS + HEX_LIP_OUTER_RADIUS + PLAYER_CAPSULE_RADIUS,
+    `выход на ${fromCentre.toFixed(2)} м от оси — внутри габарита машины`,
+  );
+  // Капсула не рождается в губе ни одного кольца.
+  for (const duct of HEXACOPTER_DUCTS) {
+    const centre = hexacopterPoint(duct.a, duct.b, 0);
+    const clearance =
+      Math.hypot(exit[0] - centre[0], exit[2] - centre[2]) -
+      HEX_LIP_OUTER_RADIUS;
+    assert.ok(
+      clearance > PLAYER_CAPSULE_RADIUS,
+      `кольцо ${duct.index}: зазор ${clearance.toFixed(2)} м меньше капсулы`,
+    );
+  }
+  // И ни в одной стойке шасси.
+  for (const leg of HEXACOPTER_GEAR_STATIONS) {
+    const centre = hexacopterPoint(leg.a, leg.b, 0);
+    assert.ok(
+      Math.hypot(exit[0] - centre[0], exit[2] - centre[2]) >
+        PLAYER_CAPSULE_RADIUS,
+      "выход совпал со стойкой шасси",
+    );
+  }
+  // Подошвы на земле под машиной, а не на полу кабины и не в воздухе.
+  const feet = exit[1] - PLAYER_CAPSULE_FOOT_OFFSET;
+  assert.ok(
+    Math.abs(feet - HEX_FOOT_BOTTOM_Y) < 0.1,
+    `подошвы на ${feet.toFixed(2)} при земле ${HEX_FOOT_BOTTOM_Y}`,
+  );
+  // У кресла пилота своя подсказка, не вагонная.
+  assert.equal(TOWN_HEXACOPTER_PILOT_SEAT.hintCue, "town-hexacopter-pilot-seat");
+});

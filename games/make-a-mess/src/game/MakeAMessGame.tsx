@@ -387,6 +387,7 @@ const entryApproachActions: readonly GameAction[] = [
   "hexacopter-ride.approaching",
   "seat.approaching",
   "stand.available",
+  "hexacopter-stand.available",
 ];
 
 function entryApproachAction(entry: HingedEntryApproach): GameAction {
@@ -413,7 +414,9 @@ function entryApproachAction(entry: HingedEntryApproach): GameAction {
           : entry.kind === "seat"
             ? "seat.approaching"
             : entry.kind === "stand"
-              ? "stand.available"
+              ? entry.cue === "town-hexacopter-pilot-seat"
+                ? "hexacopter-stand.available"
+                : "stand.available"
               : "door.approaching";
 }
 
@@ -465,7 +468,13 @@ function entryActionKey(
     return touch ? "hint.seat.actionTouch" : "hint.seat.action";
   }
   if (entry.kind === "stand") {
-    return touch ? "hint.stand.actionTouch" : "hint.stand.action";
+    return entry.cue === "town-hexacopter-pilot-seat"
+      ? touch
+        ? "hint.hexacopterStand.actionTouch"
+        : "hint.hexacopterStand.action"
+      : touch
+        ? "hint.stand.actionTouch"
+        : "hint.stand.action";
   }
   return touch ? "hint.door.actionTouch" : "hint.door.action";
 }

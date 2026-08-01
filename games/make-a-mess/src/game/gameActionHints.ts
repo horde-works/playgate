@@ -15,7 +15,8 @@ export type GameAction =
   | "town-ride.approaching"
   | "hexacopter-ride.approaching"
   | "seat.approaching"
-  | "stand.available";
+  | "stand.available"
+  | "hexacopter-stand.available";
 
 export interface GameActionHint {
   readonly id: string;
@@ -172,6 +173,17 @@ export const gameActionHints: readonly GameActionHint[] = [
     detailKey: "hint.stand.action",
     touchDetailKey: "hint.stand.actionTouch",
     keyLabelKey: "hint.stand.key",
+    once: false,
+  },
+  {
+    id: "leaving-the-pilot-seat",
+    action: "hexacopter-stand.available",
+    delayMs: 80,
+    eyebrowKey: "hint.hexacopterStand.eyebrow",
+    titleKey: "hint.hexacopterStand.title",
+    detailKey: "hint.hexacopterStand.action",
+    touchDetailKey: "hint.hexacopterStand.actionTouch",
+    keyLabelKey: "hint.hexacopterStand.key",
     once: false,
   },
   {
