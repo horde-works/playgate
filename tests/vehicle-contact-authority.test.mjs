@@ -197,8 +197,12 @@ function createScenario(kind) {
 test("fixture uses the real hexacopter, authored mass, and a sub-step city wall", () => {
   assert.equal(pieces.length, 629);
   assert.equal(colliders.length, 611);
+  // 86.5 вместо прежних 84.3: лопасти переведены с пластика на сталь, чтобы
+  // экранированный кольцом винт переживал близкий взрыв, и весят они вдвое
+  // больше (2.2 -> 4.4 единиц на все восемнадцать). Тяговооружённость
+  // поднята следом, смысл запаса прежний.
   assert.ok(
-    Math.abs(properties.mass - 84.3) < 0.1,
+    Math.abs(properties.mass - 86.5) < 0.1,
     `unexpected authored mass ${properties.mass}`,
   );
   assert.equal(Math.min(...cityWall.size), 0.24);
