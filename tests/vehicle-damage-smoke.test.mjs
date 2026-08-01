@@ -31,6 +31,24 @@ test("damage smoke follows actual actuator loss and a detached required core", (
   });
 });
 
+test("healthy engines do not smoke merely because the failed carrier releases them", () => {
+  const twoEngines = [
+    ...bindings,
+    {
+      id: "engine:1",
+      commandChannel: "throttle:1",
+      totalContribution: 1,
+      members: [
+        { pieceId: "core:1", contribution: 1, required: true },
+        { pieceId: "drive:1", contribution: 1, required: false },
+      ],
+    },
+  ];
+  const directDamage = new Set(["core"]);
+  assert.equal(vehicleEngineDamageSmoke(twoEngines, directDamage, 0).severity, 1);
+  assert.equal(vehicleEngineDamageSmoke(twoEngines, directDamage, 1).severity, 0);
+});
+
 test("combustion smoke persists while electrical smoke cools after the burst", () => {
   assert.equal(vehicleDamageSmokeRate(1, 30, false), 42);
   assert.ok(vehicleDamageSmokeRate(1, 0, true) > 40);

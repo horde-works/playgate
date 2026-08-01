@@ -11,50 +11,65 @@ import {
 } from "react";
 import {
   BoxGeometry,
+  BufferAttribute,
+  BufferGeometry,
   Color,
   Data3DTexture,
   FrontSide,
   GLSL3,
-  InstancedBufferAttribute,
   InstancedMesh,
-  LinearFilter,
   Mesh,
   NormalBlending,
-  PlaneGeometry,
   PointLight,
-  RedFormat,
-  RepeatWrapping,
   ShaderMaterial,
-  UnsignedByteType,
   Vector3,
   Vector4,
 } from "three";
+import { createBillowSmokePool, createFxNoiseTexture } from "./billowSmoke";
 import {
   materialRuntimeProfiles,
   type BreakableMaterial,
 } from "./destructionScene";
+import {
+  clearPool,
+  createBillboardPool,
+  createPoolWithGeometry,
+  markPoolDirty,
+  writeParticle,
+  type ParticlePool,
+} from "./fxParticlePool";
+import { environmentState } from "./environmentState";
+import {
+  EXPLOSION_FIRE_RAMP,
+  EXPLOSION_LIGHT,
+  EXPLOSION_POOL_CAPACITY,
+  EXPOSURE_KICK_TAU,
+  FIREBALL_BOX_SCALE,
+  FIREBALL_CARVE_AMPLITUDE,
+  FIREBALL_CORE_RADIUS,
+  LOBE_STRETCH_RANGE,
+  MAX_FIREBALL_LOBES,
+  planExplosionSecondaries,
+  planFireball,
+  random01,
+  type ExplosionFxInput,
+  type ExplosionFxLobeInput,
+  type FireballPlan,
+  type PlannedParticle,
+} from "./explosionFxModel";
 import { performanceGovernor } from "./performanceGovernor";
 
-const TRAIL_CAPACITY = 192;
+const TRAIL_CAPACITY = EXPLOSION_POOL_CAPACITY.trail;
+const SMOKE_CAPACITY = EXPLOSION_POOL_CAPACITY.smoke;
+const RIBBON_CAPACITY = EXPLOSION_POOL_CAPACITY.ribbon;
+const RIBBON_SEGMENTS = 12;
 const FIREBALL_CAPACITY = 2;
 const MAX_ACTIVE_BLASTS = 4;
 const MAX_TRAILED_DEBRIS_PER_BLAST = 10;
 const LIGHT_CAPACITY = 2;
-const MAX_FIREBALL_LOBES = 8;
 
-export interface ExplosionFxDefinition {
-  readonly id: number;
-  readonly kind: "grenade" | "rocket";
-  readonly position: readonly [number, number, number];
-  readonly lobes: readonly ExplosionFxLobe[];
-  readonly dustColor: readonly [number, number, number];
-}
-
-export interface ExplosionFxLobe {
-  readonly direction: readonly [number, number, number];
-  readonly weight: number;
-  readonly delay: number;
-}
+export type ExplosionFxDefinition = ExplosionFxInput;
+export type ExplosionFxLobe = ExplosionFxLobeInput;
 
 export interface ExplosionDebrisProfile {
   readonly material: BreakableMaterial;
@@ -64,31 +79,6 @@ export interface ExplosionDebrisProfile {
 export interface ExplosionFxRuntime {
   spawn: (definition: ExplosionFxDefinition) => void;
   clear: () => void;
-}
-
-interface ParticlePool {
-  readonly capacity: number;
-  readonly geometry: PlaneGeometry;
-  readonly material: ShaderMaterial;
-  readonly origin: Float32Array;
-  readonly velocity: Float32Array;
-  readonly timing: Float32Array;
-  readonly style: Float32Array;
-  readonly color: Float32Array;
-  cursor: number;
-}
-
-interface ParticleSpawn {
-  readonly origin: readonly [number, number, number];
-  readonly velocity: readonly [number, number, number];
-  readonly reach: number;
-  readonly birth: number;
-  readonly life: number;
-  readonly size: number;
-  readonly seed: number;
-  readonly kind: number;
-  readonly heat: number;
-  readonly color: readonly [number, number, number];
 }
 
 interface TrackedDebris {
@@ -124,6 +114,9 @@ interface LightSlot {
   life: number;
   peak: number;
   distance: number;
+  emberLife: number;
+  emberFraction: number;
+  exposureKick: number;
 }
 
 const dustinessByMaterial: Record<BreakableMaterial, number> = {
@@ -145,94 +138,6 @@ const dustinessByMaterial: Record<BreakableMaterial, number> = {
   earth: 1,
   asphalt: 0.58,
 };
-
-function random01(seed: number, index: number, salt: number): number {
-  const value =
-    Math.sin(seed * 17.17 + index * 91.91 + salt * 37.37) * 43758.5453;
-  return value - Math.floor(value);
-}
-
-function createPool(capacity: number, material: ShaderMaterial): ParticlePool {
-  const geometry = new PlaneGeometry(1, 1);
-  const origin = new Float32Array(capacity * 3);
-  const velocity = new Float32Array(capacity * 3);
-  const timing = new Float32Array(capacity * 4);
-  const style = new Float32Array(capacity * 4);
-  const color = new Float32Array(capacity * 3);
-  geometry.setAttribute("aOrigin", new InstancedBufferAttribute(origin, 3));
-  geometry.setAttribute("aVelocity", new InstancedBufferAttribute(velocity, 3));
-  geometry.setAttribute("aTiming", new InstancedBufferAttribute(timing, 4));
-  geometry.setAttribute("aStyle", new InstancedBufferAttribute(style, 4));
-  geometry.setAttribute("aColor", new InstancedBufferAttribute(color, 3));
-  return {
-    capacity,
-    geometry,
-    material,
-    origin,
-    velocity,
-    timing,
-    style,
-    color,
-    cursor: 0,
-  };
-}
-
-function writeParticle(pool: ParticlePool, particle: ParticleSpawn): void {
-  const index = pool.cursor;
-  pool.cursor = (pool.cursor + 1) % pool.capacity;
-  pool.origin.set(particle.origin, index * 3);
-  pool.velocity.set(particle.velocity, index * 3);
-  pool.timing.set(
-    [particle.birth, particle.life, particle.reach, particle.size],
-    index * 4,
-  );
-  pool.style.set([particle.seed, particle.kind, particle.heat, 0], index * 4);
-  pool.color.set(particle.color, index * 3);
-}
-
-function markPoolDirty(pool: ParticlePool): void {
-  for (const name of [
-    "aOrigin",
-    "aVelocity",
-    "aTiming",
-    "aStyle",
-    "aColor",
-  ] as const) {
-    (pool.geometry.getAttribute(name) as InstancedBufferAttribute).needsUpdate =
-      true;
-  }
-}
-
-function clearPool(pool: ParticlePool): void {
-  for (let index = 1; index < pool.timing.length; index += 4) {
-    pool.timing[index] = 0;
-  }
-  pool.cursor = 0;
-  markPoolDirty(pool);
-}
-
-function createExplosionNoiseTexture(): Data3DTexture {
-  const size = 32;
-  const data = new Uint8Array(size * size * size);
-  let state = 0x9e3779b9;
-  for (let index = 0; index < data.length; index += 1) {
-    state ^= state << 13;
-    state ^= state >>> 17;
-    state ^= state << 5;
-    data[index] = state & 0xff;
-  }
-  const texture = new Data3DTexture(data, size, size, size);
-  texture.format = RedFormat;
-  texture.type = UnsignedByteType;
-  texture.minFilter = LinearFilter;
-  texture.magFilter = LinearFilter;
-  texture.wrapS = RepeatWrapping;
-  texture.wrapT = RepeatWrapping;
-  texture.wrapR = RepeatWrapping;
-  texture.unpackAlignment = 1;
-  texture.needsUpdate = true;
-  return texture;
-}
 
 function createFireballMaterial(noise: Data3DTexture): ShaderMaterial {
   return new ShaderMaterial({
@@ -314,14 +219,16 @@ function createFireballMaterial(noise: Data3DTexture): ShaderMaterial {
         return fract(sin(dot(point, vec2(12.9898, 78.233))) * 43758.5453);
       }
 
+      // HDR ramp: whiteHot must cross the bloom threshold by a wide margin —
+      // the blown-out core with a halo is what separates fire from orange fog.
       vec3 fireColor(float temperature) {
-        vec3 ember = vec3(0.72, 0.035, 0.004);
-        vec3 orange = vec3(3.3, 0.52, 0.025);
-        vec3 yellow = vec3(7.2, 2.55, 0.34);
-        vec3 whiteHot = vec3(11.5, 8.2, 3.9);
+        vec3 ember = vec3(${EXPLOSION_FIRE_RAMP.ember.join(", ")});
+        vec3 orange = vec3(${EXPLOSION_FIRE_RAMP.orange.join(", ")});
+        vec3 yellow = vec3(${EXPLOSION_FIRE_RAMP.yellow.join(", ")});
+        vec3 whiteHot = vec3(${EXPLOSION_FIRE_RAMP.whiteHot.join(", ")});
         vec3 color = mix(ember, orange, smoothstep(0.06, 0.32, temperature));
         color = mix(color, yellow, smoothstep(0.3, 0.66, temperature));
-        return mix(color, whiteHot, smoothstep(0.64, 0.94, temperature));
+        return mix(color, whiteHot, smoothstep(0.62, 0.98, temperature));
       }
 
       void main() {
@@ -335,16 +242,19 @@ function createFireballMaterial(noise: Data3DTexture): ShaderMaterial {
         if (rayEnd <= rayStart) discard;
 
         float ignition = smoothstep(0.0, 0.014, uAge);
-        float coreExpansion = 1.0 - exp(-uAge * mix(24.0, 18.0, uRocket));
+        float coreExpansion = 1.0 - exp(-uAge * mix(26.0, 19.0, uRocket));
         float coreCooling = smoothstep(0.1, mix(0.62, 0.82, uRocket), uAge);
-        float coreRadius = mix(0.035, 0.13, coreExpansion)
-          * mix(1.0, 0.7, coreCooling);
-        float globalLift = smoothstep(0.24, uLife, uAge) * 0.075;
+        float coreRadius = mix(0.03, ${FIREBALL_CORE_RADIUS}, coreExpansion)
+          * mix(1.0, 0.72, coreCooling);
+        // The hot volume buoys visibly out of the dust it made (references
+        // show the fire riding above the cold cloud by mid-life).
+        float globalLift = smoothstep(0.2, uLife, uAge) * 0.11;
 
         float segment = (rayEnd - rayStart) / max(1.0, uSteps);
         float cursor = rayStart + segment * pixelNoise(gl_FragCoord.xy + uNoiseOffset.xy * 97.0);
         vec3 accumulated = vec3(0.0);
         float opacity = 0.0;
+        float flameCoverage = 0.0;
 
         for (int index = 0; index < MAX_STEPS; index += 1) {
           if (float(index) >= uSteps || cursor > rayEnd || opacity > 0.992) break;
@@ -352,33 +262,55 @@ function createFireballMaterial(noise: Data3DTexture): ShaderMaterial {
           vec3 point = rayOrigin + rayDirection * cursor;
           vec3 centered = point - vec3(0.0, globalLift, 0.0);
 
-          float broadNoise = texture(
-            uNoise,
-            centered * 0.72 + uNoiseOffset + vec3(0.0, uAge * 0.035, 0.0)
-          ).r;
+          float noiseScale = mix(
+            1.42,
+            0.82,
+            smoothstep(0.0, mix(0.72, 1.0, uRocket), uAge)
+          );
+          vec3 noiseCoordinate = centered * noiseScale
+            + uNoiseOffset
+            - vec3(0.0, uAge * 0.14, 0.0);
+          float broadNoise = texture(uNoise, noiseCoordinate).r;
           float detailNoise = texture(
             uNoise,
-            centered * 1.85 + uNoiseOffset.yzx * 1.7 - vec3(0.0, uAge * 0.06, 0.0)
+            noiseCoordinate * 1.9 + uNoiseOffset.yzx * 0.63
           ).r;
-          float erosion = (broadNoise - 0.5) * 0.038
-            + (detailNoise - 0.5) * 0.018;
-          float coreBoundary = coreRadius + erosion * 0.65;
+          // Radial carving: boundaries move by a fraction of their own
+          // radius, giving deep macroscopic folds instead of an eroded fuzz
+          // (the ±3%-of-box erosion this replaces read as a dithered pompom).
+          float carve = (broadNoise - 0.5)
+              * ${(FIREBALL_CARVE_AMPLITUDE * 1.44).toFixed(2)}
+            + (detailNoise - 0.5)
+              * ${(FIREBALL_CARVE_AMPLITUDE * 0.56).toFixed(2)};
+          // Hot pockets survive mid-life while their surroundings sootify:
+          // real fireballs are never one uniform temperature.
+          float kernelNoise = texture(
+            uNoise,
+            noiseCoordinate * 2.7 + uNoiseOffset.zxy * 1.31
+          ).r;
+          float hotKernel = smoothstep(0.56, 0.85, kernelNoise);
+
+          float coreBoundary = coreRadius * (1.0 + carve);
           float coreLength = length(centered);
           float coreDensity = 1.0
-            - smoothstep(-0.026, 0.022, coreLength - coreBoundary);
-          coreDensity *= ignition * mix(1.0, 0.42, coreCooling);
-          float coreInterior = clamp(
-            1.0 - coreLength / max(0.001, coreBoundary),
+            - smoothstep(-0.04, 0.026, coreLength - coreBoundary);
+          coreDensity *= ignition * mix(1.0, 0.5, coreCooling);
+          float coreShell = clamp(
+            coreLength / max(0.001, coreBoundary),
             0.0,
             1.0
           );
+          float coreInterior = 1.0 - coreShell;
 
           float density = coreDensity;
-          float temperature = coreDensity
-            * exp(-uAge * mix(4.7, 3.7, uRocket))
-            * (1.05 + coreInterior * 0.72);
+          // Cooling is outside-in: the shell chars while the heart stays lit.
+          float ageCool = exp(-uAge * mix(2.1, 1.7, uRocket));
+          float shellCool = mix(1.0, 0.34, smoothstep(0.45, 1.02, coreShell));
+          float temperature = coreDensity * ageCool * shellCool
+            * mix(0.55, 1.35, hotKernel)
+            * (0.75 + coreInterior * 0.65);
           float smokeSignal = coreDensity
-            * smoothstep(0.11, mix(0.42, 0.58, uRocket), uAge);
+            * smoothstep(0.07, mix(0.34, 0.5, uRocket), uAge);
 
           for (int lobeIndex = 0; lobeIndex < MAX_LOBES; lobeIndex += 1) {
             if (lobeIndex >= uLobeCount) break;
@@ -393,76 +325,119 @@ function createFireballMaterial(noise: Data3DTexture): ShaderMaterial {
               -localAge * mix(17.0, 12.5, uRocket)
             );
             float travel = timingShape.y * lobeExpansion
-              + localAge * mix(0.018, 0.026, uRocket);
+              + localAge * mix(0.03, 0.045, uRocket);
             vec3 lobeCenter = lobeDirection * travel;
             lobeCenter.y += localAge * localAge * 0.018;
 
             vec3 relative = centered - lobeCenter;
             float axial = dot(relative, lobeDirection);
             vec3 perpendicular = relative - lobeDirection * axial;
-            float stretch = mix(1.08, 1.42, timingShape.w);
+            // Jets: shape drives elongation along the vent axis. Combined
+            // with travel ≈ 2 radii this is what breaks the sphere.
+            float stretch = mix(
+              ${LOBE_STRETCH_RANGE[0]},
+              ${LOBE_STRETCH_RANGE[1]},
+              timingShape.w
+            );
             float lobeDistance = sqrt(
               dot(perpendicular, perpendicular)
               + axial * axial / (stretch * stretch)
             );
             float lobeRadius = timingShape.z
-              * mix(0.18, 1.0, lobeExpansion)
+              * mix(0.16, 1.0, lobeExpansion)
               * mix(0.86, 1.08, lobeWeight);
+            lobeRadius *= mix(
+              1.0,
+              0.7,
+              smoothstep(
+                mix(0.34, 0.5, uRocket),
+                mix(0.76, 1.08, uRocket),
+                uAge
+              )
+            );
             float lobeBoundary = lobeRadius
-              + erosion * mix(0.75, 1.25, timingShape.w);
+              * (1.0 + carve * mix(0.85, 1.3, timingShape.w));
             float lobeDensity = 1.0
-              - smoothstep(-0.032, 0.024, lobeDistance - lobeBoundary);
+              - smoothstep(-0.045, 0.028, lobeDistance - lobeBoundary);
             lobeDensity *= ignition;
 
             // A probabilistic union keeps the dense centre connected but
             // preserves genuine voids between independently moving lobes.
             density = 1.0 - (1.0 - density) * (1.0 - lobeDensity);
-            float lobeHeat = exp(
-              -localAge * mix(4.3, 3.15, uRocket)
-            ) * mix(0.62, 1.12, timingShape.w);
-            float lobeCore = clamp(
-              1.0 - lobeDistance / max(0.001, lobeBoundary),
+            float lobeShell = clamp(
+              lobeDistance / max(0.001, lobeBoundary),
               0.0,
               1.0
             );
+            float lobeHeat = exp(
+              -localAge * mix(3.4, 2.6, uRocket)
+            ) * mix(0.62, 1.12, timingShape.w)
+              * mix(1.0, 0.42, smoothstep(0.5, 1.0, lobeShell))
+              * mix(0.6, 1.3, hotKernel);
             temperature = max(
               temperature,
               lobeDensity * lobeHeat
-                * (0.12 + pow(lobeCore, 0.58) * 0.9)
+                * (0.12 + pow(1.0 - lobeShell, 0.58) * 0.95)
             );
             smokeSignal = max(
               smokeSignal,
               lobeDensity * smoothstep(
-                0.1 + timingShape.w * 0.07,
-                mix(0.4, 0.58, uRocket),
+                0.07 + timingShape.w * 0.05,
+                mix(0.32, 0.5, uRocket),
                 localAge
               )
             );
           }
 
+          // The hot volume is only the pressure/combustion phase. It must not
+          // survive as one slowly rising smoke object; cooling packets are
+          // emitted into the separate spherical-particle cloud below.
+          float volumeFade = 1.0 - smoothstep(
+            mix(0.52, 0.72, uRocket),
+            mix(0.88, 1.2, uRocket),
+            uAge
+          );
+          density *= volumeFade;
+          smokeSignal *= volumeFade;
+
           if (density > 0.001) {
-            float thermalPattern = broadNoise * 0.68 + detailNoise * 0.32;
             float thermalBreakup = mix(
-              0.32,
-              1.28,
-              smoothstep(0.18, 0.82, thermalPattern)
+              0.58,
+              1.16,
+              smoothstep(0.22, 0.78, broadNoise)
             );
-            temperature = clamp(temperature * thermalBreakup, 0.0, 1.15);
+            temperature = clamp(temperature * thermalBreakup, 0.0, 1.2);
+            // Marbled crust: thin bright filaments between darker cooling
+            // cells — the magma-crack texture of a real fireball surface.
+            float ridge = 1.0 - abs(detailNoise * 2.0 - 1.0);
+            float crack = smoothstep(0.82, 0.985, ridge);
+            temperature = min(1.2, temperature * (1.0 + crack * 0.7));
             float soot = clamp(smokeSignal, 0.0, 1.0)
-              * (0.38 + 0.62 * (1.0 - temperature));
+              * (0.45 + 0.55 * (1.0 - temperature));
             // Hot gas emits strongly but absorbs little. The previous fixed
             // extinction made the nearest lobe opaque, hiding the white core
             // and flattening every cluster into a camera-facing patch.
-            float extinction = density * mix(2.2, 17.0, soot);
+            float extinction = density * mix(2.4, 19.0, soot);
             float sampleAlpha = 1.0 - exp(-extinction * segment);
-
-            vec3 smokeColor = mix(
-              uDustColor * 0.27,
-              uDustColor * 0.72,
-              0.25 + 0.55 * broadNoise + centered.y * 0.2
+            float hotCoverage = smoothstep(0.1, 0.48, temperature);
+            float sampleFlameCoverage = 1.0 - exp(
+              -density * hotCoverage * 15.0 * segment
             );
+            flameCoverage += (1.0 - flameCoverage) * sampleFlameCoverage;
+
+            // Combustion soot is near-black; the pale masonry dust belongs
+            // to the separate particle cloud. Only the dissolving tail of
+            // the volume takes the material dust tint.
+            float dustPhase = smoothstep(0.5, 0.96, uAge / uLife);
+            vec3 sootBody = vec3(0.032, 0.030, 0.028)
+              * (0.7 + 0.6 * broadNoise);
+            vec3 dustBody = uDustColor * mix(0.3, 0.62, broadNoise);
+            vec3 smokeColor = mix(sootBody, dustBody, dustPhase * 0.8);
             float emissionMask = temperature
               * mix(1.0, 0.36, smoothstep(0.62, 1.0, density) * soot);
+            // The first frames overexpose: real cameras never resolve the
+            // detonation flash as a politely lit orange volume.
+            emissionMask *= 1.0 + 1.6 * exp(-uAge * 7.0);
             vec3 emission = fireColor(temperature) * emissionMask;
             vec3 scattered = fireColor(min(0.58, temperature))
               * temperature * density * 0.18;
@@ -475,8 +450,15 @@ function createFireballMaterial(noise: Data3DTexture): ShaderMaterial {
           cursor += segment;
         }
 
-        if (opacity < 0.004) discard;
-        fragColor = vec4(accumulated / max(0.001, opacity), opacity);
+        float outputAlpha = max(
+          opacity,
+          smoothstep(0.025, 0.34, flameCoverage)
+        );
+        if (outputAlpha < 0.004) discard;
+        fragColor = vec4(
+          accumulated / max(0.001, opacity),
+          outputAlpha
+        );
       }
     `,
   });
@@ -537,9 +519,24 @@ function createTrailMaterial(): ShaderMaterial {
         float size = aSize * growth;
         vec3 camRight = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
         vec3 camUp = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
+        vec2 viewVelocity = (viewMatrix * vec4(aVelocity, 0.0)).xy;
+        vec2 streakDirection = length(viewVelocity) > 0.001
+          ? normalize(viewVelocity)
+          : vec2(1.0, 0.0);
+        vec3 streakAxis = camRight * streakDirection.x
+          + camUp * streakDirection.y;
+        vec3 streakAcross = camRight * -streakDirection.y
+          + camUp * streakDirection.x;
+        // Hot sparks stretch into long radial streaks; cold fragments stay
+        // compact. Streak length follows launch speed and heat.
+        float streakMax = 4.3 + aHeat * 5.5;
+        float streakGain = 0.24 * (1.0 + aHeat * 1.2);
+        float streak = aKind > 0.5 && aKind < 1.5
+          ? 1.7 + min(streakMax, length(aVelocity) * streakGain) * (1.0 - life)
+          : 1.14;
         vec3 world = center
-          + camRight * position.x * size * 1.14
-          + camUp * position.y * size;
+          + streakAxis * position.x * size * streak
+          + streakAcross * position.y * size;
         vQuad = position.xy;
         vLife = life;
         vSeed = aSeed;
@@ -575,15 +572,16 @@ function createTrailMaterial(): ShaderMaterial {
         float appear = smoothstep(0.0, appearWindow, vLife);
         float fade = smoothstep(1.0, vKind < 0.5 ? 0.48 : 0.58, vLife);
         float density = vKind < 0.5 ? 0.72 : (vKind < 1.5 ? 0.68 : 0.24);
-        float heatEnd = 0.13 + vSeed * 0.17;
-        float heat = vHeat * smoothstep(heatEnd, 0.012, vLife);
+        // Sparks glow for most of their flight, not the first frames only.
+        float heatEnd = 0.13 + vSeed * 0.17 + vHeat * 0.42;
+        float heat = vHeat * (1.0 - smoothstep(0.012, heatEnd, vLife));
         alpha *= billow * appear * fade * density * mix(1.0, 1.38, heat);
         if (alpha < 0.003) discard;
         float softLight = 0.82 + (p.y * 0.5 + 0.5) * 0.18;
         vec3 aged = mix(vColor * 0.72, vColor * 1.12, vLife);
         vec3 hot = mix(
-          vec3(2.35, 0.48, 0.045),
-          vec3(4.25, 2.35, 0.62),
+          vec3(1.25, 0.2, 0.018),
+          vec3(7.0, 3.1, 0.55),
           smoothstep(0.25, 0.92, heat)
         );
         vec3 cloud = mix(aged * softLight, hot, heat);
@@ -614,76 +612,184 @@ function createFireballSlot(): FireballSlot {
   };
 }
 
-function configureFireballLobes(
-  slot: FireballSlot,
-  definition: ExplosionFxDefinition,
-  seed: number,
-): void {
-  const candidates = definition.lobes
-    .map((lobe, index) => {
-      const direction = new Vector3(...lobe.direction);
-      if (direction.lengthSq() < 0.0001) direction.set(0, 1, 0);
-      direction.normalize();
-      const variation = 0.86 + random01(seed, index, 71) * 0.28;
-      return {
-        direction,
-        weight: Math.max(0, Math.min(1, lobe.weight)),
-        delay: Math.max(0, lobe.delay),
-        score: lobe.weight * variation,
-        sourceIndex: index,
-      };
-    })
-    .filter((candidate) => candidate.weight > 0.035)
-    .sort((left, right) => right.score - left.score);
-
-  const selected: typeof candidates = [];
-  for (const candidate of candidates) {
-    // Nearby probes describe one macroscopic vent. Keep the strongest one,
-    // then spend the remaining budget on genuinely different directions.
-    const overlaps = selected.some(
-      (existing) => existing.direction.dot(candidate.direction) > 0.82,
-    );
-    if (overlaps) continue;
-    selected.push(candidate);
-    if (selected.length >= MAX_FIREBALL_LOBES) break;
-  }
-
-  // A highly enclosed blast can leave too few transmitted probes. Retain its
-  // strongest remaining directions at reduced size instead of reverting to a
-  // perfect sphere.
-  for (const candidate of candidates) {
-    if (selected.length >= Math.min(4, MAX_FIREBALL_LOBES)) break;
-    if (selected.includes(candidate)) continue;
-    selected.push(candidate);
-  }
-
-  slot.lobeCount = selected.length;
+function configureFireballSlot(slot: FireballSlot, plan: FireballPlan): void {
+  slot.lobeCount = Math.min(plan.lobes.length, MAX_FIREBALL_LOBES);
   for (let index = 0; index < MAX_FIREBALL_LOBES; index += 1) {
     const directionWeight = slot.lobeDirectionWeights[index];
     const timingShape = slot.lobeTimingShapes[index];
-    const candidate = selected[index];
-    if (!candidate) {
+    const lobe = plan.lobes[index];
+    if (!lobe) {
       directionWeight.set(0, 1, 0, 0);
       timingShape.set(0, 0, 0, 0);
       continue;
     }
-    const randomRadius = 0.88 + random01(seed, candidate.sourceIndex, 79) * 0.24;
-    const randomTravel = 0.86 + random01(seed, candidate.sourceIndex, 83) * 0.3;
-    const shapeSeed = random01(seed, candidate.sourceIndex, 89);
-    const visibleWeight = Math.sqrt(Math.max(0.04, candidate.weight));
     directionWeight.set(
-      candidate.direction.x,
-      candidate.direction.y,
-      candidate.direction.z,
-      visibleWeight,
+      lobe.direction[0],
+      lobe.direction[1],
+      lobe.direction[2],
+      lobe.visibleWeight,
     );
-    timingShape.set(
-      candidate.delay + shapeSeed * 0.025,
-      (0.115 + visibleWeight * 0.085) * randomTravel,
-      (0.105 + visibleWeight * 0.105) * randomRadius,
-      shapeSeed,
-    );
+    timingShape.set(lobe.delay, lobe.travel, lobe.radius, lobe.shape);
   }
+}
+
+/**
+ * A camera-facing strip: position.x ∈ [0..1] is the along-trail parameter
+ * (0 = burning head, 1 = oldest point), position.y = ±0.5 across.
+ */
+function createRibbonGeometry(segments: number): BufferGeometry {
+  const geometry = new BufferGeometry();
+  const positions = new Float32Array((segments + 1) * 2 * 3);
+  const indices: number[] = [];
+  for (let index = 0; index <= segments; index += 1) {
+    const along = index / segments;
+    positions.set([along, -0.5, 0], index * 2 * 3);
+    positions.set([along, 0.5, 0], (index * 2 + 1) * 3);
+    if (index < segments) {
+      const corner = index * 2;
+      indices.push(corner, corner + 1, corner + 2);
+      indices.push(corner + 1, corner + 3, corner + 2);
+    }
+  }
+  geometry.setAttribute("position", new BufferAttribute(positions, 3));
+  geometry.setIndex(indices);
+  return geometry;
+}
+
+/**
+ * Ballistic ribbon trails: each instance renders the recent arc of one
+ * burning fragment (hot head, incandescent tail) or one cooled faller (grey
+ * smoke thread). The whole path is reconstructed analytically per vertex —
+ * drag decay plus gravity droop — so trails curve like the references and
+ * cost nothing on the CPU.
+ */
+function createRibbonMaterial(): ShaderMaterial {
+  return new ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    blending: NormalBlending,
+    toneMapped: false,
+    uniforms: { uTime: { value: 0 } },
+    vertexShader: /* glsl */ `
+      uniform float uTime;
+      attribute vec3 aOrigin;
+      attribute vec3 aVelocity;
+      attribute vec4 aTiming;
+      attribute vec4 aStyle;
+      attribute vec3 aColor;
+      attribute vec4 aClamp;
+      varying float vAlong;
+      varying float vLife;
+      varying float vHeat;
+      varying float vSeed;
+      varying vec3 vColor;
+
+      vec3 pathPoint(float tau, float drag, float grav) {
+        float travel = (1.0 - exp(-drag * tau)) / drag;
+        vec3 point = aOrigin + aVelocity * travel;
+        point.y -= grav * tau * tau * 0.5;
+        // A falling arc lands ON the birth surface and its thread lies
+        // along it, instead of the trail sinking into ground or facade.
+        if (dot(aClamp.xyz, aClamp.xyz) > 0.5) {
+          float depth = dot(point, aClamp.xyz) - aClamp.w;
+          if (depth < 0.03) point += aClamp.xyz * (0.03 - depth);
+        }
+        return point;
+      }
+
+      void main() {
+        float age = uTime - aTiming.x;
+        float duration = aTiming.y;
+        if (duration <= 0.0 || age < 0.0 || age >= duration) {
+          gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+          vLife = 1.0;
+          return;
+        }
+        float life = clamp(age / duration, 0.0, 1.0);
+        float along = position.x;
+        float window = aStyle.w;
+        float tau = max(0.0, age - along * window);
+        // Light burning sparks brake hard and barely droop; heavy cooled
+        // fallers keep little drag and drop out of the cloud.
+        float drag = mix(0.85, 1.7, aStyle.z);
+        float grav = mix(8.5, 3.8, aStyle.z);
+        vec3 head = pathPoint(tau, drag, grav);
+        vec3 lookAhead = pathPoint(tau + 0.03, drag, grav) - head;
+        float aheadLength = length(lookAhead);
+        vec3 tangent = aheadLength > 0.0001
+          ? lookAhead / aheadLength
+          : vec3(0.0, -1.0, 0.0);
+        vec3 view = normalize(head - cameraPosition);
+        vec3 acrossRaw = cross(tangent, view);
+        float acrossLength = length(acrossRaw);
+        vec3 across = acrossLength > 0.001
+          ? acrossRaw / acrossLength
+          : normalize(cross(tangent, vec3(0.0, 1.0, 0.0)) + vec3(0.001));
+        float width = aTiming.w
+          * (1.0 - along * 0.72)
+          * (0.6 + 0.4 * (1.0 - life));
+        vec3 world = head + across * position.y * width;
+        vAlong = along;
+        vLife = life;
+        vHeat = aStyle.z;
+        vSeed = aStyle.x;
+        vColor = aColor;
+        gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      precision mediump float;
+      varying float vAlong;
+      varying float vLife;
+      varying float vHeat;
+      varying float vSeed;
+      varying vec3 vColor;
+
+      void main() {
+        float taper = 1.0 - vAlong;
+        float appear = smoothstep(0.0, 0.05, vLife);
+        float fade = 1.0 - smoothstep(0.55, 1.0, vLife);
+        float flicker = 0.8 + 0.2 * sin(vSeed * 40.0 + vAlong * 26.0);
+        float alpha = pow(taper, 1.35) * appear * fade
+          * mix(0.3, 0.85, vHeat) * flicker;
+        if (alpha < 0.004) discard;
+        // The head stays incandescent, the tail cools through the ramp; a
+        // dead-cold ribbon is just a grey smoke thread.
+        float glow = vHeat * (1.0 - vAlong * 0.85) * (1.0 - 0.75 * vLife);
+        vec3 hot = mix(
+          vec3(1.3, 0.32, 0.045),
+          vec3(9.5, 4.4, 1.15),
+          smoothstep(0.15, 0.85, glow)
+        );
+        vec3 color = mix(vColor, hot, smoothstep(0.05, 0.4, glow));
+        gl_FragColor = vec4(color, alpha);
+      }
+    `,
+  });
+}
+
+function writePlannedParticles(
+  pool: ParticlePool,
+  planned: readonly PlannedParticle[],
+  now: number,
+): void {
+  for (const particle of planned) {
+    writeParticle(pool, {
+      origin: particle.origin,
+      velocity: particle.velocity,
+      reach: particle.reach,
+      birth: now + particle.birthOffset,
+      life: particle.life,
+      size: particle.size,
+      seed: particle.seed,
+      kind: particle.kind,
+      heat: particle.heat,
+      density: particle.density,
+      clampPlane: particle.clampPlane,
+      color: particle.color,
+    });
+  }
+  markPoolDirty(pool);
 }
 
 export function ExplosionFxSystem({
@@ -697,6 +803,7 @@ export function ExplosionFxSystem({
 }) {
   const { camera: renderCamera, gl, scene: renderScene } = useThree();
   const trailMesh = useRef<InstancedMesh>(null);
+  const smokeMesh = useRef<InstancedMesh>(null);
   const fireballRefs = useRef<Array<Mesh | null>>(
     Array.from({ length: FIREBALL_CAPACITY }, () => null),
   );
@@ -704,11 +811,26 @@ export function ExplosionFxSystem({
     Array.from({ length: LIGHT_CAPACITY }, () => null),
   );
   const trailPool = useMemo(
-    () => createPool(TRAIL_CAPACITY, createTrailMaterial()),
+    () => createBillboardPool(TRAIL_CAPACITY, createTrailMaterial()),
     [],
   );
+  const ribbonPool = useMemo(
+    () =>
+      createPoolWithGeometry(
+        RIBBON_CAPACITY,
+        createRibbonMaterial(),
+        createRibbonGeometry(RIBBON_SEGMENTS),
+      ),
+    [],
+  );
+  const fireballNoise = useMemo(() => createFxNoiseTexture(), []);
+  // The smoke shares the fireball's noise volume: one world-anchored field
+  // both carves the flame and folds the aftermath cloud.
+  const smokePool = useMemo(
+    () => createBillowSmokePool(SMOKE_CAPACITY, fireballNoise),
+    [fireballNoise],
+  );
   const fireballGeometry = useMemo(() => new BoxGeometry(1, 1, 1), []);
-  const fireballNoise = useMemo(() => createExplosionNoiseTexture(), []);
   const fireballMaterials = useMemo(
     () =>
       Array.from({ length: FIREBALL_CAPACITY }, () =>
@@ -729,8 +851,13 @@ export function ExplosionFxSystem({
       life: 0,
       peak: 0,
       distance: 0,
+      emberLife: 0,
+      emberFraction: 0,
+      exposureKick: 0,
     })),
   );
+  const exposureBase = useRef<number | null>(null);
+  const lastExposureKick = useRef(1);
   const trailPosition = useMemo(() => new Vector3(), []);
   const trailColor = useMemo(() => new Color(), []);
   const cameraWorld = useMemo(() => new Vector3(), []);
@@ -738,6 +865,8 @@ export function ExplosionFxSystem({
 
   const clear = useCallback(() => {
     clearPool(trailPool);
+    clearPool(smokePool);
+    clearPool(ribbonPool);
     activeBlasts.current = [];
     for (const slot of fireballSlots.current) slot.life = 0;
     for (const fireball of fireballRefs.current) {
@@ -749,7 +878,7 @@ export function ExplosionFxSystem({
     for (const light of lightRefs.current) {
       if (light) light.intensity = 0;
     }
-  }, [trailPool]);
+  }, [ribbonPool, smokePool, trailPool]);
 
   const spawn = useCallback((definition: ExplosionFxDefinition) => {
     const now = performance.now() / 1000;
@@ -757,6 +886,7 @@ export function ExplosionFxSystem({
     const quality = Math.min(snapshot.cpuQuality, snapshot.gpuQuality);
     const rocket = definition.kind === "rocket";
     const seed = definition.id * 0.61803398875;
+    const plan = planFireball(definition, seed);
 
     const fireballIndex = fireballCursor.current;
     fireballCursor.current = (fireballCursor.current + 1) % FIREBALL_CAPACITY;
@@ -764,15 +894,34 @@ export function ExplosionFxSystem({
     fireball.position.set(...definition.position);
     fireball.dustColor.setRGB(...definition.dustColor);
     fireball.birth = now;
-    fireball.life = rocket ? 2.85 : 2.2;
-    fireball.diameter = rocket ? 5.4 : 3.15;
-    fireball.rocket = rocket;
+    fireball.life = plan.life;
+    fireball.diameter = plan.diameter;
+    fireball.rocket = plan.rocket;
     fireball.noiseOffset.set(
       random01(seed, 0, 13) * 9,
       random01(seed, 1, 17) * 9,
       random01(seed, 2, 19) * 9,
     );
-    configureFireballLobes(fireball, definition, seed);
+    configureFireballSlot(fireball, plan);
+    const secondaries = planExplosionSecondaries(
+      definition,
+      plan,
+      quality,
+      seed,
+    );
+    writePlannedParticles(smokePool, secondaries.smoke, now);
+    // kind 3 are ballistic ribbons (sparks and smoke-thread fallers); the
+    // flat-billboard pool keeps the puffs, fragments and jets.
+    writePlannedParticles(
+      trailPool,
+      secondaries.trail.filter((particle) => particle.kind !== 3),
+      now,
+    );
+    writePlannedParticles(
+      ribbonPool,
+      secondaries.trail.filter((particle) => particle.kind === 3),
+      now,
+    );
     activeBlasts.current = [
       ...activeBlasts.current.filter((blast) => blast.expiresAt > now),
       {
@@ -785,15 +934,19 @@ export function ExplosionFxSystem({
       },
     ].slice(-MAX_ACTIVE_BLASTS);
 
+    const lightPlan = EXPLOSION_LIGHT[definition.kind];
     const slotIndex = lightCursor.current;
     lightCursor.current = (lightCursor.current + 1) % LIGHT_CAPACITY;
     const slot = lightSlots.current[slotIndex];
     slot.position.set(...definition.position);
     slot.birth = now;
-    slot.life = rocket ? 0.42 : 0.28;
-    slot.peak = (rocket ? 150 : 78) * [0.72, 0.88, 1][quality];
-    slot.distance = rocket ? 7 : 4.2;
-  }, []);
+    slot.life = lightPlan.life;
+    slot.peak = lightPlan.peak * [0.72, 0.88, 1][quality];
+    slot.distance = lightPlan.distance;
+    slot.emberLife = lightPlan.emberLife;
+    slot.emberFraction = lightPlan.emberFraction;
+    slot.exposureKick = lightPlan.exposureKick;
+  }, [ribbonPool, smokePool, trailPool]);
 
   useEffect(() => {
     const api: ExplosionFxRuntime = { spawn, clear };
@@ -833,16 +986,36 @@ export function ExplosionFxSystem({
     () => () => {
       trailPool.geometry.dispose();
       trailPool.material.dispose();
+      smokePool.geometry.dispose();
+      smokePool.material.dispose();
+      ribbonPool.geometry.dispose();
+      ribbonPool.material.dispose();
       fireballGeometry.dispose();
       fireballNoise.dispose();
       for (const material of fireballMaterials) material.dispose();
+      if (exposureBase.current !== null) {
+        gl.toneMappingExposure = exposureBase.current;
+      }
     },
-    [fireballGeometry, fireballMaterials, fireballNoise, trailPool],
+    [
+      fireballGeometry,
+      fireballMaterials,
+      fireballNoise,
+      gl,
+      ribbonPool,
+      smokePool,
+      trailPool,
+    ],
   );
 
   useFrame(({ camera }) => {
     const now = performance.now() / 1000;
     trailPool.material.uniforms.uTime.value = now;
+    smokePool.material.uniforms.uTime.value = now;
+    ribbonPool.material.uniforms.uTime.value = now;
+    smokePool.material.uniforms.uLightWorld.value.copy(
+      environmentState.sunDirection,
+    );
     camera.getWorldPosition(cameraWorld);
     const quality = Math.min(
       performanceGovernor.getSnapshot().cpuQuality,
@@ -861,7 +1034,8 @@ export function ExplosionFxSystem({
       }
       mesh.visible = true;
       mesh.position.copy(slot.position);
-      mesh.scale.setScalar(slot.diameter);
+      // The raymarch box is wider than the fireball so jets have head-room.
+      mesh.scale.setScalar(slot.diameter * FIREBALL_BOX_SCALE);
       mesh.updateMatrixWorld();
       cameraLocal.copy(cameraWorld);
       mesh.worldToLocal(cameraLocal);
@@ -869,7 +1043,7 @@ export function ExplosionFxSystem({
       material.uniforms.uAge.value = age;
       material.uniforms.uLife.value = slot.life;
       material.uniforms.uRocket.value = slot.rocket ? 1 : 0;
-      material.uniforms.uSteps.value = [12, 18, 24][quality];
+      material.uniforms.uSteps.value = [14, 20, 28][quality];
       material.uniforms.uDustColor.value.copy(slot.dustColor);
       const qualityLobeCount = [4, 6, MAX_FIREBALL_LOBES][quality];
       material.uniforms.uLobeCount.value = Math.min(
@@ -894,19 +1068,52 @@ export function ExplosionFxSystem({
       const slot = lightSlots.current[index];
       if (!light) continue;
       const age = now - slot.birth;
-      if (slot.life <= 0 || age < 0 || age >= slot.life) {
+      if (slot.life <= 0 || age < 0 || age >= slot.life + slot.emberLife) {
         light.intensity = 0;
         continue;
       }
-      const progress = age / slot.life;
       light.position.copy(slot.position);
       light.distance = slot.distance;
-      light.color.setRGB(
-        1,
-        0.44 + 0.5 * Math.pow(1 - progress, 0.55),
-        0.08 + 0.52 * Math.pow(1 - progress, 1.2),
-      );
-      light.intensity = slot.peak * Math.pow(1 - progress, 2.1);
+      if (age < slot.life) {
+        const progress = age / slot.life;
+        light.color.setRGB(
+          1,
+          0.44 + 0.5 * Math.pow(1 - progress, 0.55),
+          0.08 + 0.52 * Math.pow(1 - progress, 1.2),
+        );
+        light.intensity = slot.peak * Math.pow(1 - progress, 2.1);
+      } else {
+        // Ember afterglow: the dust stays lit from within for over a second
+        // after the flash, flickering as the embers cool — without it the
+        // cloud goes dead-dark long before it disperses.
+        const emberProgress = (age - slot.life) / slot.emberLife;
+        const flicker = 0.8 + 0.2 * Math.sin(age * 34 + slot.birth * 13);
+        light.color.setRGB(1, 0.34 - emberProgress * 0.08, 0.05);
+        light.intensity =
+          slot.peak *
+          slot.emberFraction *
+          Math.pow(1 - emberProgress, 1.6) *
+          flicker;
+      }
+    }
+
+    // Camera flash: a brief exposure spike sells the detonation to the whole
+    // frame even where the point light cannot reach. The base exposure is
+    // captured lazily so the game's own setting stays authoritative, and
+    // writes stop once the kick has fully decayed.
+    let kick = 0;
+    for (const slot of lightSlots.current) {
+      const age = now - slot.birth;
+      if (slot.life <= 0 || age < 0 || age > 0.5) continue;
+      kick += slot.exposureKick * Math.exp(-age / EXPOSURE_KICK_TAU);
+    }
+    const kickFactor = 1 + Math.min(0.8, kick);
+    if (kickFactor > 1.002 || lastExposureKick.current > 1.002) {
+      if (exposureBase.current === null) {
+        exposureBase.current = gl.toneMappingExposure;
+      }
+      gl.toneMappingExposure = exposureBase.current * kickFactor;
+      lastExposureKick.current = kickFactor;
     }
 
     let trailChanged = false;
@@ -1018,7 +1225,18 @@ export function ExplosionFxSystem({
         ref={trailMesh}
         args={[trailPool.geometry, trailPool.material, TRAIL_CAPACITY]}
         frustumCulled={false}
-        renderOrder={8}
+        renderOrder={5}
+      />
+      <instancedMesh
+        ref={smokeMesh}
+        args={[smokePool.geometry, smokePool.material, SMOKE_CAPACITY]}
+        frustumCulled={false}
+        renderOrder={6}
+      />
+      <instancedMesh
+        args={[ribbonPool.geometry, ribbonPool.material, RIBBON_CAPACITY]}
+        frustumCulled={false}
+        renderOrder={6}
       />
       {Array.from({ length: LIGHT_CAPACITY }, (_, index) => (
         <pointLight

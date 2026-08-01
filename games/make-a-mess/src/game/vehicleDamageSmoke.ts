@@ -10,7 +10,7 @@ export interface VehicleEngineDamageSmoke {
 /** Damage smoke reads the same actuator membership as propulsion itself. */
 export function vehicleEngineDamageSmoke(
   bindings: readonly CommandActuatorBinding[],
-  inactiveMemberIds: ReadonlySet<string>,
+  damagedMemberIds: ReadonlySet<string>,
   engineIndex: number,
 ): VehicleEngineDamageSmoke {
   const channel = `throttle:${engineIndex}`;
@@ -25,7 +25,7 @@ export function vehicleEngineDamageSmoke(
   let detachedAnchorPieceId: string | null = null;
   for (const binding of matches) {
     const requiredMissing = binding.members.find(
-      (member) => member.required && inactiveMemberIds.has(member.pieceId),
+      (member) => member.required && damagedMemberIds.has(member.pieceId),
     );
     detachedAnchorPieceId ??= requiredMissing?.pieceId ?? null;
     if (requiredMissing) {
@@ -34,7 +34,7 @@ export function vehicleEngineDamageSmoke(
     const attachedContribution = binding.members.reduce(
       (sum, member) =>
         sum +
-        (!member.required && !inactiveMemberIds.has(member.pieceId)
+        (!member.required && !damagedMemberIds.has(member.pieceId)
           ? member.contribution
           : 0),
       0,
