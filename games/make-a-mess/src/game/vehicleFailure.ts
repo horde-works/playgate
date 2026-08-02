@@ -308,6 +308,17 @@ export interface VehicleFailureObservation {
   readonly pitch: number;
   readonly roll: number;
   readonly headingError: number;
+  /**
+   * Курс машины задаётся её носом.
+   *
+   * Верно для корпуса, который умеет идти только туда, куда смотрит: у него
+   * отвёрнутый нос и есть сход с линии. Машина с векторной тягой держит
+   * линию телом, а нос ведёт отдельно — упреждая поворот или разглядывая
+   * причал, — и мерить её сход по носу значит судить исправную машину за
+   * то, ради чего эта тяга и сделана. Для таких машин поле выставляется в
+   * false: сход считается по самой траектории, а нос остаётся наблюдением.
+   */
+  readonly courseFollowsNose?: boolean;
   /** Actual yaw rate minus the turn rate explicitly requested by autopilot. */
   readonly yawRateError: number;
   /**
@@ -650,7 +661,8 @@ export function advanceVehicleFailureWatchdog(
   const routeSeconds = heldSeconds(
     !suspended &&
       !observation.turning &&
-      (Math.abs(observation.headingError) > envelope.maximumHeadingError ||
+      ((observation.courseFollowsNose !== false &&
+        Math.abs(observation.headingError) > envelope.maximumHeadingError) ||
         observation.crossTrackError > envelope.maximumCrossTrackError ||
         Math.abs(observation.altitudeError ?? 0) >
           envelope.maximumAltitudeError),

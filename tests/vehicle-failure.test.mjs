@@ -1024,3 +1024,60 @@ test("a recoverable deviation never reaches the watchdog as a divergence", () =>
     true,
   );
 });
+
+test("отвёрнутый нос — не сход с маршрута для машины с векторной тягой", () => {
+  // Гексакоптер идёт по линии телом, а нос ведёт отдельно: упреждает поворот,
+  // разглядывает причал, заходит крабом. В живом прогоне он летел в 4.7 м от
+  // трассы при полностью исправных органах и получал routeDivergence за 113°
+  // отворота носа. Сход считается по траектории; нос остаётся наблюдением.
+  let crabbing = createVehicleFailureWatchdog(0.4);
+  let crabbingFailure = null;
+  for (let seconds = 0; crabbingFailure === null && seconds < 30; seconds += 0.1) {
+    const result = advanceVehicleFailureWatchdog(
+      crabbing,
+      observation({
+        courseFollowsNose: false,
+        headingError: Math.PI * 0.63,
+        progress: 0.4 + seconds * 0.005,
+      }),
+    );
+    crabbing = result.state;
+    crabbingFailure = result.failure;
+  }
+  assert.equal(crabbingFailure, null);
+
+  // Корпус, который умеет идти только туда, куда смотрит, судится по-прежнему.
+  let bound = createVehicleFailureWatchdog(0.4);
+  let boundFailure = null;
+  for (let seconds = 0; boundFailure === null && seconds < 30; seconds += 0.1) {
+    const result = advanceVehicleFailureWatchdog(
+      bound,
+      observation({
+        courseFollowsNose: true,
+        headingError: Math.PI * 0.63,
+        progress: 0.4 + seconds * 0.005,
+      }),
+    );
+    bound = result.state;
+    boundFailure = result.failure;
+  }
+  assert.equal(boundFailure, "routeDivergence");
+
+  // Снос остаётся приговором для любой машины: тяга вбок не отменяет линии.
+  let adrift = createVehicleFailureWatchdog(0.4);
+  let adriftFailure = null;
+  for (let seconds = 0; adriftFailure === null && seconds < 30; seconds += 0.1) {
+    const result = advanceVehicleFailureWatchdog(
+      adrift,
+      observation({
+        courseFollowsNose: false,
+        crossTrackError:
+          DEFAULT_VEHICLE_FAILURE_ENVELOPE.maximumCrossTrackError + 3,
+        progress: 0.4 + seconds * 0.005,
+      }),
+    );
+    adrift = result.state;
+    adriftFailure = result.failure;
+  }
+  assert.equal(adriftFailure, "routeDivergence");
+});

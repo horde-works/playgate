@@ -49,6 +49,7 @@ import {
   engineValuesPortToStarboard,
   advanceDrivePhase,
   advanceVehicleRouteProgress,
+  PROGRESS_SEARCH_ARC,
   autopilot,
   shipForces,
   isDockingSettleWindow,
@@ -701,6 +702,10 @@ interface FrameState {
   rotorAuthority: RotorcraftAuthority | null;
   /** Command the bounded rotor allocator actually accepted last step. */
   rotorAcceptedYawRate: number | null;
+  /** Последнее требование автомата по рысканью — для разбора поведения носа. */
+  lastGuidanceYawRate: number | null;
+  /** Курс, который автомат хочет от носа, град. */
+  lastHeadingTarget: number | null;
   /** Directional yaw envelope reported to the common autopilot. */
   rotorYawRateLimits: {
     readonly minimum: number;
@@ -1182,6 +1187,8 @@ function restingState(engineCount: number): FrameState {
     rotorMotorOutput: Array.from({ length: engineCount }, () => 0),
     rotorAuthority: null,
     rotorAcceptedYawRate: null,
+    lastGuidanceYawRate: null,
+    lastHeadingTarget: null,
     rotorYawRateLimits: null,
     trimMassPositions: [],
     trimAvailable: [],
@@ -3562,6 +3569,12 @@ export function VehicleFrameSystem({
         mass.centre,
       );
       const shipModel = {
+        // Наклон винтового диска — это и есть способ перемещения мультиротора;
+        // у машины с оболочкой боковые движители швартовые, и вести её тем же
+        // законом значит отнимать у неё рейс: в прогоне дирижабль переставал
+        // раскручивать валы, а базальтовый скай-рам доползал последние восемь
+        // метров к причалу четырнадцать секунд.
+        vectoredTranslation: frame.flight.liftSource === "rotor",
         mass: mass.mass,
         inertiaYaw: mass.inertia[4],
         bodyCentre: mass.centre as [number, number, number],
@@ -4761,11 +4774,26 @@ export function VehicleFrameSystem({
         ) {
           const travelled =
             Math.hypot(state.body.velocity[0], state.body.velocity[2]) * step;
+          const groundSpeedNow = Math.hypot(
+            state.body.velocity[0],
+            state.body.velocity[2],
+          );
           flight.progress = advanceVehicleRouteProgress(
             plan,
             flight.progress,
             centreNow,
             travelled,
+            groundSpeedNow > 0.5
+              ? [
+                  state.body.velocity[0] / groundSpeedNow,
+                  state.body.velocity[2] / groundSpeedNow,
+                ]
+              : undefined,
+            // Срезать разворот позволено машине, которая перемещается наклоном
+            // движителей: она проходит излом мимо кончика штатно. Крейсерское
+            // судно идёт по линии, и та же поблажка уводит его счётчик вперёд
+            // самой машины — до причала оно тогда не доходит, а доползает.
+            frame.flight.liftSource === "rotor" ? PROGRESS_SEARCH_ARC : 0,
           );
           if (
             !flight.handoffRequested &&
@@ -4903,6 +4931,19 @@ export function VehicleFrameSystem({
             ),
           };
         }
+        state.lastGuidanceYawRate = Number(
+          piloted.guidance.yawRate.toFixed(3),
+        );
+        state.lastHeadingTarget = Number(
+          (
+            (Math.atan2(
+              piloted.headingTarget[1],
+              piloted.headingTarget[0],
+            ) *
+              180) /
+            Math.PI
+          ).toFixed(1),
+        );
         const watchdogResult = advanceVehicleFailureWatchdog(
           flight.watchdog,
           {
@@ -4911,6 +4952,13 @@ export function VehicleFrameSystem({
             pitch: tracking.pitch,
             roll: tracking.roll,
             headingError: tracking.headingError,
+            // Нос машины с векторной тягой курса не задаёт: тело держит линию
+            // само, а нос ведётся отдельно. Судить её сход по носу — значит
+            // выносить приговор исправной машине за то, ради чего эта тяга и
+            // поставлена: в замере гексакоптер шёл в 4.7 м от линии при
+            // полностью исправных органах и получал routeDivergence за 113°
+            // отворота носа.
+            courseFollowsNose: (frame.flight.limits.lateralThrust ?? 0) <= 1e-6,
             yawRateError:
               state.body.angularVelocity[1] -
               (usesRotorDynamics
@@ -5315,6 +5363,28 @@ export function VehicleFrameSystem({
               ? Number(state.flight.progress.toFixed(3))
               : null,
             recovery: state.recovery?.lifecycle.phase ?? null,
+            // Режим ведения. Ход по маршруту двигает только штатный полёт:
+            // в эпизоде коррекции прогресс намеренно стоит. Без этого поля
+            // замерший счётчик неотличим от сломанного счётчика.
+            correcting: state.flight?.trajectoryCorrection
+              ? `${state.flight.trajectoryCorrection.phase}:${state.flight.trajectoryCorrection.reason}`
+              : null,
+            goArounds: state.flight?.goArounds ?? null,
+            // Нос: сколько просит автомат, сколько разрешает распределитель
+            // тяги и сколько из этого принято. Без этих трёх чисел «машина
+            // не поворачивает нос» неотличимо от «машине нечем повернуть».
+            yawWanted: state.lastGuidanceYawRate ?? null,
+            yawLimit: state.rotorYawRateLimits
+              ? Number(
+                  Math.min(
+                    Math.abs(state.rotorYawRateLimits.minimum),
+                    Math.abs(state.rotorYawRateLimits.maximum),
+                  ).toFixed(3),
+                )
+              : null,
+            yawTaken: state.rotorAcceptedYawRate ?? null,
+            // Куда автомат хочет нос — против того, куда нос смотрит.
+            noseWanted: state.lastHeadingTarget,
             disposition: state.recovery?.lifecycle.disposition ?? null,
             // Условия controlMismatch поимённо: вердикт один, а поводов три,
             // и по симптому «машина визуально цела» их не различить.

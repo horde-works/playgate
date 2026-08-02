@@ -1008,6 +1008,29 @@ export const ROUTE_LOOKAHEAD = 52;
  * долго летит боком там, где могла бы уже смотреть вперёд.
  */
 export const HEADING_ALIGN_SECONDS = 2.2;
+
+/**
+ * Ширина коридора трассы, метры. Снос штатен — трасса для машины с векторной
+ * тягой ориентир, а не рельс, — но за пределами коридора упреждение носа
+ * сворачивается: иначе снос и упреждение начинают накручивать друг друга.
+ */
+export const ROUTE_CORRIDOR = 18;
+
+/**
+ * Длина участка линии, который счётчик хода просматривает вперёд у МАНЁВРЕННОЙ
+ * машины, метры. Берётся от геометрии разворота, а не от скорости: смысл окна
+ * в том, чтобы шпилька помещалась в него целиком и срезанный разворот
+ * засчитывался. Крейсерским судам это окно не выдаётся: они разворот не
+ * срезают, а поблажка уводит их счётчик вперёд машины.
+ */
+export const PROGRESS_SEARCH_ARC = 40;
+
+/**
+ * Насколько близко к линии обязана быть машина, чтобы ей засчитали кусок
+ * маршрута, который она срезала, метры. Взято от геометрии разворота: его
+ * плечи проходят в паре метров друг от друга.
+ */
+export const PROGRESS_JUMP_PROXIMITY = 6;
 /**
  * На посадочной прямой цель должна быть ближе: так корабль захватывает створ
  * до вокзала, а не идёт параллельно ему до последних метров.
@@ -1039,20 +1062,103 @@ export function advanceVehicleRouteProgress(
   progress: number,
   centre: SceneVector3,
   travelled: number,
+  /**
+   * Куда машина ИДЁТ, в осях мира. Нужен, чтобы отличить пройденный разворот
+   * от разворота, к которому машина только подлетает: у обоих плечи проходят
+   * рядом, и по одному расстоянию они неразличимы. Без этого довода срезанный
+   * разворот не засчитывается вовсе — как было раньше.
+   */
+  course?: readonly [number, number],
+  /**
+   * Длина участка, на котором машине позволено засчитать СРЕЗАННЫЙ разворот,
+   * метры. Ноль — счётчик идёт строго по пройденному, как у крейсерского
+   * судна: оно разворот не срезает, и поблажка ему только вредит. Ненулевое
+   * значение — привилегия манёвренной машины, которая честно проходит излом
+   * мимо кончика.
+   */
+  turnBackArc = 0,
 ): number {
-  const window = Math.max(0.02, (travelled / plan.length) * 8);
-  let nearest = progress;
-  let bestDistance = Number.POSITIVE_INFINITY;
-  for (let step = 0; step <= 24; step += 1) {
-    const s = Math.max(0, Math.min(1, progress - 0.004 + (window * step) / 24));
-    const point = plan.point(s);
-    const distance = Math.hypot(point[0] - centre[0], point[2] - centre[2]);
-    if (distance < bestDistance) {
-      bestDistance = distance;
-      nearest = s;
+  // СЧЁТЧИК ОБЯЗАН УВИДЕТЬ СОСТОЯВШИЙСЯ РАЗВОРОТ.
+  //
+  // Срезать шпильку машине не запрещено — так и ведёт себя пилот, которому
+  // важен не кончик разворота, а то, что он пройден. Но окно поиска шириной
+  // в несколько метров смотрело только на ближайшее продолжение линии: у
+  // разворота оба плеча идут рядом, машина оказывалась уже на обратном, а
+  // окно всё ещё упиралось в несделанный кончик. Ход не засчитывался ни
+  // вперёд (мешал кончик), ни назад (счётчик не умеет) — и застревал
+  // навсегда: в замере аккуратная петля 7 м/с вокруг одной точки, прогресс
+  // намертво 0.823, ни одного отказа.
+  //
+  // Окно поэтому всегда покрывает участок, на котором разворот помещается
+  // целиком. Пропустить больше него счётчик по-прежнему не может: за раз
+  // засчитывается не больше этого куска линии, и «срезать» половину рейса
+  // машине это не даёт.
+  const stepWindow = Math.max(0.02, (travelled / plan.length) * 8);
+  const window = Math.max(
+    // Доля рейса — вторая граница того же окна: сорок метров это разворот на
+    // трёхсотметровом круге и заметный кусок короткого перегона.
+    Math.min(turnBackArc / plan.length, 0.12),
+    stepWindow,
+  );
+  // Обычный ход ищется СВОЕЙ точностью. Растянуть один и тот же проход на всё
+  // широкое окно нельзя: шаг выборки грубеет с трети метра до метра, прогресс
+  // начинает убегать вперёд, профиль скорости кончается раньше машины — и она
+  // доползает к причалу последние метры вместо того, чтобы прийти.
+  const scan = (from: number, to: number, samples: number) => {
+    let at = progress;
+    let best = Number.POSITIVE_INFINITY;
+    for (let step = 0; step <= samples; step += 1) {
+      const s = Math.max(0, Math.min(1, from + ((to - from) * step) / samples));
+      const point = plan.point(s);
+      const distance = Math.hypot(point[0] - centre[0], point[2] - centre[2]);
+      if (distance < best) {
+        best = distance;
+        at = s;
+      }
     }
+    return { at, best };
+  };
+  const stepScan = scan(progress - 0.004, progress + stepWindow, 24);
+  const wideScan = scan(progress - 0.004, progress + window, 48);
+  const nearest = wideScan.at;
+  const bestDistance = wideScan.best;
+  const nearestInStep = stepScan.at;
+  // Обычный ход засчитывается по пройденному за шаг. Скачок дальше него — это
+  // заявка «разворот уже позади», и принимается она по двум признакам сразу:
+  // машина ДЕЙСТВИТЕЛЬНО стоит у той точки, и участок между ними действительно
+  // завёрнут назад. Одной близости мало: плавная трасса тоже проходит рядом
+  // сама с собой, и по одной близости патрульная машина «доходила» до причала
+  // за десятки метров до него, а остаток ползла по кончившемуся профилю
+  // скорости — в прогоне последние восемь метров занимали четырнадцать секунд.
+  const jumped = nearest > progress + stepWindow;
+  if (!jumped) {
+    return Math.max(progress, nearest);
   }
-  return Math.max(progress, nearest);
+  const tangentAt = (at: number): readonly [number, number] => {
+    const span = Math.min(0.004, 2 / plan.length);
+    const back = plan.point(Math.max(0, at - span));
+    const ahead = plan.point(Math.min(1, at + span));
+    const dx = ahead[0] - back[0];
+    const dz = ahead[2] - back[2];
+    const length = Math.hypot(dx, dz) || 1;
+    return [dx / length, dz / length];
+  };
+  const here = tangentAt(progress);
+  const there = tangentAt(nearest);
+  const turnedBack = here[0] * there[0] + here[1] * there[1] < -0.2;
+  // Машина обязана УЖЕ ИДТИ по тому плечу, которое просит себе засчитать.
+  // Патрульная трасса разворачивается так же круто, как кольцевая, и её плечи
+  // проходят так же близко: без этого довода машина, только подлетающая к
+  // концу патруля, получала бы ход за обратное плечо и не доходила до цели.
+  const goingThere =
+    course !== undefined &&
+    course[0] * there[0] + course[1] * there[1] > 0.3;
+  return Math.max(
+    progress,
+    turnedBack && goingThere && bestDistance <= PROGRESS_JUMP_PROXIMITY
+      ? nearest
+      : nearestInStep,
+  );
 }
 
 /** The route has handed navigation to its hover-and-land final manoeuvre. */
@@ -1431,6 +1537,11 @@ export function shipForces(
  * управления. По этим числам он и предсказывает, где окажется.
  */
 export interface ShipModel {
+  /**
+   * Машина перемещается наклоном движителей, а не тягой вдоль носа.
+   * Мультиротор — да; дирижабль с швартовыми подруливающими — нет.
+   */
+  readonly vectoredTranslation?: boolean;
   readonly mass: number;
   readonly inertiaYaw: number;
   /** Центр масс в тех же авторских координатах, что точки органов управления. */
@@ -1911,6 +2022,14 @@ export interface VehicleGuidanceDemand {
 }
 
 /** Что общий автопилот доложил о себе. */
+/**
+ * Машина перемещается НАКЛОНОМ ДВИЖИТЕЛЕЙ, а не тягой вдоль носа.
+ *
+ * Это про мультиротор: диск винтов кренится и тянет машину в любую сторону,
+ * поэтому направление хода у неё не связано с носом. Боковая тяга сама по
+ * себе такого не означает — у дирижабля есть подруливающие, но они швартовые,
+ * а летит он носом вперёд, и вести его вектором значит ломать ему рейс.
+ */
 export interface AutopilotOutput {
   /** Корабельный контроллер: совместимый выход для плавучих машин. */
   readonly controls: ShipControls;
@@ -1920,6 +2039,12 @@ export interface AutopilotOutput {
   readonly goAround: boolean;
   /** Нейтральное требование, которое каждый вид машины исполняет сам. */
   readonly guidance: VehicleGuidanceDemand;
+  /**
+   * Куда автомат хочет нос, в осях мира. Отдаётся наружу именно потому, что
+   * по поведению машины это неразличимо: нос, стоящий поперёк курса, может
+   * означать и «прошу, но нечем повернуть», и «именно этого и прошу».
+   */
+  readonly headingTarget: readonly [number, number];
 }
 
 function shipControlsForGuidance(
@@ -2219,19 +2344,46 @@ export function autopilot(
         guess.heading[0] * tangentX + guess.heading[1] * tangentZ,
       ),
     );
-    const turnSeconds = Math.min(
-      6,
-      Math.max(HEADING_ALIGN_SECONDS, noseOff / yawAuthority),
+    // Упреждение — это ставка на будущее положение, и платит за неё снос.
+    // Пока машина держит трассу, ставка полная; чем дальше её снесло, тем
+    // ближе прицел возвращается под себя, иначе упреждение и снос начинают
+    // накручивать друг друга и машина уходит от линии всё дальше.
+    const driftPenalty = clamp01(
+      1 - Math.hypot(lateralErrorX, lateralErrorZ) / ROUTE_CORRIDOR,
     );
+    const turnSeconds =
+      Math.min(6, Math.max(HEADING_ALIGN_SECONDS, noseOff / yawAuthority)) *
+      driftPenalty;
     const leadProgress = Math.min(
       1,
       progress + (Math.max(groundSpeed, 1) * turnSeconds) / plan.length,
     );
+    // НАПРАВЛЕНИЕ БЕРЁТСЯ ТАМ, ГДЕ ОНО ЕСТЬ.
+    //
+    // Касательная в точке под машиной определена не везде. На вертикальном
+    // взлёте маршрут почти не смещается по горизонтали, и разность соседних
+    // точек — это шум: у него есть направление, но смысла в нём нет. Нос
+    // честно целился в этот шум, держал его весь подъём, а машина потом
+    // уходила по настоящему курсу — в замере с девяноста градусами разворота
+    // в долгу, которые она потом отрабатывала полминуты, идя боком.
+    //
+    // Поэтому прицел ищется вперёд по линии, пока горизонтальное смещение не
+    // станет осмысленным. Тогда на подъёме нос заранее разворачивается туда,
+    // куда машина полетит, и с площадки она уходит уже по курсу.
     const leadHere = plan.point(leadProgress);
-    const leadAhead = plan.point(Math.min(1, leadProgress + 6 / plan.length));
-    const leadX = leadAhead[0] - leadHere[0];
-    const leadZ = leadAhead[2] - leadHere[2];
-    const leadLength = Math.hypot(leadX, leadZ);
+    let leadX = 0;
+    let leadZ = 0;
+    let leadLength = 0;
+    for (let probe = 1; probe <= 8; probe += 1) {
+      const at = Math.min(1, leadProgress + (probe * 6) / plan.length);
+      const point = plan.point(at);
+      leadX = point[0] - leadHere[0];
+      leadZ = point[2] - leadHere[2];
+      leadLength = Math.hypot(leadX, leadZ);
+      if (leadLength >= 4 || at >= 1) {
+        break;
+      }
+    }
     const leadTangent: readonly [number, number] =
       leadLength > 1e-6
         ? [leadX / leadLength, leadZ / leadLength]
@@ -2362,11 +2514,27 @@ export function autopilot(
   // Поэтому на финальном участке продольная команда выводится из оставшегося
   // расстояния до причальной точки вдоль причального курса, а не из профиля.
   const holonomicBerthHold =
-    onApproach && (limits.lateralThrust ?? 0) > 1e-6;
-  const berthAlong = holonomicBerthHold
-    ? (berthPoint[0] - centre[0]) * approach.heading[0] +
-      (berthPoint[2] - centre[2]) * approach.heading[1]
-    : 0;
+    onApproach &&
+    (limits.lateralThrust ?? 0) > 1e-6 &&
+    model.vectoredTranslation === true;
+  // ОШИБКА МЕСТА — ЭТО ВЕКТОР, И МЕРИТЬ ЕЁ НАДО ЦЕЛИКОМ.
+  //
+  // Прежде остаток до причала считался вдоль ПРИЧАЛЬНОГО курса, а боковой
+  // контур — вдоль СВОЕГО борта. Пока нос смотрит на причал, эти две оси
+  // образуют нормальный базис. Но всенаправленная машина приходит на финиш
+  // как угодно повёрнутой, и при носе поперёк причального курса обе оси
+  // встают перпендикулярно ошибке: тридцать метров промаха проецируются в
+  // ноль СРАЗУ В ОБА КАНАЛА. Машина не «подходит медленно» — она вообще не
+  // видит, что промахнулась, и висит рядом с бертом, пока её сносит ветром.
+  //
+  // Поэтому желаемое движение строится вектором в осях мира, ограничивается
+  // по МОДУЛЮ и лишь затем раскладывается на нос и борт. Базис полный: любое
+  // направление промаха представимо. Ограничение до разложения — не деталь:
+  // именно одновременное насыщение обеих команд когда-то разносило машину,
+  // прикладывая полную горизонтальную силу ниже центра масс.
+  const berthErrorX = berthPoint[0] - centre[0];
+  const berthErrorZ = berthPoint[2] - centre[2];
+  const berthError = Math.hypot(berthErrorX, berthErrorZ);
   // Профиль маршрута в самом конце требует НУЛЯ скорости — он описывает рейс,
   // а не установку на место. Позиционной команде нужен собственный, малый
   // манёвренный предел, иначе машина честно останавливается ровно там, где
@@ -2388,9 +2556,78 @@ export function autopilot(
   // подбор коэффициентов.
   // Желаемый ход вдоль носа — то, о чём автопилот на самом деле просит. Ниже
   // он сплющивается в тягу, но само требование остаётся и отдаётся наружу.
+  // Темп подхода расписан по ОСТАВШЕМУСЯ РАССТОЯНИЮ, а не по профилю рейса.
+  // Профиль в последней точке требует нуля — он описывает рейс, а не установку
+  // на место, — и машина, промахнувшаяся мимо берта, добирала бы недостающие
+  // метры швартовочным ползком по полметра в секунду. Тормозная кривая от
+  // честного остатка сама сходится к этому ползку у самого стакана, но за
+  // десяток метров даёт нормальный подходной ход. Потолком служит скорость,
+  // с которой маршрут разрешает входить на посадочную прямую.
+  const berthApproachSpeed = Math.min(
+    Math.max(0.6, Math.sqrt(2 * 0.35 * berthError)),
+    Math.max(0.6, plan.speedLimit(plan.finalFrom)),
+  );
+  const berthDemand = holonomicBerthHold
+    ? Math.min(berthApproachSpeed, berthError * 0.7)
+    : 0;
+  const berthDemandX = berthError > 1e-6 ? (berthErrorX / berthError) * berthDemand : 0;
+  const berthDemandZ = berthError > 1e-6 ? (berthErrorZ / berthError) * berthDemand : 0;
+  // ТЕЛО ИДЁТ ПО ЛИНИИ, НОС СВОБОДЕН.
+  //
+  // Продольная команда — это ход ВДОЛЬ НОСА, и пока нос смотрел по касательной,
+  // этого хватало. Но носу разрешено уходить на упреждение поворота, а тяга
+  // мультиротора идёт следом за наклоном: машина честно выполняла «столько-то
+  // вперёд» в сторону, куда смотрела, и выписывала собственный круг снаружи
+  // маршрута — в замере до 82 м мимо трассы шириной 137 м, с раскачкой туда и
+  // обратно. Боковой контур в одиночку такой снос не вытягивал.
+  //
+  // Поэтому у машины с векторной тягой требование к ходу задаётся ВЕКТОРОМ на
+  // следующую точку линии и раскладывается на нос и борт. Кто куда смотрит,
+  // на траекторию больше не влияет: упреждение остаётся чистым рысканьем,
+  // а тело идёт по маршруту.
+  const holonomicRoute =
+    !onApproach &&
+    (limits.lateralThrust ?? 0) > 1e-6 &&
+    model.vectoredTranslation === true;
+  const aimErrorX = aim[0] - centre[0];
+  const aimErrorZ = aim[2] - centre[2];
+  const aimError = Math.hypot(aimErrorX, aimErrorZ);
+  // Знак хода несёт сам вектор: точка прицела лежит впереди по маршруту.
+  const routeDemand = Math.abs(wantedSpeed);
+  // ТЕЛО НЕ ОБГОНЯЕТ НОС.
+  //
+  // Требование-вектор машина исполняет наклоном винтов, то есть МГНОВЕННО, а
+  // нос разворачивается сопротивлением лопастей — у этой машины около десяти
+  // градусов в секунду. На изломе трассы курс движения переставлялся на
+  // девяносто градусов за три секунды, нос оставался позади и уже не догонял
+  // никогда: в замере он весь круг шёл на 60–90° в стороне, а к посадке летел
+  // почти задом.
+  //
+  // Поэтому направление хода ограничено углом сноса относительно носа. Внутри
+  // предела машина идёт крабом — это и просили: нос ведёт поворот, тело
+  // срезает. За пределом ход отклоняется обратно к носу, и машина сперва
+  // доворачивается, как всякий дрон. Предел не относится к причалу: там
+  // подход медленный и заходить боком на пятно машине не мешает.
+  const crabLimit = Math.PI / 3;
+  const noseAngle = Math.atan2(heading[1], heading[0]);
+  const wantAngle = Math.atan2(aimErrorZ, aimErrorX);
+  let crab = wantAngle - noseAngle;
+  while (crab > Math.PI) crab -= Math.PI * 2;
+  while (crab < -Math.PI) crab += Math.PI * 2;
+  const heldAngle =
+    noseAngle + Math.max(-crabLimit, Math.min(crabLimit, crab));
+  // Пока нос отрабатывает, ход придерживается: гнать полным ходом в сторону,
+  // отличную от требуемой, значит увозить машину с линии тем быстрее, чем
+  // сильнее она промахивается носом.
+  const crabExcess = Math.max(0, Math.abs(crab) - crabLimit);
+  const heldSpeed = routeDemand * clamp01(1 - crabExcess / (Math.PI / 2));
+  const routeDemandX = aimError > 1e-6 ? Math.cos(heldAngle) * heldSpeed : 0;
+  const routeDemandZ = aimError > 1e-6 ? Math.sin(heldAngle) * heldSpeed : 0;
   const requestedForwardSpeed = holonomicBerthHold
-    ? Math.max(-berthHoldSpeed, Math.min(berthHoldSpeed, berthAlong * 0.7))
-    : wantedSpeed;
+    ? berthDemandX * heading[0] + berthDemandZ * heading[1]
+    : holonomicRoute
+      ? routeDemandX * heading[0] + routeDemandZ * heading[1]
+      : wantedSpeed;
   // Высота остаётся требованием сверх веса. Чем его выполнить — клапаном
   // оболочки или общим газом винтов — решает видовой контроллер.
   const wantedAltitude =
@@ -2466,13 +2703,25 @@ export function autopilot(
   const swayCrossZ = errorZ - swayReferenceZ * swayAlong;
   const lateralOffset =
     swayCrossX * starboardAxis[0] + swayCrossZ * starboardAxis[1];
+  const starboardOffsetX = -heading[1];
+  const starboardOffsetZ = heading[0];
   const requestedLateralSpeed =
-    (limits.lateralThrust ?? 0) > 1e-6
-      ? Math.max(
-          -berthHoldSpeed,
-          Math.min(berthHoldSpeed, (lateralOffset * 0.9) / 1.6),
-        )
-      : 0;
+    (limits.lateralThrust ?? 0) <= 1e-6
+      ? 0
+      : holonomicBerthHold
+        ? // Вторая половина того же вектора: борт добирает ту часть промаха,
+          // которую нос не закрывает. Вместе они дают ровно `berthDemand`.
+          berthDemandX * starboardOffsetX + berthDemandZ * starboardOffsetZ
+        : holonomicRoute
+          ? // На маршруте — та же пара: борт довозит поперечную часть хода.
+            // Отдельного контура сноса здесь больше нет, он был бы вторым
+            // счётом того же самого: прицел лежит НА линии, и вектор на него
+            // сам возвращает машину к трассе.
+            routeDemandX * starboardOffsetX + routeDemandZ * starboardOffsetZ
+          : Math.max(
+              -berthHoldSpeed,
+              Math.min(berthHoldSpeed, (lateralOffset * 0.9) / 1.6),
+            );
   const guidance: VehicleGuidanceDemand = {
     forwardSpeed: requestedForwardSpeed,
     lateralSpeed: requestedLateralSpeed,
@@ -2492,6 +2741,7 @@ export function autopilot(
   );
 
   return {
+    headingTarget: [wanted[0], wanted[1]],
     controls: shipControl.controls,
     desiredYawRate: shipControl.desiredYawRate,
     goAround,
