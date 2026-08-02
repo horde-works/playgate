@@ -245,7 +245,18 @@ const GRAVITY = 9.81;
 
 /** Предельный наклон винтокрылой машины, если паспорт молчит. */
 const DEFAULT_ROTOR_TILT = (30 * Math.PI) / 180;
-/** Наибольшая угловая скорость рыскания по полному рулю, рад/с. */
+/**
+ * Темп рыскания по полному отклонению ручки, рад/с.
+ *
+ * Это ЖЕЛАНИЕ пилота, а не возможность машины. Мультиротор разворачивается
+ * вокруг вертикали вяло: момент ему даёт только реакция воздуха на вращение
+ * винтов, и располагаемые для этой машины 0.19 рад/с вчетверо меньше числа,
+ * которое здесь стояло как «предел». Разница стоила дорого: автомат просил
+ * недостижимое, упирался в потолок и каждым шагом подкручивал машину, пока
+ * она не наматывала лишние обороты вокруг себя прямо на маршруте. Настоящий
+ * предел приходит снизу, из аллокатора (`yawRateLimits`), и именно им теперь
+ * меряется любой запрос. Здесь остаётся только чувствительность ручки.
+ */
 const ROTOR_YAW_RATE = 0.9;
 /** Spinning visibly while leaving more than four fifths of the weight on gear. */
 const ROTOR_GROUND_IDLE_THROTTLE = 0.04;
@@ -5316,6 +5327,20 @@ export function VehicleFrameSystem({
             ),
             vx: Number(state.body.velocity[0].toFixed(2)),
             vz: Number(state.body.velocity[2].toFixed(2)),
+            // След на плане: по нему видно петли, которых нет в маршруте.
+            x: Number((mass.centre[0] + state.body.position[0]).toFixed(2)),
+            z: Number((mass.centre[2] + state.body.position[2]).toFixed(2)),
+            yaw: Number(
+              (
+                (Math.atan2(
+                  rotateByQuaternion(state.body.orientation, frame.nose)[0],
+                  -rotateByQuaternion(state.body.orientation, frame.nose)[2],
+                ) *
+                  180) /
+                Math.PI
+              ).toFixed(1),
+            ),
+            yawRate: Number(state.body.angularVelocity[1].toFixed(3)),
             spin: Number(Math.hypot(...state.body.angularVelocity).toFixed(2)),
           });
           if (trace.length > 400) {

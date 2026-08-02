@@ -999,6 +999,15 @@ export const SKY_TRAIN_UNDERWAY_TIME =
  */
 /** Крейсерская дальность упреждения вдоль линии, м. */
 export const ROUTE_LOOKAHEAD = 52;
+
+/**
+ * За сколько секунд машина с векторной тягой ВЫРАВНИВАЕТ нос по курсу, если
+ * власти хватает. Не «как быстро она может», а «как быстро ей стоит»: нос
+ * идёт к курсу спокойно, а положение всё это время держит боковая тяга.
+ * Меньше — дёрганый нос без выигрыша в траектории; больше — машина заметно
+ * долго летит боком там, где могла бы уже смотреть вперёд.
+ */
+export const HEADING_ALIGN_SECONDS = 2.2;
 /**
  * На посадочной прямой цель должна быть ближе: так корабль захватывает створ
  * до вокзала, а не идёт параллельно ему до последних метров.
@@ -2185,10 +2194,51 @@ export function autopilot(
   //
   // Поэтому у неё нос идёт по касательной маршрута, а у причала — по
   // причальному курсу, и никакой связи с ошибкой положения у него нет.
+  // Реальная власть машины по рысканию: сколько она СПОСОБНА, а не сколько
+  // записано в паспорте. Всё, что просит автомат, меряется этим числом.
+  const yawAuthority = model.yawRateLimits
+    ? Math.max(
+        0.05,
+        Math.min(
+          Math.abs(model.yawRateLimits.minimum),
+          Math.abs(model.yawRateLimits.maximum),
+        ),
+      )
+    : Infinity;
   if ((limits.lateralThrust ?? 0) > 1e-6) {
+    // УПРЕЖДЕНИЕ НОСА ВО ВРЕМЕНИ. Разворот у этой машины длится секунды, и
+    // целиться в касательную под собой значит опаздывать на весь этот срок:
+    // к концу доворота трасса уже повернула, и нос снова догоняет. Поэтому
+    // прицел берётся там, где машина ОКАЖЕТСЯ за время собственного
+    // разворота. На плавном участке это почти ничего не меняет, а на изломе
+    // машина начинает доворот заранее и входит в него боком — ровно так, как
+    // это делает живой пилот дрона. У причала курс задаёт створ.
+    const noseOff = Math.abs(
+      Math.atan2(
+        guess.heading[1] * tangentX - guess.heading[0] * tangentZ,
+        guess.heading[0] * tangentX + guess.heading[1] * tangentZ,
+      ),
+    );
+    const turnSeconds = Math.min(
+      6,
+      Math.max(HEADING_ALIGN_SECONDS, noseOff / yawAuthority),
+    );
+    const leadProgress = Math.min(
+      1,
+      progress + (Math.max(groundSpeed, 1) * turnSeconds) / plan.length,
+    );
+    const leadHere = plan.point(leadProgress);
+    const leadAhead = plan.point(Math.min(1, leadProgress + 6 / plan.length));
+    const leadX = leadAhead[0] - leadHere[0];
+    const leadZ = leadAhead[2] - leadHere[2];
+    const leadLength = Math.hypot(leadX, leadZ);
+    const leadTangent: readonly [number, number] =
+      leadLength > 1e-6
+        ? [leadX / leadLength, leadZ / leadLength]
+        : [tangentX, tangentZ];
     wanted = onApproach
       ? [approach.heading[0], approach.heading[1]]
-      : [tangentX, tangentZ];
+      : leadTangent;
   }
   const turn = guess.heading[1] * wanted[0] - guess.heading[0] * wanted[1];
   const facing = guess.heading[0] * wanted[0] + guess.heading[1] * wanted[1];
@@ -2216,8 +2266,28 @@ export function autopilot(
   // моменте шести колец раскручивает машину до нескольких рад/с, и корпус
   // опрокидывается тягой, приложенной ниже центра масс. Нужен закон посадки,
   // который ведёт МЕСТО и КУРС согласованно, а не два контура порознь.
-  const pursuit =
-    Math.abs(bearingError) > Math.PI / 2 && groundSpeed < 4
+  // НОС ЦЕЛИТСЯ ТУДА, ГДЕ МАШИНА ОКАЖЕТСЯ, А НЕ ГДЕ ОНА СЕЙЧАС ДОЛЖНА БЫТЬ.
+  //
+  // Погоня выведена для корпуса, который едет туда, куда смотрит: она просит
+  // темп, пропорциональный СКОРОСТИ, и не спрашивает, умеет ли машина так
+  // поворачиваться. Мультиротор так не умеет и не должен: рыскание у него
+  // рождается одним лишь реактивным моментом винтов и потому вяло, зато вбок
+  // он уходит мгновенно. Прежний закон на маршрутной скорости просил около
+  // 0.9 рад/с при физически доступных 0.19, упирался в потолок и каждым шагом
+  // подкручивал машину дальше — она наматывала лишние обороты вокруг себя,
+  // формально идя по трассе. На висении та же формула давала крохи, поэтому
+  // взлёт и посадка выглядели чисто: беда включалась вместе со скоростью.
+  //
+  // Здесь требование пропорционально ОШИБКЕ КУРСА и обратно времени, за
+  // которое машина реально успевает довернуть. Оно само убывает по мере
+  // выравнивания, поэтому раскрутки не возникает, а на остром угле разворот
+  // начинается заранее — корпус входит в поворот боком, на тяге, и нос
+  // приходит к курсу к тому моменту, когда он там понадобится.
+  const holonomic = (limits.lateralThrust ?? 0) > 1e-6;
+  const pursuit = holonomic
+    ? bearingError /
+      Math.max(HEADING_ALIGN_SECONDS, Math.abs(bearingError) / yawAuthority)
+    : Math.abs(bearingError) > Math.PI / 2 && groundSpeed < 4
       ? bearingError / 3
       : (2 * Math.max(groundSpeed, 1.5) * Math.sin(bearingError)) /
         Math.max(20, reach);
