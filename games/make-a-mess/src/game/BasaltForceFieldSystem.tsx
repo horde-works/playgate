@@ -26,7 +26,6 @@ import {
 import { BASALT_SKY_RAM_SHIELD_PROJECTION } from "./basaltSkyRamShield.ts";
 import type { SceneVector3 } from "./destructionScene.ts";
 import {
-  BASALT_FORCE_FIELD_CELLS,
   BASALT_FORCE_FIELD_PROJECTION,
   BASALT_FORCE_FIELD_CORE_GAIN,
   BASALT_FORCE_FIELD_CORE_SIGMA,
@@ -95,6 +94,22 @@ const NETWORK_RELIEF_SEED: Readonly<Record<BasaltForceFieldNetwork, number>> = {
   "ram-port": 11.431,
   "ram-starboard": 24.187,
   "ram-bow": 52.903,
+  "nimbus-east": 63.117,
+  "nimbus-west": 71.843,
+  "nimbus-north": 84.229,
+  "nimbus-south": 96.571,
+  "nimbus-crown": 109.337,
+  "nimbus-spindle-outward": 121.913,
+  "nimbus-spindle-inward": 134.527,
+  "nimbus-spindle-clockwise": 147.281,
+  "nimbus-spindle-counterclockwise": 159.847,
+  "nimbus-spindle-crown": 172.603,
+  "nimbus-dock-rear": 185.291,
+  "nimbus-dock-service": 197.857,
+  "nimbus-dock-habitation": 210.431,
+  "nimbus-dock-rear-crown": 223.109,
+  "nimbus-dock-service-crown": 235.693,
+  "nimbus-dock-habitation-crown": 248.267,
 };
 
 function cellVisualRelief(
@@ -298,8 +313,14 @@ const ForceFieldLayer = forwardRef<
     readonly projection: BasaltForceFieldProjection;
     readonly resetVersion: number;
     readonly getPose?: () => BasaltForceFieldPose | null;
+    readonly color?: string;
   }
->(function ForceFieldLayer({ projection, resetVersion, getPose }, forwardedRef) {
+>(function ForceFieldLayer({
+  projection,
+  resetVersion,
+  getPose,
+  color = "#ff2d18",
+}, forwardedRef) {
   const cells = projection.cells;
   const mesh = useRef<InstancedMesh>(null);
   const group = useRef<Group>(null);
@@ -338,7 +359,7 @@ const ForceFieldLayer = forwardRef<
     },
     uniforms: {
       uTime: { value: 0 },
-      uColor: { value: new Color("#ff2d18") },
+      uColor: { value: new Color(color) },
       uImpactPoint: { value: impacts.points },
       uImpactData: { value: impacts.data },
       uPressPoint: { value: presses.points },
@@ -357,7 +378,7 @@ const ForceFieldLayer = forwardRef<
     blending: AdditiveBlending,
     side: DoubleSide,
     toneMapped: false,
-  }), [impacts, presses]);
+  }), [color, impacts, presses]);
 
   useEffect(() => {
     geometry.setAttribute("aDamage", damageAttribute);
@@ -560,18 +581,29 @@ export const BasaltForceFieldSystem = forwardRef<
   BasaltForceFieldRuntime,
   {
     readonly resetVersion: number;
+    readonly staticProjection?: BasaltForceFieldProjection;
+    readonly staticColor?: string;
+    readonly includeSkyRam?: boolean;
     /** Live pose of the sky ram, or null while it is not in the world. */
     readonly skyRamPose?: () => BasaltForceFieldPose | null;
   }
->(function BasaltForceFieldSystem({ resetVersion, skyRamPose }, forwardedRef) {
+>(function BasaltForceFieldSystem({
+  resetVersion,
+  staticProjection = BASALT_FORCE_FIELD_PROJECTION,
+  staticColor = "#ff2d18",
+  includeSkyRam = true,
+  skyRamPose,
+}, forwardedRef) {
   const fortress = useRef<BasaltForceFieldRuntime>(null);
   const skyRam = useRef<BasaltForceFieldRuntime>(null);
-  const skyRamOffset = BASALT_FORCE_FIELD_PROJECTION.count;
+  const skyRamOffset = staticProjection.count;
 
   const layers = useCallback(() => [
     { runtime: fortress.current, offset: 0 },
-    { runtime: skyRam.current, offset: skyRamOffset },
-  ], [skyRamOffset]);
+    ...(includeSkyRam
+      ? [{ runtime: skyRam.current, offset: skyRamOffset }]
+      : []),
+  ], [includeSkyRam, skyRamOffset]);
 
   useImperativeHandle(forwardedRef, () => ({
     intersectSegment: (from, to, clearance = 0) => {
@@ -625,15 +657,18 @@ export const BasaltForceFieldSystem = forwardRef<
     <>
       <ForceFieldLayer
         ref={fortress}
-        projection={BASALT_FORCE_FIELD_PROJECTION}
+        projection={staticProjection}
         resetVersion={resetVersion}
+        color={staticColor}
       />
-      <ForceFieldLayer
-        ref={skyRam}
-        projection={BASALT_SKY_RAM_SHIELD_PROJECTION}
-        resetVersion={resetVersion}
-        getPose={skyRamPose}
-      />
+      {includeSkyRam ? (
+        <ForceFieldLayer
+          ref={skyRam}
+          projection={BASALT_SKY_RAM_SHIELD_PROJECTION}
+          resetVersion={resetVersion}
+          getPose={skyRamPose}
+        />
+      ) : null}
     </>
   );
 });

@@ -186,6 +186,8 @@ export interface SceneGroupDefinition {
 
 export interface SceneWorldDefinition {
   readonly playerSpawn: SceneVector3;
+  /** Initial camera yaw; 0 looks toward world -Z. */
+  readonly playerSpawnYaw?: number;
   readonly cameraFar: number;
   readonly center: readonly [x: number, z: number];
   readonly halfExtents: readonly [x: number, z: number];

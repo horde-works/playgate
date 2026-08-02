@@ -1290,6 +1290,60 @@ export function FirstPersonRocketLauncher({
   );
 }
 
+/** Никакого ствола: игрок держит сам заряд и лепит его в точку прицела. */
+export function FirstPersonDemolitionCharge() {
+  const group = useRef<Group>(null);
+  const { camera } = useThree();
+  const equipProgress = useRef(0);
+  const localOffset = useMemo(() => new Vector3(), []);
+  const cameraQuaternion = useMemo(() => new Quaternion(), []);
+  const toolEuler = useMemo(() => new Euler(), []);
+
+  useFrame((state, delta) => {
+    if (!group.current) return;
+    equipProgress.current = Math.min(1, equipProgress.current + delta * 4.2);
+    const equip = 1 - Math.pow(1 - equipProgress.current, 3);
+    const draw = 1 - equip;
+    const idleScale = viewmodelIdleScale();
+    const idleX = Math.sin(state.clock.elapsedTime * 1.4) * 0.006 * idleScale;
+    const idleY = Math.sin(state.clock.elapsedTime * 2.2 + 0.8) * 0.005 * idleScale;
+
+    group.current.position.copy(camera.position);
+    group.current.quaternion.copy(camera.getWorldQuaternion(cameraQuaternion));
+    localOffset.set(0.42 + idleX, -0.34 + idleY - draw * 0.22, -0.72 + draw * 0.18);
+    localOffset.applyQuaternion(group.current.quaternion);
+    group.current.position.add(localOffset);
+    toolEuler.set(-0.12 + idleY, -0.18 + idleX, -0.08 + draw * 0.25);
+    group.current.quaternion.multiply(new Quaternion().setFromEuler(toolEuler));
+  });
+
+  return (
+    <group ref={group} renderOrder={20}>
+      <ViewmodelLighting />
+      <RoundedBox args={[0.42, 0.25, 0.085]} radius={0.025} smoothness={3} castShadow>
+        <meshStandardMaterial color="#302c24" metalness={0.3} roughness={0.7} />
+      </RoundedBox>
+      {[-0.12, 0.12].map((x) => (
+        <RoundedBox
+          key={x}
+          args={[0.034, 0.27, 0.105]}
+          radius={0.008}
+          smoothness={2}
+          position={[x, 0, 0.008]}
+          castShadow
+        >
+          <meshStandardMaterial color="#d6a329" metalness={0.58} roughness={0.4} />
+        </RoundedBox>
+      ))}
+      <mesh position={[0, 0, 0.055]}>
+        <circleGeometry args={[0.025, 16]} />
+        <meshBasicMaterial color="#ff3b16" toneMapped={false} />
+      </mesh>
+      <GunHand position={[0.02, -0.18, 0.085]} rotation={[0.18, -0.05, -0.08]} scale={0.92} />
+    </group>
+  );
+}
+
 export function FirstPersonMachineGun({
   shotsRef,
 }: {

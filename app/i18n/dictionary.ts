@@ -68,6 +68,7 @@ export const ui = {
     "announce.weaponRocket": "The rocket is armed.",
     "announce.weaponLance": "Lance loaded. Aim for the engines.",
     "announce.weaponMg": "The machine gun is warm.",
+    "announce.weaponCharge": "KABOOM! Who needs architecture anyway?",
     "announce.interIslandRulesKicker": "Flight rules",
     "announce.interIslandWeaponBlocked":
       "Weapons are not permitted on inter-island flights.",
@@ -224,6 +225,8 @@ export const ui = {
     "weapon.lance": "Lance launcher",
     "weapon.lance.short": "Lance",
     "weapon.mg": "Machine gun",
+    "weapon.charge": "Explosives",
+    "weapon.charge.short": "KABOOM",
 
     "time.dawn": "Dawn",
     "time.morning": "Morning",
@@ -242,6 +245,7 @@ export const ui = {
     "fire.hold": "Fire (hold)",
     "fire.launch": "Launch",
     "fire.fire": "Fire",
+    "fire.place": "Plant",
 
     "controls.move": "Move",
     "controls.look": "Look",
@@ -251,8 +255,11 @@ export const ui = {
     "controls.fly": "Flight mode",
     "controls.telemetry": "Telemetry",
     "controls.jump": "Jump",
+    "controls.detonate": "Detonate",
     "controls.chooseAction": "Choose an action",
     "controls.reset": "Restart",
+    "hint.charge.eyebrow": "Charges planted",
+    "hint.charge.title": "Space — KABOOM",
 
     "hint.destination.eyebrow": "Flight controls",
     "hint.destination.title": "Choose the next action.",
@@ -341,6 +348,12 @@ export const ui = {
     "hint.hexacopterStand.key": "Space",
     "hint.hexacopterStand.action": "Leave the copter",
     "hint.hexacopterStand.actionTouch": "Leave the copter",
+
+    "hint.dsStand.eyebrow": "Driver's seat",
+    "hint.dsStand.title": "W and S drive, A and D steer, Shift is the handbrake.",
+    "hint.dsStand.key": "Space",
+    "hint.dsStand.action": "Get out of the car",
+    "hint.dsStand.actionTouch": "Get out of the car",
 
     "hint.departure.eyebrow": "Terminal dispatch",
     "hint.departure.title":
@@ -478,6 +491,7 @@ export const ui = {
     "announce.weaponRocket": "El cohete está listo.",
     "announce.weaponLance": "Dardo cargado. Apunta a los motores.",
     "announce.weaponMg": "La ametralladora está caliente.",
+    "announce.weaponCharge": "¡BUM! ¿Quién necesita arquitectura?",
     "announce.interIslandRulesKicker": "Normas de vuelo",
     "announce.interIslandWeaponBlocked":
       "No se permite usar armas en los vuelos entre islas.",
@@ -634,6 +648,8 @@ export const ui = {
     "weapon.lance": "Lanzador de dardos",
     "weapon.lance.short": "Dardo",
     "weapon.mg": "Ametralladora",
+    "weapon.charge": "Explosivos",
+    "weapon.charge.short": "¡BUM!",
 
     "time.dawn": "Amanecer",
     "time.morning": "Mañana",
@@ -652,6 +668,7 @@ export const ui = {
     "fire.hold": "Fuego (mantener)",
     "fire.launch": "Lanzar",
     "fire.fire": "Fuego",
+    "fire.place": "Colocar",
 
     "controls.move": "Moverse",
     "controls.look": "Mirar",
@@ -661,8 +678,11 @@ export const ui = {
     "controls.fly": "Modo vuelo",
     "controls.telemetry": "Telemetría",
     "controls.jump": "Saltar",
+    "controls.detonate": "Detonar",
     "controls.chooseAction": "Elegir una acción",
     "controls.reset": "Reiniciar",
+    "hint.charge.eyebrow": "Cargas colocadas",
+    "hint.charge.title": "Espacio — ¡BUM!",
 
     "hint.destination.eyebrow": "Controles de vuelo",
     "hint.destination.title": "Elige la siguiente acción.",
@@ -754,6 +774,12 @@ export const ui = {
     "hint.hexacopterStand.key": "Espacio",
     "hint.hexacopterStand.action": "Salir del HX-6",
     "hint.hexacopterStand.actionTouch": "Salir del HX-6",
+
+    "hint.dsStand.eyebrow": "Asiento del conductor",
+    "hint.dsStand.title": "W y S aceleran y frenan, A y D giran, Shift es el freno de mano.",
+    "hint.dsStand.key": "Espacio",
+    "hint.dsStand.action": "Bajar del coche",
+    "hint.dsStand.actionTouch": "Bajar del coche",
 
     "hint.departure.eyebrow": "Despacho de la terminal",
     "hint.departure.title":
@@ -895,6 +921,7 @@ export const ui = {
     "announce.weaponRocket": "Ракета готова.",
     "announce.weaponLance": "Игла в стволе. Целься по движкам.",
     "announce.weaponMg": "Пулемёт разогрет.",
+    "announce.weaponCharge": "БАБАХ! Кому тут мешает архитектура?",
     "announce.interIslandRulesKicker": "Правила рейса",
     "announce.interIslandWeaponBlocked":
       "Оружие не разрешено использовать на межостровных рейсах.",
@@ -1050,6 +1077,8 @@ export const ui = {
     "weapon.lance": "Игломёт",
     "weapon.lance.short": "Игла",
     "weapon.mg": "Пулемёт",
+    "weapon.charge": "Взрывчатка",
+    "weapon.charge.short": "БАБАХ",
 
     "time.dawn": "Рассвет",
     "time.morning": "Утро",
@@ -1068,6 +1097,7 @@ export const ui = {
     "fire.hold": "Огонь (держать)",
     "fire.launch": "Пуск",
     "fire.fire": "Огонь",
+    "fire.place": "Заложить",
 
     "controls.move": "Двигаться",
     "controls.look": "Смотреть",
@@ -1077,8 +1107,11 @@ export const ui = {
     "controls.fly": "Режим полёта",
     "controls.telemetry": "Телеметрия",
     "controls.jump": "Прыжок",
+    "controls.detonate": "Взорвать",
     "controls.chooseAction": "Выбрать действие",
     "controls.reset": "Заново",
+    "hint.charge.eyebrow": "Заложено зарядов",
+    "hint.charge.title": "Пробел — БАБАХ",
 
     "hint.destination.eyebrow": "Управление рейсом",
     "hint.destination.title": "Что делаем дальше?",
@@ -1171,6 +1204,12 @@ export const ui = {
     "hint.hexacopterStand.key": "Пробел",
     "hint.hexacopterStand.action": "Покинуть коптер",
     "hint.hexacopterStand.actionTouch": "Покинуть коптер",
+
+    "hint.dsStand.eyebrow": "Место водителя",
+    "hint.dsStand.title": "W и S — газ и тормоз, A и D — руль, Shift — ручник.",
+    "hint.dsStand.key": "Пробел",
+    "hint.dsStand.action": "Выйти из машины",
+    "hint.dsStand.actionTouch": "Выйти из машины",
 
     "hint.departure.eyebrow": "Диспетчерская Терминала",
     "hint.departure.title": "Пустой состав готов к контрольному кругу.",

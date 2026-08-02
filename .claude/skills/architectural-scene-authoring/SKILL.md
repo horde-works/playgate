@@ -122,6 +122,55 @@ delivery.
 - For public places, run the real capsule through each entrance and vertical
   route separately, including working zones and head clearance.
 
+### Tower architecture and failure contract
+
+Treat tower form as a visible load path, not a façade wrapped around one
+generic core. Derive its local `along/across/up` or `radial/tangent/up` basis
+from the construction envelope, terrain fall line, access/departure corridor
+and functional wind field. Store that basis once. Verify unit lengths,
+orthogonality, signs, dot products and compiled bounds independently; never
+resolve placement as “put it on one side”.
+
+Use these tower families as structural topologies, not styles to paste onto a
+generic extrusion:
+
+- a smooth spindle may use an armoured polygonal core, redundant perimeter
+  columns and sectorised floors;
+- a ringed spindle keeps its white diagonal outer bands segmented,
+  replaceable and secondary: they may redistribute load but are never the sole
+  vertical path;
+- an atmospheric tower over a work yard starts with the complete swept work
+  envelope. Six inhabited mega-supports stand outside it, carry diagonal lift
+  and stair routes, and continue directly into the upper volume without a
+  single transfer floor or detachable common megatruss;
+- a vertical dock is one continuous C/U-shaped building with a rear structural
+  spine and two cheeks around the dock void, never two independent towers whose
+  survival depends on a bridge;
+- a well tower uses a broad inhabited external annular core, with rooms and
+  glazing toward both the outer city and inner void, an armoured middle band,
+  and a load-following top split into unequal functional lobes instead of a
+  rigid decorative ring.
+
+For every family, keep the façade non-bearing and split floor plates into
+replaceable sectors. Vary the exact redundancy, but preserve independent deep
+foundations, armoured concrete load paths and local rather than global failure.
+At least two continuous evacuation routes must survive the loss of one sector;
+ring stairs may live inside the core, while a six-support tower can carry one
+stair route in each support.
+
+Diagonal lifts are authored in two stages. First build the measurable shaft:
+explicit lower and upper endpoints, continuous chords, cross-bracing,
+landings, clearance and support contact. Cabin physics, controls and moving
+bodies are a separate later milestone; never fake them with an animated cabin
+before the shaft and its load path are true.
+
+Acceptance must exercise failure, not only inventory: initial unsupported
+count is zero; removing up to thirty percent of a redundant column ring does
+not detach the tower; damage to two neighbouring floor sectors stays local;
+loss of one atmospheric mega-support does not globally detach the upper body.
+Tests reconstruct directions and bounds from compiled pieces rather than
+reusing the authoring helper.
+
 ### 6. Author material and light from physical sources
 
 - Make metal, plastic, glass, stone and paint differ by optical response, not

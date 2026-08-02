@@ -884,7 +884,8 @@ export function ExplosionFxSystem({
     const now = performance.now() / 1000;
     const snapshot = performanceGovernor.getSnapshot();
     const quality = Math.min(snapshot.cpuQuality, snapshot.gpuQuality);
-    const rocket = definition.kind === "rocket";
+    const rocket = definition.kind === "rocket" || definition.kind === "charge";
+    const charge = definition.kind === "charge";
     const seed = definition.id * 0.61803398875;
     const plan = planFireball(definition, seed);
 
@@ -927,8 +928,8 @@ export function ExplosionFxSystem({
       {
         id: definition.id,
         center: new Vector3(...definition.position),
-        visualRadius: rocket ? 8 : 4.2,
-        expiresAt: now + (rocket ? 2.2 : 1.55),
+        visualRadius: charge ? 13 : rocket ? 8 : 4.2,
+        expiresAt: now + (charge ? 3 : rocket ? 2.2 : 1.55),
         tracked: new Map(),
         nextScanAt: now + 0.08,
       },

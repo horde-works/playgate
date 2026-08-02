@@ -114,6 +114,27 @@ test("light plan: a dim flickering ember tail outlives the flash", () => {
   }
 });
 
+test("charge reads as a different scale, not a recoloured rocket", () => {
+  const rocket = planFireball(definitionWith(openAir, "rocket"), 4.3);
+  const charge = planFireball(definitionWith(openAir, "charge"), 4.3);
+  const rocketSecondaries = planExplosionSecondaries(
+    definitionWith(groundBurst, "rocket"),
+    rocket,
+    2,
+    4.3,
+  );
+  const chargeSecondaries = planExplosionSecondaries(
+    definitionWith(groundBurst, "charge"),
+    charge,
+    2,
+    4.3,
+  );
+  assert.ok(charge.diameter >= rocket.diameter * 1.65);
+  assert.ok(charge.life > rocket.life * 1.3);
+  assert.ok(chargeSecondaries.smoke.length > rocketSecondaries.smoke.length * 1.35);
+  assert.ok(chargeSecondaries.trail.length > rocketSecondaries.trail.length * 1.25);
+});
+
 test("fire ramp punches through the bloom threshold, embers stay below", () => {
   assert.ok(
     Math.max(...EXPLOSION_FIRE_RAMP.whiteHot) >= BLOOM_THRESHOLD * 3,

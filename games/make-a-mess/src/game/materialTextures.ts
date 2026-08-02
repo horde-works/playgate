@@ -227,6 +227,120 @@ function createArchitecturalMetalTexture(
   return texture;
 }
 
+type NimbusTextureProfile = Extract<
+  SurfaceTextureProfile,
+  | "nimbus-ceramic-composite"
+  | "nimbus-carbon-laminate"
+  | "nimbus-technical-deck"
+  | "nimbus-crushed-aggregate"
+  | "nimbus-board-formed-concrete"
+>;
+
+function createNimbusSurfaceTexture(profile: NimbusTextureProfile): CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = TEXTURE_SIZE;
+  canvas.height = TEXTURE_SIZE;
+  const context = canvas.getContext("2d");
+  if (context) {
+    const seed = profile.length * 1_337;
+    const random = createRandom(seed);
+    const base = profile === "nimbus-ceramic-composite"
+      ? 232
+      : profile === "nimbus-carbon-laminate"
+        ? 166
+        : profile === "nimbus-technical-deck"
+          ? 154
+          : profile === "nimbus-crushed-aggregate"
+            ? 184
+            : 205;
+    gray(context, base);
+    context.fillRect(0, 0, TEXTURE_SIZE, TEXTURE_SIZE);
+
+    if (profile === "nimbus-ceramic-composite") {
+      fillNoise(context, random, base, 13, 3);
+      for (const x of [0, 64, 127]) {
+        gray(context, 188, 0.42);
+        context.fillRect(x, 0, 1, TEXTURE_SIZE);
+      }
+      for (let mote = 0; mote < 46; mote += 1) {
+        gray(context, 205 + random() * 35, 0.25);
+        context.fillRect(random() * TEXTURE_SIZE, random() * TEXTURE_SIZE, 1, 1);
+      }
+    } else if (profile === "nimbus-carbon-laminate") {
+      fillNoise(context, random, base, 12, 4);
+      context.lineWidth = 1;
+      for (let offset = -TEXTURE_SIZE; offset < TEXTURE_SIZE * 2; offset += 8) {
+        gray(context, 190, 0.16);
+        context.strokeStyle = context.fillStyle;
+        context.beginPath();
+        context.moveTo(offset, 0);
+        context.lineTo(offset - TEXTURE_SIZE, TEXTURE_SIZE);
+        context.stroke();
+        gray(context, 125, 0.12);
+        context.strokeStyle = context.fillStyle;
+        context.beginPath();
+        context.moveTo(offset, 0);
+        context.lineTo(offset + TEXTURE_SIZE, TEXTURE_SIZE);
+        context.stroke();
+      }
+    } else if (profile === "nimbus-technical-deck") {
+      fillNoise(context, random, base, 22, 3);
+      for (let groove = 0; groove < TEXTURE_SIZE; groove += 12) {
+        gray(context, 112, 0.32);
+        context.fillRect(0, groove, TEXTURE_SIZE, 1.4);
+      }
+      for (let grain = 0; grain < 90; grain += 1) {
+        gray(context, 205, 0.28);
+        context.fillRect(random() * TEXTURE_SIZE, random() * TEXTURE_SIZE, 1.4, 1.4);
+      }
+    } else if (profile === "nimbus-crushed-aggregate") {
+      fillNoise(context, random, base, 32, 4);
+      for (let stone = 0; stone < 78; stone += 1) {
+        gray(context, 130 + random() * 100, 0.55);
+        context.beginPath();
+        context.ellipse(
+          random() * TEXTURE_SIZE,
+          random() * TEXTURE_SIZE,
+          1.5 + random() * 5,
+          1 + random() * 3.5,
+          random() * Math.PI,
+          0,
+          Math.PI * 2,
+        );
+        context.fill();
+      }
+    } else {
+      fillNoise(context, random, base, 20, 4);
+      for (let seam = 0; seam < TEXTURE_SIZE; seam += 32) {
+        gray(context, 158, 0.36);
+        context.fillRect(0, seam, TEXTURE_SIZE, 1.5);
+      }
+      for (let row = 16; row < TEXTURE_SIZE; row += 32) {
+        for (let column = 16; column < TEXTURE_SIZE; column += 48) {
+          gray(context, 132, 0.5);
+          context.beginPath();
+          context.arc(column + (row % 64 === 16 ? 0 : 24), row, 1.8, 0, Math.PI * 2);
+          context.fill();
+        }
+      }
+    }
+  }
+  const texture = new CanvasTexture(canvas);
+  texture.wrapS = RepeatWrapping;
+  texture.wrapT = RepeatWrapping;
+  texture.magFilter = LinearFilter;
+  texture.minFilter = LinearMipmapLinearFilter;
+  texture.anisotropy = 4;
+  texture.colorSpace = SRGBColorSpace;
+  return texture;
+}
+
+function isNimbusTextureProfile(
+  profile: SurfaceTextureProfile | undefined,
+): profile is NimbusTextureProfile {
+  return profile?.startsWith("nimbus-") ?? false;
+}
+
 // Профили-«вывески» растягиваются по родным UV грани один раз: мировая
 // трипланарная проекция размазала бы надпись тайлингом.
 const faceFitTextureProfiles = new Set<SurfaceTextureProfile>([
@@ -1279,6 +1393,8 @@ export function getMaterialTexture(
     || textureProfile === "gold-mirror"
   ) {
     texture = createArchitecturalMetalTexture(textureProfile);
+  } else if (isNimbusTextureProfile(textureProfile)) {
+    texture = createNimbusSurfaceTexture(textureProfile);
   } else if (sourceUrl) {
     texture = configureTexture(
       textureLoader.load(sourceUrl, undefined, undefined, () => {
@@ -1313,6 +1429,11 @@ export function getPieceMaterial(
   const isPaintedSteel = isSteel && textureProfile === "painted-steel";
   const isMatteAluminium = isSteel && textureProfile === "matte-aluminium";
   const isGoldMirror = isSteel && textureProfile === "gold-mirror";
+  const isNimbusCeramic = textureProfile === "nimbus-ceramic-composite";
+  const isNimbusCarbon = textureProfile === "nimbus-carbon-laminate";
+  const isNimbusDeck = textureProfile === "nimbus-technical-deck";
+  const isNimbusAggregate = textureProfile === "nimbus-crushed-aggregate";
+  const isNimbusConcrete = textureProfile === "nimbus-board-formed-concrete";
   const isDarkStone =
     material === "basalt" || material === "graphiteStone";
   const isEyeGlass =
@@ -1341,6 +1462,14 @@ export function getPieceMaterial(
             : material === "graphiteStone" ? 0.08 : 0,
     roughness: isGoldMirror
       ? 0.16
+      : isNimbusCeramic
+        ? 0.58
+        : isNimbusCarbon
+          ? 0.46
+          : isNimbusDeck
+            ? 0.74
+            : isNimbusAggregate || isNimbusConcrete
+              ? 0.92
       : isMatteAluminium
         ? 0.74
         : isPaintedSteel

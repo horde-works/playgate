@@ -16,7 +16,8 @@ export type GameAction =
   | "hexacopter-ride.approaching"
   | "seat.approaching"
   | "stand.available"
-  | "hexacopter-stand.available";
+  | "hexacopter-stand.available"
+  | "ds-stand.available";
 
 export interface GameActionHint {
   readonly id: string;
@@ -173,6 +174,20 @@ export const gameActionHints: readonly GameActionHint[] = [
     detailKey: "hint.stand.action",
     touchDetailKey: "hint.stand.actionTouch",
     keyLabelKey: "hint.stand.key",
+    once: false,
+  },
+  {
+    // Сев за руль, человек обязан УЗНАТЬ, чем управлять. У коптера для этого
+    // есть отдельный контур пилота, у машины рычага всего три — и они
+    // помещаются прямо в подсказку места.
+    id: "behind-the-wheel",
+    action: "ds-stand.available",
+    delayMs: 80,
+    eyebrowKey: "hint.dsStand.eyebrow",
+    titleKey: "hint.dsStand.title",
+    detailKey: "hint.dsStand.action",
+    touchDetailKey: "hint.dsStand.actionTouch",
+    keyLabelKey: "hint.dsStand.key",
     once: false,
   },
   {

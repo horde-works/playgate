@@ -451,6 +451,7 @@ export function compileSceneDocument(
     title: document.title,
     environment: document.environment,
     playerSpawn: document.world.playerSpawn,
+    playerSpawnYaw: document.world.playerSpawnYaw,
     cameraFar: document.world.cameraFar,
     worldCenter: document.world.center,
     worldHalfExtents: document.world.halfExtents,

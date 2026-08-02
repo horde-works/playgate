@@ -13,6 +13,10 @@ import {
   townVertipadDocument,
   townVertipadSpotLights,
 } from "../content/scenes/townVertipadDocument.ts";
+import {
+  townBoulevardDocument,
+  townBoulevardSpotLights,
+} from "../content/scenes/townBoulevardDocument.ts";
 
 // ---------------------------------------------------------------------------
 // Боевая городская сцена: базовый город (destructionScene) плюс старый
@@ -37,6 +41,11 @@ export const vertipadCompilation = compileSceneGroups(
   cityPrefabLibrary,
 );
 
+export const boulevardCompilation = compileSceneGroups(
+  townBoulevardDocument,
+  cityPrefabLibrary,
+);
+
 export const townScene = createDestructionScene({
   ...openHouseSceneOptions,
   clusters: [
@@ -44,12 +53,18 @@ export const townScene = createDestructionScene({
     ...oldQuarterCompilation.clusters,
     ...skyMooringCompilation.clusters,
     ...vertipadCompilation.clusters,
+    ...boulevardCompilation.clusters,
   ],
   lamps: [
     ...openHouseSceneOptions.lamps,
     ...oldQuarterCompilation.lamps,
     ...skyMooringCompilation.lamps,
     ...vertipadCompilation.lamps,
+    ...boulevardCompilation.lamps,
   ],
-  spotLights: [...skyMooringSpotLights, ...townVertipadSpotLights],
+  spotLights: [
+    ...skyMooringSpotLights,
+    ...townVertipadSpotLights,
+    ...townBoulevardSpotLights,
+  ],
 });

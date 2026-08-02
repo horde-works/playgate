@@ -41,6 +41,15 @@ import {
   TOWN_HEXACOPTER_CLUSTER_ID,
   hexacopterPoint,
 } from "./townHexacopter.ts";
+import {
+  NIMBUS_HEXACOPTER_CLUSTER_ID,
+  NIMBUS_HEXACOPTER_LIFT_CENTRE,
+  NIMBUS_HEXACOPTER_MOORING_POINT,
+  NIMBUS_HEXACOPTER_NOSE,
+  NIMBUS_HEXACOPTER_ORIGIN,
+  nimbusHexacopterPointFromTown,
+  nimbusHexacopterVectorFromTown,
+} from "./nimbusHexacopter.ts";
 
 // Kept as re-exports for callers while the authored routes themselves live in
 // their own artifact module.
@@ -383,6 +392,14 @@ function hexacopterProximitySensors(): readonly VehicleProximitySensor[] {
   return sensors;
 }
 
+function nimbusHexacopterProximitySensors(): readonly VehicleProximitySensor[] {
+  return hexacopterProximitySensors().map((sensor) => ({
+    ...sensor,
+    point: nimbusHexacopterPointFromTown(sensor.point),
+    normal: nimbusHexacopterVectorFromTown(sensor.normal),
+  }));
+}
+
 function basaltSkyRamProximitySensors(): readonly VehicleProximitySensor[] {
   const sensors: VehicleProximitySensor[] = [
     // The cast point sits inside its berth jaw. Its upper brace is the first
@@ -576,6 +593,18 @@ export const vehicleFrames: readonly VehicleFrameDefinition[] = [
     // одной точке. Винтокрылая машина создаёт тот же момент разнотягом
     // винтов — быстро, непрерывно и в обе стороны, — и возить ради этого
     // свинец по рельсам значит противоречить её собственной физике.
+  },
+  {
+    id: "nimbus-hexacopter",
+    clusterId: NIMBUS_HEXACOPTER_CLUSTER_ID,
+    telemetryLabel: "HX-6 NIMBUS",
+    independentMemberMatches: [":blade:", ":trim:"],
+    origin: NIMBUS_HEXACOPTER_ORIGIN,
+    nose: NIMBUS_HEXACOPTER_NOSE,
+    mooringPoint: NIMBUS_HEXACOPTER_MOORING_POINT,
+    liftCentre: NIMBUS_HEXACOPTER_LIFT_CENTRE,
+    envelopeMatch: ":blade:",
+    proximitySensors: nimbusHexacopterProximitySensors(),
   },
 ];
 

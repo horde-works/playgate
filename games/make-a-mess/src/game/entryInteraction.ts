@@ -18,7 +18,8 @@ export type EntryInteractionCue =
   | "town-passenger-flight"
   | "town-hexacopter-passenger-flight"
   | "stronghold-passenger-flight"
-  | "town-hexacopter-pilot-seat";
+  | "town-hexacopter-pilot-seat"
+  | "town-ds-driver-seat";
 
 export interface EntryInteractionAction {
   /** Stable command understood by the interaction owner. */

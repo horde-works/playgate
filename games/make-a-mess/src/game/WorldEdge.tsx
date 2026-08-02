@@ -120,6 +120,17 @@ const EDGE_PROFILES: Record<string, EdgeProfile> = {
     underglow: true,
     strata: ["#26292c", "#2b2f32", "#3a3e41", "#26292c", "#2e3234", "#212426", "#1b1e20", "#17191b"],
   },
+  nimbus: {
+    // The authored ground remains irregular through the rim. The skirt hides
+    // inside its deep earth rather than drawing a clean ring around the bowl.
+    groundRadius: 189,
+    lipRadius: 193.5,
+    lipY: -8.2,
+    wallRadius: 202,
+    topY: -4.8,
+    underglow: false,
+    strata: ["#343936", "#414640", "#4b4d46", "#555148", "#454744", "#373c3b", "#2d3334", "#242a2c"],
+  },
 };
 
 function fallbackProfile(worldRadius: number): EdgeProfile {

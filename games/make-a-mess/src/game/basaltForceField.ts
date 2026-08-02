@@ -25,7 +25,23 @@ export type BasaltForceFieldNetwork =
   | "tower"
   | "ram-port"
   | "ram-starboard"
-  | "ram-bow";
+  | "ram-bow"
+  | "nimbus-east"
+  | "nimbus-west"
+  | "nimbus-north"
+  | "nimbus-south"
+  | "nimbus-crown"
+  | "nimbus-spindle-outward"
+  | "nimbus-spindle-inward"
+  | "nimbus-spindle-clockwise"
+  | "nimbus-spindle-counterclockwise"
+  | "nimbus-spindle-crown"
+  | "nimbus-dock-rear"
+  | "nimbus-dock-service"
+  | "nimbus-dock-habitation"
+  | "nimbus-dock-rear-crown"
+  | "nimbus-dock-service-crown"
+  | "nimbus-dock-habitation-crown";
 
 export interface BasaltForceFieldCell {
   readonly index: number;

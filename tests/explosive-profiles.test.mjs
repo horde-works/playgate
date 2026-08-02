@@ -24,6 +24,21 @@ function steelReach(kind) {
   return reach;
 }
 
+function materialReach(kind, material) {
+  const profile = explosiveProfile(kind);
+  const threshold = fractureEnergyByMaterial[material] * 1.15;
+  let reach = 0;
+  for (let d = 0; d <= profile.blastRadius; d += 0.01) {
+    if (
+      blastEnergyAtDistance(d, profile.blastRadius, profile.damageEnergy) >
+      threshold
+    ) {
+      reach = d;
+    }
+  }
+  return reach;
+}
+
 test("каждый боеприпас — данные, а не ветка кода", () => {
   for (const [kind, profile] of Object.entries(explosiveProfiles)) {
     assert.equal(profile.kind, kind);
@@ -59,5 +74,25 @@ test("игла быстрее и легче тяжёлой ракеты", () => 
     explosiveProfile("lance").pressureImpulse <
       explosiveProfile("rocket").pressureImpulse / 2,
     "лёгкая боевая часть толкает соразмерно слабее",
+  );
+});
+
+test("накладной заряд честно мощнее тяжёлой ракеты", () => {
+  const charge = explosiveProfile("charge");
+  const rocket = explosiveProfile("rocket");
+  assert.equal(charge.blastRadius, rocket.blastRadius * 1.5);
+  assert.ok(
+    Math.abs(
+      charge.damageEnergy / fractureEnergyByMaterial.concrete -
+        rocket.damageEnergy / fractureEnergyByMaterial.wood,
+    ) < 1e-9,
+    "бетон для заряда должен быть тем же, чем дерево является для ракеты",
+  );
+  assert.ok(charge.carveRadiusMultiplier >= 1.5);
+  assert.ok(charge.pressureImpulse > rocket.pressureImpulse * 2.5);
+  assert.ok(
+    materialReach("charge", "concrete") >=
+      materialReach("rocket", "wood") * 1.48,
+    "заряд должен сохранять ракетный урон по дереву на полуторном радиусе бетона",
   );
 });

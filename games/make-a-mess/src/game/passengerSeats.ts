@@ -15,6 +15,19 @@ import {
   TOWN_HEXACOPTER_CLUSTER_ID,
   hexacopterPoint,
 } from "./townHexacopter.ts";
+import {
+  NIMBUS_HEXACOPTER_CLUSTER_ID,
+  nimbusHexacopterPointFromTown,
+  nimbusHexacopterVectorFromTown,
+} from "./nimbusHexacopter.ts";
+import {
+  DS_CLUSTER_ID,
+  DS_DOOR_POST,
+  DS_DRIVER_HEAD,
+  DS_DRIVER_STEP_OUT,
+  DS_NOSE,
+  dsPoint,
+} from "./townCitroenDs.ts";
 import { PLAYER_CAPSULE_FOOT_OFFSET, PLAYER_CAPSULE_RADIUS } from "./playerMovement.ts";
 
 /**
@@ -56,6 +69,8 @@ export interface PassengerSeatCarrierPose {
 export const SKY_TRAIN_DRIVER_SEAT_ID = "terminal:sky-train:driver-seat";
 export const TOWN_HEXACOPTER_PILOT_SEAT_ID =
   "town:hexacopter:pilot-seat";
+export const NIMBUS_HEXACOPTER_PILOT_SEAT_ID =
+  "nimbus:hexacopter:pilot-seat";
 
 export const SKY_TRAIN_DRIVER_SEAT: PassengerSeatDefinition = {
   id: SKY_TRAIN_DRIVER_SEAT_ID,
@@ -110,9 +125,66 @@ export const TOWN_HEXACOPTER_PILOT_SEAT: PassengerSeatDefinition = {
   releaseRadius: 1.6,
 };
 
+export const NIMBUS_HEXACOPTER_PILOT_SEAT: PassengerSeatDefinition = {
+  ...TOWN_HEXACOPTER_PILOT_SEAT,
+  id: NIMBUS_HEXACOPTER_PILOT_SEAT_ID,
+  carrierClusterId: NIMBUS_HEXACOPTER_CLUSTER_ID,
+  interactionPoint: nimbusHexacopterPointFromTown(
+    TOWN_HEXACOPTER_PILOT_SEAT.interactionPoint,
+  ),
+  occupantPoint: nimbusHexacopterPointFromTown(
+    TOWN_HEXACOPTER_PILOT_SEAT.occupantPoint,
+  ),
+  exitPoint: nimbusHexacopterPointFromTown(
+    TOWN_HEXACOPTER_PILOT_SEAT.exitPoint,
+  ),
+  facing: nimbusHexacopterVectorFromTown(TOWN_HEXACOPTER_PILOT_SEAT.facing),
+  requiredPieceIds: [
+    `${NIMBUS_HEXACOPTER_CLUSTER_ID}:seat:pedestal:piece`,
+    `${NIMBUS_HEXACOPTER_CLUSTER_ID}:seat:cushion:piece`,
+    `${NIMBUS_HEXACOPTER_CLUSTER_ID}:seat:back:piece`,
+  ],
+};
+
+/**
+ * МЕСТО ВОДИТЕЛЯ. У машины оно слева — она французская, и руль у неё слева.
+ *
+ * Отличие от кресла пилота коптера одно и принципиальное: в коптер СНАЧАЛА
+ * залезают, и действие живёт внутри кабины. К машине подходят снаружи, к
+ * водительской двери, и предложение обязано появляться там же — иначе игрок
+ * ходит вокруг корпуса и не понимает, что делать. Поэтому точка предложения
+ * стоит СНАРУЖИ, у двери, а не на подушке сиденья.
+ */
+export const TOWN_DS_DRIVER_SEAT_ID = "town:ds:driver-seat";
+
+export const TOWN_DS_DRIVER_SEAT: PassengerSeatDefinition = {
+  id: TOWN_DS_DRIVER_SEAT_ID,
+  carrierClusterId: DS_CLUSTER_ID,
+  interactionPoint: dsPoint(...DS_DOOR_POST),
+  occupantPoint: dsPoint(...DS_DRIVER_HEAD),
+  exitPoint: dsPoint(
+    DS_DRIVER_STEP_OUT[0],
+    DS_DRIVER_STEP_OUT[1] + PLAYER_CAPSULE_FOOT_OFFSET,
+    DS_DRIVER_STEP_OUT[2],
+  ),
+  hintCue: "town-ds-driver-seat",
+  facing: DS_NOSE,
+  requiredPieceIds: [
+    "town-boulevard:ds:seat:front:cushion:piece",
+    "town-boulevard:ds:seat:front:back:piece",
+    "town-boulevard:ds:steering:wheel:piece",
+  ],
+  // Радиус подхода щедрый намеренно: у машины длинный борт, и человек
+  // подходит к ней откуда угодно, а не по створу, как к посту площадки.
+  approachRadius: 1.8,
+  releaseRadius: 2.4,
+};
+
 export const passengerSeats: readonly PassengerSeatDefinition[] = [
   SKY_TRAIN_DRIVER_SEAT,
   TOWN_HEXACOPTER_PILOT_SEAT,
+  NIMBUS_HEXACOPTER_PILOT_SEAT,
+  TOWN_DS_DRIVER_SEAT,
 ];
 
 const seatsById = new Map(passengerSeats.map((seat) => [seat.id, seat] as const));

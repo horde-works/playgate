@@ -108,6 +108,18 @@ export const ROCKET_BLAST_PUSH_RADIUS = BLAST_PUSH_RADIUS * ROCKET_VOLUME_SCALE;
 export const ROCKET_DAMAGE_ENERGY = GRENADE_DAMAGE_ENERGY * ROCKET_VOLUME_MULTIPLIER;
 
 /**
+ * Подрывной заряд считается от игрового требования: бетон должен уступать
+ * ему так же, как дерево уступает тяжёлой ракете. Бетон сопротивляется в
+ * 2.4 / 0.72 = 3⅓ раза сильнее дерева — ровно во столько раз заряд несёт
+ * больше энергии. Полуторный радиус даёт двум-трём зарядам общий объём
+ * поражения размером с подъезд, а не несколько соседних ракетных кратеров.
+ */
+export const CHARGE_BLAST_RADIUS = ROCKET_BLAST_RADIUS * 1.5;
+export const CHARGE_BLAST_PUSH_RADIUS = ROCKET_BLAST_PUSH_RADIUS * 1.45;
+export const CHARGE_DAMAGE_ENERGY =
+  ROCKET_DAMAGE_ENERGY * (2.4 / 0.72);
+
+/**
  * ЛЁГКАЯ РАКЕТА («игла»): тонкий скоростной боеприпас против МАШИН.
  *
  * Тяжёлая ракета несёт 550 единиц на радиусе 9.5 м — она перебивает порог
@@ -141,7 +153,11 @@ export const LANCE_BLAST_RADIUS = 1.6;
 export const LANCE_BLAST_PUSH_RADIUS = 2.4;
 export const LANCE_DAMAGE_ENERGY = 90;
 
-export const MAX_BLAST_RADIUS = Math.max(BLAST_RADIUS, ROCKET_BLAST_RADIUS);
+export const MAX_BLAST_RADIUS = Math.max(
+  BLAST_RADIUS,
+  ROCKET_BLAST_RADIUS,
+  CHARGE_BLAST_RADIUS,
+);
 
 /**
  * Паспорт боеприпаса. Раньше все различия жили в двадцати шести ветках
@@ -153,6 +169,8 @@ export interface ExplosiveProfile {
   readonly blastRadius: number;
   readonly blastPushRadius: number;
   readonly damageEnergy: number;
+  /** Множитель реального вырезаемого радиуса после учёта материала. */
+  readonly carveRadiusMultiplier: number;
   /** Импульс давления на составное тело, единицы силы·с. */
   readonly pressureImpulse: number;
   /** Сколько направлений сэмплится для формы видимого облака. */
@@ -181,7 +199,7 @@ export interface ExplosiveProfile {
   };
 }
 
-export type ExplosiveKind = "grenade" | "rocket" | "lance";
+export type ExplosiveKind = "grenade" | "rocket" | "lance" | "charge";
 
 export const explosiveProfiles: Record<ExplosiveKind, ExplosiveProfile> = {
   grenade: {
@@ -189,6 +207,7 @@ export const explosiveProfiles: Record<ExplosiveKind, ExplosiveProfile> = {
     blastRadius: BLAST_RADIUS,
     blastPushRadius: BLAST_PUSH_RADIUS,
     damageEnergy: GRENADE_DAMAGE_ENERGY,
+    carveRadiusMultiplier: 1,
     pressureImpulse: 55,
     visualDirections: 18,
     visualProbeDistance: 4.2,
@@ -211,6 +230,7 @@ export const explosiveProfiles: Record<ExplosiveKind, ExplosiveProfile> = {
     blastRadius: ROCKET_BLAST_RADIUS,
     blastPushRadius: ROCKET_BLAST_PUSH_RADIUS,
     damageEnergy: ROCKET_DAMAGE_ENERGY,
+    carveRadiusMultiplier: 1,
     pressureImpulse: 110,
     visualDirections: 24,
     visualProbeDistance: 10,
@@ -233,6 +253,7 @@ export const explosiveProfiles: Record<ExplosiveKind, ExplosiveProfile> = {
     blastRadius: LANCE_BLAST_RADIUS,
     blastPushRadius: LANCE_BLAST_PUSH_RADIUS,
     damageEnergy: LANCE_DAMAGE_ENERGY,
+    carveRadiusMultiplier: 1,
     // Лёгкая боевая часть толкает соразмерно: машину она качнёт, но не
     // отшвырнёт, и это заметная разница в поведении цели после попадания.
     pressureImpulse: 38,
@@ -252,6 +273,31 @@ export const explosiveProfiles: Record<ExplosiveKind, ExplosiveProfile> = {
       gravityScale: 0,
       angularDamping: 0.9,
       fuseMs: 2200,
+      spin: { x: 0, y: 0, z: 0 },
+    },
+  },
+  charge: {
+    kind: "charge",
+    blastRadius: CHARGE_BLAST_RADIUS,
+    blastPushRadius: CHARGE_BLAST_PUSH_RADIUS,
+    damageEnergy: CHARGE_DAMAGE_ENERGY,
+    carveRadiusMultiplier: 1.55,
+    pressureImpulse: 300,
+    visualDirections: 32,
+    visualProbeDistance: 15,
+    carveBudget: { maxTargets: 128, workBudget: 45_000, groundWorkBudget: 5_400 },
+    chipBudget: 42,
+    looseBurstSpeed: 12,
+    playerPush: { horizontal: 14.5, vertical: 10.5 },
+    debrisPush: { base: 12.5, falloff: 17 },
+    // У заряда нет снаряда, но единый паспорт намеренно остаётся полным:
+    // ни один потребитель профиля не обязан знать способ доставки взрывчатки.
+    projectile: {
+      speed: 1,
+      density: 4.5,
+      gravityScale: 1,
+      angularDamping: 0.9,
+      fuseMs: 0,
       spin: { x: 0, y: 0, z: 0 },
     },
   },

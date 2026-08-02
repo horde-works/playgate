@@ -17,7 +17,7 @@ export interface ExplosionFxLobeInput {
 
 export interface ExplosionFxInput {
   readonly id: number;
-  readonly kind: "grenade" | "rocket" | "lance";
+  readonly kind: "grenade" | "rocket" | "lance" | "charge";
   readonly position: readonly [number, number, number];
   readonly lobes: readonly ExplosionFxLobeInput[];
   readonly dustColor: readonly [number, number, number];
@@ -78,7 +78,7 @@ export interface ExplosionLightPlan {
 }
 
 export const EXPLOSION_LIGHT: Record<
-  "grenade" | "rocket" | "lance",
+  "grenade" | "rocket" | "lance" | "charge",
   ExplosionLightPlan
 > =
   {
@@ -107,6 +107,14 @@ export const EXPLOSION_LIGHT: Record<
       emberLife: 0.7,
       emberFraction: 0.09,
       exposureKick: 0.3,
+    },
+    charge: {
+      peak: 920,
+      distance: 34,
+      life: 0.72,
+      emberLife: 2.25,
+      emberFraction: 0.17,
+      exposureKick: 0.7,
     },
   };
 
@@ -234,10 +242,10 @@ export function planFireball(
   definition: ExplosionFxInput,
   seed: number,
 ): FireballPlan {
-  const rocket = definition.kind === "rocket";
+  const rocket = definition.kind === "rocket" || definition.kind === "charge";
   return {
-    life: rocket ? 1.32 : 0.98,
-    diameter: rocket ? 5.4 : 3.15,
+    life: definition.kind === "charge" ? 1.78 : rocket ? 1.32 : 0.98,
+    diameter: definition.kind === "charge" ? 9.2 : rocket ? 5.4 : 3.15,
     rocket,
     lobes: selectFireballLobes(definition.lobes, seed),
   };
@@ -346,6 +354,7 @@ export function planExplosionSecondaries(
   seed: number,
 ): SecondaryPlan {
   const rocket = fireball.rocket;
+  const charge = definition.kind === "charge";
   const smoke: PlannedParticle[] = [];
   const trail: PlannedParticle[] = [];
   const center = definition.position;
@@ -687,5 +696,31 @@ export function planExplosionSecondaries(
     }
   }
 
-  return { smoke, trail };
+  if (!charge) return { smoke, trail };
+  const expand = (particle: PlannedParticle, smokeParticle: boolean) => ({
+    ...particle,
+    velocity: [
+      particle.velocity[0] * 1.28,
+      particle.velocity[1] * 1.28,
+      particle.velocity[2] * 1.28,
+    ] as [number, number, number],
+    reach: particle.reach * 1.35,
+    life: particle.life * (smokeParticle ? 1.18 : 1.08),
+    size: particle.size * (smokeParticle ? 1.38 : 1.25),
+  });
+  // Количество и размер дают именно ОБЪЁМ, а не просто большую яркую сферу.
+  return {
+    smoke: [
+      ...smoke.map((particle) => expand(particle, true)),
+      ...smoke
+        .slice(0, Math.floor(smoke.length * 0.42))
+        .map((particle) => expand({ ...particle, birthOffset: particle.birthOffset + 0.08 }, true)),
+    ],
+    trail: [
+      ...trail.map((particle) => expand(particle, false)),
+      ...trail
+        .slice(0, Math.floor(trail.length * 0.3))
+        .map((particle) => expand({ ...particle, birthOffset: particle.birthOffset + 0.035 }, false)),
+    ],
+  };
 }

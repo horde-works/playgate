@@ -67,6 +67,20 @@ import {
   type TownHexacopterFlightKind,
 } from "./townHexacopterRoutes.ts";
 import {
+  NIMBUS_HEXACOPTER_NOSE,
+  NIMBUS_HEXACOPTER_RUDDER_POINT,
+  isInsideNimbusHexacopter,
+  nimbusHexacopterPoint,
+  nimbusHexacopterPointFromTown,
+} from "./nimbusHexacopter.ts";
+import {
+  nimbusHexacopterArrivalPlan,
+  nimbusHexacopterEscapePlan,
+  nimbusHexacopterPlan,
+  nimbusHexacopterRoutePhase,
+  type NimbusHexacopterFlightKind,
+} from "./nimbusHexacopterRoutes.ts";
+import {
   interIslandArrivalOrigin,
   interIslandArrivalPhase,
   interIslandArrivalPlan,
@@ -287,6 +301,13 @@ const townHexacopterFrame = vehicleFrames.find(
 );
 if (!townHexacopterFrame) {
   throw new Error("The town hexacopter frame is missing from the vehicle catalog");
+}
+
+const nimbusHexacopterFrame = vehicleFrames.find(
+  (frame) => frame.id === "nimbus-hexacopter",
+);
+if (!nimbusHexacopterFrame) {
+  throw new Error("The Nimbus hexacopter frame is missing from the vehicle catalog");
 }
 
 const SKY_LONGSHIP_COURSE = (6 * Math.PI) / 180;
@@ -976,10 +997,67 @@ export const TOWN_HEXACOPTER_AIR_VEHICLE: AirVehicleDefinition = {
   },
 };
 
+export const NIMBUS_HEXACOPTER_AIR_VEHICLE: AirVehicleDefinition = {
+  ...nimbusHexacopterFrame,
+  departure: {
+    target: {
+      id: "nimbus:hexacopter:departure",
+      kind: "departure",
+      cue: "town-hexacopter-uncrewed-flight",
+      actions: [
+        { id: "circuit", labelKey: "hint.hexacopterDeparture.uncrewed" },
+        { id: "manual", labelKey: "hint.hexacopterDeparture.manual" },
+      ],
+    },
+    point: nimbusHexacopterPoint(2.9, -3.32, 1),
+    flightKind: "circuit",
+    approachRadius: 2.6,
+    releaseRadius: 3.5,
+    heightTolerance: 2.4,
+    passengerDropPoint: nimbusHexacopterPoint(2.4, -3.1, 1),
+  },
+  passengerFlight: {
+    target: {
+      id: "nimbus:hexacopter:ride",
+      kind: "ride",
+      cue: "town-hexacopter-passenger-flight",
+      actions: [
+        { id: "tour", labelKey: "hint.hexacopterRide.action" },
+        { id: "manual", labelKey: "hint.hexacopterRide.manual" },
+      ],
+    },
+    point: nimbusHexacopterPoint(-0.15, 0, 1.98),
+    flightKind: "tour",
+    approachRadius: 1.15,
+    releaseRadius: 1.6,
+    contains: isInsideNimbusHexacopter,
+  },
+  flight: {
+    ...TOWN_HEXACOPTER_AIR_VEHICLE.flight,
+    limits: {
+      ...TOWN_HEXACOPTER_AIR_VEHICLE.flight.limits,
+      enginePoints: HEXACOPTER_DUCTS.map((station) =>
+        nimbusHexacopterPointFromTown(hexacopterDuctPoint(station, HEX_DISC_Y))),
+      rudderPoint: NIMBUS_HEXACOPTER_RUDDER_POINT,
+    },
+    approach: {
+      ...TOWN_HEXACOPTER_AIR_VEHICLE.flight.approach,
+      heading: [NIMBUS_HEXACOPTER_NOSE[0], NIMBUS_HEXACOPTER_NOSE[2]],
+    },
+    routePlan: (kind, berth) =>
+      nimbusHexacopterPlan(kind as NimbusHexacopterFlightKind, berth),
+    arrivalPlan: nimbusHexacopterArrivalPlan,
+    escapePlan: nimbusHexacopterEscapePlan,
+    routePhase: (kind, progress) =>
+      nimbusHexacopterRoutePhase(kind as NimbusHexacopterFlightKind, progress),
+  },
+};
+
 export const airVehicles: readonly AirVehicleDefinition[] = [
   SKY_TRAIN_AIR_VEHICLE,
   SKY_LONGSHIP_AIR_VEHICLE,
   TOWN_AIRSHIP_AIR_VEHICLE,
   BASALT_SKY_RAM_AIR_VEHICLE,
   TOWN_HEXACOPTER_AIR_VEHICLE,
+  NIMBUS_HEXACOPTER_AIR_VEHICLE,
 ];

@@ -23,6 +23,7 @@ import {
 import { structuralMaterialProfiles } from "../games/make-a-mess/src/game/destructionScene.ts";
 import { grandTerminalScene } from "../games/make-a-mess/src/game/grandTerminalScene.ts";
 import { townScene } from "../games/make-a-mess/src/game/townScene.ts";
+import { nimbusScene } from "../games/make-a-mess/src/game/nimbusScene.ts";
 import {
   advanceVehicleRouteProgress,
   autopilot,
@@ -611,6 +612,7 @@ test("every authored air vehicle can construct a moving route intercept", () => 
     ...grandTerminalScene.breakablePieces,
     ...vikingVillageScene.breakablePieces,
     ...townScene.breakablePieces,
+    ...nimbusScene.breakablePieces,
     ...basaltStrongholdScene.breakablePieces,
   ];
   for (const vehicle of airVehicles) {

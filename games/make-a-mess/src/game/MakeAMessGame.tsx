@@ -147,11 +147,16 @@ import {
 } from "./impactSoundPolicy";
 import {
   FirstPersonHammer,
+  FirstPersonDemolitionCharge,
   FirstPersonLauncher,
   FirstPersonMachineGun,
   FirstPersonRocketLauncher,
   type SwingDefinition,
 } from "./FirstPersonWeapons";
+import {
+  DemolitionChargeSystem,
+  type DemolitionChargeRuntime,
+} from "./DemolitionChargeSystem";
 import { GrenadeProjectileVisual } from "./GrenadeProjectileVisual";
 import { DynamicBreakableWorld } from "./DynamicBreakableWorld";
 import {
@@ -184,11 +189,14 @@ import {
   type VehicleFramePoseState,
 } from "./VehicleFrameSystem";
 import { AstanaTrainSystem } from "./AstanaTrainSystem";
+import { TownCarSystem } from "./TownCarSystem";
+import { townDsClusterDefinition } from "./townCitroenDs";
 import {
   BasaltForceFieldSystem,
   type BasaltForceFieldRuntime,
 } from "./BasaltForceFieldSystem";
 import type { BasaltForceFieldPose } from "./basaltForceField.ts";
+import { NIMBUS_FORCE_FIELD_PROJECTION } from "./nimbusForceField.ts";
 import { BASALT_SKY_RAM_CLUSTER_ID } from "./basaltSkyRam.ts";
 import {
   BASALT_FORCE_FIELD_APPROACH_BULGE,
@@ -359,7 +367,14 @@ import type {
 type ControlName = "forward" | "backward" | "left" | "right" | "run" | "jump";
 
 // "none" — фоторежим: пустые руки, клик ничего не делает; клавиша 0.
-type WeaponName = "none" | "hammer" | "launcher" | "mg" | "rocket" | "lance";
+type WeaponName =
+  | "none"
+  | "hammer"
+  | "launcher"
+  | "mg"
+  | "rocket"
+  | "lance"
+  | "charge";
 
 function nextWeaponName(weapon: WeaponName): Exclude<WeaponName, "none"> {
   return weapon === "hammer"
@@ -370,7 +385,9 @@ function nextWeaponName(weapon: WeaponName): Exclude<WeaponName, "none"> {
         ? "rocket"
         : weapon === "rocket"
           ? "lance"
-          : "hammer";
+          : weapon === "lance"
+            ? "charge"
+            : "hammer";
 }
 
 /**
@@ -446,6 +463,7 @@ const entryApproachActions: readonly GameAction[] = [
   "seat.approaching",
   "stand.available",
   "hexacopter-stand.available",
+  "ds-stand.available",
 ];
 
 function entryApproachAction(entry: HingedEntryApproach): GameAction {
@@ -474,7 +492,9 @@ function entryApproachAction(entry: HingedEntryApproach): GameAction {
             : entry.kind === "stand"
               ? entry.cue === "town-hexacopter-pilot-seat"
                 ? "hexacopter-stand.available"
-                : "stand.available"
+                : entry.cue === "town-ds-driver-seat"
+                  ? "ds-stand.available"
+                  : "stand.available"
               : "door.approaching";
 }
 
@@ -526,6 +546,9 @@ function entryActionKey(
     return touch ? "hint.seat.actionTouch" : "hint.seat.action";
   }
   if (entry.kind === "stand") {
+    if (entry.cue === "town-ds-driver-seat") {
+      return touch ? "hint.dsStand.actionTouch" : "hint.dsStand.action";
+    }
     return entry.cue === "town-hexacopter-pilot-seat"
       ? touch
         ? "hint.hexacopterStand.actionTouch"
@@ -3848,6 +3871,8 @@ interface OpenWorldSceneProps {
   fallbackLook: boolean;
   mobileControls: MobileControlsRef;
   mobileActions: MutableRefObject<MobileActionBridge>;
+  chargeCount: number;
+  demolitionChargeRuntime: MutableRefObject<DemolitionChargeRuntime | null>;
   resetVersion: number;
   entryOpenRequestVersion: number;
   entryOpenRequestTargetRef: MutableRefObject<HingedEntryApproach | null>;
@@ -3862,9 +3887,12 @@ interface OpenWorldSceneProps {
   onPointerLockChange: (held: boolean) => void;
   onBrokenCountChange: (count: number) => void;
   onDynamicBodyCountChange: (count: number) => void;
+  onChargeCountChange: (count: number) => void;
   onEntryApproachChange: (entry: HingedEntryApproach | null) => void;
   onVillagerInspect: (report: VillagerReport | null) => void;
   onDepartureApproachChange: (approached: HingedEntryApproach | null) => void;
+  /** Пост у водительской двери: подход к машине — не подход к рейсу. */
+  onCarApproachChange: (approached: HingedEntryApproach | null) => void;
   onInterIslandBoundary: (
     flightKind: string,
     passenger: InterIslandPassengerHandoff | null,
@@ -3889,11 +3917,13 @@ function OpenWorldScene({
   active,
   flightMode,
   weapon,
+  chargeCount,
   timeOfDay,
   timeOfDaySnapVersion,
   fallbackLook,
   mobileControls,
   mobileActions,
+  demolitionChargeRuntime,
   resetVersion,
   entryOpenRequestVersion,
   entryOpenRequestTargetRef,
@@ -3908,9 +3938,11 @@ function OpenWorldScene({
   onPointerLockChange,
   onBrokenCountChange,
   onDynamicBodyCountChange,
+  onChargeCountChange,
   onEntryApproachChange,
   onVillagerInspect,
   onDepartureApproachChange,
+  onCarApproachChange,
   onInterIslandBoundary,
   onInterIslandArrivalReady,
   onInterIslandArrivalComplete,
@@ -4003,7 +4035,8 @@ function OpenWorldScene({
   const passengerViewMotion = useMemo(() => createPassengerViewMotion(), []);
   const raycaster = useRef(new Raycaster());
   const basaltForceField = useRef<BasaltForceFieldRuntime | null>(null);
-  const forceFieldActive = scene.id === "basalt-stronghold";
+  const forceFieldActive = scene.id === "basalt-stronghold" || scene.id === "nimbus";
+  const nimbusForceField = scene.id === "nimbus";
   const forceFieldTransmission = useCallback(
     (from: SceneVector3, to: SceneVector3): number => {
       if (!forceFieldActive) return 1;
@@ -4065,9 +4098,13 @@ function OpenWorldScene({
   );
   const compoundClusterDefinitions = useMemo(() => {
     const available = new Set(breakablePieces.map((piece) => piece.clusterId));
-    return [...astanaTrainClusterDefinitions(), ...vehicleFrames].filter(
-      (definition) => available.has(definition.clusterId),
-    );
+    // Поезд и airborne-кадры — свои списки; дорожная машина — третий такой
+    // же владелец составного тела, не ветка VehicleFrameSystem.
+    return [
+      ...astanaTrainClusterDefinitions(),
+      ...vehicleFrames,
+      townDsClusterDefinition(),
+    ].filter((definition) => available.has(definition.clusterId));
   }, [breakablePieces]);
   /**
    * Кто из кусков — член составного кластера. Такие куски авторятся в
@@ -7668,7 +7705,7 @@ function OpenWorldScene({
             resolveDamageSource(entry.source),
             "blast",
             entry.energy,
-          );
+          ) * profile.carveRadiusMultiplier;
           const physicalChipCount = Math.min(3, chipState.budget);
           const applyOutcome = (carve: {
             carved: boolean;
@@ -7779,7 +7816,7 @@ function OpenWorldScene({
                   resolveDamageSource(entry.source),
                   "blast",
                   energy,
-                ),
+                ) * profile.carveRadiusMultiplier,
                 burstSpeed: Math.max(profile.looseBurstSpeed, energy * 0.72),
               }
             : null;
@@ -8235,6 +8272,13 @@ function OpenWorldScene({
     [explodeAt],
   );
 
+  const detonateCharge = useCallback(
+    (position: readonly [number, number, number]) => {
+      explodeAt(new Vector3(...position), "charge");
+    },
+    [explodeAt],
+  );
+
   const fireGrenade = useCallback(() => {
     const now = performance.now();
     if (now - lastGrenadeTime.current < 850) {
@@ -8481,6 +8525,10 @@ function OpenWorldScene({
     }
     if (weapon === "rocket" || weapon === "lance") {
       fireRocket(launcherExplosive(weapon));
+      return;
+    }
+    if (weapon === "charge") {
+      demolitionChargeRuntime.current?.placeOrRemove();
       return;
     }
 
@@ -8793,6 +8841,7 @@ function OpenWorldScene({
     center,
     commitRemnants,
     fallbackLook,
+    demolitionChargeRuntime,
     fireGrenade,
     fireRocket,
     fireRound,
@@ -9111,6 +9160,9 @@ function OpenWorldScene({
         <BasaltForceFieldSystem
           ref={basaltForceField}
           resetVersion={resetVersion}
+          staticProjection={nimbusForceField ? NIMBUS_FORCE_FIELD_PROJECTION : undefined}
+          staticColor={nimbusForceField ? "#79e6ff" : undefined}
+          includeSkyRam={!nimbusForceField}
           skyRamPose={skyRamShieldPose}
         />
       ) : null}
@@ -9187,6 +9239,13 @@ function OpenWorldScene({
           kinematicClusters={compoundKinematicClusters}
         />
       </group>
+      <DemolitionChargeSystem
+        active={weapon === "charge"}
+        raycastRoot={breakableRaycastRoot}
+        runtimeRef={demolitionChargeRuntime}
+        onCountChange={onChargeCountChange}
+        onDetonate={detonateCharge}
+      />
       <ProjectileWarmup />
       <TracerSystem runtimeRef={tracerRuntime} />
       <MachineGunImpactSystem runtimeRef={machineGunImpactRuntime} />
@@ -9251,6 +9310,24 @@ function OpenWorldScene({
         clusterEventStates={clusterEventStates}
         clusterRegistry={compoundKinematicClusters}
       />
+      <TownCarSystem
+        pieces={breakablePieces}
+        bodies={pieceBodies}
+        brokenPieces={brokenPiecesRef}
+        inactivePieces={inactiveCompoundMembers}
+        resetVersion={resetVersion}
+        clusterRegistry={compoundKinematicClusters}
+        occupiedSeatId={occupiedSeatId}
+        onOccupiedSeatChange={onOccupiedSeatChange}
+        onApproachChange={onCarApproachChange}
+        entryRequestVersion={entryOpenRequestVersion}
+        entryRequestTargetRef={entryOpenRequestTargetRef}
+        contactMaterialOf={contactMaterialOf}
+        worldContactPieceAt={worldContactPieceAt}
+        onContactDamage={handleContactDamage}
+        onFramePose={publishVehicleFramePose}
+        onMotionTelemetryUpdate={onMotionTelemetryUpdate}
+      />
       <MotionInstrumentSystem
         definitions={motionInstrumentDefinitions}
         pieceById={breakablePieceById}
@@ -9281,7 +9358,9 @@ function OpenWorldScene({
             passengerViewMotion={passengerViewMotion}
             spawn={scene.playerSpawn}
             flightMode={flightMode}
-            entryInteractionActive={entryInteractionActive}
+            entryInteractionActive={
+              entryInteractionActive || (weapon === "charge" && chargeCount > 0)
+            }
             interIslandArrivalActive={interIslandArrivalActive}
             interIslandBoundaryPassThrough={interIslandBoundaryPassThrough}
             occupiedSeatId={occupiedSeatId}
@@ -9297,6 +9376,8 @@ function OpenWorldScene({
               kickRef={launcherKick}
               slim={weapon === "lance"}
             />
+          ) : weapon === "charge" ? (
+            <FirstPersonDemolitionCharge />
           ) : (
             <FirstPersonMachineGun shotsRef={mgShots} />
           )}
@@ -9463,12 +9544,14 @@ function MobileGameControls({
   active,
   flightMode,
   weapon,
+  chargeCount,
   movementLocked,
   timeOfDay,
   controls,
   onStart,
   onStrike,
   onStrikeEnd,
+  onDetonate,
   onWeaponChange,
   onTimeChange,
   onFlightChange,
@@ -9480,12 +9563,14 @@ function MobileGameControls({
   active: boolean;
   flightMode: boolean;
   weapon: WeaponName;
+  chargeCount: number;
   movementLocked: boolean;
   timeOfDay: TimeOfDay;
   controls: MobileControlsRef;
   onStart: () => void;
   onStrike: () => void;
   onStrikeEnd: () => void;
+  onDetonate: () => void;
   onWeaponChange: (weapon: WeaponName) => void;
   onTimeChange: () => void;
   onFlightChange: () => void;
@@ -9777,9 +9862,11 @@ function MobileGameControls({
       ? "—"
       : weapon === "hammer"
         ? t("fire.strike")
-        : weapon === "mg"
-          ? t("fire.fire")
-          : t("fire.launch");
+        : weapon === "charge"
+          ? t("fire.place")
+          : weapon === "mg"
+            ? t("fire.fire")
+            : t("fire.launch");
   const timeLabel = t(timeOfDayKey(timeOfDay));
 
   return (
@@ -9827,25 +9914,42 @@ function MobileGameControls({
             {fireLabel}
           </button>
         ) : null}
-        {!flightMode && entryActions.length < 2 ? (
+        {(weapon === "charge" && chargeCount > 0) ||
+        (!flightMode && entryActions.length < 2) ? (
           <button
             type="button"
-            className={entryAction ? "is-entry-action" : undefined}
+            className={
+              weapon === "charge" && chargeCount > 0
+                ? "is-entry-action"
+                : entryAction
+                  ? "is-entry-action"
+                  : undefined
+            }
             onPointerDown={(event) => {
               event.preventDefault();
-              if (entryAction) {
+              if (weapon === "charge" && chargeCount > 0) {
+                onDetonate();
+              } else if (entryAction) {
                 onEntryAction();
               } else {
                 setJump(true);
               }
             }}
-            onPointerCancel={() => !entryAction && setJump(false)}
-            onPointerLeave={() => !entryAction && setJump(false)}
-            onPointerUp={() => !entryAction && setJump(false)}
+            onPointerCancel={() =>
+              weapon !== "charge" && !entryAction && setJump(false)
+            }
+            onPointerLeave={() =>
+              weapon !== "charge" && !entryAction && setJump(false)
+            }
+            onPointerUp={() =>
+              weapon !== "charge" && !entryAction && setJump(false)
+            }
           >
-            {entryAction
-              ? t(entryActionKey(entryAction, true))
-              : t("mobile.jump")}
+            {weapon === "charge" && chargeCount > 0
+              ? t("controls.detonate")
+              : entryAction
+                ? t(entryActionKey(entryAction, true))
+                : t("mobile.jump")}
           </button>
         ) : null}
       </div>
@@ -9863,6 +9967,7 @@ function MobileGameControls({
                   ? t("weapon.lance.short")
                   : t("weapon.rocket.short"),
               ],
+              ["charge", "5", t("weapon.charge.short")],
             ] as const
           ).map(([nextWeapon, shortcut, label]) => (
             <button
@@ -10400,7 +10505,9 @@ function usePlayerModeCaption({
                 ? t("announce.weaponRocket")
                 : weapon === "lance"
                   ? t("announce.weaponLance")
-                  : t("announce.weaponMg");
+                  : weapon === "charge"
+                    ? t("announce.weaponCharge")
+                    : t("announce.weaponMg");
     } else if (before.timeOfDay !== timeOfDay) {
       kicker = `${t(timeOfDayKey(timeOfDay))} · ${gameClockText(TIME_OF_DAY_TARGETS[timeOfDay])}`;
       text = t(timeOfDayAnnouncementKey(timeOfDay));
@@ -10432,7 +10539,9 @@ function ModeChips({
             ? t("weapon.rocket")
             : weapon === "lance"
               ? t("weapon.lance")
-              : t("weapon.mg");
+              : weapon === "charge"
+                ? t("weapon.charge")
+                : t("weapon.mg");
 
   if (!flightMode && !weaponChip) {
     return null;
@@ -10798,6 +10907,7 @@ export function MakeAMessGame({
     strike: () => {},
     strikeEnd: () => {},
   });
+  const demolitionChargeRuntime = useRef<DemolitionChargeRuntime | null>(null);
   const arrivalBootstrapSnapshot = useSyncExternalStore(
     subscribeInterIslandBootstrap,
     interIslandBootstrapSnapshot,
@@ -10846,6 +10956,7 @@ export function MakeAMessGame({
   const fallbackLook = reportedFallbackLook ?? touchLikeDevice;
   const active = controlActive || framePlacesPlayer;
   const [brokenCount, setBrokenCount] = useState(0);
+  const [chargeCount, setChargeCount] = useState(0);
   const [resetVersion, setResetVersion] = useState(0);
   const [weapon, setWeapon] = useState<WeaponName>("hammer");
   const [flightMode, setFlightMode] = useState(false);
@@ -11322,14 +11433,18 @@ export function MakeAMessGame({
   // судна обзорный рейс первичен; во всех остальных спорах побеждает дверь.
   const approachSources = useRef<{
     door: HingedEntryApproach | null;
+    car: HingedEntryApproach | null;
     departure: HingedEntryApproach | null;
-  }>({ door: null, departure: null });
+  }>({ door: null, car: null, departure: null });
 
   const applyApproach = useCallback(
-    (source: "door" | "departure", entry: HingedEntryApproach | null) => {
+    (source: "door" | "car" | "departure", entry: HingedEntryApproach | null) => {
       approachSources.current[source] = entry;
+      // Сесть в машину — это войти в дверь, а не отправить рейс: пост стоит
+      // снаружи, у ручки. Поэтому машина занимает дверную сторону спора, где
+      // общее правило «дверь важнее» уже верно, а рейс остаётся отдельным.
       const next = preferredEntryInteraction(
-        approachSources.current.door,
+        approachSources.current.door ?? approachSources.current.car,
         approachSources.current.departure,
       );
       setApproachedEntry(next);
@@ -11350,6 +11465,11 @@ export function MakeAMessGame({
   const handleDepartureApproachChange = useCallback(
     (approached: HingedEntryApproach | null) =>
       applyApproach("departure", approached),
+    [applyApproach],
+  );
+
+  const handleCarApproachChange = useCallback(
+    (approached: HingedEntryApproach | null) => applyApproach("car", approached),
     [applyApproach],
   );
 
@@ -11632,7 +11752,16 @@ export function MakeAMessGame({
             Number(event.code.slice("Digit".length)),
           )
         : null;
-      if (numberedAction && !event.repeat) {
+      if (
+        event.code === "Space" &&
+        weapon === "charge" &&
+        chargeCount > 0 &&
+        !event.repeat
+      ) {
+        event.preventDefault();
+        mobileControls.current.jump = false;
+        demolitionChargeRuntime.current?.detonateAll();
+      } else if (numberedAction && !event.repeat) {
         event.preventDefault();
         openApproachedEntry(numberedAction.id);
       } else if (
@@ -11673,6 +11802,12 @@ export function MakeAMessGame({
         // Одна клавиша, два ракетомёта: повторное нажатие меняет боеприпас.
         requestWeaponChange(nextLauncherWeapon(weapon));
       } else if (
+        event.code === "Digit5" &&
+        (!occupiedSeatId || interIslandPassengerState.flightActive) &&
+        !event.repeat
+      ) {
+        requestWeaponChange("charge");
+      } else if (
         event.code === "KeyQ" &&
         (!occupiedSeatId || interIslandPassengerState.flightActive) &&
         !event.repeat
@@ -11694,6 +11829,7 @@ export function MakeAMessGame({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
     approachedEntry,
+    chargeCount,
     cycleTimeOfDay,
     hasNumberedEntryActions,
     interIslandPassengerState.flightActive,
@@ -11852,6 +11988,8 @@ export function MakeAMessGame({
                     fallbackLook={fallbackLook}
                     mobileControls={mobileControls}
                     mobileActions={mobileActions}
+                    chargeCount={chargeCount}
+                    demolitionChargeRuntime={demolitionChargeRuntime}
                     resetVersion={resetVersion}
                     entryOpenRequestVersion={entryOpenRequestVersion}
                     entryOpenRequestTargetRef={entryOpenRequestTargetRef}
@@ -11870,8 +12008,10 @@ export function MakeAMessGame({
                     onPointerLockChange={handlePointerLockChange}
                     onBrokenCountChange={setBrokenCount}
                     onDynamicBodyCountChange={setDynamicBodyCount}
+                    onChargeCountChange={setChargeCount}
                     onEntryApproachChange={handleEntryApproachChange}
                     onDepartureApproachChange={handleDepartureApproachChange}
+                    onCarApproachChange={handleCarApproachChange}
                     onInterIslandBoundary={handleInterIslandBoundary}
                     onInterIslandArrivalReady={handleInterIslandArrivalReady}
                     onInterIslandArrivalComplete={
@@ -12074,7 +12214,11 @@ export function MakeAMessGame({
                     ? t("weapon.launcher")
                     : equippedWeapon === "rocket"
                       ? t("weapon.rocket")
-                      : t("weapon.mg")}
+                      : equippedWeapon === "lance"
+                        ? t("weapon.lance")
+                        : equippedWeapon === "charge"
+                          ? `${t("weapon.charge")} · ${chargeCount}/10`
+                          : t("weapon.mg")}
             </span>
           </div>
           <div className="damage-copy">
@@ -12099,7 +12243,30 @@ export function MakeAMessGame({
         </div>
       ) : null}
 
-      {active && surfaces.actionHints && activeHint ? (
+      {active &&
+      surfaces.actionHints &&
+      equippedWeapon === "charge" &&
+      chargeCount > 0 ? (
+        <aside
+          className="game-action-hint is-persistent"
+          role="status"
+          aria-live="polite"
+        >
+          <p>
+            {t("hint.charge.eyebrow")} · {chargeCount}/10
+          </p>
+          <h2>{t("hint.charge.title")}</h2>
+          <div className="game-action-hint-detail">
+            {!fallbackLook ? <kbd>Space</kbd> : null}
+            <span>{t("controls.detonate")}</span>
+          </div>
+        </aside>
+      ) : null}
+
+      {active &&
+      surfaces.actionHints &&
+      activeHint &&
+      !(equippedWeapon === "charge" && chargeCount > 0) ? (
         <aside
           className={`game-action-hint${activeHint.durationMs === undefined ? " is-persistent" : ""}${hintLeaving ? " is-leaving" : ""}`}
           role="status"
@@ -12130,7 +12297,8 @@ export function MakeAMessGame({
       {active &&
       surfaces.actionHints &&
       approachedEntry &&
-      hasNumberedEntryActions ? (
+      hasNumberedEntryActions &&
+      !(equippedWeapon === "charge" && chargeCount > 0) ? (
         <aside
           className="game-action-hint game-entry-choice is-persistent"
           role="status"
@@ -12158,12 +12326,14 @@ export function MakeAMessGame({
           active={active}
           flightMode={flightMode}
           weapon={equippedWeapon}
+          chargeCount={chargeCount}
           movementLocked={occupiedSeatId !== null}
           timeOfDay={timeOfDay}
           controls={mobileControls}
           onStart={startPlaying}
           onStrike={() => mobileActions.current.strike()}
           onStrikeEnd={() => mobileActions.current.strikeEnd()}
+          onDetonate={() => demolitionChargeRuntime.current?.detonateAll()}
           onWeaponChange={requestWeaponChange}
           onTimeChange={cycleTimeOfDay}
           onFlightChange={toggleFlightMode}
@@ -12191,12 +12361,14 @@ export function MakeAMessGame({
                 ? "—"
                 : equippedWeapon === "hammer"
                   ? t("fire.strike")
+                  : equippedWeapon === "charge"
+                    ? t("fire.place")
                   : equippedWeapon === "launcher" ||
                       equippedWeapon === "rocket" ||
                       equippedWeapon === "lance"
                     ? t("fire.shoot")
                     : t("fire.hold")}
-              <span>0·1·2·3·4</span>
+              <span>0·1·2·3·4·5</span>
               {t("controls.weapon")}
             </>
           ) : null}
@@ -12210,7 +12382,14 @@ export function MakeAMessGame({
           ) : null}
           <span>T</span>
           {t("controls.telemetry")}
-          {!flightMode ? (
+          {equippedWeapon === "charge" && chargeCount > 0 ? (
+            <>
+              <span>Space</span>
+              {t("controls.detonate")}
+            </>
+          ) : null}
+          {!flightMode &&
+          !(equippedWeapon === "charge" && chargeCount > 0) ? (
             <>
               <span>
                 {hasNumberedEntryActions
