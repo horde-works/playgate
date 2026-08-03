@@ -23,6 +23,14 @@ export interface EnvironmentState {
    * upward faces. Constant per map for now; a weather system can animate it.
    */
   wetness: number;
+  /**
+   * How far the cloud deck has drifted, in metres of world. Published once per
+   * frame so the sky, the shadow on the ground and the sun-occlusion query all
+   * read the same field at the same offset.
+   */
+  readonly cloudDrift: [x: number, z: number];
+  /** Cloud between the camera and the sun right now, 0..1. */
+  sunOcclusion: number;
 }
 
 export const environmentState: EnvironmentState = {
@@ -33,4 +41,6 @@ export const environmentState: EnvironmentState = {
   nightFactor: 0,
   twilightFactor: 0,
   wetness: 0.55,
+  cloudDrift: [0, 0],
+  sunOcclusion: 0,
 };

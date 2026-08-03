@@ -175,6 +175,17 @@ import type { VillagerReport } from "./villagerSim";
 import type { NoiseEvent } from "./villagerAlarm";
 import { vikingSettlement } from "../content/scenes/vikingSettlement.ts";
 import { GrassField } from "./GrassField";
+import { DutchPolderWater } from "./DutchPolderWater";
+import { CLEAR_SKY, DUTCH_POLDER_SKY } from "./skyWeatherModel.ts";
+
+/**
+ * TEMP (2026-08-03): kill switch for the polder deck while its cost is being
+ * calibrated. `CLEAR_SKY` takes every cloud branch out of the sky shader at the
+ * first test, so flipping this is an honest A/B — not a cheaper cloud, no cloud
+ * at all. Remove once the frame budget is settled.
+ */
+const POLDER_WEATHER_ENABLED = true;
+import { environmentState } from "./environmentState";
 import { SceneDressing } from "./SceneDressing";
 import { WorldEdge } from "./WorldEdge";
 import { HingedDoorSystem, type HingedEntryApproach } from "./HingedDoorSystem";
@@ -1883,6 +1894,14 @@ function MouseLook({
       cameraRef.current.rotation.set(pitch.current, yaw.current, 0, "YXZ");
     };
     scope.__mamLook = setLook;
+    // Sky work cannot be verified without knowing where the sun actually is:
+    // the solar frame is geographic, so guessing an azimuth wastes a run.
+    scope.__mamSun = () => ({
+      x: environmentState.sunDirection.x,
+      y: environmentState.sunDirection.y,
+      z: environmentState.sunDirection.z,
+      day: environmentState.dayFactor,
+    });
     // Browser automation runs in an isolated page realm and cannot call the
     // dev hook directly. Match mamTeleport with a one-shot query command so
     // a physical weapon test can still author an exact line of sight.
@@ -1897,6 +1916,7 @@ function MouseLook({
     }
     return () => {
       delete scope.__mamLook;
+      delete scope.__mamSun;
     };
   }, []);
 
@@ -9199,6 +9219,9 @@ function OpenWorldScene({
         cameraFar={scene.cameraFar}
         snapVersion={timeOfDaySnapVersion}
         cinematic={cinematic}
+        weather={POLDER_WEATHER_ENABLED && scene.id === "dutch-polder"
+          ? DUTCH_POLDER_SKY
+          : CLEAR_SKY}
       />
       <SceneMutableObjectSystem
         definitions={mutableObjectDefinitions}
@@ -9297,17 +9320,20 @@ function OpenWorldScene({
         </>
       ) : null}
       {scene.id === "dutch-polder" && scene.worldRadius ? (
-        <GrassField
-          profile="dutch-polder"
-          worldRadius={scene.worldRadius}
-          center={scene.worldCenter}
-          nightRef={nightRef}
-          pieces={breakablePieces}
-          count={24000}
-          bladeColor="#4f6735"
-          tipColor="#879b57"
-          hiddenPieceIds={hiddenPieces}
-        />
+        <>
+          <GrassField
+            profile="dutch-polder"
+            worldRadius={scene.worldRadius}
+            center={scene.worldCenter}
+            nightRef={nightRef}
+            pieces={breakablePieces}
+            count={24000}
+            bladeColor="#4f6735"
+            tipColor="#879b57"
+            hiddenPieceIds={hiddenPieces}
+          />
+          <DutchPolderWater />
+        </>
       ) : null}
       <group ref={breakableRaycastRoot}>
         <BreakableObjects

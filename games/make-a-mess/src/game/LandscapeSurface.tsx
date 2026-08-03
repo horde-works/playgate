@@ -15,6 +15,7 @@ import type {
   LandscapeVisualChunkDefinition,
   LandscapeVisualDefinition,
 } from "./destructionScene.ts";
+import { dutchPolderGroundTint } from "./dutchPolderVegetation.ts";
 import {
   getPieceMaterial,
   pieceMaterialBaseColor,
@@ -57,6 +58,7 @@ const LandscapeRenderChunk = memo(function LandscapeRenderChunk({
   color,
   landscapeSurface,
   breakableMaterial,
+  groundTint,
 }: {
   chunk: LandscapeVisualChunkDefinition;
   hiddenPieceIds: ReadonlySet<string>;
@@ -65,6 +67,7 @@ const LandscapeRenderChunk = memo(function LandscapeRenderChunk({
   color: string;
   landscapeSurface: LandscapeVisualDefinition["landscapeSurface"];
   breakableMaterial: LandscapeVisualDefinition["material"];
+  groundTint: ((x: number, z: number) => readonly [number, number, number]) | null;
 }) {
   const mesh = useRef<InstancedMesh>(null);
   const { geometry, owners } = useMemo(() => {
@@ -78,6 +81,19 @@ const LandscapeRenderChunk = memo(function LandscapeRenderChunk({
       "normal",
       new Float32BufferAttribute(chunk.normals.flatMap((normal) => [...normal]), 3),
     );
+    if (groundTint) {
+      // Грунт несёт цвет СВОЕЙ растительности, из того же сэмплера, который её
+      // и расставляет. Без этого берег читался голым при любой густоте: на
+      // склоне, если смотреть вдоль него, между вертикальными стеблями всегда
+      // видно землю, а земля была одной плоской заливкой.
+      next.setAttribute(
+        "color",
+        new Float32BufferAttribute(
+          chunk.vertices.flatMap((vertex) => [...groundTint(vertex[0], vertex[2])]),
+          3,
+        ),
+      );
+    }
     next.setIndex(visible.indices);
     next.setAttribute(
       "materialAnchor",
@@ -119,7 +135,7 @@ const LandscapeRenderChunk = memo(function LandscapeRenderChunk({
     return { geometry: next, owners: visible.owners };
   // hiddenKey is the compact invalidation key for this specific chunk.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chunk, hiddenKey, landscapeSurface]);
+  }, [chunk, hiddenKey, landscapeSurface, groundTint]);
 
   useEffect(() => () => geometry.dispose(), [geometry]);
   useLayoutEffect(() => {
@@ -281,11 +297,37 @@ export const LandscapeSurface = memo(function LandscapeSurface({
   definition: LandscapeVisualDefinition;
   hiddenPieceIds: ReadonlySet<string>;
 }) {
-  const material = useMemo(() => getPieceMaterial(
+  const sharedMaterial = useMemo(() => getPieceMaterial(
     definition.material,
     pieceMaterialBaseColor(definition.material, definition.color),
     definition.textureProfile,
   ), [definition.color, definition.material, definition.textureProfile]);
+
+  // Тинт грунта пока есть только у польдера: там растительность банду́ется по
+  // глубине, и земля обязана соглашаться с ней.
+  const groundTint = definition.landscapeSurface === "dutch-polder-ground"
+    ? dutchPolderGroundTint
+    : null;
+
+  // ВАЖНО: включать vertexColors на общем материале нельзя — он лежит в кэше
+  // и раздаётся всем кускам мира с тем же ключом. Хуже того, у материала есть
+  // свой `customProgramCacheKey`, и он НЕ учитывает vertexColors: three молча
+  // переиспользовал бы программу, скомпилированную без USE_COLOR, и вершинный
+  // цвет просто не доехал бы до кадра. Поэтому клон и свой ключ.
+  const material = useMemo(() => {
+    if (!groundTint) return sharedMaterial;
+    const tinted = sharedMaterial.clone();
+    tinted.vertexColors = true;
+    const inheritedKey = sharedMaterial.customProgramCacheKey?.bind(sharedMaterial);
+    tinted.customProgramCacheKey = () =>
+      `${inheritedKey ? inheritedKey() : sharedMaterial.uuid}:vertex-tint`;
+    return tinted;
+  }, [sharedMaterial, groundTint]);
+
+  useEffect(() => {
+    if (material === sharedMaterial) return;
+    return () => material.dispose();
+  }, [material, sharedMaterial]);
   const shell = definition.destructionShell;
   const shellMaterial = useMemo(() => shell
     ? getPieceMaterial(
@@ -314,6 +356,7 @@ export const LandscapeSurface = memo(function LandscapeSurface({
           color={definition.color}
           landscapeSurface={definition.landscapeSurface}
           breakableMaterial={definition.material}
+          groundTint={groundTint}
         />
       ))}
       {shell && shellMaterial ? chunks.map(({ chunk, hiddenKey }) => (

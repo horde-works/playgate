@@ -25,7 +25,8 @@ Topographic drawing: [`dutch-polder-topography.png`](./dutch-polder-topography.p
 - Real water simulation is outside the milestone. The water datum, channels,
   banks, bridge clearances, waterfall mouths and water-driven machine
   interfaces are authored now so a later water system does not require a
-  terrain rewrite.
+  terrain rewrite. A visual water sheet was added later over exactly those
+  authored channels and changed no terrain; see §5.1.
 - Existing dirty work in town/vehicle/runtime files is foreign work and is not
   part of this design.
 
@@ -152,6 +153,28 @@ painted over ground.
 | `C2 southwest` | `(-30,13) → (-35,29) → (-47,40) → (-52,48)` | 3.5 m | southwest waterfall mouth |
 | `C3 field-drain` | `(5,14) → (6,31) → (4,47)` | 2.6 m | narrow controlled polder drain |
 | `C4 east-fork` | `(39,12) → (48,25) → (63,32)` | 3.8 m | east waterfall mouth |
+
+### 5.1 The visual sheet (built 2026-08-03)
+
+Every channel above is now filled by one water sheet:
+`game/dutchPolderWaterModel.ts` (pure geometry, detectors in
+`tests/dutch-polder-water.test.mjs`) and `game/DutchPolderWater.tsx` (render).
+What it is and is not:
+
+- one mesh over all four channels, so the whole polder costs exactly one
+  planar-mirror pass and one half-resolution refraction pass per frame;
+- the waterline is not authored. The sheet is cut wider than any water can be
+  and a depth pass decides where the water stops, so it follows the meshed
+  bank and softens every reed that stands in it;
+- body colour is absorption over measured thickness, not a painted tint;
+  reflection is the mirror pass broken up by two octaves of capillary ripple;
+- the sheet must be softened by the same single Chaikin pass the landscape
+  document applies before carving, or it drifts off its own trench at a bend;
+- a damp collar sheet floats 9 cm higher and darkens the bank the water no
+  longer covers; duckweed rafts drift downstream and gather against the banks.
+- still absent: hydrology, buoyancy, flow forces, anything at the waterfall
+  mouths. `C2` and `C4` reach their mouths and fade out over the last few
+  metres; nothing pours over the lip.
 
 Bridge anchors are fixed after the channels, not placed approximately:
 

@@ -47,6 +47,16 @@ import {
   updateMaterialEnvironment,
 } from "./materialTextures";
 import { environmentState } from "./environmentState";
+import {
+  installSkyClouds,
+  setSkyCloudCoarse,
+  type SkyCloudUniforms,
+} from "./skyClouds";
+import {
+  CLEAR_SKY,
+  cloudDrift,
+  type SkyWeather,
+} from "./skyWeatherModel.ts";
 import { lampBeaconOpacity, lampBeaconWorldDiameter } from "./lampBeacon";
 import {
   lampEventLevel,
@@ -129,7 +139,12 @@ export function SceneEnvironment({
     skyScene.sky.material.uniforms.sunPosition.value
       .copy(environmentState.sunPosition)
       .normalize();
+    // Six cube faces of the same shader the visible sky uses — three-stdlib
+    // shares one material across every Sky. Walk the deck coarsely for them:
+    // what survives the blur is its average brightness, not its billows.
+    setSkyCloudCoarse(skyScene.sky.material, true);
     const target = pmrem.fromScene(skyScene.holder, 0.028, 1, 60);
+    setSkyCloudCoarse(skyScene.sky.material, false);
     scene.environment = target.texture;
     currentTarget.current?.dispose();
     currentTarget.current = target;
@@ -151,6 +166,7 @@ export function DayNightCycle({
   cameraFar = 140,
   snapVersion = 0,
   cinematic = false,
+  weather = CLEAR_SKY,
 }: {
   mode: TimeOfDay;
   nightRef: { current: number };
@@ -167,6 +183,8 @@ export function DayNightCycle({
   cameraFar?: number;
   snapVersion?: number;
   cinematic?: boolean;
+  /** Authored weather. `CLEAR_SKY` leaves the analytic dome untouched. */
+  weather?: SkyWeather;
 }) {
   const directional = useRef<DirectionalLight>(null);
   const hemisphere = useRef<HemisphereLight>(null);
@@ -195,6 +213,12 @@ export function DayNightCycle({
   const shadowThrottle = useRef(1);
   const sunWasMoving = useRef(false);
   const skyRef = useRef<ComponentRef<typeof Sky>>(null);
+  const clouds = useRef<SkyCloudUniforms | null>(null);
+  const cloudLitDay = useMemo(() => new Color(weather.litColor), [weather]);
+  const cloudShadeDay = useMemo(() => new Color(weather.shadeColor), [weather]);
+  // A cumulus at night is a dark mass with a moonlit rim, not a white puff.
+  const cloudLitNight = useMemo(() => new Color("#2c3646"), []);
+  const cloudShadeNight = useMemo(() => new Color("#141a25"), []);
 
   // Drawn after the opaque world so the per-pixel scattering shader only runs
   // where sky is actually visible instead of being overdrawn by the terrain.
@@ -207,6 +231,15 @@ export function DayNightCycle({
       skyRef.current.position.set(worldCenter?.[0] ?? 0, 0, worldCenter?.[1] ?? 0);
     }
   }, [worldCenter]);
+
+  // The weather field is grafted onto the analytic sky rather than replacing
+  // it: a world without an authored sky keeps exactly the dome it had.
+  useLayoutEffect(() => {
+    const material = skyRef.current?.material;
+    if (!material) return;
+    clouds.current ??= installSkyClouds(material);
+    clouds.current?.setWeather(weather);
+  }, [weather]);
 
   // A cinematic replay can begin while the previous run is still at night.
   // Snap before the first rendered frame so recording never captures that
@@ -316,6 +349,22 @@ export function DayNightCycle({
     const skyMaterial = skyRef.current?.material;
     if (skyMaterial && "uniforms" in skyMaterial) {
       skyMaterial.uniforms.sunPosition.value.set(sunX, sunY, sunZ);
+    }
+
+    // The deck rides the wind on world time, so the shadow it will cast can
+    // be asked for at any world point without a second clock.
+    if (clouds.current && weather.coverage > 0) {
+      const [driftX, driftZ] = cloudDrift(weather, frameState.clock.elapsedTime);
+      clouds.current.drift.set(driftX, driftZ);
+      // The higher a layer sits, the faster the wind it rides: the three decks
+      // never move as one sheet, which is most of what says they are at
+      // different distances.
+      clouds.current.midDrift.set(driftX * 1.45, driftZ * 1.45);
+      clouds.current.cirrusDrift.set(driftX * 1.9, driftZ * 1.9);
+      clouds.current.lit.copy(cloudLitNight).lerp(cloudLitDay, day);
+      clouds.current.shade.copy(cloudShadeNight).lerp(cloudShadeDay, day);
+      environmentState.cloudDrift[0] = driftX;
+      environmentState.cloudDrift[1] = driftZ;
     }
   });
 

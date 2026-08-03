@@ -1,4 +1,4 @@
 interface:
   display_name: "Environmental Scene Authoring"
-  short_description: "Lighting, atmosphere, terrain, vegetation QA"
-  default_prompt: "Use $environmental-scene-authoring to diagnose and improve this world environment without breaking rendering or destruction."
+  short_description: "Lighting, atmosphere, sky and clouds, terrain, vegetation QA"
+  default_prompt: "Use $environmental-scene-authoring to diagnose and improve this world environment — light, sky and cloud deck, fog, terrain, vegetation — without breaking rendering, destruction or the frame budget."
