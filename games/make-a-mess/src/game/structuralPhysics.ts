@@ -12,6 +12,8 @@ export interface StructuralPieceDefinition<Material extends string> {
   readonly size: StructuralVector3;
   readonly volume?: number;
   readonly bearingArea?: number;
+  /** Authored world/terrain root, independent of its visual material. */
+  readonly foundation?: boolean;
   readonly contactBoxes?: readonly StructuralContactBox[];
   readonly carriesAttachments?: boolean;
   readonly bearsLoad?: boolean;
@@ -35,6 +37,13 @@ export interface StructuralMaterialProfile {
   readonly bearsLoad?: boolean;
   readonly carriesAttachments?: boolean;
   readonly sideAttachmentReach?: number;
+}
+
+function pieceIsFoundation<Material extends string>(
+  piece: StructuralPieceDefinition<Material>,
+  materialProfiles: Readonly<Record<Material, StructuralMaterialProfile>>,
+): boolean {
+  return piece.foundation ?? materialProfiles[piece.material].foundation ?? false;
 }
 
 export interface StructuralSolver {
@@ -465,7 +474,7 @@ export function createStructuralSolver<Material extends string>(
   let nextComponentId = 0;
   for (const piece of pieces) {
     if (
-      materialProfiles[piece.material].foundation ||
+      pieceIsFoundation(piece, materialProfiles) ||
       componentIdsByPieceId.has(piece.id)
     ) {
       continue;
@@ -487,7 +496,7 @@ export function createStructuralSolver<Material extends string>(
         const neighbor = pieceById.get(neighborId);
         if (
           !neighbor ||
-          materialProfiles[neighbor.material].foundation ||
+          pieceIsFoundation(neighbor, materialProfiles) ||
           componentIdsByPieceId.has(neighborId)
         ) {
           continue;
@@ -500,14 +509,14 @@ export function createStructuralSolver<Material extends string>(
   }
 
   for (const piece of pieces) {
-    if (!materialProfiles[piece.material].foundation) {
+    if (!pieceIsFoundation(piece, materialProfiles)) {
       continue;
     }
 
     const adjacentComponentIds = new Set<number>();
     for (const neighborId of structuralNeighbors.get(piece.id) ?? []) {
       const neighbor = pieceById.get(neighborId);
-      if (!neighbor || materialProfiles[neighbor.material].foundation) {
+      if (!neighbor || pieceIsFoundation(neighbor, materialProfiles)) {
         continue;
       }
       for (const componentId of componentIdsByPieceId.get(neighborId) ?? []) {
@@ -579,7 +588,7 @@ export function createStructuralSolver<Material extends string>(
       activePieces
         .filter(
           (piece) =>
-            materialProfiles[piece.material].foundation &&
+            pieceIsFoundation(piece, materialProfiles) &&
             !broken.has(piece.id),
         )
         .map((piece) => piece.id),
@@ -656,7 +665,7 @@ export function createStructuralSolver<Material extends string>(
       const pieceDepth = supportDepthByPiece.get(piece.id);
       if (
         pieceDepth === undefined ||
-        materialProfiles[piece.material].foundation
+        pieceIsFoundation(piece, materialProfiles)
       ) {
         continue;
       }
@@ -689,7 +698,7 @@ export function createStructuralSolver<Material extends string>(
     piece: StructuralPieceDefinition<Material>,
   ): number => {
     const profile = materialProfiles[piece.material];
-    if (profile.foundation) {
+    if (pieceIsFoundation(piece, materialProfiles)) {
       return Number.POSITIVE_INFINITY;
     }
 
@@ -717,7 +726,7 @@ export function createStructuralSolver<Material extends string>(
       .filter(
         (piece) =>
           structure.stable.has(piece.id) &&
-          !materialProfiles[piece.material].foundation,
+          !pieceIsFoundation(piece, materialProfiles),
       )
       .sort((left, right) => right.position[1] - left.position[1]);
 

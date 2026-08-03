@@ -121,8 +121,26 @@ function surfaceMeshGeometry(
       2,
     ),
   );
+  if (profile.normals) {
+    if (profile.normals.length !== profile.vertices.length) {
+      throw new Error("A surface mesh needs one normal per vertex");
+    }
+    geometry.setAttribute(
+      "normal",
+      new Float32BufferAttribute(profile.normals.flatMap((normal) => [...normal]), 3),
+    );
+  }
+  if (profile.colors) {
+    if (profile.colors.length !== profile.vertices.length) {
+      throw new Error("A surface mesh needs one colour per vertex");
+    }
+    geometry.setAttribute(
+      "color",
+      new Float32BufferAttribute(profile.colors.flatMap((color) => [...color]), 3),
+    );
+  }
   geometry.setIndex([...profile.indices]);
-  geometry.computeVertexNormals();
+  if (!profile.normals) geometry.computeVertexNormals();
   geometry.computeBoundingBox();
   geometry.computeBoundingSphere();
   return geometry;
@@ -288,7 +306,11 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
         // Negative bands are otherwise unused. -1 = village earth, -2 =
         // authored city grime. Reusing this attribute stays within WebGL's
         // instancing attribute cap.
-        bands[index] = piece.landscapeSurface === "viking-ground" ? -1 : -2;
+        bands[index] = piece.landscapeSurface === "viking-ground"
+          ? -1
+          : piece.landscapeSurface === "city-ground"
+            ? -2
+            : -3;
         return;
       }
       if (hasSilicateJoints(piece.id, piece.material)) {
@@ -329,13 +351,11 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
         batch.materialColor,
         batch.textureProfile,
       );
-      if (
-        batch.geometryKind !== "surfaceMesh" ||
-        batch.visualMesh?.doubleSided === false
-      ) return base;
-      const curvedShell = base.clone();
-      curvedShell.side = DoubleSide;
-      return curvedShell;
+      if (batch.geometryKind !== "surfaceMesh") return base;
+      const surface = base.clone();
+      surface.vertexColors = Boolean(batch.visualMesh?.colors);
+      if (batch.visualMesh?.doubleSided !== false) surface.side = DoubleSide;
+      return surface;
     },
     [batch.geometryKind, batch.material, batch.materialColor, batch.textureProfile],
   );

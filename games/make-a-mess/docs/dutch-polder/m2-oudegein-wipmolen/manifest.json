@@ -1,0 +1,62 @@
+{
+  "modelId": "dutch-windmill-oudegein-wipmolen-m2",
+  "revision": "m2-2026-08-02",
+  "modelHash": "097df1d22486",
+  "generatedAt": "2026-08-02T16:27:42.649Z",
+  "views": [
+    {
+      "id": "front",
+      "label": "Front +Z",
+      "projection": "orthographic",
+      "file": "front.png"
+    },
+    {
+      "id": "left",
+      "label": "Left profile",
+      "projection": "orthographic",
+      "file": "left.png"
+    },
+    {
+      "id": "rear",
+      "label": "Rear -Z · scoop wheel",
+      "projection": "orthographic",
+      "file": "rear.png"
+    },
+    {
+      "id": "three-quarter-left",
+      "label": "3/4 left",
+      "projection": "perspective",
+      "file": "three-quarter-left.png"
+    },
+    {
+      "id": "three-quarter-right",
+      "label": "3/4 right",
+      "projection": "perspective",
+      "file": "three-quarter-right.png"
+    },
+    {
+      "id": "high-three-quarter",
+      "label": "High 3/4",
+      "projection": "perspective",
+      "file": "high-three-quarter.png"
+    },
+    {
+      "id": "seat-and-tail",
+      "label": "Seat + tail joint",
+      "projection": "perspective",
+      "file": "seat-and-tail.png"
+    },
+    {
+      "id": "scoop-wheel",
+      "label": "Scoop wheel",
+      "projection": "perspective",
+      "file": "scoop-wheel.png"
+    },
+    {
+      "id": "silhouette",
+      "label": "Silhouette control",
+      "projection": "orthographic",
+      "file": "silhouette.png"
+    }
+  ]
+}

@@ -50,6 +50,8 @@ interface EdgeProfile {
   wallRadius: number;
   /** Warm light bleeding through the fog from below (volcanic maps). */
   underglow: boolean;
+  /** Slow concentric fronts travelling through the fog sea. */
+  waveStrength?: number;
   /** Rock strata, listed top ring → apex; faces blend between neighbours. */
   strata: readonly string[];
 }
@@ -96,6 +98,7 @@ const EDGE_PROFILES: Record<string, EdgeProfile> = {
     wallRadius: 99.5,
     topY: -0.4,
     underglow: false,
+    waveStrength: 1,
     strata: ["#2e261c", "#463a2c", "#514537", "#5c5a52", "#54524b", "#454440", "#3a3936", "#302f2c"],
   },
   // Степной остров: суша обрывается плотным лёссовым уступом, ниже —
@@ -108,6 +111,7 @@ const EDGE_PROFILES: Record<string, EdgeProfile> = {
     wallRadius: 134,
     topY: -0.4,
     underglow: false,
+    waveStrength: 0.28,
     strata: ["#6d6249", "#7b6f53", "#867a5d", "#8f8467", "#7a7059", "#66604d", "#55503f", "#454133"],
   },
   "basalt-stronghold": {
@@ -129,7 +133,18 @@ const EDGE_PROFILES: Record<string, EdgeProfile> = {
     wallRadius: 202,
     topY: -4.8,
     underglow: false,
+    waveStrength: 0.42,
     strata: ["#343936", "#414640", "#4b4d46", "#555148", "#454744", "#373c3b", "#2d3334", "#242a2c"],
+  },
+  "dutch-polder": {
+    groundRadius: 76,
+    lipRadius: 78,
+    lipY: -2.4,
+    wallRadius: 83,
+    topY: -0.45,
+    underglow: false,
+    waveStrength: 0.86,
+    strata: ["#33291e", "#4a3b2c", "#57452f", "#62523f", "#575149", "#454039", "#38342e", "#302f2c"],
   },
 };
 
@@ -141,6 +156,7 @@ function fallbackProfile(worldRadius: number): EdgeProfile {
     wallRadius: worldRadius + 1,
     topY: -0.3,
     underglow: false,
+    waveStrength: 0.48,
     strata: TOWN_STRATA,
   };
 }
@@ -286,12 +302,15 @@ function buildSkirtGeometry(profile: EdgeProfile): BufferGeometry {
 }
 
 const FOG_VERTEX = /* glsl */ `
+  attribute float fogEdgeFactor;
   varying vec3 vWorld;
   varying vec2 vLocal;
+  varying float vFogEdgeFactor;
   void main() {
     vec4 world = modelMatrix * vec4(position, 1.0);
     vWorld = world.xyz;
     vLocal = position.xz;
+    vFogEdgeFactor = fogEdgeFactor;
     gl_Position = projectionMatrix * viewMatrix * world;
   }
 `;
@@ -312,8 +331,11 @@ const FOG_FRAGMENT = /* glsl */ `
   uniform float uSeaRadius;
   uniform float uRimRadius;
   uniform float uCreepStart;
+  uniform float uBoundaryMode;
+  uniform float uWaveStrength;
   varying vec3 vWorld;
   varying vec2 vLocal;
+  varying float vFogEdgeFactor;
 
   float hash2(vec2 p) {
     return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
@@ -350,10 +372,14 @@ const FOG_FRAGMENT = /* glsl */ `
     vec2 u = radial > 0.001 ? vLocal / radial : vec2(1.0, 0.0);
     float tongues = vnoise(vec2(u.x * 7.0 + u.y * 2.6, radial * 0.24 - drift * 0.12)) * 0.65
                   + vnoise(vec2(u.y * 9.0 - u.x * 3.4, radial * 0.31 - drift * 0.19)) * 0.35;
-    float creep = pow(smoothstep(uCreepStart, uRimRadius + 1.0, radial), 0.75);
+    float creep = uBoundaryMode > 0.5
+      ? vFogEdgeFactor
+      : pow(smoothstep(uCreepStart, uRimRadius + 1.0, radial), 0.75);
     alpha *= creep * mix(0.4, 1.2, tongues);
     // The last strides before the rim are properly thick: no further to go.
-    float nearRim = smoothstep(uRimRadius - 3.5, uRimRadius + 1.0, radial);
+    float nearRim = uBoundaryMode > 0.5
+      ? smoothstep(0.72, 0.98, vFogEdgeFactor)
+      : smoothstep(uRimRadius - 3.5, uRimRadius + 1.0, radial);
     alpha = max(alpha, nearRim * body * mix(0.55, 0.9, n));
 
     // Ridges catch the sun like cloud tops; the glint follows the camera.
@@ -362,6 +388,23 @@ const FOG_FRAGMENT = /* glsl */ `
     float glint = pow(max(dot(view, normalize(uSunDirection)), 0.0), 6.0);
     vec3 color = uFogColor * (1.0 + crest * 0.14 * (0.35 + uDay * 0.65));
     color = mix(color, uSunColor, glint * crest * 0.28);
+
+    // Long, low wave fronts travel out through the fog sea. They are only a
+    // modulation of this existing pass: no particles, simulation or draw
+    // calls. Two slightly different wavelengths prevent a mechanical target.
+    float waveA = pow(
+      max(0.0, 0.5 + 0.5 * sin(radial * 0.49 - uTime * 0.92 + n * 1.4)),
+      12.0
+    );
+    float waveB = pow(
+      max(0.0, 0.5 + 0.5 * sin(radial * 0.31 - uTime * 0.57 + n * 2.1 + 2.4)),
+      16.0
+    );
+    float waveZone = smoothstep(uRimRadius - 2.0, uRimRadius + 12.0, radial)
+      * (1.0 - smoothstep(0.78, 0.96, radial / uSeaRadius));
+    float fogWave = max(waveA, waveB * 0.72) * waveZone * uWaveStrength;
+    color = mix(color, uSunColor, fogWave * (0.05 + uDay * 0.07));
+    alpha = max(alpha, fogWave * body * 0.16);
 
     // Volcanic maps: warm pools bleed through thin fog after dark.
     float pools = smoothstep(0.58, 0.92, vnoise(p * 0.021 + vec2(41.7, 13.3)));
@@ -388,16 +431,111 @@ const FOG_TOP_Y = 1.25;
 const FOG_FEATHER = 3.1;
 const FOG_SEA_Y = -7;
 
+type EdgePoint = readonly [x: number, z: number];
+
+function offsetBoundaryRing(
+  boundary: readonly EdgePoint[],
+  center: readonly [number, number],
+  offset: number,
+): readonly EdgePoint[] {
+  return boundary.map(([worldX, worldZ]) => {
+    const x = worldX - center[0];
+    const z = worldZ - center[1];
+    const radius = Math.hypot(x, z) || 1;
+    const scale = Math.max(0.05, radius + offset) / radius;
+    return [x * scale, z * scale] as const;
+  });
+}
+
+function irregularFogWallGeometry(
+  boundary: readonly EdgePoint[],
+  center: readonly [number, number],
+): BufferGeometry {
+  const ring = offsetBoundaryRing(boundary, center, 4.5);
+  const top = FOG_TOP_Y + 1.8;
+  const bottom = FOG_SEA_Y - 0.5;
+  const positions: number[] = [];
+  const edgeFactors: number[] = [];
+  for (let index = 0; index < ring.length; index += 1) {
+    const next = (index + 1) % ring.length;
+    const [ax, az] = ring[index];
+    const [bx, bz] = ring[next];
+    positions.push(
+      ax, top, az,
+      bx, bottom, bz,
+      bx, top, bz,
+      ax, top, az,
+      ax, bottom, az,
+      bx, bottom, bz,
+    );
+    edgeFactors.push(1, 1, 1, 1, 1, 1);
+  }
+  const geometry = new BufferGeometry();
+  geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+  geometry.setAttribute(
+    "fogEdgeFactor",
+    new Float32BufferAttribute(edgeFactors, 1),
+  );
+  return geometry;
+}
+
+function irregularFogCreepGeometry(
+  boundary: readonly EdgePoint[],
+  center: readonly [number, number],
+): BufferGeometry {
+  const rings = [
+    { offset: -12, y: 0.06, factor: 0 },
+    { offset: -5, y: 0.55, factor: 0.42 },
+    { offset: -1.2, y: 1.05, factor: 0.78 },
+    { offset: 4.5, y: 1.7, factor: 1 },
+  ] as const;
+  const points = rings.map((ring) => offsetBoundaryRing(boundary, center, ring.offset));
+  const positions: number[] = [];
+  const edgeFactors: number[] = [];
+  for (let index = 0; index < boundary.length; index += 1) {
+    const next = (index + 1) % boundary.length;
+    for (let band = 0; band < rings.length - 1; band += 1) {
+      const [ax, az] = points[band][index];
+      const [bx, bz] = points[band][next];
+      const [cx, cz] = points[band + 1][next];
+      const [dx, dz] = points[band + 1][index];
+      const inner = rings[band];
+      const outer = rings[band + 1];
+      positions.push(
+        ax, inner.y, az,
+        cx, outer.y, cz,
+        bx, inner.y, bz,
+        ax, inner.y, az,
+        dx, outer.y, dz,
+        cx, outer.y, cz,
+      );
+      edgeFactors.push(
+        inner.factor, outer.factor, inner.factor,
+        inner.factor, outer.factor, outer.factor,
+      );
+    }
+  }
+  const geometry = new BufferGeometry();
+  geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+  geometry.setAttribute(
+    "fogEdgeFactor",
+    new Float32BufferAttribute(edgeFactors, 1),
+  );
+  return geometry;
+}
+
 export function WorldEdge({
   sceneId,
   worldRadius,
   center,
+  boundary,
   cameraFar,
   nightRef,
 }: {
   sceneId: string;
   worldRadius: number;
   center: readonly [number, number];
+  boundary?: readonly EdgePoint[];
   cameraFar: number;
   nightRef: RefObject<number>;
 }) {
@@ -407,7 +545,10 @@ export function WorldEdge({
   // (whose distance is capped at cameraFar * 0.92 in DayNightCycle).
   const seaRadius = Math.min(worldRadius * 2.35, cameraFar * 0.86);
 
-  const skirtGeometry = useMemo(() => buildSkirtGeometry(profile), [profile]);
+  const skirtGeometry = useMemo(
+    () => boundary ? null : buildSkirtGeometry(profile),
+    [boundary, profile],
+  );
   // «Блюр» юбки: постоянная примесь цвета тумана независимо от дистанции
   // камеры (глубже — сильнее). Дефокус восприятием, без пост-процесса —
   // обрыв не спорит за резкость с игровым полем.
@@ -463,6 +604,8 @@ export function WorldEdge({
           uSeaRadius: { value: 120 },
           uRimRadius: { value: 60 },
           uCreepStart: { value: 45 },
+          uBoundaryMode: { value: 0 },
+          uWaveStrength: { value: 0.48 },
         },
         vertexShader: FOG_VERTEX,
         fragmentShader: FOG_FRAGMENT,
@@ -474,18 +617,33 @@ export function WorldEdge({
   );
 
   const fogWallGeometry = useMemo(() => {
+    if (boundary) return irregularFogWallGeometry(boundary, center);
     const wallRadius = profile.wallRadius;
     const top = FOG_TOP_Y + 1.8;
     const height = top - (FOG_SEA_Y - 0.5);
     const geometry = new CylinderGeometry(wallRadius, wallRadius, height, 96, 1, true);
     geometry.translate(0, top - height / 2, 0);
+    geometry.setAttribute(
+      "fogEdgeFactor",
+      new Float32BufferAttribute(
+        new Float32Array(geometry.getAttribute("position").count).fill(1),
+        1,
+      ),
+    );
     return geometry;
-  }, [profile]);
+  }, [boundary, center, profile]);
 
   const fogSeaGeometry = useMemo(() => {
     const geometry = new CircleGeometry(seaRadius, 72);
     geometry.rotateX(-Math.PI / 2);
     geometry.translate(0, FOG_SEA_Y, 0);
+    geometry.setAttribute(
+      "fogEdgeFactor",
+      new Float32BufferAttribute(
+        new Float32Array(geometry.getAttribute("position").count).fill(1),
+        1,
+      ),
+    );
     return geometry;
   }, [seaRadius]);
 
@@ -494,6 +652,7 @@ export function WorldEdge({
   // radial alpha gradient lives in the shader; this mesh just gives it
   // surfaces at the right heights.
   const fogCreepGeometry = useMemo(() => {
+    if (boundary) return irregularFogCreepGeometry(boundary, center);
     const rings: readonly (readonly [number, number])[] = [
       [profile.groundRadius - 14, 0.06],
       [profile.groundRadius - 6, 0.55],
@@ -522,12 +681,16 @@ export function WorldEdge({
     }
     const geometry = new BufferGeometry();
     geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+    geometry.setAttribute(
+      "fogEdgeFactor",
+      new Float32BufferAttribute(new Float32Array(positions.length / 3), 1),
+    );
     return geometry;
-  }, [profile]);
+  }, [boundary, center, profile]);
 
   useEffect(() => {
     return () => {
-      skirtGeometry.dispose();
+      skirtGeometry?.dispose();
       skirtMaterial.dispose();
       fogWallGeometry.dispose();
       fogSeaGeometry.dispose();
@@ -543,6 +706,8 @@ export function WorldEdge({
     uniforms.uSeaRadius.value = seaRadius;
     uniforms.uRimRadius.value = profile.groundRadius;
     uniforms.uCreepStart.value = profile.groundRadius - 13;
+    uniforms.uBoundaryMode.value = boundary ? 1 : 0;
+    uniforms.uWaveStrength.value = profile.waveStrength ?? 0.48;
     const sceneFog = frameState.scene.fog;
     if (sceneFog instanceof Fog) {
       (uniforms.uFogColor.value as Color).copy(sceneFog.color);
@@ -562,7 +727,9 @@ export function WorldEdge({
 
   return (
     <group ref={groupRef} position={[center[0], 0, center[1]]}>
-      <mesh geometry={skirtGeometry} material={skirtMaterial} />
+      {skirtGeometry ? (
+        <mesh geometry={skirtGeometry} material={skirtMaterial} />
+      ) : null}
       {/* Fog draws after the Sky dome (renderOrder 1000): over the void
           nothing writes depth, so anything below 1000 would be painted over
           by the sky. */}

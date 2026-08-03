@@ -42,20 +42,32 @@ test("Astana compass rotates without moving the map", () => {
   assert.deepEqual(astanaScene.solarFrame, frame);
 });
 
-test("equinox dawn and sunset make Baiterek's shadow tell the city axis", () => {
-  const dawn = equinoxSunDirection(TIME_OF_DAY_TARGETS.dawn, frame);
+test("equinox sunrise and sunset make Baiterek's shadow tell the city axis", () => {
+  const sunrise = equinoxSunDirection(0, frame);
   const sunset = equinoxSunDirection(TIME_OF_DAY_TARGETS.sunset, frame);
-  const dawnShadow = horizontal([-dawn[0], -dawn[1], -dawn[2]]);
+  const sunriseShadow = horizontal([-sunrise[0], -sunrise[1], -sunrise[2]]);
   const sunsetShadow = horizontal([-sunset[0], -sunset[1], -sunset[2]]);
 
-  assert.ok(dot2(horizontal(dawn), ASTANA_TRUE_EAST_VECTOR) > 1 - 1e-12,
-    "dawn light must arrive from Khan Shatyr");
-  assert.ok(dot2(dawnShadow, ASTANA_TRUE_EAST_VECTOR) < -1 + 1e-12,
-    "dawn shadow must point exactly away from Khan Shatyr");
+  assert.ok(dot2(horizontal(sunrise), ASTANA_TRUE_EAST_VECTOR) > 1 - 1e-12,
+    "sunrise light must arrive from Khan Shatyr");
+  assert.ok(dot2(sunriseShadow, ASTANA_TRUE_EAST_VECTOR) < -1 + 1e-12,
+    "sunrise shadow must point exactly away from Khan Shatyr");
   assert.ok(dot2(horizontal(sunset), ASTANA_TRUE_EAST_VECTOR) < -1 + 1e-12,
     "sunset light must arrive from the opposite end of the axis");
   assert.ok(dot2(sunsetShadow, ASTANA_TRUE_EAST_VECTOR) > 1 - 1e-12,
     "sunset shadow must point exactly toward Khan Shatyr");
+});
+
+test("the morning phase already stands clear of the horizon", () => {
+  const dawn = equinoxSunDirection(TIME_OF_DAY_TARGETS.dawn, frame);
+  const elevation = Math.atan2(dawn[1], Math.hypot(dawn[0], dawn[2])) * 180 / Math.PI;
+
+  assert.ok(elevation > 8, `morning sun sits at ${elevation.toFixed(2)}°`);
+  assert.ok(elevation < 14, `morning sun sits at ${elevation.toFixed(2)}°`);
+  assert.ok(dot2(horizontal(dawn), ASTANA_TRUE_EAST_VECTOR) > 0.9,
+    "morning light must still arrive along the city axis");
+  assert.ok(dot2(horizontal(dawn), ASTANA_TRUE_NORTH_VECTOR) < 0,
+    "the risen sun must have swung toward the south");
 });
 
 test("the rest of the day follows a physical northern-hemisphere equinox", () => {

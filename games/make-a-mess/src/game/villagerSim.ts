@@ -20,6 +20,68 @@ import {
   type ObstacleBox,
   type ObstacleField,
 } from "./villagerNavigation.ts";
+import {
+  passingAdvice,
+  PASSING_LOOK_AHEAD,
+} from "./villagerPassing.ts";
+import {
+  habituationAfter,
+  habituationDecay,
+  habituationFor,
+  levelAtDistance,
+  startleAmplitude,
+  startleBrake,
+  travelTime,
+  HABITUATION_GAIN,
+  HABITUATION_GAIN_SPREAD,
+  INDOOR_LOSS_DB,
+  LATENCY_SPREAD,
+  REACTION_LATENCY,
+  STARTLE_CHILD_GAIN,
+  STARTLE_FREEZE_SPREAD,
+  STARTLE_GAIN_CEILING,
+  STARTLE_GAIN_SPREAD,
+  STARTLE_ROLE_GAIN,
+  STARTLE_SPAN_SPREAD,
+  ALERT_SPAN_SPREAD,
+  ALERT_TRIGGER,
+  BRUISE_PACE,
+  BRUISE_SECONDS,
+  CURIOSITY_CHANCE,
+  CURIOSITY_QUIET,
+  CURIOSITY_SPAN,
+  HORN_COOLDOWN,
+  HORN_QUORUM,
+  LOOK_STANDOFF,
+  SIGNAL_FLOOR_DB,
+  SIGNAL_URGENCY,
+  WATCH_RADIUS,
+  BRUISE_SPEED,
+  DUSTING_SPREAD,
+  DUST_MAX,
+  KNOCKDOWN_SPEED,
+  PRONE_SPREAD,
+  RISE_SECONDS,
+  flightOf,
+  waveSpeed,
+  type BlastWave,
+  APPROACH_STANDOFF,
+  GATHER_REACH,
+  HIDE_SPREAD,
+  PANIC_PACE,
+  PANIC_SPAN_SPREAD,
+  PANIC_TRIGGER,
+  FIX_DELAY_SPREAD,
+  FAMILIAR_ALERT_SCALE,
+  RESIDUAL_ERROR,
+  SOURCE_MEMORY,
+  SOURCE_SAME_ANGLE,
+  alertSeconds,
+  dropsLoad,
+  localisationError,
+  type NoiseEvent,
+  type PendingNoise,
+} from "./villagerAlarm.ts";
 
 /**
  * Жители деревни как чистая симуляция — без three.js, чтобы её поведение
@@ -382,6 +444,10 @@ export interface Villager {
   path: [number, number][];
   waypoint: number;
   destinationNode: number;
+  /** Сглаженная поправка курса на расхождение со встречными, радианы. */
+  passYaw: number;
+  /** Сглаженный множитель темпа: уступающий слегка сбавляет. */
+  passPace: number;
   /** Сторона обхода препятствия; держится, пока препятствие не кончится. */
   avoidSign: number;
   avoidHold: number;
@@ -389,9 +455,11 @@ export interface Villager {
   /**
    * 0 — идёт; 1 переступает; 2 перемах с опорой; 3 через бедро; 4 выход
    * силой; 5 сидит; 6 лежит. Дальше — работа: 7 рубит, 8 кладёт, 9 трёт,
-   * 10 тянет на верёвке, 11 копает, 12 вешает, 13 кует.
+   * 10 тянет на верёвке, 11 копает, 12 вешает, 13 кует. И 15 — отряхивается
+   * после взрыва (полёт и лежание своей позы не завели: у падения та же поза,
+   * что у лежащего, и лишняя стоила бы больше, чем даёт).
    */
-  climbKind: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13;
+  climbKind: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 15;
   /** Прогресс движения 0→1; из него шейдер строит позу. */
   climbProgress: number;
   climbFromX: number;
@@ -435,6 +503,110 @@ export interface Villager {
   /** Сколько секунд ещё сидеть или лежать, и сколько было всего. */
   rest: number;
   restDuration: number;
+  /**
+   * ИСПУГ — МОДИФИКАТОР, А НЕ ПОЗА. Сидящий вздрагивает сидя, несущий бревно —
+   * с бревном, кузнец — на замахе. Поэтому здесь не `climbKind`, а амплитуда
+   * поверх любой позы: 0 — спокоен, 1 — полный рефлекс вздрагивания.
+   */
+  startle: number;
+  /** Секунд с начала вздрога; из него шейдер берёт форму. */
+  startleAge: number;
+  /**
+   * ЛИЧНЫЕ ЧЕРТЫ ИСПУГА. Без них деревня вздрагивает одним телом на тридцать
+   * четыре головы: людей различает только расстояние до хлопка, а это видно
+   * сразу. Пугливость складывается из своей и ремесленной.
+   */
+  readonly startleGain: number;
+  /** Своя длительность рефлекса: у кого доля секунды, у кого вдвое дольше. */
+  readonly startleSpan: number;
+  /** Насколько рефлекс глушит ход именно у него: кто-то встаёт колом, кто-то сбивается с шага. */
+  readonly startleFreeze: number;
+  /** Своя скорость привыкания к грохоту. */
+  readonly habituationGain: number;
+  /**
+   * Привычка к грохоту, 0..1. Копится с каждым выстрелом и тает в тишине.
+   * Без неё очередь из пулемёта превращает деревню в дёргающийся ад.
+   */
+  habituation: number;
+  /** Уровень последнего услышанного, дБ у самого уха. Для замеров и ступеней. */
+  heardLevel: number;
+  /**
+   * ЗАМИРАНИЕ С ОСМОТРОМ — второе звено каскада и совсем не хвост рефлекса.
+   * Тело стоит, голова ищет. Секунды, а не доли секунды.
+   */
+  alert: number;
+  /** Сколько уже длится замирание: из него берётся плавность позы. */
+  alertAge: number;
+  /** Насколько сильна тревога, 0..1. */
+  alertPeak: number;
+  /**
+   * Был ли источник УЖЕ ИЗВЕСТЕН, когда хлопнуло. Доживает до решения: бежать
+   * домой от знакомого грохота с известной стороны — не поведение, а паника
+   * без причины, и она же обнуляет деревню под непрерывной стрельбой.
+   */
+  alertFamiliar: boolean;
+  /** Свой запас неподвижности: кто-то застывает надолго, кто-то оглянулся и пошёл. */
+  readonly alertSpan: number;
+  /** Куда, ПО ЕГО МНЕНИЮ, хлопнуло. Импульсный звук локализуется плохо. */
+  sourceYaw: number;
+  /** Где хлопнуло на самом деле — чтобы было к чему поправляться. */
+  sourceTrueYaw: number;
+  /** Через сколько секунд он поправит свою оценку. 0 — уже поправил. */
+  sourceFixIn: number;
+  /** Сколько ещё секунд он ПОМНИТ, где источник. Пока помнит — искать нечего. */
+  sourceKnown: number;
+  /** Направление, которое он в прошлый раз выяснил. */
+  sourceKnownYaw: number;
+  /** Где хлопнуло, в мировых координатах — чтобы было от чего уходить и к чему идти. */
+  sourceX: number;
+  sourceZ: number;
+  /**
+   * ТРЕТЬЕ ЗВЕНО: секунды принятого решения. Пока держится, оно перекрывает
+   * и работу, и обычный выбор цели.
+   */
+  panic: number;
+  /**
+   * Что именно решил. `cover` — к СВОЕЙ двери (не к ближайшей); `gather` —
+   * сперва за своим ребёнком; `approach` — пойти разобраться.
+   */
+  panicKind: "cover" | "gather" | "approach" | "look" | null;
+  /** За кем идёт: место в списке жителей, а не ссылка. */
+  gatherIndex: number | null;
+  /** Сколько ещё секунд отсиживается в доме ДНЁМ. */
+  insideUntil: number;
+  /**
+   * СБИТ С НОГ — это СОСТОЯНИЕ, а не модификатор. В отличие от испуга, который
+   * ложится поверх любой позы, падение вытесняет всё: ни работы, ни ходьбы, ни
+   * ноши, ни осмотра. Испуг — поверх позы; отброс — вместо позы.
+   */
+  downPhase: "flight" | "prone" | "rising" | null;
+  /** Секунд в текущей фазе падения. */
+  downTime: number;
+  /** Сколько лежать ничком: тем дольше, чем сильнее прилетело. */
+  proneSeconds: number;
+  /** Полёт тела: откуда, куда, как долго и на какую высоту. */
+  flightSeconds: number;
+  flightFromX: number;
+  flightFromZ: number;
+  flightToX: number;
+  flightToZ: number;
+  flightPeak: number;
+  /** Сколько ещё секунд обхлопывается. Отряхиваются НЕ только упавшие. */
+  dusting: number;
+  /** Пыль поверх своей затасканности: 0 — чист, 1 — весь в пыли. */
+  dust: number;
+  /** Ушибся: идёт домой и прихрамывает. Но не убился — этого здесь нет. */
+  bruised: number;
+  /** Где рвануло — и ходил ли он уже смотреть на это. */
+  blastX: number;
+  blastZ: number;
+  blastSeen: boolean;
+  looked: boolean;
+  /**
+   * Поток случайности для всего, что вызвано ШУМОМ. Отдельный от общего: иначе
+   * количество выстрелов игрока меняло бы и походку, и выбор дел всей деревни.
+   */
+  readonly alarmRandom: () => number;
   state: "walking" | "dwelling" | "inside";
   dwell: number;
   /** Фаза шага: растёт от ПРОЙДЕННОГО ПУТИ, а не от времени. */
@@ -700,6 +872,563 @@ export interface VillagerPopulation {
   seeThrough: Set<string>;
   /** Кого именно жители просят открыть в этом кадре. */
   doorRequests: Set<string>;
+  /**
+   * Шум в пути. Звук идёт 343 м/с, и до дальнего края мира (96 м) доходит на
+   * 0.28 с позже, чем до ближнего. Это не роскошь: без задержки вся деревня
+   * вздрагивает в один кадр, и сцена сразу читается срежиссированной.
+   */
+  noise: PendingNoise[];
+  /** Сколько секунд деревня не слышала настоящего хлопка. */
+  quiet: number;
+  /** Сколько ещё секунд дозорный не станет трубить снова. */
+  hornCooldown: number;
+  /**
+   * Вооружённый человек в деревне. Не событие и не шум — присутствие: стоящие
+   * жители провожают его взглядом. null — либо никого, либо руки пустые.
+   */
+  threat: { readonly x: number; readonly z: number } | null;
+}
+
+/**
+ * Сколько секунд поправка курса на расхождение доходит до полной. Человек не
+ * меняет курс скачком; без этого сглаживания дёрганье возвращается, даже когда
+ * сам совет посчитан честно.
+ */
+const PASSING_SMOOTH = 0.35;
+
+/**
+ * Кого вообще рассматривать при расхождении: видимых, стоящих на ногах и не
+ * дальше горизонта предвидения. Лежащий не участник движения — его обходят как
+ * препятствие, а не как встречного.
+ */
+function* passingNeighbours(
+  villagers: readonly Villager[],
+  me: Villager,
+): Generator<Villager> {
+  for (const other of villagers) {
+    if (other === me || !other.visible || other.downPhase !== null) {
+      continue;
+    }
+    if (Math.abs(other.x - me.x) > PASSING_LOOK_AHEAD) {
+      continue;
+    }
+    if (Math.abs(other.z - me.z) > PASSING_LOOK_AHEAD) {
+      continue;
+    }
+    yield other;
+  }
+}
+
+/** Ухо жителя на этой высоте: звук судится от головы, а не от стопы. */
+const EAR_HEIGHT = 1.6;
+
+/** Событие живёт не дольше, чем звук идёт через весь мир и обратно. */
+const NOISE_LIFETIME = 4;
+
+/**
+ * ДОЗОРНЫЙ. Когда в тревоге уже полдеревни, у зала трубят — и тревога
+ * расходится дальше ФИЗИКОЙ, а не рассылкой по списку: рог просто ещё одно
+ * событие шума, только не хлопок, а знак. Поэтому его слышат те, кто далеко и
+ * сам ничего не заметил, — и деревня начинает вести себя как целое.
+ *
+ * Передышка обязательна: без неё рог поднимает тревогу, тревога поднимает рог,
+ * и деревня уходит в вечную петлю.
+ */
+function soundTheHorn(population: VillagerPopulation, step: number): void {
+  population.hornCooldown = Math.max(0, population.hornCooldown - step);
+  const horn = population.settlement.horn;
+  if (!horn || population.hornCooldown > 0) {
+    return;
+  }
+  const alarmed = population.villagers.filter(
+    (villager) => villager.panic > 0 && villager.panicKind !== "look",
+  ).length;
+  if (alarmed < HORN_QUORUM) {
+    return;
+  }
+  population.hornCooldown = HORN_COOLDOWN;
+  emitNoise(population, {
+    x: horn.at[0],
+    y: 2,
+    z: horn.at[1],
+    level: horn.level,
+    rise: 0.2,
+    signal: true,
+  });
+}
+
+/**
+ * Шумнуло. Кто шумнул — закону безразлично: ствол, граната, обвал сруба, рог.
+ * Событие не применяется сразу — оно ложится в очередь и доходит до каждого
+ * своим чередом.
+ */
+export function emitNoise(population: VillagerPopulation, event: NoiseEvent): void {
+  const count = population.villagers.length;
+  if (count === 0) {
+    return;
+  }
+  // Тишину считаем по НАСТОЯЩИМ хлопкам: свой же рог её не прерывает, иначе
+  // деревня никогда не успокоится настолько, чтобы пойти поглазеть.
+  if (!event.signal) {
+    population.quiet = 0;
+  }
+  population.noise.push({
+    ...event,
+    age: 0,
+    delivered: new Uint8Array(count),
+    left: count,
+  });
+}
+
+/**
+ * Что человек услышал. Ступень берётся от УРОВНЯ У УХА, а не от расстояния:
+ * это одно и то же только в чистом поле, а за стеной сруба уже нет. Схема с
+ * радиусом слышимости даёт на земле видимый круг — внутри дёргаются, снаружи
+ * нет, — чего в жизни не бывает.
+ */
+/**
+ * Опускание ноши на землю: 0.9 с вниз, пара секунд на виду, потом пропадает.
+ * Общая для «донёс — поставил» и для «выронил от испуга»: с точки зрения рук
+ * это одно и то же движение, разной у них только причина.
+ */
+function ageCarryDrop(villager: Villager, step: number): void {
+  villager.carryDrop = Math.min(1, villager.carryDrop + step / 0.9);
+  if (villager.carryDrop >= 1) {
+    villager.carryLinger += step;
+    if (villager.carryLinger > 2.2) {
+      villager.carries = false;
+      villager.carryDrop = 0;
+      villager.carryLinger = 0;
+    }
+  }
+}
+
+/**
+ * ВОЛНА. Второй канал того же события: звук слышно, волна толкает. Приходят
+ * они вместе — это один и тот же фронт, — но судятся раздельно: звук накрывает
+ * деревню целиком, волна достаёт единицы метров.
+ *
+ * Отряхиваются НЕ только сбитые с ног: кто устоял, но попал в облако, тоже
+ * обхлопывается стоя, — а это две трети зоны, и именно это делает картину
+ * после взрыва живой.
+ */
+function shove(
+  population: VillagerPopulation,
+  villager: Villager,
+  wave: BlastWave,
+  event: NoiseEvent,
+  distance: number,
+): void {
+  if (distance > wave.pushRadius) {
+    return;
+  }
+  const { horizontal, vertical } = waveSpeed(wave, distance);
+  // Пыль садится на всех, кого накрыло облаком, — и сходит отряхиванием не в
+  // ноль, а к СВОЕЙ затасканности: у ребёнка к детской, у кузнеца к кузнецовой.
+  const share = Math.max(0, 1 - distance / wave.pushRadius);
+  villager.dust = Math.min(1, villager.dust + DUST_MAX * share);
+  // Обхлопываются столько, сколько на них села пыль: у края облака — мазнул и
+  // пошёл, в упор — всерьёз. Иначе задетый краем стоит и отряхивает чистое.
+  villager.dusting = Math.max(
+    villager.dusting,
+    (DUSTING_SPREAD[0] +
+      villager.alarmRandom() * (DUSTING_SPREAD[1] - DUSTING_SPREAD[0])) *
+      (0.35 + 0.65 * share),
+  );
+
+  if (horizontal < KNOCKDOWN_SPEED) {
+    return;
+  }
+
+  const away = Math.hypot(villager.x - event.x, villager.z - event.z) || 1;
+  const dirX = (villager.x - event.x) / away;
+  const dirZ = (villager.z - event.z) / away;
+  const flight = flightOf(horizontal, vertical);
+
+  // Куда упадёт. Сквозь сруб не проносит: точка приземления проверяется по
+  // тому же полю препятствий, по которому люди ходят, и подтягивается ближе,
+  // пока не окажется на свободном месте.
+  let reach = flight.reach;
+  if (population.field) {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const testX = villager.x + dirX * reach;
+      const testZ = villager.z + dirZ * reach;
+      const solid = population.field
+        .query(testX, testZ, 0.6, population.seeThrough)
+        .some(
+          (box) => box.top > STEP_UP_HEIGHT && distanceToBox(box, testX, testZ) < 0.4,
+        );
+      if (!solid) {
+        break;
+      }
+      reach *= 0.5;
+    }
+  }
+
+  villager.downPhase = "flight";
+  villager.downTime = 0;
+  villager.flightSeconds = flight.seconds;
+  villager.flightPeak = flight.peak;
+  villager.flightFromX = villager.x;
+  villager.flightFromZ = villager.z;
+  villager.flightToX = villager.x + dirX * reach;
+  villager.flightToZ = villager.z + dirZ * reach;
+  villager.proneSeconds =
+    PRONE_SPREAD[0] +
+    villager.alarmRandom() * (PRONE_SPREAD[1] - PRONE_SPREAD[0]) +
+    Math.min(1.2, horizontal / 8);
+
+  // ГРАНИЦА «НЕ ПРО УБИЙСТВА»: скорость приземления НЕ переводится в урон.
+  // Верхняя ступень — «ушибся»: дольше лежит, идёт домой, до вечера хромает.
+  if (horizontal >= BRUISE_SPEED) {
+    villager.bruised = BRUISE_SECONDS;
+  }
+
+  // Дело выпадает из рук вместе с человеком.
+  villager.workVerb = null;
+  if (villager.carries && villager.job) {
+    villager.carryDrop = 0;
+    villager.carryLinger = 0;
+    releaseJob(population, villager);
+  }
+}
+
+/**
+ * РЕШЕНИЕ. Принимается, когда осмотр кончился, и зависит не от громкости, а
+ * от того, кто ты и кто рядом. Порядок веток и есть характер деревни:
+ *
+ *  1. взрослый со СВОИМ ребёнком на улице — сперва за ним, и только потом
+ *     домой. Своих собирают ПРЕЖДЕ, чем спасаются;
+ *  2. старейшина — идёт разбираться, против общего потока;
+ *  3. все прочие — к СВОЕЙ двери. Не к ближайшей: люди уходят к знакомому.
+ */
+/**
+ * Бросить всё и планировать заново ОТ ФАКТИЧЕСКОГО МЕСТА, а не от прежнего
+ * номера узла. На этом в деревне обжигались дважды: остановленный посреди
+ * улицы житель с прежним номером узла то укладывался спать в чистом поле, то
+ * до утра топтался у штабеля брёвен.
+ */
+function replanHere(population: VillagerPopulation, villager: Villager): void {
+  releaseJob(population, villager);
+  releaseStation(population, villager);
+  villager.workVerb = null;
+  if (villager.climbKind >= 7) {
+    villager.climbKind = 0;
+    villager.climbProgress = 0;
+  }
+  villager.nodeIndex = nearestNodeTo(population.network, villager.x, villager.z);
+  villager.state = "dwelling";
+  villager.dwell = 0;
+  villager.path = [];
+  villager.waypoint = 0;
+  villager.speed = 0;
+}
+
+function decideAction(population: VillagerPopulation, villager: Villager): void {
+  if (villager.alertPeak < PANIC_TRIGGER) {
+    return;
+  }
+  // ЗНАКОМЫЙ ГРОХОТ С ИЗВЕСТНОЙ СТОРОНЫ НЕ ГОНИТ ПО ДОМАМ. Тот же закон, что и
+  // у замирания, только этажом выше: пока источник понятен и не бьёт рядом,
+  // человек работает, поглядывая. Без этой ветки деревня под ровной стрельбой
+  // с одного места переставала носить вовсе — замер: 1 единица против 12.
+  if (villager.alertFamiliar && villager.alertPeak < 0.95) {
+    return;
+  }
+  villager.panic =
+    PANIC_SPAN_SPREAD[0] +
+    villager.alarmRandom() * (PANIC_SPAN_SPREAD[1] - PANIC_SPAN_SPREAD[0]);
+  villager.gatherIndex = null;
+
+  if (!villager.child) {
+    let nearest: number | null = null;
+    let best = Infinity;
+    for (const [index, other] of population.villagers.entries()) {
+      if (!other.child || other.homeId !== villager.homeId || !other.visible) {
+        continue;
+      }
+      const gap = Math.hypot(other.x - villager.x, other.z - villager.z);
+      if (gap < best) {
+        best = gap;
+        nearest = index;
+      }
+    }
+    if (nearest !== null) {
+      villager.panicKind = "gather";
+      villager.gatherIndex = nearest;
+      replanHere(population, villager);
+      return;
+    }
+  }
+
+  // Ушибленный никуда не разбираться не идёт: ему домой.
+  if (villager.role === "elder" && villager.bruised <= 0 && villager.alertPeak < 0.95) {
+    villager.panicKind = "approach";
+    replanHere(population, villager);
+    return;
+  }
+
+  villager.panicKind = "cover";
+  replanHere(population, villager);
+}
+
+/**
+ * Куда человек идёт по принятому решению. Своей дороги здесь нет: возвращается
+ * обычный номер узла, а дальше работает та же машинерия маршрута, подхода к
+ * двери по нормали и просьбы её открыть, что и в мирной жизни.
+ */
+function panicGoal(
+  population: VillagerPopulation,
+  network: VillageNetwork,
+  villager: Villager,
+  homeNode: number | undefined,
+): number | undefined {
+  if (villager.panic <= 0 || villager.panicKind === null) {
+    return undefined;
+  }
+  if (villager.panicKind === "gather" && villager.gatherIndex !== null) {
+    const child = population.villagers[villager.gatherIndex];
+    if (child && child.visible) {
+      return nearestNodeTo(network, child.x, child.z);
+    }
+    // Ребёнок уже дома — значит, и самому пора.
+    villager.panicKind = "cover";
+    villager.gatherIndex = null;
+  }
+  if (villager.panicKind === "approach" || villager.panicKind === "look") {
+    const looking = villager.panicKind === "look";
+    const atX = looking ? villager.blastX : villager.sourceX;
+    const atZ = looking ? villager.blastZ : villager.sourceZ;
+    const standoff = looking ? LOOK_STANDOFF : APPROACH_STANDOFF;
+    const dx = villager.x - atX;
+    const dz = villager.z - atZ;
+    const away = Math.hypot(dx, dz) || 1;
+    return nearestNodeTo(
+      network,
+      atX + (dx / away) * standoff,
+      atZ + (dz / away) * standoff,
+    );
+  }
+  return homeNode;
+}
+
+function hear(
+  population: VillagerPopulation,
+  villager: Villager,
+  event: NoiseEvent,
+  distance: number,
+): void {
+  const indoors = villager.state === "inside";
+  const level = levelAtDistance(event.level, distance) - (indoors ? INDOOR_LOSS_DB : 0);
+
+  // ЗНАК, А НЕ ХЛОПОК. У рога нет ударного фронта — значит нет и рефлекса; и
+  // искать его не надо: все знают, где рог и что он значит. Порог у знака ниже
+  // порога вздрагивания, потому что понять рог можно и не вздрогнув.
+  if (event.signal) {
+    villager.heardLevel = level;
+    if (level < SIGNAL_FLOOR_DB || villager.downPhase !== null) {
+      return;
+    }
+    villager.alertPeak = Math.max(villager.alertPeak, SIGNAL_URGENCY);
+    villager.alertFamiliar = false;
+    villager.sourceTrueYaw = Math.atan2(event.x - villager.x, event.z - villager.z);
+    villager.sourceYaw = villager.sourceTrueYaw;
+    villager.sourceFixIn = 0;
+    // Короткий взгляд на дозорного — и сразу решение: искать нечего.
+    villager.alert = Math.max(villager.alert, 0.5 + villager.alarmRandom() * 0.6);
+    return;
+  }
+  // Привычку берём ТУ, С КОТОРОЙ ВСТРЕЧАЮТ ЭТОТ хлопок: очень громкое сбрасывает
+  // её сразу, а не к следующему разу.
+  // Волна приходит вместе со звуком — это один и тот же фронт.
+  if (event.wave) {
+    // На пролом потом сходят посмотреть — даже те, кого волна не достала.
+    villager.blastX = event.x;
+    villager.blastZ = event.z;
+    villager.blastSeen = true;
+    villager.looked = false;
+    if (!indoors) {
+      shove(population, villager, event.wave, event, distance);
+    }
+  }
+  const facing = habituationFor(villager.habituation, level);
+  // Пугливость — личная: один и тот же хлопок поднимает разных людей
+  // по-разному, и ремесло правит порогом наравне с характером.
+  const amplitude = Math.min(
+    STARTLE_GAIN_CEILING,
+    startleAmplitude(level, event.rise, facing) * villager.startleGain,
+  );
+  villager.heardLevel = level;
+  villager.habituation = habituationAfter(facing, level, villager.habituationGain);
+  if (amplitude <= 0) {
+    return;
+  }
+  // Второй хлопок перебивает первый, только если он громче: иначе очередь
+  // держала бы человека в вечном начале вздрога и он бы не разгибался.
+  if (villager.startleAge >= villager.startleSpan || amplitude >= villager.startle) {
+    villager.startle = amplitude;
+    villager.startleAge = 0;
+  }
+
+  // КУДА СМОТРЕТЬ. Истинное направление знает симуляция, человек — нет: у
+  // импульсного звука ошибка направления велика, а изредка и груба. Оценку он
+  // поправит через полсекунды-секунду, и вот эта поправка на глаз и читается
+  // как «сообразил, откуда».
+  const trueYaw = Math.atan2(event.x - villager.x, event.z - villager.z);
+  villager.sourceX = event.x;
+  villager.sourceZ = event.z;
+  // Хлопает всё оттуда же, и он это уже выяснил? Тогда искать нечего: глянул
+  // и вернулся к делу. А вот стоит стрелку сменить место — источник снова
+  // неизвестен, и деревня замирает как в первый раз.
+  const familiar =
+    villager.sourceKnown > 0 &&
+    Math.abs(shortestAngleTo(villager.sourceKnownYaw, trueYaw)) < SOURCE_SAME_ANGLE;
+  villager.sourceTrueYaw = trueYaw;
+  if (familiar) {
+    villager.sourceYaw =
+      trueYaw + (villager.alarmRandom() - 0.5) * 2 * RESIDUAL_ERROR;
+    villager.sourceFixIn = 0;
+    // Знание освежается каждым таким хлопком: пока стреляют оттуда же, оно не
+    // выветривается, и человек не начинает искать заново на ровном месте.
+    villager.sourceKnown = SOURCE_MEMORY;
+    villager.sourceKnownYaw = trueYaw;
+  } else {
+    villager.sourceYaw = trueYaw + localisationError(villager.alarmRandom);
+    villager.sourceFixIn =
+      FIX_DELAY_SPREAD[0] +
+      villager.alarmRandom() * (FIX_DELAY_SPREAD[1] - FIX_DELAY_SPREAD[0]);
+  }
+
+  // Дальше рефлекса идёт не всякий хлопок: тихий заставил вздрогнуть — и
+  // человек пошёл по своим делам. Но ЗНАНИЕ ОБ ИСТОЧНИКЕ обновляется даже от
+  // тихого: сидящий в срубе слышит глухо, однако прекрасно понимает, что
+  // хлопает всё оттуда же. Без этого память выветривалась, пока человек
+  // пережидал в доме, и, выйдя, он пугался знакомого грохота как нового —
+  // деревня уходила в вечный круг «спрятался, вышел, спрятался».
+  if (amplitude < ALERT_TRIGGER) {
+    return;
+  }
+
+  const seconds =
+    alertSeconds(villager.alertSpan, amplitude) * (familiar ? FAMILIAR_ALERT_SCALE : 1);
+  if (seconds > villager.alert) {
+    villager.alert = seconds;
+    villager.alertAge = 0;
+    villager.alertFamiliar = familiar;
+  }
+  villager.alertPeak = Math.max(villager.alertPeak, Math.min(1, amplitude));
+
+  // РУКИ РАЗЖИМАЮТСЯ. Единица уже списана со склада, а до приёмника не
+  // доедет — обещание надо вернуть, иначе приёмник до конца дня будет ждать
+  // то, чего никто не несёт.
+  if (villager.carries && villager.job && dropsLoad(amplitude, villager.alarmRandom)) {
+    villager.workVerb = null;
+    if (villager.climbKind >= 7) {
+      villager.climbKind = 0;
+      villager.climbProgress = 0;
+    }
+    villager.carryDrop = 0;
+    villager.carryLinger = 0;
+    releaseJob(population, villager);
+  }
+}
+
+function ageNoise(population: VillagerPopulation, step: number): void {
+  const { villagers, noise } = population;
+  population.quiet += step;
+  for (let index = noise.length - 1; index >= 0; index -= 1) {
+    const event = noise[index];
+    event.age += step;
+    for (const [slot, villager] of villagers.entries()) {
+      if (event.delivered[slot]) {
+        continue;
+      }
+      const dx = villager.x - event.x;
+      const dy = villager.y + EAR_HEIGHT * villager.build - event.y;
+      const dz = villager.z - event.z;
+      const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      // Своя латентность у каждого: разброс важнее самой задержки, потому что
+      // именно он ломает синхронный вздрог всей деревни.
+      const delay =
+        travelTime(distance) + REACTION_LATENCY + villager.seed * LATENCY_SPREAD;
+      if (event.age < delay) {
+        continue;
+      }
+      event.delivered[slot] = 1;
+      event.left -= 1;
+      hear(population, villager, event, distance);
+    }
+    if (event.left <= 0 || event.age > NOISE_LIFETIME) {
+      noise.splice(index, 1);
+    }
+  }
+}
+
+/**
+ * Всё, что кончается само: вздрог, тревога, решение, привычка и память об
+ * источнике. Считается для ВСЕХ, включая сидящих в доме, — иначе спрятавшийся
+ * выходит наружу с той же тревогой, с какой заходил, и застывает столбом.
+ */
+function ageAlarm(population: VillagerPopulation, step: number): void {
+  for (const villager of population.villagers) {
+    villager.habituation = habituationDecay(villager.habituation, step);
+    villager.sourceKnown = Math.max(0, villager.sourceKnown - step);
+    villager.bruised = Math.max(0, villager.bruised - step);
+    // Пока человек лежит или обхлопывается, тревога и решение НЕ тают: иначе
+    // отброшенный встаёт уже спокойным, будто ничего и не было.
+    if (villager.downPhase !== null || villager.dusting > 0) {
+      continue;
+    }
+    if (villager.panic > 0) {
+      villager.panic -= step;
+      if (villager.panic <= 0) {
+        villager.panic = 0;
+        villager.panicKind = null;
+        villager.gatherIndex = null;
+      }
+    }
+    // ЛЮБОПЫТСТВО. Когда всё стихло, часть жителей идёт СМОТРЕТЬ на то, что
+    // осталось от взрыва. Это и есть награда игроку вместо трупов: приходят,
+    // стоят и глазеют на пролом.
+    if (
+      villager.panic <= 0 &&
+      villager.alert <= 0 &&
+      villager.blastSeen &&
+      !villager.looked &&
+      villager.visible &&
+      population.quiet > CURIOSITY_QUIET &&
+      villager.alarmRandom() < CURIOSITY_CHANCE * step
+    ) {
+      villager.looked = true;
+      villager.panicKind = "look";
+      villager.panic =
+        CURIOSITY_SPAN[0] +
+        villager.alarmRandom() * (CURIOSITY_SPAN[1] - CURIOSITY_SPAN[0]);
+      replanHere(population, villager);
+    }
+    if (villager.alert > 0) {
+      villager.alert -= step;
+      villager.alertAge += step;
+      if (villager.alert <= 0) {
+        // ОСМОТРЕЛСЯ — РЕШАЙ. Здесь кончается непроизвольное и начинается
+        // поступок. Сидящему в доме решать нечего: он уже в укрытии.
+        if (villager.visible) {
+          decideAction(population, villager);
+        }
+        villager.alert = 0;
+        villager.alertAge = 0;
+        villager.alertPeak = 0;
+        villager.alertFamiliar = false;
+      }
+    }
+    if (villager.startle > 0) {
+      villager.startleAge += step;
+      if (villager.startleAge >= villager.startleSpan) {
+        villager.startle = 0;
+        villager.startleAge = 0;
+      }
+    }
+  }
 }
 
 /**
@@ -791,7 +1520,7 @@ export interface VillagerJob {
 
 /**
  * Поза и период движения по глаголу. Числа — из справочника механики
- * (docs/work-motion-mechanics.md §1.2): тяжёлое движение всем телом не бывает
+ * (docs/village-motion.md §1.2): тяжёлое движение всем телом не бывает
  * частым, кистевое — наоборот.
  */
 export function workPoseKind(verb: SettlementWorkVerb): 7 | 8 | 9 | 10 | 11 | 12 | 13 {
@@ -1176,7 +1905,11 @@ export interface VillagerReport {
     | "climbing"
     | "door"
     | "walking"
-    | "standing";
+    | "standing"
+    /** Замер, ищет глазами, откуда хлопнуло. */
+    | "alarmed"
+    /** Обхлопывает с себя пыль после взрыва. */
+    | "dusting";
   /** Где именно работает прямо сейчас: площадка или склад. */
   readonly at: string | null;
   /** Зачем: своё дело, место или дорога домой. */
@@ -1206,7 +1939,11 @@ export function describeVillager(
   };
   const action: VillagerReport["action"] = !villager.visible
     ? "asleep"
-    : (WORK_ACTION[villager.climbKind] ??
+    : villager.dusting > 0
+      ? "dusting"
+      : villager.alert > 0
+      ? "alarmed"
+      : (WORK_ACTION[villager.climbKind] ??
       (villager.climbKind > 0
         ? "climbing"
         : villager.doorWait > 0
@@ -1487,6 +2224,12 @@ export function createVillagerPopulation(
     // Женский сложением уже, ребёнок — мельче обоих.
     const build =
       (child ? 0.6 + random() * 0.12 : 0.88 + random() * 0.28) * (female ? 0.955 : 1);
+    // ЧЕРТЫ ИСПУГА БЕРУТСЯ ИЗ ОТДЕЛЬНОГО ПОТОКА СЛУЧАЙНОСТИ. В общий их класть
+    // нельзя: каждое новое свойство сдвигает всю последовательность, а за ней
+    // меняются места рождения, первые дела и повадки ВСЕЙ деревни. Сюда уже
+    // наступили — от четырёх лишних вызовов покраснел тест про кузнеца у горна,
+    // хотя ни строчки про работу не менялось.
+    const alarmRandom = mulberry32(0x51ed270b + villagers.length * 2654435761);
     const villager: Villager = {
       id: `${home.id}:${index}`,
       name: person?.name ?? "",
@@ -1541,6 +2284,8 @@ export function createVillagerPopulation(
       path: [],
       waypoint: 0,
       destinationNode: spawnNode,
+      passYaw: 0,
+      passPace: 1,
       avoidSign: 0,
       avoidHold: 0,
       climbKind: 0,
@@ -1570,6 +2315,62 @@ export function createVillagerPopulation(
       restY: 0,
       rest: 0,
       restDuration: 0,
+      startle: 0,
+      startleAge: 0,
+      startleGain: Math.min(
+        STARTLE_GAIN_CEILING,
+        (STARTLE_GAIN_SPREAD[0] +
+          alarmRandom() * (STARTLE_GAIN_SPREAD[1] - STARTLE_GAIN_SPREAD[0])) *
+          (STARTLE_ROLE_GAIN[role] ?? 1) *
+          (child ? STARTLE_CHILD_GAIN : 1),
+      ),
+      startleSpan:
+        STARTLE_SPAN_SPREAD[0] +
+        alarmRandom() * (STARTLE_SPAN_SPREAD[1] - STARTLE_SPAN_SPREAD[0]),
+      startleFreeze:
+        STARTLE_FREEZE_SPREAD[0] +
+        alarmRandom() * (STARTLE_FREEZE_SPREAD[1] - STARTLE_FREEZE_SPREAD[0]),
+      habituationGain:
+        HABITUATION_GAIN *
+        (HABITUATION_GAIN_SPREAD[0] +
+          alarmRandom() * (HABITUATION_GAIN_SPREAD[1] - HABITUATION_GAIN_SPREAD[0])),
+      habituation: 0,
+      heardLevel: 0,
+      alert: 0,
+      alertAge: 0,
+      alertPeak: 0,
+      alertFamiliar: false,
+      alertSpan:
+        ALERT_SPAN_SPREAD[0] +
+        alarmRandom() * (ALERT_SPAN_SPREAD[1] - ALERT_SPAN_SPREAD[0]),
+      sourceYaw: 0,
+      sourceTrueYaw: 0,
+      sourceFixIn: 0,
+      sourceKnown: 0,
+      sourceKnownYaw: 0,
+      sourceX: 0,
+      sourceZ: 0,
+      panic: 0,
+      panicKind: null,
+      downPhase: null,
+      downTime: 0,
+      proneSeconds: 0,
+      flightSeconds: 0,
+      flightFromX: 0,
+      flightFromZ: 0,
+      flightToX: 0,
+      flightToZ: 0,
+      flightPeak: 0,
+      dusting: 0,
+      dust: 0,
+      bruised: 0,
+      blastX: 0,
+      blastZ: 0,
+      blastSeen: false,
+      looked: false,
+      gatherIndex: null,
+      insideUntil: 0,
+      alarmRandom,
       // Первое дело житель получит на первом же шаге симуляции.
       state: "dwelling",
       dwell: 0.2 + random() * 2.5,
@@ -1629,6 +2430,10 @@ export function createVillagerPopulation(
     doorState: new Map<string, { press: number; hold: number }>(),
     seeThrough: new Set<string>(),
     doorRequests: new Set<string>(),
+    noise: [],
+    quiet: 999,
+    hornCooldown: 0,
+    threat: null,
   };
 }
 
@@ -1799,6 +2604,11 @@ export function stepVillagers(
   ageDoors(population, step);
   refreshSeeThrough(population);
   population.doorRequests.clear();
+  // Слух живёт отдельно от дел и работает даже для тех, кто сидит дома:
+  // сруб глушит хлопок, но не отменяет его.
+  ageAlarm(population, step);
+  ageNoise(population, step);
+  soundTheHorn(population, step);
   // Мир меняется и без людей: лес отрастает, очаг прогорает. Спрос на работу
   // берётся отсюда, а не из расписания.
   ageStores(population, step);
@@ -1814,6 +2624,12 @@ export function stepVillagers(
     if (villager.state === "inside") {
       villager.speed = 0;
       villager.visible = false;
+      // Спрятавшийся днём отсиживается: без этого счётчика он выскакивал бы
+      // обратно в тот же кадр, потому что днём условие утра истинно всегда.
+      if (villager.insideUntil > 0) {
+        villager.insideUntil -= step;
+        continue;
+      }
       // Утро: выходят не все разом — у каждого свой час.
       if (night < 0.24 + villager.seed * 0.16) {
         villager.state = "dwelling";
@@ -1839,21 +2655,196 @@ export function stepVillagers(
       }
     }
 
+    // СБИТ С НОГ. Состояние, а не модификатор: оно вытесняет и осмотр, и
+    // решение, и ходьбу. Полёт — настоящая баллистика; лежит — та же поза, что
+    // у лежащего на лежанке, только на земле; встаёт — та же поза наоборот.
+    // Отдельных «поз падения» не заводим: лишняя поза стоила бы больше, чем
+    // даёт, а ЭТА уже проверена людьми, которые ложатся спать.
+    if (villager.downPhase !== null) {
+      villager.speed = 0;
+      villager.downTime += step;
+      if (villager.downPhase === "flight") {
+        const t = Math.min(1, villager.downTime / villager.flightSeconds);
+        villager.x =
+          villager.flightFromX + (villager.flightToX - villager.flightFromX) * t;
+        villager.z =
+          villager.flightFromZ + (villager.flightToZ - villager.flightFromZ) * t;
+        // Дуга — не синус для красоты, а настоящая парабола броска.
+        villager.y = Math.max(0, 4 * villager.flightPeak * t * (1 - t));
+        // Тело заваливается горизонтально ещё в воздухе: человек падает, а не
+        // приземляется на ноги.
+        villager.climbKind = 6;
+        villager.climbProgress = Math.min(1, villager.downTime / 0.32);
+        villager.restY = 0;
+        if (t >= 1) {
+          villager.y = 0;
+          villager.downPhase = "prone";
+          villager.downTime = 0;
+        }
+      } else if (villager.downPhase === "prone") {
+        villager.climbKind = 6;
+        villager.climbProgress = 1;
+        villager.restY = 0;
+        villager.y = 0;
+        if (villager.downTime >= villager.proneSeconds) {
+          villager.downPhase = "rising";
+          villager.downTime = 0;
+        }
+      } else {
+        // Встаёт: та же поза, отыгранная назад. Поднявшись — отряхивается.
+        villager.climbProgress = Math.max(
+          0,
+          1 - villager.downTime / RISE_SECONDS,
+        );
+        if (villager.downTime >= RISE_SECONDS) {
+          villager.downPhase = null;
+          villager.downTime = 0;
+          villager.climbKind = 0;
+          villager.climbProgress = 0;
+          villager.y = 0;
+          // Поднявшийся планирует заново от того места, куда его отбросило.
+          replanHere(population, villager);
+        }
+      }
+      if (population.field) {
+        resolveCollisions(villager, population.field, population.seeThrough);
+      }
+      continue;
+    }
+
+    // ОТРЯХИВАЕТСЯ. Не только сбитый с ног: кто устоял в облаке, обхлопывается
+    // стоя — а это две трети зоны. Пыль сходит не в ноль, а к своей.
+    if (villager.dusting > 0) {
+      villager.dusting -= step;
+      // Пыль сходит РОВНО к концу отряхивания, а не по своему таймеру: иначе
+      // человек с лёгкой пылью успевал очиститься за полсекунды и ещё три
+      // секунды обхлопывал чистое.
+      villager.dust = Math.max(
+        0,
+        villager.dust - (villager.dust * step) / Math.max(0.25, villager.dusting),
+      );
+      villager.speed = 0;
+      villager.climbKind = 15;
+      villager.climbProgress = (villager.climbProgress + step / 0.85) % 1;
+      if (population.field) {
+        resolveCollisions(villager, population.field, population.seeThrough);
+      }
+      if (villager.dusting <= 0) {
+        villager.dusting = 0;
+        villager.dust = 0;
+        villager.climbKind = 0;
+        villager.climbProgress = 0;
+      }
+      continue;
+    }
+
+    // ЗАМИРАНИЕ С ОСМОТРОМ. Вытесняет и ходьбу, и работу, но НЕ ТРОГАЕТ ни
+    // маршрут, ни номер узла, ни дело: человек не бросает свои планы, он их
+    // откладывает — и, отпустив, продолжает ровно оттуда, где стоял. Прежде на
+    // этом уже обжигались: остановленный посреди деревни житель с прежним
+    // номером узла укладывался спать прямо там.
+    if (villager.alert > 0) {
+      villager.speed = 0;
+
+      // Вскакивает: сидеть и лежать при таком грохоте никто не остаётся.
+      if (villager.rest > 0) {
+        villager.rest = Math.max(0, villager.rest - step * 3);
+        villager.climbProgress = Math.min(1, villager.rest / 0.7);
+        if (villager.rest <= 0) {
+          villager.climbKind = 0;
+          villager.climbProgress = 0;
+          villager.y = 0;
+        }
+      } else {
+        // Работа прерывается: молот не опускают на наковальню, оглядываясь.
+        villager.workVerb = null;
+        if (villager.climbKind >= 7) {
+          villager.climbKind = 0;
+          villager.climbProgress = 0;
+        }
+        // Голова идёт ТУДА, ГДЕ ЕМУ ПОКАЗАЛОСЬ, а через полсекунды-секунду он
+        // поправляется. Именно эта поправка и читается как «сообразил».
+        if (villager.sourceFixIn > 0) {
+          villager.sourceFixIn -= step;
+          if (villager.sourceFixIn <= 0) {
+            villager.sourceYaw =
+              villager.sourceTrueYaw +
+              (villager.alarmRandom() - 0.5) * 2 * RESIDUAL_ERROR;
+            // Выяснил — и теперь помнит. Пока помнит, следующий такой же
+            // хлопок не заставит его искать заново.
+            villager.sourceKnown = SOURCE_MEMORY;
+            villager.sourceKnownYaw = villager.sourceTrueYaw;
+          }
+        }
+        villager.faceYaw = villager.sourceYaw;
+        villager.yaw +=
+          shortestAngleTo(villager.yaw, villager.faceYaw) * Math.min(1, step * 2.6);
+      }
+
+      if (villager.carries && !villager.job) {
+        ageCarryDrop(villager, step);
+      }
+      if (population.field) {
+        resolveCollisions(villager, population.field, population.seeThrough);
+      }
+      continue;
+    }
+
+    // ВЗЯЛ РЕБЁНКА. Догнал — и дальше идут вместе: ребёнок получает то же
+    // решение и перепланирует путь от СВОЕГО места. Это и есть «сначала свои,
+    // потом сам»: пока ребёнок не подобран, взрослый домой не поворачивает.
+    if (
+      villager.panic > 0 &&
+      villager.panicKind === "gather" &&
+      villager.gatherIndex !== null
+    ) {
+      const child = population.villagers[villager.gatherIndex];
+      if (!child || !child.visible) {
+        villager.panicKind = "cover";
+        villager.gatherIndex = null;
+      } else if (
+        Math.hypot(child.x - villager.x, child.z - villager.z) < GATHER_REACH
+      ) {
+        child.panic = Math.max(child.panic, villager.panic);
+        child.panicKind = "cover";
+        child.alert = 0;
+        child.alertPeak = 0;
+        replanHere(population, child);
+        villager.panicKind = "cover";
+        villager.gatherIndex = null;
+        replanHere(population, villager);
+      }
+    }
+
     if (villager.state === "dwelling") {
       villager.speed = 0;
+      // ПО ТРЕВОГЕ ПРЯЧУТСЯ И ДНЁМ, и делают это СРАЗУ по приходу. Проверка
+      // стояла в конце ветки, после того как истечёт отмеренное стояние, — и
+      // человек послушно топтался у собственного порога, пока решение не
+      // выдыхалось. Укрытие — это своя дверь, а не ближайшая.
+      if (villager.panic > 0 && villager.panicKind === "cover") {
+        const door = network.nodes[villager.nodeIndex];
+        if (
+          door?.homeId === villager.homeId &&
+          Math.hypot(villager.x - door.x, villager.z - door.z) < 3
+        ) {
+          villager.state = "inside";
+          villager.visible = false;
+          villager.insideUntil =
+            HIDE_SPREAD[0] +
+            villager.alarmRandom() * (HIDE_SPREAD[1] - HIDE_SPREAD[0]);
+          villager.panic = 0;
+          villager.panicKind = null;
+          villager.gatherIndex = null;
+          releaseJob(population, villager);
+          continue;
+        }
+      }
       // ДОНЁС — ПОСТАВИЛ. Короб опускается перед собой за 0.9 с, пару секунд
       // лежит на виду и пропадает; дальше человек идёт обычным жителем, а
       // ношу подхватит уже кто-то другой и в другой раз.
       if (villager.carries && !villager.job) {
-        villager.carryDrop = Math.min(1, villager.carryDrop + step / 0.9);
-        if (villager.carryDrop >= 1) {
-          villager.carryLinger += step;
-          if (villager.carryLinger > 2.2) {
-            villager.carries = false;
-            villager.carryDrop = 0;
-            villager.carryLinger = 0;
-          }
-        }
+        ageCarryDrop(villager, step);
         villager.dwell = Math.max(villager.dwell, 0.35);
       }
       // Сидящего и лежащего не толкаем: он уже устроился. Но доворачивается
@@ -1881,12 +2872,27 @@ export function stepVillagers(
       if (population.field) {
         resolveCollisions(villager, population.field, population.seeThrough);
       }
+      // ПРОВОЖАЮТ ВЗГЛЯДОМ. Человек с оружием — событие сам по себе, даже
+      // когда молчит: стоящий житель смотрит на него, а не на своё дело.
+      // Работающего это не отвлекает — у него руки заняты.
+      if (population.threat && !villager.workVerb) {
+        const gap = Math.hypot(
+          population.threat.x - villager.x,
+          population.threat.z - villager.z,
+        );
+        if (gap < WATCH_RADIUS && gap > 1.2) {
+          villager.faceYaw = Math.atan2(
+            population.threat.x - villager.x,
+            population.threat.z - villager.z,
+          );
+        }
+      }
       // Стоя человек доворачивается к делу, а не замирает истуканом.
       villager.yaw +=
         shortestAngleTo(villager.yaw, villager.faceYaw) * Math.min(1, step * 3);
       // РАБОЧАЯ ПОЗА идёт циклами, пока длится дело: рубка — серия ударов,
       // укладка — серия наклонов. Период взят из справочника механики
-      // (docs/work-motion-mechanics.md): тяжёлое движение не бывает частым.
+      // (docs/village-motion.md §1.2): тяжёлое движение не бывает частым.
       if (villager.workVerb && villager.rest <= 0) {
         const cycle = workCycleSeconds(villager.workVerb);
         villager.climbKind = workPoseKind(villager.workVerb);
@@ -1958,7 +2964,11 @@ export function stepVillagers(
         releaseJob(population, villager);
         villager.workVerb = null;
       }
-      chooseWork(population, villager, nightPull);
+      // По тревоге за новое дело не берутся: человек идёт по решению, а не
+      // подхватывает по дороге поленья.
+      if (villager.panic <= 0) {
+        chooseWork(population, villager, nightPull);
+      }
       // Возня на месте — то, чем занимаются, когда НЕСТИ НЕЧЕГО. Настоящее
       // поручение важнее: иначе люди залипают у ближайшего верстака, а дрова
       // до очага никто не доносит (замер: поток «валить» упал в ноль).
@@ -1989,6 +2999,7 @@ export function stepVillagers(
         releaseStation(population, villager);
       }
       const goal =
+        panicGoal(population, network, villager, homeNode) ??
         workGoalNode(population, villager) ??
         chooseGoal(settlement, network, villager, nightPull, homeNode);
       const plan =
@@ -2472,27 +3483,18 @@ export function stepVillagers(
       }
     }
 
-    // Расхождение со встречными: смотрим, кто идёт рядом, и берём в сторону.
-    // Сумма ограничена — иначе в толчее у колодца человек начинает рыскать.
-    let sidestep = 0;
-    for (const other of villagers) {
-      if (other === villager || !other.visible) {
-        continue;
-      }
-      const dx = other.x - villager.x;
-      const dz = other.z - villager.z;
-      const gap = Math.hypot(dx, dz);
-      if (gap > 1.3 || gap < 1e-3) {
-        continue;
-      }
-      const forward = Math.sin(villager.yaw) * dx + Math.cos(villager.yaw) * dz;
-      if (forward <= 0) {
-        continue;
-      }
-      const side = Math.cos(villager.yaw) * dx - Math.sin(villager.yaw) * dz;
-      sidestep -= Math.sign(side || 1) * (1.3 - gap) * 0.45;
-    }
-    desiredYaw += Math.max(-0.5, Math.min(0.5, sidestep));
+    // РАСХОЖДЕНИЕ СО ВСТРЕЧНЫМИ. Судится не текущее расстояние, а промах в
+    // точке наибольшего сближения (villagerPassing.ts): так попутчики не
+    // расталкиваются без причины, встречные начинают расходиться за несколько
+    // метров, а кто кого пропускает, обе стороны решают одинаково и молча.
+    const advice = passingAdvice(villager, passingNeighbours(villagers, villager));
+    // Совет ведётся НИЗКОЧАСТОТНО. Без этого дёрганье вернулось бы через
+    // заднюю дверь: у совета нет памяти, и на границе решения он меняется
+    // скачком, а человек так не умеет.
+    const smooth = Math.min(1, step / PASSING_SMOOTH);
+    villager.passYaw += (advice.steer - villager.passYaw) * smooth;
+    villager.passPace += (advice.pace - villager.passPace) * smooth;
+    desiredYaw += villager.passYaw;
 
     // Ночью и с ношей идут иначе; лёгкая индивидуальная раскачка темпа.
     let cruise =
@@ -2526,6 +3528,11 @@ export function stepVillagers(
     // разворот на месте.
     let wanted =
       cruise *
+      (villager.panic > 0 ? PANIC_PACE : 1) *
+      (villager.bruised > 0 ? BRUISE_PACE : 1) *
+      // Уступающий не только отворачивает, но и слегка сбавляет — иначе
+      // расхождение читается объездом, а не вежливостью.
+      villager.passPace *
       (1 - 0.55 * Math.min(1, Math.abs(error) / 1.2)) *
       (1 - 0.72 * blocked);
     if (Math.abs(error) > 1.35) {
@@ -2547,6 +3554,16 @@ export function stepVillagers(
       Math.min(2.8 * step, wanted - villager.speed),
     );
     villager.speed = Math.max(0, villager.speed);
+
+    // РЕФЛЕКС ОБРЫВАЕТ ХОД. Множителем, а не целью скорости: осечка на шаге
+    // мгновенна, и разгонный предел не должен её сглаживать. Он же сам и
+    // возвращает человека к прежнему темпу, когда рефлекс отпустил.
+    if (villager.startle > 0) {
+      villager.speed *= startleBrake(
+        villager.startleAge / villager.startleSpan,
+        villager.startle * villager.startleFreeze,
+      );
+    }
 
     // Пятимся из угла: назад, не разворачиваясь, — так человек и делает,
     // когда зашёл в тупик между сараем и поленницей.

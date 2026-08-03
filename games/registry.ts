@@ -63,6 +63,18 @@ export const games = [
     theme: "safety-orange",
     art: "viking-village",
   },
+  {
+    slug: "make-a-mess-dutch-polder",
+    title: "Make a Mess: Dutch Polder",
+    href: "/games/make-a-mess/dutch-polder",
+    summary:
+      "Неровный голландский польдер в натуральном масштабе: четыре разные мельницы, дома, каналы, мосты, грядки и дорожки.",
+    genre: "Landscape destruction sandbox",
+    status: "playable",
+    stageLabel: "Новый мир",
+    theme: "electric-blue",
+    art: "mess",
+  },
 ] as const satisfies readonly GameEntry[];
 
 export const featuredGame = games[0];

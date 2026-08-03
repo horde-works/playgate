@@ -127,6 +127,16 @@ function dynamicVisualMeshKey(
     mix(vertex[1]);
     mix(vertex[2]);
   }
+  for (const normal of profile.normals ?? []) {
+    mix(normal[0]);
+    mix(normal[1]);
+    mix(normal[2]);
+  }
+  for (const color of profile.colors ?? []) {
+    mix(color[0]);
+    mix(color[1]);
+    mix(color[2]);
+  }
   for (const index of profile.indices) mix(index);
   return `${profile.vertices.length}:${profile.indices.length}:${hash >>> 0}:${profile.doubleSided === false ? "front" : "double"}`;
 }

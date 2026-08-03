@@ -82,13 +82,23 @@ import type { CompoundKinematicClusterDefinition } from "./compoundKinematicClus
 // ---------------------------------------------------------------------------
 
 export const DS_LENGTH = 4.874;
-export const DS_WIDTH = 1.79;
-export const DS_HEIGHT = 1.464;
+/** По БАМПЕРАМ: именно они, а не борта, набирают паспортную ширину. */
+export const DS_WIDTH = 1.803;
+export const DS_HEIGHT = 1.47;
 export const DS_WHEELBASE = 3.125;
 /** Передняя колея ШИРЕ задней на 0.2 м — главный признак образа. */
-export const DS_TRACK_FRONT = 1.5;
-export const DS_TRACK_REAR = 1.3;
-export const DS_FRONT_OVERHANG = 0.8;
+export const DS_TRACK_FRONT = 1.516;
+export const DS_TRACK_REAR = 1.316;
+/**
+ * Свесы с заводского чертежа, и они СИЛЬНО разные: 1016 спереди против 733
+ * сзади. Длинный передний свес — прямое следствие переднего привода с
+ * агрегатом впереди оси, и он же половина образа. Набор сходится
+ * арифметически: 1016 + 3125 + 733 = 4874.
+ */
+export const DS_FRONT_OVERHANG = 1.016;
+export const DS_REAR_OVERHANG = DS_LENGTH - DS_FRONT_OVERHANG - DS_WHEELBASE;
+/** Клиренс по юбке между колёсами. */
+export const DS_GROUND_CLEARANCE = 0.145;
 
 /** Нос смотрит в −x, как у всех машин проекта. */
 export const DS_NOSE: SceneVector3 = [-1, 0, 0];
@@ -216,7 +226,25 @@ export const DS_STEERING_RETURN = 2.2;
 // первый же кадр.
 // ---------------------------------------------------------------------------
 
-export const DS_HUB_HEIGHT = DS_WHEEL_RADIUS + DS_STATIC_COMPRESSION;
+/**
+ * ВЕРХ СТОЙКИ, а не центр колеса. Подвеска щупает мир лучом ИЗ ЭТОЙ ТОЧКИ на
+ * длину «радиус + ход», и сжатие получается как `reach − расстояние`; при
+ * снаряжённой массе это ровно половина хода, как и требует паспорт.
+ *
+ * Отсюда старая ловушка: точка называлась «ступицей», и колесо рисовали прямо
+ * в ней — то есть на 160 мм выше, чем надо. Машина стояла в воздухе, а вместе
+ * с ней уезжала вверх и колёсная арка, потому что и она считалась от этой
+ * высоты.
+ */
+export const DS_STRUT_TOP_HEIGHT = DS_WHEEL_RADIUS + DS_STATIC_COMPRESSION;
+/** @deprecated Историческое имя `DS_STRUT_TOP_HEIGHT`; это НЕ центр колеса. */
+export const DS_HUB_HEIGHT = DS_STRUT_TOP_HEIGHT;
+
+/**
+ * ЦЕНТР КОЛЕСА у стоящей машины: ровно радиус над дорогой, иначе покрышка не
+ * касается асфальта. Именно от него строятся видимое колесо и арка.
+ */
+export const DS_WHEEL_CENTRE_HEIGHT = DS_WHEEL_RADIUS;
 
 export interface DsWheelStation {
   readonly id: string;
@@ -269,150 +297,6 @@ export const DS_WHEEL_STATIONS: readonly DsWheelStation[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// ПОВЕРХНОСТЬ КУЗОВА
-//
-// Форма задаётся ФУНКЦИЕЙ, и геометрия обязана браться из неё, а не
-// подгоняться коробками на глаз. Тогда правка образа — это правка одной
-// станции профиля, а не пересборка полусотни деталей.
-//
-// Продольная координата `u` идёт от носа (0) к корме (1). Профилей три:
-// полуширина в плане, верхняя линия и линия порога. Все три заданы станциями
-// и интерполируются гладко — на изломе интерполяции панель встаёт ступенькой,
-// и это видно в первом же боковом кадре.
-// ---------------------------------------------------------------------------
-
-interface ProfileStation {
-  readonly u: number;
-  readonly value: number;
-}
-
-/**
- * Гладкая интерполяция по станциям. Между узлами — сглаженный шаг, поэтому
- * касательная на самих узлах непрерывна и обвод не ломается.
- */
-function sampleProfile(
-  stations: readonly ProfileStation[],
-  u: number,
-): number {
-  const clamped = Math.max(0, Math.min(1, u));
-  if (clamped <= stations[0].u) return stations[0].value;
-  const last = stations[stations.length - 1];
-  if (clamped >= last.u) return last.value;
-  for (let index = 1; index < stations.length; index += 1) {
-    const before = stations[index - 1];
-    const after = stations[index];
-    if (clamped <= after.u) {
-      const span = after.u - before.u;
-      const t = span > 1e-9 ? (clamped - before.u) / span : 0;
-      const smooth = t * t * (3 - 2 * t);
-      return before.value + (after.value - before.value) * smooth;
-    }
-  }
-  return last.value;
-}
-
-/**
- * ПЛАН — та самая капля. Максимум ширины лежит в плечах у передних дверей, и
- * от него обвод СХОДИТСЯ к корме сильнее, чем к носу.
- */
-const DS_HALF_WIDTH_STATIONS: readonly ProfileStation[] = [
-  { u: 0.0, value: 0.33 },
-  { u: 0.09, value: 0.66 },
-  // Крыло НАКРЫВАЕТ переднее колесо. Станция стоит ровно на передней оси, а
-  // её значение выведено из колеи: полколеи плюс полширины шины плюс кромка.
-  // Уже — и шина торчит наружу, чего у этой машины нет ни в одном ракурсе.
-  {
-    u: (DS_FRONT_AXLE_X - DS_NOSE_X) / DS_LENGTH,
-    value: DS_TRACK_FRONT / 2 + DS_TYRE_HALF_WIDTH + 0.03,
-  },
-  { u: 0.34, value: 0.895 },
-  { u: 0.52, value: 0.89 },
-  { u: 0.68, value: 0.855 },
-  // Задняя ось. Борт здесь ЗАКРЫВАЕТ колесо целиком — иначе щиток не на что
-  // повесить, а без щитка машина перестаёт быть собой. Значение снова из
-  // колеи, только задней, поэтому сузить корму втихую нельзя.
-  {
-    u: (DS_REAR_AXLE_X - DS_NOSE_X) / DS_LENGTH,
-    value: DS_TRACK_REAR / 2 + DS_TYRE_HALF_WIDTH + 0.055,
-  },
-  // И только за колесом корма сходится — коротко и быстро.
-  { u: 0.9, value: 0.62 },
-  { u: 1.0, value: 0.3 },
-];
-
-/**
- * ВЕРХНЯЯ ЛИНИЯ. Гребень крыши стоит ПОЗАДИ середины, над задним рядом, и
- * оттуда корма падает длинным пологим скатом — этим машина и опознаётся в
- * профиль.
- */
-const DS_TOP_STATIONS: readonly ProfileStation[] = [
-  { u: 0.0, value: 0.72 },
-  { u: 0.1, value: 0.79 },
-  { u: 0.22, value: 0.88 },
-  { u: 0.3, value: 1.02 },
-  { u: 0.42, value: 1.36 },
-  { u: 0.56, value: 1.464 },
-  { u: 0.68, value: 1.45 },
-  { u: 0.8, value: 1.32 },
-  { u: 0.92, value: 1.1 },
-  { u: 1.0, value: 0.96 },
-];
-
-/**
- * ЛИНИЯ ПОРОГА. Юбка проходит низко и почти горизонтально, приподнимаясь у
- * обоих свесов: машина не должна цеплять землю носом на въезде.
- */
-const DS_SILL_STATIONS: readonly ProfileStation[] = [
-  { u: 0.0, value: 0.46 },
-  { u: 0.1, value: 0.3 },
-  { u: 0.24, value: 0.22 },
-  { u: 0.5, value: 0.2 },
-  { u: 0.76, value: 0.22 },
-  { u: 0.9, value: 0.3 },
-  { u: 1.0, value: 0.5 },
-];
-
-export function dsHalfWidth(u: number): number {
-  return sampleProfile(DS_HALF_WIDTH_STATIONS, u);
-}
-
-export function dsTopHeight(u: number): number {
-  return sampleProfile(DS_TOP_STATIONS, u);
-}
-
-export function dsSillHeight(u: number): number {
-  return sampleProfile(DS_SILL_STATIONS, u);
-}
-
-/** Продольная координата станции профиля в авторских осях. */
-export function dsStationX(u: number): number {
-  return DS_NOSE_X + u * DS_LENGTH;
-}
-
-/** Обратно: доля длины по авторской координате. */
-export function dsStationOf(x: number): number {
-  return (x - DS_NOSE_X) / DS_LENGTH;
-}
-
-/**
- * Точка на боковой поверхности. `side` = ±1 — левый и правый борт,
- * `height` — доля между порогом и верхней линией.
- */
-export function dsSurfacePoint(
-  u: number,
-  side: number,
-  height: number,
-): SceneVector3 {
-  const sill = dsSillHeight(u);
-  const top = dsTopHeight(u);
-  return [
-    dsStationX(u),
-    sill + (top - sill) * Math.max(0, Math.min(1, height)),
-    side * dsHalfWidth(u),
-  ];
-}
-
-// ---------------------------------------------------------------------------
 // ФАРЫ
 //
 // Четыре под общим стеклом; ВНУТРЕННЯЯ пара связана с рулевым и уходит в
@@ -430,14 +314,26 @@ export interface DsHeadlampStation {
   readonly directional: boolean;
 }
 
-const DS_LAMP_U = 0.045;
-const DS_LAMP_Y = 0.66;
+/**
+ * Станция блока фар и высота его оси. Сняты с вида спереди заводского
+ * чертежа: фара сидит В КРЫЛЕ, заметно выше бампера и ниже гребня крыла.
+ * Пара под общим стеклом стоит тесно, поэтому внутренняя лампа недалеко от
+ * внешней — это один прибор, а не два разнесённых.
+ */
+const DS_LAMP_U = 0.062;
+const DS_LAMP_Y = 0.72;
+const DS_LAMP_X = DS_NOSE_X + DS_LAMP_U * DS_LENGTH;
 
+/**
+ * Пара стоит ТЕСНО и ВНУТРИ крыла: это один прибор под общим стеклом, а не
+ * два разнесённых фонаря. Нос на этой станции всего 0.6 полуширины, и вынос
+ * ламп за 0.6 вытаскивал их наружу из кузова.
+ */
 export const DS_HEADLAMP_STATIONS: readonly DsHeadlampStation[] = [
-  { id: "outer-left", point: [dsStationX(DS_LAMP_U), DS_LAMP_Y, -0.55], directional: false },
-  { id: "inner-left", point: [dsStationX(DS_LAMP_U), DS_LAMP_Y, -0.28], directional: true },
-  { id: "inner-right", point: [dsStationX(DS_LAMP_U), DS_LAMP_Y, 0.28], directional: true },
-  { id: "outer-right", point: [dsStationX(DS_LAMP_U), DS_LAMP_Y, 0.55], directional: false },
+  { id: "outer-left", point: [DS_LAMP_X, DS_LAMP_Y, -0.46], directional: false },
+  { id: "inner-left", point: [DS_LAMP_X, DS_LAMP_Y, -0.26], directional: true },
+  { id: "inner-right", point: [DS_LAMP_X, DS_LAMP_Y, 0.26], directional: true },
+  { id: "outer-right", point: [DS_LAMP_X, DS_LAMP_Y, 0.46], directional: false },
 ];
 
 /** Куда смотрит фара при данном угле руля, в авторских осях. */
@@ -489,7 +385,14 @@ export function townDsClusterDefinition(): CompoundKinematicClusterDefinition {
     // Колёса опираются ЛУЧАМИ подвески. Если отдать их Rapier-коллайдерами,
     // солвер приклеит машину к асфальту трением, а тяга из пятен контакта
     // ничего не сдвинет.
-    contactMemberExcludes: [":wheel:"],
+    // Колёса опираются лучами, платформа — силовой корень.
+    //
+    // Платформу из оболочки убирает не косметика: её материал `earth` (роль
+    // парящего корня решателя) стоит В ТАБЛИЦЕ закона удара, и оставленная
+    // снаружи она разлеталась бы от касания на городской скорости, унося с
+    // собой всю машину. Снаружи у автомобиля облицовка и бампера — в днище
+    // не бьют.
+    contactMemberExcludes: [":wheel:", ":platform:"],
     // ОТКРЫТО: КОЛЁСА НЕ ПОВОРАЧИВАЮТСЯ И НЕ КАТЯТСЯ ВИЗУАЛЬНО.
     //
     // Механизм для этого в проекте есть и он верный — тот самый, которым у
@@ -546,13 +449,21 @@ export const DS_DRIVER_SIDE = 1;
 const DS_DRIVER_X = -0.55;
 
 /**
+ * Полуширина кузова по талии на станции водительской двери. Число дублирует
+ * `dsWaistHalfWidth` из `townCitroenDsBody.ts`, и это осознанно: паспорт не
+ * должен зависеть от модуля поверхности, иначе импорты пойдут по кругу.
+ * Расхождение ловит тест, а не комментарий.
+ */
+export const DS_DRIVER_DOOR_HALF_WIDTH = 0.889;
+
+/**
  * Точка, СТОЯ В КОТОРОЙ человек получает предложение сесть: снаружи, у ручки
  * водительской двери, на высоте глаз стоящего.
  */
 export const DS_DOOR_POST: SceneVector3 = [
   DS_DRIVER_X,
   1.5,
-  DS_DRIVER_SIDE * (dsHalfWidth(dsStationOf(DS_DRIVER_X)) + 0.55),
+  DS_DRIVER_SIDE * (DS_DRIVER_DOOR_HALF_WIDTH + 0.55),
 ];
 
 /** Голова водителя за рулём. */
@@ -566,5 +477,5 @@ export const DS_DRIVER_HEAD: SceneVector3 = [
 export const DS_DRIVER_STEP_OUT: SceneVector3 = [
   DS_DRIVER_X,
   0,
-  DS_DRIVER_SIDE * (dsHalfWidth(dsStationOf(DS_DRIVER_X)) + 0.75),
+  DS_DRIVER_SIDE * (DS_DRIVER_DOOR_HALF_WIDTH + 0.75),
 ];

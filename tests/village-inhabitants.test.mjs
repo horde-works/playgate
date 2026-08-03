@@ -234,20 +234,28 @@ test("the village goes to bed at night and comes back out at dawn", () => {
 });
 
 test("craft pulls villagers to their own work yards", () => {
-  const population = createVillagerPopulation(vikingSettlement, 24, field);
+  // МЕРИТЬ НАДО НЕ ОДИН ПРОГОН. Пастухов в деревне двое, кузнецов двое, и
+  // попадёт ли конкретный человек на свою площадку за смену — решает жребий
+  // целей, а не притяжение. Замер по одному размеру деревни давал ноль или
+  // две тысячи посещений подряд БЕЗ всякой правки кода — то есть ловил не
+  // ремесло, а тасовку. Поэтому прогоняем несколько размеров и требуем, чтобы
+  // ремесло сработало хотя бы в одном: это и есть проверяемое утверждение.
   const visits = new Map();
-  for (let tick = 0; tick < 60 * 60 * 12; tick += 1) {
-    stepVillagers(population, 1 / 60, 0);
-    for (const villager of population.villagers) {
-      if (villager.state !== "dwelling") {
-        continue;
+  for (const count of [24, 28, 34]) {
+    const population = createVillagerPopulation(vikingSettlement, count, field);
+    for (let tick = 0; tick < 60 * 60 * 6; tick += 1) {
+      stepVillagers(population, 1 / 60, 0);
+      for (const villager of population.villagers) {
+        if (villager.state !== "dwelling") {
+          continue;
+        }
+        const node = population.network.nodes[villager.nodeIndex];
+        if (!node.areaId) {
+          continue;
+        }
+        const key = `${villager.role}:${node.areaId}`;
+        visits.set(key, (visits.get(key) ?? 0) + 1);
       }
-      const node = population.network.nodes[villager.nodeIndex];
-      if (!node.areaId) {
-        continue;
-      }
-      const key = `${villager.role}:${node.areaId}`;
-      visits.set(key, (visits.get(key) ?? 0) + 1);
     }
   }
   // Кузнец бывает у кузни, пастух — у загона: тропы ведут по ремеслу.

@@ -173,6 +173,14 @@ export interface ExplosiveProfile {
   readonly carveRadiusMultiplier: number;
   /** Импульс давления на составное тело, единицы силы·с. */
   readonly pressureImpulse: number;
+  /**
+   * Уровень хлопка на расстоянии 1 м, дБ — то, чем боеприпас слышен жителям.
+   * Порядок выведен из полной энергии (плотность урона × куб радиуса взрыва),
+   * а сами числа поджаты к физическому потолку неискажённой звуковой волны
+   * (~194 дБ): выше него «уровень» перестаёт быть акустикой, а разница всё
+   * равно неразличима — вся деревня и так выше порога рефлекса. Допущение.
+   */
+  readonly noiseLevel: number;
   /** Сколько направлений сэмплится для формы видимого облака. */
   readonly visualDirections: number;
   readonly visualProbeDistance: number;
@@ -209,6 +217,7 @@ export const explosiveProfiles: Record<ExplosiveKind, ExplosiveProfile> = {
     damageEnergy: GRENADE_DAMAGE_ENERGY,
     carveRadiusMultiplier: 1,
     pressureImpulse: 55,
+    noiseLevel: 170,
     visualDirections: 18,
     visualProbeDistance: 4.2,
     carveBudget: { maxTargets: 80, workBudget: 9_000, groundWorkBudget: 1_600 },
@@ -232,6 +241,7 @@ export const explosiveProfiles: Record<ExplosiveKind, ExplosiveProfile> = {
     damageEnergy: ROCKET_DAMAGE_ENERGY,
     carveRadiusMultiplier: 1,
     pressureImpulse: 110,
+    noiseLevel: 182,
     visualDirections: 24,
     visualProbeDistance: 10,
     carveBudget: { maxTargets: 80, workBudget: 20_000, groundWorkBudget: 3_000 },
@@ -257,6 +267,7 @@ export const explosiveProfiles: Record<ExplosiveKind, ExplosiveProfile> = {
     // Лёгкая боевая часть толкает соразмерно: машину она качнёт, но не
     // отшвырнёт, и это заметная разница в поведении цели после попадания.
     pressureImpulse: 38,
+    noiseLevel: 166,
     visualDirections: 16,
     visualProbeDistance: 3.4,
     carveBudget: { maxTargets: 48, workBudget: 7_000, groundWorkBudget: 1_200 },
@@ -283,6 +294,7 @@ export const explosiveProfiles: Record<ExplosiveKind, ExplosiveProfile> = {
     damageEnergy: CHARGE_DAMAGE_ENERGY,
     carveRadiusMultiplier: 1.55,
     pressureImpulse: 300,
+    noiseLevel: 190,
     visualDirections: 32,
     visualProbeDistance: 15,
     carveBudget: { maxTargets: 128, workBudget: 45_000, groundWorkBudget: 5_400 },
@@ -311,6 +323,14 @@ export const MAX_LIVE_SHARD_BOXES = 900;
 export const VOLUME_BREAK_FRACTION = 0.45;
 export const MG_FIRE_INTERVAL = 0.11;
 export const MG_RANGE = 70;
+
+/**
+ * Уровень выстрела на 1 м, дБ. Измерено: пик стрелкового оружия у стрелка
+ * лежит в 155–165 дБ (NIOSH). Фронт почти отвесный — именно резкость, а не
+ * громкость, вызывает рефлекс вздрагивания.
+ */
+export const GUNSHOT_NOISE_LEVEL = 160;
+export const GUNSHOT_NOISE_RISE = 1;
 
 export interface DebrisCollisionTuning {
   readonly hardCcd: boolean;
@@ -463,6 +483,7 @@ export const fractureEnergyByMaterial: Record<
   graphiteStone: 3,
   basalt: 3.2,
   steel: 24,
+  sheetMetal: 24,
 };
 
 /**
@@ -511,6 +532,10 @@ export function blastEnergyAtDistance(
 }
 
 export const crumbleOnLanding: ReadonlySet<BreakableMaterial> = new Set([
+  // Тонкая панель кузова — единственный «металл» в этом списке, и это не
+  // послабление, а физика: лист в миллиметр мнётся на городских скоростях.
+  // Силовой набор остаётся сталью и в списке не значится.
+  "sheetMetal",
   "wood",
   "foliage",
   "brick",
@@ -553,21 +578,80 @@ const landingDamageByMaterial: Partial<
     minimumIntensity: 0.18,
   },
   basalt: { chipSpeed: 9, shatterSpeed: 13.5, minimumIntensity: 0.2 },
+  /**
+   * ТОНКАЯ ПАНЕЛЬ. Числа здесь — при РАВНЫХ массах, как и у всей таблицы, и
+   * потому выглядят большими. Панель же почти всегда встречает то, что тяжелее
+   * её в сотни раз, поэтому её преимущество в массе упирается в потолок 3, и
+   * фактические пороги втрое ниже: заметная вмятина с 10 км/ч, оторванная
+   * панель с 30 км/ч. Ровно так и мнётся настоящий кузов: бампер держит
+   * 4 км/ч без следов, к 25 км/ч крыло уже сложено.
+   */
+  sheetMetal: { chipSpeed: 8.4, shatterSpeed: 25, minimumIntensity: 0.1 },
 };
+
+/**
+ * ПРЕИМУЩЕСТВО В МАССЕ. Во сколько раз «выше по скорости» бьёт тот, кто
+ * тяжелее судимого куска.
+ *
+ * Пороги этой таблицы откалиброваны по ПАДАЮЩЕМУ ОБЛОМКУ: кусок встречает
+ * землю, и работу делает его собственный вес. Там ударивший и судимый — одно
+ * тело, преимущества нет, число равно единице, и закон работает как прежде.
+ *
+ * Удар машины устроен иначе, и одной скоростью его не описать. Тонна железа и
+ * упавшая доска на пяти метрах в секунду несут энергию, отличающуюся в
+ * шестьдесят раз, и садовый стол про это знает: тяжёлый о лёгкое не тормозит,
+ * он проходит насквозь. Поэтому скорость приводится к ЭНЕРГЕТИЧЕСКОМУ
+ * ПАРИТЕТУ — какую скорость должно было бы иметь тело массы цели, чтобы
+ * принести столько же энергии.
+ *
+ * Чистое `sqrt(m1/m2)` для этого не годится: у машины против травинки оно
+ * уходит в десятки, и она крошила бы газон стоя на месте. Поэтому кривая
+ * НАСЫЩАЕТСЯ: при равных массах ровно единица, дальше растёт всё медленнее и
+ * упирается в потолок.
+ *
+ * Потолок и форма выбраны по трём известным случаям, и все три сходятся с
+ * поведением настоящей машины (масса 1.33 против медианного куска города):
+ *
+ *   дерево  0.02 → преимущество 2.75 → ломается с  8 км/ч;
+ *   кирпич  0.17 → преимущество 2.28 → ломается с 12 км/ч;
+ *   бетон   0.65 → преимущество 1.60 → ломается с 24 км/ч.
+ *
+ * Это ровно то, чего ждёшь от машины: деревянное сносится с места, кладка —
+ * с небольшого разбега, бетон требует хода.
+ */
+export const MASS_ADVANTAGE_CAP = 3;
+
+export function landingMassAdvantage(
+  strikerMass: number,
+  targetMass: number,
+): number {
+  if (!(strikerMass > 0) || !(targetMass > 0) || strikerMass <= targetMass) {
+    return 1;
+  }
+  const ratio = Math.sqrt(strikerMass / targetMass);
+  return 1 + (MASS_ADVANTAGE_CAP - 1) * (1 - 1 / ratio);
+}
 
 export function classifyLandingDamage(
   material: BreakableMaterial,
   approachSpeed: number,
   intensity: number,
+  /**
+   * Преимущество ударившего в массе, из `landingMassAdvantage`. Единица —
+   * падение куска на землю, и тогда закон работает ровно как прежде.
+   */
+  massAdvantage = 1,
 ): LandingDamage {
   const profile = landingDamageByMaterial[material];
   if (!profile || intensity < profile.minimumIntensity) {
     return "none";
   }
-  if (approachSpeed >= profile.shatterSpeed) {
+  const effectiveSpeed =
+    approachSpeed * Math.min(MASS_ADVANTAGE_CAP, Math.max(1, massAdvantage));
+  if (effectiveSpeed >= profile.shatterSpeed) {
     return "shatter";
   }
-  if (approachSpeed >= profile.chipSpeed) {
+  if (effectiveSpeed >= profile.chipSpeed) {
     return "chip";
   }
   return "none";
@@ -580,6 +664,20 @@ export const groundMaterials: ReadonlySet<BreakableMaterial> = new Set([
   "asphalt",
   "grass",
 ]);
+
+/**
+ * Massive terrain must retain a remnant; the thin polder turf shell is
+ * intentionally sacrificial and may disappear completely to expose earth.
+ */
+export function groundCarveRequiresRemnant(
+  source: Pick<ShardSource, "landscapeSurface" | "material" | "size">,
+): boolean {
+  return groundMaterials.has(source.material) && !(
+    source.landscapeSurface === "dutch-polder-ground" &&
+    source.material === "grass" &&
+    source.size[1] <= 0.5
+  );
+}
 
 const MIN_REMNANT_VOXELS = 2;
 
@@ -596,6 +694,8 @@ const voxelSizeByMaterial: Record<BreakableMaterial, number> = {
   graphiteStone: 0.15,
   concrete: 0.14,
   steel: 0.18,
+  // Панель рвётся мельче бруска: у неё нет толщины, которую надо колоть.
+  sheetMetal: 0.12,
   foliage: 0.2,
   grass: 0.18,
   soil: 0.18,
@@ -709,6 +809,7 @@ const damageRoughnessByMaterial: Record<BreakableMaterial, number> = {
   graphiteStone: 0.25,
   concrete: 0.27,
   steel: 0.12,
+  sheetMetal: 0.12,
   foliage: 0.44,
   grass: 0.4,
   soil: 0.38,

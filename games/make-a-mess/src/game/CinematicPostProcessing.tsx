@@ -7,6 +7,7 @@ import {
   Color,
   LinearFilter,
   MathUtils,
+  UnsignedByteType,
   Vector2,
   Vector3,
 } from "three";
@@ -267,8 +268,10 @@ function createLensDirtTexture(): CanvasTexture {
 
 export function CinematicPostProcessing({
   compact,
+  byteBloom = false,
 }: {
   compact: boolean;
+  byteBloom?: boolean;
 }) {
   const { camera, gl, scene, size } = useThree();
   const dpr = useThree((state) => state.viewport.dpr);
@@ -300,6 +303,19 @@ export function CinematicPostProcessing({
       0.35,
       1.6,
     );
+    if (byteBloom) {
+      // Chrome/ANGLE intermittently loses the full composer frame while
+      // sampling HalfFloat bloom targets over the dense polder vegetation.
+      // Keep UnrealBloom's thresholded multi-scale look, but use the stable
+      // normalized 8-bit target path for this scene.
+      bloomPass.renderTargetBright.texture.type = UnsignedByteType;
+      for (const target of [
+        ...bloomPass.renderTargetsHorizontal,
+        ...bloomPass.renderTargetsVertical,
+      ]) {
+        target.texture.type = UnsignedByteType;
+      }
+    }
     composer.addPass(bloomPass);
 
     const cinematicPass = new ShaderPass(CinematicShader);
@@ -322,7 +338,7 @@ export function CinematicPostProcessing({
       outputPass,
       smaaPass,
     };
-  }, [camera, compact, gl, scene, size.height, size.width]);
+  }, [byteBloom, camera, compact, gl, scene, size.height, size.width]);
 
   useEffect(() => {
     pipeline.composer.setPixelRatio(dpr);

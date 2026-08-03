@@ -1,0 +1,56 @@
+{
+  "modelId": "dutch-windmill-de-kat-m1",
+  "revision": "m1-2026-08-02",
+  "modelHash": "8452e7116fe5",
+  "generatedAt": "2026-08-02T16:30:43.914Z",
+  "views": [
+    {
+      "id": "front",
+      "label": "Front +Z",
+      "projection": "orthographic",
+      "file": "front.png"
+    },
+    {
+      "id": "left",
+      "label": "Left profile",
+      "projection": "orthographic",
+      "file": "left.png"
+    },
+    {
+      "id": "rear",
+      "label": "Rear -Z",
+      "projection": "orthographic",
+      "file": "rear.png"
+    },
+    {
+      "id": "three-quarter-left",
+      "label": "3/4 left",
+      "projection": "perspective",
+      "file": "three-quarter-left.png"
+    },
+    {
+      "id": "three-quarter-right",
+      "label": "3/4 right",
+      "projection": "perspective",
+      "file": "three-quarter-right.png"
+    },
+    {
+      "id": "high-three-quarter",
+      "label": "High 3/4",
+      "projection": "perspective",
+      "file": "high-three-quarter.png"
+    },
+    {
+      "id": "rotor-joint",
+      "label": "Rotor joint",
+      "projection": "perspective",
+      "file": "rotor-joint.png"
+    },
+    {
+      "id": "silhouette",
+      "label": "Silhouette control",
+      "projection": "orthographic",
+      "file": "silhouette.png"
+    }
+  ]
+}

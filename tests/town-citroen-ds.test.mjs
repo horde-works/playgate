@@ -18,6 +18,8 @@ import {
   DS_HEIGHT,
   DS_HUB_HEIGHT,
   DS_LENGTH,
+  DS_STRUT_TOP_HEIGHT,
+  DS_WHEEL_CENTRE_HEIGHT,
   DS_MASS,
   DS_MAXIMUM_STEER,
   DS_NOSE,
@@ -39,15 +41,30 @@ import {
   DS_WIDTH,
   dsCornerDamping,
   dsCornerStiffness,
-  dsHalfWidth,
   dsHeadlampDirection,
-  dsSillHeight,
+  townDsClusterDefinition,
+} from "../games/make-a-mess/src/game/townCitroenDs.ts";
+import {
+  DS_FRONT_ARCH_RADIUS,
+  DS_THETA_CROWN,
+  DS_THETA_KEEL,
+  DS_THETA_SHOULDER,
+  DS_THETA_WAIST,
+  dsArchFloor,
+  dsBodyPoint,
+  dsSection,
+  dsSectionPoint,
+  dsSkirtHeight,
   dsStationOf,
   dsStationX,
-  dsSurfacePoint,
   dsTopHeight,
-} from "../games/make-a-mess/src/game/townCitroenDs.ts";
+  dsWaistHalfWidth,
+} from "../games/make-a-mess/src/game/townCitroenDsBody.ts";
 import { townScene } from "../games/make-a-mess/src/game/townScene.ts";
+import {
+  compoundClusterOwnsPiece,
+  compoundMemberNeedsPoseBody,
+} from "../games/make-a-mess/src/game/compoundKinematicCluster.ts";
 import {
   massProperties,
   rotateVector,
@@ -58,6 +75,12 @@ import {
   carForces,
 } from "../games/make-a-mess/src/game/carDynamics.ts";
 import { structuralMaterialProfiles } from "../games/make-a-mess/src/game/destructionScene.ts";
+import {
+  MASS_ADVANTAGE_CAP,
+  classifyLandingDamage,
+  crumbleOnLanding,
+  landingMassAdvantage,
+} from "../games/make-a-mess/src/game/destructionRuntime.ts";
 import {
   TOWN_DS_DRIVER_SEAT,
   passengerSeatIsIntact,
@@ -82,18 +105,26 @@ const stations = Array.from({ length: SAMPLES + 1 }, (_, i) => i / SAMPLES);
 
 test("габариты сняты с настоящей машины", () => {
   assert.ok(Math.abs(DS_LENGTH - 4.874) < 1e-9);
-  assert.ok(Math.abs(DS_WIDTH - 1.79) < 1e-9);
-  assert.ok(Math.abs(DS_HEIGHT - 1.464) < 1e-9);
+  assert.ok(Math.abs(DS_WIDTH - 1.803) < 1e-9);
+  assert.ok(Math.abs(DS_HEIGHT - 1.47) < 1e-9);
   assert.ok(Math.abs(DS_WHEELBASE - 3.125) < 1e-9);
-  // База занимает почти две трети длины: свесы у машины короткие спереди и
-  // длинные сзади, и это видно в профиль.
+  // База занимает почти две трети длины.
   assert.ok(DS_WHEELBASE / DS_LENGTH > 0.63);
+  // СВЕСЫ РАЗНЫЕ, и передний ДЛИННЕЕ: 1016 против 733 по заводскому чертежу.
+  // Прежний паспорт утверждал обратное и ставил переднюю ось на 216 мм
+  // вперёд; из-за этого у машины был короткий нос и длинная корма — то есть
+  // ровно наоборот, чем у настоящей.
   const rearOverhang = DS_TAIL_X - DS_REAR_AXLE_X;
   const frontOverhang = DS_FRONT_AXLE_X - DS_NOSE_X;
   assert.ok(
-    rearOverhang > frontOverhang,
-    `задний свес ${rearOverhang.toFixed(2)} не длиннее переднего ${frontOverhang.toFixed(2)}`,
+    Math.abs(frontOverhang - 1.016) < 1e-6,
+    `передний свес ${frontOverhang.toFixed(3)} вместо 1.016`,
   );
+  assert.ok(
+    Math.abs(rearOverhang - 0.733) < 1e-6,
+    `задний свес ${rearOverhang.toFixed(3)} вместо 0.733`,
+  );
+  assert.ok(frontOverhang > rearOverhang + 0.25);
 });
 
 test("передняя колея ШИРЕ задней — главный признак образа", () => {
@@ -112,7 +143,7 @@ test("передняя колея ШИРЕ задней — главный пр�
 });
 
 test("в плане машина — капля: плечи впереди, корма уже носа", () => {
-  const widths = stations.map((u) => dsHalfWidth(u));
+  const widths = stations.map((u) => dsWaistHalfWidth(u));
   const widest = Math.max(...widths);
   assert.ok(
     Math.abs(widest * 2 - DS_WIDTH) < 0.02,
@@ -123,77 +154,126 @@ test("в плане машина — капля: плечи впереди, ко
     widestAt < 0.5,
     `плечи оказались позади середины: u=${widestAt.toFixed(2)}`,
   );
-  // Сходится корма сильнее, чем нос: иначе получится симметричная лодка.
-  const tailTaper = widest - dsHalfWidth(1);
-  const noseTaper = widest - dsHalfWidth(0);
+  // В ПЛАНЕ острее нос, а не корма: нос сходится в форштевень, корма же
+  // остаётся широкой почти до самого торца и обрывается коротко. Прежний
+  // паспорт требовал обратного и сужал корму вдвое сильнее правды — вместе с
+  // задранной верхней линией это давало вертикальный плавник вместо кормы.
+  const tailTaper = widest - dsWaistHalfWidth(1);
+  const noseTaper = widest - dsWaistHalfWidth(0);
   assert.ok(
-    tailTaper > noseTaper,
-    `корма сужается не сильнее носа: ${tailTaper.toFixed(3)} против ${noseTaper.toFixed(3)}`,
+    noseTaper > tailTaper,
+    `нос сужается не сильнее кормы: ${noseTaper.toFixed(3)} против ${tailTaper.toFixed(3)}`,
+  );
+  // При этом корма ДЕРЖИТ ширину: на девяти десятых длины она всё ещё шире
+  // четырёх пятых максимума. Это и отличает каплю от лодки.
+  assert.ok(
+    dsWaistHalfWidth(0.9) > widest * 0.85,
+    `корма схлопнулась рано: ${dsWaistHalfWidth(0.9).toFixed(3)}`,
   );
 });
 
-test("в профиль гребень крыши стоит ПОЗАДИ середины", () => {
+test("в профиль гребень крыши — ПЛАТО около середины", () => {
   const tops = stations.map((u) => dsTopHeight(u));
   const peak = Math.max(...tops);
   assert.ok(
     Math.abs(peak - DS_HEIGHT) < 0.01,
     `пик ${peak.toFixed(3)} против паспортной высоты ${DS_HEIGHT}`,
   );
-  const peakAt = stations[tops.indexOf(peak)];
+  // Гребень — не точка, а ПЛАТО: между 0.44 и 0.56 верхняя линия меняется на
+  // считаные миллиметры, и его середина лежит практически ровно посередине
+  // машины. Прежний паспорт требовал «позади середины» и уводил гребень к
+  // u=0.56; на заводском чертеже он на 0.48.
+  const plateau = stations.filter((u) => peak - dsTopHeight(u) < 0.02);
+  const first = Math.min(...plateau);
+  const last = Math.max(...plateau);
   assert.ok(
-    peakAt > 0.5,
-    `гребень оказался впереди середины: u=${peakAt.toFixed(2)}`,
+    last - first > 0.08,
+    `гребень получился точкой, а не плато: ${first.toFixed(2)}..${last.toFixed(2)}`,
   );
-  // Нос ниже кормы: машина «едет носом вниз».
+  const peakAt = (first + last) / 2;
   assert.ok(
-    dsTopHeight(0) < dsTopHeight(1),
-    "нос не ниже кормы — образ потерян",
+    Math.abs(peakAt - 0.5) < 0.06,
+    `середина плато уехала от середины машины: u=${peakAt.toFixed(2)}`,
+  );
+  // «Носом вниз» — про ОБВОД, а не про торцы. На заводском чертёже верх у
+  // самого носа даже выше, чем у кормы (0.544 против 0.493): там сидит
+  // высокий передний бампер, отметка 560 против 430 сзади. А наклон даёт
+  // длинный низкий капот: на четверти длины машина ещё ниже метра, тогда как
+  // симметричная ей станция сзади уже за девятьсот.
+  assert.ok(
+    dsTopHeight(0.24) < 1.01,
+    `капот задран: ${dsTopHeight(0.24).toFixed(3)}`,
+  );
+  assert.ok(
+    dsTopHeight(0.24) < dsTopHeight(0.76),
+    "капот не ниже кормовой части — образ потерян",
   );
 });
 
 test("обвод гладкий: ни одной ступеньки в профиле", () => {
-  // Ступенька — это скачок ВТОРОЙ разности. Порог замерен по самому обводу:
-  // на гладких участках она на порядок меньше, и излом видно сразу.
-  for (const [name, profile] of [
-    ["полуширина", dsHalfWidth],
-    ["верх", dsTopHeight],
-    ["порог", dsSillHeight],
-  ]) {
+  // Ступеньку нельзя ловить порогом на вторую разность: у настоящего обвода
+  // есть участки честно большой кривизны — форштевень сходится с 0.75 до
+  // 0.37 полуширины на восьми сотых длины, и никакая постоянная не отличит
+  // его от излома.
+  //
+  // Отличает их ПОВЕДЕНИЕ ПРИ СГУЩЕНИИ СЕТКИ: у гладкой функции вторая
+  // разность падает как квадрат шага, у разрыва не падает вовсе. Поэтому
+  // меряется не величина, а её отношение на двух разрешениях.
+  const secondDifference = (profile, samples) => {
     let worst = 0;
-    for (let index = 1; index < SAMPLES; index += 1) {
-      const before = profile(stations[index - 1]);
-      const here = profile(stations[index]);
-      const after = profile(stations[index + 1]);
+    for (let index = 1; index < samples - 1; index += 1) {
+      const h = 1 / samples;
+      const before = profile((index - 1) * h);
+      const here = profile(index * h);
+      const after = profile((index + 1) * h);
       worst = Math.max(worst, Math.abs(after - 2 * here + before));
     }
+    return worst;
+  };
+  for (const [name, profile] of [
+    ["полуширина", dsWaistHalfWidth],
+    ["верх", dsTopHeight],
+    ["юбка", dsSkirtHeight],
+    ["плечо", (u) => dsSection(u).shoulder],
+  ]) {
+    const coarse = secondDifference(profile, 200);
+    const fine = secondDifference(profile, 400);
+    // Вдвое мельче шаг — вчетверо меньше вторая разность. Допуск втрое:
+    // максимум берётся по разным точкам, и точное отношение не обязано
+    // выдерживаться до цифры.
     assert.ok(
-      worst < 0.002,
-      `${name}: излом обвода, вторая разность ${worst.toFixed(5)}`,
+      fine < coarse * 0.75,
+      `${name}: обвод не сглаживается при сгущении сетки — это разрыв, ` +
+        `а не кривизна: ${coarse.toFixed(5)} -> ${fine.toFixed(5)}`,
     );
   }
 });
 
 test("порог всюду ниже верхней линии, а под ним есть просвет", () => {
-  for (const u of stations) {
-    const sill = dsSillHeight(u);
+  // Самые торцы исключены СОЗНАТЕЛЬНО: там кузов сходится в бампер, и борта
+  // как такового уже нет.
+  for (const u of stations.filter((v) => v > 0.02 && v < 0.98)) {
+    const sill = dsSkirtHeight(u);
     const top = dsTopHeight(u);
-    assert.ok(top - sill > 0.2, `на u=${u.toFixed(2)} борт схлопнулся`);
-    assert.ok(sill > 0.15, `на u=${u.toFixed(2)} юбка легла на землю`);
+    // На самых торцах кузов сходится к бамперу, поэтому борт там низкий;
+    // важно, что он НИГДЕ не выворачивается.
+    assert.ok(top - sill > 0.15, `на u=${u.toFixed(2)} борт схлопнулся`);
+    assert.ok(sill > 0.14, `на u=${u.toFixed(2)} юбка легла на землю`);
   }
   // Машина не цепляет землю свесами: под носом и кормой просвет больше, чем
   // под серединой.
-  assert.ok(dsSillHeight(0) > dsSillHeight(0.5));
-  assert.ok(dsSillHeight(1) > dsSillHeight(0.5));
+  assert.ok(dsSkirtHeight(0) > dsSkirtHeight(0.5));
+  assert.ok(dsSkirtHeight(1) > dsSkirtHeight(0.5));
 });
 
 test("точка поверхности лежит между порогом и верхом", () => {
   for (const u of [0.1, 0.3, 0.5, 0.7, 0.9]) {
     for (const side of [-1, 1]) {
-      const low = dsSurfacePoint(u, side, 0);
-      const high = dsSurfacePoint(u, side, 1);
+      const low = dsBodyPoint(u, DS_THETA_WAIST, side);
+      const high = dsBodyPoint(u, DS_THETA_CROWN, side);
       assert.ok(Math.abs(low[0] - dsStationX(u)) < 1e-9);
-      assert.ok(Math.abs(low[2] - side * dsHalfWidth(u)) < 1e-9);
-      assert.ok(Math.abs(low[1] - dsSillHeight(u)) < 1e-9);
+      assert.ok(Math.abs(low[2] - side * dsWaistHalfWidth(u)) < 1e-9);
+      assert.ok(low[1] > dsSkirtHeight(u));
       assert.ok(Math.abs(high[1] - dsTopHeight(u)) < 1e-9);
     }
   }
@@ -281,8 +361,8 @@ test("кузов накрывает колёса обеих осей", () => {
     const u = dsStationOf(station.hub[0]);
     const outer = Math.abs(station.hub[2]) + DS_TYRE_HALF_WIDTH;
     assert.ok(
-      dsHalfWidth(u) >= outer,
-      `${station.id}: борт ${dsHalfWidth(u).toFixed(3)} уже колеса ${outer.toFixed(3)}`,
+      dsWaistHalfWidth(u) >= outer,
+      `${station.id}: борт ${dsWaistHalfWidth(u).toFixed(3)} уже колеса ${outer.toFixed(3)}`,
     );
   }
 });
@@ -293,7 +373,7 @@ test("ступица стоит так, что снаряжённая машин
   );
   // Колесо не торчит сквозь юбку: порог над осью колеса на уровне арок.
   const frontU = dsStationOf(DS_FRONT_AXLE_X);
-  assert.ok(dsSillHeight(frontU) < DS_HUB_HEIGHT);
+  assert.ok(dsSkirtHeight(frontU) < DS_HUB_HEIGHT);
 });
 
 test("предельный угол руля даёт настоящий разворот", () => {
@@ -484,7 +564,8 @@ test("кластер DS — тот же контракт составного т
 
 test("оболочка — visualMesh из профиля, а не стопка коробок", () => {
   const shell = carPieces.filter((piece) =>
-    /:(skin:|bonnet|boot:lid|roof|nose:cap|tail:cap|spat:|glass:)/.test(piece.id),
+    /:(floorpan:|wing:|door:(front|rear):|bonnet|boot:lid|roof|pillar:|spat:|glass:|scuttle:|wheel-well:)/
+      .test(piece.id) && !/overrider/.test(piece.id),
   );
   assert.ok(shell.length >= 12, `оболочечных кусков ${shell.length}`);
   for (const piece of shell) {
@@ -633,7 +714,7 @@ test("силовой набор спрятан за кузовом", () => {
   for (const piece of structural) {
     const x = piece.position[0] - DS_PARK_X;
     const bottom = piece.position[1] - DS_ROAD_TOP_Y - piece.size[1] / 2;
-    const sill = dsSillHeight(Math.max(0, Math.min(1, dsStationOf(x))));
+    const sill = dsSkirtHeight(Math.max(0, Math.min(1, dsStationOf(x))));
     assert.ok(
       bottom >= sill - 1e-9,
       `${piece.id}: низ ${bottom.toFixed(3)} ниже порога ${sill.toFixed(3)}`,
@@ -689,11 +770,13 @@ test("место водителя принадлежит машине и цел�
     assert.ok(ids.has(required), `кресло требует кусок, которого нет: ${required}`);
   }
   assert.equal(passengerSeatIsIntact(TOWN_DS_DRIVER_SEAT, new Set()), true);
-  // Потеряли руль — сесть за него больше нельзя.
+  // Потеряли СТУПИЦУ руля — сесть за него больше нельзя. Обод собран из
+  // отдельных дуг и может быть смят, а рулить машина не перестанет; несущая
+  // тут именно ступица.
   assert.equal(
     passengerSeatIsIntact(
       TOWN_DS_DRIVER_SEAT,
-      new Set(["town-boulevard:ds:steering:wheel:piece"]),
+      new Set(["town-boulevard:ds:steering:boss:piece"]),
     ),
     false,
   );
@@ -709,11 +792,11 @@ test("предложение сесть стоит СНАРУЖИ, у водит
   // Снаружи борта — иначе человек, стоящий у машины, ничего не увидит, и
   // именно это и наблюдалось.
   assert.ok(
-    Math.abs(post[2]) > dsHalfWidth(u),
-    `пост внутри кузова: |z|=${Math.abs(post[2]).toFixed(2)} против борта ${dsHalfWidth(u).toFixed(2)}`,
+    Math.abs(post[2]) > dsWaistHalfWidth(u),
+    `пост внутри кузова: |z|=${Math.abs(post[2]).toFixed(2)} против борта ${dsWaistHalfWidth(u).toFixed(2)}`,
   );
   // Но и не в соседнем ряду: до него надо дойти, а не наткнуться.
-  assert.ok(Math.abs(post[2]) < dsHalfWidth(u) + 1.0);
+  assert.ok(Math.abs(post[2]) < dsWaistHalfWidth(u) + 1.0);
   // Руль у машины СЛЕВА: правый борт смотрит в −z, значит водитель в +z.
   assert.ok(post[2] > 0, "пост оказался на пассажирской стороне");
   // На высоте глаз стоящего человека, а не на уровне порога.
@@ -734,12 +817,12 @@ test("водитель садится в кабину, а выходит на д
   const headU = dsStationOf(head[0]);
   // Голова ВНУТРИ кузова и ниже крыши: иначе камера окажется снаружи стекла.
   assert.ok(
-    Math.abs(head[2]) < dsHalfWidth(headU),
+    Math.abs(head[2]) < dsWaistHalfWidth(headU),
     `голова водителя снаружи борта: ${head[2].toFixed(2)}`,
   );
   assert.ok(
-    head[1] > dsSillHeight(headU) && head[1] < dsTopHeight(headU),
-    `голова водителя на высоте ${head[1].toFixed(2)}, борт ${dsSillHeight(headU).toFixed(2)}…${dsTopHeight(headU).toFixed(2)}`,
+    head[1] > dsSkirtHeight(headU) && head[1] < dsTopHeight(headU),
+    `голова водителя на высоте ${head[1].toFixed(2)}, борт ${dsSkirtHeight(headU).toFixed(2)}…${dsTopHeight(headU).toFixed(2)}`,
   );
   assert.ok(head[2] > 0, "водитель сел справа");
 
@@ -749,7 +832,7 @@ test("водитель садится в кабину, а выходит на д
     TOWN_DS_DRIVER_SEAT.exitPoint[2] - DS_PARK_Z,
   ];
   // Выходят наружу, на свою же сторону, и на полотно дороги, а не в стену.
-  assert.ok(Math.abs(out[2]) > dsHalfWidth(dsStationOf(out[0])));
+  assert.ok(Math.abs(out[2]) > dsWaistHalfWidth(dsStationOf(out[0])));
   assert.ok(out[2] > 0);
   assert.ok(
     DS_PARK_Z + out[2] < DS_ROAD_CENTRE_Z + DS_ROAD_HALF_WIDTH,
@@ -899,4 +982,275 @@ test("машина поворачивает и держится на колёс�
     `кузов завалился в повороте: up.y=${up[1].toFixed(3)}`,
   );
   assert.equal(run.result.contacts, 4, "машина встала на два колеса");
+});
+
+// ---------------------------------------------------------------------------
+// 8. Что машина ломает и что ломает её
+//
+// Закон удара один на весь проект и откалиброван по ПАДАЮЩЕМУ ОБЛОМКУ, где
+// работу делает собственный вес падающего. Машина в него не укладывалась
+// дважды: тонна железа судилась как упавшая доска той же скорости, а её
+// собственный кузов был выведен из-под закона как «сталь».
+//
+// Здесь проверяется калибровка по трём известным случаям и по самой машине.
+// Числа — не вкус: это скорости, на которых настоящая машина делает ровно то
+// же самое.
+// ---------------------------------------------------------------------------
+
+/** Скорость, с которой удар машины разрушает кусок этого материала, км/ч. */
+function shattersFrom(material, targetMass, strikerMass = carMass.mass) {
+  const advantage = landingMassAdvantage(strikerMass, targetMass);
+  for (let speed = 0.05; speed < 60; speed += 0.05) {
+    if (classifyLandingDamage(material, speed, 5, advantage) === "shatter") {
+      return speed * 3.6;
+    }
+  }
+  return Infinity;
+}
+
+/** Медианная масса куска этого материала в городе. */
+function medianMass(material) {
+  const masses = townScene.breakablePieces
+    .filter((piece) => piece.material === material)
+    .map((piece) => massProperties([piece], density).mass)
+    .sort((a, b) => a - b);
+  return masses[Math.floor(masses.length / 2)];
+}
+
+test("падающий обломок судится ровно как прежде", () => {
+  // Преимущества в массе у него нет: ударивший и судимый — одно тело. Любая
+  // другая калибровка здесь означала бы, что машина переписала чужой закон.
+  assert.equal(landingMassAdvantage(1, 1), 1);
+  assert.equal(landingMassAdvantage(0.5, 1), 1);
+  assert.equal(classifyLandingDamage("wood", 7.1, 0.3), "shatter");
+  assert.equal(classifyLandingDamage("wood", 4.2, 0.3), "chip");
+  assert.equal(classifyLandingDamage("wood", 3.2, 0.3), "none");
+  assert.equal(classifyLandingDamage("concrete", 12.5, 0.3), "shatter");
+});
+
+test("преимущество в массе насыщается, а не растёт без предела", () => {
+  // Без потолка машина крошила бы траву стоя на месте: отношение масс уходит
+  // в тысячи, и любая скорость становилась бы разрушительной.
+  assert.ok(landingMassAdvantage(1.33, 0.0001) <= MASS_ADVANTAGE_CAP);
+  assert.ok(landingMassAdvantage(1e9, 1e-9) <= MASS_ADVANTAGE_CAP);
+  // И растёт монотонно: чем легче цель, тем меньше нужно скорости.
+  assert.ok(
+    landingMassAdvantage(1.33, 0.02) > landingMassAdvantage(1.33, 0.65),
+  );
+});
+
+test("машина ломает дерево с места, кирпич с разбега, бетон на ходу", () => {
+  const wood = shattersFrom("wood", medianMass("wood") > 0.005 ? medianMass("wood") : 0.02);
+  const brick = shattersFrom("brick", medianMass("brick"));
+  const concrete = shattersFrom("concrete", medianMass("concrete"));
+  // Деревянное сносится буквально с места.
+  assert.ok(wood < 12, `дерево ломается только с ${wood.toFixed(0)} км/ч`);
+  // Кладка требует небольшого разбега, но остаётся проходимой.
+  assert.ok(brick > wood && brick < 20, `кирпич ломается с ${brick.toFixed(0)} км/ч`);
+  // Бетон требует настоящего хода — и всё же меньшего, чем прежние 38 км/ч.
+  assert.ok(
+    concrete > brick && concrete > 18 && concrete < 32,
+    `бетон ломается с ${concrete.toFixed(0)} км/ч`,
+  );
+});
+
+test("гексакоптер тяжелее машины и ломает охотнее — тем же законом", () => {
+  // Одна калибровка на все машины проекта: коптер весит 86.5 против 1.33, и
+  // разница обязана следовать из массы, а не из отдельной таблицы для него.
+  const byCar = shattersFrom("concrete", medianMass("concrete"));
+  const byCopter = shattersFrom("concrete", medianMass("concrete"), 86.5);
+  assert.ok(
+    byCopter < byCar,
+    `коптер ломает бетон с ${byCopter.toFixed(0)} км/ч, машина с ${byCar.toFixed(0)}`,
+  );
+});
+
+test("кузов мнётся, силовой набор — нет", () => {
+  // Брусок стали об бетон бетон и проиграет — это правда. Но кузов не брусок,
+  // и отдельный материал существует ровно затем, чтобы эту разницу назвать.
+  const shell = carPieces.filter((piece) => piece.material === "sheetMetal");
+  const structure = carPieces.filter((piece) => piece.material === "steel");
+  assert.ok(shell.length >= 10, `облицовки всего ${shell.length} кусков`);
+  assert.ok(structure.length >= 10, `силового набора всего ${structure.length}`);
+  // Силовой набор обязан остаться вне закона удара: машина складывается, но
+  // не рассыпается конструктором. Платформа при этом `earth` — это её роль
+  // парящего корня решателя, а не материал, и под закон она тоже не попадает.
+  for (const id of [
+    "frame:rail:left",
+    "subframe:front",
+    "engine:block",
+    "cabin:floor",
+  ]) {
+    const piece = carPieces.find((p) => p.id === `${DS_CLUSTER_ID}:${id}:piece`);
+    assert.ok(piece, `нет куска ${id}`);
+    assert.equal(piece.material, "steel", `${id} перестал быть силовым`);
+  }
+  const platform = carPieces.find(
+    (p) => p.id === `${DS_CLUSTER_ID}:platform:piece`,
+  );
+  assert.ok(platform, "нет платформы");
+  assert.equal(platform.material, "earth", "платформа потеряла роль корня");
+  // Её материал ПОД законом удара — значит она обязана быть вне контактной
+  // оболочки, иначе силовой корень машины разлетается от касания и машина
+  // складывается целиком.
+  assert.equal(crumbleOnLanding.has(platform.material), true);
+  const excludes = townDsClusterDefinition().contactMemberExcludes ?? [];
+  assert.ok(
+    excludes.some((match) => platform.id.includes(match)),
+    "платформа осталась в контактной оболочке машины",
+  );
+  // Сталь вне закона удара на любой скорости, панель — под ним.
+  assert.equal(classifyLandingDamage("steel", 40, 10, 3), "none");
+  const panel = massProperties([shell[0]], density).mass;
+  const advantage = landingMassAdvantage(carMass.mass, panel);
+  let dent = 0;
+  for (let v = 0.05; v < 60; v += 0.05) {
+    if (classifyLandingDamage("sheetMetal", v, 5, advantage) !== "none") { dent = v * 3.6; break; }
+  }
+  // Заметная вмятина приходит на городских скоростях, а не на трассе.
+  assert.ok(dent > 6 && dent < 18, `кузов мнётся только с ${dent.toFixed(0)} км/ч`);
+});
+
+// ---------------------------------------------------------------------------
+// ПОСАДКА И НАКРЫТИЕ КОЛЁС
+//
+// Эти проверки появились после того, как машина полгода простояла в воздухе:
+// станция подвески называлась «ступицей», колесо рисовали прямо в ней, и
+// покрышка висела над асфальтом на статическую осадку — 160 мм. Ошибку не
+// ловил ни один тест, потому что все они смотрели на числа паспорта, а не на
+// СОБРАННУЮ машину.
+// ---------------------------------------------------------------------------
+
+test("видимое колесо стоит НА дороге, а не висит над ней", () => {
+  for (const piece of carPieces.filter((p) => p.id.includes(":tyre:"))) {
+    const bottom = piece.position[1] - DS_WHEEL_RADIUS - DS_ROAD_TOP_Y;
+    assert.ok(
+      Math.abs(bottom) < 0.005,
+      `${piece.id}: низ шины на ${(bottom * 1000).toFixed(0)} мм от дороги`,
+    );
+  }
+});
+
+test("верх стойки остаётся выше центра колеса ровно на осадку", () => {
+  // Луч подвески щупает мир ИЗ ВЕРХА СТОЙКИ на длину «радиус + ход», и при
+  // снаряжённой массе сжатие обязано выйти ровно в половину хода. Сдвинешь
+  // станцию к центру колеса ради красивой картинки — и машина сядет на
+  // асфальт по самые пороги.
+  for (const station of DS_WHEEL_STATIONS) {
+    assert.ok(
+      Math.abs(station.hub[1] - DS_STRUT_TOP_HEIGHT) < 1e-9,
+      `${station.id}: станция не на верху стойки`,
+    );
+  }
+  const reach = DS_WHEEL_RADIUS + DS_SUSPENSION_TRAVEL;
+  const restingDistance = DS_STRUT_TOP_HEIGHT;
+  assert.ok(
+    Math.abs((reach - restingDistance) - DS_STATIC_COMPRESSION) < 1e-9,
+    "сжатие при снаряжённой массе разошлось с паспортной осадкой",
+  );
+});
+
+test("кузов накрывает покрышку по ВСЕЙ её высоте, а не только по талии", () => {
+  // Проверяется силуэт сечения на каждой высоте покрышки, а не одно число:
+  // борт над талией подбирается внутрь, и колесо вылезало именно там.
+  const halfAt = (u, y) => {
+    const section = dsSection(u);
+    let best = 0;
+    for (let t = 0; t <= 1; t += 0.004) {
+      const [half, height] = dsSectionPoint(section, t);
+      if (Math.abs(height - y) < 0.015) best = Math.max(best, half);
+    }
+    return best;
+  };
+  for (const station of DS_WHEEL_STATIONS) {
+    const u = dsStationOf(station.hub[0]);
+    const outer = Math.abs(station.hub[2]) + DS_TYRE_HALF_WIDTH;
+    for (const share of [0, 0.5, 0.9]) {
+      const y = DS_WHEEL_CENTRE_HEIGHT + DS_WHEEL_RADIUS * share;
+      // Ниже кромки арки кузова нет вовсе — это проём, и колесо там видно по
+      // замыслу. Смысл имеет только то, что ВЫШЕ выреза.
+      const lip = dsArchFloor(u);
+      if (Number.isFinite(lip) && y < lip) continue;
+      assert.ok(
+        halfAt(u, y) >= outer,
+        `${station.id}: на высоте ${y.toFixed(2)} борт ${halfAt(u, y).toFixed(3)} уже шины ${outer.toFixed(3)}`,
+      );
+    }
+  }
+});
+
+test("передняя арка опирается на порог, а не висит на высоте ступицы", () => {
+  // Арка-полукруг от ступицы вырезала у своих концов полосу борта до самого
+  // порога — колеса там уже нет, и сквозь прореху было видно шасси.
+    // Замер у САМОГО конца проёма: на 0.98 радиуса дуга ещё идёт, и требовать
+  // там нуля бессмысленно.
+  const endU = dsStationOf(DS_FRONT_AXLE_X + DS_FRONT_ARCH_RADIUS * 0.995);
+  assert.ok(
+    dsArchFloor(endU) - dsSkirtHeight(endU) < 0.06,
+    `у конца арки вырез поднят на ${((dsArchFloor(endU) - dsSkirtHeight(endU)) * 1000).toFixed(0)} мм над порогом`,
+  );
+  const crestU = dsStationOf(DS_FRONT_AXLE_X);
+  assert.ok(
+    dsArchFloor(crestU) > DS_WHEEL_CENTRE_HEIGHT + DS_WHEEL_RADIUS,
+    "кромка арки задевает покрышку",
+  );
+});
+
+// ---------------------------------------------------------------------------
+// ПОВОРОТ И ПРОКАТ КОЛЁС
+// ---------------------------------------------------------------------------
+
+test("колесо артикулируется РЕНДЕРОМ, а не собственным телом", () => {
+  // Инвариант против рецидива: три захода сделать колесо `independentMember`
+  // разваливали подвеску — луч находил опору в собственном колесе, а
+  // кинематическое колесо распирало изнутри свой же кузов. Колесо обязано
+  // остаться обычным членом кластера, у которого нет ни тела, ни коллайдера.
+  const cluster = townDsClusterDefinition();
+  for (const piece of carPieces.filter((p) => p.id.includes(":wheel:"))) {
+    assert.ok(
+      compoundClusterOwnsPiece(cluster, piece),
+      `${piece.id}: колесо перестало быть обычным членом кластера`,
+    );
+    assert.ok(
+      !compoundMemberNeedsPoseBody(cluster, piece),
+      `${piece.id}: колесу завели отдельное тело — подвеска это не переживёт`,
+    );
+  }
+});
+
+test("id, по которым пишется поворот, существуют в сцене", () => {
+  // Тихий отказ: система машины пишет артикуляцию по собранному id, и опечатка
+  // в нём не роняет ничего — колёса просто не поворачиваются.
+  const known = new Set(carPieces.map((piece) => piece.id));
+  for (const station of DS_WHEEL_STATIONS) {
+    for (const part of ["tyre", "hub"]) {
+      const id = `${DS_CLUSTER_ID}:wheel:${station.id}:${part}:piece`;
+      assert.ok(known.has(id), `в сцене нет куска ${id}`);
+    }
+  }
+});
+
+test("поворачиваются ТОЛЬКО передние колёса, и на паспортный угол", () => {
+  for (const station of DS_WHEEL_STATIONS) {
+    const expected = station.axle === "front" ? 1 : 0;
+    assert.ok(
+      Math.abs(station.steerShare - expected) < 1e-9,
+      `${station.id}: доля поворота ${station.steerShare}`,
+    );
+  }
+  // Предельный угол — тот же, из которого выведен радиус разворота.
+  const inner = DS_MAXIMUM_STEER;
+  assert.ok(inner > 0.4 && inner < 0.65, `предельный угол ${inner.toFixed(3)}`);
+});
+
+test("прокат колеса считается из ПУТИ, а не из времени", () => {
+  // Угол проката = путь / радиус. Проверяется размерность: один оборот на
+  // длину окружности. Считай его из времени — и колесо крутилось бы у
+  // стоящей машины.
+  const circumference = 2 * Math.PI * DS_WHEEL_RADIUS;
+  const spin = circumference / DS_WHEEL_RADIUS;
+  assert.ok(
+    Math.abs(spin - 2 * Math.PI) < 1e-9,
+    "оборот колеса разошёлся с длиной окружности",
+  );
 });

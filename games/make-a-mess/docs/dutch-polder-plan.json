@@ -1,0 +1,197 @@
+{
+  "schemaVersion": 1,
+  "id": "dutch-polder-authoring-plan",
+  "units": "metres",
+  "coordinateFrame": {
+    "east": "+X",
+    "south": "+Z",
+    "up": "+Y",
+    "north": "-Z",
+    "waterY": 0,
+    "playerSpawn": [0, 2, 50]
+  },
+  "motionContract": {
+    "windSimulation": false,
+    "capYaw": false,
+    "bodyYaw": false,
+    "sailRotation": "deterministic-constant-angular-speed",
+    "airVehicleCoupling": false
+  },
+  "shoreline": [
+    [-63, -33],
+    [-43, -49],
+    [-15, -52],
+    [9, -49],
+    [32, -51],
+    [57, -40],
+    [70, -23],
+    [68, -2],
+    [73, 18],
+    [64, 38],
+    [42, 50],
+    [18, 55],
+    [-7, 54],
+    [-30, 57],
+    [-53, 47],
+    [-67, 32],
+    [-70, 13],
+    [-66, -6]
+  ],
+  "derivedEnvelope": {
+    "bounds": {
+      "minX": -70,
+      "maxX": 73,
+      "minZ": -52,
+      "maxZ": 57
+    },
+    "area": 13058,
+    "equalAreaDiameter": 128.9416999079497,
+    "centroid": [0.5479016694746516, 2.1677132792158065],
+    "perimeter": 422.60874998443063,
+    "maximumRadius": 75.18643494673758,
+    "minimumControlPointRadius": 49.81967482832461
+  },
+  "zones": [
+    {
+      "id": "T1",
+      "kind": "central-crown",
+      "topY": 5.2,
+      "reliefY": [3.1, 5.8],
+      "polygon": [[-20, -26], [2, -35], [22, -26], [28, -12], [18, 5], [2, 9], [-8, 4], [-24, -9]]
+    },
+    {
+      "id": "T2",
+      "kind": "northwest-bench",
+      "topY": 2.4,
+      "reliefY": [1.8, 2.7],
+      "polygon": [[-63, -33], [-43, -49], [-24, -44], [-20, -16], [-30, 3], [-54, 8], [-66, -6]]
+    },
+    {
+      "id": "T3",
+      "kind": "northeast-bench",
+      "topY": 2.8,
+      "reliefY": [2.1, 3.1],
+      "polygon": [[20, -44], [48, -41], [66, -25], [58, -9], [36, -8], [15, -20]]
+    },
+    {
+      "id": "T4",
+      "kind": "east-bench",
+      "topY": 1.9,
+      "reliefY": [1.3, 2.2],
+      "polygon": [[35, -8], [64, -16], [70, 5], [63, 20], [45, 21], [33, 10]]
+    },
+    {
+      "id": "T5",
+      "kind": "south-polder",
+      "topY": 0.8,
+      "reliefY": [0.55, 1.05],
+      "polygon": [[-58, 5], [-32, 3], [-6, 9], [25, 5], [44, 20], [37, 46], [8, 54], [-25, 53], [-52, 42], [-66, 20]]
+    },
+    {
+      "id": "T6",
+      "kind": "southeast-bench",
+      "topY": 1.45,
+      "reliefY": [1, 1.8],
+      "polygon": [[13, 18], [45, 15], [64, 30], [52, 47], [23, 55], [8, 42]]
+    }
+  ],
+  "channels": [
+    {
+      "id": "C1",
+      "kind": "main",
+      "width": 4.2,
+      "bedY": -1.4,
+      "points": [[-67, 15], [-52, 10], [-38, 14], [-23, 10], [-6, 15], [10, 13], [23, 9], [39, 12], [55, 18], [68, 15]]
+    },
+    {
+      "id": "C2",
+      "kind": "southwest-outlet",
+      "width": 3.5,
+      "bedY": -1.4,
+      "points": [[-30, 13], [-35, 29], [-47, 40], [-52, 48]]
+    },
+    {
+      "id": "C3",
+      "kind": "field-drain",
+      "width": 2.6,
+      "bedY": -1.4,
+      "points": [[5, 14], [6, 31], [4, 47]]
+    },
+    {
+      "id": "C4",
+      "kind": "east-outlet",
+      "width": 3.8,
+      "bedY": -1.4,
+      "points": [[39, 12], [48, 25], [63, 32]]
+    }
+  ],
+  "bridges": [
+    { "id": "B1", "position": [-44, 11], "connects": ["T2", "T5"] },
+    { "id": "B2", "position": [0, 14], "connects": ["T1", "T5"] },
+    { "id": "B3", "position": [41, 13], "connects": ["T4", "T5"] },
+    { "id": "B4", "position": [-40, 33], "connects": ["T5", "T5"] },
+    { "id": "B5", "position": [53, 27], "connects": ["T4", "T6"] }
+  ],
+  "objects": [
+    {
+      "id": "M1",
+      "family": "de-kat-octagonal-paint-stellingmolen",
+      "position": [2, 5.2, -13],
+      "frontDegrees": 168,
+      "sailSpan": 21.76,
+      "clearanceRadius": 12,
+      "shoreClearance": 24.59
+    },
+    {
+      "id": "M2",
+      "family": "oudegein-wipmolen",
+      "position": [-40, 2.4, -25],
+      "frontDegrees": 152,
+      "sailSpan": 24.9,
+      "clearanceRadius": 13,
+      "shoreClearance": 7.61
+    },
+    {
+      "id": "M3",
+      "family": "jonge-schaap-hexagonal-sawmill",
+      "position": [36, 2.8, -28],
+      "frontDegrees": 194,
+      "sailSpan": 20.68,
+      "clearanceRadius": 11,
+      "shoreClearance": 8.44
+    },
+    {
+      "id": "M4",
+      "family": "gekroonde-poelenburg-paltrok",
+      "position": [50, 1.9, 4],
+      "frontDegrees": 205,
+      "sailSpan": 23,
+      "sailSpanConfidence": "published",
+      "clearanceRadius": 12,
+      "shoreClearance": 6.92
+    },
+    {
+      "id": "H1",
+      "family": "zaan-timber-merchant-house",
+      "position": [-50, 2.25, 4],
+      "frontDegrees": 128,
+      "envelope": [10.8, 7.15, 7.2],
+      "envelopeAxes": ["wall-depth", "ridge-height", "wall-width"],
+      "roofEnvelope": [11.16, 7.15, 7.47],
+      "clearanceRadius": 7.3,
+      "shoreClearance": 10.42
+    },
+    {
+      "id": "H2",
+      "family": "north-holland-stolp-farm",
+      "position": [31, 1.45, 29],
+      "frontDegrees": 206,
+      "envelope": [14.6, 10.7, 13.4],
+      "envelopeAxes": ["main-wall-width", "crown-height", "main-wall-depth"],
+      "combinedWallEnvelope": [14.6, 10.7, 19.3],
+      "roofEnvelope": [15.44, 10.7, 20.53],
+      "clearanceRadius": 13,
+      "shoreClearance": 9.8
+    }
+  ]
+}

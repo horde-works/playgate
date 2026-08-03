@@ -1,0 +1,44 @@
+{
+  "modelId": "dutch-polder-terrain-graybox",
+  "revision": "terrain-a2-2026-08-02",
+  "modelHash": "b8a91baf27c3",
+  "generatedAt": "2026-08-02T19:08:48.385Z",
+  "views": [
+    {
+      "id": "plan",
+      "label": "Plan · six plates, channels and true reserves",
+      "projection": "orthographic",
+      "file": "plan.png"
+    },
+    {
+      "id": "south-approach",
+      "label": "South approach · low polder toward displaced crown",
+      "projection": "perspective",
+      "file": "south-approach.png"
+    },
+    {
+      "id": "northwest",
+      "label": "Northwest · separate domestic and central plates",
+      "projection": "perspective",
+      "file": "northwest.png"
+    },
+    {
+      "id": "east",
+      "label": "East · production shelf, fork and farm bench",
+      "projection": "perspective",
+      "file": "east.png"
+    },
+    {
+      "id": "hydrology",
+      "label": "Hydrology cutaway · channel bed and bridge seats",
+      "projection": "perspective",
+      "file": "hydrology.png"
+    },
+    {
+      "id": "silhouette",
+      "label": "Silhouette · non-radial terrain mass",
+      "projection": "orthographic",
+      "file": "silhouette.png"
+    }
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "modelId": "dutch-house-north-holland-stolp-h2",
+  "revision": "h2-2026-08-02",
+  "modelHash": "c5f9f5514686",
+  "generatedAt": "2026-08-02T18:48:35.863Z",
+  "views": [
+    {
+      "id": "front",
+      "label": "Front +Z · six-bay brick residence",
+      "projection": "orthographic",
+      "file": "front.png"
+    },
+    {
+      "id": "left",
+      "label": "Left · timber dars wall",
+      "projection": "orthographic",
+      "file": "left.png"
+    },
+    {
+      "id": "rear",
+      "label": "Rear -Z · dars doors + tail",
+      "projection": "orthographic",
+      "file": "rear.png"
+    },
+    {
+      "id": "right",
+      "label": "Right · dwelling-to-tail transition",
+      "projection": "orthographic",
+      "file": "right.png"
+    },
+    {
+      "id": "three-quarter-left",
+      "label": "3/4 left · residence + barn wall",
+      "projection": "perspective",
+      "file": "three-quarter-left.png"
+    },
+    {
+      "id": "three-quarter-right",
+      "label": "3/4 right · residence + tail",
+      "projection": "perspective",
+      "file": "three-quarter-right.png"
+    },
+    {
+      "id": "high-three-quarter",
+      "label": "High 3/4 · asymmetric roof transitions",
+      "projection": "perspective",
+      "file": "high-three-quarter.png"
+    },
+    {
+      "id": "vierkant-cutaway",
+      "label": "Cutaway · four-post roof load path",
+      "projection": "perspective",
+      "file": "vierkant-cutaway.png"
+    },
+    {
+      "id": "tail-junction-cutaway",
+      "label": "Cutaway · open rear bay + roof flashing",
+      "projection": "perspective",
+      "file": "tail-junction-cutaway.png"
+    },
+    {
+      "id": "silhouette",
+      "label": "Silhouette control",
+      "projection": "orthographic",
+      "file": "silhouette.png"
+    }
+  ]
+}

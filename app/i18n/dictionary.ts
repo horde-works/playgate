@@ -170,6 +170,8 @@ export const ui = {
     "villager.act.door": "waiting at the door",
     "villager.act.walking": "walking",
     "villager.act.standing": "standing",
+    "villager.act.alarmed": "frozen, looking for the sound",
+    "villager.act.dusting": "beating the dust off",
     "villager.intent.home": "heading home",
     "villager.intent.at": "working at {place}",
     "villager.intent.idle": "no errand",
@@ -593,6 +595,8 @@ export const ui = {
     "villager.act.door": "espera en la puerta",
     "villager.act.walking": "camina",
     "villager.act.standing": "de pie",
+    "villager.act.alarmed": "inmóvil, buscando el ruido",
+    "villager.act.dusting": "se sacude el polvo",
     "villager.intent.home": "va a casa",
     "villager.intent.at": "trabaja en {place}",
     "villager.intent.idle": "sin encargo",
@@ -1022,6 +1026,8 @@ export const ui = {
     "villager.act.door": "ждёт у двери",
     "villager.act.walking": "идёт",
     "villager.act.standing": "стоит",
+    "villager.act.alarmed": "замер, ищет, откуда хлопнуло",
+    "villager.act.dusting": "отряхивается от пыли",
     "villager.intent.home": "домой",
     "villager.intent.at": "работает: {place}",
     "villager.intent.idle": "без поручения",
@@ -1495,6 +1501,44 @@ export const sceneCopy: Record<string, Record<Language, SceneCopy>> = {
       reset: "Отстроить поселение заново",
     },
   },
+  "dutch-polder": {
+    en: {
+      status: "Make a Mess / Dutch Polder",
+      eyebrow: "Polder world test 001",
+      heading: "The mills are mechanisms.",
+      ready: "The polder is assembled",
+      loading: "Raising the island…",
+      description:
+        "An uneven Dutch polder at natural scale: four constructionally distinct mills, two house types, reserved canal waterlines, five real bridges, raised flower beds, bank revetments, masonry and dry shell paths. Wind and real water are deliberately absent; the sails are temporarily static while their mechanism is optimized separately.",
+      enter: "Enter the polder",
+      returnToGame: "Return to the island",
+      reset: "Restore the polder",
+    },
+    es: {
+      status: "Make a Mess / Dutch Polder",
+      eyebrow: "Prueba de mundo pólder 001",
+      heading: "Los molinos son mecanismos.",
+      ready: "El pólder está montado",
+      loading: "Levantando la isla…",
+      description:
+        "Un pólder neerlandés irregular a escala natural: cuatro molinos constructivamente distintos, dos tipos de casa, cotas reservadas para los canales, cinco puentes reales, bancales de flores, defensas de ribera, mampostería y caminos secos. El viento y el agua real no están activos; las aspas quedan temporalmente estáticas mientras su mecanismo se optimiza por separado.",
+      enter: "Entrar en el pólder",
+      returnToGame: "Volver a la isla",
+      reset: "Restaurar el pólder",
+    },
+    ru: {
+      status: "Make a Mess / Dutch Polder",
+      eyebrow: "Polder world test 001",
+      heading: "Мельницы — механизмы.",
+      ready: "Польдер собран",
+      loading: "Поднимаем остров…",
+      description:
+        "Неровный голландский польдер в натуральном масштабе: четыре конструктивно разные мельницы, два типа домов, каналы с зарезервированным уровнем воды, пять настоящих мостов, грядки, береговые крепления, кладка и сухие дорожки. Ветер и настоящая вода намеренно не включены; лопасти временно статичны до отдельной оптимизации механизма.",
+      enter: "Войти в польдер",
+      returnToGame: "Вернуться на остров",
+      reset: "Восстановить польдер",
+    },
+  },
 };
 
 export interface GameCardCopy {
@@ -1584,6 +1628,26 @@ export const gameCardCopy: Record<string, Record<Language, GameCardCopy>> = {
       genre: "Living-world destruction sandbox",
       summary:
         "Обитаемая северная деревня: частокол, длинные дома, зал конунга, оружейные навесы, бельё, очаги, грязь, мох и каменистый лес.",
+    },
+  },
+  "make-a-mess-dutch-polder": {
+    en: {
+      stageLabel: "New world",
+      genre: "Landscape destruction sandbox",
+      summary:
+        "An uneven Dutch polder at natural scale: four different mills, houses, canals, real bridges, raised flower beds and dry paths.",
+    },
+    es: {
+      stageLabel: "Mundo nuevo",
+      genre: "Sandbox de paisaje y destrucción",
+      summary:
+        "Un pólder neerlandés irregular a escala natural: cuatro molinos distintos, casas, canales, puentes reales, bancales de flores y caminos secos.",
+    },
+    ru: {
+      stageLabel: "Новый мир",
+      genre: "Landscape destruction sandbox",
+      summary:
+        "Неровный голландский польдер в натуральном масштабе: четыре разные мельницы, дома, каналы, настоящие мосты, грядки и сухие дорожки.",
     },
   },
 };

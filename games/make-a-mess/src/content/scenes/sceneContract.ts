@@ -8,6 +8,7 @@ import type {
   LampBeaconDefinition,
   LampEventLightingDefinition,
   LandscapeSurfaceProfile,
+  LandscapeVisualDefinition,
   MutableSceneObjectDefinition,
   SceneVector3,
   SpotLightDefinition,
@@ -91,6 +92,9 @@ export interface ScenePrefabPieceDefinition {
   readonly voxelization?: DamageVoxelizationDefinition;
   readonly volume?: number;
   readonly bearingArea?: number;
+  readonly foundation?: boolean;
+  readonly intactVisible?: boolean;
+  readonly intactCollider?: boolean;
   readonly color: string;
   readonly colorSlot?: string;
   readonly contactBoxes?: readonly SceneContactBox[];
@@ -147,6 +151,9 @@ export interface ScenePrimitiveDefinition extends SceneObjectBase {
   readonly voxelization?: DamageVoxelizationDefinition;
   readonly volume?: number;
   readonly bearingArea?: number;
+  readonly foundation?: boolean;
+  readonly intactVisible?: boolean;
+  readonly intactCollider?: boolean;
   readonly color: string;
   readonly contactBoxes?: readonly SceneContactBox[];
   readonly bearsLoad?: boolean;
@@ -194,7 +201,18 @@ export interface SceneWorldDefinition {
   readonly boundaryRadius?: number;
   readonly skyRadius?: number;
   readonly radius?: number;
+  /** Exact shoreline used by atmosphere/edge rendering for non-circular islands. */
+  readonly edgeBoundary?: readonly (readonly [x: number, z: number])[];
   readonly safetyFloorY: number;
+}
+
+export interface SceneConstantRotorDefinition {
+  /** Authored scene group containing only the moving rotor members. */
+  readonly groupId: string;
+  /** World-space pivot and axis; the scene compiler resolves the cluster id. */
+  readonly pivot: SceneVector3;
+  readonly axis: SceneVector3;
+  readonly radiansPerSecond: number;
 }
 
 export interface AuthoredSceneDocument {
@@ -205,6 +223,9 @@ export interface AuthoredSceneDocument {
   readonly world: SceneWorldDefinition;
   readonly copy: DestructionSceneCopy;
   readonly groups: readonly SceneGroupDefinition[];
+  readonly landscapeVisual?: LandscapeVisualDefinition;
+  /** Deterministic local mechanisms. This is not a wind or aerodynamic model. */
+  readonly constantRotors?: readonly SceneConstantRotorDefinition[];
   /** Directed fixtures with real surface light and optional volumetric beams. */
   readonly spotLights?: readonly SpotLightDefinition[];
   /**

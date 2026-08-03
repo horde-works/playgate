@@ -73,6 +73,16 @@ function visualMeshKey(piece: BreakablePieceDefinition): string {
     mix(vertex[1]);
     mix(vertex[2]);
   }
+  for (const normal of piece.visualMesh.normals ?? []) {
+    mix(normal[0]);
+    mix(normal[1]);
+    mix(normal[2]);
+  }
+  for (const color of piece.visualMesh.colors ?? []) {
+    mix(color[0]);
+    mix(color[1]);
+    mix(color[2]);
+  }
   for (const index of piece.visualMesh.indices) mix(index);
   return `${piece.visualMesh.vertices.length}:${piece.visualMesh.indices.length}:${hash >>> 0}:${piece.visualMesh.doubleSided === false ? "front" : "double"}`;
 }
@@ -104,6 +114,7 @@ export function buildIntactInstanceBatches(
 ): readonly IntactInstanceBatch[] {
   const batches = new Map<string, BreakablePieceDefinition[]>();
   for (const piece of pieces) {
+    if (piece.intactVisible === false) continue;
     const materialColor = pieceMaterialBaseColor(piece.material, piece.color);
     const castShadow =
       !isGlassMaterial(piece.material) && piece.shape !== "groundTile";

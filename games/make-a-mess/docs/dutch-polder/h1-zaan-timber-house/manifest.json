@@ -1,0 +1,68 @@
+{
+  "modelId": "dutch-house-zaan-timber-merchant-h1",
+  "revision": "h1-2026-08-02",
+  "modelHash": "d2f9c311f149",
+  "generatedAt": "2026-08-02T18:18:39.268Z",
+  "views": [
+    {
+      "id": "front",
+      "label": "Front +Z · shaped merchant gable",
+      "projection": "orthographic",
+      "file": "front.png"
+    },
+    {
+      "id": "left",
+      "label": "Left profile · deep main body",
+      "projection": "orthographic",
+      "file": "left.png"
+    },
+    {
+      "id": "rear",
+      "label": "Rear -Z · asymmetric workshop",
+      "projection": "orthographic",
+      "file": "rear.png"
+    },
+    {
+      "id": "right",
+      "label": "Right profile · workshop overlap",
+      "projection": "orthographic",
+      "file": "right.png"
+    },
+    {
+      "id": "three-quarter-left",
+      "label": "3/4 left · house frontage",
+      "projection": "perspective",
+      "file": "three-quarter-left.png"
+    },
+    {
+      "id": "three-quarter-right",
+      "label": "3/4 right · attached workshop",
+      "projection": "perspective",
+      "file": "three-quarter-right.png"
+    },
+    {
+      "id": "high-three-quarter",
+      "label": "High 3/4 · roof junction",
+      "projection": "perspective",
+      "file": "high-three-quarter.png"
+    },
+    {
+      "id": "frame-cutaway",
+      "label": "Cutaway · five yokes + roof load path",
+      "projection": "perspective",
+      "file": "frame-cutaway.png"
+    },
+    {
+      "id": "junction-cutaway",
+      "label": "Cutaway · workshop junction",
+      "projection": "perspective",
+      "file": "junction-cutaway.png"
+    },
+    {
+      "id": "silhouette",
+      "label": "Silhouette control",
+      "projection": "orthographic",
+      "file": "silhouette.png"
+    }
+  ]
+}

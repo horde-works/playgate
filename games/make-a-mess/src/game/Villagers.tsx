@@ -19,12 +19,14 @@ import {
 import {
   createVillagerPopulation,
   describeVillager,
+  emitNoise,
   pickVillager,
   stepVillagers,
   storePieceVisibility,
   type VillagerPopulation,
   type VillagerReport,
 } from "./villagerSim.ts";
+import { alertPose, type NoiseEvent } from "./villagerAlarm.ts";
 import { buildObstacleField, type NavPiece } from "./villagerNavigation.ts";
 import type { SettlementPlan } from "./settlementPlan.ts";
 
@@ -284,7 +286,14 @@ function buildVillagerGeometry(): BufferGeometry {
 
 const GAIT_DECLARATIONS = /* glsl */ `
   attribute float aDye;
-  attribute float aWear;
+  // ПОТОЛОК ВЕРШИННЫХ АТРИБУТОВ — 16 СЛОТОВ, и житель стоял на нём вплотную:
+  // position, normal, uv, color, instanceMatrix (сразу ЧЕТЫРЕ слота) и семь
+  // своих. Семнадцатый, отдельный aAlarm, не собрался вовсе: «Too many
+  // attributes», и вся деревня пропадала с экрана. Поэтому личное состояние
+  // человека живёт ОДНИМ вектором: слот считается за вектор, а не за число,
+  // и vec4 стоит ровно столько же, сколько float.
+  // x — затасканность одежды, y — амплитуда вздрога, z — его ход, w — запас.
+  attribute vec4 aState;
   attribute vec2 aFlags;
   attribute vec3 aPivotA;
   attribute vec3 aPivotB;
@@ -502,7 +511,21 @@ const GAIT_COMPUTE = /* glsl */ `
       float split = 0.0;
       vec2 other = vec2(0.0);
 
-      if (climbKind < 7.5) {
+      if (climbKind > 14.5) {
+        // ОТРЯХИВАЕТСЯ. Мелкие частые взмахи: одна кисть обхлопывает бедро и
+        // подол, другая сбивает пыль с плеча — ВРОЗЬ, а не в такт, иначе
+        // получается «хлопает в ладоши». Это единственное движение деревни,
+        // где руки быстрее ног: ноги стоят.
+        float beat = t * 6.28318;
+        float low = 0.5 + 0.5 * sin(beat);
+        float high = 0.5 + 0.5 * sin(beat + 2.1);
+        hand = mix(vec2(0.22, 0.46), vec2(0.30, 0.30), low);
+        split = 1.0;
+        other = mix(vec2(0.16, 0.02), vec2(0.24, 0.14), high);
+        lean = 0.12 + 0.04 * low;
+        stance = 0.1;
+        shift = 0.12 * (low - 0.5);
+      } else if (climbKind < 7.5) {
         // КОЛКА. Верхняя рука начинает у головы топора и СЪЕЗЖАЕТ вниз к
         // нижней по мере падения — без этого скольжения удар теряет рычаг.
         // Пик скорости на 60–70% дуги, проводка идёт в колоду.
@@ -774,6 +797,106 @@ const GAIT_COMPUTE = /* glsl */ `
     gaitPos = gaitRotX(bodyPitch) * (gaitPos - restPivot) + restPivot;
   }
   gaitPos.y -= bodySink;
+
+  // ВЗДРОГ. Испуг — МОДИФИКАТОР, а не поза: сидящий вздрагивает сидя, несущий
+  // бревно — с бревном, кузнец — на замахе. Поэтому он ложится последним
+  // поверх уже посчитанной позы и ничего в ней не заменяет; иначе пришлось бы
+  // писать испуганную версию каждой из четырнадцати поз.
+  //
+  // Форма: быстрый подъём и более долгий спад, пик на ~85 мс после начала
+  // движения. Ровный колокол читается приседанием, а не рефлексом.
+  //
+  // Ног вздрог НЕ КАСАЕТСЯ. Голени и стопы стоят там, где стояли: опора — это
+  // то единственное, что нельзя трогать ради выразительности, иначе фигура
+  // просядет сквозь грунт и вся походка развалится. Настоящий рефлекс и есть
+  // работа плечевого пояса и шеи: плечи вверх, голова в них, локти к телу.
+  float alarmT = aState.z;
+  float alarmEnv = aState.y
+    * (alarmT > 0.0 && alarmT < 1.0 ? sin(3.14159265 * pow(alarmT, 0.42)) : 0.0);
+  if (alarmEnv > 0.0) {
+    // ПРИСЕД ВСЕМ ТЕЛОМ. Просадка убывает вниз по ноге и обнуляется на стопе:
+    // так суставы нигде не расходятся, а опора остаётся на месте. Первая
+    // версия двигала одну голову на честные пять сантиметров — анатомически
+    // верно и на экране невидимо.
+    float sink = 0.085 * alarmEnv;
+    if (kind == 7.0) {
+      // Стопа не двигается вовсе.
+    } else if (kind == 2.0) {
+      gaitPos.y -= sink * 0.21;
+    } else if (kind == 1.0) {
+      gaitPos.y -= sink * 0.52;
+      gaitPos.z += 0.02 * alarmEnv;
+    } else if (kind == 6.0) {
+      // Голова садится в плечи и уходит назад — самое узнаваемое в рефлексе.
+      gaitPos.y -= sink + 0.05 * alarmEnv;
+      gaitPos.z -= 0.03 * alarmEnv;
+    } else if (kind == 3.0 || kind == 4.0 || kind == 8.0 || kind == 9.0) {
+      // Плечевой пояс идёт ВВЕРХ относительно осевшего корпуса, локти к телу.
+      gaitPos.y -= sink - 0.032 * alarmEnv;
+      gaitPos.x -= side * 0.04 * alarmEnv;
+      gaitPos.z += 0.05 * alarmEnv;
+    } else {
+      gaitPos.y -= sink;
+      gaitPos.z += 0.03 * alarmEnv;
+    }
+  }
+
+  // НАСТОРОЖЕННОСТЬ И ПЕРЕБЕЖКА живут в ОДНОМ канале: они не бывают
+  // одновременно (сперва ищут, потом идут), а свободных слотов у жителя нет
+  // ни одного. Поэтому 0..1 — настороженность, 1..2 — пригнутая перебежка.
+  float watch = min(aState.w, 1.0);
+  float duck = max(0.0, aState.w - 1.0);
+  if (watch > 0.0) {
+    if (kind == 7.0) {
+      // Стопа стоит.
+    } else if (kind == 2.0) {
+      gaitPos.y -= 0.008 * watch;
+    } else if (kind == 1.0) {
+      gaitPos.y -= 0.019 * watch;
+      gaitPos.z += 0.012 * watch;
+    } else if (kind == 6.0) {
+      // Голова подана вперёд и чуть опущена: человек всматривается.
+      gaitPos.y -= 0.03 * watch;
+      gaitPos.z += 0.035 * watch;
+    } else if (kind == 3.0 || kind == 4.0 || kind == 8.0 || kind == 9.0) {
+      gaitPos.y -= 0.022 * watch;
+      gaitPos.x -= side * 0.016 * watch;
+      gaitPos.z += 0.028 * watch;
+    } else {
+      gaitPos.y -= 0.036 * watch;
+      gaitPos.z += 0.024 * watch;
+    }
+  }
+
+  // ПРИГНУТЬСЯ И НАКРЫТЬСЯ. Характерное движение под огнём — не испуганное
+  // стояние во весь рост, а низкая перебежка: корпус вперёд и вниз, голова
+  // втянута, руки подняты к голове. Держится всё время, пока человек идёт по
+  // принятому решению, и опять не трогает стопу.
+  if (duck > 0.0) {
+    float drop = 0.13 * duck;
+    if (kind == 7.0) {
+      // Стопа стоит.
+    } else if (kind == 2.0) {
+      gaitPos.y -= drop * 0.22;
+    } else if (kind == 1.0) {
+      gaitPos.y -= drop * 0.55;
+      gaitPos.z += 0.03 * duck;
+    } else if (kind == 6.0) {
+      gaitPos.y -= drop + 0.035 * duck;
+      gaitPos.z += 0.075 * duck;
+    } else if (kind == 3.0 || kind == 4.0) {
+      // РУКИ К ГОЛОВЕ: предплечья уходят вверх и внутрь, локти вперёд.
+      gaitPos.y -= drop - 0.2 * duck * (kind == 4.0 ? 1.0 : 0.55);
+      gaitPos.x -= side * 0.05 * duck;
+      gaitPos.z += 0.12 * duck * (kind == 4.0 ? 1.0 : 0.5);
+    } else if (kind == 8.0 || kind == 9.0) {
+      gaitPos.y -= drop;
+      gaitPos.z += 0.05 * duck;
+    } else {
+      gaitPos.y -= drop;
+      gaitPos.z += 0.07 * duck;
+    }
+  }
 `;
 
 /** Две ссылки на состояние вместо новых объектов каждый кадр. */
@@ -789,6 +912,8 @@ export function Villagers({
   openDoors,
   stockStates,
   inspectRef,
+  noise,
+  threat,
   count = 24,
 }: {
   /** Какое поселение здесь живёт: тропы, жильё, места, роли, одежда. */
@@ -821,6 +946,16 @@ export function Villagers({
         ) => VillagerReport | null)
       | null;
   };
+  /**
+   * Шум мира: сюда кладут выстрелы, взрывы и обвалы. Очередь ОБЩАЯ и без
+   * различения источников — жителю всё равно, кто именно хлопнул.
+   */
+  noise?: { current: NoiseEvent[] };
+  /**
+   * Где стоит вооружённый человек. Не шум и не событие — присутствие: стоящие
+   * жители провожают его взглядом. null, если руки у него пустые.
+   */
+  threat?: { current: { x: number; z: number } | null };
   /** Приёмник следов: отпечаток ставится в момент удара пяткой. */
   count?: number;
 }) {
@@ -856,6 +991,68 @@ export function Villagers({
     };
   }, [inspectRef]);
 
+  // Dev-хук: срез слуха деревни. Испуг живёт в атрибуте вершинного шейдера, и
+  // «не вижу разницы» невозможно разложить глазами на «событие не дошло»,
+  // «дошло, но амплитуда нулевая» и «всё считается, но не читается».
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") {
+      return undefined;
+    }
+    const scope = window as unknown as Record<string, unknown>;
+    const probe = () => {
+      const state = population.current;
+      if (!state) {
+        return null;
+      }
+      const walking = state.villagers.filter((villager) => villager.visible);
+      const pace = walking.reduce((sum, villager) => sum + villager.speed, 0);
+      return {
+        pending: state.noise.length,
+        startled: state.villagers.filter((villager) => villager.startle > 0).length,
+        // Замерших видно дольше рефлекса — по ним и судят второе звено.
+        watching: state.villagers.filter((villager) => villager.alert > 0).length,
+        carrying: state.villagers.filter((villager) => villager.carries).length,
+        // Третье звено: кто какое решение принял и сколько уже в домах.
+        cover: state.villagers.filter((villager) => villager.panicKind === "cover").length,
+        gather: state.villagers.filter((villager) => villager.panicKind === "gather").length,
+        approach: state.villagers.filter((villager) => villager.panicKind === "approach").length,
+        indoors: state.villagers.filter((villager) => villager.state === "inside").length,
+        // Волна: сбитые с ног, отряхивающиеся, ушибленные и любопытные.
+        downed: state.villagers.filter((villager) => villager.downPhase !== null).length,
+        dusting: state.villagers.filter((villager) => villager.dusting > 0).length,
+        bruised: state.villagers.filter((villager) => villager.bruised > 0).length,
+        looking: state.villagers.filter((villager) => villager.panicKind === "look").length,
+        horn: Number(state.hornCooldown.toFixed(0)),
+        // Куда смотреть, чтобы увидеть последствия: первый сбитый с ног или
+        // отряхивающийся. Без этого поймать позу в кадр можно только случайно.
+        at: (() => {
+          const who =
+            state.villagers.find((villager) => villager.downPhase !== null) ??
+            state.villagers.find((villager) => villager.dusting > 0);
+          return who
+            ? {
+                id: who.id,
+                x: Number(who.x.toFixed(2)),
+                z: Number(who.z.toFixed(2)),
+                phase: who.downPhase ?? "dusting",
+              }
+            : null;
+        })(),
+        peak: Math.max(0, ...state.villagers.map((villager) => villager.startle)),
+        heard: Math.max(0, ...state.villagers.map((villager) => villager.heardLevel)),
+        habituation: Math.max(0, ...state.villagers.map((villager) => villager.habituation)),
+        // Средний ход деревни: по нему видно осечку, которой поза не выдаёт.
+        pace: walking.length > 0 ? Number((pace / walking.length).toFixed(3)) : 0,
+      };
+    };
+    scope.__mamVillagerAlarm = probe;
+    return () => {
+      if (scope.__mamVillagerAlarm === probe) {
+        delete scope.__mamVillagerAlarm;
+      }
+    };
+  }, []);
+
   const geometry = useMemo(() => buildVillagerGeometry(), []);
 
   const gaitAttribute = useMemo(
@@ -870,9 +1067,11 @@ export function Villagers({
     () => new InstancedBufferAttribute(new Float32Array(count * 4), 4),
     [count],
   );
-  // Своя затасканность у каждого: кузнец чумазее старейшины, ребёнок — всех.
-  const wearAttribute = useMemo(
-    () => new InstancedBufferAttribute(new Float32Array(count), 1),
+  // ЛИЧНОЕ СОСТОЯНИЕ ЧЕЛОВЕКА одним вектором: затасканность одежды, амплитуда
+  // вздрога, его ход и запасной канал. Раздельными атрибутами это не сделать —
+  // житель стоит вплотную к потолку в 16 слотов (см. GAIT_DECLARATIONS).
+  const stateAttribute = useMemo(
+    () => new InstancedBufferAttribute(new Float32Array(count * 4), 4),
     [count],
   );
 
@@ -892,7 +1091,7 @@ export function Villagers({
         // а свет на них остаётся от позы покоя.
         .replace(
           "#include <beginnormal_vertex>",
-          `#include <beginnormal_vertex>\n${GAIT_COMPUTE}\n  objectNormal = gRotB * gRotA * objectNormal;\n  vDyeColor = aDyeColor.rgb;\n  vDyeMask = aDye;\n  vBodyPos = position;\n  vWear = aWear;`,
+          `#include <beginnormal_vertex>\n${GAIT_COMPUTE}\n  objectNormal = gRotB * gRotA * objectNormal;\n  vDyeColor = aDyeColor.rgb;\n  vDyeMask = aDye;\n  vBodyPos = position;\n  vWear = aState.x;`,
         )
         .replace(
           "#include <begin_vertex>",
@@ -956,7 +1155,7 @@ export function Villagers({
     geometry.setAttribute("aGait", gaitAttribute);
     geometry.setAttribute("aDyeColor", dyeAttribute);
     geometry.setAttribute("aClimb", climbAttribute);
-    geometry.setAttribute("aWear", wearAttribute);
+    geometry.setAttribute("aState", stateAttribute);
     for (const [index, villager] of population.current.villagers.entries()) {
       dyeAttribute.setXYZW(
         index,
@@ -967,12 +1166,19 @@ export function Villagers({
       );
     }
     dyeAttribute.needsUpdate = true;
-    wearAttribute.needsUpdate = true;
+    stateAttribute.needsUpdate = true;
     mesh.frustumCulled = false;
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.customDepthMaterial = depthMaterial;
-  }, [geometry, gaitAttribute, dyeAttribute, climbAttribute, wearAttribute, depthMaterial]);
+  }, [
+    geometry,
+    gaitAttribute,
+    dyeAttribute,
+    climbAttribute,
+    stateAttribute,
+    depthMaterial,
+  ]);
 
   // Прошлая «половина шага» каждого жителя: смена означает удар пяткой.
   const lastStep = useRef<Int32Array>(new Int32Array(count));
@@ -997,6 +1203,15 @@ export function Villagers({
     if (openDoors) {
       state.externalOpenDoors = openDoors.current;
     }
+    // Шум этого кадра — в симуляцию. Очередь опустошается здесь и только
+    // здесь: дальше событие живёт своей жизнью, доходя до каждого в свой срок.
+    if (noise && noise.current.length > 0) {
+      for (const event of noise.current) {
+        emitNoise(state, event);
+      }
+      noise.current.length = 0;
+    }
+    state.threat = threat?.current ?? null;
     stepVillagers(state, delta, nightRef.current ?? 0);
 
     // Уровни складов — в изменяемые куски сцены. Раз в четверть секунды:
@@ -1076,7 +1291,21 @@ export function Villagers({
         stride,
         stride * 0.8 + 0.08,
       );
-      wearAttribute.setX(index, villager.wear);
+      stateAttribute.setXYZW(
+        index,
+        // Пыль ложится ПОВЕРХ своей затасканности и сходит отряхиванием
+        // обратно к ней, а не в ноль: ни новой текстуры, ни частиц на теле.
+        Math.min(1, villager.wear + villager.dust),
+        villager.startle,
+        villager.startle > 0 ? villager.startleAge / villager.startleSpan : 0,
+        // Один канал на две позы: 0..1 — настороженность осмотра, 1..2 —
+        // пригнутая перебежка по принятому решению. Свободных слотов нет.
+        villager.alert > 0
+          ? alertPose(villager.alertAge, villager.alert, villager.alertPeak)
+          : villager.panic > 0 && villager.panicKind !== "approach"
+            ? 1 + Math.min(1, villager.panic / 2.5)
+            : 0,
+      );
       climbAttribute.setXYZW(
         index,
         villager.climbKind,
@@ -1108,6 +1337,7 @@ export function Villagers({
     mesh.instanceMatrix.needsUpdate = true;
     gaitAttribute.needsUpdate = true;
     climbAttribute.needsUpdate = true;
+    stateAttribute.needsUpdate = true;
   });
 
   useEffect(() => {

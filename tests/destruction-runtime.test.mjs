@@ -20,6 +20,7 @@ import {
   distanceToOrientedBox,
   fractureEnergyByMaterial,
   grenadeEnergyAtDistance,
+  groundCarveRequiresRemnant,
   impactDamageRadius,
   omittedDebrisColliderBoxes,
   rocketEnergyAtDistance,
@@ -32,6 +33,24 @@ import {
 
 const still = new Vector3();
 const identity = new Quaternion();
+
+test("only the thin polder turf shell may vanish without a ground remnant", () => {
+  assert.equal(groundCarveRequiresRemnant({
+    material: "grass",
+    landscapeSurface: "dutch-polder-ground",
+    size: [2.04, 0.36, 2.04],
+  }), false);
+  assert.equal(groundCarveRequiresRemnant({
+    material: "earth",
+    landscapeSurface: "dutch-polder-ground",
+    size: [2.04, 8, 2.04],
+  }), true);
+  assert.equal(groundCarveRequiresRemnant({
+    material: "grass",
+    landscapeSurface: "viking-ground",
+    size: [2, 0.36, 2],
+  }), true);
+});
 
 test("only genuinely small debris pays for full continuous collision detection", () => {
   assert.deepEqual(debrisCollisionTuning([0.18, 0.12, 0.1]), {

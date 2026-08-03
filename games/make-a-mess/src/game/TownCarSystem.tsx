@@ -43,6 +43,7 @@ import {
   type CarMachine,
   type CarWheel,
 } from "./carDynamics";
+import { setMemberArticulation } from "./clusterMemberArticulation";
 import {
   DS_BRAKE_DECELERATION,
   DS_CLUSTER_ID,
@@ -236,6 +237,8 @@ export function TownCarSystem({
   );
 
   const steer = useRef(0);
+  /** Накопленный угол проката колеса, радианы. */
+  const wheelSpin = useRef(0);
   const approached = useRef(false);
   const handledRequest = useRef(entryRequestVersion);
   const ray = useRef<InstanceType<typeof rapier.Ray> | null>(null);
@@ -465,6 +468,36 @@ export function TownCarSystem({
     }
     onSteeringChange?.(steer.current * DS_HEADLAMP_STEER_SHARE);
 
+    // --- Видимый поворот и прокат колёс --------------------------------------
+    //
+    // Пишется ТОЛЬКО В РЕНДЕР: у колеса нет ни тела, ни коллайдера, поэтому
+    // подвеска об этом повороте не знает и знать не может. Именно так и надо:
+    // три прежних захода сделать колесо телом развалили подвеску, разбор — в
+    // шапке `clusterMemberArticulation.ts`.
+    //
+    // Угол проката копится из пройденного пути, а не из времени: тогда колесо
+    // стоит на месте у стоящей машины и не «подкручивается» на паузе.
+    const forwardWorldSpin = toWorld([DS_NOSE[0], 0, DS_NOSE[2]]);
+    const spinHeading: [number, number] = [
+      forwardWorldSpin[0] - translation.x,
+      forwardWorldSpin[2] - translation.z,
+    ];
+    const spinLength = Math.hypot(spinHeading[0], spinHeading[1]) || 1;
+    const signedSpeed =
+      (linear.x * spinHeading[0] + linear.z * spinHeading[1]) / spinLength;
+    wheelSpin.current =
+      (wheelSpin.current + (signedSpeed * PHYSICS_TIME_STEP) / DS_WHEEL_RADIUS)
+      % (Math.PI * 2);
+    for (const wheel of CAR_WHEELS) {
+      const angle = steer.current * wheel.steerShare;
+      for (const part of ["tyre", "hub"] as const) {
+        setMemberArticulation(
+          `${DS_CLUSTER_ID}:wheel:${wheel.id}:${part}:piece`,
+          { steer: angle, spin: wheelSpin.current },
+        );
+      }
+    }
+
     // --- Лучи подвески ------------------------------------------------------
     const upWorld = toWorld([0, 1, 0]);
     const up: [number, number, number] = [
@@ -657,8 +690,10 @@ export function TownCarSystem({
           closingSpeed: resolution.closingSpeed,
           vehiclePieceId: piece.id,
           vehicleIntensity: resolution.vehicleIntensity,
+          vehicleMassAdvantage: resolution.vehicleMassAdvantage,
           worldPieceId: obstacle?.pieceId ?? null,
           worldIntensity: resolution.obstacleIntensity,
+          worldMassAdvantage: resolution.obstacleMassAdvantage,
         });
       }
     }

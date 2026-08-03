@@ -1,4 +1,5 @@
 import type { SceneVector3 } from "./destructionScene.ts";
+import { landingMassAdvantage } from "./destructionRuntime.ts";
 
 /**
  * УДАР ДВУХ ОБЪЕКТОВ. Не контакт.
@@ -98,6 +99,13 @@ export interface VehicleContactResolution {
   readonly vehicleIntensity: number;
   /** То же для встреченного куска мира. Ноль, когда кусок не опознан. */
   readonly obstacleIntensity: number;
+  /**
+   * Во сколько раз препятствие тяжелее встретившего его куска МАШИНЫ, и
+   * наоборот. Закон материалов приводит по ним скорость к энергетическому
+   * паритету: тонна и доска на одной скорости — разные события.
+   */
+  readonly vehicleMassAdvantage: number;
+  readonly obstacleMassAdvantage: number;
 }
 
 /**
@@ -113,9 +121,11 @@ export interface VehicleContactDamageRequest {
   /** Кусок машины, встретивший мир. Судится своим материалом. */
   readonly vehiclePieceId: string;
   readonly vehicleIntensity: number;
+  readonly vehicleMassAdvantage: number;
   /** Встреченный кусок мира, если он опознан. Судится своим материалом. */
   readonly worldPieceId: string | null;
   readonly worldIntensity: number;
+  readonly worldMassAdvantage: number;
 }
 
 /**
@@ -176,6 +186,8 @@ export function resolveVehicleContact(
     impulse: [0, 0, 0],
     vehicleIntensity: 0,
     obstacleIntensity: 0,
+    vehicleMassAdvantage: 1,
+    obstacleMassAdvantage: 1,
   };
   if (length <= 1e-9 || event.effectiveMass <= 0) {
     return idle;
@@ -222,5 +234,16 @@ export function resolveVehicleContact(
     vehicleIntensity: contactIntensity(magnitude, vehicleMass),
     obstacleIntensity:
       obstacleMass === null ? 0 : contactIntensity(magnitude, obstacleMass),
+    // Кусок машины сминается МЕЖДУ стеной и массой собственной машины,
+    // которая едет следом. Поэтому давит на него не встреченный кирпич, а
+    // эффективная масса машины в этой точке — она и стоит в числителе.
+    vehicleMassAdvantage: landingMassAdvantage(
+      event.effectiveMass,
+      vehicleMass,
+    ),
+    obstacleMassAdvantage:
+      obstacleMass === null
+        ? 1
+        : landingMassAdvantage(event.effectiveMass, obstacleMass),
   };
 }

@@ -1,0 +1,62 @@
+{
+  "modelId": "dutch-windmill-jonge-schaap-sawmill-m3",
+  "revision": "m3-2026-08-02",
+  "modelHash": "971a36819732",
+  "generatedAt": "2026-08-02T17:02:45.372Z",
+  "views": [
+    {
+      "id": "front",
+      "label": "Front +Z · log intake",
+      "projection": "orthographic",
+      "file": "front.png"
+    },
+    {
+      "id": "left",
+      "label": "Left profile · long shed",
+      "projection": "orthographic",
+      "file": "left.png"
+    },
+    {
+      "id": "rear",
+      "label": "Rear -Z",
+      "projection": "orthographic",
+      "file": "rear.png"
+    },
+    {
+      "id": "three-quarter-left",
+      "label": "3/4 left",
+      "projection": "perspective",
+      "file": "three-quarter-left.png"
+    },
+    {
+      "id": "three-quarter-right",
+      "label": "3/4 right",
+      "projection": "perspective",
+      "file": "three-quarter-right.png"
+    },
+    {
+      "id": "high-three-quarter",
+      "label": "High 3/4 · massing",
+      "projection": "perspective",
+      "file": "high-three-quarter.png"
+    },
+    {
+      "id": "saw-workflow",
+      "label": "Log intake → saw frames",
+      "projection": "perspective",
+      "file": "saw-workflow.png"
+    },
+    {
+      "id": "crankshaft",
+      "label": "Cutaway · crankshaft → three frames",
+      "projection": "perspective",
+      "file": "crankshaft.png"
+    },
+    {
+      "id": "silhouette",
+      "label": "Silhouette control",
+      "projection": "orthographic",
+      "file": "silhouette.png"
+    }
+  ]
+}

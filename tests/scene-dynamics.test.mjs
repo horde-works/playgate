@@ -53,7 +53,7 @@ test("the eight authored phases form one continuous solar day", () => {
       ]),
     ),
     {
-      dawn: "06:00",
+      dawn: "07:00",
       morning: "09:00",
       day: "12:00",
       afternoon: "15:00",

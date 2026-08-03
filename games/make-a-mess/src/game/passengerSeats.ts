@@ -170,9 +170,14 @@ export const TOWN_DS_DRIVER_SEAT: PassengerSeatDefinition = {
   hintCue: "town-ds-driver-seat",
   facing: DS_NOSE,
   requiredPieceIds: [
-    "town-boulevard:ds:seat:front:cushion:piece",
-    "town-boulevard:ds:seat:front:back:piece",
-    "town-boulevard:ds:steering:wheel:piece",
+    // Спереди у машины ДВА РАЗДЕЛЬНЫХ кресла, а не диван: место водителя
+    // держится на левом. Диван во всю ширину был ошибкой прежней сборки.
+    "town-boulevard:ds:seat:front:left:cushion:piece",
+    "town-boulevard:ds:seat:front:left:back:piece",
+    // Руль собран из обода, спицы и ступицы — цельного куска «steering:wheel»
+    // больше нет. Место водителя держится на СТУПИЦЕ: обод можно смять, а
+    // рулить она не перестанет.
+    "town-boulevard:ds:steering:boss:piece",
   ],
   // Радиус подхода щедрый намеренно: у машины длинный борт, и человек
   // подходит к ней откуда угодно, а не по створу, как к посту площадки.

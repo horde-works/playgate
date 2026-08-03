@@ -1,0 +1,62 @@
+{
+  "modelId": "dutch-windmill-gekroonde-poelenburg-paltrok-m4",
+  "revision": "m4-2026-08-02",
+  "modelHash": "22ee85fcb89e",
+  "generatedAt": "2026-08-02T17:35:25.164Z",
+  "views": [
+    {
+      "id": "front",
+      "label": "Front +Z · windward shell",
+      "projection": "orthographic",
+      "file": "front.png"
+    },
+    {
+      "id": "left",
+      "label": "Left profile · open wing",
+      "projection": "orthographic",
+      "file": "left.png"
+    },
+    {
+      "id": "rear",
+      "label": "Rear -Z · open saw floor",
+      "projection": "orthographic",
+      "file": "rear.png"
+    },
+    {
+      "id": "three-quarter-left",
+      "label": "3/4 left",
+      "projection": "perspective",
+      "file": "three-quarter-left.png"
+    },
+    {
+      "id": "three-quarter-rear",
+      "label": "3/4 rear · open floor",
+      "projection": "perspective",
+      "file": "three-quarter-rear.png"
+    },
+    {
+      "id": "high-three-quarter",
+      "label": "High 3/4 · wings + body",
+      "projection": "perspective",
+      "file": "high-three-quarter.png"
+    },
+    {
+      "id": "roller-ring",
+      "label": "Cutaway · roller ring + king post",
+      "projection": "perspective",
+      "file": "roller-ring.png"
+    },
+    {
+      "id": "open-saw-floor",
+      "label": "Cutaway · three saw frames",
+      "projection": "perspective",
+      "file": "open-saw-floor.png"
+    },
+    {
+      "id": "silhouette",
+      "label": "Silhouette control",
+      "projection": "orthographic",
+      "file": "silhouette.png"
+    }
+  ]
+}

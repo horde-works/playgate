@@ -66,6 +66,18 @@ export type BreakableMaterial =
   | "concrete"
   | "glass"
   | "steel"
+  /**
+   * ТОНКАЯ ПАНЕЛЬ КУЗОВА. Та же сталь по марке и совсем другая по прочности:
+   * лист в миллиметр, который держится геометрией — коробчатыми сечениями и
+   * зонами смятия, а не толщиной металла.
+   *
+   * Отдельный материал нужен ровно затем, что «сталь» в законе удара
+   * неуязвима, и это правда для бруска: брусок стали об бетон бетон и
+   * проиграет. Но кузов машины — не брусок, и мнётся он с городских
+   * скоростей. Силовой набор машины при этом остаётся сталью и переживает
+   * всё: машина складывается, но не рассыпается конструктором.
+   */
+  | "sheetMetal"
   // Пластиковая обшивка (экраны лоджий, сайдинг): легче и мягче стали,
   // пробивается честно, но не крошится в пыль как штукатурка.
   | "plastic"
@@ -122,6 +134,10 @@ export interface SurfacePolygonProfile {
 export interface SurfaceMeshProfile {
   readonly vertices: readonly SceneVector3[];
   readonly indices: readonly number[];
+  /** Optional authored normals, one per vertex, in the same local space. */
+  readonly normals?: readonly SceneVector3[];
+  /** Linear RGB vertex colours, one per vertex. */
+  readonly colors?: readonly SceneVector3[];
   readonly doubleSided?: boolean;
 }
 export interface DamageVoxelizationDefinition {
@@ -132,7 +148,10 @@ export interface DamageVoxelizationDefinition {
   /** Optional per-piece damage resolution override. */
   readonly voxelSize?: number;
 }
-export type LandscapeSurfaceProfile = "viking-ground" | "city-ground";
+export type LandscapeSurfaceProfile =
+  | "viking-ground"
+  | "city-ground"
+  | "dutch-polder-ground";
 export type SurfaceTextureProfile =
   | "painted-steel"
   | "matte-aluminium"
@@ -230,6 +249,12 @@ export interface BreakablePieceDefinition {
   readonly voxelization?: DamageVoxelizationDefinition;
   readonly volume?: number;
   readonly bearingArea?: number;
+  /** Stable authored world root; terrain does not depend on material choice. */
+  readonly foundation?: boolean;
+  /** Physics/destruction body represented by a separate intact visual shell. */
+  readonly intactVisible?: boolean;
+  /** Exclude the body's box from the quiet-world collider mesh. */
+  readonly intactCollider?: boolean;
   readonly color: string;
   readonly row?: number;
   readonly column?: number;
@@ -266,6 +291,37 @@ export interface BreakablePieceDefinition {
    * leaves the surface pristine, so untreated scenes are unchanged.
    */
   readonly weathering?: number;
+}
+
+export interface LandscapeVisualChunkDefinition {
+  readonly id: string;
+  readonly vertices: readonly SceneVector3[];
+  readonly normals: readonly SceneVector3[];
+  readonly indices: readonly number[];
+  /** One owner piece id per indexed triangle. */
+  readonly triangleOwners: readonly string[];
+  readonly ownerPieceIds: readonly string[];
+  /** Potential turf walls; rendered only when the neighbouring owner is gone. */
+  readonly shellEdges?: readonly {
+    readonly start: SceneVector3;
+    readonly end: SceneVector3;
+    readonly ownerPieceId: string;
+    readonly neighborPieceId: string;
+  }[];
+}
+
+export interface LandscapeVisualDefinition {
+  readonly material: BreakableMaterial;
+  readonly color: string;
+  readonly textureProfile?: SurfaceTextureProfile;
+  readonly landscapeSurface?: LandscapeSurfaceProfile;
+  readonly chunks: readonly LandscapeVisualChunkDefinition[];
+  /** Gives an owner-aware intact heightfield a physical-looking cut edge. */
+  readonly destructionShell?: {
+    readonly depth: number;
+    readonly material: BreakableMaterial;
+    readonly color: string;
+  };
 }
 
 export interface BreakableClusterDefinition {
@@ -367,6 +423,18 @@ export const materialRuntimeProfiles: Record<
     restitution: 0.06,
   },
   steel: {
+    density: 3.6,
+    impulse: 1.9,
+    lift: 0.28,
+    torque: 0.12,
+    fractureRadius: [0.78, 0.58],
+    neighborChance: 0.12,
+    dustColor: "#f6cf74",
+    debrisColor: "#747b7d",
+    debrisCount: 3,
+    restitution: 0.04,
+  },
+  sheetMetal: {
     density: 3.6,
     impulse: 1.9,
     lift: 0.28,
@@ -5447,6 +5515,14 @@ export const structuralMaterialProfiles: Record<
     carriesAttachments: true,
     sideAttachmentReach: 0.24,
   },
+  sheetMetal: {
+    density: materialRuntimeProfiles.steel.density,
+    compressionStrength: 220,
+    cantilever: 2.1,
+    maximumVerticalGap: 1.1,
+    carriesAttachments: true,
+    sideAttachmentReach: 0.24,
+  },
   stone: {
     density: materialRuntimeProfiles.stone.density,
     compressionStrength: 118,
@@ -5539,6 +5615,13 @@ export interface DestructionSceneCopy {
   readonly reset: string;
 }
 
+export interface ConstantRotorDefinition {
+  readonly clusterId: string;
+  readonly pivot: SceneVector3;
+  readonly axis: SceneVector3;
+  readonly radiansPerSecond: number;
+}
+
 export interface DestructionSceneDefinition {
   readonly id: string;
   readonly title: string;
@@ -5554,6 +5637,7 @@ export interface DestructionSceneDefinition {
   /** Radius of the visible sky dome, independent of the physical island. */
   readonly skyRadius?: number;
   readonly worldRadius?: number;
+  readonly worldEdgeBoundary?: readonly (readonly [x: number, z: number])[];
   /**
    * Seconds after entering the world during which flight is refused. A rule of
    * the map, not a special case of one fortress: a siege only means anything
@@ -5566,6 +5650,7 @@ export interface DestructionSceneDefinition {
   readonly breakableClusters: readonly BreakableClusterDefinition[];
   readonly breakablePieces: readonly BreakablePieceDefinition[];
   readonly breakablePieceById: ReadonlyMap<string, BreakablePieceDefinition>;
+  readonly landscapeVisual: LandscapeVisualDefinition | null;
   readonly breakableClusterById: ReadonlyMap<
     string,
     BreakableClusterDefinition
@@ -5575,6 +5660,8 @@ export interface DestructionSceneDefinition {
   /** Piece-driven clocks and event displays authored independently of runtime. */
   readonly mutableObjectDefinitions: readonly MutableSceneObjectDefinition[];
   readonly motionInstrumentDefinitions: readonly MotionInstrumentDefinition[];
+  /** Constant local rotation only; deliberately independent from all wind systems. */
+  readonly constantRotorDefinitions: readonly ConstantRotorDefinition[];
   /** All pieces controlled by mutable objects, precomputed for render batching. */
   readonly mutablePieceIds: ReadonlySet<string>;
   /**
@@ -5631,15 +5718,18 @@ interface DestructionSceneOptions {
   readonly boundaryRadius?: number;
   readonly skyRadius?: number;
   readonly worldRadius?: number;
+  readonly worldEdgeBoundary?: readonly (readonly [x: number, z: number])[];
   /** Seconds of enforced walking after entry (see the scene definition). */
   readonly flightLockSeconds?: number;
   readonly safetyFloorY?: number;
   readonly copy: DestructionSceneCopy;
   readonly clusters: readonly BreakableClusterDefinition[];
+  readonly landscapeVisual?: LandscapeVisualDefinition;
   readonly lamps?: readonly LampDefinition[];
   readonly spotLights?: readonly SpotLightDefinition[];
   readonly mutableObjects?: readonly MutableSceneObjectDefinition[];
   readonly motionInstruments?: readonly MotionInstrumentDefinition[];
+  readonly constantRotors?: readonly ConstantRotorDefinition[];
   /** Мир, который нельзя разрушить (см. поле в определении сцены). */
   readonly indestructible?: boolean;
   /** SPDX-лицензия контента мира, если она отличается от лицензии репозитория. */
@@ -5894,18 +5984,21 @@ export function createDestructionScene(
     boundaryRadius: options.boundaryRadius,
     skyRadius: options.skyRadius,
     worldRadius: options.worldRadius,
+    worldEdgeBoundary: options.worldEdgeBoundary,
     flightLockSeconds: options.flightLockSeconds,
     safetyFloorY: options.safetyFloorY ?? -2.2,
     copy: options.copy,
     breakableClusters: clusters,
     breakablePieces: pieces,
     breakablePieceById: pieceById,
+    landscapeVisual: options.landscapeVisual ?? null,
     breakableClusterById: clusterById,
     lampDefinitions: options.lamps ?? [],
     spotLightDefinitions: options.spotLights ?? [],
     mutableObjectDefinitions,
     mutablePieceIds,
     motionInstrumentDefinitions,
+    constantRotorDefinitions: options.constantRotors ?? [],
     indestructible,
     contentLicense,
     fogDistances: options.fogDistances ?? null,

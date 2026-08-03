@@ -1,0 +1,68 @@
+{
+  "modelId": "dutch-landscape-kit",
+  "revision": "landscape-kit-a2-2026-08-03",
+  "modelHash": "7bb64d6ec203",
+  "generatedAt": "2026-08-02T20:05:16.284Z",
+  "views": [
+    {
+      "id": "bridge-front",
+      "label": "Kwakel bridge · load path and paired rails",
+      "projection": "orthographic",
+      "file": "bridge-front.png"
+    },
+    {
+      "id": "bridge-profile",
+      "label": "Kwakel bridge · crown, stringers and abutments",
+      "projection": "orthographic",
+      "file": "bridge-profile.png"
+    },
+    {
+      "id": "bridge-high",
+      "label": "Kwakel bridge · deck boards meet both banks",
+      "projection": "perspective",
+      "file": "bridge-high.png"
+    },
+    {
+      "id": "field-bed",
+      "label": "Working flower beds · ridges, stems and blossoms",
+      "projection": "perspective",
+      "file": "field-bed.png"
+    },
+    {
+      "id": "masonry",
+      "label": "Retaining masonry · alternating bond and cap",
+      "projection": "perspective",
+      "file": "masonry.png"
+    },
+    {
+      "id": "revetment",
+      "label": "Canal revetment · sheet piles, walers and anchors",
+      "projection": "perspective",
+      "file": "revetment.png"
+    },
+    {
+      "id": "path",
+      "label": "Dry path · compacted shell over earth sub-base",
+      "projection": "perspective",
+      "file": "path.png"
+    },
+    {
+      "id": "pollard-willow",
+      "label": "Pollard willow · trunk, cut crown and regrowth",
+      "projection": "perspective",
+      "file": "pollard-willow.png"
+    },
+    {
+      "id": "field-fence",
+      "label": "Field fence · driven posts and continuous rails",
+      "projection": "perspective",
+      "file": "field-fence.png"
+    },
+    {
+      "id": "hedgerow",
+      "label": "Hedgerow · woody line beneath overlapping crowns",
+      "projection": "perspective",
+      "file": "hedgerow.png"
+    }
+  ]
+}

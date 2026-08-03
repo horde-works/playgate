@@ -277,6 +277,9 @@ function compilePiece(
         (object.transform.scale?.[0] ?? 1) *
         (object.transform.scale?.[2] ?? 1),
       ),
+    foundation: source.foundation,
+    intactVisible: source.intactVisible,
+    intactCollider: source.intactCollider,
     color,
     contactBoxes: transformedBoxes(source.contactBoxes, object.transform),
     carriesAttachments: source.carriesAttachments,
@@ -342,6 +345,9 @@ function primitiveSource(object: Extract<SceneObjectDefinition, { kind: "primiti
     voxelization: object.voxelization,
     volume: object.volume,
     bearingArea: object.bearingArea,
+    foundation: object.foundation,
+    intactVisible: object.intactVisible,
+    intactCollider: object.intactCollider,
     color: object.color,
     contactBoxes: object.contactBoxes,
     bearsLoad: object.bearsLoad,
@@ -445,6 +451,25 @@ export function compileSceneDocument(
   options: { readonly validateInitialStability?: boolean } = {},
 ): SceneCompilationResult {
   const { clusters, lamps, objectCount, usedPrefabs } = compileSceneGroups(document, prefabs);
+  const groupIds = new Set(document.groups.map((group) => group.id));
+  const constantRotors = (document.constantRotors ?? []).map((rotor) => {
+    if (!groupIds.has(rotor.groupId)) {
+      throw new Error(`Scene ${document.id}: constant rotor references missing group ${rotor.groupId}`);
+    }
+    const axisLength = Math.hypot(...rotor.axis);
+    if (!Number.isFinite(axisLength) || axisLength < 0.999 || axisLength > 1.001) {
+      throw new Error(`Scene ${document.id}: constant rotor ${rotor.groupId} axis must be unit length`);
+    }
+    if (!Number.isFinite(rotor.radiansPerSecond) || rotor.radiansPerSecond <= 0) {
+      throw new Error(`Scene ${document.id}: constant rotor ${rotor.groupId} speed must be positive`);
+    }
+    return {
+      clusterId: `${document.id}:${rotor.groupId}`,
+      pivot: rotor.pivot,
+      axis: rotor.axis,
+      radiansPerSecond: rotor.radiansPerSecond,
+    };
+  });
 
   const scene = createDestructionScene({
     id: document.id,
@@ -458,12 +483,15 @@ export function compileSceneDocument(
     boundaryRadius: document.world.boundaryRadius,
     skyRadius: document.world.skyRadius,
     worldRadius: document.world.radius,
+    worldEdgeBoundary: document.world.edgeBoundary,
     safetyFloorY: document.world.safetyFloorY,
     copy: document.copy,
     clusters,
+    landscapeVisual: document.landscapeVisual,
     lamps,
     spotLights: document.spotLights,
     mutableObjects: document.mutableObjects,
+    constantRotors,
     indestructible: document.indestructible,
     contentLicense: document.contentLicense,
     fogDistances: document.fogDistances,

@@ -29,6 +29,9 @@ low-level mathematical contract and do not replace it.
 
 Read these in addition when relevant:
 
+- standalone reference-critical object, fixed multi-angle PNG acceptance, or
+  geometry that must be proven before scene/compiler/support integration:
+  [`games/make-a-mess/docs/object-study-authoring.md`](../../../games/make-a-mess/docs/object-study-authoring.md);
 - island shell, terrain, structural solver and deterministic frames:
   [`.claude/skills/world-building/SKILL.md`](../world-building/SKILL.md);
 - Astana plan, scale, inventories and object passports:
@@ -49,6 +52,51 @@ assume existing code is reference-correct.
 For a substantial object, complete and report each milestone before the next
 large implementation block unless the user requests uninterrupted end-to-end
 delivery.
+
+### Deterministic execution contract for faster models
+
+Treat reference-critical object work as a narrow pipeline when the executing
+model is optimized for speed rather than spatial judgment. Do not delegate the
+whole world or several unrelated objects as one prompt.
+
+Before geometry, require one evidence card containing:
+
+1. source hierarchy and the exact fact owned by each source;
+2. local axes and one human-scale reference;
+3. main wall footprint, complete fixed envelope and motion envelope as separate
+   values with named axes;
+4. countable topology, support chain, openings, hinges and major joints;
+5. protected scope and explicit rejection conditions;
+6. fixed exterior, high, silhouette and cutaway cameras.
+
+Then require this exact sequence:
+
+```text
+evidence card -> named parameters -> canonical parts -> independent tests
+              -> fixed-view PNGs -> discrepancy list -> corrected PNGs
+              -> user acceptance -> scene/compiler adapter
+```
+
+Use an existing accepted object as a code scaffold only. Do not inherit its
+dimensions, topology, joint solution or camera framing. State which parts were
+reused mechanically and which invariants came from the new references.
+
+Make these checks machine-owned before visual review:
+
+- reconstruct all bounds from final parts, including annexes and roof
+  projections;
+- test openings against wall geometry rather than counting dark panels;
+- test every door leaf against its own hinge/jamb;
+- test roof-entry joints for an opening, support frame and weather transition;
+- test primary member endpoints against their bearings and finished shell;
+- test unique ids, non-degenerate geometry and fixed camera inventory;
+- reject wind, movement or scene imports outside the protected scope.
+
+Stop and escalate instead of inventing geometry when sources disagree about a
+load-bearing topology, when a complete envelope does not fit its reserved world
+space, or when two corrected render loops still fail the same silhouette or
+joint check. A faster model may produce the first object pass; it may not mark
+its own visual output accepted or compile it into the world.
 
 ### 1. Audit and protect scope
 
@@ -85,8 +133,23 @@ delivery.
 ### 3. Establish the place before the skin
 
 - Fix local axes, vertical datum, footprint and relation to terrain/path.
+- For a reference-critical object that can stand alone, build one canonical
+  3D object in an isolated Object Lab before scene integration. Keep the lab
+  free of compiler, physics and support imports; make future adapters consume
+  the same geometry rather than a second simplified model.
+- Store fixed front, profile, rear, both diagonal, high, joint and silhouette
+  cameras with the object. Stamp every PNG with one revision and model hash;
+  treat the hash only as proof that all views share one model.
+- If an outer shell hides the causal chain of a mechanism, add an explicitly
+  labelled cutaway camera that hides whole named shell groups. Keep the same
+  canonical geometry, pivots and revision; never substitute a diagram or a
+  second simplified mechanism, and never use cutaway instead of exterior
+  control views.
 - Use true scaled bounds and natural material colours in the blockout; do not
   substitute a flat footprint when height balance is the actual decision.
+- Store wall footprint, roof/fixture envelope and any motion reserve as
+  separate named bounds with explicit axes. A wall-footprint check does not
+  prove that eaves, gutters, finials or other projections fit the placement.
 - Build the primary silhouette and negative spaces first.
 - Prove the main player route in both directions.
 - Accept front, profile and diagonal gray-box views before fittings.
@@ -103,6 +166,29 @@ delivery.
 - Match tangents and, where the specular silhouette requires it, curvature.
 - Build openings as holes in the shell; separate body, dark mask, glass and
   frame.
+- Check the swept envelope of every allowed moving group across its complete
+  range, not only the authored screenshot phase. Rotor tips, doors, cranes and
+  wheels must clear roofs, rails, thresholds and adjacent structures.
+- Compare that swept group against the union of every fixed part in the
+  approach direction, including thickness. A named roof check is invalid when
+  a deck edge, stage, rail, bracket or support projects farther; sample the
+  complete blade length rather than checking only hub and tip.
+- Reconstruct wall and roof envelopes independently from the canonical parts;
+  do not label a nominal footprint as an overall envelope.
+- Build every operable leaf from its hinge axis. For paired openings, verify
+  the exact leaf count, hinge attachment and open/closed clearance; a visually
+  nearby panel is not a hinged door.
+- When a tower, annex, chimney or other major shell enters a roof, author the
+  joint itself: cut roof surfaces plus a collar, flashing, support frame or
+  transition volume. Never pass two closed shells through each other and call
+  the overlap a connection.
+- For a machine that historically moved as one assembly, define the complete
+  kinematic boundary before modelling detail. All attached body, wings, floors
+  and tools share one pivot; fixed foundations, ring walls and guide tracks stay
+  outside it even when the current milestone explicitly disables that motion.
+- When sources establish unequal load sharing, make the primary load path
+  continuous and visually dominant. Secondary rollers or guides must remain
+  readable but must not imply an equal independent foundation.
 - Build fixture support chains (`surface → base → bracket → device`) before
   decorative detail.
 - Preserve protected livery and physics while correcting their carrier form.
@@ -197,9 +283,46 @@ reusing the authoring helper.
   against all public entrances.
 - Treat both riverbanks and bridge approaches as continuous public routes.
 
+#### Landscape objects use the same evidence pipeline
+
+Do not treat a bridge, path, retaining wall, canal edge, field bed, fence,
+hedgerow or pollard tree as anonymous world dressing.  When it repeats or has
+a physical assembly, author one canonical standalone object first, capture its
+fixed views, test its load path and only then instance it through a one-part to
+one-piece scene adapter.  Extend the object library instead of rebuilding a
+similar prop inside each world.
+
+Keep these causal layers readable:
+
+- path: compacted subbase wider than the finished walking surface;
+- bridge: abutments, stringers, deck boards, posts and paired rails;
+- retaining wall: bonded courses and capstones rather than a coloured slab;
+- canal edge: sheets, walers, posts and land anchors; water never supplies
+  structural support;
+- field bed: raised earth, repeated stems and flower heads as separate systems;
+- field edge: woody trunk/stems or fence posts and rails before foliage.
+
+Derive every bridge frame from its channel: tangent owns the banks, the normal
+owns the crossing axis, and both approach endpoints must land on opposite bank
+datums.  Never lay a route ribbon through the channel and call it a bridge.
+
+For a constantly animated rotor, split fixed construction and the complete
+moving cross into separate canonical prefab groups.  Derive world pivot and
+axis from the accepted object anchor.  Rigid sails remain rigid geometry, not
+cloth.  Until an aerodynamic contract exists, the mechanism must import no
+wind field, apply no yaw or force, register no airborne vehicles and influence
+no other object.  Test the complete swept volume against every fixed part.
+
+Scene adapters must classify the actual part semantics, not substrings in a
+group name: `roof-frame` is structural while `roof-skin` is surface-attached.
+Record authored pegs, bearings and attachment metadata explicitly and prove
+zero unsupported pieces after the whole scene compiles.
+
 ### 8. Run the autonomous comparison loop
 
 - Capture the same front, profile, both diagonal, high, joint and night views.
+- Keep camera definitions and articulated phase fixed between revisions. Never
+  tune a camera to hide a profile defect.
 - Compare in the order silhouette → control lines → negative space → volumes →
   glazing → joints → material → light → detail.
 - Write concrete discrepancies and identify the owning profile/function.

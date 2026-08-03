@@ -19,6 +19,7 @@ import {
   CylinderGeometry,
   DoubleSide,
   DynamicDrawUsage,
+  Euler,
   ExtrudeGeometry,
   Float32BufferAttribute,
   InstancedBufferAttribute,
@@ -51,6 +52,10 @@ import {
 } from "./treeVisualModel";
 import { treeBarkAtlas } from "./treeBarkAtlas";
 import type { CompoundKinematicClusterRegistry } from "./compoundKinematicCluster";
+import {
+  getMemberArticulation,
+  hasMemberArticulations,
+} from "./clusterMemberArticulation";
 import { markActiveShotPerformance } from "./shotPerformanceTrace";
 
 const UNIT_BOX = new BoxGeometry(1, 1, 1);
@@ -97,8 +102,26 @@ function dynamicSurfaceMeshGeometry(
       2,
     ),
   );
+  if (profile.normals) {
+    if (profile.normals.length !== profile.vertices.length) {
+      throw new Error("A dynamic surface mesh needs one normal per vertex");
+    }
+    geometry.setAttribute(
+      "normal",
+      new Float32BufferAttribute(profile.normals.flatMap((normal) => [...normal]), 3),
+    );
+  }
+  if (profile.colors) {
+    if (profile.colors.length !== profile.vertices.length) {
+      throw new Error("A dynamic surface mesh needs one colour per vertex");
+    }
+    geometry.setAttribute(
+      "color",
+      new Float32BufferAttribute(profile.colors.flatMap((color) => [...color]), 3),
+    );
+  }
   geometry.setIndex([...profile.indices]);
-  geometry.computeVertexNormals();
+  if (!profile.normals) geometry.computeVertexNormals();
   geometry.computeBoundingBox();
   geometry.computeBoundingSphere();
   return geometry;
@@ -272,6 +295,9 @@ function setFragmentMatrix(
   dummy.updateMatrix();
 }
 
+const articulationEuler = new Euler();
+const articulationQuaternion = new Quaternion();
+
 function setClusteredFragmentMatrix(
   dummy: Object3D,
   fragment: DynamicBreakableFragment,
@@ -281,6 +307,20 @@ function setClusteredFragmentMatrix(
   rotation: Quaternion,
 ): void {
   const ownRotation = rotation.set(...fragment.fallbackQuaternion);
+  // Артикуляция члена: поворот ВОКРУГ СОБСТВЕННОГО ЦЕНТРА куска, поверх его
+  // авторской позы и под позой кластера. Ею колесо машины поворачивается за
+  // рулём и катится, не заводя себе ни тела, ни коллайдера — см.
+  // `clusterMemberArticulation.ts`, там же разбор трёх неудачных попыток
+  // сделать это телом.
+  const articulation = hasMemberArticulations()
+    ? getMemberArticulation(fragment.sourceId)
+    : undefined;
+  if (articulation) {
+    articulationEuler.set(0, articulation.steer, articulation.spin, "YZX");
+    ownRotation.premultiply(
+      articulationQuaternion.setFromEuler(articulationEuler),
+    );
+  }
   localCenter
     .set(fragment.center[0], fragment.center[1], fragment.center[2])
     .applyQuaternion(ownRotation);
@@ -349,7 +389,11 @@ function writeFragmentAttributes(
       fragment.treeVisualSourceId ?? fragment.sourceId,
     );
   } else if (fragment.landscapeSurface) {
-    band = fragment.landscapeSurface === "viking-ground" ? -1 : -2;
+    band = fragment.landscapeSurface === "viking-ground"
+      ? -1
+      : fragment.landscapeSurface === "city-ground"
+        ? -2
+        : -3;
   } else if (fragmentHasJoints(fragment)) {
     band = silicateJointBand(fragment.size);
     tint.set(silicateJointTint(fragment.color));
@@ -487,16 +531,17 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
       batch.materialColor,
       batch.textureProfile,
     );
-    const doubleSidedSurface = batch.geometryKind === "surfaceMesh" &&
-      batch.visualMesh?.doubleSided !== false;
+    const surfaceMesh = batch.geometryKind === "surfaceMesh";
+    const doubleSidedSurface = surfaceMesh && batch.visualMesh?.doubleSided !== false;
     if (
       !batch.treeBark &&
       batch.geometryKind !== "foliage" &&
-      !doubleSidedSurface
+      !surfaceMesh
     ) {
       return base;
     }
     const next = base.clone();
+    if (surfaceMesh) next.vertexColors = Boolean(batch.visualMesh?.colors);
     if (batch.geometryKind === "foliage" || doubleSidedSurface) {
       next.side = DoubleSide;
     }
@@ -621,8 +666,7 @@ diffuseColor.rgb = mix(
       if (
         batch.geometryKind === "foliage" ||
         batch.treeBark ||
-        (batch.geometryKind === "surfaceMesh" &&
-          batch.visualMesh?.doubleSided !== false)
+        batch.geometryKind === "surfaceMesh"
       ) {
         material.dispose();
       }

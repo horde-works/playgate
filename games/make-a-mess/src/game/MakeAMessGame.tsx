@@ -97,6 +97,8 @@ import {
   blastEnergyAtDistance,
   explosiveProfile,
   type ExplosiveKind,
+  GUNSHOT_NOISE_LEVEL,
+  GUNSHOT_NOISE_RISE,
   MG_FIRE_INTERVAL,
   MG_RANGE,
   ROCKET_BLAST_PUSH_RADIUS,
@@ -115,6 +117,7 @@ import {
   debrisSleepSampleRequirement,
   fractureEnergyByMaterial,
   grenadeEnergyAtDistance,
+  groundCarveRequiresRemnant,
   groundMaterials,
   selectCarveTargetsWithinBudget,
   impactDamageRadius,
@@ -169,6 +172,7 @@ import { getPieceRenderBoxes } from "./breakableGeometry";
 import { Birds } from "./Birds";
 import { Villagers } from "./Villagers";
 import type { VillagerReport } from "./villagerSim";
+import type { NoiseEvent } from "./villagerAlarm";
 import { vikingSettlement } from "../content/scenes/vikingSettlement.ts";
 import { GrassField } from "./GrassField";
 import { SceneDressing } from "./SceneDressing";
@@ -183,12 +187,17 @@ import {
 import { SmokePlumes } from "./SmokePlumes";
 import { WindController } from "./WindController";
 import { IntactBreakableWorld } from "./IntactBreakableWorld";
+import { LandscapeSurface } from "./LandscapeSurface";
 import {
   VehicleFrameSystem,
   type RotorcraftPilotStatus,
   type VehicleFramePoseState,
 } from "./VehicleFrameSystem";
 import { AstanaTrainSystem } from "./AstanaTrainSystem";
+import {
+  ConstantRotorSystem,
+  constantRotorClusterDefinitions,
+} from "./ConstantRotorSystem";
 import { TownCarSystem } from "./TownCarSystem";
 import { townDsClusterDefinition } from "./townCitroenDs";
 import {
@@ -711,6 +720,7 @@ const blastTransmissionByMaterial: Record<BreakableMaterial, number> = {
   graphiteStone: 0.018,
   basalt: 0.014,
   steel: 0.01,
+  sheetMetal: 0.01,
 };
 
 type BlastOccluderSource =
@@ -849,11 +859,16 @@ function readBreakableHit(intersection: Intersection): BreakableHitData | null {
     intersection.instanceId === undefined
       ? undefined
       : instanceIds?.[intersection.instanceId];
+  const triangleOwners = userData.breakableTriangleOwnerIds as
+    readonly string[] | undefined;
+  const triangleOwnerId = intersection.faceIndex == null
+    ? undefined
+    : triangleOwners?.[intersection.faceIndex];
   const pieceId =
     typeof userData.breakablePiece === "string"
       ? userData.breakablePiece
       : instanceKind === undefined || instanceKind === "piece"
-        ? instanceSourceId
+        ? instanceSourceId ?? triangleOwnerId
         : undefined;
   const shardId =
     typeof userData.breakableShard === "string"
@@ -2407,6 +2422,7 @@ const BreakablePiece = memo(function BreakablePiece({
 
 function BreakableObjects({
   pieces,
+  landscapeVisual,
   brokenPieces,
   shatteredPieces,
   bodies,
@@ -2418,6 +2434,7 @@ function BreakableObjects({
   onDebrisContact,
 }: {
   pieces: readonly BreakablePieceDefinition[];
+  landscapeVisual: DestructionSceneDefinition["landscapeVisual"];
   brokenPieces: ReadonlySet<string>;
   shatteredPieces: ReadonlySet<string>;
   bodies: MutableRefObject<Map<string, RapierRigidBody>>;
@@ -2508,6 +2525,12 @@ function BreakableObjects({
         mutablePieceIds={mutablePieceIds}
         mutablePieceStates={mutablePieceStates}
       />
+      {landscapeVisual ? (
+        <LandscapeSurface
+          definition={landscapeVisual}
+          hiddenPieceIds={hiddenPieceIds}
+        />
+      ) : null}
       <DynamicBreakableWorld
         pieces={bodyPieces}
         shards={[]}
@@ -4081,6 +4104,12 @@ function OpenWorldScene({
   // Обратная связь от створок: какие входы уже распахнуты. Без неё житель
   // просит открыть — и тут же проходит сквозь ещё закрытую дверь.
   const villagerOpenDoors = useRef<Set<string>>(new Set());
+  // Шум мира для жителей. Очередь ОБЩАЯ и без различения источников: выстрел,
+  // взрыв, обвал — для уха это одно и то же событие с разным уровнем.
+  const villagerNoise = useRef<NoiseEvent[]>([]);
+  // Где стоит игрок, когда он вооружён. Молот и пустые руки деревню не пугают:
+  // испуг вызывает не человек, а СТВОЛ в его руках.
+  const villagerThreat = useRef<{ x: number; z: number } | null>(null);
   const nightRef = useRef(0);
   const worldTimeRef = useRef(TIME_OF_DAY_TARGETS.day);
   const mutablePieceStates = useRef(new Map<string, MutablePieceVisualState>());
@@ -4102,10 +4131,11 @@ function OpenWorldScene({
     // же владелец составного тела, не ветка VehicleFrameSystem.
     return [
       ...astanaTrainClusterDefinitions(),
+      ...constantRotorClusterDefinitions(scene.constantRotorDefinitions),
       ...vehicleFrames,
       townDsClusterDefinition(),
     ].filter((definition) => available.has(definition.clusterId));
-  }, [breakablePieces]);
+  }, [breakablePieces, scene.constantRotorDefinitions]);
   /**
    * Кто из кусков — член составного кластера. Такие куски авторятся в
    * системе координат кластера и СУДЯТСЯ в ней же: любой урон обязан
@@ -4446,6 +4476,14 @@ function OpenWorldScene({
       query.get("mamProbe") === "1" || runtimeDiagnosticsEnabled("scene");
     const teleportRequest = query.get("mamTeleport") ?? "";
     let handledTeleportRequest = "";
+    // Сколько раз подряд игрок УЖЕ оказался там, куда его просили.
+    //
+    // Одного успешного вызова мало: первые сорок шагов после входа контроллер
+    // принудительно держит игрока на точке спавна, и телепорт, сработавший в
+    // это окно, честно возвращал `true` и тут же затирался. Команда молча
+    // считалась выполненной, а игрок оставался на месте — и снять кадр в
+    // нужной точке было нельзя.
+    let teleportSettled = 0;
     const teleportAvailableAt = performance.now() + 1_200;
     let timer: number | undefined;
     const publish = () => {
@@ -4463,11 +4501,24 @@ function OpenWorldScene({
             number,
             number,
           ];
-          if ([x, y, z].every(Number.isFinite) && teleport(x, y, z)) {
-            handledTeleportRequest = teleportRequest;
-            if (!automaticProbe && timer !== undefined) {
-              window.clearInterval(timer);
-              timer = undefined;
+          if ([x, y, z].every(Number.isFinite)) {
+            const playerBody = pieceBodies.current.get("player");
+            const at = playerBody?.translation();
+            const stuck =
+              at !== undefined &&
+              Math.hypot(at.x - x, at.y - y, at.z - z) < 0.75;
+            teleportSettled = stuck ? teleportSettled + 1 : 0;
+            if (!stuck) {
+              teleport(x, y, z);
+            }
+            // Команда считается выполненной, только когда позиция УДЕРЖАЛАСЬ
+            // несколько опросов подряд: иначе её съедает удержание на спавне.
+            if (teleportSettled >= 3) {
+              handledTeleportRequest = teleportRequest;
+              if (!automaticProbe && timer !== undefined) {
+                window.clearInterval(timer);
+                timer = undefined;
+              }
             }
           }
         } catch {
@@ -5955,6 +6006,7 @@ function OpenWorldScene({
       });
       if (
         isGroundTarget &&
+        groundCarveRequiresRemnant(source) &&
         (additions.length === 0 || removedVolume > sourceVolume * 0.38)
       ) {
         return { carved: false, brokenParentId: null };
@@ -6146,6 +6198,7 @@ function OpenWorldScene({
           worldPiece.material,
           request.closingSpeed,
           request.worldIntensity,
+          request.worldMassAdvantage,
         );
         if (verdict === "shatter") {
           impactId.current += 1;
@@ -6187,6 +6240,7 @@ function OpenWorldScene({
           vehiclePiece.material,
           request.closingSpeed,
           request.vehicleIntensity,
+          request.vehicleMassAdvantage,
         );
         if (verdict === "shatter") {
           breakPieces([vehiclePiece.id]);
@@ -6455,6 +6509,14 @@ function OpenWorldScene({
     const traceId = startShotPerformanceTrace();
     const gunshotStartedAt = performance.now();
     playGunshotSound();
+    // Шумит ДУЛО, а не пуля: событие рождается там, где стоит стрелок.
+    villagerNoise.current.push({
+      x: camera.position.x,
+      y: camera.position.y,
+      z: camera.position.z,
+      level: GUNSHOT_NOISE_LEVEL,
+      rise: GUNSHOT_NOISE_RISE,
+    });
     markShotPerformance(
       traceId,
       "gunshot_audio",
@@ -6953,6 +7015,12 @@ function OpenWorldScene({
 
   useFrame(() => {
     drainBlastQueue();
+    // Деревню тревожит не человек, а СТВОЛ в его руках: с молотом и с пустыми
+    // руками мимо жителей можно ходить сколько угодно.
+    villagerThreat.current =
+      weapon === "none" || weapon === "hammer"
+        ? null
+        : { x: camera.position.x, z: camera.position.z };
   });
 
   const explodeAt = useCallback(
@@ -6965,6 +7033,22 @@ function OpenWorldScene({
       const energyAtDistance = (surfaceDistance: number) =>
         blastEnergyAtDistance(surfaceDistance, blastRadius, profile.damageEnergy);
       playExplosionSound();
+      // Уровень хлопка — свойство боеприпаса, а не ветка «если граната».
+      villagerNoise.current.push({
+        x: center3.x,
+        y: center3.y,
+        z: center3.z,
+        level: profile.noiseLevel,
+        rise: 0.95,
+        // ВОЛНА — второй канал того же события. Скорости берутся ГОТОВЫМИ из
+        // паспорта: житель — такой же человек, как игрок, и отшвыривает его
+        // ровно тем же. Считать от массы нельзя — массы раздуты ×200.
+        wave: {
+          pushRadius: blastPushRadius,
+          horizontal: profile.playerPush.horizontal,
+          vertical: profile.playerPush.vertical,
+        },
+      });
       explosionId.current += 1;
       const nextExplosionId = explosionId.current;
 
@@ -9171,6 +9255,7 @@ function OpenWorldScene({
           sceneId={scene.id}
           worldRadius={scene.worldRadius}
           center={scene.worldCenter}
+          boundary={scene.worldEdgeBoundary}
           cameraFar={scene.cameraFar}
           nightRef={nightRef}
         />
@@ -9193,6 +9278,8 @@ function OpenWorldScene({
             openDoors={villagerOpenDoors}
             stockStates={mutablePieceStates}
             inspectRef={villagerInspect}
+            noise={villagerNoise}
+            threat={villagerThreat}
             // Деревня выросла: жительниц и девочек ДОБАВИЛИ, а не заменили
             // ими часть мужчин.
             count={34}
@@ -9209,9 +9296,23 @@ function OpenWorldScene({
           />
         </>
       ) : null}
+      {scene.id === "dutch-polder" && scene.worldRadius ? (
+        <GrassField
+          profile="dutch-polder"
+          worldRadius={scene.worldRadius}
+          center={scene.worldCenter}
+          nightRef={nightRef}
+          pieces={breakablePieces}
+          count={24000}
+          bladeColor="#4f6735"
+          tipColor="#879b57"
+          hiddenPieceIds={hiddenPieces}
+        />
+      ) : null}
       <group ref={breakableRaycastRoot}>
         <BreakableObjects
           pieces={breakablePieces}
+          landscapeVisual={scene.landscapeVisual}
           brokenPieces={brokenPieces}
           shatteredPieces={hiddenPieces}
           bodies={pieceBodies}
@@ -9308,6 +9409,15 @@ function OpenWorldScene({
         movingVehicles={movingVehicles}
         dockedVehicles={dockedVehicles}
         clusterEventStates={clusterEventStates}
+        clusterRegistry={compoundKinematicClusters}
+      />
+      <ConstantRotorSystem
+        definitions={scene.constantRotorDefinitions}
+        pieces={breakablePieces}
+        bodies={pieceBodies}
+        brokenPieces={brokenPiecesRef}
+        inactivePieces={inactiveCompoundMembers}
+        resetVersion={resetVersion}
         clusterRegistry={compoundKinematicClusters}
       />
       <TownCarSystem
@@ -9408,62 +9518,139 @@ function OpenWorldScene({
 const DESKTOP_PIXEL_BUDGET = 1_100_000;
 const COMPACT_PIXEL_BUDGET = 720_000;
 
+// Изменение dpr пересоздаёт render targets всей цепочки постобработки, и это
+// стоит ЦЕЛОГО кадра: замер по соседним кадрам показал, что кадр, в котором
+// сменился размер буфера, отличается от предыдущего на 55–88% пикселей, тогда
+// как обычные соседние кадры расходятся на доли процента. Лёгкая сцена
+// (польдер без жителей) держит высокий fps, прежний шаг +0.04 раз в секунду
+// поднимал масштаб, спайк GPU ронял его обратно — и экран мерцал вспышками.
+//
+// Поэтому масштаб теперь не «подкручивается», а ходит по ЛЕСТНИЦЕ: одна
+// ступень за раз, только после нескольких согласных окон подряд, и обратный
+// ход закрыт длинной задержкой. Мёртвая зона между порогами гарантирует, что
+// сцена, стоящая ровно на границе, не качается вверх-вниз.
+const RENDER_SCALE_LADDER = [1, 0.85, 0.72, 0.62] as const;
+const SCALE_WINDOW_SECONDS = 1;
+const SCALE_WARMUP_SECONDS = 2.5;
+// Понижение отвечает на реальную перегрузку, поэтому ему нужно меньше
+// свидетельств, чем повышению, — но больше одного шумного окна.
+const WINDOWS_BEFORE_DEMOTION = 3;
+const WINDOWS_BEFORE_PROMOTION = 8;
+const SECONDS_AFTER_ANY_CHANGE = 6;
+const SECONDS_BEFORE_REVERSAL = 25;
+
 function AdaptiveRenderScale({ compact }: { compact: boolean }) {
   const setDpr = useThree((state) => state.setDpr);
   const size = useThree((state) => state.size);
   const elapsed = useRef(0);
   const frames = useRef(0);
   const warmup = useRef(0);
-  const currentDpr = useRef(1);
+  // Индекс ступени: 0 — полное разрешение бюджета.
+  const level = useRef(0);
+  const overloadedWindows = useRef(0);
+  const comfortableWindows = useRef(0);
+  const sinceAnyChange = useRef(Number.POSITIVE_INFINITY);
+  const sinceDemotion = useRef(Number.POSITIVE_INFINITY);
+  const baseline = useRef(1);
+  const applied = useRef(0);
 
+  // Бюджет пикселей задаёт только ВЕРХ лестницы. Пересчёт при ресайзе
+  // переприкладывает текущую ступень, а не сбрасывает её: раньше любая правка
+  // раскладки (а с ней смена size) швыряла масштаб обратно на полный и
+  // запускала подъём заново.
   useEffect(() => {
     const pixelBudget = compact ? COMPACT_PIXEL_BUDGET : DESKTOP_PIXEL_BUDGET;
-    const minimumDpr = compact ? 0.72 : 0.58;
-    const nextDpr = MathUtils.clamp(
+    const softFloor = compact ? 0.72 : 0.58;
+    const hardFloor = compact ? 0.62 : 0.52;
+    baseline.current = MathUtils.clamp(
       Math.sqrt(pixelBudget / Math.max(1, size.width * size.height)),
-      minimumDpr,
+      softFloor,
       1,
     );
-    currentDpr.current = nextDpr;
-    performanceGovernor.setDpr(nextDpr);
+    const nextDpr = MathUtils.clamp(
+      baseline.current * RENDER_SCALE_LADDER[level.current],
+      hardFloor,
+      1,
+    );
     elapsed.current = 0;
     frames.current = 0;
     warmup.current = 0;
-    setDpr(nextDpr);
+    overloadedWindows.current = 0;
+    comfortableWindows.current = 0;
+    if (Math.abs(nextDpr - applied.current) > 0.001) {
+      applied.current = nextDpr;
+      performanceGovernor.setDpr(nextDpr);
+      setDpr(nextDpr);
+    }
   }, [compact, setDpr, size.height, size.width]);
 
   useFrame((_, delta) => {
     warmup.current += delta;
-    if (warmup.current < 2.5) {
+    sinceAnyChange.current += delta;
+    sinceDemotion.current += delta;
+    if (warmup.current < SCALE_WARMUP_SECONDS) {
       return;
     }
 
     elapsed.current += delta;
     frames.current += 1;
-    if (elapsed.current < 1) {
+    if (elapsed.current < SCALE_WINDOW_SECONDS) {
       return;
     }
 
     const fps = frames.current / elapsed.current;
-    const pressure = performanceGovernor.getSnapshot();
-    const minimumDpr = compact ? 0.62 : 0.52;
-    let nextDpr = currentDpr.current;
-    if (pressure.gpuQuality < 2) {
-      nextDpr = Math.max(
-        minimumDpr,
-        nextDpr - (pressure.gpuQuality === 0 ? 0.09 : 0.055),
-      );
-    } else if (fps > (compact ? 52 : 57)) {
-      nextDpr = Math.min(1, nextDpr + 0.04);
-    }
-
-    if (Math.abs(nextDpr - currentDpr.current) > 0.001) {
-      currentDpr.current = nextDpr;
-      setDpr(nextDpr);
-      performanceGovernor.setDpr(nextDpr);
-    }
     elapsed.current = 0;
     frames.current = 0;
+
+    const pressure = performanceGovernor.getSnapshot();
+    // Мёртвая зона: окно голосует, только когда оно ЯВНО на одной из сторон.
+    // Всё, что между порогами, лестницу не трогает вовсе.
+    const struggling = pressure.gpuQuality < 2 || fps < (compact ? 44 : 48);
+    const roomy = pressure.gpuQuality === 2 && fps > (compact ? 52 : 57);
+    overloadedWindows.current = struggling ? overloadedWindows.current + 1 : 0;
+    comfortableWindows.current = roomy ? comfortableWindows.current + 1 : 0;
+
+    if (sinceAnyChange.current < SECONDS_AFTER_ANY_CHANGE) {
+      return;
+    }
+
+    let nextLevel = level.current;
+    if (
+      overloadedWindows.current >= WINDOWS_BEFORE_DEMOTION &&
+      level.current < RENDER_SCALE_LADDER.length - 1
+    ) {
+      nextLevel = level.current + 1;
+    } else if (
+      comfortableWindows.current >= WINDOWS_BEFORE_PROMOTION &&
+      level.current > 0 &&
+      sinceDemotion.current >= SECONDS_BEFORE_REVERSAL
+    ) {
+      nextLevel = level.current - 1;
+    }
+    if (nextLevel === level.current) {
+      return;
+    }
+
+    const hardFloor = compact ? 0.62 : 0.52;
+    const nextDpr = MathUtils.clamp(
+      baseline.current * RENDER_SCALE_LADDER[nextLevel],
+      hardFloor,
+      1,
+    );
+    if (nextLevel > level.current) {
+      sinceDemotion.current = 0;
+    }
+    level.current = nextLevel;
+    overloadedWindows.current = 0;
+    comfortableWindows.current = 0;
+    // Упёрлись в пол: ступень запомнена, но буфер трогать незачем.
+    if (Math.abs(nextDpr - applied.current) <= 0.001) {
+      return;
+    }
+    applied.current = nextDpr;
+    sinceAnyChange.current = 0;
+    performanceGovernor.setDpr(nextDpr);
+    setDpr(nextDpr);
   });
 
   return null;
@@ -11933,6 +12120,8 @@ export function MakeAMessGame({
             <Canvas
               className="game-canvas"
               shadows="percentage"
+              // Pinned while AdaptiveRenderScale is off — DPR changes recreate
+              // composer buffers and flash a flat-grey frame (worst on polder).
               dpr={1}
               camera={{
                 position: [
@@ -12045,8 +12234,13 @@ export function MakeAMessGame({
                   enabled={showPerformance}
                   onSample={setPerformance}
                 />
-                <AdaptiveRenderScale compact={fallbackLook} />
-                <CinematicPostProcessing compact={fallbackLook} />
+                {/* TEMP: adaptive DPR off — grey-frame flicker on polder until
+                    composer resize is synced with setDpr. */}
+                {/* <AdaptiveRenderScale compact={fallbackLook} /> */}
+                <CinematicPostProcessing
+                  compact={fallbackLook}
+                  byteBloom={scene.id === "dutch-polder"}
+                />
               </Suspense>
             </Canvas>
           </KeyboardControls>

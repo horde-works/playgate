@@ -1,0 +1,126 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" fill="#f2f4e9" role="img" aria-labelledby="title desc">
+  <title id="title">Dutch Polder world topographic authoring plan</title>
+  <desc id="desc">An irregular 143 by 109 metre island divided into six elevation plates, with four windmills, two houses, four canals, five bridges and conservative sail-clearance circles.</desc>
+  <defs>
+    <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#172b3b"/>
+      <stop offset="1" stop-color="#0b1822"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="12" stdDeviation="12" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+    <pattern id="grid" width="36" height="31.2" patternUnits="userSpaceOnUse">
+      <path d="M 36 0 L 0 0 0 31.2" fill="none" stroke="#ffffff" stroke-opacity="0.055" stroke-width="1"/>
+    </pattern>
+    <style>
+      .label { font-family: ui-sans-serif, system-ui, sans-serif; fill: #f2f4e9; font-size: 22px; font-weight: 600; paint-order: stroke; stroke: #13202a; stroke-width: 0.7px; stroke-linejoin: round; }
+      .small { font-family: ui-sans-serif, system-ui, sans-serif; fill: #d6dccf; font-size: 17px; paint-order: stroke; stroke: #13202a; stroke-width: 0.6px; stroke-linejoin: round; }
+      .tiny { font-family: ui-monospace, SFMono-Regular, monospace; fill: #d6dccf; font-size: 14px; paint-order: stroke; stroke: #13202a; stroke-width: 0.5px; }
+      .sweep { fill: none; stroke: #f7d774; stroke-width: 3; stroke-dasharray: 10 8; opacity: 0.9; }
+      .object { fill: #26231c; stroke: #fff0b2; stroke-width: 3; }
+      .bridge { fill: #ad8151; stroke: #3a291b; stroke-width: 3; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="1000" fill="url(#sea)"/>
+  <rect width="1600" height="1000" fill="url(#grid)"/>
+
+  <text x="62" y="68" class="label" font-size="30">DUTCH POLDER · TOPOGRAPHIC CONTRACT</text>
+  <text x="62" y="101" class="small">world metres · north is −Z · water datum Y = 0.00 · equivalent diameter 128.94 m</text>
+
+  <g filter="url(#shadow)">
+    <polygon points="233,223 413,98 665,74 881,98 1088,82 1313,168 1430,301 1412,464 1457,620 1376,776 1178,870 962,909 737,901 530,925 323,847 197,730 170,581 206,433" fill="#617750" stroke="#b7c689" stroke-width="6"/>
+
+    <polygon points="233,223 413,98 584,137 620,355 530,503 314,542 206,433" fill="#809764" opacity="0.96"/>
+    <polygon points="980,137 1232,160 1394,285 1322,410 1124,418 935,324" fill="#71895b" opacity="0.96"/>
+    <polygon points="638,277 818,207 998,277 1052,386 962,519 818,550 674,511 602,410" fill="#9d9b62" opacity="0.98"/>
+    <polygon points="1115,418 1376,355 1430,519 1367,636 1205,644 1097,558" fill="#6f8758" opacity="0.96"/>
+    <polygon points="278,519 512,503 746,550 1025,519 1196,636 1133,839 872,901 575,894 332,808 206,636" fill="#9aaa68" opacity="0.98"/>
+    <polygon points="917,620 1205,597 1376,714 1268,847 1007,917 872,808" fill="#87955f" opacity="0.98"/>
+
+    <path d="M197 597 C316 530 396 616 458 589 C557 545 646 625 746 597 C849 568 908 603 1007 550 C1104 516 1192 573 1295 620 C1342 642 1374 620 1412 597" fill="none" stroke="#3f9fc1" stroke-width="42" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M530 581 C494 654 492 715 431 769 C385 809 354 840 332 854" fill="none" stroke="#3f9fc1" stroke-width="35" stroke-linecap="round"/>
+    <path d="M845 589 C852 680 859 763 836 847" fill="none" stroke="#4aa6c4" stroke-width="26" stroke-linecap="round"/>
+    <path d="M1151 574 C1210 621 1229 681 1367 730" fill="none" stroke="#3f9fc1" stroke-width="38" stroke-linecap="round"/>
+
+    <path d="M197 597 C316 530 396 616 458 589 C557 545 646 625 746 597 C849 568 908 603 1007 550 C1104 516 1192 573 1295 620 C1342 642 1374 620 1412 597" fill="none" stroke="#9dd8e6" stroke-opacity="0.45" stroke-width="5"/>
+
+    <g transform="translate(404 574) rotate(-14)"><rect class="bridge" x="-28" y="-8" width="56" height="16" rx="3"/></g>
+    <g transform="translate(800 588) rotate(8)"><rect class="bridge" x="-28" y="-8" width="56" height="16" rx="3"/></g>
+    <g transform="translate(1169 578) rotate(-13)"><rect class="bridge" x="-28" y="-8" width="56" height="16" rx="3"/></g>
+    <g transform="translate(440 737) rotate(-38)"><rect class="bridge" x="-28" y="-8" width="56" height="16" rx="3"/></g>
+    <g transform="translate(1277 691) rotate(32)"><rect class="bridge" x="-28" y="-8" width="56" height="16" rx="3"/></g>
+
+    <circle class="sweep" cx="818" cy="379" r="108"/>
+    <circle class="sweep" cx="440" cy="285" r="117"/>
+    <circle class="sweep" cx="1124" cy="262" r="99"/>
+    <circle class="sweep" cx="1250" cy="511" r="99"/>
+
+    <g transform="translate(818 379)">
+      <polygon class="object" points="-32,28 -23,-29 23,-29 32,28"/>
+      <line x1="-72" y1="48" x2="72" y2="-48" stroke="#fff0b2" stroke-width="7"/>
+      <line x1="-60" y1="-60" x2="60" y2="60" stroke="#fff0b2" stroke-width="7"/>
+      <circle cx="0" cy="0" r="9" fill="#c79a51"/>
+    </g>
+    <g transform="translate(440 285)">
+      <polygon class="object" points="-28,30 -36,-18 36,-18 28,30"/>
+      <rect class="object" x="-18" y="-40" width="36" height="28"/>
+      <line x1="-70" y1="42" x2="70" y2="-42" stroke="#fff0b2" stroke-width="6"/>
+      <line x1="-58" y1="-58" x2="58" y2="58" stroke="#fff0b2" stroke-width="6"/>
+    </g>
+    <g transform="translate(1124 262)">
+      <polygon class="object" points="-27,26 -18,-26 18,-26 27,26"/>
+      <rect class="object" x="-58" y="16" width="116" height="37"/>
+      <line x1="-61" y1="44" x2="61" y2="-44" stroke="#fff0b2" stroke-width="6"/>
+      <line x1="-50" y1="-50" x2="50" y2="50" stroke="#fff0b2" stroke-width="6"/>
+    </g>
+    <g transform="translate(1250 511)">
+      <rect class="object" x="-60" y="-35" width="120" height="70"/>
+      <circle cx="0" cy="0" r="26" fill="none" stroke="#c79a51" stroke-width="6"/>
+      <line x1="-64" y1="46" x2="64" y2="-46" stroke="#fff0b2" stroke-width="6"/>
+      <line x1="-52" y1="-52" x2="52" y2="52" stroke="#fff0b2" stroke-width="6"/>
+    </g>
+
+    <g transform="translate(350 511) rotate(-38)"><rect class="object" x="-46" y="-30" width="92" height="60"/><rect class="object" x="22" y="-48" width="38" height="33"/></g>
+    <g transform="translate(1079 706) rotate(26)"><rect class="object" x="-66" y="-60" width="132" height="120"/><rect class="object" x="34" y="-25" width="68" height="50"/></g>
+  </g>
+
+  <text x="818" y="328" text-anchor="middle" class="label">M1 · DE KAT TYPE</text>
+  <text x="818" y="351" text-anchor="middle" class="tiny">base +5.20 · sails 21.76 m</text>
+  <text x="440" y="213" text-anchor="middle" class="label">M2 · WIPMOLEN</text>
+  <text x="440" y="236" text-anchor="middle" class="tiny">base +2.40 · sails 24.90 m</text>
+  <text x="1124" y="191" text-anchor="middle" class="label">M3 · HEX SAWMILL</text>
+  <text x="1124" y="214" text-anchor="middle" class="tiny">base +2.80 · sails 20.68 m</text>
+  <text x="1250" y="443" text-anchor="middle" class="label">M4 · PALTROK</text>
+  <text x="1250" y="466" text-anchor="middle" class="tiny">base +1.90 · sails ~20.4 m</text>
+  <text x="350" y="446" text-anchor="middle" class="label">H1</text>
+  <text x="350" y="469" text-anchor="middle" class="tiny">Zaan timber house</text>
+  <text x="1079" y="641" text-anchor="middle" class="label">H2</text>
+  <text x="1079" y="664" text-anchor="middle" class="tiny">stolp farm</text>
+
+  <text x="812" y="250" text-anchor="middle" class="small">T1 central crown · +5.20</text>
+  <text x="304" y="156" text-anchor="middle" class="small">T2 northwest bench · +2.40</text>
+  <text x="1270" y="144" text-anchor="middle" class="small">T3 saw yard · +2.80</text>
+  <text x="1360" y="387" text-anchor="middle" class="small">T4 east shelf · +1.90</text>
+  <text x="651" y="800" text-anchor="middle" class="small">T5 low polder · +0.80</text>
+  <text x="1205" y="817" text-anchor="middle" class="small">T6 farm shelf · +1.45</text>
+
+  <g transform="translate(70 875)">
+    <path d="M0 0 H180" stroke="#f2f4e9" stroke-width="4"/>
+    <path d="M0 -8 V8 M90 -8 V8 M180 -8 V8" stroke="#f2f4e9" stroke-width="4"/>
+    <text x="0" y="31" class="tiny">0</text>
+    <text x="78" y="31" class="tiny">10 m</text>
+    <text x="164" y="31" class="tiny">20 m</text>
+  </g>
+
+  <g transform="translate(1470 130)">
+    <path d="M0 48 V-36" stroke="#f2f4e9" stroke-width="4"/>
+    <path d="M0 -48 L-10 -28 H10 Z" fill="#f2f4e9"/>
+    <text x="0" y="76" text-anchor="middle" class="label">N</text>
+  </g>
+
+  <g transform="translate(1260 890)">
+    <circle class="sweep" cx="0" cy="0" r="24"/>
+    <text x="38" y="6" class="small">conservative sail reserve</text>
+  </g>
+</svg>

@@ -21,7 +21,9 @@ test("the intact fortress exposes a few cached physics meshes, not one collider 
     collidablePieces.reduce(
       (total, piece) =>
         total +
-        (piece.shape === "sphere"
+        (piece.visualMesh
+          ? piece.visualMesh.indices.length / 3
+          : piece.shape === "sphere"
           ? 288
           : piece.shape === "cylinder"
             ? 36
@@ -95,4 +97,54 @@ test("a same-ID geometry edit cannot reuse a stale static collider", () => {
   assert.notDeepEqual([...moved.vertices], [...before.vertices]);
   assert.notDeepEqual([...resized.vertices], [...before.vertices]);
   assert.strictEqual(cachedAgain, before);
+});
+
+test("an authored terrain shell collides as its surface, not its bounding cube", () => {
+  const terrain = {
+    id: "terrain:surface",
+    material: "grass",
+    shape: "groundTile",
+    position: [10, 2, -4],
+    size: [8, 3, 8],
+    visualMesh: {
+      vertices: [
+        [-0.5, -0.5, -0.5],
+        [0.5, 0.5, -0.5],
+        [0.5, 0.5, 0.5],
+        [-0.5, -0.5, 0.5],
+      ],
+      indices: [0, 2, 1, 0, 3, 2],
+      doubleSided: false,
+    },
+  };
+  const mesh = buildStaticColliderMeshes([terrain])[0];
+  assert.equal(mesh.vertices.length, 12);
+  assert.equal(mesh.indices.length, 6);
+  assert.deepEqual([...mesh.vertices.slice(0, 3)], [6, 0.5, -8]);
+
+  const edited = buildStaticColliderMeshes([{
+    ...terrain,
+    visualMesh: {
+      ...terrain.visualMesh,
+      vertices: terrain.visualMesh.vertices.map((vertex, index) =>
+        index === 1 ? [vertex[0], 0.25, vertex[2]] : vertex
+      ),
+    },
+  }])[0];
+  assert.notStrictEqual(edited, mesh);
+  assert.notDeepEqual([...edited.vertices], [...mesh.vertices]);
+});
+
+test("a body covered by a separate intact landscape shell is not boxed twice", () => {
+  const hiddenBody = {
+    id: "terrain:cell:0:0",
+    material: "earth",
+    shape: "groundTile",
+    position: [0, -3, 0],
+    size: [3, 8, 3],
+    intactCollider: false,
+  };
+  assert.deepEqual(buildStaticColliderMeshes([hiddenBody]), []);
+  const store = createStaticColliderMeshStore([hiddenBody]);
+  assert.deepEqual(store.updateHidden(new Set()), []);
 });

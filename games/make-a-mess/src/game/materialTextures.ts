@@ -33,6 +33,8 @@ import {
   townSurfaceRoutes,
   type TownPlanPoint,
 } from "../content/scenes/townSurfacePlan.ts";
+import { createLandscapeSampler } from "../content/landscape/landscapeSampler.ts";
+import { dutchPolderLandscapeDocument } from "../content/scenes/dutchPolder/dutchPolderLandscapeDocument.ts";
 
 interface GlowMaterial {
   readonly material: MeshStandardMaterial;
@@ -177,6 +179,7 @@ const photorealTextureUrls: Partial<Record<BreakableMaterial, string>> = {
   earth: "/games/make-a-mess/textures/soil.webp",
   asphalt: "/games/make-a-mess/textures/asphalt.webp",
   steel: "/games/make-a-mess/textures/steel.webp",
+  sheetMetal: "/games/make-a-mess/textures/steel.webp",
 };
 
 const surfaceTextureUrls: Partial<Record<SurfaceTextureProfile, string>> = {
@@ -358,6 +361,7 @@ const bumpScaleByMaterial: Record<BreakableMaterial, number> = {
   concrete: 0.026,
   glass: 0,
   steel: 0.006,
+  sheetMetal: 0.006,
   stone: 0.045,
   basalt: 0.052,
   graphiteStone: 0.04,
@@ -374,6 +378,50 @@ const textureCache = new Map<string, Texture>();
 const materialCache = new Map<string, MeshStandardMaterial>();
 let vikingTrafficTexture: CanvasTexture | null = null;
 let citySurfaceTexture: CanvasTexture | null = null;
+let dutchPolderSurfaceTexture: CanvasTexture | null = null;
+
+const DUTCH_POLDER_SURFACE_TEXTURE_SIZE = 256;
+const DUTCH_POLDER_WORLD_MIN = -96;
+const DUTCH_POLDER_WORLD_SPAN = 192;
+
+/**
+ * Shared semantic mask for intact terrain and its post-hit voxels. Red is the
+ * authored path mask; green is exposed channel soil. It changes material
+ * response in world space and never replaces the terrain geometry or texture.
+ */
+function getDutchPolderSurfaceTexture(): CanvasTexture {
+  if (dutchPolderSurfaceTexture) return dutchPolderSurfaceTexture;
+  const canvas = document.createElement("canvas");
+  canvas.width = DUTCH_POLDER_SURFACE_TEXTURE_SIZE;
+  canvas.height = DUTCH_POLDER_SURFACE_TEXTURE_SIZE;
+  const context = canvas.getContext("2d");
+  if (context) {
+    const pixels = context.createImageData(canvas.width, canvas.height);
+    const sampler = createLandscapeSampler(dutchPolderLandscapeDocument);
+    for (let row = 0; row < canvas.height; row += 1) {
+      for (let column = 0; column < canvas.width; column += 1) {
+        const worldX = DUTCH_POLDER_WORLD_MIN +
+          (column + 0.5) / canvas.width * DUTCH_POLDER_WORLD_SPAN;
+        const worldZ = DUTCH_POLDER_WORLD_MIN +
+          (canvas.height - row - 0.5) / canvas.height * DUTCH_POLDER_WORLD_SPAN;
+        const sample = sampler.sample(worldX, worldZ);
+        const offset = (row * canvas.width + column) * 4;
+        pixels.data[offset] = Math.round(sample.pathWeight * 255);
+        pixels.data[offset + 1] =
+          sample.groundKind === "bed" ? 255 : sample.groundKind === "bank" ? 210 : 0;
+        pixels.data[offset + 2] = 0;
+        pixels.data[offset + 3] = 255;
+      }
+    }
+    context.putImageData(pixels, 0, 0);
+  }
+  dutchPolderSurfaceTexture = new CanvasTexture(canvas);
+  dutchPolderSurfaceTexture.magFilter = LinearFilter;
+  dutchPolderSurfaceTexture.minFilter = LinearMipmapLinearFilter;
+  dutchPolderSurfaceTexture.anisotropy = 4;
+  dutchPolderSurfaceTexture.colorSpace = NoColorSpace;
+  return dutchPolderSurfaceTexture;
+}
 
 const VIKING_TRAFFIC_TEXTURE_SIZE = 512;
 const VIKING_WORLD_MIN_X = -96;
@@ -1427,6 +1475,16 @@ export function getPieceMaterial(
   const isTransparent = pieceMaterialIsTransparent(material, color);
   const isSteel = material === "steel";
   const isPaintedSteel = isSteel && textureProfile === "painted-steel";
+  // АВТОМОБИЛЬНЫЙ МЕТАЛЛИК. Тонкая наружная панель под краской — не то же
+  // самое, что окрашенный архитектурный металл: у здания покрытие матовое и
+  // почти без отражения, у машины оно зеркалит небо.
+  //
+  // До этой ветки `sheetMetal` вообще не попадал ни в один металлический
+  // случай (все они проверяли `material === "steel"`), сваливался в общий
+  // хвост и получал metalness 0, roughness 0.94 И СВОЮ ЖЕ ТЕКСТУРУ В BUMP —
+  // то есть выглядел матовой тканью, чем бы его ни красили.
+  const isCarPaint = material === "sheetMetal"
+    && textureProfile === "painted-steel";
   const isMatteAluminium = isSteel && textureProfile === "matte-aluminium";
   const isGoldMirror = isSteel && textureProfile === "gold-mirror";
   const isNimbusCeramic = textureProfile === "nimbus-ceramic-composite";
@@ -1444,7 +1502,8 @@ export function getPieceMaterial(
   const standardMaterial = new MeshStandardMaterial({
     color,
     map: surfaceTexture,
-    bumpMap: isGlass || isPaintedSteel || isMatteAluminium || isGoldMirror
+    bumpMap: isGlass || isPaintedSteel || isCarPaint || isMatteAluminium
+      || isGoldMirror
       ? null
       : surfaceTexture,
     bumpScale: bumpScaleByMaterial[material],
@@ -1453,6 +1512,8 @@ export function getPieceMaterial(
     depthWrite: !isTransparent,
     metalness: isGoldMirror
       ? 0.92
+      : isCarPaint
+        ? 0.7
       : isMatteAluminium
         ? 0.08
         : isPaintedSteel
@@ -1462,6 +1523,8 @@ export function getPieceMaterial(
             : material === "graphiteStone" ? 0.08 : 0,
     roughness: isGoldMirror
       ? 0.16
+      : isCarPaint
+        ? 0.17
       : isNimbusCeramic
         ? 0.58
         : isNimbusCarbon
@@ -1491,6 +1554,8 @@ export function getPieceMaterial(
                       : 0.94,
     envMapIntensity: isGoldMirror
       ? 1.8
+      : isCarPaint
+        ? 1.9
       : isMatteAluminium
         ? 0.45
         : isSteel
@@ -1528,6 +1593,7 @@ export function getPieceMaterial(
       shader.uniforms.uLandscapeSoilMap = { value: getMaterialTexture("soil") };
       shader.uniforms.uVikingTrafficMap = { value: getVikingTrafficTexture() };
       shader.uniforms.uCitySurfaceMap = { value: getCitySurfaceTexture() };
+      shader.uniforms.uDutchPolderSurfaceMap = { value: getDutchPolderSurfaceTexture() };
       // A cached material may be compiled again for a recreated WebGL
       // renderer. Keep only its current program so day/night updates do not
       // retain dead renderers or grow linearly after every scene reset.
@@ -1718,6 +1784,7 @@ uniform float uWetness;
 uniform sampler2D uLandscapeSoilMap;
 uniform sampler2D uVikingTrafficMap;
 uniform sampler2D uCitySurfaceMap;
+uniform sampler2D uDutchPolderSurfaceMap;
 
 float materialValueNoise(vec2 p) {
   vec2 cellIndex = floor(p);
@@ -2019,6 +2086,38 @@ if (citySurface > 0.5) {
   // Water-darkened curb and drain edges remain matte here; the physically
   // glossy response is introduced below with the common wetness pass.
   diffuseColor.rgb *= 1.0 - cityRetainedWater * 0.18;
+}
+
+// Dutch polder paths and exposed channel beds are world-space masks over the
+// SAME grass/soil material used by the destructible cover cells. The intact
+// transition mesh and post-hit voxels therefore sample identical texels.
+float dutchPolderSurface =
+  (1.0 - step(0.5, abs(vLandscapeSurfaceProfile - 3.0))) * materialUp;
+if (dutchPolderSurface > 0.5) {
+  vec2 dutchPoint = vMaterialCoordinate.xz;
+  vec2 dutchUv = clamp(
+    vec2((dutchPoint.x + 96.0) / 192.0, (dutchPoint.y + 96.0) / 192.0),
+    vec2(0.001),
+    vec2(0.999)
+  );
+  vec2 dutchMask = texture2D(uDutchPolderSurfaceMap, dutchUv).rg;
+  float dutchBroad = materialValueNoise(dutchPoint * 0.18 + vec2(9.7, 31.2));
+  float dutchFine = materialValueNoise(dutchPoint * 0.77 + vec2(43.1, 6.4));
+  vec3 dutchSoil = sRGBTransferEOTF(
+    texture2D(uLandscapeSoilMap, dutchPoint * 0.34 + vec2(0.23, 0.51))
+  ).rgb;
+  vec3 dutchPath = dutchSoil * mix(
+    vec3(0.74, 0.58, 0.38),
+    vec3(0.92, 0.74, 0.48),
+    dutchFine
+  );
+  vec3 dutchBed = dutchSoil * mix(
+    vec3(0.45, 0.36, 0.27),
+    vec3(0.62, 0.49, 0.34),
+    dutchBroad
+  );
+  diffuseColor.rgb = mix(diffuseColor.rgb, dutchPath, dutchMask.r * 0.94);
+  diffuseColor.rgb = mix(diffuseColor.rgb, dutchBed, dutchMask.g * 0.96);
 }
 
 // Standing dampness: glossy splotches on upward, sky-exposed faces.

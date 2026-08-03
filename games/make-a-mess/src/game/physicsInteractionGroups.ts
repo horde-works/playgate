@@ -42,10 +42,29 @@ export const ACTOR_NORMAL = interactionGroups(
     GROUP_VEHICLE_ATTACHMENT,
 );
 
-/** Passenger on an airborne carrier may cross the ground-player boundary. */
+/**
+ * Пассажир НА ХОДУ по палубе носителя.
+ *
+ * Отличие от `ACTOR_NORMAL` ровно одно и намеренное: снята граница мира.
+ * Кольцо-ограничитель держит пешехода на острове, а улетающий на корабле
+ * обязан его пересечь.
+ *
+ * ВСЁ ОСТАЛЬНОЕ ОБЯЗАНО ОСТАТЬСЯ. Пока отсюда выпадал `GROUP_VEHICLE`,
+ * капсула переставала сталкиваться с носителем в тот самый миг, когда его
+ * признавали подвижной опорой, — то есть палуба, по которой человек идёт,
+ * исчезала у него из-под ног, и он проваливался вниз сквозь корабль.
+ * Ощущалось это как «раньше я ехал в его системе отсчёта, а теперь падаю».
+ *
+ * Сидящий пассажир глушится ИНАЧЕ и отдельно — `setCollisionGroups(0)` на
+ * время занятого места, — так что снимать здесь носитель было незачем.
+ */
 export const ACTOR_ABOARD = interactionGroups(
   GROUP_ACTOR,
-  GROUP_WORLD | GROUP_DEBRIS | GROUP_ACTOR_DETAIL,
+  GROUP_WORLD |
+    GROUP_DEBRIS |
+    GROUP_ACTOR_DETAIL |
+    GROUP_VEHICLE |
+    GROUP_VEHICLE_ATTACHMENT,
 );
 
 export const DEBRIS_ACTOR_DETAIL = interactionGroups(

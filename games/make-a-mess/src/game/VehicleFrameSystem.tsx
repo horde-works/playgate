@@ -2875,8 +2875,10 @@ export function VehicleFrameSystem({
             closingSpeed: resolution.closingSpeed,
             vehiclePieceId: member.piece.id,
             vehicleIntensity: resolution.vehicleIntensity,
+            vehicleMassAdvantage: resolution.vehicleMassAdvantage,
             worldPieceId: obstacle?.pieceId ?? null,
             worldIntensity: resolution.obstacleIntensity,
+            worldMassAdvantage: resolution.obstacleMassAdvantage,
           });
         }
         if (contactImpulses.length > 0) {

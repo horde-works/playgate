@@ -46,9 +46,13 @@ export function equinoxSunDirection(
  * Three-hour positions around the solar day. The renderer can glide between
  * them, while clocks read the same continuous value instead of maintaining a
  * second, decorative notion of time.
+ *
+ * Утро — исключение из трёхчасового шага: в 06:00 равноденственное солнце
+ * стоит ровно на горизонте, свет идёт вскользь и мир остаётся тёмным. Час
+ * спустя оно уже поднялось над крышами, поэтому фаза читается как 07:00.
  */
 export const TIME_OF_DAY_TARGETS: Readonly<Record<TimeOfDay, number>> = {
-  dawn: 0,
+  dawn: 1 / 24,
   morning: 0.125,
   day: 0.25,
   afternoon: 0.375,

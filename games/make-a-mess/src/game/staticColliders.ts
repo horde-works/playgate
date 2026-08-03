@@ -117,7 +117,9 @@ function pieceColliderTemplate(piece: BreakablePieceDefinition): {
   readonly corners: readonly (readonly [number, number, number])[];
   readonly indices: readonly number[];
 } {
-  return piece.shape === "sphere"
+  return piece.visualMesh
+    ? { corners: piece.visualMesh.vertices, indices: piece.visualMesh.indices }
+    : piece.shape === "sphere"
     ? { corners: sphereCorners, indices: sphereIndices }
     : piece.shape === "cylinder"
       ? { corners: prismCorners, indices: prismIndices }
@@ -157,6 +159,8 @@ function pieceSetHash(pieces: readonly BreakablePieceDefinition[]): string {
       ...piece.position.map(String),
       ...rotation.map(String),
       ...piece.size.map(String),
+      ...(piece.visualMesh?.vertices.flatMap((vertex) => vertex.map(String)) ?? []),
+      ...(piece.visualMesh?.indices.map(String) ?? []),
     ];
     for (const token of tokens) {
       primary = hashToken(primary, token);
@@ -258,7 +262,7 @@ export function buildStaticColliderMeshes(
 ): readonly StaticColliderMeshDefinition[] {
   const chunks = new Map<string, BreakablePieceDefinition[]>();
   for (const piece of pieces) {
-    if (piece.material === "foliage") {
+    if (piece.material === "foliage" || piece.intactCollider === false) {
       continue;
     }
     const key = chunkKey(piece);
@@ -294,7 +298,7 @@ export function createStaticColliderMeshStore(
   const chunks = new Map<string, BreakablePieceDefinition[]>();
   const pieceChunk = new Map<string, string>();
   for (const piece of pieces) {
-    if (piece.material === "foliage") {
+    if (piece.material === "foliage" || piece.intactCollider === false) {
       continue;
     }
     const key = chunkKey(piece);
