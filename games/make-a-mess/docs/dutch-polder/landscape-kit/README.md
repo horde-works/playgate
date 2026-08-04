@@ -13,6 +13,11 @@ Status: canonical standalone kit, before scene adapter.
 - Nederlands Openluchtmuseum owns the working-garden distinction: vegetable
   and flower beds are separate cultivated strips used for sowing, weeding and
   harvesting, not a flat ornamental colour field.
+- The historical `schouw` construction family owns the flat bottom and simple
+  raked board ends; the yard-kit passport owns the 4.60 × 1.45 m envelope.
+- The yard study PNGs own the accepted visual character of the schouw,
+  mooring-post module and private jetty. The fixed PNGs in this directory are
+  the canonical geometry proof, not a second design.
 
 Sources:
 
@@ -20,6 +25,8 @@ Sources:
 - https://monumentenregister.cultureelerfgoed.nl/monumenten/339227
 - https://zaansmuseum.nl/en/see-do/wooden-dreams/
 - https://www.openluchtmuseum.nl/nl/verdiep/de-tuinen-van-het-huis-van-herinnering
+- https://nl.wikipedia.org/wiki/Schouw_(historisch_scheepje)
+- https://www.johvdmeulen.nl/schouw-bouwen/
 
 ## Authored dimensions
 
@@ -30,6 +37,9 @@ Sources:
 - retaining masonry module: `5.00 m`;
 - raised field-bed module: `4 × 0.82 × 6.00 m` ridges;
 - timber revetment module: `6.40 m`.
+- schouw: `4.60 × 1.45 m`, `0.15 m` light draught, waterline at local `y=0`;
+- mooring posts: two `1.60 m` piles at `3.20 m` centres;
+- private jetty: `2.40 × 1.10 m`, deck top `0.30 m` above its local waterline;
 - timber field-fence module: `6.00 m`, four driven posts and two rails;
 - hedgerow module: `6.00 m`, seven woody stems beneath overlapping crowns;
 - pollard-willow module: one trunk, five cut-back branches and five separate
@@ -48,6 +58,10 @@ measurements.
 - sheet piling relies on water as support instead of walers and land anchors;
 - finished path is wider than its sub-base or floats over a terrain step.
 - a hedge is a row of foliage blocks without woody stems;
+- a schouw gains a keel, pointed stems, cabin or yacht-like fittings;
+- a mooring pile has a flat top or loses its forged ring;
+- a private jetty gains a railing, loses one of its seven deck boards or puts
+  its steps anywhere except the water end;
 - a pollard willow is a generic tree silhouette without the cut crown and
   visible regrowth branches;
 - fences, hedges or willows are redrawn ad hoc in the world instead of placed
@@ -57,4 +71,5 @@ measurements.
 
 Scene prefabs must be generated from the exact canonical parts grouped here.
 World placement may rotate or repeat a module, but may not rebuild a simpler
-bridge, wall, field, revetment, willow, fence or hedge in a scene-only helper.
+schouw, mooring module, jetty, bridge, wall, field, revetment, willow, fence or
+hedge in a scene-only helper.

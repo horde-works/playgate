@@ -4,6 +4,13 @@ import type {
   ObjectMaterialId,
   ObjectPoint,
 } from "./objectModel.ts";
+import { reverseTriangleWinding } from "./objectModel.ts";
+import { dutchLampFixture } from "../dutchLighting/dutchLightingFixtures.ts";
+import {
+  facetedFrustumWithFrontOpenings,
+  frontWindowAssembly,
+  sideWindowAssembly,
+} from "../dutchArchitecture/dutchWindowAssemblies.ts";
 
 export const JONGE_SCHAAP_ROTOR_SPAN = 20.68;
 export const JONGE_SCHAAP_ROTOR_RADIUS = JONGE_SCHAAP_ROTOR_SPAN / 2;
@@ -70,32 +77,6 @@ const polar = (radius: number, y: number, angle: number): ObjectPoint => point(
   TOWER_Z + Math.cos(angle) * radius,
 );
 
-const hexagonalFrustum = (
-  id: string,
-  group: string,
-  material: ObjectMaterialId,
-  y0: number,
-  y1: number,
-  radius0: number,
-  radius1: number,
-) => {
-  const vertices: ObjectPoint[] = [];
-  for (let ring = 0; ring < 2; ring += 1) {
-    for (let index = 0; index < HEXAGON; index += 1) {
-      const angle = (index / HEXAGON) * TAU + Math.PI / HEXAGON;
-      vertices.push(polar(ring === 0 ? radius0 : radius1, ring === 0 ? y0 : y1, angle));
-    }
-  }
-  const triangles: Array<readonly [number, number, number]> = [];
-  for (let index = 0; index < HEXAGON; index += 1) {
-    const next = (index + 1) % HEXAGON;
-    triangles.push([index, next, HEXAGON + next], [index, HEXAGON + next, HEXAGON + index]);
-  }
-  triangles.push([0, 2, 1], [0, 3, 2], [0, 4, 3], [0, 5, 4]);
-  triangles.push([6, 7, 8], [6, 8, 9], [6, 9, 10], [6, 10, 11]);
-  addMesh(id, group, material, vertices, triangles);
-};
-
 const hexagonalAnnulus = (
   id: string,
   y: number,
@@ -129,7 +110,7 @@ const hexagonalAnnulus = (
       [li, uin, ui], [li, lin, uin],
     );
   }
-  addMesh(id, "gallery", "timber-mid", vertices, triangles);
+  addMesh(id, "gallery", "timber-mid", vertices, reverseTriangleWinding(triangles));
 };
 
 const addRing = (
@@ -168,21 +149,21 @@ const addGableRoof = () => {
     point(-7.15, 4.1, 1.65), point(7.15, 4.1, 1.65),
     point(0, 5.55, HALL_REAR_Z - 0.2), point(0, 5.55, 1.65),
   ];
-  addMesh("saw-hall-roof-rear", "saw-hall", "roof", rearVertices, [
+  addMesh("saw-hall-roof-rear", "saw-hall", "roof", rearVertices, reverseTriangleWinding([
     [0, 4, 5], [0, 5, 2],
     [4, 1, 3], [4, 3, 5],
     [0, 1, 4], [2, 5, 3],
-  ], true);
+  ]), true);
   const cutHalfWidth = 5.25;
   const cutEdgeY = 4.1 + (1 - cutHalfWidth / 7.15) * 1.45;
   addMesh("saw-hall-roof-front-left", "saw-hall", "roof", [
     point(-7.15, 4.1, 1.65), point(-cutHalfWidth, cutEdgeY, 1.65),
     point(-7.15, 4.1, HALL_FRONT_Z + 0.2), point(-cutHalfWidth, cutEdgeY, HALL_FRONT_Z + 0.2),
-  ], [[0, 1, 3], [0, 3, 2]], true);
+  ], reverseTriangleWinding([[0, 1, 3], [0, 3, 2]]), true);
   addMesh("saw-hall-roof-front-right", "saw-hall", "roof", [
     point(cutHalfWidth, cutEdgeY, 1.65), point(7.15, 4.1, 1.65),
     point(cutHalfWidth, cutEdgeY, HALL_FRONT_Z + 0.2), point(7.15, 4.1, HALL_FRONT_Z + 0.2),
-  ], [[0, 1, 3], [0, 3, 2]], true);
+  ], reverseTriangleWinding([[0, 1, 3], [0, 3, 2]]), true);
   addBeam("saw-hall-ridge", "saw-hall", "paint-light", point(0, 5.58, HALL_REAR_Z - 0.3), point(0, 5.58, 1.62), 0.17, 0.17);
   addBeam("saw-hall-left-eave", "saw-hall", "paint-light", point(-7.18, 4.08, HALL_REAR_Z - 0.25), point(-7.18, 4.08, HALL_FRONT_Z + 0.25), 0.18, 0.16);
   addBeam("saw-hall-right-eave", "saw-hall", "paint-light", point(7.18, 4.08, HALL_REAR_Z - 0.25), point(7.18, 4.08, HALL_FRONT_Z + 0.25), 0.18, 0.16);
@@ -228,9 +209,24 @@ const addFrontGable = () => {
   addBox("front-centre-pier", "saw-hall", "cladding", point(0, 2.15, HALL_FRONT_Z), point(1.15, 3.9, 0.24));
   addBox("front-right-wall", "saw-hall", "cladding", point(6.42, 2.15, HALL_FRONT_Z), point(1.36, 3.9, 0.24));
   addBox("front-door-head", "saw-hall", "cladding", point(0, 3.72, HALL_FRONT_Z), point(11.75, 0.78, 0.24));
-  addMesh("front-gable", "saw-hall", "cladding", [
-    point(-6.9, 4.05, HALL_FRONT_Z),
-    point(6.9, 4.05, HALL_FRONT_Z),
+  const gableWindow = { id: "front-gable-window", centerX: 0, centerY: 4.62, width: 1.2, height: 0.72 } as const;
+  const windowBottom = gableWindow.centerY - gableWindow.height / 2;
+  const windowTop = gableWindow.centerY + gableWindow.height / 2;
+  const halfWidthAt = (y: number) => 6.9 * (1 - (y - 4.05) / (5.48 - 4.05));
+  addMesh("front-gable-below-window", "saw-hall", "cladding", [
+    point(-halfWidthAt(4.05), 4.05, HALL_FRONT_Z), point(halfWidthAt(4.05), 4.05, HALL_FRONT_Z),
+    point(-halfWidthAt(windowBottom), windowBottom, HALL_FRONT_Z), point(halfWidthAt(windowBottom), windowBottom, HALL_FRONT_Z),
+  ], [[0, 1, 3], [0, 3, 2]], true);
+  addMesh("front-gable-window-left", "saw-hall", "cladding", [
+    point(-halfWidthAt(windowBottom), windowBottom, HALL_FRONT_Z), point(-gableWindow.width / 2, windowBottom, HALL_FRONT_Z),
+    point(-halfWidthAt(windowTop), windowTop, HALL_FRONT_Z), point(-gableWindow.width / 2, windowTop, HALL_FRONT_Z),
+  ], [[0, 1, 3], [0, 3, 2]], true);
+  addMesh("front-gable-window-right", "saw-hall", "cladding", [
+    point(gableWindow.width / 2, windowBottom, HALL_FRONT_Z), point(halfWidthAt(windowBottom), windowBottom, HALL_FRONT_Z),
+    point(gableWindow.width / 2, windowTop, HALL_FRONT_Z), point(halfWidthAt(windowTop), windowTop, HALL_FRONT_Z),
+  ], [[0, 1, 3], [0, 3, 2]], true);
+  addMesh("front-gable-above-window", "saw-hall", "cladding", [
+    point(-halfWidthAt(windowTop), windowTop, HALL_FRONT_Z), point(halfWidthAt(windowTop), windowTop, HALL_FRONT_Z),
     point(0, 5.48, HALL_FRONT_Z),
   ], [[0, 1, 2]], true);
   for (const x of [-5.74, -0.58, 0.58, 5.74]) {
@@ -241,9 +237,16 @@ const addFrontGable = () => {
   addOpenDoorLeaf("front-door-left-inner", -0.58, -1);
   addOpenDoorLeaf("front-door-right-inner", 0.58, 1);
   addOpenDoorLeaf("front-door-right-outer", 5.74, -1);
-  addBox("front-gable-window", "saw-hall", "opening", point(0, 4.62, HALL_FRONT_Z + 0.13), point(1.2, 0.72, 0.08));
-  addBeam("front-gable-window-head", "saw-hall", "paint-light", point(-0.72, 5.06, HALL_FRONT_Z + 0.21), point(0.72, 5.06, HALL_FRONT_Z + 0.21), 0.11, 0.08);
-  addBeam("front-gable-window-sill", "saw-hall", "paint-light", point(-0.72, 4.18, HALL_FRONT_Z + 0.21), point(0.72, 4.18, HALL_FRONT_Z + 0.21), 0.11, 0.08);
+  parts.push(...frontWindowAssembly({
+    ...gableWindow,
+    group: "front-gable-window",
+    faceZAt: () => HALL_FRONT_Z,
+    wallDepth: 0.24,
+    columns: 2,
+    rows: 2,
+    interiorDepth: 1.15,
+  }));
+  addBeam("front-gable-window-lamp-carrier", "front-gable-window-interior", "timber-dark", point(-0.72, 5.3, 10.15), point(0.72, 5.3, 10.15), 0.13, 0.13);
 };
 
 const addSawFrame = (index: number, x: number, z: number, width: number) => {
@@ -334,19 +337,44 @@ const addOldDutchSail = (blade: number) => {
 
 // Long, low production shed: it establishes the object before the mill tower does.
 addBox("saw-hall-floor", "saw-hall", "foundation", point(0, 0.18, 1), point(13.8, 0.36, 20));
-addBox("saw-hall-left-wall", "saw-hall", "cladding", point(-6.9, 2.18, 1), point(0.24, 4, 20));
-addBox("saw-hall-right-wall", "saw-hall", "cladding", point(6.9, 2.18, 1), point(0.24, 4, 20));
+const hallSideWindowZs = [-6.2, -1.8, 2.6, 7] as const;
+const hallWindowBottom = 2.42 - 1.15 / 2;
+const hallWindowTop = 2.42 + 1.15 / 2;
+const hallWindowSegments = [
+  [HALL_REAR_Z, hallSideWindowZs[0] - 0.75],
+  [hallSideWindowZs[0] + 0.75, hallSideWindowZs[1] - 0.75],
+  [hallSideWindowZs[1] + 0.75, hallSideWindowZs[2] - 0.75],
+  [hallSideWindowZs[2] + 0.75, hallSideWindowZs[3] - 0.75],
+  [hallSideWindowZs[3] + 0.75, HALL_FRONT_Z],
+] as const;
+for (const side of [-1, 1] as const) {
+  addBox(`saw-hall-side-${side}-lower`, "saw-hall", "cladding", point(side * 6.9, (0.18 + hallWindowBottom) / 2, 1), point(0.24, hallWindowBottom - 0.18, 20));
+  addBox(`saw-hall-side-${side}-upper`, "saw-hall", "cladding", point(side * 6.9, (hallWindowTop + 4.18) / 2, 1), point(0.24, 4.18 - hallWindowTop, 20));
+  for (const [segment, [z0, z1]] of hallWindowSegments.entries()) {
+    addBox(`saw-hall-side-${side}-window-band-${segment}`, "saw-hall", "cladding", point(side * 6.9, 2.42, (z0 + z1) / 2), point(0.24, 1.15, z1 - z0));
+  }
+}
 addBox("saw-hall-rear-wall", "saw-hall", "cladding", point(0, 2.18, HALL_REAR_Z), point(13.8, 4, 0.24));
 for (const x of [-6.72, 6.72]) {
   for (const z of [-7.2, -3.6, 0, 3.6, 7.2]) {
     addBeam(`hall-frame-${x}-${z}`, "saw-hall", "timber-dark", point(x, 0.35, z), point(x, 4.22, z), 0.2, 0.2);
   }
 }
-for (const side of [-1, 1]) {
-  for (const z of [-6.2, -1.8, 2.6, 7]) {
-    addBox(`side-window-${side}-${z}`, "saw-hall", "opening", point(side * 7.03, 2.42, z), point(0.08, 1.15, 1.5));
-    addBeam(`side-window-sill-${side}-${z}`, "saw-hall", "paint-light", point(side * 7.1, 1.77, z - 0.86), point(side * 7.1, 1.77, z + 0.86), 0.1, 0.09);
-    addBeam(`side-window-head-${side}-${z}`, "saw-hall", "paint-light", point(side * 7.1, 3.07, z - 0.86), point(side * 7.1, 3.07, z + 0.86), 0.1, 0.09);
+for (const side of [-1, 1] as const) {
+  for (const z of hallSideWindowZs) {
+    parts.push(...sideWindowAssembly({
+      id: `side-window-${side}-${z}`,
+      group: "saw-hall-window",
+      side,
+      wallX: side * 7.02,
+      centerY: 2.42,
+      centerZ: z,
+      width: 1.5,
+      height: 1.15,
+      wallDepth: 0.24,
+      columns: 2,
+      rows: 2,
+    }));
   }
 }
 addGableRoof();
@@ -355,7 +383,22 @@ addFrontGable();
 // Hexagonal smock, structurally distinct from the octagonal De Kat tower.
 const towerBottomRadius = 8.9 / (2 * Math.cos(Math.PI / 6));
 const towerTopRadius = 5.2 / (2 * Math.cos(Math.PI / 6));
-hexagonalFrustum("hexagonal-smock", "tower", "thatch", 3.95, 13.5, towerBottomRadius * 0.89, towerTopRadius);
+const towerWindow = { id: "tower-upper-window", centerX: 0, centerY: 10.8, width: 0.84, height: 1.1 } as const;
+const towerRadius0 = towerBottomRadius * 0.89;
+const towerRadiusAt = (y: number) => towerRadius0 + (towerTopRadius - towerRadius0) * ((y - 3.95) / (13.5 - 3.95));
+const towerFrontZAt = (y: number) => TOWER_Z + Math.cos(Math.PI / HEXAGON) * towerRadiusAt(y);
+parts.push(...facetedFrustumWithFrontOpenings({
+  id: "hexagonal-smock",
+  group: "tower",
+  material: "thatch",
+  sides: HEXAGON,
+  centerZ: TOWER_Z,
+  y0: 3.95,
+  y1: 13.5,
+  radius0: towerRadius0,
+  radius1: towerTopRadius,
+  openings: [towerWindow],
+}));
 for (let index = 0; index < HEXAGON; index += 1) {
   const angle = (index / HEXAGON) * TAU + Math.PI / HEXAGON;
   addBeam(
@@ -368,8 +411,17 @@ for (let index = 0; index < HEXAGON; index += 1) {
     0.16,
   );
 }
-addBox("tower-front-door", "tower", "opening", point(0, 7.62, TOWER_Z + towerBottomRadius * 0.74), point(1.05, 1.8, 0.12), point(-0.19, 0, 0));
-addBox("tower-upper-window", "tower", "opening", point(0, 10.8, TOWER_Z + 3.58), point(0.84, 1.1, 0.1), point(-0.19, 0, 0));
+addBox("tower-front-door", "tower", "dark-recess", point(0, 7.62, TOWER_Z + towerBottomRadius * 0.74), point(1.05, 1.8, 0.12), point(-0.19, 0, 0));
+parts.push(...frontWindowAssembly({
+  ...towerWindow,
+  group: "tower-window",
+  faceZAt: towerFrontZAt,
+  wallDepth: 0.22,
+  columns: 2,
+  rows: 2,
+  frameMaterial: "timber-dark",
+  interiorDepth: 1.1,
+}));
 
 // Low gallery deliberately cuts across the shed roof line.
 hexagonalAnnulus("gallery-deck", JONGE_SCHAAP_GALLERY_Y, towerBottomRadius - 0.22, JONGE_SCHAAP_GALLERY_OUTER_DIAMETER / 2, 0.28);
@@ -423,7 +475,7 @@ for (let section = 0; section < capSections.length - 1; section += 1) {
 capTriangles.push([0, 1, 3], [0, 3, 2]);
 const capEnd = (capSections.length - 1) * 4;
 capTriangles.push([capEnd, capEnd + 3, capEnd + 1], [capEnd, capEnd + 2, capEnd + 3]);
-addMesh("cap-hull", "cap", "thatch", capVertices, capTriangles);
+addMesh("cap-hull", "cap", "thatch", capVertices, reverseTriangleWinding(capTriangles));
 for (const [index, section] of capSections.entries()) {
   addBeam(`cap-rib-${index}`, "cap", "timber-dark", point(-section.halfWidth, section.top, TOWER_Z + section.z), point(section.halfWidth, section.top, TOWER_Z + section.z), 0.11, 0.14);
 }
@@ -479,9 +531,33 @@ for (let spoke = 0; spoke < 10; spoke += 1) {
   addBeam("drive-wheel-spoke-" + spoke, "drivetrain", "timber-mid", point(5.15, 7.9, 0.25), point(5.15, 7.9 + Math.cos(angle) * 1.5, 0.25 + Math.sin(angle) * 1.5), 0.1, 0.09);
 }
 
+for (const [id, x, z] of [["west", -3.65, 3.2], ["east", 3.65, 3.2]] as const) {
+  parts.push(...dutchLampFixture({
+    id: `saw-floor-lamp:${id}`,
+    group: "lighting-fixtures",
+    lens: point(x, 3.98, z),
+    carrierPoint: point(x, 4.68, z),
+    carrier: "ceiling",
+    lampClass: "work",
+    poolGroupId: "dutch-polder:m3-saw-floor",
+    priority: id === "west" ? 2.3 : 1.8,
+  }));
+}
+parts.push(...dutchLampFixture({
+  id: "front-gable-window-interior-lamp",
+  group: "lighting-fixtures",
+  // Keep the bulb inside the right pane rather than hidden by the central mullion.
+  lens: point(0.3, 4.84, 10.54),
+  carrierPoint: point(0.3, 5.3, 10.54),
+  carrier: "ceiling",
+  lampClass: "work",
+  poolGroupId: "dutch-polder:m3-saw-floor",
+  priority: 2.0,
+}));
+
 export const jongeSchaapSawmillObject: ObjectLabModel = {
   id: "dutch-windmill-jonge-schaap-sawmill-m3",
-  revision: "m3-2026-08-02",
+  revision: "m3-2026-08-04-real-windows-a3",
   title: "Het Jonge Schaap-type hexagonal sawmill — structural grey model",
   units: "metres",
   coordinates: { up: "+Y", front: "+Z", origin: "ground-centre" },
@@ -558,6 +634,8 @@ export const jongeSchaapSawmillObject: ObjectLabModel = {
       fov: 34,
       hiddenGroups: ["tower", "cap", "rotor", "gallery", "saw-hall", "roof-joint", "saw-hall-doors"],
     },
+    { id: "night-saw-floor", label: "Night · two working saw lines", projection: "perspective", position: point(-14, 7.4, 16), target: point(0, 3.5, 2.6), fov: 34, lighting: "night" },
+    { id: "night-gable-window", label: "Night · real gable window and interior bulb", projection: "perspective", position: point(1.2, 5.25, 16), target: point(0, 4.65, 10.55), fov: 24, lighting: "night" },
     { id: "silhouette", label: "Silhouette control", projection: "orthographic", position: point(0, 12.2, 49), target: point(0, 11.2, 1.5), orthoHeight: 29.5 },
   ],
 };

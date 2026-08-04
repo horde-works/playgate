@@ -4,6 +4,7 @@ import type {
   ObjectMaterialId,
   ObjectPoint,
 } from "../dutchWindmills/objectModel.ts";
+import { dutchLampFixture } from "../dutchLighting/dutchLightingFixtures.ts";
 
 export const ZAAN_HOUSE_FOOTPRINT_WIDTH = 7.2;
 export const ZAAN_HOUSE_FOOTPRINT_DEPTH = 10.8;
@@ -309,9 +310,47 @@ addBeam("service-junction-front-post", "service-junction", "timber-dark", point(
 addBeam("service-junction-rear-post", "service-junction", "timber-dark", point(2.1, 0.48, -2.72), point(2.1, 2.5, -2.72), 0.24, 0.24);
 addBeam("service-junction-brace", "service-junction", "timber-dark", point(2.1, 0.65, -2.55), point(2.1, 2.42, -1.35), 0.16, 0.18);
 
+for (const part of parts) {
+  if (part.material === "opening" && part.id.includes("window")) part.material = "glazing";
+}
+
+parts.push(
+  ...dutchLampFixture({
+    id: "front-room-lamp",
+    group: "lighting-fixtures",
+    lens: point(1.28, 2.43, 4.6),
+    carrierPoint: point(1.28, 3.18, 4.6),
+    carrier: "ceiling",
+    lampClass: "domestic",
+    poolGroupId: "dutch-polder:h1-house",
+    priority: 2.5,
+  }),
+  ...dutchLampFixture({
+    id: "workshop-lamp",
+    group: "lighting-fixtures",
+    lens: point(1.72, 1.84, 1.18),
+    carrierPoint: point(1.72, 2.5, 1.18),
+    carrier: "ceiling",
+    lampClass: "work",
+    poolGroupId: "dutch-polder:h1-house",
+    priority: 1.8,
+  }),
+  ...dutchLampFixture({
+    id: "front-entry-lantern",
+    group: "lighting-fixtures",
+    lens: point(1.08, 2.36, 5.8),
+    carrierPoint: point(1.08, 2.48, 5.49),
+    carrier: "wall-z",
+    outward: 1,
+    lampClass: "exterior",
+    poolGroupId: "dutch-polder:h1-house",
+    priority: 2.2,
+  }),
+);
+
 export const zaanTimberMerchantHouseObject: ObjectLabModel = {
   id: "dutch-house-zaan-timber-merchant-h1",
-  revision: "h1-2026-08-02",
+  revision: "h1-2026-08-04-real-windows-a2",
   title: "Zaan timber merchant house + workshop — structural grey model",
   units: "metres",
   coordinates: { up: "+Y", front: "+Z", origin: "ground-centre" },
@@ -361,6 +400,7 @@ export const zaanTimberMerchantHouseObject: ObjectLabModel = {
     { id: "high-three-quarter", label: "High 3/4 · roof junction", projection: "perspective", position: point(17, 18, 18), target: point(1.1, 3.0, -0.2), fov: 36 },
     { id: "frame-cutaway", label: "Cutaway · five yokes + roof load path", projection: "perspective", position: point(-13, 8.5, 15), target: point(0, 3.0, 0), fov: 34, hiddenGroups: ["main-cladding", "front-openings", "side-openings", "rear-openings", "rear-trim", "gable-trim", "roof-skin", "service-cladding", "service-openings", "service-trim", "service-roof"] },
     { id: "junction-cutaway", label: "Cutaway · workshop junction", projection: "perspective", position: point(14, 6.4, 9), target: point(2.0, 2.0, -0.5), fov: 32, hiddenGroups: ["main-cladding", "front-openings", "side-openings", "rear-openings", "rear-trim", "gable-trim", "roof-skin", "roof-frame", "service-cladding", "service-openings", "service-trim", "service-roof"] },
+    { id: "night-front", label: "Night · inhabited front and workshop", projection: "perspective", position: point(-11, 5.5, 14), target: point(1.0, 2.1, 3.2), fov: 34, lighting: "night" },
     { id: "silhouette", label: "Silhouette control", projection: "orthographic", position: point(0.8, 4.1, 30), target: point(0.8, 3.7, 1), orthoHeight: 10.4 },
   ],
 };

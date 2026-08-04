@@ -24,6 +24,7 @@ import type {
 } from "./destructionScene";
 import {
   buildProceduralRootNetwork,
+  coniferLimbRods,
   isEnhancedTreePiece,
   proceduralPineNeedleProfile,
   proceduralRootJointDiameter,
@@ -31,547 +32,21 @@ import {
   treeBarkPhase,
   treeWoodSpecies,
   treeVisualRootId,
+  willowWhipFan,
 } from "./treeVisualModel";
+import {
+  buildTreeVisuals,
+  hash,
+  HIDDEN_MATRIX,
+  UP,
+} from "./treeVisualInstances";
+import type { FoliageInstance, VisualInstance } from "./treeVisualInstances";
 import { treeBarkAtlas } from "./treeBarkAtlas";
 import { windState } from "./windState";
-
-const UP = new Vector3(0, 1, 0);
-const HIDDEN_MATRIX = new Matrix4().makeScale(0, 0, 0);
-
-interface VisualInstance {
-  readonly sourceId: string;
-  readonly matrix: Matrix4;
-  readonly color: Color;
-  readonly species: number;
-  readonly phase: number;
-  readonly bend?: number;
-  readonly taper?: number;
-}
-
-type FoliageInstance = VisualInstance;
-
-interface TreeGroup {
-  readonly id: string;
-  readonly kind: TreeVisualKind;
-  readonly seed: number;
-  trunk?: BreakablePieceDefinition;
-  readonly branches: BreakablePieceDefinition[];
-  readonly foliage: BreakablePieceDefinition[];
-}
-
-interface TreeVisualBuild {
-  readonly wood: readonly VisualInstance[];
-  readonly roots: readonly VisualInstance[];
-  readonly rootJoints: readonly VisualInstance[];
-  readonly foliage: readonly FoliageInstance[];
-  readonly conifer: readonly FoliageInstance[];
-}
 
 interface TreeShader {
   readonly uniforms: Record<string, { value: unknown }>;
   vertexShader: string;
-}
-
-function hash(seed: number, salt: number): number {
-  const value = Math.sin(seed * 127.1 + salt * 311.7) * 43758.5453;
-  return value - Math.floor(value);
-}
-
-function hashText(value: string): number {
-  let result = 2166136261;
-  for (let index = 0; index < value.length; index += 1) {
-    result ^= value.charCodeAt(index);
-    result = Math.imul(result, 16777619);
-  }
-  return (result >>> 0) / 0xffffffff;
-}
-
-function groupTrees(pieces: readonly BreakablePieceDefinition[]): TreeGroup[] {
-  const groups = new Map<string, TreeGroup>();
-  for (const piece of pieces) {
-    if (!isEnhancedTreePiece(piece)) {
-      continue;
-    }
-    const visual = piece.treeVisual;
-    const rootId = treeVisualRootId(piece);
-    if (!visual || !rootId) {
-      continue;
-    }
-    let group = groups.get(rootId);
-    if (!group) {
-      group = {
-        id: rootId,
-        kind: visual.kind,
-        seed: visual.seed,
-        branches: [],
-        foliage: [],
-      };
-      groups.set(rootId, group);
-    }
-    if (visual.role === "trunk") {
-      group.trunk = piece;
-    } else if (visual.role === "branch") {
-      group.branches.push(piece);
-    } else if (visual.role === "foliage") {
-      group.foliage.push(piece);
-    }
-  }
-  return [...groups.values()];
-}
-
-function pieceAxis(piece: BreakablePieceDefinition): Vector3 {
-  const rotation = piece.rotation ?? [0, 0, 0];
-  return UP.clone()
-    .applyQuaternion(
-      new Quaternion().setFromEuler(
-        new Euler(rotation[0], rotation[1], rotation[2]),
-      ),
-    )
-    .normalize();
-}
-
-function outwardBranchAxis(
-  piece: BreakablePieceDefinition,
-  trunk: BreakablePieceDefinition | undefined,
-): Vector3 {
-  const axis = pieceAxis(piece);
-  if (!trunk) {
-    return axis;
-  }
-
-  const trunkAxis = pieceAxis(trunk);
-  const fromTrunk = new Vector3(...piece.position).sub(
-    new Vector3(...trunk.position),
-  );
-  const radial = fromTrunk.addScaledVector(
-    trunkAxis,
-    -fromTrunk.dot(trunkAxis),
-  );
-  if (radial.lengthSq() < 1e-6 || axis.dot(radial) >= 0) {
-    return axis;
-  }
-
-  // Mirror only the component perpendicular to the trunk. The upward rise is
-  // already correct in the authored proxy; its radial component is reversed.
-  const alongTrunk = trunkAxis.clone().multiplyScalar(axis.dot(trunkAxis));
-  return alongTrunk.multiplyScalar(2).sub(axis).normalize();
-}
-
-function segmentMatrix(
-  start: Vector3,
-  end: Vector3,
-  diameter: number,
-): Matrix4 {
-  const direction = end.clone().sub(start);
-  const length = Math.max(0.001, direction.length());
-  direction.multiplyScalar(1 / length);
-  const rotation = new Quaternion().setFromUnitVectors(UP, direction);
-  return new Matrix4().compose(
-    start.clone().add(end).multiplyScalar(0.5),
-    rotation,
-    new Vector3(diameter, length, diameter),
-  );
-}
-
-function pushCurvedPiece(
-  output: VisualInstance[],
-  piece: BreakablePieceDefinition,
-  seed: number,
-  kind: TreeVisualKind,
-  role: "trunk" | "branch",
-  trunk?: BreakablePieceDefinition,
-  rootOutput?: VisualInstance[],
-  rootJointOutput?: VisualInstance[],
-): void {
-  const axis = role === "branch"
-    ? outwardBranchAxis(piece, trunk)
-    : pieceAxis(piece);
-  const center = new Vector3(...piece.position);
-  const length = piece.size[1];
-  const start = center.clone().addScaledVector(axis, -length / 2);
-  const end = center.clone().addScaledVector(axis, length / 2);
-  const identityNoise = hashText(piece.id);
-  const profile = proceduralWoodTubeProfile(role);
-  const bend = length * profile.bendRatio;
-  const species = treeWoodSpecies(kind);
-
-  // One connected tube per trunk or authored branch. The old visual split a
-  // member into several open cylinders, so even a small bend exposed the sky
-  // through their transverse seams. Height subdivisions now live inside one
-  // mesh and the shader bends that continuous surface instead.
-  output.push({
-    sourceId: piece.id,
-    matrix: segmentMatrix(start, end, piece.size[0] * 1.08),
-    color: kind === "birch" && role === "trunk"
-      ? new Color("#ded9c9")
-      : new Color(piece.color),
-    species,
-    phase: treeBarkPhase(seed, piece.id),
-    bend:
-      (bend / Math.max(piece.size[0] * 1.08, 0.001)) *
-      (0.65 + identityNoise * 0.7),
-    taper: profile.tipScale,
-  });
-
-  if (role !== "trunk") {
-    return;
-  }
-
-  // Roots are a branched render network: thick flare near the trunk, curved
-  // tapered sections along the soil, then buried terminal segments. The trunk
-  // remains the single cheap gameplay collider.
-  const rootBase = start.clone().addScaledVector(axis, piece.size[0] * 0.025);
-  const roots = buildProceduralRootNetwork(
-    seed + identityNoise * 997,
-    piece.size[0],
-    kind,
-  );
-  roots.forEach((root, rootIndex) => {
-    const rootPoints = root.points.map((point) =>
-      rootBase.clone().add(new Vector3(...point)),
-    );
-    for (let index = 0; index < rootPoints.length - 1; index += 1) {
-      (rootOutput ?? output).push({
-        sourceId: piece.id,
-        matrix: segmentMatrix(
-          rootPoints[index],
-          rootPoints[index + 1],
-          root.diameters[index],
-        ),
-        color: kind === "birch"
-          ? new Color("#c8c1ae")
-          : new Color(piece.color).multiplyScalar(0.88),
-        species,
-        phase: hash(seed + identityNoise * 79, 80 + rootIndex * 5 + index),
-        bend: 0,
-        taper: 1,
-      });
-    }
-    for (let index = 1; index < rootPoints.length - 1; index += 1) {
-      const diameter = proceduralRootJointDiameter(
-        root.diameters[index - 1],
-        root.diameters[index],
-      );
-      rootJointOutput?.push({
-        sourceId: piece.id,
-        matrix: new Matrix4().compose(
-          rootPoints[index],
-          new Quaternion(),
-          new Vector3(diameter, diameter * 0.9, diameter),
-        ),
-        color: kind === "birch"
-          ? new Color("#c8c1ae")
-          : new Color(piece.color).multiplyScalar(0.88),
-        species,
-        phase: hash(seed + identityNoise * 83, 180 + rootIndex * 5 + index),
-        bend: 0,
-        taper: 1,
-      });
-    }
-  });
-}
-
-function pushBirchTwig(
-  output: VisualInstance[],
-  trunk: BreakablePieceDefinition,
-  foliage: BreakablePieceDefinition,
-  seed: number,
-  index: number,
-): void {
-  const axis = pieceAxis(trunk);
-  const trunkCenter = new Vector3(...trunk.position);
-  const trunkStart = trunkCenter
-    .clone()
-    .addScaledVector(axis, -trunk.size[1] / 2);
-  const target = new Vector3(...foliage.position);
-  const projected = target.clone().sub(trunkStart).dot(axis);
-  const attachDistance = Math.max(
-    trunk.size[1] * 0.5,
-    Math.min(trunk.size[1] * 0.9, projected - trunk.size[1] * 0.08),
-  );
-  const start = trunkStart.clone().addScaledVector(axis, attachDistance);
-  const middle = start.clone().lerp(target, 0.56);
-  middle.y += trunk.size[0] * (0.45 + hash(seed, 100 + index) * 0.35);
-  const diameter = trunk.size[0] * (0.16 + hash(seed, 120 + index) * 0.05);
-  const color = new Color("#716957");
-  const directMiddle = start.clone().lerp(target, 0.56);
-  output.push({
-    sourceId: foliage.id,
-    matrix: segmentMatrix(start, target, diameter),
-    color,
-    species: 1,
-    phase: hash(seed, 180 + index),
-    bend:
-      middle.distanceTo(directMiddle) /
-      Math.max(diameter, 0.001),
-    taper: 0.4,
-  });
-}
-
-function pushPineWhorl(
-  output: VisualInstance[],
-  trunk: BreakablePieceDefinition,
-  tier: BreakablePieceDefinition,
-  seed: number,
-  tierIndex: number,
-): void {
-  const trunkAxis = pieceAxis(trunk);
-  const trunkCenter = new Vector3(...trunk.position);
-  const trunkStart = trunkCenter
-    .clone()
-    .addScaledVector(trunkAxis, -trunk.size[1] / 2);
-  const tierCenter = new Vector3(...tier.position);
-  const attachHeight = Math.max(
-    0,
-    Math.min(trunk.size[1], tierCenter.clone().sub(trunkStart).dot(trunkAxis)),
-  );
-  const attach = trunkStart.clone().addScaledVector(trunkAxis, attachHeight);
-  const isTip = tier.treeVisual?.localId === "tip";
-  const branchCount = isTip ? 4 : 7;
-  const yaw = tier.rotation?.[1] ?? 0;
-  const radiusX = tier.size[0] * (isTip ? 0.32 : 0.48);
-  const radiusZ = tier.size[2] * (isTip ? 0.32 : 0.48);
-
-  for (let index = 0; index < branchCount; index += 1) {
-    const angle =
-      yaw +
-      (index / branchCount) * Math.PI * 2 +
-      (hash(seed + tierIndex * 17, 310 + index) - 0.5) * 0.24;
-    const end = attach.clone().add(
-      new Vector3(
-        Math.cos(angle) * radiusX,
-        isTip
-          ? tier.size[1] * (0.12 + hash(seed, 320 + index) * 0.16)
-          : -tier.size[1] * (0.08 + hash(seed, 330 + index) * 0.15),
-        Math.sin(angle) * radiusZ,
-      ),
-    );
-    const diameter = trunk.size[0] * (isTip ? 0.055 : 0.085);
-    const color = new Color("#493629");
-    output.push({
-      sourceId: tier.id,
-      matrix: segmentMatrix(attach, end, diameter),
-      color,
-      species: 2,
-      phase: hash(seed + tierIndex * 29, 340 + index),
-      bend: tier.size[1] * (isTip ? 0.08 : 0.04) / Math.max(diameter, 0.001),
-      taper: 0.34,
-    });
-  }
-}
-
-function pushShrubTwigs(
-  output: VisualInstance[],
-  piece: BreakablePieceDefinition,
-): void {
-  const visual = piece.vegetationVisual;
-  if (!visual) {
-    return;
-  }
-  const rotation = new Quaternion().setFromEuler(
-    new Euler(...(piece.rotation ?? [0, 0, 0])),
-  );
-  const center = new Vector3(...piece.position);
-  const bottom = center
-    .clone()
-    .add(new Vector3(0, -piece.size[1] * 0.48, 0).applyQuaternion(rotation));
-  const twigCount = visual.kind === "hedge" ? 6 : 4;
-  const diameter = Math.max(
-    0.018,
-    Math.min(piece.size[0], piece.size[2]) * 0.028,
-  );
-
-  for (let index = 0; index < twigCount; index += 1) {
-    const angle =
-      (index / twigCount) * Math.PI * 2 +
-      hash(visual.seed, 410 + index) * 0.7;
-    const localEnd = new Vector3(
-      Math.cos(angle) * piece.size[0] * (0.16 + hash(visual.seed, 420 + index) * 0.22),
-      piece.size[1] * (0.48 + hash(visual.seed, 430 + index) * 0.42),
-      Math.sin(angle) * piece.size[2] * (0.16 + hash(visual.seed, 440 + index) * 0.22),
-    ).applyQuaternion(rotation);
-    output.push({
-      sourceId: piece.id,
-      matrix: segmentMatrix(bottom, bottom.clone().add(localEnd), diameter),
-      color: new Color("#55432f"),
-      species: 0,
-      phase: hash(visual.seed, 450 + index),
-    });
-  }
-}
-
-function pieceMatrix(piece: BreakablePieceDefinition): Matrix4 {
-  const rotation = piece.rotation ?? [0, 0, 0];
-  return new Matrix4().compose(
-    new Vector3(...piece.position),
-    new Quaternion().setFromEuler(
-      new Euler(rotation[0], rotation[1], rotation[2]),
-    ),
-    new Vector3(...piece.size),
-  );
-}
-
-function vegetationLobeMatrix(
-  piece: BreakablePieceDefinition,
-  index: number,
-  count: number,
-): Matrix4 {
-  const visual = piece.vegetationVisual;
-  const rotation = new Quaternion().setFromEuler(
-    new Euler(...(piece.rotation ?? [0, 0, 0])),
-  );
-  const center = new Vector3(...piece.position);
-  const row = index - (count - 1) / 2;
-  const isHedge = visual?.kind === "hedge";
-  const localOffset = isHedge
-    ? new Vector3(
-        row * piece.size[0] * 0.22,
-        (index % 2 === 0 ? -0.04 : 0.05) * piece.size[1],
-        (index % 2 === 0 ? -0.05 : 0.05) * piece.size[2],
-      )
-    : new Vector3(
-        Math.cos(index * 2.2) * piece.size[0] * 0.16,
-        (index === 0 ? -0.08 : 0.08) * piece.size[1],
-        Math.sin(index * 2.2) * piece.size[2] * 0.16,
-      );
-  center.add(localOffset.applyQuaternion(rotation));
-  const scale = isHedge
-    ? new Vector3(
-        piece.size[0] * 0.42,
-        piece.size[1] * (0.82 + (index % 2) * 0.1),
-        piece.size[2] * 0.98,
-      )
-    : new Vector3(
-        piece.size[0] * 0.74,
-        piece.size[1] * (0.76 + (index % 2) * 0.16),
-        piece.size[2] * 0.74,
-      );
-  return new Matrix4().compose(center, rotation, scale);
-}
-
-function buildTreeVisuals(
-  pieces: readonly BreakablePieceDefinition[],
-): TreeVisualBuild {
-  const wood: VisualInstance[] = [];
-  const roots: VisualInstance[] = [];
-  const rootJoints: VisualInstance[] = [];
-  const foliage: FoliageInstance[] = [];
-  const conifer: FoliageInstance[] = [];
-
-  for (const group of groupTrees(pieces)) {
-    if (group.trunk) {
-      pushCurvedPiece(
-        wood,
-        group.trunk,
-        group.seed,
-        group.kind,
-        "trunk",
-        undefined,
-        roots,
-        rootJoints,
-      );
-    }
-    if (group.kind === "pine") {
-      if (group.trunk) {
-        group.foliage.forEach((tier, index) =>
-          pushPineWhorl(wood, group.trunk!, tier, group.seed, index),
-        );
-      }
-      group.foliage.forEach((tier, index) => {
-        conifer.push({
-          sourceId: tier.id,
-          matrix: pieceMatrix(tier),
-          color: new Color(tier.color),
-          species: 2,
-          phase: hash(group.seed + hashText(group.id) * 100, 280 + index),
-        });
-      });
-      continue;
-    }
-    group.branches.forEach((branch) =>
-      pushCurvedPiece(
-        wood,
-        branch,
-        group.seed,
-        group.kind,
-        "branch",
-        group.trunk,
-      ),
-    );
-    if (
-      group.kind === "birch" &&
-      group.trunk &&
-      group.branches.length === 0
-    ) {
-      group.foliage.forEach((cluster, index) =>
-        pushBirchTwig(wood, group.trunk!, cluster, group.seed, index),
-      );
-    }
-    group.foliage.forEach((cluster, index) => {
-      // Three overlapping render lobes make a dense crown while the gameplay
-      // proxy remains small. All lobes address the same destructible section
-      // and still share one draw call.
-      for (let lobe = 0; lobe < 3; lobe += 1) {
-        foliage.push({
-          sourceId: cluster.id,
-          matrix: treeFoliageLobeMatrix(cluster, lobe, group.seed + index * 7),
-          color: new Color(cluster.color),
-          species: group.kind === "birch" ? 1 : 0,
-          phase: hash(
-            group.seed + hashText(group.id) * 100,
-            150 + index * 2 + lobe,
-          ),
-        });
-      }
-    });
-  }
-
-  for (const piece of pieces) {
-    const visual = piece.vegetationVisual;
-    if (!visual) {
-      continue;
-    }
-    pushShrubTwigs(wood, piece);
-    const lobeCount = visual.kind === "hedge" ? 4 : 3;
-    for (let index = 0; index < lobeCount; index += 1) {
-      foliage.push({
-        sourceId: piece.id,
-        matrix: vegetationLobeMatrix(piece, index, lobeCount),
-        color: new Color(piece.color),
-        species: 0,
-        phase: hash(visual.seed + hashText(piece.id) * 100, 470 + index),
-      });
-    }
-  }
-
-  return { wood, roots, rootJoints, foliage, conifer };
-}
-
-function treeFoliageLobeMatrix(
-  piece: BreakablePieceDefinition,
-  index: number,
-  seed: number,
-): Matrix4 {
-  const rotation = new Quaternion().setFromEuler(
-    new Euler(...(piece.rotation ?? [0, 0, 0])),
-  );
-  const side = index - 1;
-  const center = new Vector3(...piece.position).add(
-    new Vector3(
-      side * piece.size[0] * (0.1 + hash(seed, 610 + index) * 0.04),
-      side * piece.size[1] * 0.045,
-      (hash(seed, 620 + index) - 0.5) * piece.size[2] * 0.16,
-    ).applyQuaternion(rotation),
-  );
-  return new Matrix4().compose(
-    center,
-    rotation,
-    new Vector3(
-      piece.size[0] * 0.84,
-      piece.size[1] * 0.9,
-      piece.size[2] * 0.84,
-    ),
-  );
 }
 
 function makeLeafCloudGeometry(leafCount = 72): BufferGeometry {
@@ -620,10 +95,18 @@ function makeLeafCloudGeometry(leafCount = 72): BufferGeometry {
     ];
     const tone = 0.78 + hash(leaf, 10) * 0.3;
     const rank = (leaf + hash(leaf, 11) * 0.8) / leafCount;
+    // Лист листу рознь не только яркостью: молодая пластинка теплее и желтее,
+    // старая — холоднее и синее. Одинаковый оттенок на все 72 листа даёт
+    // пластиковую крону, которая не оживает даже при хорошем свете.
+    const warmth = hash(leaf, 12);
 
     for (const point of points) {
       positions.push(point.x, point.y, point.z);
-      colors.push(tone * 0.92, tone, tone * 0.84);
+      colors.push(
+        tone * (0.84 + warmth * 0.22),
+        tone * (1.02 - warmth * 0.05),
+        tone * (0.94 - warmth * 0.26),
+      );
       leafData.push(center.x, center.y, center.z, rank);
     }
     uvs.push(0.5, 0, 1, 0.5, 0.5, 1, 0, 0.5);
@@ -949,7 +432,8 @@ attribute vec4 aLeafData;
 attribute vec2 aTreeParams;
 uniform float uTreeTime;
 uniform float uTreeWind;
-uniform vec3 uTreeCamera;`,
+uniform vec3 uTreeCamera;
+varying vec3 vTreeLeafTint;`,
         )
         .replace(
           "#include <begin_vertex>",
@@ -966,6 +450,23 @@ float treeVisible = step(aLeafData.w, treeDensity);
 float treeAreaPreservation = min(1.55, inversesqrt(max(treeDensity, 0.2)));
 vec3 treeLeafOffset = transformed - aLeafData.xyz;
 transformed = aLeafData.xyz + treeLeafOffset * treeAreaPreservation;
+// Отжившие листья есть в любой кроне, и раздавать их надо ПОЛИСТНО: жёлтый
+// ком читается как больное пятно, а рассыпанные листья — как живое дерево.
+// Берёза желтеет раньше и заметнее всех, дуб держит лист дольше, ива — самая
+// ровная. Порода приходит в aTreeParams.x (0 широколиственные, 1 берёза,
+// 2 хвоя, 3 ива). Тон уезжает во фрагмент варьирующей: в вершинном шейдере
+// vColor объявлен как out, и читать его оттуда нельзя.
+float treeIsWillow = step(2.5, aTreeParams.x);
+float treeYellowRate = mix(mix(0.08, 0.19, treeIsBirch), 0.05, treeIsWillow);
+float treeLeafRoll = fract(
+  sin(aLeafData.w * 91.7 + aTreeParams.y * 37.3 + treeAnchor.x * 0.31) * 43758.5453
+);
+float treeYellow = step(1.0 - treeYellowRate, treeLeafRoll)
+  * (0.55 + fract(treeLeafRoll * 17.3) * 0.45);
+// Испод листа белой ивы серебряный: пластинка светлее и холоднее, отчего
+// крона на ветру взблёскивает сединой.
+vTreeLeafTint = mix(vec3(1.0), vec3(1.58, 1.34, 0.5), treeYellow)
+  * mix(vec3(1.0), vec3(1.22, 1.27, 1.34), treeIsWillow * 0.5);
 float treePhase = aTreeParams.y * 6.28318 + aLeafData.w * 11.7;
 float treeGust = sin(uTreeTime * 1.13 + treePhase + treeAnchor.x * 0.09 + treeAnchor.z * 0.07);
 float treeFlutter = sin(uTreeTime * 3.7 + treePhase * 1.91);
@@ -973,9 +474,20 @@ transformed.x += (treeGust * 0.018 + treeFlutter * 0.007) * uTreeWind;
 transformed.z += (treeGust * 0.012 - treeFlutter * 0.005) * uTreeWind;
 transformed = mix(aLeafData.xyz, transformed, treeVisible);`,
         );
+      compiled.fragmentShader = compiled.fragmentShader
+        .replace(
+          "#include <common>",
+          `#include <common>
+varying vec3 vTreeLeafTint;`,
+        )
+        .replace(
+          "#include <color_fragment>",
+          `#include <color_fragment>
+diffuseColor.rgb *= vTreeLeafTint;`,
+        );
       shader.current = compiled as TreeShader;
     };
-    next.customProgramCacheKey = () => `procedural-tree-foliage-v2:${variant}`;
+    next.customProgramCacheKey = () => `procedural-tree-foliage-v3-leaf-tint:${variant}`;
     return next;
   }, [variant]);
 
@@ -1053,7 +565,7 @@ export const TreeVisuals = memo(function TreeVisuals({
   if (
     build.wood.length === 0 &&
     build.roots.length === 0 &&
-    build.rootJoints.length === 0 &&
+    build.lumps.length === 0 &&
     build.foliage.length === 0 &&
     build.conifer.length === 0
   ) {
@@ -1068,7 +580,7 @@ export const TreeVisuals = memo(function TreeVisuals({
         variant="root"
       />
       <WoodBatch
-        instances={build.rootJoints}
+        instances={build.lumps}
         hiddenPieceIds={hiddenPieceIds}
         variant="joint"
       />

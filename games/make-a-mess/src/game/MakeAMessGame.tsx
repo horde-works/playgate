@@ -348,6 +348,10 @@ import {
 } from "../../../../app/i18n/dictionary";
 import { LanguageSwitcher } from "../../../../app/components/LanguageSwitcher";
 import {
+  abandonWorldBoot,
+  markWorldBoot,
+} from "../../../../app/components/worldBoot";
+import {
   CinematicCameraRig,
   CinematicFlyoverGalleryShortcut,
   CinematicFlyoverLauncher,
@@ -479,6 +483,7 @@ const entryApproachActions: readonly GameAction[] = [
   "viking-ride.approaching",
   "town-ride.approaching",
   "hexacopter-departure.approaching",
+  "skat-departure.approaching",
   "hexacopter-ride.approaching",
   "seat.approaching",
   "stand.available",
@@ -498,6 +503,8 @@ function entryApproachAction(entry: HingedEntryApproach): GameAction {
             ? "town-departure.approaching"
             : entry.cue === "town-hexacopter-uncrewed-flight"
               ? "hexacopter-departure.approaching"
+              : entry.cue === "sr6-skat-uncrewed-flight"
+                ? "skat-departure.approaching"
               : "terminal-departure.approaching"
         : entry.kind === "ride"
           ? entry.cue === "viking-passenger-flight"
@@ -541,6 +548,10 @@ function entryActionKey(
           ? touch
             ? "hint.hexacopterDeparture.actionTouch"
             : "hint.hexacopterDeparture.action"
+          : entry.cue === "sr6-skat-uncrewed-flight"
+            ? touch
+              ? "hint.skatDeparture.actionTouch"
+              : "hint.skatDeparture.action"
           : touch
             ? "hint.departure.actionTouch"
             : "hint.departure.action";
@@ -9682,6 +9693,38 @@ function AdaptiveRenderScale({ compact }: { compact: boolean }) {
   return null;
 }
 
+/**
+ * Единственная честная веха «мир виден».
+ *
+ * Флаг `ready` поднимается на создании контекста WebGL — до сборки поддерева
+ * сцены, слияния геометрии, запекания света и компиляции шейдеров. Всё это
+ * стоит ещё секунды, и отчёт о загрузке, поверивший `ready`, снимался бы с
+ * пустого экрана.
+ *
+ * Датчик живёт внутри той же границы Suspense, что и сцена, поэтому не
+ * существует, пока её нет. Срабатывание на ВТОРОМ вызове — не запас
+ * прочности, а определение: обработчик кадра идёт перед отрисовкой, значит
+ * второй вызов означает, что первый кадр уже показан.
+ *
+ * Приоритет не задан намеренно: положительный отключил бы у r3f
+ * автоматическую отрисовку и погасил бы сцену целиком.
+ */
+function FirstFrameProbe() {
+  const frames = useRef(0);
+
+  useFrame(() => {
+    if (frames.current > 1) {
+      return;
+    }
+    frames.current += 1;
+    if (frames.current > 1) {
+      markWorldBoot("firstFrame");
+    }
+  });
+
+  return null;
+}
+
 function PerformanceProbe({
   enabled,
   onSample,
@@ -11838,7 +11881,16 @@ export function MakeAMessGame({
           }
         : { kind: "scenarioResolved", scenario: "standing" },
     );
-  }, [arrivalBootstrapComplete, resolvedInitialArrival]);
+    // Прилёт — авторская сцена со своей заслонкой, именем острова и силуэтом
+    // судна: общий отчёт о загрузке ей не нужен и спорил бы с ней за кадр.
+    // Штатный вход, наоборот, отсюда и начинается: код мира уже выполнен и
+    // геометрия посчитана — эта веха закрывает самую долгую стадию.
+    if (resolvedInitialArrival) {
+      abandonWorldBoot();
+    } else {
+      markWorldBoot("codeReady", scene.title);
+    }
+  }, [arrivalBootstrapComplete, resolvedInitialArrival, scene.title]);
 
   useEffect(() => {
     if (ready) {
@@ -12180,6 +12232,7 @@ export function MakeAMessGame({
                 state.gl.shadowMap.autoUpdate = false;
                 state.gl.shadowMap.needsUpdate = true;
                 setReady(true);
+                markWorldBoot("rendererReady");
               }}
             >
               <Suspense fallback={null}>
@@ -12256,6 +12309,7 @@ export function MakeAMessGame({
                     onComplete={finishFlyover}
                   />
                 ) : null}
+                <FirstFrameProbe />
                 <PerformanceProbe
                   enabled={showPerformance}
                   onSample={setPerformance}

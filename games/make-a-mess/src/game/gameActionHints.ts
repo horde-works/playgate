@@ -10,6 +10,7 @@ export type GameAction =
   | "viking-departure.approaching"
   | "town-departure.approaching"
   | "hexacopter-departure.approaching"
+  | "skat-departure.approaching"
   | "terminal-ride.approaching"
   | "viking-ride.approaching"
   | "town-ride.approaching"
@@ -141,6 +142,17 @@ export const gameActionHints: readonly GameActionHint[] = [
     detailKey: "hint.hexacopterDeparture.action",
     touchDetailKey: "hint.hexacopterDeparture.actionTouch",
     keyLabelKey: "hint.hexacopterDeparture.key",
+    once: false,
+  },
+  {
+    id: "dispatching-the-sr6-skat",
+    action: "skat-departure.approaching",
+    delayMs: 180,
+    eyebrowKey: "hint.skatDeparture.eyebrow",
+    titleKey: "hint.skatDeparture.title",
+    detailKey: "hint.skatDeparture.action",
+    touchDetailKey: "hint.skatDeparture.actionTouch",
+    keyLabelKey: "hint.skatDeparture.key",
     once: false,
   },
   {

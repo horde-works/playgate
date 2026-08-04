@@ -81,6 +81,20 @@ import {
   type NimbusHexacopterFlightKind,
 } from "./nimbusHexacopterRoutes.ts";
 import {
+  SR6_SKAT_DISPATCH_POINT,
+  SR6_SKAT_ENGINE_POINTS,
+  SR6_SKAT_PASSENGER_DROP_POINT,
+  SR6_SKAT_ROTOR_CAPACITY_WEIGHTS,
+  SR6_SKAT_ROTOR_SPIN_DIRECTIONS,
+  SR6_SKAT_RUDDER_POINT,
+} from "./sr6Skat.ts";
+import {
+  sr6SkatArrivalPlan,
+  sr6SkatEscapePlan,
+  sr6SkatPlan,
+  sr6SkatRoutePhase,
+} from "./sr6SkatRoutes.ts";
+import {
   interIslandArrivalOrigin,
   interIslandArrivalPhase,
   interIslandArrivalPlan,
@@ -308,6 +322,11 @@ const nimbusHexacopterFrame = vehicleFrames.find(
 );
 if (!nimbusHexacopterFrame) {
   throw new Error("The Nimbus hexacopter frame is missing from the vehicle catalog");
+}
+
+const sr6SkatFrame = vehicleFrames.find((frame) => frame.id === "sr6-skat");
+if (!sr6SkatFrame) {
+  throw new Error("The SR-6 Skat frame is missing from the vehicle catalog");
 }
 
 const SKY_LONGSHIP_COURSE = (6 * Math.PI) / 180;
@@ -1053,6 +1072,88 @@ export const NIMBUS_HEXACOPTER_AIR_VEHICLE: AirVehicleDefinition = {
   },
 };
 
+/**
+ * Parked M6 prototype. It deliberately has no public dispatch/ride action yet:
+ * geometry, damage, motor actuation and flight dynamics are live, while the
+ * temporary meadow placement remains a display berth rather than a service.
+ */
+export const SR6_SKAT_AIR_VEHICLE: AirVehicleDefinition = {
+  ...sr6SkatFrame,
+  departure: {
+    target: {
+      id: "town:sr6-skat:departure",
+      kind: "departure",
+      cue: "sr6-skat-uncrewed-flight",
+    },
+    point: SR6_SKAT_DISPATCH_POINT,
+    flightKind: "circuit",
+    approachRadius: 2.5,
+    releaseRadius: 3.4,
+    heightTolerance: 2.2,
+    passengerDropPoint: SR6_SKAT_PASSENGER_DROP_POINT,
+  },
+  flight: {
+    limits: {
+      // Подъём этой машине даёт не enginePower, а `liftReserve`: для
+      // liftSource "rotor" вертикальная способность считается в рантайме как
+      // масса * g * запас, поэтому она следует за массой сама и поднять себя
+      // машина может по построению.
+      //
+      // enginePower и lateralThrust — горизонтальные СИЛЫ, и они за массой не
+      // следуют. Стальное ядро и перевод силового пути с пластика на сталь
+      // подняли массу с 5.53 до 7.12 кг (x1.288), поэтому обе величины
+      // отмасштабированы на тот же множитель от исходных 62 и 42: удельные
+      // ускорения остаются прежними (боком 7.59 м/с², горизонтальная
+      // тяговооружённость 6.85). Проверяется тестом, а не на глаз.
+      enginePower: 80,
+      enginePoints: SR6_SKAT_ENGINE_POINTS,
+      rotorCapacityWeights: SR6_SKAT_ROTOR_CAPACITY_WEIGHTS,
+      rotorSpinDirections: SR6_SKAT_ROTOR_SPIN_DIRECTIONS,
+      maxRudderForce: 0,
+      rudderReferenceSpeed: 9,
+      rudderPoint: SR6_SKAT_RUDDER_POINT,
+      liftTrimRange: 0.28,
+      lateralThrust: 54,
+    },
+    approach: {
+      heading: [sr6SkatFrame.nose[0], sr6SkatFrame.nose[2]],
+      tolerance: { position: 4.4, heading: 0.36, speed: 3 },
+    },
+    docking: {
+      position: 1.4,
+      height: 0.45,
+      headingCos: 0,
+      speed: 0.32,
+      verticalSpeed: 0.22,
+      uprightCos: 0.9,
+      angularSpeed: 0.16,
+    },
+    landing: {
+      radius: 1.2,
+      height: 0.55,
+      speed: 0.38,
+      verticalSpeed: 0.52,
+      uprightCos: 0.984,
+      angularSpeed: 0.2,
+    },
+    spoolSeconds: 4.5,
+    underwaySeconds: 6.5,
+    driveAnimation: { kind: "propeller", phaseSpeed: 29, shaftAxis: [0, 1, 0] },
+    linearDamping: 0.2,
+    angularDamping: 0.58,
+    lateralDragRatio: 6.4,
+    liftSource: "rotor",
+    liftReserve: 3.2,
+    maximumTilt: (28 * Math.PI) / 180,
+    guidance: { upsetTiltRate: 1.35, upsetYawRate: 1.15 },
+    mooringReach: 0.6,
+    routePlan: (_kind, berth) => sr6SkatPlan(berth),
+    arrivalPlan: sr6SkatArrivalPlan,
+    escapePlan: sr6SkatEscapePlan,
+    routePhase: (_kind, progress) => sr6SkatRoutePhase(progress),
+  },
+};
+
 export const airVehicles: readonly AirVehicleDefinition[] = [
   SKY_TRAIN_AIR_VEHICLE,
   SKY_LONGSHIP_AIR_VEHICLE,
@@ -1060,4 +1161,5 @@ export const airVehicles: readonly AirVehicleDefinition[] = [
   BASALT_SKY_RAM_AIR_VEHICLE,
   TOWN_HEXACOPTER_AIR_VEHICLE,
   NIMBUS_HEXACOPTER_AIR_VEHICLE,
+  SR6_SKAT_AIR_VEHICLE,
 ];

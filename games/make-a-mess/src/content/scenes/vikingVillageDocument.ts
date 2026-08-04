@@ -22,6 +22,7 @@ import {
 // Список складов живёт в описании поселения: сцена берёт оттуда, какие куски
 // объявить изменяемыми, чтобы уровень было чем показать.
 import { vikingSettlementStores } from "./vikingSettlement.ts";
+import { shrubExtent, shrubTone } from "../prefabs/coreShrubs.ts";
 
 interface MutableGroup {
   readonly id: string;
@@ -1974,6 +1975,54 @@ function createWoodland(): void {
       ],
     });
   }
+
+  // ПОДЛЕСОК СЕВЕРА. Бор без него читается декорацией: под соснами Скандинавии
+  // всегда есть тёмные подушки можжевельника и низкий вересковый мат по
+  // прогалам. Оба вида — свои силуэты (`coreShrubs`), а не общий зелёный ком:
+  // можжевельник уходит в хвойный батч, вереск стелется и цветёт лиловым.
+  for (let index = 0; index < 56; index += 1) {
+    const angle = noise(index, 9, 61) * Math.PI * 2;
+    const radius = 68 + noise(index, 10, 62) * 24;
+    const x = Math.cos(angle) * radius;
+    const z = WORLD_CENTER_Z + Math.sin(angle) * radius;
+    if (Math.abs(x) < 12 && z > 35) {
+      continue;
+    }
+    // Куст сажается только там, где под ним ЕСТЬ плитка дёрна: сетка грунта
+    // кончается неровной кромкой (radius > edge), и на 91 метре плитки уже
+    // может не быть — подушка повисает в воздухе.
+    const tileX = Math.round(x / 4) * 4;
+    const tileZ = WORLD_CENTER_Z + Math.round((z - WORLD_CENTER_Z) / 4) * 4;
+    const tileEdge =
+      92 + (noise(tileX, tileZ, 4) - 0.5) * 8 + Math.sin(tileZ * 0.075) * 2.4;
+    if (Math.hypot(tileX, tileZ - WORLD_CENTER_Z) > tileEdge - 2) {
+      continue;
+    }
+    const juniper = noise(index, 11, 63) > 0.42;
+    const kind = juniper ? "needle" : "heath";
+    const [width, height] = shrubExtent(kind, index * 3 + 17);
+    primitive(
+      woodland,
+      `${kind}:${index}`,
+      "foliage",
+      "groundTile",
+      // Заглубление в дёрн, но не глубже 0.12 м: решатель считает более
+      // глубокое утопание отсутствием опоры.
+      [x, height * 0.5 - 0.08, z],
+      [width, height, width * (0.82 + noise(index, 12, 64) * 0.3)],
+      shrubTone(kind, index * 3 + 17),
+      {
+        rotation: [
+          (noise(index, 13, 65) - 0.5) * 0.12,
+          noise(index, 14, 66) * Math.PI,
+          (noise(index, 15, 67) - 0.5) * 0.12,
+        ],
+        bearsLoad: false,
+        volume: juniper ? 0.09 : 0.05,
+        vegetationVisual: { kind, seed: index * 3 + 17 },
+      },
+    );
+  }
 }
 
 // Heaped fieldstones and gravel-strewn path edges — the stony Scandinavian
@@ -3675,7 +3724,8 @@ function createShoreFringe(): void {
           [cx, height / 2, cz], [0.3 + seedA * 0.2, height, 0.26],
           clump % 2 === 0 ? "#5b6b44" : "#52633e", {
             rotation: [(seedB - 0.5) * 0.2, noise(step, clump, 83) * Math.PI, (seedA - 0.5) * 0.24],
-            vegetationVisual: { kind: "shrub", seed: step * 7 + clump },
+            // Урез фьорда — осока, а не куст: жёсткий пучок листьев вверх.
+            vegetationVisual: { kind: "sedge", seed: step * 7 + clump },
             bearsLoad: false,
           });
       }

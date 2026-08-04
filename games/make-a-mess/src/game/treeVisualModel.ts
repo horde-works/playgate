@@ -22,13 +22,197 @@ export interface ProceduralWoodTubeProfile {
 /**
  * One connected tube profile per woody gameplay member. Longitudinal segments
  * bend the surface without introducing separate open-ended mesh sections.
+ *
+ * Стриженая ива живёт по другому закону, чем дерево со свободной кроной: её
+ * ствол за два метра почти не сбегает (сбег съеден срезкой), а годичный хлыст,
+ * наоборот, уходит в тонкий кончик и заметнее выгибается под собственным весом.
  */
 export function proceduralWoodTubeProfile(
   role: "trunk" | "branch",
+  kind?: TreeVisualKind,
 ): ProceduralWoodTubeProfile {
+  if (kind === "willow") {
+    return role === "trunk"
+      ? { bendRatio: 0.03, tipScale: 0.88, longitudinalSegments: 6 }
+      : { bendRatio: 0.075, tipScale: 0.4, longitudinalSegments: 6 };
+  }
+  if (kind === "pine") {
+    // Сосна сбегает сильно: ствол в двадцать метров к вершине ужимается почти
+    // вдвое, а сук — тонкая изогнутая рука.
+    return role === "trunk"
+      ? { bendRatio: 0.02, tipScale: 0.52, longitudinalSegments: 6 }
+      : { bendRatio: 0.06, tipScale: 0.42, longitudinalSegments: 6 };
+  }
   return role === "trunk"
     ? { bendRatio: 0.022, tipScale: 0.64, longitudinalSegments: 6 }
     : { bendRatio: 0.055, tipScale: 0.44, longitudinalSegments: 6 };
+}
+
+/** One rendered rod of a pollard whip bunch. Lengths are metres. */
+export interface WillowWhipRod {
+  readonly start: SceneVector3;
+  /** Unit vector along the rod. */
+  readonly direction: SceneVector3;
+  readonly length: number;
+  readonly diameter: number;
+  /** 0 — сам авторский хлыст, 1..2 — соседи по гнезду, 3 — развилка на нём. */
+  readonly index: number;
+}
+
+function orthonormalBasis(
+  direction: SceneVector3,
+): readonly [SceneVector3, SceneVector3] {
+  const reference: SceneVector3 = Math.abs(direction[1]) > 0.94
+    ? [1, 0, 0]
+    : [0, 1, 0];
+  const right: SceneVector3 = [
+    direction[1] * reference[2] - direction[2] * reference[1],
+    direction[2] * reference[0] - direction[0] * reference[2],
+    direction[0] * reference[1] - direction[1] * reference[0],
+  ];
+  const rightLength = Math.max(1e-5, Math.hypot(...right));
+  const unitRight: SceneVector3 = [
+    right[0] / rightLength,
+    right[1] / rightLength,
+    right[2] / rightLength,
+  ];
+  return [
+    unitRight,
+    [
+      unitRight[1] * direction[2] - unitRight[2] * direction[1],
+      unitRight[2] * direction[0] - unitRight[0] * direction[2],
+      unitRight[0] * direction[1] - unitRight[1] * direction[0],
+    ],
+  ];
+}
+
+function unit(vector: SceneVector3): SceneVector3 {
+  const length = Math.max(1e-5, Math.hypot(...vector));
+  return [vector[0] / length, vector[1] / length, vector[2] / length];
+}
+
+/**
+ * Сук сосны не заканчивается прутом: в наружной трети он раздаёт короткие
+ * восходящие побеги, и уже на них сидят подушки хвои. Без этих побегов сук
+ * читается голой спицей с шаром на конце — «ёлкой из палок».
+ */
+export function coniferLimbRods(
+  start: SceneVector3,
+  rawDirection: SceneVector3,
+  length: number,
+  diameter: number,
+  seed: number,
+): readonly WillowWhipRod[] {
+  const direction = unit(rawDirection);
+  const [right, up] = orthonormalBasis(direction);
+  const rods: WillowWhipRod[] = [
+    { start, direction, length, diameter, index: 0 },
+  ];
+  // Побег ОДИН: два восходящих побега на каждом суку превращали крону в
+  // частокол торчащих палок.
+  for (let shoot = 1; shoot <= 1; shoot += 1) {
+    const along = 0.52 + rootNoise(seed, 300 + shoot) * 0.3;
+    const swing = rootNoise(seed, 310 + shoot) * Math.PI * 2;
+    // Побег уходит ВВЕРХ от сука: у сосны крона держится подушками поверх
+    // почти горизонтальных сучьев, и это подъём делает силуэт слоистым.
+    const rise = 0.28 + rootNoise(seed, 320 + shoot) * 0.3;
+    const tangent: SceneVector3 = [
+      right[0] * Math.cos(swing) + up[0] * Math.sin(swing),
+      right[1] * Math.cos(swing) + up[1] * Math.sin(swing),
+      right[2] * Math.cos(swing) + up[2] * Math.sin(swing),
+    ];
+    rods.push({
+      start: [
+        start[0] + direction[0] * length * along,
+        start[1] + direction[1] * length * along,
+        start[2] + direction[2] * length * along,
+      ],
+      direction: unit([
+        direction[0] + tangent[0] * 0.32,
+        direction[1] + tangent[1] * 0.32 + rise,
+        direction[2] + tangent[2] * 0.32,
+      ]),
+      length: length * (0.24 + rootNoise(seed, 330 + shoot) * 0.22),
+      diameter: diameter * (0.5 + rootNoise(seed, 340 + shoot) * 0.18),
+      index: shoot,
+    });
+  }
+  return rods;
+}
+
+/**
+ * Из головы бьёт не прут, а ГНЕЗДО прутьев: спящие почки сидят на наплыве
+ * кучей, и побеги уходят вверх пучками по два-три, почти параллельно, с
+ * развилкой в верхней трети. Один авторский хлыст — одно такое гнездо, поэтому
+ * плотность кроны (референс: пятьдесят-восемьдесят прутьев на дереве) берётся
+ * рендером, а не умножением разрушаемых тел.
+ */
+export function willowWhipFan(
+  start: SceneVector3,
+  rawDirection: SceneVector3,
+  length: number,
+  diameter: number,
+  seed: number,
+): readonly WillowWhipRod[] {
+  const direction = unit(rawDirection);
+  const [right, up] = orthonormalBasis(direction);
+  const rods: WillowWhipRod[] = [
+    { start, direction, length, diameter, index: 0 },
+  ];
+
+  for (let sibling = 1; sibling <= 2; sibling += 1) {
+    const swing = rootNoise(seed, 200 + sibling) * Math.PI * 2;
+    // Расхождение в гнезде мелкое: по фото ряда в Вассенаре пучок расходится с
+    // полууглом около 11°, крайние прутья — до 20°. Внутри гнезда — единицы
+    // градусов, иначе снова получается фейерверк.
+    const spread = 0.03 + rootNoise(seed, 210 + sibling) * 0.055;
+    const tangent: SceneVector3 = [
+      (right[0] * Math.cos(swing) + up[0] * Math.sin(swing)),
+      (right[1] * Math.cos(swing) + up[1] * Math.sin(swing)),
+      (right[2] * Math.cos(swing) + up[2] * Math.sin(swing)),
+    ];
+    const offset = diameter * (0.9 + rootNoise(seed, 220 + sibling) * 1.4);
+    rods.push({
+      start: [
+        start[0] + tangent[0] * offset,
+        start[1] + tangent[1] * offset,
+        start[2] + tangent[2] * offset,
+      ],
+      direction: unit([
+        direction[0] + tangent[0] * spread,
+        direction[1] + tangent[1] * spread,
+        direction[2] + tangent[2] * spread,
+      ]),
+      length: length * (0.64 + rootNoise(seed, 230 + sibling) * 0.28),
+      diameter: diameter * (0.72 + rootNoise(seed, 240 + sibling) * 0.2),
+      index: sibling,
+    });
+  }
+
+  const forkAt = 0.56 + rootNoise(seed, 250) * 0.18;
+  const forkSwing = rootNoise(seed, 260) * Math.PI * 2;
+  const forkSpread = 0.14 + rootNoise(seed, 270) * 0.16;
+  const forkTangent: SceneVector3 = [
+    right[0] * Math.cos(forkSwing) + up[0] * Math.sin(forkSwing),
+    right[1] * Math.cos(forkSwing) + up[1] * Math.sin(forkSwing),
+    right[2] * Math.cos(forkSwing) + up[2] * Math.sin(forkSwing),
+  ];
+  rods.push({
+    start: [
+      start[0] + direction[0] * length * forkAt,
+      start[1] + direction[1] * length * forkAt,
+      start[2] + direction[2] * length * forkAt,
+    ],
+    direction: unit([
+      direction[0] + forkTangent[0] * forkSpread,
+      direction[1] + forkTangent[1] * forkSpread,
+      direction[2] + forkTangent[2] * forkSpread,
+    ]),
+    length: length * (1 - forkAt) * (0.62 + rootNoise(seed, 280) * 0.3),
+    diameter: diameter * 0.58,
+    index: 3,
+  });
+  return rods;
 }
 
 export function treeWoodSpecies(kind: TreeVisualKind): number {

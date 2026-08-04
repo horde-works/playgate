@@ -9,7 +9,7 @@ import {
   type SupportMode,
   type VegetationVisualDefinition,
 } from "./destructionScene.ts";
-import { propPine } from "../content/prefabs/coreFlora.ts";
+import { PINE_NOMINAL_HEIGHT, propPine } from "../content/prefabs/coreFlora.ts";
 
 interface BasaltStrongholdWorldbuildingOptions {
   readonly surfaceYAt: (x: number, z: number) => number;
@@ -1230,7 +1230,7 @@ function addConifer(
   lean: number,
   seed: number,
 ): void {
-  const pieces = propPine({ seed, scale: height / 6.6 });
+  const pieces = propPine({ seed, scale: height / PINE_NOMINAL_HEIGHT });
   for (const source of pieces) {
     const leanOffset = lean * source.position[1] * 0.045;
     const translate = (position: SceneVector3): SceneVector3 => [

@@ -72,6 +72,8 @@ test("набор приёмочных камер фиксирован и сод�
     "three-quarter-right",
     "high-three-quarter",
     "rotor-joint",
+    "night-entry",
+    "night-window",
     "silhouette",
   ];
   assert.deepEqual(deKatObject.views.map((view) => view.id), required);

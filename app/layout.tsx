@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ConsentGate } from "./components/ConsentGate";
+import { WorldBootOverlay } from "./components/WorldBootOverlay";
 import { LanguageProvider } from "./i18n/LanguageProvider";
 import { TERMS_ACCEPTANCE_STORAGE_KEY, TERMS_VERSION } from "./legal/consent";
 
@@ -50,6 +51,12 @@ export default function RootLayout({
       >
         <LanguageProvider>
           <ConsentGate>{children}</ConsentGate>
+          {/*
+            Отчёт о загрузке мира живёт над страницей, а не внутри неё: путь
+            «выбрал мир → мир виден» пересекает смену маршрута, и внутри
+            страницы он оборвался бы ровно на самом долгом ожидании.
+          */}
+          <WorldBootOverlay />
         </LanguageProvider>
       </body>
     </html>

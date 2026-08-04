@@ -6,6 +6,7 @@ const modelQuery = query.has("profile") ? `?profile=${encodeURIComponent(query.g
 const model = await fetch(`/model.json${modelQuery}`).then((response) => response.json());
 const view = model.views.find((candidate) => candidate.id === requestedView) ?? model.views[0];
 const silhouette = view.id === "silhouette";
+const night = view.lighting === "night";
 
 const palette = {
   foundation: { color: 0x777b7d, roughness: 0.95 },
@@ -38,22 +39,32 @@ const palette = {
   metal: { color: 0x52585b, roughness: 0.52, metalness: 0.35 },
   "paint-light": { color: 0xc4c3ba, roughness: 0.82 },
   "paint-accent": { color: 0x8d8b84, roughness: 0.82 },
+  // Transparent envelopes must not write depth: otherwise a pane or lantern
+  // lens can erase the real interior/bulb it is specifically meant to reveal.
+  glazing: { color: 0x385869, roughness: 0.12, metalness: 0.04, transparent: true, opacity: 0.42, depthWrite: false },
+  "lamp-glass": { color: 0xb9c7c8, roughness: 0.14, transparent: true, opacity: 0.16, depthWrite: false },
+  "lamp-bulb": { color: 0xffd394, roughness: 0.18, transparent: true, opacity: 1, depthWrite: false },
+  "dark-recess": { color: 0x111416, roughness: 1 },
   opening: { color: 0x171a1c, roughness: 1 },
 };
+
+for (const [id, override] of Object.entries(model.materialOverrides ?? {})) {
+  palette[id] = { ...(palette[id] ?? {}), ...override };
+}
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
 renderer.setPixelRatio(1);
 renderer.setSize(innerWidth, innerHeight);
-renderer.setClearColor(silhouette ? 0xf1efe8 : 0xd9dde0, 1);
+renderer.setClearColor(silhouette ? 0xf1efe8 : night ? 0x07101a : 0xd9dde0, 1);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = silhouette ? 1 : 1.08;
+renderer.toneMappingExposure = silhouette ? 1 : night ? 1.16 : 1.08;
 document.body.prepend(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.fog = silhouette ? null : new THREE.Fog(0xd9dde0, model.labEnvironment?.fogNear ?? 62, model.labEnvironment?.fogFar ?? 90);
+scene.fog = silhouette ? null : new THREE.Fog(night ? 0x07101a : 0xd9dde0, model.labEnvironment?.fogNear ?? 62, model.labEnvironment?.fogFar ?? 90);
 const root = new THREE.Group();
 root.name = model.id;
 scene.add(root);
@@ -61,11 +72,11 @@ scene.add(root);
 const materials = Object.fromEntries(
   Object.entries(palette).map(([id, definition]) => [
     id,
-    new THREE.MeshStandardMaterial(
-      silhouette
-        ? { color: 0x25282a, roughness: 1, side: THREE.DoubleSide }
-        : definition,
-    ),
+    new THREE.MeshStandardMaterial(silhouette
+      ? { color: 0x25282a, roughness: 1, side: THREE.DoubleSide }
+      : id === "lamp-bulb" && night
+        ? { ...definition, emissive: 0xffa94d, emissiveIntensity: 4.5 }
+        : definition),
   ]),
 );
 
@@ -135,7 +146,13 @@ for (const part of model.parts) {
   }
   if (!mesh) continue;
   mesh.name = part.id;
-  mesh.castShadow = !silhouette && part.material !== "canvas";
+  // Force nested transparent layers into physical outside-to-inside order.
+  // Distance sorting is ambiguous because pane, lens and bulb can share a
+  // centre line; without this the clear envelope can paint over the emitter.
+  if (part.material === "glazing") mesh.renderOrder = 3;
+  if (part.material === "lamp-glass") mesh.renderOrder = 4;
+  if (part.material === "lamp-bulb") mesh.renderOrder = 5;
+  mesh.castShadow = !silhouette && !["canvas", "glazing", "lamp-glass", "lamp-bulb"].includes(part.material);
   mesh.receiveShadow = !silhouette;
   mesh.userData.group = part.group;
   root.add(mesh);
@@ -144,7 +161,7 @@ for (const part of model.parts) {
 if (!silhouette) {
   const floor = new THREE.Mesh(
     new THREE.CircleGeometry(model.labEnvironment?.floorRadius ?? 29, 96),
-    new THREE.MeshStandardMaterial({ color: 0xc4c8ca, roughness: 1 }),
+    new THREE.MeshStandardMaterial({ color: night ? 0x17221f : 0xc4c8ca, roughness: night ? 0.78 : 1 }),
   );
   floor.rotation.x = -Math.PI / 2;
   floor.position.y = model.labEnvironment?.floorY ?? -0.04;
@@ -158,9 +175,13 @@ if (!silhouette) {
   scene.add(grid);
 }
 
-scene.add(new THREE.HemisphereLight(0xf3f5f5, 0x4d5255, silhouette ? 2.2 : 2.65));
+scene.add(new THREE.HemisphereLight(
+  night ? 0x6f86a8 : 0xf3f5f5,
+  night ? 0x07100d : 0x4d5255,
+  silhouette ? 2.2 : night ? 0.32 : 2.65,
+));
 if (!silhouette) {
-  const key = new THREE.DirectionalLight(0xffffff, 4.1);
+  const key = new THREE.DirectionalLight(night ? 0x9db9df : 0xffffff, night ? 0.68 : 4.1);
   key.position.set(-18, 34, 25);
   key.castShadow = true;
   key.shadow.mapSize.set(2048, 2048);
@@ -170,9 +191,21 @@ if (!silhouette) {
   key.shadow.camera.bottom = -10;
   key.shadow.bias = -0.00045;
   scene.add(key);
-  const rim = new THREE.DirectionalLight(0xbfcbd0, 1.15);
+  const rim = new THREE.DirectionalLight(night ? 0x3f5874 : 0xbfcbd0, night ? 0.34 : 1.15);
   rim.position.set(23, 18, -24);
   scene.add(rim);
+
+  if (night) {
+    for (const part of model.parts) {
+      if (!part.light || view.hiddenGroups?.includes(part.group)) continue;
+      const source = part.light.position ?? part.center;
+      if (!source) continue;
+      const lamp = new THREE.PointLight(part.light.color, part.light.intensity, part.light.distance, 1.55);
+      lamp.position.set(...source);
+      lamp.castShadow = false;
+      scene.add(lamp);
+    }
+  }
 }
 
 const aspect = innerWidth / innerHeight;
@@ -184,6 +217,7 @@ if (view.projection === "orthographic") {
   camera = new THREE.PerspectiveCamera(view.fov ?? 38, aspect, 0.1, 180);
 }
 camera.position.set(...view.position);
+if (view.up) camera.up.set(...view.up);
 camera.lookAt(...view.target);
 
 document.getElementById("title").textContent = model.title;

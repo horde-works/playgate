@@ -154,12 +154,16 @@ painted over ground.
 | `C3 field-drain` | `(5,14) → (6,31) → (4,47)` | 2.6 m | narrow controlled polder drain |
 | `C4 east-fork` | `(39,12) → (48,25) → (63,32)` | 3.8 m | east waterfall mouth |
 
-### 5.1 The visual sheet (built 2026-08-03)
+### 5.1 The visual water (built 2026-08-03, mouths 2026-08-04)
 
-Every channel above is now filled by one water sheet:
-`game/dutchPolderWaterModel.ts` (pure geometry, detectors in
-`tests/dutch-polder-water.test.mjs`) and `game/DutchPolderWater.tsx` (render).
-What it is and is not:
+Every channel above is filled by one water sheet, and every channel end that
+reaches the rim pours off it. Owners: `game/dutchPolderWaterModel.ts` (sheet
+geometry), `game/DutchPolderWater.tsx` (surface, damp collar, both passes),
+`game/dutchPolderSpillModel.ts` with `DutchPolderSpill.tsx` and
+`DutchPolderSpray.tsx` (the falls). Detectors:
+`tests/dutch-polder-water.test.mjs`, `tests/dutch-polder-spill.test.mjs`.
+The reusable law is §10 of `environmental-rendering-lessons.md`; this section
+records only what is specific to the polder.
 
 - one mesh over all four channels, so the whole polder costs exactly one
   planar-mirror pass and one half-resolution refraction pass per frame;
@@ -168,13 +172,25 @@ What it is and is not:
   bank and softens every reed that stands in it;
 - body colour is absorption over measured thickness, not a painted tint;
   reflection is the mirror pass broken up by two octaves of capillary ripple;
-- the sheet must be softened by the same single Chaikin pass the landscape
-  document applies before carving, or it drifts off its own trench at a bend;
+- the sheet is softened by the same single Chaikin pass the landscape document
+  applies before carving, or it drifts off its own trench at a bend;
 - a damp collar sheet floats 9 cm higher and darkens the bank the water no
-  longer covers; duckweed rafts drift downstream and gather against the banks.
-- still absent: hydrology, buoyancy, flow forces, anything at the waterfall
-  mouths. `C2` and `C4` reach their mouths and fade out over the last few
-  metres; nothing pours over the lip.
+  longer covers; duckweed rafts drift downstream and gather against the banks;
+- the mouths are measured, not authored. Each rim end is cut to a lip found on
+  the shell the scene actually draws — voxel smoothing moves the visible bank
+  by up to two metres — and the sheet leans into the diagonal that lip makes
+  with the shoreline. Discharge is a broad-crested weir, `q = 1.7·h^1.5`, and
+  nothing goes over a lip that the approach did not carry to it: the narrowest
+  section of the approach sets the flow. Below 2 cm of head there is no nappe
+  at all, only a wet streak on the face;
+- approaching a lip the flow goes critical: ripple is swept out and the last
+  few metres turn to mirror, standing waves hold their place over the sill,
+  and the drawdown is bent across the mouth so the middle carries the head
+  while the wings do not;
+- deepest standing water in the polder is 0.61 m, at a scoured sill. Anything
+  reading more than ~0.75 m of column means open air under the sheet;
+- still absent: hydrology proper, buoyancy, flow forces on bodies, and any
+  effect of the falls on what floats past them.
 
 Bridge anchors are fixed after the channels, not placed approximately:
 

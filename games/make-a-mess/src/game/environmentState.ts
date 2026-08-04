@@ -12,6 +12,9 @@ export interface EnvironmentState {
   /** Sun position in world units (matches the directional light). */
   readonly sunPosition: Vector3;
   readonly sunColor: Color;
+  /** Direction and colour of the active directional key: sun by day, moon by night. */
+  readonly keyLightDirection: Vector3;
+  readonly keyLightColor: Color;
   /** 1 at full day, 0 at night. */
   dayFactor: number;
   /** 1 at full night, 0 at day. */
@@ -37,6 +40,8 @@ export const environmentState: EnvironmentState = {
   sunDirection: new Vector3(0.4, 0.7, 0.5).normalize(),
   sunPosition: new Vector3(24, 12, 14),
   sunColor: new Color("#fff3d7"),
+  keyLightDirection: new Vector3(0.4, 0.7, 0.5).normalize(),
+  keyLightColor: new Color("#fff3d7"),
   dayFactor: 1,
   nightFactor: 0,
   twilightFactor: 0,

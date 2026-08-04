@@ -238,6 +238,19 @@ export function sampleDutchPolderVegetation(
   };
 }
 
+/** Reed licence at a point, shared by everything that has to respect it. */
+function placementLicense(sample: LandscapeSample, x: number, z: number): number {
+  const shelter = bridgeShelter(x, z);
+  if (shelter.corner >= 1) return 1;
+  const placement = sample.channelId ? channelPlacement(sample.channelId, x, z) : null;
+  return Math.max(
+    shelter.corner,
+    placement && sample.channelId
+      ? reedLicense(sample.channelId, placement.along, placement.side, x, z)
+      : 0,
+  );
+}
+
 function sampleUntrodden(
   sample: LandscapeSample,
   x: number,
@@ -260,28 +273,26 @@ function sampleUntrodden(
   // Тростник растёт не там, где ему хорошо, а там, где его НЕ ВЫКОСИЛИ. Режим
   // содержания принадлежит отрезку русла и решает, есть ли здесь заросли и на
   // каком берегу; на выкошенной фронте трава сходит прямо к воде.
-  const placement = sample.channelId ? channelPlacement(sample.channelId, x, z) : null;
   const shelter = bridgeShelter(x, z);
   // Под настилом не растёт ничего: вечная тень и устой на пути.
   if (shelter.under > 0.5) return null;
-  const license = Math.max(
-    shelter.corner,
-    placement && sample.channelId
-      ? reedLicense(sample.channelId, placement.along, placement.side, x, z)
-      : 0,
-  );
+  const license = placementLicense(sample, x, z);
 
   // Кубышка держит полосу, которая до сих пор была пустой: между ряской на
   // поверхности и стоящими у берега надводными не было НИЧЕГО, и открытая вода
   // читалась голой плоскостью. Плавающие пластины сразу говорят «стоячая вода»,
   // растут колониями и живут там, где глубина уже не пускает тростник.
-  if (aboveWater < -0.16) {
+  if (aboveWater < -0.2) {
     const lilyPatch = dutchPolderVegetationPatchNoise(x, z, 53, 7.5);
-    if (lilyPatch > 0.63) {
-      const room = smoothstep(-0.16, -0.34, aboveWater);
+    // Кубышка занимает открытую воду, а не отнимает мелководье у пояса: там,
+    // где стоит тростник, ей не хватает света, и первая же прикидка показала
+    // ровно эту ошибку — пластин вышло больше, чем стеблей.
+    const shade = placementLicense(sample, x, z);
+    if (lilyPatch > 0.7 && shade < 0.5) {
+      const room = smoothstep(-0.2, -0.4, aboveWater);
       return {
         kind: 4,
-        keep: 0.3 + room * 0.4,
+        keep: (0.26 + room * 0.36) * (1 - shade),
         dryness: 0.05,
         height: [0.85, 1.3],
         width: [0.85, 1.35],

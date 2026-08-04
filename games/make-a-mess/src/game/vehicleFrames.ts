@@ -50,6 +50,16 @@ import {
   nimbusHexacopterPointFromTown,
   nimbusHexacopterVectorFromTown,
 } from "./nimbusHexacopter.ts";
+import {
+  SR6_SKAT_CLUSTER_ID,
+  SR6_SKAT_LIFT_CENTRE,
+  SR6_SKAT_MOORING_POINT,
+  SR6_SKAT_NOSE,
+  SR6_SKAT_ORIGIN,
+  sr6SkatPoint,
+  sr6SkatVector,
+} from "./sr6Skat.ts";
+import { SR6_ROTOR_STATIONS } from "../content/objects/vehicles/sr6SkatObject.ts";
 
 // Kept as re-exports for callers while the authored routes themselves live in
 // their own artifact module.
@@ -400,6 +410,34 @@ function nimbusHexacopterProximitySensors(): readonly VehicleProximitySensor[] {
   }));
 }
 
+function sr6SkatProximitySensors(): readonly VehicleProximitySensor[] {
+  const sensors: VehicleProximitySensor[] = [
+    { point: sr6SkatPoint([0, 0.82, 2.43]), normal: SR6_SKAT_NOSE },
+    { point: sr6SkatPoint([0, 1.12, -2.08]), normal: sr6SkatVector([0, 0, -1]) },
+    { point: sr6SkatPoint([0, 1.82, -0.2]), normal: [0, 1, 0] },
+    { point: sr6SkatPoint([0, 0.05, 0]), normal: [0, -1, 0] },
+  ];
+  for (const station of SR6_ROTOR_STATIONS) {
+    const length = Math.hypot(station.x, station.z) || 1;
+    const outward: SceneVector3 = [station.x / length, 0, station.z / length];
+    sensors.push(
+      {
+        point: sr6SkatPoint([
+          station.x + outward[0] * station.radius,
+          station.planeY,
+          station.z + outward[2] * station.radius,
+        ]),
+        normal: sr6SkatVector(outward),
+      },
+      {
+        point: sr6SkatPoint([station.x, station.planeY + 0.18, station.z]),
+        normal: [0, 1, 0],
+      },
+    );
+  }
+  return sensors;
+}
+
 function basaltSkyRamProximitySensors(): readonly VehicleProximitySensor[] {
   const sensors: VehicleProximitySensor[] = [
     // The cast point sits inside its berth jaw. Its upper brace is the first
@@ -605,6 +643,18 @@ export const vehicleFrames: readonly VehicleFrameDefinition[] = [
     liftCentre: NIMBUS_HEXACOPTER_LIFT_CENTRE,
     envelopeMatch: ":blade:",
     proximitySensors: nimbusHexacopterProximitySensors(),
+  },
+  {
+    id: "sr6-skat",
+    clusterId: SR6_SKAT_CLUSTER_ID,
+    telemetryLabel: "SR-6 SKAT",
+    independentMemberMatches: [":blade:"],
+    origin: SR6_SKAT_ORIGIN,
+    nose: SR6_SKAT_NOSE,
+    mooringPoint: SR6_SKAT_MOORING_POINT,
+    liftCentre: SR6_SKAT_LIFT_CENTRE,
+    envelopeMatch: ":blade:",
+    proximitySensors: sr6SkatProximitySensors(),
   },
 ];
 
@@ -1392,6 +1442,10 @@ export interface ShipLimits {
   readonly enginePower: number;
   /** Точки моторов в авторских координатах. */
   readonly enginePoints: readonly SceneVector3[];
+  /** Relative maximum lift of each rotor; omitted means equal motors. */
+  readonly rotorCapacityWeights?: readonly number[];
+  /** Reaction-torque sign of each rotor; omitted keeps legacy alternation. */
+  readonly rotorSpinDirections?: readonly (-1 | 1)[];
   /**
    * Боковая сила на оперении при опорной скорости. Перо руля работает
    * скоростным напором: сила падает как квадрат скорости, и на подходе, когда

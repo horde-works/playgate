@@ -9,7 +9,7 @@ import type {
   ScenePrefabLibrary,
   ScenePrefabPieceDefinition,
 } from "../scenes/sceneContract.ts";
-import { propBirch, propOak } from "./coreFlora.ts";
+import { propBirch, propOak, propWeepingWillow } from "./coreFlora.ts";
 import {
   propFridgeMoskva,
   propFridgeRibbed,
@@ -1229,7 +1229,9 @@ function parkModule(
 }
 
 function streetTree(seed: number): ScenePrefabDefinition {
-  const pieces: Piece[] = [...propBirch({ seed, scale: 1.35 })];
+  // Порода берёзы задана взрослым деревом (12–13 м); улица авторилась под
+  // прежнее пятиметровое, поэтому здесь она молодая.
+  const pieces: Piece[] = [...propBirch({ seed, scale: 0.45 })];
   return prefab(`city:tree:whitewashed:${seed}`, "Whitewashed street tree", ["city", "flora", "tree", "whitewashed"], pieces);
 }
 
@@ -2483,7 +2485,7 @@ function cardboardBoxes(): ScenePrefabDefinition {
 }
 
 function saplingWithStake(): ScenePrefabDefinition {
-  const pieces: Piece[] = [...propBirch({ seed: 41, scale: 0.55 })];
+  const pieces: Piece[] = [...propBirch({ seed: 41, scale: 0.18 })];
   pieces.push(
     cylinder("stake", [0.28, 0.75, 0.1], 0.045, 1.5, "#9c8a6a", undefined, "wood"),
     part("tie", "cloth", "panel", [0.14, 1.18, 0.05], [0.34, 0.05, 0.05], "#3f6e52", {
@@ -2598,8 +2600,12 @@ const prefabs = [
   parkModule("city:lawn:fence", "Low geometric lawn fence", "lawn-fence"),
   parkModule("city:drain:linear", "Linear sidewalk drain", "linear-drain"),
   ...[1, 2, 3].map(streetTree),
-  prefab("city:tree:courtyard", "Broad courtyard tree", ["city", "flora", "tree"], propOak({ seed: 17, scale: 1.4 })),
-  prefab("city:tree:willow", "Heavy overhanging yard tree", ["city", "flora", "tree"], propOak({ seed: 29, scale: 1.75 })),
+  // Порода дуба задана взрослым полевым деревом (9–10 м); двор хрущёвки
+  // авторился под прежний четырёхметровый, поэтому здесь он молодой.
+  prefab("city:tree:courtyard", "Broad courtyard tree", ["city", "flora", "tree"], propOak({ seed: 17, scale: 0.62 })),
+  // Префаб назывался ивой с самого начала, а собирался дубом. Теперь это
+  // настоящая плакучая ива: купол шире собственной высоты и занавес до земли.
+  prefab("city:tree:willow", "Weeping willow over the yard", ["city", "flora", "tree", "willow"], propWeepingWillow({ seed: 29, scale: 0.9 })),
   hedge(),
   flowerBed(),
   gableYellowHouse(),

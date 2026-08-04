@@ -6,6 +6,7 @@ import { SiteHeader } from "./SiteHeader";
 import { SiteFooter } from "./SiteFooter";
 import { featuredGame } from "../../games/registry";
 import { useLanguage } from "../i18n/LanguageProvider";
+import { requestWorldBoot } from "./worldBoot";
 
 export function HomeView() {
   const { t } = useLanguage();
@@ -25,7 +26,11 @@ export function HomeView() {
           </h1>
           <p className="hero-lede">{t("home.lede")}</p>
           <div className="hero-actions">
-            <Link className="button button-primary" href={featuredGame.href}>
+            <Link
+              className="button button-primary"
+              href={featuredGame.href}
+              onClick={() => requestWorldBoot(featuredGame.title)}
+            >
               {t("home.openCta")}
               <span aria-hidden="true">↗</span>
             </Link>

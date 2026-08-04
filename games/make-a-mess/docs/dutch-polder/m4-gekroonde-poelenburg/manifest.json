@@ -1,8 +1,8 @@
 {
   "modelId": "dutch-windmill-gekroonde-poelenburg-paltrok-m4",
-  "revision": "m4-2026-08-02",
-  "modelHash": "22ee85fcb89e",
-  "generatedAt": "2026-08-02T17:35:25.164Z",
+  "revision": "m4-2026-08-04-real-windows-a2",
+  "modelHash": "3ebc3b684bce",
+  "generatedAt": "2026-08-04T15:37:45.626Z",
   "views": [
     {
       "id": "front",
@@ -51,6 +51,18 @@
       "label": "Cutaway · three saw frames",
       "projection": "perspective",
       "file": "open-saw-floor.png"
+    },
+    {
+      "id": "night-open-floor",
+      "label": "Night · open saw-floor work pools",
+      "projection": "perspective",
+      "file": "night-open-floor.png"
+    },
+    {
+      "id": "window-detail",
+      "label": "Detail · real upper windows and reveals",
+      "projection": "perspective",
+      "file": "window-detail.png"
     },
     {
       "id": "silhouette",

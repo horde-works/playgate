@@ -7,6 +7,34 @@ import { forbidsDerivatives } from "./contentLicensing.ts";
 import type { MotionInstrumentDefinition } from "./motionTelemetry.ts";
 import type { SolarFrameDefinition } from "./timeOfDay.ts";
 import { propTree } from "../content/prefabs/coreFlora.ts";
+
+/**
+ * Возраст городских лиственных. Породы заданы взрослыми деревьями (дуб полевой
+ * межи 9–10 м, повислая берёза 12–13 м — см. `docs/procedural-tree-lessons.md`),
+ * а пояс опушки, куртины луга и дворы города авторились под прежние четырёх- и
+ * пятиметровые. Над опушкой на высоте 10 м висит причальная мачта дирижабля, и
+ * её габарит — авторское условие города, а не случайность:
+ * `tests/town-sky-mooring.test.mjs` держит верхушку опушки ниже гондолы.
+ * Поэтому город сажает МОЛОДЫЕ деревья — возрастом на месте посадки, а не
+ * занижением породы. Взрослый лес в городе потребует поднять причал и
+ * пересчитать габарит.
+ */
+const TOWN_TREE_AGE: Readonly<Record<"oak" | "birch" | "pine", number>> = {
+  oak: 0.62,
+  // Сосна выросла втрое (порода — 18 м вместо шести), а пояс города авторился
+  // под прежнюю: под причалом дирижабля ей тоже положен молодой возраст.
+  pine: 0.34,
+  // Берёзу пришлось состарить ещё меньше дуба: на 0.45 крона `edge:13`
+  // въезжала в раскос сходни причала — площадку под мачту расчищали под
+  // прежний пояс, и его габарит держит тест `no tree grows through the
+  // mooring site`.
+  birch: 0.35,
+};
+
+const townTreeScale = (
+  kind: "oak" | "birch" | "pine",
+  scale = 1,
+): number => scale * TOWN_TREE_AGE[kind];
 import { townSurfaceRoutes } from "../content/scenes/townSurfacePlan.ts";
 import {
   buildPlannedDoors,
@@ -176,8 +204,13 @@ export type SurfaceTextureProfile =
   | "city-chalk-sign-a"
   | "city-chalk-sign-b";
 
-export type TreeVisualKind = "oak" | "birch" | "pine";
-export type TreeVisualRole = "trunk" | "branch" | "foliage" | "bark";
+export type TreeVisualKind = "oak" | "birch" | "pine" | "willow";
+// `knob` — древесина, которая НЕ вытянута в трубу: наплыв каллуса на голове
+// стриженого дерева, бугор на стволе. Труба таких форм не умеет: её вершина
+// ужимается тейпером, а торцов у неё нет, поэтому стопка коротких труб читается
+// как стопка абажуров с небом в просветах. Такие куски рисуются замкнутым
+// шаровым примитивом.
+export type TreeVisualRole = "trunk" | "branch" | "knob" | "foliage" | "bark";
 
 /**
  * Identifies the cheap structural proxy that belongs to a procedural tree.
@@ -193,7 +226,21 @@ export interface TreeVisualDefinition {
   readonly parentLocalId?: string;
 }
 
-export type VegetationVisualKind = "shrub" | "hedge";
+/**
+ * Куст — не «зелёный ком», а вид со своей средой. Силуэт различает их сильнее
+ * цвета: круглая садовая крона, многоствольная заросль, стриженая изгородь,
+ * хвойная подушка, низкий верещатник, дуги ежевики, мелколистная степная
+ * арка и осока уреза. Полный разбор — `docs/procedural-tree-lessons.md` §8.
+ */
+export type VegetationVisualKind =
+  | "shrub"
+  | "hedge"
+  | "thicket"
+  | "needle"
+  | "heath"
+  | "cane"
+  | "steppe"
+  | "sedge";
 
 export interface VegetationVisualDefinition {
   readonly kind: VegetationVisualKind;
@@ -4256,7 +4303,8 @@ function createEdgewood(): BreakableClusterDefinition[] {
   ];
   for (const [index, [kind, tx, tz, seed, scale]] of belt.entries()) {
     treePieces.push(
-      ...asPieces("town:edgewood", `edge:${index}`, propTree(kind, { seed, scale }), [tx, 0, tz]),
+      ...asPieces("town:edgewood", `edge:${index}`,
+        propTree(kind, { seed, scale: townTreeScale(kind, scale) }), [tx, 0, tz]),
     );
   }
 
@@ -4288,7 +4336,12 @@ function createEdgewood(): BreakableClusterDefinition[] {
         [sx, -0.02 + height / 2, sz], [width, height, width * 0.85],
         index % 3 === 0 ? "#3c5230" : index % 3 === 1 ? "#49603a" : "#425934",
         [0, tone * Math.PI, 0]),
-      vegetationVisual: { kind: "shrub", seed: seed + 140 },
+      // Опушка зарастает не сиренью: у тропы в лес это бузина, лещина и
+      // ежевика — заросль со стволиками и дуги побегов.
+      vegetationVisual: {
+        kind: index % 3 === 0 ? "cane" : "thicket",
+        seed: seed + 140,
+      },
     });
   }
 
@@ -4351,7 +4404,7 @@ function createMeadowGroves(): BreakableClusterDefinition[] {
           ...asPieces("town:groves", `grove:${treeIndex}`,
             propTree(kind, {
               seed: 80 + grove * 5 + member,
-              scale: 0.84 + memberNoise * 0.34,
+              scale: townTreeScale(kind, 0.84 + memberNoise * 0.34),
             }),
             [tx, 0, tz]),
         );
@@ -4378,7 +4431,11 @@ function createMeadowGroves(): BreakableClusterDefinition[] {
           [sx, -0.02 + height / 2, sz], [width, height, width * 0.82],
           shrub % 3 === 0 ? "#3f5531" : shrub % 3 === 1 ? "#4a613a" : "#445c35",
           [0, tone * Math.PI, 0]),
-        vegetationVisual: { kind: "shrub", seed: grove * 17 + shrub + 700 },
+        // Куртины луга — подрост и садовый самосев: округлые кусты.
+        vegetationVisual: {
+          kind: shrub % 4 === 3 ? "cane" : "shrub",
+          seed: grove * 17 + shrub + 700,
+        },
       });
     }
   }
@@ -4400,7 +4457,10 @@ function createMeadowGroves(): BreakableClusterDefinition[] {
       ...asPieces("town:groves", `lone:${lone}`,
         propTree(lone % 3 === 0 ? "oak" : "birch", {
           seed: 200 + lone,
-          scale: 0.78 + loneNoise * 0.28,
+          scale: townTreeScale(
+            lone % 3 === 0 ? "oak" : "birch",
+            0.78 + loneNoise * 0.28,
+          ),
         }),
         [tx, 0, tz]),
     );
@@ -4431,7 +4491,11 @@ function createMeadowGroves(): BreakableClusterDefinition[] {
           [bx, -0.02 + height / 2, bz], [width, height, width * 0.85],
           drift % 2 === 0 ? "#465d36" : "#405833",
           [0, driftNoise * Math.PI, 0]),
-        vegetationVisual: { kind: "shrub", seed: drift * 13 + bush + 900 },
+        // Гривы луга: тёрн и шиповник вперемешку с ивняком.
+        vegetationVisual: {
+          kind: bush % 2 === 0 ? "thicket" : "cane",
+          seed: drift * 13 + bush + 900,
+        },
       });
     }
   }
@@ -4586,7 +4650,8 @@ function createRimHedgerow(): BreakableClusterDefinition[] {
           [x, -0.02 + height / 2, z], [width, height, width * 0.8],
           step % 3 === 0 ? "#3f5531" : step % 3 === 1 ? "#4a613a" : "#445c35",
           [0, noiseA * Math.PI, 0]),
-        vegetationVisual: { kind: "shrub", seed: step + 300 },
+        // Бурьян по кромке города — заросль тёрна, а не садовый куст.
+        vegetationVisual: { kind: "thicket", seed: step + 300 },
       });
       if (noiseA > 0.4) {
         const smallWidth = width * 0.55;
@@ -4602,7 +4667,7 @@ function createRimHedgerow(): BreakableClusterDefinition[] {
               [smallWidth, smallHeight, smallWidth * 0.85],
               step % 2 === 0 ? "#465d36" : "#405833",
               [0, noiseB * Math.PI, 0]),
-            vegetationVisual: { kind: "shrub", seed: step + 500 },
+            vegetationVisual: { kind: "cane", seed: step + 500 },
           });
         }
       }
@@ -4951,7 +5016,8 @@ function createRimClosure(): BreakableClusterDefinition[] {
   ];
   for (const [index, [kind, tx, tz, seed, scale]] of screenTrees.entries()) {
     screen.push(
-      ...asPieces("town:rim:screen", `screen:${index}`, propTree(kind, { seed, scale }), [tx, 0, tz]),
+      ...asPieces("town:rim:screen", `screen:${index}`,
+        propTree(kind, { seed, scale: townTreeScale(kind, scale) }), [tx, 0, tz]),
     );
   }
   clusters.push(cluster("town:rim:screen", "Treeline beyond the fences", "wood", "mounted", screen));
@@ -5246,7 +5312,8 @@ function createTownClutter(): BreakableClusterDefinition[] {
     // Городские дворы знают полусухие деревья: часть крон (по сиду) несёт
     // усохшие рыжие ветви — как тополь у площадки, который сохнет годами.
     treePieces.push(
-      ...asPieces("town:trees", `tree:${index}`, propTree(kind, { seed, scale, dry: true }), [tx, 0, tz]),
+      ...asPieces("town:trees", `tree:${index}`,
+        propTree(kind, { seed, scale: townTreeScale(kind, scale), dry: true }), [tx, 0, tz]),
     );
   }
   clusters.push(cluster("town:trees", "Courtyard trees", "wood", "mounted", treePieces));

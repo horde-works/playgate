@@ -452,7 +452,9 @@ function createMountainRidge(side: -1 | 1): void {
               ],
               ),
               vegetationVisual: {
-                kind: "shrub",
+                // Нагорье и зовётся heath: это низкий вересковый мат по
+                // базальту, а не садовый куст.
+                kind: "heath",
                 seed: index * 7 + growth + 701,
               },
             },

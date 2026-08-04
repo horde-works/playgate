@@ -67,7 +67,8 @@ Before geometry, require one evidence card containing:
    values with named axes;
 4. countable topology, support chain, openings, hinges and major joints;
 5. protected scope and explicit rejection conditions;
-6. fixed exterior, high, silhouette and cutaway cameras.
+6. fixed exterior, high and silhouette cameras, plus an identical closed
+   exterior pair for every cutaway camera.
 
 Then require this exact sequence:
 
@@ -85,11 +86,25 @@ Make these checks machine-owned before visual review:
 
 - reconstruct all bounds from final parts, including annexes and roof
   projections;
-- test openings against wall geometry rather than counting dark panels;
+- test every window as a complete assembly: shell and every exterior cladding
+  course are segmented around a true void; four reveals, four frame sides,
+  muntins/transoms, ordinary transparent glazing and interior depth all exist;
+  probe inward from the pane and reject any uninterrupted wall immediately
+  behind it;
 - test every door leaf against its own hinge/jamb;
 - test roof-entry joints for an opening, support frame and weather transition;
 - test primary member endpoints against their bearings and finished shell;
 - test unique ids, non-degenerate geometry and fixed camera inventory;
+- reject any transparent canonical or compiled part without a physically
+  transparent real-world material; a dark recess, void or cutaway helper is
+  not glass;
+- reject any window glass that emits, owns a source or maps to the warm glow
+  colour; for every lit fixture require a clear non-emissive lens containing a
+  smaller bulb/flame that alone owns the source at its centre;
+- audit apparent transparency independently from material opacity: require
+  outward winding/positive signed volume for closed opaque meshes and outward
+  normals for open roofs and panels; never use `doubleSided` to conceal an
+  inverted surface;
 - reject wind, movement or scene imports outside the protected scope.
 
 Stop and escalate instead of inventing geometry when sources disagree about a
@@ -145,6 +160,11 @@ its own visual output accepted or compile it into the world.
   canonical geometry, pivots and revision; never substitute a diagram or a
   second simplified mechanism, and never use cutaway instead of exterior
   control views.
+- Pair every cutaway with the same camera rendered once with the complete outer
+  shell and once with named groups hidden. Keep projection, target, framing,
+  mechanism phase, revision and model hash identical, and present both images
+  together for acceptance. Never create the cutaway by lowering surface opacity
+  or assigning ghost/X-ray materials to canonical parts.
 - Use true scaled bounds and natural material colours in the blockout; do not
   substitute a flat footprint when height balance is the actual decision.
 - Store wall footprint, roof/fixture envelope and any motion reserve as
@@ -164,8 +184,11 @@ its own visual output accepted or compile it into the world.
   `visualMesh` for double curvature and exact glazing, and a sampled surface
   function for repeated shells.
 - Match tangents and, where the specular silhouette requires it, curvature.
-- Build openings as holes in the shell; separate body, dark mask, glass and
-  frame.
+- Build every window in the causal order `segmented shell/cladding → void →
+  jamb/head/sill reveals → frame/muntins → ordinary transparent glazing →
+  interior depth`. A dark mask may belong deep inside the room, but it may
+  never close the opening immediately behind the pane or substitute for the
+  room.
 - Check the swept envelope of every allowed moving group across its complete
   range, not only the authored screenshot phase. Rotor tips, doors, cranes and
   wheels must clear roofs, rails, thresholds and adjacent structures.
@@ -261,11 +284,29 @@ reusing the authoring helper.
 
 - Make metal, plastic, glass, stone and paint differ by optical response, not
   only color.
+- Author and preview the canonical object with the material semantics that the
+  world adapter will use. Diagnostic visibility belongs to the camera, never
+  to a part material. Treat glazing, dark recesses/voids and opaque shell as
+  distinct ids; do not map all three through one `darkGlass` shortcut.
+- Before scene integration, enumerate every transparent prefab piece and prove
+  that the real object contains a physically transparent element at that id.
+- Treat back-face disappearance as a transparency defect even when opacity is
+  one. Validate canonical and compiled index winding in both intact and dynamic
+  paths.
 - Keep flat graphics in texture/UV/palette carriers; use geometry only for
   thickness, shadow and real gaps.
-- Separate visible fixture, emissive surface and actual light.
-- Root spotlights at the physical lens, derive direction from the same carrier,
-  and verify the real illuminated target.
+- Treat ordinary window glass as transmission only: it is never an emissive
+  panel and never owns a light. Lighted windows must reveal a physical interior
+  fixture through ordinary glass.
+- Build the complete visible fixture chain `carrier → plate/hook → arm/chain →
+  body/cap → clear non-emissive lens → contained bulb/flame`. The bulb/flame
+  alone is emissive and owns the point/spot source at its own centre.
+- Place interior fixtures so the bulb is visible from at least one fixed
+  exterior night camera and is not hidden behind a mullion, transom, roof
+  member or opaque backing. Window transmission, bulb emission, illuminated
+  materials and reflections are four independent checks.
+- Root directional light from the bulb/flame and the same physical carrier,
+  then verify the real illuminated target.
 - Check day, evening and night transitions and route legibility.
 - Verify physical light radius and shared-pool selection separately. A correct
   close view does not prove that a landmark remains lit in a flyover.
@@ -321,6 +362,9 @@ zero unsupported pieces after the whole scene compiles.
 ### 8. Run the autonomous comparison loop
 
 - Capture the same front, profile, both diagonal, high, joint and night views.
+- Capture each cutaway as a locked pair: complete exterior first, then the same
+  camera with named shell groups hidden. Compare the exterior for material and
+  silhouette regressions before reading the mechanism through the cutaway.
 - Keep camera definitions and articulated phase fixed between revisions. Never
   tune a camera to hide a profile defect.
 - Compare in the order silhouette → control lines → negative space → volumes →
@@ -344,6 +388,12 @@ node --test <object-tests> <structure-tests> <walkability-tests>
 Also verify:
 
 - exact counts only for reference-defined or functional invariants;
+- one-to-one cutaway/exterior camera pairs and an audited list of transparent
+  canonical and compiled pieces;
+- a window-assembly audit and inward clear-opening probe for every window;
+- a lens/bulb containment audit proving that lenses own no sources, bulbs own
+  sources at their centres, and lit-window close views show the bulb through
+  ordinary glass;
 - dimensions, endpoints, tangent/curvature continuity and maximum error from
   compiled pieces;
 - whole-scene initial support and relevant destruction behavior;
@@ -362,10 +412,19 @@ make an unrelated suite green.
 - Never claim joined rods meet until their compiled world endpoints have been
   independently reconstructed and measured.
 - Never model reference-critical geometry from a single perspective.
+- Never accept a cutaway without its identical complete-shell projection.
+- Never encode cutaway visibility as opacity or let a diagnostic transparent
+  surface compile into the world.
 - Never call a polyline smooth when its tangent or visible normal jumps.
 - Never treat a dark windshield mask as one oversized glass pane.
 - Never place glass or a door on top of a solid wall instead of making a real
   opening.
+- Never author decorative/fake windows. A window without a true shell and
+  cladding void, reveals, frame, transparent glass and interior depth is not a
+  window.
+- Never make a window pane or the whole lantern lens luminous. Put a separate
+  visible bulb/flame inside the clear lens and make only that element own the
+  source.
 - Never use a decorative stripe to fake missing body curvature.
 - Never create an artificial roof hump to hide a bad roof-to-front transition.
 - Never leave a canopy, device or light without a visible attachment path.

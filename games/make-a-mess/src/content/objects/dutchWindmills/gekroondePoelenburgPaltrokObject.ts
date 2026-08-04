@@ -4,6 +4,12 @@ import type {
   ObjectMaterialId,
   ObjectPoint,
 } from "./objectModel.ts";
+import { reverseTriangleWinding } from "./objectModel.ts";
+import { dutchLampFixture } from "../dutchLighting/dutchLightingFixtures.ts";
+import {
+  frontWindowAssembly,
+  rectangularFrustumWithFrontOpenings,
+} from "../dutchArchitecture/dutchWindowAssemblies.ts";
 
 export const POELENBURG_ROTOR_SPAN = 23;
 export const POELENBURG_ROTOR_RADIUS = POELENBURG_ROTOR_SPAN / 2;
@@ -81,31 +87,7 @@ const addAnnulus = (id: string, group: string, material: ObjectMaterialId, y: nu
       [li, uin, ui], [li, lin, uin],
     );
   }
-  addMesh(id, group, material, vertices, triangles);
-};
-
-const addRectangularFrustum = (
-  id: string,
-  group: string,
-  material: ObjectMaterialId,
-  y0: number,
-  y1: number,
-  halfX0: number,
-  halfZ0: number,
-  halfX1: number,
-  halfZ1: number,
-) => {
-  const vertices: ObjectPoint[] = [
-    point(-halfX0, y0, -halfZ0), point(halfX0, y0, -halfZ0),
-    point(halfX0, y0, halfZ0), point(-halfX0, y0, halfZ0),
-    point(-halfX1, y1, -halfZ1), point(halfX1, y1, -halfZ1),
-    point(halfX1, y1, halfZ1), point(-halfX1, y1, halfZ1),
-  ];
-  addMesh(id, group, material, vertices, [
-    [0, 1, 5], [0, 5, 4], [1, 2, 6], [1, 6, 5],
-    [2, 3, 7], [2, 7, 6], [3, 0, 4], [3, 4, 7],
-    [0, 3, 2], [0, 2, 1], [4, 5, 6], [4, 6, 7],
-  ]);
+  addMesh(id, group, material, vertices, reverseTriangleWinding(triangles));
 };
 
 const rotorPoint = (angle: number, radius: number, tangentOffset: number, z = POELENBURG_ROTOR_PLANE_Z): ObjectPoint => {
@@ -187,29 +169,73 @@ for (const x of [-8.55, -4.5, 4.5, 8.55]) {
 
 // Closed windward skirt and the restored stepped overlapping plank wall.
 addBox("front-lower-skirt", "stepped-wall", "cladding", point(0, 3.02, 5.52), point(7.6, 1.68, 0.24));
+const paltrokUpperWindowXs = [-1.25, 1.25] as const;
 for (let course = 0; course < 16; course += 1) {
   const y = 2.35 + course * 0.5;
   const t = (y - 2.35) / 8.0;
   const width = 7.8 + (4.35 - 7.8) * t;
   const frontZ = 4.05 + (2.72 - 4.05) * t + course * 0.018;
-  addBox(`stepped-plank-course-${course}`, "stepped-wall", "cladding", point(0, y, frontZ), point(width, 0.58, 0.2));
+  const cutsWindows = y + 0.29 > 7.55 - 0.95 / 2 && y - 0.29 < 7.55 + 0.95 / 2;
+  const gaps = cutsWindows
+    ? paltrokUpperWindowXs.map((x) => [x - 0.78 / 2, x + 0.78 / 2] as const)
+    : [];
+  const segments: Array<readonly [number, number]> = [];
+  let cursor = -width / 2;
+  for (const [gapLeft, gapRight] of gaps) {
+    if (gapLeft > cursor) segments.push([cursor, gapLeft]);
+    cursor = gapRight;
+  }
+  if (cursor < width / 2) segments.push([cursor, width / 2]);
+  for (const [segment, [x0, x1]] of segments.entries()) {
+    addBox(`stepped-plank-course-${course}-segment-${segment}`, "stepped-wall", "cladding", point((x0 + x1) / 2, y, frontZ), point(x1 - x0, 0.58, 0.2));
+  }
 }
 
-// Tall central body starts above the open work floor: paltrok, not tower-on-base.
-addRectangularFrustum("upper-body-shell", "upper-body", "cladding", 4.15, 10.95, 3.9, 4.05, 2.18, 2.7);
+// Tall central body starts above the open work floor. Both upper windows are
+// voids in the windward face, not panes laid over a continuous frustum.
+const upperBodyWindows = paltrokUpperWindowXs.map((centerX) => ({
+  id: `upper-front-window-${centerX}`,
+  centerX,
+  centerY: 7.55,
+  width: 0.78,
+  height: 0.95,
+})) as readonly { id: string; centerX: number; centerY: number; width: number; height: number }[];
+const upperBodyFrontZAt = (y: number) => 4.05 + (2.7 - 4.05) * ((y - 4.15) / (10.95 - 4.15));
+parts.push(...rectangularFrustumWithFrontOpenings({
+  id: "upper-body-shell",
+  group: "upper-body",
+  material: "cladding",
+  y0: 4.15,
+  y1: 10.95,
+  halfX0: 3.9,
+  halfZ0: 4.05,
+  halfX1: 2.18,
+  halfZ1: 2.7,
+  openings: upperBodyWindows,
+}));
 for (const [index, sx, sz] of [[0, -1, -1], [1, 1, -1], [2, -1, 1], [3, 1, 1]] as const) {
   addBeam(`upper-body-corner-${index}`, "upper-body", "timber-dark", point(sx * 3.9, 4.08, sz * 4.05), point(sx * 2.18, 11.0, sz * 2.7), 0.21, 0.19);
 }
-for (const x of [-1.25, 1.25]) {
-  addBox(`upper-front-window-${x}`, "upper-body", "opening", point(x, 7.55, 3.48), point(0.78, 0.95, 0.1), point(-0.19, 0, 0));
+for (const window of upperBodyWindows) {
+  parts.push(...frontWindowAssembly({
+    ...window,
+    group: "upper-body-window",
+    faceZAt: upperBodyFrontZAt,
+    wallDepth: 0.2,
+    columns: 2,
+    rows: 2,
+    frameMaterial: "timber-dark",
+    interiorDepth: 1.25,
+  }));
 }
 
 // Side-wing roofs protect the machines but leave the rear and sides visibly open.
 for (const side of [-1, 1]) {
+  const roofTriangles: Array<readonly [number, number, number]> = [[0, 1, 3], [0, 3, 2]];
   addMesh(`wing-roof-${side}`, "wings", "roof", [
     point(side * 3.15, 5.4, -5.6), point(side * 8.95, 3.95, -5.6),
     point(side * 3.15, 5.4, 5.45), point(side * 8.95, 3.95, 5.45),
-  ], [[0, 1, 3], [0, 3, 2]], true);
+  ], side < 0 ? roofTriangles : reverseTriangleWinding(roofTriangles), true);
   addBox(`wing-front-wall-${side}`, "wings", "cladding", point(side * 6.05, 2.96, 5.48), point(5.7, 1.42, 0.2));
   addBeam(`wing-outer-eave-${side}`, "wings", "paint-light", point(side * 8.98, 3.95, -5.72), point(side * 8.98, 3.95, 5.58), 0.17, 0.15);
   addBeam(`wing-inner-eave-${side}`, "wings", "paint-light", point(side * 3.14, 5.41, -5.72), point(side * 3.14, 5.41, 5.58), 0.17, 0.15);
@@ -249,7 +275,7 @@ for (let section = 0; section < capSections.length - 1; section += 1) {
 capTriangles.push([0, 1, 3], [0, 3, 2]);
 const capEnd = (capSections.length - 1) * 4;
 capTriangles.push([capEnd, capEnd + 3, capEnd + 1], [capEnd, capEnd + 2, capEnd + 3]);
-addMesh("cap-hull", "cap", "roof", capVertices, capTriangles);
+addMesh("cap-hull", "cap", "roof", capVertices, reverseTriangleWinding(capTriangles));
 
 // Rotor plane is completely in front of the windward roof envelope.
 addCylinder("windshaft", "rotor", "metal", point(0, POELENBURG_HUB_Y, 0.45), point(0, POELENBURG_HUB_Y, POELENBURG_ROTOR_PLANE_Z + 0.32), 0.29, 20);
@@ -281,9 +307,22 @@ for (let spoke = 0; spoke < 8; spoke += 1) {
   addBeam(`winding-spoke-${spoke}`, "tail", "paint-light", windingCentre, point(1.8, 1.55 + Math.cos(angle), -11.9 + Math.sin(angle)), 0.075, 0.065);
 }
 
+for (const [id, x, z] of [["west", -3.65, -0.2], ["east", 3.65, -0.2]] as const) {
+  parts.push(...dutchLampFixture({
+    id: `open-floor-lamp:${id}`,
+    group: "lighting-fixtures",
+    lens: point(x, 4.68, z),
+    carrierPoint: point(x, 5.38, z),
+    carrier: "ceiling",
+    lampClass: "work",
+    poolGroupId: "dutch-polder:m4-open-floor",
+    priority: id === "west" ? 2.4 : 1.9,
+  }));
+}
+
 export const gekroondePoelenburgPaltrokObject: ObjectLabModel = {
   id: "dutch-windmill-gekroonde-poelenburg-paltrok-m4",
-  revision: "m4-2026-08-02",
+  revision: "m4-2026-08-04-real-windows-a2",
   title: "De Gekroonde Poelenburg-type paltrok sawmill — structural grey model",
   units: "metres",
   coordinates: { up: "+Y", front: "+Z", origin: "ground-centre" },
@@ -345,6 +384,8 @@ export const gekroondePoelenburgPaltrokObject: ObjectLabModel = {
     { id: "high-three-quarter", label: "High 3/4 · wings + body", projection: "perspective", position: point(-34, 36, 39), target: point(0, 7.4, 0), fov: 38 },
     { id: "roller-ring", label: "Cutaway · roller ring + king post", projection: "perspective", position: point(-8.5, 3.1, -8.5), target: point(0, 1.3, 0), fov: 32, hiddenGroups: ["upper-body", "stepped-wall", "wings", "wing-frame", "cap", "rotor", "saw-floor", "saw-frames", "log-carriages", "tail"] },
     { id: "open-saw-floor", label: "Cutaway · three saw frames", projection: "perspective", position: point(-12, 7.4, -13), target: point(0, 3.8, -0.5), fov: 34, hiddenGroups: ["upper-body", "stepped-wall", "wings", "wing-frame", "cap", "rotor", "tail"] },
+    { id: "night-open-floor", label: "Night · open saw-floor work pools", projection: "perspective", position: point(20, 9.5, -24), target: point(0, 4.2, -0.4), fov: 34, lighting: "night" },
+    { id: "window-detail", label: "Detail · real upper windows and reveals", projection: "perspective", position: point(-5, 8.5, 12), target: point(0, 7.55, 3.2), fov: 26 },
     { id: "silhouette", label: "Silhouette control", projection: "orthographic", position: point(0, 11.8, 48), target: point(0, 11.2, 0), orthoHeight: 29 },
   ],
 };

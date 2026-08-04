@@ -319,6 +319,8 @@ function rotorcraftFlightForces(
       availability: points.map((_, index) => availability[index] ?? 1),
       motorOutput: points.map((_, index) => state.rotorMotorOutput[index] ?? 0),
       liftCapacity: mass.mass * GRAVITY * (frame.flight.liftReserve ?? 1.35),
+      capacityWeights: limits.rotorCapacityWeights,
+      spinDirections: limits.rotorSpinDirections,
       maximumTilt: frame.flight.maximumTilt ?? DEFAULT_ROTOR_TILT,
     },
     {

@@ -328,6 +328,10 @@ export function DayNightCycle({
       .normalize();
     if (directional.current) {
       environmentState.sunColor.copy(directional.current.color);
+      environmentState.keyLightDirection
+        .copy(directional.current.position)
+        .normalize();
+      environmentState.keyLightColor.copy(directional.current.color);
     }
     environmentState.dayFactor = day;
     environmentState.nightFactor = night;

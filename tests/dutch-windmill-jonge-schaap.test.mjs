@@ -38,7 +38,7 @@ test("лесопилка остаётся шестиугольной башне�
   assert.ok(groups.has("drivetrain"));
   const tower = jongeSchaapSawmillObject.parts.find((part) => part.id === "hexagonal-smock");
   assert.equal(tower?.kind, "mesh");
-  assert.equal(tower?.vertices.length, 12);
+  assert.equal(tower?.vertices.length, 28);
   assert.equal(jongeSchaapSawmillObject.dimensions.sawHallDepth, 20);
   assert.equal(jongeSchaapSawmillObject.dimensions.sawHallWidth, 13.8);
 });
@@ -124,7 +124,7 @@ test("приёмочные камеры проверяют массу и про�
   const ids = jongeSchaapSawmillObject.views.map((view) => view.id);
   assert.deepEqual(ids, [
     "front", "left", "rear", "three-quarter-left", "three-quarter-right",
-    "high-three-quarter", "saw-workflow", "crankshaft", "silhouette",
+    "high-three-quarter", "saw-workflow", "crankshaft", "night-saw-floor", "night-gable-window", "silhouette",
   ]);
   const crankshaft = jongeSchaapSawmillObject.views.find((view) => view.id === "crankshaft");
   assert.deepEqual(crankshaft?.hiddenGroups, [

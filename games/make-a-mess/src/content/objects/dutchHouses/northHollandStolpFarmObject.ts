@@ -4,6 +4,7 @@ import type {
   ObjectMaterialId,
   ObjectPoint,
 } from "../dutchWindmills/objectModel.ts";
+import { dutchLampFixture } from "../dutchLighting/dutchLightingFixtures.ts";
 
 export const STOLP_MAIN_WALL_WIDTH = 14.6;
 export const STOLP_MAIN_WALL_DEPTH = 13.4;
@@ -414,9 +415,62 @@ for (const side of [-1, 1]) {
   }
 }
 
+for (const part of parts) {
+  if (part.material === "opening" && part.id.includes("window")) part.material = "glazing";
+}
+
+for (const x of [-3.65, 3.65]) {
+  addBeam(`residence-window-lamp-carrier-${x}`, "residential-interior", "timber-dark", point(x, 2.92, 5.9), point(x, 2.92, 6.84), 0.14, 0.14);
+}
+addBeam("front-gable-window-lamp-carrier", "residential-interior", "timber-dark", point(-0.4, 5.62, 6.18), point(0.4, 5.62, 6.18), 0.14, 0.14);
+
+parts.push(
+  ...dutchLampFixture({
+    id: "residence-left-window-lamp",
+    group: "lighting-fixtures",
+    lens: point(-3.65, 2.22, 6.12),
+    carrierPoint: point(-3.65, 2.92, 6.12),
+    carrier: "ceiling",
+    lampClass: "domestic",
+    poolGroupId: "dutch-polder:h2-residence",
+    priority: 2.5,
+  }),
+  ...dutchLampFixture({
+    id: "residence-right-window-lamp",
+    group: "lighting-fixtures",
+    lens: point(3.65, 2.22, 6.12),
+    carrierPoint: point(3.65, 2.92, 6.12),
+    carrier: "ceiling",
+    lampClass: "domestic",
+    poolGroupId: "dutch-polder:h2-residence",
+    priority: 2.35,
+  }),
+  ...dutchLampFixture({
+    id: "residence-gable-window-lamp",
+    group: "lighting-fixtures",
+    lens: point(0, 4.92, 6.18),
+    carrierPoint: point(0, 5.62, 6.18),
+    carrier: "ceiling",
+    lampClass: "domestic",
+    poolGroupId: "dutch-polder:h2-residence",
+    priority: 2.15,
+  }),
+  ...dutchLampFixture({
+    id: "service-entry-lantern",
+    group: "lighting-fixtures",
+    lens: point(7.78, 2.18, -0.6),
+    carrierPoint: point(7.42, 2.36, -0.6),
+    carrier: "wall-x",
+    outward: 1,
+    lampClass: "exterior",
+    poolGroupId: "dutch-polder:h2-residence",
+    priority: 2.2,
+  }),
+);
+
 export const northHollandStolpFarmObject: ObjectLabModel = {
   id: "dutch-house-north-holland-stolp-h2",
-  revision: "h2-2026-08-02",
+  revision: "h2-2026-08-04-real-windows-a2",
   title: "North-Holland stolp farm + rear tail — structural grey model",
   units: "metres",
   coordinates: { up: "+Y", front: "+Z", origin: "ground-centre" },
@@ -466,6 +520,7 @@ export const northHollandStolpFarmObject: ObjectLabModel = {
     { id: "high-three-quarter", label: "High 3/4 · asymmetric roof transitions", projection: "perspective", position: point(25, 27, 25), target: point(1.0, 3.4, -2.0), fov: 37 },
     { id: "vierkant-cutaway", label: "Cutaway · four-post roof load path", projection: "perspective", position: point(-20, 13, 20), target: point(0, 4.2, 0), fov: 34, hiddenGroups: ["residential-shell", "residential-openings", "residential-trim", "residential-gable", "front-gable-roof", "barn-shell", "barn-openings", "main-roof-skin", "tail-shell", "tail-openings", "tail-roof"] },
     { id: "tail-junction-cutaway", label: "Cutaway · open rear bay + roof flashing", projection: "perspective", position: point(18, 8, -20), target: point(2.8, 2.5, -7.0), fov: 32, hiddenGroups: ["residential-shell", "residential-openings", "residential-trim", "residential-gable", "front-gable-roof", "barn-shell", "barn-openings", "main-roof-skin", "tail-shell", "tail-openings", "tail-roof", "main-roof-frame"] },
+    { id: "night-residence", label: "Night · occupied residence, dark barn", projection: "perspective", position: point(19, 7.5, 20), target: point(1.5, 2.1, 4.2), fov: 34, lighting: "night" },
     { id: "silhouette", label: "Silhouette control", projection: "orthographic", position: point(-24, 12, 27), target: point(0, 4.1, -1), orthoHeight: 16.0 },
   ],
 };

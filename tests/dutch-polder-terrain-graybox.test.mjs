@@ -3,12 +3,20 @@ import test from "node:test";
 import {
   DUTCH_POLDER_BRIDGE_SEATS,
   DUTCH_POLDER_BRIDGE_APPROACHES,
+  DUTCH_POLDER_BUILDING_PLOTS,
   DUTCH_POLDER_CHANNELS,
+  DUTCH_POLDER_CHANNEL_BANK_WIDTH,
   DUTCH_POLDER_OBJECT_RESERVES,
+  DUTCH_POLDER_PAD_BANK_MARGIN,
+  DUTCH_POLDER_PAD_SHORE_MARGIN,
   DUTCH_POLDER_ROUTES,
   DUTCH_POLDER_SHORELINE,
   DUTCH_POLDER_ZONES,
   dutchPolderGroundTopAt,
+  dutchPolderKeepOut,
+  dutchPolderPlotArrival,
+  dutchPolderPlotToWorld,
+  dutchPolderRectRadius,
   dutchPolderTerrainGraybox,
 } from "../games/make-a-mess/src/content/scenes/dutchPolder/dutchPolderTerrainGraybox.ts";
 
@@ -39,7 +47,22 @@ test("каждый принятый объект получает истинну
     const [x, z] = reserve.position;
     assert.ok(Math.abs(dutchPolderGroundTopAt(x, z) - reserve.baseY) <= 0.2, `${reserve.id}: base Y is detached from terrain`);
   }
-  assert.equal(DUTCH_POLDER_OBJECT_RESERVES.find(({ id }) => id === "H2").radius, 13);
+  // A circle is the true keep-out shape for a mill, because its sails sweep
+  // one. A building has no sails, so its reserve is read from the plot it
+  // actually occupies rather than from an authored radius.
+  for (const plot of DUTCH_POLDER_BUILDING_PLOTS) {
+    const reserve = DUTCH_POLDER_OBJECT_RESERVES.find(({ id }) => id === plot.id);
+    assert.equal(plot.sweep !== undefined, plot.id.startsWith("M"), `${plot.id}: sweep belongs to mills`);
+    assert.equal(
+      reserve.radius,
+      Math.max(plot.sweep ?? 0, dutchPolderRectRadius(dutchPolderKeepOut(plot))),
+      plot.id,
+    );
+    assert.ok(
+      reserve.radius >= dutchPolderRectRadius(plot.footprint),
+      `${plot.id}: reserve smaller than the building itself`,
+    );
+  }
 });
 
 test("грубые клетки не пересекают математические водные призмы", () => {
@@ -104,5 +127,45 @@ test("обязательная сеть имеет связный путь от 
     expanded = false;
     for (const node of [...reached]) for (const next of nodes.get(node) ?? []) if (!reached.has(next)) { reached.add(next); expanded = true; }
   }
-  for (const { id, position } of DUTCH_POLDER_OBJECT_RESERVES) assert.ok(reached.has(`${position[0].toFixed(2)}:${position[1].toFixed(2)}`), `${id}: no mandatory route`);
+  // A route has to deliver a visitor to the parcel gate where one is declared,
+  // and only to the building origin while an object still has no parcel.
+  for (const plot of DUTCH_POLDER_BUILDING_PLOTS) {
+    const [x, , z] = dutchPolderPlotArrival(plot);
+    assert.ok(reached.has(`${x.toFixed(2)}:${z.toFixed(2)}`), `${plot.id}: no mandatory route`);
+  }
+});
+
+test("levelled ground carries the whole building and never eats a canal bank", () => {
+  for (const plot of DUTCH_POLDER_BUILDING_PLOTS) {
+    // The pad exists to hold the object up, so it must contain the footprint.
+    assert.ok(plot.pad.minX <= plot.footprint.minX && plot.pad.maxX >= plot.footprint.maxX, `${plot.id}: pad narrower than its building`);
+    assert.ok(plot.pad.minZ <= plot.footprint.minZ && plot.pad.maxZ >= plot.footprint.maxZ, `${plot.id}: pad shorter than its building`);
+    let worstChannel = Number.POSITIVE_INFINITY;
+    let worstShore = Number.POSITIVE_INFINITY;
+    for (let ix = 0; ix <= 20; ix += 1) {
+      for (let iz = 0; iz <= 20; iz += 1) {
+        const [x, z] = dutchPolderPlotToWorld(
+          plot,
+          plot.pad.minX + (plot.pad.maxX - plot.pad.minX) * ix / 20,
+          plot.pad.minZ + (plot.pad.maxZ - plot.pad.minZ) * iz / 20,
+        );
+        for (const channel of DUTCH_POLDER_CHANNELS) {
+          worstChannel = Math.min(
+            worstChannel,
+            channelDistance(x, z, channel)
+              - (channel.width / 2 + DUTCH_POLDER_CHANNEL_BANK_WIDTH + DUTCH_POLDER_PAD_BANK_MARGIN),
+          );
+        }
+        worstShore = Math.min(worstShore, DUTCH_POLDER_SHORELINE.reduce(
+          (best, point, index) => Math.min(best, distanceToSegment(x, z, point, DUTCH_POLDER_SHORELINE[(index + 1) % DUTCH_POLDER_SHORELINE.length])),
+          Number.POSITIVE_INFINITY,
+        ) - DUTCH_POLDER_PAD_SHORE_MARGIN);
+      }
+    }
+    // Levelled ground may lap the soft terrace of a channel; the bed and the
+    // bank are the shape of the waterway and belong to the water, not to a
+    // construction pad that would flatten them into a lip.
+    assert.ok(worstChannel > 0, `${plot.id}: levelled ground reaches into a canal bank by ${(-worstChannel).toFixed(2)} m`);
+    assert.ok(worstShore > 0, `${plot.id}: levelled ground reaches the island edge by ${(-worstShore).toFixed(2)} m`);
+  }
 });

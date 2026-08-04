@@ -144,11 +144,32 @@ export interface RotorMixInput {
   /** Суммарная тяга, которую дают ВСЕ исправные винты, в единицах силы. */
   readonly capacity: number;
   /**
+   * Relative passport capacity of each rotor. Omitted means equal motors.
+   * Values are normalised internally, so their sum still equals `capacity`.
+   */
+  readonly capacityWeights?: readonly number[];
+  /** Reaction-torque sign of each rotor. Omitted keeps legacy alternation. */
+  readonly spinDirections?: readonly (-1 | 1)[];
+  /**
    * Known thrust that is still present but can no longer be commanded.
    * A severed motor does not stop in one frame; living rotors must cancel its
    * decaying force instead of allocating as though it had already vanished.
    */
   readonly biasThrust?: readonly number[];
+}
+
+export function rotorCapacityByPoint(
+  capacity: number,
+  count: number,
+  weights?: readonly number[],
+): readonly number[] {
+  if (count <= 0 || capacity <= 0) return [];
+  const safe = Array.from({ length: count }, (_, index) =>
+    Math.max(0, weights?.[index] ?? 1),
+  );
+  const total = safe.reduce((sum, value) => sum + value, 0);
+  if (total <= 1e-9) return safe.map(() => 0);
+  return safe.map((weight) => capacity * weight / total);
 }
 
 export interface RotorMixDemand {
@@ -256,14 +277,21 @@ export function mixRotorThrust(
       lateral: dx * starboard[0] + dz * starboard[1],
     };
   });
-  const share = count > 0 ? input.capacity / count : 0;
+  const capacityByPoint = rotorCapacityByPoint(
+    input.capacity,
+    count,
+    input.capacityWeights,
+  );
   const perRotorLimit = input.availability.map(
-    (fraction) => share * Math.max(0, Math.min(1, fraction)),
+    (fraction, index) =>
+      (capacityByPoint[index] ?? 0) * Math.max(0, Math.min(1, fraction)),
   );
   // Направление вращения чередуется по кругу, как у всякого мультиротора:
   // соседние винты крутятся навстречу, и сумма их реактивных моментов у целой
   // машины равна нулю. Рыскание — это перекос ЭТОЙ суммы.
-  const spin = input.points.map((_, index) => (index % 2 === 0 ? 1 : -1));
+  const spin = input.points.map(
+    (_, index) => input.spinDirections?.[index] ?? (index % 2 === 0 ? 1 : -1),
+  );
   const yawMoment = demand.yawMoment ?? 0;
   const biasThrust = input.points.map((_, index) =>
     Math.max(0, input.biasThrust?.[index] ?? 0),
@@ -700,6 +728,10 @@ export interface RotorcraftMachine {
   readonly motorOutput?: readonly number[];
   /** Суммарная тяга ВСЕХ исправных винтов. */
   readonly liftCapacity: number;
+  /** Relative maximum thrust of each physical rotor. */
+  readonly capacityWeights?: readonly number[];
+  /** Reaction-torque sign of each physical rotor. */
+  readonly spinDirections?: readonly (-1 | 1)[];
   /** Предельный наклон, рад: он и есть предел горизонтального манёвра. */
   readonly maximumTilt: number;
 }
@@ -897,8 +929,11 @@ export function rotorcraftForces(
         )
       : 0;
 
-  const perRotorCapacity =
-    machine.points.length > 0 ? machine.liftCapacity / machine.points.length : 0;
+  const capacityByPoint = rotorCapacityByPoint(
+    machine.liftCapacity,
+    machine.points.length,
+    machine.capacityWeights,
+  );
   const currentMotorOutput = machine.motorOutput
     ? machine.points.map((_, index) =>
         Math.max(0, Math.min(1, machine.motorOutput?.[index] ?? 0)),
@@ -906,7 +941,7 @@ export function rotorcraftForces(
     : null;
   const uncontrollableThrust = machine.points.map((_, index) =>
     (machine.availability[index] ?? 1) <= 1e-6
-      ? (currentMotorOutput?.[index] ?? 0) * perRotorCapacity
+      ? (currentMotorOutput?.[index] ?? 0) * (capacityByPoint[index] ?? 0)
       : 0,
   );
 
@@ -946,6 +981,8 @@ export function rotorcraftForces(
           nose: machine.nose,
           availability: machine.availability,
           capacity: machine.liftCapacity,
+          capacityWeights: machine.capacityWeights,
+          spinDirections: machine.spinDirections,
           biasThrust: uncontrollableThrust,
         },
         {
@@ -1024,20 +1061,20 @@ export function rotorcraftForces(
   // потеря лопасти не учитывается дважды и одновременно не обходится стороной.
   const commandedThrottle = mix.thrust.map((value, index) => {
     const available = Math.max(0, Math.min(1, machine.availability[index] ?? 1));
-    const deliveredCapacity = perRotorCapacity * available;
+    const deliveredCapacity = (capacityByPoint[index] ?? 0) * available;
     return deliveredCapacity > 1e-9
       ? Math.max(0, Math.min(1, value / deliveredCapacity))
       : 0;
   });
   const motorOutput = currentMotorOutput
     ? currentMotorOutput
-    : mix.thrust.map((value) =>
-        perRotorCapacity > 1e-9
-          ? Math.max(0, Math.min(1, value / perRotorCapacity))
+    : mix.thrust.map((value, index) =>
+        (capacityByPoint[index] ?? 0) > 1e-9
+          ? Math.max(0, Math.min(1, value / (capacityByPoint[index] ?? 1)))
           : 0,
       );
   const thrust = machine.motorOutput
-    ? motorOutput.map((value) => value * perRotorCapacity)
+    ? motorOutput.map((value, index) => value * (capacityByPoint[index] ?? 0))
     : [...mix.thrust];
 
   // Замер идёт ПОСЛЕ актуатора и инерции мотора. Именно эти моменты и тяга
@@ -1068,7 +1105,10 @@ export function rotorcraftForces(
   }, 0);
   const deliveredYawMoment = thrust.reduce(
     (sum, value, index) =>
-      sum + (value * (index % 2 === 0 ? 1 : -1)) / YAW_TORQUE_PER_THRUST_INVERSE,
+      sum +
+        (value *
+          (machine.spinDirections?.[index] ?? (index % 2 === 0 ? 1 : -1))) /
+          YAW_TORQUE_PER_THRUST_INVERSE,
     0,
   );
   const deliveredThrust = thrust.reduce((sum, value) => sum + value, 0);

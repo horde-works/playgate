@@ -5,6 +5,12 @@ import type {
   ObjectMeshPart,
   ObjectPoint,
 } from "./objectModel.ts";
+import { reverseTriangleWinding } from "./objectModel.ts";
+import { dutchLampFixture } from "../dutchLighting/dutchLightingFixtures.ts";
+import {
+  facetedFrustumWithFrontOpenings,
+  frontWindowAssembly,
+} from "../dutchArchitecture/dutchWindowAssemblies.ts";
 
 export const DE_KAT_ROTOR_SPAN = 21.76;
 export const DE_KAT_ROTOR_RADIUS = DE_KAT_ROTOR_SPAN / 2;
@@ -137,7 +143,7 @@ const octagonalAnnulus = (
       [lowerInner, lowerInnerNext, upperInnerNext],
     );
   }
-  addMesh(id, "gallery", "timber-mid", vertices, triangles);
+  addMesh(id, "gallery", "timber-mid", vertices, reverseTriangleWinding(triangles));
 };
 
 const addCapHull = () => {
@@ -171,7 +177,7 @@ const addCapHull = () => {
   triangles.push([0, 1, 3], [0, 3, 2]);
   const end = (sections.length - 1) * 4;
   triangles.push([end, end + 3, end + 1], [end, end + 2, end + 3]);
-  addMesh("cap-hull", "cap", "roof", vertices, triangles);
+  addMesh("cap-hull", "cap", "roof", vertices, reverseTriangleWinding(triangles));
 
   for (const [index, section] of sections.entries()) {
     addBeam(
@@ -256,9 +262,9 @@ const addSail = (blade: number) => {
   );
 };
 
-// Foundation and exposed octagonal lower frame.
+// Foundation and exposed octagonal lower frame. There is deliberately no
+// project-only shadow volume inside it: the real frame remains genuinely open.
 octagonalFrustum("foundation-plinth", "foundation", "foundation", 0, 0.42, 6.05, 5.86);
-octagonalFrustum("underframe-shadow-core", "underframe", "opening", 0.43, 4.62, 5.48, 5.15);
 
 for (let index = 0; index < OCTAGON; index += 1) {
   const angle = (index / OCTAGON) * TAU + Math.PI / OCTAGON;
@@ -304,13 +310,28 @@ for (let index = 0; index < OCTAGON; index += 1) {
 }
 
 // A real dark opening and its structural frame, on the +Z face.
-addBox("front-door-opening", "underframe", "opening", point(0, 1.65, 5.5), point(1.78, 2.75, 0.16));
+addBox("front-door-opening", "underframe", "dark-recess", point(0, 1.65, 5.5), point(1.78, 2.75, 0.16));
 addBeam("front-door-left", "underframe", "timber-dark", point(-1.02, 0.48, 5.62), point(-1.02, 3.15, 5.37), 0.28, 0.24);
 addBeam("front-door-right", "underframe", "timber-dark", point(1.02, 0.48, 5.62), point(1.02, 3.15, 5.37), 0.28, 0.24);
 addBeam("front-door-head", "underframe", "timber-dark", point(-1.04, 3.12, 5.38), point(1.04, 3.12, 5.38), 0.28, 0.24);
 
-// Tapered smock. The octagonal cross-section is the primary silhouette owner.
-octagonalFrustum("smock-shell", "smock", "cladding", 4.58, 14.72, 5.63, 3.14);
+// Tapered smock. Its front face is physically segmented around the window;
+// glass never sits in front of an unbroken cladding face.
+const smockWindow = { id: "smock-window", centerX: 0, centerY: 10.72, width: 1.02, height: 1.24 } as const;
+const smockRadiusAt = (y: number) => 5.63 + (3.14 - 5.63) * ((y - 4.58) / (14.72 - 4.58));
+const smockFrontZAt = (y: number) => Math.cos(Math.PI / OCTAGON) * smockRadiusAt(y);
+parts.push(...facetedFrustumWithFrontOpenings({
+  id: "smock-shell",
+  group: "smock",
+  material: "cladding",
+  sides: OCTAGON,
+  centerZ: 0,
+  y0: 4.58,
+  y1: 14.72,
+  radius0: 5.63,
+  radius1: 3.14,
+  openings: [smockWindow],
+}));
 for (let index = 0; index < OCTAGON; index += 1) {
   const angle = (index / OCTAGON) * TAU + Math.PI / OCTAGON;
   addBeam(
@@ -367,13 +388,17 @@ for (let index = 0; index < OCTAGON; index += 1) {
   );
 }
 
-// Small front window; frame sits proud of the weatherboarding.
-addBox("smock-window-recess", "smock", "opening", point(0, 10.72, 4.18), point(0.92, 1.18, 0.12));
-addBeam("smock-window-left", "smock", "timber-dark", point(-0.55, 10.08, 4.23), point(-0.55, 11.38, 4.23), 0.13, 0.1);
-addBeam("smock-window-right", "smock", "timber-dark", point(0.55, 10.08, 4.23), point(0.55, 11.38, 4.23), 0.13, 0.1);
-addBeam("smock-window-top", "smock", "timber-dark", point(-0.56, 11.39, 4.23), point(0.56, 11.39, 4.23), 0.13, 0.1);
-addBeam("smock-window-bottom", "smock", "timber-dark", point(-0.56, 10.07, 4.23), point(0.56, 10.07, 4.23), 0.13, 0.1);
-addBeam("smock-window-mullion", "smock", "timber-mid", point(0, 10.11, 4.27), point(0, 11.35, 4.27), 0.07, 0.07);
+parts.push(...frontWindowAssembly({
+  ...smockWindow,
+  group: "smock-window",
+  faceZAt: smockFrontZAt,
+  wallDepth: 0.22,
+  columns: 2,
+  rows: 2,
+  frameMaterial: "timber-dark",
+  interiorDepth: 1.25,
+}));
+addBeam("smock-window-lamp-carrier", "smock-window-interior", "timber-dark", point(-0.72, 11.62, smockFrontZAt(11.62) - 0.72), point(0.72, 11.62, smockFrontZAt(11.62) - 0.72), 0.14, 0.14);
 
 addCapHull();
 addCylinder("windshaft", "rotor", "metal", point(0, DE_KAT_HUB_Y, 2.25), point(0, DE_KAT_HUB_Y, 5.62), 0.31, 20);
@@ -392,16 +417,41 @@ addMesh(
   "annex",
   "roof",
   annexRoofVertices,
-  [[0, 1, 5], [0, 5, 4], [4, 5, 3], [4, 3, 2], [0, 4, 2], [1, 3, 5]],
+  reverseTriangleWinding([[0, 1, 5], [0, 5, 4], [4, 5, 3], [4, 3, 2], [0, 4, 2], [1, 3, 5]]),
 );
-addBox("annex-door-recess", "annex", "opening", point(10.39, 1.5, -1.5), point(0.13, 2.65, 1.52));
+addBox("annex-door-recess", "annex", "dark-recess", point(10.39, 1.5, -1.5), point(0.13, 2.65, 1.52));
 addBeam("annex-door-left", "annex", "timber-dark", point(10.51, 0.2, -2.38), point(10.51, 2.96, -2.38), 0.18, 0.18);
 addBeam("annex-door-right", "annex", "timber-dark", point(10.51, 0.2, -0.62), point(10.51, 2.96, -0.62), 0.18, 0.18);
 addBeam("annex-door-head", "annex", "timber-dark", point(10.51, 2.96, -2.4), point(10.51, 2.96, -0.6), 0.18, 0.18);
 
+parts.push(
+  ...dutchLampFixture({
+    id: "smock-window-interior-lamp",
+    group: "lighting-fixtures",
+    // Offset from the mullion so the physical bulb is legible through one pane.
+    lens: point(0.27, 10.93, smockFrontZAt(10.93) - 0.46),
+    carrierPoint: point(0.27, 11.62, smockFrontZAt(11.62) - 0.46),
+    carrier: "ceiling",
+    lampClass: "domestic",
+    poolGroupId: "dutch-polder:m1-entry",
+    priority: 2.1,
+  }),
+  ...dutchLampFixture({
+    id: "front-entry-lantern",
+    group: "lighting-fixtures",
+    lens: point(1.3, 2.25, 5.83),
+    carrierPoint: point(1.3, 2.45, 5.48),
+    carrier: "wall-z",
+    outward: 1,
+    lampClass: "exterior",
+    poolGroupId: "dutch-polder:m1-entry",
+    priority: 2.4,
+  }),
+);
+
 export const deKatObject: ObjectLabModel = {
   id: "dutch-windmill-de-kat-m1",
-  revision: "m1-2026-08-02",
+  revision: "m1-2026-08-04-real-windows-a3",
   title: "De Kat-type paint mill — structural grey model",
   units: "metres",
   coordinates: { up: "+Y", front: "+Z", origin: "ground-centre" },
@@ -455,6 +505,8 @@ export const deKatObject: ObjectLabModel = {
     { id: "three-quarter-right", label: "3/4 right", projection: "perspective", position: point(34, 21, 34), target: point(0, 11, 0), fov: 36 },
     { id: "high-three-quarter", label: "High 3/4", projection: "perspective", position: point(-30, 35, 35), target: point(0, 10, 0), fov: 38 },
     { id: "rotor-joint", label: "Rotor joint", projection: "perspective", position: point(-8, 18.5, 17), target: point(0, 15.8, 4.2), fov: 30 },
+    { id: "night-entry", label: "Night · entry lantern and timber pool", projection: "perspective", position: point(-9, 5.2, 15), target: point(0.8, 2.3, 4.8), fov: 34, lighting: "night" },
+    { id: "night-window", label: "Night · real smock window and interior bulb", projection: "perspective", position: point(1.1, 11.15, 9), target: point(0, 10.72, 3.35), fov: 24, lighting: "night" },
     { id: "silhouette", label: "Silhouette control", projection: "orthographic", position: point(0, 13, 42), target: point(0, 12.4, 0), orthoHeight: 29 },
   ],
 };

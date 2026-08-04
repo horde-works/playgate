@@ -43,8 +43,8 @@ test("корпус остаётся открытой paltrok-площадкой 
 });
 
 test("ступенчатая plank wall является повторяемой геометрией, не текстурой", () => {
-  const courses = gekroondePoelenburgPaltrokObject.parts.filter((part) => /^stepped-plank-course-\d+$/.test(part.id));
-  assert.equal(courses.length, 16);
+  const courses = gekroondePoelenburgPaltrokObject.parts.filter((part) => /^stepped-plank-course-\d+-segment-\d+$/.test(part.id));
+  assert.equal(new Set(courses.map(({ id }) => Number(id.match(/course-(\d+)/)?.[1]))).size, 16);
   assert.ok(courses.every((part) => part.kind === "box"));
 });
 
@@ -97,7 +97,7 @@ test("все детали невырождены и ids уникальны", () 
 test("приёмочные камеры отделяют внешний силуэт от двух cutaway-проверок", () => {
   assert.deepEqual(gekroondePoelenburgPaltrokObject.views.map((view) => view.id), [
     "front", "left", "rear", "three-quarter-left", "three-quarter-rear",
-    "high-three-quarter", "roller-ring", "open-saw-floor", "silhouette",
+    "high-three-quarter", "roller-ring", "open-saw-floor", "night-open-floor", "window-detail", "silhouette",
   ]);
   assert.ok(gekroondePoelenburgPaltrokObject.views.find((view) => view.id === "roller-ring")?.hiddenGroups?.length);
   assert.ok(gekroondePoelenburgPaltrokObject.views.find((view) => view.id === "open-saw-floor")?.hiddenGroups?.length);

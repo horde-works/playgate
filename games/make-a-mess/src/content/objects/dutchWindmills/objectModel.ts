@@ -1,4 +1,9 @@
 export type ObjectPoint = readonly [x: number, y: number, z: number];
+export type ObjectTriangle = readonly [a: number, b: number, c: number];
+
+export const reverseTriangleWinding = (
+  triangles: readonly ObjectTriangle[],
+): ObjectTriangle[] => triangles.map(([a, b, c]) => [a, c, b]);
 
 export type ObjectMaterialId =
   | "foundation"
@@ -31,12 +36,34 @@ export type ObjectMaterialId =
   | "metal"
   | "paint-light"
   | "paint-accent"
+  | "glazing"
+  | "lamp-glass"
+  | "lamp-bulb"
+  | "dark-recess"
   | "opening";
+
+export type ObjectLightSource = {
+  readonly position?: ObjectPoint;
+  readonly color: string;
+  readonly distance: number;
+  readonly intensity: number;
+  readonly dayIntensityFactor?: number;
+  readonly poolPriority?: number;
+  readonly localPoolCapacity?: number;
+  readonly poolGroupId?: string;
+  readonly interior?: boolean;
+  readonly transition?: {
+    readonly fadeInSeconds: number;
+    readonly fadeOutSeconds: number;
+  };
+};
 
 type ObjectPartBase = {
   id: string;
   material: ObjectMaterialId;
   group: string;
+  /** A real fixture owns its source on the bulb/flame contained by its lens. */
+  light?: ObjectLightSource;
 };
 
 export type ObjectBoxPart = ObjectPartBase & {
@@ -65,7 +92,7 @@ export type ObjectCylinderPart = ObjectPartBase & {
 export type ObjectMeshPart = ObjectPartBase & {
   kind: "mesh";
   vertices: readonly ObjectPoint[];
-  triangles: readonly (readonly [a: number, b: number, c: number])[];
+  triangles: readonly ObjectTriangle[];
   normals?: readonly ObjectPoint[];
   vertexColors?: readonly ObjectPoint[];
   showEdges?: boolean;
@@ -87,6 +114,7 @@ export type ObjectLabView = {
   orthoHeight?: number;
   fov?: number;
   hiddenGroups?: readonly string[];
+  lighting?: "day" | "night";
 };
 
 export type ObjectLabModel = {

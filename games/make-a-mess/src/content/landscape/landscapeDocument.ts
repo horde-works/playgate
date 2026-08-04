@@ -12,10 +12,23 @@ export interface LandscapeElevationArea {
   readonly blendWidth: number;
 }
 
+/**
+ * Levelled construction ground.
+ *
+ * A building is a rectangle standing on its own plot, so the ground it needs is
+ * a rectangle turned with it — never a circle around its origin. A circular pad
+ * sized from an abstract clearance radius cannot cover an eleven-metre plinth,
+ * and it silently leaves the far corners of every long building hanging over
+ * whatever the surrounding terrain happens to do.
+ */
 export interface LandscapeFlatPad {
   readonly id: string;
+  /** Centre of the levelled rectangle, in world plan coordinates. */
   readonly center: LandscapePoint2;
-  readonly radius: number;
+  /** Rotation of the plot's own axes, matching the structure it carries. */
+  readonly yaw: number;
+  /** Half extents along the plot's own axes. */
+  readonly halfExtents: LandscapePoint2;
   readonly elevation: number;
   /** Soft shoulder outside the exactly flat construction pad. */
   readonly shoulder: number;

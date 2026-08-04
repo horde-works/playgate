@@ -30,6 +30,7 @@ import {
   sampleDutchPolderVegetation,
   type DutchPolderVegetationStyle,
 } from "./dutchPolderVegetation";
+import { WATER_LEVEL as DUTCH_POLDER_WATER_LEVEL } from "./dutchPolderWaterModel";
 import { environmentState } from "./environmentState";
 import { sampleVikingGroundTraffic } from "./materialTextures";
 import { windState } from "./windState";
@@ -527,6 +528,74 @@ function makeMarshMarigoldGeometry(): BufferGeometry {
   return finish();
 }
 
+/**
+ * Yellow water-lily — the layer that was simply absent.
+ *
+ * Between duckweed lying on the surface and the emergent plants standing at the
+ * bank there was nothing at all, so open water read as a bare plane. Nuphar
+ * fills it: round leathery plates floating flat, in colonies, out where the
+ * depth already refuses reed. A flat plate is also the one shape here that says
+ * "still water" on its own, before any reflection is involved.
+ *
+ * The plates lie IN the water plane rather than on the ground, so the scatter
+ * seats this species at the water level instead of on the terrain top.
+ */
+function makeFloatingLeafGeometry(): BufferGeometry {
+  const { strip: pushStrip, finish } = createMarshBuilder(0.28);
+  const PADS = 7;
+  for (let pad = 0; pad < PADS; pad += 1) {
+    const padVar = bladeHash(pad * 13 + 4);
+    const angle = pad * 2.399963 + padVar * 0.9;
+    const radius = pad === 0 ? 0 : 0.12 + padVar * 0.4;
+    const cx = Math.cos(angle) * radius;
+    const cz = Math.sin(angle) * radius;
+    const heading = padVar * Math.PI * 2;
+    const outX = Math.cos(heading);
+    const outZ = Math.sin(heading);
+    const span = 0.13 + padVar * 0.075;
+    // Пластина лежит на воде и чуть приподнята в середине — край подмокает и
+    // прилегает, поэтому силуэт мягкий, а не как вырезанный кружок.
+    const lift = 0.012 + padVar * 0.01;
+    pushStrip(
+      [
+        { x: cx - outX * span, y: 0.004, z: cz - outZ * span, half: 0.02, v: 0 },
+        { x: cx - outX * span * 0.3, y: lift, z: cz - outZ * span * 0.3, half: span * 0.86, v: 0.35 },
+        { x: cx + outX * span * 0.45, y: lift, z: cz + outZ * span * 0.45, half: span * 0.78, v: 0.7 },
+        { x: cx + outX * span, y: 0.004, z: cz + outZ * span, half: 0.024, v: 1 },
+      ],
+      -outZ,
+      outX,
+      1,
+      padVar,
+      padVar,
+    );
+  }
+  // Цветок кубышки — маленький жёлтый шар, торчащий над водой, а не лежащий.
+  for (let bloom = 0; bloom < 2; bloom += 1) {
+    const bloomVar = bladeHash(bloom * 29 + 9);
+    const angle = bloomVar * Math.PI * 2;
+    const radius = 0.1 + bloomVar * 0.26;
+    const cx = Math.cos(angle) * radius;
+    const cz = Math.sin(angle) * radius;
+    for (let face = 0; face < 2; face += 1) {
+      const faceAngle = angle + face * 1.571;
+      pushStrip(
+        [
+          { x: cx, y: 0.02, z: cz, half: 0.008, v: 0 },
+          { x: cx, y: 0.055, z: cz, half: 0.026, v: 0.55 },
+          { x: cx, y: 0.082, z: cz, half: 0.01, v: 1 },
+        ],
+        -Math.sin(faceAngle),
+        Math.cos(faceAngle),
+        2,
+        bloomVar,
+        bloomVar,
+      );
+    }
+  }
+  return finish();
+}
+
 // Deterministic hash scatter — no Math.random, so the field is identical every
 // load (and safe for any replay/resume of the session).
 function hash(index: number, salt: number): number {
@@ -578,6 +647,8 @@ type MarshSpecies = {
   readonly headAged: string;
   /** How floppy the leaves are relative to the stalk. */
   readonly limber: number;
+  /** Darkest the litter shade may go — flat plants have no canopy above them. */
+  readonly canopyFloor: number;
   /**
    * Share of clumps actually carrying their flowering head.
    *
@@ -588,7 +659,7 @@ type MarshSpecies = {
   readonly bloom: number;
 };
 
-const MARSH_SPECIES: Readonly<Record<1 | 2 | 3, MarshSpecies>> = {
+const MARSH_SPECIES: Readonly<Record<1 | 2 | 3 | 4, MarshSpecies>> = {
   // Phragmites in April: this is LAST YEAR'S stand. Straw stalks, leaves mostly
   // stripped by winter, and the plumes gone silver-grey — the fresh purple-brown
   // of a young panicle belongs to a different month and must not appear here.
@@ -612,6 +683,7 @@ const MARSH_SPECIES: Readonly<Record<1 | 2 | 3, MarshSpecies>> = {
     headFresh: "#877c6c",
     headAged: "#948a7c",
     limber: 1.5,
+    canopyFloor: 0.5,
     // Метёлку уже прореживает геометрия — здесь она проходит целиком.
     bloom: 1,
   },
@@ -629,6 +701,7 @@ const MARSH_SPECIES: Readonly<Record<1 | 2 | 3, MarshSpecies>> = {
     headFresh: "#e8bf22",
     headAged: "#c9a63a",
     limber: 0.7,
+    canopyFloor: 0.5,
     // Ирис в апреле только начинает: флаг несёт считанное меньшинство.
     bloom: 0.1,
   },
@@ -647,8 +720,28 @@ const MARSH_SPECIES: Readonly<Record<1 | 2 | 3, MarshSpecies>> = {
     headFresh: "#f0c41c",
     headAged: "#d2ad2f",
     limber: 0.6,
+    canopyFloor: 0.5,
     // Калужница в апреле в разгаре — она и есть весь цвет этого кадра.
     bloom: 0.72,
+  },
+  // Кубышка: тёмная кожистая пластина на воде. Гаснет рано — это цветовое
+  // пятно на поверхности, а не силуэт, и держать её вдали нечем.
+  4: {
+    geometry: makeFloatingLeafGeometry,
+    fade: [30, 52],
+    leafFade: 30,
+    headFade: 22,
+    stalkLive: "#3f5c34",
+    stalkDead: "#5f6b3c",
+    leafLive: "#33512f",
+    leafDead: "#59653a",
+    headFresh: "#edc92a",
+    headAged: "#c9ab35",
+    limber: 0.2,
+    // Пластина лежит плашмя, у неё нет высоты над корнем — общий пол полога
+    // покрасил бы её в ноль, будто она в собственной тени.
+    canopyFloor: 0.94,
+    bloom: 0.3,
   },
 };
 
@@ -671,6 +764,7 @@ function makeMarshMaterial(species: MarshSpecies): ShaderMaterial {
       uHeadFade: { value: species.headFade },
       uLimber: { value: species.limber },
       uBloom: { value: species.bloom },
+      uCanopyFloor: { value: species.canopyFloor },
       uStalkLive: { value: new Color(species.stalkLive) },
       uStalkDead: { value: new Color(species.stalkDead) },
       uLeafLive: { value: new Color(species.leafLive) },
@@ -695,6 +789,7 @@ function makeMarshMaterial(species: MarshSpecies): ShaderMaterial {
       uniform float uHeadFade;
       uniform float uLimber;
       uniform float uBloom;
+      uniform float uCanopyFloor;
       attribute vec4 aBlade;      // xz центр элемента, z доля высоты, w разброс элемента
       attribute vec4 aBladeSide;  // xy боковое смещение, z часть, w разброс стебля
       attribute vec4 aTuft;       // фаза, личное гашение, затенённость, влажность
@@ -799,7 +894,7 @@ function makeMarshMaterial(species: MarshSpecies): ShaderMaterial {
         // а запечённая затенённость застройки гаснет с высотой — изгородь
         // затеняет корни, а не макушки.
         float aboveRoot = shifted.y - origin.y;
-        float canopy = mix(0.5, 1.0, smoothstep(0.0, 0.42, aboveRoot));
+        float canopy = mix(uCanopyFloor, 1.0, smoothstep(0.0, 0.42, aboveRoot));
         float bakedAmbient = mix(ambient, 1.0, smoothstep(0.1, 0.9, aboveRoot));
         vShade = canopy * bakedAmbient * (0.86 + stemVar * 0.26);
 
@@ -893,6 +988,7 @@ export function GrassField({
   const reedRef = useRef<InstancedMesh>(null);
   const irisRef = useRef<InstancedMesh>(null);
   const herbRef = useRef<InstancedMesh>(null);
+  const lilyRef = useRef<InstancedMesh>(null);
   const { camera } = useThree();
 
   const geometry = useMemo(() => makeTuftGeometry(), []);
@@ -903,18 +999,23 @@ export function GrassField({
   const marsh = profile === "dutch-polder";
   const marshParts = useMemo(() => {
     if (!marsh) return null;
-    const build = (kind: 1 | 2 | 3) => {
+    const build = (kind: 1 | 2 | 3 | 4) => {
       const species = MARSH_SPECIES[kind];
       return { geometry: species.geometry(), material: makeMarshMaterial(species) };
     };
-    return { reed: build(1), iris: build(2), herb: build(3) };
+    return { reed: build(1), iris: build(2), herb: build(3), lily: build(4) };
   }, [marsh]);
 
   // Indexed by kind - 1, so the scatter can address them by species number.
   const marshGeometries = useMemo(
     () =>
       marshParts
-        ? [marshParts.reed.geometry, marshParts.iris.geometry, marshParts.herb.geometry]
+        ? [
+            marshParts.reed.geometry,
+            marshParts.iris.geometry,
+            marshParts.herb.geometry,
+            marshParts.lily.geometry,
+          ]
         : [],
     [marshParts],
   );
@@ -924,7 +1025,7 @@ export function GrassField({
   // этого не хватает никогда. Перераспределение, а не увеличение: сумма
   // по-прежнему `count`.
   const budgets = useMemo(() => {
-    if (!marsh) return { turf: count, reed: 0, iris: 0, herb: 0 };
+    if (!marsh) return { turf: count, reed: 0, iris: 0, herb: 0, lily: 0 };
     // Доли подобраны по ПЛОТНОСТИ НА КВАДРАТНЫЙ МЕТР, а не на глаз: тростник
     // занимает 8.5% растительной площади, ирис 3.0%, дербенник 3.5%, дёрн 85%.
     // Равные доли бюджета дали бы болотным видам плотность выше дёрна — с
@@ -934,7 +1035,8 @@ export function GrassField({
     const reed = Math.round(count * 0.24);
     const iris = Math.round(count * 0.028);
     const herb = Math.round(count * 0.012);
-    return { turf: count - reed - iris - herb, reed, iris, herb };
+    const lily = Math.round(count * 0.016);
+    return { turf: count - reed - iris - herb - lily, reed, iris, herb, lily };
   }, [marsh, count]);
 
   const material = useMemo(
@@ -1234,8 +1336,8 @@ export function GrassField({
     // Один проход рассева наполняет все четыре меша: и вид растения, и высота
     // его посадки берутся из ОДНОЙ выборки ландшафта, так что делить проход по
     // видам означало бы сэмплировать рельеф четыре раза подряд.
-    const budgetByKind = [budgets.turf, budgets.reed, budgets.iris, budgets.herb];
-    const meshByKind = [mesh, reedRef.current, irisRef.current, herbRef.current];
+    const budgetByKind = [budgets.turf, budgets.reed, budgets.iris, budgets.herb, budgets.lily];
+    const meshByKind = [mesh, reedRef.current, irisRef.current, herbRef.current, lilyRef.current];
     const targets = budgetByKind.map((budget, kind) => ({
       mesh: meshByKind[kind],
       budget: meshByKind[kind] ? budget : 0,
@@ -1371,7 +1473,11 @@ export function GrassField({
         if (hiddenPieceIds?.has(coverPieceId)) {
           continue;
         }
-        groundY = dutchPolderVisualTopAt(x, z) + 0.025;
+        // Плавающие пластины сидят в плоскости воды: посади их на дно —
+        // и колония утонет ровно на глубину русла.
+        groundY = dutchStyle.kind === 4
+          ? DUTCH_POLDER_WATER_LEVEL + 0.012
+          : dutchPolderVisualTopAt(x, z) + 0.025;
         const occupied = dutchBlockers.get(cell)?.some(([bottom, top]) =>
           bottom >= groundY - 1.5 && bottom <= groundY + 0.75 && top >= groundY + 0.04
         );
@@ -1529,7 +1635,7 @@ export function GrassField({
       uniforms.uCamera.value.copy(camera.position);
       uniforms.uWind.value = windState.strength * windScale;
       uniforms.uWindDir.value.set(windState.direction[0], windState.direction[1]);
-      uniforms.uSunDir.value.copy(environmentState.sunDirection);
+      uniforms.uSunDir.value.copy(environmentState.keyLightDirection);
       // Device pixels, not CSS pixels: the adaptive render scale moves the
       // drawing buffer, and the minimum blade width has to follow it.
       uniforms.uViewport.value.set(canvas.width, canvas.height);
@@ -1540,9 +1646,9 @@ export function GrassField({
       );
       uniforms.uTransmit.value.copy(environmentState.sunColor).multiplyScalar(transmit);
       uniforms.uSheen.value.setRGB(
-        0.10 * dusk + 0.020 * moon,
-        0.07 * dusk + 0.026 * moon,
-        0.035 * dusk + 0.048 * moon,
+        0.10 * dusk + 0.030 * moon,
+        0.07 * dusk + 0.045 * moon,
+        0.035 * dusk + 0.075 * moon,
       );
     }
   });
@@ -1573,7 +1679,7 @@ export function GrassField({
     return () => {
       geometry.dispose();
       material.dispose();
-      for (const part of [marshParts?.reed, marshParts?.iris, marshParts?.herb]) {
+      for (const part of [marshParts?.reed, marshParts?.iris, marshParts?.herb, marshParts?.lily]) {
         part?.geometry.dispose();
         part?.material.dispose();
       }
@@ -1605,6 +1711,12 @@ export function GrassField({
           <instancedMesh
             ref={herbRef}
             args={[marshParts.herb.geometry, marshParts.herb.material, Math.max(1, budgets.herb)]}
+            receiveShadow={false}
+            castShadow={false}
+          />
+          <instancedMesh
+            ref={lilyRef}
+            args={[marshParts.lily.geometry, marshParts.lily.material, Math.max(1, budgets.lily)]}
             receiveShadow={false}
             castShadow={false}
           />

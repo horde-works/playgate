@@ -1,0 +1,38 @@
+{
+  "modelId": "dutch-schouw-object-study",
+  "revision": "landscape-kit-a5-2026-08-04-bottom-audit",
+  "modelHash": "0e4616021c01",
+  "generatedAt": "2026-08-04T10:53:22.651Z",
+  "views": [
+    {
+      "id": "schouw-front",
+      "label": "Schouw · flat bottom and raked bow board",
+      "projection": "orthographic",
+      "file": "schouw-front.png"
+    },
+    {
+      "id": "schouw-profile",
+      "label": "Schouw · 4.60 m shallow-water profile",
+      "projection": "orthographic",
+      "file": "schouw-profile.png"
+    },
+    {
+      "id": "schouw-three-quarter",
+      "label": "Schouw · frames, benches and paired oars",
+      "projection": "perspective",
+      "file": "schouw-three-quarter.png"
+    },
+    {
+      "id": "schouw-high",
+      "label": "Schouw · flat floor and working interior",
+      "projection": "perspective",
+      "file": "schouw-high.png"
+    },
+    {
+      "id": "silhouette",
+      "label": "Schouw · closed four-board bottom from below",
+      "projection": "perspective",
+      "file": "silhouette.png"
+    }
+  ]
+}

@@ -7,6 +7,8 @@ export type WaterPoint2 = readonly [x: number, z: number];
 // the sheet visibly over the bed while it still disappears into the sloped
 // bank instead of exposing a mesh edge.
 export const WATER_LEVEL = 0.08;
+/** Alias for readers that care about the datum rather than the sheet. */
+export const POLDER_WATER_LEVEL_DATUM = WATER_LEVEL;
 /** Bank half-width the landscape carves beside every channel bed. */
 export const BANK_WIDTH = 2.4;
 /**
@@ -57,9 +59,34 @@ export function softenPolyline(
   return softened;
 }
 
+/**
+ * Where a channel end is allowed to reach. A free end runs on past the
+ * authored line and dies inside the overrun; an end that pours off the island
+ * stops at its measured lip, because past that there is nothing underneath and
+ * a sheet of water hanging in open air is not something depth testing should
+ * have to hide afterwards.
+ */
+export interface SheetSpill {
+  readonly channelId: string;
+  readonly end: "head" | "tail";
+  /** Metres from the last authored point to the lip, on the centreline. */
+  readonly distance: number;
+  /**
+   * How far the lip runs on per metre across it. The shoreline crosses every
+   * mouth on the diagonal, so a square end ring either stops short on one side
+   * and bares the bed or hangs over the void on the other. Leaning the last
+   * rings by this removes the choice.
+   */
+  readonly slope: number;
+}
+
+/** Over how many metres the end rings lean into the diagonal of their lip. */
+export const LIP_SKEW_REACH = 3;
+
 export function overrunEnds(
   points: readonly WaterPoint2[],
-  distance: number,
+  headDistance: number,
+  tailDistance: number = headDistance,
 ): readonly WaterPoint2[] {
   const head = normalizedDirection(points[1], points[0]);
   const tail = normalizedDirection(
@@ -68,11 +95,23 @@ export function overrunEnds(
   );
   const first = points[0];
   const last = points[points.length - 1];
-  return [
-    [first[0] + head[0] * distance, first[1] + head[1] * distance],
-    ...points,
-    [last[0] + tail[0] * distance, last[1] + tail[1] * distance],
+  const reach = (
+    anchor: WaterPoint2,
+    outward: WaterPoint2,
+    distance: number,
+  ): WaterPoint2 => [
+    anchor[0] + outward[0] * distance,
+    anchor[1] + outward[1] * distance,
   ];
+  // A lip INSIDE the authored end (C2 was drawn half a metre past the shore)
+  // moves that end back along its own last segment. Appending it instead would
+  // fold the line over itself and give the sheet a zero-area spike.
+  const result = [...points];
+  if (headDistance >= 0) result.unshift(reach(first, head, headDistance));
+  else result[0] = reach(first, head, headDistance);
+  if (tailDistance >= 0) result.push(reach(last, tail, tailDistance));
+  else result[result.length - 1] = reach(last, tail, tailDistance);
+  return result;
 }
 
 export function resampleCentreline(
@@ -110,8 +149,15 @@ export interface WaterSheetModel {
   readonly ringsPerChannel: readonly number[];
 }
 
-/** Every polder channel as one sheet: one mirror pass, one refraction pass. */
-export function buildWaterSheetModel(): WaterSheetModel {
+/**
+ * Every polder channel as one sheet: one mirror pass, one refraction pass.
+ * `spills` are the ends that reach the rim, measured against the shell the
+ * scene actually draws; the caller owns that measurement, so this stays a pure
+ * function of the authored channels.
+ */
+export function buildWaterSheetModel(
+  spills: readonly SheetSpill[] = [],
+): WaterSheetModel {
   const positions: number[] = [];
   const flow: number[] = [];
   const shape: number[] = [];
@@ -121,8 +167,16 @@ export function buildWaterSheetModel(): WaterSheetModel {
 
   for (const channel of DUTCH_POLDER_CHANNELS) {
     const halfWidth = waterSheetHalfWidth(channel.width);
+    const spillOf = (end: "head" | "tail") => spills.find(
+      (spill) => spill.channelId === channel.id && spill.end === end,
+    );
+    const reachOf = (end: "head" | "tail") => spillOf(end)?.distance ?? END_OVERRUN;
     const centreline = resampleCentreline(
-      overrunEnds(softenPolyline(channel.points), END_OVERRUN),
+      overrunEnds(
+        softenPolyline(channel.points),
+        reachOf("head"),
+        reachOf("tail"),
+      ),
       CENTRELINE_STEP,
     );
     ringsPerChannel.push(centreline.length);
@@ -157,12 +211,25 @@ export function buildWaterSheetModel(): WaterSheetModel {
       const edge = Math.max(0, Math.min(1, fromEnd / END_OVERRUN));
       const edgeFade = edge * edge * (3 - 2 * edge);
 
+      // Lean the last rings into the diagonal of whichever lip they are near.
+      const headEnd = arc[index] < total - arc[index];
+      const spill = spillOf(headEnd ? "head" : "tail");
+      const toLip = headEnd ? arc[index] : total - arc[index];
+      const lean = spill && toLip < LIP_SKEW_REACH
+        ? (1 - toLip / LIP_SKEW_REACH) ** 2 * spill.slope
+        : 0;
+      // Outward is the tangent at a tail end and against it at a head end; the
+      // lip measures across in that same frame.
+      const outwardX = headEnd ? -tangentX : tangentX;
+      const outwardZ = headEnd ? -tangentZ : tangentZ;
+
       for (let column = 0; column <= ACROSS_SPANS; column += 1) {
         const across = (column / ACROSS_SPANS) * 2 - 1;
         const offset = across * halfWidth;
+        const skew = lean * (headEnd ? -offset : offset);
         positions.push(
-          point[0] + normalX * offset,
-          -(point[1] + normalZ * offset),
+          point[0] + normalX * offset + outwardX * skew,
+          -(point[1] + normalZ * offset + outwardZ * skew),
           0,
         );
         // Ripple, drift and weed are authored in metres of the canal itself,

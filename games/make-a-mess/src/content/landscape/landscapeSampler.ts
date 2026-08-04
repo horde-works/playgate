@@ -1,6 +1,7 @@
 import type {
   LandscapeDocument,
   LandscapeDryChannel,
+  LandscapeFlatPad,
   LandscapePoint2,
   LandscapePoint3,
   LandscapeSample,
@@ -83,21 +84,43 @@ function polygonSignedDistance(
   return pointInPolygon(x, z, polygon) ? distance : -distance;
 }
 
-function baseElevationAt(document: LandscapeDocument, x: number, z: number): number {
+/**
+ * Distance from a point to the pad rectangle, measured in the pad's own axes.
+ * Zero anywhere on the levelled ground itself.
+ */
+export function flatPadDistance(pad: LandscapeFlatPad, x: number, z: number): number {
+  const cos = Math.cos(pad.yaw);
+  const sin = Math.sin(pad.yaw);
+  const dx = x - pad.center[0];
+  const dz = z - pad.center[1];
+  // Inverse of the scene's Y rotation: world offsets back into plot axes.
+  const localX = dx * cos - dz * sin;
+  const localZ = dx * sin + dz * cos;
+  return Math.hypot(
+    Math.max(0, Math.abs(localX) - pad.halfExtents[0]),
+    Math.max(0, Math.abs(localZ) - pad.halfExtents[1]),
+  );
+}
+
+function baseElevationAt(
+  document: LandscapeDocument,
+  x: number,
+  z: number,
+): { readonly elevation: number; readonly padWeight: number } {
   let elevation = document.baseElevation;
   for (const area of document.elevationAreas) {
     const signedDistance = polygonSignedDistance(x, z, area.polygon);
     const weight = smootherstep((signedDistance + area.blendWidth / 2) / area.blendWidth);
     elevation += (area.elevation - elevation) * weight;
   }
+  let padWeight = 0;
   for (const pad of document.flatPads) {
-    const distance = Math.hypot(x - pad.center[0], z - pad.center[1]);
-    const weight = distance <= pad.radius
-      ? 1
-      : 1 - smootherstep((distance - pad.radius) / pad.shoulder);
+    const distance = flatPadDistance(pad, x, z);
+    const weight = distance <= 0 ? 1 : 1 - smootherstep(distance / pad.shoulder);
     elevation += (pad.elevation - elevation) * weight;
+    padWeight = Math.max(padWeight, weight);
   }
-  return elevation;
+  return { elevation, padWeight };
 }
 
 function corridorElevation(
@@ -173,8 +196,16 @@ export function createLandscapeSampler(document: LandscapeDocument): LandscapeSa
       };
     }
 
-    let elevation = baseElevationAt(document, x, z);
+    // Levelled ground is levelled. A route may paint its surface across a yard,
+    // but it may not re-cut the ground the yard was levelled for: a path that
+    // ends inside a building grades a groove under the plinth and hangs the
+    // corner of it in the air. The pad's own shoulder is what lets the ramp
+    // rise to meet the yard — cutting the grade off at the pad edge instead
+    // would leave a wall there, and an unsupported turf cell on top of it.
+    const base = baseElevationAt(document, x, z);
+    let elevation = base.elevation;
     let pathWeight = 0;
+    const onLevelledGround = document.flatPads.some((pad) => flatPadDistance(pad, x, z) <= 0);
     for (const corridor of document.corridors) {
       const route = corridorElevation(x, z, corridor.points);
       const halfWidth = corridor.width / 2;
@@ -182,7 +213,7 @@ export function createLandscapeSampler(document: LandscapeDocument): LandscapeSa
         ? 1
         : 1 - smootherstep((route.distance - halfWidth) / corridor.feather);
       pathWeight = Math.max(pathWeight, weight);
-      if (corridor.conformsTerrainToGrade) {
+      if (corridor.conformsTerrainToGrade && base.padWeight < 1) {
         // The visible path mask may feather in one metre, but its earth cut or
         // fill must widen when the route crosses a slope. Otherwise a cheap
         // surface mask silently recreates a vertical ribbon at its edge.
@@ -193,15 +224,12 @@ export function createLandscapeSampler(document: LandscapeDocument): LandscapeSa
         const gradeWeight = route.distance <= halfWidth
           ? 1
           : 1 - smootherstep((route.distance - halfWidth) / gradeFeather);
-        elevation += (route.elevation - elevation) * gradeWeight;
+        elevation += (route.elevation - elevation) * gradeWeight * (1 - base.padWeight);
       }
     }
 
-    const protectedByPad = document.flatPads.some((pad) =>
-      Math.hypot(x - pad.center[0], z - pad.center[1]) <= pad.radius
-    );
     let channelResult: ReturnType<typeof channelSample> = null;
-    if (!protectedByPad) {
+    if (!onLevelledGround) {
       for (const channel of document.dryChannels) {
         const distance = polylineProjection(x, z, channel.points).distance;
         const candidate = channelSample(channel, distance, elevation);

@@ -1,8 +1,8 @@
 {
   "modelId": "dutch-windmill-de-kat-m1",
-  "revision": "m1-2026-08-02",
-  "modelHash": "8452e7116fe5",
-  "generatedAt": "2026-08-02T16:30:43.914Z",
+  "revision": "m1-2026-08-04-real-windows-a3",
+  "modelHash": "772091cd9bde",
+  "generatedAt": "2026-08-04T15:37:11.690Z",
   "views": [
     {
       "id": "front",
@@ -45,6 +45,18 @@
       "label": "Rotor joint",
       "projection": "perspective",
       "file": "rotor-joint.png"
+    },
+    {
+      "id": "night-entry",
+      "label": "Night · entry lantern and timber pool",
+      "projection": "perspective",
+      "file": "night-entry.png"
+    },
+    {
+      "id": "night-window",
+      "label": "Night · real smock window and interior bulb",
+      "projection": "perspective",
+      "file": "night-window.png"
     },
     {
       "id": "silhouette",

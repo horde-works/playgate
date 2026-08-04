@@ -12,10 +12,12 @@ import {
 } from "../games/make-a-mess/src/content/scenes/dutchPolder/dutchPolderDocument.ts";
 import {
   DUTCH_POLDER_BRIDGE_SEATS,
+  DUTCH_POLDER_BUILDING_PLOTS,
   DUTCH_POLDER_CHANNELS,
   DUTCH_POLDER_SHORELINE,
   dutchPolderChannelDistance,
   dutchPolderGroundTopAt,
+  dutchPolderPlotToWorld,
 } from "../games/make-a-mess/src/content/scenes/dutchPolder/dutchPolderTerrainGraybox.ts";
 import {
   dutchPolderCompilation,
@@ -37,8 +39,12 @@ import { equinoxSunDirection } from "../games/make-a-mess/src/game/timeOfDay.ts"
 test("the complete polder compiles with no unsupported member", () => {
   assert.equal(dutchPolderScene.resolveStructuralCollapse(new Set()).size, 0);
   assert.equal(dutchPolderCompilation.artifact.pieceCount >= 5_000, true);
-  assert.equal(dutchPolderCompilation.artifact.prefabIds.length, 19);
-  assert.equal(dutchPolderCompilation.artifact.groupCount, 19);
+  // 19 + три префаба головчатой ивы (core:willow:71..73) + два префаба
+  // плакучей (core:weeping-willow:81..82) + три instance-scoped варианта
+  // освещённых мостов B1/B3/B5. B2/B4 используют исходный тёмный prefab.
+  assert.equal(dutchPolderCompilation.artifact.prefabIds.length, 27);
+  // Группы: к прежним девятнадцати добавилась группа плакучих ив у воды.
+  assert.equal(dutchPolderCompilation.artifact.groupCount, 20);
   const earthCells = dutchPolderScene.breakablePieces.filter((piece) =>
     piece.id.includes(":terrain:cell:")
   );
@@ -205,8 +211,73 @@ test("all five bridge seats are occupied by one canonical bridge", () => {
   }
 });
 
+/** Plan extents and lowest point of one canonical part, in the object's axes. */
+const partSeat = (part) => {
+  const points = part.kind === "mesh"
+    ? part.vertices
+    : part.kind === "box"
+      ? [-1, 1].flatMap((sx) => [-1, 1].flatMap((sy) => [-1, 1].map((sz) => [
+        part.center[0] + sx * part.size[0] / 2,
+        part.center[1] + sy * part.size[1] / 2,
+        part.center[2] + sz * part.size[2] / 2,
+      ])))
+      : [part.from, part.to];
+  return {
+    lowest: Math.min(...points.map(([, y]) => y)),
+    minX: Math.min(...points.map(([x]) => x)),
+    maxX: Math.max(...points.map(([x]) => x)),
+    minZ: Math.min(...points.map(([, , z]) => z)),
+    maxZ: Math.max(...points.map(([, , z]) => z)),
+  };
+};
+
+test("every building rests on the ground the polder actually renders", () => {
+  const sampler = createLandscapeSampler(dutchPolderLandscapeDocument);
+  for (const plot of DUTCH_POLDER_BUILDING_PLOTS) {
+    for (const part of plot.model.parts) {
+      const seat = partSeat(part);
+      // Only the parts that touch the object's own ground plane hold it up.
+      if (seat.lowest > 0.06) continue;
+      const base = plot.elevation + seat.lowest;
+      for (let ix = 0; ix <= 6; ix += 1) {
+        for (let iz = 0; iz <= 6; iz += 1) {
+          const [x, z] = dutchPolderPlotToWorld(
+            plot,
+            seat.minX + (seat.maxX - seat.minX) * ix / 6,
+            seat.minZ + (seat.maxZ - seat.minZ) * iz / 6,
+          );
+          const where = `${plot.id}/${part.id} at (${x.toFixed(1)}, ${z.toFixed(1)})`;
+          // The designed surface under a building is its own levelled pad, to
+          // the millimetre. This is the assertion that fails when an object is
+          // sited across a terrace edge or inside an excavated canal bank —
+          // the Zaan house used to hang 2.25 m and the stolp farm 1.09 m here.
+          // How far a given part sits above the object's own ground plane is
+          // the object study's business, not the siting's.
+          assert.ok(
+            Math.abs(plot.elevation - sampler.elevationAt(x, z)) < 0.01,
+            `${where}: design surface is ${sampler.elevationAt(x, z).toFixed(3)}, plot datum ${plot.elevation.toFixed(3)}`,
+          );
+          // The rendered turf skin is allowed to sink toward its stepped earth
+          // blocks by the shell's own smoothing budget, and no further.
+          // Measured worst: M4 0.22 m at the canal-side corner of its brick
+          // ring, then M1 0.11, M3 0.09, H2 0.05, H1 0.01.
+          const air = base - dutchPolderVisualTopAt(x, z);
+          assert.ok(
+            air < DUTCH_POLDER_TERRAIN_COVER_DEPTH,
+            `${where}: hangs ${air.toFixed(3)} m over the rendered turf`,
+          );
+          assert.ok(air > -0.4, `${where}: buried ${(-air).toFixed(3)} m`);
+        }
+      }
+    }
+  }
+});
+
 test("field modules remain outside channels and accepted object reserves", () => {
-  assert.equal(DUTCH_POLDER_FIELD_PLACEMENTS.length, 7);
+  // Five, not seven: `west-red` stood where the Zaan house now stands and
+  // `west-yellow` inside its yard. Bulb parcels return to the west with the
+  // hamlet, cut as parcels rather than as free-standing beds.
+  assert.equal(DUTCH_POLDER_FIELD_PLACEMENTS.length, 5);
   for (const field of DUTCH_POLDER_FIELD_PLACEMENTS) {
     assert.equal(
       dutchPolderFieldIsClear(field.position[0], field.position[2]),

@@ -1,5 +1,43 @@
 # Dutch Polder — siting, parcels and orientation brief
 
+## Status update — the seating contract landed, and two objects moved
+
+Everything below is still the work order. What has actually been built, and
+where it overrides the text:
+
+- **Levelled ground is now a plot, not a circle.** `LandscapeFlatPad` carries
+  `yaw` and `halfExtents`; every pad is the object's own ground-contact
+  footprint — read from its canonical object study by
+  `dutchPolderGroundFootprint` — plus a working margin. The old pads were
+  circles of `reserve.radius * 0.42`, which for the Zaan house meant 3.2 m of
+  levelled ground under an eleven-metre brick plinth.
+- **`DUTCH_POLDER_BUILDING_PLOTS` owns position, bearing and datum.** Scene
+  placements, landscape pads, reserve circles and the ends of mandatory routes
+  are all derived from it, so they can no longer drift apart.
+- **A route may no longer re-cut levelled ground.** Every one of the six
+  objects had a groove of 0.15–0.37 m under its plinth, cut by the mandatory
+  route that ended inside the building. The corridor grade is now damped by the
+  pad weight, so the ramp rises to meet the yard across the pad's shoulder.
+- **§4.4 is overridden: H1 moved to the south bank**, `(-54, 26)`, bearing
+  341.6°, on the polder datum. Holding `(6.3 m from C1)` was not survivable:
+  the house origin stood inside the channel's own excavated bank (7.7 m of
+  bed + bank + terrace), a third of the plinth hung up to 2.25 m in the air,
+  and the front door opened onto a 1.91 m drop. It now fronts the water square
+  (0.0° off the perpendicular of the reach it faces), keeps a 274 m² parcel for
+  the hamlet to grow into, and its gate stands 11.1 m from the B1 landing. The
+  hamlet of §4.4 still belongs on that lane; `west-red`, `west-yellow` and the
+  two western field fences were removed rather than nudged, and the western
+  field pattern is re-cut with it.
+- **§4.5 is overridden: H2 moved 8 m forward along its own axis** to
+  `(27.49, 36.19)`, bearing unchanged. Its rear tail plinth stood 1.55 m from
+  the C4 centreline — inside a 3.8 m water prism — and hung 1.09 m.
+- **Detectors 14 and 16 exist now**, plus a third: the design surface under
+  every building is its own pad to the millimetre, no pad may reach into a
+  channel bed or bank, and a route ends at the declared gate.
+- **Next instance of the same defect, measured but not fixed:** all ten bridge
+  approach ends are authored at 0.92 / 0.80 / 1.10 while the ground under them
+  samples 0.42–0.62, and `B3`'s south landing sits in the channel bed.
+
 Status: **work order, not yet implemented.** This document extends
 [`dutch-polder-brief.md`](./dutch-polder-brief.md) and does not replace it. The
 shoreline polygon, the six terrain datums, the natural 1:1 scale, the six

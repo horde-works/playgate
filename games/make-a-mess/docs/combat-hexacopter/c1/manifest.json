@@ -1,0 +1,86 @@
+{
+  "modelId": "combat-hexacopter-c1",
+  "revision": "combat-hex-c1-2026-08-04",
+  "modelHash": "6551bd630fd3",
+  "generatedAt": "2026-08-04T15:39:27.320Z",
+  "views": [
+    {
+      "id": "front",
+      "label": "Front orthographic — eight propulsors",
+      "projection": "orthographic",
+      "file": "front.png"
+    },
+    {
+      "id": "left",
+      "label": "Left profile — rising spine",
+      "projection": "orthographic",
+      "file": "left.png"
+    },
+    {
+      "id": "right",
+      "label": "Right profile — weapon and gear chains",
+      "projection": "orthographic",
+      "file": "right.png"
+    },
+    {
+      "id": "rear",
+      "label": "Rear orthographic — boost pair",
+      "projection": "orthographic",
+      "file": "rear.png"
+    },
+    {
+      "id": "top",
+      "label": "Top plan — 6+2 topology",
+      "projection": "orthographic",
+      "file": "top.png"
+    },
+    {
+      "id": "front-three-quarter",
+      "label": "Front three-quarter — character study",
+      "projection": "perspective",
+      "file": "front-three-quarter.png"
+    },
+    {
+      "id": "rear-three-quarter",
+      "label": "Rear three-quarter — spine and boost ducts",
+      "projection": "perspective",
+      "file": "rear-three-quarter.png"
+    },
+    {
+      "id": "high-three-quarter",
+      "label": "High three-quarter — frame plan",
+      "projection": "perspective",
+      "file": "high-three-quarter.png"
+    },
+    {
+      "id": "underside",
+      "label": "Low three-quarter — keel and landing chains",
+      "projection": "perspective",
+      "file": "underside.png"
+    },
+    {
+      "id": "yaw-detail",
+      "label": "Yaw tunnel detail — longitudinal axes",
+      "projection": "perspective",
+      "file": "yaw-detail.png"
+    },
+    {
+      "id": "structural-exterior",
+      "label": "Structural camera — full exterior",
+      "projection": "perspective",
+      "file": "structural-exterior.png"
+    },
+    {
+      "id": "structural-cutaway",
+      "label": "Structural camera — canonical cutaway",
+      "projection": "perspective",
+      "file": "structural-cutaway.png"
+    },
+    {
+      "id": "silhouette",
+      "label": "Silhouette control",
+      "projection": "orthographic",
+      "file": "silhouette.png"
+    }
+  ]
+}

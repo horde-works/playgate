@@ -86,10 +86,22 @@ const LandscapeRenderChunk = memo(function LandscapeRenderChunk({
       // и расставляет. Без этого берег читался голым при любой густоте: на
       // склоне, если смотреть вдоль него, между вертикальными стеблями всегда
       // видно землю, а земля была одной плоской заливкой.
+      //
+      // ПЛОСКИЙ ЦВЕТ ОПРЕДЕЛЕНИЯ ВМЕШАН СЮДА ЖЕ. Кусок уже нёс ровно шестнадцать
+      // вершинных атрибутов — предел, который WebGL вообще гарантирует: три
+      // преппенда three, четыре слота `instanceMatrix`, `instanceColor` и восемь
+      // материальных. Вершинный цвет стал бы семнадцатым, и программа перестаёт
+      // линковаться. Но инстанция здесь ОДНА, и её цвет — просто заливка; three
+      // всё равно перемножает vColor на instanceColor, так что произведение,
+      // посчитанное заранее, даёт тот же кадр и освобождает слот.
+      const flat = new Color(color);
       next.setAttribute(
         "color",
         new Float32BufferAttribute(
-          chunk.vertices.flatMap((vertex) => [...groundTint(vertex[0], vertex[2])]),
+          chunk.vertices.flatMap((vertex) => {
+            const tint = groundTint(vertex[0], vertex[2]);
+            return [tint[0] * flat.r, tint[1] * flat.g, tint[2] * flat.b];
+          }),
           3,
         ),
       );
@@ -135,18 +147,22 @@ const LandscapeRenderChunk = memo(function LandscapeRenderChunk({
     return { geometry: next, owners: visible.owners };
   // hiddenKey is the compact invalidation key for this specific chunk.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chunk, hiddenKey, landscapeSurface, groundTint]);
+  }, [chunk, hiddenKey, landscapeSurface, groundTint, color]);
 
   useEffect(() => () => geometry.dispose(), [geometry]);
   useLayoutEffect(() => {
     const current = mesh.current;
     if (!current) return;
     current.setMatrixAt(0, new Matrix4());
-    current.setColorAt(0, new Color(color));
+    // Тонированный кусок НЕ заводит instanceColor: его заливка уже вмешана в
+    // вершинный цвет, а свободный слот атрибута нужен именно под него.
+    if (!groundTint) {
+      current.setColorAt(0, new Color(color));
+      if (current.instanceColor) current.instanceColor.needsUpdate = true;
+    }
     current.instanceMatrix.needsUpdate = true;
-    if (current.instanceColor) current.instanceColor.needsUpdate = true;
     current.computeBoundingSphere();
-  }, [color, geometry]);
+  }, [color, geometry, groundTint]);
 
   return (
     <instancedMesh
@@ -317,6 +333,14 @@ export const LandscapeSurface = memo(function LandscapeSurface({
   const material = useMemo(() => {
     if (!groundTint) return sharedMaterial;
     const tinted = sharedMaterial.clone();
+    // `Material.copy` в three 0.185 копирует ТОЛЬКО объявленный список свойств.
+    // `onBeforeCompile` и `customProgramCacheKey` в него не входят, а весь
+    // рисунок грунта — трипланарная проекция, макровариация, бамп, влажность у
+    // земли — живёт именно в `onBeforeCompile`. Клон без него выходит голым
+    // MeshStandardMaterial: ландшафт превращается в гладкую заливку без всякой
+    // фактуры. Переносить руками и проверять кадром, а не глазами по коду.
+    tinted.onBeforeCompile = sharedMaterial.onBeforeCompile;
+    tinted.defines = sharedMaterial.defines ? { ...sharedMaterial.defines } : undefined;
     tinted.vertexColors = true;
     const inheritedKey = sharedMaterial.customProgramCacheKey?.bind(sharedMaterial);
     tinted.customProgramCacheKey = () =>

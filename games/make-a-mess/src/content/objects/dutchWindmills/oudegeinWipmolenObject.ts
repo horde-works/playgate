@@ -4,6 +4,12 @@ import type {
   ObjectMaterialId,
   ObjectPoint,
 } from "./objectModel.ts";
+import { reverseTriangleWinding } from "./objectModel.ts";
+import { dutchLampFixture } from "../dutchLighting/dutchLightingFixtures.ts";
+import {
+  frontWindowAssembly,
+  rectangularFrustumWithFrontOpenings,
+} from "../dutchArchitecture/dutchWindowAssemblies.ts";
 
 export const OUDEGEIN_ROTOR_SPAN = 24.9;
 export const OUDEGEIN_ROTOR_RADIUS = OUDEGEIN_ROTOR_SPAN / 2;
@@ -55,33 +61,6 @@ const addMesh = (
   triangles: Array<readonly [number, number, number]>,
   doubleSided = false,
 ) => parts.push({ kind: "mesh", id, group, material, vertices, triangles, doubleSided });
-
-const addRectangularFrustum = (
-  id: string,
-  group: string,
-  material: ObjectMaterialId,
-  y0: number,
-  y1: number,
-  halfX0: number,
-  halfZ0: number,
-  halfX1: number,
-  halfZ1: number,
-) => {
-  const vertices: ObjectPoint[] = [
-    point(-halfX0, y0, -halfZ0), point(halfX0, y0, -halfZ0),
-    point(halfX0, y0, halfZ0), point(-halfX0, y0, halfZ0),
-    point(-halfX1, y1, -halfZ1), point(halfX1, y1, -halfZ1),
-    point(halfX1, y1, halfZ1), point(-halfX1, y1, halfZ1),
-  ];
-  addMesh(id, group, material, vertices, [
-    [0, 1, 5], [0, 5, 4],
-    [1, 2, 6], [1, 6, 5],
-    [2, 3, 7], [2, 7, 6],
-    [3, 0, 4], [3, 4, 7],
-    [0, 3, 2], [0, 2, 1],
-    [4, 5, 6], [4, 6, 7],
-  ]);
-};
 
 const addRing = (
   id: string,
@@ -187,7 +166,19 @@ const addOldDutchSail = (blade: number) => {
 
 // Brick seat and the old square, thatched lower tower.
 addBox("brick-plinth", "foundation", "brick", point(0, 0.3, 0), point(9.05, 0.6, 8.65));
-addRectangularFrustum("lower-tower-thatch", "lower-tower", "thatch", 0.58, 8.15, 4.3, 4.1, 1.48, 1.42);
+const lowerWindow = { id: "lower-window", centerX: 0, centerY: 3.05, width: 1.28, height: 1.55 } as const;
+parts.push(...rectangularFrustumWithFrontOpenings({
+  id: "lower-tower-thatch",
+  group: "lower-tower",
+  material: "thatch",
+  y0: 0.58,
+  y1: 8.15,
+  halfX0: 4.3,
+  halfZ0: 4.1,
+  halfX1: 1.48,
+  halfZ1: 1.42,
+  openings: [lowerWindow],
+}));
 for (const [index, signs] of [[-1, -1], [1, -1], [1, 1], [-1, 1]].entries()) {
   const [sx, sz] = signs;
   addBeam(
@@ -201,15 +192,16 @@ for (const [index, signs] of [[-1, -1], [1, -1], [1, 1], [-1, 1]].entries()) {
   );
 }
 
-const lowerFaceSlope = -Math.atan((4.1 - 1.42) / (8.15 - 0.58));
 const lowerFrontZAt = (y: number) => 4.1 + (1.42 - 4.1) * ((y - 0.58) / (8.15 - 0.58));
-addBox("lower-window-recess", "lower-tower", "opening", point(0, 3.05, lowerFrontZAt(3.05) + 0.08), point(1.28, 1.55, 0.13), point(lowerFaceSlope, 0, 0));
-for (const x of [-0.72, 0.72]) {
-  addBeam(`lower-window-jamb-${x}`, "lower-tower", "paint-light", point(x, 2.2, lowerFrontZAt(2.2) + 0.17), point(x, 3.9, lowerFrontZAt(3.9) + 0.17), 0.13, 0.1);
-}
-addBeam("lower-window-head", "lower-tower", "paint-light", point(-0.75, 3.91, lowerFrontZAt(3.91) + 0.17), point(0.75, 3.91, lowerFrontZAt(3.91) + 0.17), 0.14, 0.1);
-addBeam("lower-window-sill", "lower-tower", "paint-light", point(-0.75, 2.19, lowerFrontZAt(2.19) + 0.17), point(0.75, 2.19, lowerFrontZAt(2.19) + 0.17), 0.14, 0.1);
-addBeam("lower-window-mullion", "lower-tower", "paint-light", point(0, 2.24, lowerFrontZAt(2.24) + 0.22), point(0, 3.86, lowerFrontZAt(3.86) + 0.22), 0.07, 0.07);
+parts.push(...frontWindowAssembly({
+  ...lowerWindow,
+  group: "lower-window",
+  faceZAt: lowerFrontZAt,
+  wallDepth: 0.24,
+  columns: 2,
+  rows: 2,
+  interiorDepth: 1.4,
+}));
 
 // Exposed seat: the upper house is a separate machine resting on this cross.
 addCylinder("main-post", "seat", "timber-dark", point(0, 6.65, 0), point(0, 8.75, 0), 0.54, 16);
@@ -217,18 +209,29 @@ addBeam("seat-cross-x", "seat", "timber-dark", point(-2.25, 8.2, 0), point(2.25,
 addBeam("seat-cross-z", "seat", "timber-dark", point(0, 8.2, -2.15), point(0, 8.2, 2.15), 0.5, 0.44);
 addBox("upper-house-floor", "upper-house", "timber-dark", point(0, 8.55, 0.15), point(5.9, 0.42, 7.65));
 
-// Rectangular upper house; it never merges into the thatched pyramid.
-addBox("upper-house-shell", "upper-house", "cladding", point(0, 10.62, 0.28), point(5.6, 4.05, 7.4));
+// Rectangular upper house; its front wall is built around a real opening.
+const upperHouseBottom = 8.595;
+const upperHouseTop = 12.645;
+const upperHouseFrontZ = 3.98;
+const upperWindow = { id: "upper-front-window", centerX: 0, centerY: 10.85, width: 1.24, height: 1.6 } as const;
+addBox("upper-house-left-wall", "upper-house", "cladding", point(-2.72, 10.62, 0.28), point(0.16, 4.05, 7.4));
+addBox("upper-house-right-wall", "upper-house", "cladding", point(2.72, 10.62, 0.28), point(0.16, 4.05, 7.4));
+addBox("upper-house-rear-wall", "upper-house", "cladding", point(0, 10.62, -3.42), point(5.6, 4.05, 0.16));
+addBox("upper-house-front-lower", "upper-house", "cladding", point(0, (upperHouseBottom + 10.05) / 2, upperHouseFrontZ), point(5.6, 10.05 - upperHouseBottom, 0.16));
+addBox("upper-house-front-upper", "upper-house", "cladding", point(0, (11.65 + upperHouseTop) / 2, upperHouseFrontZ), point(5.6, upperHouseTop - 11.65, 0.16));
+for (const [id, x0, x1] of [["left", -2.8, -0.62], ["right", 0.62, 2.8]] as const) {
+  addBox(`upper-house-front-${id}-pier`, "upper-house", "cladding", point((x0 + x1) / 2, upperWindow.centerY, upperHouseFrontZ), point(x1 - x0, upperWindow.height, 0.16));
+}
 const upperRoofVertices: ObjectPoint[] = [
   point(-3.02, 12.62, -3.58), point(3.02, 12.62, -3.58),
   point(-3.02, 12.62, 4.04), point(3.02, 12.62, 4.04),
   point(0, 14.08, -3.58), point(0, 14.08, 4.04),
 ];
-addMesh("upper-house-roof", "upper-house", "roof", upperRoofVertices, [
+addMesh("upper-house-roof", "upper-house", "roof", upperRoofVertices, reverseTriangleWinding([
   [0, 4, 5], [0, 5, 2],
   [4, 1, 3], [4, 3, 5],
   [0, 1, 4], [2, 5, 3],
-]);
+]));
 for (const [id, x, z] of [
   ["rear-left", -2.82, -3.45], ["rear-right", 2.82, -3.45],
   ["front-left", -2.82, 3.92], ["front-right", 2.82, 3.92],
@@ -239,12 +242,16 @@ addBeam("roof-ridge", "upper-house", "paint-light", point(0, 14.12, -3.7), point
 addBeam("front-eave", "upper-house", "paint-light", point(-3.06, 12.6, 4.08), point(3.06, 12.6, 4.08), 0.18, 0.16);
 addBeam("rear-eave", "upper-house", "paint-light", point(-3.06, 12.6, -3.62), point(3.06, 12.6, -3.62), 0.18, 0.16);
 
-addBox("upper-front-opening", "upper-house", "opening", point(0, 10.85, 4.01), point(1.24, 1.6, 0.13));
-for (const x of [-0.72, 0.72]) {
-  addBeam(`upper-front-window-jamb-${x}`, "upper-house", "paint-light", point(x, 9.98, 4.11), point(x, 11.72, 4.11), 0.13, 0.1);
-}
-addBeam("upper-front-window-head", "upper-house", "paint-light", point(-0.74, 11.73, 4.11), point(0.74, 11.73, 4.11), 0.13, 0.1);
-addBeam("upper-front-window-sill", "upper-house", "paint-light", point(-0.74, 9.97, 4.11), point(0.74, 9.97, 4.11), 0.13, 0.1);
+parts.push(...frontWindowAssembly({
+  ...upperWindow,
+  group: "upper-window",
+  faceZAt: () => upperHouseFrontZ,
+  wallDepth: 0.2,
+  columns: 2,
+  rows: 2,
+  interiorDepth: 1.35,
+}));
+addBeam("upper-window-lamp-carrier", "upper-window-interior", "timber-dark", point(-0.72, 12.18, 3.15), point(0.72, 12.18, 3.15), 0.14, 0.14);
 
 // Fixed windshaft and ground-sailer rotor.
 addCylinder("windshaft", "rotor", "metal", point(0, OUDEGEIN_HUB_Y, 0.85), point(0, OUDEGEIN_HUB_Y, 5.99), 0.3, 20);
@@ -253,7 +260,7 @@ addCylinder("rotor-cap", "rotor", "paint-accent", point(0, OUDEGEIN_HUB_Y, 5.9),
 for (let blade = 0; blade < 4; blade += 1) addOldDutchSail(blade);
 
 // Rear tail, access stair and handrails remain fixed in this world.
-addBox("upper-rear-door", "upper-house", "opening", point(0, 10.25, -3.49), point(1.3, 2.45, 0.14));
+addBox("upper-rear-door", "upper-house", "dark-recess", point(0, 10.25, -3.49), point(1.3, 2.45, 0.14));
 addBeam("tail-beam-left", "tail", "timber-dark", point(-1.42, 9.3, -3.55), point(-0.64, 1.05, -11.35), 0.32, 0.28);
 addBeam("tail-beam-right", "tail", "timber-dark", point(1.42, 9.3, -3.55), point(0.64, 1.05, -11.35), 0.32, 0.28);
 addBeam("tail-cross-head", "tail", "timber-dark", point(-1.48, 9.25, -3.58), point(1.48, 9.25, -3.58), 0.3, 0.28);
@@ -320,9 +327,32 @@ for (let index = 0; index < 16; index += 1) {
 addBox("scoop-channel-left", "scoop-wheel", "foundation", point(-2.68, 0.52, -4.82), point(0.36, 1.04, 3.5));
 addBox("scoop-channel-right", "scoop-wheel", "foundation", point(2.68, 0.52, -4.82), point(0.36, 1.04, 3.5));
 
+parts.push(
+  ...dutchLampFixture({
+    id: "upper-window-interior-lamp",
+    group: "lighting-fixtures",
+    lens: point(0, 11.48, 3.15),
+    carrierPoint: point(0, 12.18, 3.15),
+    carrier: "ceiling",
+    lampClass: "domestic",
+    poolGroupId: "dutch-polder:m2-upper-house",
+    priority: 2.25,
+  }),
+  ...dutchLampFixture({
+    id: "upper-eave-lantern",
+    group: "lighting-fixtures",
+    lens: point(0, 11.85, 4.18),
+    carrierPoint: point(0, 12.6, 4.08),
+    carrier: "ceiling",
+    lampClass: "exterior",
+    poolGroupId: "dutch-polder:m2-upper-house",
+    priority: 2.1,
+  }),
+);
+
 export const oudegeinWipmolenObject: ObjectLabModel = {
   id: "dutch-windmill-oudegein-wipmolen-m2",
-  revision: "m2-2026-08-02",
+  revision: "m2-2026-08-04-real-windows-a2",
   title: "Poldermolen Oudegein-type wipmolen — structural grey model",
   units: "metres",
   coordinates: { up: "+Y", front: "+Z", origin: "ground-centre" },
@@ -382,6 +412,7 @@ export const oudegeinWipmolenObject: ObjectLabModel = {
     { id: "high-three-quarter", label: "High 3/4", projection: "perspective", position: point(-34, 35, 38), target: point(0, 9.5, -1.1), fov: 38 },
     { id: "seat-and-tail", label: "Seat + tail joint", projection: "perspective", position: point(-17, 14, -22), target: point(0, 7.9, -3.1), fov: 34 },
     { id: "scoop-wheel", label: "Scoop wheel", projection: "perspective", position: point(5.5, 2.8, -14), target: point(0, 2.58, -4.82), fov: 30 },
+    { id: "night-upper-house", label: "Night · occupied upper house", projection: "perspective", position: point(-13, 13.5, 22), target: point(0, 10.8, 3.2), fov: 32, lighting: "night" },
     { id: "silhouette", label: "Silhouette control", projection: "orthographic", position: point(0, 12.5, 45), target: point(0, 12.35, 0), orthoHeight: 29.5 },
   ],
 };

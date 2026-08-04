@@ -16,6 +16,7 @@
 import type { MutableGroup } from "./astanaAuthoring.ts";
 import { noise, place, primitive } from "./astanaAuthoring.ts";
 import { insideLandmarkReserve } from "./astanaLayout.ts";
+import { shrubTone } from "../../prefabs/coreShrubs.ts";
 
 /**
  * Просека под эстакадой кольца: ствол не имеет права стоять ближе этого
@@ -307,7 +308,10 @@ export function createGround(base: MutableGroup, surface: MutableGroup): void {
  */
 export function createGreenBelt(belt: MutableGroup): void {
   let planted = 0;
-  const attempts = 260;
+  // Шаг посадки. Полоса смыкается кронами, но не растёт друг сквозь друга:
+  // на 260 попытках соседи стояли в четырёх метрах, а взрослая сосна теперь
+  // раскидывает сучья на три — отдельные сучья теряли опору в чужой кроне.
+  const attempts = 224;
   for (let index = 0; index < attempts && planted < 150; index += 1) {
     // Два ряда: внешний прижат к обрыву, внутренний идёт со смещением на
     // полшага — так полоса смыкается кронами и читается лесозащитной, а не
@@ -341,7 +345,11 @@ export function createGreenBelt(belt: MutableGroup): void {
     const variant = birch
       ? `core:birch:${1 + (index % 3)}`
       : `core:pine:${1 + (index % 4)}`;
-    const scale = 1.02 + noise(index, 4, 34) * 0.5;
+    // Порода берёзы задана взрослым деревом (12–13 м), а полоса авторилась под
+    // прежнее пятиметровое: междурядье рассчитано на крону в четыре метра, и
+    // взрослые кроны в нём смыкаются. Полоса сажает молодые берёзы — возрастом,
+    // а не занижением породы; сплошную взрослую полосу надо переразбивать.
+    const scale = (1.02 + noise(index, 4, 34) * 0.5) * (birch ? 0.38 : 0.28);
     place(belt, `belt:${index}`, variant, {
       position: [x, soil.top, z],
       rotation: [0, noise(index, 5, 35) * Math.PI * 2, 0],
@@ -385,11 +393,15 @@ export function createGreenBelt(belt: MutableGroup): void {
           z + (noise(index * 5 + clump, 11, 41) - 0.5) * 1.7,
         ],
         [size, size * 0.85, size * 0.92],
-        noise(index * 5 + clump, 12, 42) > 0.6 ? "#43552f" : "#4d6136",
+        shrubTone("steppe", index * 5 + clump),
         {
           rotation: [0, noise(index * 5 + clump, 13, 43) * Math.PI, 0],
           bearsLoad: false,
           volume: 0.05,
+          // Подлесок полосы — карагана и жимолость: мелкий сизый лист и
+          // ажурная масса. Прежний общий «зелёный ком» был тем же, что во
+          // дворе хрущёвки и на голландской канаве.
+          vegetationVisual: { kind: "steppe", seed: index * 5 + clump },
         },
       );
     }

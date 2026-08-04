@@ -7,6 +7,7 @@ import {
   rotorcraftForces,
   rotorcraftMaximumAcceleration,
   rotorcraftVelocityDemand,
+  rotorCapacityByPoint,
 } from "../games/make-a-mess/src/game/rotorcraftDynamics.ts";
 import {
   HEXACOPTER_DUCTS,
@@ -24,6 +25,13 @@ const base = {
   availability: points.map(() => 1),
   capacity: 1000,
 };
+
+test("разные классы роторов сохраняют суммарную тягу и паспортное отношение", () => {
+  const capacities = rotorCapacityByPoint(1000, 6, [1, 1, 1, 1, 1.337, 1.337]);
+  assert.equal(Math.abs(capacities.reduce((sum, value) => sum + value, 0) - 1000) < 1e-9, true);
+  assert.equal(Math.abs(capacities[4] / capacities[0] - 1.337) < 1e-9, true);
+  assert.equal(Math.abs(capacities[5] / capacities[1] - 1.337) < 1e-9, true);
+});
 
 test("горизонт у коптера рождается наклоном, и его предел — из наклона", () => {
   const tilt = (25 * Math.PI) / 180;

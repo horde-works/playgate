@@ -1,9 +1,279 @@
 {
   "modelId": "dutch-landscape-kit",
-  "revision": "landscape-kit-a2-2026-08-03",
-  "modelHash": "7bb64d6ec203",
-  "generatedAt": "2026-08-02T20:05:16.284Z",
+  "revision": "landscape-kit-a17-2026-08-04",
+  "modelHash": "ac7e537d4b16",
+  "generatedAt": "2026-08-04T15:40:22.322Z",
   "views": [
+    {
+      "id": "schouw-front",
+      "label": "Schouw · flat bottom and raked bow board",
+      "projection": "orthographic",
+      "file": "schouw-front.png"
+    },
+    {
+      "id": "schouw-profile",
+      "label": "Schouw · 4.60 m shallow-water profile",
+      "projection": "orthographic",
+      "file": "schouw-profile.png"
+    },
+    {
+      "id": "schouw-three-quarter",
+      "label": "Schouw · frames, benches and paired oars",
+      "projection": "perspective",
+      "file": "schouw-three-quarter.png"
+    },
+    {
+      "id": "schouw-high",
+      "label": "Schouw · flat floor and working interior",
+      "projection": "perspective",
+      "file": "schouw-high.png"
+    },
+    {
+      "id": "mooring-posts-front",
+      "label": "Meerpalen · two piles at 3.20 m centres",
+      "projection": "orthographic",
+      "file": "mooring-posts-front.png"
+    },
+    {
+      "id": "mooring-posts-profile",
+      "label": "Meerpalen · circular oak shafts and rings",
+      "projection": "orthographic",
+      "file": "mooring-posts-profile.png"
+    },
+    {
+      "id": "mooring-posts-three-quarter",
+      "label": "Meerpalen · tarred oak and forged fittings",
+      "projection": "perspective",
+      "file": "mooring-posts-three-quarter.png"
+    },
+    {
+      "id": "mooring-posts-cap-ring",
+      "label": "Meerpalen · four-faced cap and forged ring",
+      "projection": "perspective",
+      "file": "mooring-posts-cap-ring.png"
+    },
+    {
+      "id": "jetty-front",
+      "label": "Private steiger · two water steps and no rail",
+      "projection": "orthographic",
+      "file": "jetty-front.png"
+    },
+    {
+      "id": "jetty-profile",
+      "label": "Private steiger · deck 0.30 m above water",
+      "projection": "orthographic",
+      "file": "jetty-profile.png"
+    },
+    {
+      "id": "jetty-three-quarter",
+      "label": "Private steiger · four piles, bearers and steps",
+      "projection": "perspective",
+      "file": "jetty-three-quarter.png"
+    },
+    {
+      "id": "jetty-high",
+      "label": "Private steiger · seven drained deck boards",
+      "projection": "perspective",
+      "file": "jetty-high.png"
+    },
+    {
+      "id": "picket-fence-front",
+      "label": "Hekje · exact three-metre module and 0.95 m gate",
+      "projection": "orthographic",
+      "file": "picket-fence-front.png"
+    },
+    {
+      "id": "picket-fence-three-quarter",
+      "label": "Hekje · green pickets, white gate and grounded posts",
+      "projection": "perspective",
+      "file": "picket-fence-three-quarter.png"
+    },
+    {
+      "id": "picket-fence-gate-detail",
+      "label": "Hekje · shared hinge post, straps, brace and latch",
+      "projection": "perspective",
+      "file": "picket-fence-gate-detail.png"
+    },
+    {
+      "id": "peat-store-front",
+      "label": "Turfhok · open front and ventilated peat stack",
+      "projection": "orthographic",
+      "file": "peat-store-front.png"
+    },
+    {
+      "id": "peat-store-profile",
+      "label": "Turfhok · rearward roof fall from unequal posts",
+      "projection": "orthographic",
+      "file": "peat-store-profile.png"
+    },
+    {
+      "id": "peat-store-three-quarter",
+      "label": "Turfhok · four-post frame, slatted back and dry fuel",
+      "projection": "perspective",
+      "file": "peat-store-three-quarter.png"
+    },
+    {
+      "id": "peat-store-stack-detail",
+      "label": "Turfhok · three explicit chevron courses with 40 mm air gaps",
+      "projection": "perspective",
+      "file": "peat-store-stack-detail.png"
+    },
+    {
+      "id": "privy-front",
+      "label": "Huisje · exact door and open heart cutout",
+      "projection": "orthographic",
+      "file": "privy-front.png"
+    },
+    {
+      "id": "privy-profile",
+      "label": "Huisje · 1.10 m cantilever beyond bank and rearward roof fall",
+      "projection": "orthographic",
+      "file": "privy-profile.png"
+    },
+    {
+      "id": "privy-three-quarter",
+      "label": "Huisje · grounded beams, framed door and water-side opening",
+      "projection": "perspective",
+      "file": "privy-three-quarter.png"
+    },
+    {
+      "id": "privy-rear-water",
+      "label": "Huisje · open rear, raised seat and clear direct drop",
+      "projection": "perspective",
+      "file": "privy-rear-water.png"
+    },
+    {
+      "id": "privy-door-detail",
+      "label": "Huisje · real 120 mm heart void and attached ironwork",
+      "projection": "perspective",
+      "file": "privy-door-detail.png"
+    },
+    {
+      "id": "hand-pump-front",
+      "label": "Handpomp · tapered iron column, spout and receiving bucket",
+      "projection": "orthographic",
+      "file": "hand-pump-front.png"
+    },
+    {
+      "id": "hand-pump-profile",
+      "label": "Handpomp · 0.22 m spout projection and rear lever",
+      "projection": "orthographic",
+      "file": "hand-pump-profile.png"
+    },
+    {
+      "id": "hand-pump-three-quarter",
+      "label": "Handpomp · stone footing, working head and oak bucket",
+      "projection": "perspective",
+      "file": "hand-pump-three-quarter.png"
+    },
+    {
+      "id": "hand-pump-bucket-detail",
+      "label": "Handpomp · open stave bucket",
+      "projection": "perspective",
+      "file": "hand-pump-bucket-detail.png"
+    },
+    {
+      "id": "hand-pump-pivot-detail",
+      "label": "Handpomp · attached pivot and grip",
+      "projection": "perspective",
+      "file": "hand-pump-pivot-detail.png"
+    },
+    {
+      "id": "drying-line-front",
+      "label": "Drooglijn · exact span, sag and leaning prop",
+      "projection": "orthographic",
+      "file": "drying-line-front.png"
+    },
+    {
+      "id": "drying-line-profile",
+      "label": "Drooglijn · twin lines on transverse bars",
+      "projection": "orthographic",
+      "file": "drying-line-profile.png"
+    },
+    {
+      "id": "drying-line-three-quarter",
+      "label": "Drooglijn · grounded posts and working Y-prop",
+      "projection": "perspective",
+      "file": "drying-line-three-quarter.png"
+    },
+    {
+      "id": "drying-line-high",
+      "label": "Drooglijn · two continuous opaque cords",
+      "projection": "perspective",
+      "file": "drying-line-high.png"
+    },
+    {
+      "id": "drying-line-prop-detail",
+      "label": "Drooglijn · fork supports both midpoints",
+      "projection": "perspective",
+      "file": "drying-line-prop-detail.png"
+    },
+    {
+      "id": "bean-frame-front",
+      "label": "Bonenrek · five exact paired stations",
+      "projection": "orthographic",
+      "file": "bean-frame-front.png"
+    },
+    {
+      "id": "bean-frame-profile",
+      "label": "Bonenrek · 0.70 m rows and ties at 2.10 m",
+      "projection": "orthographic",
+      "file": "bean-frame-profile.png"
+    },
+    {
+      "id": "bean-frame-three-quarter",
+      "label": "Bonenrek · planted A-frame and filled bed",
+      "projection": "perspective",
+      "file": "bean-frame-three-quarter.png"
+    },
+    {
+      "id": "bean-frame-high",
+      "label": "Bonenrek · continuous ridge and five bindings",
+      "projection": "perspective",
+      "file": "bean-frame-high.png"
+    },
+    {
+      "id": "bean-frame-tie-detail",
+      "label": "Bonenrek · poles continue above bound ridge",
+      "projection": "perspective",
+      "file": "bean-frame-tie-detail.png"
+    },
+    {
+      "id": "rain-barrel-front",
+      "label": "Regenton · twelve oak staves and three forged hoops",
+      "projection": "orthographic",
+      "file": "rain-barrel-front.png"
+    },
+    {
+      "id": "rain-barrel-profile",
+      "label": "Regenton · brick support and outlet 0.15 m above",
+      "projection": "orthographic",
+      "file": "rain-barrel-profile.png"
+    },
+    {
+      "id": "rain-barrel-three-quarter",
+      "label": "Regenton · grounded barrel and wall-service chain",
+      "projection": "perspective",
+      "file": "rain-barrel-three-quarter.png"
+    },
+    {
+      "id": "rain-barrel-high",
+      "label": "Regenton · real open top and hollow square downspout",
+      "projection": "perspective",
+      "file": "rain-barrel-high.png"
+    },
+    {
+      "id": "rain-barrel-support-detail",
+      "label": "Regenton · stave ring bears on two bricks",
+      "projection": "orthographic",
+      "file": "rain-barrel-support-detail.png"
+    },
+    {
+      "id": "rain-barrel-outlet-detail",
+      "label": "Regenton · open square outlet over clear top",
+      "projection": "perspective",
+      "file": "rain-barrel-outlet-detail.png"
+    },
     {
       "id": "bridge-front",
       "label": "Kwakel bridge · load path and paired rails",
@@ -21,6 +291,12 @@
       "label": "Kwakel bridge · deck boards meet both banks",
       "projection": "perspective",
       "file": "bridge-high.png"
+    },
+    {
+      "id": "bridge-night",
+      "label": "Kwakel bridge · night landing and water-edge pool",
+      "projection": "perspective",
+      "file": "bridge-night.png"
     },
     {
       "id": "field-bed",

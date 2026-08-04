@@ -1,8 +1,8 @@
 {
   "modelId": "dutch-windmill-oudegein-wipmolen-m2",
-  "revision": "m2-2026-08-02",
-  "modelHash": "097df1d22486",
-  "generatedAt": "2026-08-02T16:27:42.649Z",
+  "revision": "m2-2026-08-04-real-windows-a2",
+  "modelHash": "5c489a9248f6",
+  "generatedAt": "2026-08-04T15:37:10.718Z",
   "views": [
     {
       "id": "front",
@@ -51,6 +51,12 @@
       "label": "Scoop wheel",
       "projection": "perspective",
       "file": "scoop-wheel.png"
+    },
+    {
+      "id": "night-upper-house",
+      "label": "Night · occupied upper house",
+      "projection": "perspective",
+      "file": "night-upper-house.png"
     },
     {
       "id": "silhouette",

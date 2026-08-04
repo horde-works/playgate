@@ -17,6 +17,7 @@ import {
   townBoulevardDocument,
   townBoulevardSpotLights,
 } from "../content/scenes/townBoulevardDocument.ts";
+import { sr6SkatPrototypeDocument } from "../content/scenes/sr6SkatPrototypeDocument.ts";
 
 // ---------------------------------------------------------------------------
 // Боевая городская сцена: базовый город (destructionScene) плюс старый
@@ -46,6 +47,11 @@ export const boulevardCompilation = compileSceneGroups(
   cityPrefabLibrary,
 );
 
+export const sr6SkatCompilation = compileSceneGroups(
+  sr6SkatPrototypeDocument,
+  cityPrefabLibrary,
+);
+
 export const townScene = createDestructionScene({
   ...openHouseSceneOptions,
   clusters: [
@@ -54,6 +60,7 @@ export const townScene = createDestructionScene({
     ...skyMooringCompilation.clusters,
     ...vertipadCompilation.clusters,
     ...boulevardCompilation.clusters,
+    ...sr6SkatCompilation.clusters,
   ],
   lamps: [
     ...openHouseSceneOptions.lamps,
@@ -61,6 +68,7 @@ export const townScene = createDestructionScene({
     ...skyMooringCompilation.lamps,
     ...vertipadCompilation.lamps,
     ...boulevardCompilation.lamps,
+    ...sr6SkatCompilation.lamps,
   ],
   spotLights: [
     ...skyMooringSpotLights,

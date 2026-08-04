@@ -1,8 +1,4 @@
-import { deKatObject } from "../../objects/dutchWindmills/deKatObject.ts";
-import { gekroondePoelenburgPaltrokObject } from "../../objects/dutchWindmills/gekroondePoelenburgPaltrokObject.ts";
-import { jongeSchaapSawmillObject } from "../../objects/dutchWindmills/jongeSchaapSawmillObject.ts";
 import type { ObjectLabModel } from "../../objects/dutchWindmills/objectModel.ts";
-import { oudegeinWipmolenObject } from "../../objects/dutchWindmills/oudegeinWipmolenObject.ts";
 import { createLandscapeSampler } from "../../landscape/landscapeSampler.ts";
 import type {
   AuthoredSceneDocument,
@@ -16,8 +12,8 @@ import type {
 } from "../../../game/destructionScene.ts";
 import {
   DUTCH_POLDER_BRIDGE_SEATS,
+  DUTCH_POLDER_BUILDING_PLOTS,
   DUTCH_POLDER_CHANNELS,
-  DUTCH_POLDER_OBJECT_RESERVES,
   DUTCH_POLDER_ROUTES,
   DUTCH_POLDER_SHORELINE,
   dutchPolderChannelAt,
@@ -25,6 +21,8 @@ import {
   dutchPolderDistanceToSegment,
   dutchPolderGroundTopAt,
   dutchPolderLandAt,
+  dutchPolderKeepOut,
+  dutchPolderRectDistance,
   type DutchPolderChannel,
   type DutchPolderPoint2,
 } from "./dutchPolderTerrainGraybox.ts";
@@ -382,7 +380,9 @@ for (const bridge of DUTCH_POLDER_BRIDGE_SEATS) {
   prefab(
     bridges,
     bridge.id,
-    "dutch:landscape:bridge",
+    bridge.id === "B1" || bridge.id === "B3" || bridge.id === "B5"
+      ? `dutch:landscape:bridge-lit-${bridge.id.toLowerCase()}`
+      : "dutch:landscape:bridge",
     [bridge.position[0], bridge.bankY - 0.78, bridge.position[1]],
     [0, bridgeYaw, 0],
     undefined,
@@ -403,14 +403,24 @@ for (const bridge of DUTCH_POLDER_BRIDGE_SEATS) {
   }
 }
 
-const placements: readonly Placement[] = [
-  { id: "m1", prefab: "dutch:m1-de-kat", position: [2, 5.2, -13], bearing: 168, model: deKatObject },
-  { id: "m2", prefab: "dutch:m2-oudegein", position: [-40, 2.4, -25], bearing: 152, model: oudegeinWipmolenObject },
-  { id: "m3", prefab: "dutch:m3-jonge-schaap", position: [36, 2.8, -28], bearing: 194, model: jongeSchaapSawmillObject },
-  { id: "m4", prefab: "dutch:m4-poelenburg", position: [50, 1.9, 4], bearing: 205, model: gekroondePoelenburgPaltrokObject },
-  { id: "h1", prefab: "dutch:h1-zaan-house", position: [-50, 2.25, 4], bearing: 128 },
-  { id: "h2", prefab: "dutch:h2-stolp-farm", position: [31, 1.45, 29], bearing: 206 },
-];
+const PREFAB_BY_OBJECT: Record<string, string> = {
+  m1: "dutch:m1-de-kat",
+  m2: "dutch:m2-oudegein",
+  m3: "dutch:m3-jonge-schaap",
+  m4: "dutch:m4-poelenburg",
+  h1: "dutch:h1-zaan-house",
+  h2: "dutch:h2-stolp-farm",
+};
+
+// Position, bearing and datum come from the building-plot contract, so the
+// object, its levelled ground and its keep-out circle cannot drift apart.
+const placements: readonly Placement[] = DUTCH_POLDER_BUILDING_PLOTS.map((plot) => ({
+  id: plot.objectId,
+  prefab: PREFAB_BY_OBJECT[plot.objectId],
+  position: [plot.origin[0], plot.elevation, plot.origin[1]] as SceneVector3,
+  bearing: plot.bearing,
+  model: plot.model,
+}));
 
 const rotorFacings = placements.flatMap((placement) => {
   const axis = placement.model?.rotor?.axis;
@@ -457,15 +467,26 @@ for (const placement of placements) {
   }
 }
 
-export const DUTCH_POLDER_FIELD_PLACEMENTS = [
-  { id: "west-red", position: [-55, 0.84, 30] as SceneVector3, yaw: -0.18, scale: [1, 1, 1.35] as SceneVector3 },
-  { id: "west-yellow", position: [-45, 0.84, 25] as SceneVector3, yaw: 0.16, scale: [1, 1, 1.2] as SceneVector3 },
-  { id: "south-purple", position: [-22, 0.84, 39] as SceneVector3, yaw: -0.04, scale: [1.2, 1, 1.55] as SceneVector3 },
-  { id: "south-blue", position: [-12, 0.84, 45] as SceneVector3, yaw: 0.1, scale: [1, 1, 1.15] as SceneVector3 },
-  { id: "middle-yellow", position: [14, 1.02, 36] as SceneVector3, yaw: -0.12, scale: [1.15, 1, 1.45] as SceneVector3 },
-  { id: "farm-purple", position: [13, 1.5, 25] as SceneVector3, yaw: 0.08, scale: [0.95, 1, 1.1] as SceneVector3 },
-  { id: "east-blue", position: [46, 1.5, 40] as SceneVector3, yaw: -0.24, scale: [1.05, 1, 1.15] as SceneVector3 },
-] as const;
+// Beds sit on the ground the landscape actually renders. Three of the seven
+// authored elevations disagreed with it — `middle-yellow` was buried 0.43 m and
+// `farm-purple` floated 0.22 m — so the datum is sampled, never typed.
+// `west-red` stood where the Zaan house now stands and `west-yellow` inside its
+// yard; bulb parcels belong to the open polder, so both are dropped here rather
+// than nudged, and the western field pattern is re-cut with the hamlet.
+export const DUTCH_POLDER_FIELD_PLACEMENTS = ([
+  { id: "south-purple", at: [-22, 39], yaw: -0.04, scale: [1.2, 1, 1.55] as SceneVector3 },
+  { id: "south-blue", at: [-12, 45], yaw: 0.1, scale: [1, 1, 1.15] as SceneVector3 },
+  { id: "middle-yellow", at: [11, 38], yaw: -0.12, scale: [1.15, 1, 1.45] as SceneVector3 },
+  { id: "farm-purple", at: [13, 25], yaw: 0.08, scale: [0.95, 1, 1.1] as SceneVector3 },
+  { id: "east-blue", at: [46, 40], yaw: -0.24, scale: [1.05, 1, 1.15] as SceneVector3 },
+] as const).map((field) => ({
+  ...field,
+  position: [
+    field.at[0],
+    dutchPolderVisualTopAt(field.at[0], field.at[1]),
+    field.at[1],
+  ] as SceneVector3,
+}));
 
 const fields = group("flower-fields", "Raised flower beds", "soil");
 for (const field of DUTCH_POLDER_FIELD_PLACEMENTS) {
@@ -488,8 +509,8 @@ for (const wall of [
 
 const fieldEdges = group("field-edges", "Fences and hedgerows", "wood");
 for (const edge of [
-  { id: "west-fence-a", prefab: "dutch:landscape:field-fence", x: -53, z: 21, yaw: -0.12 },
-  { id: "west-fence-b", prefab: "dutch:landscape:field-fence", x: -47, z: 20.3, yaw: -0.12 },
+  // The two western field fences ran straight through the new house plot. The
+  // parcel gets its own edge with the yard; a field fence is not a garden fence.
   { id: "south-hedge-a", prefab: "dutch:landscape:hedgerow", x: -25, z: 49, yaw: 0.04 },
   { id: "south-hedge-b", prefab: "dutch:landscape:hedgerow", x: -19, z: 49.2, yaw: 0.04 },
   { id: "farm-fence-a", prefab: "dutch:landscape:field-fence", x: 17, z: 18.5, yaw: -0.08 },
@@ -509,26 +530,82 @@ for (const edge of [
 }
 
 const willows = group("pollard-willows", "Channel broadleaf trees", "wood", "mounted");
-for (const [index, [x, z, yaw]] of [
-  [-61, 22, 0.15], [-57.5, -11, -0.2], [-31, 47, 0.6],
-  [20, 49, -0.35], [57, -27, -0.5],
-  // Irregular channel-side groups. These sit on the upper terrace rather than
-  // in the exposed bed, and stay clear of bridge seats, routes and mill pads.
-  [-25.1, 18.1, 2.83], [-22.4, 4.1, 3.11], [-16.3, 19.3, 3.48],
-  [-5.3, 7.1, 3.85], [30.2, 3.2, 5.42], [-38.3, 41.1, 2.89],
-  [11.6, 19.9, 2.2], [-0.7, 23, 2.48], [11.9, 31.2, 2.85],
-  [-1.2, 38.4, 3.22], [58.6, 22.4, 3.83],
-].entries()) {
+/**
+ * Головчатые ивы стоят РЯДОМ по дальнему берегу главной канавы, а не россыпью.
+ *
+ * Knotwilg сажают не как дерево, а как межу: живая граница участка, крепление
+ * откоса и делянка прута разом. Читается такая посадка ритмом — линия с шагом в
+ * пять-восемь метров, — и россыпь, которая была здесь раньше, не читалась ею
+ * никак: замер дал шаги 8, 44 и 30 метров, а четыре ивы из одиннадцати стояли
+ * дальше восьми метров от любой воды, одна — в сорока трёх, на сухом бугре, где
+ * иве попросту нечем жить.
+ *
+ * Берег выбран ДАЛЬНИЙ намеренно. Двор дома h1 теперь выходит на воду с этой
+ * стороны, и ряд по его бровке встал бы стеной в четырёх метрах перед парадной
+ * дверью. Межу метят по границе участка, а не перед собственным крыльцом; к
+ * своей канаве надо подходить, причаливать и косить. Ближайшая ива к любому
+ * дверному проёму — 14.2 м.
+ *
+ * Разрывы в ряду не случайны: он рвётся там, где к воде выходят люди — у мостов
+ * и мельничных площадок. Расстояния проверены по скомпилированной сцене, а не
+ * на глаз.
+ *
+ * Каждая точка ОБЯЗАНА стоять на настоящем грунте: проверяется тем же
+ * `dutchPolderCoverPieceIdAt`, которым пользуется рассев растительности, и не
+ * в одной точке, а по квадрату 3.2 м вокруг ствола. Одна ива без этой проверки
+ * встала в семидесяти двух метрах от центра, за кромкой суши, и сцена
+ * отказалась стартовать с девяноста пятью неопёртыми кусками — деревом целиком.
+ */
+const POLLARD_ROW: readonly (readonly [number, number, number])[] = [
+  [-65.1, 9.1, 2.74], [-59.0, 7.1, 1.12], [-51.3, 6.1, 4.05],
+  [-33.5, 7.6, 5.61], [-25.9, 6.0, 2.2], [-19.5, 6.2, 3.88],
+  [10.8, 7.4, 0.94], [24.1, 4.8, 5.13], [31.5, 5.5, 1.77],
+  // Точка (60.4, 11.6) выброшена: там рельеф не держал часть хлыстов, хотя
+  // ствол стоял — место, а не дерево, остальные десять с теми же сидами целы.
+  [66.6, 10.2, 3.46],
+];
+/** Обычные широколиственные: двор, углы полей, дальняя межа. */
+const BANK_BROADLEAVES: readonly (readonly [number, number, number])[] = [
+  [-31, 47, 0.6], [-25.1, 18.1, 2.83], [-5.3, 7.1, 3.85],
+  [11.6, 19.9, 2.2], [-1.2, 38.4, 3.22],
+];
+for (const [index, [x, z, yaw]] of [...POLLARD_ROW, ...BANK_BROADLEAVES].entries()) {
+  const pollarded = index < POLLARD_ROW.length;
   prefab(
     willows,
     `willow:${index}`,
-    `core:oak:${71 + index % 3}`,
+    pollarded
+      ? `core:willow:${71 + index % 3}`
+      : `core:oak:${71 + index % 3}`,
     // The fixed turf shell is now the real intact support and collider. Roots
     // must meet that visible triangle, not the stepped earth body below it.
     [x, dutchPolderVisualTopAt(x, z) - 0.04, z],
     [0, yaw, 0],
-    [0.9 + (index % 3) * 0.08, 0.92 + (index % 2) * 0.1, 0.9 + (index % 3) * 0.08],
+    // Масштаб РАВНОМЕРНЫЙ. Прежний сплющивал дерево по высоте на 8%, и у
+    // тонкого повёрнутого хлыста опорная коробка переставала перекрываться с
+    // головой: одна ива из десяти стартовала с шестью неопёртыми хлыстами.
+    // Деревья не сплющивают, а неравномерный масштаб ломает ровно те члены,
+    // что держатся перекрытием.
+    (() => { const grow = 0.88 + ((index * 7) % 5) * 0.05; return [grow, grow, grow] as const; })(),
     [{ kind: "damp", amount: 0.3 }, { kind: "moss", amount: 0.18 }],
+  );
+}
+
+// Плакучая ива — не рабочее дерево берега, а дерево ДВОРА: в Голландии она
+// стоит у воды возле фермы и у моста, где её занавес полощется над каналом.
+// Их мало и они крупные, поэтому это отдельная группа, а не рассев.
+const weepingWillows = group("weeping-willows", "Weeping willows at the water", "wood", "mounted");
+for (const [index, [x, z, yaw]] of [
+  [26.5, 16.4, 0.6], [-51.3, 16.9, 0.85], [7.4, 44.8, 4.3],
+].entries()) {
+  prefab(
+    weepingWillows,
+    `weeping:${index}`,
+    `core:weeping-willow:${81 + (index % 2)}`,
+    [x, dutchPolderVisualTopAt(x, z) - 0.05, z],
+    [0, yaw, 0],
+    [0.94 + (index % 3) * 0.06, 0.96 + (index % 2) * 0.08, 0.94 + (index % 3) * 0.06],
+    [{ kind: "damp", amount: 0.34 }, { kind: "moss", amount: 0.2 }],
   );
 }
 
@@ -577,4 +654,10 @@ export const dutchPolderFieldIsClear = (x: number, z: number, radius = 3.6) =>
   dutchPolderLandAt(x, z)
   && !dutchPolderChannelAt(x, z)
   && DUTCH_POLDER_CHANNELS.every((channel) => dutchPolderChannelDistance(x, z, channel) > channel.width / 2 + radius)
-  && DUTCH_POLDER_OBJECT_RESERVES.every((reserve) => Math.hypot(x - reserve.position[0], z - reserve.position[1]) > reserve.radius + radius);
+  // A building keeps its own plot, measured as the rectangle it is, instead of
+  // sterilising the corners of a circle it never occupies. A mill additionally
+  // keeps the circle its sails sweep.
+  && DUTCH_POLDER_BUILDING_PLOTS.every((plot) =>
+    dutchPolderRectDistance(plot, dutchPolderKeepOut(plot), x, z) > radius
+    && (plot.sweep === undefined
+      || Math.hypot(x - plot.origin[0], z - plot.origin[1]) > plot.sweep + radius));

@@ -1,7 +1,18 @@
 import { northHollandStolpFarmObject } from "../objects/dutchHouses/northHollandStolpFarmObject.ts";
 import { zaanTimberMerchantHouseObject } from "../objects/dutchHouses/zaanTimberMerchantHouseObject.ts";
 import {
+  dutchLandscapeBeanFrameParts,
   dutchLandscapeBridgeParts,
+  dutchLandscapeDryingLineParts,
+  dutchLandscapeHandPumpParts,
+  dutchLandscapeJettyParts,
+  dutchLandscapeLitBridgeParts,
+  dutchLandscapeMooringPostParts,
+  dutchLandscapePeatStoreParts,
+  dutchLandscapePicketFenceParts,
+  dutchLandscapePrivyParts,
+  dutchLandscapeRainBarrelParts,
+  dutchLandscapeSchouwParts,
   dutchLandscapeFenceParts,
   dutchLandscapeFieldParts,
   dutchLandscapeHedgeParts,
@@ -9,6 +20,7 @@ import {
   dutchLandscapeRevetmentParts,
   dutchLandscapeWallParts,
 } from "../objects/dutchLandscape/dutchLandscapeKitObject.ts";
+import { zaanYardShedParts } from "../objects/dutchLandscape/zaanYardShedObject.ts";
 import { deKatObject } from "../objects/dutchWindmills/deKatObject.ts";
 import { gekroondePoelenburgPaltrokObject } from "../objects/dutchWindmills/gekroondePoelenburgPaltrokObject.ts";
 import { jongeSchaapSawmillObject } from "../objects/dutchWindmills/jongeSchaapSawmillObject.ts";
@@ -29,7 +41,8 @@ import type {
   BreakableShape,
   SceneVector3,
 } from "../../game/destructionScene.ts";
-import { propOak } from "./coreFlora.ts";
+import { litWindowColor } from "../../game/destructionScene.ts";
+import { propOak, propPollardWillow, propWeepingWillow } from "./coreFlora.ts";
 
 type MaterialBinding = {
   readonly material: BreakableMaterial;
@@ -70,6 +83,12 @@ const materialBindings: Record<ObjectMaterialId, MaterialBinding> = {
   metal: { material: "steel", shape: "steelSheet", color: "#535a5d" },
   "paint-light": { material: "wood", shape: "plank", color: "#d4d0be" },
   "paint-accent": { material: "wood", shape: "plank", color: "#bfa25a" },
+  glazing: { material: "darkGlass", shape: "glassPane", color: "#1c2528" },
+  "lamp-glass": { material: "glass", shape: "glassPane", color: "#b9c7c8" },
+  "lamp-bulb": { material: "glass", shape: "glassPane", color: litWindowColor },
+  "dark-recess": { material: "wood", shape: "panel", color: "#111718" },
+  // Legacy house studies still use `opening` for their glazing. New objects
+  // must distinguish real glass from an opaque recess explicitly.
   opening: { material: "darkGlass", shape: "glassPane", color: "#1c2528" },
 };
 
@@ -108,6 +127,10 @@ function isSurfacePart(part: ObjectLabPart): boolean {
 function mappedBase(part: ObjectLabPart) {
   const binding = materialBindings[part.material];
   const surface = isSurfacePart(part);
+  const nonStructuralGlass = part.material === "lamp-glass"
+    || part.material === "lamp-bulb"
+    || part.material === "glazing"
+    || part.material === "opening";
   const structuralStem = /field-stem/.test(part.id);
   const tallJoint = /cap-rib|crown-post/.test(part.id);
   const structuralSkin = part.id === "cap-hull" || part.id === "roof-ridge-cap";
@@ -115,17 +138,36 @@ function mappedBase(part: ObjectLabPart) {
     material: binding.material,
     shape: binding.shape,
     color: binding.color,
-    bearsLoad: structuralStem || structuralSkin ? true : surface ? false : undefined,
-    carriesAttachments: structuralSkin ? true : surface ? false : true,
+    bearsLoad: nonStructuralGlass ? false : structuralStem || structuralSkin ? true : surface ? false : undefined,
+    carriesAttachments: nonStructuralGlass ? false : structuralSkin ? true : surface ? false : true,
     // Canonical Dutch timberwork is a pegged/jointed assembly. The object
     // study records the exact meeting geometry, while this metadata tells the
     // generic support solver that a touching member is a joint rather than a
     // freestanding stack. It is intentionally short-range: nearby buildings
     // cannot become one structure through empty air.
-    attachmentSupportMode: surface && !structuralSkin ? undefined : "hinge",
+    attachmentSupportMode: nonStructuralGlass || (surface && !structuralSkin) ? undefined : "hinge",
     sideAttachmentReach: tallJoint ? 2.8 : surface ? 1.6 : 2,
     maximumVerticalGap: tallJoint ? 0.72 : 0.28,
     weathering: binding.material === "wood" || binding.material === "stone" ? 0.24 : undefined,
+  } as const;
+}
+
+function mappedLight(part: ObjectLabPart) {
+  if (!part.light) return {};
+  return {
+    light: {
+      ...part.light,
+      position: point(part.light.position ?? (
+        part.kind === "box" ? part.center
+          : part.kind === "beam" || part.kind === "cylinder"
+            ? [
+                (part.from[0] + part.to[0]) / 2,
+                (part.from[1] + part.to[1]) / 2,
+                (part.from[2] + part.to[2]) / 2,
+              ]
+            : [0, 0, 0]
+      )),
+    },
   } as const;
 }
 
@@ -150,6 +192,7 @@ function meshPiece(part: Extract<ObjectLabPart, { kind: "mesh" }>): ScenePrefabP
   return {
     id: part.id,
     ...mappedBase(part),
+    ...mappedLight(part),
     shape: "panel",
     position: centre,
     size,
@@ -168,6 +211,7 @@ export function canonicalPartToPrefabPiece(part: ObjectLabPart): ScenePrefabPiec
     return {
       id: part.id,
       ...mappedBase(part),
+      ...mappedLight(part),
       position: point(part.center),
       rotation,
       size,
@@ -191,6 +235,7 @@ export function canonicalPartToPrefabPiece(part: ObjectLabPart): ScenePrefabPiec
   return {
     id: part.id,
     ...mappedBase(part),
+    ...mappedLight(part),
     shape: part.kind === "cylinder" ? "cylinder" : mappedBase(part).shape,
     position: centre,
     rotation,
@@ -212,6 +257,42 @@ function prefab(
     displayName,
     tags,
     pieces: parts.map(canonicalPartToPrefabPiece),
+  };
+}
+
+function prefabWithLightGroup(
+  id: string,
+  displayName: string,
+  tags: readonly string[],
+  parts: readonly ObjectLabPart[],
+  poolGroupId: string,
+): ScenePrefabDefinition {
+  const definition = prefab(id, displayName, tags, parts);
+  return {
+    ...definition,
+    pieces: definition.pieces.map((piece) => piece.light
+      ? { ...piece, light: { ...piece.light, poolGroupId } }
+      : piece),
+  };
+}
+
+function coreWeepingWillowPrefab(seed: number): ScenePrefabDefinition {
+  return {
+    schemaVersion: 1,
+    id: `core:weeping-willow:${seed}`,
+    displayName: "Weeping willow",
+    tags: ["core", "flora", "tree", "willow"],
+    pieces: propWeepingWillow({ seed }),
+  };
+}
+
+function corePollardWillowPrefab(seed: number): ScenePrefabDefinition {
+  return {
+    schemaVersion: 1,
+    id: `core:willow:${seed}`,
+    displayName: "Pollard willow",
+    tags: ["core", "flora", "tree", "willow"],
+    pieces: propPollardWillow({ seed }),
   };
 }
 
@@ -241,12 +322,32 @@ const definitions = [
   ...modelPrefabs("m4-poelenburg", "De Gekroonde Poelenburg paltrok", gekroondePoelenburgPaltrokObject),
   ...modelPrefabs("h1-zaan-house", "Zaan timber merchant house", zaanTimberMerchantHouseObject),
   ...modelPrefabs("h2-stolp-farm", "North-Holland stolp farm", northHollandStolpFarmObject),
+  prefab("dutch:landscape:schouw", "Polder schouw", ["dutch", "landscape", "yard", "boat"], dutchLandscapeSchouwParts),
+  prefab("dutch:landscape:mooring-posts", "Pair of mooring posts", ["dutch", "landscape", "yard", "water-edge"], dutchLandscapeMooringPostParts),
+  prefab("dutch:landscape:jetty", "Private timber jetty", ["dutch", "landscape", "yard", "water-edge"], dutchLandscapeJettyParts),
+  prefab("dutch:landscape:yard-shed", "Zaan yard shed", ["dutch", "landscape", "yard", "building"], zaanYardShedParts),
+  prefab("dutch:landscape:peat-store", "Ventilated peat store", ["dutch", "landscape", "yard", "fuel"], dutchLandscapePeatStoreParts),
+  prefab("dutch:landscape:privy", "Ditch-side privy", ["dutch", "landscape", "yard", "water-edge"], dutchLandscapePrivyParts),
+  prefab("dutch:landscape:hand-pump", "Cast-iron hand pump", ["dutch", "landscape", "yard", "water"], dutchLandscapeHandPumpParts),
+  prefab("dutch:landscape:drying-line", "Farmyard drying line", ["dutch", "landscape", "yard", "domestic"], dutchLandscapeDryingLineParts),
+  prefab("dutch:landscape:bean-frame", "Hazel bean frame", ["dutch", "landscape", "yard", "garden"], dutchLandscapeBeanFrameParts),
+  prefab("dutch:landscape:picket-fence", "Zaan picket fence and gate", ["dutch", "landscape", "yard", "fence"], dutchLandscapePicketFenceParts),
+  prefab("dutch:landscape:rain-barrel", "Oak rain barrel", ["dutch", "landscape", "yard", "water"], dutchLandscapeRainBarrelParts),
   prefab("dutch:landscape:bridge", "Kwakel bridge", ["dutch", "landscape", "bridge"], dutchLandscapeBridgeParts),
+  ...(["B1", "B3", "B5"] as const).map((bridgeId) => prefabWithLightGroup(
+    `dutch:landscape:bridge-lit-${bridgeId.toLowerCase()}`,
+    `Kwakel bridge ${bridgeId} — two lanterns`,
+    ["dutch", "landscape", "bridge", "lit"],
+    dutchLandscapeLitBridgeParts,
+    `dutch-polder:${bridgeId.toLowerCase()}-bridge`,
+  )),
   prefab("dutch:landscape:field-bed", "Raised flower beds", ["dutch", "landscape", "field"], dutchLandscapeFieldParts),
   prefab("dutch:landscape:retaining-wall", "Coursed retaining wall", ["dutch", "landscape", "masonry"], dutchLandscapeWallParts),
   prefab("dutch:landscape:revetment", "Timber canal revetment", ["dutch", "landscape", "canal"], dutchLandscapeRevetmentParts),
   prefab("dutch:landscape:path", "Compacted shell path", ["dutch", "landscape", "path"], dutchLandscapePathParts),
   ...[71, 72, 73].map(coreTreePrefab),
+  ...[71, 72, 73].map(corePollardWillowPrefab),
+  ...[81, 82].map(coreWeepingWillowPrefab),
   prefab("dutch:landscape:field-fence", "Timber field fence", ["dutch", "landscape", "fence"], dutchLandscapeFenceParts),
   prefab("dutch:landscape:hedgerow", "Field hedgerow", ["dutch", "landscape", "hedge"], dutchLandscapeHedgeParts),
 ] as const;

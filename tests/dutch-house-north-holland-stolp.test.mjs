@@ -139,7 +139,7 @@ test("all final parts are unique and non-degenerate", () => {
 test("acceptance cameras separate exterior, load path and tail joint", () => {
   assert.deepEqual(northHollandStolpFarmObject.views.map((view) => view.id), [
     "front", "left", "rear", "right", "three-quarter-left", "three-quarter-right",
-    "high-three-quarter", "vierkant-cutaway", "tail-junction-cutaway", "silhouette",
+    "high-three-quarter", "vierkant-cutaway", "tail-junction-cutaway", "night-residence", "silhouette",
   ]);
   assert.ok(northHollandStolpFarmObject.views.find((view) => view.id === "vierkant-cutaway")?.hiddenGroups?.includes("main-roof-skin"));
   assert.ok(northHollandStolpFarmObject.views.find((view) => view.id === "tail-junction-cutaway")?.hiddenGroups?.includes("tail-roof"));

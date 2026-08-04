@@ -68,6 +68,6 @@ test("приёмочные камеры включают отдельные пр
   const ids = oudegeinWipmolenObject.views.map((view) => view.id);
   assert.deepEqual(ids, [
     "front", "left", "rear", "three-quarter-left", "three-quarter-right",
-    "high-three-quarter", "seat-and-tail", "scoop-wheel", "silhouette",
+    "high-three-quarter", "seat-and-tail", "scoop-wheel", "night-upper-house", "silhouette",
   ]);
 });

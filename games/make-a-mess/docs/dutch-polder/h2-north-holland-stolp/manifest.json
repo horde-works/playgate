@@ -1,8 +1,8 @@
 {
   "modelId": "dutch-house-north-holland-stolp-h2",
-  "revision": "h2-2026-08-02",
-  "modelHash": "c5f9f5514686",
-  "generatedAt": "2026-08-02T18:48:35.863Z",
+  "revision": "h2-2026-08-04-real-windows-a2",
+  "modelHash": "77118a7f96d9",
+  "generatedAt": "2026-08-04T15:37:45.988Z",
   "views": [
     {
       "id": "front",
@@ -57,6 +57,12 @@
       "label": "Cutaway · open rear bay + roof flashing",
       "projection": "perspective",
       "file": "tail-junction-cutaway.png"
+    },
+    {
+      "id": "night-residence",
+      "label": "Night · occupied residence, dark barn",
+      "projection": "perspective",
+      "file": "night-residence.png"
     },
     {
       "id": "silhouette",

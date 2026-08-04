@@ -4,6 +4,7 @@ import Link from "next/link";
 import type { GameEntry } from "../../games/registry";
 import { useLanguage } from "../i18n/LanguageProvider";
 import { gameCardCopy } from "../i18n/dictionary";
+import { requestWorldBoot } from "./worldBoot";
 
 interface GameCardProps {
   game: GameEntry;
@@ -29,7 +30,14 @@ export function GameCard({ game, featured = false }: GameCardProps) {
         </div>
         <h3>{game.title}</h3>
         <p>{copy.summary}</p>
-        <Link className="button button-dark" href={game.href}>
+        {/* Переход к миру занимает секунды и начинается с замершей страницы:
+            отчёт о загрузке обязан появиться в том же кадре, что и клик, — до
+            того, как маршрутизатор уйдёт грузить код мира. */}
+        <Link
+          className="button button-dark"
+          href={game.href}
+          onClick={() => requestWorldBoot(game.title)}
+        >
           {t("card.cta")}
           <span aria-hidden="true">↗</span>
         </Link>

@@ -4492,6 +4492,124 @@ html[data-terms="accepted"] .consent-content-blocked {
   .gate-loading-title span { animation-duration: 0.01ms; }
 }
 
+/* ── Отчёт о загрузке мира ───────────────────────────────────────────────────
+   Действует те же законы, что и для заслонки, и по той же причине: стадия
+   сборки замораживает главный поток на секунды. Поэтому здесь НЕТ ни цифр
+   процентов, ни покадрового JS, ни размытий — всё это встанет ровно тогда,
+   когда должно двигаться. Двигаются только transform и opacity: их доводит
+   композитор, не спрашивая поток.
+
+   Цвет фона тот же, что у .play-page и .world-shutter, поэтому переход
+   «каталог → отчёт → мир» идёт через одну темноту, без промежуточной вспышки. */
+.world-boot {
+  position: fixed;
+  z-index: 95;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #1b1f1e;
+  opacity: 1;
+}
+
+/* Уходит отчёт, а не появляется: ожидание обязано быть видно с первого кадра
+   после клика, поэтому входной анимации у него нет вовсе. */
+.world-boot.is-leaving {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.42s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.world-boot-card {
+  width: min(520px, 100%);
+  text-align: left;
+}
+
+/* Кикер называет мир, который сейчас грузится: пока идёт ожидание, это
+   единственный ответ на вопрос «а туда ли я нажал». */
+.world-boot-kicker {
+  margin: 0 0 12px;
+  color: #d9ff3f;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.world-boot-title {
+  margin: 0 0 22px;
+  color: var(--paper-bright);
+  font-size: clamp(24px, 3.4vw, 40px);
+  font-weight: 810;
+  letter-spacing: -0.05em;
+  line-height: 1.02;
+}
+
+.world-boot-meter {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.world-boot-track {
+  position: relative;
+  flex: 1;
+  height: 2px;
+  overflow: hidden;
+  background: rgb(255 255 255 / 0.18);
+}
+
+/* Полоса — один CSS-переход к потолку стадии, запущенный ДО заморозки потока.
+   Кривая с быстрым началом проходит большую часть отрезка за первую треть
+   времени: короткая сборка читается быстрой, длинная — замедляющейся, но
+   живой. Потолка полоса не пересекает: шкалу закрывает только настоящий
+   первый кадр мира. */
+.world-boot-fill {
+  position: absolute;
+  inset: 0;
+  transform-origin: 0 50%;
+  transform: scaleX(0);
+  will-change: transform;
+  background: var(--acid);
+  transition-property: transform;
+  transition-timing-function: cubic-bezier(0.12, 0.78, 0.28, 1);
+}
+
+/* Единственное доказательство, что машина работает, когда поток стоит: сама
+   полоса к концу стадии почти неподвижна, а проблеск идёт по ней всегда. */
+.world-boot-sweep {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    rgb(255 255 255 / 0) 0%,
+    rgb(255 255 255 / 0.85) 50%,
+    rgb(255 255 255 / 0) 100%
+  );
+  animation: worldBootSweep 1.25s linear infinite;
+}
+
+@keyframes worldBootSweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+
+.world-boot-step {
+  color: rgb(255 255 255 / 0.5);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.16em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Полоса остаётся: она сообщает, а не украшает. Уходит только бегущий
+   проблеск — единственное здесь чисто декоративное движение. */
+@media (prefers-reduced-motion: reduce) {
+  .world-boot-sweep { animation: none; }
+}
+
 /* Табло отказа машины: полный разбор «ожидалось / получено» по органам. */
 .vehicle-failure-report {
   position: fixed;

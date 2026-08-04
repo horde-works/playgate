@@ -2,12 +2,18 @@ import type { LandscapeDocument } from "../../landscape/landscapeDocument.ts";
 import { compileVoxelSmoothedLandscape } from "../../landscape/landscapeMesher.ts";
 import { createLandscapeSampler } from "../../landscape/landscapeSampler.ts";
 import {
+  DUTCH_POLDER_BUILDING_PLOTS,
   DUTCH_POLDER_CHANNELS,
-  DUTCH_POLDER_OBJECT_RESERVES,
   DUTCH_POLDER_ROUTES,
   DUTCH_POLDER_SHORELINE,
   DUTCH_POLDER_ZONES,
+  dutchPolderPlotToWorld,
+  dutchPolderPlotYaw,
 } from "./dutchPolderTerrainGraybox.ts";
+import {
+  polderCarveCentreline,
+  polderScourCarves,
+} from "./dutchPolderHydrology.ts";
 
 export const dutchPolderCoverPieceId = (cellId: string) =>
   `dutch-polder:terrain-surface:cover:${cellId}:piece`;
@@ -20,27 +26,6 @@ const transitionWidth = (elevation: number): number => elevation >= 5
   : elevation >= 2.3
     ? 7
     : 5;
-
-function softenPolyline(
-  points: readonly (readonly [number, number])[],
-  iterations = 1,
-): readonly (readonly [number, number])[] {
-  let current = [...points];
-  for (let iteration = 0; iteration < iterations; iteration += 1) {
-    const next: Array<readonly [number, number]> = [current[0]];
-    for (let index = 1; index < current.length; index += 1) {
-      const from = current[index - 1];
-      const to = current[index];
-      next.push(
-        [from[0] * 0.75 + to[0] * 0.25, from[1] * 0.75 + to[1] * 0.25],
-        [from[0] * 0.25 + to[0] * 0.75, from[1] * 0.25 + to[1] * 0.75],
-      );
-    }
-    next.push(current[current.length - 1]);
-    current = next;
-  }
-  return current;
-}
 
 export const dutchPolderLandscapeDocument: LandscapeDocument = {
   schemaVersion: 1,
@@ -58,13 +43,26 @@ export const dutchPolderLandscapeDocument: LandscapeDocument = {
       polygon: zone.polygon,
       blendWidth: transitionWidth(zone.topY),
     })),
-  flatPads: DUTCH_POLDER_OBJECT_RESERVES.map((reserve) => ({
-    id: reserve.id,
-    center: reserve.position,
-    radius: Math.max(3.2, reserve.radius * 0.42),
-    elevation: reserve.baseY,
-    shoulder: Math.max(2.4, reserve.radius * 0.28),
-  })),
+  // Levelled ground follows the building, not a clearance circle: the pad is the
+  // object's own ground-contact footprint plus a working margin, turned with it.
+  flatPads: DUTCH_POLDER_BUILDING_PLOTS.map((plot) => {
+    const [centerX, centerZ] = dutchPolderPlotToWorld(
+      plot,
+      (plot.pad.minX + plot.pad.maxX) / 2,
+      (plot.pad.minZ + plot.pad.maxZ) / 2,
+    );
+    return {
+      id: plot.id,
+      center: [centerX, centerZ] as const,
+      yaw: dutchPolderPlotYaw(plot.bearing),
+      halfExtents: [
+        (plot.pad.maxX - plot.pad.minX) / 2,
+        (plot.pad.maxZ - plot.pad.minZ) / 2,
+      ] as const,
+      elevation: plot.elevation,
+      shoulder: 2.4,
+    };
+  }),
   corridors: DUTCH_POLDER_ROUTES.map((route) => ({
     id: route.id,
     points: route.points,
@@ -74,16 +72,35 @@ export const dutchPolderLandscapeDocument: LandscapeDocument = {
     conformsTerrainToGrade: true,
     maximumCrossSlope: 0.5,
   })),
-  dryChannels: DUTCH_POLDER_CHANNELS.map((channel) => ({
-    id: channel.id,
-    points: softenPolyline(channel.points),
-    bedWidth: channel.width,
-    bankWidth: 2.4,
-    terraceWidth: 3.2,
-    bedElevation: -0.25,
-    bedSurface: "soil" as const,
-    bankSurface: "soil" as const,
-  })),
+  // A carve that stops at the last authored point closes its own mouth: past
+  // that point the sampler measures distance to the POLYLINE, so it reads bank,
+  // then terrace, and the ground climbs back over the water plane. The river
+  // has to arrive at the rim with the section it cut for itself, or the fall
+  // cannot agree with the water feeding it.
+  dryChannels: DUTCH_POLDER_CHANNELS.flatMap((channel) => [
+    {
+      id: channel.id,
+      points: polderCarveCentreline(channel),
+      bedWidth: channel.width,
+      bankWidth: 2.4,
+      terraceWidth: 3.2,
+      bedElevation: -0.25,
+      bedSurface: "soil" as const,
+      bankSurface: "soil" as const,
+    },
+    // Scour at the brink. The sampler keeps the LOWEST channel it finds, so
+    // these simply win inside their own reach and leave the canal alone.
+    ...polderScourCarves(channel).map((carve) => ({
+      id: carve.id,
+      points: carve.points,
+      bedWidth: Math.min(carve.bedWidth, channel.width),
+      bankWidth: carve.bankWidth,
+      terraceWidth: 0.5,
+      bedElevation: -0.25 - carve.drop,
+      bedSurface: "soil" as const,
+      bankSurface: "soil" as const,
+    })),
+  ]),
   water: "none",
 };
 

@@ -28,7 +28,9 @@ const prefabs: readonly ScenePrefabDefinition[] = [
     prefab(`core:birch:${seed}`, "Birch tree", ["core", "flora", "tree"], propBirch({ seed })),
   ),
   ...[1, 2, 3].map((seed) =>
-    prefab(`core:poplar:${seed}`, "Poplar", ["core", "flora", "tree"], propOak({ seed: seed + 40 })),
+    // Тополь пока собран формой дуба и держит прежний габарит острова:
+    // порода дуба выросла до взрослой, поэтому здесь явный молодой возраст.
+    prefab(`core:poplar:${seed}`, "Poplar", ["core", "flora", "tree"], propOak({ seed: seed + 40, scale: 0.42 })),
   ),
 ];
 

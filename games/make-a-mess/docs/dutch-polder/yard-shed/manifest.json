@@ -1,0 +1,62 @@
+{
+  "modelId": "zaan-yard-shed",
+  "revision": "zaan-yard-shed-a4-2026-08-04",
+  "modelHash": "c42654d4335d",
+  "generatedAt": "2026-08-04T11:29:04.706Z",
+  "views": [
+    {
+      "id": "front",
+      "label": "Front · real double-door opening and cargo hoist",
+      "projection": "orthographic",
+      "file": "front.png"
+    },
+    {
+      "id": "profile",
+      "label": "Profile · side window, eave and roof support",
+      "projection": "orthographic",
+      "file": "profile.png"
+    },
+    {
+      "id": "front-three-quarter",
+      "label": "Exterior · tarred stepped boards, white doors and warm tiles",
+      "projection": "perspective",
+      "file": "front-three-quarter.png"
+    },
+    {
+      "id": "rear-three-quarter",
+      "label": "Rear · closed working-yard shell",
+      "projection": "perspective",
+      "file": "rear-three-quarter.png"
+    },
+    {
+      "id": "high",
+      "label": "High · tile courses, ridge and 0.25 m overhangs",
+      "projection": "perspective",
+      "file": "high.png"
+    },
+    {
+      "id": "hoist-detail",
+      "label": "Joint · internal beam tail, brace, chain and hook",
+      "projection": "perspective",
+      "file": "hoist-detail.png"
+    },
+    {
+      "id": "frame-exterior",
+      "label": "Control pair · complete exterior",
+      "projection": "perspective",
+      "file": "frame-exterior.png"
+    },
+    {
+      "id": "frame-cutaway",
+      "label": "Control pair · three yokes, four rafters and hoist tail",
+      "projection": "perspective",
+      "file": "frame-cutaway.png"
+    },
+    {
+      "id": "silhouette",
+      "label": "Silhouette · one-bay yard shed and projecting hoist",
+      "projection": "perspective",
+      "file": "silhouette.png"
+    }
+  ]
+}

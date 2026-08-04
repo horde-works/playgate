@@ -1,8 +1,8 @@
 {
   "modelId": "dutch-windmill-jonge-schaap-sawmill-m3",
-  "revision": "m3-2026-08-02",
-  "modelHash": "971a36819732",
-  "generatedAt": "2026-08-02T17:02:45.372Z",
+  "revision": "m3-2026-08-04-real-windows-a3",
+  "modelHash": "7c1e99cd6a36",
+  "generatedAt": "2026-08-04T15:37:14.159Z",
   "views": [
     {
       "id": "front",
@@ -51,6 +51,18 @@
       "label": "Cutaway · crankshaft → three frames",
       "projection": "perspective",
       "file": "crankshaft.png"
+    },
+    {
+      "id": "night-saw-floor",
+      "label": "Night · two working saw lines",
+      "projection": "perspective",
+      "file": "night-saw-floor.png"
+    },
+    {
+      "id": "night-gable-window",
+      "label": "Night · real gable window and interior bulb",
+      "projection": "perspective",
+      "file": "night-gable-window.png"
     },
     {
       "id": "silhouette",
