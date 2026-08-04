@@ -474,11 +474,25 @@ test("the weeping willow is a dome, and its curtain is drawn, not bodied", async
       width >= height,
       `seed ${seed}: крона ${width.toFixed(1)} у́же высоты ${height.toFixed(1)}`,
     );
-    assert.ok(limbs.length >= 4, `seed ${seed}: сучьев ${limbs.length}`);
+    // Сучьев немного (3–4), зато каждый ветвится: масса кроны — в ветвях
+    // второго порядка и в побегах, а не в числе спиц из ствола.
+    assert.ok(limbs.length >= 3, `seed ${seed}: сучьев ${limbs.length}`);
+    const forks = tree.filter(({ id }) => /^limb:\d+:fork:\d+$/.test(id));
+    assert.ok(
+      forks.length >= limbs.length * 2,
+      `seed ${seed}: ветвей второго порядка ${forks.length} на ${limbs.length} сучьев`,
+    );
     assert.ok(trunk.size[1] / trunk.size[0] <= 8, `seed ${seed}: ствол слишком тонкий`);
     // Тел мало: занавес — работа рендера, а не физики. Тонкий отвес как тело
-    // теряет опору от любого поворота посадки.
-    assert.ok(tree.length <= 30, `seed ${seed}: тел ${tree.length}`);
+    // теряет опору от любого поворота посадки. В телах живёт только СКЕЛЕТ —
+    // ствол, сучья, ветви второго порядка и листва на них.
+    assert.ok(tree.length <= 40, `seed ${seed}: тел ${tree.length}`);
+    // Скелет обязан ВЕТВИТЬСЯ: колесо спиц из одной точки читается картонкой,
+    // а плакучая ива — обычное дерево, с которого падают побеги.
+    assert.ok(
+      tree.some(({ id }) => /^limb:\d+:fork:\d+$/.test(id)),
+      `seed ${seed}: у скелета нет ветвей второго порядка`,
+    );
     assert.equal(
       tree.some(({ id }) => id.includes(":strand:")),
       false,

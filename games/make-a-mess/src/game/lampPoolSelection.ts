@@ -3,6 +3,7 @@ interface GroupedLampCandidate {
     readonly id: string;
     readonly poolGroupId?: string;
     readonly poolPriority?: number;
+    readonly reservePoolGroup?: boolean;
   };
   readonly rank: number;
 }
@@ -34,12 +35,13 @@ export function selectGroupedLampCandidates<T extends GroupedLampCandidate>(
     .sort((left, right) => left[0].rank - right[0].rank);
   const selected: T[] = [];
 
-  // A large coherent landmark can otherwise consume the entire pool and
-  // make every other monument switch off in the same aerial view. Reserve
-  // one real authored source for each high-priority group first. Nearby
-  // detail then fills the remaining slots in the ordinary rank order.
+  // A large coherent landmark can otherwise consume the entire pool and make
+  // every other district switch off in the same aerial view. Reserve one real
+  // authored source for explicitly protected or high-priority groups first.
+  // Nearby detail then fills the remaining slots in ordinary rank order.
   const persistentGroups = orderedGroups.filter((group) =>
-    (group[0].lamp.poolPriority ?? 0) >= PERSISTENT_LAMP_GROUP_PRIORITY);
+    group.some(({ lamp }) => lamp.reservePoolGroup)
+      || (group[0].lamp.poolPriority ?? 0) >= PERSISTENT_LAMP_GROUP_PRIORITY);
   for (const group of persistentGroups) {
     if (selected.length >= capacity) break;
     selected.push(group[0]);
@@ -56,7 +58,10 @@ export function selectGroupedLampCandidates<T extends GroupedLampCandidate>(
       selected.push(...missing);
       continue;
     }
-    if ((group[0].lamp.poolPriority ?? 0) >= PERSISTENT_LAMP_GROUP_PRIORITY) {
+    if (
+      group.some(({ lamp }) => lamp.reservePoolGroup)
+      || (group[0].lamp.poolPriority ?? 0) >= PERSISTENT_LAMP_GROUP_PRIORITY
+    ) {
       selected.push(...missing.slice(0, remaining));
       break;
     }

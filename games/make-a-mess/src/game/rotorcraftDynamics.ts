@@ -104,6 +104,34 @@ export function rotorcraftMaximumAcceleration(
 }
 
 /**
+ * Продольное ускорение, которое машина берёт ПРЯМОЙ тягой тоннелей, без наклона.
+ *
+ * У обычного мультиротора это ноль, и весь его манёвр равен `g·tg(θmax)`. У
+ * машины с синфазной парой к нему прибавляется вот это — и прибавляется даром,
+ * потому что вертикаль остаётся нетронутой.
+ */
+export function rotorcraftSurgeAcceleration(
+  machine: Pick<
+    RotorcraftMachine,
+    "yawThrusters" | "yawThrusterAvailability" | "nose" | "centreOfMass" | "mass"
+  >,
+): number {
+  const thrusters = machine.yawThrusters ?? [];
+  if (thrusters.length === 0 || machine.mass <= 1e-6) {
+    return 0;
+  }
+  return (
+    yawThrusterAllocation(
+      thrusters,
+      machine.centreOfMass,
+      0,
+      machine.yawThrusterAvailability,
+      { force: 0, nose: machine.nose },
+    ).maximumSurgeForce / machine.mass
+  );
+}
+
+/**
  * Внешний контур курса: «куда смотреть» → «с какой скоростью доворачивать».
  *
  * Оба вектора — горизонтальные, в мировых осях. Ошибка берётся знаковой через
@@ -533,6 +561,259 @@ export function mixRotorThrust(
  */
 const YAW_TORQUE_PER_THRUST_INVERSE = 12;
 
+// ---------------------------------------------------------------------------
+// ОТДЕЛЬНЫЙ ОРГАН РЫСКАНИЯ
+//
+// Реактивный момент встречных пар — единственное, что есть у ОБЫЧНОГО
+// мультиротора, и он слаб по построению: момент берётся сопротивлением
+// лопасти, а не плечом. Машине, от которой требуется резкий разворот вокруг
+// оси, этого мало, и настоящий ответ на это — не выкрутить коэффициент, а
+// поставить ОТДЕЛЬНЫЙ ДВИЖИТЕЛЬ: реверсивный вентилятор в тоннеле, вынесенный
+// от центра масс вбок, который создаёт момент ПЛЕЧОМ.
+//
+// Из этого следует то, чего у реактивного канала нет вовсе: у такого движителя
+// есть настоящая сила в настоящей точке. Пара соосных вентиляторов дала бы
+// чистый момент, а пара развёрнутых — момент И боковую силу, и эта сила
+// физически неизбежна. Прятать её нельзя: её обязана снимать поза машины,
+// ровно как снимается любое другое возмущение.
+//
+// Канал остаётся ДОПОЛНИТЕЛЬНЫМ. Реактивный момент никуда не девается и по
+// умолчанию продолжает нести свою долю: тоннели помогают, а не подменяют.
+// Отказ любого из них не выключает рыскание — он только сужает доступный
+// диапазон, и автопилот узнаёт об этом обычным путём, через `yawRateLimits`.
+// ---------------------------------------------------------------------------
+
+/** Реверсивный движитель рыскания в авторских координатах машины. */
+export interface RotorcraftYawThruster {
+  /** Точка приложения тяги — ось вентилятора. */
+  readonly point: SceneVector3;
+  /** Единичная ось тяги. Команда со знаком: реверс — то же сопло назад. */
+  readonly axis: SceneVector3;
+  /** Тяга при полной команде, Н. */
+  readonly maximumForce: number;
+}
+
+export interface RotorcraftYawThrusterAllocation {
+  /** Команда каждому вентилятору, −1…1 от ЕГО ЖЕ располагаемой тяги. */
+  readonly commands: readonly number[];
+  /** Сила каждого вентилятора в авторских осях. */
+  readonly forces: readonly SceneVector3[];
+  /** Сумма сил: у развёрнутой пары она НЕ ноль, и это не ошибка. */
+  readonly netForce: SceneVector3;
+  readonly yawMoment: number;
+  /** Наибольший момент, который эта раскладка ещё способна дать. */
+  readonly maximumMoment: number;
+  /** Доставленная продольная сила вдоль носа, Н. */
+  readonly surgeForce: number;
+  /** Наибольшая продольная сила этой раскладки при нулевом рыскании, Н. */
+  readonly maximumSurgeForce: number;
+}
+
+const EMPTY_YAW_ALLOCATION: RotorcraftYawThrusterAllocation = {
+  commands: [],
+  forces: [],
+  netForce: [0, 0, 0],
+  yawMoment: 0,
+  maximumMoment: 0,
+  surgeForce: 0,
+  maximumSurgeForce: 0,
+};
+
+/**
+ * Раскладка момента по реверсивным вентиляторам с наименьшей затратой тяги.
+ *
+ * Плечо берётся из авторской точки и оси — `(r × F)y` вокруг ЦЕНТРА МАСС, а не
+ * из назначенного множителя: подвинули тоннель — изменилось плечо. Решается
+ * связкой Лагранжа с зажимом: у каждого вентилятора свой предел, поэтому доля
+ * пропорциональна плечу, пока он в него не упрётся.
+ */
+export function yawThrusterAllocation(
+  thrusters: readonly RotorcraftYawThruster[],
+  centreOfMass: SceneVector3,
+  requestedYawMoment: number,
+  availability?: readonly number[],
+  /**
+   * Продольное требование и ось носа. Без них раскладка ведёт себя ровно как
+   * прежде — только рыскание, — и ни одна машина без второго режима ничего не
+   * замечает.
+   */
+  surge?: { readonly force: number; readonly nose: SceneVector3 },
+): RotorcraftYawThrusterAllocation {
+  if (thrusters.length === 0) {
+    return EMPTY_YAW_ALLOCATION;
+  }
+  const limits = thrusters.map(
+    (thruster, index) =>
+      thruster.maximumForce *
+      Math.max(0, Math.min(1, availability?.[index] ?? 1)),
+  );
+  const arms = thrusters.map((thruster) => {
+    const rx = thruster.point[0] - centreOfMass[0];
+    const rz = thruster.point[2] - centreOfMass[2];
+    return rz * thruster.axis[0] - rx * thruster.axis[2];
+  });
+  const maximumMoment = arms.reduce(
+    (sum, arm, index) => sum + Math.abs(arm) * limits[index],
+    0,
+  );
+  const wanted = Math.max(
+    -maximumMoment,
+    Math.min(maximumMoment, requestedYawMoment),
+  );
+  let low = -1e6;
+  let high = 1e6;
+  for (let iteration = 0; iteration < 64; iteration += 1) {
+    const lambda = (low + high) / 2;
+    const delivered = arms.reduce((sum, arm, index) => {
+      const force = Math.max(
+        -limits[index],
+        Math.min(limits[index], lambda * arm),
+      );
+      return sum + force * arm;
+    }, 0);
+    if (delivered < wanted) low = lambda;
+    else high = lambda;
+  }
+  const lambda = (low + high) / 2;
+  const yawForces = arms.map((arm, index) =>
+    Math.max(-limits[index], Math.min(limits[index], lambda * arm)),
+  );
+
+  // СИНФАЗНАЯ ДОБАВКА. Рыскание уже разложено и трогать его нельзя, поэтому
+  // тяга добавляется тем, что у каждого вентилятора ОСТАЛОСЬ до упора, и
+  // добавляется поровну — иначе она создаст паразитный момент и съест курс.
+  const noseLength = surge
+    ? Math.hypot(surge.nose[0], surge.nose[1], surge.nose[2]) || 1
+    : 1;
+  const alongNose = thrusters.map((thruster) =>
+    surge
+      ? (thruster.axis[0] * surge.nose[0] +
+          thruster.axis[1] * surge.nose[1] +
+          thruster.axis[2] * surge.nose[2]) /
+        noseLength
+      : 0,
+  );
+  // ТЯГА ОБЯЗАНА ЖИТЬ В НУЛЕВОМ ПРОСТРАНСТВЕ РЫСКАНИЯ.
+  //
+  // Прибавить всем поровну можно только там, где плечи взаимно гасятся —
+  // у зеркальной пары. Одиночный уцелевший тоннель, толкая вперёд, ОДНОВРЕМЕННО
+  // разворачивает машину, и слабому реактивному каналу приходится это гасить:
+  // на замере круг переставал проходиться вовсе. Поэтому синфазная добавка
+  // берётся не как «всем поровну», а как та её часть, что не создаёт момента:
+  // из единичного вектора вычитается его проекция на вектор плеч. У зеркальной
+  // пары остаётся он весь, у одиночного тоннеля — ровно ноль. Курс не страдает
+  // никогда, а тяга появляется ровно там, где она физически бесплатна.
+  const armSquared = arms.reduce((sum, arm) => sum + arm * arm, 0);
+  const uniformYawLeak = arms.reduce((sum, arm) => sum + arm, 0);
+  const shape = arms.map((arm) =>
+    armSquared > 1e-9 ? 1 - (uniformYawLeak / armSquared) * arm : 1,
+  );
+  const surgePerUnit = shape.reduce(
+    (sum, value, index) => sum + value * alongNose[index],
+    0,
+  );
+  let common = 0;
+  if (surge && Math.abs(surgePerUnit) > 1e-9) {
+    const wanted = surge.force / surgePerUnit;
+    let headroom = Infinity;
+    for (let index = 0; index < thrusters.length; index += 1) {
+      const step = shape[index];
+      if (Math.abs(step) < 1e-9) continue;
+      const towards = wanted * step;
+      const room =
+        towards >= 0
+          ? limits[index] - yawForces[index]
+          : limits[index] + yawForces[index];
+      headroom = Math.min(headroom, Math.max(0, room) / Math.abs(step));
+    }
+    common = Math.sign(wanted) * Math.min(Math.abs(wanted), headroom);
+  }
+  const scalarForces = yawForces.map((force, index) =>
+    Math.max(
+      -limits[index],
+      Math.min(limits[index], force + common * shape[index]),
+    ),
+  );
+  // Максимум синфазной тяги: все вентиляторы в упор по этой же форме.
+  const maximumSurgeForce = surge
+    ? Math.abs(
+        surgePerUnit *
+          Math.min(
+            ...limits.map((limit, index) =>
+              Math.abs(shape[index]) > 1e-9
+                ? limit / Math.abs(shape[index])
+                : Infinity,
+            ),
+          ),
+      )
+    : 0;
+  const forces = thrusters.map((thruster, index) => [
+    thruster.axis[0] * scalarForces[index],
+    thruster.axis[1] * scalarForces[index],
+    thruster.axis[2] * scalarForces[index],
+  ] as SceneVector3);
+  return {
+    commands: scalarForces.map((force, index) =>
+      limits[index] > 1e-9 ? force / limits[index] : 0,
+    ),
+    forces,
+    netForce: forces.reduce<SceneVector3>(
+      (sum, force) => [sum[0] + force[0], sum[1] + force[1], sum[2] + force[2]],
+      [0, 0, 0],
+    ),
+    yawMoment: scalarForces.reduce(
+      (sum, force, index) => sum + force * arms[index],
+      0,
+    ),
+    maximumMoment,
+    surgeForce: scalarForces.reduce(
+      (sum, force, index) => sum + force * alongNose[index],
+      0,
+    ),
+    maximumSurgeForce,
+  };
+}
+
+/**
+ * ВТОРОЙ РЕЖИМ ТОЙ ЖЕ ПАРЫ: СИНФАЗНАЯ ТЯГА.
+ *
+ * Развёрнутые тоннели стоят почти вдоль корпуса, и из этого следует не одно
+ * свойство, а два, различающиеся только знаком команды:
+ *
+ *   дифференциально (один вперёд, другой назад) — плечи складываются,
+ *     продольные составляющие гасятся: чистое рыскание;
+ *   синфазно (оба вперёд) — плечи гасятся, продольные складываются: чистая
+ *     тяга вдоль носа.
+ *
+ * Второе для винтокрылой машины принципиально. Обычный мультиротор
+ * горизонтальной силы без наклона не имеет вовсе, его предел равен
+ * `g·tg(θmax)` и ничему другому, а наклон ещё и отнимает вертикаль как `cos θ`.
+ * Пара тоннелей даёт продольную силу ПРЯМО, не трогая ни позы, ни высоты, и на
+ * этой машине она в разы больше наклонной.
+ *
+ * Поэтому распределение решается сразу по двум требованиям. Приоритет у
+ * рыскания: курс — канал управления, а тяга — канал хода, и оставить машину
+ * без курса ради разгона нельзя. Тяга берёт то, что осталось до упора каждого
+ * вентилятора.
+ */
+export interface RotorcraftYawThrusterDemand {
+  readonly yawMoment: number;
+  /** Требуемая продольная сила вдоль носа, Н. Минус — назад. */
+  readonly surgeForce?: number;
+}
+
+/**
+ * Доля момента рыскания, которую НАМЕРЕННО оставляют реактивному каналу, когда
+ * у машины есть отдельные вентиляторы.
+ *
+ * Ноль означал бы, что тоннели заменили собой обычное управление рысканьем, а
+ * они его дополняют. Единица означала бы, что тоннели просто добирают остаток —
+ * тогда шесть колец постоянно сидят в насыщении по рысканию и тратят на него
+ * запас оборотов, нужный позе. Треть — это работающий обычный канал при
+ * сохранённом запасе; остальное берёт орган, созданный ровно для этого.
+ */
+export const ROTORCRAFT_AUXILIARY_YAW_PRIMARY_SHARE = 0.35;
+
 /**
  * Потолок общего газа. Пятнадцать процентов оборотов оставлены на моменты по
  * крену, тангажу и рысканию — без этого запаса машина теряет угол там, где он
@@ -545,7 +826,7 @@ const ROTOR_COLLECTIVE_CEILING = 0.85;
  * сопротивлением лопасти, — поэтому просить у него резкости бессмысленно: он
  * всё равно упрётся в запас оборотов и отдаст меньше запрошенного.
  */
-const YAW_RATE_GAIN = 2.4;
+export const ROTORCRAFT_YAW_RATE_GAIN = 2.4;
 
 
 // ---------------------------------------------------------------------------
@@ -732,6 +1013,18 @@ export interface RotorcraftMachine {
   readonly capacityWeights?: readonly number[];
   /** Reaction-torque sign of each physical rotor. */
   readonly spinDirections?: readonly (-1 | 1)[];
+  /**
+   * Отдельные реверсивные движители рыскания, если они у машины есть. Обычный
+   * мультиротор их не имеет, и весь код ниже работает как работал.
+   */
+  readonly yawThrusters?: readonly RotorcraftYawThruster[];
+  /** Доля тяги, которую каждый из них ещё может дать: 0…1. */
+  readonly yawThrusterAvailability?: readonly number[];
+  /**
+   * Фактическая команда вентиляторов после актуаторов и инерции, −1…1. Как и у
+   * винтов: если поля нет, чистый стенд исполняет команду мгновенно.
+   */
+  readonly yawThrusterOutput?: readonly number[];
   /** Предельный наклон, рад: он и есть предел горизонтального манёвра. */
   readonly maximumTilt: number;
 }
@@ -805,6 +1098,12 @@ export interface RotorcraftResult {
   /** Фактическая доля паспортной тяги каждого мотора, 0…1. */
   readonly motorOutput: readonly number[];
   readonly thrust: readonly number[];
+  /** Знаковая команда каждому вентилятору рыскания, −1…1. Реверс — минус. */
+  readonly commandedYawThrusters: readonly number[];
+  /** Момент, доставленный ВЕНТИЛЯТОРАМИ, отдельно от реактивного. */
+  readonly yawThrusterMoment: number;
+  /** Их суммарная сила в мировых осях: её снимает поза, а не отдельный костыль. */
+  readonly yawThrusterForce: readonly [number, number, number];
 }
 
 /**
@@ -824,6 +1123,29 @@ export function advanceRotorMotorOutput(
   if (deltaSeconds <= 0 || Math.abs(to - from) < 1e-9) return from;
   const responseSeconds =
     to > from
+      ? Math.max(0.05, Math.min(0.12, spoolSeconds / 40))
+      : Math.max(0.06, Math.min(0.18, spoolSeconds / 30));
+  const response = 1 - Math.exp(-deltaSeconds / responseSeconds);
+  return from + (to - from) * response;
+}
+
+/**
+ * Инерция РЕВЕРСИВНОГО привода. Отличий от подъёмного два, и оба физические:
+ * команда знаковая, а «разгон» и «сброс» считаются по модулю — вентилятору
+ * всё равно, в какую сторону он раскручивается, но проход через ноль он
+ * проживает целиком, а не перескакивает.
+ */
+export function advanceReversibleThrusterOutput(
+  current: number,
+  target: number,
+  deltaSeconds: number,
+  spoolSeconds: number,
+): number {
+  const from = Math.max(-1, Math.min(1, current));
+  const to = Math.max(-1, Math.min(1, target));
+  if (deltaSeconds <= 0 || Math.abs(to - from) < 1e-9) return from;
+  const responseSeconds =
+    Math.abs(to) > Math.abs(from)
       ? Math.max(0.05, Math.min(0.12, spoolSeconds / 40))
       : Math.max(0.06, Math.min(0.18, spoolSeconds / 30));
   const response = 1 - Math.exp(-deltaSeconds / responseSeconds);
@@ -899,10 +1221,51 @@ export function rotorcraftForces(
   const yawRate = dot(state.angularVelocity, up);
   // Контур угловой скорости рыскания. Внутрь идёт скорость, а не угол: курс
   // держит внешний контур, здесь только его отработка.
-  const yawMoment = machine.inertia[1] * YAW_RATE_GAIN * (demand.yaw - yawRate);
+  const wantedYawMoment =
+    machine.inertia[1] * ROTORCRAFT_YAW_RATE_GAIN * (demand.yaw - yawRate);
+
+  // РАЗДЕЛ МОМЕНТА МЕЖДУ ДВУМЯ ОРГАНАМИ.
+  //
+  // Вентиляторы спрашиваются ПЕРВЫМИ и берут свою долю, а реактивному каналу
+  // остаётся заказанная треть. Порядок именно такой, чтобы микшер решался ОДИН
+  // раз за шаг: его собственный диапазон от заказа не зависит, поэтому остаток
+  // догоняется вторым — дешёвым — обращением к тоннелям уже после того, как
+  // стал известен принятый реактивный момент.
+  const yawThrusters = machine.yawThrusters ?? [];
+  const preferredAuxiliary = yawThrusterAllocation(
+    yawThrusters,
+    machine.centreOfMass,
+    wantedYawMoment * (1 - ROTORCRAFT_AUXILIARY_YAW_PRIMARY_SHARE),
+    machine.yawThrusterAvailability,
+  );
+  const yawMoment = wantedYawMoment - preferredAuxiliary.yawMoment;
+
+  // ХОД БЕРЁТСЯ ТОННЕЛЯМИ ПРЕЖДЕ, ЧЕМ НАКЛОНОМ.
+  //
+  // Наклон — единственный способ разогнаться у обычного мультиротора, но он
+  // дорогой: забирает вертикаль как `cos θ` и появляется не сразу, потому что
+  // сперва машина должна повернуться. Прямая продольная тяга ни того, ни
+  // другого не стоит. Поэтому она снимает с наклона столько требования,
+  // сколько может, а винтам остаётся только остаток — и машина идёт быстро,
+  // оставаясь заметно ровнее.
+  const surgeCapacity = yawThrusterAllocation(
+    yawThrusters,
+    machine.centreOfMass,
+    0,
+    machine.yawThrusterAvailability,
+    { force: 0, nose: machine.nose },
+  ).maximumSurgeForce;
+  const surgeAcceleration = machine.mass > 1e-6 ? surgeCapacity / machine.mass : 0;
+  const fanForward =
+    Math.sign(demand.forward) *
+    Math.min(Math.abs(demand.forward), surgeAcceleration);
+  const tiltDemand = {
+    forward: demand.forward - fanForward,
+    lateral: demand.lateral,
+  };
 
   const requestedTarget = rotorcraftAttitudeTarget(
-    demand,
+    tiltDemand,
     machine.maximumTilt,
     gravity,
   );
@@ -1047,13 +1410,48 @@ export function rotorcraftForces(
     mix.minimumYawMoment,
     Math.min(mix.maximumYawMoment, yawMoment),
   );
-  const yawMomentToRate = Math.max(1e-6, machine.inertia[1] * YAW_RATE_GAIN);
+  // Что реактивный канал не взял, добирают тоннели — и наоборот: выбитый
+  // вентилятор просто возвращает недостачу винтам. Ни одна из сторон не знает
+  // о другой ничего, кроме принятого момента.
+  const auxiliary = yawThrusterAllocation(
+    yawThrusters,
+    machine.centreOfMass,
+    wantedYawMoment - acceptedYawMoment,
+    machine.yawThrusterAvailability,
+    { force: fanForward * machine.mass, nose: machine.nose },
+  );
+  const commandedYawThrusters = auxiliary.commands;
+  // Сила этого шага — фактическая, после актуатора и инерции вентилятора, как
+  // у винтов. Чистый стенд без обратной связи исполняет команду мгновенно.
+  const yawThrusterOutput = yawThrusters.map((_, index) =>
+    machine.yawThrusterOutput
+      ? Math.max(-1, Math.min(1, machine.yawThrusterOutput[index] ?? 0))
+      : commandedYawThrusters[index] *
+        Math.max(0, Math.min(1, machine.yawThrusterAvailability?.[index] ?? 1)),
+  );
+  const yawThrusterScalarForce = yawThrusters.map(
+    (thruster, index) => yawThrusterOutput[index] * thruster.maximumForce,
+  );
+  const yawThrusterMoment = yawThrusters.reduce((sum, thruster, index) => {
+    const rx = thruster.point[0] - machine.centreOfMass[0];
+    const rz = thruster.point[2] - machine.centreOfMass[2];
+    const arm = rz * thruster.axis[0] - rx * thruster.axis[2];
+    return sum + yawThrusterScalarForce[index] * arm;
+  }, 0);
+  const yawMomentToRate = Math.max(1e-6, machine.inertia[1] * ROTORCRAFT_YAW_RATE_GAIN);
+  // Автопилот меряет свою просьбу ЭТИМ числом, поэтому располагаемый диапазон
+  // обязан считать оба органа. Иначе машина с полностью исправными тоннелями
+  // продолжала бы просить только то, что может один реактивный момент.
   const yawRateLimits = {
-    minimum: yawRate + mix.minimumYawMoment / yawMomentToRate,
-    maximum: yawRate + mix.maximumYawMoment / yawMomentToRate,
+    minimum:
+      yawRate +
+      (mix.minimumYawMoment - auxiliary.maximumMoment) / yawMomentToRate,
+    maximum:
+      yawRate +
+      (mix.maximumYawMoment + auxiliary.maximumMoment) / yawMomentToRate,
   };
   const acceptedYawRate =
-    yawRate + acceptedYawMoment / yawMomentToRate;
+    yawRate + (acceptedYawMoment + auxiliary.yawMoment) / yawMomentToRate;
 
   // Mixer решает задачу в ДОСТАВЛЕННОЙ тяге. В throttle-канал надо отправить
   // больше ровно во столько раз, сколько актуатор ещё способен доставить:
@@ -1184,6 +1582,32 @@ export function rotorcraftForces(
     );
   }
 
+  // ВЕНТИЛЯТОРЫ РЫСКАНИЯ — НАСТОЯЩАЯ СИЛА В НАСТОЯЩЕЙ ТОЧКЕ, и прикладывается
+  // она именно там, где стоит тоннель. Момент из неё родится сам, плечом; ни
+  // складывать его отдельно, ни выдавать парой, как реактивный, не нужно и
+  // нельзя — иначе он посчитается дважды.
+  //
+  // Побочные следствия установки при этом появляются сами и остаются
+  // физическими: развёрнутая пара даёт боковую силу, а вынос тоннелей над
+  // центром масс превращает её в кренящий момент. Оба снимает поза машины.
+  const yawThrusterForce: [number, number, number] = [0, 0, 0];
+  yawThrusters.forEach((thruster, index) => {
+    const scalar = yawThrusterScalarForce[index];
+    if (Math.abs(scalar) < 1e-9) {
+      return;
+    }
+    const worldAxis = rotateByQuaternion(state.orientation, thruster.axis);
+    const force: [number, number, number] = [
+      worldAxis[0] * scalar,
+      worldAxis[1] * scalar,
+      worldAxis[2] * scalar,
+    ];
+    yawThrusterForce[0] += force[0];
+    yawThrusterForce[1] += force[1];
+    yawThrusterForce[2] += force[2];
+    forces.push({ force, point: place(thruster.point) });
+  });
+
   // Порог заметности: у команды около нуля отношение бессмысленно — оно
   // скачет от знака шума. Считаем недобор только там, где машину ДЕЙСТВИТЕЛЬНО
   // о чём-то просят.
@@ -1200,7 +1624,9 @@ export function rotorcraftForces(
       thrust: share(deliveredThrust, machine.liftCapacity * collective),
       pitch: share(deliveredPitchMoment, pitchMoment),
       roll: share(deliveredRollMoment, rollMoment),
-      yaw: share(deliveredYawMoment, yawMoment),
+      // Недобор рыскания меряется по ОБЩЕЙ просьбе и ОБЩЕЙ доставке: у машины
+      // с тоннелями watchdog иначе судил бы её по одному из двух органов.
+      yaw: share(deliveredYawMoment + yawThrusterMoment, wantedYawMoment),
     },
     yawRate,
     acceptedYawRate,
@@ -1220,6 +1646,9 @@ export function rotorcraftForces(
     commandedThrottle,
     motorOutput,
     thrust,
+    commandedYawThrusters,
+    yawThrusterMoment,
+    yawThrusterForce,
   };
 }
 
@@ -1308,10 +1737,14 @@ export function rotorcraftFlightStep(
   // Поэтому снаружи этой функции борт ВСЕГДА проектный, а разворот знака живёт
   // здесь, в единственном месте, и больше нигде.
   const lateralSpeed = state.velocity[2] * nx - state.velocity[0] * nz;
+  // Предел разгона у машины с тоннелями больше наклонного, и внешний контур
+  // обязан это знать: иначе он сам зажимает просьбу цифрой обычного коптера, и
+  // вся прямая тяга простаивает при формально исправном аппарате.
   const acceleration = rotorcraftVelocityDemand(
     { forward: request.forwardSpeed, lateral: request.lateralSpeed },
     { forward: forwardSpeed, lateral: lateralSpeed },
-    rotorcraftMaximumAcceleration(machine.maximumTilt),
+    rotorcraftMaximumAcceleration(machine.maximumTilt) +
+      rotorcraftSurgeAcceleration(machine),
   );
   const result = rotorcraftForces(
     machine,
@@ -1327,6 +1760,19 @@ export function rotorcraftFlightStep(
     },
     trim,
   );
+  // ПОТОЛОК ТЕМПА — ЧАСТЬ ОБЪЯВЛЕННОГО ДИАПАЗОНА, А НЕ ОТДЕЛЬНЫЙ ЗАЖИМ ВНУТРИ.
+  //
+  // Аллокатор считает, сколько машина способна дать ЗА ОДИН ШАГ, и у машины с
+  // отдельными тоннелями это число получается в разы больше того темпа, с
+  // которым ей вообще разрешено крутиться. Если наверх уходит только оно,
+  // автопилот снова просит недостижимое — на этот раз не из-за слабости
+  // канала, а из-за собственного потолка машины, — и watchdog судит её по
+  // команде, которой она никогда не получала. Поэтому объявляется пересечение
+  // физической способности и разрешённого темпа.
+  const limitedYawRates = {
+    minimum: Math.max(-maximumYawRate, result.yawRateLimits.minimum),
+    maximum: Math.min(maximumYawRate, result.yawRateLimits.maximum),
+  };
   return {
     forces: result.forces,
     trim: advanceRotorcraftTrim(
@@ -1335,7 +1781,14 @@ export function rotorcraftFlightStep(
       { pitch: result.pitchRate, roll: result.rollRate },
       deltaSeconds,
     ),
-    result,
+    result: {
+      ...result,
+      yawRateLimits: limitedYawRates,
+      acceptedYawRate: Math.max(
+        limitedYawRates.minimum,
+        Math.min(limitedYawRates.maximum, result.acceptedYawRate),
+      ),
+    },
     forwardSpeed,
     lateralSpeed,
   };

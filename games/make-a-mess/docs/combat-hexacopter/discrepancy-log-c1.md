@@ -1,4 +1,4 @@
-# Discrepancy log — combat hexacopter C1
+# Discrepancy log — RAX-8 Tonkawa C1
 
 ## Visual loop 01
 

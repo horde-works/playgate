@@ -4,6 +4,7 @@ import type {
   SceneVector3,
 } from "./destructionScene.ts";
 import { PLAYER_CAPSULE_FOOT_OFFSET } from "./playerMovement.ts";
+import type { RotorcraftYawThruster } from "./rotorcraftDynamics.ts";
 import type { VehicleRecoveryLifecycle } from "./vehicleFailure.ts";
 import type { VehicleSafetyAdvisory } from "./vehicleSafetyAutomation.ts";
 import {
@@ -60,6 +61,7 @@ import {
   sr6SkatVector,
 } from "./sr6Skat.ts";
 import { SR6_ROTOR_STATIONS } from "../content/objects/vehicles/sr6SkatObject.ts";
+import { combatHexacopterRangeFrame } from "./combatHexacopter.ts";
 
 // Kept as re-exports for callers while the authored routes themselves live in
 // their own artifact module.
@@ -656,6 +658,7 @@ export const vehicleFrames: readonly VehicleFrameDefinition[] = [
     envelopeMatch: ":blade:",
     proximitySensors: sr6SkatProximitySensors(),
   },
+  combatHexacopterRangeFrame,
 ];
 
 const frameByCluster = new Map(
@@ -1446,6 +1449,18 @@ export interface ShipLimits {
   readonly rotorCapacityWeights?: readonly number[];
   /** Reaction-torque sign of each rotor; omitted keeps legacy alternation. */
   readonly rotorSpinDirections?: readonly (-1 | 1)[];
+  /**
+   * ОТДЕЛЬНЫЕ ДВИЖИТЕЛИ РЫСКАНИЯ, если они у машины есть.
+   *
+   * Обычному мультиротору курс даёт только реактивный момент винтов, и он слаб
+   * по построению. Машина, от которой требуется резкий разворот вокруг оси,
+   * получает для этого настоящий орган: реверсивные вентиляторы, вынесенные от
+   * центра масс. Они канал НЕ ЗАМЕНЯЮТ — реактивный момент продолжает нести
+   * свою долю, а их потеря лишь сужает располагаемый диапазон.
+   *
+   * Порядок этого списка — порядок каналов `yaw-throttle:<номер>`.
+   */
+  readonly yawThrusters?: readonly RotorcraftYawThruster[];
   /**
    * Боковая сила на оперении при опорной скорости. Перо руля работает
    * скоростным напором: сила падает как квадрат скорости, и на подходе, когда

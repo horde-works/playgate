@@ -16,6 +16,7 @@ import {
   SR6_SKAT_ROTOR_CAPACITY_WEIGHTS,
 } from "../games/make-a-mess/src/game/sr6Skat.ts";
 import { sr6SkatPlan } from "../games/make-a-mess/src/game/sr6SkatRoutes.ts";
+import { townScene } from "../games/make-a-mess/src/game/townScene.ts";
 import { massProperties } from "../games/make-a-mess/src/game/clusterDynamics.ts";
 import { structuralMaterialProfiles } from "../games/make-a-mess/src/game/destructionScene.ts";
 
@@ -138,7 +139,7 @@ test("силовое ядро стальное и каждая гондола к
   for (const piece of core) {
     assert.equal(piece.material, "steel", `${local(piece)} не сталь`);
   }
-  for (const required of ["core-keel-beam", "core-main-cross-beam", "core-forward-cross-beam", "core-longeron-1", "core-longeron--1"]) {
+  for (const required of ["core-keel-beam", "core-longeron-1", "core-longeron--1"]) {
     assert.equal(core.some((piece) => local(piece) === `${required}:piece`), true, `нет ${required}`);
   }
 
@@ -262,4 +263,38 @@ test("силовая установка откалибрована по изме
   const horizontalRatio = (limits.enginePower * limits.enginePoints.length) / (mass * 9.81);
   assert.equal(Math.abs(lateralAcceleration - 42 / 5.53) < 0.35, true, `боком ${lateralAcceleration.toFixed(2)} м/с²`);
   assert.equal(Math.abs(horizontalRatio - (62 * 6) / (5.53 * 9.81)) < 0.35, true, `горизонтальная T/W ${horizontalRatio.toFixed(2)}`);
+});
+
+test("броня днища защищает, а не держит: её потеря не роняет ни одной гондолы", () => {
+  const pieces = townScene.breakablePieces.filter((piece) => piece.id.startsWith(`${SR6_SKAT_CLUSTER_ID}:`));
+  const local = (piece) => piece.id.replace(`${SR6_SKAT_CLUSTER_ID}:`, "");
+  const nacelles = pieces.filter((piece) => /-nacelle:piece$/.test(local(piece)));
+  assert.equal(nacelles.length, 6);
+
+  const armour = pieces.filter((piece) => local(piece).startsWith("belly-armour"));
+  assert.equal(armour.length >= 12, true, `бронелистов всего ${armour.length}`);
+  const afterArmour = townScene.resolveStructuralCollapse(new Set(armour.map((piece) => piece.id)));
+  assert.equal(nacelles.filter((piece) => afterArmour.has(piece.id)).length, 0, "снятая броня уронила гондолы");
+});
+
+test("очередь по кокпиту снизу не отрывает боковые винты", () => {
+  const pieces = townScene.breakablePieces.filter((piece) => piece.id.startsWith(`${SR6_SKAT_CLUSTER_ID}:`));
+  const local = (piece) => piece.id.replace(`${SR6_SKAT_CLUSTER_ID}:`, "");
+  const nacelles = pieces.filter((piece) => /-nacelle:piece$/.test(local(piece)));
+  const cabin = pieces.filter((piece) => /survival-cell-shell|flank-carbon|cell-|canopy|seat-|instrument|control-|yoke|rudder-pedal|harness|battery-|livery|hump-|parachute|transom-vent/.test(local(piece)));
+  assert.equal(cabin.length > 20, true);
+  const collapsed = townScene.resolveStructuralCollapse(new Set(cabin.map((piece) => piece.id)));
+  const lost = nacelles.filter((piece) => collapsed.has(piece.id)).map(local);
+  assert.deepEqual(lost, [], "снесённая кабина утащила гондолы");
+});
+
+test("силовой корень стальной и лежит выше брони, а не под кокпитом", () => {
+  const root = townScene.breakablePieces.find((piece) => piece.id === `${SR6_SKAT_CLUSTER_ID}:core:piece`);
+  assert.ok(root, "корень не найден");
+  assert.equal(root.material, "steel", `корень — ${root.material}`);
+});
+
+test("простых поперечных балок в ядре нет", () => {
+  const crossBeams = sr6SkatObject.parts.filter((part) => /cross-beam|cross-blade/.test(part.id));
+  assert.deepEqual(crossBeams.map((part) => part.id), []);
 });

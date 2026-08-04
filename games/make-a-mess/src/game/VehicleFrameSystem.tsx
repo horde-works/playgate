@@ -138,6 +138,7 @@ import {
   type RotorLiftState,
 } from "./vehicleLiftGeometry.ts";
 import {
+  advanceReversibleThrusterOutput,
   advanceRotorMotorOutput,
   NEUTRAL_ROTORCRAFT_TRIM,
   rotorcraftCommandsExecute,
@@ -308,6 +309,7 @@ function rotorcraftFlightForces(
   if (points.length === 0) {
     return null;
   }
+  const yawThrusters = limits.yawThrusters ?? [];
   const trim = state.rotorTrim ?? NEUTRAL_ROTORCRAFT_TRIM;
   const flightStep = rotorcraftFlightStep(
     {
@@ -321,6 +323,13 @@ function rotorcraftFlightForces(
       liftCapacity: mass.mass * GRAVITY * (frame.flight.liftReserve ?? 1.35),
       capacityWeights: limits.rotorCapacityWeights,
       spinDirections: limits.rotorSpinDirections,
+      yawThrusters: limits.yawThrusters,
+      yawThrusterAvailability: yawThrusters.map(
+        (_, index) => state.yawThrusterHealth[index] ?? 1,
+      ),
+      yawThrusterOutput: yawThrusters.map(
+        (_, index) => state.yawThrusterOutput[index] ?? 0,
+      ),
       maximumTilt: frame.flight.maximumTilt ?? DEFAULT_ROTOR_TILT,
     },
     {
@@ -348,15 +357,32 @@ function rotorcraftFlightForces(
       ? points.map(() => ROTOR_GROUND_IDLE_THROTTLE)
       : [...flightStep.result.commandedThrottle]
     : points.map(() => 0);
+  // Тоннели рыскания идут ЧЕРЕЗ ТОТ ЖЕ слой актуаторов: их живучесть — такой
+  // же физический факт, как живучесть подъёмного кольца, и узнаётся она из
+  // членства кусков в теле, а не из отдельного флага. Команда знаковая:
+  // реверсивный вентилятор дует в обе стороны.
+  const requestedYawThrottle = enabled && !pilotGroundIdle
+    ? yawThrusters.map(
+        (_, index) => flightStep.result.commandedYawThrusters[index] ?? 0,
+      )
+    : yawThrusters.map(() => 0);
   const actuation = executeCommandActuators(
     frame.actuators,
     attachedMembers,
-    Object.fromEntries(
-      requestedThrottle.map((value, index) => [`throttle:${index}`, value]),
-    ),
+    Object.fromEntries([
+      ...requestedThrottle.map(
+        (value, index) => [`throttle:${index}`, value] as const,
+      ),
+      ...requestedYawThrottle.map(
+        (value, index) => [`yaw-throttle:${index}`, value] as const,
+      ),
+    ]),
   );
   const deliveredTargets = requestedThrottle.map((value, index) =>
     deliveredCommandValue(actuation, `throttle:${index}`, value),
+  );
+  const deliveredYawTargets = requestedYawThrottle.map((value, index) =>
+    deliveredCommandValue(actuation, `yaw-throttle:${index}`, value),
   );
   const runUpFraction =
     state.flight && !state.flight.castOff
@@ -376,6 +402,25 @@ function rotorcraftFlightForces(
       frame.flight.spoolSeconds,
     ),
   );
+  state.yawThrusterOutput = yawThrusters.map((_, index) =>
+    advanceReversibleThrusterOutput(
+      state.yawThrusterOutput[index] ?? 0,
+      (deliveredYawTargets[index] ?? 0) * runUpFraction,
+      step,
+      frame.flight.spoolSeconds,
+    ),
+  );
+  // Живучесть — из СРАВНЕНИЯ просьбы с доставкой, как у винтов. Пока тоннель
+  // ничего не просили, прежняя оценка сохраняется: молчащий канал не значит
+  // сломанный.
+  state.yawThrusterHealth = [
+    ...updatePropulsionFeedback(
+      state.yawThrusterHealth,
+      actuation,
+      yawThrusters.length,
+      "yaw-throttle:",
+    ),
+  ];
   // The adaptive balance term may learn only from a freely responding craft.
   // During run-up the gear/mast answers the attitude error while motor output
   // is deliberately attenuated; integrating that error stores a false moment
@@ -393,7 +438,7 @@ function rotorcraftFlightForces(
     : null;
   state.rotorYawRateLimits = enabled ? flightStep.result.yawRateLimits : null;
 
-  for (let engine = 0; engine < state.spinAngles.length; engine += 1) {
+  for (let engine = 0; engine < points.length; engine += 1) {
     state.spinAngles[engine] = advanceDrivePhase(
       state.spinAngles[engine] ?? 0,
       frame.flight.driveAnimation.phaseSpeed,
@@ -401,9 +446,22 @@ function rotorcraftFlightForces(
       step,
     );
   }
+  // Лопасти тоннеля крутит ЕГО СОБСТВЕННАЯ доставленная команда, поэтому
+  // реверс виден так же ясно, как в физике: вентилятор действительно
+  // отрабатывает назад, а не замирает.
+  for (let fan = 0; fan < yawThrusters.length; fan += 1) {
+    const angle = points.length + fan;
+    state.spinAngles[angle] = advanceDrivePhase(
+      state.spinAngles[angle] ?? 0,
+      frame.flight.driveAnimation.phaseSpeed,
+      state.yawThrusterOutput[fan] ?? 0,
+      step,
+    );
+  }
   if (state.flight) {
     state.flight.driveThrottle = requestedThrottle;
     state.flight.throttle = [...state.rotorMotorOutput];
+    state.flight.yawThrusterThrottle = [...state.yawThrusterOutput];
     state.flight.propulsionFeedback = updatePropulsionFeedback(
       state.flight.propulsionFeedback,
       actuation,
@@ -490,6 +548,19 @@ function bladePropeller(pieceId: string): string | null {
   return match ? match[1] : null;
 }
 
+/**
+ * Лопасть ВЕНТИЛЯТОРА РЫСКАНИЯ: `…:yaw-engine:<номер>:blade:<номер>`.
+ *
+ * Отдельный разбор, а не расширение прежнего, ровно потому, что это другой
+ * орган: у него свой канал команды, свой знак и своя — наклонная — ось вала.
+ * Слить их в одно выражение значило бы отдать вентилятор ближайшему подъёмному
+ * кольцу и крутить его чужими оборотами.
+ */
+function yawFanBlade(pieceId: string): { key: string; index: number } | null {
+  const match = pieceId.match(/^(.*:yaw-engine:(\d+)):blade:/);
+  return match ? { key: match[1], index: Number(match[2]) } : null;
+}
+
 function driveUsesPropulsionFeedback(
   drive: AirVehicleDefinition["flight"]["driveAnimation"],
 ): boolean {
@@ -541,6 +612,12 @@ interface FrameMember {
   readonly baseQuaternion: Quaternion;
   /** Ось винта, вокруг которой этот кусок вращается сверх позы кадра. */
   readonly spinHub: readonly [number, number, number] | null;
+  /**
+   * Направление этого вала в осях машины. Пусто — вал общий, из паспорта
+   * анимации. Наклонный тоннель объявляет своё: у него ось не вертикальна и не
+   * продольна, а развёрнута ровно на угол установки.
+   */
+  readonly spinAxis: readonly [number, number, number] | null;
   /** Index into the frame's trim rails when this piece is a travelling car. */
   readonly trimRailIndex: number | null;
   /** Чей это винт: индекс мотора в паспорте машины, чью тягу он показывает. */
@@ -622,6 +699,8 @@ interface FlightState {
   throttle: readonly number[];
   /** Signed shaft command автопилота; по ней же крутится видимый винт. */
   driveThrottle: readonly number[];
+  /** Знаковая доставленная команда каждого вентилятора рыскания, −1…1. */
+  yawThrusterThrottle: readonly number[];
   /** Оценка доступной тяги, выученная по паре «запрос → исполнение». */
   propulsionFeedback: readonly number[];
   /** Sensor report; only the autopilot may turn it into control requests. */
@@ -700,6 +779,13 @@ interface FrameState {
   rotorTrim: RotorcraftTrimState | null;
   /** Actual per-motor output after actuator delivery and spool inertia. */
   rotorMotorOutput: number[];
+  /**
+   * То же для вентиляторов рыскания, но ЗНАКОВОЕ: тоннель реверсивен, и минус
+   * здесь означает обратную тягу, а не отсутствие команды.
+   */
+  yawThrusterOutput: number[];
+  /** Доля тяги, которую каждый тоннель ещё способен дать: 0…1. */
+  yawThrusterHealth: number[];
   /** Previous physical step, consumed by the common failure watchdog. */
   rotorAuthority: RotorcraftAuthority | null;
   /** Command the bounded rotor allocator actually accepted last step. */
@@ -1174,7 +1260,7 @@ function VehicleExhaustSmoke({
   );
 }
 
-function restingState(engineCount: number): FrameState {
+function restingState(engineCount: number, yawThrusterCount = 0): FrameState {
   return {
     pose: RESTING_POSE,
     previousPose: RESTING_POSE,
@@ -1187,6 +1273,8 @@ function restingState(engineCount: number): FrameState {
     trimAttitude: null,
     rotorTrim: null,
     rotorMotorOutput: Array.from({ length: engineCount }, () => 0),
+    yawThrusterOutput: Array.from({ length: yawThrusterCount }, () => 0),
+    yawThrusterHealth: Array.from({ length: yawThrusterCount }, () => 1),
     rotorAuthority: null,
     rotorAcceptedYawRate: null,
     lastGuidanceYawRate: null,
@@ -1199,7 +1287,12 @@ function restingState(engineCount: number): FrameState {
     guidanceSource: null,
     telemetryImpact: null,
     liftNow: 0,
-    spinAngles: Array.from({ length: engineCount }, () => 0),
+    // Вентиляторы рыскания продолжают этот же список: у каждого свой угол,
+    // и по нему видно и знак команды, и её величину.
+    spinAngles: Array.from(
+      { length: engineCount + yawThrusterCount },
+      () => 0,
+    ),
     flight: null,
     recovery: null,
     supportContacts: 0,
@@ -1235,6 +1328,7 @@ function createFlightState(
     progress: 0,
     throttle: zeroThrottle,
     driveThrottle: zeroThrottle,
+    yawThrusterThrottle: [],
     propulsionFeedback: Array.from({ length: engineCount }, () => 1),
     safetyAdvisory: null,
     pilotObstacleReadings: [],
@@ -1693,7 +1787,7 @@ export function VehicleFrameSystem({
     // дублировать из сцены, и она не разъедется, если мотор подвинут.
     const bladeCentres = new Map<string, [number, number, number, number]>();
     for (const piece of pieces) {
-      const engine = bladePropeller(piece.id);
+      const engine = bladePropeller(piece.id) ?? yawFanBlade(piece.id)?.key;
       if (!engine) {
         continue;
       }
@@ -1728,8 +1822,12 @@ export function VehicleFrameSystem({
     for (const piece of pieces) {
       const [rx, ry, rz] = piece.rotation ?? [0, 0, 0];
       const engine = bladePropeller(piece.id);
+      const yawFan = yawFanBlade(piece.id);
       const oar = oarMemberIdentity(piece.id);
       const vehicle = vehicleByCluster.get(piece.clusterId);
+      const yawThruster = yawFan
+        ? vehicle?.flight.limits.yawThrusters?.[yawFan.index]
+        : undefined;
       const oarPivot = oar ? oarPivots.get(oar.key) : undefined;
       const trimRailIndex = vehicle?.trimRails?.findIndex(
         (rail) => rail.carPieceId === piece.id,
@@ -1737,7 +1835,12 @@ export function VehicleFrameSystem({
       const member: FrameMember = {
         piece,
         baseQuaternion: new Quaternion().setFromEuler(new Euler(rx, ry, rz)),
-        spinHub: engine ? (hubs.get(engine) ?? null) : null,
+        spinHub: engine
+          ? (hubs.get(engine) ?? null)
+          : yawThruster && yawFan
+            ? (hubs.get(yawFan.key) ?? null)
+            : null,
+        spinAxis: yawThruster ? yawThruster.axis : null,
         trimRailIndex:
           trimRailIndex === undefined || trimRailIndex < 0
             ? null
@@ -1747,9 +1850,14 @@ export function VehicleFrameSystem({
               hubs.get(engine),
               vehicle?.flight.limits.enginePoints ?? [],
             )
-          : oar
-            ? (oarEngines.get(oar.key) ?? 0)
-            : 0,
+          : yawThruster && yawFan
+            ? // Каналы углов идут подряд: сперва подъёмные кольца, затем
+              // тоннели. Свой угол у каждого — иначе реверс одного тоннеля
+              // читался бы как остановка другого.
+              (vehicle?.flight.limits.enginePoints.length ?? 0) + yawFan.index
+            : oar
+              ? (oarEngines.get(oar.key) ?? 0)
+              : 0,
         oarStroke:
           oar && oarPivot && vehicle?.flight.driveAnimation.kind === "oars"
             ? {
@@ -1812,15 +1920,77 @@ export function VehicleFrameSystem({
       if (existing) {
         return existing;
       }
-      const engineCount =
-        frames.find((frame) => frame.id === id)?.flight.limits.enginePoints
-          .length ?? 0;
-      const created = restingState(engineCount);
+      const limits = frames.find((frame) => frame.id === id)?.flight.limits;
+      const created = restingState(
+        limits?.enginePoints.length ?? 0,
+        limits?.yawThrusters?.length ?? 0,
+      );
       states.current.set(id, created);
       return created;
     },
     [frames],
   );
+
+  // Dev-хук телеметрии машин: снимок живого состояния рейса без HUD и без
+  // догадок. Пара к __mamTeleport/__mamLook, только для чтения.
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return undefined;
+    const scope = window as unknown as Record<string, unknown>;
+    const snapshot = () =>
+      frames.map((frame) => {
+        const live = states.current.get(frame.id);
+        const flight = live?.flight ?? null;
+        return {
+          id: frame.id,
+          supportContacts: live?.supportContacts ?? null,
+          recovery: live?.recovery
+            ? {
+                phase: live.recovery.lifecycle.phase,
+                progress: live.recovery.progress,
+                groundContactSeconds: live.recovery.groundContactSeconds,
+              }
+            : null,
+          flight: flight
+            ? {
+                kind: flight.kind,
+                time: flight.time,
+                castOff: flight.castOff,
+                progress: flight.progress,
+                corrections: flight.corrections,
+                goArounds: flight.goArounds,
+                unexpectedGroundContactSeconds:
+                  flight.unexpectedGroundContactSeconds,
+                trajectoryCorrection: flight.trajectoryCorrection
+                  ? {
+                      phase: flight.trajectoryCorrection.phase,
+                      reason: flight.trajectoryCorrection.reason,
+                      elapsedSeconds: flight.trajectoryCorrection.elapsedSeconds,
+                      stableSeconds: flight.trajectoryCorrection.stableSeconds,
+                      allowanceSeconds:
+                        flight.trajectoryCorrection.allowanceSeconds,
+                    }
+                  : null,
+                safetyAdvisory: flight.safetyAdvisory,
+                throttle: flight.throttle,
+              }
+            : null,
+          pose: live?.pose ?? null,
+          body: live
+            ? {
+                position: live.body.position,
+                velocity: live.body.velocity,
+                angularVelocity: live.body.angularVelocity,
+              }
+            : null,
+        };
+      });
+    scope.__mamVehicles = snapshot;
+    return () => {
+      if (scope.__mamVehicles === snapshot) {
+        delete scope.__mamVehicles;
+      }
+    };
+  }, [frames]);
 
   useEffect(() => {
     for (const sourceId of telemetryActiveSources.current) {
@@ -4075,7 +4245,13 @@ export function VehicleFrameSystem({
         // восстановление винты крутить не умело. Для плавучей машины это
         // всего лишь некрасиво, для винтокрылой — физически невозможно: она
         // снижается именно потому, что винты работают.
-        for (let engine = 0; engine < state.spinAngles.length; engine += 1) {
+        // Считаются ТОЛЬКО тяговые каналы: углы вентиляторов рыскания идут
+        // дальше по этому же списку, и владеет ими винтокрылый шаг.
+        for (
+          let engine = 0;
+          engine < frame.flight.limits.enginePoints.length;
+          engine += 1
+        ) {
           state.spinAngles[engine] = advanceDrivePhase(
             state.spinAngles[engine] ?? 0,
             frame.flight.driveAnimation.phaseSpeed,
@@ -5942,10 +6118,15 @@ export function VehicleFrameSystem({
           // Ось вала принадлежит машине. У тянущего винта она продольная, у
           // подъёмного — вертикальная; паспорт говорит какая, и общий код
           // остаётся один для обеих.
+          //
+          // Собственная ось члена старше паспортной: у наклонного тоннеля вал
+          // развёрнут на угол установки, и крутить его лопасти вокруг общей
+          // вертикали значило бы показывать не тот механизм.
           const authoredShaft =
-            frame.flight.driveAnimation.kind === "propeller"
+            member.spinAxis ??
+            (frame.flight.driveAnimation.kind === "propeller"
               ? frame.flight.driveAnimation.shaftAxis
-              : undefined;
+              : undefined);
           const tailwardLength = Math.hypot(frame.nose[0], frame.nose[2]) || 1;
           const shaft = authoredShaft
             ? oarTailwardAxis.current

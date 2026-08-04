@@ -1,5 +1,6 @@
 import type { ObjectLabModel } from "../../objects/dutchWindmills/objectModel.ts";
 import { createLandscapeSampler } from "../../landscape/landscapeSampler.ts";
+import { WATER_LEVEL } from "../../../game/dutchPolderWaterModel.ts";
 import type {
   AuthoredSceneDocument,
   SceneGroupDefinition,
@@ -22,6 +23,9 @@ import {
   dutchPolderGroundTopAt,
   dutchPolderLandAt,
   dutchPolderKeepOut,
+  dutchPolderPlot,
+  dutchPolderPlotToWorld,
+  dutchPolderPlotYaw,
   dutchPolderRectDistance,
   type DutchPolderChannel,
   type DutchPolderPoint2,
@@ -606,6 +610,117 @@ for (const [index, [x, z, yaw]] of [
     [0, yaw, 0],
     [0.94 + (index % 3) * 0.06, 0.96 + (index % 2) * 0.08, 0.94 + (index % 3) * 0.06],
     [{ kind: "damp", amount: 0.34 }, { kind: "moss", amount: 0.2 }],
+  );
+}
+
+/**
+ * Двор занского дома.
+ *
+ * Раскладка авторизована в СОБСТВЕННОЙ раме участка H1 (+Z — на воду, +X —
+ * вдоль набережной), а не в мировых осях: двор принадлежит дому, и если дом
+ * когда-нибудь сдвинется по контракту участков, двор уедет вместе с ним, не
+ * рассыпавшись по польдеру.
+ *
+ * Отметка берётся двумя разными правилами, и это не мелочь. Наземный предмет
+ * садится на САМУЮ НИЗКУЮ точку грунта под своим пятном — тогда он врастает в
+ * бугор, а не висит над ямой. Предмет на воде садится от уреза по своему
+ * объявленному якорю: у лодки нуль — ватерлиния, у свай — низ сваи под водой,
+ * у мостков — низ сваи на дне. Одна общая отметка для тех и других означала бы
+ * либо утопленную лодку, либо мостки на сваях в воздухе.
+ */
+const zaanPlot = dutchPolderPlot("H1");
+const zaanYardYaw = dutchPolderPlotYaw(zaanPlot.bearing);
+
+type YardPlacement = {
+  readonly id: string;
+  readonly prefab: string;
+  /** Положение в раме участка. */
+  readonly at: readonly [x: number, z: number];
+  /** Доворот относительно рамы участка, градусы. */
+  readonly turn?: number;
+  /** Половина пятна объекта в его собственных осях — по нему ищется грунт. */
+  readonly half: readonly [x: number, z: number];
+  /** Отметка от уреза воды вместо посадки на грунт. */
+  readonly waterOffset?: number;
+  /** Опора на самую высокую точку: так стоит нужник, свесив зад над водой. */
+  readonly seatOnHighest?: boolean;
+  readonly damp: number;
+  readonly moss: number;
+};
+
+const ZAAN_YARD: readonly YardPlacement[] = [
+  // Вода: причал у восточного, рабочего конца фасада, чтобы парадный вид от
+  // калитки на канал остался открытым.
+  { id: "jetty", prefab: "dutch:landscape:jetty", at: [-3.5, 11.6], half: [0.56, 1.45], waterOffset: -0.33, damp: 0.85, moss: 0.3 },
+  { id: "mooring", prefab: "dutch:landscape:mooring-posts", at: [0.5, 12.6], half: [1.7, 0.12], waterOffset: -0.85, damp: 0.85, moss: 0.28 },
+  // Лодка стоит МОТОРИСТО вдоль берега (доворот 90°), снаружи от свай: к сваям
+  // её и привязывают, а между сваями и берегом лодке не хватает воды.
+  { id: "schouw", prefab: "dutch:landscape:schouw", at: [0.5, 13.5], turn: -90, half: [2.32, 0.73], waterOffset: 0, damp: 0.8, moss: 0.22 },
+  // Нужник вынесен на берег за линию забора, на восточный край: он садится на
+  // высокую, береговую сторону своего пятна и свешивает очко к воде.
+  { id: "privy", prefab: "dutch:landscape:privy", at: [-7.2, 11.6], turn: 180, half: [0.63, 0.73], seatOnHighest: true, damp: 0.55, moss: 0.26 },
+
+  // Рабочая половина двора — восточная полоса. Сарай смотрит воротами и
+  // подъёмной балкой на воду: груз идёт с лодки под балку, а не через дом.
+  { id: "shed", prefab: "dutch:landscape:yard-shed", at: [-6.1, -0.7], half: [2.55, 3.45], damp: 0.24, moss: 0.12 },
+  { id: "peat-store", prefab: "dutch:landscape:peat-store", at: [-5.4, -5.5], turn: 180, half: [1.4, 0.69], damp: 0.3, moss: 0.16 },
+  { id: "rain-barrel", prefab: "dutch:landscape:rain-barrel", at: [-2.95, 2.6], turn: 90, half: [0.32, 0.32], damp: 0.45, moss: 0.2 },
+
+  // Домашняя половина — западная полоса и зады.
+  { id: "hand-pump", prefab: "dutch:landscape:hand-pump", at: [5.9, 1.6], turn: -90, half: [0.28, 0.55], damp: 0.35, moss: 0.18 },
+  { id: "drying-line", prefab: "dutch:landscape:drying-line", at: [1, -7.2], half: [3.55, 0.28], damp: 0.18, moss: 0.08 },
+  // Рама для фасоли стоит в списке кита, но НЕ размещена: в сцене она
+  // стартует шестью неопёртыми шестами из десяти. Дефект внутри объекта —
+  // воспроизводится с ним одним и не зависит от места; разбор записан в
+  // dutchLandscapeKitObject.ts над её авторством. Место под неё держит
+  // западная полоса огорода, точка (6.8, -2.6) в раме участка.
+
+  // Палисад: три модуля по 3 м вдоль передней межи и калитка ровно там, где
+  // кончается обязательная тропа. Восточнее калитки межа остаётся ОТКРЫТОЙ —
+  // через неё во двор заходит груз, и забор там был бы враньём.
+  { id: "fence-a", prefab: "dutch:landscape:picket-fence", at: [-1.825, 7.325], half: [1.51, 0.06], damp: 0.3, moss: 0.16 },
+  { id: "gate", prefab: "dutch:landscape:picket-gate", at: [-1.825, 7.325], half: [0.54, 0.06], damp: 0.3, moss: 0.14 },
+  { id: "fence-b", prefab: "dutch:landscape:picket-fence", at: [2.24, 7.325], half: [1.51, 0.06], damp: 0.3, moss: 0.16 },
+  { id: "fence-c", prefab: "dutch:landscape:picket-fence", at: [5.26, 7.325], half: [1.51, 0.06], damp: 0.3, moss: 0.16 },
+];
+
+const zaanYard = group("zaan-yard", "Zaan house yard", "wood");
+const zaanMooring = group("zaan-mooring", "Zaan house mooring", "wood");
+
+for (const item of ZAAN_YARD) {
+  const [worldX, worldZ] = dutchPolderPlotToWorld(zaanPlot, item.at[0], item.at[1]);
+  const yaw = zaanYardYaw + (item.turn ?? 0) * Math.PI / 180;
+  const cos = Math.cos(yaw);
+  const sin = Math.sin(yaw);
+  let y: number;
+  if (item.waterOffset !== undefined) {
+    y = WATER_LEVEL + item.waterOffset;
+  } else {
+    const tops: number[] = [];
+    for (let ix = -2; ix <= 2; ix += 1) {
+      for (let iz = -2; iz <= 2; iz += 1) {
+        const localX = item.half[0] * ix / 2;
+        const localZ = item.half[1] * iz / 2;
+        tops.push(dutchPolderVisualTopAt(
+          worldX + localX * cos + localZ * sin,
+          worldZ - localX * sin + localZ * cos,
+        ));
+      }
+    }
+    // Наземный предмет садится на четыре сантиметра НИЖЕ низшей точки грунта:
+    // ножка, свая и столб врастают в дёрн, а не касаются его в одной точке.
+    // Ровно так же сидят деревья, и по той же причине — контакт по касанию
+    // решатель считает висящим.
+    y = (item.seatOnHighest ? Math.max(...tops) : Math.min(...tops)) - 0.04;
+  }
+  prefab(
+    item.waterOffset !== undefined ? zaanMooring : zaanYard,
+    item.id,
+    item.prefab,
+    [worldX, y, worldZ],
+    [0, yaw, 0],
+    undefined,
+    [{ kind: "damp", amount: item.damp }, { kind: "moss", amount: item.moss }],
   );
 }
 

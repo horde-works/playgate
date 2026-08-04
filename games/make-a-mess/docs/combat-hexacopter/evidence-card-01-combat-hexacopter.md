@@ -1,8 +1,8 @@
-# Evidence card 01 — combat hexacopter (`combat-hexacopter`)
+# Evidence card 01 — RAX-8 Tonkawa (`combat-hexacopter`)
 
 ## Identity and source hierarchy
 
-- Object: fictional one-seat armed electric VTOL with six lift rotors and two dedicated yaw-control ducted fans; explicitly not an SR-6 variant and not a conventional winged aircraft.
+- Object: **RAX-8 Tonkawa**, a fictional one-seat armed electric VTOL with six lift rotors and two dedicated yaw-control ducted fans; explicitly not an SR-6 variant and not a conventional winged aircraft.
 - `user contract`: the supplied concept owns the visible character: low wide stance, six independent annular lift nacelles, raised central tail spine, paired canted shoulder yaw fans, graphite/olive/titanium material hierarchy, compact chin weapon and restrained modular stores.
 - `user correction 2026-08-04`: there is no continuous external bumper, rail or perimeter frame on any side. Every lift nacelle is tied inward to the armoured core by local tapered root structures.
 - `user correction 2026-08-04`: yaw-fan axes are diagonal in plan rather than parallel to the body centreline; the two forward-facing axes diverge outward symmetrically.
@@ -55,8 +55,11 @@ Sources:
 ## Protected scope
 
 - New canonical owner: `src/content/objects/vehicles/combatHexacopterObject.ts`.
-- New test and capture wrapper only.
-- Do not modify SR-6 geometry, Dutch-polder canonical objects, scene adapters, prefab registries, physics, routes or world placement before visual acceptance.
+- Visual C2 accepted by the owner on `2026-08-04`; canonical geometry is now frozen.
+- Runtime owner: `src/game/combatHexacopter.ts`; canonical-to-scene adapter: `src/content/scenes/combatHexacopterPrototypeDocument.ts`.
+- Public designation fixed by the owner on `2026-08-04`: `RAX-8 Tonkawa`; internal `combat-hexacopter` ids remain stable compatibility keys.
+- Runtime placement is isolated to the dedicated `combat-hexacopter-range` proving ground, with a physical dispatch post and closed autonomous circuit.
+- Do not modify SR-6 geometry, Dutch-polder canonical objects or existing vehicle registrations as collateral work.
 
 ## Rejection conditions
 
@@ -83,6 +86,16 @@ Sources:
 | raised narrow tail | spine section control points | recover crown rise and tail half-width | profile, high-three-quarter |
 | crash chain reaches datum | landing assembly endpoints | each pad/oleo/strut/trunnion chain contacts | underside |
 | one canonical object | model revision/hash | capture manifest and required views | every delivered PNG |
+
+## Accepted runtime contract
+
+- The accepted `429` canonical parts compile directly into one linked, destructible vehicle cluster; there is no reduced runtime redraw.
+- Six lift motors own `throttle:0..5`; two reversible canted yaw fans own `yaw-throttle:0..1`.
+- The autopilot continues to request conventional yaw rate only. A lower controller converts yaw-rate error to moment and combines ordinary lift-rotor reaction torque with the two dedicated canted fans.
+- Nominal split retains `35%` of requested yaw moment on the ordinary hexacopter channel and gives the balance to the dedicated pair. Either channel takes the residual if the other saturates or is damaged.
+- Mirrored `18 deg` fan axes create a coupled lateral force during pure yaw. This is preserved as physical truth and must be cancelled by the lift/attitude controller rather than deleted from the model.
+- Placement factory rotates geometry, lift points, yaw points/axes, proximity sensors and movable-frame anchors from one berth/yaw contract.
+- Prototype datum `[0,0,0]` remains isolated authoring space; the registered proving-ground berth is a separate placement contract.
 
 ## Part budget
 

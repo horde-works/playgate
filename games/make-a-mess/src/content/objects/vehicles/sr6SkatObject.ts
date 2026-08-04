@@ -506,19 +506,17 @@ for (const side of [-1, 1]) {
 // off panels that compile to plastic, and a single round through the belly
 // takes the machine apart — which is exactly what happened. The core is a
 // closed steel skeleton the exterior hides: a centreline keel beam, two
-// longerons inside the side torque boxes, two transverse beams routed through
-// the only two corridors that cross no rotor disc, and a saddle from every
-// nacelle to both the longeron outboard and the core inboard.
+// longerons inside the side torque boxes, and a saddle from every nacelle to
+// both the longeron outboard and the core inboard.
 //
-// Rotor discs occupy Z 1.13…2.37, −0.17…1.07 and −0.944…−2.356, so the only
-// clean transverse corridors are Z 1.07…1.13 and Z −0.17…−0.944. Both beams sit
-// in them; a straight member anywhere else would cut a propeller.
+// There are deliberately NO plain transverse members. A beam straight across
+// the machine reads as a bar bolted over a copter and breaks its look, and it
+// is not needed: the closed path is nacelle → outer saddle → longeron and
+// nacelle → inner saddle → keel beam, so every ring is tied to the core twice
+// without anything crossing the open bays.
 // ---------------------------------------------------------------------------
 
 const CORE_KEEL_Y = 0.88;
-const CORE_MAIN_BEAM_Z = -0.55;
-const CORE_FORWARD_BEAM_Z = 1.1;
-
 addFacets("core-keel-beam", "core-frame", "timber-mid", buildTorqueBox({
   from: point(0, CORE_KEEL_Y, 2.02),
   to: point(0, CORE_KEEL_Y + 0.07, -2.08),
@@ -526,26 +524,6 @@ addFacets("core-keel-beam", "core-frame", "timber-mid", buildTorqueBox({
   height: 0.17,
   chamfer: 0.036,
   tag: "keel-beam",
-}));
-
-addFacets("core-main-cross-beam", "core-frame", "timber-mid", buildTorqueBox({
-  from: point(-2.28, 0.9, CORE_MAIN_BEAM_Z),
-  to: point(2.28, 0.9, CORE_MAIN_BEAM_Z),
-  width: 0.16,
-  height: 0.13,
-  chamfer: 0.032,
-  tag: "cross-beam",
-}));
-
-// The forward corridor is only 60 mm wide, so this beam is a deep blade rather
-// than a box: it has to fit between the front and middle discs.
-addFacets("core-forward-cross-beam", "core-frame", "timber-mid", buildTorqueBox({
-  from: point(-2.24, 0.87, CORE_FORWARD_BEAM_Z),
-  to: point(2.24, 0.87, CORE_FORWARD_BEAM_Z),
-  width: 0.15,
-  height: 0.052,
-  chamfer: 0.014,
-  tag: "cross-blade",
 }));
 
 for (const side of [-1, 1]) {
@@ -744,24 +722,34 @@ addFacets("survival-cell-shell", "outer-shell", "paint-light", buildLoft(
     ];
   }, 0.012);
 
-  shell("belly-armour", "timber-mid", (section, offset) => [
-    point(-section.keelHalf - offset * 0.5, section.keelY - offset, section.z),
-    point(0, section.keelY - offset, section.z),
-    point(section.keelHalf + offset * 0.5, section.keelY - offset, section.z),
-  ], 0.02);
-
-  for (const side of [-1, 1]) {
-    for (let bolt = 0; bolt < 5; bolt += 1) {
-      const z = lerp(1.4, -1.1, bolt / 4);
-      const section = cabinSections.reduce(
-        (best, candidate) => Math.abs(candidate.z - z) < Math.abs(best.z - z) ? candidate : best,
-      );
+  // Butted armour plates over the whole lower surface — both bevels and the
+  // flat bottom — each bolted to the keel beam. Authored as a run of separate
+  // plates meeting on section boundaries rather than one skin, so a round that
+  // does defeat a plate takes that plate and nothing else. They compile as
+  // SOLID steel of real thickness instead of the 8 mm shell a machine gun used
+  // to walk straight through.
+  const ARMOUR_SEAMS = [0, 2, 4, 6, 8, 10, cabinSections.length - 1];
+  for (let plate = 0; plate < ARMOUR_SEAMS.length - 1; plate += 1) {
+    const span = cabinSections.slice(ARMOUR_SEAMS[plate], ARMOUR_SEAMS[plate + 1] + 1);
+    const ring = (section: CabinSection, offset: number): ObjectPoint[] => [
+      point(-section.chineHalf - offset * 0.55, section.chineY - offset * 0.5, section.z),
+      point(-section.keelHalf - offset * 0.6, section.keelY - offset, section.z),
+      point(0, section.keelY - offset, section.z),
+      point(section.keelHalf + offset * 0.6, section.keelY - offset, section.z),
+      point(section.chineHalf + offset * 0.55, section.chineY - offset * 0.5, section.z),
+    ];
+    addFacets(`belly-armour-plate-${plate}`, "armour", "timber-mid", buildLoft(
+      span.map((section) => [...ring(section, 0.062), ...[...ring(section, 0.014)].reverse()]),
+      { tag: `armour-${plate}`, capStart: true, capEnd: true },
+    ));
+    const mid = span[Math.floor(span.length / 2)];
+    for (const side of [-1, 1]) {
       addBox(
-        `belly-armour-boss-${side}-${bolt}`,
-        "outer-shell",
+        `belly-armour-stud-${plate}-${side}`,
+        "armour",
         "metal",
-        point(side * (section.keelHalf + 0.012), section.keelY - 0.026, z),
-        point(0.04, 0.028, 0.085),
+        point(side * (mid.keelHalf * 0.55), mid.keelY - 0.03, mid.z),
+        point(0.05, 0.17, 0.07),
       );
     }
   }

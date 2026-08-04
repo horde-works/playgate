@@ -51,6 +51,8 @@ export type ObjectLightSource = {
   readonly poolPriority?: number;
   readonly localPoolCapacity?: number;
   readonly poolGroupId?: string;
+  /** Keep one physical source from this group in wide architectural views. */
+  readonly reservePoolGroup?: boolean;
   readonly interior?: boolean;
   readonly transition?: {
     readonly fadeInSeconds: number;

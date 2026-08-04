@@ -357,67 +357,82 @@ function pushWeepingCurtain(
   const length = limb.size[1];
   const start = new Vector3(...limb.position).addScaledVector(axis, -length / 2);
   const identity = hashText(limb.id);
-  const strands = 5 + Math.floor(hash(seed + identity * 31, 900) * 3);
   const profile = proceduralWoodTubeProfile("branch", "willow");
+  // Побегов тем больше, чем длиннее несущая ветвь: вуаль висит со ВСЕГО
+  // скелета, а не только с главных сучьев.
+  const shoots = Math.max(6, Math.round(length * 5.5));
 
-  for (let strand = 0; strand < strands; strand += 1) {
-    const roll = hash(seed + identity * 37, 910 + strand);
-    // Занавес идёт ОТ САМОГО КОМЛЯ сука: очарование плакучей ивы в том, что
-    // плети падают уже от верхних побегов, а не с середины ветви. Пока плеть
-    // была телом, у комля она теряла опору — теперь это рендер, и запрета нет.
-    const along = 0.1 + (strand / strands) * 0.88 + roll * 0.04;
+  for (let shoot = 0; shoot < shoots; shoot += 1) {
+    const roll = hash(seed + identity * 37, 910 + shoot);
+    const along = 0.06 + (shoot / shoots) * 0.92 + roll * 0.03;
     const hang = start.clone().addScaledVector(axis, length * along);
-    // Плеть висит почти отвесно и достаёт до земли: чем выше точка подвеса,
-    // тем длиннее плеть, поэтому подол занавеса ровный, а купол — куполом.
-    const drop = Math.max(0.9, hang.y - (0.45 + roll * 0.85));
-    const sway = hash(seed + identity * 41, 920 + strand);
+    // Побег НЕ ветвится — он просто падает. Длина набирается от высоты
+    // подвеса: подол вуали ровный, поэтому купол читается куполом.
+    const drop = Math.max(1.1, hang.y - (0.35 + roll * 0.8));
+    const sway = hash(seed + identity * 41, 920 + shoot);
     const direction = new Vector3(
-      Math.cos(sway * Math.PI * 2) * (0.05 + roll * 0.1),
+      Math.cos(sway * Math.PI * 2) * (0.04 + roll * 0.12),
       -1,
-      Math.sin(sway * Math.PI * 2) * (0.05 + roll * 0.1),
+      Math.sin(sway * Math.PI * 2) * (0.04 + roll * 0.12),
     ).normalize();
-    const diameter = limb.size[0] * (0.16 + roll * 0.08);
-    const rods = willowWhipFan(
-      [hang.x, hang.y, hang.z],
-      [direction.x, direction.y, direction.z],
-      drop,
-      diameter,
-      seed + identity * 53 + strand * 7,
-    );
-    rods.forEach((rod) => {
-      woodOutput.push({
-        sourceId: limb.id,
-        matrix: rodMatrix(rod),
-        color: new Color(limb.color),
-        species: treeWoodSpecies("willow"),
-        phase: treeBarkPhase(seed + rod.index * 11, `${limb.id}:${strand}:${rod.index}`),
-        bend: (rod.length * profile.bendRatio) / Math.max(rod.diameter * 1.08, 0.001),
-        taper: profile.tipScale,
-      });
-      // Лист сидит по всей плети рукавами — так занавес читается штрихами, а
-      // не гирляндой шаров. Развилка гнезда (index 3) остаётся голой веточкой:
-      // лист на ней утроил бы стоимость кроны, ничего не добавив силуэту.
-      if (rod.index > 2) {
-        return;
-      }
-      for (let station = 0; station < 3; station += 1) {
-        // Первый рукав садится вплотную к суку: сверху крона иначе читается
-        // голыми жердями поверх занавеса.
-        const at = 0.05 + station * 0.32;
-        foliageOutput.push({
-          sourceId: limb.id,
-          matrix: willowSleeveMatrix(
-            rod,
-            at,
-            limb.size[0] * (2.6 + roll * 0.9),
-            seed + strand * 13 + station,
-          ),
-          color: new Color(limb.color).lerp(new Color("#84995a"), 0.86),
-          species: 3,
-          phase: hash(seed + identity * 59, 930 + strand * 4 + station),
-        });
-      }
+    const diameter = Math.max(0.008, limb.size[0] * (0.06 + roll * 0.04));
+    const rodStart: [number, number, number] = [hang.x, hang.y, hang.z];
+    woodOutput.push({
+      sourceId: limb.id,
+      matrix: segmentMatrix(
+        hang,
+        hang.clone().addScaledVector(direction, drop),
+        diameter,
+      ),
+      color: new Color(limb.color),
+      species: treeWoodSpecies("willow"),
+      phase: treeBarkPhase(seed + shoot * 11, `${limb.id}:${shoot}`),
+      bend: (drop * profile.bendRatio * 0.5) / Math.max(diameter, 0.001),
+      taper: 0.5,
     });
+
+    // ВУАЛЬ, А НЕ БУСЫ. Лист идёт по побегу частыми УЗКИМИ рукавами: длинный
+    // тонкий сегмент читается прядью, а несколько толстых комьев — гирляндой
+    // шаров, чем прежняя сборка и грешила.
+    // Рукава считаются ОТ ПОБЕГА, а не от толщины ветви: их длина равна шагу
+    // между ними, поэтому пряди смыкаются в сплошную зелёную нить. Раньше
+    // рукав был вчетверо короче интервала — оттого вуаль и просвечивала
+    // пунктиром вместо зелёной дымки.
+    // Прядь СПЛОШНАЯ: рукав длиннее шага между рукавами в полтора раза, они
+    // перекрываются и читаются одной лентой листвы. Равный шагу рукав давал
+    // бусы на нитке — ровно то, что видно в кадре сверху.
+    const stations = 4;
+    const step = 0.92 / stations;
+    // Длина пряди в полтора шага — рукава перекрываются в сплошную ленту;
+    // толщина от толщины САМОГО побега, а не от его длины.
+    const sleeveLength = drop * step * 1.5;
+    const sleeveRadius = Math.max(0.05, diameter * 6 + roll * 0.03);
+    // Фаза своя у каждого побега: одинаковый шаг на всех плетях выстраивает
+    // листву рядами и вуаль читается кукурузным початком.
+    const phase = hash(seed + identity * 67, 940 + shoot) * step;
+    for (let station = 0; station < stations; station += 1) {
+      const at = 0.06 + phase + station * step;
+      const rod: WillowWhipRod = {
+        start: rodStart,
+        direction: [direction.x, direction.y, direction.z],
+        length: drop,
+        diameter,
+        index: 0,
+      };
+      foliageOutput.push({
+        sourceId: limb.id,
+        matrix: willowSleeveMatrix(
+          rod,
+          at,
+          sleeveRadius,
+          sleeveLength,
+          seed + shoot * 13 + station,
+        ),
+        color: new Color(limb.color).lerp(new Color("#89a05c"), 0.88),
+        species: 3,
+        phase: hash(seed + identity * 59, 930 + shoot * 5 + station),
+      });
+    }
   }
 }
 
@@ -803,7 +818,8 @@ export function buildTreeVisuals(
             matrix: willowSleeveMatrix(
               rod,
               along,
-              cluster.size[0],
+              cluster.size[0] * 0.31,
+              cluster.size[0] * 1.5,
               group.seed + index * 7 + lobe,
             ),
             color: new Color(cluster.color),
@@ -875,10 +891,16 @@ function whipFraction(
   return Math.min(1, Math.max(0, projected / Math.max(0.001, whip.size[1])));
 }
 
+/**
+ * Рукав листвы вдоль побега. Толщина и длина задаются ОТДЕЛЬНО: у ивы прядь
+ * тонкая и длинная (десять к одному), и связывать одно с другим нельзя —
+ * толстая прядь превращает вуаль в зелёную стену, короткая — в бусы на нитке.
+ */
 function willowSleeveMatrix(
   rod: WillowWhipRod,
   along: number,
-  size: number,
+  radius: number,
+  length: number,
   seed: number,
 ): Matrix4 {
   const direction = new Vector3(...rod.direction);
@@ -887,11 +909,11 @@ function willowSleeveMatrix(
     rod.length * Math.min(0.94, along * (0.9 + hash(seed, 640) * 0.2)),
   );
   const rotation = new Quaternion().setFromUnitVectors(UP, direction);
-  const sleeve = size * (0.86 + hash(seed, 650) * 0.28);
+  const jitter = 0.88 + hash(seed, 650) * 0.24;
   return new Matrix4().compose(
     centre,
     rotation,
-    new Vector3(sleeve * 0.62, sleeve * 1.5, sleeve * 0.62),
+    new Vector3(radius * 2 * jitter, length * jitter, radius * 2 * jitter),
   );
 }
 

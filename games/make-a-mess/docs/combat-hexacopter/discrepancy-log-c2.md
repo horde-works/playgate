@@ -1,4 +1,4 @@
-# Discrepancy review — combat hexacopter C2
+# Discrepancy review — RAX-8 Tonkawa C2
 
 ## Compared material
 
@@ -33,3 +33,8 @@
 - `surface hierarchy` — improved. The yaw housings use local angular shrouds, the central tail remains narrow and raised, and there is no horizontal shelf or exterior cage.
 - Canonical result: `429/900` parts, recovered envelope `6.889 x 6.873 x 2.000 m`, `11/11` independent tests pass, lint passes.
 - Full thirteen-view PNG set recaptured from revision `combat-hex-c2-2026-08-04`, model hash `608adbcf79a1`.
+- Owner accepted C2 on `2026-08-04`: not a literal concept copy, but the required brutal character and resolved forms are accepted.
+- Post-acceptance runtime adapter compiles the same `429` parts into one cluster with six lift and two reversible canted-yaw actuator channels.
+- Combined yaw control preserves the ordinary lift-rotor reaction channel and adds the dedicated pair below the unchanged yaw-rate autopilot interface.
+- Public designation fixed after acceptance as `RAX-8 Tonkawa`; internal ids remain stable.
+- The accepted model is registered only in its dedicated 100 m proving ground, with a physical autonomous launch post and closed return circuit.

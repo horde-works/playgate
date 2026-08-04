@@ -322,7 +322,7 @@ for (const [id, x, z] of [["west", -3.65, -0.2], ["east", 3.65, -0.2]] as const)
 
 export const gekroondePoelenburgPaltrokObject: ObjectLabModel = {
   id: "dutch-windmill-gekroonde-poelenburg-paltrok-m4",
-  revision: "m4-2026-08-04-real-windows-a2",
+  revision: "m4-2026-08-04-night-range-a3",
   title: "De Gekroonde Poelenburg-type paltrok sawmill — structural grey model",
   units: "metres",
   coordinates: { up: "+Y", front: "+Z", origin: "ground-centre" },

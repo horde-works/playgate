@@ -271,6 +271,56 @@ const buildYawBlade = (
   return { vertices, triangles };
 };
 
+/**
+ * СТАЛЬНАЯ ЛИНЕЙКА: плоский лист заданной толщины по четырём углам.
+ *
+ * Нужна ровно потому, что тело вращения — не конструкция. Обечайка, собранная
+ * одним `buildRevolution`, выглядит кольцом, но несёт её один-единственный
+ * кусок: снесли его — и всё, что к нему прилегало, повисло в воздухе, потому
+ * что опереться больше не на что. Набор из отдельных листов ведёт себя как
+ * настоящий набор: каждый сегмент несёт соседей и накладки, а теряется он
+ * поодиночке.
+ *
+ * Толщина откладывается по НОРМАЛИ четырёхугольника, а не по мировой оси:
+ * скошенный воротник иначе получал бы разную толщину по дуге.
+ */
+const steelPlate = (
+  a: ObjectPoint,
+  b: ObjectPoint,
+  c: ObjectPoint,
+  d: ObjectPoint,
+  thickness: number,
+  tag: string,
+): Facet[] => {
+  const edge1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const edge2 = [d[0] - a[0], d[1] - a[1], d[2] - a[2]];
+  const normal = [
+    edge1[1] * edge2[2] - edge1[2] * edge2[1],
+    edge1[2] * edge2[0] - edge1[0] * edge2[2],
+    edge1[0] * edge2[1] - edge1[1] * edge2[0],
+  ];
+  const length = Math.hypot(normal[0], normal[1], normal[2]) || 1;
+  const half = thickness / 2;
+  const offset = (p: ObjectPoint, sign: number): ObjectPoint => point(
+    p[0] + (normal[0] / length) * half * sign,
+    p[1] + (normal[1] / length) * half * sign,
+    p[2] + (normal[2] / length) * half * sign,
+  );
+  const [a0, b0, c0, d0] = [a, b, c, d].map((p) => offset(p, -1));
+  const [a1, b1, c1, d1] = [a, b, c, d].map((p) => offset(p, 1));
+  return [
+    { points: [a1, b1, c1, d1], tag },
+    { points: [d0, c0, b0, a0], tag },
+    { points: [a0, b0, b1, a1], tag },
+    { points: [b0, c0, c1, b1], tag },
+    { points: [c0, d0, d1, c1], tag },
+    { points: [d0, a0, a1, d1], tag },
+  ];
+};
+
+/** Сколько стальных сегментов в кольце одной гондолы. */
+const LIFT_RING_SEGMENTS = 12;
+
 export const COMBAT_HEX_LIFT_STATIONS = [
   { id: "front-left", x: -2.35, z: 1.95, outerRadius: 0.78, planeY: 1.08, spin: "cw", powerClass: "standard" },
   { id: "front-right", x: 2.35, z: 1.95, outerRadius: 0.78, planeY: 1.08, spin: "ccw", powerClass: "standard" },
@@ -301,29 +351,92 @@ for (const station of COMBAT_HEX_LIFT_STATIONS) {
   const outer = station.outerRadius;
   const mouth = throat + 0.025;
 
-  addFacets(`${group}-nacelle`, group, "roof-dark", buildRevolution([
-    { radius: mouth, y: deck + 0.01 },
-    { radius: outer - 0.03, y: deck + 0.01 },
-    { radius: outer, y: deck - 0.025 },
-    { radius: outer, y: floor + 0.035 },
-    { radius: outer - 0.028, y: floor },
-    { radius: throat + 0.045, y: floor },
-    { radius: throat, y: floor + 0.055 },
-    { radius: throat, y: deck - 0.16 },
-    { radius: throat + 0.018, y: deck - 0.09 },
-    { radius: mouth, y: deck + 0.01 },
-  ], center, { segments: 56, tag: "lift-duct" }), { showEdges: false });
+  // КОЛЬЦО ИЗ СОЕДИНЁННЫХ СТАЛЬНЫХ СЕГМЕНТОВ, А НЕ ТОЧЁНАЯ БОЧКА.
+  //
+  // Так собран первый тяжёлый коптер: обечайка там — двенадцать стальных
+  // панелей, каждая со своей несущей площадью и обычным допуском стыка. Тело
+  // вращения на его месте выглядит так же, но конструкцией не является: у
+  // машины не остаётся силового пути от лопасти к лонжерону, и держать
+  // движитель приходится не геометрией, а раздутым допуском.
+  //
+  // Отсюда порядок работы кольца: сегменты — стенка и силовой набор, воротники
+  // сверху и снизу — вход и выход тоннеля, статорные стойки упираются в стенку
+  // изнутри, мотор висит на стойках. Каждое звено этой цепи существует.
+  const ringTop = deck - 0.02;
+  const ringBottom = floor + 0.02;
+  const wall = (outer - throat) * 0.5;
+  const collarRise = 0.085;
+  const ringAt = (radius: number, angle: number, y: number): ObjectPoint =>
+    point(station.x + Math.cos(angle) * radius, y, station.z + Math.sin(angle) * radius);
 
-  addFacets(`${group}-rim`, group, "metal", buildRevolution([
-    { radius: mouth - 0.005, y: deck + 0.012 },
-    { radius: mouth, y: deck + 0.035 },
-    { radius: outer + 0.018, y: deck + 0.035 },
-    { radius: outer + 0.026, y: deck + 0.008 },
-    { radius: outer + 0.018, y: deck - 0.035 },
-    { radius: outer - 0.006, y: deck - 0.035 },
-    { radius: outer - 0.006, y: deck + 0.01 },
-    { radius: mouth - 0.005, y: deck + 0.012 },
-  ], center, { segments: 56, tag: "machined-rim" }), { showEdges: false });
+  for (let segment = 0; segment < LIFT_RING_SEGMENTS; segment += 1) {
+    const from = (segment / LIFT_RING_SEGMENTS) * TAU;
+    const to = ((segment + 1) / LIFT_RING_SEGMENTS) * TAU;
+    const mid = (from + to) / 2;
+    // Стенка сегмента: наружу — броневая грань, внутрь — рабочая поверхность
+    // тоннеля. Чуть скруглена по высоте наружным поясом.
+    addFacets(
+      `${group}-ring-segment-${segment}`,
+      group,
+      segment % 2 === 0 ? "timber-mid" : "timber-dark",
+      steelPlate(
+        ringAt(outer, from, ringBottom),
+        ringAt(outer, to, ringBottom),
+        ringAt(outer, to, ringTop),
+        ringAt(outer, from, ringTop),
+        wall,
+        "ring-segment",
+      ),
+      { showEdges: false },
+    );
+    // Стык сегментов — накладная планка снаружи: она и держит соседей вместе.
+    addFacets(
+      `${group}-ring-splice-${segment}`,
+      group,
+      "metal",
+      buildTorqueBox({
+        from: ringAt(outer + wall * 0.45, from, ringBottom - 0.005),
+        to: ringAt(outer + wall * 0.45, from, ringTop + 0.005),
+        width: 0.055,
+        height: 0.03,
+        chamfer: 0.008,
+        tag: "ring-splice",
+      }),
+      { showEdges: false },
+    );
+    // ВЕРХНИЙ КОНИЧЕСКИЙ ВОРОТНИК — сплошной, из скошенных внутрь линеек:
+    // длина по дуге заметно больше высоты, как и просили. Это вход тоннеля.
+    addFacets(
+      `${group}-collar-top-${segment}`,
+      group,
+      "metal",
+      steelPlate(
+        ringAt(outer, from, ringTop),
+        ringAt(outer, to, ringTop),
+        ringAt(mouth, to, ringTop + collarRise),
+        ringAt(mouth, from, ringTop + collarRise),
+        0.026,
+        "collar-top",
+      ),
+      { showEdges: false },
+    );
+    // НИЖНИЙ ВОРОТНИК — зеркальный: выход тоннеля, поджатый внутрь.
+    addFacets(
+      `${group}-collar-bottom-${segment}`,
+      group,
+      "roof-dark",
+      steelPlate(
+        ringAt(mouth, from, ringBottom - collarRise * 0.8),
+        ringAt(mouth, to, ringBottom - collarRise * 0.8),
+        ringAt(outer, to, ringBottom),
+        ringAt(outer, from, ringBottom),
+        0.024,
+        "collar-bottom",
+      ),
+      { showEdges: false },
+    );
+    void mid;
+  }
 
   const hubRadius = station.powerClass === "boost" ? 0.18 : 0.155;
   addCylinder(`${group}-motor`, group, "metal", point(station.x, station.planeY - 0.17, station.z), point(station.x, station.planeY + 0.17, station.z), hubRadius, 28);
@@ -360,30 +473,17 @@ for (const station of COMBAT_HEX_LIFT_STATIONS) {
     }));
   }
 
+  // Броневых накладок больше нет: сегмент кольца САМ и есть броня. Прежние
+  // шесть коробочек висели поверх бочки и держались только допуском — теперь
+  // ту же грань несёт кусок, который эту нагрузку действительно принимает.
   const side = station.x < 0 ? -1 : 1;
-  addBox(`${group}-service-panel`, group, "dark-recess", point(station.x + side * (outer + 0.012), station.planeY - 0.02, station.z), point(0.04, 0.09, 0.25));
-  addBox(`${group}-service-index`, group, "paint-accent", point(station.x + side * (outer + 0.024), deck + 0.02, station.z + 0.18), point(0.025, 0.018, 0.12));
-  for (let panel = 0; panel < 6; panel += 1) {
-    const panelAngle = panel * TAU / 6 + 0.08;
-    const panelRadius = outer + 0.018;
-    const halfArc = 0.1;
-    addFacets(`${group}-outer-armour-panel-${panel}`, group, panel % 2 === 0 ? "timber-mid" : "timber-dark", buildTorqueBox({
-      from: point(
-        station.x + Math.cos(panelAngle - halfArc) * panelRadius,
-        station.planeY - 0.02,
-        station.z + Math.sin(panelAngle - halfArc) * panelRadius,
-      ),
-      to: point(
-        station.x + Math.cos(panelAngle + halfArc) * panelRadius,
-        station.planeY - 0.02,
-        station.z + Math.sin(panelAngle + halfArc) * panelRadius,
-      ),
-      width: 0.036,
-      height: 0.105,
-      chamfer: 0.01,
-      tag: "nacelle-armour-panel",
-    }), { showEdges: false });
-  }
+  addBox(
+    `${group}-service-panel`,
+    group,
+    "dark-recess",
+    point(station.x + side * (outer - wall * 0.5), station.planeY - 0.02, station.z),
+    point(0.05, 0.09, 0.25),
+  );
 }
 
 const YAW_OUTER_RADIUS = 0.41;
@@ -462,9 +562,24 @@ for (const station of COMBAT_HEX_YAW_STATIONS) {
 
 type LiftRootPair = readonly [primary: ObjectPoint, secondary: ObjectPoint];
 
+/**
+ * УЗЛЫ КОРНЕЙ ТЯГ. Каждый обязан лежать В БОРТУ, а не рядом с ним.
+ *
+ * Передняя пара этого правила не соблюдала: корень стоял на x = ±0.58 при
+ * z = 2.18, а нос к этой станции сужается до 0.43 — тяга начиналась в
+ * пятнадцати сантиметрах от обшивки, и в кадре между ней и корпусом была
+ * видна щель. Ошибка типовая: координата взята той же логикой, что у широких
+ * средних станций, где борт действительно так далеко.
+ *
+ * Числа ниже сняты с ФАКТИЧЕСКОГО профиля несущего корпуса: на z = 2.00 борт
+ * доходит до 0.560, поэтому корень уходит назад к этой станции и садится на
+ * 0.54, прикусывая обшивку на пару сантиметров. Тяга получает небольшую
+ * стреловидность вперёд к кольцу — именно так и крепится вынесенная вперёд
+ * балка.
+ */
 const liftRootNodes = (station: LiftStation, side: number): LiftRootPair => {
   if (station.id.startsWith("front")) {
-    return [point(side * 0.58, 1.06, 2.18), point(side * 0.72, 0.93, 1.46)];
+    return [point(side * 0.54, 1.06, 2.0), point(side * 0.72, 0.93, 1.46)];
   }
   if (station.id.startsWith("middle")) {
     return [point(side * 0.72, 1.16, 0.76), point(side * 0.84, 0.96, -0.34)];
@@ -1329,7 +1444,7 @@ export const COMBAT_HEX_PART_BUDGET = 900;
 export const combatHexacopterObject: CombatHexacopterModel = {
   id: "combat-hexacopter-c2",
   revision: "combat-hex-c2-2026-08-04",
-  title: "Combat Hexacopter — six lift ducts, paired yaw tunnels",
+  title: "RAX-8 Tonkawa — six lift ducts, paired yaw tunnels",
   units: "metres",
   coordinates: { up: "+Y", front: "+Z", origin: "ground-centre" },
   sourceNotes: [

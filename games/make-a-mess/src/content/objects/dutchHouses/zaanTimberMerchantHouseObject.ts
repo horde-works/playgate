@@ -338,8 +338,10 @@ parts.push(
   ...dutchLampFixture({
     id: "front-entry-lantern",
     group: "lighting-fixtures",
-    lens: point(1.08, 2.36, 5.8),
-    carrierPoint: point(1.08, 2.48, 5.49),
+    // The narrow door/window pier cannot carry the 240 mm plate. The head
+    // above the door is solid and keeps the lantern centred on the entrance.
+    lens: point(0, 2.88, 5.78),
+    carrierPoint: point(0, 3.08, 5.42),
     carrier: "wall-z",
     outward: 1,
     lampClass: "exterior",
@@ -350,7 +352,7 @@ parts.push(
 
 export const zaanTimberMerchantHouseObject: ObjectLabModel = {
   id: "dutch-house-zaan-timber-merchant-h1",
-  revision: "h1-2026-08-04-real-windows-a2",
+  revision: "h1-2026-08-04-entry-light-a3",
   title: "Zaan timber merchant house + workshop — structural grey model",
   units: "metres",
   coordinates: { up: "+Y", front: "+Z", origin: "ground-centre" },
@@ -401,6 +403,7 @@ export const zaanTimberMerchantHouseObject: ObjectLabModel = {
     { id: "frame-cutaway", label: "Cutaway · five yokes + roof load path", projection: "perspective", position: point(-13, 8.5, 15), target: point(0, 3.0, 0), fov: 34, hiddenGroups: ["main-cladding", "front-openings", "side-openings", "rear-openings", "rear-trim", "gable-trim", "roof-skin", "service-cladding", "service-openings", "service-trim", "service-roof"] },
     { id: "junction-cutaway", label: "Cutaway · workshop junction", projection: "perspective", position: point(14, 6.4, 9), target: point(2.0, 2.0, -0.5), fov: 32, hiddenGroups: ["main-cladding", "front-openings", "side-openings", "rear-openings", "rear-trim", "gable-trim", "roof-skin", "roof-frame", "service-cladding", "service-openings", "service-trim", "service-roof"] },
     { id: "night-front", label: "Night · inhabited front and workshop", projection: "perspective", position: point(-11, 5.5, 14), target: point(1.0, 2.1, 3.2), fov: 34, lighting: "night" },
+    { id: "night-entry-detail", label: "Night · lantern carried by solid door head", projection: "perspective", position: point(-3.8, 3.35, 9.6), target: point(0, 2.75, 5.35), fov: 27, lighting: "night" },
     { id: "silhouette", label: "Silhouette control", projection: "orthographic", position: point(0.8, 4.1, 30), target: point(0.8, 3.7, 1), orthoHeight: 10.4 },
   ],
 };

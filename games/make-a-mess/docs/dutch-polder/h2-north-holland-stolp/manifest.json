@@ -1,8 +1,8 @@
 {
   "modelId": "dutch-house-north-holland-stolp-h2",
-  "revision": "h2-2026-08-04-real-windows-a2",
-  "modelHash": "77118a7f96d9",
-  "generatedAt": "2026-08-04T15:37:45.988Z",
+  "revision": "h2-2026-08-04-entry-light-a3",
+  "modelHash": "fcb000d805c3",
+  "generatedAt": "2026-08-04T17:29:42.729Z",
   "views": [
     {
       "id": "front",
@@ -63,6 +63,12 @@
       "label": "Night · occupied residence, dark barn",
       "projection": "perspective",
       "file": "night-residence.png"
+    },
+    {
+      "id": "night-service-entry-detail",
+      "label": "Night · side lantern on solid service wall",
+      "projection": "perspective",
+      "file": "night-service-entry-detail.png"
     },
     {
       "id": "silhouette",

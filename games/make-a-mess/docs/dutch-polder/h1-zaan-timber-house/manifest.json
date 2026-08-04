@@ -1,8 +1,8 @@
 {
   "modelId": "dutch-house-zaan-timber-merchant-h1",
-  "revision": "h1-2026-08-04-real-windows-a2",
-  "modelHash": "166b7cc33bcf",
-  "generatedAt": "2026-08-04T15:37:45.307Z",
+  "revision": "h1-2026-08-04-entry-light-a3",
+  "modelHash": "35585d334964",
+  "generatedAt": "2026-08-04T17:29:43.274Z",
   "views": [
     {
       "id": "front",
@@ -63,6 +63,12 @@
       "label": "Night · inhabited front and workshop",
       "projection": "perspective",
       "file": "night-front.png"
+    },
+    {
+      "id": "night-entry-detail",
+      "label": "Night · lantern carried by solid door head",
+      "projection": "perspective",
+      "file": "night-entry-detail.png"
     },
     {
       "id": "silhouette",

@@ -149,7 +149,8 @@ test("все детали невырождены и ids уникальны", () 
 test("приёмочные камеры показывают оболочку, каркас и соединение мастерской отдельно", () => {
   assert.deepEqual(zaanTimberMerchantHouseObject.views.map((view) => view.id), [
     "front", "left", "rear", "right", "three-quarter-left", "three-quarter-right",
-    "high-three-quarter", "frame-cutaway", "junction-cutaway", "night-front", "silhouette",
+    "high-three-quarter", "frame-cutaway", "junction-cutaway", "night-front",
+    "night-entry-detail", "silhouette",
   ]);
   assert.ok(zaanTimberMerchantHouseObject.views.find((view) => view.id === "frame-cutaway")?.hiddenGroups?.length);
   assert.ok(zaanTimberMerchantHouseObject.views.find((view) => view.id === "junction-cutaway")?.hiddenGroups?.length);

@@ -64,9 +64,15 @@ export function updatePropulsionFeedback(
   previous: readonly number[],
   executions: readonly CommandActuatorExecution[],
   engineCount: number,
+  /**
+   * Приставка канала. Отдельный орган — отдельная группа каналов, но закон
+   * обучения у них один: сравнить просьбу с доставкой. Модуль остаётся общим и
+   * ничего не знает ни о винтах, ни о тоннелях.
+   */
+  channelPrefix = "throttle:",
 ): readonly number[] {
   return Array.from({ length: engineCount }, (_, index) => {
-    const channel = `throttle:${index}`;
+    const channel = `${channelPrefix}${index}`;
     const measurable = executions.filter(
       (execution) =>
         execution.commandChannel === channel &&

@@ -4,7 +4,11 @@ import type {
   ObjectPoint,
 } from "../dutchWindmills/objectModel.ts";
 
-export const DUTCH_POLDER_LOCAL_LIGHT_CAPACITY = 6;
+// Nine architectural groups must remain legible in the island-wide night
+// composition. Twelve real point lights retain one source per group and leave
+// three slots for nearby fixture detail without returning to the rejected
+// twenty-four-light renderer load.
+export const DUTCH_POLDER_LOCAL_LIGHT_CAPACITY = 12;
 
 export type DutchLampClass = "domestic" | "work" | "exterior";
 
@@ -33,12 +37,13 @@ const classLight = (
     return {
       position: lens,
       color: "#ffd08a",
-      distance: 10,
-      intensity: 12,
+      distance: 16,
+      intensity: 14,
       dayIntensityFactor: 0.05,
       poolPriority: priority,
       localPoolCapacity: DUTCH_POLDER_LOCAL_LIGHT_CAPACITY,
       poolGroupId,
+      reservePoolGroup: true,
       interior: true,
       transition: { fadeInSeconds: 1.8, fadeOutSeconds: 2.4 },
     };
@@ -47,12 +52,13 @@ const classLight = (
     return {
       position: lens,
       color: "#ffbd70",
-      distance: 14,
-      intensity: 18,
+      distance: 22,
+      intensity: 22,
       dayIntensityFactor: 0.025,
       poolPriority: priority,
       localPoolCapacity: DUTCH_POLDER_LOCAL_LIGHT_CAPACITY,
       poolGroupId,
+      reservePoolGroup: true,
       interior: true,
       transition: { fadeInSeconds: 1.4, fadeOutSeconds: 2.0 },
     };
@@ -60,12 +66,13 @@ const classLight = (
   return {
     position: lens,
     color: "#ffe0aa",
-    distance: 16,
-    intensity: 20,
+    distance: 24,
+    intensity: 24,
     dayIntensityFactor: 0,
     poolPriority: priority,
     localPoolCapacity: DUTCH_POLDER_LOCAL_LIGHT_CAPACITY,
     poolGroupId,
+    reservePoolGroup: true,
     transition: { fadeInSeconds: 1.6, fadeOutSeconds: 2.2 },
   };
 };

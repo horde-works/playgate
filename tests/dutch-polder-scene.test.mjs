@@ -42,9 +42,14 @@ test("the complete polder compiles with no unsupported member", () => {
   // 19 + три префаба головчатой ивы (core:willow:71..73) + два префаба
   // плакучей (core:weeping-willow:81..82) + три instance-scoped варианта
   // освещённых мостов B1/B3/B5. B2/B4 используют исходный тёмный prefab.
-  assert.equal(dutchPolderCompilation.artifact.prefabIds.length, 27);
-  // Группы: к прежним девятнадцати добавилась группа плакучих ив у воды.
-  assert.equal(dutchPolderCompilation.artifact.groupCount, 20);
+  // 27 + одиннадцать посадок дворового кита занского дома (десять предметов,
+  // из них забор одним модулем, плюс отдельная калитка). Рама для фасоли в
+  // мир не посажена — известный дефект опирания внутри самого объекта.
+  assert.equal(dutchPolderCompilation.artifact.prefabIds.length, 38);
+  // Группы: к прежним двадцати добавились две группы двора занского дома —
+  // наземная и швартовная. Они разделены, потому что садятся по разным
+  // правилам отметки: одна от грунта, другая от уреза воды.
+  assert.equal(dutchPolderCompilation.artifact.groupCount, 22);
   const earthCells = dutchPolderScene.breakablePieces.filter((piece) =>
     piece.id.includes(":terrain:cell:")
   );

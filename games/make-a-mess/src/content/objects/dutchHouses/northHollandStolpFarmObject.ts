@@ -458,8 +458,10 @@ parts.push(
   ...dutchLampFixture({
     id: "service-entry-lantern",
     group: "lighting-fixtures",
-    lens: point(7.78, 2.18, -0.6),
-    carrierPoint: point(7.42, 2.36, -0.6),
+    // The former carrier point was centred in the service-door opening. This
+    // plate lands on the solid timber bay beyond the right jamb instead.
+    lens: point(7.72, 2.18, 0.28),
+    carrierPoint: point(7.36, 2.36, 0.28),
     carrier: "wall-x",
     outward: 1,
     lampClass: "exterior",
@@ -470,7 +472,7 @@ parts.push(
 
 export const northHollandStolpFarmObject: ObjectLabModel = {
   id: "dutch-house-north-holland-stolp-h2",
-  revision: "h2-2026-08-04-real-windows-a2",
+  revision: "h2-2026-08-04-entry-light-a3",
   title: "North-Holland stolp farm + rear tail — structural grey model",
   units: "metres",
   coordinates: { up: "+Y", front: "+Z", origin: "ground-centre" },
@@ -521,6 +523,7 @@ export const northHollandStolpFarmObject: ObjectLabModel = {
     { id: "vierkant-cutaway", label: "Cutaway · four-post roof load path", projection: "perspective", position: point(-20, 13, 20), target: point(0, 4.2, 0), fov: 34, hiddenGroups: ["residential-shell", "residential-openings", "residential-trim", "residential-gable", "front-gable-roof", "barn-shell", "barn-openings", "main-roof-skin", "tail-shell", "tail-openings", "tail-roof"] },
     { id: "tail-junction-cutaway", label: "Cutaway · open rear bay + roof flashing", projection: "perspective", position: point(18, 8, -20), target: point(2.8, 2.5, -7.0), fov: 32, hiddenGroups: ["residential-shell", "residential-openings", "residential-trim", "residential-gable", "front-gable-roof", "barn-shell", "barn-openings", "main-roof-skin", "tail-shell", "tail-openings", "tail-roof", "main-roof-frame"] },
     { id: "night-residence", label: "Night · occupied residence, dark barn", projection: "perspective", position: point(19, 7.5, 20), target: point(1.5, 2.1, 4.2), fov: 34, lighting: "night" },
+    { id: "night-service-entry-detail", label: "Night · side lantern on solid service wall", projection: "perspective", position: point(13.5, 3.4, 4.1), target: point(7.25, 1.9, 0.1), fov: 29, lighting: "night" },
     { id: "silhouette", label: "Silhouette control", projection: "orthographic", position: point(-24, 12, 27), target: point(0, 4.1, -1), orthoHeight: 16.0 },
   ],
 };

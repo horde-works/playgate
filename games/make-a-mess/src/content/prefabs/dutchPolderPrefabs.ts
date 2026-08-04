@@ -10,6 +10,7 @@ import {
   dutchLandscapeMooringPostParts,
   dutchLandscapePeatStoreParts,
   dutchLandscapePicketFenceParts,
+  dutchLandscapePicketGateParts,
   dutchLandscapePrivyParts,
   dutchLandscapeRainBarrelParts,
   dutchLandscapeSchouwParts,
@@ -331,7 +332,8 @@ const definitions = [
   prefab("dutch:landscape:hand-pump", "Cast-iron hand pump", ["dutch", "landscape", "yard", "water"], dutchLandscapeHandPumpParts),
   prefab("dutch:landscape:drying-line", "Farmyard drying line", ["dutch", "landscape", "yard", "domestic"], dutchLandscapeDryingLineParts),
   prefab("dutch:landscape:bean-frame", "Hazel bean frame", ["dutch", "landscape", "yard", "garden"], dutchLandscapeBeanFrameParts),
-  prefab("dutch:landscape:picket-fence", "Zaan picket fence and gate", ["dutch", "landscape", "yard", "fence"], dutchLandscapePicketFenceParts),
+  prefab("dutch:landscape:picket-fence", "Zaan picket fence module", ["dutch", "landscape", "yard", "fence"], dutchLandscapePicketFenceParts),
+  prefab("dutch:landscape:picket-gate", "Zaan picket gate", ["dutch", "landscape", "yard", "gate"], dutchLandscapePicketGateParts),
   prefab("dutch:landscape:rain-barrel", "Oak rain barrel", ["dutch", "landscape", "yard", "water"], dutchLandscapeRainBarrelParts),
   prefab("dutch:landscape:bridge", "Kwakel bridge", ["dutch", "landscape", "bridge"], dutchLandscapeBridgeParts),
   ...(["B1", "B3", "B5"] as const).map((bridgeId) => prefabWithLightGroup(

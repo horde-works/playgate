@@ -62,6 +62,8 @@ export interface SceneLightSource {
   readonly localPoolCapacity?: number;
   /** Fixtures in one room are selected as a coherent set. */
   readonly poolGroupId?: string;
+  /** Reserve one real source from this group before filling nearby detail. */
+  readonly reservePoolGroup?: boolean;
   /** Suppress this interior light for a player seated in its moving group. */
   readonly interior?: boolean;
   /** Long-range camera-facing signal halo. */

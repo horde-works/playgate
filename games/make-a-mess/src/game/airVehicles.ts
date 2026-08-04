@@ -95,6 +95,17 @@ import {
   sr6SkatRoutePhase,
 } from "./sr6SkatRoutes.ts";
 import {
+  COMBAT_HEXACOPTER_RANGE_DISPATCH_POINT,
+  combatHexacopterRangeBlueprint,
+  combatHexacopterRangeFrame,
+} from "./combatHexacopter.ts";
+import {
+  combatHexacopterRangeArrivalPlan,
+  combatHexacopterRangeEscapePlan,
+  combatHexacopterRangePhase,
+  combatHexacopterRangePlan,
+} from "./combatHexacopterRangeRoutes.ts";
+import {
   interIslandArrivalOrigin,
   interIslandArrivalPhase,
   interIslandArrivalPlan,
@@ -1102,10 +1113,10 @@ export const SR6_SKAT_AIR_VEHICLE: AirVehicleDefinition = {
       // enginePower и lateralThrust — горизонтальные СИЛЫ, и они за массой не
       // следуют. Стальное ядро и перевод силового пути с пластика на сталь
       // подняли массу с 5.53 до 7.12 кг (x1.288), поэтому обе величины
-      // отмасштабированы на тот же множитель от исходных 62 и 42: удельные
-      // ускорения остаются прежними (боком 7.59 м/с², горизонтальная
-      // тяговооружённость 6.85). Проверяется тестом, а не на глаз.
-      enginePower: 80,
+      // отмасштабированы от исходных 62 и 42 по ФАКТИЧЕСКОЙ массе 6.45 кг,
+      // так что удельные ускорения остаются прежними (боком 7.59 м/с²,
+      // горизонтальная тяговооружённость 6.85). Проверяется тестом.
+      enginePower: 72,
       enginePoints: SR6_SKAT_ENGINE_POINTS,
       rotorCapacityWeights: SR6_SKAT_ROTOR_CAPACITY_WEIGHTS,
       rotorSpinDirections: SR6_SKAT_ROTOR_SPIN_DIRECTIONS,
@@ -1113,7 +1124,7 @@ export const SR6_SKAT_AIR_VEHICLE: AirVehicleDefinition = {
       rudderReferenceSpeed: 9,
       rudderPoint: SR6_SKAT_RUDDER_POINT,
       liftTrimRange: 0.28,
-      lateralThrust: 54,
+      lateralThrust: 49,
     },
     approach: {
       heading: [sr6SkatFrame.nose[0], sr6SkatFrame.nose[2]],
@@ -1154,6 +1165,76 @@ export const SR6_SKAT_AIR_VEHICLE: AirVehicleDefinition = {
   },
 };
 
+export const COMBAT_HEXACOPTER_RANGE_AIR_VEHICLE: AirVehicleDefinition = {
+  ...combatHexacopterRangeFrame,
+  departure: {
+    target: {
+      id: "combat-hexacopter-range:departure",
+      kind: "departure",
+      cue: "town-hexacopter-uncrewed-flight",
+    },
+    point: COMBAT_HEXACOPTER_RANGE_DISPATCH_POINT,
+    flightKind: "circuit",
+    approachRadius: 2.4,
+    releaseRadius: 3.2,
+    heightTolerance: 2.3,
+    passengerDropPoint: [4.4, 0.08, 3.5],
+  },
+  flight: {
+    limits: {
+      enginePower: 105,
+      enginePoints: combatHexacopterRangeBlueprint.enginePoints,
+      rotorCapacityWeights: combatHexacopterRangeBlueprint.rotorCapacityWeights,
+      rotorSpinDirections: combatHexacopterRangeBlueprint.rotorSpinDirections,
+      // Второй орган рыскания. Реактивный момент шести колец даёт этой машине
+      // около 0.1 рад/с, а её собственный круг требует вдвое больше: без
+      // тоннелей нос физически не успевает за трассой и аппарат идёт боком.
+      yawThrusters: combatHexacopterRangeBlueprint.yawThrusters,
+      maxRudderForce: 0,
+      rudderReferenceSpeed: 8,
+      rudderPoint: combatHexacopterRangeBlueprint.mooringPoint,
+      liftTrimRange: combatHexacopterRangeBlueprint.flight.liftTrimRange,
+      lateralThrust: 70,
+    },
+    approach: {
+      heading: [combatHexacopterRangeFrame.nose[0], combatHexacopterRangeFrame.nose[2]],
+      tolerance: { position: 4.2, heading: 0.4, speed: 2.8 },
+    },
+    docking: {
+      position: 1.3,
+      height: 0.45,
+      headingCos: 0,
+      speed: 0.34,
+      verticalSpeed: 0.5,
+      uprightCos: 0.96,
+      angularSpeed: 0.2,
+    },
+    landing: {
+      radius: 1.15,
+      height: 0.48,
+      speed: 0.4,
+      verticalSpeed: 0.55,
+      uprightCos: 0.978,
+      angularSpeed: 0.22,
+    },
+    spoolSeconds: combatHexacopterRangeBlueprint.flight.spoolSeconds,
+    underwaySeconds: 6,
+    driveAnimation: { kind: "propeller", phaseSpeed: 31, shaftAxis: [0, 1, 0] },
+    linearDamping: combatHexacopterRangeBlueprint.flight.linearDamping,
+    angularDamping: combatHexacopterRangeBlueprint.flight.angularDamping,
+    lateralDragRatio: combatHexacopterRangeBlueprint.flight.lateralDragRatio,
+    liftSource: "rotor",
+    liftReserve: combatHexacopterRangeBlueprint.flight.liftReserve,
+    maximumTilt: combatHexacopterRangeBlueprint.flight.maximumTilt,
+    guidance: { upsetTiltRate: 1.45, upsetYawRate: 1.3 },
+    mooringReach: 0.6,
+    routePlan: (_kind, berth) => combatHexacopterRangePlan(berth),
+    arrivalPlan: combatHexacopterRangeArrivalPlan,
+    escapePlan: combatHexacopterRangeEscapePlan,
+    routePhase: (_kind, progress) => combatHexacopterRangePhase(progress),
+  },
+};
+
 export const airVehicles: readonly AirVehicleDefinition[] = [
   SKY_TRAIN_AIR_VEHICLE,
   SKY_LONGSHIP_AIR_VEHICLE,
@@ -1162,4 +1243,5 @@ export const airVehicles: readonly AirVehicleDefinition[] = [
   TOWN_HEXACOPTER_AIR_VEHICLE,
   NIMBUS_HEXACOPTER_AIR_VEHICLE,
   SR6_SKAT_AIR_VEHICLE,
+  COMBAT_HEXACOPTER_RANGE_AIR_VEHICLE,
 ];

@@ -655,8 +655,13 @@ for (const z of [-0.55, 0.55]) {
 }
 addBox("schouw-foredeck", "schouw-frame", "timber-mid", point(0, 0.2875, 2), point(1.02, 0.035, 0.5));
 for (const side of [-1, 1] as const) {
-  addBeam(`schouw-oar:${side}:shaft`, "schouw-fittings", "timber-mid", point(side * 0.15, 0.36, 0.25), point(side * 2.32, 0.18, -0.45), 0.045, 0.045);
-  addBeam(`schouw-oar:${side}:blade`, "schouw-fittings", "timber-mid", point(side * 2.32, 0.18, -0.45), point(side * 2.62, 0.13, -0.55), 0.12, 0.025);
+  // Oars are stowed, not shipped. Deployed they reached 2.62 m from the axis,
+  // and a moored boat 5.28 m across a 4.20 m canal lays its blades on both
+  // banks. At a mooring they are lifted out of the rowlocks and laid inboard
+  // along the benches, blades aft — which is also what stops a blade from
+  // being the first thing a passing hull or a blast takes off.
+  addBeam(`schouw-oar:${side}:shaft`, "schouw-fittings", "timber-mid", point(side * 0.40, 0.30, 1.35), point(side * 0.46, 0.295, -0.95), 0.045, 0.045);
+  addBeam(`schouw-oar:${side}:blade`, "schouw-fittings", "timber-mid", point(side * 0.46, 0.295, -0.95), point(side * 0.48, 0.29, -1.27), 0.12, 0.025);
   addBox(`schouw-rowlock:${side}:base`, "schouw-fittings", "timber-dark", point(side * 0.66, 0.315, 0.25), point(0.06, 0.03, 0.085));
   for (const z of [0.222, 0.278]) {
     addCylinder(`schouw-rowlock:${side}:prong:${z}`, "schouw-fittings", "timber-dark", point(side * 0.66, 0.33, z), point(side * 0.66, 0.39, z), 0.012, 7);
@@ -1235,6 +1240,21 @@ const beanFrameStations = [-1.1, -0.55, 0, 0.55, 1.1] as const;
 const beanFrameBedSize = point(2.6, 0.2, 1.1);
 const beanFrameBaseToTie = Math.hypot(beanFrameTieY, beanFrameRowSpacing / 2);
 
+// Нога сидит в грядке, но не пробивает её насквозь. Явные contactBoxes
+// включают строгий режим опирания: проникновение глубже 0.12 м отвергается,
+// и нога, начинавшаяся на нуле объекта, прошивала двадцатисантиметровую
+// грядку целиком — грядка переставала быть опорой, а от самого грунта у
+// пятнадцатимиллиметрового шеста оставалось пятно контакта в ноль. Рама
+// стартовала в сцене десятью неопёртыми кусками. Ось шеста не меняется,
+// подрезан только закопанный конец.
+// ВНИМАНИЕ, известный дефект опирания. В сцене польдера рама стартует шестью
+// неопёртыми шестами из десяти — стоят ровно станции 0.55 и 1.1, падают −1.1,
+// −0.55 и 0, и набор не меняется ни от места на карте, ни от заглубления, ни
+// от добавленных пяток и ригеля. На простой земляной плите объект стоит
+// целиком, значит дело в паре «тонкий шест — дёрновая оболочка польдера»:
+// пятно опирания считается по МЕНЬШЕЙ коробке, а у шеста Ø15 мм это девять
+// квадратных сантиметров. Лечится в объекте, а не в посадке, поэтому рама
+// пока НЕ размещена в мире; остальные десять предметов двора стоят.
 for (const x of beanFrameStations) {
   for (const rowSign of [-1, 1] as const) {
     const baseZ = rowSign * beanFrameRowSpacing / 2;
@@ -1743,7 +1763,7 @@ export const DUTCH_RAIN_BARREL_OUTLET_CLEARANCE = rainBarrelDownspoutBottomY - r
 
 export const dutchLandscapeKitObject: DutchLandscapeKitLabModel = {
   id: "dutch-landscape-kit",
-  revision: "landscape-kit-a17-2026-08-04",
+  revision: "landscape-kit-a18-2026-08-04-night-range",
   title: "Dutch polder landscape kit — water, yard, bridge, beds, banks and field edges",
   units: "metres",
   coordinates: { up: "+Y", front: "+Z", origin: "ground-centre" },
@@ -1971,7 +1991,14 @@ export const dutchLandscapeLitBridgeParts = parts.filter((part) => bridgeLitGrou
 export const dutchLandscapeSchouwParts = parts.filter((part) => schouwGroups.includes(part.group as typeof schouwGroups[number]));
 export const dutchLandscapeMooringPostParts = parts.filter((part) => mooringPostGroups.includes(part.group as typeof mooringPostGroups[number]));
 export const dutchLandscapeJettyParts = parts.filter((part) => jettyGroups.includes(part.group as typeof jettyGroups[number]));
-export const dutchLandscapePicketFenceParts = parts.filter((part) => picketFenceGroups.includes(part.group as typeof picketFenceGroups[number]));
+// The fence run and its gate are two prefabs, not one. A boundary is built by
+// repeating the three-metre module, and a module that carries a gate baked into
+// it would put a gate every four metres. They still share one authored frame:
+// the gate hangs on the module's right-hand post, so both are placed with the
+// SAME transform and need no offset arithmetic at placement.
+const picketParts = parts.filter((part) => picketFenceGroups.includes(part.group as typeof picketFenceGroups[number]));
+export const dutchLandscapePicketFenceParts = picketParts.filter((part) => part.id.startsWith("picket-fence-"));
+export const dutchLandscapePicketGateParts = picketParts.filter((part) => part.id.startsWith("picket-gate-"));
 export const dutchLandscapePeatStoreParts = parts.filter((part) => peatStoreGroups.includes(part.group as typeof peatStoreGroups[number]));
 export const dutchLandscapePrivyParts = parts.filter((part) => privyGroups.includes(part.group as typeof privyGroups[number]));
 export const dutchLandscapeHandPumpParts = parts.filter((part) => handPumpGroups.includes(part.group as typeof handPumpGroups[number]));

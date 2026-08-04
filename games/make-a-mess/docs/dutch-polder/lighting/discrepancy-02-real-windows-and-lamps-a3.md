@@ -36,7 +36,11 @@
   still capped at six active sources.
 - Targeted real-window, prefab, lighting and mill suites pass 39/39.
 
-## Current capture set
+## A3 capture set
+
+This set is superseded by
+`discrepancy-03-exterior-carriers-and-night-range-a4.md`; it remains here as
+the historical proof for the window/lens correction.
 
 | Object | Revision | Hash | Views |
 | --- | --- | --- | ---: |

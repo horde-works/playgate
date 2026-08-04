@@ -1167,59 +1167,90 @@ export function propWeepingWillow(options: TreeOptions = {}): FloraPiece[] {
     },
   ];
 
-  // Сучья поднимаются дугой и разносят точки подвеса: занавес висит с них, а
-  // не со ствола, поэтому купол шире высоты.
-  const limbCount = 4 + Math.floor(rand(seed, 15) * 3);
-  const reach = (3.6 + rand(seed, 16) * 1.5) * s;
+  // СКЕЛЕТ ДУГОЙ. У ивы нет ни одной прямой линии: сук выходит из ствола круто
+  // вверх, потом ложится и на конце клонится вниз — с этой дуги и падают
+  // побеги. Прямая спица, торчащая вбок, читается колесом от телеги, чем
+  // прошлая сборка и грешила. Дуга набирается ЦЕПОЧКОЙ звеньев: каждое
+  // положе предыдущего и тоньше его.
+  const limbCount = 3 + Math.floor(rand(seed, 15) * 2);
+  const reach = (3.9 + rand(seed, 16) * 1.4) * s;
   for (let limb = 0; limb < limbCount; limb += 1) {
     const limbVar = rand(seed, 40 + limb);
     const yaw = limb * 2.399963229728653 + (rand(seed, 60 + limb) - 0.5) * 0.5;
-    // Сук уходит вбок положе, чем вверх: занавес должен быть шире дерева, а
-    // сам сук — прятаться внутри него, а не торчать копьём над кроной.
-    const tilt = 0.85 + limbVar * 0.35;
-    const attachHeight = trunkHeight * (0.62 + (limb / limbCount) * 0.34);
-    const attach = scaleVector(trunkAxis, attachHeight);
-    const direction = directionFromAngles(yaw, tilt);
-    const length = reach * (0.78 + limbVar * 0.36);
-    const limbId = `limb:${limb}`;
-    pieces.push(
-      branchPiece(
-        "willow",
-        seed,
-        limbId,
-        "trunk",
-        attach,
-        direction,
-        length,
-        (0.13 + limbVar * 0.07) * s,
-        limbVar > 0.5 ? "#5a4a38" : "#63523d",
-      ),
-    );
-
-    // Листва и на самом суку: без неё верх купола гол, и сук читается копьём
-    // поверх занавеса.
-    for (let leafy = 0; leafy < 3; leafy += 1) {
+    const attachHeight = trunkHeight * (0.62 + (limb / limbCount) * 0.32);
+    const span = reach * (0.86 + limbVar * 0.3);
+    const segments = 3;
+    let node = scaleVector(trunkAxis, attachHeight);
+    let parent = "trunk";
+    for (let segment = 0; segment < segments; segment += 1) {
+      const segVar = rand(seed, 100 + limb * 5 + segment);
+      // Наклон растёт от звена к звену: 0.55 → 0.95 → 1.35 рад. Последнее
+      // звено уходит ниже горизонта — это и есть свес дуги.
+      // Дуга: 0.62 → 1.02 → 1.32 рад. Последнее звено ложится почти
+      // горизонтально — так купол выходит шире собственной высоты, а не
+      // сваливается вниз у самого ствола.
+      const tilt = 0.62 + segment * 0.35 + (segVar - 0.5) * 0.16;
+      const segYaw = yaw + (segVar - 0.5) * 0.3;
+      const direction = directionFromAngles(segYaw, tilt);
+      const length = span * (0.42 - segment * 0.07);
+      const id = segment === 0 ? `limb:${limb}` : `limb:${limb}:arc:${segment}`;
       pieces.push(
-        clump(
+        branchPiece(
           "willow",
           seed,
-          `${limbId}:leaf:${leafy}`,
-          limbId,
-          seed * 613 + limb * 29 + leafy,
-          addVector(attach, scaleVector(direction, length * (0.34 + leafy * 0.3))),
-          (0.52 + limbVar * 0.16) * s,
-          WEEPING_GREENS,
-          0.4,
+          id,
+          parent,
+          node,
+          direction,
+          length,
+          (0.15 - segment * 0.035 + segVar * 0.03) * s,
+          segVar > 0.5 ? "#5a4a38" : "#63523d",
+        ),
+      );
+      node = addVector(node, scaleVector(direction, length));
+      parent = id;
+    }
+
+    // Ветви второго порядка сходят с середины дуги — тоже дугой вниз.
+    const forkCount = 2;
+    for (let fork = 0; fork < forkCount; fork += 1) {
+      const forkVar = rand(seed, 140 + limb * 5 + fork);
+      const forkParent = `limb:${limb}:arc:${1 + fork % 2}`;
+      const forkBase = pieces.find(({ id }) => id === forkParent);
+      if (!forkBase) {
+        continue;
+      }
+      const baseAxis = normalizeVector([
+        -Math.sin(forkBase.rotation![2]),
+        Math.cos(forkBase.rotation![0]) * Math.cos(forkBase.rotation![2]),
+        Math.sin(forkBase.rotation![0]) * Math.cos(forkBase.rotation![2]),
+      ]);
+      const forkStart = addVector(
+        forkBase.position as FloraVector,
+        scaleVector(baseAxis, forkBase.size[1] * (0.1 + forkVar * 0.3)),
+      );
+      const forkDirection = directionFromAngles(
+        yaw + (fork % 2 === 0 ? -1 : 1) * (0.45 + forkVar * 0.5),
+        1.25 + forkVar * 0.4,
+      );
+      const forkLength = span * (0.3 + forkVar * 0.18);
+      const forkId = `limb:${limb}:fork:${fork}`;
+      pieces.push(
+        branchPiece(
+          "willow",
+          seed,
+          forkId,
+          forkParent,
+          forkStart,
+          forkDirection,
+          forkLength,
+          (0.055 + forkVar * 0.03) * s,
+          forkVar > 0.5 ? "#59493a" : "#61513e",
         ),
       );
     }
-
-    // ЗАНАВЕС РИСУЕТ РЕНДЕР. Плеть — не отдельное тело: тонкий отвес в два
-    // сантиметра держится в решателе на волоске, и любой поворот посадки
-    // сбивает ему опору (ловилось на польдере трижды подряд, каждый раз на
-    // другой плети). Телом остаётся сук; сломав его, игрок роняет весь его
-    // занавес разом — это и честнее, и вчетверо дешевле по телам.
   }
+
   // ВЕРШИНА. Без неё над кроной остаётся дыра: сучья расходятся вбок, и макушка
   // читается голым столбом с пучком — ровно то, чем плакучая ива НЕ является.
   // Короткий верхушечный сук поднимается почти отвесно, и занавес падает уже

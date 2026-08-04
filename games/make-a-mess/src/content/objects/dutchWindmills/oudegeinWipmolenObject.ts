@@ -352,7 +352,7 @@ parts.push(
 
 export const oudegeinWipmolenObject: ObjectLabModel = {
   id: "dutch-windmill-oudegein-wipmolen-m2",
-  revision: "m2-2026-08-04-real-windows-a2",
+  revision: "m2-2026-08-04-night-range-a3",
   title: "Poldermolen Oudegein-type wipmolen — structural grey model",
   units: "metres",
   coordinates: { up: "+Y", front: "+Z", origin: "ground-centre" },

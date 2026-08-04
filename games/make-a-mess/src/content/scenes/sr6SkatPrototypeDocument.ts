@@ -212,8 +212,13 @@ function meshObject(part: Extract<ObjectLabPart, { kind: "mesh" }>): SceneObject
       colors: part.vertexColors?.map(point),
       doubleSided: part.doubleSided,
     },
-    voxelization: { mode: "shell", thickness: binding.shellThickness, voxelSize: 0.11 },
-    volume: Math.max(0.0002, area * binding.shellThickness),
+    // Armour is solid steel of real thickness, not a surface layer: a thin
+    // shell resolves to a couple of voxels and a burst goes straight through
+    // it into the core it is supposed to protect.
+    voxelization: part.group === "armour"
+      ? { mode: "solid", thickness: 0.05, voxelSize: 0.05 }
+      : { mode: "shell", thickness: binding.shellThickness, voxelSize: 0.11 },
+    volume: Math.max(0.0002, area * (part.group === "armour" ? 0.05 : binding.shellThickness)),
     // Lofted shell and frame panels are structure and carry their fittings; a
     // blanket bearsLoad:false left every deck fitting on the hump with nothing
     // to attach to, because a mesh that bears no load is not a support
@@ -257,15 +262,21 @@ function canonicalPart(part: ObjectLabPart): SceneObjectDefinition {
   });
 }
 
+/**
+ * Силовой корень кластера. Раньше это был невидимый грунтовый балласт под
+ * кокпитом: половина массы машины и одновременно та точка, попадание в которую
+ * снизу роняло весь борт вместе с гондолами. Теперь корень — стальной, лежит
+ * внутри килевой балки над батарейным отсеком и прикрыт бронелистами.
+ */
 const root: SceneObjectDefinition = {
   kind: "primitive",
   id: "core",
-  material: "earth",
-  shape: "cylinder",
-  size: [0.56, 0.34, 0.56],
-  color: "#343b3e",
-  transform: { position: sr6SkatPoint([0, 0.58, 0]) },
-  volume: 2.2,
+  material: "steel",
+  shape: "steelSheet",
+  size: [0.16, 0.18, 3.6],
+  color: "#4d5456",
+  transform: { position: sr6SkatPoint([0, 0.92, 0]) },
+  volume: 0.42,
   contactBoxes: [{ position: [0, 0.22, 0], size: [4.5, 1.08, 4.68] }],
   carriesAttachments: true,
   attachmentSupportMode: "cable",

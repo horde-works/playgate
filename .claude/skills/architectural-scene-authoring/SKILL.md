@@ -301,6 +301,10 @@ reusing the authoring helper.
 - Build the complete visible fixture chain `carrier → plate/hook → arm/chain →
   body/cap → clear non-emissive lens → contained bulb/flame`. The bulb/flame
   alone is emissive and owns the point/spot source at its own centre.
+- Name and test the carrier surface for every exterior fixture. The mounting
+  plate must positively overlap opaque carrier geometry and must not overlap a
+  door/window clear opening or glazing. A plausible close camera is not proof:
+  it can hide a plate floating beyond a jamb or sitting directly on glass.
 - Place interior fixtures so the bulb is visible from at least one fixed
   exterior night camera and is not hidden behind a mullion, transom, roof
   member or opaque backing. Window transmission, bulb emission, illuminated
@@ -310,6 +314,10 @@ reusing the authoring helper.
 - Check day, evening and night transitions and route legibility.
 - Verify physical light radius and shared-pool selection separately. A correct
   close view does not prove that a landmark remains lit in a flyover.
+- For a wide night composition, test bulb emission, physical cast radius and
+  point-pool residency as three separate systems. Reserve at least one real
+  authored source per required architectural cluster before spending the
+  remaining pool on nearby detail; do not substitute a camera-facing beacon.
 
 ### 7. Integrate the city and landscape
 
@@ -394,6 +402,10 @@ Also verify:
 - a lens/bulb containment audit proving that lenses own no sources, bulbs own
   sources at their centres, and lit-window close views show the bulb through
   ordinary glass;
+- a mounting audit proving every exterior plate overlaps a named opaque
+  carrier and no opening/glazing volume;
+- a wide-view pool audit proving every required night cluster retains one real
+  source within the declared renderer budget;
 - dimensions, endpoints, tangent/curvature continuity and maximum error from
   compiled pieces;
 - whole-scene initial support and relevant destruction behavior;
@@ -428,6 +440,7 @@ make an unrelated suite green.
 - Never use a decorative stripe to fake missing body curvature.
 - Never create an artificial roof hump to hide a bad roof-to-front transition.
 - Never leave a canopy, device or light without a visible attachment path.
+- Never mount an exterior light on glazing or in a door/window clear opening.
 - Never start a beam in empty space in front of its fixture.
 - Never turn livery or flat ornament into a stack of physical stickers.
 - Never accept unsupported pieces, hidden decorative supports or a collider

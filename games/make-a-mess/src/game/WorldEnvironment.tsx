@@ -582,9 +582,10 @@ interface LampLightPoolProps {
  * forward renderer evaluates every visible point light for every fragment on
  * screen, so 24 always-on lamps at night tripled the shading cost. A lamp
  * with a 9 m range that is 40+ m away lights nothing a player can resolve —
- * so each frame the pool is assigned to the nearest lit lamps only, with a
- * short fade on reassignment. The flame glow itself is emissive + bloom and
- * stays on every lamp regardless of the pool.
+ * so each frame the pool first preserves explicitly reserved architectural
+ * groups, then assigns the remaining slots to nearby detail, with a short fade
+ * on reassignment. The flame glow itself is emissive + bloom and stays on every
+ * lamp regardless of the pool.
  */
 export function LampLightPool({
   lamps,

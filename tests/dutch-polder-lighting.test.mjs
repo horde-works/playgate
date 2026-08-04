@@ -10,6 +10,7 @@ import { oudegeinWipmolenObject } from "../games/make-a-mess/src/content/objects
 import { dutchPolderPrefabLibrary } from "../games/make-a-mess/src/content/prefabs/dutchPolderPrefabs.ts";
 import { compileSceneGroups } from "../games/make-a-mess/src/content/scenes/compileScene.ts";
 import { dutchPolderDocument } from "../games/make-a-mess/src/content/scenes/dutchPolder/dutchPolderDocument.ts";
+import { selectGroupedLampCandidates } from "../games/make-a-mess/src/game/lampPoolSelection.ts";
 
 const models = [
   deKatObject,
@@ -40,10 +41,11 @@ test("every polder source is a visible bulb contained by a separate transparent 
     )), bulb.id);
     assert.ok(bulb.light, bulb.id);
     assert.deepEqual(bulb.light.position, bulb.center, bulb.id);
-    assert.equal(bulb.light.localPoolCapacity, 6, bulb.id);
+    assert.equal(bulb.light.localPoolCapacity, 12, bulb.id);
+    assert.equal(bulb.light.reservePoolGroup, true, bulb.id);
     assert.equal(bulb.light.beacon, undefined, bulb.id);
-    assert.ok(bulb.light.distance >= 10, bulb.id);
-    assert.ok(bulb.light.intensity >= 12, bulb.id);
+    assert.ok(bulb.light.distance >= 16, bulb.id);
+    assert.ok(bulb.light.intensity >= 14, bulb.id);
   }
   assert.equal(allCanonicalParts.filter((part) => part.light && part.material !== "lamp-bulb").length, 0);
 });
@@ -60,16 +62,61 @@ test("fixture support chain includes carrier plate or hook, arm or chain, cap an
   }
 });
 
+const partBounds = (part) => {
+  if (part.kind === "box") {
+    return part.center.map((value, axis) => [value - part.size[axis] / 2, value + part.size[axis] / 2]);
+  }
+  if (part.kind === "beam") {
+    const margin = Math.max(part.width, part.depth) / 2;
+    return part.from.map((value, axis) => [
+      Math.min(value, part.to[axis]) - margin,
+      Math.max(value, part.to[axis]) + margin,
+    ]);
+  }
+  return undefined;
+};
+
+const boundsOverlap = (left, right) => left.every(([minimum, maximum], axis) => (
+  Math.min(maximum, right[axis][1]) - Math.max(minimum, right[axis][0]) > 0.001
+));
+
+test("every exterior mounting plate lands on opaque carrier geometry, never an opening or pane", () => {
+  for (const [model, prefix, plateSuffix] of [
+    [deKatObject, "front-entry-lantern", "mounting-plate"],
+    [oudegeinWipmolenObject, "upper-eave-lantern", "ceiling-plate"],
+    [zaanTimberMerchantHouseObject, "front-entry-lantern", "mounting-plate"],
+    [northHollandStolpFarmObject, "service-entry-lantern", "mounting-plate"],
+  ]) {
+    const plate = model.parts.find(({ id }) => id === `${prefix}:${plateSuffix}`);
+    assert.ok(plate, `${model.id}:${prefix}`);
+    const plateBounds = partBounds(plate);
+    assert.ok(plateBounds, plate.id);
+    const carrier = model.parts.find((part) => {
+      if (part.group === "lighting-fixtures" || part.id.startsWith(`${prefix}:`)) return false;
+      if (["glazing", "opening", "dark-recess", "lamp-glass", "lamp-bulb"].includes(part.material)) return false;
+      const bounds = partBounds(part);
+      return bounds && boundsOverlap(plateBounds, bounds);
+    });
+    assert.ok(carrier, `${plate.id} has no opaque carrier overlap`);
+    const falseCarrier = model.parts.find((part) => {
+      if (!["glazing", "opening", "dark-recess"].includes(part.material)) return false;
+      const bounds = partBounds(part);
+      return bounds && boundsOverlap(plateBounds, bounds);
+    });
+    assert.equal(falseCarrier, undefined, `${plate.id} overlaps ${falseCarrier?.id}`);
+  }
+});
+
 test("working and exterior pools stay strong enough to reveal nearby materials", () => {
   for (const bulb of bulbParts) {
     const light = bulb.light;
     if (/saw-floor|open-floor|workshop|front-gable-window-interior/.test(bulb.id)) {
-      assert.ok(light.distance >= 14, bulb.id);
-      assert.ok(light.intensity >= 18, bulb.id);
+      assert.ok(light.distance >= 22, bulb.id);
+      assert.ok(light.intensity >= 22, bulb.id);
     }
     if (/entry|bridge-lantern|upper-eave/.test(bulb.id)) {
-      assert.ok(light.distance >= 16, bulb.id);
-      assert.ok(light.intensity >= 20, bulb.id);
+      assert.ok(light.distance >= 24, bulb.id);
+      assert.ok(light.intensity >= 24, bulb.id);
       assert.equal(light.dayIntensityFactor, 0, bulb.id);
     }
   }
@@ -127,9 +174,17 @@ test("only B1, B3 and B5 receive instance-scoped bridge lantern groups", () => {
   }
 });
 
-test("compiled scene authors twenty-two real bulbs but every nearby fixture caps the active pool at six", () => {
+test("compiled scene keeps all nine night clusters represented inside a twelve-light pool", () => {
   const compiled = compileSceneGroups(dutchPolderDocument, dutchPolderPrefabLibrary);
   assert.equal(compiled.lamps.length, 22);
-  assert.ok(compiled.lamps.every(({ localPoolCapacity }) => localPoolCapacity === 6));
+  assert.ok(compiled.lamps.every(({ localPoolCapacity }) => localPoolCapacity === 12));
+  assert.ok(compiled.lamps.every(({ reservePoolGroup }) => reservePoolGroup));
   assert.ok(compiled.lamps.every(({ beacon }) => beacon === undefined));
+  const candidates = compiled.lamps.map((lamp, index) => ({ lamp, rank: index + 1 }));
+  const selected = selectGroupedLampCandidates(candidates, 12);
+  assert.equal(selected.length, 12);
+  assert.deepEqual(
+    new Set(selected.map(({ lamp }) => lamp.poolGroupId)),
+    new Set(compiled.lamps.map(({ poolGroupId }) => poolGroupId)),
+  );
 });

@@ -2015,6 +2015,8 @@ export interface LampDefinition {
   readonly localPoolCapacity?: number;
   /** Nearby selection treats every lamp in this group as one coherent fixture set. */
   readonly poolGroupId?: string;
+  /** Wide views retain one real point source from this architectural group. */
+  readonly reservePoolGroup?: boolean;
   /** Interior illumination is suppressed for a player seated in this carrier. */
   readonly interior?: boolean;
   /** Camera-facing halo for lights that must remain identifiable at range. */

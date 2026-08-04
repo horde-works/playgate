@@ -439,8 +439,10 @@ parts.push(
   ...dutchLampFixture({
     id: "front-entry-lantern",
     group: "lighting-fixtures",
-    lens: point(1.3, 2.25, 5.83),
-    carrierPoint: point(1.3, 2.45, 5.48),
+    // Mount directly through the right door post; the former plate missed its
+    // outer edge and only appeared attached from the accepted camera.
+    lens: point(1.38, 2.25, 5.79),
+    carrierPoint: point(1.02, 2.45, 5.44),
     carrier: "wall-z",
     outward: 1,
     lampClass: "exterior",
@@ -451,7 +453,7 @@ parts.push(
 
 export const deKatObject: ObjectLabModel = {
   id: "dutch-windmill-de-kat-m1",
-  revision: "m1-2026-08-04-real-windows-a3",
+  revision: "m1-2026-08-04-entry-light-a4",
   title: "De Kat-type paint mill — structural grey model",
   units: "metres",
   coordinates: { up: "+Y", front: "+Z", origin: "ground-centre" },

@@ -557,7 +557,7 @@ parts.push(...dutchLampFixture({
 
 export const jongeSchaapSawmillObject: ObjectLabModel = {
   id: "dutch-windmill-jonge-schaap-sawmill-m3",
-  revision: "m3-2026-08-04-real-windows-a3",
+  revision: "m3-2026-08-04-night-range-a4",
   title: "Het Jonge Schaap-type hexagonal sawmill — structural grey model",
   units: "metres",
   coordinates: { up: "+Y", front: "+Z", origin: "ground-centre" },

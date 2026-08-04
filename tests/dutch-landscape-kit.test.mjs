@@ -84,6 +84,7 @@ import {
   dutchLandscapeMooringPostParts,
   dutchLandscapePeatStoreParts,
   dutchLandscapePicketFenceParts,
+  dutchLandscapePicketGateParts,
   dutchLandscapePrivyParts,
   dutchLandscapeRainBarrelParts,
   dutchLandscapeRevetmentParts,
@@ -249,11 +250,13 @@ test("частные мостки имеют четыре сваи, два ле�
 });
 
 test("домашний hekje сохраняет точный трёхметровый модуль и открытый шаг штакетин", () => {
-  const moduleParts = dutchLandscapePicketFenceParts.filter(({ id }) => id.startsWith("picket-fence-"));
-  const gateParts = dutchLandscapePicketFenceParts.filter(({ id }) => id.startsWith("picket-gate-"));
+  // Модуль и калитка — два префаба, но один авторский кадр: калитка висит на
+  // правой стойке модуля, поэтому оба ставятся одним и тем же трансформом.
+  const moduleParts = dutchLandscapePicketFenceParts;
+  const gateParts = dutchLandscapePicketGateParts;
   assert.ok(moduleParts.length <= 45);
   assert.ok(gateParts.length <= 20);
-  assert.ok(dutchLandscapePicketFenceParts.length <= 65);
+  assert.ok(moduleParts.length + gateParts.length <= 65);
 
   const posts = moduleParts.filter(({ id }) => id.startsWith("picket-fence-post:") && !id.includes("cap"));
   assert.equal(posts.length, 2);
@@ -301,14 +304,14 @@ test("домашний hekje сохраняет точный трёхметро�
 });
 
 test("калитка имеет несущую раму, диагональ и непрерывные цепочки петель и замка", () => {
-  const leafFrame = dutchLandscapePicketFenceParts.filter(({ id }) => id.startsWith("picket-gate-frame-") && !id.includes("diagonal"));
+  const leafFrame = dutchLandscapePicketGateParts.filter(({ id }) => id.startsWith("picket-gate-frame-") && !id.includes("diagonal"));
   assert.equal(leafFrame.length, 4);
   const frameBounds = leafFrame.map(boxBounds);
   approx(Math.max(...frameBounds.map((bounds) => bounds[0][1])) - Math.min(...frameBounds.map((bounds) => bounds[0][0])), DUTCH_PICKET_GATE_WIDTH);
   approx(Math.max(...frameBounds.map((bounds) => bounds[1][1])) - Math.min(...frameBounds.map((bounds) => bounds[1][0])), DUTCH_PICKET_GATE_HEIGHT);
   approx(Math.min(...frameBounds.map((bounds) => bounds[1][0])), 0.05);
 
-  const brace = dutchLandscapePicketFenceParts.find(({ id }) => id === "picket-gate-diagonal");
+  const brace = dutchLandscapePicketGateParts.find(({ id }) => id === "picket-gate-diagonal");
   assert.equal(brace.kind, "beam");
   assert.ok(brace.from[0] < brace.to[0] && brace.from[1] < brace.to[1]);
   const frameFrontZ = Math.max(...frameBounds.map((bounds) => bounds[2][1]));
@@ -316,14 +319,14 @@ test("калитка имеет несущую раму, диагональ и �
   assert.ok(brace.to[2] - brace.depth / 2 <= frameFrontZ);
 
   const sharedPost = dutchLandscapePicketFenceParts.find(({ id }) => id === "picket-fence-post:1");
-  const latchPost = dutchLandscapePicketFenceParts.find(({ id }) => id === "picket-gate-latch-post");
+  const latchPost = dutchLandscapePicketGateParts.find(({ id }) => id === "picket-gate-latch-post");
   assert.equal(sharedPost.kind, "box");
   assert.equal(latchPost.kind, "box");
   approx(boxBounds(sharedPost)[0][1], 1);
   approx(boxBounds(latchPost)[1][0], 0);
 
-  const pins = dutchLandscapePicketFenceParts.filter(({ id }) => id.startsWith("picket-gate-hinge-pin:"));
-  const straps = dutchLandscapePicketFenceParts.filter(({ id }) => id.startsWith("picket-gate-hinge-strap:"));
+  const pins = dutchLandscapePicketGateParts.filter(({ id }) => id.startsWith("picket-gate-hinge-pin:"));
+  const straps = dutchLandscapePicketGateParts.filter(({ id }) => id.startsWith("picket-gate-hinge-strap:"));
   assert.equal(pins.length, 2);
   assert.equal(straps.length, 2);
   for (const pin of pins) {
@@ -337,13 +340,13 @@ test("калитка имеет несущую раму, диагональ и �
     assert.ok(boxBounds(strap)[2][0] <= frameFrontZ);
   }
 
-  const latchBar = dutchLandscapePicketFenceParts.find(({ id }) => id === "picket-gate-latch-bar");
-  const catchPart = dutchLandscapePicketFenceParts.find(({ id }) => id === "picket-gate-latch-catch");
+  const latchBar = dutchLandscapePicketGateParts.find(({ id }) => id === "picket-gate-latch-bar");
+  const catchPart = dutchLandscapePicketGateParts.find(({ id }) => id === "picket-gate-latch-catch");
   assert.ok(intervalOverlap(boxBounds(latchBar)[0], boxBounds(catchPart)[0]) > 0);
   assert.ok(intervalOverlap(boxBounds(catchPart)[0], boxBounds(latchPost)[0]) > 0);
   assert.ok(intervalOverlap(boxBounds(latchBar)[2], [frameBounds[1][2][0], frameFrontZ]) > 0);
   assert.ok(intervalOverlap(boxBounds(catchPart)[2], boxBounds(latchPost)[2]) > 0);
-  const latchHandle = dutchLandscapePicketFenceParts.find(({ id }) => id === "picket-gate-latch-handle");
+  const latchHandle = dutchLandscapePicketGateParts.find(({ id }) => id === "picket-gate-latch-handle");
   assert.equal(latchHandle.kind, "cylinder");
   assert.ok(latchHandle.from[2] - latchHandle.radius < boxBounds(latchBar)[2][1]);
 
