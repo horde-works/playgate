@@ -2137,8 +2137,8 @@ export interface VehicleGuidanceDemand {
   readonly yawRate: number;
   /** Требуемая вертикальная сила сверх веса, доля веса. */
   readonly liftFraction: number;
-  /** Ускорение, которого требует трасса, в мировых осях [x, z]. Упреждение. */
-  readonly pathAcceleration?: readonly [number, number];
+  /** Ускорение, которого требует кривая, в мировых осях [x, y, z]. */
+  readonly pathAcceleration?: readonly [number, number, number];
   /**
    * Машина в посадочном створе. Фазу знает автопилот, а ПОЛИТИКА фазы —
    * например, какой занос терпим — применяется автоматом управления: занос на
@@ -2369,82 +2369,36 @@ function turnExitHeading(
 }
 
 /**
- * ТОРМОЖЕНИЕ КАК ЧАСТЬ МАНЁВРА, А НЕ ОТДЕЛЬНОЕ СОБЫТИЕ ПЕРЕД НИМ.
+ * КИНЕМАТИЧЕСКОЕ ТРЕБОВАНИЕ ТРАССЫ — ОДНО, ТРЁХМЕРНОЕ.
  *
- * Без этого манёвр разваливался на три акта: ограничитель говорит «впереди
- * вираж», контур скорости тормозит ВСЕМ бюджетом наклона назад — машина
- * встаёт на дыбы, — и только когда кривизна оказывается под машиной,
- * появляется боковое требование и бюджет перебрасывается на крен. Тормоз
- * кончился — крен начался. Живой пилот тормозит ВНУТРЬ виража: замедление и
- * крен перекрываются, и вход выглядит одной дугой.
+ * Упреждение не делится по плоскостям. Траектория — одна кривая в
+ * пространстве, и частица, идущая по ней с профилем скорости, испытывает одно
+ * ускорение: центростремительное `v²·κ` вдоль нормали кривой — В ТРЁХ ОСЯХ,
+ * гребень горки прижимает так же честно, как вираж уводит вбок, — плюс
+ * продольное торможение вдоль касательной. Пока это жило тремя кусками (бок
+ * отдельно, тормоз отдельно, вертикаль отдельной вставкой в контур подъёма и
+ * даже в другой величине), каждая плоскость опаздывала по-своему.
  *
- * Здесь берётся производная РАЗРЕШЁННОГО профиля скорости вдоль пути —
- * `v·dv/ds` — и подаётся вектором вдоль касательной в то же упреждение, куда
- * идёт боковое `v²/r`. Дальше эллипс возможностей делит оба требования
- * ОДНОВРЕМЕННО: машина ещё тормозит, а крен уже растёт. Разгонная сторона не
- * упреждается — набрать скорость контур успевает и сам, спешка тут не красит.
+ * Здесь всё считается из ОДНИХ трёх точек кривой. Дальше машина сама
+ * раскладывает вектор по своим органам: горизонталь — наклон и тоннели,
+ * вертикаль — газ. Автопилот органов по-прежнему не знает.
+ *
+ * Торможение — от ФАКТИЧЕСКОЙ скорости к разрешённой впереди: машина медленнее
+ * цели — упреждать нечего, и дедлок невозможен по построению.
  */
-function pathBrakingDemand(
+interface PathKinematicDemand {
+  /** Мировое ускорение, которого требует кривая, [x, y, z] м/с². */
+  readonly acceleration: readonly [number, number, number];
+  /** Целевая вертикальная скорость профиля: уклон на путевую, м/с. */
+  readonly verticalRate: number;
+}
+
+function pathKinematicDemand(
   plan: VehicleRoutePlan,
   progress: number,
   speed: number,
   model: ShipModel,
-): readonly [number, number] | undefined {
-  if (speed < 2 || plan.length <= 1) {
-    return undefined;
-  }
-  const deltaMetres = Math.max(8, speed * 0.6);
-  const dp = deltaMetres / plan.length;
-  if (progress + dp >= 1) {
-    return undefined;
-  }
-  const ahead = Math.min(
-    plan.speedLimit(progress + dp),
-    governedRouteSpeed(plan, progress + dp, model, false, speed),
-  );
-  // ТОРМОЖЕНИЕ СЧИТАЕТСЯ ОТ ФАКТИЧЕСКОЙ СКОРОСТИ, А НЕ ОТ РАЗРЕШЁННОЙ.
-  //
-  // Производная «разрешено здесь → разрешено впереди» устроила дедлок: на краю
-  // окна выгоды профиль обрывается ступенькой, упреждение вставало в −52 м/с²
-  // и глушило тягу; машина осаживалась НИЖЕ целевой скорости, progress замирал,
-  // а с ним замирало и само упреждение — вечное равновесие, дрейф в никуда на
-  // 2.4 м/с при просьбе 30. Упреждение — это недостающее ЗАМЕДЛЕНИЕ от текущего
-  // хода к разрешённому впереди: машина медленнее цели — упреждать нечего, и
-  // дедлок невозможен по построению.
-  if (!Number.isFinite(ahead) || ahead >= speed) {
-    return undefined;
-  }
-  const along = Math.max(
-    -(model.turnCapability?.braking ?? 52),
-    (ahead * ahead - speed * speed) / (2 * deltaMetres),
-  );
-  const before = plan.point(Math.max(0, progress - dp));
-  const after = plan.point(Math.min(1, progress + dp));
-  const dx = after[0] - before[0];
-  const dz = after[2] - before[2];
-  const length = Math.hypot(dx, dz);
-  if (length < 1e-6) {
-    return undefined;
-  }
-  return [(dx / length) * along, (dz / length) * along];
-}
-
-/**
- * УСКОРЕНИЕ, КОТОРОГО ТРЕБУЕТ САМА ТРАССА ЗДЕСЬ И СЕЙЧАС.
- *
- * Величина `v²/r`, направление к центру поворота, мировые горизонтальные оси.
- * Чистая кинематика окружности, известная ДО того, как машину снесёт, — этим
- * упреждение и отличается от исправления ошибки.
- *
- * Направление берётся из второй разности трёх точек: `A − 2B + C` смотрит в
- * вогнутую сторону. Продольная составляющая вычитается, чтобы осталось чистое
- * поперечное и упреждение не подмешивало в вираж лишний ход.
- */
-function pathAccelerationDemand(
-  plan: VehicleRoutePlan,
-  progress: number,
-  speed: number,
-): readonly [number, number] | undefined {
+): PathKinematicDemand | undefined {
   if (speed < 1 || plan.length <= 1) {
     return undefined;
   }
@@ -2452,36 +2406,64 @@ function pathAccelerationDemand(
   const before = plan.point(Math.max(0, progress - step));
   const here = plan.point(progress);
   const after = plan.point(Math.min(1, progress + step));
-  const secondX = before[0] - 2 * here[0] + after[0];
-  const secondZ = before[2] - 2 * here[2] + after[2];
   const tangentX = after[0] - before[0];
+  const tangentY = after[1] - before[1];
   const tangentZ = after[2] - before[2];
-  const tangentLength = Math.hypot(tangentX, tangentZ);
+  const tangentLength = Math.hypot(tangentX, tangentY, tangentZ);
   if (tangentLength < 1e-6) {
     return undefined;
   }
-  const tx = tangentX / tangentLength;
-  const tz = tangentZ / tangentLength;
-  const along = secondX * tx + secondZ * tz;
-  const normalX = secondX - along * tx;
-  const normalZ = secondZ - along * tz;
-  const normalLength = Math.hypot(normalX, normalZ);
-  if (normalLength < 1e-9) {
-    return undefined;
+  const ux = tangentX / tangentLength;
+  const uy = tangentY / tangentLength;
+  const uz = tangentZ / tangentLength;
+  // Вертикальные полки владеют высотой сами — у столбов профиль молчит.
+  const shelfFree =
+    (!plan.verticalDeparture ||
+      progress > plan.verticalDeparture.until + 0.02) &&
+    (!plan.verticalArrival || progress < plan.verticalArrival.from - 0.02);
+  const horizontal = Math.hypot(tangentX, tangentZ) || 1e-6;
+  const verticalRate = shelfFree
+    ? Math.max(-6, Math.min(6, (tangentY / horizontal) * speed))
+    : 0;
+  // Вторая разность тех же трёх точек: её нормальная часть — кривизна В ТРЁХ
+  // ОСЯХ. Плечо выборки — горизонтальная полухорда, которой параметризован
+  // маршрут.
+  const secondX = before[0] - 2 * here[0] + after[0];
+  const secondY = before[1] - 2 * here[1] + after[1];
+  const secondZ = before[2] - 2 * here[2] + after[2];
+  const along = secondX * ux + secondY * uy + secondZ * uz;
+  const normalX = secondX - along * ux;
+  const normalY = shelfFree ? secondY - along * uy : 0;
+  const normalZ = secondZ - along * uz;
+  const normalLength = Math.hypot(normalX, normalY, normalZ);
+  const arm = step * plan.length;
+  const centripetal =
+    normalLength > 1e-9 ? (speed * speed * normalLength) / (arm * arm) : 0;
+  // Продольное торможение вдоль той же касательной.
+  const deltaMetres = Math.max(8, speed * 0.6);
+  const dp = deltaMetres / plan.length;
+  let braking = 0;
+  if (progress + dp < 1) {
+    const ahead = Math.min(
+      plan.speedLimit(progress + dp),
+      governedRouteSpeed(plan, progress + dp, model, false, speed),
+    );
+    if (Number.isFinite(ahead) && ahead < speed) {
+      braking = Math.max(
+        -(model.turnCapability?.braking ?? 52),
+        (ahead * ahead - speed * speed) / (2 * deltaMetres),
+      );
+    }
   }
-  const radius = pathTurnRadius(
-    [before[0], before[2]],
-    [here[0], here[2]],
-    [after[0], after[2]],
-  );
-  if (!Number.isFinite(radius) || radius <= 0) {
-    return undefined;
-  }
-  const magnitude = (speed * speed) / radius;
-  return [
-    (normalX / normalLength) * magnitude,
-    (normalZ / normalLength) * magnitude,
-  ];
+  const scale = normalLength > 1e-9 ? centripetal / normalLength : 0;
+  return {
+    acceleration: [
+      normalX * scale + ux * braking,
+      normalY * scale + uy * braking,
+      normalZ * scale + uz * braking,
+    ],
+    verticalRate,
+  };
 }
 
 /**
@@ -3116,37 +3098,17 @@ export function autopilot(
     wantedAltitude +
     (safetyIntervention ? (safety?.altitudeOffset ?? 0) : 0) -
     centre[1];
-  // ВЕРТИКАЛЬНОЕ УПРЕЖДЕНИЕ ПРОФИЛЯ: горка исполняется, а не сглаживается.
-  //
-  // Реактивный контур узнаёт о перепаде, когда уже промахнулся: на маршруте с
-  // авторскими горками и нырками машина отставала от профиля на девять метров
-  // из девяти возможных — летела ленивую версию шоу. Целевая вертикальная
-  // скорость известна из самой трассы: уклон профиля на путевую скорость.
-  // На ровном профиле слагаемое тождественно нулю, и ни одна из прежних
-  // машин не замечает ничего. У вертикальных столбов упреждение выключено:
-  // там высотой владеет полка, а не профиль.
-  const profileStep = Math.min(0.02, 8 / Math.max(1, plan.length));
-  const shelfFree =
-    (!plan.verticalDeparture ||
-      progress > plan.verticalDeparture.until + 0.02) &&
-    (!plan.verticalArrival || progress < plan.verticalArrival.from - 0.02);
-  const profileClimbRate = shelfFree
-    ? Math.max(
-        -6,
-        Math.min(
-          6,
-          ((plan.altitude(Math.min(1, progress + profileStep)) -
-            plan.altitude(Math.max(0, progress - profileStep))) /
-            (2 * profileStep * Math.max(1, plan.length))) *
-            groundSpeed,
-        ),
-      )
-    : 0;
+  // Вертикальное упреждение — из ЕДИНОГО кинематического требования кривой:
+  // та же величина, что вела горку до объединения, только источник теперь
+  // один на все три плоскости. Реактивный контур без него летел ленивую
+  // версию шоу — 9.5 м промаха из 9 возможных.
+  const pathKinematics = pathKinematicDemand(plan, progress, groundSpeed, model);
   const liftFraction = Math.max(
     -limits.liftTrimRange,
     Math.min(
       limits.liftTrimRange,
-      altitudeError * 0.06 + (profileClimbRate - velocity[1]) * 0.12,
+      altitudeError * 0.06 +
+        ((pathKinematics?.verticalRate ?? 0) - velocity[1]) * 0.12,
     ),
   );
 
@@ -3249,22 +3211,12 @@ export function autopilot(
     // Только для машины с векторируемой тягой: неголономная поворачивает носом
     // и боковое ускорение исполнить не может. Боковое `v²/r` и продольное
     // торможение профиля складываются в ОДИН вектор: манёвр — единое целое.
-    pathAcceleration: (() => {
-      if ((limits.lateralThrust ?? 0) <= 1e-6) {
-        return undefined;
-      }
-      const lateral = pathAccelerationDemand(plan, progress, groundSpeed);
-      const braking = onApproach
-        ? undefined
-        : pathBrakingDemand(plan, progress, groundSpeed, model);
-      if (!lateral && !braking) {
-        return undefined;
-      }
-      return [
-        (lateral?.[0] ?? 0) + (braking?.[0] ?? 0),
-        (lateral?.[1] ?? 0) + (braking?.[1] ?? 0),
-      ] as const;
-    })(),
+    // ОДИН вектор в трёх осях из одного расчёта: вираж, гребень и торможение —
+    // не отдельные каналы, а одно ускорение одной кривой.
+    pathAcceleration:
+      (limits.lateralThrust ?? 0) > 1e-6 && !onApproach
+        ? pathKinematics?.acceleration
+        : undefined,
   };
   const shipControl = shipControlsForGuidance(
     guidance,

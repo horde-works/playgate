@@ -47,7 +47,11 @@ function steelPlate(ring: number, sector: number): SceneObjectDefinition {
     material: "steel",
     shape: "steelSheet",
     size: [sizeX, PLATE_THICKNESS, sizeZ],
-    color: (ring + sector) % 3 === 0 ? "#4c5356" : "#3f4649",
+    // У ГОЛОГО МЕТАЛЛА БАЗОВЫЙ ЦВЕТ — ЭТО F0 ОТРАЖЕНИЯ, А НЕ ДИФФУЗНОЕ АЛЬБЕДО.
+    // Сталь отражает 50-60% (F0 ~0.5 линейных), здесь стояло 0.05 — уголь. При
+    // metalness 0.78 диффузной составляющей почти нет, так что настил светился
+    // только отражённым небом, и держался в кадре исключительно вуалью блума.
+    color: (ring + sector) % 3 === 0 ? "#b4b9bc" : "#a3a9ac",
     transform: { position: [centreX, PLATE_THICKNESS / 2, centreZ] },
     visualMesh: {
       vertices,

@@ -79,10 +79,12 @@ export const CLEAR_SKY: SkyWeather = {
   density: 0.0042,
   windSpeed: 6,
   windBearing: 0,
-  // Light haze — the ordinary summer air of every one of these islands. At a
-  // genuine 50 km an object eighty metres away has no air in front of it at
-  // all, which is true, and reads as a world with no depth.
-  visibility: 9000,
+  // Haze — 3 km is an ordinary hazy summer day, and it is the WEATHER these
+  // islands stand in, not a fog setting. At a genuine 50 km an object eighty
+  // metres away has no air in front of it at all: true, and a world with no
+  // depth. Here the deck's far rim carries 6% of air, the machine at the end
+  // of its route 14%, the world edge 39%.
+  visibility: 3000,
   midLevel: 0,
   midAltitude: 4200,
   midScale: 5600,

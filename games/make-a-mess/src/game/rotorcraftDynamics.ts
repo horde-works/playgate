@@ -1786,7 +1786,7 @@ export interface RotorcraftRequest {
    * только вдоль корпуса, у неё в любую сторону. Проверено дорого: упреждение
    * по рысканью съело всю власть по курсу и увело машину на 6232 м от трассы.
    */
-  readonly pathAcceleration?: readonly [number, number];
+  readonly pathAcceleration?: readonly [number, number, number];
 }
 
 export interface RotorcraftFlightStep {
@@ -1858,10 +1858,16 @@ export function rotorcraftFlightStep(
   // Упреждение раскладывается ТОЙ ЖЕ проекцией, что и скорость: иначе знак
   // борта разъедется и машина начнёт входить в вираж наружу.
   const pathForward = request.pathAcceleration
-    ? request.pathAcceleration[0] * nx + request.pathAcceleration[1] * nz
+    ? request.pathAcceleration[0] * nx + request.pathAcceleration[2] * nz
     : 0;
   const pathLateral = request.pathAcceleration
-    ? request.pathAcceleration[1] * nx - request.pathAcceleration[0] * nz
+    ? request.pathAcceleration[2] * nx - request.pathAcceleration[0] * nz
+    : 0;
+  // ВЕРТИКАЛЬНАЯ ЧАСТЬ ТОГО ЖЕ ВЕКТОРА — В ГАЗ. Гребень горки прижимает,
+  // впадина отпускает; исполняет это подъёмная тяга, как вираж исполняет
+  // наклон. Доля веса, зажата собственным пределом дифферентовки газа.
+  const pathVertical = request.pathAcceleration
+    ? Math.max(-0.3, Math.min(0.3, request.pathAcceleration[1] / 9.81))
     : 0;
   const combined = {
     forward: corrective.forward + pathForward,
@@ -1895,7 +1901,7 @@ export function rotorcraftFlightStep(
     {
       forward: acceleration.forward,
       lateral: -acceleration.lateral,
-      collective: request.collective,
+      collective: request.collective + pathVertical,
       yaw: Math.max(
         -maximumYawRate,
         Math.min(maximumYawRate, request.yawRate),
