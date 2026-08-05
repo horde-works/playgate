@@ -89,6 +89,28 @@ test("рой детерминирован, мал в шаге и держитс�
       off <= firefly.wanderAmplitude + firefly.bobAmplitude + 1e-6,
       `светлячок улетел с кривой на ${off.toFixed(2)} м`,
     );
-    assert.ok(sample.intensity > 0.05 && sample.intensity <= 1.001);
+    assert.ok(sample.intensity >= 0 && sample.intensity <= 1.001);
   }
+  // Края маршрута гасят рой: у берта трасса начинается прямо под стоящей
+  // машиной, и непогашенный там светляк выглядел «откреплённым бирюзовым
+  // фонарём под брюхом». Светляк с фазой у нуля обязан быть тёмным.
+  const atBerth = sampleRouteFirefly(
+    plan,
+    { ...one[0], phase: 0.004, drift: 0 },
+    3.3,
+    0,
+    20,
+  );
+  assert.ok(
+    atBerth.intensity < 0.02,
+    `светляк у берта светится на ${atBerth.intensity.toFixed(2)}`,
+  );
+  const midway = sampleRouteFirefly(
+    plan,
+    { ...one[0], phase: 0.5, drift: 0 },
+    3.3,
+    0,
+    20,
+  );
+  assert.ok(midway.intensity > 0.1, "на маршевой части рой обязан жить");
 });

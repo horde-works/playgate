@@ -6691,6 +6691,15 @@ function FlightRouteRibbons({
       const positions = swarmGeometry.getAttribute("position") as BufferAttribute;
       const colors = swarmGeometry.getAttribute("color") as BufferAttribute;
       const time = clock.elapsedTime;
+      // Возле самой машины светляк гаснет: одиночная искра у брюха без луча
+      // рядом читается не роем трассы, а откреплённым фонарём.
+      const centre = state?.mass
+        ? [
+            state.body.position[0] + state.mass.centre[0],
+            state.body.position[1] + state.mass.centre[1],
+            state.body.position[2] + state.mass.centre[2],
+          ]
+        : null;
       for (let index = 0; index < fireflies.length; index += 1) {
         const sample = sampleRouteFirefly(
           plan,
@@ -6699,6 +6708,16 @@ function FlightRouteRibbons({
           range[0],
           range[1],
         );
+        let nearFade = 1;
+        if (centre) {
+          const distance = Math.hypot(
+            sample.position[0] - centre[0],
+            sample.position[1] - centre[1],
+            sample.position[2] - centre[2],
+          );
+          nearFade = Math.min(1, Math.max(0, (distance - 2.5) / 4));
+        }
+        const glow = sample.intensity * nearFade;
         positions.setXYZ(
           index,
           sample.position[0],
@@ -6707,10 +6726,10 @@ function FlightRouteRibbons({
         );
         colors.setXYZW(
           index,
-          sample.color[0] * sample.intensity,
-          sample.color[1] * sample.intensity,
-          sample.color[2] * sample.intensity,
-          sample.intensity,
+          sample.color[0] * glow,
+          sample.color[1] * glow,
+          sample.color[2] * glow,
+          glow,
         );
       }
       positions.needsUpdate = true;

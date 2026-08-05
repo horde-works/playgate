@@ -216,6 +216,11 @@ export function sampleRouteFirefly(
     0.55 +
     0.45 *
       Math.sin(timeSeconds * firefly.twinkleFrequency * Math.PI * 2 + firefly.twinklePhase);
+  // Края маршрута гасят и светлячков, как гасят луч: у берта трасса начинается
+  // прямо под стоящей машиной, и не погашенный там светляк выглядел
+  // «откреплённым бирюзовым фонарём под брюхом» — на площадке и у роторов
+  // вдоль взлётного столба. Рой живёт на маршевой части, где рядом луч.
+  const edge = Math.min(1, Math.min(at, 1 - at) / 0.06);
   return {
     position: [
       centre[0] + acrossX * wobble,
@@ -223,6 +228,6 @@ export function sampleRouteFirefly(
       centre[2] + acrossZ * wobble,
     ],
     color: routeAltitudeColor(centre[1], low, high),
-    intensity: twinkle,
+    intensity: twinkle * edge * edge,
   };
 }
