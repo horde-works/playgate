@@ -3916,6 +3916,8 @@ function OpenWorldShell({ scene }: { scene: DestructionSceneDefinition }) {
 }
 
 interface OpenWorldSceneProps {
+  /** Лента маршрута в мире: включается третьим положением T. */
+  routeOverlayEnabled: boolean;
   scene: DestructionSceneDefinition;
   active: boolean;
   flightMode: boolean;
@@ -3969,6 +3971,7 @@ interface OpenWorldSceneProps {
 function OpenWorldScene({
   scene,
   active,
+  routeOverlayEnabled,
   flightMode,
   weapon,
   chargeCount,
@@ -9398,6 +9401,7 @@ function OpenWorldScene({
         forceFieldRef={forceFieldActive ? basaltForceField : undefined}
       />
       <VehicleFrameSystem
+        showRouteOverlay={routeOverlayEnabled}
         pieces={breakablePieces}
         bodies={pieceBodies}
         brokenPieces={brokenPiecesRef}
@@ -10363,6 +10367,8 @@ const telemetryMetricLabels: Readonly<Record<string, TranslationKey>> = {
   pitch: "telemetry.metric.pitch",
   roll: "telemetry.metric.roll",
   propellerRevolutions: "telemetry.metric.propellerRevolutions",
+  rotorRings: "telemetry.metric.rotorRings",
+  yawTunnels: "telemetry.metric.yawTunnels",
   trimCar: "telemetry.metric.trimCar",
   routeProgress: "telemetry.metric.routeProgress",
   distanceRemaining: "telemetry.metric.distanceRemaining",
@@ -10517,11 +10523,17 @@ function MotionTelemetryPanel({
           const activityKey = `${metric.id}:${index}`;
           const token = activityTokens[activityKey] ?? 0;
           const side = metric.valueSides?.[index];
-          const warning = metric.valueStates?.[index] === "warning";
+          const channelState = metric.valueStates?.[index];
           return (
             <span
               key={activityKey}
-              className={`motion-telemetry-value-channel${warning ? " is-warning" : ""}`}
+              className={`motion-telemetry-value-channel${
+                channelState === "critical"
+                  ? " is-critical"
+                  : channelState === "warning"
+                    ? " is-warning"
+                    : ""
+              }`}
             >
               {index > 0 ? (
                 <span className="motion-telemetry-value-separator"> / </span>
@@ -10593,6 +10605,7 @@ function MotionTelemetryPanel({
             </dl>
           </section>
           <MotionImpactIndicator
+            machine={snapshot.machine}
             impact={snapshot.impact}
             locale={locale}
             ariaLabel={t("telemetry.impactAria")}
@@ -11290,7 +11303,10 @@ export function MakeAMessGame({
     performanceGovernor.getSnapshot(),
   );
   const [telemetryStore] = useState(createMotionTelemetryStore);
-  const [telemetryVisible, setTelemetryVisible] = useState(false);
+  // Три положения по T: выкл -> телеметрия -> телеметрия с маршрутом.
+  // Маршрут в мире — часть телеметрии, а не постоянная декорация.
+  const [telemetryMode, setTelemetryMode] = useState<0 | 1 | 2>(0);
+  const telemetryVisible = telemetryMode > 0;
   const flyoverRunning =
     flyoverMode === "playing" || flyoverMode === "recording";
   const cinematicActive = flyover !== undefined && flyoverMode !== "idle";
@@ -11418,21 +11434,26 @@ export function MakeAMessGame({
   );
 
   const toggleMotionTelemetry = useCallback(() => {
-    if (telemetryVisible) {
-      setTelemetryVisible(false);
+    if (telemetryMode === 2) {
+      setTelemetryMode(0);
       announceTelemetry("announce.telemetryOff");
+      return;
+    }
+    if (telemetryMode === 1) {
+      setTelemetryMode(2);
+      announceTelemetry("announce.telemetryRoute");
       return;
     }
     if (!telemetryStore.getSnapshot()) {
       announceTelemetry("announce.telemetryUnavailable");
       return;
     }
-    setTelemetryVisible(true);
+    setTelemetryMode(1);
     announceTelemetry("announce.telemetryOn");
-  }, [announceTelemetry, telemetryStore, telemetryVisible]);
+  }, [announceTelemetry, telemetryStore, telemetryMode]);
 
   const handleTelemetryUnavailable = useCallback(() => {
-    setTelemetryVisible(false);
+    setTelemetryMode(0);
     announceTelemetry("announce.telemetryAutoOff");
   }, [announceTelemetry]);
 
@@ -12245,6 +12266,7 @@ export function MakeAMessGame({
                 >
                   <PhysicsPerformanceProbe />
                   <OpenWorldScene
+                    routeOverlayEnabled={telemetryMode === 2}
                     key={resetVersion}
                     onVillagerInspect={setInspectedVillager}
                     scene={scene}
@@ -12320,10 +12342,16 @@ export function MakeAMessGame({
                 <CinematicPostProcessing
                   compact={fallbackLook}
                   byteBloom={scene.id === "dutch-polder"}
-                  // Polder midtones die looking sunward: shafts + glare + bloom
-                  // veil stack on a bright dome. Scale the screen veil only —
-                  // weather/cloud deck stay as authored.
-                  sunVeil={scene.id === "dutch-polder" ? 0.42 : 1}
+                  // Screen veil only — weather/cloud deck stay as authored.
+                  // Polder midtones die looking sunward (dense grass + dome).
+                  // Town boulevard washes milder looking east into the sun.
+                  sunVeil={
+                    scene.id === "dutch-polder"
+                      ? 0.42
+                      : scene.id === "open-house"
+                        ? 0.72
+                        : 1
+                  }
                 />
               </Suspense>
             </Canvas>

@@ -103,6 +103,34 @@ function carrierExtents(
   return extents;
 }
 
+/**
+ * Авторская точка машины в ЕДИНИЧНОМ корпусе сферы телеметрии — тем же
+ * эллипсоидом и теми же осями [правый борт, верх, нос], что и точка удара.
+ * Силуэт органов и вектор удара обязаны жить в одной системе координат;
+ * второй нормировки, которая могла бы разъехаться, не существует.
+ */
+export function carrierHullPoint(
+  frame: ImpactFrameGeometry,
+  properties: MassProperties,
+  authored: SceneVector3,
+): MotionTelemetryVector3 {
+  const axes = carrierAxes(frame.nose);
+  const point = inCarrierAxes(
+    [
+      authored[0] - properties.centre[0],
+      authored[1] - properties.centre[1],
+      authored[2] - properties.centre[2],
+    ],
+    axes,
+  );
+  const extents = carrierExtents(frame, properties, axes);
+  return [
+    Math.max(-1, Math.min(1, point[0] / extents[0])),
+    Math.max(-1, Math.min(1, point[1] / extents[1])),
+    Math.max(-1, Math.min(1, point[2] / extents[2])),
+  ];
+}
+
 export function createVehicleImpactTelemetry({
   frame,
   properties,

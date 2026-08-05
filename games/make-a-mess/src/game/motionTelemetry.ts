@@ -5,7 +5,11 @@
  */
 export type MotionTelemetryUnit = "km/h" | "m/s" | "m" | "deg" | "percent";
 export type MotionTelemetryValueSide = "left" | "right";
-export type MotionTelemetryValueState = "normal" | "warning";
+/**
+ * Состояние канала: warning — деградировал, critical — мёртв. Ослабший и
+ * выбитый орган — разные события, и строка обязана их различать.
+ */
+export type MotionTelemetryValueState = "normal" | "warning" | "critical";
 
 export interface MotionTelemetryMetric {
   /** Stable semantic name, localised by the consumer when it knows it. */
@@ -73,11 +77,41 @@ export interface MotionTelemetrySnapshot {
   readonly mode?: string;
   readonly phase: string;
   readonly metrics: readonly MotionTelemetryMetric[];
+  /** Тип машины и живое состояние её органов — для типовой панели и сферы. */
+  readonly machine?: MotionTelemetryMachine;
   /** Latest finite external impulse, captured before automation reacts. */
   readonly impact?: MotionTelemetryImpact;
 }
 
 export type MotionTelemetryVector3 = readonly [number, number, number];
+
+/**
+ * МАШИНА В ТЕЛЕМЕТРИИ: тип и живой силуэт органов.
+ *
+ * Разные типы движущихся объектов заслуживают разной телеметрии: у
+ * винтокрылой машины — кольца и тоннели, у плавучей — моторы. Точки органов
+ * отданы в осях сферы удара [правый борт, верх, нос] и нормированы тем же
+ * эллипсоидом корпуса, что и точка удара, — силуэт и вектор удара живут в
+ * одной системе координат по построению.
+ */
+export type MotionTelemetryMachineKind = "rotorcraft" | "buoyant";
+
+export interface MotionTelemetryEngineState {
+  readonly point: MotionTelemetryVector3;
+  /** Фактическая тяга 0…1; у реверсивного — со знаком. */
+  readonly output: number;
+  /** Живучесть канала 0…1: warning ниже единицы, critical у нуля. */
+  readonly health: number;
+  /** Реверсивный движитель: знак output — направление. */
+  readonly reversible?: boolean;
+}
+
+export interface MotionTelemetryMachine {
+  readonly kind: MotionTelemetryMachineKind;
+  readonly engines: readonly MotionTelemetryEngineState[];
+  /** Отдельные движители (тоннели рыскания), если есть. */
+  readonly auxiliary?: readonly MotionTelemetryEngineState[];
+}
 
 export interface MotionTelemetryImpact {
   readonly sequence: number;

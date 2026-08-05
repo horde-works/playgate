@@ -236,6 +236,24 @@ Run the full suite before final delivery when practical. Report unrelated
 baseline failures separately; never weaken the new invariant to make them
 green.
 
+### Flight-quality instrumentation
+
+Judge an autonomous flight with the offline force rig, not by eye and not by
+heading. The accepted metrics, each caught a real defect:
+
+- cross-track and altitude error against the plan (en-route only: vertical
+  departure/arrival shelves are their own law and measuring them against the
+  route profile is a probe artifact);
+- yaw work per circuit and nose reversals (997° for a 360° circuit exposed
+  the pursuit churn);
+- pitch split by sign and phase: nose-down dive on acceleration, nose-up
+  during braking, and the pitch-up swing rate — the visible "rearing" gesture;
+- speed at the crossing versus speed on tight arcs (racing-line shape);
+- fan commands, delivered output and learned health for auxiliary thrusters.
+
+Identical numbers across a with/without comparison almost always mean the
+change is not wired, not that it is neutral.
+
 ## Non-negotiable invariants
 
 - Never move a carrier from route progress or elapsed time.
@@ -262,6 +280,20 @@ green.
   ramp its own articulation policy.
 - Never hide a visible engine inside the measured hull envelope or drive its
   smoke/light from requested rather than delivered power.
+- Never judge an en-route holonomic flight by heading error or slip: the
+  trajectory is the requirement, the nose is a preference. Heading matters at
+  the approach gate.
+- Never author route speed bands from the machine's physics: bands are intent
+  ceilings, the governor computes the operating point from the live passport.
+- Never keep a derived limit (attitude ceiling, corridor, slip allowance) as a
+  standalone constant next to the passport it follows from — derive it.
+- Never feed feedforward computed from allowed-vs-allowed profiles: braking
+  anticipation is the gap between ACTUAL speed and the allowed speed ahead,
+  or a stalled machine deadlocks against its own frozen demand.
+- Never author kinked profiles or windows: the curve's second derivative reads
+  a linear window's corner as a crest and fights the climb.
+- Never sample first and second derivatives of a plan with one base length:
+  curvature needs a wide base, slope a fine one.
 
 ## Handoff
 

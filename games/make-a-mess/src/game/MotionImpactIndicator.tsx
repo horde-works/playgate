@@ -3,6 +3,7 @@
 import type { CSSProperties, ReactElement } from "react";
 import type {
   MotionTelemetryImpact,
+  MotionTelemetryMachine,
   MotionTelemetryVector3,
 } from "./motionTelemetry";
 
@@ -69,6 +70,108 @@ function ringPath(
   return parts.join(" ");
 }
 
+/**
+ * СИЛУЭТ МАШИНЫ ВНУТРИ СФЕРЫ. Осями сферы владеет удар: [правый борт, верх,
+ * нос], и органы приходят в ТОЙ ЖЕ нормировке корпуса (`carrierHullPoint`),
+ * поэтому силуэт, метки двигателей и вектор удара совпадают по построению —
+ * удар в правое переднее кольцо рисуется ровно на правом переднем кольце.
+ *
+ * Контур — по типу машины: винтокрылая — плоский корпус со стрелой к носу,
+ * плавучая — веретено. Двигатели — живые метки: заливка дышит фактической
+ * тягой, цвет — живучестью (норма/деградация/выбит), реверсивный тоннель
+ * показывает знак стрелкой вперёд или назад.
+ */
+function hullOutline(kind: MotionTelemetryMachine["kind"]): readonly MotionTelemetryVector3[] {
+  return kind === "rotorcraft"
+    ? [
+        [0, -0.08, 0.95],
+        [0.34, -0.08, 0.38],
+        [0.42, -0.08, -0.3],
+        [0.18, -0.08, -0.82],
+        [-0.18, -0.08, -0.82],
+        [-0.42, -0.08, -0.3],
+        [-0.34, -0.08, 0.38],
+      ]
+    : [
+        [0, 0, 1],
+        [0.3, 0.16, 0.55],
+        [0.38, 0.2, 0],
+        [0.3, 0.16, -0.6],
+        [0, 0, -0.95],
+        [-0.3, -0.16, -0.6],
+        [-0.38, -0.2, 0],
+        [-0.3, -0.16, 0.55],
+      ];
+}
+
+function outlinePath(points: readonly MotionTelemetryVector3[]): string {
+  return (
+    points
+      .map((point, index) => {
+        const projected = project(point);
+        return `${index === 0 ? "M" : "L"} ${projected.x.toFixed(2)} ${projected.y.toFixed(2)}`;
+      })
+      .join(" ") + " Z"
+  );
+}
+
+function engineStateClass(health: number): string {
+  return health <= 0.05
+    ? " is-dead"
+    : health < 1 - 1e-6
+      ? " is-degraded"
+      : "";
+}
+
+function MachineSilhouette({
+  machine,
+}: {
+  readonly machine: MotionTelemetryMachine;
+}): ReactElement {
+  return (
+    <g className="motion-impact-machine" aria-hidden="true">
+      <path
+        className="motion-impact-hull"
+        d={outlinePath(hullOutline(machine.kind))}
+      />
+      {machine.engines.map((engine, index) => {
+        const projected = project(engine.point);
+        return (
+          <circle
+            key={`engine:${index}`}
+            className={`motion-impact-engine${engineStateClass(engine.health)}${projected.depth < 0 ? " is-far" : ""}`}
+            cx={projected.x}
+            cy={projected.y}
+            r={2.6}
+            style={{ fillOpacity: 0.18 + 0.72 * Math.min(1, Math.abs(engine.output)) }}
+          />
+        );
+      })}
+      {(machine.auxiliary ?? []).map((engine, index) => {
+        const projected = project(engine.point);
+        // Реверсивный движитель: стрелка по знаку фактической тяги.
+        const ahead = project([
+          engine.point[0],
+          engine.point[1],
+          engine.point[2] + (engine.output >= 0 ? 0.16 : -0.16),
+        ]);
+        const dx = ahead.x - projected.x;
+        const dy = ahead.y - projected.y;
+        const length = Math.hypot(dx, dy) || 1;
+        const tip = 3.4;
+        return (
+          <path
+            key={`aux:${index}`}
+            className={`motion-impact-engine is-aux${engineStateClass(engine.health)}${projected.depth < 0 ? " is-far" : ""}`}
+            d={`M ${(projected.x + (dx / length) * tip).toFixed(2)} ${(projected.y + (dy / length) * tip).toFixed(2)} L ${(projected.x - (dy / length) * 2.2).toFixed(2)} ${(projected.y + (dx / length) * 2.2).toFixed(2)} L ${(projected.x + (dy / length) * 2.2).toFixed(2)} ${(projected.y - (dx / length) * 2.2).toFixed(2)} Z`}
+            style={{ fillOpacity: 0.2 + 0.7 * Math.min(1, Math.abs(engine.output)) }}
+          />
+        );
+      })}
+    </g>
+  );
+}
+
 const VERTICAL_FAR = ringPath("vertical", false);
 const VERTICAL_NEAR = ringPath("vertical", true);
 const HORIZONTAL_FAR = ringPath("horizontal", false);
@@ -93,12 +196,14 @@ function formatValue(value: number, locale: string, unit: string): string {
 }
 
 export function MotionImpactIndicator({
+  machine,
   impact,
   locale,
   ariaLabel,
   kickLabel,
   rotationLabel,
 }: {
+  readonly machine?: MotionTelemetryMachine;
   readonly impact: MotionTelemetryImpact | undefined;
   readonly locale: string;
   readonly ariaLabel: string;
@@ -142,6 +247,7 @@ export function MotionImpactIndicator({
             <path className="motion-impact-ring is-far" d={HORIZONTAL_FAR} />
             <path className="motion-impact-ring is-near" d={HORIZONTAL_NEAR} />
           </g>
+          {machine ? <MachineSilhouette machine={machine} /> : null}
           <path
             className="motion-impact-nose"
             d={`M ${NOSE_POINT.x.toFixed(2)} ${(NOSE_POINT.y - 4).toFixed(2)} l 3 6 h -6 z`}

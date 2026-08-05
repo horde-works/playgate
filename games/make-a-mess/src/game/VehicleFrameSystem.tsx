@@ -129,7 +129,10 @@ import type {
   MotionTelemetryUpdate,
 } from "./motionTelemetry";
 import { motionTelemetryAvailable } from "./motionTelemetry";
-import { createVehicleImpactTelemetry } from "./vehicleImpactTelemetry";
+import {
+  carrierHullPoint,
+  createVehicleImpactTelemetry,
+} from "./vehicleImpactTelemetry";
 import { runtimeDiagnosticsEnabled } from "./runtimeDiagnostics";
 import { countActiveUpwardSupportContacts } from "./vehiclePhysicalContact";
 import {
@@ -1496,6 +1499,7 @@ function speedLimitedPlan(
  * дарим ему скорость кадра — иначе он падал бы как с нуля.
  */
 export function VehicleFrameSystem({
+  showRouteOverlay = false,
   pieces,
   bodies,
   brokenPieces,
@@ -1531,6 +1535,8 @@ export function VehicleFrameSystem({
   onContactDamage,
   onVehicleFailure,
 }: {
+  /** Лента маршрута в мире — часть телеметрии, включается режимом по T. */
+  readonly showRouteOverlay?: boolean;
   pieces: readonly BreakablePieceDefinition[];
   bodies: { current: Map<string, RapierRigidBody> };
   brokenPieces: { current: ReadonlySet<string> };
@@ -5977,7 +5983,10 @@ export function VehicleFrameSystem({
               activityDelta: 0.45,
             },
             {
-              id: "propellerRevolutions",
+              // Тип машины — тип строки: у винтокрылой это кольца подъёма, у
+              // плавучей — моторы. Ослабший и ВЫБИТЫЙ орган различаются:
+              // warning деградировал, critical мёртв.
+              id: usesRotorDynamics ? "rotorRings" : "propellerRevolutions",
               value: engineValuesPortToStarboard(
                 usesRotorDynamics
                   ? state.rotorMotorOutput
@@ -5993,7 +6002,11 @@ export function VehicleFrameSystem({
                 state.mass?.centre ?? frame.origin,
                 frame.nose,
               ).map((value) =>
-                value < 1 - 1e-6 ? ("warning" as const) : ("normal" as const),
+                value <= 0.05
+                  ? ("critical" as const)
+                  : value < 1 - 1e-6
+                    ? ("warning" as const)
+                    : ("normal" as const),
               ),
               unit: "percent",
               precision: 0,
@@ -6001,6 +6014,30 @@ export function VehicleFrameSystem({
               activityDelta: 4,
             },
           ];
+          // Тоннели рыскания — отдельная строка отдельного органа: знак — это
+          // реверс, и он часть показания, а не шум.
+          const telemetryYawThrusters = frame.flight.limits.yawThrusters ?? [];
+          if (telemetryYawThrusters.length > 0) {
+            metrics.push({
+              id: "yawTunnels",
+              value: telemetryYawThrusters.map(
+                (_, index) => (state.yawThrusterOutput[index] ?? 0) * 100,
+              ),
+              valueSides: ["left", "right"],
+              valueStates: telemetryYawThrusters.map((_, index) => {
+                const health = state.yawThrusterHealth[index] ?? 1;
+                return health <= 0.05
+                  ? ("critical" as const)
+                  : health < 1 - 1e-6
+                    ? ("warning" as const)
+                    : ("normal" as const);
+              }),
+              unit: "percent",
+              precision: 0,
+              signed: true,
+              activityDelta: 6,
+            });
+          }
           // Trim position is a measurement, like every other instrument: the
           // car's own metres from zero, marked warning once it sits on a stop
           // or the whole channel has been shot away.
@@ -6044,6 +6081,39 @@ export function VehicleFrameSystem({
               },
             );
           }
+          // Живой силуэт органов для панели и сферы удара — в ЕДИНОЙ
+          // нормировке корпуса с точкой удара (carrierHullPoint).
+          const telemetryMass = state.mass;
+          const telemetryMachine =
+            telemetryMass !== null
+              ? {
+                  kind: usesRotorDynamics
+                    ? ("rotorcraft" as const)
+                    : ("buoyant" as const),
+                  engines: frame.flight.limits.enginePoints.map(
+                    (point, index) => ({
+                      point: carrierHullPoint(frame, telemetryMass, point),
+                      output: usesRotorDynamics
+                        ? (state.rotorMotorOutput[index] ?? 0)
+                        : Math.abs(telemetryFlight.driveThrottle[index] ?? 0),
+                      health: propulsion.fractions[index] ?? 1,
+                    }),
+                  ),
+                  auxiliary:
+                    telemetryYawThrusters.length > 0
+                      ? telemetryYawThrusters.map((thruster, index) => ({
+                          point: carrierHullPoint(
+                            frame,
+                            telemetryMass,
+                            thruster.point,
+                          ),
+                          output: state.yawThrusterOutput[index] ?? 0,
+                          health: state.yawThrusterHealth[index] ?? 1,
+                          reversible: true,
+                        }))
+                      : undefined,
+                }
+              : undefined;
           onMotionTelemetryUpdate({
             sourceId,
             snapshot: {
@@ -6064,6 +6134,7 @@ export function VehicleFrameSystem({
                   ? state.telemetryImpact
                   : undefined,
               metrics,
+              machine: telemetryMachine,
             },
           });
         }
@@ -6474,7 +6545,11 @@ export function VehicleFrameSystem({
         damagedPieces={smokingDamage}
         bodies={bodies}
       />
-      <FlightRouteRibbons frames={frames} states={states} />
+      <FlightRouteRibbons
+        frames={frames}
+        states={states}
+        enabled={showRouteOverlay}
+      />
     </>
   );
 }
@@ -6496,9 +6571,11 @@ const ROUTE_FIREFLY_COUNT = 420;
 function FlightRouteRibbons({
   frames,
   states,
+  enabled,
 }: {
   readonly frames: readonly VehicleFrameRuntime[];
   readonly states: { readonly current: Map<string, FrameState> };
+  readonly enabled: boolean;
 }) {
   const beams = useRef(new Map<string, Mesh>());
   const swarms = useRef(new Map<string, Points<BufferGeometry<NormalOrGLBufferAttributes>>>());
@@ -6530,7 +6607,11 @@ function FlightRouteRibbons({
       const flight = state?.flight;
       const plan = state?.activePlan;
       const visible = Boolean(
-        flight && flight.castOff && flight.occupancy === "uncrewed" && plan,
+        enabled &&
+          flight &&
+          flight.castOff &&
+          flight.occupancy === "uncrewed" &&
+          plan,
       );
       beam.visible = visible;
       swarm.visible = visible;

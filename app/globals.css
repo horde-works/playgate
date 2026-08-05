@@ -2370,6 +2370,41 @@ button:focus-visible {
   opacity: 0.82;
 }
 
+.motion-impact-hull {
+  fill: rgba(126, 220, 255, 0.07);
+  stroke: rgba(126, 220, 255, 0.45);
+  stroke-width: 0.8px;
+}
+
+.motion-impact-engine {
+  fill: #6ee7ff;
+  stroke: rgba(160, 235, 255, 0.85);
+  stroke-width: 0.7px;
+}
+
+.motion-impact-engine.is-degraded {
+  fill: #f5b04a;
+  stroke: rgba(255, 196, 110, 0.9);
+}
+
+.motion-impact-engine.is-dead {
+  fill: #ff5d52;
+  stroke: rgba(255, 120, 110, 0.95);
+  fill-opacity: 0.55 !important;
+}
+
+.motion-impact-engine.is-far {
+  opacity: 0.45;
+}
+
+.motion-telemetry-value-channel.is-critical {
+  color: #ff5d52;
+}
+
+.motion-telemetry-value-channel.is-critical .motion-telemetry-reading {
+  text-shadow: 0 0 6px rgba(255, 93, 82, 0.55);
+}
+
 .motion-impact-nose {
   fill: var(--telemetry-accent);
   opacity: 0.88;
