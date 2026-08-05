@@ -297,8 +297,8 @@ change is not wired, not that it is neutral.
   hands the instrument to the neighbouring plate nearer the outboard normal;
   stacked instruments on one plate separate vertically with a clear gap. Hull
   sensors sit ON the skin (a belly sensor hovering under the hull reads as a
-  detached lamp), and ring up/down sensors sit on the collar rims, not over
-  the open rotor mouth.
+  detached lamp). The rule covers SIDE-looking instruments only: ring up/down
+  sensors belong over and under the duct axis where they look.
 - Never sample first and second derivatives of a plan with one base length:
   curvature needs a wide base, slope a fine one.
 

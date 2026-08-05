@@ -215,20 +215,14 @@ function proximitySensors(
         ]),
         normal: combatHexacopterVector(placement, across),
       },
+      // Верхний и нижний смотрят сквозь ось ротора — им место НАД и ПОД
+      // кольцом, как и было: правило середины плиты касается только боковых.
       {
-        point: combatHexacopterPoint(placement, [
-          station.x + across[0] * chord,
-          deck - 0.015,
-          station.z + across[2] * chord,
-        ]),
+        point: combatHexacopterPoint(placement, [station.x, deck + 0.03, station.z]),
         normal: [0, 1, 0],
       },
       {
-        point: combatHexacopterPoint(placement, [
-          station.x + across[0] * chord,
-          floor + 0.015,
-          station.z + across[2] * chord,
-        ]),
+        point: combatHexacopterPoint(placement, [station.x, floor - 0.02, station.z]),
         normal: [0, -1, 0],
       },
     );
