@@ -9,14 +9,18 @@ import {
 } from "@react-three/rapier";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
+  AdditiveBlending,
   BufferAttribute,
   BufferGeometry,
+  CanvasTexture,
   DoubleSide,
   Euler,
   InstancedBufferAttribute,
   InstancedMesh,
   Mesh,
   PlaneGeometry,
+  Points,
+  type NormalOrGLBufferAttributes,
   Quaternion,
   Vector3,
 } from "three";
@@ -154,8 +158,10 @@ import {
   type RotorcraftTrimState,
 } from "./rotorcraftDynamics.ts";
 import {
-  routeRibbonGeometry,
-  routeRibbonSections,
+  createRouteFireflies,
+  routeBeamGeometry,
+  routeGlowSections,
+  sampleRouteFirefly,
 } from "./routeRibbon.ts";
 import {
   advanceRotorcraftGovernor,
@@ -6474,13 +6480,19 @@ export function VehicleFrameSystem({
 }
 
 /**
- * ЛЕНТА МАРШРУТА: дополненная реальность автономного рейса.
+ * ТРАССА АВТОНОМНОГО РЕЙСА: туманный луч со светлячками.
  *
- * Рисуется только для БЕСПИЛОТНОГО полёта после cast-off: у ручного пилота
- * маршрута нет, у пришвартованной машины — рейса. Ширина ленты — авторский
- * коридор участка, так что игрок видит и трассу, и разрешённую ей свободу.
- * Полупрозрачная, гаснет к дальнему краю, глубину не пишет — не мешает.
+ * Кино, а не отладчик: кривая ВСЕГО маршрута от взлёта до посадки, цвет и
+ * яркость по высоте, вдоль луча течёт рой мерцающих огоньков со своим
+ * блужданием. Прогресс машины и коридор здесь не участвуют — они дело контура
+ * управления. Луч строится ОДИН раз на план; по кадрам живут только светлячки.
+ *
+ * Бюджет посчитан до показа: 420 искр по три выборки кривой — около 1300
+ * табличных выборок на кадр, геометрия луча ~400 вершин статикой.
  */
+// Мелких много: рой из сотен искр читается туманом света, а не бусами.
+const ROUTE_FIREFLY_COUNT = 420;
+
 function FlightRouteRibbons({
   frames,
   states,
@@ -6488,59 +6500,143 @@ function FlightRouteRibbons({
   readonly frames: readonly VehicleFrameRuntime[];
   readonly states: { readonly current: Map<string, FrameState> };
 }) {
-  const meshes = useRef(new Map<string, Mesh>());
-  const rebuildAt = useRef(new Map<string, number>());
+  const beams = useRef(new Map<string, Mesh>());
+  const swarms = useRef(new Map<string, Points<BufferGeometry<NormalOrGLBufferAttributes>>>());
+  const builtFor = useRef(new Map<string, VehicleRoutePlan>());
+  const altitudeRange = useRef(new Map<string, readonly [number, number]>());
+  const fireflies = useMemo(() => createRouteFireflies(ROUTE_FIREFLY_COUNT), []);
+  const spriteMap = useMemo(() => {
+    const size = 64;
+    const canvas = document.createElement("canvas");
+    canvas.width = size;
+    canvas.height = size;
+    const context = canvas.getContext("2d");
+    if (context) {
+      const gradient = context.createRadialGradient(32, 32, 0, 32, 32, 32);
+      gradient.addColorStop(0, "rgba(255,255,255,1)");
+      gradient.addColorStop(0.35, "rgba(255,255,255,0.5)");
+      gradient.addColorStop(1, "rgba(255,255,255,0)");
+      context.fillStyle = gradient;
+      context.fillRect(0, 0, size, size);
+    }
+    return new CanvasTexture(canvas);
+  }, []);
   useFrame(({ clock }) => {
     for (const frame of frames) {
       const state = states.current.get(frame.id);
-      const mesh = meshes.current.get(frame.id);
-      if (!mesh) continue;
+      const beam = beams.current.get(frame.id);
+      const swarm = swarms.current.get(frame.id);
+      if (!beam || !swarm) continue;
       const flight = state?.flight;
       const plan = state?.activePlan;
       const visible = Boolean(
         flight && flight.castOff && flight.occupancy === "uncrewed" && plan,
       );
-      mesh.visible = visible;
-      if (!visible || !plan || !flight) continue;
-      const now = clock.elapsedTime;
-      const last = rebuildAt.current.get(frame.id) ?? -1;
-      // Пересборка пять раз в секунду: 50 сечений — копейки, а лента дышит
-      // вместе с progress и сменой плана (уход на второй круг, эвакуация).
-      if (now - last < 0.2) continue;
-      rebuildAt.current.set(frame.id, now);
-      const sections = routeRibbonSections(plan, flight.progress);
-      const ribbon = routeRibbonGeometry(sections);
-      const geometry = mesh.geometry as BufferGeometry;
-      geometry.setAttribute(
-        "position",
-        new BufferAttribute(ribbon.positions, 3),
-      );
-      geometry.setAttribute("color", new BufferAttribute(ribbon.colors, 4));
-      geometry.setIndex(new BufferAttribute(ribbon.indices, 1));
-      geometry.computeBoundingSphere();
+      beam.visible = visible;
+      swarm.visible = visible;
+      if (!visible || !plan) continue;
+      if (builtFor.current.get(frame.id) !== plan) {
+        builtFor.current.set(frame.id, plan);
+        const sections = routeGlowSections(plan);
+        const ribbon = routeBeamGeometry(sections);
+        const geometry = beam.geometry as BufferGeometry;
+        geometry.setAttribute(
+          "position",
+          new BufferAttribute(ribbon.positions, 3),
+        );
+        geometry.setAttribute("color", new BufferAttribute(ribbon.colors, 4));
+        geometry.setIndex(new BufferAttribute(ribbon.indices, 1));
+        geometry.computeBoundingSphere();
+        let low = Number.POSITIVE_INFINITY;
+        let high = Number.NEGATIVE_INFINITY;
+        for (const section of sections) {
+          low = Math.min(low, section.centre[1]);
+          high = Math.max(high, section.centre[1]);
+        }
+        altitudeRange.current.set(frame.id, [low, high]);
+        const swarmGeometry = swarm.geometry as BufferGeometry;
+        swarmGeometry.setAttribute(
+          "position",
+          new BufferAttribute(new Float32Array(fireflies.length * 3), 3),
+        );
+        swarmGeometry.setAttribute(
+          "color",
+          new BufferAttribute(new Float32Array(fireflies.length * 4), 4),
+        );
+      }
+      const range = altitudeRange.current.get(frame.id) ?? [0, 1];
+      const swarmGeometry = swarm.geometry as BufferGeometry;
+      const positions = swarmGeometry.getAttribute("position") as BufferAttribute;
+      const colors = swarmGeometry.getAttribute("color") as BufferAttribute;
+      const time = clock.elapsedTime;
+      for (let index = 0; index < fireflies.length; index += 1) {
+        const sample = sampleRouteFirefly(
+          plan,
+          fireflies[index],
+          time,
+          range[0],
+          range[1],
+        );
+        positions.setXYZ(
+          index,
+          sample.position[0],
+          sample.position[1],
+          sample.position[2],
+        );
+        colors.setXYZW(
+          index,
+          sample.color[0] * sample.intensity,
+          sample.color[1] * sample.intensity,
+          sample.color[2] * sample.intensity,
+          sample.intensity,
+        );
+      }
+      positions.needsUpdate = true;
+      colors.needsUpdate = true;
     }
   });
   return (
     <>
       {frames.map((frame) => (
-        <mesh
-          key={frame.id}
-          ref={(value) => {
-            if (value) meshes.current.set(frame.id, value);
-            else meshes.current.delete(frame.id);
-          }}
-          frustumCulled={false}
-          visible={false}
-        >
-          <bufferGeometry />
-          <meshBasicMaterial
-            vertexColors
-            transparent
-            depthWrite={false}
-            side={DoubleSide}
-            toneMapped={false}
-          />
-        </mesh>
+        <group key={frame.id}>
+          <mesh
+            ref={(value) => {
+              if (value) beams.current.set(frame.id, value);
+              else beams.current.delete(frame.id);
+            }}
+            frustumCulled={false}
+            visible={false}
+          >
+            <bufferGeometry />
+            <meshBasicMaterial
+              vertexColors
+              transparent
+              depthWrite={false}
+              side={DoubleSide}
+              toneMapped={false}
+            />
+          </mesh>
+          <points
+            ref={(value) => {
+              if (value) swarms.current.set(frame.id, value);
+              else swarms.current.delete(frame.id);
+            }}
+            frustumCulled={false}
+            visible={false}
+          >
+            <bufferGeometry />
+            <pointsMaterial
+              map={spriteMap}
+              vertexColors
+              transparent
+              depthWrite={false}
+              blending={AdditiveBlending}
+              size={0.42}
+              sizeAttenuation
+              toneMapped={false}
+            />
+          </points>
+        </group>
       ))}
     </>
   );

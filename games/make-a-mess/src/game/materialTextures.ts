@@ -2208,12 +2208,13 @@ reflectedLight.indirectSpecular *= materialSpecularOcclusion;
 // down. Warm and bright toward the sun, blue away from it, pale at the
 // horizon, deep overhead, and correct at every hour without a second set of
 // numbers to keep in step with the dome.
-// TWO different jobs, deliberately not one law. `materialAir` is the
+// TWO different jobs, deliberately not one law. materialAir is the
 // atmosphere: Koschmieder extinction over the authored visibility, the same
-// air the cloud deck fades into. `materialEdgeVeil` is the scene's own linear
+// air the cloud deck fades into. materialEdgeVeil is the scene's own linear
 // fog, which exists to hide where the island's geometry stops — a game need,
 // not a weather one. Both dissolve into the same sky, so they compose without
 // showing a seam, and whichever is thicker owns the pixel.
+// (No backticks in here: this GLSL lives inside a template literal.)
 float materialAir = 1.0 - exp(-vFogDepth * uAirExtinction);
 float materialEdgeVeil = smoothstep(fogNear, fogFar, vFogDepth);
 float materialFogFactor = max(materialAir, materialEdgeVeil);
