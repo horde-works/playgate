@@ -8,6 +8,7 @@ import type { RotorcraftYawThruster } from "./rotorcraftDynamics.ts";
 import {
   corneringSpeed,
   DEFAULT_SLIP_POLICY,
+  slipAllowanceForCorridor,
   pathSpeedCeiling,
   pathTurnAngle,
   pathTurnRadius,
@@ -2144,6 +2145,8 @@ export interface VehicleGuidanceDemand {
    * маршруте почти свободен, а на заходе зажат до створовых шести градусов.
    */
   readonly approachPhase?: boolean;
+  /** Допуск заноса, выведенный из коридора участка, рад. */
+  readonly slipAllowance?: number;
 }
 
 /** Что общий автопилот доложил о себе. */
@@ -2517,7 +2520,13 @@ function governedRouteSpeed(
     : capability.yawRate;
   const limits = { ...capability, yawRate };
   const policy = model.slipPolicy ?? DEFAULT_SLIP_POLICY;
-  const allowance = onApproach ? policy.onApproach : policy.enRoute;
+  const corridorHere = plan.corridor?.(progress);
+  const allowance = Math.min(
+    onApproach ? policy.onApproach : Number.POSITIVE_INFINITY,
+    corridorHere !== undefined
+      ? slipAllowanceForCorridor(corridorHere, policy)
+      : policy.enRoute,
+  );
   const authoredHere = plan.speedLimit(progress);
   // ДВЕ РАЗНЫЕ ДЛИНЫ, И ПУТАТЬ ИХ НЕЛЬЗЯ — ЭТО УЖЕ СТОИЛО МОЛЧАЩЕГО ОГРАНИЧИТЕЛЯ.
   //
@@ -2805,7 +2814,9 @@ export function autopilot(
     // ближе прицел возвращается под себя, иначе упреждение и снос начинают
     // накручивать друг друга и машина уходит от линии всё дальше.
     const driftPenalty = clamp01(
-      1 - Math.hypot(lateralErrorX, lateralErrorZ) / ROUTE_CORRIDOR,
+      1 -
+        Math.hypot(lateralErrorX, lateralErrorZ) /
+          (plan.corridor?.(progress) ?? ROUTE_CORRIDOR),
     );
     const turnSeconds =
       Math.min(6, Math.max(HEADING_ALIGN_SECONDS, noseOff / yawAuthority)) *
@@ -3197,6 +3208,18 @@ export function autopilot(
     yawRate: requestedYawRate,
     liftFraction,
     approachPhase: onApproach,
+    slipAllowance:
+      plan.corridor !== undefined
+        ? Math.min(
+            onApproach
+              ? (model.slipPolicy ?? DEFAULT_SLIP_POLICY).onApproach
+              : Number.POSITIVE_INFINITY,
+            slipAllowanceForCorridor(
+              plan.corridor(progress),
+              model.slipPolicy ?? DEFAULT_SLIP_POLICY,
+            ),
+          )
+        : undefined,
     // Только для машины с векторируемой тягой: неголономная поворачивает носом
     // и боковое ускорение исполнить не может. Боковое `v²/r` и продольное
     // торможение профиля складываются в ОДИН вектор: манёвр — единое целое.

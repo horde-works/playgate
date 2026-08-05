@@ -9,9 +9,13 @@ import {
 } from "@react-three/rapier";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
+  BufferAttribute,
+  BufferGeometry,
+  DoubleSide,
   Euler,
   InstancedBufferAttribute,
   InstancedMesh,
+  Mesh,
   PlaneGeometry,
   Quaternion,
   Vector3,
@@ -149,6 +153,10 @@ import {
   type RotorcraftLimitReport,
   type RotorcraftTrimState,
 } from "./rotorcraftDynamics.ts";
+import {
+  routeRibbonGeometry,
+  routeRibbonSections,
+} from "./routeRibbon.ts";
 import {
   advanceRotorcraftGovernor,
   DEFAULT_SLIP_POLICY,
@@ -454,11 +462,12 @@ function rotorcraftFlightForces(
     ? advanceRotorcraftGovernor(
         state.governor,
         measuredSlipAngle(flightStep.forwardSpeed, flightStep.lateralSpeed),
-        // Допуск берётся ПО ФАЗЕ: на маршруте занос почти свободен, на заходе
-        // машина обязана прийти в положении, и терпимость к крабу кончается.
-        guidance?.approachPhase
-          ? DEFAULT_SLIP_POLICY.onApproach
-          : DEFAULT_SLIP_POLICY.enRoute,
+        // Допуск считает автопилот из коридора участка; фаза — запасной путь
+        // для маршрутов, не объявивших коридор.
+        guidance?.slipAllowance ??
+          (guidance?.approachPhase
+            ? DEFAULT_SLIP_POLICY.onApproach
+            : DEFAULT_SLIP_POLICY.enRoute),
         step,
       )
     : NEUTRAL_GOVERNOR;
@@ -819,6 +828,8 @@ interface FrameState {
   yawThrusterHealth: number[];
   /** Срезка ограничителя по фактическому заносу: живёт между кадрами. */
   governor: RotorcraftGovernorState;
+  /** План, который автопилот фактически вёл в этом кадре, — для ленты. */
+  activePlan: VehicleRoutePlan | null;
   /** Previous physical step, consumed by the common failure watchdog. */
   rotorAuthority: RotorcraftAuthority | null;
   /** Command the bounded rotor allocator actually accepted last step. */
@@ -1311,6 +1322,7 @@ function restingState(engineCount: number, yawThrusterCount = 0): FrameState {
     yawThrusterOutput: Array.from({ length: yawThrusterCount }, () => 0),
     yawThrusterHealth: Array.from({ length: yawThrusterCount }, () => 1),
     governor: NEUTRAL_GOVERNOR,
+    activePlan: null,
     rotorAuthority: null,
     rotorAcceptedYawRate: null,
     lastGuidanceYawRate: null,
@@ -4264,6 +4276,7 @@ export function VehicleFrameSystem({
         )
           ? speedLimitedPlan(plan, flightClearance.speedFactor)
           : plan;
+        state.activePlan = controlledPlan;
         const sensedSafety = senseObstacleSafety(berthPlan, berthProgress);
         // H owns a deliberately direct return. Proximity assistance may stop
         // that request, but climbing or diving around the obstruction would
@@ -5220,6 +5233,8 @@ export function VehicleFrameSystem({
             // Both numbers now come from the question the corrector asks, so
             // it always acts first by construction.
             crossTrackError: unrecoverable.crossTrack,
+            // Порог ухода — местный: узкой улице метры, открытой воде десятки.
+            corridorLimit: plan.corridor?.(flight.progress),
             altitudeError: unrecoverable.altitude,
             progress: flight.progress,
             requiredControlAvailable: usesRotorDynamics
@@ -6453,6 +6468,80 @@ export function VehicleFrameSystem({
         damagedPieces={smokingDamage}
         bodies={bodies}
       />
+      <FlightRouteRibbons frames={frames} states={states} />
+    </>
+  );
+}
+
+/**
+ * ЛЕНТА МАРШРУТА: дополненная реальность автономного рейса.
+ *
+ * Рисуется только для БЕСПИЛОТНОГО полёта после cast-off: у ручного пилота
+ * маршрута нет, у пришвартованной машины — рейса. Ширина ленты — авторский
+ * коридор участка, так что игрок видит и трассу, и разрешённую ей свободу.
+ * Полупрозрачная, гаснет к дальнему краю, глубину не пишет — не мешает.
+ */
+function FlightRouteRibbons({
+  frames,
+  states,
+}: {
+  readonly frames: readonly VehicleFrameRuntime[];
+  readonly states: { readonly current: Map<string, FrameState> };
+}) {
+  const meshes = useRef(new Map<string, Mesh>());
+  const rebuildAt = useRef(new Map<string, number>());
+  useFrame(({ clock }) => {
+    for (const frame of frames) {
+      const state = states.current.get(frame.id);
+      const mesh = meshes.current.get(frame.id);
+      if (!mesh) continue;
+      const flight = state?.flight;
+      const plan = state?.activePlan;
+      const visible = Boolean(
+        flight && flight.castOff && flight.occupancy === "uncrewed" && plan,
+      );
+      mesh.visible = visible;
+      if (!visible || !plan || !flight) continue;
+      const now = clock.elapsedTime;
+      const last = rebuildAt.current.get(frame.id) ?? -1;
+      // Пересборка пять раз в секунду: 50 сечений — копейки, а лента дышит
+      // вместе с progress и сменой плана (уход на второй круг, эвакуация).
+      if (now - last < 0.2) continue;
+      rebuildAt.current.set(frame.id, now);
+      const sections = routeRibbonSections(plan, flight.progress);
+      const ribbon = routeRibbonGeometry(sections);
+      const geometry = mesh.geometry as BufferGeometry;
+      geometry.setAttribute(
+        "position",
+        new BufferAttribute(ribbon.positions, 3),
+      );
+      geometry.setAttribute("color", new BufferAttribute(ribbon.colors, 4));
+      geometry.setIndex(new BufferAttribute(ribbon.indices, 1));
+      geometry.computeBoundingSphere();
+    }
+  });
+  return (
+    <>
+      {frames.map((frame) => (
+        <mesh
+          key={frame.id}
+          ref={(value) => {
+            if (value) meshes.current.set(frame.id, value);
+            else meshes.current.delete(frame.id);
+          }}
+          frustumCulled={false}
+          visible={false}
+        >
+          <bufferGeometry />
+          <meshBasicMaterial
+            vertexColors
+            transparent
+            depthWrite={false}
+            side={DoubleSide}
+            toneMapped={false}
+          />
+        </mesh>
+      ))}
     </>
   );
 }

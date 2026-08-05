@@ -42,10 +42,18 @@ export interface SkyWeather {
   /** Compass bearing the cloud travels toward, in radians from +x toward +z. */
   readonly windBearing: number;
   /**
-   * Metres of visibility for cloud, e-folding. This is aerial perspective: how
-   * fast a distant heap dissolves into the same haze the land does.
+   * METEOROLOGICAL VISIBILITY IN METRES — the distance at which contrast falls
+   * to 2%, which is what a weather report means by "visibility" and the only
+   * number the air's clarity needs. Koschmieder: extinction per metre is
+   * 3.912 / visibility, so this ONE value carries both how fast a cloud four
+   * kilometres out dissolves and how much air stands between the eye and a
+   * building at eighty metres. They were separate numbers, which is how a world
+   * ended up with crisp distant cloud and no aerial perspective at all.
+   *
+   * Real categories, for authoring: 50 km+ exceptionally clear, 20-50 km clear,
+   * 10-20 km light haze, 4-10 km haze, 1-4 km mist, under 1 km fog.
    */
-  readonly hazeDistance: number;
+  readonly visibility: number;
   /** Strength of the mid-level mottled sheet, 0..1. */
   readonly midLevel: number;
   readonly midAltitude: number;
@@ -71,7 +79,10 @@ export const CLEAR_SKY: SkyWeather = {
   density: 0.0042,
   windSpeed: 6,
   windBearing: 0,
-  hazeDistance: 13000,
+  // Light haze — the ordinary summer air of every one of these islands. At a
+  // genuine 50 km an object eighty metres away has no air in front of it at
+  // all, which is true, and reads as a world with no depth.
+  visibility: 9000,
   midLevel: 0,
   midAltitude: 4200,
   midScale: 5600,
@@ -99,8 +110,9 @@ export const DUTCH_POLDER_SKY: SkyWeather = {
   windSpeed: 7.5,
   windBearing: 0.32,
   // Showers wash the air. Long visibility is what lets a heap four kilometres
-  // out keep its dark belly instead of dissolving into a pale wash.
-  hazeDistance: 18000,
+  // out keep its dark belly instead of dissolving into a pale wash — and it is
+  // the same number that leaves the polder's own far bank crisp.
+  visibility: 70000,
   midLevel: 0.22,
   midAltitude: 4300,
   midScale: 6100,
@@ -112,6 +124,116 @@ export const DUTCH_POLDER_SKY: SkyWeather = {
   shadeColor: "#7d8797",
   shadowStrength: 0.62,
 };
+
+/**
+ * The air the analytic dome is made of, and the one number that puts what it
+ * emits into the renderer's units.
+ *
+ * THE DOME IS NOT A LIGHT SOURCE WE AUTHOR — IT IS A MEASUREMENT WE EXPOSE.
+ * Preetham's shader ends in `pow(texColor, 1.0 / 2.4)`, and that pow IS a
+ * display transform: it was written when the sky went straight to an sRGB
+ * framebuffer. Our composer takes what it writes as SCENE-LINEAR radiance and
+ * tone-maps it a second time, with AgX at exposure 1.08. Unscaled, a clear day
+ * sky leaves that shader at 2–5 linear, and AgX is already at 226/255 by 2.0:
+ * every direction more than ten degrees above the horizon came out between 215
+ * and 243 with two to nine levels of chroma left in it. Not a bright sky — a
+ * sky with no midtones at all, at every hour the sun was up.
+ *
+ * Worse, it made the whole dome a light source for effects that were written
+ * assuming it was not one: the bloom high-pass at 1.6 passes the FULL colour
+ * of anything over the threshold, so a quarter of the sky was being blurred
+ * back over the frame as veiling glare — about 0.28 linear on ground that
+ * itself only reflects 0.05, which is what whitened the far half of a range
+ * where the fog does not even begin until 110 m.
+ *
+ * `exposure` anchors the dome instead of scaling the effects that read it: a
+ * clear noon zenith at ~0.47 linear, about 1.4 stops over middle grey, which
+ * is where a tone mapper still holds colour. Everything else follows — the
+ * horizon stays 1.6x the zenith, the disc still clips to white and still
+ * blooms, and the only sky left above the high-pass is the few degrees of
+ * aureole around the sun, which is the one place glare belongs.
+ *
+ * The air itself is cleaner than it was. Turbidity 6.2 is industrial haze: it
+ * is mie scatter, it is white, and at dusk it washed the long red path out —
+ * fifteen degrees along the horizon from a setting sun it rendered 216,197,170,
+ * a pale smear where a sunset belongs. At 3.8 that same patch of sky comes out
+ * 163,128,102: 61 levels of chroma against 46. `tests/sky-exposure` pins it.
+ */
+export const ATMOSPHERE = {
+  /** Scale on the dome's own output, applied last, to everything it draws. */
+  exposure: 0.42,
+  /**
+   * Ambient multiplier for the PMREM baked from this same shader. It moves
+   * INVERSELY with the exposure and the air, because the dome's exposure is a
+   * units fix and must not change how much light the world receives: 0.22
+   * against the old blown sky and 0.44 against this one are the same fill.
+   */
+  ambientIntensity: 0.44,
+  /** Open country air. Every world but the fortress stands under it. */
+  town: {
+    turbidity: 3.8,
+    rayleigh: 2.6,
+    mieCoefficient: 0.005,
+    mieDirectionalG: 0.77,
+  },
+  /**
+   * Volcanic: still the heaviest sky we draw, just no longer a blown one.
+   * Heavy air is not a whiter tint — it is forward scattering, and it shows as
+   * the ratio between the sky twenty degrees off the sun and the sky at the
+   * zenith: 4.2 here against 2.3 over open country and 1.9 in a flyover's air.
+   */
+  fortress: {
+    turbidity: 8,
+    rayleigh: 1.6,
+    mieCoefficient: 0.011,
+    mieDirectionalG: 0.82,
+  },
+  /** Cleaner air and a tighter forward lobe, for recorded flyovers. */
+  cinematic: {
+    turbidity: 2.6,
+    rayleigh: 2.6,
+    mieCoefficient: 0.0012,
+    mieDirectionalG: 0.68,
+  },
+} as const;
+
+/**
+ * Koschmieder's constant: contrast falls to 2% after this many e-foldings, so
+ * `visibility` in metres becomes the extinction length the shaders integrate
+ * over. One conversion, in one place, used by the cloud deck and by the haze
+ * on the ground alike — they are the same air.
+ */
+export const KOSCHMIEDER = 3.912;
+
+/** Metres of air per e-folding of extinction, from the authored visibility. */
+export function extinctionLength(weather: SkyWeather): number {
+  return weather.visibility / KOSCHMIEDER;
+}
+
+/**
+ * Fraction of a surface's own colour that survives `distance` metres of this
+ * air. What it loses, aerial perspective replaces with the sky in the same
+ * direction — which is what the piece materials read out of the environment
+ * bake rather than out of an authored fog colour.
+ */
+export function airTransmittance(weather: SkyWeather, distance: number): number {
+  return Math.exp(-distance / extinctionLength(weather));
+}
+
+export type SkyTheme = "town" | "fortress";
+
+/**
+ * The four Preetham parameters for a world.
+ *
+ * `three-stdlib` hands every `Sky` ONE module-level material, so the visible
+ * dome and the sky the environment is baked from are literally the same
+ * uniforms. They were being written twice, from two components, with two
+ * copies of the same four numbers; this is the one place they come from now.
+ */
+export function skyAir(theme: SkyTheme, cinematic = false) {
+  if (theme === "fortress") return ATMOSPHERE.fortress;
+  return cinematic ? ATMOSPHERE.cinematic : ATMOSPHERE.town;
+}
 
 /**
  * A tile has to be wide enough that an open sky is not the same cloud four
@@ -608,7 +730,7 @@ export function cloudDensityAt(
 
 /** How far a ray is walked through the deck before haze has eaten all of it. */
 export function cloudReach(weather: SkyWeather): number {
-  return weather.hazeDistance * CLOUD_LAW.reachInHazes;
+  return extinctionLength(weather) * CLOUD_LAW.reachInHazes;
 }
 
 /** Steps and step length the march uses for a ray of this path length. */

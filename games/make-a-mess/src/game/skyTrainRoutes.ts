@@ -423,6 +423,14 @@ export interface VehicleRoutePlan {
   speedLimit(progress: number): number;
   altitude(progress: number): number;
   /**
+   * ТОЧНОСТЬ — СВОЙСТВО ТРАЕКТОРИИ, а не машины. Полуширина разрешённого
+   * коридора, метры: облёт улицы между домами — полметра и строго, открытый
+   * воздух — десятки метров и «резвись, и пусть тебя заносит». Из этого числа
+   * выводятся и допуск заноса, и скорость, и порог ухода с трассы — одно
+   * правило вместо особых случаев на фазу. Не задано — действует конверт.
+   */
+  corridor?(progress: number): number;
+  /**
    * Route-authored vertical departure before horizontal motion is released.
    *
    * The route keeps its ordinary ground point at progress zero, so a machine

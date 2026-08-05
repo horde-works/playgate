@@ -10,6 +10,7 @@ import {
   pathTurnAngle,
   pathTurnRadius,
 } from "../games/make-a-mess/src/game/rotorcraftSpeedGovernor.ts";
+import * as governorModule from "../games/make-a-mess/src/game/rotorcraftSpeedGovernor.ts";
 
 const degrees = (value) => (value * 180) / Math.PI;
 
@@ -222,4 +223,23 @@ test("на маршруте машину НЕ тормозят за то, что
     DEFAULT_SLIP_POLICY.enRoute,
   );
   assert.ok(Math.abs(damaged - byBankAlone) < 1e-6);
+});
+
+test("точность — свойство траектории: допуск заноса выводится из ширины коридора", () => {
+  // Узкая улица судится створовой строгостью, открытый воздух — маршрутной
+  // свободой, между ними плавно и монотонно. Створ перестаёт быть особым
+  // случаем: это просто участок с узким коридором.
+  const { slipAllowanceForCorridor } = governorModule;
+  const street = slipAllowanceForCorridor(0.5);
+  const narrow = slipAllowanceForCorridor(4);
+  const middle = slipAllowanceForCorridor(12);
+  const open = slipAllowanceForCorridor(30);
+  assert.equal(Math.abs(street - DEFAULT_SLIP_POLICY.onApproach) < 1e-9, true);
+  assert.equal(Math.abs(narrow - DEFAULT_SLIP_POLICY.onApproach) < 1e-9, true);
+  assert.equal(middle > narrow && middle < open, true, "между границами — плавно");
+  assert.equal(Math.abs(open - DEFAULT_SLIP_POLICY.enRoute) < 1e-9, true);
+  // И через закон виража узкий коридор означает МЕДЛЕННО на том же радиусе.
+  const slow = corneringSpeed(12, Math.PI / 2, TONKAWA, street);
+  const fast = corneringSpeed(12, Math.PI / 2, TONKAWA, open);
+  assert.equal(slow < fast, true, "узкий коридор обязан стоить скорости");
 });

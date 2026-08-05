@@ -148,6 +148,11 @@ export const combatHexacopterRangeCircuit = createMotionRoute({
     // тормозил её числами вчерашнего аппарата. Физику считает governor из
     // ЖИВОГО паспорта; здесь остаётся только замысел: тихо у земли, во всю на
     // круге.
+    // Коридор — требование участка: у земли строгие метры (взлётный и
+    // посадочный столбы обязаны стоять над точкой), на круге — свобода
+    // гоночной линии. Ширина здесь и есть та самая «точность исполнения».
+    corridor: ({ progress }) =>
+      progress < 0.06 ? 4 : progress < 0.9 ? 30 : progress < 0.96 ? 12 : 4,
     speedLimit: ({ progress }) => {
       if (progress < 0.06) return 5;
       if (progress < 0.9) return 30;
@@ -180,6 +185,7 @@ function placedPlan(
     },
     speedLimit: (progress) => route.requirement("speedLimit", progress),
     altitude: (progress) => berth[1] + route.requirement("altitude", progress),
+    corridor: (progress) => route.requirement("corridor", progress),
     finalFrom,
   };
 }

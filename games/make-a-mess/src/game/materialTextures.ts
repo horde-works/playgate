@@ -133,10 +133,8 @@ const environmentShaderByMaterial = new WeakMap<
 >();
 
 export interface MaterialEnvironmentUpdate {
-  readonly sunDirection: Vector3;
-  readonly sunColor: Color;
-  /** How strongly fog is tinted toward the sun (sunset haze). */
-  readonly sunStrength: number;
+  /** Extinction per metre of the authored air: `1 / extinctionLength`. */
+  readonly airExtinction: number;
   /** Scene-wide standing dampness 0..1. */
   readonly wetness: number;
   /** Seconds since start, drives cloth wind. */
@@ -151,11 +149,7 @@ export function updateMaterialEnvironment(
   update: MaterialEnvironmentUpdate,
 ): void {
   for (const shader of environmentShaders) {
-    (shader.uniforms.uFogSunDirection.value as Vector3).copy(
-      update.sunDirection,
-    );
-    (shader.uniforms.uFogSunColor.value as Color).copy(update.sunColor);
-    shader.uniforms.uFogSunStrength.value = update.sunStrength;
+    shader.uniforms.uAirExtinction.value = update.airExtinction;
     shader.uniforms.uWetness.value = update.wetness;
     shader.uniforms.uTime.value = update.time;
     shader.uniforms.uWindStrength.value = update.windStrength;
@@ -1580,9 +1574,7 @@ export function getPieceMaterial(
     ].join(":");
 
     standardMaterial.onBeforeCompile = (shader) => {
-      shader.uniforms.uFogSunDirection = { value: new Vector3(0.4, 0.7, 0.5) };
-      shader.uniforms.uFogSunColor = { value: new Color("#ffd9a0") };
-      shader.uniforms.uFogSunStrength = { value: 0.0 };
+      shader.uniforms.uAirExtinction = { value: 0.0 };
       shader.uniforms.uWetness = { value: 0.0 };
       shader.uniforms.uTime = { value: 0.0 };
       shader.uniforms.uWindStrength = { value: 1.0 };
@@ -1777,9 +1769,7 @@ varying float vWeathering;
 varying vec3 vBevelAxisX;
 varying vec3 vBevelAxisY;
 varying vec3 vBevelAxisZ;
-uniform vec3 uFogSunDirection;
-uniform vec3 uFogSunColor;
-uniform float uFogSunStrength;
+uniform float uAirExtinction;
 uniform float uWetness;
 uniform sampler2D uLandscapeSoilMap;
 uniform sampler2D uVikingTrafficMap;
@@ -2209,14 +2199,34 @@ reflectedLight.indirectSpecular *= materialSpecularOcclusion;
         .replace(
           "#include <fog_fragment>",
           `#ifdef USE_FOG
-// Depth fog tinted toward the sun: air glows around the light source the
-// way real haze in-scatters, instead of one flat fog color everywhere.
-float materialFogFactor = smoothstep(fogNear, fogFar, vFogDepth);
-float materialFogSunAmount = pow(
-  clamp(dot(normalize(vMaterialCoordinate - cameraPosition), uFogSunDirection), 0.0, 1.0),
-  8.0
-);
-vec3 materialFogTint = mix(fogColor, uFogSunColor, materialFogSunAmount * uFogSunStrength);
+// AERIAL PERSPECTIVE IS THE SKY, INTEGRATED TO THE OBJECT INSTEAD OF TO
+// INFINITY. For a single-scattering atmosphere the radiance reaching the eye
+// is L_object * T(d) + L_air(direction) * (1 - T(d)) — and L_air for a ray
+// that never hits anything is exactly what the dome already draws in that
+// direction. So the colour distance fades toward is not authored: it is read
+// out of the very sky this world is lit by, along the ray we are looking
+// down. Warm and bright toward the sun, blue away from it, pale at the
+// horizon, deep overhead, and correct at every hour without a second set of
+// numbers to keep in step with the dome.
+// TWO different jobs, deliberately not one law. `materialAir` is the
+// atmosphere: Koschmieder extinction over the authored visibility, the same
+// air the cloud deck fades into. `materialEdgeVeil` is the scene's own linear
+// fog, which exists to hide where the island's geometry stops — a game need,
+// not a weather one. Both dissolve into the same sky, so they compose without
+// showing a seam, and whichever is thicker owns the pixel.
+float materialAir = 1.0 - exp(-vFogDepth * uAirExtinction);
+float materialEdgeVeil = smoothstep(fogNear, fogFar, vFogDepth);
+float materialFogFactor = max(materialAir, materialEdgeVeil);
+#if defined( USE_ENVMAP ) && defined( ENVMAP_TYPE_CUBE_UV )
+vec3 materialViewRay = transformDirectionByInverseViewMatrix(-vViewPosition, viewMatrix);
+// Read a broadened lobe rather than the sharpest mip: what in-scatters toward
+// the eye is spread by the phase function, so the solar disc belongs in this
+// as a circumsolar glow and not as one blazing texel of the environment map.
+vec3 materialFogTint = textureCubeUV(envMap, envMapRotation * materialViewRay, 0.25).rgb;
+#else
+// Anything shaded without the sky bake keeps the scene's own fog colour.
+vec3 materialFogTint = fogColor;
+#endif
 gl_FragColor.rgb = mix(gl_FragColor.rgb, materialFogTint, materialFogFactor);
 #endif`,
         );

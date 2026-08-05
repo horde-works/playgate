@@ -186,3 +186,12 @@ test("корни передних тяг лежат в борту, а не ря�
     );
   }
 });
+
+test("коридор — требование участка: узко у земли, свобода на круге", () => {
+  const berth = COMBAT_HEXACOPTER_RANGE_PLACEMENT.position;
+  const plan = combatHexacopterRangePlan(berth);
+  assert.ok(plan.corridor, "маршрут обязан объявлять коридор");
+  assert.equal(plan.corridor(0.02) <= 4, true, "взлётный столб — строгие метры");
+  assert.equal(plan.corridor(0.5) >= 25, true, "круг — свобода гоночной линии");
+  assert.equal(plan.corridor(0.98) <= 4, true, "посадочный столб — строгие метры");
+});

@@ -329,6 +329,12 @@ export interface VehicleFailureObservation {
    * answered better.
    */
   readonly crossTrackError: number;
+  /**
+   * Полуширина коридора УЧАСТКА, если трасса её объявила. Точность — свойство
+   * траектории: городской пролёт судится метрами, открытый воздух — десятками.
+   * Не задана — действует общий конверт.
+   */
+  readonly corridorLimit?: number;
   /** Vertical error that cannot be removed in that distance, in metres. */
   readonly altitudeError?: number;
   readonly progress: number;
@@ -707,7 +713,8 @@ export function advanceVehicleFailureWatchdog(
       !observation.turning &&
       ((observation.courseFollowsNose !== false &&
         Math.abs(observation.headingError) > envelope.maximumHeadingError) ||
-        observation.crossTrackError > envelope.maximumCrossTrackError ||
+        observation.crossTrackError >
+          (observation.corridorLimit ?? envelope.maximumCrossTrackError) ||
         Math.abs(observation.altitudeError ?? 0) >
           envelope.maximumAltitudeError),
     current.routeSeconds,

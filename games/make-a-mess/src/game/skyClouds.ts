@@ -10,7 +10,9 @@ import {
 } from "three";
 import type { Material, Texture } from "three";
 import {
+  ATMOSPHERE,
   CLOUD_LAW,
+  extinctionLength,
   SKY_FIELD_SIZE,
   cloudEdgeFor,
   cloudReach,
@@ -90,6 +92,7 @@ const skyShaderFunctions = /* glsl */ `
   uniform float uCirrusScale;
   uniform float uBeamStrength;
   uniform float uSunRadiusDegrees;
+  uniform float uSkyExposure;
 
   // ---- solar geometry -------------------------------------------------
   // Bennett's formula: refraction in arcminutes for an APPARENT altitude in
@@ -427,7 +430,12 @@ const skyComposite = /* glsl */ `
   retColor += uCloudLit
     * cloudBeams(skyRayOrigin, skyRayDirection, vSunDirection, skyCosSun)
     * uBeamStrength;
-  gl_FragColor = vec4( retColor, 1.0 );
+  // ONE exposure, applied to everything the dome draws, at the very end: air,
+  // cloud, disc, aureole and beams all leave here in the same units, so the
+  // ratios this whole file is built on survive it. See ATMOSPHERE — what the
+  // Preetham shader emits is display-referred, and the composer reads it as
+  // scene-linear radiance before tone mapping it a second time.
+  gl_FragColor = vec4( retColor * uSkyExposure, 1.0 );
 `;
 
 export interface SkyCloudUniforms {
@@ -503,6 +511,7 @@ export function installSkyClouds(material: Material): SkyCloudUniforms | null {
   // Tight circumsolar glow, then the broad wash, in units of vSunE.
   uniforms.uSunAureole = { value: new Vector2(0.035, 0.004) };
   uniforms.uSunRadiusDegrees = { value: SUN_ANGULAR_RADIUS_DEGREES };
+  uniforms.uSkyExposure = { value: ATMOSPHERE.exposure };
 
   const sunDiscSource =
     "float sundisk = smoothstep( sunAngularDiameterCos, sunAngularDiameterCos + 0.00002, cosTheta );";
@@ -538,7 +547,7 @@ export function installSkyClouds(material: Material): SkyCloudUniforms | null {
       uniforms.uCloudThickness.value = weather.thickness;
       uniforms.uCloudScale.value = weather.fieldScale;
       uniforms.uCloudDensity.value = weather.density;
-      uniforms.uCloudHazeRate.value = 1 / weather.hazeDistance;
+      uniforms.uCloudHazeRate.value = 1 / extinctionLength(weather);
       uniforms.uCloudReach.value = cloudReach(weather);
       shear.set(
         Math.cos(weather.windBearing) * CLOUD_LAW.shear,

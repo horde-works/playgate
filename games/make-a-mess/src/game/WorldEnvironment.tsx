@@ -53,8 +53,11 @@ import {
   type SkyCloudUniforms,
 } from "./skyClouds";
 import {
+  ATMOSPHERE,
   CLEAR_SKY,
   cloudDrift,
+  extinctionLength,
+  skyAir,
   type SkyWeather,
 } from "./skyWeatherModel.ts";
 import { lampBeaconOpacity, lampBeaconWorldDiameter } from "./lampBeacon";
@@ -93,27 +96,33 @@ export function SceneEnvironment({
 }) {
   const gl = useThree((state) => state.gl);
   const scene = useThree((state) => state.scene);
-  const fortress = theme === "fortress";
   const pmrem = useMemo(() => new PMREMGenerator(gl), [gl]);
   const skyScene = useMemo(() => {
     const holder = new Scene();
     const sky = new SkyImpl();
     sky.scale.setScalar(48);
+    // The same uniforms the visible dome is drawn from — `three-stdlib` shares
+    // one material — so these come from the one law rather than a second copy
+    // of the same four numbers. A recorded flyover swaps in cleaner air below;
+    // this bake takes the world's ordinary sky, which is what its objects sit
+    // under for every frame that is not a recording.
     const uniforms = sky.material.uniforms;
-    uniforms.turbidity.value = fortress ? 10.5 : 6.2;
-    uniforms.rayleigh.value = fortress ? 1.25 : 1.6;
-    uniforms.mieCoefficient.value = fortress ? 0.011 : 0.005;
-    uniforms.mieDirectionalG.value = fortress ? 0.82 : 0.77;
+    const air = skyAir(theme);
+    uniforms.turbidity.value = air.turbidity;
+    uniforms.rayleigh.value = air.rayleigh;
+    uniforms.mieCoefficient.value = air.mieCoefficient;
+    uniforms.mieDirectionalG.value = air.mieDirectionalG;
     holder.add(sky);
     return { holder, sky };
-  }, [fortress]);
+  }, [theme]);
   const currentTarget = useRef<WebGLRenderTarget | null>(null);
   const lastBucket = useRef("");
 
   useEffect(() => {
-    // The atmosphere shader is HDR-bright; a low multiplier keeps its PMREM
-    // as a tint-correct ambient rather than a wash.
-    scene.environmentIntensity = 0.22;
+    // Ambient comes from the dome, so it is measured against the dome: this
+    // multiplier moves inversely to ATMOSPHERE.exposure and delivers the same
+    // fill light the world had before the sky was put into the right units.
+    scene.environmentIntensity = ATMOSPHERE.ambientIntensity;
     return () => {
       scene.environmentIntensity = 1;
       scene.environment = null;
@@ -336,11 +345,12 @@ export function DayNightCycle({
     environmentState.dayFactor = day;
     environmentState.nightFactor = night;
     environmentState.twilightFactor = twilight;
+    // The sun is no longer passed to the piece materials: haze used to be a
+    // flat colour with a hand-authored warm tint aimed at the sun, and it is
+    // now the sky itself, read out of the environment bake along the view ray.
+    // Where the sun is, and how warm the air is around it, is already in there.
     updateMaterialEnvironment({
-      sunDirection: environmentState.sunDirection,
-      sunColor: environmentState.sunColor,
-      sunStrength:
-        (0.32 + twilight * 1.2) * MathUtils.clamp(day + twilight, 0, 1),
+      airExtinction: 1 / extinctionLength(weather),
       wetness: environmentState.wetness,
       time: frameState.clock.elapsedTime,
       windStrength: windState.strength,
@@ -409,10 +419,7 @@ export function DayNightCycle({
           skyRadius ?? Math.max(fortress ? 170 : 110, (worldRadius ?? 58) * 2.6),
         )}
         sunPosition={[24, 12, 14]}
-        turbidity={fortress ? 10.5 : cinematic ? 4.2 : 6.2}
-        rayleigh={fortress ? 1.25 : 1.6}
-        mieCoefficient={fortress ? 0.011 : cinematic ? 0.0012 : 0.005}
-        mieDirectionalG={fortress ? 0.82 : cinematic ? 0.68 : 0.77}
+        {...skyAir(theme, cinematic)}
       />
       <hemisphereLight
         ref={hemisphere}

@@ -97,6 +97,30 @@ export const DEFAULT_SLIP_POLICY: RotorcraftSlipPolicy = {
 };
 
 /**
+ * ДОПУСК ЗАНОСА ИЗ ШИРИНЫ КОРИДОРА. Точность — свойство траектории: узкий
+ * коридор городской улицы (± метры) означает строгий занос и, через закон
+ * виража, малую скорость; широкий над водой — «резвись, и пусть тебя заносит».
+ * Створ перестаёт быть особым случаем: это просто участок с узким коридором.
+ *
+ * Границы: до 5 м — створовая строгость, от 20 м — маршрутная свобода, между
+ * ними плавно. Числа осознанно грубые: это политика ощущения, не физика.
+ */
+export function slipAllowanceForCorridor(
+  corridorHalfWidth: number,
+  policy: RotorcraftSlipPolicy = DEFAULT_SLIP_POLICY,
+): number {
+  const strictBelow = 5;
+  const freeAbove = 20;
+  const raw =
+    (corridorHalfWidth - strictBelow) / (freeAbove - strictBelow);
+  const clamped = Math.max(0, Math.min(1, raw));
+  const eased = clamped * clamped * (3 - 2 * clamped);
+  return (
+    policy.onApproach + (policy.enRoute - policy.onApproach) * eased
+  );
+}
+
+/**
  * Радиус поворота трассы по трём последовательным точкам — радиус описанной
  * окружности. Прямая даёт бесконечность, и это правильный ответ: на прямой
  * вираж не ограничивает ничего.
