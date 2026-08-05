@@ -542,17 +542,34 @@ const IntactPieceColliders = memo(function IntactPieceColliders({
   );
 });
 
+const EMPTY_CRATERED_MESHES: ReadonlyMap<
+  string,
+  NonNullable<BreakablePieceDefinition["visualMesh"]>
+> = new Map();
+
 export const IntactBreakableWorld = memo(function IntactBreakableWorld({
   pieces,
   hiddenPieceIds,
   mutablePieceIds = EMPTY_MUTABLE_PIECE_IDS,
   mutablePieceStates,
+  crateredMeshes = EMPTY_CRATERED_MESHES,
 }: {
   pieces: readonly BreakablePieceDefinition[];
   hiddenPieceIds: ReadonlySet<string>;
   mutablePieceIds?: ReadonlySet<string>;
   mutablePieceStates?: MutableRefObject<
     ReadonlyMap<string, MutablePieceVisualState>
+  >;
+  /**
+   * Куски с настоящей пробоиной: их авторская сетка подрезана кратером. Такой
+   * кусок уходит из общего инстансного батча и рисуется своим — форма у него
+   * теперь СВОЯ, и делить геометрию с целыми однотипными кусками он больше не
+   * может. Цена — один draw call на пробитый кусок; поэтому карта наполняется
+   * вызывающим под бюджетом, а не безгранично.
+   */
+  crateredMeshes?: ReadonlyMap<
+    string,
+    NonNullable<BreakablePieceDefinition["visualMesh"]>
   >;
 }) {
   const emptyMutablePieceStates = useRef<
@@ -581,6 +598,38 @@ export const IntactBreakableWorld = memo(function IntactBreakableWorld({
     ],
     [genericRenderPieces, mutablePieceIds],
   );
+  // Пробитые куски: батч на кусок, с его собственной подрезанной сеткой.
+  // Ключ батча уже включает хеш вершин, поэтому две разные пробоины никогда
+  // не сольются в один инстансный меш.
+  const crateredBatches = useMemo(
+    () =>
+      crateredMeshes.size === 0
+        ? []
+        : genericRenderPieces
+            .filter((piece) => crateredMeshes.has(piece.id))
+            .flatMap((piece) =>
+              buildIntactInstanceBatches([
+                { ...piece, visualMesh: crateredMeshes.get(piece.id) },
+              ]).map((batch) => ({
+                batch: { ...batch, id: `cratered:${piece.id}:${batch.id}` },
+                mutable: mutablePieceIds.has(piece.id),
+              })),
+            ),
+    [crateredMeshes, genericRenderPieces, mutablePieceIds],
+  );
+  // Целый инстанс пробитого куска гасится в его прежнем батче — но ТОЛЬКО там.
+  // Ни свет, ни коллайдер об этом знать не должны: кусок никуда не делся, у
+  // него лишь дыра, и запекание не имеет права пропускать через него небо.
+  const hiddenForBatches = useMemo(() => {
+    if (crateredMeshes.size === 0) {
+      return hiddenPieceIds;
+    }
+    const next = new Set(hiddenPieceIds);
+    for (const id of crateredMeshes.keys()) {
+      next.add(id);
+    }
+    return next;
+  }, [crateredMeshes, hiddenPieceIds]);
   const lighting = useMemo(() => new WorldLightingBake(pieces), [pieces]);
 
   // Initial AO and destruction updates are streamed in small slices. The
@@ -598,6 +647,16 @@ export const IntactBreakableWorld = memo(function IntactBreakableWorld({
   return (
     <>
       {instanceBatches.map(({ batch, mutable }) => (
+        <IntactPieceBatch
+          key={batch.id}
+          batch={batch}
+          hiddenPieceIds={hiddenForBatches}
+          lighting={lighting}
+          mutable={mutable}
+          mutablePieceStates={resolvedMutablePieceStates}
+        />
+      ))}
+      {crateredBatches.map(({ batch, mutable }) => (
         <IntactPieceBatch
           key={batch.id}
           batch={batch}

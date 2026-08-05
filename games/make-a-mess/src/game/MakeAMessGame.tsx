@@ -123,6 +123,8 @@ import {
   selectCarveTargetsWithinBudget,
   impactDamageRadius,
   omittedDebrisColliderBoxes,
+  FORM_PRESERVING_CARVE_FRACTION,
+  damageRadiusScaleByMaterial,
   isSuperficialCarve,
   pieceMaterialVolume,
   rocketEnergyAtDistance,
@@ -145,6 +147,10 @@ import {
   SurfaceDamageDecals,
   type SurfaceDamageDecalRuntime,
 } from "./SurfaceDamageDecals";
+import {
+  clipMeshAgainstCraters,
+  type MeshCrater,
+} from "./meshCraterClip";
 import type { VehicleContactDamageRequest } from "./vehicleContactDamage";
 import {
   playDebrisSound,
@@ -2502,6 +2508,7 @@ function BreakableObjects({
   kinematicClusterDefinitions,
   mutablePieceIds,
   mutablePieceStates,
+  crateredMeshes,
   registerBody,
   onDebrisContact,
 }: {
@@ -2516,6 +2523,11 @@ function BreakableObjects({
   kinematicClusterDefinitions: readonly CompoundKinematicClusterDefinition[];
   mutablePieceIds: ReadonlySet<string>;
   mutablePieceStates: MutableRefObject<Map<string, MutablePieceVisualState>>;
+  /** Куски с настоящей пробоиной в авторской сетке. */
+  crateredMeshes: ReadonlyMap<
+    string,
+    NonNullable<BreakablePieceDefinition["visualMesh"]>
+  >;
   registerBody: (id: string, body: RapierRigidBody | null) => void;
   onDebrisContact: (
     piece: BreakablePieceDefinition,
@@ -2596,6 +2608,7 @@ function BreakableObjects({
         hiddenPieceIds={hiddenPieceIds}
         mutablePieceIds={mutablePieceIds}
         mutablePieceStates={mutablePieceStates}
+        crateredMeshes={crateredMeshes}
       />
       {landscapeVisual ? (
         <LandscapeSurface
@@ -3504,6 +3517,52 @@ function Tracer({
 }
 
 /**
+ * Сколько кусков одновременно могут нести настоящую пробоину. У пробитого
+ * куска форма СВОЯ, инстансный батч он делить больше не может и стоит своего
+ * draw call; сверх этого числа удар уходит прежним путём, в воксели.
+ */
+const MAXIMUM_CRATERED_PIECES = 24;
+/** Кратеров на кусок: дальше решето честнее показать вокселями. */
+const MAXIMUM_CRATERS_PER_PIECE = 6;
+
+/**
+ * Подрезает авторскую сетку куска его кратерами. Кратеры приходят в метрах от
+ * центра куска, а вершины сетки нормированы на габарит — поэтому в подрезку
+ * они уходят домноженными, а обратно возвращаются поделёнными.
+ */
+function clipPieceMesh(
+  piece: BreakablePieceDefinition,
+  craters: readonly MeshCrater[],
+): NonNullable<BreakablePieceDefinition["visualMesh"]> | null {
+  const mesh = piece.visualMesh;
+  if (!mesh) {
+    return null;
+  }
+  const scaled = mesh.vertices.map(
+    ([x, y, z]) =>
+      [x * piece.size[0], y * piece.size[1], z * piece.size[2]] as const,
+  );
+  const clipped = clipMeshAgainstCraters(scaled, mesh.indices, craters, {
+    normals: mesh.normals,
+    colors: mesh.colors,
+  });
+  // Дыра съела деталь целиком — показывать нечего, пусть работает прежний путь.
+  if (clipped.indices.length === 0) {
+    return null;
+  }
+  return {
+    ...mesh,
+    vertices: clipped.vertices.map(
+      ([x, y, z]) =>
+        [x / piece.size[0], y / piece.size[1], z / piece.size[2]] as const,
+    ),
+    indices: [...clipped.indices],
+    normals: clipped.normals ? [...clipped.normals] : undefined,
+    colors: clipped.colors ? [...clipped.colors] : undefined,
+  };
+}
+
+/**
  * Нормаль отметины в той же системе, в которой живёт её точка. Точка удара по
  * члену компаунда уже переведена в систему машины, и нормаль обязана уехать
  * туда же — иначе пробоина на летящем борту смотрит в мировую сторону и с
@@ -4138,6 +4197,32 @@ function OpenWorldScene({
     >(),
   );
   const surfaceDecalRuntime = useRef<SurfaceDamageDecalRuntime | null>(null);
+  /**
+   * НАСТОЯЩИЕ ПРОБОИНЫ. Кратеры копятся в системе самого куска (метры от его
+   * центра), а из них выводится подрезанная авторская сетка — та, которой он
+   * теперь и рисуется. Решётка при этом остаётся гроссбухом: она отвечает за
+   * материал и связность, а форму держит сетка.
+   *
+   * Бюджет жёсткий: пробитый кусок стоит своего draw call, потому что форма у
+   * него больше не общая с однотипными соседями. Сверх бюджета удар уходит
+   * прежним путём, в воксели.
+   */
+  const pieceCraters = useRef(new Map<string, MeshCrater[]>());
+  const [crateredMeshes, setCrateredMeshes] = useState<
+    ReadonlyMap<string, NonNullable<BreakablePieceDefinition["visualMesh"]>>
+  >(() => new Map());
+  const crateredMeshesRef = useRef(crateredMeshes);
+  crateredMeshesRef.current = crateredMeshes;
+  const dropPieceCraters = useCallback((pieceId: string) => {
+    if (!pieceCraters.current.delete(pieceId)) {
+      return;
+    }
+    const next = new Map(crateredMeshesRef.current);
+    if (next.delete(pieceId)) {
+      crateredMeshesRef.current = next;
+      setCrateredMeshes(next);
+    }
+  }, []);
   const resolveDamageSource = useCallback(
     (source: ShardSource): ShardSource => {
       if (source.voxelBody) return source;
@@ -5122,6 +5207,8 @@ function OpenWorldScene({
     tethers.current.clear();
     superficialDamage.current.clear();
     surfaceDecalRuntime.current?.clear();
+    pieceCraters.current.clear();
+    setCrateredMeshes(new Map());
     debrisSoundByBody.current.clear();
     physicsStep.current = 0;
     debrisSettlingUntilStep.current.clear();
@@ -6305,21 +6392,47 @@ function OpenWorldScene({
       // может расколоть кусок по-настоящему.
       //
       // Обрубок сюда не попадает: он и так набор коробок, беречь в нём нечего.
-      const superficial =
+      const formQuery =
         piece !== undefined &&
         remnant === undefined &&
-        damageSource.voxelBody !== undefined &&
+        damageSource.voxelBody !== undefined
+          ? {
+              radius,
+              fragments,
+              sourceSize: source.size,
+              sourceCenter: [
+                bodyPosition.x,
+                bodyPosition.y,
+                bodyPosition.z,
+              ] as const,
+              removedVolume,
+              previouslyRemoved:
+                superficialDamage.current.get(piece.id)?.removed ?? 0,
+              materialVolume: pieceMaterialVolume(piece),
+              tolerance: Math.max(...damageSource.voxelBody.cellSize),
+            }
+          : null;
+      // Ступень первая: удар меньше, чем деталь толста, — отметина.
+      const surfaceMark = formQuery !== null && isSuperficialCarve(formQuery);
+      // Ступень вторая: дыра настоящая, но форму держит авторская сетка —
+      // значит вырезаем дыру В НЕЙ, а не пересобираем кусок из коробок. Сюда
+      // же попадает вся разница между плоской плитой и кривой оболочкой: закон
+      // один, а результат разный, потому что разный вход.
+      const cratered =
+        formQuery !== null &&
+        piece !== undefined &&
+        !surfaceMark &&
+        piece.visualMesh !== undefined &&
+        (crateredMeshesRef.current.has(piece.id) ||
+          crateredMeshesRef.current.size < MAXIMUM_CRATERED_PIECES) &&
+        (pieceCraters.current.get(piece.id)?.length ?? 0) <
+          MAXIMUM_CRATERS_PER_PIECE &&
         isSuperficialCarve({
-          radius,
-          fragments,
-          sourceSize: source.size,
-          sourceCenter: [bodyPosition.x, bodyPosition.y, bodyPosition.z],
-          removedVolume,
-          previouslyRemoved:
-            superficialDamage.current.get(piece.id)?.removed ?? 0,
-          materialVolume: pieceMaterialVolume(piece),
-          tolerance: Math.max(...damageSource.voxelBody.cellSize),
+          ...formQuery,
+          maximumRadius: Number.POSITIVE_INFINITY,
+          maximumRemovedFraction: FORM_PRESERVING_CARVE_FRACTION,
         });
+      const superficial = surfaceMark || cratered;
 
       // ОБРУБОК НАСЛЕДУЕТ ВЕС СВОЕГО КУСКА, А НЕ СВОЙ ГАБАРИТ.
       //
@@ -6384,6 +6497,30 @@ function OpenWorldScene({
             (superficialDamage.current.get(piece.id)?.removed ?? 0) +
             removedVolume,
         });
+        if (cratered) {
+          // Кратер живёт в системе самого куска, в метрах от его центра: сетка
+          // подрезается один раз и дальше ездит с куском любой позой.
+          const local = new Vector3(...kernelPoint)
+            .sub(bodyPosition)
+            .applyQuaternion(bodyQuaternion.clone().invert());
+          const craters = [
+            ...(pieceCraters.current.get(piece.id) ?? []),
+            {
+              center: [local.x, local.y, local.z] as const,
+              // Ядро сняло материал радиусом с поправкой на материал — дыра в
+              // сетке обязана совпасть с тем, что действительно исчезло.
+              radius: radius * damageRadiusScaleByMaterial[source.material],
+            },
+          ];
+          pieceCraters.current.set(piece.id, craters);
+          const clipped = clipPieceMesh(piece, craters);
+          if (clipped) {
+            const next = new Map(crateredMeshesRef.current);
+            next.set(piece.id, clipped);
+            crateredMeshesRef.current = next;
+            setCrateredMeshes(next);
+          }
+        } else {
         surfaceDecalRuntime.current?.spawn({
           sourceId: piece.id,
           point: kernelPoint,
@@ -6405,6 +6542,7 @@ function OpenWorldScene({
           material: source.material,
           clusterId,
         });
+        }
       } else if (remnant) {
         commitRemnants(remnant.id, additions);
       } else {
@@ -6413,6 +6551,7 @@ function OpenWorldScene({
         if (piece && superficialDamage.current.delete(piece.id)) {
           surfaceDecalRuntime.current?.dropSource(piece.id);
         }
+        if (piece) dropPieceCraters(piece.id);
         commitRemnants(null, additions);
         carvedPiecesRef.current.add(targetId);
         setCarvedPieces((current) => {
@@ -6495,6 +6634,7 @@ function OpenWorldScene({
         // Кусок исчерпал свой материал — его отметины уходят вместе с ним.
         superficialDamage.current.delete(piece.id);
         surfaceDecalRuntime.current?.dropSource(piece.id);
+        dropPieceCraters(piece.id);
       }
       return { carved: true, brokenParentId: crossed ? parentId : null };
     },
@@ -9742,6 +9882,7 @@ function OpenWorldScene({
           kinematicClusterDefinitions={compoundClusterDefinitions}
           mutablePieceIds={mutablePieceIds}
           mutablePieceStates={mutablePieceStates}
+          crateredMeshes={crateredMeshes}
           registerBody={registerBody}
           onDebrisContact={handleDebrisContact}
         />

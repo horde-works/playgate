@@ -31,11 +31,25 @@ export interface MeshCrater {
 export interface ClippedMesh {
   readonly vertices: readonly ClipVector3[];
   readonly indices: readonly number[];
+  /** Нормали и цвета переносятся, если были у исходной сетки. */
+  readonly normals?: readonly ClipVector3[];
+  readonly colors?: readonly ClipVector3[];
   /** Сколько треугольников исчезло целиком: по ним считается снятая площадь. */
   readonly removedTriangles: number;
 }
 
-export interface ClipOptions {
+export interface ClipAttributes {
+  /**
+   * Пер-вершинные данные исходной сетки. Их обязательно вести через дробление:
+   * авторские нормали задают гладкость кривой оболочки, а вершинные цвета —
+   * её раскраску. Потерять их значит получить дыру ценой фасеточного,
+   * одноцветного корпуса.
+   */
+  readonly normals?: readonly ClipVector3[];
+  readonly colors?: readonly ClipVector3[];
+}
+
+export interface ClipOptions extends ClipAttributes {
   /**
    * Сколько раз дробить треугольник, встретивший кромку кратера. Каждый
    * уровень учетверяет только пограничные треугольники; три уровня дают
@@ -149,6 +163,21 @@ function touchesCraters(
   return false;
 }
 
+/** Вершина вместе со своими пер-вершинными данными. */
+interface ClipPoint {
+  readonly position: ClipVector3;
+  readonly normal?: ClipVector3;
+  readonly color?: ClipVector3;
+}
+
+function mixPoints(a: ClipPoint, b: ClipPoint): ClipPoint {
+  return {
+    position: midpoint(a.position, b.position),
+    normal: a.normal && b.normal ? midpoint(a.normal, b.normal) : undefined,
+    color: a.color && b.color ? midpoint(a.color, b.color) : undefined,
+  };
+}
+
 export function clipMeshAgainstCraters(
   vertices: readonly ClipVector3[],
   indices: readonly number[],
@@ -156,47 +185,62 @@ export function clipMeshAgainstCraters(
   options: ClipOptions = {},
 ): ClippedMesh {
   if (craters.length === 0) {
-    return { vertices, indices, removedTriangles: 0 };
+    return {
+      vertices,
+      indices,
+      normals: options.normals,
+      colors: options.colors,
+      removedTriangles: 0,
+    };
   }
   const maximumDepth = Math.max(0, options.subdivisions ?? DEFAULT_SUBDIVISIONS);
   const snapRim = options.snapRim ?? true;
 
   const outVertices: ClipVector3[] = [];
+  const outNormals: ClipVector3[] = [];
+  const outColors: ClipVector3[] = [];
   const outIndices: number[] = [];
   const vertexKeys = new Map<string, number>();
   let removedTriangles = 0;
 
-  const pushVertex = (point: ClipVector3): number => {
-    const key = `${point[0].toFixed(5)}:${point[1].toFixed(5)}:${point[2].toFixed(5)}`;
+  const pushVertex = (point: ClipPoint): number => {
+    const key = `${point.position[0].toFixed(5)}:${point.position[1].toFixed(5)}:${point.position[2].toFixed(5)}`;
     const existing = vertexKeys.get(key);
     if (existing !== undefined) {
       return existing;
     }
     const index = outVertices.length;
-    outVertices.push(point);
+    outVertices.push(point.position);
+    if (point.normal) outNormals.push(point.normal);
+    if (point.color) outColors.push(point.color);
     vertexKeys.set(key, index);
     return index;
   };
 
-  const emit = (a: ClipVector3, b: ClipVector3, c: ClipVector3): void => {
+  const emit = (a: ClipPoint, b: ClipPoint, c: ClipPoint): void => {
     outIndices.push(pushVertex(a), pushVertex(b), pushVertex(c));
   };
 
   const clipTriangle = (
-    a: ClipVector3,
-    b: ClipVector3,
-    c: ClipVector3,
+    a: ClipPoint,
+    b: ClipPoint,
+    c: ClipPoint,
     depth: number,
   ): void => {
-    const depthA = craterDepth(a, craters);
-    const depthB = craterDepth(b, craters);
-    const depthC = craterDepth(c, craters);
+    const depthA = craterDepth(a.position, craters);
+    const depthB = craterDepth(b.position, craters);
+    const depthC = craterDepth(c.position, craters);
 
     // Целиком снаружи — но только если кратер вообще не задевает треугольник.
     // Проверка по вершинам одна этого не ловит: пулевая дыра меньше грани
     // лежит целиком ВНУТРИ треугольника, все три угла снаружи, и лист остаётся
     // целым. Ровно поэтому здесь стоит охватывающая сфера треугольника.
-    if (depthA >= 0 && depthB >= 0 && depthC >= 0 && !touchesCraters(a, b, c, craters)) {
+    if (
+      depthA >= 0 &&
+      depthB >= 0 &&
+      depthC >= 0 &&
+      !touchesCraters(a.position, b.position, c.position, craters)
+    ) {
       emit(a, b, c);
       return;
     }
@@ -210,30 +254,36 @@ export function clipMeshAgainstCraters(
       // Глубже не дробим: решает середина, а кромку выправляет прижатие к
       // сфере — так дыра остаётся круглой без бесконечного дробления.
       const centroid: ClipVector3 = [
-        (a[0] + b[0] + c[0]) / 3,
-        (a[1] + b[1] + c[1]) / 3,
-        (a[2] + b[2] + c[2]) / 3,
+        (a.position[0] + b.position[0] + c.position[0]) / 3,
+        (a.position[1] + b.position[1] + c.position[1]) / 3,
+        (a.position[2] + b.position[2] + c.position[2]) / 3,
       ];
       if (craterDepth(centroid, craters) < 0) {
         removedTriangles += 1;
         return;
       }
-      emit(
-        snapRim && depthA < 0 ? snapToRim(a, craters) : a,
-        snapRim && depthB < 0 ? snapToRim(b, craters) : b,
-        snapRim && depthC < 0 ? snapToRim(c, craters) : c,
-      );
+      const rim = (point: ClipPoint, distance: number): ClipPoint =>
+        snapRim && distance < 0
+          ? { ...point, position: snapToRim(point.position, craters) }
+          : point;
+      emit(rim(a, depthA), rim(b, depthB), rim(c, depthC));
       return;
     }
 
-    const ab = midpoint(a, b);
-    const bc = midpoint(b, c);
-    const ca = midpoint(c, a);
+    const ab = mixPoints(a, b);
+    const bc = mixPoints(b, c);
+    const ca = mixPoints(c, a);
     clipTriangle(a, ab, ca, depth + 1);
     clipTriangle(ab, b, bc, depth + 1);
     clipTriangle(ca, bc, c, depth + 1);
     clipTriangle(ab, bc, ca, depth + 1);
   };
+
+  const pointAt = (index: number): ClipPoint => ({
+    position: vertices[index],
+    normal: options.normals?.[index],
+    color: options.colors?.[index],
+  });
 
   for (let index = 0; index + 2 < indices.length; index += 3) {
     const a = vertices[indices[index]];
@@ -242,10 +292,29 @@ export function clipMeshAgainstCraters(
     if (!a || !b || !c) {
       continue;
     }
-    clipTriangle(a, b, c, 0);
+    clipTriangle(
+      pointAt(indices[index]),
+      pointAt(indices[index + 1]),
+      pointAt(indices[index + 2]),
+      0,
+    );
   }
 
-  return { vertices: outVertices, indices: outIndices, removedTriangles };
+  return {
+    vertices: outVertices,
+    indices: outIndices,
+    // Пер-вершинные данные отдаются только полным набором: неполный набор
+    // рендер обязан отвергнуть, а не подставить нули.
+    normals:
+      options.normals && outNormals.length === outVertices.length
+        ? outNormals
+        : undefined,
+    colors:
+      options.colors && outColors.length === outVertices.length
+        ? outColors
+        : undefined,
+    removedTriangles,
+  };
 }
 
 /**

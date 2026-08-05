@@ -175,3 +175,76 @@ test("пробоина в настоящем корпусе стоит деся�
     `сетка выросла с ${before} до ${after} треугольников`,
   );
 });
+
+test("нормали и цвета переживают подрезку", () => {
+  const normals = PLATE_VERTICES.map(() => [0, 1, 0]);
+  const colors = PLATE_VERTICES.map((_, index) =>
+    index < 2 ? [1, 0, 0] : [0, 0, 1],
+  );
+  const clipped = clipMeshAgainstCraters(
+    PLATE_VERTICES,
+    PLATE_INDICES,
+    [{ center: [0, 0, 0], radius: 0.4 }],
+    { normals, colors },
+  );
+  assert.equal(clipped.normals?.length, clipped.vertices.length);
+  assert.equal(clipped.colors?.length, clipped.vertices.length);
+  // Плита плоская — все перенесённые нормали обязаны остаться её нормалью.
+  for (const normal of clipped.normals) {
+    assert.ok(Math.abs(normal[1] - 1) < 1e-9 && Math.abs(normal[0]) < 1e-9);
+  }
+  // Цвет по вершинам интерполируется, а не берётся от одной из них.
+  const reds = clipped.colors.filter((color) => color[0] > 0.9).length;
+  const blues = clipped.colors.filter((color) => color[2] > 0.9).length;
+  const mixed = clipped.colors.length - reds - blues;
+  assert.ok(mixed > 0, "середины рёбер обязаны получить смешанный цвет");
+});
+
+test("сетка без пер-вершинных данных их и не выдумывает", () => {
+  const clipped = clipMeshAgainstCraters(
+    PLATE_VERTICES,
+    PLATE_INDICES,
+    [{ center: [0, 0, 0], radius: 0.4 }],
+  );
+  assert.equal(clipped.normals, undefined);
+  assert.equal(clipped.colors, undefined);
+});
+
+test("подрезка живёт в системе куска и возвращается нормированной", () => {
+  // Ровно тот путь, которым идёт carveAt: кратер в метрах от центра куска,
+  // сетка нормирована на габарит, обратно — тоже нормированная.
+  const hull = combatHexacopterRangeScene.breakablePieces.find(
+    (piece) =>
+      piece.id === "combat-hexacopter-range:vehicle:armoured-body-shell:piece",
+  );
+  const scaled = hull.visualMesh.vertices.map(([x, y, z]) => [
+    x * hull.size[0],
+    y * hull.size[1],
+    z * hull.size[2],
+  ]);
+  const target = scaled[Math.floor(scaled.length / 2)];
+  const clipped = clipMeshAgainstCraters(
+    scaled,
+    hull.visualMesh.indices,
+    [{ center: target, radius: 0.45 }],
+    { normals: hull.visualMesh.normals, colors: hull.visualMesh.colors },
+  );
+  assert.ok(clipped.removedTriangles > 0);
+
+  const normalized = clipped.vertices.map(([x, y, z]) => [
+    x / hull.size[0],
+    y / hull.size[1],
+    z / hull.size[2],
+  ]);
+  // Габарит куска не изменился: подрезка ничего не выносит за его рамку.
+  for (const vertex of normalized) {
+    for (const axis of [0, 1, 2]) {
+      assert.ok(
+        Math.abs(vertex[axis]) <= 0.5 + 1e-6,
+        `вершина вышла за габарит куска: ${vertex[axis]}`,
+      );
+    }
+  }
+  // Авторские нормали дожили до конца: без них корпус стал бы фасеточным.
+  assert.ok(hull.visualMesh.normals ? clipped.normals !== undefined : true);
+});

@@ -759,12 +759,29 @@ export interface SuperficialCarveQuery {
   readonly materialVolume: number;
   /** Допуск сравнения рамок — размер воксельной клетки куска. */
   readonly tolerance: number;
+  /**
+   * Потолок радиуса. По умолчанию — отметина на поверхности: сквозь большую
+   * воронку видно, и рисовать её пятном нельзя. Куску с авторской сеткой
+   * вызывающий снимает потолок: у него дыра будет НАСТОЯЩЕЙ, вырезанной в
+   * самой сетке, и прятать её незачем.
+   */
+  readonly maximumRadius?: number;
+  /** Потолок снятого материала; по умолчанию — предел отметины. */
+  readonly maximumRemovedFraction?: number;
 }
+
+/**
+ * Сколько материала кусок может потерять, ОСТАВАЯСЬ собой, когда дыра
+ * вырезается в его настоящей сетке. Порог выше, чем у отметины: корпус с
+ * третью выбитого борта ещё читается корпусом, а вот отметина на месте той же
+ * трети была бы враньём.
+ */
+export const FORM_PRESERVING_CARVE_FRACTION = 0.34;
 
 export function isSuperficialCarve(query: SuperficialCarveQuery): boolean {
   // Воронка размером с человека обязана быть настоящей дырой: сквозь неё
   // видно, в неё лезут, и рисовать её отметиной было бы обманом.
-  if (query.radius > SUPERFICIAL_CARVE_RADIUS) {
+  if (query.radius > (query.maximumRadius ?? SUPERFICIAL_CARVE_RADIUS)) {
     return false;
   }
   // Кусок раскололся — это уже другая форма, и не одна.
@@ -774,7 +791,8 @@ export function isSuperficialCarve(query: SuperficialCarveQuery): boolean {
   if (
     query.materialVolume <= 0 ||
     query.previouslyRemoved + query.removedVolume >
-      query.materialVolume * SUPERFICIAL_CARVE_FRACTION
+      query.materialVolume *
+        (query.maximumRemovedFraction ?? SUPERFICIAL_CARVE_FRACTION)
   ) {
     return false;
   }
