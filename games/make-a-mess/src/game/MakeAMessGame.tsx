@@ -135,6 +135,11 @@ import {
   type ShardSource,
 } from "./destructionRuntime";
 import { createBreakablePieceIndex } from "./breakablePieceIndex";
+import {
+  hingeCapacity,
+  stepTether,
+  type TetherAnchor,
+} from "./attachmentTether";
 import type { VehicleContactDamageRequest } from "./vehicleContactDamage";
 import {
   playDebrisSound,
@@ -2310,6 +2315,29 @@ const BreakablePiece = memo(function BreakablePiece({
               z: pose.quaternion[2],
               w: pose.quaternion[3],
             },
+            false,
+          );
+          // И С ТОЙ ЖЕ СКОРОСТЬЮ. Перенос позы без переноса движения означал,
+          // что кусок рождался НЕПОДВИЖНЫМ рядом с идущей машиной: она
+          // мгновенно налетала на собственную деталь, и выглядело это как
+          // «обломок мешает лететь». Скорость берётся точкой корпуса — той
+          // самой, где деталь сидела, — и потому включает вращение машины.
+          if (
+            currentBody.bodyType() !== rapier.RigidBodyType.Dynamic
+          ) {
+            currentBody.setBodyType(rapier.RigidBodyType.Dynamic, true);
+          }
+          const carried = compoundClusterPointWorldVelocity(
+            runtime.body,
+            pose.position,
+          );
+          currentBody.setLinvel(
+            { x: carried[0], y: carried[1], z: carried[2] },
+            false,
+          );
+          const spin = runtime.body.angvel();
+          currentBody.setAngvel(
+            { x: spin.x, y: spin.y, z: spin.z },
             false,
           );
         }
@@ -4737,6 +4765,162 @@ function OpenWorldScene({
     }
   });
 
+  // ПОВИСШЕЕ КРЕПЛЕНИЕ.
+  //
+  // Отказ опоры не означает, что материал в месте контакта исчез: плита,
+  // съехавшая с балки, ещё касается её краем, и постройка на этом краю
+  // повисает. Кусок в этом состоянии — обычное динамическое тело со всей своей
+  // физикой, но его центр привязан к уцелевшему шву; связь рвётся сама, когда
+  // спрос на неё перерастает прочность шва (`attachmentTether.ts`).
+  //
+  // Точка крепления живёт в системе своего носителя: у постройки это мир, у
+  // машины — её компаунд, и тогда панель висит на летящем корпусе, а не на
+  // точке в воздухе, где корпус когда-то был.
+  const tethers = useRef(
+    new Map<
+      string,
+      {
+        readonly anchor: TetherAnchor;
+        readonly clusterId: string | null;
+        /**
+         * Шаг установки. Тело у отказавшего куска появляется не в тот же кадр:
+         * состояние уходит в React, и динамику включает эффект. Без отсрочки
+         * связь удалялась бы раньше, чем ей достанется тело, — и повисание не
+         * случалось бы ни разу.
+         */
+        readonly installedStep: number;
+      }
+    >(),
+  );
+  const TETHER_BODY_GRACE_STEPS = 30;
+
+  useAfterPhysicsStep(() => {
+    if (tethers.current.size === 0) {
+      return;
+    }
+    const step = Math.max(1e-4, world.timestep);
+    for (const [id, held] of [...tethers.current]) {
+      const body = dynamicBodies.current.get(id);
+      if (!body || body.bodyType() !== rapier.RigidBodyType.Dynamic) {
+        if (
+          physicsStep.current - held.installedStep >
+          TETHER_BODY_GRACE_STEPS
+        ) {
+          tethers.current.delete(id);
+        }
+        continue;
+      }
+      let anchor = held.anchor;
+      if (held.clusterId) {
+        const frame = liveCompoundFrame(held.clusterId);
+        if (!frame) {
+          // Носитель перестал существовать — держаться больше не за что.
+          tethers.current.delete(id);
+          continue;
+        }
+        // Точка крепления живёт в системе носителя, и её собственная скорость
+        // входит в вердикт: ровный полёт машины шов не нагружает, а рывок —
+        // нагружает, и именно он его в конце концов и рвёт.
+        const pivot = compoundClusterPointToWorld(
+          frame.runtime.definition.origin,
+          frame.transform,
+          held.anchor.pivot,
+        );
+        anchor = {
+          ...held.anchor,
+          pivot,
+          pivotVelocity: compoundClusterPointWorldVelocity(
+            frame.runtime.body,
+            pivot,
+          ),
+        };
+      }
+
+      const translation = body.translation();
+      const linear = body.linvel();
+      const result = stepTether(
+        anchor,
+        {
+          position: [translation.x, translation.y, translation.z],
+          linearVelocity: [linear.x, linear.y, linear.z],
+        },
+        Math.max(1e-6, body.mass()),
+        step,
+      );
+      if (result.released) {
+        tethers.current.delete(id);
+        continue;
+      }
+      if (result.demand > 0) {
+        body.setLinvel(
+          {
+            x: result.linearVelocity[0],
+            y: result.linearVelocity[1],
+            z: result.linearVelocity[2],
+          },
+          true,
+        );
+      }
+    }
+  });
+
+  /**
+   * Панель машины отрывается по ВНУТРЕННЕМУ шву — той своей грани, что
+   * обращена к оси корпуса. Именно там она приварена, и именно там держится,
+   * когда крепление уже отказало: дальше она отходит наружу и полощется на
+   * ходу, пока шов не порвётся окончательно.
+   *
+   * Ложь возвращается, когда носителя нет: у куска без живого компаунда
+   * держаться не за что, и он уходит прежним путём.
+   */
+  const hangVehiclePiece = useCallback(
+    (piece: BreakablePieceDefinition): boolean => {
+      const frame = liveCompoundFrameOfPiece(piece.id);
+      if (!frame) {
+        return false;
+      }
+      const origin = frame.runtime.definition.origin;
+      const pivot = [0, 1, 2].map((axis) =>
+        MathUtils.clamp(
+          origin[axis],
+          piece.position[axis] - piece.size[axis] / 2,
+          piece.position[axis] + piece.size[axis] / 2,
+        ),
+      ) as [number, number, number];
+      // Ось шва — та, вдоль которой панель вынесена от оси машины дальше
+      // всего; площадь шва — её поперечное сечение по двум другим осям.
+      const offsets = [0, 1, 2].map((axis) =>
+        Math.abs(piece.position[axis] - origin[axis]),
+      );
+      const seamAxis = offsets.indexOf(Math.max(...offsets));
+      const seamArea = [0, 1, 2]
+        .filter((axis) => axis !== seamAxis)
+        .reduce((area, axis) => area * piece.size[axis], 1);
+      const capacity = hingeCapacity(
+        seamArea,
+        structuralMaterialProfiles[piece.material].compressionStrength,
+      );
+      if (!(capacity > 0)) {
+        return false;
+      }
+      tethers.current.set(piece.id, {
+        anchor: {
+          pivot,
+          length: Math.hypot(
+            piece.position[0] - pivot[0],
+            piece.position[1] - pivot[1],
+            piece.position[2] - pivot[2],
+          ),
+          capacity,
+        },
+        clusterId: piece.clusterId,
+        installedStep: physicsStep.current,
+      });
+      return true;
+    },
+    [liveCompoundFrameOfPiece],
+  );
+
   const markRemnantDetached = useCallback((id: string) => {
     const current = remnantById.current.get(id);
     if (!current || current.detached) {
@@ -4857,6 +5041,7 @@ function OpenWorldScene({
     projectileRuntime.current?.clear();
     restCounters.current.clear();
     preStepMotions.current.clear();
+    tethers.current.clear();
     debrisSoundByBody.current.clear();
     physicsStep.current = 0;
     debrisSettlingUntilStep.current.clear();
@@ -5098,6 +5283,9 @@ function OpenWorldScene({
                     )
                     .map((remnant) => remnant.id),
                 ),
+                // Без обрубков решается ЦЕЛЫМИ кусками, и там привязи нет:
+                // авторский кусок либо стоит, либо уходит целиком.
+                tethersByPieceId: new Map<string, TetherAnchor>(),
               };
         let resolved = resolve(cascaded);
         // Structural failure may reveal another broken parent. A tree is only
@@ -5158,6 +5346,20 @@ function OpenWorldScene({
       if (sectionFailures.size > result.brokenPieceIds.size) {
         result = resolveWithTreeCascade(sectionFailures);
       }
+      // Кусок, отказавший рядом с тем, кто устоял, повисает на уцелевшем шве
+      // вместо мгновенного отлёта. Привязь ставится ДО того, как обрубок
+      // получит своё динамическое тело: тело родится уже привязанным.
+      for (const [id, anchor] of result.tethersByPieceId) {
+        if (tethers.current.has(id)) {
+          continue;
+        }
+        tethers.current.set(id, {
+          anchor,
+          clusterId: null,
+          installedStep: physicsStep.current,
+        });
+      }
+
       let remnantsChanged = false;
       const updatedRemnants = remnantsRef.current.map((remnant) => {
         if (remnant.detached || !result.detachedFragmentIds.has(remnant.id)) {
@@ -6294,13 +6496,25 @@ function OpenWorldScene({
         );
         if (verdict === "shatter") {
           breakPieces([vehiclePiece.id]);
-          shatterTarget(
-            vehiclePiece,
-            "piece",
-            point,
-            request.closingSpeed,
-            "fall",
-          );
+          // Стекло лопается — ему нечем повисать. Силовая же панель рвётся не
+          // вся сразу: внутренний шов держит её и после отказа, поэтому она
+          // отходит от борта и полощется на нём, а уходит совсем только когда
+          // шов не выдержит следующего рывка. Сыпать её осколками в этот
+          // момент значило бы стереть саму фазу отрыва.
+          const hung =
+            vehiclePiece.material === "glass" ||
+            vehiclePiece.material === "darkGlass"
+              ? false
+              : hangVehiclePiece(vehiclePiece);
+          if (!hung) {
+            shatterTarget(
+              vehiclePiece,
+              "piece",
+              point,
+              request.closingSpeed,
+              "fall",
+            );
+          }
           playImpactSound(vehiclePiece.material);
         }
       }
@@ -6314,6 +6528,7 @@ function OpenWorldScene({
       breakPieces,
       breakablePieceById,
       chipAtImpact,
+      hangVehiclePiece,
       indestructible,
       playImpactSound,
       settleWorld,

@@ -1,3 +1,4 @@
+import { hingeCapacity, type TetherAnchor } from "./attachmentTether.ts";
 import {
   createStructuralSolver,
   type StructuralMaterialProfile,
@@ -30,6 +31,11 @@ export interface RuntimeStructuralFragment<Material extends string> {
 export interface RuntimeStructuralResult {
   readonly brokenPieceIds: ReadonlySet<string>;
   readonly detachedFragmentIds: ReadonlySet<string>;
+  /**
+   * Чем кусок ещё держится в момент отказа. Кусок, для которого привязи нет,
+   * уходит свободным телом — так же, как уходил до появления этого поля.
+   */
+  readonly tethersByPieceId: ReadonlyMap<string, TetherAnchor>;
 }
 
 export interface RuntimeStructureResolver {
@@ -201,10 +207,49 @@ export function createRuntimeStructureResolver<Material extends string>(
       };
     });
   const structuralPieces = [...activePieces, ...structuralFragments];
+  const structuralPieceById = new Map(
+    structuralPieces.map((piece) => [piece.id, piece]),
+  );
   const solver = createStructuralSolver(
     structuralPieces,
     materialProfiles,
   );
+
+  /**
+   * Привязь отказавшего куска: самое крупное уцелевшее касание с тем, кто
+   * ещё стоит. Длина — от точки касания до центра куска: вокруг неё кусок и
+   * повиснет, а прочность считается по площади этого касания.
+   */
+  const tetherFor = (
+    pieceId: string,
+    failed: ReadonlySet<string>,
+  ): TetherAnchor | null => {
+    const piece = structuralPieceById.get(pieceId);
+    if (!piece) {
+      return null;
+    }
+    const anchor = solver.residualAnchors(pieceId, failed)[0];
+    if (!anchor) {
+      return null;
+    }
+    const capacity = hingeCapacity(
+      anchor.area,
+      materialProfiles[piece.material].compressionStrength,
+    );
+    if (!(capacity > 0)) {
+      return null;
+    }
+    return {
+      pivot: anchor.pivot,
+      length: Math.hypot(
+        piece.position[0] - anchor.pivot[0],
+        piece.position[1] - anchor.pivot[1],
+        piece.position[2] - anchor.pivot[2],
+      ),
+      capacity,
+    };
+  };
+
   return {
     resolve(brokenPieceIds) {
       const structuralBroken = new Set(
@@ -255,9 +300,24 @@ export function createRuntimeStructureResolver<Material extends string>(
         }
       }
 
+      // Привязь спрашивается ТОЛЬКО у того, кто отказал именно сейчас, и
+      // только против тех, кто устоял: у куска, чья опора рухнула вместе с
+      // ним, держаться не за что, и он обязан улететь свободным телом.
+      const tethersByPieceId = new Map<string, TetherAnchor>();
+      for (const id of resolved) {
+        if (structuralBroken.has(id)) {
+          continue;
+        }
+        const tether = tetherFor(id, resolved);
+        if (tether) {
+          tethersByPieceId.set(id, tether);
+        }
+      }
+
       return {
         brokenPieceIds: nextBrokenPieces,
         detachedFragmentIds,
+        tethersByPieceId,
       };
     },
   };

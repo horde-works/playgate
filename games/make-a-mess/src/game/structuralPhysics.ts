@@ -46,8 +46,32 @@ function pieceIsFoundation<Material extends string>(
   return piece.foundation ?? materialProfiles[piece.material].foundation ?? false;
 }
 
+/**
+ * За ЧТО кусок ещё держится в тот момент, когда он уже не стоит.
+ *
+ * Решатель отвечает на вопрос «держит ли опора вес» — и это правильный вопрос
+ * для стены. Но отказ опоры не означает, что материал в месте контакта исчез:
+ * плита, съехавшая с балки, ещё касается её краем, и настоящая постройка на
+ * этом краю повисает. Точка ниже — тот самый край.
+ */
+export interface AttachmentAnchor {
+  readonly supportId: string;
+  /** Середина уцелевшего пятна контакта, мировая система. */
+  readonly pivot: StructuralVector3;
+  /** Площадь этого пятна: по ней считается прочность повисшей связи. */
+  readonly area: number;
+}
+
 export interface StructuralSolver {
   resolve(broken: ReadonlySet<string>): ReadonlySet<string>;
+  /**
+   * Уцелевшие касания куска с теми, кто ещё стоит. Пусто — держаться не за
+   * что, и кусок уходит свободным телом, как уходил всегда.
+   */
+  residualAnchors(
+    pieceId: string,
+    broken: ReadonlySet<string>,
+  ): readonly AttachmentAnchor[];
   /** Resolve only precompiled components selected by the caller. */
   resolveScoped(
     broken: ReadonlySet<string>,
@@ -822,7 +846,140 @@ export function createStructuralSolver<Material extends string>(
     return next;
   };
 
+  /**
+   * Пятно, которым кусок ещё касается опоры. Вертикальное опирание описывается
+   * теми же патчами, что и несущий контакт; боковое крепление — перекрытием
+   * габаритов по высоте и по одной из горизонталей. Точка берётся серединой
+   * пятна: именно вокруг неё повиснет кусок, чей момент опора уже не держит.
+   */
+  const anchorBetween = (
+    piece: StructuralPieceDefinition<Material>,
+    support: StructuralPieceDefinition<Material>,
+  ): AttachmentAnchor | null => {
+    const profile = materialProfiles[piece.material];
+    const patches = bearingContactPatches(
+      piece,
+      support,
+      pieceMaximumVerticalGap(piece, profile),
+    );
+    if (patches.length > 0) {
+      let best: BearingContactPatch | null = null;
+      let bestArea = 0;
+      for (const patch of patches) {
+        const area =
+          Math.max(0, patch.x[1] - patch.x[0]) *
+          Math.max(0, patch.z[1] - patch.z[0]);
+        if (best === null || area > bestArea) {
+          best = patch;
+          bestArea = area;
+        }
+      }
+      if (!best) {
+        return null;
+      }
+      return {
+        supportId: support.id,
+        pivot: [
+          (best.x[0] + best.x[1]) / 2,
+          physicalLowerBound(piece, 1),
+          (best.z[0] + best.z[1]) / 2,
+        ],
+        area: bestArea,
+      };
+    }
+
+    // Боковое крепление: полки нет, кусок держит сам шов на стене.
+    const verticalOverlap =
+      Math.min(physicalUpperBound(piece, 1), physicalUpperBound(support, 1)) -
+      Math.max(physicalLowerBound(piece, 1), physicalLowerBound(support, 1));
+    if (verticalOverlap <= 0) {
+      return null;
+    }
+    const seam: number[] = [];
+    for (const axis of [0, 2] as const) {
+      seam.push(
+        Math.max(
+          0,
+          Math.min(
+            physicalUpperBound(piece, axis),
+            physicalUpperBound(support, axis),
+          ) -
+            Math.max(
+              physicalLowerBound(piece, axis),
+              physicalLowerBound(support, axis),
+            ),
+        ),
+      );
+    }
+    const seamWidth = Math.max(seam[0], seam[1]);
+    if (seamWidth <= 0) {
+      return null;
+    }
+    return {
+      supportId: support.id,
+      pivot: [
+        (Math.max(
+          physicalLowerBound(piece, 0),
+          physicalLowerBound(support, 0),
+        ) +
+          Math.min(
+            physicalUpperBound(piece, 0),
+            physicalUpperBound(support, 0),
+          )) /
+          2,
+        (Math.max(
+          physicalLowerBound(piece, 1),
+          physicalLowerBound(support, 1),
+        ) +
+          Math.min(
+            physicalUpperBound(piece, 1),
+            physicalUpperBound(support, 1),
+          )) /
+          2,
+        (Math.max(
+          physicalLowerBound(piece, 2),
+          physicalLowerBound(support, 2),
+        ) +
+          Math.min(
+            physicalUpperBound(piece, 2),
+            physicalUpperBound(support, 2),
+          )) /
+          2,
+      ],
+      area: verticalOverlap * seamWidth,
+    };
+  };
+
   return {
+    residualAnchors(
+      pieceId: string,
+      broken: ReadonlySet<string>,
+    ): readonly AttachmentAnchor[] {
+      const piece = pieceById.get(pieceId);
+      if (!piece) {
+        return [];
+      }
+      const anchors: AttachmentAnchor[] = [];
+      const seen = new Set<string>();
+      for (const supportId of [
+        ...(verticalSupportCandidates.get(pieceId) ?? []),
+        ...(sideAttachmentCandidates.get(pieceId) ?? []),
+      ]) {
+        if (broken.has(supportId) || seen.has(supportId)) {
+          continue;
+        }
+        seen.add(supportId);
+        const support = pieceById.get(supportId);
+        if (!support) {
+          continue;
+        }
+        const anchor = anchorBetween(piece, support);
+        if (anchor && anchor.area > 0) {
+          anchors.push(anchor);
+        }
+      }
+      return anchors.sort((left, right) => right.area - left.area);
+    },
     affectedPieceIds(seedIds: Iterable<string>): ReadonlySet<string> {
       const affected = new Set<string>();
       const pendingDependents: string[] = [];
