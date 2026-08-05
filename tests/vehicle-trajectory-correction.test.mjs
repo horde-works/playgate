@@ -24,6 +24,7 @@ import { structuralMaterialProfiles } from "../games/make-a-mess/src/game/destru
 import { grandTerminalScene } from "../games/make-a-mess/src/game/grandTerminalScene.ts";
 import { townScene } from "../games/make-a-mess/src/game/townScene.ts";
 import { nimbusScene } from "../games/make-a-mess/src/game/nimbusScene.ts";
+import { combatHexacopterRangeScene } from "../games/make-a-mess/src/game/combatHexacopterRangeScene.ts";
 import {
   advanceVehicleRouteProgress,
   autopilot,
@@ -614,6 +615,9 @@ test("every authored air vehicle can construct a moving route intercept", () => 
     ...townScene.breakablePieces,
     ...nimbusScene.breakablePieces,
     ...basaltStrongholdScene.breakablePieces,
+    // Боевой полигон: RAX-8 живёт в собственной сцене, и с момента регистрации
+    // машины в общем реестре её мир обязан участвовать в перекрёстных тестах.
+    ...combatHexacopterRangeScene.breakablePieces,
   ];
   for (const vehicle of airVehicles) {
     const kind =

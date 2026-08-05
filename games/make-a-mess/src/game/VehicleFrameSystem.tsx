@@ -353,8 +353,8 @@ function rotorcraftFlightForces(
       capacityWeights: limits.rotorCapacityWeights,
       spinDirections: limits.rotorSpinDirections,
       yawThrusters: limits.yawThrusters,
-      yawThrusterAvailability: yawThrusters.map(
-        (_, index) => state.yawThrusterHealth[index] ?? 1,
+      yawThrusterAvailability: yawThrusters.map((_, index) =>
+        state.yawThrustersProven ? (state.yawThrusterHealth[index] ?? 1) : 0,
       ),
       yawThrusterOutput: yawThrusters.map(
         (_, index) => state.yawThrusterOutput[index] ?? 0,
@@ -392,9 +392,14 @@ function rotorcraftFlightForces(
   // членства кусков в теле, а не из отдельного флага. Команда знаковая:
   // реверсивный вентилятор дует в обе стороны.
   const requestedYawThrottle = enabled && !pilotGroundIdle
-    ? yawThrusters.map(
-        (_, index) => flightStep.result.commandedYawThrusters[index] ?? 0,
-      )
+    ? yawThrusters.map((_, index) => {
+        const commanded = flightStep.result.commandedYawThrusters[index] ?? 0;
+        // Пробный импульс: непроверенный канал получает крохотный запрос,
+        // чтобы живучесть выучилась ДО того, как тоннелям доверят разгон.
+        return !state.yawThrustersProven && Math.abs(commanded) < 0.1
+          ? 0.1
+          : commanded;
+      })
     : yawThrusters.map(() => 0);
   const actuation = executeCommandActuators(
     frame.actuators,
@@ -451,6 +456,15 @@ function rotorcraftFlightForces(
       "yaw-throttle:",
     ),
   ];
+  if (
+    !state.yawThrustersProven &&
+    requestedYawThrottle.some((value) => Math.abs(value) > 0.05)
+  ) {
+    state.yawThrustersProven = true;
+  }
+  if (!enabled) {
+    state.yawThrustersProven = false;
+  }
   // The adaptive balance term may learn only from a freely responding craft.
   // During run-up the gear/mast answers the attitude error while motor output
   // is deliberately attenuated; integrating that error stores a false moment
@@ -836,6 +850,15 @@ interface FrameState {
   yawThrusterOutput: number[];
   /** Доля тяги, которую каждый тоннель ещё способен дать: 0…1. */
   yawThrusterHealth: number[];
+  /**
+   * Каналы тоннелей ПРОВЕРЕНЫ этим рейсом. Живучесть узнаётся только из пары
+   * «запрос → доставка», и до первого запроса автоматика верит в единицы:
+   * тоннель, выбитый у берта, на старте получал полный разгонный приказ, а
+   * живой напарник валил машину некомпенсируемым моментом. До проверки
+   * синфазная тяга закрыта; крохотный пробный импульс на первом кадре рейса
+   * выучивает правду за 1/60 секунды.
+   */
+  yawThrustersProven: boolean;
   /** Срезка ограничителя по фактическому заносу: живёт между кадрами. */
   governor: RotorcraftGovernorState;
   /** План, который автопилот фактически вёл в этом кадре, — для ленты. */
@@ -1331,6 +1354,7 @@ function restingState(engineCount: number, yawThrusterCount = 0): FrameState {
     rotorMotorOutput: Array.from({ length: engineCount }, () => 0),
     yawThrusterOutput: Array.from({ length: yawThrusterCount }, () => 0),
     yawThrusterHealth: Array.from({ length: yawThrusterCount }, () => 1),
+    yawThrustersProven: false,
     governor: NEUTRAL_GOVERNOR,
     activePlan: null,
     rotorAuthority: null,

@@ -712,8 +712,17 @@ export function yawThrusterAllocation(
     (sum, value, index) => sum + value * alongNose[index],
     0,
   );
+  // РАЗГОН — ТОЛЬКО ЗДОРОВОЙ ПАРОЙ. Правило явное, а не следствие алгебры:
+  // выбитый или сильно деградировавший тоннель выключает синфазную тягу у
+  // ОБОИХ, и пара остаётся органом рыскания — одиночный работает реверсом.
+  // Нулевое пространство и так давало нулевую долю мёртвому, но оно считает
+  // от ВЕРИМОЙ живучести; явное правило не оставляет классу отказа самой
+  // возможности: почувствовал некомпенсируемый момент — источник уже убран.
+  const pairHealthyForSurge =
+    thrusters.length >= 2 &&
+    thrusters.every((_, index) => (availability?.[index] ?? 1) >= 0.85);
   let common = 0;
-  if (surge && Math.abs(surgePerUnit) > 1e-9) {
+  if (surge && pairHealthyForSurge && Math.abs(surgePerUnit) > 1e-9) {
     const wanted = surge.force / surgePerUnit;
     let headroom = Infinity;
     for (let index = 0; index < thrusters.length; index += 1) {
@@ -735,18 +744,19 @@ export function yawThrusterAllocation(
     ),
   );
   // Максимум синфазной тяги: все вентиляторы в упор по этой же форме.
-  const maximumSurgeForce = surge
-    ? Math.abs(
-        surgePerUnit *
-          Math.min(
-            ...limits.map((limit, index) =>
-              Math.abs(shape[index]) > 1e-9
-                ? limit / Math.abs(shape[index])
-                : Infinity,
+  const maximumSurgeForce =
+    surge && pairHealthyForSurge
+      ? Math.abs(
+          surgePerUnit *
+            Math.min(
+              ...limits.map((limit, index) =>
+                Math.abs(shape[index]) > 1e-9
+                  ? limit / Math.abs(shape[index])
+                  : Infinity,
+              ),
             ),
-          ),
-      )
-    : 0;
+        )
+      : 0;
   const forces = thrusters.map((thruster, index) => [
     thruster.axis[0] * scalarForces[index],
     thruster.axis[1] * scalarForces[index],

@@ -301,6 +301,12 @@ change is not wired, not that it is neutral.
   sensors belong over and under the duct axis where they look.
 - Never sample first and second derivatives of a plan with one base length:
   curvature needs a wide base, slope a fine one.
+- Never let a mirrored effector pair drive translation unless BOTH members are
+  proven healthy: null-space math protects against a KNOWN dead member, but
+  belief lags reality — an explicit pair-health gate (and treating unproven
+  channels as unavailable until a probe pulse teaches them) is what removes
+  the uncompensatable moment class entirely. A degraded pair remains a yaw
+  organ (a lone member works in reverse), never a thrust organ.
 
 ## Handoff
 

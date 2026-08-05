@@ -36,6 +36,7 @@ import {
   advanceRotorMotorOutput,
   NEUTRAL_ROTORCRAFT_TRIM,
   rotorcraftFlightStep,
+  rotorcraftSurgeAcceleration,
 } from "../games/make-a-mess/src/game/rotorcraftDynamics.ts";
 import {
   compileCommandActuators,
@@ -622,6 +623,66 @@ test("оба тоннеля выбиты — автоматика доводит
     Number.isFinite(none.worstCrossTrack) && none.worstCrossTrack < 400,
     true,
     "без обоих тоннелей машина обязана остаться управляемой, пусть и вяло",
+  );
+});
+
+test("разгон — только здоровой парой: деградация одного выключает синфазную тягу у обоих", () => {
+  // Правило Igor, явное, а не следствие алгебры: выбитый или сильно
+  // деградировавший тоннель означает, что синфазная тяга ЛЮБОГО из них создаёт
+  // момент, который нечем компенсировать. Источник момента убирается целиком:
+  // пара остаётся органом рыскания (одиночный — реверсом), но не разгона.
+  const surge = (availability) =>
+    rotorcraftSurgeAcceleration({
+      yawThrusters: rangeFlight.limits.yawThrusters,
+      yawThrusterAvailability: availability,
+      nose: rangeVehicle.nose,
+      centreOfMass: rangeMass.centre,
+      mass: rangeMass.mass,
+    });
+  assert.equal(surge([1, 1]) > 20, true, "здоровая пара обязана разгонять");
+  assert.equal(surge([1, 0.9]) > 20, true, "лёгкая потёртость — ещё пара");
+  assert.equal(surge([1, 0.5]), 0, "полуживой тоннель: разгон закрыт ОБОИМ");
+  assert.equal(surge([0, 1]), 0, "мёртвый тоннель: разгон закрыт ОБОИМ");
+  // Рыскание при этом живо: одиночному тоннелю момент разрешён.
+  const machine = {
+    points: rangeFlight.limits.enginePoints,
+    yawThrusters: rangeFlight.limits.yawThrusters,
+    centreOfMass: rangeMass.centre,
+    nose: rangeVehicle.nose,
+    mass: rangeMass.mass,
+    inertia: [rangeMass.inertia[0], rangeMass.inertia[4], rangeMass.inertia[8]],
+    availability: rangeFlight.limits.enginePoints.map(() => 1),
+    liftCapacity: rangeMass.mass * 9.81 * rangeFlight.liftReserve,
+    capacityWeights: rangeFlight.limits.rotorCapacityWeights,
+    spinDirections: rangeFlight.limits.rotorSpinDirections,
+    yawThrusterAvailability: [0, 1],
+    maximumTilt: rangeFlight.maximumTilt,
+  };
+  const spun = rotorcraftFlightStep(
+    machine,
+    {
+      orientation: vehicleRotation(
+        { position: [0, 0, 0], yaw: 0, pitch: 0, roll: 0 },
+        rangeVehicle.nose,
+      ),
+      centre: rangeMass.centre,
+      velocity: [0, 0, 0],
+      angularVelocity: [0, 0, 0],
+    },
+    { forwardSpeed: 0, lateralSpeed: 0, yawRate: 0.6, collective: 0 },
+    NEUTRAL_ROTORCRAFT_TRIM,
+    1 / 60,
+    0.9,
+  ).result;
+  assert.equal(
+    Math.abs(spun.commandedYawThrusters[1]) > 0.01,
+    true,
+    "уцелевший тоннель обязан отвечать за рыскание",
+  );
+  assert.equal(
+    Math.abs(spun.commandedYawThrusters[0]) < 1e-9,
+    true,
+    "мёртвому не командуют",
   );
 });
 
