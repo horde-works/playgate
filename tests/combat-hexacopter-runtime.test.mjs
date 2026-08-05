@@ -659,3 +659,67 @@ test("конверт отказов следует паспорту машины
     DEFAULT_VEHICLE_FAILURE_ENVELOPE,
   );
 });
+
+test("автомат сообщает не только сколько не дал, но и что именно упёрлось", () => {
+  const properties = rangeMass;
+  const machine = {
+    points: rangeFlight.limits.enginePoints,
+    yawThrusters: rangeFlight.limits.yawThrusters,
+    centreOfMass: properties.centre,
+    nose: rangeVehicle.nose,
+    mass: properties.mass,
+    inertia: [properties.inertia[0], properties.inertia[4], properties.inertia[8]],
+    availability: rangeFlight.limits.enginePoints.map(() => 1),
+    liftCapacity: properties.mass * 9.81 * rangeFlight.liftReserve,
+    capacityWeights: rangeFlight.limits.rotorCapacityWeights,
+    spinDirections: rangeFlight.limits.rotorSpinDirections,
+    yawThrusterAvailability: [1, 1],
+    maximumTilt: rangeFlight.maximumTilt,
+  };
+  const state = {
+    orientation: vehicleRotation(
+      { position: [0, 0, 0], yaw: 0, pitch: 0, roll: 0 },
+      rangeVehicle.nose,
+    ),
+    centre: properties.centre,
+    velocity: [0, 0, 0],
+    angularVelocity: [0, 0, 0],
+  };
+  const step = (request, tweak = {}) =>
+    rotorcraftFlightStep(
+      { ...machine, ...tweak },
+      state,
+      { forwardSpeed: 0, lateralSpeed: 0, yawRate: 0, collective: 0, ...request },
+      NEUTRAL_ROTORCRAFT_TRIM,
+      1 / 60,
+      0.9,
+    ).result.limits;
+
+  // 1. Висение без просьб: упираться не во что.
+  const idle = step({});
+  assert.equal(idle.yaw, "none");
+  assert.equal(idle.pitch, "none");
+  assert.equal(idle.surge, "none");
+
+  // 2. Просьба крутиться вчетверо быстрее собственного потолка. Машина МОЖЕТ
+  //    больше, чем ей позволено, и это правило, а не поломка.
+  assert.equal(step({ yawRate: 4 }).yaw, "envelope");
+
+  // 3. Потолок снят, но тоннели выбиты — теперь недобор настоящий, железный.
+  const starved = rotorcraftFlightStep(
+    { ...machine, yawThrusterAvailability: [0, 0] },
+    state,
+    { forwardSpeed: 0, lateralSpeed: 0, yawRate: 0.9, collective: 0 },
+    NEUTRAL_ROTORCRAFT_TRIM,
+    1 / 60,
+    0.9,
+  ).result.limits;
+  assert.equal(
+    starved.yaw,
+    "effector",
+    "без тоннелей реактивный момент обязан упереться в железо",
+  );
+
+  // 4. Разгон сверх того, что тоннели дают: продольный канал в упоре.
+  assert.equal(step({ forwardSpeed: 60 }).surge, "effector");
+});

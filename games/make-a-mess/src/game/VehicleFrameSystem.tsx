@@ -146,6 +146,7 @@ import {
   rotorcraftMaximumAcceleration,
   rotorcraftSurgeAcceleration,
   type RotorcraftAuthority,
+  type RotorcraftLimitReport,
   type RotorcraftTrimState,
 } from "./rotorcraftDynamics.ts";
 import {
@@ -461,6 +462,7 @@ function rotorcraftFlightForces(
     ? flightStep.result.acceptedYawRate
     : null;
   state.rotorYawRateLimits = enabled ? flightStep.result.yawRateLimits : null;
+  state.rotorLimits = enabled ? flightStep.result.limits : null;
 
   for (let engine = 0; engine < points.length; engine += 1) {
     state.spinAngles[engine] = advanceDrivePhase(
@@ -820,6 +822,8 @@ interface FrameState {
   lastGuidanceYawRate: number | null;
   /** Курс, который автомат хочет от носа, град. */
   lastHeadingTarget: number | null;
+  /** Что именно ограничило каждый канал на прошлом шаге. */
+  rotorLimits: RotorcraftLimitReport | null;
   /** Directional yaw envelope reported to the common autopilot. */
   rotorYawRateLimits: {
     readonly minimum: number;
@@ -1306,6 +1310,7 @@ function restingState(engineCount: number, yawThrusterCount = 0): FrameState {
     rotorAcceptedYawRate: null,
     lastGuidanceYawRate: null,
     lastHeadingTarget: null,
+    rotorLimits: null,
     rotorYawRateLimits: null,
     trimMassPositions: [],
     trimAvailable: [],
@@ -5622,6 +5627,11 @@ export function VehicleFrameSystem({
                 )
               : null,
             yawTaken: state.rotorAcceptedYawRate ?? null,
+            // ПРИЧИНА, А НЕ ТОЛЬКО ВЕЛИЧИНА. Панель показывала «органы
+            // отвечают — причина в маршруте или позе»: верно, но дальше
+            // догадка. Здесь автомат называет, что именно упёрлось на каждом
+            // канале, и разбор перестаёт быть гаданием.
+            limitedBy: state.rotorLimits ?? null,
             // Куда автомат хочет нос — против того, куда нос смотрит.
             noseWanted: state.lastHeadingTarget,
             disposition: state.recovery?.lifecycle.disposition ?? null,

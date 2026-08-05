@@ -1040,6 +1040,40 @@ export interface RotorcraftMachine {
  * невыполненной при полностью исправной, с виду, машине. И наоборот: одно
  * выбитое кольцо стоит запаса оборотов, но команды выполняются все.
  */
+/**
+ * ЧТО ИМЕННО УПЁРЛОСЬ. Недобор без причины — половина ответа.
+ *
+ * `authority` говорит, какую долю заказанного машина дала. Этого достаточно
+ * сторожу, чтобы объявить отказ, но недостаточно тому, кто просит: одна и та же
+ * недостача по продольной оси означает совершенно разное, и реагировать на неё
+ * надо по-разному.
+ *
+ *   "effector"  — орган в упоре. Просить меньше бесполезно, надо просить
+ *                 ДРУГОЕ: снять часть требования на иной канал или сбавить ход;
+ *   "attitude"  — поза уже на разрешённом пределе. Тяга есть, но подставить её
+ *                 под нужным углом нельзя, и просить больше — копить ошибку;
+ *   "envelope"  — упёрлись не в железо, а в правило: потолок темпа, запас
+ *                 оборотов под моменты. Машина МОЖЕТ, но ей не разрешено;
+ *   "none"      — заказ выполнен.
+ *
+ * Разница между первым и вторым и есть та обратная связь, ради которой канал
+ * заводится: «не дам» против «не дам, потому что вот это».
+ */
+export type RotorcraftLimitCause =
+  | "none"
+  | "effector"
+  | "attitude"
+  | "envelope";
+
+export interface RotorcraftLimitReport {
+  readonly thrust: RotorcraftLimitCause;
+  readonly pitch: RotorcraftLimitCause;
+  readonly roll: RotorcraftLimitCause;
+  readonly yaw: RotorcraftLimitCause;
+  /** Продольная тяга отдельных движителей, если они есть. */
+  readonly surge: RotorcraftLimitCause;
+}
+
 export interface RotorcraftAuthority {
   /** Доля заказанной суммарной тяги. */
   readonly thrust: number;
@@ -1098,6 +1132,8 @@ export interface RotorcraftResult {
   /** Фактическая доля паспортной тяги каждого мотора, 0…1. */
   readonly motorOutput: readonly number[];
   readonly thrust: readonly number[];
+  /** Что именно ограничило каждый канал на этом шаге. */
+  readonly limits: RotorcraftLimitReport;
   /** Знаковая команда каждому вентилятору рыскания, −1…1. Реверс — минус. */
   readonly commandedYawThrusters: readonly number[];
   /** Момент, доставленный ВЕНТИЛЯТОРАМИ, отдельно от реактивного. */
@@ -1611,7 +1647,49 @@ export function rotorcraftForces(
   // Порог заметности: у команды около нуля отношение бессмысленно — оно
   // скачет от знака шума. Считаем недобор только там, где машину ДЕЙСТВИТЕЛЬНО
   // о чём-то просят.
+  // ПРИЧИНА СОБИРАЕТСЯ ИЗ ТОГО, ЧТО КАСКАД И ТАК ЗНАЕТ, а не угадывается по
+  // величине недобора. Каждый признак ниже — уже принятое выше решение:
+  // осуществима ли поза, какую долю манёвра приняли, упёрлась ли команда в
+  // край многогранника раскладок или в паспортное правило.
   const noticeable = machine.liftCapacity * 0.01;
+  const short = (delivered: number, wanted: number): boolean =>
+    Math.abs(wanted) >= noticeable && Math.abs(delivered) < Math.abs(wanted) * 0.98;
+  const attitudeCause: RotorcraftLimitCause = !mix.attitudeFeasible
+    ? "attitude"
+    : maneuverScale < 0.999
+      ? "attitude"
+      : "effector";
+  // Рыскание: сперва смотрим, не правило ли это. Заказ, упершийся ровно в край
+  // достижимого диапазона, ограничен ЖЕЛЕЗОМ; заказ, срезанный собственным
+  // потолком темпа, ограничен ПРАВИЛОМ.
+  const yawSaturated =
+    Math.abs(wantedYawMoment) >= noticeable &&
+    Math.abs(acceptedYawMoment + auxiliary.yawMoment - wantedYawMoment) >
+      Math.abs(wantedYawMoment) * 0.02;
+  const fanSaturated = commandedYawThrusters.some(
+    (command) => Math.abs(command) > 0.995,
+  );
+  const limits: RotorcraftLimitReport = {
+    thrust:
+      collective >= ROTOR_COLLECTIVE_CEILING - 1e-6
+        ? "envelope"
+        : short(deliveredThrust, machine.liftCapacity * collective)
+          ? "effector"
+          : "none",
+    pitch: short(deliveredPitchMoment, pitchMoment) ? attitudeCause : "none",
+    roll: short(deliveredRollMoment, rollMoment) ? attitudeCause : "none",
+    // Здесь различить «упёрлось железо» и «не разрешило правило» нельзя: темп
+    // рыскания зажат ПОТОЛКОМ ещё до входа сюда, и в этот каскад приходит уже
+    // урезанная просьба. Поэтому недобор на этом уровне всегда железный, а
+    // правило распознаёт шаг полёта, где потолок и живёт.
+    yaw: yawSaturated ? "effector" : "none",
+    surge:
+      yawThrusters.length === 0
+        ? "none"
+        : fanSaturated
+          ? "effector"
+          : "none",
+  };
   const share = (delivered: number, wanted: number): number => {
     if (Math.abs(wanted) < noticeable) return 1;
     const ratio = delivered / wanted;
@@ -1646,6 +1724,7 @@ export function rotorcraftForces(
     commandedThrottle,
     motorOutput,
     thrust,
+    limits,
     commandedYawThrusters,
     yawThrusterMoment,
     yawThrusterForce,
@@ -1773,6 +1852,13 @@ export function rotorcraftFlightStep(
     minimum: Math.max(-maximumYawRate, result.yawRateLimits.minimum),
     maximum: Math.min(maximumYawRate, result.yawRateLimits.maximum),
   };
+  // ВОТ ЗДЕСЬ и распознаётся правило: просьбу срезал собственный потолок
+  // машины, а не край её возможностей. Машина МОЖЕТ, но ей не разрешено — и
+  // тому, кто просит, это надо знать отдельно, иначе он будет искать
+  // несуществующую поломку.
+  const cappedByPolicy =
+    Math.abs(request.yawRate) > maximumYawRate + 1e-6 &&
+    Math.abs(result.yawRate) < maximumYawRate;
   return {
     forces: result.forces,
     trim: advanceRotorcraftTrim(
@@ -1783,6 +1869,9 @@ export function rotorcraftFlightStep(
     ),
     result: {
       ...result,
+      limits: cappedByPolicy
+        ? { ...result.limits, yaw: "envelope" as const }
+        : result.limits,
       yawRateLimits: limitedYawRates,
       acceptedYawRate: Math.max(
         limitedYawRates.minimum,
