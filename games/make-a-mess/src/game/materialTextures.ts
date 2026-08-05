@@ -2072,9 +2072,9 @@ if (citySurface > 0.5) {
   vec3 citySoil = sRGBTransferEOTF(
     texture2D(uLandscapeSoilMap, cityPoint * 0.36 + vec2(0.31, 0.07))
   ).rgb;
-  vec3 cityGrit = mix(vec3(0.44, 0.34, 0.25), vec3(0.26, 0.24, 0.21), cityFine);
+  vec3 cityGrit = mix(vec3(0.36, 0.28, 0.20), vec3(0.22, 0.20, 0.18), cityFine);
   citySoil *= cityGrit;
-  diffuseColor.rgb = mix(diffuseColor.rgb, citySoil, cityDirt * 0.9);
+  diffuseColor.rgb = mix(diffuseColor.rgb, citySoil, cityDirt * 0.92);
   // Water-darkened curb and drain edges remain matte here; the physically
   // glossy response is introduced below with the common wetness pass.
   diffuseColor.rgb *= 1.0 - cityRetainedWater * 0.18;

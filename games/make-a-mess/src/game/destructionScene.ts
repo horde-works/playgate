@@ -1660,7 +1660,7 @@ function createGroundTiles(): BreakableClusterDefinition[] {
           "groundTile",
           [cx, -0.14, cz],
           [6, 0.24, 6],
-          (xIndex + zIndex) % 2 === 0 ? "#607b43" : "#6b874a",
+          (xIndex + zIndex) % 2 === 0 ? "#556f3a" : "#5f7941",
         ),
         landscapeSurface: "city-ground",
       });
@@ -1672,7 +1672,7 @@ function createGroundTiles(): BreakableClusterDefinition[] {
           "groundTile",
           [cx, -0.71, cz],
           [6, 0.9, 6],
-          (xIndex + zIndex) % 2 === 0 ? "#6d5a3e" : "#665336",
+          (xIndex + zIndex) % 2 === 0 ? "#5a4a32" : "#53422c",
         ),
       );
       lowerPieces.push(
@@ -1683,7 +1683,7 @@ function createGroundTiles(): BreakableClusterDefinition[] {
           "groundTile",
           [cx, -1.61, cz],
           [6, 0.9, 6],
-          (xIndex + zIndex) % 2 === 0 ? "#5c4a33" : "#55442d",
+          (xIndex + zIndex) % 2 === 0 ? "#4a3b28" : "#443626",
         ),
       );
     }
@@ -1707,17 +1707,17 @@ function createGroundTiles(): BreakableClusterDefinition[] {
         "groundTile",
         [cx, -0.14, cz],
         [6, 0.24, 6],
-        index % 2 === 0 ? "#607b43" : "#6b874a",
+        index % 2 === 0 ? "#556f3a" : "#5f7941",
       ),
       landscapeSurface: "city-ground",
     });
     upperPieces.push(
       makePiece(`yard:earth:u:s:${index}`, "yard:earth:upper", "earth", "groundTile",
-        [cx, -0.71, cz], [6, 0.9, 6], index % 2 === 0 ? "#6d5a3e" : "#665336"),
+        [cx, -0.71, cz], [6, 0.9, 6], index % 2 === 0 ? "#5a4a32" : "#53422c"),
     );
     lowerPieces.push(
       makePiece(`yard:earth:l:s:${index}`, "yard:earth:lower", "earth", "groundTile",
-        [cx, -1.61, cz], [6, 0.9, 6], index % 2 === 0 ? "#5c4a33" : "#55442d"),
+        [cx, -1.61, cz], [6, 0.9, 6], index % 2 === 0 ? "#4a3b28" : "#443626"),
     );
   }
 
@@ -3620,14 +3620,14 @@ function createKhrushchevka(
   for (let index = 0; index < 6; index += 1) {
     asphaltPieces.push(
       makePiece(`hru:asphalt:walk:${index}`, "hru:asphalt", "asphalt", "groundTile",
-        [13.8 + index * 3.55, 0.03, 0.75], [3.5, 0.1, 1.5], "#4a4a48"),
+        [13.8 + index * 3.55, 0.03, 0.75], [3.5, 0.1, 1.5], "#383836"),
     );
   }
   asphaltPieces.push(
     makePiece("hru:asphalt:path:0", "hru:asphalt", "asphalt", "groundTile",
-      [6.6, 0.03, 1.7], [2.8, 0.1, 1.4], "#4e4e4c"),
+      [6.6, 0.03, 1.7], [2.8, 0.1, 1.4], "#3c3c3a"),
     makePiece("hru:asphalt:path:1", "hru:asphalt", "asphalt", "groundTile",
-      [9.6, 0.03, 1.2], [3.2, 0.1, 1.4], "#4a4a48"),
+      [9.6, 0.03, 1.2], [3.2, 0.1, 1.4], "#383836"),
   );
   clusters.push(cluster("hru:asphalt", "Asphalt yard", "asphalt", "mounted", asphaltPieces));
 
@@ -3795,10 +3795,10 @@ function createStreets(): BreakableClusterDefinition[] {
     const cx = -12 + index * 6;
     roadPieces.push(
       { ...makePiece(`town:road:main:${index}`, "town:roads", "asphalt", "groundTile",
-        [cx, 0.03, -12], [6, 0.1, 6], index % 2 === 0 ? "#4a4a48" : "#4e4e4c"),
+        [cx, 0.03, -12], [6, 0.1, 6], index % 2 === 0 ? "#383836" : "#3c3c3a"),
         weathering: index % 4 === 1 ? 0.4 : 0.1 },
       { ...makePiece(`town:road:south:${index}`, "town:roads", "asphalt", "groundTile",
-        [cx, 0.03, -30], [6, 0.1, 6], index % 2 === 0 ? "#4e4e4c" : "#4a4a48"),
+        [cx, 0.03, -30], [6, 0.1, 6], index % 2 === 0 ? "#3c3c3a" : "#383836"),
         weathering: index % 4 === 3 ? 0.4 : 0.1 },
     );
     // The cross street joins at cx=42 — no curb across its mouth.
@@ -3825,7 +3825,7 @@ function createStreets(): BreakableClusterDefinition[] {
     }
     roadPieces.push(
       makePiece(`town:road:cross:${index}`, "town:roads", "asphalt", "groundTile",
-        [42, 0.03, cz], [6, 0.1, 6], index % 2 === 0 ? "#4a4a48" : "#4e4e4c"),
+        [42, 0.03, cz], [6, 0.1, 6], index % 2 === 0 ? "#383836" : "#3c3c3a"),
     );
     // Бордюры и осевая прерывистая — поперечная улица оформлена наравне с
     // главными; устья перекрёстков остаются открытыми.
@@ -6092,6 +6092,10 @@ export const openHouseSceneOptions = {
   id: "open-house",
   title: "Make a Mess",
   environment: "town",
+  // Edge veil only — hide the island rim, not the boulevard. Default town
+  // fog (near ≈ 42 on radius 60) already washed midground façades looking
+  // east from the mooring stairs; streets must stay crisp through the block.
+  fogDistances: [98, 235],
   // Спавн — как будто только что сошёл с дирижабля: игрок стоит на осевой
   // главной улицы в самом начале асфальта (его западный край x = -15),
   // спиной к нижней ступени причальной лестницы (-17.98, -12.67), лицом
