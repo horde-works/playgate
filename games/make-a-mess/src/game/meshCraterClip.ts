@@ -51,6 +51,19 @@ export interface ClipAttributes {
 
 export interface ClipOptions extends ClipAttributes {
   /**
+   * ТОРЕЦ ДЫРЫ. Панели авторятся поверхностями нулевой толщины: 4.5 см доски
+   * живут в паспорте куска, кормят массу и решётку повреждения, но геометрией
+   * не являются. Пока дыр не было, этого никто не видел — торец панели просто
+   * неоткуда было показать. Стоит прорезать дыру, и лист читается бумагой.
+   *
+   * Поэтому кромка дыры получает настоящий борт: полоса в толщину материала,
+   * симметричная относительно поверхности — авторская сетка описывает
+   * СРЕДИННУЮ плоскость доски, ровно как её понимают и масса, и решётка.
+   * Наружный контур детали борта не получает: там торец закрыт соседями, а
+   * лишние треугольники по всему периметру стоили бы куда дороже.
+   */
+  readonly rimThickness?: number;
+  /**
    * Сколько раз дробить треугольник, встретивший кромку кратера. Каждый
    * уровень учетверяет только пограничные треугольники; три уровня дают
    * кромку точнее сантиметра на детали в метр.
@@ -300,6 +313,20 @@ export function clipMeshAgainstCraters(
     );
   }
 
+  const rimThickness = options.rimThickness ?? 0;
+  if (rimThickness > 0) {
+    buildHoleRim(
+      outVertices,
+      outIndices,
+      outNormals,
+      outColors,
+      craters,
+      rimThickness,
+      Boolean(options.normals),
+      Boolean(options.colors),
+    );
+  }
+
   return {
     vertices: outVertices,
     indices: outIndices,
@@ -315,6 +342,128 @@ export function clipMeshAgainstCraters(
         : undefined,
     removedTriangles,
   };
+}
+
+/**
+ * Достраивает борт дыры. Кромкой считается ребро, которое осталось у ОДНОГО
+ * треугольника и обеими вершинами лежит на сфере кратера: наружный контур
+ * детали этому не отвечает и борта не получает.
+ *
+ * Полоса ставится симметрично поверхности, потому что авторская сетка
+ * описывает срединную плоскость материала — так же её понимают и масса куска,
+ * и его решётка повреждения. Тогда доска в 4.5 см и выглядит доской в 4.5 см.
+ */
+function buildHoleRim(
+  vertices: ClipVector3[],
+  indices: number[],
+  normals: ClipVector3[],
+  colors: ClipVector3[],
+  craters: readonly MeshCrater[],
+  thickness: number,
+  carriesNormals: boolean,
+  carriesColors: boolean,
+): void {
+  // Кромка дыры — не окружность из вершин: прижимаются к сфере только те
+  // вершины, что оказались ВНУТРИ, а их соседи остаются там, где были. Поэтому
+  // граница дыры идёт зигзагом между радиусом кратера и следующим узлом сетки,
+  // и признак «лежит точно на сфере» её не находит. Годится окрестность
+  // кратера: она заведомо накрывает зигзаг и заведомо не достаёт до наружного
+  // контура детали, если только дыра не съела сам контур — а там борт уместен.
+  const rimNeighbourhood = (point: ClipVector3): boolean => {
+    for (const crater of craters) {
+      const slack = crater.radius * 0.6 + thickness;
+      if (distanceToCrater(point, crater) <= slack) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  // Счётчик использований ребра и нормаль треугольника, который его породил.
+  const edgeUse = new Map<string, number>();
+  const edgeNormal = new Map<string, ClipVector3>();
+  const key = (a: number, b: number) => (a < b ? `${a}:${b}` : `${b}:${a}`);
+  const triangleCount = indices.length;
+  for (let index = 0; index + 2 < triangleCount; index += 3) {
+    const [ia, ib, ic] = [indices[index], indices[index + 1], indices[index + 2]];
+    const a = vertices[ia];
+    const b = vertices[ib];
+    const c = vertices[ic];
+    const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]] as const;
+    const ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]] as const;
+    const face: ClipVector3 = [
+      ab[1] * ac[2] - ab[2] * ac[1],
+      ab[2] * ac[0] - ab[0] * ac[2],
+      ab[0] * ac[1] - ab[1] * ac[0],
+    ];
+    const length = Math.hypot(...face);
+    const unit: ClipVector3 =
+      length > 1e-12
+        ? [face[0] / length, face[1] / length, face[2] / length]
+        : [0, 1, 0];
+    for (const [first, second] of [
+      [ia, ib],
+      [ib, ic],
+      [ic, ia],
+    ] as const) {
+      const id = key(first, second);
+      edgeUse.set(id, (edgeUse.get(id) ?? 0) + 1);
+      if (!edgeNormal.has(id)) {
+        edgeNormal.set(id, unit);
+      }
+    }
+  }
+
+  const rimEdges: (readonly [number, number])[] = [];
+  const seen = new Set<string>();
+  for (let index = 0; index + 2 < triangleCount; index += 3) {
+    const [ia, ib, ic] = [indices[index], indices[index + 1], indices[index + 2]];
+    for (const [first, second] of [
+      [ia, ib],
+      [ib, ic],
+      [ic, ia],
+    ] as const) {
+      const id = key(first, second);
+      if (edgeUse.get(id) !== 1 || seen.has(id)) {
+        continue;
+      }
+      seen.add(id);
+      if (
+        !rimNeighbourhood(vertices[first]) ||
+        !rimNeighbourhood(vertices[second])
+      ) {
+        continue;
+      }
+      rimEdges.push([first, second]);
+    }
+  }
+
+  const half = thickness / 2;
+  for (const [first, second] of rimEdges) {
+    const normal = edgeNormal.get(key(first, second)) ?? [0, 1, 0];
+    const offset = (index: number, sign: number): number => {
+      const source = vertices[index];
+      vertices.push([
+        source[0] + normal[0] * half * sign,
+        source[1] + normal[1] * half * sign,
+        source[2] + normal[2] * half * sign,
+      ]);
+      if (carriesNormals) {
+        // Борт смотрит вдоль поверхности, а не вдоль неё же наружу: иначе он
+        // ловит свет как сама панель и торец не читается.
+        normals.push(normal);
+      }
+      if (carriesColors) {
+        colors.push(colors[index] ?? [1, 1, 1]);
+      }
+      return vertices.length - 1;
+    };
+    const frontA = offset(first, 1);
+    const frontB = offset(second, 1);
+    const backA = offset(first, -1);
+    const backB = offset(second, -1);
+    indices.push(frontA, frontB, backB, frontA, backB, backA);
+  }
 }
 
 /**

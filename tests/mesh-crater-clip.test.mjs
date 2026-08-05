@@ -248,3 +248,61 @@ test("подрезка живёт в системе куска и возвращ
   // Авторские нормали дожили до конца: без них корпус стал бы фасеточным.
   assert.ok(hull.visualMesh.normals ? clipped.normals !== undefined : true);
 });
+
+test("кромка дыры получает торец в толщину материала", () => {
+  const thickness = 0.045;
+  const plain = clipMeshAgainstCraters(
+    PLATE_VERTICES,
+    PLATE_INDICES,
+    [{ center: [0, 0, 0], radius: 0.4 }],
+  );
+  const rimmed = clipMeshAgainstCraters(
+    PLATE_VERTICES,
+    PLATE_INDICES,
+    [{ center: [0, 0, 0], radius: 0.4 }],
+    { rimThickness: thickness },
+  );
+  assert.ok(
+    rimmed.indices.length > plain.indices.length,
+    "борт обязан добавить треугольников",
+  );
+
+  // Плита лежит в плоскости y = 0; борт обязан выйти из неё ровно на половину
+  // толщины в каждую сторону — авторская сетка описывает СРЕДИННУЮ плоскость.
+  const heights = rimmed.vertices.map((vertex) => vertex[1]);
+  const top = Math.max(...heights);
+  const bottom = Math.min(...heights);
+  assert.ok(Math.abs(top - thickness / 2) < 1e-9, `верх борта ${top}`);
+  assert.ok(Math.abs(bottom + thickness / 2) < 1e-9, `низ борта ${bottom}`);
+
+  // Борт стоит ТОЛЬКО у дыры: наружный контур плиты остаётся плоским.
+  const outerRaised = rimmed.vertices.filter(
+    (vertex) => Math.abs(vertex[1]) > 1e-9 && Math.hypot(vertex[0], vertex[2]) > 0.6,
+  );
+  assert.equal(outerRaised.length, 0, "наружный контур борта не получает");
+});
+
+test("без толщины в паспорте борт не строится", () => {
+  const withoutRim = clipMeshAgainstCraters(
+    PLATE_VERTICES,
+    PLATE_INDICES,
+    [{ center: [0, 0, 0], radius: 0.4 }],
+    { rimThickness: 0 },
+  );
+  for (const vertex of withoutRim.vertices) {
+    assert.equal(vertex[1], 0);
+  }
+});
+
+test("борт не ломает пер-вершинные данные", () => {
+  const normals = PLATE_VERTICES.map(() => [0, 1, 0]);
+  const colors = PLATE_VERTICES.map(() => [0.5, 0.5, 0.5]);
+  const rimmed = clipMeshAgainstCraters(
+    PLATE_VERTICES,
+    PLATE_INDICES,
+    [{ center: [0, 0, 0], radius: 0.4 }],
+    { normals, colors, rimThickness: 0.045 },
+  );
+  assert.equal(rimmed.normals?.length, rimmed.vertices.length);
+  assert.equal(rimmed.colors?.length, rimmed.vertices.length);
+});

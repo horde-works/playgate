@@ -3545,6 +3545,11 @@ function clipPieceMesh(
   const clipped = clipMeshAgainstCraters(scaled, mesh.indices, craters, {
     normals: mesh.normals,
     colors: mesh.colors,
+    // Толщина берётся ИЗ ПАСПОРТА куска — того же числа, которым живут его
+    // масса и решётка повреждения. Панели авторятся поверхностями без
+    // толщины, и до появления дыр этого никто не видел: торец было неоткуда
+    // показать. Теперь есть откуда, и он обязан совпасть с материалом.
+    rimThickness: piece.voxelization?.thickness ?? 0,
   });
   // Дыра съела деталь целиком — показывать нечего, пусть работает прежний путь.
   if (clipped.indices.length === 0) {
