@@ -3116,11 +3116,37 @@ export function autopilot(
     wantedAltitude +
     (safetyIntervention ? (safety?.altitudeOffset ?? 0) : 0) -
     centre[1];
+  // ВЕРТИКАЛЬНОЕ УПРЕЖДЕНИЕ ПРОФИЛЯ: горка исполняется, а не сглаживается.
+  //
+  // Реактивный контур узнаёт о перепаде, когда уже промахнулся: на маршруте с
+  // авторскими горками и нырками машина отставала от профиля на девять метров
+  // из девяти возможных — летела ленивую версию шоу. Целевая вертикальная
+  // скорость известна из самой трассы: уклон профиля на путевую скорость.
+  // На ровном профиле слагаемое тождественно нулю, и ни одна из прежних
+  // машин не замечает ничего. У вертикальных столбов упреждение выключено:
+  // там высотой владеет полка, а не профиль.
+  const profileStep = Math.min(0.02, 8 / Math.max(1, plan.length));
+  const shelfFree =
+    (!plan.verticalDeparture ||
+      progress > plan.verticalDeparture.until + 0.02) &&
+    (!plan.verticalArrival || progress < plan.verticalArrival.from - 0.02);
+  const profileClimbRate = shelfFree
+    ? Math.max(
+        -6,
+        Math.min(
+          6,
+          ((plan.altitude(Math.min(1, progress + profileStep)) -
+            plan.altitude(Math.max(0, progress - profileStep))) /
+            (2 * profileStep * Math.max(1, plan.length))) *
+            groundSpeed,
+        ),
+      )
+    : 0;
   const liftFraction = Math.max(
     -limits.liftTrimRange,
     Math.min(
       limits.liftTrimRange,
-      altitudeError * 0.06 - velocity[1] * 0.12,
+      altitudeError * 0.06 + (profileClimbRate - velocity[1]) * 0.12,
     ),
   );
 

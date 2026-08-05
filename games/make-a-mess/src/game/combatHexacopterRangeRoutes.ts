@@ -106,10 +106,12 @@ function curvedNode(index: number) {
   }
   const previous = circuitPoints[index - 1];
   const next = circuitPoints[index + 1];
+  // Катмулл-Ром: ручка — половина хорды соседей. Прежние 0.16 давали почти
+  // ломаную со скруглёнными углами, и в небе это читалось изломами луча.
   const tangent: SceneVector3 = [
-    (next[0] - previous[0]) * 0.16,
+    (next[0] - previous[0]) * 0.3,
     0,
-    (next[2] - previous[2]) * 0.16,
+    (next[2] - previous[2]) * 0.3,
   ];
   return {
     id: index === 1
@@ -124,7 +126,7 @@ function curvedNode(index: number) {
     position,
     incoming: [position[0] - tangent[0], 0, position[2] - tangent[2]] as SceneVector3,
     outgoing: [position[0] + tangent[0], 0, position[2] + tangent[2]] as SceneVector3,
-    samples: 36,
+    samples: 48,
   };
 }
 
@@ -133,11 +135,32 @@ export const combatHexacopterRangeCircuit = createMotionRoute({
   nodes: circuitPoints.map((_, index) => curvedNode(index)),
   measureAxes: [0, 2],
   requirements: {
+    // ВЫСОТА — ЧАСТЬ ШОУ, а не константа безопасности. Горка на разгоне,
+    // пикирование в дальний вираж, нырки и подскоки в долях восьмёрки —
+    // перепады идут по всему маршруту, включая манёвры, и показывают, что
+    // вертикаль у машины такой же орган, как крен. Окно перепадов гаснет к
+    // краям, чтобы стыки со взлётным и посадочным столбами остались на
+    // ровных двадцати метрах.
     altitude: ({ progress }) => {
       const departure = Math.min(1, progress / 0.085);
       const arrival = Math.min(1, (1 - progress) / 0.11);
       const edge = Math.min(departure, arrival);
-      return CLEARANCE_ALTITUDE * edge * edge * (3 - 2 * edge);
+      const base = CLEARANCE_ALTITUDE * edge * edge * (3 - 2 * edge);
+      const window =
+        Math.min(1, Math.max(0, (progress - 0.1) / 0.05)) *
+        Math.min(1, Math.max(0, (0.88 - progress) / 0.05));
+      const bump = (centre: number, width: number) => {
+        const x = (progress - centre) / width;
+        return Math.exp(-x * x * 2.2);
+      };
+      const wave =
+        9 * bump(0.2, 0.09) -
+        8 * bump(0.36, 0.08) +
+        6 * bump(0.5, 0.06) -
+        6 * bump(0.6, 0.055) +
+        9 * bump(0.7, 0.06) -
+        7 * bump(0.8, 0.055);
+      return Math.max(0, base + window * wave);
     },
     // СКОРОСТЬ РАЗРЕШЕНА ПО УЧАСТКУ, а не одним числом на весь круг: разгонный
     // луч и дальний разворот existуют ради неё, восьмёрка — ради поворотливости
