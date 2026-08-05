@@ -143,9 +143,18 @@ import {
   NEUTRAL_ROTORCRAFT_TRIM,
   rotorcraftCommandsExecute,
   rotorcraftFlightStep,
+  rotorcraftMaximumAcceleration,
+  rotorcraftSurgeAcceleration,
   type RotorcraftAuthority,
   type RotorcraftTrimState,
 } from "./rotorcraftDynamics.ts";
+import {
+  advanceRotorcraftGovernor,
+  DEFAULT_SLIP_POLICY,
+  measuredSlipAngle,
+  NEUTRAL_GOVERNOR,
+  type RotorcraftGovernorState,
+} from "./rotorcraftSpeedGovernor.ts";
 import {
   advanceRotorcraftPilot,
   consumeRotorcraftPilotCommands,
@@ -214,6 +223,7 @@ import {
   createVehicleFailureWatchdog,
   createVehicleRecoveryLifecycle,
   DEFAULT_VEHICLE_FAILURE_ENVELOPE,
+  vehicleFailureEnvelopeFor,
   deliveredLiftControlFraction,
   normalizedLiftTrimRequest,
   rebaseVehicleFailureWatchdog,
@@ -432,6 +442,20 @@ function rotorcraftFlightForces(
     : trimMayLearn
       ? flightStep.trim
       : trim;
+  // ОБРАТНАЯ СВЯЗЬ ПО ФАКТИЧЕСКОМУ ЗАНОСУ.
+  //
+  // Всё, что считает автопилот вперёд по трассе, — предсказание. Оно не знает
+  // ни ветра, ни удара, ни того, что аллокатор сегодня отдаёт меньше вчерашнего.
+  // Здесь меряется РЕЗУЛЬТАТ: насколько нос отстал от вектора пути. Отстал
+  // сильнее разрешённого — скорость режется, независимо от причины.
+  state.governor = enabled
+    ? advanceRotorcraftGovernor(
+        state.governor,
+        measuredSlipAngle(flightStep.forwardSpeed, flightStep.lateralSpeed),
+        DEFAULT_SLIP_POLICY.enRoute,
+        step,
+      )
+    : NEUTRAL_GOVERNOR;
   state.rotorAuthority = enabled ? flightStep.result.authority : null;
   state.rotorAcceptedYawRate = enabled
     ? flightStep.result.acceptedYawRate
@@ -786,6 +810,8 @@ interface FrameState {
   yawThrusterOutput: number[];
   /** Доля тяги, которую каждый тоннель ещё способен дать: 0…1. */
   yawThrusterHealth: number[];
+  /** Срезка ограничителя по фактическому заносу: живёт между кадрами. */
+  governor: RotorcraftGovernorState;
   /** Previous physical step, consumed by the common failure watchdog. */
   rotorAuthority: RotorcraftAuthority | null;
   /** Command the bounded rotor allocator actually accepted last step. */
@@ -1275,6 +1301,7 @@ function restingState(engineCount: number, yawThrusterCount = 0): FrameState {
     rotorMotorOutput: Array.from({ length: engineCount }, () => 0),
     yawThrusterOutput: Array.from({ length: yawThrusterCount }, () => 0),
     yawThrusterHealth: Array.from({ length: yawThrusterCount }, () => 1),
+    governor: NEUTRAL_GOVERNOR,
     rotorAuthority: null,
     rotorAcceptedYawRate: null,
     lastGuidanceYawRate: null,
@@ -3844,15 +3871,47 @@ export function VehicleFrameSystem({
         driveUsesPropulsionFeedback(frame.flight.driveAnimation) && flight
           ? { ...shipModel, engineAvailability: flight.propulsionFeedback }
           : shipModel;
+      // ПОВОРОТЛИВОСТЬ СООБЩАЕТСЯ АВТОПИЛОТУ ТАК ЖЕ, КАК ВСЁ ОСТАЛЬНОЕ:
+      // замеренным числом снизу, а не паспортной догадкой сверху. Поперечное
+      // ускорение у коптера равно g·tg(θmax) и ничему иному, а тормозит он
+      // тем же, чем разгоняется, — вместе с реверсом тоннелей, если они есть.
       const autopilotModel: ShipModel =
-        frame.flight.liftSource === "rotor" && state.rotorYawRateLimits
-          ? { ...feedbackModel, yawRateLimits: state.rotorYawRateLimits }
+        frame.flight.liftSource === "rotor"
+          ? {
+              ...feedbackModel,
+              ...(state.rotorYawRateLimits
+                ? { yawRateLimits: state.rotorYawRateLimits }
+                : {}),
+              turnCapability: {
+                yawRate: ROTOR_YAW_RATE,
+                lateralAcceleration: rotorcraftMaximumAcceleration(
+                  frame.flight.maximumTilt ?? DEFAULT_ROTOR_TILT,
+                ),
+                braking:
+                  rotorcraftMaximumAcceleration(
+                    frame.flight.maximumTilt ?? DEFAULT_ROTOR_TILT,
+                  ) +
+                  (mass
+                    ? rotorcraftSurgeAcceleration({
+                        yawThrusters: frame.flight.limits.yawThrusters,
+                        yawThrusterAvailability: state.yawThrusterHealth,
+                        nose: frame.nose,
+                        centreOfMass: mass.centre,
+                        mass: mass.mass,
+                      })
+                    : 0),
+              },
+              governorScale: state.governor.scale,
+            }
           : feedbackModel;
+      // ОДИН ПАСПОРТ — ОДИН КОНВЕРТ. Предел позы выводится из разрешённого
+      // машине наклона, а не помнится отдельным числом рядом с ним.
+      const passportEnvelope = vehicleFailureEnvelopeFor(frame.flight);
       const failureEnvelope = driveUsesPropulsionFeedback(
         frame.flight.driveAnimation,
       )
-        ? supervisedFailureEnvelope(flightClearance)
-        : undefined;
+        ? supervisedFailureEnvelope(flightClearance, passportEnvelope)
+        : passportEnvelope;
       // One deviation model per machine, derived from the same envelope the
       // watchdog escalates on. Guidance is therefore always the first to act.
       // Supervision only stretches timers, never the limits themselves, so the
@@ -3861,7 +3920,7 @@ export function VehicleFrameSystem({
       if (!state.guidance || state.guidanceSource !== frame.flight.approach) {
         state.guidanceSource = frame.flight.approach;
         state.guidance = vehicleGuidanceEnvelope(
-          DEFAULT_VEHICLE_FAILURE_ENVELOPE,
+          passportEnvelope,
           frame.flight.approach,
           frame.flight.limits,
           frame.flight.guidance,
@@ -4727,7 +4786,7 @@ export function VehicleFrameSystem({
             ? 0
             : deliveredControlFraction(flight.driveThrottle, flight.throttle);
         const activeFailureEnvelope =
-          failureEnvelope ?? DEFAULT_VEHICLE_FAILURE_ENVELOPE;
+          failureEnvelope ?? passportEnvelope;
         const disturbanceFeasible = vehicleDisturbanceRecoveryFeasible({
           pitch: beforeRecoveryTracking.pitch,
           roll: beforeRecoveryTracking.roll,

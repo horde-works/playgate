@@ -43,6 +43,10 @@ import {
   executeCommandActuators,
 } from "../games/make-a-mess/src/game/vehicleActuation.ts";
 import { updatePropulsionFeedback } from "../games/make-a-mess/src/game/vehiclePropulsionAutomation.ts";
+import {
+  DEFAULT_VEHICLE_FAILURE_ENVELOPE,
+  vehicleFailureEnvelopeFor,
+} from "../games/make-a-mess/src/game/vehicleFailure.ts";
 
 const compiled = compileSceneGroups(combatHexacopterPrototypeDocument, new Map());
 const vehicle = compiled.clusters.find(
@@ -625,5 +629,33 @@ test("лопасти тоннеля не принадлежат подъёмно
     rangeFlight.limits.yawThrusters.length,
     2,
     "паспорт машины обязан объявлять оба тоннеля общему коду",
+  );
+});
+
+test("конверт отказов следует паспорту машины, а не помнится отдельным числом", () => {
+  // Живой полёт дал `CRITICALATTITUDE` при 53.1° тангажа, когда все шесть
+  // приводов доставляли ровно заказанное. Отказа не было: машине подняли
+  // разрешённый наклон до 56°, а порог аварии остался общим — 39.6°, писанным
+  // под прежние 34°. Число нельзя помнить отдельно от того, из чего оно следует.
+  const vehicle = airVehicles.find((entry) => entry.id === "combat-hexacopter");
+  const envelope = vehicleFailureEnvelopeFor(vehicle.flight);
+  assert.equal(
+    envelope.maximumPitch > vehicle.flight.maximumTilt,
+    true,
+    `авария при ${envelope.maximumPitch} объявлена раньше разрешённых ${vehicle.flight.maximumTilt}`,
+  );
+  assert.equal(
+    envelope.maximumRoll > vehicle.flight.maximumTilt,
+    true,
+    "в координированном вираже крен ровно паспортный, аварией он быть не может",
+  );
+  // Пятьдесят три градуса из отчёта живого полёта обязаны стать штатными.
+  assert.equal(envelope.maximumPitch > (53.1 * Math.PI) / 180, true);
+
+  // А машина, которая про наклон ничего не объявляет, не меняется вовсе.
+  const airship = airVehicles.find((entry) => entry.id === "town-airship");
+  assert.deepEqual(
+    vehicleFailureEnvelopeFor(airship.flight),
+    DEFAULT_VEHICLE_FAILURE_ENVELOPE,
   );
 });

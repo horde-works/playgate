@@ -5,6 +5,15 @@ import type {
 } from "./destructionScene.ts";
 import { PLAYER_CAPSULE_FOOT_OFFSET } from "./playerMovement.ts";
 import type { RotorcraftYawThruster } from "./rotorcraftDynamics.ts";
+import {
+  DEFAULT_SLIP_POLICY,
+  pathSpeedCeiling,
+  pathTurnAngle,
+  pathTurnRadius,
+  type RotorcraftPathSample,
+  type RotorcraftSlipPolicy,
+  type RotorcraftTurnCapability,
+} from "./rotorcraftSpeedGovernor.ts";
 import type { VehicleRecoveryLifecycle } from "./vehicleFailure.ts";
 import type { VehicleSafetyAdvisory } from "./vehicleSafetyAutomation.ts";
 import {
@@ -1656,6 +1665,15 @@ export interface ShipModel {
    * Directional yaw rates the machine controller can accept while preserving
    * its present thrust and attitude. Damage may make them asymmetric.
    */
+  /**
+   * Поворотливость машины: чем она способна вести вираж. Есть только у той,
+   * у которой вопрос «успеет ли нос» вообще стоит.
+   */
+  readonly turnCapability?: RotorcraftTurnCapability;
+  /** Допустимый занос. Не задан — общий по проекту. */
+  readonly slipPolicy?: RotorcraftSlipPolicy;
+  /** Срезка от обратной связи по фактическому заносу, 0…1. */
+  readonly governorScale?: number;
   readonly yawRateLimits?: {
     readonly minimum: number;
     readonly maximum: number;
@@ -2251,6 +2269,95 @@ function shipControlsForGuidance(
 }
 
 /**
+ * СКОЛЬКО РАЗРЕШАЕТ ФИЗИКА НА ЭТОМ УЧАСТКЕ ТРАССЫ.
+ *
+ * Трасса даёт форму, паспорт — способности, здесь они встречаются. Машина без
+ * объявленной поворотливости (`turnCapability`) ограничений отсюда не получает
+ * вовсе и летит ровно как летела: у дирижабля, состава и драккара вопроса
+ * «успеет ли нос за виражом» просто не существует.
+ *
+ * Горизонт просмотра берётся по тормозному пути: дальше заглядывать
+ * бессмысленно, ближе — поздно.
+ */
+function governedRouteSpeed(
+  plan: VehicleRoutePlan,
+  progress: number,
+  model: ShipModel,
+  onApproach: boolean,
+): number {
+  const capability = model.turnCapability;
+  if (!capability) {
+    return Number.POSITIVE_INFINITY;
+  }
+  // Темп рыскания берётся ИЗ АЛЛОКАТОРА, если он есть: выбитый движитель
+  // сужает его сам, и ограничитель обязан узнать об этом тем же путём.
+  const yawRate = model.yawRateLimits
+    ? Math.max(
+        0.05,
+        Math.min(
+          Math.abs(model.yawRateLimits.minimum),
+          Math.abs(model.yawRateLimits.maximum),
+        ),
+      )
+    : capability.yawRate;
+  const limits = { ...capability, yawRate };
+  const policy = model.slipPolicy ?? DEFAULT_SLIP_POLICY;
+  const allowance = onApproach ? policy.onApproach : policy.enRoute;
+  const authoredHere = plan.speedLimit(progress);
+  const horizon = Math.max(
+    30,
+    (authoredHere * authoredHere) / (2 * Math.max(0.5, capability.braking)) + 25,
+  );
+  // БАЗА ЗАМЕРА КРИВИЗНЫ — ЭТО МАСШТАБ САМОГО ВИРАЖА, а не удобный мелкий шаг.
+  //
+  // По трём точкам в восьми метрах друг от друга сплайн отдаёт радиусы в
+  // четыре метра там, где трасса плавная: считается не поворот, а рябь
+  // сглаживания. Ограничитель на такие «повороты» не реагировал — до них
+  // всегда успеваешь затормозить, — и потому не срабатывал вовсе.
+  //
+  // Настоящий масштаб задаёт сама машина: на крейсерском ходу она ведёт вираж
+  // радиуса примерно `v/ω`, и мерить надо на этой длине. Замер по трассе
+  // подтвердил: база 8 м даёт минимум 4.1 м, база 35 м — 14.9 м.
+  const turnScale = Math.max(
+    25,
+    Math.min(60, authoredHere / Math.max(0.1, yawRate)),
+  );
+  const step = plan.length > 1 ? turnScale / plan.length : 0.02;
+  const samples: RotorcraftPathSample[] = [];
+  for (let index = 1; index <= 40; index += 1) {
+    const at = progress + step * index;
+    if (at >= 1) break;
+    const distance = step * index * plan.length;
+    if (distance > horizon) break;
+    const here = plan.point(at);
+    const before = plan.point(Math.max(0, at - step));
+    const after = plan.point(Math.min(1, at + step));
+    samples.push({
+      distance,
+      radius: pathTurnRadius(
+        [before[0], before[2]],
+        [here[0], here[2]],
+        [after[0], after[2]],
+      ),
+      // Угол ДУГИ, а не одного излома: занос копится по всему повороту, и
+      // мерить его одной тройкой точек значит систематически его занижать.
+      turnAngle:
+        pathTurnAngle(
+          [before[0], before[2]],
+          [here[0], here[2]],
+          [after[0], after[2]],
+        ) * 4,
+    });
+  }
+  if (samples.length === 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return (
+    pathSpeedCeiling(samples, limits, allowance) * (model.governorScale ?? 1)
+  );
+}
+
+/**
  * ОБЩИЙ АВТОПИЛОТ. Читает маршрут и состояние машины, формирует нейтральное
  * требование движения, затем корабельный контроллер переводит его в совместимые
  * рычаги. Винтокрылая машина берёт `guidance` и исполняет его своим каскадом;
@@ -2581,12 +2688,25 @@ export function autopilot(
   const braking = onApproach
     ? Math.max(0, speedAlong * speedAlong) / (2 * Math.max(1, berthDistance))
     : 0;
+  // АВТОРСКИЙ ПРЕДЕЛ УЧАСТКА — ПОТОЛОК, А НЕ РАБОЧАЯ ТОЧКА.
+  //
+  // Он отвечает на вопрос «быстрее не надо по замыслу»: тихо у причала, шумно
+  // на разгонном луче. На вопрос «быстрее НЕЛЬЗЯ» он не отвечает и ответить не
+  // может — для этого надо знать радиус ближайшего виража и то, чем машина
+  // располагает, а маршрут не знает ни того, ни другого. Пока это писалось
+  // руками, промахи шли подряд: сперва на 92 метра мимо трассы, потом на 48.
+  //
+  // Поэтому предел считается ещё и физикой, и берётся меньшее из двух.
+  // Считает его САМ автопилот по геометрии плана: у любого маршрута есть точки
+  // и длина, больше ничего не нужно. Делать это свойством маршрута значило бы
+  // раздать один и тот же закон по всем трассам и потерять его при следующей.
+  const authored = Math.min(
+    plan.speedLimit(progress),
+    governedRouteSpeed(plan, progress, model, onApproach),
+  );
   const routeAllowed = onApproach
-    ? Math.min(
-        plan.speedLimit(progress),
-        Math.max(0.8, Math.sqrt(2 * 0.35 * berthDistance)),
-      )
-    : plan.speedLimit(progress);
+    ? Math.min(authored, Math.max(0.8, Math.sqrt(2 * 0.35 * berthDistance)))
+    : authored;
   const safetyIntervention = safety?.risk === "intervention";
   const allowed = safetyIntervention
     ? Math.min(routeAllowed, safety?.maximumSpeed ?? routeAllowed)
