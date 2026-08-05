@@ -2135,6 +2135,8 @@ export interface VehicleGuidanceDemand {
   readonly yawRate: number;
   /** Требуемая вертикальная сила сверх веса, доля веса. */
   readonly liftFraction: number;
+  /** Ускорение, которого требует трасса, в мировых осях [x, z]. Упреждение. */
+  readonly pathAcceleration?: readonly [number, number];
 }
 
 /** Что общий автопилот доложил о себе. */
@@ -2266,6 +2268,61 @@ function shipControlsForGuidance(
     controls: { throttle, rudder, liftTrim, sway },
     desiredYawRate,
   };
+}
+
+/**
+ * УСКОРЕНИЕ, КОТОРОГО ТРЕБУЕТ САМА ТРАССА ЗДЕСЬ И СЕЙЧАС.
+ *
+ * Величина `v²/r`, направление к центру поворота, мировые горизонтальные оси.
+ * Чистая кинематика окружности, известная ДО того, как машину снесёт, — этим
+ * упреждение и отличается от исправления ошибки.
+ *
+ * Направление берётся из второй разности трёх точек: `A − 2B + C` смотрит в
+ * вогнутую сторону. Продольная составляющая вычитается, чтобы осталось чистое
+ * поперечное и упреждение не подмешивало в вираж лишний ход.
+ */
+function pathAccelerationDemand(
+  plan: VehicleRoutePlan,
+  progress: number,
+  speed: number,
+): readonly [number, number] | undefined {
+  if (speed < 1 || plan.length <= 1) {
+    return undefined;
+  }
+  const step = Math.min(0.2, 30 / plan.length);
+  const before = plan.point(Math.max(0, progress - step));
+  const here = plan.point(progress);
+  const after = plan.point(Math.min(1, progress + step));
+  const secondX = before[0] - 2 * here[0] + after[0];
+  const secondZ = before[2] - 2 * here[2] + after[2];
+  const tangentX = after[0] - before[0];
+  const tangentZ = after[2] - before[2];
+  const tangentLength = Math.hypot(tangentX, tangentZ);
+  if (tangentLength < 1e-6) {
+    return undefined;
+  }
+  const tx = tangentX / tangentLength;
+  const tz = tangentZ / tangentLength;
+  const along = secondX * tx + secondZ * tz;
+  const normalX = secondX - along * tx;
+  const normalZ = secondZ - along * tz;
+  const normalLength = Math.hypot(normalX, normalZ);
+  if (normalLength < 1e-9) {
+    return undefined;
+  }
+  const radius = pathTurnRadius(
+    [before[0], before[2]],
+    [here[0], here[2]],
+    [after[0], after[2]],
+  );
+  if (!Number.isFinite(radius) || radius <= 0) {
+    return undefined;
+  }
+  const magnitude = (speed * speed) / radius;
+  return [
+    (normalX / normalLength) * magnitude,
+    (normalZ / normalLength) * magnitude,
+  ];
 }
 
 /**
@@ -2945,6 +3002,12 @@ export function autopilot(
     lateralSpeed: requestedLateralSpeed,
     yawRate: requestedYawRate,
     liftFraction,
+    // Только для машины с векторируемой тягой: неголономная поворачивает носом
+    // и боковое ускорение исполнить не может.
+    pathAcceleration:
+      (limits.lateralThrust ?? 0) > 1e-6
+        ? pathAccelerationDemand(plan, progress, groundSpeed)
+        : undefined,
   };
   const shipControl = shipControlsForGuidance(
     guidance,

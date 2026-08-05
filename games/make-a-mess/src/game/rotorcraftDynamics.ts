@@ -1309,6 +1309,16 @@ export function rotorcraftForces(
   // Общий газ держит ВЕС, а не «долю мощности»: наклон забирает вертикаль,
   // поэтому на манёвре его приходится добирать. Отсюда и связанность, которой
   // у плавучей машины нет вовсе.
+  // Газ считается по ФАКТИЧЕСКОМУ наклону, и попытка забежать вперёд провалилась.
+  //
+  // Рассуждение было верным: в вираже тяга равна весу на косинус крена, и пока
+  // тяга догоняет наклон, вертикаль проседает. А вот реализация «взять больший
+  // из углов, нынешний или заказанный» означала добавлять газ под наклон,
+  // которого ещё нет, — машина всплывала на разгоне на 7.13 м. На маршруте она
+  // при этом не дала ничего: промах по высоте остался прежним, 19.8 м.
+  //
+  // Значит причина просадок не здесь, и лечить её надо там, где она есть, а не
+  // компенсацией с обратным знаком.
   const tiltCosine = Math.max(0.35, up[1]);
   const wantedThrust =
     (machine.mass * gravity * (1 + demand.collective)) / tiltCosine;
@@ -1763,6 +1773,20 @@ export interface RotorcraftRequest {
   readonly yawRate: number;
   /** Просьба по подъёму сверх веса, доля веса. */
   readonly collective: number;
+  /**
+   * УПРЕЖДЕНИЕ: ускорение, которого требует САМА ТРАССА, в мировых осях [x, z].
+   *
+   * Без него контур позы чисто реактивен: крен считается из ошибки боковой
+   * скорости, а ошибка появляется только ПОСЛЕ того, как машину уже снесло.
+   * Замер дал запаздывание в 1.30 с — на маршрутной скорости это двадцать шесть
+   * метров, пройденных прежде чем аппарат начнёт крениться.
+   *
+   * Упреждается ТОЛЬКО КРЕН. Требовать вдобавок, чтобы нос шёл за креном, —
+   * значит навязывать голономной машине ограничение самолёта: у него сила
+   * только вдоль корпуса, у неё в любую сторону. Проверено дорого: упреждение
+   * по рысканью съело всю власть по курсу и увело машину на 6232 м от трассы.
+   */
+  readonly pathAcceleration?: readonly [number, number];
 }
 
 export interface RotorcraftFlightStep {
@@ -1819,12 +1843,32 @@ export function rotorcraftFlightStep(
   // Предел разгона у машины с тоннелями больше наклонного, и внешний контур
   // обязан это знать: иначе он сам зажимает просьбу цифрой обычного коптера, и
   // вся прямая тяга простаивает при формально исправном аппарате.
-  const acceleration = rotorcraftVelocityDemand(
+  const ceiling =
+    rotorcraftMaximumAcceleration(machine.maximumTilt) +
+    rotorcraftSurgeAcceleration(machine);
+  const corrective = rotorcraftVelocityDemand(
     { forward: request.forwardSpeed, lateral: request.lateralSpeed },
     { forward: forwardSpeed, lateral: lateralSpeed },
-    rotorcraftMaximumAcceleration(machine.maximumTilt) +
-      rotorcraftSurgeAcceleration(machine),
+    ceiling,
   );
+  // Упреждение раскладывается ТОЙ ЖЕ проекцией, что и скорость: иначе знак
+  // борта разъедется и машина начнёт входить в вираж наружу.
+  const pathForward = request.pathAcceleration
+    ? request.pathAcceleration[0] * nx + request.pathAcceleration[1] * nz
+    : 0;
+  const pathLateral = request.pathAcceleration
+    ? request.pathAcceleration[1] * nx - request.pathAcceleration[0] * nz
+    : 0;
+  const combined = {
+    forward: corrective.forward + pathForward,
+    lateral: corrective.lateral + pathLateral,
+  };
+  const magnitude = Math.hypot(combined.forward, combined.lateral);
+  const scale = magnitude > ceiling && magnitude > 1e-9 ? ceiling / magnitude : 1;
+  const acceleration = {
+    forward: combined.forward * scale,
+    lateral: combined.lateral * scale,
+  };
   const result = rotorcraftForces(
     machine,
     state,

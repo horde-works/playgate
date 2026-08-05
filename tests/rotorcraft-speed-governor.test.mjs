@@ -76,16 +76,17 @@ test("разрешённый занос поднимает скорость, н�
 });
 
 test("короткий излом проходится быстрее длинной дуги того же радиуса", () => {
-  // Если вся дуга короче допустимого заноса, нос не успеет отстать заметно.
-  const shortKink = corneringSpeed(20, DEFAULT_SLIP_POLICY.enRoute * 0.8, TONKAWA, DEFAULT_SLIP_POLICY.enRoute);
-  const longArc = corneringSpeed(20, Math.PI, TONKAWA, DEFAULT_SLIP_POLICY.enRoute);
+  // Свойство живёт там, где рыскание вообще связывает, то есть на створе:
+  // на маршруте занос почти свободен намеренно, и ограничивает только крен.
+  const shortKink = corneringSpeed(20, DEFAULT_SLIP_POLICY.onApproach * 0.8, TONKAWA, DEFAULT_SLIP_POLICY.onApproach);
+  const longArc = corneringSpeed(20, Math.PI, TONKAWA, DEFAULT_SLIP_POLICY.onApproach);
   assert.ok(
     shortKink > longArc,
     `излом ${shortKink.toFixed(1)} обязан быть быстрее дуги ${longArc.toFixed(1)}`,
   );
 });
 
-test("створ зажимает машину сильнее маршрута", () => {
+test("на маршруте занос свободен, а на створе зажат: курс важен только там", () => {
   // Радиус выбран там, где решает РЫСКАНИЕ: на широком вираже ограничивает
   // крен, и допуск заноса на него влиять не обязан — поперечной силы от него
   // не прибавляется.
@@ -96,15 +97,25 @@ test("створ зажимает машину сильнее маршрута",
     `на заходе ${onApproach.toFixed(1)} обязано быть меньше маршрутных ${enRoute.toFixed(1)}`,
   );
   assert.equal(DEFAULT_SLIP_POLICY.enRoute > DEFAULT_SLIP_POLICY.onApproach, true);
+  // Маршрутный допуск обязан быть настолько широким, чтобы не тормозить машину
+  // за проход манёвра боком: голономная держит трассу, а не курс.
+  assert.equal(
+    DEFAULT_SLIP_POLICY.enRoute > Math.PI / 4,
+    true,
+    "маршрутный занос зажат — машина превратится в рейсовый автобус",
+  );
 });
 
 test("выбитый орган рыскания сам замедляет машину, без единой правки маршрута", () => {
-  const healthy = corneringSpeed(25, Math.PI / 2, TONKAWA, DEFAULT_SLIP_POLICY.enRoute);
+  // Опять же на створе: там машина обязана прийти В ПОЛОЖЕНИИ, и потерянный
+  // орган рыскания честно отнимает скорость захода. На маршруте она полетит
+  // боком и это нормально — трассу она держит перемещением, а не носом.
+  const healthy = corneringSpeed(25, Math.PI / 2, TONKAWA, DEFAULT_SLIP_POLICY.onApproach);
   const damaged = corneringSpeed(
     25,
     Math.PI / 2,
     { ...TONKAWA, yawRate: 0.2 },
-    DEFAULT_SLIP_POLICY.enRoute,
+    DEFAULT_SLIP_POLICY.onApproach,
   );
   assert.ok(
     damaged < healthy * 0.6,
@@ -191,4 +202,24 @@ test("в пределах допуска ограничитель не трог�
     );
   }
   assert.ok(state.scale > 0.99, `завис на ${state.scale.toFixed(3)}`);
+});
+
+test("на маршруте машину НЕ тормозят за то, что она идёт боком", () => {
+  // Прямое следствие правила: голономная держит трассу, а не курс. Если
+  // ограничитель начнёт резать скорость за занос, получится рейсовый автобус —
+  // ровно то, чем эта машина быть не должна.
+  const sharp = corneringSpeed(20, Math.PI / 2, TONKAWA, DEFAULT_SLIP_POLICY.enRoute);
+  const byBankAlone = Math.sqrt(TONKAWA.lateralAcceleration * 20);
+  assert.ok(
+    Math.abs(sharp - byBankAlone) < 1e-6,
+    `на маршруте ограничивать обязан только крен, а вышло ${sharp.toFixed(1)} против ${byBankAlone.toFixed(1)}`,
+  );
+  // И даже наполовину потерянное рыскание маршрутную скорость не трогает.
+  const damaged = corneringSpeed(
+    20,
+    Math.PI / 2,
+    { ...TONKAWA, yawRate: 0.3 },
+    DEFAULT_SLIP_POLICY.enRoute,
+  );
+  assert.ok(Math.abs(damaged - byBankAlone) < 1e-6);
 });

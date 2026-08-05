@@ -353,6 +353,7 @@ function rotorcraftFlightForces(
       forwardSpeed: guidance?.forwardSpeed ?? 0,
       lateralSpeed: guidance?.lateralSpeed ?? 0,
       yawRate: guidance?.yawRate ?? 0,
+      pathAcceleration: guidance?.pathAcceleration,
       collective:
         state.flight?.pilot && !state.flight.castOff
           ? -limits.liftTrimRange
