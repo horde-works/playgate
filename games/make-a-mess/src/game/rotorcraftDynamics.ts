@@ -1867,8 +1867,21 @@ export function rotorcraftFlightStep(
     forward: corrective.forward + pathForward,
     lateral: corrective.lateral + pathLateral,
   };
+  // РАЗГОНУ НАКЛОН ПОЧТИ НЕ ПОЛОЖЕН, ТОРМОЖЕНИЮ — ВЕСЬ БЮДЖЕТ.
+  //
+  // Симметричный потолок оставлял лазейку: при большой ошибке скорости контур
+  // добирал наклоном сверх тоннелей, и машина разгонялась клювом в 35° — а
+  // потом перекладывалась в горизонт со взмахом в 37°/с, который с земли
+  // читается как «встала на дыбы перед манёвром». Скорость этой машине дают
+  // тоннели; глубокий клевок на разгоне — только поза, и цена ей ноль.
+  // Торможение — другое дело: это безопасность, ему наклон отдан целиком.
+  // У машины без тоннелей асимметрии нет — наклон её единственный орган.
+  const accelerationCeiling =
+    surgeCeiling > 1e-6 ? surgeCeiling + tiltCeiling * 0.25 : tiltCeiling;
+  const forwardCeiling =
+    combined.forward >= 0 ? accelerationCeiling : tiltCeiling + surgeCeiling;
   const ellipse = Math.hypot(
-    combined.forward / Math.max(1e-6, tiltCeiling + surgeCeiling),
+    combined.forward / Math.max(1e-6, forwardCeiling),
     combined.lateral / Math.max(1e-6, tiltCeiling),
   );
   const scale = ellipse > 1 ? 1 / ellipse : 1;
