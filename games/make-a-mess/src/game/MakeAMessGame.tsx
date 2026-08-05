@@ -123,6 +123,7 @@ import {
   selectCarveTargetsWithinBudget,
   impactDamageRadius,
   omittedDebrisColliderBoxes,
+  isSuperficialCarve,
   pieceMaterialVolume,
   rocketEnergyAtDistance,
   segmentIntersectsOccupiedGeometry,
@@ -140,6 +141,10 @@ import {
   stepTether,
   type TetherAnchor,
 } from "./attachmentTether";
+import {
+  SurfaceDamageDecals,
+  type SurfaceDamageDecalRuntime,
+} from "./SurfaceDamageDecals";
 import type { VehicleContactDamageRequest } from "./vehicleContactDamage";
 import {
   playDebrisSound,
@@ -3498,6 +3503,44 @@ function Tracer({
   );
 }
 
+/**
+ * Нормаль отметины в той же системе, в которой живёт её точка. Точка удара по
+ * члену компаунда уже переведена в систему машины, и нормаль обязана уехать
+ * туда же — иначе пробоина на летящем борту смотрит в мировую сторону и с
+ * первым же разворотом уходит внутрь корпуса.
+ */
+function decalNormalInFrame(
+  worldNormal: readonly [number, number, number],
+  worldAnchor: readonly [number, number, number],
+  localPoint: readonly [number, number, number],
+  frame: {
+    readonly runtime: CompoundKinematicClusterRuntime;
+    readonly transform: CompoundClusterWorldTransform;
+  } | null,
+): readonly [number, number, number] {
+  if (!frame) {
+    return worldNormal;
+  }
+  const tip = compoundClusterPointToLocal(
+    frame.runtime.definition.origin,
+    frame.transform,
+    [
+      worldAnchor[0] + worldNormal[0],
+      worldAnchor[1] + worldNormal[1],
+      worldAnchor[2] + worldNormal[2],
+    ],
+  );
+  const local: [number, number, number] = [
+    tip[0] - localPoint[0],
+    tip[1] - localPoint[1],
+    tip[2] - localPoint[2],
+  ];
+  const length = Math.hypot(...local);
+  return length > 1e-6
+    ? [local[0] / length, local[1] / length, local[2] / length]
+    : worldNormal;
+}
+
 interface TracerRuntime {
   spawn: (from: TracerDefinition["from"], to: TracerDefinition["to"]) => void;
   clear: () => void;
@@ -4078,9 +4121,30 @@ function OpenWorldScene({
     }
     return compiled;
   }, [breakablePieces]);
+  /**
+   * Накопленное ПОВЕРХНОСТНОЕ повреждение куска: решётка со всеми прежними
+   * пробоинами, которая ещё не изменила его форму. Ею и продолжает работать
+   * ядро, поэтому вторая пуля в то же место дорезает первую, а не начинает с
+   * целого куска.
+   */
+  const superficialDamage = useRef(
+    new Map<
+      string,
+      {
+        readonly voxelBody: NonNullable<ShardSource["voxelBody"]>;
+        readonly boxes: NonNullable<ShardSource["boxes"]>;
+        readonly removed: number;
+      }
+    >(),
+  );
+  const surfaceDecalRuntime = useRef<SurfaceDamageDecalRuntime | null>(null);
   const resolveDamageSource = useCallback(
     (source: ShardSource): ShardSource => {
       if (source.voxelBody) return source;
+      const damaged = superficialDamage.current.get(source.id);
+      if (damaged) {
+        return { ...source, voxelBody: damaged.voxelBody, boxes: damaged.boxes };
+      }
       const geometry = customDamageGeometryByPieceId.get(source.id);
       return geometry
         ? { ...source, voxelBody: geometry.body, boxes: geometry.boxes }
@@ -4300,6 +4364,20 @@ function OpenWorldScene({
       return clusterId ? liveCompoundFrame(clusterId) : null;
     },
     [compoundOwnedPieceClusters, liveCompoundFrame],
+  );
+  /** Живая система носителя для отметин повреждения. */
+  const decalCarrierFrameOf = useCallback(
+    (clusterId: string) => {
+      const frame = liveCompoundFrame(clusterId);
+      return frame
+        ? {
+            origin: frame.runtime.definition.origin,
+            position: frame.transform.position,
+            quaternion: frame.transform.rotation,
+          }
+        : null;
+    },
+    [liveCompoundFrame],
   );
   /** То же для любой цели урона: кусок или его обрубок. */
   const liveCompoundFrameOfTarget = useCallback(
@@ -5042,6 +5120,8 @@ function OpenWorldScene({
     restCounters.current.clear();
     preStepMotions.current.clear();
     tethers.current.clear();
+    superficialDamage.current.clear();
+    surfaceDecalRuntime.current?.clear();
     debrisSoundByBody.current.clear();
     physicsStep.current = 0;
     debrisSettlingUntilStep.current.clear();
@@ -6216,6 +6296,31 @@ function OpenWorldScene({
         source.volume ??
         source.size[0] * source.size[1] * source.size[2];
 
+      // ПРЕДСТАВЛЕНИЕ МЕНЯЕТСЯ ТОЛЬКО ТОГДА, КОГДА ИЗМЕНИЛАСЬ ФОРМА.
+      //
+      // Пуля в борт формы не меняет — она меняет поверхность, и переводить
+      // ради неё авторскую сетку в сотню коробок значит стереть машину. Такой
+      // удар остаётся на сетке: снаружи это пробоина с окалиной, внутри —
+      // накопленная воксельная решётка, по которой следующее попадание уже
+      // может расколоть кусок по-настоящему.
+      //
+      // Обрубок сюда не попадает: он и так набор коробок, беречь в нём нечего.
+      const superficial =
+        piece !== undefined &&
+        remnant === undefined &&
+        damageSource.voxelBody !== undefined &&
+        isSuperficialCarve({
+          radius,
+          fragments,
+          sourceSize: source.size,
+          sourceCenter: [bodyPosition.x, bodyPosition.y, bodyPosition.z],
+          removedVolume,
+          previouslyRemoved:
+            superficialDamage.current.get(piece.id)?.removed ?? 0,
+          materialVolume: pieceMaterialVolume(piece),
+          tolerance: Math.max(...damageSource.voxelBody.cellSize),
+        });
+
       // ОБРУБОК НАСЛЕДУЕТ ВЕС СВОЕГО КУСКА, А НЕ СВОЙ ГАБАРИТ.
       //
       // Панели летающего кузова авторятся с ЗАНИЖЕННЫМ volume: лист обшивки
@@ -6229,7 +6334,9 @@ function OpenWorldScene({
       // равна единице: применённая вторым слоем, она занижала материал куска
       // в десятки раз.
       const authoredDensityScale = carvedMaterialScale(damageSource);
-      const additions = fragments.map((fragment): RemnantDefinition => {
+      const additions = superficial
+        ? []
+        : fragments.map((fragment): RemnantDefinition => {
         remnantCounter.current += 1;
         return {
           id: `remnant:${remnantCounter.current}`,
@@ -6257,6 +6364,7 @@ function OpenWorldScene({
         };
       });
       if (
+        !superficial &&
         isGroundTarget &&
         groundCarveRequiresRemnant(source) &&
         (additions.length === 0 || removedVolume > sourceVolume * 0.38)
@@ -6264,9 +6372,47 @@ function OpenWorldScene({
         return { carved: false, brokenParentId: null };
       }
 
-      if (remnant) {
+      if (superficial && piece) {
+        // Форма прежняя: кусок остаётся собой, а повреждение копится в его
+        // решётке и выходит наружу отметиной. Следующий удар работает уже по
+        // этой решётке и может расколоть кусок по-настоящему.
+        const carried = fragments[0];
+        superficialDamage.current.set(piece.id, {
+          voxelBody: carried.voxelBody ?? damageSource.voxelBody!,
+          boxes: carried.boxes ?? damageSource.boxes ?? [],
+          removed:
+            (superficialDamage.current.get(piece.id)?.removed ?? 0) +
+            removedVolume,
+        });
+        surfaceDecalRuntime.current?.spawn({
+          sourceId: piece.id,
+          point: kernelPoint,
+          // Отметина смотрит НАВСТРЕЧУ удару и живёт в системе носителя: у
+          // машины она едет с бортом, а не висит в точке, где борт был.
+          normal: decalNormalInFrame(
+            pushDirection && pushDirection.lengthSq() > 1e-8
+              ? [
+                  -pushDirection.x / pushDirection.length(),
+                  -pushDirection.y / pushDirection.length(),
+                  -pushDirection.z / pushDirection.length(),
+                ]
+              : [0, 1, 0],
+            debrisAnchor,
+            kernelPoint,
+            clusterFrame,
+          ),
+          radius,
+          material: source.material,
+          clusterId,
+        });
+      } else if (remnant) {
         commitRemnants(remnant.id, additions);
       } else {
+        // Кусок всё-таки меняет форму: накопленная поверхностная решётка
+        // больше его не описывает, и отметины на ней тоже.
+        if (piece && superficialDamage.current.delete(piece.id)) {
+          surfaceDecalRuntime.current?.dropSource(piece.id);
+        }
         commitRemnants(null, additions);
         carvedPiecesRef.current.add(targetId);
         setCarvedPieces((current) => {
@@ -6345,6 +6491,11 @@ function OpenWorldScene({
       const crossed = isGroundTarget
         ? false
         : subtractParentVolume(parentId, removedVolume);
+      if (crossed && piece) {
+        // Кусок исчерпал свой материал — его отметины уходят вместе с ним.
+        superficialDamage.current.delete(piece.id);
+        surfaceDecalRuntime.current?.dropSource(piece.id);
+      }
       return { carved: true, brokenParentId: crossed ? parentId : null };
     },
     [
@@ -9621,6 +9772,10 @@ function OpenWorldScene({
       <ProjectileWarmup />
       <TracerSystem runtimeRef={tracerRuntime} />
       <MachineGunImpactSystem runtimeRef={machineGunImpactRuntime} />
+      <SurfaceDamageDecals
+        runtimeRef={surfaceDecalRuntime}
+        carrierFrameOf={decalCarrierFrameOf}
+      />
       <ExplosionFxSystem
         runtimeRef={explosionFxRuntime}
         bodies={pieceBodies}

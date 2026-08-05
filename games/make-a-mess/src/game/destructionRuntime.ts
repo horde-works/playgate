@@ -727,6 +727,75 @@ export function compilePieceDamageGeometry(
 }
 
 /**
+ * ПРЕДСТАВЛЕНИЕ МЕНЯЕТСЯ ТОЛЬКО ТОГДА, КОГДА ИЗМЕНИЛАСЬ ФОРМА.
+ *
+ * Воксельная решётка — честный носитель РАЗРУШЕНИЯ: расколотый кусок,
+ * выбитая воронка, отвалившийся угол. Но пулевое отверстие формы не меняет:
+ * оно меняет поверхность. Прежде любое попадание переводило кусок целиком —
+ * авторская сетка корпуса превращалась в сотню коробок по 15 см от одной
+ * пули, и дальше от неё уже нельзя было вернуться.
+ *
+ * Поэтому у повреждения два представления, и выбор между ними — не вкус, а
+ * измеримый вопрос: осталась ли форма прежней. Четыре условия ниже отвечают
+ * на него, и каждое закрывает свой случай.
+ */
+export const SUPERFICIAL_CARVE_RADIUS = 0.3;
+/**
+ * Изрешечённая панель перестаёт быть панелью: после этой доли снятого
+ * материала кусок обязан перейти в воксели, даже если каждая отдельная дыра
+ * была пулевой.
+ */
+export const SUPERFICIAL_CARVE_FRACTION = 0.12;
+
+export interface SuperficialCarveQuery {
+  readonly radius: number;
+  readonly fragments: readonly ShardDefinition[];
+  readonly sourceSize: readonly [number, number, number];
+  /** Мировой центр куска в момент удара. */
+  readonly sourceCenter: readonly [number, number, number];
+  readonly removedVolume: number;
+  /** Сколько материала этого куска уже снято прежними попаданиями. */
+  readonly previouslyRemoved: number;
+  readonly materialVolume: number;
+  /** Допуск сравнения рамок — размер воксельной клетки куска. */
+  readonly tolerance: number;
+}
+
+export function isSuperficialCarve(query: SuperficialCarveQuery): boolean {
+  // Воронка размером с человека обязана быть настоящей дырой: сквозь неё
+  // видно, в неё лезут, и рисовать её отметиной было бы обманом.
+  if (query.radius > SUPERFICIAL_CARVE_RADIUS) {
+    return false;
+  }
+  // Кусок раскололся — это уже другая форма, и не одна.
+  if (query.fragments.length !== 1) {
+    return false;
+  }
+  if (
+    query.materialVolume <= 0 ||
+    query.previouslyRemoved + query.removedVolume >
+      query.materialVolume * SUPERFICIAL_CARVE_FRACTION
+  ) {
+    return false;
+  }
+
+  // Уцелевший материал обязан занимать ТУ ЖЕ рамку. Дыра, съевшая край,
+  // сжимает габарит куска — снаружи это видно как обкусанная кромка, и
+  // авторская сетка там уже врёт.
+  const fragment = query.fragments[0];
+  const tolerance = Math.max(1e-6, query.tolerance);
+  for (const axis of [0, 1, 2] as const) {
+    if (
+      Math.abs(fragment.position[axis] - query.sourceCenter[axis]) > tolerance ||
+      Math.abs(fragment.size[axis] - query.sourceSize[axis]) > tolerance
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * АВТОРСКИЙ ОБЪЁМ МАТЕРИАЛА КУСКА. Габарит — только запасной вариант, и для
  * куска с авторской сеткой он не годится: `volume` описывает толщину скорлупы
  * и составляет 0.5–3 % от bounding box (смок мельницы: 17.8 м³ материала в
