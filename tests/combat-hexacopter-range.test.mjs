@@ -195,3 +195,36 @@ test("коридор — требование участка: узко у зем
   assert.equal(plan.corridor(0.5) >= 25, true, "круг — свобода гоночной линии");
   assert.equal(plan.corridor(0.98) <= 4, true, "посадочный столб — строгие метры");
 });
+
+test("побрякушка не переживает своего носителя: сенсоры падают с пушкой и носом", () => {
+  // «Нижний сенсор в полуметре от корпуса и откреплён» — так выглядел шар
+  // подвеса после гибели подбородочной пушки: допуск 0.42 дотягивался до
+  // дальней структуры, и мелочь висела в воздухе. Теперь у сенсоров и огней
+  // побрякушечный допуск 0.12: держаться можно только за своего носителя.
+  const cannonDead = new Set(
+    vehiclePieces.filter((piece) => /chin-cannon/.test(piece.id)).map((p) => p.id),
+  );
+  const afterCannon = compilation.scene.resolveStructuralCollapse(cannonDead);
+  const window = vehiclePieces.find((piece) => piece.id.includes("sensor-window"));
+  assert.ok(window);
+  assert.equal(
+    afterCannon.has(window.id),
+    true,
+    "окно сенсора обязано упасть вместе с пушечным узлом",
+  );
+  const noseDead = new Set(
+    vehiclePieces
+      .filter((piece) =>
+        /armoured-body-shell|nose-dorsal|survival-keel|chin-cannon/.test(piece.id),
+      )
+      .map((p) => p.id),
+  );
+  const afterNose = compilation.scene.resolveStructuralCollapse(noseDead);
+  const ball = vehiclePieces.find((piece) => piece.id.includes("sensor-ball"));
+  assert.ok(ball);
+  assert.equal(
+    afterNose.has(ball.id),
+    true,
+    "шар подвеса обязан упасть вместе с носом, а не висеть в воздухе",
+  );
+});

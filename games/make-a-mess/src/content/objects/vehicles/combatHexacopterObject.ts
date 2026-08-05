@@ -473,16 +473,29 @@ for (const station of COMBAT_HEX_LIFT_STATIONS) {
     }));
   }
 
-  // Броневых накладок больше нет: сегмент кольца САМ и есть броня. Прежние
-  // шесть коробочек висели поверх бочки и держались только допуском — теперь
-  // ту же грань несёт кусок, который эту нагрузку действительно принимает.
+  // Броневых накладок больше нет: сегмент кольца САМ и есть броня.
+  //
+  // Сервисная панель — на СЕРЕДИНЕ КОРМОВОЙ пластины, по её хорде. Чистый
+  // борт (угол 0) — это стык сегментов: панель, посаженная туда, сидела на
+  // ребре полуутопленной и криво поперёк обеих хорд. Композиция борта теперь
+  // симметрична: фонарь на пластине к носу (+15°), панель на пластине к корме
+  // (−15°), оба заподлицо каждый со своей.
   const side = station.x < 0 ? -1 : 1;
+  const outboardAngle = side < 0 ? Math.PI : 0;
+  const panelAngle = outboardAngle - side * (Math.PI / 12);
+  const panelChord = outer * Math.cos(Math.PI / 12) + wall / 2;
+  const panelRadial = panelChord + 0.025 + 0.002;
   addBox(
     `${group}-service-panel`,
     group,
     "dark-recess",
-    point(station.x + side * (outer - wall * 0.5), station.planeY - 0.02, station.z),
+    point(
+      station.x + panelRadial * Math.cos(panelAngle),
+      station.planeY - 0.02,
+      station.z + panelRadial * Math.sin(panelAngle),
+    ),
     point(0.05, 0.09, 0.25),
+    point(0, -panelAngle, 0),
   );
 }
 

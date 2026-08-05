@@ -216,8 +216,13 @@ function primitive(
       ? 0.34
       : part.group === "weapons"
         ? 0.5
-        : part.group === "lighting"
-          ? 0.3
+        : part.group === "lighting" || part.group === "sensors"
+          ? // Побрякушка держится ТОЛЬКО за своего носителя: фонарь за
+            // пластину, шар за подвес, блистер за основание. Прежние 0.3–0.42
+            // дотягивались до дальней структуры, и после гибели носителя
+            // сенсор висел в полуметре от корпуса — тот же класс дефекта,
+            // что был у накладок гондол.
+            0.12
           : 0.42;
   return {
     kind: "primitive",
@@ -240,7 +245,7 @@ function primitive(
     // compact collision proxies do not literally overlap. This reach closes
     // only that local joint; neighbouring ducts remain metres away.
     sideAttachmentReach: attachmentReach,
-    maximumVerticalGap: part.group === "landing-gear" ? 0.1 : driveSkin ? 0.22 : driveMember ? 0.3 : part.group === "weapons" ? 0.32 : part.group === "lighting" ? 0.24 : 0.36,
+    maximumVerticalGap: part.group === "landing-gear" ? 0.1 : driveSkin ? 0.22 : driveMember ? 0.3 : part.group === "weapons" ? 0.32 : part.group === "lighting" || part.group === "sensors" ? 0.12 : 0.36,
     actuator: actuatorFor(part),
     light: lightFor(part),
     bearsLoad: loadBearing(part),
