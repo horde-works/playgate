@@ -257,7 +257,13 @@ export function createCombatHexacopterVehicleFrame(
     id: blueprint.id,
     clusterId: blueprint.placement.clusterId,
     telemetryLabel: blueprint.telemetryLabel,
-    independentMemberMatches: [":engine:", ":yaw-engine:"],
+    // Собственное кинематическое тело нужно только тому, чья поза отличается
+    // от позы кадра, — вращающимся лопастям. Прежняя маска ":engine:" делала
+    // независимым телом ВСЮ гондолу: 390 кусков из 663 получали по телу, а
+    // вращались 44. Первый коптер собран правильно — [":blade:"] — и после
+    // перестройки гондол в стальной набор эта расточительность подорожала
+    // ещё на две с лишним сотни кусков.
+    independentMemberMatches: [":blade:"],
     origin: blueprint.origin,
     nose: blueprint.nose,
     mooringPoint: blueprint.mooringPoint,

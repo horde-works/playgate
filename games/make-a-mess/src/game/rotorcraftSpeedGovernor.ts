@@ -58,6 +58,14 @@ export interface RotorcraftTurnCapability {
    * подползать к каждому виражу.
    */
   readonly braking: number;
+  /**
+   * Постоянная отклика контура скорости, с. Пока команда «тормози» доходит до
+   * фактической силы, машина летит прежним ходом — и эту дистанцию надо
+   * вычитать из запаса до виража. Без неё ограничитель считал аппарат
+   * идеальным: «до поворота четыре метра, сброшу» — и в восьмёрку машина
+   * входила на 25 м/с при вираже на 14.7.
+   */
+  readonly responseSeconds?: number;
 }
 
 /** Сколько заносить разрешено. Двойной: маршрут терпит, створ — нет. */
@@ -189,6 +197,11 @@ export function pathSpeedCeiling(
 ): number {
   let ceiling = Number.POSITIVE_INFINITY;
   const braking = Math.max(0.01, capability.braking);
+  // За время отклика машина НЕ тормозит — она пролетает `v·τ` прежним ходом.
+  // Отсюда квадратное уравнение `v² = target² + 2a·(d − v·τ)`, решённое ниже;
+  // нижняя граница `target` — у самого виража формула иначе давала бы меньше
+  // самой скорости виража.
+  const lag = Math.max(0, capability.responseSeconds ?? 0) * braking;
   for (const sample of samples) {
     const target = corneringSpeed(
       sample.radius,
@@ -200,7 +213,10 @@ export function pathSpeedCeiling(
       continue;
     }
     const distance = Math.max(0, sample.distance);
-    const allowed = Math.sqrt(target * target + 2 * braking * distance);
+    const allowed = Math.max(
+      target,
+      -lag + Math.sqrt(lag * lag + target * target + 2 * braking * distance),
+    );
     if (allowed < ceiling) {
       ceiling = allowed;
     }

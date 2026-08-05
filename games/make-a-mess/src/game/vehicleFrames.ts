@@ -2137,6 +2137,12 @@ export interface VehicleGuidanceDemand {
   readonly liftFraction: number;
   /** Ускорение, которого требует трасса, в мировых осях [x, z]. Упреждение. */
   readonly pathAcceleration?: readonly [number, number];
+  /**
+   * Машина в посадочном створе. Фазу знает автопилот, а ПОЛИТИКА фазы —
+   * например, какой занос терпим — применяется автоматом управления: занос на
+   * маршруте почти свободен, а на заходе зажат до створовых шести градусов.
+   */
+  readonly approachPhase?: boolean;
 }
 
 /** Что общий автопилот доложил о себе. */
@@ -2359,6 +2365,59 @@ function turnExitHeading(
 }
 
 /**
+ * ТОРМОЖЕНИЕ КАК ЧАСТЬ МАНЁВРА, А НЕ ОТДЕЛЬНОЕ СОБЫТИЕ ПЕРЕД НИМ.
+ *
+ * Без этого манёвр разваливался на три акта: ограничитель говорит «впереди
+ * вираж», контур скорости тормозит ВСЕМ бюджетом наклона назад — машина
+ * встаёт на дыбы, — и только когда кривизна оказывается под машиной,
+ * появляется боковое требование и бюджет перебрасывается на крен. Тормоз
+ * кончился — крен начался. Живой пилот тормозит ВНУТРЬ виража: замедление и
+ * крен перекрываются, и вход выглядит одной дугой.
+ *
+ * Здесь берётся производная РАЗРЕШЁННОГО профиля скорости вдоль пути —
+ * `v·dv/ds` — и подаётся вектором вдоль касательной в то же упреждение, куда
+ * идёт боковое `v²/r`. Дальше эллипс возможностей делит оба требования
+ * ОДНОВРЕМЕННО: машина ещё тормозит, а крен уже растёт. Разгонная сторона не
+ * упреждается — набрать скорость контур успевает и сам, спешка тут не красит.
+ */
+function pathBrakingDemand(
+  plan: VehicleRoutePlan,
+  progress: number,
+  speed: number,
+  model: ShipModel,
+): readonly [number, number] | undefined {
+  if (speed < 2 || plan.length <= 1) {
+    return undefined;
+  }
+  const deltaMetres = Math.max(8, speed * 0.6);
+  const dp = deltaMetres / plan.length;
+  if (progress + dp >= 1) {
+    return undefined;
+  }
+  const here = Math.min(
+    plan.speedLimit(progress),
+    governedRouteSpeed(plan, progress, model, false),
+  );
+  const ahead = Math.min(
+    plan.speedLimit(progress + dp),
+    governedRouteSpeed(plan, progress + dp, model, false),
+  );
+  if (!Number.isFinite(here) || !Number.isFinite(ahead) || ahead >= here) {
+    return undefined;
+  }
+  const along = (ahead * ahead - here * here) / (2 * deltaMetres);
+  const before = plan.point(Math.max(0, progress - dp));
+  const after = plan.point(Math.min(1, progress + dp));
+  const dx = after[0] - before[0];
+  const dz = after[2] - before[2];
+  const length = Math.hypot(dx, dz);
+  if (length < 1e-6) {
+    return undefined;
+  }
+  return [(dx / length) * along, (dz / length) * along];
+}
+
+/**
  * УСКОРЕНИЕ, КОТОРОГО ТРЕБУЕТ САМА ТРАССА ЗДЕСЬ И СЕЙЧАС.
  *
  * Величина `v²/r`, направление к центру поворота, мировые горизонтальные оси.
@@ -2449,40 +2508,58 @@ function governedRouteSpeed(
   const policy = model.slipPolicy ?? DEFAULT_SLIP_POLICY;
   const allowance = onApproach ? policy.onApproach : policy.enRoute;
   const authoredHere = plan.speedLimit(progress);
-  const horizon = Math.max(
-    30,
-    (authoredHere * authoredHere) / (2 * Math.max(0.5, capability.braking)) + 25,
-  );
-  // БАЗА ЗАМЕРА КРИВИЗНЫ — ЭТО МАСШТАБ САМОГО ВИРАЖА, а не удобный мелкий шаг.
+  // ДВЕ РАЗНЫЕ ДЛИНЫ, И ПУТАТЬ ИХ НЕЛЬЗЯ — ЭТО УЖЕ СТОИЛО МОЛЧАЩЕГО ОГРАНИЧИТЕЛЯ.
   //
-  // По трём точкам в восьми метрах друг от друга сплайн отдаёт радиусы в
-  // четыре метра там, где трасса плавная: считается не поворот, а рябь
-  // сглаживания. Ограничитель на такие «повороты» не реагировал — до них
-  // всегда успеваешь затормозить, — и потому не срабатывал вовсе.
+  // БАЗА ЗАМЕРА КРИВИЗНЫ — масштаб самого виража, `v/ω`: по трём точкам в
+  // восьми метрах сплайн отдаёт радиусы в четыре метра там, где трасса
+  // плавная, — считается рябь сглаживания, а не поворот (замер: база 8 м даёт
+  // минимум 4.1 м, база 35 м — 14.9 м).
   //
-  // Настоящий масштаб задаёт сама машина: на крейсерском ходу она ведёт вираж
-  // радиуса примерно `v/ω`, и мерить надо на этой длине. Замер по трассе
-  // подтвердил: база 8 м даёт минимум 4.1 м, база 35 м — 14.9 м.
+  // ШАГ ВЫБОРКИ — сколько точек умещается в горизонте торможения. Когда обе
+  // длины были одним числом, первая же точка выборки (~42 м) оказывалась за
+  // горизонтом (~36 м), цикл выходил пустым и предел был бесконечностью:
+  // ограничитель молчал весь полёт, а машина уходила с трассы на 84 метра.
   const turnScale = Math.max(
     25,
     Math.min(60, authoredHere / Math.max(0.1, yawRate)),
   );
-  const step = plan.length > 1 ? turnScale / plan.length : 0.02;
+  const base = plan.length > 1 ? turnScale / plan.length : 0.02;
+  const horizon = Math.max(
+    2 * turnScale,
+    (authoredHere * authoredHere) / (2 * Math.max(0.5, capability.braking)) + 15,
+  );
+  const sampleMetres = Math.max(4, horizon / 24);
+  const sampleStep = plan.length > 1 ? sampleMetres / plan.length : 0.02;
   const samples: RotorcraftPathSample[] = [];
   for (let index = 1; index <= 40; index += 1) {
-    const at = progress + step * index;
+    const at = progress + sampleStep * index;
     if (at >= 1) break;
-    const distance = step * index * plan.length;
+    const distance = sampleMetres * index;
     if (distance > horizon) break;
     const here = plan.point(at);
-    const before = plan.point(Math.max(0, at - step));
-    const after = plan.point(Math.min(1, at + step));
+    const before = plan.point(Math.max(0, at - base));
+    const after = plan.point(Math.min(1, at + base));
+    // Кривизна меряется ДВУМЯ базами, и берётся худший радиус. Большая база
+    // гасит рябь сглаживания, но на вираже, чья дуга сравнима с ней самой,
+    // хордит угол и завышает радиус — machine получала разрешение на 19 м/с
+    // там, где физика виража держит 14. Короткая база честна на крутом, длинная
+    // — на пологом; правду о вираже говорит меньший из двух радиусов.
+    const tightBase = plan.length > 1 ? 18 / plan.length : base * 0.5;
+    const beforeTight = plan.point(Math.max(0, at - tightBase));
+    const afterTight = plan.point(Math.min(1, at + tightBase));
     samples.push({
       distance,
-      radius: pathTurnRadius(
-        [before[0], before[2]],
-        [here[0], here[2]],
-        [after[0], after[2]],
+      radius: Math.min(
+        pathTurnRadius(
+          [before[0], before[2]],
+          [here[0], here[2]],
+          [after[0], after[2]],
+        ),
+        pathTurnRadius(
+          [beforeTight[0], beforeTight[2]],
+          [here[0], here[2]],
+          [afterTight[0], afterTight[2]],
+        ),
       ),
       // Угол ДУГИ, а не одного излома: занос копится по всему повороту, и
       // мерить его одной тройкой точек значит систематически его занижать.
@@ -3090,12 +3167,26 @@ export function autopilot(
     lateralSpeed: requestedLateralSpeed,
     yawRate: requestedYawRate,
     liftFraction,
+    approachPhase: onApproach,
     // Только для машины с векторируемой тягой: неголономная поворачивает носом
-    // и боковое ускорение исполнить не может.
-    pathAcceleration:
-      (limits.lateralThrust ?? 0) > 1e-6
-        ? pathAccelerationDemand(plan, progress, groundSpeed)
-        : undefined,
+    // и боковое ускорение исполнить не может. Боковое `v²/r` и продольное
+    // торможение профиля складываются в ОДИН вектор: манёвр — единое целое.
+    pathAcceleration: (() => {
+      if ((limits.lateralThrust ?? 0) <= 1e-6) {
+        return undefined;
+      }
+      const lateral = pathAccelerationDemand(plan, progress, groundSpeed);
+      const braking = onApproach
+        ? undefined
+        : pathBrakingDemand(plan, progress, groundSpeed, model);
+      if (!lateral && !braking) {
+        return undefined;
+      }
+      return [
+        (lateral?.[0] ?? 0) + (braking?.[0] ?? 0),
+        (lateral?.[1] ?? 0) + (braking?.[1] ?? 0),
+      ] as const;
+    })(),
   };
   const shipControl = shipControlsForGuidance(
     guidance,

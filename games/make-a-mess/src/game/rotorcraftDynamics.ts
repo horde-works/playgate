@@ -1843,13 +1843,17 @@ export function rotorcraftFlightStep(
   // Предел разгона у машины с тоннелями больше наклонного, и внешний контур
   // обязан это знать: иначе он сам зажимает просьбу цифрой обычного коптера, и
   // вся прямая тяга простаивает при формально исправном аппарате.
-  const ceiling =
-    rotorcraftMaximumAcceleration(machine.maximumTilt) +
-    rotorcraftSurgeAcceleration(machine);
+  // ПОТОЛОК РАЗГОНА — ЭЛЛИПС, А НЕ КРУГ. Тоннели толкают только вдоль носа:
+  // вперёд машина берёт наклон плюс синфазную тягу, вбок — один наклон. Пока
+  // потолок был кругом «наклон + тоннели», контур скорости разрешал себе вбок
+  // 39 м/с² там, где физика даёт 14.5, — просил недостижимое и жил в насыщении
+  // клампа позы вместо честного предела.
+  const tiltCeiling = rotorcraftMaximumAcceleration(machine.maximumTilt);
+  const surgeCeiling = rotorcraftSurgeAcceleration(machine);
   const corrective = rotorcraftVelocityDemand(
     { forward: request.forwardSpeed, lateral: request.lateralSpeed },
     { forward: forwardSpeed, lateral: lateralSpeed },
-    ceiling,
+    Number.POSITIVE_INFINITY,
   );
   // Упреждение раскладывается ТОЙ ЖЕ проекцией, что и скорость: иначе знак
   // борта разъедется и машина начнёт входить в вираж наружу.
@@ -1863,8 +1867,11 @@ export function rotorcraftFlightStep(
     forward: corrective.forward + pathForward,
     lateral: corrective.lateral + pathLateral,
   };
-  const magnitude = Math.hypot(combined.forward, combined.lateral);
-  const scale = magnitude > ceiling && magnitude > 1e-9 ? ceiling / magnitude : 1;
+  const ellipse = Math.hypot(
+    combined.forward / Math.max(1e-6, tiltCeiling + surgeCeiling),
+    combined.lateral / Math.max(1e-6, tiltCeiling),
+  );
+  const scale = ellipse > 1 ? 1 / ellipse : 1;
   const acceleration = {
     forward: combined.forward * scale,
     lateral: combined.lateral * scale,

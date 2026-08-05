@@ -454,7 +454,11 @@ function rotorcraftFlightForces(
     ? advanceRotorcraftGovernor(
         state.governor,
         measuredSlipAngle(flightStep.forwardSpeed, flightStep.lateralSpeed),
-        DEFAULT_SLIP_POLICY.enRoute,
+        // Допуск берётся ПО ФАЗЕ: на маршруте занос почти свободен, на заходе
+        // машина обязана прийти в положении, и терпимость к крабу кончается.
+        guidance?.approachPhase
+          ? DEFAULT_SLIP_POLICY.onApproach
+          : DEFAULT_SLIP_POLICY.enRoute,
         step,
       )
     : NEUTRAL_GOVERNOR;
@@ -3889,6 +3893,9 @@ export function VehicleFrameSystem({
                 ? { yawRateLimits: state.rotorYawRateLimits }
                 : {}),
               turnCapability: {
+                // Замеренное запаздывание контура: столько машина летит прежним
+                // ходом, пока команда торможения становится силой.
+                responseSeconds: 0.8,
                 yawRate: ROTOR_YAW_RATE,
                 lateralAcceleration: rotorcraftMaximumAcceleration(
                   frame.flight.maximumTilt ?? DEFAULT_ROTOR_TILT,

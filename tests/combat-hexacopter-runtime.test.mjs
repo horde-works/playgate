@@ -266,7 +266,10 @@ test("одно размещение поворачивает геометрию,
 
 test("авторский прототип изолирован, а принятая машина зарегистрирована только в полигоне", () => {
   assert.equal(combatHexacopterPrototypeFrame.clusterId, COMBAT_HEXACOPTER_PROTOTYPE_PLACEMENT.clusterId);
-  assert.equal(combatHexacopterPrototypeFrame.independentMemberMatches.includes(":yaw-engine:"), true);
+  // Независимое тело — только вращающемуся: лопасти обоих видов содержат
+  // ":blade:". Маска шире (":engine:") делала телом всю гондолу — 390 кусков
+  // при 44 вращающихся.
+  assert.deepEqual(combatHexacopterPrototypeFrame.independentMemberMatches, [":blade:"]);
   const registeredFrame = vehicleFrames.find((frame) => frame.id === "combat-hexacopter");
   const registeredVehicle = airVehicles.find((vehicle) => vehicle.id === "combat-hexacopter");
   assert.equal(registeredFrame?.clusterId, COMBAT_HEXACOPTER_RANGE_PLACEMENT.clusterId);
@@ -332,6 +335,15 @@ function flyRangeCircuit({ brokenPieces = [], yawThrusters = true } = {}) {
       rangeMass.mass * rangeFlight.linearDamping * rangeFlight.lateralDragRatio,
     dragAngular: rangeMass.inertia[4] * rangeFlight.angularDamping,
     limits: rangeFlight.limits,
+    // Как в рантайме: авторский предел — потолок по замыслу, рабочую точку
+    // считает governor из живого паспорта. Без этого стенд летал бы по
+    // маршруту, которого в игре больше нет.
+    turnCapability: {
+      responseSeconds: 0.8,
+      yawRate: 0.9,
+      lateralAcceleration: 9.81 * Math.tan(rangeFlight.maximumTilt),
+      braking: 9.81 * Math.tan(rangeFlight.maximumTilt) + 24.8,
+    },
   };
   const plan = combatHexacopterRangePlan(COMBAT_HEXACOPTER_RANGE_PLACEMENT.position);
   const dt = 1 / 60;
@@ -394,6 +406,10 @@ function flyRangeCircuit({ brokenPieces = [], yawThrusters = true } = {}) {
         lateralSpeed: piloted.guidance.lateralSpeed,
         yawRate: piloted.guidance.yawRate,
         collective: piloted.guidance.liftFraction,
+        // Упреждение — часть контракта guidance, и стенд обязан летать тем же
+        // законом, что рантайм: без этой строки тест доказывал полёт, которого
+        // в игре нет.
+        pathAcceleration: piloted.guidance.pathAcceleration,
       },
       trim,
       dt,
