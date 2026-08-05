@@ -545,3 +545,51 @@ test("the polder bank belongs to pollards, not to weeping willows", async () => 
     );
   }
 });
+
+// Ветвь обязана НАЧИНАТЬСЯ НА СВОЁМ РОДИТЕЛЕ. Восстанавливать ось ветви из её
+// поворота нельзя: у ветви соглашение [0, -yaw, -tilt], а у ствола [rx, 0, rz],
+// и по стволовой формуле развилки уезжали на полметра — в кадре это читается
+// как «ветки не закреплены».
+test("every branch starts on the member that carries it", async () => {
+  const { propWeepingWillow, propOak, propPine } = await import(
+    "../games/make-a-mess/src/content/prefabs/coreFlora.ts"
+  );
+  const segment = (piece) => {
+    const axis = pieceAxis(piece);
+    const centre = new Vector3(...piece.position);
+    return [
+      centre.clone().addScaledVector(axis, -piece.size[1] / 2),
+      centre.clone().addScaledVector(axis, piece.size[1] / 2),
+    ];
+  };
+  for (const build of [propWeepingWillow, propOak, propPine]) {
+    for (const seed of SEEDS) {
+      const pieces = build({ seed });
+      const byId = new Map(pieces.map((piece) => [piece.id, piece]));
+      for (const piece of pieces) {
+        if (piece.treeVisual?.role !== "branch") {
+          continue;
+        }
+        const parent = byId.get(piece.treeVisual.parentLocalId ?? "");
+        if (!parent || parent.treeVisual?.role === "knob") {
+          continue;
+        }
+        const [start] = segment(piece);
+        const [from, to] = segment(parent);
+        const along = to.clone().sub(from);
+        const t = Math.max(
+          0,
+          Math.min(1, start.clone().sub(from).dot(along) / along.lengthSq()),
+        );
+        const gap =
+          start.distanceTo(from.clone().addScaledVector(along, t)) -
+          parent.size[0] / 2;
+        assert.ok(
+          gap <= 0.06,
+          `seed ${seed}: ${piece.id} начинается в ${gap.toFixed(2)} м от ` +
+            `${parent.id} — ветвь висит в воздухе`,
+        );
+      }
+    }
+  }
+});

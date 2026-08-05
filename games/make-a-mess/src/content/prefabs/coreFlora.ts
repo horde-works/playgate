@@ -1182,6 +1182,11 @@ export function propWeepingWillow(options: TreeOptions = {}): FloraPiece[] {
     const segments = 3;
     let node = scaleVector(trunkAxis, attachHeight);
     let parent = "trunk";
+    // Звенья дуги запоминаются ЯВНО. Восстанавливать ось ветви из её поворота
+    // нельзя: у ветви соглашение `[0, -yaw, -tilt]`, а не стволовое
+    // `[rx, 0, rz]`, и по стволовой формуле развилки уезжали на полметра от
+    // родителя — ровно то, что видно в кадре как «ветки не закреплены».
+    const arcs: { id: string; start: FloraVector; direction: FloraVector; length: number }[] = [];
     for (let segment = 0; segment < segments; segment += 1) {
       const segVar = rand(seed, 100 + limb * 5 + segment);
       // Наклон растёт от звена к звену: 0.55 → 0.95 → 1.35 рад. Последнее
@@ -1207,6 +1212,7 @@ export function propWeepingWillow(options: TreeOptions = {}): FloraPiece[] {
           segVar > 0.5 ? "#5a4a38" : "#63523d",
         ),
       );
+      arcs.push({ id, start: node, direction, length });
       node = addVector(node, scaleVector(direction, length));
       parent = id;
     }
@@ -1215,19 +1221,11 @@ export function propWeepingWillow(options: TreeOptions = {}): FloraPiece[] {
     const forkCount = 2;
     for (let fork = 0; fork < forkCount; fork += 1) {
       const forkVar = rand(seed, 140 + limb * 5 + fork);
-      const forkParent = `limb:${limb}:arc:${1 + fork % 2}`;
-      const forkBase = pieces.find(({ id }) => id === forkParent);
-      if (!forkBase) {
-        continue;
-      }
-      const baseAxis = normalizeVector([
-        -Math.sin(forkBase.rotation![2]),
-        Math.cos(forkBase.rotation![0]) * Math.cos(forkBase.rotation![2]),
-        Math.sin(forkBase.rotation![0]) * Math.cos(forkBase.rotation![2]),
-      ]);
+      const base = arcs[1 + (fork % 2)];
+      const forkParent = base.id;
       const forkStart = addVector(
-        forkBase.position as FloraVector,
-        scaleVector(baseAxis, forkBase.size[1] * (0.1 + forkVar * 0.3)),
+        base.start,
+        scaleVector(base.direction, base.length * (0.25 + forkVar * 0.45)),
       );
       const forkDirection = directionFromAngles(
         yaw + (fork % 2 === 0 ? -1 : 1) * (0.45 + forkVar * 0.5),

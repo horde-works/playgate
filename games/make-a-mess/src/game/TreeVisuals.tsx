@@ -457,7 +457,7 @@ transformed = aLeafData.xyz + treeLeafOffset * treeAreaPreservation;
 // 2 хвоя, 3 ива). Тон уезжает во фрагмент варьирующей: в вершинном шейдере
 // vColor объявлен как out, и читать его оттуда нельзя.
 float treeIsWillow = step(2.5, aTreeParams.x);
-float treeYellowRate = mix(mix(0.08, 0.19, treeIsBirch), 0.05, treeIsWillow);
+float treeYellowRate = mix(mix(0.08, 0.19, treeIsBirch), 0.1, treeIsWillow);
 float treeLeafRoll = fract(
   sin(aLeafData.w * 91.7 + aTreeParams.y * 37.3 + treeAnchor.x * 0.31) * 43758.5453
 );
@@ -487,7 +487,7 @@ diffuseColor.rgb *= vTreeLeafTint;`,
         );
       shader.current = compiled as TreeShader;
     };
-    next.customProgramCacheKey = () => `procedural-tree-foliage-v3-leaf-tint:${variant}`;
+    next.customProgramCacheKey = () => `procedural-tree-foliage-v4-leaf-tint:${variant}`;
     return next;
   }, [variant]);
 
