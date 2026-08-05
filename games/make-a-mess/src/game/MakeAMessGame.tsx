@@ -107,6 +107,7 @@ import {
   blastNoise,
   buildShards,
   bulletHoleRadius,
+  carvedMaterialScale,
   classifyLandingDamage,
   closestPointOnOccupiedGeometry,
   compilePieceDamageGeometry,
@@ -122,6 +123,7 @@ import {
   selectCarveTargetsWithinBudget,
   impactDamageRadius,
   omittedDebrisColliderBoxes,
+  pieceMaterialVolume,
   rocketEnergyAtDistance,
   segmentIntersectsOccupiedGeometry,
   trimShardBudget,
@@ -5122,7 +5124,13 @@ function OpenWorldScene({
           continue;
         }
 
-        const originalVolume = parent.size[0] * parent.size[1] * parent.size[2];
+        // ПОРОГ БЕРЁТСЯ ОТ МАТЕРИАЛА, А НЕ ОТ ГАБАРИТА — как и у второго
+        // потребителя того же порога, subtractParentVolume. От bounding box
+        // оболочка не могла пройти проверку никогда: пуля снимала 0.08 %
+        // материала смока, а уцелевшие 99.9 % сравнивались с объёмом воздуха
+        // внутри мельницы и объявлялись обломками. Кусок «терял крепления» от
+        // любого касания, и всё, что на нём стояло, уходило каскадом.
+        const originalVolume = pieceMaterialVolume(parent);
         const stableVolume = remnantsRef.current
           .filter(
             (remnant) =>
@@ -5338,8 +5346,7 @@ function OpenWorldScene({
         return false;
       }
 
-      const original =
-        parent.volume ?? parent.size[0] * parent.size[1] * parent.size[2];
+      const original = pieceMaterialVolume(parent);
       const remaining =
         (remainingVolumeRef.current.get(parentId) ?? original) - volume;
       remainingVolumeRef.current.set(parentId, remaining);
@@ -5955,6 +5962,13 @@ function OpenWorldScene({
             debrisAnchor,
           )
         : ([0, 0, 0] as const);
+      // Тот же источник урона, который уходит в ядро — и синхронно, и через
+      // prepareCarveRequest в воркер. По нему же решается, привело ядро объём
+      // обрубка к материалу само или отдало геометрию сетки.
+      const damageSource = resolveDamageSource({
+        ...source,
+        renderColor: sourceRenderColor,
+      });
       let fragments: readonly ShardDefinition[] | null;
       let removedVolume: number;
       if (precomputed !== undefined) {
@@ -5965,10 +5979,7 @@ function OpenWorldScene({
         carveRequestId.current += 1;
         const response = executeCarveKernel({
           requestId: carveRequestId.current,
-          source: resolveDamageSource({
-            ...source,
-            renderColor: sourceRenderColor,
-          }),
+          source: damageSource,
           position: [bodyPosition.x, bodyPosition.y, bodyPosition.z],
           quaternion: [
             bodyQuaternion.x,
@@ -6005,12 +6016,11 @@ function OpenWorldScene({
       // поправки огрызок лёгкой панели оказывался тяжелее всей панели
       // целиком — корабль после дырки в борту весил больше исправного и
       // снимался с рейса «исчерпанным запасом подъёма».
-      const parentBoundingVolume =
-        source.size[0] * source.size[1] * source.size[2];
-      const authoredDensityScale =
-        sourceVolume > 0 && parentBoundingVolume > 1e-9
-          ? Math.min(1, sourceVolume / parentBoundingVolume)
-          : 1;
+      //
+      // У скомпилированной оболочки ядро приводит объём САМО, и там поправка
+      // равна единице: применённая вторым слоем, она занижала материал куска
+      // в десятки раз.
+      const authoredDensityScale = carvedMaterialScale(damageSource);
       const additions = fragments.map((fragment): RemnantDefinition => {
         remnantCounter.current += 1;
         return {

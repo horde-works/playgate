@@ -727,6 +727,48 @@ export function compilePieceDamageGeometry(
 }
 
 /**
+ * АВТОРСКИЙ ОБЪЁМ МАТЕРИАЛА КУСКА. Габарит — только запасной вариант, и для
+ * куска с авторской сеткой он не годится: `volume` описывает толщину скорлупы
+ * и составляет 0.5–3 % от bounding box (смок мельницы: 17.8 м³ материала в
+ * габарите 1097 м³). Любой порог живучести берёт материал, а не воздух внутри.
+ */
+export function pieceMaterialVolume(
+  piece: {
+    readonly size: readonly [number, number, number];
+    readonly volume?: number;
+  },
+): number {
+  return piece.volume && piece.volume > 0
+    ? piece.volume
+    : piece.size[0] * piece.size[1] * piece.size[2];
+}
+
+/**
+ * Приводит объём, посчитанный ядром carve, к авторскому объёму материала.
+ *
+ * У ядра ДВА соглашения, и путать их нельзя. Скомпилированная оболочка несёт
+ * `volumeScale` (см. compileCustomVoxelGeometry), и тогда ядро отдаёт материал
+ * САМО — ровно так же, как debrisBodyPool считает по нему плотность обломка.
+ * У сплошной сетки шкалы нет, ядро отдаёт геометрию, и её нужно привести к
+ * авторскому объёму: огрызок тонкой обшивки не весит как монолит стали того же
+ * габарита, иначе корабль после дырки в борту тяжелеет.
+ *
+ * Домножение уже приведённого объёма занижало материал оболочки в десятки раз.
+ */
+export function carvedMaterialScale(
+  source: Pick<ShardSource, "size" | "volume" | "voxelBody">,
+): number {
+  if (source.voxelBody?.volumeScale !== undefined) {
+    return 1;
+  }
+  const bounding = source.size[0] * source.size[1] * source.size[2];
+  const material = source.volume ?? bounding;
+  return material > 0 && bounding > 1e-9
+    ? Math.min(1, material / bounding)
+    : 1;
+}
+
+/**
  * Оценка стоимости одного carve в «воксельных юнитах» — та же формула
  * сетки, что у createSolidVoxelBody (клампы по оси и по бюджету тела).
  * Кирпич ≈ десятки-сотни юнитов, бюджетный гигант ≈ carveVoxelBudget.
