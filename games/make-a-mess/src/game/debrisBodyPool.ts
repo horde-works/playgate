@@ -7,6 +7,7 @@ import {
   type ShardDefinition,
 } from "./destructionRuntime.ts";
 import { materialRuntimeProfiles } from "./destructionScene.ts";
+import { shellPlateBoxes } from "./shellPlates.ts";
 import {
   DEBRIS_ACTOR_DETAIL,
   DEBRIS_SETTLING,
@@ -77,12 +78,24 @@ function primaryColliderSpecs(
   }[];
 } {
   const profile = materialRuntimeProfiles[source.material];
-  const density =
-    profile.density * (source.voxelBody?.volumeScale ?? 1);
-  const renderBoxes =
+  // ОБОЛОЧКА СТАЛКИВАЕТСЯ СВОЕЙ ТОЛЩИНОЙ. Прежде коллайдер брал клетку решётки
+  // целиком, а массу выправляла заниженная плотность: вес выходил верный, но
+  // тонкая обшивка встречала мир на 13 см раньше собственной поверхности и
+  // выглядела раздутой. Плита той же массы честнее по обеим статьям — объём
+  // ужимается ровно во столько раз, во сколько поднимается плотность.
+  const authoredBoxes =
     source.boxes && source.boxes.length > 0
       ? source.boxes
       : [{ center: [0, 0, 0] as const, size: source.size }];
+  const renderBoxes = shellPlateBoxes(
+    authoredBoxes,
+    source.voxelBody?.cellSize,
+    source.voxelBody?.volumeScale,
+  );
+  const density =
+    renderBoxes === authoredBoxes
+      ? profile.density * (source.voxelBody?.volumeScale ?? 1)
+      : profile.density;
 
   if (source.shape === "sphere") {
     return {

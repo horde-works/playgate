@@ -114,22 +114,45 @@ test("sphere and cylinder shards use round colliders", () => {
   assert.deepEqual(cylinder.colliders[0].args, [0.298, 0.198]);
 });
 
-test("volume scale of thin shells flows into collider density", () => {
-  const spec = shardBodySpec(
+test("тонкая оболочка сталкивается своей толщиной, а весит столько же", () => {
+  // Прежде volumeScale уходил В ПЛОТНОСТЬ: масса выходила верной, но коллайдер
+  // оставался размером с клетку решётки — обшивка в сантиметр встречала мир на
+  // десяток сантиметров раньше собственной поверхности. Теперь ужимается
+  // ОБЪЁМ, а плотность остаётся материалом, и произведение то же самое.
+  const scale = 0.25;
+  const plain = shardBodySpec(makeShard());
+  const shell = shardBodySpec(
     makeShard({
       voxelBody: {
         size: [0.4, 0.3, 0.2],
         dimensions: [1, 1, 1],
         cellSize: [0.4, 0.3, 0.2],
         occupied: new Uint8Array([1]),
-        volumeScale: 0.25,
+        volumeScale: scale,
       },
     }),
   );
   assert.equal(
-    spec.colliders[0].density,
-    materialRuntimeProfiles.brick.density * 0.25,
+    shell.colliders[0].density,
+    materialRuntimeProfiles.brick.density,
+    "плотность оболочки — это плотность её материала",
   );
+
+  // Масса сходится с точностью до двухмиллиметровой утяжки коллайдера, которая
+  // была тут и раньше: у тонкой плиты она забирает заметную долю толщины.
+  const halfVolume = (collider) =>
+    collider.args[0] * collider.args[1] * collider.args[2];
+  const shellMass = halfVolume(shell.colliders[0]) * shell.colliders[0].density;
+  const previousMass =
+    halfVolume(plain.colliders[0]) * plain.colliders[0].density * scale;
+  assert.ok(
+    Math.abs(shellMass - previousMass) < previousMass * 0.08,
+    `масса ушла: ${shellMass} против ${previousMass}`,
+  );
+  // Сжимается самая тонкая ось, остальные держат пятно контакта.
+  assert.equal(shell.colliders[0].args[0], plain.colliders[0].args[0]);
+  assert.equal(shell.colliders[0].args[1], plain.colliders[0].args[1]);
+  assert.ok(shell.colliders[0].args[2] < plain.colliders[0].args[2]);
 });
 
 test("attached remnant keeps default groups and up to eight colliders", () => {

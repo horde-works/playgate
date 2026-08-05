@@ -21,6 +21,7 @@ import {
   hasSilicateJoints,
 } from "./silicateJoints.ts";
 import { computeBoxFaceMasks } from "./boxFaceMasks.ts";
+import { shellPlateBoxes } from "./shellPlates.ts";
 import {
   usesFoliageDebrisGeometry,
   usesTreeBarkVisual,
@@ -295,10 +296,14 @@ function shardFragments(
   }
   const fragments: DynamicBreakableFragment[] = [];
   {
-    const boxes =
+    // Оболочка рисуется СВОЕЙ толщиной, а не размером клетки решётки.
+    const boxes = shellPlateBoxes(
       shard.boxes && shard.boxes.length > 0
         ? shard.boxes
-        : [{ center: [0, 0, 0] as const, size: shard.size }];
+        : [{ center: [0, 0, 0] as const, size: shard.size }],
+      shard.voxelBody?.cellSize,
+      shard.voxelBody?.volumeScale,
+    );
     const faceMasks = computeBoxFaceMasks(
       boxes,
       groundMaterials.has(shard.material),
@@ -356,10 +361,13 @@ function remnantFragments(
   }
   const fragments: DynamicBreakableFragment[] = [];
   {
-    const boxes =
+    const boxes = shellPlateBoxes(
       remnant.boxes && remnant.boxes.length > 0
         ? remnant.boxes
-        : [{ center: [0, 0, 0] as const, size: remnant.size }];
+        : [{ center: [0, 0, 0] as const, size: remnant.size }],
+      remnant.voxelBody?.cellSize,
+      remnant.voxelBody?.volumeScale,
+    );
     const faceMasks = computeBoxFaceMasks(
       boxes,
       groundMaterials.has(remnant.material),
