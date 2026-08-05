@@ -6,6 +6,7 @@ import type {
 import { PLAYER_CAPSULE_FOOT_OFFSET } from "./playerMovement.ts";
 import type { RotorcraftYawThruster } from "./rotorcraftDynamics.ts";
 import {
+  corneringSpeed,
   DEFAULT_SLIP_POLICY,
   pathSpeedCeiling,
   pathTurnAngle,
@@ -2394,18 +2395,26 @@ function pathBrakingDemand(
   if (progress + dp >= 1) {
     return undefined;
   }
-  const here = Math.min(
-    plan.speedLimit(progress),
-    governedRouteSpeed(plan, progress, model, false),
-  );
   const ahead = Math.min(
     plan.speedLimit(progress + dp),
-    governedRouteSpeed(plan, progress + dp, model, false),
+    governedRouteSpeed(plan, progress + dp, model, false, speed),
   );
-  if (!Number.isFinite(here) || !Number.isFinite(ahead) || ahead >= here) {
+  // ТОРМОЖЕНИЕ СЧИТАЕТСЯ ОТ ФАКТИЧЕСКОЙ СКОРОСТИ, А НЕ ОТ РАЗРЕШЁННОЙ.
+  //
+  // Производная «разрешено здесь → разрешено впереди» устроила дедлок: на краю
+  // окна выгоды профиль обрывается ступенькой, упреждение вставало в −52 м/с²
+  // и глушило тягу; машина осаживалась НИЖЕ целевой скорости, progress замирал,
+  // а с ним замирало и само упреждение — вечное равновесие, дрейф в никуда на
+  // 2.4 м/с при просьбе 30. Упреждение — это недостающее ЗАМЕДЛЕНИЕ от текущего
+  // хода к разрешённому впереди: машина медленнее цели — упреждать нечего, и
+  // дедлок невозможен по построению.
+  if (!Number.isFinite(ahead) || ahead >= speed) {
     return undefined;
   }
-  const along = (ahead * ahead - here * here) / (2 * deltaMetres);
+  const along = Math.max(
+    -(model.turnCapability?.braking ?? 52),
+    (ahead * ahead - speed * speed) / (2 * deltaMetres),
+  );
   const before = plan.point(Math.max(0, progress - dp));
   const after = plan.point(Math.min(1, progress + dp));
   const dx = after[0] - before[0];
@@ -2488,6 +2497,8 @@ function governedRouteSpeed(
   progress: number,
   model: ShipModel,
   onApproach: boolean,
+  /** Фактический ход: разгон судится от него, а не от абстрактного нуля. */
+  speed = 0,
 ): number {
   const capability = model.turnCapability;
   if (!capability) {
@@ -2549,6 +2560,7 @@ function governedRouteSpeed(
     const afterTight = plan.point(Math.min(1, at + tightBase));
     samples.push({
       distance,
+      speedCap: plan.speedLimit(at),
       radius: Math.min(
         pathTurnRadius(
           [before[0], before[2]],
@@ -2574,9 +2586,26 @@ function governedRouteSpeed(
   if (samples.length === 0) {
     return Number.POSITIVE_INFINITY;
   }
-  return (
-    pathSpeedCeiling(samples, limits, allowance) * (model.governorScale ?? 1)
-  );
+  const braked =
+    pathSpeedCeiling(samples, limits, allowance) * (model.governorScale ?? 1);
+  // ГАЗ В ЩЕЛИ НЕ ОКУПАЕТСЯ. Тормозная парабола честно разрешает разогнаться
+  // между двумя ограничениями — физика позволяет. Но на перекрестье восьмёрки
+  // это давало пульс: пятнадцать метров «прямой», просьба прыгала с 15 до 30,
+  // машина клевала — и тут же осаживалась перед следующей долей со взмахом
+  // носа, который с земли читается как «встала на дыбы». Пилот держит фигуру
+  // одним темпом: РАЗГОНЯТЬСЯ разрешено только до скорости, которая удержится
+  // всё окно выгоды. Торможение параболе оставлено целиком.
+  const gainWindow = Math.max(35, speed * 2.5);
+  let sustained = Number.POSITIVE_INFINITY;
+  for (const sample of samples) {
+    if (sample.distance > gainWindow) break;
+    const target = Math.min(
+      corneringSpeed(sample.radius, sample.turnAngle, limits, allowance),
+      sample.speedCap ?? Number.POSITIVE_INFINITY,
+    );
+    if (target < sustained) sustained = target;
+  }
+  return Math.min(braked, Math.max(speed, sustained));
 }
 
 /**
@@ -2924,7 +2953,7 @@ export function autopilot(
   // раздать один и тот же закон по всем трассам и потерять его при следующей.
   const authored = Math.min(
     plan.speedLimit(progress),
-    governedRouteSpeed(plan, progress, model, onApproach),
+    governedRouteSpeed(plan, progress, model, onApproach, groundSpeed),
   );
   const routeAllowed = onApproach
     ? Math.min(authored, Math.max(0.8, Math.sqrt(2 * 0.35 * berthDistance)))

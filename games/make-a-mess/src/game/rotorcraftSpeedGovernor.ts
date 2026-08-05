@@ -179,6 +179,12 @@ export interface RotorcraftPathSample {
   readonly distance: number;
   readonly radius: number;
   readonly turnAngle: number;
+  /**
+   * Авторский предел В ЭТОЙ точке, если есть. Ступенька замысла — такое же
+   * требование к профилю, как вираж: без неё машина мчалась до самой ступеньки
+   * и осаживалась рывком, потому что тормозная парабола о ней не знала.
+   */
+  readonly speedCap?: number;
 }
 
 /**
@@ -203,11 +209,9 @@ export function pathSpeedCeiling(
   // самой скорости виража.
   const lag = Math.max(0, capability.responseSeconds ?? 0) * braking;
   for (const sample of samples) {
-    const target = corneringSpeed(
-      sample.radius,
-      sample.turnAngle,
-      capability,
-      slipAllowance,
+    const target = Math.min(
+      corneringSpeed(sample.radius, sample.turnAngle, capability, slipAllowance),
+      sample.speedCap ?? Number.POSITIVE_INFINITY,
     );
     if (!Number.isFinite(target)) {
       continue;
