@@ -292,6 +292,13 @@ change is not wired, not that it is neutral.
   or a stalled machine deadlocks against its own frozen demand.
 - Never author kinked profiles or windows: the curve's second derivative reads
   a linear window's corner as a crest and fights the climb.
+- Instruments on a segmented ring mount at the STRICT MIDDLE of a side plate,
+  rotated to its chord — never on a splice. A plate occupied by a nav light
+  hands the instrument to the neighbouring plate nearer the outboard normal;
+  stacked instruments on one plate separate vertically with a clear gap. Hull
+  sensors sit ON the skin (a belly sensor hovering under the hull reads as a
+  detached lamp), and ring up/down sensors sit on the collar rims, not over
+  the open rotor mouth.
 - Never sample first and second derivatives of a plan with one base length:
   curvature needs a wide base, slope a fine one.
 

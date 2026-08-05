@@ -485,13 +485,16 @@ for (const station of COMBAT_HEX_LIFT_STATIONS) {
   const panelAngle = outboardAngle - side * (Math.PI / 12);
   const panelChord = outer * Math.cos(Math.PI / 12) + wall / 2;
   const panelRadial = panelChord + 0.025 + 0.002;
+  // Панель — в НИЖНЕЙ трети плиты: середину кормовой плиты на средних
+  // гондолах занимает датчик дистанции, и приборная колонка читается сверху
+  // вниз — сенсор в центре, панель под ним, зазор в ладонь.
   addBox(
     `${group}-service-panel`,
     group,
     "dark-recess",
     point(
       station.x + panelRadial * Math.cos(panelAngle),
-      station.planeY - 0.02,
+      station.planeY - 0.13,
       station.z + panelRadial * Math.sin(panelAngle),
     ),
     point(0.05, 0.09, 0.25),

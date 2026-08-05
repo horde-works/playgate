@@ -143,6 +143,39 @@ const localYawThrusters = (): readonly CombatHexacopterYawThruster[] =>
     maximumForce: COMBAT_HEXACOPTER_YAW_FAN_FORCE,
   }));
 
+/**
+ * СЕНСОРЫ ДИСТАНЦИИ КРЕПЯТСЯ, А НЕ ВИСЯТ. Правило посадки прибора на
+ * сегментированное кольцо: СТРОГО СЕРЕДИНА БОКОВОЙ ПЛИТЫ — стыковые планки
+ * идут каждые 30°, и сырой «радиус наружу» сажал датчик на стык. Если плита
+ * занята путевым огнём (средние гондолы), прибор уходит на СОСЕДНЮЮ плиту,
+ * более близкую к нормали борта. Верхний и нижний датчики кольца сидят на
+ * кромках воротников того же азимута, а не парят над зевом ротора.
+ * Корпусные — НА обшивке: брюшной прежде висел в сорока сантиметрах под
+ * днищем и читался «откреплённым бирюзовым фонарём» у земли.
+ */
+const RING_PLATE = Math.PI / 6;
+
+function plateMiddleAzimuth(outwardAzimuth: number, blocked?: number): number {
+  const middleOf = (raw: number) =>
+    Math.round((raw - RING_PLATE / 2) / RING_PLATE) * RING_PLATE +
+    RING_PLATE / 2;
+  const nearest = middleOf(outwardAzimuth);
+  if (blocked === undefined) {
+    return nearest;
+  }
+  const wrap = (value: number) =>
+    Math.atan2(Math.sin(value), Math.cos(value));
+  if (Math.abs(wrap(nearest - blocked)) > 1e-6) {
+    return nearest;
+  }
+  const before = nearest - RING_PLATE;
+  const after = nearest + RING_PLATE;
+  return Math.abs(wrap(before - outwardAzimuth)) <=
+    Math.abs(wrap(after - outwardAzimuth))
+    ? before
+    : after;
+}
+
 function proximitySensors(
   placement: CombatHexacopterPlacement,
 ): CombatHexacopterBlueprint["proximitySensors"] {
@@ -150,33 +183,52 @@ function proximitySensors(
     point: SceneVector3;
     normal: SceneVector3;
   }[] = [
+    // Корпусные — на обшивке. Нос и хвост совпадают с бронёй; брюшной сидит
+    // на днище (низ обшивки 0.42), верхний — на хребте (1.86).
     { point: combatHexacopterPoint(placement, [0, 0.82, 3.15]), normal: combatHexacopterVector(placement, [0, 0, 1]) },
     { point: combatHexacopterPoint(placement, [0, 1.7, -3.25]), normal: combatHexacopterVector(placement, [0, 0, -1]) },
-    { point: combatHexacopterPoint(placement, [0, 2, -1.18]), normal: [0, 1, 0] },
-    { point: combatHexacopterPoint(placement, [0, 0.02, 0]), normal: [0, -1, 0] },
+    { point: combatHexacopterPoint(placement, [0, 1.88, -1.18]), normal: [0, 1, 0] },
+    { point: combatHexacopterPoint(placement, [0, 0.4, 0]), normal: [0, -1, 0] },
   ];
+  const wall = 0.065 / 2;
   for (const station of COMBAT_HEX_LIFT_STATIONS) {
-    const radialLength = Math.hypot(station.x, station.z) || 1;
-    const outward: SceneVector3 = [
-      station.x / radialLength,
-      0,
-      station.z / radialLength,
-    ];
+    const outwardAzimuth = Math.atan2(station.z, station.x);
+    // На средних гондолах середину носовой плиты занимает путевой огонь.
+    const lightAzimuth = station.id.startsWith("middle")
+      ? station.x < 0
+        ? Math.PI - RING_PLATE / 2
+        : RING_PLATE / 2
+      : undefined;
+    const azimuth = plateMiddleAzimuth(outwardAzimuth, lightAzimuth);
+    const chord = station.outerRadius * Math.cos(RING_PLATE / 2) + wall / 2;
+    const radial = chord + 0.05;
+    const across: SceneVector3 = [Math.cos(azimuth), 0, Math.sin(azimuth)];
+    const deck = station.planeY + 0.15;
+    const floor = station.planeY - 0.2;
+    const wallMiddleY = (deck - 0.02 + floor + 0.02) / 2;
     sensors.push(
       {
         point: combatHexacopterPoint(placement, [
-          station.x + outward[0] * station.outerRadius,
-          station.planeY,
-          station.z + outward[2] * station.outerRadius,
+          station.x + across[0] * radial,
+          wallMiddleY,
+          station.z + across[2] * radial,
         ]),
-        normal: combatHexacopterVector(placement, outward),
+        normal: combatHexacopterVector(placement, across),
       },
       {
-        point: combatHexacopterPoint(placement, [station.x, station.planeY + 0.18, station.z]),
+        point: combatHexacopterPoint(placement, [
+          station.x + across[0] * chord,
+          deck - 0.015,
+          station.z + across[2] * chord,
+        ]),
         normal: [0, 1, 0],
       },
       {
-        point: combatHexacopterPoint(placement, [station.x, station.planeY - 0.22, station.z]),
+        point: combatHexacopterPoint(placement, [
+          station.x + across[0] * chord,
+          floor + 0.015,
+          station.z + across[2] * chord,
+        ]),
         normal: [0, -1, 0],
       },
     );

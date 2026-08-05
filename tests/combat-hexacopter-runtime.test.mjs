@@ -812,3 +812,54 @@ test("силуэт для сферы: органы в единичном кор�
   assert.ok(frontLeftAuthored[2] > 0.2, "переднее кольцо обязано быть впереди");
   assert.ok(frontLeftAuthored[0] > 0.2, "кольцо на −x — ПРАВЫЙ борт: положительная ось starboard");
 });
+
+test("датчики дистанции сидят по правилу плит: середина, не стык, не плита огней", () => {
+  // Правило посадки прибора на сегментированное кольцо: строго середина
+  // боковой плиты (стыки каждые 30°); плита, занятая путевым огнём, отдаёт
+  // датчик соседней, более близкой к нормали борта. Брюшной корпусной — на
+  // днище, а не в сорока сантиметрах под ним.
+  const sensors = combatHexacopterPrototypeBlueprint.proximitySensors;
+  assert.equal(sensors.length, 22);
+  const belly = sensors.find(
+    (sensor) => sensor.normal[1] === -1 && Math.abs(sensor.point[2]) < 0.5,
+  );
+  assert.ok(belly && belly.point[1] > 0.38, "брюшной датчик обязан сидеть на днище");
+  const stations = [
+    { x: -2.35, z: 1.95, light: false },
+    { x: 2.35, z: 1.95, light: false },
+    { x: -2.62, z: 0.2, light: true },
+    { x: 2.62, z: 0.2, light: true },
+    { x: -2.25, z: -1.85, light: false },
+    { x: 2.25, z: -1.85, light: false },
+  ];
+  for (const station of stations) {
+    const outward = sensors.find(
+      (sensor) =>
+        Math.abs(sensor.normal[1]) < 0.01 &&
+        Math.hypot(sensor.point[0] - station.x, sensor.point[2] - station.z) <
+          1.1 &&
+        Math.abs(sensor.point[1] - 1.0) < 0.3,
+    );
+    assert.ok(outward, `нет периметрового датчика у станции ${station.x},${station.z}`);
+    const azimuth =
+      (Math.atan2(
+        outward.point[2] - station.z,
+        outward.point[0] - station.x,
+      ) *
+        180) /
+      Math.PI;
+    const offMiddle = Math.abs(((azimuth - 15) % 30 + 30) % 30);
+    assert.ok(
+      offMiddle < 1 || offMiddle > 29,
+      `датчик не на середине плиты: азимут ${azimuth.toFixed(1)}°`,
+    );
+    if (station.light) {
+      // Плита огней (+15° от нормали к носу) занята — датчик на кормовой.
+      const lightAzimuth = station.x < 0 ? 165 : 15;
+      assert.ok(
+        Math.abs(azimuth - lightAzimuth) > 5,
+        "датчик залез на плиту путевого огня",
+      );
+    }
+  }
+});
