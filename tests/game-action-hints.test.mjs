@@ -10,10 +10,11 @@ test("the first-spawn guidance is a reusable game action cue", () => {
   const [hint] = hintsForGameAction("player.spawned");
   // General movement plus two distinct calls for each scheduled carrier:
   // an uncrewed service flight ashore and a passenger flight aboard. Город
-  // держит две машины — дирижабль у мачты и гексакоптер во дворе, — а Нимб
-  // получает собственный HX-6. Плюс два разных «встать»: из кресла
-  // машиниста в вагон и из кресла пилота наружу к коптеру.
-  assert.equal(gameActionHints.length, 16);
+  // держит две машины — дирижабль у мачты и гексакоптер во дворе, — Нимб
+  // получает собственный HX-6, SR-6 «Скат» и RAX-8 Tonkawa зовут со своих
+  // площадок. Плюс два разных «встать»: из кресла машиниста в вагон и из
+  // кресла пилота наружу к коптеру.
+  assert.equal(gameActionHints.length, 18);
   assert.equal(hint.id, "first-look");
   assert.equal(hint.once, true);
   assert.equal(hint.delayMs >= 2_000, true);

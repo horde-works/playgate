@@ -10,6 +10,7 @@ export type GameAction =
   | "viking-departure.approaching"
   | "town-departure.approaching"
   | "hexacopter-departure.approaching"
+  | "combat-departure.approaching"
   | "skat-departure.approaching"
   | "terminal-ride.approaching"
   | "viking-ride.approaching"
@@ -142,6 +143,17 @@ export const gameActionHints: readonly GameActionHint[] = [
     detailKey: "hint.hexacopterDeparture.action",
     touchDetailKey: "hint.hexacopterDeparture.actionTouch",
     keyLabelKey: "hint.hexacopterDeparture.key",
+    once: false,
+  },
+  {
+    id: "dispatching-the-tonkawa",
+    action: "combat-departure.approaching",
+    delayMs: 180,
+    eyebrowKey: "hint.combatDeparture.eyebrow",
+    titleKey: "hint.combatDeparture.title",
+    detailKey: "hint.combatDeparture.action",
+    touchDetailKey: "hint.combatDeparture.actionTouch",
+    keyLabelKey: "hint.combatDeparture.key",
     once: false,
   },
   {

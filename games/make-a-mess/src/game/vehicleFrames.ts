@@ -787,6 +787,38 @@ export function vehicleAttitude(
  * Authoring order is not a side contract: this keeps telemetry and future
  * control panels correct even when engines are rearranged in the model.
  */
+/**
+ * Значения по БОРТАМ, внутри борта — С ПЕРЕДНИХ. Для гексакоптеров плоский
+ * список из шести чисел с двумя подписями путал стороны; здесь каждая
+ * сторона — своя строка, и порядок в ней тот, каким машину видит глаз:
+ * переднее кольцо, среднее, заднее.
+ */
+export function engineValuesBySide(
+  values: readonly number[],
+  enginePoints: readonly SceneVector3[],
+  bodyCentre: SceneVector3,
+  nose: SceneVector3,
+): { readonly port: readonly number[]; readonly starboard: readonly number[] } {
+  const starboardAxis = pitchAxisOf(nose);
+  const lateralLength = Math.hypot(starboardAxis[0], starboardAxis[2]) || 1;
+  const sx = starboardAxis[0] / lateralLength;
+  const sz = starboardAxis[2] / lateralLength;
+  const forwardLength = Math.hypot(nose[0], nose[2]) || 1;
+  const fx = nose[0] / forwardLength;
+  const fz = nose[2] / forwardLength;
+  const tagged = enginePoints.map((point, index) => ({
+    index,
+    lateral: (point[0] - bodyCentre[0]) * sx + (point[2] - bodyCentre[2]) * sz,
+    forward: (point[0] - bodyCentre[0]) * fx + (point[2] - bodyCentre[2]) * fz,
+  }));
+  const pick = (side: -1 | 1) =>
+    tagged
+      .filter((entry) => (side < 0 ? entry.lateral < 0 : entry.lateral >= 0))
+      .sort((a, b) => b.forward - a.forward || a.index - b.index)
+      .map((entry) => values[entry.index] ?? 0);
+  return { port: pick(-1), starboard: pick(1) };
+}
+
 export function engineValuesPortToStarboard(
   values: readonly number[],
   enginePoints: readonly SceneVector3[],

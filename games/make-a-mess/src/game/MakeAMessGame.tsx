@@ -505,6 +505,8 @@ function entryApproachAction(entry: HingedEntryApproach): GameAction {
             ? "town-departure.approaching"
             : entry.cue === "town-hexacopter-uncrewed-flight"
               ? "hexacopter-departure.approaching"
+              : entry.cue === "combat-hexacopter-uncrewed-flight"
+                ? "combat-departure.approaching"
               : entry.cue === "sr6-skat-uncrewed-flight"
                 ? "skat-departure.approaching"
               : "terminal-departure.approaching"
@@ -550,6 +552,10 @@ function entryActionKey(
           ? touch
             ? "hint.hexacopterDeparture.actionTouch"
             : "hint.hexacopterDeparture.action"
+          : entry.cue === "combat-hexacopter-uncrewed-flight"
+            ? touch
+              ? "hint.combatDeparture.actionTouch"
+              : "hint.combatDeparture.action"
           : entry.cue === "sr6-skat-uncrewed-flight"
             ? touch
               ? "hint.skatDeparture.actionTouch"
@@ -10378,6 +10384,8 @@ const telemetryMetricLabels: Readonly<Record<string, TranslationKey>> = {
   roll: "telemetry.metric.roll",
   propellerRevolutions: "telemetry.metric.propellerRevolutions",
   rotorRings: "telemetry.metric.rotorRings",
+  rotorRingsPort: "telemetry.metric.rotorRingsPort",
+  rotorRingsStarboard: "telemetry.metric.rotorRingsStarboard",
   yawTunnels: "telemetry.metric.yawTunnels",
   trimCar: "telemetry.metric.trimCar",
   routeProgress: "telemetry.metric.routeProgress",

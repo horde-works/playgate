@@ -47,6 +47,7 @@ import {
   DEFAULT_VEHICLE_FAILURE_ENVELOPE,
   vehicleFailureEnvelopeFor,
 } from "../games/make-a-mess/src/game/vehicleFailure.ts";
+import { carrierHullPoint } from "../games/make-a-mess/src/game/vehicleImpactTelemetry.ts";
 
 const compiled = compileSceneGroups(combatHexacopterPrototypeDocument, new Map());
 const vehicle = compiled.clusters.find(
@@ -299,6 +300,17 @@ const rangeMass = massProperties(
   (material) => structuralMaterialProfiles[material].density,
 );
 const rangeActuators = compileCommandActuators(rangePieces);
+const rangeLocalBounds = (() => {
+  const minimum = [Infinity, Infinity, Infinity];
+  const maximum = [-Infinity, -Infinity, -Infinity];
+  for (const piece of rangePieces) {
+    for (let axis = 0; axis < 3; axis += 1) {
+      minimum[axis] = Math.min(minimum[axis], piece.position[axis] - piece.size[axis] / 2);
+      maximum[axis] = Math.max(maximum[axis], piece.position[axis] + piece.size[axis] / 2);
+    }
+  }
+  return { minimum, maximum };
+})();
 
 /**
  * Один круг по авторскому маршруту. `brokenPieces` выбивает куски так же, как
@@ -732,4 +744,46 @@ test("автомат сообщает не только сколько не да
 
   // 4. Разгон сверх того, что тоннели дают: продольный канал в упоре.
   assert.equal(step({ forwardSpeed: 60 }).surge, "effector");
+});
+
+test("аэронавигационные огни стоят по НАСТОЯЩИМ бортам и не утоплены в кольцо", () => {
+  // Нос машины — +z; наблюдатель за кормой смотрит вдоль носа, его правая
+  // рука — МИНУС x. Зелёный обязан быть на правом борту (−x), красный — на
+  // левом (+x). Прежде было наоборот, и оба фонаря были утоплены в стальную
+  // стенку среднего кольца (линза 3.400 при внешней грани стенки ~3.416) —
+  // «чем-то прикрыты» дословно.
+  assert.ok(vehicle);
+  const green = vehicle.pieces.find((piece) => piece.id.includes("nav-starboard-lens"));
+  const red = vehicle.pieces.find((piece) => piece.id.includes("nav-port-lens"));
+  assert.ok(green && red);
+  assert.ok(green.position[0] < 0, "зелёный — правый борт, то есть −x");
+  assert.ok(red.position[0] > 0, "красный — левый борт, то есть +x");
+  const wallOuter = 2.62 + 0.78 + (0.78 - 0.715) / 2;
+  for (const lens of [green, red]) {
+    const inner = Math.abs(lens.position[0]) - lens.size[0] / 2;
+    assert.ok(
+      inner >= wallOuter - 1e-3,
+      `фонарь утоплен в стенку кольца: внутренняя грань ${inner.toFixed(3)} при стенке ${wallOuter.toFixed(3)}`,
+    );
+  }
+});
+
+test("силуэт для сферы: органы в единичном корпусе, стороны по конвенции", () => {
+  const points = rangeFlight.limits.enginePoints.map((point) =>
+    carrierHullPoint(
+      { origin: rangeVehicle.origin, nose: rangeVehicle.nose, localBounds: rangeLocalBounds },
+      rangeMass,
+      point,
+    ),
+  );
+  assert.equal(points.length, 6);
+  for (const point of points) {
+    assert.ok(point.every((value) => Number.isFinite(value) && Math.abs(value) <= 1));
+  }
+  // Передние кольца — вперёд по третьей оси; кольцо на +x — отрицательная
+  // первая ось (правый борт = −x): удар в правое переднее кольцо рисуется
+  // ровно на правом переднем кольце.
+  const frontLeftAuthored = points[0]; // станция x=-2.35, z=+1.95
+  assert.ok(frontLeftAuthored[2] > 0.2, "переднее кольцо обязано быть впереди");
+  assert.ok(frontLeftAuthored[0] > 0.2, "кольцо на −x — ПРАВЫЙ борт: положительная ось starboard");
 });

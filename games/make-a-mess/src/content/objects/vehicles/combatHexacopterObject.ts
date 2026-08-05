@@ -1306,9 +1306,9 @@ for (const side of [-1, 1]) {
 
 addCylinder("sensor-gimbal-yoke", "sensors", "metal", point(-0.17, 0.45, 2.65), point(0.17, 0.45, 2.65), 0.045, 16);
 addEllipsoid("sensor-ball", "sensors", "roof-dark", point(0, 0.35, 2.68), point(0.18, 0.17, 0.18), 24, 12);
-addEllipsoid("sensor-window", "sensors", "glazing", point(0, 0.34, 2.835), point(0.09, 0.085, 0.035), 18, 9);
+addEllipsoid("sensor-window", "sensors", "glazing", point(0, 0.36, 2.79), point(0.09, 0.085, 0.035), 18, 9);
 addBox("dorsal-sensor-base", "sensors", "metal", point(0, 1.84, -0.38), point(0.28, 0.08, 0.34));
-addEllipsoid("dorsal-sensor-blister", "sensors", "glazing", point(0, 1.92, -0.36), point(0.12, 0.08, 0.14), 18, 8);
+addEllipsoid("dorsal-sensor-blister", "sensors", "glazing", point(0, 1.895, -0.36), point(0.12, 0.08, 0.14), 18, 8);
 
 // Service panels, latches and functional colour accents. These articulate the
 // real removable volumes but never substitute for silhouette geometry.
@@ -1324,14 +1324,19 @@ for (const side of [-1, 1]) {
   addBox(`warning-stripe-${side}`, "service-detail", "paint-accent", point(side * 0.77, 0.92, 1.02), point(0.028, 0.045, 0.38));
 }
 
-// Civil-position colours remain correct even on the combat airframe: green
-// starboard/right, red port/left, white aft and a dorsal red beacon.
+// Аэронавигационные цвета — по БОРТАМ, а не по знаку оси. Нос машины смотрит
+// в +z; наблюдатель за кормой глядит вдоль носа, и его правая рука — МИНУС x
+// (правая тройка: смотрим вдоль +z — x уходит влево). Прежде зелёный стоял на
+// +3.4, то есть на ЛЕВОМ борту — огни были перепутаны местами. И оба были
+// утоплены в стальную стенку кольца (линза на 3.400 при внешней грани стенки
+// 3.4165) — «чем-то прикрыты» дословно. Теперь линза сидит НА стенке среднего
+// кольца, наружу, заподлицо касаясь её.
 parts.push({
   kind: "box",
   id: "nav-starboard-lens",
   group: "lighting",
   material: "foliage",
-  center: point(3.4, 1.12, 0.18),
+  center: point(-3.455, 1.12, 0.18),
   size: point(0.035, 0.11, 0.2),
   light: { color: "#6bff9c", distance: 18, intensity: 3.4, dayIntensityFactor: 1 },
 });
@@ -1340,7 +1345,7 @@ parts.push({
   id: "nav-port-lens",
   group: "lighting",
   material: "flower-red",
-  center: point(-3.4, 1.12, 0.18),
+  center: point(3.455, 1.12, 0.18),
   size: point(0.035, 0.11, 0.2),
   light: { color: "#ff665f", distance: 18, intensity: 3.4, dayIntensityFactor: 1 },
 });

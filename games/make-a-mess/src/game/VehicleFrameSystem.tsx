@@ -54,6 +54,7 @@ import type { RemnantDefinition } from "./destructionRuntime";
 import {
   RESTING_POSE,
   departureLightGlow,
+  engineValuesBySide,
   engineValuesPortToStarboard,
   advanceDrivePhase,
   advanceVehicleRouteProgress,
@@ -5982,15 +5983,54 @@ export function VehicleFrameSystem({
               signed: true,
               activityDelta: 0.45,
             },
-            {
-              // Тип машины — тип строки: у винтокрылой это кольца подъёма, у
-              // плавучей — моторы. Ослабший и ВЫБИТЫЙ орган различаются:
-              // warning деградировал, critical мёртв.
-              id: usesRotorDynamics ? "rotorRings" : "propellerRevolutions",
+          ];
+          // Тип машины — тип строк. Ослабший и ВЫБИТЫЙ орган различаются:
+          // warning деградировал, critical мёртв.
+          const organState = (value: number) =>
+            value <= 0.05
+              ? ("critical" as const)
+              : value < 1 - 1e-6
+                ? ("warning" as const)
+                : ("normal" as const);
+          if (usesRotorDynamics) {
+            // Гексакоптер читается по бортам: своя строка каждому борту,
+            // внутри — с ПЕРЕДНЕГО кольца. Плоский список из шести чисел с
+            // двумя подписями путал стороны.
+            const ringOutputs = engineValuesBySide(
+              state.rotorMotorOutput,
+              frame.flight.limits.enginePoints,
+              state.mass?.centre ?? frame.origin,
+              frame.nose,
+            );
+            const ringHealth = engineValuesBySide(
+              propulsion.fractions,
+              frame.flight.limits.enginePoints,
+              state.mass?.centre ?? frame.origin,
+              frame.nose,
+            );
+            metrics.push(
+              {
+                id: "rotorRingsPort",
+                value: ringOutputs.port.map((value) => value * 100),
+                valueStates: ringHealth.port.map(organState),
+                unit: "percent",
+                precision: 0,
+                activityDelta: 4,
+              },
+              {
+                id: "rotorRingsStarboard",
+                value: ringOutputs.starboard.map((value) => value * 100),
+                valueStates: ringHealth.starboard.map(organState),
+                unit: "percent",
+                precision: 0,
+                activityDelta: 4,
+              },
+            );
+          } else {
+            metrics.push({
+              id: "propellerRevolutions",
               value: engineValuesPortToStarboard(
-                usesRotorDynamics
-                  ? state.rotorMotorOutput
-                  : telemetryFlight.driveThrottle,
+                telemetryFlight.driveThrottle,
                 frame.flight.limits.enginePoints,
                 state.mass?.centre ?? frame.origin,
                 frame.nose,
@@ -6001,37 +6041,38 @@ export function VehicleFrameSystem({
                 frame.flight.limits.enginePoints,
                 state.mass?.centre ?? frame.origin,
                 frame.nose,
-              ).map((value) =>
-                value <= 0.05
-                  ? ("critical" as const)
-                  : value < 1 - 1e-6
-                    ? ("warning" as const)
-                    : ("normal" as const),
-              ),
+              ).map(organState),
               unit: "percent",
               precision: 0,
               signed: true,
               activityDelta: 4,
-            },
-          ];
+            });
+          }
           // Тоннели рыскания — отдельная строка отдельного органа: знак — это
           // реверс, и он часть показания, а не шум.
           const telemetryYawThrusters = frame.flight.limits.yawThrusters ?? [];
           if (telemetryYawThrusters.length > 0) {
+            const tunnelOutputs = engineValuesBySide(
+              state.yawThrusterOutput,
+              telemetryYawThrusters.map((thruster) => thruster.point),
+              state.mass?.centre ?? frame.origin,
+              frame.nose,
+            );
+            const tunnelHealth = engineValuesBySide(
+              state.yawThrusterHealth,
+              telemetryYawThrusters.map((thruster) => thruster.point),
+              state.mass?.centre ?? frame.origin,
+              frame.nose,
+            );
             metrics.push({
               id: "yawTunnels",
-              value: telemetryYawThrusters.map(
-                (_, index) => (state.yawThrusterOutput[index] ?? 0) * 100,
+              value: [...tunnelOutputs.port, ...tunnelOutputs.starboard].map(
+                (value) => value * 100,
               ),
               valueSides: ["left", "right"],
-              valueStates: telemetryYawThrusters.map((_, index) => {
-                const health = state.yawThrusterHealth[index] ?? 1;
-                return health <= 0.05
-                  ? ("critical" as const)
-                  : health < 1 - 1e-6
-                    ? ("warning" as const)
-                    : ("normal" as const);
-              }),
+              valueStates: [...tunnelHealth.port, ...tunnelHealth.starboard].map(
+                organState,
+              ),
               unit: "percent",
               precision: 0,
               signed: true,

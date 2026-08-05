@@ -1171,7 +1171,9 @@ export const COMBAT_HEXACOPTER_RANGE_AIR_VEHICLE: AirVehicleDefinition = {
     target: {
       id: "combat-hexacopter-range:departure",
       kind: "departure",
-      cue: "town-hexacopter-uncrewed-flight",
+      // Своя табличка: прежде cue городского коптера показывал на пульте
+      // полигона имя HX-6 вместо RAX-8 Tonkawa.
+      cue: "combat-hexacopter-uncrewed-flight",
     },
     point: COMBAT_HEXACOPTER_RANGE_DISPATCH_POINT,
     flightKind: "circuit",

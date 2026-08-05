@@ -2371,9 +2371,9 @@ button:focus-visible {
 }
 
 .motion-impact-hull {
-  fill: rgba(126, 220, 255, 0.07);
-  stroke: rgba(126, 220, 255, 0.45);
-  stroke-width: 0.8px;
+  fill: rgba(126, 220, 255, 0.1);
+  stroke: rgba(126, 220, 255, 0.6);
+  stroke-width: 1px;
 }
 
 .motion-impact-engine {
