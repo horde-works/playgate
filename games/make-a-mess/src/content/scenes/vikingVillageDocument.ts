@@ -170,7 +170,9 @@ function createTerrain(): void {
         continue;
       }
       const key = `${x}:${z}`;
-      primitive(base, `earth:${key}`, "earth", "groundTile", [x, -0.62, z], [4.05, 1, 4.05], "#554432");
+      // Deep earth stays darker than timber and cover grass so luminance
+      // separates mud / wood / roof instead of collapsing into one mid-tone.
+      primitive(base, `earth:${key}`, "earth", "groundTile", [x, -0.62, z], [4.05, 1, 4.05], "#453628");
 
       const grassVariation = noise(x, z, 2);
       const grassPatch = noise(x, z, 8);
@@ -394,12 +396,12 @@ function createBuildings(): void {
   const buildings = group("buildings", "Log houses and the great hall", "wood");
   place(buildings, "great-hall", "viking:hall", { position: [0, 0, -17] }, {
     palette: {
-      hallTimber: "#775138",
-      timber: "#6d4b35",
+      hallTimber: "#82593c",
+      timber: "#7a5538",
       darkTimber: "#362b25",
-      lightTimber: "#98704d",
-      roof: "#51483a",
-      mossRoof: "#3d4b36",
+      lightTimber: "#a87c52",
+      roof: "#3f382c",
+      mossRoof: "#33402e",
       door: "#382923",
     },
     surface: buildingTreatments,
@@ -3761,7 +3763,14 @@ export const vikingVillageDocument: AuthoredSceneDocument = {
   schemaVersion: 1,
   id: "viking-village",
   title: "Make a Mess: Viking Village",
-  environment: "fortress",
+  // Northern settlement air — not the volcanic fortress palette. Fortress
+  // mie/gray fog collapsed wood, mud and sky into one mid-grey; town air
+  // keeps chroma and lets the sun's key light cast readable shadows.
+  environment: "town",
+  // Edge veil only: hide the island rim, do not wash the courtyard. With the
+  // fortress defaults (58/196) a flyover already lost midground contrast
+  // inside the palisade.
+  fogDistances: [108, 268],
   world: {
     playerSpawn: [0, 1.3, 75],
     cameraFar: ROUTE_CAMERA_FAR,

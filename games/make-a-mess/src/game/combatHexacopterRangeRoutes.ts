@@ -146,9 +146,15 @@ export const combatHexacopterRangeCircuit = createMotionRoute({
       const arrival = Math.min(1, (1 - progress) / 0.11);
       const edge = Math.min(departure, arrival);
       const base = CLEARANCE_ALTITUDE * edge * edge * (3 - 2 * edge);
+      // Окно — smoothstep, не линейка: излом линейного окна вторая
+      // производная кривой читала как гребень и толкала газ вниз ровно на
+      // подъёме первой горки (замер: −9.4 м у progress 0.15).
+      const eased = (raw: number) => {
+        const clamped = Math.min(1, Math.max(0, raw));
+        return clamped * clamped * (3 - 2 * clamped);
+      };
       const window =
-        Math.min(1, Math.max(0, (progress - 0.1) / 0.05)) *
-        Math.min(1, Math.max(0, (0.88 - progress) / 0.05));
+        eased((progress - 0.1) / 0.08) * eased((0.88 - progress) / 0.08);
       const bump = (centre: number, width: number) => {
         const x = (progress - centre) / width;
         return Math.exp(-x * x * 2.2);

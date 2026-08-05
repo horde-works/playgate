@@ -12320,6 +12320,10 @@ export function MakeAMessGame({
                 <CinematicPostProcessing
                   compact={fallbackLook}
                   byteBloom={scene.id === "dutch-polder"}
+                  // Polder midtones die looking sunward: shafts + glare + bloom
+                  // veil stack on a bright dome. Scale the screen veil only —
+                  // weather/cloud deck stay as authored.
+                  sunVeil={scene.id === "dutch-polder" ? 0.42 : 1}
                 />
               </Suspense>
             </Canvas>

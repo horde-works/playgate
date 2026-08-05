@@ -241,6 +241,19 @@ export function DayNightCycle({
     }
   }, [worldCenter]);
 
+  // DirectionalLight.target is a separate Object3D — three only aims the
+  // shadow camera if that target lives in the scene graph.
+  useLayoutEffect(() => {
+    const light = directional.current;
+    if (!light) return;
+    const scene = light.parent;
+    if (scene && light.target.parent !== scene) {
+      scene.add(light.target);
+    }
+    light.target.position.set(worldCenter?.[0] ?? 0, 0, worldCenter?.[1] ?? 0);
+    light.target.updateMatrixWorld();
+  }, [worldCenter]);
+
   // The weather field is grafted onto the analytic sky rather than replacing
   // it: a world without an authored sky keeps exactly the dome it had.
   useLayoutEffect(() => {
@@ -302,7 +315,16 @@ export function DayNightCycle({
 
     if (directional.current) {
       directional.current.position.set(sunX, Math.max(sunY, 7), sunZ);
-      directional.current.intensity = 0.3 + 3.65 * day;
+      // Aim the shadow frustum at the island centre — worlds like Viking sit
+      // off the origin, and a target left at (0,0,0) softens contact across
+      // the courtyard that the eye is actually looking at.
+      const aimX = worldCenter?.[0] ?? 0;
+      const aimZ = worldCenter?.[1] ?? 0;
+      directional.current.target.position.set(aimX, 0, aimZ);
+      directional.current.target.updateMatrixWorld();
+      // Key light slightly ahead of fill so cast shadows stay readable once
+      // aerial perspective and soft PCF start eating contrast.
+      directional.current.intensity = 0.35 + 3.85 * day;
       if (day > 0.02) {
         scratchColor
           .copy(sunWarmColor)
@@ -313,7 +335,9 @@ export function DayNightCycle({
       }
     }
     if (hemisphere.current) {
-      hemisphere.current.intensity = 0.15 + 0.43 * day;
+      // Fill used to rival the key light after fog: 0.58 daytime hemisphere
+      // plus PMREM ambient lifted every surface toward the same mid-grey.
+      hemisphere.current.intensity = 0.12 + 0.34 * day;
     }
 
     scratchColor
@@ -394,16 +418,21 @@ export function DayNightCycle({
         attach="fog"
         args={[
           fortress ? "#84939d" : "#9cc0ce",
+          // Edge veil only — hide where the island stops. Hardcoded fortress
+          // 58/196 washed midground on every fortress-sized island; scale
+          // from radius like town so a settlement courtyard stays crisp.
           fogDistances
             ? fogDistances[0]
-            : fortress
-              ? 58
-              : Math.max(42, (worldRadius ?? 67) * 0.6),
+            : Math.max(
+                fortress ? 88 : 42,
+                (worldRadius ?? 67) * (fortress ? 0.95 : 0.6),
+              ),
           fogDistances
             ? fogDistances[1]
-            : fortress
-              ? 196
-              : Math.max(128, (worldRadius ?? 67) * 2),
+            : Math.max(
+                fortress ? 210 : 128,
+                (worldRadius ?? 67) * (fortress ? 2.45 : 2),
+              ),
         ]}
       />
       {/* The sky dome must enclose everything that renders — including the
@@ -426,14 +455,14 @@ export function DayNightCycle({
         args={[
           fortress ? "#c9d7df" : "#d8f0ff",
           fortress ? "#31352f" : "#4d5d38",
-          0.58,
+          0.46,
         ]}
       />
       <directionalLight
         ref={directional}
         castShadow
         position={[10, 16, 9]}
-        intensity={3.1}
+        intensity={3.4}
         color="#fff3d7"
         shadow-mapSize-width={2048}
         shadow-mapSize-height={2048}
@@ -444,8 +473,10 @@ export function DayNightCycle({
         shadow-camera-top={fortress ? 95 : 70}
         shadow-camera-bottom={fortress ? -95 : -70}
         shadow-bias={-0.00035}
-        shadow-normalBias={0.035}
-        shadow-radius={3.2}
+        shadow-normalBias={0.028}
+        // Soft PCF at 3.2 dissolved into fog as "no shadows". Tighter radius
+        // keeps contact readable without returning hard aliasing.
+        shadow-radius={1.7}
       />
     </>
   );

@@ -2021,7 +2021,9 @@ if (vikingSurface > 0.5) {
   vec3 vikingSoil = sRGBTransferEOTF(
     texture2D(uLandscapeSoilMap, vikingPoint * 0.32 + vec2(0.17, 0.43))
   ).rgb;
-  vikingSoil *= mix(vec3(0.62, 0.40, 0.25), vec3(0.78, 0.56, 0.34), vikingFineNoise);
+  // Travelled mud is darker and cooler than grass or timber — without that
+  // split the courtyard, walls and fog sit in one mid-grey and lose weight.
+  vikingSoil *= mix(vec3(0.46, 0.31, 0.20), vec3(0.58, 0.42, 0.27), vikingFineNoise);
   diffuseColor.rgb = mix(diffuseColor.rgb, vikingSoil, vikingDirt * 0.96);
 
   float vikingMossNoise =

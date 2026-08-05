@@ -360,7 +360,7 @@ function pushWeepingCurtain(
   const profile = proceduralWoodTubeProfile("branch", "willow");
   // Побегов тем больше, чем длиннее несущая ветвь: вуаль висит со ВСЕГО
   // скелета, а не только с главных сучьев.
-  const shoots = Math.max(6, Math.round(length * 5.5));
+  const shoots = Math.max(9, Math.round(length * 11));
 
   for (let shoot = 0; shoot < shoots; shoot += 1) {
     const roll = hash(seed + identity * 37, 910 + shoot);
@@ -401,12 +401,13 @@ function pushWeepingCurtain(
     // Прядь СПЛОШНАЯ: рукав длиннее шага между рукавами в полтора раза, они
     // перекрываются и читаются одной лентой листвы. Равный шагу рукав давал
     // бусы на нитке — ровно то, что видно в кадре сверху.
-    const stations = 4;
-    const step = 0.92 / stations;
-    // Длина пряди в полтора шага — рукава перекрываются в сплошную ленту;
-    // толщина от толщины САМОГО побега, а не от его длины.
-    const sleeveLength = drop * step * 1.5;
-    const sleeveRadius = Math.max(0.05, diameter * 6 + roll * 0.03);
+    // Три рукава на побег, каждый вдвое длиннее шага: побег укрыт целиком, а
+    // сэкономленные лепестки уходят в ЧИСЛО нитей. Занавес — это много тонких
+    // прядей, а не несколько толстых.
+    const stations = 3;
+    const step = 0.9 / stations;
+    const sleeveLength = drop * step * 2;
+    const sleeveRadius = Math.max(0.035, diameter * 4.5 + roll * 0.02);
     // Фаза своя у каждого побега: одинаковый шаг на всех плетях выстраивает
     // листву рядами и вуаль читается кукурузным початком.
     const phase = hash(seed + identity * 67, 940 + shoot) * step;

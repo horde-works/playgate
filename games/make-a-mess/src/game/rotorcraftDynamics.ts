@@ -1867,7 +1867,7 @@ export function rotorcraftFlightStep(
   // впадина отпускает; исполняет это подъёмная тяга, как вираж исполняет
   // наклон. Доля веса, зажата собственным пределом дифферентовки газа.
   const pathVertical = request.pathAcceleration
-    ? Math.max(-0.3, Math.min(0.3, request.pathAcceleration[1] / 9.81))
+    ? Math.max(-0.2, Math.min(0.2, request.pathAcceleration[1] / 9.81))
     : 0;
   const combined = {
     forward: corrective.forward + pathForward,

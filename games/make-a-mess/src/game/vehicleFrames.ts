@@ -2416,14 +2416,31 @@ function pathKinematicDemand(
   const ux = tangentX / tangentLength;
   const uy = tangentY / tangentLength;
   const uz = tangentZ / tangentLength;
+  const horizontalFine0 = Math.hypot(tangentX, tangentZ) || 1e-6;
   // Вертикальные полки владеют высотой сами — у столбов профиль молчит.
   const shelfFree =
     (!plan.verticalDeparture ||
       progress > plan.verticalDeparture.until + 0.02) &&
     (!plan.verticalArrival || progress < plan.verticalArrival.from - 0.02);
-  const horizontal = Math.hypot(tangentX, tangentZ) || 1e-6;
+  // Первой производной — мелкое плечо: широкая база, нужная кривизне,
+  // сглаживает уклон, и горка снова исполнялась лениво (замер: промах по
+  // высоте вернулся с 6.5 к 9.7 м). Одна функция, одна кривая — но у первой
+  // и второй производной разные шаги выборки, это числовая гигиена, а не
+  // возврат к отдельным каналам.
+  const fine = Math.min(0.02, 8 / plan.length);
+  const beforeFine = plan.point(Math.max(0, progress - fine));
+  const afterFine = plan.point(Math.min(1, progress + fine));
+  const horizontalFine =
+    Math.hypot(afterFine[0] - beforeFine[0], afterFine[2] - beforeFine[2]) ||
+    1e-6;
   const verticalRate = shelfFree
-    ? Math.max(-6, Math.min(6, (tangentY / horizontal) * speed))
+    ? Math.max(
+        -6,
+        Math.min(
+          6,
+          ((afterFine[1] - beforeFine[1]) / horizontalFine) * speed,
+        ),
+      )
     : 0;
   // Вторая разность тех же трёх точек: её нормальная часть — кривизна В ТРЁХ
   // ОСЯХ. Плечо выборки — горизонтальная полухорда, которой параметризован
@@ -2456,11 +2473,17 @@ function pathKinematicDemand(
     }
   }
   const scale = normalLength > 1e-9 ? centripetal / normalLength : 0;
+  // Торможение — по ГОРИЗОНТАЛЬНОЙ касательной: профиль скорости мерян в
+  // плане (plan.length — горизонталь), и вертикальная проекция замедления
+  // воевала бы с пикированием — толкала вверх ровно там, где профиль ведёт
+  // вниз. Замер это и показал: с 3D-торможением промах держался у 9.7 м.
+  const hx = tangentX / horizontalFine0;
+  const hz = tangentZ / horizontalFine0;
   return {
     acceleration: [
-      normalX * scale + ux * braking,
-      normalY * scale + uy * braking,
-      normalZ * scale + uz * braking,
+      normalX * scale + hx * braking,
+      normalY * scale,
+      normalZ * scale + hz * braking,
     ],
     verticalRate,
   };

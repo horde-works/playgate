@@ -755,7 +755,10 @@ export const dutchPolderDocument: AuthoredSceneDocument = {
   },
   landscapeVisual: dutchPolderLandscapeVisual,
   groups: [...groups.values()],
-  fogDistances: [118, 225],
+  // Edge veil starts past the island rim (radius ~79). Slightly longer far
+  // keeps the far bank from jumping to sky-grey with the near midground —
+  // lessons §7: aerial perspective was starting too sharply across plans.
+  fogDistances: [122, 252],
   solarFrame: {
     model: "equinox",
     latitudeDegrees: 52.4,

@@ -1203,7 +1203,7 @@ export function propWeepingWillow(options: TreeOptions = {}): FloraPiece[] {
           node,
           direction,
           length,
-          (0.15 - segment * 0.035 + segVar * 0.03) * s,
+          (0.115 - segment * 0.028 + segVar * 0.025) * s,
           segVar > 0.5 ? "#5a4a38" : "#63523d",
         ),
       );
@@ -1244,7 +1244,7 @@ export function propWeepingWillow(options: TreeOptions = {}): FloraPiece[] {
           forkStart,
           forkDirection,
           forkLength,
-          (0.055 + forkVar * 0.03) * s,
+          (0.045 + forkVar * 0.022) * s,
           forkVar > 0.5 ? "#59493a" : "#61513e",
         ),
       );

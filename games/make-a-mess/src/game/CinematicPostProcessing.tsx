@@ -38,6 +38,7 @@ const CinematicShader = {
     uSunPresence: { value: 0 },
     uShaftColor: { value: new Color("#ffdfae") },
     uShaftIntensity: { value: 0.2 },
+    uGlareStrength: { value: 1 },
     uDirtStrength: { value: 0.14 },
     uSaturation: { value: 0.97 },
     uColorBalance: { value: new Vector3(1.02, 1.0, 0.98) },
@@ -57,6 +58,7 @@ const CinematicShader = {
     uniform float uSunPresence;
     uniform vec3 uShaftColor;
     uniform float uShaftIntensity;
+    uniform float uGlareStrength;
     uniform float uDirtStrength;
     uniform float uSaturation;
     uniform vec3 uColorBalance;
@@ -111,8 +113,10 @@ const CinematicShader = {
 
         vec2 toSun = (vUv - uSunScreen) * vec2(uAspect, 1.0);
         float sunDistance = length(toSun);
-        float glare = exp(-sunDistance * sunDistance * 42.0) * 0.12
-          + exp(-sunDistance * 7.5) * 0.026;
+        // uGlareStrength lets a washed world (the polder) keep the aureole
+        // without the wide veil that ate its midtones when looking sunward.
+        float glare = (exp(-sunDistance * sunDistance * 42.0) * 0.12
+          + exp(-sunDistance * 7.5) * 0.026) * uGlareStrength;
         color += uShaftColor * glare * sunVisible;
 
         float dirtLight = shaft * 1.1 + exp(-sunDistance * 2.6) * 0.5;
@@ -269,9 +273,13 @@ function createLensDirtTexture(): CanvasTexture {
 export function CinematicPostProcessing({
   compact,
   byteBloom = false,
+  /** Scales shafts, glare and lens dirt. Polder uses <1 so sunward views
+   * keep midtone grass instead of a white veil; cloud deck is untouched. */
+  sunVeil = 1,
 }: {
   compact: boolean;
   byteBloom?: boolean;
+  sunVeil?: number;
 }) {
   const { camera, gl, scene, size } = useThree();
   const dpr = useThree((state) => state.viewport.dpr);
@@ -280,6 +288,7 @@ export function CinematicPostProcessing({
   const duskShaftColor = useMemo(() => new Color("#ffb46a"), []);
   const smoothedSunPresence = useRef(0);
   const gpuTimer = useMemo(() => new GpuFrameTimer(gl.getContext()), [gl]);
+  const veil = MathUtils.clamp(sunVeil, 0, 1);
 
   const pipeline = useMemo(() => {
     const composer = new EffectComposer(gl);
@@ -297,11 +306,13 @@ export function CinematicPostProcessing({
       composer.addPass(aoPass);
     }
 
+    // Polder: raise the bloom gate a touch so the dome's aureole does not
+    // spill as a ground veil; strength stays, only what crosses threshold.
     const bloomPass = new UnrealBloomPass(
       new Vector2(32, 32),
-      compact ? 0.1 : 0.13,
+      compact ? 0.1 : veil < 1 ? 0.11 : 0.13,
       0.35,
-      1.6,
+      veil < 1 ? 1.85 : 1.6,
     );
     if (byteBloom) {
       // Chrome/ANGLE intermittently loses the full composer frame while
@@ -321,6 +332,8 @@ export function CinematicPostProcessing({
     const cinematicPass = new ShaderPass(CinematicShader);
     const lensDirt = createLensDirtTexture();
     cinematicPass.uniforms.tLensDirt.value = lensDirt;
+    cinematicPass.uniforms.uGlareStrength.value = veil;
+    cinematicPass.uniforms.uDirtStrength.value = 0.14 * veil;
     composer.addPass(cinematicPass);
 
     const outputPass = new OutputPass();
@@ -338,7 +351,7 @@ export function CinematicPostProcessing({
       outputPass,
       smaaPass,
     };
-  }, [byteBloom, camera, compact, gl, scene, size.height, size.width]);
+  }, [byteBloom, camera, compact, gl, scene, size.height, size.width, veil]);
 
   useEffect(() => {
     pipeline.composer.setPixelRatio(dpr);
@@ -409,7 +422,9 @@ export function CinematicPostProcessing({
         .copy(environmentState.sunColor)
         .lerp(duskShaftColor, environmentState.twilightFactor * 0.55);
       uniforms.uShaftIntensity.value =
-        0.07 + environmentState.twilightFactor * 0.18;
+        (0.07 + environmentState.twilightFactor * 0.18) * veil;
+      uniforms.uGlareStrength.value = veil;
+      uniforms.uDirtStrength.value = 0.14 * veil;
     }
   });
 

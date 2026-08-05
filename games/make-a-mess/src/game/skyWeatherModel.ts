@@ -121,7 +121,9 @@ export const DUTCH_POLDER_SKY: SkyWeather = {
   cirrus: 0.16,
   cirrusAltitude: 7400,
   cirrusScale: 9500,
-  beamStrength: 0.055,
+  // Soft crepuscular hint in the dome — not a ground-washing screen veil.
+  // Cinematic shafts are scaled separately for this world via sunVeil.
+  beamStrength: 0.028,
   litColor: "#fbf7ef",
   shadeColor: "#7d8797",
   shadowStrength: 0.62,
