@@ -1327,28 +1327,43 @@ for (const side of [-1, 1]) {
 // Аэронавигационные цвета — по БОРТАМ, а не по знаку оси. Нос машины смотрит
 // в +z; наблюдатель за кормой глядит вдоль носа, и его правая рука — МИНУС x
 // (правая тройка: смотрим вдоль +z — x уходит влево). Прежде зелёный стоял на
-// +3.4, то есть на ЛЕВОМ борту — огни были перепутаны местами. И оба были
-// утоплены в стальную стенку кольца (линза на 3.400 при внешней грани стенки
-// 3.4165) — «чем-то прикрыты» дословно. Теперь линза сидит НА стенке среднего
-// кольца, наружу, заподлицо касаясь её.
-parts.push({
-  kind: "box",
-  id: "nav-starboard-lens",
-  group: "lighting",
-  material: "foliage",
-  center: point(-3.455, 1.12, 0.18),
-  size: point(0.035, 0.11, 0.2),
-  light: { color: "#6bff9c", distance: 18, intensity: 3.4, dayIntensityFactor: 1 },
-});
-parts.push({
-  kind: "box",
-  id: "nav-port-lens",
-  group: "lighting",
-  material: "flower-red",
-  center: point(3.455, 1.12, 0.18),
-  size: point(0.035, 0.11, 0.2),
-  light: { color: "#ff665f", distance: 18, intensity: 3.4, dayIntensityFactor: 1 },
-});
+// +x, то есть на ЛЕВОМ борту — огни были перепутаны местами.
+//
+// МЕСТО ФОНАРЯ — СЕРЕДИНА ПЛАСТИНЫ, ЗАПОДЛИЦО ПО ЕЁ ПЛОСКОСТИ. Стена кольца —
+// двенадцать плоских сегментов со стыковыми планками каждые 30°, и чистый борт
+// (угол 0) — это ровно СТЫК, да ещё с сервисной панелью рядом: фонарь,
+// посаженный туда, лез и на планку, и на панель. Середина пластины — 15° к
+// носу; фонарь повёрнут по её хорде и касается её внешней грани.
+{
+  const middleRight = COMBAT_HEX_LIFT_STATIONS[3];
+  const lampAngle = Math.PI / 12;
+  const wall = 0.065 / 2;
+  const chord = middleRight.outerRadius * Math.cos(lampAngle) + wall / 2;
+  const lampRadial = chord + 0.0175 + 0.0015;
+  const lampX = middleRight.x + lampRadial * Math.cos(lampAngle);
+  const lampZ = middleRight.z + lampRadial * Math.sin(lampAngle);
+  const lampY = 1.12;
+  parts.push({
+    kind: "box",
+    id: "nav-starboard-lens",
+    group: "lighting",
+    material: "foliage",
+    center: point(-lampX, lampY, lampZ),
+    size: point(0.035, 0.11, 0.2),
+    rotation: point(0, lampAngle, 0),
+    light: { color: "#6bff9c", distance: 18, intensity: 3.4, dayIntensityFactor: 1 },
+  });
+  parts.push({
+    kind: "box",
+    id: "nav-port-lens",
+    group: "lighting",
+    material: "flower-red",
+    center: point(lampX, lampY, lampZ),
+    size: point(0.035, 0.11, 0.2),
+    rotation: point(0, -lampAngle, 0),
+    light: { color: "#ff665f", distance: 18, intensity: 3.4, dayIntensityFactor: 1 },
+  });
+}
 parts.push({
   kind: "box",
   id: "nav-aft-lens",

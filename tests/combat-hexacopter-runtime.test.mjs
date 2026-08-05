@@ -746,25 +746,50 @@ test("автомат сообщает не только сколько не да
   assert.equal(step({ forwardSpeed: 60 }).surge, "effector");
 });
 
-test("аэронавигационные огни стоят по НАСТОЯЩИМ бортам и не утоплены в кольцо", () => {
-  // Нос машины — +z; наблюдатель за кормой смотрит вдоль носа, его правая
-  // рука — МИНУС x. Зелёный обязан быть на правом борту (−x), красный — на
-  // левом (+x). Прежде было наоборот, и оба фонаря были утоплены в стальную
-  // стенку среднего кольца (линза 3.400 при внешней грани стенки ~3.416) —
-  // «чем-то прикрыты» дословно.
+test("аэронавигационные огни: настоящие борта и СЕРЕДИНА пластины, а не стык", () => {
+  // Зелёный — правый борт (−x при носе в +z), красный — левый. Место фонаря —
+  // середина сегмента стены кольца: стыковые планки идут каждые 30° от
+  // чистого борта, и угол 0 — это ровно стык с сервисной панелью рядом.
+  // Фонарь сидит на 15° к носу, повёрнут по хорде пластины и касается её.
   assert.ok(vehicle);
   const green = vehicle.pieces.find((piece) => piece.id.includes("nav-starboard-lens"));
   const red = vehicle.pieces.find((piece) => piece.id.includes("nav-port-lens"));
   assert.ok(green && red);
   assert.ok(green.position[0] < 0, "зелёный — правый борт, то есть −x");
   assert.ok(red.position[0] > 0, "красный — левый борт, то есть +x");
-  const wallOuter = 2.62 + 0.78 + (0.78 - 0.715) / 2;
   for (const lens of [green, red]) {
-    const inner = Math.abs(lens.position[0]) - lens.size[0] / 2;
-    assert.ok(
-      inner >= wallOuter - 1e-3,
-      `фонарь утоплен в стенку кольца: внутренняя грань ${inner.toFixed(3)} при стенке ${wallOuter.toFixed(3)}`,
+    const azimuth = Math.atan2(
+      lens.position[2] - 0.2,
+      Math.abs(lens.position[0]) - 2.62,
     );
+    assert.ok(
+      Math.abs((azimuth * 180) / Math.PI - 15) < 2,
+      `фонарь не на середине пластины: азимут ${((azimuth * 180) / Math.PI).toFixed(1)}°`,
+    );
+    const radial = Math.hypot(
+      Math.abs(lens.position[0]) - 2.62,
+      lens.position[2] - 0.2,
+    );
+    assert.ok(
+      radial > 0.783 && radial < 0.796,
+      `фонарь не заподлицо с хордой: вынос ${radial.toFixed(3)}`,
+    );
+    assert.ok(Math.abs(Math.abs(lens.rotation?.[1] ?? 0) - Math.PI / 12) < 1e-6,
+      "фонарь обязан лежать по хорде пластины, а не по мировой оси");
+    // Чистое место: до сервисной панели и стыковых планок — не вплотную.
+    for (const other of vehicle.pieces) {
+      if (other === lens) continue;
+      if (/service-panel|ring-splice/.test(other.id) === false) continue;
+      const distance = Math.hypot(
+        other.position[0] - lens.position[0],
+        other.position[1] - lens.position[1],
+        other.position[2] - lens.position[2],
+      );
+      assert.ok(
+        distance > 0.16,
+        `фонарь налез на ${other.id.split(":vehicle:")[1]}: ${distance.toFixed(2)} м`,
+      );
+    }
   }
 });
 
