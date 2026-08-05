@@ -516,3 +516,66 @@ export function meshPlanarDeviation(
   }
   return best;
 }
+
+/**
+ * Подрезает авторскую сетку куска его кратерами и возвращает её в том же виде,
+ * в каком её ждёт рендер: вершины нормированы на габарит куска, толщина борта
+ * взята из паспорта.
+ *
+ * ДЫРЯВЫЙ КУСОК ВСЕГДА ДВУСТОРОННИЙ. Замкнутая оболочка авторится
+ * односторонней, и это правильно: внутрь неё не заглянешь, изнанку рисовать
+ * незачем, она стоит fill rate. Но дыра ровно это и меняет — через неё видно
+ * изнанку дальней стенки, а её нет, и постройка читается прозрачной насквозь.
+ * Колпак мельницы (`cap-hull`, 36 треугольников, ни одного граничного ребра)
+ * ловит это первым.
+ */
+export function clipPieceVisualMesh(
+  piece: {
+    readonly size: readonly [number, number, number];
+    readonly visualMesh?: {
+      readonly vertices: readonly ClipVector3[];
+      readonly indices: readonly number[];
+      readonly normals?: readonly ClipVector3[];
+      readonly colors?: readonly ClipVector3[];
+      readonly doubleSided?: boolean;
+    };
+    readonly voxelization?: { readonly thickness?: number };
+  },
+  craters: readonly MeshCrater[],
+): {
+  readonly vertices: readonly ClipVector3[];
+  readonly indices: readonly number[];
+  readonly normals?: readonly ClipVector3[];
+  readonly colors?: readonly ClipVector3[];
+  readonly doubleSided: boolean;
+} | null {
+  const mesh = piece.visualMesh;
+  if (!mesh) {
+    return null;
+  }
+  const scaled = mesh.vertices.map(
+    ([x, y, z]) =>
+      [x * piece.size[0], y * piece.size[1], z * piece.size[2]] as const,
+  );
+  const clipped = clipMeshAgainstCraters(scaled, mesh.indices, craters, {
+    normals: mesh.normals,
+    colors: mesh.colors,
+    // Толщина берётся ИЗ ПАСПОРТА куска — того же числа, которым живут его
+    // масса и решётка повреждения.
+    rimThickness: piece.voxelization?.thickness ?? 0,
+  });
+  // Дыра съела деталь целиком — показывать нечего, пусть работает прежний путь.
+  if (clipped.indices.length === 0) {
+    return null;
+  }
+  return {
+    vertices: clipped.vertices.map(
+      ([x, y, z]) =>
+        [x / piece.size[0], y / piece.size[1], z / piece.size[2]] as const,
+    ),
+    indices: [...clipped.indices],
+    normals: clipped.normals ? [...clipped.normals] : undefined,
+    colors: clipped.colors ? [...clipped.colors] : undefined,
+    doubleSided: true,
+  };
+}

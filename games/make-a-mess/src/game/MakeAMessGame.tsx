@@ -148,7 +148,7 @@ import {
   type SurfaceDamageDecalRuntime,
 } from "./SurfaceDamageDecals";
 import {
-  clipMeshAgainstCraters,
+  clipPieceVisualMesh,
   type MeshCrater,
 } from "./meshCraterClip";
 import type { VehicleContactDamageRequest } from "./vehicleContactDamage";
@@ -3526,48 +3526,6 @@ const MAXIMUM_CRATERED_PIECES = 24;
 const MAXIMUM_CRATERS_PER_PIECE = 6;
 
 /**
- * Подрезает авторскую сетку куска его кратерами. Кратеры приходят в метрах от
- * центра куска, а вершины сетки нормированы на габарит — поэтому в подрезку
- * они уходят домноженными, а обратно возвращаются поделёнными.
- */
-function clipPieceMesh(
-  piece: BreakablePieceDefinition,
-  craters: readonly MeshCrater[],
-): NonNullable<BreakablePieceDefinition["visualMesh"]> | null {
-  const mesh = piece.visualMesh;
-  if (!mesh) {
-    return null;
-  }
-  const scaled = mesh.vertices.map(
-    ([x, y, z]) =>
-      [x * piece.size[0], y * piece.size[1], z * piece.size[2]] as const,
-  );
-  const clipped = clipMeshAgainstCraters(scaled, mesh.indices, craters, {
-    normals: mesh.normals,
-    colors: mesh.colors,
-    // Толщина берётся ИЗ ПАСПОРТА куска — того же числа, которым живут его
-    // масса и решётка повреждения. Панели авторятся поверхностями без
-    // толщины, и до появления дыр этого никто не видел: торец было неоткуда
-    // показать. Теперь есть откуда, и он обязан совпасть с материалом.
-    rimThickness: piece.voxelization?.thickness ?? 0,
-  });
-  // Дыра съела деталь целиком — показывать нечего, пусть работает прежний путь.
-  if (clipped.indices.length === 0) {
-    return null;
-  }
-  return {
-    ...mesh,
-    vertices: clipped.vertices.map(
-      ([x, y, z]) =>
-        [x / piece.size[0], y / piece.size[1], z / piece.size[2]] as const,
-    ),
-    indices: [...clipped.indices],
-    normals: clipped.normals ? [...clipped.normals] : undefined,
-    colors: clipped.colors ? [...clipped.colors] : undefined,
-  };
-}
-
-/**
  * Нормаль отметины в той же системе, в которой живёт её точка. Точка удара по
  * члену компаунда уже переведена в систему машины, и нормаль обязана уехать
  * туда же — иначе пробоина на летящем борту смотрит в мировую сторону и с
@@ -6518,7 +6476,7 @@ function OpenWorldScene({
             },
           ];
           pieceCraters.current.set(piece.id, craters);
-          const clipped = clipPieceMesh(piece, craters);
+          const clipped = clipPieceVisualMesh(piece, craters);
           if (clipped) {
             const next = new Map(crateredMeshesRef.current);
             next.set(piece.id, clipped);

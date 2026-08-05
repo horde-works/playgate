@@ -5,6 +5,7 @@ import { dutchPolderScene } from "../games/make-a-mess/src/game/dutchPolderScene
 import { combatHexacopterRangeScene } from "../games/make-a-mess/src/game/combatHexacopterRangeScene.ts";
 import {
   clipMeshAgainstCraters,
+  clipPieceVisualMesh,
   meshPlanarDeviation,
 } from "../games/make-a-mess/src/game/meshCraterClip.ts";
 
@@ -305,4 +306,70 @@ test("борт не ломает пер-вершинные данные", () => 
   );
   assert.equal(rimmed.normals?.length, rimmed.vertices.length);
   assert.equal(rimmed.colors?.length, rimmed.vertices.length);
+});
+
+test("пробитый кусок всегда двусторонний", () => {
+  // Колпак мельницы — замкнутая ОДНОсторонняя оболочка: пока дыр нет, изнанку
+  // рисовать незачем. Дыра ровно это и меняет — через неё видно изнанку
+  // дальней стенки, и без переключения постройка читается прозрачной насквозь.
+  const cap = dutchPolderScene.breakablePieces.find((piece) =>
+    piece.id.endsWith("m1:cap-hull"),
+  );
+  assert.ok(cap?.visualMesh, "колпак обязан быть сеточным");
+  assert.equal(cap.visualMesh.doubleSided, false, "паспорт колпака изменился");
+
+  const vertex = cap.visualMesh.vertices[0];
+  const clipped = clipPieceVisualMesh(cap, [
+    {
+      center: [
+        vertex[0] * cap.size[0],
+        vertex[1] * cap.size[1],
+        vertex[2] * cap.size[2],
+      ],
+      radius: 0.5,
+    },
+  ]);
+  assert.ok(clipped);
+  assert.equal(clipped.doubleSided, true);
+  // Наружу кусок может выйти только на борт дыры — половину толщины
+  // материала, и то лишь если дыра пришлась на самую кромку детали.
+  const half = cap.voxelization.thickness / 2;
+  for (const point of clipped.vertices) {
+    for (const axis of [0, 1, 2]) {
+      const overhang =
+        (Math.abs(point[axis]) - 0.5) * cap.size[axis];
+      assert.ok(
+        overhang <= half + 1e-6,
+        `кусок вырос на ${overhang.toFixed(4)} м при толщине ${cap.voxelization.thickness}`,
+      );
+    }
+  }
+});
+
+test("борт колпака встаёт по толщине из паспорта", () => {
+  const cap = dutchPolderScene.breakablePieces.find((piece) =>
+    piece.id.endsWith("m1:cap-hull"),
+  );
+  const vertex = cap.visualMesh.vertices[0];
+  const crater = {
+    center: [
+      vertex[0] * cap.size[0],
+      vertex[1] * cap.size[1],
+      vertex[2] * cap.size[2],
+    ],
+    radius: 0.5,
+  };
+  const withRim = clipPieceVisualMesh(cap, [crater]);
+  const withoutRim = clipPieceVisualMesh(
+    { ...cap, voxelization: { thickness: 0 } },
+    [crater],
+  );
+  assert.ok(
+    withRim.indices.length > withoutRim.indices.length,
+    "борт обязан добавить треугольников и на замкнутой оболочке",
+  );
+});
+
+test("кусок без авторской сетки подрезать нечем", () => {
+  assert.equal(clipPieceVisualMesh({ size: [1, 1, 1] }, []), null);
 });
