@@ -15,24 +15,32 @@ import {
 } from "react";
 import {
   AdditiveBlending,
+  BackSide,
   Color,
+  CubeCamera,
   CylinderGeometry,
   DataTexture,
   DirectionalLight,
   Fog,
+  HalfFloatType,
   HemisphereLight,
   LinearFilter,
   MathUtils,
   Mesh,
+  NoToneMapping,
   PMREMGenerator,
   PointLight,
   RGBAFormat,
   Scene,
+  SphereGeometry,
   Sprite,
   SpriteMaterial,
   SpotLight as ThreeSpotLight,
   ShaderMaterial,
   Vector3,
+  WebGLCubeRenderTarget,
+  type PerspectiveCamera,
+  type WebGLRenderer,
   type WebGLRenderTarget,
 } from "three";
 import { Sky as SkyImpl } from "three-stdlib";
@@ -50,8 +58,18 @@ import { environmentState } from "./environmentState";
 import {
   installSkyClouds,
   setSkyCloudCoarse,
+  setSkyMarchQuality,
   type SkyCloudUniforms,
 } from "./skyClouds";
+import {
+  DOME_FACE_COUNT,
+  DOME_FACE_SIZE,
+  DOME_REPAINT_STRIDES,
+  DOME_SETTLE_CYCLES,
+  SKY_DOME_CACHE_ENABLED,
+  domeNeedsContinuousRepaint,
+  sunDirectionBucket,
+} from "./skyDomeModel.ts";
 import { performanceGovernor } from "./performanceGovernor";
 import {
   ATMOSPHERE,
@@ -122,6 +140,7 @@ export function SceneEnvironment({
   }, [theme]);
   const currentTarget = useRef<WebGLRenderTarget | null>(null);
   const lastBucket = useRef("");
+  const lastDomeVersion = useRef(-1);
 
   useEffect(() => {
     // Ambient comes from the dome, so it is measured against the dome. The
@@ -138,27 +157,40 @@ export function SceneEnvironment({
   }, [pmrem, scene]);
 
   useFrame(() => {
-    // Re-bake the environment only when the sun has moved perceptibly.
+    // Re-bake the environment only when the sun has moved perceptibly — or
+    // when the amortized dome finished a repaint under new light.
     const direction = environmentState.sunDirection;
     const bucket = [
       Math.round(direction.x * 10),
       Math.round(direction.y * 14),
       Math.round(direction.z * 10),
     ].join(":");
-    if (bucket === lastBucket.current) {
+    const domeVersion = environmentState.skyDomeVersion;
+    if (
+      bucket === lastBucket.current &&
+      domeVersion === lastDomeVersion.current
+    ) {
       return;
     }
     lastBucket.current = bucket;
+    lastDomeVersion.current = domeVersion;
 
-    skyScene.sky.material.uniforms.sunPosition.value
-      .copy(environmentState.sunPosition)
-      .normalize();
-    // Six cube faces of the same shader the visible sky uses — three-stdlib
-    // shares one material across every Sky. Walk the deck coarsely for them:
-    // what survives the blur is its average brightness, not its billows.
-    setSkyCloudCoarse(skyScene.sky.material, true);
-    const target = pmrem.fromScene(skyScene.holder, 0.028, 1, 60);
-    setSkyCloudCoarse(skyScene.sky.material, false);
+    let target: WebGLRenderTarget;
+    if (environmentState.skyDomeTexture) {
+      // Готовый купол уже отмаршировал небо на авторском максимуме — ambient
+      // остаётся только переблюрить его. Шесть рендеров неба не нужны.
+      target = pmrem.fromCubemap(environmentState.skyDomeTexture);
+    } else {
+      skyScene.sky.material.uniforms.sunPosition.value
+        .copy(environmentState.sunPosition)
+        .normalize();
+      // Six cube faces of the same shader the visible sky uses — three-stdlib
+      // shares one material across every Sky. Walk the deck coarsely for them:
+      // what survives the blur is its average brightness, not its billows.
+      setSkyCloudCoarse(skyScene.sky.material, true);
+      target = pmrem.fromScene(skyScene.holder, 0.028, 1, 60);
+      setSkyCloudCoarse(skyScene.sky.material, false);
+    }
     scene.environment = target.texture;
     currentTarget.current?.dispose();
     currentTarget.current = target;
@@ -267,6 +299,90 @@ export function DayNightCycle({
   const sunWasMoving = useRef(false);
   const skyRef = useRef<ComponentRef<typeof Sky>>(null);
   const clouds = useRef<SkyCloudUniforms | null>(null);
+  const domeViewRef = useRef<Mesh>(null);
+  /**
+   * Развёртка перекраски купола: грань-курсор, готовность, бакет солнца,
+   * счётчик чистых оборотов (закон DOME_SETTLE_CYCLES) и чётность кадров
+   * для страйда перекраски.
+   */
+  const domeState = useRef({
+    cursor: 0,
+    completed: false,
+    bucket: "",
+    cleanCycles: 0,
+    frameParity: 0,
+  });
+
+  // Амортизированный купол (skyDomeModel.ts): небо маршируется в кубокарту
+  // грань за граню, кадр читает её одной выборкой. Sky здесь делит ОДИН
+  // материал со всеми Sky мира (three-stdlib), так что солнце, погода и дрейф
+  // приходят сами.
+  const dome = useMemo(() => {
+    const target = new WebGLCubeRenderTarget(DOME_FACE_SIZE, {
+      type: HalfFloatType,
+      generateMipmaps: false,
+    });
+    target.texture.name = "sky:dome-cache";
+    const holder = new Scene();
+    const sky = new SkyImpl();
+    sky.scale.setScalar(48);
+    holder.add(sky);
+    const rig = new CubeCamera(0.1, 60, target);
+    // Высота глаза, не ноль: марш воздуха читает таблицы атмосферы по высоте
+    // наблюдателя, и ровно в h = 0 зенитный луч попадает в граничный тексель
+    // таблицы — купол получает чёрную верхнюю грань. Живой марш никогда не
+    // ходит с нулевой высоты, и купол не должен.
+    rig.position.y = 1.7;
+    holder.add(rig);
+    const viewGeometry = new SphereGeometry(1, 48, 24);
+    const viewMaterial = new ShaderMaterial({
+      uniforms: {
+        uDome: { value: target.texture },
+        uDomeCenter: { value: new Vector3() },
+      },
+      vertexShader: /* glsl */ `
+        varying vec3 vWorldPosition;
+        void main() {
+          vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+          vWorldPosition = worldPosition.xyz;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          // Как у родного Sky: купол прижат к дальней плоскости. Без этого
+          // сферу режет camera.far с ракурсов, где её поверхность дальше
+          // дальней плоскости (камера не в центре мира), — чёрный сектор
+          // с дуговой границей ровно в азимуте от центра.
+          gl_Position.z = gl_Position.w;
+        }
+      `,
+      // Радианс купола лежит в кубокарте scene-linear (грани печатаются с
+      // выключенным tonemapping), поэтому дальше он проходит ровно тот же
+      // хвост конвейера, что и живой марш.
+      fragmentShader: /* glsl */ `
+        uniform samplerCube uDome;
+        uniform vec3 uDomeCenter;
+        varying vec3 vWorldPosition;
+        void main() {
+          vec3 direction = normalize(vWorldPosition - uDomeCenter);
+          vec4 sky = textureCube(uDome, direction);
+          gl_FragColor = vec4(sky.rgb, 1.0);
+          #include <tonemapping_fragment>
+          #include <colorspace_fragment>
+        }
+      `,
+      side: BackSide,
+      depthWrite: false,
+    });
+    return { target, holder, sky, rig, viewGeometry, viewMaterial };
+  }, []);
+
+  useEffect(
+    () => () => {
+      environmentState.skyDomeTexture = null;
+      dome.viewMaterial.dispose();
+      dome.viewGeometry.dispose();
+      dome.target.dispose();
+    },
+    [dome],
+  );
   /** Elevation the measurement below was last taken at, in degrees. */
   const measuredAt = useRef(Number.NaN);
   /** How much of the sun the deck is holding back, damped across frames. */
@@ -301,7 +417,20 @@ export function DayNightCycle({
       skyRef.current.renderOrder = 1000;
       skyRef.current.position.set(worldCenter?.[0] ?? 0, 0, worldCenter?.[1] ?? 0);
     }
-  }, [worldCenter]);
+    if (domeViewRef.current) {
+      domeViewRef.current.renderOrder = 1000;
+      domeViewRef.current.position.set(
+        worldCenter?.[0] ?? 0,
+        0,
+        worldCenter?.[1] ?? 0,
+      );
+      dome.viewMaterial.uniforms.uDomeCenter.value.set(
+        worldCenter?.[0] ?? 0,
+        0,
+        worldCenter?.[1] ?? 0,
+      );
+    }
+  }, [dome, worldCenter]);
 
   // DirectionalLight.target is a separate Object3D — three only aims the
   // shadow camera if that target lives in the scene graph.
@@ -326,6 +455,44 @@ export function DayNightCycle({
     clouds.current?.setWeather(weather);
     clouds.current?.setHaze(skyHaze(theme, cinematic));
   }, [cinematic, theme, weather]);
+
+  /**
+   * Одна грань купола за кадр. Марш — всегда на авторском максимуме: это
+   * амортизация, а не спуск качества; сколько бы губернатор ни срезал живой
+   * марш, кэшированное небо остаётся полным. Радианс печатается scene-linear
+   * (tonemapping выключен), чтобы выборка из купола прошла тот же хвост
+   * конвейера, что и живой марш.
+   */
+  const renderDomeFace = (gl: WebGLRenderer, face: number) => {
+    const material = dome.sky.material;
+    // CubeCamera ориентирует свои шесть камер только в updateCoordinateSystem,
+    // который зовёт update(); при ручном рендере граней его надо позвать
+    // самим — иначе все шесть камер смотрят в одну сторону, и купол
+    // становится шестью копиями одного вида.
+    if (dome.rig.coordinateSystem !== gl.coordinateSystem) {
+      dome.rig.coordinateSystem = gl.coordinateSystem;
+      dome.rig.updateCoordinateSystem();
+    }
+    const previousToneMapping = gl.toneMapping;
+    const previousTarget = gl.getRenderTarget();
+    const previousXr = gl.xr.enabled;
+    const previousShadowUpdate = gl.shadowMap.needsUpdate;
+    gl.toneMapping = NoToneMapping;
+    gl.xr.enabled = false;
+    gl.shadowMap.needsUpdate = false;
+    setSkyMarchQuality(material, 2);
+    gl.setRenderTarget(dome.target, face);
+    if (gl.autoClear === false) gl.clear();
+    gl.render(dome.holder, dome.rig.children[face] as PerspectiveCamera);
+    gl.setRenderTarget(previousTarget);
+    gl.toneMapping = previousToneMapping;
+    gl.xr.enabled = previousXr;
+    gl.shadowMap.needsUpdate = previousShadowUpdate;
+    setSkyMarchQuality(
+      material,
+      performanceGovernor.getSnapshot().gpuQuality,
+    );
+  };
 
   // A cinematic replay can begin while the previous run is still at night.
   // Snap before the first rendered frame so recording never captures that
@@ -624,6 +791,72 @@ export function DayNightCycle({
       environmentState.cloudDrift[0] = driftX;
       environmentState.cloudDrift[1] = driftZ;
     }
+
+    // ---- АМОРТИЗИРОВАННЫЙ КУПОЛ -----------------------------------------
+    // Пока солнце стоит (а в обычной игре оно стоит всегда), небо маршируется
+    // в кубокарту по одной грани за кадр, и весь кадр — включая служебные
+    // проходы воды — читает её одной выборкой. Движущееся солнце возвращает
+    // живой марш: кэш с шестикадровой развёрткой показал бы диск, скачущий
+    // между гранями.
+    const skyMesh = skyRef.current;
+    const domeMesh = domeViewRef.current;
+    if (skyMesh && domeMesh) {
+      const state = domeState.current;
+      if (!SKY_DOME_CACHE_ENABLED || sunIsMoving) {
+        state.completed = false;
+        state.cursor = 0;
+        state.cleanCycles = 0;
+        environmentState.skyDomeTexture = null;
+        skyMesh.visible = true;
+        domeMesh.visible = false;
+      } else {
+        const bucket = sunDirectionBucket(
+          environmentState.sunDirection.x,
+          environmentState.sunDirection.y,
+          environmentState.sunDirection.z,
+        );
+        if (state.bucket !== bucket) {
+          // Свет сдвинулся без «движения» (дрожание у порога бакета):
+          // купол не сбрасывается с экрана, но перекрашивается заново.
+          state.cleanCycles = 0;
+        }
+        // Пока купол не устоялся (DOME_SETTLE_CYCLES чистых оборотов после
+        // любой инвалидации) — красить обязательно; дальше — только миры с
+        // дрейфующей палубой.
+        const repaint =
+          state.cleanCycles < DOME_SETTLE_CYCLES ||
+          domeNeedsContinuousRepaint(weather.coverage);
+        if (repaint) {
+          // Спуск оси — темп перекраски, а не качество грани: грань всегда
+          // авторский максимум, страйд лишь растягивает оборот.
+          const stride =
+            DOME_REPAINT_STRIDES[performanceGovernor.getSnapshot().gpuQuality];
+          state.frameParity = (state.frameParity + 1) % stride;
+          if (state.frameParity === 0) {
+            renderDomeFace(frameState.gl, state.cursor);
+            state.cursor = (state.cursor + 1) % DOME_FACE_COUNT;
+            if (state.cursor === 0) {
+              // Версия растёт только на смене света: непрерывная перекраска
+              // дрейфующей палубы не должна дёргать ambient-переблюр каждые
+              // шесть кадров.
+              if (!state.completed || state.bucket !== bucket) {
+                environmentState.skyDomeVersion += 1;
+              }
+              if (state.bucket === bucket) {
+                state.cleanCycles += 1;
+              }
+              state.completed = true;
+              state.bucket = bucket;
+              environmentState.skyDomeTexture = dome.target.texture;
+            }
+          }
+        }
+        // Живой марш остаётся на экране, пока первый полный оборот не готов:
+        // полкупола из кэша и полкупола марша — это шов, а не амортизация.
+        skyMesh.visible = !state.completed;
+        domeMesh.visible = state.completed;
+      }
+    }
   });
 
   return (
@@ -668,6 +901,19 @@ export function DayNightCycle({
           skyRadius ?? Math.max(fortress ? 170 : 110, (worldRadius ?? 58) * 2.6),
         )}
         sunPosition={[24, 12, 14]}
+      />
+      {/* Кэшированный купол — тот же радиус и центр, что у живого Sky выше;
+          между ними переключает кадровая логика DayNightCycle. */}
+      <mesh
+        ref={domeViewRef}
+        geometry={dome.viewGeometry}
+        material={dome.viewMaterial}
+        scale={Math.min(
+          cameraFar * 0.92,
+          skyRadius ?? Math.max(fortress ? 170 : 110, (worldRadius ?? 58) * 2.6),
+        )}
+        frustumCulled={false}
+        visible={false}
       />
       <hemisphereLight
         ref={hemisphere}

@@ -1,4 +1,4 @@
-import { Color, Vector3 } from "three";
+import { Color, Vector3, type CubeTexture } from "three";
 
 /**
  * Frame-coherent environment state. Written once per frame by DayNightCycle,
@@ -53,6 +53,17 @@ export interface EnvironmentState {
   readonly groundLight: Color;
   /** Magnitude of that light, 1 at a clear midday. */
   groundLightLevel: number;
+  /**
+   * Кубокарта амортизированного купола неба (skyDomeModel.ts). null — купол
+   * не готов (солнце движется или кэш выключен): ambient печётся живым маршем,
+   * как раньше. Не-null всегда указывает на ПОЛНОСТЬЮ перекрашенный купол.
+   */
+  skyDomeTexture: CubeTexture | null;
+  /**
+   * Растёт на смене освещения готового купола — сигнал ambient-перепечке,
+   * что кубокарту стоит переблюрить, не дожидаясь смены солнечного бакета.
+   */
+  skyDomeVersion: number;
 }
 
 export const environmentState: EnvironmentState = {
@@ -69,4 +80,6 @@ export const environmentState: EnvironmentState = {
   sunOcclusion: 0,
   groundLight: new Color("#ffffff"),
   groundLightLevel: 1,
+  skyDomeTexture: null,
+  skyDomeVersion: 0,
 };
