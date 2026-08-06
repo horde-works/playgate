@@ -10078,6 +10078,7 @@ const SECONDS_BEFORE_REVERSAL = 25;
 function AdaptiveRenderScale({
   compact,
   manualLevel = null,
+  onDprChange,
 }: {
   compact: boolean;
   /**
@@ -10086,17 +10087,21 @@ function AdaptiveRenderScale({
    * голосование, но страж буфера и пересчёт на ресайз работают одинаково.
    */
   manualLevel?: number | null;
+  /**
+   * Выбранный DPR поднимается в корень и возвращается пропом dpr на Canvas —
+   * ШТАТНЫЙ путь r3f, работающий во всех браузерах. Прямые вызовы gl ниже
+   * дают мгновенность в том же кадре; проп закрывает движки, где прямой
+   * путь капризничает (Safari), и заканчивает войну со стором: configure()
+   * теперь переприкладывает НАШЕ значение, а не дефолт [1,2].
+   */
+  onDprChange?: (dpr: number) => void;
 }) {
   const gl = useThree((state) => state.gl);
   const size = useThree((state) => state.size);
-  // Стор r3f НЕ трогаем: configure() Canvas переприкладывает dpr-проп (и его
-  // дефолт [1,2]) при каждом ре-рендере и затирает setDpr — замерено: стор
-  // 0.62, буфер полноразмерный. Буфером владеет эта лестница напрямую через
-  // gl; читатели фактического DPR (LOD листвы, HUD) берут его из
-  // performanceGovernor. updateStyle=false — CSS-размер не трогаем.
   const applyDpr = (next: number) => {
     gl.setPixelRatio(next);
     gl.setSize(size.width, size.height, false);
+    onDprChange?.(next);
   };
   const elapsed = useRef(0);
   const frames = useRef(0);
@@ -12027,6 +12032,9 @@ export function MakeAMessGame({
     applyGraphicsSettings(graphicsSettings);
     saveGraphicsSettings(graphicsSettings);
   }, [graphicsSettings]);
+  // Фактический DPR лестницы; возвращается пропом на Canvas — штатный путь
+  // r3f применения разрешения, единый для всех браузеров.
+  const [appliedDpr, setAppliedDpr] = useState(1);
   const [dynamicBodyCount, setDynamicBodyCount] = useState(0);
   const [performance, setPerformance] = useState<PerformanceSnapshot>(() =>
     performanceGovernor.getSnapshot(),
@@ -12948,12 +12956,13 @@ export function MakeAMessGame({
             <Canvas
               className="game-canvas"
               shadows="percentage"
-              // DPR-пропа здесь НЕТ намеренно: r3f переприкладывает проп при
-              // каждом ре-рендере Canvas и затирает setDpr лестницы (замерено:
-              // стор 0.62, буфер полноразмерный). Разрешением владеет
-              // AdaptiveRenderScale: кап пиксельного бюджета + лестница по
-              // нагрузке; серый кадр смены DPR закрыт покадровой сверкой
-              // размера конвейера (syncPipelineSize).
+              // DPR-проп — ЗЕРКАЛО решения AdaptiveRenderScale (никогда не
+              // константа: configure() r3f переприкладывает проп при каждом
+              // ре-рендере, и константа затирала бы лестницу — замерено: стор
+              // 0.62, буфер полноразмерный). Так r3f применяет разрешение
+              // своим штатным путём во всех браузерах; серый кадр смены DPR
+              // закрыт покадровой сверкой конвейера (syncPipelineSize).
+              dpr={appliedDpr}
               camera={{
                 position: [
                   scene.playerSpawn[0],
@@ -13078,6 +13087,7 @@ export function MakeAMessGame({
                       ? null
                       : graphicsSettings.renderScaleLevel
                   }
+                  onDprChange={setAppliedDpr}
                 />
                 <CinematicPostProcessing
                   compact={fallbackLook}
