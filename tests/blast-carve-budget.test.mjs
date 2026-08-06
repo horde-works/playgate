@@ -125,3 +125,119 @@ test("the direct-hit target is always carved even when overweight", () => {
   );
   assert.equal(selected.length, 1);
 });
+
+// ---------------------------------------------------------------------------
+// Польдер: земляные колонны глубиной 8.8-13 м против закона, калиброванного
+// на плиту 6×0.9×6. Два дефекта августа 2026 (вердикт Igor по игре):
+// воронка съедала весь план ячейки кубами по 0.8 м, а дернина проигрывала
+// грунтовый срез бюджета колоннам — земля выбрана, оболочка цела.
+
+const POLDER_EARTH = { material: "earth", size: [2.04, 8.84, 2.04] };
+const POLDER_TURF = {
+  material: "grass",
+  size: [2.04, 0.36, 2.04],
+  landscapeSurface: "dutch-polder-ground",
+};
+
+test("грунт режется жертвенным слоем: решётка колонны — авторская, не бюджетная", async () => {
+  const { GROUND_CARVE_DEPTH } = await import(
+    "../games/make-a-mess/src/game/destructionRuntime.ts"
+  );
+  // Слой конечен и мельче любой колонны польдера.
+  assert.equal(GROUND_CARVE_DEPTH <= 1.5, true);
+
+  // Тело слоя на грунтовом бюджете держит клетку у авторской (0.16), а не
+  // огрубляется колонной: до слоя 2-метровая ячейка давала клетку 0.34 м.
+  const layerBody = createSolidVoxelBody(
+    [POLDER_EARTH.size[0], GROUND_CARVE_DEPTH, POLDER_EARTH.size[2]],
+    0.16,
+    carveVoxelBudget("earth"),
+  );
+  assert.equal(
+    Math.max(...layerBody.cellSize) <= 0.2,
+    true,
+    `клетка слоя ${Math.max(...layerBody.cellSize)} — колонна снова огрубила решётку`,
+  );
+
+  // Цена колонны считается слоем: глубина под ним бюджет не ест.
+  assert.equal(
+    carveWorkUnits("earth", POLDER_EARTH.size),
+    carveWorkUnits("earth", [
+      POLDER_EARTH.size[0],
+      GROUND_CARVE_DEPTH,
+      POLDER_EARTH.size[2],
+    ]),
+  );
+});
+
+test("жертвенная дернина — обычная цель, а не жилец грунтового среза", () => {
+  // До правки: две колонны съедали 2400 из 3000 грунтового среза, и третий
+  // дерновый quad уже не влезал — вся оболочка над воронкой оставалась целой.
+  const targets = [
+    { source: POLDER_EARTH },
+    { source: POLDER_EARTH },
+    ...Array.from({ length: 7 }, () => ({ source: POLDER_TURF })),
+  ];
+  const selected = selectCarveTargetsWithinBudget(
+    targets,
+    (entry) => entry.source,
+    ROCKET_BUDGET,
+  );
+  const turfSelected = selected.filter(
+    (entry) => entry.source === POLDER_TURF,
+  ).length;
+  assert.equal(
+    turfSelected,
+    7,
+    `дернина вытеснена из бюджета (${turfSelected}/7) — оболочка не откроется`,
+  );
+  // Массивный грунт остаётся на своём срезе и не вытесняет настоящие цели.
+  assert.equal(
+    selected.filter((entry) => entry.source === POLDER_EARTH).length,
+    2,
+  );
+});
+
+test("carve колонны оставляет цельный плинтус и не копает глубже слоя", async () => {
+  const { damageBody, GROUND_CARVE_DEPTH } = await import(
+    "../games/make-a-mess/src/game/destructionRuntime.ts"
+  );
+  const three = await import("three");
+  const source = {
+    id: "polder-earth-test",
+    material: "earth",
+    size: POLDER_EARTH.size,
+    volume:
+      POLDER_EARTH.size[0] * POLDER_EARTH.size[1] * POLDER_EARTH.size[2],
+  };
+  const state = {
+    position: new three.Vector3(0, 0, 0),
+    quaternion: new three.Quaternion(),
+    linearVelocity: new three.Vector3(),
+    angularVelocity: new three.Vector3(),
+  };
+  // Удар в верхнюю грань колонны — как ракета в поверхность луга.
+  const result = damageBody(source, state, {
+    worldPoint: new three.Vector3(0.2, POLDER_EARTH.size[1] / 2, 0.1),
+    radius: 1.05,
+    idPrefix: "test:polder-earth",
+    burstSpeed: 6,
+  });
+  assert.notEqual(result, null, "carve колонны не состоялся");
+  // Плинтус: цельный остаток почти всей глубины колонны.
+  const plinth = result.fragments.find(
+    (fragment) =>
+      fragment.size[1] >= POLDER_EARTH.size[1] - GROUND_CARVE_DEPTH - 0.1,
+  );
+  assert.notEqual(
+    plinth,
+    undefined,
+    "цельный плинтус под жертвенным слоем не сохранился",
+  );
+  // Воронка не выедает объём глубже слоя.
+  assert.equal(
+    result.removedVolume <= POLDER_EARTH.size[0] * POLDER_EARTH.size[2] * GROUND_CARVE_DEPTH,
+    true,
+    `снято ${result.removedVolume} м³ — глубже жертвенного слоя`,
+  );
+});

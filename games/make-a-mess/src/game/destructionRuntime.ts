@@ -708,6 +708,18 @@ const voxelSizeByMaterial: Record<BreakableMaterial, number> = {
 // поэтому у грунта свой, маленький воксельный потолок.
 const GROUND_CARVE_MAX_VOXELS = 1_200;
 
+/**
+ * Жертвенный слой грунта: воксельное тело carve строится по верхним полутора
+ * метрам, плинтус ниже остаётся цельной коробкой обрубка. Закон родился на
+ * польдере: его земляные колонны глубиной 8.8–13 м (571 м³ против 32 м³
+ * городской плиты, под которую калиброван воксельный потолок) огрубляли
+ * решётку до 0.34–0.8 м — ракетная воронка съедала весь план ячейки насквозь
+ * кубами по 0.8 м. Замеренная воронка глубже 1.18 м не идёт; вердикт Igor —
+ * глубже копать и не нужно. Слой держит решётку у авторской (0.16–0.27 м)
+ * на любой глубине колонны.
+ */
+export const GROUND_CARVE_DEPTH = 1.5;
+
 export function carveVoxelBudget(material: BreakableMaterial): number {
   return groundMaterials.has(material)
     ? GROUND_CARVE_MAX_VOXELS
@@ -865,9 +877,14 @@ export function carveWorkUnits(
   size: readonly [number, number, number],
 ): number {
   const cell = voxelSizeByMaterial[material];
+  // Грунт режется жертвенным слоем — и стоит слоем: глубина колонны под ним
+  // в цене не участвует (см. GROUND_CARVE_DEPTH).
+  const height = groundMaterials.has(material)
+    ? Math.min(size[1], GROUND_CARVE_DEPTH)
+    : size[1];
   const estimate =
     Math.max(1, Math.min(48, Math.round(size[0] / cell))) *
-    Math.max(1, Math.min(48, Math.round(size[1] / cell))) *
+    Math.max(1, Math.min(48, Math.round(height / cell))) *
     Math.max(1, Math.min(48, Math.round(size[2] / cell)));
   return Math.min(estimate, carveVoxelBudget(material));
 }
@@ -894,6 +911,7 @@ export function selectCarveTargetsWithinBudget<T>(
   sourceOf: (target: T) => {
     readonly material: BreakableMaterial;
     readonly size: readonly [number, number, number];
+    readonly landscapeSurface?: LandscapeSurfaceProfile;
   },
   budget: CarveWorkBudget,
 ): T[] {
@@ -907,7 +925,12 @@ export function selectCarveTargetsWithinBudget<T>(
     }
     const source = sourceOf(target);
     const work = carveWorkUnits(source.material, source.size);
-    if (groundMaterials.has(source.material)) {
+    // Грунтовый срез — для МАССИВНОГО грунта (он всегда ближе всех к
+    // эпицентру и вытесняет настоящие цели). Жертвенная дернина польдера —
+    // обычная цель обычной цены: раньше она делила срез с 571-кубовыми
+    // земляными колоннами и в 35% попаданий проигрывала его целиком —
+    // земля под оболочкой выбрана, оболочка цела.
+    if (groundCarveRequiresRemnant(source)) {
       if (groundWorkSpent + work > budget.groundWorkBudget) {
         continue;
       }
@@ -1309,10 +1332,45 @@ function carveBoxCuts(
   options: CarveOptions = {},
 ): CarveResult | null {
   const material = options.material ?? "brick";
+  // Жертвенный слой грунта (GROUND_CARVE_DEPTH): воксельное тело строится по
+  // окну высотой ≤ 1.5 м вокруг точек удара, остальная колонна остаётся
+  // цельными плинтусами-обрубками (ниже окна — всегда; выше — когда удар
+  // пришёл в бок колонны, например в стенку канала). Решётка окна — почти
+  // авторская клетка материала вместо огрублённой бюджетом колонны.
+  const half = size[1] / 2;
+  const groundLayer =
+    !options.body &&
+    groundMaterials.has(material) &&
+    size[1] > GROUND_CARVE_DEPTH + 0.25;
+  let carveSize = size;
+  let carveOffsetY = 0;
+  const plinths: RemnantSpec[] = [];
+  if (groundLayer) {
+    let highestCut = -half;
+    for (const cut of cuts) {
+      highestCut = Math.max(highestCut, Math.min(half, cut.point.y));
+    }
+    const top = Math.min(half, highestCut + GROUND_CARVE_DEPTH / 2);
+    const bottom = Math.max(-half, top - GROUND_CARVE_DEPTH);
+    carveSize = [size[0], top - bottom, size[2]];
+    carveOffsetY = (top + bottom) / 2;
+    for (const [from, to] of [
+      [-half, bottom],
+      [top, half],
+    ] as const) {
+      if (to - from > 0.05) {
+        plinths.push({
+          size: [size[0], to - from, size[2]],
+          localCenter: [0, (from + to) / 2, 0],
+          volume: size[0] * size[2] * (to - from),
+        });
+      }
+    }
+  }
   let body =
     options.body ??
     createSolidVoxelBody(
-      size,
+      carveSize,
       voxelSizeByMaterial[material],
       carveVoxelBudget(material),
     );
@@ -1325,7 +1383,7 @@ function carveBoxCuts(
   for (const cut of cuts) {
     if (cut.radius < voxelSizeByMaterial[material] * 0.5) continue;
     const result = applyVoxelDamage(body, {
-      point: [cut.point.x, cut.point.y, cut.point.z],
+      point: [cut.point.x, cut.point.y - carveOffsetY, cut.point.z],
       radius: cut.radius,
       seed: cut.salt,
       roughness: cut.roughness ?? options.roughness ?? 0.26,
@@ -1351,7 +1409,12 @@ function carveBoxCuts(
       const localComponent = splitVoxelComponents(extracted.body)[0];
       return {
         size: extracted.body.size,
-        localCenter: extracted.localCenter,
+        // Остаток слоя возвращается из системы окна в систему целого куска.
+        localCenter: [
+          extracted.localCenter[0],
+          extracted.localCenter[1] + carveOffsetY,
+          extracted.localCenter[2],
+        ],
         voxelBody: extracted.body,
         boxes: localComponent?.boxes ?? [],
         volume: component.volume,
@@ -1359,7 +1422,7 @@ function carveBoxCuts(
     });
 
   return {
-    kept,
+    kept: plinths.length > 0 ? [...kept, ...plinths] : kept,
     removedVolume,
   };
 }
@@ -1677,11 +1740,20 @@ export function impactDamageRadius(
   cause: FractureCause,
   strength: number,
 ): number {
+  // Fallback-тело обязано жить на ТОЙ ЖЕ сетке, которой потом реально режут:
+  // бюджет материала и жертвенный слой грунта (carveBoxCuts), иначе
+  // minimumRadius считается по другой решётке.
+  const fallbackSize: readonly [number, number, number] =
+    groundMaterials.has(source.material) &&
+    source.size[1] > GROUND_CARVE_DEPTH + 0.25
+      ? [source.size[0], GROUND_CARVE_DEPTH, source.size[2]]
+      : source.size;
   const body =
     source.voxelBody ??
     createSolidVoxelBody(
-      source.size,
+      fallbackSize,
       voxelSizeByMaterial[source.material],
+      carveVoxelBudget(source.material),
     );
   const orderedAxes = ([0, 1, 2] as const).toSorted(
     (left, right) => source.size[right] - source.size[left],
