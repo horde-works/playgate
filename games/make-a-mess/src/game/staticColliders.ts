@@ -12,6 +12,28 @@ export interface StaticColliderMeshDefinition {
   readonly pieceCount: number;
 }
 
+/**
+ * Пробитый кусок сталкивается своей ПОДРЕЗАННОЙ сеткой. Формат — тот же
+ * unit-space, что у авторского visualMesh (это выход clipPieceVisualMesh);
+ * revision растёт с каждым новым кратером и участвует в ключе кеша чанка.
+ * Вердикт Igor (август 2026): дыра, сквозь которую видно, обязана
+ * простреливаться и проходиться — пуля (Rapier-луч) и капсула игрока живут
+ * на этих тримешах, и авторская сетка без дыры делала пробоину «невидимой
+ * стеной».
+ */
+export interface StaticColliderCraterOverride {
+  readonly vertices: readonly (readonly [number, number, number])[];
+  readonly indices: readonly number[];
+  readonly revision: string;
+}
+
+export type StaticColliderCraterOverrides = ReadonlyMap<
+  string,
+  StaticColliderCraterOverride
+>;
+
+const EMPTY_CRATER_OVERRIDES: StaticColliderCraterOverrides = new Map();
+
 const STATIC_COLLIDER_CHUNK_SIZE = 24;
 const MAX_CACHED_MESHES = 512;
 const meshCache = new Map<string, StaticColliderMeshDefinition>();
@@ -113,10 +135,16 @@ const sphereIndices: readonly number[] = (() => {
   return indices;
 })();
 
-function pieceColliderTemplate(piece: BreakablePieceDefinition): {
+function pieceColliderTemplate(
+  piece: BreakablePieceDefinition,
+  craterOverride?: StaticColliderCraterOverride,
+): {
   readonly corners: readonly (readonly [number, number, number])[];
   readonly indices: readonly number[];
 } {
+  if (craterOverride) {
+    return { corners: craterOverride.vertices, indices: craterOverride.indices };
+  }
   return piece.visualMesh
     ? { corners: piece.visualMesh.vertices, indices: piece.visualMesh.indices }
     : piece.shape === "sphere"
@@ -187,8 +215,18 @@ function cacheMesh(
 function buildChunkMesh(
   id: string,
   pieces: readonly BreakablePieceDefinition[],
+  craterOverrides: StaticColliderCraterOverrides = EMPTY_CRATER_OVERRIDES,
 ): StaticColliderMeshDefinition {
-  const cacheKey = `${id}:${pieceSetHash(pieces)}`;
+  // Кратеры — часть личности чанка: новая пробоина обязана дать новый меш,
+  // а кеш прежнего (до пробоины) остаётся валиден для отката/переиспользования.
+  let craterToken = "";
+  if (craterOverrides.size > 0) {
+    for (const piece of pieces) {
+      const override = craterOverrides.get(piece.id);
+      if (override) craterToken += `|${piece.id}#${override.revision}`;
+    }
+  }
+  const cacheKey = `${id}:${pieceSetHash(pieces)}${craterToken}`;
   const cached = meshCache.get(cacheKey);
   if (cached) {
     meshCache.delete(cacheKey);
@@ -196,12 +234,14 @@ function buildChunkMesh(
     return cached;
   }
 
+  const templateOf = (piece: BreakablePieceDefinition) =>
+    pieceColliderTemplate(piece, craterOverrides.get(piece.id));
   const totalVertices = pieces.reduce(
-    (sum, piece) => sum + pieceColliderTemplate(piece).corners.length,
+    (sum, piece) => sum + templateOf(piece).corners.length,
     0,
   );
   const totalIndices = pieces.reduce(
-    (sum, piece) => sum + pieceColliderTemplate(piece).indices.length,
+    (sum, piece) => sum + templateOf(piece).indices.length,
     0,
   );
   const vertices = new Float32Array(totalVertices * 3);
@@ -216,7 +256,7 @@ function buildChunkMesh(
   let indexOffset = 0;
 
   pieces.forEach((piece) => {
-    const template = pieceColliderTemplate(piece);
+    const template = templateOf(piece);
     position.set(...piece.position);
     rotation.set(
       piece.rotation?.[0] ?? 0,
@@ -284,6 +324,14 @@ export interface StaticColliderMeshStore {
   updateHidden(
     hiddenPieceIds: ReadonlySet<string>,
   ): readonly StaticColliderMeshDefinition[];
+  /**
+   * Скрытые куски + пробоины разом: чанк перестраивается, когда меняется
+   * его состав ИЛИ ревизия кратеров любого его куска.
+   */
+  update(
+    hiddenPieceIds: ReadonlySet<string>,
+    craterOverrides: StaticColliderCraterOverrides,
+  ): readonly StaticColliderMeshDefinition[];
 }
 
 /**
@@ -316,44 +364,67 @@ export function createStaticColliderMeshStore(
     chunkOrder.map((id) => [id, buildChunkMesh(id, chunks.get(id) ?? [])]),
   );
   let appliedHidden = new Set<string>();
+  let appliedCraters: StaticColliderCraterOverrides = EMPTY_CRATER_OVERRIDES;
   let result: readonly StaticColliderMeshDefinition[] = chunkOrder
     .map((id) => meshes.get(id))
     .filter((mesh): mesh is StaticColliderMeshDefinition => Boolean(mesh));
 
-  return {
-    updateHidden(hiddenPieceIds) {
-      const dirtyChunks = new Set<string>();
-      for (const pieceId of hiddenPieceIds) {
-        if (!appliedHidden.has(pieceId)) {
-          const key = pieceChunk.get(pieceId);
-          if (key) dirtyChunks.add(key);
-        }
+  const update = (
+    hiddenPieceIds: ReadonlySet<string>,
+    craterOverrides: StaticColliderCraterOverrides,
+  ): readonly StaticColliderMeshDefinition[] => {
+    const dirtyChunks = new Set<string>();
+    for (const pieceId of hiddenPieceIds) {
+      if (!appliedHidden.has(pieceId)) {
+        const key = pieceChunk.get(pieceId);
+        if (key) dirtyChunks.add(key);
       }
-      for (const pieceId of appliedHidden) {
-        if (!hiddenPieceIds.has(pieceId)) {
-          const key = pieceChunk.get(pieceId);
-          if (key) dirtyChunks.add(key);
-        }
+    }
+    for (const pieceId of appliedHidden) {
+      if (!hiddenPieceIds.has(pieceId)) {
+        const key = pieceChunk.get(pieceId);
+        if (key) dirtyChunks.add(key);
       }
-      appliedHidden = new Set(hiddenPieceIds);
-      if (dirtyChunks.size === 0) {
-        return result;
+    }
+    // Пробоины: чанк грязный, если у куска появился/сменился/ушёл кратер.
+    for (const [pieceId, override] of craterOverrides) {
+      if (appliedCraters.get(pieceId)?.revision !== override.revision) {
+        const key = pieceChunk.get(pieceId);
+        if (key) dirtyChunks.add(key);
       }
-
-      dirtyChunks.forEach((id) => {
-        const visiblePieces = (chunks.get(id) ?? []).filter(
-          (piece) => !hiddenPieceIds.has(piece.id),
-        );
-        if (visiblePieces.length === 0) {
-          meshes.delete(id);
-        } else {
-          meshes.set(id, buildChunkMesh(id, visiblePieces));
-        }
-      });
-      result = chunkOrder
-        .map((id) => meshes.get(id))
-        .filter((mesh): mesh is StaticColliderMeshDefinition => Boolean(mesh));
+    }
+    for (const pieceId of appliedCraters.keys()) {
+      if (!craterOverrides.has(pieceId)) {
+        const key = pieceChunk.get(pieceId);
+        if (key) dirtyChunks.add(key);
+      }
+    }
+    appliedHidden = new Set(hiddenPieceIds);
+    appliedCraters = craterOverrides;
+    if (dirtyChunks.size === 0) {
       return result;
+    }
+
+    dirtyChunks.forEach((id) => {
+      const visiblePieces = (chunks.get(id) ?? []).filter(
+        (piece) => !hiddenPieceIds.has(piece.id),
+      );
+      if (visiblePieces.length === 0) {
+        meshes.delete(id);
+      } else {
+        meshes.set(id, buildChunkMesh(id, visiblePieces, craterOverrides));
+      }
+    });
+    result = chunkOrder
+      .map((id) => meshes.get(id))
+      .filter((mesh): mesh is StaticColliderMeshDefinition => Boolean(mesh));
+    return result;
+  };
+
+  return {
+    update,
+    updateHidden(hiddenPieceIds) {
+      return update(hiddenPieceIds, appliedCraters);
     },
   };
 }

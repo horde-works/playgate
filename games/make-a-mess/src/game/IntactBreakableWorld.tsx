@@ -51,6 +51,8 @@ import {
 } from "./worldLightingBake";
 import {
   createStaticColliderMeshStore,
+  type StaticColliderCraterOverride,
+  type StaticColliderCraterOverrides,
   type StaticColliderMeshDefinition,
 } from "./staticColliders";
 import { TreeVisuals } from "./TreeVisuals";
@@ -514,24 +516,46 @@ const StaticColliderMesh = memo(function StaticColliderMesh({
 const IntactPieceColliders = memo(function IntactPieceColliders({
   pieces,
   hiddenPieceIds,
+  crateredMeshes = EMPTY_CRATERED_MESHES,
 }: {
   pieces: readonly BreakablePieceDefinition[];
   hiddenPieceIds: ReadonlySet<string>;
+  crateredMeshes?: ReadonlyMap<
+    string,
+    NonNullable<BreakablePieceDefinition["visualMesh"]>
+  >;
 }) {
   const meshStore = useMemo(
     () => createStaticColliderMeshStore(pieces),
     [pieces],
   );
+  // Пробитый кусок сталкивается подрезанной сеткой: пуля (Rapier-луч) и
+  // капсула игрока проходят в дыру честно. Ревизия — размеры сетки: каждый
+  // новый кратер дробит новые треугольники, и счётчики растут.
+  const craterOverrides = useMemo(() => {
+    if (crateredMeshes.size === 0) {
+      return new Map() as StaticColliderCraterOverrides;
+    }
+    const next = new Map<string, StaticColliderCraterOverride>();
+    for (const [pieceId, mesh] of crateredMeshes) {
+      next.set(pieceId, {
+        vertices: mesh.vertices,
+        indices: mesh.indices,
+        revision: `${mesh.vertices.length}:${mesh.indices.length}`,
+      });
+    }
+    return next as StaticColliderCraterOverrides;
+  }, [crateredMeshes]);
   const meshes = useMemo(() => {
     const startedAt = performance.now();
-    const next = meshStore.updateHidden(hiddenPieceIds);
+    const next = meshStore.update(hiddenPieceIds, craterOverrides);
     markActiveShotPerformance(
       "static_collider_mesh_diff",
       performance.now() - startedAt,
       { meshCount: next.length, hiddenPieceCount: hiddenPieceIds.size },
     );
     return next;
-  }, [hiddenPieceIds, meshStore]);
+  }, [craterOverrides, hiddenPieceIds, meshStore]);
 
   return (
     <RigidBody type="fixed" colliders={false}>
@@ -618,8 +642,11 @@ export const IntactBreakableWorld = memo(function IntactBreakableWorld({
     [crateredMeshes, genericRenderPieces, mutablePieceIds],
   );
   // Целый инстанс пробитого куска гасится в его прежнем батче — но ТОЛЬКО там.
-  // Ни свет, ни коллайдер об этом знать не должны: кусок никуда не делся, у
-  // него лишь дыра, и запекание не имеет права пропускать через него небо.
+  // Свет об этом знать не должен: кусок никуда не делся, у него лишь дыра, и
+  // запекание не имеет права пропускать через него небо. А вот КОЛЛАЙДЕР
+  // обязан знать (вердикт Igor, август 2026): дыра, сквозь которую видно,
+  // простреливается и проходится — IntactPieceColliders строит тримеш куска
+  // из той же подрезанной сетки, что и рендер.
   const hiddenForBatches = useMemo(() => {
     if (crateredMeshes.size === 0) {
       return hiddenPieceIds;
@@ -670,6 +697,7 @@ export const IntactBreakableWorld = memo(function IntactBreakableWorld({
       <IntactPieceColliders
         pieces={pieces}
         hiddenPieceIds={hiddenPieceIds}
+        crateredMeshes={crateredMeshes}
       />
     </>
   );

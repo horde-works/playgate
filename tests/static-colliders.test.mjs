@@ -148,3 +148,60 @@ test("a body covered by a separate intact landscape shell is not boxed twice", (
   const store = createStaticColliderMeshStore([hiddenBody]);
   assert.deepEqual(store.updateHidden(new Set()), []);
 });
+
+test("пробоина меняет коллайдер куска: дыра простреливается и проходится", () => {
+  // Вердикт Igor (август 2026): кратер жил только в рендере, а тримеш
+  // коллайдера оставался авторским — дыра, сквозь которую видно, была
+  // невидимой стеной для пули (Rapier-луч) и капсулы игрока.
+  const shell = {
+    id: "mill:smock:panel",
+    material: "plaster",
+    position: [4, 2, -3],
+    size: [2, 3, 0.3],
+    visualMesh: {
+      vertices: [
+        [-0.5, -0.5, 0],
+        [0.5, -0.5, 0],
+        [0.5, 0.5, 0],
+        [-0.5, 0.5, 0],
+      ],
+      indices: [0, 1, 2, 0, 2, 3],
+    },
+  };
+  const store = createStaticColliderMeshStore([shell]);
+  const authored = store.updateHidden(new Set())[0];
+
+  // Подрезанная кратером сетка (как отдаёт clipPieceVisualMesh): больше
+  // треугольников, дыра посередине.
+  const cratered = new Map([
+    [
+      shell.id,
+      {
+        vertices: [
+          [-0.5, -0.5, 0],
+          [0.5, -0.5, 0],
+          [0.5, 0.5, 0],
+          [-0.5, 0.5, 0],
+          [-0.1, -0.1, 0],
+          [0.1, -0.1, 0],
+          [0.1, 0.1, 0],
+          [-0.1, 0.1, 0],
+        ],
+        indices: [0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5, 2, 3, 7, 2, 7, 6, 3, 0, 4, 3, 4, 7],
+        revision: "8:24",
+      },
+    ],
+  ]);
+  const pierced = store.update(new Set(), cratered)[0];
+  assert.notStrictEqual(pierced, authored);
+  assert.equal(pierced.vertices.length, 8 * 3);
+  assert.equal(pierced.indices.length, 24);
+
+  // Та же ревизия — тот же меш (чанк не пересобирается зря).
+  const again = store.update(new Set(), cratered)[0];
+  assert.strictEqual(again, pierced);
+
+  // Кратеры ушли (кусок сломался по-настоящему) — коллайдер снова авторский.
+  const restored = store.update(new Set(), new Map())[0];
+  assert.equal(restored.vertices.length, 4 * 3);
+});
