@@ -1183,6 +1183,8 @@ function VehicleExhaustSmoke({
   const accumulators = useRef(new Float32Array(sources.length));
   const cursors = useRef(new Uint16Array(sources.length));
   const serials = useRef(new Uint32Array(sources.length));
+  /** Ни одной живой частицы: обход и заливка атрибутов спят до эмиссии. */
+  const smokeAsleep = useRef(false);
   const damageAges = useRef(new Float32Array(sources.length));
   const sourceValues = useRef(
     (geometry.getAttribute("aSource") as InstancedBufferAttribute)
@@ -1310,15 +1312,25 @@ function VehicleExhaustSmoke({
         particle.life = lifeSeconds * (0.82 + seed * 0.34);
         particle.power = power;
         particle.seed = seed;
+        smokeAsleep.current = false;
       }
     }
 
+    // Мёртвый дым не обходится и не заливается: у пришвартованной машины с
+    // целыми моторами здесь тысячи частиц с age >= life, и их обход плюс
+    // пять needsUpdate на кадр были чистым налогом на простой. Последний
+    // живой кадр дозаливает нули размеров, дальше система спит до эмиссии.
+    if (smokeAsleep.current) {
+      return;
+    }
+    let liveCount = 0;
     for (const [index, particle] of particles.current.entries()) {
       particle.age += delta;
       if (particle.age >= particle.life) {
         sizeValues.current[index] = 0;
         continue;
       }
+      liveCount += 1;
       const life = particle.age / particle.life;
       particle.velocity.x *= Math.exp(-0.18 * delta);
       particle.velocity.z *= Math.exp(-0.18 * delta);
@@ -1333,6 +1345,9 @@ function VehicleExhaustSmoke({
       sizeValues.current[index] = size;
       powerValues.current[index] = particle.power;
       seedValues.current[index] = particle.seed;
+    }
+    if (liveCount === 0) {
+      smokeAsleep.current = true;
     }
     for (const name of [
       "aSource",
@@ -2419,6 +2434,24 @@ export function VehicleFrameSystem({
   const obstacleRay = useRef<InstanceType<typeof rapier.Ray> | null>(null);
   /** Тела корабля: чтобы луч опоры не принял его же куски за землю. */
   const shipBodies = useRef<Map<string, Set<number>>>(new Map());
+  /**
+   * Ключ последней пересборки shipBodies: число тел в реестре, пока ни один
+   * кусок не сломан. Целая машина не меняет состав тел — пересборка каждый
+   * физический шаг была чистым налогом на простой (O(члены × кадры × 3 шага
+   * догона) Map-обходов на кадр). Любая поломка сбрасывает ключ в -1 и
+   * возвращает полный пересчёт с проверкой границ.
+   */
+  const shipBodiesIntactKey = useRef(-1);
+  /**
+   * Живые члены машины взаимодействия, кешированные по размерам входов:
+   * реестр только худеет, brokenPieces только растёт — размеры ловят любую
+   * перемену. Прежде Set в ~600 элементов собирался и фильтровался на
+   * КАЖДОМ физическом шаге ради подсказки у причала.
+   */
+  const launchMembersCache = useRef<{ key: string; members: Set<string> }>({
+    key: "",
+    members: new Set(),
+  });
   // Стойки собираются от измеренной массы, а масса машины меняется по ходу
   // боя. Пересобираются они не каждый шаг — только когда масса заметно уехала.
   const supportStrutBuilds = useRef<Map<string, SupportStrutBuild>>(new Map());
@@ -2582,15 +2615,25 @@ export function VehicleFrameSystem({
       const registeredLaunchMembers = clusterRegistry.current.get(
         interactionFrame.clusterId,
       )?.attachedMemberIds;
-      const launchMembers = new Set(
-        (registeredLaunchMembers
-          ? [...registeredLaunchMembers]
-          : interactionFrame.members.map((member) => member.piece.id)
-        ).filter(
-          (pieceId) =>
-            !brokenPieces.current.has(pieceId) && !inactivePieces.has(pieceId),
-        ),
-      );
+      // Ключ по размерам входов: реестр только худеет, brokenPieces только
+      // растёт. Совпал — прошлое множество верно, без пересборки на шаг.
+      const launchMembersKey = `${interactionFrame.id}:${
+        registeredLaunchMembers?.size ?? -1
+      }:${brokenPieces.current.size}:${inactivePieces.size}`;
+      if (launchMembersCache.current.key !== launchMembersKey) {
+        const next = new Set<string>();
+        for (const pieceId of registeredLaunchMembers ??
+          interactionFrame.members.map((member) => member.piece.id)) {
+          if (
+            !brokenPieces.current.has(pieceId) &&
+            !inactivePieces.has(pieceId)
+          ) {
+            next.add(pieceId);
+          }
+        }
+        launchMembersCache.current = { key: launchMembersKey, members: next };
+      }
+      const launchMembers = launchMembersCache.current.members;
       const launchPropulsionHealth = driveUsesPropulsionFeedback(
         interactionFrame.flight.driveAnimation,
       )
@@ -3046,8 +3089,21 @@ export function VehicleFrameSystem({
     // --- Тело корабля --------------------------------------------------
     // Контактный корпус кластера и его ещё не отделившиеся визуальные тела
     // принадлежат самому кораблю: сенсоры не принимают их за внешний мир.
-    shipBodies.current.clear();
-    for (const frame of frames) {
+    //
+    // Пока ни один кусок не сломан, состав тел меняется только с реестром
+    // (число тел). Совпал ключ — прошлые множества верны, пересборка не
+    // нужна; сломанное возвращает полный путь с проверкой границ.
+    const shipBodiesKey =
+      brokenPieces.current.size === 0 ? bodies.current.size : -1;
+    const shipBodiesFresh =
+      shipBodiesKey !== -1 &&
+      shipBodiesKey === shipBodiesIntactKey.current &&
+      shipBodies.current.size > 0;
+    shipBodiesIntactKey.current = shipBodiesKey;
+    if (!shipBodiesFresh) {
+      shipBodies.current.clear();
+    }
+    for (const frame of shipBodiesFresh ? [] : frames) {
       const state = frameState(frame.id);
       const ownBodies = new Set<number>();
       const runtime = clusterRegistry.current.get(frame.clusterId);
@@ -3357,12 +3413,16 @@ export function VehicleFrameSystem({
       // членов собирался заново каждый физический шаг.
       let frameBroken = 0;
       let frameDamaged = 0;
-      for (const member of frame.members) {
-        if (brokenPieces.current.has(member.piece.id)) {
-          frameBroken += 1;
-        }
-        if (damagedPieces.has(member.piece.id)) {
-          frameDamaged += 1;
+      // Пустые множества делают обход тождественным нулю — целая машина не
+      // платит O(члены) за каждый шаг догона.
+      if (brokenPieces.current.size > 0 || damagedPieces.size > 0) {
+        for (const member of frame.members) {
+          if (brokenPieces.current.has(member.piece.id)) {
+            frameBroken += 1;
+          }
+          if (damagedPieces.has(member.piece.id)) {
+            frameDamaged += 1;
+          }
         }
       }
       const frameRemnants =
