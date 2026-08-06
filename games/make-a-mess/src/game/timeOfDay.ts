@@ -43,21 +43,34 @@ export function equinoxSunDirection(
 }
 
 /**
- * Three-hour positions around the solar day. The renderer can glide between
- * them, while clocks read the same continuous value instead of maintaining a
- * second, decorative notion of time.
+ * Positions around the solar day. The renderer can glide between them, while
+ * clocks read the same continuous value instead of maintaining a second,
+ * decorative notion of time.
  *
- * Утро — исключение из трёхчасового шага: в 06:00 равноденственное солнце
- * стоит ровно на горизонте, свет идёт вскользь и мир остаётся тёмным. Час
- * спустя оно уже поднялось над крышами, поэтому фаза читается как 07:00.
+ * These are NOT an even three-hour wheel, and every exception is about an hour
+ * where the light is worth standing in.
+ *
+ * Утро: в 06:00 равноденственное солнце стоит ровно на горизонте, свет идёт
+ * вскользь и мир остаётся тёмным. Час спустя оно уже поднялось над крышами,
+ * поэтому фаза читается как 07:00.
+ *
+ * ЗАКАТ И ВЕЧЕР. At 18:00 the equinox sun sits exactly ON the horizon, and
+ * what is left of the beam there is a tenth of its noon strength: the land is
+ * a silhouette and the wheel contained no golden hour at all. 17:37 puts the
+ * sun at 3.5° over the polder, where the beam is half strength and reads
+ * (1.00, 0.40, 0.08) — raking gold, with shadows the length of the field.
+ * `evening` then takes the moment 18:00 used to hold and a little past it: at
+ * −3° the sun is down, the Belt of Venus stands behind the observer, and the
+ * cloud bases are still burning because at 680 m the light has not left yet.
+ * Its old 21:00 sat at −25.6°, which is night wearing another name.
  */
 export const TIME_OF_DAY_TARGETS: Readonly<Record<TimeOfDay, number>> = {
   dawn: 1 / 24,
   morning: 0.125,
   day: 0.25,
   afternoon: 0.375,
-  sunset: 0.5,
-  evening: 0.625,
+  sunset: 0.484,
+  evening: 0.5137,
   night: 0.75,
   predawn: 0.875,
 };

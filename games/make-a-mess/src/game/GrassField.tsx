@@ -1,7 +1,7 @@
 "use client";
 
 import { useFrame, useThree } from "@react-three/fiber";
-import { useEffect, useMemo, useRef, type RefObject } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import {
   BufferGeometry,
   Color,
@@ -957,10 +957,16 @@ function makeMarshMaterial(species: MarshSpecies): ShaderMaterial {
   });
 }
 
+/**
+ * Grazing highlight on the blade tips at its strongest. A low light rakes
+ * along a field and the tips catch it; it is scaled by the same measured
+ * ground light as everything else, so it cannot outlive what casts it.
+ */
+const GRASS_SHEEN = 0.13;
+
 export function GrassField({
   worldRadius,
   center,
-  nightRef,
   pieces,
   count = 26000,
   bladeColor = "#43602c",
@@ -973,7 +979,6 @@ export function GrassField({
 }: {
   worldRadius: number;
   center: readonly [number, number];
-  nightRef: RefObject<number>;
   pieces: readonly BreakablePieceDefinition[];
   count?: number;
   bladeColor?: string;
@@ -1612,21 +1617,29 @@ export function GrassField({
     // болотные материалы отдельно, они разойдутся с травой на первом же
     // изменении времени суток, и берег начнёт жить в другом дне, чем луг.
     const canvas = state.gl.domElement;
-    const night = nightRef.current ?? 0;
-    // Трава не освещается сценой, поэтому свет дня ей задаётся вручную — и
-    // не одной яркостью, а ЦВЕТОМ: днём белый, в сумерках тёплый, ночью
-    // холодный и тёмный. Плюс блик на кончиках, который живёт только когда
-    // светило низко, — закатный и лунный.
-    const lit = 1 - night * 0.88;
-    const dusk = Math.max(0, 1 - Math.abs(night - 0.45) / 0.4);
-    const moon = Math.max(0, (night - 0.6) / 0.4);
-    // Просвет живёт только при дневном свете и берёт ЦВЕТ солнца: закатное
-    // солнце сквозь тростник даёт янтарь, а не белый пересвет. Низкое солнце
-    // бьёт вдоль зарослей и просвечивает больше стеблей сразу, поэтому в
-    // сумерки эффект сильнее, а не слабее.
+    // Трава по-прежнему не участвует в освещении сцены — это ручные лопасти,
+    // и своя яркость им нужна. Но БЕРЁТСЯ она теперь из общего замера, а не
+    // из нарисованной кривой: `groundLightLevel` — это ровно та энергия,
+    // которую в этот же кадр получили ключ, луна и полусфера, делённая на
+    // полдень. Цвет приходит оттуда же, поэтому «днём белый, в сумерках
+    // тёплый, ночью холодный» больше нигде не записано — так выходит само.
+    //
+    // Что было, когда яркость рисовали отдельно от мира: при солнце 3.5° над
+    // горизонтом тростник стоял на ПОЛНОЙ полуденной яркости против 0.42 у
+    // остального кадра и светился белым, а на −3° трава держала 0.69 против
+    // 0.007 — стократное расхождение, поле, освещённое ничем.
+    const lit = environmentState.groundLightLevel;
+    // Просвет живёт только на ПРЯМОМ луче и берёт его цвет: закатное солнце
+    // сквозь тростник даёт янтарь, а не белый пересвет. Низкое солнце бьёт
+    // вдоль зарослей и просвечивает больше стеблей сразу, поэтому в сумерки
+    // эффект сильнее — но исчезает вместе с лучом, а не вместе с ночью.
     const sunHeight = Math.max(0, environmentState.sunDirection.y);
     const grazing = 1 + 0.9 * (1 - Math.min(1, sunHeight / 0.5));
-    const transmit = lit * environmentState.dayFactor * 0.62 * grazing;
+    const transmit = environmentState.dayFactor * 0.62 * grazing;
+    // Блик на кончиках — скользящее отражение: он живёт, пока светило низко
+    // над горизонтом, и гаснет вместе с тем, что его отбрасывает.
+    const lowSun = Math.max(0, 1 - Math.min(1, sunHeight / 0.35));
+    const sheen = GRASS_SHEEN * lit * lowSun;
 
     for (const target of [material, marshParts?.reed.material, marshParts?.iris.material, marshParts?.herb.material]) {
       if (!target) continue;
@@ -1639,17 +1652,15 @@ export function GrassField({
       // Device pixels, not CSS pixels: the adaptive render scale moves the
       // drawing buffer, and the minimum blade width has to follow it.
       uniforms.uViewport.value.set(canvas.width, canvas.height);
-      uniforms.uLightColor.value.setRGB(
-        lit * (1 + 0.26 * dusk),
-        lit * (1 - 0.06 * dusk + 0.04 * moon),
-        lit * (1 - 0.19 * dusk + 0.24 * moon),
-      );
-      uniforms.uTransmit.value.copy(environmentState.sunColor).multiplyScalar(transmit);
-      uniforms.uSheen.value.setRGB(
-        0.10 * dusk + 0.030 * moon,
-        0.07 * dusk + 0.045 * moon,
-        0.035 * dusk + 0.075 * moon,
-      );
+      uniforms.uLightColor.value
+        .copy(environmentState.groundLight)
+        .multiplyScalar(lit);
+      uniforms.uTransmit.value
+        .copy(environmentState.keyLightColor)
+        .multiplyScalar(transmit);
+      uniforms.uSheen.value
+        .copy(environmentState.groundLight)
+        .multiplyScalar(sheen);
     }
   });
 

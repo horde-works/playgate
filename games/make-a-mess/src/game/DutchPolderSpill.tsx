@@ -44,6 +44,12 @@ import { windState } from "./windState";
  *
  * Draw calls: 1. Triangles: 1728 for the one mouth across three sheets.
  * Texture: 256 KB.
+ *
+ * And it is shed first. Below `SPILL_FPS_FLOOR` the whole thing — curtain and
+ * mist together — stops being drawn, retrying once a minute. The river, its
+ * mirror and its refraction stay: they are the world. This is a flourish on
+ * the edge of it, and three alpha sheets of overdraw in front of a scene that
+ * already pays for two full extra renders is the first thing worth giving up.
  */
 
 const SPILL_TEXTURE_SIZE = 256;
@@ -299,7 +305,12 @@ const spillFragmentShader = /* glsl */ `
 export interface PolderSpill {
   readonly mesh: Mesh;
   readonly triangles: number;
-  frame(elapsed: number, scene: Scene): void;
+  /**
+   * `drawn` is the frame-rate kill switch. It lives here rather than at the
+   * call site because the curtain owns its own mesh: a caller reaching in to
+   * set `spill.mesh.visible` is reaching through the memo that holds it.
+   */
+  frame(elapsed: number, scene: Scene, drawn: boolean): void;
   dispose(): void;
 }
 
@@ -373,7 +384,10 @@ export function createPolderSpill(shared: SpillLighting): PolderSpill | null {
   return {
     mesh,
     triangles: model.triangles,
-    frame(elapsed, scene) {
+    frame(elapsed, scene, drawn) {
+      mesh.visible = drawn;
+      // A shed curtain still costs its uniform writes and its scene fog read.
+      if (!drawn) return;
       const uniforms = material.uniforms;
       // Sun, day factor and the water's absorption arrive by shared uniform;
       // only what is the fall's own is written here.

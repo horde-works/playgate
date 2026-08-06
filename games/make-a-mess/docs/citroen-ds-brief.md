@@ -4,8 +4,8 @@
 `townCitroenDsBody.ts` или сборки в `content/scenes/townBoulevardDocument.ts`.
 
 Общий способ работы — `.claude/skills/architectural-scene-authoring/SKILL.md`
-и `geometry-lessons.md`. Здесь только факты об этой машине и числа, снятые с
-референсов.
+и `architectural-authoring.md`. Здесь только факты об этой машине и числа,
+снятые с референсов.
 
 ---
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, type RefObject } from "react";
+import { useMemo } from "react";
 import type { BreakablePieceDefinition } from "./destructionScene";
 import { WireSpans, type WireSpan } from "./WireSpans";
 import { IvyPatches, WeedClumps, type IvyRun, type WeedPoint } from "./Undergrowth";
@@ -448,12 +448,10 @@ const configBuilders: Record<string, () => DressingConfig> = {
 
 export function SceneDressing({
   sceneId,
-  nightRef,
   pieces,
   brokenPieces,
 }: {
   sceneId: string;
-  nightRef: RefObject<number>;
   /** Куски сцены — для авто-привязки концов проводов к опорам. */
   pieces?: readonly BreakablePieceDefinition[];
   /** Сломанные куски: провод с потерянной опорой падает. */
@@ -468,8 +466,8 @@ export function SceneDressing({
       {config.wires?.length ? (
         <WireSpans spans={config.wires} pieces={pieces} brokenPieces={brokenPieces} />
       ) : null}
-      {config.ivy?.length ? <IvyPatches runs={config.ivy} nightRef={nightRef} /> : null}
-      {config.weeds?.length ? <WeedClumps points={config.weeds} nightRef={nightRef} /> : null}
+      {config.ivy?.length ? <IvyPatches runs={config.ivy} /> : null}
+      {config.weeds?.length ? <WeedClumps points={config.weeds} /> : null}
       {config.puddles?.length ? <Puddles spots={config.puddles} /> : null}
     </>
   );

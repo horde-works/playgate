@@ -1,0 +1,4 @@
+interface:
+  display_name: "Reference-Faithful Object Study"
+  short_description: "Engineer verifiable 3D objects from references"
+  default_prompt: "Use $reference-faithful-object-study to research, engineer, test, and render this real-world or imagined 3D object — building, vehicle, machine or mechanism — as canonical geometry before integration."

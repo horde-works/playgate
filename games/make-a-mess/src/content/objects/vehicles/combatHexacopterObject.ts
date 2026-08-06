@@ -1213,17 +1213,40 @@ addBox("right-battery-module", "interior", "roof-dark", point(0.25, 0.56, 0.02),
 // Four complete landing-gear chains.
 // ---------------------------------------------------------------------------
 
-const landingStations = [
+/**
+ * ПОСАДОЧНЫЕ СТАНЦИИ — ПАСПОРТ, А НЕ ВНУТРЕННЕЕ ДЕЛО РИСОВАЛЬЩИКА.
+ *
+ * Колено и ось пятки нужны не только чертежу: из них живая машина собирает
+ * стойки (`supportStrut`), поэтому станции экспортируются наравне с
+ * подъёмными и рыскательными. Ось стойки — отрезок колено→ось пятки, и она
+ * наклонена наружу и вдоль борта: ноги у этой машины разнесены враспор.
+ */
+export const COMBAT_HEX_LANDING_STATIONS = [
   { id: "left-front", side: -1, attach: point(-1.42, 0.78, 1.34), dragZ: 1.03 },
   { id: "right-front", side: 1, attach: point(1.42, 0.78, 1.34), dragZ: 1.03 },
   { id: "left-rear", side: -1, attach: point(-1.55, 0.91, -1.42), dragZ: -1.08 },
   { id: "right-rear", side: 1, attach: point(1.55, 0.91, -1.42), dragZ: -1.08 },
-] as const;
+].map((station) => {
+  const lean = station.attach[2] > 0 ? 1 : -1;
+  const knee = point(
+    station.attach[0] + station.side * 0.12,
+    0.38,
+    station.attach[2] + lean * 0.08,
+  );
+  const axle = point(knee[0] + station.side * 0.035, 0.17, knee[2] + lean * 0.06);
+  return { ...station, knee, axle };
+});
 
-for (const gear of landingStations) {
-  const knee = point(gear.attach[0] + gear.side * 0.12, 0.38, gear.attach[2] + (gear.attach[2] > 0 ? 0.08 : -0.08));
-  const axle = point(knee[0] + gear.side * 0.035, 0.17, knee[2] + (gear.attach[2] > 0 ? 0.06 : -0.06));
+/** Ход штока олео. Столько же берёт на себя и физическая стойка. */
+export const COMBAT_HEX_OLEO_STROKE = 0.12;
+/** Доля хода, съеденная собственным весом: авторская поза — поза под нагрузкой. */
+export const COMBAT_HEX_OLEO_STATIC_SAG_SHARE = 0.25;
+
+for (const gear of COMBAT_HEX_LANDING_STATIONS) {
+  const { knee, axle } = gear;
   const pad = point(axle[0], 0.055, axle[2]);
+  const oleoAt = (t: number) =>
+    point(lerp(knee[0], axle[0], t), lerp(knee[1], axle[1], t), lerp(knee[2], axle[2], t));
 
   addFacets(`landing-trunnion-${gear.id}`, "landing-gear", "metal", buildTorqueBox({
     from: point(gear.attach[0], gear.attach[1], gear.attach[2] - 0.14),
@@ -1246,8 +1269,16 @@ for (const gear of landingStations) {
     tag: "drag-link",
   }));
   addEllipsoid(`landing-knee-${gear.id}`, "landing-gear", "metal", knee, point(0.065, 0.06, 0.065), 14, 7);
-  addCylinder(`landing-oleo-${gear.id}`, "landing-gear", "metal", knee, axle, 0.046, 18);
-  addCylinder(`landing-oleo-gland-${gear.id}`, "landing-gear", "paint-accent", point(axle[0], axle[1] + 0.07, axle[2]), point(axle[0], axle[1] + 0.035, axle[2]), 0.056, 18);
+  // ОЛЕО — ДВЕ ДЕТАЛИ, А НЕ ОДНА ТРУБА.
+  //
+  // Пока цилиндр и шток были одним куском, ход стойки нарисовать было нечем:
+  // осевшая машина уводила пятку под грунт. Цилиндр висит на колене и стоит
+  // неподвижно, сальник — его нижнее уплотнение, а шток ходит внутрь на весь
+  // ход. Перекрытие выбрано так, что на полном обжатии шток целиком уходит
+  // внутрь цилиндра, а на полном выпуске не выглядывает из него.
+  addCylinder(`landing-oleo-${gear.id}`, "landing-gear", "metal", knee, oleoAt(0.64), 0.048, 18);
+  addCylinder(`landing-oleo-gland-${gear.id}`, "landing-gear", "paint-accent", oleoAt(0.6), oleoAt(0.73), 0.056, 18);
+  addCylinder(`landing-oleo-piston-${gear.id}`, "landing-gear", "metal", oleoAt(0.43), axle, 0.036, 16);
   addFacets(`landing-scissor-${gear.id}`, "landing-gear", "metal", [
     ...buildTorqueBox({ from: point(knee[0] - gear.side * 0.06, knee[1] - 0.02, knee[2]), to: point(knee[0] - gear.side * 0.08, 0.27, axle[2]), width: 0.028, height: 0.045, chamfer: 0.008, tag: "scissor" }),
     ...buildTorqueBox({ from: point(knee[0] - gear.side * 0.08, 0.27, axle[2]), to: point(axle[0] - gear.side * 0.05, axle[1] + 0.02, axle[2]), width: 0.026, height: 0.042, chamfer: 0.008, tag: "scissor" }),

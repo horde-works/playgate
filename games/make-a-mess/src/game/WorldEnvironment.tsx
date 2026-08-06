@@ -57,9 +57,20 @@ import {
   CLEAR_SKY,
   cloudDrift,
   extinctionLength,
-  skyAir,
+  getSkyFieldData,
+  skyHaze,
+  sunOcclusionAt,
   type SkyWeather,
 } from "./skyWeatherModel.ts";
+import {
+  elevationDegrees,
+  horizonColour,
+  nightLevel,
+  setAirHaze,
+  skyFill,
+  sunBeam,
+  transmittanceAt,
+} from "./atmosphereModel.ts";
 import { lampBeaconOpacity, lampBeaconWorldDiameter } from "./lampBeacon";
 import {
   lampEventLevel,
@@ -101,17 +112,10 @@ export function SceneEnvironment({
     const holder = new Scene();
     const sky = new SkyImpl();
     sky.scale.setScalar(48);
-    // The same uniforms the visible dome is drawn from — `three-stdlib` shares
-    // one material — so these come from the one law rather than a second copy
-    // of the same four numbers. A recorded flyover swaps in cleaner air below;
-    // this bake takes the world's ordinary sky, which is what its objects sit
-    // under for every frame that is not a recording.
-    const uniforms = sky.material.uniforms;
-    const air = skyAir(theme);
-    uniforms.turbidity.value = air.turbidity;
-    uniforms.rayleigh.value = air.rayleigh;
-    uniforms.mieCoefficient.value = air.mieCoefficient;
-    uniforms.mieDirectionalG.value = air.mieDirectionalG;
+    // `three-stdlib` shares one material across every Sky, so the graft that
+    // turns the dome into a marched atmosphere is already on this one and its
+    // air is the world's air. Nothing to copy across: setting it here would be
+    // the second place a number lives, which is how these two drifted before.
     holder.add(sky);
     return { holder, sky };
   }, [theme]);
@@ -119,9 +123,9 @@ export function SceneEnvironment({
   const lastBucket = useRef("");
 
   useEffect(() => {
-    // Ambient comes from the dome, so it is measured against the dome: this
-    // multiplier moves inversely to ATMOSPHERE.exposure and delivers the same
-    // fill light the world had before the sky was put into the right units.
+    // Ambient comes from the dome, so it is measured against the dome. The
+    // dome now leaves its shader in scene-linear radiance of its own, so this
+    // is a plain trim on how much of the sky's light the world receives.
     scene.environmentIntensity = ATMOSPHERE.ambientIntensity;
     return () => {
       scene.environmentIntensity = 1;
@@ -161,6 +165,54 @@ export function SceneEnvironment({
 
   return null;
 }
+
+/**
+ * THE ONE MOMENT EVERY GAIN IS PINNED TO: a clear midday over the polder, sun
+ * at 37.6°, in this world's own ordinary air. Written down rather than
+ * evaluated here because the model's tables are built per world air and this
+ * anchor must not move with the world — `tests/sky-exposure` recomputes both
+ * numbers from `atmosphereModel` and fails if they have drifted.
+ *
+ * Everything below is a unit conversion against this one measurement, not a
+ * mood: each was chosen once so that midday keeps exactly the exposure it had
+ * before the sky became something we measure.
+ */
+const NOON = { beam: 0.906, fill: 1.532 } as const;
+
+/** Key at that noon lands on the 4.2 it used to be. */
+const KEY_GAIN = 4.64;
+/**
+ * The moon. This one IS authored and it is NOT physical: real moonlight is
+ * about a four-hundred-thousandth of sunlight, and a world lit that way at
+ * night is a black screen. A twelfth is the playable lie, and it is the only
+ * light in this file that the atmosphere does not answer for.
+ */
+const MOON_INTENSITY = 0.35;
+/** Hemisphere at that same noon lands on the 0.46 it used to be. */
+const HEMISPHERE_GAIN = 0.3;
+/** What is left of the fill under a moon, once the sky has stopped giving. */
+const HEMISPHERE_NIGHT = 0.1;
+/**
+ * How much of the dome's irradiance reaches the shaded side of a cumulus.
+ * The march applies its own base-to-top profile and its own occlusion on top
+ * of this; what this carries is the COLOUR of the fill and its order of
+ * magnitude against the lit side.
+ */
+const CLOUD_FILL_SHARE = 0.55;
+/**
+ * How much of the beam a cloud takes comes back as diffuse fill rather than
+ * being reflected to space or absorbed. A cumulus is not a lid: its albedo is
+ * high and most of what it intercepts still arrives, just from everywhere at
+ * once instead of from one direction. Without this term walking into shade
+ * would be a light switch, which is the one thing shade is not.
+ */
+const CLOUD_DIFFUSE_RETURN = 0.45;
+/**
+ * What the scene's own lights come to at that noon — the divisor that makes
+ * `groundLightLevel` read 1 there, so the number means the same thing in
+ * every world and on the very first frame.
+ */
+const NOON_GROUND_LIGHT = KEY_GAIN * NOON.beam + HEMISPHERE_GAIN * NOON.fill;
 
 export function DayNightCycle({
   mode,
@@ -202,32 +254,41 @@ export function DayNightCycle({
   const time = useRef(TIME_OF_DAY_TARGETS.day);
   const appliedSnapVersion = useRef(snapVersion);
   const fortress = theme === "fortress";
-  const dayColor = useMemo(
-    () => new Color(fortress ? "#84939d" : "#9cc0ce"),
-    [fortress],
-  );
-  const duskColor = useMemo(
-    () => new Color(fortress ? "#a66c54" : "#d09a67"),
-    [fortress],
-  );
-  const nightColor = useMemo(
-    () => new Color(fortress ? "#090d13" : "#0d1420"),
-    [fortress],
-  );
-  const sunWarmColor = useMemo(() => new Color("#ffc07a"), []);
-  const sunDayColor = useMemo(() => new Color("#fff3d7"), []);
+  // Moonlight is the one key this file still authors: there is no lunar
+  // ephemeris here, so below the horizon the model has nothing left to answer.
   const moonColor = useMemo(() => new Color("#8fa5c8"), []);
-  const scratchColor = useMemo(() => new Color(), []);
+  const groundBounce = useMemo(
+    () => new Color(fortress ? "#31352f" : "#4d5d38"),
+    [fortress],
+  );
 
   const shadowThrottle = useRef(1);
   const sunWasMoving = useRef(false);
   const skyRef = useRef<ComponentRef<typeof Sky>>(null);
   const clouds = useRef<SkyCloudUniforms | null>(null);
-  const cloudLitDay = useMemo(() => new Color(weather.litColor), [weather]);
-  const cloudShadeDay = useMemo(() => new Color(weather.shadeColor), [weather]);
-  // A cumulus at night is a dark mass with a moonlit rim, not a white puff.
-  const cloudLitNight = useMemo(() => new Color("#2c3646"), []);
-  const cloudShadeNight = useMemo(() => new Color("#141a25"), []);
+  /** Elevation the measurement below was last taken at, in degrees. */
+  const measuredAt = useRef(Number.NaN);
+  /** How much of the sun the deck is holding back, damped across frames. */
+  const shadeRef = useRef(0);
+  const measured = useMemo(
+    () => ({
+      keyColour: new Color(1, 1, 1),
+      keyLevel: 0,
+      fillColour: new Color(1, 1, 1),
+      fillLevel: 0,
+      horizon: new Color(0, 0, 0),
+      cloudLit: new Color(0, 0, 0),
+      cloudShade: new Color(0, 0, 0),
+    }),
+    [],
+  );
+
+  // The air a world stands in. Set before anything asks the model a question,
+  // because the tables it answers from are built per air.
+  useLayoutEffect(() => {
+    setAirHaze(skyHaze(theme, cinematic));
+    measuredAt.current = Number.NaN;
+  }, [cinematic, theme]);
 
   // Drawn after the opaque world so the per-pixel scattering shader only runs
   // where sky is actually visible instead of being overdrawn by the terrain.
@@ -254,14 +315,16 @@ export function DayNightCycle({
     light.target.updateMatrixWorld();
   }, [worldCenter]);
 
-  // The weather field is grafted onto the analytic sky rather than replacing
-  // it: a world without an authored sky keeps exactly the dome it had.
+  // The marched atmosphere and the weather field are grafted onto the dome
+  // together. A world without an authored sky still gets the air; what it
+  // skips is the cloud deck, whose every branch leaves at the first test.
   useLayoutEffect(() => {
     const material = skyRef.current?.material;
     if (!material) return;
     clouds.current ??= installSkyClouds(material);
     clouds.current?.setWeather(weather);
-  }, [weather]);
+    clouds.current?.setHaze(skyHaze(theme, cinematic));
+  }, [cinematic, theme, weather]);
 
   // A cinematic replay can begin while the previous run is still at night.
   // Snap before the first rendered frame so recording never captures that
@@ -306,15 +369,116 @@ export function DayNightCycle({
       : null;
     const elevation = geographicSun?.[1] ?? Math.sin(angle);
     const azimuth = angle + Math.PI * 0.3;
-    const day = MathUtils.clamp(elevation / 0.32, 0, 1);
-    const night = 1 - day;
-    const twilight = MathUtils.clamp(1 - Math.abs(elevation) * 3.4, 0, 1);
     const sunX = geographicSun ? geographicSun[0] * 30 : Math.cos(azimuth) * 30;
     const sunZ = geographicSun ? geographicSun[2] * 30 : Math.sin(azimuth) * 24;
     const sunY = geographicSun ? geographicSun[1] * 30 : elevation * 26;
+    const night = nightLevel(elevation);
+    // A band a few degrees either side of the horizon: what shafts and lens
+    // glare are scaled by, and the only remaining hand-shaped curve here.
+    const elevationNow = elevationDegrees(elevation);
+    const twilight = MathUtils.clamp(1 - Math.abs(elevationNow) / 9, 0, 1);
+
+    // ---- ASK THE AIR -----------------------------------------------------
+    // Not every frame: a quarter of a degree of solar elevation is half the
+    // sun's own diameter, and nothing in the frame can resolve a smaller step.
+    // Between measurements this costs nothing at all.
+    // Written as a NOT of the near test so the first frame, where nothing has
+    // been measured yet, falls through it.
+    if (!(Math.abs(elevationNow - measuredAt.current) < 0.25)) {
+      measuredAt.current = elevationNow;
+      const length = Math.hypot(sunX, sunY, sunZ) || 1;
+      const unitSun = [sunX / length, sunY / length, sunZ / length] as const;
+
+      const beam = sunBeam(elevation);
+      measured.keyColour.setRGB(beam.colour[0], beam.colour[1], beam.colour[2]);
+      measured.keyLevel = beam.level;
+
+      const fill = skyFill(unitSun);
+      measured.fillColour.setRGB(fill.colour[0], fill.colour[1], fill.colour[2]);
+      measured.fillLevel = fill.level;
+
+      // The edge veil is one colour for every bearing, so it takes the mean of
+      // the horizon around the compass. Per-direction aerial perspective is
+      // not this: the piece materials already read it out of the sky bake
+      // along their own view ray.
+      measured.horizon.setRGB(0, 0, 0);
+      const bearings = 8;
+      for (let bearing = 0; bearing < bearings; bearing += 1) {
+        const sample = horizonColour(
+          unitSun,
+          ((bearing + 0.5) / bearings) * Math.PI * 2,
+        );
+        measured.horizon.r += sample[0] / bearings;
+        measured.horizon.g += sample[1] / bearings;
+        measured.horizon.b += sample[2] / bearings;
+      }
+
+      // A cumulus is lit at ITS OWN ALTITUDE, and that is the whole reason a
+      // sunset sky burns while the ground under it has already gone dark: at
+      // a sun on the horizon the beam reaching 680 m still carries 15% of its
+      // red against the ground's 9%, and a degree later the ground has none
+      // left while the cloud base still has 2%. Asking this at height costs
+      // one table lookup and buys the effect nothing else in the frame gives.
+      const litBeam = transmittanceAt(weather.baseAltitude, elevation);
+      measured.cloudLit.setRGB(litBeam[0], litBeam[1], litBeam[2]);
+      // What the sky and the wet ground put back into the shaded side.
+      measured.cloudShade
+        .copy(measured.fillColour)
+        .multiplyScalar(measured.fillLevel * CLOUD_FILL_SHARE);
+    }
+
+    // ---- IS THE SUN BEHIND A CLOUD RIGHT NOW ----------------------------
+    // Asked every frame, unlike the atmosphere above: the sun moves a degree
+    // in minutes, but the deck rides the wind and a heap crosses the sun in
+    // seconds. The walk is the same one the sky shader makes — same field,
+    // same drift, same law — so what dims the world is the cloud that is
+    // actually in front of the sun, not a number that correlates with one.
+    //
+    // Sampled at the CAMERA, and that is the honest limit of this: the whole
+    // world dims together rather than shadows sliding across the field. The
+    // per-point version needs the deck sampled in every surface shader; what
+    // is published below is what that pass would read.
+    const shadeTarget = weather.coverage > 0
+      ? sunOcclusionAt(
+        getSkyFieldData(),
+        weather,
+        frameState.camera.position.x,
+        frameState.camera.position.y,
+        frameState.camera.position.z,
+        [
+          environmentState.sunDirection.x,
+          environmentState.sunDirection.y,
+          environmentState.sunDirection.z,
+        ],
+        environmentState.cloudDrift,
+      ) * weather.shadowStrength
+      : 0;
+    // A cloud edge crossing the sun takes a second or two of real time, not a
+    // frame: damped, or the key light strobes as the march gains and loses a
+    // sample. This is the same reasoning as the dither in the sky shader —
+    // a stepped integral has to be smoothed somewhere.
+    shadeRef.current = MathUtils.damp(shadeRef.current, shadeTarget, 2.2, delta);
+    const shade = shadeRef.current;
+    environmentState.sunOcclusion = shade;
+
+    // The frame's whole light budget, worked out ONCE. Three consumers read it
+    // — the key, the fill and everything hand-shaded — and the moment any of
+    // them recomputes its own version is the moment grass ends up in a
+    // different day from the ground. What the deck takes from the beam it
+    // hands to the fill, less what it sends back to space.
+    const beamLost = KEY_GAIN * measured.keyLevel * shade;
+    const keyEnergy = KEY_GAIN * measured.keyLevel - beamLost + MOON_INTENSITY * night;
+    const fillEnergy = HEMISPHERE_GAIN * measured.fillLevel
+      + beamLost * CLOUD_DIFFUSE_RETURN
+      + HEMISPHERE_NIGHT * night;
 
     if (directional.current) {
-      directional.current.position.set(sunX, Math.max(sunY, 7), sunZ);
+      // The shadow follows the real sun now. It used to be pinned no lower
+      // than y = 7 — thirteen degrees — so no world has ever had a long
+      // shadow. The floor left here is a degree and a bit, only so the shadow
+      // matrix stays conditioned; by then the beam is 7% of its red and
+      // whether it casts at all has stopped mattering.
+      directional.current.position.set(sunX, Math.max(sunY, 0.65), sunZ);
       // Aim the shadow frustum at the island centre — worlds like Viking sit
       // off the origin, and a target left at (0,0,0) softens contact across
       // the courtyard that the eye is actually looking at.
@@ -322,34 +486,50 @@ export function DayNightCycle({
       const aimZ = worldCenter?.[1] ?? 0;
       directional.current.target.position.set(aimX, 0, aimZ);
       directional.current.target.updateMatrixWorld();
-      // Key light slightly ahead of fill so cast shadows stay readable once
-      // aerial perspective and soft PCF start eating contrast.
-      directional.current.intensity = 0.35 + 3.85 * day;
-      if (day > 0.02) {
-        scratchColor
-          .copy(sunWarmColor)
-          .lerp(sunDayColor, MathUtils.clamp(elevation * 2.4, 0, 1));
-        directional.current.color.copy(scratchColor);
-      } else {
-        directional.current.color.copy(moonColor);
+      // Key colour and strength are one measurement split in two, because
+      // three multiplies them: the colour is the beam normalised, the
+      // intensity is what is left of its strongest channel. Nothing here
+      // decides that dusk is orange — the air already took the blue out.
+      const moon = MOON_INTENSITY * night;
+      const key = keyEnergy - moon;
+      directional.current.intensity = keyEnergy;
+      if (keyEnergy > 1e-5) {
+        // Added as light, not blended as paint: through the crossover the sun
+        // is still red and weak while the moon has come up, and a lerp between
+        // the two would invent a colour that neither of them is.
+        const sunShare = key / keyEnergy;
+        const moonShare = moon / keyEnergy;
+        directional.current.color.setRGB(
+          measured.keyColour.r * sunShare + moonColor.r * moonShare,
+          measured.keyColour.g * sunShare + moonColor.g * moonShare,
+          measured.keyColour.b * sunShare + moonColor.b * moonShare,
+        );
       }
     }
     if (hemisphere.current) {
-      // Fill used to rival the key light after fog: 0.58 daytime hemisphere
-      // plus PMREM ambient lifted every surface toward the same mid-grey.
-      hemisphere.current.intensity = 0.12 + 0.34 * day;
+      // The dome's own irradiance, trimmed to land where the authored fill
+      // used to at noon. It is warm at dusk and blue at midday for the same
+      // reason the sky is, and it does not need to be told which.
+      //
+      // Under cloud it GAINS what the beam just lost, less what the deck sends
+      // back to space: a cumulus does not swallow the light, it turns it from
+      // a direction into a diffuse wash. That is the whole readable difference
+      // between sun and shade — not "darker", but shadows going soft and the
+      // colour rolling over to the sky's.
+      hemisphere.current.intensity = fillEnergy;
+      hemisphere.current.color.copy(measured.fillColour);
+      hemisphere.current.groundColor.copy(groundBounce);
     }
 
-    scratchColor
-      .copy(nightColor)
-      .lerp(dayColor, day)
-      .lerp(duskColor, twilight * 0.8);
-    fogRef.current?.color.copy(scratchColor);
-    backgroundRef.current?.copy(scratchColor);
+    fogRef.current?.color.copy(measured.horizon);
+    backgroundRef.current?.copy(measured.horizon);
 
     // Fixtures are small now (sill lamps behind glass instead of whole
-    // glowing panes), so they burn brighter to read at street distance.
-    setWindowGlow(night * 2.7);
+    // glowing panes), so they burn brighter to read at street distance — and
+    // brighter again since the bloom gate moved into the sky's real units. A
+    // bare bulb seen at night IS white with a halo round it; what it must not
+    // be is dimmer than a daylight horizon while still haloing.
+    setWindowGlow(night * 10);
     nightRef.current = night;
 
     // Publish the sun to everything that shades with it: sun-tinted fog in
@@ -366,9 +546,38 @@ export function DayNightCycle({
         .normalize();
       environmentState.keyLightColor.copy(directional.current.color);
     }
-    environmentState.dayFactor = day;
+    // "How much direct sun is there" — which is what every consumer of this
+    // actually wants: grass translucency, specular on water, the strength of
+    // the shafts. It is the beam, normalised against a high sun, so it falls
+    // off the way the beam does instead of running to a hand-picked floor —
+    // and it takes the deck with it, because a sunbeam through a reed bed and
+    // a shaft across the sky are both the DIRECT sun or they are nothing.
+    environmentState.dayFactor = MathUtils.clamp(
+      (measured.keyLevel * (1 - shade)) / NOON.beam,
+      0,
+      1,
+    );
     environmentState.nightFactor = night;
     environmentState.twilightFactor = twilight;
+
+    // The one number anything hand-shaded should light itself by. It is the
+    // sum of exactly what the scene's own lights were just given — key, moon,
+    // fill — divided by what that sum is at a clear midday, so "1" means "as
+    // bright as noon" and a blade of grass cannot end up in a different day
+    // from the ground it stands in.
+    environmentState.groundLightLevel = (keyEnergy + fillEnergy) / NOON_GROUND_LIGHT;
+    // Its colour is the two lights mixed by how much each contributes, so
+    // dusk comes out warm and a moonlit night blue without either being
+    // written down anywhere as a mood.
+    const totalEnergy = Math.max(keyEnergy + fillEnergy, 1e-6);
+    environmentState.groundLight.setRGB(
+      (directional.current?.color.r ?? 1) * (keyEnergy / totalEnergy)
+        + measured.fillColour.r * (fillEnergy / totalEnergy),
+      (directional.current?.color.g ?? 1) * (keyEnergy / totalEnergy)
+        + measured.fillColour.g * (fillEnergy / totalEnergy),
+      (directional.current?.color.b ?? 1) * (keyEnergy / totalEnergy)
+        + measured.fillColour.b * (fillEnergy / totalEnergy),
+    );
     // The sun is no longer passed to the piece materials: haze used to be a
     // flat colour with a hand-authored warm tint aimed at the sun, and it is
     // now the sky itself, read out of the environment bake along the view ray.
@@ -399,8 +608,13 @@ export function DayNightCycle({
       // different distances.
       clouds.current.midDrift.set(driftX * 1.45, driftZ * 1.45);
       clouds.current.cirrusDrift.set(driftX * 1.9, driftZ * 1.9);
-      clouds.current.lit.copy(cloudLitNight).lerp(cloudLitDay, day);
-      clouds.current.shade.copy(cloudShadeNight).lerp(cloudShadeDay, day);
+      // The deck is lit by the beam that reaches ITS altitude and filled by
+      // the sky, both measured. There is no night cloud colour to cross-fade
+      // to any more: a cumulus goes dark because the light left, and it stays
+      // burning for the minutes after sunset because at 680 m the light has
+      // not left yet. Both come out of the same lookup.
+      clouds.current.lit.copy(measured.cloudLit);
+      clouds.current.shade.copy(measured.cloudShade);
       environmentState.cloudDrift[0] = driftX;
       environmentState.cloudDrift[1] = driftZ;
     }
@@ -448,7 +662,6 @@ export function DayNightCycle({
           skyRadius ?? Math.max(fortress ? 170 : 110, (worldRadius ?? 58) * 2.6),
         )}
         sunPosition={[24, 12, 14]}
-        {...skyAir(theme, cinematic)}
       />
       <hemisphereLight
         ref={hemisphere}

@@ -109,7 +109,7 @@ export interface ScenePrefabPieceDefinition {
    * Сужение окна опоры для этого куска. Нужно парящей машине над твердью:
    * у стали окно 1.1 м, и любая её деталь в метре над асфальтом иначе
    * «садится» на него, получая второй корень устойчивости мимо собственного
-   * силового узла (transport-lessons §21).
+   * силового узла (vehicle-authoring references/assembly.md, п. 21).
    */
   readonly maximumVerticalGap?: number;
   readonly hinge?: SceneHinge;
@@ -167,7 +167,7 @@ export interface ScenePrimitiveDefinition extends SceneObjectBase {
    * Сужение окна опоры для этого куска. Нужно парящей машине над твердью:
    * у стали окно 1.1 м, и любая её деталь в метре над асфальтом иначе
    * «садится» на него, получая второй корень устойчивости мимо собственного
-   * силового узла (transport-lessons §21).
+   * силового узла (vehicle-authoring references/assembly.md, п. 21).
    */
   readonly maximumVerticalGap?: number;
   readonly hinge?: SceneHinge;

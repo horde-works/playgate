@@ -1,0 +1,4 @@
+interface:
+  display_name: "Tree Authoring"
+  short_description: "Procedural trees and shrubs for make-a-mess"
+  default_prompt: "Use $tree-authoring to build or revise a procedural tree or shrub — trunk, branches, crown, foliage, siting and destruction — within the three-representation contract and budgets."

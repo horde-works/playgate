@@ -1,0 +1,4 @@
+interface:
+  display_name: "Destruction Authoring"
+  short_description: "Author and verify destruction mechanics"
+  default_prompt: "Use $destruction-authoring to change materials, weapons, carve mechanics, debris budgets, impact sound, or explosion visuals, and verify with the destruction test map."

@@ -5,6 +5,7 @@ import type {
 } from "./destructionScene.ts";
 import { PLAYER_CAPSULE_FOOT_OFFSET } from "./playerMovement.ts";
 import type { RotorcraftYawThruster } from "./rotorcraftDynamics.ts";
+import type { StrutRetraction, SupportStrutPlan } from "./supportStrut.ts";
 import {
   corneringSpeed,
   DEFAULT_SLIP_POLICY,
@@ -104,6 +105,39 @@ export {
  * Модуль намеренно чистый: ни three, ни rapier. Всё, что здесь есть, можно
  * посчитать в тесте.
  */
+/**
+ * Опора машины в терминах КАДРА: физический паспорт стойки плюс то, какими
+ * кусками она нарисована.
+ *
+ * Закону стойки о кусках знать нечего — он о газе, масле и ходе. Но живой
+ * машине нужно и то и другое: по чему судить, цела ли нога, и что двигать,
+ * чтобы ход было видно. Это знание принадлежит кадру, поэтому здесь оно и
+ * лежит — совпадением по вхождению в id куска, как и все прочие маски кадра.
+ */
+export interface VehicleSupportStrutDefinition {
+  readonly plan: SupportStrutPlan;
+  /** Без этих кусков опоры нет: угол проваливается на грунт. */
+  readonly requiredMembers: readonly string[];
+  /** Ходят вместе со штоком на весь ход. */
+  readonly travellingMembers: readonly string[];
+  /**
+   * Ходят на половину хода. Шлиц-шарнир не едет, а складывается: его середина
+   * проходит половину пути концов, и это ближе к правде, чем неподвижность.
+   */
+  readonly halfTravellingMembers?: readonly string[];
+  /**
+   * Цапфа уборки. Есть — нога складывается к корпусу на крейсерской фазе и
+   * возвращается на подходе; нет — стойка неубирающаяся, и это нормальный
+   * вариант, а не недоделка.
+   */
+  readonly retraction?: StrutRetraction;
+  /**
+   * Что именно поворачивается вокруг цапфы. Сама цапфа сюда НЕ ВХОДИТ: она и
+   * есть ось, вокруг которой ходит остальное.
+   */
+  readonly foldingMembers?: readonly string[];
+}
+
 export interface VehicleFrameDefinition {
   readonly id: string;
   readonly clusterId: string;
@@ -139,6 +173,13 @@ export interface VehicleFrameDefinition {
    * landing estimation; every other direction is opt-in equipment.
    */
   readonly proximitySensors: readonly VehicleProximitySensor[];
+  /**
+   * Опоры машины. Объявившая их машина стоит на грунте СТОЙКАМИ, а не
+   * коллайдерами ног: реакцию, ход и осадку считает `supportStrut`, а сами
+   * ноги обязаны быть исключены из обвода компаунда — иначе луч стойки найдёт
+   * опору в собственной пятке.
+   */
+  readonly supportStruts?: readonly VehicleSupportStrutDefinition[];
   /**
    * Подвижные грузы дифферентовки внутри оболочки. Единственный орган, который
    * вообще создаёт момент по крену и тангажу: своей массой, а не силой.

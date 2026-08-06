@@ -1,0 +1,4 @@
+interface:
+  display_name: "Vehicle Authoring"
+  short_description: "Build and verify honest controlled machines"
+  default_prompt: "Use $vehicle-authoring to add or revise a physically honest controlled machine (airborne carrier, rotorcraft, ground car, train, or mechanism), its controls, routes, journey stages, and docking or landing."

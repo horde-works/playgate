@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import { Sky as SkyImpl } from "three-stdlib";
 import {
   CLEAR_SKY,
@@ -25,6 +26,19 @@ import {
   sunOcclusionAt,
 } from "../games/make-a-mess/src/game/skyWeatherModel.ts";
 import { installSkyClouds } from "../games/make-a-mess/src/game/skyClouds.ts";
+import {
+  DUTCH_POLDER_EAST_VECTOR,
+  DUTCH_POLDER_NORTH_VECTOR,
+  DUTCH_POLDER_WIND_BEARING,
+} from "../games/make-a-mess/src/content/scenes/dutchPolder/dutchPolderDocument.ts";
+import {
+  TIME_OF_DAY_TARGETS,
+  equinoxSunDirection,
+} from "../games/make-a-mess/src/game/timeOfDay.ts";
+import {
+  elevationDegrees,
+  sunBeam,
+} from "../games/make-a-mess/src/game/atmosphereModel.ts";
 
 const field = getSkyFieldData();
 
@@ -415,5 +429,133 @@ test("the march stays inside its lookup budget", () => {
   assert.ok(
     CLOUD_LAW.coarseSteps <= 6,
     "the environment bake is walking the deck at full detail six times over",
+  );
+});
+
+test("the mills, the deck and the sun agree which way is west", () => {
+  // A Dutch mill turns its cap into the wind, and the wind over the Low
+  // Countries is a westerly — so the sails are presented to the setting sun.
+  // That is one fact, and it decides three things that used to be authored
+  // apart: where true east is, which way the cloud deck drifts, and therefore
+  // which side of the mills the golden hour lands on.
+  const east = DUTCH_POLDER_EAST_VECTOR;
+  assert.ok(
+    Math.abs(Math.hypot(east[0], east[1]) - 1) < 1e-9,
+    "the island's east is not a unit vector",
+  );
+  const drift = [
+    Math.cos(DUTCH_POLDER_SKY.windBearing),
+    Math.sin(DUTCH_POLDER_SKY.windBearing),
+  ];
+  const along = drift[0] * east[0] + drift[1] * east[1];
+  assert.ok(
+    along > 0.999,
+    `the deck drifts ${(Math.acos(Math.min(1, along)) * 180 / Math.PI).toFixed(0)}°`
+      + " off the island's own east — that is a second, disagreeing wind",
+  );
+  assert.ok(
+    Math.abs(DUTCH_POLDER_SKY.windBearing - DUTCH_POLDER_WIND_BEARING) < 1e-9,
+    "the authored deck bearing has drifted from the compass it mirrors",
+  );
+
+  // And the payoff, measured: at the sunset phase the sun must be IN FRONT of
+  // the sails, not behind them. It read −1.00 here — the mills stood as flat
+  // black cut-outs through the entire golden hour of the one world built
+  // around them.
+  const frame = {
+    model: "equinox",
+    latitudeDegrees: 52.4,
+    east: DUTCH_POLDER_EAST_VECTOR,
+    north: DUTCH_POLDER_NORTH_VECTOR,
+  };
+  const facing = (phase) => {
+    const sun = equinoxSunDirection(TIME_OF_DAY_TARGETS[phase], frame);
+    // The rotors look the opposite way to true east, into the westerly.
+    return -(sun[0] * east[0] + sun[2] * east[1]);
+  };
+  assert.ok(
+    facing("sunset") > 0.98,
+    `at sunset the sun is ${facing("sunset").toFixed(2)} against the sails`,
+  );
+  assert.ok(facing("evening") > 0.95, "the sails lose the sun before it sets");
+  assert.ok(facing("dawn") < -0.9, "the mills are no longer backlit at dawn");
+
+  // The golden hour has to actually be in the wheel: a beam still worth half
+  // its noon strength, and already deeply reddened.
+  const sun = equinoxSunDirection(TIME_OF_DAY_TARGETS.sunset, frame);
+  const beam = sunBeam(sun[1]);
+  const elevation = elevationDegrees(sun[1]);
+  assert.ok(
+    elevation > 2.5 && elevation < 5,
+    `the sunset phase puts the sun at ${elevation.toFixed(1)}°, outside the golden hour`,
+  );
+  assert.ok(
+    beam.level > 0.4 && beam.colour[1] < 0.55,
+    `the sunset beam is ${beam.colour.map((v) => v.toFixed(2)).join(",")} at ${beam.level.toFixed(2)}`,
+  );
+  // Evening is the sun just under: down for the ground, still on the deck.
+  const dusk = equinoxSunDirection(TIME_OF_DAY_TARGETS.evening, frame);
+  const duskElevation = elevationDegrees(dusk[1]);
+  assert.ok(
+    duskElevation < 0 && duskElevation > -6,
+    `the evening phase sits at ${duskElevation.toFixed(1)}° — that is night, not dusk`,
+  );
+});
+
+test("the deck actually dims the world it is drifting over", () => {
+  // `sunOcclusionAt` existed and nothing called it; `shadowStrength` was
+  // authored at 0.62 and nothing read it. So a world could stand under a
+  // kilometre of congestus in full, unbroken sunlight — the one seam left
+  // between the sky and the light after the atmosphere became a measurement.
+  const field = getSkyFieldData();
+  const weather = DUTCH_POLDER_SKY;
+  const high = [0.3, 0.82, 0.49];
+  const length = Math.hypot(...high);
+  const sun = high.map((v) => v / length);
+
+  // Somewhere under the deck must be genuinely shaded, and somewhere clear.
+  let darkest = 0;
+  let brightest = 1;
+  for (let x = -3000; x <= 3000; x += 250) {
+    for (let z = -3000; z <= 3000; z += 250) {
+      const occlusion = sunOcclusionAt(field, weather, x, 2, z, sun, [0, 0]);
+      darkest = Math.max(darkest, occlusion);
+      brightest = Math.min(brightest, occlusion);
+    }
+  }
+  assert.ok(darkest > 0.5, `the deck never blocks more than ${darkest.toFixed(2)} of the sun`);
+  assert.ok(brightest < 0.05, `nowhere under the deck is in clear sun (${brightest.toFixed(2)})`);
+
+  // A sun below the horizon has nothing left to occlude.
+  assert.equal(sunOcclusionAt(field, weather, 0, 2, 0, [0.7, -0.1, 0.7], [0, 0]), 0);
+  // Clear weather cannot cast a shadow, whatever the shadow strength says.
+  assert.equal(sunOcclusionAt(field, CLEAR_SKY, 0, 2, 0, sun, [0, 0]), 0);
+
+  // And the world reads it: the light budget must not be a light switch. What
+  // the beam loses, the fill largely gets back — walking into cloud shade is
+  // shadows going soft, not somebody turning the sun off.
+  const source = readFileSync(
+    new URL("../games/make-a-mess/src/game/WorldEnvironment.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.ok(source.includes("sunOcclusionAt("), "nothing asks whether the sun is behind cloud");
+  assert.ok(source.includes("weather.shadowStrength"), "the authored shadow depth is still unread");
+  assert.ok(
+    source.includes("environmentState.sunOcclusion = shade"),
+    "the occlusion is measured and then thrown away",
+  );
+  const returned = source.match(/const CLOUD_DIFFUSE_RETURN = ([\d.]+)/);
+  assert.ok(returned, "no diffuse return: cloud shade would be a light switch");
+  assert.ok(
+    Number(returned[1]) > 0.25 && Number(returned[1]) < 0.8,
+    `a cloud returns ${returned[1]} of what it intercepts — that is a lid or a lamp`,
+  );
+
+  // The budget is worked out once. Three consumers read it; the moment one
+  // recomputes its own version, grass is back in a different day.
+  assert.equal(
+    (source.match(/KEY_GAIN \* measured\.keyLevel/g) ?? []).length,
+    2,
+    "the key's energy is being computed in more than one place again",
   );
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, type RefObject } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import { IcosahedronGeometry, Vector3 } from "three";
 import type { InstancedMesh } from "three";
@@ -16,6 +16,7 @@ import {
   planSprayPacket,
 } from "./dutchPolderSpillModel.ts";
 import { environmentState } from "./environmentState";
+import { spillPowerState } from "./spillPowerState";
 import { windState } from "./windState";
 
 /**
@@ -39,17 +40,7 @@ const SPRAY_WIND = 0.8;
 /** Never spend a whole frame catching up after a stall. */
 const SPRAY_MAX_PER_FRAME = 4;
 
-export function DutchPolderSpray({
-  meshRef,
-}: {
-  /**
-   * Handed down so `DutchPolderWater` can hide the cloud in the two passes it
-   * reads back. Mist drifting over the canal is real, and the mirror SHOULD
-   * carry it — but the refraction pass is the scene without water, so mist
-   * caught there is sampled as bed and printed underneath the river.
-   */
-  readonly meshRef?: RefObject<InstancedMesh | null>;
-}) {
+export function DutchPolderSpray() {
   const study = useMemo(() => {
     if (POLDER_SPILL_LIPS.length === 0) return null;
     const noise = createFxNoiseTexture();
@@ -63,6 +54,7 @@ export function DutchPolderSpray({
     return { noise, pool };
   }, []);
   const pending = useRef(0);
+  const meshRef = useRef<InstancedMesh>(null);
 
   useEffect(
     () => () => {
@@ -75,6 +67,17 @@ export function DutchPolderSpray({
 
   useFrame((state, delta) => {
     if (!study) return;
+    // Shed with the water it comes off. A cloud still hanging over a mouth
+    // that has stopped pouring is worse than no cloud at all, and this pool is
+    // the other half of what the kill switch is trying to save: 44 packets of
+    // soft-particle overdraw over the same corner of the screen.
+    const mesh = meshRef.current;
+    if (!spillPowerState.on) {
+      pending.current = 0;
+      if (mesh) mesh.visible = false;
+      return;
+    }
+    if (mesh && !mesh.visible) mesh.visible = true;
     const now = state.clock.elapsedTime;
     const uniforms = study.pool.material.uniforms;
     /* eslint-disable react-hooks/immutability -- FX uniforms are frame state */

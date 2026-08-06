@@ -9758,7 +9758,6 @@ function OpenWorldScene({
       <OpenWorldShell scene={scene} />
       <SceneDressing
         sceneId={scene.id}
-        nightRef={nightRef}
         pieces={breakablePieces}
         brokenPieces={brokenPieces}
       />
@@ -9787,7 +9786,6 @@ function OpenWorldScene({
           <GrassField
             worldRadius={scene.worldRadius}
             center={scene.worldCenter}
-            nightRef={nightRef}
             pieces={breakablePieces}
           />
           <SmokePlumes nightRef={nightRef} />
@@ -9824,7 +9822,6 @@ function OpenWorldScene({
             profile="dutch-polder"
             worldRadius={scene.worldRadius}
             center={scene.worldCenter}
-            nightRef={nightRef}
             pieces={breakablePieces}
             count={24000}
             bladeColor="#4f6735"
@@ -12842,7 +12839,9 @@ export function MakeAMessGame({
                       ? 0.42
                       : scene.id === "open-house"
                         ? 0.72
-                        : 1
+                        : scene.id === "basalt-stronghold"
+                          ? 0.55
+                          : 1
                   }
                 />
               </Suspense>

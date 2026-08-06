@@ -2468,7 +2468,7 @@ function createServiceBuildings(): void {
  * (x = 0), и маршрут читается сам: вагон → перрон → шлагбаум → площадь →
  * фасад.
  *
- * Правила сборки транспорта — games/make-a-mess/docs/transport-lessons.md.
+ * Правила сборки транспорта — .claude/skills/vehicle-authoring/references/assembly.md.
  * Что здесь важно:
  *   - состав держит «подъёмное сердце» (earth) внутри оболочки: разбил его —
  *     падает весь поезд, а перрон, навес, путь и упор остаются;

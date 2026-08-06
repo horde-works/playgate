@@ -166,18 +166,24 @@ test("channels are dry depressions in the shared surface", () => {
   assert.equal(islandIdForScene("dutch-polder"), null);
 });
 
-test("polder east points dawn light into all four rotor faces", () => {
+test("polder west puts the setting sun square on all four rotor faces", () => {
+  // A Dutch mill turns its cap INTO the wind and the wind over the Low
+  // Countries is a westerly, so the sails are presented to the sunset — which
+  // is why Kinderdijk photographs the way it does. This used to be authored
+  // the other way round: dawn light landed square on the faces and the mills
+  // stood as flat black cut-outs through the whole golden hour, every day, in
+  // the one world built around them.
   assert.deepEqual(dutchPolderScene.solarFrame?.east, DUTCH_POLDER_EAST_VECTOR);
   assert.deepEqual(dutchPolderScene.solarFrame?.north, DUTCH_POLDER_NORTH_VECTOR);
+  const sunset = equinoxSunDirection(0.5, dutchPolderScene.solarFrame);
+  assert.ok(Math.abs(sunset[1]) < 1e-9, "18:00 at an equinox is not on the horizon");
   const sunrise = equinoxSunDirection(0, dutchPolderScene.solarFrame);
-  assert.ok(Math.abs(sunrise[1]) < 1e-9);
   for (const placement of DUTCH_POLDER_OBJECT_PLACEMENTS.filter(({ id }) => id.startsWith("m"))) {
     const yaw = Math.PI - placement.bearing * Math.PI / 180;
     const rotorFront = [Math.sin(yaw), Math.cos(yaw)];
-    assert.ok(
-      sunrise[0] * rotorFront[0] + sunrise[2] * rotorFront[1] > 0.87,
-      placement.id,
-    );
+    const onto = (sun) => sun[0] * rotorFront[0] + sun[2] * rotorFront[1];
+    assert.ok(onto(sunset) > 0.87, `${placement.id} is not facing the sunset`);
+    assert.ok(onto(sunrise) < -0.87, `${placement.id} is not backlit at dawn`);
   }
 });
 

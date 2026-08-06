@@ -546,6 +546,89 @@ test("the polder bank belongs to pollards, not to weeping willows", async () => 
   }
 });
 
+// ПОЛНЫЙ АУДИТ СКЕЛЕТА. У каждой ветви должно быть понятное начало (стык с
+// родителем — либо продолжение конец-в-начало, либо ответвление на его
+// поверхности) и понятный конец (потомок, листва или сход на нет). Ветвь,
+// обрывающаяся в воздухе, читается обрубком, даже если данные «валидны»:
+// у плакучей ивы так висело тринадцать сучьев из двадцати одного.
+test("every branch has an honest start and an honest end", async () => {
+  const flora = await import(
+    "../games/make-a-mess/src/content/prefabs/coreFlora.ts"
+  );
+  const ends = (piece) => {
+    const axis = pieceAxis(piece);
+    const centre = new Vector3(...piece.position);
+    return [
+      centre.clone().addScaledVector(axis, -piece.size[1] / 2),
+      centre.clone().addScaledVector(axis, piece.size[1] / 2),
+    ];
+  };
+  for (const [name, build] of [
+    ["плакучая ива", flora.propWeepingWillow],
+    ["головчатая ива", flora.propPollardWillow],
+    ["дуб", flora.propOak],
+    ["берёза", flora.propBirch],
+    ["сосна", flora.propPine],
+  ]) {
+    for (const seed of SEEDS) {
+      const pieces = build({ seed });
+      const byId = new Map(pieces.map((piece) => [piece.id, piece]));
+      const children = new Map();
+      for (const piece of pieces) {
+        const parent = piece.treeVisual?.parentLocalId;
+        if (parent) {
+          children.set(parent, [...(children.get(parent) ?? []), piece]);
+        }
+      }
+      for (const piece of pieces) {
+        if (piece.treeVisual?.role !== "branch") {
+          continue;
+        }
+        const parent = byId.get(piece.treeVisual.parentLocalId ?? "");
+        const [start, end] = ends(piece);
+        if (parent && parent.treeVisual?.role !== "knob") {
+          const [from, to] = ends(parent);
+          const along = to.clone().sub(from);
+          const t = Math.max(
+            0,
+            Math.min(1, start.clone().sub(from).dot(along) / along.lengthSq()),
+          );
+          const surface =
+            start.distanceTo(from.clone().addScaledVector(along, t)) -
+            parent.size[0] / 2;
+          const joint = start.distanceTo(to);
+          assert.ok(
+            joint <= 0.02 || surface <= 0.02,
+            `${name} seed ${seed}: ${piece.id} — начало не на родителе ` +
+              `(стык ${joint.toFixed(2)} м, до поверхности ${surface.toFixed(2)} м)`,
+          );
+          assert.ok(
+            piece.size[0] <= parent.size[0] * 1.02,
+            `${name} seed ${seed}: ${piece.id} толще своего родителя`,
+          );
+        }
+        // Сухой сучок сосны обрывается намеренно — он и есть облом.
+        if (piece.treeVisual.localId.startsWith("stub:") || piece.size[0] <= 0.04) {
+          continue;
+        }
+        const covered = (children.get(piece.treeVisual.localId) ?? []).some(
+          (child) => {
+            const point = child.treeVisual?.role === "foliage"
+              ? new Vector3(...child.position)
+              : ends(child)[0];
+            return point.distanceTo(end) < Math.max(0.7, child.size[0]);
+          },
+        );
+        assert.ok(
+          covered,
+          `${name} seed ${seed}: ${piece.id} обрывается в воздухе ` +
+            `(Ø${piece.size[0].toFixed(3)}) — нет ни потомка, ни листвы на конце`,
+        );
+      }
+    }
+  }
+});
+
 // Ветвь обязана НАЧИНАТЬСЯ НА СВОЁМ РОДИТЕЛЕ. Восстанавливать ось ветви из её
 // поворота нельзя: у ветви соглашение [0, -yaw, -tilt], а у ствола [rx, 0, rz],
 // и по стволовой формуле развилки уезжали на полметра — в кадре это читается

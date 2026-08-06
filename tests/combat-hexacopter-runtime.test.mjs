@@ -66,7 +66,7 @@ test("принятая C2 собирается в один разрушаемы�
   assert.ok(vehicle);
   assert.equal(compiled.clusters.length, 1);
   assert.equal(vehicle.pieces.length, combatHexacopterObject.parts.length);
-  assert.equal(vehicle.pieces.length, 663);
+  assert.equal(vehicle.pieces.length, 667);
   assert.equal(vehicle.pieces.some((piece) => piece.id.includes("outer-torque-rail")), false);
 });
 
@@ -97,7 +97,7 @@ test("шесть подъёмных и два управляющих приво�
 test("каждый мотор, винт, пилон, панель, оружие и огонь имеет путь к силовому кластеру", () => {
   const rangeDocument = createCombatHexacopterPrototypeDocument(COMBAT_HEXACOPTER_RANGE_PLACEMENT);
   const groups = compileSceneGroups(rangeDocument, new Map());
-  assert.equal(groups.clusters[0].pieces.length, 663);
+  assert.equal(groups.clusters[0].pieces.length, 667);
   for (const piece of groups.clusters[0].pieces) {
     assert.equal(piece.sideAttachmentReach > 0, true, piece.id);
   }
@@ -222,7 +222,7 @@ test("силовой путь и броня входят в сцену стал�
   assert.equal(glazing.every((piece) => piece.material === "darkGlass"), true);
 });
 
-test("масса и центр масс вычисляются из тех же 663 физических деталей", () => {
+test("масса и центр масс вычисляются из тех же 667 физических деталей", () => {
   assert.ok(vehicle);
   const properties = massProperties(
     vehicle.pieces,
@@ -261,7 +261,7 @@ test("одно размещение поворачивает геометрию,
   assert.equal(Math.abs(blueprint.nose[0] - 1) < 1e-9, true);
   assert.equal(Math.abs(blueprint.nose[2]) < 1e-9, true);
   assert.equal(placed.id, placement.clusterId);
-  assert.equal(placed.pieces.length, 663);
+  assert.equal(placed.pieces.length, 667);
   assert.equal(blueprint.enginePoints.length, 6);
   assert.equal(blueprint.proximitySensors.length, 22);
 });

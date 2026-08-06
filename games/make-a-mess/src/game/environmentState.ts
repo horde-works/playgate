@@ -34,6 +34,25 @@ export interface EnvironmentState {
   readonly cloudDrift: [x: number, z: number];
   /** Cloud between the camera and the sun right now, 0..1. */
   sunOcclusion: number;
+  /**
+   * Total light landing on the ground, as ONE measurement: beam plus sky fill
+   * plus the moon, in the same units the scene's own lights are given, and
+   * normalised so a clear midday is 1.
+   *
+   * This exists because vegetation does not take part in the scene's lighting
+   * at all — grass, reeds and undergrowth are hand-shaded blades with their
+   * own brightness, and that brightness used to be a curve drawn against the
+   * old day/night ramp. When the ramp became a measurement the curve stayed
+   * where it was, and the result was exact: at a sun 3.5° up the reeds stood
+   * at FULL midday brightness while the world around them had 42% of it, and
+   * three degrees under the horizon the grass was still at 69% against the
+   * world's 0.7%. A hundredfold. It read as a field lit by nothing.
+   *
+   * So the blades read this instead. One number, one colour, one owner.
+   */
+  readonly groundLight: Color;
+  /** Magnitude of that light, 1 at a clear midday. */
+  groundLightLevel: number;
 }
 
 export const environmentState: EnvironmentState = {
@@ -48,4 +67,6 @@ export const environmentState: EnvironmentState = {
   wetness: 0.55,
   cloudDrift: [0, 0],
   sunOcclusion: 0,
+  groundLight: new Color("#ffffff"),
+  groundLightLevel: 1,
 };

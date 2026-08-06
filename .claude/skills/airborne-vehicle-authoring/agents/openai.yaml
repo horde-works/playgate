@@ -1,4 +1,0 @@
-interface:
-  display_name: "Airborne Vehicle Authoring"
-  short_description: "Build and verify honest flying vehicles"
-  default_prompt: "Use $airborne-vehicle-authoring to add or revise a physically honest flying vehicle and its routes."

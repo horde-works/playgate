@@ -1520,7 +1520,7 @@ export interface VillagerJob {
 
 /**
  * Поза и период движения по глаголу. Числа — из справочника механики
- * (docs/village-motion.md §1.2): тяжёлое движение всем телом не бывает
+ * (docs/village-inhabitants-lessons.md §6.1): тяжёлое движение всем телом не бывает
  * частым, кистевое — наоборот.
  */
 export function workPoseKind(verb: SettlementWorkVerb): 7 | 8 | 9 | 10 | 11 | 12 | 13 {
@@ -2892,7 +2892,7 @@ export function stepVillagers(
         shortestAngleTo(villager.yaw, villager.faceYaw) * Math.min(1, step * 3);
       // РАБОЧАЯ ПОЗА идёт циклами, пока длится дело: рубка — серия ударов,
       // укладка — серия наклонов. Период взят из справочника механики
-      // (docs/village-motion.md §1.2): тяжёлое движение не бывает частым.
+      // (docs/village-inhabitants-lessons.md §6.1): тяжёлое движение не бывает частым.
       if (villager.workVerb && villager.rest <= 0) {
         const cycle = workCycleSeconds(villager.workVerb);
         villager.climbKind = workPoseKind(villager.workVerb);

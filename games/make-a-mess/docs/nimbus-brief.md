@@ -10,7 +10,7 @@
 верфи с начатым корпусом большой машины.
 
 Нормативы: `physical-architecture-guide.md`, `architectural-authoring.md`,
-`geometry-lessons.md`, `.claude/skills/world-building/SKILL.md`.
+`.claude/skills/world-building/SKILL.md`.
 
 ---
 

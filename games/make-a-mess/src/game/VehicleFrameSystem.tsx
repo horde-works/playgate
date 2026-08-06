@@ -9,21 +9,24 @@ import {
 } from "@react-three/rapier";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import {
-  AdditiveBlending,
   BufferAttribute,
   BufferGeometry,
-  CanvasTexture,
   DoubleSide,
+  DynamicDrawUsage,
   Euler,
   InstancedBufferAttribute,
   InstancedMesh,
+  Line,
   Mesh,
+  MeshBasicMaterial,
   PlaneGeometry,
-  Points,
-  type NormalOrGLBufferAttributes,
   Quaternion,
+  ShaderMaterial,
   Vector3,
 } from "three";
+import { LineMaterial } from "three/addons/lines/LineMaterial.js";
+import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
+import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import {
   departureSignalColor,
   structuralMaterialProfiles,
@@ -137,6 +140,21 @@ import {
 import { runtimeDiagnosticsEnabled } from "./runtimeDiagnostics";
 import { countActiveUpwardSupportContacts } from "./vehiclePhysicalContact";
 import {
+  buildSupportStruts,
+  strutClosingSpeed,
+  strutFoldAngle,
+  strutFoldOffset,
+  strutPadFriction,
+  strutReaction,
+  strutVisualSlide,
+  type StrutRetraction,
+  type SupportStrut,
+} from "./supportStrut";
+import {
+  clearMemberArticulation,
+  setMemberArticulation,
+} from "./clusterMemberArticulation";
+import {
   compileCommandActuators,
   deliveredCommandValue,
   executeCommandActuators,
@@ -162,10 +180,13 @@ import {
   type RotorcraftTrimState,
 } from "./rotorcraftDynamics.ts";
 import {
-  createRouteFireflies,
-  routeBeamGeometry,
-  routeGlowSections,
-  sampleRouteFirefly,
+  ROUTE_ACTUAL_COLOR,
+  routeAltitudeDiscGeometry,
+  routeCraftContourGeometry,
+  routeGateGeometry,
+  routePlanLineGeometry,
+  routeSemanticMarkers,
+  type RouteVector3,
 } from "./routeRibbon.ts";
 import {
   advanceRotorcraftGovernor,
@@ -1513,6 +1534,90 @@ function speedLimitedPlan(
 }
 
 /**
+ * Собранная опора: физический паспорт стойки плюс разрешённые в настоящие
+ * id куски. Разрешение делается один раз на сборку, а не каждый шаг: масок в
+ * ноге шесть, ног четыре, а членов у машины шестьсот с лишним.
+ */
+/**
+ * Кусок ноги в терминах движения: сколько хода штока он проходит и ходит ли
+ * вокруг цапфы. Разрешается один раз на сборку — масок в ноге дюжина, ног
+ * четыре, а членов у машины шестьсот с лишним.
+ */
+interface CompiledStrutMember {
+  readonly id: string;
+  readonly centre: readonly [number, number, number];
+  /** 1 — идёт со штоком, 0.5 — шлиц-шарнир, 0 — стоит на месте относительно ноги. */
+  readonly travelShare: number;
+  readonly folds: boolean;
+}
+
+interface CompiledSupportStrut {
+  readonly strut: SupportStrut;
+  readonly requiredMembers: readonly string[];
+  readonly members: readonly CompiledStrutMember[];
+  readonly retraction: StrutRetraction | null;
+}
+
+interface SupportStrutBuild {
+  readonly mass: number;
+  readonly struts: readonly CompiledSupportStrut[];
+}
+
+function compileSupportStruts(
+  frame: VehicleFrameRuntime,
+  mass: MassProperties,
+): SupportStrutBuild {
+  const definitions = frame.supportStruts ?? [];
+  const struts = buildSupportStruts(
+    definitions.map((definition) => definition.plan),
+    mass.mass * GRAVITY,
+    mass.centre,
+  );
+  const matching = (masks: readonly string[]) =>
+    frame.members
+      .filter((member) => masks.some((mask) => member.piece.id.includes(mask)))
+      .map((member) => member.piece.id);
+  return {
+    mass: mass.mass,
+    struts: struts.map((strut, index) => {
+      const definition = definitions[index];
+      const share = new Map<string, number>();
+      const folding = new Set(matching(definition.foldingMembers ?? []));
+      for (const id of matching(definition.travellingMembers)) {
+        share.set(id, 1);
+      }
+      for (const id of matching(definition.halfTravellingMembers ?? [])) {
+        share.set(id, 0.5);
+      }
+      const members: CompiledStrutMember[] = [];
+      for (const member of frame.members) {
+        const travelShare = share.get(member.piece.id) ?? 0;
+        const folds = folding.has(member.piece.id);
+        if (travelShare === 0 && !folds) {
+          continue;
+        }
+        members.push({
+          id: member.piece.id,
+          centre: [
+            member.piece.position[0],
+            member.piece.position[1],
+            member.piece.position[2],
+          ],
+          travelShare,
+          folds,
+        });
+      }
+      return {
+        strut,
+        requiredMembers: matching(definition.requiredMembers),
+        members,
+        retraction: definition.retraction ?? null,
+      };
+    }),
+  };
+}
+
+/**
  * Слой подвижных кластеров. Пока поза кадра — покой, система не трогает
  * ничего: корабль стоит у причала своими авторскими телами. Как только поза
  * сдвинута, куски переводятся в кинематику и каждый кадр получают
@@ -2061,6 +2166,15 @@ export function VehicleFrameSystem({
               }
             : null,
           pose: live?.pose ?? null,
+          // Ноги: доля уборки и то, на скольких опорах машина стоит. Оба
+          // числа отвечают на вопрос «убралось ли и выпустилось ли обратно»
+          // без разглядывания машины на двадцатиметровой высоте.
+          gear: frame.supportStruts?.length
+            ? {
+                retracted: supportStrutFold.current.get(frame.id) ?? 0,
+                supports: live?.supportContacts ?? 0,
+              }
+            : null,
           body: live
             ? {
                 position: live.body.position,
@@ -2305,10 +2419,34 @@ export function VehicleFrameSystem({
   const obstacleRay = useRef<InstanceType<typeof rapier.Ray> | null>(null);
   /** Тела корабля: чтобы луч опоры не принял его же куски за землю. */
   const shipBodies = useRef<Map<string, Set<number>>>(new Map());
+  // Стойки собираются от измеренной массы, а масса машины меняется по ходу
+  // боя. Пересобираются они не каждый шаг — только когда масса заметно уехала.
+  const supportStrutBuilds = useRef<Map<string, SupportStrutBuild>>(new Map());
+  /** Доля уборки ног, 0 — выпущены, 1 — убраны. Одна на машину. */
+  const supportStrutFold = useRef<Map<string, number>>(new Map());
+  const supportStrutRay = useRef<InstanceType<typeof rapier.Ray> | null>(null);
   const debrisLocalPoint = useRef(new Vector3());
   const debrisCarrierRotation = useRef(new Quaternion());
   const handoffLookDirection = useRef(new Vector3());
   const interIslandPassengerStatus = useRef({ active: false, inside: false });
+
+  // Ход штока — состояние рендерера, а не машины: уехав со сцены, машина
+  // обязана унести его с собой. Иначе следующая сцена платит за поиск
+  // артикуляции у каждого несомого куска, ничего за это не получая.
+  const strutBuildsForCleanup = supportStrutBuilds;
+  useEffect(
+    () => () => {
+      for (const build of strutBuildsForCleanup.current.values()) {
+        for (const compiled of build.struts) {
+          for (const member of compiled.members) {
+            clearMemberArticulation(member.id);
+          }
+        }
+      }
+      strutBuildsForCleanup.current.clear();
+    },
+    [strutBuildsForCleanup],
+  );
 
   // Dev-прибор двигателей: по каждому каналу — РЕАЛЬНАЯ доставленная тяга,
   // состояние каждого его члена (цел / надкусан carve / отломан) и severity
@@ -5728,6 +5866,246 @@ export function VehicleFrameSystem({
         }
       }
 
+      // ── ОПОРЫ ─────────────────────────────────────────────────────────────
+      //
+      // Машина, объявившая стойки, стоит на грунте ИМИ. Её ноги выключены из
+      // обвода компаунда, поэтому Rapier о них не знает вовсе: луч ищет землю,
+      // общий закон считает реакцию, а сюда возвращаются сила в пятке, число
+      // опор под машиной и видимый ход штока.
+      const strutForces: {
+        force: [number, number, number];
+        point: [number, number, number];
+      }[] = [];
+      let strutContacts = 0;
+      if (frame.supportStruts?.length && mass && mass.mass > 0) {
+        const cached = supportStrutBuilds.current.get(frame.id);
+        // Пересборка от массы: пока она не уехала на процент, числа стойки
+        // остаются верными, а бисекция газового столба стоит дороже луча.
+        const build =
+          cached && Math.abs(cached.mass - mass.mass) < mass.mass * 0.01
+            ? cached
+            : compileSupportStruts(frame, mass);
+        supportStrutBuilds.current.set(frame.id, build);
+        // УБОРКА ИДЁТ ПО ОБЩЕМУ ЖУРНАЛУ РЕЙСА, А НЕ ПО СВОЕМУ ТАЙМЕРУ.
+        //
+        // Нога уходит, когда рейс перешёл из взлётной фазы в крейсерскую, и
+        // возвращается на подходе. Ни высоты, ни скорости, ни отдельного
+        // расписания здесь нет: любая машина, у которой появится убирающаяся
+        // опора, получит это правило даром. Отказ (`failed`) выпускает ноги —
+        // машине, которая садится как умеет, они нужнее всего.
+        const journey = airVehicleFlightEventState(
+          frame,
+          state.flight,
+          state.recovery?.lifecycle ?? null,
+        );
+        const retractSeconds =
+          build.struts.find((compiled) => compiled.retraction)?.retraction
+            ?.seconds ?? 0;
+        if (retractSeconds > 0) {
+          const previous = supportStrutFold.current.get(frame.id) ?? 0;
+          const rate = step / retractSeconds;
+          supportStrutFold.current.set(
+            frame.id,
+            journey === "cruise"
+              ? Math.min(1, previous + rate)
+              : Math.max(0, previous - rate),
+          );
+        }
+        const fold = supportStrutFold.current.get(frame.id) ?? 0;
+        const ownBodies = shipBodies.current.get(frame.clusterId);
+        supportStrutRay.current ??= new rapier.Ray(
+          { x: 0, y: 0, z: 0 },
+          { x: 0, y: 0, z: 0 },
+        );
+        const cast = supportStrutRay.current;
+        const up = rotateByQuaternion(state.body.orientation, [0, 1, 0]);
+        for (const compiled of build.struts) {
+          const strut = compiled.strut;
+          const foldAngle = compiled.retraction
+            ? strutFoldAngle(compiled.retraction, fold)
+            : 0;
+          // УБРАННАЯ НОГА НЕ ДЕРЖИТ, И ПОЛУУБРАННАЯ ТОЖЕ. Опора считается
+          // опорой только выпущенной до конца; всё остальное — брюхо и общий
+          // закон материалов.
+          const down = Math.abs(foldAngle) < 1e-4;
+          const intact =
+            down &&
+            compiled.requiredMembers.every(
+              (id) => attachedMembers.has(id) && !brokenPieces.current.has(id),
+            );
+          const mount = rotateByQuaternion(state.body.orientation, [
+            strut.mount[0] - mass.centre[0],
+            strut.mount[1] - mass.centre[1],
+            strut.mount[2] - mass.centre[2],
+          ]);
+          const mountWorld: [number, number, number] = [
+            centre[0] + mount[0],
+            centre[1] + mount[1],
+            centre[2] + mount[2],
+          ];
+          const axisWorld = rotateByQuaternion(
+            state.body.orientation,
+            strut.axis,
+          );
+          let probe = null as null | {
+            distance: number;
+            normal: [number, number, number];
+          };
+          if (intact && physicalCarrier) {
+            cast.origin.x = mountWorld[0];
+            cast.origin.y = mountWorld[1];
+            cast.origin.z = mountWorld[2];
+            cast.dir.x = axisWorld[0];
+            cast.dir.y = axisWorld[1];
+            cast.dir.z = axisWorld[2];
+            const hit = rapierWorld.castRayAndGetNormal(
+              cast,
+              strut.extendedReach,
+              true,
+              undefined,
+              VEHICLE_CONTACT_QUERY,
+              undefined,
+              physicalCarrier,
+              (collider) => {
+                const handle = collider.parent()?.handle;
+                return (
+                  handle === undefined ||
+                  (handle !== physicalCarrier.handle && !ownBodies?.has(handle))
+                );
+              },
+            );
+            if (hit) {
+              const flipped =
+                hit.normal.x * up[0] +
+                  hit.normal.y * up[1] +
+                  hit.normal.z * up[2] <
+                0;
+              probe = {
+                distance: hit.timeOfImpact,
+                normal: flipped
+                  ? [-hit.normal.x, -hit.normal.y, -hit.normal.z]
+                  : [hit.normal.x, hit.normal.y, hit.normal.z],
+              };
+            }
+          }
+          const lever: [number, number, number] = [
+            mountWorld[0] - centre[0],
+            mountWorld[1] - centre[1],
+            mountWorld[2] - centre[2],
+          ];
+          const mountVelocity: [number, number, number] = [
+            state.body.velocity[0] +
+              state.body.angularVelocity[1] * lever[2] -
+              state.body.angularVelocity[2] * lever[1],
+            state.body.velocity[1] +
+              state.body.angularVelocity[2] * lever[0] -
+              state.body.angularVelocity[0] * lever[2],
+            state.body.velocity[2] +
+              state.body.angularVelocity[0] * lever[1] -
+              state.body.angularVelocity[1] * lever[0],
+          ];
+          const reaction = strutReaction(
+            strut,
+            probe,
+            probe
+              ? strutClosingSpeed(mountVelocity, axisWorld, probe.normal)
+              : 0,
+            step,
+            intact ? 1 : 0,
+          );
+          if (probe && reaction.load > 0) {
+            strutContacts += 1;
+            const foot: [number, number, number] = [
+              mountWorld[0] + axisWorld[0] * probe.distance,
+              mountWorld[1] + axisWorld[1] * probe.distance,
+              mountWorld[2] + axisWorld[2] * probe.distance,
+            ];
+            strutForces.push({
+              force: [
+                probe.normal[0] * reaction.load,
+                probe.normal[1] * reaction.load,
+                probe.normal[2] * reaction.load,
+              ],
+              point: foot,
+            });
+            // Пятка не катится: она держит во все стороны одинаково. Без неё
+            // севшая машина уезжала бы по площадке от любого остатка хода.
+            const footVelocity: [number, number, number] = [
+              state.body.velocity[0] +
+                state.body.angularVelocity[1] * (foot[2] - centre[2]) -
+                state.body.angularVelocity[2] * (foot[1] - centre[1]),
+              state.body.velocity[1] +
+                state.body.angularVelocity[2] * (foot[0] - centre[0]) -
+                state.body.angularVelocity[0] * (foot[2] - centre[2]),
+              state.body.velocity[2] +
+                state.body.angularVelocity[0] * (foot[1] - centre[1]) -
+                state.body.angularVelocity[1] * (foot[0] - centre[0]),
+            ];
+            const along =
+              footVelocity[0] * probe.normal[0] +
+              footVelocity[1] * probe.normal[1] +
+              footVelocity[2] * probe.normal[2];
+            const friction = strutPadFriction(
+              strut,
+              reaction.load,
+              [
+                footVelocity[0] - probe.normal[0] * along,
+                footVelocity[1] - probe.normal[1] * along,
+                footVelocity[2] - probe.normal[2] * along,
+              ],
+            );
+            strutForces.push({
+              force: [friction[0], friction[1], friction[2]],
+              point: foot,
+            });
+          }
+          // Движение ноги в кадр. Сначала ход штока — разгруженная стойка
+          // выпускается ниже авторской позы, потому что авторская нарисована
+          // под весом машины, — и уже сдвинутый кусок складывается вокруг
+          // цапфы. Порядок именно этот: шток ходит по СВОЕЙ оси, а она сама
+          // повёрнута уборкой.
+          const travel = strutVisualSlide(strut, reaction.compression);
+          const turn = compiled.retraction
+            ? { axis: compiled.retraction.hinge, angle: foldAngle }
+            : undefined;
+          for (const member of compiled.members) {
+            const share = member.travelShare;
+            const moved: [number, number, number] = [
+              member.centre[0] + travel[0] * share,
+              member.centre[1] + travel[1] * share,
+              member.centre[2] + travel[2] * share,
+            ];
+            if (!member.folds || !compiled.retraction) {
+              setMemberArticulation(member.id, {
+                steer: 0,
+                spin: 0,
+                slide: [
+                  moved[0] - member.centre[0],
+                  moved[1] - member.centre[1],
+                  moved[2] - member.centre[2],
+                ],
+              });
+              continue;
+            }
+            const folded = strutFoldOffset(
+              compiled.retraction,
+              foldAngle,
+              moved,
+            );
+            setMemberArticulation(member.id, {
+              steer: 0,
+              spin: 0,
+              turn,
+              slide: [
+                moved[0] - member.centre[0] + folded[0],
+                moved[1] - member.centre[1] + folded[1],
+                moved[2] - member.centre[2] + folded[2],
+              ],
+            });
+          }
+        }
+      }
+
       // Stable support is measured from Rapier contacts. The solver owns the
       // normal reaction and Coulomb friction; this channel reports only that
       // an upward-facing surface is persistently carrying the vehicle.
@@ -5738,7 +6116,11 @@ export function VehicleFrameSystem({
       // исправный рейс детектором «неожиданного контакта». Тот же реестр
       // собственных тел уже отсекает свои куски для лучей опоры.
       const ownDebrisBodies = shipBodies.current.get(frame.clusterId);
-      state.supportContacts = physicalRuntime
+      // ОПОРА НА СТОЙКАХ — ТОЖЕ ОПОРА. У машины с ногами вне обвода компаунда
+      // манифестов при штатной посадке не будет вовсе: она стоит на грунте
+      // тем, чего Rapier не видит. Считать её при этом летящей значило бы
+      // сорвать ей каждую посадку.
+      state.supportContacts = strutContacts + (physicalRuntime
         ? countActiveUpwardSupportContacts(
             rapierWorld.narrowPhase,
             physicalRuntime.body,
@@ -5791,7 +6173,7 @@ export function VehicleFrameSystem({
               );
             },
           )
-        : 0;
+        : 0);
       // Винтокрылая машина несёт себя КОЛЬЦАМИ, а не одной вертикалью в точке
       // подъёма. Отсюда всё её поведение: тяга каждого кольца своя, суммарный
       // вектор наклоняется вместе с корпусом, и разностью тяг рождаются момент
@@ -5850,6 +6232,9 @@ export function VehicleFrameSystem({
           : flight && flight.castOff && flight.progress < 0.9
             ? []
             : [mooring]),
+        // Реакция грунта под пятками. Она приходит НЕ от солвера: ноги этой
+        // машины вне обвода компаунда, и всё, чем она стоит, посчитано выше.
+        ...strutForces,
         ...controls,
       ] as const;
       if (physicalCarrier) {
@@ -6619,19 +7004,303 @@ export function VehicleFrameSystem({
   );
 }
 
-/**
- * ТРАССА АВТОНОМНОГО РЕЙСА: туманный луч со светлячками.
- *
- * Кино, а не отладчик: кривая ВСЕГО маршрута от взлёта до посадки, цвет и
- * яркость по высоте, вдоль луча течёт рой мерцающих огоньков со своим
- * блужданием. Прогресс машины и коридор здесь не участвуют — они дело контура
- * управления. Луч строится ОДИН раз на план; по кадрам живут только светлячки.
- *
- * Бюджет посчитан до показа: 420 искр по три выборки кривой — около 1300
- * табличных выборок на кадр, геометрия луча ~400 вершин статикой.
- */
-// Мелких много: рой из сотен искр читается туманом света, а не бусами.
-const ROUTE_FIREFLY_COUNT = 420;
+/** Один непрерывный GL line strip: без лент, стыков и геометрического glow. */
+const ROUTE_TRAIL_COMMIT_METRES = 0.5;
+const ROUTE_TRAIL_MAX_SAMPLES = 4000;
+
+function routeVisualKey(plan: VehicleRoutePlan): string {
+  const anchors = [0, 0.37, 0.73, 1].flatMap((progress) =>
+    plan.point(progress).map((value) => Math.round(value * 100)),
+  );
+  return `${plan.id}:${Math.round(plan.length * 100)}:${anchors.join(",")}`;
+}
+
+type RouteRgbaGeometry = {
+  readonly positions: Float32Array;
+  readonly colors: Float32Array;
+};
+
+function routeLayerColors(
+  colors: Float32Array,
+  tint: readonly [number, number, number] | null,
+  gain = 1,
+  applyVertexAlpha = true,
+): Float32Array {
+  const result = new Float32Array((colors.length / 4) * 3);
+  for (
+    let source = 0, target = 0;
+    source < colors.length;
+    source += 4, target += 3
+  ) {
+    const strength = applyVertexAlpha ? colors[source + 3] : 1;
+    result[target] = (tint?.[0] ?? colors[source]) * strength * gain;
+    result[target + 1] =
+      (tint?.[1] ?? colors[source + 1]) * strength * gain;
+    result[target + 2] =
+      (tint?.[2] ?? colors[source + 2]) * strength * gain;
+  }
+  return result;
+}
+
+function createRouteStripMaterial(trailFade: boolean): ShaderMaterial {
+  return new ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    toneMapped: false,
+    uniforms: {
+      routeHead: { value: 1 },
+      trailFade: { value: trailFade ? 1 : 0 },
+    },
+    vertexShader: /* glsl */ `
+      attribute vec4 routeColor;
+      attribute float routeIndex;
+      uniform float routeHead;
+      uniform float trailFade;
+      varying vec4 vRouteColor;
+
+      void main() {
+        vRouteColor = routeColor;
+        if (trailFade > 0.5) {
+          float age = routeIndex / max(1.0, routeHead);
+          vRouteColor.a = 0.14 + 0.76 * pow(age, 1.4);
+        }
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      varying vec4 vRouteColor;
+
+      void main() {
+        gl_FragColor = vRouteColor;
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }
+    `,
+  });
+}
+
+function createRouteStrip(
+  renderOrder: number,
+  capacity = 0,
+): Line<BufferGeometry, ShaderMaterial> {
+  const geometry = new BufferGeometry();
+  if (capacity > 0) {
+    const positions = new BufferAttribute(new Float32Array(capacity * 3), 3);
+    positions.setUsage(DynamicDrawUsage);
+    const colors = new Float32Array(capacity * 4);
+    const indices = new Float32Array(capacity);
+    for (let index = 0; index < capacity; index += 1) {
+      colors.set([...ROUTE_ACTUAL_COLOR, 1], index * 4);
+      indices[index] = index;
+    }
+    geometry.setAttribute("position", positions);
+    geometry.setAttribute("routeColor", new BufferAttribute(colors, 4));
+    geometry.setAttribute("routeIndex", new BufferAttribute(indices, 1));
+    geometry.setDrawRange(0, 0);
+  }
+  const line = new Line(
+    geometry,
+    createRouteStripMaterial(capacity > 0),
+  );
+  line.frustumCulled = false;
+  line.renderOrder = renderOrder;
+  line.visible = false;
+  return line;
+}
+
+function createRouteSegmentMaterial(
+  linewidth: number,
+  opacity: number,
+): LineMaterial {
+  const material = new LineMaterial({
+    color: 0xffffff,
+    linewidth,
+    worldUnits: false,
+    vertexColors: true,
+    transparent: true,
+    opacity,
+    depthWrite: false,
+    toneMapped: false,
+  });
+  material.resolution.set(1, 1);
+  return material;
+}
+
+function createRouteSegments(
+  linewidth: number,
+  renderOrder: number,
+  opacity: number,
+): LineSegments2 {
+  const line = new LineSegments2(
+    new LineSegmentsGeometry(),
+    createRouteSegmentMaterial(linewidth, opacity),
+  );
+  line.frustumCulled = false;
+  line.renderOrder = renderOrder;
+  line.visible = false;
+  return line;
+}
+
+function createRouteDiscMesh(
+  renderOrder: number,
+): Mesh<BufferGeometry, MeshBasicMaterial> {
+  const mesh = new Mesh(
+    new BufferGeometry(),
+    new MeshBasicMaterial({
+      color: 0x28cdbd,
+      transparent: true,
+      opacity: 0.58,
+      depthWrite: false,
+      toneMapped: false,
+      side: DoubleSide,
+    }),
+  );
+  mesh.frustumCulled = false;
+  mesh.renderOrder = renderOrder;
+  mesh.visible = false;
+  return mesh;
+}
+
+function setRouteStripGeometry(
+  target: Line<BufferGeometry, ShaderMaterial>,
+  line: RouteRgbaGeometry,
+  opaque: boolean,
+) {
+  if (line.positions.length < 6) return;
+  const colors = opaque ? new Float32Array(line.colors) : line.colors;
+  if (opaque) {
+    for (let index = 3; index < colors.length; index += 4) colors[index] = 1;
+  }
+  const geometry = target.geometry;
+  geometry.setAttribute("position", new BufferAttribute(line.positions, 3));
+  geometry.setAttribute("routeColor", new BufferAttribute(colors, 4));
+  geometry.setAttribute(
+    "routeIndex",
+    new BufferAttribute(
+      Float32Array.from(
+        { length: line.positions.length / 3 },
+        (_, index) => index,
+      ),
+      1,
+    ),
+  );
+  target.material.uniforms.routeHead.value = line.positions.length / 3 - 1;
+  geometry.computeBoundingSphere();
+}
+
+function updateActualRouteStrip(
+  target: Line<BufferGeometry, ShaderMaterial>,
+  committed: readonly RouteVector3[],
+  live: RouteVector3,
+  rewrite: boolean,
+) {
+  const position = target.geometry.getAttribute("position") as BufferAttribute;
+  const capacity = position.count;
+  const committedCount = Math.min(committed.length, capacity);
+  const liveIndex = Math.min(committedCount, capacity - 1);
+  const last = committed[committedCount - 1];
+  const hasLiveTip =
+    committedCount < capacity &&
+    Boolean(
+      last &&
+        Math.hypot(
+          live[0] - last[0],
+          live[1] - last[1],
+          live[2] - last[2],
+        ) > 1e-4,
+    );
+
+  position.clearUpdateRanges();
+  if (rewrite) {
+    for (let index = 0; index < committedCount; index += 1) {
+      position.setXYZ(index, ...committed[index]);
+    }
+    position.addUpdateRange(0, committedCount * 3);
+  } else if (committedCount > 0) {
+    position.setXYZ(committedCount - 1, ...committed[committedCount - 1]);
+    position.addUpdateRange((committedCount - 1) * 3, 3);
+  }
+  if (hasLiveTip) {
+    position.setXYZ(liveIndex, ...live);
+    position.addUpdateRange(liveIndex * 3, 3);
+  }
+  position.needsUpdate = committedCount > 0;
+  const drawCount = committedCount + (hasLiveTip ? 1 : 0);
+  target.geometry.setDrawRange(0, drawCount);
+  target.material.uniforms.routeHead.value = Math.max(1, drawCount - 1);
+  return drawCount;
+}
+
+function setRouteSegmentGeometry(
+  target: LineSegments2,
+  line: RouteRgbaGeometry,
+  tint: readonly [number, number, number] | null,
+  gain = 1,
+) {
+  const geometry = target.geometry as LineSegmentsGeometry;
+  if (line.positions.length < 6) {
+    geometry.setPositions(new Float32Array(6));
+    geometry.setColors(new Float32Array(6));
+  } else {
+    geometry.setPositions(line.positions);
+    geometry.setColors(routeLayerColors(line.colors, tint, gain));
+  }
+  geometry.computeBoundingSphere();
+}
+
+function setRouteDiscGeometry(
+  target: Mesh<BufferGeometry, MeshBasicMaterial>,
+  geometryData: ReturnType<typeof routeAltitudeDiscGeometry>,
+) {
+  const geometry = target.geometry;
+  geometry.setAttribute(
+    "position",
+    new BufferAttribute(geometryData.positions, 3),
+  );
+  geometry.setIndex(new BufferAttribute(geometryData.indices, 1));
+  geometry.computeVertexNormals();
+  geometry.computeBoundingSphere();
+}
+
+interface RouteRenderBundle {
+  readonly plan: Line<BufferGeometry, ShaderMaterial>;
+  readonly actual: Line<BufferGeometry, ShaderMaterial>;
+  readonly gates: LineSegments2;
+  readonly altitudeDiscs: Mesh<BufferGeometry, MeshBasicMaterial>;
+  readonly craft: LineSegments2;
+  readonly objects: readonly (
+    | Line<BufferGeometry, ShaderMaterial>
+    | Mesh<BufferGeometry, MeshBasicMaterial>
+    | LineSegments2
+  )[];
+  readonly materials: readonly (
+    | ShaderMaterial
+    | LineMaterial
+    | MeshBasicMaterial
+  )[];
+}
+
+function createRouteRenderBundle(): RouteRenderBundle {
+  const bundle = {
+    plan: createRouteStrip(21),
+    actual: createRouteStrip(22, ROUTE_TRAIL_MAX_SAMPLES + 1),
+    gates: createRouteSegments(0.72, 23, 0.72),
+    altitudeDiscs: createRouteDiscMesh(24),
+    craft: createRouteSegments(0.9, 26, 0.55),
+  };
+  const objects = [
+    bundle.plan,
+    bundle.actual,
+    bundle.gates,
+    bundle.altitudeDiscs,
+    bundle.craft,
+  ] as const;
+  return {
+    ...bundle,
+    objects,
+    materials: objects.map((object) => object.material),
+  };
+}
 
 function FlightRouteRibbons({
   frames,
@@ -6642,165 +7311,165 @@ function FlightRouteRibbons({
   readonly states: { readonly current: Map<string, FrameState> };
   readonly enabled: boolean;
 }) {
-  const beams = useRef(new Map<string, Mesh>());
-  const swarms = useRef(new Map<string, Points<BufferGeometry<NormalOrGLBufferAttributes>>>());
-  const builtFor = useRef(new Map<string, VehicleRoutePlan>());
-  const altitudeRange = useRef(new Map<string, readonly [number, number]>());
-  const fireflies = useMemo(() => createRouteFireflies(ROUTE_FIREFLY_COUNT), []);
-  const spriteMap = useMemo(() => {
-    const size = 64;
-    const canvas = document.createElement("canvas");
-    canvas.width = size;
-    canvas.height = size;
-    const context = canvas.getContext("2d");
-    if (context) {
-      const gradient = context.createRadialGradient(32, 32, 0, 32, 32, 32);
-      gradient.addColorStop(0, "rgba(255,255,255,1)");
-      gradient.addColorStop(0.35, "rgba(255,255,255,0.5)");
-      gradient.addColorStop(1, "rgba(255,255,255,0)");
-      context.fillStyle = gradient;
-      context.fillRect(0, 0, size, size);
-    }
-    return new CanvasTexture(canvas);
-  }, []);
-  useFrame(({ clock }) => {
+  const routeVisuals = useMemo(
+    () =>
+      new Map(
+        frames.map((frame) => [frame.id, createRouteRenderBundle()] as const),
+      ),
+    [frames],
+  );
+  const builtFor = useRef(new Map<string, string>());
+  const trailActive = useRef(new Map<string, boolean>());
+  const trailSamples = useRef(new Map<string, RouteVector3[]>());
+  useEffect(
+    () => () => {
+      for (const visual of routeVisuals.values()) {
+        for (const object of visual.objects) object.geometry.dispose();
+        for (const material of visual.materials) material.dispose();
+      }
+    },
+    [routeVisuals],
+  );
+
+  useFrame(({ size }) => {
     for (const frame of frames) {
       const state = states.current.get(frame.id);
-      const beam = beams.current.get(frame.id);
-      const swarm = swarms.current.get(frame.id);
-      if (!beam || !swarm) continue;
+      const visual = routeVisuals.get(frame.id);
+      if (!visual) continue;
+      visual.craft.material.resolution.set(size.width, size.height);
+      visual.gates.material.resolution.set(size.width, size.height);
+
       const flight = state?.flight;
       const plan = state?.activePlan;
-      const visible = Boolean(
-        enabled &&
-          flight &&
-          flight.castOff &&
+      const underway = Boolean(
+        state &&
+          flight?.castOff &&
           flight.occupancy === "uncrewed" &&
           plan,
       );
-      beam.visible = visible;
-      swarm.visible = visible;
-      if (!visible || !plan) continue;
-      if (builtFor.current.get(frame.id) !== plan) {
-        builtFor.current.set(frame.id, plan);
-        const sections = routeGlowSections(plan);
-        const ribbon = routeBeamGeometry(sections);
-        const geometry = beam.geometry as BufferGeometry;
-        geometry.setAttribute(
-          "position",
-          new BufferAttribute(ribbon.positions, 3),
-        );
-        geometry.setAttribute("color", new BufferAttribute(ribbon.colors, 4));
-        geometry.setIndex(new BufferAttribute(ribbon.indices, 1));
-        geometry.computeBoundingSphere();
-        let low = Number.POSITIVE_INFINITY;
-        let high = Number.NEGATIVE_INFINITY;
-        for (const section of sections) {
-          low = Math.min(low, section.centre[1]);
-          high = Math.max(high, section.centre[1]);
-        }
-        altitudeRange.current.set(frame.id, [low, high]);
-        const swarmGeometry = swarm.geometry as BufferGeometry;
-        swarmGeometry.setAttribute(
-          "position",
-          new BufferAttribute(new Float32Array(fireflies.length * 3), 3),
-        );
-        swarmGeometry.setAttribute(
-          "color",
-          new BufferAttribute(new Float32Array(fireflies.length * 4), 4),
-        );
+      const visible = enabled && underway;
+      for (const object of visual.objects) object.visible = visible;
+      if (!underway || !state || !plan || !flight) {
+        trailActive.current.set(frame.id, false);
+        continue;
       }
-      const range = altitudeRange.current.get(frame.id) ?? [0, 1];
-      const swarmGeometry = swarm.geometry as BufferGeometry;
-      const positions = swarmGeometry.getAttribute("position") as BufferAttribute;
-      const colors = swarmGeometry.getAttribute("color") as BufferAttribute;
-      const time = clock.elapsedTime;
-      // Возле самой машины светляк гаснет: одиночная искра у брюха без луча
-      // рядом читается не роем трассы, а откреплённым фонарём.
-      const centre = state?.mass
-        ? [
-            state.body.position[0] + state.mass.centre[0],
-            state.body.position[1] + state.mass.centre[1],
-            state.body.position[2] + state.mass.centre[2],
-          ]
-        : null;
-      for (let index = 0; index < fireflies.length; index += 1) {
-        const sample = sampleRouteFirefly(
+
+      const visualKey = routeVisualKey(plan);
+      if (builtFor.current.get(frame.id) !== visualKey) {
+        builtFor.current.set(frame.id, visualKey);
+        const line = routePlanLineGeometry(
           plan,
-          fireflies[index],
-          time,
-          range[0],
-          range[1],
+          Math.max(480, Math.min(960, Math.ceil(plan.length / 0.9))),
         );
-        let nearFade = 1;
-        if (centre) {
-          const distance = Math.hypot(
-            sample.position[0] - centre[0],
-            sample.position[1] - centre[1],
-            sample.position[2] - centre[2],
-          );
-          nearFade = Math.min(1, Math.max(0, (distance - 2.5) / 4));
-        }
-        const glow = sample.intensity * nearFade;
-        positions.setXYZ(
-          index,
-          sample.position[0],
-          sample.position[1],
-          sample.position[2],
+        setRouteStripGeometry(visual.plan, line, true);
+        const markers = routeSemanticMarkers(plan);
+        setRouteSegmentGeometry(
+          visual.gates,
+          routeGateGeometry(plan, markers),
+          null,
         );
-        colors.setXYZW(
-          index,
-          sample.color[0] * glow,
-          sample.color[1] * glow,
-          sample.color[2] * glow,
-          glow,
+        setRouteDiscGeometry(
+          visual.altitudeDiscs,
+          routeAltitudeDiscGeometry(plan, markers),
         );
       }
-      positions.needsUpdate = true;
-      colors.needsUpdate = true;
+
+      const orientation = state.body.orientation;
+      const massCentre = state.mass?.centre ?? [0, 0, 0];
+      const massOffset = rotateByQuaternion(orientation, massCentre);
+      const centre: RouteVector3 = [
+        state.body.position[0] + massOffset[0],
+        state.body.position[1] + massOffset[1],
+        state.body.position[2] + massOffset[2],
+      ];
+      let samples = trailSamples.current.get(frame.id);
+      let rewriteTrail = false;
+      if (!trailActive.current.get(frame.id) || !samples) {
+        trailActive.current.set(frame.id, true);
+        samples = [[...centre] as RouteVector3];
+        trailSamples.current.set(frame.id, samples);
+        rewriteTrail = true;
+      }
+      // История + живой кончик: кончик каждый кадр на позе машины, новые
+      // точки коммитятся часто — иначе след рисуется ступенями позади.
+      const anchor = samples[samples.length - 1];
+      if (
+        Math.hypot(
+          centre[0] - anchor[0],
+          centre[1] - anchor[1],
+          centre[2] - anchor[2],
+        ) >= ROUTE_TRAIL_COMMIT_METRES
+      ) {
+        samples.push(centre);
+        if (samples.length > ROUTE_TRAIL_MAX_SAMPLES) {
+          samples.splice(0, samples.length - ROUTE_TRAIL_MAX_SAMPLES);
+          rewriteTrail = true;
+        }
+      }
+      const actualPointCount = updateActualRouteStrip(
+        visual.actual,
+        samples,
+        centre,
+        rewriteTrail,
+      );
+      const actualVisible = visible && actualPointCount >= 2;
+      visual.actual.visible = actualVisible;
+
+      if (visible) {
+        const up = rotateByQuaternion(orientation, [0, 1, 0]);
+        const heading = rotateByQuaternion(orientation, frame.nose);
+        const tangentStep = Math.min(0.01, 2 / Math.max(1, plan.length));
+        const tangentBefore = plan.point(
+          Math.max(0, flight.progress - tangentStep),
+        );
+        const tangentAfter = plan.point(
+          Math.min(1, flight.progress + tangentStep),
+        );
+        const routeDirection: RouteVector3 = [
+          tangentAfter[0] - tangentBefore[0],
+          tangentAfter[1] - tangentBefore[1],
+          tangentAfter[2] - tangentBefore[2],
+        ];
+        const engines = frame.flight.limits.enginePoints.map((point, index) => {
+          const local: RouteVector3 = [
+            point[0] - massCentre[0],
+            point[1] - massCentre[1],
+            point[2] - massCentre[2],
+          ];
+          const offset = rotateByQuaternion(orientation, local);
+          return {
+            position: [
+              centre[0] + offset[0],
+              centre[1] + offset[1],
+              centre[2] + offset[2],
+            ] as RouteVector3,
+            intensity: state.rotorMotorOutput[index] ?? 0,
+          };
+        });
+        setRouteSegmentGeometry(
+          visual.craft,
+          routeCraftContourGeometry({
+            centre,
+            heading,
+            course: state.body.velocity,
+            route: routeDirection,
+            up,
+            engines,
+          }),
+          null,
+          1,
+        );
+      }
     }
   });
+
   return (
     <>
       {frames.map((frame) => (
         <group key={frame.id}>
-          <mesh
-            ref={(value) => {
-              if (value) beams.current.set(frame.id, value);
-              else beams.current.delete(frame.id);
-            }}
-            frustumCulled={false}
-            visible={false}
-          >
-            <bufferGeometry />
-            <meshBasicMaterial
-              vertexColors
-              transparent
-              depthWrite={false}
-              side={DoubleSide}
-              toneMapped={false}
-            />
-          </mesh>
-          <points
-            ref={(value) => {
-              if (value) swarms.current.set(frame.id, value);
-              else swarms.current.delete(frame.id);
-            }}
-            frustumCulled={false}
-            visible={false}
-          >
-            <bufferGeometry />
-            <pointsMaterial
-              map={spriteMap}
-              vertexColors
-              transparent
-              depthWrite={false}
-              blending={AdditiveBlending}
-              size={0.42}
-              sizeAttenuation
-              toneMapped={false}
-            />
-          </points>
+          {routeVisuals.get(frame.id)?.objects.map((object, index) => (
+            <primitive key={index} object={object} />
+          ))}
         </group>
       ))}
     </>

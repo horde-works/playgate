@@ -440,15 +440,41 @@ const rotorFacingSum = rotorFacings.reduce(
   [0, 0] as const,
 );
 const rotorFacingLength = Math.hypot(...rotorFacingSum) || 1;
-/** True east is authored toward the average front normal of all four rotors. */
+/**
+ * True east is authored AWAY from the average front normal of the four rotors,
+ * because a Dutch mill turns its cap to face the wind and the wind over the
+ * Low Countries is a westerly. That is the whole of the reasoning, and it is
+ * not a convenience: it is why every photograph of Kinderdijk at dusk has the
+ * sails presented flat to the camera with the sun going down behind it.
+ *
+ * It used to point the other way, and the cost was exact rather than a matter
+ * of taste — the sun's direction dotted with the rotor face read +0.97 at
+ * dawn and −1.00 at sunset. The mills were lit square-on at first light and
+ * stood as flat black cut-outs for the entire golden hour, every day, in the
+ * one world built around them.
+ */
 export const DUTCH_POLDER_EAST_VECTOR = [
-  rotorFacingSum[0] / rotorFacingLength,
-  rotorFacingSum[1] / rotorFacingLength,
+  -rotorFacingSum[0] / rotorFacingLength,
+  -rotorFacingSum[1] / rotorFacingLength,
 ] as const;
 export const DUTCH_POLDER_NORTH_VECTOR = [
   -DUTCH_POLDER_EAST_VECTOR[1],
   DUTCH_POLDER_EAST_VECTOR[0],
 ] as const;
+
+/**
+ * The bearing the cloud deck drifts along, in world x/z radians.
+ *
+ * A westerly is one wind. It is what the mills are turned into and it is what
+ * carries the deck, so it is one number here rather than two that happened to
+ * be authored eight weeks apart — the old pair disagreed by seventy-one
+ * degrees, which is a sky whose weather comes from somewhere the mills have
+ * never heard of. `tests/sky-weather` holds them together.
+ */
+export const DUTCH_POLDER_WIND_BEARING = Math.atan2(
+  DUTCH_POLDER_EAST_VECTOR[1],
+  DUTCH_POLDER_EAST_VECTOR[0],
+);
 
 for (const placement of placements) {
   const yaw = Math.PI - placement.bearing * Math.PI / 180;

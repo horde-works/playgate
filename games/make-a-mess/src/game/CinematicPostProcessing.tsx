@@ -72,9 +72,12 @@ const CinematicShader = {
     float brightMask(vec3 color) {
       // Only genuinely HDR-bright sources (the sun core, strong glare) feed
       // the shafts — ordinary hazy sky must not, or looking sunward becomes
-      // a white-out instead of beams.
+      // a white-out instead of beams. These two moved with the bloom gate
+      // below and for the same reason: the dome is a marched atmosphere now
+      // and its horizon really is several times its zenith, where the fit it
+      // replaced was compressed to sit just under whatever gate it was given.
       float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));
-      return smoothstep(2.3, 5.5, luminance);
+      return smoothstep(8.6, 20.6, luminance);
     }
 
     void main() {
@@ -306,13 +309,23 @@ export function CinematicPostProcessing({
       composer.addPass(aoPass);
     }
 
-    // Polder: raise the bloom gate a touch so the dome's aureole does not
-    // spill as a ground veil; strength stays, only what crosses threshold.
+    // THE GATE IS IN THE SKY'S UNITS. UnrealBloom's high pass does not pass
+    // the excess over its threshold — it passes the WHOLE colour of anything
+    // above it, so every value the sky routinely exceeds becomes a
+    // full-brightness source blurred back down over the frame.
+    //
+    // The old 1.6 was set against an analytic sky compressed to sit just under
+    // it. A marched atmosphere is not compressed: its horizon is genuinely
+    // three to eight times its zenith, and at 1.6 up to a fifth of the whole
+    // dome crossed the gate — a veil over the entire daylight frame. Measured
+    // over both airs and every sun from 2° to 60°, 6.0 leaves at most 1.9% of
+    // the dome and 22° of reach, which is an aureole around the sun and
+    // nothing else. Polder keeps its slightly higher gate.
     const bloomPass = new UnrealBloomPass(
       new Vector2(32, 32),
       compact ? 0.1 : veil < 1 ? 0.11 : 0.13,
       0.35,
-      veil < 1 ? 1.85 : 1.6,
+      veil < 1 ? 6.94 : 6,
     );
     if (byteBloom) {
       // Chrome/ANGLE intermittently loses the full composer frame while

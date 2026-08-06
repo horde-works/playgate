@@ -5,13 +5,18 @@ import {
   LIP_PLACE_OFFSET,
   LIP_SAMPLE_INSET,
   POLDER_MOUTH_LIPS,
+  POLDER_SPILL_ENABLED,
   POLDER_SPILL_LIPS,
   SPILL_GRAVITY,
+  SPILL_JUDGE_PERIOD,
+  SPILL_RETRY_PERIOD,
+  SPILL_WARMUP,
   SPRAY_BIRTH_TO,
   VEIL_FADE_TO,
   VEIL_FALL_TIME,
   WEIR_COEFFICIENT,
   buildSpillVeilModel,
+  initialSpillPower,
   polderLipLineAt,
   polderSheetSpills,
   polderSpillApproach,
@@ -20,6 +25,7 @@ import {
   spillDrawdownRatio,
   spillDropShape,
   spillOutwardShape,
+  stepSpillPower,
 } from "../games/make-a-mess/src/game/dutchPolderSpillModel.ts";
 import {
   POLDER_WATER_LEVEL_DATUM,
@@ -330,6 +336,87 @@ test("the fall is built exactly as deep as it is drawn", () => {
   assert.ok(Math.abs(spillDropShape(VEIL_FALL_TIME) - 6.7) < 0.3);
   // Nothing may be born past the end of the water it is torn from.
   assert.ok(SPRAY_BIRTH_TO <= VEIL_FALL_TIME);
+});
+
+/** Runs the kill switch for `seconds` at a steady frame rate. */
+function runSpillPower(power, fps, seconds, step = 1 / 60) {
+  let now = 0;
+  const flips = [];
+  while (now < seconds) {
+    const before = power.on;
+    power = stepSpillPower(power, step, fps);
+    if (power.on !== before) flips.push({ at: now, on: power.on });
+    now += step;
+  }
+  return { power, flips };
+}
+
+test("a fall that costs the frame rate switches itself off within a second", () => {
+  const { power, flips } = runSpillPower(initialSpillPower(), 22, 5);
+  assert.equal(power.on, false, "still drawing at 22 fps");
+  assert.equal(flips.length, 1, `flipped ${flips.length} times`);
+  // The judgement window opens only after the warm-up, so the switch lands
+  // between one and two seconds — never later, and never inside the warm-up.
+  assert.ok(
+    flips[0].at >= SPILL_WARMUP && flips[0].at <= SPILL_WARMUP + SPILL_JUDGE_PERIOD + 0.05,
+    `switched off at ${flips[0].at.toFixed(2)} s`,
+  );
+});
+
+test("a fall the machine can afford is never switched off", () => {
+  const { power, flips } = runSpillPower(initialSpillPower(), 58, 300);
+  assert.equal(power.on, true);
+  assert.deepEqual(flips, []);
+  assert.ok(power.measured > 0, "nothing was ever measured");
+});
+
+test("it tries again once a minute, and gives up again in a second", () => {
+  const { flips } = runSpillPower(initialSpillPower(), 18, 200);
+  // off, on, off, on, off … one retry per minute and no more.
+  assert.ok(flips.length >= 5, `only ${flips.length} flips in 200 s`);
+  const retries = flips.filter((flip) => flip.on);
+  for (let index = 1; index < retries.length; index += 1) {
+    const gap = retries[index].at - retries[index - 1].at;
+    assert.ok(
+      Math.abs(gap - (SPILL_RETRY_PERIOD + SPILL_WARMUP + SPILL_JUDGE_PERIOD)) < 0.1,
+      `retried after ${gap.toFixed(2)} s`,
+    );
+  }
+  // And the fall is drawn for only a sliver of that minute while it is unaffordable.
+  const drawn = flips.reduce(
+    (total, flip, index) => flip.on && flips[index + 1]
+      ? total + (flips[index + 1].at - flip.at)
+      : total,
+    0,
+  );
+  assert.ok(drawn / 200 < 0.05, `drawn for ${(100 * drawn / 200).toFixed(1)}% of a slow run`);
+});
+
+test("a machine that recovers gets its fall back", () => {
+  let { power } = runSpillPower(initialSpillPower(), 18, 5);
+  assert.equal(power.on, false);
+  // The next retry finds a machine that is no longer struggling.
+  ({ power } = runSpillPower(power, 58, SPILL_RETRY_PERIOD + 5));
+  assert.equal(power.on, true, "never came back");
+});
+
+test("the kill switch defers to the scene's own A/B switch", () => {
+  // POLDER_SPILL_ENABLED is the honest A/B for what the whole fall costs. A
+  // governor that could turn it back on would quietly invalidate that
+  // measurement, so it starts from the flag and `stepSpillPower` guards it.
+  assert.equal(initialSpillPower().on, POLDER_SPILL_ENABLED);
+});
+
+test("nothing is judged inside the warm-up", () => {
+  // The rate the governor reads is smoothed across the whole scene and still
+  // holds the reading from before the switch. Judging inside that moment is
+  // how a machine that could afford the fall loses it for good.
+  let power = initialSpillPower();
+  for (let now = 0; now < SPILL_WARMUP - 1e-9; now += 1 / 60) {
+    power = stepSpillPower(power, 1 / 60, 1);
+    assert.equal(power.on, true, `switched off at ${now.toFixed(2)} s, inside the warm-up`);
+  }
+  assert.equal(power.timer, 0, "the judgement window opened during the warm-up");
 });
 
 test("the nappe leaves the rim instead of clinging to it", () => {

@@ -57,7 +57,8 @@ const hi = (p, a) => p.position[a] + p.size[a] / 2;
 const volume = (p) => p.size[0] * p.size[1] * p.size[2];
 
 // Повёрнутые детали пропускаем: их осевой габарит врёт в обе стороны, честный
-// AABB надо считать как |R|·size (см. transport-lessons §6).
+// AABB надо считать как |R|·size (см. vehicle-authoring
+// references/assembly.md, «Процесс: порядок сборки и верификация»).
 const pieces = scene.breakablePieces.filter(
   (p) => !p.rotation && (!prefix || p.id.includes(prefix)),
 );

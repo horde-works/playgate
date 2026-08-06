@@ -31,7 +31,7 @@ test("машина, физический пульт и стартовая точ
   const dispatch = compilation.scene.breakableClusters.find(
     (cluster) => cluster.id === "combat-hexacopter-range:dispatch",
   );
-  assert.equal(vehicle?.pieces.length, 663);
+  assert.equal(vehicle?.pieces.length, 667);
   assert.ok(dispatch?.pieces.some((piece) => piece.id.includes(":screen:")));
   assert.equal(compilation.scene.resolveStructuralCollapse(new Set()).size, 0);
 });

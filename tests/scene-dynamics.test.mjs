@@ -57,8 +57,11 @@ test("the eight authored phases form one continuous solar day", () => {
       morning: "09:00",
       day: "12:00",
       afternoon: "15:00",
-      sunset: "18:00",
-      evening: "21:00",
+      // Not 18:00 and 21:00 any more: at 18:00 the equinox sun is exactly ON
+      // the horizon, so the wheel held no golden hour and `evening` sat at
+      // −25.6°, which is night under another name. See timeOfDay.ts.
+      sunset: "17:37",
+      evening: "18:20",
       night: "00:00",
       predawn: "03:00",
     },
@@ -75,10 +78,13 @@ test("analogue hands read the same continuous time as the sky", () => {
   assert.ok(Math.abs(noon.position[0]) < 1e-12);
   assert.ok(Math.abs(noon.position[1] - 0.5) < 1e-12);
 
+  // RAW solar time, not the sunset phase: this test is about the hands
+  // agreeing with the sky's own clock, and 0.5 is 18:00 by that convention
+  // whatever hour the day/night presets happen to park on.
   const sixPm = analogClockHandState(
     hand,
     [0, 0, 0],
-    clockTimeFraction({ kind: "game" }, TIME_OF_DAY_TARGETS.sunset, 0) * 2,
+    clockTimeFraction({ kind: "game" }, 0.5, 0) * 2,
   );
   assert.ok(Math.abs(sixPm.position[0]) < 1e-12);
   assert.ok(Math.abs(sixPm.position[1] + 0.5) < 1e-12);

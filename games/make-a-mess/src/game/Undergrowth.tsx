@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, type RefObject } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import {
   BufferGeometry,
@@ -16,6 +16,7 @@ import {
   ShaderMaterial,
   Vector3,
 } from "three";
+import { environmentState } from "./environmentState";
 import { windState } from "./windState";
 
 /**
@@ -236,10 +237,8 @@ function makeLeafGeometry(): BufferGeometry {
 
 export function IvyPatches({
   runs,
-  nightRef,
 }: {
   runs: readonly IvyRun[];
-  nightRef: RefObject<number>;
 }) {
   const meshRef = useRef<InstancedMesh>(null);
   const build = useMemo(() => buildIvy(runs), [runs]);
@@ -255,7 +254,7 @@ export function IvyPatches({
       new ShaderMaterial({
         uniforms: {
           uTime: { value: 0 },
-          uLight: { value: 1 },
+          uLight: { value: new Color(1, 1, 1) },
           uWind: { value: 1 },
           uShadow: { value: new Color("#131c0d") },
           uDeep: { value: new Color("#223318") },
@@ -292,7 +291,7 @@ export function IvyPatches({
           uniform vec3 uDeep;
           uniform vec3 uFresh;
           uniform vec3 uDry;
-          uniform float uLight;
+          uniform vec3 uLight;
           varying vec2 vUv;
           varying float vTone;
           varying float vDepth;
@@ -355,7 +354,13 @@ export function IvyPatches({
   useFrame((state) => {
     material.uniforms.uTime.value = state.clock.elapsedTime;
     material.uniforms.uWind.value = windState.strength;
-    material.uniforms.uLight.value = 1 - (nightRef.current ?? 0) * 0.82;
+    // Ivy is lit by the world, not by a curve of its own: `groundLightLevel`
+    // is the same energy the scene's key, moon and fill were just given,
+    // normalised to a clear midday. Its own 0.82 ramp meant a wall of leaves
+    // stayed at two thirds of daylight three degrees after sunset.
+    material.uniforms.uLight.value
+      .copy(environmentState.groundLight)
+      .multiplyScalar(environmentState.groundLightLevel);
   });
 
   useEffect(
@@ -450,10 +455,8 @@ function makeWeedGeometry(): BufferGeometry {
 
 export function WeedClumps({
   points,
-  nightRef,
 }: {
   points: readonly WeedPoint[];
-  nightRef: RefObject<number>;
 }) {
   const meshRef = useRef<InstancedMesh>(null);
   const geometry = useMemo(() => makeWeedGeometry(), []);
@@ -463,7 +466,7 @@ export function WeedClumps({
       new ShaderMaterial({
         uniforms: {
           uTime: { value: 0 },
-          uLight: { value: 1 },
+          uLight: { value: new Color(1, 1, 1) },
           uWind: { value: 1 },
           uBase: { value: new Color("#42542c") },
           uTip: { value: new Color("#728143") },
@@ -496,7 +499,7 @@ export function WeedClumps({
           uniform vec3 uTip;
           uniform vec3 uBaseDry;
           uniform vec3 uTipDry;
-          uniform float uLight;
+          uniform vec3 uLight;
           varying vec2 vUv;
           varying float vDry;
           void main() {
@@ -546,7 +549,9 @@ export function WeedClumps({
   useFrame((state) => {
     material.uniforms.uTime.value = state.clock.elapsedTime;
     material.uniforms.uWind.value = windState.strength;
-    material.uniforms.uLight.value = 1 - (nightRef.current ?? 0) * 0.85;
+    material.uniforms.uLight.value
+      .copy(environmentState.groundLight)
+      .multiplyScalar(environmentState.groundLightLevel);
   });
 
   useEffect(

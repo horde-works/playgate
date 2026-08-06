@@ -1,6 +1,9 @@
 import {
+  ClampToEdgeWrapping,
   Color,
   DataTexture,
+  DataUtils,
+  HalfFloatType,
   LinearFilter,
   LinearMipmapLinearFilter,
   RGBAFormat,
@@ -10,7 +13,6 @@ import {
 } from "three";
 import type { Material, Texture } from "three";
 import {
-  ATMOSPHERE,
   CLOUD_LAW,
   extinctionLength,
   SKY_FIELD_SIZE,
@@ -19,6 +21,14 @@ import {
   getSkyFieldData,
   type SkyWeather,
 } from "./skyWeatherModel.ts";
+import {
+  AIR_LAW,
+  MULTI_SCATTER_SIZE,
+  TRANSMITTANCE_HEIGHT,
+  TRANSMITTANCE_WIDTH,
+  multiScatterTable,
+  transmittanceTable,
+} from "./atmosphereModel.ts";
 
 let fieldTexture: DataTexture | null = null;
 
@@ -53,6 +63,177 @@ const SUN_ANGULAR_RADIUS_DEGREES = 0.2666;
 function f(value: number): string {
   return Number.isInteger(value) ? value.toFixed(1) : String(value);
 }
+
+// ---------------------------------------------------------------------------
+// The air, on the GPU.
+//
+// Same law as `atmosphereModel`, same two tables, generated from the same
+// constants — the CPU answers "what colour is the key light, the fill and the
+// fog", the GPU answers "what colour is the sky in this direction", and there
+// is no third place where either could be tuned apart from the other.
+//
+// EVERYTHING HERE IS IN MEGAMETRES. A planet radius of 6 360 000 squares to
+// 4e13, and a float32 holds seven digits: the discriminant of the ray-sphere
+// test would be quantised to steps of four million metres, which is not a
+// horizon at all. At 6.36 the same arithmetic is exact to a millimetre.
+// ---------------------------------------------------------------------------
+const MM = 1e6;
+/** Metres of air per megametre — turns the law's SI constants into Mm units. */
+const perMm = (value: number) => value * MM;
+
+const airShaderFunctions = /* glsl */ `
+  uniform sampler2D uAirTransmittance;
+  uniform sampler2D uAirMultiScatter;
+  uniform float uAirHaze;
+  uniform float uSunDiscRadiance;
+  uniform float uSunAureoleGain;
+
+  const float AIR_PLANET = ${f(AIR_LAW.planetRadius / MM)};
+  const float AIR_TOP = ${f(AIR_LAW.atmosphereRadius / MM)};
+  const float AIR_DEPTH = ${f((AIR_LAW.atmosphereRadius - AIR_LAW.planetRadius) / MM)};
+  const float AIR_MU_FLOOR = ${f(-0.35)};
+  const vec3 AIR_BETA_R = vec3(
+    ${f(perMm(AIR_LAW.rayleighScatter[0]))},
+    ${f(perMm(AIR_LAW.rayleighScatter[1]))},
+    ${f(perMm(AIR_LAW.rayleighScatter[2]))}
+  );
+  const vec3 AIR_BETA_O = vec3(
+    ${f(perMm(AIR_LAW.ozoneAbsorb[0]))},
+    ${f(perMm(AIR_LAW.ozoneAbsorb[1]))},
+    ${f(perMm(AIR_LAW.ozoneAbsorb[2]))}
+  );
+  const float AIR_MIE_S = ${f(perMm(AIR_LAW.mieScatter))};
+  const float AIR_MIE_E = ${f(perMm(AIR_LAW.mieScatter + AIR_LAW.mieAbsorb))};
+  const float AIR_H_R = ${f(AIR_LAW.rayleighHeight / MM)};
+  const float AIR_H_M = ${f(AIR_LAW.mieHeight / MM)};
+  const float AIR_OZONE_C = ${f(AIR_LAW.ozoneCentre / MM)};
+  const float AIR_OZONE_W = ${f(AIR_LAW.ozoneWidth / MM)};
+  const float AIR_G = ${f(AIR_LAW.mieG)};
+  const float AIR_IRRADIANCE = ${f(AIR_LAW.solarIrradiance)};
+
+  /** Rayleigh, Mie and ozone density at a height, relative to sea level. */
+  vec3 airDensityAt(float height) {
+    return vec3(
+      exp(-height / AIR_H_R),
+      exp(-height / AIR_H_M),
+      max(0.0, 1.0 - abs(height - AIR_OZONE_C) / AIR_OZONE_W)
+    );
+  }
+
+  /**
+   * Where a (height, sun cosine) pair lands in either table. Height is square
+   * rooted so half the rows sit in the lowest quarter of the air, which is
+   * where all the density is; the cosine is linear because the table is wide.
+   */
+  vec2 airTableUv(float height, float mu) {
+    return vec2(
+      (mu - AIR_MU_FLOOR) / (1.0 - AIR_MU_FLOOR),
+      sqrt(clamp(height, 0.0, AIR_DEPTH) / AIR_DEPTH)
+    );
+  }
+
+  /** Fraction of each colour that survives the trip out to space. */
+  vec3 airTransmittance(float height, float mu) {
+    return texture2D(uAirTransmittance, airTableUv(height, mu)).rgb;
+  }
+
+  /** Light that has already bounced, and so arrives from every direction. */
+  vec3 airMultiScatter(float height, float mu) {
+    return texture2D(uAirMultiScatter, airTableUv(height, mu)).rgb;
+  }
+
+  /** Air a ray crosses before it leaves the atmosphere, or hits the ground. */
+  float airPathLength(float radius, float mu) {
+    float base = radius * radius * (mu * mu - 1.0);
+    float ground = base + AIR_PLANET * AIR_PLANET;
+    if (mu < 0.0 && ground >= 0.0) {
+      return max(0.0, -radius * mu - sqrt(ground));
+    }
+    float top = base + AIR_TOP * AIR_TOP;
+    if (top < 0.0) return 0.0;
+    return max(0.0, -radius * mu + sqrt(top));
+  }
+
+  float airRayleighPhase(float cosAngle) {
+    return 0.05968310365946075 * (1.0 + cosAngle * cosAngle);
+  }
+
+  float airMiePhase(float cosAngle) {
+    float g2 = AIR_G * AIR_G;
+    return 0.1193662073189215
+      * ((1.0 - g2) * (1.0 + cosAngle * cosAngle))
+      / ((2.0 + g2) * pow(1.0 + g2 - 2.0 * AIR_G * cosAngle, 1.5));
+  }
+
+  /**
+   * The sky in one direction. Samples are spaced quadratically: a grazing view
+   * crosses hundreds of kilometres of air and nearly all of the scattering
+   * happens in the first few, so an even march spends its whole budget on
+   * empty high air and aliases the part that is actually bright.
+   *
+   * The sun may be below the horizon. That is not a special case — the table
+   * returns zero for any sample the planet stands in front of, which IS the
+   * Earth's shadow, while samples above it are still lit by a reddened beam.
+   * Twilight is nowhere authored here; it is what the geometry does.
+   */
+  vec3 airRadiance(vec3 dir, vec3 sunDir, float eyeHeight) {
+    float radius = AIR_PLANET + clamp(eyeHeight, 0.0, AIR_DEPTH);
+    // The GEOMETRY is mirrored about the horizon while the phase angle below
+    // keeps the true direction. A downward ray from two metres up hits the
+    // ground immediately, so an honest path there is zero and the lower half
+    // of the dome would render black — visible as a hard band wherever the
+    // world edge's fog sea does not quite reach. Mirrored, it simply carries
+    // the horizon's own colour downward, which is what haze over water does.
+    float mu = max(dir.y, 0.0);
+    float path = airPathLength(radius, mu);
+    if (path <= 0.0) return vec3(0.0);
+
+    float cosSun = dot(dir, sunDir);
+    float phaseR = airRayleighPhase(cosSun);
+    float phaseM = airMiePhase(cosSun);
+    float mieScatter = AIR_MIE_S * uAirHaze;
+    float mieExtinct = AIR_MIE_E * uAirHaze;
+    float steps = mix(
+      ${f(AIR_LAW.viewSteps)},
+      ${f(AIR_LAW.coarseViewSteps)},
+      uCloudCoarse
+    );
+
+    vec3 depth = vec3(0.0);
+    vec3 total = vec3(0.0);
+    float previous = 0.0;
+    for (int step = 0; step < ${AIR_LAW.viewSteps}; step += 1) {
+      if (float(step) >= steps) break;
+      float reach = (float(step) + 1.0) / steps;
+      float far = path * reach * reach;
+      float span = far - previous;
+      float t = (previous + far) * 0.5;
+      previous = far;
+
+      float sampleRadius = sqrt(radius * radius + t * t + 2.0 * radius * t * mu);
+      float height = sampleRadius - AIR_PLANET;
+      vec3 local = airDensityAt(height);
+      depth += local * span;
+
+      // The sun's cosine at THIS sample, not at the eye: along a ray hundreds
+      // of kilometres long the local vertical turns, which is how the far end
+      // can still be in sunlight while the near end is already in shadow.
+      float muSun = (radius * sunDir.y + t * cosSun) / sampleRadius;
+      vec3 sunlight = airTransmittance(height, muSun);
+      vec3 bounced = airMultiScatter(height, muSun);
+
+      vec3 seen = exp(-(
+        AIR_BETA_R * depth.x + mieExtinct * depth.y + AIR_BETA_O * depth.z
+      ));
+      // Light straight from the sun keeps its phase function; light that has
+      // already bounced has lost its direction and arrives evenly.
+      vec3 aimed = AIR_BETA_R * (local.x * phaseR) + mieScatter * local.y * phaseM;
+      vec3 even = AIR_BETA_R * local.x + mieScatter * local.y;
+      total += seen * (sunlight * aimed + bounced * even) * span;
+    }
+    return total * AIR_IRRADIANCE;
+  }
+`;
 
 const [warpA, warpB, warpC, warpD] = CLOUD_LAW.fieldWarp;
 const warpScale = CLOUD_LAW.fieldWarpScale;
@@ -92,7 +273,6 @@ const skyShaderFunctions = /* glsl */ `
   uniform float uCirrusScale;
   uniform float uBeamStrength;
   uniform float uSunRadiusDegrees;
-  uniform float uSkyExposure;
 
   // ---- solar geometry -------------------------------------------------
   // Bennett's formula: refraction in arcminutes for an APPARENT altitude in
@@ -407,21 +587,45 @@ const skyComposite = /* glsl */ `
   vec3 skyRayOrigin = cameraPosition;
   vec3 skyRayDirection = normalize(vWorldPosition - cameraPosition);
   float skyCosSun = dot(skyRayDirection, vSunDirection);
+  float skyEyeHeight = max(skyRayOrigin.y, 0.0) / ${f(MM)};
+
+  // THE AIR. Everything the analytic sky used to answer with a formula is
+  // marched here instead, against the same two tables the CPU reads for the
+  // key light, the fill and the fog. That is the whole point: the sky, the
+  // light falling on the ground and the colour a cumulus is lit with cannot
+  // disagree about what hour it is, because they are one measurement.
+  //
+  // What the formula could not do, and this can: a warm gradient that is
+  // thirty degrees tall instead of five, a zenith that stays blue over an
+  // orange horizon because ozone absorbs in the middle of the spectrum, and
+  // the Belt of Venus standing on the Earth's own shadow behind the observer.
+  vec3 airColor = airRadiance(skyRayDirection, vSunDirection, skyEyeHeight);
+  retColor = airColor;
+
+  // The sun itself, reddened by the air it is seen through rather than by an
+  // authored dusk tint. At the horizon seven per cent of its red and half a
+  // per cent of its green survive — which is why a setting sun can be looked
+  // at, and why it is orange without anyone deciding that it should be.
+  vec3 skySunBeam = airTransmittance(skyEyeHeight, vSunDirection.y);
+  retColor += skySunBeam
+    * (sundisk * uSunDiscRadiance + sunAureole * uSunAureoleGain);
+
   // Far to near: ice veil, then the mid-level sheet, then the deck in front
-  // of both of them. Each fades into the air it is seen through, so a sky
-  // this deep still ends in haze rather than in an edge.
+  // of both of them. Each fades into the air it is seen through — the AIR,
+  // deliberately, not the frame with the sun's disc already added into it:
+  // a raft four kilometres out must dissolve into sky, never into glare.
   vec4 veil = highSheet(
     skyRayOrigin, skyRayDirection, vec4(0.0, 0.0, 1.0, 0.0), vec2(0.28, 1.0),
     uCirrusDrift, uCirrusBase, uCirrusScale, uCirrus, 0.58, 1.6, 0.0,
-    skyCosSun, retColor
+    skyCosSun, airColor
   );
   vec4 sheet = highSheet(
     skyRayOrigin, skyRayDirection, vec4(0.0, 1.0, 0.0, 0.0), vec2(1.0, 1.0),
     uMidDrift, uMidBase, uMidScale, uMidLevel, 0.50, 0.25, 0.55,
-    skyCosSun, retColor
+    skyCosSun, airColor
   );
   vec4 deck = marchCumulus(
-    skyRayOrigin, skyRayDirection, vSunDirection, skyCosSun, retColor
+    skyRayOrigin, skyRayDirection, vSunDirection, skyCosSun, airColor
   );
   retColor = mix(retColor, veil.rgb, veil.a);
   retColor = mix(retColor, sheet.rgb, sheet.a);
@@ -430,12 +634,12 @@ const skyComposite = /* glsl */ `
   retColor += uCloudLit
     * cloudBeams(skyRayOrigin, skyRayDirection, vSunDirection, skyCosSun)
     * uBeamStrength;
-  // ONE exposure, applied to everything the dome draws, at the very end: air,
-  // cloud, disc, aureole and beams all leave here in the same units, so the
-  // ratios this whole file is built on survive it. See ATMOSPHERE — what the
-  // Preetham shader emits is display-referred, and the composer reads it as
-  // scene-linear radiance before tone mapping it a second time.
-  gl_FragColor = vec4( retColor * uSkyExposure, 1.0 );
+  // No exposure knob rides here any more. The dome leaves this shader in
+  // scene-linear radiance because AIR_LAW.solarIrradiance is the ONE anchor
+  // between physics and the renderer's units, and it is applied inside the
+  // march. A second scale at the end is how the sky and the light on the
+  // ground drifted apart in the first place.
+  gl_FragColor = vec4( retColor, 1.0 );
 `;
 
 export interface SkyCloudUniforms {
@@ -445,10 +649,71 @@ export interface SkyCloudUniforms {
   readonly lit: Color;
   readonly shade: Color;
   setWeather(weather: SkyWeather): void;
+  /** Aerosol multiplier for this world's air — see `skyHaze`. */
+  setHaze(haze: number): void;
 }
 
 interface UniformMap {
   [name: string]: { value: unknown };
+}
+
+/**
+ * The two atmosphere tables, as textures. Half float rather than bytes: the
+ * transmittance of the blue channel through a horizontal path is around a
+ * millionth, and a byte cannot hold the difference between that and nothing —
+ * which is the difference between a sunset and a black band.
+ *
+ * These are the same numbers `atmosphereModel` answers CPU questions from.
+ * They depend on nothing that changes during play, so they are built once per
+ * air and then only read.
+ */
+function airTable(
+  values: Float32Array,
+  width: number,
+  height: number,
+  name: string,
+): DataTexture {
+  const packed = new Uint16Array(width * height * 4);
+  for (let texel = 0; texel < width * height; texel += 1) {
+    packed[texel * 4] = DataUtils.toHalfFloat(values[texel * 3]);
+    packed[texel * 4 + 1] = DataUtils.toHalfFloat(values[texel * 3 + 1]);
+    packed[texel * 4 + 2] = DataUtils.toHalfFloat(values[texel * 3 + 2]);
+    packed[texel * 4 + 3] = DataUtils.toHalfFloat(1);
+  }
+  const texture = new DataTexture(
+    packed,
+    width,
+    height,
+    RGBAFormat,
+    HalfFloatType,
+  );
+  texture.name = name;
+  texture.wrapS = ClampToEdgeWrapping;
+  texture.wrapT = ClampToEdgeWrapping;
+  texture.magFilter = LinearFilter;
+  texture.minFilter = LinearFilter;
+  texture.generateMipmaps = false;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+let transmittanceTexture: DataTexture | null = null;
+let multiScatterTexture: DataTexture | null = null;
+
+function getAirTables(): readonly [DataTexture, DataTexture] {
+  transmittanceTexture ??= airTable(
+    transmittanceTable(),
+    TRANSMITTANCE_WIDTH,
+    TRANSMITTANCE_HEIGHT,
+    "sky:air-transmittance",
+  );
+  multiScatterTexture ??= airTable(
+    multiScatterTable(),
+    MULTI_SCATTER_SIZE,
+    MULTI_SCATTER_SIZE,
+    "sky:air-multi-scatter",
+  );
+  return [transmittanceTexture, multiScatterTexture];
 }
 
 /**
@@ -511,7 +776,15 @@ export function installSkyClouds(material: Material): SkyCloudUniforms | null {
   // Tight circumsolar glow, then the broad wash, in units of vSunE.
   uniforms.uSunAureole = { value: new Vector2(0.035, 0.004) };
   uniforms.uSunRadiusDegrees = { value: SUN_ANGULAR_RADIUS_DEGREES };
-  uniforms.uSkyExposure = { value: ATMOSPHERE.exposure };
+  const [transmittance, multiScatter] = getAirTables();
+  uniforms.uAirTransmittance = { value: transmittance as Texture };
+  uniforms.uAirMultiScatter = { value: multiScatter as Texture };
+  uniforms.uAirHaze = { value: 1 };
+  // The disc is roughly a hundred thousand times the sky it sits in; this is
+  // enough of that to clip white through AgX with room to spare, and to keep
+  // clipping once the horizon has taken all but seven per cent of its red.
+  uniforms.uSunDiscRadiance = { value: 420 };
+  uniforms.uSunAureoleGain = { value: 40 };
 
   const sunDiscSource =
     "float sundisk = smoothstep( sunAngularDiameterCos, sunAngularDiameterCos + 0.00002, cosTheta );";
@@ -525,8 +798,16 @@ export function installSkyClouds(material: Material): SkyCloudUniforms | null {
   }
 
   shaderMaterial.fragmentShader = shaderMaterial.fragmentShader
-    .replace("void main() {", `${skyShaderFunctions}\n      void main() {`)
+    // Cloud declarations first: the air march reads `uCloudCoarse` to drop to
+    // its bake step count, and one uniform declared twice is a compile error.
+    .replace(
+      "void main() {",
+      `${skyShaderFunctions}\n${airShaderFunctions}\n      void main() {`,
+    )
     .replace(sunDiscSource, sunDiscShader)
+    // The upstream sum is left in place so `sundisk` and `sunAureole` keep a
+    // consumer inside the analytic branch; the composite overwrites what it
+    // produced, and the compiler drops the rest of that chain as dead.
     .replace(
       sunAddSource,
       "L0 += vSunE * Fex * ( 19000.0 * sundisk + sunAureole );",
@@ -560,6 +841,9 @@ export function installSkyClouds(material: Material): SkyCloudUniforms | null {
       uniforms.uCirrusBase.value = weather.cirrusAltitude;
       uniforms.uCirrusScale.value = weather.cirrusScale;
       uniforms.uBeamStrength.value = weather.beamStrength;
+    },
+    setHaze(haze: number) {
+      uniforms.uAirHaze.value = haze;
     },
   };
 }

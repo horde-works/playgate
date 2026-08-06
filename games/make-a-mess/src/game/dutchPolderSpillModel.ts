@@ -31,6 +31,77 @@ export const SPILL_VEIL_MOUTH_IDS: readonly string[] = ["C1-main:head"];
 /** Off means no fall at all — the only honest A/B for what it costs. */
 export const POLDER_SPILL_ENABLED = true;
 
+/**
+ * Below this the fall is not worth its frame.
+ *
+ * A waterfall is decoration. A playable rate is not, and this is the most
+ * expensive decoration on the rim: three alpha sheets of overdraw plus a mist
+ * pool, all of it in front of a scene that already pays for a planar mirror
+ * and a refraction pass. So it is the first thing shed, exactly as the wind is.
+ */
+export const SPILL_FPS_FLOOR = 30;
+/** How long a window the rate is judged over before the fall is switched off. */
+export const SPILL_JUDGE_PERIOD = 1;
+/** How long it stays off before it is worth spending a second to try again. */
+export const SPILL_RETRY_PERIOD = 60;
+/**
+ * Seconds ignored after every switch.
+ *
+ * Turning the curtain back on costs a pipeline warm-up that says nothing about
+ * what it costs to keep drawing, and the smoothed rate it is judged by still
+ * holds the reading from while it was off. Judge inside that moment and a
+ * machine that could afford the fall switches it straight back off, for ever.
+ */
+export const SPILL_WARMUP = 0.5;
+
+export interface SpillPower {
+  readonly on: boolean;
+  /** Seconds accumulated in the current phase — judging, or resting. */
+  readonly timer: number;
+  /** Seconds left to ignore after the last switch. */
+  readonly warmup: number;
+  /** The rate the last completed judgement saw. */
+  readonly measured: number;
+}
+
+export const initialSpillPower = (): SpillPower => ({
+  on: POLDER_SPILL_ENABLED,
+  timer: 0,
+  warmup: SPILL_WARMUP,
+  measured: 0,
+});
+
+/**
+ * One step of the fall's own kill switch.
+ *
+ * `fps` is not measured here: `performanceGovernor` already smooths one frame
+ * rate for the whole scene, and a second judge with its own smoothing would
+ * disagree with the first — the wind would shed at one moment and the water at
+ * another, on the same stutter.
+ */
+export function stepSpillPower(
+  power: SpillPower,
+  delta: number,
+  fps: number,
+): SpillPower {
+  if (!POLDER_SPILL_ENABLED) return { ...power, on: false };
+  if (!(delta > 0)) return power;
+  if (power.warmup > 0) {
+    return { ...power, warmup: Math.max(0, power.warmup - delta) };
+  }
+  const timer = power.timer + delta;
+  if (power.on) {
+    if (timer < SPILL_JUDGE_PERIOD) return { ...power, timer };
+    if (fps >= SPILL_FPS_FLOOR) {
+      return { ...power, timer: 0, measured: fps };
+    }
+    return { on: false, timer: 0, warmup: 0, measured: fps };
+  }
+  if (timer < SPILL_RETRY_PERIOD) return { ...power, timer };
+  // Try again: whatever was loading the machine a minute ago may be gone.
+  return { on: true, timer: 0, warmup: SPILL_WARMUP, measured: power.measured };
+}
+
 export const SPILL_GRAVITY = 9.81;
 
 /**

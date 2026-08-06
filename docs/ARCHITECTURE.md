@@ -65,7 +65,7 @@ docs/                    This document
 | `materialAppearance.ts` | Wetness, streaking and per-material surface tuning |
 | `boxFaceMasks.ts` | Per-face exposure masks from sibling adjacency |
 | `silicateJoints.ts` | Mortar/joint banding between masonry pieces |
-| `WorldEnvironment.tsx` | Sky, fog, day/night cycle, pooled lamp lights |
+| `WorldEnvironment.tsx` | Sky, fog, day/night cycle, pooled lamp lights; sky/sun radiance owned by `atmosphereModel.ts` |
 | `CinematicPostProcessing.tsx` | The always-on post pipeline (AO, bloom, shafts, grade) |
 | `HingedDoorSystem.tsx` | Kinematic swinging doors driven by player proximity |
 | `FirstPersonWeapons.tsx` | Hammer, grenade/rocket launchers, machine gun |

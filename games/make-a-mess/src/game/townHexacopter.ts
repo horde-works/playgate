@@ -53,7 +53,8 @@ import type { SceneVector3 } from "./destructionScene.ts";
  * здесь это батарейный поддон под стеклянным полом, его видно.
  *
  * Смерть: разбить силовой шпангоут в гондоле — падает вся машина. Площадка
- * остаётся: она не несёт и не держит навесок (см. transport-lessons §10, §22).
+ * остаётся: она не несёт и не держит навесок (см. vehicle-authoring
+ * references/assembly.md, пп. 10, 22).
  */
 
 export const TOWN_HEXACOPTER_SCENE_ID = "town-vertipad";

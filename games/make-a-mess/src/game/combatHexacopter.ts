@@ -1,17 +1,24 @@
 import {
   COMBAT_HEX_HEIGHT,
+  COMBAT_HEX_LANDING_STATIONS,
   COMBAT_HEX_LENGTH,
   COMBAT_HEX_LIFT_STATIONS,
+  COMBAT_HEX_OLEO_STATIC_SAG_SHARE,
+  COMBAT_HEX_OLEO_STROKE,
   COMBAT_HEX_WIDTH,
   COMBAT_HEX_YAW_STATIONS,
 } from "../content/objects/vehicles/combatHexacopterObject.ts";
 import type { SceneVector3 } from "./destructionScene.ts";
+import { strutRetractionAngle } from "./supportStrut.ts";
 import {
   ROTORCRAFT_AUXILIARY_YAW_PRIMARY_SHARE,
   ROTORCRAFT_YAW_RATE_GAIN,
   yawThrusterAllocation,
 } from "./rotorcraftDynamics.ts";
-import type { VehicleFrameDefinition } from "./vehicleFrames.ts";
+import type {
+  VehicleFrameDefinition,
+  VehicleSupportStrutDefinition,
+} from "./vehicleFrames.ts";
 
 export const COMBAT_HEXACOPTER_BLUEPRINT_ID = "combat-hexacopter";
 export const RAX8_TONKAWA_NAME = "RAX-8 Tonkawa";
@@ -48,6 +55,8 @@ export interface CombatHexacopterBlueprint {
     readonly point: SceneVector3;
     readonly normal: SceneVector3;
   }[];
+  /** Четыре опоры машины: паспорт без нагрузки, массу подставит рантайм. */
+  readonly landingStruts: readonly VehicleSupportStrutDefinition[];
   readonly envelope: {
     readonly length: number;
     readonly width: number;
@@ -230,6 +239,101 @@ function proximitySensors(
   return sensors;
 }
 
+/**
+ * ЧЕТЫРЕ ОПОРЫ КАК ФИЗИЧЕСКИЙ ОРГАН, А НЕ КАК ЖЁСТКИЙ СТОЛБ.
+ *
+ * Раньше нога держала машину коллайдерами: касание решалось одним импульсом
+ * за шаг, нарисованный ход олео был украшением, а закон материалов судил
+ * посадку по пиковой скорости вместо работы. Теперь ногу держит стойка —
+ * газовая пружина с несимметричным маслом, — а куски `landing-` выключены из
+ * компаунда, иначе луч стойки нашёл бы опору в собственной пятке.
+ *
+ * Числа выбраны по этой машине и проверены прогоном посадок на шаге 1/60:
+ *
+ *   0.5 м/с (штатная автоматическая) — 2.4 g, полход;
+ *   2.0 м/с (расчётная) — 4.6 g, 83% хода, отскок 0.5 м/с;
+ *   3.0 м/с — ровно упор;
+ *   4.0 м/с — упор пробит, остаток принимает корпус и судит закон материалов.
+ *
+ * Ход 0.12 м снят с нарисованного цилиндра: колено 0.38 → ось пятки 0.17.
+ * Ось стойки — тот же отрезок, наклонённый наружу и вдоль борта, поэтому
+ * сжимается она чуть быстрее, чем машина снижается.
+ *
+ * УБОРКА. Цапфа нарисована вдоль оси z, поэтому нога складывается в плоскости
+ * борта — к продольной оси корпуса, как и положено. Угол не назначен, а выведен
+ * из геометрии: столько, чтобы пятка ушла под самое низкое место днища и там
+ * остановилась. У кормовых ног днище выше, но высота уборки для всех одна —
+ * иначе четыре ноги вставали бы на четырёх разных уровнях без всякой на то
+ * причины.
+ */
+const GEAR_TUCKED_HEIGHT = 0.36;
+const GEAR_RETRACT_SECONDS = 4;
+/** Всё, что висит НА цапфе. Сама цапфа не складывается: она и есть ось. */
+const GEAR_FOLDING_PARTS = [
+  "main-strut",
+  "drag-link",
+  "knee",
+  "oleo",
+  "oleo-gland",
+  "oleo-piston",
+  "scissor",
+  "pad-pivot",
+  "pad",
+  "pad-sole",
+] as const;
+
+function landingStruts(
+  placement: CombatHexacopterPlacement,
+): readonly VehicleSupportStrutDefinition[] {
+  return COMBAT_HEX_LANDING_STATIONS.map((station) => ({
+    plan: {
+      id: station.id,
+      mount: combatHexacopterPoint(placement, station.knee),
+      axis: combatHexacopterVector(placement, [
+        station.axle[0] - station.knee[0],
+        station.axle[1] - station.knee[1],
+        station.axle[2] - station.knee[2],
+      ]),
+      // Опора отсчитывается от СОБСТВЕННОГО датума машины, а не от грунта
+      // мира: вылет — свойство ноги, а где под ней земля, каждый шаг ищет луч.
+      groundHeight: placement.position[1],
+      stroke: COMBAT_HEX_OLEO_STROKE,
+      staticSagShare: COMBAT_HEX_OLEO_STATIC_SAG_SHARE,
+      compressedLoadFactor: 6,
+      designSinkRate: 2,
+      oilShareAtDesignRate: 2,
+      recoilSeconds: 0.9,
+    },
+    // Нога держится на главной стойке и кончается пяткой: нет любого из двух —
+    // угол проваливается. Цапфа и подкос без главной стойки бесполезны сами.
+    requiredMembers: [
+      `:landing-main-strut-${station.id}:`,
+      `:landing-pad-${station.id}:`,
+    ],
+    travellingMembers: [
+      `:landing-oleo-piston-${station.id}:`,
+      `:landing-pad-pivot-${station.id}:`,
+      `:landing-pad-${station.id}:`,
+      `:landing-pad-sole-${station.id}:`,
+    ],
+    halfTravellingMembers: [`:landing-scissor-${station.id}:`],
+    retraction: {
+      // Цапфа: точка крепления, ось — вдоль корпуса, как она и нарисована.
+      pivot: combatHexacopterPoint(placement, station.attach),
+      hinge: combatHexacopterVector(placement, [0, 0, 1]),
+      angle: strutRetractionAngle({
+        pivot: station.attach,
+        foot: [station.axle[0], 0.055, station.axle[2]],
+        tuckedHeight: GEAR_TUCKED_HEIGHT,
+      }),
+      seconds: GEAR_RETRACT_SECONDS,
+    },
+    foldingMembers: GEAR_FOLDING_PARTS.map(
+      (part) => `:landing-${part}-${station.id}:`,
+    ),
+  }));
+}
+
 export function createCombatHexacopterBlueprint(
   placement: CombatHexacopterPlacement,
 ): CombatHexacopterBlueprint {
@@ -254,6 +358,7 @@ export function createCombatHexacopterBlueprint(
     rotorSpinDirections: COMBAT_HEXACOPTER_ROTOR_SPIN_DIRECTIONS,
     yawThrusters,
     proximitySensors: proximitySensors(placement),
+    landingStruts: landingStruts(placement),
     envelope: {
       length: COMBAT_HEX_LENGTH,
       width: COMBAT_HEX_WIDTH,
@@ -310,12 +415,20 @@ export function createCombatHexacopterVehicleFrame(
     // перестройки гондол в стальной набор эта расточительность подорожала
     // ещё на две с лишним сотни кусков.
     independentMemberMatches: [":blade:"],
+    // НОГА И ЛУЧ СТОЙКИ НЕСОВМЕСТИМЫ. Оставленный пятке коллайдер немедленно
+    // становится тем, что находит под собой её собственный луч, — машина
+    // «садится» в воздухе на нулевом обжатии. Опору держит `supportStrut`,
+    // поэтому в обводе компаунда ей делать нечего. Цена честная и известная:
+    // отстрелить ногу попаданием больше нельзя, потому что попадания ищутся
+    // лучом по коллайдерам. У автомобиля за колёса заплачено тем же.
+    contactMemberExcludes: [":landing-"],
     origin: blueprint.origin,
     nose: blueprint.nose,
     mooringPoint: blueprint.mooringPoint,
     liftCentre: blueprint.liftCentre,
     envelopeMatch: ":blade:",
     proximitySensors: blueprint.proximitySensors,
+    supportStruts: blueprint.landingStruts,
   };
 }
 

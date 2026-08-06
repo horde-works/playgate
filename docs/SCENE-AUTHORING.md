@@ -6,7 +6,7 @@ play; there is no risky all-at-once migration.
 
 For reference-faithful physical architecture, human access, materials,
 lighting and visual acceptance, use
-[`games/make-a-mess/docs/geometry-lessons.md`](../games/make-a-mess/docs/geometry-lessons.md)
+[`games/make-a-mess/docs/architectural-authoring.md`](../games/make-a-mess/docs/architectural-authoring.md)
 and the project skill
 `.claude/skills/architectural-scene-authoring/SKILL.md`.
 

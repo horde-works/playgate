@@ -84,7 +84,7 @@ function createHighlandGround(): void {
           "groundTile",
           [centerX, -0.09, centerZ],
           [6.04, 0.26, 6.04],
-          tone > 0.66 ? "#536a3e" : tone > 0.32 ? "#50663c" : "#4c6239",
+          tone > 0.66 ? "#4a6136" : tone > 0.32 ? "#465c34" : "#425730",
         ),
       );
       earth.push(
@@ -95,7 +95,7 @@ function createHighlandGround(): void {
           "groundTile",
           [centerX, -1.08, centerZ],
           [6.04, 1.72, 6.04],
-          tone > 0.5 ? "#554431" : "#51402f",
+          tone > 0.5 ? "#453628" : "#3f3224",
         ),
       );
       index += 1;
@@ -152,7 +152,7 @@ function createCircularHighlandExtension(): void {
       const surfaceY = 0.04 - easedRim * (1.05 + tone * 0.42);
       const grassCenterY = surfaceY - 0.13;
       const grassColor =
-        tone > 0.72 ? "#566b40" : tone > 0.38 ? "#50653c" : "#4a6038";
+        tone > 0.72 ? "#4d6238" : tone > 0.38 ? "#475c35" : "#425730";
 
       grass.push(
         piece(
@@ -176,7 +176,7 @@ function createCircularHighlandExtension(): void {
             "groundTile",
             [centerX, surfaceY - 0.26 - earthHeight / 2, centerZ],
             [6.04, earthHeight, 6.04],
-            tone > 0.5 ? "#554432" : "#50402f",
+            tone > 0.5 ? "#453628" : "#3f3224",
           ),
         );
       } else {
@@ -210,7 +210,7 @@ function createCircularHighlandExtension(): void {
             "groundTile",
             [centerX, rockBottom - earthHeight / 2, centerZ],
             [6.04, earthHeight, 6.04],
-            tone > 0.5 ? "#4b3c2e" : "#403428",
+            tone > 0.5 ? "#3f3224" : "#362b20",
           ),
         );
       }
@@ -504,7 +504,7 @@ function createMountainRidge(side: -1 | 1): void {
 function createCitadelWall(): void {
   const wallId = "stronghold:wall";
   const wall: BreakablePieceDefinition[] = [];
-  const wallPalette = ["#3f4244", "#484b4c", "#34383a", "#505354"];
+  const wallPalette = ["#383b3d", "#414446", "#2e3234", "#474a4c"];
   const blockWidth = 1.48;
   const rowHeight = 0.8;
   const columns = 38;
@@ -1651,7 +1651,11 @@ lamps.push(...skyRamWorld.lamps);
 export const basaltStrongholdScene = createDestructionScene({
   id: "basalt-stronghold",
   title: "Make a Mess: Basalt Stronghold",
+  // Volcanic air stays — gray mie and cool fog belong to this citadel.
+  // Edge veil must not start inside the bailey: default fortress near (~93)
+  // already washed wall faces and highland grass into one mid-grey.
   environment: "fortress",
+  fogDistances: [112, 275],
   playerSpawn: [0, 1.25, 31],
   cameraFar: ROUTE_CAMERA_FAR,
   worldCenter: [0, PLAYFIELD_CENTER_Z],

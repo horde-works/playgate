@@ -306,7 +306,10 @@ function pushWillowWhip(
   seed: number,
   trunk: BreakablePieceDefinition | undefined,
 ): readonly WillowWhipRod[] {
-  const axis = outwardBranchAxis(piece, trunk);
+  // Побег НЕ зеркалить: `outwardBranchAxis` разворачивает ветвь, смотрящую
+  // «внутрь» ствола, но у хлыста и плети направление авторское и уже верное —
+  // разворот отрывает нарисованный побег от его же гнезда.
+  const axis = pieceAxis(piece);
   const center = new Vector3(...piece.position);
   const length = piece.size[1];
   const start = center.clone().addScaledVector(axis, -length / 2);

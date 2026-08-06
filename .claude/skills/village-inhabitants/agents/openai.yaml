@@ -1,0 +1,4 @@
+interface:
+  display_name: "Village Inhabitants"
+  short_description: "Population, work and senses of make-a-mess worlds"
+  default_prompt: "Use $village-inhabitants to author or revise villagers — roster, intents, crafts, routes, gaits, work motions and reactions to noise and explosions."

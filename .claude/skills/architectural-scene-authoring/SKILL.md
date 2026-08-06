@@ -13,35 +13,43 @@ Do not substitute an implementation report for a verified scene.
 
 Before changing code, read
 [`games/make-a-mess/docs/physical-architecture-guide.md`](../../../games/make-a-mess/docs/physical-architecture-guide.md)
-completely. It defines the shared quality bar, owner boundaries, autonomous
-design process, causal-detail rules, diagnostic order and acceptance matrix.
+completely. After the documentation consolidation its scope is deliberately
+narrow: the shared quality bar, the ownership model (one observable world,
+several owners), the diagnostic order and the map of truth sources. The
+detailed place contract lives in the documents below.
 
 Then read these architectural contracts completely:
 
 1. [`games/make-a-mess/docs/architectural-authoring.md`](../../../games/make-a-mess/docs/architectural-authoring.md)
-   for research, geometry passports, buildings, public space, materials,
-   landmark light and urban integration;
-2. [`games/make-a-mess/docs/geometry-lessons.md`](../../../games/make-a-mess/docs/geometry-lessons.md)
-   for exact topology, transforms and independent acceptance tests.
+   — the merged contract for research, geometry passports, exact topology,
+   transforms, curves and shells, openings, buildings, public space,
+   materials, landmark light, urban integration and independent acceptance
+   tests (the former `geometry-lessons.md` is folded in here);
+2. [`games/make-a-mess/docs/architectural-surface-texturing.md`](../../../games/make-a-mess/docs/architectural-surface-texturing.md)
+   — the surface texturing pipeline: texture profiles, tile scale in metres,
+   triplanar vs native UV, weathering and the actual PBR values per material
+   class.
 
-The architectural guide owns the workflow. The geometry lessons provide its
-low-level mathematical contract and do not replace it.
+The merged architectural contract owns the workflow, including its low-level
+mathematical rules.
 
 Read these in addition when relevant:
 
 - standalone reference-critical object, fixed multi-angle PNG acceptance, or
   geometry that must be proven before scene/compiler/support integration:
-  [`games/make-a-mess/docs/object-study-authoring.md`](../../../games/make-a-mess/docs/object-study-authoring.md);
+  the `reference-faithful-object-study` skill
+  ([SKILL.md](../reference-faithful-object-study/SKILL.md) + its
+  `references/`);
 - island shell, terrain, structural solver and deterministic frames:
   [`.claude/skills/world-building/SKILL.md`](../world-building/SKILL.md);
 - Astana plan, scale, inventories and object passports:
   [`games/make-a-mess/docs/astana-brief.md`](../../../games/make-a-mess/docs/astana-brief.md);
 - exact Khan Shatyr geometry:
   [`games/make-a-mess/docs/khan-shatyr-geometry.md`](../../../games/make-a-mess/docs/khan-shatyr-geometry.md);
-- transport construction and solver lessons:
-  [`games/make-a-mess/docs/transport-lessons.md`](../../../games/make-a-mess/docs/transport-lessons.md);
-- airborne carrier dynamics: use `$airborne-vehicle-authoring` and its
-  normative dynamics contract.
+- vehicle construction and solver lessons:
+  `.claude/skills/vehicle-authoring/references/assembly.md`;
+- vehicle dynamics and control: use `$vehicle-authoring` and its normative
+  contracts (`airborne-vehicle-dynamics.md`, `vehicle-control-lessons.md`).
 
 Inspect the current implementation, compiler/runtime owners and targeted tests
 after reading the applicable documents. Do not trust remembered constants or
@@ -140,6 +148,15 @@ its own visual output accepted or compile it into the world.
   silhouette looks plausible.
 - Map every invariant to a named parameter, an independent test where possible
   and a control camera.
+- Build an invariant table before detailed geometry:
+
+  | Observation | Model owner | Test | Control view |
+  |---|---|---|---|
+  | roof falls continuously to front | roof profile | tangent/normal check | profile |
+  | glass is smaller than dark mask | distinct boundaries | extents check | front |
+  | base narrows toward nose | lower width profile | station widths | front/high |
+  | fixture is mounted | attachment nodes | proximity/support check | close/high |
+
 - Do not start detailed geometry from one attractive perspective.
 - When the requirement is qualitative, extract its geometry instead of asking
   the user for coordinates. “Whale, not bomb” already implies length, taper,

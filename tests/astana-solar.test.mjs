@@ -43,8 +43,14 @@ test("Astana compass rotates without moving the map", () => {
 });
 
 test("equinox sunrise and sunset make Baiterek's shadow tell the city axis", () => {
+  // Both ends read from RAW solar time, not from the phase wheel. The axis is
+  // a property of the equinox geometry — the sun is exactly on it when it is
+  // exactly on the horizon — and it must stay pinned here whatever hour the
+  // day/night presets happen to park on. The sunrise half already worked this
+  // way; the sunset half was reading `TIME_OF_DAY_TARGETS.sunset` and so was
+  // silently asserting where that preset sat.
   const sunrise = equinoxSunDirection(0, frame);
-  const sunset = equinoxSunDirection(TIME_OF_DAY_TARGETS.sunset, frame);
+  const sunset = equinoxSunDirection(0.5, frame);
   const sunriseShadow = horizontal([-sunrise[0], -sunrise[1], -sunrise[2]]);
   const sunsetShadow = horizontal([-sunset[0], -sunset[1], -sunset[2]]);
 
@@ -56,6 +62,22 @@ test("equinox sunrise and sunset make Baiterek's shadow tell the city axis", () 
     "sunset light must arrive from the opposite end of the axis");
   assert.ok(dot2(sunsetShadow, ASTANA_TRUE_EAST_VECTOR) > 1 - 1e-12,
     "sunset shadow must point exactly toward Khan Shatyr");
+});
+
+test("the dusk presets still stand a player on that axis", () => {
+  // What the geometry above guarantees is worth nothing if no preset lands
+  // near it. `sunset` sits in the golden hour and `evening` just under the
+  // horizon, so neither is exactly on the axis any more — but a five-degree
+  // offset is still a shadow running the length of the boulevard.
+  for (const phase of ["sunset", "evening"]) {
+    const sun = horizontal(equinoxSunDirection(TIME_OF_DAY_TARGETS[phase], frame));
+    const offAxis = Math.acos(Math.min(1, -dot2(sun, ASTANA_TRUE_EAST_VECTOR)))
+      * 180 / Math.PI;
+    assert.ok(
+      offAxis < 6,
+      `the ${phase} sun stands ${offAxis.toFixed(1)}° off the city axis`,
+    );
+  }
 });
 
 test("the morning phase already stands clear of the horizon", () => {

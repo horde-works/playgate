@@ -297,6 +297,7 @@ function setFragmentMatrix(
 
 const articulationEuler = new Euler();
 const articulationQuaternion = new Quaternion();
+const articulationAxis = new Vector3();
 
 function setClusteredFragmentMatrix(
   dummy: Object3D,
@@ -320,14 +321,28 @@ function setClusteredFragmentMatrix(
     ownRotation.premultiply(
       articulationQuaternion.setFromEuler(articulationEuler),
     );
+    if (articulation.turn) {
+      // Складывание ноги вокруг цапфы. Сюда приходит только поворот; уход
+      // самого центра куска с оси цапфы несёт `slide` ниже.
+      articulationAxis.set(...articulation.turn.axis);
+      ownRotation.premultiply(
+        articulationQuaternion.setFromAxisAngle(
+          articulationAxis,
+          articulation.turn.angle,
+        ),
+      );
+    }
   }
   localCenter
     .set(fragment.center[0], fragment.center[1], fragment.center[2])
     .applyQuaternion(ownRotation);
+  // Сдвиг члена — В ОСЯХ КЛАСТЕРА и ДО его поворота: шток стойки ходит вдоль
+  // своей оси вместе с машиной, а не вдоль мировой вертикали.
+  const slide = articulation?.slide;
   localCenter.set(
-    localCenter.x + fragment.fallbackPosition[0] - clusterOrigin[0],
-    localCenter.y + fragment.fallbackPosition[1] - clusterOrigin[1],
-    localCenter.z + fragment.fallbackPosition[2] - clusterOrigin[2],
+    localCenter.x + fragment.fallbackPosition[0] - clusterOrigin[0] + (slide?.[0] ?? 0),
+    localCenter.y + fragment.fallbackPosition[1] - clusterOrigin[1] + (slide?.[1] ?? 0),
+    localCenter.z + fragment.fallbackPosition[2] - clusterOrigin[2] + (slide?.[2] ?? 0),
   );
   localCenter.applyQuaternion(clusterObject.quaternion);
   dummy.position.copy(clusterObject.position).add(localCenter);

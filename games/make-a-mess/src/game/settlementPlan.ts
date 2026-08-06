@@ -93,7 +93,7 @@ export type SettlementCargo = "log" | "firewood";
 
 /**
  * Чем работают. Глагол задаёт ПОЗУ и длительность, поэтому список выведен из
- * механики движений (docs/village-motion.md §7), а не из названий дел:
+ * механики движений (docs/village-inhabitants-lessons.md §6.3–6.4), а не из названий дел:
  * стирка, точило и скребок по шкуре — одно движение, а не три.
  */
 export type SettlementWorkVerb =

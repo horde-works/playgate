@@ -1217,6 +1217,41 @@ export function propWeepingWillow(options: TreeOptions = {}): FloraPiece[] {
       parent = id;
     }
 
+    // КОНЕЦ ДУГИ. Ветвь не может обрываться в воздухе: она либо переходит в
+    // более тонкую, либо сходит на нет веточкой в листве. Последнее звено дуги
+    // получает тонкий кончик и ком листвы — без них сук читается обрубком.
+    const tipVar = rand(seed, 190 + limb);
+    const tipDirection = directionFromAngles(
+      yaw + (tipVar - 0.5) * 0.5,
+      1.42 + tipVar * 0.3,
+    );
+    const tipLength = span * (0.16 + tipVar * 0.1);
+    const tipId = `limb:${limb}:tip`;
+    pieces.push(
+      branchPiece(
+        "willow",
+        seed,
+        tipId,
+        parent,
+        node,
+        tipDirection,
+        tipLength,
+        0.03 * s,
+        "#5d4d3c",
+      ),
+      clump(
+        "willow",
+        seed,
+        `${tipId}:leaf`,
+        tipId,
+        seed * 631 + limb * 37,
+        addVector(node, scaleVector(tipDirection, tipLength * 0.85)),
+        (0.46 + tipVar * 0.14) * s,
+        WEEPING_GREENS,
+        0.4,
+      ),
+    );
+
     // Ветви второго порядка сходят с середины дуги — тоже дугой вниз.
     const forkCount = 2;
     for (let fork = 0; fork < forkCount; fork += 1) {
@@ -1244,6 +1279,18 @@ export function propWeepingWillow(options: TreeOptions = {}): FloraPiece[] {
           forkLength,
           (0.045 + forkVar * 0.022) * s,
           forkVar > 0.5 ? "#59493a" : "#61513e",
+        ),
+        // Конец ответвления тоже обязан во что-то переходить.
+        clump(
+          "willow",
+          seed,
+          `${forkId}:leaf`,
+          forkId,
+          seed * 641 + limb * 43 + fork,
+          addVector(forkStart, scaleVector(forkDirection, forkLength * 0.88)),
+          (0.42 + forkVar * 0.14) * s,
+          WEEPING_GREENS,
+          0.4,
         ),
       );
     }
@@ -1276,7 +1323,7 @@ export function propWeepingWillow(options: TreeOptions = {}): FloraPiece[] {
       "limb:crown:leaf:0",
       "limb:crown",
       seed * 613 + 907,
-      addVector(crownAttach, scaleVector(crownDirection, crownLength * 0.6)),
+      addVector(crownAttach, scaleVector(crownDirection, crownLength * 0.92)),
       (0.6 + crownVar * 0.18) * s,
       WEEPING_GREENS,
       0.4,

@@ -40,10 +40,11 @@ export const FIREBALL_CARVE_AMPLITUDE = 0.43;
 export const LOBE_TIP_LIMIT = 0.46;
 
 /**
- * HDR fire ramp. The fireball material skips tone mapping, so these raw
- * values land in the half-float buffer where UnrealBloom thresholds at 1.6:
- * the white-hot core must cross it by a wide margin to visibly bloom, while
- * ember stays below it.
+ * HDR fire ramp. These raw values land in the half-float buffer that
+ * UnrealBloom thresholds, and they are NOT scaled when that gate moves: AgX is
+ * an absolute curve, so changing them would change what colour the fireball
+ * renders, not just what haloes. The core still crosses the gate by more than
+ * three times and the ember still stays under it.
  */
 export const EXPLOSION_FIRE_RAMP = {
   ember: [0.72, 0.035, 0.004],
@@ -53,7 +54,7 @@ export const EXPLOSION_FIRE_RAMP = {
 } as const;
 
 /** Bloom threshold in CinematicPostProcessing; kept here for the detectors. */
-export const BLOOM_THRESHOLD = 1.6;
+export const BLOOM_THRESHOLD = 6;
 
 /** Instanced pool sizes; the inventory detectors keep spawn counts inside. */
 export const EXPLOSION_POOL_CAPACITY = {

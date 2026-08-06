@@ -64,9 +64,6 @@ export interface SkyWeather {
   readonly cirrusScale: number;
   /** Brightness of crepuscular rays under the deck. */
   readonly beamStrength: number;
-  /** Lit and shaded cloud colours at full day. */
-  readonly litColor: string;
-  readonly shadeColor: string;
   /** How dark the ground goes under the thickest part of the deck, 0..1. */
   readonly shadowStrength: number;
 }
@@ -92,8 +89,6 @@ export const CLEAR_SKY: SkyWeather = {
   cirrusAltitude: 7200,
   cirrusScale: 9000,
   beamStrength: 0,
-  litColor: "#ffffff",
-  shadeColor: "#8d97a6",
   shadowStrength: 0,
 };
 
@@ -110,7 +105,12 @@ export const DUTCH_POLDER_SKY: SkyWeather = {
   fieldScale: 5200,
   density: 0.0042,
   windSpeed: 7.5,
-  windBearing: 0.32,
+  // The same westerly the mills are turned into: mirrors
+  // DUTCH_POLDER_WIND_BEARING, which is derived from the island's own compass.
+  // Held there by `tests/sky-weather` — a deck that drifts on a bearing of its
+  // own is weather from a country the windmills have never heard of, and these
+  // two were seventy-one degrees apart.
+  windBearing: -1.5742324105259842,
   // Showers wash the air. Long visibility is what lets a heap four kilometres
   // out keep its dark belly instead of dissolving into a pale wash — and it is
   // the same number that leaves the polder's own far bank crisp.
@@ -124,81 +124,39 @@ export const DUTCH_POLDER_SKY: SkyWeather = {
   // Soft crepuscular hint in the dome — not a ground-washing screen veil.
   // Cinematic shafts are scaled separately for this world via sunVeil.
   beamStrength: 0.028,
-  litColor: "#fbf7ef",
-  shadeColor: "#7d8797",
   shadowStrength: 0.62,
 };
 
 /**
- * The air the analytic dome is made of, and the one number that puts what it
- * emits into the renderer's units.
+ * What is left to author about the air, now that the dome is marched rather
+ * than fitted: how much dust is in it, and one multiplier for the fill.
  *
- * THE DOME IS NOT A LIGHT SOURCE WE AUTHOR — IT IS A MEASUREMENT WE EXPOSE.
- * Preetham's shader ends in `pow(texColor, 1.0 / 2.4)`, and that pow IS a
- * display transform: it was written when the sky went straight to an sRGB
- * framebuffer. Our composer takes what it writes as SCENE-LINEAR radiance and
- * tone-maps it a second time, with AgX at exposure 1.08. Unscaled, a clear day
- * sky leaves that shader at 2–5 linear, and AgX is already at 226/255 by 2.0:
- * every direction more than ten degrees above the horizon came out between 215
- * and 243 with two to nine levels of chroma left in it. Not a bright sky — a
- * sky with no midtones at all, at every hour the sun was up.
+ * There used to be four Preetham parameters per world here, and a fifth
+ * number — an exposure — to undo the units that shader emits in. All five are
+ * gone. `AIR_LAW` holds the real coefficients of nitrogen, aerosol and ozone,
+ * and `AIR_LAW.solarIrradiance` is the single anchor between physics and the
+ * renderer, applied inside the march. What a world still gets to say is how
+ * dirty its sky is, because that genuinely differs between a polder and a
+ * volcano — and it says it once, as a multiplier on the aerosol, instead of as
+ * a turbidity that also had to be traded against a rayleigh and a phase g.
  *
- * Worse, it made the whole dome a light source for effects that were written
- * assuming it was not one: the bloom high-pass at 1.6 passes the FULL colour
- * of anything over the threshold, so a quarter of the sky was being blurred
- * back over the frame as veiling glare — about 0.28 linear on ground that
- * itself only reflects 0.05, which is what whitened the far half of a range
- * where the fog does not even begin until 110 m.
- *
- * `exposure` anchors the dome instead of scaling the effects that read it: a
- * clear noon zenith at ~0.47 linear, about 1.4 stops over middle grey, which
- * is where a tone mapper still holds colour. Everything else follows — the
- * horizon stays 1.6x the zenith, the disc still clips to white and still
- * blooms, and the only sky left above the high-pass is the few degrees of
- * aureole around the sun, which is the one place glare belongs.
- *
- * The air itself is cleaner than it was. Turbidity 6.2 is industrial haze: it
- * is mie scatter, it is white, and at dusk it washed the long red path out —
- * fifteen degrees along the horizon from a setting sun it rendered 216,197,170,
- * a pale smear where a sunset belongs. At 3.8 that same patch of sky comes out
- * 163,128,102: 61 levels of chroma against 46. `tests/sky-exposure` pins it.
+ * Aerosol is not a whiter tint. It is forward scattering and it absorbs, so
+ * more of it means a brighter halo around the sun, a duller horizon away from
+ * it, and a shorter view — all three at once, from one number.
  */
 export const ATMOSPHERE = {
-  /** Scale on the dome's own output, applied last, to everything it draws. */
-  exposure: 0.42,
   /**
-   * Ambient multiplier for the PMREM baked from this same shader. It moves
-   * INVERSELY with the exposure and the air, because the dome's exposure is a
-   * units fix and must not change how much light the world receives: 0.22
-   * against the old blown sky and 0.44 against this one are the same fill.
+   * Ambient multiplier for the PMREM baked from the dome. The dome is now in
+   * scene-linear units of its own, so this is a genuine artistic trim on how
+   * much of the sky's light the world receives, not a units fix.
    */
   ambientIntensity: 0.44,
-  /** Open country air. Every world but the fortress stands under it. */
-  town: {
-    turbidity: 3.8,
-    rayleigh: 2.6,
-    mieCoefficient: 0.005,
-    mieDirectionalG: 0.77,
-  },
-  /**
-   * Volcanic: still the heaviest sky we draw, just no longer a blown one.
-   * Heavy air is not a whiter tint — it is forward scattering, and it shows as
-   * the ratio between the sky twenty degrees off the sun and the sky at the
-   * zenith: 4.2 here against 2.3 over open country and 1.9 in a flyover's air.
-   */
-  fortress: {
-    turbidity: 8,
-    rayleigh: 1.6,
-    mieCoefficient: 0.011,
-    mieDirectionalG: 0.82,
-  },
-  /** Cleaner air and a tighter forward lobe, for recorded flyovers. */
-  cinematic: {
-    turbidity: 2.6,
-    rayleigh: 2.6,
-    mieCoefficient: 0.0012,
-    mieDirectionalG: 0.68,
-  },
+  /** Open country. Every world but the fortress stands under this air. */
+  town: { haze: 1 },
+  /** Volcanic: the heaviest sky we draw. */
+  fortress: { haze: 3.2 },
+  /** Cleaner air, for recorded flyovers. */
+  cinematic: { haze: 0.45 },
 } as const;
 
 /**
@@ -227,16 +185,15 @@ export function airTransmittance(weather: SkyWeather, distance: number): number 
 export type SkyTheme = "town" | "fortress";
 
 /**
- * The four Preetham parameters for a world.
+ * How much aerosol a world's air carries, relative to clean country air.
  *
  * `three-stdlib` hands every `Sky` ONE module-level material, so the visible
  * dome and the sky the environment is baked from are literally the same
- * uniforms. They were being written twice, from two components, with two
- * copies of the same four numbers; this is the one place they come from now.
+ * uniforms. This is the one place the number comes from, for both.
  */
-export function skyAir(theme: SkyTheme, cinematic = false) {
-  if (theme === "fortress") return ATMOSPHERE.fortress;
-  return cinematic ? ATMOSPHERE.cinematic : ATMOSPHERE.town;
+export function skyHaze(theme: SkyTheme, cinematic = false): number {
+  if (theme === "fortress") return ATMOSPHERE.fortress.haze;
+  return cinematic ? ATMOSPHERE.cinematic.haze : ATMOSPHERE.town.haze;
 }
 
 /**

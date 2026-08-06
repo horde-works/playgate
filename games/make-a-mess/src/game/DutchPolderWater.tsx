@@ -29,7 +29,6 @@ import {
 } from "three";
 import type {
   Camera,
-  InstancedMesh,
   IUniform,
   PerspectiveCamera,
   Scene,
@@ -42,10 +41,12 @@ import {
   APPROACH_REACH,
   GATHER_MULTIPLIER,
   POLDER_SPILL_LIPS,
+  initialSpillPower,
   polderSheetSpills,
   polderSpillApproach,
   spillAcrossAt,
   spillDrawdownAt,
+  stepSpillPower,
 } from "./dutchPolderSpillModel.ts";
 import {
   DAMP_COLLAR_HEIGHT,
@@ -53,6 +54,8 @@ import {
   buildWaterSheetModel,
 } from "./dutchPolderWaterModel.ts";
 import { environmentState } from "./environmentState";
+import { performanceGovernor } from "./performanceGovernor";
+import { spillPowerState } from "./spillPowerState";
 import { windState } from "./windState";
 
 const MIRROR_SIZE = 1024;
@@ -592,13 +595,14 @@ const collarFragmentShader = /* glsl */ `
 
 /** Every channel of the polder, as one reflecting, refracting water sheet. */
 export function DutchPolderWater() {
-  // The mist is mounted here rather than beside the game so it can be taken
-  // out of the two passes the water reads back, exactly like the other sheets.
-  // The handoff goes through a plain box rather than the ref itself: a memo
-  // that closes over a ref makes every field of that memo read as a ref access.
-  const sprayRef = useRef<InstancedMesh | null>(null);
+  // The mist is mounted here, beside the water it comes off, but unlike the
+  // two service sheets it is NOT hidden from the passes the water reads back.
+  // It cannot corrupt them: the billow material writes no depth, and depth is
+  // what those passes are read for — the waterline, the vertical column, the
+  // thickness and the damp collar all come from it. The most a stray packet
+  // over the canal can do is tint the refracted colour slightly, which is what
+  // real mist over real water does anyway.
   const study = useMemo(() => {
-    const hidden: { spray: InstancedMesh | null } = { spray: null };
     const geometry = buildWaterSheet();
     const ripples = createRippleNormals();
     const weed = createWeedTexture();
@@ -774,8 +778,6 @@ export function DutchPolderWater() {
       water.visible = false;
       collar.visible = false;
       if (spill) spill.mesh.visible = false;
-      const spray = hidden.spray;
-      if (spray) spray.visible = false;
       renderer.xr.enabled = false;
       // The scene throttles its shadow atlas by hand. An extra pass must not
       // be the one to spend the pending update.
@@ -792,19 +794,17 @@ export function DutchPolderWater() {
       renderer.shadowMap.needsUpdate = previousShadowUpdate;
       renderer.setRenderTarget(previousTarget);
 
-      // The mirror is allowed the mist: a fall's cloud really is reflected in
-      // the water above it, and the reflected camera sees it from outside.
-      if (spray) spray.visible = true;
       renderMirror(renderer, scene, camera);
       collar.visible = true;
-      if (spill) spill.mesh.visible = true;
+      // Restored to whatever the kill switch says, not unconditionally: this
+      // runs every frame and would otherwise put a shed curtain straight back.
+      if (spill) spill.mesh.visible = spillPowerState.on;
     };
 
     return {
       collar,
       collarMaterial,
       geometry,
-      hidden,
       material,
       mirrorTexture,
       refraction,
@@ -815,7 +815,9 @@ export function DutchPolderWater() {
     };
   }, []);
 
-  useFrame((state) => {
+  const power = useRef(initialSpillPower());
+
+  useFrame((state, delta) => {
     const uniforms = study.material.uniforms;
     uniforms.sunDirection.value.copy(environmentState.keyLightDirection);
     uniforms.sunColor.value.copy(environmentState.keyLightColor);
@@ -824,14 +826,18 @@ export function DutchPolderWater() {
     uniforms.uTime.value = state.clock.elapsedTime;
     uniforms.uRippleSlope.value = RIPPLE_SLOPE * windState.strength;
     /* eslint-enable react-hooks/immutability */
-    study.spill?.frame(state.clock.elapsedTime, state.scene);
-  });
 
-  // Reading the ref in an effect rather than in render is the whole point of
-  // the box: the mist exists only after its mesh has been created.
-  useEffect(() => {
-    study.hidden.spray = sprayRef.current;
-  }, [study]);
+    // The fall pays for itself or it goes. The river, its mirror and its
+    // refraction stay either way — they are the world; the fall is a flourish
+    // on the edge of it, and it is the most expensive thing here.
+    power.current = stepSpillPower(
+      power.current,
+      delta,
+      performanceGovernor.getSnapshot().fps,
+    );
+    spillPowerState.on = power.current.on;
+    study.spill?.frame(state.clock.elapsedTime, state.scene, power.current.on);
+  });
 
   useEffect(
     () => () => {
@@ -853,7 +859,7 @@ export function DutchPolderWater() {
       <primitive object={study.water} />
       <primitive object={study.collar} />
       {study.spill ? <primitive object={study.spill.mesh} /> : null}
-      <DutchPolderSpray meshRef={sprayRef} />
+      <DutchPolderSpray />
     </>
   );
 }
