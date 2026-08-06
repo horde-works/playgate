@@ -11,6 +11,7 @@ import {
   Euler,
   Float32BufferAttribute,
   Frustum,
+  Group,
   InstancedBufferAttribute,
   InstancedMesh,
   Matrix4,
@@ -51,6 +52,8 @@ import {
   TREE_FOLIAGE_LODS,
   type TreeFoliageLod,
 } from "./treeVisualLod";
+import { performanceGovernor } from "./performanceGovernor";
+import { registerRefractionExcluded } from "./servicePassPolicy.ts";
 import { treeBarkAtlas } from "./treeBarkAtlas";
 import { windState } from "./windState";
 
@@ -415,7 +418,7 @@ const FoliageBatch = memo(function FoliageBatch({
   variant?: "broadleaf" | "pine";
 }) {
   const camera = useThree((state) => state.camera);
-  const viewportHeight = useThree((state) => state.size.height);
+  const viewportCssHeight = useThree((state) => state.size.height);
   const meshes = useRef<Partial<Record<TreeFoliageLod, InstancedMesh | null>>>({});
   const shader = useRef<TreeShader | null>(null);
   const geometries = useMemo(
@@ -522,6 +525,11 @@ diffuseColor.rgb *= vTreeLeafTint;`,
   );
 
   const updateVisibleInstances = () => {
+    // Высота БУФЕРА, не CSS: экранный LOD меряется в настоящих пикселях.
+    // Фактическим DPR владеет лестница разрешения и публикует его через
+    // губернатор (стор r3f затирается dpr-пропом Canvas и врать может).
+    const bufferHeight =
+      viewportCssHeight * Math.max(0.2, performanceGovernor.getSnapshot().dpr);
     culling.projectionView.multiplyMatrices(
       camera.projectionMatrix,
       camera.matrixWorldInverse,
@@ -551,7 +559,7 @@ diffuseColor.rgb *= vTreeLeafTint;`,
       const diameter = projectedDiameterPixels(
         radius,
         distance,
-        viewportHeight,
+        bufferHeight,
         camera.projectionMatrix.elements[5],
       );
       const lod = selectTreeFoliageLod(diameter, instance.phase);
@@ -604,7 +612,7 @@ diffuseColor.rgb *= vTreeLeafTint;`,
     // `updateVisibleInstances` deliberately closes over the current immutable
     // instance list and camera; all mutable render state lives in refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [geometries, hiddenPieceIds, instances, viewportHeight]);
+  }, [geometries, hiddenPieceIds, instances, viewportCssHeight]);
 
   useFrame((state) => {
     const current = shader.current;
@@ -678,6 +686,15 @@ export const TreeVisuals = memo(function TreeVisuals({
   hiddenPieceIds: ReadonlySet<string>;
 }) {
   const build = useMemo(() => buildTreeVisuals(pieces), [pieces]);
+  const group = useRef<Group>(null);
+  // Деревья стоят на берегах над водой: рефракционному проходу они не нужны
+  // ни картинкой (толща съедает), ни глубиной (урез держат не они), а их
+  // вершинная цена — крупнейшая статья второго рендера сцены.
+  useEffect(() => {
+    const current = group.current;
+    if (!current) return;
+    return registerRefractionExcluded(current);
+  }, []);
   if (
     build.wood.length === 0 &&
     build.roots.length === 0 &&
@@ -688,7 +705,7 @@ export const TreeVisuals = memo(function TreeVisuals({
     return null;
   }
   return (
-    <>
+    <group ref={group}>
       <WoodBatch instances={build.wood} hiddenPieceIds={hiddenPieceIds} />
       <WoodBatch
         instances={build.roots}
@@ -709,6 +726,6 @@ export const TreeVisuals = memo(function TreeVisuals({
         hiddenPieceIds={hiddenPieceIds}
         variant="pine"
       />
-    </>
+    </group>
   );
 });

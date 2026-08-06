@@ -10068,8 +10068,17 @@ const SECONDS_AFTER_ANY_CHANGE = 6;
 const SECONDS_BEFORE_REVERSAL = 25;
 
 function AdaptiveRenderScale({ compact }: { compact: boolean }) {
-  const setDpr = useThree((state) => state.setDpr);
+  const gl = useThree((state) => state.gl);
   const size = useThree((state) => state.size);
+  // Стор r3f НЕ трогаем: configure() Canvas переприкладывает dpr-проп (и его
+  // дефолт [1,2]) при каждом ре-рендере и затирает setDpr — замерено: стор
+  // 0.62, буфер полноразмерный. Буфером владеет эта лестница напрямую через
+  // gl; читатели фактического DPR (LOD листвы, HUD) берут его из
+  // performanceGovernor. updateStyle=false — CSS-размер не трогаем.
+  const applyDpr = (next: number) => {
+    gl.setPixelRatio(next);
+    gl.setSize(size.width, size.height, false);
+  };
   const elapsed = useRef(0);
   const frames = useRef(0);
   const warmup = useRef(0);
@@ -10108,11 +10117,21 @@ function AdaptiveRenderScale({ compact }: { compact: boolean }) {
     if (Math.abs(nextDpr - applied.current) > 0.001) {
       applied.current = nextDpr;
       performanceGovernor.setDpr(nextDpr);
-      setDpr(nextDpr);
+      applyDpr(nextDpr);
     }
-  }, [compact, setDpr, size.height, size.width]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- applyDpr стабилен по gl/size
+  }, [compact, size.height, size.width]);
 
   useFrame((_, delta) => {
+    // Страж буфера: любой чужой resize (r3f на смене size, сторонний
+    // setPixelRatio) возвращается к ступени лестницы в следующем же кадре.
+    if (
+      applied.current > 0 &&
+      Math.abs(gl.getPixelRatio() - applied.current) > 0.001
+    ) {
+      applyDpr(applied.current);
+    }
+
     warmup.current += delta;
     sinceAnyChange.current += delta;
     sinceDemotion.current += delta;
@@ -10178,7 +10197,7 @@ function AdaptiveRenderScale({ compact }: { compact: boolean }) {
     applied.current = nextDpr;
     sinceAnyChange.current = 0;
     performanceGovernor.setDpr(nextDpr);
-    setDpr(nextDpr);
+    applyDpr(nextDpr);
   });
 
   return null;
@@ -12708,9 +12727,12 @@ export function MakeAMessGame({
             <Canvas
               className="game-canvas"
               shadows="percentage"
-              // Pinned while AdaptiveRenderScale is off — DPR changes recreate
-              // composer buffers and flash a flat-grey frame (worst on polder).
-              dpr={1}
+              // DPR-пропа здесь НЕТ намеренно: r3f переприкладывает проп при
+              // каждом ре-рендере Canvas и затирает setDpr лестницы (замерено:
+              // стор 0.62, буфер полноразмерный). Разрешением владеет
+              // AdaptiveRenderScale: кап пиксельного бюджета + лестница по
+              // нагрузке; серый кадр смены DPR закрыт покадровой сверкой
+              // размера конвейера (syncPipelineSize).
               camera={{
                 position: [
                   scene.playerSpawn[0],
@@ -12825,9 +12847,10 @@ export function MakeAMessGame({
                   enabled={showPerformance}
                   onSample={setPerformance}
                 />
-                {/* TEMP: adaptive DPR off — grey-frame flicker on polder until
-                    composer resize is synced with setDpr. */}
-                {/* <AdaptiveRenderScale compact={fallbackLook} /> */}
+                {/* Главная GPU-крутилка губернатора: кап пиксельного бюджета
+                    и лестница разрешения. Серый кадр смены DPR закрыт
+                    покадровой сверкой размера конвейера (syncPipelineSize). */}
+                <AdaptiveRenderScale compact={fallbackLook} />
                 <CinematicPostProcessing
                   compact={fallbackLook}
                   byteBloom={scene.id === "dutch-polder"}

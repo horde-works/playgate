@@ -33,6 +33,7 @@ import {
 import { WATER_LEVEL as DUTCH_POLDER_WATER_LEVEL } from "./dutchPolderWaterModel";
 import { environmentState } from "./environmentState";
 import { sampleVikingGroundTraffic } from "./materialTextures";
+import { registerRefractionExcluded } from "./servicePassPolicy.ts";
 import { windState } from "./windState";
 
 /**
@@ -1663,6 +1664,16 @@ export function GrassField({
         .multiplyScalar(sheen);
     }
   });
+
+  // Газон стоит на берегах НАД водой: рефракционному проходу он не нужен ни
+  // картинкой, ни глубиной. Болотные части (камыш, ирис, кувшинки) остаются:
+  // их стебли пересекают зеркало воды, и глубина рефракции даёт им мягкий
+  // вход (§10 environmental lessons).
+  useEffect(() => {
+    const turf = meshRef.current;
+    if (!turf) return;
+    return registerRefractionExcluded(turf);
+  }, []);
 
   // Dev-хук: минимальная экранная ширина стебля правится на живой сцене, чтобы
   // судить рябь глазами на настоящем GPU, а не по офлайн-замерам.

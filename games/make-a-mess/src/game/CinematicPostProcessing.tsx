@@ -366,15 +366,41 @@ export function CinematicPostProcessing({
     };
   }, [byteBloom, camera, compact, gl, scene, size.height, size.width, veil]);
 
-  useEffect(() => {
-    pipeline.composer.setPixelRatio(dpr);
+  // Один владелец размера конвейера. Вызывается и эффектом (первый монтаж),
+  // и КАЖДЫЙ КАДР перед composer.render: адаптивный DPR меняет буфер рисования
+  // немедленно, а React-эффект прибегает на коммит позже — кадр, отрисованный
+  // композером старого размера в буфер нового, и был «серым кадром» польдера.
+  const appliedPipelineSize = useRef({ width: 0, height: 0, dpr: 0 });
+  const syncPipelineSize = () => {
+    const pixelRatio = gl.getPixelRatio();
+    const applied = appliedPipelineSize.current;
+    if (
+      applied.width === size.width &&
+      applied.height === size.height &&
+      applied.dpr === pixelRatio
+    ) {
+      return;
+    }
+    applied.width = size.width;
+    applied.height = size.height;
+    applied.dpr = pixelRatio;
+    pipeline.composer.setPixelRatio(pixelRatio);
     pipeline.composer.setSize(size.width, size.height);
     pipeline.bloomPass.setSize(
-      Math.max(64, Math.round(size.width * dpr * 0.5)),
-      Math.max(64, Math.round(size.height * dpr * 0.5)),
+      Math.max(64, Math.round(size.width * pixelRatio * 0.5)),
+      Math.max(64, Math.round(size.height * pixelRatio * 0.5)),
     );
     pipeline.cinematicPass.uniforms.uAspect.value =
       size.width / Math.max(1, size.height);
+  };
+
+  useEffect(() => {
+    // Новый pipeline (useMemo) стартует с нулевым applied — эффект даёт ему
+    // размер до первого кадра; dpr в зависимостях, чтобы отработал и путь,
+    // когда кадровый цикл стоит (пауза, скрытая вкладка).
+    appliedPipelineSize.current = { width: 0, height: 0, dpr: 0 };
+    syncPipelineSize();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- syncPipelineSize стабилен по замыканию pipeline/gl/size
   }, [dpr, pipeline, size.height, size.width]);
 
   useEffect(
@@ -451,6 +477,9 @@ export function CinematicPostProcessing({
     const sunPresence = pipeline.cinematicPass.uniforms.uSunPresence;
     const restoredSunPresence = sunPresence.value;
     if (gpuQuality === 0) sunPresence.value = 0;
+    // Размер конвейера сверяется с буфером В ЭТОМ кадре, до рендера: смена
+    // DPR никогда не должна дожить до composer.render рассинхроненной.
+    syncPipelineSize();
     gpuTimer.begin();
     try {
       pipeline.composer.render(delta);

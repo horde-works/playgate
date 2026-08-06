@@ -59,6 +59,10 @@ import {
 } from "./dutchPolderWaterBudget.ts";
 import { environmentState } from "./environmentState";
 import { performanceGovernor } from "./performanceGovernor";
+import {
+  hideRefractionExcluded,
+  restoreRefractionExcluded,
+} from "./servicePassPolicy.ts";
 import { setInstalledSkyCloudCoarse } from "./skyClouds";
 import { spillPowerState } from "./spillPowerState";
 import { windState } from "./windState";
@@ -804,7 +808,11 @@ export function DutchPolderWater() {
       renderer.state.buffers.depth.setMask(true);
       // RenderPass turns autoClear off around the frame it owns.
       if (renderer.autoClear === false) renderer.clear();
+      // Берега без деревьев и газона: сквозь толщу их не видно, урез держат
+      // не они, а их вершины — крупнейшая статья этого прохода.
+      hideRefractionExcluded();
       renderer.render(scene, camera);
+      restoreRefractionExcluded();
 
       water.visible = true;
       renderer.xr.enabled = previousXr;
