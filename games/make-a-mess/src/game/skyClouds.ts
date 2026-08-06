@@ -786,6 +786,20 @@ export function setSkyCloudCoarse(material: Material, coarse: boolean): void {
 }
 
 /**
+ * The one shared sky material, remembered at graft time. Service passes that
+ * re-render the whole scene mid-frame (the polder water's mirror and
+ * refraction) drop the dome to its bake march through this handle: their
+ * image of the sky is smeared by ripples or absorbed by the water column, and
+ * a full march there is the single most expensive thing in their pixels.
+ */
+let installedSkyMaterial: Material | null = null;
+
+/** Coarse the shared dome for a service pass; ALWAYS restore in the caller. */
+export function setInstalledSkyCloudCoarse(coarse: boolean): void {
+  if (installedSkyMaterial) setSkyCloudCoarse(installedSkyMaterial, coarse);
+}
+
+/**
  * Live gpuQuality → dome step ceilings. Bake still uses `setSkyCloudCoarse`.
  */
 export function setSkyMarchQuality(
@@ -808,6 +822,7 @@ export function installSkyClouds(material: Material): SkyCloudUniforms | null {
     uniforms: UniformMap;
     fragmentShader: string;
   };
+  installedSkyMaterial = material;
   if (shaderMaterial.uniforms.uCloudMap) return null;
 
   const drift = new Vector2();

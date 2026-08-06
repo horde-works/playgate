@@ -211,3 +211,55 @@ test("the water datum clears every carved bed in the polder", () => {
     );
   }
 });
+
+// ---------------------------------------------------------------------------
+// Бюджет служебных проходов. Зеркало и рефракция — два полных рендера сцены
+// на кадр сверх основного (§10.8 environmental-rendering-lessons.md); их цена
+// зафиксирована здесь, чтобы не отрасти молча, как это сделал кадр августа
+// 2026 (78-96 мс GPU на Iris Xe).
+
+test("бюджет воды: служебные проходы не дорожают молча", async () => {
+  const budget = await import(
+    "../games/make-a-mess/src/game/dutchPolderWaterBudget.ts"
+  );
+
+  // Рубильник закоммичен только включённым: false — локальный A/B, не режим.
+  assert.equal(budget.WATER_PASS_QUALITY_ENABLED, true);
+
+  // Зеркало читается сквозь трёхтаповый смаз ряби; 512 — решение о цене.
+  assert.ok(
+    budget.MIRROR_SIZE <= 512,
+    `MIRROR_SIZE ${budget.MIRROR_SIZE} вырос без пересмотра бюджета`,
+  );
+
+  // Оси спускаются от авторского максимума и не превышают его.
+  assert.equal(budget.REFRACTION_SCALES.length, 3);
+  assert.equal(budget.MIRROR_FRAME_STRIDES.length, 3);
+  const maxScale = budget.REFRACTION_SCALES[2];
+  assert.ok(maxScale <= 0.5, `refraction max ${maxScale} дороже половины буфера`);
+  for (let quality = 0; quality < 2; quality += 1) {
+    assert.ok(
+      budget.REFRACTION_SCALES[quality] <= budget.REFRACTION_SCALES[quality + 1],
+      "ось рефракции обязана спускаться, а не подниматься",
+    );
+    assert.ok(
+      budget.MIRROR_FRAME_STRIDES[quality] >=
+        budget.MIRROR_FRAME_STRIDES[quality + 1],
+      "страйд зеркала растёт только вниз по качеству",
+    );
+  }
+  // Авторский максимум не страйдится: качество 2 живёт покадрово.
+  assert.equal(budget.MIRROR_FRAME_STRIDES[2], 1);
+  // Урез зернеет ниже 0.3 — пол оси, проверенный кадрами.
+  assert.ok(
+    budget.REFRACTION_SCALES[0] >= 0.3,
+    "пол рефракции ниже проверенного кадрами предела",
+  );
+
+  // Селектор уважает рубильник и качество.
+  assert.equal(budget.waterPassBudget(0).mirrorFrameStride >= 1, true);
+  assert.equal(
+    budget.waterPassBudget(2).refractionScale,
+    budget.REFRACTION_SCALES[2],
+  );
+});

@@ -53,14 +53,15 @@ import {
   WATER_LEVEL,
   buildWaterSheetModel,
 } from "./dutchPolderWaterModel.ts";
+import {
+  MIRROR_SIZE,
+  waterPassBudget,
+} from "./dutchPolderWaterBudget.ts";
 import { environmentState } from "./environmentState";
 import { performanceGovernor } from "./performanceGovernor";
+import { setInstalledSkyCloudCoarse } from "./skyClouds";
 import { spillPowerState } from "./spillPowerState";
 import { windState } from "./windState";
-
-const MIRROR_SIZE = 1024;
-/** Refraction is read through moving water; half the drawing buffer is plenty. */
-const REFRACTION_SCALE = 0.5;
 const RIPPLE_TEXTURE_SIZE = 128;
 const WEED_TEXTURE_SIZE = 128;
 /** Surface slope of a calm ditch, in metres of rise per metre of run. */
@@ -741,6 +742,9 @@ export function DutchPolderWater() {
       scene: Scene,
       camera: Camera,
     ) => void;
+    // Счётчик кадров зеркала для страйда бюджета. Живёт в замыкании листа:
+    // страйд — свойство этого зеркала, а не мира.
+    let mirrorFrameParity = 0;
 
     water.onBeforeRender = (
       renderer: WebGLRenderer,
@@ -759,10 +763,19 @@ export function DutchPolderWater() {
         if (!frustum.intersectsSphere(worldSphere)) return;
       }
 
+      const budget = waterPassBudget(
+        performanceGovernor.getSnapshot().gpuQuality,
+      );
       const perspective = camera as PerspectiveCamera;
       renderer.getDrawingBufferSize(drawingSize);
-      const width = Math.max(2, Math.floor(drawingSize.x * REFRACTION_SCALE));
-      const height = Math.max(2, Math.floor(drawingSize.y * REFRACTION_SCALE));
+      const width = Math.max(
+        2,
+        Math.floor(drawingSize.x * budget.refractionScale),
+      );
+      const height = Math.max(
+        2,
+        Math.floor(drawingSize.y * budget.refractionScale),
+      );
       if (refraction.width !== width || refraction.height !== height) {
         refraction.setSize(width, height);
       }
@@ -782,6 +795,10 @@ export function DutchPolderWater() {
       // The scene throttles its shadow atlas by hand. An extra pass must not
       // be the one to spend the pending update.
       renderer.shadowMap.needsUpdate = false;
+      // Оба служебных прохода видят купол в режиме запекания: их небо либо
+      // размазано рябью, либо съедено толщей — полный марш там не читается,
+      // а стоит дороже всего остального в их пикселях.
+      setInstalledSkyCloudCoarse(true);
 
       renderer.setRenderTarget(refraction);
       renderer.state.buffers.depth.setMask(true);
@@ -791,10 +808,18 @@ export function DutchPolderWater() {
 
       water.visible = true;
       renderer.xr.enabled = previousXr;
-      renderer.shadowMap.needsUpdate = previousShadowUpdate;
       renderer.setRenderTarget(previousTarget);
 
-      renderMirror(renderer, scene, camera);
+      // Страйд зеркала: пропущенный кадр оставляет матрицу проектора и
+      // текстуру из одного и того же прошлого кадра — отражение запаздывает
+      // целиком, но остаётся согласованным. Урез и толща так не живут:
+      // рефракционная глубина снимается каждый кадр выше.
+      mirrorFrameParity = (mirrorFrameParity + 1) % budget.mirrorFrameStride;
+      if (mirrorFrameParity === 0) {
+        renderMirror(renderer, scene, camera);
+      }
+      setInstalledSkyCloudCoarse(false);
+      renderer.shadowMap.needsUpdate = previousShadowUpdate;
       collar.visible = true;
       // Restored to whatever the kill switch says, not unconditionally: this
       // runs every frame and would otherwise put a shed curtain straight back.
