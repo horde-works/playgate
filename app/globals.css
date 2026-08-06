@@ -2109,6 +2109,138 @@ button:focus-visible {
   color: var(--ink);
 }
 
+.graphics-menu {
+  position: relative;
+  pointer-events: auto;
+}
+
+.graphics-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid rgb(247 243 232 / 0.28);
+  background: rgb(13 15 14 / 0.4);
+  color: var(--paper-bright);
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
+.graphics-toggle.is-open,
+.graphics-toggle:hover {
+  border-color: var(--acid);
+  color: var(--acid);
+}
+
+.graphics-panel {
+  position: absolute;
+  top: calc(100% + 14px);
+  right: 0;
+  z-index: 24;
+  display: grid;
+  gap: 12px;
+  width: min(340px, calc(100vw - 36px));
+  padding: 14px 16px 16px;
+  border: 1px solid rgb(182 255 60 / 0.42);
+  background: rgb(8 10 9 / 0.92);
+  color: var(--paper-bright);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.graphics-auto {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid rgb(247 243 232 / 0.28);
+  background: transparent;
+  color: var(--paper-bright);
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
+.graphics-auto-mark {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgb(247 243 232 / 0.3);
+}
+
+.graphics-auto.is-active {
+  border-color: var(--acid);
+  color: var(--acid);
+}
+
+.graphics-auto.is-active .graphics-auto-mark {
+  background: var(--acid);
+  box-shadow: 0 0 12px var(--acid);
+}
+
+.graphics-hint {
+  margin: 0;
+  color: rgb(247 243 232 / 0.55);
+  font-size: 8px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: none;
+}
+
+.graphics-row {
+  display: grid;
+  gap: 6px;
+}
+
+.graphics-row-name {
+  display: grid;
+  gap: 2px;
+  font-size: 9px;
+}
+
+.graphics-row-name em {
+  color: rgb(247 243 232 / 0.5);
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: none;
+}
+
+.graphics-options {
+  display: flex;
+  gap: 6px;
+}
+
+.graphics-options button {
+  flex: 1;
+  padding: 6px 4px;
+  border: 1px solid rgb(247 243 232 / 0.22);
+  background: transparent;
+  color: rgb(247 243 232 / 0.75);
+  font: inherit;
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
+.graphics-options button:hover {
+  border-color: rgb(182 255 60 / 0.6);
+}
+
+.graphics-options button.is-active {
+  border-color: var(--acid);
+  background: rgb(182 255 60 / 0.12);
+  color: var(--acid);
+}
+
 .game-performance {
   position: absolute;
   top: 82px;

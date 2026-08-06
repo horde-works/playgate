@@ -14,6 +14,23 @@ export interface RuntimePerformanceSnapshot {
   readonly gpuQuality: PerformanceQuality;
   readonly physicsQuality: PerformanceQuality;
   readonly bottleneck: PerformanceBottleneck;
+  /**
+   * Текущая ступень лестницы разрешения (индекс RENDER_SCALE_LADDER,
+   * 0 — верх). Публикуется лестницей рядом с dpr: панель настроек
+   * предзаполняет ручной режим тем, что автомат выбрал сейчас.
+   */
+  readonly renderScaleLevel: number;
+}
+
+/**
+ * Ручной оверрайд осей качества. Пока он стоит, автоматика замирает: сенсоры
+ * (fps, cpuMs, gpuMs, physics) продолжают мерить и показываться честно, но
+ * оси держат выбранные значения. null — качеством владеет автомат.
+ */
+export interface QualityOverride {
+  readonly cpuQuality: PerformanceQuality;
+  readonly gpuQuality: PerformanceQuality;
+  readonly physicsQuality: PerformanceQuality;
 }
 
 const TARGET_FRAME_MS = 1000 / 60;
@@ -37,12 +54,40 @@ class PerformanceGovernor {
     gpuQuality: 2,
     physicsQuality: 2,
     bottleneck: "balanced",
+    renderScaleLevel: 0,
   };
   private pendingPhysicsMs = 0;
   private decisionElapsedMs = 0;
   private cpuRecoveryWindows = 0;
   private gpuRecoveryWindows = 0;
   private physicsRecoveryWindows = 0;
+  private override: QualityOverride | null = null;
+
+  /**
+   * Ручной режим панели настроек. Установка применяет оси немедленно (все
+   * потребители читают снапшот в тот же кадр); null возвращает автомат,
+   * который продолжает с текущих значений и обычной скоростью восстановления.
+   */
+  setQualityOverride(override: QualityOverride | null): void {
+    this.override = override;
+    if (override) {
+      this.snapshot = { ...this.snapshot, ...override };
+      this.cpuRecoveryWindows = 0;
+      this.gpuRecoveryWindows = 0;
+      this.physicsRecoveryWindows = 0;
+    }
+  }
+
+  getQualityOverride(): QualityOverride | null {
+    return this.override;
+  }
+
+  /** Лестница разрешения публикует свою ступень для панели настроек. */
+  setRenderScaleLevel(level: number): void {
+    if (this.snapshot.renderScaleLevel !== level) {
+      this.snapshot = { ...this.snapshot, renderScaleLevel: level };
+    }
+  }
 
   recordPhysics(durationMs: number): void {
     this.pendingPhysicsMs += Math.max(0, durationMs);
@@ -99,11 +144,14 @@ class PerformanceGovernor {
     this.decisionElapsedMs += boundedFrameMs;
     if (this.decisionElapsedMs >= 1000) {
       this.decisionElapsedMs %= 1000;
-      this.updateQuality(
-        exclusiveCpuMs > 12.5,
-        inferredGpuMs > 15.2,
-        nextPhysicsMs > 5.5,
-      );
+      // Ручной режим: сенсоры продолжают мерить (HUD честен), оси стоят.
+      if (!this.override) {
+        this.updateQuality(
+          exclusiveCpuMs > 12.5,
+          inferredGpuMs > 15.2,
+          nextPhysicsMs > 5.5,
+        );
+      }
     }
   }
 
@@ -167,9 +215,9 @@ class PerformanceGovernor {
       cpuMs: 0,
       physicsMs: 0,
       gpuMs: null,
-      cpuQuality: 2,
-      gpuQuality: 2,
-      physicsQuality: 2,
+      cpuQuality: this.override?.cpuQuality ?? 2,
+      gpuQuality: this.override?.gpuQuality ?? 2,
+      physicsQuality: this.override?.physicsQuality ?? 2,
       bottleneck: "balanced",
     };
     this.pendingPhysicsMs = 0;

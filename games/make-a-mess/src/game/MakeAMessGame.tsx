@@ -23,8 +23,16 @@ import {
 import { debrisBodyHasSiblingOverlap } from "./debrisCollisionActivation";
 import {
   performanceGovernor,
+  type PerformanceQuality,
   type RuntimePerformanceSnapshot,
 } from "./performanceGovernor";
+import {
+  applyGraphicsSettings,
+  loadGraphicsSettings,
+  manualSettingsFromSnapshot,
+  saveGraphicsSettings,
+  type GraphicsSettings,
+} from "./graphicsSettings.ts";
 import {
   markActiveShotPerformance,
   markShotPerformance,
@@ -10067,7 +10075,18 @@ const WINDOWS_BEFORE_PROMOTION = 8;
 const SECONDS_AFTER_ANY_CHANGE = 6;
 const SECONDS_BEFORE_REVERSAL = 25;
 
-function AdaptiveRenderScale({ compact }: { compact: boolean }) {
+function AdaptiveRenderScale({
+  compact,
+  manualLevel = null,
+}: {
+  compact: boolean;
+  /**
+   * Ручная ступень лестницы из панели настроек (индекс RENDER_SCALE_LADDER);
+   * null — ступень выбирает автомат по нагрузке. Ручной режим замораживает
+   * голосование, но страж буфера и пересчёт на ресайз работают одинаково.
+   */
+  manualLevel?: number | null;
+}) {
   const gl = useThree((state) => state.gl);
   const size = useThree((state) => state.size);
   // Стор r3f НЕ трогаем: configure() Canvas переприкладывает dpr-проп (и его
@@ -10099,28 +10118,42 @@ function AdaptiveRenderScale({ compact }: { compact: boolean }) {
     const pixelBudget = compact ? COMPACT_PIXEL_BUDGET : DESKTOP_PIXEL_BUDGET;
     const softFloor = compact ? 0.72 : 0.58;
     const hardFloor = compact ? 0.62 : 0.52;
+    // Потолок — devicePixelRatio, не 1: size в CSS-пикселях, и на Retina
+    // потолок 1.0 недоиспользовал пиксельный бюджет вчетверо (буфер 0.25
+    // площади экрана даже при свободном GPU), а каждая ступень вниз
+    // растягивалась на дисплей грубее, чем на обычном мониторе.
+    const deviceCeiling =
+      typeof window === "undefined" ? 1 : Math.max(1, window.devicePixelRatio);
     baseline.current = MathUtils.clamp(
       Math.sqrt(pixelBudget / Math.max(1, size.width * size.height)),
       softFloor,
-      1,
+      deviceCeiling,
     );
+    if (manualLevel !== null) {
+      level.current = MathUtils.clamp(
+        Math.round(manualLevel),
+        0,
+        RENDER_SCALE_LADDER.length - 1,
+      );
+    }
     const nextDpr = MathUtils.clamp(
       baseline.current * RENDER_SCALE_LADDER[level.current],
       hardFloor,
-      1,
+      deviceCeiling,
     );
     elapsed.current = 0;
     frames.current = 0;
     warmup.current = 0;
     overloadedWindows.current = 0;
     comfortableWindows.current = 0;
+    performanceGovernor.setRenderScaleLevel(level.current);
     if (Math.abs(nextDpr - applied.current) > 0.001) {
       applied.current = nextDpr;
       performanceGovernor.setDpr(nextDpr);
       applyDpr(nextDpr);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- applyDpr стабилен по gl/size
-  }, [compact, size.height, size.width]);
+  }, [compact, manualLevel, size.height, size.width]);
 
   useFrame((_, delta) => {
     // Страж буфера: любой чужой resize (r3f на смене size, сторонний
@@ -10130,6 +10163,11 @@ function AdaptiveRenderScale({ compact }: { compact: boolean }) {
       Math.abs(gl.getPixelRatio() - applied.current) > 0.001
     ) {
       applyDpr(applied.current);
+    }
+
+    // Ручная ступень: голосование стоит, страж выше продолжает работать.
+    if (manualLevel !== null) {
+      return;
     }
 
     warmup.current += delta;
@@ -10188,6 +10226,7 @@ function AdaptiveRenderScale({ compact }: { compact: boolean }) {
       sinceDemotion.current = 0;
     }
     level.current = nextLevel;
+    performanceGovernor.setRenderScaleLevel(nextLevel);
     overloadedWindows.current = 0;
     comfortableWindows.current = 0;
     // Упёрлись в пол: ступень запомнена, но буфер трогать незачем.
@@ -10304,6 +10343,173 @@ function PhysicsPerformanceProbe() {
     );
   });
   return null;
+}
+
+/** Ступени лестницы разрешения в человеческих словах; индекс = ступень. */
+const GRAPHICS_RESOLUTION_LABELS: readonly TranslationKey[] = [
+  "graphics.levelFull",
+  "graphics.levelHigh",
+  "graphics.levelMedium",
+  "graphics.levelLow",
+];
+/** Оси качества показываются от максимума вниз; значения — 2/1/0. */
+const GRAPHICS_QUALITY_OPTIONS: readonly {
+  value: PerformanceQuality;
+  label: TranslationKey;
+}[] = [
+  { value: 2, label: "graphics.qualityMax" },
+  { value: 1, label: "graphics.qualityMid" },
+  { value: 0, label: "graphics.qualityLow" },
+];
+
+/**
+ * Панель настроек графики. «Автоматически» — качеством владеет губернатор,
+ * и ряды живьём показывают его текущий выбор; клик по любому значению
+ * выключает автомат и стартует ровно с того, что автомат выбрал (закон
+ * панели), с одной заменённой осью. Всё применяется в тот же кадр.
+ */
+function GraphicsSettingsMenu({
+  open,
+  settings,
+  onToggleOpen,
+  onChange,
+  t,
+}: {
+  open: boolean;
+  settings: GraphicsSettings;
+  onToggleOpen: () => void;
+  onChange: (next: GraphicsSettings) => void;
+  t: (key: TranslationKey) => string;
+}) {
+  const [autoView, setAutoView] = useState(() =>
+    performanceGovernor.getSnapshot(),
+  );
+  // Пока панель открыта в автомате — показывать его живой выбор.
+  useEffect(() => {
+    if (!open || !settings.auto) return;
+    setAutoView(performanceGovernor.getSnapshot());
+    const timer = setInterval(
+      () => setAutoView(performanceGovernor.getSnapshot()),
+      500,
+    );
+    return () => clearInterval(timer);
+  }, [open, settings.auto]);
+
+  const shown: GraphicsSettings = settings.auto
+    ? {
+        auto: true,
+        renderScaleLevel: autoView.renderScaleLevel,
+        gpuQuality: autoView.gpuQuality,
+        cpuQuality: autoView.cpuQuality,
+        physicsQuality: autoView.physicsQuality,
+      }
+    : settings;
+
+  // Клик по значению в автомате = выключить автомат, стартовав от его
+  // текущего выбора с одной заменённой осью.
+  const pick = (patch: Partial<GraphicsSettings>) => {
+    const base = settings.auto
+      ? manualSettingsFromSnapshot(performanceGovernor.getSnapshot())
+      : settings;
+    onChange({ ...base, ...patch, auto: false });
+  };
+
+  return (
+    <div className="graphics-menu">
+      <button
+        type="button"
+        className={`graphics-toggle${open ? " is-open" : ""}`}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        onClick={onToggleOpen}
+      >
+        {t("graphics.button")}
+      </button>
+      {open ? (
+        <aside
+          className="graphics-panel"
+          role="dialog"
+          aria-label={t("graphics.title")}
+        >
+          <button
+            type="button"
+            className={`graphics-auto${settings.auto ? " is-active" : ""}`}
+            aria-pressed={settings.auto}
+            onClick={() =>
+              onChange(
+                settings.auto
+                  ? manualSettingsFromSnapshot(performanceGovernor.getSnapshot())
+                  : { ...settings, auto: true },
+              )
+            }
+          >
+            <span className="graphics-auto-mark" aria-hidden="true" />
+            {t("graphics.auto")}
+          </button>
+          <p className="graphics-hint">{t("graphics.autoHint")}</p>
+
+          <div className="graphics-row">
+            <span className="graphics-row-name">{t("graphics.resolution")}</span>
+            <div className="graphics-options">
+              {GRAPHICS_RESOLUTION_LABELS.map((label, index) => (
+                <button
+                  key={label}
+                  type="button"
+                  className={
+                    shown.renderScaleLevel === index ? "is-active" : undefined
+                  }
+                  onClick={() => pick({ renderScaleLevel: index })}
+                >
+                  {t(label)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {(
+            [
+              {
+                name: "graphics.effects",
+                hint: "graphics.effectsHint",
+                field: "gpuQuality",
+              },
+              {
+                name: "graphics.particles",
+                hint: "graphics.particlesHint",
+                field: "cpuQuality",
+              },
+              {
+                name: "graphics.physics",
+                hint: "graphics.physicsHint",
+                field: "physicsQuality",
+              },
+            ] as const
+          ).map((row) => (
+            <div className="graphics-row" key={row.field}>
+              <span className="graphics-row-name">
+                {t(row.name)}
+                <em>{t(row.hint)}</em>
+              </span>
+              <div className="graphics-options">
+                {GRAPHICS_QUALITY_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={
+                      shown[row.field] === option.value ? "is-active" : undefined
+                    }
+                    onClick={() => pick({ [row.field]: option.value })}
+                  >
+                    {t(option.label)}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </aside>
+      ) : null}
+    </div>
+  );
 }
 
 function MobileGameControls({
@@ -11806,6 +12012,15 @@ export function MakeAMessGame({
   const flyoverVideoUrlRef = useRef<string | null>(null);
   const [ready, setReady] = useState(false);
   const [showPerformance, setShowPerformance] = useState(false);
+  // Настройки графики: применяются в тот же кадр, переживают перезагрузку.
+  const [graphicsSettings, setGraphicsSettings] = useState<GraphicsSettings>(
+    () => loadGraphicsSettings(),
+  );
+  const [graphicsMenuOpen, setGraphicsMenuOpen] = useState(false);
+  useEffect(() => {
+    applyGraphicsSettings(graphicsSettings);
+    saveGraphicsSettings(graphicsSettings);
+  }, [graphicsSettings]);
   const [dynamicBodyCount, setDynamicBodyCount] = useState(0);
   const [performance, setPerformance] = useState<PerformanceSnapshot>(() =>
     performanceGovernor.getSnapshot(),
@@ -12850,7 +13065,14 @@ export function MakeAMessGame({
                 {/* Главная GPU-крутилка губернатора: кап пиксельного бюджета
                     и лестница разрешения. Серый кадр смены DPR закрыт
                     покадровой сверкой размера конвейера (syncPipelineSize). */}
-                <AdaptiveRenderScale compact={fallbackLook} />
+                <AdaptiveRenderScale
+                  compact={fallbackLook}
+                  manualLevel={
+                    graphicsSettings.auto
+                      ? null
+                      : graphicsSettings.renderScaleLevel
+                  }
+                />
                 <CinematicPostProcessing
                   compact={fallbackLook}
                   byteBloom={scene.id === "dutch-polder"}
@@ -12922,6 +13144,13 @@ export function MakeAMessGame({
                 onOpen={openFlyoverGallery}
               />
             ) : null}
+            <GraphicsSettingsMenu
+              open={graphicsMenuOpen}
+              settings={graphicsSettings}
+              onToggleOpen={() => setGraphicsMenuOpen((current) => !current)}
+              onChange={setGraphicsSettings}
+              t={t}
+            />
             <LanguageSwitcher className="language-switcher-play" />
             <Link href="/games" className="play-exit">
               {t("hud.allGames")}
