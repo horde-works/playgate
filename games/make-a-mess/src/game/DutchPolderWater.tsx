@@ -807,7 +807,12 @@ export function DutchPolderWater() {
         (camera as PerspectiveCamera).projectionMatrix,
       );
 
-      // Матрица проектора для выборки зеркала поверхностью.
+      // Матрица проектора для выборки зеркала поверхностью. ВАЖНО: без
+      // умножения на water.matrixWorld — вершинник этой воды (конвенция
+      // Water, не Reflector) подаёт в textureMatrix уже МИРОВУЮ позицию;
+      // matrixWorld здесь применялся бы дважды, UV уезжали за таргет, и
+      // clamp растягивал крайние текселы в продольные полосы вместо
+      // отражения.
       const textureMatrix = material.uniforms.textureMatrix.value as Matrix4;
       textureMatrix.set(
         0.5, 0, 0, 0.5,
@@ -817,7 +822,6 @@ export function DutchPolderWater() {
       );
       textureMatrix.multiply(virtual.projectionMatrix);
       textureMatrix.multiply(virtual.matrixWorldInverse);
-      textureMatrix.multiply(water.matrixWorld);
 
       // Косая проекция: ближняя плоскость = плоскость воды, чтобы дно и всё
       // подводное не пролезало в отражение. clipBias — как у стока.
