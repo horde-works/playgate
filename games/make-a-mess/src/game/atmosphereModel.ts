@@ -85,8 +85,31 @@ export const AIR_LAW = {
    */
   solarIrradiance: 48.3,
 
-  /** Steps along the view ray. Distributed quadratically — see `skyRadiance`. */
-  viewSteps: 24,
+  /**
+   * Author ceiling for the live GPU view march at gpuQuality 2. Distributed
+   * quadratically — see GLSL `airRadiance`. Cut from 24 to 16 once phase dither
+   * and elevation adaptive count landed: the transmittance and multi-scatter
+   * tables already hold the expensive integrals, and a flat 24 at every pixel
+   * was the shared idle-FPS regression across worlds.
+   */
+  viewSteps: 16,
+  /**
+   * CPU lighting queries (`skyRadiance` → key, fill, fog). Paid a few times
+   * per degree of solar elevation, not per pixel — keep the denser integrand
+   * so noon anchors and twilight curves do not track the live GPU budget.
+   */
+  cpuViewSteps: 24,
+  /**
+   * Live-frame air step ceilings for gpuQuality 0 / 1 / 2. Bake still forces
+   * `coarseViewSteps` via `uCloudCoarse`. Quality is a descent FROM the author
+   * max, never a lowered authorship floor.
+   */
+  qualityViewSteps: [6, 10, 16] as const,
+  /**
+   * At the zenith, fraction of the quality ceiling that is actually walked.
+   * Horizon / twilight keep the full ceiling (ozone path, Belt of Venus).
+   */
+  zenithStepScale: 0.55,
   /**
    * Steps the environment bake uses. `three-stdlib` hands every `Sky` one
    * material, so a PMREM relight draws the visible sky's own shader six times;
@@ -532,7 +555,7 @@ export function skyRadiance(
   const cosSun = direction[0] * sun[0] + direction[1] * sun[1] + direction[2] * sun[2];
   const phaseR = rayleighPhase(cosSun);
   const phaseM = miePhase(cosSun);
-  const steps = AIR_LAW.viewSteps;
+  const steps = AIR_LAW.cpuViewSteps;
 
   let depthR = 0;
   let depthM = 0;

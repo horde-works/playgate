@@ -52,6 +52,7 @@ import {
   setSkyCloudCoarse,
   type SkyCloudUniforms,
 } from "./skyClouds";
+import { performanceGovernor } from "./performanceGovernor";
 import {
   ATMOSPHERE,
   CLEAR_SKY,
@@ -363,6 +364,11 @@ export function DayNightCycle({
     if (worldTimeRef) {
       worldTimeRef.current = time.current;
     }
+    // Live sky march budget follows gpuQuality (author max at 2; bake still
+    // forces coarse via setSkyCloudCoarse). Kill-switch freezes at full.
+    clouds.current?.setMarchQuality(
+      performanceGovernor.getSnapshot().gpuQuality,
+    );
     const angle = time.current * Math.PI * 2;
     const geographicSun = solarFrame
       ? equinoxSunDirection(time.current, solarFrame)

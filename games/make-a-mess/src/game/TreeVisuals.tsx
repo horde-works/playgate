@@ -1,19 +1,22 @@
 "use client";
 
-import { useFrame } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import {
   BufferGeometry,
   Color,
   CylinderGeometry,
   DoubleSide,
+  DynamicDrawUsage,
   Euler,
   Float32BufferAttribute,
+  Frustum,
   InstancedBufferAttribute,
   InstancedMesh,
   Matrix4,
   MeshStandardMaterial,
   Quaternion,
+  Sphere,
   SphereGeometry,
   StaticDrawUsage,
   Vector3,
@@ -41,6 +44,13 @@ import {
   UP,
 } from "./treeVisualInstances";
 import type { FoliageInstance, VisualInstance } from "./treeVisualInstances";
+import {
+  projectedDiameterPixels,
+  selectTreeFoliageLod,
+  TREE_FOLIAGE_CULL_INTERVAL_SECONDS,
+  TREE_FOLIAGE_LODS,
+  type TreeFoliageLod,
+} from "./treeVisualLod";
 import { treeBarkAtlas } from "./treeBarkAtlas";
 import { windState } from "./windState";
 
@@ -49,7 +59,10 @@ interface TreeShader {
   vertexShader: string;
 }
 
-function makeLeafCloudGeometry(leafCount = 72): BufferGeometry {
+function makeLeafCloudGeometry(
+  leafCount: number,
+  elementScale: number,
+): BufferGeometry {
   const positions: number[] = [];
   const uvs: number[] = [];
   const colors: number[] = [];
@@ -85,7 +98,7 @@ function makeLeafCloudGeometry(leafCount = 72): BufferGeometry {
       .multiplyScalar(Math.cos(roll))
       .addScaledVector(bitangent, Math.sin(roll));
     const rolledBitangent = normal.clone().cross(rolledTangent).normalize();
-    const width = 0.048 + hash(leaf, 8) * 0.032;
+    const width = (0.048 + hash(leaf, 8) * 0.032) * elementScale;
     const height = width * (1.3 + hash(leaf, 9) * 0.42);
     const points = [
       center.clone().addScaledVector(rolledBitangent, -height),
@@ -125,7 +138,10 @@ function makeLeafCloudGeometry(leafCount = 72): BufferGeometry {
   return geometry;
 }
 
-function makePineSprayGeometry(): BufferGeometry {
+function makePineSprayGeometry(
+  density: number,
+  elementScale: number,
+): BufferGeometry {
   const positions: number[] = [];
   const uvs: number[] = [];
   const colors: number[] = [];
@@ -194,11 +210,15 @@ function makePineSprayGeometry(): BufferGeometry {
       base.y = (hash(bough, 530 + station) - 0.5) * 0.105;
 
       for (let needle = 0; needle < needlesPerStation; needle += 1) {
-        const rank =
-          (bough * stationsPerBough * needlesPerStation +
-            station * needlesPerStation +
-            needle) /
+        const serial =
+          bough * stationsPerBough * needlesPerStation +
+          station * needlesPerStation +
+          needle;
+        const rank = serial /
           (boughCount * stationsPerBough * needlesPerStation);
+        if (density < 1 && hash(serial, 591) > density) {
+          continue;
+        }
         const aroundAngle =
           (needle / needlesPerStation) * Math.PI * 2 +
           (hash(bough + station * 13, 540 + needle) - 0.5) * 0.42;
@@ -216,8 +236,9 @@ function makePineSprayGeometry(): BufferGeometry {
           minimumLength +
           hash(bough + station * 7, 550 + needle) * lengthVariation;
         const width =
-          minimumHalfWidth +
-          hash(bough + station * 11, 560 + needle) * halfWidthVariation;
+          (minimumHalfWidth +
+            hash(bough + station * 11, 560 + needle) * halfWidthVariation) *
+          elementScale;
         const tone = 0.68 + hash(bough + station * 17, 570 + needle) * 0.3;
         pushNeedle(base, direction, side, length, width, rank, tone);
       }
@@ -393,23 +414,30 @@ const FoliageBatch = memo(function FoliageBatch({
   hiddenPieceIds: ReadonlySet<string>;
   variant?: "broadleaf" | "pine";
 }) {
-  const mesh = useRef<InstancedMesh>(null);
+  const camera = useThree((state) => state.camera);
+  const viewportHeight = useThree((state) => state.size.height);
+  const meshes = useRef<Partial<Record<TreeFoliageLod, InstancedMesh | null>>>({});
   const shader = useRef<TreeShader | null>(null);
-  const geometry = useMemo(() => {
-    const next = variant === "pine"
-      ? makePineSprayGeometry()
-      : makeLeafCloudGeometry();
-    const treeParams = new Float32Array(instances.length * 2);
-    instances.forEach((instance, index) => {
-      treeParams[index * 2] = instance.species;
-      treeParams[index * 2 + 1] = instance.phase;
-    });
-    next.setAttribute(
-      "aTreeParams",
-      new InstancedBufferAttribute(treeParams, 2, false),
-    );
-    return next;
-  }, [instances, variant]);
+  const geometries = useMemo(
+    () =>
+      new Map(
+        TREE_FOLIAGE_LODS.map((profile) => {
+          const next = variant === "pine"
+            ? makePineSprayGeometry(profile.pineDensity, profile.elementScale)
+            : makeLeafCloudGeometry(profile.broadleafCount, profile.elementScale);
+          next.setAttribute(
+            "aTreeParams",
+            new InstancedBufferAttribute(
+              new Float32Array(instances.length * 2),
+              2,
+              false,
+            ),
+          );
+          return [profile.id, next] as const;
+        }),
+      ),
+    [instances.length, variant],
+  );
   const material = useMemo(() => {
     const next = new MeshStandardMaterial({
       color: "#ffffff",
@@ -423,7 +451,6 @@ const FoliageBatch = memo(function FoliageBatch({
     next.onBeforeCompile = (compiled) => {
       compiled.uniforms.uTreeTime = { value: 0 };
       compiled.uniforms.uTreeWind = { value: 1 };
-      compiled.uniforms.uTreeCamera = { value: new Vector3() };
       compiled.vertexShader = compiled.vertexShader
         .replace(
           "#include <common>",
@@ -432,24 +459,13 @@ attribute vec4 aLeafData;
 attribute vec2 aTreeParams;
 uniform float uTreeTime;
 uniform float uTreeWind;
-uniform vec3 uTreeCamera;
 varying vec3 vTreeLeafTint;`,
         )
         .replace(
           "#include <begin_vertex>",
           `#include <begin_vertex>
 vec3 treeAnchor = instanceMatrix[3].xyz;
-float treeDistance = distance(treeAnchor, uTreeCamera);
-float treeNearToMid = smoothstep(22.0, 48.0, treeDistance);
-float treeMidToFar = smoothstep(48.0, 82.0, treeDistance);
-float treeDensity = mix(1.0, 0.62, treeNearToMid);
-treeDensity = mix(treeDensity, 0.28, treeMidToFar);
 float treeIsBirch = step(0.5, aTreeParams.x) * (1.0 - step(1.5, aTreeParams.x));
-treeDensity *= mix(1.0, 0.88, treeIsBirch);
-float treeVisible = step(aLeafData.w, treeDensity);
-float treeAreaPreservation = min(1.55, inversesqrt(max(treeDensity, 0.2)));
-vec3 treeLeafOffset = transformed - aLeafData.xyz;
-transformed = aLeafData.xyz + treeLeafOffset * treeAreaPreservation;
 // Отжившие листья есть в любой кроне, и раздавать их надо ПОЛИСТНО: жёлтый
 // ком читается как больное пятно, а рассыпанные листья — как живое дерево.
 // Берёза желтеет раньше и заметнее всех, дуб держит лист дольше, ива — самая
@@ -471,8 +487,7 @@ float treePhase = aTreeParams.y * 6.28318 + aLeafData.w * 11.7;
 float treeGust = sin(uTreeTime * 1.13 + treePhase + treeAnchor.x * 0.09 + treeAnchor.z * 0.07);
 float treeFlutter = sin(uTreeTime * 3.7 + treePhase * 1.91);
 transformed.x += (treeGust * 0.018 + treeFlutter * 0.007) * uTreeWind;
-transformed.z += (treeGust * 0.012 - treeFlutter * 0.005) * uTreeWind;
-transformed = mix(aLeafData.xyz, transformed, treeVisible);`,
+transformed.z += (treeGust * 0.012 - treeFlutter * 0.005) * uTreeWind;`,
         );
       compiled.fragmentShader = compiled.fragmentShader
         .replace(
@@ -487,64 +502,165 @@ diffuseColor.rgb *= vTreeLeafTint;`,
         );
       shader.current = compiled as TreeShader;
     };
-    next.customProgramCacheKey = () => `procedural-tree-foliage-v4-leaf-tint:${variant}`;
+    next.customProgramCacheKey = () => `procedural-tree-foliage-v5-real-lod:${variant}`;
     return next;
   }, [variant]);
 
+  const culling = useMemo(
+    () => ({
+      projectionView: new Matrix4(),
+      frustum: new Frustum(),
+      sphere: new Sphere(),
+      centre: new Vector3(),
+      cameraDelta: new Vector3(),
+      lastCameraPosition: new Vector3(),
+      lastCameraRotation: new Quaternion(),
+      hasCameraSample: false,
+      lastAt: Number.NEGATIVE_INFINITY,
+    }),
+    [],
+  );
+
+  const updateVisibleInstances = () => {
+    culling.projectionView.multiplyMatrices(
+      camera.projectionMatrix,
+      camera.matrixWorldInverse,
+    );
+    culling.frustum.setFromProjectionMatrix(culling.projectionView);
+    const counts: Record<TreeFoliageLod, number> = { near: 0, mid: 0, far: 0 };
+    const ids: Record<TreeFoliageLod, string[]> = { near: [], mid: [], far: [] };
+
+    for (const instance of instances) {
+      if (hiddenPieceIds.has(instance.sourceId)) continue;
+      const elements = instance.matrix.elements;
+      culling.centre.set(elements[12], elements[13], elements[14]);
+      const scaleX = Math.hypot(elements[0], elements[1], elements[2]);
+      const scaleY = Math.hypot(elements[4], elements[5], elements[6]);
+      const scaleZ = Math.hypot(elements[8], elements[9], elements[10]);
+      const radius = Math.max(scaleX, scaleY, scaleZ) * 0.72;
+      // Keep a small caster margin outside the view so a nearby crown can
+      // still throw a shadow into the visible frame.
+      culling.sphere.center.copy(culling.centre);
+      culling.sphere.radius = radius + Math.min(8, radius * 0.45);
+      if (!culling.frustum.intersectsSphere(culling.sphere)) continue;
+
+      const distance = culling.cameraDelta
+        .copy(culling.centre)
+        .sub(camera.position)
+        .length();
+      const diameter = projectedDiameterPixels(
+        radius,
+        distance,
+        viewportHeight,
+        camera.projectionMatrix.elements[5],
+      );
+      const lod = selectTreeFoliageLod(diameter, instance.phase);
+      if (!lod) continue;
+      const mesh = meshes.current[lod];
+      const geometry = geometries.get(lod);
+      if (!mesh || !geometry) continue;
+      const target = counts[lod];
+      mesh.setMatrixAt(target, instance.matrix);
+      mesh.setColorAt(target, instance.color);
+      const params = geometry.getAttribute("aTreeParams") as InstancedBufferAttribute;
+      const values = params.array as Float32Array;
+      values[target * 2] = instance.species;
+      values[target * 2 + 1] = instance.phase;
+      ids[lod].push(instance.sourceId);
+      counts[lod] += 1;
+    }
+
+    for (const profile of TREE_FOLIAGE_LODS) {
+      const mesh = meshes.current[profile.id];
+      const geometry = geometries.get(profile.id);
+      if (!mesh || !geometry) continue;
+      mesh.count = counts[profile.id];
+      mesh.instanceMatrix.setUsage(DynamicDrawUsage);
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      (geometry.getAttribute("aTreeParams") as InstancedBufferAttribute)
+        .needsUpdate = true;
+      mesh.userData.breakableInstanceIds = ids[profile.id];
+    }
+
+    culling.lastCameraPosition.copy(camera.position);
+    culling.lastCameraRotation.copy(camera.quaternion);
+    culling.hasCameraSample = true;
+  };
+
   useEffect(
     () => () => {
-      geometry.dispose();
+      for (const geometry of geometries.values()) geometry.dispose();
       material.dispose();
     },
-    [geometry, material],
+    [geometries, material],
   );
 
   useLayoutEffect(() => {
-    const current = mesh.current;
-    if (!current) {
-      return;
-    }
-    instances.forEach((instance, index) => {
-      current.setMatrixAt(
-        index,
-        hiddenPieceIds.has(instance.sourceId)
-          ? HIDDEN_MATRIX
-          : instance.matrix,
-      );
-      current.setColorAt(index, instance.color);
-    });
-    current.instanceMatrix.setUsage(StaticDrawUsage);
-    current.instanceMatrix.needsUpdate = true;
-    if (current.instanceColor) {
-      current.instanceColor.needsUpdate = true;
-    }
-    current.computeBoundingSphere();
-  }, [hiddenPieceIds, instances]);
+    updateVisibleInstances();
+    // The next timed update should not wait on a timestamp from the previous
+    // scene/instance set.
+    culling.lastAt = Number.NEGATIVE_INFINITY;
+    // `updateVisibleInstances` deliberately closes over the current immutable
+    // instance list and camera; all mutable render state lives in refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [geometries, hiddenPieceIds, instances, viewportHeight]);
 
   useFrame((state) => {
     const current = shader.current;
-    if (!current) {
-      return;
+    if (current) {
+      current.uniforms.uTreeTime.value = state.clock.elapsedTime;
+      current.uniforms.uTreeWind.value = windState.strength;
     }
-    current.uniforms.uTreeTime.value = state.clock.elapsedTime;
-    current.uniforms.uTreeWind.value = windState.strength;
-    (current.uniforms.uTreeCamera.value as Vector3).copy(state.camera.position);
+    if (
+      state.clock.elapsedTime - culling.lastAt >=
+      TREE_FOLIAGE_CULL_INTERVAL_SECONDS
+    ) {
+      const forceRefresh = !Number.isFinite(culling.lastAt);
+      culling.lastAt = state.clock.elapsedTime;
+      const moved =
+        culling.lastCameraPosition.distanceToSquared(state.camera.position) >
+        0.16;
+      // Quaternion dot is sign-independent here because q and -q describe the
+      // same rotation. This avoids rescanning a whole forest while the camera
+      // is stationary.
+      const turned =
+        1 -
+          Math.abs(
+            culling.lastCameraRotation.dot(state.camera.quaternion),
+          ) >
+        0.00008;
+      if (forceRefresh || !culling.hasCameraSample || moved || turned) {
+        updateVisibleInstances();
+      }
+    }
   });
 
   if (instances.length === 0) {
     return null;
   }
   return (
-    <instancedMesh
-      ref={mesh}
-      args={[geometry, material, instances.length]}
-      castShadow
-      receiveShadow
-      userData={{
-        breakableInstanceIds: instances.map((instance) => instance.sourceId),
-        breakableMaterial: "foliage",
-      }}
-    />
+    <>
+      {TREE_FOLIAGE_LODS.map((profile) => (
+        <instancedMesh
+          key={profile.id}
+          ref={(current) => {
+            meshes.current[profile.id] = current;
+          }}
+          args={[geometries.get(profile.id), material, instances.length]}
+          // Distant leaf shadows are sub-pixel noise, but a full extra foliage
+          // render pass. Keep authored shadows where they can be perceived.
+          castShadow={profile.id === "near"}
+          receiveShadow
+          frustumCulled={false}
+          userData={{
+            breakableInstanceIds: [],
+            breakableMaterial: "foliage",
+            foliageLod: profile.id,
+          }}
+        />
+      ))}
+    </>
   );
 });
 

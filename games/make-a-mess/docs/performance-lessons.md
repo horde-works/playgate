@@ -64,7 +64,10 @@ ANGLE→Metal, Rapier в wasm на одном потоке): что держит
 искр/крошки попадания (§5.3), плотность дыма и свет взрыва
 (`ExplosionFxSystem.tsx`), sway инструмента (§6), ветер
 (`WindController.tsx`), водные проходы польдера (`DutchPolderWater.tsx`),
-постобработка (`CinematicPostProcessing.tsx`). Правило направления: деградация начинается с
+постобработка (`CinematicPostProcessing.tsx`), **живой sky march**
+(`uSkyQuality` в `skyClouds.ts` / `DayNightCycle` — air steps + cloud count +
+beams; bake PMREM отдельно через `uCloudCoarse`; рубильник
+`SKY_MARCH_QUALITY_ENABLED`). Правило направления: деградация начинается с
 расстояния и temporal-качества, никогда — с визуального центра события.
 
 ## 2. Замер раньше вывода
@@ -117,8 +120,10 @@ FPS с первого запуска, а цена считается за пят
 
 Отработанный пример — облачная палуба: первая версия стоила 576 выборок на
 пиксель неба и уронила FPS вдвое; разбор вернул ≤96 без потери картинки.
-Числа и приёмы — `environmental-rendering-lessons.md` §9.5, здесь не
-дублируются.
+После physical air тот же закон: потолок `viewSteps = 16` + dither/адаптив +
+ось `gpuQuality` (`SKY_MARCH_QUALITY_ENABLED`), совместный бюджет air+cloud+beams
+≤120 (тест `sky-weather`). Числа и приёмы — `environmental-rendering-lessons.md`
+§9.5 и §11, здесь не дублируются.
 
 ## 3. Физика: где деньги
 

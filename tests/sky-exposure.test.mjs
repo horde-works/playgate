@@ -184,14 +184,21 @@ test("the march budget is fixed and small", () => {
   // expensive integral does not depend on the hour, so it is not paid per
   // pixel. The cloud deck above this is allowed 96 samples; the air must stay
   // a fraction of it or an open horizon costs more than the weather does.
-  assert.equal(AIR_LAW.viewSteps, 24);
-  assert.ok(AIR_LAW.viewSteps * 2 <= 48, "the air march outgrew its budget");
+  // Author ceiling is 16 (was 24): phase dither + elevation scale keep the
+  // picture, gpuQuality can still descend further via qualityViewSteps.
+  assert.equal(AIR_LAW.viewSteps, 16);
+  assert.equal(AIR_LAW.qualityViewSteps[2], AIR_LAW.viewSteps);
+  assert.ok(AIR_LAW.viewSteps * 2 <= 40, "the air march outgrew its budget");
   assert.ok(
     AIR_LAW.coarseViewSteps <= 8,
     "the environment bake draws this sky six times per relight",
   );
+  assert.deepEqual(
+    [...AIR_LAW.qualityViewSteps],
+    [6, 10, 16],
+    "live quality ceilings drifted without a documented budget change",
+  );
 });
-
 // ---------------------------------------------------------------------------
 // The anchor
 // ---------------------------------------------------------------------------

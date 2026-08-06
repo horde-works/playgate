@@ -59,10 +59,25 @@ function getSkyFieldTexture(): DataTexture {
 /** Half the sun's angular diameter, in degrees. */
 const SUN_ANGULAR_RADIUS_DEGREES = 0.2666;
 
+/**
+ * Honest A/B for the live quality axis. When false, the dome always marches
+ * at author maximum (gpuQuality 2) regardless of the governor — isolate sky
+ * cost without disabling the physical air itself.
+ */
+export const SKY_MARCH_QUALITY_ENABLED = true;
+
 /** A GLSL float literal — an integer written bare would be an int there. */
 function f(value: number): string {
   return Number.isInteger(value) ? value.toFixed(1) : String(value);
 }
+
+/** Interleaved gradient noise — same grain the cloud march uses for phase. */
+const SKY_PHASE_DITHER = /* glsl */ `
+  float skyPhaseDither() {
+    return fract(52.9829189
+      * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+  }
+`;
 
 // ---------------------------------------------------------------------------
 // The air, on the GPU.
@@ -171,6 +186,11 @@ const airShaderFunctions = /* glsl */ `
    * happens in the first few, so an even march spends its whole budget on
    * empty high air and aliases the part that is actually bright.
    *
+   * The step count is a descent from AIR_LAW.viewSteps: gpuQuality picks a
+   * ceiling, elevation scales it (zenith cheaper, horizon full), and bake
+   * forces the coarse ceiling. Phase dither is what makes fewer steps safe
+   * — without it, every ray sampling at the same phase draws contour bands.
+   *
    * The sun may be below the horizon. That is not a special case — the table
    * returns zero for any sample the planet stands in front of, which IS the
    * Earth's shadow, while samples above it are still lit by a reddened beam.
@@ -193,22 +213,35 @@ const airShaderFunctions = /* glsl */ `
     float phaseM = airMiePhase(cosSun);
     float mieScatter = AIR_MIE_S * uAirHaze;
     float mieExtinct = AIR_MIE_E * uAirHaze;
-    float steps = mix(
-      ${f(AIR_LAW.viewSteps)},
-      ${f(AIR_LAW.coarseViewSteps)},
-      uCloudCoarse
+    // Quality ceilings 0 / 1 / 2 from AIR_LAW.qualityViewSteps.
+    float q0 = ${f(AIR_LAW.qualityViewSteps[0])};
+    float q1 = ${f(AIR_LAW.qualityViewSteps[1])};
+    float q2 = ${f(AIR_LAW.qualityViewSteps[2])};
+    float qualityCeiling = mix(
+      mix(q0, q1, clamp(uSkyQuality, 0.0, 1.0)),
+      q2,
+      clamp(uSkyQuality - 1.0, 0.0, 1.0)
     );
+    float steps = mix(qualityCeiling, ${f(AIR_LAW.coarseViewSteps)}, uCloudCoarse);
+    // Zenith spends less of the ceiling; the horizon keeps it for twilight.
+    steps = max(
+      ${f(AIR_LAW.coarseViewSteps)},
+      steps * mix(1.0, ${f(AIR_LAW.zenithStepScale)}, clamp(dir.y, 0.0, 1.0))
+    );
+    // Same grain as the cloud march: fewer steps without horizontal bands.
+    float dither = skyPhaseDither();
 
     vec3 depth = vec3(0.0);
     vec3 total = vec3(0.0);
     float previous = 0.0;
     for (int step = 0; step < ${AIR_LAW.viewSteps}; step += 1) {
       if (float(step) >= steps) break;
-      float reach = (float(step) + 1.0) / steps;
+      float reach = (float(step) + dither) / steps;
       float far = path * reach * reach;
-      float span = far - previous;
+      float span = max(far - previous, 0.0);
       float t = (previous + far) * 0.5;
       previous = far;
+      if (span <= 0.0) continue;
 
       float sampleRadius = sqrt(radius * radius + t * t + 2.0 * radius * t * mu);
       float height = sampleRadius - AIR_PLANET;
@@ -265,6 +298,9 @@ const skyShaderFunctions = /* glsl */ `
   uniform float uCloudHazeRate;
   uniform float uCloudReach;
   uniform float uCloudCoarse;
+  // Live quality 0 / 1 / 2 from the governor. Bake forces coarse via
+  // uCloudCoarse. Kill-switch freezes this at 2.
+  uniform float uSkyQuality;
   uniform float uMidLevel;
   uniform float uMidBase;
   uniform float uMidScale;
@@ -273,6 +309,8 @@ const skyShaderFunctions = /* glsl */ `
   uniform float uCirrusScale;
   uniform float uBeamStrength;
   uniform float uSunRadiusDegrees;
+
+  ${SKY_PHASE_DITHER.trim()}
 
   // ---- solar geometry -------------------------------------------------
   // Bennett's formula: refraction in arcminutes for an APPARENT altitude in
@@ -423,9 +461,17 @@ const skyShaderFunctions = /* glsl */ `
       ${f(CLOUD_LAW.minSteps)},
       ${f(CLOUD_LAW.maxSteps)}
     );
-    // The environment bake renders this sky six times per relight, and what it
-    // wants out of the deck is an average brightness, not a billow.
-    count = mix(count, ${f(CLOUD_LAW.coarseSteps)}, uCloudCoarse);
+    // Quality: 0 → coarseSteps (as bake), 1 → not below 8 and ~half the
+    // path count, 2 → full path-length count. Bake still forces coarse.
+    float q0 = ${f(CLOUD_LAW.coarseSteps)};
+    float q1 = max(8.0, count * 0.55);
+    float q2 = count;
+    float liveCount = mix(
+      mix(q0, q1, clamp(uSkyQuality, 0.0, 1.0)),
+      q2,
+      clamp(uSkyQuality - 1.0, 0.0, 1.0)
+    );
+    count = mix(liveCount, ${f(CLOUD_LAW.coarseSteps)}, uCloudCoarse);
     float stepLength = through / count;
     // Whatever a step is too coarse to resolve is FILTERED away rather than
     // aliased: the level read is the one whose texel is as wide as the step.
@@ -439,8 +485,7 @@ const skyShaderFunctions = /* glsl */ `
     // and with two dozen samples that is a tenth of its brightness stepping at
     // once, in a horizontal band. Interleaved gradient noise scatters the
     // phase across the screen instead, which the eye reads as grain.
-    float dither = fract(52.9829189
-      * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+    float dither = skyPhaseDither();
     float transmittance = 1.0;
     vec3 scattered = vec3(0.0);
     for (int step = 0; step < ${CLOUD_LAW.maxSteps}; step += 1) {
@@ -519,8 +564,16 @@ const skyShaderFunctions = /* glsl */ `
    * is also the only direction a beam is ever seen from.
    */
   float cloudBeams(vec3 origin, vec3 dir, vec3 sunDir, float cosSun) {
+    // Strength is a uniform the host can zero; quality 0 sheds the 6 field
+    // taps entirely so a struggling GPU does not pay for crepuscular hint.
     float aim = smoothstep(0.55, 0.99, cosSun);
-    if (uCloudCoverage <= 0.0 || aim <= 0.001 || sunDir.y < 0.04) return 0.0;
+    if (
+      uCloudCoverage <= 0.0
+      || uBeamStrength <= 0.001
+      || uSkyQuality < 0.5
+      || aim <= 0.001
+      || sunDir.y < 0.04
+    ) return 0.0;
     float reach = min(uCloudBase * 1.3, 2000.0);
     float lit = 0.0;
     for (int s = 0; s < 6; s += 1) {
@@ -651,6 +704,11 @@ export interface SkyCloudUniforms {
   setWeather(weather: SkyWeather): void;
   /** Aerosol multiplier for this world's air — see `skyHaze`. */
   setHaze(haze: number): void;
+  /**
+   * Live march budget 0 / 1 / 2 (governor gpuQuality). Forced to 2 when
+   * `SKY_MARCH_QUALITY_ENABLED` is false.
+   */
+  setMarchQuality(quality: 0 | 1 | 2): void;
 }
 
 interface UniformMap {
@@ -728,6 +786,18 @@ export function setSkyCloudCoarse(material: Material, coarse: boolean): void {
 }
 
 /**
+ * Live gpuQuality → dome step ceilings. Bake still uses `setSkyCloudCoarse`.
+ */
+export function setSkyMarchQuality(
+  material: Material,
+  quality: 0 | 1 | 2,
+): void {
+  const uniforms = (material as Material & { uniforms?: UniformMap }).uniforms;
+  if (!uniforms?.uSkyQuality) return;
+  uniforms.uSkyQuality.value = SKY_MARCH_QUALITY_ENABLED ? quality : 2;
+}
+
+/**
  * Grafts the weather field and a physical solar disc onto the analytic sky
  * already in use. Worlds that never set a coverage keep the sky they had:
  * every cloud branch leaves at the first test.
@@ -764,6 +834,7 @@ export function installSkyClouds(material: Material): SkyCloudUniforms | null {
   uniforms.uCloudHazeRate = { value: 1 / 13000 };
   uniforms.uCloudReach = { value: 13000 * CLOUD_LAW.reachInHazes };
   uniforms.uCloudCoarse = { value: 0 };
+  uniforms.uSkyQuality = { value: 2 };
   uniforms.uMidLevel = { value: 0 };
   uniforms.uMidBase = { value: 4200 };
   uniforms.uMidScale = { value: 5600 };
@@ -797,9 +868,10 @@ export function installSkyClouds(material: Material): SkyCloudUniforms | null {
     }
   }
 
+  // Cloud declarations first: the air march and the deck share uSkyQuality /
+  // uCloudCoarse, and one uniform declared twice is a compile error.
+  // skyPhaseDither lives with the cloud uniforms so both marches see one grain.
   shaderMaterial.fragmentShader = shaderMaterial.fragmentShader
-    // Cloud declarations first: the air march reads `uCloudCoarse` to drop to
-    // its bake step count, and one uniform declared twice is a compile error.
     .replace(
       "void main() {",
       `${skyShaderFunctions}\n${airShaderFunctions}\n      void main() {`,
@@ -844,6 +916,9 @@ export function installSkyClouds(material: Material): SkyCloudUniforms | null {
     },
     setHaze(haze: number) {
       uniforms.uAirHaze.value = haze;
+    },
+    setMarchQuality(quality: 0 | 1 | 2) {
+      uniforms.uSkyQuality.value = SKY_MARCH_QUALITY_ENABLED ? quality : 2;
     },
   };
 }

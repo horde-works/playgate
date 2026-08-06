@@ -38,6 +38,7 @@ import {
 import {
   elevationDegrees,
   sunBeam,
+  AIR_LAW,
 } from "../games/make-a-mess/src/game/atmosphereModel.ts";
 
 const field = getSkyFieldData();
@@ -403,6 +404,10 @@ test("the march stays inside its lookup budget", () => {
   // steps and two lookups give the same picture — dome coverage moved by 0.003
   // — is that the mip level follows the step, and that the lean is applied
   // before anything is read, so shape, billow and column depth share a texel.
+  //
+  // Air is a separate cost: each live sky pixel also walks airRadiance. The
+  // combined ceiling is pinned so neither side can silently regrow into a
+  // full-screen tax again (2026-08-06).
   const sky = new SkyImpl();
   installSkyClouds(sky.material);
   const source = sky.material.fragmentShader;
@@ -420,15 +425,64 @@ test("the march stays inside its lookup budget", () => {
   // Every ray sampling at the same phase draws the sky in horizontal contour
   // bands: a heap gains or loses a whole sample as the elevation crosses a
   // threshold, and at two dozen samples that is a tenth of its brightness
-  // stepping at once. The phase has to vary across the screen.
+  // stepping at once. The phase has to vary across the screen — air included.
   const march = shaderFunction(source, "vec4 marchCumulus");
-  assert.ok(march.includes("gl_FragCoord"), "the march samples every ray at one phase");
+  assert.ok(
+    march.includes("skyPhaseDither") || march.includes("gl_FragCoord"),
+    "the cloud march samples every ray at one phase",
+  );
+  const air = shaderFunction(source, "vec3 airRadiance");
+  assert.ok(
+    air.includes("skyPhaseDither"),
+    "the air march has no phase dither — fewer steps will band",
+  );
+  assert.ok(source.includes("uSkyQuality"), "live quality axis never reached the shader");
+  assert.ok(
+    march.includes("uSkyQuality"),
+    "the deck ignores the live quality axis (only bake coarse would run)",
+  );
 
-  const worst = CLOUD_LAW.maxSteps * perSample * (1 + sunSamples);
-  assert.ok(worst <= 96, `a sky pixel can cost ${worst} lookups`);
+  const cloudLookups = CLOUD_LAW.maxSteps * perSample * (1 + sunSamples);
+  assert.ok(cloudLookups <= 96, `cloud deck alone can cost ${cloudLookups} lookups`);
   assert.ok(
     CLOUD_LAW.coarseSteps <= 6,
     "the environment bake is walking the deck at full detail six times over",
+  );
+  assert.ok(
+    CLOUD_LAW.maxSteps === 24,
+    "author cloud maxSteps drifted without a budget review",
+  );
+
+  // Beams: up to 6 cloudField taps, only near the sun and only at quality > 0.
+  const beams = shaderFunction(source, "float cloudBeams");
+  assert.ok(beams.includes("uBeamStrength"), "beams run even when strength is zero");
+  assert.ok(beams.includes("uSkyQuality"), "beams ignore quality 0 early-out");
+  const beamTaps = 6;
+
+  // Combined worst case at author max (quality 2, horizon, full deck):
+  // air viewSteps + cloud textureLod budget + beam field taps.
+  const airCeiling = AIR_LAW.viewSteps;
+  assert.ok(airCeiling <= 16, `air ceiling is ${airCeiling}, over 16`);
+  assert.equal(
+    AIR_LAW.qualityViewSteps[2],
+    AIR_LAW.viewSteps,
+    "quality 2 air must match the author viewSteps ceiling",
+  );
+  assert.ok(
+    AIR_LAW.coarseViewSteps <= 6,
+    "the environment bake draws this sky six times per relight",
+  );
+  assert.ok(
+    AIR_LAW.qualityViewSteps[0] <= AIR_LAW.coarseViewSteps
+      || AIR_LAW.qualityViewSteps[0] <= 8,
+    "quality 0 should sit in the coarse class",
+  );
+  const combined = airCeiling + cloudLookups + beamTaps;
+  // 16 + 96 + 6 = 118. Pin with a little headroom so a deliberate bump
+  // forces this test to update the lessons section too.
+  assert.ok(
+    combined <= 120,
+    `a sky pixel can cost ${combined} air-steps + cloud-lookups + beam-taps`,
   );
 });
 
