@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { dirname, extname, join, resolve } from "node:path";
@@ -53,12 +54,27 @@ export async function captureObjectLab(model, relativeOutputRoot) {
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Object Lab failed to acquire a local port");
 
-  const chromeCandidates = [
-    process.env.PLAYGATE_CHROME,
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/Applications/Chromium.app/Contents/MacOS/Chromium",
-  ].filter(Boolean);
-  const chrome = chromeCandidates[0];
+  // PLAYGATE_CHROME — явное указание пользователя, оно главнее автопоиска и не
+  // проверяется на существование молча: если путь задан и неверен, пусть падает
+  // с внятной ошибкой, а не уезжает на другой браузер.
+  let chrome = process.env.PLAYGATE_CHROME;
+  if (chrome && !existsSync(chrome)) {
+    throw new Error(`PLAYGATE_CHROME points at a missing file: ${chrome}`);
+  }
+  if (!chrome) {
+    // Кандидаты обеих платформ проекта. Проверка existsSync обязательна:
+    // без неё берётся первый по списку, и машина, чьи пути стоят ниже,
+    // пытается запустить чужой исполняемый файл.
+    chrome = [
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      "/Applications/Chromium.app/Contents/MacOS/Chromium",
+      "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+      "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+      process.env.LOCALAPPDATA
+        ? `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe`
+        : null,
+    ].filter((candidate) => candidate && existsSync(candidate))[0];
+  }
   if (!chrome) throw new Error("Chrome not found; set PLAYGATE_CHROME to its executable");
 
   await mkdir(outputRoot, { recursive: true });

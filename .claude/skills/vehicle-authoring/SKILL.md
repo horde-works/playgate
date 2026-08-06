@@ -1,6 +1,22 @@
 ---
 name: vehicle-authoring
-description: Build, revise, diagnose, or audit ALL controlled moving objects in Make a Mess — airborne carriers (airship, sky train, flying longship, sky ram), rotorcraft (HX-6, RAX-8, SR-6), the ground car (Citroën DS), the GOA4 LRT train, windmills and constant-rotation mechanisms — plus every shared control subsystem: cluster membership and member articulation, breakable actuators, the automation/autopilot boundary (VehicleGuidanceDemand), route artifacts and trajectory building, journey stages (LampEventState), mooring/landing and go-arounds, failure recovery, retractable landing gear, manual piloting, passenger inertia, world envelopes, telemetry and acceptance tests. Triggers: кластер, актуатор, автопилот, автомат управления, маршрут, трасса, berth, швартовка, посадка, go-around, стадия рейса, шасси, уборка опор, балиса, одометрия, TownCarSystem, carDynamics, astanaTrainControl, ConstantRotor, motionRoute, rotorcraftDynamics, rotorcraftPilot, vehicleFrames, VehicleFrameSystem, vehicleFailure, vehicleActuation, supportStrut, clusterMemberArticulation, resetForces, mooringForce, LampEventState, VehicleGuidanceDemand.
+description: >-
+  Build, revise, diagnose, or audit ALL controlled moving objects in Make a Mess
+  — airborne carriers (airship, sky train, flying longship, sky ram), rotorcraft
+  (HX-6, RAX-8, SR-6), the ground car (Citroën DS), the GOA4 LRT train, windmills
+  and constant-rotation mechanisms — plus every shared control subsystem: cluster
+  membership and member articulation, breakable actuators, the
+  automation/autopilot boundary (VehicleGuidanceDemand), route artifacts and
+  trajectory building, journey stages (LampEventState), mooring/landing and
+  go-arounds, failure recovery, retractable landing gear, manual piloting,
+  passenger inertia, world envelopes, telemetry and acceptance tests. Triggers:
+  кластер, актуатор, автопилот, автомат управления, маршрут, трасса, berth,
+  швартовка, посадка, go-around, стадия рейса, шасси, уборка опор, балиса,
+  одометрия, TownCarSystem, carDynamics, astanaTrainControl, ConstantRotor,
+  motionRoute, rotorcraftDynamics, rotorcraftPilot, vehicleFrames,
+  VehicleFrameSystem, vehicleFailure, vehicleActuation, supportStrut,
+  clusterMemberArticulation, resetForces, mooringForce, LampEventState,
+  VehicleGuidanceDemand.
 ---
 
 # Vehicle Authoring

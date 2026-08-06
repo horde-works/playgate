@@ -259,7 +259,7 @@ GOA4 как подкласс той же идеи, что возит дириж�
 
 ## 3. Палитры
 
-Сняты с референсных фотографий (сетка средних цветов, `scratchpad/palette.py`),
+Сняты с референсных фотографий (сетка средних цветов, `palette.mjs`),
 проверены глазом. Внутри одного объекта краски берутся ТОЛЬКО из своего набора.
 
 **ЛРТ (кольцо, станции, поезд).** Опора и балка `#d8dade` `#cfd1d5` `#bfc2c6`;
@@ -631,5 +631,7 @@ https://varandej.livejournal.com/456406.html
 https://tengrinews.kz/my-country/bashnya-vernulas-proishodit-staryim-vokzalom-astanyi-603445/
 
 Инструмент для снятия палитры с фотографии —
-`.claude/skills/world-building/scripts/palette.py` (ужимает картинку через
-`sips` и печатает сетку средних цветов).
+`.claude/skills/world-building/scripts/palette.mjs` (ужимает картинку через
+`sharp` и печатает сетку средних цветов):
+
+    node .claude/skills/world-building/scripts/palette.mjs --grid 8 photo.jpg

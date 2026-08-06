@@ -1,6 +1,14 @@
 ---
 name: architectural-scene-authoring
-description: Build, revise, diagnose, or audit reference-faithful physical places and architectural forms in Make a Mess. Use for buildings, stations, platforms, monuments, bridges, streets, public interiors, façades, roofs, canopies, glazing, curved shells, vehicle exterior/interior architecture, fixture mounting, architectural lighting, player access, urban composition, promenades, embankments, LRT exits, visual comparison with photographs, unsupported scene pieces, or any request to make an authored place physically and visually match reality.
+description: >-
+  Build, revise, diagnose, or audit reference-faithful physical places and
+  architectural forms in Make a Mess. Use for buildings, stations, platforms,
+  monuments, bridges, streets, public interiors, façades, roofs, canopies,
+  glazing, curved shells, vehicle exterior/interior architecture, fixture
+  mounting, architectural lighting, player access, urban composition,
+  promenades, embankments, LRT exits, visual comparison with photographs,
+  unsupported scene pieces, or any request to make an authored place
+  physically and visually match reality.
 ---
 
 # Architectural Scene Authoring
