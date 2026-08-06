@@ -17,13 +17,16 @@
 export const WATER_PASS_QUALITY_ENABLED = true;
 
 /**
- * Авторский размер планарного зеркала. Понижен с 1024 после замера: зеркало
- * читается тремя тапами вдоль направления, куда рябь сместила отражение
- * (см. sampleMirror и reflectionOffset в DutchPolderWater), то есть картинка
- * в нём размазана самой водой — 512 неотличимы, а заливка зеркала вчетверо
- * дешевле. Это решение о цене, зафиксированное тестом, а не дефолт.
+ * Доля буфера кадра под зеркальный проход, по gpuQuality 0/1/2 — та же
+ * единица, что у рефракции ниже, и это не совпадение: оба таргета питают
+ * пиксели экрана, и мериться обязаны от экрана. Абсолютный размер (был
+ * 1024, потом 512) на большом мониторе блочил отражение мельницы, на полу
+ * лестницы — переплачивал. В долях буфера зеркало никогда не блочнее
+ * самой картинки и само масштабируется в обе стороны вместе с лестницей
+ * разрешения. Половина буфера на максимуме — классика планарных отражений:
+ * смаз ряби (три тапа по направлению смещения) съедает разницу с полной.
  */
-export const MIRROR_SIZE = 512;
+export const MIRROR_SCALES = [0.35, 0.42, 0.5] as const;
 
 /**
  * Доля буфера кадра под проход рефракции, по gpuQuality 0/1/2. Рефракция
@@ -45,6 +48,7 @@ export const MIRROR_FRAME_STRIDES = [2, 1, 1] as const;
 export type WaterPassQuality = 0 | 1 | 2;
 
 export interface WaterPassBudget {
+  readonly mirrorScale: number;
   readonly refractionScale: number;
   readonly mirrorFrameStride: number;
 }
@@ -52,6 +56,7 @@ export interface WaterPassBudget {
 export function waterPassBudget(quality: WaterPassQuality): WaterPassBudget {
   const effective = WATER_PASS_QUALITY_ENABLED ? quality : 2;
   return {
+    mirrorScale: MIRROR_SCALES[effective],
     refractionScale: REFRACTION_SCALES[effective],
     mirrorFrameStride: MIRROR_FRAME_STRIDES[effective],
   };

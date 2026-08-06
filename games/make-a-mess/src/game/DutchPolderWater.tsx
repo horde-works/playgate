@@ -14,6 +14,8 @@ import {
   Matrix4,
   Mesh,
   NearestFilter,
+  PerspectiveCamera,
+  Plane,
   RGBAFormat,
   RepeatWrapping,
   ShaderMaterial,
@@ -27,13 +29,7 @@ import {
   Vector4,
   WebGLRenderTarget,
 } from "three";
-import type {
-  Camera,
-  IUniform,
-  PerspectiveCamera,
-  Scene,
-  WebGLRenderer,
-} from "three";
+import type { Camera, IUniform, Scene, WebGLRenderer } from "three";
 import { Water } from "three/addons/objects/Water.js";
 import { createPolderSpill } from "./DutchPolderSpill";
 import { DutchPolderSpray } from "./DutchPolderSpray";
@@ -53,10 +49,7 @@ import {
   WATER_LEVEL,
   buildWaterSheetModel,
 } from "./dutchPolderWaterModel.ts";
-import {
-  MIRROR_SIZE,
-  waterPassBudget,
-} from "./dutchPolderWaterBudget.ts";
+import { waterPassBudget } from "./dutchPolderWaterBudget.ts";
 import { environmentState } from "./environmentState";
 import { performanceGovernor } from "./performanceGovernor";
 import {
@@ -611,9 +604,13 @@ export function DutchPolderWater() {
     const geometry = buildWaterSheet();
     const ripples = createRippleNormals();
     const weed = createWeedTexture();
+    // Стоковый зеркальный проход Water не используется: его таргет создаётся
+    // один раз в замыкании и не умеет следовать за буфером кадра. Зеркалом
+    // владеет собственный проход ниже (математика Reflector), таргет — в
+    // долях буфера по бюджету. 2×2 — заглушка для неиспользуемого таргета.
     const water = new Water(geometry, {
-      textureWidth: MIRROR_SIZE,
-      textureHeight: MIRROR_SIZE,
+      textureWidth: 2,
+      textureHeight: 2,
       clipBias: 0.001,
       alpha: 1,
       sunDirection: environmentState.keyLightDirection.clone(),
@@ -693,11 +690,34 @@ export function DutchPolderWater() {
     material.depthWrite = false;
     material.needsUpdate = true;
 
-    // Stock Water uses HalfFloat. Change it before first allocation: the same
-    // Chrome/ANGLE path already blanked this scene's bloom compositor.
-    const mirrorTexture = material.uniforms.mirrorSampler.value as Texture;
-    mirrorTexture.type = UnsignedByteType;
-    mirrorTexture.needsUpdate = true;
+    // Собственный зеркальный таргет: в долях буфера кадра (бюджет), только
+    // UnsignedByte — тот же путь Chrome/ANGLE, что гасил composer-frame на
+    // HalfFloat. Стоковая 2×2-заглушка отвязывается от материала целиком.
+    const stockMirrorTexture = material.uniforms.mirrorSampler.value as Texture;
+    const mirror = new WebGLRenderTarget(2, 2, {
+      type: UnsignedByteType,
+      minFilter: LinearFilter,
+      magFilter: LinearFilter,
+      depthBuffer: true,
+      generateMipmaps: false,
+    });
+    mirror.texture.name = "dutch-polder:water:mirror";
+    material.uniforms.mirrorSampler.value = mirror.texture;
+    // Рабочие объекты зеркального прохода (математика three Reflector,
+    // плоскость — сама простыня). Аллокации один раз, на кадр — ни одной.
+    const mirrorRig = {
+      virtualCamera: new PerspectiveCamera(),
+      reflectorPlane: new Plane(),
+      normal: new Vector3(),
+      reflectorWorldPosition: new Vector3(),
+      cameraWorldPosition: new Vector3(),
+      rotationMatrix: new Matrix4(),
+      lookAtPosition: new Vector3(),
+      clipPlane: new Vector4(),
+      view: new Vector3(),
+      aim: new Vector3(),
+      q: new Vector4(),
+    };
 
     const collarMaterial = new ShaderMaterial({
       vertexShader: collarVertexShader,
@@ -739,16 +759,109 @@ export function DutchPolderWater() {
     const worldSphere = new Sphere();
     const viewProjection = new Matrix4();
     const frustum = new Frustum();
-    // Stock Water hangs its planar-mirror pass on onBeforeRender and reads
-    // nothing past the camera argument.
-    const renderMirror = water.onBeforeRender as unknown as (
-      renderer: WebGLRenderer,
-      scene: Scene,
-      camera: Camera,
-    ) => void;
     // Счётчик кадров зеркала для страйда бюджета. Живёт в замыкании листа:
     // страйд — свойство этого зеркала, а не мира.
     let mirrorFrameParity = 0;
+
+    /**
+     * Планарное зеркало своими руками — математика three Reflector, плоскость
+     * задаёт сама простыня. Свой проход существует ради одного: таргет в
+     * ДОЛЯХ буфера кадра, а не абсолютным числом из замыкания стокового
+     * Water — зеркало никогда не блочнее картинки и масштабируется вместе
+     * с лестницей разрешения в обе стороны.
+     */
+    const renderMirror = (
+      renderer: WebGLRenderer,
+      scene: Scene,
+      camera: Camera,
+      mirrorScale: number,
+    ) => {
+      const rig = mirrorRig;
+      rig.reflectorWorldPosition.setFromMatrixPosition(water.matrixWorld);
+      rig.cameraWorldPosition.setFromMatrixPosition(camera.matrixWorld);
+      rig.rotationMatrix.extractRotation(water.matrixWorld);
+      rig.normal.set(0, 0, 1).applyMatrix4(rig.rotationMatrix);
+      rig.view.subVectors(
+        rig.reflectorWorldPosition,
+        rig.cameraWorldPosition,
+      );
+      // Камера под плоскостью — отражать нечего.
+      if (rig.view.dot(rig.normal) > 0) return;
+      rig.view.reflect(rig.normal).negate();
+      rig.view.add(rig.reflectorWorldPosition);
+      rig.rotationMatrix.extractRotation(camera.matrixWorld);
+      rig.lookAtPosition
+        .set(0, 0, -1)
+        .applyMatrix4(rig.rotationMatrix)
+        .add(rig.cameraWorldPosition);
+      rig.aim.subVectors(rig.reflectorWorldPosition, rig.lookAtPosition);
+      rig.aim.reflect(rig.normal).negate();
+      rig.aim.add(rig.reflectorWorldPosition);
+      const virtual = rig.virtualCamera;
+      virtual.position.copy(rig.view);
+      virtual.up.set(0, 1, 0).applyMatrix4(rig.rotationMatrix).reflect(rig.normal);
+      virtual.lookAt(rig.aim);
+      virtual.far = (camera as PerspectiveCamera).far;
+      virtual.updateMatrixWorld();
+      virtual.projectionMatrix.copy(
+        (camera as PerspectiveCamera).projectionMatrix,
+      );
+
+      // Матрица проектора для выборки зеркала поверхностью.
+      const textureMatrix = material.uniforms.textureMatrix.value as Matrix4;
+      textureMatrix.set(
+        0.5, 0, 0, 0.5,
+        0, 0.5, 0, 0.5,
+        0, 0, 0.5, 0.5,
+        0, 0, 0, 1,
+      );
+      textureMatrix.multiply(virtual.projectionMatrix);
+      textureMatrix.multiply(virtual.matrixWorldInverse);
+      textureMatrix.multiply(water.matrixWorld);
+
+      // Косая проекция: ближняя плоскость = плоскость воды, чтобы дно и всё
+      // подводное не пролезало в отражение. clipBias — как у стока.
+      rig.reflectorPlane.setFromNormalAndCoplanarPoint(
+        rig.normal,
+        rig.reflectorWorldPosition,
+      );
+      rig.reflectorPlane.applyMatrix4(virtual.matrixWorldInverse);
+      rig.clipPlane.set(
+        rig.reflectorPlane.normal.x,
+        rig.reflectorPlane.normal.y,
+        rig.reflectorPlane.normal.z,
+        rig.reflectorPlane.constant,
+      );
+      const projection = virtual.projectionMatrix;
+      rig.q.x =
+        (Math.sign(rig.clipPlane.x) + projection.elements[8]) /
+        projection.elements[0];
+      rig.q.y =
+        (Math.sign(rig.clipPlane.y) + projection.elements[9]) /
+        projection.elements[5];
+      rig.q.z = -1;
+      rig.q.w = (1 + projection.elements[10]) / projection.elements[14];
+      rig.clipPlane.multiplyScalar(2 / rig.clipPlane.dot(rig.q));
+      projection.elements[2] = rig.clipPlane.x;
+      projection.elements[6] = rig.clipPlane.y;
+      projection.elements[10] = rig.clipPlane.z + 1 - 0.001;
+      projection.elements[14] = rig.clipPlane.w;
+
+      const width = Math.max(2, Math.floor(drawingSize.x * mirrorScale));
+      const height = Math.max(2, Math.floor(drawingSize.y * mirrorScale));
+      if (mirror.width !== width || mirror.height !== height) {
+        mirror.setSize(width, height);
+      }
+
+      const previousTarget = renderer.getRenderTarget();
+      water.visible = false;
+      renderer.setRenderTarget(mirror);
+      renderer.state.buffers.depth.setMask(true);
+      if (renderer.autoClear === false) renderer.clear();
+      renderer.render(scene, virtual);
+      water.visible = true;
+      renderer.setRenderTarget(previousTarget);
+    };
 
     water.onBeforeRender = (
       renderer: WebGLRenderer,
@@ -818,13 +931,18 @@ export function DutchPolderWater() {
       renderer.xr.enabled = previousXr;
       renderer.setRenderTarget(previousTarget);
 
+      // Глаз обновляется КАЖДЫЙ кадр — раньше это делал стоковый зеркальный
+      // проход, теперь обязанность лежит здесь, вне страйда.
+      (material.uniforms.eye.value as Vector3).setFromMatrixPosition(
+        camera.matrixWorld,
+      );
       // Страйд зеркала: пропущенный кадр оставляет матрицу проектора и
       // текстуру из одного и того же прошлого кадра — отражение запаздывает
       // целиком, но остаётся согласованным. Урез и толща так не живут:
       // рефракционная глубина снимается каждый кадр выше.
       mirrorFrameParity = (mirrorFrameParity + 1) % budget.mirrorFrameStride;
       if (mirrorFrameParity === 0) {
-        renderMirror(renderer, scene, camera);
+        renderMirror(renderer, scene, camera, budget.mirrorScale);
       }
       setInstalledSkyCloudCoarse(false);
       renderer.shadowMap.needsUpdate = previousShadowUpdate;
@@ -839,10 +957,11 @@ export function DutchPolderWater() {
       collarMaterial,
       geometry,
       material,
-      mirrorTexture,
+      mirror,
       refraction,
       ripples,
       spill,
+      stockMirrorTexture,
       water,
       weed,
     };
@@ -877,7 +996,8 @@ export function DutchPolderWater() {
       study.geometry.dispose();
       study.material.dispose();
       study.collarMaterial.dispose();
-      study.mirrorTexture.dispose();
+      study.stockMirrorTexture.dispose();
+      study.mirror.dispose();
       study.refraction.depthTexture?.dispose();
       study.refraction.dispose();
       study.ripples.dispose();

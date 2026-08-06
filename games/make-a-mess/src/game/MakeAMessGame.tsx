@@ -10136,8 +10136,14 @@ function AdaptiveRenderScale({
         RENDER_SCALE_LADDER.length - 1,
       );
     }
+    // Ручной режим меряет ступени от НАТИВНОГО окна: «Полное» — честный
+    // максимум системы (окно × devicePixelRatio), сколько бы оно ни стоило —
+    // это выбор игрока. Пиксельный бюджет остаётся защитой только автомата:
+    // на большом мониторе он капал ручное «Полное» до DPR 0.58, и блочность
+    // была виднее всего в отражениях воды.
     const nextDpr = MathUtils.clamp(
-      baseline.current * RENDER_SCALE_LADDER[level.current],
+      (manualLevel !== null ? deviceCeiling : baseline.current) *
+        RENDER_SCALE_LADDER[level.current],
       hardFloor,
       deviceCeiling,
     );

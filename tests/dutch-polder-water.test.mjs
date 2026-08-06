@@ -226,18 +226,26 @@ test("бюджет воды: служебные проходы не дорожа
   // Рубильник закоммичен только включённым: false — локальный A/B, не режим.
   assert.equal(budget.WATER_PASS_QUALITY_ENABLED, true);
 
-  // Зеркало читается сквозь трёхтаповый смаз ряби; 512 — решение о цене.
-  assert.ok(
-    budget.MIRROR_SIZE <= 512,
-    `MIRROR_SIZE ${budget.MIRROR_SIZE} вырос без пересмотра бюджета`,
-  );
-
-  // Оси спускаются от авторского максимума и не превышают его.
+  // Оба служебных таргета меряются в ДОЛЯХ буфера кадра — единица, в которой
+  // зеркало никогда не блочнее картинки (вкусовой вердикт: абсолютные 512
+  // блочили отражение мельницы на большом мониторе, абсолютные 1024
+  // переплачивали на полу лестницы). Половина буфера — потолок обоих.
+  assert.equal(budget.MIRROR_SCALES.length, 3);
   assert.equal(budget.REFRACTION_SCALES.length, 3);
   assert.equal(budget.MIRROR_FRAME_STRIDES.length, 3);
-  const maxScale = budget.REFRACTION_SCALES[2];
-  assert.ok(maxScale <= 0.5, `refraction max ${maxScale} дороже половины буфера`);
+  assert.ok(
+    budget.MIRROR_SCALES[2] <= 0.5,
+    `mirror max ${budget.MIRROR_SCALES[2]} дороже половины буфера`,
+  );
+  assert.ok(
+    budget.REFRACTION_SCALES[2] <= 0.5,
+    `refraction max ${budget.REFRACTION_SCALES[2]} дороже половины буфера`,
+  );
   for (let quality = 0; quality < 2; quality += 1) {
+    assert.ok(
+      budget.MIRROR_SCALES[quality] <= budget.MIRROR_SCALES[quality + 1],
+      "ось зеркала обязана спускаться, а не подниматься",
+    );
     assert.ok(
       budget.REFRACTION_SCALES[quality] <= budget.REFRACTION_SCALES[quality + 1],
       "ось рефракции обязана спускаться, а не подниматься",
