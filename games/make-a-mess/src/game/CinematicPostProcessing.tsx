@@ -7,7 +7,6 @@ import {
   Color,
   LinearFilter,
   MathUtils,
-  UnsignedByteType,
   Vector2,
   Vector3,
 } from "three";
@@ -275,13 +274,11 @@ function createLensDirtTexture(): CanvasTexture {
 
 export function CinematicPostProcessing({
   compact,
-  byteBloom = false,
   /** Scales shafts, glare and lens dirt. Polder uses <1 so sunward views
    * keep midtone grass instead of a white veil; cloud deck is untouched. */
   sunVeil = 1,
 }: {
   compact: boolean;
-  byteBloom?: boolean;
   sunVeil?: number;
 }) {
   const { camera, gl, scene, size } = useThree();
@@ -327,19 +324,13 @@ export function CinematicPostProcessing({
       0.35,
       veil < 1 ? 6.94 : 6,
     );
-    if (byteBloom) {
-      // Chrome/ANGLE intermittently loses the full composer frame while
-      // sampling HalfFloat bloom targets over the dense polder vegetation.
-      // Keep UnrealBloom's thresholded multi-scale look, but use the stable
-      // normalized 8-bit target path for this scene.
-      bloomPass.renderTargetBright.texture.type = UnsignedByteType;
-      for (const target of [
-        ...bloomPass.renderTargetsHorizontal,
-        ...bloomPass.renderTargetsVertical,
-      ]) {
-        target.texture.type = UnsignedByteType;
-      }
-    }
+    // Блум живёт в HalfFloat ВЕЗДЕ. Прежний byteBloom польдера (8-битные
+    // таргеты против ANGLE-потери кадра) сплющивал HDR ярче единицы — при
+    // пороге 6.94 ВСЁ содержимое bright-буфера — и убивал цвет ореола.
+    // Настоящие источники нестабильности вылечены по корню (буря
+    // перекомпиляций от ламп модели вида; семпл грани купола в кадре её
+    // покраски), HalfFloat держит серию 36 кадров без единого плоского —
+    // развязка в environmental-rendering-lessons §2.
     composer.addPass(bloomPass);
 
     const cinematicPass = new ShaderPass(CinematicShader);
@@ -364,7 +355,7 @@ export function CinematicPostProcessing({
       outputPass,
       smaaPass,
     };
-  }, [byteBloom, camera, compact, gl, scene, size.height, size.width, veil]);
+  }, [camera, compact, gl, scene, size.height, size.width, veil]);
 
   // Один владелец размера конвейера. Вызывается и эффектом (первый монтаж),
   // и КАЖДЫЙ КАДР перед composer.render: адаптивный DPR меняет буфер рисования

@@ -13190,7 +13190,6 @@ export function MakeAMessGame({
                 />
                 <CinematicPostProcessing
                   compact={fallbackLook}
-                  byteBloom={scene.id === "dutch-polder"}
                   // Screen veil only — weather/cloud deck stay as authored.
                   // Polder midtones die looking sunward (dense grass + dome).
                   // Town boulevard washes milder looking east into the sun.
