@@ -1,0 +1,4 @@
+interface:
+  display_name: "Parallel Work"
+  short_description: "Coordinate two machines and neighbouring agents"
+  default_prompt: "Use $parallel-work to decide which machine a task belongs to, dispatch heavy runs or whole tasks to the Windows host, talk to the agent on the Mac, split concurrent sessions across worktrees, and take in someone else's work without losing your own."
