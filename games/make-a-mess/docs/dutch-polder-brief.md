@@ -5,8 +5,9 @@ landscape kit and data-first scene are built; sail animation is temporarily
 disabled for an isolated performance pass;
 wind and real water remain deliberately outside scope.
 
-Concept reference:
-`/Users/kirisyuk/Downloads/Gemini_Generated_Image_nngrc0nngrc0nngr.png`.
+Concept reference: a generated image that lived in the author's Downloads
+folder and was never committed. It is gone from every machine but this line,
+so treat the topographic drawing below as the only surviving reference.
 
 Topographic drawing: [`dutch-polder-topography.png`](./dutch-polder-topography.png).
 

@@ -1,0 +1,4 @@
+# `tools/winrun` — исходник обёртки, которая живёт вне git.
+# Windows-чекаут держит core.autocrlf=true; без этой строки свежий чекаут
+# отдаёт CRLF, и установленная копия умирает как `bad interpreter: /bin/sh^M`.
+tools/winrun text eol=lf

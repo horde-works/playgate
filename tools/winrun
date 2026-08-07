@@ -1,0 +1,66 @@
+#!/bin/sh
+# Run a command natively on the Windows side, inside the playgate repo.
+#
+# WSL is only the front door here: the command becomes a real Windows process
+# using NTFS paths, so there is no /mnt/c penalty on builds and tests.
+#
+#   winrun npm test
+#   winrun git status
+#   winrun node --test tests/village-inhabitants.test.mjs
+#
+# THIS FILE IS A SOURCE COPY. IT IS NOT THE ONE THAT RUNS.
+#
+# The installed copy lives outside git, inside the WSL distro `Debian` on the
+# Windows host, at /usr/local/bin/winrun. Editing this file alone changes
+# nothing. After changing it, install it by hand and check the two match:
+#
+#   sudo cp /mnt/c/Users/IgorKirisyuk/cursor/playgate/tools/winrun /usr/local/bin/winrun
+#   sudo chmod 755 /usr/local/bin/winrun
+#   cmp /usr/local/bin/winrun /mnt/c/Users/IgorKirisyuk/cursor/playgate/tools/winrun && echo in-sync
+#
+# Keep this file LF-only. The Windows checkout has core.autocrlf=true, so
+# without the `tools/winrun text eol=lf` rule in .gitattributes a fresh
+# checkout hands you CRLF and the installed copy dies as
+# `bad interpreter: /bin/sh^M`.
+#
+# WHICH CHECKOUT THE COMMAND RUNS IN
+#
+# By default, the main checkout named below. Set PLAYGATE_REPO to run somewhere
+# else -- a git worktree, most often:
+#
+#   PLAYGATE_REPO='C:\Users\IgorKirisyuk\cursor\playgate-wt-hx6' winrun npm test
+#
+# PLAYGATE_REPO is a WINDOWS path (C:\...), because it is handed to PowerShell
+# and not to the WSL shell; a /mnt/c path is rejected rather than guessed at.
+# The directory is checked before the command runs, so a wrong path fails hard
+# instead of quietly running in the main checkout -- which is the entire reason
+# this knob exists.
+#
+# ARGUMENTS ARE NOT REQUOTED
+#
+# "$*" glues the arguments into a single PowerShell -Command string exactly as
+# they arrive. Any quoting you need on the Windows side has to survive your
+# shell -- and ssh, if you came in that way -- as literal characters. Non-ASCII
+# does not survive this path at all: keep the command line ASCII.
+
+REPO_DEFAULT='C:\Users\IgorKirisyuk\cursor\playgate'
+REPO=${PLAYGATE_REPO:-$REPO_DEFAULT}
+PS='/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'
+
+if [ $# -eq 0 ]; then
+    echo "usage: winrun <command> [args...]" >&2
+    exit 2
+fi
+
+case $REPO in
+    /*)
+        printf '%s\n' "winrun: PLAYGATE_REPO must be a Windows path (C:\\Users\\...), got: $REPO" >&2
+        exit 2
+        ;;
+    *"'"*)
+        printf '%s\n' "winrun: PLAYGATE_REPO must not contain a single quote: $REPO" >&2
+        exit 2
+        ;;
+esac
+
+exec "$PS" -NoProfile -ExecutionPolicy Bypass -Command "if (-not (Test-Path -LiteralPath '$REPO' -PathType Container)) { [Console]::Error.WriteLine('winrun: no such directory: $REPO'); exit 2 }; Set-Location -LiteralPath '$REPO'; $*"
