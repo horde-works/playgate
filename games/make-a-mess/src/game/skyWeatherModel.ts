@@ -128,6 +128,146 @@ export const DUTCH_POLDER_SKY: SkyWeather = {
 };
 
 /**
+ * ПОГОДА ПРИНАДЛЕЖИТ МИРУ.
+ *
+ * До этой таблицы `CLEAR_SKY` доставался всем, кроме польдера, и нёс две вещи
+ * сразу: `coverage: 0` — то есть НИ ОДНОГО облака ни в одном мире, кроме
+ * польдера, — и одну на всех дальность видимости 3 км.
+ *
+ * Три километра — это по метеорологической шкале дымка на грани тумана, и на
+ * островах шириной в двести метров она красит не даль, а середину кадра. Замер
+ * базальтовой стены (альбедо linear 0.045) на рассвете крепости, через AgX:
+ *
+ *   дальность       30 м            60 м            120 м
+ *    3000 м     #646660 13%     #767a74 19%     #8d928c 28%
+ *    9000 м     #51504b  8%     #5b5c57 11%     #6b6e68 15%
+ *   20000 м     #4a4844  7%     #504f4a  8%     #595a55 10%
+ *
+ * Сама стена без воздуха — #44413c, 5%. Аэроперспектива подмешивает не серый, а
+ * НЕБО вдоль луча, а небо на горизонте — linear 1.4–2.3, в тридцать пять раз
+ * ярче стены. Поэтому восемь процентов воздуха на шестидесяти метрах вчетверо
+ * подняли графитовую стену и посадили её в один тон с травой.
+ *
+ * ЦЕНА ПАЛУБЫ. `coverage > 0` включает марш облаков: до
+ * `maxSteps · 2 · (1 + sunSamples)` = 96 выборок на пиксель неба против 16 у
+ * чистого воздуха, и `domeNeedsContinuousRepaint` снимает амортизацию купола на
+ * нижних ярусах GPU. Это осознанный размен на мир: облака стоят дорого и
+ * авторятся там, где они делают кадр, а не везде по умолчанию.
+ */
+export const WORLD_SKY: Readonly<Record<string, SkyWeather>> = {
+  // Летний город: кучевые с плоским основанием, воздух обычный городской.
+  "open-house": {
+    ...CLEAR_SKY,
+    coverage: 0.22,
+    baseAltitude: 820,
+    thickness: 1000,
+    visibility: 24000,
+    windSpeed: 6.5,
+    windBearing: 0.6,
+    midLevel: 0.14,
+    cirrus: 0.1,
+    beamStrength: 0.02,
+    shadowStrength: 0.55,
+  },
+  // Вулканическая крепость. Единственный мир, которому дымка идёт: здесь она
+  // не погода, а то, чем дышит гора. Но 3 км съедали базальт в упор, поэтому
+  // воздух отодвинут, а тяжесть неба ушла туда, где ей место, — в палубу.
+  // Низкое плотное основание держит горизонт тёмным, и аэроперспектива
+  // подмешивает в стену сумрак, а не белизну.
+  "basalt-stronghold": {
+    ...CLEAR_SKY,
+    coverage: 0.58,
+    baseAltitude: 540,
+    thickness: 1400,
+    density: 0.0056,
+    visibility: 14000,
+    windSpeed: 8,
+    windBearing: 2.4,
+    midLevel: 0.3,
+    cirrus: 0,
+    beamStrength: 0.05,
+    shadowStrength: 0.74,
+  },
+  // Морской фронт над фьордом: рваная низкая облачность, чистый солёный воздух.
+  "viking-village": {
+    ...CLEAR_SKY,
+    coverage: 0.44,
+    baseAltitude: 620,
+    thickness: 1150,
+    visibility: 30000,
+    windSpeed: 9.5,
+    windBearing: -0.9,
+    midLevel: 0.24,
+    cirrus: 0.18,
+    beamStrength: 0.04,
+    shadowStrength: 0.66,
+  },
+  // Гранд-терминал: высокое ясное небо с перистой вуалью — под ним читается
+  // силуэт дебаркадера, а не погода.
+  "grand-terminal": {
+    ...CLEAR_SKY,
+    coverage: 0.12,
+    baseAltitude: 1150,
+    thickness: 700,
+    visibility: 40000,
+    windSpeed: 5,
+    windBearing: 1.9,
+    midLevel: 0.08,
+    cirrus: 0.32,
+    beamStrength: 0.015,
+    shadowStrength: 0.4,
+  },
+  // Сухая степь: остров видно целиком, и `fogDistances: [150, 328]` в
+  // документе сцены поставлены ровно под это. Воздуху положено соответствовать.
+  astana: {
+    ...CLEAR_SKY,
+    coverage: 0.1,
+    baseAltitude: 1400,
+    thickness: 800,
+    visibility: 60000,
+    windSpeed: 7,
+    windBearing: 0.2,
+    midLevel: 0.06,
+    cirrus: 0.14,
+    beamStrength: 0.012,
+    shadowStrength: 0.38,
+  },
+  nimbus: {
+    ...CLEAR_SKY,
+    coverage: 0.34,
+    baseAltitude: 980,
+    thickness: 1300,
+    visibility: 45000,
+    windSpeed: 11,
+    windBearing: -2.1,
+    midLevel: 0.2,
+    cirrus: 0.22,
+    beamStrength: 0.03,
+    shadowStrength: 0.6,
+  },
+  // Полигон Tonkawa: наблюдательный мир, небу положено не мешать телеметрии.
+  "combat-hexacopter-range": {
+    ...CLEAR_SKY,
+    coverage: 0.14,
+    baseAltitude: 1250,
+    thickness: 750,
+    visibility: 45000,
+    windSpeed: 4.5,
+    windBearing: 1.1,
+    midLevel: 0.05,
+    cirrus: 0.08,
+    beamStrength: 0.01,
+    shadowStrength: 0.42,
+  },
+  "dutch-polder": DUTCH_POLDER_SKY,
+};
+
+/** Воздух мира по его id. Мир без записи стоит под общим ясным небом. */
+export function worldWeather(sceneId: string): SkyWeather {
+  return WORLD_SKY[sceneId] ?? CLEAR_SKY;
+}
+
+/**
  * What is left to author about the air, now that the dome is marched rather
  * than fitted: how much dust is in it, and one multiplier for the fill.
  *

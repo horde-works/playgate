@@ -22,7 +22,7 @@ const piece = (id, position = [0, 0.5, 0]) => ({
   color: "#222222",
 });
 
-test("the eight authored phases form one continuous solar day", () => {
+test("the nine authored phases form one continuous solar day", () => {
   assert.deepEqual(
     [
       "dawn",
@@ -30,6 +30,7 @@ test("the eight authored phases form one continuous solar day", () => {
       "day",
       "afternoon",
       "sunset",
+      "dusk",
       "evening",
       "night",
       "predawn",
@@ -39,6 +40,7 @@ test("the eight authored phases form one continuous solar day", () => {
       "day",
       "afternoon",
       "sunset",
+      "dusk",
       "evening",
       "night",
       "predawn",
@@ -61,6 +63,11 @@ test("the eight authored phases form one continuous solar day", () => {
       // the horizon, so the wheel held no golden hour and `evening` sat at
       // −25.6°, which is night under another name. See timeOfDay.ts.
       sunset: "17:37",
+      // Девятая фаза. Золотой свет на земле и цвет в небе — разные минуты: на
+      // 3.5° луч ещё половинной силы, но горизонт держит 22 уровня хромы, а
+      // цвет живёт на −1°, где их 72. Колесо через эту полосу перепрыгивало за
+      // 0.10 с скольжения — розовое небо было видно только на переходе.
+      dusk: "18:07",
       evening: "18:20",
       night: "00:00",
       predawn: "03:00",

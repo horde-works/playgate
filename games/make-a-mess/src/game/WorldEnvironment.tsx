@@ -104,6 +104,7 @@ import {
 } from "./lampPoolSelection";
 import { windState } from "./windState";
 import {
+  DEFAULT_SOLAR_FRAME,
   TIME_OF_DAY_TARGETS,
   equinoxSunDirection,
   type SolarFrameDefinition,
@@ -608,15 +609,19 @@ export function DayNightCycle({
     clouds.current?.setMarchQuality(
       performanceGovernor.getSnapshot().gpuQuality,
     );
-    const angle = time.current * Math.PI * 2;
-    const geographicSun = solarFrame
-      ? equinoxSunDirection(time.current, solarFrame)
-      : null;
-    const elevation = geographicSun?.[1] ?? Math.sin(angle);
-    const azimuth = angle + Math.PI * 0.3;
-    const sunX = geographicSun ? geographicSun[0] * 30 : Math.cos(azimuth) * 30;
-    const sunZ = geographicSun ? geographicSun[2] * 30 : Math.sin(azimuth) * 24;
-    const sunY = geographicSun ? geographicSun[1] * 30 : elevation * 26;
+    // ОДНО СОЛНЦЕ. Высоту и положение берут из одного вектора, иначе луч и
+    // купол расходятся во мнении, который час: прежний фолбэк для мира без
+    // `solarFrame` спрашивал высоту у `Math.sin(angle)`, а положение собирал с
+    // множителями (30, 26, 24), и в полдень это были солнце в зените для света
+    // против солнца на 42.8° для неба. См. DEFAULT_SOLAR_FRAME.
+    const geographicSun = equinoxSunDirection(
+      time.current,
+      solarFrame ?? DEFAULT_SOLAR_FRAME,
+    );
+    const elevation = geographicSun[1];
+    const sunX = geographicSun[0] * 30;
+    const sunZ = geographicSun[2] * 30;
+    const sunY = geographicSun[1] * 30;
     const night = nightLevel(elevation);
     // A band a few degrees either side of the horizon: what shafts and lens
     // glare are scaled by, and the only remaining hand-shaped curve here.

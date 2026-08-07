@@ -4,6 +4,7 @@ export type TimeOfDay =
   | "day"
   | "afternoon"
   | "sunset"
+  | "dusk"
   | "evening"
   | "night"
   | "predawn";
@@ -15,6 +16,29 @@ export interface SolarFrameDefinition {
   readonly east: readonly [x: number, z: number];
   readonly north: readonly [x: number, z: number];
 }
+
+/**
+ * География для мира, который своей не объявил.
+ *
+ * Раньше такой мир получал не географию, а ФОЛБЭК ИЗ ДВУХ РАЗНЫХ СОЛНЦ:
+ * `sunBeam()` и `nightLevel()` спрашивали высоту у `Math.sin(angle)`, а купол,
+ * заливка и горизонт — у вектора, собранного с множителями (30, 26, 24). В
+ * полдень луч считал солнце в зените, а небо рисовало его на 42.8° — сорок
+ * семь градусов расхождения. Замер по фазам: утро 7.7°, полдень 47.2°,
+ * послеполуденное 13.4°. Ровно то, что запрещает §11.1 lessons: четыре вопроса
+ * к ОДНОЙ атмосфере не могут разойтись во мнении, который час.
+ *
+ * Широта та же, что у польдера, — не потому что миры соседи, а потому что
+ * колесо фаз одно на всю игру, и высоты солнца в его таблице сняты именно
+ * здесь. Мир, которому нужно своё солнце, объявляет `solarFrame` и получает
+ * его; общего фолбэка с собственной геометрией больше нет.
+ */
+export const DEFAULT_SOLAR_FRAME: SolarFrameDefinition = {
+  model: "equinox",
+  latitudeDegrees: 52.4,
+  east: [1, 0],
+  north: [0, -1],
+};
 
 /**
  * Направление ОТ мира К солнцу для равноденствия.
@@ -63,6 +87,21 @@ export function equinoxSunDirection(
  * −3° the sun is down, the Belt of Venus stands behind the observer, and the
  * cloud bases are still burning because at 680 m the light has not left yet.
  * Its old 21:00 sat at −25.6°, which is night wearing another name.
+ *
+ * СУМЕРКИ — девятая фаза, и она существует потому, что золотой свет НА ЗЕМЛЕ и
+ * цвет В НЕБЕ приходятся на разные минуты. Замер горизонта в пяти градусах над
+ * солнцем, через AgX на рабочей экспозиции, по уровням хромы:
+ *
+ *   солнце   5.6°  #fffaf2   13     ← `sunset` до этой правки промахивался сюда
+ *   солнце   3.5°  #fff6e9   22     ← `sunset`: золотой час на земле
+ *   солнце   1.0°  #fde4cb   50
+ *   солнце  −1.0°  #d8a890   72     ← `dusk`: небо наконец розовое
+ *   солнце  −3.0°  #8e6c5b   51     ← `evening`: уже глубокие сумерки
+ *
+ * Цвет живёт между 0° и −2°, и колесо через эту полосу ПЕРЕПРЫГИВАЛО: скольжение
+ * идёт 0.22 суток/с, то есть вся полоса проходилась за 0.10 с реального
+ * времени. Розовое небо было видно только на переходе между фазами — включалось
+ * на мгновение и пропадало, ни одна остановка в него не попадала.
  */
 export const TIME_OF_DAY_TARGETS: Readonly<Record<TimeOfDay, number>> = {
   dawn: 1 / 24,
@@ -70,6 +109,8 @@ export const TIME_OF_DAY_TARGETS: Readonly<Record<TimeOfDay, number>> = {
   day: 0.25,
   afternoon: 0.375,
   sunset: 0.484,
+  // Солнце на −1.0° при широте базиса: cos(lat)·cos(hourAngle) = sin(−1°).
+  dusk: 0.5046,
   evening: 0.5137,
   night: 0.75,
   predawn: 0.875,
@@ -81,6 +122,7 @@ const TIME_OF_DAY_SEQUENCE: readonly TimeOfDay[] = [
   "day",
   "afternoon",
   "sunset",
+  "dusk",
   "evening",
   "night",
   "predawn",

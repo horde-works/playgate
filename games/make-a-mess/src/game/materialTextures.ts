@@ -1546,6 +1546,22 @@ export function getPieceMaterial(
                     : material === "asphalt"
                       ? 0.88
                       : 0.94,
+    // ЭТИ ЧИСЛА ДО GPU НЕ ДОЕЗЖАЮТ, И ЭТО НЕ ОПЕЧАТКА, А УСТРОЙСТВО three.
+    //
+    // Куски не держат собственной `envMap`: отражения и ambient им даёт
+    // `scene.environment` (запечённый купол, см. SceneEnvironment). А
+    // WebGLRenderer.js:2696 — `material.envMap === null && scene.environment
+    // !== null` — каждый кадр перетирает униформу значением
+    // `scene.environmentIntensity`, то есть `ATMOSPHERE.ambientIntensity`
+    // (0.44). Фактически ВСЕ материалы получают 0.44: и камень, которому
+    // заказано 0.35, и автокраска, которой заказано 1.9, и стекло с его 1.5.
+    //
+    // Числа оставлены как авторское намерение, а не как рабочая настройка.
+    // Чтобы они заработали, куску нужна своя `envMap` (тогда three берёт
+    // `material.envMapIntensity` и свой перетир пропускает), а сами значения
+    // нужно домножить на `ATMOSPHERE.ambientIntensity` — иначе общий уровень
+    // подскочит вдвое-вчетверо. Это правка ко всем машинам и всему остеклению
+    // сразу, поэтому она отдельной задачей и с кадрами.
     envMapIntensity: isGoldMirror
       ? 1.8
       : isCarPaint

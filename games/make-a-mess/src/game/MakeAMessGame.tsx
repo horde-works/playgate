@@ -204,15 +204,16 @@ import type { NoiseEvent } from "./villagerAlarm";
 import { vikingSettlement } from "../content/scenes/vikingSettlement.ts";
 import { GrassField } from "./GrassField";
 import { DutchPolderWater } from "./DutchPolderWater";
-import { CLEAR_SKY, DUTCH_POLDER_SKY } from "./skyWeatherModel.ts";
+import { CLEAR_SKY, worldWeather } from "./skyWeatherModel.ts";
 
 /**
- * TEMP (2026-08-03): kill switch for the polder deck while its cost is being
- * calibrated. `CLEAR_SKY` takes every cloud branch out of the sky shader at the
- * first test, so flipping this is an honest A/B — not a cheaper cloud, no cloud
- * at all. Remove once the frame budget is settled.
+ * TEMP (2026-08-03): kill switch for the authored decks while their cost is
+ * being calibrated. `CLEAR_SKY` takes every cloud branch out of the sky shader
+ * at the first test, so flipping this is an honest A/B — not a cheaper cloud,
+ * no cloud at all. Расширен с польдера на все миры вместе с `WORLD_SKY`:
+ * палуба стоит до 96 выборок на пиксель неба против 16 у чистого воздуха.
  */
-const POLDER_WEATHER_ENABLED = true;
+const WORLD_WEATHER_ENABLED = true;
 import { environmentState } from "./environmentState";
 import { SceneDressing } from "./SceneDressing";
 import { WorldEdge } from "./WorldEdge";
@@ -473,6 +474,8 @@ function timeOfDayKey(timeOfDay: TimeOfDay): TranslationKey {
       return "time.afternoon";
     case "sunset":
       return "time.sunset";
+    case "dusk":
+      return "time.dusk";
     case "evening":
       return "time.evening";
     case "night":
@@ -494,6 +497,8 @@ function timeOfDayAnnouncementKey(timeOfDay: TimeOfDay): TranslationKey {
       return "announce.timeAfternoon";
     case "sunset":
       return "announce.timeSunset";
+    case "dusk":
+      return "announce.timeDusk";
     case "evening":
       return "announce.timeEvening";
     case "night":
@@ -9767,9 +9772,7 @@ function OpenWorldScene({
         cameraFar={scene.cameraFar}
         snapVersion={timeOfDaySnapVersion}
         cinematic={cinematic}
-        weather={POLDER_WEATHER_ENABLED && scene.id === "dutch-polder"
-          ? DUTCH_POLDER_SKY
-          : CLEAR_SKY}
+        weather={WORLD_WEATHER_ENABLED ? worldWeather(scene.id) : CLEAR_SKY}
       />
       <SceneMutableObjectSystem
         definitions={mutableObjectDefinitions}
