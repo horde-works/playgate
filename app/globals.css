@@ -2797,6 +2797,40 @@ button:focus-visible {
   transform: translate(-50%, -50%);
 }
 
+/* Пустые руки — стойка наблюдателя: перекрестье ослаблено, но остаётся
+   органом выбора машины взглядом. */
+.crosshair.is-bare i {
+  opacity: 0.45;
+  box-shadow: none;
+}
+
+/* Дуга накопления выбора: --aim-progress (0..1) пишет VehicleAimSelector
+   напрямую в стиль элемента — без единого ре-рендера React. */
+.crosshair-aim-dwell {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: conic-gradient(
+    rgb(84 255 226 / 0.85) calc(var(--aim-progress, 0) * 360deg),
+    transparent 0
+  );
+  -webkit-mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - 3px),
+    #000 calc(100% - 2px)
+  );
+  mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - 3px),
+    #000 calc(100% - 2px)
+  );
+  opacity: calc(min(1, var(--aim-progress, 0) * 8));
+}
+
 .controls-hint {
   position: absolute;
   right: clamp(18px, 3vw, 48px);

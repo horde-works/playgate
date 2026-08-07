@@ -58,6 +58,7 @@ import {
   type PlannedParticle,
 } from "./explosionFxModel";
 import { performanceGovernor } from "./performanceGovernor";
+import { safeCompileAsync } from "./safeCompileAsync";
 
 const TRAIL_CAPACITY = EXPLOSION_POOL_CAPACITY.trail;
 const SMOKE_CAPACITY = EXPLOSION_POOL_CAPACITY.smoke;
@@ -965,8 +966,7 @@ export function ExplosionFxSystem({
     for (const mesh of fireballRefs.current) {
       if (mesh) mesh.visible = true;
     }
-    void gl
-      .compileAsync(renderScene, renderCamera)
+    void safeCompileAsync(gl, renderScene, renderCamera)
       .catch(() => undefined)
       .finally(() => {
         if (cancelled) return;

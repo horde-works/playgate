@@ -26,6 +26,7 @@ import {
   type PerformanceQuality,
   type RuntimePerformanceSnapshot,
 } from "./performanceGovernor";
+import { safeCompileAsync } from "./safeCompileAsync";
 import {
   applyGraphicsSettings,
   loadGraphicsSettings,
@@ -3368,7 +3369,9 @@ function ProjectileWarmup() {
       );
       trail.setColorAt(0, new Color(ROCKET_TRAIL_COLORS[0]));
       warmScene.add(trail);
-      void gl.compileAsync(warmScene, camera).finally(() => warmScene.clear());
+      void safeCompileAsync(gl, warmScene, camera).finally(() =>
+        warmScene.clear(),
+      );
 
       // Prime the WASM allocation path without leaving a body in the world.
       // The live projectile still owns its normal React/Rapier lifecycle.
@@ -4027,6 +4030,10 @@ function OpenWorldShell({ scene }: { scene: DestructionSceneDefinition }) {
 interface OpenWorldSceneProps {
   /** Лента маршрута в мире: включается третьим положением T. */
   routeOverlayEnabled: boolean;
+  /** Выбранная прицелом машина — её маршрут и её телеметрия. */
+  selectedVehicleClusterId?: string | null;
+  onAimSelectionChange?: (clusterId: string | null) => void;
+  aimIndicatorRef?: { readonly current: HTMLElement | null };
   scene: DestructionSceneDefinition;
   active: boolean;
   flightMode: boolean;
@@ -4081,6 +4088,9 @@ function OpenWorldScene({
   scene,
   active,
   routeOverlayEnabled,
+  selectedVehicleClusterId,
+  onAimSelectionChange,
+  aimIndicatorRef,
   flightMode,
   weapon,
   chargeCount,
@@ -9897,6 +9907,9 @@ function OpenWorldScene({
       />
       <VehicleFrameSystem
         showRouteOverlay={routeOverlayEnabled}
+        selectedVehicleClusterId={selectedVehicleClusterId}
+        onAimSelectionChange={onAimSelectionChange}
+        aimIndicatorRef={aimIndicatorRef}
         pieces={breakablePieces}
         bodies={pieceBodies}
         brokenPieces={brokenPiecesRef}
@@ -11142,24 +11155,36 @@ function telemetryValueParts(
 
 function MotionTelemetryPanel({
   store,
+  sourceId = null,
   timeOfDay,
   onUnavailable,
 }: {
   store: MotionTelemetryStore;
+  /** Выбранная прицелом машина; без выбора панель живёт по приоритету. */
+  sourceId?: string | null;
   timeOfDay: TimeOfDay;
   onUnavailable: () => void;
 }): ReactElement | null {
   const { language, t } = useLanguage();
+  const readSnapshot = useCallback(
+    () =>
+      sourceId ? store.getSourceSnapshot(sourceId) : store.getSnapshot(),
+    [store, sourceId],
+  );
   const snapshot = useSyncExternalStore(
     store.subscribe,
-    store.getSnapshot,
-    store.getSnapshot,
+    readSnapshot,
+    readSnapshot,
   );
   useEffect(() => {
-    if (!snapshot) {
+    // С явным источником пустой снапшот — «выбранная машина ещё не
+    // публикует» (раскрутка перед отрывом), а не «телеметрия пропала»:
+    // панель молчит и материализуется с первым замером. Конец полёта
+    // закрывает её через сброс ВЫБОРА, а не через этот путь.
+    if (!snapshot && !sourceId) {
       onUnavailable();
     }
-  }, [onUnavailable, snapshot]);
+  }, [onUnavailable, snapshot, sourceId]);
   const previousSnapshot = useRef<MotionTelemetrySnapshot | null>(null);
   const activityLastAt = useRef(new Map<string, number>());
   const [activityTokens, setActivityTokens] = useState<
@@ -11952,7 +11977,9 @@ export function MakeAMessGame({
   const [brokenCount, setBrokenCount] = useState(0);
   const [chargeCount, setChargeCount] = useState(0);
   const [resetVersion, setResetVersion] = useState(0);
-  const [weapon, setWeapon] = useState<WeaponName>("hammer");
+  // Старт с пустыми руками (вердикт Igor 07.08.2026): вошёл — наблюдаешь,
+  // первый клик ничего не ломает; молоток — в одном нажатии (1).
+  const [weapon, setWeapon] = useState<WeaponName>("none");
   const [flightMode, setFlightMode] = useState(false);
   const [timeOfDay, setTimeOfDay] = useState<TimeOfDay>("day");
   const [flyoverMode, setFlyoverMode] = useState<FlyoverMode>("idle");
@@ -12044,6 +12071,15 @@ export function MakeAMessGame({
   // Маршрут в мире — часть телеметрии, а не постоянная декорация.
   const [telemetryMode, setTelemetryMode] = useState<0 | 1 | 2>(0);
   const telemetryVisible = telemetryMode > 0;
+  // Чью телеметрию показывать, решает игрок взглядом (vehicleAimSelection):
+  // панель открывается сама для выбранной машины, T листает глубину.
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string | null>(
+    null,
+  );
+  // Сессия помнит выбранную глубину: наблюдательная сессия — «маршрут
+  // всегда», прогулка — «панель, и хватит»; перевыбор не спорит с игроком.
+  const telemetryDepthRef = useRef<1 | 2>(1);
+  const aimIndicatorRef = useRef<HTMLElement | null>(null);
   const flyoverRunning =
     flyoverMode === "playing" || flyoverMode === "recording";
   const cinematicActive = flyover !== undefined && flyoverMode !== "idle";
@@ -12171,23 +12207,36 @@ export function MakeAMessGame({
   );
 
   const toggleMotionTelemetry = useCallback(() => {
+    // Цикл прежний (выкл -> панель -> панель с маршрутом), но вход в него
+    // автоматический — от выбора машины прицелом; T листает глубину для
+    // ВЫБРАННОЙ машины. Ненулевая глубина запоминается: перевыбор и новый
+    // вылет открываются сразу на ней.
     if (telemetryMode === 2) {
       setTelemetryMode(0);
       announceTelemetry("announce.telemetryOff");
       return;
     }
     if (telemetryMode === 1) {
+      telemetryDepthRef.current = 2;
       setTelemetryMode(2);
       announceTelemetry("announce.telemetryRoute");
       return;
     }
-    if (!telemetryStore.getSnapshot()) {
+    if (!selectedVehicleId || !telemetryStore.getSourceSnapshot(selectedVehicleId)) {
       announceTelemetry("announce.telemetryUnavailable");
       return;
     }
+    telemetryDepthRef.current = 1;
     setTelemetryMode(1);
     announceTelemetry("announce.telemetryOn");
-  }, [announceTelemetry, telemetryStore, telemetryMode]);
+  }, [announceTelemetry, telemetryStore, telemetryMode, selectedVehicleId]);
+
+  // Панель открывается сама для выбранной машины — на запомненной глубине;
+  // потеря выбора (машина села, полётов нет) закрывает её.
+  const handleAimSelectionChange = useCallback((clusterId: string | null) => {
+    setSelectedVehicleId(clusterId);
+    setTelemetryMode(clusterId ? telemetryDepthRef.current : 0);
+  }, []);
 
   const handleTelemetryUnavailable = useCallback(() => {
     setTelemetryMode(0);
@@ -13008,6 +13057,9 @@ export function MakeAMessGame({
                   <PhysicsPerformanceProbe />
                   <OpenWorldScene
                     routeOverlayEnabled={telemetryMode === 2}
+                    selectedVehicleClusterId={selectedVehicleId}
+                    onAimSelectionChange={handleAimSelectionChange}
+                    aimIndicatorRef={aimIndicatorRef}
                     key={resetVersion}
                     onVillagerInspect={setInspectedVillager}
                     scene={scene}
@@ -13203,6 +13255,7 @@ export function MakeAMessGame({
       (!active || !inspectedVillager) ? (
         <MotionTelemetryPanel
           store={telemetryStore}
+          sourceId={selectedVehicleId}
           timeOfDay={timeOfDay}
           onUnavailable={handleTelemetryUnavailable}
         />
@@ -13297,14 +13350,23 @@ export function MakeAMessGame({
         </aside>
       ) : null}
 
-      {/* В фоторежиме (пустые руки) прицел тоже прячется — кадр чистый. */}
-      {surfaces.worldHud && equippedWeapon !== "none" ? (
+      {/* Пустые руки — стойка наблюдателя: перекрестье остаётся, но
+          ослабленное. Оно теперь орган выбора машины взглядом, и дуга на нём
+          показывает накопление выбора (CSS-переменную пишет
+          VehicleAimSelector напрямую, без ре-рендеров). */}
+      {surfaces.worldHud ? (
         <div
-          className={`crosshair${active ? " is-active" : ""}`}
+          ref={(node) => {
+            aimIndicatorRef.current = node;
+          }}
+          className={`crosshair${active ? " is-active" : ""}${
+            equippedWeapon === "none" ? " is-bare" : ""
+          }`}
           aria-hidden="true"
         >
           <i />
           <i />
+          <span className="crosshair-aim-dwell" />
         </div>
       ) : null}
 

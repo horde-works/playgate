@@ -34,6 +34,13 @@ import {
   type LampEventState,
 } from "./destructionScene";
 import { setSignalGlassGlow } from "./materialTextures";
+import {
+  AIM_BASE_CAPTURE_ANGLE,
+  IDLE_AIM_SELECTION,
+  advanceAimSelection,
+  aimDwellProgress,
+  type AimCandidate,
+} from "./vehicleAimSelection";
 import { VEHICLE_CONTACT_QUERY } from "./physicsInteractionGroups";
 import { createSoftSmokeMaterial } from "./softSmokeMaterial";
 import {
@@ -1645,6 +1652,11 @@ function compileSupportStruts(
  */
 export function VehicleFrameSystem({
   showRouteOverlay = false,
+  // Без выбора (undefined) оверлей ведёт себя по-старому — у всех летящих:
+  // это путь сцен, не подключивших выбор прицелом. null — «выбрана никакая».
+  selectedVehicleClusterId,
+  onAimSelectionChange,
+  aimIndicatorRef,
   pieces,
   bodies,
   brokenPieces,
@@ -1682,6 +1694,12 @@ export function VehicleFrameSystem({
 }: {
   /** Лента маршрута в мире — часть телеметрии, включается режимом по T. */
   readonly showRouteOverlay?: boolean;
+  /** Выбранная прицелом машина: только её маршрут рисуется в небе. */
+  readonly selectedVehicleClusterId?: string | null;
+  /** Смена выбора прицелом (vehicleAimSelection) — наверх, к панели и T. */
+  readonly onAimSelectionChange?: (clusterId: string | null) => void;
+  /** Элемент перекрестья: накопление выбора пишется в его CSS-переменную. */
+  readonly aimIndicatorRef?: { readonly current: HTMLElement | null };
   pieces: readonly BreakablePieceDefinition[];
   bodies: { current: Map<string, RapierRigidBody> };
   brokenPieces: { current: ReadonlySet<string> };
@@ -7055,10 +7073,17 @@ export function VehicleFrameSystem({
         damagedPieces={smokingDamage}
         bodies={bodies}
       />
+      <VehicleAimSelector
+        frames={frames}
+        states={states}
+        onSelectionChange={onAimSelectionChange}
+        indicatorRef={aimIndicatorRef}
+      />
       <FlightRouteRibbons
         frames={frames}
         states={states}
         enabled={showRouteOverlay}
+        selectedClusterId={selectedVehicleClusterId}
       />
     </>
   );
@@ -7362,14 +7387,104 @@ function createRouteRenderBundle(): RouteRenderBundle {
   };
 }
 
+/**
+ * Выбор машины прицелом (правила и числа — vehicleAimSelection.ts). Здесь
+ * только интеграция: углы от камеры, кандидаты из живых кадров, накопление
+ * на перекрестье через CSS-переменную (без ре-рендеров), доклад наверх
+ * при смене выбора.
+ */
+function VehicleAimSelector({
+  frames,
+  states,
+  onSelectionChange,
+  indicatorRef,
+}: {
+  readonly frames: readonly VehicleFrameRuntime[];
+  readonly states: { readonly current: Map<string, FrameState> };
+  readonly onSelectionChange?: (clusterId: string | null) => void;
+  readonly indicatorRef?: { readonly current: HTMLElement | null };
+}) {
+  const selection = useRef(IDLE_AIM_SELECTION);
+  const reported = useRef<string | null>(null);
+  const aimDirection = useRef(new Vector3());
+  const forced = useRef<string | null>(null);
+  useEffect(() => {
+    if (typeof window === "undefined" || process.env.NODE_ENV === "production") {
+      return;
+    }
+    const scope = window as typeof window & {
+      __mamVehicleSelect?: (clusterId: string | null) => boolean;
+      __mamVehicleSelection?: () => string | null;
+    };
+    scope.__mamVehicleSelect = (clusterId: string | null) => {
+      forced.current = clusterId;
+      return true;
+    };
+    scope.__mamVehicleSelection = () => selection.current.selectedId;
+    return () => {
+      delete scope.__mamVehicleSelect;
+      delete scope.__mamVehicleSelection;
+    };
+  }, []);
+  useFrame(({ camera }, delta) => {
+    camera.getWorldDirection(aimDirection.current);
+    const candidates: AimCandidate[] = [];
+    for (const frame of frames) {
+      if (!frame.clusterId) {
+        continue;
+      }
+      const state = states.current.get(frame.id);
+      if (!state?.mass) {
+        continue;
+      }
+      const dx = state.mass.centre[0] + state.body.position[0] - camera.position.x;
+      const dy = state.mass.centre[1] + state.body.position[1] - camera.position.y;
+      const dz = state.mass.centre[2] + state.body.position[2] - camera.position.z;
+      const distance = Math.hypot(dx, dy, dz) || 1;
+      const dot =
+        (dx * aimDirection.current.x +
+          dy * aimDirection.current.y +
+          dz * aimDirection.current.z) /
+        distance;
+      candidates.push({
+        id: frame.clusterId,
+        angle: Math.acos(Math.max(-1, Math.min(1, dot))),
+        // Полукорпус машины (~4 м) добавляется к базовому конусу: дальняя
+        // остаётся выбираемой, ближняя не требует снайперства.
+        captureAngle: AIM_BASE_CAPTURE_ANGLE + Math.atan(4 / distance),
+        flying: Boolean(state.flight),
+        piloted: Boolean(state.flight?.pilot),
+      });
+    }
+    let next = advanceAimSelection(selection.current, candidates, delta);
+    if (forced.current !== null) {
+      next = { ...next, selectedId: forced.current };
+      forced.current = null;
+    }
+    selection.current = next;
+    indicatorRef?.current?.style.setProperty(
+      "--aim-progress",
+      aimDwellProgress(next).toFixed(3),
+    );
+    if (next.selectedId !== reported.current) {
+      reported.current = next.selectedId;
+      onSelectionChange?.(next.selectedId);
+    }
+  });
+  return null;
+}
+
 function FlightRouteRibbons({
   frames,
   states,
   enabled,
+  selectedClusterId,
 }: {
   readonly frames: readonly VehicleFrameRuntime[];
   readonly states: { readonly current: Map<string, FrameState> };
   readonly enabled: boolean;
+  /** Маршрут в небе рисуется только у выбранной машины: два плана — каша. */
+  readonly selectedClusterId?: string | null;
 }) {
   const routeVisuals = useMemo(
     () =>
@@ -7407,7 +7522,11 @@ function FlightRouteRibbons({
           flight.occupancy === "uncrewed" &&
           plan,
       );
-      const visible = enabled && underway;
+      const visible =
+        enabled &&
+        underway &&
+        (selectedClusterId === undefined ||
+          frame.clusterId === selectedClusterId);
       for (const object of visual.objects) object.visible = visible;
       if (!underway || !state || !plan || !flight) {
         trailActive.current.set(frame.id, false);
