@@ -7,6 +7,7 @@ import {
   Color,
   LinearFilter,
   MathUtils,
+  UnsignedByteType,
   Vector2,
   Vector3,
 } from "three";
@@ -274,11 +275,14 @@ function createLensDirtTexture(): CanvasTexture {
 
 export function CinematicPostProcessing({
   compact,
+  /** Байтовые таргеты блума: платформенный костыль Metal для польдера. */
+  byteBloom = false,
   /** Scales shafts, glare and lens dirt. Polder uses <1 so sunward views
    * keep midtone grass instead of a white veil; cloud deck is untouched. */
   sunVeil = 1,
 }: {
   compact: boolean;
+  byteBloom?: boolean;
   sunVeil?: number;
 }) {
   const { camera, gl, scene, size } = useThree();
@@ -324,13 +328,24 @@ export function CinematicPostProcessing({
       0.35,
       veil < 1 ? 6.94 : 6,
     );
-    // Блум живёт в HalfFloat ВЕЗДЕ. Прежний byteBloom польдера (8-битные
-    // таргеты против ANGLE-потери кадра) сплющивал HDR ярче единицы — при
-    // пороге 6.94 ВСЁ содержимое bright-буфера — и убивал цвет ореола.
-    // Настоящие источники нестабильности вылечены по корню (буря
-    // перекомпиляций от ламп модели вида; семпл грани купола в кадре её
-    // покраски), HalfFloat держит серию 36 кадров без единого плоского —
-    // развязка в environmental-rendering-lessons §2.
+    // Блум живёт в HalfFloat — 8-битные таргеты сплющивали HDR ярче единицы
+    // (при пороге 6.94 — ВСЁ содержимое bright-буфера) и убивали цвет
+    // ореола. После лечения бурь по корню HalfFloat держит серию 36 кадров
+    // на польдере без единого плоского НА ANGLE/D3D (Windows). На Apple
+    // (Metal) мерцание кадра вернулось при первой же проверке — там дорожка
+    // всё ещё неисправна, и польдер держит байтовые таргеты платформенно.
+    // Это деградация с настоящей ценой (белый ореол вместо тёплого);
+    // снимать её можно только серией кадров, снятой НА Metal —
+    // environmental-rendering-lessons §2.
+    if (byteBloom) {
+      bloomPass.renderTargetBright.texture.type = UnsignedByteType;
+      for (const target of [
+        ...bloomPass.renderTargetsHorizontal,
+        ...bloomPass.renderTargetsVertical,
+      ]) {
+        target.texture.type = UnsignedByteType;
+      }
+    }
     composer.addPass(bloomPass);
 
     const cinematicPass = new ShaderPass(CinematicShader);
@@ -355,7 +370,7 @@ export function CinematicPostProcessing({
       outputPass,
       smaaPass,
     };
-  }, [camera, compact, gl, scene, size.height, size.width, veil]);
+  }, [byteBloom, camera, compact, gl, scene, size.height, size.width, veil]);
 
   // Один владелец размера конвейера. Вызывается и эффектом (первый монтаж),
   // и КАЖДЫЙ КАДР перед composer.render: адаптивный DPR меняет буфер рисования

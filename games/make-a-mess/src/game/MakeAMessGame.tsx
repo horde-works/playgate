@@ -369,6 +369,8 @@ import {
   type TimeOfDay,
 } from "./WorldEnvironment";
 import { CinematicPostProcessing } from "./CinematicPostProcessing";
+import { ScreenLuminanceSampler } from "./ScreenLuminanceSampler";
+import { screenLuminanceProbe } from "./screenLuminanceProbe";
 import { useLanguage } from "../../../../app/i18n/LanguageProvider";
 import {
   sceneCopy,
@@ -11230,6 +11232,76 @@ function MotionTelemetryPanel({
       onUnavailable();
     }
   }, [onUnavailable, snapshot, sourceId]);
+  // АДАПТИВНЫЕ ЧЕРНИЛА (вердикт Igor: ни плашек, ни обводок — обычный текст
+  // контрастного к фону цвета). За каждой строкой замеряется яркость
+  // готового кадра (screenLuminanceProbe/ScreenLuminanceSampler); строка над
+  // светлым получает is-ink-dark — графит; над тёмным — кость как была.
+  // Гистерезис держит цвет на дрожащем пороге, берётся ХУДШАЯ из двух точек
+  // строки: полстроки на небе — вся строка графитом.
+  const inkRows = useRef(new Map<string, HTMLElement>());
+  const [darkInkRows, setDarkInkRows] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const inkRef = useCallback(
+    (key: string) => (node: HTMLElement | null) => {
+      if (node) {
+        inkRows.current.set(key, node);
+      } else {
+        inkRows.current.delete(key);
+      }
+    },
+    [],
+  );
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      for (const [key, element] of inkRows.current) {
+        const rect = element.getBoundingClientRect();
+        if (rect.width < 4 || rect.height < 2) {
+          continue;
+        }
+        screenLuminanceProbe.requests.set(`tele:${key}:l`, {
+          x: rect.left + rect.width * 0.22,
+          y: rect.top + rect.height / 2,
+        });
+        screenLuminanceProbe.requests.set(`tele:${key}:r`, {
+          x: rect.left + rect.width * 0.82,
+          y: rect.top + rect.height / 2,
+        });
+      }
+      setDarkInkRows((previous) => {
+        let changed = false;
+        const next = new Set(previous);
+        for (const key of inkRows.current.keys()) {
+          const left = screenLuminanceProbe.results.get(`tele:${key}:l`);
+          const right = screenLuminanceProbe.results.get(`tele:${key}:r`);
+          if (left === undefined && right === undefined) {
+            continue;
+          }
+          const luminance = Math.max(left ?? 0, right ?? 0);
+          const wasDark = previous.has(key);
+          const wantsDark = wasDark ? luminance > 0.5 : luminance > 0.58;
+          if (wantsDark !== wasDark) {
+            changed = true;
+            if (wantsDark) {
+              next.add(key);
+            } else {
+              next.delete(key);
+            }
+          }
+        }
+        return changed ? next : previous;
+      });
+    }, 280);
+    return () => {
+      window.clearInterval(interval);
+      for (const key of [...screenLuminanceProbe.requests.keys()]) {
+        if (key.startsWith("tele:")) {
+          screenLuminanceProbe.requests.delete(key);
+        }
+      }
+    };
+  }, []);
+  const inkClass = (key: string) => (darkInkRows.has(key) ? " is-ink-dark" : "");
   const previousSnapshot = useRef<MotionTelemetrySnapshot | null>(null);
   const activityLastAt = useRef(new Map<string, number>());
   const [activityTokens, setActivityTokens] = useState<
@@ -11359,7 +11431,7 @@ function MotionTelemetryPanel({
       aria-label={t("telemetry.aria")}
       data-testid="motion-telemetry"
     >
-      <header>
+      <header ref={inkRef("header")} className={inkClass("header")}>
         <span className="motion-telemetry-signal" aria-hidden="true" />
         <div>
           <p>{t("telemetry.kicker")}</p>
@@ -11370,7 +11442,10 @@ function MotionTelemetryPanel({
         </strong>
       </header>
       {attitude ? (
-        <div className="motion-telemetry-instruments">
+        <div
+          ref={inkRef("instruments")}
+          className={`motion-telemetry-instruments${inkClass("instruments")}`}
+        >
           <section
             className="motion-telemetry-attitude"
             aria-label={t("telemetry.attitudeAria")}
@@ -11416,7 +11491,11 @@ function MotionTelemetryPanel({
             : undefined;
           const label = kindLabel ?? telemetryMetricLabels[metric.id];
           return (
-            <div key={metric.id}>
+            <div
+              key={metric.id}
+              ref={inkRef(`metric:${metric.id}`)}
+              className={inkClass(`metric:${metric.id}`) || undefined}
+            >
               <dt>{label ? t(label) : metric.id}</dt>
               <dd>{renderValue(metric)}</dd>
             </div>
@@ -13188,8 +13267,19 @@ export function MakeAMessGame({
                   }
                   onDprChange={setAppliedDpr}
                 />
+                <ScreenLuminanceSampler />
                 <CinematicPostProcessing
                   compact={fallbackLook}
+                  // Платформенный костыль ТОЛЬКО для Metal: на Apple
+                  // HalfFloat-дорожка блума всё ещё мерцает кадром на
+                  // польдере (замер Igor), на ANGLE/D3D серия 36 кадров
+                  // чиста — Windows держит честный HDR-ореол. Снимать —
+                  // только серией кадров, снятой на Metal (lessons §2).
+                  byteBloom={
+                    scene.id === "dutch-polder" &&
+                    typeof navigator !== "undefined" &&
+                    /Mac|iPhone|iPad/.test(navigator.userAgent)
+                  }
                   // Screen veil only — weather/cloud deck stay as authored.
                   // Polder midtones die looking sunward (dense grass + dome).
                   // Town boulevard washes milder looking east into the sun.

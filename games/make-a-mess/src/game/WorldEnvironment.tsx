@@ -874,7 +874,15 @@ export function DayNightCycle({
     const domeMesh = domeViewRef.current;
     if (skyMesh && domeMesh) {
       const state = domeState.current;
-      if (!SKY_DOME_CACHE_ENABLED || sunIsMoving) {
+      // Кэш купола — амортизация для НИЖНИХ ярусов GPU. На максималках небо
+      // маршируется живьём каждый кадр: подмена на кубокарту 512/грань после
+      // остановки солнца читалась глазом как «похожее, но упрощённое, другая
+      // гамма» (вердикт Igor) — против принципа «от максимума и вниз»
+      // амортизации на вершине не место. Спуск качества возвращает кэш —
+      // там кадр важнее идеальности неба.
+      const domeTier =
+        performanceGovernor.getSnapshot().gpuQuality < 2;
+      if (!SKY_DOME_CACHE_ENABLED || !domeTier || sunIsMoving) {
         state.completed = false;
         state.cursor = 0;
         state.cleanCycles = 0;

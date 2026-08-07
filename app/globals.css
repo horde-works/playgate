@@ -2265,43 +2265,31 @@ button:focus-visible {
   --telemetry-ink: #f4f2e9;
   --telemetry-muted: rgb(244 242 233 / 0.8);
   --telemetry-accent: #e3ff79;
-  /* Стилевой приоритет — светлая кость на тёмном; графитовый ореол несёт
-     контраст на светлом небе. Прежний mix-blend-mode: difference давал
-     «адаптивность» без гарантии: на средне-сером настиле (≈50%) разность
-     вырождалась в кашу, на небе подписи буреют. Ореол гарантирует чтение
-     на любом фоне, включая кадр «половина на небе, половина на земле». */
-  --telemetry-halo: rgb(22 26 28 / 0.9);
+  /* Контраст — АДАПТИВНЫМ ЦВЕТОМ обычного текста (вердикт Igor: ни плашек,
+     ни обводок — этого языка в игре нет). За каждой строкой замеряется
+     яркость кадра (screenLuminanceProbe), и строка получает is-ink-dark:
+     графит на светлом небе, кость на тёмной земле. */
+  --telemetry-ink-dark: #2a2f31;
+  --telemetry-muted-dark: rgb(42 47 49 / 0.78);
+  --telemetry-accent-dark: #57641c;
   position: absolute;
   top: 50%;
   right: clamp(18px, 3vw, 48px);
   z-index: 16;
   width: min(334px, calc(100vw - 36px));
-  padding: 14px 16px;
-  border-radius: 12px;
-  /* Слабое тёмное стекло под всей панелью — вторая половина гарантии: ореол
-     держит каждый глиф, плашка выравнивает фон, когда панель лежит одной
-     половиной на небе, другой — на земле. Без blur: он не бесплатен на
-     Iris Xe, а ровная подложка даёт ту же читаемость. */
-  background: rgb(22 26 28 / 0.22);
   color: var(--telemetry-ink);
   font-family: var(--font-geist-mono), monospace;
-  /* Ореол в четыре слоя: тонкий моноширинный шрифт на почти белом небе с
-     одним слоем читается призраком, слои складывают альфу в плотный кант. */
-  text-shadow:
-    0 0 1px var(--telemetry-halo),
-    0 0 2px var(--telemetry-halo),
-    0 0 4px var(--telemetry-halo),
-    0 1px 3px var(--telemetry-halo);
   pointer-events: none;
   transform: translateY(-50%);
   animation: motionTelemetryIn 340ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
-/* Приборные символы (сфера положения, индикатор импульса, риски) — тот же
-   ореол, что у текста: тонкие штрихи без него тонут в небе. */
-.motion-telemetry svg {
-  filter: drop-shadow(0 0 1px var(--telemetry-halo))
-    drop-shadow(0 1px 1.5px var(--telemetry-halo));
+/* Строка над светлым фоном: тот же текст, графитовые чернила. */
+.motion-telemetry .is-ink-dark {
+  --telemetry-ink: var(--telemetry-ink-dark);
+  --telemetry-muted: var(--telemetry-muted-dark);
+  --telemetry-accent: var(--telemetry-accent-dark);
+  color: var(--telemetry-ink);
 }
 
 .motion-telemetry.is-dawn,
@@ -2454,9 +2442,7 @@ button:focus-visible {
   width: 42px;
   height: 1px;
   background: var(--telemetry-accent);
-  box-shadow:
-    0 0 5px color-mix(in srgb, var(--telemetry-accent) 55%, transparent),
-    0 0 1px 1px var(--telemetry-halo);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--telemetry-accent) 55%, transparent);
   transform: translate(-50%, -50%);
 }
 
@@ -2562,10 +2548,7 @@ button:focus-visible {
 }
 
 .motion-telemetry-value-channel.is-critical .motion-telemetry-reading {
-  text-shadow:
-    0 0 6px rgba(255, 93, 82, 0.55),
-    0 0 2px var(--telemetry-halo),
-    0 1px 2px var(--telemetry-halo);
+  text-shadow: 0 0 6px rgba(255, 93, 82, 0.55);
 }
 
 .motion-impact-nose {
@@ -2693,10 +2676,7 @@ button:focus-visible {
 .motion-telemetry-value-channel.is-warning .motion-telemetry-value-side,
 .motion-telemetry-value-channel.is-warning .motion-telemetry-reading {
   color: #f5b04a;
-  text-shadow:
-    0 0 7px rgb(245 176 74 / 0.4),
-    0 0 2px var(--telemetry-halo),
-    0 1px 2px var(--telemetry-halo);
+  text-shadow: 0 0 7px rgb(245 176 74 / 0.4);
 }
 
 .motion-telemetry-value-side {
