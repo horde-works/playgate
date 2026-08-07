@@ -2822,23 +2822,30 @@ button:focus-visible {
   box-shadow: 0 0 4px rgb(0 0 0 / 0.9);
 }
 
-.crosshair i:first-child {
+/* По типу, не по позиции: последним ребёнком контейнера теперь стоит дуга
+   накопления выбора, и `i:last-child` молча переставал совпадать —
+   вертикальная палка теряла размеры, прицел вырождался в черту. */
+.crosshair i:first-of-type {
   width: 24px;
   height: 2px;
   transform: translate(-50%, -50%);
 }
 
-.crosshair i:last-child {
+.crosshair i:last-of-type {
   width: 2px;
   height: 24px;
   transform: translate(-50%, -50%);
 }
 
-/* Пустые руки — стойка наблюдателя: перекрестье ослаблено, но остаётся
-   органом выбора машины взглядом. */
+/* Пустые руки — стойка наблюдателя: ослабленная ЧЕРТА (вердикт Igor:
+   «черта ок для пустых рук, для оружия — всё-таки перекрестье»). */
 .crosshair.is-bare i {
   opacity: 0.45;
   box-shadow: none;
+}
+
+.crosshair.is-bare i:last-of-type {
+  display: none;
 }
 
 /* Дуга накопления выбора: --aim-progress (0..1) пишет VehicleAimSelector

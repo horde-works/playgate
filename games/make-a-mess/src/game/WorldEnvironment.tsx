@@ -311,23 +311,41 @@ export function DayNightCycle({
     bucket: "",
     cleanCycles: 0,
     frameParity: 0,
+    /** Число программ рендерера в прошлый кадр — детектор бури компиляций. */
+    programCount: 0,
+    /** Оборот дописан — обмен буферов ждёт СЛЕДУЮЩЕГО кадра (см. ниже). */
+    pendingSwap: false,
+    /** Был ли хоть один применённый обмен: до него показывать нечего. */
+    everSwapped: false,
   });
 
   // Амортизированный купол (skyDomeModel.ts): небо маршируется в кубокарту
   // грань за граню, кадр читает её одной выборкой. Sky здесь делит ОДИН
   // материал со всеми Sky мира (three-stdlib), так что солнце, погода и дрейф
   // приходят сами.
+  //
+  // Кубокарт ДВЕ — задняя красится, передняя показывается, обмен по
+  // завершении оборота. Красить прямо в показываемую текстуру нельзя по
+  // двум причинам сразу: (1) на ANGLE «покрасил грань → семплишь тот же
+  // кубмап в том же кадре» изредка читается чёрной гранью — стена в небе,
+  // которая живёт до следующей инвалидации (репро: тяжёлый кадр смены
+  // оружия; sync-read после покраски гонку глушил); (2) при смене света
+  // зритель видел полкупола старого солнца и полкупола нового.
   const dome = useMemo(() => {
-    const target = new WebGLCubeRenderTarget(DOME_FACE_SIZE, {
-      type: HalfFloatType,
-      generateMipmaps: false,
-    });
-    target.texture.name = "sky:dome-cache";
+    const makeTarget = (label: string) => {
+      const cube = new WebGLCubeRenderTarget(DOME_FACE_SIZE, {
+        type: HalfFloatType,
+        generateMipmaps: false,
+      });
+      cube.texture.name = `sky:dome-cache:${label}`;
+      return cube;
+    };
+    const targets = [makeTarget("a"), makeTarget("b")] as const;
     const holder = new Scene();
     const sky = new SkyImpl();
     sky.scale.setScalar(48);
     holder.add(sky);
-    const rig = new CubeCamera(0.1, 60, target);
+    const rig = new CubeCamera(0.1, 60, targets[0]);
     // Высота глаза, не ноль: марш воздуха читает таблицы атмосферы по высоте
     // наблюдателя, и ровно в h = 0 зенитный луч попадает в граничный тексель
     // таблицы — купол получает чёрную верхнюю грань. Живой марш никогда не
@@ -337,7 +355,7 @@ export function DayNightCycle({
     const viewGeometry = new SphereGeometry(1, 48, 24);
     const viewMaterial = new ShaderMaterial({
       uniforms: {
-        uDome: { value: target.texture },
+        uDome: { value: targets[0].texture },
         uDomeCenter: { value: new Vector3() },
       },
       vertexShader: /* glsl */ `
@@ -371,7 +389,16 @@ export function DayNightCycle({
       side: BackSide,
       depthWrite: false,
     });
-    return { target, holder, sky, rig, viewGeometry, viewMaterial };
+    return {
+      targets,
+      // Индекс ЗАДНЕЙ кубокарты — в неё красят; передняя показывается.
+      back: { index: 1 },
+      holder,
+      sky,
+      rig,
+      viewGeometry,
+      viewMaterial,
+    };
   }, []);
 
   useEffect(
@@ -379,7 +406,7 @@ export function DayNightCycle({
       environmentState.skyDomeTexture = null;
       dome.viewMaterial.dispose();
       dome.viewGeometry.dispose();
-      dome.target.dispose();
+      for (const target of dome.targets) target.dispose();
     },
     [dome],
   );
@@ -481,9 +508,54 @@ export function DayNightCycle({
     gl.xr.enabled = false;
     gl.shadowMap.needsUpdate = false;
     setSkyMarchQuality(material, 2);
-    gl.setRenderTarget(dome.target, face);
+    gl.setRenderTarget(dome.targets[dome.back.index], face);
     if (gl.autoClear === false) gl.clear();
     gl.render(dome.holder, dome.rig.children[face] as PerspectiveCamera);
+    // Явный неблокирующий flush: на ANGLE/D3D офскрин-покраска грани,
+    // поданная в один submit с тяжёлым кадром (компиляции, загрузка
+    // текстур нового инструмента), изредка теряется — грань остаётся
+    // чёрной. Синхронное чтение текселя гонку глушило (замер 4/4 против
+    // 4/5 стены без него); flush упорядочивает отправку без блокировки.
+    gl.getContext().flush();
+    if (
+      process.env.NODE_ENV !== "production" &&
+      (window as typeof window & { __mamDomeTripwire?: boolean })
+        .__mamDomeTripwire
+    ) {
+      // Ловушка «чёрной грани» (включается window.__mamDomeTripwire = true):
+      // читаем один тексель свежепокрашенной грани, ПОКА она привязана
+      // (сырой readPixels; readRenderTargetPixels с кубическим таргетом
+      // падает в bindFramebuffer). Днём радианс неба нигде не ноль; нулевой
+      // тексель = грань не напечаталась. Чтение синхронно и само глушит
+      // гонку — поэтому только по явному флагу, не фоном.
+      try {
+        const context = gl.getContext() as WebGL2RenderingContext;
+        const probe = new Float32Array(4);
+        context.readPixels(
+          DOME_FACE_SIZE >> 1,
+          DOME_FACE_SIZE >> 1,
+          1,
+          1,
+          context.RGBA,
+          context.FLOAT,
+          probe,
+        );
+        const scope = window as typeof window & {
+          __mamDomeDebug?: Array<Record<string, unknown>>;
+        };
+        const log = (scope.__mamDomeDebug ??= []);
+        log.push({
+          face,
+          rgb: [probe[0], probe[1], probe[2]].map((v) => +v.toFixed(4)),
+          glError: context.getError(),
+          sunY: +environmentState.sunDirection.y.toFixed(3),
+          t: Math.round(performance.now()),
+        });
+        if (log.length > 400) log.splice(0, log.length - 400);
+      } catch {
+        // Диагност не жилец — мир жилец.
+      }
+    }
     gl.setRenderTarget(previousTarget);
     gl.toneMapping = previousToneMapping;
     gl.xr.enabled = previousXr;
@@ -806,6 +878,8 @@ export function DayNightCycle({
         state.completed = false;
         state.cursor = 0;
         state.cleanCycles = 0;
+        state.pendingSwap = false;
+        state.everSwapped = false;
         environmentState.skyDomeTexture = null;
         skyMesh.visible = true;
         domeMesh.visible = false;
@@ -826,7 +900,29 @@ export function DayNightCycle({
         const repaint =
           state.cleanCycles < DOME_SETTLE_CYCLES ||
           domeNeedsContinuousRepaint(weather.coverage);
-        if (repaint) {
+        // ОТЛОЖЕННЫЙ ОБМЕН. Обменивать буферы в кадре, где докрашена
+        // последняя грань, нельзя: главный проход тут же семплит кубокарту,
+        // чью грань красили микросекунды назад, и ANGLE РОНЯЕТ эту покраску
+        // насовсем — купол ездил с чёрной гранью 5 до следующей инвалидации
+        // (замер: дамп буферов показывал ноль ровно в грани 5 заднего
+        // буфера). Обмен применяется в НАЧАЛЕ следующего кадра: у
+        // показываемого куба любая грань покрашена минимум кадр назад.
+        if (state.pendingSwap) {
+          state.pendingSwap = false;
+          state.everSwapped = true;
+          const painted = dome.targets[dome.back.index];
+          dome.back.index = 1 - dome.back.index;
+          dome.viewMaterial.uniforms.uDome.value = painted.texture;
+          environmentState.skyDomeTexture = painted.texture;
+        }
+        // Буря компиляций (новое оружие, первый взрыв, чужой эффект): в
+        // кадре, где родились новые GL-программы, ANGLE изредка роняет
+        // офскрин-покраску грани в чёрное. Кадр покраски просто пропускается
+        // — оборот растянется на кадры, зато купол не получит чёрной грани.
+        const programCount = frameState.gl.info.programs?.length ?? 0;
+        const compileStorm = programCount !== state.programCount;
+        state.programCount = programCount;
+        if (repaint && !compileStorm) {
           // Спуск оси — темп перекраски, а не качество грани: грань всегда
           // авторский максимум, страйд лишь растягивает оборот.
           const stride =
@@ -847,14 +943,74 @@ export function DayNightCycle({
               }
               state.completed = true;
               state.bucket = bucket;
-              environmentState.skyDomeTexture = dome.target.texture;
+              // Оборот дописан — обмен буферов отложен до следующего кадра
+              // (см. pendingSwap выше): показывать свежекрашенную грань в её
+              // же кадре нельзя.
+              state.pendingSwap = true;
             }
           }
         }
-        // Живой марш остаётся на экране, пока первый полный оборот не готов:
-        // полкупола из кэша и полкупола марша — это шов, а не амортизация.
-        skyMesh.visible = !state.completed;
-        domeMesh.visible = state.completed;
+        // Живой марш остаётся на экране, пока первый полный оборот не готов
+        // И не применён первый обмен буферов: полкупола из кэша и полкупола
+        // марша — это шов, а не амортизация.
+        const domeReady = state.completed && state.everSwapped;
+        skyMesh.visible = !domeReady;
+        domeMesh.visible = domeReady;
+      }
+      if (process.env.NODE_ENV !== "production") {
+        (window as typeof window & {
+          __mamDomeDump?: () => unknown;
+        }).__mamDomeDump = () => {
+          const gl = frameState.gl;
+          const previous = gl.getRenderTarget();
+          const context = gl.getContext() as WebGL2RenderingContext;
+          const report: Record<string, number[][]> = {};
+          for (let targetIndex = 0; targetIndex < 2; targetIndex += 1) {
+            const rows: number[][] = [];
+            for (let face = 0; face < DOME_FACE_COUNT; face += 1) {
+              gl.setRenderTarget(dome.targets[targetIndex], face);
+              const pixels = new Float32Array(4 * 64);
+              context.readPixels(
+                (DOME_FACE_SIZE >> 1) - 4,
+                (DOME_FACE_SIZE >> 1) - 4,
+                8,
+                8,
+                context.RGBA,
+                context.FLOAT,
+                pixels,
+              );
+              let sum = 0;
+              for (let i = 0; i < pixels.length; i += 4) {
+                sum += pixels[i] + pixels[i + 1] + pixels[i + 2];
+              }
+              rows.push([face, +(sum / (64 * 3)).toFixed(4)]);
+            }
+            report[dome.targets[targetIndex].texture.name] = rows;
+          }
+          gl.setRenderTarget(previous);
+          return {
+            shown: (
+              dome.viewMaterial.uniforms.uDome.value as { name?: string }
+            )?.name,
+            backIndex: dome.back.index,
+            report,
+          };
+        };
+        (window as typeof window & {
+          __mamSkyDebug?: () => Record<string, unknown>;
+        }).__mamSkyDebug = () => ({
+          skyVisible: skyMesh.visible,
+          domeVisible: domeMesh.visible,
+          completed: domeState.current.completed,
+          cursor: domeState.current.cursor,
+          cleanCycles: domeState.current.cleanCycles,
+          backIndex: dome.back.index,
+          shownTexture: (
+            dome.viewMaterial.uniforms.uDome.value as { name?: string } | null
+          )?.name,
+          sunMoving: sunIsMoving,
+          programCount: domeState.current.programCount,
+        });
       }
     }
   });

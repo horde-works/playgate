@@ -139,6 +139,52 @@ function ViewmodelLighting() {
   );
 }
 
+/**
+ * Метка слоя модели вида: включает VIEWMODEL_LAYER всей группе инструмента,
+ * чтобы постоянные лампы модели вида (FirstPersonToolLighting) её освещали.
+ * Сами лампы отсюда УБРАНЫ намеренно: лампа, монтируемая и снимаемая вместе
+ * с оружием, меняет ЧИСЛО источников в сцене, а число источников — часть
+ * ключа программы у three: каждая смена инструмента перекомпилировала все
+ * освещённые материалы мира (полуторасекундный фриз), и под этой бурей
+ * ANGLE изредка ронял покраску граней небесного купола в чёрное.
+ */
+function ViewmodelLayer() {
+  const anchor = useRef<Group>(null);
+  useEffect(() => {
+    const parent = anchor.current?.parent;
+    if (!parent) {
+      return;
+    }
+    parent.traverse((object) => {
+      object.layers.enable(VIEWMODEL_LAYER);
+    });
+  });
+  return <group ref={anchor} />;
+}
+
+/**
+ * Постоянный свет модели вида: монтируется ОДИН раз на сессию мира и следует
+ * за камерой, а не за конкретным инструментом. Смена оружия больше не меняет
+ * число источников — перекомпиляций мира на «1»–«5» не существует.
+ */
+export function FirstPersonToolLighting() {
+  const group = useRef<Group>(null);
+  const { camera } = useThree();
+  const cameraQuaternion = useMemo(() => new Quaternion(), []);
+  useFrame(() => {
+    if (!group.current) {
+      return;
+    }
+    group.current.position.copy(camera.position);
+    group.current.quaternion.copy(camera.getWorldQuaternion(cameraQuaternion));
+  });
+  return (
+    <group ref={group}>
+      <ViewmodelLighting />
+    </group>
+  );
+}
+
 function FlashBurst({
   flashRef,
   lightRef,
@@ -656,7 +702,7 @@ export function FirstPersonHammer({ swing }: { swing: SwingDefinition }) {
 
   return (
     <group ref={group} renderOrder={20}>
-      <ViewmodelLighting />
+      <ViewmodelLayer />
       <mesh position={[0, -0.055, 0]} castShadow>
         <cylinderGeometry args={[0.034, 0.047, 0.65, 16]} />
         <meshStandardMaterial
@@ -805,7 +851,7 @@ export function FirstPersonLauncher({
 
   return (
     <group ref={group} renderOrder={20}>
-      <ViewmodelLighting />
+      <ViewmodelLayer />
       <mesh
         position={[0, 0.015, -0.25]}
         rotation={[Math.PI / 2, 0, 0]}
@@ -1078,7 +1124,7 @@ export function FirstPersonRocketLauncher({
 
   return (
     <group ref={group} renderOrder={20} scale={slim ? [0.72, 0.72, 1.06] : 1}>
-      <ViewmodelLighting />
+      <ViewmodelLayer />
       {/* Золотое навершие: единственный способ отличить игломёт от тяжёлого
           ствола, не глядя на подпись. Латунь на дульном срезе. */}
       {slim ? (
@@ -1319,7 +1365,7 @@ export function FirstPersonDemolitionCharge() {
 
   return (
     <group ref={group} renderOrder={20}>
-      <ViewmodelLighting />
+      <ViewmodelLayer />
       <RoundedBox args={[0.42, 0.25, 0.085]} radius={0.025} smoothness={3} castShadow>
         <meshStandardMaterial color="#302c24" metalness={0.3} roughness={0.7} />
       </RoundedBox>
@@ -1628,7 +1674,7 @@ export function FirstPersonMachineGun({
 
   return (
     <group ref={group} renderOrder={20}>
-      <ViewmodelLighting />
+      <ViewmodelLayer />
       <mesh
         position={[0, 0.015, -0.64]}
         rotation={[Math.PI / 2, 0, 0]}

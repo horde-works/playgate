@@ -181,6 +181,7 @@ import {
   FirstPersonLauncher,
   FirstPersonMachineGun,
   FirstPersonRocketLauncher,
+  FirstPersonToolLighting,
   type SwingDefinition,
 } from "./FirstPersonWeapons";
 import {
@@ -4254,7 +4255,7 @@ function OpenWorldScene({
       ),
     [breakablePieces],
   );
-  const { camera } = useThree();
+  const { camera, scene: threeScene } = useThree();
   const { rapier, world } = useRapier();
   const passengerViewMotion = useMemo(() => createPassengerViewMotion(), []);
   const raycaster = useRef(new Raycaster());
@@ -4669,6 +4670,33 @@ function OpenWorldScene({
             }
           : null,
       };
+    };
+    // Луч по ВСЕЙ рендер-сцене: называет объект в пикселе (NDC), когда
+    // «что-то чёрное в небе» не отвечает ни физике, ни breakables.
+    (window as Window & {
+      __mamSceneProbe?: (ndcX: number, ndcY: number) => unknown;
+    }).__mamSceneProbe = (ndcX: number, ndcY: number) => {
+      const probeRaycaster = new Raycaster();
+      probeRaycaster.setFromCamera(
+        new Vector2(ndcX, ndcY),
+        camera,
+      );
+      probeRaycaster.far = 5000;
+      probeRaycaster.layers.enableAll();
+      const hits = probeRaycaster.intersectObject(threeScene, true);
+      return hits.slice(0, 6).map((hit) => ({
+        distance: +hit.distance.toFixed(2),
+        name: hit.object.name || hit.object.type,
+        material:
+          (Array.isArray((hit.object as { material?: unknown }).material)
+            ? "array"
+            : ((hit.object as { material?: { name?: string; type?: string } })
+                .material?.name ||
+              (hit.object as { material?: { type?: string } }).material
+                ?.type)) ?? null,
+        visible: hit.object.visible,
+        renderOrder: hit.object.renderOrder,
+      }));
     };
     const teleportWindow = window as Window & {
       __mamTeleport?: (x: number, y: number, z: number) => boolean;
@@ -10027,6 +10055,11 @@ function OpenWorldScene({
             vehicleFramePoses={vehicleFramePoses}
             forceFieldRef={forceFieldActive ? basaltForceField : undefined}
           />
+          {/* Свет модели вида живёт ПОСТОЯННО: лампы, ездящие вместе с
+              оружием, меняли число источников сцены и заставляли three
+              перекомпилировать все освещённые материалы на каждую смену
+              инструмента. */}
+          <FirstPersonToolLighting />
           {weapon === "none" ? null : weapon === "hammer" ? (
             <FirstPersonHammer swing={swing} />
           ) : weapon === "launcher" ? (
