@@ -37,13 +37,15 @@ import {
   TOWN_HEXACOPTER_CLUSTER_ID,
 } from "../games/make-a-mess/src/game/townHexacopter.ts";
 import { nimbusScene } from "../games/make-a-mess/src/game/nimbusScene.ts";
-import { townScene } from "../games/make-a-mess/src/game/townScene.ts";
+// Оригинал HX-6 переехал на полигон Tonkawa (фишка №1) — эталон для сверки
+// копии причала живёт теперь там, id кластера и кусков сохранены.
+import { combatHexacopterRangeScene } from "../games/make-a-mess/src/game/combatHexacopterRangeScene.ts";
 import { vehicleRouteHeading } from "../games/make-a-mess/src/game/vehicleFrames.ts";
 
 const nimbusShip = nimbusScene.breakablePieces.filter(
   (piece) => piece.clusterId === NIMBUS_HEXACOPTER_CLUSTER_ID,
 );
-const townShip = townScene.breakablePieces.filter(
+const townShip = combatHexacopterRangeScene.breakablePieces.filter(
   (piece) => piece.clusterId === TOWN_HEXACOPTER_CLUSTER_ID,
 );
 const plan = nimbusHexacopterPlan("circuit", NIMBUS_HEXACOPTER_ORIGIN);

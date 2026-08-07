@@ -67,6 +67,17 @@ import {
   type TownHexacopterFlightKind,
 } from "./townHexacopterRoutes.ts";
 import {
+  isInsideRangeHexacopter,
+  rangeHexacopterPoint,
+  rangeHexacopterPointFromTown,
+} from "./rangeHexacopter.ts";
+import {
+  rangeHexacopterArrivalPlan,
+  rangeHexacopterPlan,
+  rangeHexacopterRoutePhase,
+  type RangeHexacopterFlightKind,
+} from "./rangeHexacopterRoutes.ts";
+import {
   NIMBUS_HEXACOPTER_NOSE,
   NIMBUS_HEXACOPTER_RUDDER_POINT,
   isInsideNimbusHexacopter,
@@ -873,13 +884,14 @@ export const TOWN_HEXACOPTER_AIR_VEHICLE: AirVehicleDefinition = {
       ],
     },
     // Стойка с табло у кромки пятна — единственный физический интерфейс
-    // площадки. Мачт у этой машины нет.
-    point: hexacopterPoint(2.9, -3.32, 1),
+    // площадки. Мачт у этой машины нет. Точки — на полигоне Tonkawa
+    // (фишка №1): машина переехала целиком, интерфейс переехал с ней.
+    point: rangeHexacopterPoint(2.9, -3.32, 1),
     flightKind: "circuit",
     approachRadius: 2.6,
     releaseRadius: 3.5,
     heightTolerance: 2.4,
-    passengerDropPoint: hexacopterPoint(2.4, -3.1, 1),
+    passengerDropPoint: rangeHexacopterPoint(2.4, -3.1, 1),
   },
   passengerFlight: {
     target: {
@@ -902,11 +914,11 @@ export const TOWN_HEXACOPTER_AIR_VEHICLE: AirVehicleDefinition = {
     },
     // Точка вызова стоит у кресла: человек, вошедший в дверь левого борта,
     // делает полшага к оси и получает предложение лететь.
-    point: hexacopterPoint(-0.15, 0, 1.98),
+    point: rangeHexacopterPoint(-0.15, 0, 1.98),
     flightKind: "tour",
     approachRadius: 1.15,
     releaseRadius: 1.6,
-    contains: isInsideHexacopter,
+    contains: isInsideRangeHexacopter,
   },
   flight: {
     limits: {
@@ -917,7 +929,7 @@ export const TOWN_HEXACOPTER_AIR_VEHICLE: AirVehicleDefinition = {
       // ему вялый разгон), и ровно то, чего ждёшь от лёгкой машины.
       enginePower: 58,
       enginePoints: HEXACOPTER_DUCTS.map((station) =>
-        hexacopterDuctPoint(station, HEX_DISC_Y),
+        rangeHexacopterPointFromTown(hexacopterDuctPoint(station, HEX_DISC_Y)),
       ),
       // РУЛЯ НЕТ. Гексакоптер разворачивается разнотягом колец — и на
       // крейсере, и вися на месте, одинаково. Оперение ему не нужно, и врать
@@ -926,7 +938,7 @@ export const TOWN_HEXACOPTER_AIR_VEHICLE: AirVehicleDefinition = {
       // весь момент придётся взять моторам. Именно этого мы и хотим.
       maxRudderForce: 0,
       rudderReferenceSpeed: 9,
-      rudderPoint: HEXACOPTER_RUDDER_POINT,
+      rudderPoint: rangeHexacopterPointFromTown(HEXACOPTER_RUDDER_POINT),
       // Вертикальный запас у винтокрылой машины больше, чем у дирижабля: она
       // не стравливает газ, а прибавляет обороты.
       liftTrimRange: 0.28,
@@ -1018,12 +1030,15 @@ export const TOWN_HEXACOPTER_AIR_VEHICLE: AirVehicleDefinition = {
     // почти над ним, и не имеет права тянуть машину за нос через полдвора.
     // Длинный радиус разворачивал лёгкий корпус рывком за носовой узел.
     mooringReach: 0.6,
+    // Маршруты полигона: розетка формулой над стальным диском (фишка №1).
+    // Аварийный уход остаётся городским — он строится от позы отказа и
+    // берта, мировых якорей у него нет.
     routePlan: (kind, berth) =>
-      townHexacopterPlan(kind as TownHexacopterFlightKind, berth),
-    arrivalPlan: townHexacopterArrivalPlan,
+      rangeHexacopterPlan(kind as RangeHexacopterFlightKind, berth),
+    arrivalPlan: rangeHexacopterArrivalPlan,
     escapePlan: townHexacopterEscapePlan,
     routePhase: (kind, progress) =>
-      townHexacopterRoutePhase(kind as TownHexacopterFlightKind, progress),
+      rangeHexacopterRoutePhase(kind as RangeHexacopterFlightKind, progress),
   },
 };
 

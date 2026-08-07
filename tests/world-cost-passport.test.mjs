@@ -3,6 +3,7 @@ import test from "node:test";
 import { buildIntactInstanceBatches } from "../games/make-a-mess/src/game/intactWorldBatching.ts";
 import { buildTreeVisuals } from "../games/make-a-mess/src/game/treeVisualInstances.ts";
 import { townScene } from "../games/make-a-mess/src/game/townScene.ts";
+import { combatHexacopterRangeScene } from "../games/make-a-mess/src/game/combatHexacopterRangeScene.ts";
 import { dutchPolderScene } from "../games/make-a-mess/src/game/dutchPolderScene.ts";
 import { vikingVillageScene } from "../games/make-a-mess/src/game/vikingVillageScene.ts";
 import { basaltStrongholdScene } from "../games/make-a-mess/src/game/basaltStrongholdScene.ts";
@@ -25,16 +26,34 @@ import { astanaScene } from "../games/make-a-mess/src/game/astanaScene.ts";
 
 const PASSPORTS = [
   {
+    // Вертипад HX-6 переехал на полигон Tonkawa (фишка №1, 07.08.2026) —
+    // город подешевел на 656 кусков и 112 батчей, потолки опущены следом.
     scene: townScene,
     limits: {
-      pieces: 24200,
-      intactBatches: 315,
-      shadowBatches: 250,
-      singleInstanceBatches: 225,
+      pieces: 23500,
+      intactBatches: 200,
+      shadowBatches: 175,
+      singleInstanceBatches: 130,
       foliage: 10800,
       conifer: 1450,
-      lamps: 72,
-      spotLights: 8,
+      lamps: 56,
+      spotLights: 5,
+    },
+  },
+  {
+    // Полигон Tonkawa: RAX-8 плюс переехавший вертипад HX-6. Кусков мало,
+    // но батчей много: кастомные меши двух машин — одиночные батчи; на
+    // пустом стальном диске это осознанная цена наблюдательного мира.
+    scene: combatHexacopterRangeScene,
+    limits: {
+      pieces: 1450,
+      intactBatches: 445,
+      shadowBatches: 395,
+      singleInstanceBatches: 320,
+      foliage: 0,
+      conifer: 0,
+      lamps: 20,
+      spotLights: 2,
     },
   },
   {

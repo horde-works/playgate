@@ -14,6 +14,7 @@ import {
   structuralMaterialProfiles,
 } from "../games/make-a-mess/src/game/destructionScene.ts";
 import { townScene } from "../games/make-a-mess/src/game/townScene.ts";
+import { combatHexacopterRangeScene } from "../games/make-a-mess/src/game/combatHexacopterRangeScene.ts";
 import { TOWN_HEXACOPTER_CLUSTER_ID } from "../games/make-a-mess/src/game/townHexacopter.ts";
 import { vehicleFrameForCluster } from "../games/make-a-mess/src/game/vehicleFrames.ts";
 
@@ -27,7 +28,7 @@ const CITY_WALL_ID = "hru:walls:0:0:flat:14.8625";
 const frame = vehicleFrameForCluster(TOWN_HEXACOPTER_CLUSTER_ID);
 assert.ok(frame, "hexacopter frame is missing");
 
-const pieces = townScene.breakablePieces.filter(
+const pieces = combatHexacopterRangeScene.breakablePieces.filter(
   (piece) => piece.clusterId === TOWN_HEXACOPTER_CLUSTER_ID,
 );
 const colliders = compoundClusterColliders(frame, pieces, new Set());

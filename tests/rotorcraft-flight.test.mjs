@@ -6,7 +6,7 @@ import {
   stepBody,
 } from "../games/make-a-mess/src/game/clusterDynamics.ts";
 import { structuralMaterialProfiles } from "../games/make-a-mess/src/game/destructionScene.ts";
-import { townScene } from "../games/make-a-mess/src/game/townScene.ts";
+import { combatHexacopterRangeScene } from "../games/make-a-mess/src/game/combatHexacopterRangeScene.ts";
 import { TOWN_HEXACOPTER_CLUSTER_ID } from "../games/make-a-mess/src/game/townHexacopter.ts";
 import { TOWN_HEXACOPTER_AIR_VEHICLE } from "../games/make-a-mess/src/game/airVehicles.ts";
 import {
@@ -61,7 +61,7 @@ import {
 // ---------------------------------------------------------------------------
 
 const densityOf = (material) => structuralMaterialProfiles[material].density;
-const ship = townScene.breakablePieces.filter(
+const ship = combatHexacopterRangeScene.breakablePieces.filter(
   (piece) => piece.clusterId === TOWN_HEXACOPTER_CLUSTER_ID,
 );
 const properties = massProperties(ship, densityOf);

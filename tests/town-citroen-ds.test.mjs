@@ -61,6 +61,7 @@ import {
   dsWaistHalfWidth,
 } from "../games/make-a-mess/src/game/townCitroenDsBody.ts";
 import { townScene } from "../games/make-a-mess/src/game/townScene.ts";
+import { combatHexacopterRangeScene } from "../games/make-a-mess/src/game/combatHexacopterRangeScene.ts";
 import {
   compoundClusterOwnsPiece,
   compoundMemberNeedsPoseBody,
@@ -732,13 +733,17 @@ test("силовой набор спрятан за кузовом", () => {
 });
 
 test("луч фар — тот же прибор, что у посадочных фар гексакоптера", () => {
-  const hexacopter = townScene.spotLightDefinitions.filter((light) =>
-    light.id.includes("headlight"),
+  // Эталонный прибор уехал вместе с HX-6 на полигон Tonkawa (фишка №1);
+  // закон «один прибор на весь проект» от этого не ослаб — сверяем через
+  // сцену полигона.
+  const hexacopter = combatHexacopterRangeScene.spotLightDefinitions.filter(
+    (light) =>
+      light.id.includes(":hexacopter:") && light.id.includes("headlight"),
   );
   const ours = townScene.spotLightDefinitions.filter(
     (light) => light.carrierClusterId === DS_CLUSTER_ID,
   );
-  assert.ok(hexacopter.length > 0, "фар гексакоптера в сцене нет");
+  assert.ok(hexacopter.length > 0, "фар гексакоптера на полигоне нет");
   const reference = hexacopter[0];
   for (const lamp of ours) {
     assert.equal(lamp.color, reference.color);

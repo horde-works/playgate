@@ -48,38 +48,42 @@ import {
   levelLiftCeiling,
 } from "../games/make-a-mess/src/game/vehicleLiftGeometry.ts";
 import {
-  townHexacopterRoute,
-  townHexacopterPlan,
-} from "../games/make-a-mess/src/game/townHexacopterRoutes.ts";
+  rangeHexacopterRoute,
+  rangeHexacopterPlan,
+} from "../games/make-a-mess/src/game/rangeHexacopterRoutes.ts";
 import {
   HEXACOPTER_DUCTS,
   hexacopterDuctPoint,
-  HEXACOPTER_PAD_X,
-  HEXACOPTER_PAD_Z,
   HEXACOPTER_SPAN,
   HEX_CANOPY_TOP_Y,
   HEX_FLOOR_Y,
   HEX_TRUNNION_Y,
   TOWN_HEXACOPTER_CLUSTER_ID,
   TOWN_VERTIPAD_CLUSTER_ID,
-  hexacopterPoint,
-  isInsideHexacopter,
 } from "../games/make-a-mess/src/game/townHexacopter.ts";
-import { townScene } from "../games/make-a-mess/src/game/townScene.ts";
+import {
+  RANGE_DECK_TOP_Y,
+  RANGE_HEXACOPTER_PAD_X,
+  RANGE_HEXACOPTER_PAD_Z,
+  rangeHexacopterPoint,
+  rangeHexacopterPointFromTown,
+  isInsideRangeHexacopter,
+} from "../games/make-a-mess/src/game/rangeHexacopter.ts";
+import { combatHexacopterRangeScene } from "../games/make-a-mess/src/game/combatHexacopterRangeScene.ts";
 
 const vehicle = TOWN_HEXACOPTER_AIR_VEHICLE;
 const flight = vehicle.flight;
 const densityOf = (material) => structuralMaterialProfiles[material].density;
 
-const ship = townScene.breakablePieces.filter(
+const ship = combatHexacopterRangeScene.breakablePieces.filter(
   (piece) => piece.clusterId === TOWN_HEXACOPTER_CLUSTER_ID,
 );
-const pad = townScene.breakablePieces.filter(
+const pad = combatHexacopterRangeScene.breakablePieces.filter(
   (piece) => piece.clusterId === TOWN_VERTIPAD_CLUSTER_ID,
 );
 // Рантайм берёт бертом ЦЕНТР МАСС машины (VehicleFrameSystem: `mass.centre`),
-// поэтому и высоты маршрута отсчитываются от него, а не от асфальта.
-const PAD = [HEXACOPTER_PAD_X, 0, HEXACOPTER_PAD_Z];
+// поэтому и высоты маршрута отсчитываются от него, а не от настила.
+const PAD = [RANGE_HEXACOPTER_PAD_X, 0, RANGE_HEXACOPTER_PAD_Z];
 
 // ---------------------------------------------------------------------------
 // 1. Конструкция
@@ -111,7 +115,7 @@ test("табличка предлагает пустой облёт или ру�
 });
 
 test("внутри гаснет только свет кабины, а аэронавигационные огни работают всегда", () => {
-  const carrierLamps = townScene.lampDefinitions.filter(
+  const carrierLamps = combatHexacopterRangeScene.lampDefinitions.filter(
     (lamp) => lamp.carrierClusterId === TOWN_HEXACOPTER_CLUSTER_ID,
   );
   const cabinLights = carrierLamps.filter((lamp) => lamp.interior);
@@ -136,7 +140,7 @@ test("внутри гаснет только свет кабины, а аэро�
 });
 
 test("передние два двигателя несут яркие перекрывающиеся прожекторы", () => {
-  const headlights = townScene.spotLightDefinitions.filter(
+  const headlights = combatHexacopterRangeScene.spotLightDefinitions.filter(
     (light) =>
       light.carrierClusterId === TOWN_HEXACOPTER_CLUSTER_ID &&
       light.id.includes(":headlight:"),
@@ -158,7 +162,7 @@ test("передние два двигателя несут яркие пере�
     );
     assert.equal(light.dayIntensityFactor, 0);
     assert.equal(
-      Math.abs(light.position[1] - (HEX_TRUNNION_Y - 0.06)) < 0.02,
+      Math.abs(light.position[1] - (RANGE_DECK_TOP_Y + HEX_TRUNNION_Y - 0.06)) < 0.02,
       true,
       `${light.id} не стоит на передней грани двигателя`,
     );
@@ -212,26 +216,31 @@ test("нижнее силовое ребро остаётся стальным, 
   assert.equal(lowerRing.every((piece) => piece.material === "steel"), true);
 });
 
-test("площадка стоит строго справа от дома h2, а не по диагонали к гаражу", () => {
-  // Дом h2 — копия исходного дома со сдвигом +56; его продольный центр z=-3.
-  assert.equal(HEXACOPTER_PAD_Z, -3);
-  // Восточная стена дома x=60.35, ворота гаражного ряда x=77.45. Центр
-  // шестиметровой плиты лежит в свободном промежутке с рабочим зазором с обеих
-  // сторон, а не у одного из углов.
-  assert.equal(HEXACOPTER_PAD_X, 69);
-  assert.equal(HEXACOPTER_PAD_X - 3 > 60.35, true);
-  assert.equal(HEXACOPTER_PAD_X + 3 < 77.45, true);
+test("площадка стоит на восточном настиле, в стороне от рабочей зоны RAX", () => {
+  assert.equal(RANGE_HEXACOPTER_PAD_X, 30);
+  assert.equal(RANGE_HEXACOPTER_PAD_Z, -14);
+  const radial = Math.hypot(RANGE_HEXACOPTER_PAD_X, RANGE_HEXACOPTER_PAD_Z);
+  // Шестиметровая плита целиком на сегментном настиле (внешнее кольцо 49.2)…
+  assert.equal(radial + 3 < 49.2, true, `край плиты на ${(radial + 3).toFixed(1)} м`);
+  // …и не залезает ни под розетку (мин. радиус розы 20 м от центра), ни к
+  // станции запуска RAX (5.2, 2.2).
+  assert.equal(radial - 3 > 20, true);
+  const toDispatch = Math.hypot(
+    RANGE_HEXACOPTER_PAD_X - 5.2,
+    RANGE_HEXACOPTER_PAD_Z - 2.2,
+  );
+  assert.equal(toDispatch > 10, true, `до станции запуска ${toDispatch.toFixed(1)} м`);
 });
 
 test("сцена стартует без единого неопёртого куска", () => {
-  const unsupported = [...townScene.resolveStructuralCollapse(new Set())];
+  const unsupported = [...combatHexacopterRangeScene.resolveStructuralCollapse(new Set())];
   assert.deepEqual(unsupported, []);
 });
 
 test("разбитый силовой шпангоут роняет ВСЮ машину и не трогает площадку", () => {
   const core = ship.find((piece) => piece.id.endsWith(":core:piece"));
   assert.ok(core, "силовой шпангоут не найден");
-  const collapsed = townScene.resolveStructuralCollapse(new Set([core.id]));
+  const collapsed = combatHexacopterRangeScene.resolveStructuralCollapse(new Set([core.id]));
   const stillFlying = ship.filter(
     (piece) => piece.id !== core.id && !collapsed.has(piece.id),
   );
@@ -296,7 +305,7 @@ test("потеря кольца уводит живой центр масс в �
     densityOf,
   );
   const station = HEXACOPTER_DUCTS[3];
-  const lostPoint = hexacopterPoint(station.a, station.b, 0);
+  const lostPoint = rangeHexacopterPoint(station.a, station.b, 0);
   const before = Math.hypot(
     properties.centre[0] - lostPoint[0],
     properties.centre[2] - lostPoint[2],
@@ -476,7 +485,7 @@ test("руля у машины нет: рыскание делают тольк�
   );
   // Плечи рыскания настоящие и разнесённые: три кольца на борт.
   const arms = flight.limits.enginePoints.map(
-    (point) => point[2] - HEXACOPTER_PAD_Z,
+    (point) => point[2] - RANGE_HEXACOPTER_PAD_Z,
   );
   assert.equal(arms.filter((arm) => arm > 0.5).length, 3);
   assert.equal(arms.filter((arm) => arm < -0.5).length, 3);
@@ -505,7 +514,9 @@ test("важно не сколько колец потеряно, а какие"
     HEXACOPTER_DUCTS.map((_, index) => (dead.includes(index) ? 0 : 1));
   const ratio = (...dead) =>
     levelLiftCeiling(
-      HEXACOPTER_DUCTS.map((station) => hexacopterDuctPoint(station)),
+      HEXACOPTER_DUCTS.map((station) =>
+        rangeHexacopterPointFromTown(hexacopterDuctPoint(station)),
+      ),
       properties.centre,
       alive(...dead),
     ) * reserve;
@@ -539,7 +550,7 @@ test("важно не сколько колец потеряно, а какие"
 
 test("маршрут начинается и кончается на площадке", () => {
   for (const kind of ["circuit", "tour"]) {
-    const plan = townHexacopterPlan(kind, BERTH);
+    const plan = rangeHexacopterPlan(kind, BERTH);
     const start = plan.point(0);
     const dock = plan.point(1);
     assert.equal(Math.hypot(start[0] - PAD[0], start[2] - PAD[2]) < 0.3, true);
@@ -549,35 +560,45 @@ test("маршрут начинается и кончается на площа�
   }
 });
 
-test("взлётный коридор набирает высоту раньше, чем упирается в дома", () => {
-  const plan = townHexacopterPlan("circuit", BERTH);
-  // Восточная стена h2 находится в 8.65 м по курсу; конёк — на 6.1 м.
+test("взлётный коридор набирает высоту раньше, чем уходит к рабочей зоне RAX", () => {
+  // На полигоне нет домов, но есть RAX со станцией запуска у центра диска:
+  // разгонный створ обязан пройти над ними уже на полке, а не набирать
+  // высоту по пути.
+  const plan = rangeHexacopterPlan("circuit", BERTH);
   for (let step = 0; step <= 40; step += 1) {
     const progress = (step / 40) * 0.08;
     const point = plan.point(progress);
     const away = Math.hypot(point[0] - BERTH[0], point[2] - BERTH[2]);
-    if (away > 6.5) {
+    if (away > 8) {
       assert.equal(
-        point[1] > 6,
+        point[1] - BERTH[1] > 6,
         true,
-        `на ${away.toFixed(1)} м от площадки высота всего ${point[1].toFixed(1)}`,
+        `на ${away.toFixed(1)} м от площадки высота всего ${(point[1] - BERTH[1]).toFixed(1)}`,
       );
     }
-    if (away > 11) {
-      assert.equal(point[1] > 11.5, true, "не перевалили парапеты вовремя");
+    if (away > 21) {
+      assert.equal(
+        point[1] - BERTH[1] > 11,
+        true,
+        "полка отрыва не набрана к сходу с плиты",
+      );
     }
   }
 });
 
 test("высота непрерывна, а маркеры упорядочены", () => {
   for (const kind of ["circuit", "tour"]) {
-    const route = townHexacopterRoute(kind);
-    const plan = townHexacopterPlan(kind, BERTH);
+    const route = rangeHexacopterRoute(kind);
+    const plan = rangeHexacopterPlan(kind, BERTH);
+    // Порог — уклон, а не абсолют: шаг сэмпла зависит от длины маршрута
+    // (тур вдвое длиннее круга). Самый крутой законный уклон — начало
+    // вогнутого профиля отрыва, 2·12/22 ≈ 1.09 м/м; настоящий разрыв — метры.
+    const stride = route.length / 400;
     let previous = plan.altitude(0);
     for (let step = 1; step <= 400; step += 1) {
       const altitude = plan.altitude(step / 400);
       assert.equal(
-        Math.abs(altitude - previous) < 1.6,
+        Math.abs(altitude - previous) < 1.3 * stride,
         true,
         `разрыв высоты на ${(step / 400).toFixed(3)}`,
       );
@@ -592,11 +613,15 @@ test("высота непрерывна, а маркеры упорядочен�
   }
 });
 
-test("маршрут остаётся внутри пользовательской оболочки мира", () => {
-  const centre = [townScene.worldCenter[0], townScene.worldCenter[1]];
+test("маршрут остаётся внутри видимой атмосферы полигона", () => {
+  // Закон полигона — прецедент RAX: маршрут летающей машины может уходить
+  // за кромку суши и границу игрока, землю под него не расширяют. Покрывать
+  // машину обязаны небо и камера — против них и меряем.
+  const scene = combatHexacopterRangeScene;
+  const centre = [scene.worldCenter[0], scene.worldCenter[1]];
   let maximum = 0;
   for (const kind of ["circuit", "tour"]) {
-    const plan = townHexacopterPlan(kind, BERTH);
+    const plan = rangeHexacopterPlan(kind, BERTH);
     for (let step = 0; step <= 600; step += 1) {
       const point = plan.point(step / 600);
       maximum = Math.max(
@@ -607,14 +632,29 @@ test("маршрут остаётся внутри пользовательск�
   }
   const margin = HEXACOPTER_SPAN / 2 + 6;
   assert.equal(
-    maximum + margin < townScene.boundaryRadius,
+    maximum + margin < scene.skyRadius,
     true,
-    `радиус маршрута ${maximum.toFixed(1)} + запас ${margin.toFixed(1)}`,
+    `радиус маршрута ${maximum.toFixed(1)} + запас ${margin.toFixed(1)} против неба ${scene.skyRadius}`,
   );
+  // А сама розетка — целиком над настилом: за сушу выходит только
+  // восточный причальный створ.
+  const rose = rangeHexacopterRoute("circuit");
+  const roseStart = rose.markerProgress("departureComplete");
+  const roseEnd = rose.markerProgress("roseComplete");
+  const plan = rangeHexacopterPlan("circuit", BERTH);
+  for (let step = 0; step <= 200; step += 1) {
+    const progress = roseStart + (roseEnd - roseStart) * (step / 200);
+    const point = plan.point(progress);
+    assert.equal(
+      Math.hypot(point[0] - centre[0], point[2] - centre[1]) < scene.worldRadius,
+      true,
+      `роза вышла за настил на прогрессе ${progress.toFixed(3)}`,
+    );
+  }
 });
 
 test("финальный участок ведёт к площадке по курсу носа", () => {
-  const plan = townHexacopterPlan("circuit", BERTH);
+  const plan = rangeHexacopterPlan("circuit", BERTH);
   const [tangentX, tangentZ] = vehicleRouteHeading(plan, 0.995);
   const heading = flight.approach.heading;
   const alignment = tangentX * heading[0] + tangentZ * heading[1];
@@ -632,7 +672,7 @@ test("маршрут САМ объявляет, где машина стоит �
   // и посадочный участки обязаны честно требовать нуля — иначе стоящая на
   // шасси машина получит «потерял маршрут» прямо на своей площадке, а
   // висящая в метре над пятном не получит ничего.
-  const plan = townHexacopterPlan("circuit", BERTH);
+  const plan = rangeHexacopterPlan("circuit", BERTH);
   const GROUND = 1.5;
   assert.equal(plan.altitude(0) - BERTH[1] < GROUND, true, "старт не на земле");
   assert.equal(plan.altitude(1) - BERTH[1] < GROUND, true, "финиш не на земле");
@@ -694,7 +734,7 @@ function mooringCapture(state) {
 }
 
 function flyCircuit(kind) {
-  const plan = townHexacopterPlan(kind, BERTH);
+  const plan = rangeHexacopterPlan(kind, BERTH);
   let state = {
     ...RESTING_BODY,
     position: [0, 0, 0],
@@ -1022,8 +1062,11 @@ test("на возвращении машина сначала захватыва
     null,
     "машина не захватила пятно перед снижением",
   );
+  // Полка прихода на полигоне — DECK_CLEAR_ALTITUDE = 12: пустой палубе не
+  // нужен городской запас в двадцать метров, но захват пятна обязан случиться
+  // на полке, а не в процессе снижения.
   assert.equal(
-    circuit.arrivalCaptureAltitude > 20,
+    circuit.arrivalCaptureAltitude > 10.5,
     true,
     `пятно захвачено уже на высоте ${circuit.arrivalCaptureAltitude.toFixed(2)} м`,
   );
@@ -1073,13 +1116,13 @@ test("рейс кончается посадкой на своё пятно", ()
 
 test("действие «лететь» живёт только внутри кабины", () => {
   const inside = vehicle.passengerFlight.point;
-  assert.equal(isInsideHexacopter(inside), true);
+  assert.equal(isInsideRangeHexacopter(inside), true);
   assert.equal(vehicle.passengerFlight.contains(inside), true);
   // Снаружи — у стойки табло, у кольца, под днищем — предложения нет.
-  assert.equal(isInsideHexacopter(vehicle.departure.point), false);
-  assert.equal(isInsideHexacopter(hexacopterPoint(2.15, 0, 1.7)), false);
-  assert.equal(isInsideHexacopter(hexacopterPoint(0, 0, HEX_FLOOR_Y - 0.3)), false);
-  assert.equal(isInsideHexacopter(hexacopterPoint(0, 0, HEX_CANOPY_TOP_Y + 0.3)), false);
+  assert.equal(isInsideRangeHexacopter(vehicle.departure.point), false);
+  assert.equal(isInsideRangeHexacopter(rangeHexacopterPoint(2.15, 0, 1.7)), false);
+  assert.equal(isInsideRangeHexacopter(rangeHexacopterPoint(0, 0, HEX_FLOOR_Y - 0.3)), false);
+  assert.equal(isInsideRangeHexacopter(rangeHexacopterPoint(0, 0, HEX_CANOPY_TOP_Y + 0.3)), false);
 });
 
 test("беспилотный запуск стоит у площадки, а не в кабине", () => {

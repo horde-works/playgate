@@ -15,6 +15,7 @@ import {
 } from "../games/make-a-mess/src/game/compoundKinematicCluster.ts";
 import { structuralMaterialProfiles } from "../games/make-a-mess/src/game/destructionScene.ts";
 import { townScene } from "../games/make-a-mess/src/game/townScene.ts";
+import { combatHexacopterRangeScene } from "../games/make-a-mess/src/game/combatHexacopterRangeScene.ts";
 import {
   VEHICLE_ATTACHMENT,
   VEHICLE_CARRIER,
@@ -23,6 +24,14 @@ import { countUpwardSupportContacts } from "../games/make-a-mess/src/game/vehicl
 import { vehicleFrameForCluster } from "../games/make-a-mess/src/game/vehicleFrames.ts";
 
 await RAPIER.init();
+
+// Машины живут в разных сценах: HX-6 с площадкой — на полигоне Tonkawa
+// (фишка №1), дирижабль с мачтой — в городе. Id кластеров глобально
+// уникальны, поэтому куски ищутся по объединению сцен.
+const machineScenePieces = [
+  ...townScene.breakablePieces,
+  ...combatHexacopterRangeScene.breakablePieces,
+];
 
 function rotationOf(piece) {
   return new Quaternion().setFromEuler(new Euler(...(piece.rotation ?? [0, 0, 0])));
@@ -93,7 +102,7 @@ function addFixedPiece(world, piece, collisionGroups) {
 function selfContactResult(clusterId) {
   const frame = vehicleFrameForCluster(clusterId);
   assert.ok(frame, `${clusterId} has no vehicle frame`);
-  const pieces = townScene.breakablePieces.filter(
+  const pieces = machineScenePieces.filter(
     (piece) => piece.clusterId === clusterId,
   );
   const properties = massProperties(
@@ -186,7 +195,7 @@ function selfContactResult(clusterId) {
 function idleBerthResult(clusterId, berthClusterId) {
   const frame = vehicleFrameForCluster(clusterId);
   assert.ok(frame, `${clusterId} has no vehicle frame`);
-  const pieces = townScene.breakablePieces.filter(
+  const pieces = machineScenePieces.filter(
     (piece) => piece.clusterId === clusterId,
   );
   const properties = massProperties(
@@ -241,7 +250,7 @@ function idleBerthResult(clusterId, berthClusterId) {
     addFixedPiece(world, piece, VEHICLE_ATTACHMENT);
   }
   const berthSources = new Map();
-  for (const piece of townScene.breakablePieces.filter(
+  for (const piece of machineScenePieces.filter(
     (piece) => piece.clusterId === berthClusterId,
   )) {
     for (const handle of addFixedPiece(world, piece, undefined)) {

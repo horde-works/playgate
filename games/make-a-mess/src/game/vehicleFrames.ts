@@ -54,6 +54,7 @@ import {
   TOWN_HEXACOPTER_CLUSTER_ID,
   hexacopterPoint,
 } from "./townHexacopter.ts";
+import { rangeHexacopterPointFromTown } from "./rangeHexacopter.ts";
 import {
   NIMBUS_HEXACOPTER_CLUSTER_ID,
   NIMBUS_HEXACOPTER_LIFT_CENTRE,
@@ -665,19 +666,25 @@ export const vehicleFrames: readonly VehicleFrameDefinition[] = [
     clusterId: TOWN_HEXACOPTER_CLUSTER_ID,
     telemetryLabel: "HX-6",
     independentMemberMatches: [":blade:", ":trim:"],
-    origin: HEXACOPTER_ORIGIN,
+    // Машина переехала на полигон Tonkawa (фишка №1, вердикт Igor
+    // 07.08.2026) чистой трансляцией с сохранением всех идентификаторов:
+    // якоря кадра переезжают той же суммой, что и куски кластера.
+    origin: rangeHexacopterPointFromTown(HEXACOPTER_ORIGIN),
     nose: HEXACOPTER_NOSE,
     // Носовой штырь под гондолой входит в приёмный стакан площадки.
-    mooringPoint: HEXACOPTER_MOORING_POINT,
+    mooringPoint: rangeHexacopterPointFromTown(HEXACOPTER_MOORING_POINT),
     // Подъём приложен в плоскости входных губ — единственной точке машины,
     // которая выше центра масс. Это и есть весь её маятник: у винтокрылой
     // машины он короткий, и таким он и должен быть.
-    liftCentre: HEXACOPTER_LIFT_CENTRE,
+    liftCentre: rangeHexacopterPointFromTown(HEXACOPTER_LIFT_CENTRE),
     // Подъём этой машины делают ЛОПАСТИ, а не оболочка. Поэтому доля
     // уцелевших лопастей и есть доля располагаемого подъёма: восемнадцать
     // лопастей в шести кольцах, потеря кольца — минус 1/6 подъёма.
     envelopeMatch: ":blade:",
-    proximitySensors: hexacopterProximitySensors(),
+    proximitySensors: hexacopterProximitySensors().map((sensor) => ({
+      ...sensor,
+      point: rangeHexacopterPointFromTown(sensor.point),
+    })),
     // ДИФФЕРЕНТОВКИ У КОПТЕРА НЕТ И БЫТЬ НЕ ДОЛЖНО.
     //
     // Подвижный груз — орган ГАЗОВОЙ машины: у неё момент по крену и тангажу

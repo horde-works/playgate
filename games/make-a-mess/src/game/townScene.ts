@@ -9,10 +9,10 @@ import {
   skyMooringDocument,
   skyMooringSpotLights,
 } from "../content/scenes/skyMooringDocument.ts";
-import {
-  townVertipadDocument,
-  townVertipadSpotLights,
-} from "../content/scenes/townVertipadDocument.ts";
+// Вертипад HX-6 переехал на полигон Tonkawa целиком (фишка №1, вердикт
+// Igor 07.08.2026) — см. rangeVertipadDocument.ts. Город остаётся без
+// собственного вертипада; кластер town-vertipad:hexacopter живёт теперь
+// ровно в одной сцене — combatHexacopterRangeScene.
 import {
   townBoulevardDocument,
   townBoulevardSpotLights,
@@ -37,11 +37,6 @@ export const skyMooringCompilation = compileSceneGroups(
   cityPrefabLibrary,
 );
 
-export const vertipadCompilation = compileSceneGroups(
-  townVertipadDocument,
-  cityPrefabLibrary,
-);
-
 export const boulevardCompilation = compileSceneGroups(
   townBoulevardDocument,
   cityPrefabLibrary,
@@ -58,7 +53,6 @@ export const townScene = createDestructionScene({
     ...openHouseSceneOptions.clusters,
     ...oldQuarterCompilation.clusters,
     ...skyMooringCompilation.clusters,
-    ...vertipadCompilation.clusters,
     ...boulevardCompilation.clusters,
     ...sr6SkatCompilation.clusters,
   ],
@@ -66,13 +60,11 @@ export const townScene = createDestructionScene({
     ...openHouseSceneOptions.lamps,
     ...oldQuarterCompilation.lamps,
     ...skyMooringCompilation.lamps,
-    ...vertipadCompilation.lamps,
     ...boulevardCompilation.lamps,
     ...sr6SkatCompilation.lamps,
   ],
   spotLights: [
     ...skyMooringSpotLights,
-    ...townVertipadSpotLights,
     ...townBoulevardSpotLights,
   ],
 });

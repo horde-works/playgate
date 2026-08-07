@@ -12,7 +12,7 @@ import {
   classifyLandingDamage,
   crumbleOnLanding,
 } from "../games/make-a-mess/src/game/destructionRuntime.ts";
-import { townScene } from "../games/make-a-mess/src/game/townScene.ts";
+import { combatHexacopterRangeScene } from "../games/make-a-mess/src/game/combatHexacopterRangeScene.ts";
 import {
   HEXACOPTER_GEAR_STATIONS,
   HEXACOPTER_DUCTS,
@@ -21,8 +21,10 @@ import {
   HEX_FOOT_BOTTOM_Y,
   HEX_LIP_OUTER_RADIUS,
   TOWN_HEXACOPTER_CLUSTER_ID,
-  hexacopterPoint,
 } from "../games/make-a-mess/src/game/townHexacopter.ts";
+// Машина живёт на полигоне Tonkawa: мировые точки контакта строятся её
+// полигонным размещением, машинно-локальные оси и станции — те же.
+import { rangeHexacopterPoint } from "../games/make-a-mess/src/game/rangeHexacopter.ts";
 import { airVehicles } from "../games/make-a-mess/src/game/airVehicles.ts";
 import {
   contactRestitution,
@@ -45,7 +47,7 @@ const judge = (material, closingSpeed, intensity) =>
     ? classifyLandingDamage(material, closingSpeed, intensity)
     : "none";
 
-const ship = townScene.breakablePieces.filter(
+const ship = combatHexacopterRangeScene.breakablePieces.filter(
   (piece) => piece.clusterId === TOWN_HEXACOPTER_CLUSTER_ID,
 );
 const properties = massProperties(ship, densityOf);
@@ -66,14 +68,14 @@ assert.ok(GLASS, "у машины должно быть остекление");
 
 const GEAR = pieceNamed("gear:0:lower");
 const SHROUD = pieceNamed("duct:0:shroud:0");
-const GEAR_POINT = hexacopterPoint(
+const GEAR_POINT = rangeHexacopterPoint(
   HEXACOPTER_GEAR_STATIONS[0].a,
   HEXACOPTER_GEAR_STATIONS[0].b,
   HEX_FOOT_BOTTOM_Y,
 );
 const RIM_STATION = HEXACOPTER_DUCTS[0];
 const RIM_RADIUS = HEX_ARM_RADIUS + HEX_LIP_OUTER_RADIUS;
-const RIM_POINT = hexacopterPoint(
+const RIM_POINT = rangeHexacopterPoint(
   RIM_RADIUS * Math.cos(RIM_STATION.angle),
   RIM_RADIUS * Math.sin(RIM_STATION.angle),
   HEX_DISC_Y,

@@ -19,6 +19,7 @@ import {
 } from "../games/make-a-mess/src/game/clusterDynamics.ts";
 import { grandTerminalScene } from "../games/make-a-mess/src/game/grandTerminalScene.ts";
 import { townScene } from "../games/make-a-mess/src/game/townScene.ts";
+import { combatHexacopterRangeScene } from "../games/make-a-mess/src/game/combatHexacopterRangeScene.ts";
 import { TOWN_HEXACOPTER_CLUSTER_ID } from "../games/make-a-mess/src/game/townHexacopter.ts";
 import { vehicleFrameForCluster } from "../games/make-a-mess/src/game/vehicleFrames.ts";
 
@@ -79,9 +80,11 @@ test("town vehicles materialise only articulated bodies until pieces detach", ()
   for (const [clusterId, expectedBodies] of expected) {
     const frame = vehicleFrameForCluster(clusterId);
     assert.ok(frame, `missing frame ${clusterId}`);
-    const pieces = townScene.breakablePieces.filter(
-      (piece) => piece.clusterId === clusterId,
-    );
+    // HX-6 переехал на полигон Tonkawa; дирижабль остался в городе.
+    const pieces = [
+      ...townScene.breakablePieces,
+      ...combatHexacopterRangeScene.breakablePieces,
+    ].filter((piece) => piece.clusterId === clusterId);
     const intactBodies = pieces.filter((piece) =>
       compoundMemberNeedsIndividualBody(frame, piece, false),
     );

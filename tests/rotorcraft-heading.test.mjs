@@ -5,7 +5,7 @@ import {
   HEADING_ALIGN_SECONDS,
 } from "../games/make-a-mess/src/game/vehicleFrames.ts";
 import { airVehicles } from "../games/make-a-mess/src/game/airVehicles.ts";
-import { townScene } from "../games/make-a-mess/src/game/townScene.ts";
+import { combatHexacopterRangeScene } from "../games/make-a-mess/src/game/combatHexacopterRangeScene.ts";
 import { massProperties } from "../games/make-a-mess/src/game/clusterDynamics.ts";
 import { structuralMaterialProfiles } from "../games/make-a-mess/src/game/destructionScene.ts";
 
@@ -19,7 +19,7 @@ import { structuralMaterialProfiles } from "../games/make-a-mess/src/game/destru
  * пропорционален ошибке курса и убывает вместе с ней.
  */
 const vehicle = airVehicles.find(({ id }) => id === "town-hexacopter");
-const pieces = townScene.breakablePieces.filter(
+const pieces = combatHexacopterRangeScene.breakablePieces.filter(
   (piece) => piece.clusterId === vehicle.clusterId,
 );
 const mass = massProperties(
