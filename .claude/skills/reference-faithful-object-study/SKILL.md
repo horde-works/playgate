@@ -2,19 +2,23 @@
 name: reference-faithful-object-study
 description: >-
   Research, engineer, implement, validate, test, and render reference-faithful
-  3D objects as one canonical geometry before scene/physics integration. Use
-  for Object Lab studies of vehicles, aircraft, rotorcraft, drones, boats,
-  machines, articulated mechanisms, buildings, architecture and props; for
-  ImageGen concept-to-geometry, blueprints, measured drawings and multi-angle
-  PNG studies; and for quantitative reference registration, overlays, IoU,
+  3D objects as one canonical geometry before scene/physics integration — both
+  real-world types and imagined machines. Use for Object Lab studies of
+  vehicles, cars, aircraft, rotorcraft, drones, hexacopters, boats, ships,
+  windmills, machines and articulated mechanisms (rotors, wheels, canopies,
+  doors, gates, sails, turrets, kinematic groups, swept envelopes), and equally
+  for buildings, architectural props, yard or street objects, sheds, pumps,
+  furniture, equipment, openings, supports and joints; for ImageGen
+  concept-to-geometry, blueprints, measured drawings and multi-angle PNG
+  studies; and for quantitative reference registration, overlays, IoU,
   landmarks, multi-view conflicts, solid/manifold/export checks, PBR/material
   and target-renderer parity, named assembly joints and hardpoints, motion/swept
   envelopes, CAD/BREP/STEP/GLB sidecars, physics/visual mapping and repeated
   object-study failures. Triggers:
   ObjectLabModel, objectModel.ts, object lab, evidence card, discrepancy log,
-  canonical object, reference manifest, silhouette fit, motionConstraints,
-  rotor pivot, swept envelope, cutaway, solid validity, assembly datum, model
-  hash and capture manifest.
+  canonical object, reference manifest, silhouette control, silhouette fit,
+  motionConstraints, rotor pivot, swept envelope, cutaway, solid validity,
+  assembly datum, model hash and capture manifest.
 ---
 
 # Reference-Faithful Object Study

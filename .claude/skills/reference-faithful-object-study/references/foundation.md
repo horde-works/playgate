@@ -231,26 +231,45 @@ protected files. It should not weaken the portable evidence or acceptance gates.
 
 ## 9. Installation and discovery
 
-Keep one canonical skill folder in a versioned repository. Expose it to each
-agent through that agent's discovery directory:
+Keep exactly one skill folder, in the repository, and let every agent discover
+it there. A skill lives at `.claude/skills/<skill-name>/` and serves both agents
+from that one place:
 
-| Agent | Discovery location | Preferred installation |
+| Consumer | What it reads | Where it comes from |
 | --- | --- | --- |
-| Claude Code | `~/.claude/skills/<skill-name>/SKILL.md` | short pointer to the canonical folder |
-| Codex | `~/.codex/skills/<skill-name>/SKILL.md` | short pointer to the canonical folder |
+| Claude Code | `SKILL.md` frontmatter (`name`, `description`) | the repository folder |
+| Codex | `agents/openai.yaml` (`display_name`, `short_description`, `default_prompt`) | the same repository folder |
 
-The pointer contains only valid frontmatter, the canonical absolute path and an
-instruction to read the canonical `SKILL.md` completely. It owns no operating
-rules. Edit the repository copy and validate it once; do not maintain two
-forked skill bodies.
+Both files sit side by side in one versioned folder. There is nothing to install
+and nothing to keep in step.
 
-For a portable team installation, replace the user-specific absolute path with
-a repository-relative discovery mechanism supported by the team environment or
-generate local pointers during setup. Never commit another developer's home
-path into a shared product configuration.
+**Do not place a same-named skill in a user-level directory** — not
+`~/.claude/skills/`, not `~/.codex/skills/`, and not as a "pointer that owns no
+rules". A user-level skill with the same `name` silently shadows the repository
+one, and shadowing is not a small cost:
+
+- **The agent gets the stub instead of the method.** Discovery resolves to the
+  pointer, so the router, the mandatory-reading list and every conditional
+  module are replaced by a few lines telling the agent to go and read them.
+- **An absolute home path is machine-local.** This project is developed from two
+  machines whose checkouts differ (`/Users/…/cursor/playgate` against
+  `C:\Users\…\cursor\playgate`). A pointer written on one of them resolves to
+  nothing on the other — and because it still shadows by name, the second
+  machine ends up with LESS than if the pointer had never existed. Removing a
+  working skill is the opposite of installing one.
+- **Two copies of a description drift, and nothing reports it.** Repository
+  tests scan the repository; they cannot see a user-level fork. Observed in this
+  skill: the pointer's `agents/openai.yaml` had already drifted from the
+  canonical one in `short_description` and `default_prompt` while both
+  `SKILL.md` frontmatters still matched character for character — the failure
+  was already present and invisible.
+
+This is a recorded project decision, not a preference: see the "Скиллы" section
+of the repository `CLAUDE.md`. If a skill does not appear, fix discovery for the
+repository folder; do not fork it into a home directory.
 
 An already running agent session may have cached its available skill catalog.
-Start a new session after first installation if the skill does not appear.
+Start a new session if a newly added repository skill does not appear.
 
 ## 10. Extension rules
 
@@ -274,7 +293,12 @@ in tested scripts. Do not duplicate a rule between the router and a reference.
 Before releasing or porting the skill, verify:
 
 - frontmatter contains only a valid `name` and comprehensive `description`;
-- discovery pointer and canonical skill use the same name;
+- `description` still names the concrete objects a request will actually call
+  them, not only the abstract quality vocabulary — a checklist noun that nobody
+  types is a trigger that never fires;
+- no same-named skill exists in any user-level directory (§9);
+- the Codex manifest `agents/openai.yaml` sits beside `SKILL.md` in the same
+  repository folder and describes the same skill;
 - canonical `SKILL.md` links every conditional module directly;
 - every Markdown link resolves;
 - the main file remains below 500 lines;
