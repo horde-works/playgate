@@ -174,8 +174,11 @@ test("меши конечны и не содержат вырожденных т
 test("фиксированные камеры включают ортографику, рискованные виды и парный cutaway", () => {
   const required = [
     "front", "left", "right", "rear", "top", "front-three-quarter",
-    "rear-three-quarter", "high-three-quarter", "underside", "yaw-detail",
-    "structural-exterior", "structural-cutaway", "silhouette",
+    "rear-three-quarter", "high-three-quarter", "underside",
+    // Камера рамы фонаря: носовой торец продольных членов и обе дуги на
+    // стекле читаются только вблизи.
+    "canopy-frame",
+    "yaw-detail", "structural-exterior", "structural-cutaway", "silhouette",
   ];
   assert.deepEqual(combatHexacopterObject.views.map((view) => view.id), required);
   const exterior = combatHexacopterObject.views.find((view) => view.id === "structural-exterior");
@@ -185,6 +188,102 @@ test("фиксированные камеры включают ортограф�
   assert.equal(cutaway.fov, exterior.fov);
   assert.equal(exterior.hiddenGroups, undefined);
   assert.deepEqual(cutaway.hiddenGroups, ["outer-shell", "canopy", "shoulder-armour", "service-detail", "sensors", "lighting"]);
+});
+
+// ---------------------------------------------------------------------------
+// Рама фонаря. Оба замера снимаются с ВЫПУЩЕННЫХ мешей — и обвода, и члена, —
+// поэтому строитель не может подтвердить сам себя.
+// ---------------------------------------------------------------------------
+
+const partById = (id) => {
+  const part = combatHexacopterObject.parts.find((candidate) => candidate.id === id);
+  assert.ok(part, `в объекте нет детали ${id}`);
+  return part;
+};
+
+const CANOPY_FRAME_IDS = [
+  "canopy-crown-rail",
+  "canopy-coaming--1",
+  "canopy-coaming-1",
+  "canopy-mid-pillar--1",
+  "canopy-mid-pillar-1",
+  "canopy-aft-pillar--1",
+  "canopy-aft-pillar-1",
+  "canopy-aft-brow",
+  "survival-canopy-sill--1",
+  "survival-canopy-sill-1",
+];
+
+/** Кольца остекления, восстановленные из его собственных вершин. */
+const glazingRings = () => {
+  const rings = new Map();
+  for (const vertex of partById("canopy-glazing").vertices) {
+    const key = vertex[2].toFixed(4);
+    const ring = rings.get(key) ?? [];
+    ring.push(vertex);
+    rings.set(key, ring);
+  }
+  return [...rings.values()]
+    .map((ring) => {
+      // На каждом кольце с одного борта ровно три узла: пята, стекло, конёк.
+      // Меш выпускает вершины пофасетно, поэтому узлы сначала склеиваются.
+      const unique = new Map();
+      for (const vertex of ring) {
+        unique.set(vertex.map((value) => value.toFixed(4)).join(":"), vertex);
+      }
+      const outboard = [...unique.values()]
+        .filter((vertex) => vertex[0] > 1e-6)
+        .sort((first, second) => first[1] - second[1]);
+      assert.equal(outboard.length, 3, `кольцо z=${ring[0][2]} потеряло узлы обвода`);
+      return { z: ring[0][2], base: outboard[0], glass: outboard[1], crown: outboard[2] };
+    })
+    .sort((first, second) => second.z - first.z);
+};
+
+test("рама фонаря не выходит за поперечный обвод остекления", () => {
+  const front = Math.max(...partById("canopy-glazing").vertices.map((vertex) => vertex[2]));
+  for (const id of CANOPY_FRAME_IDS) {
+    const reach = Math.max(...partById(id).vertices.map((vertex) => vertex[2]));
+    assert.equal(
+      reach <= front,
+      true,
+      `${id} выходит на ${((reach - front) * 1000).toFixed(0)} мм за обвод стекла (${reach.toFixed(3)} против ${front.toFixed(3)})`,
+    );
+  }
+});
+
+test("стойка фонаря идёт по обводу стекла, а не по хорде между пятой и коньком", () => {
+  const rings = glazingRings();
+  for (const id of ["canopy-mid-pillar--1", "canopy-mid-pillar-1", "canopy-aft-pillar--1", "canopy-aft-pillar-1"]) {
+    const pillar = partById(id);
+    const station = (
+      Math.min(...pillar.vertices.map((vertex) => vertex[2]))
+      + Math.max(...pillar.vertices.map((vertex) => vertex[2]))
+    ) / 2;
+    const upper = rings.find((ring, index) => ring.z >= station && rings[index + 1]?.z <= station);
+    const lower = rings[rings.indexOf(upper) + 1];
+    assert.ok(upper && lower, `станция ${station} вне остекления`);
+    const t = (upper.z - station) / (upper.z - lower.z);
+    const cornerX = upper.glass[0] + (lower.glass[0] - upper.glass[0]) * t;
+    const cornerY = upper.glass[1] + (lower.glass[1] - upper.glass[1]) * t;
+
+    // Узел стойки стоит НА углу остекления: прямая хорда проходила в 14 см от
+    // него, тонула в стекле и высовывалась наружу одним верхним огрызком.
+    const near = pillar.vertices.filter(
+      (vertex) => Math.hypot(Math.abs(vertex[0]) - cornerX, vertex[1] - cornerY) <= 0.06,
+    );
+    assert.equal(
+      near.length > 0,
+      true,
+      `${id}: ближайшая точка в ${Math.min(...pillar.vertices.map((vertex) => Math.hypot(Math.abs(vertex[0]) - cornerX, vertex[1] - cornerY))).toFixed(3)} м от угла остекления`,
+    );
+    // И короб сидит серединой на поверхности, как комингс: часть наружу,
+    // часть внутрь.
+    const outboard = Math.max(...near.map((vertex) => Math.abs(vertex[0])));
+    const inboard = Math.min(...near.map((vertex) => Math.abs(vertex[0])));
+    assert.equal(outboard > cornerX, true, `${id} целиком внутри стекла`);
+    assert.equal(inboard < cornerX, true, `${id} целиком снаружи стекла`);
+  }
 });
 
 test("прозрачность принадлежит только физическому стеклу", () => {

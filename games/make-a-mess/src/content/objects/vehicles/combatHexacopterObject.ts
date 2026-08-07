@@ -936,17 +936,127 @@ addFacets("canopy-glazing", "canopy", "glazing", buildLoft(
   { tag: "canopy", capStart: true },
 ), { showEdges: false, doubleSided: true });
 
+/**
+ * Сечение остекления на произвольной станции: рама фонаря обязана строиться
+ * ПО ОБВОДУ, а не по хорде между его крайними узлами.
+ */
+const canopySectionAt = (z: number): CanopySection => {
+  for (let index = 0; index < canopySections.length - 1; index += 1) {
+    const from = canopySections[index];
+    const to = canopySections[index + 1];
+    if (z <= from.z && z >= to.z) {
+      const t = (from.z - z) / (from.z - to.z);
+      const mix = (a: number, b: number) => a + (b - a) * t;
+      return {
+        z,
+        baseHalf: mix(from.baseHalf, to.baseHalf),
+        baseY: mix(from.baseY, to.baseY),
+        glassHalf: mix(from.glassHalf, to.glassHalf),
+        glassY: mix(from.glassY, to.glassY),
+        crownHalf: mix(from.crownHalf, to.crownHalf),
+        crownY: mix(from.crownY, to.crownY),
+        topY: mix(from.topY, to.topY),
+      };
+    }
+  }
+  throw new Error(`canopy station ${z} lies outside the glazing`);
+};
+
+/**
+ * СТОЙКА ФОНАРЯ ИДЁТ ПО ОБВОДУ, А НЕ ПО ХОРДЕ.
+ *
+ * Обвод остекления выпуклый: пята — стекло — конёк. Прямой короб между пятой
+ * и коньком проходит на 5 см ВНУТРИ этой ломаной, поэтому стойка тонула в
+ * стекле, а наружу торчал только её верхний огрызок — «силовой элемент
+ * наезжает на стекло». Строим ломаную по тем же узлам, что и сам обвод: как
+ * комингс, короб сидит серединой на поверхности и наполовину утоплен.
+ */
+const canopyPillarFacets = (
+  z: number,
+  side: number,
+  width: number,
+  height: number,
+  tag: string,
+): Facet[] => {
+  const section = canopySectionAt(z);
+  const nodes: readonly ObjectPoint[] = [
+    point(side * section.baseHalf, section.baseY, z),
+    point(side * section.glassHalf, section.glassY, z),
+    point(side * section.crownHalf, section.crownY, z),
+    // Дуга кончается В продольном рельсе, а не торцом посреди панели: рама
+    // фонаря — замкнутая клетка, шпангоут отдаёт нагрузку хребту.
+    point(0, section.topY + 0.012, z),
+  ];
+  const facets: Facet[] = [];
+  for (let index = 0; index < nodes.length - 1; index += 1) {
+    facets.push(...buildTorqueBox({
+      from: nodes[index],
+      to: nodes[index + 1],
+      width,
+      height,
+      chamfer: 0.018,
+      tag,
+    }));
+  }
+  return facets;
+};
+
+/** Поперечный обвод остекления по носу: за него рама выходить не имеет права. */
+const CANOPY_FRONT_Z = canopySections[0].z;
+
+/**
+ * НОСОВОЙ ТОРЕЦ ПРОДОЛЬНОГО ЧЛЕНА.
+ *
+ * Крышка торсионного короба перпендикулярна ОСИ, поэтому её верхний угол всегда
+ * уходит вперёд дальше самого узла — тем дальше, чем круче наклон. На носовой
+ * секции это давало вынос 1.8 см у конькового рельса и 0.9 см у комингсов:
+ * силовой элемент кончался огрызком ЗА поперечным обводом стекла, в воздухе над
+ * бронёй носа. Узел утапливается вдоль оси ровно на измеренный вынос, и мерится
+ * он по ПОСТРОЕННОМУ коробу — выводить эту величину заново рядом со строителем
+ * значит держать две копии одной геометрии.
+ */
+const insetToCanopyFrontFrame = (
+  from: ObjectPoint,
+  to: ObjectPoint,
+  box: { readonly width: number; readonly height: number; readonly chamfer: number },
+): ObjectPoint => {
+  const axis = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
+  const length = Math.hypot(axis[0], axis[1], axis[2]);
+  const unit = axis.map((value) => value / length);
+  let node = from;
+  for (let pass = 0; pass < 4; pass += 1) {
+    let front = -Infinity;
+    for (const facet of buildTorqueBox({ from: node, to, ...box })) {
+      for (const vertex of facet.points) {
+        front = Math.max(front, vertex[2]);
+      }
+    }
+    const excess = front - (CANOPY_FRONT_Z - 0.004);
+    if (excess <= 0) {
+      break;
+    }
+    const step = excess / Math.abs(unit[2]);
+    node = point(
+      node[0] + unit[0] * step,
+      node[1] + unit[1] * step,
+      node[2] + unit[2] * step,
+    );
+  }
+  return node;
+};
+
 {
+  const box = { width: 0.065, height: 0.075, chamfer: 0.018 };
   const crownRail: Facet[] = [];
   for (let index = 0; index < canopySections.length - 1; index += 1) {
     const from = canopySections[index];
     const to = canopySections[index + 1];
+    const start = point(0, from.topY + 0.012, from.z);
+    const end = point(0, to.topY + 0.012, to.z);
     crownRail.push(...buildTorqueBox({
-      from: point(0, from.topY + 0.012, from.z),
-      to: point(0, to.topY + 0.012, to.z),
-      width: 0.065,
-      height: 0.075,
-      chamfer: 0.018,
+      from: index === 0 ? insetToCanopyFrontFrame(start, end, box) : start,
+      to: end,
+      ...box,
       tag: "canopy-crown-rail",
     }));
   }
@@ -955,35 +1065,26 @@ addFacets("canopy-glazing", "canopy", "glazing", buildLoft(
 
 for (const side of [-1, 1]) {
   const sillFacets: Facet[] = [];
+  const sillBox = { width: 0.065, height: 0.07, chamfer: 0.016 };
   for (let index = 0; index < canopySections.length - 1; index += 1) {
     const from = canopySections[index];
     const to = canopySections[index + 1];
+    const start = point(side * from.baseHalf, from.baseY, from.z);
+    const end = point(side * to.baseHalf, to.baseY, to.z);
     sillFacets.push(...buildTorqueBox({
-      from: point(side * from.baseHalf, from.baseY, from.z),
-      to: point(side * to.baseHalf, to.baseY, to.z),
-      width: 0.065,
-      height: 0.07,
-      chamfer: 0.016,
+      from: index === 0 ? insetToCanopyFrontFrame(start, end, sillBox) : start,
+      to: end,
+      ...sillBox,
       tag: "canopy-coaming",
     }));
   }
   addFacets(`canopy-coaming-${side}`, "outer-shell", "metal", sillFacets, { showEdges: false });
-  addFacets(`canopy-mid-pillar-${side}`, "outer-shell", "metal", buildTorqueBox({
-    from: point(side * 0.47, 1.135, 1.28),
-    to: point(side * 0.21, 1.66, 1.28),
-    width: 0.07,
-    height: 0.075,
-    chamfer: 0.018,
-    tag: "canopy-mid-pillar",
-  }), { showEdges: false });
-  addFacets(`canopy-aft-pillar-${side}`, "outer-shell", "metal", buildTorqueBox({
-    from: point(side * 0.37, 1.26, 0.02),
-    to: point(side * 0.14, 1.58, 0.02),
-    width: 0.075,
-    height: 0.08,
-    chamfer: 0.018,
-    tag: "canopy-aft-pillar",
-  }), { showEdges: false });
+  addFacets(`canopy-mid-pillar-${side}`, "outer-shell", "metal",
+    canopyPillarFacets(1.28, side, 0.07, 0.075, "canopy-mid-pillar"),
+    { showEdges: false });
+  addFacets(`canopy-aft-pillar-${side}`, "outer-shell", "metal",
+    canopyPillarFacets(0.02, side, 0.075, 0.08, "canopy-aft-pillar"),
+    { showEdges: false });
 }
 
 addFacets("canopy-aft-brow", "outer-shell", "roof-dark", buildTorqueBox({
@@ -1586,6 +1687,9 @@ export const combatHexacopterObject: CombatHexacopterModel = {
     { id: "rear-three-quarter", label: "Rear three-quarter — spine and boost ducts", projection: "perspective", position: point(8.5, 4.5, -8.8), target: point(0, 1.02, -0.2), fov: 34 },
     { id: "high-three-quarter", label: "High three-quarter — frame plan", projection: "perspective", position: point(-8.6, 9.5, 8.2), target: point(0, 0.95, -0.05), fov: 34 },
     { id: "underside", label: "Low three-quarter — keel and landing chains", projection: "perspective", position: point(7.5, 2.2, 8.4), target: point(0, 0.66, 0.1), fov: 36 },
+    // Камера, вскрывающая раму фонаря: носовой торец продольных членов и обе
+    // дуги на стекле. Обе болезни C2 были видны только вблизи и только отсюда.
+    { id: "canopy-frame", label: "Canopy frame detail — nose termination and bows", projection: "perspective", position: point(-2.6, 2.9, 6.2), target: point(0, 1.35, 1.4), fov: 26 },
     { id: "yaw-detail", label: "Yaw tunnel detail — mirrored diagonal axes", projection: "perspective", position: point(-4.2, 2.9, 3.5), target: point(-1.02, 1.36, -0.48), fov: 25, hiddenGroups: ["outer-shell", "canopy", "shoulder-armour", "service-detail", "sensors", "lighting"] },
     { id: "structural-exterior", label: "Structural camera — full exterior", projection: "perspective", position: point(-6.4, 4.15, 6.7), target: point(0, 0.96, 0), fov: 31 },
     { id: "structural-cutaway", label: "Structural camera — canonical cutaway", projection: "perspective", position: point(-6.4, 4.15, 6.7), target: point(0, 0.96, 0), fov: 31, hiddenGroups: ["outer-shell", "canopy", "shoulder-armour", "service-detail", "sensors", "lighting"] },

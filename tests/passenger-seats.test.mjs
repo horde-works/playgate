@@ -114,15 +114,19 @@ test("пилот покидает коптер наружу: за габарит
     "../games/make-a-mess/src/game/passengerSeats.ts"
   );
   const {
-    HEXACOPTER_PAD_X,
-    HEXACOPTER_PAD_Z,
     HEXACOPTER_DUCTS,
     HEXACOPTER_GEAR_STATIONS,
     HEX_ARM_RADIUS,
     HEX_LIP_OUTER_RADIUS,
-    HEX_FOOT_BOTTOM_Y,
-    hexacopterPoint,
   } = await import("../games/make-a-mess/src/game/townHexacopter.ts");
+  // Машина живёт на полигоне, поэтому и меряем в её мире, а не в городе,
+  // из которого она уехала.
+  const {
+    RANGE_HEXACOPTER_PAD_X,
+    RANGE_HEXACOPTER_PAD_Z,
+    RANGE_HEXACOPTER_PAD_TOP_Y,
+    rangeHexacopterPoint,
+  } = await import("../games/make-a-mess/src/game/rangeHexacopter.ts");
   const { PLAYER_CAPSULE_FOOT_OFFSET, PLAYER_CAPSULE_RADIUS } = await import(
     "../games/make-a-mess/src/game/playerMovement.ts"
   );
@@ -130,8 +134,8 @@ test("пилот покидает коптер наружу: за габарит
   const exit = TOWN_HEXACOPTER_PILOT_SEAT.exitPoint;
   // Снаружи машины: дальше внешней кромки колец плюс радиус капсулы.
   const fromCentre = Math.hypot(
-    exit[0] - HEXACOPTER_PAD_X,
-    exit[2] - HEXACOPTER_PAD_Z,
+    exit[0] - RANGE_HEXACOPTER_PAD_X,
+    exit[2] - RANGE_HEXACOPTER_PAD_Z,
   );
   assert.ok(
     fromCentre > HEX_ARM_RADIUS + HEX_LIP_OUTER_RADIUS + PLAYER_CAPSULE_RADIUS,
@@ -139,7 +143,7 @@ test("пилот покидает коптер наружу: за габарит
   );
   // Капсула не рождается в губе ни одного кольца.
   for (const duct of HEXACOPTER_DUCTS) {
-    const centre = hexacopterPoint(duct.a, duct.b, 0);
+    const centre = rangeHexacopterPoint(duct.a, duct.b, 0);
     const clearance =
       Math.hypot(exit[0] - centre[0], exit[2] - centre[2]) -
       HEX_LIP_OUTER_RADIUS;
@@ -150,7 +154,7 @@ test("пилот покидает коптер наружу: за габарит
   }
   // И ни в одной стойке шасси.
   for (const leg of HEXACOPTER_GEAR_STATIONS) {
-    const centre = hexacopterPoint(leg.a, leg.b, 0);
+    const centre = rangeHexacopterPoint(leg.a, leg.b, 0);
     assert.ok(
       Math.hypot(exit[0] - centre[0], exit[2] - centre[2]) >
         PLAYER_CAPSULE_RADIUS,
@@ -160,9 +164,66 @@ test("пилот покидает коптер наружу: за габарит
   // Подошвы на земле под машиной, а не на полу кабины и не в воздухе.
   const feet = exit[1] - PLAYER_CAPSULE_FOOT_OFFSET;
   assert.ok(
-    Math.abs(feet - HEX_FOOT_BOTTOM_Y) < 0.1,
-    `подошвы на ${feet.toFixed(2)} при земле ${HEX_FOOT_BOTTOM_Y}`,
+    Math.abs(feet - RANGE_HEXACOPTER_PAD_TOP_Y) < 0.1,
+    `подошвы на ${feet.toFixed(2)} при земле ${RANGE_HEXACOPTER_PAD_TOP_Y}`,
   );
   // У кресла пилота своя подсказка, не вагонная.
   assert.equal(TOWN_HEXACOPTER_PILOT_SEAT.hintCue, "town-hexacopter-pilot-seat");
+});
+
+/**
+ * ДЕТЕКТОР ОСТАВЛЕННОГО ЯКОРЯ.
+ *
+ * Кресло авторизовано в координатах покоя машины, поэтому переезд машины на
+ * другую карту обязан унести и его. Проверка ловит именно расхождение: место
+ * пилота должно лежать внутри объёма своей машины, а выход — рядом с ней, а не
+ * там, где машина стояла в прошлой жизни. Так на полигоне Tonkawa кресло HX-6
+ * осталось в городских координатах, и «взять управление» уносило человека за
+ * кромку мира на 40 м от машины.
+ */
+test("место пилота и выход остаются при машине, где бы она ни стояла", async () => {
+  const {
+    TOWN_HEXACOPTER_PILOT_SEAT,
+    NIMBUS_HEXACOPTER_PILOT_SEAT,
+  } = await import("../games/make-a-mess/src/game/passengerSeats.ts");
+  const { isInsideRangeHexacopter } = await import(
+    "../games/make-a-mess/src/game/rangeHexacopter.ts"
+  );
+  const { isInsideNimbusHexacopter } = await import(
+    "../games/make-a-mess/src/game/nimbusHexacopter.ts"
+  );
+
+  for (const [seat, contains] of [
+    [TOWN_HEXACOPTER_PILOT_SEAT, isInsideRangeHexacopter],
+    [NIMBUS_HEXACOPTER_PILOT_SEAT, isInsideNimbusHexacopter],
+  ]) {
+    const carrierFrame = vehicleFrames.find(
+      (candidate) => candidate.clusterId === seat.carrierClusterId,
+    );
+    assert.ok(carrierFrame, `у кресла ${seat.id} нет машины`);
+    assert.equal(
+      contains(seat.interactionPoint),
+      true,
+      `${seat.id}: предложение сесть не в кабине`,
+    );
+    assert.equal(
+      contains(seat.occupantPoint),
+      true,
+      `${seat.id}: пилот садится вне кабины`,
+    );
+    // Выход намеренно СНАРУЖИ, но в шаге от машины: это дверь, а не телепорт.
+    const exitReach = Math.hypot(
+      seat.exitPoint[0] - carrierFrame.origin[0],
+      seat.exitPoint[2] - carrierFrame.origin[2],
+    );
+    assert.equal(
+      contains(seat.exitPoint),
+      false,
+      `${seat.id}: выход внутри кабины`,
+    );
+    assert.ok(
+      exitReach < 5,
+      `${seat.id}: выход в ${exitReach.toFixed(2)} м от машины`,
+    );
+  }
 });

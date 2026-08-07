@@ -20,6 +20,7 @@ import {
   nimbusHexacopterPointFromTown,
   nimbusHexacopterVectorFromTown,
 } from "./nimbusHexacopter.ts";
+import { rangeHexacopterPointFromTown } from "./rangeHexacopter.ts";
 import {
   DS_CLUSTER_ID,
   DS_DOOR_POST,
@@ -102,18 +103,44 @@ const HEX_EXIT_ANGLE = (300 * Math.PI) / 180;
 const HEX_EXIT_RADIUS =
   HEX_ARM_RADIUS + HEX_LIP_OUTER_RADIUS + PLAYER_CAPSULE_RADIUS + 0.2;
 
+/**
+ * Кресло АВТОРИЗОВАНО В ГОРОДСКИХ КООРДИНАТАХ машины и переезжает вместе с
+ * ней — той же суммой, что её куски (rangeVertipadDocument), якоря кадра
+ * (vehicleFrames) и посты (airVehicles).
+ *
+ * Так и появился дефект переезда на полигон: всё перечисленное перевели, а
+ * кресло осталось в городе. Кластер и куски совпадают по имени, поэтому
+ * рантайм признавал кресло своим и честно сажал в него пилота — по городским
+ * координатам, то есть в 40.7 м от машины и в 69 м от центра полигона при
+ * радиусе суши 50: человек оказывался в воздухе за кромкой мира и ехал за
+ * машиной, как за игрушкой на пульте.
+ */
+const HEX_PILOT_SEAT_TOWN_INTERACTION = hexacopterPoint(
+  -0.15,
+  0,
+  HEX_SEAT_Y + 0.42,
+);
+// Collision is muted while seated. The camera rides 0.54 m above this
+// point, at eye height behind the instrument screen and below the canopy.
+const HEX_PILOT_SEAT_TOWN_OCCUPANT = hexacopterPoint(
+  -0.18,
+  0,
+  HEX_SEAT_Y + 0.16,
+);
+const HEX_PILOT_SEAT_TOWN_EXIT = hexacopterPoint(
+  HEX_EXIT_RADIUS * Math.cos(HEX_EXIT_ANGLE),
+  HEX_EXIT_RADIUS * Math.sin(HEX_EXIT_ANGLE),
+  HEX_FOOT_BOTTOM_Y + PLAYER_CAPSULE_FOOT_OFFSET + 0.04,
+);
+
 export const TOWN_HEXACOPTER_PILOT_SEAT: PassengerSeatDefinition = {
   id: TOWN_HEXACOPTER_PILOT_SEAT_ID,
   carrierClusterId: TOWN_HEXACOPTER_CLUSTER_ID,
-  interactionPoint: hexacopterPoint(-0.15, 0, HEX_SEAT_Y + 0.42),
-  // Collision is muted while seated. The camera rides 0.54 m above this
-  // point, at eye height behind the instrument screen and below the canopy.
-  occupantPoint: hexacopterPoint(-0.18, 0, HEX_SEAT_Y + 0.16),
-  exitPoint: hexacopterPoint(
-    HEX_EXIT_RADIUS * Math.cos(HEX_EXIT_ANGLE),
-    HEX_EXIT_RADIUS * Math.sin(HEX_EXIT_ANGLE),
-    HEX_FOOT_BOTTOM_Y + PLAYER_CAPSULE_FOOT_OFFSET + 0.04,
+  interactionPoint: rangeHexacopterPointFromTown(
+    HEX_PILOT_SEAT_TOWN_INTERACTION,
   ),
+  occupantPoint: rangeHexacopterPointFromTown(HEX_PILOT_SEAT_TOWN_OCCUPANT),
+  exitPoint: rangeHexacopterPointFromTown(HEX_PILOT_SEAT_TOWN_EXIT),
   hintCue: "town-hexacopter-pilot-seat",
   facing: [-1, 0, 0],
   requiredPieceIds: [
@@ -129,15 +156,13 @@ export const NIMBUS_HEXACOPTER_PILOT_SEAT: PassengerSeatDefinition = {
   ...TOWN_HEXACOPTER_PILOT_SEAT,
   id: NIMBUS_HEXACOPTER_PILOT_SEAT_ID,
   carrierClusterId: NIMBUS_HEXACOPTER_CLUSTER_ID,
+  // Оба переезда считаются от ОДНОГО городского оригинала: брать точки уже
+  // переехавшей машины значит складывать два переноса.
   interactionPoint: nimbusHexacopterPointFromTown(
-    TOWN_HEXACOPTER_PILOT_SEAT.interactionPoint,
+    HEX_PILOT_SEAT_TOWN_INTERACTION,
   ),
-  occupantPoint: nimbusHexacopterPointFromTown(
-    TOWN_HEXACOPTER_PILOT_SEAT.occupantPoint,
-  ),
-  exitPoint: nimbusHexacopterPointFromTown(
-    TOWN_HEXACOPTER_PILOT_SEAT.exitPoint,
-  ),
+  occupantPoint: nimbusHexacopterPointFromTown(HEX_PILOT_SEAT_TOWN_OCCUPANT),
+  exitPoint: nimbusHexacopterPointFromTown(HEX_PILOT_SEAT_TOWN_EXIT),
   facing: nimbusHexacopterVectorFromTown(TOWN_HEXACOPTER_PILOT_SEAT.facing),
   requiredPieceIds: [
     `${NIMBUS_HEXACOPTER_CLUSTER_ID}:seat:pedestal:piece`,
