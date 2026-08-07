@@ -38,6 +38,8 @@ Before changing geometry:
 11. Use [templates.md](references/templates.md) for the evidence card, reference-fit manifest, solid/assembly audit, discrepancy log, README index and handoff.
 12. Read [skill-evaluation.md](references/skill-evaluation.md) completely when modifying this skill or when the same failure class survives two complete discrepancy cycles.
 
+Read [foundation.md](references/foundation.md) completely only when installing, porting, restructuring or extending this skill. It defines the portable architecture and compatibility contract; ordinary object studies should load the operational references above instead.
+
 Also read repository instructions, the object passport, authoring schema, renderer, material bindings, current canonical owner and targeted tests. Direct user constraints and project-local contracts override this skill.
 
 ## Non-negotiable boundary
