@@ -26,7 +26,14 @@ import { readFileSync } from "node:fs";
 // цитировать путь, которым он вызван, и запрет на прозу сделал бы
 // документирование граблей невозможным.
 
-const CODE_EXTENSIONS = /\.(mjs|cjs|js|jsx|ts|tsx)$/;
+const CODE_EXTENSIONS = /\.(mjs|cjs|js|jsx|ts|tsx|sh|ps1|py)$/;
+
+// Обёртка `winrun` — единственный файл, где путь машины и есть поведение: это
+// значение по умолчанию, к которому она уходит без PLAYGATE_REPO. Файл без
+// расширения и под скан не попадает, но исключение объявлено явно, чтобы
+// переименование в winrun.sh не сделало тест внезапно красным на том, что в
+// нём правильно.
+const ALLOWED = new Set(["tools/winrun"]);
 
 /** Домашние каталоги обеих машин проекта. */
 const MACHINE_LOCAL_ROOTS = [
@@ -42,7 +49,7 @@ test("исполняемые файлы не прибиты к домашнем�
   const offenders = [];
 
   for (const file of trackedFiles) {
-    if (!CODE_EXTENSIONS.test(file)) continue;
+    if (!CODE_EXTENSIONS.test(file) || ALLOWED.has(file)) continue;
     // Сам этот тест обязан содержать образцы, которые ищет.
     if (file === "tests/portable-paths.test.mjs") continue;
 
