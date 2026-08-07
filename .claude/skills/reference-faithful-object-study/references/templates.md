@@ -5,9 +5,11 @@
 1. Evidence card
 2. Part-budget worksheet
 3. Independent-test matrix
-4. Discrepancy log
-5. Acceptance handoff
-6. Object README index
+4. Reference-fit manifest
+5. Solid and assembly audit
+6. Discrepancy log
+7. Acceptance handoff
+8. Object README index
 
 ## 1. Evidence card
 
@@ -38,6 +40,14 @@ Sources:
 - Derived angles/projections with equations.
 - Authored overhangs/thicknesses and why.
 
+## Canonical representation and reference registration
+
+- Canonical editable owner and deterministic derivatives/diagnostic sidecars.
+- Registered strict views, projection/crop and calibration anchor.
+- Per-claim authority; structural/negative-space masks and named landmarks.
+- Multi-view conflicts and explicit resolution.
+- Fit thresholds and report/overlay paths.
+
 ## Named construction
 
 - Part/system, section, material and function.
@@ -46,11 +56,21 @@ Sources:
   → ordinary transparent glazing → modelled interior depth.
 - Budget compression strategy.
 
+## Surface/material/render contract (when present)
+
+- Semantic material families and finish boundaries.
+- PBR channel ownership; UV/texture coverage and color spaces.
+- Transparent parts and contained emissive sources.
+- Neutral diagnostic light plus acceptance light/color-management settings.
+- Target-renderer/export parity checks and budgets.
+
 ## Load and attachment paths
 
 - datum → ... → final surface.
 - carrier → bracket → fitting → dependent.
 - adapter-owned embedment/placement anchors.
+- named part-local datums, mating faces, axes, hardpoints and purchased-component interfaces;
+- visual → physics/contact → render-only articulation mapping where applicable.
 
 ## Motion contract (when present)
 
@@ -123,7 +143,73 @@ Ensemble after: ... / total ceiling
 | views | view id inventory | all required | missing id |
 ```
 
-## 4. Discrepancy log
+## 4. Reference-fit manifest
+
+```json
+{
+  "schema": "reference-fit-manifest.v1",
+  "canonicalPolicy": "claim-authority-matrix",
+  "sources": [],
+  "structuralParts": [],
+  "validationOnly": [],
+  "landmarks": [],
+  "gates": {
+    "bboxCenterDriftMax": 0.015,
+    "bboxSizeDriftMax": 0.03,
+    "silhouetteIouMin": 0.9
+  }
+}
+```
+
+Save calibrated view-constraint input/report, prepared masks, metric JSON and
+overlays beside the revision captures. Thresholds are object-specific and must
+be justified in the evidence card.
+
+## 5. Solid and assembly audit
+
+```md
+## Representation
+
+- canonical owner:
+- deterministic derivatives:
+- diagnostic-only artifacts:
+
+## Body and solid gates
+
+- dominant body family per major mass:
+- intended closed/open classification:
+- connected components / manifold edges / signed volume:
+- canonical ↔ compiled/exported bounds and landmark comparison:
+- optional BREP/STEP validity and round-trip:
+
+## Surface/material/render gates
+
+- semantic material inventory and physical family:
+- UV/texture coverage by named surface group:
+- color-space and normal/tangent audit:
+- transparent/emissive ownership:
+- neutral diagnostic render:
+- canonical ↔ target-renderer parity:
+
+## Datums and joints
+
+| Interface | Fixed datum | Moving datum | Relation | Recovered check |
+| --- | --- | --- | --- | --- |
+| ... | ... | ... | rigid/revolute/linear/... | ... |
+
+## Runtime mapping
+
+- visual construction:
+- physics bodies/colliders/stations:
+- render-only articulation:
+- damage/support groups:
+
+## Claims not made
+
+- structural certification / manufacturability / airworthiness / ...
+```
+
+## 6. Discrepancy log
 
 ```md
 # Discrepancy review NN — object — revision
@@ -164,7 +250,7 @@ Ensemble after: ... / total ceiling
 - No protected-object changes.
 ```
 
-## 5. Acceptance handoff
+## 7. Acceptance handoff
 
 ```md
 Готов объект №N — `name`.
@@ -173,6 +259,7 @@ Ensemble after: ... / total ceiling
 - Which openings/supports are real geometry.
 - Part count / object ceiling; ensemble total / ceiling.
 - Targeted tests and lint result.
+- Registered fit residuals/overlays and solid/assembly/export gates actually run.
 - Reference roles with direct links.
 - Explicitly: object is not placed/registered.
 
@@ -184,7 +271,7 @@ Ensemble after: ... / total ceiling
 Принимаем?
 ```
 
-## 6. Object README index
+## 8. Object README index
 
 One per object, at `docs/<object>/README.md`. Never per milestone.
 

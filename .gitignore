@@ -40,5 +40,9 @@ next-env.d.ts
 /work/
 /artifacts/
 
+# python — байткод вспомогательных скриптов скиллов
+__pycache__/
+*.py[cod]
+
 # Личные разрешения Claude Code — у каждого свои
 .claude/settings.local.json

@@ -74,9 +74,20 @@ The rule:
 
 Never average a self-contradictory sheet into a compromise that appears in no projection.
 
+Before canonical geometry, write the registered-view conflict report from
+reference-registration.md. Only calibrated/eligible projections enter shared-
+axis comparison. A resolved conflict records which passport/physics anchor or
+which projection owns each disputed claim; it never creates view-specific
+runtime geometry.
+
 ## 8. From sheet to invariants
 
 Convert readings into falsifiable invariants exactly as for documentary evidence (research-evidence.md §5): each invariant gets an owner parameter, an independent test and an exposing camera, and the study gets a rejection list of conditions that fail the object "even if the silhouette looks plausible". The M10 rejection list is the model: canopy top line that descends aft of its peak, front and rear nacelle attachments built from the same member type, a plan edge that curves where the sheet shows one straight taper — each rejects a *class* of wrong object, not one bad render.
+
+After authoring dimensions from passport/physics anchors, quantitative overlays,
+silhouette metrics and landmarks may enforce the approved character. They remain
+validation evidence, not a route for relabelling concept pixels as published or
+measured dimensions.
 
 ## 9. Concept evolution during milestones
 

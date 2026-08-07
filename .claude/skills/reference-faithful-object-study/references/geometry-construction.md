@@ -4,17 +4,18 @@
 
 1. Coordinate contract
 2. Decomposition
-3. Primitive selection
-4. Shared geometry
-5. Openings and hollow objects
-6. Load paths
-7. Attachments and moving parts
-8. Roofs and slopes
-9. Stairs, boats and water objects
-10. Repetition and budgets
-11. Materials and grouping
-12. Geometry failure modes
-13. Measured drawings and blueprints
+3. Dominant body families
+4. Primitive selection
+5. Shared geometry
+6. Openings and hollow objects
+7. Load paths
+8. Attachments and moving parts
+9. Roofs and slopes
+10. Stairs, boats and water objects
+11. Repetition and budgets
+12. Materials and grouping
+13. Geometry failure modes
+14. Measured drawings and blueprints
 
 ## 1. Coordinate contract
 
@@ -67,7 +68,20 @@ Example budget table:
 | functional interior | 4 | explains use |
 | detail reserve | 2 | only after verification |
 
-## 3. Primitive selection
+## 3. Dominant body families
+
+Before detailing, classify every major mass as a faceted loft/monocoque,
+thin-walled shell, cored annular duct, open truss/spoked frame, drafted torque
+box/casting, revolved body, bent panel assembly or beam lattice. Build its
+defining volume and negative spaces first.
+
+A geometrically valid block remains wrong when the object is an open frame; a
+stack of cylinders remains wrong when profile stations define a loft. Treat a
+body-family mismatch as a rebuild trigger, not an invitation to add fillets,
+panel lines or shallow recesses. For assembly, validity and export gates read
+solid-assembly-validation.md.
+
+## 4. Primitive selection
 
 ### Boxes
 
@@ -115,7 +129,7 @@ Use for:
 
 Build closed volumes unless the physical part is a deliberately thin two-sided sheet. Confirm triangle winding and normals in the actual renderer.
 
-## 4. Shared geometry
+## 5. Shared geometry
 
 Define common values once:
 
@@ -137,7 +151,12 @@ Make adjacent parts share these values. Examples:
 
 Avoid magic offsets. Name deliberate offsets by purpose: `roofThickness`, `trimNormalOffset`, `hingeEngagement`, `boardGap`.
 
-## 5. Openings and hollow objects
+Also name assembly datums instead of repeating transforms: mounting planes,
+bolt/shaft axes, ring saddles, hinge pivots, bearing seats, physics/thrust
+stations and contact planes. A repeated or mirrored module reads one shared
+definition plus a transform; it is never two hand-tuned copies.
+
+## 6. Openings and hollow objects
 
 ### Real door/window opening
 
@@ -185,7 +204,7 @@ One mesh may contain many staves if the part budget is strict, but its silhouett
 
 Split floor/seat geometry around the void. Probe a point through every relevant layer. A dark material or absent rear wall is insufficient if a floor slab still closes the path.
 
-## 6. Load paths
+## 7. Load paths
 
 Write each load path as a chain:
 
@@ -228,7 +247,7 @@ Do not add fake bank geometry to a standalone asset. Expose a named anchor and l
 
 Use real piles, legs, blocks or a foundation down to the datum. Never let the renderer’s shadow imply support.
 
-## 7. Attachments and moving parts
+## 8. Attachments and moving parts
 
 Model the complete attachment chain before decoration. Store each mechanism's axis and pivot exactly once. For kinematic groups, motion contracts, second states and swept envelopes, read articulation.md — the boundary of the moving group is drawn before geometry, not after.
 
@@ -263,7 +282,7 @@ A visible ring needs a bracket, staple or hole. Construct ring thickness and inn
 
 Join every segment. A bucket bail must terminate in lugs/rim positions, not in empty air beside the bucket.
 
-## 8. Roofs and slopes
+## 9. Roofs and slopes
 
 Derive pitch:
 
@@ -296,7 +315,7 @@ When large shells intersect — a tower, annex, chimney or duct passing through 
 
 Keep the wall footprint and the roof/fixed envelope as separate recovered numbers with explicit axes. Overhangs, gutters, ridges and decorative finials may legitimately exceed the wall footprint while both contours still fit a shared world clearance; a wall-footprint test proves nothing about a roof overhang. For moving objects a third number — the kinematic reserve — joins them; see articulation.md §4.
 
-## 9. Stairs, boats and water objects
+## 10. Stairs, boats and water objects
 
 ### Stairs
 
@@ -327,7 +346,7 @@ Use a waterline anchor when placement depends on draught. Do not ground a boat a
 
 Record driven tip, bed, waterline and visible top as separate datums. A pile can be below ground/water without violating the object ground contract only when explicitly documented.
 
-## 10. Repetition and budgets
+## 11. Repetition and budgets
 
 Spend parts on observable topology.
 
@@ -350,7 +369,7 @@ Bad compression:
 
 Track both object and ensemble totals after every addition.
 
-## 11. Materials and grouping
+## 12. Materials and grouping
 
 Material names may affect physics/support classification. Read the runtime mapping before naming groups.
 
@@ -366,7 +385,7 @@ Do not invent a material id without updating every binding/renderer path require
 
 Materials must reveal geometry rather than conceal it. Neutral structural renders are useful for checking normal errors and intersections.
 
-## 12. Geometry failure modes
+## 13. Geometry failure modes
 
 | Failure | Cause | Correction |
 | --- | --- | --- |
@@ -381,8 +400,11 @@ Materials must reveal geometry rather than conceal it. Neutral structural render
 | bucket reads as barrel | closed top or no handle | create open interior and attachment |
 | support appears from shadow | no carrier reaches datum | extend real foundation/pile/leg |
 | exact count but generic form | budget spent on repetition | reallocate to defining topology |
+| valid mesh but wrong body class | primary construction chosen from a convenient primitive | rebuild the dominant family before detail |
+| mirrored modules drift | two copies authored independently | instantiate one named assembly with mirrored transforms |
+| export keeps shell but loses joint meaning | unnamed transforms/groups | preserve datums, semantic ids and pivots through adapter |
 
-## 13. Measured drawings and blueprints
+## 14. Measured drawings and blueprints
 
 When a scanned factory drawing or measured blueprint exists, it outranks every photograph — but scans lie in their own way. The method below was proven on the Citroën DS study; the object's own passport stays at `games/make-a-mess/docs/citroen-ds-brief.md`.
 
@@ -409,6 +431,11 @@ Each scan has its own anisotropy. Mixing readings from two scans produced false 
 ### Acceptance: overlay in the drawing's pixel frame
 
 The drawing is not only input but the target. Overlay an orthographic render of the COMPILED parts onto the corresponding drawing view in the drawing's own pixel frame, and compare in order: silhouette → control lines → openings → secondary volumes. While points 1–3 diverge, do not build detail.
+
+Use reference-registration.md for the frozen camera/pixel transform, masks,
+landmarks, IoU and contradiction report. The printed dimension remains the
+authority; an overlay residual is the detector that the compiled geometry has
+not yet honoured it.
 
 ### Detectors that caught what number-tests missed
 

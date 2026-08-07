@@ -153,6 +153,13 @@ Collect:
 
 Download the original or a large institutional derivative when thumbnails hide construction. Inspect the local image at original detail. A search-engine caption is not visual inspection.
 
+When an image will control fit rather than merely explain typology, also create
+the registered-source entry required by reference-registration.md: exact local
+file, crop, projection, calibration anchor, owned claims, excluded regions,
+mask/landmark paths and fit thresholds. Evidence collection and image
+registration are separate records; one establishes authority, the other
+establishes a reproducible pixel-to-model comparison.
+
 Do not trace perspective directly into dimensions. Correct for:
 
 - converging verticals;
@@ -249,6 +256,12 @@ Resolution rules:
 
 Never average incompatible variants into a hybrid that existed nowhere.
 
+For multi-view sheets, solve a second class of contradiction before geometry:
+whether calibrated shared axes and visible part counts can belong to one rigid
+object. Use reference-registration.md's conflict report. A view can remain
+useful for one owned claim while being disqualified for another; do not promote
+one front view to global authority merely because it is visually attractive.
+
 ## 8. Evidence-card requirements
 
 Write the card before geometry. It must be specific enough that another agent can reject a wrong model without seeing the author’s intent.
@@ -257,8 +270,9 @@ Required sections:
 
 - **Identity and source hierarchy**: object, non-object confusions, source roles, URLs.
 - **Local frame and envelopes**: axes, ground/water datum, exact bounds, authored overhangs.
+- **Representation and registration**: canonical owner, derived/diagnostic artifacts, registered views, calibration anchors, per-claim authority and unresolved conflicts.
 - **Named construction**: every primary member, opening, working element and compression strategy.
-- **Load and attachment paths**: explicit chains from datum to final dependent.
+- **Load and attachment paths**: explicit chains from datum to final dependent, including named datums/joints/hardpoints and purchased-component interfaces.
 - **Protected scope**: accepted work and forbidden integration files.
 - **Rejection conditions**: measurable failures and visual category failures.
 - **Invariant matrix**: invariant, parameter owner, independent test, fixed camera.

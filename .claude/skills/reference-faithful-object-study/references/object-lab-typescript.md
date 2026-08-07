@@ -58,6 +58,11 @@ The model also carries `dimensions`, `labMetrics`, named `anchors`, per-view `hi
 
 Keep one mutable `parts` array local to the canonical file and add typed helpers only when they reduce repeated errors. Avoid adding a second geometry model for capture.
 
+Blender, STEP/BREP and GLB files do not become parallel editable owners. For
+Playgate, keep them deterministic derivatives or `diagnostic-only` sidecars as
+defined by solid-assembly-validation.md unless canonical ownership is explicitly
+migrated before work.
+
 ## 3. File and scope rules
 
 For the Dutch yard kit:
@@ -207,6 +212,11 @@ Minimum per object:
 7. required views;
 8. total unique/non-degenerate suite remains green.
 
+For machines/vehicles/closed shells add applicable gates from
+solid-assembly-validation.md: closed-edge use and signed volume, intended
+component count, named hardpoint/mate relations, mirrored transform recovery,
+visual-to-physics station alignment and canonical-to-compiled bounds/landmarks.
+
 Run:
 
 ```sh
@@ -244,6 +254,13 @@ PLAYGATE_CAPTURE_VIEWS=object-front,object-profile,object-three-quarter \
 The capture command can return a continuing session. Wait/poll until every requested view prints `captured ...`.
 
 Inspect PNGs with the local image viewer at original resolution. Do not rely on file existence.
+
+When a registered source view controls fit, capture a flat silhouette in its
+frozen pixel frame and run the bundled `scripts/reference_fit_report.py`. Use
+prepared masks for annotated/concept sheets; thresholding is only a first pass.
+Save JSON and overlay with the revision artifacts. Run
+`scripts/view_constraint_report.py` before geometry when calibrated strict views
+share physical axes.
 
 Capture output updates `manifest.json`. Verify `modelId`, `revision`, `modelHash` and view inventory.
 

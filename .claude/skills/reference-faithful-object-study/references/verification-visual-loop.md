@@ -17,13 +17,15 @@
 
 ## 1. Verification layers
 
-Use all three layers:
+Use all applicable layers:
 
 1. **Contract tests** prove dimensions, counts, topology and anchors.
-2. **Rendered inspection** proves silhouette, visibility, normals, intersections and material response.
-3. **Integration restraint** proves the accepted object remains canonical and unmodified before placement.
+2. **Registered reference fit** proves eligible strict views satisfy authorized silhouettes, control lines, negative spaces and landmarks in a frozen pixel frame.
+3. **Solid/assembly/export gates** prove closedness, winding, component count, named mates and canonical-to-derived agreement where applicable.
+4. **Rendered inspection** proves silhouette, visibility, normals, intersections and material response.
+5. **Integration restraint** proves the accepted object remains canonical and unmodified before placement.
 
-No layer replaces another. A passing mesh can render incorrectly; a good render can hide a missing bottom; a correct object can be damaged by premature adapter changes.
+No layer replaces another. A passing mask can conceal a detached joint; a passing mesh can render incorrectly; a good render can hide a missing bottom; a correct object can be damaged by premature adapter changes.
 
 ## 2. Independent geometry tests
 
@@ -71,6 +73,10 @@ Check:
 - positive volume/orientation when required by runtime;
 - hole probe points remain uncovered;
 - no duplicate/copied id.
+
+For vehicles, assemblies, closed shells or derived GLB/STEP artifacts, also run
+solid-assembly-validation.md: component/solid count, named frame and mate
+relations, canonical-to-export bounds/landmarks and round-trip checks.
 
 ## 3. Contact and support tests
 
@@ -211,6 +217,11 @@ Before review, record:
 - capture time/manifest;
 - per-object part count.
 
+For registered views also record the manifest revision, frozen model-to-pixel
+transform, mask paths, overlay paths, metric JSON and pass/fail thresholds.
+Never derive a mask from a flattering beauty render when a flat canonical mask
+can be captured.
+
 ## 7. Diagnostic views, cutaways and the transparency double audit
 
 Transparency is not an object property unless the documented real material is physically transparent. A dark reveal, a door niche, an interior shadow or a designer's X-ray never compiles as glass.
@@ -243,16 +254,17 @@ Create a discrepancy log after the first current capture.
 
 Review in strict order:
 
-1. silhouette/envelope;
-2. ground/water contact;
-3. major negative spaces;
-4. roof and control-line direction;
-5. support/load path;
-6. attachment depth;
-7. working geometry/interior;
-8. material boundaries;
-9. normals, z-fighting and false highlights;
-10. tertiary detail.
+1. source authority/registration conflict;
+2. structural count and silhouette/envelope;
+3. ground/water contact;
+4. major negative spaces;
+5. roof and control-line direction;
+6. support/load path;
+7. attachment depth and named mate relation;
+8. working geometry/interior;
+9. material boundaries;
+10. normals, z-fighting and false highlights;
+11. tertiary detail.
 
 For each discrepancy write:
 
@@ -301,6 +313,7 @@ The handoff must lead with the result:
 - part count/object budget and total budget;
 - tests and lint result;
 - reference roles and links;
+- registered-view metrics/overlays and solid/export gates actually run;
 - explicit statement that world placement/adapter remains absent;
 - actual current PNGs in meaningful order;
 - direct request for visual acceptance.
