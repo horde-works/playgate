@@ -2263,46 +2263,72 @@ button:focus-visible {
 
 .motion-telemetry {
   --telemetry-ink: #f4f2e9;
-  --telemetry-muted: rgb(244 242 233 / 0.72);
+  --telemetry-muted: rgb(244 242 233 / 0.8);
   --telemetry-accent: #e3ff79;
+  /* Стилевой приоритет — светлая кость на тёмном; графитовый ореол несёт
+     контраст на светлом небе. Прежний mix-blend-mode: difference давал
+     «адаптивность» без гарантии: на средне-сером настиле (≈50%) разность
+     вырождалась в кашу, на небе подписи буреют. Ореол гарантирует чтение
+     на любом фоне, включая кадр «половина на небе, половина на земле». */
+  --telemetry-halo: rgb(22 26 28 / 0.9);
   position: absolute;
   top: 50%;
   right: clamp(18px, 3vw, 48px);
   z-index: 16;
   width: min(334px, calc(100vw - 36px));
+  padding: 14px 16px;
+  border-radius: 12px;
+  /* Слабое тёмное стекло под всей панелью — вторая половина гарантии: ореол
+     держит каждый глиф, плашка выравнивает фон, когда панель лежит одной
+     половиной на небе, другой — на земле. Без blur: он не бесплатен на
+     Iris Xe, а ровная подложка даёт ту же читаемость. */
+  background: rgb(22 26 28 / 0.22);
   color: var(--telemetry-ink);
   font-family: var(--font-geist-mono), monospace;
-  mix-blend-mode: difference;
+  /* Ореол в четыре слоя: тонкий моноширинный шрифт на почти белом небе с
+     одним слоем читается призраком, слои складывают альфу в плотный кант. */
+  text-shadow:
+    0 0 1px var(--telemetry-halo),
+    0 0 2px var(--telemetry-halo),
+    0 0 4px var(--telemetry-halo),
+    0 1px 3px var(--telemetry-halo);
   pointer-events: none;
   transform: translateY(-50%);
   animation: motionTelemetryIn 340ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+/* Приборные символы (сфера положения, индикатор импульса, риски) — тот же
+   ореол, что у текста: тонкие штрихи без него тонут в небе. */
+.motion-telemetry svg {
+  filter: drop-shadow(0 0 1px var(--telemetry-halo))
+    drop-shadow(0 1px 1.5px var(--telemetry-halo));
+}
+
 .motion-telemetry.is-dawn,
 .motion-telemetry.is-morning {
   --telemetry-ink: #f6eadc;
-  --telemetry-muted: rgb(246 234 220 / 0.7);
+  --telemetry-muted: rgb(246 234 220 / 0.8);
   --telemetry-accent: #ffe6a0;
 }
 
 .motion-telemetry.is-day,
 .motion-telemetry.is-afternoon {
   --telemetry-ink: #f4f2e9;
-  --telemetry-muted: rgb(244 242 233 / 0.72);
+  --telemetry-muted: rgb(244 242 233 / 0.8);
   --telemetry-accent: #e5ff80;
 }
 
 .motion-telemetry.is-sunset,
 .motion-telemetry.is-evening {
   --telemetry-ink: #ffe9dd;
-  --telemetry-muted: rgb(255 233 221 / 0.72);
+  --telemetry-muted: rgb(255 233 221 / 0.8);
   --telemetry-accent: #ffd08f;
 }
 
 .motion-telemetry.is-night,
 .motion-telemetry.is-predawn {
   --telemetry-ink: #e9f0e8;
-  --telemetry-muted: rgb(233 240 232 / 0.7);
+  --telemetry-muted: rgb(233 240 232 / 0.8);
   --telemetry-accent: #d9ff70;
 }
 
@@ -2428,7 +2454,9 @@ button:focus-visible {
   width: 42px;
   height: 1px;
   background: var(--telemetry-accent);
-  box-shadow: 0 0 5px color-mix(in srgb, var(--telemetry-accent) 55%, transparent);
+  box-shadow:
+    0 0 5px color-mix(in srgb, var(--telemetry-accent) 55%, transparent),
+    0 0 1px 1px var(--telemetry-halo);
   transform: translate(-50%, -50%);
 }
 
@@ -2534,7 +2562,10 @@ button:focus-visible {
 }
 
 .motion-telemetry-value-channel.is-critical .motion-telemetry-reading {
-  text-shadow: 0 0 6px rgba(255, 93, 82, 0.55);
+  text-shadow:
+    0 0 6px rgba(255, 93, 82, 0.55),
+    0 0 2px var(--telemetry-halo),
+    0 1px 2px var(--telemetry-halo);
 }
 
 .motion-impact-nose {
@@ -2655,11 +2686,17 @@ button:focus-visible {
   transform-origin: right center;
 }
 
+/* Ослабший орган — ЯНТАРЬ, выбитый — красный: те же цвета, что у точек
+   двигателей на приборе (is-degraded / is-dead). Прежний красный warning
+   был неотличим от critical — «ослабший и выбитый — разные события». */
 .motion-telemetry-value-channel.is-warning,
 .motion-telemetry-value-channel.is-warning .motion-telemetry-value-side,
 .motion-telemetry-value-channel.is-warning .motion-telemetry-reading {
-  color: #ff6259;
-  text-shadow: 0 0 7px rgb(255 62 52 / 0.46);
+  color: #f5b04a;
+  text-shadow:
+    0 0 7px rgb(245 176 74 / 0.4),
+    0 0 2px var(--telemetry-halo),
+    0 1px 2px var(--telemetry-halo);
 }
 
 .motion-telemetry-value-side {

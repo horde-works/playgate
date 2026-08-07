@@ -404,6 +404,7 @@ import { gameClockText, nextTimeOfDay, TIME_OF_DAY_TARGETS } from "./timeOfDay";
 import {
   createMotionTelemetryStore,
   motionTelemetryMetricActivity,
+  type MotionTelemetryMachineKind,
   type MotionTelemetryMetric,
   type MotionTelemetrySnapshot,
   type MotionTelemetryStore,
@@ -11112,6 +11113,17 @@ const telemetryMetricLabels: Readonly<Record<string, TranslationKey>> = {
   distanceRemaining: "telemetry.metric.distanceRemaining",
 };
 
+// Естественность речи зависит от типа судна: коптер висит над ПЛОЩАДКОЙ,
+// дирижабль — над ПРИЧАЛОМ. Видовая метка старше общей, общая — запасная.
+const telemetryMetricLabelsByKind: Readonly<
+  Record<string, Partial<Record<MotionTelemetryMachineKind, TranslationKey>>>
+> = {
+  relativeAltitude: {
+    rotorcraft: "telemetry.metric.relativeAltitude.rotorcraft",
+    buoyant: "telemetry.metric.relativeAltitude.buoyant",
+  },
+};
+
 const telemetryPhaseLabels: Readonly<Record<string, TranslationKey>> = {
   attention: "telemetry.phase.attention",
   departure: "telemetry.phase.departure",
@@ -11365,16 +11377,18 @@ function MotionTelemetryPanel({
         </div>
       ) : null}
       <dl>
-        {visibleMetrics.map((metric) => (
-          <div key={metric.id}>
-            <dt>
-              {telemetryMetricLabels[metric.id]
-                ? t(telemetryMetricLabels[metric.id])
-                : metric.id}
-            </dt>
-            <dd>{renderValue(metric)}</dd>
-          </div>
-        ))}
+        {visibleMetrics.map((metric) => {
+          const kindLabel = snapshot.machine
+            ? telemetryMetricLabelsByKind[metric.id]?.[snapshot.machine.kind]
+            : undefined;
+          const label = kindLabel ?? telemetryMetricLabels[metric.id];
+          return (
+            <div key={metric.id}>
+              <dt>{label ? t(label) : metric.id}</dt>
+              <dd>{renderValue(metric)}</dd>
+            </div>
+          );
+        })}
       </dl>
     </aside>
   );
