@@ -242,11 +242,14 @@ function speedLimit(
     return Math.min(3.4, stopping);
   }
   // Авторская банда обязана быть ПОСИЛЬНОЙ (§13 матрицы: «speed limit не
-  // требует невозможного ускорения»): вираж по фактическому радиусу линии
-  // при боковом a = 4.5 м/с² — внутри располагаемых g·tg 30° ≈ 5.66 с
-  // запасом на высотную работу. В горле лепестка (R ≈ 6 м) это ~5.2 м/с,
-  // на вершине (R ≈ 12 м) ~7.4; круиз машина увидит только на створах.
-  const turn = Math.sqrt(4.5 * routeTurnRadius(geometry, progress));
+  // требует невозможного ускорения») — И С ЗАПАСОМ НА ЗАХВАТ ДУГИ: вираж
+  // считается на a = 3.5 м/с² из располагаемых g·tg 30° ≈ 5.66. Замер на
+  // честном риге: банда впритык (4.5) даёт вход в лепесток на пределе и
+  // вынос 19 м — контур с запаздыванием 0.8 с не успевает развить полное
+  // боковое в момент захвата; остаток идёт на захват и высотную работу.
+  // В горле лепестка (R ≈ 6 м) это ~4.6 м/с, на вершине (R ≈ 12) ~6.5;
+  // круиз машина видит только на створах.
+  const turn = Math.sqrt(3.5 * routeTurnRadius(geometry, progress));
   return Math.min(cruiseSpeed, Math.max(3, turn), stopping);
 }
 
@@ -335,6 +338,9 @@ export function rangeHexacopterPlan(
     // хорде срезает дугу на ~L²/8R, поэтому L = √(8·R·ε) держит срез в
     // пределах ε ≈ 1.2 м и в горле лепестка (R ≈ 6 м → L ≈ 8), и на
     // створах (прямая → верхний предел 27 м, круизные три секунды).
+    // Радиус берётся ХУДШИЙ в окне будущего упреждения, а не в текущей
+    // точке: упреждение, посчитанное по ещё-широкой дуге на ПОДХОДЕ к горлу,
+    // целит за горло и срезает его (замер: снос 19 м на входе в лепесток).
     guidanceLookahead(progress) {
       if (progress < departureComplete * 0.5) {
         return 12;
@@ -342,7 +348,16 @@ export function rangeHexacopterPlan(
       if (progress < departureComplete) {
         return 20;
       }
-      const turnRadius = routeTurnRadius(route, progress);
+      let turnRadius = Number.POSITIVE_INFINITY;
+      for (let ahead = 0; ahead <= 27; ahead += 9) {
+        turnRadius = Math.min(
+          turnRadius,
+          routeTurnRadius(
+            route,
+            Math.min(0.999, progress + ahead / route.length),
+          ),
+        );
+      }
       if (!Number.isFinite(turnRadius)) {
         return 27;
       }

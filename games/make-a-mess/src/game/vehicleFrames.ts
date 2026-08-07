@@ -9,6 +9,7 @@ import type { StrutRetraction, SupportStrutPlan } from "./supportStrut.ts";
 import {
   corneringSpeed,
   DEFAULT_SLIP_POLICY,
+  VECTORED_SLIP_POLICY,
   slipAllowanceForCorridor,
   pathSpeedCeiling,
   pathTurnAngle,
@@ -2570,6 +2571,32 @@ function pathKinematicDemand(
 }
 
 /**
+ * Политика заноса машины: явная из паспорта, иначе выводится из способа
+ * тяги. Векторируемая машина (ротор) на маршруте носом не движется — ей
+ * положена свободная маршрутная полоса и строгий створ; неголономная
+ * получает общее правило. Производная величина, не отдельная константа.
+ */
+function slipPolicyOf(model: ShipModel) {
+  return (
+    model.slipPolicy ??
+    (model.vectoredTranslation ? VECTORED_SLIP_POLICY : DEFAULT_SLIP_POLICY)
+  );
+}
+
+/**
+ * Устойчивая способность рыскания из полосы аллокатора. Полоса ЦЕНТРИРОВАНА
+ * на текущем вращении корпуса: [ω−a, ω+a]. Способность машины — ПОЛУШИРИНА
+ * `a`, а не min(|краёв|): прежнее чтение в вираже видело ближний к нулю
+ * край (0.04–0.11 вместо честных ~0.19) и душило машину тем сильнее, чем
+ * честнее она поворачивала — главный корень «HX-6 ползёт».
+ */
+function sustainedYawRate(
+  limits: NonNullable<ShipModel["yawRateLimits"]>,
+): number {
+  return Math.max(0.05, (limits.maximum - limits.minimum) / 2);
+}
+
+/**
  * СКОЛЬКО РАЗРЕШАЕТ ФИЗИКА НА ЭТОМ УЧАСТКЕ ТРАССЫ.
  *
  * Трасса даёт форму, паспорт — способности, здесь они встречаются. Машина без
@@ -2595,16 +2622,10 @@ function governedRouteSpeed(
   // Темп рыскания берётся ИЗ АЛЛОКАТОРА, если он есть: выбитый движитель
   // сужает его сам, и ограничитель обязан узнать об этом тем же путём.
   const yawRate = model.yawRateLimits
-    ? Math.max(
-        0.05,
-        Math.min(
-          Math.abs(model.yawRateLimits.minimum),
-          Math.abs(model.yawRateLimits.maximum),
-        ),
-      )
+    ? sustainedYawRate(model.yawRateLimits)
     : capability.yawRate;
   const limits = { ...capability, yawRate };
-  const policy = model.slipPolicy ?? DEFAULT_SLIP_POLICY;
+  const policy = slipPolicyOf(model);
   const corridorHere = plan.corridor?.(progress);
   const allowance = Math.min(
     onApproach ? policy.onApproach : Number.POSITIVE_INFINITY,
@@ -2669,12 +2690,18 @@ function governedRouteSpeed(
       ),
       // Угол ДУГИ, а не одного излома: занос копится по всему повороту, и
       // мерить его одной тройкой точек значит систематически его занижать.
-      turnAngle:
+      // Но не длиннее полуоборота: дуга за π — устойчивый вираж, в нём
+      // отставание носа насыщается, а не копится, и накручивать угол дальше
+      // (замерено до 716°) значит требовать координированного полёта — послаб-
+      // ление β/Δψ исчезает, и скорость падает до ω·r, ползучего шага.
+      turnAngle: Math.min(
+        Math.PI,
         pathTurnAngle(
           [before[0], before[2]],
           [here[0], here[2]],
           [after[0], after[2]],
         ) * 4,
+      ),
     });
   }
   if (samples.length === 0) {
@@ -2870,15 +2897,10 @@ export function autopilot(
   // Поэтому у неё нос идёт по касательной маршрута, а у причала — по
   // причальному курсу, и никакой связи с ошибкой положения у него нет.
   // Реальная власть машины по рысканию: сколько она СПОСОБНА, а не сколько
-  // записано в паспорте. Всё, что просит автомат, меряется этим числом.
+  // записано в паспорте. Всё, что просит автомат, меряется этим числом —
+  // полушириной полосы аллокатора, устойчивым темпом (см. sustainedYawRate).
   const yawAuthority = model.yawRateLimits
-    ? Math.max(
-        0.05,
-        Math.min(
-          Math.abs(model.yawRateLimits.minimum),
-          Math.abs(model.yawRateLimits.maximum),
-        ),
-      )
+    ? sustainedYawRate(model.yawRateLimits)
     : Infinity;
   if ((limits.lateralThrust ?? 0) > 1e-6) {
     // УПРЕЖДЕНИЕ НОСА ВО ВРЕМЕНИ. Разворот у этой машины длится секунды, и
@@ -3299,18 +3321,17 @@ export function autopilot(
     yawRate: requestedYawRate,
     liftFraction,
     approachPhase: onApproach,
-    slipAllowance:
+    // Допуск объявляется ВСЕГДА: у политики один владелец — автопилот, и
+    // реактивный губернатор заноса обязан жить той же политикой (в том числе
+    // выведенной из векторируемости), а не запасными умолчаниями рантайма.
+    slipAllowance: Math.min(
+      onApproach
+        ? slipPolicyOf(model).onApproach
+        : Number.POSITIVE_INFINITY,
       plan.corridor !== undefined
-        ? Math.min(
-            onApproach
-              ? (model.slipPolicy ?? DEFAULT_SLIP_POLICY).onApproach
-              : Number.POSITIVE_INFINITY,
-            slipAllowanceForCorridor(
-              plan.corridor(progress),
-              model.slipPolicy ?? DEFAULT_SLIP_POLICY,
-            ),
-          )
-        : undefined,
+        ? slipAllowanceForCorridor(plan.corridor(progress), slipPolicyOf(model))
+        : slipPolicyOf(model).enRoute,
+    ),
     // Только для машины с векторируемой тягой: неголономная поворачивает носом
     // и боковое ускорение исполнить не может. Боковое `v²/r` и продольное
     // торможение профиля складываются в ОДИН вектор: манёвр — единое целое.
