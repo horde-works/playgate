@@ -7436,11 +7436,19 @@ function FlightRouteRibbons({
 
       const orientation = state.body.orientation;
       const massCentre = state.mass?.centre ?? [0, 0, 0];
-      const massOffset = rotateByQuaternion(orientation, massCentre);
+      // Центр HUD — МИРОВОЙ центр масс тела: state.body.position — смещение
+      // центра масс от авторского (readCarrierBody), восстанавливается
+      // ПРОСТЫМ сложением, как во всех остальных потребителях state.body.
+      // Здесь стояло rotate(orientation, massCentre) — вращение АБСОЛЮТНОЙ
+      // мировой точки кватернионом машины. У машины с бертом вдали от начала
+      // координат (город: |massCentre| ≈ 69 м) любое рыскание уводило диск и
+      // янтарный след по рычагу той же длины — «HUD летает отдельно»; RAX в
+      // (0,0) был иммунен, потому и «совпадал». Диск — отрисовка известного
+      // о теле, а не вторая сущность (закон Igor, 07.08.2026).
       const centre: RouteVector3 = [
-        state.body.position[0] + massOffset[0],
-        state.body.position[1] + massOffset[1],
-        state.body.position[2] + massOffset[2],
+        massCentre[0] + state.body.position[0],
+        massCentre[1] + state.body.position[1],
+        massCentre[2] + state.body.position[2],
       ];
       let samples = trailSamples.current.get(frame.id);
       let rewriteTrail = false;
