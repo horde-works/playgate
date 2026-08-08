@@ -37,8 +37,11 @@ Before changing code, read these documents completely and in this order:
    — the control contract FIRST: cluster membership and articulation,
    actuators, the automation/autopilot boundary, guidance tolerances and
    corridors, route building, journey stages and subscribers,
-   mooring/landing, failure recovery, and the per-machine-type chapters
-   (rotorcraft, buoyant, ground car, GOA4 train, rotors, manual pilot).
+   mooring/landing, failure recovery, aerobatic figures (§9А), and the
+   per-machine-type chapters (rotorcraft, buoyant, ground car, GOA4 train,
+   rotors, manual pilot). Read §3.3.1 before touching anything that decides a
+   rotorcraft's attitude: the pose is an INPUT to the cascade, not only a
+   consequence of the acceleration demand.
 2. [`games/make-a-mess/docs/airborne-vehicle-dynamics.md`](../../games/make-a-mess/docs/airborne-vehicle-dynamics.md)
    — the carrier flight-physics contract: definition contract, physical
    assembly, Rapier body laws, mass/balance/lift, force model, passenger
