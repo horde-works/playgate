@@ -4,6 +4,7 @@ import {
   motionRoutePhase,
   type MotionRouteArtifact,
 } from "./motionRoute.ts";
+import type { RouteFigureStation } from "./flightFigures.ts";
 import type {
   SkyTrainEmergencyEscapeInput,
   VehicleRoutePlan,
@@ -196,6 +197,52 @@ export const combatHexacopterRangeCircuit = createMotionRoute({
   },
 });
 
+/**
+ * ФИГУРЫ ПОКАЗАТЕЛЬНОГО МАРШРУТА.
+ *
+ * Обе стоят там, где их требует сама трасса, а не «где красиво».
+ *
+ * ПЕТЛЯ — на разгонном луче. Он прямой, длинный и высокий: к этой доле волна
+ * высоты добавляет девять метров к базовым двадцати, а петля просит запаса
+ * снизу (провал плюс возврат из перевёрнутого) и двадцать шесть метров неба
+ * сверху. Курс она не меняет и возвращает машину в точку входа, поэтому трасса
+ * продолжается практически оттуда же.
+ *
+ * ИММЕЛЬМАН — на дальнем развороте, и он там ЗАМЕНЯЕТ манёвр, а не украшает
+ * его. Трасса разворачивается широкой дугой в сотню метров; иммельман
+ * разворачивает машину на месте, и трасса подхватывает её уже на обратном
+ * галсе. Курс на выходе расходится с трассой на двадцать градусов — это
+ * доворот, который автопилот закрывает обычными средствами.
+ *
+ * Ход фигуры — шестнадцать метров в секунду, и это не «помедленнее»: радиус
+ * растёт как квадрат хода, и на разрешённых участку тридцати петля попросила
+ * бы шестьдесят четыре метра неба вместо двадцати шести.
+ */
+export const COMBAT_HEXACOPTER_FIGURE_SPEED = 16;
+
+/** Годное небо полигона: видимая оболочка мира поднята под эту машину. */
+export const COMBAT_HEXACOPTER_RANGE_SKY = 150;
+
+export const combatHexacopterRangeFigures: readonly RouteFigureStation[] = [
+  {
+    key: "range-loop",
+    kind: "loop",
+    at: combatHexacopterRangeCircuit.nodeProgress("circuit-3"),
+    // Петля закрывается в точке входа, поэтому трасса продолжается оттуда же.
+    resumeAt: combatHexacopterRangeCircuit.nodeProgress("circuit-3"),
+    speed: COMBAT_HEXACOPTER_FIGURE_SPEED,
+    sky: COMBAT_HEXACOPTER_RANGE_SKY,
+  },
+  {
+    key: "range-immelmann",
+    kind: "immelmann",
+    at: combatHexacopterRangeCircuit.nodeProgress("circuit-4"),
+    resumeAt: combatHexacopterRangeCircuit.nodeProgress("circuit-7"),
+    speed: COMBAT_HEXACOPTER_FIGURE_SPEED,
+    sky: COMBAT_HEXACOPTER_RANGE_SKY,
+  },
+];
+
 function placedPlan(
   route: MotionRouteArtifact,
   berth: SceneVector3,
@@ -304,13 +351,66 @@ export function combatHexacopterGuardPlan(berth: SceneVector3): VehicleRoutePlan
   };
 }
 
+/**
+ * ЭТАЖ ПОД ФИГУРУ, м над бертом.
+ *
+ * Петля забирает высоту НЕ ТОЛЬКО ВВЕРХ: на вертикальных кусках вес держать
+ * нечем, тяга смотрит поперёк него, и машина проседает. Замер на стенде — 6.7 м
+ * при радиусе 13.0; объявленный провал 0.75 радиуса, то есть 9.8. К нему
+ * прибавляется возврат из перевёрнутого на случай срыва наверху — 11.8 м, и это
+ * тоже замер, а не оценка: полубочка считается по власти, которая есть на газе
+ * возврата, а не по паспортному пределу.
+ *
+ * Итого 21.6, объявляется 26 с запасом. Показательные двадцать метров под это
+ * не подходят, поэтому трасса поднимает себе пол на подходе к фигуре — как
+ * поднимала бы его над препятствием. Проверяется тестом против ЖИВОГО паспорта
+ * машины, а не сверкой числа с самим собой.
+ */
+export const COMBAT_HEXACOPTER_FIGURE_FLOOR = 26;
+/** Ширина подхода к фигуре в долях трассы: на ней снимается ход и берётся этаж. */
+const FIGURE_RUN_IN = 0.045;
+
+function figureApproach(progress: number): RouteFigureStation | null {
+  for (const station of combatHexacopterRangeFigures) {
+    if (
+      progress > station.at - FIGURE_RUN_IN &&
+      progress < station.at + FIGURE_RUN_IN * 0.4
+    ) {
+      return station;
+    }
+  }
+  return null;
+}
+
 export function combatHexacopterRangePlan(berth: SceneVector3): VehicleRoutePlan {
+  const placed = placedPlan(
+    combatHexacopterRangeCircuit,
+    berth,
+    combatHexacopterRangeCircuit.markerProgress("final"),
+  );
+  // ФИГУРА — ТРЕБОВАНИЕ УЧАСТКА, и требования вокруг неё подстраиваются под
+  // неё, а не наоборот. Ход снимается до фигурного: радиус растёт как квадрат
+  // хода, и на разрешённых участку тридцати петля попросила бы шестьдесят
+  // четыре метра неба вместо двадцати шести.
+  const altitude = (progress: number) => {
+    const station = figureApproach(progress);
+    const base = placed.altitude(progress);
+    return station ? Math.max(base, berth[1] + COMBAT_HEXACOPTER_FIGURE_FLOOR) : base;
+  };
   return {
-    ...placedPlan(
-      combatHexacopterRangeCircuit,
-      berth,
-      combatHexacopterRangeCircuit.markerProgress("final"),
-    ),
+    ...placed,
+    figures: combatHexacopterRangeFigures,
+    altitude,
+    point(progress) {
+      const point = placed.point(progress);
+      return [point[0], altitude(progress), point[2]];
+    },
+    speedLimit: (progress) => {
+      const station = figureApproach(progress);
+      return station
+        ? Math.min(placed.speedLimit(progress), station.speed)
+        : placed.speedLimit(progress);
+    },
     verticalDeparture: {
       altitude: berth[1] + CLEARANCE_ALTITUDE,
       until: combatHexacopterRangeCircuit.markerProgress("departureComplete"),

@@ -216,6 +216,12 @@ import { resolveVehicleWeaponShot } from "./vehicleGunnery.ts";
 import { allegianceOf } from "./vehicleAllegiance.ts";
 import { COMBAT_HEXACOPTER_SKY_CONTROL } from "./airVehicles.ts";
 import {
+  advanceRouteFigures,
+  figureCapabilityOf,
+  IDLE_ROUTE_FIGURE,
+  type RouteFigureFlight,
+} from "./flightFigures.ts";
+import {
   COMBAT_HEXACOPTER_GUARD_ALTITUDE,
   COMBAT_HEXACOPTER_GUARD_RADIUS,
   COMBAT_HEXACOPTER_GUARD_SPEED,
@@ -418,6 +424,10 @@ function rotorcraftFlightForces(
       lateralSpeed: guidance?.lateralSpeed ?? 0,
       yawRate: guidance?.yawRate ?? 0,
       pathAcceleration: guidance?.pathAcceleration,
+      // Поза и её темп проходят насквозь: решение «фигура или обычный полёт»
+      // принято выше, здесь только не теряется по дороге.
+      attitude: guidance?.attitude ?? null,
+      attitudeRate: guidance?.attitudeRate ?? null,
       collective:
         state.flight?.pilot && !state.flight.castOff
           ? -limits.liftTrimRange
@@ -902,6 +912,14 @@ interface FrameState {
    * null — машина не воюет (безоружна, не на боевой задаче, некого атаковать).
    */
   combat: AirCombatState | null;
+  /**
+   * Фигуры высшего пилотажа этого круга. Живут рядом с боем и по той же
+   * причине: это ЧЕТВЁРТЫЙ источник guidance. Всё решение — в чистой
+   * `advanceRouteFigures`, здесь только память между кадрами.
+   */
+  figure: RouteFigureFlight;
+  /** Доля трассы, с которой начался прошлый кадр: станция ловится между ними. */
+  figureProgress: number | null;
   /**
    * Каналы тоннелей ПРОВЕРЕНЫ этим рейсом. Живучесть узнаётся только из пары
    * «запрос → доставка», и до первого запроса автоматика верит в единицы:
@@ -1409,6 +1427,8 @@ function VehicleExhaustSmoke({
 function restingState(engineCount: number, yawThrusterCount = 0): FrameState {
   return {
     combat: null,
+    figure: IDLE_ROUTE_FIGURE,
+    figureProgress: null,
     pose: RESTING_POSE,
     previousPose: RESTING_POSE,
     velocity: [0, 0, 0],
@@ -6449,6 +6469,109 @@ export function VehicleFrameSystem({
         }
       } else if (state.combat) {
         state.combat = null;
+      }
+
+      // ---------------------------------------------------------------
+      // ФИГУРЫ ВЫСШЕГО ПИЛОТАЖА — ЧЕТВЁРТЫЙ ИСТОЧНИК GUIDANCE.
+      //
+      // Врезка такая же узкая, как боевая, и по тому же правилу: решение
+      // целиком в чистой `advanceRouteFigures`, здесь только состояние между
+      // кадрами и подстановка результата. React-часть тестами не покрыта, и
+      // обе поломки боевой задачи жили именно в ней — второй раз наступать
+      // на это незачем.
+      //
+      // Пока фигура идёт, прогресс трассы ЗАМИРАЕТ: она не является функцией
+      // горизонтального положения, и двигать по ней проекцию нечем.
+      // ---------------------------------------------------------------
+      const figurePlan = state.activePlan;
+      // НАЧАТУЮ ФИГУРУ ДОВОДЯТ ДО КОНЦА. Условия входа проверяются один раз, а
+      // дальше в силе только одно: машина, перевёрнутая на полпути, обязана
+      // получить команду перевернуться обратно. Бросить её там нельзя — обычный
+      // контур позы этого положения не различает: у перевёрнутой машины и нос,
+      // и борт горизонтальны, то есть «тангаж ноль, крен ноль», и она читается
+      // как ровная. Поэтому смена задачи, начало боя или потеря фигур
+      // маршрутом обрывают ВХОД в фигуру, но не саму фигуру.
+      const figureRunning = state.figure.episode !== null;
+      if (
+        usesRotorDynamics &&
+        mass &&
+        flight &&
+        flight.castOff &&
+        !state.recovery &&
+        (!state.combat || figureRunning) &&
+        (figurePlan?.figures?.length || figureRunning)
+      ) {
+        const figureCentre: [number, number, number] = [
+          mass.centre[0] + state.body.position[0],
+          mass.centre[1] + state.body.position[1],
+          mass.centre[2] + state.body.position[2],
+        ];
+        const figureNose = rotateByQuaternion(state.body.orientation, frame.nose);
+        const flatFigureNose = Math.hypot(figureNose[0], figureNose[2]) || 1;
+        const figureLimits = frame.flight.limits;
+        // ЗАМИРАНИЕ ДЕЛАЕТСЯ ОТКАТОМ, а не пропуском: маршрутный прогресс в
+        // этом кадре уже сдвинулся выше по коду, и просто «не двигать» его
+        // здесь нельзя — он уже двинут. Берётся замороженное значение прошлого
+        // кадра, и трасса стоит на нём всю фигуру.
+        const figureFrom = state.figure.episode
+          ? (state.figureProgress ?? flight.progress)
+          : flight.progress;
+        const figured = advanceRouteFigures({
+          state: state.figure,
+          stations: figurePlan?.figures,
+          previousProgress: state.figureProgress ?? figureFrom,
+          progress: figureFrom,
+          attitude: state.body.orientation,
+          heading: [
+            figureNose[0] / flatFigureNose,
+            figureNose[2] / flatFigureNose,
+          ],
+          bodyNose: frame.nose,
+          speed: Math.hypot(
+            state.body.velocity[0],
+            state.body.velocity[1],
+            state.body.velocity[2],
+          ),
+          capability: figureCapabilityOf({
+            points: figureLimits.enginePoints,
+            centreOfMass: mass.centre,
+            nose: frame.nose,
+            mass: mass.mass,
+            inertia: [mass.inertia[0], mass.inertia[4], mass.inertia[8]],
+            liftCapacity:
+              mass.mass * GRAVITY * (frame.flight.liftReserve ?? 1.35),
+            capacityWeights: figureLimits.rotorCapacityWeights,
+          }),
+          gate: {
+            // Опора — берт этой же трассы: он и есть уровень, с которого
+            // машина взлетала, и относительно которого объявлен провал фигуры.
+            heightAboveGround: figureCentre[1] - (figurePlan?.point(1)[1] ?? 0),
+            // Власть — доля доставленного слабейшим каналом. Побитая машина
+            // фигур не крутит, и узнаётся это из членства кусков в теле.
+            authority: Math.min(
+              1,
+              ...(flight.propulsionFeedback ?? propulsion.fractions),
+            ),
+          },
+          altitude: figureCentre[1],
+          deltaSeconds: step,
+        });
+        state.figure = figured.state;
+        state.figureProgress = figured.progress;
+        flight.progress = figured.progress;
+        if (figured.command) {
+          rotorGuidance = {
+            forwardSpeed: figured.command.speed,
+            lateralSpeed: 0,
+            yawRate: 0,
+            liftFraction: figured.command.liftFraction,
+            attitude: figured.command.attitude,
+            attitudeRate: figured.command.angularVelocity,
+          };
+        }
+      } else if (state.figure.episode) {
+        state.figure = IDLE_ROUTE_FIGURE;
+        state.figureProgress = null;
       }
 
       const rotorRecoveryPhase = state.recovery?.lifecycle.phase ?? null;

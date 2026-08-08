@@ -1,4 +1,5 @@
 import type { SceneVector3 } from "./destructionScene.ts";
+import type { RouteFigureStation } from "./flightFigures.ts";
 import {
   createMotionRoute,
   motionRoutePhase,
@@ -466,6 +467,14 @@ export interface VehicleRoutePlan {
   readonly terminalGuidanceHeading?: readonly [number, number];
   /** Source-route point beyond a temporary plan's endpoint, by flown metres. */
   terminalGuidancePoint?(distance: number): SceneVector3;
+  /**
+   * ФИГУРЫ ВЫСШЕГО ПИЛОТАЖА — ТРЕБОВАНИЕ УЧАСТКА, как высота и коридор.
+   *
+   * Трасса объявляет, где машина крутит петлю и где иммельман, и с какой доли
+   * продолжается после них. Автопилот этого не решает: он исполняет требование
+   * или пропускает фигуру, если ворота её не пускают.
+   */
+  readonly figures?: readonly RouteFigureStation[];
   readonly finalFrom: number;
 }
 

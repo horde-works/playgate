@@ -262,6 +262,24 @@ function arcLift(speed: number, rate: number, upY: number): number {
   );
 }
 
+/**
+ * ПОЗА РОВНОГО ПОЛЁТА ЭТИМ КУРСОМ — основание, к которому пристраивается фигура.
+ *
+ * Именно ровного, а не нынешнего. Машина входит в фигуру из виража, то есть с
+ * креном, и если взять её фактическую позу за основание, фигура унаследует этот
+ * крен целиком: замер на маршруте дал полупетлю в наклонённой плоскости — ось
+ * вверх дошла только до −0.62 вместо −0.98, машина «перевернулась» на две трети.
+ * Крен на входе — это то, из чего фигура ВЫВОДИТ машину, а не то, что она несёт.
+ */
+export function levelAttitude(
+  heading: readonly [number, number],
+  bodyNose: SceneVector3,
+): Quaternion {
+  const yaw =
+    Math.atan2(heading[0], heading[1]) - Math.atan2(bodyNose[0], bodyNose[2]);
+  return quaternionAboutAxis([0, 1, 0], yaw);
+}
+
 /** Вертикаль оси машины в мире — она и решает знак тяги. */
 function attitudeUpY(attitude: Quaternion): number {
   return rotateVector(attitude, [0, 1, 0])[1];
@@ -741,6 +759,189 @@ export function advanceFlightFigure(
       aborted,
     },
     command: plan.command(progress, speed),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// ФИГУРА КАК СТАНЦИЯ МАРШРУТА
+// ---------------------------------------------------------------------------
+
+/**
+ * ФИГУРА — СВОЙСТВО УЧАСТКА ТРАССЫ, а не выдумка автопилота.
+ *
+ * Она объявляется там же, где высота, скорость и коридор: трасса говорит «вот
+ * здесь крутим петлю», а не автопилот решает это по настроению. Отсюда и
+ * `resumeAt`: фигура ЗАМЕНЯЕТ кусок трассы, и трасса обязана сказать, какой
+ * именно. У петли это почти сама точка входа — она возвращает машину туда же
+ * тем же курсом. У иммельмана — участок, на котором трасса сама разворачивается:
+ * фигура делает разворот на месте вместо широкой дуги.
+ */
+export interface RouteFigureStation {
+  readonly key: string;
+  readonly kind: FlightFigureKind;
+  /** Доля трассы, на которой фигура начинается. */
+  readonly at: number;
+  /** Доля трассы, с которой трасса продолжается после фигуры. */
+  readonly resumeAt: number;
+  /** Ход входа, м/с. Фигура крутится на нём, а не на разрешённом трассой. */
+  readonly speed: number;
+  /**
+   * Годное небо над этой точкой, абсолютная высота мира.
+   *
+   * Объявляет ТРАССА, а не автомат: потолок — свойство мира, и трасса
+   * единственная, кто про свой мир знает. У полигона это 150 м видимого неба.
+   */
+  readonly sky: number;
+}
+
+/**
+ * Какая фигура наступила на этом шаге. Возвращает `null`, если ни одна — и это
+ * обычный ответ: станций на круге две, а шагов шестьдесят в секунду.
+ */
+export function routeFigureDue(
+  stations: readonly RouteFigureStation[] | undefined,
+  previousProgress: number,
+  progress: number,
+  spent: readonly string[],
+): RouteFigureStation | null {
+  if (!stations || progress < previousProgress) return null;
+  for (const station of stations) {
+    if (spent.includes(station.key)) continue;
+    if (previousProgress <= station.at && progress >= station.at) {
+      return station;
+    }
+  }
+  return null;
+}
+
+/**
+ * Что автопилот помнит о фигурах этого круга. Ровно три вещи: идёт ли фигура,
+ * какие уже отработаны и почему последняя не состоялась.
+ */
+export interface RouteFigureFlight {
+  readonly episode: FlightFigureEpisode | null;
+  readonly station: RouteFigureStation | null;
+  readonly spent: readonly string[];
+  /** Причина пропуска — наружу, в телеметрию: пропуск не молчит. */
+  readonly skipped: string | null;
+}
+
+export const IDLE_ROUTE_FIGURE: RouteFigureFlight = {
+  episode: null,
+  station: null,
+  spent: [],
+  skipped: null,
+};
+
+/**
+ * ВЕСЬ РАЗГОВОР ТРАССЫ С ФИГУРОЙ — ОДНОЙ ЧИСТОЙ ФУНКЦИЕЙ.
+ *
+ * Она живёт здесь, а не в компоненте, по прямому уроку проекта: React-часть
+ * тестами не покрыта, и обе поломки боевой задачи жили именно в ней. Компоненту
+ * остаётся передать сюда состояние и взять ответ.
+ *
+ * Пока фигура идёт, прогресс трассы ЗАМИРАЕТ — возвращается тот же, что пришёл.
+ * Кончилась — прогресс становится `resumeAt`: фигура заменила кусок трассы, и
+ * трасса знает, какой именно.
+ */
+export function advanceRouteFigures(input: {
+  readonly state: RouteFigureFlight;
+  readonly stations?: readonly RouteFigureStation[];
+  readonly previousProgress: number;
+  readonly progress: number;
+  readonly attitude: Quaternion;
+  /** Горизонтальный курс машины, единичный. */
+  readonly heading: readonly [number, number];
+  /** Нос машины в авторской позе покоя — из него строится ровное основание. */
+  readonly bodyNose: SceneVector3;
+  readonly speed: number;
+  readonly capability: FlightFigureCapability;
+  /** Ворота без хода и без неба: ход берётся замеренный, небо — от станции. */
+  readonly gate: Omit<FlightFigureGate, "speed" | "headroom">;
+  /** Абсолютная высота машины, м. Из неё и потолка станции выходит запас неба. */
+  readonly altitude: number;
+  readonly deltaSeconds: number;
+}): {
+  readonly state: RouteFigureFlight;
+  readonly command: FlightFigureCommand | null;
+  readonly progress: number;
+} {
+  const { state } = input;
+  // Новый круг — новые фигуры. Признак круга тот же, которым живёт трасса:
+  // прогресс пошёл назад.
+  const spent =
+    input.progress < input.previousProgress - 0.5 ? [] : state.spent;
+
+  if (state.episode && state.station) {
+    const advanced = advanceFlightFigure(
+      state.episode,
+      input.attitude,
+      input.speed,
+      input.deltaSeconds,
+    );
+    if (!advanced.episode.done) {
+      return {
+        state: { ...state, spent, episode: advanced.episode },
+        command: advanced.command,
+        progress: input.progress,
+      };
+    }
+    return {
+      state: {
+        episode: null,
+        station: null,
+        spent: [...spent, state.station.key],
+        skipped: advanced.episode.aborted
+          ? `${state.station.key}: снята по времени`
+          : null,
+      },
+      command: null,
+      progress: state.station.resumeAt,
+    };
+  }
+
+  const due = routeFigureDue(
+    input.stations,
+    input.previousProgress,
+    input.progress,
+    spent,
+  );
+  if (!due) {
+    return { state: { ...state, spent }, command: null, progress: input.progress };
+  }
+  const plan = planFlightFigure(
+    due.kind,
+    due.speed,
+    input.capability,
+    input.heading,
+    levelAttitude(input.heading, input.bodyNose),
+  );
+  const verdict = flightFigureVerdict(
+    plan,
+    {
+      ...input.gate,
+      speed: input.speed,
+      headroom: due.sky - input.altitude,
+    },
+    input.capability,
+  );
+  if (!verdict.flyable) {
+    return {
+      state: {
+        episode: null,
+        station: null,
+        spent: [...spent, due.key],
+        skipped: `${due.key}: ${verdict.reason}`,
+      },
+      command: null,
+      progress: input.progress,
+    };
+  }
+  const episode = beginFlightFigure(plan);
+  return {
+    state: { episode, station: due, spent, skipped: null },
+    command: plan.command(0, input.speed),
+    progress: input.progress,
   };
 }
 
