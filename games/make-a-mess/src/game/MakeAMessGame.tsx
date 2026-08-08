@@ -3051,6 +3051,7 @@ function Grenade({
   const rocketVisual = useRef<Group>(null);
   const rocketTrailMesh = useRef<InstancedMesh>(null);
   const exploded = useRef(false);
+  const pendingContact = useRef<SceneVector3 | null>(null);
   const previousProjectilePosition = useRef<SceneVector3>(grenade.position);
   const trailTimer = useRef(0);
   const nextTrailSlot = useRef(0);
@@ -3110,18 +3111,15 @@ function Grenade({
   }, [trailColor, trailDummy]);
 
   const triggerAt = useCallback(
-    (fieldHit?: BasaltForceFieldHit | null) => {
+    (fieldHit?: BasaltForceFieldHit | null, at?: SceneVector3 | null) => {
       if (exploded.current || !body.current) {
         return;
       }
 
       exploded.current = true;
       const translation = body.current.translation();
-      const point: SceneVector3 = fieldHit?.point ?? [
-        translation.x,
-        translation.y,
-        translation.z,
-      ];
+      const point: SceneVector3 = fieldHit?.point ??
+        at ?? [translation.x, translation.y, translation.z];
       onExplode(
         grenade.id,
         grenade.kind,
@@ -3172,6 +3170,25 @@ function Grenade({
 
   useFrame((_, delta) => {
     if (!body.current) {
+      return;
+    }
+
+    // КАСАНИЕ ОТМЕЧЕНО В КОЛБЭКЕ, А ПОДРЫВ ИДЁТ ЗДЕСЬ.
+    //
+    // Обработчик столкновения rapier зовёт из-под собственного шага, когда
+    // мир одолжен наружу; весь конвейер взрыва оттуда — это вызов мира
+    // из-под самого себя, и wasm отвечает «recursive use of an object
+    // detected». Кадр тот же самый: физика шагает раньше снарядов, так что
+    // задержки на глаз нет, а точка берётся с момента касания, а не после
+    // отскока.
+    const contact = pendingContact.current;
+    if (contact) {
+      pendingContact.current = null;
+      const contactFieldHit = forceFieldRef?.current?.intersectSegment(
+        previousProjectilePosition.current,
+        contact,
+      );
+      triggerAt(contactFieldHit, contact);
       return;
     }
 
@@ -3286,7 +3303,17 @@ function Grenade({
         angularDamping={profile.projectile.angularDamping}
         ccd
         collisionGroups={ACTOR_NORMAL}
-        onCollisionEnter={() => trigger()}
+        onCollisionEnter={() => {
+          // Здесь только отметка и чтение позы: подрыв идёт следующим
+          // проходом кадра, вне колбэка физического мира.
+          if (exploded.current || pendingContact.current) {
+            return;
+          }
+          const translation = body.current?.translation();
+          pendingContact.current = translation
+            ? [translation.x, translation.y, translation.z]
+            : previousProjectilePosition.current;
+        }}
       >
         {isRocket ? (
           <BallCollider args={[grenade.kind === "lance" ? 0.085 : 0.14]} />
@@ -10123,20 +10150,29 @@ function OpenWorldScene({
               перекомпилировать все освещённые материалы на каждую смену
               инструмента. */}
           <FirstPersonToolLighting />
-          {weapon === "none" ? null : weapon === "hammer" ? (
-            <FirstPersonHammer swing={swing} />
-          ) : weapon === "launcher" ? (
-            <FirstPersonLauncher kickRef={launcherKick} />
-          ) : weapon === "rocket" || weapon === "lance" ? (
-            <FirstPersonRocketLauncher
-              kickRef={launcherKick}
-              slim={weapon === "lance"}
-            />
-          ) : weapon === "charge" ? (
-            <FirstPersonDemolitionCharge />
-          ) : (
-            <FirstPersonMachineGun shotsRef={mgShots} />
-          )}
+          {/* СОБСТВЕННАЯ ГРАНИЦА ОЖИДАНИЯ У МОДЕЛИ ОРУЖИЯ.
+              Стволы грузят текстуры и потому саспендятся. Ближайший внешний
+              Suspense стоит НАД <Physics>: без этой границы ожидание одной
+              картинки гасило всё поддерево сцены, и первая же смена ствола
+              разбирала и заново собирала весь физический мир — сотни
+              createCollider, снятые позы динамических тел и повод для
+              re-entrancy в rapier. Ждать текстуру должна рука, а не мир. */}
+          <Suspense fallback={null}>
+            {weapon === "none" ? null : weapon === "hammer" ? (
+              <FirstPersonHammer swing={swing} />
+            ) : weapon === "launcher" ? (
+              <FirstPersonLauncher kickRef={launcherKick} />
+            ) : weapon === "rocket" || weapon === "lance" ? (
+              <FirstPersonRocketLauncher
+                kickRef={launcherKick}
+                slim={weapon === "lance"}
+              />
+            ) : weapon === "charge" ? (
+              <FirstPersonDemolitionCharge />
+            ) : (
+              <FirstPersonMachineGun shotsRef={mgShots} />
+            )}
+          </Suspense>
           <MouseLook
             active={active}
             initialYaw={scene.playerSpawnYaw ?? 0}
