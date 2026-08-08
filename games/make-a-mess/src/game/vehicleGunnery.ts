@@ -132,6 +132,26 @@ export interface RocketArmament {
    * что пристрелка спарки. Сорок метров — середина рабочего конверта.
    */
   readonly harmonisationRange: number;
+  /**
+   * ВЫНОС ТОЧКИ СХОДА ВПЕРЁД ОТ УСТЬЯ ТРУБЫ, м.
+   *
+   * Труба сидит на своём авторском месте, а вот РОДИТЬСЯ снаряд обязан уже вне
+   * машины. Устье пода лежит на z = 1.62, корпус тянется до 3.44, поэтому
+   * снаряд, появлявшийся ровно в устье, возникал ВНУТРИ собственного габарита,
+   * в трёх сантиметрах от пода, — и на манёвре машина подрывала себя (вердикт
+   * Igor 08.08.2026, наблюдение в игре).
+   *
+   * У ручной ракетницы этот вынос есть с самого начала (`+direction · 1.05`);
+   * у бортовой его просто забыли. Число выводится, а не выбирается: расстояние
+   * от устья до передней кромки габарита плюс радиус неконтактного взрывателя
+   * плюс запас. Иначе снаряд выйдет наружу, но тут же сработает по своей же
+   * машине.
+   *
+   * Второй способ — как у истребителей, сбрасывать ракету вниз и запускать
+   * мотор ниже корпуса — честнее физически, но требует отдельной фазы полёта
+   * снаряда. Отложен сознательно.
+   */
+  readonly launchClearance: number;
   /** Запас на взведение до входа в собственный радиус поражения, с. */
   readonly armSeconds: number;
 }
@@ -634,11 +654,19 @@ export function resolveVehicleWeaponShot(
         pose.gunAxis,
         armament.rockets.harmonisationRange,
       );
+  const direction = deflectHorizontally(aligned, shot.deflection);
+  // Пушка бьёт лучом от самого среза — ей выноситься некуда и незачем: срез
+  // спарки и так вынесен в нос дальше всего. Ракета рождается ВПЕРЕДИ машины.
+  const clearance = cannon ? 0 : armament.rockets.launchClearance;
   return {
     weapon: shot.weapon,
     explosive: cannon ? undefined : armament.rockets.explosive,
-    origin,
-    direction: deflectHorizontally(aligned, shot.deflection),
+    origin: [
+      origin[0] + direction[0] * clearance,
+      origin[1] + direction[1] * clearance,
+      origin[2] + direction[2] * clearance,
+    ],
+    direction,
     inheritVelocity: pose.velocity,
   };
 }

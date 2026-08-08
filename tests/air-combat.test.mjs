@@ -16,6 +16,7 @@ import {
   extrapolateTrack,
   interceptSolution,
   raySolution,
+  resolveVehicleWeaponShot,
   rocketMinimumRange,
 } from "../games/make-a-mess/src/game/vehicleGunnery.ts";
 import {
@@ -841,4 +842,55 @@ test("ЛЮБОЙ план отвечает на ВСЕ требования тр
       }
     }
   }
+});
+
+test("СНАРЯД РОЖДАЕТСЯ ВНЕ СОБСТВЕННОЙ МАШИНЫ, а не в устье трубы", () => {
+  // Наблюдение Igor в игре: атакующий сбил сам себя. Устье пода лежит на
+  // z = 1.62, корпус тянется до 3.44 — снаряд возникал ВНУТРИ габарита, в трёх
+  // сантиметрах от пода, и на манёвре машина подрывала себя. У ручной
+  // ракетницы вынос был с самого начала, у бортовой его забыли.
+  const halfLength = combatHexacopterRangeBlueprint.envelope.length / 2;
+  const fuse = explosiveProfile("podRocket").proximityFuse ?? 0;
+  const pose = {
+    centre: [0, 30, 0],
+    massCentre: [0, 1.109, 0.207],
+    velocity: [0, 0, 0],
+    gunAxis: [0, 0, 1],
+    rotate: (local) => local,
+  };
+  for (let index = 0; index < armament.rockets.mounts.length; index += 1) {
+    const resolved = resolveVehicleWeaponShot(
+      { weapon: "podRocket", mountIndex: index, deflection: 0, serial: index },
+      armament,
+      pose,
+    );
+    const distance = Math.hypot(
+      resolved.origin[0] - pose.centre[0],
+      resolved.origin[1] - pose.centre[1],
+      resolved.origin[2] - pose.centre[2],
+    );
+    assert.ok(
+      distance > halfLength + fuse,
+      `труба ${index}: сход в ${distance.toFixed(2)} м при габарите ${halfLength.toFixed(2)} и взрывателе ${fuse}`,
+    );
+  }
+});
+
+test("пушке вынос не нужен: срез спарки и так впереди всего", () => {
+  const pose = {
+    centre: [0, 30, 0],
+    massCentre: [0, 1.109, 0.207],
+    velocity: [0, 0, 0],
+    gunAxis: [0, 0, 1],
+    rotate: (local) => local,
+  };
+  const resolved = resolveVehicleWeaponShot(
+    { weapon: "cannon", mountIndex: 0, deflection: 0, serial: 0 },
+    armament,
+    pose,
+  );
+  // Луч обязан выходить ИМЕННО из среза, иначе трасса нарисуется не оттуда.
+  const muzzle = armament.cannon.mounts[0].muzzle;
+  const expected = muzzle[2] - pose.massCentre[2] + pose.centre[2];
+  assert.ok(Math.abs(resolved.origin[2] - expected) < 1e-6);
 });

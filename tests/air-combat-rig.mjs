@@ -633,6 +633,7 @@ export function runDuel({
 
     // --- выстрелы ----------------------------------------------------------
     const targetPieces = livePieces(target);
+    const hunterPieces = livePieces(hunter);
     for (const shot of output.shots) {
       if (shot.weapon === "cannon") {
         report.cannonShots += 1;
@@ -660,9 +661,18 @@ export function runDuel({
           ),
           shot.deflection,
         );
+        // ТОЧКА СХОДА ВЫНЕСЕНА ВПЕРЁД, как в рантайме: снаряд обязан родиться
+        // вне собственного габарита. Стенд обязан спрашивать это у паспорта, а
+        // не спавнить в устье — иначе он проверяет не ту машину, что летает.
+        const clearance = armament.rockets.launchClearance;
+        const launch = [
+          tube[0] + direction[0] * clearance,
+          tube[1] + direction[1] * clearance,
+          tube[2] + direction[2] * clearance,
+        ];
         const speed = explosiveProfile(armament.rockets.explosive).projectile.speed;
         rockets.push({
-          position: [...tube],
+          position: [...launch],
           velocity: [
             direction[0] * speed + hunter.state.velocity[0],
             direction[1] * speed + hunter.state.velocity[1],
@@ -695,6 +705,26 @@ export function runDuel({
           previous[2] + (rocket.position[2] - previous[2]) * (s / substeps),
         ];
         const fuse = explosiveProfile(armament.rockets.explosive).proximityFuse ?? 0;
+        // СНАЧАЛА — СВОЯ МАШИНА.
+        //
+        // Стенд этого не проверял, и потому не поймал главное: снаряд рождался
+        // внутри собственного габарита и на манёвре подрывал стрелка. Стенд,
+        // который знает геометрию только цели, доказывает половину боя.
+        for (const piece of hunterPieces) {
+          const distance = Math.hypot(
+            piece.centre[0] - point[0],
+            piece.centre[1] - point[1],
+            piece.centre[2] - point[2],
+          );
+          if (distance <= piece.radius + fuse) {
+            report.selfDamage += 1;
+            detonation = point;
+            break;
+          }
+        }
+        if (detonation) {
+          break;
+        }
         for (const piece of targetPieces) {
           const distance = Math.hypot(
             piece.centre[0] - point[0],
@@ -727,7 +757,8 @@ export function runDuel({
             report.destroyed.push(piece.id.split(":").slice(2).join(":"));
           }
         }
-        // Свой же взрыв: если атакующий оказался внутри волны — это его беда.
+        // Свой же взрыв на дистанции: помимо прямого подрыва о собственную
+        // машину считается и попадание в ударную волну.
         const ownDistance = Math.hypot(
           hunterCentre[0] - detonation[0],
           hunterCentre[1] - detonation[1],

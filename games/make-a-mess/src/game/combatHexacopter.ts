@@ -19,7 +19,11 @@ import type {
   VehicleFrameDefinition,
   VehicleSupportStrutDefinition,
 } from "./vehicleFrames.ts";
-import { MG_FIRE_INTERVAL, MG_RANGE } from "./destructionRuntime.ts";
+import {
+  explosiveProfile,
+  MG_FIRE_INTERVAL,
+  MG_RANGE,
+} from "./destructionRuntime.ts";
 import type { VehicleArmament, WeaponMount } from "./vehicleGunnery.ts";
 
 export const COMBAT_HEXACOPTER_BLUEPRINT_ID = "combat-hexacopter";
@@ -241,6 +245,15 @@ function armament(placement: CombatHexacopterPlacement): VehicleArmament {
       // Середина рабочего конверта: ближе сведения трубы бьют наружу, дальше —
       // внутрь, и на краях конверта расхождение остаётся меньше метра.
       harmonisationRange: 40,
+      // ВЫВОДИТСЯ, А НЕ ВЫБИРАЕТСЯ: от устья до передней кромки габарита
+      // (3.44 − 1.62 = 1.82), плюс радиус неконтактного взрывателя, плюс
+      // запас. Без слагаемого со взрывателем снаряд вышел бы наружу и тут же
+      // сработал по своей машине.
+      launchClearance:
+        COMBAT_HEX_LENGTH / 2 -
+        POD_MOUTH_Z +
+        (explosiveProfile("podRocket").proximityFuse ?? 0) +
+        0.3,
       armSeconds: 0.35,
     },
   };
