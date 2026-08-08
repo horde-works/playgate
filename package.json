@@ -14,6 +14,8 @@
     "start": "next start",
     "postinstall": "patch-package",
     "test": "npm run build && node --test tests/*.test.mjs",
+    "test:affected": "node tools/affected-tests.mjs --run",
+    "typecheck": "tsc --noEmit",
     "lint": "eslint . --ignore-pattern .next --ignore-pattern out"
   },
   "dependencies": {
