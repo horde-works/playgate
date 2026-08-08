@@ -445,23 +445,6 @@ function passOffsetDistance(
   return Math.max(own.radius + track.radius + 4, trackable);
 }
 
-/**
- * Радиус уязвимой точки — половина шага между кольцами: попадание в кольцо
- * должно означать именно это кольцо. Считается из расстановки, а не задаётся.
- */
-function weakPointRadius(track: AirCombatTrack): number {
-  const rings = track.weakPoints;
-  if (rings.length < 2) {
-    return track.radius;
-  }
-  let closest = Infinity;
-  for (let i = 0; i < rings.length; i += 1) {
-    for (let j = i + 1; j < rings.length; j += 1) {
-      closest = Math.min(closest, length(subtract(rings[i].point, rings[j].point)));
-    }
-  }
-  return Number.isFinite(closest) ? closest / 2 : track.radius;
-}
 
 /**
  * И ОБРАТНОЕ СЛЕДСТВИЕ: скорость прохода ограничена тем же неравенством.

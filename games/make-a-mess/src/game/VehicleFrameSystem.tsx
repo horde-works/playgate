@@ -203,6 +203,23 @@ import {
   type RotorcraftGovernorState,
 } from "./rotorcraftSpeedGovernor.ts";
 import {
+  createAirCombatState,
+  stepAirCombat,
+  type AirCombatState,
+} from "./airCombatPilot.ts";
+import type {
+  AirCombatTrack,
+  VehicleWeaponFireEvent,
+} from "./vehicleGunnery.ts";
+import { resolveVehicleWeaponShot } from "./vehicleGunnery.ts";
+import { allegianceOf } from "./vehicleAllegiance.ts";
+import { COMBAT_HEXACOPTER_SKY_CONTROL } from "./airVehicles.ts";
+import {
+  COMBAT_HEXACOPTER_GUARD_ALTITUDE,
+  COMBAT_HEXACOPTER_GUARD_RADIUS,
+  COMBAT_HEXACOPTER_GUARD_SPEED,
+} from "./combatHexacopterRangeRoutes.ts";
+import {
   advanceRotorcraftPilot,
   consumeRotorcraftPilotCommands,
   createRotorcraftPilotCommandBuffer,
@@ -879,6 +896,12 @@ interface FrameState {
   /** Доля тяги, которую каждый тоннель ещё способен дать: 0…1. */
   yawThrusterHealth: number[];
   /**
+   * Состояние воздушного боя. Живёт здесь по той же причине, что и состояние
+   * ручного пилота: это ТРЕТИЙ источник guidance, а не отдельная подсистема.
+   * null — машина не воюет (безоружна, не на боевой задаче, некого атаковать).
+   */
+  combat: AirCombatState | null;
+  /**
    * Каналы тоннелей ПРОВЕРЕНЫ этим рейсом. Живучесть узнаётся только из пары
    * «запрос → доставка», и до первого запроса автоматика верит в единицы:
    * тоннель, выбитый у берта, на старте получал полный разгонный приказ, а
@@ -1384,6 +1407,7 @@ function VehicleExhaustSmoke({
 
 function restingState(engineCount: number, yawThrusterCount = 0): FrameState {
   return {
+    combat: null,
     pose: RESTING_POSE,
     previousPose: RESTING_POSE,
     velocity: [0, 0, 0],
@@ -1691,6 +1715,7 @@ export function VehicleFrameSystem({
   contactMaterialOf,
   onContactDamage,
   onVehicleFailure,
+  onVehicleWeaponFire,
 }: {
   /** Лента маршрута в мире — часть телеметрии, включается режимом по T. */
   readonly showRouteOverlay?: boolean;
@@ -1777,6 +1802,12 @@ export function VehicleFrameSystem({
   onContactDamage?: (request: VehicleContactDamageRequest) => void;
   /** One-shot failure fact; presentation stays outside the physics system. */
   onVehicleFailure?: (event: VehicleFailureEvent) => void;
+  /**
+   * Выстрел бортового оружия. Система машин НЕ стреляет сама: она сообщает,
+   * что оружие сработало, а превращение в луч и снаряд — дело сцены, где
+   * живут физический мир и пул снарядов.
+   */
+  onVehicleWeaponFire?: (event: VehicleWeaponFireEvent) => void;
 }) {
   const { rapier, world: rapierWorld } = useRapier();
   const { camera } = useThree();
@@ -6262,6 +6293,160 @@ export function VehicleFrameSystem({
       // газ и сбросить балласт мгновенно нельзя» — это про дирижабль. У винтов
       // балласта нет, их инерция — это запаздывание раскрутки, и жить ей
       // внутри винтовой модели, а не в клапане чужой оболочки.
+      // ---------------------------------------------------------------
+      // ВОЗДУШНЫЙ БОЙ — ТРЕТИЙ ИСТОЧНИК GUIDANCE.
+      //
+      // Врезка сознательно узкая: автомат боя ПЕРЕОПРЕДЕЛЯЕТ уже посчитанное
+      // требование наведения и не трогает ничего больше — ни микшер, ни позу,
+      // ни маршрутный прогресс. Ровно так же в этот контур входит человек
+      // (`rotorcraftPilot`), и по той же причине: guidance — общая граница, а
+      // не собственность автопилота.
+      //
+      // Условий работы три, и все объявлены паспортом, а не именем машины:
+      // у неё есть вооружение, она на боевой задаче и в воздухе.
+      // ---------------------------------------------------------------
+      if (
+        frame.armament &&
+        usesRotorDynamics &&
+        mass &&
+        flight?.kind === COMBAT_HEXACOPTER_SKY_CONTROL &&
+        flight.castOff
+      ) {
+        const combatCentre: [number, number, number] = [
+          mass.centre[0] + state.body.position[0],
+          mass.centre[1] + state.body.position[1],
+          mass.centre[2] + state.body.position[2],
+        ];
+        const gunAxis = rotateByQuaternion(state.body.orientation, frame.nose);
+        const flatGun = Math.hypot(gunAxis[0], gunAxis[2]) || 1;
+        const halfSpan = Math.max(
+          frame.localBounds.maximum[0] - frame.localBounds.minimum[0],
+          frame.localBounds.maximum[2] - frame.localBounds.minimum[2],
+        ) / 2;
+
+        // Чужие борта в воздухе. Модуль боя получает СНИМОК состояния и
+        // ничего сверх: ни маршрута, ни прогресса, ни определения машины.
+        const tracks: AirCombatTrack[] = [];
+        for (const other of frames) {
+          if (other.id === frame.id || !other.allegiance) {
+            continue;
+          }
+          const otherState = states.current.get(other.id);
+          if (!otherState?.mass) {
+            continue;
+          }
+          const otherCentre: [number, number, number] = [
+            otherState.mass.centre[0] + otherState.body.position[0],
+            otherState.mass.centre[1] + otherState.body.position[1],
+            otherState.mass.centre[2] + otherState.body.position[2],
+          ];
+          const otherAttached =
+            clusterRegistry.current.get(other.clusterId)?.attachedMemberIds ??
+            new Set<string>();
+          const otherHealth = propulsionHealth(
+            other.actuators,
+            otherAttached,
+            other.flight.limits.enginePoints.length,
+          ).fractions;
+          const otherHalfSpan = Math.max(
+            other.localBounds.maximum[0] - other.localBounds.minimum[0],
+            other.localBounds.maximum[2] - other.localBounds.minimum[2],
+          ) / 2;
+          tracks.push({
+            id: other.id,
+            allegiance: other.allegiance,
+            centre: otherCentre,
+            velocity: otherState.body.velocity as [number, number, number],
+            // «Текущий манёвр» снаружи виден как вращение корпуса. У машины,
+            // идущей носом по курсу, это и есть темп разворота её скорости;
+            // краб даст расхождение, и это честная слепота наблюдателя.
+            turnRate: otherState.body.angularVelocity[1],
+            radius: otherHalfSpan,
+            weakPoints: other.flight.limits.enginePoints.map((point, index) => {
+              const offset = rotateByQuaternion(otherState.body.orientation, [
+                point[0] - otherState.mass!.centre[0],
+                point[1] - otherState.mass!.centre[1],
+                point[2] - otherState.mass!.centre[2],
+              ]);
+              return {
+                point: [
+                  otherCentre[0] + offset[0],
+                  otherCentre[1] + offset[1],
+                  otherCentre[2] + offset[2],
+                ] as [number, number, number],
+                health: otherHealth[index] ?? 1,
+              };
+            }),
+            // Севшая цель не цель, отказавшая — тем более.
+            landed: otherState.flight === null && otherState.supportContacts > 0,
+            failed: otherState.recovery !== null,
+          });
+        }
+
+        state.combat ??= createAirCombatState(
+          frame.armament.rockets.mounts.length,
+        );
+        // Предельная скорость ВЫВОДИТСЯ, а не берётся из маршрута: это та, на
+        // которой требуемый темп разворота ещё равен располагаемому.
+        const combatLateral = GRAVITY * Math.tan(frame.flight.maximumTilt ?? 0);
+        const combatStep = stepAirCombat({
+          own: {
+            allegiance: allegianceOf(frame),
+            centre: combatCentre,
+            velocity: state.body.velocity as [number, number, number],
+            nose: [gunAxis[0] / flatGun, gunAxis[2] / flatGun],
+            gunAxis: gunAxis as [number, number, number],
+            verticalSpeed: state.body.velocity[1],
+            radius: halfSpan,
+          },
+          station: {
+            centre: berth,
+            radius: COMBAT_HEXACOPTER_GUARD_RADIUS,
+            altitude: COMBAT_HEXACOPTER_GUARD_ALTITUDE,
+            speed: COMBAT_HEXACOPTER_GUARD_SPEED,
+            // Периметр стерегут целиком: обнаружение покрывает орбиту с запасом.
+            detectionRange: COMBAT_HEXACOPTER_GUARD_RADIUS * 3,
+          },
+          armament: frame.armament,
+          limits: {
+            maximumSpeed: combatLateral / ROTOR_YAW_RATE,
+            yawRate: ROTOR_YAW_RATE,
+            liftTrimRange: frame.flight.limits.liftTrimRange,
+          },
+          tracks,
+          deltaSeconds: step,
+          state: state.combat,
+        });
+        state.combat = combatStep.state;
+        // Пока цели нет, машина идёт по СВОЕЙ трассе: сторожевая орбита —
+        // маршрут, а не выдумка автомата боя. Требование перехватывается
+        // только тогда, когда бой действительно начался.
+        if (combatStep.state.mode !== "station") {
+          rotorGuidance = combatStep.guidance;
+          liftCommand = combatStep.guidance.liftFraction;
+        }
+        if (combatStep.shots.length > 0 && onVehicleWeaponFire) {
+          const carrierPose = {
+            centre: combatCentre,
+            massCentre: mass.centre as [number, number, number],
+            velocity: state.body.velocity as [number, number, number],
+            gunAxis: gunAxis as [number, number, number],
+            rotate: (local: [number, number, number]) =>
+              rotateByQuaternion(state.body.orientation, local) as
+                [number, number, number],
+          };
+          onVehicleWeaponFire({
+            frameId: frame.id,
+            clusterId: frame.clusterId,
+            shots: combatStep.shots.map((shot) =>
+              resolveVehicleWeaponShot(shot, frame.armament!, carrierPose),
+            ),
+          });
+        }
+      } else if (state.combat) {
+        state.combat = null;
+      }
+
       const rotorRecoveryPhase = state.recovery?.lifecycle.phase ?? null;
       const rotorEnabled =
         Boolean(state.flight) &&

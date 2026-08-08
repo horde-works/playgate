@@ -6,6 +6,7 @@ import {
   type VehicleAllegiance,
 } from "./vehicleAllegiance.ts";
 import type { VehicleRecoveryLifecycle } from "./vehicleFailure.ts";
+import type { VehicleArmament } from "./vehicleGunnery.ts";
 import type { VehicleGuidanceOverrides } from "./vehicleGuidanceEnvelope.ts";
 import type {
   RotorLandingTolerance,
@@ -150,6 +151,11 @@ export interface AirVehicleDefinition extends VehicleFrameDefinition {
    * здесь, а не в кадре, потому что это ВОЗМОЖНОСТЬ машины, а не её геометрия.
    */
   readonly allegiance?: VehicleAllegiance;
+  /**
+   * Бортовое вооружение. Не задано — машина безоружна и в бой не идёт, даже
+   * будучи чужой: сторона говорит «кто он», вооружение — «чем он может».
+   */
+  readonly armament?: VehicleArmament;
   readonly departure?: {
     readonly target: EntryInteractionTarget;
     readonly point: SceneVector3;
@@ -1213,6 +1219,7 @@ export const COMBAT_HEXACOPTER_SKY_CONTROL = "sky-control";
 export const COMBAT_HEXACOPTER_RANGE_AIR_VEHICLE: AirVehicleDefinition = {
   ...combatHexacopterRangeFrame,
   allegiance: TONKAWA_ALLEGIANCE,
+  armament: combatHexacopterRangeBlueprint.armament,
   departure: {
     target: {
       id: "combat-hexacopter-range:departure",

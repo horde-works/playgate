@@ -189,6 +189,7 @@ import {
   type DemolitionChargeRuntime,
 } from "./DemolitionChargeSystem";
 import { GrenadeProjectileVisual } from "./GrenadeProjectileVisual";
+import type { VehicleWeaponFireEvent } from "./vehicleGunnery";
 import { DynamicBreakableWorld } from "./DynamicBreakableWorld";
 import {
   ExplosionFxSystem,
@@ -7078,15 +7079,27 @@ function OpenWorldScene({
     }
   }, [flushBulletCarve]);
 
-  const fireRound = useCallback(() => {
+  /**
+   * ОДИН ВЫСТРЕЛ ПУЛЕМЁТА, ОТКУДА БЫ ОН НИ ВЫШЕЛ.
+   *
+   * Без аргумента стреляет человек — из камеры, как и раньше. С `mount`
+   * стреляет БОРТОВАЯ установка: ей передают дульный срез и ось ствола, а всё
+   * остальное — луч, поиск куска, carve, импульс, трасса, звук — общее.
+   * Отдельного «оружия машин» не заводится: боеприпас один и тот же.
+   */
+  const fireRound = useCallback((mount?: {
+    readonly origin: Vector3;
+    readonly direction: Vector3;
+  }) => {
+    const shooterPosition = mount ? mount.origin : camera.position;
     const traceId = startShotPerformanceTrace();
     const gunshotStartedAt = performance.now();
     playGunshotSound();
     // Шумит ДУЛО, а не пуля: событие рождается там, где стоит стрелок.
     villagerNoise.current.push({
-      x: camera.position.x,
-      y: camera.position.y,
-      z: camera.position.z,
+      x: shooterPosition.x,
+      y: shooterPosition.y,
+      z: shooterPosition.z,
       level: GUNSHOT_NOISE_LEVEL,
       rise: GUNSHOT_NOISE_RISE,
     });
@@ -7097,13 +7110,15 @@ function OpenWorldScene({
     );
     mgShots.current += 1;
 
-    const direction = camera.getWorldDirection(new Vector3());
+    const direction = mount
+      ? mount.direction.clone().normalize()
+      : camera.getWorldDirection(new Vector3());
     direction.x += (Math.random() - 0.5) * 0.024;
     direction.y += (Math.random() - 0.5) * 0.024;
     direction.z += (Math.random() - 0.5) * 0.024;
     direction.normalize();
     const projectileRay = new rapier.Ray(
-      { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+      { x: shooterPosition.x, y: shooterPosition.y, z: shooterPosition.z },
       { x: direction.x, y: direction.y, z: direction.z },
     );
     const playerBody = pieceBodies.current.get("player");
@@ -7153,7 +7168,7 @@ function OpenWorldScene({
       | undefined;
     if (physicsHit) {
       const distance = physicsHit.timeOfImpact;
-      const point = camera.position
+      const point = shooterPosition
         .clone()
         .addScaledVector(direction, distance);
       const parent = physicsHit.collider.parent();
@@ -7184,7 +7199,7 @@ function OpenWorldScene({
           // Compound colliders move away from their authored coordinates.
           // This rare branch keeps exact member selection; ordinary city fire
           // never enters the multi-million-triangle render raycast anymore.
-          raycaster.current.set(camera.position, direction);
+          raycaster.current.set(shooterPosition, direction);
           const visual = intersectBreakables(MG_RANGE).find((candidate) => {
             const candidateData = readBreakableHit(candidate);
             return Boolean(
@@ -7213,13 +7228,13 @@ function OpenWorldScene({
         hit = { distance, point, data };
       }
     }
-    const fieldRayEnd = camera.position
+    const fieldRayEnd = shooterPosition
       .clone()
       .add(direction.clone().multiplyScalar(MG_RANGE));
     const forceFieldStartedAt = performance.now();
     const fieldHit = forceFieldActive
       ? (basaltForceField.current?.intersectSegment(
-          [camera.position.x, camera.position.y, camera.position.z],
+          [shooterPosition.x, shooterPosition.y, shooterPosition.z],
           [fieldRayEnd.x, fieldRayEnd.y, fieldRayEnd.z],
         ) ?? null)
       : null;
@@ -7231,17 +7246,20 @@ function OpenWorldScene({
     );
     const fieldHitDistance = fieldHit
       ? Math.hypot(
-          fieldHit.point[0] - camera.position.x,
-          fieldHit.point[1] - camera.position.y,
-          fieldHit.point[2] - camera.position.z,
+          fieldHit.point[0] - shooterPosition.x,
+          fieldHit.point[1] - shooterPosition.y,
+          fieldHit.point[2] - shooterPosition.z,
         )
       : Number.POSITIVE_INFINITY;
     const fieldIntercepts =
       fieldHit !== null && (!hit || fieldHitDistance < hit.distance);
 
-    const muzzle = new Vector3(0.36, -0.26, -0.8)
-      .applyQuaternion(camera.quaternion)
-      .add(camera.position);
+    // У бортовой установки дульный срез УЖЕ известен — он и есть начало луча.
+    const muzzle = mount
+      ? shooterPosition.clone()
+      : new Vector3(0.36, -0.26, -0.8)
+          .applyQuaternion(camera.quaternion)
+          .add(shooterPosition);
     const end = fieldIntercepts
       ? new Vector3(...fieldHit.point)
       : hit
@@ -8996,6 +9014,45 @@ function OpenWorldScene({
     });
   }, [camera]);
 
+  /**
+   * БОРТОВОЕ ОРУЖИЕ МАШИНЫ СТРЕЛЯЕТ ТЕМ ЖЕ, ЧЕМ И ЧЕЛОВЕК.
+   *
+   * Система машин присылает уже готовые мировые выстрелы — луч из дульного
+   * среза и снаряд с наследованной скоростью носителя, — а здесь они попадают
+   * в те же самые тракты: `fireRound` для пулемёта и общий пул снарядов для
+   * ракеты. Никакого второго оружия «для машин» не заводится: разойдись эти
+   * два тракта, и одна и та же пуля начала бы вести себя по-разному в
+   * зависимости от того, кто нажал.
+   */
+  const handleVehicleWeaponFire = useCallback(
+    (event: VehicleWeaponFireEvent) => {
+      for (const shot of event.shots) {
+        const origin = new Vector3(...shot.origin);
+        const direction = new Vector3(...shot.direction).normalize();
+        if (shot.weapon === "cannon") {
+          fireRound({ origin, direction });
+          continue;
+        }
+        grenadeId.current += 1;
+        const speed = explosiveProfile(shot.explosive ?? "podRocket")
+          .projectile.speed;
+        projectileRuntime.current?.spawn({
+          id: grenadeId.current,
+          kind: shot.explosive ?? "podRocket",
+          position: [origin.x, origin.y, origin.z],
+          // Снаряд наследует ход носителя: ровно на это и решался прицел
+          // (`interceptSolution` считает встречу в системе стрелка).
+          velocity: [
+            direction.x * speed + shot.inheritVelocity[0],
+            direction.y * speed + shot.inheritVelocity[1],
+            direction.z * speed + shot.inheritVelocity[2],
+          ],
+        });
+      }
+    },
+    [fireRound],
+  );
+
   const handleBodyContact = useCallback(
     (
       source: ShardSource,
@@ -9981,6 +10038,7 @@ function OpenWorldScene({
         worldContactPieceAt={worldContactPieceAt}
         contactMaterialOf={contactMaterialOf}
         onContactDamage={handleContactDamage}
+        onVehicleWeaponFire={handleVehicleWeaponFire}
         onVehicleFailure={onVehicleFailure}
       />
       <AstanaTrainSystem

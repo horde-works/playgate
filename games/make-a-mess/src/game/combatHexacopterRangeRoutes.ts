@@ -235,19 +235,24 @@ function placedPlan(
  *    располагаемых 14.5, то есть машина идёт по кругу с большим запасом и
  *    может сорваться в перехват в любой момент, не сбрасывая ход.
  *
- * Орбита замкнута: у неё нет ни захода, ни финала, потому что рейс кончается
- * не точкой на кривой, а приказом. Возврат на площадку — обычный
- * `combatHexacopterRangeArrivalPlan`.
+ * СТОРОЖЕВОЙ ПОЛЁТ — ЭТО НЕ ОДИН КРУГ. Маршрут кончается точкой, и машина,
+ * пройдя один оборот, честно пошла бы садиться — то есть «сторожить небо»
+ * означало бы полторы минуты дежурства. Пока рейс не умеет длиться до приказа,
+ * орбита наматывается сорок раз: 11.6 км, около двенадцати минут дежурства при
+ * шестнадцати метрах в секунду. Это ЗАПЛАТКА, и она названа заплаткой: правильно
+ * было бы дать рейсу признак «до отмены», и тогда кругов не считают вовсе.
  */
 export const COMBAT_HEXACOPTER_GUARD_RADIUS = 46;
 export const COMBAT_HEXACOPTER_GUARD_ALTITUDE = 26;
 export const COMBAT_HEXACOPTER_GUARD_SPEED = 16;
 
+export const COMBAT_HEXACOPTER_GUARD_LAPS = 40;
+
 const guardCircle = createMotionRoute({
   id: "combat-hexacopter:guard",
   // Круг считается формулой: шестнадцать узлов с касательными ручками длиной
   // в треть хорды — так дуга остаётся дугой, а не шестнадцатиугольником.
-  nodes: Array.from({ length: 17 }, (_, index) => {
+  nodes: Array.from({ length: 16 * COMBAT_HEXACOPTER_GUARD_LAPS + 1 }, (_, index) => {
     const step = (2 * Math.PI) / 16;
     const t = index * step;
     const r = COMBAT_HEXACOPTER_GUARD_RADIUS;
@@ -258,7 +263,12 @@ const guardCircle = createMotionRoute({
       -r * Math.sin(t) * (step / 3),
     ];
     return {
-      id: index === 0 ? "berth" : index === 16 ? "dock" : `guard-${index}`,
+      id:
+        index === 0
+          ? "berth"
+          : index === 16 * COMBAT_HEXACOPTER_GUARD_LAPS
+            ? "dock"
+            : `guard-${index}`,
       position,
       incoming: [position[0] - tangent[0], 0, position[2] - tangent[2]] as SceneVector3,
       outgoing: [position[0] + tangent[0], 0, position[2] + tangent[2]] as SceneVector3,
@@ -266,7 +276,11 @@ const guardCircle = createMotionRoute({
     };
   }),
   measureAxes: [0, 2],
-  markers: { departureComplete: "guard-1", arriving: "guard-15", final: "dock" },
+  markers: {
+    departureComplete: "guard-1",
+    arriving: `guard-${16 * COMBAT_HEXACOPTER_GUARD_LAPS - 1}`,
+    final: "dock",
+  },
   requirements: {
     altitude: () => COMBAT_HEXACOPTER_GUARD_ALTITUDE,
     speedLimit: () => COMBAT_HEXACOPTER_GUARD_SPEED,

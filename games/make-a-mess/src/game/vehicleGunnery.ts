@@ -564,6 +564,85 @@ export function advanceGunnery(
   };
 }
 
+/**
+ * ВЫСТРЕЛ, ГОТОВЫЙ К ИСПОЛНЕНИЮ.
+ *
+ * Граница проведена там же, где и всюду в проекте: геометрию считает тот, у
+ * кого есть ПОЗА (система машин), а физику — тот, у кого есть МИР (сцена).
+ * Поэтому наружу уходит уже мировой луч, а не «машина выстрелила, разберитесь
+ * сами»: сцена не знает ни про кривые преследования, ни про сведение подов, а
+ * система машин — ни про Rapier, ни про пул снарядов.
+ */
+export interface VehicleWeaponShot {
+  readonly weapon: "cannon" | "podRocket";
+  /** Чем стреляет ракетная труба; у пушки не задано. */
+  readonly explosive?: ExplosiveKind;
+  /** Дульный срез в мире. */
+  readonly origin: SceneVector3;
+  /** Единичная ось выстрела в мире: уже с разбросом и сведением. */
+  readonly direction: SceneVector3;
+  /** Скорость носителя: снаряд физически сходит с летящей машины. */
+  readonly inheritVelocity: SceneVector3;
+}
+
+export interface VehicleWeaponFireEvent {
+  readonly frameId: string;
+  readonly clusterId: string;
+  readonly shots: readonly VehicleWeaponShot[];
+}
+
+/** Поза стреляющей машины: авторские точки едут в мир только через неё. */
+export interface WeaponCarrierPose {
+  /** Мировой центр масс. */
+  readonly centre: SceneVector3;
+  /** Центр масс в АВТОРСКИХ осях. */
+  readonly massCentre: SceneVector3;
+  readonly velocity: SceneVector3;
+  /** Фактическая ось ствола в мире — с креном и тангажом. */
+  readonly gunAxis: SceneVector3;
+  /** Поворот авторского вектора в мировой. */
+  rotate(local: SceneVector3): SceneVector3;
+}
+
+/**
+ * Один `GunneryShot` → один мировой выстрел.
+ *
+ * Пушка бьёт вдоль оси корпуса с рассеиванием; труба — вдоль СВЕДЁННОГО
+ * направления, иначе она систематически мажет на свой вынос от оси
+ * (см. `harmonisationRange`).
+ */
+export function resolveVehicleWeaponShot(
+  shot: GunneryShot,
+  armament: VehicleArmament,
+  pose: WeaponCarrierPose,
+): VehicleWeaponShot {
+  const cannon = shot.weapon === "cannon";
+  const mounts = cannon ? armament.cannon.mounts : armament.rockets.mounts;
+  const mount = mounts[shot.mountIndex % mounts.length];
+  const local = subtract(mount.muzzle, pose.massCentre);
+  const offset = pose.rotate(local);
+  const origin: SceneVector3 = [
+    pose.centre[0] + offset[0],
+    pose.centre[1] + offset[1],
+    pose.centre[2] + offset[2],
+  ];
+  const aligned = cannon
+    ? normalize(pose.gunAxis)
+    : harmonisedLaunchDirection(
+        origin,
+        pose.centre,
+        pose.gunAxis,
+        armament.rockets.harmonisationRange,
+      );
+  return {
+    weapon: shot.weapon,
+    explosive: cannon ? undefined : armament.rockets.explosive,
+    origin,
+    direction: deflectHorizontally(aligned, shot.deflection),
+    inheritVelocity: pose.velocity,
+  };
+}
+
 /** Повернуть направление на малый угол вокруг вертикали. */
 export function deflectHorizontally(
   direction: SceneVector3,
