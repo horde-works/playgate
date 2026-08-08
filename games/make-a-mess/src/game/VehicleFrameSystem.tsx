@@ -233,7 +233,7 @@ import { resolveVehicleWeaponShot } from "./vehicleGunnery.ts";
 import { allegianceOf } from "./vehicleAllegiance.ts";
 import { COMBAT_HEXACOPTER_SKY_CONTROL } from "./airVehicles.ts";
 import {
-  advanceRouteFigures,
+  advanceRouteFigureFrame,
   figureCapabilityOf,
   IDLE_ROUTE_FIGURE,
   type RouteFigureFlight,
@@ -6518,39 +6518,27 @@ export function VehicleFrameSystem({
         (!state.combat || figureRunning) &&
         (figurePlan?.figures?.length || figureRunning)
       ) {
-        const figureCentre: [number, number, number] = [
-          mass.centre[0] + state.body.position[0],
-          mass.centre[1] + state.body.position[1],
-          mass.centre[2] + state.body.position[2],
-        ];
-        const figureNose = rotateByQuaternion(state.body.orientation, frame.nose);
-        const flatFigureNose = Math.hypot(figureNose[0], figureNose[2]) || 1;
         const figureLimits = frame.flight.limits;
-        // ЗАМИРАНИЕ ДЕЛАЕТСЯ ОТКАТОМ, а не пропуском: маршрутный прогресс в
-        // этом кадре уже сдвинулся выше по коду, и просто «не двигать» его
-        // здесь нельзя — он уже двинут. Берётся замороженное значение прошлого
-        // кадра, и трасса стоит на нём всю фигуру.
-        const figureFrom = state.figure.episode
-          ? (state.figureProgress ?? flight.progress)
-          : flight.progress;
-        const figured = advanceRouteFigures({
+        // ВЕСЬ КАДР ФИГУРЫ СЧИТАЕТ ОБЩАЯ ЧИСТАЯ ФУНКЦИЯ. Здесь остаётся ровно
+        // то, что принадлежит компоненту: состояние тела на входе и подстановка
+        // результата на выходе. Сборка паспорта фигуры, опора высоты, власть и
+        // замирание прогресса — там же, где стенд их берёт, и разойтись им
+        // больше нечем.
+        const figured = advanceRouteFigureFrame({
           state: state.figure,
+          frozenProgress: state.figureProgress,
           stations: figurePlan?.figures,
-          previousProgress: state.figureProgress ?? figureFrom,
-          progress: figureFrom,
+          berthAltitude: figurePlan?.point(1)[1] ?? 0,
+          progress: flight.progress,
           attitude: state.body.orientation,
-          heading: [
-            figureNose[0] / flatFigureNose,
-            figureNose[2] / flatFigureNose,
+          centre: [
+            mass.centre[0] + state.body.position[0],
+            mass.centre[1] + state.body.position[1],
+            mass.centre[2] + state.body.position[2],
           ],
+          velocity: state.body.velocity,
           bodyNose: frame.nose,
-          speed: Math.hypot(
-            state.body.velocity[0],
-            state.body.velocity[1],
-            state.body.velocity[2],
-          ),
-          verticalSpeed: state.body.velocity[1],
-          capability: figureCapabilityOf({
+          machine: {
             points: figureLimits.enginePoints,
             centreOfMass: mass.centre,
             nose: frame.nose,
@@ -6559,33 +6547,19 @@ export function VehicleFrameSystem({
             liftCapacity:
               mass.mass * GRAVITY * (frame.flight.liftReserve ?? 1.35),
             capacityWeights: figureLimits.rotorCapacityWeights,
-          }),
-          gate: {
-            // Опора — берт этой же трассы: он и есть уровень, с которого
-            // машина взлетала, и относительно которого объявлен провал фигуры.
-            heightAboveGround: figureCentre[1] - (figurePlan?.point(1)[1] ?? 0),
-            // Власть — доля доставленного слабейшим каналом. Побитая машина
-            // фигур не крутит, и узнаётся это из членства кусков в теле.
-            authority: Math.min(
-              1,
-              ...(flight.propulsionFeedback ?? propulsion.fractions),
-            ),
+            angularDamping: frame.flight.angularDamping,
           },
-          altitude: figureCentre[1],
+          authority: Math.min(
+            1,
+            ...(flight.propulsionFeedback ?? propulsion.fractions),
+          ),
           deltaSeconds: step,
         });
         state.figure = figured.state;
-        state.figureProgress = figured.progress;
+        state.figureProgress = figured.frozenProgress;
         flight.progress = figured.progress;
-        if (figured.command) {
-          rotorGuidance = {
-            forwardSpeed: figured.command.speed,
-            lateralSpeed: 0,
-            yawRate: 0,
-            liftFraction: figured.command.liftFraction,
-            attitude: figured.command.attitude,
-            attitudeRate: figured.command.angularVelocity,
-          };
+        if (figured.guidance) {
+          rotorGuidance = figured.guidance;
         }
       } else if (state.figure.episode) {
         state.figure = IDLE_ROUTE_FIGURE;

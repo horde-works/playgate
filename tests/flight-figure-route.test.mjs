@@ -16,7 +16,7 @@ import {
 } from "../games/make-a-mess/src/game/airVehicles.ts";
 import { rotateVector } from "../games/make-a-mess/src/game/clusterDynamics.ts";
 import {
-  advanceRouteFigures,
+  advanceRouteFigureFrame,
   figureCapabilityOf,
   IDLE_ROUTE_FIGURE,
   invertedRecoveryHeight,
@@ -25,7 +25,13 @@ import {
 import {
   advanceVehicleRouteProgress,
   autopilot,
+  vehicleRouteAltitudeTarget,
 } from "../games/make-a-mess/src/game/vehicleFrames.ts";
+import {
+  advanceVehicleFailureWatchdog,
+  createVehicleFailureWatchdog,
+  vehicleFailureEnvelopeFor,
+} from "../games/make-a-mess/src/game/vehicleFailure.ts";
 import {
   centreOf,
   createMachine,
@@ -52,23 +58,25 @@ const pieces = compileSceneGroups(
 ).clusters[0].pieces;
 const plan = combatHexacopterRangePlan(BERTH);
 
-function build(startProgress) {
-  const point = plan.point(startProgress);
-  const ahead = plan.point(Math.min(1, startProgress + 0.004));
-  const tangent = [ahead[0] - point[0], 0, ahead[2] - point[2]];
-  const length = Math.hypot(tangent[0], tangent[2]) || 1;
-  const heading = [tangent[0] / length, 0, tangent[2] / length];
-  const cruise = plan.speedLimit(startProgress);
+/**
+ * МАШИНА СТАВИТСЯ НА ПЛОЩАДКУ, А НЕ ЗАПУСКАЕТСЯ С СЕРЕДИНЫ ТРАССЫ.
+ *
+ * Стенд стартовал в воздухе, на маршрутной скорости и носом по касательной, и
+ * этим пропускал ровно тот кусок рейса, на котором живой полёт и разошёлся:
+ * вертикальный уход, разворот носа на площадку и вход в первый номер. Взлёт и
+ * посадка — часть программы, и проверяться обязаны вместе с ней.
+ */
+function build() {
   return createMachine({
     pieces,
     vehicle: rax,
-    startPoint: point,
-    startVelocity: [heading[0] * cruise, 0, heading[2] * cruise],
-    startNose: heading,
+    startPoint: plan.point(0),
+    startVelocity: [0, 0, 0],
+    startNose: null,
   });
 }
 
-const capability = figureCapabilityOf(build(0.05).machine);
+const capability = figureCapabilityOf(build().machine);
 
 /**
  * ЗАПАС ДО ЗЕМЛИ МЕРИТСЯ МЕЖДУ СТОЛБАМИ, А НЕ ВЕСЬ ПРОГОН.
@@ -87,14 +95,23 @@ function clearanceOf(flight) {
 }
 
 /** Круг с фигурами: настоящий автопилот, настоящие силы, замирающий прогресс. */
-function flyCircuit({ from, to, seconds, stations = plan.figures }) {
-  const m = build(from);
-  let progress = from;
-  let frozen = from;
+function flyCircuit({ seconds, stations = plan.figures }) {
+  const m = build();
+  let progress = 0;
+  // Замороженная доля живёт МЕЖДУ КАДРАМИ всегда, а не только на фигуре: из
+  // неё и текущей доли получается интервал, на котором станция «наступает».
+  let frozen = null;
   let figures = IDLE_ROUTE_FIGURE;
   const events = [];
   let lastGuidance = null;
   const track = [];
+  // СТОРОЖ ОТКАЗОВ — ТОТ ЖЕ, ЧТО СНИМАЕТ МАШИНУ С РЕЙСА В ИГРЕ. Без него стенд
+  // доказывал «долетела», а живой полёт кончался снятием: маршрут выводил
+  // машину за конверт позы и высоты, и увидеть это было нечем.
+  const envelope = vehicleFailureEnvelopeFor(m.flight);
+  let watchdog = createVehicleFailureWatchdog(0);
+  let failure = null;
+  let failedAt = null;
   for (let step = 0; step < seconds * 60; step += 1) {
     const centre = centreOf(m);
     const nose = forwardAxis(m);
@@ -109,23 +126,22 @@ function flyCircuit({ from, to, seconds, stations = plan.figures }) {
       centre,
       Math.hypot(m.state.velocity[0], m.state.velocity[2]) * dt,
     );
-    const figureFrom = figures.episode ? frozen : progress;
-    const figured = advanceRouteFigures({
+    // ТОТ ЖЕ КАДР ФИГУРЫ, ЧТО У РАНТАЙМА, И ТОЙ ЖЕ ФУНКЦИЕЙ. Стенд, считающий
+    // это своим кодом, доказывает полёт своего кода: паспорт фигуры здесь
+    // собирался с затуханием вращения, а в компоненте — без, и в игре не
+    // полетела ни одна фигура при шести зелёных на стенде.
+    const figured = advanceRouteFigureFrame({
       state: figures,
+      frozenProgress: frozen,
       stations,
-      previousProgress: frozen,
-      progress: figureFrom,
+      berthAltitude: plan.point(1)[1],
+      progress,
       attitude: m.state.orientation,
-      heading: [nose[0] / flat, nose[2] / flat],
+      centre,
+      velocity: m.state.velocity,
       bodyNose: m.vehicle.nose,
-      speed,
-      verticalSpeed: m.state.velocity[1],
-      capability,
-      gate: {
-        heightAboveGround: centre[1] - BERTH[1],
-        authority: Math.min(...m.feedback),
-      },
-      altitude: centre[1],
+      machine: m.machine,
+      authority: Math.min(...m.feedback),
       deltaSeconds: dt,
     });
     if (figured.state.station && !figures.station) {
@@ -142,18 +158,11 @@ function flyCircuit({ from, to, seconds, stations = plan.figures }) {
       events.push({ skipped: figured.state.skipped });
     }
     figures = figured.state;
-    frozen = figured.progress;
+    frozen = figured.frozenProgress;
     progress = figured.progress;
 
-    if (figured.command) {
-      stepMachine(m, {
-        forwardSpeed: figured.command.speed,
-        lateralSpeed: 0,
-        yawRate: 0,
-        liftFraction: figured.command.liftFraction,
-        attitude: figured.command.attitude,
-        attitudeRate: figured.command.angularVelocity,
-      });
+    if (figured.guidance) {
+      stepMachine(m, figured.guidance);
     } else {
       const piloted = autopilot(
         plan,
@@ -169,7 +178,7 @@ function flyCircuit({ from, to, seconds, stations = plan.figures }) {
               yawRateLimits: m.yawRateLimits,
             }
           : { ...m.model, engineAvailability: m.feedback },
-        1,
+        Math.min(1, step / 120),
         m.vehicle.nose,
         m.flight.approach,
       );
@@ -194,9 +203,62 @@ function flyCircuit({ from, to, seconds, stations = plan.figures }) {
       lift: lastGuidance?.liftFraction ?? 0,
       vy: m.state.velocity[1],
     });
-    if (progress >= to) break;
+    // Конверт проверяется на СЫРЫХ отклонениях. Рантайм судит по остатку,
+    // который наведение уже не вытянет, и он всегда меньше сырого: стенд,
+    // проходящий по сырому, проходит и по нему.
+    const bodyNose = rotateVector(m.state.orientation, m.vehicle.nose);
+    const bodyUp = rotateVector(m.state.orientation, [0, 1, 0]);
+    const onLine = plan.point(progress);
+    const advanced = advanceVehicleFailureWatchdog(
+      watchdog,
+      {
+        deltaSeconds: dt,
+        relativeAltitude: live[1] - BERTH[1],
+        pitch: Math.asin(Math.max(-1, Math.min(1, bodyNose[1]))),
+        roll: Math.asin(
+          Math.max(
+            -1,
+            Math.min(1, -(bodyNose[2] * bodyUp[0] - bodyNose[0] * bodyUp[2])),
+          ),
+        ),
+        headingError: 0,
+        // Нос машины с векторной тягой курса не задаёт — тело держит линию само.
+        courseFollowsNose: false,
+        yawRateError: 0,
+        crossTrackError: Math.hypot(live[0] - onLine[0], live[2] - onLine[2]),
+        corridorLimit: plan.corridor?.(progress),
+        // ВЫСОТА МЕРИТСЯ ПРОТИВ ТОЙ ЖЕ ЦЕЛИ, ПО КОТОРОЙ ЛЕТИТ АВТОПИЛОТ, а не
+        // против точки линии. На взлётном и посадочном столбах цель — сам
+        // столб: профиль трассы у площадки гасится к нулю, потому что там
+        // машина стоит, и судить по нему поднявшуюся на двадцать метров машину
+        // значит объявлять расхождением исполнение собственного требования.
+        altitudeError: live[1] - vehicleRouteAltitudeTarget(plan, progress, live),
+        progress,
+        requiredControlAvailable: true,
+        requestedControlEffort: 0,
+        deliveredControlFraction: 1,
+        requestedLiftEffort: 0,
+        deliveredLiftFraction: 1,
+        goArounds: 0,
+        corrections: 0,
+        trimAuthorityExhausted: false,
+        turning: Math.abs(m.state.angularVelocity[1]) > 0.1,
+        inFinalManeuver: false,
+        dockingDistance: Math.hypot(live[0] - BERTH[0], live[2] - BERTH[2]),
+        inDockingCapture: false,
+        dockingComplete: false,
+        recoveringDisturbance: false,
+      },
+      envelope,
+    );
+    watchdog = advanced.state;
+    if (advanced.failure && !failure) {
+      failure = advanced.failure;
+      failedAt = { progress, seconds: step / 60, figure: figures.station?.key ?? null };
+    }
+    if (progress >= 0.9995 && Math.hypot(...m.state.velocity) < 0.6) break;
   }
-  return { events, track, progress, machine: m };
+  return { events, track, progress, machine: m, failure, failedAt };
 }
 
 test("программа объявляет ШЕСТЬ фигур, и ни одна не повторяет другую", () => {
@@ -286,7 +348,7 @@ test("этаж под каждую фигуру ВЫВЕДЕН из физики
   }
 });
 
-const run = flyCircuit({ from: 0.004, to: 0.999, seconds: 300 });
+const run = flyCircuit({ seconds: 300 });
 const started = run.events.filter((event) => event.start).map((e) => e.start);
 const ended = run.events.filter((event) => event.end);
 
@@ -312,6 +374,35 @@ if (process.env.FIGURE_TRACE) {
     );
   }
 }
+
+/**
+ * СТОРОЖ ОТКАЗОВ — ГЛАВНЫЙ СУДЬЯ ЭТОГО СТЕНДА.
+ *
+ * «Долетела» и «не снята с рейса» — разные утверждения, и разошлись они в живом
+ * полёте: программа проходилась целиком, а машину снимало расхождением по
+ * высоте на входе в первый разворот. Причина была в требовании — профиль просил
+ * набирать четыре метра в секунду ровно там, где машина завалена в крен и
+ * вертикальной тяги у неё осталась половина, — но увидеть это стенд не мог,
+ * потому что сторожа в нём не было вовсе.
+ */
+test("рейс НЕ СНИМАЕТСЯ сторожем отказов — от площадки до площадки", () => {
+  assert.equal(
+    run.failure,
+    null,
+    `снята: ${run.failure} на ${run.failedAt?.seconds?.toFixed(0)} с, доля ${run.failedAt?.progress?.toFixed(3)}, номер ${run.failedAt?.figure ?? "нет"}`,
+  );
+});
+
+test("машина ВЗЛЕТАЕТ с площадки и САДИТСЯ на неё, а не стартует в воздухе", () => {
+  const first = run.track[0];
+  assert.ok(first.height < 2, `старт на высоте ${first.height.toFixed(1)} м`);
+  const last = run.track.at(-1);
+  assert.ok(
+    Math.hypot(last.at[0] - BERTH[0], last.at[1] - BERTH[2]) < 4,
+    `села в ${Math.hypot(last.at[0] - BERTH[0], last.at[1] - BERTH[2]).toFixed(1)} м от площадки`,
+  );
+  assert.ok(last.height < 3, `зависла на ${last.height.toFixed(1)} м`);
+});
 
 test("программа доходит до створа", () => {
   // ДЛИНА ПРОГРАММЫ ТРЕБОВАНИЕМ БОЛЬШЕ НЕ ЯВЛЯЕТСЯ. Здесь стояла планка в три
@@ -399,7 +490,7 @@ test("на трёх номерах машина смотрит на площад
  * трассы (одиннадцать метров радиуса против сорока пяти на галсах).
  */
 test("трасса остаётся летимой БЕЗ ЕДИНОЙ фигуры", () => {
-  const bare = flyCircuit({ from: 0.004, to: 0.999, seconds: 300, stations: [] });
+  const bare = flyCircuit({ seconds: 300, stations: [] });
   assert.deepEqual(bare.events, [], "фигуры не объявлены, а что-то началось");
   assert.ok(
     bare.progress >= 0.99,
@@ -407,6 +498,7 @@ test("трасса остаётся летимой БЕЗ ЕДИНОЙ фигу�
   );
   const lowest = clearanceOf(bare);
   assert.ok(lowest > 3, `без фигур опустилась до ${lowest.toFixed(1)} м`);
+  assert.equal(bare.failure, null, `без фигур снята: ${bare.failure}`);
   // И не разошлась с трассой: полукруги проходятся, а не срезаются по прямой.
   const worst = bare.track
     .filter((s) => s.progress > 0.02 && s.progress < 0.98)

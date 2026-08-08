@@ -185,6 +185,8 @@ test("маршрутные метки — только границы режим
     // Столбы у земли: там режим меняется дважды — по ходу и по коридору.
     ...[26, 40].map((metres) => metres / plan.length),
     plan.verticalDeparture.until,
+    // Конец ухода спиной: там кончается тихий ход номера и начинается галс.
+    combatHexacopterRangeCircuit.nodeProgress("backaway"),
     // Точка покоя: машина останавливается и разворачивается на месте.
     combatHexacopterRangeCircuit.nodeProgress("rest-in"),
     combatHexacopterRangeCircuit.nodeProgress("rest-out"),

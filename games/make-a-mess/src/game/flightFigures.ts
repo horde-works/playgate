@@ -87,8 +87,18 @@ export interface FigureCapabilitySource {
   readonly inertia: readonly [number, number, number];
   readonly liftCapacity: number;
   readonly capacityWeights?: readonly number[] | null;
-  /** Паспортное затухание вращения, 1/с, как его понимает `stepBody`. */
-  readonly angularDamping?: number;
+  /**
+   * Паспортное затухание вращения, 1/с, как его понимает `stepBody`.
+   *
+   * ОБЯЗАТЕЛЬНОЕ ПОЛЕ, и это не педантизм. Оно необязательным было ровно один
+   * день: рантайм собирал паспорт фигуры отдельным литералом и это поле в нём
+   * забыл, а стенд собирал своим и не забыл. Расхождение молчаливое и злое —
+   * без затухания расписание фигуры просит темп, который машина удержать не
+   * может, и фигура либо не проходит ворота, либо снимается по времени. На
+   * стенде при этом всё летало. Необязательное поле, у которого есть разумный
+   * ноль, — это приглашение к такому расхождению; здесь его быть не должно.
+   */
+  readonly angularDamping: number;
 }
 
 /**
@@ -1335,4 +1345,118 @@ export function figureNoseDirection(
   nose: SceneVector3,
 ): SceneVector3 {
   return rotateVector(attitude, nose);
+}
+
+/**
+ * ТРЕБОВАНИЕ ДВИЖЕНИЯ, КОТОРОЕ ФИГУРА ВЫСТАВЛЯЕТ ВМЕСТО АВТОПИЛОТА.
+ *
+ * Структурно совместимо с `VehicleGuidanceDemand`, но объявлено здесь: тянуть
+ * сюда тип наведения значило бы завязать модуль фигур на модуль автопилота ради
+ * шести полей.
+ */
+export interface RouteFigureGuidance {
+  readonly forwardSpeed: number;
+  readonly lateralSpeed: number;
+  readonly yawRate: number;
+  readonly liftFraction: number;
+  readonly attitude: Quaternion;
+  readonly attitudeRate: SceneVector3;
+}
+
+export interface RouteFigureStepInput {
+  readonly state: RouteFigureFlight;
+  /**
+   * Доля трассы, замороженная на прошлом кадре, или `null`, если фигура не шла.
+   * Замирание делается ОТКАТОМ, а не пропуском: маршрутный прогресс к этому
+   * моменту уже сдвинут, и «просто не двигать» его нельзя — он уже двинут.
+   */
+  readonly frozenProgress: number | null;
+  readonly stations: readonly RouteFigureStation[] | undefined;
+  /**
+   * Опора фигуры — берт ЭТОЙ ЖЕ трассы, то есть её последняя точка: это и есть
+   * уровень, с которого машина взлетала и относительно которого объявлен провал.
+   */
+  readonly berthAltitude: number;
+  readonly progress: number;
+  readonly attitude: Quaternion;
+  readonly centre: SceneVector3;
+  readonly velocity: SceneVector3;
+  /** Нос машины в авторской позе покоя. */
+  readonly bodyNose: SceneVector3;
+  readonly machine: FigureCapabilitySource;
+  /** Доля доставленного слабейшим каналом: побитая машина фигур не крутит. */
+  readonly authority: number;
+  readonly deltaSeconds: number;
+}
+
+export interface RouteFigureStepResult {
+  readonly state: RouteFigureFlight;
+  readonly frozenProgress: number | null;
+  readonly progress: number;
+  readonly guidance: RouteFigureGuidance | null;
+}
+
+/**
+ * ВЕСЬ КАДР ФИГУРЫ ЦЕЛИКОМ — ОДНОЙ ЧИСТОЙ ФУНКЦИЕЙ, И ЭТО НЕ КОСМЕТИКА.
+ *
+ * `advanceRouteFigures` решает, крутить ли фигуру. Но между ним и машиной лежит
+ * ещё слой: как собрать паспорт фигуры, чем мерить высоту над бертом, что такое
+ * власть, откуда взять замороженную долю и во что превратить команду. Этот слой
+ * был написан ДВАЖДЫ — в компоненте и в стенде, — и разошёлся, как расходится
+ * всякий дубль:
+ *
+ *   - стенд передавал паспортное затухание вращения, компонент его забыл. Без
+ *     затухания расписание фигуры просит темп, которого машина не даёт;
+ *   - замороженную долю они брали по-разному, и это меняет кадр входа.
+ *
+ * Итог был ровно тот, которого и следовало ждать: на стенде летели все шесть
+ * фигур, в игре — ни одной, и разницу увидел человек глазами, а не тест.
+ *
+ * Поэтому слой здесь и один. Компоненту остаётся отдать состояние тела и взять
+ * ответ; стенду — то же самое. Разойтись им больше нечем.
+ */
+export function advanceRouteFigureFrame(
+  input: RouteFigureStepInput,
+): RouteFigureStepResult {
+  const running = input.state.episode !== null;
+  const from = running ? (input.frozenProgress ?? input.progress) : input.progress;
+  const nose = rotateVector(input.attitude, input.bodyNose);
+  const flat = Math.hypot(nose[0], nose[2]) || 1;
+  const figured = advanceRouteFigures({
+    state: input.state,
+    stations: input.stations,
+    previousProgress: input.frozenProgress ?? from,
+    progress: from,
+    attitude: input.attitude,
+    heading: [nose[0] / flat, nose[2] / flat],
+    bodyNose: input.bodyNose,
+    speed: Math.hypot(
+      input.velocity[0],
+      input.velocity[1],
+      input.velocity[2],
+    ),
+    verticalSpeed: input.velocity[1],
+    capability: figureCapabilityOf(input.machine),
+    gate: {
+      heightAboveGround: input.centre[1] - input.berthAltitude,
+      authority: input.authority,
+    },
+    altitude: input.centre[1],
+    deltaSeconds: input.deltaSeconds,
+  });
+  return {
+    state: figured.state,
+    frozenProgress: figured.progress,
+    progress: figured.progress,
+    guidance: figured.command
+      ? {
+          forwardSpeed: figured.command.speed,
+          lateralSpeed: 0,
+          yawRate: 0,
+          liftFraction: figured.command.liftFraction,
+          attitude: figured.command.attitude,
+          attitudeRate: figured.command.angularVelocity,
+        }
+      : null,
+  };
 }
