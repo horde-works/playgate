@@ -202,6 +202,7 @@ import {
   NEUTRAL_GOVERNOR,
   type RotorcraftGovernorState,
 } from "./rotorcraftSpeedGovernor.ts";
+import { dispatchedFlightKind } from "./entryInteraction.ts";
 import {
   createAirCombatState,
   stepAirCombat,
@@ -2865,13 +2866,16 @@ export function VehicleFrameSystem({
               passengerLaunchAllowed &&
               seatIntact;
             interaction.flight = createFlightState(
-              manualPilotLaunch
-                ? (departure?.flightKind ?? "circuit")
-                : post === "ride"
-                  ? (requestedAction ??
-                    interactionFrame.passengerFlight?.flightKind ??
-                    "tour")
-                  : (departure?.flightKind ?? "circuit"),
+              // Решение «какой рейс начинается» вынесено в чистую функцию:
+              // здесь уже была ошибка, которую нечем было поймать тестом.
+              dispatchedFlightKind({
+                post: post === "ride" ? "ride" : "board",
+                requestedAction,
+                departureKind: departure?.flightKind ?? null,
+                passengerKind:
+                  interactionFrame.passengerFlight?.flightKind ?? null,
+                manualPilotLaunch,
+              }),
               post === "ride" || manualPilotLaunch ? "passenger" : "uncrewed",
               interactionFrame.flight.limits.enginePoints.length,
               0,

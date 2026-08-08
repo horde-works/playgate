@@ -35,7 +35,11 @@ import {
 } from "../games/make-a-mess/src/game/combatHexacopter.ts";
 import { createCombatHexacopterPrototypeDocument } from "../games/make-a-mess/src/content/scenes/combatHexacopterPrototypeDocument.ts";
 import { compileSceneGroups } from "../games/make-a-mess/src/content/scenes/compileScene.ts";
-import { airVehicles } from "../games/make-a-mess/src/game/airVehicles.ts";
+import {
+  COMBAT_HEXACOPTER_SKY_CONTROL,
+  airVehicles,
+} from "../games/make-a-mess/src/game/airVehicles.ts";
+import { dispatchedFlightKind } from "../games/make-a-mess/src/game/entryInteraction.ts";
 
 // ---------------------------------------------------------------------------
 // Свой-чужой
@@ -664,4 +668,129 @@ test("скорость сближения знаковая: расхождени
   const opening = closingSpeedTo([0, 0, 0], [0, 0, -12], { centre: [0, 0, 40], velocity: [0, 0, 0] });
   assert.ok(closing > 0);
   assert.ok(opening < 0);
+});
+
+// ---------------------------------------------------------------------------
+// Табличка: пункт обязан ЧТО-ТО менять
+// ---------------------------------------------------------------------------
+
+test("каждый пункт таблички выбирает СВОЮ трассу, а не молча первую", () => {
+  // Класс ошибки, стоивший утреннего прогона: рантайм брал вид рейса из
+  // паспорта и игнорировал выбранный пункт, поэтому «Сторожить небо»
+  // исполнялось как обзорный круг — машина уходила на ту же трассу и не
+  // видела чужой борт. Здесь проверяется ПАСПОРТНАЯ половина: разные пункты
+  // обязаны давать разные трассы. Если они одинаковы, пункт бессмыслен даже
+  // при исправном рантайме.
+  const berth = [0, 0.08, 0];
+  for (const vehicle of airVehicles) {
+    const actions = vehicle.departure?.target.actions;
+    if (!actions || actions.length < 2) {
+      continue;
+    }
+    const kinds = actions
+      .map((action) => action.id)
+      // `manual` — способ управления, а не вид рейса.
+      .filter((id) => id !== "manual");
+    const plans = kinds.map((kind) => vehicle.flight.routePlan(kind, berth));
+    const ids = new Set(plans.map((plan) => plan.id));
+    assert.equal(
+      ids.size,
+      kinds.length,
+      `${vehicle.id}: пункты ${kinds.join(", ")} дают трассы ${[...ids].join(", ")}`,
+    );
+  }
+});
+
+test("ВЫБРАННЫЙ ПУНКТ И ЕСТЬ ВИД РЕЙСА — на обоих постах", () => {
+  // Ровно та ошибка, что съела утренний прогон: со стойки площадки рейс
+  // назывался паспортным именем, а не выбранным, и боевая задача исполнялась
+  // как обзорный круг. Теперь решение — чистая функция, и оно проверяется.
+  assert.equal(
+    dispatchedFlightKind({
+      post: "board",
+      requestedAction: COMBAT_HEXACOPTER_SKY_CONTROL,
+      departureKind: "circuit",
+      manualPilotLaunch: false,
+    }),
+    COMBAT_HEXACOPTER_SKY_CONTROL,
+  );
+  // Единственный пункт — паспортный рейс.
+  assert.equal(
+    dispatchedFlightKind({
+      post: "board",
+      requestedAction: null,
+      departureKind: "circuit",
+      manualPilotLaunch: false,
+    }),
+    "circuit",
+  );
+  // `manual` — способ управления: трассу даёт паспорт, а не название пункта.
+  assert.equal(
+    dispatchedFlightKind({
+      post: "board",
+      requestedAction: "manual",
+      departureKind: "circuit",
+      manualPilotLaunch: true,
+    }),
+    "circuit",
+  );
+  // Даже если сесть за штурвал не вышло, рейс с именем «manual» не рождается.
+  assert.equal(
+    dispatchedFlightKind({
+      post: "board",
+      requestedAction: "manual",
+      departureKind: "circuit",
+      manualPilotLaunch: false,
+    }),
+    "circuit",
+  );
+  // Пассажирский пост вёл себя правильно и раньше — закрепляем.
+  assert.equal(
+    dispatchedFlightKind({
+      post: "ride",
+      requestedAction: "evasive",
+      passengerKind: "tour",
+      manualPilotLaunch: false,
+    }),
+    "evasive",
+  );
+});
+
+test("боевая задача RAX — сторожевая орбита, а не показательный круг", () => {
+  const rax = airVehicles.find((entry) => entry.id === "combat-hexacopter");
+  const berth = [0, 0.08, 0];
+  const guard = rax.flight.routePlan(COMBAT_HEXACOPTER_SKY_CONTROL, berth);
+  const circuit = rax.flight.routePlan("circuit", berth);
+  assert.notEqual(guard.id, circuit.id);
+
+  // Орбита идёт по КРОМКЕ охраняемого круга на постоянной высоте: сторожат
+  // периметр, а не летают над ним по центру.
+  const radii = [];
+  const altitudes = [];
+  for (let i = 0; i <= 40; i += 1) {
+    const p = 0.1 + (i / 40) * 0.8;
+    const point = guard.point(p);
+    radii.push(Math.hypot(point[0] - berth[0], point[2] - berth[2]));
+    altitudes.push(point[1] - berth[1]);
+  }
+  const spread = Math.max(...radii) - Math.min(...radii);
+  assert.ok(spread < 1.5, `радиус орбиты гуляет на ${spread.toFixed(2)} м`);
+  assert.ok(
+    Math.max(...altitudes) - Math.min(...altitudes) < 0.5,
+    "высота дежурства обязана быть постоянной",
+  );
+  // И дежурство обязано ДЛИТЬСЯ: один круг — это полторы минуты.
+  assert.ok(
+    guard.length > 5000,
+    `сторожевой рейс всего ${guard.length.toFixed(0)} м — машина уйдёт садиться`,
+  );
+});
+
+test("у злого круга HX-6 своя трасса, отличная от обзорной", () => {
+  const hx6 = airVehicles.find((entry) => entry.id === "town-hexacopter");
+  const berth = [30, 0.22, -14];
+  assert.notEqual(
+    hx6.flight.routePlan("evasive", berth).id,
+    hx6.flight.routePlan("circuit", berth).id,
+  );
 });

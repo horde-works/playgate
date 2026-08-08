@@ -67,6 +67,59 @@ export function numberedEntryInteractionAction(
   return actions[digit - 1] ?? null;
 }
 
+/**
+ * СПОСОБ УПРАВЛЕНИЯ, А НЕ ВИД РЕЙСА.
+ *
+ * Единственный пункт таблички, который не называет трассу: он говорит, КТО
+ * поведёт машину, а куда — решает паспорт.
+ */
+export const MANUAL_PILOT_ACTION = "manual";
+
+export interface DispatchedFlightKindInput {
+  /** С какого поста запускают: стойка площадки или место пассажира. */
+  readonly post: "board" | "ride";
+  /** Что выбрали на табличке; пусто — единственный пункт. */
+  readonly requestedAction?: string | null;
+  /** Вид рейса по умолчанию у стойки. */
+  readonly departureKind?: string | null;
+  /** Вид рейса по умолчанию у пассажирского поста. */
+  readonly passengerKind?: string | null;
+  /** Запуск за штурвал состоялся: сиденье цело и человек в нём. */
+  readonly manualPilotLaunch: boolean;
+}
+
+/**
+ * КАКОЙ РЕЙС НАЧИНАЕТСЯ ПО ВЫБРАННОМУ ПУНКТУ.
+ *
+ * Вынесено из системы машин отдельной функцией не ради чистоты, а потому что
+ * здесь уже была ошибка, которую нечем было поймать: со стойки площадки вид
+ * рейса брался ТОЛЬКО из паспорта, а выбранный пункт игнорировался. Пока на
+ * табличке был один рейс, это ничего не значило; второй пункт («Сторожить
+ * небо») молча исполнился как первый — машина ушла на обзорный круг и не
+ * увидела чужой борт.
+ *
+ * Правило одно для обоих постов: пункт называет трассу, кроме `manual` —
+ * он называет пилота.
+ */
+export function dispatchedFlightKind(
+  input: DispatchedFlightKindInput,
+): string {
+  const fallback =
+    input.post === "ride"
+      ? (input.passengerKind ?? "tour")
+      : (input.departureKind ?? "circuit");
+  if (input.manualPilotLaunch) {
+    // За штурвалом человек, и трассу ему даёт паспорт: возвращать сюда
+    // `manual` значило бы завести рейс с несуществующим видом.
+    return input.departureKind ?? fallback;
+  }
+  const requested = input.requestedAction;
+  if (!requested || requested === MANUAL_PILOT_ACTION) {
+    return fallback;
+  }
+  return requested;
+}
+
 /** A single input command belongs to exactly the entry advertised by the UI. */
 export function entryInteractionMatches(
   request: EntryInteractionTarget | null | undefined,
