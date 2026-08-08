@@ -101,12 +101,40 @@ export interface RocketArmament {
   readonly kind: "podRocket";
   readonly mounts: readonly WeaponMount[];
   readonly explosive: ExplosiveKind;
-  /** Сколько труб уходит в одном рипле. */
+  /**
+   * Сколько труб уходит в одном рипле. ЭТО И ЕСТЬ МАГАЗИН.
+   *
+   * Полного боекомплекта у пода нет, и это осознанно. Сперва он был: двенадцать
+   * труб — двенадцать ракет, счётчик и никакого способа его пополнить.
+   * Отстрелявшись за четыре захода, машина НАВСЕГДА оставалась с одной пушкой,
+   * а пушка кольца сквозь кожухи не берёт — то есть «не сбил, продолжает
+   * охотиться» переставало быть выполнимым ровно тогда, когда становилось
+   * нужным. Счётчик без пополнения — не механика, а тупик.
+   *
+   * У ручной ракетницы игрока магазина тоже нет, только перезарядка; держать
+   * борт строже человека не за что. Расход ограничивают ТЕМП и правило «один
+   * рипл на заход»: они дают бою длину, ничего не запирая.
+   *
+   * Если конечный боекомплект понадобится — его место в дозаправке на площадке,
+   * а не в молчаливом счётчике.
+   */
   readonly rippleSize: number;
   /** Пауза между трубами внутри рипла, с. */
   readonly rippleInterval: number;
   /** Пауза между риплами, с. */
   readonly reloadSeconds: number;
+  /**
+   * ПОПОЛНЕНИЕ ПУСТОГО ПОДА, с. Вердикт Igor: полминуты и заново.
+   *
+   * Боекомплект у пода конечный — двенадцать труб, — но пустой под это ПАУЗА,
+   * а не тупик. Первая редакция запирала машину навсегда: счётчик был, способа
+   * пополнить не было, и «не сбил — продолжает охотиться» переставало быть
+   * выполнимым ровно тогда, когда становилось нужным.
+   *
+   * Полминуты — это примерно два-три захода на одной пушке: достаточно, чтобы
+   * пустой под читался в бою как событие, и мало, чтобы бой не заглох.
+   */
+  readonly rearmSeconds: number;
   readonly range: number;
   /** Угловой шаг веера, рад: рипл закрывает ошибку упреждения шириной. */
   readonly rippleSpread: number;
@@ -380,6 +408,10 @@ export function rocketMinimumRange(
 export interface GunneryState {
   /** Непрерывное время удержания решения пушкой, с. */
   readonly trackingSeconds: number;
+  /** Ракет в поду. Ноль — идёт пополнение. */
+  readonly magazine: number;
+  /** Осталось до полного пода, с. Ноль — под снаряжён. */
+  readonly rearmSeconds: number;
   /**
    * ОДИН РИПЛ НА ЗАХОД.
    *
@@ -402,9 +434,11 @@ export interface GunneryState {
   readonly rocketsFired: number;
 }
 
-export function createGunneryState(): GunneryState {
+export function createGunneryState(magazine = 0): GunneryState {
   return {
     trackingSeconds: 0,
+    magazine,
+    rearmSeconds: 0,
     rippleSpentThisPass: false,
     cannonCooldown: 0,
     cannonShots: 0,
@@ -431,8 +465,6 @@ export interface GunneryInput {
   readonly rocketAimTolerance: number;
   /** Решение встречи сошлось. */
   readonly rocketSolved: boolean;
-  /** Ракет осталось. */
-  readonly rocketsLeft: number;
 }
 
 export interface GunneryShot {
@@ -477,6 +509,18 @@ export function advanceGunnery(
   const cannonCooldown = Math.max(0, state.cannonCooldown - deltaSeconds);
   const rocketCooldown = Math.max(0, state.rocketCooldown - deltaSeconds);
 
+  // ПОПОЛНЕНИЕ ИДЁТ САМО, независимо от боя: под снаряжают, пока машина
+  // работает пушкой. Досняряжения «наполовину» нет — под либо пуст, либо полон.
+  const full = armament.rockets.mounts.length;
+  let magazine = state.magazine;
+  let rearmSeconds = state.rearmSeconds;
+  if (rearmSeconds > 0) {
+    rearmSeconds = Math.max(0, rearmSeconds - deltaSeconds);
+    if (rearmSeconds === 0) {
+      magazine = full;
+    }
+  }
+
   // Сопровождение копится, только пока решение ДЕРЖИТСЯ. Разрыв обнуляет —
   // именно этим устойчивое сопровождение отличается от суммы мгновений.
   const holding = input.weaponsFree && input.cannonSolved;
@@ -514,7 +558,7 @@ export function advanceGunnery(
   const mayLaunch =
     input.weaponsFree &&
     input.rocketSolved &&
-    input.rocketsLeft > 0 &&
+    magazine > 0 &&
     !tooClose &&
     input.range <= armament.rockets.range &&
     input.rocketAimError <=
@@ -522,7 +566,7 @@ export function advanceGunnery(
 
   // Начатый рипл ДОСТРЕЛИВАЕТСЯ. Это часть закона захода: обязательство,
   // взятое на входе, не пересматривается на каждом кадре.
-  if (rippleRemaining > 0 && rocketCooldown <= 0 && input.rocketsLeft > 0) {
+  if (rippleRemaining > 0 && rocketCooldown <= 0 && magazine > 0) {
     const indexInRipple = armament.rockets.rippleSize - rippleRemaining;
     const mountIndex = rocketsFired % armament.rockets.mounts.length;
     shots.push({
@@ -548,7 +592,7 @@ export function advanceGunnery(
     rocketCooldown <= 0 &&
     !state.rippleSpentThisPass
   ) {
-    rippleRemaining = Math.min(armament.rockets.rippleSize, input.rocketsLeft);
+    rippleRemaining = Math.min(armament.rockets.rippleSize, magazine);
     const mountIndex = rocketsFired % armament.rockets.mounts.length;
     shots.push({
       weapon: "podRocket",
@@ -567,9 +611,19 @@ export function advanceGunnery(
         : armament.rockets.reloadSeconds;
   }
 
+  const launched = shots.filter((shot) => shot.weapon === "podRocket").length;
+  magazine = Math.max(0, magazine - launched);
+  if (magazine === 0 && rearmSeconds === 0 && launched > 0) {
+    rearmSeconds = armament.rockets.rearmSeconds;
+    // Недострелянный рипл на пустом поду не «висит» до пополнения.
+    rippleRemaining = 0;
+  }
+
   return {
     state: {
       trackingSeconds,
+      magazine,
+      rearmSeconds,
       rippleSpentThisPass:
         state.rippleSpentThisPass ||
         shots.some((shot) => shot.weapon === "podRocket"),
@@ -685,7 +739,10 @@ export function deflectHorizontally(
   ];
 }
 
-/** Новый заход — новая огневая возможность. */
+/**
+ * Новый заход — новая огневая возможность. Боекомплект при этом НЕ
+ * пополняется: заход снимает право на рипл, а не снаряжает под.
+ */
 export function armGunneryForPass(state: GunneryState): GunneryState {
   return { ...state, rippleSpentThisPass: false, rippleRemaining: 0 };
 }

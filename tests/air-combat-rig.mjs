@@ -807,7 +807,8 @@ export function runDuel({
   }
   report.ringsLost = ringAvailability(target).filter((value) => value < 0.5).length;
   report.ringAvailability = ringAvailability(target);
-  report.rocketsLeft = combat.rocketsLeft;
+  report.podLeft = combat.gunnery.magazine;
+  report.reloadingAtEnd = combat.gunnery.rearmSeconds > 0;
   return report;
 }
 
@@ -827,6 +828,7 @@ export function summarise(report) {
     `первое попадание: ${report.firstBloodAt === null ? "—" : `${report.firstBloodAt.toFixed(1)} с`}`,
     `кольца: [${(report.ringAvailability ?? []).map((v) => v.toFixed(2)).join(" ")}]`,
     `самоподрыв: ${report.selfDamage}`,
+    `под на конец боя: ${report.podLeft ?? "—"}${report.reloadingAtEnd ? " (снаряжается)" : ""}`,
     `режимы: ${Object.entries(report.modeSeconds)
       .map(([mode, value]) => `${mode} ${value.toFixed(0)}с`)
       .join(", ")}`,

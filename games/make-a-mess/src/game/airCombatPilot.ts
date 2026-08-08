@@ -113,7 +113,6 @@ export interface AirCombatState {
   /** Скорость, с которой машина ВОШЛА в текущий заход, м/с. */
   readonly passEntrySpeed: number;
   readonly gunnery: GunneryState;
-  readonly rocketsLeft: number;
   readonly orbitPhase: number;
   /** Диагностика ритма: секунд в бою от первого обнаружения. */
   readonly engagementSeconds: number;
@@ -131,6 +130,12 @@ export interface AirCombatTelemetry {
   readonly aimPoint: SceneVector3 | null;
   readonly minimumRange: number;
   readonly weaponsFree: boolean;
+  /** Ракет в поду прямо сейчас. */
+  readonly rocketsLeft: number;
+  /** Под пуст и снаряжается. */
+  readonly reloading: boolean;
+  /** Сколько ещё снаряжаться, с. */
+  readonly rearmSeconds: number;
 }
 
 export interface AirCombatOutput {
@@ -140,7 +145,7 @@ export interface AirCombatOutput {
   readonly telemetry: AirCombatTelemetry;
 }
 
-export function createAirCombatState(rounds: number): AirCombatState {
+export function createAirCombatState(magazine = 0): AirCombatState {
   return {
     mode: "station",
     modeSeconds: 0,
@@ -150,8 +155,7 @@ export function createAirCombatState(rounds: number): AirCombatState {
     passVertical: 1,
     weakPointIndex: null,
     passEntrySpeed: 0,
-    gunnery: createGunneryState(),
-    rocketsLeft: rounds,
+    gunnery: createGunneryState(magazine),
     orbitPhase: 0,
     engagementSeconds: 0,
   };
@@ -848,12 +852,9 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
         ? Math.atan(target.radius / Math.max(range, 1)) * 0.35
         : 0,
       rocketSolved,
-      rocketsLeft: state.rocketsLeft,
     },
     deltaSeconds,
   );
-  const rocketsSpent = gunnery.shots.filter((shot) => shot.weapon === "podRocket").length;
-
   const minimumRange = target
     ? own.radius +
       explosiveProfile(armament.rockets.explosive).blastPushRadius +
@@ -871,7 +872,6 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
       weakPointIndex,
       passEntrySpeed,
       gunnery: gunnery.state,
-      rocketsLeft: Math.max(0, state.rocketsLeft - rocketsSpent),
       orbitPhase: state.orbitPhase,
       engagementSeconds: holdsTarget
         ? state.engagementSeconds + deltaSeconds
@@ -896,6 +896,9 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
       aimPoint: rocketAim ?? aimPoint,
       minimumRange,
       weaponsFree,
+      rocketsLeft: gunnery.state.magazine,
+      reloading: gunnery.state.rearmSeconds > 0,
+      rearmSeconds: gunnery.state.rearmSeconds,
     },
   };
 }

@@ -267,13 +267,12 @@ function fireInput(overrides = {}) {
     rocketAimError: 0.01,
     rocketAimTolerance: 0.06,
     rocketSolved: true,
-    rocketsLeft: 12,
     ...overrides,
   };
 }
 
 test("пушка молчит, пока сопровождение не устоялось", () => {
-  let state = createGunneryState();
+  let state = createGunneryState(12);
   const dt = 1 / 60;
   let fired = 0;
   let elapsed = 0;
@@ -294,7 +293,7 @@ test("пушка молчит, пока сопровождение не усто
 });
 
 test("разрыв решения обнуляет сопровождение, а не копит его по кусочкам", () => {
-  let state = createGunneryState();
+  let state = createGunneryState(12);
   const dt = 1 / 60;
   for (let step = 0; step < 40; step += 1) {
     // Решение мигает через кадр: суммарно времени хватает, непрерывно — нет.
@@ -314,7 +313,7 @@ test("разрыв решения обнуляет сопровождение, �
 });
 
 test("под стреляет РИПЛОМ: три трубы подряд, а не по одной", () => {
-  let state = createGunneryState();
+  let state = createGunneryState(12);
   const dt = 1 / 60;
   const rockets = [];
   let seconds = 0;
@@ -341,7 +340,7 @@ test("под стреляет РИПЛОМ: три трубы подряд, а �
 });
 
 test("рипл РАСКЛАДЫВАЕТСЯ веером, а не кладёт ракеты одну в другую", () => {
-  let state = createGunneryState();
+  let state = createGunneryState(12);
   const dt = 1 / 60;
   const deflections = [];
   for (let step = 0; step < 60 && deflections.length < 3; step += 1) {
@@ -364,7 +363,7 @@ test("рипл РАСКЛАДЫВАЕТСЯ веером, а не кладёт �
 test("ОДИН РИПЛ НА ЗАХОД: заход — огневая возможность, а не расход всего пода", () => {
   // Вердикт Igor: цель не обязана падать с первого раза, и это не про
   // введение ошибки, а про настойчивость. Выражается расходом, а не разбросом.
-  let state = createGunneryState();
+  let state = createGunneryState(12);
   let fired = 0;
   for (let step = 0; step < 60 * 20; step += 1) {
     const result = advanceGunnery(state, armament, fireInput(), 1 / 60);
@@ -388,13 +387,81 @@ test("ОДИН РИПЛ НА ЗАХОД: заход — огневая возм�
   assert.equal(second, armament.rockets.rippleSize);
 });
 
-test("боекомплект пода — ровно четыре захода, дальше работает пушка", () => {
-  const passes = armament.rockets.mounts.length / armament.rockets.rippleSize;
-  assert.equal(passes, 4, "двенадцать труб по три — четыре огневых возможности");
+test("ПУСТОЙ ПОД — ЭТО ПАУЗА, А НЕ ТУПИК: полминуты и заново", () => {
+  // Первая редакция запирала машину навсегда: счётчик был, способа пополнить
+  // не было, и «не сбил — продолжает охотиться» переставало быть выполнимым
+  // ровно тогда, когда становилось нужным.
+  const full = armament.rockets.mounts.length;
+  let state = createGunneryState(full);
+  const dt = 1 / 60;
+  let fired = 0;
+  let emptyAt = null;
+  let seconds = 0;
+
+  // Опустошаем под заходами.
+  for (let pass = 0; pass < 6 && emptyAt === null; pass += 1) {
+    state = armGunneryForPass(state);
+    for (let step = 0; step < 60 * 4; step += 1) {
+      const result = advanceGunnery(state, armament, fireInput(), dt);
+      state = result.state;
+      seconds += dt;
+      fired += result.shots.filter((shot) => shot.weapon === "podRocket").length;
+      if (state.magazine === 0 && emptyAt === null) {
+        emptyAt = seconds;
+      }
+    }
+  }
+  assert.equal(fired, full, `под обязан выдать ровно ${full}, а выдал ${fired}`);
+  assert.ok(state.rearmSeconds > 0, "опустевший под обязан начать снаряжаться");
+
+  // Пока идёт снаряжение — ракет нет, что бы ни просили. Шагаем по
+  // ФАКТИЧЕСКОМУ остатку: таймер начал тикать в тот же момент, когда под
+  // опустел, то есть часть его уже прошла внутри последнего захода.
+  const remaining = state.rearmSeconds;
+  assert.ok(
+    remaining > armament.rockets.rearmSeconds * 0.5,
+    `таймер снаряжения ${remaining.toFixed(1)} с — начался не тогда, когда под опустел`,
+  );
+  let duringRearm = 0;
+  for (let step = 0; step < Math.floor(remaining * 60) - 1; step += 1) {
+    state = armGunneryForPass(state);
+    const result = advanceGunnery(state, armament, fireInput(), dt);
+    state = result.state;
+    duringRearm += result.shots.filter((s) => s.weapon === "podRocket").length;
+  }
+  assert.equal(duringRearm, 0, "на снаряжении под стрелять не может");
+  assert.equal(state.magazine, 0, "и остаётся пустым до конца таймера");
+
+  // И сразу по истечении таймера — снова полон. Досчитываем последние кадры:
+  // остаток после целого числа шагов меньше кадра, но не ноль.
+  let refilled = 0;
+  for (let step = 0; step < 4; step += 1) {
+    const result = advanceGunnery(state, armament, { ...fireInput(), weaponsFree: false }, dt);
+    state = result.state;
+    if (state.rearmSeconds === 0) {
+      refilled = state.magazine;
+      break;
+    }
+  }
+  assert.equal(refilled, full, "по истечении таймера под обязан быть снаряжён целиком");
+  assert.equal(state.rearmSeconds, 0);
+});
+
+test("на снаряжении пушка работает: охота не прерывается", () => {
+  const full = armament.rockets.mounts.length;
+  let state = { ...createGunneryState(0), rearmSeconds: 30 };
+  let cannon = 0;
+  for (let step = 0; step < 60 * 5; step += 1) {
+    const result = advanceGunnery(state, armament, fireInput(), 1 / 60);
+    state = result.state;
+    cannon += result.shots.filter((s) => s.weapon === "cannon").length;
+  }
+  assert.ok(cannon > 0, "пустой под не имеет права глушить пушку");
+  assert.ok(state.magazine < full, "и под при этом ещё не снаряжён");
 });
 
 test("в упор ракета не пускается, и это видно наружу отдельным признаком", () => {
-  let state = createGunneryState();
+  let state = createGunneryState(12);
   const result = advanceGunnery(
     state,
     armament,
@@ -409,7 +476,7 @@ test("в упор ракета не пускается, и это видно н�
 });
 
 test("запрет огня снимает и пушку, и ракету", () => {
-  let state = createGunneryState();
+  let state = createGunneryState(12);
   for (let step = 0; step < 60; step += 1) {
     const result = advanceGunnery(
       state,
