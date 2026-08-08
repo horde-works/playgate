@@ -1,8 +1,8 @@
 {
-  "modelId": "duct-hexacopter-hxd",
+  "modelId": "vx8-yaqui",
   "revision": "duct-hex-d4a-rig-2026-08-08",
-  "modelHash": "f0d1be03c993",
-  "generatedAt": "2026-08-08T19:54:24.752Z",
+  "modelHash": "25f8228cc394",
+  "generatedAt": "2026-08-08T20:16:53.807Z",
   "views": [
     {
       "id": "front",

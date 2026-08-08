@@ -1,5 +1,12 @@
 /**
- * HX-D — integrated-duct combat hexacopter. Revision `d2-loft-core`.
+ * VX-8 «Yaqui» — integrated-duct combat hexacopter. Revision `d4a-rig`.
+ *
+ * The designation continues the line RAX-8 Tonkawa started: the index alludes to
+ * the ducted-fan VTOLs this airframe descends from — Piasecki's VZ-8 Airgeep,
+ * the Bell X-22 — and to its own eight propulsors, while the name is a people
+ * the army naming tradition never took. The Yaqui were subdued by neither Spain
+ * nor Mexico, which is this machine's character: it is not fast, it is
+ * impossible to shift.
  *
  * Steel core only: survival cell, keels, frame grid, chined outer rail, six
  * annular duct cells, the cored structural deck, the dorsal spine, both
@@ -2002,9 +2009,9 @@ const structuralGroups = [
 ] as const;
 
 export const ductHexacopterObject: DuctHexacopterModel = {
-  id: "duct-hexacopter-hxd",
+  id: "vx8-yaqui",
   revision: "duct-hex-d4a-rig-2026-08-08",
-  title: "HX-D — rigged: eight fans, four retractable legs, centreline gun and launchers",
+  title: "VX-8 «Yaqui» — eight fans, four retractable legs, centreline gun and launchers",
   units: "metres",
   coordinates: { up: "+Y", front: "+Z", origin: "ground-centre" },
   sourceNotes: [
