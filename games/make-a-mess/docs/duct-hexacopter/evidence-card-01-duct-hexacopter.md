@@ -1,6 +1,12 @@
-# Evidence card 01 — HX-D integrated-duct combat hexacopter
+# Evidence card 01 — VX-8 «Yaqui», integrated-duct combat hexacopter
 
-Working designation **HX-D**. A separate object from RAX-8 Tonkawa
+**VX-8 «Yaqui»**, named by the owner on 2026-08-09. The index alludes to the
+ducted-fan VTOL line — Piasecki VZ-8 Airgeep, Bell X-22 — and the eight
+propulsors; the name is a people the army naming tradition never took, chosen
+for character rather than for shape: the Yaqui were subdued by neither Spain nor
+Mexico. `HX-D` was the working designation and is retired.
+
+A separate object from RAX-8 Tonkawa
 (`combatHexacopterObject.ts`) and from SR-6 Skat. Nothing from the abandoned
 `codex/integrated-duct-hexacopter-runtime` line is inherited: that branch was
 cancelled by the owner on 2026-08-08 and its geometry, contours and captures own

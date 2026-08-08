@@ -1,4 +1,7 @@
-# HX-D integrated-duct combat hexacopter — object-study index
+# VX-8 «Yaqui» — object-study index
+
+Integrated-duct combat hexacopter. Named 2026-08-09; `HX-D` was the working
+designation.
 
 Single-seat armoured VTOL: six lift fans cored into one lifting body, two
 longitudinal reversible fans for yaw, cruise and braking. A separate object from
