@@ -17,11 +17,13 @@ import {
 import { islandAirportFlyover } from "../games/make-a-mess/src/game/islandAirportFlyover.ts";
 import {
   PLAYER_HEIGHT,
+  routeBoxOf,
   walkRoute,
 } from "../games/make-a-mess/src/game/walkableRoute.ts";
 
 const pieces = islandAirportScene.breakablePieces;
 const withId = (fragment) => pieces.filter((piece) => piece.id.includes(fragment));
+const pieceById = (id) => pieces.find((piece) => piece.id === id);
 
 function extent(items, axis) {
   return {
@@ -32,9 +34,9 @@ function extent(items, axis) {
 
 test("the complete airport compiles as one initially stable authored scene", () => {
   assert.equal(islandAirportScene.resolveStructuralCollapse(new Set()).size, 0);
-  assert.equal(islandAirportCompilation.artifact.groupCount, 16);
-  assert.ok(islandAirportCompilation.artifact.pieceCount >= 1_750);
-  assert.equal(islandAirportCompilation.artifact.lampCount, 11);
+  assert.equal(islandAirportCompilation.artifact.groupCount, islandAirportDocument.groups.length);
+  assert.equal(islandAirportCompilation.artifact.pieceCount, pieces.length);
+  assert.ok(islandAirportCompilation.artifact.lampCount >= 11);
   assert.equal(new Set(pieces.map((piece) => piece.id)).size, pieces.length);
 
   for (const service of [
@@ -64,6 +66,37 @@ test("the island is flat, elongated and bounded by the authored non-radial shore
   for (const x of [-88, 88]) {
     assert.ok(airportPointInShoreline(x, AIRPORT_RUNWAY.centreZ));
     assert.ok(airportDistanceToShoreline(x, AIRPORT_RUNWAY.centreZ) > 7);
+  }
+
+  for (const piece of pieces.filter((candidate) =>
+    candidate.id.includes(":terrain:earth:") || candidate.id.includes(":pavement:")
+  )) {
+    for (const sideX of [-1, 1]) {
+      for (const sideZ of [-1, 1]) {
+        const x = piece.position[0] + sideX * piece.size[0] / 2;
+        const z = piece.position[2] + sideZ * piece.size[2] / 2;
+        assert.ok(airportPointInShoreline(x, z), `${piece.id} corner ${x.toFixed(2)},${z.toFixed(2)} crosses the shoreline`);
+      }
+    }
+  }
+});
+
+test("grass never intersects paved or hardstanding operational surfaces", () => {
+  const grass = withId(":turf:grass:").map(routeBoxOf);
+  const hardstands = pieces.filter((piece) =>
+    piece.id.includes(":pavement:") ||
+    piece.id.includes(":maintenance-hangar:hangar:foundation:") ||
+    piece.id.includes(":fire-station:fire:foundation:") ||
+    piece.id.includes(":fuel-farm:tank-pad:") ||
+    piece.id.includes(":fuel-farm:pump-pad:")
+  ).map(routeBoxOf);
+  for (const turfBox of grass) {
+    for (const pavedBox of hardstands) {
+      const overlapX = Math.min(turfBox.maxX, pavedBox.maxX) - Math.max(turfBox.minX, pavedBox.minX);
+      const overlapY = Math.min(turfBox.maxY, pavedBox.maxY) - Math.max(turfBox.minY, pavedBox.minY);
+      const overlapZ = Math.min(turfBox.maxZ, pavedBox.maxZ) - Math.max(turfBox.minZ, pavedBox.minZ);
+      assert.ok(overlapX <= 0.04 || overlapY <= 0.04 || overlapZ <= 0.04, `${turfBox.id} intersects ${pavedBox.id}`);
+    }
   }
 });
 
@@ -152,6 +185,24 @@ test("both independent passenger routes cross the building in both directions", 
   }
 });
 
+test("the airside security boundary cannot be bypassed around the terminal ends", () => {
+  const closedPublicDoors = [4.75, 11.25].map((x, index) => ({
+    id: `test:closed-landside-door:${index}`,
+    position: [x, 2.2, AIRPORT_TERMINAL.landsideZ],
+    size: [4.15, 4.4, 0.5],
+  }));
+  const bypass = walkRoute([...pieces, ...closedPublicDoors], {
+    x: 4.75, z: 42, footY: 0.46,
+  }, {
+    x: 0, z: 2, footY: 0.4,
+  }, {
+    bounds: { minX: -118, maxX: 118, minZ: -8, maxZ: 53, floorY: -0.2, ceilingY: 7 },
+    cell: 0.5,
+    height: PLAYER_HEIGHT + 0.18,
+  });
+  assert.equal(bypass.reached, false, "public circulation bypasses the controlled terminal boundary");
+});
+
 test("terminal fixtures and airfield lights use complete physical carrier chains", () => {
   assert.equal(withId(":terminal-lighting:fixture:").length, 32);
   for (let row = 0; row < 2; row += 1) {
@@ -162,8 +213,26 @@ test("terminal fixtures and airfield lights use complete physical carrier chains
     }
   }
   assert.equal(withId(":airfield-equipment:edge:").length, 44 * 4);
-  assert.equal(withId(":airfield-equipment:threshold:").length, 14 * 4);
-  assert.equal(withId(":airfield-equipment:papi:").length, 4 * 4);
+  assert.equal(withId(":airfield-equipment:threshold:").length, 14 * 7);
+  assert.equal(withId(":airfield-equipment:papi:").length, 8 * 4);
+
+  for (const end of [-1, 1]) {
+    const expectedX = end < 0
+      ? AIRPORT_RUNWAY.westThresholdX + AIRPORT_RUNWAY.thresholdInset
+      : AIRPORT_RUNWAY.eastThresholdX - AIRPORT_RUNWAY.thresholdInset;
+    for (let index = -3; index <= 3; index += 1) {
+      const prefix = `:threshold:${end}:${index}:`;
+      assert.equal(withId(`${prefix}base:`).length, 1);
+      assert.equal(withId(`${prefix}approach:lens:`).length, 1);
+      assert.equal(withId(`${prefix}runway:lens:`).length, 1);
+      assert.equal(withId(`${prefix}base:`)[0].position[0], expectedX);
+    }
+  }
+  for (const approach of ["west", "east"]) {
+    const papi = withId(`:papi:${approach}:`).filter((piece) => piece.id.includes(":base:"));
+    assert.equal(papi.length, 4);
+    assert.equal(new Set(papi.map((piece) => piece.position[0])).size, 1, `${approach} PAPI is not perpendicular to the runway`);
+  }
 
   const edgeBase = "island-airport:airfield-equipment:edge:4:1:base:piece";
   const edgeCollapse = islandAirportScene.resolveStructuralCollapse(new Set([edgeBase]));
@@ -177,14 +246,32 @@ test("terminal fixtures and airfield lights use complete physical carrier chains
 });
 
 test("tower, rescue, maintenance and fuel systems keep their defining parts", () => {
-  assert.equal(AIRPORT_CONTROL_TOWER.roofY, 14.35);
+  assert.equal(AIRPORT_CONTROL_TOWER.roofY, 13.85);
   assert.equal(withId(":control-tower:cab-glass-").length, 4);
   assert.equal(withId(":control-tower:beacon-").length, 3);
   assert.equal(withId(":maintenance-hangar:hangar:door:").length, 2);
   assert.equal(withId(":fire-station:fire:door:").length, 3);
   assert.equal(withId(":fuel-farm:tank:").length, 3);
-  assert.equal(withId(":fuel-farm:fence:").length, 10);
+  assert.equal(withId(":fuel-farm:fence-z:").length, 18);
+  assert.equal(withId(":fuel-farm:fence-x:").length, 8);
+  assert.equal(withId(":fuel-farm:gate-z:").length, 2);
+  assert.equal(withId(":fuel-farm:bund-").length, 28);
+  assert.equal(withId(":terminal-interior:wc:").length, 10);
+  assert.equal(withId(":terminal-interior:gate-desk:").length, 6);
+  assert.equal(withId(":terminal-interior:baggage-feed:").length, 9);
+  assert.ok(withId(":landside:security:").length > 100);
   assert.deepEqual(islandAirportDocument.world.playerSpawn, [4.75, 1.25, 42]);
+
+  const towerPost = pieceById("island-airport:control-tower:cab-post:-4.1:-4.1:piece");
+  const towerRoof = pieceById("island-airport:control-tower:cab-roof:piece");
+  assert.ok(towerPost && towerRoof);
+  assert.ok(towerRoof.position[1] - towerRoof.size[1] / 2 - (towerPost.position[1] + towerPost.size[1] / 2) <= 0.05);
+
+  const hangarFoundation = "island-airport:maintenance-hangar:hangar:foundation:piece";
+  const hangarCollapse = islandAirportScene.resolveStructuralCollapse(new Set([hangarFoundation]));
+  for (const piece of pieces.filter((candidate) => candidate.clusterId === "island-airport:maintenance-hangar")) {
+    assert.ok(hangarCollapse.has(piece.id), `${piece.id} keeps a false load path after its foundation is removed`);
+  }
 });
 
 test("the flyover covers overview, circulation, systems and sunset without entering solids", () => {
@@ -197,13 +284,46 @@ test("the flyover covers overview, circulation, systems and sunset without enter
   for (const chapter of islandAirportFlyover.chapters) {
     assert.ok(chapter.captureAt >= chapter.from && chapter.captureAt <= chapter.to);
   }
-  for (const frame of islandAirportFlyover.keyframes) {
-    const insideSolid = pieces.some((piece) => {
-      if (piece.intactCollider === false) return false;
-      return [0, 1, 2].every((axis) =>
-        Math.abs(frame.position[axis] - piece.position[axis]) < piece.size[axis] / 2
-      );
+  for (let index = 1; index < islandAirportFlyover.chapters.length; index += 1) {
+    assert.ok(islandAirportFlyover.chapters[index - 1].to < islandAirportFlyover.chapters[index].from);
+  }
+
+  const smootherstep = (amount) => amount ** 3 * (amount * (amount * 6 - 15) + 10);
+  const catmull = (previous, start, end, next, amount) => {
+    const amount2 = amount * amount;
+    const amount3 = amount2 * amount;
+    return (2 * amount3 - 3 * amount2 + 1) * start +
+      (amount3 - 2 * amount2 + amount) * (end - previous) * 0.5 +
+      (-2 * amount3 + 3 * amount2) * end +
+      (amount3 - amount2) * (next - start) * 0.5;
+  };
+  const positionAt = (progress) => {
+    const frames = islandAirportFlyover.keyframes;
+    let segment = frames.length - 2;
+    for (let index = 0; index < frames.length - 1; index += 1) {
+      if (progress <= frames[index + 1].at) {
+        segment = index;
+        break;
+      }
+    }
+    const start = frames[segment];
+    const end = frames[segment + 1];
+    const local = smootherstep(Math.max(0, Math.min(1, (progress - start.at) / (end.at - start.at))));
+    const previous = frames[Math.max(0, segment - 1)];
+    const next = frames[Math.min(frames.length - 1, segment + 2)];
+    return [0, 1, 2].map((axis) => catmull(previous.position[axis], start.position[axis], end.position[axis], next.position[axis], local));
+  };
+  const solidBoxes = pieces.filter((piece) => piece.intactCollider !== false).map(routeBoxOf);
+  const cameraRadius = 0.14;
+  for (let sample = 0; sample <= 2_000; sample += 1) {
+    const progress = sample / 2_000;
+    const position = positionAt(progress);
+    const collision = solidBoxes.find((box) => {
+      const dx = Math.max(box.minX - position[0], 0, position[0] - box.maxX);
+      const dy = Math.max(box.minY - position[1], 0, position[1] - box.maxY);
+      const dz = Math.max(box.minZ - position[2], 0, position[2] - box.maxZ);
+      return dx * dx + dy * dy + dz * dz < cameraRadius * cameraRadius;
     });
-    assert.equal(insideSolid, false, `camera ${frame.at} is inside authored geometry`);
+    assert.equal(collision, undefined, `camera ${progress.toFixed(4)} clips ${collision?.id}`);
   }
 });

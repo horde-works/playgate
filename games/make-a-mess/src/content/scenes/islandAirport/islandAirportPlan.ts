@@ -54,7 +54,7 @@ export const AIRPORT_TERMINAL = {
   width: 52,
   depth: 20,
   wallTop: 6.3,
-  roofTop: 6.72,
+  roofTop: 6.59,
   bayCount: 8,
   bayWidth: 6.5,
   airsideZ: 10,
@@ -66,8 +66,8 @@ export const AIRPORT_CONTROL_TOWER = {
   shaftWidth: 6,
   shaftDepth: 6,
   cabFloor: 10.8,
-  cabHeight: 3.2,
-  roofY: 14.35,
+  cabHeight: 3.05,
+  roofY: 13.85,
 } as const;
 
 export function airportPointInShoreline(x: number, z: number): boolean {

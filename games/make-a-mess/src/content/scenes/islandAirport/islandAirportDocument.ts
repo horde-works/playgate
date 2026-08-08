@@ -78,22 +78,32 @@ const fuelFarm = group("fuel-farm", "Fuel farm and service yard", "steel");
 
 const GROUND_BOTTOM = -4.2;
 const GROUND_STEP = 6;
+const PAVING_CLEARANCE = GROUND_STEP / 2 + 0.1;
 
 function pavedAt(x: number, z: number): boolean {
-  return airportInsideRectangle(x, z, 0, AIRPORT_RUNWAY.centreZ, AIRPORT_RUNWAY.length + 4, AIRPORT_RUNWAY.width + 4, 2) ||
-    airportInsideRectangle(x, z, AIRPORT_APRON.centre[0], AIRPORT_APRON.centre[1], AIRPORT_APRON.width, AIRPORT_APRON.depth, 2) ||
-    airportInsideRectangle(x, z, 18, -10.5, 16, 17, 2) ||
-    airportInsideRectangle(x, z, 8, 39, 82, 9, 2) ||
-    airportInsideRectangle(x, z, -43, 47, 35, 16, 2) ||
-    airportInsideRectangle(x, z, 58, 45, 31, 15, 2) ||
-    airportInsideRectangle(x, z, AIRPORT_TERMINAL.origin[0], AIRPORT_TERMINAL.origin[2], AIRPORT_TERMINAL.width, AIRPORT_TERMINAL.depth, 2) ||
-    airportInsideRectangle(x, z, 61, 13, 27, 25, 2) ||
-    airportInsideRectangle(x, z, -58, 15, 24, 17, 2);
+  return airportInsideRectangle(x, z, 0, AIRPORT_RUNWAY.centreZ, AIRPORT_RUNWAY.length + 4, AIRPORT_RUNWAY.width + 4, PAVING_CLEARANCE) ||
+    airportInsideRectangle(x, z, AIRPORT_APRON.centre[0], AIRPORT_APRON.centre[1], AIRPORT_APRON.width, AIRPORT_APRON.depth, PAVING_CLEARANCE) ||
+    airportInsideRectangle(x, z, 18, -10.5, 16, 17, PAVING_CLEARANCE) ||
+    airportInsideRectangle(x, z, 8, 39, 88, 9, PAVING_CLEARANCE) ||
+    airportInsideRectangle(x, z, -43, 45, 33, 11, PAVING_CLEARANCE) ||
+    airportInsideRectangle(x, z, 58, 43, 29, 11, PAVING_CLEARANCE) ||
+    airportInsideRectangle(x, z, AIRPORT_TERMINAL.origin[0], AIRPORT_TERMINAL.origin[2], AIRPORT_TERMINAL.width, AIRPORT_TERMINAL.depth, PAVING_CLEARANCE) ||
+    airportInsideRectangle(x, z, 61, 13, 27, 25, PAVING_CLEARANCE) ||
+    airportInsideRectangle(x, z, -58, 15, 24, 17, PAVING_CLEARANCE) ||
+    airportInsideRectangle(x, z, 61, 2, 29, 21, PAVING_CLEARANCE) ||
+    airportInsideRectangle(x, z, -58, 3, 24, 13, PAVING_CLEARANCE) ||
+    airportInsideRectangle(x, z, 75, 37, 25, 12, PAVING_CLEARANCE);
 }
 
 for (let x = -117; x <= 117; x += GROUND_STEP) {
   for (let z = -57; z <= 57; z += GROUND_STEP) {
-    if (!airportPointInShoreline(x, z) || airportDistanceToShoreline(x, z) < 3.4) continue;
+    const halfTile = (GROUND_STEP + 0.08) / 2;
+    const cornersInside = [-1, 1].every((sideX) =>
+      [-1, 1].every((sideZ) =>
+        airportPointInShoreline(x + sideX * halfTile, z + sideZ * halfTile)
+      )
+    );
+    if (!cornersInside || airportDistanceToShoreline(x, z) < halfTile) continue;
     primitive(
       terrain,
       `earth:${x}:${z}`,
@@ -135,9 +145,10 @@ for (let segment = 0; segment < ISLAND_AIRPORT_SHORELINE.length; segment += 1) {
     const t = (block + 0.5) / count;
     const edgeX = ax + dx * t;
     const edgeZ = az + dz * t;
-    const inwardLength = Math.hypot(edgeX, edgeZ) || 1;
-    const x = edgeX - edgeX / inwardLength * 1.05;
-    const z = edgeZ - edgeZ / inwardLength * 1.05;
+    const inwardX = -dz / length;
+    const inwardZ = dx / length;
+    const x = edgeX + inwardX * 1.05;
+    const z = edgeZ + inwardZ * 1.05;
     primitive(
       shoreline,
       `riprap:${segment}:${block}`,
@@ -181,8 +192,8 @@ slabStrip("runway", [0, 0.18, AIRPORT_RUNWAY.centreZ], AIRPORT_RUNWAY.length, AI
 slabStrip("apron", [AIRPORT_APRON.centre[0], 0.18, AIRPORT_APRON.centre[1]], AIRPORT_APRON.width, AIRPORT_APRON.depth);
 slabStrip("taxiway", [18, 0.18, -11], 22, 12, false);
 slabStrip("landside-loop", [8, 0.18, 39], 88, 7);
-slabStrip("west-parking", [-43, 0.18, 48], 34, 15);
-slabStrip("east-parking", [58, 0.18, 46], 30, 14);
+slabStrip("west-parking", [-43, 0.18, 45], 32, 10);
+slabStrip("east-parking", [58, 0.18, 43], 28, 10);
 slabStrip("hangar-apron", [61, 0.18, 2], 29, 21);
 slabStrip("fire-apron", [-58, 0.18, 3], 24, 13);
 
@@ -207,8 +218,20 @@ for (let x = -72; x <= 72; x += 12) paint(`centreline:${x}`, x, AIRPORT_RUNWAY.c
 for (const side of [-1, 1]) {
   paint(`runway-edge:${side}`, 0, AIRPORT_RUNWAY.centreZ + side * (AIRPORT_RUNWAY.width / 2 - 0.35), AIRPORT_RUNWAY.length - 4, 0.22);
   for (let stripe = 0; stripe < 6; stripe += 1) {
-    paint(`threshold-west:${side}:${stripe}`, -80, AIRPORT_RUNWAY.centreZ + side * (1.15 + stripe * 0.82), 5.8, 0.42);
-    paint(`threshold-east:${side}:${stripe}`, 80, AIRPORT_RUNWAY.centreZ + side * (1.15 + stripe * 0.82), 5.8, 0.42);
+    paint(
+      `threshold-west:${side}:${stripe}`,
+      AIRPORT_RUNWAY.westThresholdX + AIRPORT_RUNWAY.thresholdInset,
+      AIRPORT_RUNWAY.centreZ + side * (1.15 + stripe * 0.82),
+      5.8,
+      0.42,
+    );
+    paint(
+      `threshold-east:${side}:${stripe}`,
+      AIRPORT_RUNWAY.eastThresholdX - AIRPORT_RUNWAY.thresholdInset,
+      AIRPORT_RUNWAY.centreZ + side * (1.15 + stripe * 0.82),
+      5.8,
+      0.42,
+    );
   }
 }
 paint("aiming-west:north", -54, AIRPORT_RUNWAY.centreZ - 2.8, 9, 1.1);
@@ -305,14 +328,14 @@ for (let bay = 0; bay < AIRPORT_TERMINAL.bayCount; bay += 1) {
   facadeBay("landside", bay, bay === 3 || bay === 4);
   const x = firstBayX + bay * bayWidth;
   for (const [zone, z, depth] of [["south", 14, 8], ["north", 26, 8]] as const) {
-    primitive(terminalEnvelope, `roof:${zone}:${bay}`, "sheetMetal", "steelSheet", [x, 6.55, z], [bayWidth, 0.18, depth], "#dfe4e4", {
+    primitive(terminalEnvelope, `roof:${zone}:${bay}`, "sheetMetal", "steelSheet", [x, 6.5, z], [bayWidth, 0.18, depth], "#dfe4e4", {
       bearsLoad: false,
       textureProfile: "painted-steel",
       volume: bayWidth * depth * 0.035,
       contactBearingOrder: true,
     });
   }
-  primitive(terminalGlass, `skylight:${bay}`, "glass", "glassPane", [x, 6.57, 20], [bayWidth + 0.08, 0.12, 3.72], "#b7d0d2", {
+  primitive(terminalGlass, `skylight:${bay}`, "glass", "glassPane", [x, 6.5, 20], [bayWidth + 0.08, 0.18, 3.72], "#b7d0d2", {
     bearsLoad: false,
     volume: 0.08,
     contactBearingOrder: true,
@@ -388,9 +411,31 @@ for (let index = 0; index < 16; index += 1) {
 }
 
 // Partitions produce actual rooms while preserving the two public north-south routes.
-primitive(terminalInterior, "baggage-wall", "concrete", "panel", [31.5, 2.15, 25], [0.3, 3.4, 9.2], "#c5c7c5", { carriesAttachments: true });
+// The baggage wall has a real belt opening rather than a conveyor painted onto it.
+primitive(terminalInterior, "baggage-wall:south", "concrete", "panel", [31.5, 2.15, 21.75], [0.3, 3.4, 3.3], "#c5c7c5", { carriesAttachments: true });
+primitive(terminalInterior, "baggage-wall:north", "concrete", "panel", [31.5, 2.15, 28.25], [0.3, 3.4, 3.3], "#c5c7c5", { carriesAttachments: true });
+primitive(terminalInterior, "baggage-feed:bed", "steel", "plank", [31, 0.72, 25.3], [6, 0.22, 1.15], "#596469", { carriesAttachments: true });
+for (let slat = 0; slat < 8; slat += 1) {
+  primitive(terminalInterior, `baggage-feed:slat:${slat}`, "plastic", "plank", [28.45 + slat * 0.73, 0.88, 25.3], [0.62, 0.08, 1.02], "#272c2e", { bearsLoad: false, volume: 0.025 });
+}
 primitive(terminalInterior, "service-wall-west", "concrete", "panel", [-15, 2.15, 19], [0.3, 3.4, 8], "#c5c7c5", { carriesAttachments: true });
 counter("cafe", -10.5, 14.2, Math.PI);
+
+// A compact WC core occupies the west service bay; the recessed entrance is
+// kept off both security routes and remains visibly traversable.
+primitive(terminalInterior, "wc:east-wall", "concrete", "panel", [-11.65, 2.05, 21.2], [0.22, 3.2, 5.6], "#c5c7c5", { carriesAttachments: true });
+primitive(terminalInterior, "wc:front-left", "concrete", "panel", [-16.45, 2.05, 18.45], [2.4, 3.2, 0.22], "#c5c7c5", { carriesAttachments: true });
+primitive(terminalInterior, "wc:front-right", "concrete", "panel", [-12.65, 2.05, 18.45], [1.8, 3.2, 0.22], "#c5c7c5", { carriesAttachments: true });
+primitive(terminalInterior, "wc:sign", "darkGlass", "glassPane", [-14.55, 3.2, 18.3], [1.05, 0.52, 0.06], "#28516a", { bearsLoad: false, volume: 0.01 });
+for (const [index, x] of [[0, -16.3], [1, -13.6]] as const) {
+  primitive(terminalInterior, `wc:cubicle:${index}`, "plastic", "panel", [x + 1.2, 1.45, 22.6], [0.1, 2.3, 2.2], "#d8dcda", { carriesAttachments: true });
+  primitive(terminalInterior, `wc:fixture:${index}:base`, "stone", "cylinder", [x, 0.72, 22.45], [0.78, 0.72, 0.92], "#e4e4df", { carriesAttachments: true });
+  primitive(terminalInterior, `wc:fixture:${index}:tank`, "stone", "panel", [x, 1.12, 22.82], [0.8, 0.68, 0.24], "#e4e4df", { bearsLoad: false, volume: 0.08 });
+}
+
+// Gate desks sit beside, not across, the two airside door approaches.
+counter("gate-desk:west", -8.5, 13.2, Math.PI);
+counter("gate-desk:east", 27.5, 13.2, Math.PI);
 
 // Departure board: opaque carrier, frame, non-emissive display glass and small status lamps.
 for (const x of [6, 10]) {
@@ -446,9 +491,9 @@ for (const xOffset of [-4.1, 4.1]) for (const zOffset of [-4.1, 4.1]) {
   primitive(tower, `cab-post:${xOffset}:${zOffset}`, "steel", "plank", [towerX + xOffset, 12.35, towerZ + zOffset], [0.22, 2.7, 0.22], "#5b666a", { carriesAttachments: true });
 }
 primitive(tower, "cab-roof", "sheetMetal", "steelSheet", [towerX, AIRPORT_CONTROL_TOWER.roofY, towerZ], [9.3, 0.26, 9.3], "#d7dddd", { carriesAttachments: true, attachmentSupportMode: "hinge", textureProfile: "painted-steel", volume: 2.1 });
-primitive(tower, "beacon-mast", "steel", "cylinder", [towerX, 15.55, towerZ], [0.16, 2.2, 0.16], "#596367", { carriesAttachments: true });
-primitive(tower, "beacon-lens", "glass", "cylinder", [towerX, 16.72, towerZ], [0.46, 0.24, 0.46], "#f4f1e2", { bearsLoad: false, carriesAttachments: true, attachmentSupportMode: "hinge", sideAttachmentReach: 0.2, volume: 0.02 });
-primitive(tower, "beacon-bulb", "glass", "sphere", [towerX, 16.72, towerZ], [0.16, 0.16, 0.16], "#f4f1e2", {
+primitive(tower, "beacon-mast", "steel", "cylinder", [towerX, 15.05, towerZ], [0.16, 2.2, 0.16], "#596367", { carriesAttachments: true });
+primitive(tower, "beacon-lens", "glass", "cylinder", [towerX, 16.22, towerZ], [0.46, 0.24, 0.46], "#f4f1e2", { bearsLoad: false, carriesAttachments: true, attachmentSupportMode: "hinge", sideAttachmentReach: 0.2, volume: 0.02 });
+primitive(tower, "beacon-bulb", "glass", "sphere", [towerX, 16.22, towerZ], [0.16, 0.16, 0.16], "#f4f1e2", {
   bearsLoad: false,
   sideAttachmentReach: 0.2,
   volume: 0.002,
@@ -467,19 +512,29 @@ function portalBuilding(
   accent: string,
 ): void {
   primitive(target, `${id}:foundation`, "concrete", "groundTile", [centreX, 0.2, centreZ], [width, 0.4, depth], "#92999a", { foundation: true, carriesAttachments: true });
-  primitive(target, `${id}:rear`, "concrete", "panel", [centreX, height / 2 + 0.4, centreZ + depth / 2], [width, height, 0.4], "#aeb3b2", { carriesAttachments: true });
-  for (const side of [-1, 1]) primitive(target, `${id}:side:${side}`, "concrete", "panel", [centreX + side * width / 2, height / 2 + 0.4, centreZ], [0.4, height, depth], "#9fa7a7", { carriesAttachments: true });
+  const primaryMember = { carriesAttachments: true, maximumVerticalGap: 0.05 } as const;
+  primitive(target, `${id}:rear`, "concrete", "panel", [centreX, height / 2 + 0.4, centreZ + depth / 2], [width, height, 0.4], "#aeb3b2", primaryMember);
+  for (const side of [-1, 1]) primitive(target, `${id}:side:${side}`, "concrete", "panel", [centreX + side * width / 2, height / 2 + 0.4, centreZ], [0.4, height, depth], "#9fa7a7", primaryMember);
   const bay = width / doorCount;
   for (let index = 0; index < doorCount; index += 1) {
     const x = centreX - width / 2 + bay * (index + 0.5);
-    primitive(target, `${id}:door:${index}`, "sheetMetal", "steelSheet", [x, height / 2, centreZ - depth / 2], [bay - 0.7, height - 0.8, 0.16], index % 2 ? accent : "#c9cecc", { bearsLoad: false, textureProfile: "painted-steel", volume: 0.5 });
-    if (index < doorCount - 1) primitive(target, `${id}:pier:${index}`, "steel", "plank", [x + bay / 2, height / 2 + 0.4, centreZ - depth / 2], [0.42, height, 0.42], "#606a6e", { carriesAttachments: true });
+    primitive(target, `${id}:door:${index}`, "sheetMetal", "steelSheet", [x, height / 2, centreZ - depth / 2], [bay - 0.7, height - 0.8, 0.16], index % 2 ? accent : "#c9cecc", { bearsLoad: false, textureProfile: "painted-steel", volume: 0.5, maximumVerticalGap: 0.05 });
+    if (index < doorCount - 1) primitive(target, `${id}:pier:${index}`, "steel", "plank", [x + bay / 2, height / 2 + 0.4, centreZ - depth / 2], [0.42, height, 0.42], "#606a6e", primaryMember);
   }
   for (let frame = 0; frame <= 4; frame += 1) {
     const x = centreX - width / 2 + (width * frame) / 4;
-    primitive(target, `${id}:roof-frame:${frame}`, "steel", "plank", [x, height + 0.25, centreZ], [0.3, 0.36, depth + 0.2], "#616b6e", { carriesAttachments: true });
+    primitive(target, `${id}:roof-frame:${frame}`, "steel", "plank", [x, height + 0.25, centreZ], [0.3, 0.36, depth + 0.2], "#616b6e", { carriesAttachments: true, maximumVerticalGap: 0.05 });
   }
-  primitive(target, `${id}:roof`, "sheetMetal", "steelSheet", [centreX, height + 0.52, centreZ], [width + 0.6, 0.22, depth + 0.6], "#d1d7d5", { bearsLoad: false, textureProfile: "painted-steel", volume: width * depth * 0.03 });
+  for (let bayIndex = 0; bayIndex < 4; bayIndex += 1) {
+    const x = centreX - width / 2 + (width / 4) * (bayIndex + 0.5);
+    primitive(target, `${id}:roof:${bayIndex}`, "sheetMetal", "steelSheet", [x, height + 0.52, centreZ], [width / 4 + 0.18, 0.22, depth + 0.6], "#d1d7d5", {
+      bearsLoad: false,
+      textureProfile: "painted-steel",
+      volume: width * depth * 0.0075,
+      contactBearingOrder: true,
+      maximumVerticalGap: 0.05,
+    });
+  }
 }
 
 portalBuilding(hangar, "hangar", 61, 13, 26, 22, 8.2, 2, "#5f8190");
@@ -487,7 +542,7 @@ portalBuilding(fireStation, "fire", -58, 15, 22, 14, 5.8, 3, "#c94135");
 
 // Runway edge/threshold lights: base, housing, clear lens, contained signal bulb.
 function airfieldLight(id: string, x: number, z: number, color: string, height = 0.46): void {
-  primitive(airfield, `${id}:base`, "concrete", "stoneBlock", [x, 0.22, z], [0.34, 0.28, 0.34], "#8d9391", { carriesAttachments: true, volume: 0.03 });
+  primitive(airfield, `${id}:base`, "concrete", "stoneBlock", [x, 0.18, z], [0.38, 0.4, 0.38], "#8d9391", { carriesAttachments: true, volume: 0.04 });
   primitive(airfield, `${id}:stem`, "steel", "cylinder", [x, 0.38 + height / 2, z], [0.08, height, 0.08], "#5e686b", {
     carriesAttachments: true,
     attachmentSupportMode: "hinge",
@@ -499,16 +554,41 @@ function airfieldLight(id: string, x: number, z: number, color: string, height =
   primitive(airfield, `${id}:bulb`, "glass", "sphere", [x, 0.48 + height / 2, z], [0.1, 0.1, 0.1], color, { bearsLoad: false, sideAttachmentReach: 0.18, volume: 0.001 });
 }
 
+// A threshold fitting carries two opposed faces: green toward the approach,
+// red toward the runway end. The bulbs sit inside a common hood so neither
+// signal reads as an unsupported emissive sphere.
+function thresholdLight(id: string, x: number, z: number, approachDirection: -1 | 1): void {
+  primitive(airfield, `${id}:base`, "concrete", "stoneBlock", [x, 0.18, z], [0.38, 0.4, 0.38], "#8d9391", { carriesAttachments: true, volume: 0.04 });
+  primitive(airfield, `${id}:stem`, "steel", "cylinder", [x, 0.54, z], [0.08, 0.32, 0.08], "#5e686b", { carriesAttachments: true, attachmentSupportMode: "hinge", sideAttachmentReach: 0.18, maximumVerticalGap: 0.035, volume: 0.003 });
+  primitive(airfield, `${id}:housing`, "steel", "panel", [x, 0.72, z], [0.42, 0.24, 0.34], "#3f494d", { carriesAttachments: true, attachmentSupportMode: "hinge", sideAttachmentReach: 0.18, volume: 0.014 });
+  for (const face of ["approach", "runway"] as const) {
+    const direction = face === "approach" ? approachDirection : -approachDirection;
+    const color = face === "approach" ? "#7fe6a0" : "#f08a80";
+    primitive(airfield, `${id}:${face}:lens`, "glass", "glassPane", [x + direction * 0.225, 0.72, z], [0.06, 0.16, 0.22], color, { bearsLoad: false, carriesAttachments: true, attachmentSupportMode: "hinge", sideAttachmentReach: 0.2, volume: 0.002 });
+    primitive(airfield, `${id}:${face}:bulb`, "glass", "sphere", [x + direction * 0.13, 0.72, z], [0.09, 0.09, 0.09], color, {
+      bearsLoad: false,
+      sideAttachmentReach: 0.18,
+      volume: 0.001,
+      light: { color, distance: 7, intensity: 2.4, dayIntensityFactor: 0.18, poolPriority: 1.2, poolGroupId: `airport-threshold-${face}` },
+    });
+  }
+}
+
 for (let x = -84; x <= 84; x += 8) {
   for (const side of [-1, 1]) airfieldLight(`edge:${x}:${side}`, x, AIRPORT_RUNWAY.centreZ + side * 7.55, "#f4f1e2");
 }
 for (const end of [-1, 1]) {
-  const x = end * 86.5;
+  const x = end < 0
+    ? AIRPORT_RUNWAY.westThresholdX + AIRPORT_RUNWAY.thresholdInset
+    : AIRPORT_RUNWAY.eastThresholdX - AIRPORT_RUNWAY.thresholdInset;
   for (let index = -3; index <= 3; index += 1) {
-    airfieldLight(`threshold:${end}:${index}`, x, AIRPORT_RUNWAY.centreZ + index * 1.7, end < 0 ? "#7fe6a0" : "#f08a80", 0.32);
+    thresholdLight(`threshold:${end}:${index}`, x, AIRPORT_RUNWAY.centreZ + index * 1.7, end as -1 | 1);
   }
 }
-for (let index = 0; index < 4; index += 1) airfieldLight(`papi:${index}`, -53 + index * 1.35, AIRPORT_RUNWAY.centreZ + 10.2, index < 2 ? "#f4f1e2" : "#f08a80", 0.28);
+for (let index = 0; index < 4; index += 1) {
+  airfieldLight(`papi:west:${index}`, -57, AIRPORT_RUNWAY.centreZ - 9.8 - index * 1.35, index < 2 ? "#f4f1e2" : "#f08a80", 0.28);
+  airfieldLight(`papi:east:${index}`, 57, AIRPORT_RUNWAY.centreZ + 9.8 + index * 1.35, index < 2 ? "#f4f1e2" : "#f08a80", 0.28);
+}
 
 // Windsock mast and a shaped cloth sock.
 primitive(airfield, "windsock-mast", "steel", "cylinder", [-72, 3.4, 1], [0.18, 6.6, 0.18], "#697276", { carriesAttachments: true });
@@ -523,8 +603,8 @@ primitive(airfield, "windsock", "cloth", "panel", [-68.7, 6.35, 1], [2.7, 0.92, 
 // Parking bays and a readable pedestrian route from spawn to the terminal.
 for (const side of [-1, 1]) {
   for (let index = 0; index < 9; index += 1) {
-    const x = side < 0 ? -58 + index * 3.8 : 44 + index * 3.5;
-    paint(`parking:${side}:${index}`, x, side < 0 ? 48 : 46, 0.12, 5.4);
+    const x = side < 0 ? -58 + index * 3.8 : 44.5 + index * 3.4;
+    paint(`parking:${side}:${index}`, x, side < 0 ? 45 : 43, 0.12, 5.4);
   }
 }
 paint("crosswalk:north", 8, 34.8, 14, 0.7);
@@ -547,6 +627,35 @@ for (const x of [-7, 23]) {
   });
 }
 
+// The terminal itself is part of a continuous landside/airside boundary.
+// Concrete-rooted posts take the loads; infill panels and the closed service
+// gate are mounted between them. Both runs terminate inside the riprap belt.
+function securityFenceSpan(id: string, fromX: number, toX: number, gate = false): void {
+  const span = toX - fromX;
+  const panelCount = Math.ceil(span / 3.8);
+  const panelWidth = span / panelCount;
+  for (let post = 0; post <= panelCount; post += 1) {
+    const x = fromX + panelWidth * post;
+    primitive(landside, `security:${id}:footing:${post}`, "concrete", "stoneBlock", [x, 0.18, 9.35], [0.5, 0.36, 0.5], "#858c8b", { foundation: true, carriesAttachments: true, volume: 0.05 });
+    primitive(landside, `security:${id}:post:${post}`, "steel", "plank", [x, 1.28, 9.35], [0.14, 2.15, 0.14], "#59666a", { carriesAttachments: true, maximumVerticalGap: 0.04, volume: 0.012 });
+  }
+  for (let panel = 0; panel < panelCount; panel += 1) {
+    const x = fromX + panelWidth * (panel + 0.5);
+    primitive(landside, gate ? `security:${id}:gate-leaf:${panel}` : `security:${id}:panel:${panel}`, "steel", gate ? "steelSheet" : "panel", [x, 1.38, 9.35], [panelWidth - 0.18, 1.55, gate ? 0.14 : 0.08], gate ? "#607176" : "#768286", {
+      bearsLoad: false,
+      attachmentSupportMode: "hinge",
+      sideAttachmentReach: 0.24,
+      textureProfile: "painted-steel",
+      volume: panelWidth * 0.08,
+    });
+  }
+}
+
+securityFenceSpan("west", -117.4, -51);
+securityFenceSpan("service-gate", -51, -43, true);
+securityFenceSpan("west-terminal", -43, -18.2);
+securityFenceSpan("east", 34.2, 117.4);
+
 // Fuel tanks are real revolved vessels on concrete saddles inside a guarded yard.
 for (let index = 0; index < 3; index += 1) {
   const x = 70 + index * 5.4;
@@ -554,9 +663,27 @@ for (let index = 0; index < 3; index += 1) {
   primitive(fuelFarm, `tank:${index}`, "steel", "cylinder", [x, 2.2, 38], [3.7, 4.0, 3.7], "#d4d7d1", { textureProfile: "painted-steel", carriesAttachments: true, volume: 7.5 });
   primitive(fuelFarm, `cap:${index}`, "steel", "cylinder", [x, 4.35, 38], [0.7, 0.28, 0.7], "#6d7779", { bearsLoad: false, volume: 0.06 });
 }
-for (let segment = 0; segment < 10; segment += 1) {
-  const x = 65 + segment * 2.3;
-  primitive(fuelFarm, `fence:${segment}`, "steel", "panel", [x, 1.15, 33.5], [2.25, 1.8, 0.08], "#697477", { bearsLoad: false, volume: 0.04 });
+for (const side of [-1, 1]) {
+  for (let segment = 0; segment < 10; segment += 1) {
+    const x = 65 + segment * 2.3;
+    const z = side < 0 ? 33.5 : 42.5;
+    primitive(fuelFarm, `bund-z:${side}:${segment}`, "concrete", "stoneBlock", [x, 0.18, z], [2.3, 0.36, 0.52], "#909694", { foundation: true, carriesAttachments: true, volume: 0.12 });
+    const isGate = side < 0 && (segment === 3 || segment === 4);
+    primitive(fuelFarm, isGate ? `gate-z:${segment}` : `fence-z:${side}:${segment}`, "steel", isGate ? "steelSheet" : "panel", [x, 1.15, z], [2.25, 1.8, isGate ? 0.14 : 0.08], isGate ? "#586b70" : "#697477", { bearsLoad: false, maximumVerticalGap: 0.04, volume: 0.04 });
+  }
+}
+for (const side of [-1, 1]) {
+  for (let segment = 0; segment < 4; segment += 1) {
+    const z = 35 + segment * 2.05;
+    const x = side < 0 ? 64 : 86.7;
+    primitive(fuelFarm, `bund-x:${side}:${segment}`, "concrete", "stoneBlock", [x, 0.18, z], [0.52, 0.36, 2.05], "#909694", { foundation: true, carriesAttachments: true, volume: 0.11 });
+    primitive(fuelFarm, `fence-x:${side}:${segment}`, "steel", "panel", [x, 1.15, z], [0.08, 1.8, 2], "#697477", { bearsLoad: false, maximumVerticalGap: 0.04, volume: 0.04 });
+  }
+}
+primitive(fuelFarm, "pump-pad", "concrete", "groundTile", [65.6, 0.18, 38], [2.2, 0.36, 3.4], "#8e9492", { foundation: true, carriesAttachments: true });
+primitive(fuelFarm, "pump-skid", "steel", "panel", [65.6, 0.72, 38], [1.45, 0.7, 2.5], "#53636a", { carriesAttachments: true, maximumVerticalGap: 0.05 });
+for (const z of [37.35, 38.65]) {
+  primitive(fuelFarm, `pump-pipe:${z}`, "steel", "cylinder", [66.95, 1.02, z], [0.18, 2.2, 0.18], "#d9c34e", { rotation: [0, 0, Math.PI / 2], bearsLoad: false, attachmentSupportMode: "hinge", sideAttachmentReach: 0.22, volume: 0.02 });
 }
 
 export const islandAirportDocument: AuthoredSceneDocument = {
