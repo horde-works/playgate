@@ -5,12 +5,33 @@ import {
   routeAltitudeDiscGeometry,
   routeAltitudeColor,
   routeCraftContourGeometry,
+  routeCraftPlumbGeometry,
+  routeDropLineGeometry,
   routeGateGeometry,
+  routeGroundDatum,
+  routeGroundTrackGeometry,
   routePlanLineGeometry,
+  routePlannedSchedule,
+  routePlannedTickGeometry,
   routeSemanticMarkers,
+  routeTickInterval,
+  routeTickScale,
+  routeTrailAlpha,
+  routeTrailTickGeometry,
   ROUTE_ACTUAL_COLOR,
 } from "../games/make-a-mess/src/game/routeRibbon.ts";
-import { combatHexacopterRangePlan } from "../games/make-a-mess/src/game/combatHexacopterRangeRoutes.ts";
+import {
+  patchRouteLineFragmentShader,
+  patchRouteLineVertexShader,
+  routeInstanceBuffers,
+  ROUTE_LINE_FRAGMENT_ANCHORS,
+  ROUTE_LINE_VERTEX_ANCHORS,
+} from "../games/make-a-mess/src/game/routeLineShader.ts";
+import { LineMaterial } from "three/addons/lines/LineMaterial.js";
+import {
+  combatHexacopterRangePlan,
+  combatHexacopterRangeReliefs,
+} from "../games/make-a-mess/src/game/combatHexacopterRangeRoutes.ts";
 import { COMBAT_HEXACOPTER_RANGE_PLACEMENT } from "../games/make-a-mess/src/game/combatHexacopter.ts";
 
 const plan = combatHexacopterRangePlan(
@@ -31,6 +52,55 @@ const wavy = {
   },
   finalFrom: 0.95,
 };
+
+/**
+ * Ступенчатая трасса: прямая 400 м с набором высоты 5 → 45, первая половина
+ * разрешает 10 м/с, вторая — 40. На ней проверяются датум, частокол отвесов и
+ * главное утверждение решётки: шаг засечек — ОБРАТНАЯ скорость.
+ */
+const stepped = {
+  id: "route-tick-test",
+  length: 400,
+  point(progress) {
+    return [progress * 400, 5 + progress * 40, 0];
+  },
+  altitude(progress) {
+    return this.point(progress)[1];
+  },
+  speedLimit(progress) {
+    return progress < 0.5 ? 10 : 40;
+  },
+  finalFrom: 0.95,
+};
+
+/** Середины шпал без дублей: у старших засечек их две (крест). */
+function tickCentres(geometry) {
+  const seen = new Map();
+  for (let index = 0; index < geometry.positions.length; index += 6) {
+    const centre = [0, 1, 2].map(
+      (axis) =>
+        (geometry.positions[index + axis] +
+          geometry.positions[index + 3 + axis]) /
+        2,
+    );
+    seen.set(centre.map((value) => value.toFixed(3)).join("|"), centre);
+  }
+  return [...seen.values()].sort((a, b) => a[0] - b[0]);
+}
+
+function segmentLengths(geometry) {
+  const lengths = [];
+  for (let index = 0; index < geometry.positions.length; index += 6) {
+    lengths.push(
+      Math.hypot(
+        geometry.positions[index + 3] - geometry.positions[index],
+        geometry.positions[index + 4] - geometry.positions[index + 1],
+        geometry.positions[index + 5] - geometry.positions[index + 2],
+      ),
+    );
+  }
+  return lengths;
+}
 
 test("план — плотная тонкая полилиния по всей кривой", () => {
   const geometry = routePlanLineGeometry(wavy, 240);
@@ -99,16 +169,34 @@ test("маршрутные метки — только границы режим
   const gates = markers.filter((marker) => marker.kind === "gate");
   const peaks = markers.filter((marker) => marker.kind === "altitudePeak");
   const troughs = markers.filter((marker) => marker.kind === "altitudeTrough");
-  assert.equal(peaks.length, 3);
-  assert.equal(troughs.length, 3);
-  assert.ok(gates.length >= 4 && gates.length <= 5, `лишние ворота: ${gates.length}`);
-  for (const expected of [0.2, 0.36, 0.5, 0.6, 0.7, 0.8]) {
+  assert.ok(gates.length >= 4 && gates.length <= 6, `лишние ворота: ${gates.length}`);
+  // ЛЕНТА СВЕРЯЕТСЯ С ЗАМЫСЛОМ, а не с запомненными координатами. Прежняя
+  // редакция знала шесть чисел наизусть и устарела в день, когда программа
+  // показа выросла с одного круга до девяти номеров. Правило же осталось тем
+  // же: лента не имеет права ни потерять объявленную горку, ни выдумать свою.
+  const declared = combatHexacopterRangeReliefs;
+  assert.ok(declared.length >= 6, `в программе всего ${declared.length} перепадов`);
+  for (const relief of declared) {
+    // Края отданы воротам взлёта и захода: там перепад высоты — это столб, а
+    // не рельеф, и метить его отдельно нечем.
+    if (relief.progress < 0.15 || relief.progress > 0.92) continue;
     assert.ok(
       markers.some(
         (marker) =>
-          marker.kind !== "gate" && Math.abs(marker.progress - expected) < 0.004,
+          marker.kind === relief.kind &&
+          Math.abs(marker.progress - relief.progress) < 0.02,
       ),
-      `потерян экстремум ${expected}`,
+      `потерян объявленный ${relief.kind} на ${relief.progress}`,
+    );
+  }
+  for (const marker of [...peaks, ...troughs]) {
+    assert.ok(
+      declared.some(
+        (relief) =>
+          relief.kind === marker.kind &&
+          Math.abs(relief.progress - marker.progress) < 0.02,
+      ),
+      `выдуман ${marker.kind} на ${marker.progress.toFixed(3)}`,
     );
   }
 
@@ -167,4 +255,227 @@ test("контур машины — обод, три вектора и тяги"
     verticalReach >= 0.5,
     `векторы тяг обязаны подниматься над кругом: ${verticalReach.toFixed(2)} м`,
   );
+});
+
+test("датум — низшая точка задания, наземный след лежит ровно на нём", () => {
+  const datum = routeGroundDatum(stepped);
+  assert.ok(Math.abs(datum - 5) < 0.05, `датум уехал: ${datum}`);
+  const track = routeGroundTrackGeometry(stepped, datum, 240);
+  assert.equal(track.positions.length, 241 * 3);
+  for (let index = 0; index < track.positions.length; index += 3) {
+    assert.equal(
+      track.positions[index + 1],
+      datum,
+      "след обязан лежать на одной плоскости: длины отвесов сравнивают",
+    );
+  }
+  const middle = stepped.point(0.5);
+  assert.ok(
+    Math.abs(track.positions[120 * 3] - middle[0]) < 1,
+    "след обязан повторять план в плане, а не срезать угол",
+  );
+});
+
+test("отвесы — вертикальны, от трассы до датума, шагом по длине дуги", () => {
+  const datum = routeGroundDatum(stepped);
+  const drops = routeDropLineGeometry(stepped, datum, 20);
+  const pairs = drops.positions.length / 6;
+  assert.ok(pairs >= 16 && pairs <= 24, `частокол сбит: ${pairs}`);
+  const tops = [];
+  for (let index = 0; index < pairs; index += 1) {
+    const offset = index * 6;
+    const top = drops.positions.slice(offset, offset + 3);
+    const bottom = drops.positions.slice(offset + 3, offset + 6);
+    assert.ok(Math.abs(bottom[1] - datum) < 1e-4, "низ обязан быть на датуме");
+    assert.ok(
+      Math.abs(top[0] - bottom[0]) < 1e-5 &&
+        Math.abs(top[2] - bottom[2]) < 1e-5,
+      "отвес обязан быть вертикальным, иначе длина не читается как высота",
+    );
+    assert.ok(
+      Math.abs(top[1] - (5 + (top[0] / 400) * 40)) < 0.2,
+      "верх обязан лежать на трассе",
+    );
+    tops.push(top[0]);
+  }
+  for (let index = 1; index < tops.length; index += 1) {
+    const step = tops[index] - tops[index - 1];
+    assert.ok(
+      Math.abs(step - 19.9) < 1.5,
+      `шаг частокола обязан идти по дуге, а не по доле: ${step.toFixed(2)}`,
+    );
+  }
+  assert.ok(
+    drops.colors[3] > drops.colors[7],
+    "отвес висит с трассы: верх ярче низа",
+  );
+});
+
+test("шаг решётки выбирается лестницей от полного времени задания", () => {
+  assert.equal(routeTickInterval(20, 200), 0.25);
+  assert.equal(routeTickInterval(90, 200), 0.5);
+  assert.equal(routeTickInterval(300, 200), 2);
+  assert.ok(routeTickInterval(1e6, 200) >= 300, "лестница обязана кончаться");
+});
+
+test("плановая решётка: расстояние между засечками — обратная скорость", () => {
+  const schedule = routePlannedSchedule(stepped, 720);
+  assert.ok(
+    Math.abs(schedule.seconds - 25.1) < 0.8,
+    `расписание не сошлось: ${schedule.seconds.toFixed(2)} с`,
+  );
+  const interval = routeTickInterval(schedule.seconds);
+  const ticks = routePlannedTickGeometry(stepped, interval, schedule);
+  const centres = tickCentres(ticks);
+  assert.ok(centres.length > 40, `решётка пуста: ${centres.length}`);
+
+  const meanGap = (from, to) => {
+    const slice = centres.filter((point) => point[0] > from && point[0] < to);
+    let total = 0;
+    for (let index = 1; index < slice.length; index += 1) {
+      total += slice[index][0] - slice[index - 1][0];
+    }
+    return total / Math.max(1, slice.length - 1);
+  };
+  const slow = meanGap(20, 180);
+  const fast = meanGap(220, 380);
+  const ratio = fast / slow;
+  assert.ok(
+    ratio > 3.2 && ratio < 4.8,
+    `ритм обязан кодировать скорость вчетверо: ${slow.toFixed(2)} м против ${fast.toFixed(2)} м`,
+  );
+
+  // Шпала растёт вместе с заданием: 400 м дают полуторный масштаб.
+  const scale = routeTickScale(stepped.length);
+  assert.ok(Math.abs(scale - 400 / 260) < 1e-9, `масштаб шпалы: ${scale}`);
+  const tiers = [...new Set(segmentLengths(ticks).map((v) => v.toFixed(2)))]
+    .map(Number)
+    .sort((a, b) => a - b);
+  assert.equal(tiers.length, 4, `иерархия засечек потеряна: ${tiers}`);
+  assert.ok(
+    Math.abs(tiers[0] - 0.9 * scale) < 1e-2,
+    `младшая засечка: ${tiers[0]}`,
+  );
+  assert.ok(
+    Math.abs(tiers.at(-1) - 3.4 * scale) < 1e-2,
+    `старшая засечка: ${tiers.at(-1)}`,
+  );
+});
+
+test("масштаб шпалы зажат: короткий облёт и километровый обход читаются оба", () => {
+  assert.equal(routeTickScale(60), 0.7, "на коротком задании шпала не тонет");
+  assert.equal(routeTickScale(2000), 4, "на длинном не разрастается");
+  assert.ok(routeTickScale(500) > routeTickScale(200), "между краями растёт");
+});
+
+test("решётка факта ставится по реальному времени, а не по метрам", () => {
+  const points = [];
+  const times = [];
+  for (let index = 0; index <= 30; index += 1) {
+    points.push([index, 20, 0]);
+    times.push(index);
+  }
+  for (let index = 1; index <= 30; index += 1) {
+    points.push([30 + index * 4, 20, 0]);
+    times.push(30 + index);
+  }
+  const centres = tickCentres(routeTrailTickGeometry(points, times, 5));
+  const slow = centres.filter((point) => point[0] < 30);
+  const fast = centres.filter((point) => point[0] > 30);
+  assert.ok(slow.length >= 4 && fast.length >= 4, "решётка не покрыла след");
+  assert.ok(
+    Math.abs(slow[1][0] - slow[0][0] - 5) < 0.3,
+    `медленный участок обязан идти по 5 м: ${slow[1][0] - slow[0][0]}`,
+  );
+  assert.ok(
+    Math.abs(fast[1][0] - fast[0][0] - 20) < 0.6,
+    `быстрый участок обязан идти по 20 м: ${fast[1][0] - fast[0][0]}`,
+  );
+});
+
+test("живой отвес машины идёт до датума и ставит тень на нём", () => {
+  const datum = 5;
+  const plumb = routeCraftPlumbGeometry([10, 48, -4], datum, 1.1);
+  const pairs = plumb.positions.length / 6;
+  assert.equal(pairs, 21, "отвес и двадцать сегментов кольца");
+  assert.ok(Math.abs(plumb.positions[1] - 48) < 1e-4);
+  assert.ok(Math.abs(plumb.positions[4] - datum) < 1e-4);
+  for (let index = 1; index < pairs; index += 1) {
+    const offset = index * 6;
+    assert.ok(Math.abs(plumb.positions[offset + 1] - datum) < 1e-4);
+    assert.ok(
+      Math.abs(
+        Math.hypot(
+          plumb.positions[offset] - 10,
+          plumb.positions[offset + 2] + 4,
+        ) - 1.1,
+      ) < 1e-4,
+      "тень обязана стоять под машиной",
+    );
+  }
+});
+
+test("затухание следа монотонно и не гасит хвост в ноль", () => {
+  assert.ok(Math.abs(routeTrailAlpha(0) - 0.14) < 1e-9);
+  assert.ok(Math.abs(routeTrailAlpha(1) - 0.9) < 1e-9);
+  for (let index = 1; index <= 10; index += 1) {
+    assert.ok(routeTrailAlpha(index / 10) > routeTrailAlpha((index - 1) / 10));
+  }
+});
+
+test("патч жирной нити: якоря three на месте, ширина стала мировой", () => {
+  const material = new LineMaterial({});
+  for (const anchor of ROUTE_LINE_VERTEX_ANCHORS) {
+    assert.ok(
+      material.vertexShader.includes(anchor),
+      `якорь вершинного шейдера пропал — нить вернётся в пиксель: ${anchor}`,
+    );
+  }
+  for (const anchor of ROUTE_LINE_FRAGMENT_ANCHORS) {
+    assert.ok(
+      material.fragmentShader.includes(anchor),
+      `якорь фрагментного шейдера пропал: ${anchor}`,
+    );
+  }
+  const vertex = patchRouteLineVertexShader(material.vertexShader);
+  const fragment = patchRouteLineFragmentShader(material.fragmentShader);
+  assert.ok(
+    !vertex.includes("offset *= linewidth;"),
+    "ширина осталась постоянной экранной",
+  );
+  assert.ok(vertex.includes("offset *= routeWidthPx;"));
+  assert.ok(vertex.includes("uniform float routeWidthWorld;"));
+  assert.ok(vertex.includes("attribute float instanceAlphaStart;"));
+  assert.ok(
+    fragment.includes("float alpha = opacity * vRouteFade * vRouteAlpha;"),
+  );
+  for (const varying of ["vRouteFade", "vRouteAlpha"]) {
+    assert.ok(vertex.includes(`varying float ${varying};`), `vs ${varying}`);
+    assert.ok(fragment.includes(`varying float ${varying};`), `fs ${varying}`);
+  }
+});
+
+test("упаковка жирной нити — полилиния, готовые пары и пустой вход", () => {
+  const line = {
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 2, 0, 0]),
+    colors: new Float32Array([1, 0, 0, 0.2, 0, 1, 0, 0.5, 0, 0, 1, 0.9]),
+  };
+  const strip = routeInstanceBuffers(line, true);
+  assert.equal(strip.segments, 2);
+  assert.deepEqual([...strip.positions.slice(0, 6)], [0, 0, 0, 1, 0, 0]);
+  assert.deepEqual([...strip.positions.slice(6, 12)], [1, 0, 0, 2, 0, 0]);
+  assert.deepEqual(
+    [...strip.alphas].map((value) => Math.round(value * 10) / 10),
+    [0.2, 0.5, 0.5, 0.9],
+  );
+  assert.equal(routeInstanceBuffers(line, false).segments, 1);
+
+  const empty = routeInstanceBuffers(
+    { positions: new Float32Array(), colors: new Float32Array() },
+    true,
+  );
+  assert.equal(empty.segments, 0);
+  assert.equal(empty.positions.length, 6, "атрибут обязан существовать всегда");
+  assert.equal(empty.alphas.length, 2);
+  assert.equal(empty.alphas[0], 0, "пустой сегмент обязан быть прозрачным");
 });

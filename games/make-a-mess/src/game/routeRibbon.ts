@@ -32,6 +32,24 @@ export const ROUTE_ACTUAL_COLOR: readonly [number, number, number] = [
   0.95, 0.34, 0.035,
 ];
 
+/**
+ * Опорная плоскость и её проекции — холодный тёмно-бирюзовый, тише нити.
+ * ТЁМНЫЙ, а не бледный: подложка чаще всего лежит на светлом небе, и светлая
+ * полупрозрачная линия там просто исчезает. Тёмная читается и на небе, и на
+ * городе (проверено кадром r-mid: прежние 0.12/0.30/0.34 смывались в фон).
+ */
+export const ROUTE_GROUND_COLOR: readonly [number, number, number] = [
+  0.05, 0.15, 0.18,
+];
+
+/**
+ * Затухание следа по возрасту: 0 — самый старый удержанный конец, 1 — свежий.
+ * Закон живёт здесь, а не в шейдере: его читают и тест, и рендер.
+ */
+export function routeTrailAlpha(age: number): number {
+  return 0.14 + 0.76 * clamp01(age) ** 1.4;
+}
+
 export function routeAltitudeRange(
   plan: VehicleRoutePlan,
   samples = 160,
@@ -89,8 +107,7 @@ export function routeActualTrailGeometry(
   const positions = new Float32Array(samples.length * 3);
   const colors = new Float32Array(samples.length * 4);
   for (let index = 0; index < samples.length; index += 1) {
-    const age = index / last;
-    const alpha = 0.14 + 0.76 * age ** 1.4;
+    const alpha = routeTrailAlpha(index / last);
     positions.set(samples[index], index * 3);
     colors.set(
       [
@@ -103,6 +120,386 @@ export function routeActualTrailGeometry(
     );
   }
   return { positions, colors };
+}
+
+/**
+ * ДАТУМ — ОДНА ПЛОСКОСТЬ ОТСЧЁТА НА ВСЁ ЗАДАНИЕ, а не рельеф под машиной.
+ *
+ * Высоту нельзя прочитать с оттенка: из синевы не следует «сорок метров».
+ * Её читают длиной отвеса рядом с известным предметом — но длины сравнимы
+ * между собой, только пока висят от общей плоскости. Земля, с которой машина
+ * ушла, и есть низшая точка задания (маршрут начинается наземной точкой у
+ * берта — контракт `VehicleRoutePlan`).
+ */
+export function routeGroundDatum(plan: VehicleRoutePlan, samples = 240): number {
+  return routeAltitudeRange(plan, samples)[0];
+}
+
+/**
+ * Наземный след — проекция задания на датум. Привязывает висящую в воздухе
+ * нить к земле и к тому, что на ней стоит: линия перестаёт плавать.
+ * Возвращает ПОЛИЛИНИЮ (strip).
+ */
+export function routeGroundTrackGeometry(
+  plan: VehicleRoutePlan,
+  datum: number,
+  sections = 480,
+): RouteLineGeometry {
+  if (plan.length <= 1) {
+    return { positions: new Float32Array(), colors: new Float32Array() };
+  }
+  const count = Math.max(120, Math.round(sections));
+  const positions = new Float32Array((count + 1) * 3);
+  const colors = new Float32Array((count + 1) * 4);
+  for (let index = 0; index <= count; index += 1) {
+    const point = plan.point(index / count);
+    positions.set([point[0], datum, point[2]], index * 3);
+    colors.set([...ROUTE_GROUND_COLOR, 0.8], index * 4);
+  }
+  return { positions, colors };
+}
+
+/**
+ * Отвесы — частокол вертикальных волосков от задания до датума. Дают высоту
+ * как ДЛИНУ, а заодно второй раз дают дальность: перспективное сгущение
+ * частокола — градиент плотности, подсказка глубины много сильнее оттенка.
+ * Шаг по ДЛИНЕ ДУГИ, иначе на медленном участке отвесы слипаются.
+ * Возвращает ПАРЫ вершин (segments).
+ */
+export function routeDropLineGeometry(
+  plan: VehicleRoutePlan,
+  datum: number,
+  spacingMetres = 12,
+  maxDrops = 320,
+): RouteLineGeometry {
+  const positions: number[] = [];
+  const colors: number[] = [];
+  if (plan.length <= 1) {
+    return {
+      positions: new Float32Array(),
+      colors: new Float32Array(),
+    };
+  }
+  const spacing = Math.max(spacingMetres, plan.length / maxDrops);
+  const [low, high] = routeAltitudeRange(plan);
+  const samples = Math.max(240, Math.min(1600, Math.ceil(plan.length / 0.75)));
+  let previous = plan.point(0);
+  let travelled = 0;
+  let nextDrop = spacing;
+  for (let index = 1; index <= samples; index += 1) {
+    const point = plan.point(index / samples);
+    travelled += Math.hypot(
+      point[0] - previous[0],
+      point[1] - previous[1],
+      point[2] - previous[2],
+    );
+    previous = point;
+    if (travelled < nextDrop) continue;
+    nextDrop += spacing;
+    const top = routeAltitudeColor(point[1], low, high);
+    appendLine(
+      positions,
+      colors,
+      point as RouteVector3,
+      [point[0], datum, point[2]],
+      [top[0] * 0.72, top[1] * 0.72, top[2] * 0.72],
+      0.62,
+      ROUTE_GROUND_COLOR,
+      0.16,
+    );
+  }
+  return {
+    positions: new Float32Array(positions),
+    colors: new Float32Array(colors),
+  };
+}
+
+/**
+ * Живой отвес машины и её тень на датуме — «я вот настолько выше земли».
+ * Один сегмент и кольцо вместо частокола: у машины высота нужна точная,
+ * а не выборочная. Возвращает ПАРЫ вершин (segments).
+ */
+export function routeCraftPlumbGeometry(
+  centre: RouteVector3,
+  datum: number,
+  shadowRadius = 1.1,
+): RouteLineGeometry {
+  const positions: number[] = [];
+  const colors: number[] = [];
+  const foot: RouteVector3 = [centre[0], datum, centre[2]];
+  appendLine(
+    positions,
+    colors,
+    centre,
+    foot,
+    ROUTE_ACTUAL_COLOR,
+    0.6,
+    ROUTE_GROUND_COLOR,
+    0.22,
+  );
+  const segments = 20;
+  for (let index = 0; index < segments; index += 1) {
+    const a = (index / segments) * Math.PI * 2;
+    const b = ((index + 1) / segments) * Math.PI * 2;
+    appendLine(
+      positions,
+      colors,
+      [
+        foot[0] + Math.cos(a) * shadowRadius,
+        datum,
+        foot[2] + Math.sin(a) * shadowRadius,
+      ],
+      [
+        foot[0] + Math.cos(b) * shadowRadius,
+        datum,
+        foot[2] + Math.sin(b) * shadowRadius,
+      ],
+      ROUTE_ACTUAL_COLOR,
+      0.42,
+    );
+  }
+  return {
+    positions: new Float32Array(positions),
+    colors: new Float32Array(colors),
+  };
+}
+
+/**
+ * РАСПИСАНИЕ ЗАДАНИЯ: секунда, к которой машина обязана оказаться в точке,
+ * если идёт по разрешённой скорости. Скорость нельзя прочитать с линии, но
+ * можно прочитать с РИТМА — а ритм растёт только из расписания.
+ */
+export interface RouteSchedule {
+  readonly points: readonly RouteVector3[];
+  /** Секунды от начала задания в каждой точке. */
+  readonly times: readonly number[];
+  readonly seconds: number;
+}
+
+export function routePlannedSchedule(
+  plan: VehicleRoutePlan,
+  samples = 720,
+): RouteSchedule {
+  const count = Math.max(120, Math.round(samples));
+  const points: RouteVector3[] = [];
+  const speeds: number[] = [];
+  let ceiling = 0;
+  for (let index = 0; index <= count; index += 1) {
+    const progress = index / count;
+    points.push(plan.point(progress) as RouteVector3);
+    const speed = Math.abs(plan.speedLimit(progress));
+    speeds.push(speed);
+    ceiling = Math.max(ceiling, speed);
+  }
+  // Пол скорости: у берта разрешённая скорость честно падает в ноль, и
+  // деление уводит расписание в бесконечность. 8% потолка — шаг, на котором
+  // подход читается СГУЩЕНИЕМ засечек, а не разрывом.
+  const floor = Math.max(0.5, ceiling * 0.08);
+  const times: number[] = [0];
+  for (let index = 1; index <= count; index += 1) {
+    const previous = points[index - 1];
+    const point = points[index];
+    const step = Math.hypot(
+      point[0] - previous[0],
+      point[1] - previous[1],
+      point[2] - previous[2],
+    );
+    const speed = Math.max(floor, (speeds[index - 1] + speeds[index]) * 0.5);
+    times.push(times[index - 1] + step / speed);
+  }
+  return { points, times, seconds: times[count] };
+}
+
+const ROUTE_TICK_LADDER = [
+  0.25, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300,
+] as const;
+
+/**
+ * Шаг засечек выбирается лестницей 1–2–5 от полного времени задания, а не
+ * назначается: иначе долгий рейс тонет в частоколе, а короткий остаётся без
+ * ритма. Один и тот же шаг обязаны получить план и факт — сравнивают решётки.
+ */
+export function routeTickInterval(seconds: number, budget = 200): number {
+  for (const step of ROUTE_TICK_LADDER) {
+    if (seconds / step <= budget) return step;
+  }
+  return ROUTE_TICK_LADDER[ROUTE_TICK_LADDER.length - 1];
+}
+
+export interface RouteTickTiers {
+  readonly majorEvery: number;
+  readonly heavyEvery: number;
+}
+
+export const ROUTE_TICK_TIERS: RouteTickTiers = {
+  majorEvery: 4,
+  heavyEvery: 20,
+};
+
+/**
+ * Длина шпалы — не константа, а доля масштаба задания. Полметра читается на
+ * стометровом облёте и пропадает на километровом обходе города: шпала обязана
+ * расти вместе с тем, что размечает. Один и тот же масштаб получают план и
+ * факт, иначе решётки нельзя приложить друг к другу.
+ */
+export function routeTickScale(length: number): number {
+  return Math.max(0.7, Math.min(4, length / 260));
+}
+
+function tickTier(order: number, tiers: RouteTickTiers, scale: number) {
+  if (tiers.heavyEvery > 0 && order % tiers.heavyEvery === 0) {
+    return { half: 1.7 * scale, weight: 0.95, cross: true };
+  }
+  if (tiers.majorEvery > 0 && order % tiers.majorEvery === 0) {
+    return { half: 1.0 * scale, weight: 0.7, cross: false };
+  }
+  return { half: 0.45 * scale, weight: 0.42, cross: false };
+}
+
+/**
+ * Шпалы через равные СЕКУНДЫ. Расстояние между ними и есть скорость: густо —
+ * медленно, растянуто — быстро; меняющийся шаг — ускорение. Легенда не нужна,
+ * читается на стоп-кадре и на любом удалении — это стробофотография.
+ */
+function appendTimeRungs(
+  positions: number[],
+  colors: number[],
+  points: readonly RouteVector3[],
+  times: readonly number[],
+  interval: number,
+  tiers: RouteTickTiers,
+  scale: number,
+  shade: (
+    point: RouteVector3,
+    fraction: number,
+    weight: number,
+  ) => readonly [number, number, number, number],
+) {
+  if (points.length < 2 || !(interval > 0)) return;
+  const first = times[0];
+  const span = Math.max(1e-6, times[times.length - 1] - first);
+  for (let index = 1; index < points.length; index += 1) {
+    const from = times[index - 1];
+    const to = times[index];
+    if (!(to > from)) continue;
+    const start = Math.floor(from / interval) + 1;
+    const end = Math.floor(to / interval);
+    for (let order = start; order <= end; order += 1) {
+      if (order <= 0) continue;
+      const at = order * interval;
+      const t = (at - from) / (to - from);
+      const back = points[index - 1];
+      const ahead = points[index];
+      const centre: RouteVector3 = [
+        back[0] + (ahead[0] - back[0]) * t,
+        back[1] + (ahead[1] - back[1]) * t,
+        back[2] + (ahead[2] - back[2]) * t,
+      ];
+      const tangent = normalize([
+        ahead[0] - back[0],
+        ahead[1] - back[1],
+        ahead[2] - back[2],
+      ]);
+      let side = cross(tangent, [0, 1, 0]);
+      if (Math.hypot(side[0], side[1], side[2]) < 1e-3) {
+        side = cross(tangent, [0, 0, 1]);
+      }
+      side = normalize(side);
+      const tier = tickTier(order, tiers, scale);
+      const shaded = shade(
+        centre,
+        clamp01((at - first) / span),
+        tier.weight,
+      );
+      const tint = [shaded[0], shaded[1], shaded[2]] as const;
+      appendLine(
+        positions,
+        colors,
+        addScaled(centre, side, -tier.half),
+        addScaled(centre, side, tier.half),
+        tint,
+        shaded[3],
+      );
+      if (tier.cross) {
+        const up = normalize(cross(side, tangent));
+        appendLine(
+          positions,
+          colors,
+          addScaled(centre, up, -tier.half * 0.55),
+          addScaled(centre, up, tier.half * 0.55),
+          tint,
+          shaded[3],
+        );
+      }
+    }
+  }
+}
+
+/**
+ * Засечки плана — по ПЛАНОВОМУ времени. Возвращает ПАРЫ вершин (segments).
+ */
+export function routePlannedTickGeometry(
+  plan: VehicleRoutePlan,
+  interval: number,
+  schedule: RouteSchedule = routePlannedSchedule(plan),
+  tiers: RouteTickTiers = ROUTE_TICK_TIERS,
+  scale: number = routeTickScale(plan.length),
+): RouteLineGeometry {
+  const positions: number[] = [];
+  const colors: number[] = [];
+  const [low, high] = routeAltitudeRange(plan);
+  appendTimeRungs(
+    positions,
+    colors,
+    schedule.points,
+    schedule.times,
+    interval,
+    tiers,
+    scale,
+    (point, _fraction, weight) => {
+      const color = routeAltitudeColor(point[1], low, high);
+      return [color[0], color[1], color[2], weight];
+    },
+  );
+  return {
+    positions: new Float32Array(positions),
+    colors: new Float32Array(colors),
+  };
+}
+
+/**
+ * Засечки факта — по РЕАЛЬНОМУ времени, тем же шагом, что и у плана. Там, где
+ * решётка факта растянулась против плановой, машина обогнала расписание; где
+ * сгустилась — отстала. Возвращает ПАРЫ вершин (segments).
+ */
+export function routeTrailTickGeometry(
+  points: readonly RouteVector3[],
+  times: readonly number[],
+  interval: number,
+  tiers: RouteTickTiers = ROUTE_TICK_TIERS,
+  scale = 1,
+): RouteLineGeometry {
+  const positions: number[] = [];
+  const colors: number[] = [];
+  appendTimeRungs(
+    positions,
+    colors,
+    points,
+    times,
+    interval,
+    tiers,
+    scale,
+    (_point, fraction, weight) => [
+      ROUTE_ACTUAL_COLOR[0],
+      ROUTE_ACTUAL_COLOR[1],
+      ROUTE_ACTUAL_COLOR[2],
+      weight * routeTrailAlpha(fraction),
+    ],
+  );
+  return {
+    positions: new Float32Array(positions),
+    colors: new Float32Array(colors),
+  };
 }
 
 export type RouteSemanticMarkerKind = "gate" | "altitudePeak" | "altitudeTrough";

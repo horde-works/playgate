@@ -61,6 +61,17 @@ export interface FlightFigureCapability {
   readonly rollAcceleration: number;
   /** То же по тангажу, рад/с². */
   readonly pitchAcceleration: number;
+  /**
+   * СОПРОТИВЛЕНИЕ ВРАЩЕНИЮ, 1/с: сколько углового ускорения съедает каждая
+   * рад/с темпа.
+   *
+   * Без него запас приходилось назначать на глаз, и он назначался: множитель
+   * 0.6 «чтобы не по пределу» был честной догадкой и ничем больше. Между тем
+   * догадка описывала конкретную физику — момент, который уходит не на
+   * вращение, а на его удержание. Раз физика есть, её и надо считать, а не
+   * закладывать коэффициентом.
+   */
+  readonly angularDamping: number;
 }
 
 /**
@@ -76,6 +87,8 @@ export interface FigureCapabilitySource {
   readonly inertia: readonly [number, number, number];
   readonly liftCapacity: number;
   readonly capacityWeights?: readonly number[] | null;
+  /** Паспортное затухание вращения, 1/с, как его понимает `stepBody`. */
+  readonly angularDamping?: number;
 }
 
 /**
@@ -120,6 +133,14 @@ export function figureCapabilityOf(
       extremeMoment(starboard) / Math.max(1e-6, machine.inertia[0]),
     pitchAcceleration:
       extremeMoment(forward) / Math.max(1e-6, machine.inertia[2]),
+    // Момент сопротивления считается по инерции РЫСКАНИЯ — так его задаёт
+    // физика тела, — а в угловое ускорение переводится через инерцию той оси,
+    // вокруг которой идёт фигура. У RAX обе поперечные инерции равны, поэтому
+    // число одно; у машины с другой развесовкой оно разошлось бы, и брать одно
+    // за другое было бы ошибкой молчаливой.
+    angularDamping:
+      ((machine.angularDamping ?? 0) * machine.inertia[1]) /
+      Math.max(1e-6, machine.inertia[2]),
   };
 }
 
@@ -185,61 +206,132 @@ const FULL_TURN = Math.PI * 2;
 const GRAVITY = 9.81;
 
 /**
- * НИЖНИЙ ПРЕДЕЛ ГАЗА В ФИГУРЕ, доли веса.
+ * НИЖНИЙ ПРЕДЕЛ ГАЗА В ФИГУРЕ — ВЫВОДИТСЯ ИЗ ПОТРЕБНОГО МОМЕНТА.
  *
- * Газ в фигуре — это не только подъём, это ВЛАСТЬ. Момент коптеру создаёт
- * разнотяг колец, а кольцо толкает только в одну сторону: чтобы одни ушли выше
- * среднего, другие обязаны уйти ниже, и на нуле уходить некуда. Момент по
- * построению пропорционален среднему газу, и просьба «дай ноль» на верхушке
- * петли означает «останься без тангажа ровно там, где вращение надо держать».
+ * Газ в фигуре — это не только подъём, это ВЛАСТЬ: момент коптеру создаёт
+ * разнотяг колец, а разнотяг ограничен средним газом. Просьба «дай ноль» на
+ * верхушке петли означает «останься без тангажа ровно там, где вращение надо
+ * держать».
  *
- * Отсюда пол. Цена ему — верхушка петли получается острее расчётной: лишний
- * газ на перевёрнутой машине давит к центру. Это то самое «яйцо остриём вверх»,
- * и оно свойство машины, а не огрех.
+ * Сколько именно надо — считается, а не назначается. Фигуре нужно ДВА момента:
+ * разогнать вращение до своего темпа в пределах разрешённого отставания
+ * (`ω²/2φ`) и потом удерживать его против сопротивления (`k·ω`). Сумма,
+ * делённая на власть единицы газа, и есть пол. Прежние 0.45 были догадкой; для
+ * малой петли выводится 0.40, для большой — 0.23, и разница осмысленна:
+ * большая петля крутится медленнее, значит и держать её дешевле.
  */
-export const FIGURE_LIFT_FLOOR = 0.45;
+export function figureLiftFloor(
+  capability: FlightFigureCapability,
+  rate: number,
+  /** Полный угол фигуры, рад: у петли оборот, у иммельмана полоборота с бочкой. */
+  turn: number,
+): number {
+  const lag = Math.max(0.2, FIGURE_LEASH * turn);
+  const needed =
+    (rate * rate) / (2 * lag) + capability.angularDamping * Math.abs(rate);
+  // Власть единицы газа — производная доли по газу ниже половины резерва.
+  const perCollective =
+    (2 * capability.pitchAcceleration) / Math.max(1e-6, figureReserve(capability));
+  return Math.max(0.15, needed / Math.max(1e-6, perCollective));
+}
 
-/**
- * ГАЗ НА ПЕРЕВЁРНУТОМ УЧАСТКЕ, доли веса — полубочка иммельмана и возврат из
- * перевёрнутого.
- *
- * Ровно вес, и это не «удержание высоты»: вверх ногами тяга смотрит в землю и
- * не держит ничего. Она тратится ЦЕЛИКОМ на власть по крену, потому что больше
- * ей там применения нет, а перевернуться нужно быстро. За полубочку вертикальная
- * составляющая в среднем гасит сама себя — ось проходит от −1 до +1.
- */
-export const FIGURE_ROLL_COLLECTIVE = 1;
+
 
 /**
  * ДОЛЯ ПРЕДЕЛЬНОГО УГЛОВОГО УСКОРЕНИЯ, доступная на этом газе.
  *
  * Паспортное угловое ускорение снято крайней раскладкой: половина колец на
  * полную, половина в ноль, то есть при среднем газе в ПОЛОВИНУ располагаемой
- * тяги. В фигуре средний газ другой, и момент вместе с ним: кольцу некуда
- * уходить ниже нуля, поэтому разнотяг не может превысить среднего. Отсюда
- * прямая пропорция `2·газ/резерв`.
+ * тяги. На другом среднем газе момент другой, и ограничивает его РАЗНОТЯГ,
+ * который упирается в две стенки сразу: кольцу некуда уходить ниже нуля и
+ * некуда выше собственного потолка. Поэтому доступное отклонение равно
+ * `min(газ, резерв − газ)`, и максимум у него ровно посередине.
+ *
+ * Отсюда прямое следствие, которого не было в первой редакции: «побольше газа»
+ * НЕ означает «побольше власти». Выше половины резерва власть снова падает,
+ * потому что кольцам становится некуда расти.
  *
  * Это не поправочный коэффициент, а пропущенная физика. Иммельман, расписанный
  * по паспортному пределу, просил полубочку за 0.72 с при газе в 0.45 веса —
  * впятеро меньше того, на котором предел замерен. Стенд ответил честно:
  * `maneuverScale` упал в НОЛЬ, машина на две десятых секунды осталась без
  * управления вверх ногами и вышла из фигуры случайностью, а не расписанием.
- *
- * Возвращается доля УПОТРЕБИМАЯ, а не теоретическая: расписание по самому краю
- * невыполнимо по построению, потому что на краю нечем гасить ни демпфирование,
- * ни собственную ошибку. Тот же запас и по той же причине, что у радиуса.
  */
-export const FIGURE_ANGULAR_MARGIN = 0.6;
+export function figureReserve(capability: FlightFigureCapability): number {
+  return capability.uprightCentripetal / GRAVITY + 1;
+}
 
 export function figureAngularShare(
   capability: FlightFigureCapability,
   collective: number,
 ): number {
-  const reserve = capability.uprightCentripetal / GRAVITY + 1;
-  return (
-    Math.max(0.05, Math.min(1, (2 * collective) / Math.max(1e-6, reserve))) *
-    FIGURE_ANGULAR_MARGIN
-  );
+  const reserve = figureReserve(capability);
+  const usable = Math.min(collective, reserve - collective);
+  return Math.max(0.02, Math.min(1, (2 * usable) / Math.max(1e-6, reserve)));
+}
+
+/**
+ * ГАЗ, НА КОТОРОМ ВЛАСТЬ МАКСИМАЛЬНА — ровно половина резерва, и это не выбор,
+ * а вершина `min(газ, резерв − газ)`.
+ *
+ * На перевёрнутом участке — полубочке иммельмана и возврате из перевёрнутого —
+ * держать высоту тягой всё равно нельзя: она смотрит в землю. Значит, её надо
+ * тратить ЦЕЛИКОМ на скорость переворота, а «целиком» у коптера означает не
+ * «на всю», а «на половине резерва». За полуоборот вертикальная составляющая
+ * гасит сама себя — ось проходит от −1 до +1, и интеграл косинуса равен нулю,
+ * — поэтому величина газа на просадку не влияет, а на её ДЛИТЕЛЬНОСТЬ влияет
+ * прямо. Прежняя единица веса была вдвое меньше нужного и стоила вдвое более
+ * долгого переворота.
+ */
+export function figureRollCollective(
+  capability: FlightFigureCapability,
+): number {
+  return figureReserve(capability) / 2;
+}
+
+/**
+ * УГЛОВОЕ УСКОРЕНИЕ, КОТОРОЕ ОСТАЁТСЯ ФИГУРЕ на этом газе.
+ *
+ * Вычитается ДВОЕ, и оба слагаемых физические.
+ *
+ * Первое — сопротивление на собственном пиковом темпе манёвра: `k·√(π·α)`.
+ * Уравнение относительно α — темп зависит от ускорения, а ускорение от темпа, —
+ * и решается сжатием за несколько итераций.
+ *
+ * Второе — доля КОНТУРА, и она отнимается ДОЛЕЙ, а не вычитанием, потому что
+ * тратится на ДРУГОЙ оси. Крен и тангаж создаются одними и теми же кольцами, и
+ * множество достижимых пар «момент по крену, момент по тангажу» выпукло:
+ * заявка на полный предел по крену — это вершина, где власть по тангажу ровно
+ * нулевая. А она нужна: машина отстаёт от упреждения, и контур догоняет её
+ * моментом `жёсткость × отставание` — по тангажу тоже. Поэтому заявка по крену
+ * ужимается настолько, насколько тангажу нужен запас.
+ *
+ * Замер без этого члена: одиннадцать кадров без управления посреди полубочки;
+ * с одним только вычитанием — три. Допустимое отставание берётся то же, которым
+ * живёт поводок эпизода, иначе у фигуры было бы два разных мнения о том,
+ * насколько машине позволено отстать.
+ *
+ * Отсюда же исчезает нужда в назначенном запасе 0.6: он был грубой заменой
+ * ровно этих двух вычитаний.
+ */
+export function figureAngularAcceleration(
+  peak: number,
+  capability: FlightFigureCapability,
+  collective: number,
+): number {
+  const share = figureAngularShare(capability, collective);
+  const correction = ROTORCRAFT_ATTITUDE_STIFFNESS * FIGURE_LEASH * HALF_TURN;
+  const crossAxis = Math.max(1e-6, capability.pitchAcceleration * share);
+  const coupling = Math.max(0.1, 1 - correction / crossAxis);
+  const available = peak * share * coupling;
+  let solved = Math.max(0.05, available);
+  for (let pass = 0; pass < 12; pass += 1) {
+    solved = Math.max(
+      0.05,
+      available - capability.angularDamping * Math.sqrt(HALF_TURN * solved),
+    );
+  }
+  return solved;
 }
 
 /**
@@ -256,10 +348,13 @@ export function figureAngularShare(
  * означала бы просить центростремительное под дугу, которой машина не летит, —
  * и она честно не летела: петля закрывалась на четырнадцать метров ниже входа.
  */
-function arcLift(speed: number, rate: number, upY: number): number {
-  return (
-    Math.max(FIGURE_LIFT_FLOOR, (speed * Math.abs(rate)) / GRAVITY + upY) - 1
-  );
+function arcLift(
+  speed: number,
+  rate: number,
+  upY: number,
+  floor: number,
+): number {
+  return Math.max(floor, (speed * Math.abs(rate)) / GRAVITY + upY) - 1;
 }
 
 /**
@@ -434,6 +529,7 @@ function loopPlan(
   const length = FULL_TURN * radius;
   const attitudeAt = (t: number) =>
     pitchedAttitude(Math.max(0, Math.min(1, t)) * FULL_TURN, 0, nose, base);
+  const floor = figureLiftFloor(capability, speed / radius, FULL_TURN);
   return {
     kind: "loop",
     radius,
@@ -457,6 +553,7 @@ function loopPlan(
           liveSpeed,
           Math.hypot(...angularVelocity),
           attitudeUpY(attitude),
+          floor,
         ),
         angularVelocity,
         offset: [forward * nose[0], up, forward * nose[1]],
@@ -486,10 +583,15 @@ function immelmannPlan(
   // Полубочка идёт на той же скорости, поэтому её «длина» — путь за время
   // переворота. Держать машину в этот момент нечем: она падает, и это входит
   // в потребный запас высоты.
+  const rollCollective = figureRollCollective(capability);
   const rollSeconds = halfTurnSeconds(
-    capability.rollAcceleration *
-      figureAngularShare(capability, FIGURE_ROLL_COLLECTIVE),
+    figureAngularAcceleration(
+      capability.rollAcceleration,
+      capability,
+      rollCollective,
+    ),
   );
+  const floor = figureLiftFloor(capability, speed / radius, HALF_TURN);
   const rollLength = speed * rollSeconds;
   const length = loopLength + rollLength;
   const loopShare = loopLength / length;
@@ -533,6 +635,7 @@ function immelmannPlan(
             liveSpeed,
             Math.hypot(...angularVelocity),
             attitudeUpY(attitude),
+            floor,
           ),
           angularVelocity,
           offset: [forward * nose[0], up, forward * nose[1]],
@@ -549,7 +652,7 @@ function immelmannPlan(
         // На полубочке дуги нет, значит нет и центростремительного. Газ здесь
         // держит не высоту, а ВЛАСТЬ: перевернуться надо быстро, а момент
         // коптеру даёт разнотяг, и разнотяг не бывает больше среднего газа.
-        liftFraction: FIGURE_ROLL_COLLECTIVE - 1,
+        liftFraction: rollCollective - 1,
         angularVelocity: scheduleRate(attitudeAt, t, speed / length, [
           loopShare,
         ]),
@@ -642,16 +745,20 @@ export function flightFigureVerdict(
  * Высота, которую отнимает возврат из перевёрнутого. Наружу — для телеметрии.
  *
  * Полубочка на выравнивание, свободное падение за это время и гашение набранной
- * вертикальной скорости располагаемым избытком тяги. Темп полубочки берётся НЕ
- * паспортным пределом, а тем, что машина даёт на газе возврата: предел замерен
- * при среднем газе в половину резерва, а вверх ногами такого газа не бывает.
+ * вертикальной скорости располагаемым избытком тяги. Темп полубочки — тот же,
+ * что у полубочки иммельмана: на газе максимальной власти и за вычетом того,
+ * что съедает сопротивление. Одна формула на оба места, потому что манёвр один.
  */
 export function invertedRecoveryHeight(
   capability: FlightFigureCapability,
 ): number {
+  const rollCollective = figureRollCollective(capability);
   const rollSeconds = halfTurnSeconds(
-    capability.rollAcceleration *
-      figureAngularShare(capability, FIGURE_ROLL_COLLECTIVE),
+    figureAngularAcceleration(
+      capability.rollAcceleration,
+      capability,
+      rollCollective,
+    ),
   );
   const vertical = GRAVITY * rollSeconds;
   return (
@@ -679,10 +786,35 @@ export function invertedRecoveryHeight(
  * ногами; без собственного хода — не начиналась вовсе.
  */
 export const FIGURE_LEASH = 0.22;
+/**
+ * Жёсткость контура позы, 1/с² — та же, что в `rotorcraftAttitudeMoment`.
+ * Продублирована числом сознательно: модуль фигур физику не импортирует и не
+ * должен, а расхождение ловится тестом.
+ */
+export const ROTORCRAFT_ATTITUDE_STIFFNESS = 6;
 /** Насколько точно машина обязана попасть в последнюю позу расписания, рад. */
 export const FIGURE_EXIT_TOLERANCE = 0.25;
 /** Во сколько раз дольше плана фигура имеет право идти, прежде чем её снимут. */
 export const FIGURE_TIMEOUT_SHARE = 2.5;
+
+/**
+ * ХВОСТ ВОЗВРАТА: фигура гасит набранное снижение САМА.
+ *
+ * Расписание кончается ровной машиной — и этого мало. На полупетле и полубочке
+ * держать вес нечем, и к выходу иммельмана замер дал 15.7 м/с снижения. Отдать
+ * машину автопилоту в таком виде значит отдать ему задачу, которой у него нет
+ * власти: он просил максимальный подъём и всё равно потерял тридцать шесть
+ * метров, дойдя до самой земли.
+ *
+ * Поэтому фигура не считается законченной, пока вертикаль не улеглась. Это тот
+ * же манёвр, который уже посчитан в `invertedRecoveryHeight`, — теперь он не
+ * только резервируется, но и ЛЕТИТСЯ.
+ */
+export const FIGURE_RECOVERY_COLLECTIVE = 1.2;
+/** Снижение, ниже которого машину можно отдавать, м/с. */
+export const FIGURE_RECOVERY_SINK = 1.5;
+/** Дольше этого хвост не тянут: значит, гасить нечем. */
+export const FIGURE_RECOVERY_SECONDS = 3;
 
 export interface FlightFigureEpisode {
   readonly plan: FlightFigurePlan;
@@ -692,6 +824,9 @@ export interface FlightFigureEpisode {
   readonly achieved: number;
   readonly seconds: number;
   readonly done: boolean;
+  /** Расписание отработано, идёт гашение снижения. */
+  readonly recovering: boolean;
+  readonly recoverySeconds: number;
   /** Фигура снята по времени: машина за ней не пошла. */
   readonly aborted: boolean;
 }
@@ -703,6 +838,8 @@ export function beginFlightFigure(plan: FlightFigurePlan): FlightFigureEpisode {
     achieved: 0,
     seconds: 0,
     done: false,
+    recovering: false,
+    recoverySeconds: 0,
     aborted: false,
   };
 }
@@ -717,12 +854,33 @@ export function advanceFlightFigure(
   episode: FlightFigureEpisode,
   attitude: Quaternion,
   speed: number,
+  /** Вертикальная скорость машины, м/с. Минус — снижается. */
+  verticalSpeed: number,
   deltaSeconds: number,
 ): {
   readonly episode: FlightFigureEpisode;
   readonly command: FlightFigureCommand;
 } {
   const { plan } = episode;
+  if (episode.recovering) {
+    const recoverySeconds = episode.recoverySeconds + deltaSeconds;
+    const settled =
+      verticalSpeed > -FIGURE_RECOVERY_SINK ||
+      recoverySeconds > FIGURE_RECOVERY_SECONDS;
+    const exit = plan.command(1, speed);
+    return {
+      episode: {
+        ...episode,
+        seconds: episode.seconds + deltaSeconds,
+        recoverySeconds,
+        recovering: !settled,
+        done: settled,
+      },
+      // Поза выхода держится, а газ идёт на гашение: машина уже ровная, и вся
+      // тяга работает вертикалью.
+      command: { ...exit, liftFraction: FIGURE_RECOVERY_COLLECTIVE },
+    };
+  }
   // Проекция ищется ТОЛЬКО ВПЕРЁД: расписание не отматывают назад, иначе
   // машина, качнувшаяся в позе, теряла бы уже пройденное.
   let achieved = episode.achieved;
@@ -749,13 +907,17 @@ export function advanceFlightFigure(
     relativeRotation(attitude, plan.command(1).attitude).angle <
       FIGURE_EXIT_TOLERANCE;
   const aborted = !settled && seconds > plan.seconds * FIGURE_TIMEOUT_SHARE;
+  // Расписание отработано — но фигура ещё не кончена: сперва гасится снижение.
+  const recovering = settled && verticalSpeed <= -FIGURE_RECOVERY_SINK;
   return {
     episode: {
-      plan,
+      ...episode,
       progress,
       achieved,
       seconds,
-      done: settled || aborted,
+      recovering,
+      recoverySeconds: 0,
+      done: (settled && !recovering) || aborted,
       aborted,
     },
     command: plan.command(progress, speed),
@@ -785,6 +947,11 @@ export interface RouteFigureStation {
   readonly resumeAt: number;
   /** Ход входа, м/с. Фигура крутится на нём, а не на разрешённом трассой. */
   readonly speed: number;
+  /**
+   * Потребный этаж под фигурой, м над бертом. Объявляет ТРАССА, потому что
+   * поднять себя может только она; проверяется против живого паспорта машины.
+   */
+  readonly floor: number;
   /**
    * Годное небо над этой точкой, абсолютная высота мира.
    *
@@ -855,6 +1022,8 @@ export function advanceRouteFigures(input: {
   /** Нос машины в авторской позе покоя — из него строится ровное основание. */
   readonly bodyNose: SceneVector3;
   readonly speed: number;
+  /** Вертикальная скорость машины, м/с. Фигура гасит её сама перед выходом. */
+  readonly verticalSpeed: number;
   readonly capability: FlightFigureCapability;
   /** Ворота без хода и без неба: ход берётся замеренный, небо — от станции. */
   readonly gate: Omit<FlightFigureGate, "speed" | "headroom">;
@@ -877,6 +1046,7 @@ export function advanceRouteFigures(input: {
       state.episode,
       input.attitude,
       input.speed,
+      input.verticalSpeed,
       input.deltaSeconds,
     );
     if (!advanced.episode.done) {

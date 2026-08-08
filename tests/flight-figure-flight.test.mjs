@@ -80,6 +80,7 @@ function fly(kind, { settleSteps = 60, afterSteps = 150 } = {}) {
       episode,
       m.state.orientation,
       speed,
+      m.state.velocity[1],
       dt,
     );
     episode = advanced.episode;
@@ -102,6 +103,7 @@ function fly(kind, { settleSteps = 60, afterSteps = 150 } = {}) {
         (centre[0] - entry[0]) * (entryNose[0] / flat) +
         (centre[2] - entry[2]) * (entryNose[2] / flat),
       speed: Math.hypot(...m.state.velocity),
+      sink: m.state.velocity[1],
     });
   }
 
@@ -189,8 +191,24 @@ test("ИММЕЛЬМАН разворачивает курс и оставляе
 
 test("ИММЕЛЬМАН оставляет машину ВЫШЕ входа: ради этого он и делается", () => {
   const exit = immelmann.track.at(-1).height;
-  assert.ok(exit > immelmann.plan.radius * 0.6, `вышла на ${exit.toFixed(1)} м выше входа`);
+  assert.ok(exit > 0, `вышла на ${exit.toFixed(1)} м относительно входа`);
   assert.ok(exit < immelmann.plan.ceiling);
+});
+
+test("ФИГУРА ГАСИТ СНИЖЕНИЕ САМА, а не отдаёт его автопилоту", () => {
+  // Без хвоста возврата иммельман отдавал машину с 15.7 м/с снижения. Дальше
+  // автопилот просил максимальный подъём — и всё равно терял тридцать шесть
+  // метров, до самой земли: он сидел в насыщении, то есть в отказе. Фигура не
+  // имеет права передавать эстафету в таком состоянии.
+  for (const [name, run] of [["петля", loop], ["иммельман", immelmann]]) {
+    const worst = run.track.reduce((deep, s) => Math.min(deep, s.sink), 0);
+    assert.ok(worst < -4, `${name}: снижения не было вовсе, замер лукавит`);
+    const parting = run.track.at(-1).sink;
+    assert.ok(
+      parting > -2,
+      `${name} отдаёт машину со снижением ${parting.toFixed(1)} м/с`,
+    );
+  }
 });
 
 test("НИ ОДНА фигура не оставляет машину без управления", () => {

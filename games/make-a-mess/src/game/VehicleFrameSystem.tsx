@@ -15,13 +15,14 @@ import {
   DynamicDrawUsage,
   Euler,
   InstancedBufferAttribute,
+  InstancedInterleavedBuffer,
   InstancedMesh,
-  Line,
+  InterleavedBufferAttribute,
   Mesh,
   MeshBasicMaterial,
   PlaneGeometry,
   Quaternion,
-  ShaderMaterial,
+  Vector2,
   Vector3,
 } from "three";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
@@ -187,12 +188,28 @@ import {
   type RotorcraftTrimState,
 } from "./rotorcraftDynamics.ts";
 import {
+  patchRouteLineFragmentShader,
+  patchRouteLineVertexShader,
+  routeInstanceBuffers,
+} from "./routeLineShader.ts";
+import {
   ROUTE_ACTUAL_COLOR,
   routeAltitudeDiscGeometry,
   routeCraftContourGeometry,
+  routeCraftPlumbGeometry,
+  routeDropLineGeometry,
   routeGateGeometry,
+  routeGroundDatum,
+  routeGroundTrackGeometry,
   routePlanLineGeometry,
+  routePlannedSchedule,
+  routePlannedTickGeometry,
+  ROUTE_TICK_TIERS,
   routeSemanticMarkers,
+  routeTickInterval,
+  routeTickScale,
+  routeTrailAlpha,
+  routeTrailTickGeometry,
   type RouteVector3,
 } from "./routeRibbon.ts";
 import {
@@ -6532,6 +6549,7 @@ export function VehicleFrameSystem({
             state.body.velocity[1],
             state.body.velocity[2],
           ),
+          verticalSpeed: state.body.velocity[1],
           capability: figureCapabilityOf({
             points: figureLimits.enginePoints,
             centreOfMass: mass.centre,
@@ -7401,7 +7419,18 @@ export function VehicleFrameSystem({
   );
 }
 
-/** Один непрерывный GL line strip: без лент, стыков и геометрического glow. */
+/**
+ * ТРАССА В МИРЕ — ЖИРНАЯ ЛИНИЯ, А НЕ `gl.LINES`.
+ *
+ * `THREE.Line` рисуется через `gl.LINES`, а `linewidth` там игнорирует
+ * ДРАЙВЕР: на всяком десктопном GL нить ровно в один пиксель, и никакой
+ * материал этого не меняет. Отсюда и «маршруты — тонкие нитки», и то, что
+ * дальнее не отличалось от ближнего: один пиксель в сорока метрах и в
+ * четырёхстах — буквально одни и те же пиксели. Слои разведены по
+ * `LineSegments2`, а ширина каждого — МИРОВАЯ, зажатая полом и потолком в
+ * экранных пикселях (`createRouteLineMaterial`): близь жирная, даль тонкая,
+ * но никогда не исчезает. Ленты по-прежнему нет — есть иерархия толщин.
+ */
 const ROUTE_TRAIL_COMMIT_METRES = 0.5;
 const ROUTE_TRAIL_MAX_SAMPLES = 4000;
 
@@ -7417,125 +7446,248 @@ type RouteRgbaGeometry = {
   readonly colors: Float32Array;
 };
 
-function routeLayerColors(
-  colors: Float32Array,
-  tint: readonly [number, number, number] | null,
-  gain = 1,
-  applyVertexAlpha = true,
-): Float32Array {
-  const result = new Float32Array((colors.length / 4) * 3);
-  for (
-    let source = 0, target = 0;
-    source < colors.length;
-    source += 4, target += 3
-  ) {
-    const strength = applyVertexAlpha ? colors[source + 3] : 1;
-    result[target] = (tint?.[0] ?? colors[source]) * strength * gain;
-    result[target + 1] =
-      (tint?.[1] ?? colors[source + 1]) * strength * gain;
-    result[target + 2] =
-      (tint?.[2] ?? colors[source + 2]) * strength * gain;
-  }
-  return result;
+/** [метры начала затухания, метры конца, остаточная доля яркости]. */
+type RouteFade = readonly [number, number, number];
+
+const ROUTE_FADE_LINE: RouteFade = [90, 620, 0.4];
+const ROUTE_FADE_SOFT: RouteFade = [120, 700, 0.55];
+const ROUTE_FADE_UNDERLAY: RouteFade = [60, 420, 0.25];
+
+interface RouteLineStyle {
+  /** Мировая ширина нити, метры. */
+  readonly world: number;
+  /** Пол в экранных пикселях: даль тонкая, но не исчезает. */
+  readonly minPixels: number;
+  /** Потолок в экранных пикселях: близь жирная, но не колбаса. */
+  readonly maxPixels: number;
+  readonly opacity: number;
+  /**
+   * Сквозной проход: рисуется БЕЗ depth-теста и раньше основного, поэтому
+   * скрытый за домом кусок трассы читается как «за домом», а не пропадает.
+   * Перекрытие — сильнейшая подсказка глубины, и терять её нельзя.
+   */
+  readonly through?: boolean;
+  readonly dash?: readonly [number, number];
+  readonly fade?: RouteFade;
 }
 
-function createRouteStripMaterial(trailFade: boolean): ShaderMaterial {
-  return new ShaderMaterial({
-    transparent: true,
-    depthWrite: false,
-    toneMapped: false,
-    uniforms: {
-      routeHead: { value: 1 },
-      trailFade: { value: trailFade ? 1 : 0 },
-    },
-    vertexShader: /* glsl */ `
-      attribute vec4 routeColor;
-      attribute float routeIndex;
-      uniform float routeHead;
-      uniform float trailFade;
-      varying vec4 vRouteColor;
-
-      void main() {
-        vRouteColor = routeColor;
-        if (trailFade > 0.5) {
-          float age = routeIndex / max(1.0, routeHead);
-          vRouteColor.a = 0.14 + 0.76 * pow(age, 1.4);
-        }
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `,
-    fragmentShader: /* glsl */ `
-      varying vec4 vRouteColor;
-
-      void main() {
-        gl_FragColor = vRouteColor;
-        #include <tonemapping_fragment>
-        #include <colorspace_fragment>
-      }
-    `,
-  });
-}
-
-function createRouteStrip(
-  renderOrder: number,
-  capacity = 0,
-): Line<BufferGeometry, ShaderMaterial> {
-  const geometry = new BufferGeometry();
-  if (capacity > 0) {
-    const positions = new BufferAttribute(new Float32Array(capacity * 3), 3);
-    positions.setUsage(DynamicDrawUsage);
-    const colors = new Float32Array(capacity * 4);
-    const indices = new Float32Array(capacity);
-    for (let index = 0; index < capacity; index += 1) {
-      colors.set([...ROUTE_ACTUAL_COLOR, 1], index * 4);
-      indices[index] = index;
-    }
-    geometry.setAttribute("position", positions);
-    geometry.setAttribute("routeColor", new BufferAttribute(colors, 4));
-    geometry.setAttribute("routeIndex", new BufferAttribute(indices, 1));
-    geometry.setDrawRange(0, 0);
-  }
-  const line = new Line(
-    geometry,
-    createRouteStripMaterial(capacity > 0),
-  );
-  line.frustumCulled = false;
-  line.renderOrder = renderOrder;
-  line.visible = false;
-  return line;
-}
-
-function createRouteSegmentMaterial(
-  linewidth: number,
-  opacity: number,
-): LineMaterial {
+function createRouteLineMaterial(style: RouteLineStyle): LineMaterial {
   const material = new LineMaterial({
     color: 0xffffff,
-    linewidth,
+    linewidth: style.maxPixels,
     worldUnits: false,
     vertexColors: true,
     transparent: true,
-    opacity,
+    opacity: style.opacity,
     depthWrite: false,
+    depthTest: style.through !== true,
     toneMapped: false,
+    dashed: style.dash !== undefined,
   });
+  if (style.dash) {
+    material.dashScale = 1;
+    material.dashSize = style.dash[0];
+    material.gapSize = style.dash[1];
+  }
   material.resolution.set(1, 1);
+  const fade = style.fade ?? ROUTE_FADE_LINE;
+  material.uniforms.routeWidthWorld = { value: style.world };
+  material.uniforms.routeWidthClamp = {
+    value: new Vector2(style.minPixels, style.maxPixels),
+  };
+  material.uniforms.routeFade = {
+    value: new Vector3(fade[0], fade[1], fade[2]),
+  };
+  material.vertexShader = patchRouteLineVertexShader(material.vertexShader);
+  material.fragmentShader = patchRouteLineFragmentShader(
+    material.fragmentShader,
+  );
   return material;
 }
 
-function createRouteSegments(
-  linewidth: number,
-  renderOrder: number,
-  opacity: number,
-): LineSegments2 {
-  const line = new LineSegments2(
-    new LineSegmentsGeometry(),
-    createRouteSegmentMaterial(linewidth, opacity),
+/**
+ * Слой трассы принимает `RouteLineGeometry` — либо полилинию (`strip`), либо
+ * готовые пары вершин. Альфа уходит в собственный per-instance атрибут.
+ */
+function setRouteSegments(
+  geometry: LineSegmentsGeometry,
+  line: RouteRgbaGeometry,
+  strip: boolean,
+): number {
+  const { positions, colors, alphas, segments } = routeInstanceBuffers(
+    line,
+    strip,
   );
+  const positionBuffer = new InstancedInterleavedBuffer(positions, 6, 1);
+  geometry.setAttribute(
+    "instanceStart",
+    new InterleavedBufferAttribute(positionBuffer, 3, 0),
+  );
+  geometry.setAttribute(
+    "instanceEnd",
+    new InterleavedBufferAttribute(positionBuffer, 3, 3),
+  );
+  const colorBuffer = new InstancedInterleavedBuffer(colors, 6, 1);
+  geometry.setAttribute(
+    "instanceColorStart",
+    new InterleavedBufferAttribute(colorBuffer, 3, 0),
+  );
+  geometry.setAttribute(
+    "instanceColorEnd",
+    new InterleavedBufferAttribute(colorBuffer, 3, 3),
+  );
+  const alphaBuffer = new InstancedInterleavedBuffer(alphas, 2, 1);
+  geometry.setAttribute(
+    "instanceAlphaStart",
+    new InterleavedBufferAttribute(alphaBuffer, 1, 0),
+  );
+  geometry.setAttribute(
+    "instanceAlphaEnd",
+    new InterleavedBufferAttribute(alphaBuffer, 1, 1),
+  );
+  geometry.instanceCount = segments;
+  return segments;
+}
+
+const EMPTY_ROUTE_GEOMETRY: RouteRgbaGeometry = {
+  positions: new Float32Array(6),
+  colors: new Float32Array(8),
+};
+
+function createRouteLine(
+  style: RouteLineStyle,
+  renderOrder: number,
+  shared?: LineSegmentsGeometry,
+): LineSegments2 {
+  const geometry = shared ?? new LineSegmentsGeometry();
+  if (!shared) setRouteSegments(geometry, EMPTY_ROUTE_GEOMETRY, false);
+  const line = new LineSegments2(geometry, createRouteLineMaterial(style));
   line.frustumCulled = false;
   line.renderOrder = renderOrder;
   line.visible = false;
   return line;
+}
+
+/**
+ * Фактический след живёт в предвыделенных буферах: он растёт каждый кадр, а
+ * пересобирать инстансную геометрию на четыре тысячи сегментов по кадру —
+ * мусор и лишняя выгрузка. Меняется хвост, альфа переписывается только при
+ * смене числа точек.
+ */
+interface RouteTrailBuffers {
+  readonly geometry: LineSegmentsGeometry;
+  readonly positions: Float32Array;
+  readonly alphas: Float32Array;
+  readonly positionBuffer: InstancedInterleavedBuffer;
+  readonly alphaBuffer: InstancedInterleavedBuffer;
+  readonly capacity: number;
+  segments: number;
+  points: number;
+}
+
+function createRouteTrailBuffers(capacity: number): RouteTrailBuffers {
+  const geometry = new LineSegmentsGeometry();
+  const positions = new Float32Array(capacity * 6);
+  const colors = new Float32Array(capacity * 6);
+  const alphas = new Float32Array(capacity * 2);
+  for (let index = 0; index < capacity; index += 1) {
+    colors.set(ROUTE_ACTUAL_COLOR, index * 6);
+    colors.set(ROUTE_ACTUAL_COLOR, index * 6 + 3);
+  }
+  const positionBuffer = new InstancedInterleavedBuffer(positions, 6, 1);
+  positionBuffer.setUsage(DynamicDrawUsage);
+  const colorBuffer = new InstancedInterleavedBuffer(colors, 6, 1);
+  const alphaBuffer = new InstancedInterleavedBuffer(alphas, 2, 1);
+  alphaBuffer.setUsage(DynamicDrawUsage);
+  geometry.setAttribute(
+    "instanceStart",
+    new InterleavedBufferAttribute(positionBuffer, 3, 0),
+  );
+  geometry.setAttribute(
+    "instanceEnd",
+    new InterleavedBufferAttribute(positionBuffer, 3, 3),
+  );
+  geometry.setAttribute(
+    "instanceColorStart",
+    new InterleavedBufferAttribute(colorBuffer, 3, 0),
+  );
+  geometry.setAttribute(
+    "instanceColorEnd",
+    new InterleavedBufferAttribute(colorBuffer, 3, 3),
+  );
+  geometry.setAttribute(
+    "instanceAlphaStart",
+    new InterleavedBufferAttribute(alphaBuffer, 1, 0),
+  );
+  geometry.setAttribute(
+    "instanceAlphaEnd",
+    new InterleavedBufferAttribute(alphaBuffer, 1, 1),
+  );
+  geometry.instanceCount = 0;
+  return {
+    geometry,
+    positions,
+    alphas,
+    positionBuffer,
+    alphaBuffer,
+    capacity,
+    segments: 0,
+    points: 0,
+  };
+}
+
+function updateRouteTrail(
+  target: RouteTrailBuffers,
+  committed: readonly RouteVector3[],
+  live: RouteVector3,
+  rewrite: boolean,
+): number {
+  const committedCount = Math.min(committed.length, target.capacity);
+  if (committedCount === 0) {
+    target.segments = 0;
+    target.points = 0;
+    target.geometry.instanceCount = 0;
+    return 0;
+  }
+  const last = committed[committedCount - 1];
+  const hasLive =
+    committedCount < target.capacity &&
+    Math.hypot(live[0] - last[0], live[1] - last[1], live[2] - last[2]) > 1e-4;
+  const points = committedCount + (hasLive ? 1 : 0);
+  const segments = Math.max(0, points - 1);
+  const pointAt = (index: number) =>
+    index < committedCount ? committed[index] : live;
+
+  const from =
+    rewrite || segments < target.segments
+      ? 0
+      : Math.max(0, target.segments - 1);
+  for (let index = from; index < segments; index += 1) {
+    target.positions.set(pointAt(index), index * 6);
+    target.positions.set(pointAt(index + 1), index * 6 + 3);
+  }
+  target.positionBuffer.clearUpdateRanges();
+  if (segments > from) {
+    target.positionBuffer.addUpdateRange(from * 6, (segments - from) * 6);
+    target.positionBuffer.needsUpdate = true;
+  }
+
+  if (rewrite || points !== target.points) {
+    const span = Math.max(1, points - 1);
+    for (let index = 0; index < segments; index += 1) {
+      target.alphas[index * 2] = routeTrailAlpha(index / span);
+      target.alphas[index * 2 + 1] = routeTrailAlpha((index + 1) / span);
+    }
+    target.alphaBuffer.clearUpdateRanges();
+    if (segments > 0) {
+      target.alphaBuffer.addUpdateRange(0, segments * 2);
+      target.alphaBuffer.needsUpdate = true;
+    }
+    target.points = points;
+  }
+  target.segments = segments;
+  target.geometry.instanceCount = segments;
+  return segments;
 }
 
 function createRouteDiscMesh(
@@ -7558,93 +7710,6 @@ function createRouteDiscMesh(
   return mesh;
 }
 
-function setRouteStripGeometry(
-  target: Line<BufferGeometry, ShaderMaterial>,
-  line: RouteRgbaGeometry,
-  opaque: boolean,
-) {
-  if (line.positions.length < 6) return;
-  const colors = opaque ? new Float32Array(line.colors) : line.colors;
-  if (opaque) {
-    for (let index = 3; index < colors.length; index += 4) colors[index] = 1;
-  }
-  const geometry = target.geometry;
-  geometry.setAttribute("position", new BufferAttribute(line.positions, 3));
-  geometry.setAttribute("routeColor", new BufferAttribute(colors, 4));
-  geometry.setAttribute(
-    "routeIndex",
-    new BufferAttribute(
-      Float32Array.from(
-        { length: line.positions.length / 3 },
-        (_, index) => index,
-      ),
-      1,
-    ),
-  );
-  target.material.uniforms.routeHead.value = line.positions.length / 3 - 1;
-  geometry.computeBoundingSphere();
-}
-
-function updateActualRouteStrip(
-  target: Line<BufferGeometry, ShaderMaterial>,
-  committed: readonly RouteVector3[],
-  live: RouteVector3,
-  rewrite: boolean,
-) {
-  const position = target.geometry.getAttribute("position") as BufferAttribute;
-  const capacity = position.count;
-  const committedCount = Math.min(committed.length, capacity);
-  const liveIndex = Math.min(committedCount, capacity - 1);
-  const last = committed[committedCount - 1];
-  const hasLiveTip =
-    committedCount < capacity &&
-    Boolean(
-      last &&
-        Math.hypot(
-          live[0] - last[0],
-          live[1] - last[1],
-          live[2] - last[2],
-        ) > 1e-4,
-    );
-
-  position.clearUpdateRanges();
-  if (rewrite) {
-    for (let index = 0; index < committedCount; index += 1) {
-      position.setXYZ(index, ...committed[index]);
-    }
-    position.addUpdateRange(0, committedCount * 3);
-  } else if (committedCount > 0) {
-    position.setXYZ(committedCount - 1, ...committed[committedCount - 1]);
-    position.addUpdateRange((committedCount - 1) * 3, 3);
-  }
-  if (hasLiveTip) {
-    position.setXYZ(liveIndex, ...live);
-    position.addUpdateRange(liveIndex * 3, 3);
-  }
-  position.needsUpdate = committedCount > 0;
-  const drawCount = committedCount + (hasLiveTip ? 1 : 0);
-  target.geometry.setDrawRange(0, drawCount);
-  target.material.uniforms.routeHead.value = Math.max(1, drawCount - 1);
-  return drawCount;
-}
-
-function setRouteSegmentGeometry(
-  target: LineSegments2,
-  line: RouteRgbaGeometry,
-  tint: readonly [number, number, number] | null,
-  gain = 1,
-) {
-  const geometry = target.geometry as LineSegmentsGeometry;
-  if (line.positions.length < 6) {
-    geometry.setPositions(new Float32Array(6));
-    geometry.setColors(new Float32Array(6));
-  } else {
-    geometry.setPositions(line.positions);
-    geometry.setColors(routeLayerColors(line.colors, tint, gain));
-  }
-  geometry.computeBoundingSphere();
-}
-
 function setRouteDiscGeometry(
   target: Mesh<BufferGeometry, MeshBasicMaterial>,
   geometryData: ReturnType<typeof routeAltitudeDiscGeometry>,
@@ -7660,42 +7725,161 @@ function setRouteDiscGeometry(
 }
 
 interface RouteRenderBundle {
-  readonly plan: Line<BufferGeometry, ShaderMaterial>;
-  readonly actual: Line<BufferGeometry, ShaderMaterial>;
+  /** Сквозные проходы: то же, что план и факт, но без depth-теста. */
+  readonly planGhost: LineSegments2;
+  readonly actualGhost: LineSegments2;
+  /** Проекция задания на датум и частокол отвесов до него. */
+  readonly groundTrack: LineSegments2;
+  readonly dropLines: LineSegments2;
+  /** Решётки времени: плановая и фактическая, одним шагом. */
+  readonly planTicks: LineSegments2;
+  readonly actualTicks: LineSegments2;
+  readonly plan: LineSegments2;
+  readonly actual: LineSegments2;
+  /** Живой отвес машины и её тень на датуме. */
+  readonly craftPlumb: LineSegments2;
   readonly gates: LineSegments2;
   readonly altitudeDiscs: Mesh<BufferGeometry, MeshBasicMaterial>;
   readonly craft: LineSegments2;
+  readonly trail: RouteTrailBuffers;
   readonly objects: readonly (
-    | Line<BufferGeometry, ShaderMaterial>
     | Mesh<BufferGeometry, MeshBasicMaterial>
     | LineSegments2
   )[];
-  readonly materials: readonly (
-    | ShaderMaterial
-    | LineMaterial
-    | MeshBasicMaterial
-  )[];
+  readonly lineMaterials: readonly LineMaterial[];
+  readonly materials: readonly (LineMaterial | MeshBasicMaterial)[];
+  readonly geometries: readonly BufferGeometry[];
 }
 
+/**
+ * ИЕРАРХИЯ ТОЛЩИН, а не «сделать всё пожирнее»: если жирное всё, не выделено
+ * ничто. Факт — самая толстая нить, он и есть история; план тоньше; подложка
+ * (наземный след, отвесы) тоньше всего; сквозные проходы — тусклые и узкие.
+ */
 function createRouteRenderBundle(): RouteRenderBundle {
+  const planGeometry = new LineSegmentsGeometry();
+  setRouteSegments(planGeometry, EMPTY_ROUTE_GEOMETRY, false);
+  const trail = createRouteTrailBuffers(ROUTE_TRAIL_MAX_SAMPLES);
   const bundle = {
-    plan: createRouteStrip(21),
-    actual: createRouteStrip(22, ROUTE_TRAIL_MAX_SAMPLES + 1),
-    gates: createRouteSegments(0.72, 23, 0.72),
-    altitudeDiscs: createRouteDiscMesh(24),
-    craft: createRouteSegments(0.9, 26, 0.55),
+    planGhost: createRouteLine(
+      {
+        world: 0.1,
+        minPixels: 1,
+        maxPixels: 2,
+        opacity: 0.34,
+        through: true,
+        dash: [3, 3],
+        fade: ROUTE_FADE_UNDERLAY,
+      },
+      16,
+      planGeometry,
+    ),
+    actualGhost: createRouteLine(
+      {
+        world: 0.14,
+        minPixels: 1.2,
+        maxPixels: 2.6,
+        opacity: 0.3,
+        through: true,
+        fade: ROUTE_FADE_UNDERLAY,
+      },
+      17,
+      trail.geometry,
+    ),
+    groundTrack: createRouteLine(
+      {
+        world: 0.07,
+        minPixels: 1,
+        maxPixels: 2.2,
+        opacity: 0.8,
+        fade: ROUTE_FADE_UNDERLAY,
+      },
+      18,
+    ),
+    dropLines: createRouteLine(
+      {
+        world: 0.05,
+        minPixels: 1,
+        maxPixels: 1.6,
+        opacity: 0.75,
+        fade: ROUTE_FADE_UNDERLAY,
+      },
+      19,
+    ),
+    planTicks: createRouteLine(
+      { world: 0.09, minPixels: 1, maxPixels: 3, opacity: 0.9 },
+      20,
+    ),
+    plan: createRouteLine(
+      { world: 0.16, minPixels: 1.6, maxPixels: 4.5, opacity: 0.95 },
+      21,
+      planGeometry,
+    ),
+    actualTicks: createRouteLine(
+      { world: 0.12, minPixels: 1.2, maxPixels: 4, opacity: 1 },
+      22,
+    ),
+    actual: createRouteLine(
+      { world: 0.24, minPixels: 2.4, maxPixels: 7, opacity: 1 },
+      23,
+      trail.geometry,
+    ),
+    gates: createRouteLine(
+      {
+        world: 0.1,
+        minPixels: 1.2,
+        maxPixels: 3,
+        opacity: 0.7,
+        fade: ROUTE_FADE_SOFT,
+      },
+      24,
+    ),
+    altitudeDiscs: createRouteDiscMesh(25),
+    craftPlumb: createRouteLine(
+      {
+        world: 0.1,
+        minPixels: 1.4,
+        maxPixels: 3.5,
+        opacity: 0.95,
+        fade: ROUTE_FADE_SOFT,
+      },
+      26,
+    ),
+    craft: createRouteLine(
+      {
+        world: 0.12,
+        minPixels: 1.6,
+        maxPixels: 4,
+        opacity: 0.75,
+        fade: ROUTE_FADE_SOFT,
+      },
+      27,
+    ),
   };
   const objects = [
+    bundle.planGhost,
+    bundle.actualGhost,
+    bundle.groundTrack,
+    bundle.dropLines,
+    bundle.planTicks,
     bundle.plan,
+    bundle.actualTicks,
     bundle.actual,
     bundle.gates,
     bundle.altitudeDiscs,
+    bundle.craftPlumb,
     bundle.craft,
   ] as const;
+  const materials = objects.map((object) => object.material);
   return {
     ...bundle,
+    trail,
     objects,
-    materials: objects.map((object) => object.material),
+    materials,
+    lineMaterials: materials.filter(
+      (material): material is LineMaterial => "resolution" in material,
+    ),
+    geometries: [...new Set(objects.map((object) => object.geometry))],
   };
 }
 
@@ -7808,23 +7992,32 @@ function FlightRouteRibbons({
   const builtFor = useRef(new Map<string, string>());
   const trailActive = useRef(new Map<string, boolean>());
   const trailSamples = useRef(new Map<string, RouteVector3[]>());
+  /** Секунда рейса на каждом коммите следа — из неё растёт решётка факта. */
+  const trailTimes = useRef(new Map<string, number[]>());
+  const trailClock = useRef(new Map<string, number>());
+  const trailTicks = useRef(new Map<string, number>());
+  /** Плоскость отсчёта, шаг и масштаб решётки — свойства задания. */
+  const routeDatum = useRef(new Map<string, number>());
+  const routeInterval = useRef(new Map<string, number>());
+  const routeTickSize = useRef(new Map<string, number>());
   useEffect(
     () => () => {
       for (const visual of routeVisuals.values()) {
-        for (const object of visual.objects) object.geometry.dispose();
+        for (const geometry of visual.geometries) geometry.dispose();
         for (const material of visual.materials) material.dispose();
       }
     },
     [routeVisuals],
   );
 
-  useFrame(({ size }) => {
+  useFrame(({ size }, delta) => {
     for (const frame of frames) {
       const state = states.current.get(frame.id);
       const visual = routeVisuals.get(frame.id);
       if (!visual) continue;
-      visual.craft.material.resolution.set(size.width, size.height);
-      visual.gates.material.resolution.set(size.width, size.height);
+      for (const material of visual.lineMaterials) {
+        material.resolution.set(size.width, size.height);
+      }
 
       const flight = state?.flight;
       const plan = state?.activePlan;
@@ -7848,22 +8041,64 @@ function FlightRouteRibbons({
       const visualKey = routeVisualKey(plan);
       if (builtFor.current.get(frame.id) !== visualKey) {
         builtFor.current.set(frame.id, visualKey);
-        const line = routePlanLineGeometry(
-          plan,
-          Math.max(480, Math.min(960, Math.ceil(plan.length / 0.9))),
+        const sections = Math.max(
+          480,
+          Math.min(960, Math.ceil(plan.length / 0.9)),
         );
-        setRouteStripGeometry(visual.plan, line, true);
+        // План и его сквозной проход делят одну геометрию: считать кривую
+        // дважды незачем, а штрих ghost-а — свойство материала.
+        setRouteSegments(
+          visual.plan.geometry as LineSegmentsGeometry,
+          routePlanLineGeometry(plan, sections),
+          true,
+        );
+        visual.planGhost.computeLineDistances();
+
+        const datum = routeGroundDatum(plan);
+        routeDatum.current.set(frame.id, datum);
+        setRouteSegments(
+          visual.groundTrack.geometry as LineSegmentsGeometry,
+          routeGroundTrackGeometry(plan, datum, sections),
+          true,
+        );
+        setRouteSegments(
+          visual.dropLines.geometry as LineSegmentsGeometry,
+          routeDropLineGeometry(plan, datum),
+          false,
+        );
+
+        const schedule = routePlannedSchedule(plan, sections);
+        const interval = routeTickInterval(schedule.seconds);
+        // Шаг и масштаб решётки — один на обе: их прикладывают друг к другу.
+        const tickSize = routeTickScale(plan.length);
+        routeInterval.current.set(frame.id, interval);
+        routeTickSize.current.set(frame.id, tickSize);
+        setRouteSegments(
+          visual.planTicks.geometry as LineSegmentsGeometry,
+          routePlannedTickGeometry(
+            plan,
+            interval,
+            schedule,
+            ROUTE_TICK_TIERS,
+            tickSize,
+          ),
+          false,
+        );
+
         const markers = routeSemanticMarkers(plan);
-        setRouteSegmentGeometry(
-          visual.gates,
+        setRouteSegments(
+          visual.gates.geometry as LineSegmentsGeometry,
           routeGateGeometry(plan, markers),
-          null,
+          false,
         );
         setRouteDiscGeometry(
           visual.altitudeDiscs,
           routeAltitudeDiscGeometry(plan, markers),
         );
       }
+      const datum = routeDatum.current.get(frame.id) ?? 0;
+      const tickInterval = routeInterval.current.get(frame.id) ?? 1;
+      const tickSize = routeTickSize.current.get(frame.id) ?? 1;
 
       const orientation = state.body.orientation;
       const massCentre = state.mass?.centre ?? [0, 0, 0];
@@ -7882,13 +8117,22 @@ function FlightRouteRibbons({
         massCentre[2] + state.body.position[2],
       ];
       let samples = trailSamples.current.get(frame.id);
+      let times = trailTimes.current.get(frame.id);
       let rewriteTrail = false;
-      if (!trailActive.current.get(frame.id) || !samples) {
+      if (!trailActive.current.get(frame.id) || !samples || !times) {
         trailActive.current.set(frame.id, true);
         samples = [[...centre] as RouteVector3];
+        times = [0];
         trailSamples.current.set(frame.id, samples);
+        trailTimes.current.set(frame.id, times);
+        trailClock.current.set(frame.id, 0);
+        trailTicks.current.set(frame.id, 0);
         rewriteTrail = true;
       }
+      // Часы рейса, а не настенные: время копится тем же шагом, что и кадр,
+      // и переживает паузу вкладки без разрыва решётки.
+      const clock = (trailClock.current.get(frame.id) ?? 0) + delta;
+      trailClock.current.set(frame.id, clock);
       // История + живой кончик: кончик каждый кадр на позе машины, новые
       // точки коммитятся часто — иначе след рисуется ступенями позади.
       const anchor = samples[samples.length - 1];
@@ -7900,21 +8144,48 @@ function FlightRouteRibbons({
         ) >= ROUTE_TRAIL_COMMIT_METRES
       ) {
         samples.push(centre);
+        times.push(clock);
         if (samples.length > ROUTE_TRAIL_MAX_SAMPLES) {
-          samples.splice(0, samples.length - ROUTE_TRAIL_MAX_SAMPLES);
+          const excess = samples.length - ROUTE_TRAIL_MAX_SAMPLES;
+          samples.splice(0, excess);
+          times.splice(0, excess);
           rewriteTrail = true;
         }
       }
-      const actualPointCount = updateActualRouteStrip(
-        visual.actual,
+      const actualSegments = updateRouteTrail(
+        visual.trail,
         samples,
         centre,
         rewriteTrail,
       );
-      const actualVisible = visible && actualPointCount >= 2;
+      const actualVisible = visible && actualSegments >= 1;
       visual.actual.visible = actualVisible;
+      visual.actualGhost.visible = actualVisible;
+
+      // Решётка факта перестраивается только когда появилась новая засечка:
+      // между ними ей нечего показывать, а геометрия инстансная.
+      const ticks = Math.floor((times.at(-1) ?? 0) / tickInterval);
+      if (rewriteTrail || ticks !== trailTicks.current.get(frame.id)) {
+        trailTicks.current.set(frame.id, ticks);
+        setRouteSegments(
+          visual.actualTicks.geometry as LineSegmentsGeometry,
+          routeTrailTickGeometry(
+            samples,
+            times,
+            tickInterval,
+            ROUTE_TICK_TIERS,
+            tickSize,
+          ),
+          false,
+        );
+      }
 
       if (visible) {
+        setRouteSegments(
+          visual.craftPlumb.geometry as LineSegmentsGeometry,
+          routeCraftPlumbGeometry(centre, datum),
+          false,
+        );
         const up = rotateByQuaternion(orientation, [0, 1, 0]);
         const heading = rotateByQuaternion(orientation, frame.nose);
         const tangentStep = Math.min(0.01, 2 / Math.max(1, plan.length));
@@ -7945,8 +8216,8 @@ function FlightRouteRibbons({
             intensity: state.rotorMotorOutput[index] ?? 0,
           };
         });
-        setRouteSegmentGeometry(
-          visual.craft,
+        setRouteSegments(
+          visual.craft.geometry as LineSegmentsGeometry,
           routeCraftContourGeometry({
             centre,
             heading,
@@ -7955,8 +8226,7 @@ function FlightRouteRibbons({
             up,
             engines,
           }),
-          null,
-          1,
+          false,
         );
       }
     }

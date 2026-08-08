@@ -191,9 +191,17 @@ test("коридор — требование участка: узко у зем
   const berth = COMBAT_HEXACOPTER_RANGE_PLACEMENT.position;
   const plan = combatHexacopterRangePlan(berth);
   assert.ok(plan.corridor, "маршрут обязан объявлять коридор");
-  assert.equal(plan.corridor(0.02) <= 4, true, "взлётный столб — строгие метры");
+  // ЩУП В МЕТРАХ, А НЕ В ДОЛЯХ. Столб у земли — свойство места, а не длины
+  // программы: пока круг был 830 м, доля 0.98 означала тридцать метров до
+  // площадки, а на 3.5 км та же доля означает семьдесят — уже не столб.
+  const metres = (value) => value / combatHexacopterRangeCircuit.length;
+  assert.equal(plan.corridor(metres(12)) <= 4, true, "взлётный столб — строгие метры");
   assert.equal(plan.corridor(0.5) >= 25, true, "круг — свобода гоночной линии");
-  assert.equal(plan.corridor(0.98) <= 4, true, "посадочный столб — строгие метры");
+  assert.equal(
+    plan.corridor(1 - metres(12)) <= 4,
+    true,
+    "посадочный столб — строгие метры",
+  );
 });
 
 test("побрякушка не переживает своего носителя: сенсоры падают с пушкой и носом", () => {

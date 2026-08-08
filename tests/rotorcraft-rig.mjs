@@ -75,6 +75,7 @@ export function createMachine({
     capacityWeights: flight.limits.rotorCapacityWeights,
     spinDirections: flight.limits.rotorSpinDirections,
     maximumTilt: flight.maximumTilt,
+    angularDamping: flight.angularDamping,
   };
   const model = {
     mass: mass.mass,

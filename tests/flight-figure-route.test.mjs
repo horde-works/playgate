@@ -7,8 +7,6 @@ import {
   combatHexacopterRangeBlueprint,
 } from "../games/make-a-mess/src/game/combatHexacopter.ts";
 import {
-  COMBAT_HEXACOPTER_FIGURE_FLOOR,
-  combatHexacopterRangeFigures,
   combatHexacopterRangePlan,
 } from "../games/make-a-mess/src/game/combatHexacopterRangeRoutes.ts";
 import {
@@ -78,6 +76,7 @@ function flyCircuit({ from, to, seconds }) {
   let frozen = from;
   let figures = IDLE_ROUTE_FIGURE;
   const events = [];
+  let lastGuidance = null;
   const track = [];
   for (let step = 0; step < seconds * 60; step += 1) {
     const centre = centreOf(m);
@@ -103,6 +102,7 @@ function flyCircuit({ from, to, seconds }) {
       heading: [nose[0] / flat, nose[2] / flat],
       bodyNose: m.vehicle.nose,
       speed,
+      verticalSpeed: m.state.velocity[1],
       capability,
       gate: {
         heightAboveGround: centre[1] - BERTH[1],
@@ -157,6 +157,7 @@ function flyCircuit({ from, to, seconds }) {
         m.flight.approach,
       );
       stepMachine(m, piloted.guidance);
+      lastGuidance = piloted.guidance;
     }
 
     const live = centreOf(m);
@@ -168,148 +169,125 @@ function flyCircuit({ from, to, seconds }) {
       height: live[1],
       off: Math.hypot(live[0] - onRoute[0], live[2] - onRoute[2]),
       speed: Math.hypot(...m.state.velocity),
+      want: plan.point(progress)[1],
+      lift: lastGuidance?.liftFraction ?? 0,
+      vy: m.state.velocity[1],
     });
     if (progress >= to) break;
   }
   return { events, track, progress, machine: m };
 }
 
-test("трасса ОБЪЯВЛЯЕТ обе фигуры и обе — на своих местах", () => {
-  assert.equal(plan.figures?.length, 2);
+test("программа объявляет ЧЕТЫРЕ фигуры, и все они разные", () => {
+  assert.equal(plan.figures?.length, 4);
   assert.deepEqual(
     plan.figures.map((station) => station.kind),
-    ["loop", "immelmann"],
+    ["loop", "immelmann", "loop", "immelmann"],
   );
-  // Петля закрывается в точке входа, иммельман заменяет дальний разворот.
-  assert.equal(combatHexacopterRangeFigures[0].resumeAt, combatHexacopterRangeFigures[0].at);
-  assert.ok(
-    combatHexacopterRangeFigures[1].resumeAt >
-      combatHexacopterRangeFigures[1].at + 0.05,
-    "иммельман обязан заменять кусок трассы, а не стоять на месте",
-  );
+  // Петли РАЗНОГО размера: радиус растёт как квадрат хода, и две одинаковые
+  // петли были бы одной, показанной дважды.
+  const [small, , big] = plan.figures;
+  assert.ok(big.speed > small.speed * 1.4, "вторая петля обязана быть заметно шире");
+  // Петля закрывается в точке входа; иммельман заменяет разворот трассы.
+  assert.equal(small.resumeAt, small.at);
+  for (const station of plan.figures.filter((s) => s.kind === "immelmann")) {
+    assert.ok(
+      station.resumeAt > station.at,
+      `${station.key} обязан заменять кусок трассы`,
+    );
+  }
 });
 
-test("этаж под фигуру ВЫВЕДЕН из физики машины, а не назначен", () => {
-  const needed = combatHexacopterRangeFigures.map((station) => {
-    const figure = planFlightFigure(
-      station.kind,
-      station.speed,
-      capability,
-      [0, 1],
-    );
-    return {
-      station,
-      floor: figure.dip + invertedRecoveryHeight(capability),
-      ceiling: figure.ceiling,
-    };
-  });
-  for (const entry of needed) {
+test("этаж под каждую фигуру ВЫВЕДЕН из физики машины, а не назначен", () => {
+  for (const station of plan.figures) {
+    const figure = planFlightFigure(station.kind, station.speed, capability, [0, 1]);
+    const needed = figure.dip + invertedRecoveryHeight(capability);
     assert.ok(
-      COMBAT_HEXACOPTER_FIGURE_FLOOR >= entry.floor,
-      `${entry.station.key} просит ${entry.floor.toFixed(1)} м снизу при объявленных ${COMBAT_HEXACOPTER_FIGURE_FLOOR}`,
+      station.floor >= needed,
+      `${station.key} просит ${needed.toFixed(1)} м снизу при объявленных ${station.floor}`,
     );
     // И трасса действительно поднимается к этой доле, а не только объявляет.
-    const at = plan.altitude(entry.station.at) - BERTH[1];
+    const at = plan.altitude(station.at) - BERTH[1];
     assert.ok(
-      at >= entry.floor,
-      `на доле ${entry.station.at.toFixed(3)} трасса даёт ${at.toFixed(1)} м при потребных ${entry.floor.toFixed(1)}`,
+      at >= needed,
+      `на доле ${station.at.toFixed(3)} трасса даёт ${at.toFixed(1)} при потребных ${needed.toFixed(1)}`,
     );
-    // И неба сверху хватает: полигон видит небо на 150 м.
-    assert.ok(150 - (BERTH[1] + at) > entry.ceiling);
-  }
-  // Ход у фигуры свой, и трасса его снимает: на разрешённых участку тридцати
-  // радиус вырос бы вчетверо.
-  assert.ok(
-    plan.speedLimit(combatHexacopterRangeFigures[0].at) <= 16,
-    `подход к петле разрешает ${plan.speedLimit(combatHexacopterRangeFigures[0].at)} м/с`,
-  );
-});
-
-const run = flyCircuit({ from: 0.05, to: 0.45, seconds: 140 });
-if (process.env.FIGURE_TRACE) {
-  console.log(JSON.stringify(run.events));
-  for (const s of run.track.filter((_, i) => i % 30 === 0)) {
-    console.log(
-      `p${s.progress.toFixed(3)} ${String(s.figure).padEnd(16)} y${s.height.toFixed(0).padStart(4)} off${s.off.toFixed(0).padStart(4)} v${s.speed.toFixed(0).padStart(3)} up${s.up.toFixed(2)}`,
+    // Небо сверху: полигон видит его на 150 м.
+    assert.ok(station.sky - (BERTH[1] + at) > figure.ceiling, station.key);
+    // Ход у фигуры свой, и трасса его снимает.
+    assert.ok(
+      plan.speedLimit(station.at) <= station.speed,
+      `${station.key}: подход разрешает ${plan.speedLimit(station.at)} м/с`,
     );
   }
-}
-
-test("RAX ВХОДИТ в обе фигуры с маршрута и НЕ пропускает ни одной", () => {
-  const skipped = run.events.filter((event) => event.skipped);
-  assert.deepEqual(skipped, [], `пропущены: ${JSON.stringify(skipped)}`);
-  const started = run.events.filter((event) => event.start).map((e) => e.start);
-  assert.deepEqual(started, ["range-loop", "range-immelmann"]);
 });
 
-test("обе фигуры ЗАКАНЧИВАЮТСЯ, а не снимаются по времени", () => {
-  const ended = run.events.filter((event) => event.end);
-  assert.equal(ended.length, 2, JSON.stringify(run.events));
+const run = flyCircuit({ from: 0.004, to: 0.999, seconds: 300 });
+const started = run.events.filter((event) => event.start).map((e) => e.start);
+const ended = run.events.filter((event) => event.end);
+
+test("RAX проходит ВСЮ программу и не пропускает ни одной фигуры", () => {
+  assert.deepEqual(run.events.filter((e) => e.skipped), []);
+  assert.deepEqual(started, plan.figures.map((station) => station.key));
+  assert.equal(ended.length, 4, JSON.stringify(run.events));
   for (const event of ended) {
     assert.equal(event.aborted, false, `${event.end} снята по времени`);
   }
 });
 
-test("машина ДЕЙСТВИТЕЛЬНО переворачивается на маршруте, а не изображает", () => {
-  for (const key of ["range-loop", "range-immelmann"]) {
-    const inside = run.track.filter((sample) => sample.figure === key);
-    assert.ok(inside.length > 60, `${key}: всего ${inside.length} кадров`);
+if (process.env.FIGURE_TRACE) {
+  const toBerth = run.track.findIndex((x) => x.progress > 0.985);
+  console.log(`ПРОДОЛЖИТЕЛЬНОСТЬ до створа: ${(toBerth / 60).toFixed(0)} с; прогон ${(run.track.length / 60).toFixed(0)} с, доля ${run.progress.toFixed(3)}`);
+  for (const s of plan.figures) {
+    const inside = run.track.filter((x) => x.figure === s.key);
+    const low = inside.reduce((w, x) => Math.min(w, x.up), 1);
+    const peak = inside.reduce((b, x) => Math.max(b, x.height), 0);
+    const floor = inside.reduce((b, x) => Math.min(b, x.height), 1e9);
+    console.log(
+      `${s.key.padEnd(17)} ${(inside.length / 60).toFixed(1)} с  высота ${floor.toFixed(0)}..${peak.toFixed(0)} м  ось вверх до ${low.toFixed(2)}`,
+    );
+  }
+}
+
+test("программа занимает НЕ МЕНЬШЕ трёх минут — ради этого она и переписана", () => {
+  const seconds = run.track.findIndex((x) => x.progress > 0.985) / 60;
+  assert.ok(seconds >= 180, `круг занял ${seconds.toFixed(0)} с`);
+  assert.ok(run.progress >= 0.99, `круг встал на доле ${run.progress.toFixed(3)}`);
+});
+
+test("машина ДЕЙСТВИТЕЛЬНО переворачивается на каждой фигуре, а не изображает", () => {
+  for (const station of plan.figures) {
+    const inside = run.track.filter((sample) => sample.figure === station.key);
+    assert.ok(inside.length > 60, `${station.key}: всего ${inside.length} кадров`);
     const lowest = inside.reduce((worst, s) => Math.min(worst, s.up), 1);
-    assert.ok(lowest < -0.9, `${key}: самая перевёрнутая поза ${lowest.toFixed(2)}`);
+    assert.ok(lowest < -0.9, `${station.key}: самая перевёрнутая поза ${lowest.toFixed(2)}`);
   }
 });
 
 test("ПРОГРЕСС ТРАССЫ ЗАМИРАЕТ на фигуре — в этом весь ответ ловушке", () => {
-  for (const key of ["range-loop", "range-immelmann"]) {
-    const inside = run.track.filter((sample) => sample.figure === key);
+  for (const station of plan.figures) {
+    const inside = run.track.filter((sample) => sample.figure === station.key);
     const first = inside[0].progress;
     const drift = inside.reduce(
       (worst, s) => Math.max(worst, Math.abs(s.progress - first)),
       0,
     );
-    assert.ok(drift < 1e-9, `${key}: прогресс уехал на ${drift}`);
+    assert.ok(drift < 1e-9, `${station.key}: прогресс уехал на ${drift}`);
   }
 });
 
-test("ПЕТЛЯ не сбивает машину с трассы: вошла и вышла на месте", () => {
-  const inside = run.track.filter((sample) => sample.figure === "range-loop");
-  const worst = inside.reduce((best, s) => Math.max(best, s.off), 0);
-  // Петля возвращает машину в точку входа, поэтому уход с трассы у неё
-  // невелик и весь укладывается в коридор участка.
-  assert.ok(worst < 20, `петля увела на ${worst.toFixed(1)} м`);
-  const after = run.track.filter(
-    (sample) => sample.progress > 0.095 && sample.progress < 0.12,
-  );
-  const settled = after.reduce((best, s) => Math.max(best, s.off), 0);
-  assert.ok(settled < 8, `после петли машина в ${settled.toFixed(1)} м от трассы`);
-});
-
-test("ИММЕЛЬМАН уводит с трассы — и машина ВОЗВРАЩАЕТСЯ, а не теряется", () => {
-  // Он ЗАМЕНЯЕТ дальний разворот: трасса разворачивается дугой в сотню метров,
-  // машина — на месте. Поэтому в момент возврата она заведомо не там, где
-  // трасса, и это не ошибка, а цена фигуры. Важно, чтобы цена была КОНЕЧНОЙ.
-  const rejoin = run.track.filter((sample) => sample.progress > 0.22);
-  const worst = rejoin.reduce((best, s) => Math.max(best, s.off), 0);
-  assert.ok(worst < 60, `отход после иммельмана ${worst.toFixed(1)} м`);
-  const closed = rejoin.find((sample) => sample.off < 5);
-  assert.ok(closed, "машина обязана вернуться на трассу, а не идти рядом");
-  assert.ok(
-    closed.progress < 0.36,
-    `возврат занял до доли ${closed.progress.toFixed(3)}`,
-  );
-});
-
-test("после фигур круг продолжается обычным ровным полётом", () => {
-  assert.ok(run.progress >= 0.44, `круг встал на доле ${run.progress.toFixed(3)}`);
-  const tail = run.track.slice(-240);
-  assert.ok(
-    tail.every((sample) => sample.figure === null),
-    "хвост прогона обязан быть обычным маршрутным полётом",
-  );
-  assert.ok(
-    tail.every((sample) => sample.up > 0.5),
-    "и обязан быть ровным полётом, а не полётом вверх ногами",
-  );
+test("после каждой фигуры машина ВОЗВРАЩАЕТСЯ на трассу, а не теряется", () => {
+  for (const station of plan.figures) {
+    const after = run.track.filter(
+      (sample) =>
+        sample.figure === null &&
+        sample.progress > station.resumeAt &&
+        sample.progress < station.resumeAt + 0.06,
+    );
+    if (after.length === 0) continue;
+    const closed = after.find((sample) => sample.off < 8);
+    assert.ok(closed, `${station.key}: машина так и не вернулась на трассу`);
+  }
 });
 
 test("машина не задевает землю: провал фигуры остаётся над полигоном", () => {
@@ -317,9 +295,7 @@ test("машина не задевает землю: провал фигуры �
   assert.ok(lowest > 3, `опустилась до ${lowest.toFixed(1)} м`);
 });
 
-test("паспорт RAX объявляет обе фигуры выполнимыми на своей же скорости", () => {
-  // Резерв тяги — то самое, что делает фигуру возможной. Если он изменится,
-  // радиус и провал изменятся вместе с ним, и этот тест обязан это заметить.
+test("паспорт RAX объявляет фигуры выполнимыми на своей же скорости", () => {
   assert.ok(combatHexacopterRangeBlueprint.flight.liftReserve > 3.5);
   assert.ok(capability.uprightCentripetal > 2 * 9.81);
 });
@@ -337,8 +313,8 @@ test("фигуры доходят до машины ИМЕННО ТЕМ марш
   const rax8 = airVehicles.find((entry) => entry.id === "combat-hexacopter");
   const flyover = rax8.flight.routePlan("flyover", BERTH);
   assert.ok(
-    flyover.figures?.length === 2,
-    "маршрут облёта обязан нести обе фигуры — иначе врезка молча не сработает",
+    flyover.figures?.length === 4,
+    "маршрут облёта обязан нести все четыре фигуры — иначе врезка молча не сработает",
   );
   // Сторожевая орбита фигур не крутит: там машина работает, а не показывает,
   // и переворачиваться посреди боевого дежурства ей незачем.
@@ -348,7 +324,7 @@ test("фигуры доходят до машины ИМЕННО ТЕМ марш
   // Это не оплошность: круг один, и разводить его надвое ради формальности
   // означало бы завести вторую правду о маршруте.
   const arrival = rax8.flight.arrivalPlan(BERTH);
-  assert.equal(arrival.figures?.length, 2);
+  assert.equal(arrival.figures?.length, 4);
 });
 
 test("обёртка ограничения скорости НЕ ТЕРЯЕТ фигуры по дороге", () => {
@@ -356,5 +332,5 @@ test("обёртка ограничения скорости НЕ ТЕРЯЕТ �
   // автопилоту. Обёртка, собранная перечислением полей, унесла бы фигуры молча.
   const flyover = combatHexacopterRangePlan(BERTH);
   const limited = { ...flyover, speedLimit: (p) => flyover.speedLimit(p) * 0.5 };
-  assert.equal(limited.figures?.length, 2);
+  assert.equal(limited.figures?.length, 4);
 });

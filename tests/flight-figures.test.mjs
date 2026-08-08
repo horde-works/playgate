@@ -3,7 +3,10 @@ import test from "node:test";
 import {
   FIGURE_MINIMUM_AUTHORITY,
   FIGURE_MINIMUM_SPEED,
-  FIGURE_ROLL_COLLECTIVE,
+  figureAngularAcceleration,
+  figureLiftFloor,
+  figureReserve,
+  figureRollCollective,
   figureAngularShare,
   figureCapabilityOf,
   figureNoseDirection,
@@ -201,17 +204,52 @@ test("фигура ПРОПУСКАЕТСЯ, если её нечем закон
   assert.match(lowGround.reason, /высот/);
 });
 
-test("власть по крену считается ПО ГАЗУ, а не по паспортному пределу", () => {
-  // Паспортный предел снят при среднем газе в половину резерва. На газе
-  // возврата его столько, сколько разрешает разнотяг: кольцу некуда ниже нуля.
-  const share = figureAngularShare(capability, FIGURE_ROLL_COLLECTIVE);
-  assert.ok(share < 0.35, `доступно ${share.toFixed(3)} предельного`);
-  // Больше газа — больше власти, и строго монотонно.
-  assert.ok(figureAngularShare(capability, 2) > share);
-  // Полубочка на этой доле идёт заметно дольше паспортной.
-  const honest = halfTurnSeconds(capability.rollAcceleration * share);
-  const naive = halfTurnSeconds(capability.rollAcceleration);
-  assert.ok(honest > naive * 1.7, `${honest.toFixed(2)} против ${naive.toFixed(2)} с`);
+test("власть по газу имеет ВЕРШИНУ: больше газа не значит больше власти", () => {
+  // Разнотяг упирается в две стенки сразу — ноль снизу и потолок кольца
+  // сверху, — поэтому доступное отклонение равно min(газ, резерв − газ).
+  // Максимум у него ровно посередине, и это не выбор, а вершина функции.
+  const reserve = figureReserve(capability);
+  const best = figureRollCollective(capability);
+  assert.ok(Math.abs(best - reserve / 2) < 1e-9, `${best} против ${reserve / 2}`);
+  assert.ok(Math.abs(figureAngularShare(capability, best) - 1) < 1e-9);
+  // По обе стороны от вершины власти меньше, и это ловит прежнюю ошибку:
+  // газ в один вес давал вдвое меньше момента, чем машина умеет.
+  assert.ok(figureAngularShare(capability, 1) < 0.5);
+  assert.ok(figureAngularShare(capability, reserve - 0.4) < 0.25);
+});
+
+test("угловое ускорение фигуры — располагаемое МИНУС сопротивление и контур", () => {
+  const best = figureRollCollective(capability);
+  const paper = capability.rollAcceleration;
+  const honest = figureAngularAcceleration(paper, capability, best);
+  assert.ok(honest < paper * 0.45, `${honest.toFixed(2)} из ${paper.toFixed(2)}`);
+  assert.ok(honest > paper * 0.2, `${honest.toFixed(2)} из ${paper.toFixed(2)}`);
+  // Машина без сопротивления вращению получила бы заметно больше — значит,
+  // вычитается именно оно, а не подогнанный множитель.
+  const frictionless = figureAngularAcceleration(
+    paper,
+    { ...capability, angularDamping: 0 },
+    best,
+  );
+  assert.ok(frictionless > honest * 1.4, `${frictionless.toFixed(2)} против ${honest.toFixed(2)}`);
+});
+
+test("пол газа ВЫВОДИТСЯ из потребного момента и у каждой фигуры свой", () => {
+  const small = planFlightFigure("loop", 16, capability, NOSE);
+  const big = planFlightFigure("loop", 25, capability, NOSE);
+  const smallFloor = figureLiftFloor(capability, 16 / small.radius, Math.PI * 2);
+  const bigFloor = figureLiftFloor(capability, 25 / big.radius, Math.PI * 2);
+  // Большая петля крутится медленнее — держать её дешевле. Один пол на обе был
+  // бы либо избыточным для одной, либо недостаточным для другой.
+  assert.ok(bigFloor < smallFloor, `${bigFloor.toFixed(3)} против ${smallFloor.toFixed(3)}`);
+  assert.ok(smallFloor > 0.3 && smallFloor < 0.55, `${smallFloor.toFixed(3)}`);
+  // И пол растёт с сопротивлением: удержание темпа — его прямая цена.
+  const draggy = figureLiftFloor(
+    { ...capability, angularDamping: capability.angularDamping * 2 },
+    16 / small.radius,
+    Math.PI * 2,
+  );
+  assert.ok(draggy > smallFloor * 1.4, `${draggy.toFixed(3)} против ${smallFloor.toFixed(3)}`);
 });
 
 test("высота на возврат из перевёрнутого — величина, а не догадка", () => {
