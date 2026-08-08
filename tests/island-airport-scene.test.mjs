@@ -24,6 +24,7 @@ import {
 const pieces = islandAirportScene.breakablePieces;
 const withId = (fragment) => pieces.filter((piece) => piece.id.includes(fragment));
 const pieceById = (id) => pieces.find((piece) => piece.id === id);
+const authoredObjects = islandAirportDocument.groups.flatMap((group) => group.objects);
 
 function extent(items, axis) {
   return {
@@ -77,6 +78,36 @@ test("the island is flat, elongated and bounded by the authored non-radial shore
         const z = piece.position[2] + sideZ * piece.size[2] / 2;
         assert.ok(airportPointInShoreline(x, z), `${piece.id} corner ${x.toFixed(2)},${z.toFixed(2)} crosses the shoreline`);
       }
+    }
+  }
+
+  const shoreAnchors = pieces.filter((piece) =>
+    piece.foundation && piece.id.includes(":landside:security:") && Math.abs(piece.position[0]) > 116.2
+  );
+  assert.equal(shoreAnchors.length, 2);
+  const riprapBoxes = withId(":shoreline:riprap:").map(routeBoxOf);
+  for (const anchor of shoreAnchors) {
+    assert.ok(airportDistanceToShoreline(anchor.position[0], anchor.position[2]) < 0.04);
+    const anchorBox = routeBoxOf(anchor);
+    assert.ok(riprapBoxes.some((rock) =>
+      Math.min(anchorBox.maxX, rock.maxX) > Math.max(anchorBox.minX, rock.minX) &&
+      Math.min(anchorBox.maxZ, rock.maxZ) > Math.max(anchorBox.minZ, rock.minZ)
+    ), `${anchor.id} does not bear on the riprap belt`);
+  }
+
+  for (const foundation of pieces.filter((piece) =>
+    piece.foundation &&
+    !piece.id.includes(":shoreline:riprap:") &&
+    !shoreAnchors.includes(piece)
+  )) {
+    for (const sideX of [-1, 1]) for (const sideZ of [-1, 1]) {
+      assert.ok(
+        airportPointInShoreline(
+          foundation.position[0] + sideX * foundation.size[0] / 2,
+          foundation.position[2] + sideZ * foundation.size[2] / 2,
+        ),
+        `${foundation.id} foundation crosses the shoreline`,
+      );
     }
   }
 });
@@ -186,12 +217,12 @@ test("both independent passenger routes cross the building in both directions", 
 });
 
 test("the airside security boundary cannot be bypassed around the terminal ends", () => {
-  const closedPublicDoors = [4.75, 11.25].map((x, index) => ({
-    id: `test:closed-landside-door:${index}`,
-    position: [x, 2.2, AIRPORT_TERMINAL.landsideZ],
-    size: [4.15, 4.4, 0.5],
-  }));
-  const bypass = walkRoute([...pieces, ...closedPublicDoors], {
+  const closedPublicFacade = {
+    id: "test:closed-landside-facade",
+    position: [AIRPORT_TERMINAL.origin[0], 2.2, AIRPORT_TERMINAL.landsideZ],
+    size: [AIRPORT_TERMINAL.width + 0.5, 4.4, 0.5],
+  };
+  const bypass = walkRoute([...pieces, closedPublicFacade], {
     x: 4.75, z: 42, footY: 0.46,
   }, {
     x: 0, z: 2, footY: 0.4,
@@ -201,6 +232,17 @@ test("the airside security boundary cannot be bypassed around the terminal ends"
     height: PLAYER_HEIGHT + 0.18,
   });
   assert.equal(bypass.reached, false, "public circulation bypasses the controlled terminal boundary");
+
+  for (const piece of withId(":landside:security:")) {
+    for (const building of [
+      { id: "fire station", minX: -69, maxX: -47, minZ: 8, maxZ: 22 },
+      { id: "hangar", minX: 48, maxX: 74, minZ: 2, maxZ: 24 },
+    ]) {
+      const inside = piece.position[0] > building.minX && piece.position[0] < building.maxX &&
+        piece.position[2] > building.minZ && piece.position[2] < building.maxZ;
+      assert.equal(inside, false, `${piece.id} passes through the ${building.id}`);
+    }
+  }
 });
 
 test("terminal fixtures and airfield lights use complete physical carrier chains", () => {
@@ -232,7 +274,18 @@ test("terminal fixtures and airfield lights use complete physical carrier chains
     const papi = withId(`:papi:${approach}:`).filter((piece) => piece.id.includes(":base:"));
     assert.equal(papi.length, 4);
     assert.equal(new Set(papi.map((piece) => piece.position[0])).size, 1, `${approach} PAPI is not perpendicular to the runway`);
+    for (let index = 0; index < 4; index += 1) {
+      const bulb = pieceById(`island-airport:airfield-equipment:papi:${approach}:${index}:bulb:piece`);
+      assert.equal(bulb?.color, index < 2 ? "#f08a80" : "#f4f1e2", `${approach} PAPI has its near/far colors reversed`);
+    }
   }
+  const activeAirfieldBulbs = authoredObjects.filter((object) =>
+    object.kind === "primitive" &&
+    (object.id.startsWith("edge:") || object.id.startsWith("papi:")) &&
+    object.id.endsWith(":bulb")
+  );
+  assert.equal(activeAirfieldBulbs.length, 52);
+  assert.ok(activeAirfieldBulbs.every((bulb) => bulb.kind === "primitive" && bulb.light));
 
   const edgeBase = "island-airport:airfield-equipment:edge:4:1:base:piece";
   const edgeCollapse = islandAirportScene.resolveStructuralCollapse(new Set([edgeBase]));

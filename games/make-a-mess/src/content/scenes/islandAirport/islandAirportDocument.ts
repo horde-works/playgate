@@ -551,7 +551,20 @@ function airfieldLight(id: string, x: number, z: number, color: string, height =
     volume: 0.004,
   });
   primitive(airfield, `${id}:lens`, "glass", "cylinder", [x, 0.48 + height / 2, z], [0.24, 0.18, 0.24], "#dce6df", { carriesAttachments: true, attachmentSupportMode: "hinge", sideAttachmentReach: 0.18, volume: 0.006 });
-  primitive(airfield, `${id}:bulb`, "glass", "sphere", [x, 0.48 + height / 2, z], [0.1, 0.1, 0.1], color, { bearsLoad: false, sideAttachmentReach: 0.18, volume: 0.001 });
+  primitive(airfield, `${id}:bulb`, "glass", "sphere", [x, 0.48 + height / 2, z], [0.1, 0.1, 0.1], color, {
+    bearsLoad: false,
+    sideAttachmentReach: 0.18,
+    volume: 0.001,
+    light: {
+      color,
+      distance: id.startsWith("papi:") ? 8 : 6,
+      intensity: id.startsWith("papi:") ? 2.8 : 2.2,
+      dayIntensityFactor: 0.16,
+      poolPriority: id.startsWith("papi:") ? 1.5 : 1.1,
+      poolGroupId: id.startsWith("papi:") ? "airport-papi" : "airport-runway-edge",
+      localPoolCapacity: id.startsWith("papi:") ? 8 : 18,
+    },
+  });
 }
 
 // A threshold fitting carries two opposed faces: green toward the approach,
@@ -586,8 +599,8 @@ for (const end of [-1, 1]) {
   }
 }
 for (let index = 0; index < 4; index += 1) {
-  airfieldLight(`papi:west:${index}`, -57, AIRPORT_RUNWAY.centreZ - 9.8 - index * 1.35, index < 2 ? "#f4f1e2" : "#f08a80", 0.28);
-  airfieldLight(`papi:east:${index}`, 57, AIRPORT_RUNWAY.centreZ + 9.8 + index * 1.35, index < 2 ? "#f4f1e2" : "#f08a80", 0.28);
+  airfieldLight(`papi:west:${index}`, -57, AIRPORT_RUNWAY.centreZ - 9.8 - index * 1.35, index < 2 ? "#f08a80" : "#f4f1e2", 0.28);
+  airfieldLight(`papi:east:${index}`, 57, AIRPORT_RUNWAY.centreZ + 9.8 + index * 1.35, index < 2 ? "#f08a80" : "#f4f1e2", 0.28);
 }
 
 // Windsock mast and a shaped cloth sock.
@@ -630,18 +643,18 @@ for (const x of [-7, 23]) {
 // The terminal itself is part of a continuous landside/airside boundary.
 // Concrete-rooted posts take the loads; infill panels and the closed service
 // gate are mounted between them. Both runs terminate inside the riprap belt.
-function securityFenceSpan(id: string, fromX: number, toX: number, gate = false): void {
+function securityFenceSpan(id: string, fromX: number, toX: number, z = 9.35, gate = false): void {
   const span = toX - fromX;
   const panelCount = Math.ceil(span / 3.8);
   const panelWidth = span / panelCount;
   for (let post = 0; post <= panelCount; post += 1) {
     const x = fromX + panelWidth * post;
-    primitive(landside, `security:${id}:footing:${post}`, "concrete", "stoneBlock", [x, 0.18, 9.35], [0.5, 0.36, 0.5], "#858c8b", { foundation: true, carriesAttachments: true, volume: 0.05 });
-    primitive(landside, `security:${id}:post:${post}`, "steel", "plank", [x, 1.28, 9.35], [0.14, 2.15, 0.14], "#59666a", { carriesAttachments: true, maximumVerticalGap: 0.04, volume: 0.012 });
+    primitive(landside, `security:${id}:footing:${post}`, "concrete", "stoneBlock", [x, 0.18, z], [0.5, 0.36, 0.5], "#858c8b", { foundation: true, carriesAttachments: true, volume: 0.05 });
+    primitive(landside, `security:${id}:post:${post}`, "steel", "plank", [x, 1.28, z], [0.14, 2.15, 0.14], "#59666a", { carriesAttachments: true, maximumVerticalGap: 0.04, volume: 0.012 });
   }
   for (let panel = 0; panel < panelCount; panel += 1) {
     const x = fromX + panelWidth * (panel + 0.5);
-    primitive(landside, gate ? `security:${id}:gate-leaf:${panel}` : `security:${id}:panel:${panel}`, "steel", gate ? "steelSheet" : "panel", [x, 1.38, 9.35], [panelWidth - 0.18, 1.55, gate ? 0.14 : 0.08], gate ? "#607176" : "#768286", {
+    primitive(landside, gate ? `security:${id}:gate-leaf:${panel}` : `security:${id}:panel:${panel}`, "steel", gate ? "steelSheet" : "panel", [x, 1.38, z], [panelWidth - 0.18, 1.55, gate ? 0.14 : 0.08], gate ? "#607176" : "#768286", {
       bearsLoad: false,
       attachmentSupportMode: "hinge",
       sideAttachmentReach: 0.24,
@@ -651,10 +664,39 @@ function securityFenceSpan(id: string, fromX: number, toX: number, gate = false)
   }
 }
 
-securityFenceSpan("west", -117.4, -51);
-securityFenceSpan("service-gate", -51, -43, true);
-securityFenceSpan("west-terminal", -43, -18.2);
-securityFenceSpan("east", 34.2, 117.4);
+function securityFenceReturn(id: string, x: number, fromZ: number, toZ: number): void {
+  const span = toZ - fromZ;
+  const panelCount = Math.ceil(span / 3.8);
+  const panelDepth = span / panelCount;
+  for (let post = 0; post <= panelCount; post += 1) {
+    const z = fromZ + panelDepth * post;
+    primitive(landside, `security:${id}:footing:${post}`, "concrete", "stoneBlock", [x, 0.18, z], [0.5, 0.36, 0.5], "#858c8b", { foundation: true, carriesAttachments: true, volume: 0.05 });
+    primitive(landside, `security:${id}:post:${post}`, "steel", "plank", [x, 1.28, z], [0.14, 2.15, 0.14], "#59666a", { carriesAttachments: true, maximumVerticalGap: 0.04, volume: 0.012 });
+  }
+  for (let panel = 0; panel < panelCount; panel += 1) {
+    const z = fromZ + panelDepth * (panel + 0.5);
+    primitive(landside, `security:${id}:panel:${panel}`, "steel", "panel", [x, 1.38, z], [0.08, 1.55, panelDepth - 0.18], "#768286", {
+      bearsLoad: false,
+      attachmentSupportMode: "hinge",
+      sideAttachmentReach: 0.24,
+      textureProfile: "painted-steel",
+      volume: panelDepth * 0.08,
+    });
+  }
+}
+
+// The rescue station and hangar are closed service buildings and therefore
+// form solid sections of the boundary at their front facades. Short returns
+// connect their corners without sending fence panels through the interiors.
+securityFenceSpan("west-shore", -116.43, -69.45);
+securityFenceReturn("fire-west-return", -69.45, 8, 9.35);
+securityFenceReturn("fire-east-return", -46.55, 8, 9.35);
+securityFenceSpan("service-gate", -46.55, -38.55, 9.35, true);
+securityFenceSpan("west-terminal", -38.55, -18.2);
+securityFenceSpan("east-terminal", 34.2, 47.55);
+securityFenceReturn("hangar-west-return", 47.55, 2, 9.35);
+securityFenceReturn("hangar-east-return", 74.45, 2, 9.35);
+securityFenceSpan("east-shore", 74.45, 116.39);
 
 // Fuel tanks are real revolved vessels on concrete saddles inside a guarded yard.
 for (let index = 0; index < 3; index += 1) {

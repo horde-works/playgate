@@ -21,7 +21,9 @@ The terminal is one continuous assembly: concrete bay foundations carry steel pe
 
 Interior objects are physical: check-in and gate desks, security rails and arches, gate seating, a faceted baggage carousel with an empty centre and a real back-of-house feed, cafe counter, WC core, partitions, and a departure board on two posts. Hanging lights use the explicit dependency chain roof beam → stem → housing → lens → bulb/light.
 
-The tower, hangar, rescue station and runway equipment follow the same rule. Runway edge lights stand just outside the asphalt on embedded concrete shoulder footings; threshold lights use the same physical base chain and carry separate approach/runway faces. Hangar roofs are split by structural bay so no surviving pier can hold a monolithic sheet. Breaking a base removes the complete local assembly; breaking a roof beam removes only its locally dependent skylights and fixtures.
+The tower, hangar, rescue station and runway equipment follow the same rule. Runway edge lights stand just outside the asphalt on embedded concrete shoulder footings; threshold lights use the same physical base chain and carry separate approach/runway faces. Both PAPI bars put the red pair nearest the runway, and every edge/PAPI bulb is a pooled physical source. Hangar roofs are split by structural bay so no surviving pier can hold a monolithic sheet. Breaking a base removes the complete local assembly; breaking a roof beam removes only its locally dependent skylights and fixtures.
+
+The security fence joins the terminal, rescue station and hangar as one controlled boundary: short returns meet each closed service facade instead of crossing its interior. Shore-end footings are centred on and carried by the riprap belt, closing the route without a freestanding post in open water.
 
 ## Visual invariants
 
