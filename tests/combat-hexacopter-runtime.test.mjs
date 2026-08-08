@@ -348,6 +348,12 @@ function flyRangeCircuit({ brokenPieces = [], yawThrusters = true } = {}) {
       rangeMass.mass * rangeFlight.linearDamping * rangeFlight.lateralDragRatio,
     dragAngular: rangeMass.inertia[4] * rangeFlight.angularDamping,
     limits: rangeFlight.limits,
+    // ВЕКТОРНАЯ ТЯГА — ИЗ ТОГО ЖЕ ПРИЗНАКА, ЧТО В РАНТАЙМЕ (`liftSource`), а не
+    // руками. Он переключает ЗАКОН ДВИЖЕНИЯ: без него автопилот считает, что
+    // тело едет туда, куда смотрит нос. Стенд без него совпадал с машиной ровно
+    // до тех пор, пока нос совпадал с направлением хода, и разошёлся полностью
+    // на первом же участке, где маршрут объявил курс отдельно от движения.
+    vectoredTranslation: rangeFlight.liftSource === "rotor",
     // Как в рантайме: авторский предел — потолок по замыслу, рабочую точку
     // считает governor из живого паспорта. Без этого стенд летал бы по
     // маршруту, которого в игре больше нет.

@@ -2976,6 +2976,22 @@ export function autopilot(
       ? [approach.heading[0], approach.heading[1]]
       : leadTangent;
   }
+  // ТРАССА МОЖЕТ ПОПРОСИТЬ КУРС НАПРЯМУЮ, и тогда он не выводится из движения.
+  //
+  // Просить об этом можно только у машины, которая умеет двигаться не туда,
+  // куда смотрит: у неголономной сила лежит вдоль корпуса, и нос обязан идти
+  // за движением. На заходе требование тоже не действует — там курс принадлежит
+  // створу, и второе мнение о нём означало бы промах мимо площадки.
+  const authoredHeading =
+    !onApproach && (limits.lateralThrust ?? 0) > 1e-6
+      ? plan.heading?.(progress)
+      : null;
+  if (authoredHeading) {
+    const length = Math.hypot(authoredHeading[0], authoredHeading[1]);
+    if (length > 1e-6) {
+      wanted = [authoredHeading[0] / length, authoredHeading[1] / length];
+    }
+  }
   const turn = guess.heading[1] * wanted[0] - guess.heading[0] * wanted[1];
   const facing = guess.heading[0] * wanted[0] + guess.heading[1] * wanted[1];
   const bearingError = Math.atan2(turn, facing);
@@ -3205,7 +3221,15 @@ export function autopilot(
   // срезает. За пределом ход отклоняется обратно к носу, и машина сперва
   // доворачивается, как всякий дрон. Предел не относится к причалу: там
   // подход медленный и заходить боком на пятно машине не мешает.
-  const crabLimit = Math.PI / 3;
+  //
+  // И ОН НЕ ОТНОСИТСЯ К ОБЪЯВЛЕННОМУ КУРСУ. Предел сторожит ОТСТАВАНИЕ носа от
+  // курса, который никто не назначал: там расхождение — это всегда промах, и
+  // придержать ход правильно. Курс, объявленный участком, — не промах, а
+  // замысел: «пяться от площадки, глядя на неё» и есть расхождение на сто
+  // восемьдесят градусов. Прежний предел придерживал бы ход тем сильнее, чем
+  // точнее машина выполняет требование, и на развороте спиной остановил бы её
+  // совсем (множитель уходит в ноль уже на девяноста градусах).
+  const crabLimit = authoredHeading ? Math.PI : Math.PI / 3;
   const noseAngle = Math.atan2(heading[1], heading[0]);
   const wantAngle = Math.atan2(aimErrorZ, aimErrorX);
   let crab = wantAngle - noseAngle;

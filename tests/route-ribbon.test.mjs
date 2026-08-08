@@ -29,6 +29,7 @@ import {
 } from "../games/make-a-mess/src/game/routeLineShader.ts";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import {
+  combatHexacopterRangeCircuit,
   combatHexacopterRangePlan,
   combatHexacopterRangeReliefs,
 } from "../games/make-a-mess/src/game/combatHexacopterRangeRoutes.ts";
@@ -169,7 +170,38 @@ test("маршрутные метки — только границы режим
   const gates = markers.filter((marker) => marker.kind === "gate");
   const peaks = markers.filter((marker) => marker.kind === "altitudePeak");
   const troughs = markers.filter((marker) => marker.kind === "altitudeTrough");
-  assert.ok(gates.length >= 4 && gates.length <= 6, `лишние ворота: ${gates.length}`);
+  // ВОРОТА СВЕРЯЮТСЯ С ЗАМЫСЛОМ, А НЕ СЧИТАЮТСЯ ШТУКАМИ. Здесь стояла вилка
+  // «от четырёх до шести», написанная для круга, у которого режимов и было
+  // четыре: столб взлёта, столб захода и створ. Программа показа объявляет
+  // больше — точку покоя, где ход гасится почти в ноль, и участки фигур, где
+  // коридор расходится вдвое, — и каждая такая граница ЕСТЬ смена режима, то
+  // есть ворота по определению. Вилка ловила бы не выдуманные ворота, а рост
+  // программы.
+  //
+  // Ловить надо ровно то, ради чего она писалась: ворота ПОСРЕДИ ровного
+  // участка, взявшиеся из ступеньки в требовании там, где никакого перехода
+  // не объявлено.
+  const declaredGates = [
+    // Столбы у земли: там режим меняется дважды — по ходу и по коридору.
+    ...[26, 40].map((metres) => metres / plan.length),
+    plan.verticalDeparture.until,
+    // Точка покоя: машина останавливается и разворачивается на месте.
+    combatHexacopterRangeCircuit.nodeProgress("rest-in"),
+    combatHexacopterRangeCircuit.nodeProgress("rest-out"),
+    // Заход: коридор сужается тремя ступенями, и последняя — сам створ.
+    ...[110, 70, 40, 20].map((metres) => 1 - metres / plan.length),
+    plan.verticalArrival.from,
+    plan.finalFrom,
+    // Участки фигур: объявленная фигура расширяет коридор, и это тоже режим.
+    ...plan.figures.flatMap((station) => [station.at, station.resumeAt]),
+  ];
+  for (const gate of gates) {
+    assert.ok(
+      declaredGates.some((declared) => Math.abs(declared - gate.progress) < 0.04),
+      `ворота на ${gate.progress.toFixed(3)} не стоят ни на одной объявленной границе режима`,
+    );
+  }
+  assert.ok(gates.length >= 4, `границы режимов потеряны: ${gates.length}`);
   // ЛЕНТА СВЕРЯЕТСЯ С ЗАМЫСЛОМ, а не с запомненными координатами. Прежняя
   // редакция знала шесть чисел наизусть и устарела в день, когда программа
   // показа выросла с одного круга до девяти номеров. Правило же осталось тем
@@ -180,10 +212,14 @@ test("маршрутные метки — только границы режим
     // Края отданы воротам взлёта и захода: там перепад высоты — это столб, а
     // не рельеф, и метить его отдельно нечем.
     if (relief.progress < 0.15 || relief.progress > 0.92) continue;
+    // ВОРОТА НА ЭТОМ МЕСТЕ — ТОЖЕ ОТВЕТ. Лента намеренно не рисует экстремум
+    // там, где уже стоит граница режима: два знака на одной точке читались бы
+    // как две разные вещи. Точка покоя и выход из финального иммельмана —
+    // ровно такие места: там и горка, и смена режима, и показать надо смену.
     assert.ok(
       markers.some(
         (marker) =>
-          marker.kind === relief.kind &&
+          (marker.kind === relief.kind || marker.kind === "gate") &&
           Math.abs(marker.progress - relief.progress) < 0.02,
       ),
       `потерян объявленный ${relief.kind} на ${relief.progress}`,

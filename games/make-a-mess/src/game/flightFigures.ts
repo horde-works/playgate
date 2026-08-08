@@ -1155,6 +1155,10 @@ export interface RouteFigureStation {
   readonly resumeAt: number;
   /** Ход входа, м/с. Фигура крутится на нём, а не на разрешённом трассой. */
   readonly speed: number;
+  /** Наклон плоскости петли, рад. */
+  readonly bank?: number;
+  /** Доля оборота петли, рад. Целый оборот замыкает её в точке входа. */
+  readonly sweep?: number;
   /**
    * Потребный этаж под фигурой, м над бертом. Объявляет ТРАССА, потому что
    * поднять себя может только она; проверяется против живого паспорта машины.
@@ -1293,6 +1297,8 @@ export function advanceRouteFigures(input: {
     input.capability,
     input.heading,
     levelAttitude(input.heading, input.bodyNose),
+    due.bank ?? 0,
+    due.sweep,
   );
   const verdict = flightFigureVerdict(
     plan,

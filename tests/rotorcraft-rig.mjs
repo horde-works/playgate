@@ -81,6 +81,18 @@ export function createMachine({
     mass: mass.mass,
     inertiaYaw: mass.inertia[4],
     bodyCentre: mass.centre,
+    // ВЕКТОРНАЯ ТЯГА ОБЪЯВЛЯЕТСЯ СТЕНДОМ ТАК ЖЕ, КАК РАНТАЙМОМ.
+    //
+    // Признак берётся из того же места (`liftSource === "rotor"`), а не
+    // ставится руками, потому что он переключает ЗАКОН ДВИЖЕНИЯ, а не
+    // коэффициент: без него автопилот считает, что тело едет туда, куда
+    // смотрит нос, и продольная команда идёт вдоль корпуса. Стенд без этого
+    // признака летал неголономным законом и совпадал с машиной ровно до тех
+    // пор, пока нос совпадал с направлением хода. Первый же участок, где
+    // маршрут объявил курс отдельно от движения, разошёлся с рантаймом
+    // полностью: машина развернула нос на площадку и улетела туда, куда
+    // смотрит, вместо того чтобы пятиться по трассе.
+    vectoredTranslation: flight.liftSource === "rotor",
     dragLinear: mass.mass * flight.linearDamping,
     dragLateral: mass.mass * flight.linearDamping * flight.lateralDragRatio,
     dragAngular: mass.inertia[4] * flight.angularDamping,
