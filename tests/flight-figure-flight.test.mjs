@@ -9,6 +9,7 @@ import {
   advanceFlightFigure,
   beginFlightFigure,
   figureCapabilityOf,
+  invertedRecoveryHeight,
   planFlightFigure,
 } from "../games/make-a-mess/src/game/flightFigures.ts";
 import {
@@ -50,7 +51,7 @@ function build() {
 const capability = figureCapabilityOf(build().machine);
 
 /** Прогон одной фигуры от ровного полёта до ровного полёта. */
-function fly(kind, { settleSteps = 60, afterSteps = 150 } = {}) {
+function fly(kind, { settleSteps = 60, afterSteps = 150, bank = 0, sweep } = {}) {
   const m = build();
   const level = {
     forwardSpeed: SPEED,
@@ -69,6 +70,8 @@ function fly(kind, { settleSteps = 60, afterSteps = 150 } = {}) {
     capability,
     [entryNose[0] / flat, entryNose[2] / flat],
     m.state.orientation,
+    bank,
+    sweep,
   );
 
   let episode = beginFlightFigure(plan);
@@ -99,6 +102,9 @@ function fly(kind, { settleSteps = 60, afterSteps = 150 } = {}) {
       up: rotateVector(m.state.orientation, [0, 1, 0]),
       nose: forwardAxis(m),
       height: centre[1] - entry[1],
+      side:
+        (centre[0] - entry[0]) * (-entryNose[2] / flat) +
+        (centre[2] - entry[2]) * (entryNose[0] / flat),
       along:
         (centre[0] - entry[0]) * (entryNose[0] / flat) +
         (centre[2] - entry[2]) * (entryNose[2] / flat),
@@ -123,6 +129,9 @@ function fly(kind, { settleSteps = 60, afterSteps = 150 } = {}) {
 
 const loop = fly("loop");
 const immelmann = fly("immelmann");
+const splitS = fly("split-s");
+const banked = fly("loop", { bank: 0.55 });
+const threeQuarter = fly("loop", { sweep: (Math.PI * 3) / 2 });
 
 test("ПЕТЛЯ: машина действительно переворачивается, а не обходит верх боком", () => {
   const lowest = loop.track.reduce((worst, s) => Math.min(worst, s.up[1]), 1);
@@ -211,6 +220,26 @@ test("ФИГУРА ГАСИТ СНИЖЕНИЕ САМА, а не отдаёт е
   }
 });
 
+test("ПЕТЛЯ ВНИЗ теряет высоту, разворачивает курс и оставляет машину РОВНОЙ", () => {
+  assert.equal(splitS.episode.done, true);
+  assert.equal(splitS.episode.aborted, false);
+  const lowest = splitS.track.reduce((worst, s) => Math.min(worst, s.up[1]), 1);
+  assert.ok(lowest < -0.9, `не перевернулась: ${lowest.toFixed(2)}`);
+  assert.ok(
+    splitS.settledUp[1] > 0.98,
+    `осталась накренённой: ось вверх ${splitS.settledUp[1].toFixed(2)}`,
+  );
+  const turn =
+    splitS.exitNose[0] * splitS.entryNose[0] +
+    splitS.exitNose[2] * splitS.entryNose[2];
+  assert.ok(turn < -0.8, `курс развернуло только на ${(Math.acos(turn) * 57.3).toFixed(0)}°`);
+  // Главное: она ТЕРЯЕТ высоту. Ради этого она и есть — единственная фигура,
+  // которой можно входить в глиссаду.
+  const exit = splitS.track.at(-1).height;
+  assert.ok(exit < -splitS.plan.radius, `потеряла всего ${(-exit).toFixed(1)} м`);
+  assert.ok(-exit < splitS.plan.dip, `провалилась на ${(-exit).toFixed(1)} при объявленных ${splitS.plan.dip.toFixed(1)}`);
+});
+
 test("НИ ОДНА фигура не оставляет машину без управления", () => {
   // `maneuverScale` ниже половины означает, что аллокатор не смог дать
   // требуемую позу и удерживает нынешнюю. Один такой кадр вверх ногами — и
@@ -218,9 +247,91 @@ test("НИ ОДНА фигура не оставляет машину без у�
   // и оба вылечены: полубочка идёт по своему профилю разгона-торможения, а
   // разность темпа не берётся поперёк стыка.
   assert.equal(loop.stalled, 0, `петля потеряла управление на ${loop.stalled} кадрах`);
+  // У петли ВНИЗ стык полубочки и дуги стоит нескольких кадров удержания:
+  // полубочка кончается нулевым темпом, дуга просит полный, а машина в этот
+  // момент перевёрнута и власти у неё меньше. Замерено три кадра из трёхсот;
+  // сглаживать дугу пробовал — стало сорок пять, потому что профиль
+  // разгона-торможения просит вдвое больший темп в середине.
+  assert.ok(splitS.stalled <= 4, `петля вниз потеряла управление на ${splitS.stalled} кадрах`);
   assert.equal(
     immelmann.stalled,
     0,
     `иммельман потерял управление на ${immelmann.stalled} кадрах`,
   );
+});
+
+test("НАКЛОНЁННАЯ ПЕТЛЯ идёт под углом к нормали и уносит машину вбок", () => {
+  assert.equal(banked.episode.done, true);
+  assert.equal(banked.episode.aborted, false);
+  // Плоскость наклонена — значит подъём идёт не по вертикали, и машина уходит
+  // вбок ровно настолько, насколько плоскость завалена: 2R·sin φ.
+  const side = banked.track.reduce(
+    (worst, s) => (Math.abs(s.side) > Math.abs(worst) ? s.side : worst),
+    0,
+  );
+  const upright = loop.track.reduce(
+    (worst, s) => (Math.abs(s.side) > Math.abs(worst) ? s.side : worst),
+    0,
+  );
+  // Номинально снос равен 2R·sin φ = 13.6 м; замер даёт 10 — машина не летит
+  // номинальную окружность, она проседает и срезает. Важно, что снос ЕСТЬ и он
+  // порядка радиуса, а прямая петля не сносит вовсе.
+  assert.ok(
+    Math.abs(side) > banked.plan.radius * 0.6,
+    `наклон не сносит: ${side.toFixed(1)} м против ${upright.toFixed(1)} у прямой петли`,
+  );
+  assert.ok(Math.abs(upright) < 2, `прямая петля снесла на ${upright.toFixed(1)} м`);
+  // И небо она просит меньше — часть подъёма ушла вбок.
+  const peak = banked.track.reduce((best, s) => Math.max(best, s.height), 0);
+  const straight = loop.track.reduce((best, s) => Math.max(best, s.height), 0);
+  assert.ok(peak < straight, `${peak.toFixed(1)} м против ${straight.toFixed(1)}`);
+  assert.ok(banked.stalled <= 4, `${banked.stalled} кадров без управления`);
+});
+
+test("НЕПОЛНАЯ ПЕТЛЯ оставляет машину В ДРУГОМ МЕСТЕ — ради этого она и нужна", () => {
+  assert.equal(threeQuarter.episode.done, true);
+  assert.equal(threeQuarter.episode.aborted, false);
+  // Целая петля возвращает машину в точку входа, и наклон этого не меняет:
+  // на 2π и синус, и «единица минус косинус» обнуляются одинаково. Три
+  // четверти оборота — не замыкаются, и это единственный способ выйти из
+  // фигуры не там, где вошёл.
+  const closed = Math.hypot(
+    loop.track.at(-1).along,
+    loop.track.at(-1).height,
+  );
+  const open = Math.hypot(
+    threeQuarter.track.at(-1).along,
+    threeQuarter.track.at(-1).height,
+  );
+  // Три четверти оборота дают по геометрии смещение R·√2 = 18.4 м; замер даёт
+  // 16.0 — машина проседает и срезает. У целой петли остаётся только её
+  // собственная просадка, 8.1 м, и она вдвое меньше.
+  assert.ok(
+    open > threeQuarter.plan.radius,
+    `неполная петля закрылась: ${open.toFixed(1)} м при радиусе ${threeQuarter.plan.radius.toFixed(1)}`,
+  );
+  assert.ok(
+    open > closed * 1.7,
+    `${open.toFixed(1)} м против ${closed.toFixed(1)} у целой — разницы нет`,
+  );
+  // Номинально три четверти оставляют машину ВЫШЕ входа на радиус, но замер
+  // даёт ниже: просадка фигуры и хвост возврата съедают этот радиус целиком.
+  // Это и есть честная разница между окружностью на бумаге и путём машины —
+  // и повод не обещать маршруту высоту, которой на выходе не будет.
+  // Мерить надо тем же, чем меряют ВОРОТА: провал плюс возврат из
+  // перевёрнутого. Один только провал описывает путь фигуры, а хвост возврата
+  // — это ещё высота, и у неполной петли она не отыгрывается ничем.
+  const clearance =
+    threeQuarter.plan.dip + invertedRecoveryHeight(capability);
+  assert.ok(
+    threeQuarter.track.at(-1).height > -clearance,
+    `провалилась на ${(-threeQuarter.track.at(-1).height).toFixed(1)} при запасе ${clearance.toFixed(1)}`,
+  );
+  // И машину отдают РОВНОЙ, хотя расписание кончилось носом вниз: хвост
+  // возврата держит ровную позу, а не последнюю позу расписания.
+  assert.ok(
+    threeQuarter.settledUp[1] > 0.98,
+    `отдана с осью вверх ${threeQuarter.settledUp[1].toFixed(2)}`,
+  );
+  assert.ok(threeQuarter.stalled <= 4, `${threeQuarter.stalled} кадров без управления`);
 });

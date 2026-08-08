@@ -207,7 +207,7 @@ const circuitNodes: readonly { id: string | null; position: SceneVector3 }[] = [
   //    полсотни, то есть читается ровно так, как задумано.
   ...arcPoints([0, 0], 64, -60, 300, 11).map(plainPoint),
   // 8. ВОСТОЧНЫЙ КРЮК ЗА ОСТРОВ и возврат по диагонали к самому берту.
-  ...arcPoints([56, -8], 76, 205, 25, 7).map(plainPoint),
+  ...arcPoints([58, -8], 84, 205, 25, 7).map(plainPoint),
   plainPoint([42, 0, -20]),
   // 9. НИЗКИЙ ПРОХОД НАД ПЛОЩАДКОЙ И ЗАХОД ИЗ ИММЕЛЬМАНА.
   //

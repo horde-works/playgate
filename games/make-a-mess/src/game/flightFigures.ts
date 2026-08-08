@@ -29,7 +29,7 @@ import {
  * ведётся по кривой, она поворачивается и летит туда, куда её толкают кольца.
  */
 
-export type FlightFigureKind = "loop" | "immelmann";
+export type FlightFigureKind = "loop" | "immelmann" | "split-s";
 
 /**
  * Что машина может, в величинах фигуры. Всё выводится из паспорта и НИЧЕГО не
@@ -189,6 +189,12 @@ export interface FlightFigurePlan {
    * вернётся, а не туда, где обычно получается.
    */
   readonly dip: number;
+  /**
+   * ПОЗА, В КОТОРОЙ МАШИНУ ОТДАЮТ. Не то же самое, что последняя поза
+   * расписания: неполная петля кончается носом в землю, и держать эту позу,
+   * пока хвост гасит снижение, значит гасить его снижением же. Отдают ровной.
+   */
+  readonly levelExit: Quaternion;
   /** Чем фигура кончается: смещение и разворот курса, рад. */
   readonly exit: {
     readonly offset: SceneVector3;
@@ -387,6 +393,29 @@ function attitudeUpY(attitude: Quaternion): number {
  * Отдельно выведенная формула разошлась бы молча — и разошлась бы именно там,
  * где расписание сложнее всего, то есть на стыке полупетли и полубочки.
  */
+/**
+ * Разворот КУРСА между двумя позами. Ноль, если нос на выходе почти вертикален:
+ * горизонтальной проекции у него тогда нет, и курса эта фигура не задаёт.
+ */
+function exitHeadingTurn(
+  exit: Quaternion,
+  base: Quaternion,
+  nose: readonly [number, number],
+): number {
+  const forward: SceneVector3 = [nose[0], 0, nose[1]];
+  const after = rotateVector(exit, rotateVector(conjugate(base), forward));
+  const flat = Math.hypot(after[0], after[2]);
+  if (flat < 0.25) return 0;
+  return Math.atan2(
+    nose[0] * (after[2] / flat) - nose[1] * (after[0] / flat),
+    nose[0] * (after[0] / flat) + nose[1] * (after[2] / flat),
+  );
+}
+
+function conjugate(q: Quaternion): Quaternion {
+  return [-q[0], -q[1], -q[2], q[3]];
+}
+
 /** Кратчайший поворот из `from` в `to`: вектор в мировых осях и его угол. */
 function relativeRotation(
   from: Quaternion,
@@ -496,17 +525,26 @@ function pitchedAttitude(
   roll: number,
   nose: readonly [number, number],
   base: Quaternion,
+  /**
+   * НАКЛОН ПЛОСКОСТИ ФИГУРЫ, рад. Поворачивает всю систему отсчёта вокруг оси
+   * носа: подъём идёт под углом к нормали, а ось вращения перестаёт быть
+   * горизонтальным бортом. Ноль — обычная вертикальная петля.
+   */
+  bank = 0,
 ): Quaternion {
   const starboard: SceneVector3 = [-nose[1], 0, nose[0]];
   const forward: SceneVector3 = [nose[0], 0, nose[1]];
-  return normalizeQuaternion(
+  const figure = multiplyQuaternions(
     multiplyQuaternions(
-      multiplyQuaternions(
-        quaternionAboutAxis(starboard, pitch),
-        quaternionAboutAxis(forward, roll),
-      ),
-      base,
+      quaternionAboutAxis(starboard, pitch),
+      quaternionAboutAxis(forward, roll),
     ),
+    base,
+  );
+  return normalizeQuaternion(
+    bank === 0
+      ? figure
+      : multiplyQuaternions(quaternionAboutAxis(forward, bank), figure),
   );
 }
 
@@ -524,11 +562,31 @@ function loopPlan(
   capability: FlightFigureCapability,
   nose: readonly [number, number],
   base: Quaternion,
+  bank = 0,
+  /**
+   * ДОЛЯ ОБОРОТА. Целый оборот замыкает петлю в точке входа — и наклон этого не
+   * меняет, потому что и синус, и «единица минус косинус» обнуляются на 2π
+   * одинаково. Снос наклонённой петли живёт ВНУТРИ фигуры, а не на выходе.
+   *
+   * Выход в другой точке даёт только НЕПОЛНАЯ петля: три четверти оборота
+   * оставляют машину выше, в стороне и носом вниз — то есть в состоянии,
+   * которое само является входом в следующую фигуру. Отсюда и «фигуры,
+   * переходящие в фигуры»: незамкнутая фигура по построению не возвращает
+   * машину туда, откуда взяла.
+   */
+  sweep = FULL_TURN,
 ): FlightFigurePlan {
   const radius = figureRadius(speed, capability);
-  const length = FULL_TURN * radius;
+  const length = sweep * radius;
   const attitudeAt = (t: number) =>
-    pitchedAttitude(Math.max(0, Math.min(1, t)) * FULL_TURN, 0, nose, base);
+    pitchedAttitude(Math.max(0, Math.min(1, t)) * sweep, 0, nose, base, bank);
+  // Плоскость наклонена — значит «вверх» у фигуры уже не мировая вертикаль:
+  // это вертикаль, повёрнутая вокруг оси носа. Отсюда и весь снос вбок.
+  const planeUp: SceneVector3 = [
+    -nose[1] * Math.sin(bank),
+    Math.cos(bank),
+    nose[0] * Math.sin(bank),
+  ];
   const floor = figureLiftFloor(capability, speed / radius, FULL_TURN);
   return {
     kind: "loop",
@@ -536,12 +594,29 @@ function loopPlan(
     speed,
     length,
     seconds: length / Math.max(speed, 0.5),
-    ceiling: 2 * radius,
+    // Небо просит меньше наклонённая петля: часть подъёма ушла вбок.
+    // Высшая точка дуги — на половине оборота, дальше она снижается.
+    ceiling:
+      radius * (1 - Math.cos(Math.min(sweep, HALF_TURN))) * Math.cos(bank),
     dip: FIGURE_DIP_SHARE * radius,
-    exit: { offset: [0, 0, 0], headingTurn: 0 },
+    levelExit: base,
+    exit: {
+      offset: [
+        radius * Math.sin(sweep) * nose[0] +
+          radius * (1 - Math.cos(sweep)) * planeUp[0],
+        radius * (1 - Math.cos(sweep)) * planeUp[1],
+        radius * Math.sin(sweep) * nose[1] +
+          radius * (1 - Math.cos(sweep)) * planeUp[2],
+      ],
+      // Курс на выходе берётся из САМОЙ ПОЗЫ, а не из формулы: у неполной
+      // петли нос может смотреть в зенит или в землю, и тогда горизонтальной
+      // проекции у него нет вовсе — разворота курса тоже нет, и врать о нём
+      // нельзя. Ноль здесь означает «курс не определён этой фигурой».
+      headingTurn: exitHeadingTurn(attitudeAt(1), base, nose),
+    },
     command(progress, liveSpeed = speed) {
       const t = Math.max(0, Math.min(1, progress));
-      const theta = t * FULL_TURN;
+      const theta = t * sweep;
       const forward = radius * Math.sin(theta);
       const up = radius * (1 - Math.cos(theta));
       const attitude = attitudeAt(t);
@@ -556,7 +631,11 @@ function loopPlan(
           floor,
         ),
         angularVelocity,
-        offset: [forward * nose[0], up, forward * nose[1]],
+        offset: [
+          forward * nose[0] + up * planeUp[0],
+          up * planeUp[1],
+          forward * nose[1] + up * planeUp[2],
+        ],
       };
     },
   };
@@ -616,6 +695,7 @@ function immelmannPlan(
     length,
     seconds: length / Math.max(speed, 0.5),
     ceiling: 2 * radius,
+    levelExit: attitudeAt(1),
     // Иммельман кончается наверху и вниз не идёт: провал ему нужен только на
     // случай срыва, и это та же полубочка, что в возврате из перевёрнутого.
     dip: 0,
@@ -667,16 +747,138 @@ function immelmannPlan(
  * @param base поза РОВНОГО полёта этим курсом. Фигура пристраивается к ней, а
  *   не подменяет её: на нулевом прогрессе команда равна ровно `base`.
  */
+/**
+ * ПЕТЛЯ ВНИЗ (split-S): полубочка в перевёрнутое, затем нижняя половина петли.
+ *
+ * Зеркало иммельмана и его же куски: тот же профиль полуоборота, тот же закон
+ * тяги, тот же газ на перевёрнутом участке. Отличие одно и оно всё меняет —
+ * фигура ТЕРЯЕТ высоту, а не набирает, и потому это единственная фигура,
+ * которой можно входить в глиссаду.
+ *
+ * Порядок обратный иммельману: сперва переворот, потом дуга. Перевернувшись,
+ * машина проходит тангажом от π до 2π и выходит ровной, курсом назад и ниже
+ * входа на два радиуса плюс то, что съела полубочка.
+ */
+function splitSPlan(
+  speed: number,
+  capability: FlightFigureCapability,
+  nose: readonly [number, number],
+  base: Quaternion,
+): FlightFigurePlan {
+  const radius = figureRadius(speed, capability);
+  const rollCollective = figureRollCollective(capability);
+  const rollSeconds = halfTurnSeconds(
+    figureAngularAcceleration(
+      capability.rollAcceleration,
+      capability,
+      rollCollective,
+    ),
+  );
+  const rollLength = speed * rollSeconds;
+  const loopLength = HALF_TURN * radius;
+  const length = rollLength + loopLength;
+  const rollShare = rollLength / length;
+  const floor = figureLiftFloor(capability, speed / radius, HALF_TURN);
+  const rollDrop = 0.5 * GRAVITY * rollSeconds * rollSeconds;
+  const attitudeAt = (t: number) => {
+    const clamped = Math.max(0, Math.min(1, t));
+    return clamped <= rollShare
+      ? // Тангаж ещё нулевой: машина переворачивается, оставаясь на курсе.
+        pitchedAttitude(
+          0,
+          halfTurnProfile(clamped / rollShare) * HALF_TURN,
+          nose,
+          base,
+        )
+      : // Тангаж ПРОДОЛЖАЕТСЯ с нуля, а не начинается с π. После полубочки
+        // машина уже перевёрнута — это её КРЕН, а не тангаж, — и начинать
+        // дугу с половины оборота значило бы прыгнуть на 180° за один шаг.
+        // Замер поймал ровно это: восемьдесят два кадра без управления и
+        // выход с креном в сорок восемь градусов.
+        // Дуга РАВНОМЕРНАЯ, и это проверено дважды. Профиль разгона-торможения
+        // даёт в середине вдвое больший темп, и перевёрнутой машине его не
+        // хватает: сорок пять кадров без управления против трёх у равномерной.
+        // Стык всё равно стоит нескольких кадров удержания — полубочка кончает
+        // нулевым темпом, дуга просит полный, — и это честная цена стыка, а не
+        // огрех расписания.
+        pitchedAttitude(
+          -((clamped - rollShare) / Math.max(1e-6, 1 - rollShare)) * HALF_TURN,
+          HALF_TURN,
+          nose,
+          base,
+        );
+  };
+  return {
+    kind: "split-s",
+    radius,
+    speed,
+    length,
+    seconds: length / Math.max(speed, 0.5),
+    // Вверх фигура не идёт вовсе: перевернулась и пошла вниз.
+    ceiling: 0,
+    // Провал — вся высота фигуры плюс то, что съест хвост возврата: он тоже
+    // часть фигуры, и не считать его значит обещать дно выше настоящего.
+    dip: 2 * radius + rollDrop + invertedRecoveryHeight(capability),
+    levelExit: attitudeAt(1),
+    exit: {
+      offset: [0, -(2 * radius + rollDrop), 0],
+      headingTurn: Math.PI,
+    },
+    command(progress, liveSpeed = speed) {
+      const t = Math.max(0, Math.min(1, progress));
+      const attitude = attitudeAt(t);
+      const angularVelocity = scheduleRate(attitudeAt, t, speed / length, [
+        rollShare,
+      ]);
+      if (t <= rollShare) {
+        return {
+          attitude,
+          speed,
+          liftFraction: rollCollective - 1,
+          angularVelocity,
+          offset: [0, -0.5 * GRAVITY * (t / rollShare) ** 2 * rollSeconds ** 2, 0],
+        };
+      }
+      const theta =
+        ((t - rollShare) / Math.max(1e-6, 1 - rollShare)) * HALF_TURN;
+      const forward = radius * Math.sin(theta);
+      const down = radius * (1 - Math.cos(theta));
+      return {
+        attitude,
+        speed,
+        liftFraction: arcLift(
+          liveSpeed,
+          Math.hypot(...angularVelocity),
+          attitudeUpY(attitude),
+          floor,
+        ),
+        angularVelocity,
+        offset: [
+          -forward * nose[0],
+          -(rollDrop + down),
+          -forward * nose[1],
+        ],
+      };
+    },
+  };
+}
+
 export function planFlightFigure(
   kind: FlightFigureKind,
   speed: number,
   capability: FlightFigureCapability,
   nose: readonly [number, number],
   base: Quaternion = [0, 0, 0, 1],
+  /** Наклон плоскости фигуры, рад. Действует только на петлю. */
+  bank = 0,
+  /** Доля оборота петли, рад. Целый оборот замыкает её в точке входа. */
+  sweep = FULL_TURN,
 ): FlightFigurePlan {
-  return kind === "loop"
-    ? loopPlan(speed, capability, nose, base)
-    : immelmannPlan(speed, capability, nose, base);
+  if (kind === "loop") {
+    return loopPlan(speed, capability, nose, base, bank, sweep);
+  }
+  if (kind === "split-s") return splitSPlan(speed, capability, nose, base);
+  return immelmannPlan(speed, capability, nose, base);
 }
 
 /**
@@ -878,7 +1080,13 @@ export function advanceFlightFigure(
       },
       // Поза выхода держится, а газ идёт на гашение: машина уже ровная, и вся
       // тяга работает вертикалью.
-      command: { ...exit, liftFraction: FIGURE_RECOVERY_COLLECTIVE },
+      command: {
+        ...exit,
+        attitude: plan.levelExit,
+        // Темпа у хвоста нет: он не крутит, он выравнивает и гасит.
+        angularVelocity: [0, 0, 0],
+        liftFraction: FIGURE_RECOVERY_COLLECTIVE,
+      },
     };
   }
   // Проекция ищется ТОЛЬКО ВПЕРЁД: расписание не отматывают назад, иначе
