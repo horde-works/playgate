@@ -307,6 +307,11 @@ export interface VehicleFailureObservation {
   readonly relativeAltitude: number;
   readonly pitch: number;
   readonly roll: number;
+  /**
+   * Машина исполняет объявленную маршрутом фигуру: поза ей ЗАДАНА. Абсолютный
+   * угол в это время не значит ничего, судить можно только исполнение.
+   */
+  readonly executingFigure?: boolean;
   readonly headingError: number;
   /**
    * Курс машины задаётся её носом.
@@ -671,6 +676,54 @@ function observationIsFinite(observation: VehicleFailureObservation): boolean {
   ].every(Number.isFinite);
 }
 
+/**
+ * КРИТИЧЕСКАЯ ПОЗА — ОДНО ПРАВИЛО, И ОНО ЖИВЁТ ЗДЕСЬ.
+ *
+ * Правило было переписано в стенде отдельной строкой, и это тот же дубль, что
+ * уже стоил проекта одного молчаливого расхождения: тест проверял свою копию
+ * условия и оставался зелёным, когда рантайм снимал машину. Здесь оно одно, и
+ * все, кому нужно, вызывают его.
+ *
+ * СУДИТСЯ УПРАВЛЯЕМОСТЬ, А НЕ УГОЛ. Для машины, которой велено переворачиваться,
+ * абсолютный тангаж не значит ничего: на петле он проходит все сто восемьдесят
+ * градусов, и сторож честно снимал бы её каждый раз при исправных органах.
+ * Пока поза ЗАДАНА фигурой, её исполнение проверяет сама фигура — у неё есть
+ * поводок и срок; сторожу здесь судить нечего.
+ *
+ * РАССОГЛАСОВАНИЕ ТЕМПА РЫСКАНИЯ — признак ЗАКЛИНИВШЕГО канала, и потому
+ * смотрится только на невращающейся машине. `acceptedYawRate` есть темп, к
+ * которому приложенный момент машину разгоняет; разность с текущим темпом
+ * равна самому моменту, делённому на инерцию, то есть велика ВСЕГДА, когда
+ * машина энергично доворачивает. Живой замер: разворот носа на площадку при
+ * тангаже и крене в 1.8°, уклонении 0.5 м и отклонении по высоте 1.4 м — и
+ * `CRITICALATTITUDE` через три секунды. Тот же довод уже применён к таймеру
+ * трассы ниже: просьба о повороте — намерение, а не движение.
+ */
+export function vehicleAttitudeCritical(
+  observation: {
+    readonly pitch: number;
+    readonly roll: number;
+    readonly yawRateError: number;
+    readonly turning?: boolean;
+    readonly executingFigure?: boolean;
+  },
+  envelope: VehicleFailureEnvelope = DEFAULT_VEHICLE_FAILURE_ENVELOPE,
+): boolean {
+  if (observation.executingFigure === true) {
+    return false;
+  }
+  if (
+    Math.abs(observation.pitch) > envelope.maximumPitch ||
+    Math.abs(observation.roll) > envelope.maximumRoll
+  ) {
+    return true;
+  }
+  return (
+    observation.turning !== true &&
+    Math.abs(observation.yawRateError) > envelope.maximumYawRate
+  );
+}
+
 export function advanceVehicleFailureWatchdog(
   current: VehicleFailureWatchdogState,
   observation: VehicleFailureObservation,
@@ -701,10 +754,7 @@ export function advanceVehicleFailureWatchdog(
     ? current.correctionSeconds + delta
     : current.correctionSeconds;
   const attitudeSeconds = heldSeconds(
-    !suspended &&
-      (Math.abs(observation.pitch) > envelope.maximumPitch ||
-        Math.abs(observation.roll) > envelope.maximumRoll ||
-        Math.abs(observation.yawRateError) > envelope.maximumYawRate),
+    !suspended && vehicleAttitudeCritical(observation, envelope),
     current.attitudeSeconds,
     delta,
   );

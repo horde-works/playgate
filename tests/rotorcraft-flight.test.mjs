@@ -20,6 +20,7 @@ import {
   advanceVehicleFailureWatchdog,
   createVehicleFailureWatchdog,
   DEFAULT_VEHICLE_FAILURE_ENVELOPE,
+  vehicleAttitudeCritical,
 } from "../games/make-a-mess/src/game/vehicleFailure.ts";
 import {
   advanceRotorMotorOutput,
@@ -514,13 +515,20 @@ test("отказ любого одного винта в полёте меняе
       // trade away pitch/roll and then accuse itself of disobeying it.
       const unavailableYaw = dead % 2 === 0 ? 0.6 : -0.6;
       last = advance(simulation, { forward: 0, yawRate: unavailableYaw });
-      const yawRateError =
-        simulation.body.angularVelocity[1] - last.acceptedYawRate;
-      const critical =
-        Math.abs(last.pitch) > DEFAULT_VEHICLE_FAILURE_ENVELOPE.maximumPitch ||
-        Math.abs(last.roll) > DEFAULT_VEHICLE_FAILURE_ENVELOPE.maximumRoll ||
-        Math.abs(yawRateError) >
-          DEFAULT_VEHICLE_FAILURE_ENVELOPE.maximumYawRate;
+      // ПРАВИЛО СПРАШИВАЕТСЯ У СТОРОЖА, А НЕ ПЕРЕПИСЫВАЕТСЯ ЗДЕСЬ. Копия
+      // условия — это второе мнение о том, что считать критической позой, и
+      // оно расходится с первым молча: тест остаётся зелёным ровно тогда,
+      // когда рантайм снимает машину по изменившемуся правилу.
+      const critical = vehicleAttitudeCritical(
+        {
+          pitch: last.pitch,
+          roll: last.roll,
+          yawRateError:
+            simulation.body.angularVelocity[1] - last.acceptedYawRate,
+          turning: Math.abs(simulation.body.angularVelocity[1]) > 0.1,
+        },
+        DEFAULT_VEHICLE_FAILURE_ENVELOPE,
+      );
       criticalSeconds = critical ? criticalSeconds + STEP : 0;
       maximumCriticalSeconds = Math.max(maximumCriticalSeconds, criticalSeconds);
     }

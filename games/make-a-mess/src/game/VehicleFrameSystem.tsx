@@ -5541,6 +5541,8 @@ export function VehicleFrameSystem({
             relativeAltitude: state.body.position[1],
             pitch: tracking.pitch,
             roll: tracking.roll,
+            // Поза на фигуре задана маршрутом, а не потеряна машиной.
+            executingFigure: state.figure.episode !== null,
             headingError: tracking.headingError,
             // Нос машины с векторной тягой курса не задаёт: тело держит линию
             // само, а нос ведётся отдельно. Судить её сход по носу — значит
@@ -5980,6 +5982,18 @@ export function VehicleFrameSystem({
             // догадка. Здесь автомат называет, что именно упёрлось на каждом
             // канале, и разбор перестаёт быть гаданием.
             limitedBy: state.rotorLimits ?? null,
+            // ФИГУРА: ЧТО ИДЁТ, ЧТО ПРОЙДЕНО И ПОЧЕМУ ПРОПУЩЕНО.
+            //
+            // Причина пропуска считалась с самого начала («пропуск не молчит»),
+            // но наружу её никто не выводил, и разбор упирался в глаза: видно,
+            // что фигуры нет, а почему — нет. Замер живьём: четыре петли из
+            // шести номеров, обе разворачивающие фигуры не показаны, и назвать
+            // причину было нечем.
+            figure: state.figure.station?.key ?? null,
+            figuresSpent: state.figure.spent.length
+              ? state.figure.spent.join(",")
+              : null,
+            figureSkipped: state.figure.skipped,
             // Куда автомат хочет нос — против того, куда нос смотрит.
             noseWanted: state.lastHeadingTarget,
             disposition: state.recovery?.lifecycle.disposition ?? null,

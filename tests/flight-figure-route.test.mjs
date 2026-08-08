@@ -221,10 +221,20 @@ function flyCircuit({ seconds, stations = plan.figures }) {
             Math.min(1, -(bodyNose[2] * bodyUp[0] - bodyNose[0] * bodyUp[2])),
           ),
         ),
+        executingFigure: figures.episode !== null,
         headingError: 0,
         // Нос машины с векторной тягой курса не задаёт — тело держит линию само.
         courseFollowsNose: false,
-        yawRateError: 0,
+        // РАСХОЖДЕНИЕ ПО ТЕМПУ РЫСКАНИЯ БЕРЁТСЯ НАСТОЯЩЕЕ, И ЭТО НЕ ДЕТАЛЬ.
+        //
+        // Здесь стоял ноль — «канал не проверяем». А сторож считает его в ТОМ
+        // ЖЕ таймере, что углы позы: критической позой объявляется и тангаж, и
+        // крен, и рассогласование темпа рыскания. Заглушив канал, стенд
+        // проходил рейс, который в игре снимался с CRITICALATTITUDE при
+        // тангаже и крене в 1.8° — то есть на идеально ровной машине.
+        yawRateError:
+          m.state.angularVelocity[1] -
+          (m.lastResult?.acceptedYawRate ?? 0),
         crossTrackError: Math.hypot(live[0] - onLine[0], live[2] - onLine[2]),
         corridorLimit: plan.corridor?.(progress),
         // ВЫСОТА МЕРИТСЯ ПРОТИВ ТОЙ ЖЕ ЦЕЛИ, ПО КОТОРОЙ ЛЕТИТ АВТОПИЛОТ, а не
