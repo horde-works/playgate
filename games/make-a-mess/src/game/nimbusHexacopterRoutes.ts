@@ -215,6 +215,16 @@ function createSurveyRoute(
   return route;
 }
 
+/** Объявлен ли маркер: спросить у трассы нельзя, но можно не упасть. */
+function hasMarker(route: MotionRouteArtifact, marker: string): boolean {
+  try {
+    route.markerProgress(marker);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function planFromRoute(
   route: MotionRouteArtifact,
 ): VehicleRoutePlan {
@@ -232,11 +242,21 @@ function planFromRoute(
       return route.requirement("altitude", progress);
     },
     finalFrom: route.markerProgress("final"),
-    verticalDeparture: {
-      altitude: NIMBUS_HEXACOPTER_ALTITUDE_ONE_THIRD,
-      until: route.markerProgress("verticalDepartureComplete"),
-      tolerance: 1,
-    },
+    // ВЕРТИКАЛЬНЫЙ ОТРЫВ ЕСТЬ НЕ У КАЖДОЙ ТРАССЫ.
+    //
+    // Прибытийная трасса начинается за сотню метров от берта: отрываться ей
+    // неоткуда, и маркера у неё нет. Безусловное чтение маркера роняло
+    // построение плана исключением — то есть прилёт на Nimbus не состоялся бы
+    // вовсе. Найдено детектором полноты плана, а не в браузере.
+    ...(hasMarker(route, "verticalDepartureComplete")
+      ? {
+          verticalDeparture: {
+            altitude: NIMBUS_HEXACOPTER_ALTITUDE_ONE_THIRD,
+            until: route.markerProgress("verticalDepartureComplete"),
+            tolerance: 1,
+          },
+        }
+      : {}),
     verticalArrival: {
       altitude: NIMBUS_HEXACOPTER_ALTITUDE_ONE_THIRD,
       from: route.markerProgress("final"),

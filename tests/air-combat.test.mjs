@@ -794,3 +794,51 @@ test("у злого круга HX-6 своя трасса, отличная от
     hx6.flight.routePlan("circuit", berth).id,
   );
 });
+
+test("ЛЮБОЙ план отвечает на ВСЕ требования трассы, а не на те, что вспомнили", () => {
+  // Второй подряд отказ на запуске пришёл отсюда: сторожевая орбита не
+  // объявила `corridor`, и общий контракт трассы выбросил исключение при
+  // первом же обращении. Отсутствие требования — не «по умолчанию широко»,
+  // а поломка, и ловить её обязан тест, а не человек в браузере.
+  //
+  // Детектор общий: каждый план каждой машины опрашивается по всей длине
+  // всеми полями, которые у него есть.
+  const berth = [0, 0.08, 0];
+  const probes = Array.from({ length: 41 }, (_, index) => index / 40);
+  for (const vehicle of airVehicles) {
+    const kinds = new Set([
+      vehicle.departure?.flightKind,
+      vehicle.passengerFlight?.flightKind,
+      ...(vehicle.departure?.target.actions ?? []).map((action) => action.id),
+      ...(vehicle.passengerFlight?.target.actions ?? []).map((a) => a.id),
+    ]);
+    kinds.delete(undefined);
+    kinds.delete("manual");
+    const plans = [
+      ...[...kinds].map((kind) => [
+        `${vehicle.id}:${kind}`,
+        vehicle.flight.routePlan(kind, berth),
+      ]),
+      [`${vehicle.id}:arrival`, vehicle.flight.arrivalPlan(berth)],
+    ];
+    for (const [label, plan] of plans) {
+      for (const progress of probes) {
+        for (const field of ["point", "speedLimit", "altitude", "corridor"]) {
+          const answer = plan[field];
+          if (typeof answer !== "function") {
+            continue;
+          }
+          const value = answer(progress);
+          const finite =
+            typeof value === "number"
+              ? Number.isFinite(value)
+              : value.every((component) => Number.isFinite(component));
+          assert.ok(
+            finite,
+            `${label}: требование ${field} на ${progress} дало ${JSON.stringify(value)}`,
+          );
+        }
+      }
+    }
+  }
+});
