@@ -14,7 +14,10 @@ const GAME = fileURLToPath(
   new URL("../games/make-a-mess/src/game/MakeAMessGame.tsx", import.meta.url),
 );
 
-const source = readFileSync(GAME, "utf8");
+// Концы строк нормализуются: на Windows файл лежит с CRLF, и поиск по «\n»
+// там не совпадает. Сторож на этом уже один раз покраснел на чужой машине,
+// оставшись зелёным на своей.
+const source = readFileSync(GAME, "utf8").replace(/\r\n/g, "\n");
 
 function componentSource(name) {
   const start = source.indexOf(`function ${name}(`);
