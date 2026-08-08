@@ -41,7 +41,7 @@ import {
  * (три точки на широкой базе; кривизне — широкая база, склону — мелкая).
  */
 
-export type RangeHexacopterFlightKind = "circuit" | "tour";
+export type RangeHexacopterFlightKind = "circuit" | "tour" | "evasive";
 
 /** Поперечная ось маршрута в мире — та же формула, что у города. */
 const LATERAL: SceneVector3 = [HEXACOPTER_NOSE[2], 0, -HEXACOPTER_NOSE[0]];
@@ -119,7 +119,175 @@ function roseNode(id: string, theta: number, thetaStep: number) {
   };
 }
 
+/**
+ * УКЛОНЕНИЕ: маршрут, построенный ПРОТИВ ЭКСТРАПОЛЯТОРА.
+ *
+ * Атакующий не знает плана цели, но видит её живой манёвр и продолжает его
+ * моделью постоянного разворота. Значит трудность цели — это НЕ скорость и не
+ * тугой вираж (по обоим параметрам HX-6 заведомо уступает), а частота, с
+ * которой её манёвр перестаёт быть тем, чем был. Ломают предсказание три вещи,
+ * и все три здесь заданы формулой:
+ *
+ *  1. СМЕНА ЗНАКА КРИВИЗНЫ. Основа — лемниската Жероно `(A cos t, B sin 2t)`:
+ *     она проходит через центр дважды и обходит доли в противоположных
+ *     направлениях ПО ПОСТРОЕНИЮ, а не по удаче расстановки точек.
+ *  2. СЕРПАНТИН поверх неё: пять периодов за оборот. На круге длиной около
+ *     двухсот метров и скорости порядка десяти метров в секунду это перемена
+ *     направления каждые полторы-две секунды — ровно тот порядок, которым
+ *     реальная машина срывает прицел стрелку.
+ *  3. ВЫСОТНАЯ ВОЛНА, и она здесь главная. У атакующего ствол закреплён на
+ *     корпусе, отдельного привода тангажа нет, и вертикально он наводится
+ *     ВЫСОТОЙ. Три периода за оборот против пяти у серпантина: периоды
+ *     несоизмеримы, поэтому ошибка по курсу и ошибка по высоте почти никогда
+ *     не обнуляются одновременно.
+ *
+ * Радиусы намеренно щадящие: маршрут обязан быть посильным САМОЙ ЦЕЛИ
+ * (поперечных у неё 5.66 м/с² против 14.5 у атакующего), иначе она провалит
+ * собственную трассу и боя не выйдет. Посильность проверяется тестом, а не
+ * обещанием.
+ */
+/**
+ * Числа подобраны ЗАМЕРОМ, и первый подбор был поучительно неверен.
+ *
+ * Серпантин амплитудой 6 м с пятью периодами накладывался на уже искривлённую
+ * долю лемнискаты, кривизны складывались, и вместо змейки выходили шпильки
+ * радиусом 4.7 м. Полоса скорости — она считается из геометрии — честно
+ * притормаживала цель до четырёх метров в секунду, и получалось ровно
+ * обратное задуманному: МЕДЛЕННАЯ цель, по которой попасть легче, чем по
+ * быстрой. Уклонение — это не «дёргаться сильнее», а сохранять ход, меняя
+ * замысел.
+ *
+ * Поэтому доли расширены, серпантин ослаблен до модуляции, а основную работу
+ * делает ВЫСОТА: у атакующего ствол на корпусе, вертикально он наводится
+ * высотой, и сбить его по этой оси дешевле всего. Периоды серпантина и волны
+ * (4 и 3) несоизмеримы — ошибки по курсу и по высоте почти никогда не
+ * обнуляются вместе.
+ */
+const EVADE_LOBE = 48;
+const EVADE_HEIGHT = 30;
+const EVADE_WEAVE = 3.5;
+const EVADE_WEAVE_CYCLES = 4;
+const EVADE_ALTITUDE_MEAN = 21;
+/** 9 м на трёх периодах требуют 2.4 м/с² вертикали при располагаемых 2.75. */
+const EVADE_ALTITUDE_WAVE = 9;
+const EVADE_ALTITUDE_CYCLES = 3;
+/** Плечо входа в волну. На 18 м оно требовало 23 м/с набора — неисполнимо. */
+const EVADE_ALTITUDE_RAMP = 45;
+
+function evadePoint(t: number): { p: SceneVector3; d: SceneVector3 } {
+  const weave = EVADE_WEAVE_CYCLES;
+  return {
+    p: [
+      DISC_A + EVADE_LOBE * Math.cos(t),
+      0,
+      DISC_B + EVADE_HEIGHT * Math.sin(2 * t) + EVADE_WEAVE * Math.sin(weave * t),
+    ],
+    d: [
+      -EVADE_LOBE * Math.sin(t),
+      0,
+      2 * EVADE_HEIGHT * Math.cos(2 * t) +
+        weave * EVADE_WEAVE * Math.cos(weave * t),
+    ],
+  };
+}
+
+function evadeNode(id: string, t: number, step: number) {
+  const { p, d } = evadePoint(t);
+  const scale = step / 3;
+  return {
+    id,
+    position: p,
+    incoming: [p[0] - d[0] * scale, 0, p[2] - d[2] * scale] as SceneVector3,
+    outgoing: [p[0] + d[0] * scale, 0, p[2] + d[2] * scale] as SceneVector3,
+    samples: 24,
+  };
+}
+
+function evasiveGeometry(): MotionRouteDefinition {
+  // Серпантин с пятью периодами требует плотной сетки: узлов должно быть
+  // заметно больше, чем колебаний, иначе кубический сплайн срежет их в дугу и
+  // весь смысл маршрута пропадёт. Сорок восемь узлов — почти десять на период.
+  const STEP = (2 * Math.PI) / 48;
+  const nodes: MotionRouteDefinition["nodes"][number][] = [
+    { id: "pad", position: [0, 0, 0] },
+    {
+      id: "deck-clear",
+      position: [CLIMB_DISTANCE, 0, 2],
+      outgoing: [CLIMB_DISTANCE + 12, 0, 4],
+    },
+  ];
+  let cursor = 0;
+  for (let t = 0; t <= 2 * Math.PI + 1e-9; t += STEP) {
+    nodes.push(evadeNode(`evade-${cursor}`, t, STEP));
+    cursor += 1;
+  }
+  const last = `evade-${cursor - 1}`;
+  nodes.push(
+    {
+      id: "arrival-shoulder",
+      position: [-(FINAL_RUN + 22), 0, 5],
+      incoming: [-(FINAL_RUN + 18), 0, 17],
+      outgoing: [-(FINAL_RUN + 12), 0, -1],
+      samples: 48,
+    },
+    {
+      id: "final-entry",
+      position: [-FINAL_RUN, 0, 0],
+      incoming: [-(FINAL_RUN + 10), 0, 0],
+      outgoing: [-FINAL_RUN * 0.4, 0, 0],
+      samples: 40,
+    },
+    { id: "dock", position: [0, 0, 0] },
+  );
+  return {
+    id: "range-hexacopter:evasive",
+    nodes,
+    measureAxes: [0, 2],
+    markers: {
+      verticalDepartureComplete: "deck-clear",
+      departureComplete: "evade-0",
+      roseComplete: last,
+      arriving: "arrival-shoulder",
+      final: "final-entry",
+    },
+  };
+}
+
+/**
+ * Высота уклонения задаётся ПУТЕВОЙ КООРДИНАТОЙ, а не углом вокруг центра:
+ * лемниската не звёздчата относительно него, и atan2 на ней крутится рывками.
+ */
+function evasiveAltitude(
+  geometry: MotionRouteArtifact,
+  { distance, remaining, progress }: MotionRouteRequirementContext,
+): number {
+  if (distance < CLIMB_DISTANCE) {
+    const t = clamp01(distance / CLIMB_DISTANCE);
+    return DECK_CLEAR_ALTITUDE * (1 - (1 - t) * (1 - t));
+  }
+  if (remaining < FINAL_DESCENT_DISTANCE) {
+    const t = clamp01((remaining - 3) / (FINAL_DESCENT_DISTANCE - 3));
+    return DECK_CLEAR_ALTITUDE * (1 - (1 - t) * (1 - t));
+  }
+  const start = geometry.markerProgress("departureComplete");
+  const end = geometry.markerProgress("roseComplete");
+  const ramp = EVADE_ALTITUDE_RAMP / geometry.length;
+  const inside = Math.min(
+    smootherStep((progress - start) / ramp),
+    smootherStep((end - progress) / ramp),
+  );
+  const u = clamp01((progress - start) / Math.max(1e-6, end - start));
+  const wave =
+    EVADE_ALTITUDE_MEAN +
+    EVADE_ALTITUDE_WAVE *
+      Math.sin(2 * Math.PI * EVADE_ALTITUDE_CYCLES * u + 0.6);
+  return DECK_CLEAR_ALTITUDE + (wave - DECK_CLEAR_ALTITUDE) * inside;
+}
+
 function routeGeometry(kind: RangeHexacopterFlightKind): MotionRouteDefinition {
+  if (kind === "evasive") {
+    return evasiveGeometry();
+  }
   // «Тур» — та же розетка вторым кругом: длиннее; «circuit» — один оборот.
   const laps = kind === "tour" ? 2 : 1;
   const STEP = (20 * Math.PI) / 180;
@@ -256,11 +424,16 @@ function speedLimit(
 function buildRoute(kind: RangeHexacopterFlightKind): MotionRouteArtifact {
   const definition = routeGeometry(kind);
   const geometry = createMotionRoute(definition);
+  const evasive = kind === "evasive";
   return createMotionRoute({
     ...definition,
     requirements: {
-      altitude: (context) => altitude(geometry, context),
-      speedLimit: (context) => speedLimit(geometry, 9, context),
+      altitude: (context) =>
+        evasive ? evasiveAltitude(geometry, context) : altitude(geometry, context),
+      // Полоса скорости считается из ГЕОМЕТРИИ тем же законом, что и у
+      // розетки, поэтому серпантин сам себя и притормаживает там, где
+      // затянул вираж. Отдельного числа для уклонения не заводится.
+      speedLimit: (context) => speedLimit(geometry, evasive ? 11 : 9, context),
     },
   });
 }
@@ -270,6 +443,7 @@ const ROUTES: Readonly<
 > = {
   circuit: buildRoute("circuit"),
   tour: buildRoute("tour"),
+  evasive: buildRoute("evasive"),
 };
 
 function placeLocal(

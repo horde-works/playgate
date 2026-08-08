@@ -1,5 +1,10 @@
 import type { LampEventState, SceneVector3 } from "./destructionScene.ts";
 import type { EntryInteractionTarget } from "./entryInteraction.ts";
+import {
+  TONKAWA_ALLEGIANCE,
+  TOWN_ALLEGIANCE,
+  type VehicleAllegiance,
+} from "./vehicleAllegiance.ts";
 import type { VehicleRecoveryLifecycle } from "./vehicleFailure.ts";
 import type { VehicleGuidanceOverrides } from "./vehicleGuidanceEnvelope.ts";
 import type {
@@ -111,6 +116,8 @@ import {
   combatHexacopterRangeFrame,
 } from "./combatHexacopter.ts";
 import {
+  combatHexacopterGuardPhase,
+  combatHexacopterGuardPlan,
   combatHexacopterRangeArrivalPlan,
   combatHexacopterRangeEscapePlan,
   combatHexacopterRangePhase,
@@ -137,6 +144,12 @@ import {
 export const DEFAULT_VEHICLE_LIFT_RESERVE = 1.12;
 
 export interface AirVehicleDefinition extends VehicleFrameDefinition {
+  /**
+   * Сторона машины. Не задана — мирный транспорт: он никого не атакует и не
+   * является целью по признаку клана (`vehicleAllegiance.ts`). Свойство стоит
+   * здесь, а не в кадре, потому что это ВОЗМОЖНОСТЬ машины, а не её геометрия.
+   */
+  readonly allegiance?: VehicleAllegiance;
   readonly departure?: {
     readonly target: EntryInteractionTarget;
     readonly point: SceneVector3;
@@ -867,6 +880,10 @@ export const BASALT_SKY_RAM_AIR_VEHICLE: AirVehicleDefinition = {
  */
 export const TOWN_HEXACOPTER_AIR_VEHICLE: AirVehicleDefinition = {
   ...townHexacopterFrame,
+  // Городская машина, стоящая на чужом полигоне. Именно поэтому она — цель:
+  // не «слабая» и не «плохая», а ЧУЖАЯ. Сторона у неё была бы той же и в
+  // городе, просто там ей никто не оппонирует.
+  allegiance: TOWN_ALLEGIANCE,
   departure: {
     target: {
       id: "town:hexacopter:departure",
@@ -876,6 +893,12 @@ export const TOWN_HEXACOPTER_AIR_VEHICLE: AirVehicleDefinition = {
         {
           id: "circuit",
           labelKey: "hint.hexacopterDeparture.uncrewed",
+        },
+        {
+          // Злой круг: перепады высот и смена знака кривизны. Нужен затем,
+          // чтобы у RAX была ТРУДНАЯ цель без человека за штурвалом.
+          id: "evasive",
+          labelKey: "hint.hexacopterDeparture.evasive",
         },
         {
           id: "manual",
@@ -1180,8 +1203,16 @@ export const SR6_SKAT_AIR_VEHICLE: AirVehicleDefinition = {
   },
 };
 
+/**
+ * Имя боевой задачи. Отдельная константа, потому что её знают трое: паспорт
+ * машины (какую трассу строить), табличка полигона (что предложить человеку) и
+ * автомат боя (когда он вообще имеет право работать).
+ */
+export const COMBAT_HEXACOPTER_SKY_CONTROL = "sky-control";
+
 export const COMBAT_HEXACOPTER_RANGE_AIR_VEHICLE: AirVehicleDefinition = {
   ...combatHexacopterRangeFrame,
+  allegiance: TONKAWA_ALLEGIANCE,
   departure: {
     target: {
       id: "combat-hexacopter-range:departure",
@@ -1189,6 +1220,15 @@ export const COMBAT_HEXACOPTER_RANGE_AIR_VEHICLE: AirVehicleDefinition = {
       // Своя табличка: прежде cue городского коптера показывал на пульте
       // полигона имя HX-6 вместо RAX-8 Tonkawa.
       cue: "combat-hexacopter-uncrewed-flight",
+      actions: [
+        // ПЕРВЫМ ПУНКТОМ — БОЕВАЯ ЗАДАЧА. С пульта полигона машину отправляют
+        // сторожить периметр; показательный круг остаётся вторым.
+        {
+          id: COMBAT_HEXACOPTER_SKY_CONTROL,
+          labelKey: "hint.hexacopterDeparture.skyControl",
+        },
+        { id: "circuit", labelKey: "hint.hexacopterDeparture.uncrewed" },
+      ],
     },
     point: COMBAT_HEXACOPTER_RANGE_DISPATCH_POINT,
     flightKind: "circuit",
@@ -1245,10 +1285,16 @@ export const COMBAT_HEXACOPTER_RANGE_AIR_VEHICLE: AirVehicleDefinition = {
     maximumTilt: combatHexacopterRangeBlueprint.flight.maximumTilt,
     guidance: { upsetTiltRate: 1.45, upsetYawRate: 1.3 },
     mooringReach: 0.6,
-    routePlan: (_kind, berth) => combatHexacopterRangePlan(berth),
+    routePlan: (kind, berth) =>
+      kind === COMBAT_HEXACOPTER_SKY_CONTROL
+        ? combatHexacopterGuardPlan(berth)
+        : combatHexacopterRangePlan(berth),
     arrivalPlan: combatHexacopterRangeArrivalPlan,
     escapePlan: combatHexacopterRangeEscapePlan,
-    routePhase: (_kind, progress) => combatHexacopterRangePhase(progress),
+    routePhase: (kind, progress) =>
+      kind === COMBAT_HEXACOPTER_SKY_CONTROL
+        ? combatHexacopterGuardPhase(progress)
+        : combatHexacopterRangePhase(progress),
   },
 };
 

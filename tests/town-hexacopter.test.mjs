@@ -98,10 +98,12 @@ test("машина и площадка — разные кластеры, и о�
   );
 });
 
-test("табличка предлагает пустой облёт или ручное управление из целого кресла", () => {
+test("табличка предлагает облёт, злой круг или ручное управление из целого кресла", () => {
+  // «Злой круг» добавлен вместе с воздушным боем: у RAX должна быть трудная
+  // цель и без человека за штурвалом (`docs/air-combat-lessons.md`, §6).
   assert.deepEqual(
     vehicle.departure?.target.actions?.map((action) => action.id),
-    ["circuit", "manual"],
+    ["circuit", "evasive", "manual"],
   );
   assert.equal(TOWN_HEXACOPTER_PILOT_SEAT.id, TOWN_HEXACOPTER_PILOT_SEAT_ID);
   assert.equal(

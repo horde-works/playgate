@@ -56,6 +56,13 @@ Read by adjacency:
   `games/make-a-mess/docs/destruction-lessons.md` — read whenever a vehicle
   hits the world, sheds pieces, or a glass/steel/sheet-metal verdict is in
   question (закон удара, контракт куска, carve по движущемуся телу).
+- Воздушный бой — третий клиент границы `VehicleGuidanceDemand` рядом с
+  автопилотом и ручным пилотом: `games/make-a-mess/docs/air-combat-lessons.md`.
+  Читать перед правкой `vehicleAllegiance`, `vehicleGunnery`, `airCombatPilot`,
+  профиля `podRocket`, сторожевой орбиты `sky-control` и маршрута-приманки
+  `evasive`. Там же — почему пропорциональный контур не ведёт движущуюся цель,
+  почему проход идёт на постоянной скорости и почему геометрию захода диктует
+  рыскание, а не габарит.
 - Frame budgets and adjacent Rapier pitfalls:
   `games/make-a-mess/docs/performance-lessons.md` — read before adding
   per-step physics work, extra bodies, sensors or debris load.

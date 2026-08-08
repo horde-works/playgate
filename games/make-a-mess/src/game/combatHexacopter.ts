@@ -19,6 +19,8 @@ import type {
   VehicleFrameDefinition,
   VehicleSupportStrutDefinition,
 } from "./vehicleFrames.ts";
+import { MG_FIRE_INTERVAL, MG_RANGE } from "./destructionRuntime.ts";
+import type { VehicleArmament, WeaponMount } from "./vehicleGunnery.ts";
 
 export const COMBAT_HEXACOPTER_BLUEPRINT_ID = "combat-hexacopter";
 export const RAX8_TONKAWA_NAME = "RAX-8 Tonkawa";
@@ -57,6 +59,8 @@ export interface CombatHexacopterBlueprint {
   }[];
   /** Четыре опоры машины: паспорт без нагрузки, массу подставит рантайм. */
   readonly landingStruts: readonly VehicleSupportStrutDefinition[];
+  /** Стволы и трубы в авторской позе покоя, как enginePoints. */
+  readonly armament: VehicleArmament;
   readonly envelope: {
     readonly length: number;
     readonly width: number;
@@ -142,6 +146,104 @@ export function combatHexacopterPoint(
     placement.position[1] + offset[1],
     placement.position[2] + offset[2],
   ];
+}
+
+/**
+ * ВООРУЖЕНИЕ БЕРЁТСЯ ИЗ АВТОРСКОЙ ГЕОМЕТРИИ, А НЕ ПРИДУМЫВАЕТСЯ РЯДОМ.
+ *
+ * Стволы и трубы на модели уже стоят (`combatHexacopterObject.ts:1401-1453`):
+ * подбородочная спарка из трёх стволов с дульным срезом на z = 3.60 и два
+ * пода по шесть труб с устьями на z = 1.62. Все они НЕПОДВИЖНЫ и смотрят по
+ * оси корпуса — поэтому «стреляет строго вперёд» это не упрощение механики, а
+ * честность к принятой машине.
+ *
+ * Числа здесь дублировать нельзя: расхождение паспорта с моделью означало бы,
+ * что трасса выходит не из ствола. Проверяется тестом по кускам сцены.
+ */
+const CANNON_MUZZLE_Z = 3.6;
+const CANNON_BARRELS: readonly SceneVector3[] = [
+  [0, 0.315, CANNON_MUZZLE_Z],
+  [-0.043, 0.357, CANNON_MUZZLE_Z],
+  [0.043, 0.357, CANNON_MUZZLE_Z],
+];
+
+const POD_MOUTH_Z = 1.62;
+const POD_CENTRE_X = 1.18;
+const POD_TUBE_OFFSETS: readonly (readonly [number, number])[] = [
+  [-0.11, -0.09],
+  [-0.11, 0.09],
+  [0, -0.09],
+  [0, 0.09],
+  [0.11, -0.09],
+  [0.11, 0.09],
+];
+
+function armament(placement: CombatHexacopterPlacement): VehicleArmament {
+  const cannonMounts: WeaponMount[] = CANNON_BARRELS.map((local, index) => ({
+    id: `chin-cannon-barrel-${index}`,
+    muzzle: combatHexacopterPoint(placement, local),
+  }));
+  const tubeMounts: WeaponMount[] = [];
+  for (const side of [-1, 1] as const) {
+    POD_TUBE_OFFSETS.forEach(([dx, dy], index) => {
+      tubeMounts.push({
+        id: `launcher-tube-${side}-${index}`,
+        muzzle: combatHexacopterPoint(placement, [
+          side * POD_CENTRE_X + dx,
+          0.65 + dy,
+          POD_MOUTH_Z,
+        ]),
+      });
+    });
+  }
+  return {
+    cannon: {
+      kind: "cannon",
+      mounts: cannonMounts,
+      // Дальность и темп — общие с ручным пулемётом: это один и тот же
+      // боеприпас, а не «оружие машины» с отдельными числами.
+      range: MG_RANGE,
+      fireInterval: MG_FIRE_INTERVAL,
+      dispersion: 0.012,
+      // Две очереди на удержание. Меньше — машина щёлкает одиночными на
+      // пролёте угла и читается автоматом; больше — не успевает открыть огонь
+      // на быстром проходе.
+      trackingSeconds: 0.22,
+    },
+    rockets: {
+      kind: "podRocket",
+      mounts: tubeMounts,
+      explosive: "podRocket",
+      // Три трубы в рипле: одиночная ракета кольца почти не снимает, а веер из
+      // трёх закрывает ошибку упреждения примерно на ширину цели.
+      rippleSize: 3,
+      rippleInterval: 0.14,
+      reloadSeconds: 2.2,
+      // Ракета — оружие ПОДХОДА, пушка — оружие прохода, поэтому её конверт
+      // длиннее пушечного. Дальше 85 м время полёта переваливает за 0.9 с и
+      // ошибка упреждения растёт быстрее, чем помогает веер.
+      range: 85,
+      // ШАГ ВЕЕРА ПОДБИРАЛСЯ ЗАМЕРОМ И БЫЛ УМЕНЬШЕН ВЧЕТВЕРО.
+      //
+      // Замысел «широкий веер закрывает ошибку упреждения» был верен ровно до
+      // тех пор, пока упреждение бралось пропорциональным контуром и ошибка
+      // держалась в четверть радиана. После подачи темпа линии визирования
+      // вперёд ошибка ушла на порядок, и прежние 0.035 рад (метр на тридцати
+      // метрах) стали РАЗБРАСЫВАТЬ ракеты с выбранного кольца на корпус: 19
+      // снятых кусков и ни одного кольца.
+      //
+      // Теперь это не дробь, а короткая очередь: 0.36 м между ракетами на
+      // тридцати метрах — меньше габарита кольца.
+      rippleSpread: 0.012,
+      // Ворота пуска: трубы неподвижны, значит решение обязано лежать почти на
+      // оси. Три градуса.
+      aimTolerance: 0.052,
+      // Середина рабочего конверта: ближе сведения трубы бьют наружу, дальше —
+      // внутрь, и на краях конверта расхождение остаётся меньше метра.
+      harmonisationRange: 40,
+      armSeconds: 0.35,
+    },
+  };
 }
 
 const localYawThrusters = (): readonly CombatHexacopterYawThruster[] =>
@@ -359,6 +461,7 @@ export function createCombatHexacopterBlueprint(
     yawThrusters,
     proximitySensors: proximitySensors(placement),
     landingStruts: landingStruts(placement),
+    armament: armament(placement),
     envelope: {
       length: COMBAT_HEX_LENGTH,
       width: COMBAT_HEX_WIDTH,

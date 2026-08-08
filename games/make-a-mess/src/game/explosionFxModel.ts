@@ -17,7 +17,7 @@ export interface ExplosionFxLobeInput {
 
 export interface ExplosionFxInput {
   readonly id: number;
-  readonly kind: "grenade" | "rocket" | "lance" | "charge";
+  readonly kind: "grenade" | "rocket" | "lance" | "podRocket" | "charge";
   readonly position: readonly [number, number, number];
   readonly lobes: readonly ExplosionFxLobeInput[];
   readonly dustColor: readonly [number, number, number];
@@ -79,7 +79,7 @@ export interface ExplosionLightPlan {
 }
 
 export const EXPLOSION_LIGHT: Record<
-  "grenade" | "rocket" | "lance" | "charge",
+  "grenade" | "rocket" | "lance" | "podRocket" | "charge",
   ExplosionLightPlan
 > =
   {
@@ -108,6 +108,16 @@ export const EXPLOSION_LIGHT: Record<
       emberLife: 0.7,
       emberFraction: 0.09,
       exposureKick: 0.3,
+    },
+    // Подвесная: вспышка ещё короче и тусклее иглиной. Боевая часть вдвое
+    // легче, и в кадре это должен быть щелчок на кольце, а не событие.
+    podRocket: {
+      peak: 210,
+      distance: 9,
+      life: 0.2,
+      emberLife: 0.5,
+      emberFraction: 0.07,
+      exposureKick: 0.22,
     },
     charge: {
       peak: 920,

@@ -219,6 +219,67 @@ function placedPlan(
   };
 }
 
+/**
+ * CONTROL THE SKIES: СТОРОЖЕВАЯ ОРБИТА ПО ПЕРИМЕТРУ.
+ *
+ * Это не «маршрут для красоты», а рабочее место машины: она ходит по кромке
+ * охраняемого круга и смотрит по касательной. Радиус и высота выведены, а не
+ * выбраны:
+ *
+ *  - РАДИУС 46 м — кромка суши полигона (50 м) минус полугабарит машины и
+ *    запас: сторожить надо периметр, а не летать над ним по центру;
+ *  - ВЫСОТА 26 м — выше высотной волны цели (максимум 30 м на её злом
+ *    маршруте — нет, ровно под ним) и заведомо выше палубы. Взято из
+ *    требования видеть весь круг, а не из вкуса;
+ *  - СКОРОСТЬ 16 м/с — вираж радиусом 46 м требует v²/r = 5.6 м/с² при
+ *    располагаемых 14.5, то есть машина идёт по кругу с большим запасом и
+ *    может сорваться в перехват в любой момент, не сбрасывая ход.
+ *
+ * Орбита замкнута: у неё нет ни захода, ни финала, потому что рейс кончается
+ * не точкой на кривой, а приказом. Возврат на площадку — обычный
+ * `combatHexacopterRangeArrivalPlan`.
+ */
+export const COMBAT_HEXACOPTER_GUARD_RADIUS = 46;
+export const COMBAT_HEXACOPTER_GUARD_ALTITUDE = 26;
+export const COMBAT_HEXACOPTER_GUARD_SPEED = 16;
+
+const guardCircle = createMotionRoute({
+  id: "combat-hexacopter:guard",
+  // Круг считается формулой: шестнадцать узлов с касательными ручками длиной
+  // в треть хорды — так дуга остаётся дугой, а не шестнадцатиугольником.
+  nodes: Array.from({ length: 17 }, (_, index) => {
+    const step = (2 * Math.PI) / 16;
+    const t = index * step;
+    const r = COMBAT_HEXACOPTER_GUARD_RADIUS;
+    const position: SceneVector3 = [r * Math.sin(t), 0, r * Math.cos(t)];
+    const tangent: SceneVector3 = [
+      r * Math.cos(t) * (step / 3),
+      0,
+      -r * Math.sin(t) * (step / 3),
+    ];
+    return {
+      id: index === 0 ? "berth" : index === 16 ? "dock" : `guard-${index}`,
+      position,
+      incoming: [position[0] - tangent[0], 0, position[2] - tangent[2]] as SceneVector3,
+      outgoing: [position[0] + tangent[0], 0, position[2] + tangent[2]] as SceneVector3,
+      samples: 32,
+    };
+  }),
+  measureAxes: [0, 2],
+  markers: { departureComplete: "guard-1", arriving: "guard-15", final: "dock" },
+  requirements: {
+    altitude: () => COMBAT_HEXACOPTER_GUARD_ALTITUDE,
+    speedLimit: () => COMBAT_HEXACOPTER_GUARD_SPEED,
+  },
+});
+
+export function combatHexacopterGuardPlan(berth: SceneVector3): VehicleRoutePlan {
+  return {
+    ...placedPlan(guardCircle, berth, guardCircle.markerProgress("final")),
+    guidanceLookahead: () => 22,
+  };
+}
+
 export function combatHexacopterRangePlan(berth: SceneVector3): VehicleRoutePlan {
   return {
     ...placedPlan(
@@ -264,6 +325,10 @@ export function combatHexacopterRangeEscapePlan(
     altitude: (progress) => berth[1] + input.start[1] + CLEARANCE_ALTITUDE + progress * 12,
     finalFrom: Number.POSITIVE_INFINITY,
   };
+}
+
+export function combatHexacopterGuardPhase(progress: number) {
+  return motionRoutePhase(guardCircle, progress, "departureComplete", "arriving");
 }
 
 export function combatHexacopterRangePhase(progress: number) {
