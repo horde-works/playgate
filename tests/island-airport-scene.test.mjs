@@ -274,10 +274,17 @@ test("terminal fixtures and airfield lights use complete physical carrier chains
     const papi = withId(`:papi:${approach}:`).filter((piece) => piece.id.includes(":base:"));
     assert.equal(papi.length, 4);
     assert.equal(new Set(papi.map((piece) => piece.position[0])).size, 1, `${approach} PAPI is not perpendicular to the runway`);
+    const orderedBulbs = [];
     for (let index = 0; index < 4; index += 1) {
       const bulb = pieceById(`island-airport:airfield-equipment:papi:${approach}:${index}:bulb:piece`);
+      orderedBulbs.push(bulb);
       assert.equal(bulb?.color, index < 2 ? "#f08a80" : "#f4f1e2", `${approach} PAPI has its near/far colors reversed`);
     }
+    assert.ok(
+      Math.abs(orderedBulbs[0].position[2] - AIRPORT_RUNWAY.centreZ) <
+        Math.abs(orderedBulbs[3].position[2] - AIRPORT_RUNWAY.centreZ),
+      `${approach} PAPI indices no longer run from runway-near to outboard`,
+    );
   }
   const activeAirfieldBulbs = authoredObjects.filter((object) =>
     object.kind === "primitive" &&
@@ -285,7 +292,11 @@ test("terminal fixtures and airfield lights use complete physical carrier chains
     object.id.endsWith(":bulb")
   );
   assert.equal(activeAirfieldBulbs.length, 52);
-  assert.ok(activeAirfieldBulbs.every((bulb) => bulb.kind === "primitive" && bulb.light));
+  assert.ok(activeAirfieldBulbs.every((bulb) => {
+    if (bulb.kind !== "primitive" || !bulb.light) return false;
+    return bulb.light.poolGroupId === (bulb.id.startsWith("papi:") ? "airport-papi" : "airport-runway-edge") &&
+      typeof bulb.light.localPoolCapacity === "number";
+  }));
 
   const edgeBase = "island-airport:airfield-equipment:edge:4:1:base:piece";
   const edgeCollapse = islandAirportScene.resolveStructuralCollapse(new Set([edgeBase]));
