@@ -182,14 +182,23 @@ test("программа объявляет ЧЕТЫРЕ фигуры, и все
   assert.equal(plan.figures?.length, 4);
   assert.deepEqual(
     plan.figures.map((station) => station.kind),
-    ["loop", "immelmann", "loop", "immelmann"],
+    ["immelmann", "loop", "loop", "immelmann"],
   );
-  // Петли РАЗНОГО размера: радиус растёт как квадрат хода, и две одинаковые
-  // петли были бы одной, показанной дважды.
-  const [small, , big] = plan.figures;
-  assert.ok(big.speed > small.speed * 1.4, "вторая петля обязана быть заметно шире");
+  // Петли РАЗНОГО размера, и мерить это надо РАДИУСОМ, а не ходом: радиус
+  // растёт как квадрат, поэтому разница в ходе на треть даёт разницу в размере
+  // вдвое. Две одинаковые петли были бы одной, показанной дважды.
+  const loops = plan.figures.filter((station) => station.kind === "loop");
+  const radii = loops.map(
+    (station) => planFlightFigure("loop", station.speed, capability, [0, 1]).radius,
+  );
+  assert.ok(
+    Math.max(...radii) > Math.min(...radii) * 1.5,
+    `петли одного размера: ${radii.map((r) => r.toFixed(0)).join(" и ")} м`,
+  );
   // Петля закрывается в точке входа; иммельман заменяет разворот трассы.
-  assert.equal(small.resumeAt, small.at);
+  for (const station of loops) {
+    assert.equal(station.resumeAt, station.at, station.key);
+  }
   for (const station of plan.figures.filter((s) => s.kind === "immelmann")) {
     assert.ok(
       station.resumeAt > station.at,

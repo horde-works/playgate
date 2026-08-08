@@ -107,6 +107,14 @@ function hairpin(
   entry: readonly [number, number],
   exit: readonly [number, number],
   reach: number,
+  /**
+   * Курс, С КОТОРЫМ машина приходит на вход. Без него генератор выбирает
+   * перпендикуляр вслепую и в половине случаев выпучивает разворот НАЗАД:
+   * замер показал скачок курса с +24° на −90° за один шаг трассы и радиус
+   * кривизны в шесть метров на самом входе. Разворот обязан сперва
+   * продолжить движение, и только потом заворачивать.
+   */
+  heading: readonly [number, number],
   samples = 5,
 ): SceneVector3[] {
   const midX = (entry[0] + exit[0]) / 2;
@@ -114,9 +122,17 @@ function hairpin(
   const acrossX = exit[0] - entry[0];
   const acrossZ = exit[1] - entry[1];
   const across = Math.hypot(acrossX, acrossZ) || 1;
-  // Наружу от середины — перпендикуляр к отрезку «вход-выход».
-  const outX = -acrossZ / across;
-  const outZ = acrossX / across;
+  // Наружу от середины — перпендикуляр к отрезку «вход-выход», и ВПЕРЁД по
+  // курсу входа: из двух перпендикуляров годится тот, что продолжает движение.
+  const forward = Math.hypot(heading[0], heading[1]) || 1;
+  const sign =
+    (-acrossZ / across) * (heading[0] / forward) +
+      (acrossX / across) * (heading[1] / forward) >=
+    0
+      ? 1
+      : -1;
+  const outX = (-acrossZ / across) * sign;
+  const outZ = (acrossX / across) * sign;
   return Array.from({ length: samples }, (_, index) => {
     const t = (index / (samples - 1)) * Math.PI;
     return [
@@ -150,20 +166,24 @@ const circuitNodes: readonly { id: string | null; position: SceneVector3 }[] = [
   //    ход, и на ней же — малая петля: она закрывается в точке входа и трассу
   //    не сбивает.
   namedPoint("departure-complete", 6, 40),
-  namedPoint("loop-small", 14, 72),
-  plainPoint([22, 0, 82]),
+  plainPoint([12, 0, 60]),
+  plainPoint([22, 0, 70]),
   // 2. СЕВЕРНАЯ ШПИЛЬКА — иммельман разворачивает машину на месте вместо дуги.
-  namedPoint("immelmann-north", 30, 96),
-  ...hairpin([30, 96], [-27, 137], 36).slice(1, -1).map(plainPoint),
-  namedPoint("north-rejoin", -27, 137),
+  namedPoint("immelmann-north", 30, 84),
+  ...hairpin([30, 84], [-27, 125], 34, [8, 14]).slice(1, -1).map(plainPoint),
+  namedPoint("north-rejoin", -27, 125),
   // 3. ДЛИННЫЙ ЮЖНЫЙ ГАЛС. Две сотни метров прямой, и большая петля стоит в
   //    ДАЛЬНЕМ его конце, а не сразу за шпилькой: из иммельмана машина выходит
   //    на двадцать шесть метров выше входа и с этой высоты сперва должна
   //    успокоиться. Замер с петлёй сразу после шпильки: машина ныряла с 33 до
   //    12 м, ворота честно отказывали ей в фигуре — «не хватает высоты на
   //    возврат», — и большая петля не показывалась вовсе.
-  plainPoint([-22, 0, 100]),
-  plainPoint([-10, 0, 52]),
+  // Обе петли стоят на ЭТОМ галсе, а не на взлётном луче. Луч занят своим
+  // делом — набрать высоту и ход, — и фигура на нём приходила на пятнадцать
+  // метров ниже трассы: ворота честно отвечали «не хватает высоты на возврат».
+  // Здесь машина уже высокая и уже быстрая, и обе петли получают своё.
+  namedPoint("loop-small", -24, 96),
+  plainPoint([-20, 0, 52]),
   namedPoint("loop-big", -16, 6),
   plainPoint([-22, 0, -50]),
   // 4. ШИРОКАЯ ОРБИТА. Остров и территория за ним целиком, по кромке видимого
@@ -208,7 +228,7 @@ const circuitNodes: readonly { id: string | null; position: SceneVector3 }[] = [
   plainPoint([4, 0, -8]),
   plainPoint([6, 0, 28]),
   namedPoint("immelmann-final", 8, 62),
-  ...hairpin([8, 62], [78, 62], 36).slice(1, -1).map(plainPoint),
+  ...hairpin([8, 62], [78, 62], 36, [2, 34]).slice(1, -1).map(plainPoint),
   namedPoint("final-rejoin", 78, 62),
   plainPoint([44, 0, 40]),
   namedPoint("arrival-shoulder", 4, 26),
@@ -227,10 +247,25 @@ function curvedNode(index: number) {
   const next = circuitNodes[index + 1].position;
   // Катмулл-Ром: ручка — половина хорды соседей. Прежние 0.16 давали почти
   // ломаную со скруглёнными углами, и в небе это читалось изломами луча.
+  //
+  // НО РУЧКА ЗАЖАТА КОРОЧЕ СОСЕДНЕГО ОТРЕЗКА, и это не косметика. Шаг узлов в
+  // программе показа скачет от восьми метров на стыке номеров до сорока внутри
+  // дуги; ручка, взятая от хорды дальних соседей, на коротком отрезке выходит
+  // ДЛИННЕЕ самого отрезка, и кривая закладывает петлю. Замер: радиусы шесть
+  // метров там, где номера сшиты, при разрешённых тридцати метрах в секунду —
+  // это не сложный вираж, это дефект кривой, и проходить его не должен никакой
+  // автопилот.
+  const span: SceneVector3 = [next[0] - previous[0], 0, next[2] - previous[2]];
+  const spanLength = Math.hypot(span[0], span[2]) || 1;
+  const shortest = Math.min(
+    Math.hypot(position[0] - previous[0], position[2] - previous[2]),
+    Math.hypot(next[0] - position[0], next[2] - position[2]),
+  );
+  const handle = Math.min(spanLength * 0.3, shortest * 0.42);
   const tangent: SceneVector3 = [
-    (next[0] - previous[0]) * 0.3,
+    (span[0] / spanLength) * handle,
     0,
-    (next[2] - previous[2]) * 0.3,
+    (span[2] / spanLength) * handle,
   ];
   return {
     id,
@@ -435,7 +470,12 @@ export const combatHexacopterRangeCircuit = createMotionRoute({
  * друга, они показывают, что размер фигуры — свойство входа, а не машины.
  */
 export const COMBAT_HEXACOPTER_FIGURE_SPEED = 16;
-export const COMBAT_HEXACOPTER_BIG_FIGURE_SPEED = 25;
+// Двадцать один, а не двадцать пять: на двадцати пяти радиус выходит 32 м, а
+// провал — 24, и петля просит под собой 33.5 м чистого воздуха. Машина держит
+// маршрутную высоту с постоянным недобором около пятнадцати метров, и ворота
+// честно отказывали фигуре. На двадцати одном радиус 22.5 — по-прежнему в
+// полтора раза шире малой, то есть разница видна, а требование выполнимо.
+export const COMBAT_HEXACOPTER_BIG_FIGURE_SPEED = 21;
 
 /** Годное небо полигона: видимая оболочка мира поднята под эту машину. */
 export const COMBAT_HEXACOPTER_RANGE_SKY = 150;
@@ -454,7 +494,7 @@ export const COMBAT_HEXACOPTER_RANGE_SKY = 150;
  * Проверяется тестом против ЖИВОГО паспорта машины, а не сверкой с самим собой.
  */
 export const COMBAT_HEXACOPTER_FIGURE_FLOOR = 26;
-export const COMBAT_HEXACOPTER_BIG_FIGURE_FLOOR = 44;
+export const COMBAT_HEXACOPTER_BIG_FIGURE_FLOOR = 34;
 const IMMELMANN_FLOOR = 16;
 
 const nodeAt = (id: string) => combatHexacopterRangeCircuit.nodeProgress(id);
@@ -472,6 +512,15 @@ const nodeAt = (id: string) => combatHexacopterRangeCircuit.nodeProgress(id);
  */
 export const combatHexacopterRangeFigures: readonly RouteFigureStation[] = [
   {
+    key: "immelmann-north",
+    kind: "immelmann",
+    at: nodeAt("immelmann-north"),
+    resumeAt: nodeAt("north-rejoin"),
+    speed: COMBAT_HEXACOPTER_FIGURE_SPEED,
+    floor: IMMELMANN_FLOOR,
+    sky: COMBAT_HEXACOPTER_RANGE_SKY,
+  },
+  {
     key: "loop-small",
     kind: "loop",
     at: nodeAt("loop-small"),
@@ -479,15 +528,6 @@ export const combatHexacopterRangeFigures: readonly RouteFigureStation[] = [
     resumeAt: nodeAt("loop-small"),
     speed: COMBAT_HEXACOPTER_FIGURE_SPEED,
     floor: COMBAT_HEXACOPTER_FIGURE_FLOOR,
-    sky: COMBAT_HEXACOPTER_RANGE_SKY,
-  },
-  {
-    key: "immelmann-north",
-    kind: "immelmann",
-    at: nodeAt("immelmann-north"),
-    resumeAt: nodeAt("north-rejoin"),
-    speed: COMBAT_HEXACOPTER_FIGURE_SPEED,
-    floor: IMMELMANN_FLOOR,
     sky: COMBAT_HEXACOPTER_RANGE_SKY,
   },
   {
@@ -549,84 +589,21 @@ function figureApproach(
 }
 
 /**
- * ПОПЕРЕЧНАЯ СПОСОБНОСТЬ, м/с², под которую написан ЭТОТ маршрут.
+ * ХОД В ВИРАЖЕ ТРАССА НЕ СЧИТАЕТ, и это не упущение.
  *
- * Тоннели толкают вдоль носа и в вираже не помогают: боковое ускорение даёт
- * один наклон, `g·tg(34°)`. Число живёт в маршруте, а не в машине, потому что
- * маршрут у этой машины персональный — но и потому, что требование участка
- * обязано быть выполнимым САМО, а не в надежде на чужой governor.
+ * Здесь стояла своя формула `v = √(a·r)` с поперечным ускорением машины,
+ * зашитым в маршрут числом. Она работала — и была в неверном слое дважды.
+ * Во-первых, паспорт машины в требовании трассы мёртв: выбьет винт, наклон
+ * упадёт, а трасса будет по-прежнему разрешать свои 6.6. Во-вторых, сглаживание
+ * назад «под торможение» — это упреждение, а упреждение по определению знает,
+ * откуда машина летит и с какой скоростью; трасса не знает ни того, ни другого.
+ *
+ * Всё это уже есть у автопилота и считается из ЖИВОГО паспорта:
+ * `corneringSpeed` берёт радиус, угол дуги, располагаемое поперечное и допуск
+ * заноса участка, а `pathSpeedCeiling` тормозит заранее. Трассе остаётся
+ * замысел: потолок хода по участкам, рельеф высоты и КОРИДОР — тот самый допуск,
+ * в котором автопилоту разрешено лавировать.
  */
-const RANGE_LATERAL_ACCELERATION = 6.6;
-
-/**
- * ХОД, КОТОРЫЙ РАЗРЕШАЕТ СОБСТВЕННАЯ КРИВИЗНА ТРАССЫ.
- *
- * `v = √(a·r)` — прямо из виража. Считается один раз при сборке по выборке и
- * сглаживается вперёд-назад: тормозить надо ДО поворота, а не в нём.
- *
- * Это заменяет полосы, написанные от руки. Замер показал, чего они стоили: 452
- * участка, где трасса круче, чем машина физически проходит, шпильки с радиусом
- * в три метра при разрешённых тридцати метрах в секунду, и уход от трассы на
- * 61.9 м. Шпильку машина проходит медленно — а фигура проходит её быстро и на
- * месте, и в этом вся разница между «трасса требует невозможного» и «трасса
- * требует того, что умеет фигура».
- */
-function curvatureSpeedProfile(
-  route: MotionRouteArtifact,
-  samples = 900,
-): (progress: number) => number {
-  // База в четырнадцать метров, а не в шесть: на короткой базе кривизна ловит
-  // дрожь сплайна у каждого узла, и профиль глушил машину до десяти метров в
-  // секунду на всём круге. Меряется поворот трассы, а не рябь её параметризации.
-  const step = 14 / route.length;
-  const raw = Array.from({ length: samples + 1 }, (_, index) => {
-    const progress = index / samples;
-    const before = route.point(Math.max(0, progress - step));
-    const here = route.point(progress);
-    const after = route.point(Math.min(1, progress + step));
-    const first: readonly [number, number] = [
-      here[0] - before[0],
-      here[2] - before[2],
-    ];
-    const second: readonly [number, number] = [
-      after[0] - here[0],
-      after[2] - here[2],
-    ];
-    const lengths = Math.hypot(...first) * Math.hypot(...second);
-    if (lengths < 1e-9) return Number.POSITIVE_INFINITY;
-    const cross = first[0] * second[1] - first[1] * second[0];
-    const turn = Math.abs(
-      Math.asin(Math.max(-1, Math.min(1, cross / lengths))),
-    );
-    if (turn < 1e-6) return Number.POSITIVE_INFINITY;
-    const radius = (Math.hypot(...first) + Math.hypot(...second)) / 2 / turn;
-    // Пол — причальный ход: ниже него трасса не ограничивает никогда, иначе
-    // одиночный выброс кривизны останавливал бы машину посреди круга.
-    return Math.max(9, Math.sqrt(RANGE_LATERAL_ACCELERATION * radius));
-  });
-  // Торможение успевает: ограничение расползается назад по трассе настолько,
-  // насколько машине нужно пути, чтобы сбросить ход. Вперёд — вдвое короче:
-  // разгоняться она умеет тоннелями и быстрее, чем тормозить наклоном.
-  const spread = Math.ceil((55 / route.length) * samples);
-  const eased = raw.slice();
-  for (let pass = samples; pass >= 0; pass -= 1) {
-    for (let back = 1; back <= spread && pass - back >= 0; back += 1) {
-      const reachable = eased[pass] + RANGE_LATERAL_ACCELERATION * 0.06 * back;
-      if (reachable < eased[pass - back]) eased[pass - back] = reachable;
-    }
-  }
-  // ЧИТАЕТСЯ ИНТЕРПОЛЯЦИЕЙ, а не округлением к выборке. Округление превращает
-  // профиль в лестницу из девятисот ступенек: governor гонится за каждой, а
-  // лента маршрута читает каждую как ворота — замер дал сорок девять ворот
-  // вместо пяти.
-  return (progress: number) => {
-    const at = Math.min(samples, Math.max(0, progress * samples));
-    const low = Math.floor(at);
-    const high = Math.min(samples, low + 1);
-    return eased[low] + (eased[high] - eased[low]) * (at - low);
-  };
-}
-
 function placedPlan(
   route: MotionRouteArtifact,
   berth: SceneVector3,
@@ -735,8 +712,6 @@ export function combatHexacopterGuardPlan(berth: SceneVector3): VehicleRoutePlan
   };
 }
 
-const rangeCurvatureSpeed = curvatureSpeedProfile(combatHexacopterRangeCircuit);
-
 export function combatHexacopterRangePlan(berth: SceneVector3): VehicleRoutePlan {
   const placed = placedPlan(
     combatHexacopterRangeCircuit,
@@ -766,6 +741,23 @@ export function combatHexacopterRangePlan(berth: SceneVector3): VehicleRoutePlan
   return {
     ...placed,
     figures: combatHexacopterRangeFigures,
+    // ДОПУСК — СВОЙСТВО УЧАСТКА, и на фигурном участке он широкий.
+    //
+    // Там, где трасса объявляет фигуру, она объявляет и манёвр, который простой
+    // автопилот выполнить не может: шпильку в тридцать четыре метра радиусом
+    // машина без иммельмана обходит широко, и это не промах, а честная разница
+    // между «развернуться на месте» и «обойти дугой». Высота там маршрутная,
+    // до земли и до соседей далеко — цена ширины нулевая, а требовать точности
+    // значило бы требовать невозможного и звать это отказом.
+    corridor: (progress) => {
+      const approach = figureApproach(progress);
+      const base = placed.corridor?.(progress) ?? 30;
+      if (!approach) return base;
+      // Но СТОЛБ У ЗЕМЛИ шире не становится никогда: там точность — вопрос
+      // столкновения, а не красоты, и никакая фигура его не отменяет.
+      if (base < 30) return base;
+      return Math.max(base, 30 + 40 * approach!.weight);
+    },
     altitude,
     point(progress) {
       const point = placed.point(progress);
@@ -773,10 +765,7 @@ export function combatHexacopterRangePlan(berth: SceneVector3): VehicleRoutePlan
     },
     speedLimit: (progress) => {
       const approach = figureApproach(progress);
-      const open = Math.min(
-        placed.speedLimit(progress),
-        rangeCurvatureSpeed(progress),
-      );
+      const open = placed.speedLimit(progress);
       if (!approach) return open;
       // Ход снимается ПЛАВНО к фигурному: скачок ограничения governor читает
       // как торможение в пол, а лента — как ворота.
