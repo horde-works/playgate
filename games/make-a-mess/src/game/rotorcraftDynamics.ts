@@ -48,6 +48,40 @@ export interface RotorcraftDemand {
    * в «с какой скоростью доворачивать», а этот — в перекос реактивных моментов.
    */
   readonly yaw: number;
+  /**
+   * ПОЗА ЦЕЛИКОМ, кватернионом мира. Необязательна — и в этом всё дело.
+   *
+   * Обычно поза у коптера не задаётся, а ВЫВОДИТСЯ: `tan θ = a/g`, потому что
+   * единственный способ поехать вбок — наклонить вектор тяги. Пока машина
+   * держит горизонт, это верно и удобно.
+   *
+   * Но это же и есть тот самый «рудимент углов». Вывод позы из ускорения
+   * означает, что просить позу НЕЛЬЗЯ: нельзя лететь ногами вперёд, нельзя
+   * встать носом в зенит, нельзя перевернуться. Причём мешает не машина —
+   * микшер решает тягу и все три момента одной задачей на выпуклом множестве и
+   * ни про какие пределы наклона не знает, — мешает ровно эта строчка перед ним.
+   *
+   * Поэтому поза становится ВХОДОМ. Если она задана:
+   *   - предел наклона не применяется вовсе: его смысл был в том, чтобы вывод
+   *     из ускорения не съел вертикаль, а здесь выводить нечего;
+   *   - `collective` читается как тяга ВДОЛЬ ОСИ МАШИНЫ в долях веса, а не как
+   *     удержание мировой вертикали. Вверх ногами вторая трактовка не просто
+   *     неточна, она бессмысленна: делить на косинус наклона, ушедший в минус,
+   *     значит просить тягу в противоположную сторону;
+   *   - ошибка считается кватернионом, а не парой углов. В петле тангаж
+   *     проходит через 180°, где параметризация «тангаж-крен» вырождается.
+   *
+   * Продольная тяга тоннелей при этом продолжает работать по `forward`: у
+   * машины, стоящей носом в зенит, они просто становятся вертикальными
+   * движителями. Для аллокатора это ничего не меняет — он и так складывает
+   * силы, а не углы.
+   */
+  readonly attitude?: readonly [number, number, number, number] | null;
+  /**
+   * УПРЕЖДАЮЩИЙ ТЕМП заданной позы, рад/с, в МИРОВЫХ осях. Без него контур
+   * держит позу, но не вращается: см. `rotorcraftAttitudeMoment`.
+   */
+  readonly attitudeRate?: SceneVector3 | null;
 }
 
 /** Углы, которые из этого следуют. Их и отрабатывает контур угловой скорости. */
@@ -89,6 +123,92 @@ export function rotorcraftAttitudeTarget(
   return {
     pitch: Math.asin(Math.max(-1, Math.min(1, forward / length))),
     roll: Math.asin(Math.max(-1, Math.min(1, lateral / length))),
+  };
+}
+
+/** Ошибка позы, разложенная по осям КОРПУСА в знаках этого модуля. */
+export interface RotorcraftAttitudeError {
+  /** Плюс — нос надо опустить (тот же знак, что у `pitchDown`). */
+  readonly pitch: number;
+  /** Плюс — правый борт надо опустить. */
+  readonly roll: number;
+  /** Плюс — нос надо довернуть вправо вокруг ОСИ КОРПУСА. */
+  readonly yaw: number;
+  /** Полный угол ошибки, рад. Наружу — для телеметрии и ворот. */
+  readonly angle: number;
+}
+
+/**
+ * ОШИБКА ПОЗЫ КВАТЕРНИОНОМ, а не разностью углов.
+ *
+ * Разность углов работает, пока углы малы. Кватернион работает всегда — и это
+ * не педантизм: в петле тангаж проходит 90°, где «тангаж-крен» вырождается
+ * (крен и рыскание становятся одной осью), и контур на разности углов в этой
+ * точке теряет управление ровно тогда, когда оно нужнее всего.
+ *
+ * Считается кратчайший поворот из фактической позы в заказанную и раскладывается
+ * по трём осям КОРПУСА. Раскладка точна для малой ошибки и остаётся правильным
+ * ЗАКОНОМ для большой: она ведёт машину по геодезической, то есть кратчайшим
+ * путём, а не по сумме трёх независимых доворотов.
+ */
+/**
+ * Разложение МИРОВОГО вектора вращения по осям корпуса в знаках этого модуля.
+ * Одна функция на ошибку позы и на упреждающий темп — иначе они разъедутся.
+ */
+export function rotorcraftBodyRotation(
+  rotation: SceneVector3,
+  actual: readonly [number, number, number, number],
+  nose: SceneVector3,
+): { readonly pitch: number; readonly roll: number; readonly yaw: number } {
+  const noseLength = Math.hypot(nose[0], nose[2]) || 1;
+  const noseFlat: SceneVector3 = [nose[0] / noseLength, 0, nose[2] / noseLength];
+  const forwardWorld = rotateByQuaternion(actual, noseFlat);
+  const starboardWorld = rotateByQuaternion(actual, [
+    noseFlat[2],
+    0,
+    -noseFlat[0],
+  ]);
+  const upWorld = rotateByQuaternion(actual, [0, 1, 0]);
+  return {
+    pitch: dot(rotation, starboardWorld),
+    roll: -dot(rotation, forwardWorld),
+    yaw: dot(rotation, upWorld),
+  };
+}
+
+export function rotorcraftAttitudeError(
+  commanded: readonly [number, number, number, number],
+  actual: readonly [number, number, number, number],
+  nose: SceneVector3,
+): RotorcraftAttitudeError {
+  // qe = commanded · conj(actual): поворот в МИРОВЫХ осях, переводящий
+  // фактическую позу в заказанную.
+  const [cx, cy, cz, cw] = commanded;
+  const [ax, ay, az, aw] = actual;
+  let ex = cw * -ax + cx * aw + cy * -az - cz * -ay;
+  let ey = cw * -ay - cx * -az + cy * aw + cz * -ax;
+  let ez = cw * -az + cx * -ay - cy * -ax + cz * aw;
+  let ew = cw * aw - cx * -ax - cy * -ay - cz * -az;
+  // Кратчайшая сторона: у кватерниона два представления одного поворота, и
+  // второе крутит машину длинным путём на 360° минус нужное.
+  if (ew < 0) {
+    ex = -ex;
+    ey = -ey;
+    ez = -ez;
+    ew = -ew;
+  }
+  const sine = Math.hypot(ex, ey, ez);
+  const angle = 2 * Math.atan2(sine, ew);
+  if (sine < 1e-9) {
+    return { pitch: 0, roll: 0, yaw: 0, angle: 0 };
+  }
+  const scale = angle / sine;
+  // Оси корпуса — те же, что мерит контур: борт этого модуля (nz, −nx), а не
+  // проектный. Знаки взяты из `pitchDown`/`rollStarboardDown`, чтобы ошибку и
+  // фактический угол негде было развести.
+  return {
+    ...rotorcraftBodyRotation([ex * scale, ey * scale, ez * scale], actual, nose),
+    angle,
   };
 }
 
@@ -838,6 +958,16 @@ const ROTOR_COLLECTIVE_CEILING = 0.85;
  */
 export const ROTORCRAFT_YAW_RATE_GAIN = 2.4;
 
+/**
+ * Жёсткость курсового канала, когда курс приходит из ЗАДАННОЙ ПОЗЫ: ошибка
+ * угла → потребный темп. Мягче, чем у крена с тангажом, ровно потому же,
+ * почему мягок и сам канал: реактивный момент в разы слабее моментного, и
+ * просить у него резкости — значит съесть запас оборотов, которым держится
+ * поза. В фигуре это особенно важно: курс там меняется САМ, как следствие
+ * вращения по тангажу, и догонять его отдельно не нужно.
+ */
+export const ROTORCRAFT_ATTITUDE_YAW_GAIN = 1.6;
+
 
 // ---------------------------------------------------------------------------
 // ВНЕШНИЙ КОНТУР И САМОНАСТРОЙКА ПОД РАЗВЕСОВКУ
@@ -970,12 +1100,26 @@ export function rotorcraftAttitudeMoment(
   actual: number,
   rate: number,
   inertia: number,
+  /**
+   * УПРЕЖДАЮЩИЙ ТЕМП, рад/с. Ноль — «стой в этом угле», и это верно для всей
+   * маршрутной жизни машины.
+   *
+   * Для фигуры — неверно. Пропорциональный контур по построению отстаёт: чтобы
+   * держать вращение ω, ему нужна ПОСТОЯННАЯ ошибка `ω·k_d/k_p`, и у этой
+   * машины на петлевом темпе это шестьдесят градусов. Замер показал ровно это:
+   * поза отставала на 18° при поводке в 18°, петля вместо тринадцати метров
+   * радиуса вышла семьдесят, скорость с 16 разогналась до 53 м/с, а фигура
+   * заняла тринадцать секунд вместо пяти. Ту же болезнь и тем же лекарством
+   * лечили в прицеливании: пропорция не следит за движущимся, следит
+   * упреждение. Здесь демпфер гасит не темп, а РАСХОЖДЕНИЕ темпов.
+   */
+  wantedRate = 0,
   stiffness = 6,
   // Слегка передемпфировано: критическое для этой жёсткости — 4.9, и меньшее
   // значение даёт заброс угла за паспортный предел наклона.
   damping = 5.2,
 ): number {
-  return inertia * (stiffness * (target - actual) - damping * rate);
+  return inertia * (stiffness * (target - actual) - damping * (rate - wantedRate));
 }
 
 // ---------------------------------------------------------------------------
@@ -1265,10 +1409,27 @@ export function rotorcraftForces(
   // машине это разные оси, и перепутать их — значит держать курс тем сильнее
   // мимо, чем резче манёвр.
   const yawRate = dot(state.angularVelocity, up);
+
+  // ПОЗА ЗАДАНА — ЗНАЧИТ, ОНА И ЕСТЬ ЗАДАНИЕ, а не следствие ускорения.
+  const commandedAttitude = demand.attitude
+    ? rotorcraftAttitudeError(demand.attitude, state.orientation, machine.nose)
+    : null;
+
   // Контур угловой скорости рыскания. Внутрь идёт скорость, а не угол: курс
-  // держит внешний контур, здесь только его отработка.
+  // держит внешний контур, здесь только его отработка. С заданной позой курс
+  // приходит из НЕЁ: держать его отдельно было бы вторым мнением о том же.
+  const wantedYawRate = commandedAttitude
+    ? ROTORCRAFT_ATTITUDE_YAW_GAIN * commandedAttitude.yaw +
+      (demand.attitudeRate
+        ? rotorcraftBodyRotation(
+            demand.attitudeRate,
+            state.orientation,
+            machine.nose,
+          ).yaw
+        : 0)
+    : demand.yaw;
   const wantedYawMoment =
-    machine.inertia[1] * ROTORCRAFT_YAW_RATE_GAIN * (demand.yaw - yawRate);
+    machine.inertia[1] * ROTORCRAFT_YAW_RATE_GAIN * (wantedYawRate - yawRate);
 
   // РАЗДЕЛ МОМЕНТА МЕЖДУ ДВУМЯ ОРГАНАМИ.
   //
@@ -1310,11 +1471,18 @@ export function rotorcraftForces(
     lateral: demand.lateral,
   };
 
-  const requestedTarget = rotorcraftAttitudeTarget(
-    tiltDemand,
-    machine.maximumTilt,
-    gravity,
-  );
+  // Заданная поза переводится в ТОТ ЖЕ вид, в котором живёт контур: «куда
+  // довернуть от нынешнего». Тогда весь тракт ниже — моменты, микшер, поиск
+  // ближайшей выполнимой позы — остаётся дословно прежним, а на ровном полёте
+  // обе ветки совпадают до числа. Предел наклона к заданной позе не
+  // применяется: он ограничивал ВЫВОД угла из ускорения, а здесь выводить
+  // нечего.
+  const requestedTarget = commandedAttitude
+    ? {
+        pitch: pitchDown + commandedAttitude.pitch,
+        roll: rollStarboardDown + commandedAttitude.roll,
+      }
+    : rotorcraftAttitudeTarget(tiltDemand, machine.maximumTilt, gravity);
 
   // Общий газ держит ВЕС, а не «долю мощности»: наклон забирает вертикаль,
   // поэтому на манёвре его приходится добирать. Отсюда и связанность, которой
@@ -1329,7 +1497,14 @@ export function rotorcraftForces(
   //
   // Значит причина просадок не здесь, и лечить её надо там, где она есть, а не
   // компенсацией с обратным знаком.
-  const tiltCosine = Math.max(0.35, up[1]);
+  //
+  // С ЗАДАННОЙ ПОЗОЙ ДЕЛИТЬ НЕ НА ЧТО. Деление на косинус — это удержание
+  // МИРОВОЙ вертикали: «дай столько, чтобы вертикальная проекция равнялась
+  // весу». У перевёрнутой машины такой проекции нет вовсе, и пол в 0.35 не
+  // спасает — он превращает просьбу в тройную тягу, направленную вниз.
+  // Поэтому при заданной позе `collective` читается как тяга ВДОЛЬ ОСИ
+  // МАШИНЫ в долях веса, и на ровном полёте это то же самое число.
+  const tiltCosine = commandedAttitude ? 1 : Math.max(0.35, up[1]);
   const wantedThrust =
     (machine.mass * gravity * (1 + demand.collective)) / tiltCosine;
   // ЗАПАС ОБОРОТОВ — ЭТО ЗАПАС УПРАВЛЯЕМОСТИ, и держать его должна автоматика,
@@ -1364,6 +1539,16 @@ export function rotorcraftForces(
       : 0,
   );
 
+  // Упреждающий темп есть только у заданной позы: маршрутный полёт просит
+  // УГОЛ и стоять в нём, а фигура — вращение, и это разные задачи.
+  const wantedRates =
+    commandedAttitude && demand.attitudeRate
+      ? rotorcraftBodyRotation(
+          demand.attitudeRate,
+          state.orientation,
+          machine.nose,
+        )
+      : null;
   const momentsFor = (target: {
     readonly pitch: number;
     readonly roll: number;
@@ -1376,6 +1561,7 @@ export function rotorcraftForces(
         pitchDown,
         pitchRate,
         machine.inertia[2],
+        wantedRates?.pitch ?? 0,
       ) + machine.inertia[2] * trim.pitch,
     roll:
       rotorcraftAttitudeMoment(
@@ -1383,6 +1569,7 @@ export function rotorcraftForces(
         rollStarboardDown,
         rollRate,
         machine.inertia[0],
+        wantedRates?.roll ?? 0,
       ) + machine.inertia[0] * trim.roll,
   });
   const allocate = (target: {
@@ -1797,6 +1984,15 @@ export interface RotorcraftRequest {
    * по рысканью съело всю власть по курсу и увело машину на 6232 м от трассы.
    */
   readonly pathAcceleration?: readonly [number, number, number];
+  /**
+   * ЗАДАННАЯ ПОЗА. Пока её нет, машина летает как обычный коптер: поза
+   * выводится из ускорения. Как только она появилась, задание меняется
+   * местами — поза приходит сверху, а ход остаётся ходом ВДОЛЬ НОСА, только
+   * нос теперь трёхмерный, и «вдоль носа» вполне может означать «вверх».
+   */
+  readonly attitude?: readonly [number, number, number, number] | null;
+  /** Темп вращения заданной позы, рад/с, в мировых осях. */
+  readonly attitudeRate?: SceneVector3 | null;
 }
 
 export interface RotorcraftFlightStep {
@@ -1831,7 +2027,22 @@ export function rotorcraftFlightStep(
   const nz = forwardWorld[2] / flat;
   // Ход РАСКЛАДЫВАЕТСЯ ПО НОСУ, а не берётся модулем: машина, летящая боком,
   // должна видеть это как снос, иначе она примет его за ход вперёд.
-  const forwardSpeed = state.velocity[0] * nx + state.velocity[2] * nz;
+  // В ФИГУРЕ НОС ТРЁХМЕРЕН, и горизонтальная проекция перестаёт его описывать.
+  //
+  // Обычно ход меряется по проекции носа на землю — и это верно, пока машина
+  // держит горизонт. У машины, вставшей носом в зенит, проекция вырождается в
+  // ноль: `flat` спасает деление, но не смысл, и контур скорости начинает
+  // читать вертикальный ход как боковой снос. Поэтому при заданной позе ход
+  // берётся вдоль НАСТОЯЩЕЙ оси носа, а снос — вдоль настоящего борта.
+  const figureAttitude = request.attitude ?? null;
+  const starboardWorld = rotateByQuaternion(state.orientation, [
+    noseFlat[2],
+    0,
+    -noseFlat[0],
+  ]);
+  const forwardSpeed = figureAttitude
+    ? dot(state.velocity, forwardWorld)
+    : state.velocity[0] * nx + state.velocity[2] * nz;
   // ПРАВЫЙ БОРТ — ПО СОГЛАШЕНИЮ ПРОЕКТА, а не по внутреннему соглашению этого
   // модуля, и разница здесь не косметическая.
   //
@@ -1849,7 +2060,9 @@ export function rotorcraftFlightStep(
   //
   // Поэтому снаружи этой функции борт ВСЕГДА проектный, а разворот знака живёт
   // здесь, в единственном месте, и больше нигде.
-  const lateralSpeed = state.velocity[2] * nx - state.velocity[0] * nz;
+  const lateralSpeed = figureAttitude
+    ? -dot(state.velocity, starboardWorld)
+    : state.velocity[2] * nx - state.velocity[0] * nz;
   // Предел разгона у машины с тоннелями больше наклонного, и внешний контур
   // обязан это знать: иначе он сам зажимает просьбу цифрой обычного коптера, и
   // вся прямая тяга простаивает при формально исправном аппарате.
@@ -1916,6 +2129,8 @@ export function rotorcraftFlightStep(
         -maximumYawRate,
         Math.min(maximumYawRate, request.yawRate),
       ),
+      attitude: figureAttitude,
+      attitudeRate: request.attitudeRate ?? null,
     },
     trim,
   );
@@ -1941,12 +2156,19 @@ export function rotorcraftFlightStep(
     Math.abs(result.yawRate) < maximumYawRate;
   return {
     forces: result.forces,
-    trim: advanceRotorcraftTrim(
-      trim,
-      { pitch: result.pitchError, roll: result.rollError },
-      { pitch: result.pitchRate, roll: result.rollRate },
-      deltaSeconds,
-    ),
+    // ФИГУРА НИЧЕМУ НЕ УЧИТ. Триммер существует, чтобы выучить перекос груза:
+    // «висим ровно, а винты держат разную тягу». Ошибка позы в фигуре — не
+    // перекос, а само задание, и копить её значит выучить, что машина всегда
+    // должна крутиться. Ворота по угловой скорости этого не ловят: на входе в
+    // фигуру вращение ещё нулевое, а ошибка уже во весь оборот.
+    trim: figureAttitude
+      ? trim
+      : advanceRotorcraftTrim(
+          trim,
+          { pitch: result.pitchError, roll: result.rollError },
+          { pitch: result.pitchRate, roll: result.rollRate },
+          deltaSeconds,
+        ),
     result: {
       ...result,
       limits: cappedByPolicy

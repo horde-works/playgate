@@ -3,30 +3,59 @@ import test from "node:test";
 import {
   FIGURE_MINIMUM_AUTHORITY,
   FIGURE_MINIMUM_SPEED,
+  FIGURE_ROLL_COLLECTIVE,
+  figureAngularShare,
+  figureCapabilityOf,
   figureNoseDirection,
   figureRadius,
   flightFigureVerdict,
+  halfTurnSeconds,
   invertedRecoveryHeight,
   planFlightFigure,
 } from "../games/make-a-mess/src/game/flightFigures.ts";
 import { rotateVector } from "../games/make-a-mess/src/game/clusterDynamics.ts";
 import { airVehicles } from "../games/make-a-mess/src/game/airVehicles.ts";
+import { compileSceneGroups } from "../games/make-a-mess/src/content/scenes/compileScene.ts";
+import { createCombatHexacopterPrototypeDocument } from "../games/make-a-mess/src/content/scenes/combatHexacopterPrototypeDocument.ts";
+import { COMBAT_HEXACOPTER_RANGE_PLACEMENT } from "../games/make-a-mess/src/game/combatHexacopter.ts";
+import { createMachine } from "./rotorcraft-rig.mjs";
 
 const g = 9.81;
 const rax = airVehicles.find((entry) => entry.id === "combat-hexacopter");
 const T = rax.flight.liftReserve;
 
-/** Способности RAX в величинах фигуры — выводятся из паспорта, не задаются. */
-const capability = {
-  uprightCentripetal: (T - 1) * g,
-  invertedCentripetal: (T + 1) * g,
-  // Момент половиной колец, делённый на инерцию: 472/19.7 и 207/19.7.
-  rollAcceleration: 24.01,
-  pitchAcceleration: 10.53,
-};
+/**
+ * Способности RAX в величинах фигуры — СНИМАЮТСЯ С СОБРАННОЙ МАШИНЫ.
+ *
+ * Не из констант теста: инерции и плечи живут в скомпилированной сцене, и
+ * задавать их числом здесь значило бы проверять договорённость теста с самим
+ * собой. Первая редакция так и делала — и несла в паспорте пиковый темп вместо
+ * ускорения.
+ */
+const capability = figureCapabilityOf(
+  createMachine({
+    pieces: compileSceneGroups(
+      createCombatHexacopterPrototypeDocument(COMBAT_HEXACOPTER_RANGE_PLACEMENT),
+      new Map(),
+    ).clusters[0].pieces,
+    vehicle: rax,
+    startPoint: [0, 60, 0],
+    startVelocity: [0, 0, 0],
+    startNose: [1, 0, 0],
+  }).machine,
+);
 const NOSE = [0, 1];
 
-test("перевёрнутая тяга помогает: наверху располагаемое ВТРОЕ больше, чем внизу", () => {
+test("способности выведены из паспорта и совпадают с прямым счётом по нему", () => {
+  assert.ok(Math.abs(capability.uprightCentripetal - (T - 1) * g) < 1e-9);
+  assert.ok(Math.abs(capability.invertedCentripetal - (T + 1) * g) < 1e-9);
+  // Момент половиной колец, делённый на инерцию. Числа не задаются, а
+  // фиксируются: их изменение означает, что изменилась машина.
+  assert.ok(Math.abs(capability.rollAcceleration - 24.02) < 0.05, `${capability.rollAcceleration}`);
+  assert.ok(Math.abs(capability.pitchAcceleration - 10.53) < 0.05, `${capability.pitchAcceleration}`);
+});
+
+test("перевёрнутая тяга помогает: наверху располагаемое ПОЛУТОРАКРАТНО больше", () => {
   // Это не свойство модуля, а свойство винта, который толкает в одну сторону.
   // Вверх ногами тяга смотрит к центру петли и складывается с весом.
   assert.ok(
@@ -165,19 +194,33 @@ test("фигура ПРОПУСКАЕТСЯ, если её нечем закон
 
   const lowGround = flightFigureVerdict(
     plan,
-    { ...goodGate, heightAboveGround: 0.2 },
+    { ...goodGate, heightAboveGround: 2 },
     capability,
   );
   assert.equal(lowGround.flyable, false);
   assert.match(lowGround.reason, /высот/);
 });
 
+test("власть по крену считается ПО ГАЗУ, а не по паспортному пределу", () => {
+  // Паспортный предел снят при среднем газе в половину резерва. На газе
+  // возврата его столько, сколько разрешает разнотяг: кольцу некуда ниже нуля.
+  const share = figureAngularShare(capability, FIGURE_ROLL_COLLECTIVE);
+  assert.ok(share < 0.35, `доступно ${share.toFixed(3)} предельного`);
+  // Больше газа — больше власти, и строго монотонно.
+  assert.ok(figureAngularShare(capability, 2) > share);
+  // Полубочка на этой доле идёт заметно дольше паспортной.
+  const honest = halfTurnSeconds(capability.rollAcceleration * share);
+  const naive = halfTurnSeconds(capability.rollAcceleration);
+  assert.ok(honest > naive * 1.7, `${honest.toFixed(2)} против ${naive.toFixed(2)} с`);
+});
+
 test("высота на возврат из перевёрнутого — величина, а не догадка", () => {
   const height = invertedRecoveryHeight(capability);
-  // Полбочки на выравнивание плюс гашение набранной вертикальной скорости.
-  // У этой машины это единицы метров — то есть угловой порог в 36° крена
-  // защищает от того, что откатывается за пару метров.
-  assert.ok(height > 1 && height < 6, `${height.toFixed(2)} м`);
+  // Полбочки на выравнивание плюс гашение набранной вертикальной скорости, и
+  // полбочки — по власти, которая ЕСТЬ вверх ногами. Через паспортный предел
+  // выходило 1.7 м, и это была та же ошибка, что раньше дала 0.42: расчёт по
+  // способности, которой на этом режиме у машины нет.
+  assert.ok(height > 9 && height < 15, `${height.toFixed(2)} м`);
   // И она обязана считаться от УСКОРЕНИЯ: вдвое более резвая машина
   // возвращается заметно дешевле.
   const brisk = invertedRecoveryHeight({ ...capability, rollAcceleration: 48 });
