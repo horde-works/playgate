@@ -28,6 +28,11 @@ import {
   vehicleRouteAltitudeTarget,
 } from "../games/make-a-mess/src/game/vehicleFrames.ts";
 import {
+  assessVehicleTrajectory,
+  requestedVehicleTrajectoryMode,
+} from "../games/make-a-mess/src/game/vehicleTrajectoryCorrection.ts";
+import { vehicleGuidanceEnvelope } from "../games/make-a-mess/src/game/vehicleGuidanceEnvelope.ts";
+import {
   advanceVehicleFailureWatchdog,
   createVehicleFailureWatchdog,
   vehicleFailureEnvelopeFor,
@@ -109,9 +114,29 @@ function flyCircuit({ seconds, stations = plan.figures }) {
   // доказывал «долетела», а живой полёт кончался снятием: маршрут выводил
   // машину за конверт позы и высоты, и увидеть это было нечем.
   const envelope = vehicleFailureEnvelopeFor(m.flight);
+  // КОРРЕКТОР ТРАЕКТОРИИ — ТОЖЕ ЧАСТЬ РАНТАЙМА, И СТЕНД ОБЯЗАН ЕГО СПРАШИВАТЬ.
+  //
+  // Он вмешивается раньше сторожа: увидев возмущение, объявляет `stabilizing`,
+  // подменяет активный план своим — а у плана коррекции фигур нет, и слой фигур
+  // выключается целиком. Стенд, который его не спрашивал, летел программу,
+  // которой в игре не было: четыре петли из шести, обе разворачивающие фигуры
+  // не показаны, машина «приседает» после каждой.
+  //
+  // И строится он С ПАСПОРТНЫМИ ПОПРАВКАМИ, как в рантайме. Без них порог
+  // возмущения общий — 0.62 рад/с по рысканию, — а эта машина разворачивается
+  // на месте со скоростью 0.66: любой её полноценный разворот объявлялся бы
+  // потерей управления по построению. Паспорт поднимает порог до 1.3.
+  const guidanceEnvelope = vehicleGuidanceEnvelope(
+    envelope,
+    m.flight.approach,
+    m.flight.limits,
+    m.flight.guidance,
+  );
   let watchdog = createVehicleFailureWatchdog(0);
   let failure = null;
   let failedAt = null;
+  let seized = null;
+  const wouldSeize = [];
   for (let step = 0; step < seconds * 60; step += 1) {
     const centre = centreOf(m);
     const nose = forwardAxis(m);
@@ -203,6 +228,44 @@ function flyCircuit({ seconds, stations = plan.figures }) {
       lift: lastGuidance?.liftFraction ?? 0,
       vy: m.state.velocity[1],
     });
+    // ВМЕШАЛСЯ БЫ КОРРЕКТОР? Спрашивается тем же вопросом и на тех же данных,
+    // что в рантайме. Если да — в игре машина в этот момент теряет фигуру.
+    const mode = requestedVehicleTrajectoryMode(
+      assessVehicleTrajectory(
+        plan,
+        progress,
+        {
+          position: live,
+          orientation: m.state.orientation,
+          velocity: m.state.velocity,
+          angularVelocity: m.state.angularVelocity,
+        },
+        m.vehicle.nose,
+        { ...m.model, engineAvailability: m.feedback },
+        guidanceEnvelope,
+      ),
+    );
+    // Рантайм не пускает корректор в идущую фигуру, и стенд обязан считать так
+    // же. Но случай ЗАПОМИНАЕТСЯ отдельно: он и есть доказательство механизма —
+    // без защиты машина теряла бы номер ровно здесь.
+    const event = {
+      mode,
+      progress,
+      seconds: step / 60,
+      figure: figures.station?.key ?? null,
+      tiltRate: Math.hypot(m.state.angularVelocity[0], m.state.angularVelocity[2]),
+      yawRate: Math.abs(m.state.angularVelocity[1]),
+    };
+    if (mode !== "authoredRoute") {
+      if (figures.episode) {
+        if (!wouldSeize.some((x) => x.figure === event.figure)) {
+          wouldSeize.push(event);
+        }
+      } else if (!seized) {
+        seized = event;
+      }
+    }
+
     // Конверт проверяется на СЫРЫХ отклонениях. Рантайм судит по остатку,
     // который наведение уже не вытянет, и он всегда меньше сырого: стенд,
     // проходящий по сырому, проходит и по нему.
@@ -268,7 +331,7 @@ function flyCircuit({ seconds, stations = plan.figures }) {
     }
     if (progress >= 0.9995 && Math.hypot(...m.state.velocity) < 0.6) break;
   }
-  return { events, track, progress, machine: m, failure, failedAt };
+  return { events, track, progress, machine: m, failure, failedAt, seized, wouldSeize };
 }
 
 test("программа объявляет ШЕСТЬ фигур, и ни одна не повторяет другую", () => {
@@ -400,6 +463,27 @@ test("рейс НЕ СНИМАЕТСЯ сторожем отказов — от 
     run.failure,
     null,
     `снята: ${run.failure} на ${run.failedAt?.seconds?.toFixed(0)} с, доля ${run.failedAt?.progress?.toFixed(3)}, номер ${run.failedAt?.figure ?? "нет"}`,
+  );
+});
+
+/**
+ * КОРРЕКТОР НЕ ОТБИРАЕТ У МАШИНЫ ФИГУРУ.
+ *
+ * Он вмешивается РАНЬШЕ сторожа отказов и тише: объявляет возмущение, подменяет
+ * активный план своим — а у плана коррекции фигур нет, и слой фигур выключается
+ * целиком. Ни отказа, ни записи о пропуске при этом не возникает: номер просто
+ * не показывается.
+ *
+ * Возмущением объявляется большой угловой темп, а фигура вращает машину быстро
+ * и по требованию маршрута. Живой замер до правки: четыре петли из шести,
+ * обе разворачивающие фигуры не показаны, машина «приседает» после каждой.
+ */
+test("корректор траектории НЕ ВМЕШИВАЕТСЯ в объявленную фигуру", () => {
+  assert.equal(
+    run.seized,
+    null,
+    `корректор забрал машину: ${run.seized?.mode} на ${run.seized?.seconds?.toFixed(0)} с, ` +
+      `доля ${run.seized?.progress?.toFixed(3)}, номер ${run.seized?.figure ?? "нет"}`,
   );
 });
 
@@ -646,4 +730,29 @@ if (process.env.FIGURE_TRACE) {
     `бросок: ход ${Math.min(...dash.map((s) => s.speed)).toFixed(0)}..${Math.max(...dash.map((s) => s.speed)).toFixed(0)} м/с, ` +
       `до площадки ${Math.min(...dash.map((s) => Math.hypot(s.at[0], s.at[1]))).toFixed(0)} м`,
   );
+}
+
+if (process.env.FIGURE_TRACE) {
+  for (const event of run.wouldSeize) {
+    console.log(
+      `корректор ВОШЁЛ БЫ в номер ${event.figure}: ${event.mode} на ${event.seconds.toFixed(0)} с`,
+    );
+  }
+}
+
+if (process.env.FIGURE_TRACE) {
+  const outside = run.track.filter((s) => s.figure === null);
+  console.log(
+    `ворота возмущения паспорта: наклон ${rax.flight.guidance.upsetTiltRate}, рыскание ${rax.flight.guidance.upsetYawRate} рад/с`,
+  );
+  if (run.seized) {
+    console.log(
+      `захват вне фигуры: наклон ${run.seized.tiltRate.toFixed(2)}, рыскание ${run.seized.yawRate.toFixed(2)} рад/с`,
+    );
+  }
+  for (const event of run.wouldSeize) {
+    console.log(
+      `в номере ${event.figure}: наклон ${event.tiltRate.toFixed(2)}, рыскание ${event.yawRate.toFixed(2)} рад/с`,
+    );
+  }
 }
