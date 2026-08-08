@@ -146,6 +146,16 @@ const EDGE_PROFILES: Record<string, EdgeProfile> = {
     waveStrength: 0.86,
     strata: ["#33291e", "#4a3b2c", "#57452f", "#62523f", "#575149", "#454039", "#38342e", "#302f2c"],
   },
+  "island-airport": {
+    groundRadius: 118,
+    lipRadius: 120,
+    lipY: -2.4,
+    wallRadius: 124,
+    topY: -0.45,
+    underglow: false,
+    waveStrength: 0.72,
+    strata: ["#342b22", "#493b2f", "#584939", "#665442", "#575047", "#47423c", "#393632", "#2e2d2a"],
+  },
 };
 
 function fallbackProfile(worldRadius: number): EdgeProfile {

@@ -260,6 +260,19 @@ export const WORLD_SKY: Readonly<Record<string, SkyWeather>> = {
     shadowStrength: 0.42,
   },
   "dutch-polder": DUTCH_POLDER_SKY,
+  "island-airport": {
+    ...CLEAR_SKY,
+    coverage: 0.2,
+    baseAltitude: 1050,
+    thickness: 820,
+    visibility: 42000,
+    windSpeed: 7.5,
+    windBearing: 0.35,
+    midLevel: 0.1,
+    cirrus: 0.22,
+    beamStrength: 0.018,
+    shadowStrength: 0.48,
+  },
 };
 
 /** Воздух мира по его id. Мир без записи стоит под общим ясным небом. */

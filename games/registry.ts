@@ -75,6 +75,18 @@ export const games = [
     theme: "electric-blue",
     art: "mess",
   },
+  {
+    slug: "make-a-mess-island-airport",
+    title: "Make a Mess: Island Airport",
+    href: "/games/make-a-mess/island-airport",
+    summary:
+      "Региональный аэропорт на вытянутом острове: короткая ВПП, перрон, пассажирский терминал, башня и служебная инфраструктура.",
+    genre: "Airport destruction sandbox",
+    status: "playable",
+    stageLabel: "Новый мир",
+    theme: "acid-green",
+    art: "grand-terminal",
+  },
 ] as const satisfies readonly GameEntry[];
 
 export const featuredGame = games[0];
