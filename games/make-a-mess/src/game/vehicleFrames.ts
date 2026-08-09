@@ -76,6 +76,7 @@ import {
 } from "./sr6Skat.ts";
 import { SR6_ROTOR_STATIONS } from "../content/objects/vehicles/sr6SkatObject.ts";
 import { combatHexacopterRangeFrame } from "./combatHexacopter.ts";
+import { ductHexacopterRangeFrame } from "./rangeDuctHexacopter.ts";
 
 // Kept as re-exports for callers while the authored routes themselves live in
 // their own artifact module.
@@ -719,6 +720,7 @@ export const vehicleFrames: readonly VehicleFrameDefinition[] = [
     proximitySensors: sr6SkatProximitySensors(),
   },
   combatHexacopterRangeFrame,
+  ductHexacopterRangeFrame,
 ];
 
 const frameByCluster = new Map(

@@ -12,6 +12,7 @@ export type GameAction =
   | "hexacopter-departure.approaching"
   | "combat-departure.approaching"
   | "skat-departure.approaching"
+  | "yaqui-departure.approaching"
   | "terminal-ride.approaching"
   | "viking-ride.approaching"
   | "town-ride.approaching"
@@ -154,6 +155,17 @@ export const gameActionHints: readonly GameActionHint[] = [
     detailKey: "hint.combatDeparture.action",
     touchDetailKey: "hint.combatDeparture.actionTouch",
     keyLabelKey: "hint.combatDeparture.key",
+    once: false,
+  },
+  {
+    id: "dispatching-the-yaqui",
+    action: "yaqui-departure.approaching",
+    delayMs: 180,
+    eyebrowKey: "hint.yaquiDeparture.eyebrow",
+    titleKey: "hint.yaquiDeparture.title",
+    detailKey: "hint.yaquiDeparture.action",
+    touchDetailKey: "hint.yaquiDeparture.actionTouch",
+    keyLabelKey: "hint.yaquiDeparture.key",
     once: false,
   },
   {

@@ -13,8 +13,9 @@ test("the first-spawn guidance is a reusable game action cue", () => {
   // держит две машины — дирижабль у мачты и гексакоптер во дворе, — Нимб
   // получает собственный HX-6, SR-6 «Скат» и RAX-8 Tonkawa зовут со своих
   // площадок. Плюс два разных «встать»: из кресла машиниста в вагон и из
-  // кресла пилота наружу к коптеру.
-  assert.equal(gameActionHints.length, 18);
+  // кресла пилота наружу к коптеру. Девятнадцатая — вылет VX-8 «Yaqui» со
+  // своего пада на том же полигоне: у машины свой зов, а не общий с RAX-8.
+  assert.equal(gameActionHints.length, 19);
   assert.equal(hint.id, "first-look");
   assert.equal(hint.once, true);
   assert.equal(hint.delayMs >= 2_000, true);

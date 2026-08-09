@@ -60,14 +60,22 @@ test("не объявившая сторону машина мирная, и э�
   assert.equal(allegianceOf({ allegiance: TOWN_ALLEGIANCE }), TOWN_ALLEGIANCE);
 });
 
-test("на полигоне ровно две воюющие машины, остальной парк мирный", () => {
+test("воюют только объявившие сторону, остальной парк мирный", () => {
   const rax = airVehicles.find((entry) => entry.id === "combat-hexacopter");
+  const vx8 = airVehicles.find((entry) => entry.id === "duct-hexacopter");
   const hx6 = airVehicles.find((entry) => entry.id === "town-hexacopter");
+  // Tonkawa выставляет две машины, и это её единственный способ расти: сторона
+  // объявляется в парке, а не выводится из полигона, на котором машина стоит.
   assert.equal(allegianceOf(rax), TONKAWA_ALLEGIANCE);
+  assert.equal(allegianceOf(vx8), TONKAWA_ALLEGIANCE);
   assert.equal(allegianceOf(hx6), TOWN_ALLEGIANCE);
+  // Своя своих не бьёт, и обе бьют город.
+  assert.equal(areHostiles(rax, vx8), false);
   assert.equal(areHostiles(rax, hx6), true);
+  assert.equal(areHostiles(vx8, hx6), true);
+  const declared = new Set([rax, vx8, hx6]);
   for (const vehicle of airVehicles) {
-    if (vehicle === rax || vehicle === hx6) {
+    if (declared.has(vehicle)) {
       continue;
     }
     assert.equal(
@@ -76,6 +84,7 @@ test("на полигоне ровно две воюющие машины, ос�
       `${vehicle.id} не должен быть втянут в бой`,
     );
     assert.equal(areHostiles(rax, vehicle), false);
+    assert.equal(areHostiles(vx8, vehicle), false);
   }
 });
 

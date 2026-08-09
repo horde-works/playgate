@@ -13,6 +13,7 @@ export type EntryInteractionCue =
   | "town-uncrewed-flight"
   | "town-hexacopter-uncrewed-flight"
   | "combat-hexacopter-uncrewed-flight"
+  | "duct-hexacopter-uncrewed-flight"
   | "sr6-skat-uncrewed-flight"
   | "stronghold-uncrewed-flight"
   | "terminal-passenger-flight"

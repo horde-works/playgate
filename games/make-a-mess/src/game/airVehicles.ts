@@ -116,6 +116,20 @@ import {
   combatHexacopterRangeBlueprint,
   combatHexacopterRangeFrame,
 } from "./combatHexacopter.ts";
+import { DUCT_HEXACOPTER_PROPOSED_LIMITS } from "./ductHexacopter.ts";
+import {
+  DUCT_HEXACOPTER_RANGE_DISPATCH_POINT,
+  DUCT_HEXACOPTER_RANGE_LIMITS,
+  ductHexacopterRangeBlueprint,
+  ductHexacopterRangeFrame,
+  ductHexacopterRangeYawThrusters,
+} from "./rangeDuctHexacopter.ts";
+import {
+  ductHexacopterArrivalPlan,
+  ductHexacopterEscapePlan,
+  ductHexacopterLapPhase,
+  ductHexacopterLapPlan,
+} from "./ductHexacopterRangeRoutes.ts";
 import {
   combatHexacopterGuardPhase,
   combatHexacopterGuardPlan,
@@ -1323,6 +1337,104 @@ export const COMBAT_HEXACOPTER_RANGE_AIR_VEHICLE: AirVehicleDefinition = {
   },
 };
 
+/**
+ * VX-8 «Yaqui» НА ПОЛИГОНЕ TONKAWA.
+ *
+ * Вторая машина этого мира. Сторона — та же, `tonkawa`: полигон один и хозяин
+ * у обеих машин один, а объявить её чужой значило бы завести в мире войну,
+ * которой никто не просил, — вооружение у неё настоящее.
+ *
+ * ЧИСЛА ПРЕДЕЛОВ ПРИХОДЯТ ИЗ ДВУХ РАЗНЫХ МЕСТ, И ЭТО НАМЕРЕННО.
+ * `maxRudderForce` и `rudderReferenceSpeed` взяты у паспорта как есть: они не
+ * зависят от массы (руля у машины нет вовсе, тоннели работают на месте).
+ * `enginePower` и `lateralThrust` — из `rangeDuctHexacopter.ts`, потому что
+ * ЗАВИСЯТ, а паспорт считал их до того, как машина собралась, и промахнулся
+ * ровно вдвое по массе. Из паспорта взята выводимость, а не цифра.
+ */
+export const DUCT_HEXACOPTER_RANGE_AIR_VEHICLE: AirVehicleDefinition = {
+  ...ductHexacopterRangeFrame,
+  allegiance: TONKAWA_ALLEGIANCE,
+  armament: ductHexacopterRangeBlueprint.armament,
+  departure: {
+    target: {
+      id: "duct-hexacopter-range:departure",
+      kind: "departure",
+      cue: "duct-hexacopter-uncrewed-flight",
+      actions: [{ id: "lap", labelKey: "hint.yaquiDeparture.action" }],
+    },
+    point: DUCT_HEXACOPTER_RANGE_DISPATCH_POINT,
+    flightKind: "lap",
+    // Шире, чем у RAX-8 (2.4/3.2): машина вдвое тяжелее и на полтора метра
+    // шире, и подходить к ней вплотную человеку незачем.
+    approachRadius: 3,
+    releaseRadius: 4,
+    heightTolerance: 2.3,
+  },
+  flight: {
+    limits: {
+      enginePower: DUCT_HEXACOPTER_RANGE_LIMITS.enginePower,
+      enginePoints: ductHexacopterRangeBlueprint.enginePoints,
+      rotorCapacityWeights: ductHexacopterRangeBlueprint.rotorCapacityWeights,
+      rotorSpinDirections: ductHexacopterRangeBlueprint.rotorSpinDirections,
+      // Тоннели с ПРИБИТОЙ тягой, а не с паспортной: паспорт сам оставил это
+      // рантайму, и 1030 Н на собранном теле дают вдвое больше углового
+      // ускорения, чем нужно.
+      yawThrusters: ductHexacopterRangeYawThrusters,
+      maxRudderForce: DUCT_HEXACOPTER_PROPOSED_LIMITS.maxRudderForce,
+      rudderReferenceSpeed: DUCT_HEXACOPTER_PROPOSED_LIMITS.rudderReferenceSpeed,
+      rudderPoint: ductHexacopterRangeBlueprint.mooringPoint,
+      liftTrimRange: ductHexacopterRangeBlueprint.flight.liftTrimRange,
+      lateralThrust: DUCT_HEXACOPTER_RANGE_LIMITS.lateralThrust,
+    },
+    approach: {
+      heading: [ductHexacopterRangeFrame.nose[0], ductHexacopterRangeFrame.nose[2]],
+      tolerance: { position: 4.2, heading: 0.4, speed: 2.8 },
+    },
+    docking: {
+      position: 1.5,
+      height: 0.5,
+      headingCos: 0,
+      speed: 0.34,
+      verticalSpeed: 0.5,
+      uprightCos: 0.96,
+      angularSpeed: 0.2,
+    },
+    landing: {
+      // Допуск посадки — от габарита машины, а не от чужого числа: у неё
+      // полуразмах 3.64 против 2.9 у RAX-8, и опоры расставлены шире.
+      radius: 1.4,
+      height: 0.5,
+      speed: 0.4,
+      verticalSpeed: 0.55,
+      uprightCos: 0.978,
+      angularSpeed: 0.22,
+    },
+    spoolSeconds: ductHexacopterRangeBlueprint.flight.spoolSeconds,
+    underwaySeconds: 6,
+    // Медленнее RAX-8 (31): кольца этой машины крупнее, и на его оборотах
+    // концы лопастей читались бы размытым диском вместо винта.
+    driveAnimation: { kind: "propeller", phaseSpeed: 26, shaftAxis: [0, 1, 0] },
+    linearDamping: ductHexacopterRangeBlueprint.flight.linearDamping,
+    angularDamping: ductHexacopterRangeBlueprint.flight.angularDamping,
+    lateralDragRatio: ductHexacopterRangeBlueprint.flight.lateralDragRatio,
+    liftSource: "rotor",
+    liftReserve: ductHexacopterRangeBlueprint.flight.liftReserve,
+    maximumTilt: ductHexacopterRangeBlueprint.flight.maximumTilt,
+    /**
+     * Ворота возмущения обязаны стоять ВЫШЕ того, что машина делает сама. У
+     * RAX-8 это 1.9/1.3 под его фигуры; здесь программы нет — только круг, —
+     * поэтому и запас нужен меньший. Взято с тем же троекратным запасом над
+     * рабочим темпом круга: 14 м/с по дуге радиусом 39.7 дают 0.35 рад/с.
+     */
+    guidance: { upsetTiltRate: 1.4, upsetYawRate: 1.1 },
+    mooringReach: 0.6,
+    routePlan: (_kind, berth) => ductHexacopterLapPlan(berth),
+    arrivalPlan: ductHexacopterArrivalPlan,
+    escapePlan: ductHexacopterEscapePlan,
+    routePhase: (_kind, progress) => ductHexacopterLapPhase(progress),
+  },
+};
+
 export const airVehicles: readonly AirVehicleDefinition[] = [
   SKY_TRAIN_AIR_VEHICLE,
   SKY_LONGSHIP_AIR_VEHICLE,
@@ -1332,4 +1444,5 @@ export const airVehicles: readonly AirVehicleDefinition[] = [
   NIMBUS_HEXACOPTER_AIR_VEHICLE,
   SR6_SKAT_AIR_VEHICLE,
   COMBAT_HEXACOPTER_RANGE_AIR_VEHICLE,
+  DUCT_HEXACOPTER_RANGE_AIR_VEHICLE,
 ];

@@ -542,6 +542,8 @@ function entryApproachAction(entry: HingedEntryApproach): GameAction {
               ? "hexacopter-departure.approaching"
               : entry.cue === "combat-hexacopter-uncrewed-flight"
                 ? "combat-departure.approaching"
+              : entry.cue === "duct-hexacopter-uncrewed-flight"
+                ? "yaqui-departure.approaching"
               : entry.cue === "sr6-skat-uncrewed-flight"
                 ? "skat-departure.approaching"
               : "terminal-departure.approaching"
@@ -591,6 +593,10 @@ function entryActionKey(
             ? touch
               ? "hint.combatDeparture.actionTouch"
               : "hint.combatDeparture.action"
+          : entry.cue === "duct-hexacopter-uncrewed-flight"
+            ? touch
+              ? "hint.yaquiDeparture.actionTouch"
+              : "hint.yaquiDeparture.action"
           : entry.cue === "sr6-skat-uncrewed-flight"
             ? touch
               ? "hint.skatDeparture.actionTouch"
