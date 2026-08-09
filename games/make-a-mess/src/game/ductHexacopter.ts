@@ -193,13 +193,17 @@ export const DUCT_HEXACOPTER_ROTOR_SPIN_DIRECTIONS = DUCT_HEX_LIFT_STATIONS.map(
  * `3.8 rad/s²` where the first machine gets `15.0`, so the pair would exist and
  * do nothing.
  *
- * Their expectation for live mass is 18–26 kg, which puts the honest figure
- * near `1030 N` at 20 kg. It is set there rather than left low, because a
- * number that is wrong small reads as a working machine that flies badly, while
- * a number that is wrong large reads as a machine that overshoots — and only
- * the second gets fixed. The runtime pins it against the assembled cluster.
+ * The estimate that replaced it — `1030 N` at 20 kg — then overshot the other
+ * way, and the measurement settled it: on the assembled cluster the yaw inertia
+ * is `132.7 kg·m²`, where `1030 N` would give roughly twice the angular
+ * acceleration RAX-8 has proven flyable. The runtime pinned `541 N`
+ * (`rangeDuctHexacopter.ts`), which lands at `15.2 rad/s²` against its `8.0`.
+ *
+ * This constant follows that measurement rather than keeping a second opinion:
+ * a passport figure that disagrees with the flying machine is exactly the second
+ * source of truth both sessions refused to keep for inertia.
  */
-export const DUCT_HEXACOPTER_YAW_FAN_FORCE = 1030;
+export const DUCT_HEXACOPTER_YAW_FAN_FORCE = 541;
 
 const localYawThrusters = (): readonly DuctHexacopterYawThruster[] =>
   DUCT_HEX_YAW_STATIONS.map((station) => ({
@@ -496,7 +500,13 @@ export const ductHexacopterPrototypeFrame = createDuctHexacopterVehicleFrame(
  * Everything about mass and inertia stays with the runtime by agreement.
  */
 export const DUCT_HEXACOPTER_PROPOSED_LIMITS = {
-  /** Per thrust point, six of them. Higher than RAX-8: heavier body, same rings. */
+  /**
+   * Per thrust point, six of them. Superseded by measurement: the assembled
+   * cluster weighs `20.05 kg`, not the `11 kg` these limits were solved for, so
+   * the runtime carries `225` and `152`. Kept here as the passport's own
+   * derivation, marked as what it is — the number a drawing can reach before a
+   * body exists.
+   */
   enginePower: 124,
   /**
    * Strictly above zero, or heading and crab die quietly — and consistent with
