@@ -1,6 +1,12 @@
 import type { SceneVector3 } from "./destructionScene.ts";
 import { explosiveProfile } from "./destructionRuntime.ts";
 import type { VehicleGuidanceDemand } from "./vehicleFrames.ts";
+import {
+  chooseAirManoeuvre,
+  predictionHorizon,
+  type AirManoeuvreEstimate,
+  type AirManoeuvreKind,
+} from "./airCombatManoeuvres.ts";
 import { isHostileAllegiance, type VehicleAllegiance } from "./vehicleAllegiance.ts";
 import {
   advanceGunnery,
@@ -89,6 +95,10 @@ export interface AirCombatLimits {
   readonly maximumSpeed: number;
   readonly yawRate: number;
   readonly liftTrimRange: number;
+  /** Поперечное ускорение по наклону, м/с²: из него угловая скорость виража. */
+  readonly lateralAcceleration: number;
+  /** Секунды и цена высоты на разворот курса фигурой. `null` — фигур нет. */
+  readonly reversal?: { readonly seconds: number; readonly cost: number } | null;
 }
 
 export interface AirCombatState {
@@ -136,6 +146,9 @@ export interface AirCombatTelemetry {
   readonly reloading: boolean;
   /** Сколько ещё снаряжаться, с. */
   readonly rearmSeconds: number;
+  /** Что выбрал оценщик и за сколько секунд обещает решение. */
+  readonly manoeuvre: AirManoeuvreKind | null;
+  readonly manoeuvreSeconds: number;
 }
 
 export interface AirCombatOutput {
@@ -186,6 +199,9 @@ function horizontalUnit(v: SceneVector3): readonly [number, number] {
   const l = Math.hypot(v[0], v[2]);
   return l < EPSILON ? [0, 1] : [v[0] / l, v[2] / l];
 }
+
+/** Ниже этого над бертом станции боевой автомат не опускается, м. */
+const COMBAT_FLOOR = 8;
 
 /**
  * Знаковая ошибка курса. Положительный результат требует ПОЛОЖИТЕЛЬНОГО темпа
@@ -491,6 +507,9 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
   let range = Infinity;
   let closingSpeed = 0;
   let aimPoint: SceneVector3 | null = null;
+  // Упреждение, с которым строится ПРИЦЕЛ. Телу его нужно знать: вести
+  // корпус с меньшим упреждением, чем ствол, — это шаг назад к погоне.
+  let aimLead = 0;
   let rocketAim: SceneVector3 | null = null;
   let aimError = Math.PI;
   /**
@@ -549,6 +568,7 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
 
     // Пушка: упреждение контура управления.
     const lag = noseLagSeconds(own, target, limits);
+    aimLead = lag;
     aimPoint = extrapolateTrack(aimTrack, lag);
 
     // Ракета: честное решение встречи в системе стрелка.
@@ -659,6 +679,31 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
     }
   }
 
+  // --- ЧЕМ ЗАКРЫТЬ ЭТУ ВСТРЕЧУ ----------------------------------------------
+  const manoeuvre: AirManoeuvreEstimate | null = target
+    ? chooseAirManoeuvre(
+        {
+          own: { centre: own.centre, velocity: own.velocity, nose: own.nose },
+          target: {
+            centre: target.centre,
+            velocity: target.velocity,
+            turnRate: target.turnRate,
+          },
+        },
+        {
+          maximumSpeed: limits.maximumSpeed,
+          lateralAcceleration: limits.lateralAcceleration,
+          surgeAcceleration: 0,
+          yawRate: limits.yawRate,
+          firingRange: armament.rockets.range,
+          minimumRange: 0,
+          gunCone: ATTACK_ENTRY_AIM,
+          reversal: limits.reversal ?? null,
+          floor: station.centre[1] + COMBAT_FLOOR,
+        },
+      )
+    : null;
+
   // --- кривая --------------------------------------------------------------
   const desiredVelocity: [number, number, number] = [0, 0, 0];
   let desiredHeading: readonly [number, number] = own.nose;
@@ -692,7 +737,33 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
     desiredHeading = horizontalUnit(subtract(lead, own.centre));
 
     if (mode === "intercept") {
-      applyDirection(subtract(lead, own.centre), limits.maximumSpeed);
+      // ТЕЛО ИДЁТ В ТОЧКУ ВСТРЕЧИ, А НОС — В ТОЧКУ ПРИЦЕЛИВАНИЯ, и это разные
+      // точки. Прежде тело шло туда же, куда нос, то есть в саму цель, — а это
+      // погоня, и она проигрывает всякому, кто быстрее.
+      // УПРЕЖДЕНИЕ ТЕЛА НЕ МЕНЬШЕ УПРЕЖДЕНИЯ ПРИЦЕЛА, И ЭТО НЕ ОСТОРОЖНОСТЬ.
+      //
+      // Прежний код вёл тело в ТОЧКУ ПРИЦЕЛИВАНИЯ — то есть туда, где цель
+      // окажется к приходу снаряда. Это упреждающее преследование, и против
+      // медленной цели оно работает: корпус срезает угол сам собой.
+      //
+      // Первая редакция подключения вела тело в точку ВСТРЕЧИ и на этом
+      // проиграла там, где выигрывала: у медленной цели встреча решается за
+      // ноль-две секунды, точка встречи почти совпадает с самой целью, и
+      // «улучшение» оказалось чистой погоней. Замер по HX-6: время в атаке
+      // упало с шестидесяти секунд до сорока трёх, выстрелов со 184 до 116, и
+      // цель, прежде сваливавшаяся на 87-й секунде, дожила до конца.
+      //
+      // Поэтому берётся БОЛЬШЕЕ из двух упреждений. Против медленного побеждает
+      // прицельное — и поведение остаётся прежним; против быстрого побеждает
+      // встреча — и появляется то, чего не было.
+      const bodyLead = Math.max(
+        aimLead,
+        manoeuvre && Number.isFinite(manoeuvre.seconds) ? manoeuvre.seconds : 0,
+      );
+      const meeting = extrapolateTrack(target, bodyLead);
+      applyDirection(subtract(meeting, own.centre), limits.maximumSpeed);
+      // Высота остаётся ПРИЦЕЛЬНОЙ: ствол связан с корпусом, и вертикальное
+      // наведение здесь делается именно ею.
       desiredAltitude = lead[1];
     } else if (mode === "attack") {
       // ПРОХОД: скорость мимо цели с выносом на закреплённую сторону.
@@ -898,6 +969,8 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
       weaponsFree,
       rocketsLeft: gunnery.state.magazine,
       reloading: gunnery.state.rearmSeconds > 0,
+      manoeuvre: manoeuvre?.kind ?? null,
+      manoeuvreSeconds: manoeuvre?.seconds ?? Number.POSITIVE_INFINITY,
       rearmSeconds: gunnery.state.rearmSeconds,
     },
   };

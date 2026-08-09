@@ -311,6 +311,9 @@ const LIMITS = {
   maximumSpeed: 21,
   yawRate: 0.72,
   liftTrimRange: combatHexacopterRangeBlueprint.flight.liftTrimRange,
+  lateralAcceleration:
+    GRAVITY * Math.tan(combatHexacopterRangeBlueprint.flight.maximumTilt),
+  reversal: { seconds: 5.1, cost: 0 },
 };
 
 const HX6_BERTH = [
@@ -543,6 +546,11 @@ export function runDuel({
     stepMachine(hunter, output.guidance);
 
     report.modeSeconds[combat.mode] = (report.modeSeconds[combat.mode] ?? 0) + dt;
+    if (process.env.DUEL_TRACE && step % 30 === 0) {
+      console.log(
+        `${now.toFixed(1)}s ${combat.mode.padEnd(10)} man=${String(output.telemetry.manoeuvre).padEnd(9)} t=${(output.telemetry.manoeuvreSeconds ?? Infinity).toFixed(1).padStart(5)} rng=${output.telemetry.range.toFixed(0).padStart(4)} tw=${track.turnRate.toFixed(2).padStart(6)} hunterR=${Math.hypot(hunterCentre[0], hunterCentre[2]).toFixed(0).padStart(4)}`,
+      );
+    }
     if (output.telemetry.weaponsFree && output.telemetry.range < armament.rockets.range) {
       // блокировка пуска собственным радиусом поражения
       if (output.telemetry.range < output.telemetry.minimumRange) {

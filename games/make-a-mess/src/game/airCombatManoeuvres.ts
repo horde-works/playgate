@@ -135,12 +135,46 @@ const infeasible = (
  * оказаться на хорде — и она сама приходит навстречу. Отдельного «срезания
  * хорды» писать не пришлось, оно выпало из этого перебора само.
  */
+/**
+ * ГОРИЗОНТ ПРЕДСКАЗАНИЯ — НЕ КОНСТАНТА, А СВОЙСТВО ЧУЖОГО МАНЁВРА.
+ *
+ * Экстраполяция знает про цель одно: её нынешние ход и темп разворота. Это
+ * дуга, и верить ей можно ровно столько, сколько цель остаётся В ЭТОЙ дуге.
+ * Дальше начинается не предсказание, а выдумка.
+ *
+ * Общая константа тут не работает, и это замерено. Восемь секунд — для VX-8 со
+ * стометровыми прямыми ещё один поворот, а для HX-6 с его маленьким кругом уже
+ * ПОЛОВИНА петли: охотник улетал через её диаметр, доходил до 231 м от центра
+ * и терял цель, простояв потом восемьдесят три секунды на станции.
+ *
+ * Мера у дуги своя — угол, а не время. Четверть оборота машина проходит за
+ * `(π/2)/ω`, и это тот кусок, на котором «продолжает как сейчас» ещё
+ * утверждение, а не догадка. У идущего прямо `ω → 0`, горизонт растёт, и его
+ * приходится ограничивать сверху — но уже по другой причине: не потому, что
+ * прямая невероятна, а потому, что за полминуты в замкнутой арене прямых не
+ * бывает.
+ */
+export const HORIZON_ARC = Math.PI / 2;
+export const HORIZON_MINIMUM = 2;
+export const HORIZON_MAXIMUM = 12;
+
+export function predictionHorizon(
+  target: Pick<AirEngagementGeometry["target"], "turnRate">,
+): number {
+  const rate = Math.abs(target.turnRate);
+  if (rate < 1e-3) return HORIZON_MAXIMUM;
+  return Math.max(
+    HORIZON_MINIMUM,
+    Math.min(HORIZON_MAXIMUM, HORIZON_ARC / rate),
+  );
+}
+
 export function timeToReach(
   from: SceneVector3,
   speed: number,
   target: AirEngagementGeometry["target"],
   firingRange: number,
-  horizon = 30,
+  horizon = predictionHorizon(target),
   step = 0.2,
 ): number {
   if (speed <= 0.1) return Number.POSITIVE_INFINITY;

@@ -6483,6 +6483,10 @@ export function VehicleFrameSystem({
             maximumSpeed: combatLateral / ROTOR_YAW_RATE,
             yawRate: ROTOR_YAW_RATE,
             liftTrimRange: frame.flight.limits.liftTrimRange,
+            lateralAcceleration: combatLateral,
+            // Фигур боевому пилоту пока не отдано: вход в них перекрыт на время
+            // боя, и обещать разворот через верх было бы враньём оценщику.
+            reversal: null,
           },
           tracks,
           deltaSeconds: step,
