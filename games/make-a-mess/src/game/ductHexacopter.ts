@@ -182,13 +182,24 @@ export const DUCT_HEXACOPTER_ROTOR_SPIN_DIRECTIONS = DUCT_HEX_LIFT_STATIONS.map(
 );
 
 /**
- * Reversible tunnel force. The pair exists because the reaction torque of six
- * rings cannot turn a body this broad fast enough for its own circuit; the
- * number is a passport figure the runtime is free to tune against live mass,
- * not a law. It is set slightly above the RAX-8 value because this machine is
- * wider and its yaw inertia is larger for the same six rings.
+ * Reversible tunnel force — PROVISIONAL, and provisional by an order of
+ * magnitude rather than by a percent.
+ *
+ * The first figure here was 145 N, chosen as "a bit more than RAX-8". The
+ * Windows session took it apart with numbers instead of taste: dropping the
+ * cant that RAX-8 has cost this machine yaw arm, `1.183 m` down to `0.980 m` a
+ * side, while its yaw radius of gyration is `2.60 m` against RAX-8's `1.43 m`
+ * — the mass of this body rides the hull rim, not the arms. At 145 N that is
+ * `3.8 rad/s²` where the first machine gets `15.0`, so the pair would exist and
+ * do nothing.
+ *
+ * Their expectation for live mass is 18–26 kg, which puts the honest figure
+ * near `1030 N` at 20 kg. It is set there rather than left low, because a
+ * number that is wrong small reads as a working machine that flies badly, while
+ * a number that is wrong large reads as a machine that overshoots — and only
+ * the second gets fixed. The runtime pins it against the assembled cluster.
  */
-export const DUCT_HEXACOPTER_YAW_FAN_FORCE = 145;
+export const DUCT_HEXACOPTER_YAW_FAN_FORCE = 1030;
 
 const localYawThrusters = (): readonly DuctHexacopterYawThruster[] =>
   DUCT_HEX_YAW_STATIONS.map((station) => ({
@@ -483,8 +494,16 @@ export const ductHexacopterPrototypeFrame = createDuctHexacopterVehicleFrame(
 export const DUCT_HEXACOPTER_PROPOSED_LIMITS = {
   /** Per thrust point, six of them. Higher than RAX-8: heavier body, same rings. */
   enginePower: 124,
-  /** Strictly above zero, or heading and crab die quietly. */
-  lateralThrust: 62,
+  /**
+   * Strictly above zero, or heading and crab die quietly — and consistent with
+   * `enginePower`, which the first draft was not. The house rule
+   * (`tests/sr6-skat.test.mjs`) reads lateral as `thrust / m` at `7.59` and
+   * thrust-to-weight as `power * 6 / (m * g)` at `6.86`. My pair, 124 and 62,
+   * described two different machines — 11.1 kg and 8.2 kg — and both lighter
+   * than RAX-8 at 9.58 kg, which this broader body certainly is not. At
+   * `enginePower 124` the consistent lateral figure is 83.
+   */
+  lateralThrust: 83,
   maxRudderForce: 0,
   rudderReferenceSpeed: 8,
 } as const;
