@@ -11,6 +11,7 @@ import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { TERMS_VERSION } from "../app/legal/consent.ts";
+import { DUCT_HEXACOPTER_RANGE_BERTH } from "../games/make-a-mess/src/game/rangeDuctHexacopter.ts";
 
 const args = process.argv.slice(2);
 const argOf = (name, fallback) => {
@@ -191,7 +192,9 @@ async function main() {
       cdp.eval(
         `(() => { const b = document.querySelector("#enter-game"); return !!b && !b.disabled; })()`,
       ),
-      { timeout: 240000 },
+      // Сборка этого мира в dev со SwiftShader идёт около ста секунд, а под
+      // нагрузкой — заметно дольше. Ждать надо СОСТОЯНИЯ, а не таймаута.
+      { timeout: 600000, every: 1000 },
     );
     console.log("entering the world…");
     await cdp.eval(`document.querySelector("#enter-game").click()`);
@@ -202,20 +205,28 @@ async function main() {
         `document.querySelectorAll("nextjs-portal").forEach((n) => n.remove()), true`,
       );
 
-    // Ждём не появления машины в списке, а её ПОЛОЖЕНИЯ: `body` наполняется
-    // только после первого тика физики, и снимок без него врёт пустотой.
-    const berth = await waitFor("VX-8 resting position", async () => {
+    // `body.position` — это НЕ мировая точка, а СМЕЩЕНИЕ от авторского центра
+    // масс (`worldCom − mass.centre`). У стоящей машины оно ровно нулевое,
+    // поэтому камера, наведённая на него, смотрит в центр мира — то есть на
+    // соседнюю машину. Мировая точка собирается из берта и этого смещения.
+    const offsetOf = async () => {
       const value = await cdp.eval(
         `(() => {
            if (typeof window.__mamVehicles !== "function") return null;
            const found = window.__mamVehicles().find((v) => v.id === ${JSON.stringify(VEHICLE_ID)});
-           if (!found) return null;
-           const position = (found.body && found.body.position) || (found.pose && found.pose.position);
-           return position ? JSON.stringify(position) : null;
+           return found && found.body ? JSON.stringify(found.body.position) : null;
          })()`,
       );
       return value ? JSON.parse(value) : null;
-    }, { timeout: 240000 });
+    };
+    const worldPoint = (offset) => [
+      DUCT_HEXACOPTER_RANGE_BERTH[0] + offset[0],
+      DUCT_HEXACOPTER_RANGE_BERTH[1] + offset[1],
+      DUCT_HEXACOPTER_RANGE_BERTH[2] + offset[2],
+    ];
+
+    await waitFor("VX-8 body", offsetOf, { timeout: 240000 });
+    const berth = worldPoint(await offsetOf());
     console.log("VX-8 berth:", berth.map((v) => v.toFixed(2)).join(", "));
 
     // Режим полёта: __mamTeleport не отключает гравитацию, и без него камера
@@ -226,13 +237,47 @@ async function main() {
     await cdp.send("Input.dispatchKeyEvent", {
       type: "keyUp", key: "f", code: "KeyF", windowsVirtualKeyCode: 70,
     });
-    await sleep(600);
+    // Мир доставляет игрока в свой playerSpawn уже после клика по входу.
+    // Съёмка до этого момента снимает точку появления, а не то, что заказано.
+    await sleep(6000);
 
-    const shoot = async (name, camera, at) => {
+    const shoot = async (name, camera, at, retarget) => {
       const { yaw, pitch } = aim(camera, at);
-      await cdp.eval(`window.__mamTeleport(${camera[0]}, ${camera[1]}, ${camera[2]})`);
-      await cdp.eval(`window.__mamLook(${yaw}, ${pitch})`);
+      // ТЕЛЕПОРТ ПОВТОРЯЕТСЯ НАМЕРЕННО. Сразу после входа в мир игра ещё
+      // доставляет игрока в собственный playerSpawn, и одиночный телепорт,
+      // отданный раньше этого, молча затирается: кадр тогда снимается от
+      // точки появления — то есть с видом на СОСЕДНЮЮ машину.
+      for (const attempt of [0, 1]) {
+        await cdp.eval(`window.__mamTeleport(${camera[0]}, ${camera[1]}, ${camera[2]})`);
+        await cdp.eval(`window.__mamLook(${yaw}, ${pitch})`);
+        if (attempt === 0) await sleep(1800);
+      }
       await sleep(1400);
+      // ЛЕТЯЩАЯ МАШИНА УЕЗЖАЕТ ИЗ ПРИЦЕЛА, ПОКА КАМЕРА ВСТАЁТ. На круге она
+      // идёт около одиннадцати метров в секунду, то есть за постановку камеры
+      // уходит метров на тридцать: наводка, снятая до телепорта, показывает
+      // пустое небо рядом с машиной. Досняли — перенаводимся по живой точке.
+      if (retarget) {
+        // Перенаводка тоже С УПРЕЖДЕНИЕМ: между командой взгляда и затвором
+        // проходят сотни миллисекунд, и машина, идущая сорок километров в час,
+        // успевает уйти к краю кадра. Скорость снимаем прямо здесь, двумя
+        // замерами, и целимся туда, где машина будет в момент снимка.
+        const first = await retarget();
+        await sleep(250);
+        const second = await retarget();
+        if (second) {
+          const SHUTTER_SECONDS = 0.45;
+          const led = first
+            ? second.map(
+                (value, axis) =>
+                  value + ((value - first[axis]) / 0.25) * SHUTTER_SECONDS,
+              )
+            : second;
+          const corrected = aim(camera, led);
+          await cdp.eval(`window.__mamLook(${corrected.yaw}, ${corrected.pitch})`);
+          await sleep(120);
+        }
+      }
       await clearOverlay();
       const shot = await cdp.send("Page.captureScreenshot", {
         format: "png", captureBeyondViewport: false,
@@ -242,12 +287,22 @@ async function main() {
       console.log("wrote", file);
     };
 
-    // КАДР 1 — машина на своём паду. Камера с юго-востока, чуть выше колец:
-    // видно и пад под опорами, и вертипад HX-6 за машиной.
+    // Телеметрия наводится прицелом, но кадр снимается телепортом, поэтому
+    // машину выбираем принудительно: иначе панель молчит и кадр не называет
+    // того, кого показывает.
+    await cdp.eval(
+      `window.__mamVehicleSelect(${JSON.stringify(
+        "combat-hexacopter-range:duct-vehicle",
+      )})`,
+    );
+
+    // КАДР 1 — машина НА СВОИХ ОПОРАХ. Камера низкая и близкая: с высоты
+    // видно машину, но не видно, стоит она или висит, а весь вопрос кадра
+    // именно в этом — опоры должны касаться пада.
     await shoot(
       "vx8-on-pad",
-      [berth[0] + 11, berth[1] + 5.4, berth[2] + 12],
-      [berth[0], berth[1] + 1.4, berth[2]],
+      [berth[0] + 9.5, berth[1] + 2.2, berth[2] + 10.5],
+      [berth[0], berth[1] + 1.2, berth[2]],
     );
 
     // КАДР 2 — машина в воздухе. Поднимает её ЕЁ СОБСТВЕННЫЙ автомат по её
@@ -257,30 +312,47 @@ async function main() {
     );
     console.log("depart accepted:", departed);
 
-    const airborne = await waitFor("VX-8 airborne", async () => {
-      const value = await cdp.eval(
-        `(() => {
-           const found = window.__mamVehicles().find((v) => v.id === ${JSON.stringify(VEHICLE_ID)});
-           return found && found.body ? JSON.stringify(found.body.position) : null;
-         })()`,
-      );
-      if (!value) return null;
-      const position = JSON.parse(value);
-      return position[1] > berth[1] + 9 ? position : null;
-    }, { timeout: 180000, every: 700 });
+    // Ждём не «оторвалась», а «идёт по кругу»: машина, висящая над собственным
+    // падом, — это ещё взлёт, а кадр обещан НАД ПОЛИГОНОМ. Условие двойное —
+    // вышла на эшелон и ушла от берта по горизонтали.
+    const airborne = await waitFor("VX-8 on the lap", async () => {
+      const offset = await offsetOf();
+      if (!offset) return null;
+      const along = Math.hypot(offset[0], offset[2]);
+      return offset[1] > 15 && along > 20 ? worldPoint(offset) : null;
+    }, { timeout: 300000, every: 700 });
 
     console.log("VX-8 airborne at:", airborne.map((v) => v.toFixed(2)).join(", "));
 
     // Камера снаружи круга и чуть выше машины: видно и её, и полигон под ней.
-    const outward = Math.hypot(airborne[0], airborne[2]) || 1;
+    // Ближе, чем хочется «для композиции»: на кадре обязана читаться САМА
+    // МАШИНА — шесть колец и застеклённая кабина, — иначе кадр доказывает
+    // только то, что в небе что-то есть.
+    // Упреждение: ставим камеру не туда, где машина сейчас, а туда, где она
+    // будет, когда камера встанет. Скорость снимается двумя замерами живой
+    // точки, а не берётся из паспорта: по дуге путевая меньше предельной.
+    const before = await offsetOf();
+    await sleep(700);
+    const after = await offsetOf();
+    const SETTLE_SECONDS = 3.6;
+    const lead = worldPoint([
+      after[0] + ((after[0] - before[0]) / 0.7) * SETTLE_SECONDS,
+      after[1] + ((after[1] - before[1]) / 0.7) * SETTLE_SECONDS,
+      after[2] + ((after[2] - before[2]) / 0.7) * SETTLE_SECONDS,
+    ]);
+    const outward = Math.hypot(lead[0], lead[2]) || 1;
     await shoot(
       "vx8-airborne",
       [
-        airborne[0] + (airborne[0] / outward) * 26,
-        airborne[1] + 9,
-        airborne[2] + (airborne[2] / outward) * 26,
+        lead[0] + (lead[0] / outward) * 17,
+        lead[1] + 5.5,
+        lead[2] + (lead[2] / outward) * 17,
       ],
-      airborne,
+      lead,
+      async () => {
+        const offset = await offsetOf();
+        return offset ? worldPoint(offset) : null;
+      },
     );
 
     const report = {
