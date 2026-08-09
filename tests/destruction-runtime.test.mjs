@@ -11,6 +11,7 @@ import {
   buildShards,
   classifyLandingDamage,
   closestPointOnOccupiedGeometry,
+  crumbleOnLanding,
   damageBody,
   damageBodyBatch,
   damageRadiusScaleByMaterial,
@@ -21,6 +22,8 @@ import {
   fractureEnergyByMaterial,
   grenadeEnergyAtDistance,
   groundCarveRequiresRemnant,
+  hammerWorksMaterial,
+  HAMMER_BLOW_ENERGY,
   impactDamageRadius,
   omittedDebrisColliderBoxes,
   rocketEnergyAtDistance,
@@ -890,4 +893,36 @@ test("retention policy keeps everything while budgets are not exceeded", () => {
     priority: () => 0,
   });
   assert.deepEqual(trimmed.map((shard) => shard.id), ["first", "second"]);
+});
+
+// У удара молотком появилась энергия — в той же шкале, что у всего остального.
+// До неё лестница урона начиналась с безусловного отлома, и один удар по
+// стальному члену машины отцеплял его от корпуса вместе с соседями.
+test("the hammer works stone but never steel", () => {
+  // Самый прочный камень миров молоток обязан брать: на нём стоят крепость и
+  // весь каменный город, и разрушение их — основная механика игры.
+  for (const material of [
+    "glass",
+    "plaster",
+    "wood",
+    "plastic",
+    "brick",
+    "concrete",
+    "stone",
+    "graphiteStone",
+    "basalt",
+  ]) {
+    assert.equal(hammerWorksMaterial(material), true, material);
+  }
+  // Сталь — не материал ручного инструмента. Это согласовано со всем прежним
+  // законом: у неё нет пулевого отверстия и она не берёт контактный удар.
+  for (const material of ["steel", "sheetMetal"]) {
+    assert.equal(hammerWorksMaterial(material), false, material);
+    assert.equal(bulletHoleRadius[material], undefined, material);
+    assert.equal(crumbleOnLanding.has(material), material === "sheetMetal");
+  }
+  // Порог живёт МЕЖДУ ними, а не рядом с краем: запас с обеих сторон должен
+  // быть виден, иначе правка одного числа в каталоге молча меняет закон.
+  assert.ok(fractureEnergyByMaterial.basalt < HAMMER_BLOW_ENERGY);
+  assert.ok(HAMMER_BLOW_ENERGY * 2 < fractureEnergyByMaterial.steel);
 });

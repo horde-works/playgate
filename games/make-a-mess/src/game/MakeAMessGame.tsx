@@ -20,7 +20,7 @@ import {
   shardBodySpec,
   type DebrisColliderSpec,
 } from "./debrisBodyPool";
-import { debrisBodyHasSiblingOverlap } from "./debrisCollisionActivation";
+import { debrisBodyIsEmbedded } from "./debrisCollisionActivation";
 import {
   performanceGovernor,
   type PerformanceQuality,
@@ -129,6 +129,7 @@ import {
   grenadeEnergyAtDistance,
   groundCarveRequiresRemnant,
   groundMaterials,
+  hammerWorksMaterial,
   selectCarveTargetsWithinBudget,
   impactDamageRadius,
   omittedDebrisColliderBoxes,
@@ -311,6 +312,8 @@ import {
   ACTOR_ABOARD,
   ACTOR_NORMAL,
   DEBRIS_ACTOR_DETAIL,
+  DEBRIS_INSIDE_CARRIER,
+  DEBRIS_LEAVING_CARRIER,
   DEBRIS_NORMAL,
   DEBRIS_SETTLING,
   VEHICLE_ATTACHMENT,
@@ -2222,8 +2225,29 @@ interface BreakablePieceProps {
 
 // Свежие обломки короткое время не сталкиваются с соседями — подробные
 // маски взаимодействия также используются датчиками транспорта.
-const DEBRIS_SETTLE_STEPS = 36;
+//
+// ЗАДЕРЖКА ДЕРЖИТСЯ ТОЛЬКО НА ОДНОМ: запрос формой честен лишь после того,
+// как тело хоть раз прошло через `world.step()` и попало в broad phase. Пара
+// шагов запаса это гарантирует, и на них же кластер успевает тронуться с
+// места. Больше задержке взять неоткуда: «дать перекрытиям осесть» теперь
+// делают сами ворота, и они судят по ГЛУБИНЕ.
+//
+// Прежние 36 шагов (0.6 с) стоили дорого: за это время куски успевали
+// перемешаться и садились в кучу уже вложенными друг в друга. Замер на
+// фасаде `hru:south:0` — пар с проникновением больше сантиметра после
+// осадки: 36 шагов → 157 пар (худшая 6.4 см), 12 → 131, 6 → 37 (3.9 см),
+// 1 → 28. Остаток на шести — авторское взаимопроникновение оконного набора,
+// которое разводится не здесь (см. `resolveInterpenetration`).
+const DEBRIS_SETTLE_STEPS = 6;
 const DEBRIS_OVERLAP_RETRY_STEPS = 6;
+/**
+ * ПОТОЛОК ЛЬГОТЫ. Раньше его не было: кусок, оставшийся заделанным в соседа,
+ * возвращался в льготу каждые шесть шагов бесконечно — и оставался призраком
+ * навсегда, проваливаясь сквозь всё, что попадалось. Три секунды хватает
+ * любому куску, чтобы разъехаться с соседями по-настоящему; всё, что не
+ * разъехалось, честнее один раз растолкать, чем прятать вечно.
+ */
+const DEBRIS_SETTLE_MAX_STEPS = 180;
 const DEBRIS_ACTIVATION_CHECKS_PER_STEP = [4, 12, 24] as const;
 const DEBRIS_CONTACT_GRACE_STEPS = 30;
 const DEBRIS_RETRY_COOLDOWN_STEPS = 12;
@@ -2313,6 +2337,9 @@ const BreakablePiece = memo(function BreakablePiece({
     : false;
   const vehicleAttachment = Boolean(clusterFrame && !compoundClusterMember);
   const ownsContactShape = broken || !compoundClusterMember;
+  // Член машины рождается внутри её оболочки, а не рядом с ней, поэтому
+  // льгота у него своя — без собственного носителя (см. DEBRIS_LEAVING_CARRIER).
+  const settlingGroup = clusterFrame ? DEBRIS_LEAVING_CARRIER : DEBRIS_SETTLING;
   const collisionTuning = debrisCollisionTuning(piece.size);
 
   useEffect(() => {
@@ -2412,7 +2439,7 @@ const BreakablePiece = memo(function BreakablePiece({
           continue;
         }
         // Don't collide with sibling debris yet — let overlaps settle.
-        collider.setCollisionGroups(DEBRIS_SETTLING);
+        collider.setCollisionGroups(settlingGroup);
       }
     }
 
@@ -2442,6 +2469,7 @@ const BreakablePiece = memo(function BreakablePiece({
     fallingTreeFoliage,
     rapier,
     registerBody,
+    settlingGroup,
   ]);
 
   return (
@@ -2463,7 +2491,7 @@ const BreakablePiece = memo(function BreakablePiece({
       // undefined). Отдельный механизм получает явную маску: с миром он
       // взаимодействует, со своим составным корпусом — нет.
       {...(broken
-        ? { collisionGroups: DEBRIS_SETTLING }
+        ? { collisionGroups: settlingGroup }
         : vehicleAttachment
           ? { collisionGroups: VEHICLE_ATTACHMENT }
           : {})}
@@ -4507,6 +4535,8 @@ function OpenWorldScene({
   const debrisSoundByBody = useRef(new Map<string, number>());
   const physicsStep = useRef(0);
   const debrisSettlingUntilStep = useRef(new Map<string, number>());
+  /** Круговой курсор по очереди на проверку: бюджет достаётся всем по разу. */
+  const debrisActivationCursor = useRef(0);
   const lastContactStepByBody = useRef(new Map<string, Map<number, number>>());
   const contactDamageAfterStep = useRef(new Map<string, number>());
   const dynamicStartedStep = useRef(new Map<string, number>());
@@ -4567,6 +4597,26 @@ function OpenWorldScene({
         volume:
           source.volume ?? source.size[0] * source.size[1] * source.size[2],
       };
+    },
+    [breakablePieceById],
+  );
+  /**
+   * Льготная группа новорождённого обломка. У куска машины она своя: он
+   * рождается ВНУТРИ её оболочки, а не рядом с ней, поэтому носитель на время
+   * льготы снимается вместе с собратьями (см. DEBRIS_LEAVING_CARRIER).
+   *
+   * Осколки (`shardById`) сюда не попадают: у ShardDefinition нет кластера, и
+   * заводить его ради мелкой стружки, которая и так вылетает из машины наружу,
+   * незачем. Крупные куски — члены и обрубки — свой кластер несут.
+   */
+  const debrisSettlingGroupFor = useCallback(
+    (id: string): number => {
+      const clusterId =
+        breakablePieceById.get(id)?.clusterId ??
+        remnantById.current.get(id)?.clusterId;
+      return clusterId && vehicleFrameForCluster(clusterId)
+        ? DEBRIS_LEAVING_CARRIER
+        : DEBRIS_SETTLING;
     },
     [breakablePieceById],
   );
@@ -4861,11 +4911,12 @@ function OpenWorldScene({
               id,
               physicsStep.current + DEBRIS_SETTLE_STEPS,
             );
+            const settlingGroup = debrisSettlingGroupFor(id);
             const colliderCount = body.numColliders();
             for (let index = 0; index < colliderCount; index += 1) {
               const collider = body.collider(index);
               if (collider.collisionGroups() !== DEBRIS_ACTOR_DETAIL) {
-                collider.setCollisionGroups(DEBRIS_SETTLING);
+                collider.setCollisionGroups(settlingGroup);
               }
             }
           }
@@ -4896,7 +4947,7 @@ function OpenWorldScene({
         debrisSettlingUntilStep.current.delete(id);
       }
     },
-    [rapier],
+    [debrisSettlingGroupFor, rapier],
   );
 
   const withBody = useCallback((id: string, action: BodyAction) => {
@@ -4921,14 +4972,28 @@ function OpenWorldScene({
       DEBRIS_ACTIVATION_CHECKS_PER_STEP[
         performanceGovernor.getSnapshot().physicsQuality
       ];
-    let dynamicBodyHandles: Set<number> | null = null;
+    // ЧЕРЁД, А НЕ ГОЛОВА КАРТЫ.
+    //
+    // Проверок за шаг отпущено 4/12/24, а `Map.set` по существующему ключу
+    // порядок обхода не меняет. Прежний цикл шёл с начала карты и обрывался
+    // по бюджету, поэтому при обвале в сотни кусков первые же претенденты
+    // съедали бюджет каждый шаг, а хвост не проверялся вообще. Курсор бежит
+    // по очереди и никого не оставляет голодным.
+    const ready: string[] = [];
     for (const [id, readyStep] of debrisSettlingUntilStep.current) {
-      if (physicsStep.current < readyStep) {
-        continue;
+      if (physicsStep.current >= readyStep) {
+        ready.push(id);
       }
-      if (activationChecks >= activationBudget) {
-        break;
-      }
+    }
+    let dynamicBodyHandles: Set<number> | null = null;
+    let carrierBodyHandles: Set<number> | null = null;
+    const start = ready.length > 0 ? debrisActivationCursor.current % ready.length : 0;
+    for (
+      let offset = 0;
+      offset < ready.length && activationChecks < activationBudget;
+      offset += 1
+    ) {
+      const id = ready[(start + offset) % ready.length];
       const body = dynamicBodies.current.get(id);
       if (!body || body.bodyType() !== rapier.RigidBodyType.Dynamic) {
         debrisSettlingUntilStep.current.delete(id);
@@ -4939,15 +5004,34 @@ function OpenWorldScene({
           (candidate) => candidate.handle,
         ),
       );
+      carrierBodyHandles ??= new Set(
+        [...compoundKinematicClusters.current.values()].map(
+          (runtime) => runtime.body.handle,
+        ),
+      );
       activationChecks += 1;
-      if (
-        debrisBodyHasSiblingOverlap(
+      // Заделан ли он в СВОЮ машину — вопрос отдельный от «заделан ли в
+      // собрата»: у ответов разные последствия, и спрашиваются они порознь.
+      const insideCarrier =
+        carrierBodyHandles.size > 0 &&
+        debrisBodyIsEmbedded(
+          world,
+          body,
+          carrierBodyHandles,
+          DEBRIS_ACTOR_DETAIL,
+        );
+      const embedded =
+        insideCarrier ||
+        debrisBodyIsEmbedded(
           world,
           body,
           dynamicBodyHandles,
           DEBRIS_ACTOR_DETAIL,
-        )
-      ) {
+        );
+      const startedStep = dynamicStartedStep.current.get(id) ?? physicsStep.current;
+      const expired =
+        physicsStep.current - startedStep >= DEBRIS_SETTLE_MAX_STEPS;
+      if (embedded && !expired) {
         debrisSettlingUntilStep.current.set(
           id,
           physicsStep.current + DEBRIS_OVERLAP_RETRY_STEPS,
@@ -4955,14 +5039,18 @@ function OpenWorldScene({
         continue;
       }
       debrisSettlingUntilStep.current.delete(id);
+      // Кусок, который по истечении льготы всё ещё сидит в контуре машины,
+      // выйти оттуда уже не может. Мир он получает целиком, свою машину — нет.
+      const armed = insideCarrier ? DEBRIS_INSIDE_CARRIER : DEBRIS_NORMAL;
       const colliderCount = body.numColliders();
       for (let index = 0; index < colliderCount; index += 1) {
         const collider = body.collider(index);
         if (collider.collisionGroups() !== DEBRIS_ACTOR_DETAIL) {
-          collider.setCollisionGroups(DEBRIS_NORMAL);
+          collider.setCollisionGroups(armed);
         }
       }
     }
+    debrisActivationCursor.current += activationChecks;
 
     for (const [id, body] of dynamicBodies.current) {
       if (body.isSleeping()) {
@@ -9359,6 +9447,32 @@ function OpenWorldScene({
       ]);
 
       const strikeSpeed = materialRuntimeProfiles[material].impulse * 2.1;
+
+      // МАТЕРИАЛ, КОТОРЫЙ МОЛОТКУ НЕ ПО ЗУБАМ.
+      //
+      // Ниже начинается лестница урона, и первая же её ступень — `breakAt` —
+      // вносила цель в множество сломанных БЕЗУСЛОВНО, ни разу не спросив
+      // прочность. Для стального члена машины это означало отцепление от
+      // корпуса (и, по `neighborChance`, ещё нескольких соседей) от удара,
+      // который эту сталь заведомо не берёт. Прочность спрашивается ЗДЕСЬ,
+      // одним вопросом на всю лестницу.
+      //
+      // Импульс при этом не отменяется: по двустороннему закону он обязателен
+      // всегда. Но получает его только то, что УЖЕ свободно, — иначе удар,
+      // которому отказано в разрушении, отрывал бы деталь через ensureDynamic
+      // тем же самым способом, только окольным.
+      if (!hammerWorksMaterial(material)) {
+        const looseId =
+          shardId ??
+          (remnantId && remnantById.current.get(remnantId)?.detached
+            ? remnantId
+            : null) ??
+          (piece && brokenPiecesRef.current.has(piece.id) ? piece.id : null);
+        if (looseId) {
+          applyImpact(looseId, material, point, direction);
+        }
+        return;
+      }
 
       // Отцепленная деталь остаётся разрушаемой: молоток выгрызает из неё
       // куски тем же carveLooseTarget, что и пулемёт, — иначе после отрыва

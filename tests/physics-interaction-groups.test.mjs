@@ -4,6 +4,8 @@ import {
   ACTOR_ABOARD,
   ACTOR_NORMAL,
   ACTOR_SAFETY_FLOOR,
+  DEBRIS_INSIDE_CARRIER,
+  DEBRIS_LEAVING_CARRIER,
   DEBRIS_NORMAL,
   DEBRIS_SETTLING,
   VEHICLE_ATTACHMENT,
@@ -49,6 +51,29 @@ test("a carrier never collides with its own attached pose bodies", () => {
   assert.equal(interacts(VEHICLE_CONTACT_QUERY, VEHICLE_ATTACHMENT), false);
   assert.equal(interacts(VEHICLE_CARRIER, 0xffff_ffff), true);
   assert.equal(interacts(VEHICLE_ATTACHMENT, 0xffff_ffff), true);
+});
+
+// Обычный обломок мира с машинами сталкивается сразу и всегда: льгота на
+// оседание снимает только СОБРАТЬЕВ. Кусок самой машины рождается внутри её
+// оболочки, и для него — и только для него — снимается ещё и носитель.
+test("only a machine's own part gets a grace period from its carrier", () => {
+  assert.equal(interacts(VEHICLE_CARRIER, DEBRIS_SETTLING), true);
+  assert.equal(interacts(VEHICLE_CARRIER, DEBRIS_LEAVING_CARRIER), false);
+  assert.equal(interacts(VEHICLE_CARRIER, DEBRIS_INSIDE_CARRIER), false);
+
+  // Всё, кроме носителя, у льготных групп остаётся на месте.
+  for (const group of [DEBRIS_LEAVING_CARRIER, DEBRIS_INSIDE_CARRIER]) {
+    assert.equal(interacts(group, 0xffff_ffff), true, "world");
+    assert.equal(interacts(group, ACTOR_NORMAL), true, "player");
+    assert.equal(interacts(group, WORLD_BOUNDARY), true, "map edge");
+    assert.equal(interacts(group, VEHICLE_CONTACT_QUERY), true, "sensors");
+  }
+
+  // Разница между двумя льготами ровно одна: оседающий кусок ещё и не
+  // толкается с собратьями, а запертый в контуре — уже полноценный обломок.
+  assert.equal(interacts(DEBRIS_LEAVING_CARRIER, DEBRIS_NORMAL), false);
+  assert.equal(interacts(DEBRIS_INSIDE_CARRIER, DEBRIS_NORMAL), true);
+  assert.equal(interacts(DEBRIS_INSIDE_CARRIER, DEBRIS_INSIDE_CARRIER), true);
 });
 
 test("falling debris is retired only below the shared fog depth", () => {

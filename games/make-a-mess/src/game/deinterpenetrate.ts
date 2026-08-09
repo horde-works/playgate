@@ -183,9 +183,15 @@ function resolveCluster(cluster: BreakableClusterDefinition): BreakableClusterDe
         let separated = false;
         let intersectionVolume = 1;
         for (let axis = 0; axis < 3; axis += 1) {
-          const overlap =
+          // Перекрытие по оси не может превысить толщину МЕНЬШЕГО из ящиков.
+          // Без этого потолка заклёпка внутри плиты давала «пересечение»
+          // толщиной в плиту, объём завышался в разы, и гейт доли срабатывал
+          // на паре, которая по-настоящему его не проходит.
+          const overlap = Math.min(
             aabbHalves[i][axis] + aabbHalves[j][axis] -
-            Math.abs(obbs[i].center[axis] - obbs[j].center[axis]);
+              Math.abs(obbs[i].center[axis] - obbs[j].center[axis]),
+            2 * Math.min(aabbHalves[i][axis], aabbHalves[j][axis]),
+          );
           if (overlap <= 0) {
             separated = true;
             break;
