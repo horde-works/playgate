@@ -52,6 +52,43 @@ Recover bounds by part kind:
 
 Measure unions from output parts. Do not trust exported dimension constants alone.
 
+### Surfaces: probe them, do not sample their vertices
+
+A lofted skin has vertices only where its triangulation put them — on the
+outline and around the holes. Sampling "vertices near this point" therefore
+returns nothing in the middle of a plate, and a test written that way either
+throws or, worse, silently measures the edge and calls it the centre.
+
+Probe the surface instead: find the triangle whose plan projection contains the
+station, interpolate the height barycentrically, and compare that against the
+control line. The difference between the two numbers is the panel chord — a
+real, reportable quantity — and it is how you discover that the emitted body is
+flatter than the tables claim.
+
+Probe pairs worth writing for any lofted body:
+
+- axis depth against chine depth at the same station (is the section a lens?);
+- crown at the nose against crown amidships (does the body dive?);
+- belly at the chine against belly on the axis (does the bottom lift?);
+- passport section values against probed ones, with the chord as the tolerance.
+
+### Contents and occupants are a volume, and the volume is a test
+
+Anything the object exists to carry — a pilot, a passenger row, a cargo bay, a
+seat, an engine — occupies space that structure may not. Store that volume as
+data and walk every part against it. A transverse frame arching straight through
+the pilot survived three revisions in one study because no test knew where the
+pilot was; the owner found it by eye.
+
+Model the occupant as **zones, not one box**: a torso zone that is wide and low,
+a head zone that is narrow and high. A single rectangular prism rejects the
+canopy bow that legitimately passes over the shoulder, and a test that cries
+wolf gets its threshold loosened until it means nothing.
+
+Check headroom separately, measured from the crown of the head rather than from
+the eye anchor, and require a real margin: three centimetres is a coincidence,
+not a clearance.
+
 ### Angles and lengths
 
 - beam/cylinder length from endpoint distance;
@@ -193,6 +230,15 @@ Use for:
 
 Use for one reference-critical joint: heart cutout, ring bracket, stair notch, pump pivot, bucket interior.
 
+### The frame must contain the object
+
+Every overview orthographic must contain the whole object with margin, and a
+test should recover the envelope and prove it. Ortho heights authored before the
+capture frame changed will crop the machine at the edge of the picture, and the
+owner will spend the review describing what they cannot see. Detail
+orthographics are exempt by name — a detail camera that must contain everything
+is just another overview.
+
 Do not create a flattering camera that hides the risky side. The camera exists to falsify the model.
 
 ## 6. Capture discipline
@@ -265,6 +311,18 @@ Review in strict order:
 9. material boundaries;
 10. normals, z-fighting and false highlights;
 11. tertiary detail.
+
+### An owner's verdict becomes a test, not a memory
+
+Every accepted correction from a reviewer gets a named regression test in the
+same pass that fixes it. Not a note in the log — a test. "The section must be a
+lens", "no structure in the occupant volume", "the crest must not fall behind
+the cabin", "the roof must attach one row above the sill": each of those is a
+sentence that can fail. Without it the class returns three revisions later, in a
+different part, and the reviewer has to find it twice.
+
+Write the test so that it fails for the *class*, not for the instance: assert
+that axis depth exceeds chine depth, not that it equals `0.95`.
 
 For each discrepancy write:
 

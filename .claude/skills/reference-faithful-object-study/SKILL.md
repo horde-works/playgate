@@ -133,6 +133,13 @@ Work in this order:
 
 Classify the dominant body family of every major mass before detail: shell, faceted loft, annular duct, open truss, drafted torque box/casting, revolved body, bent panel or beam lattice. A wrong family is rebuilt, not polished.
 
+For a lofted body — fuselage, hull, lifting body, nacelle — author the crown,
+keel and half-width **tables before any geometry**, and let every member read
+them: a body whose section is constant from nose to tail is the failure
+geometry-construction.md §3.1 calls the cake. Then panel its skin on the
+features the tables describe, because a panel carries the surface only at its
+corners and a wide one interpolates the loft away.
+
 For every part, answer:
 
 - What is it physically?
@@ -319,6 +326,10 @@ Minimum machine gate before showing PNGs:
 - every annex/tower entry into a roof has an open span, support and flashing/collar;
 - main load-bearing members end on supports and stay under the finish shell;
 - ids unique, geometry non-degenerate;
+- lofted surfaces probed by triangle interpolation, not by vertex sampling, and
+  the panel chord stated as a tolerance;
+- occupant/contents volumes recovered as zones and empty of structure;
+- every reviewer verdict from this study carried into a named regression test;
 - all fixed cameras show one revision and one hash;
 - every eligible registered view has the required mask/overlay/metric report and no unresolved multi-view conflict;
 - every intended closed body passes manifold/winding/component-count checks, and every named mate/axis is independently recovered;

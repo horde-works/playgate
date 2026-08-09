@@ -81,6 +81,35 @@ Compare that swept envelope against the union of **all** static parts in the dir
 
 The same law covers translation: an opening canopy sweeps a volume; a sliding hatch sweeps a slab. Every swept volume must clear every static part with the tolerance the passport names.
 
+## 7.1 Retraction: the free volume decides, and the angle is solved
+
+For anything that stows — landing gear, a boom, a hatch, a folding wing — decide
+**where it goes before deciding where it hangs**. Enumerate the volumes that are
+free in plan (for a machine packed with rotors or engines that may be only the
+nose, the tail and the gaps between units), and place the hinge so the stowed
+member lands in one of them. A leg that folds into a duct is not retractable; it
+is broken, and the render will not tell you, because the extended pose looks
+fine.
+
+The stowed angle is **solved, not typed**. Ninety degrees is a habit, not a
+geometry: a member splayed outboard as well as down needs the rotation that
+brings it horizontal, which for a realistic splay is `130°` or more. Compute it
+from the member's own vector and store the result as the range; then test by
+composing the stored rotation and checking the folded joints against every
+static volume they must miss.
+
+Minimum tests for a retraction:
+
+- folded pivot, knee and tip clear every bore, ring and duct;
+- folded member sits above the ground datum by a stated margin;
+- folded member lies inside the body's plan, not hanging outside it;
+- extended pose still reaches the datum with the stated ground clearance.
+
+If the second state cannot be rendered — a single-pose lab cannot show two —
+record it as an open debt in the discrepancy log, in those words. A stowed
+position that is computed but never seen is exactly the promise this method
+exists to eliminate.
+
 ## 8. Leaves, gates and paired openings
 
 Build every leaf from its hinge axis, not from the opening centre. For a paired opening verify separately:

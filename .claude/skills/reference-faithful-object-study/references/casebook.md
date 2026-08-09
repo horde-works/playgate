@@ -14,8 +14,9 @@
 10. SR-6 Skat: primitive vocabulary and shared normals
 11. SR-6 Skat: member families, air gaps, livery and control lines
 12. RAX-8 Tonkawa combat hexacopter (C1 → C2)
-13. Cross-case best practices
-14. Cross-case worst practices
+13. VX-8 Yaqui integrated-duct hexacopter: the loft, the panels and the cake
+14. Cross-case best practices
+15. Cross-case worst practices
 
 ## 1. How to use this casebook
 
@@ -360,7 +361,78 @@ Braces that terminate "visually near" rings are detached hardware at vehicle sca
 
 Direct owner corrections are Tier A and override the concept sheet. A mirrored installation is one parameterized assembly instantiated twice — never two hand-placed copies. "Delete the cage" class corrections must remove members from canonical geometry and be locked by a test that the class cannot return.
 
-## 13. Cross-case best practices
+## 13. VX-8 Yaqui integrated-duct hexacopter: the loft, the panels and the cake
+
+### Risk
+
+A machine whose plan is dictated by a pack of units — six ducts here, two
+engines and two nacelles on a transport — invites two mistakes at once. The
+plan gets solved carefully and the **section gets forgotten**, so the body
+becomes a plate of constant thickness with a stencil outline. Then, when the
+section is finally authored as a loft, the emitted skin quietly flattens it
+again, because a panel only carries the surface at its corners.
+
+### Bad practice
+
+- Author the deck as two flat flanges at fixed heights and cut the plan with a
+  stencil. The owner's verdict on the first revision was one word: *торт* — a
+  cake. Constant section, axis level with the chine, nose a wall.
+- Emit the whole perforated deck as one plate. The ear-clipped skin owns
+  vertices only on the contour and the wells, so a triangle runs from the
+  transom to the cabin and the crown sags `0.16 m` at the axis while every
+  dimension test passes.
+- Lay the skin flush with the frames it covers. Every frame pokes through by
+  three centimetres and in plan the whole dorsal reads as transparent.
+- Lower a component into the body without asking what it crosses. Two dorsal
+  tunnels shared a volume with the deck flange for three revisions; no test ever
+  asked, and the defect surfaced only when an intake was moved.
+- Build the body from an upper and a lower skin and call it closed. With no
+  chine band the front projection looks straight through the hull edge.
+- Arch a transverse frame across the cockpit. The pilot was not a volume any
+  test knew about; the owner found the frame going through him by eye.
+- Aim a rail at a joint and stop short of it. The canopy shoulder rail ended
+  `0.44 m` from the vertex it pointed at.
+
+### Correction
+
+- Author crown, keel and lateral falloff as tables; make every member read them;
+  forbid hand-typed heights in the file. Result: waist `0.95`, chine `0.45`,
+  crown dropping `0.60` to the nose.
+- Panel the skin on the features: bay boundaries at the frames, lane boundaries
+  bracketing every channel and the cockpit. Thirty panels became ninety, and the
+  residual chord fell to `0.08 m` — stated as a tolerance, not hidden.
+- Offset the skin outward from the trusses by a real thickness.
+- Sink recessed components into the surface itself — a trough in the deck under
+  each channel — instead of letting shells interpenetrate.
+- Close the perimeter with a chine band from upper skin to belly.
+- Store the occupant as two zones, torso and head; split transverse frames into
+  side pieces at cabin stations and close the ring above through the canopy bow.
+- Land every rail on the vertex it points at.
+
+### Tests that matter
+
+- surface probe: axis depth exceeds chine depth by a stated margin; crown falls
+  to the nose; belly lifts to the chine; no flange is planar;
+- passport section values agree with probed ones within the panel chord;
+- no deck or skin vertex lies inside any recessed component's bore;
+- chine band reaches the deck above and the belly below at every sampled station;
+- no part except the seat rails intrudes into either occupant zone; headroom is
+  measured from the crown of the head with a helmet margin;
+- every cutaway has an external twin with an identical camera;
+- overview orthographics contain the recovered envelope;
+- folded gear clears every duct and stays inside the plan;
+- conformal stores: every roof vertex sits on the belly surface;
+- transparency audited from both ends — every glazing-material part is a pane,
+  every part in the glazing group is glass.
+
+### General lesson
+
+On a packed machine the plan is the easy half. Author the section as data,
+panel the skin on the features that section describes, and probe the emitted
+surface rather than its vertices — otherwise the tables, the tests and the
+render will each describe a different object, and all three will look green.
+
+## 14. Cross-case best practices
 
 1. Write an evidence card before code.
 2. Let sources own different claims instead of forcing one source to own everything.
@@ -377,6 +449,10 @@ Direct owner corrections are Tier A and override the concept sheet. A mirrored i
 13. Keep adapter/placement separate from object acceptance.
 14. Track per-object and total budgets continuously.
 15. Show the user the same canonical geometry that will later enter the world.
+16. Author a lofted body as control-line tables and let every member read them.
+17. Panel a skin on the features it must describe, and state the chord you accept.
+18. Turn every reviewer verdict into a named regression test in the same pass.
+19. Decide where a stowed member goes before deciding where it hangs.
 
 ## 14. Cross-case worst practices
 
@@ -395,3 +471,7 @@ Direct owner corrections are Tier A and override the concept sheet. A mirrored i
 13. Modify accepted neighboring objects during a local fix.
 14. Spend the budget on hidden repetition and then delete defining structure.
 15. Report intent without showing current rendered evidence.
+16. Give a body a constant section and a stencil plan, then hope the skin saves it.
+17. Sample vertices to measure the middle of a plate that has none.
+18. Let two solids share a volume because no test was ever written to ask.
+19. Type ninety degrees for a fold whose geometry needs a hundred and thirty.

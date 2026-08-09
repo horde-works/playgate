@@ -81,6 +81,79 @@ body-family mismatch as a rebuild trigger, not an invitation to add fillets,
 panel lines or shallow recesses. For assembly, validity and export gates read
 solid-assembly-validation.md.
 
+## 3.1 Lofted bodies: the tables own every height
+
+An aerodynamic or hydrodynamic body — fuselage, hull, lifting body, nacelle,
+wing — is a **loft**, and the loft is data before it is geometry. Author it as
+control-line tables, then let every member read them:
+
+- a **crown line**: the top of the structure on the centreline, station by station;
+- a **keel/belly line**: the bottom on the centreline;
+- a **half-width line**, or a lateral falloff, from the axis to the chine.
+
+Then the rule that makes it stick: **no member may hold a hand-typed height.**
+Skins, frame caps, longitudinal rails, keels, ring walls, mounting pads, weapon
+fairings — all of them sample the same functions. The moment one member carries
+its own number, the body has two shapes and the render will show the argument.
+
+### The cake
+
+The failure this prevents was named by an owner in one sentence: *"каждая
+боковая плита одинаковой высоты, и центральная ось на той же высоте, что и
+бока… это кусок теста, торт"*. Its signature is constant section from nose to
+tail, an axis no taller than the chine, and a plan cut out with a stencil.
+Every real airframe instead has a section that is a lens — deep on the axis,
+thin at the edge — a crown that dives toward the nose, and a belly that lifts
+toward every chine. Numbers from the case that produced this note: waist depth
+`0.95 m` against chine depth `0.45 m`, crown dropping `0.60 m` over the forward
+half.
+
+A body-family mismatch is a rebuild, not a fillet. Discovering it after the skin
+is on costs the skin as well.
+
+### Panelling a lofted skin: the chord is not the curve
+
+A panel only carries the surface **at its own corners**. A wide panel spanning a
+feature interpolates straight across it, so a trough, a chine or a crown that
+the tables describe simply disappears from the emitted geometry while every
+number-test still passes. Measured cost in the case above: the deck sagged
+`0.16 m` below its own crown line at the axis, because one plate spanned the
+whole beam and the triangulation ran from the transom to the cabin.
+
+Therefore:
+
+- split the skin into panels whose boundaries **bracket every feature**: the
+  edges of a channel, the shoulder of a hump, the sides of a cockpit opening;
+- keep each panel small enough that the chord error is below the tolerance you
+  are willing to state — and then state it, rather than hoping nobody probes;
+- let panel boundaries fall on the frames that carry them, which is also how a
+  real stressed skin is bounded;
+- measure the residual with a surface probe (verification-visual-loop.md §2),
+  never with vertex sampling: the middle of a plate has no vertices at all.
+
+### Skin lies on the frame, not flush with it
+
+Set the skin outward from the members it covers by a real thickness. Panels
+authored at the same height as their trusses let every frame poke through by a
+few centimetres, and in plan the whole assembly reads as if it were transparent
+— an effect indistinguishable from a winding error, and far more embarrassing to
+diagnose late.
+
+### An opening may not touch a panel boundary
+
+When a plate with holes is split into panels, every opening must live wholly
+inside one panel with at least **two chamfers plus clearance** of margin. An
+opening that comes within one chamfer of a boundary leaves a sliver the
+triangulator cannot close: the honest ones throw, the dishonest ones emit
+inverted triangles that paper over the hole.
+
+### A body built from two skins needs its perimeter
+
+Top and bottom skins are not a body. Without a chine band closing the edge from
+one to the other, the front and side projections look straight through the hull
+— and because both skins render correctly, nothing but an orthographic view will
+tell you. Close the perimeter along the same contour the outer rail follows.
+
 ## 4. Primitive selection
 
 ### Boxes
@@ -401,6 +474,11 @@ Materials must reveal geometry rather than conceal it. Neutral structural render
 | support appears from shadow | no carrier reaches datum | extend real foundation/pile/leg |
 | exact count but generic form | budget spent on repetition | reallocate to defining topology |
 | valid mesh but wrong body class | primary construction chosen from a convenient primitive | rebuild the dominant family before detail |
+| constant section nose to tail, axis level with the chine | body authored as planes plus a stencil plan instead of a loft | author crown/keel/half-width tables and make every member read them |
+| a described trough, chine or crown missing from the render | one panel spans the feature and interpolates across it | split panels on the feature's own edges; probe the surface, not the vertices |
+| frames visible through the skin; assembly looks transparent | skin authored flush with the members it covers | offset the skin outward by a real thickness |
+| two solids sharing one volume for several revisions | no test ever asked whether a recessed component crosses its host | test that no host vertex lies inside the component's bore |
+| hull edge see-through in front/side views | body built as two skins with no perimeter band | close the chine from upper skin to lower along the contour |
 | mirrored modules drift | two copies authored independently | instantiate one named assembly with mirrored transforms |
 | export keeps shell but loses joint meaning | unnamed transforms/groups | preserve datums, semantic ids and pivots through adapter |
 
