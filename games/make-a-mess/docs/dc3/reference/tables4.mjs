@@ -1,4 +1,4 @@
-import sharp from "/Users/kirisyuk/cursor/playgate/node_modules/sharp/lib/index.js";
+import sharp from "sharp";
 import { readFileSync } from "node:fs";
 const trace = JSON.parse(readFileSync("trace.json", "utf8"));
 const { data, info } = await sharp("c47-3view.png").greyscale().raw().toBuffer({ resolveWithObject: true });

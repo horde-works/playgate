@@ -2,7 +2,7 @@
 // Масштаб отсюда НЕ берём — только форму; абсолют идёт от напечатанных размеров DC-3.
 // Панели плана и фронта пересекаются рамками, поэтому пиксель относится к панели
 // по МЕТКЕ СВЯЗНОЙ КОМПОНЕНТЫ своей клетки, а не по попаданию в прямоугольник.
-import sharp from "/Users/kirisyuk/cursor/playgate/node_modules/sharp/lib/index.js";
+import sharp from "sharp";
 import { writeFileSync } from "node:fs";
 
 const file = "c47-3view.png";

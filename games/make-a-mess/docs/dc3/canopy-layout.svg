@@ -1,0 +1,274 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2640" height="2000" viewBox="0 0 2640 2000">
+<defs><marker id="tick" markerWidth="12" markerHeight="12" refX="6" refY="6" orient="auto">
+<path d="M 3 3 L 9 9" stroke="#1d2226" stroke-width="1.6"/></marker></defs>
+<style>
+  text{font-family:"Helvetica Neue",Arial,sans-serif;fill:#1d2226}
+  .viewbox{fill:#ffffff;stroke:#c3c9cc;stroke-width:1.4}
+  .grid{stroke:#e6e9ea;stroke-width:1}
+  .gridheavy{stroke:#ccd2d5;stroke-width:1.2}
+  .datum{stroke:#8d979c;stroke-width:1.1;stroke-dasharray:18 6 4 6}
+  .traced{stroke:#9aa3a8;stroke-width:2.4;fill:none;stroke-linejoin:round}
+  .ghost{fill:none;stroke:#c0736b;stroke-width:1.8;stroke-dasharray:8 6}
+  .control{stroke:#1d2226;stroke-width:1.6;stroke-dasharray:14 5 4 5}
+  .member{stroke:#1d2226;stroke-width:3.4;fill:none;stroke-linejoin:round}
+  .memberheavy{stroke:#1d2226;stroke-width:4.6;fill:none;stroke-linejoin:round}
+  .glass{fill:#cddfe8;stroke:#1d2226;stroke-width:2.4}
+  .roofplan{fill:#eceeef;stroke:#1d2226;stroke-width:2.2}
+  .roofoutline{fill:none;stroke:#1d2226;stroke-width:2.6;stroke-dasharray:none}
+  .post{fill:#79838a;stroke:#1d2226;stroke-width:1.4}
+  .dim{stroke:#1d2226;stroke-width:1.3;fill:none}
+  .witness{stroke:#9aa3a8;stroke-width:1}
+  .dimtext{font-size:20px}
+  .label{font-size:20px}
+  .note{font-size:18px;fill:#5d666b}
+  .controllabel{font-size:18px;fill:#1d2226;font-weight:700}
+  .tick{font-size:17px;fill:#5d666b}
+  .panel{font-size:21px;font-weight:700}
+  .viewtitle{font-size:25px;font-weight:700;letter-spacing:0.03em}
+  .tracedlabel{font-size:18px;fill:#8d979c}
+  .ghostlabel{font-size:18px;fill:#c0736b}
+  .th{font-size:19px;font-weight:700}
+  .td{font-size:19px;fill:#31383c}
+  .title{font-size:34px;font-weight:700;letter-spacing:0.02em}
+  .sub{font-size:20px;fill:#5d666b}
+</style>
+<rect width="100%" height="100%" fill="#f5f6f7"/>
+<text x="130" y="80" class="title">DOUGLAS DC-3 · ФОНАРЬ КАБИНЫ — РАЗБИВКА ПЕРЕД ПОСТРОЕНИЕМ</text>
+<text x="130" y="118" class="sub">самолётная рама, метры · серое — снято с PD-чертежа C-47 · чёрное — построение · красный пунктир — где остекление стояло в ревизии c4</text>
+<line x1="130" y1="140" x2="2510" y2="140" stroke="#1d2226" stroke-width="2"/>
+<rect x="130.0" y="170.0" width="1300.0" height="860.0" class="viewbox"/>
+<text x="148.0" y="204.0" class="viewtitle" text-anchor="start">1 · БОКОВАЯ ПРОЕКЦИЯ — разбивка фонаря</text>
+<line x1="230.0" y1="236.0" x2="230.0" y2="870.0" class="gridheavy"/>
+<text x="230.0" y="896.0" class="tick" text-anchor="middle">0.00</text>
+<line x1="283.8" y1="236.0" x2="283.8" y2="870.0" class="grid"/>
+<line x1="337.5" y1="236.0" x2="337.5" y2="870.0" class="grid"/>
+<text x="337.5" y="896.0" class="tick" text-anchor="middle">0.50</text>
+<line x1="391.3" y1="236.0" x2="391.3" y2="870.0" class="grid"/>
+<line x1="445.0" y1="236.0" x2="445.0" y2="870.0" class="gridheavy"/>
+<text x="445.0" y="896.0" class="tick" text-anchor="middle">1.00</text>
+<line x1="498.8" y1="236.0" x2="498.8" y2="870.0" class="grid"/>
+<line x1="552.5" y1="236.0" x2="552.5" y2="870.0" class="grid"/>
+<text x="552.5" y="896.0" class="tick" text-anchor="middle">1.50</text>
+<line x1="606.3" y1="236.0" x2="606.3" y2="870.0" class="grid"/>
+<line x1="660.0" y1="236.0" x2="660.0" y2="870.0" class="gridheavy"/>
+<text x="660.0" y="896.0" class="tick" text-anchor="middle">2.00</text>
+<line x1="713.8" y1="236.0" x2="713.8" y2="870.0" class="grid"/>
+<line x1="767.5" y1="236.0" x2="767.5" y2="870.0" class="grid"/>
+<text x="767.5" y="896.0" class="tick" text-anchor="middle">2.50</text>
+<line x1="821.3" y1="236.0" x2="821.3" y2="870.0" class="grid"/>
+<line x1="875.0" y1="236.0" x2="875.0" y2="870.0" class="gridheavy"/>
+<text x="875.0" y="896.0" class="tick" text-anchor="middle">3.00</text>
+<line x1="928.8" y1="236.0" x2="928.8" y2="870.0" class="grid"/>
+<line x1="982.5" y1="236.0" x2="982.5" y2="870.0" class="grid"/>
+<text x="982.5" y="896.0" class="tick" text-anchor="middle">3.50</text>
+<line x1="1036.3" y1="236.0" x2="1036.3" y2="870.0" class="grid"/>
+<line x1="1090.0" y1="236.0" x2="1090.0" y2="870.0" class="gridheavy"/>
+<text x="1090.0" y="896.0" class="tick" text-anchor="middle">4.00</text>
+<line x1="187.0" y1="627.0" x2="1100.8" y2="627.0" class="datum"/>
+<text x="1107.2" y="633.0" class="note" text-anchor="start">wl 0</text>
+<text x="660.0" y="926.0" class="note" text-anchor="middle">станция fs, м — назад от кончика носа</text>
+<polyline points="229.7,625.3 237.1,585.1 247.9,565.6 259.9,552.9 271.9,540.2 284.5,531.0 297.1,521.8 309.7,512.6 322.9,506.8 336.1,501.0 349.3,495.2 362.4,489.5 375.6,483.7 388.8,477.9 402.0,472.1 415.7,469.8 428.9,464.0 442.1,458.2 455.3,452.5 468.5,446.7 481.7,440.9 493.7,428.3 505.7,415.6 517.7,402.9 529.7,390.3 541.7,377.6 553.7,365.0 565.7,352.3 578.3,343.1 590.4,330.4 603.0,321.2 616.1,315.4 629.3,309.7 642.5,303.9 656.3,301.6 670.0,299.2 683.2,293.4 697.0,291.1 710.7,288.8 724.5,286.4 738.9,287.5 752.6,285.2 766.4,282.9 780.1,280.5 793.9,278.2 808.3,279.3 822.0,277.0 835.8,274.6 850.1,275.7 863.9,273.4 876.5,264.2 887.9,248.1 900.5,238.9 914.3,236.5 928.6,237.6 942.4,235.3 956.8,236.4 970.5,234.1 984.9,235.2 1004.5,267.2 1018.2,264.9 1032.6,266.0 1046.9,267.1 1061.3,268.2 1075.1,265.9 1089.4,267.0" class="traced"/>
+<polyline points="230.3,628.7 251.7,671.1 268.9,689.4 285.6,704.3 301.1,712.3 316.6,720.3 332.1,728.3 347.7,736.3 362.6,740.8 378.1,748.8 393.1,753.3 408.0,757.9 422.9,762.4 437.8,767.0 452.8,771.5 467.7,776.1 482.6,780.6 497.6,785.2 512.5,789.7 527.5,794.3 541.8,795.4 556.7,799.9 602.1,817.0 615.9,814.7 630.2,815.8 645.1,820.3 660.1,824.9 674.4,826.0 689.4,830.5 703.7,831.6 718.7,836.2 733.0,837.3 747.4,838.4 762.3,842.9 776.6,844.0" class="traced"/>
+<text x="885.8" y="240.0" class="tracedlabel" text-anchor="start">обвод носа снят с чертежа</text>
+<text x="563.3" y="861.7" class="tracedlabel" text-anchor="middle">низ фюзеляжа</text>
+<rect x="737.4" y="321.7" width="109.7" height="79.5" class="ghost"/>
+<rect x="847.1" y="334.6" width="165.6" height="141.9" class="ghost"/>
+<text x="1025.5" y="343.7" class="ghostlabel" text-anchor="end">остекление в c4</text>
+<line x1="488.0" y1="471.3" x2="885.8" y2="476.9" class="control"/>
+<text x="892.2" y="482.9" class="controllabel" text-anchor="start">подоконная линия — ПРЯМАЯ</text>
+<polygon points="481.8,440.8 578.3,343.0 612.7,364.7 531.0,472.2" class="glass"/>
+<text x="363.3" y="321.7" class="panel" text-anchor="start">W · лобовое</text>
+<line x1="449.3" y1="326.0" x2="518.1" y2="381.9" class="witness"/>
+<polyline points="578.3,343.0 638.5,309.7 853.5,275.7 939.5,269.2" class="member"/>
+<text x="569.7" y="276.6" class="panel" text-anchor="start">BR · козырёк</text>
+<text x="728.8" y="240.0" class="panel" text-anchor="start">RF · крыша кабины</text>
+<text x="896.5" y="283.0" class="panel" text-anchor="start">FR · зализ</text>
+<rect x="539.6" y="401.3" width="116.1" height="71.3" class="glass"/>
+<text x="597.6" y="387.3" class="panel" text-anchor="middle">S1</text>
+<rect x="665.4" y="401.3" width="91.4" height="72.9" class="glass"/>
+<text x="711.1" y="387.3" class="panel" text-anchor="middle">S2</text>
+<rect x="766.4" y="401.3" width="78.5" height="74.2" class="glass"/>
+<text x="805.7" y="387.3" class="panel" text-anchor="middle">S3</text>
+<rect x="655.7" y="401.3" width="9.7" height="72.8" class="post"/>
+<rect x="756.8" y="401.3" width="9.7" height="74.0" class="post"/>
+<rect x="531.0" y="401.3" width="8.6" height="71.0" class="post"/>
+<text x="535.3" y="518.0" class="note" text-anchor="middle">P-K · угловая стойка</text>
+<line x1="230.0" y1="970.0" x2="230.0" y2="970.0" class="witness"/>
+<line x1="481.8" y1="970.0" x2="481.8" y2="970.0" class="witness"/>
+<line x1="230.0" y1="970.0" x2="481.8" y2="970.0" class="dim" marker-start="url(#tick)" marker-end="url(#tick)"/>
+<text x="355.9" y="961.0" class="dimtext" text-anchor="middle" transform="rotate(0.0 355.9 970.0)">1.17 — нос до лобового</text>
+<line x1="481.8" y1="1014.0" x2="481.8" y2="1014.0" class="witness"/>
+<line x1="737.4" y1="1014.0" x2="737.4" y2="1014.0" class="witness"/>
+<line x1="481.8" y1="1014.0" x2="737.4" y2="1014.0" class="dim" marker-start="url(#tick)" marker-end="url(#tick)"/>
+<text x="609.6" y="1005.0" class="dimtext" text-anchor="middle" transform="rotate(0.0 609.6 1014.0)">+1.19 — ошибка c4</text>
+<line x1="509.4" y1="479.9" x2="508.1" y2="613.0" class="witness"/>
+<line x1="844.8" y1="483.1" x2="843.5" y2="616.2" class="witness"/>
+<line x1="508.3" y1="600.2" x2="843.7" y2="603.4" class="dim" marker-start="url(#tick)" marker-end="url(#tick)"/>
+<text x="676.0" y="592.8" class="dimtext" text-anchor="middle" transform="rotate(0.6 676.0 601.8)">1.56 — длина остекления</text>
+<line x1="965.3" y1="476.5" x2="965.3" y2="476.5" class="witness"/>
+<line x1="965.3" y1="401.3" x2="965.3" y2="401.3" class="witness"/>
+<line x1="965.3" y1="476.5" x2="965.3" y2="401.3" class="dim" marker-start="url(#tick)" marker-end="url(#tick)"/>
+<text x="965.3" y="429.9" class="dimtext" text-anchor="middle" transform="rotate(-90.0 965.3 438.9)">0.33 — высота окна</text>
+<line x1="1064.2" y1="476.5" x2="1064.2" y2="476.5" class="witness"/>
+<line x1="1064.2" y1="275.7" x2="1064.2" y2="275.7" class="witness"/>
+<line x1="1064.2" y1="476.5" x2="1064.2" y2="275.7" class="dim" marker-start="url(#tick)" marker-end="url(#tick)"/>
+<text x="1064.2" y="367.1" class="dimtext" text-anchor="middle" transform="rotate(-90.0 1064.2 376.1)">0.93 — гребень над подоконником</text>
+<line x1="481.8" y1="440.8" x2="481.8" y2="272.8" class="witness"/>
+<path d="M 481.8 328.8 A 112 112 0 0 1 560.4 361.1" class="dim"/>
+<text x="499.8" y="308.8" class="dimtext" text-anchor="start">45° наклон лобового</text>
+<rect x="1470.0" y="170.0" width="1040.0" height="860.0" class="viewbox"/>
+<text x="1488.0" y="204.0" class="viewtitle" text-anchor="start">2 · ПЛАН — фонарь на обводе носа</text>
+<line x1="1560.0" y1="236.0" x2="1560.0" y2="800.0" class="gridheavy"/>
+<text x="1560.0" y="830.0" class="tick" text-anchor="middle">0.00</text>
+<line x1="1613.8" y1="236.0" x2="1613.8" y2="800.0" class="grid"/>
+<line x1="1667.5" y1="236.0" x2="1667.5" y2="800.0" class="grid"/>
+<text x="1667.5" y="830.0" class="tick" text-anchor="middle">0.50</text>
+<line x1="1721.3" y1="236.0" x2="1721.3" y2="800.0" class="grid"/>
+<line x1="1775.0" y1="236.0" x2="1775.0" y2="800.0" class="gridheavy"/>
+<text x="1775.0" y="830.0" class="tick" text-anchor="middle">1.00</text>
+<line x1="1828.8" y1="236.0" x2="1828.8" y2="800.0" class="grid"/>
+<line x1="1882.5" y1="236.0" x2="1882.5" y2="800.0" class="grid"/>
+<text x="1882.5" y="830.0" class="tick" text-anchor="middle">1.50</text>
+<line x1="1936.3" y1="236.0" x2="1936.3" y2="800.0" class="grid"/>
+<line x1="1990.0" y1="236.0" x2="1990.0" y2="800.0" class="gridheavy"/>
+<text x="1990.0" y="830.0" class="tick" text-anchor="middle">2.00</text>
+<line x1="2043.8" y1="236.0" x2="2043.8" y2="800.0" class="grid"/>
+<line x1="2097.5" y1="236.0" x2="2097.5" y2="800.0" class="grid"/>
+<text x="2097.5" y="830.0" class="tick" text-anchor="middle">2.50</text>
+<line x1="2151.3" y1="236.0" x2="2151.3" y2="800.0" class="grid"/>
+<line x1="2205.0" y1="236.0" x2="2205.0" y2="800.0" class="gridheavy"/>
+<text x="2205.0" y="830.0" class="tick" text-anchor="middle">3.00</text>
+<line x1="2258.8" y1="236.0" x2="2258.8" y2="800.0" class="grid"/>
+<line x1="2312.5" y1="236.0" x2="2312.5" y2="800.0" class="grid"/>
+<text x="2312.5" y="830.0" class="tick" text-anchor="middle">3.50</text>
+<line x1="2366.3" y1="236.0" x2="2366.3" y2="800.0" class="grid"/>
+<line x1="1527.8" y1="519.5" x2="2387.8" y2="519.5" class="datum"/>
+<polyline points="1560.0,521.2 1580.4,561.9 1601.1,585.7 1621.5,602.7 1641.9,616.3 1662.6,628.1 1683.0,639.9 1703.6,648.5 1724.0,656.9 1744.5,663.8 1765.1,670.6 1785.5,677.3 1806.0,684.2 1826.6,690.9 1847.0,694.3 1867.5,701.2 1888.1,704.4 1908.5,707.8 1928.9,716.4 1949.6,724.8 1970.0,730.0 1990.6,735.1 2011.1,738.4 2031.5,741.8 2052.1,745.3 2072.6,748.7 2093.0,752.1 2113.6,755.4 2134.1,755.4" class="traced"/>
+<polyline points="1560.0,517.8 1580.4,477.1 1601.1,453.3 1621.5,436.3 1641.9,422.8 1662.6,410.9 1683.0,399.1 1703.6,390.5 1724.0,382.1 1744.5,375.2 1765.1,368.4 1785.5,361.7 1806.0,354.8 1826.6,348.1 1847.0,344.7 1867.5,337.8 1888.1,334.6 1908.5,331.2 1928.9,322.6 1949.6,314.2 1970.0,309.0 1990.6,303.9 2011.1,300.6 2031.5,297.2 2052.1,293.8 2072.6,290.3 2093.0,286.9 2113.6,283.6 2134.1,283.6" class="traced"/>
+<text x="1968.5" y="807.8" class="tracedlabel" text-anchor="middle">полуширина фюзеляжа снята с чертежа</text>
+<polygon points="1908.3,637.8 2183.5,680.8 2269.5,532.4 2269.5,506.6 2183.5,358.3 1908.3,401.3" class="roofoutline"/>
+<text x="2067.4" y="429.2" class="panel" text-anchor="middle">RF · крыша</text>
+<polygon points="1811.8,513.0 1861.0,390.5 1942.7,401.3 1908.3,513.0" class="glass"/>
+<rect x="1869.6" y="313.1" width="116.1" height="11.8" class="glass"/>
+<rect x="1995.4" y="304.5" width="91.4" height="11.8" class="glass"/>
+<rect x="2096.4" y="298.1" width="78.5" height="11.8" class="glass"/>
+<polygon points="1811.8,526.0 1861.0,648.5 1942.7,637.8 1908.3,526.0" class="glass"/>
+<rect x="1869.6" y="725.9" width="116.1" height="11.8" class="glass"/>
+<rect x="1995.4" y="734.5" width="91.4" height="11.8" class="glass"/>
+<rect x="2096.4" y="741.0" width="78.5" height="11.8" class="glass"/>
+<line x1="1811.8" y1="519.5" x2="1908.3" y2="519.5" class="memberheavy"/>
+<text x="1861.0" y="596.9" class="panel" text-anchor="middle">W-R</text>
+<text x="1861.0" y="459.3" class="panel" text-anchor="middle">W-L</text>
+<text x="1916.9" y="489.4" class="note" text-anchor="middle">P-C</text>
+<line x1="1849.0" y1="390.5" x2="1641.0" y2="390.5" class="witness"/>
+<line x1="1849.0" y1="648.5" x2="1641.0" y2="648.5" class="witness"/>
+<line x1="1661.0" y1="390.5" x2="1661.0" y2="648.5" class="dim" marker-start="url(#tick)" marker-end="url(#tick)"/>
+<text x="1661.0" y="510.5" class="dimtext" text-anchor="middle" transform="rotate(90.0 1661.0 519.5)">1.20 — лобовое по низу</text>
+<line x1="2184.5" y1="298.1" x2="2350.9" y2="298.1" class="witness"/>
+<line x1="2184.5" y1="741.0" x2="2350.9" y2="741.0" class="witness"/>
+<line x1="2334.9" y1="298.1" x2="2334.9" y2="741.0" class="dim" marker-start="url(#tick)" marker-end="url(#tick)"/>
+<text x="2334.9" y="510.5" class="dimtext" text-anchor="middle" transform="rotate(90.0 2334.9 519.5)">2.06 — по задним окнам</text>
+<text x="1594.4" y="291.6" class="note" text-anchor="start">нос выходит на полную ширину</text>
+<text x="1594.4" y="317.4" class="note" text-anchor="start">за 1.5 м станции</text>
+<rect x="130.0" y="1080.0" width="700.0" height="820.0" class="viewbox"/>
+<text x="148.0" y="1114.0" class="viewtitle" text-anchor="start">3 · ВИД СПЕРЕДИ — лобовое стекло</text>
+<polyline points="480.0,1772.5 459.1,1771.4 438.4,1768.0 418.2,1762.5 398.7,1754.8 380.0,1745.0 362.4,1733.3 346.2,1719.8 331.4,1704.7 318.2,1688.0 306.8,1670.0 297.3,1650.9 289.8,1630.8 284.4,1610.1 281.1,1588.9 280.0,1567.5 281.1,1546.1 284.4,1524.9 289.8,1504.2 297.3,1484.1 306.8,1465.0 318.2,1447.0 331.4,1430.3 346.2,1415.2 362.4,1401.7 380.0,1390.0 398.7,1380.2 418.2,1372.5 438.4,1367.0 459.1,1363.6 480.0,1362.5 500.9,1363.6 521.6,1367.0 541.8,1372.5 561.3,1380.2 580.0,1390.0 597.6,1401.7 613.8,1415.2 628.6,1430.3 641.8,1447.0 653.2,1465.0 662.7,1484.1 670.2,1504.2 675.6,1524.9 678.9,1546.1 680.0,1567.5 678.9,1588.9 675.6,1610.1 670.2,1630.8 662.7,1650.9 653.2,1670.0 641.8,1688.0 628.6,1704.7 613.8,1719.8 597.6,1733.3 580.0,1745.0 561.3,1754.8 541.8,1762.5 521.6,1768.0 500.9,1771.4 480.0,1772.5" class="traced"/>
+<text x="480.0" y="1802.5" class="tracedlabel" text-anchor="middle">сечение фюзеляжа на станции 1.25</text>
+<polygon points="472.5,1371.0 330.0,1407.5 342.5,1282.5 472.5,1257.3" class="glass"/>
+<polygon points="487.5,1371.0 630.0,1407.5 617.5,1282.5 487.5,1257.3" class="glass"/>
+<rect x="472.5" y="1257.3" width="15.0" height="113.7" class="post"/>
+<text x="480.0" y="1227.5" class="note" text-anchor="middle">P-C · стойка 60 мм</text>
+<text x="390.0" y="1332.5" class="panel" text-anchor="middle">W-L</text>
+<text x="570.0" y="1332.5" class="panel" text-anchor="middle">W-R</text>
+<line x1="330.0" y1="1414.7" x2="330.0" y2="1539.5" class="witness"/>
+<line x1="630.0" y1="1414.7" x2="630.0" y2="1539.5" class="witness"/>
+<line x1="330.0" y1="1527.5" x2="630.0" y2="1527.5" class="dim" marker-start="url(#tick)" marker-end="url(#tick)"/>
+<text x="480.0" y="1518.5" class="dimtext" text-anchor="middle" transform="rotate(0.0 480.0 1527.5)">1.20</text>
+<line x1="710.0" y1="1407.5" x2="710.0" y2="1407.5" class="witness"/>
+<line x1="710.0" y1="1257.3" x2="710.0" y2="1257.3" class="witness"/>
+<line x1="710.0" y1="1407.5" x2="710.0" y2="1257.3" class="dim" marker-start="url(#tick)" marker-end="url(#tick)"/>
+<text x="710.0" y="1323.4" class="dimtext" text-anchor="middle" transform="rotate(-90.0 710.0 1332.4)">0.60</text>
+<text x="235.0" y="1450.0" class="note" text-anchor="start">низ лобового = подоконная линия</text>
+<rect x="870.0" y="1080.0" width="700.0" height="820.0" class="viewbox"/>
+<text x="888.0" y="1114.0" class="viewtitle" text-anchor="start">4 · СЕЧЕНИЕ A–A по wl 0.88</text>
+<line x1="1220.0" y1="1210.0" x2="1220.0" y2="1620.0" class="datum"/>
+<polyline points="1213.8,1234.8 1097.0,1281.8 1023.2,1290.0 1008.9,1581.0" class="memberheavy"/>
+<polyline points="1226.2,1234.8 1343.0,1281.8 1416.8,1290.0 1431.2,1581.0" class="memberheavy"/>
+<polyline points="1370.5,1209.8 1377.0,1229.3 1383.4,1249.0 1386.7,1268.4 1393.2,1287.9 1396.3,1307.6 1399.6,1327.1 1407.8,1346.5 1415.8,1366.2 1420.7,1385.7 1425.6,1405.4 1428.7,1424.8 1432.0,1444.3 1435.3,1464.0 1438.5,1483.5 1441.8,1502.9 1444.9,1522.6 1444.9,1542.1" class="traced"/>
+<polyline points="1069.5,1209.8 1063.0,1229.3 1056.6,1249.0 1053.3,1268.4 1046.8,1287.9 1043.7,1307.6 1040.4,1327.1 1032.2,1346.5 1024.2,1366.2 1019.3,1385.7 1014.4,1405.4 1011.3,1424.8 1008.0,1444.3 1004.8,1464.0 1001.5,1483.5 998.2,1502.9 995.1,1522.6 995.1,1542.1" class="traced"/>
+<text x="1220.0" y="1191.8" class="note" text-anchor="middle">нос</text>
+<text x="1269.2" y="1261.3" class="dimtext" text-anchor="start">V 22°</text>
+<text x="1293.8" y="1486.8" class="note" text-anchor="start">щека — боковые окна</text>
+<text x="953.5" y="1589.3" class="tracedlabel" text-anchor="start">серым — борт с чертежа</text>
+<rect x="1610.0" y="1080.0" width="900.0" height="820.0" class="viewbox"/>
+<text x="1628.0" y="1114.0" class="viewtitle" text-anchor="start">5 · ВЕДОМОСТЬ ПАНЕЛЕЙ</text>
+<line x1="1628.0" y1="1180.0" x2="2492.0" y2="1180.0" class="control"/>
+<text x="1632.0" y="1168.0" class="th" text-anchor="start">id</text>
+<text x="1762.0" y="1168.0" class="th" text-anchor="start">что</text>
+<text x="1982.0" y="1168.0" class="th" text-anchor="start">станции fs</text>
+<text x="2152.0" y="1168.0" class="th" text-anchor="start">bl</text>
+<text x="2272.0" y="1168.0" class="th" text-anchor="start">wl</text>
+<text x="2410.0" y="1168.0" class="th" text-anchor="start">материал</text>
+<text x="1632.0" y="1208.0" class="td" text-anchor="start">W-L / W-R</text>
+<text x="1762.0" y="1208.0" class="td" text-anchor="start">лобовое, плоское</text>
+<text x="1982.0" y="1208.0" class="td" text-anchor="start">1.17 → 1.62</text>
+<text x="2152.0" y="1208.0" class="td" text-anchor="start">0…±0.60</text>
+<text x="2272.0" y="1208.0" class="td" text-anchor="start">0.87 → 1.32</text>
+<text x="2410.0" y="1208.0" class="td" text-anchor="start">glazing</text>
+<text x="1632.0" y="1248.0" class="td" text-anchor="start">P-C</text>
+<text x="1762.0" y="1248.0" class="td" text-anchor="start">центральная стойка</text>
+<text x="1982.0" y="1248.0" class="td" text-anchor="start">1.17 → 1.62</text>
+<text x="2152.0" y="1248.0" class="td" text-anchor="start">±0.03</text>
+<text x="2272.0" y="1248.0" class="td" text-anchor="start">0.87 → 1.32</text>
+<text x="2410.0" y="1248.0" class="td" text-anchor="start">metal</text>
+<text x="1632.0" y="1288.0" class="td" text-anchor="start">P-K ×2</text>
+<text x="1762.0" y="1288.0" class="td" text-anchor="start">угловая стойка</text>
+<text x="1982.0" y="1288.0" class="td" text-anchor="start">1.40 → 1.78</text>
+<text x="2152.0" y="1288.0" class="td" text-anchor="start">±0.60</text>
+<text x="2272.0" y="1288.0" class="td" text-anchor="start">0.72 → 1.22</text>
+<text x="2410.0" y="1288.0" class="td" text-anchor="start">metal</text>
+<text x="1632.0" y="1328.0" class="td" text-anchor="start">BR</text>
+<text x="1762.0" y="1328.0" class="td" text-anchor="start">козырёк</text>
+<text x="1982.0" y="1328.0" class="td" text-anchor="start">1.62 → 1.90</text>
+<text x="2152.0" y="1328.0" class="td" text-anchor="start">±0.55</text>
+<text x="2272.0" y="1328.0" class="td" text-anchor="start">1.32 → 1.48</text>
+<text x="2410.0" y="1328.0" class="td" text-anchor="start">metal</text>
+<text x="1632.0" y="1368.0" class="td" text-anchor="start">RF</text>
+<text x="1762.0" y="1368.0" class="td" text-anchor="start">крыша кабины</text>
+<text x="1982.0" y="1368.0" class="td" text-anchor="start">1.90 → 2.90</text>
+<text x="2152.0" y="1368.0" class="td" text-anchor="start">±0.55…0.75</text>
+<text x="2272.0" y="1368.0" class="td" text-anchor="start">1.48 → 1.63</text>
+<text x="2410.0" y="1368.0" class="td" text-anchor="start">paint-light</text>
+<text x="1632.0" y="1408.0" class="td" text-anchor="start">S1 ×2</text>
+<text x="1762.0" y="1408.0" class="td" text-anchor="start">боковое окно 1</text>
+<text x="1982.0" y="1408.0" class="td" text-anchor="start">1.44 → 1.98</text>
+<text x="2152.0" y="1408.0" class="td" text-anchor="start">±0.96</text>
+<text x="2272.0" y="1408.0" class="td" text-anchor="start">0.72 → 1.05</text>
+<text x="2410.0" y="1408.0" class="td" text-anchor="start">glazing</text>
+<text x="1632.0" y="1448.0" class="td" text-anchor="start">S2 ×2</text>
+<text x="1762.0" y="1448.0" class="td" text-anchor="start">боковое окно 2</text>
+<text x="1982.0" y="1448.0" class="td" text-anchor="start">2.03 → 2.45</text>
+<text x="2152.0" y="1448.0" class="td" text-anchor="start">±1.00</text>
+<text x="2272.0" y="1448.0" class="td" text-anchor="start">0.72 → 1.05</text>
+<text x="2410.0" y="1448.0" class="td" text-anchor="start">glazing</text>
+<text x="1632.0" y="1488.0" class="td" text-anchor="start">S3 ×2</text>
+<text x="1762.0" y="1488.0" class="td" text-anchor="start">боковое окно 3</text>
+<text x="1982.0" y="1488.0" class="td" text-anchor="start">2.50 → 2.86</text>
+<text x="2152.0" y="1488.0" class="td" text-anchor="start">±1.03</text>
+<text x="2272.0" y="1488.0" class="td" text-anchor="start">0.72 → 1.05</text>
+<text x="2410.0" y="1488.0" class="td" text-anchor="start">glazing</text>
+<text x="1632.0" y="1528.0" class="td" text-anchor="start">FR</text>
+<text x="1762.0" y="1528.0" class="td" text-anchor="start">зализ в гребень</text>
+<text x="1982.0" y="1528.0" class="td" text-anchor="start">2.90 → 3.30</text>
+<text x="2152.0" y="1528.0" class="td" text-anchor="start">±0.75 → 0</text>
+<text x="2272.0" y="1528.0" class="td" text-anchor="start">1.63 → 1.66</text>
+<text x="2410.0" y="1528.0" class="td" text-anchor="start">paint-light</text>
+<text x="1632.0" y="1660.0" class="th" text-anchor="start">Что меняется против c4:</text>
+<text x="1632.0" y="1694.0" class="td" text-anchor="start">· остекление уходит ВПЕРЁД на 1.19 м</text>
+<text x="1632.0" y="1728.0" class="td" text-anchor="start">· лобовое перестаёт быть лентой по сечению</text>
+<text x="1632.0" y="1762.0" class="td" text-anchor="start">  и становится плоской парой панелей,</text>
+<text x="1632.0" y="1796.0" class="td" text-anchor="start">· подоконная линия — прямая; гребень над ней</text>
+<text x="1632.0" y="1830.0" class="td" text-anchor="start">  поднимается на 0.93 м, окна остаются на месте.</text>
+<line x1="130" y1="1930" x2="2510" y2="1930" stroke="#c3c9cc" stroke-width="1"/>
+<text x="130" y="1964" class="sub">обвод: File:Douglas C-47 Skytrain drawings.svg, общественное достояние · масштаб только с напечатанных размеров DC-3 · наклон лобового 44.6° от вертикали, полуугол V 22°</text>
+</svg>

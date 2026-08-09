@@ -1,4 +1,4 @@
-import sharp from "/Users/kirisyuk/cursor/playgate/node_modules/sharp/lib/index.js";
+import sharp from "sharp";
 import { readFileSync } from "node:fs";
 
 const trace = JSON.parse(readFileSync("trace.json", "utf8"));
