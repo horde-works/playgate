@@ -261,6 +261,74 @@ test("окна: проём действительно вырезан из обш
   }
 });
 
+test("нос: профиль не растянут — высота набирается к станции 2.1", () => {
+  // Ровно этот класс провалил ревизию c4: колонки таблицы сели на чужую сетку
+  // станций, и нос выходил на полную высоту только к 3.5 м.
+  const skin = dc3Object.parts.filter((part) => part.group === "hull-fuselage")
+    .flatMap((part) => vertices(part).map(toAircraft));
+  const crownAt = (fs) => {
+    const band = skin.filter((node) => Math.abs(node.fs - fs) < 0.14);
+    assert.ok(band.length > 4, `нет обшивки на станции ${fs}`);
+    return Math.max(...band.map((node) => node.wl));
+  };
+  const peak = Math.max(...skin.filter((node) => node.fs < 8).map((node) => node.wl));
+  const early = crownAt(2.10);
+  assert.ok(early / peak > 0.90,
+    `на станции 2.10 верх взял лишь ${(100 * early / peak).toFixed(0)} % высоты (${early.toFixed(3)} из ${peak.toFixed(3)})`);
+  assert.ok(crownAt(1.06) / peak < 0.55,
+    "нос уже полной высоты у станции 1.06 — обтекатель потерян");
+});
+
+test("фонарь: подоконная линия прямая, а гребень над ней поднимается", () => {
+  // Инвариант, снятый с чертежа: окна стоят на месте, тело растёт вокруг них.
+  const panes = withPrefix("cockpit-window-").filter((part) => part.id.endsWith("-glass"));
+  assert.equal(panes.length, 6, `панелей бокового остекления кабины ${panes.length}`);
+  const sills = panes.map((part) => {
+    const nodes = vertices(part).map(toAircraft);
+    return { fs: nodes.reduce((sum, node) => sum + node.fs, 0) / nodes.length, wl: Math.min(...nodes.map((node) => node.wl)) };
+  }).sort((a, b) => a.fs - b.fs);
+  const spread = Math.max(...sills.map((s) => s.wl)) - Math.min(...sills.map((s) => s.wl));
+  assert.ok(spread < 0.10, `подоконная линия гуляет на ${spread.toFixed(3)} м`);
+
+  const skin = dc3Object.parts.filter((part) => part.group === "hull-fuselage")
+    .flatMap((part) => vertices(part).map(toAircraft));
+  const crownAt = (fs) => Math.max(...skin.filter((node) => Math.abs(node.fs - fs) < 0.14).map((node) => node.wl));
+  // Подъём меряется по КРАЯМ полосы остекления, а не по центрам крайних окон.
+  const paneNodes = panes.flatMap((part) => vertices(part).map(toAircraft));
+  const front = Math.min(...paneNodes.map((node) => node.fs));
+  const rear = Math.max(...paneNodes.map((node) => node.fs));
+  const rise = crownAt(rear) - crownAt(front);
+  assert.ok(rise > 0.30,
+    `гребень над остеклением (${front.toFixed(2)}…${rear.toFixed(2)}) поднялся лишь на ${rise.toFixed(3)} м`);
+});
+
+test("фонарь: лобовое — плоская пара панелей на своих станциях", () => {
+  for (const side of ["left", "right"]) {
+    const pane = find(`windscreen-${side}-glass`);
+    assert.ok(pane, `нет лобового стекла ${side}`);
+    const nodes = vertices(pane).map(toAircraft);
+    const from = Math.min(...nodes.map((node) => node.fs));
+    const to = Math.max(...nodes.map((node) => node.fs));
+    assert.ok(Math.abs(from - 1.171) < 0.06 && Math.abs(to - 1.620) < 0.06,
+      `${pane.id}: станции ${from.toFixed(3)}…${to.toFixed(3)}, ведомость требует 1.171…1.620`);
+    // Наклон меряется по КОНЬКУ: у панели есть ещё угловая кромка, и по её
+    // высоте угол выходит другим — мерить надо ту линию, что задана ведомостью.
+    const ridge = nodes.filter((node) => Math.abs(node.bl) < 0.06).sort((a, b) => a.wl - b.wl);
+    assert.ok(ridge.length >= 2, `${pane.id}: не нашлась линия конька`);
+    const low = ridge[0];
+    const high = ridge[ridge.length - 1];
+    const rake = Math.atan2(high.fs - low.fs, high.wl - low.wl) * 180 / Math.PI;
+    assert.ok(Math.abs(rake - 44.6) < 6,
+      `${pane.id}: наклон ${rake.toFixed(1)}°, ведомость требует 44.6°`);
+    // Панель ПЛОСКАЯ поперёк: она не повторяет дугу сечения.
+    const sag = nodes.reduce((worst, node) => Math.max(worst, Math.abs(node.bl)), 0);
+    assert.ok(sag > 0.45, `${pane.id}: панель не доходит до угловой стойки (${sag.toFixed(3)})`);
+  }
+  for (const id of ["windscreen-centre-post", "windscreen-corner-post-left", "windscreen-corner-post-right", "windscreen-sill", "windscreen-brow", "windscreen-reveal"]) {
+    assert.ok(find(id), `нет детали фонаря ${id}`);
+  }
+});
+
 test("прозрачность: аудит с двух концов", () => {
   const transparent = ["glazing", "lamp-glass", "canvas"];
   for (const part of dc3Object.parts) {

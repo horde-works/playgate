@@ -103,62 +103,81 @@ const SEMI_SPAN = DC3_SPAN / 2;
 // ---------------------------------------------------------------------------
 
 type FuselageRow = {
-  readonly u: number;
+  readonly fs: number;
   readonly half: number;
   readonly top: number;
   readonly bottom: number;
 };
 
+/**
+ * Станции фюзеляжа. КАЖДАЯ КОЛОНКА СНЯТА СО СВОЕЙ ПАНЕЛИ и приведена на общую
+ * сетку интерполяцией СВОИХ измерений: `half` с плановой, `top` и `bottom` — с
+ * боковой. В ревизии c4 колонки сводились руками и сошлись не по станции —
+ * носовой профиль растянулся назад на метр, а фонарь уехал за ним.
+ * Сборка: docs/dc3/reference/fuselage-table.mjs.
+ *
+ * Участки, где трасса села на чужую деталь (мачта антенны, диск винта, зализ
+ * крыла, гондола, оперение), объявлены окнами отбраковки в скрипте и заполнены
+ * интерполяцией между чистыми краями. Хвостовой конус за станцией 13.2 —
+ * авторский: там фюзеляж закрыт килём и стабилизатором на всех трёх панелях.
+ *
+ * Крутой участок `top` между 1.171 и 1.62 — это НЕ кривизна обтекателя, а само
+ * лобовое стекло, наклон 44.6° от вертикали.
+ */
 const FUSELAGE_TABLE: readonly FuselageRow[] = [
-  { u: 0.000, half: 0.020, top: 0.020, bottom: -0.020 },
-  { u: 0.015, half: 0.300, top: 0.330, bottom: -0.290 },
-  { u: 0.039, half: 0.639, top: 0.667, bottom: -0.560 },
-  { u: 0.060, half: 0.760, top: 0.812, bottom: -0.660 },
-  { u: 0.078, half: 0.860, top: 0.930, bottom: -0.720 },
-  { u: 0.100, half: 0.965, top: 1.101, bottom: -0.800 },
-  { u: 0.116, half: 1.050, top: 1.240, bottom: -0.860 },
-  { u: 0.140, half: 1.105, top: 1.422, bottom: -0.930 },
-  { u: 0.155, half: 1.145, top: 1.520, bottom: -0.960 },
-  { u: 0.175, half: 1.170, top: 1.590, bottom: -0.990 },
-  { u: 0.194, half: 1.192, top: 1.633, bottom: -1.010 },
-  { u: 0.233, half: 1.224, top: 1.660, bottom: -1.020 },
-  { u: 0.272, half: 1.224, top: 1.658, bottom: -1.020 },
-  { u: 0.310, half: 1.239, top: 1.656, bottom: -1.020 },
-  { u: 0.349, half: 1.255, top: 1.650, bottom: -1.020 },
-  { u: 0.388, half: 1.287, top: 1.643, bottom: -1.020 },
-  { u: 0.427, half: 1.285, top: 1.634, bottom: -1.020 }, // зализ крыла снаружи
-  { u: 0.466, half: 1.285, top: 1.627, bottom: -1.020 }, // зализ крыла снаружи
-  { u: 0.504, half: 1.285, top: 1.614, bottom: -1.020 },
-  { u: 0.543, half: 1.283, top: 1.601, bottom: -1.020 },
-  { u: 0.582, half: 1.287, top: 1.588, bottom: -1.020 },
-  { u: 0.621, half: 1.239, top: 1.573, bottom: -1.015 },
-  { u: 0.660, half: 1.176, top: 1.559, bottom: -1.000 },
-  { u: 0.699, half: 1.113, top: 1.544, bottom: -0.980 },
-  { u: 0.737, half: 1.050, top: 1.530, bottom: -0.940 },
-  { u: 0.776, half: 0.971, top: 1.515, bottom: -0.880 },
-  { u: 0.815, half: 0.892, top: 1.500, bottom: -0.790 },
-  { u: 0.840, half: 0.860, top: 1.486, bottom: -0.700 },
-  { u: 0.865, half: 0.800, top: 1.440, bottom: -0.600 },
-  { u: 0.890, half: 0.720, top: 1.380, bottom: -0.480 },
-  { u: 0.915, half: 0.620, top: 1.300, bottom: -0.340 },
-  { u: 0.940, half: 0.500, top: 1.190, bottom: -0.190 },
-  { u: 0.965, half: 0.360, top: 1.060, bottom: -0.040 },
-  { u: 0.982, half: 0.240, top: 0.960, bottom: 0.080 },
-  { u: 0.994, half: 0.130, top: 0.900, bottom: 0.170 },
+  { fs: 0.000, half: 0.020, top: 0.020, bottom: -0.020 },
+  { fs: 0.100, half: 0.204, top: 0.309, bottom: -0.204 },
+  { fs: 0.220, half: 0.327, top: 0.422, bottom: -0.332 },
+  { fs: 0.360, half: 0.436, top: 0.524, bottom: -0.417 },
+  { fs: 0.520, half: 0.527, top: 0.590, bottom: -0.500 },
+  { fs: 0.700, half: 0.616, top: 0.670, bottom: -0.570 },
+  { fs: 0.900, half: 0.685, top: 0.754, bottom: -0.631 },
+  { fs: 1.060, half: 0.738, top: 0.814, bottom: -0.679 },
+  { fs: 1.171, half: 0.775, top: 0.866, bottom: -0.713 },
+  { fs: 1.340, half: 0.815, top: 1.045, bottom: -0.765 },
+  { fs: 1.500, half: 0.852, top: 1.215, bottom: -0.798 },
+  { fs: 1.620, half: 0.876, top: 1.320, bottom: -0.930 },
+  { fs: 1.780, half: 0.945, top: 1.437, bottom: -0.868 },
+  { fs: 1.900, half: 0.978, top: 1.500, bottom: -0.890 },
+  { fs: 2.100, half: 1.019, top: 1.546, bottom: -0.935 },
+  { fs: 2.350, half: 1.066, top: 1.584, bottom: -0.981 },
+  { fs: 2.620, half: 1.097, top: 1.622, bottom: -1.009 },
+  { fs: 2.900, half: 1.130, top: 1.636, bottom: -1.010 },
+  { fs: 3.250, half: 1.160, top: 1.658, bottom: -1.010 },
+  { fs: 3.700, half: 1.181, top: 1.674, bottom: -1.010 },
+  { fs: 4.200, half: 1.208, top: 1.673, bottom: -1.010 },
+  { fs: 4.800, half: 1.224, top: 1.658, bottom: -1.010 },
+  { fs: 5.500, half: 1.234, top: 1.649, bottom: -1.010 },
+  { fs: 6.300, half: 1.248, top: 1.637, bottom: -1.010 },
+  { fs: 7.200, half: 1.263, top: 1.610, bottom: -1.011 },
+  { fs: 8.100, half: 1.272, top: 1.597, bottom: -1.011 },
+  { fs: 9.000, half: 1.281, top: 1.578, bottom: -1.011 },
+  { fs: 9.900, half: 1.290, top: 1.556, bottom: -1.011 },
+  { fs: 10.800, half: 1.299, top: 1.544, bottom: -1.012 },
+  { fs: 11.700, half: 1.271, top: 1.515, bottom: -1.012 },
+  { fs: 12.500, half: 1.221, top: 1.484, bottom: -1.012 },
+  { fs: 13.200, half: 1.160, top: 1.519, bottom: -0.947 },
+  { fs: 14.400, half: 1.045, top: 1.470, bottom: -0.880 },
+  { fs: 15.600, half: 0.930, top: 1.395, bottom: -0.720 },
+  { fs: 16.600, half: 0.820, top: 1.300, bottom: -0.545 },
+  { fs: 17.600, half: 0.660, top: 1.170, bottom: -0.330 },
+  { fs: 18.600, half: 0.450, top: 1.010, bottom: -0.120 },
+  { fs: 19.300, half: 0.230, top: 0.900, bottom: 0.060 },
+  { fs: 19.550, half: 0.120, top: 0.840, bottom: 0.140 },
 ];
 
 const FUSELAGE_NOSE_FS = 0;
-const FUSELAGE_TAIL_FS = 0.994 * DC3_LENGTH;
+const FUSELAGE_TAIL_FS = FUSELAGE_TABLE[FUSELAGE_TABLE.length - 1].fs;
 
 const sampleFuselage = (fs: number): FuselageRow => {
-  const u = clamp(fs / DC3_LENGTH, FUSELAGE_TABLE[0].u, FUSELAGE_TABLE[FUSELAGE_TABLE.length - 1].u);
+  const station = clamp(fs, FUSELAGE_TABLE[0].fs, FUSELAGE_TABLE[FUSELAGE_TABLE.length - 1].fs);
   let index = 0;
-  while (index < FUSELAGE_TABLE.length - 2 && FUSELAGE_TABLE[index + 1].u < u) index += 1;
+  while (index < FUSELAGE_TABLE.length - 2 && FUSELAGE_TABLE[index + 1].fs < station) index += 1;
   const a = FUSELAGE_TABLE[index];
   const b = FUSELAGE_TABLE[index + 1];
-  const ratio = (u - a.u) / (b.u - a.u);
+  const ratio = (station - a.fs) / (b.fs - a.fs);
   return {
-    u,
+    fs: station,
     half: lerp(a.half, b.half, ratio),
     top: lerp(a.top, b.top, ratio),
     bottom: lerp(a.bottom, b.bottom, ratio),
@@ -608,7 +627,7 @@ for (const [index, angle] of STRINGER_ANGLES.entries()) {
 
 /** Пол салона: уровень выбран так, чтобы под ним прошли лонжероны центроплана. */
 export const DC3_CABIN_FLOOR_WL = -0.34;
-const CABIN_FRONT_FS = 3.55;
+const CABIN_FRONT_FS = 3.25;
 const CABIN_REAR_FS = 14.10;
 
 const floorHalfWidthAt = (fs: number) => {
@@ -1151,7 +1170,23 @@ type SkinHole = {
   readonly fromCell: number;
   readonly toCell: number;
   readonly kind: "cabin" | "cockpit" | "door";
+  /**
+   * Диапазон ячеек по станциям. Нужен там, где кромка проёма обязана идти по
+   * ПРЯМОЙ, а сечение под ней растёт: у окон кабины подоконная линия
+   * горизонтальна, пока гребень над ней поднимается на 0.93 м.
+   */
+  readonly cellSpans?: readonly { readonly from: number; readonly to: number }[];
+  /**
+   * Точные высоты кромок. Вырез обшивки неизбежно квантуется по ячейкам
+   * сечения, а рама и стекло строятся ПО НИМ — поэтому видимая линия остаётся
+   * прямой, а ступеньку выреза съедает четверть.
+   */
+  readonly sillWl?: number;
+  readonly headWl?: number;
 };
+
+const holeCells = (hole: SkinHole, station: number) =>
+  hole.cellSpans?.[station - hole.fromStation] ?? { from: hole.fromCell, to: hole.toCell };
 
 /**
  * Обшивка отрезка фюзеляжа с настоящими проёмами.
@@ -1164,19 +1199,29 @@ const emitFuselageSkin = (
   id: string,
   from: number,
   to: number,
-  options: { readonly step?: number; readonly capStart?: boolean; readonly capEnd?: boolean; readonly holes?: readonly SkinHole[] } = {},
+  options: {
+    readonly step?: number; readonly capStart?: boolean; readonly capEnd?: boolean;
+    readonly holes?: readonly SkinHole[]; readonly stations?: readonly number[];
+  } = {},
 ) => {
   const step = options.step ?? 0.22;
   const steps = Math.max(2, Math.round((to - from) / step));
-  const stations = Array.from({ length: steps + 1 }, (_, index) => lerp(from, to, index / steps));
+  // Явный список станций нужен там, где проём обязан лечь по своим границам:
+  // фонарь разбит на панели с точностью до сантиметров, и подгонять его под
+  // равномерную сетку значило бы двигать построение под удобство кода.
+  const stations = options.stations
+    ? [...options.stations]
+    : Array.from({ length: steps + 1 }, (_, index) => lerp(from, to, index / steps));
   const sections = stations.map(fuselageArc);
   const holes = options.holes ?? [];
   const facets: Facet[] = [];
   for (let station = 0; station < sections.length - 1; station += 1) {
     for (let cell = 0; cell < ARC_POINTS - 1; cell += 1) {
-      const inside = holes.some((hole) =>
-        station >= hole.fromStation && station < hole.toStation
-        && cell >= hole.fromCell && cell < hole.toCell);
+      const inside = holes.some((hole) => {
+        if (station < hole.fromStation || station >= hole.toStation) return false;
+        const span = holeCells(hole, station);
+        return cell >= span.from && cell < span.to;
+      });
       if (inside) continue;
       facets.push({
         points: [sections[station][cell], sections[station + 1][cell], sections[station + 1][cell + 1], sections[station][cell + 1]],
@@ -1204,6 +1249,16 @@ const skinPoint = (fs: number, cell: number, inset: number): ObjectPoint => {
   return toModel(fs, half * Math.sin(angle), centre + (cos >= 0 ? upper : lower) * cos);
 };
 
+/** Ячейка сечения, на которой поверхность пересекает заданную высоту. */
+const cellAtWl = (fs: number, wl: number, side: 1 | -1) => {
+  const row = sampleFuselage(fs);
+  const centre = (row.top + row.bottom) / 2;
+  const radius = wl >= centre ? row.top - centre : centre - row.bottom;
+  const angle = Math.acos(clamp((wl - centre) / radius, -1, 1));
+  const signed = side > 0 ? angle : -angle;
+  return (signed + Math.PI) / (Math.PI * 2) * (ARC_POINTS - 1);
+};
+
 const REVEAL_DEPTH = 0.10;
 const GLASS_INSET = 0.045;
 
@@ -1219,50 +1274,87 @@ const emitOpening = (
 ) => {
   const fs0 = stations[hole.fromStation];
   const fs1 = stations[hole.toStation];
-  const cells = [hole.fromCell, hole.toCell];
+  const spanAt = (station: number) => holeCells(hole, Math.min(station, hole.toStation - 1));
   const outer = (fs: number, cell: number) => skinPoint(fs, cell, 0);
   const inner = (fs: number, cell: number) => skinPoint(fs, cell, REVEAL_DEPTH);
-  const reveal: Facet[] = [];
-  for (let cell = hole.fromCell; cell < hole.toCell; cell += 1) {
-    // верхняя и нижняя четверти (по станциям)
-    reveal.push({ points: [outer(fs0, cell), inner(fs0, cell), inner(fs0, cell + 1), outer(fs0, cell + 1)], tag: "reveal" });
-    reveal.push({ points: [outer(fs1, cell + 1), inner(fs1, cell + 1), inner(fs1, cell), outer(fs1, cell)], tag: "reveal" });
+  const reveal: { points: ObjectPoint[]; reference: ObjectPoint }[] = [];
+  const push = (points: ObjectPoint[], reference: ObjectPoint) => reveal.push({ points, reference });
+  {
+    const first = spanAt(hole.fromStation);
+    const last = spanAt(hole.toStation - 1);
+    // Передняя и задняя стенки смотрят ВДОЛЬ станции, поэтому их разворачивает
+    // центр самого проёма, а не точка на той же станции: там скалярное
+    // произведение вырождается в ноль и знак становится шумом.
+    const centre = skinPoint((fs0 + fs1) / 2, (first.from + first.to) / 2, REVEAL_DEPTH / 2);
+    for (let cell = first.from; cell < first.to; cell += 1) {
+      push([outer(fs0, cell), inner(fs0, cell), inner(fs0, cell + 1), outer(fs0, cell + 1)], centre);
+    }
+    for (let cell = last.from; cell < last.to; cell += 1) {
+      push([outer(fs1, cell + 1), inner(fs1, cell + 1), inner(fs1, cell), outer(fs1, cell)], centre);
+    }
   }
-  for (const [index, cell] of cells.entries()) {
+  for (const [index, key] of (["from", "to"] as const).entries()) {
     for (let station = hole.fromStation; station < hole.toStation; station += 1) {
       const a = stations[station];
       const b = stations[station + 1];
-      const quad = [outer(a, cell), inner(a, cell), inner(b, cell), outer(b, cell)];
-      reveal.push({ points: index === 0 ? quad : [...quad].reverse(), tag: "reveal" });
+      const cellA = spanAt(station)[key];
+      const cellB = spanAt(Math.min(station + 1, hole.toStation - 1))[key];
+      const quad = [outer(a, cellA), inner(a, cellA), inner(b, cellB), outer(b, cellB)];
+      const span = spanAt(station);
+      push(index === 0 ? quad : [...quad].reverse(),
+        skinPoint((a + b) / 2, (span.from + span.to) / 2, REVEAL_DEPTH / 2));
     }
   }
   // Стенка проёма смотрит В проём: снаружи в окно видно именно её, а не изнанку.
-  // Разворачивать нужно КАЖДУЮ грань: у четырёх стенок нет общей «наружи», и
-  // единый разворот на весь набор оставил бы четверть граней вывернутой.
-  const revealCentre = skinPoint((fs0 + fs1) / 2, (hole.fromCell + hole.toCell) / 2, REVEAL_DEPTH / 2);
-  addFacets(`${hole.id}-reveal`, group, "metal", reveal.map((facet) => {
-    const [a, b, c] = facet.points;
+  // Разворачивается КАЖДАЯ грань, и к СВОЕЙ оси: у четырёх стенок нет общей
+  // «наружи», а на длинном окне нет и общего центра.
+  addFacets(`${hole.id}-reveal`, group, "metal", reveal.map(({ points, reference }) => {
+    const [a, b, c] = points;
     const ux = b[0] - a[0]; const uy = b[1] - a[1]; const uz = b[2] - a[2];
     const vx = c[0] - a[0]; const vy = c[1] - a[1]; const vz = c[2] - a[2];
-    const nx = uy * vz - uz * vy;
-    const ny = uz * vx - ux * vz;
-    const nz = ux * vy - uy * vx;
+    const nx = uy * vz - uz * vy; const ny = uz * vx - ux * vz; const nz = ux * vy - uy * vx;
     let cx = 0; let cy = 0; let cz = 0;
-    for (const node of facet.points) { cx += node[0]; cy += node[1]; cz += node[2]; }
-    const count = facet.points.length;
-    const toAxis = [revealCentre[0] - cx / count, revealCentre[1] - cy / count, revealCentre[2] - cz / count];
-    const dot = nx * toAxis[0] + ny * toAxis[1] + nz * toAxis[2];
-    return dot >= 0 ? facet : { points: [...facet.points].reverse(), tag: facet.tag };
+    for (const node of points) { cx += node[0]; cy += node[1]; cz += node[2]; }
+    const count = points.length;
+    const dot = nx * (reference[0] - cx / count) + ny * (reference[1] - cy / count) + nz * (reference[2] - cz / count);
+    return { points: dot >= 0 ? points : [...points].reverse(), tag: "reveal" };
   }));
+
+  /**
+   * Кромка рамы: ТОЧНАЯ высота, если проём её объявил, иначе граница ячейки.
+   * Вырез обшивки неизбежно квантуется по сечению — видимую прямую держит рама,
+   * а ступеньку выреза съедает четверть.
+   */
+  const edgeCell = (fs: number, key: "from" | "to", station: number) => {
+    if (hole.sillWl === undefined || hole.headWl === undefined) return spanAt(station)[key];
+    const side = (hole.fromCell + hole.toCell) / 2 > (ARC_POINTS - 1) / 2 ? 1 : -1;
+    const sill = cellAtWl(fs, hole.sillWl, side);
+    const head = cellAtWl(fs, hole.headWl, side);
+    return key === "from" ? Math.min(sill, head) : Math.max(sill, head);
+  };
+  const firstSpan = spanAt(hole.fromStation);
 
   // Рама: тонкая накладка вокруг проёма, выступающая наружу на 12 мм.
   const frame: Facet[] = [];
   const framePoint = (fs: number, cell: number, out: number) => skinPoint(fs, cell, -out);
+  const across = Math.max(2, firstSpan.to - firstSpan.from);
   const ring = [
-    ...Array.from({ length: hole.toCell - hole.fromCell + 1 }, (_, index) => ({ fs: fs0, cell: hole.fromCell + index })),
-    ...Array.from({ length: hole.toStation - hole.fromStation }, (_, index) => ({ fs: stations[hole.fromStation + index + 1], cell: hole.toCell })),
-    ...Array.from({ length: hole.toCell - hole.fromCell }, (_, index) => ({ fs: fs1, cell: hole.toCell - index - 1 })),
-    ...Array.from({ length: hole.toStation - hole.fromStation - 1 }, (_, index) => ({ fs: stations[hole.toStation - index - 1], cell: hole.fromCell })),
+    ...Array.from({ length: across + 1 }, (_, index) => ({
+      fs: fs0,
+      cell: lerp(edgeCell(fs0, "from", hole.fromStation), edgeCell(fs0, "to", hole.fromStation), index / across),
+    })),
+    ...Array.from({ length: hole.toStation - hole.fromStation }, (_, index) => ({
+      fs: stations[hole.fromStation + index + 1],
+      cell: edgeCell(stations[hole.fromStation + index + 1], "to", hole.fromStation + index),
+    })),
+    ...Array.from({ length: across }, (_, index) => ({
+      fs: fs1,
+      cell: lerp(edgeCell(fs1, "to", hole.toStation - 1), edgeCell(fs1, "from", hole.toStation - 1), (index + 1) / across),
+    })),
+    ...Array.from({ length: hole.toStation - hole.fromStation - 1 }, (_, index) => ({
+      fs: stations[hole.toStation - index - 1],
+      cell: edgeCell(stations[hole.toStation - index - 1], "from", hole.toStation - index - 1),
+    })),
   ];
   for (let index = 0; index < ring.length; index += 1) {
     const current = ring[index];
@@ -1276,13 +1368,18 @@ const emitOpening = (
     });
   }
   addShell(`${hole.id}-frame`, group, "metal", frame,
-    skinPoint((fs0 + fs1) / 2, (hole.fromCell + hole.toCell) / 2, 0.5));
+    skinPoint((fs0 + fs1) / 2, (firstSpan.from + firstSpan.to) / 2, 0.5));
 
   // Стекло: обычная прозрачная панель внутри четвертей. Источников света нет.
   const glass: ObjectPoint[][] = [];
+  const width = Math.max(2, firstSpan.to - firstSpan.from);
   for (let station = hole.fromStation; station <= hole.toStation; station += 1) {
-    glass.push(Array.from({ length: hole.toCell - hole.fromCell + 1 }, (_, index) =>
-      skinPoint(stations[station], hole.fromCell + index, GLASS_INSET)));
+    const index = Math.min(station, hole.toStation - 1);
+    const fs = stations[station];
+    const low = edgeCell(fs, "from", index);
+    const high = edgeCell(fs, "to", index);
+    glass.push(Array.from({ length: width + 1 }, (_, step) =>
+      skinPoint(fs, lerp(low, high, step / width), GLASS_INSET)));
   }
   const pane: Facet[] = [];
   for (let station = 0; station < glass.length - 1; station += 1) {
@@ -1309,13 +1406,65 @@ const cabinWindowHoles = (side: 1 | -1): SkinHole[] => {
   });
 };
 
-const COCKPIT_FROM = 2.10;
-const COCKPIT_TO = CABIN_SKIN_FROM;
-const cockpitSteps = Math.max(2, Math.round((COCKPIT_TO - COCKPIT_FROM) / SKIN_STEP));
-const cockpitHoles: SkinHole[] = [
-  { id: "windscreen", fromStation: 1, toStation: 3, fromCell: 13, toCell: 19, kind: "cockpit" },
-  { id: "cockpit-side-right", fromStation: 3, toStation: 6, fromCell: 19, toCell: 22, kind: "cockpit" },
-  { id: "cockpit-side-left", fromStation: 3, toStation: 6, fromCell: 10, toCell: 13, kind: "cockpit" },
+/**
+ * Фонарь кабины по ведомости из docs/dc3/canopy-layout.png.
+ *
+ * Лобовое стекло — НЕ лента, вырезанная по сечению. Это плоская пара панелей
+ * на своих станциях: 1.171 → 1.620, наклон 44.6° от вертикали, ширина по низу
+ * 1.20 м. Боковые окна стоят на щеке отдельными проёмами, и подоконная линия
+ * у них ПРЯМАЯ, пока гребень над ней поднимается на 0.93 м.
+ */
+const CANOPY_STATIONS = [
+  1.060, 1.171, 1.300, 1.440, 1.620, 1.780, 1.900, 1.980,
+  2.025, 2.160, 2.300, 2.450, 2.495, 2.620, 2.740, 2.860, 2.920,
+];
+const COCKPIT_FROM = CANOPY_STATIONS[0];
+const COCKPIT_TO = CANOPY_STATIONS[CANOPY_STATIONS.length - 1];
+/** Ячейки сечения: 16 — гребень, шаг 11.25°. */
+const CREST_CELL = 16;
+const WINDSCREEN_CELLS = { from: 12, to: 20 };           // ±45° от гребня
+/** Подоконная линия и верх остекления кабины — прямые (ведомость, лист §1). */
+export const DC3_COCKPIT_SILL_WL = 0.720;
+export const DC3_COCKPIT_HEAD_WL = 1.050;
+
+/**
+ * Диапазоны ячеек считаются на КАЖДОЙ станции от постоянных высот. Фиксированный
+ * диапазон гнал подоконник вверх вместе с сечением — на длине фонаря это дало
+ * 0.19 м подъёма там, где на чертеже прямая.
+ */
+const cockpitWindowSpans = (stations: readonly number[], from: number, to: number, side: 1 | -1) =>
+  Array.from({ length: to - from }, (_, index) => {
+    const fs = (stations[from + index] + stations[from + index + 1]) / 2;
+    // Кромку подоконника держим точно, а недостающую ширину добираем ВВЕРХ.
+    // Обратный порядок опускал подоконник на тех станциях, где сечение выше, —
+    // ровно та кривизна, которой на чертеже нет.
+    const sill = Math.round(cellAtWl(fs, DC3_COCKPIT_SILL_WL, side));
+    const head = Math.round(cellAtWl(fs, DC3_COCKPIT_HEAD_WL, side));
+    return side > 0
+      ? { from: Math.min(head, sill - 2), to: sill }
+      : { from: sill, to: Math.max(head, sill + 2) };
+  });
+const WINDSCREEN_STATIONS = { from: 1, to: 4 };          // 1.171 → 1.620
+const SIDE_WINDOW_STATIONS = [[3, 7], [8, 11], [12, 15]];
+
+const canopyHoles: SkinHole[] = [
+  {
+    id: "windscreen", kind: "cockpit",
+    fromStation: WINDSCREEN_STATIONS.from, toStation: WINDSCREEN_STATIONS.to,
+    fromCell: WINDSCREEN_CELLS.from, toCell: WINDSCREEN_CELLS.to,
+  },
+  ...SIDE_WINDOW_STATIONS.flatMap(([from, to], index) => ([1, -1] as const).map((side) => {
+    const spans = cockpitWindowSpans(CANOPY_STATIONS, from, to, side);
+    return {
+      id: `cockpit-window-${side > 0 ? "right" : "left"}-${index}`,
+      kind: "cockpit" as const,
+      fromStation: from, toStation: to,
+      fromCell: spans[0].from, toCell: spans[0].to,
+      cellSpans: spans,
+      sillWl: DC3_COCKPIT_SILL_WL,
+      headWl: DC3_COCKPIT_HEAD_WL,
+    };
+  })),
 ];
 
 const DOOR_FROM = CABIN_SKIN_TO;
@@ -1326,15 +1475,90 @@ const doorHoles: SkinHole[] = [
   { id: "cabin-door", fromStation: 2, toStation: 8, fromCell: 6, toCell: 10, kind: "door" },
 ];
 
-const noseSkin = emitFuselageSkin("hull-nose", 0.02, COCKPIT_FROM, { capStart: true });
-const cockpitSkin = emitFuselageSkin("hull-cockpit", COCKPIT_FROM, COCKPIT_TO, { step: (COCKPIT_TO - COCKPIT_FROM) / cockpitSteps, holes: cockpitHoles });
+emitFuselageSkin("hull-nose", 0.02, COCKPIT_FROM, { step: 0.13, capStart: true });
+const cockpitSkin = emitFuselageSkin("hull-cockpit", COCKPIT_FROM, COCKPIT_TO, { stations: CANOPY_STATIONS, holes: canopyHoles });
+emitFuselageSkin("hull-forward", COCKPIT_TO, CABIN_SKIN_FROM, { step: 0.21 });
 const cabinSkin = emitFuselageSkin("hull-cabin", CABIN_SKIN_FROM, CABIN_SKIN_TO, { step: SKIN_STEP, holes: [...cabinWindowHoles(1), ...cabinWindowHoles(-1)] });
 const doorSkin = emitFuselageSkin("hull-cabin-aft", DOOR_FROM, DOOR_TO, { step: (DOOR_TO - DOOR_FROM) / doorSteps, holes: doorHoles });
 emitFuselageSkin("hull-aft", DOOR_TO, 15.20);
 emitFuselageSkin("hull-tailcone", 15.20, FUSELAGE_TAIL_FS, { capEnd: true });
-void noseSkin;
 
-for (const hole of cockpitHoles) emitOpening(hole, cockpitSkin.stations, "glazing", "glazing-cockpit");
+// ------------------------------------------------------------ лобовое стекло
+/**
+ * Проём фонаря закрывается ПЛОСКИМИ панелями, а не куском той же оболочки:
+ * каждая панель идёт от кромки выреза к коньку по прямой, поэтому в сечении
+ * появляется настоящая грань, а не продолжение круга. Кромки панели — те же
+ * точки, по которым резана обшивка, поэтому щели не остаётся по построению.
+ */
+{
+  const GLASS_SINK = 0.018;
+  const ridgeAt = (fs: number, inset: number) => skinPoint(fs, CREST_CELL, inset);
+
+  // Четверть по всему периметру выреза. Без неё снаружи видна изнанка
+  // односторонней обшивки — та самая «дыра», которой на машине нет.
+  {
+    const hole = canopyHoles[0];
+    const list = CANOPY_STATIONS;
+    const reveal: Facet[] = [];
+    const outer = (fs: number, cell: number) => skinPoint(fs, cell, 0);
+    const inner = (fs: number, cell: number) => skinPoint(fs, cell, GLASS_SINK + 0.014);
+    for (let cell = hole.fromCell; cell < hole.toCell; cell += 1) {
+      const front = list[hole.fromStation]; const rear = list[hole.toStation];
+      reveal.push({ points: [outer(front, cell), inner(front, cell), inner(front, cell + 1), outer(front, cell + 1)], tag: "reveal" });
+      reveal.push({ points: [outer(rear, cell + 1), inner(rear, cell + 1), inner(rear, cell), outer(rear, cell)], tag: "reveal" });
+    }
+    for (const [index, cell] of [hole.fromCell, hole.toCell].entries()) {
+      for (let station = hole.fromStation; station < hole.toStation; station += 1) {
+        const a = list[station]; const b = list[station + 1];
+        const quad = [outer(a, cell), inner(a, cell), inner(b, cell), outer(b, cell)];
+        reveal.push({ points: index === 0 ? quad : [...quad].reverse(), tag: "reveal" });
+      }
+    }
+    const centre = skinPoint((list[hole.fromStation] + list[hole.toStation]) / 2, CREST_CELL, GLASS_SINK);
+    addFacets("windscreen-reveal", "glazing-cockpit", "metal", reveal.map((facet) => {
+      const [a, b, c] = facet.points;
+      const ux = b[0] - a[0]; const uy = b[1] - a[1]; const uz = b[2] - a[2];
+      const vx = c[0] - a[0]; const vy = c[1] - a[1]; const vz = c[2] - a[2];
+      const nx = uy * vz - uz * vy; const ny = uz * vx - ux * vz; const nz = ux * vy - uy * vx;
+      let cx = 0; let cy = 0; let cz = 0;
+      for (const node of facet.points) { cx += node[0]; cy += node[1]; cz += node[2]; }
+      const count = facet.points.length;
+      const dot = nx * (centre[0] - cx / count) + ny * (centre[1] - cy / count) + nz * (centre[2] - cz / count);
+      return dot >= 0 ? facet : { points: [...facet.points].reverse(), tag: facet.tag };
+    }));
+  }
+  const stations = CANOPY_STATIONS.slice(WINDSCREEN_STATIONS.from, WINDSCREEN_STATIONS.to + 1);
+  for (const [side, cell] of [[1, WINDSCREEN_CELLS.to], [-1, WINDSCREEN_CELLS.from]] as const) {
+    const name = side > 0 ? "right" : "left";
+    const facets: Facet[] = [];
+    for (let index = 0; index < stations.length - 1; index += 1) {
+      const a = stations[index]; const b = stations[index + 1];
+      const quad = [
+        skinPoint(a, cell, GLASS_SINK), skinPoint(b, cell, GLASS_SINK),
+        ridgeAt(b, GLASS_SINK), ridgeAt(a, GLASS_SINK),
+      ];
+      facets.push({ points: side > 0 ? quad : [...quad].reverse(), tag: "windscreen" });
+    }
+    parts.push(facetsToPart(`windscreen-${name}-glass`, "glazing-cockpit", "glazing", facets, { showEdges: false, doubleSided: true }));
+  }
+  // Центральная стойка по коньку и две угловые по кромкам выреза.
+  addFacets("windscreen-centre-post", "glazing-cockpit", "metal",
+    memberChain(stations.map((fs) => ridgeAt(fs, 0.016)), 0.052, 0.048, "post-centre"));
+  for (const [side, cell] of [[1, WINDSCREEN_CELLS.to], [-1, WINDSCREEN_CELLS.from]] as const) {
+    addFacets(`windscreen-corner-post-${side > 0 ? "right" : "left"}`, "glazing-cockpit", "metal",
+      memberChain(stations.map((fs) => skinPoint(fs, cell, 0.016)), 0.048, 0.044, "post-corner"));
+  }
+  // Нижняя рама и козырёк: проём обрамлён со всех четырёх сторон.
+  for (const [id, fs] of [["windscreen-sill", stations[0]], ["windscreen-brow", stations[stations.length - 1]]] as const) {
+    const across = Array.from({ length: WINDSCREEN_CELLS.to - WINDSCREEN_CELLS.from + 1 }, (_, index) =>
+      skinPoint(fs, WINDSCREEN_CELLS.from + index, 0.016));
+    addFacets(id, "glazing-cockpit", "metal", memberChain(across, 0.048, 0.044, id));
+  }
+}
+
+for (const hole of canopyHoles.filter((hole) => hole.id.startsWith("cockpit-window-"))) {
+  emitOpening(hole, cockpitSkin.stations, "glazing", "glazing-cockpit");
+}
 for (const hole of [...cabinWindowHoles(1), ...cabinWindowHoles(-1)]) emitOpening(hole, cabinSkin.stations, "glazing", "glazing-cabin");
 for (const hole of doorHoles) emitOpening(hole, doorSkin.stations, "paint-light", "door");
 
@@ -1896,12 +2120,12 @@ for (const side of [-1, 1] as const) {
 // ровно столько, чтобы глубина салона была видна снаружи.
 // ---------------------------------------------------------------------------
 
-const CABIN_INTERIOR_FROM = 3.90;
+const CABIN_INTERIOR_FROM = 1.95;
 const CABIN_INTERIOR_TO = 13.80;
 
 // Пол салона: настил между балками, с проходом посередине.
 {
-  const stations = [CABIN_INTERIOR_FROM, 6.0, 8.5, 11.0, CABIN_INTERIOR_TO];
+  const stations = [CABIN_INTERIOR_FROM, 3.2, 6.0, 8.5, 11.0, CABIN_INTERIOR_TO];
   const sections = stations.map((fs) => {
     const half = floorHalfWidthAt(fs);
     return [
@@ -1944,7 +2168,7 @@ for (const side of [-1, 1] as const) {
 }
 
 // Перегородки: кабина отделена от салона, багажник — от салона.
-for (const [id, fs] of [["interior-cockpit-bulkhead", 3.86], ["interior-rear-bulkhead", 13.86]] as const) {
+for (const [id, fs] of [["interior-cockpit-bulkhead", 3.10], ["interior-rear-bulkhead", 13.86]] as const) {
   const row = sampleFuselage(fs);
   const centre = (row.top + row.bottom) / 2;
   const nodes = Array.from({ length: 20 }, (_, index) => {
@@ -1968,16 +2192,18 @@ for (const [id, fs] of [["interior-cockpit-bulkhead", 3.86], ["interior-rear-bul
 // Кабина: два кресла, приборная доска и штурвальные колонки.
 for (const side of [-1, 1] as const) {
   const bl = side * 0.42;
+  // Кресло стоит ПОД фонарём: глаз лётчика на 0.86 над полом попадает ровно в
+  // подоконную линию 0.72…1.05, иначе окно смотрит в никуда.
   addBox(`cockpit-seat-${side < 0 ? "left" : "right"}`, "interior", "timber-dark",
-    toModel(3.30, bl, DC3_CABIN_FLOOR_WL + 0.26), [0.46, 0.14, 0.46]);
+    toModel(2.35, bl, DC3_CABIN_FLOOR_WL + 0.26), [0.46, 0.14, 0.46]);
   addBox(`cockpit-seat-back-${side < 0 ? "left" : "right"}`, "interior", "timber-dark",
-    toModel(3.56, bl, DC3_CABIN_FLOOR_WL + 0.58), [0.46, 0.62, 0.10], [DC3_GROUND_ANGLE, 0, 0]);
+    toModel(2.61, bl, DC3_CABIN_FLOOR_WL + 0.58), [0.46, 0.62, 0.10], [DC3_GROUND_ANGLE, 0, 0]);
   addFacets(`cockpit-column-${side < 0 ? "left" : "right"}`, "interior", "metal", memberFacets(
-    toModel(2.86, bl, DC3_CABIN_FLOOR_WL + 0.10),
-    toModel(2.98, bl, DC3_CABIN_FLOOR_WL + 0.62), 0.07, 0.07, "column"));
+    toModel(2.05, bl, DC3_CABIN_FLOOR_WL + 0.10),
+    toModel(2.20, bl, DC3_CABIN_FLOOR_WL + 0.62), 0.07, 0.07, "column"));
 }
 addBox("cockpit-panel", "interior", "timber-dark",
-  toModel(2.62, 0, DC3_CABIN_FLOOR_WL + 0.86), [1.30, 0.46, 0.10], [DC3_GROUND_ANGLE + 0.25, 0, 0]);
+  toModel(1.86, 0, DC3_CABIN_FLOOR_WL + 0.84), [1.24, 0.44, 0.10], [DC3_GROUND_ANGLE + 0.25, 0, 0]);
 
 // ---------------------------------------------------------------------------
 // 16. Модель.
@@ -2008,7 +2234,7 @@ const views: readonly Dc3View[] = [
   { id: "wing-root-detail", label: "DC-3 · корень крыла", projection: "perspective", position: point(7.2, 3.4, 5.6), target: point(1.6, 0.9, -1.2), fov: 34 },
   { id: "nacelle-detail", label: "DC-3 · мотогондола и узел рамы", projection: "perspective", position: point(7.4, 3.2, 7.4), target: point(2.98, 1.5, 2.0), fov: 32 },
   { id: "gear-bay-detail", label: "DC-3 · ниша шасси", projection: "perspective", position: point(6.6, 0.4, 5.4), target: point(2.82, 0.9, 0.4), fov: 34 },
-  { id: "cockpit-detail", label: "DC-3 · нос и кабина", projection: "perspective", position: point(-6.4, 4.6, 10.6), target: point(0, 2.6, 3.4), fov: 32 },
+  { id: "cockpit-detail", label: "DC-3 · нос и фонарь кабины", projection: "perspective", position: point(-5.2, 5.0, 9.4), target: point(0, 3.4, 4.3), fov: 30 },
   { id: "tail-detail", label: "DC-3 · оперение", projection: "perspective", position: point(-8.4, 5.4, -15.4), target: point(0, 3.0, -11.2), fov: 32 },
   { id: "cabin-section", label: "DC-3 · разрез салона (набор)", projection: "perspective", position: point(-11.4, 4.4, 3.4), target: point(0, 1.2, -2.4), fov: 34, hiddenGroups: [] },
   { id: "cabin-section-external", label: "DC-3 · тот же кадр без скрытий", projection: "perspective", position: point(-11.4, 4.4, 3.4), target: point(0, 1.2, -2.4), fov: 34 },
@@ -2020,8 +2246,8 @@ const views: readonly Dc3View[] = [
 
 export const dc3Object: Dc3Model = {
   id: "dc3",
-  revision: "dc3-c4-finish-2026-08-09",
-  title: "Douglas DC-3 · c4 отделка",
+  revision: "dc3-c5-nose-2026-08-09",
+  title: "Douglas DC-3 · c5 нос и фонарь",
   units: "metres",
   coordinates: { up: "+Y", front: "+Z", origin: "ground-centre" },
   captureFrame: [1800, 1000],

@@ -164,14 +164,16 @@ test("габарит: верх киля стоит на напечатанной
     `верх киля ${fin[1].toFixed(3)} м, напечатано ${PUBLISHED_HEIGHT} ± 0.10`);
 });
 
-test("габарит: в стоянке гребень фюзеляжа догоняет верх киля", () => {
-  // Машина задрана носом настолько, что передний верх и киль встают вровень.
-  // Это проверяемое следствие позы, а не совпадение.
-  const frames = byPrefix("frame-");
-  const crown = Math.max(...frames.flatMap((part) => vertices(part).map((vertex) => vertex[1])));
+test("габарит: в стоянке самая высокая точка — козырёк кабины, а не киль", () => {
+  // Машина задрана носом на 9.66°, поэтому передний верх обгоняет киль. На
+  // чертеже разница 0.26 м; в ревизии c4 с растянутым носом её не было вовсе —
+  // тест ловит именно возврат растянутого профиля.
+  const crown = Math.max(...dc3Object.parts
+    .filter((part) => part.group === "hull-fuselage")
+    .flatMap((part) => vertices(part).map((vertex) => vertex[1])));
   const fin = dc3Object.anchors.finTop[1];
-  assert.ok(Math.abs(crown - fin) < 0.12,
-    `гребень ${crown.toFixed(3)} и киль ${fin.toFixed(3)} разошлись на ${(crown - fin).toFixed(3)} м`);
+  assert.ok(crown - fin > 0.12 && crown - fin < 0.36,
+    `козырёк ${crown.toFixed(3)} над килём ${fin.toFixed(3)} на ${(crown - fin).toFixed(3)} м, ожидалось 0.12…0.36`);
 });
 
 test("габарит: ничто из ядра не уходит под землю", () => {
@@ -195,13 +197,15 @@ test("фюзеляж: сечение — лофт по таблице, а не �
   // Контрольные станции паспорта — полуширина ОБШИВКИ. Шпангоут обязан стоять
   // под ней, а не вровень: разница и есть толщина обшивки с полкой.
   const SKIN_INSET = 0.034;
+  // Значения — из таблицы станций, собранной скриптом
+  // docs/dc3/reference/fuselage-table.mjs: каждая колонка со своей панели.
   const expected = [
-    { fs: 2.10, skinHalf: 1.001 },
-    { fs: 5.10, skinHalf: 1.224 },
-    { fs: 8.10, skinHalf: 1.286 },
-    { fs: 11.10, skinHalf: 1.285 },
-    { fs: 14.10, skinHalf: 1.083 },
-    { fs: 17.20, skinHalf: 0.768 },
+    { fs: 2.10, skinHalf: 1.019 },
+    { fs: 5.10, skinHalf: 1.229 },
+    { fs: 8.10, skinHalf: 1.271 },
+    { fs: 11.10, skinHalf: 1.292 },
+    { fs: 14.10, skinHalf: 1.079 },
+    { fs: 17.20, skinHalf: 0.731 },
   ];
   for (const station of expected) {
     const frame = frames.reduce((best, item) =>
