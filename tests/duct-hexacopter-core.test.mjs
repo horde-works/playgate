@@ -727,15 +727,21 @@ test("шасси: четыре подошвы на грунте, цепь до �
   for (const contract of DUCT_HEX_GEAR_RETRACTION) {
     const gear = DUCT_HEX_LANDING_STATIONS.find((station) => station.id === contract.id);
     const angle = (contract.rangeDegrees[1] * Math.PI) / 180;
+    // Знак поворота берётся из ОСИ, а не из величины: иначе тест примет позу,
+    // достигнутую длинным путём, и не заметит ногу, идущую сквозь грунт.
+    const sense = contract.axis[2];
     const rotate = (probe) => {
       const dx = probe[0] - contract.pivot[0];
       const dy = probe[1] - contract.pivot[1];
+      const turn = angle * sense;
       return [
-        contract.pivot[0] + dx * Math.cos(angle) - dy * Math.sin(angle),
-        contract.pivot[1] + dx * Math.sin(angle) + dy * Math.cos(angle),
+        contract.pivot[0] + dx * Math.cos(turn) - dy * Math.sin(turn),
+        contract.pivot[1] + dx * Math.sin(turn) + dy * Math.cos(turn),
         probe[2],
       ];
     };
+    assert.ok(Math.abs(contract.rangeDegrees[1]) < 180,
+      `${gear.id}: складывание длинным путём, ${contract.rangeDegrees[1]} градусов`);
     for (const probe of [gear.knee, gear.axle, gear.pad]) {
       const folded = rotate(probe);
       assert.ok(folded[1] > 0.2, `${gear.id}: сложенная нога всё ещё внизу (${folded[1].toFixed(2)})`);

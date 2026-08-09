@@ -1984,11 +1984,19 @@ export const DUCT_HEX_GEAR_RETRACTION = DUCT_HEX_LANDING_STATIONS.map((gear) => 
   // needs far more than the ninety degrees one might type from habit.
   const phi = Math.atan2(gear.pad[1] - gear.attach[1], gear.pad[0] - gear.attach[0]);
   const target = gear.side < 0 ? 0 : Math.PI;
-  const fold = (target - phi) * 180 / Math.PI;
+  // The SIGN lives in the hinge, the magnitude in the range. Storing the raw
+  // difference gave the starboard legs 229 degrees — the same pose reached the
+  // long way round, which on an animated retraction means the leg sweeps down
+  // through the ground before coming up.
+  // Wrapped into (-180, 180]: without the wrap the starboard legs took the
+  // long way round — the same pose, reached by sweeping down through the ground.
+  const raw = target - phi;
+  const signed = Math.atan2(Math.sin(raw), Math.cos(raw));
+  const fold = Math.abs(signed) * 180 / Math.PI;
   return {
     id: gear.id,
     pivot: gear.attach,
-    axis: point(0, 0, 1),
+    axis: point(0, 0, Math.sign(signed) || 1),
     rangeDegrees: [0, Math.round(fold * 10) / 10] as const,
     restDegrees: 0,
     motion: "hinge-retraction" as const,
