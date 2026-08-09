@@ -2,6 +2,7 @@ import type { LampEventState, SceneVector3 } from "./destructionScene.ts";
 import type { EntryInteractionTarget } from "./entryInteraction.ts";
 import {
   TONKAWA_ALLEGIANCE,
+  YAQUI_ALLEGIANCE,
   TOWN_ALLEGIANCE,
   type VehicleAllegiance,
 } from "./vehicleAllegiance.ts";
@@ -1340,9 +1341,19 @@ export const COMBAT_HEXACOPTER_RANGE_AIR_VEHICLE: AirVehicleDefinition = {
 /**
  * VX-8 «Yaqui» НА ПОЛИГОНЕ TONKAWA.
  *
- * Вторая машина этого мира. Сторона — та же, `tonkawa`: полигон один и хозяин
- * у обеих машин один, а объявить её чужой значило бы завести в мире войну,
- * которой никто не просил, — вооружение у неё настоящее.
+ * Вторая машина этого мира и ЧУЖАЯ ей. Сторона — `yaqui`, не `tonkawa`.
+ *
+ * Первая редакция ставила обеим одну сторону: полигон один, хозяин один, а
+ * объявить её чужой значило бы завести войну, которой никто не просил.
+ * Аргумент был честный и неверный ровно в одном месте — вооружение у обеих
+ * настоящее, и две вооружённые машины одной стороны, летающие мимо друг друга,
+ * это не мир, а невыстрелившая декорация. Полигон затем и нужен, чтобы на нём
+ * встречались разные кланы.
+ *
+ * Механики для этого не потребовалось никакой: вражда выводится из РАЗНЫХ
+ * сторон (`isHostileAllegiance`), боевой пилот уже отбирает цели по ней, а
+ * `stepAirCombat` уже включён в кадр машины. Изменилась одна строка паспорта —
+ * и это ровно та проверка, ради которой признак живёт в паспорте, а не в бою.
  *
  * ЧИСЛА ПРЕДЕЛОВ ПРИХОДЯТ ИЗ ДВУХ РАЗНЫХ МЕСТ, И ЭТО НАМЕРЕННО.
  * `maxRudderForce` и `rudderReferenceSpeed` взяты у паспорта как есть: они не
@@ -1353,7 +1364,7 @@ export const COMBAT_HEXACOPTER_RANGE_AIR_VEHICLE: AirVehicleDefinition = {
  */
 export const DUCT_HEXACOPTER_RANGE_AIR_VEHICLE: AirVehicleDefinition = {
   ...ductHexacopterRangeFrame,
-  allegiance: TONKAWA_ALLEGIANCE,
+  allegiance: YAQUI_ALLEGIANCE,
   armament: ductHexacopterRangeBlueprint.armament,
   departure: {
     target: {
@@ -1421,12 +1432,23 @@ export const DUCT_HEXACOPTER_RANGE_AIR_VEHICLE: AirVehicleDefinition = {
     liftReserve: ductHexacopterRangeBlueprint.flight.liftReserve,
     maximumTilt: ductHexacopterRangeBlueprint.flight.maximumTilt,
     /**
-     * Ворота возмущения обязаны стоять ВЫШЕ того, что машина делает сама. У
-     * RAX-8 это 1.9/1.3 под его фигуры; здесь программы нет — только круг, —
-     * поэтому и запас нужен меньший. Взято с тем же троекратным запасом над
-     * рабочим темпом круга: 14 м/с по дуге радиусом 39.7 дают 0.35 рад/с.
+     * ВОРОТА ВОЗМУЩЕНИЯ СТОЯТ ВЫШЕ ТОГО, ЧТО ПРОСИТ ТРАССА, — И НИЖЕ ТОГО, ЧТО
+     * ПРОСИТ ФИГУРА. Второе не упущение, а признание невозможного.
+     *
+     * Прежние 1.4/1.1 были посчитаны под круг: 14 м/с по дуге радиусом 39.7
+     * дают 0.35 рад/с, троекратный запас — 1.05. Круга больше нет. У программы
+     * овал с разворотами радиусом 39.7 на двадцати метрах в секунду и пять
+     * номеров, и замер на стенде пад-в-пад даёт другие числа: вне фигур
+     * корпус разгоняется до 1.14 рад/с по наклону и 0.70 по рысканию.
+     * Отсюда 2.4 и 1.4 — вдвое над замеренным, как и было задумано.
+     *
+     * А ВНУТРИ ФИГУРЫ ПОРОГА, КОТОРЫЙ РАБОТАЛ БЫ, НЕ СУЩЕСТВУЕТ. Бочка
+     * раскручивает корпус до 4.67 рад/с: это не срыв, это сама фигура. Ворота,
+     * пропускающие бочку, не поймали бы уже ничего. Поэтому фигуру защищает не
+     * порог, а знание о том, что поза ЗАКАЗАНА, — рантайм не пускает корректор
+     * в идущий номер, и стенд проверяет, что без этой защиты номера терялись бы.
      */
-    guidance: { upsetTiltRate: 1.4, upsetYawRate: 1.1 },
+    guidance: { upsetTiltRate: 2.4, upsetYawRate: 1.4 },
     mooringReach: 0.6,
     routePlan: (_kind, berth) => ductHexacopterLapPlan(berth),
     arrivalPlan: ductHexacopterArrivalPlan,

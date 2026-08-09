@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   CIVIL_ALLEGIANCE,
   TONKAWA_ALLEGIANCE,
+  YAQUI_ALLEGIANCE,
   TOWN_ALLEGIANCE,
   allegianceOf,
   areHostiles,
@@ -64,15 +65,20 @@ test("воюют только объявившие сторону, осталь�
   const rax = airVehicles.find((entry) => entry.id === "combat-hexacopter");
   const vx8 = airVehicles.find((entry) => entry.id === "duct-hexacopter");
   const hx6 = airVehicles.find((entry) => entry.id === "town-hexacopter");
-  // Tonkawa выставляет две машины, и это её единственный способ расти: сторона
-  // объявляется в парке, а не выводится из полигона, на котором машина стоит.
+  // СТОРОНА ОБЪЯВЛЯЕТСЯ В ПАРКЕ, А НЕ ВЫВОДИТСЯ ИЗ ПОЛИГОНА, на котором машина
+  // стоит, — и вот прямое тому доказательство: RAX-8 и VX-8 делят одну
+  // площадку и один воздух, но принадлежат разным кланам.
   assert.equal(allegianceOf(rax), TONKAWA_ALLEGIANCE);
-  assert.equal(allegianceOf(vx8), TONKAWA_ALLEGIANCE);
+  assert.equal(allegianceOf(vx8), YAQUI_ALLEGIANCE);
   assert.equal(allegianceOf(hx6), TOWN_ALLEGIANCE);
-  // Своя своих не бьёт, и обе бьют город.
-  assert.equal(areHostiles(rax, vx8), false);
+  // Соседи по полигону — враги, и обе бьют город.
+  assert.equal(areHostiles(rax, vx8), true);
   assert.equal(areHostiles(rax, hx6), true);
   assert.equal(areHostiles(vx8, hx6), true);
+  // Вражда СИММЕТРИЧНА по построению: односторонней её сделать нельзя, и это
+  // намеренно — иначе немедленно встал бы вопрос «а он знает, что на него
+  // охотятся». Обе машины вооружены, обе увидят другую целью.
+  assert.equal(areHostiles(vx8, rax), true);
   const declared = new Set([rax, vx8, hx6]);
   for (const vehicle of airVehicles) {
     if (declared.has(vehicle)) {

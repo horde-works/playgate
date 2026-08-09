@@ -29,7 +29,12 @@ import {
  * ведётся по кривой, она поворачивается и летит туда, куда её толкают кольца.
  */
 
-export type FlightFigureKind = "loop" | "immelmann" | "split-s";
+export type FlightFigureKind =
+  | "loop"
+  | "immelmann"
+  | "split-s"
+  | "roll"
+  | "kulbit";
 
 /**
  * Что машина может, в величинах фигуры. Всё выводится из паспорта и НИЧЕГО не
@@ -479,11 +484,69 @@ function scheduleRate(
 }
 
 /**
+ * ПОВОРОТ, НАЧАТЫЙ С ХОДУ, А НЕ С НУЛЯ.
+ *
+ * Обобщение перекладки на два случая, которых у неё не было: произвольный угол
+ * и НЕНУЛЕВОЙ НАЧАЛЬНЫЙ ТЕМП. Второе — не удобство, а лечение стыка.
+ *
+ * Расписание, начинающееся с нулевого темпа, безупречно, пока фигура начинается
+ * с ровного полёта. Но фигура, которая начинается ВНУТРИ другой, приходит на
+ * стык с той угловой скоростью, которую уже набрала: кульбит входит в кувырок
+ * прямо с петлевого темпа. Потребовать в этот момент ноль — значит потребовать
+ * мгновенной остановки вращения, и цену такому требованию проект уже знает: на
+ * стыке полупетли и полубочки иммельмана расписание однажды попросило три рад/с
+ * скачком, аллокатор объявил позу невыполнимой, и машина кадр висела вверх
+ * ногами без управления.
+ *
+ * Движение то же самое: разгон постоянным `α`, потом торможение тем же `α` в
+ * ноль. Отличие в том, что разгон стартует не с нуля. Отсюда и время:
+ *
+ *     Φ = ω₀·t_р + ½α·t_р² + (ω₀ + α·t_р)²/(2α)   ⟹   t_р = (√(ω₀²/2 + αΦ) − ω₀)/α
+ *
+ * При `ω₀ = 0` всё сворачивается в прежнее `2√(Φ/α)` — поэтому старая формула
+ * теперь не отдельная, а частный случай этой, и разойтись им нечем.
+ */
+export interface FigureTurnProfile {
+  readonly seconds: number;
+  /** Наибольший темп расписания, рад/с — по нему судят о посильности. */
+  readonly peakRate: number;
+  /** Доля времени поворота → пройденный угол, рад. */
+  angleAt(fraction: number): number;
+}
+
+export function runningTurnProfile(
+  turn: number,
+  angularAcceleration: number,
+  entryRate = 0,
+): FigureTurnProfile {
+  const alpha = Math.max(0.05, angularAcceleration);
+  const total = Math.max(0, turn);
+  const entry = Math.max(0, entryRate);
+  const accelerate = Math.max(
+    0,
+    (Math.sqrt((entry * entry) / 2 + alpha * total) - entry) / alpha,
+  );
+  const peakRate = entry + alpha * accelerate;
+  const seconds = accelerate + peakRate / alpha;
+  const turnedAtPeak = entry * accelerate + 0.5 * alpha * accelerate * accelerate;
+  return {
+    seconds,
+    peakRate,
+    angleAt(fraction) {
+      const t = Math.max(0, Math.min(1, fraction)) * seconds;
+      if (t <= accelerate) return entry * t + 0.5 * alpha * t * t;
+      const s = t - accelerate;
+      return Math.min(total, turnedAtPeak + peakRate * s - 0.5 * alpha * s * s);
+    },
+  };
+}
+
+/**
  * Время перекладки на полоборота: разгон до середины и торможение до конца.
  * Пиковый темп при этом равен `α · t/2` и достигается ровно в середине.
  */
 export function halfTurnSeconds(angularAcceleration: number): number {
-  return 2 * Math.sqrt(HALF_TURN / Math.max(angularAcceleration, 0.05));
+  return runningTurnProfile(HALF_TURN, angularAcceleration).seconds;
 }
 
 /**
@@ -557,6 +620,36 @@ function pitchedAttitude(
       : multiplyQuaternions(quaternionAboutAxis(forward, bank), figure),
   );
 }
+
+/**
+ * БОЧКИ В ПЕТЛЕ У ЭТОЙ МАШИНЫ НЕТ И БЫТЬ НЕ МОЖЕТ — ПРОВЕРЕНО И ЗАКРЫТО.
+ *
+ * Параметр `spin` у петли был написан и снят в один день, и снят не потому,
+ * что не заладился, а потому, что замер объяснил, почему он не может
+ * заладиться никогда. Записано здесь, чтобы никто не начал его заново.
+ *
+ * У винтокрылой машины ОДНА сила и она вдоль оси корпуса. В дуге эта ось
+ * обязана смотреть в центр дуги — больше центростремительному взяться неоткуда.
+ * Бочка есть поворот вокруг НОСА, а он уводит ось корпуса с центра: сколько
+ * накренила, столько центростремительного и потеряла. Петля с бочкой у
+ * коптера — это не трудная фигура, это противоречие в условии.
+ *
+ * Тоннели дела не меняют: они толкают вдоль носа, то есть вдоль оси вращения
+ * бочки, и к центру дуги не смотрят ни при каком крене.
+ *
+ * Замер на VX-8, три попытки, ход 14 м/с:
+ *
+ *   - полоборота: сход по времени, 337 кадров без управления, минус 130 м,
+ *     курс потерян (косинус 0.28), снос вбок 45 м;
+ *   - оборот: 12 кадров без управления, петля НЕ ЗАМЫКАЕТСЯ (выход +25 м),
+ *     и машина ни разу не переворачивается — крен ровно гасит переворот,
+ *     вертикаль оси идёт как `cos²θ` и не опускается ниже нуля;
+ *   - два оборота: сход, минус 435 м, разгон до 95 м/с.
+ *
+ * Куда бочка ВСЁ-ТАКИ помещается — в кувырок кульбита. Там подъём держат
+ * тоннели, а не кольца, и куда смотрит ось корпуса, ровно всё равно: бочка
+ * достаётся даром. См. `kulbitPlan`.
+ */
 
 /**
  * ПЕТЛЯ. Тангаж проходит полный оборот, машина возвращается в точку входа тем
@@ -634,9 +727,21 @@ function loopPlan(
       return {
         attitude,
         speed,
+        // ТЯГУ ПРОСИТ ДУГА, А НЕ ВСЁ ВРАЩЕНИЕ ЦЕЛИКОМ.
+        //
+        // Здесь стояла величина полного темпа расписания, и без бочки она
+        // равна ровно `v/R` — то есть была верна ровно до тех пор, пока
+        // расписание не начало крутить два канала сразу. Бочка добавляет
+        // столько же рад/с, полный темп вырастает в полтора раза, и петля
+        // начинает просить тягу под дугу вдвое круче собственной: замер дал
+        // подъём 55 м вместо 18 и разгон до 33 м/с при плановых 14.
+        //
+        // Путь гнёт только ТАНГАЖ. Вращение вокруг носа не искривляет
+        // траекторию вовсе и центростремительного не требует — оно требует
+        // власти, и власть ему уже отсчитана полом газа выше.
         liftFraction: arcLift(
           liveSpeed,
-          Math.hypot(...angularVelocity),
+          speed / radius,
           attitudeUpY(attitude),
           floor,
         ),
@@ -873,6 +978,300 @@ function splitSPlan(
   };
 }
 
+/**
+ * БОЧКА: полный оборот по крену на прямой, нос никуда не уходит.
+ *
+ * Самая дешёвая фигура по расписанию и самая ДОРОГАЯ по высоте, и это не
+ * парадокс, а одна и та же причина. Вертикальная составляющая тяги идёт как
+ * косинус крена, а интеграл косинуса по полному обороту равен нулю: сколько
+ * машина выиграла в первой четверти, столько же отдала в третьей. Значит,
+ * бочку она пролетает БАЛЛИСТИЧЕСКИ, и провал равен `½g·t²` — целиком, без
+ * скидок на то, что кольца при этом работают.
+ *
+ * Отсюда единственный рычаг: КРУТИТЬ БЫСТРО. Провал квадратичен по времени, и
+ * лишняя секунда стоит дороже любой экономии газа. Поэтому газ здесь тот же,
+ * что у полубочки иммельмана, — на вершине власти, — а темп берётся весь,
+ * какой остаётся после сопротивления.
+ *
+ * Для VX-8 это выходит 2.5 секунды и тридцать метров вниз. Число неприятное и
+ * объявляется как есть: бочку этой машине можно крутить только высоко, и
+ * ворота обязаны сказать это раньше, чем земля.
+ */
+function rollPlan(
+  speed: number,
+  capability: FlightFigureCapability,
+  nose: readonly [number, number],
+  base: Quaternion,
+  /** Оборотов. Дробное значение допустимо — полубочка это `0.5`. */
+  spin = 1,
+): FlightFigurePlan {
+  const collective = figureRollCollective(capability);
+  const turn = FULL_TURN * Math.max(0.1, spin);
+  const profile = runningTurnProfile(
+    turn,
+    figureAngularAcceleration(
+      capability.rollAcceleration,
+      capability,
+      collective,
+    ),
+  );
+  const seconds = profile.seconds;
+  const length = speed * seconds;
+  const drop = 0.5 * GRAVITY * seconds * seconds;
+  const attitudeAt = (t: number) =>
+    pitchedAttitude(0, profile.angleAt(t), nose, base);
+  return {
+    kind: "roll",
+    // Радиуса у бочки нет: она не дуга. Объявляется габарит вращения, потому
+    // что ноль здесь читался бы как «фигура ничего не занимает».
+    radius: 0,
+    speed,
+    length,
+    seconds,
+    ceiling: 0,
+    dip: drop,
+    levelExit: base,
+    exit: {
+      offset: [speed * seconds * nose[0], -drop, speed * seconds * nose[1]],
+      headingTurn: 0,
+    },
+    command(progress) {
+      const t = Math.max(0, Math.min(1, progress));
+      const travelled = t * seconds;
+      return {
+        attitude: attitudeAt(t),
+        speed,
+        // Газ идёт на ВЛАСТЬ, не на высоту: держать её всё равно нечем — за
+        // оборот вертикаль тяги сама себя гасит.
+        liftFraction: collective - 1,
+        angularVelocity: scheduleRate(attitudeAt, t, 1 / seconds),
+        offset: [
+          speed * travelled * nose[0],
+          -0.5 * GRAVITY * travelled * travelled,
+          speed * travelled * nose[1],
+        ],
+      };
+    },
+  };
+}
+
+/**
+ * КУЛЬБИТ: полупетля вверх, реверс тоннелей, кувырок через нос и уход тем же
+ * курсом — выше, чем вошла.
+ *
+ * ЭТА ФИГУРА ЕСТЬ ТОЛЬКО У МАШИНЫ С ПРОДОЛЬНОЙ ТЯГОЙ, и в этом весь её смысл.
+ * Обычный мультиротор, довернув тангаж за 180°, оказывается без единого
+ * органа, способного толкнуть его вверх: кольца смотрят вниз, а больше у него
+ * ничего нет, и остаток оборота он проходит падая. У VX-8 тоннели дают
+ * 53.9 м/с² вдоль носа — впятеро больше, чем его же наклон, — и на второй
+ * половине оборота ось носа смотрит в землю. Реверс в этот момент толкает
+ * машину ПРЯМО ВВЕРХ, и не слегка: пять с половиной g.
+ *
+ * Отсюда и раскладка, и она вся выводится, а не выбирается.
+ *
+ * 1. ДУГА ВХОДА, тангаж от нуля до `entrySweep`. Настоящая дуга настоящего
+ *    радиуса: машина честно входит в петлю и честно набирает два радиуса
+ *    высоты. По умолчанию полоборота — это и есть «верхняя точка», из которой
+ *    всё дальнейшее и происходит.
+ *
+ * 2. КУВЫРОК, тангаж от `entrySweep` до полного оборота. Начинается НЕ С НУЛЯ,
+ *    а с петлевого темпа (`runningTurnProfile`), поэтому стыка здесь нет:
+ *    машина не останавливает вращение, чтобы начать его заново.
+ *
+ * 3. ТРЕБОВАНИЕ ХОДА НА КУВЫРКЕ — ОДНА СТРОКА, И ОНА ЖЕ ВЕСЬ РЕВЕРС.
+ *
+ *    Просьба формулируется не в тяге, а в НАМЕРЕНИИ: «хочу идти вертикально
+ *    вверх со скоростью `climb`». Вдоль носа это `climb · sin θ`, где `sin θ` —
+ *    вертикаль самой оси носа. На второй половине оборота синус отрицателен, и
+ *    просьба сама собой становится ОТРИЦАТЕЛЬНОЙ — то есть реверсом. Ни знака,
+ *    ни расписания тяги задавать не пришлось: они следствие того, куда смотрит
+ *    нос.
+ *
+ *    Проверяется в трёх точках. На 180° нос горизонтален, просьба — ноль:
+ *    гасится снос назад, набранный на верхушке дуги. На 270° нос смотрит в
+ *    землю, просьба — полный реверс: это и есть подъём. На 360° нос снова
+ *    горизонтален, просьба возвращается к ходу вперёд.
+ *
+ *    И побочное следствие, которое стоит назвать: вертикальная составляющая
+ *    выходит `climb · sin²θ` — неотрицательная ВЕЗДЕ. Кувырок не может опустить
+ *    машину, он умеет только поднимать. Горизонтальная же идёт как
+ *    `½·climb·sin 2θ` и за оборот сама себя обнуляет — машина уходит почти
+ *    оттуда же, откуда начала кувырок.
+ *
+ * 4. `climb` РАВЕН ХОДУ ВХОДА, и это не подгонка: машина меняет ход на подъём
+ *    метр в метр. Свободного числа в фигуре нет ни одного.
+ *
+ * 5. ВЫХОД — разгон тоннелями вперёд на последней доле кувырка. «Укладывает нос
+ *    в горизонт с разгоном»: без этого фигура кончалась бы машиной, ползущей
+ *    вверх без хода, и трасса подхватывала бы её с нуля.
+ *
+ * 6. БОЧКИ В КУВЫРКЕ ТОЖЕ НЕТ, И ЭТО ВТОРОЙ ЗАМЕР ОДНОЙ И ТОЙ ЖЕ ПРИЧИНЫ.
+ *
+ *    Соображение было хорошее и оказалось неверным. Рассуждали так: в дуге
+ *    крен запрещён, потому что ось корпуса держит центростремительное, — а в
+ *    кувырке она не держит ничего, вертикаль вытягивают тоннели, и они стоят
+ *    вдоль оси бочки. Значит, бочка тут даром.
+ *
+ *    Даром она не оказалась, потому что платить надо было не подъёмом, а
+ *    ВЛАСТЬЮ. Кувырок уже идёт на предельном темпе тангажа: 2.64 рад/с в пике.
+ *    Оборот крена за те же две секунды просит около трёх рад/с, а удержать три
+ *    рад/с при сопротивлении 1.35 1/с стоит 4.0 рад/с² — ровно весь бюджет
+ *    крена, и это ДО того, как тангаж возьмёт своё из того же разнотяга.
+ *    Замер: полбочки — 180 м вниз и разгон до 61 м/с (полоборота вдобавок
+ *    оставляет машину перевёрнутой, а расписание обещает ровный выход, и
+ *    эпизод тянется вдвое дольше плана); целая бочка — 68 кадров без
+ *    управления и 30 м вниз.
+ *
+ *    Замедлять кувырок бесполезно, и это считается, а не пробуется: бочке
+ *    нужно `2·Φ/T` рад/с, удержание стоит `k·2Φ/T`, и чтобы уложиться в
+ *    бюджет крена, кувырку пришлось бы длиться дольше, чем растягивание его
+ *    темпа успевает освободить. Уравнение не сходится ни при каком `T`.
+ *
+ *    ОБЩЕЕ ПРАВИЛО, КОТОРОЕ ИЗ ЭТОГО СЛЕДУЕТ: у VX-8 хватает власти ровно на
+ *    ОДИН быстрый канал вращения за раз. Бочка сама по себе — пожалуйста,
+ *    кувырок сам по себе — пожалуйста; вместе — нет. Виновато не расписание, а
+ *    сопротивление вращению 1.35 1/с при инерции вдвое большей, чем у RAX-8.
+ */
+const KULBIT_EXIT_SHARE = 0.12;
+const KULBIT_SAMPLES = 96;
+
+function kulbitPlan(
+  speed: number,
+  capability: FlightFigureCapability,
+  nose: readonly [number, number],
+  base: Quaternion,
+  entrySweep = HALF_TURN,
+): FlightFigurePlan {
+  const radius = figureRadius(speed, capability);
+  const arcRate = speed / Math.max(0.5, radius);
+  const arc = Math.max(0.2, Math.min(entrySweep, FULL_TURN - 0.2));
+  const arcSeconds = arc / arcRate;
+  const collective = figureRollCollective(capability);
+  const flip = runningTurnProfile(
+    FULL_TURN - arc,
+    figureAngularAcceleration(
+      capability.pitchAcceleration,
+      capability,
+      collective,
+    ),
+    arcRate,
+  );
+  const seconds = arcSeconds + flip.seconds;
+  const length = speed * seconds;
+  const arcShare = arcSeconds / seconds;
+  const climb = speed;
+  const floor = figureLiftFloor(capability, arcRate, FULL_TURN);
+
+  const flipFractionAt = (t: number): number =>
+    (Math.max(0, Math.min(1, t)) - arcShare) / Math.max(1e-6, 1 - arcShare);
+  const pitchAt = (t: number): number => {
+    const clamped = Math.max(0, Math.min(1, t));
+    return clamped <= arcShare
+      ? (clamped / arcShare) * arc
+      : arc + flip.angleAt(flipFractionAt(clamped));
+  };
+  const attitudeAt = (t: number) => pitchedAttitude(pitchAt(t), 0, nose, base);
+  /** Доля хода, отданная разгону на выходе: 0 весь кувырок, 1 в самом конце. */
+  const surgeAt = (flipFraction: number): number => {
+    const raw = (flipFraction - (1 - KULBIT_EXIT_SHARE)) / KULBIT_EXIT_SHARE;
+    const s = Math.max(0, Math.min(1, raw));
+    return s * s * (3 - 2 * s);
+  };
+  const demandAt = (flipFraction: number, theta: number): number => {
+    const surge = surgeAt(flipFraction);
+    return climb * Math.sin(theta) * (1 - surge) + speed * surge;
+  };
+
+  // ПУТЬ КУВЫРКА СЧИТАЕТСЯ ЧИСЛЕННО, а не оценивается множителем. Требование
+  // хода известно в каждой точке, ось носа тоже — значит, известна и скорость;
+  // остаётся её проинтегрировать. Так объявленный потолок оказывается ровно
+  // тем, о чём фигура просит, а не догадкой о том, что из просьбы выйдет.
+  const rise: number[] = [0];
+  const drift: number[] = [0];
+  for (let index = 1; index <= KULBIT_SAMPLES; index += 1) {
+    const before = (index - 1) / KULBIT_SAMPLES;
+    const after = index / KULBIT_SAMPLES;
+    const step = (after - before) * flip.seconds;
+    const mid = (before + after) / 2;
+    const theta = arc + flip.angleAt(mid);
+    const along = demandAt(mid, theta);
+    rise[index] = rise[index - 1] + along * Math.sin(theta) * step;
+    drift[index] = drift[index - 1] + along * Math.cos(theta) * step;
+  }
+  const sampled = (table: readonly number[], fraction: number): number => {
+    const scaled = Math.max(0, Math.min(1, fraction)) * KULBIT_SAMPLES;
+    const low = Math.min(KULBIT_SAMPLES, Math.floor(scaled));
+    const high = Math.min(KULBIT_SAMPLES, low + 1);
+    return table[low] + (table[high] - table[low]) * (scaled - low);
+  };
+
+  const arcCeiling = radius * (1 - Math.cos(Math.min(arc, HALF_TURN)));
+  const arcForward = radius * Math.sin(arc);
+  const flipRise = rise[KULBIT_SAMPLES];
+  const flipDrift = drift[KULBIT_SAMPLES];
+  return {
+    kind: "kulbit",
+    radius,
+    speed,
+    length,
+    seconds,
+    ceiling: arcCeiling + flipRise,
+    // Вниз от точки входа фигура не идёт НИ РАЗУ: дуга поднимает, кувырок тоже
+    // (вертикаль его требования — квадрат синуса, а он неотрицателен). Провал
+    // остаётся нулевым по той же причине, что у иммельмана, и по той же
+    // причине ворота всё равно требуют высоты на возврат из перевёрнутого:
+    // ноль здесь про ПЛАН, а не про срыв.
+    dip: 0,
+    levelExit: base,
+    exit: {
+      offset: [
+        (arcForward + flipDrift) * nose[0],
+        arcCeiling + flipRise,
+        (arcForward + flipDrift) * nose[1],
+      ],
+      headingTurn: 0,
+    },
+    command(progress, liveSpeed = speed) {
+      const t = Math.max(0, Math.min(1, progress));
+      const theta = pitchAt(t);
+      const attitude = attitudeAt(t);
+      const angularVelocity = scheduleRate(attitudeAt, t, 1 / seconds);
+      if (t <= arcShare) {
+        return {
+          attitude,
+          speed,
+          liftFraction: arcLift(
+            liveSpeed,
+            Math.hypot(...angularVelocity),
+            attitudeUpY(attitude),
+            floor,
+          ),
+          angularVelocity,
+          offset: [
+            radius * Math.sin(theta) * nose[0],
+            radius * (1 - Math.cos(theta)),
+            radius * Math.sin(theta) * nose[1],
+          ],
+        };
+      }
+      const flipFraction = (t - arcShare) / Math.max(1e-6, 1 - arcShare);
+      return {
+        attitude,
+        // ВОТ ЗДЕСЬ И ЖИВЁТ РЕВЕРС — в знаке одного числа.
+        speed: demandAt(flipFraction, theta),
+        // Кольца на кувырке держат не высоту, а власть: высоту держат тоннели.
+        liftFraction: collective - 1,
+        angularVelocity,
+        offset: [
+          (arcForward + sampled(drift, flipFraction)) * nose[0],
+          arcCeiling + sampled(rise, flipFraction),
+          (arcForward + sampled(drift, flipFraction)) * nose[1],
+        ],
+      };
+    },
+  };
+}
+
 export function planFlightFigure(
   kind: FlightFigureKind,
   speed: number,
@@ -881,11 +1280,35 @@ export function planFlightFigure(
   base: Quaternion = [0, 0, 0, 1],
   /** Наклон плоскости фигуры, рад. Действует только на петлю. */
   bank = 0,
-  /** Доля оборота петли, рад. Целый оборот замыкает её в точке входа. */
-  sweep = FULL_TURN,
+  /**
+   * Доля оборота петли, рад. Целый оборот замыкает её в точке входа. У кульбита
+   * тем же числом задаётся дуга ВХОДА: остаток до полного оборота — кувырок.
+   *
+   * УМОЛЧАНИЯ ЗДЕСЬ НЕТ, И ЭТО НЕ ЛЕНЬ. Общее умолчание в этой точке уже стоило
+   * прогона: петле по умолчанию нужен ПОЛНЫЙ оборот, кульбиту — ПОЛОВИНА, и
+   * `FULL_TURN`, поставленный здесь на обоих, молча выдал кульбиту дугу входа
+   * в целый оборот. Кувырка от фигуры осталось 0.2 рад, и на стенде она
+   * отлеталась обычной петлёй — законченной, незаваленной и совершенно не той.
+   * Умолчание принадлежит фигуре, а не общей двери к ней.
+   */
+  sweep?: number,
+  /**
+   * Оборотов бочки — И ТОЛЬКО ДЛЯ САМОЙ БОЧКИ.
+   *
+   * Ни петля, ни кульбит бочки не принимают, и это не упущение, а измеренный
+   * запрет: разборы над `loopPlan` и `kulbitPlan`. Ноль читается как «оборот»,
+   * потому что бочки без оборота не бывает.
+   */
+  spin = 0,
 ): FlightFigurePlan {
   if (kind === "loop") {
     return loopPlan(speed, capability, nose, base, bank, sweep);
+  }
+  if (kind === "roll") {
+    return rollPlan(speed, capability, nose, base, spin > 0 ? spin : 1);
+  }
+  if (kind === "kulbit") {
+    return kulbitPlan(speed, capability, nose, base, sweep);
   }
   if (kind === "split-s") return splitSPlan(speed, capability, nose, base);
   return immelmannPlan(speed, capability, nose, base);
@@ -1167,8 +1590,13 @@ export interface RouteFigureStation {
   readonly speed: number;
   /** Наклон плоскости петли, рад. */
   readonly bank?: number;
-  /** Доля оборота петли, рад. Целый оборот замыкает её в точке входа. */
+  /**
+   * Доля оборота петли, рад. Целый оборот замыкает её в точке входа. У кульбита
+   * это дуга ВХОДА, а остаток до полного оборота — кувырок.
+   */
   readonly sweep?: number;
+  /** Оборотов бочки: внутри петли — поверх дуги, у бочки — сама фигура. */
+  readonly spin?: number;
   /**
    * Потребный этаж под фигурой, м над бертом. Объявляет ТРАССА, потому что
    * поднять себя может только она; проверяется против живого паспорта машины.
@@ -1309,6 +1737,7 @@ export function advanceRouteFigures(input: {
     levelAttitude(input.heading, input.bodyNose),
     due.bank ?? 0,
     due.sweep,
+    due.spin,
   );
   const verdict = flightFigureVerdict(
     plan,
