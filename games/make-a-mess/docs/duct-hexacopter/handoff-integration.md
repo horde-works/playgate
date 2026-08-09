@@ -102,3 +102,75 @@ Answer three things:
    shape, or a gear contract that changed?
 
 Reply short. The owner wants the decision, not the deliberation.
+
+---
+
+# Agreement, 2026-08-09
+
+Negotiated directly between the two sessions. Both accepted; this section is the
+record, not a proposal.
+
+## Who does what
+
+**Mac (object author):** the adapter and the `VehicleFrameDefinition` — the
+object translating itself. Nothing else.
+
+**Windows (flight model):** berth in the range or a scene of its own, world
+envelope, live mass and lift tuning, allocation of the extra yaw pair, autopilot
+and figure behaviour, the full suite, the build and the live headless frames.
+
+The frozen list stays frozen. Any wish to change the silhouette, the lofted
+section, the raked cut, the crest, the channels or the stance comes back to the
+Object Lab as a new revision, with the reason — never into the adapter.
+
+## Order of work
+
+Object first, adapter second — two merges, not one branch, because the object
+touches no runtime file and lands inert, which stops the rebase drift against a
+`main` that moves daily.
+
+1. Windows lands its two uncommitted files (`combatHexacopterRangeRoutes.ts`,
+   `flight-figure-route.test.mjs`) so the base is clean.
+2. Mac rebases `claude/integrated-duct-hexacopter` onto `main` and hands it over
+   for merge. Local `main` on Windows equals `origin/main` at `7d099a6`.
+3. Mac branches the adapter off the updated `main`; it reviews as a small diff.
+
+## What Windows told the adapter to expose, and what it refused
+
+The contract shape did not change under the twelve flight commits:
+`enginePoints`, `rotorCapacityWeights`, `rotorSpinDirections`,
+`yawThrusters{point, axis, maximumForce}`, `supportStruts` with
+`retraction{pivot, hinge, angle, seconds}` and `foldingMembers`. The object
+exports map one to one: `mount = knee`, `axis = axle − knee`.
+
+The seam is two files, not one: blueprint plus `VehicleFrameDefinition` in a
+`ductHexacopter.ts` twin of `combatHexacopter.ts`; `flight.limits` live
+separately in `airVehicles.ts`. The frame definition carries no limits, but the
+limits must be **complete** — the figure layer asks for a capability and gets a
+hollow one if they are not.
+
+- `lateralThrust` must exceed `1e-6`, or authored heading and the crab limit
+  switch off silently and the show programme degrades without an error. RAX-8
+  declares `70`.
+- Attitude is now an **input** (`VehicleGuidanceDemand.attitude`), so
+  `blueprint.flight.maximumTilt` is route policy rather than a hard envelope.
+- **Refused, deliberately:** authored pitch and roll inertia. Windows derives the
+  tensor at runtime from the assembled cluster, because an authored copy becomes
+  a second source of truth that drifts from the body Rapier actually simulates.
+  The adapter supplies part masses and geometry; inertia and yaw allocation stay
+  with the runtime.
+
+## Risks Windows put on the record
+
+- The range airspace is occupied: RAX-8 runs `128 m` out, `16–77 m` up, and a low
+  pass around `22 m` within `40 m` of the pad. VX-8 needs a berth clear of those
+  legs, or its own scene.
+- `combat-hexacopter-range.test.mjs` counts `667` cluster pieces. The new machine
+  gets its own group and its own cluster; nothing is ever added to RAX-8.
+- `contactMemberExcludes ":landing-"` is mandatory, or the leg collider fights
+  the strut ray and the machine lands in the air.
+- `independentMemberMatches` must be `[":blade:"]` only, or `715` parts become
+  bodies.
+- The retracted gear pose is computed but never rendered; the gear system will
+  ask for it. It is the Mac session's debt to close.
+- Baseline held against: `1625 / 1622 / 3`, the same three accepted reds.
