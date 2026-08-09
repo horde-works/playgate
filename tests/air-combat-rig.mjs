@@ -12,6 +12,16 @@ import {
   RANGE_HEXACOPTER_PAD_Z,
 } from "../games/make-a-mess/src/game/rangeHexacopter.ts";
 import { rangeHexacopterPlan } from "../games/make-a-mess/src/game/rangeHexacopterRoutes.ts";
+import { ductHexacopterRangePadDocument } from "../games/make-a-mess/src/content/scenes/ductHexacopterRangePadDocument.ts";
+import {
+  DUCT_HEXACOPTER_RANGE_BERTH,
+  DUCT_HEXACOPTER_RANGE_PLACEMENT,
+} from "../games/make-a-mess/src/game/rangeDuctHexacopter.ts";
+import { ductHexacopterLapPlan } from "../games/make-a-mess/src/game/ductHexacopterRangeRoutes.ts";
+import {
+  advanceRouteFigureFrame,
+  IDLE_ROUTE_FIGURE,
+} from "../games/make-a-mess/src/game/flightFigures.ts";
 import { airVehicles } from "../games/make-a-mess/src/game/airVehicles.ts";
 import {
   advanceVehicleRouteProgress,
@@ -48,6 +58,7 @@ import {
 import {
   TONKAWA_ALLEGIANCE,
   TOWN_ALLEGIANCE,
+  YAQUI_ALLEGIANCE,
 } from "../games/make-a-mess/src/game/vehicleAllegiance.ts";
 import {
   deflectHorizontally,
@@ -238,6 +249,54 @@ const hx6Pieces = rangeVertipadCompilation.clusters.find(
   (cluster) => cluster.id === hx6Vehicle.clusterId,
 ).pieces;
 
+const vx8Vehicle = airVehicles.find((entry) => entry.id === "duct-hexacopter");
+const vx8Pieces = compileSceneGroups(
+  ductHexacopterRangePadDocument,
+  new Map(),
+).clusters.find(
+  (cluster) => cluster.id === DUCT_HEXACOPTER_RANGE_PLACEMENT.clusterId,
+).pieces;
+
+/**
+ * КОГО ГОНЯЮТ. Две цели, и они разные не размером, а ПОВЕДЕНИЕМ.
+ *
+ * HX-6 — гость города: он идёт по маршруту и ничего не предпринимает. Это
+ * нижняя граница, на ней проверяется сам механизм боя.
+ *
+ * VX-8 — соседняя боевая машина, и с ней бой другой по существу. Она вдвое
+ * тяжелее, идёт по прямым до тридцати метров в секунду и — главное — КРУТИТ
+ * ФИГУРЫ. Кульбит в её программе стоит как номер показа, но в бою он читается
+ * иначе: машина тормозит с пяти с половиной g, уходит вверх и разворачивается
+ * через нос. Преследователь, взявший обязательство на заход, в этот момент
+ * проскакивает мимо. Стенд обязан это видеть, а видеть он это может, только
+ * если слой фигур у цели РАБОТАЕТ, — иначе VX-8 отличается от HX-6 одной
+ * скоростью и стенд проверяет не то.
+ */
+const TARGETS = {
+  hx6: {
+    id: "hx6",
+    vehicle: hx6Vehicle,
+    pieces: hx6Pieces,
+    allegiance: TOWN_ALLEGIANCE,
+    berth: [
+      RANGE_HEXACOPTER_PAD_X,
+      RANGE_HEXACOPTER_PAD_TOP_Y,
+      RANGE_HEXACOPTER_PAD_Z,
+    ],
+    plan: (kind, berth) => rangeHexacopterPlan(kind, berth),
+    figures: false,
+  },
+  vx8: {
+    id: "vx8",
+    vehicle: vx8Vehicle,
+    pieces: vx8Pieces,
+    allegiance: YAQUI_ALLEGIANCE,
+    berth: DUCT_HEXACOPTER_RANGE_BERTH,
+    plan: (_kind, berth) => ductHexacopterLapPlan(berth),
+    figures: true,
+  },
+};
+
 const armament = combatHexacopterRangeBlueprint.armament;
 
 const STATION = {
@@ -263,10 +322,16 @@ const HX6_BERTH = [
 export function runDuel({
   seconds = 120,
   targetKind = "evasive",
+  /** Кого гонять: `hx6` (гость города) или `vx8` (соседняя боевая машина). */
+  target: targetName = "hx6",
   startProgress = 0.22,
   collect = false,
 } = {}) {
-  const plan = rangeHexacopterPlan(targetKind, HX6_BERTH);
+  const profile = TARGETS[targetName];
+  if (!profile) {
+    throw new Error(`нет такой цели: ${targetName}`);
+  }
+  const plan = profile.plan(targetKind, profile.berth);
   const startPoint = plan.point(startProgress);
   const ahead = plan.point(Math.min(1, startProgress + 0.004));
   const tangent = [
@@ -277,8 +342,8 @@ export function runDuel({
   const tangentLength = Math.hypot(tangent[0], tangent[2]) || 1;
   const cruise = plan.speedLimit(startProgress);
   const target = createMachine({
-    pieces: hx6Pieces,
-    vehicle: hx6Vehicle,
+    pieces: profile.pieces,
+    vehicle: profile.vehicle,
     startPoint,
     startVelocity: [
       (tangent[0] / tangentLength) * cruise,
@@ -300,6 +365,8 @@ export function runDuel({
   });
 
   let combat = createAirCombatState(armament.rockets.mounts.length);
+  let targetFigures = IDLE_ROUTE_FIGURE;
+  let targetFrozen = null;
   let progress = startProgress;
   const rockets = [];
   const report = {
@@ -315,6 +382,18 @@ export function runDuel({
     minimumRangeBlocks: 0,
     selfDamage: 0,
     outcome: "survived",
+    // САМАЯ ДАЛЬНЯЯ ТОЧКА, КУДА ЧТО-ЛИБО УЛЕТЕЛО, м от центра полигона.
+    //
+    // Меряется затем, что видимое небо — купол КОНЕЧНОГО радиуса, и всё, что
+    // вышло за него, оказывается нарисовано на пустоте. У машин предел задан
+    // трассой и известен заранее; у промахнувшейся ракеты — нет: она летит,
+    // пока не кончится взрыватель, и это 173 м ОТ ТОЧКИ ПУСКА.
+    targetFigures: [],
+    targetSkips: [],
+    reachMachines: 0,
+    reachRockets: 0,
+    ceilingMachines: 0,
+    ceilingRockets: 0,
     seconds: 0,
     firstBloodAt: null,
     killAt: null,
@@ -343,13 +422,56 @@ export function runDuel({
       target.vehicle.nose,
       target.flight.approach,
     );
-    stepMachine(target, targetPiloted.guidance);
-    progress = advanceVehicleRouteProgress(
-      plan,
-      progress,
-      centreOf(target),
-      Math.hypot(target.state.velocity[0], target.state.velocity[2]) * dt,
-    );
+    // ПОРЯДОК КАДРА У ЦЕЛИ БЕЗ ФИГУР ОСТАЁТСЯ ПРЕЖНИМ, и это не педантизм:
+    // сперва шаг, потом продвижение трассы по НОВОМУ центру. Общая
+    // перестановка ради слоя фигур сдвинула кадр на шаг и перевернула
+    // сравнение маршрутов — злой круг стал легче ровного.
+    //
+    // Машине с фигурами порядок нужен другой — тот, которым живёт рантайм:
+    // трасса двигается сама, фигура откатывает её назад, и только потом шаг.
+    if (profile.figures) {
+      progress = advanceVehicleRouteProgress(
+        plan,
+        progress,
+        targetCentre,
+        Math.hypot(target.state.velocity[0], target.state.velocity[2]) * dt,
+      );
+      const figured = advanceRouteFigureFrame({
+        state: targetFigures,
+        frozenProgress: targetFrozen,
+        stations: plan.figures,
+        berthAltitude: plan.point(1)[1],
+        progress,
+        attitude: target.state.orientation,
+        centre: targetCentre,
+        velocity: target.state.velocity,
+        bodyNose: target.vehicle.nose,
+        machine: target.machine,
+        authority: Math.min(...target.feedback),
+        deltaSeconds: dt,
+      });
+      if (figured.state.skipped && figured.state.skipped !== targetFigures.skipped) {
+        report.targetSkips.push(figured.state.skipped);
+      }
+      if (figured.state.station && !targetFigures.station) {
+        report.targetFigures.push({
+          key: figured.state.station.key,
+          at: now,
+        });
+      }
+      targetFigures = figured.state;
+      targetFrozen = figured.frozenProgress;
+      progress = figured.progress;
+      stepMachine(target, figured.guidance ?? targetPiloted.guidance);
+    } else {
+      stepMachine(target, targetPiloted.guidance);
+      progress = advanceVehicleRouteProgress(
+        plan,
+        progress,
+        centreOf(target),
+        Math.hypot(target.state.velocity[0], target.state.velocity[2]) * dt,
+      );
+    }
     if (progress >= 0.92) {
       progress = 0.14;
     }
@@ -368,8 +490,8 @@ export function runDuel({
     previousTargetVelocity = [...target.state.velocity];
 
     const track = {
-      id: "hx6",
-      allegiance: TOWN_ALLEGIANCE,
+      id: profile.id,
+      allegiance: profile.allegiance,
       centre: liveTargetCentre,
       velocity: [...target.state.velocity],
       turnRate: headingDelta / dt,
@@ -386,6 +508,18 @@ export function runDuel({
     };
 
     const hunterCentre = centreOf(hunter);
+    // ВЫНОС МАШИН — от центра полигона, а не от чьего-то пада: небо рисуется
+    // вокруг мира, и мерить его надо тем же центром, каким оно построено.
+    report.reachMachines = Math.max(
+      report.reachMachines,
+      Math.hypot(hunterCentre[0], hunterCentre[2]),
+      Math.hypot(liveTargetCentre[0], liveTargetCentre[2]),
+    );
+    report.ceilingMachines = Math.max(
+      report.ceilingMachines,
+      hunterCentre[1],
+      liveTargetCentre[1],
+    );
     const hunterNoseAxis = forwardAxis(hunter);
     const flatNose = Math.hypot(hunterNoseAxis[0], hunterNoseAxis[2]) || 1;
     const output = stepAirCombat({
@@ -479,6 +613,11 @@ export function runDuel({
         rocket.position[2] + rocket.velocity[2] * dt,
       ];
       rocket.life -= dt;
+      report.reachRockets = Math.max(
+        report.reachRockets,
+        Math.hypot(rocket.position[0], rocket.position[2]),
+      );
+      report.ceilingRockets = Math.max(report.ceilingRockets, rocket.position[1]);
       // Пролёт разбивается на подшаги: за кадр ракета проходит 1.6 м, а куски
       // цели меньше — без этого быстрая ракета «протыкает» цель насквозь.
       let detonation = null;
@@ -614,6 +753,13 @@ export function summarise(report) {
     `кольца: [${(report.ringAvailability ?? []).map((v) => v.toFixed(2)).join(" ")}]`,
     `самоподрыв: ${report.selfDamage}`,
     `под на конец боя: ${report.podLeft ?? "—"}${report.reloadingAtEnd ? " (снаряжается)" : ""}`,
+    `фигуры цели: ${
+      report.targetFigures.length
+        ? report.targetFigures.map((f) => `${f.key}@${f.at.toFixed(0)}с`).join(", ")
+        : "—"
+    }`,
+    `вынос: машины ${report.reachMachines.toFixed(0)} м / потолок ${report.ceilingMachines.toFixed(0)} м; ` +
+      `ракеты ${report.reachRockets.toFixed(0)} м / потолок ${report.ceilingRockets.toFixed(0)} м`,
     `режимы: ${Object.entries(report.modeSeconds)
       .map(([mode, value]) => `${mode} ${value.toFixed(0)}с`)
       .join(", ")}`,

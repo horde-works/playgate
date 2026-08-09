@@ -181,12 +181,16 @@ export const ductHexacopterRangePadDocument: AuthoredSceneDocument = {
   world: {
     playerSpawn: [PAD_X, PAD_TOP + 1.3, PAD_Z + 9],
     playerSpawnYaw: 0,
-    cameraFar: 380,
+    // Небо и дальность камеры — те же, что у документа полигона: сцена одна
+    // (`COMBAT_HEXACOPTER_RANGE_SCENE_ID`), и разойтись этим двум числам
+    // значило бы получить разный горизонт в зависимости от того, чей документ
+    // собрали. Вывод размера — там же, у `combatHexacopterRangeDocument`.
+    cameraFar: 620,
     center: [0, 0],
     halfExtents: [53, 53],
     radius: 50,
     boundaryRadius: 55,
-    skyRadius: 150,
+    skyRadius: 330,
     safetyFloorY: -2,
   },
   copy: {

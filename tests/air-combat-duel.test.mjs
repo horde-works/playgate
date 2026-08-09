@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runDuel, summarise } from "./air-combat-rig.mjs";
+import { combatHexacopterRangeDocument } from "../games/make-a-mess/src/content/scenes/combatHexacopterRangeDocument.ts";
+
+/** Небо берётся из документа мира, а не переписывается сюда числом. */
+const RANGE_SKY_RADIUS = combatHexacopterRangeDocument.world.skyRadius;
 
 /**
  * Приёмка воздушного боя. Сам стенд — `air-combat-rig.mjs`: он вынесен из
@@ -81,5 +85,72 @@ test("злой маршрут ДЕЙСТВИТЕЛЬНО труднее ровн
   assert.ok(
     hard.seconds > easy.seconds,
     `на злом маршруте цель обязана жить дольше: ${hard.seconds.toFixed(1)} против ${easy.seconds.toFixed(1)}`,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// СОСЕД ПО ПОЛИГОНУ
+// ---------------------------------------------------------------------------
+
+/**
+ * Один прогон на все утверждения ниже: дуэль в полтораста секунд стоит дорого,
+ * а вопросы к ней разные и независимые.
+ */
+const yaqui = runDuel({ seconds: 150, target: "vx8" });
+
+test("НЕБО ПОКРЫВАЕТ ВСЁ, ЧТО ЛЕТИТ, — и дальше всех летит промах", () => {
+  console.log(`
+[дуэль: RAX-8 против VX-8]
+  ${summarise(yaqui)}
+`);
+  // Купол рисуется конечным радиусом; вышедшее за него оказывается нарисовано
+  // на пустоте. Предел задаёт НЕ машина: ракета, не нашедшая цели, летит, пока
+  // не кончится взрыватель, — 173 м от точки пуска, где бы та ни случилась.
+  assert.ok(
+    yaqui.reachRockets > yaqui.reachMachines,
+    `ракеты (${yaqui.reachRockets.toFixed(0)} м) не обогнали машины (${yaqui.reachMachines.toFixed(0)} м) — замер подозрителен`,
+  );
+  assert.ok(
+    yaqui.reachRockets < RANGE_SKY_RADIUS,
+    `ракеты уходят на ${yaqui.reachRockets.toFixed(0)} м при небе ${RANGE_SKY_RADIUS} м`,
+  );
+  assert.ok(
+    yaqui.reachMachines < RANGE_SKY_RADIUS,
+    `машины уходят на ${yaqui.reachMachines.toFixed(0)} м при небе ${RANGE_SKY_RADIUS} м`,
+  );
+});
+
+test("СОСЕД — ЦЕЛЬ ДРУГОГО КЛАССА, а не тот же гость побыстрее", () => {
+  const guest = runDuel({ seconds: 150, target: "hx6" });
+  // Разница обязана быть в ИСХОДЕ, а не в оттенках. Гость города сбивается;
+  // соседняя боевая машина переживает те же полтораста секунд.
+  assert.notEqual(guest.outcome, "survived", "гость обязан быть сбит");
+  // И вот почему, числом: атакующему объявлено 21 м/с, а сосед идёт по прямым
+  // тридцать. ДОГНАТЬ ЕГО НЕЛЬЗЯ — можно только встретить. Отсюда и время на
+  // станции: преследование вырождается в ожидание.
+  const stationSeconds = yaqui.modeSeconds.station ?? 0;
+  assert.ok(
+    stationSeconds > yaqui.seconds * 0.3,
+    `на станции ${stationSeconds.toFixed(0)} из ${yaqui.seconds.toFixed(0)} с — ` +
+      "погоня перестала быть безнадёжной, и это повод переписать утверждение, а не радоваться",
+  );
+});
+
+test("ЦЕЛЬ, ПОТЕРЯВШАЯ ВЛАСТЬ, ФИГУР НЕ КРУТИТ — ворота считают то же, что в показе", () => {
+  // VX-8 объявляет пять номеров, но в бою не отработал ни одного, и причина
+  // названа воротами поимённо: «недобор власти». К моменту, когда номер
+  // наступает, машина уже без колец.
+  //
+  // Это правильное поведение и одновременно приговор нынешней раскладке:
+  // фигура привязана к ДОЛЕ ТРАССЫ, а не к угрозе. Кульбит как средство
+  // разорвать заход обязан вызываться боем, а не точкой маршрута, — иначе он
+  // случается тогда, когда уже поздно.
+  assert.ok(
+    yaqui.targetSkips.length > 0,
+    "цель не пропустила ни одного номера — раскладка изменилась, утверждение пора пересмотреть",
+  );
+  assert.ok(
+    yaqui.targetSkips.every((reason) => reason.includes("власти")),
+    `пропуски не по власти: ${[...new Set(yaqui.targetSkips)].join("; ")}`,
   );
 });
