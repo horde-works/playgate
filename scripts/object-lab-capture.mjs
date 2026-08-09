@@ -19,6 +19,9 @@ const mime = {
 
 export async function captureObjectLab(model, relativeOutputRoot) {
   const outputRoot = join(repositoryRoot, relativeOutputRoot);
+  // Пропорция кадра принадлежит объекту: широкая плоская машина в квадрате
+  // теряет половину поля, а вертикальная мельница — наоборот.
+  const [captureWidth, captureHeight] = model.captureFrame ?? [1280, 1280];
   const modelHash = createHash("sha256").update(JSON.stringify(model)).digest("hex").slice(0, 12);
   const modelPayload = JSON.stringify({ ...model, modelHash });
   const server = createServer(async (request, response) => {
@@ -90,7 +93,7 @@ export async function captureObjectLab(model, relativeOutputRoot) {
       "--no-first-run",
       "--run-all-compositor-stages-before-draw",
       "--virtual-time-budget=1800",
-      "--window-size=1280,1280",
+      `--window-size=${captureWidth},${captureHeight}`,
       `--screenshot=${destination}`,
       `http://127.0.0.1:${address.port}/?view=${encodeURIComponent(viewId)}`,
     ], { stdio: ["ignore", "pipe", "pipe"] });

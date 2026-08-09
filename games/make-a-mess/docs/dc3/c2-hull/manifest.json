@@ -1,0 +1,110 @@
+{
+  "modelId": "dc3",
+  "revision": "dc3-c2-hull-2026-08-09",
+  "modelHash": "e75dc0f14f15",
+  "generatedAt": "2026-08-09T06:37:59.872Z",
+  "views": [
+    {
+      "id": "front",
+      "label": "DC-3 · фронт, ортогональ",
+      "projection": "orthographic",
+      "file": "front.png"
+    },
+    {
+      "id": "left",
+      "label": "DC-3 · левый борт, ортогональ",
+      "projection": "orthographic",
+      "file": "left.png"
+    },
+    {
+      "id": "rear",
+      "label": "DC-3 · корма, ортогональ",
+      "projection": "orthographic",
+      "file": "rear.png"
+    },
+    {
+      "id": "top",
+      "label": "DC-3 · план, ортогональ",
+      "projection": "orthographic",
+      "file": "top.png"
+    },
+    {
+      "id": "front-three-quarter",
+      "label": "DC-3 · три четверти спереди",
+      "projection": "perspective",
+      "file": "front-three-quarter.png"
+    },
+    {
+      "id": "rear-three-quarter",
+      "label": "DC-3 · три четверти сзади",
+      "projection": "perspective",
+      "file": "rear-three-quarter.png"
+    },
+    {
+      "id": "high-three-quarter",
+      "label": "DC-3 · три четверти сверху",
+      "projection": "perspective",
+      "file": "high-three-quarter.png"
+    },
+    {
+      "id": "underside",
+      "label": "DC-3 · снизу",
+      "projection": "perspective",
+      "file": "underside.png"
+    },
+    {
+      "id": "silhouette",
+      "label": "DC-3 · силуэт",
+      "projection": "orthographic",
+      "file": "silhouette.png"
+    },
+    {
+      "id": "wing-root-detail",
+      "label": "DC-3 · корень крыла",
+      "projection": "perspective",
+      "file": "wing-root-detail.png"
+    },
+    {
+      "id": "nacelle-detail",
+      "label": "DC-3 · мотогондола и узел рамы",
+      "projection": "perspective",
+      "file": "nacelle-detail.png"
+    },
+    {
+      "id": "gear-bay-detail",
+      "label": "DC-3 · ниша шасси",
+      "projection": "perspective",
+      "file": "gear-bay-detail.png"
+    },
+    {
+      "id": "cockpit-detail",
+      "label": "DC-3 · нос и кабина",
+      "projection": "perspective",
+      "file": "cockpit-detail.png"
+    },
+    {
+      "id": "tail-detail",
+      "label": "DC-3 · оперение",
+      "projection": "perspective",
+      "file": "tail-detail.png"
+    },
+    {
+      "id": "cabin-section",
+      "label": "DC-3 · разрез салона (набор)",
+      "projection": "perspective",
+      "file": "cabin-section.png"
+    },
+    {
+      "id": "cabin-section-external",
+      "label": "DC-3 · тот же кадр без скрытий",
+      "projection": "perspective",
+      "file": "cabin-section-external.png"
+    },
+    {
+      "id": "structure-only",
+      "label": "DC-3 · только силовой набор",
+      "projection": "perspective",
+      "file": "structure-only.png"
+    }
+  ]
+}
