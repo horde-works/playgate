@@ -1026,68 +1026,6 @@ export const DC3_CONTROL_HINGE_CHORD = 0.75;
 /** Наружная граница зализа: дальше идёт чистая консоль. */
 const WING_ROOT_BL = 1.30;
 
-const ARC_POINTS = 33;
-
-/**
- * Замкнутое сечение фюзеляжа: обход от киля через борт, верх и обратно. Первая
- * и последняя точка совпадают, поэтому оболочка сходится сама, и поперёк неё не
- * ложится фальшивая полоса.
- */
-const fuselageArc = (fs: number): ObjectPoint[] => {
-  const row = sampleFuselage(fs);
-  const centre = (row.top + row.bottom) / 2;
-  const upper = row.top - centre;
-  const lower = centre - row.bottom;
-  return Array.from({ length: ARC_POINTS }, (_, index) => {
-    const angle = lerp(-Math.PI, Math.PI, index / (ARC_POINTS - 1));
-    const cos = Math.cos(angle);
-    return toModel(fs, row.half * Math.sin(angle), centre + (cos >= 0 ? upper : lower) * cos);
-  });
-};
-
-/** Полуширина борта на станции и высоте — по ней садится зализ. */
-const fuselageHalfAt = (fs: number, wl: number) => {
-  const row = sampleFuselage(fs);
-  const centre = (row.top + row.bottom) / 2;
-  const radius = wl >= centre ? row.top - centre : centre - row.bottom;
-  const ratio = clamp(1 - ((wl - centre) / radius) ** 2, 0, 1);
-  return row.half * Math.sqrt(ratio);
-};
-
-/**
- * Крышка сечения ВЕЕРОМ ИЗ ЦЕНТРА, а не из первой вершины.
- *
- * Веер из вершины 0 по тонкому профилю неизбежно даёт лучи нулевой площади у
- * острой задней кромки. Их приходилось выбрасывать — и тело переставало быть
- * замкнутым, то есть теряло единственную честную проверку навивки. Веер из
- * центра сечения даёт широкие треугольники и оставляет тело замкнутым.
- */
-const capFan = (section: readonly ObjectPoint[], reverse: boolean): Facet[] => {
-  let x = 0; let y = 0; let z = 0;
-  for (const node of section) { x += node[0]; y += node[1]; z += node[2]; }
-  const centre = point(x / section.length, y / section.length, z / section.length);
-  const facets: Facet[] = [];
-  for (let index = 0; index < section.length; index += 1) {
-    const next = (index + 1) % section.length;
-    facets.push({
-      points: reverse
-        ? [centre, section[next], section[index]]
-        : [centre, section[index], section[next]],
-      tag: "cap",
-    });
-  }
-  return facets;
-};
-
-/** Крышка сечения без вырожденного треугольника на сомкнутых концах. */
-const capFacet = (section: readonly ObjectPoint[], reverse: boolean): Facet => {
-  const last = section[section.length - 1];
-  const first = section[0];
-  const same = Math.hypot(last[0] - first[0], last[1] - first[1], last[2] - first[2]) < 1e-9;
-  const points = same ? section.slice(0, -1) : [...section];
-  return { points: reverse ? [...points].reverse() : points, tag: "cap" };
-};
-
 /**
  * Разворот оболочки нормалями НАРУЖУ.
  *
@@ -1152,66 +1090,126 @@ const addShell = (
   reference?: ObjectPoint,
 ) => addFacets(id, group, material, orientOutward(facets, reference ?? facetCentre(facets)));
 
-/** Шаг станций обшивки салона: ровно половина окна, чтобы проём лёг по сетке. */
-const SKIN_STEP = 0.255;
-/** Первое окно салона снято с чертежа: центр на станции 4.41, шаг 1.02. */
-export const DC3_WINDOW_FIRST_FS = 4.41;
-export const DC3_WINDOW_PITCH = 1.02;
-export const DC3_WINDOW_COUNT = 7;
-export const DC3_WINDOW_SIDE = 0.51;
-const CABIN_SKIN_FROM = DC3_WINDOW_FIRST_FS - SKIN_STEP;
-const CABIN_SKIN_TO = CABIN_SKIN_FROM + SKIN_STEP * (DC3_WINDOW_PITCH / SKIN_STEP) * (DC3_WINDOW_COUNT - 1) + SKIN_STEP * 2;
+/**
+ * Остекление: КАЖДАЯ панель обмерена отдельно, скрипт
+ * docs/dc3/reference/canopy-survey.mjs. Ни одно число здесь не подобрано.
+ *
+ * Лобовое стекло — V, раскрытая вперёд: две полосы, идущие от вершины на
+ * гребне вниз-наружу до подоконной линии, разделённые центральной стойкой.
+ * Вершина V лежит там, где гребень носа достигает подоконной высоты; заднюю
+ * границу задаёт наружный предел остекления в плане.
+ *
+ * Боковое окно — ОДНО на сторону (прямое указание владельца; чертёж C-47
+ * показывает в этой полосе три света, и расхождение объявлено в журнале).
+ */
 
-/** Проём в обшивке: диапазон станций и диапазон ячеек сечения. */
+/** Подоконная линия остекления кабины — прямая (обмер боковой проекции). */
+export const DC3_COCKPIT_SILL_WL = 0.773;
+/** Наружный предел лобового по размаху (обмер плановой проекции). */
+export const DC3_WINDSCREEN_OUTER_BL = 0.726;
+/** Границы панелей лобового по размаху — оттуда же. */
+export const DC3_WINDSCREEN_MULLIONS_BL = [0.300, 0.521] as const;
+/** Одно боковое окно на сторону: габарит и высоты сняты с чертежа. */
+export const DC3_COCKPIT_WINDOW = { from: 2.009, to: 2.398, sill: 0.701, head: 1.052 };
+/** Окно салона: 0.388 × 0.457, первое по центру 4.379, шаг 1.02. */
+export const DC3_CABIN_WINDOW = { length: 0.408, sill: 0.210, head: 0.667, firstCentre: 4.379, pitch: 1.020, count: 7 };
+
+const ARC_POINTS = 33;
+const CREST_CELL = (ARC_POINTS - 1) / 2;
+
+/**
+ * Замкнутое сечение фюзеляжа: обход от киля через борт, верх и обратно. Первая
+ * и последняя точка совпадают, поэтому оболочка сходится сама, и поперёк неё не
+ * ложится фальшивая полоса.
+ */
+const fuselageArc = (fs: number): ObjectPoint[] => {
+  const row = sampleFuselage(fs);
+  const centre = (row.top + row.bottom) / 2;
+  const upper = row.top - centre;
+  const lower = centre - row.bottom;
+  return Array.from({ length: ARC_POINTS }, (_, index) => {
+    const angle = lerp(-Math.PI, Math.PI, index / (ARC_POINTS - 1));
+    const cos = Math.cos(angle);
+    return toModel(fs, row.half * Math.sin(angle), centre + (cos >= 0 ? upper : lower) * cos);
+  });
+};
+
+/** Полуширина борта на станции и высоте — по ней садится зализ. */
+const fuselageHalfAt = (fs: number, wl: number) => {
+  const row = sampleFuselage(fs);
+  const centre = (row.top + row.bottom) / 2;
+  const radius = wl >= centre ? row.top - centre : centre - row.bottom;
+  const ratio = clamp(1 - ((wl - centre) / radius) ** 2, 0, 1);
+  return row.half * Math.sqrt(ratio);
+};
+
+/** Ячейка сечения, на которой поверхность пересекает заданную высоту. */
+const cellAtWl = (fs: number, wl: number, side: 1 | -1) => {
+  const row = sampleFuselage(fs);
+  const centre = (row.top + row.bottom) / 2;
+  const radius = wl >= centre ? row.top - centre : centre - row.bottom;
+  const angle = Math.acos(clamp((wl - centre) / radius, -1, 1));
+  return CREST_CELL + side * angle / (Math.PI * 2) * (ARC_POINTS - 1);
+};
+
+/** Ячейка сечения на заданном удалении от плоскости симметрии. */
+const cellAtBl = (fs: number, bl: number, side: 1 | -1) => {
+  const row = sampleFuselage(fs);
+  const angle = Math.asin(clamp(Math.abs(bl) / row.half, -1, 1));
+  return CREST_CELL + side * angle / (Math.PI * 2) * (ARC_POINTS - 1);
+};
+
+/**
+ * Крышка сечения ВЕЕРОМ ИЗ ЦЕНТРА, а не из первой вершины.
+ *
+ * Веер из вершины 0 по тонкому профилю неизбежно даёт лучи нулевой площади у
+ * острой задней кромки. Их приходилось выбрасывать — и тело переставало быть
+ * замкнутым, то есть теряло единственную честную проверку навивки.
+ */
+const capFan = (section: readonly ObjectPoint[], reverse: boolean): Facet[] => {
+  let x = 0; let y = 0; let z = 0;
+  for (const node of section) { x += node[0]; y += node[1]; z += node[2]; }
+  const centre = point(x / section.length, y / section.length, z / section.length);
+  const facets: Facet[] = [];
+  for (let index = 0; index < section.length; index += 1) {
+    const next = (index + 1) % section.length;
+    facets.push({
+      points: reverse ? [centre, section[next], section[index]] : [centre, section[index], section[next]],
+      tag: "cap",
+    });
+  }
+  return facets;
+};
+
+/** Крышка сечения без вырожденного треугольника на сомкнутых концах. */
+const capFacet = (section: readonly ObjectPoint[], reverse: boolean): Facet => {
+  const last = section[section.length - 1];
+  const first = section[0];
+  const same = Math.hypot(last[0] - first[0], last[1] - first[1], last[2] - first[2]) < 1e-9;
+  const points = same ? section.slice(0, -1) : [...section];
+  return { points: reverse ? [...points].reverse() : points, tag: "cap" };
+};
+
 type SkinHole = {
   readonly id: string;
   readonly fromStation: number;
   readonly toStation: number;
-  readonly fromCell: number;
-  readonly toCell: number;
-  readonly kind: "cabin" | "cockpit" | "door";
-  /**
-   * Диапазон ячеек по станциям. Нужен там, где кромка проёма обязана идти по
-   * ПРЯМОЙ, а сечение под ней растёт: у окон кабины подоконная линия
-   * горизонтальна, пока гребень над ней поднимается на 0.93 м.
-   */
-  readonly cellSpans?: readonly { readonly from: number; readonly to: number }[];
-  /**
-   * Точные высоты кромок. Вырез обшивки неизбежно квантуется по ячейкам
-   * сечения, а рама и стекло строятся ПО НИМ — поэтому видимая линия остаётся
-   * прямой, а ступеньку выреза съедает четверть.
-   */
-  readonly sillWl?: number;
-  readonly headWl?: number;
+  /** Диапазон ячеек на каждой станции: кромка идёт по линии, а не по сетке. */
+  readonly spans: readonly { readonly from: number; readonly to: number }[];
 };
-
-const holeCells = (hole: SkinHole, station: number) =>
-  hole.cellSpans?.[station - hole.fromStation] ?? { from: hole.fromCell, to: hole.toCell };
+const holeSpan = (hole: SkinHole, station: number) =>
+  hole.spans[clamp(station - hole.fromStation, 0, hole.spans.length - 1)];
 
 /**
- * Обшивка отрезка фюзеляжа с настоящими проёмами.
- *
- * Панель не «затемняется» и не заклеивается стеклом поверх целой стенки: квад,
- * попавший в проём, ПРОСТО НЕ ВЫПУСКАЕТСЯ. Дальше проём получает четверти,
- * раму, стекло и глубину салона за ним — по цепочке, которую требует канон.
+ * Обшивка отрезка фюзеляжа с настоящими проёмами. Квад, попавший в проём,
+ * ПРОСТО НЕ ВЫПУСКАЕТСЯ; вырез квантуется по ячейкам сечения, а видимую прямую
+ * держит рама, построенная по точным высотам.
  */
 const emitFuselageSkin = (
   id: string,
-  from: number,
-  to: number,
-  options: {
-    readonly step?: number; readonly capStart?: boolean; readonly capEnd?: boolean;
-    readonly holes?: readonly SkinHole[]; readonly stations?: readonly number[];
-  } = {},
+  stations: readonly number[],
+  options: { readonly capStart?: boolean; readonly capEnd?: boolean; readonly holes?: readonly SkinHole[] } = {},
 ) => {
-  const step = options.step ?? 0.22;
-  const steps = Math.max(2, Math.round((to - from) / step));
-  // Явный список станций нужен там, где проём обязан лечь по своим границам:
-  // фонарь разбит на панели с точностью до сантиметров, и подгонять его под
-  // равномерную сетку значило бы двигать построение под удобство кода.
-  const stations = options.stations
-    ? [...options.stations]
-    : Array.from({ length: steps + 1 }, (_, index) => lerp(from, to, index / steps));
   const sections = stations.map(fuselageArc);
   const holes = options.holes ?? [];
   const facets: Facet[] = [];
@@ -1219,8 +1217,10 @@ const emitFuselageSkin = (
     for (let cell = 0; cell < ARC_POINTS - 1; cell += 1) {
       const inside = holes.some((hole) => {
         if (station < hole.fromStation || station >= hole.toStation) return false;
-        const span = holeCells(hole, station);
-        return cell >= span.from && cell < span.to;
+        const span = holeSpan(hole, station);
+        // Режем ТОЛЬКО целиком попавшие ячейки: вырез обязан быть уже стекла,
+        // иначе по краю проёма остаётся щель, которую нечем закрыть.
+        return cell >= span.from && cell + 1 <= span.to;
       });
       if (inside) continue;
       facets.push({
@@ -1231,13 +1231,12 @@ const emitFuselageSkin = (
   }
   if (options.capStart) facets.push(capFacet(sections[0], false));
   if (options.capEnd) facets.push(capFacet(sections[sections.length - 1], true));
-  const middle = lerp(from, to, 0.5);
+  const middle = stations[Math.floor(stations.length / 2)];
   const row = sampleFuselage(middle);
   addShell(id, "hull-fuselage", "paint-light", facets, toModel(middle, 0, (row.top + row.bottom) / 2));
-  return { stations, sections };
 };
 
-/** Точка на поверхности фюзеляжа по станции и ячейке, уведённая внутрь на `inset`. */
+/** Точка на поверхности по станции и ДРОБНОЙ ячейке, уведённая внутрь на `inset`. */
 const skinPoint = (fs: number, cell: number, inset: number): ObjectPoint => {
   const row = sampleFuselage(fs);
   const centre = (row.top + row.bottom) / 2;
@@ -1249,318 +1248,255 @@ const skinPoint = (fs: number, cell: number, inset: number): ObjectPoint => {
   return toModel(fs, half * Math.sin(angle), centre + (cos >= 0 ? upper : lower) * cos);
 };
 
-/** Ячейка сечения, на которой поверхность пересекает заданную высоту. */
-const cellAtWl = (fs: number, wl: number, side: 1 | -1) => {
-  const row = sampleFuselage(fs);
-  const centre = (row.top + row.bottom) / 2;
-  const radius = wl >= centre ? row.top - centre : centre - row.bottom;
-  const angle = Math.acos(clamp((wl - centre) / radius, -1, 1));
-  const signed = side > 0 ? angle : -angle;
-  return (signed + Math.PI) / (Math.PI * 2) * (ARC_POINTS - 1);
-};
-
-const REVEAL_DEPTH = 0.10;
-const GLASS_INSET = 0.045;
+const REVEAL_DEPTH = 0.09;
+const GLASS_INSET = 0.040;
+const FRAME_PROUD = 0.014;
 
 /**
- * Четверти, рама, стекло и стенка глубины за проёмом. Стекло — ordinary
- * transparent glazing; ничего не светится, за ним настоящий объём салона.
+ * Проём: четверти, рама по ТОЧНЫМ кромкам, стекло и глубина за ним.
+ * Кромки задаются функциями `edge`, поэтому линия рамы остаётся прямой
+ * независимо от того, как вырез лёг на сетку сечения.
  */
 const emitOpening = (
+  id: string,
+  group: string,
+  material: ObjectMaterialId,
   hole: SkinHole,
   stations: readonly number[],
-  material: ObjectMaterialId,
-  group: string,
+  edge: (fs: number, key: "from" | "to") => number,
 ) => {
-  const fs0 = stations[hole.fromStation];
-  const fs1 = stations[hole.toStation];
-  const spanAt = (station: number) => holeCells(hole, Math.min(station, hole.toStation - 1));
+  const list = Array.from({ length: hole.toStation - hole.fromStation + 1 }, (_, index) => stations[hole.fromStation + index]);
   const outer = (fs: number, cell: number) => skinPoint(fs, cell, 0);
   const inner = (fs: number, cell: number) => skinPoint(fs, cell, REVEAL_DEPTH);
+
   const reveal: { points: ObjectPoint[]; reference: ObjectPoint }[] = [];
-  const push = (points: ObjectPoint[], reference: ObjectPoint) => reveal.push({ points, reference });
-  {
-    const first = spanAt(hole.fromStation);
-    const last = spanAt(hole.toStation - 1);
-    // Передняя и задняя стенки смотрят ВДОЛЬ станции, поэтому их разворачивает
-    // центр самого проёма, а не точка на той же станции: там скалярное
-    // произведение вырождается в ноль и знак становится шумом.
-    const centre = skinPoint((fs0 + fs1) / 2, (first.from + first.to) / 2, REVEAL_DEPTH / 2);
-    for (let cell = first.from; cell < first.to; cell += 1) {
-      push([outer(fs0, cell), inner(fs0, cell), inner(fs0, cell + 1), outer(fs0, cell + 1)], centre);
-    }
-    for (let cell = last.from; cell < last.to; cell += 1) {
-      push([outer(fs1, cell + 1), inner(fs1, cell + 1), inner(fs1, cell), outer(fs1, cell)], centre);
+  const centre = skinPoint((list[0] + list[list.length - 1]) / 2,
+    (edge(list[Math.floor(list.length / 2)], "from") + edge(list[Math.floor(list.length / 2)], "to")) / 2, REVEAL_DEPTH / 2);
+  const steps = 4;
+  for (const fs of [list[0], list[list.length - 1]]) {
+    for (let step = 0; step < steps; step += 1) {
+      const a = lerp(edge(fs, "from"), edge(fs, "to"), step / steps);
+      const b = lerp(edge(fs, "from"), edge(fs, "to"), (step + 1) / steps);
+      reveal.push({ points: [outer(fs, a), inner(fs, a), inner(fs, b), outer(fs, b)], reference: centre });
     }
   }
-  for (const [index, key] of (["from", "to"] as const).entries()) {
-    for (let station = hole.fromStation; station < hole.toStation; station += 1) {
-      const a = stations[station];
-      const b = stations[station + 1];
-      const cellA = spanAt(station)[key];
-      const cellB = spanAt(Math.min(station + 1, hole.toStation - 1))[key];
-      const quad = [outer(a, cellA), inner(a, cellA), inner(b, cellB), outer(b, cellB)];
-      const span = spanAt(station);
-      push(index === 0 ? quad : [...quad].reverse(),
-        skinPoint((a + b) / 2, (span.from + span.to) / 2, REVEAL_DEPTH / 2));
+  for (const key of ["from", "to"] as const) {
+    for (let index = 0; index < list.length - 1; index += 1) {
+      const a = list[index]; const b = list[index + 1];
+      reveal.push({
+        points: [outer(a, edge(a, key)), inner(a, edge(a, key)), inner(b, edge(b, key)), outer(b, edge(b, key))],
+        reference: skinPoint((a + b) / 2, (edge(a, "from") + edge(a, "to")) / 2, REVEAL_DEPTH / 2),
+      });
     }
   }
-  // Стенка проёма смотрит В проём: снаружи в окно видно именно её, а не изнанку.
-  // Разворачивается КАЖДАЯ грань, и к СВОЕЙ оси: у четырёх стенок нет общей
-  // «наружи», а на длинном окне нет и общего центра.
-  addFacets(`${hole.id}-reveal`, group, "metal", reveal.map(({ points, reference }) => {
+  addFacets(`${id}-reveal`, group, "metal", reveal.map(({ points, reference }) => {
     const [a, b, c] = points;
     const ux = b[0] - a[0]; const uy = b[1] - a[1]; const uz = b[2] - a[2];
     const vx = c[0] - a[0]; const vy = c[1] - a[1]; const vz = c[2] - a[2];
     const nx = uy * vz - uz * vy; const ny = uz * vx - ux * vz; const nz = ux * vy - uy * vx;
     let cx = 0; let cy = 0; let cz = 0;
     for (const node of points) { cx += node[0]; cy += node[1]; cz += node[2]; }
-    const count = points.length;
-    const dot = nx * (reference[0] - cx / count) + ny * (reference[1] - cy / count) + nz * (reference[2] - cz / count);
+    const dot = nx * (reference[0] - cx / 4) + ny * (reference[1] - cy / 4) + nz * (reference[2] - cz / 4);
     return { points: dot >= 0 ? points : [...points].reverse(), tag: "reveal" };
   }));
 
-  /**
-   * Кромка рамы: ТОЧНАЯ высота, если проём её объявил, иначе граница ячейки.
-   * Вырез обшивки неизбежно квантуется по сечению — видимую прямую держит рама,
-   * а ступеньку выреза съедает четверть.
-   */
-  const edgeCell = (fs: number, key: "from" | "to", station: number) => {
-    if (hole.sillWl === undefined || hole.headWl === undefined) return spanAt(station)[key];
-    const side = (hole.fromCell + hole.toCell) / 2 > (ARC_POINTS - 1) / 2 ? 1 : -1;
-    const sill = cellAtWl(fs, hole.sillWl, side);
-    const head = cellAtWl(fs, hole.headWl, side);
-    return key === "from" ? Math.min(sill, head) : Math.max(sill, head);
-  };
-  const firstSpan = spanAt(hole.fromStation);
-
-  // Рама: тонкая накладка вокруг проёма, выступающая наружу на 12 мм.
+  const ring: { fs: number; cell: number }[] = [];
+  for (let step = 0; step <= steps; step += 1) ring.push({ fs: list[0], cell: lerp(edge(list[0], "from"), edge(list[0], "to"), step / steps) });
+  for (let index = 1; index < list.length; index += 1) ring.push({ fs: list[index], cell: edge(list[index], "to") });
+  for (let step = steps - 1; step >= 0; step -= 1) {
+    const fs = list[list.length - 1];
+    ring.push({ fs, cell: lerp(edge(fs, "from"), edge(fs, "to"), step / steps) });
+  }
+  for (let index = list.length - 2; index >= 1; index -= 1) ring.push({ fs: list[index], cell: edge(list[index], "from") });
   const frame: Facet[] = [];
-  const framePoint = (fs: number, cell: number, out: number) => skinPoint(fs, cell, -out);
-  const across = Math.max(2, firstSpan.to - firstSpan.from);
-  const ring = [
-    ...Array.from({ length: across + 1 }, (_, index) => ({
-      fs: fs0,
-      cell: lerp(edgeCell(fs0, "from", hole.fromStation), edgeCell(fs0, "to", hole.fromStation), index / across),
-    })),
-    ...Array.from({ length: hole.toStation - hole.fromStation }, (_, index) => ({
-      fs: stations[hole.fromStation + index + 1],
-      cell: edgeCell(stations[hole.fromStation + index + 1], "to", hole.fromStation + index),
-    })),
-    ...Array.from({ length: across }, (_, index) => ({
-      fs: fs1,
-      cell: lerp(edgeCell(fs1, "to", hole.toStation - 1), edgeCell(fs1, "from", hole.toStation - 1), (index + 1) / across),
-    })),
-    ...Array.from({ length: hole.toStation - hole.fromStation - 1 }, (_, index) => ({
-      fs: stations[hole.toStation - index - 1],
-      cell: edgeCell(stations[hole.toStation - index - 1], "from", hole.toStation - index - 1),
-    })),
-  ];
   for (let index = 0; index < ring.length; index += 1) {
     const current = ring[index];
     const next = ring[(index + 1) % ring.length];
     frame.push({
       points: [
-        framePoint(current.fs, current.cell, 0.012), framePoint(next.fs, next.cell, 0.012),
-        framePoint(next.fs, next.cell, -0.02), framePoint(current.fs, current.cell, -0.02),
+        skinPoint(current.fs, current.cell, -FRAME_PROUD), skinPoint(next.fs, next.cell, -FRAME_PROUD),
+        skinPoint(next.fs, next.cell, 0.030), skinPoint(current.fs, current.cell, 0.030),
       ],
       tag: "frame",
     });
   }
-  addShell(`${hole.id}-frame`, group, "metal", frame,
-    skinPoint((fs0 + fs1) / 2, (firstSpan.from + firstSpan.to) / 2, 0.5));
+  addShell(`${id}-frame`, group, "metal", frame, centre);
 
-  // Стекло: обычная прозрачная панель внутри четвертей. Источников света нет.
-  const glass: ObjectPoint[][] = [];
-  const width = Math.max(2, firstSpan.to - firstSpan.from);
-  for (let station = hole.fromStation; station <= hole.toStation; station += 1) {
-    const index = Math.min(station, hole.toStation - 1);
-    const fs = stations[station];
-    const low = edgeCell(fs, "from", index);
-    const high = edgeCell(fs, "to", index);
-    glass.push(Array.from({ length: width + 1 }, (_, step) =>
-      skinPoint(fs, lerp(low, high, step / width), GLASS_INSET)));
-  }
   const pane: Facet[] = [];
-  for (let station = 0; station < glass.length - 1; station += 1) {
-    for (let cell = 0; cell < glass[station].length - 1; cell += 1) {
-      pane.push({ points: [glass[station][cell], glass[station + 1][cell], glass[station + 1][cell + 1], glass[station][cell + 1]], tag: "pane" });
+  for (let index = 0; index < list.length - 1; index += 1) {
+    for (let step = 0; step < steps; step += 1) {
+      const a = list[index]; const b = list[index + 1];
+      pane.push({
+        points: [
+          skinPoint(a, lerp(edge(a, "from"), edge(a, "to"), step / steps), GLASS_INSET),
+          skinPoint(b, lerp(edge(b, "from"), edge(b, "to"), step / steps), GLASS_INSET),
+          skinPoint(b, lerp(edge(b, "from"), edge(b, "to"), (step + 1) / steps), GLASS_INSET),
+          skinPoint(a, lerp(edge(a, "from"), edge(a, "to"), (step + 1) / steps), GLASS_INSET),
+        ],
+        tag: "pane",
+      });
     }
   }
-  const paneSuffix = material === "glazing" ? "glass" : "leaf";
-  parts.push(facetsToPart(`${hole.id}-${paneSuffix}`, group, material, pane, { showEdges: false, doubleSided: true }));
+  parts.push(facetsToPart(`${id}-glass`, group, material, pane, { showEdges: false, doubleSided: true }));
 };
 
-const cabinWindowHoles = (side: 1 | -1): SkinHole[] => {
-  const cellCentre = side > 0 ? 24 : 8;
-  return Array.from({ length: DC3_WINDOW_COUNT }, (_, index) => {
-    const start = index * Math.round(DC3_WINDOW_PITCH / SKIN_STEP);
-    return {
-      id: `window-${side > 0 ? "right" : "left"}-${index}`,
-      fromStation: start,
-      toStation: start + 2,
-      fromCell: cellCentre - 1,
-      toCell: cellCentre + 1,
-      kind: "cabin" as const,
-    };
-  });
-};
-
+// --------------------------------------------------------------- станции
 /**
- * Фонарь кабины по ведомости из docs/dc3/canopy-layout.png.
+ * Станции лобового ИЗМЕРЕНЫ, а не выведены из поверхности.
  *
- * Лобовое стекло — НЕ лента, вырезанная по сечению. Это плоская пара панелей
- * на своих станциях: 1.171 → 1.620, наклон 44.6° от вертикали, ширина по низу
- * 1.20 м. Боковые окна стоят на щеке отдельными проёмами, и подоконная линия
- * у них ПРЯМАЯ, пока гребень над ней поднимается на 0.93 м.
+ * Плановая проекция даёт полосу остекления от 1.065 (вершина V на плоскости
+ * симметрии) до 1.796 (задняя кромка наружной панели). Прошлая ревизия выводила
+ * эти станции из условия «гребень достиг подоконной высоты» и промахнулась на
+ * 0.11 вперёд и 0.24 назад: фонарь съезжал на нос и превращался в люк.
  */
+export const DC3_WINDSCREEN_APEX_FS = 1.065;
+export const DC3_WINDSCREEN_REAR_FS = 1.796;
+const WINDSCREEN_APEX_FS = DC3_WINDSCREEN_APEX_FS;
+const WINDSCREEN_REAR_FS = DC3_WINDSCREEN_REAR_FS;
+
 const CANOPY_STATIONS = [
-  1.060, 1.171, 1.300, 1.440, 1.620, 1.780, 1.900, 1.980,
-  2.025, 2.160, 2.300, 2.450, 2.495, 2.620, 2.740, 2.860, 2.920,
-];
-const COCKPIT_FROM = CANOPY_STATIONS[0];
-const COCKPIT_TO = CANOPY_STATIONS[CANOPY_STATIONS.length - 1];
-/** Ячейки сечения: 16 — гребень, шаг 11.25°. */
-const CREST_CELL = 16;
-const WINDSCREEN_CELLS = { from: 12, to: 20 };           // ±45° от гребня
-/** Подоконная линия и верх остекления кабины — прямые (ведомость, лист §1). */
-export const DC3_COCKPIT_SILL_WL = 0.720;
-export const DC3_COCKPIT_HEAD_WL = 1.050;
+  0.86, 0.96, WINDSCREEN_APEX_FS, 1.16, 1.26, 1.37, 1.48, 1.60, 1.70, WINDSCREEN_REAR_FS, 1.90,
+  DC3_COCKPIT_WINDOW.from, 2.10, 2.20, 2.30, DC3_COCKPIT_WINDOW.to, 2.55, 2.75, 2.92,
+].sort((a, b) => a - b);
+const stationIndex = (fs: number) => CANOPY_STATIONS.findIndex((value) => Math.abs(value - fs) < 1e-6);
+const WINDSCREEN_FROM = stationIndex(WINDSCREEN_APEX_FS);
+const WINDSCREEN_TO = stationIndex(WINDSCREEN_REAR_FS);
+const WINDOW_FROM = stationIndex(DC3_COCKPIT_WINDOW.from);
+const WINDOW_TO = stationIndex(DC3_COCKPIT_WINDOW.to);
 
-/**
- * Диапазоны ячеек считаются на КАЖДОЙ станции от постоянных высот. Фиксированный
- * диапазон гнал подоконник вверх вместе с сечением — на длине фонаря это дало
- * 0.19 м подъёма там, где на чертеже прямая.
- */
-const cockpitWindowSpans = (stations: readonly number[], from: number, to: number, side: 1 | -1) =>
-  Array.from({ length: to - from }, (_, index) => {
-    const fs = (stations[from + index] + stations[from + index + 1]) / 2;
-    // Кромку подоконника держим точно, а недостающую ширину добираем ВВЕРХ.
-    // Обратный порядок опускал подоконник на тех станциях, где сечение выше, —
-    // ровно та кривизна, которой на чертеже нет.
-    const sill = Math.round(cellAtWl(fs, DC3_COCKPIT_SILL_WL, side));
-    const head = Math.round(cellAtWl(fs, DC3_COCKPIT_HEAD_WL, side));
+/** Нижняя кромка лобового: подоконная высота, но не дальше предела по размаху. */
+const windscreenEdge = (fs: number, side: 1 | -1) => {
+  const byHeight = cellAtWl(fs, DC3_COCKPIT_SILL_WL, side);
+  const byWidth = cellAtBl(fs, DC3_WINDSCREEN_OUTER_BL, side);
+  return side > 0 ? Math.min(byHeight, byWidth) : Math.max(byHeight, byWidth);
+};
+const CENTRE_POST_CELLS = 0.35;
+
+const windscreenHole = (side: 1 | -1): SkinHole => ({
+  id: `windscreen-${side > 0 ? "right" : "left"}`,
+  fromStation: WINDSCREEN_FROM,
+  toStation: WINDSCREEN_TO,
+  spans: Array.from({ length: WINDSCREEN_TO - WINDSCREEN_FROM + 1 }, (_, index) => {
+    const fs = CANOPY_STATIONS[WINDSCREEN_FROM + index];
+    const outerCell = windscreenEdge(fs, side);
+    const crest = CREST_CELL + side * CENTRE_POST_CELLS;
     return side > 0
-      ? { from: Math.min(head, sill - 2), to: sill }
-      : { from: sill, to: Math.max(head, sill + 2) };
-  });
-const WINDSCREEN_STATIONS = { from: 1, to: 4 };          // 1.171 → 1.620
-const SIDE_WINDOW_STATIONS = [[3, 7], [8, 11], [12, 15]];
+      ? { from: Math.min(crest, outerCell), to: Math.max(crest, outerCell) }
+      : { from: Math.min(crest, outerCell), to: Math.max(crest, outerCell) };
+  }),
+});
+const cockpitWindowHole = (side: 1 | -1): SkinHole => ({
+  id: `cockpit-window-${side > 0 ? "right" : "left"}`,
+  fromStation: WINDOW_FROM,
+  toStation: WINDOW_TO,
+  spans: Array.from({ length: WINDOW_TO - WINDOW_FROM + 1 }, (_, index) => {
+    const fs = CANOPY_STATIONS[WINDOW_FROM + index];
+    const low = cellAtWl(fs, DC3_COCKPIT_WINDOW.sill, side);
+    const high = cellAtWl(fs, DC3_COCKPIT_WINDOW.head, side);
+    return { from: Math.min(low, high), to: Math.max(low, high) };
+  }),
+});
 
-const canopyHoles: SkinHole[] = [
-  {
-    id: "windscreen", kind: "cockpit",
-    fromStation: WINDSCREEN_STATIONS.from, toStation: WINDSCREEN_STATIONS.to,
-    fromCell: WINDSCREEN_CELLS.from, toCell: WINDSCREEN_CELLS.to,
-  },
-  ...SIDE_WINDOW_STATIONS.flatMap(([from, to], index) => ([1, -1] as const).map((side) => {
-    const spans = cockpitWindowSpans(CANOPY_STATIONS, from, to, side);
-    return {
-      id: `cockpit-window-${side > 0 ? "right" : "left"}-${index}`,
-      kind: "cockpit" as const,
-      fromStation: from, toStation: to,
-      fromCell: spans[0].from, toCell: spans[0].to,
-      cellSpans: spans,
-      sillWl: DC3_COCKPIT_SILL_WL,
-      headWl: DC3_COCKPIT_HEAD_WL,
-    };
-  })),
-];
+// ------------------------------------------------------------- окна салона
+const CABIN_STEP = DC3_CABIN_WINDOW.pitch / 5;
+const CABIN_FIRST_FS = DC3_CABIN_WINDOW.firstCentre - CABIN_STEP;
+const CABIN_STATIONS = Array.from({ length: 5 * (DC3_CABIN_WINDOW.count - 1) + 3 },
+  (_, index) => +(CABIN_FIRST_FS + index * CABIN_STEP).toFixed(4));
+const CABIN_SKIN_FROM = CABIN_STATIONS[0];
+const CABIN_SKIN_TO = CABIN_STATIONS[CABIN_STATIONS.length - 1];
 
+const cabinWindowHole = (side: 1 | -1, index: number): SkinHole => {
+  const from = index * 5;
+  return {
+    id: `window-${side > 0 ? "right" : "left"}-${index}`,
+    fromStation: from,
+    toStation: from + 2,
+    spans: Array.from({ length: 3 }, (_, step) => {
+      const fs = CABIN_STATIONS[from + step];
+      const low = cellAtWl(fs, DC3_CABIN_WINDOW.sill, side);
+      const high = cellAtWl(fs, DC3_CABIN_WINDOW.head, side);
+      return { from: Math.min(low, high), to: Math.max(low, high) };
+    }),
+  };
+};
+
+// -------------------------------------------------------------------- дверь
 const DOOR_FROM = CABIN_SKIN_TO;
 const DOOR_TO = 14.30;
-const doorSteps = Math.max(2, Math.round((DOOR_TO - DOOR_FROM) / SKIN_STEP));
-/** Пассажирская дверь DC-3 — левый борт, за крылом. */
-const doorHoles: SkinHole[] = [
-  { id: "cabin-door", fromStation: 2, toStation: 8, fromCell: 6, toCell: 10, kind: "door" },
-];
+const DOOR_STATIONS = Array.from({ length: 11 }, (_, index) => DOOR_FROM + (DOOR_TO - DOOR_FROM) * index / 10);
+const doorHole: SkinHole = {
+  id: "cabin-door",
+  fromStation: 2,
+  toStation: 7,
+  spans: Array.from({ length: 6 }, (_, index) => {
+    const fs = DOOR_STATIONS[2 + index];
+    const low = cellAtWl(fs, -0.20, -1);
+    const high = cellAtWl(fs, 1.06, -1);
+    return { from: Math.min(low, high), to: Math.max(low, high) };
+  }),
+};
 
-emitFuselageSkin("hull-nose", 0.02, COCKPIT_FROM, { step: 0.13, capStart: true });
-const cockpitSkin = emitFuselageSkin("hull-cockpit", COCKPIT_FROM, COCKPIT_TO, { stations: CANOPY_STATIONS, holes: canopyHoles });
-emitFuselageSkin("hull-forward", COCKPIT_TO, CABIN_SKIN_FROM, { step: 0.21 });
-const cabinSkin = emitFuselageSkin("hull-cabin", CABIN_SKIN_FROM, CABIN_SKIN_TO, { step: SKIN_STEP, holes: [...cabinWindowHoles(1), ...cabinWindowHoles(-1)] });
-const doorSkin = emitFuselageSkin("hull-cabin-aft", DOOR_FROM, DOOR_TO, { step: (DOOR_TO - DOOR_FROM) / doorSteps, holes: doorHoles });
-emitFuselageSkin("hull-aft", DOOR_TO, 15.20);
-emitFuselageSkin("hull-tailcone", 15.20, FUSELAGE_TAIL_FS, { capEnd: true });
+// ------------------------------------------------------------------ выпуск
+const range = (from: number, to: number, step: number) =>
+  Array.from({ length: Math.max(2, Math.round((to - from) / step) + 1) }, (_, index) =>
+    from + (to - from) * index / Math.max(1, Math.round((to - from) / step)));
 
-// ------------------------------------------------------------ лобовое стекло
-/**
- * Проём фонаря закрывается ПЛОСКИМИ панелями, а не куском той же оболочки:
- * каждая панель идёт от кромки выреза к коньку по прямой, поэтому в сечении
- * появляется настоящая грань, а не продолжение круга. Кромки панели — те же
- * точки, по которым резана обшивка, поэтому щели не остаётся по построению.
- */
-{
-  const GLASS_SINK = 0.018;
-  const ridgeAt = (fs: number, inset: number) => skinPoint(fs, CREST_CELL, inset);
+emitFuselageSkin("hull-nose", range(0.02, CANOPY_STATIONS[0], 0.12), { capStart: true });
+emitFuselageSkin("hull-cockpit", CANOPY_STATIONS, { holes: [windscreenHole(1), windscreenHole(-1), cockpitWindowHole(1), cockpitWindowHole(-1)] });
+emitFuselageSkin("hull-forward", range(2.92, CABIN_SKIN_FROM, 0.20));
+emitFuselageSkin("hull-cabin", CABIN_STATIONS, {
+  holes: [...Array.from({ length: DC3_CABIN_WINDOW.count }, (_, index) => cabinWindowHole(1, index)),
+    ...Array.from({ length: DC3_CABIN_WINDOW.count }, (_, index) => cabinWindowHole(-1, index))],
+});
+emitFuselageSkin("hull-cabin-aft", DOOR_STATIONS, { holes: [doorHole] });
+emitFuselageSkin("hull-aft", range(DOOR_TO, 15.20, 0.22));
+emitFuselageSkin("hull-tailcone", range(15.20, FUSELAGE_TAIL_FS, 0.22), { capEnd: true });
 
-  // Четверть по всему периметру выреза. Без неё снаружи видна изнанка
-  // односторонней обшивки — та самая «дыра», которой на машине нет.
-  {
-    const hole = canopyHoles[0];
-    const list = CANOPY_STATIONS;
-    const reveal: Facet[] = [];
-    const outer = (fs: number, cell: number) => skinPoint(fs, cell, 0);
-    const inner = (fs: number, cell: number) => skinPoint(fs, cell, GLASS_SINK + 0.014);
-    for (let cell = hole.fromCell; cell < hole.toCell; cell += 1) {
-      const front = list[hole.fromStation]; const rear = list[hole.toStation];
-      reveal.push({ points: [outer(front, cell), inner(front, cell), inner(front, cell + 1), outer(front, cell + 1)], tag: "reveal" });
-      reveal.push({ points: [outer(rear, cell + 1), inner(rear, cell + 1), inner(rear, cell), outer(rear, cell)], tag: "reveal" });
-    }
-    for (const [index, cell] of [hole.fromCell, hole.toCell].entries()) {
-      for (let station = hole.fromStation; station < hole.toStation; station += 1) {
-        const a = list[station]; const b = list[station + 1];
-        const quad = [outer(a, cell), inner(a, cell), inner(b, cell), outer(b, cell)];
-        reveal.push({ points: index === 0 ? quad : [...quad].reverse(), tag: "reveal" });
-      }
-    }
-    const centre = skinPoint((list[hole.fromStation] + list[hole.toStation]) / 2, CREST_CELL, GLASS_SINK);
-    addFacets("windscreen-reveal", "glazing-cockpit", "metal", reveal.map((facet) => {
-      const [a, b, c] = facet.points;
-      const ux = b[0] - a[0]; const uy = b[1] - a[1]; const uz = b[2] - a[2];
-      const vx = c[0] - a[0]; const vy = c[1] - a[1]; const vz = c[2] - a[2];
-      const nx = uy * vz - uz * vy; const ny = uz * vx - ux * vz; const nz = ux * vy - uy * vx;
-      let cx = 0; let cy = 0; let cz = 0;
-      for (const node of facet.points) { cx += node[0]; cy += node[1]; cz += node[2]; }
-      const count = facet.points.length;
-      const dot = nx * (centre[0] - cx / count) + ny * (centre[1] - cy / count) + nz * (centre[2] - cz / count);
-      return dot >= 0 ? facet : { points: [...facet.points].reverse(), tag: facet.tag };
-    }));
-  }
-  const stations = CANOPY_STATIONS.slice(WINDSCREEN_STATIONS.from, WINDSCREEN_STATIONS.to + 1);
-  for (const [side, cell] of [[1, WINDSCREEN_CELLS.to], [-1, WINDSCREEN_CELLS.from]] as const) {
-    const name = side > 0 ? "right" : "left";
-    const facets: Facet[] = [];
-    for (let index = 0; index < stations.length - 1; index += 1) {
-      const a = stations[index]; const b = stations[index + 1];
-      const quad = [
-        skinPoint(a, cell, GLASS_SINK), skinPoint(b, cell, GLASS_SINK),
-        ridgeAt(b, GLASS_SINK), ridgeAt(a, GLASS_SINK),
-      ];
-      facets.push({ points: side > 0 ? quad : [...quad].reverse(), tag: "windscreen" });
-    }
-    parts.push(facetsToPart(`windscreen-${name}-glass`, "glazing-cockpit", "glazing", facets, { showEdges: false, doubleSided: true }));
-  }
-  // Центральная стойка по коньку и две угловые по кромкам выреза.
-  addFacets("windscreen-centre-post", "glazing-cockpit", "metal",
-    memberChain(stations.map((fs) => ridgeAt(fs, 0.016)), 0.052, 0.048, "post-centre"));
-  for (const [side, cell] of [[1, WINDSCREEN_CELLS.to], [-1, WINDSCREEN_CELLS.from]] as const) {
-    addFacets(`windscreen-corner-post-${side > 0 ? "right" : "left"}`, "glazing-cockpit", "metal",
-      memberChain(stations.map((fs) => skinPoint(fs, cell, 0.016)), 0.048, 0.044, "post-corner"));
-  }
-  // Нижняя рама и козырёк: проём обрамлён со всех четырёх сторон.
-  for (const [id, fs] of [["windscreen-sill", stations[0]], ["windscreen-brow", stations[stations.length - 1]]] as const) {
-    const across = Array.from({ length: WINDSCREEN_CELLS.to - WINDSCREEN_CELLS.from + 1 }, (_, index) =>
-      skinPoint(fs, WINDSCREEN_CELLS.from + index, 0.016));
-    addFacets(id, "glazing-cockpit", "metal", memberChain(across, 0.048, 0.044, id));
+for (const side of [1, -1] as const) {
+  const name = side > 0 ? "right" : "left";
+  const edge = (fs: number, key: "from" | "to") => {
+    const crest = CREST_CELL + side * CENTRE_POST_CELLS;
+    const outerCell = windscreenEdge(fs, side);
+    return key === "from" ? Math.min(crest, outerCell) : Math.max(crest, outerCell);
+  };
+  // ОДНО кольцо рамы на борт. Три сегмента с собственными кольцами ставили по
+  // коньку частокол из совпадающих рельсов — деление на света несёт шпрос, а
+  // не отдельная рама у каждого света.
+  emitOpening(`windscreen-${name}`, "glazing-cockpit", "glazing", windscreenHole(side), CANOPY_STATIONS, edge);
+
+  // Шпросы: границы светов по размаху сняты с плановой проекции.
+  for (const [index, bl] of DC3_WINDSCREEN_MULLIONS_BL.entries()) {
+    let fs = WINDSCREEN_APEX_FS;
+    while (fs < WINDSCREEN_REAR_FS && fuselageHalfAt(fs, DC3_COCKPIT_SILL_WL) < bl) fs += 0.005;
+    const nodes = Array.from({ length: 5 }, (_, step) =>
+      skinPoint(fs, lerp(edge(fs, "from"), edge(fs, "to"), step / 4), 0.012));
+    addFacets(`windscreen-mullion-${name}-${index}`, "glazing-cockpit", "metal",
+      memberChain(nodes, 0.032, 0.030, `mullion-${name}-${index}`));
   }
 }
+// Центральная стойка по гребню между полосами лобового.
+addFacets("windscreen-centre-post", "glazing-cockpit", "metal", memberChain(
+  Array.from({ length: 7 }, (_, index) =>
+    skinPoint(lerp(WINDSCREEN_APEX_FS, WINDSCREEN_REAR_FS, index / 6), CREST_CELL, 0.012)),
+  0.055, 0.050, "post-centre"));
 
-for (const hole of canopyHoles.filter((hole) => hole.id.startsWith("cockpit-window-"))) {
-  emitOpening(hole, cockpitSkin.stations, "glazing", "glazing-cockpit");
+for (const side of [1, -1] as const) {
+  for (let index = 0; index < DC3_CABIN_WINDOW.count; index += 1) {
+    emitOpening(`window-${side > 0 ? "right" : "left"}-${index}`, "glazing-cabin", "glazing",
+      cabinWindowHole(side, index), CABIN_STATIONS,
+      (fs, key) => {
+        const low = cellAtWl(fs, DC3_CABIN_WINDOW.sill, side);
+        const high = cellAtWl(fs, DC3_CABIN_WINDOW.head, side);
+        return key === "from" ? Math.min(low, high) : Math.max(low, high);
+      });
+  }
 }
-for (const hole of [...cabinWindowHoles(1), ...cabinWindowHoles(-1)]) emitOpening(hole, cabinSkin.stations, "glazing", "glazing-cabin");
-for (const hole of doorHoles) emitOpening(hole, doorSkin.stations, "paint-light", "door");
+emitOpening("cabin-door", "door", "paint-light", doorHole, DOOR_STATIONS,
+  (fs, key) => {
+    const low = cellAtWl(fs, -0.20, -1);
+    const high = cellAtWl(fs, 1.06, -1);
+    return key === "from" ? Math.min(low, high) : Math.max(low, high);
+  });
 
 // ------------------------------------------------------------- обшивка крыла
 const WING_SKIN_STATIONS = [
@@ -2120,12 +2056,12 @@ for (const side of [-1, 1] as const) {
 // ровно столько, чтобы глубина салона была видна снаружи.
 // ---------------------------------------------------------------------------
 
-const CABIN_INTERIOR_FROM = 1.95;
+const CABIN_INTERIOR_FROM = 1.62;
 const CABIN_INTERIOR_TO = 13.80;
 
 // Пол салона: настил между балками, с проходом посередине.
 {
-  const stations = [CABIN_INTERIOR_FROM, 3.2, 6.0, 8.5, 11.0, CABIN_INTERIOR_TO];
+  const stations = [CABIN_INTERIOR_FROM, 2.4, 3.2, 6.0, 8.5, 11.0, CABIN_INTERIOR_TO];
   const sections = stations.map((fs) => {
     const half = floorHalfWidthAt(fs);
     return [
@@ -2202,8 +2138,12 @@ for (const side of [-1, 1] as const) {
     toModel(2.05, bl, DC3_CABIN_FLOOR_WL + 0.10),
     toModel(2.20, bl, DC3_CABIN_FLOOR_WL + 0.62), 0.07, 0.07, "column"));
 }
+// Приборная доска и противобликовый козырёк стоят СРАЗУ за лобовым: без них
+// сквозь стекло видна пустота, и проём читается дырой, а не остеклением.
 addBox("cockpit-panel", "interior", "timber-dark",
-  toModel(1.86, 0, DC3_CABIN_FLOOR_WL + 0.84), [1.24, 0.44, 0.10], [DC3_GROUND_ANGLE + 0.25, 0, 0]);
+  toModel(1.74, 0, DC3_CABIN_FLOOR_WL + 0.86), [1.20, 0.46, 0.10], [DC3_GROUND_ANGLE + 0.25, 0, 0]);
+addBox("cockpit-glareshield", "interior", "timber-dark",
+  toModel(1.62, 0, DC3_CABIN_FLOOR_WL + 1.06), [1.16, 0.10, 0.34], [DC3_GROUND_ANGLE, 0, 0]);
 
 // ---------------------------------------------------------------------------
 // 16. Модель.
