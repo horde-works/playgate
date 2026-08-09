@@ -62,6 +62,16 @@ const START_ANGLE = Math.atan2(
   -CENTRE_FROM_BERTH[0],
 );
 
+/**
+ * Длина круга по ломаной узлов — оценка, и её хватает: полосы у земли задаются
+ * в МЕТРАХ от берта, а метры из доли получаются умножением на длину. Настоящая
+ * длина кривой известна только после сборки маршрута, то есть после того, как
+ * требования понадобились.
+ */
+const LAP_POLYLINE_LENGTH =
+  2 * Math.PI * DUCT_HEXACOPTER_LAP_RADIUS * DUCT_HEXACOPTER_LAPS;
+const lapLength = () => LAP_POLYLINE_LENGTH;
+
 const lapCircle: MotionRouteArtifact = createMotionRoute({
   id: "duct-hexacopter:range-lap",
   // Круг считается формулой, а не выкладывается точками: шестнадцать узлов с
@@ -105,16 +115,52 @@ const lapCircle: MotionRouteArtifact = createMotionRoute({
   measureAxes: [0, 2],
   markers: {
     departureComplete: "lap-1",
-    arriving: `lap-${TOTAL_NODES - 1}`,
-    final: "dock",
+    arriving: `lap-${TOTAL_NODES - 2}`,
+    // СТВОР — УЗЕЛ ПЕРЕД ПРИЧАЛОМ, а не сам причал. Заход, включающийся в
+    // последней точке, не заход: машине нужен участок, на котором она уже
+    // ведёт МЕСТО, а не скорость.
+    final: `lap-${TOTAL_NODES - 1}`,
   },
   requirements: {
-    altitude: () => DUCT_HEXACOPTER_LAP_ALTITUDE,
-    speedLimit: () => DUCT_HEXACOPTER_LAP_SPEED,
+    /**
+     * ВЫСОТА ГАСНЕТ К КОНЦАМ, ИНАЧЕ САДИТЬСЯ НЕКУДА.
+     *
+     * Здесь стояла константа на всём круге — включая долю ноль и долю единица.
+     * Это значит, что точка «док» висела в восемнадцати метрах над падом:
+     * машина честно доходила до конца трассы и оставалась в небе. Не сбой
+     * автопилота и не отказ — просто посадка не была описана вовсе.
+     *
+     * Столбы взлёта и захода объявлены ниже отдельными требованиями; профиль
+     * обязан с ними сходиться, поэтому у земли он идёт к нулю, а не к
+     * маршрутной высоте.
+     */
+    altitude: ({ progress }) => {
+      const metres = progress * lapLength();
+      const toDock = (1 - progress) * lapLength();
+      const edge = Math.min(1, metres / 40, toDock / 45);
+      const eased = edge * edge * (3 - 2 * edge);
+      return DUCT_HEXACOPTER_LAP_ALTITUDE * Math.max(0, eased);
+    },
+    speedLimit: ({ progress }) => {
+      // У земли — по-причальному тихо, и это то же требование, что у соседней
+      // машины: точность нужна на взлёте и посадке, а больше нигде.
+      const metres = progress * lapLength();
+      const toDock = (1 - progress) * lapLength();
+      if (metres < 26) return 5;
+      if (toDock < 18) return 4;
+      if (toDock < 60) return 8;
+      return DUCT_HEXACOPTER_LAP_SPEED;
+    },
     // КОРИДОР ОБЯЗАТЕЛЕН: общий контракт трассы спрашивает его наравне с
     // высотой и скоростью, и отсутствие требования — это не «по умолчанию
     // широко», а исключение при первом же обращении.
-    corridor: () => DUCT_HEXACOPTER_LAP_CORRIDOR,
+    // Коридор у земли строгий: там точность — вопрос столкновения. На круге
+    // машине оставлено её паспортное место.
+    corridor: ({ progress }) => {
+      const metres = progress * lapLength();
+      const toDock = (1 - progress) * lapLength();
+      return metres < 30 || toDock < 30 ? 4 : DUCT_HEXACOPTER_LAP_CORRIDOR;
+    },
   },
 });
 
@@ -141,9 +187,25 @@ function placedPlan(
   };
 }
 
+/** Высота столбов у земли: с неё уходят и на неё возвращаются. */
+export const DUCT_HEXACOPTER_CLEARANCE_ALTITUDE = 14;
+
 export function ductHexacopterLapPlan(berth: SceneVector3): VehicleRoutePlan {
   return {
     ...placedPlan(lapCircle, berth, lapCircle.markerProgress("final")),
+    // ВЗЛЁТ И ПОСАДКА — ОТДЕЛЬНЫЕ ТРЕБОВАНИЯ, а не следствие профиля высоты.
+    // Без них машина уходит с пада по диагонали и приходит на него так же, а
+    // приходить на площадку надо сверху.
+    verticalDeparture: {
+      altitude: berth[1] + DUCT_HEXACOPTER_CLEARANCE_ALTITUDE,
+      until: lapCircle.markerProgress("departureComplete"),
+      tolerance: 0.75,
+    },
+    verticalArrival: {
+      altitude: berth[1] + DUCT_HEXACOPTER_CLEARANCE_ALTITUDE,
+      from: lapCircle.markerProgress("final"),
+      horizontalTolerance: 0.85,
+    },
     // Упреждение под собственный радиус разворота: машина широкая и тяжёлая,
     // и смотреть ей надо дальше, чем RAX-8 с его вдвое меньшей инерцией.
     guidanceLookahead: () => 24,
