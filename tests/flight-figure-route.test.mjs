@@ -498,6 +498,28 @@ test("машина ВЗЛЕТАЕТ с площадки и САДИТСЯ на �
   assert.ok(last.height < 3, `зависла на ${last.height.toFixed(1)} м`);
 });
 
+/**
+ * ФИГУРА ВХОДИТ НА ТОМ ХОДУ, НА КОТОРЫЙ ОНА ПОСЧИТАНА.
+ *
+ * Радиус фигуры растёт как КВАДРАТ хода, и планируется она по ходу
+ * ОБЪЯВЛЕННОМУ. Машина, вошедшая вдвое медленнее, чертит не ту фигуру, что
+ * задумана: расписание остаётся прежним по времени, а дуги под него нет — и
+ * вместо петли получается медленный переворот на месте. Живое наблюдение Igor:
+ * «часть петель машина исполняет на черепашьей скорости».
+ *
+ * Проверяется не «быстро ли», а СОВПАДЕНИЕ с тем, подо что фигура посчитана.
+ */
+test("каждая фигура входит на своём объявленном ходу, а не ползком", () => {
+  for (const event of run.events.filter((e) => e.start)) {
+    const station = plan.figures.find((s) => s.key === event.start);
+    assert.ok(
+      event.speed >= station.speed * 0.8,
+      `${event.start}: вход на ${event.speed.toFixed(1)} м/с при объявленных ${station.speed} — ` +
+        `фигура посчитана под другой радиус`,
+    );
+  }
+});
+
 test("программа доходит до створа", () => {
   // ДЛИНА ПРОГРАММЫ ТРЕБОВАНИЕМ БОЛЬШЕ НЕ ЯВЛЯЕТСЯ. Здесь стояла планка в три
   // минуты, и она была снята Igor: три минуты набираются длинными облётами, а
@@ -753,6 +775,16 @@ if (process.env.FIGURE_TRACE) {
   for (const event of run.wouldSeize) {
     console.log(
       `в номере ${event.figure}: наклон ${event.tiltRate.toFixed(2)}, рыскание ${event.yawRate.toFixed(2)} рад/с`,
+    );
+  }
+}
+
+if (process.env.FIGURE_TRACE) {
+  for (const event of run.events.filter((e) => e.start)) {
+    const station = plan.figures.find((s) => s.key === event.start);
+    console.log(
+      `вход ${event.start.padEnd(17)} ход ${event.speed.toFixed(1)} м/с (${(event.speed * 3.6).toFixed(0)} км/ч) ` +
+        `при объявленном ${station.speed} и потолке участка ${plan.speedLimit(event.at).toFixed(1)}`,
     );
   }
 }
