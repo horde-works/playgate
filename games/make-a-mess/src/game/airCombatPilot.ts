@@ -2,6 +2,19 @@ import type { SceneVector3 } from "./destructionScene.ts";
 import { explosiveProfile } from "./destructionRuntime.ts";
 import type { VehicleGuidanceDemand } from "./vehicleFrames.ts";
 import {
+  advanceCombatTemper,
+  approachCode,
+  approachSide,
+  approachVertical,
+  chooseApproach,
+  daredFloor,
+  IDLE_COMBAT_TEMPER,
+  pressedBreakRange,
+  shadowing,
+  thrift,
+  type CombatTemper,
+} from "./airCombatTemper.ts";
+import {
   chooseAirManoeuvre,
   predictionHorizon,
   type AirManoeuvreEstimate,
@@ -125,6 +138,10 @@ export interface AirCombatState {
   /** Скорость, с которой машина ВОШЛА в текущий заход, м/с. */
   readonly passEntrySpeed: number;
   readonly gunnery: GunneryState;
+  /** Нрав: то, что бой ПОМНИТ. Разбор — `airCombatTemper.ts`. */
+  readonly temper: CombatTemper;
+  /** Был ли нынешний заход результативным. Нужно только нраву. */
+  readonly passScored: boolean;
   readonly orbitPhase: number;
   /** Диагностика ритма: секунд в бою от первого обнаружения. */
   readonly engagementSeconds: number;
@@ -163,6 +180,8 @@ export interface AirCombatOutput {
 export function createAirCombatState(magazine = 0): AirCombatState {
   return {
     mode: "station",
+    temper: IDLE_COMBAT_TEMPER,
+    passScored: false,
     modeSeconds: 0,
     targetId: null,
     passes: 0,
@@ -486,6 +505,24 @@ function passSpeed(
 
 export interface AirCombatStepInput extends AirCombatInput {
   readonly state: AirCombatState;
+  /**
+   * Попаданий, доставленных с прошлого кадра. Автомат не может знать этого сам:
+   * стволы он отдаёт наружу, а разрешает их мир. Ноль — законное значение и
+   * означает «мне не докладывают»: нрав тогда просто не разогревается, и
+   * поведение остаётся прежним.
+   */
+  readonly hits?: number;
+  /**
+   * СКОЛЬКО С ЦЕЛИ РЕАЛЬНО СНЯТО за прошлый кадр — кусков, а не касаний.
+   *
+   * Различие несущее, и стоило оно прогона. Азарту довольно КОНТАКТА: попал —
+   * горячо. А вот заход считается удавшимся только по РЕЗУЛЬТАТУ, иначе
+   * одиночная царапина объявляет подход рабочим, зверь залипает на нём и
+   * перестаёт перебирать. Замер: злой маршрут сравнялся с ровным кругом
+   * (22.0 против 23.7 с) — уклонение обесценилось, потому что охотнику незачем
+   * стало менять повадку.
+   */
+  readonly wounds?: number;
 }
 
 export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
@@ -598,15 +635,29 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
 
   // --- переходы ------------------------------------------------------------
   const passOffset = target ? passOffsetDistance(own, target, limits) : 0;
-  const breakRange = target ? own.radius + target.radius + 6 : 0;
+  // Азарт подпускает ближе: зверь, попробовавший крови, рискует. Собственный
+  // радиус поражения проверяется отдельно и азарту не подчиняется.
+  const breakRange = target
+    ? pressedBreakRange(state.temper, own.radius + target.radius + 6)
+    : 0;
   // Дистанция нового захода. Прежние +34 м давали цикл в восемнадцать секунд:
   // машина уходила на шестьдесят метров и возвращалась. Вертолётный бой, по
   // источникам, «быстрый и яростный», и ритм обязан это показывать.
-  const reattackRange = target ? passOffset + 12 : 0;
+  // ПУСТОЙ ПОД — ЭТО ПОВЕДЕНИЕ, А НЕ СЧЁТЧИК. Зверь без яда не улетает: он
+  // висит рядом и держит давление, пока снаряжается. Отходить дальше незачем —
+  // всё равно нечем бить.
+  const reattackRange = target
+    ? (shadowing(state.gunnery.magazine, state.gunnery.rearmSeconds > 0)
+        ? passOffset * 0.6
+        : passOffset + 12)
+    : 0;
 
   let mode = state.mode;
   let passes = state.passes;
   let passSide = state.passSide;
+  // Нрав живёт между кадрами; здесь он только читается и обновляется событиями.
+  let passScored = state.passScored;
+  let passEnded = false;
   let passVertical = state.passVertical;
   let modeSeconds = state.modeSeconds + deltaSeconds;
   let passEntrySpeed = state.passEntrySpeed;
@@ -681,10 +732,27 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
           modeSeconds > 6
         ) {
           passes += 1;
-          // Следующий заход — С ДРУГОЙ СТОРОНЫ И ИЗ ДРУГОЙ ПЛОСКОСТИ. Это и
-          // разводит кадры, и мешает цели строить защиту под один шаблон.
-          passSide = -passSide;
-          passVertical = passes % 2 === 0 ? -passVertical : passVertical;
+          passEnded = true;
+          // ЧЕМ ЗАХОДИТЬ ДАЛЬШЕ — РЕШАЕТ НРАВ, А НЕ ЧЁТНОСТЬ СЧЁТЧИКА.
+          //
+          // Прежде сторона переключалась каждый заход, а ярус — через раз: это
+          // разводило кадры, но было слепо. Получилось — повторяй; не
+          // получилось — не то же самое. Отвращение к повторению и есть весь
+          // механизм разнообразия, и он дешевле любого перебора.
+          {
+            const chosen = chooseApproach(
+              advanceCombatTemper(state.temper, {
+                seconds: 0,
+                hits: 0,
+                passEnded: true,
+                passScored,
+                approach: approachCode(passSide, passVertical),
+              }),
+              approachCode(passSide, passVertical),
+            );
+            passSide = approachSide(chosen);
+            passVertical = approachVertical(chosen);
+          }
           weakPointIndex = null;
           changeTo("break");
         }
@@ -862,7 +930,10 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
     desiredAltitude = lead[1] + compensation;
   }
   // Пол не обсуждается ни в одном режиме.
-  const deck = station.centre[1] + HARD_DECK;
+  // Страх земли выводится из высоты и памяти не требует — но азарт его
+  // приглушает. Единственное место, где нрав трогает безопасность, и запас
+  // никогда не падает ниже сорока процентов: земля не договаривается.
+  const deck = station.centre[1] + daredFloor(state.temper, HARD_DECK);
   desiredAltitude = Math.max(deck, desiredAltitude);
 
   // ТА ЖЕ БОЛЕЗНЬ ПО ВЕРТИКАЛИ, И ТО ЖЕ ЛЕКАРСТВО. Цель идёт по высотной волне,
@@ -982,6 +1053,17 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
       weakPointIndex,
       passEntrySpeed,
       gunnery: gunnery.state,
+      // НРАВ ОБНОВЛЯЕТСЯ ОДИН РАЗ ЗА КАДР И ПОСЛЕДНИМ: всё, что случилось,
+      // уже случилось, и только теперь зверь про это узнаёт.
+      temper: advanceCombatTemper(state.temper, {
+        seconds: deltaSeconds,
+        hits: Math.max(0, input.hits ?? 0),
+        passEnded,
+        passScored: passScored || (input.wounds ?? 0) > 0,
+        approach: approachCode(state.passSide, state.passVertical),
+      }),
+      // Признак результативности живёт ВНУТРИ захода и гаснет вместе с ним.
+      passScored: passEnded ? false : passScored || (input.wounds ?? 0) > 0,
       orbitPhase: state.orbitPhase,
       engagementSeconds: holdsTarget
         ? state.engagementSeconds + deltaSeconds

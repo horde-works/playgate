@@ -392,6 +392,9 @@ export function runDuel({
     // трассой и известен заранее; у промахнувшейся ракеты — нет: она летит,
     // пока не кончится взрыватель, и это 173 м ОТ ТОЧКИ ПУСКА.
     targetFigures: [],
+    temperAppetite: 0,
+    temperFrustration: 0,
+    approachesUsed: 0,
     shotsWhileCommitted: 0,
     rocketsAtCommitted: 0,
     rocketHitsAtCommitted: 0,
@@ -409,6 +412,13 @@ export function runDuel({
     samples: [],
   };
   let previousTargetVelocity = [...target.state.velocity];
+  // Попадания, случившиеся в этом кадре: докладываются автомату следующим.
+  let pendingHits = 0;
+  // Снятые куски — отдельно от касаний: заход удался, если что-то оторвал.
+  let pendingWounds = 0;
+  // Сколько РАЗНЫХ подходов зверь испробовал за бой. Прежде их было два и они
+  // чередовались счётчиком; теперь их выбирает досада, и число обязано вырасти.
+  const approachesSeen = new Set();
 
   for (let step = 0; step < seconds * 60; step += 1) {
     const now = step * dt;
@@ -545,11 +555,19 @@ export function runDuel({
       tracks: [track],
       deltaSeconds: dt,
       state: combat,
+      // ПОПАДАНИЯ ДОКЛАДЫВАЮТСЯ СЛЕДУЮЩИМ КАДРОМ, и иначе не выйдет: стволы
+      // разрешает мир, а мир считает их ниже по этому же циклу. Кадр
+      // запаздывания нрав переживает — он живёт секундами, а не кадрами.
+      hits: pendingHits,
+      wounds: pendingWounds,
     });
+    pendingHits = 0;
+    pendingWounds = 0;
     combat = output.state;
     stepMachine(hunter, output.guidance);
 
     report.modeSeconds[combat.mode] = (report.modeSeconds[combat.mode] ?? 0) + dt;
+    approachesSeen.add(`${combat.passSide}:${combat.passVertical}`);
     if (process.env.DUEL_TRACE && step % 30 === 0) {
       console.log(
         `${now.toFixed(1)}s ${combat.mode.padEnd(10)} man=${String(output.telemetry.manoeuvre).padEnd(9)} t=${(output.telemetry.manoeuvreSeconds ?? Infinity).toFixed(1).padStart(5)} rng=${output.telemetry.range.toFixed(0).padStart(4)} tw=${track.turnRate.toFixed(2).padStart(6)} hunterR=${Math.hypot(hunterCentre[0], hunterCentre[2]).toFixed(0).padStart(4)}`,
@@ -578,10 +596,12 @@ export function runDuel({
         const hit = rayHit(muzzle, direction, targetPieces, MG_RANGE);
         if (hit) {
           report.cannonHits += 1;
+          pendingHits += 1;
           const piece = targetPieces.find((entry) => entry.id === hit.id);
           if (piece && bulletDestroys(piece) && target.attached.has(hit.id)) {
             target.attached.delete(hit.id);
             report.cannonBladeKills += 1;
+            pendingWounds += 1;
             report.firstBloodAt ??= now;
           }
         }
@@ -686,6 +706,7 @@ export function runDuel({
       }
       if (detonation) {
         report.rocketHits += 1;
+        pendingHits += 1;
         if (rocket.committed) report.rocketHitsAtCommitted += 1;
         report.firstBloodAt ??= now;
         // Взрыв уносит ЛОПАСТИ в радиусе вскрытия стали и не достаёт дальше.
@@ -701,6 +722,7 @@ export function runDuel({
           if (distance <= POD_REACH + piece.radius) {
             target.attached.delete(piece.id);
             report.rocketBladeKills += 1;
+            pendingWounds += 1;
             report.destroyed.push(piece.id.split(":").slice(2).join(":"));
           }
         }
@@ -756,6 +778,9 @@ export function runDuel({
   report.ringAvailability = ringAvailability(target);
   report.podLeft = combat.gunnery.magazine;
   report.reloadingAtEnd = combat.gunnery.rearmSeconds > 0;
+  report.temperAppetite = combat.temper.appetite;
+  report.temperFrustration = combat.temper.frustration;
+  report.approachesUsed = approachesSeen.size;
   return report;
 }
 
@@ -781,6 +806,8 @@ export function summarise(report) {
         ? report.targetFigures.map((f) => `${f.key}@${f.at.toFixed(0)}с`).join(", ")
         : "—"
     }`,
+    `нрав на конец: азарт ${report.temperAppetite.toFixed(2)}, досада ${report.temperFrustration.toFixed(2)}; ` +
+      `подходов испробовано ${report.approachesUsed}`,
     `ракеты по связанной: ${report.rocketHitsAtCommitted}/${report.rocketsAtCommitted}` +
       ` против ${report.rocketHits - report.rocketHitsAtCommitted}/${report.rocketsFired - report.rocketsAtCommitted} по свободной`,
     `выстрелов по СВЯЗАННОЙ цели: ${report.shotsWhileCommitted} против ${report.shotsWhileFree} по свободной`,
