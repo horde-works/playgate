@@ -9,6 +9,18 @@ export const ROTORCRAFT_PILOT_LATERAL_SPEED = 8;
 export const ROTORCRAFT_PILOT_YAW_RATE = 0.9;
 export const ROTORCRAFT_PILOT_ALTITUDE_RATE = 4;
 
+/**
+ * СКОЛЬКО МАШИНА ОБЯЗАНА ПРОСТОЯТЬ РОВНО, ПРЕЖДЕ ЧЕМ ПОСАДКА СЧИТАЕТСЯ ЦЕЛОЙ.
+ *
+ * Порог принадлежит КОНТУРУ ПОСАДКИ, а не приборам: он решает, принять ли
+ * команду разоружения. Приборная доска берёт его же
+ * (`rotorcraftPilotStatus.ts`), чтобы лампа «готов к посадке» и готовность
+ * самой машины были ОДНИМ утверждением. Прежде число стояло двумя литералами
+ * в двух файлах, и равенство между ними не держалось ничем: понизь одно — и
+ * лампа начнёт врать ровно в тот момент, когда на неё смотрят.
+ */
+export const LANDING_READY_SECONDS = 0.45;
+
 export type RotorcraftPilotMode =
   | "manual"
   | "safeClimb"
@@ -216,7 +228,7 @@ export function advanceRotorcraftPilot(
     ? previous.landingStableSeconds + navigation.deltaSeconds
     : 0;
   const disarmRequested =
-    input.requestDisarm && landingStableSeconds >= 0.45;
+    input.requestDisarm && landingStableSeconds >= LANDING_READY_SECONDS;
 
   // Zero collective means hover in the rotorcraft controller. On any physical
   // support that would unload the gear and make contact flicker. Put real

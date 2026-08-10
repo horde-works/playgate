@@ -307,3 +307,41 @@ test("место управления ищется по машине и не п�
   assert.equal(seatCommandsRotorcraft("no-such-seat"), false);
   assert.equal(rotorcraftControlSeatForCluster(null), null);
 });
+
+test("предпочтение управляющего места работает, когда мест два", async () => {
+  const { passengerSeatForCluster, TOWN_HEXACOPTER_PILOT_SEAT } = await import(
+    "../games/make-a-mess/src/game/passengerSeats.ts"
+  );
+  // Защита на тот день, когда машине законно добавят пассажирское кресло.
+  // Проверяется через список-довод: сторож реестров второе место запрещает, и
+  // без параметра эта ветка была бы недостижима — то есть не защищала бы
+  // ничего, оставаясь зелёной.
+  const cluster = "test:carrier";
+  const passenger = {
+    ...TOWN_HEXACOPTER_PILOT_SEAT,
+    id: "test:passenger-seat",
+    carrierClusterId: cluster,
+    rotorcraftControls: undefined,
+  };
+  const pilot = {
+    ...TOWN_HEXACOPTER_PILOT_SEAT,
+    id: "test:pilot-seat",
+    carrierClusterId: cluster,
+    rotorcraftControls: true,
+  };
+  // Порядок в списке не должен решать: управляющее место выигрывает в обоих.
+  assert.equal(
+    passengerSeatForCluster(cluster, [passenger, pilot])?.id,
+    pilot.id,
+    "пассажирское кресло, лежащее первым, отняло бы штурвал",
+  );
+  assert.equal(
+    passengerSeatForCluster(cluster, [pilot, passenger])?.id,
+    pilot.id,
+  );
+  // Машина без управляющего места отдаёт то, что есть.
+  assert.equal(
+    passengerSeatForCluster(cluster, [passenger])?.id,
+    passenger.id,
+  );
+});

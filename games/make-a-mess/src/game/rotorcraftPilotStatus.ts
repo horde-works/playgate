@@ -15,8 +15,13 @@
  * Здесь нет ни React, ни Rapier, ни three: на входе числа, на выходе числа.
  */
 
-import type { RotorcraftPilotState } from "./rotorcraftPilot.ts";
+import {
+  LANDING_READY_SECONDS,
+  type RotorcraftPilotState,
+} from "./rotorcraftPilot.ts";
 import type { VehicleObstacleReading } from "./vehicleSafetyAutomation.ts";
+
+export { LANDING_READY_SECONDS };
 
 export type RotorcraftProximitySector =
   | "fore"
@@ -48,13 +53,6 @@ export interface RotorcraftPilotStatus {
   readonly motorOutput: readonly number[];
   readonly motorAvailability: readonly number[];
 }
-
-/**
- * ПОСАДКА СЧИТАЕТСЯ ГОТОВОЙ, когда машина простояла ровно столько же, сколько
- * требует её собственный контур посадки. Порог живёт здесь, потому что это
- * ПОКАЗАНИЕ ПРИБОРА, а не решение: решает посадку `rotorcraftPilot`.
- */
-export const LANDING_READY_SECONDS = 0.45;
 
 /**
  * ДАЛЬНОМЕРЫ — ПО СЕКТОРАМ КОРПУСА, а не по номерам датчиков.

@@ -271,13 +271,18 @@ export function seatCommandsRotorcraft(
  */
 export function passengerSeatForCluster(
   clusterId: string | null | undefined,
+  /**
+   * Список мест — доводом, а не только модульным. Иначе предпочтение ниже
+   * недостижимо для теста: подсунуть два места на один кластер нечем, а
+   * сторож реестров второе место как раз запрещает. Проверять защиту,
+   * которую нельзя привести в действие, — то же самое, что не иметь её.
+   */
+  seats: readonly PassengerSeatDefinition[] = passengerSeats,
 ): PassengerSeatDefinition | null {
   if (!clusterId) {
     return null;
   }
-  const mine = passengerSeats.filter(
-    (seat) => seat.carrierClusterId === clusterId,
-  );
+  const mine = seats.filter((seat) => seat.carrierClusterId === clusterId);
   // МЕСТО УПРАВЛЕНИЯ ИМЕЕТ ПРЕИМУЩЕСТВО, и это не вкусовщина. Прежняя ветка
   // спрашивала именно управляющее место, а «первое попавшееся» стало бы
   // молчаливой заменой смысла: добавь машине пассажирское кресло, положи его
