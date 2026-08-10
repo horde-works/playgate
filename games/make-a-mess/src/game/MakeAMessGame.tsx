@@ -234,9 +234,11 @@ import { IntactBreakableWorld } from "./IntactBreakableWorld";
 import { LandscapeSurface } from "./LandscapeSurface";
 import {
   VehicleFrameSystem,
-  type RotorcraftPilotStatus,
   type VehicleFramePoseState,
 } from "./VehicleFrameSystem";
+// Приборная доска ручного полёта — свой модуль, а не часть покадрового
+// компонента: по ней человек решает снижаться или уходить.
+import type { RotorcraftPilotStatus } from "./rotorcraftPilotStatus.ts";
 import { AstanaTrainSystem } from "./AstanaTrainSystem";
 import {
   ConstantRotorSystem,

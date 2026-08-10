@@ -29,7 +29,6 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import {
-  departureSignalColor,
   structuralMaterialProfiles,
   type BreakablePieceDefinition,
   type LampEventState,
@@ -227,6 +226,11 @@ import {
 } from "./airCombatPilot.ts";
 import type { BodyReport } from "./airCombatPosture.ts";
 import {
+  pilotStatusKey,
+  rotorcraftPilotStatusOf,
+  type RotorcraftPilotStatus,
+} from "./rotorcraftPilotStatus.ts";
+import {
   airCombatOwnState,
   airCombatTracks,
   type SightedWorld,
@@ -337,6 +341,8 @@ type PilotControlName =
 
 /** Тяжесть. Плотности в движке свои, но она одна для всех. */
 const GRAVITY = 9.81;
+/** Пустое множество датчиков: общее и неизменяемое, чтобы не лить мусор на кадр. */
+const EMPTY_SENSOR_SET: ReadonlySet<number> = new Set<number>();
 
 /** Предельный наклон винтокрылой машины, если паспорт молчит. */
 const DEFAULT_ROTOR_TILT = (30 * Math.PI) / 180;
@@ -2900,6 +2906,13 @@ export function VehicleFrameSystem({
         // (машина на месте, человек внутри её обвода), и решает их само место;
         // прежде эта ветка спрашивала имя состава и потому молчала у всех
         // остальных машин с креслом.
+        //
+        // Для ВИНТОКРЫЛОЙ эта ветка тождественно молчит, и это не случайность,
+        // а следствие `pilotMayStand` выше: сюда попадают только рейсы в
+        // воздухе (`interaction.flight !== null`), а встать за штурвалом в
+        // воздухе запрещено. Связь косвенная и держится на тридцати строках
+        // расстояния — если `pilotMayStand` когда-нибудь смягчат, здесь
+        // появится предложение встать посреди полёта.
         post = seatAction;
       }
       const departureTarget =
@@ -7322,67 +7335,33 @@ export function VehicleFrameSystem({
       const pilot = pilotRuntime?.state.flight?.pilot ?? null;
       if (pilot && pilotRuntime) {
         const now = performance.now();
-        const targetAltitude = Math.round(pilot.targetAltitude * 10) / 10;
         const { frame, state } = pilotRuntime;
-        const attitude = vehicleAttitude(state.body.orientation, frame.nose);
-        const forward = rotateByQuaternion(state.body.orientation, frame.nose);
-        const heading =
-          ((Math.atan2(forward[0], -forward[2]) * 180) / Math.PI + 360) % 360;
-        const currentAltitude = Math.round(state.body.position[1] * 10) / 10;
-        const verticalSpeed = Math.round(state.body.velocity[1] * 10) / 10;
-        const groundSpeed =
-          Math.round(
-            Math.hypot(state.body.velocity[0], state.body.velocity[2]) * 10,
-          ) / 10;
-        const proximity = rotorcraftProximitySectors(
-          frame.nose,
-          state.flight?.pilotObstacleReadings ?? [],
-          state.flight?.pilotIntervenedSensors ?? new Set<number>(),
-        );
-        const motorOutput = state.rotorMotorOutput.map(
-          (value) => Math.round(value * 100) / 100,
-        );
-        const motorAvailability = (
-          state.flight?.propulsionFeedback ?? motorOutput.map(() => 0)
-        ).map((value) => Math.round(value * 100) / 100);
-        const key = JSON.stringify([
-          pilot.mode,
-          targetAltitude,
-          currentAltitude,
-          verticalSpeed,
-          groundSpeed,
-          Math.round(heading),
-          Math.round((attitude.pitch * 180) / Math.PI),
-          Math.round((attitude.roll * 180) / Math.PI),
-          pilot.sensorAssistEnabled,
-          pilot.landingStableSeconds >= 0.45,
-          proximity,
-          motorOutput,
-          motorAvailability,
-        ]);
-        const modeChanged = pilotStatusMode.current !== pilot.mode;
+        // Сборка доклада и разбор дальномеров живут в `rotorcraftPilotStatus`:
+        // это приборная доска, по ней человек решает снижаться или уходить, и
+        // покрыта она должна быть как расчёт, а не как кусок компонента.
+        const status = rotorcraftPilotStatusOf({
+          pilot,
+          nose: frame.nose,
+          forward: rotateByQuaternion(state.body.orientation, frame.nose),
+          position: state.body.position,
+          velocity: state.body.velocity,
+          attitude: vehicleAttitude(state.body.orientation, frame.nose),
+          obstacleReadings: state.flight?.pilotObstacleReadings ?? [],
+          intervenedSensors:
+            state.flight?.pilotIntervenedSensors ?? EMPTY_SENSOR_SET,
+          motorOutput: state.rotorMotorOutput,
+          propulsionFeedback: state.flight?.propulsionFeedback,
+        });
+        const key = pilotStatusKey(status);
+        const modeChanged = pilotStatusMode.current !== status.mode;
         if (
           key !== pilotStatusPublished.current &&
           (modeChanged || now >= pilotStatusNextAt.current)
         ) {
           pilotStatusPublished.current = key;
-          pilotStatusMode.current = pilot.mode;
+          pilotStatusMode.current = status.mode;
           pilotStatusNextAt.current = now + 100;
-          onRotorcraftPilotStatusChange({
-            mode: pilot.mode,
-            targetAltitude,
-            currentAltitude,
-            verticalSpeed,
-            groundSpeed,
-            heading,
-            pitch: attitude.pitch,
-            roll: attitude.roll,
-            sensorAssistEnabled: pilot.sensorAssistEnabled,
-            landingReady: pilot.landingStableSeconds >= 0.45,
-            proximity,
-            motorOutput,
-            motorAvailability,
-          });
+          onRotorcraftPilotStatusChange(status);
         }
       } else if (pilotStatusPublished.current !== null) {
         pilotStatusPublished.current = null;
@@ -8253,81 +8232,4 @@ function FlightRouteRibbons({
   );
 }
 
-export interface RotorcraftPilotStatus {
-  readonly mode: RotorcraftPilotState["mode"];
-  readonly targetAltitude: number;
-  readonly currentAltitude: number;
-  readonly verticalSpeed: number;
-  readonly groundSpeed: number;
-  readonly heading: number;
-  readonly pitch: number;
-  readonly roll: number;
-  readonly sensorAssistEnabled: boolean;
-  readonly landingReady: boolean;
-  readonly proximity: Readonly<
-    Record<RotorcraftProximitySector, RotorcraftProximityReading>
-  >;
-  readonly motorOutput: readonly number[];
-  readonly motorAvailability: readonly number[];
-}
 
-export type RotorcraftProximitySector =
-  "fore" | "aft" | "port" | "starboard" | "above" | "below";
-
-export interface RotorcraftProximityReading {
-  readonly distance: number | null;
-  readonly intervening: boolean;
-}
-
-function rotorcraftProximitySectors(
-  nose: readonly [number, number, number],
-  readings: readonly VehicleObstacleReading[],
-  intervened: ReadonlySet<number>,
-): Readonly<Record<RotorcraftProximitySector, RotorcraftProximityReading>> {
-  const empty = (): RotorcraftProximityReading => ({
-    distance: null,
-    intervening: false,
-  });
-  const sectors: Record<RotorcraftProximitySector, RotorcraftProximityReading> =
-    {
-      fore: empty(),
-      aft: empty(),
-      port: empty(),
-      starboard: empty(),
-      above: empty(),
-      below: empty(),
-    };
-  const noseLength = Math.hypot(nose[0], nose[2]) || 1;
-  const fore = [nose[0] / noseLength, nose[2] / noseLength] as const;
-  const starboard = [-fore[1], fore[0]] as const;
-  for (const reading of readings) {
-    const normal = reading.localNormal;
-    let sector: RotorcraftProximitySector;
-    if (normal[1] >= 0.65) {
-      sector = "above";
-    } else if (normal[1] <= -0.65) {
-      sector = "below";
-    } else {
-      const longitudinal = normal[0] * fore[0] + normal[2] * fore[1];
-      const lateral = normal[0] * starboard[0] + normal[2] * starboard[1];
-      sector =
-        Math.abs(longitudinal) >= Math.abs(lateral)
-          ? longitudinal >= 0
-            ? "fore"
-            : "aft"
-          : lateral >= 0
-            ? "starboard"
-            : "port";
-    }
-    const previous = sectors[sector];
-    if (previous.distance === null || reading.distance < previous.distance) {
-      sectors[sector] = {
-        distance: Math.round(reading.distance * 10) / 10,
-        intervening: intervened.has(reading.sensorIndex),
-      };
-    } else if (intervened.has(reading.sensorIndex) && !previous.intervening) {
-      sectors[sector] = { ...previous, intervening: true };
-    }
-  }
-  return sectors;
-}

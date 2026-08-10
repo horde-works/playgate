@@ -42,17 +42,33 @@ const SCENES = {
   nimbus: {
     path: "/games/make-a-mess/nimbus",
     seat: NIMBUS_HEXACOPTER_PILOT_SEAT,
+    vehicleId: "nimbus-hexacopter",
   },
   hx6: {
     path: "/games/make-a-mess/combat-hexacopter-range",
     seat: TOWN_HEXACOPTER_PILOT_SEAT,
+    vehicleId: "town-hexacopter",
   },
-  // Состав неба: место машиниста, а не пилота. Управления винтами оно не даёт
-  // и «manual» не предлагает — проба обязана останавливаться на предложении
-  // сесть, а не требовать штурвала от того, у кого его нет.
+  /**
+   * Состав неба: место машиниста, а не пилота. Управления винтами оно не даёт
+   * и «manual» не предлагает — проба обязана останавливаться на предложении
+   * сесть, а не требовать штурвала от того, у кого его нет.
+   *
+   * И место это ДОСТИЖИМО ТОЛЬКО В РЕЙСЕ: `passengerSeatContextAction` требует
+   * `carrierActive`, то есть живого рейса. У стоящего состава кресло машиниста
+   * не предлагают вовсе, поэтому проба сначала отправляет его сама. Первая
+   * редакция этого не делала и зеленела на посте ПОЕЗДКИ, приняв его за место
+   * машиниста, — то есть врал сам детектор.
+   */
   terminal: {
     path: "/games/make-a-mess/grand-terminal",
     seat: SKY_TRAIN_DRIVER_SEAT,
+    vehicleId: "sky-train",
+    departFirst: "tour",
+    // Кабина стоит на высоте: без режима полёта человек из неё выпадает.
+    // Коптерам он не нужен и ставить его им вредно — с выключенной
+    // гравитацией проба перестала бы проверять, что до кресла можно дойти.
+    needsFlightMode: true,
   },
 };
 
@@ -224,19 +240,43 @@ async function main() {
     // телепорт, отданный раньше этого, молча затирается.
     await sleep(6000);
 
-    // РЕЖИМ ПОЛЁТА ОБЯЗАТЕЛЕН. `__mamTeleport` не отключает гравитацию, и без
-    // него человек, поставленный в кабину на высоте, немедленно из неё
-    // выпадает: пост исчезает, и это читается как «предложения нет».
-    // Кресла у самой площадки это прощали, кабина состава — нет.
-    for (const type of ["keyDown", "keyUp"]) {
-      await cdp.send("Input.dispatchKeyEvent", {
-        type,
-        key: "f",
-        code: "KeyF",
-        windowsVirtualKeyCode: 70,
-      });
+    // `__mamTeleport` не отключает гравитацию: человек, поставленный в кабину
+    // на высоте, немедленно из неё выпадает, пост исчезает, и это читается как
+    // «предложения нет». Режим полёта включается ТОЛЬКО там, где он нужен, —
+    // иначе проба перестанет проверять, что до кресла вообще можно дойти.
+    if (target.needsFlightMode) {
+      for (const type of ["keyDown", "keyUp"]) {
+        await cdp.send("Input.dispatchKeyEvent", {
+          type,
+          key: "f",
+          code: "KeyF",
+          windowsVirtualKeyCode: 70,
+        });
+      }
+      await sleep(800);
     }
-    await sleep(800);
+
+    // Место, живущее только в рейсе, требует сначала отправить машину.
+    if (target.departFirst) {
+      const sent = await cdp.eval(
+        `window.__mamVehicleDepart(${JSON.stringify(target.vehicleId)}, ${JSON.stringify(target.departFirst)})`,
+      );
+      if (!sent) {
+        throw new Error(
+          `${target.vehicleId} не ушёл в рейс: место машиниста недостижимо по построению`,
+        );
+      }
+      await waitFor(
+        "carrier underway",
+        async () => {
+          const raw = await cdp.eval(
+            `JSON.stringify((window.__mamVehicles?.() ?? []).find((v) => v.id === ${JSON.stringify(target.vehicleId)})?.flight ?? null)`,
+          );
+          return JSON.parse(raw ?? "null");
+        },
+        { timeout: 60000, every: 500 },
+      );
+    }
 
     const [x, y, z] = target.seat.interactionPoint;
     console.log(
@@ -280,8 +320,15 @@ async function main() {
     // предлагают ровно тому, кто уже сидит (`passengerSeatContextAction`), а
     // сесть за управление можно только через `manualPilotLaunch`.
     // Место без штурвала (машинист состава) доказывает ровно предложение —
-    // требовать от него ручного полёта значило бы придумать способность.
+    // требовать от него ручного полёта значило бы придумать способность. Но
+    // предложение обязано быть ЕГО: пост поездки живёт в той же точке, и
+    // принять его за место машиниста — это позеленеть на чужом.
     if (!target.seat.rotorcraftControls) {
+      if (state.kind !== "seat" || state.id !== target.seat.id) {
+        throw new Error(
+          `у точки кресла предложен ЧУЖОЙ пост: ${state.kind} ${state.id}, а ждали seat ${target.seat.id}`,
+        );
+      }
       const verdict = { seat: target.seat.id, offered: state, seated: null };
       await writeFile(
         join(OUT, `${SCENE}.json`),
@@ -308,7 +355,9 @@ async function main() {
           `JSON.stringify((window.__mamVehicles?.() ?? []).map((v) => ({ id: v.id, kind: v.flight?.kind ?? null, pilot: v.flight?.pilot ?? false })))`,
         );
         const rows = JSON.parse(raw ?? "[]");
-        return rows.find((row) => row.pilot) ?? null;
+        // Управление обязано достаться ИМЕННО ЭТОЙ машине: «кто-то в мире
+        // летит с человеком» — не то утверждение, ради которого проба писана.
+        return rows.find((row) => row.pilot && row.id === target.vehicleId) ?? null;
       },
       { timeout: 20000, every: 500 },
     );

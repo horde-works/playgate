@@ -275,9 +275,18 @@ export function passengerSeatForCluster(
   if (!clusterId) {
     return null;
   }
-  return (
-    passengerSeats.find((seat) => seat.carrierClusterId === clusterId) ?? null
+  const mine = passengerSeats.filter(
+    (seat) => seat.carrierClusterId === clusterId,
   );
+  // МЕСТО УПРАВЛЕНИЯ ИМЕЕТ ПРЕИМУЩЕСТВО, и это не вкусовщина. Прежняя ветка
+  // спрашивала именно управляющее место, а «первое попавшееся» стало бы
+  // молчаливой заменой смысла: добавь машине пассажирское кресло, положи его
+  // в списке выше пилотского — и ручной полёт умрёт, не сказав ни слова,
+  // потому что `manualPilotLaunch` спрашивает способность НАЙДЕННОГО места.
+  // Сегодня место у каждой машины одно (это сторожит
+  // `tests/vehicle-registry-consistency.test.mjs`), и предпочтение ничего не
+  // меняет — оно стоит здесь ровно на тот день, когда мест станет два.
+  return mine.find((seat) => seat.rotorcraftControls === true) ?? mine[0] ?? null;
 }
 
 /**
