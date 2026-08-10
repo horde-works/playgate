@@ -5864,7 +5864,7 @@ function OpenWorldScene({
   const commitShards = useCallback((additions: readonly ShardDefinition[]) => {
     const startedAt = performance.now();
     const merged = [...shardsRef.current, ...additions];
-    // Вытеснение при переполнении: сначала спящие и далёкие от игрока.
+    // Вытеснение при переполнении: сначала осевшие и далёкие от игрока.
     // Удаление тела будит его контактный остров, поэтому чистый FIFO
     // заставлял дальний выстрел шевелить давно улёгшуюся кучу перед игроком.
     const playerTranslation = pieceBodies.current.get("player")?.translation();
@@ -5872,7 +5872,14 @@ function OpenWorldScene({
       protectedNewest: additions.length,
       priority: (shard) => {
         const body = pieceBodies.current.get(shard.id);
-        const awakeBonus = body && !body.isSleeping() ? 1_000_000 : 0;
+        // «Осел» — это и уснувший, и ЗАМОРОЖЕННЫЙ: у `Fixed` isSleeping()
+        // возвращает false, и без второй половины условия защита от вытеснения
+        // доставалась бы всей куче разом, то есть никому.
+        const settled =
+          !body ||
+          body.isSleeping() ||
+          body.bodyType() !== rapier.RigidBodyType.Dynamic;
+        const awakeBonus = settled ? 0 : 1_000_000;
         const translation = body?.translation();
         const x = translation?.x ?? shard.position[0];
         const y = translation?.y ?? shard.position[1];
@@ -5892,7 +5899,7 @@ function OpenWorldScene({
       additions: additions.length,
       total: trimmed.length,
     });
-  }, []);
+  }, [rapier]);
 
   const commitRemnants = useCallback(
     (removeId: string | null, additions: readonly RemnantDefinition[]) => {
