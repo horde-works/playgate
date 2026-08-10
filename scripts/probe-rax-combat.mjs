@@ -7,15 +7,16 @@
 // запуска боевой задачи 08.08.2026.
 //
 // Проба не снимает красоту. Она поднимает обе машины полигона их собственными
-// автоматами и полторы минуты читает `__mamAirCombat()`: режим, цель, счёт
-// заходов. Успех — это ВЫХОД ИЗ `station` с непустой целью, потому что выйти
-// из него нельзя, не собрав ни трека, ни поста, ни снимка себя.
+// автоматами и две минуты (`--seconds`, по умолчанию 120) читает
+// `__mamAirCombat()`: режим, цель, счёт заходов. Успех — это ВЫХОД ИЗ
+// `station` С НЕПУСТОЙ ЦЕЛЬЮ, потому что выйти оттуда нельзя, не собрав ни
+// трека, ни поста, ни снимка себя.
 //
 //   npm run dev            # в другом окне, из корня
 //   node scripts/probe-rax-combat.mjs [--port 3000] [--seconds 120]
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { TERMS_VERSION } from "../app/legal/consent.ts";
 
@@ -214,6 +215,13 @@ async function main() {
         "RAX-8 не ушёл на боевую задачу: __mamVehicleDepart вернул false",
       );
     }
+    // Не взлетевшая жертва даёт ровно тот же симптом, что мёртвая проводка, —
+    // автомат честно стоит на посту. Без этой проверки проба обвинила бы не то.
+    if (!departed.prey) {
+      throw new Error(
+        "чужой борт не поднялся: пробе не на кого смотреть, вердикт был бы ложным",
+      );
+    }
 
     const modes = new Set();
     const targets = new Set();
@@ -231,7 +239,14 @@ async function main() {
         modes.add(hunter.mode);
         if (hunter.targetId) targets.add(hunter.targetId);
         maxPasses = Math.max(maxPasses, hunter.passes);
-        if (hunter.mode !== "station" && firstEngagementAt === null) {
+        // ЦЕЛЬ ТРЕБУЕТСЯ ЯВНО. Сегодня автомат и так не выпускает с поста без
+        // захвата, но это гарантия ВНУТРИ автомата, а следующий шаг серии —
+        // уклонение, то есть ровно то, что может завести выход без цели.
+        if (
+          hunter.mode !== "station" &&
+          hunter.targetId &&
+          firstEngagementAt === null
+        ) {
           firstEngagementAt = seconds;
           console.log(
             `t=${seconds}s ПЕРВЫЙ ВЫХОД С ПОСТА: ${hunter.mode} → ${hunter.targetId}`,
@@ -289,6 +304,8 @@ async function main() {
       } catch {}
     }
     chrome.kill();
+    // Профиль браузера — мусор сессии, и убирать его обязан тот, кто создал.
+    await rm(userDataDir, { recursive: true, force: true }).catch(() => {});
   }
 }
 

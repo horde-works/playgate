@@ -141,6 +141,44 @@ test("снимок цели несёт ровно наблюдаемые пол�
   ]);
 });
 
+test("скорость, вращение и габарит доезжают до СВОИХ полей", () => {
+  // Проверка на подмену индекса и поля. Без неё `turnRate` и `verticalSpeed`
+  // не утверждены нигде: тест на состав снимка смотрит только на присутствие
+  // ключа, а фикстура подобрана так, что подмена оси даёт молчаливый ноль.
+  const frames = [frameOf()];
+  const states = new Map([
+    [
+      "target",
+      stateOf({
+        body: {
+          ...stateOf().body,
+          velocity: [7, -3, 11],
+          angularVelocity: [0.9, 0.4, -0.6],
+        },
+      }),
+    ],
+  ]);
+  const [track] = airCombatTracks("self", frames, worldOf(states));
+  assert.deepEqual(track.velocity, [7, -3, 11]);
+  assert.equal(track.turnRate, 0.4, "манёвр берётся вокруг вертикали");
+  assert.equal(track.radius, 3, "радиус — по большей горизонтальной стороне");
+
+  const own = airCombatOwnState(
+    frameOf(),
+    stateOf({
+      body: {
+        ...stateOf().body,
+        velocity: [7, -3, 11],
+        angularVelocity: [0.9, 0.4, -0.6],
+      },
+    }),
+    [0, 0, 0],
+  );
+  assert.deepEqual(own.velocity, [7, -3, 11]);
+  assert.equal(own.verticalSpeed, -3, "вертикальная скорость — это ось Y");
+  assert.equal(own.radius, 3);
+});
+
 test("центр считается от центра масс, а не от начала кадра", () => {
   const frames = [frameOf()];
   const states = new Map([
