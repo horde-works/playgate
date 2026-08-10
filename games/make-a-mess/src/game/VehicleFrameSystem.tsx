@@ -2392,6 +2392,13 @@ export function VehicleFrameSystem({
         pointZ: number,
       ) => boolean;
       __mamVehicleDepart?: (id: string, kind?: string) => boolean;
+      __mamAirCombat?: () => readonly {
+        readonly id: string;
+        readonly mode: string;
+        readonly targetId: string | null;
+        readonly modeSeconds: number;
+        readonly passes: number;
+      }[];
       __mamVehicleContacts?: () => {
         readonly seen: number;
         readonly closing: number;
@@ -2461,6 +2468,24 @@ export function VehicleFrameSystem({
       return true;
     };
     scope.__mamVehicleDepart = departDiagnostic;
+    /**
+     * ЧТО СЕЙЧАС ДЕЛАЕТ АВТОМАТ БОЯ. Единственный способ увидеть это снаружи:
+     * состояние боя живёт в карте состояний и наружу не публикуется вовсе,
+     * поэтому «машина взлетела и полетела в ту сторону» до сих пор было
+     * единственным наблюдением, а режим, цель и счёт заходов — только в трассе
+     * стенда. Пустой список означает «никто не воюет», и это законный ответ.
+     */
+    scope.__mamAirCombat = () =>
+      frames
+        .map((frame) => ({ frame, combat: frameState(frame.id).combat }))
+        .filter(({ combat }) => combat !== null)
+        .map(({ frame, combat }) => ({
+          id: frame.id,
+          mode: combat!.mode,
+          targetId: combat!.targetId,
+          modeSeconds: Number(combat!.modeSeconds.toFixed(2)),
+          passes: combat!.passes,
+        }));
     const query = new URLSearchParams(window.location.search);
     const impulseRequest = query.get("mamVehicleImpulse");
     const impulseDelay = Math.max(
@@ -2518,6 +2543,7 @@ export function VehicleFrameSystem({
       if (scope.__mamVehicleDepart === departDiagnostic) {
         delete scope.__mamVehicleDepart;
       }
+      delete scope.__mamAirCombat;
       delete document.documentElement.dataset.mamSkyTrain;
       delete document.documentElement.dataset.mamVehicle;
     };
