@@ -329,6 +329,17 @@ export function runDuel({
   target: targetName = "hx6",
   startProgress = 0.22,
   collect = false,
+  /**
+   * СОСТОЯНИЕ ТЕЛА НА ВХОДЕ. Задаётся ОТНОСИТЕЛЬНО ЦЕЛИ, а не мира: вопрос
+   * «хватит ли мне тела на бросок отсюда» имеет смысл только в её системе.
+   *
+   *   `speed`  — мой ход, м/с;
+   *   `above`  — превышение над целью, м;
+   *   `range`  — дальность до неё, м;
+   *   `aspect` — где я относительно ЕЁ движения, рад. Ноль — прямо по курсу
+   *              (она идёт на меня), π — я у неё за хвостом.
+   */
+  entry = null,
 } = {}) {
   const profile = TARGETS[targetName];
   if (!profile) {
@@ -358,13 +369,39 @@ export function runDuel({
 
   // Атакующий стоит на своей орбите и уже на ходу: взлёт — не предмет этого
   // стенда, он проверен отдельно.
-  const hunterStart = [0, STATION.centre[1] + STATION.altitude, -STATION.radius];
+  let hunterStart = [0, STATION.centre[1] + STATION.altitude, -STATION.radius];
+  let hunterVelocity = [STATION.speed, 0, 0];
+  let hunterNose = [1, 0, 0];
+  if (entry) {
+    const here = centreOf(target);
+    const heading = Math.atan2(
+      target.state.velocity[0],
+      target.state.velocity[2],
+    );
+    // Ракурс отсчитывается от направления ЕЁ движения: ноль означает «стою у
+    // неё на пути», π — «вишу на хвосте».
+    const at = heading + entry.aspect;
+    hunterStart = [
+      here[0] + Math.sin(at) * entry.range,
+      here[1] + entry.above,
+      here[2] + Math.cos(at) * entry.range,
+    ];
+    // Нос на цель: перед броском зверь смотрит на добычу, а не по сторонам.
+    const toward = [here[0] - hunterStart[0], here[2] - hunterStart[2]];
+    const length = Math.hypot(toward[0], toward[1]) || 1;
+    hunterNose = [toward[0] / length, 0, toward[1] / length];
+    hunterVelocity = [
+      hunterNose[0] * entry.speed,
+      0,
+      hunterNose[2] * entry.speed,
+    ];
+  }
   const hunter = createMachine({
     pieces: raxPieces,
     vehicle: raxVehicle,
     startPoint: hunterStart,
-    startVelocity: [STATION.speed, 0, 0],
-    startNose: [1, 0, 0],
+    startVelocity: hunterVelocity,
+    startNose: hunterNose,
   });
 
   let combat = createAirCombatState(armament.rockets.mounts.length);
@@ -396,6 +433,11 @@ export function runDuel({
     temperFrustration: 0,
     approachesUsed: 0,
     shotsWhileCommitted: 0,
+    firstShotAt: null,
+    exitSpeed: 0,
+    exitHeight: 0,
+    exitAuthority: 1,
+    exitRange: 0,
     rocketsAtCommitted: 0,
     rocketHitsAtCommitted: 0,
     shotsWhileFree: 0,
@@ -584,6 +626,7 @@ export function runDuel({
     const targetPieces = livePieces(target);
     const hunterPieces = livePieces(hunter);
     for (const shot of output.shots) {
+      report.firstShotAt ??= now;
       if (targetFigures.episode) {
         report.shotsWhileCommitted += 1;
       } else {
@@ -778,6 +821,20 @@ export function runDuel({
   report.ringAvailability = ringAvailability(target);
   report.podLeft = combat.gunnery.magazine;
   report.reloadingAtEnd = combat.gunnery.rearmSeconds > 0;
+  // ЧЕМ КОНЧИЛОСЬ ДЛЯ ТЕЛА. Зверь, приземлившийся плохо, — мёртвый зверь, и
+  // связка, оставляющая машину медленной и низкой рядом с целью, плоха даже
+  // если попала.
+  {
+    const finish = centreOf(hunter);
+    report.exitSpeed = Math.hypot(...hunter.state.velocity);
+    report.exitHeight = finish[1] - STATION.centre[1];
+    report.exitAuthority = Math.min(...hunter.feedback);
+    report.exitRange = Math.hypot(
+      finish[0] - centreOf(target)[0],
+      finish[1] - centreOf(target)[1],
+      finish[2] - centreOf(target)[2],
+    );
+  }
   report.temperAppetite = combat.temper.appetite;
   report.temperFrustration = combat.temper.frustration;
   report.approachesUsed = approachesSeen.size;
