@@ -388,6 +388,105 @@ export function raySolution(
  * ударной волны боеприпаса плюс путь, который стрелок пройдёт на сближении,
  * пока ракета летит и взводится.
  */
+/**
+ * СКОЛЬКО ВЛАСТИ У ЦЕЛИ ОСТАЛОСЬ НА УВОРОТ.
+ *
+ * Тут перевёрнут знак, который легко поставить неверно, и я его сперва
+ * поставил неверно. Кажется, что вёрткая цель непредсказуема и стрелять по ней
+ * дальше нельзя. На самом деле наоборот: МАНЁВР — ЭТО ОБЯЗАТЕЛЬСТВО.
+ *
+ * Поперечное ускорение у машины одно и конечное. То, что уже потрачено на
+ * нынешнюю кривую (`v·ω` — честное центростремительное), потрачено: увернуться
+ * этим же ускорением второй раз нельзя. Остаётся `√(a² − (v·ω)²)`, и у машины,
+ * выгребающей всю власть в фигуре, остаток близок к нулю. Она на рельсах.
+ *
+ * Замер по VX-8: в кульбите он идёт 10–13 м/с вместо тридцати и гнёт с темпом
+ * до 2.6 рад/с — то есть в момент уклонения он и медленнее, и предсказуемее,
+ * чем на прямой. Момент ухода есть момент уязвимости.
+ *
+ * ЧТО СЧИТАТЬ ПРЕДЕЛОМ ЦЕЛИ, стрелок не знает: чужого паспорта у него нет.
+ * Поэтому он предполагает, что противник не хуже него самого, и берёт СВОЙ
+ * предел. Свободного числа не появляется, а ошибка получается в безопасную
+ * сторону: недооценив себя, промахнёшься дальше, чем надо.
+ */
+export function unusedLateralAcceleration(
+  track: Pick<AirCombatTrack, "velocity" | "turnRate">,
+  assumedLateral: number,
+): number {
+  const speed = Math.hypot(track.velocity[0], track.velocity[1], track.velocity[2]);
+  const spent = speed * Math.abs(track.turnRate);
+  const spare = assumedLateral * assumedLateral - spent * spent;
+  return spare <= 0 ? 0 : Math.sqrt(spare);
+}
+
+/**
+ * НА СКОЛЬКО ЦЕЛЬ МОЖЕТ СОЙТИ С ПРЕДСКАЗАННОЙ ТОЧКИ за время подлёта.
+ *
+ * `½·a·t²` — и ничего сверх. Тем и хорошо: величина считается по НЫНЕШНЕМУ
+ * состоянию цели, без всякой накопленной о ней истории. Стрелку не нужно
+ * изучать противника, ему нужно смотреть, что тот делает прямо сейчас.
+ */
+export function evasionRadius(
+  track: Pick<AirCombatTrack, "velocity" | "turnRate">,
+  seconds: number,
+  assumedLateral: number,
+): number {
+  const spare = unusedLateralAcceleration(track, assumedLateral);
+  return 0.5 * spare * seconds * seconds;
+}
+
+/**
+ * ПРЕДЕЛЬНАЯ ДАЛЬНОСТЬ ОГНЯ ПРОТИВ ЭТОЙ ЦЕЛИ ПРЯМО СЕЙЧАС.
+ *
+ * Не паспортная дальность оружия и не назначенное число: решение уравнения
+ * `½·a·(R/v)² = поражение` относительно `R`, то есть `R = v·√(2·L/a)`.
+ *
+ * Пример на замеренных числах. Ракета 96 м/с, радиус поражения 2.0 м плюс
+ * габарит цели. Против свободно идущей машины с остатком 10.9 м/с² выходит
+ * около семидесяти метров; против той же машины в кульбите остаток близок к
+ * нулю, и предел уходит за дальность самого оружия. Одна формула объясняет и
+ * «не стреляй издалека по бодрому», и «бей по связанному, пока он связан».
+ */
+export function maximumEffectiveRange(
+  track: Pick<AirCombatTrack, "velocity" | "turnRate">,
+  projectileSpeed: number,
+  lethalRadius: number,
+  assumedLateral: number,
+  ceiling = Number.POSITIVE_INFINITY,
+): number {
+  const spare = unusedLateralAcceleration(track, assumedLateral);
+  if (spare <= 1e-6) return ceiling;
+  return Math.min(
+    ceiling,
+    projectileSpeed * Math.sqrt((2 * lethalRadius) / spare),
+  );
+}
+
+/**
+ * СТОИТ ЛИ ТРАТИТЬ РАКЕТУ ОТСЮДА.
+ *
+ * Ответ не «уверен ли я», а «уложится ли уход цели в радиус поражения к
+ * моменту подлёта». Порог намеренно щедрый — в него входит и габарит цели:
+ * ракета, легшая в полуметре от лопасти, лопасть снимает.
+ *
+ * И щедрость эта осознанная. Ракета дешева, окно дорого: пока решение держится,
+ * пускают ещё одну и ещё. Осторожничать имеет смысл ровно там, где выстрел
+ * заведомо в пустоту, — а это и есть проверяемое здесь условие.
+ */
+export function shotWorthTaking(
+  track: Pick<AirCombatTrack, "velocity" | "turnRate" | "radius">,
+  range: number,
+  projectileSpeed: number,
+  lethalRadius: number,
+  assumedLateral: number,
+): boolean {
+  if (projectileSpeed <= 1e-6) return false;
+  const flight = range / projectileSpeed;
+  return (
+    evasionRadius(track, flight, assumedLateral) <= lethalRadius + track.radius
+  );
+}
+
 export function rocketMinimumRange(
   armament: RocketArmament,
   ownRadius: number,

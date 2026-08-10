@@ -16,6 +16,8 @@ import {
   extrapolateTrack,
   interceptSolution,
   raySolution,
+  maximumEffectiveRange,
+  shotWorthTaking,
   type AirCombatTrack,
   type GunneryShot,
   type GunneryState,
@@ -632,8 +634,29 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
         // ВХОД В АТАКУ — ЭТО РЕШЕНИЕ, А НЕ ДАЛЬНОСТЬ. Нужны все три: цель в
         // конверте, машина идёт на неё, и нос уже настолько близко к решению,
         // что проход имеет шанс кончиться выстрелом.
+        // ДАЛЬНОСТЬ ВХОДА В ЗАХОД — СВОЙСТВО ЦЕЛИ, А НЕ ПАСПОРТА ОРУЖИЯ.
+        //
+        // Паспортные 85 м у ракеты подписаны так: «дальше время полёта
+        // переваливает за 0.9 с и ошибка упреждения растёт быстрее, чем
+        // помогает веер». Это верно — и это ответ ПРО СРЕДНЮЮ цель. Но ошибка
+        // упреждения зависит не от оружия, а от того, чем цель сейчас занята:
+        // связанная фигурой не уходит с точки вовсе, свободная на тридцати
+        // уходит на полтора десятка метров за ту же секунду.
+        //
+        // Поэтому паспортное число остаётся ПОТОЛКОМ, а решение принимается по
+        // выведенному: `R = v·√(2L/a_остаток)`. Против бодрой цели заход
+        // начинается ближе, чем прежде, против связанной — с паспортного
+        // предела, и ни одно из двух чисел не назначено.
         if (
-          range <= armament.rockets.range &&
+          range <=
+            maximumEffectiveRange(
+              target,
+              explosiveProfile(armament.rockets.explosive).projectile.speed,
+              explosiveProfile(armament.rockets.explosive).blastRadius +
+                target.radius,
+              limits.lateralAcceleration,
+              armament.rockets.range,
+            ) &&
           closingSpeed > 0 &&
           bearingError <= ATTACK_ENTRY_AIM
         ) {
@@ -922,7 +945,23 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
       rocketAimTolerance: target
         ? Math.atan(target.radius / Math.max(range, 1)) * 0.35
         : 0,
-      rocketSolved,
+      // ПУСК ПРОВЕРЯЕТСЯ НЕ ТОЛЬКО ГЕОМЕТРИЕЙ, НО И ТЕМ, УСПЕЕТ ЛИ ЦЕЛЬ УЙТИ.
+      //
+      // Угловые ворота выше отвечают на вопрос «лягут ли ракеты в силуэт
+      // СЕЙЧАС». Этого мало: снаряд летит доли секунды, и за них цель может
+      // сойти с точки. Но может — не всегда: машина, выгребающая всю власть в
+      // фигуре, увернуться уже нечем, и по ней стрелять можно куда дальше, чем
+      // по идущей ровно. Разбор и формула — `unusedLateralAcceleration`.
+      rocketSolved:
+        rocketSolved &&
+        (!target ||
+          shotWorthTaking(
+            target,
+            range,
+            explosiveProfile(armament.rockets.explosive).projectile.speed,
+            explosiveProfile(armament.rockets.explosive).blastRadius,
+            limits.lateralAcceleration,
+          )),
     },
     deltaSeconds,
   );

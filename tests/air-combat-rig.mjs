@@ -392,6 +392,10 @@ export function runDuel({
     // трассой и известен заранее; у промахнувшейся ракеты — нет: она летит,
     // пока не кончится взрыватель, и это 173 м ОТ ТОЧКИ ПУСКА.
     targetFigures: [],
+    shotsWhileCommitted: 0,
+    rocketsAtCommitted: 0,
+    rocketHitsAtCommitted: 0,
+    shotsWhileFree: 0,
     targetSkips: [],
     reachMachines: 0,
     reachRockets: 0,
@@ -562,6 +566,11 @@ export function runDuel({
     const targetPieces = livePieces(target);
     const hunterPieces = livePieces(hunter);
     for (const shot of output.shots) {
+      if (targetFigures.episode) {
+        report.shotsWhileCommitted += 1;
+      } else {
+        report.shotsWhileFree += 1;
+      }
       if (shot.weapon === "cannon") {
         report.cannonShots += 1;
         const muzzle = toWorld(hunter, armament.cannon.mounts[shot.mountIndex].muzzle);
@@ -578,6 +587,7 @@ export function runDuel({
         }
       } else {
         report.rocketsFired += 1;
+        if (targetFigures.episode) report.rocketsAtCommitted += 1;
         const tube = toWorld(hunter, armament.rockets.mounts[shot.mountIndex].muzzle);
         const direction = deflectHorizontally(
           harmonisedLaunchDirection(
@@ -607,6 +617,10 @@ export function runDuel({
           ],
           life: explosiveProfile(armament.rockets.explosive).projectile.fuseMs / 1000,
           closest: Infinity,
+          // Была ли цель СВЯЗАНА в момент пуска. Тег ставится на ракету, а не
+          // считается при подрыве: к тому времени фигура уже кончится, и вопрос
+          // «стоило ли стрелять тогда» останется без ответа.
+          committed: Boolean(targetFigures.episode),
         });
       }
     }
@@ -672,6 +686,7 @@ export function runDuel({
       }
       if (detonation) {
         report.rocketHits += 1;
+        if (rocket.committed) report.rocketHitsAtCommitted += 1;
         report.firstBloodAt ??= now;
         // Взрыв уносит ЛОПАСТИ в радиусе вскрытия стали и не достаёт дальше.
         for (const piece of targetPieces) {
@@ -766,6 +781,9 @@ export function summarise(report) {
         ? report.targetFigures.map((f) => `${f.key}@${f.at.toFixed(0)}с`).join(", ")
         : "—"
     }`,
+    `ракеты по связанной: ${report.rocketHitsAtCommitted}/${report.rocketsAtCommitted}` +
+      ` против ${report.rocketHits - report.rocketHitsAtCommitted}/${report.rocketsFired - report.rocketsAtCommitted} по свободной`,
+    `выстрелов по СВЯЗАННОЙ цели: ${report.shotsWhileCommitted} против ${report.shotsWhileFree} по свободной`,
     `вынос: машины ${report.reachMachines.toFixed(0)} м / потолок ${report.ceilingMachines.toFixed(0)} м; ` +
       `ракеты ${report.reachRockets.toFixed(0)} м / потолок ${report.ceilingRockets.toFixed(0)} м`,
     `режимы: ${Object.entries(report.modeSeconds)
