@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { rotateVector } from "../games/make-a-mess/src/game/clusterDynamics.ts";
 import {
   CIVIL_ALLEGIANCE,
   TONKAWA_ALLEGIANCE,
@@ -561,7 +562,15 @@ const station = {
   detectionRange: 140,
 };
 
-const limits = { maximumSpeed: 21, yawRate: 0.72, liftTrimRange: 0.32 };
+const limits = {
+  maximumSpeed: 21,
+  yawRate: 0.72,
+  liftTrimRange: 0.32,
+  lateralAcceleration: 14.5,
+  authoredNose: [0, 1],
+  liftReserve: 4.2,
+  surgeAcceleration: 24.81,
+};
 
 function ownAt(centre, nose = [0, 1], velocity = [0, 0, 0]) {
   return {
@@ -570,6 +579,8 @@ function ownAt(centre, nose = [0, 1], velocity = [0, 0, 0]) {
     velocity,
     nose,
     gunAxis: [nose[0], 0, nose[1]],
+    // Правый борт соглашением проекта: `pitchAxisOf(nose) = (−nz, nx)`.
+    starboard: [-nose[1], 0, nose[0]],
     verticalSpeed: 0,
     radius: 3.44,
   };
@@ -661,18 +672,19 @@ test("огонь разрешён ТОЛЬКО в атаке: на станци�
   assert.equal(output.shots.length, 0);
 });
 
-test("ВЫСОТА — ЭТО ПРИЦЕЛ: наклонённый ствол требует другой высоты", () => {
-  // Машина с опущенным носом обязана встать ВЫШЕ цели: её луч уходит вниз.
+test("ВЫСОТА КАК ПРИЦЕЛ ОСТАЛАСЬ ТОЛЬКО В СБЛИЖЕНИИ", () => {
+  // Приём верен и полезен ровно там, где наклон корпуса ЧЕСТНО вытекает из
+  // разгона, а не задаётся: машина с опущенным носом бьёт ниже, значит должна
+  // встать выше. Это сближение.
   const level = ownAt([0, 26, 0]);
   const nosedown = { ...level, gunAxis: [0, -0.25, Math.sqrt(1 - 0.0625)] };
-  const track = trackAt([0, 26, 50], [8, 0, 0]);
   const shared = {
     station,
     armament,
     limits,
-    tracks: [track],
+    tracks: [trackAt([0, 26, 50], [8, 0, 0])],
     deltaSeconds: 1 / 60,
-    state: { ...createAirCombatState(12), mode: "attack", modeSeconds: 1 },
+    state: { ...createAirCombatState(12), mode: "intercept", modeSeconds: 1 },
   };
   const a = stepAirCombat({ ...shared, own: level });
   const b = stepAirCombat({ ...shared, own: nosedown });
@@ -680,6 +692,58 @@ test("ВЫСОТА — ЭТО ПРИЦЕЛ: наклонённый ствол т
     b.guidance.liftFraction > a.guidance.liftFraction,
     "с опущенным носом машина обязана проситься выше",
   );
+});
+
+test("А В АТАКЕ ВЕРТИКАЛЬ БЕРЁТ ПОЗА, А НЕ ЯРУС", () => {
+  // ЭТОТ ТЕСТ ЗАМЕНИЛ СОБОЙ УТВЕРЖДЕНИЕ КЛЕТКИ. Прежде здесь стояло, что
+  // наклонённый ствол требует ДРУГОЙ ВЫСОТЫ и в атаке тоже, — и это было
+  // единственным, что модуль умел делать с вертикалью. Он мерил ошибку
+  // прицеливания честно трёхмерной и исправить мог только пеленг.
+  //
+  // Теперь у него есть орган: заданная поза. Проверяется, что он им
+  // пользуется — и ровно тогда, когда возвышение нужно.
+  const own = ownAt([0, 26, 0], [0, 1], [0, 0, 14]);
+  const shared = {
+    station,
+    armament,
+    limits,
+    deltaSeconds: 1 / 60,
+    state: {
+      ...createAirCombatState(12),
+      mode: "attack",
+      modeSeconds: 1,
+      passEntrySpeed: 15,
+    },
+  };
+  // Цель на одном ярусе: возвышения не требуется, позой не ведут — и старый,
+  // тщательно настроенный контур рыскания остаётся при деле.
+  const level = stepAirCombat({
+    ...shared,
+    own,
+    tracks: [trackAt([0, 26, 50], [8, 0, 0])],
+  });
+  assert.equal(level.guidance.attitude ?? null, null);
+  assert.equal(level.telemetry.postureMargin, null);
+
+  // Цель много выше: тут рыскание бессильно по построению, и машина обязана
+  // задать позу, а не менять ярус.
+  const above = stepAirCombat({
+    ...shared,
+    own,
+    tracks: [trackAt([0, 62, 50], [8, 0, 0])],
+  });
+  assert.ok(above.guidance.attitude, "поза обязана быть задана");
+  assert.ok(above.guidance.attitudeRate, "и её темп тоже");
+  // Заданная поза действительно поднимает ствол: авторский нос, повёрнутый ею,
+  // уходит вверх настолько же, насколько цель выше.
+  const pointed = rotateVector(above.guidance.attitude, [0, 0, 1]);
+  assert.ok(
+    pointed[1] > 0.4,
+    `ствол поднят всего на ${(Math.asin(pointed[1]) * 180 / Math.PI).toFixed(0)}°`,
+  );
+  // И курс при этом приходит ИЗ ПОЗЫ: держать его ещё и рысканием — второе
+  // мнение о том же самом.
+  assert.equal(above.guidance.yawRate, 0);
 });
 
 test("заход кончается срывом, а не доводкой в упор", () => {

@@ -55,6 +55,7 @@ import {
   createAirCombatState,
   stepAirCombat,
 } from "../games/make-a-mess/src/game/airCombatPilot.ts";
+import { rotorcraftSurgeAcceleration } from "../games/make-a-mess/src/game/rotorcraftDynamics.ts";
 import {
   TONKAWA_ALLEGIANCE,
   TOWN_ALLEGIANCE,
@@ -314,6 +315,16 @@ const LIMITS = {
   lateralAcceleration:
     GRAVITY * Math.tan(combatHexacopterRangeBlueprint.flight.maximumTilt),
   reversal: { seconds: 5.1, cost: 0 },
+  // Нос АВТОРСКИЙ: поза строится поворотом от позы покоя, и подставить сюда
+  // нынешний курс значило бы вложить его внутрь задания.
+  authoredNose: [
+    combatHexacopterRangeBlueprint.nose[0],
+    combatHexacopterRangeBlueprint.nose[2],
+  ],
+  liftReserve: combatHexacopterRangeBlueprint.flight.liftReserve,
+  // Продольная тяга тоннелей подставляется в прогоне: она считается по
+  // ЖИВЫМ вентиляторам собранной машины, а не по чертежу.
+  surgeAcceleration: 0,
 };
 
 const HX6_BERTH = [
@@ -403,6 +414,17 @@ export function runDuel({
     startVelocity: hunterVelocity,
     startNose: hunterNose,
   });
+
+  // ТОННЕЛИ СЧИТАЮТСЯ ПО СОБРАННОЙ МАШИНЕ. Это то самое число, из которого
+  // следует, что ствол RAX-8 может смотреть куда угодно, не теряя высоты:
+  // 24.8 м/с² против 9.81 у веса.
+  const limits = {
+    ...LIMITS,
+    surgeAcceleration: rotorcraftSurgeAcceleration({
+      ...hunter.machine,
+      yawThrusterAvailability: hunter.fanHealth,
+    }),
+  };
 
   let combat = createAirCombatState(armament.rockets.mounts.length);
   let targetFigures = IDLE_ROUTE_FIGURE;
@@ -580,6 +602,8 @@ export function runDuel({
       liveTargetCentre[1],
     );
     const hunterNoseAxis = forwardAxis(hunter);
+    // Веер рипла телесный: разводится вокруг собственного «вверх» машины.
+    const hunterUp = rotateVector(hunter.state.orientation, [0, 1, 0]);
     const flatNose = Math.hypot(hunterNoseAxis[0], hunterNoseAxis[2]) || 1;
     const output = stepAirCombat({
       own: {
@@ -588,12 +612,28 @@ export function runDuel({
         velocity: [...hunter.state.velocity],
         nose: [hunterNoseAxis[0] / flatNose, hunterNoseAxis[2] / flatNose],
         gunAxis: hunterNoseAxis,
+        // Правый борт соглашением проекта: `pitchAxisOf(nose) = (−nz, nx)`.
+        starboard: rotateVector(hunter.state.orientation, [
+          -hunter.vehicle.nose[2],
+          0,
+          hunter.vehicle.nose[0],
+        ]),
         verticalSpeed: hunter.state.velocity[1],
         radius: hunter.radius,
+        // ЧТО ТЕЛО ДОЛОЖИЛО ЗА ПРОШЛЫЙ КАДР. На первом его ещё нет, и это
+        // законно: молчание означает «держу».
+        body: hunter.lastResult
+          ? {
+              maneuverScale: hunter.lastResult.maneuverScale,
+              thrust: hunter.lastResult.authority.thrust,
+              pitch: hunter.lastResult.authority.pitch,
+              roll: hunter.lastResult.authority.roll,
+            }
+          : undefined,
       },
       station: STATION,
       armament,
-      limits: LIMITS,
+      limits,
       tracks: [track],
       deltaSeconds: dt,
       state: combat,
@@ -610,9 +650,10 @@ export function runDuel({
 
     report.modeSeconds[combat.mode] = (report.modeSeconds[combat.mode] ?? 0) + dt;
     approachesSeen.add(`${combat.passSide}:${combat.passVertical}`);
-    if (process.env.DUEL_TRACE && step % 30 === 0) {
+    if (process.env.DUEL_TRACE && step % Number(process.env.DUEL_TRACE) === 0) {
+      const up = rotateVector(hunter.state.orientation, [0, 1, 0]);
       console.log(
-        `${now.toFixed(1)}s ${combat.mode.padEnd(10)} man=${String(output.telemetry.manoeuvre).padEnd(9)} t=${(output.telemetry.manoeuvreSeconds ?? Infinity).toFixed(1).padStart(5)} rng=${output.telemetry.range.toFixed(0).padStart(4)} tw=${track.turnRate.toFixed(2).padStart(6)} hunterR=${Math.hypot(hunterCentre[0], hunterCentre[2]).toFixed(0).padStart(4)}`,
+        `${now.toFixed(1)}s ${combat.mode.padEnd(10)} rng=${output.telemetry.range.toFixed(0).padStart(4)} aim=${output.telemetry.aimError.toFixed(2)} bear=${(output.telemetry.postureMargin ?? -1).toFixed(2)} lim=${String(output.telemetry.postureLimit).padEnd(5)} lost=${output.telemetry.bodyLost ? 1 : 0} gunY=${hunterNoseAxis[1].toFixed(2)} upY=${up[1].toFixed(2)} h=${hunterCentre[1].toFixed(0).padStart(3)} v=${Math.hypot(...hunter.state.velocity).toFixed(0).padStart(3)} ms=${(hunter.lastResult?.maneuverScale ?? 1).toFixed(2)} auth=${["thrust", "pitch", "roll"].map((k) => (hunter.lastResult?.authority[k] ?? 1).toFixed(2)).join("/")}`,
       );
     }
     if (output.telemetry.weaponsFree && output.telemetry.range < armament.rockets.range) {
@@ -635,7 +676,7 @@ export function runDuel({
       if (shot.weapon === "cannon") {
         report.cannonShots += 1;
         const muzzle = toWorld(hunter, armament.cannon.mounts[shot.mountIndex].muzzle);
-        const direction = deflectHorizontally(hunterNoseAxis, shot.deflection);
+        const direction = deflectHorizontally(hunterNoseAxis, shot.deflection, hunterUp);
         const hit = rayHit(muzzle, direction, targetPieces, MG_RANGE);
         if (hit) {
           report.cannonHits += 1;
@@ -660,6 +701,7 @@ export function runDuel({
             armament.rockets.harmonisationRange,
           ),
           shot.deflection,
+          hunterUp,
         );
         // ТОЧКА СХОДА ВЫНЕСЕНА ВПЕРЁД, как в рантайме: снаряд обязан родиться
         // вне собственного габарита. Стенд обязан спрашивать это у паспорта, а

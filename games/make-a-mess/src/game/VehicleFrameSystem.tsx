@@ -225,6 +225,7 @@ import {
   stepAirCombat,
   type AirCombatState,
 } from "./airCombatPilot.ts";
+import type { BodyReport } from "./airCombatPosture.ts";
 import type {
   AirCombatTrack,
   VehicleWeaponFireEvent,
@@ -549,6 +550,16 @@ function rotorcraftFlightForces(
     : trimMayLearn
       ? flightStep.trim
       : trim;
+  // Отчёт тела — то же самое, что уже уходит сторожу, только адресат другой.
+  // Боевому наведению он нужен, чтобы бросить заход, в котором машина
+  // перестала держать заданную позу: «сейчас свалюсь» есть неравенство, а не
+  // настроение (`airCombatPosture.ts`).
+  state.rotorBody = {
+    maneuverScale: flightStep.result.maneuverScale,
+    thrust: flightStep.result.authority.thrust,
+    pitch: flightStep.result.authority.pitch,
+    roll: flightStep.result.authority.roll,
+  };
   // ОБРАТНАЯ СВЯЗЬ ПО ФАКТИЧЕСКОМУ ЗАНОСУ.
   //
   // Всё, что считает автопилот вперёд по трассе, — предсказание. Оно не знает
@@ -914,6 +925,13 @@ interface FrameState {
    * нужен и остаётся null.
    */
   rotorTrim: RotorcraftTrimState | null;
+  /**
+   * ОТЧЁТ ТЕЛА О ПРОШЛОМ КАДРЕ: сколько из заказанного микшер действительно
+   * дал. Копится здесь потому, что винты считаются ПОСЛЕ наведения, а нужен он
+   * наведению — то есть следующему кадру. Кадр запаздывания принципиален и
+   * безвреден: чувство тела живёт десятыми долями секунды, а не кадрами.
+   */
+  rotorBody: BodyReport | null;
   /** Actual per-motor output after actuator delivery and spool inertia. */
   rotorMotorOutput: number[];
   /**
@@ -1456,6 +1474,7 @@ function restingState(engineCount: number, yawThrusterCount = 0): FrameState {
     trim: [],
     trimAttitude: null,
     rotorTrim: null,
+    rotorBody: null,
     rotorMotorOutput: Array.from({ length: engineCount }, () => 0),
     yawThrusterOutput: Array.from({ length: yawThrusterCount }, () => 0),
     yawThrusterHealth: Array.from({ length: yawThrusterCount }, () => 1),
@@ -6467,8 +6486,16 @@ export function VehicleFrameSystem({
             velocity: state.body.velocity as [number, number, number],
             nose: [gunAxis[0] / flatGun, gunAxis[2] / flatGun],
             gunAxis: gunAxis as [number, number, number],
+            // Правый борт — тем же поворотом, что и нос, и тем же соглашением
+            // проекта: `pitchAxisOf(nose) = (−nz, nx)`.
+            starboard: rotateByQuaternion(state.body.orientation, [
+              -frame.nose[2],
+              0,
+              frame.nose[0],
+            ]) as [number, number, number],
             verticalSpeed: state.body.velocity[1],
             radius: halfSpan,
+            body: state.rotorBody ?? undefined,
           },
           station: {
             centre: berth,
@@ -6487,6 +6514,22 @@ export function VehicleFrameSystem({
             // Фигур боевому пилоту пока не отдано: вход в них перекрыт на время
             // боя, и обещать разворот через верх было бы враньём оценщику.
             reversal: null,
+            // Нос АВТОРСКИЙ — поза строится поворотом от позы покоя.
+            authoredNose: [frame.nose[0], frame.nose[2]],
+            liftReserve: frame.flight.liftReserve ?? DEFAULT_VEHICLE_LIFT_RESERVE,
+            surgeAcceleration: rotorcraftSurgeAcceleration({
+              centreOfMass: mass.centre,
+              nose: frame.nose,
+              mass: mass.mass,
+              yawThrusters: frame.flight.limits.yawThrusters,
+              yawThrusterAvailability: (
+                frame.flight.limits.yawThrusters ?? []
+              ).map((_, index) =>
+                state.yawThrustersProven
+                  ? (state.yawThrusterHealth[index] ?? 1)
+                  : 0,
+              ),
+            }),
           },
           tracks,
           deltaSeconds: step,

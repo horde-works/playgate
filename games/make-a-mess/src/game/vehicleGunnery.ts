@@ -807,7 +807,13 @@ export function resolveVehicleWeaponShot(
         pose.gunAxis,
         armament.rockets.harmonisationRange,
       );
-  const direction = deflectHorizontally(aligned, shot.deflection);
+  // Веер разводится вокруг СОБСТВЕННОГО «вверх» машины: пусковые сидят на
+  // планере. У ровно летящей это мировая вертикаль, у наклонённой — нет.
+  const direction = deflectHorizontally(
+    aligned,
+    shot.deflection,
+    pose.rotate([0, 1, 0]),
+  );
   // Пушка бьёт лучом от самого среза — ей выноситься некуда и незачем: срез
   // спарки и так вынесен в нос дальше всего. Ракета рождается ВПЕРЕДИ машины.
   const clearance = cannon ? 0 : armament.rockets.launchClearance;
@@ -824,17 +830,49 @@ export function resolveVehicleWeaponShot(
   };
 }
 
-/** Повернуть направление на малый угол вокруг вертикали. */
+/**
+ * ВЕЕР РИПЛА РАЗВОДИТСЯ ВОКРУГ СОБСТВЕННОЙ ОСИ МАШИНЫ, А НЕ ВОКРУГ МИРОВОЙ.
+ *
+ * Пока машина умела летать только ровно, разницы не было: её «вверх» совпадало
+ * с мировым, и поворот вокруг вертикали разводил залп поперёк силуэта цели, как
+ * и задумано. Пусковые сидят на планере, и веер у них — телесный.
+ *
+ * Как только боевой автомат научился наводить ствол позой, эта подмена вылезла
+ * и вылезла грубо. Машина, работающая с превышения, кренится под семьдесят
+ * градусов и опускает ствол; поворот вокруг МИРОВОЙ вертикали разводит при этом
+ * не поперёк цели, а по конусу вокруг неё. А на отвесном стволе вырождается
+ * совсем: направление `[0,−1,0]` вокруг оси Y не поворачивается вовсе, и весь
+ * рипл уходит в одну точку.
+ *
+ * Ось по умолчанию — мировая вертикаль: тогда для ровного полёта результат
+ * побайтно прежний, и старые замеры остаются в силе.
+ */
 export function deflectHorizontally(
   direction: SceneVector3,
   radians: number,
+  /** Ось разведения: «вверх» у корпуса. По умолчанию — мировая вертикаль. */
+  axis: SceneVector3 = [0, 1, 0],
 ): SceneVector3 {
   const cosine = Math.cos(radians);
   const sine = Math.sin(radians);
+  const length = Math.hypot(axis[0], axis[1], axis[2]);
+  if (length < 1e-9) {
+    return direction;
+  }
+  const unit: SceneVector3 = [axis[0] / length, axis[1] / length, axis[2] / length];
+  // Родригес: поворот вектора вокруг произвольной оси. Для оси `[0,1,0]` он
+  // сводится ровно к прежним трём строкам, знак в знак.
+  const dotted =
+    unit[0] * direction[0] + unit[1] * direction[1] + unit[2] * direction[2];
+  const crossed: SceneVector3 = [
+    unit[1] * direction[2] - unit[2] * direction[1],
+    unit[2] * direction[0] - unit[0] * direction[2],
+    unit[0] * direction[1] - unit[1] * direction[0],
+  ];
   return [
-    direction[0] * cosine + direction[2] * sine,
-    direction[1],
-    -direction[0] * sine + direction[2] * cosine,
+    direction[0] * cosine + crossed[0] * sine + unit[0] * dotted * (1 - cosine),
+    direction[1] * cosine + crossed[1] * sine + unit[1] * dotted * (1 - cosine),
+    direction[2] * cosine + crossed[2] * sine + unit[2] * dotted * (1 - cosine),
   ];
 }
 
