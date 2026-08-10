@@ -7,6 +7,7 @@ import {
   type VehicleAllegiance,
 } from "./vehicleAllegiance.ts";
 import type { VehicleRecoveryLifecycle } from "./vehicleFailure.ts";
+import type { AirCombatStation } from "./airCombatPilot.ts";
 import type { VehicleArmament } from "./vehicleGunnery.ts";
 import type { VehicleGuidanceOverrides } from "./vehicleGuidanceEnvelope.ts";
 import type {
@@ -134,6 +135,7 @@ import {
 import {
   combatHexacopterGuardPhase,
   combatHexacopterGuardPlan,
+  combatHexacopterGuardStation,
   combatHexacopterRangeArrivalPlan,
   combatHexacopterRangeEscapePlan,
   combatHexacopterRangePhase,
@@ -254,6 +256,21 @@ export interface AirVehicleDefinition extends VehicleFrameDefinition {
     /** Physical reach of this berth's capture/winch, in metres. */
     readonly mooringReach?: number;
     routePlan(kind: string, berth: SceneVector3): VehicleRoutePlan;
+    /**
+     * СТОРОЖЕВОЙ ПОСТ ЭТОЙ ЗАДАЧИ: что машина стережёт, стоя на этом берте.
+     *
+     * Форма умышленно та же, что у `routePlan`, и стоит рядом с ним: пост и
+     * трасса — одно рабочее место, описанное с двух сторон. Автомат боя имеет
+     * право работать РОВНО ТОГДА, когда пост объявлен, — и это делает бой
+     * СПОСОБНОСТЬЮ ПАСПОРТА, ровно как `armament`, а не веткой по имени
+     * машины. Прежде рантайм спрашивал `kind === "sky-control"` и тащил к себе
+     * импортом три константы полигона; теперь он не знает ни имени задачи, ни
+     * имени машины.
+     *
+     * `null` — у этой задачи поста нет: показательный круг, перегон, посадка.
+     * Отсутствие метода целиком — машина не воюет вовсе.
+     */
+    combatStation?(kind: string, berth: SceneVector3): AirCombatStation | null;
     arrivalPlan(berth: SceneVector3): VehicleRoutePlan;
     escapePlan(
       berth: SceneVector3,
@@ -1329,6 +1346,13 @@ export const COMBAT_HEXACOPTER_RANGE_AIR_VEHICLE: AirVehicleDefinition = {
       kind === COMBAT_HEXACOPTER_SKY_CONTROL
         ? combatHexacopterGuardPlan(berth)
         : combatHexacopterRangePlan(berth),
+    // Пост объявлен ровно у той задачи, у которой он есть. Показательный круг
+    // поста не имеет — и на нём автомат боя не включается, даже если рядом
+    // висит чужая вооружённая машина: номер есть номер.
+    combatStation: (kind, berth) =>
+      kind === COMBAT_HEXACOPTER_SKY_CONTROL
+        ? combatHexacopterGuardStation(berth)
+        : null,
     arrivalPlan: combatHexacopterRangeArrivalPlan,
     escapePlan: combatHexacopterRangeEscapePlan,
     routePhase: (kind, progress) =>

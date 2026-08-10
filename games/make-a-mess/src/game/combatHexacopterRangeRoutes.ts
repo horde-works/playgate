@@ -5,6 +5,7 @@ import {
   type MotionRouteArtifact,
 } from "./motionRoute.ts";
 import type { RouteFigureStation } from "./flightFigures.ts";
+import type { AirCombatStation } from "./airCombatPilot.ts";
 import type {
   SkyTrainEmergencyEscapeInput,
   VehicleRoutePlan,
@@ -870,11 +871,11 @@ function placedPlan(
  * шестнадцати метрах в секунду. Это ЗАПЛАТКА, и она названа заплаткой: правильно
  * было бы дать рейсу признак «до отмены», и тогда кругов не считают вовсе.
  */
-export const COMBAT_HEXACOPTER_GUARD_RADIUS = 46;
-export const COMBAT_HEXACOPTER_GUARD_ALTITUDE = 26;
-export const COMBAT_HEXACOPTER_GUARD_SPEED = 16;
+const COMBAT_HEXACOPTER_GUARD_RADIUS = 46;
+const COMBAT_HEXACOPTER_GUARD_ALTITUDE = 26;
+const COMBAT_HEXACOPTER_GUARD_SPEED = 16;
 
-export const COMBAT_HEXACOPTER_GUARD_LAPS = 40;
+const COMBAT_HEXACOPTER_GUARD_LAPS = 40;
 
 const guardCircle = createMotionRoute({
   id: "combat-hexacopter:guard",
@@ -929,6 +930,33 @@ export function combatHexacopterGuardPlan(berth: SceneVector3): VehicleRoutePlan
   return {
     ...placedPlan(guardCircle, berth, guardCircle.markerProgress("final")),
     guidanceLookahead: () => 22,
+  };
+}
+
+/**
+ * ПОСТ И ТРАССА — ОДНО РАБОЧЕЕ МЕСТО, ОПИСАННОЕ ДВАЖДЫ.
+ *
+ * Трасса отвечает автопилоту, где лететь; пост отвечает автомату боя, что
+ * машина стережёт и с какой дальности чужой борт становится её делом. Числа у
+ * них обязаны быть одни и те же, поэтому пост собирается ЗДЕСЬ, рядом с
+ * выводом радиуса, высоты и хода, — а не в рантайме, куда эти константы прежде
+ * уезжали импортом. Рантайм от этого перестал знать имена машин вовсе:
+ * есть пост — есть бой, нет поста — нет.
+ *
+ * ДАЛЬНОСТЬ ОБНАРУЖЕНИЯ втрое больше радиуса потому, что периметр стерегут
+ * ЦЕЛИКОМ: с любой точки орбиты дальний край охраняемого круга лежит в двух
+ * радиусах, и тройка оставляет запас на цель, подходящую снаружи. Это решение
+ * СЦЕНАРИЯ, а не машины: та же машина на другом полигоне получит другой пост.
+ */
+export function combatHexacopterGuardStation(
+  berth: SceneVector3,
+): AirCombatStation {
+  return {
+    centre: berth,
+    radius: COMBAT_HEXACOPTER_GUARD_RADIUS,
+    altitude: COMBAT_HEXACOPTER_GUARD_ALTITUDE,
+    speed: COMBAT_HEXACOPTER_GUARD_SPEED,
+    detectionRange: COMBAT_HEXACOPTER_GUARD_RADIUS * 3,
   };
 }
 

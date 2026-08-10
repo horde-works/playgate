@@ -233,18 +233,12 @@ import {
 } from "./airCombatSensing.ts";
 import type { VehicleWeaponFireEvent } from "./vehicleGunnery.ts";
 import { resolveVehicleWeaponShot } from "./vehicleGunnery.ts";
-import { COMBAT_HEXACOPTER_SKY_CONTROL } from "./airVehicles.ts";
 import {
   advanceRouteFigureFrame,
   figureCapabilityOf,
   IDLE_ROUTE_FIGURE,
   type RouteFigureFlight,
 } from "./flightFigures.ts";
-import {
-  COMBAT_HEXACOPTER_GUARD_ALTITUDE,
-  COMBAT_HEXACOPTER_GUARD_RADIUS,
-  COMBAT_HEXACOPTER_GUARD_SPEED,
-} from "./combatHexacopterRangeRoutes.ts";
 import {
   advanceRotorcraftPilot,
   consumeRotorcraftPilotCommands,
@@ -6393,15 +6387,21 @@ export function VehicleFrameSystem({
       // (`rotorcraftPilot`), и по той же причине: guidance — общая граница, а
       // не собственность автопилота.
       //
-      // Условий работы три, и все объявлены паспортом, а не именем машины:
-      // у неё есть вооружение, она на боевой задаче и в воздухе.
+      // Условий работы три, и все объявлены ПАСПОРТОМ, а не именем машины:
+      // у неё есть вооружение, паспорт объявил пост для этой задачи, и она в
+      // воздухе. Прежде здесь стояло `kind === "sky-control"` и три константы
+      // полигона, приехавшие импортом из файла маршрутов, — то есть движок
+      // знал имя машины и разметку конкретной карты.
       // ---------------------------------------------------------------
+      const combatStation = flight
+        ? (frame.flight.combatStation?.(flight.kind, berth) ?? null)
+        : null;
       if (
         frame.armament &&
         usesRotorDynamics &&
         mass &&
-        flight?.kind === COMBAT_HEXACOPTER_SKY_CONTROL &&
-        flight.castOff
+        combatStation &&
+        flight?.castOff
       ) {
         // БОЕВОЕ ЗРЕНИЕ ОБЩЕЕ, РЕШЕНИЕ ЧАСТНОЕ. Сборка снимков живёт в
         // `airCombatSensing`, здесь остаётся ровно доступ к рантайму двумя
@@ -6427,14 +6427,7 @@ export function VehicleFrameSystem({
         const combatLateral = GRAVITY * Math.tan(frame.flight.maximumTilt ?? 0);
         const combatStep = stepAirCombat({
           own,
-          station: {
-            centre: berth,
-            radius: COMBAT_HEXACOPTER_GUARD_RADIUS,
-            altitude: COMBAT_HEXACOPTER_GUARD_ALTITUDE,
-            speed: COMBAT_HEXACOPTER_GUARD_SPEED,
-            // Периметр стерегут целиком: обнаружение покрывает орбиту с запасом.
-            detectionRange: COMBAT_HEXACOPTER_GUARD_RADIUS * 3,
-          },
+          station: combatStation,
           armament: frame.armament,
           limits: {
             maximumSpeed: combatLateral / ROTOR_YAW_RATE,
