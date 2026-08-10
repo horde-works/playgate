@@ -226,12 +226,13 @@ import {
   type AirCombatState,
 } from "./airCombatPilot.ts";
 import type { BodyReport } from "./airCombatPosture.ts";
-import type {
-  AirCombatTrack,
-  VehicleWeaponFireEvent,
-} from "./vehicleGunnery.ts";
+import {
+  airCombatOwnState,
+  airCombatTracks,
+  type SightedWorld,
+} from "./airCombatSensing.ts";
+import type { VehicleWeaponFireEvent } from "./vehicleGunnery.ts";
 import { resolveVehicleWeaponShot } from "./vehicleGunnery.ts";
-import { allegianceOf } from "./vehicleAllegiance.ts";
 import { COMBAT_HEXACOPTER_SKY_CONTROL } from "./airVehicles.ts";
 import {
   advanceRouteFigureFrame,
@@ -6402,76 +6403,21 @@ export function VehicleFrameSystem({
         flight?.kind === COMBAT_HEXACOPTER_SKY_CONTROL &&
         flight.castOff
       ) {
-        const combatCentre: [number, number, number] = [
-          mass.centre[0] + state.body.position[0],
-          mass.centre[1] + state.body.position[1],
-          mass.centre[2] + state.body.position[2],
-        ];
-        const gunAxis = rotateByQuaternion(state.body.orientation, frame.nose);
-        const flatGun = Math.hypot(gunAxis[0], gunAxis[2]) || 1;
-        const halfSpan = Math.max(
-          frame.localBounds.maximum[0] - frame.localBounds.minimum[0],
-          frame.localBounds.maximum[2] - frame.localBounds.minimum[2],
-        ) / 2;
-
-        // Чужие борта в воздухе. Модуль боя получает СНИМОК состояния и
-        // ничего сверх: ни маршрута, ни прогресса, ни определения машины.
-        const tracks: AirCombatTrack[] = [];
-        for (const other of frames) {
-          if (other.id === frame.id || !other.allegiance) {
-            continue;
-          }
-          const otherState = states.current.get(other.id);
-          if (!otherState?.mass) {
-            continue;
-          }
-          const otherCentre: [number, number, number] = [
-            otherState.mass.centre[0] + otherState.body.position[0],
-            otherState.mass.centre[1] + otherState.body.position[1],
-            otherState.mass.centre[2] + otherState.body.position[2],
-          ];
-          const otherAttached =
-            clusterRegistry.current.get(other.clusterId)?.attachedMemberIds ??
-            new Set<string>();
-          const otherHealth = propulsionHealth(
-            other.actuators,
-            otherAttached,
-            other.flight.limits.enginePoints.length,
-          ).fractions;
-          const otherHalfSpan = Math.max(
-            other.localBounds.maximum[0] - other.localBounds.minimum[0],
-            other.localBounds.maximum[2] - other.localBounds.minimum[2],
-          ) / 2;
-          tracks.push({
-            id: other.id,
-            allegiance: other.allegiance,
-            centre: otherCentre,
-            velocity: otherState.body.velocity as [number, number, number],
-            // «Текущий манёвр» снаружи виден как вращение корпуса. У машины,
-            // идущей носом по курсу, это и есть темп разворота её скорости;
-            // краб даст расхождение, и это честная слепота наблюдателя.
-            turnRate: otherState.body.angularVelocity[1],
-            radius: otherHalfSpan,
-            weakPoints: other.flight.limits.enginePoints.map((point, index) => {
-              const offset = rotateByQuaternion(otherState.body.orientation, [
-                point[0] - otherState.mass!.centre[0],
-                point[1] - otherState.mass!.centre[1],
-                point[2] - otherState.mass!.centre[2],
-              ]);
-              return {
-                point: [
-                  otherCentre[0] + offset[0],
-                  otherCentre[1] + offset[1],
-                  otherCentre[2] + offset[2],
-                ] as [number, number, number],
-                health: otherHealth[index] ?? 1,
-              };
-            }),
-            // Севшая цель не цель, отказавшая — тем более.
-            landed: otherState.flight === null && otherState.supportContacts > 0,
-            failed: otherState.recovery !== null,
-          });
-        }
+        // БОЕВОЕ ЗРЕНИЕ ОБЩЕЕ, РЕШЕНИЕ ЧАСТНОЕ. Сборка снимков живёт в
+        // `airCombatSensing`, здесь остаётся ровно доступ к рантайму двумя
+        // вопросами. Уклонению понадобятся ТЕ ЖЕ снимки — оно смотрит на
+        // охотника вместо добычи, — и второй вывод осей в другом месте был бы
+        // вторым шансом ошибиться знаком.
+        const combatWorld: SightedWorld = {
+          stateOf: (frameId) => states.current.get(frameId),
+          attachedTo: (clusterId) =>
+            clusterRegistry.current.get(clusterId)?.attachedMemberIds ??
+            new Set<string>(),
+        };
+        const tracks = airCombatTracks(frame.id, frames, combatWorld);
+        const own = airCombatOwnState(frame, state, mass.centre);
+        const combatCentre = own.centre;
+        const gunAxis = own.gunAxis;
 
         state.combat ??= createAirCombatState(
           frame.armament.rockets.mounts.length,
@@ -6480,23 +6426,7 @@ export function VehicleFrameSystem({
         // которой требуемый темп разворота ещё равен располагаемому.
         const combatLateral = GRAVITY * Math.tan(frame.flight.maximumTilt ?? 0);
         const combatStep = stepAirCombat({
-          own: {
-            allegiance: allegianceOf(frame),
-            centre: combatCentre,
-            velocity: state.body.velocity as [number, number, number],
-            nose: [gunAxis[0] / flatGun, gunAxis[2] / flatGun],
-            gunAxis: gunAxis as [number, number, number],
-            // Правый борт — тем же поворотом, что и нос, и тем же соглашением
-            // проекта: `pitchAxisOf(nose) = (−nz, nx)`.
-            starboard: rotateByQuaternion(state.body.orientation, [
-              -frame.nose[2],
-              0,
-              frame.nose[0],
-            ]) as [number, number, number],
-            verticalSpeed: state.body.velocity[1],
-            radius: halfSpan,
-            body: state.rotorBody ?? undefined,
-          },
+          own,
           station: {
             centre: berth,
             radius: COMBAT_HEXACOPTER_GUARD_RADIUS,
