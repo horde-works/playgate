@@ -10,7 +10,7 @@ import { materialRuntimeProfiles } from "./destructionScene.ts";
 import { shellPlateBoxes } from "./shellPlates.ts";
 import {
   DEBRIS_ACTOR_DETAIL,
-  DEBRIS_SETTLING,
+  DEBRIS_NORMAL,
 } from "./physicsInteractionGroups.ts";
 
 /**
@@ -199,7 +199,7 @@ export function shardBodySpec(shard: ShardDefinition): DebrisBodySpec {
     shard,
     0.78,
     MAX_FREED_COLLIDERS,
-    DEBRIS_SETTLING,
+    DEBRIS_NORMAL,
   );
   return {
     colliders: [
@@ -223,7 +223,7 @@ export function remnantBodySpec(
     remnant,
     0.82,
     freed ? MAX_FREED_COLLIDERS : MAX_ATTACHED_REMNANT_COLLIDERS,
-    freed ? DEBRIS_SETTLING : null,
+    freed ? DEBRIS_NORMAL : null,
   );
   return {
     colliders: [

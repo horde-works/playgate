@@ -7,7 +7,7 @@ import {
 } from "../games/make-a-mess/src/game/debrisCollisionActivation.ts";
 import {
   DEBRIS_ACTOR_DETAIL,
-  DEBRIS_SETTLING,
+  DEBRIS_LEAVING_CARRIER,
 } from "../games/make-a-mess/src/game/physicsInteractionGroups.ts";
 
 await RAPIER.init();
@@ -18,7 +18,7 @@ function debrisBody(world, x, half = 0.5) {
   );
   world.createCollider(
     RAPIER.ColliderDesc.cuboid(half, half, half)
-      .setCollisionGroups(DEBRIS_SETTLING),
+      .setCollisionGroups(DEBRIS_LEAVING_CARRIER),
     body,
   );
   return body;

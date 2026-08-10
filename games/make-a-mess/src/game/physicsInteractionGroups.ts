@@ -11,17 +11,6 @@ const GROUP_VEHICLE_ATTACHMENT = 0x0080;
 const interactionGroups = (membership: number, filter: number): number =>
   ((membership << 16) | filter) >>> 0;
 
-// A freshly broken cluster settles without colliding with its siblings, but
-// the player and debris remain contained by the invisible edge of the map.
-export const DEBRIS_SETTLING = interactionGroups(
-  GROUP_DEBRIS,
-  GROUP_WORLD |
-    GROUP_ACTOR |
-    GROUP_BOUNDARY |
-    GROUP_VEHICLE_QUERY |
-    GROUP_VEHICLE,
-);
-
 /**
  * ОБЛОМОК, РОЖДЁННЫЙ ВНУТРИ СВОЕЙ ЖЕ МАШИНЫ.
  *
@@ -29,12 +18,17 @@ export const DEBRIS_SETTLING = interactionGroups(
  * destruction-lessons §6.3), то есть гарантированно внутри его контактной
  * оболочки: у HX-6 замерено 11–27 коллайдеров носителя на один такой кусок,
  * а взаимопроникновение членов у жёсткой машины намеренное (88 % членов).
- * Льгота `DEBRIS_SETTLING` прикрывала его от БРАТЬЕВ и не прикрывала от
- * единственного тела, внутри которого он заведомо родился, — и солвер
- * выталкивал его вместе с носителем: машина толкалась и кувыркалась.
+ * Это ЕДИНСТВЕННЫЙ случай, которому льгота ещё нужна. Общая льгота на
+ * оседание («не сталкиваться с собратьями, пока не разъедемся») отменена: она
+ * платила взаимопроникновением — призрак садится в кучу уже вложенным, — и
+ * мировой обломок теперь вооружён с рождения. А у члена машины выбора нет,
+ * он рождается внутри неё; прежде солвер выталкивал его вместе с носителем,
+ * и машина толкалась и кувыркалась.
  *
  * Здесь снят ровно носитель. Всё остальное — мир, игрок, кромка, сенсоры —
  * обязано остаться: кусок, вылетевший из машины, для мира обычный обломок.
+ * С собратьями он не сталкивается по той же причине, что и раньше: они
+ * рождаются в той же тесноте, что и он.
  */
 export const DEBRIS_LEAVING_CARRIER = interactionGroups(
   GROUP_DEBRIS,

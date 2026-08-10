@@ -7,7 +7,6 @@ import {
   DEBRIS_INSIDE_CARRIER,
   DEBRIS_LEAVING_CARRIER,
   DEBRIS_NORMAL,
-  DEBRIS_SETTLING,
   VEHICLE_ATTACHMENT,
   VEHICLE_CARRIER,
   VEHICLE_CONTACT_QUERY,
@@ -29,7 +28,6 @@ test("the map edge contains people and debris, not airborne carriers", () => {
   assert.equal(interacts(DEBRIS_NORMAL, WORLD_BOUNDARY), true);
   assert.equal(interacts(ACTOR_ABOARD, WORLD_BOUNDARY), false);
   assert.equal(interacts(VEHICLE_CONTACT_QUERY, WORLD_BOUNDARY), false);
-  assert.equal(interacts(VEHICLE_CONTACT_QUERY, DEBRIS_SETTLING), true);
   assert.equal(interacts(VEHICLE_CONTACT_QUERY, DEBRIS_NORMAL), true);
 
   assert.equal(interacts(ACTOR_NORMAL, ACTOR_SAFETY_FLOOR), true);
@@ -44,7 +42,6 @@ test("the map edge contains people and debris, not airborne carriers", () => {
 test("a carrier never collides with its own attached pose bodies", () => {
   assert.equal(interacts(VEHICLE_CARRIER, VEHICLE_ATTACHMENT), false);
   assert.equal(interacts(VEHICLE_CARRIER, VEHICLE_CARRIER), true);
-  assert.equal(interacts(VEHICLE_CARRIER, DEBRIS_SETTLING), true);
   assert.equal(interacts(VEHICLE_CARRIER, DEBRIS_NORMAL), true);
   assert.equal(interacts(VEHICLE_CARRIER, ACTOR_NORMAL), true);
   assert.equal(interacts(VEHICLE_ATTACHMENT, ACTOR_NORMAL), true);
@@ -53,11 +50,11 @@ test("a carrier never collides with its own attached pose bodies", () => {
   assert.equal(interacts(VEHICLE_ATTACHMENT, 0xffff_ffff), true);
 });
 
-// Обычный обломок мира с машинами сталкивается сразу и всегда: льгота на
-// оседание снимает только СОБРАТЬЕВ. Кусок самой машины рождается внутри её
-// оболочки, и для него — и только для него — снимается ещё и носитель.
+// Общей льготы на оседание больше нет: мировой обломок вооружён с рождения и
+// с машинами сталкивается сразу. Льгота осталась ровно у куска самой машины —
+// он рождается внутри её оболочки.
 test("only a machine's own part gets a grace period from its carrier", () => {
-  assert.equal(interacts(VEHICLE_CARRIER, DEBRIS_SETTLING), true);
+  assert.equal(interacts(VEHICLE_CARRIER, DEBRIS_NORMAL), true);
   assert.equal(interacts(VEHICLE_CARRIER, DEBRIS_LEAVING_CARRIER), false);
   assert.equal(interacts(VEHICLE_CARRIER, DEBRIS_INSIDE_CARRIER), false);
 

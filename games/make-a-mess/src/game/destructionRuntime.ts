@@ -515,21 +515,50 @@ export function debrisColliderBoxes(
     .map((entry) => entry.box);
 }
 
-export function debrisSleepSampleRequirement(
-  energy: number,
-  dynamicAgeMs: number,
+/**
+ * ПОКОЙ МЕРЯЕТСЯ СМЕЩЕНИЕМ, А НЕ ЭНЕРГИЕЙ.
+ *
+ * Прежний закон покоя спрашивал мгновенную энергию и серию спокойных замеров.
+ * Он описывал ОДИНОЧНЫЙ обломок, который честно затухает; завал так себя не
+ * ведёт — сцепленная куча дрожит и ниже энергетического порога не опускается
+ * никогда. Замер на обвале целой хрущёвки: из 1192 кусков по энергии
+ * успокаивались 436, а 756 не засыпали вовсе и держали шаг физики на 15.7 мс
+ * до конца партии.
+ *
+ * Смещение центра за окно наблюдения этой болезни не подвержено: дрожащая
+ * куча его проходит, а летящий кусок — нет (за полсекунды свободного падения
+ * кусок уходит на 60 см при пороге в 1 см).
+ *
+ * Окно выбрано коротким осознанно: заморозка консервирует ТУ глубину
+ * взаимопроникновения, которая есть в этот момент, а чем дольше кусок в куче,
+ * тем глубже его вдавливает. Замер на том же обвале: окно 1 с даёт 956
+ * вмурованных пар, окно 0.5 с — 883, и в покое оно же дешевле.
+ */
+export const DEBRIS_REST_WINDOW_STEPS = 30;
+/** Смещение центра за окно, ниже которого кусок считается вставшим, м. */
+export const DEBRIS_REST_TRAVEL = 0.01;
+
+export type DebrisRestDecision = "freeze" | "resample" | "wait";
+
+/**
+ * Решение о судьбе куска по одному замеру смещения. Чистая функция: окно,
+ * порог и требование физического контакта — весь закон целиком.
+ *
+ * Контакт обязателен по той же причине, что и у сна: кусок не имеет права
+ * замереть в воздухе, «потому что на миг завис».
+ */
+export function debrisRestDecision(
+  travel: number | null,
+  elapsedSteps: number,
   hasPhysicalContact: boolean,
-): number | null {
-  if (!hasPhysicalContact) {
-    return null;
+): DebrisRestDecision {
+  if (travel === null) {
+    return "resample";
   }
-  if (energy < 0.035) {
-    return 3;
+  if (elapsedSteps < DEBRIS_REST_WINDOW_STEPS) {
+    return "wait";
   }
-  if (dynamicAgeMs > 4500 && energy < 0.28) {
-    return 2;
-  }
-  return null;
+  return travel < DEBRIS_REST_TRAVEL && hasPhysicalContact ? "freeze" : "resample";
 }
 
 export const bulletHoleRadius: Partial<Record<BreakableMaterial, number>> = {

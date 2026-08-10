@@ -124,7 +124,9 @@ import {
   damageBody,
   debrisColliderBoxes,
   debrisCollisionTuning,
-  debrisSleepSampleRequirement,
+  DEBRIS_REST_TRAVEL,
+  DEBRIS_REST_WINDOW_STEPS,
+  debrisRestDecision,
   fractureEnergyByMaterial,
   grenadeEnergyAtDistance,
   groundCarveRequiresRemnant,
@@ -315,7 +317,6 @@ import {
   DEBRIS_INSIDE_CARRIER,
   DEBRIS_LEAVING_CARRIER,
   DEBRIS_NORMAL,
-  DEBRIS_SETTLING,
   VEHICLE_ATTACHMENT,
   WORLD_BOUNDARY,
 } from "./physicsInteractionGroups";
@@ -2340,9 +2341,10 @@ const BreakablePiece = memo(function BreakablePiece({
     : false;
   const vehicleAttachment = Boolean(clusterFrame && !compoundClusterMember);
   const ownsContactShape = broken || !compoundClusterMember;
-  // Член машины рождается внутри её оболочки, а не рядом с ней, поэтому
-  // льгота у него своя — без собственного носителя (см. DEBRIS_LEAVING_CARRIER).
-  const settlingGroup = clusterFrame ? DEBRIS_LEAVING_CARRIER : DEBRIS_SETTLING;
+  // Член машины рождается внутри её оболочки, а не рядом с ней, и только он
+  // получает льготу (см. DEBRIS_LEAVING_CARRIER). Мировой обломок сталкивается
+  // с собратьями с первого шага: призрак садится в кучу вложенным.
+  const birthGroup = clusterFrame ? DEBRIS_LEAVING_CARRIER : DEBRIS_NORMAL;
   const collisionTuning = debrisCollisionTuning(piece.size);
 
   useEffect(() => {
@@ -2442,7 +2444,7 @@ const BreakablePiece = memo(function BreakablePiece({
           continue;
         }
         // Don't collide with sibling debris yet — let overlaps settle.
-        collider.setCollisionGroups(settlingGroup);
+        collider.setCollisionGroups(birthGroup);
       }
     }
 
@@ -2472,7 +2474,7 @@ const BreakablePiece = memo(function BreakablePiece({
     fallingTreeFoliage,
     rapier,
     registerBody,
-    settlingGroup,
+    birthGroup,
   ]);
 
   return (
@@ -2494,7 +2496,7 @@ const BreakablePiece = memo(function BreakablePiece({
       // undefined). Отдельный механизм получает явную маску: с миром он
       // взаимодействует, со своим составным корпусом — нет.
       {...(broken
-        ? { collisionGroups: settlingGroup }
+        ? { collisionGroups: birthGroup }
         : vehicleAttachment
           ? { collisionGroups: VEHICLE_ATTACHMENT }
           : {})}
@@ -4543,7 +4545,14 @@ function OpenWorldScene({
   const lastContactStepByBody = useRef(new Map<string, Map<number, number>>());
   const contactDamageAfterStep = useRef(new Map<string, number>());
   const dynamicStartedStep = useRef(new Map<string, number>());
-  const restCounters = useRef(new Map<string, number>());
+  /**
+   * Замер покоя: где кусок был на прошлом взгляде. Покой меряется СМЕЩЕНИЕМ,
+   * потому что сцепленная куча дрожит и по энергии не успокаивается никогда
+   * (`debrisRestDecision`).
+   */
+  const restSamples = useRef(
+    new Map<string, { step: number; x: number; y: number; z: number }>(),
+  );
   const settleAccumulator = useRef(0);
   const strikeTimers = useRef<number[]>([]);
   const shardsRef = useRef<readonly ShardDefinition[]>([]);
@@ -4604,22 +4613,31 @@ function OpenWorldScene({
     [breakablePieceById],
   );
   /**
-   * Льготная группа новорождённого обломка. У куска машины она своя: он
-   * рождается ВНУТРИ её оболочки, а не рядом с ней, поэтому носитель на время
-   * льготы снимается вместе с собратьями (см. DEBRIS_LEAVING_CARRIER).
+   * ЛЬГОТА ОСТАЛАСЬ ТОЛЬКО У КУСКА МАШИНЫ.
    *
-   * Осколки (`shardById`) сюда не попадают: у ShardDefinition нет кластера, и
-   * заводить его ради мелкой стружки, которая и так вылетает из машины наружу,
-   * незачем. Крупные куски — члены и обрубки — свой кластер несут.
+   * Мировой обломок сталкивается с себе подобными С РОЖДЕНИЯ. Льгота была
+   * придумана против толчка при рождении, но платили за неё не толчком, а
+   * взаимопроникновением: пока кусок призрак, он проваливается сквозь соседей
+   * и садится в кучу уже вложенным. Замер на обвале целой хрущёвки — пар с
+   * проникновением глубже сантиметра: с льготой 3461, с рождения 883.
+   * Расталкивать пару дёшево, пока она в воздухе и свободна; в зажатой куче
+   * это не удаётся уже никакой ценой.
+   *
+   * У члена машины выбора нет: он рождается ВНУТРИ её оболочки (11–27
+   * коллайдеров носителя на кусок), и без льготы солвер выталкивает его
+   * вместе с машиной. Ему — `DEBRIS_LEAVING_CARRIER` и ворота.
+   *
+   * Осколки (`shardById`) кластера не несут и потому всегда мировые: мелкая
+   * стружка из машины и так вылетает наружу.
    */
-  const debrisSettlingGroupFor = useCallback(
+  const debrisBirthGroupFor = useCallback(
     (id: string): number => {
       const clusterId =
         breakablePieceById.get(id)?.clusterId ??
         remnantById.current.get(id)?.clusterId;
       return clusterId && vehicleFrameForCluster(clusterId)
         ? DEBRIS_LEAVING_CARRIER
-        : DEBRIS_SETTLING;
+        : DEBRIS_NORMAL;
     },
     [breakablePieceById],
   );
@@ -4910,16 +4928,21 @@ function OpenWorldScene({
               id,
               physicsStep.current + DEBRIS_CONTACT_GRACE_STEPS,
             );
-            debrisSettlingUntilStep.current.set(
-              id,
-              physicsStep.current + DEBRIS_SETTLE_STEPS,
-            );
-            const settlingGroup = debrisSettlingGroupFor(id);
+            const birthGroup = debrisBirthGroupFor(id);
+            // В очередь ворот встают только те, у кого есть льгота: сегодня
+            // это ровно куски машин. Мировой обломок вооружён сразу и
+            // спрашивать о нём нечего.
+            if (birthGroup === DEBRIS_LEAVING_CARRIER) {
+              debrisSettlingUntilStep.current.set(
+                id,
+                physicsStep.current + DEBRIS_SETTLE_STEPS,
+              );
+            }
             const colliderCount = body.numColliders();
             for (let index = 0; index < colliderCount; index += 1) {
               const collider = body.collider(index);
               if (collider.collisionGroups() !== DEBRIS_ACTOR_DETAIL) {
-                collider.setCollisionGroups(settlingGroup);
+                collider.setCollisionGroups(birthGroup);
               }
             }
           }
@@ -4950,7 +4973,7 @@ function OpenWorldScene({
         debrisSettlingUntilStep.current.delete(id);
       }
     },
-    [debrisSettlingGroupFor, rapier],
+    [debrisBirthGroupFor, rapier],
   );
 
   const withBody = useCallback((id: string, action: BodyAction) => {
@@ -5378,7 +5401,7 @@ function OpenWorldScene({
     runtimeStructureCache.current = null;
     firing.current = false;
     projectileRuntime.current?.clear();
-    restCounters.current.clear();
+    restSamples.current.clear();
     preStepMotions.current.clear();
     tethers.current.clear();
     superficialDamage.current.clear();
@@ -5423,7 +5446,7 @@ function OpenWorldScene({
       ) {
         continue;
       }
-      restCounters.current.delete(id);
+      restSamples.current.delete(id);
       if (shardById.current.has(id)) {
         vanishedShardIds.add(id);
       } else if (remnantById.current.has(id)) {
@@ -5472,21 +5495,39 @@ function OpenWorldScene({
         continue;
       }
 
-      const linvel = body.linvel();
-      const angvel = body.angvel();
-      const energy =
-        linvel.x * linvel.x +
-        linvel.y * linvel.y +
-        linvel.z * linvel.z +
-        0.3 * (angvel.x * angvel.x + angvel.y * angvel.y + angvel.z * angvel.z);
-      const dynamicAge =
-        ((physicsStep.current -
-          (dynamicStartedStep.current.get(id) ?? physicsStep.current)) *
-          1000) /
-        60;
-
-      if (energy < 0.035 || (dynamicAge > 4500 && energy < 0.28)) {
-        let hasPhysicalContact = false;
+      // ВСТАВШИЙ КУСОК СТАНОВИТСЯ ЧАСТЬЮ МИРА, А НЕ ЗАСЫПАЕТ.
+      //
+      // Спящее тело дёшево, но не бесплатно, и главное — спящий остров
+      // просыпается ЦЕЛИКОМ от любого касания: одна граната у завала
+      // возвращала бы всю его цену. У `Fixed` степеней свободы нет вообще.
+      // Обратный ход остаётся прежним и общим: `ensureDynamic` возвращает
+      // кусок в динамику от удара, резки и взрыва.
+      const translation = body.translation();
+      const sample = restSamples.current.get(id);
+      const travel = sample
+        ? Math.hypot(
+            translation.x - sample.x,
+            translation.y - sample.y,
+            translation.z - sample.z,
+          )
+        : null;
+      const elapsed = sample ? physicsStep.current - sample.step : 0;
+      if (
+        travel !== null &&
+        elapsed >= DEBRIS_REST_WINDOW_STEPS &&
+        travel >= DEBRIS_REST_TRAVEL
+      ) {
+        // Ещё едет — пересэмплировать без единого запроса к контактам.
+        restSamples.current.set(id, {
+          step: physicsStep.current,
+          x: translation.x,
+          y: translation.y,
+          z: translation.z,
+        });
+        continue;
+      }
+      let hasPhysicalContact = false;
+      if (travel !== null && elapsed >= DEBRIS_REST_WINDOW_STEPS) {
         for (
           let colliderIndex = 0;
           colliderIndex < body.numColliders() && !hasPhysicalContact;
@@ -5496,29 +5537,29 @@ function OpenWorldScene({
             hasPhysicalContact = true;
           });
         }
-        const requiredSamples = debrisSleepSampleRequirement(
-          energy,
-          dynamicAge,
-          hasPhysicalContact,
-        );
-        if (requiredSamples === null) {
-          restCounters.current.delete(id);
-          continue;
-        }
-
-        const count = (restCounters.current.get(id) ?? 0) + 1;
-        if (count >= requiredSamples) {
-          body.setLinvel({ x: 0, y: 0, z: 0 }, false);
-          body.setAngvel({ x: 0, y: 0, z: 0 }, false);
-          body.enableCcd(false);
-          body.sleep();
-          restCounters.current.delete(id);
-        } else {
-          restCounters.current.set(id, count);
-        }
-      } else {
-        restCounters.current.delete(id);
       }
+      const decision = debrisRestDecision(travel, elapsed, hasPhysicalContact);
+      if (decision === "wait") {
+        continue;
+      }
+      if (decision === "resample") {
+        restSamples.current.set(id, {
+          step: physicsStep.current,
+          x: translation.x,
+          y: translation.y,
+          z: translation.z,
+        });
+        continue;
+      }
+      body.setLinvel({ x: 0, y: 0, z: 0 }, false);
+      body.setAngvel({ x: 0, y: 0, z: 0 }, false);
+      body.enableCcd(false);
+      body.setBodyType(rapier.RigidBodyType.Fixed, false);
+      restSamples.current.delete(id);
+      // Тело больше не динамическое: снять его со всех динамических учётов,
+      // иначе оно продолжит стоить обходов, ради которых всё и делалось.
+      dynamicBodies.current.delete(id);
+      preStepMotions.current.delete(id);
     }
   });
 

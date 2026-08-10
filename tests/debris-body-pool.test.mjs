@@ -6,7 +6,7 @@ import {
 } from "../games/make-a-mess/src/game/debrisBodyPool.ts";
 import {
   DEBRIS_ACTOR_DETAIL,
-  DEBRIS_SETTLING,
+  DEBRIS_NORMAL,
 } from "../games/make-a-mess/src/game/physicsInteractionGroups.ts";
 import { materialRuntimeProfiles } from "../games/make-a-mess/src/game/destructionScene.ts";
 
@@ -50,7 +50,7 @@ test("shard without boxes gets one cuboid matching its size", () => {
   const [collider] = spec.colliders;
   assert.equal(collider.shape, "cuboid");
   assert.deepEqual(collider.args, [0.198, 0.148, 0.098]);
-  assert.equal(collider.groups, DEBRIS_SETTLING);
+  assert.equal(collider.groups, DEBRIS_NORMAL);
   assert.equal(
     collider.density,
     materialRuntimeProfiles.brick.density,
@@ -68,7 +68,7 @@ test("shard with many boxes keeps three largest plus actor detail", () => {
   ];
   const spec = shardBodySpec(makeShard({ boxes, size: [0.6, 0.6, 0.6] }));
   const primaries = spec.colliders.filter(
-    (collider) => collider.groups === DEBRIS_SETTLING,
+    (collider) => collider.groups === DEBRIS_NORMAL,
   );
   const details = spec.colliders.filter(
     (collider) => collider.groups === DEBRIS_ACTOR_DETAIL,
@@ -177,7 +177,7 @@ test("freeing a remnant tightens colliders and arms ccd tuning", () => {
   const remnant = makeRemnant({ boxes, size: [1.2, 0.4, 0.4] });
   const freed = remnantBodySpec(remnant, true);
   const primaries = freed.colliders.filter(
-    (collider) => collider.groups === DEBRIS_SETTLING,
+    (collider) => collider.groups === DEBRIS_NORMAL,
   );
   assert.equal(primaries.length, 3);
   assert.ok(freed.softCcdPrediction > 0 || freed.hardCcd);

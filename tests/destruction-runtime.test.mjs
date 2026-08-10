@@ -17,7 +17,9 @@ import {
   damageRadiusScaleByMaterial,
   debrisColliderBoxes,
   debrisCollisionTuning,
-  debrisSleepSampleRequirement,
+  DEBRIS_REST_TRAVEL,
+  DEBRIS_REST_WINDOW_STEPS,
+  debrisRestDecision,
   distanceToOrientedBox,
   fractureEnergyByMaterial,
   grenadeEnergyAtDistance,
@@ -112,11 +114,26 @@ test("actor-only detail keeps every occupied box omitted by cheap proxies", () =
   ));
 });
 
-test("debris cannot sleep in mid-air just because it briefly slows down", () => {
-  assert.equal(debrisSleepSampleRequirement(0.001, 20_000, false), null);
-  assert.equal(debrisSleepSampleRequirement(0.01, 1000, true), 3);
-  assert.equal(debrisSleepSampleRequirement(0.2, 5000, true), 2);
-  assert.equal(debrisSleepSampleRequirement(0.5, 5000, true), null);
+test("rest is measured by travel, and never in mid-air", () => {
+  const still = DEBRIS_REST_TRAVEL / 2;
+  const moving = DEBRIS_REST_TRAVEL * 4;
+  const window = DEBRIS_REST_WINDOW_STEPS;
+
+  // Первый взгляд на кусок — только замер, решать не по чему.
+  assert.equal(debrisRestDecision(null, 0, true), "resample");
+  // Окно ещё не вышло: ответа нет, и контакты спрашивать незачем.
+  assert.equal(debrisRestDecision(still, window - 1, true), "wait");
+  // Встал и на что-то опирается.
+  assert.equal(debrisRestDecision(still, window, true), "freeze");
+  // Тот же покой, но в воздухе — замереть нельзя.
+  assert.equal(debrisRestDecision(still, window, false), "resample");
+  // Едет — замер обновляется.
+  assert.equal(debrisRestDecision(moving, window, true), "resample");
+
+  // За окно свободного падения кусок уходит несопоставимо дальше порога:
+  // порог не может случайно поймать летящий кусок.
+  const fall = 14 * (window / 60) ** 2 / 2;
+  assert.ok(fall > DEBRIS_REST_TRAVEL * 20, `свободное падение ${fall} м`);
 });
 
 test("a blast reaches the end of a long board even when its centre is outside", () => {
