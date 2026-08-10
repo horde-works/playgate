@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { TERMS_VERSION } from "../app/legal/consent.ts";
 import {
   NIMBUS_HEXACOPTER_PILOT_SEAT,
+  SKY_TRAIN_DRIVER_SEAT,
   TOWN_HEXACOPTER_PILOT_SEAT,
 } from "../games/make-a-mess/src/game/passengerSeats.ts";
 
@@ -45,6 +46,13 @@ const SCENES = {
   hx6: {
     path: "/games/make-a-mess/combat-hexacopter-range",
     seat: TOWN_HEXACOPTER_PILOT_SEAT,
+  },
+  // Состав неба: место машиниста, а не пилота. Управления винтами оно не даёт
+  // и «manual» не предлагает — проба обязана останавливаться на предложении
+  // сесть, а не требовать штурвала от того, у кого его нет.
+  terminal: {
+    path: "/games/make-a-mess/grand-terminal",
+    seat: SKY_TRAIN_DRIVER_SEAT,
   },
 };
 
@@ -216,6 +224,20 @@ async function main() {
     // телепорт, отданный раньше этого, молча затирается.
     await sleep(6000);
 
+    // РЕЖИМ ПОЛЁТА ОБЯЗАТЕЛЕН. `__mamTeleport` не отключает гравитацию, и без
+    // него человек, поставленный в кабину на высоте, немедленно из неё
+    // выпадает: пост исчезает, и это читается как «предложения нет».
+    // Кресла у самой площадки это прощали, кабина состава — нет.
+    for (const type of ["keyDown", "keyUp"]) {
+      await cdp.send("Input.dispatchKeyEvent", {
+        type,
+        key: "f",
+        code: "KeyF",
+        windowsVirtualKeyCode: 70,
+      });
+    }
+    await sleep(800);
+
     const [x, y, z] = target.seat.interactionPoint;
     console.log(
       `teleporting to ${target.seat.id} @ ${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)}`,
@@ -257,6 +279,19 @@ async function main() {
     // только ОДНО — что пост сменился на «встать», потому что встать
     // предлагают ровно тому, кто уже сидит (`passengerSeatContextAction`), а
     // сесть за управление можно только через `manualPilotLaunch`.
+    // Место без штурвала (машинист состава) доказывает ровно предложение —
+    // требовать от него ручного полёта значило бы придумать способность.
+    if (!target.seat.rotorcraftControls) {
+      const verdict = { seat: target.seat.id, offered: state, seated: null };
+      await writeFile(
+        join(OUT, `${SCENE}.json`),
+        `${JSON.stringify(verdict, null, 2)}\n`,
+      );
+      console.log("\n=== ВЕРДИКТ ===");
+      console.log(JSON.stringify(verdict, null, 2));
+      console.log("\nМЕСТО ПРЕДЛОЖЕНО (штурвала у него нет и не должно быть).");
+      return;
+    }
     if (!state.actions.includes("manual")) {
       throw new Error(
         `пост ${state.id} не предлагает manual: доказывать нечего`,

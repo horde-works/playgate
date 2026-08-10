@@ -258,6 +258,29 @@ export function seatCommandsRotorcraft(
 }
 
 /**
+ * МЕСТО ЭТОЙ МАШИНЫ, какое бы оно ни было.
+ *
+ * Нужна общему контуру взаимодействия: он предлагает сесть тому, у кого есть
+ * куда, и вопрос «есть ли у этой машины место» не должен превращаться в
+ * перечисление машин. Прежде контур спрашивал `id === "sky-train"` и подставлял
+ * кресло машиниста литералом, а всем остальным — кресло управления винтокрылой;
+ * то есть знал поимённо и машину, и то, какие бывают кресла.
+ *
+ * Управляющее это место или пассажирское, решает уже само место
+ * (`rotorcraftControls`), а не тот, кто его нашёл.
+ */
+export function passengerSeatForCluster(
+  clusterId: string | null | undefined,
+): PassengerSeatDefinition | null {
+  if (!clusterId) {
+    return null;
+  }
+  return (
+    passengerSeats.find((seat) => seat.carrierClusterId === clusterId) ?? null
+  );
+}
+
+/**
  * Занятое место управляет ИМЕННО ЭТОЙ машиной?
  *
  * Нужна отдельно от `seatCommandsRotorcraft` там, где вопрос задаётся внутри

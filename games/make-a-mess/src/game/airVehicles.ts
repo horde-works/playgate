@@ -1,4 +1,8 @@
-import type { LampEventState, SceneVector3 } from "./destructionScene.ts";
+import {
+  departureSignalColor,
+  type LampEventState,
+  type SceneVector3,
+} from "./destructionScene.ts";
 import type { EntryInteractionTarget } from "./entryInteraction.ts";
 import {
   TONKAWA_ALLEGIANCE,
@@ -182,6 +186,17 @@ export interface AirVehicleDefinition extends VehicleFrameDefinition {
     readonly heightTolerance: number;
     /** Empty service flights put accidental stowaways back ashore. */
     readonly passengerDropPoint?: SceneVector3;
+    /**
+     * ЦВЕТ СИГНАЛЬНОГО СТЕКЛА, КОТОРЫМ ЭТА МАШИНА СВЕТИТ О СВОЁМ ОТПРАВЛЕНИИ.
+     *
+     * Лампы принадлежат сцене, а вот ЧЬЁ отправление ими показывают — свойство
+     * машины, и объявить это может только она. Прежде рантайм зажигал их по
+     * условию `id === "sky-train"`: то есть общий контур знал, что светит
+     * именно состав, и на второй машине с расписанием пришлось бы дописать
+     * второе имя. Не объявлено — машина не светит ничем, и это норма: причал,
+     * у которого нет сигнального стекла, ничего не теряет.
+     */
+    readonly signalColor?: string;
   };
   readonly passengerFlight?: {
     readonly target: EntryInteractionTarget;
@@ -497,6 +512,8 @@ export const SKY_TRAIN_AIR_VEHICLE: AirVehicleDefinition = {
     releaseRadius: 4.8,
     heightTolerance: 3,
     passengerDropPoint: SKY_TRAIN_PLATFORM_DROP,
+    // Красное сигнальное стекло Терминала — его и зажигает отправление состава.
+    signalColor: departureSignalColor,
   },
   passengerFlight: {
     target: {

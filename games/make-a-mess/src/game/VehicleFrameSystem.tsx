@@ -105,10 +105,9 @@ import {
   type AirVehicleDefinition,
 } from "./airVehicles";
 import {
-  SKY_TRAIN_DRIVER_SEAT,
   passengerSeatContextAction,
+  passengerSeatForCluster,
   passengerSeatIsIntact,
-  rotorcraftControlSeatForCluster,
   seatCommandsCarrier,
   seatCommandsRotorcraft,
 } from "./passengerSeats";
@@ -332,7 +331,6 @@ const UPSET_SETTLE_SECONDS = 0.6;
 /** An escape that gains no route progress for this long is not an escape. */
 const ESCAPE_STALL_SECONDS = 18;
 /** Кто отправляет рейс: пока единственный кадр, у которого есть расписание. */
-const SCHEDULED_FRAME = "sky-train";
 type ScheduledInteraction = "board" | "ride" | "seat" | "stand";
 type PilotControlName =
   "forward" | "backward" | "left" | "right" | "run" | "jump";
@@ -2380,14 +2378,6 @@ export function VehicleFrameSystem({
         pitch?: number,
         roll?: number,
       ) => boolean;
-      __mamShipPose?: (
-        x: number,
-        y: number,
-        z: number,
-        yaw?: number,
-        pitch?: number,
-        roll?: number,
-      ) => boolean;
       __mamVehicleImpulse?: (
         id: string,
         impulseX: number,
@@ -2428,9 +2418,10 @@ export function VehicleFrameSystem({
       frameState(id).pose = { position: [x, y, z], yaw, pitch, roll };
       return true;
     };
+    // `__mamShipPose` снят: он был псевдонимом `__mamVehiclePose` с зашитым
+    // именем состава, читателей в репозитории не имел, а общий хук умеет то
+    // же самое и для любой машины.
     scope.__mamVehiclePose = setPose;
-    scope.__mamShipPose = (x, y, z, yaw, pitch, roll) =>
-      setPose("sky-train", x, y, z, yaw, pitch, roll);
     const applyDiagnosticImpulse = (
       id: string,
       impulseX: number,
@@ -2546,7 +2537,6 @@ export function VehicleFrameSystem({
         window.clearTimeout(departureTimer);
       }
       delete scope.__mamVehiclePose;
-      delete scope.__mamShipPose;
       if (scope.__mamVehicleImpulse === applyDiagnosticImpulse) {
         delete scope.__mamVehicleImpulse;
       }
@@ -2555,7 +2545,6 @@ export function VehicleFrameSystem({
         delete scope.__mamVehicleDepart;
       }
       delete scope.__mamAirCombat;
-      delete document.documentElement.dataset.mamSkyTrain;
       delete document.documentElement.dataset.mamVehicle;
     };
   }, [externalImpulses, frameState, frames]);
@@ -2749,7 +2738,6 @@ export function VehicleFrameSystem({
       const interactionFrame = nearestFrame ?? scheduledFrame;
       const interaction = frameState(interactionFrame.id);
       const departure = interactionFrame.departure;
-      const isTerminal = interactionFrame.id === SCHEDULED_FRAME;
       const registeredLaunchMembers = clusterRegistry.current.get(
         interactionFrame.clusterId,
       )?.attachedMemberIds;
@@ -2807,9 +2795,9 @@ export function VehicleFrameSystem({
       // Место управления ищется ПО МАШИНЕ, а не по имени кресла: у каждой
       // винтокрылой кабина своя, и общий контур обязан находить её так же,
       // как находит саму машину, — по кластеру.
-      const interactionSeat = isTerminal
-        ? SKY_TRAIN_DRIVER_SEAT
-        : rotorcraftControlSeatForCluster(interactionFrame.clusterId);
+      const interactionSeat = passengerSeatForCluster(
+        interactionFrame.clusterId,
+      );
       const seatIntact =
         interactionSeat !== null &&
         passengerSeatIsIntact(interactionSeat, inactivePieces);
@@ -2907,7 +2895,11 @@ export function VehicleFrameSystem({
             eye: [eye[0], eye[1], eye[2]],
           };
         }
-      } else if (isTerminal) {
+      } else if (interactionSeat) {
+        // Место у машины есть — предложить сесть. Условия у предложения свои
+        // (машина на месте, человек внутри её обвода), и решает их само место;
+        // прежде эта ветка спрашивала имя состава и потому молчала у всех
+        // остальных машин с креслом.
         post = seatAction;
       }
       const departureTarget =
@@ -3148,9 +3140,12 @@ export function VehicleFrameSystem({
         scheduledEventState,
         scheduled.flight?.time ?? 0,
       );
-      if (isTerminal && glow !== departureGlow.current) {
+      // Каким стеклом светит отправление, объявляет ПАСПОРТ машины: лампы
+      // принадлежат сцене, а чьё отправление они показывают — её свойство.
+      const signalColor = scheduledFrame.departure?.signalColor;
+      if (signalColor && glow !== departureGlow.current) {
         departureGlow.current = glow;
-        setSignalGlassGlow(departureSignalColor, glow);
+        setSignalGlassGlow(signalColor, glow);
       }
       if (vehicleDiagnostics) {
         const now = performance.now();
@@ -3223,10 +3218,6 @@ export function VehicleFrameSystem({
           };
           document.documentElement.dataset.mamVehicle =
             JSON.stringify(diagnostic);
-          if (isTerminal) {
-            document.documentElement.dataset.mamSkyTrain =
-              JSON.stringify(diagnostic);
-          }
         }
       }
     }
