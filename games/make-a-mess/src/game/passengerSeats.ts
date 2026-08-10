@@ -55,6 +55,23 @@ export interface PassengerSeatDefinition {
   readonly requiredPieceIds: readonly string[];
   readonly approachRadius: number;
   readonly releaseRadius: number;
+  /**
+   * С ЭТОГО МЕСТА ВИНТОКРЫЛОЙ МАШИНОЙ УПРАВЛЯЮТ РУКАМИ.
+   *
+   * Признак принадлежит МЕСТУ, а не карте и не рантайму: сидение в кабине —
+   * это свойство кабины. Заведён потому, что общий покадровый контур
+   * спрашивал вместо него ИМЯ одного конкретного кресла
+   * (`TOWN_HEXACOPTER_PILOT_SEAT_ID`), и коптер Нимба, у которого кабина
+   * такая же, а идентификатор свой, ручного управления не получал вовсе —
+   * при том, что его собственный паспорт предлагает `manual` и на вылет, и
+   * на поездку. Машина обещала то, чего не давала, и заметить это было
+   * нечем: геометрия кресла проверена тестом, а проводка — нет.
+   *
+   * Узко по смыслу и намеренно: это НЕ «кресло водителя вообще». Место
+   * машиниста состава и место водителя ситроена тоже управляющие, но их
+   * ведут другие системы, и общий признак свёл бы их в один контур.
+   */
+  readonly rotorcraftControls?: boolean;
 }
 
 export interface PassengerSeatCarrierPose {
@@ -150,9 +167,12 @@ export const TOWN_HEXACOPTER_PILOT_SEAT: PassengerSeatDefinition = {
   ],
   approachRadius: 1.2,
   releaseRadius: 1.6,
+  rotorcraftControls: true,
 };
 
 export const NIMBUS_HEXACOPTER_PILOT_SEAT: PassengerSeatDefinition = {
+  // Признак управления приезжает сюда РАССЫПЬЮ вместе с остальной кабиной, и
+  // это правильно: кабина у Нимба та же самая, отличаются машина и место.
   ...TOWN_HEXACOPTER_PILOT_SEAT,
   id: NIMBUS_HEXACOPTER_PILOT_SEAT_ID,
   carrierClusterId: NIMBUS_HEXACOPTER_CLUSTER_ID,
@@ -221,6 +241,62 @@ const seatsById = new Map(passengerSeats.map((seat) => [seat.id, seat] as const)
 
 export function passengerSeatForId(id: string | null | undefined): PassengerSeatDefinition | null {
   return id ? seatsById.get(id) ?? null : null;
+}
+
+/**
+ * Занятое место даёт ручное управление винтокрылой машиной?
+ *
+ * Отдельная функция нужна затем же, зачем `allegianceOf`: чтобы «это кресло
+ * пилота» читалось ОДИНАКОВО у всех потребителей и не превращалось в
+ * сравнение с именем конкретного кресла в каждом месте вызова. Именно такое
+ * сравнение и стоило Нимбу ручного управления.
+ */
+export function seatCommandsRotorcraft(
+  id: string | null | undefined,
+): boolean {
+  return passengerSeatForId(id)?.rotorcraftControls === true;
+}
+
+/**
+ * Занятое место управляет ИМЕННО ЭТОЙ машиной?
+ *
+ * Нужна отдельно от `seatCommandsRotorcraft` там, где вопрос задаётся внутри
+ * покадрового цикла по всем машинам: «человек сидит в каком-нибудь пилотском
+ * кресле» и «человек сидит в кресле ВОТ ЭТОЙ машины» — разные вопросы, и пока
+ * кресло управления было одно на весь проект, разницы между ними не было
+ * видно. Как только их стало два, первый вопрос стал слабее нужного.
+ */
+export function seatCommandsCarrier(
+  seatId: string | null | undefined,
+  clusterId: string | null | undefined,
+): boolean {
+  const seat = passengerSeatForId(seatId);
+  return (
+    seat?.rotorcraftControls === true &&
+    !!clusterId &&
+    seat.carrierClusterId === clusterId
+  );
+}
+
+/**
+ * Место управления ЭТОЙ машины, если оно у неё есть.
+ *
+ * Ищется по машине, а не по имени места: у каждой винтокрылой кабина своя, и
+ * общий контур обязан находить её так же, как находит саму машину, — по
+ * кластеру.
+ */
+export function rotorcraftControlSeatForCluster(
+  clusterId: string | null | undefined,
+): PassengerSeatDefinition | null {
+  if (!clusterId) {
+    return null;
+  }
+  return (
+    passengerSeats.find(
+      (seat) =>
+        seat.rotorcraftControls === true && seat.carrierClusterId === clusterId,
+    ) ?? null
+  );
 }
 
 export function passengerSeatIsIntact(

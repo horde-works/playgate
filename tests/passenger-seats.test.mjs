@@ -227,3 +227,83 @@ test("место пилота и выход остаются при машине
     );
   }
 });
+
+/**
+ * МАШИНА, ОБЕЩАВШАЯ РУЧНОЕ УПРАВЛЕНИЕ, ОБЯЗАНА ЕГО ДАВАТЬ.
+ *
+ * Дефект, ради которого написан тест: общий покадровый контур спрашивал ИМЯ
+ * одного конкретного кресла, поэтому ручное управление получал только коптер
+ * города. У коптера Нимба кабина та же, идентификатор свой, а паспорт
+ * предлагает `manual` и на вылет, и на поездку — то есть машина обещала то,
+ * чего не давала, и заметить это было нечем: геометрию кресла тест проверял,
+ * а способность — никто.
+ *
+ * Проверка идёт от ПАСПОРТА к креслу, а не наоборот: список машин, которым
+ * ручное управление обещано, собирается из их собственных действий вылета.
+ */
+test("у каждой машины, предлагающей manual, есть кресло с управлением", async () => {
+  const { airVehicles } = await import(
+    "../games/make-a-mess/src/game/airVehicles.ts"
+  );
+  const { rotorcraftControlSeatForCluster, seatCommandsRotorcraft } =
+    await import("../games/make-a-mess/src/game/passengerSeats.ts");
+
+  const promisesManual = (vehicle) =>
+    (vehicle.departure?.target?.actions ?? []).some(
+      (action) => action.id === "manual",
+    ) ||
+    (vehicle.passengerFlight?.target?.actions ?? []).some(
+      (action) => action.id === "manual",
+    );
+
+  const promised = airVehicles.filter(promisesManual);
+  assert.ok(promised.length >= 2, "тест потерял машины с ручным управлением");
+  for (const vehicle of promised) {
+    const seat = rotorcraftControlSeatForCluster(vehicle.clusterId);
+    assert.ok(
+      seat,
+      `${vehicle.id}: паспорт предлагает manual, а кресла управления нет`,
+    );
+    assert.equal(
+      seatCommandsRotorcraft(seat.id),
+      true,
+      `${seat.id}: кресло найдено, но управление не объявлено`,
+    );
+  }
+});
+
+test("место управления ищется по машине и не путает соседние", async () => {
+  const {
+    rotorcraftControlSeatForCluster,
+    seatCommandsRotorcraft,
+    TOWN_HEXACOPTER_PILOT_SEAT,
+    NIMBUS_HEXACOPTER_PILOT_SEAT,
+    SKY_TRAIN_DRIVER_SEAT,
+    TOWN_DS_DRIVER_SEAT,
+  } = await import("../games/make-a-mess/src/game/passengerSeats.ts");
+
+  assert.equal(
+    rotorcraftControlSeatForCluster(TOWN_HEXACOPTER_PILOT_SEAT.carrierClusterId)
+      ?.id,
+    TOWN_HEXACOPTER_PILOT_SEAT.id,
+  );
+  assert.equal(
+    rotorcraftControlSeatForCluster(
+      NIMBUS_HEXACOPTER_PILOT_SEAT.carrierClusterId,
+    )?.id,
+    NIMBUS_HEXACOPTER_PILOT_SEAT.id,
+  );
+  // Машинист состава и водитель ситроена — тоже места управления, но их ведут
+  // ДРУГИЕ системы. Общий признак свёл бы их в один контур, поэтому признак
+  // узкий и здесь обязан молчать.
+  assert.equal(seatCommandsRotorcraft(SKY_TRAIN_DRIVER_SEAT.id), false);
+  assert.equal(seatCommandsRotorcraft(TOWN_DS_DRIVER_SEAT.id), false);
+  assert.equal(
+    rotorcraftControlSeatForCluster(SKY_TRAIN_DRIVER_SEAT.carrierClusterId),
+    null,
+  );
+  // Незанятое место и мусор не должны давать управление.
+  assert.equal(seatCommandsRotorcraft(null), false);
+  assert.equal(seatCommandsRotorcraft("no-such-seat"), false);
+  assert.equal(rotorcraftControlSeatForCluster(null), null);
+});

@@ -106,10 +106,11 @@ import {
 } from "./airVehicles";
 import {
   SKY_TRAIN_DRIVER_SEAT,
-  TOWN_HEXACOPTER_PILOT_SEAT,
-  TOWN_HEXACOPTER_PILOT_SEAT_ID,
   passengerSeatContextAction,
   passengerSeatIsIntact,
+  rotorcraftControlSeatForCluster,
+  seatCommandsCarrier,
+  seatCommandsRotorcraft,
 } from "./passengerSeats";
 import { CompoundKinematicClusterBodies } from "./CompoundKinematicClusterBodies";
 import {
@@ -2022,7 +2023,7 @@ export function VehicleFrameSystem({
   }, [remnants]);
 
   useEffect(() => {
-    if (occupiedSeatId === TOWN_HEXACOPTER_PILOT_SEAT_ID) {
+    if (seatCommandsRotorcraft(occupiedSeatId)) {
       return;
     }
     pilotStatusPublished.current = null;
@@ -2033,7 +2034,7 @@ export function VehicleFrameSystem({
 
   useEffect(() => {
     pilotCommands.current = createRotorcraftPilotCommandBuffer();
-    if (occupiedSeatId !== TOWN_HEXACOPTER_PILOT_SEAT_ID) {
+    if (!seatCommandsRotorcraft(occupiedSeatId)) {
       return undefined;
     }
     const handleWheel = (event: WheelEvent) => {
@@ -2260,6 +2261,11 @@ export function VehicleFrameSystem({
           flight: flight
             ? {
                 kind: flight.kind,
+                // ЗА ШТУРВАЛОМ ЧЕЛОВЕК. Снаружи это не видно ничем другим:
+                // вид рейса у ручного полёта тот же, что у автоматического
+                // (`dispatchedFlightKind` намеренно не заводит вид `manual`),
+                // а разница ровно здесь.
+                pilot: flight.pilot !== null,
                 time: flight.time,
                 castOff: flight.castOff,
                 progress: flight.progress,
@@ -2477,7 +2483,12 @@ export function VehicleFrameSystem({
      */
     scope.__mamAirCombat = () =>
       frames
-        .map((frame) => ({ frame, combat: frameState(frame.id).combat }))
+        // ТОЛЬКО ЧТЕНИЕ: `frameState` создаёт состояние при промахе, и
+        // диагностика, которая пишет, — уже не диагностика.
+        .map((frame) => ({
+          frame,
+          combat: states.current.get(frame.id)?.combat ?? null,
+        }))
         .filter(({ combat }) => combat !== null)
         .map(({ frame, combat }) => ({
           id: frame.id,
@@ -2793,12 +2804,12 @@ export function VehicleFrameSystem({
         interaction.pose,
         interactionFrame.nose,
       );
+      // Место управления ищется ПО МАШИНЕ, а не по имени кресла: у каждой
+      // винтокрылой кабина своя, и общий контур обязан находить её так же,
+      // как находит саму машину, — по кластеру.
       const interactionSeat = isTerminal
         ? SKY_TRAIN_DRIVER_SEAT
-        : interactionFrame.clusterId ===
-            TOWN_HEXACOPTER_PILOT_SEAT.carrierClusterId
-          ? TOWN_HEXACOPTER_PILOT_SEAT
-          : null;
+        : rotorcraftControlSeatForCluster(interactionFrame.clusterId);
       const seatIntact =
         interactionSeat !== null &&
         passengerSeatIsIntact(interactionSeat, inactivePieces);
@@ -2809,13 +2820,17 @@ export function VehicleFrameSystem({
             eyeInShip[2] - interactionSeat.interactionPoint[2],
           )
         : Number.POSITIVE_INFINITY;
-      const hexacopterPilotMayStand =
-        interactionSeat?.id !== TOWN_HEXACOPTER_PILOT_SEAT_ID ||
-        (occupiedSeatId === TOWN_HEXACOPTER_PILOT_SEAT_ID &&
+      // Встать можно, если это не место управления вовсе, либо человек
+      // сидит ИМЕННО В ЭТОМ месте и машина не в воздухе. Второе условие про
+      // это же кресло, а не про любое пилотское: пока кресло управления было
+      // одно на проект, разницы между этими вопросами не существовало.
+      const pilotMayStand =
+        interactionSeat?.rotorcraftControls !== true ||
+        (occupiedSeatId === interactionSeat.id &&
           interaction.flight === null);
       const seatAction =
         interactionSeat &&
-        hexacopterPilotMayStand &&
+        pilotMayStand &&
         (passengerLaunchAllowed || occupiedSeatId === interactionSeat.id)
           ? passengerSeatContextAction({
               seat: interactionSeat,
@@ -2939,7 +2954,7 @@ export function VehicleFrameSystem({
             // пилота где угодно, хоть на крыше.
             const manualPilotLaunch =
               requestedAction === "manual" &&
-              interactionSeat?.id === TOWN_HEXACOPTER_PILOT_SEAT_ID &&
+              interactionSeat?.rotorcraftControls === true &&
               passengerLaunchAllowed &&
               seatIntact;
             interaction.flight = createFlightState(
@@ -2961,7 +2976,7 @@ export function VehicleFrameSystem({
                 : null,
             );
             if (manualPilotLaunch) {
-              onOccupiedSeatChange(TOWN_HEXACOPTER_PILOT_SEAT_ID);
+              onOccupiedSeatChange(interactionSeat.id);
             }
           } else if (
             post === "seat" &&
@@ -4197,7 +4212,7 @@ export function VehicleFrameSystem({
       }
       const flight = state.flight;
       const pilotControlsNow =
-        flight?.pilot && occupiedSeatId === TOWN_HEXACOPTER_PILOT_SEAT_ID
+        flight?.pilot && seatCommandsCarrier(occupiedSeatId, frame.clusterId)
           ? getPilotControls()
           : {
               forward: false,
@@ -4208,7 +4223,7 @@ export function VehicleFrameSystem({
               jump: false,
             };
       const commands =
-        flight?.pilot && occupiedSeatId === TOWN_HEXACOPTER_PILOT_SEAT_ID
+        flight?.pilot && seatCommandsCarrier(occupiedSeatId, frame.clusterId)
           ? consumeRotorcraftPilotCommands(pilotCommands.current)
           : null;
       const pilotManualOverride = Boolean(
@@ -6415,9 +6430,11 @@ export function VehicleFrameSystem({
       //
       // Условий работы три, и все объявлены ПАСПОРТОМ, а не именем машины:
       // у неё есть вооружение, паспорт объявил пост для этой задачи, и она в
-      // воздухе. Прежде здесь стояло `kind === "sky-control"` и три константы
-      // полигона, приехавшие импортом из файла маршрутов, — то есть движок
-      // знал имя машины и разметку конкретной карты.
+      // воздухе. Прежде здесь стояло сравнение рейса с ИМЕНЕМ боевой задачи и
+      // три константы полигона, приехавшие импортом из файла маршрутов, — то
+      // есть движок знал имя машины и разметку конкретной карты. Имя задачи
+      // сюда не возвращать даже в комментарии: сторож изоляции проверяет
+      // литерал, и оправдаться «это же комментарий» не выйдет.
       // ---------------------------------------------------------------
       const combatStation = flight
         ? (frame.flight.combatStation?.(flight.kind, berth) ?? null)
@@ -7303,7 +7320,7 @@ export function VehicleFrameSystem({
 
     if (
       onRotorcraftPilotStatusChange &&
-      occupiedSeatId === TOWN_HEXACOPTER_PILOT_SEAT_ID
+      seatCommandsRotorcraft(occupiedSeatId)
     ) {
       const pilotRuntime = frames
         .map((frame) => ({ frame, state: frameState(frame.id) }))
