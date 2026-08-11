@@ -4078,9 +4078,40 @@ export function VehicleFrameSystem({
       // каждый кадр падения.
       const belowWorld =
         centreNow[1] <= (recoveryServiceArea?.disappearY ?? -12);
-      if (belowWorld && !state.fellOutOfWorld) {
+      if (belowWorld && !state.fellOutOfWorld && !state.recovery) {
         state.fellOutOfWorld = true;
-        onVehicleRebuildRequest?.(frame.clusterId);
+        // ЧЕРЕЗ АВАРИЙНЫЙ ЦИКЛ, А НЕ МИМО НЕГО.
+        //
+        // Первая редакция звала пересборку напрямую, и это ломало прибытие:
+        // куски восстанавливались на берте, а РЕЙС оставался прежним — машина
+        // возникала на посадочном месте и продолжала лететь свой круг с той
+        // доли, где упала. Снаружи это читалось как «появился и взлетел без
+        // приземления, а потом улетел за остров без повода» (наблюдение Igor).
+        //
+        // Цикл умеет это сам: ожидание, пересборка, и только потом ПРИБЫТИЕ —
+        // с переносом в начало трассы прибытия и честным подлётом к берту.
+        // Провалившаяся машина входит в него на фазе ожидания: спускаться ниже
+        // ей уже некуда, она там.
+        state.recovery = {
+          lifecycle: {
+            reason: "unsafeAltitude",
+            disposition: "descendBelowFog",
+            phase: "waiting",
+            phaseSeconds: 0,
+          },
+          progress: 0,
+          escapePlan: null,
+          arrivalInitialized: false,
+          escapeStallSeconds: 0,
+          escapeBestProgress: 0,
+          landingStability: createVehicleLandingStability(
+            state.body.position,
+            state.body.orientation,
+          ),
+          groundContactSeconds: 0,
+          groundContactLatched: false,
+          groundLiftAutomation: createVehicleGroundLiftAutomation(),
+        };
       } else if (!belowWorld && state.fellOutOfWorld) {
         state.fellOutOfWorld = false;
       }

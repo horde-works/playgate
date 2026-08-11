@@ -85,8 +85,16 @@ export interface SightedState {
   readonly mass: { readonly centre: SceneVector3 } | null;
   /** Полётное состояние: `null` — не в воздухе. */
   readonly flight: object | null;
-  /** Аварийное состояние: не `null` — борт уже отказал. */
-  readonly recovery: object | null;
+  /**
+   * Аварийное состояние. Отказавший борт из боя выпадает — но НЕ ВЕСЬ ЦИКЛ.
+   *
+   * Фаза `arrival` — это машина, которая уже летит к своему берту своим ходом:
+   * она жива, видна и по всем правилам является целью. Прежде сюда смотрели
+   * одним вопросом «есть ли авария», и прибывающая машина была для охотника
+   * невидимкой — он спокойно давал ей сесть и снова взлететь (наблюдение
+   * Igor, 11.08.2026).
+   */
+  readonly recovery: { readonly lifecycle: { readonly phase: string } } | null;
   readonly supportContacts: number;
 }
 
@@ -191,7 +199,11 @@ export function airCombatTracks(
       }),
       // Севшая цель не цель, отказавшая — тем более.
       landed: state.flight === null && state.supportContacts > 0,
-      failed: state.recovery !== null,
+      // Отказ — это всё, кроме подлёта к своему берту: подлетающий жив и
+      // является целью.
+      failed:
+        state.recovery !== null &&
+        state.recovery.lifecycle.phase !== "arrival",
     });
   }
   return tracks;

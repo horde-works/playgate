@@ -257,10 +257,25 @@ test("севшей цель считается только стоящей на 
 
 test("отказ виден отдельно от посадки", () => {
   const frames = [frameOf()];
-  const states = new Map([["target", stateOf({ recovery: {} })]]);
+  const states = new Map([
+    ["target", stateOf({ recovery: { lifecycle: { phase: "descent" } } })],
+  ]);
   const [track] = airCombatTracks("self", frames, worldOf(states));
   assert.equal(track.failed, true);
   assert.equal(track.landed, false);
+});
+
+test("ПРИБЫВАЮЩАЯ МАШИНА — ЦЕЛЬ, а не невидимка", () => {
+  // Фаза `arrival` это машина, которая уже летит к своему берту своим ходом:
+  // жива, видна и по всем правилам является целью. Прежде зрение спрашивало
+  // одним вопросом «есть ли авария», и охотник спокойно давал ей сесть и
+  // снова взлететь.
+  const frames = [frameOf()];
+  const states = new Map([
+    ["target", stateOf({ recovery: { lifecycle: { phase: "arrival" } } })],
+  ]);
+  const [track] = airCombatTracks("self", frames, worldOf(states));
+  assert.equal(track.failed, false, "прибывающая машина снова невидима для боя");
 });
 
 test("радиус берётся по горизонтали и никогда по высоте", () => {
