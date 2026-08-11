@@ -1040,3 +1040,50 @@ test("пушке вынос не нужен: срез спарки и так в�
   const expected = muzzle[2] - pose.massCentre[2] + pose.centre[2];
   assert.ok(Math.abs(resolved.origin[2] - expected) < 1e-6);
 });
+
+/**
+ * ПОСТ НЕЛЬЗЯ ПОКИНУТЬ, НЕ ЗАНЯВ ЕГО.
+ *
+ * Симптом: чужой борт уже в небе, и машина уходит на перехват прямо с
+ * площадки — автомат берёт её на первом кадре после отрыва, ведёт к цели по
+ * прямой и цепляет землю. Сторож отказов снимает её по «есть поверхность».
+ *
+ * Лечится порядком, а не обходом земли: у машины уже есть трасса на пост, и
+ * она поднимает её на высоту поста. Пока высота не набрана, машина
+ * принадлежит трассе.
+ */
+test("с площадки автомат не уходит на перехват, даже если цель в небе", () => {
+  const target = trackAt([40, 30, 0], [0, 0, 8]);
+
+  // Машина только оторвалась: высота над постом почти нулевая.
+  const justOff = stepAirCombat({
+    own: ownAt([0, station.centre[1] + 0.4, 0]),
+    station,
+    armament,
+    limits,
+    tracks: [target],
+    deltaSeconds: 1 / 60,
+    state: createAirCombatState(armament.rockets.mounts.length),
+  });
+  assert.equal(
+    justOff.state.mode,
+    "station",
+    "машина ушла в бой с палубы: именно так она и цепляла землю",
+  );
+
+  // Набрала рабочую высоту — теперь бой законен.
+  const climbed = stepAirCombat({
+    own: ownAt([0, station.centre[1] + station.altitude, 0]),
+    station,
+    armament,
+    limits,
+    tracks: [target],
+    deltaSeconds: 1 / 60,
+    state: createAirCombatState(armament.rockets.mounts.length),
+  });
+  assert.notEqual(
+    climbed.state.mode,
+    "station",
+    "на своей высоте машина обязана принимать бой",
+  );
+});

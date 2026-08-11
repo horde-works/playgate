@@ -111,6 +111,32 @@ export const ACTOR_SAFETY_FLOOR = interactionGroups(
   GROUP_ACTOR,
 );
 
+/**
+ * ЛЕТЯЩИЙ СНАРЯД. Отличие от `ACTOR_NORMAL` ровно одно и намеренное: снята
+ * ГРАНИЦА МИРА.
+ *
+ * Кольцо-ограничитель и пол безопасности — мебель для ПЕШЕХОДА: одно держит
+ * его на острове, другой ловит при падении. Обе невидимы, и обе стояли в
+ * фильтре снаряда, потому что снаряд был объявлен «как актёр».
+ *
+ * Цена замерена глазами Igor: ракеты взрывались в воздухе, сильно не долетая
+ * до цели, и небо читалось как барьер с обеих сторон. Так и было — кольцо
+ * стоит на радиусе 55, а машины полигона уходят на 144, то есть боевая пара
+ * летает СНАРУЖИ ограничителя и стреляет сквозь него. Плита пола на −2
+ * ловила то, что летело вниз мимо острова.
+ *
+ * Членство остаётся `GROUP_ACTOR`: кого снаряд задевает сам, эта правка не
+ * меняет — только то, обо что он разбивается.
+ */
+export const PROJECTILE_FLIGHT = interactionGroups(
+  GROUP_ACTOR,
+  GROUP_WORLD |
+    GROUP_DEBRIS |
+    GROUP_ACTOR_DETAIL |
+    GROUP_VEHICLE |
+    GROUP_VEHICLE_ATTACHMENT,
+);
+
 /** Query mask for physical vehicle contacts with structures and debris. */
 export const VEHICLE_CONTACT_QUERY = interactionGroups(
   GROUP_VEHICLE_QUERY,

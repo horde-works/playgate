@@ -317,6 +317,7 @@ import {
   ACTOR_SAFETY_FLOOR,
   ACTOR_ABOARD,
   ACTOR_NORMAL,
+  PROJECTILE_FLIGHT,
   DEBRIS_ACTOR_DETAIL,
   DEBRIS_INSIDE_CARRIER,
   DEBRIS_LEAVING_CARRIER,
@@ -3345,7 +3346,9 @@ function Grenade({
         linearDamping={0.04}
         angularDamping={profile.projectile.angularDamping}
         ccd
-        collisionGroups={ACTOR_NORMAL}
+        // Снаряд — НЕ пешеход: кольцо-ограничитель и пол безопасности стоят
+        // для человека, и биться о них снаряду незачем (см. группу).
+        collisionGroups={PROJECTILE_FLIGHT}
         onCollisionEnter={() => {
           // Здесь только отметка и чтение позы: подрыв идёт следующим
           // проходом кадра, вне колбэка физического мира.
@@ -13619,7 +13622,17 @@ export function MakeAMessGame({
         <ModeChips flightMode={flightMode} weapon={equippedWeapon} />
       ) : null}
 
+      {/* ТЕХНИЧЕСКИЙ РАЗБОР ОТКАЗА СНЯТ С ЭКРАНА (вердикт Igor, 11.08.2026).
+          Он выходил ДВУМЯ оверлеями разом: этим, самостоятельным, и вторым —
+          вшитым в телеметрию (ниже по файлу). Оба показывали один и тот же
+          `failureReport` по одному и тому же условию.
+
+          Блок закомментирован, а не удалён, намеренно: разбор нужен при
+          отладке отказов, и восстанавливать его по памяти дороже, чем снять
+          комментарий. Вернуть — ОДИН из двух, а не оба.
+
       {failureReport ? <VehicleFailureReport report={failureReport} /> : null}
+      */}
 
       {surfaces.worldHud && active && rotorcraftPilotStatus ? (
         <RotorcraftPilotHud
@@ -13707,10 +13720,16 @@ export function MakeAMessGame({
       ) : null}
 
       {/* Разбор отказа живёт и в телеметрии: она вызывается по требованию и
-          не гаснет сама, поэтому кадр успевает снять даже длинный список. */}
+          не гаснет сама, поэтому кадр успевает снять даже длинный список.
+
+          СНЯТ С ЭКРАНА вместе с самостоятельным оверлеем (см. выше): показывать
+          один и тот же разбор дважды незачем, а какой из двух вернуть — вопрос
+          к тому, кто будет отлаживать отказ. Этот удобнее: не гаснет по таймеру.
+
       {telemetryVisible && failureReport ? (
         <VehicleFailureReport report={failureReport} embedded />
       ) : null}
+      */}
 
       {active && surfaces.worldHud && inspectedVillager ? (
         <aside

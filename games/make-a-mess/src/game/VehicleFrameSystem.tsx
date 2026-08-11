@@ -963,6 +963,12 @@ interface FrameState {
    * синфазная тяга закрыта; крохотный пробный импульс на первом кадре рейса
    * выучивает правду за 1/60 секунды.
    */
+  /**
+   * Машина уже провалилась ниже мира и пересборка запрошена. Защёлка живёт
+   * между кадрами: пересборка проходит через состояние React, и до следующего
+   * кадра машина всё ещё под миром.
+   */
+  fellOutOfWorld: boolean;
   yawThrustersProven: boolean;
   /** Срезка ограничителя по фактическому заносу: живёт между кадрами. */
   governor: RotorcraftGovernorState;
@@ -1478,6 +1484,7 @@ function restingState(engineCount: number, yawThrusterCount = 0): FrameState {
     rotorMotorOutput: Array.from({ length: engineCount }, () => 0),
     yawThrusterOutput: Array.from({ length: yawThrusterCount }, () => 0),
     yawThrusterHealth: Array.from({ length: yawThrusterCount }, () => 1),
+    fellOutOfWorld: false,
     yawThrustersProven: false,
     governor: NEUTRAL_GOVERNOR,
     activePlan: null,
@@ -3979,6 +3986,29 @@ export function VehicleFrameSystem({
         mass.centre[1] + state.body.position[1],
         mass.centre[2] + state.body.position[2],
       ];
+
+      // УПАЛА НИЖЕ МИРА — ПЕРЕСОБРАТЬ НА СВОЁМ МЕСТЕ.
+      //
+      // Глубина исчезновения до машин доходила, но спрашивалась ТОЛЬКО внутри
+      // аварийного цикла и только в фазе снижения. Сбитая машина, которая
+      // просто падает и в этот цикл не вошла, не удалялась никогда: она уходила
+      // под мир и продолжала считаться там вечно, вместе со всеми своими
+      // кусками. Обломки такой предел имеют давно.
+      //
+      // Пересборка, а не удаление, — вердикт Igor: полигон должен оставаться
+      // рабочим, а не пустеть после первого же падения.
+      //
+      // Защёлка обязательна: пересборка проходит через состояние React, и до
+      // следующего кадра машина всё ещё под миром. Без неё запрос уходил бы
+      // каждый кадр падения.
+      const belowWorld =
+        centreNow[1] <= (recoveryServiceArea?.disappearY ?? -12);
+      if (belowWorld && !state.fellOutOfWorld) {
+        state.fellOutOfWorld = true;
+        onVehicleRebuildRequest?.(frame.clusterId);
+      } else if (!belowWorld && state.fellOutOfWorld) {
+        state.fellOutOfWorld = false;
+      }
 
       if (state.recovery) {
         const previousPhase = state.recovery.lifecycle.phase;
