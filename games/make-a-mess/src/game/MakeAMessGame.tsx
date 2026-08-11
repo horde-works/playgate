@@ -11440,6 +11440,7 @@ const vehicleFailureAnnouncementKeys = {
   goAroundLimit: "announce.vehicleFailure.goAroundLimit",
   correctionLimit: "announce.vehicleFailure.correctionLimit",
   trimExhausted: "announce.vehicleFailure.trimExhausted",
+  entangled: "announce.vehicleFailure.entangled",
   dockingTimeout: "announce.vehicleFailure.dockingTimeout",
 } as const satisfies Readonly<Record<VehicleFailureReason, TranslationKey>>;
 

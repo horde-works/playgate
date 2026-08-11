@@ -1541,6 +1541,19 @@ export interface ShipLimits {
   readonly enginePoints: readonly SceneVector3[];
   /** Relative maximum lift of each rotor; omitted means equal motors. */
   readonly rotorCapacityWeights?: readonly number[];
+  /**
+   * ДОЛЯ ТЯГИ ПОДЪЁМНЫХ ДВИГАТЕЛЕЙ В РЕВЕРСЕ, 0…1. Нет поля — машина толкает
+   * только в одну сторону, как было.
+   *
+   * Вердикт Igor (12.08.2026): у всевекторной машины отсутствие реверса —
+   * недосмотр. Без него ускорение вниз ровно одно, тяжесть, а перевёрнутая
+   * машина вжимается в грунт вместо того, чтобы встать.
+   *
+   * Доля меньше единицы: канал рассчитан на один поток, назад вентилятор
+   * работает хуже. Цена перехода моделью уже учтена — реверсивная раскрутка
+   * проживает ноль целиком.
+   */
+  readonly rotorReverseShare?: number;
   /** Reaction-torque sign of each rotor; omitted keeps legacy alternation. */
   readonly rotorSpinDirections?: readonly (-1 | 1)[];
   /**

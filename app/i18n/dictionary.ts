@@ -134,6 +134,8 @@ export const ui = {
       "The vehicle can no longer hold its route.",
     "announce.vehicleFailure.trimExhausted":
       "The trim weights are at their stops and the hull still hangs over.",
+    "announce.vehicleFailure.entangled":
+      "The vehicle is caught on another body and cannot work itself free.",
     "announce.vehicleFailure.dockingTimeout":
       "The vehicle did not settle at the berth in time.",
     "chip.flight": "Flight mode",
@@ -610,6 +612,8 @@ export const ui = {
       "El vehículo ya no puede mantener su ruta.",
     "announce.vehicleFailure.trimExhausted":
       "Los lastres móviles llegaron al tope y el casco sigue inclinado.",
+    "announce.vehicleFailure.entangled":
+      "El vehículo quedó enganchado en otro cuerpo y no logra soltarse.",
     "announce.vehicleFailure.dockingTimeout":
       "El vehículo no se estabilizó a tiempo en el andén.",
     "chip.flight": "Modo vuelo",
@@ -1092,6 +1096,8 @@ export const ui = {
       "Корабль больше не удерживает маршрут.",
     "announce.vehicleFailure.trimExhausted":
       "Грузы дифферентовки на упоре, корпус остался с креном.",
+    "announce.vehicleFailure.entangled":
+      "Машина зацепилась за чужое тело и не смогла высвободиться.",
     "announce.vehicleFailure.dockingTimeout":
       "Корабль не успел стабилизироваться у причала.",
     "chip.flight": "Режим полёта",

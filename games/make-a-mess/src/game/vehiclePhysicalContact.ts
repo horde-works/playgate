@@ -81,7 +81,44 @@ export function createActivePhysicalContactRegistry(): ActivePhysicalContactRegi
 }
 
 /**
- * Count supports by refreshing only manifolds which are currently active.
+ * ЧТО ВНЕШНИЙ МИР ДЕЛАЕТ С МАШИНОЙ ПРЯМО СЕЙЧАС — одним снимком.
+ *
+ * Раньше из контактов извлекали ровно одно число: сколько манифестов держат
+ * машину снизу. Этого хватает, чтобы понять «села», и не хватает ни для чего
+ * другого. Между тем в тех же манифестах лежит ответ на вопрос, который
+ * дороже: КУДА МИР ТОЛКАЕТ. Машина, зацепившаяся за обломок, отличается от
+ * стоящей на грунте не количеством контактов, а направлением их нормалей — и
+ * выход из зацепа считается по ним же.
+ *
+ * Поэтому примитив здесь один и он полный; счётчик опор ниже — его частный
+ * случай. Два обхода одних и тех же манифестов с двумя копиями правила о
+ * знаке нормали были бы вторым шансом ошибиться этим знаком.
+ */
+export interface ExternalContactSummary {
+  /** Сколько чужих тел сейчас касаются машины. */
+  readonly count: number;
+  /**
+   * Сколько из них ПОДПИРАЮТ её снизу. Это и есть прежний счётчик опор:
+   * нормаль, направленная к телу, смотрит вверх круче 0.35.
+   */
+  readonly support: number;
+  /**
+   * Куда мир толкает машину — сумма нормалей, приведённых к направлению «в
+   * тело», нормированная. Нулевой вектор означает уравновешенный зажим: мир
+   * давит со всех сторон разом, и одного направления выхода у него нет.
+   */
+  readonly push: readonly [number, number, number];
+}
+
+/** Ничего не касается. Общий неизменяемый ноль, чтобы не плодить объекты. */
+export const NO_EXTERNAL_CONTACTS: ExternalContactSummary = {
+  count: 0,
+  support: 0,
+  push: [0, 0, 0],
+};
+
+/**
+ * Summarise only manifolds which are currently active.
  *
  * `isSelfDebris` excludes the carrier's OWN freshly detached parts. A piece
  * that just broke off materialises inside the hull and leans on it; counted as
@@ -89,14 +126,18 @@ export function createActivePhysicalContactRegistry(): ActivePhysicalContactRegi
  * was enough to end a healthy flight. Membership ends where the fragment
  * leaves the hull envelope: from there it is an ordinary obstacle again.
  */
-export function countActiveUpwardSupportContacts(
+export function summariseExternalContacts(
   narrowPhase: NarrowPhaseLike,
   body: ContactBodyLike,
   contacts: Pick<ActivePhysicalContactRegistry, "forEach">,
   isSelfDebris?: (otherCollider: number) => boolean,
-): number {
+): ExternalContactSummary {
   const bodyCentre = body.worldCom();
-  let supportCount = 0;
+  let count = 0;
+  let support = 0;
+  let pushX = 0;
+  let pushY = 0;
+  let pushZ = 0;
   contacts.forEach((ownCollider, otherCollider) => {
     if (isSelfDebris?.(otherCollider)) {
       return;
@@ -107,17 +148,50 @@ export function countActiveUpwardSupportContacts(
       }
       const point = manifold.solverContactPoint(0);
       const normal = manifold.normal();
+      // Rapier не обещает, в какую сторону смотрит нормаль пары: она может
+      // смотреть и от машины, и в неё. Приводим её к направлению «в тело» —
+      // это и есть та сила, которую машина получает.
       const towardBody =
         normal.x * (bodyCentre.x - point.x) +
         normal.y * (bodyCentre.y - point.y) +
         normal.z * (bodyCentre.z - point.z);
-      const normalY = towardBody >= 0 ? normal.y : -normal.y;
-      if (normalY > 0.35) {
-        supportCount += 1;
+      const sign = towardBody >= 0 ? 1 : -1;
+      count += 1;
+      pushX += normal.x * sign;
+      pushY += normal.y * sign;
+      pushZ += normal.z * sign;
+      if (normal.y * sign > 0.35) {
+        support += 1;
       }
     });
   });
-  return supportCount;
+  if (count === 0) {
+    return NO_EXTERNAL_CONTACTS;
+  }
+  const length = Math.hypot(pushX, pushY, pushZ);
+  return {
+    count,
+    support,
+    push:
+      length > 1e-6
+        ? [pushX / length, pushY / length, pushZ / length]
+        : [0, 0, 0],
+  };
+}
+
+/**
+ * Count supports by refreshing only manifolds which are currently active.
+ * Частный случай `summariseExternalContacts`; оставлен отдельным именем ради
+ * читаемости места вызова и старых замеров.
+ */
+export function countActiveUpwardSupportContacts(
+  narrowPhase: NarrowPhaseLike,
+  body: ContactBodyLike,
+  contacts: Pick<ActivePhysicalContactRegistry, "forEach">,
+  isSelfDebris?: (otherCollider: number) => boolean,
+): number {
+  return summariseExternalContacts(narrowPhase, body, contacts, isSelfDebris)
+    .support;
 }
 
 /**

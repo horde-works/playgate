@@ -1320,6 +1320,15 @@ export const COMBAT_HEXACOPTER_RANGE_AIR_VEHICLE: AirVehicleDefinition = {
       enginePower: 105,
       enginePoints: combatHexacopterRangeBlueprint.enginePoints,
       rotorCapacityWeights: combatHexacopterRangeBlueprint.rotorCapacityWeights,
+      /**
+       * РЕВЕРС ПОДЪЁМНЫХ КОЛЕЦ: 0.55 паспортной тяги назад.
+       *
+       * Кольцо у RAX-8 открытое, лопасть почти симметричная — обратный поток
+       * теряет на профиле, но не на раструбе. Полсотни с небольшим процентов
+       * даёт ей около 2.3 g управляемого «вниз» сверх тяжести и полтора веса
+       * тяги для подъёма из перевёрнутого положения.
+       */
+      rotorReverseShare: 0.55,
       rotorSpinDirections: combatHexacopterRangeBlueprint.rotorSpinDirections,
       // Второй орган рыскания. Реактивный момент шести колец даёт этой машине
       // около 0.1 рад/с, а её собственный круг требует вдвое больше: без
@@ -1449,6 +1458,15 @@ export const DUCT_HEXACOPTER_RANGE_AIR_VEHICLE: AirVehicleDefinition = {
       enginePower: DUCT_HEXACOPTER_RANGE_LIMITS.enginePower,
       enginePoints: ductHexacopterRangeBlueprint.enginePoints,
       rotorCapacityWeights: ductHexacopterRangeBlueprint.rotorCapacityWeights,
+      /**
+       * РЕВЕРС У КАНАЛЬНОЙ МАШИНЫ ДЕШЕВЛЕ НЕ БЫВАЕТ: 0.4.
+       *
+       * У VX-8 кольцо не открытое, а канал с раструбом на входе — он и делает
+       * ducted-фан эффективным вперёд и посредственным назад: обратный поток
+       * входит с острой кромки диффузора. Меньше, чем у RAX-8, и это честная
+       * плата за то, что вперёд он тянет лучше.
+       */
+      rotorReverseShare: 0.4,
       rotorSpinDirections: ductHexacopterRangeBlueprint.rotorSpinDirections,
       // Тоннели с ПРИБИТОЙ тягой, а не с паспортной: паспорт сам оставил это
       // рантайму, и 1030 Н на собранном теле дают вдвое больше углового

@@ -148,7 +148,11 @@ import {
   createVehicleImpactTelemetry,
 } from "./vehicleImpactTelemetry";
 import { runtimeDiagnosticsEnabled } from "./runtimeDiagnostics";
-import { countActiveUpwardSupportContacts } from "./vehiclePhysicalContact";
+import {
+  summariseExternalContacts,
+  NO_EXTERNAL_CONTACTS,
+  type ExternalContactSummary,
+} from "./vehiclePhysicalContact";
 import {
   buildSupportStruts,
   strutClosingSpeed,
@@ -455,6 +459,7 @@ function rotorcraftFlightForces(
       motorOutput: points.map((_, index) => state.rotorMotorOutput[index] ?? 0),
       liftCapacity: mass.mass * GRAVITY * (frame.flight.liftReserve ?? 1.35),
       capacityWeights: limits.rotorCapacityWeights,
+      reverseShare: limits.rotorReverseShare,
       spinDirections: limits.rotorSpinDirections,
       yawThrusters: limits.yawThrusters,
       yawThrusterAvailability: yawThrusters.map((_, index) =>
@@ -1063,6 +1068,12 @@ interface FrameState {
   recovery: FrameRecoveryState | null;
   /** Number of upward-facing physical contact manifolds last step. */
   supportContacts: number;
+  /**
+   * ЧТО ВНЕШНИЙ МИР ДЕЛАЛ С МАШИНОЙ В ПРОШЛОМ ШАГЕ — целиком, а не только
+   * счётом опор. Нужен двоим: сторожу отказов, чтобы не объявлять поломкой
+   * чужую помеху, и высвобождению, чтобы знать, куда выбираться.
+   */
+  externalContacts: ExternalContactSummary;
   /** Свободное тело: им корабль живёт, пока не летит по маршруту. */
   body: BodyState;
   mass: MassProperties | null;
@@ -1556,6 +1567,7 @@ function restingState(engineCount: number, yawThrusterCount = 0): FrameState {
     flight: null,
     recovery: null,
     supportContacts: 0,
+    externalContacts: NO_EXTERNAL_CONTACTS,
     body: RESTING_BODY,
     mass: null,
     intactMass: 0,
@@ -5330,6 +5342,9 @@ export function VehicleFrameSystem({
                 corrections: 0,
                 trimAuthorityExhausted: state.trimExhaustedSeconds > 0,
                 turning: Math.abs(state.body.angularVelocity[1]) > 0.1,
+                // Откликается ли машина: доля принятого отклонения позы из
+                // отчёта прошлого кадра. Пока откликается — поза не отказ.
+                responding: state.rotorBody?.maneuverScale ?? 0,
                 inFinalManeuver: false,
                 // Manual flight has no docking objective. Zero is a finite
                 // inactive value; Infinity is an invalid physical state.
@@ -5337,6 +5352,10 @@ export function VehicleFrameSystem({
                 inDockingCapture: false,
                 dockingComplete: false,
                 recoveringDisturbance: false,
+                // Отчалившая машина не должна касаться ничего. Раз касается —
+                // причина снаружи, и внутренние таймеры сторожа стоят.
+                externallyHeld:
+                  flight.castOff && state.externalContacts.count > 0,
               },
               failureEnvelope,
             )
@@ -5893,6 +5912,15 @@ export function VehicleFrameSystem({
             ),
             dockingComplete,
             recoveringDisturbance,
+            // ВНЕШНЯЯ ПОМЕХА, А НЕ ПОЛОМКА. Машина в рейсе не касается ничего
+            // по построению; исключения — швартовка и заход, где касание и
+            // есть цель. Всё остальное касание держит её снаружи, и судить
+            // её за это управляемостью значит ставить диагноз не той стороне.
+            externallyHeld:
+              flight.castOff &&
+              state.externalContacts.count > 0 &&
+              !dockingComplete &&
+              !(flight.progress > 0.97 && berthDistance < 8),
           },
           failureEnvelope,
         );
@@ -6581,8 +6609,8 @@ export function VehicleFrameSystem({
       // манифестов при штатной посадке не будет вовсе: она стоит на грунте
       // тем, чего Rapier не видит. Считать её при этом летящей значило бы
       // сорвать ей каждую посадку.
-      state.supportContacts = strutContacts + (physicalRuntime
-        ? countActiveUpwardSupportContacts(
+      const externalContacts = physicalRuntime
+        ? summariseExternalContacts(
             rapierWorld.narrowPhase,
             physicalRuntime.body,
             physicalRuntime.activePhysicalContacts,
@@ -6634,7 +6662,9 @@ export function VehicleFrameSystem({
               );
             },
           )
-        : 0);
+        : NO_EXTERNAL_CONTACTS;
+      state.externalContacts = externalContacts;
+      state.supportContacts = strutContacts + externalContacts.support;
       // Винтокрылая машина несёт себя КОЛЬЦАМИ, а не одной вертикалью в точке
       // подъёма. Отсюда всё её поведение: тяга каждого кольца своя, суммарный
       // вектор наклоняется вместе с корпусом, и разностью тяг рождаются момент
