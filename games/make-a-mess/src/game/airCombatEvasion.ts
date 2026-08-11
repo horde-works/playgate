@@ -11,12 +11,19 @@
  *    бросающая задачу при первом испуге, выглядит глупо и перестаёт быть
  *    целью, за которой интересно охотиться.
  *
- * 2. УГРОЗУ ВИДНО ПО ТРАЕКТОРИИ, А НЕ ПО СТВОЛУ. В снимке чужого борта
- *    (`AirCombatTrack`) нет ориентации — и не будет: это та самая граница
- *    слепоты, на которой держится баланс боя. Знать, куда смотрит ствол,
- *    жертва не может. Зато она видит положение и скорость, а этого хватает
- *    для морского правила: ПЕЛЕНГ НЕ МЕНЯЕТСЯ, ДИСТАНЦИЯ ПАДАЕТ — значит он
- *    идёт на тебя. Оно же ловит настоящий заход и не ловит пролетающего мимо.
+ * 2. УКЛОНЯЮТСЯ ОТ ПУСКА, А НЕ ОТ ПОДОЗРИТЕЛЬНОГО ПОВЕДЕНИЯ (вердикт Igor,
+ *    11.08.2026). Первая редакция пугалась геометрии сближения — то есть
+ *    самого факта, что кто-то идёт на тебя. Это неверно с двух сторон: от
+ *    ПУШКИ увернуться нельзя вовсе, луч мгновенный, а дёргаться до выстрела
+ *    значит показывать ясновидение и суетиться зря.
+ *
+ *    Уклоняются от того, что ЛЕТИТ и имеет время полёта: от ракеты. Пуск —
+ *    событие, и он же триггер.
+ *
+ * 2а. НЕ ПОПАДАЕТ — НЕ ДЁРГАЙСЯ. Правило израильской ПВО и здесь главное:
+ *    ракета, чей промах и так больше радиуса поражения, манёвра не стоит.
+ *    Считается сближение по настоящим траекториям обоих, а не «летит в мою
+ *    сторону».
  *
  * 3. МАНЁВР ВЫБИРАЕТСЯ ОДИН РАЗ И ДОВОДИТСЯ. Дрожание — главная ловушка этого
  *    места: жертва, пересматривающая решение каждый кадр, дёргается на месте
@@ -44,6 +51,50 @@ export interface EvasionOwnState {
  * и это законный ответ: драккар и состав неба не должны дёргаться от чужой
  * скорости.
  */
+/**
+ * РАКЕТА В ВОЗДУХЕ — то, от чего уклоняются. Положение, скорость и радиус
+ * поражения: больше жертве знать не нужно и неоткуда.
+ */
+export interface RocketThreat {
+  readonly id: number;
+  readonly position: SceneVector3;
+  readonly velocity: SceneVector3;
+  readonly blastRadius: number;
+}
+
+/**
+ * СБЛИЖЕНИЕ С РАКЕТОЙ: через сколько секунд она пройдёт ближе всего и на
+ * каком расстоянии. Считается по относительному движению обоих — ракета
+ * быстрая, но и жертва не стоит.
+ *
+ * `seconds <= 0` означает, что ближайшая точка уже позади: ракета промахнулась
+ * и уходит, дёргаться поздно и незачем.
+ */
+export function rocketApproach(
+  own: EvasionOwnState,
+  rocket: RocketThreat,
+): { readonly seconds: number; readonly miss: number; readonly offset: SceneVector3 } {
+  const relative = subtract(rocket.position, own.centre);
+  const closing = subtract(rocket.velocity, own.velocity);
+  const speedSq = closing[0] ** 2 + closing[1] ** 2 + closing[2] ** 2;
+  if (speedSq < EPSILON) {
+    return { seconds: 0, miss: length(relative), offset: scale(relative, -1) };
+  }
+  const seconds = -(
+    relative[0] * closing[0] +
+    relative[1] * closing[1] +
+    relative[2] * closing[2]
+  ) / speedSq;
+  const at: SceneVector3 = [
+    relative[0] + closing[0] * seconds,
+    relative[1] + closing[1] * seconds,
+    relative[2] + closing[2] * seconds,
+  ];
+  // Вектор промаха смотрит ОТ ракеты К машине: рвать вдоль него — прямейший
+  // способ увеличить промах.
+  return { seconds, miss: length(at), offset: scale(at, -1) };
+}
+
 export interface EvasionCapability {
   /**
    * Насколько сильно машина сходит с линии, м/с. Не ускорение и не «сила»:
@@ -54,10 +105,19 @@ export interface EvasionCapability {
   /** Сколько рывок длится, с. Внутри срока решение не пересматривается. */
   readonly breakSeconds: number;
   /**
-   * За сколько секунд до встречи считать угрозу настоящей. Ниже — уклоняемся.
-   * Это ВРЕМЯ, а не дальность: медленный борт на той же дистанции не опасен.
+   * Габарит машины, м: вместе с радиусом поражения даёт ответ «попадёт ли».
    */
-  readonly warningSeconds: number;
+  readonly radius: number;
+  /**
+   * Запас к радиусу поражения, м. Ноль означал бы уклонение ровно на границе,
+   * где ошибка в дециметр решает; запас покупает право ошибиться.
+   */
+  readonly margin: number;
+  /**
+   * Дальше этого горизонта пуск не тревожит: ракета ещё далеко, и решение
+   * успеет принять следующий кадр. Секунды, а не метры.
+   */
+  readonly horizonSeconds: number;
 }
 
 export interface EvasionState {
@@ -65,13 +125,14 @@ export interface EvasionState {
   readonly breakSeconds: number;
   /** Направление рывка в мире, единичное. Ноль-вектор — рывка нет. */
   readonly breakDirection: SceneVector3;
-  /** Кого испугались. Нужно, чтобы не пересматривать решение на том же борте. */
-  readonly threatId: string | null;
+  /** От какой ракеты уходим. Нужно, чтобы не начинать рывок дважды. */
+  readonly threatId: number | null;
 }
 
 export interface EvasionInput {
   readonly own: EvasionOwnState;
-  readonly tracks: readonly AirCombatTrack[];
+  /** Ракеты в воздухе. Пусто — уклоняться не от чего, и это норма. */
+  readonly rockets: readonly RocketThreat[];
   readonly capability: EvasionCapability;
   readonly deltaSeconds: number;
   readonly state: EvasionState;
@@ -96,10 +157,12 @@ export interface EvasionOutput {
    * Общий контур накладывает её поверх маршрутного требования.
    */
   readonly velocityOffset: SceneVector3;
-  /** Кто сейчас страшен. Для ленты и разбора, решение уже принято. */
-  readonly threatId: string | null;
-  /** Секунды до встречи с самым опасным бортом; `null` — никого. */
+  /** От какой ракеты уходим. Для ленты и разбора, решение уже принято. */
+  readonly threatId: number | null;
+  /** Секунды до сближения с ней; `null` — никого. */
   readonly closingSeconds: number | null;
+  /** Насколько она прошла бы мимо, если не двигаться, м. */
+  readonly miss: number | null;
 }
 
 export function createEvasionState(): EvasionState {
@@ -194,83 +257,50 @@ export function onCollisionCourse(
  */
 export function breakDirection(
   own: EvasionOwnState,
-  track: AirCombatTrack,
+  missOffset: SceneVector3,
   deck: number,
   boundary?: { readonly centre: SceneVector3; readonly radius: number },
 ): SceneVector3 {
-  const line = normalize(subtract(track.centre, own.centre));
-  if (length(line) < EPSILON) {
-    return [0, 1, 0];
+  // ВДОЛЬ ВЕКТОРА ПРОМАХА. В точке наибольшего сближения уже известно, с какой
+  // стороны ракета пройдёт; уходить надо туда же, только дальше. Это не
+  // эвристика «вбок от линии огня», а прямая производная промаха по смещению.
+  let wanted = normalize(missOffset);
+  if (length(wanted) < EPSILON) {
+    // Ракета идёт точно в центр: любая поперечная сторона одинаково хороша,
+    // берём вверх — там у винтокрылой всегда есть тяга.
+    wanted = [0, 1, 0];
   }
-  // Поперечное направление, лежащее в горизонте: уходить вбок дешевле всего,
-  // потому что у коптера это чистая тяга наклоном.
-  const lateral = normalize(cross(line, [0, 1, 0]));
-  // Вверх добавляется всегда, но не как половина рывка: вертикаль у
-  // винтокрылой дороже горизонтали, и просить её поровну значит не получить
-  // ни того, ни другого. У самой палубы вертикаль дорожает — уходить вниз
-  // некуда, и вверх становится главным.
+
+  // КОНВЕРТ СНАЧАЛА. У самой палубы вниз нельзя, за кромку мира нельзя.
   const room = own.centre[1] - deck;
-  const climb = room < 12 ? 0.6 : 0.35;
-
-  // КОНВЕРТ СНАЧАЛА. Кандидатов всего два — вбок и вбок наоборот; каждому
-  // считается, сколько у него места, и только среди уцелевших выбирается тот,
-  // что дороже обходится прицелу.
-  const candidates: SceneVector3[] = [
-    normalize([lateral[0], climb, lateral[2]]),
-    normalize([-lateral[0], climb, -lateral[2]]),
-  ];
-  const room4 = (direction: SceneVector3): number => {
-    if (!boundary) {
-      return 1;
-    }
-    // Куда машина придёт за секунду рывка, и насколько это ближе к кромке.
-    const ahead: SceneVector3 = [
-      own.centre[0] + direction[0] * 20,
-      own.centre[1] + direction[1] * 20,
-      own.centre[2] + direction[2] * 20,
-    ];
-    const offset = Math.hypot(
-      ahead[0] - boundary.centre[0],
-      ahead[2] - boundary.centre[2],
+  if (room < 12 && wanted[1] < 0) {
+    wanted = normalize([wanted[0], Math.abs(wanted[1]), wanted[2]]);
+  }
+  if (boundary) {
+    const ahead = Math.hypot(
+      own.centre[0] + wanted[0] * 20 - boundary.centre[0],
+      own.centre[2] + wanted[2] * 20 - boundary.centre[2],
     );
-    return boundary.radius - offset;
-  };
-  const safe = candidates.filter((direction) => room4(direction) > 0);
-  const allowed = safe.length > 0 ? safe : candidates;
-  // Из уцелевших — тот, что уводит ПРОТИВ его смещения: доворачиваться туда,
-  // куда он и так летит, значит помогать ему целиться.
-  let best = allowed[0];
-  let bestCost = -Infinity;
-  for (const direction of allowed) {
-    const against = -(
-      direction[0] * track.velocity[0] + direction[2] * track.velocity[2]
-    );
-    if (against > bestCost) {
-      bestCost = against;
-      best = direction;
+    if (ahead > boundary.radius) {
+      // Наружу нельзя — остаётся то же смещение, вывернутое внутрь мира.
+      wanted = normalize([-wanted[0], Math.max(wanted[1], 0.4), -wanted[2]]);
     }
   }
 
-  // РЫВОК СМЕЩАЕТ, НО НЕ ТОРМОЗИТ.
-  //
-  // Из направления убирается составляющая вдоль СВОЕЙ скорости. Под огнём не
-  // сбрасывают ход: тормозящая жертва становится удобнее для упреждения, а не
-  // труднее, и вдобавок бросает свою задачу — она перестаёт лететь маршрут и
-  // начинает висеть. Замер первой редакции, где эта проекция не снималась:
-  // средняя скорость жертвы падала с 12–14 до 4.2 м/с, то есть она выживала
-  // не манёвром, а бегством.
+  // РЫВОК СМЕЩАЕТ, НО НЕ ТОРМОЗИТ: составляющая вдоль собственной скорости
+  // снимается. Тормозящая жертва удобнее для упреждения, а не труднее, и
+  // вдобавок бросает свою задачу.
   const heading = normalize(own.velocity);
   if (length(heading) < EPSILON) {
-    return best;
+    return wanted;
   }
   const along =
-    best[0] * heading[0] + best[1] * heading[1] + best[2] * heading[2];
+    wanted[0] * heading[0] + wanted[1] * heading[1] + wanted[2] * heading[2];
   const across = normalize([
-    best[0] - heading[0] * along,
-    best[1] - heading[1] * along,
-    best[2] - heading[2] * along,
+    wanted[0] - heading[0] * along,
+    wanted[1] - heading[1] * along,
+    wanted[2] - heading[2] * along,
   ]);
-  // Рывок ровно вдоль курса вырождается: тогда уходим вверх, это всегда поперёк.
   return length(across) < EPSILON ? [0, 1, 0] : across;
 }
 
@@ -282,40 +312,38 @@ export function breakDirection(
  * иначе машина дрожит на месте вместо того, чтобы уходить.
  */
 export function stepEvasion(input: EvasionInput): EvasionOutput {
-  const { own, tracks, capability, deltaSeconds, state, deck } = input;
+  const { own, rockets, capability, deltaSeconds, state, deck } = input;
 
-  // Самый опасный борт: враждебный, живой, летящий и идущий на встречу.
-  let threat: AirCombatTrack | null = null;
+  // Самая опасная ракета: та, что придёт ближе всего и раньше всех. НЕ
+  // ПОПАДАЕТ — НЕ СЧИТАЕТСЯ: промах больше радиуса поражения с запасом
+  // означает, что манёвр только испортит собственный маршрут.
+  const lethal = capability.radius + capability.margin;
+  let threat: RocketThreat | null = null;
   let threatSeconds: number | null = null;
-  for (const track of tracks) {
-    if (
-      track.landed ||
-      track.failed ||
-      !isHostileAllegiance(own.allegiance, track.allegiance)
-    ) {
+  let threatMiss: number | null = null;
+  for (const rocket of rockets) {
+    const { seconds, miss } = rocketApproach(own, rocket);
+    if (seconds <= 0 || seconds > capability.horizonSeconds) {
       continue;
     }
-    const seconds = closingSeconds(own, track);
-    if (seconds === null || seconds > capability.warningSeconds) {
-      continue;
-    }
-    if (!onCollisionCourse(own, track, seconds)) {
+    if (miss > rocket.blastRadius + lethal) {
       continue;
     }
     if (threatSeconds === null || seconds < threatSeconds) {
-      threat = track;
+      threat = rocket;
       threatSeconds = seconds;
+      threatMiss = miss;
     }
   }
 
   const remaining = Math.max(0, state.breakSeconds - deltaSeconds);
   if (remaining > 0) {
-    // Рывок идёт — доводим его до конца тем же направлением.
     return {
       state: { ...state, breakSeconds: remaining },
       velocityOffset: scale(state.breakDirection, capability.breakSpeed),
       threatId: threat?.id ?? state.threatId,
       closingSeconds: threatSeconds,
+      miss: threatMiss,
     };
   }
 
@@ -325,17 +353,25 @@ export function stepEvasion(input: EvasionInput): EvasionOutput {
       velocityOffset: [0, 0, 0],
       threatId: null,
       closingSeconds: null,
+      miss: null,
     };
   }
 
-  const direction = breakDirection(own, threat, deck, input.boundary);
+  const direction = breakDirection(
+    own,
+    rocketApproach(own, threat).offset,
+    deck,
+    input.boundary,
+  );
   // ВЫДЕРЖКА РЫВКА ГУЛЯЕТ, И ЭТО НЕ УКРАШЕНИЕ. Два реактивных контура с
   // одинаковыми постоянными времени сцепляются в устойчивый танец, где манёвр
   // жертвы становится функцией от того, что делает охотник, — то есть
   // идеально упреждаемым. Разброс берётся из ГЕОМЕТРИИ (секунды до встречи),
   // а не из случайного числа: тогда он не периодичен и при этом воспроизводим
   // в тесте.
-  const jitter = 0.7 + 0.6 * ((threatSeconds ?? 0) % 1);
+  // Выдержка чуть длиннее времени подлёта: манёвр обязан пережить ракету,
+  // которая уже в воздухе, и не оборваться за миг до её прохода.
+  const jitter = 1 + Math.min(1, (threatSeconds ?? 0));
   return {
     state: {
       breakSeconds: capability.breakSeconds * jitter,
@@ -345,5 +381,6 @@ export function stepEvasion(input: EvasionInput): EvasionOutput {
     velocityOffset: scale(direction, capability.breakSpeed),
     threatId: threat.id,
     closingSeconds: threatSeconds,
+    miss: threatMiss,
   };
 }

@@ -60,7 +60,10 @@ import {
   type BodyState,
   type MassProperties,
 } from "./clusterDynamics";
-import type { RemnantDefinition } from "./destructionRuntime";
+import {
+  explosiveProfile,
+  type RemnantDefinition,
+} from "./destructionRuntime";
 import {
   RESTING_POSE,
   departureLightGlow,
@@ -2245,6 +2248,18 @@ export function VehicleFrameSystem({
   }, [pieces]);
 
   const states = useRef(new Map<string, FrameState>());
+  /**
+   * РАКЕТЫ В ВОЗДУХЕ — ровно те, что выпустил этот контур.
+   *
+   * Ведутся здесь потому, что здесь же и рождаются: жертве надо уклоняться от
+   * ПУСКА, а не от подозрительного поведения, и увидеть пуск она может только
+   * так. Живут по времени полёта и вычищаются по нему же — иначе список
+   * растёт партию напролёт.
+   */
+  const liveRockets = useRef<
+    { id: number; position: [number, number, number]; velocity: [number, number, number]; blastRadius: number; bornAt: number }[]
+  >([]);
+  const rocketSerial = useRef(0);
   const frameState = useCallback(
     (id: string): FrameState => {
       const existing = states.current.get(id);
@@ -2709,6 +2724,30 @@ export function VehicleFrameSystem({
 
   useBeforePhysicsStep(() => {
     const step = PHYSICS_TIME_STEP;
+
+    // РАКЕТЫ ЛЕТЯТ И СТАРЕЮТ. Здесь только счисление для чужих глаз: сам
+    // снаряд живёт своим телом в мире, а этот список нужен жертве, чтобы от
+    // пуска можно было уклониться. Три секунды — заведомо больше времени
+    // полёта на любой дальности этой пары.
+    if (liveRockets.current.length > 0) {
+      const flown: typeof liveRockets.current = [];
+      for (const rocket of liveRockets.current) {
+        const age = rocket.bornAt + step;
+        if (age > 3) {
+          continue;
+        }
+        flown.push({
+          ...rocket,
+          bornAt: age,
+          position: [
+            rocket.position[0] + rocket.velocity[0] * step,
+            rocket.position[1] + rocket.velocity[1] * step,
+            rocket.position[2] + rocket.velocity[2] * step,
+          ],
+        });
+      }
+      liveRockets.current = flown;
+    }
 
     // Кто ВЕДЁТ РЕЙС на этой карте: у него лампы причала, межостровная
     // передача и швартовка. Он один, и это осознанное ограничение.
@@ -6565,11 +6604,34 @@ export function VehicleFrameSystem({
               rotateByQuaternion(state.body.orientation, local) as
                 [number, number, number],
           };
+          const worldShots = combatStep.shots.map((shot) =>
+            resolveVehicleWeaponShot(shot, frame.armament!, carrierPose),
+          );
+          // Ракеты кладутся в общий список: от них будет уклоняться жертва.
+          for (const shot of worldShots) {
+            if (shot.weapon !== "podRocket") {
+              continue;
+            }
+            const profile = explosiveProfile(shot.explosive ?? "podRocket");
+            const speed = profile.projectile.speed;
+            rocketSerial.current += 1;
+            liveRockets.current.push({
+              id: rocketSerial.current,
+              position: [shot.origin[0], shot.origin[1], shot.origin[2]],
+              velocity: [
+                shot.direction[0] * speed + shot.inheritVelocity[0],
+                shot.direction[1] * speed + shot.inheritVelocity[1],
+                shot.direction[2] * speed + shot.inheritVelocity[2],
+              ],
+              blastRadius: profile.blastRadius,
+              bornAt: 0,
+            });
+          }
           onVehicleWeaponFire({
             frameId: frame.id,
             clusterId: frame.clusterId,
-            shots: combatStep.shots.map((shot) =>
-              resolveVehicleWeaponShot(shot, frame.armament!, carrierPose),
+            shots: worldShots.map((shot) =>
+              shot,
             ),
           });
         }
@@ -6590,12 +6652,6 @@ export function VehicleFrameSystem({
       // ---------------------------------------------------------------
       const evasion = frame.flight.evasion;
       if (evasion && usesRotorDynamics && mass && flight?.castOff && rotorGuidance) {
-        const evasionWorld: SightedWorld = {
-          stateOf: (frameId) => states.current.get(frameId),
-          attachedTo: (clusterId) =>
-            clusterRegistry.current.get(clusterId)?.attachedMemberIds ??
-            new Set<string>(),
-        };
         state.evasion ??= createEvasionState();
         const evasionStep = stepEvasion({
           own: {
@@ -6607,7 +6663,7 @@ export function VehicleFrameSystem({
             ],
             velocity: state.body.velocity,
           },
-          tracks: airCombatTracks(frame.id, frames, evasionWorld),
+          rockets: liveRockets.current,
           capability: evasion,
           deltaSeconds: step,
           state: state.evasion,
