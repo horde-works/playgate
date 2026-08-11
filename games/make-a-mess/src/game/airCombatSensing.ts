@@ -209,6 +209,46 @@ export function airCombatTracks(
   return tracks;
 }
 
+/**
+ * ВСЕ БОРТА В ВОЗДУХЕ — для расхождения, а не для боя.
+ *
+ * Отличие от `airCombatTracks` ровно одно и оно принципиальное: СТОРОНА НЕ
+ * СПРАШИВАЕТСЯ. Мирный борт в бою не участвует и цели не составляет, но
+ * столкнуться с ним можно ничуть не хуже, чем с врагом. Отфильтруй здесь по
+ * стороне — и машина будет расходиться только с теми, с кем воюет.
+ *
+ * Наружу отдаётся ещё меньше, чем боевому зрению: положение, скорость и
+ * габарит. Ни здоровья движителей, ни слабых точек, ни признака отказа —
+ * расхождению нужно знать, ГДЕ борт, а не что с ним.
+ *
+ * Севшая машина из движения выпадает: она уже не сблизится ни с кем, а
+ * заставлять живые борта расходиться со стоянкой значит гонять их вокруг
+ * пустых причалов.
+ */
+export function airTraffic(
+  observerId: string,
+  frames: readonly SightedFrame[],
+  world: SightedWorld,
+): { id: string; centre: SceneVector3; velocity: SceneVector3; radius: number }[] {
+  const traffic = [];
+  for (const other of frames) {
+    if (other.id === observerId) {
+      continue;
+    }
+    const state = world.stateOf(other.id);
+    if (!state?.mass || state.flight === null) {
+      continue;
+    }
+    traffic.push({
+      id: other.id,
+      centre: sightedCentre(state.body.position, state.mass.centre),
+      velocity: state.body.velocity,
+      radius: frameHalfSpan(other.localBounds),
+    });
+  }
+  return traffic;
+}
+
 /** Что нужно знать о СЕБЕ сверх того, что видно снаружи о любом борте. */
 export interface SightedSelf {
   /** АВТОРСКИЙ нос в осях кадра: поза строится поворотом от позы покоя. */

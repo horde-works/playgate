@@ -153,6 +153,7 @@ import {
   NO_EXTERNAL_CONTACTS,
   type ExternalContactSummary,
 } from "./vehiclePhysicalContact";
+import { separationDecision } from "./vehicleSeparation";
 import {
   beginCollisionEscape,
   stepCollisionEscape,
@@ -250,6 +251,8 @@ import {
 import {
   airCombatOwnState,
   airCombatTracks,
+  airTraffic,
+  frameHalfSpan,
   type SightedWorld,
 } from "./airCombatSensing.ts";
 import { allegianceOf } from "./vehicleAllegiance.ts";
@@ -6955,7 +6958,66 @@ export function VehicleFrameSystem({
       }
 
       // ---------------------------------------------------------------
-      // ВЫСВОБОЖДЕНИЕ ИЗ ЗАЦЕПА — ПЯТЫЙ ИСТОЧНИК GUIDANCE.
+      // РАСХОЖДЕНИЕ — ШЕСТОЙ ИСТОЧНИК GUIDANCE.
+      //
+      // «Инстинкт нас заставляет избегать столкновений. Мы ходим двумерно —
+      // инстинкт двумерный. Но для трёхмерной машины он больше на одно
+      // измерение» (Igor, 12.08.2026). Правило целиком в чистом
+      // `vehicleSeparation`, здесь только зрение и подстановка.
+      //
+      // Стороны зрение НЕ СПРАШИВАЕТ: мирный борт в бою не участвует, но
+      // столкнуться с ним можно ничуть не хуже. Освобождается ровно один —
+      // собственная цель охотника, потому что расхождение с добычей есть
+      // срыв задачи, а не осторожность.
+      if (rotorGuidance && mass && flight?.castOff && !state.escape) {
+        const separation = separationDecision({
+          self: {
+            id: frame.id,
+            centre: centreNow,
+            velocity: state.body.velocity,
+            radius: frameHalfSpan(frame.localBounds),
+          },
+          traffic: airTraffic(frame.id, frames, {
+            stateOf: (frameId) => states.current.get(frameId),
+            attachedTo: (clusterId) =>
+              clusterRegistry.current.get(clusterId)?.attachedMemberIds ??
+              new Set<string>(),
+          }),
+          groundHeight: 0,
+          exemptId: state.combat?.targetId ?? undefined,
+        });
+        if (separation) {
+          const away = separation.direction;
+          const forward = rotateByQuaternion(state.body.orientation, frame.nose);
+          const flat = Math.hypot(forward[0], forward[2]) || 1;
+          const nose: [number, number] = [forward[0] / flat, forward[2] / flat];
+          const starboard: [number, number] = [-nose[1], nose[0]];
+          // Расхождение ПОПРАВЛЯЕТ ход, а не заменяет его: машина продолжает
+          // свой рейс, просто мимо. Скорость поправки растёт со срочностью —
+          // на горизонте это едва заметный доворот, у самого борта рывок.
+          const push = 9 * separation.urgency;
+          rotorGuidance = {
+            ...rotorGuidance,
+            forwardSpeed:
+              rotorGuidance.forwardSpeed +
+              (away[0] * nose[0] + away[2] * nose[1]) * push,
+            lateralSpeed:
+              rotorGuidance.lateralSpeed +
+              (away[0] * starboard[0] + away[2] * starboard[1]) * push,
+            slipAllowance: Math.max(
+              rotorGuidance.slipAllowance ?? 0,
+              Math.PI / 4,
+            ),
+          };
+          liftCommand = Math.max(
+            0,
+            Math.min(1, liftCommand + away[1] * 0.05 * separation.urgency),
+          );
+        }
+      }
+
+      // ---------------------------------------------------------------
+      // ВЫСВОБОЖДЕНИЕ ИЗ ЗАЦЕПА — СЕДЬМОЙ ИСТОЧНИК GUIDANCE.
       //
       // Врезка той же ширины, что боевая и уклонение: правило целиком в
       // чистом `vehicleCollisionEscape`, здесь только состояние между кадрами
