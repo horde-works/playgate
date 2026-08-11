@@ -199,3 +199,28 @@ test("выдержка рывка ГУЛЯЕТ, а не одинакова ка�
     );
   }
 });
+
+test("РЫВОК СМЕЩАЕТ, НО НЕ ТОРМОЗИТ", () => {
+  // Под огнём не сбрасывают ход: тормозящая жертва удобнее для упреждения, а
+  // не труднее, и вдобавок бросает свою задачу. Первая редакция этого не
+  // снимала, и средняя скорость жертвы падала с 12–14 до 4.2 м/с — она
+  // выживала бегством, а не манёвром.
+  for (const [centre, velocity] of [
+    [[0, 30, 0], [0, 0, 12]],
+    [[0, 30, 0], [12, 0, 0]],
+    [[0, 30, 0], [8, 0, -8]],
+  ]) {
+    const own = { allegiance: "yaqui", centre, velocity };
+    const direction = breakDirection(own, hunter([0, 30, 40], [0, 0, -20]), 0);
+    const heading = Math.hypot(velocity[0], velocity[1], velocity[2]);
+    const along =
+      (direction[0] * velocity[0] +
+        direction[1] * velocity[1] +
+        direction[2] * velocity[2]) /
+      heading;
+    assert.ok(
+      Math.abs(along) < 1e-6,
+      `рывок имеет продольную составляющую ${along.toFixed(3)}: машина затормозит`,
+    );
+  }
+});

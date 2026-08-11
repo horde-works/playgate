@@ -250,7 +250,28 @@ export function breakDirection(
       best = direction;
     }
   }
-  return best;
+
+  // РЫВОК СМЕЩАЕТ, НО НЕ ТОРМОЗИТ.
+  //
+  // Из направления убирается составляющая вдоль СВОЕЙ скорости. Под огнём не
+  // сбрасывают ход: тормозящая жертва становится удобнее для упреждения, а не
+  // труднее, и вдобавок бросает свою задачу — она перестаёт лететь маршрут и
+  // начинает висеть. Замер первой редакции, где эта проекция не снималась:
+  // средняя скорость жертвы падала с 12–14 до 4.2 м/с, то есть она выживала
+  // не манёвром, а бегством.
+  const heading = normalize(own.velocity);
+  if (length(heading) < EPSILON) {
+    return best;
+  }
+  const along =
+    best[0] * heading[0] + best[1] * heading[1] + best[2] * heading[2];
+  const across = normalize([
+    best[0] - heading[0] * along,
+    best[1] - heading[1] * along,
+    best[2] - heading[2] * along,
+  ]);
+  // Рывок ровно вдоль курса вырождается: тогда уходим вверх, это всегда поперёк.
+  return length(across) < EPSILON ? [0, 1, 0] : across;
 }
 
 /**
