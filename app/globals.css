@@ -2882,6 +2882,104 @@ button:focus-visible {
   text-align: center;
 }
 
+.construction-hud {
+  position: fixed;
+  left: clamp(1rem, 3vw, 3rem);
+  bottom: clamp(5.5rem, 12vh, 8rem);
+  z-index: 28;
+  width: min(31rem, calc(100vw - 2rem));
+  padding: 0.9rem 1rem;
+  color: #eafaff;
+  background: linear-gradient(135deg, rgb(8 25 32 / 92%), rgb(12 48 59 / 82%));
+  border: 1px solid rgb(104 220 255 / 48%);
+  border-radius: 0.75rem;
+  box-shadow: 0 0.8rem 2.5rem rgb(0 0 0 / 30%), inset 0 0 1.4rem rgb(69 211 255 / 8%);
+  backdrop-filter: blur(12px);
+  pointer-events: none;
+}
+
+.construction-hud-title {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: baseline;
+  gap: 0.15rem 0.8rem;
+}
+
+.construction-hud-title p,
+.construction-status {
+  margin: 0;
+  color: #7edcf6;
+  font: 600 0.68rem/1.2 var(--font-mono, monospace);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.construction-hud-title b {
+  font-size: 1rem;
+}
+
+.construction-hud-title span {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  color: rgb(234 250 255 / 68%);
+  font-size: 0.75rem;
+}
+
+.construction-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.42rem 0.85rem;
+  margin-top: 0.72rem;
+}
+
+.construction-catalog {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.32rem;
+  margin-top: 0.7rem;
+}
+
+.construction-catalog span {
+  padding: 0.34rem 0.45rem;
+  color: rgb(226 247 252 / 64%);
+  background: rgb(72 161 184 / 9%);
+  border: 1px solid rgb(113 209 234 / 16%);
+  border-radius: 0.3rem;
+  font-size: 0.7rem;
+}
+
+.construction-catalog span.is-selected {
+  color: #f2fcff;
+  background: rgb(76 207 241 / 20%);
+  border-color: rgb(112 225 255 / 52%);
+}
+
+.construction-controls span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: rgb(234 250 255 / 76%);
+  font-size: 0.72rem;
+}
+
+.construction-controls kbd {
+  min-width: 2rem;
+  padding: 0.12rem 0.28rem;
+  color: #dff9ff;
+  background: rgb(101 213 243 / 13%);
+  border: 1px solid rgb(121 225 255 / 34%);
+  border-radius: 0.26rem;
+  font: 700 0.64rem/1.25 var(--font-mono, monospace);
+  text-align: center;
+}
+
+.construction-status {
+  margin-top: 0.68rem;
+  color: rgb(163 232 250 / 62%);
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
 /* Карточка жителя занимает тот же правый слот, что и телеметрия. */
 .villager-card {
   display: grid;

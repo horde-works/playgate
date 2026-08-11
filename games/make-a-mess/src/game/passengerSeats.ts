@@ -238,9 +238,24 @@ export const passengerSeats: readonly PassengerSeatDefinition[] = [
 ];
 
 const seatsById = new Map(passengerSeats.map((seat) => [seat.id, seat] as const));
+const runtimeSeatsById = new Map<string, PassengerSeatDefinition>();
+
+/** Runtime-built machines publish seats through the same passenger contract. */
+export function registerRuntimePassengerSeat(
+  seat: PassengerSeatDefinition,
+): () => void {
+  runtimeSeatsById.set(seat.id, seat);
+  return () => {
+    if (runtimeSeatsById.get(seat.id) === seat) runtimeSeatsById.delete(seat.id);
+  };
+}
+
+export function clearRuntimePassengerSeats(): void {
+  runtimeSeatsById.clear();
+}
 
 export function passengerSeatForId(id: string | null | undefined): PassengerSeatDefinition | null {
-  return id ? seatsById.get(id) ?? null : null;
+  return id ? seatsById.get(id) ?? runtimeSeatsById.get(id) ?? null : null;
 }
 
 /**

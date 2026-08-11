@@ -183,6 +183,7 @@ import {
 import {
   FirstPersonHammer,
   FirstPersonDemolitionCharge,
+  FirstPersonConstructor,
   FirstPersonLauncher,
   FirstPersonMachineGun,
   FirstPersonRocketLauncher,
@@ -247,6 +248,12 @@ import {
   constantRotorClusterDefinitions,
 } from "./ConstantRotorSystem";
 import { TownCarSystem } from "./TownCarSystem";
+import {
+  ConstructionSystem,
+  DEFAULT_CONSTRUCTION_UI,
+  type ConstructionRuntime,
+  type ConstructionUiState,
+} from "./ConstructionSystem";
 import { townDsClusterDefinition } from "./townCitroenDs";
 import {
   BasaltForceFieldSystem,
@@ -440,7 +447,8 @@ type WeaponName =
   | "mg"
   | "rocket"
   | "lance"
-  | "charge";
+  | "charge"
+  | "construction";
 
 function nextWeaponName(weapon: WeaponName): Exclude<WeaponName, "none"> {
   return weapon === "hammer"
@@ -453,7 +461,9 @@ function nextWeaponName(weapon: WeaponName): Exclude<WeaponName, "none"> {
           ? "lance"
           : weapon === "lance"
             ? "charge"
-            : "hammer";
+            : weapon === "charge"
+              ? "construction"
+              : "hammer";
 }
 
 /**
@@ -4128,6 +4138,8 @@ interface OpenWorldSceneProps {
   mobileActions: MutableRefObject<MobileActionBridge>;
   chargeCount: number;
   demolitionChargeRuntime: MutableRefObject<DemolitionChargeRuntime | null>;
+  constructionRuntime: MutableRefObject<ConstructionRuntime | null>;
+  onConstructionUiChange: (state: ConstructionUiState) => void;
   resetVersion: number;
   entryOpenRequestVersion: number;
   entryOpenRequestTargetRef: MutableRefObject<HingedEntryApproach | null>;
@@ -4183,6 +4195,8 @@ function OpenWorldScene({
   mobileControls,
   mobileActions,
   demolitionChargeRuntime,
+  constructionRuntime,
+  onConstructionUiChange,
   resetVersion,
   entryOpenRequestVersion,
   entryOpenRequestTargetRef,
@@ -9461,6 +9475,10 @@ function OpenWorldScene({
       demolitionChargeRuntime.current?.placeOrRemove();
       return;
     }
+    if (weapon === "construction") {
+      constructionRuntime.current?.primary();
+      return;
+    }
 
     if (weapon === "mg") {
       if (fallbackLook) {
@@ -9796,6 +9814,7 @@ function OpenWorldScene({
     carveLooseTarget,
     center,
     commitRemnants,
+    constructionRuntime,
     fallbackLook,
     demolitionChargeRuntime,
     fireGrenade,
@@ -10321,6 +10340,16 @@ function OpenWorldScene({
         onFramePose={publishVehicleFramePose}
         onMotionTelemetryUpdate={onMotionTelemetryUpdate}
       />
+      <ConstructionSystem
+        active={weapon === "construction"}
+        sceneId={scene.id}
+        resetVersion={resetVersion}
+        occupiedSeatId={occupiedSeatId}
+        onOccupiedSeatChange={onOccupiedSeatChange}
+        vehicleFramePoses={vehicleFramePoses}
+        runtimeRef={constructionRuntime}
+        onUiChange={onConstructionUiChange}
+      />
       <MotionInstrumentSystem
         definitions={motionInstrumentDefinitions}
         pieceById={breakablePieceById}
@@ -10384,6 +10413,8 @@ function OpenWorldScene({
               />
             ) : weapon === "charge" ? (
               <FirstPersonDemolitionCharge />
+            ) : weapon === "construction" ? (
+              <FirstPersonConstructor />
             ) : (
               <FirstPersonMachineGun shotsRef={mgShots} />
             )}
@@ -11208,6 +11239,8 @@ function MobileGameControls({
         ? t("fire.strike")
         : weapon === "charge"
           ? t("fire.place")
+          : weapon === "construction"
+            ? t("fire.build")
           : weapon === "mg"
             ? t("fire.fire")
             : t("fire.launch");
@@ -11312,6 +11345,7 @@ function MobileGameControls({
                   : t("weapon.rocket.short"),
               ],
               ["charge", "5", t("weapon.charge.short")],
+              ["construction", "6", t("weapon.construction.short")],
             ] as const
           ).map(([nextWeapon, shortcut, label]) => (
             <button
@@ -11964,7 +11998,9 @@ function usePlayerModeCaption({
                   ? t("announce.weaponLance")
                   : weapon === "charge"
                     ? t("announce.weaponCharge")
-                    : t("announce.weaponMg");
+                    : weapon === "construction"
+                      ? t("announce.weaponConstruction")
+                      : t("announce.weaponMg");
     } else if (before.timeOfDay !== timeOfDay) {
       kicker = `${t(timeOfDayKey(timeOfDay))} · ${gameClockText(TIME_OF_DAY_TARGETS[timeOfDay])}`;
       text = t(timeOfDayAnnouncementKey(timeOfDay));
@@ -11998,7 +12034,9 @@ function ModeChips({
               ? t("weapon.lance")
               : weapon === "charge"
                 ? t("weapon.charge")
-                : t("weapon.mg");
+                : weapon === "construction"
+                  ? t("weapon.construction")
+                  : t("weapon.mg");
 
   if (!flightMode && !weaponChip) {
     return null;
@@ -12010,6 +12048,71 @@ function ModeChips({
       ) : null}
       {weaponChip ? <span className="mode-chip">{weaponChip}</span> : null}
     </div>
+  );
+}
+
+function ConstructionHud({
+  state,
+  driving,
+}: {
+  state: ConstructionUiState;
+  driving: boolean;
+}): ReactElement {
+  const { t } = useLanguage();
+  return (
+    <aside
+      className="construction-hud"
+      role="status"
+      aria-live="polite"
+      data-construction-kind={state.selectedKind}
+      data-construction-assemblies={state.assemblyCount}
+      data-construction-parts={state.partCount}
+    >
+      <div className="construction-hud-title">
+        <p>{t("construction.kicker")}</p>
+        <b>
+          {driving
+            ? state.controlledMachine === "rotorcraft"
+              ? t("construction.machine.rotorcraft")
+              : t("construction.machine.car")
+            : t(`construction.part.${state.selectedKind}` as TranslationKey)}
+        </b>
+        <span>
+          {state.partCount} {t("construction.parts")} · {state.assemblyCount} {t("construction.assemblies")}
+        </span>
+      </div>
+      {state.catalogOpen ? (
+        <div className="construction-catalog" aria-hidden="true">
+          {(["beam", "plate", "wheel", "engine", "seat", "rotor"] as const).map(
+            (kind) => (
+              <span key={kind} className={state.selectedKind === kind ? "is-selected" : undefined}>
+                {t(`construction.part.${kind}` as TranslationKey)}
+              </span>
+            ),
+          )}
+        </div>
+      ) : null}
+      {driving ? (
+        <div className="construction-controls">
+          <span><kbd>WASD</kbd>{t("construction.control.drive")}</span>
+          <span><kbd>Space</kbd>{t("construction.control.liftBrake")}</span>
+          <span><kbd>C</kbd>{t("construction.control.exit")}</span>
+        </div>
+      ) : (
+        <div className="construction-controls">
+          <span><kbd>RMB</kbd>{t("construction.control.grab")}</span>
+          <span><kbd>LMB</kbd>{state.held ? t("construction.control.throw") : t("construction.control.place")}</span>
+          <span><kbd>Wheel</kbd>{t("construction.control.distance")}</span>
+          <span><kbd>Z / X</kbd>{t("construction.control.part")}</span>
+          <span><kbd>B</kbd>{t("construction.control.catalog")}</span>
+          <span><kbd>E</kbd>{t("construction.control.rotate")}</span>
+          <span><kbd>G</kbd>{t("construction.control.weld")}</span>
+          <span><kbd>Shift+G</kbd>{t("construction.control.unweld")}</span>
+          <span><kbd>C</kbd>{t("construction.control.enter")}</span>
+          <span><kbd>Del</kbd>{t("construction.control.remove")}</span>
+        </div>
+      )}
+    </aside>
   );
 }
 
@@ -12365,6 +12468,10 @@ export function MakeAMessGame({
     strikeEnd: () => {},
   });
   const demolitionChargeRuntime = useRef<DemolitionChargeRuntime | null>(null);
+  const constructionRuntime = useRef<ConstructionRuntime | null>(null);
+  const [constructionUi, setConstructionUi] = useState<ConstructionUiState>(
+    DEFAULT_CONSTRUCTION_UI,
+  );
   const arrivalBootstrapSnapshot = useSyncExternalStore(
     subscribeInterIslandBootstrap,
     interIslandBootstrapSnapshot,
@@ -13318,6 +13425,12 @@ export function MakeAMessGame({
       ) {
         requestWeaponChange("charge");
       } else if (
+        event.code === "Digit6" &&
+        (!occupiedSeatId || interIslandPassengerState.flightActive) &&
+        !event.repeat
+      ) {
+        requestWeaponChange("construction");
+      } else if (
         event.code === "KeyQ" &&
         (!occupiedSeatId || interIslandPassengerState.flightActive) &&
         !event.repeat
@@ -13511,6 +13624,8 @@ export function MakeAMessGame({
                     mobileActions={mobileActions}
                     chargeCount={chargeCount}
                     demolitionChargeRuntime={demolitionChargeRuntime}
+                    constructionRuntime={constructionRuntime}
+                    onConstructionUiChange={setConstructionUi}
                     resetVersion={resetVersion}
                     entryOpenRequestVersion={entryOpenRequestVersion}
                     entryOpenRequestTargetRef={entryOpenRequestTargetRef}
@@ -13620,6 +13735,15 @@ export function MakeAMessGame({
 
       {surfaces.worldHud ? (
         <ModeChips flightMode={flightMode} weapon={equippedWeapon} />
+      ) : null}
+      {surfaces.worldHud &&
+      active &&
+      (equippedWeapon === "construction" ||
+        occupiedSeatId?.startsWith("construction-seat:")) ? (
+        <ConstructionHud
+          state={constructionUi}
+          driving={occupiedSeatId?.startsWith("construction-seat:") === true}
+        />
       ) : null}
 
       {/* ТЕХНИЧЕСКИЙ РАЗБОР ОТКАЗА СНЯТ С ЭКРАНА (вердикт Igor, 11.08.2026).
@@ -13800,7 +13924,9 @@ export function MakeAMessGame({
                         ? t("weapon.lance")
                         : equippedWeapon === "charge"
                           ? `${t("weapon.charge")} · ${chargeCount}/10`
-                          : t("weapon.mg")}
+                          : equippedWeapon === "construction"
+                            ? t("weapon.construction")
+                            : t("weapon.mg")}
             </span>
           </div>
           <div className="damage-copy">
@@ -13954,12 +14080,14 @@ export function MakeAMessGame({
                   ? t("fire.strike")
                   : equippedWeapon === "charge"
                     ? t("fire.place")
+                    : equippedWeapon === "construction"
+                      ? t("fire.build")
                   : equippedWeapon === "launcher" ||
                       equippedWeapon === "rocket" ||
                       equippedWeapon === "lance"
                     ? t("fire.shoot")
                     : t("fire.hold")}
-              <span>0·1·2·3·4·5</span>
+              <span>0·1·2·3·4·5·6</span>
               {t("controls.weapon")}
             </>
           ) : null}

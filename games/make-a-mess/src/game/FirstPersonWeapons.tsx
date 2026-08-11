@@ -1390,6 +1390,58 @@ export function FirstPersonDemolitionCharge() {
   );
 }
 
+/** Compact field constructor: the open fork is both tractor emitter and placement projector. */
+export function FirstPersonConstructor() {
+  const group = useRef<Group>(null);
+  const { camera } = useThree();
+  const equipProgress = useRef(0);
+  const localOffset = useMemo(() => new Vector3(), []);
+  const cameraQuaternion = useMemo(() => new Quaternion(), []);
+  const toolEuler = useMemo(() => new Euler(), []);
+
+  useFrame((state, delta) => {
+    if (!group.current) return;
+    equipProgress.current = Math.min(1, equipProgress.current + delta * 4.4);
+    const draw = Math.pow(1 - equipProgress.current, 3);
+    const idleScale = viewmodelIdleScale();
+    const idleX = Math.sin(state.clock.elapsedTime * 1.6) * 0.005 * idleScale;
+    const idleY = Math.sin(state.clock.elapsedTime * 2.1 + 0.6) * 0.004 * idleScale;
+    group.current.position.copy(camera.position);
+    group.current.quaternion.copy(camera.getWorldQuaternion(cameraQuaternion));
+    localOffset.set(0.39 + idleX, -0.31 + idleY - draw * 0.25, -0.69 + draw * 0.16);
+    localOffset.applyQuaternion(group.current.quaternion);
+    group.current.position.add(localOffset);
+    toolEuler.set(-0.08 + idleY, -0.13, -0.11 + draw * 0.22);
+    group.current.quaternion.multiply(new Quaternion().setFromEuler(toolEuler));
+  });
+
+  return (
+    <group ref={group} renderOrder={20}>
+      <ViewmodelLayer />
+      <RoundedBox args={[0.28, 0.22, 0.48]} radius={0.04} smoothness={3} castShadow>
+        <meshStandardMaterial color="#26343a" metalness={0.52} roughness={0.38} />
+      </RoundedBox>
+      {[-0.13, 0.13].map((x) => (
+        <group key={x} position={[x, 0.01, -0.34]}>
+          <RoundedBox args={[0.055, 0.07, 0.35]} radius={0.018} smoothness={2} castShadow>
+            <meshStandardMaterial color="#70858c" metalness={0.72} roughness={0.25} />
+          </RoundedBox>
+          <mesh position={[0, 0, -0.2]} rotation={[Math.PI / 2, 0, 0]}>
+            <torusGeometry args={[0.055, 0.012, 8, 18]} />
+            <meshBasicMaterial color="#62dcff" toneMapped={false} />
+          </mesh>
+        </group>
+      ))}
+      <mesh position={[0, 0.015, -0.08]} rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[0.055, 24]} />
+        <meshBasicMaterial color="#79e7ff" toneMapped={false} />
+      </mesh>
+      <pointLight position={[0, 0.02, -0.44]} color="#62dcff" intensity={0.42} distance={1.8} />
+      <GunHand position={[0.04, -0.21, 0.16]} rotation={[0.15, -0.03, -0.08]} scale={0.9} />
+    </group>
+  );
+}
+
 export function FirstPersonMachineGun({
   shotsRef,
 }: {
