@@ -154,6 +154,11 @@ import {
   type ExternalContactSummary,
 } from "./vehiclePhysicalContact";
 import {
+  beginCollisionEscape,
+  stepCollisionEscape,
+  type CollisionEscapeState,
+} from "./vehicleCollisionEscape";
+import {
   buildSupportStruts,
   strutClosingSpeed,
   strutFoldAngle,
@@ -1074,6 +1079,13 @@ interface FrameState {
    * чужую помеху, и высвобождению, чтобы знать, куда выбираться.
    */
   externalContacts: ExternalContactSummary;
+  /**
+   * ВЫСВОБОЖДЕНИЕ ИЗ ЗАЦЕПА. Живёт ровно столько, сколько длится эпизод
+   * контакта плюс доводка; вне его — null, и машина о нём не думает.
+   */
+  escape: CollisionEscapeState | null;
+  /** Сколько машина уже свободна, но ещё доводит уход, с. */
+  escapeFreeSeconds: number;
   /** Свободное тело: им корабль живёт, пока не летит по маршруту. */
   body: BodyState;
   mass: MassProperties | null;
@@ -1568,6 +1580,8 @@ function restingState(engineCount: number, yawThrusterCount = 0): FrameState {
     recovery: null,
     supportContacts: 0,
     externalContacts: NO_EXTERNAL_CONTACTS,
+    escape: null,
+    escapeFreeSeconds: 0,
     body: RESTING_BODY,
     mass: null,
     intactMass: 0,
@@ -4146,6 +4160,30 @@ export function VehicleFrameSystem({
         (envelopeLeft / state.intactEnvelope) *
         (frame.flight.liftReserve ?? DEFAULT_VEHICLE_LIFT_RESERVE);
       const neutral = mass.mass * GRAVITY;
+      // ЧТО У МАШИНЫ ОСТАЛОСЬ — считается ДО цикла восстановления, а не после.
+      //
+      // Раньше эти три числа рождались ниже по кадру, и цикл восстановления
+      // физически не мог их спросить: исход аварии выбирался один раз, в миг
+      // отказа, и пересмотру не подлежал. Ровно об этом вердикт Igor про
+      // упавшего вверх пузом охотника — «в безвыходное положение он попал
+      // только в силу нашей логики». Теперь ответ доступен в любой момент
+      // кадра, и лежащая машина может спросить заново, жива ли она.
+      const attachedMembers =
+        clusterRegistry.current.get(frame.clusterId)?.attachedMemberIds ??
+        new Set(alive.map((member) => member.piece.id));
+      const propulsion = propulsionHealth(
+        frame.actuators,
+        attachedMembers,
+        frame.flight.limits.enginePoints.length,
+      );
+      const liftHold = state.mass
+        ? rotorHoldState(
+            frame,
+            state.intactMass,
+            state.mass,
+            propulsion.fractions,
+          )
+        : null;
       const berth = mass.centre as [number, number, number];
       let centreNow: [number, number, number] = [
         mass.centre[0] + state.body.position[0],
@@ -4304,6 +4342,31 @@ export function VehicleFrameSystem({
               state.recovery.landingStability.landed,
             rebuildComplete,
             arrivalComplete,
+            // МОЖЕТ ЛИ ОНА ЛЕТЕТЬ ОТСЮДА — вопрос задаётся СЕЙЧАС, когда всё
+            // остановилось, а не в миг катастрофы. Три факта, и все
+            // измеренные: цела ли конструкция, хватает ли подъёма на
+            // собственный вес и держат ли уцелевшие движители позу.
+            flightworthy:
+              mass.mass / Math.max(1, state.intactMass) >= 0.55 &&
+              envelopeLeft / Math.max(1, state.intactEnvelope) >= 0.5 &&
+              liftCapacity / Math.max(1, neutral) >= 1.02 &&
+              liftHold !== "tumbling",
+            // ВСТАЛА. Оторвалась от грунта и держит позу брюхом вниз —
+            // строгость здесь уместна, это взлёт.
+            uprightAgain:
+              previousPhase === "righting" &&
+              state.supportContacts === 0 &&
+              centreNow[1] > (recoveryServiceArea?.disappearY ?? -12) + 3 &&
+              (() => {
+                const pose = vehicleAttitude(
+                  state.body.orientation,
+                  frame.nose,
+                );
+                return (
+                  Math.abs(pose.pitch) < Math.PI * 0.25 &&
+                  Math.abs(pose.roll) < Math.PI * 0.25
+                );
+              })(),
           },
         );
         if (recoveryResult.requestRebuild) {
@@ -4490,22 +4553,6 @@ export function VehicleFrameSystem({
         const forward = rotateByQuaternion(state.body.orientation, frame.nose);
         onPassengerViewRestore?.(Math.atan2(-forward[0], -forward[2]), 0);
       }
-      const attachedMembers =
-        clusterRegistry.current.get(frame.clusterId)?.attachedMemberIds ??
-        new Set(alive.map((member) => member.piece.id));
-      const propulsion = propulsionHealth(
-        frame.actuators,
-        attachedMembers,
-        frame.flight.limits.enginePoints.length,
-      );
-      const liftHold = state.mass
-        ? rotorHoldState(
-            frame,
-            state.intactMass,
-            state.mass,
-            propulsion.fractions,
-          )
-        : null;
       const flightClearance = propulsionFlightClearance(propulsion, liftHold);
       const feedbackModel: ShipModel =
         driveUsesPropulsionFeedback(frame.flight.driveAnimation) && flight
@@ -5170,6 +5217,20 @@ export function VehicleFrameSystem({
                   (GRAVITY * frame.flight.limits.liftTrimRange),
               ),
             );
+          } else if (phase === "righting") {
+            // ВСТАЁТ. Просьба ровно одна: подъём на полную и поза брюхом вниз
+            // — остальное сделает распределитель. Перевёрнутой машине этот же
+            // приказ исполняется ОБРАТНОЙ тягой (`rotorReverseShare`): без
+            // реверса она вжимала бы себя в грунт, старательно исполняя
+            // «поднимайся». Отсюда и порядок работ: сперва реверс, потом
+            // самовосстановление — второе без первого физически невозможно.
+            liftCommand = 1;
+            rotorGuidance = {
+              forwardSpeed: 0,
+              lateralSpeed: 0,
+              yawRate: 0,
+              liftFraction: 1,
+            };
           } else {
             liftCommand = -1;
           }
@@ -6891,6 +6952,69 @@ export function VehicleFrameSystem({
         }
       } else if (state.evasion) {
         state.evasion = null;
+      }
+
+      // ---------------------------------------------------------------
+      // ВЫСВОБОЖДЕНИЕ ИЗ ЗАЦЕПА — ПЯТЫЙ ИСТОЧНИК GUIDANCE.
+      //
+      // Врезка той же ширины, что боевая и уклонение: правило целиком в
+      // чистом `vehicleCollisionEscape`, здесь только состояние между кадрами
+      // и подстановка направления.
+      //
+      // Условие одно и оно физическое: отчалившая машина КАСАЕТСЯ чужого
+      // тела. Ни имени, ни паспортного разрешения тут не нужно — выбираться
+      // из зацепа умеет всякий, кто умеет двигаться.
+      //
+      // Только автономный полёт. У ручного за штурвалом человек, и отнимать у
+      // него управление в тот самый миг, когда он разбирается с зацепом, —
+      // это не помощь, а второй пилот, тянущий ручку в свою сторону.
+      const touching =
+        flight?.castOff === true && state.externalContacts.count > 0;
+      if (rotorGuidance && (touching || state.escape)) {
+        if (touching && !state.escape) {
+          // Вход в эпизод: запоминается то, что привело в столкновение.
+          state.escape = beginCollisionEscape(state.body.velocity);
+        }
+        const escapeStep = stepCollisionEscape(state.escape!, {
+          contact: state.externalContacts,
+          position: state.body.position,
+          deltaSeconds: step,
+        });
+        state.escape = escapeStep.state;
+        // ДОВОДКА С КОНЦОМ. Освободившаяся машина ещё полсекунды уходит от
+        // тела — и только потом забывает эпизод. Без этого она бросает тягу
+        // внутри габарита препятствия и сваливается обратно.
+        if (!touching && escapeStep.state.seconds > 0) {
+          state.escapeFreeSeconds += step;
+        } else {
+          state.escapeFreeSeconds = 0;
+        }
+        if (state.escapeFreeSeconds > 0.5) {
+          state.escape = null;
+          state.escapeFreeSeconds = 0;
+        } else {
+          const away = escapeStep.direction;
+          const forward = rotateByQuaternion(state.body.orientation, frame.nose);
+          const flat = Math.hypot(forward[0], forward[2]) || 1;
+          const nose: [number, number] = [forward[0] / flat, forward[2] / flat];
+          const starboard: [number, number] = [-nose[1], nose[0]];
+          // Скорость ухода берётся щедрой: зацеп — это не место, где стоит
+          // экономить. Верх и низ идут отдельным каналом, потому что подъём
+          // у винтокрылой машины и есть её вертикальная тяга.
+          const ESCAPE_SPEED = 6;
+          rotorGuidance = {
+            ...rotorGuidance,
+            forwardSpeed:
+              away[0] * nose[0] * ESCAPE_SPEED + away[2] * nose[1] * ESCAPE_SPEED,
+            lateralSpeed:
+              away[0] * starboard[0] * ESCAPE_SPEED +
+              away[2] * starboard[1] * ESCAPE_SPEED,
+            // Трасса на время высвобождения отпускает целиком: держать линию
+            // в чужом теле нечем и незачем.
+            slipAllowance: Math.PI,
+          };
+          liftCommand = Math.max(0, Math.min(1, liftCommand + away[1] * 0.35));
+        }
       }
 
       // ---------------------------------------------------------------

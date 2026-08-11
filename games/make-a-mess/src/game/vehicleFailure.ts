@@ -69,9 +69,29 @@ export type VehicleRecoveryPhase =
   | "waiting"
   | "rebuilding"
   | "arrival"
+  /**
+   * ЛЕЖИТ, НО ЖИВА И ПРОБУЕТ ВСТАТЬ.
+   *
+   * Вердикт Igor (12.08.2026) на упавшего вверх пузом охотника: «прикол в том,
+   * что охотник в безвыходное положение попал только в силу нашей логики.
+   * Если бы он упал, но технически функционален и может реверсом подняться и
+   * вернуться к заданию — он мог бы это сделать».
+   *
+   * Ошибка была не в числах, а в МОМЕНТЕ ВОПРОСА: исход рейса выбирался ОДИН
+   * РАЗ, в миг отказа, когда машина кувыркалась и всё выглядело безнадёжно.
+   * Эта фаза задаёт тот же вопрос ЗАНОВО — когда всё уже остановилось и видно,
+   * что цело. Ответ часто другой.
+   */
+  | "righting"
   | "settled";
 
 export const VEHICLE_REBUILD_DELAY_SECONDS = 30;
+/**
+ * Сколько машине дано на то, чтобы встать своим ходом. Не больше: попытка,
+ * растянутая на полминуты, — это не самовосстановление, а лежание с
+ * работающими двигателями, и подмену тогда лучше вызвать сразу.
+ */
+export const VEHICLE_RIGHTING_TIMEOUT_SECONDS = 8;
 export const VEHICLE_LANDING_STABLE_SECONDS = 3;
 /** A bounce is not enough to command a full emergency lift dump. */
 export const VEHICLE_GROUND_CONTACT_CONFIRM_SECONDS = 0.4;
@@ -283,6 +303,12 @@ export interface VehicleRecoveryLifecycle {
   readonly disposition: VehicleFailureDisposition;
   readonly phase: VehicleRecoveryPhase;
   readonly phaseSeconds: number;
+  /**
+   * Попытка встать уже была. Одна на аварию: машина, которая раз не смогла,
+   * не смогла и не сможет, а бесконечные попытки — это тот же вечный лежачий
+   * борт, только с шумом.
+   */
+  readonly rightingAttempted?: boolean;
 }
 
 export interface VehicleRecoveryObservation {
@@ -292,6 +318,15 @@ export interface VehicleRecoveryObservation {
   readonly landingComplete: boolean;
   readonly rebuildComplete: boolean;
   readonly arrivalComplete: boolean;
+  /**
+   * МАШИНА МОЖЕТ ЛЕТЕТЬ ОТСЮДА. Не «была исправна», а именно СЕЙЧАС: цела,
+   * подъёма хватает на собственный вес, органы на месте. Спрашивается там,
+   * где она уже лежит неподвижно, и потому отвечает про реальность, а не про
+   * миг катастрофы.
+   */
+  readonly flightworthy?: boolean;
+  /** Встала и оторвалась от грунта: попытка удалась. */
+  readonly uprightAgain?: boolean;
 }
 
 export interface VehicleRecoveryResult {
@@ -1011,7 +1046,54 @@ export function advanceVehicleRecoveryLifecycle(
   observation: VehicleRecoveryObservation,
 ): VehicleRecoveryResult {
   const elapsed = current.phaseSeconds + Math.max(0, observation.deltaSeconds);
+  if (current.phase === "righting") {
+    // Встала и оторвалась — авария кончилась. Возврат к заданию, а не
+    // подмена: машина цела, и ей есть чем лететь.
+    if (observation.uprightAgain) {
+      return { lifecycle: null, requestRebuild: false, recovered: true };
+    }
+    // Не встала за отпущенный срок — обычный порядок замены, без второй
+    // попытки. Отсчёт до пересборки начинается с нуля: у неё был свой шанс.
+    if (elapsed >= VEHICLE_RIGHTING_TIMEOUT_SECONDS) {
+      return {
+        lifecycle: {
+          ...current,
+          phase: "settled",
+          phaseSeconds: 0,
+          // Защёлка ставится и ЗДЕСЬ, а не только на входе в попытку. Иначе
+          // инвариант «попытка одна» держится лишь на том, что в фазу попали
+          // правильной дверью, — а `settled` увидит живую машину и пошлёт её
+          // вставать снова, и так до конца мира, причём подмена не придёт
+          // никогда.
+          rightingAttempted: true,
+        },
+        requestRebuild: false,
+        recovered: false,
+      };
+    }
+    return {
+      lifecycle: { ...current, phaseSeconds: elapsed },
+      requestRebuild: false,
+      recovered: false,
+    };
+  }
   if (current.phase === "settled") {
+    // ЛЕЖИТ, НО ЖИВА — ПУСТЬ ВСТАНЁТ САМА.
+    //
+    // Вопрос задаётся здесь, а не в миг отказа, и в этом вся разница: тогда
+    // машина кувыркалась, сейчас она лежит неподвижно, и видно, что цела.
+    if (observation.flightworthy && !current.rightingAttempted) {
+      return {
+        lifecycle: {
+          ...current,
+          phase: "righting",
+          phaseSeconds: 0,
+          rightingAttempted: true,
+        },
+        requestRebuild: false,
+        recovered: false,
+      };
+    }
     // СЕВШАЯ МАШИНА ТОЖЕ ВОЗВРАЩАЕТСЯ В СТРОЙ.
     //
     // Фаза была терминальной, и это читалось как поломка: разбитая машина
