@@ -929,7 +929,27 @@ export function advanceVehicleRecoveryLifecycle(
 ): VehicleRecoveryResult {
   const elapsed = current.phaseSeconds + Math.max(0, observation.deltaSeconds);
   if (current.phase === "settled") {
-    return { lifecycle: current, requestRebuild: false, recovered: false };
+    // СЕВШАЯ МАШИНА ТОЖЕ ВОЗВРАЩАЕТСЯ В СТРОЙ.
+    //
+    // Фаза была терминальной, и это читалось как поломка: разбитая машина
+    // лежала на поле, и на замену ей не приходило ничего (наблюдение Igor,
+    // 11.08.2026). Полигон после первой же аварии пустел навсегда.
+    //
+    // Ждёт она столько же, сколько ушедшая под мир: причина простоя разная, а
+    // цена замены одна. Дальше — та же пересборка и то же прибытие с
+    // горизонта, так что путь в строй у всех бед один.
+    if (elapsed >= VEHICLE_REBUILD_DELAY_SECONDS) {
+      return {
+        lifecycle: { ...current, phase: "rebuilding", phaseSeconds: 0 },
+        requestRebuild: true,
+        recovered: false,
+      };
+    }
+    return {
+      lifecycle: { ...current, phaseSeconds: elapsed },
+      requestRebuild: false,
+      recovered: false,
+    };
   }
   if (current.phase === "landing") {
     return observation.landingComplete

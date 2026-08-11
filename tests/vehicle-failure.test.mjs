@@ -1081,3 +1081,41 @@ test("отвёрнутый нос — не сход с маршрута для �
   }
   assert.equal(adriftFailure, "routeDivergence");
 });
+
+test("севшая машина не остаётся лежать: ждёт срок и возвращается в строй", () => {
+  // Фаза `settled` была терминальной, и полигон после первой аварии пустел
+  // навсегда: разбитая машина лежала на поле, на замену не приходило ничего.
+  // Ждёт она столько же, сколько ушедшая под мир: причина простоя разная, а
+  // цена замены одна.
+  let lifecycle = {
+    reason: "structureLost",
+    disposition: "landOnSpot",
+    phase: "settled",
+    phaseSeconds: 0,
+  };
+  const observation = {
+    deltaSeconds: 1,
+    escapeComplete: false,
+    belowFog: false,
+    landingComplete: false,
+    rebuildComplete: false,
+    arrivalComplete: false,
+  };
+
+  let requested = false;
+  for (let second = 0; second < VEHICLE_REBUILD_DELAY_SECONDS + 2; second += 1) {
+    const result = advanceVehicleRecoveryLifecycle(lifecycle, observation);
+    if (result.requestRebuild) {
+      requested = true;
+      assert.equal(result.lifecycle.phase, "rebuilding");
+      assert.ok(
+        second + 1 >= VEHICLE_REBUILD_DELAY_SECONDS,
+        `пересборка запрошена слишком рано: на ${second + 1} секунде`,
+      );
+      break;
+    }
+    assert.equal(result.lifecycle.phase, "settled", "ушла из покоя раньше срока");
+    lifecycle = result.lifecycle;
+  }
+  assert.ok(requested, "машина осталась лежать навсегда");
+});

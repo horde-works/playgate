@@ -193,32 +193,30 @@ async function main() {
 
     const poseOf = async () => {
       const raw = await cdp.eval(
-        `JSON.stringify((window.__mamVehicles?.() ?? []).find((v) => v.id === ${JSON.stringify(VEHICLE)})?.body?.position ?? null)`,
+        `JSON.stringify((window.__mamVehicles?.() ?? []).find((v) => v.id === ${JSON.stringify(VEHICLE)}) ?? null)`,
       );
       return JSON.parse(raw ?? "null");
     };
 
-    const start = await poseOf();
-    console.log("положение до провала:", start?.map((v) => v.toFixed(1)).join(","));
+    const atStart = await poseOf();
+    console.log("до падения: y=", atStart?.body?.position?.[1]?.toFixed(1), "| recovery:", JSON.stringify(atStart?.recovery ?? null));
 
-    // Загоняем машину под мир: телепорт кадра — тот же инструмент, которым
-    // ставят позу в диагностике.
-    console.log("роняю машину под мир…");
-    await cdp.eval(
-      `window.__mamVehiclePose(${JSON.stringify(VEHICLE)}, 0, -40, 0)`,
-    );
-    await sleep(3000);
-    const after = await poseOf();
-    console.log("положение после:", after?.map((v) => v.toFixed(1)).join(","));
+    console.log("роняю под мир...");
+    await cdp.eval(`window.__mamVehiclePose(${JSON.stringify(VEHICLE)}, 0, -60, 0)`);
 
-    const recovered = after && after[1] > -12;
-    console.log(
-      recovered
-        ? "
-ВЕРДИКТ: машина вернулась на своё место — пересборка сработала."
-        : "
-ВЕРДИКТ: машина осталась под миром.",
-    );
+    for (let i = 0; i < 24; i += 1) {
+      await sleep(2000);
+      const now = await poseOf();
+      const y = now?.body?.position?.[1];
+      console.log(
+        `t=${(i + 1) * 2}s y=${y === undefined ? "?" : y.toFixed(1)} recovery=${JSON.stringify(now?.recovery ?? null)}`,
+      );
+      if (y !== undefined && y > 0) {
+        console.log("ВЕРДИКТ: машина вернулась.");
+        break;
+      }
+      if (i === 23) console.log("ВЕРДИКТ: за 48 секунд не вернулась.");
+    }
   } finally {
     if (cdp) {
       try {
