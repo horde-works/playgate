@@ -2435,6 +2435,15 @@ export function VehicleFrameSystem({
         readonly modeSeconds: number;
         readonly passes: number;
       }[];
+      /** Кто сейчас уходит от ракеты и сколько ракет в воздухе. */
+      __mamEvasion?: () => {
+        readonly rockets: number;
+        readonly dodging: readonly {
+          readonly id: string;
+          readonly breakSeconds: number;
+          readonly threatId: number | null;
+        }[];
+      };
       __mamVehicleContacts?: () => {
         readonly seen: number;
         readonly closing: number;
@@ -2528,6 +2537,20 @@ export function VehicleFrameSystem({
           modeSeconds: Number(combat!.modeSeconds.toFixed(2)),
           passes: combat!.passes,
         }));
+    scope.__mamEvasion = () => ({
+      rockets: liveRockets.current.length,
+      dodging: frames
+        .map((frame) => ({
+          id: frame.id,
+          evasion: states.current.get(frame.id)?.evasion ?? null,
+        }))
+        .filter(({ evasion }) => evasion !== null && evasion.breakSeconds > 0)
+        .map(({ id, evasion }) => ({
+          id,
+          breakSeconds: Number(evasion!.breakSeconds.toFixed(2)),
+          threatId: evasion!.threatId,
+        })),
+    });
     const query = new URLSearchParams(window.location.search);
     const impulseRequest = query.get("mamVehicleImpulse");
     const impulseDelay = Math.max(
@@ -2585,6 +2608,7 @@ export function VehicleFrameSystem({
         delete scope.__mamVehicleDepart;
       }
       delete scope.__mamAirCombat;
+      delete scope.__mamEvasion;
       delete document.documentElement.dataset.mamVehicle;
     };
   }, [externalImpulses, frameState, frames]);

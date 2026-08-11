@@ -230,6 +230,9 @@ async function main() {
     const started = Date.now();
     let engagementShot = false;
     const preySpeeds = [];
+    let rocketsSeen = 0;
+    let dodgeSamples = 0;
+    let firstDodgeAt = null;
 
     while ((Date.now() - started) / 1000 < SECONDS) {
       const sample = await cdp.eval(`JSON.stringify(window.__mamAirCombat())`);
@@ -284,11 +287,29 @@ async function main() {
           speed: Number(Math.hypot(pv[0], pv[1], pv[2]).toFixed(2)),
         });
       }
+      // Уклонение: сколько ракет в воздухе и уходит ли кто-то прямо сейчас.
+      const evRaw = await cdp.eval(
+        `JSON.stringify(window.__mamEvasion?.() ?? null)`,
+      );
+      const ev = JSON.parse(evRaw ?? "null");
+      if (ev) {
+        rocketsSeen = Math.max(rocketsSeen, ev.rockets);
+        if (ev.dodging.length > 0) {
+          dodgeSamples += 1;
+          if (firstDodgeAt === null) {
+            firstDodgeAt = Number(((Date.now() - started) / 1000).toFixed(1));
+            console.log(`t=${firstDodgeAt}s ПЕРВЫЙ УХОД ОТ РАКЕТЫ:`, JSON.stringify(ev.dodging));
+          }
+        }
+      }
       await sleep(500);
     }
 
     const slow = preySpeeds.filter((row) => row.speed < 0.6);
     const verdict = {
+      rocketsSeenAtOnce: rocketsSeen,
+      dodgeSamples,
+      firstDodgeAt,
       preySamples: preySpeeds.length,
       preyStalledSamples: slow.length,
       preyFirstStallAt: slow[0]?.seconds ?? null,
