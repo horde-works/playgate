@@ -123,10 +123,12 @@ import {
   crumbleOnLanding,
   damageBody,
   debrisColliderBoxes,
+  bodySettled,
   debrisCollisionTuning,
   DEBRIS_REST_TRAVEL,
   DEBRIS_REST_WINDOW_STEPS,
   debrisRestDecision,
+  physicalBodyKind,
   fractureEnergyByMaterial,
   grenadeEnergyAtDistance,
   groundCarveRequiresRemnant,
@@ -5876,11 +5878,14 @@ function OpenWorldScene({
         const body = pieceBodies.current.get(shard.id);
         // «Осел» — это и уснувший, и ЗАМОРОЖЕННЫЙ: у `Fixed` isSleeping()
         // возвращает false, и без второй половины условия защита от вытеснения
-        // доставалась бы всей куче разом, то есть никому.
+        // доставалась бы всей куче разом, то есть никому. Но КИНЕМАТИКА не
+        // оседает никогда: общий ответ и его цена — `bodySettled`.
         const settled =
           !body ||
-          body.isSleeping() ||
-          body.bodyType() !== rapier.RigidBodyType.Dynamic;
+          bodySettled(
+            physicalBodyKind(body.bodyType(), rapier.RigidBodyType),
+            body.isSleeping(),
+          );
         const awakeBonus = settled ? 0 : 1_000_000;
         const translation = body?.translation();
         const x = translation?.x ?? shard.position[0];
