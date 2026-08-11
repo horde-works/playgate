@@ -7,6 +7,7 @@ import {
   RigidBody,
   useBeforePhysicsStep,
   useRapier,
+  type RapierCollider,
   type RapierRigidBody,
 } from "@react-three/rapier";
 import {
@@ -18,7 +19,7 @@ import {
   type MutableRefObject,
   type ReactElement,
 } from "react";
-import { Euler, Group, Quaternion, Vector3 } from "three";
+import { AdditiveBlending, Euler, Group, Quaternion, Vector3 } from "three";
 import {
   advanceCarSteering,
   carForces,
@@ -93,8 +94,14 @@ export const DEFAULT_CONSTRUCTION_UI: ConstructionUiState = {
 
 interface HeldBody {
   body: RapierRigidBody;
+  collider: RapierCollider;
   assemblyId: string | null;
   distance: number;
+}
+
+interface HeldVisualCue {
+  shape: "box" | "sphere" | "cylinder";
+  scale: ConstructionVec3;
 }
 
 function id(prefix: string): string {
@@ -137,9 +144,11 @@ function partSpawnRotation(kind: ConstructionPartKind, yaw: number): Constructio
 function ConstructionPartVisual({
   part,
   powered,
+  grabbed,
 }: {
   part: ConstructionPart;
   powered: boolean;
+  grabbed: boolean;
 }): ReactElement {
   const spin = useRef<Group>(null);
   useFrame((_, delta) => {
@@ -170,12 +179,24 @@ function ConstructionPartVisual({
             <cylinderGeometry
               args={[part.size[0] / 2, part.size[2] / 2, part.size[1], part.kind === "rotor" ? 24 : 18]}
             />
-            <meshStandardMaterial color={color} roughness={0.62} metalness={0.18} />
+            <meshStandardMaterial
+              color={color}
+              roughness={0.62}
+              metalness={0.18}
+              emissive={grabbed ? "#247f91" : "#000000"}
+              emissiveIntensity={grabbed ? 0.28 : 0}
+            />
           </mesh>
         ) : (
           <mesh castShadow receiveShadow scale={part.size as [number, number, number]}>
             <boxGeometry />
-            <meshStandardMaterial color={color} roughness={0.68} metalness={0.12} />
+            <meshStandardMaterial
+              color={color}
+              roughness={0.68}
+              metalness={0.12}
+              emissive={grabbed ? "#247f91" : "#000000"}
+              emissiveIntensity={grabbed ? 0.28 : 0}
+            />
           </mesh>
         )}
       </group>
@@ -272,6 +293,8 @@ export function ConstructionSystem({
     constructionCatalogPart("beam").defaultSize,
   );
   const [holding, setHolding] = useState(false);
+  const [heldAssemblyId, setHeldAssemblyId] = useState<string | null>(null);
+  const [heldVisualCue, setHeldVisualCue] = useState<HeldVisualCue | null>(null);
   const [status, setStatus] = useState("ready");
   const bodyByAssembly = useRef(new Map<string, RapierRigidBody>());
   const held = useRef<HeldBody | null>(null);
@@ -285,6 +308,7 @@ export function ConstructionSystem({
   const impactBreakQueue = useRef(new Set<string>());
   const impactCooldownUntil = useRef(new Map<string, number>());
   const previewGroup = useRef<Group>(null);
+  const heldCueGroup = useRef<Group>(null);
   const rotorOutputByAssembly = useRef(new Map<string, number[]>());
   const steeringByAssembly = useRef(new Map<string, number>());
 
@@ -405,6 +429,8 @@ export function ConstructionSystem({
   const releaseHeld = useCallback(() => {
     held.current = null;
     setHolding(false);
+    setHeldAssemblyId(null);
+    setHeldVisualCue(null);
     setStatus("released");
     publishUi();
   }, [publishUi]);
@@ -421,6 +447,8 @@ export function ConstructionSystem({
       );
       held.current = null;
       setHolding(false);
+      setHeldAssemblyId(null);
+      setHeldVisualCue(null);
       setStatus("thrown");
       publishUi();
       return;
@@ -495,6 +523,8 @@ export function ConstructionSystem({
     };
     held.current = null;
     setHolding(false);
+    setHeldAssemblyId(null);
+    setHeldVisualCue(null);
     setAssemblies((current) => [
       ...current.filter((assembly) => assembly.id !== sourceId && assembly.id !== targetId),
       merged,
@@ -528,6 +558,8 @@ export function ConstructionSystem({
     if (held.current?.assemblyId === targetId) {
       held.current = null;
       setHolding(false);
+      setHeldAssemblyId(null);
+      setHeldVisualCue(null);
     }
     if (occupiedSeatId === `construction-seat:${targetId}`) onOccupiedSeatChange(null);
     setAssemblies((current) => current.filter((assembly) => assembly.id !== targetId));
@@ -591,15 +623,70 @@ export function ConstructionSystem({
       if (!active || occupiedSeatId || event.button !== 2) return;
       event.preventDefault();
       const hit = cast(MAX_GRAB_DISTANCE);
-      const body = hit?.collider.parent() ?? null;
+      if (!hit) return;
+      const body = hit.collider.parent();
       if (!body || body.bodyType() !== rapier.RigidBodyType.Dynamic) return;
       const data = body.userData as { constructionAssemblyId?: string } | undefined;
+      const assemblyId = data?.constructionAssemblyId ?? null;
       held.current = {
         body,
-        assemblyId: data?.constructionAssemblyId ?? null,
-        distance: hit?.timeOfImpact ?? DEFAULT_PLACE_DISTANCE,
+        collider: hit.collider,
+        assemblyId,
+        distance: hit.timeOfImpact,
       };
       setHolding(true);
+      setHeldAssemblyId(assemblyId);
+      if (assemblyId) {
+        setHeldVisualCue(null);
+      } else {
+        const shapeType = hit.collider.shapeType();
+        const pad = (size: ConstructionVec3): ConstructionVec3 =>
+          size.map((value) => Math.max(0.08, value * 1.045 + 0.025)) as unknown as ConstructionVec3;
+        if (
+          shapeType === rapier.ShapeType.Cuboid ||
+          shapeType === rapier.ShapeType.RoundCuboid
+        ) {
+          const half = hit.collider.halfExtents();
+          setHeldVisualCue({ shape: "box", scale: pad([half.x * 2, half.y * 2, half.z * 2]) });
+        } else if (shapeType === rapier.ShapeType.Ball) {
+          const diameter = hit.collider.radius() * 2;
+          setHeldVisualCue({ shape: "sphere", scale: pad([diameter, diameter, diameter]) });
+        } else if (shapeType === rapier.ShapeType.Capsule) {
+          const diameter = hit.collider.radius() * 2;
+          setHeldVisualCue({
+            shape: "sphere",
+            scale: pad([diameter, hit.collider.halfHeight() * 2 + diameter, diameter]),
+          });
+        } else if (
+          shapeType === rapier.ShapeType.Cylinder ||
+          shapeType === rapier.ShapeType.RoundCylinder ||
+          shapeType === rapier.ShapeType.Cone ||
+          shapeType === rapier.ShapeType.RoundCone
+        ) {
+          const diameter = hit.collider.radius() * 2;
+          setHeldVisualCue({
+            shape: "cylinder",
+            scale: pad([diameter, hit.collider.halfHeight() * 2, diameter]),
+          });
+        } else {
+          let scale: ConstructionVec3 = [1, 1, 1];
+          try {
+            const vertices = hit.collider.vertices();
+            let x = 0.5;
+            let y = 0.5;
+            let z = 0.5;
+            for (let index = 0; index + 2 < vertices.length; index += 3) {
+              x = Math.max(x, Math.abs(vertices[index]));
+              y = Math.max(y, Math.abs(vertices[index + 1]));
+              z = Math.max(z, Math.abs(vertices[index + 2]));
+            }
+            scale = [x * 2, y * 2, z * 2];
+          } catch {
+            // An unfamiliar collider still receives a small, cheap selection tone.
+          }
+          setHeldVisualCue({ shape: "box", scale: pad(scale) });
+        }
+      }
       body.wakeUp();
       setStatus("held — left click throws");
       publishUi();
@@ -674,6 +761,12 @@ export function ConstructionSystem({
     if (previewGroup.current) {
       previewGroup.current.position.copy(previewPosition.current);
       previewGroup.current.quaternion.set(...partSpawnRotation(selectedKind, previewYaw.current));
+    }
+    if (heldCueGroup.current && currentHeld) {
+      const translation = currentHeld.collider.translation();
+      const rotation = currentHeld.collider.rotation();
+      heldCueGroup.current.position.set(translation.x, translation.y, translation.z);
+      heldCueGroup.current.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
     }
     if (impactBreakQueue.current.size > 0) {
       const queued = new Set(impactBreakQueue.current);
@@ -905,6 +998,8 @@ export function ConstructionSystem({
     resetSeen.current = resetVersion;
     held.current = null;
     setHolding(false);
+    setHeldAssemblyId(null);
+    setHeldVisualCue(null);
     setAssemblies([]);
     try {
       window.localStorage.removeItem(`${CONSTRUCTION_STORAGE_PREFIX}${sceneId}`);
@@ -983,7 +1078,12 @@ export function ConstructionSystem({
             }}
           >
             {assembly.parts.map((part) => (
-              <ConstructionPartVisual key={part.id} part={part} powered={powered} />
+              <ConstructionPartVisual
+                key={part.id}
+                part={part}
+                powered={powered}
+                grabbed={heldAssemblyId === assembly.id}
+              />
             ))}
             {assembly.parts.map((part) => (
               <ConstructionCollider
@@ -1012,6 +1112,27 @@ export function ConstructionSystem({
               <meshBasicMaterial color="#59d6ff" transparent opacity={0.32} depthWrite={false} />
             </mesh>
           )}
+        </group>
+      ) : null}
+      {holding && heldVisualCue ? (
+        <group ref={heldCueGroup} position={[0, -1000, 0]}>
+          <mesh scale={heldVisualCue.scale as [number, number, number]} renderOrder={18}>
+            {heldVisualCue.shape === "sphere" ? (
+              <sphereGeometry args={[0.5, 18, 12]} />
+            ) : heldVisualCue.shape === "cylinder" ? (
+              <cylinderGeometry args={[0.5, 0.5, 1, 18]} />
+            ) : (
+              <boxGeometry />
+            )}
+            <meshBasicMaterial
+              color="#73dff2"
+              transparent
+              opacity={0.14}
+              depthWrite={false}
+              blending={AdditiveBlending}
+              toneMapped={false}
+            />
+          </mesh>
         </group>
       ) : null}
     </>
