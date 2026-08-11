@@ -296,7 +296,19 @@ export interface AirVehicleDefinition extends VehicleFrameDefinition {
      * не имеет права знать, кто из машин пуглив.
      */
     readonly evasion?: EvasionCapability;
-    arrivalPlan(berth: SceneVector3): VehicleRoutePlan;
+    /**
+     * Заход на посадку. `bearing` — с какой стороны машина приходит: подменные
+     * суда обязаны появляться с разных сторон, иначе полигон выглядит
+     * конвейером. `from` задаёт начало захода вместо горизонта — им пользуется
+     * отзыв с пульта, строя тот же заход от текущего места машины.
+     *
+     * Машина вправе оба довода игнорировать: у той, чей заход не зависит от
+     * стороны, подпись остаётся прежней.
+     */
+    arrivalPlan(
+      berth: SceneVector3,
+      options?: { readonly bearing?: number; readonly from?: SceneVector3 },
+    ): VehicleRoutePlan;
     escapePlan(
       berth: SceneVector3,
       input: SkyTrainEmergencyEscapeInput,

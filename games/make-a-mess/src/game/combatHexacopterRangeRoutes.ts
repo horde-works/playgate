@@ -1063,8 +1063,67 @@ export function combatHexacopterRangePlan(berth: SceneVector3): VehicleRoutePlan
   };
 }
 
-export function combatHexacopterRangeArrivalPlan(berth: SceneVector3): VehicleRoutePlan {
-  return combatHexacopterRangePlan(berth);
+/**
+ * ЗАХОД НА ПОСАДКУ — С ГОРИЗОНТА И С РАЗНЫХ СТОРОН.
+ *
+ * Прежде «прибытием» служил показательный круг: машину переносили в его начало,
+ * и она уходила крутить программу вместо того, чтобы садиться. Снаружи это
+ * читалось как «появился на площадке и взлетел, не приземлившись» (наблюдение
+ * Igor, 11.08.2026), а иногда уводило её за остров — круг ведёт куда угодно,
+ * только не к берту.
+ *
+ * Настоящий заход прост и потому надёжен: прямая с дальнего края мира к берту
+ * со снижением. Пеленг — ДОВОД, а не константа: подменные суда обязаны
+ * приходить с разных сторон, иначе полигон выглядит конвейером.
+ *
+ * Начало захода берётся снаружи, если оно задано: отзыв с пульта строит тот же
+ * заход от ТЕКУЩЕГО места машины, и лететь ей тогда не с горизонта, а оттуда,
+ * где её застал приказ.
+ */
+export function combatHexacopterRangeApproachPlan(
+  berth: SceneVector3,
+  options?: {
+    /** Пеленг захода в радианах: с какой стороны машина приходит. */
+    readonly bearing?: number;
+    /** Начало захода в мире. Не задано — берётся точка на горизонте. */
+    readonly from?: SceneVector3;
+  },
+): VehicleRoutePlan {
+  const bearing = options?.bearing ?? 0;
+  const HORIZON = 150;
+  const start: SceneVector3 = options?.from ?? [
+    berth[0] + Math.sin(bearing) * HORIZON,
+    berth[1] + CLEARANCE_ALTITUDE + 14,
+    berth[2] + Math.cos(bearing) * HORIZON,
+  ];
+  const span = Math.hypot(start[0] - berth[0], start[2] - berth[2]) || 1;
+  return {
+    id: "combat-hexacopter:range-approach",
+    length: span,
+    point(progress) {
+      const t = Math.max(0, Math.min(1, progress));
+      return [
+        start[0] + (berth[0] - start[0]) * t,
+        start[1] + (berth[1] - start[1]) * t,
+        start[2] + (berth[2] - start[2]) * t,
+      ];
+    },
+    // Подходят бодро, садятся медленно: последняя четверть — это уже посадка.
+    speedLimit: (progress) => (progress < 0.75 ? 16 : 5),
+    altitude(progress) {
+      const t = Math.max(0, Math.min(1, progress));
+      return start[1] + (berth[1] - start[1]) * t;
+    },
+    corridor: () => 10,
+    finalFrom: 0.92,
+  };
+}
+
+export function combatHexacopterRangeArrivalPlan(
+  berth: SceneVector3,
+  options?: { readonly bearing?: number; readonly from?: SceneVector3 },
+): VehicleRoutePlan {
+  return combatHexacopterRangeApproachPlan(berth, options);
 }
 
 export function combatHexacopterRangeEscapePlan(

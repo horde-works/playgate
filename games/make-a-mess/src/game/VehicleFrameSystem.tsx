@@ -349,6 +349,31 @@ type PilotControlName =
   "forward" | "backward" | "left" | "right" | "run" | "jump";
 
 /** Тяжесть. Плотности в движке свои, но она одна для всех. */
+/**
+ * ОТЗЫВ НА БАЗУ — единственная команда возврата, и только с пульта.
+ *
+ * Вердикт Igor: возврат не запускается ни пустым боезапасом, ни таймером —
+ * только человеком. Иначе бой превращается в бесконечный цикл, а у зрителя
+ * нет способа его закончить.
+ */
+const RECALL_ACTION = "recall";
+
+/**
+ * План рейса. Один вопрос в одном месте: отзыв — это заход на посадку от точки
+ * отзыва, всё остальное берёт паспортную трассу своего вида.
+ */
+function flightRoutePlan(
+  frame: VehicleFrameRuntime,
+  flight: { readonly kind: string; readonly recallFrom?: readonly [number, number, number] },
+  berth: readonly [number, number, number],
+): VehicleRoutePlan {
+  return flight.kind === RECALL_ACTION
+    ? frame.flight.arrivalPlan(berth, {
+        from: flight.recallFrom ? [...flight.recallFrom] : undefined,
+      })
+    : frame.flight.routePlan(flight.kind, berth);
+}
+
 const GRAVITY = 9.81;
 /** Пустое множество датчиков: общее и неизменяемое, чтобы не лить мусор на кадр. */
 const EMPTY_SENSOR_SET: ReadonlySet<number> = new Set<number>();
@@ -844,6 +869,12 @@ export interface VehicleFramePoseState {
 /** Ход рейса: null — стоим у причала. */
 interface FlightState {
   kind: string;
+  /**
+   * Откуда машину отозвали. Заход на посадку по отзыву начинается ТАМ, ГДЕ
+   * ПРИКАЗ ЗАСТАЛ МАШИНУ, а не на горизонте: телепортировать летящую на глазах
+   * у зрителя нельзя.
+   */
+  recallFrom?: readonly [number, number, number];
   /** How this flight was called; route kind alone does not imply occupancy. */
   occupancy: "uncrewed" | "passenger";
   /** Present only when a seated pilot, rather than a route, owns guidance. */
@@ -2260,6 +2291,8 @@ export function VehicleFrameSystem({
     { id: number; position: [number, number, number]; velocity: [number, number, number]; blastRadius: number; bornAt: number }[]
   >([]);
   const rocketSerial = useRef(0);
+  /** Счётчик прибытий: по нему разводится створ захода. */
+  const arrivalSerial = useRef(0);
   const frameState = useCallback(
     (id: string): FrameState => {
       const existing = states.current.get(id);
@@ -2957,8 +2990,13 @@ export function VehicleFrameSystem({
           post = "ride";
         } else if (
           departure &&
-          uncrewedLaunchAllowed &&
-          vehicleHome &&
+          // ПУЛЬТ ГОВОРИТ И ТОГДА, КОГДА МАШИНА НЕ ДОМА.
+          //
+          // Прежде пост требовал, чтобы машина стояла на площадке, и у пульта
+          // не было ни одного слова для улетевшей. Отсюда бой без конца:
+          // отозвать охотника было нечем (вердикт Igor, 11.08.2026). Отзыв —
+          // единственная команда возврата, других триггеров нет и не будет.
+          (interaction.flight === null ? uncrewedLaunchAllowed && vehicleHome : true) &&
           Math.abs(eye[1] - departure.point[1]) < departure.heightTolerance &&
           boardDistance <=
             (keepBoard ? departure.releaseRadius : departure.approachRadius)
@@ -2997,6 +3035,17 @@ export function VehicleFrameSystem({
         // появится предложение встать посреди полёта.
         post = seatAction;
       }
+      // Улетевшей машине пульт предлагает РОВНО ОДНО: вернуться. Показывать
+      // ей же «отправить в облёт» было бы обманом — она уже в рейсе.
+      const recallTarget =
+        departure && interaction.flight !== null
+          ? {
+              ...departure.target,
+              actions: [
+                { id: RECALL_ACTION, labelKey: "hint.vehicleRecall.action" },
+              ],
+            }
+          : null;
       const departureTarget =
         departure?.target.actions && !passengerLaunchAllowed
           ? {
@@ -3010,7 +3059,7 @@ export function VehicleFrameSystem({
         post === "ride"
           ? (interactionFrame.passengerFlight?.target ?? null)
           : post === "board"
-            ? departureTarget
+            ? (recallTarget ?? departureTarget)
             : post === "seat"
               ? { id: interactionSeat?.id ?? "seat", kind: "seat" }
               : post === "stand"
@@ -3030,7 +3079,37 @@ export function VehicleFrameSystem({
           post &&
           entryInteractionMatches(departRequestTargetRef?.current, candidate)
         ) {
+          // ОТЗЫВ: машина в рейсе получает заход на посадку ОТ ТЕКУЩЕГО МЕСТА.
+          //
+          // Не «прервать рейс» и не «телепортировать домой»: это тот же заход,
+          // что у подменного судна, только начало у него не на горизонте, а
+          // там, где приказ застал машину. Бой при этом кончается сам — цели
+          // у неё больше нет, потому что нет и рейса на сторожение.
           if (
+            post === "board" &&
+            interaction.flight !== null &&
+            departRequestTargetRef?.current?.selectedActionId === RECALL_ACTION
+          ) {
+            const centre: [number, number, number] = [
+              interaction.mass
+                ? interaction.mass.centre[0] + interaction.body.position[0]
+                : interaction.body.position[0],
+              interaction.mass
+                ? interaction.mass.centre[1] + interaction.body.position[1]
+                : interaction.body.position[1],
+              interaction.mass
+                ? interaction.mass.centre[2] + interaction.body.position[2]
+                : interaction.body.position[2],
+            ];
+            interaction.flight = {
+              ...interaction.flight,
+              kind: RECALL_ACTION,
+              recallFrom: centre,
+              progress: 0,
+              time: 0,
+            };
+            interaction.combat = null;
+          } else if (
             (post === "ride" || post === "board") &&
             interaction.flight === null
           ) {
@@ -4227,7 +4306,14 @@ export function VehicleFrameSystem({
             previousPhase !== "arrival" &&
             recoveryResult.lifecycle.phase === "arrival"
           ) {
-            const arrival = frame.flight.arrivalPlan(berth);
+            // ПОДМЕННЫЕ СУДА ПРИХОДЯТ С РАЗНЫХ СТОРОН (вердикт Igor): один и
+            // тот же створ превращает полигон в конвейер. Пеленг берётся из
+            // счётчика прибытий — воспроизводимо и без случайных чисел, но
+            // каждый раз новый.
+            arrivalSerial.current += 1;
+            const arrival = frame.flight.arrivalPlan(berth, {
+              bearing: (arrivalSerial.current * 2.399963) % (Math.PI * 2),
+            });
             const start = arrival.point(0);
             const ahead = arrival.point(Math.min(1, 6 / arrival.length));
             const tangentLength =
@@ -4936,7 +5022,7 @@ export function VehicleFrameSystem({
         // и у судна на воде требуемая высота нулевая на всём маршруте.
         const groundPlan =
           flight.pilot?.returnPlan ??
-          frame.flight.routePlan(flight.kind, berth);
+          flightRoutePlan(frame, flight, berth);
         const requiredAltitude =
           groundPlan.altitude(flight.progress) - berth[1];
         flight.unexpectedGroundContactSeconds =
@@ -5299,7 +5385,7 @@ export function VehicleFrameSystem({
       } else if (flight && flight.castOff) {
         const plan =
           flight.pilot?.returnPlan ??
-          frame.flight.routePlan(flight.kind, berth);
+          flightRoutePlan(frame, flight, berth);
         const beforeRecoveryTracking = routeTrackingState(
           plan,
           flight.progress,
@@ -5981,7 +6067,7 @@ export function VehicleFrameSystem({
         // первого участка: задний ход нельзя начинать ударом тарана в захват.
         if (!usesRotorDynamics) {
           const spool = vehicleSpoolCommand(
-            frame.flight.routePlan(flight.kind, berth),
+            flightRoutePlan(frame, flight, berth),
             flight.time,
             frame.flight.spoolSeconds,
           );
