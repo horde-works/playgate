@@ -12,6 +12,7 @@ import {
 } from "./vehicleAllegiance.ts";
 import type { VehicleRecoveryLifecycle } from "./vehicleFailure.ts";
 import type { AirCombatStation } from "./airCombatPilot.ts";
+import type { EvasionCapability } from "./airCombatEvasion.ts";
 import type { VehicleArmament } from "./vehicleGunnery.ts";
 import type { VehicleGuidanceOverrides } from "./vehicleGuidanceEnvelope.ts";
 import type {
@@ -286,6 +287,15 @@ export interface AirVehicleDefinition extends VehicleFrameDefinition {
      * Отсутствие метода целиком — машина не воюет вовсе.
      */
     combatStation?(kind: string, berth: SceneVector3): AirCombatStation | null;
+    /**
+     * СПОСОБНОСТЬ УКЛОНЯТЬСЯ. Нет поля — машина не уклоняется вовсе, и это
+     * законный ответ: состав неба и драккар не должны дёргаться от чужой
+     * скорости, они возят людей.
+     *
+     * Объявляется паспортом по той же причине, что вооружение и пост: движок
+     * не имеет права знать, кто из машин пуглив.
+     */
+    readonly evasion?: EvasionCapability;
     arrivalPlan(berth: SceneVector3): VehicleRoutePlan;
     escapePlan(
       berth: SceneVector3,
@@ -1491,6 +1501,17 @@ export const DUCT_HEXACOPTER_RANGE_AIR_VEHICLE: AirVehicleDefinition = {
      */
     guidance: { upsetTiltRate: 2.4, upsetYawRate: 1.4 },
     mooringReach: 0.6,
+    /**
+     * VX-8 УМЕЕТ УХОДИТЬ С ПРИЦЕЛА. Числа выведены, а не выбраны:
+     *
+     *  - 11 м/с бокового схода — примерно четверть её крейсерской; меньше не
+     *    сбивает упреждение, больше выбрасывает с трассы совсем;
+     *  - 1.2 с рывка — чуть больше времени полёта ракеты (0.9 с), то есть
+     *    манёвр переживает уже выпущенный снаряд;
+     *  - 3.5 с предупреждения: столько занимает заход охотника от входа в
+     *    атаку до выстрела, и раньше пугаться значит выдать ясновидение.
+     */
+    evasion: { breakSpeed: 11, breakSeconds: 1.2, warningSeconds: 3.5 },
     routePlan: (_kind, berth) => ductHexacopterLapPlan(berth),
     arrivalPlan: ductHexacopterArrivalPlan,
     escapePlan: ductHexacopterEscapePlan,

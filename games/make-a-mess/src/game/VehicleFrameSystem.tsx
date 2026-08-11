@@ -226,6 +226,11 @@ import {
 } from "./airCombatPilot.ts";
 import type { BodyReport } from "./airCombatPosture.ts";
 import {
+  createEvasionState,
+  stepEvasion,
+  type EvasionState,
+} from "./airCombatEvasion.ts";
+import {
   pilotStatusKey,
   rotorcraftPilotStatusOf,
   type RotorcraftPilotStatus,
@@ -235,6 +240,7 @@ import {
   airCombatTracks,
   type SightedWorld,
 } from "./airCombatSensing.ts";
+import { allegianceOf } from "./vehicleAllegiance.ts";
 import type { VehicleWeaponFireEvent } from "./vehicleGunnery.ts";
 import { resolveVehicleWeaponShot } from "./vehicleGunnery.ts";
 import {
@@ -969,6 +975,11 @@ interface FrameState {
    * кадра машина всё ещё под миром.
    */
   fellOutOfWorld: boolean;
+  /**
+   * Состояние уклонения. `null` — машина не умеет уходить с прицела: это
+   * объявляется паспортом, а не движком.
+   */
+  evasion: EvasionState | null;
   yawThrustersProven: boolean;
   /** Срезка ограничителя по фактическому заносу: живёт между кадрами. */
   governor: RotorcraftGovernorState;
@@ -1485,6 +1496,7 @@ function restingState(engineCount: number, yawThrusterCount = 0): FrameState {
     yawThrusterOutput: Array.from({ length: yawThrusterCount }, () => 0),
     yawThrusterHealth: Array.from({ length: yawThrusterCount }, () => 1),
     fellOutOfWorld: false,
+    evasion: null,
     yawThrustersProven: false,
     governor: NEUTRAL_GOVERNOR,
     activePlan: null,
@@ -6563,6 +6575,86 @@ export function VehicleFrameSystem({
         }
       } else if (state.combat) {
         state.combat = null;
+      }
+
+      // ---------------------------------------------------------------
+      // УКЛОНЕНИЕ — ПЯТЫЙ ИСТОЧНИК GUIDANCE, и самый скромный из них.
+      //
+      // Он не перехватывает требование, а ПОПРАВЛЯЕТ уже посчитанное: машина
+      // продолжает лететь свою трассу, только сходит с линии огня. Отсюда и
+      // возврат берётся даром — ошибка маршрута сама тянет обратно, и писать
+      // «вернуться» не нужно.
+      //
+      // Условие одно и объявлено паспортом: у машины есть способность
+      // уклоняться. Кто именно пуглив, движок не знает.
+      // ---------------------------------------------------------------
+      const evasion = frame.flight.evasion;
+      if (evasion && usesRotorDynamics && mass && flight?.castOff && rotorGuidance) {
+        const evasionWorld: SightedWorld = {
+          stateOf: (frameId) => states.current.get(frameId),
+          attachedTo: (clusterId) =>
+            clusterRegistry.current.get(clusterId)?.attachedMemberIds ??
+            new Set<string>(),
+        };
+        state.evasion ??= createEvasionState();
+        const evasionStep = stepEvasion({
+          own: {
+            allegiance: allegianceOf(frame),
+            centre: [
+              mass.centre[0] + state.body.position[0],
+              mass.centre[1] + state.body.position[1],
+              mass.centre[2] + state.body.position[2],
+            ],
+            velocity: state.body.velocity,
+          },
+          tracks: airCombatTracks(frame.id, frames, evasionWorld),
+          capability: evasion,
+          deltaSeconds: step,
+          state: state.evasion,
+          deck: berth[1],
+          boundary: recoveryServiceArea
+            ? {
+                centre: [
+                  recoveryServiceArea.center[0],
+                  0,
+                  recoveryServiceArea.center[1],
+                ],
+                radius: recoveryServiceArea.radius,
+              }
+            : undefined,
+        });
+        state.evasion = evasionStep.state;
+        const offset = evasionStep.velocityOffset;
+        if (offset[0] !== 0 || offset[1] !== 0 || offset[2] !== 0) {
+          // Поправка кладётся В ОСЯХ МАШИНЫ: контур принимает продольную и
+          // боковую скорость, а не мировой вектор.
+          const forward = rotateByQuaternion(state.body.orientation, frame.nose);
+          const flat = Math.hypot(forward[0], forward[2]) || 1;
+          const nose: [number, number] = [forward[0] / flat, forward[2] / flat];
+          const starboard: [number, number] = [-nose[1], nose[0]];
+          rotorGuidance = {
+            ...rotorGuidance,
+            forwardSpeed:
+              rotorGuidance.forwardSpeed + offset[0] * nose[0] + offset[2] * nose[1],
+            lateralSpeed:
+              rotorGuidance.lateralSpeed +
+              offset[0] * starboard[0] +
+              offset[2] * starboard[1],
+            // ТРАССА ОБЯЗАНА ОТПУСТИТЬ на время рывка. Без этого регулятор
+            // возврата гасит поправку, и манёвр читается как «не работает»,
+            // хотя работает как раз слишком хорошо.
+            slipAllowance: Math.max(
+              rotorGuidance.slipAllowance ?? 0,
+              Math.PI / 3,
+            ),
+          };
+          liftCommand = Math.max(
+            0,
+            Math.min(1, liftCommand + offset[1] * 0.02),
+          );
+        }
+      } else if (state.evasion) {
+        state.evasion = null;
       }
 
       // ---------------------------------------------------------------
