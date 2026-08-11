@@ -11,7 +11,9 @@ import {
 } from "../games/make-a-mess/src/content/scenes/ductHexacopterPrototypeDocument.ts";
 import {
   ductHexacopterObject,
+  DUCT_HEX_LIFT_BLADE_COUNT,
   DUCT_HEX_LIFT_STATIONS,
+  DUCT_HEX_YAW_BLADE_COUNT,
   DUCT_HEX_YAW_STATIONS,
 } from "../games/make-a-mess/src/content/objects/vehicles/ductHexacopterObject.ts";
 import { ductHexacopterPrototypeFrame } from "../games/make-a-mess/src/game/ductHexacopter.ts";
@@ -35,8 +37,21 @@ test("маски кадра находят то, ради чего они нап
   const [landingMask] = ductHexacopterPrototypeFrame.contactMemberExcludes;
 
   const blades = pieces.filter((piece) => piece.id.includes(bladeMask.replaceAll(":", "")));
-  assert.equal(blades.length, DUCT_HEX_LIFT_STATIONS.length + DUCT_HEX_YAW_STATIONS.length,
-    "независимых тел должно быть ровно восемь — по одному на вентилятор");
+  // ЛОПАСТЬ — ОТДЕЛЬНОЕ ТЕЛО, И ИХ БОЛЬШЕ НЕ ВОСЕМЬ.
+  //
+  // Прежде ротор был одним куском, и это утверждение проверяло «по телу на
+  // вентилятор». Так машина теряла ротор ЦЕЛИКОМ от любого попадания —
+  // постепенной потери тяги у неё не существовало (вердикт Igor, 11.08.2026).
+  // Теперь как у RAX-8: своя лопасть, свой кусок, свой вклад в привод.
+  const expectedBlades =
+    DUCT_HEX_LIFT_STATIONS.length * DUCT_HEX_LIFT_BLADE_COUNT +
+    DUCT_HEX_YAW_STATIONS.length * DUCT_HEX_YAW_BLADE_COUNT;
+  assert.equal(blades.length, expectedBlades,
+    "независимых тел должно быть по лопасти, а не по вентилятору");
+  assert.ok(
+    blades.length > DUCT_HEX_LIFT_STATIONS.length + DUCT_HEX_YAW_STATIONS.length,
+    "ротор снова стал одним куском: машина будет терять сторону от одного попадания",
+  );
   for (const blade of blades) {
     assert.equal(blade.carriesAttachments, false, `${blade.id}: на вращающемся куске что-то висит`);
     assert.equal(blade.bearsLoad, false, `${blade.id}: лопасть объявлена несущей`);

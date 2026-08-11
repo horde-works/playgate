@@ -35,6 +35,9 @@ import {
 
 const parts = ductHexacopterObject.parts;
 const byId = (id) => parts.find((part) => part.id === id);
+/** Все лопасти ротора: каждая — своя деталь, диск собирается из них. */
+const bladesOf = (group) =>
+  parts.filter((part) => /^.+-blade-\d+$/.test(part.id) && part.id.startsWith(`${group}-blade-`));
 const withPrefix = (prefix) => parts.filter((part) => part.id.startsWith(prefix));
 const bounds = (part) => ductHexacopterPartBounds(part);
 const overlap = (a, b, axis) =>
@@ -649,16 +652,22 @@ test("ортографии охватывают машину целиком", ()
 
 test("восемь вентиляторов: диски внутри горловин, защита ниже диска", () => {
   for (const station of DUCT_HEX_LIFT_STATIONS) {
-    const blades = byId(`rotor-lift-${station.id}-blades`);
-    assert.ok(blades, `${station.id}: нет лопастей`);
-    const radii = blades.vertices.map((v) => Math.hypot(v[0] - station.x, v[2] - station.z));
+    // ЛОПАСТЬ ТЕПЕРЬ СВОЯ ДЕТАЛЬ, и диск собирается из них: ротор перестал
+    // быть одним куском, чтобы попадание забирало лопасть, а не сторону.
+    // Проверять контракт диска надо по ВСЕМ лопастям разом — он о геометрии
+    // диска, а не о том, сколько кусков его образуют.
+    const blades = bladesOf(`rotor-lift-${station.id}`);
+    assert.ok(blades.length > 0, `${station.id}: нет лопастей`);
+    const radii = blades.flatMap((part) =>
+      part.vertices.map((v) => Math.hypot(v[0] - station.x, v[2] - station.z)),
+    );
     const tip = Math.max(...radii);
     assert.ok(tip <= DUCT_HEX_LIFT_TIP + 0.02, `${station.id}: законцовка ${tip.toFixed(3)}`);
     assert.ok(DUCT_HEX_LIFT_THROAT - tip > 0.05,
       `${station.id}: зазор до горловины всего ${(DUCT_HEX_LIFT_THROAT - tip).toFixed(3)} м`);
 
     // Диск — плоский: лопасти не имеют права выходить из своей плоскости.
-    const ys = blades.vertices.map((v) => v[1]);
+    const ys = blades.flatMap((part) => part.vertices.map((v) => v[1]));
     assert.ok(Math.max(...ys) - Math.min(...ys) < 0.09, `${station.id}: диск не плоский`);
     assert.ok(Math.abs((Math.max(...ys) + Math.min(...ys)) / 2 - station.planeY) < 0.02,
       `${station.id}: диск не на своей отметке`);
@@ -683,11 +692,13 @@ test("восемь вентиляторов: диски внутри горло�
   }
 
   for (const station of DUCT_HEX_YAW_STATIONS) {
-    const blades = byId(`rotor-yaw-${station.id}-blades`);
-    assert.ok(blades, `${station.id}: нет лопастей продольного вентилятора`);
-    const radii = blades.vertices.map((v) => Math.hypot(v[0] - station.x, v[1] - station.y));
+    const blades = bladesOf(`rotor-yaw-${station.id}`);
+    assert.ok(blades.length > 0, `${station.id}: нет лопастей продольного вентилятора`);
+    const radii = blades.flatMap((part) =>
+      part.vertices.map((v) => Math.hypot(v[0] - station.x, v[1] - station.y)),
+    );
     assert.ok(Math.max(...radii) <= DUCT_HEX_YAW_TIP + 0.02, `${station.id}: законцовка вышла за контракт`);
-    const zs = blades.vertices.map((v) => v[2]);
+    const zs = blades.flatMap((part) => part.vertices.map((v) => v[2]));
     assert.ok(Math.max(...zs) - Math.min(...zs) < 0.07, `${station.id}: диск не плоский`);
   }
 });

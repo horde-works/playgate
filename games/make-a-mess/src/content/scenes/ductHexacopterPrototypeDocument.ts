@@ -4,7 +4,7 @@
  * Twin of `combatHexacopterPrototypeDocument.ts`, and deliberately so: the
  * destruction solver, the cluster and the actuator layer already read that
  * shape. What differs is what the two machines differ in — this one has one
- * blade mesh per rotor rather than a part per blade, its ducts are cored into a
+ * part per blade like every other rotorcraft here, its ducts are cored into a
  * lofted body instead of hung in gondolas, and it carries glazing.
  *
  * This file is the second half of the adapter agreed with the Windows session:
@@ -122,17 +122,24 @@ function yawEngineIndex(part: ObjectLabPart): number {
  * Piece id. The frame masks read these strings, so they are contract: the blade
  * of a rotor must carry `blade`, and a landing member must keep its `landing-`
  * prefix, or the machine grows bodies it should not have and lands in the air.
+ *
+ * НОМЕР ЛОПАСТИ СОХРАНЯЕТСЯ. Пока ротор был одним куском, все они звались
+ * `blade:0`; теперь каждая лопасть — своя деталь и свой номер, как у RAX-8.
+ * Именно на этом стоит постепенная потеря тяги: попадание забирает одну
+ * лопасть, а не сторону целиком.
  */
 function objectId(part: ObjectLabPart): string {
   const lift = liftEngineIndex(part);
   if (lift >= 0) {
-    if (/-blades$/.test(part.id)) return `engine:${lift}:blade:0`;
+    const liftBlade = /-blade-(\d+)$/.exec(part.id);
+    if (liftBlade) return `engine:${lift}:blade:${liftBlade[1]}`;
     if (/-motor$/.test(part.id)) return `engine:${lift}:motor`;
     return `engine:${lift}:${part.id}`;
   }
   const yaw = yawEngineIndex(part);
   if (yaw >= 0) {
-    if (/-blades$/.test(part.id)) return `yaw-engine:${yaw}:blade:0`;
+    const yawBlade = /-blade-(\d+)$/.exec(part.id);
+    if (yawBlade) return `yaw-engine:${yaw}:blade:${yawBlade[1]}`;
     if (/-motor$/.test(part.id)) return `yaw-engine:${yaw}:motor`;
     return `yaw-engine:${yaw}:${part.id}`;
   }
@@ -141,7 +148,7 @@ function objectId(part: ObjectLabPart): string {
 
 function actuatorFor(part: ObjectLabPart): CommandActuatorTag | undefined {
   const isMotor = /-motor$/.test(part.id);
-  const isBlade = /-blades$/.test(part.id);
+  const isBlade = /-blade-\d+$/.test(part.id);
   if (!isMotor && !isBlade) return undefined;
   const lift = liftEngineIndex(part);
   if (lift >= 0) {
@@ -174,7 +181,7 @@ function actuatorFor(part: ObjectLabPart): CommandActuatorTag | undefined {
  */
 function loadBearing(part: ObjectLabPart): boolean {
   if (part.group === "canopy-glazing" || part.group === "interior") return false;
-  if (/-blades$/.test(part.id) || /-spinner$/.test(part.id)) return false;
+  if (/-blade-\d+$/.test(part.id) || /-spinner$/.test(part.id)) return false;
   if (part.group.startsWith("core-") || part.group.startsWith("hull-")) return true;
   if (part.group === "landing-gear" || part.group === "weapons") return true;
   if (part.group === "duct-flow") return true;
@@ -191,7 +198,7 @@ function primitive(
 ): SceneObjectDefinition {
   const binding = materialFor(part);
   const driveMember = liftEngineIndex(part) >= 0 || yawEngineIndex(part) >= 0;
-  const spinningBlade = /-blades$/.test(part.id) || /-spinner$/.test(part.id);
+  const spinningBlade = /-blade-\d+$/.test(part.id) || /-spinner$/.test(part.id);
   // Attachment reach is the length of a bolt, not permission to hang. A blade
   // passes centimetres from the duct wall, and any generous reach lets the
   // solver read that nearness as support — the blade would then stay hanging in

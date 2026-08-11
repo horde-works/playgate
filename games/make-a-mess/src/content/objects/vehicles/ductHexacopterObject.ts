@@ -1531,11 +1531,24 @@ addBox("rudder-pedals", "interior", "metal", point(0, CABIN_FLOOR_Y + 0.08, 2.96
 // 9b. Propulsion: flow paths, fans and blades.
 //
 // The rings and the axes were fixed by the core; nothing here may move them.
-// Every fan is one mesh per rotor — a rotor turns as one body, and a part per
-// blade would buy nothing but forty-eight ids.
+//
+// КАЖДАЯ ЛОПАСТЬ — ОТДЕЛЬНАЯ ДЕТАЛЬ, и прежнее решение здесь отменено.
+// Стояло так: «фан — один меш на ротор; деталь на лопасть не купит ничего,
+// кроме сорока восьми идентификаторов». Довод был верен ровно до первого боя.
+//
+// Что она покупает, выяснилось под огнём (наблюдение Igor, 11.08.2026): у
+// RAX-8 сорок четыре лопастных куска на восемь роторов, и попадание сносит
+// ОДНУ лопасть из пяти — тяга проседает и машина летит дальше. У VX-8 ротор
+// был одним куском, поэтому любое попадание забирало его ЦЕЛИКОМ, то есть
+// сразу сторону. Постепенной потери тяги у машины не существовало вовсе, и
+// это делало её не крепче остальных, а заметно хрупче.
 // ---------------------------------------------------------------------------
 
-/** One fan: `count` twisted, tapered blades around an axis, as a single mesh. */
+/**
+ * Один фан: `count` витых сужающихся лопастей вокруг оси, КАЖДАЯ СВОИМ
+ * набором вершин и треугольников. Индексы внутри лопасти локальные, поэтому
+ * вызывающий волен добавлять их как отдельные детали.
+ */
 const fanBlades = (
   centre: ObjectPoint,
   axis: "y" | "z",
@@ -1546,9 +1559,8 @@ const fanBlades = (
   tipChord: number,
   halfThickness: number,
   spinSign: number,
-): { vertices: ObjectPoint[]; triangles: ObjectTriangle[] } => {
-  const vertices: ObjectPoint[] = [];
-  const triangles: ObjectTriangle[] = [];
+): { vertices: ObjectPoint[]; triangles: ObjectTriangle[] }[] => {
+  const blades: { vertices: ObjectPoint[]; triangles: ObjectTriangle[] }[] = [];
   const place = (radial: number, tangential: number, axial: number, angle: number): ObjectPoint => {
     const across = Math.cos(angle) * radial - Math.sin(angle) * tangential;
     const along = Math.sin(angle) * radial + Math.cos(angle) * tangential;
@@ -1559,7 +1571,9 @@ const fanBlades = (
   const spans = [0, 0.42, 0.78, 1];
   for (let blade = 0; blade < count; blade += 1) {
     const base = (blade / count) * TAU;
-    const first = vertices.length;
+    const vertices: ObjectPoint[] = [];
+    const triangles: ObjectTriangle[] = [];
+    const first = 0;
     for (const span of spans) {
       const radius = lerp(rootRadius, tipRadius, span);
       const chord = lerp(rootChord, tipChord, span);
@@ -1584,12 +1598,17 @@ const fanBlades = (
     const last = first + (spans.length - 1) * 4;
     triangles.push([first, first + 1, first + 3], [first, first + 3, first + 2]);
     triangles.push([last, last + 2, last + 3], [last, last + 3, last + 1]);
+    blades.push({ vertices, triangles });
   }
-  return { vertices, triangles };
+  return blades;
 };
 
 const LIFT_HUB_RADIUS = 0.17;
 const LIFT_BLADE_COUNT = 10;
+const YAW_BLADE_COUNT = 6;
+/** Число лопастей — контракт: по ним считает и сцена, и её сторож. */
+export const DUCT_HEX_LIFT_BLADE_COUNT = LIFT_BLADE_COUNT;
+export const DUCT_HEX_YAW_BLADE_COUNT = YAW_BLADE_COUNT;
 
 for (const station of DUCT_HEX_LIFT_STATIONS) {
   const group = `rotor-lift-${station.id}`;
@@ -1648,11 +1667,13 @@ for (const station of DUCT_HEX_LIFT_STATIONS) {
     }), { showEdges: false });
   }
 
-  const disc = fanBlades(
+  const liftBlades = fanBlades(
     point(station.x, station.planeY, station.z), "y",
     LIFT_BLADE_COUNT, LIFT_HUB_RADIUS + 0.02, LIFT_TIP, 0.15, 0.075, 0.018, spinSign,
   );
-  addMeshPart(`${group}-blades`, group, "timber-dark", disc.vertices, disc.triangles);
+  liftBlades.forEach((blade, index) => {
+    addMeshPart(`${group}-blade-${index}`, group, "timber-dark", blade.vertices, blade.triangles);
+  });
 }
 
 for (const station of DUCT_HEX_YAW_STATIONS) {
@@ -1664,11 +1685,13 @@ for (const station of DUCT_HEX_YAW_STATIONS) {
   addEllipsoid(`${group}-spinner`, group, "roof-dark",
     point(station.x, station.y, YAW_ROTOR_Z + 0.06),
     point(0.1, 0.1, 0.14), 18, 9);
-  const disc = fanBlades(
+  const yawBlades = fanBlades(
     point(station.x, station.y, YAW_ROTOR_Z), "z",
-    6, 0.11, YAW_TIP, 0.09, 0.05, 0.014, spinSign,
+    YAW_BLADE_COUNT, 0.11, YAW_TIP, 0.09, 0.05, 0.014, spinSign,
   );
-  addMeshPart(`${group}-blades`, group, "timber-dark", disc.vertices, disc.triangles);
+  yawBlades.forEach((blade, index) => {
+    addMeshPart(`${group}-blade-${index}`, group, "timber-dark", blade.vertices, blade.triangles);
+  });
   // Stator pack behind the fan: reverse thrust is only honest if the flow is
   // straightened on both sides of the disc.
   for (let vane = 0; vane < 4; vane += 1) {
@@ -1959,7 +1982,13 @@ const kinematicGroups: readonly KinematicGroup[] = [
     motion: "constant-rotation-only" as const,
     reversible: false,
     sweptRadius: LIFT_TIP,
-    members: [`rotor-lift-${station.id}-blades`, `rotor-lift-${station.id}-spinner`] as readonly string[],
+    members: [
+      ...Array.from(
+        { length: LIFT_BLADE_COUNT },
+        (_, index) => `rotor-lift-${station.id}-blade-${index}`,
+      ),
+      `rotor-lift-${station.id}-spinner`,
+    ] as readonly string[],
   })),
   ...DUCT_HEX_YAW_STATIONS.map((station) => ({
     id: `yaw-${station.id}`,
@@ -1969,7 +1998,13 @@ const kinematicGroups: readonly KinematicGroup[] = [
     motion: "constant-rotation-only" as const,
     reversible: true,
     sweptRadius: YAW_TIP,
-    members: [`rotor-yaw-${station.id}-blades`, `rotor-yaw-${station.id}-spinner`] as readonly string[],
+    members: [
+      ...Array.from(
+        { length: YAW_BLADE_COUNT },
+        (_, index) => `rotor-yaw-${station.id}-blade-${index}`,
+      ),
+      `rotor-yaw-${station.id}-spinner`,
+    ] as readonly string[],
   })),
 ];
 
