@@ -229,6 +229,7 @@ async function main() {
     let firstEngagementAt = null;
     const started = Date.now();
     let engagementShot = false;
+    const preySpeeds = [];
 
     while ((Date.now() - started) / 1000 < SECONDS) {
       const sample = await cdp.eval(`JSON.stringify(window.__mamAirCombat())`);
@@ -271,10 +272,27 @@ async function main() {
           Buffer.from(shot.data, "base64"),
         );
       }
+      // Скорость ЖЕРТВЫ: зацеп за собственный обломок выглядит как остановка
+      // в воздухе, а не как потеря тяги — тяга просаживается и возвращается.
+      const preyRaw = await cdp.eval(
+        `JSON.stringify((window.__mamVehicles?.() ?? []).find((v) => v.id === ${JSON.stringify(PREY)})?.body?.velocity ?? null)`,
+      );
+      const pv = JSON.parse(preyRaw ?? "null");
+      if (pv) {
+        preySpeeds.push({
+          seconds: Number(((Date.now() - started) / 1000).toFixed(1)),
+          speed: Number(Math.hypot(pv[0], pv[1], pv[2]).toFixed(2)),
+        });
+      }
       await sleep(500);
     }
 
+    const slow = preySpeeds.filter((row) => row.speed < 0.6);
     const verdict = {
+      preySamples: preySpeeds.length,
+      preyStalledSamples: slow.length,
+      preyFirstStallAt: slow[0]?.seconds ?? null,
+      preySpeedMin: preySpeeds.length ? Math.min(...preySpeeds.map((r) => r.speed)) : null,
       modes: [...modes].sort(),
       targets: [...targets],
       maxPasses,
@@ -283,7 +301,7 @@ async function main() {
     };
     await writeFile(
       join(OUT, "probe.json"),
-      `${JSON.stringify({ verdict, log }, null, 2)}\n`,
+      `${JSON.stringify({ verdict, log, preySpeeds }, null, 2)}\n`,
     );
     console.log("\n=== ВЕРДИКТ ===");
     console.log(JSON.stringify(verdict, null, 2));
