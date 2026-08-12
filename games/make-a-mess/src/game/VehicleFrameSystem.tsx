@@ -1105,6 +1105,14 @@ interface FrameState {
   escape: CollisionEscapeState | null;
   /** Сколько машина уже свободна, но ещё доводит уход, с. */
   escapeFreeSeconds: number;
+  /**
+   * Последнее решение о расхождении: с кем и куда. Хранится ради разбора —
+   * правило, которое ни разу не видели работающим, проверено только на стенде.
+   */
+  separation: {
+    readonly withId: string;
+    readonly away: readonly [number, number, number];
+  } | null;
   /** Свободное тело: им корабль живёт, пока не летит по маршруту. */
   body: BodyState;
   mass: MassProperties | null;
@@ -1602,6 +1610,7 @@ function restingState(engineCount: number, yawThrusterCount = 0): FrameState {
     externalContacts: NO_EXTERNAL_CONTACTS,
     escape: null,
     escapeFreeSeconds: 0,
+    separation: null,
     body: RESTING_BODY,
     mass: null,
     intactMass: 0,
@@ -2370,6 +2379,14 @@ export function VehicleFrameSystem({
           supportContacts: live?.supportContacts ?? null,
           /** Идёт ли высвобождение из зацепа и сколько уже длится, с. */
           escaping: live?.escape ? Number(live.escape.seconds.toFixed(1)) : null,
+          separation: live?.separation
+            ? {
+                withId: live.separation.withId,
+                away: live.separation.away.map((value: number) =>
+                  Number(value.toFixed(2)),
+                ),
+              }
+            : null,
           authority: live?.rotorAuthority
             ? {
                 thrust: Number(live.rotorAuthority.thrust.toFixed(2)),
@@ -2613,6 +2630,17 @@ export function VehicleFrameSystem({
       }
       const state = frameState(id);
       if (state.flight) {
+        return false;
+      }
+      // ВИД ПРОВЕРЯЕТСЯ ДО ВЗЛЁТА, а не в шаге физики. Диагностика, способная
+      // убить сцену опечаткой в имени маршрута, — это не диагностика: живая
+      // проба попросила `lap` у машины, у которой такого вида нет, отправка
+      // ответила «взлетела», и мир падал каждый кадр до перезагрузки.
+      try {
+        // Спрашивается ровно то, что падало: стадия рейса по имени вида.
+        frame.flight.routePhase(kind, 0);
+      } catch (error) {
+        console.warn(`__mamVehicleDepart: ${(error as Error).message}`);
         return false;
       }
       state.flight = createFlightState(
@@ -7059,6 +7087,9 @@ export function VehicleFrameSystem({
           groundHeight: berth[1],
           exemptId: state.combat?.targetId ?? undefined,
         });
+        state.separation = separation
+          ? { withId: separation.withId, away: separation.direction }
+          : null;
         if (separation) {
           const away = separation.direction;
           const forward = rotateByQuaternion(state.body.orientation, frame.nose);
