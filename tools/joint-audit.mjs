@@ -64,6 +64,12 @@ const COPLANAR_MAX = 0.02;
 const FIGHT_AREA_MIN = 0.05;
 /** Сколько метров чистого воздуха считаются «ушёл наружу». */
 const ESCAPE = 2;
+/** Грани ближе этого друг к другу считаются сомкнутыми, а не разошедшимися. */
+const TOUCH = 0.002;
+/** На сколько заглядывать за плоскость смыкания в поисках углового паза. */
+const CORNER_DEPTH = 0.12;
+/** Прогон короче этого — касание двух рёбер, а не стык. */
+const CORNER_RUN_MIN = 0.3;
 /** Шаг сетки пространственного индекса. */
 const CELL = 2;
 /** Разрядность буфера глубины. */
@@ -380,13 +386,39 @@ export function auditScene(name, scene, { prefix = "" } = {}) {
 
     for (let k = 0; k < 3; k += 1) {
       const other = [0, 1, 2].filter((axis) => axis !== k);
-      const spans = other.map((axis) => ({
-        axis,
-        lo: Math.max(local.aLo[axis], local.bLo[axis]),
-        hi: Math.min(local.aHi[axis], local.bHi[axis]),
-      }));
-      if (spans.some((span) => span.hi <= span.lo)) continue;
+      // УГЛОВАЯ ЩЕЛЬ. Требовать перекрытия по ОБЕИМ оставшимся осям — значит
+      // не видеть целый класс: пол вагона не доходит до борта на 50 мм, а по
+      // высоте они лишь СМЫКАЮТСЯ (пол кончается на 1.500, борт с 1.500
+      // начинается). Перекрытия по высоте ноль, пара выпадала из анализа
+      // целиком — и паз в 50 мм на всю двенадцатиметровую длину салона нашли
+      // глаза, а не числа. Смыкание достаточно: там, где две грани сходятся в
+      // угол, паз лежит ПО ТУ СТОРОНУ плоскости смыкания, и заглянуть туда
+      // надо явно.
+      const spans = other.map((axis) => {
+        const spanLo = Math.max(local.aLo[axis], local.bLo[axis]);
+        const spanHi = Math.min(local.aHi[axis], local.bHi[axis]);
+        const clear = spanHi - spanLo;
+        if (clear > TOUCH) return { axis, lo: spanLo, hi: spanHi, corner: false };
+        if (clear < -TOUCH) return null;
+        const middle = (spanLo + spanHi) / 2;
+        return {
+          axis,
+          lo: middle - CORNER_DEPTH,
+          hi: middle + CORNER_DEPTH,
+          corner: true,
+        };
+      });
+      if (spans.some((span) => span === null)) continue;
+      // Хотя бы одна ось обязана быть настоящим прогоном: точечное касание
+      // двух рёбер стыком не является.
+      if (!spans.some((span) => !span.corner && span.hi - span.lo > CORNER_RUN_MIN)) continue;
       const area = (spans[0].hi - spans[0].lo) * (spans[1].hi - spans[1].lo);
+      // Спору граней раздутая угловая область не годится: перекрытие там
+      // придумано, чтобы заглянуть за плоскость смыкания, а грани в углу не
+      // перекрываются вовсе. Наложению нужна ЧЕСТНАЯ площадь.
+      const trueArea = spans.some((span) => span.corner)
+        ? 0
+        : (spans[0].hi - spans[0].lo) * (spans[1].hi - spans[1].lo);
 
       // --- 1. щель -------------------------------------------------------
       const forward = local.bLo[k] - local.aHi[k];
@@ -398,11 +430,16 @@ export function auditScene(name, scene, { prefix = "" } = {}) {
         // ЩЕЛЬ — это разрыв В ПЛОСКОСТИ листа: две доски пола, две панели
         // курса, две плиты настила. Разрыв ПО НОРМАЛИ листа — совсем другое
         // явление: так стоят накладные буквы над щитом, облицовка над стеной,
-        // подкладка над шпалой. Отличие снимается без единого паспортного
-        // числа: если ось разделения совпадает с самой тонкой осью хотя бы
-        // одного из кусков, куски лежат СЛОЯМИ, а не рядом.
+        // подкладка над шпалой.
+        //
+        // Слоями лежат ПАРАЛЛЕЛЬНЫЕ листы: тонкая ось у обоих одна и та же, и
+        // разошлись они именно по ней. Достаточно было проверять одного —
+        // и пол вагона, не дошедший до борта, объявлялся «накладным декором»:
+        // у борта тонкая ось совпала с осью разделения, хотя пол ему не слой,
+        // а перпендикулярный сосед. Перпендикулярные листы — это УГОЛ, и
+        // разрыв в углу есть щель.
         const layered = thinAxis(local.aLo, local.aHi) === k
-          || thinAxis(local.bLo, local.bHi) === k;
+          && thinAxis(local.bLo, local.bHi) === k;
         if (seam) seams.push({ ...seam, area, gap, axis: k, layered });
       }
 
@@ -419,7 +456,7 @@ export function auditScene(name, scene, { prefix = "" } = {}) {
       // у пары плит грунта спорят и низ, и верх, но низ смотрит в землю, а
       // верх — в камеру. Ранний выход по первой найденной стороне прятал
       // ровно ту, из-за которой рябит.
-      if (area >= FIGHT_AREA_MIN && !A.inflated && !B.inflated) {
+      if (trueArea >= FIGHT_AREA_MIN && !A.inflated && !B.inflated) {
         for (const side of ["lo", "hi"]) {
           const aFace = side === "lo" ? local.aLo[k] : local.aHi[k];
           const bFace = side === "lo" ? local.bLo[k] : local.bHi[k];

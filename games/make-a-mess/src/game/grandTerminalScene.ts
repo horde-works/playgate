@@ -3527,8 +3527,17 @@ function createSkyPlatform(): void {
         attachmentSupportMode: "cable",
         sideAttachmentReach: 0.4,
       });
+    // ПОЛ ДОХОДИТ ДО БОРТОВ. Борт стоит центром на `CAR_HALF` при толщине
+    // 0.2, значит его внутренняя грань на `CAR_HALF − 0.1`, и настил обязан
+    // быть шириной `CAR_HALF * 2 − 0.2`. Стояло `− 0.3`: по 50 мм открытого
+    // паза вдоль ОБОИХ бортов на всю двенадцатиметровую длину салона, глубиной
+    // 200 мм до рамы. Аудит стыков этого не видел по построению — пол и борт
+    // расходятся в УГЛУ (по высоте они лишь смыкаются на отметке 1.500), а он
+    // требовал перекрытия по обеим осям; чинилось это в самом измерителе.
     part(train, `${prefix}:floor`, "wood", "plank",
-      [centerX, CAR_FLOOR + 0.06, TRACK_Z], [CAR_LENGTH - 0.4, 0.2, CAR_HALF * 2 - 0.3], oakDark, {
+      // По длине — тоже до стен: корпус идёт до `bodyHalf`, а настил стоял на
+      // `CAR_LENGTH − 0.4`, то есть на 80 мм короче с КАЖДОГО торца.
+      [centerX, CAR_FLOOR + 0.06, TRACK_Z], [bodyHalf * 2, 0.2, CAR_HALF * 2 - 0.2], oakDark, {
         volume: 1.2,
         carriesAttachments: true,
         attachmentSupportMode: "cable",
@@ -4148,8 +4157,12 @@ function createSkyPlatform(): void {
           bearsLoad: false,
           sideAttachmentReach: 0.4,
         });
+      // Башмак стоит НА палубе, а не в ней. Стоял на `FLOOR_TOP + 0.05` —
+      // то есть наполовину внутри настила, и место ему освобождал отступ
+      // пола от бортов на 150 мм. Отступ был щелью на всю длину салона;
+      // теперь пол доходит до бортов, а башмак сел на него сверху.
       part(train, `hanger-shoe:${hangerX.toFixed(2)}:${side}`, "steel", "steelSheet",
-        [hangerX - inward * 0.22, FLOOR_TOP + 0.05, TRACK_Z + side * HANGER_Z],
+        [hangerX - inward * 0.22, FLOOR_TOP + 0.17, TRACK_Z + side * HANGER_Z],
         [0.5, 0.34, 0.2], iron, {
           bearsLoad: false,
           sideAttachmentReach: 0.4,
