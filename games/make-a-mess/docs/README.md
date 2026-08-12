@@ -59,6 +59,7 @@
 | `dutch-polder-plan.json`, `dutch-polder-topography.*` | План и топография польдера (данные к брифам) |
 | `nimbus-brief.md` | Паспорт мира «Нимб»: эрозионная чаша, башня, Нулевая верфь |
 | `citroen-ds-brief.md` | Паспорт референса Citroën DS: источники и снятые числа |
+| `big-cat-locomotion-research.md` | Исследование крупной кошки: анатомия, походки, наблюдение, прыжки, лазание и физические гейты |
 | `sr6-skat/` | Object study корабля SR-6 «Скат»: evidence card, вехи m1–m10 |
 | `combat-hexacopter/` | Object study боевого гексакоптера HX-6: evidence card, наборы кадров c1/c2, discrepancy-логи, референсы |
 | `dutch-polder/` | Object studies польдера: мельницы m1–m4, дома, двор, ландшафт, свет |
