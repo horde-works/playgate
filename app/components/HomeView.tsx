@@ -4,7 +4,7 @@ import Link from "next/link";
 import { GameCard } from "./GameCard";
 import { SiteHeader } from "./SiteHeader";
 import { SiteFooter } from "./SiteFooter";
-import { featuredGame } from "../../games/registry";
+import { featuredGame, homeScreenGames } from "../../games/registry";
 import { useLanguage } from "../i18n/LanguageProvider";
 import { requestWorldBoot } from "./worldBoot";
 
@@ -70,6 +70,9 @@ export function HomeView() {
           <p>{t("home.featuredLede")}</p>
         </div>
         <GameCard game={featuredGame} featured />
+        <div className="home-world-card">
+          <GameCard game={homeScreenGames[1]} />
+        </div>
       </section>
 
       <section className="principles" id="about" aria-labelledby="about-title">

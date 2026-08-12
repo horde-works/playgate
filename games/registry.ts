@@ -1,6 +1,6 @@
 export type GameStatus = "building" | "playable" | "archived";
 export type GameTheme = "safety-orange" | "electric-blue" | "acid-green";
-export type GameArt = "mess" | "basalt-stronghold" | "grand-terminal" | "viking-village";
+export type GameArt = "mess" | "basalt-stronghold" | "grand-terminal" | "viking-village" | "island-airport";
 
 export interface GameEntry {
   readonly slug: string;
@@ -49,7 +49,7 @@ export const games = [
     status: "playable",
     stageLabel: "Третья карта",
     theme: "acid-green",
-    art: "grand-terminal",
+    art: "island-airport",
   },
   {
     slug: "make-a-mess-viking-village",
@@ -90,3 +90,7 @@ export const games = [
 ] as const satisfies readonly GameEntry[];
 
 export const featuredGame = games[0];
+export const homeScreenGames = [
+  featuredGame,
+  games.find((game) => game.slug === "make-a-mess-island-airport")!,
+] as const;

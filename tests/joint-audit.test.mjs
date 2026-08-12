@@ -54,6 +54,7 @@ const BUDGET = {
   astana: { seeThrough: 315, fights: 1080 },
   nimbus: { seeThrough: 774, fights: 2070 },
   range: { seeThrough: 0, fights: 3 },
+  airport: { seeThrough: 157, fights: 38 },
 };
 
 // Разбор сцены стоит секунды, а нужен двум проверкам сразу. Считаем один раз

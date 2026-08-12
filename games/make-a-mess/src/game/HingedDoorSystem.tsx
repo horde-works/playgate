@@ -17,6 +17,8 @@ import {
 } from "./vehicleFrames";
 import {
   horizontalGateDistance,
+  automaticSlideDoorPolicy,
+  automaticSlideDoorShouldOpen,
   hingedLeafRotationAxis,
   hingedDoorGroupKey,
   inwardDoorSwingSign,
@@ -32,6 +34,7 @@ import {
   vikingGateLeafPolicy,
   vikingHallGatePolicy,
   type PlugSlideDoorPolicy,
+  type AutomaticSlideDoorPolicy,
   type TailRampPolicy,
   type VikingDoorPolicy,
   type VikingGateLeafPolicy,
@@ -65,6 +68,8 @@ interface DoorGroup {
   readonly townHouseDoor: TownHouseDoorPolicy | null;
   /** Створка не распахивается, а выходит из проёма и едет вдоль борта. */
   readonly plugSlide: PlugSlideDoorPolicy | null;
+  /** Paired terminal leaf driven directly by a proximity sensor. */
+  readonly automaticSlide: AutomaticSlideDoorPolicy | null;
   /** Кормовой бронелист вращается вокруг поперечной оси и становится трапом. */
   readonly tailRamp: TailRampPolicy | null;
 }
@@ -158,6 +163,7 @@ export function HingedDoorSystem({
         vikingDoor: vikingDoorPolicy(key),
         townHouseDoor: townHouseDoorPolicy(key),
         plugSlide: plugSlideDoorPolicy(key),
+        automaticSlide: automaticSlideDoorPolicy(key),
         tailRamp: tailRampPolicy(key),
       };
     });
@@ -366,6 +372,12 @@ export function HingedDoorSystem({
         // затворяются. Запрос игрока их не касается — для этого боковой вход.
         state.sign = group.hallGate.swingSign;
         open = entryOpenRequests?.current.has(group.hallGate.gateId) ?? false;
+      } else if (group.automaticSlide) {
+        open = automaticSlideDoorShouldOpen(
+          distance,
+          state.angle > 0.05,
+          group.automaticSlide,
+        );
       } else {
         const interactiveEntryId = group.gate?.gateId
           ?? group.vikingDoor?.doorId
@@ -411,6 +423,7 @@ export function HingedDoorSystem({
         !group.gate &&
         !group.vikingDoor &&
         !group.townHouseDoor &&
+        !group.automaticSlide &&
         !group.tailRamp &&
         open &&
         state.sign === 0
@@ -432,6 +445,7 @@ export function HingedDoorSystem({
           group.vikingDoor?.doorId ??
           group.townHouseDoor?.doorId ??
           group.plugSlide?.doorId ??
+          group.automaticSlide?.doorId ??
           group.tailRamp?.doorId;
         if (entryId && state.angle > 0.6) {
           openEntries.current.add(entryId);
@@ -443,7 +457,7 @@ export function HingedDoorSystem({
       // и входящие обтирали бы её боками.
       // У прислонно-сдвижной створки «угол» — это доля хода 0..1.
       const targetAngle = open
-        ? group.plugSlide
+        ? group.plugSlide || group.automaticSlide
           ? 1
           : group.tailRamp
             ? Math.abs(group.tailRamp.openAngle)
@@ -457,7 +471,7 @@ export function HingedDoorSystem({
       state.angle +=
         (targetAngle - state.angle) * Math.min(
           1,
-          delta * (group.plugSlide
+          delta * (group.plugSlide || group.automaticSlide
             ? open ? 2.4 : 2.0
             : group.tailRamp
               ? open ? 0.9 : 0.72
@@ -475,12 +489,15 @@ export function HingedDoorSystem({
       // едет вдоль борта вправо (право = up × наружная нормаль). Поворота нет
       // вовсе — полотно и ручка просто переносятся вместе.
       const plug = group.plugSlide;
+      const automaticSlide = group.automaticSlide;
       const plugOffset = plug
         ? Math.min(1, state.angle / plug.plugShare) * plug.plugDepth
         : 0;
       const slideOffset = plug
         ? Math.max(0, (state.angle - plug.plugShare) / (1 - plug.plugShare)) * plug.travel
-        : 0;
+        : automaticSlide
+          ? state.angle * automaticSlide.travel * automaticSlide.slideSign
+          : 0;
       const slideRight: readonly [number, number, number] = [
         hinge.normal[2],
         0,
@@ -586,7 +603,7 @@ export function HingedDoorSystem({
         if (body.bodyType() !== rapier.RigidBodyType.KinematicPositionBased) {
           body.setBodyType(rapier.RigidBodyType.KinematicPositionBased, true);
         }
-        if (plug) {
+        if (plug || automaticSlide) {
           const localPosition: readonly [number, number, number] = [
             piece.position[0] + hinge.normal[0] * plugOffset + slideRight[0] * slideOffset,
             piece.position[1],

@@ -90,6 +90,15 @@ export interface PlugSlideDoorPolicy {
   readonly plugShare: number;
 }
 
+export interface AutomaticSlideDoorPolicy {
+  readonly doorId: string;
+  /** Signed travel along `up × outward normal`; paired leaves move apart. */
+  readonly travel: number;
+  readonly slideSign: -1 | 1;
+  readonly approachRadius: number;
+  readonly releaseRadius: number;
+}
+
 export interface TailRampPolicy {
   readonly doorId: string;
   /** Signed rotation from the sealed tail to the deployed loading slope. */
@@ -133,6 +142,39 @@ export const TAIL_RAMPS: readonly TailRampPolicy[] = [
 
 export function plugSlideDoorPolicy(groupKey: string): PlugSlideDoorPolicy | null {
   return PLUG_SLIDE_DOORS.find((door) => door.doorId === groupKey) ?? null;
+}
+
+/**
+ * Terminal vestibules use the same kinematic, breakable door ownership as
+ * vehicle plug doors, but their sensor is automatic and their leaves only
+ * translate. The pair shares one doorway id while each leaf keeps its own
+ * signed travel.
+ */
+export function automaticSlideDoorPolicy(
+  groupKey: string,
+): AutomaticSlideDoorPolicy | null {
+  const match = groupKey.match(
+    /^island-airport:terminal-glass:(airside|landside):door:(\d+):(-1|1)$/,
+  );
+  if (!match) return null;
+  const side = Number(match[3]) as -1 | 1;
+  const facade = match[1] as "airside" | "landside";
+  return {
+    doorId: `island-airport:terminal-glass:${facade}:door:${match[2]}`,
+    travel: 1,
+    // `up × normal` points +X on the landside and -X on the airside.
+    slideSign: (side * (facade === "landside" ? 1 : -1)) as -1 | 1,
+    approachRadius: 3.4,
+    releaseRadius: 4.6,
+  };
+}
+
+export function automaticSlideDoorShouldOpen(
+  distance: number,
+  isPartlyOpen: boolean,
+  policy: AutomaticSlideDoorPolicy,
+): boolean {
+  return distance < (isPartlyOpen ? policy.releaseRadius : policy.approachRadius);
 }
 
 export function tailRampPolicy(groupKey: string): TailRampPolicy | null {

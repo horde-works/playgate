@@ -9,6 +9,7 @@ import { vikingVillageScene } from "../games/make-a-mess/src/game/vikingVillageS
 import { basaltStrongholdScene } from "../games/make-a-mess/src/game/basaltStrongholdScene.ts";
 import { grandTerminalScene } from "../games/make-a-mess/src/game/grandTerminalScene.ts";
 import { astanaScene } from "../games/make-a-mess/src/game/astanaScene.ts";
+import { islandAirportScene } from "../games/make-a-mess/src/game/islandAirportScene.ts";
 
 // Паспорт стоимости мира. Ядро отрисовки одно на все миры, поэтому кадр
 // дорожает не правкой рендерера, а ростом контента: куски, батчи, листва,
@@ -115,6 +116,19 @@ const PASSPORTS = [
       foliage: 1550,
       conifer: 160,
       lamps: 89,
+      spotLights: 2,
+    },
+  },
+  {
+    scene: islandAirportScene,
+    limits: {
+      pieces: 2250,
+      intactBatches: 45,
+      shadowBatches: 25,
+      singleInstanceBatches: 12,
+      foliage: 0,
+      conifer: 0,
+      lamps: 95,
       spotLights: 2,
     },
   },

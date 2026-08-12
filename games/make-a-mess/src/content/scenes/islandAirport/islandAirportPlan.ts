@@ -44,9 +44,28 @@ export const AIRPORT_RUNWAY = {
 } as const;
 
 export const AIRPORT_APRON = {
-  centre: [15, -1] as const,
+  centre: [15, 0.5] as const,
   width: 76,
-  depth: 19,
+  depth: 22,
+  stands: [
+    { id: "01", x: -2, clearSpan: 32, role: "heritage" },
+    { id: "02", x: 31, clearSpan: 20, role: "utility" },
+  ] as const,
+} as const;
+
+export const AIRPORT_TAXIWAY = {
+  centre: [18, -12.75] as const,
+  length: 4.5,
+  width: 16,
+} as const;
+
+export const AIRPORT_FUEL_FARM = {
+  centre: [88, 27] as const,
+  tankXs: [82.5, 88, 93.5] as const,
+  minX: 77,
+  maxX: 99,
+  minZ: 22.5,
+  maxZ: 31.5,
 } as const;
 
 export const AIRPORT_TERMINAL = {

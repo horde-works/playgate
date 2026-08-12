@@ -8,7 +8,9 @@ import type { SceneVector3 } from "../../../game/destructionScene.ts";
 import {
   AIRPORT_APRON,
   AIRPORT_CONTROL_TOWER,
+  AIRPORT_FUEL_FARM,
   AIRPORT_RUNWAY,
+  AIRPORT_TAXIWAY,
   AIRPORT_TERMINAL,
   AIRPORT_WORLD,
   ISLAND_AIRPORT_SHORELINE,
@@ -75,6 +77,8 @@ const fireStation = group("fire-station", "Airport fire station", "concrete");
 const airfield = group("airfield-equipment", "Airfield lighting and equipment", "steel", "mounted");
 const landside = group("landside", "Parking access and street furniture", "concrete");
 const fuelFarm = group("fuel-farm", "Fuel farm and service yard", "steel");
+const airfieldLife = group("airfield-life", "Ground handling and rescue equipment", "steel");
+const beaconRotor = group("tower-beacon-rotor", "Rotating airport beacon head", "steel");
 
 const GROUND_BOTTOM = -4.2;
 const GROUND_STEP = 6;
@@ -83,21 +87,23 @@ const PAVING_CLEARANCE = GROUND_STEP / 2 + 0.1;
 function pavedAt(x: number, z: number): boolean {
   return airportInsideRectangle(x, z, 0, AIRPORT_RUNWAY.centreZ, AIRPORT_RUNWAY.length + 4, AIRPORT_RUNWAY.width + 4, PAVING_CLEARANCE) ||
     airportInsideRectangle(x, z, AIRPORT_APRON.centre[0], AIRPORT_APRON.centre[1], AIRPORT_APRON.width, AIRPORT_APRON.depth, PAVING_CLEARANCE) ||
-    airportInsideRectangle(x, z, 18, -10.5, 16, 17, PAVING_CLEARANCE) ||
+    airportInsideRectangle(x, z, AIRPORT_TAXIWAY.centre[0], AIRPORT_TAXIWAY.centre[1], AIRPORT_TAXIWAY.width, AIRPORT_TAXIWAY.length, PAVING_CLEARANCE) ||
     airportInsideRectangle(x, z, 8, 39, 88, 9, PAVING_CLEARANCE) ||
-    airportInsideRectangle(x, z, -43, 45, 33, 11, PAVING_CLEARANCE) ||
-    airportInsideRectangle(x, z, 58, 43, 29, 11, PAVING_CLEARANCE) ||
+    airportInsideRectangle(x, z, -43, 46.25, 33, 8.5, PAVING_CLEARANCE) ||
+    airportInsideRectangle(x, z, 55, 46, 23, 8, PAVING_CLEARANCE) ||
+    airportInsideRectangle(x, z, 68.5, 34.75, 5, 15.5, PAVING_CLEARANCE) ||
+    airportInsideRectangle(x, z, 74, 27, 6, 5, PAVING_CLEARANCE) ||
     airportInsideRectangle(x, z, AIRPORT_TERMINAL.origin[0], AIRPORT_TERMINAL.origin[2], AIRPORT_TERMINAL.width, AIRPORT_TERMINAL.depth, PAVING_CLEARANCE) ||
     airportInsideRectangle(x, z, 61, 13, 27, 25, PAVING_CLEARANCE) ||
     airportInsideRectangle(x, z, -58, 15, 24, 17, PAVING_CLEARANCE) ||
-    airportInsideRectangle(x, z, 61, 2, 29, 21, PAVING_CLEARANCE) ||
+    airportInsideRectangle(x, z, 64.5, 2, 22, 21, PAVING_CLEARANCE) ||
     airportInsideRectangle(x, z, -58, 3, 24, 13, PAVING_CLEARANCE) ||
-    airportInsideRectangle(x, z, 75, 37, 25, 12, PAVING_CLEARANCE);
+    airportInsideRectangle(x, z, AIRPORT_FUEL_FARM.centre[0], AIRPORT_FUEL_FARM.centre[1], 25, 12, PAVING_CLEARANCE);
 }
 
 for (let x = -117; x <= 117; x += GROUND_STEP) {
   for (let z = -57; z <= 57; z += GROUND_STEP) {
-    const halfTile = (GROUND_STEP + 0.08) / 2;
+    const halfTile = GROUND_STEP / 2;
     const cornersInside = [-1, 1].every((sideX) =>
       [-1, 1].every((sideZ) =>
         airportPointInShoreline(x + sideX * halfTile, z + sideZ * halfTile)
@@ -110,7 +116,7 @@ for (let x = -117; x <= 117; x += GROUND_STEP) {
       "earth",
       "groundTile",
       [x, GROUND_BOTTOM / 2, z],
-      [GROUND_STEP + 0.08, -GROUND_BOTTOM, GROUND_STEP + 0.08],
+      [GROUND_STEP, -GROUND_BOTTOM, GROUND_STEP],
       (x + z) % 18 === 0 ? "#665642" : "#5b4c3b",
       { foundation: true, carriesAttachments: true },
     );
@@ -121,7 +127,7 @@ for (let x = -117; x <= 117; x += GROUND_STEP) {
         "grass",
         "groundTile",
         [x, 0.07, z],
-        [GROUND_STEP + 0.06, 0.14, GROUND_STEP + 0.06],
+        [GROUND_STEP, 0.14, GROUND_STEP],
         (x - z) % 24 === 0 ? "#718556" : "#687d50",
         { carriesAttachments: true, volume: GROUND_STEP * GROUND_STEP * 0.14 },
       );
@@ -181,8 +187,8 @@ function slabStrip(
       "asphalt",
       "groundTile",
       alongX ? [centre[0] + offset, centre[1], centre[2]] : [centre[0], centre[1], centre[2] + offset],
-      alongX ? [actual + 0.04, 0.22, width] : [width, 0.22, actual + 0.04],
-      index % 3 === 0 ? color : index % 3 === 1 ? "#303538" : "#383c3f",
+      alongX ? [actual, 0.22, width] : [width, 0.22, actual],
+      index % 7 === 0 ? "#383c3f" : color,
       { carriesAttachments: true, volume: actual * width * 0.22 },
     );
   }
@@ -190,11 +196,13 @@ function slabStrip(
 
 slabStrip("runway", [0, 0.18, AIRPORT_RUNWAY.centreZ], AIRPORT_RUNWAY.length, AIRPORT_RUNWAY.width);
 slabStrip("apron", [AIRPORT_APRON.centre[0], 0.18, AIRPORT_APRON.centre[1]], AIRPORT_APRON.width, AIRPORT_APRON.depth);
-slabStrip("taxiway", [18, 0.18, -11], 22, 12, false);
+slabStrip("taxiway", [AIRPORT_TAXIWAY.centre[0], 0.18, AIRPORT_TAXIWAY.centre[1]], AIRPORT_TAXIWAY.length, AIRPORT_TAXIWAY.width, false);
 slabStrip("landside-loop", [8, 0.18, 39], 88, 7);
-slabStrip("west-parking", [-43, 0.18, 45], 32, 10);
-slabStrip("east-parking", [58, 0.18, 43], 28, 10);
-slabStrip("hangar-apron", [61, 0.18, 2], 29, 21);
+slabStrip("west-parking", [-43, 0.18, 46.25], 32, 7.5);
+slabStrip("east-parking", [55, 0.18, 46], 22, 7);
+slabStrip("fuel-service-road", [68.5, 0.18, 34.75], 15.5, 5, false);
+slabStrip("fuel-service-yard-entry", [74, 0.18, 27], 6, 5);
+slabStrip("hangar-apron", [64.5, 0.18, 2], 22, 21);
 slabStrip("fire-apron", [-58, 0.18, 3], 24, 13);
 
 function paint(
@@ -238,10 +246,50 @@ paint("aiming-west:north", -54, AIRPORT_RUNWAY.centreZ - 2.8, 9, 1.1);
 paint("aiming-west:south", -54, AIRPORT_RUNWAY.centreZ + 2.8, 9, 1.1);
 paint("aiming-east:north", 54, AIRPORT_RUNWAY.centreZ - 2.8, 9, 1.1);
 paint("aiming-east:south", 54, AIRPORT_RUNWAY.centreZ + 2.8, 9, 1.1);
-paint("taxiway-centre", 18, -10.5, 0.25, 19, "#e1bc34");
-for (const standX of [-10, 12, 34]) {
-  paint(`stand-line:${standX}`, standX, 1, 0.22, 12, "#e1bc34");
-  paint(`stand-stop:${standX}`, standX, 6, 5.5, 0.22, "#e1bc34");
+
+const digitSegments = {
+  0: ["a", "b", "c", "d", "e", "f"],
+  2: ["a", "b", "d", "e", "g"],
+  7: ["a", "b", "c"],
+  9: ["a", "b", "c", "d", "f", "g"],
+} as const;
+const digitSegmentGeometry = {
+  a: [3.1, 0, 0.5, 2.8],
+  b: [1.55, 1.5, 2.6, 0.45],
+  c: [-1.55, 1.5, 2.6, 0.45],
+  d: [-3.1, 0, 0.5, 2.8],
+  e: [-1.55, -1.5, 2.6, 0.45],
+  f: [1.55, -1.5, 2.6, 0.45],
+  g: [0, 0, 0.5, 2.8],
+} as const;
+
+function runwayDigit(id: string, digit: keyof typeof digitSegments, x: number, z: number, facing: -1 | 1): void {
+  for (const segment of digitSegments[digit]) {
+    const [along, across, width, depth] = digitSegmentGeometry[segment];
+    paint(`runway-number:${id}:${segment}`, x + along * facing, z + across * facing, width, depth);
+  }
+}
+
+runwayDigit("09:0", 0, -66, AIRPORT_RUNWAY.centreZ - 2.2, 1);
+runwayDigit("09:9", 9, -66, AIRPORT_RUNWAY.centreZ + 2.2, 1);
+runwayDigit("27:2", 2, 66, AIRPORT_RUNWAY.centreZ + 2.2, -1);
+runwayDigit("27:7", 7, 66, AIRPORT_RUNWAY.centreZ - 2.2, -1);
+// Touchdown rubber and maintenance patches break the computer-clean runway
+// without turning every six-metre slab into a different asphalt swatch.
+for (const end of [-1, 1]) for (const side of [-1, 1]) for (let mark = 0; mark < 5; mark += 1) {
+  paint(`rubber:${end}:${side}:${mark}`, end * (43 + mark * 2.1), AIRPORT_RUNWAY.centreZ + side * (0.9 + (mark % 2) * 0.35), 1.8, 0.16, "#202426", [0, side * 0.04, 0]);
+}
+paint("repair-patch:west", -22, AIRPORT_RUNWAY.centreZ + 3.9, 12, 2.3, "#292e31", [0, 0.03, 0]);
+paint("repair-patch:east", 35, AIRPORT_RUNWAY.centreZ - 3.5, 8, 1.7, "#292e31", [0, -0.025, 0]);
+paint("taxiway-centre", 18, -12.75, 0.25, 4.5, "#e1bc34");
+paint("hold-short:north", 18, -13.1, 11, 0.22, "#e1bc34");
+paint("hold-short:south", 18, -13.7, 11, 0.22, "#e1bc34");
+for (const stand of AIRPORT_APRON.stands) {
+  paint(`stand-line:${stand.id}`, stand.x, 1.5, 0.22, 15, "#e1bc34");
+  paint(`stand-stop:${stand.id}`, stand.x, 7.1, stand.role === "heritage" ? 7 : 5, 0.22, "#e1bc34");
+}
+for (const [index, x, z, rotation] of [[0, -18, -0.4, -0.18], [1, 48, 1.8, 0.22]] as const) {
+  paint(`taxi-arc:${index}`, x, z, 12, 0.2, "#d8af39", [0, rotation, 0]);
 }
 
 const terminalHalfWidth = AIRPORT_TERMINAL.width / 2;
@@ -302,11 +350,16 @@ function facadeBay(side: "airside" | "landside", bay: number, doorway: boolean):
         carriesAttachments: true,
         volume: pierWidth * 1.4,
       });
-      // Sliding leaves are parked against the jambs, leaving a real 1.9 m
-      // clear opening at the centre of every public doorway.
-      primitive(terminalGlass, `${side}:door:${bay}:${sign}`, "glass", "glassPane", [x + sign * 1.5, 1.93, z], [0.92, 3.0, 0.11], "#9dc1c8", {
+      // Breakable automatic leaves start closed and use the shared kinematic
+      // door owner. The hinge frame supplies the outward and slide axes.
+      primitive(terminalGlass, `${side}:door:${bay}:${sign}`, "glass", "glassPane", [x + sign * 0.5, 1.93, z], [0.96, 3.0, 0.11], "#9dc1c8", {
         bearsLoad: false,
         volume: 0.04,
+        hinge: {
+          pivot: [x + sign * 0.5, 1.93, z],
+          direction: [sign, 0, 0],
+          normal: [0, 0, side === "landside" ? 1 : -1],
+        },
       });
     }
     primitive(terminalGlass, `${side}:transom:${bay}`, "glass", "glassPane", [x, 4.4, z], [3.92, 2, 0.11], "#83aeb8", {
@@ -334,11 +387,29 @@ for (let bay = 0; bay < AIRPORT_TERMINAL.bayCount; bay += 1) {
       volume: bayWidth * depth * 0.035,
       contactBearingOrder: true,
     });
+    primitive(terminalStructure, `roof-riser:${zone}:${bay}`, "steel", "plank", [x - bayWidth / 2 + 0.18, 6.96, zone === "south" ? 17.9 : 22.1], [0.16, 0.92, 0.18], "#66757b", {
+      carriesAttachments: true,
+      attachmentSupportMode: "hinge",
+      textureProfile: "matte-aluminium",
+    });
   }
-  primitive(terminalGlass, `skylight:${bay}`, "glass", "glassPane", [x, 6.5, 20], [bayWidth + 0.08, 0.18, 3.72], "#b7d0d2", {
+  // A raised continuous lantern gives the low terminal a wind-scooped civic
+  // silhouette without competing with the control tower.
+  for (const side of [-1, 1]) {
+    primitive(terminalGlass, `clerestory:${bay}:${side}`, "glass", "glassPane", [x, 6.92, 20 + side * 1.82], [bayWidth, 0.9, 0.12], "#9fc2c8", {
+      bearsLoad: false,
+      volume: 0.05,
+    });
+  }
+  primitive(terminalGlass, `skylight:${bay}`, "glass", "glassPane", [x, 7.42, 20], [bayWidth, 0.18, 3.72], "#b7d0d2", {
     bearsLoad: false,
     volume: 0.08,
     contactBearingOrder: true,
+  });
+  primitive(terminalStructure, `clerestory-frame:${bay}`, "steel", "plank", [x - bayWidth / 2 + 0.18, 6.94, 20], [0.16, 1.06, 3.9], "#66757b", {
+    carriesAttachments: true,
+    attachmentSupportMode: "hinge",
+    textureProfile: "matte-aluminium",
   });
 }
 
@@ -367,6 +438,17 @@ primitive(terminalEnvelope, "canopy-roof", "sheetMetal", "steelSheet", [8, 4.42,
   textureProfile: "painted-steel",
   volume: 2.4,
 });
+primitive(terminalEnvelope, "canopy-edge", "sheetMetal", "panel", [8, 4.25, 34.58], [26.4, 0.42, 0.16], "#e96537", {
+  bearsLoad: false,
+  textureProfile: "painted-steel",
+  volume: 0.18,
+});
+
+// Two coloured floor lines make arrivals and departures legible at walking
+// height, instead of relying on furniture placement alone.
+for (const [id, x, color] of [["arrivals", 4.75, "#4b91aa"], ["departures", 11.25, "#d9ad3f"]] as const) {
+  primitive(terminalInterior, `wayfinding:${id}`, "plastic", "groundTile", [x, 0.475, 20], [0.22, 0.025, 18.4], color, { bearsLoad: false, contactBearingOrder: true, volume: 0.02 });
+}
 
 function counter(id: string, x: number, z: number, yaw = 0): void {
   primitive(terminalInterior, `${id}:base`, "wood", "panel", [x, 1.02, z], [2.6, 1.15, 0.75], "#907052", { rotation: [0, yaw, 0], carriesAttachments: true });
@@ -480,7 +562,13 @@ const [towerX, towerZ] = AIRPORT_CONTROL_TOWER.centre;
 primitive(tower, "foundation", "concrete", "groundTile", [towerX, 0.2, towerZ], [7.2, 0.4, 7.2], "#8f9798", { foundation: true, carriesAttachments: true });
 for (const side of [-1, 1]) {
   primitive(tower, `shaft-x:${side}`, "concrete", "panel", [towerX + side * 2.85, 5.5, towerZ], [0.5, 10.2, 6], "#abb1b1", { carriesAttachments: true });
-  primitive(tower, `shaft-z:${side}`, "concrete", "panel", [towerX, 5.5, towerZ + side * 2.85], [5.7, 10.2, 0.5], "#9da5a6", { carriesAttachments: true });
+  if (side > 0) {
+    primitive(tower, `shaft-z:${side}`, "concrete", "panel", [towerX, 5.5, towerZ + side * 2.85], [5.7, 10.2, 0.5], "#9da5a6", { carriesAttachments: true });
+  } else {
+    for (const jamb of [-1, 1]) primitive(tower, `shaft-z:${side}:jamb:${jamb}`, "concrete", "panel", [towerX + jamb * 1.95, 5.5, towerZ - 2.85], [1.8, 10.2, 0.5], "#9da5a6", { carriesAttachments: true });
+    primitive(tower, `shaft-z:${side}:lintel`, "concrete", "panel", [towerX, 7.2, towerZ - 2.85], [2.1, 6.8, 0.5], "#9da5a6", { carriesAttachments: true });
+    primitive(tower, "service-door", "sheetMetal", "steelSheet", [towerX, 1.75, towerZ - 2.9], [1.8, 2.7, 0.14], "#586b70", { bearsLoad: false, carriesAttachments: true, textureProfile: "painted-steel", volume: 0.18 });
+  }
 }
 primitive(tower, "cab-floor", "steel", "groundTile", [towerX, 10.8, towerZ], [8.8, 0.32, 8.8], "#6c7579", { carriesAttachments: true, bearingArea: 10 });
 for (const side of [-1, 1]) {
@@ -492,8 +580,9 @@ for (const xOffset of [-4.1, 4.1]) for (const zOffset of [-4.1, 4.1]) {
 }
 primitive(tower, "cab-roof", "sheetMetal", "steelSheet", [towerX, AIRPORT_CONTROL_TOWER.roofY, towerZ], [9.3, 0.26, 9.3], "#d7dddd", { carriesAttachments: true, attachmentSupportMode: "hinge", textureProfile: "painted-steel", volume: 2.1 });
 primitive(tower, "beacon-mast", "steel", "cylinder", [towerX, 15.05, towerZ], [0.16, 2.2, 0.16], "#596367", { carriesAttachments: true });
-primitive(tower, "beacon-lens", "glass", "cylinder", [towerX, 16.22, towerZ], [0.46, 0.24, 0.46], "#f4f1e2", { bearsLoad: false, carriesAttachments: true, attachmentSupportMode: "hinge", sideAttachmentReach: 0.2, volume: 0.02 });
-primitive(tower, "beacon-bulb", "glass", "sphere", [towerX, 16.22, towerZ], [0.16, 0.16, 0.16], "#f4f1e2", {
+primitive(beaconRotor, "beacon-crossbar", "steel", "plank", [towerX, 16.22, towerZ], [1.35, 0.12, 0.12], "#596367", { carriesAttachments: true, volume: 0.01 });
+primitive(beaconRotor, "beacon-lens", "glass", "cylinder", [towerX + 0.62, 16.22, towerZ], [0.46, 0.24, 0.46], "#f4f1e2", { bearsLoad: false, carriesAttachments: true, attachmentSupportMode: "hinge", sideAttachmentReach: 0.2, volume: 0.02 });
+primitive(beaconRotor, "beacon-bulb", "glass", "sphere", [towerX + 0.62, 16.22, towerZ], [0.16, 0.16, 0.16], "#f4f1e2", {
   bearsLoad: false,
   sideAttachmentReach: 0.2,
   volume: 0.002,
@@ -510,6 +599,7 @@ function portalBuilding(
   height: number,
   doorCount: number,
   accent: string,
+  openDoorIndex: number | null = null,
 ): void {
   primitive(target, `${id}:foundation`, "concrete", "groundTile", [centreX, 0.2, centreZ], [width, 0.4, depth], "#92999a", { foundation: true, carriesAttachments: true });
   const primaryMember = { carriesAttachments: true, maximumVerticalGap: 0.05 } as const;
@@ -518,7 +608,11 @@ function portalBuilding(
   const bay = width / doorCount;
   for (let index = 0; index < doorCount; index += 1) {
     const x = centreX - width / 2 + bay * (index + 0.5);
-    primitive(target, `${id}:door:${index}`, "sheetMetal", "steelSheet", [x, height / 2, centreZ - depth / 2], [bay - 0.7, height - 0.8, 0.16], index % 2 ? accent : "#c9cecc", { bearsLoad: false, textureProfile: "painted-steel", volume: 0.5, maximumVerticalGap: 0.05 });
+    if (index !== openDoorIndex) {
+      primitive(target, `${id}:door:${index}`, "sheetMetal", "steelSheet", [x, height / 2, centreZ - depth / 2], [bay - 0.7, height - 0.8, 0.16], index % 2 ? accent : "#c9cecc", { bearsLoad: false, textureProfile: "painted-steel", volume: 0.5, maximumVerticalGap: 0.05 });
+    } else {
+      primitive(target, `${id}:door-open:${index}`, "sheetMetal", "steelSheet", [x, height - 0.14, centreZ - depth / 2 + 0.5], [bay - 0.7, 0.16, 1.0], accent, { bearsLoad: false, textureProfile: "painted-steel", volume: 0.18 });
+    }
     if (index < doorCount - 1) primitive(target, `${id}:pier:${index}`, "steel", "plank", [x + bay / 2, height / 2 + 0.4, centreZ - depth / 2], [0.42, height, 0.42], "#606a6e", primaryMember);
   }
   for (let frame = 0; frame <= 4; frame += 1) {
@@ -527,7 +621,7 @@ function portalBuilding(
   }
   for (let bayIndex = 0; bayIndex < 4; bayIndex += 1) {
     const x = centreX - width / 2 + (width / 4) * (bayIndex + 0.5);
-    primitive(target, `${id}:roof:${bayIndex}`, "sheetMetal", "steelSheet", [x, height + 0.52, centreZ], [width / 4 + 0.18, 0.22, depth + 0.6], "#d1d7d5", {
+    primitive(target, `${id}:roof:${bayIndex}`, "sheetMetal", "steelSheet", [x, height + 0.52, centreZ], [width / 4, 0.22, depth + 0.6], "#d1d7d5", {
       bearsLoad: false,
       textureProfile: "painted-steel",
       volume: width * depth * 0.0075,
@@ -537,8 +631,25 @@ function portalBuilding(
   }
 }
 
-portalBuilding(hangar, "hangar", 61, 13, 26, 22, 8.2, 2, "#5f8190");
-portalBuilding(fireStation, "fire", -58, 15, 22, 14, 5.8, 3, "#c94135");
+portalBuilding(hangar, "hangar", 61, 13, 26, 22, 8.2, 2, "#5f8190", 0);
+portalBuilding(fireStation, "fire", -58, 15, 22, 14, 5.8, 3, "#c94135", 1);
+
+// Ground-side life establishes scale before aircraft arrive.
+function serviceCart(id: string, x: number, z: number, color: string): void {
+  primitive(airfieldLife, `${id}:deck`, "steel", "panel", [x, 0.72, z], [3.1, 0.34, 1.35], color, { carriesAttachments: true, textureProfile: "painted-steel" });
+  for (const sx of [-1.1, 1.1]) for (const sz of [-0.62, 0.62]) {
+    primitive(airfieldLife, `${id}:wheel:${sx}:${sz}`, "plastic", "cylinder", [x + sx, 0.39, z + sz], [0.42, 0.18, 0.42], "#202426", { rotation: [Math.PI / 2, 0, 0], bearsLoad: false });
+  }
+}
+serviceCart("baggage-cart:0", 38, 2.8, "#d6aa3d");
+serviceCart("baggage-cart:1", 42, 3.6, "#557b8d");
+primitive(airfieldLife, "rescue-tender:body", "steel", "panel", [-58, 1.35, 5.2], [5.2, 1.65, 2.2], "#d94735", { carriesAttachments: true, textureProfile: "painted-steel" });
+primitive(airfieldLife, "rescue-tender:cab", "steel", "panel", [-59.4, 2.25, 5.2], [2.1, 1.15, 2.05], "#e65a42", { carriesAttachments: true, textureProfile: "painted-steel" });
+for (const x of [-60, -56.5]) for (const z of [4.15, 6.25]) primitive(airfieldLife, `rescue-tender:wheel:${x}:${z}`, "plastic", "cylinder", [x, 0.62, z], [0.72, 0.26, 0.72], "#202426", { rotation: [Math.PI / 2, 0, 0], bearsLoad: false });
+for (const [index, x, z] of [[0, 10, 7], [1, 17, 7], [2, 24, 7], [3, 45, 0]] as const) {
+  primitive(airfieldLife, `cone:${index}:base`, "plastic", "panel", [x, 0.36, z], [0.72, 0.12, 0.72], "#252a2b", { carriesAttachments: true });
+  primitive(airfieldLife, `cone:${index}:body`, "plastic", "cylinder", [x, 0.72, z], [0.4, 0.72, 0.4], "#e96537", { bearsLoad: false });
+}
 
 // Runway edge/threshold lights: base, housing, clear lens, contained signal bulb.
 function airfieldLight(id: string, x: number, z: number, color: string, height = 0.46): void {
@@ -616,11 +727,10 @@ primitive(airfield, "windsock", "cloth", "panel", [-68.7, 6.35, 1], [2.7, 0.92, 
 // Parking bays and a readable pedestrian route from spawn to the terminal.
 for (const side of [-1, 1]) {
   for (let index = 0; index < 9; index += 1) {
-    const x = side < 0 ? -58 + index * 3.8 : 44.5 + index * 3.4;
-    paint(`parking:${side}:${index}`, x, side < 0 ? 45 : 43, 0.12, 5.4);
+    const x = side < 0 ? -58 + index * 3.8 : 45.5 + index * 2.4;
+    paint(`parking:${side}:${index}`, x, 45, 0.12, side < 0 ? 5.4 : 4.2);
   }
 }
-paint("crosswalk:north", 8, 34.8, 14, 0.7);
 for (let stripe = -4; stripe <= 4; stripe += 1) paint(`crosswalk:${stripe}`, 8 + stripe * 1.35, 35.8, 0.72, 4.2);
 for (const x of [-7, 23]) {
   primitive(landside, `bollard:${x}:base`, "concrete", "stoneBlock", [x, 0.24, 34.5], [0.45, 0.36, 0.45], "#878d8d", { carriesAttachments: true });
@@ -700,15 +810,15 @@ securityFenceSpan("east-shore", 74.45, 116.39);
 
 // Fuel tanks are real revolved vessels on concrete saddles inside a guarded yard.
 for (let index = 0; index < 3; index += 1) {
-  const x = 70 + index * 5.4;
-  primitive(fuelFarm, `tank-pad:${index}`, "concrete", "groundTile", [x, 0.18, 38], [4.6, 0.36, 4.6], "#8e9492", { foundation: true, carriesAttachments: true });
-  primitive(fuelFarm, `tank:${index}`, "steel", "cylinder", [x, 2.2, 38], [3.7, 4.0, 3.7], "#d4d7d1", { textureProfile: "painted-steel", carriesAttachments: true, volume: 7.5 });
-  primitive(fuelFarm, `cap:${index}`, "steel", "cylinder", [x, 4.35, 38], [0.7, 0.28, 0.7], "#6d7779", { bearsLoad: false, volume: 0.06 });
+  const x = AIRPORT_FUEL_FARM.tankXs[index];
+  primitive(fuelFarm, `tank-pad:${index}`, "concrete", "groundTile", [x, 0.18, AIRPORT_FUEL_FARM.centre[1]], [4.6, 0.36, 4.6], "#8e9492", { foundation: true, carriesAttachments: true });
+  primitive(fuelFarm, `tank:${index}`, "steel", "cylinder", [x, 2.2, AIRPORT_FUEL_FARM.centre[1]], [3.7, 4.0, 3.7], "#d4d7d1", { textureProfile: "painted-steel", carriesAttachments: true, volume: 7.5 });
+  primitive(fuelFarm, `cap:${index}`, "steel", "cylinder", [x, 4.35, AIRPORT_FUEL_FARM.centre[1]], [0.7, 0.28, 0.7], "#6d7779", { bearsLoad: false, volume: 0.06 });
 }
 for (const side of [-1, 1]) {
   for (let segment = 0; segment < 10; segment += 1) {
-    const x = 65 + segment * 2.3;
-    const z = side < 0 ? 33.5 : 42.5;
+    const x = AIRPORT_FUEL_FARM.minX + segment * ((AIRPORT_FUEL_FARM.maxX - AIRPORT_FUEL_FARM.minX) / 9);
+    const z = side < 0 ? AIRPORT_FUEL_FARM.minZ : AIRPORT_FUEL_FARM.maxZ;
     primitive(fuelFarm, `bund-z:${side}:${segment}`, "concrete", "stoneBlock", [x, 0.18, z], [2.3, 0.36, 0.52], "#909694", { foundation: true, carriesAttachments: true, volume: 0.12 });
     const isGate = side < 0 && (segment === 3 || segment === 4);
     primitive(fuelFarm, isGate ? `gate-z:${segment}` : `fence-z:${side}:${segment}`, "steel", isGate ? "steelSheet" : "panel", [x, 1.15, z], [2.25, 1.8, isGate ? 0.14 : 0.08], isGate ? "#586b70" : "#697477", { bearsLoad: false, maximumVerticalGap: 0.04, volume: 0.04 });
@@ -716,16 +826,16 @@ for (const side of [-1, 1]) {
 }
 for (const side of [-1, 1]) {
   for (let segment = 0; segment < 4; segment += 1) {
-    const z = 35 + segment * 2.05;
-    const x = side < 0 ? 64 : 86.7;
+    const z = 23.6 + segment * 2.25;
+    const x = side < 0 ? AIRPORT_FUEL_FARM.minX : AIRPORT_FUEL_FARM.maxX;
     primitive(fuelFarm, `bund-x:${side}:${segment}`, "concrete", "stoneBlock", [x, 0.18, z], [0.52, 0.36, 2.05], "#909694", { foundation: true, carriesAttachments: true, volume: 0.11 });
     primitive(fuelFarm, `fence-x:${side}:${segment}`, "steel", "panel", [x, 1.15, z], [0.08, 1.8, 2], "#697477", { bearsLoad: false, maximumVerticalGap: 0.04, volume: 0.04 });
   }
 }
-primitive(fuelFarm, "pump-pad", "concrete", "groundTile", [65.6, 0.18, 38], [2.2, 0.36, 3.4], "#8e9492", { foundation: true, carriesAttachments: true });
-primitive(fuelFarm, "pump-skid", "steel", "panel", [65.6, 0.72, 38], [1.45, 0.7, 2.5], "#53636a", { carriesAttachments: true, maximumVerticalGap: 0.05 });
-for (const z of [37.35, 38.65]) {
-  primitive(fuelFarm, `pump-pipe:${z}`, "steel", "cylinder", [66.95, 1.02, z], [0.18, 2.2, 0.18], "#d9c34e", { rotation: [0, 0, Math.PI / 2], bearsLoad: false, attachmentSupportMode: "hinge", sideAttachmentReach: 0.22, volume: 0.02 });
+primitive(fuelFarm, "pump-pad", "concrete", "groundTile", [79, 0.18, 27], [2.2, 0.36, 3.4], "#8e9492", { foundation: true, carriesAttachments: true });
+primitive(fuelFarm, "pump-skid", "steel", "panel", [79, 0.72, 27], [1.45, 0.7, 2.5], "#53636a", { carriesAttachments: true, maximumVerticalGap: 0.05 });
+for (const z of [26.35, 27.65]) {
+  primitive(fuelFarm, `pump-pipe:${z}`, "steel", "cylinder", [80.35, 1.02, z], [0.18, 2.2, 0.18], "#d9c34e", { rotation: [0, 0, Math.PI / 2], bearsLoad: false, attachmentSupportMode: "hinge", sideAttachmentReach: 0.22, volume: 0.02 });
 }
 
 export const islandAirportDocument: AuthoredSceneDocument = {
@@ -752,6 +862,16 @@ export const islandAirportDocument: AuthoredSceneDocument = {
     east: [1, 0],
     north: [0, -1],
   },
+  constantRotors: [{
+    groupId: "tower-beacon-rotor",
+    pivot: [towerX, 16.22, towerZ],
+    axis: [0, 1, 0],
+    radiansPerSecond: 1.7,
+  }],
+  spotLights: [
+    { id: "apron-flood-west", position: [-12, 8.4, 8.8], direction: [0.16, -0.72, -0.67], color: "#ffe6bd", distance: 34, intensity: 11, angle: 0.62, penumbra: 0.55, dayIntensityFactor: 0.08 },
+    { id: "apron-flood-east", position: [39, 9.2, 8.8], direction: [-0.1, -0.68, -0.72], color: "#ffe6bd", distance: 38, intensity: 12, angle: 0.65, penumbra: 0.55, dayIntensityFactor: 0.08 },
+  ],
   copy: {
     status: "Make a Mess / Island Airport",
     eyebrow: "Regional airport test 001",

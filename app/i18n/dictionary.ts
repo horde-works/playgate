@@ -1901,4 +1901,24 @@ export const gameCardCopy: Record<string, Record<Language, GameCardCopy>> = {
         "Неровный голландский польдер в натуральном масштабе: четыре разные мельницы, дома, каналы, настоящие мосты, грядки и сухие дорожки.",
     },
   },
+  "make-a-mess-island-airport": {
+    en: {
+      stageLabel: "New world",
+      genre: "Airport destruction sandbox",
+      summary:
+        "A wind-beaten island airfield: short runway, working terminal doors, control tower, rescue station and a compact apron awaiting its first aircraft.",
+    },
+    es: {
+      stageLabel: "Mundo nuevo",
+      genre: "Sandbox aeroportuario de destrucción",
+      summary:
+        "Un aeródromo isleño azotado por el viento: pista corta, puertas de terminal activas, torre, rescate y una plataforma compacta esperando su primer avión.",
+    },
+    ru: {
+      stageLabel: "Новый мир",
+      genre: "Airport destruction sandbox",
+      summary:
+        "Продуваемый островной аэродром: короткая ВПП, живые двери терминала, башня, спасательная служба и компактный перрон в ожидании первого самолёта.",
+    },
+  },
 };

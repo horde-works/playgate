@@ -4,7 +4,9 @@ import { islandAirportDocument } from "../games/make-a-mess/src/content/scenes/i
 import {
   AIRPORT_APRON,
   AIRPORT_CONTROL_TOWER,
+  AIRPORT_FUEL_FARM,
   AIRPORT_RUNWAY,
+  AIRPORT_TAXIWAY,
   AIRPORT_TERMINAL,
   ISLAND_AIRPORT_SHORELINE,
   airportDistanceToShoreline,
@@ -15,6 +17,10 @@ import {
   islandAirportScene,
 } from "../games/make-a-mess/src/game/islandAirportScene.ts";
 import { islandAirportFlyover } from "../games/make-a-mess/src/game/islandAirportFlyover.ts";
+import {
+  automaticSlideDoorPolicy,
+  automaticSlideDoorShouldOpen,
+} from "../games/make-a-mess/src/game/hingedGatePolicy.ts";
 import {
   PLAYER_HEIGHT,
   routeBoxOf,
@@ -146,13 +152,23 @@ test("the compact runway, apron and taxiway keep their exact operational geometr
   const apronX = extent(apron, 0);
   assert.ok(Math.abs(apronX.min - (AIRPORT_APRON.centre[0] - AIRPORT_APRON.width / 2)) <= 0.021);
   assert.ok(Math.abs(apronX.max - (AIRPORT_APRON.centre[0] + AIRPORT_APRON.width / 2)) <= 0.021);
-  assert.ok(taxiway.length >= 3);
+  assert.ok(taxiway.length >= 1);
+  assert.deepEqual(extent(taxiway, 0), {
+    min: AIRPORT_TAXIWAY.centre[0] - AIRPORT_TAXIWAY.width / 2,
+    max: AIRPORT_TAXIWAY.centre[0] + AIRPORT_TAXIWAY.width / 2,
+  });
+  assert.deepEqual(extent(taxiway, 2), {
+    min: AIRPORT_TAXIWAY.centre[1] - AIRPORT_TAXIWAY.length / 2,
+    max: AIRPORT_TAXIWAY.centre[1] + AIRPORT_TAXIWAY.length / 2,
+  });
   assert.equal(withId(":markings:centreline:").length, 13);
   assert.equal(withId(":markings:threshold-").length, 24);
-  assert.equal(withId(":markings:stand-line:").length, 3);
+  assert.equal(withId(":markings:stand-line:").length, AIRPORT_APRON.stands.length);
+  assert.equal(withId(":markings:hold-short:").length, 2);
+  assert.equal(withId(":markings:runway-number:").length, 20);
 });
 
-test("terminal envelope is real construction with open doors and transparent glazing", () => {
+test("terminal envelope is real construction with automatic breakable sliding doors", () => {
   const foundations = withId(":terminal-structure:foundation:");
   assert.equal(foundations.length, AIRPORT_TERMINAL.bayCount);
   assert.deepEqual(extent(foundations, 0), {
@@ -162,6 +178,7 @@ test("terminal envelope is real construction with open doors and transparent gla
   assert.equal(withId(":terminal-structure:column:").length, 18);
   assert.equal(withId(":terminal-structure:roof-beam:").length, 9);
   assert.equal(withId(":terminal-glass:skylight:").length, 8);
+  assert.equal(withId(":terminal-glass:clerestory:").length, 16);
   assert.equal(withId(":terminal-glass:airside:window:").length, 6);
   assert.equal(withId(":terminal-glass:landside:window:").length, 6);
 
@@ -169,13 +186,16 @@ test("terminal envelope is real construction with open doors and transparent gla
     for (const bay of side === "airside" ? [2, 5] : [3, 4]) {
       const leaves = withId(`:terminal-glass:${side}:door:${bay}:`);
       assert.equal(leaves.length, 2);
-      const openingCentre = leaves.reduce((sum, leaf) => sum + leaf.position[0], 0) / 2;
-      const innerEdges = leaves.map((leaf) =>
-        leaf.position[0] < openingCentre
-          ? leaf.position[0] + leaf.size[0] / 2
-          : leaf.position[0] - leaf.size[0] / 2
-      ).sort((a, b) => a - b);
-      assert.ok(innerEdges[1] - innerEdges[0] >= 1.9, `${side} bay ${bay} is not open`);
+      assert.ok(leaves.every((leaf) => leaf.hinge), `${side} bay ${bay} is not dynamic`);
+      assert.ok(Math.abs(leaves[0].position[0] - leaves[1].position[0]) <= 1.01);
+      const policies = leaves.map((leaf) => automaticSlideDoorPolicy(leaf.id.replace(/:piece$/, "")));
+      assert.ok(policies.every(Boolean), `${side} bay ${bay} has no automatic policy`);
+      assert.equal(policies[0].doorId, policies[1].doorId);
+      assert.equal(policies[0].slideSign, -policies[1].slideSign);
+      assert.equal(automaticSlideDoorShouldOpen(3.3, false, policies[0]), true);
+      assert.equal(automaticSlideDoorShouldOpen(3.5, false, policies[0]), false);
+      assert.equal(automaticSlideDoorShouldOpen(4.5, true, policies[0]), true);
+      assert.equal(automaticSlideDoorShouldOpen(4.7, true, policies[0]), false);
     }
   }
 
@@ -186,6 +206,9 @@ test("terminal envelope is real construction with open doors and transparent gla
 });
 
 test("both independent passenger routes cross the building in both directions", () => {
+  const routePieces = pieces.filter((piece) =>
+    !(piece.hinge && piece.id.includes(":terminal-glass:"))
+  );
   const routes = [
     {
       bounds: { minX: -7, maxX: 13, minZ: 6, maxZ: 35, floorY: -0.2, ceilingY: 7 },
@@ -203,7 +226,7 @@ test("both independent passenger routes cross the building in both directions", 
       ["outbound", route.outside, route.apron],
       ["inbound", route.apron, route.outside],
     ]) {
-      const result = walkRoute(pieces, from, to, {
+      const result = walkRoute(routePieces, from, to, {
         bounds: route.bounds,
         cell: 0.2,
         height: PLAYER_HEIGHT + 0.18,
@@ -312,10 +335,19 @@ test("terminal fixtures and airfield lights use complete physical carrier chains
 test("tower, rescue, maintenance and fuel systems keep their defining parts", () => {
   assert.equal(AIRPORT_CONTROL_TOWER.roofY, 13.85);
   assert.equal(withId(":control-tower:cab-glass-").length, 4);
-  assert.equal(withId(":control-tower:beacon-").length, 3);
-  assert.equal(withId(":maintenance-hangar:hangar:door:").length, 2);
-  assert.equal(withId(":fire-station:fire:door:").length, 3);
+  assert.equal(withId(":control-tower:beacon-").length, 1);
+  assert.equal(withId(":tower-beacon-rotor:beacon-").length, 3);
+  assert.equal(withId(":control-tower:service-door:").length, 1);
+  assert.equal(withId(":maintenance-hangar:hangar:door:").length, 1);
+  assert.equal(withId(":maintenance-hangar:hangar:door-open:").length, 1);
+  assert.equal(withId(":fire-station:fire:door:").length, 2);
+  assert.equal(withId(":fire-station:fire:door-open:").length, 1);
   assert.equal(withId(":fuel-farm:tank:").length, 3);
+  assert.ok(withId(":fuel-farm:tank:").every((tank) => tank.position[0] >= AIRPORT_FUEL_FARM.minX));
+  assert.equal(islandAirportScene.constantRotorDefinitions.length, 1);
+  assert.equal(islandAirportScene.spotLightDefinitions.length, 2);
+  assert.ok(withId(":airfield-life:baggage-cart:").length >= 10);
+  assert.ok(withId(":airfield-life:rescue-tender:").length >= 6);
   assert.equal(withId(":fuel-farm:fence-z:").length, 18);
   assert.equal(withId(":fuel-farm:fence-x:").length, 8);
   assert.equal(withId(":fuel-farm:gate-z:").length, 2);
@@ -377,7 +409,10 @@ test("the flyover covers overview, circulation, systems and sunset without enter
     const next = frames[Math.min(frames.length - 1, segment + 2)];
     return [0, 1, 2].map((axis) => catmull(previous.position[axis], start.position[axis], end.position[axis], next.position[axis], local));
   };
-  const solidBoxes = pieces.filter((piece) => piece.intactCollider !== false).map(routeBoxOf);
+  const solidBoxes = pieces.filter((piece) =>
+    piece.intactCollider !== false &&
+    !(piece.hinge && piece.id.includes(":terminal-glass:"))
+  ).map(routeBoxOf);
   const cameraRadius = 0.14;
   for (let sample = 0; sample <= 2_000; sample += 1) {
     const progress = sample / 2_000;

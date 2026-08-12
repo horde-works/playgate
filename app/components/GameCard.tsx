@@ -43,7 +43,20 @@ export function GameCard({ game, featured = false }: GameCardProps) {
         </Link>
       </div>
 
-      {game.art === "basalt-stronghold" ? (
+      {game.art === "island-airport" ? (
+        <div className="game-card-art game-card-art-airport" aria-hidden="true">
+          <span className="art-word art-word-island">ISLAND</span>
+          <span className="art-word art-word-airport">AIRPORT</span>
+          <div className="art-airport-sea" />
+          <div className="art-airport-island">
+            <div className="art-airport-runway"><i /><i /><i /><i /><i /></div>
+            <div className="art-airport-terminal" />
+            <div className="art-airport-tower"><i /></div>
+          </div>
+          <div className="art-airport-beacon art-airport-beacon-left" />
+          <div className="art-airport-beacon art-airport-beacon-right" />
+        </div>
+      ) : game.art === "basalt-stronghold" ? (
         <div className="game-card-art game-card-art-stronghold" aria-hidden="true">
           <span className="art-word art-word-basalt">BASALT</span>
           <span className="art-word art-word-stronghold">STRONGHOLD</span>

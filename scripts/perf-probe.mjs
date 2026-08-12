@@ -29,6 +29,7 @@ const WORLD_ROUTES = {
   "viking-village": "/games/make-a-mess/viking-village",
   "basalt-stronghold": "/games/make-a-mess/basalt-stronghold",
   "grand-terminal": "/games/make-a-mess/grand-terminal",
+  "island-airport": "/games/make-a-mess/island-airport",
   astana: "/games/make-a-mess/astana",
   nimbus: "/games/make-a-mess/nimbus",
   "combat-hexacopter-range": "/games/make-a-mess/combat-hexacopter-range",
