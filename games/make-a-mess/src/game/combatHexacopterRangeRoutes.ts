@@ -1080,6 +1080,31 @@ export function combatHexacopterRangePlan(berth: SceneVector3): VehicleRoutePlan
  * заход от ТЕКУЩЕГО места машины, и лететь ей тогда не с горизонта, а оттуда,
  * где её застал приказ.
  */
+/**
+ * ЗАХОД: ИДТИ РОВНО, ВСТАТЬ НАД ПЛОЩАДКОЙ, СНИЖАТЬСЯ ВЕРТИКАЛЬНО.
+ *
+ * Первая редакция вела машину ПРЯМОЙ от точки на горизонте к причалу — то есть
+ * постоянным снижающимся глиссадом со ста пятидесяти метров. Замер по
+ * геометрии полигона (диск радиусом 50 м, площадка в 33 м от центра):
+ *
+ *   пеленг 0     — кромка на 12.3 м, минимум над островом 2.9 м;
+ *   пеленг 2.4   — кромка на  4.1 м  (это пеленг ПЕРВОЙ подменной машины);
+ *   отзыв снизу  — кромка на −9.6 м, то есть план идёт СКВОЗЬ остров.
+ *
+ * Отсюда и наблюдение Igor: «маршрут подменного RAX на нулевой высоте, при
+ * прибытии он врезается в край и подвисает». Прямая между двумя точками
+ * ничего не знает о том, что лежит между ними.
+ *
+ * Правильная форма в проекте уже есть и ею живёт машина города: ровный ход на
+ * высоте отрыва от палубы, `verticalArrival` над самой площадкой и только
+ * тогда снижение. Здесь она же. Отзыв снизу этим же и лечится: высота захода
+ * не зависит от того, откуда машину позвали, поэтому первое, что она сделает,
+ * — наберёт высоту, и уже потом пойдёт внутрь.
+ *
+ * Чего эта правка НЕ лечит: машину, которую позвали, когда она уже ПОД
+ * островом. План велит ей набрать высоту, а над ней твёрдое тело. Это не про
+ * трассу, это про конверт машины, и лечится оно там.
+ */
 export function combatHexacopterRangeApproachPlan(
   berth: SceneVector3,
   options?: {
@@ -1091,12 +1116,40 @@ export function combatHexacopterRangeApproachPlan(
 ): VehicleRoutePlan {
   const bearing = options?.bearing ?? 0;
   const HORIZON = 150;
-  const start: SceneVector3 = options?.from ?? [
-    berth[0] + Math.sin(bearing) * HORIZON,
-    berth[1] + CLEARANCE_ALTITUDE + 14,
-    berth[2] + Math.cos(bearing) * HORIZON,
-  ];
+  /** Высота ровного участка над причалом. Та же, что у ухода на второй круг. */
+  const CRUISE = CLEARANCE_ALTITUDE;
+  const from = options?.from;
+  const start: SceneVector3 = from
+    ? [from[0], from[1], from[2]]
+    : [
+        berth[0] + Math.sin(bearing) * HORIZON,
+        berth[1] + CRUISE,
+        berth[2] + Math.cos(bearing) * HORIZON,
+      ];
   const span = Math.hypot(start[0] - berth[0], start[2] - berth[2]) || 1;
+  /** С какой доли пути машина уже над площадкой и снижается вертикально. */
+  const verticalFrom = Math.max(0, 1 - Math.min(0.35, 24 / span));
+  const cruise = berth[1] + CRUISE;
+  /**
+   * Доля пути, на которой машина ВЫХОДИТ на высоту захода.
+   *
+   * Заход обязан начинаться там, где машина ЕСТЬ, а не там, где ей следует
+   * быть: отзыв с пульта строится от текущего места, и подменить его высоту
+   * сразу значило бы соврать о положении машины в первой же точке трассы. У
+   * прибытия с горизонта начальная высота и так крейсерская, и участок ничего
+   * не меняет.
+   */
+  const climbSpan = Math.min(0.3, Math.max(0.08, 40 / span));
+  const smootherStep = (value: number): number => {
+    const t = Math.max(0, Math.min(1, value));
+    return t * t * t * (t * (t * 6 - 15) + 10);
+  };
+  const altitudeAt = (progress: number): number => {
+    const t = Math.max(0, Math.min(1, progress));
+    return t >= climbSpan
+      ? cruise
+      : start[1] + (cruise - start[1]) * smootherStep(t / climbSpan);
+  };
   return {
     id: "combat-hexacopter:range-approach",
     length: span,
@@ -1104,18 +1157,23 @@ export function combatHexacopterRangeApproachPlan(
       const t = Math.max(0, Math.min(1, progress));
       return [
         start[0] + (berth[0] - start[0]) * t,
-        start[1] + (berth[1] - start[1]) * t,
+        // Высота НЕ интерполируется к причалу: набор в начале, затем ровный
+        // ход до самой площадки. Снижение — дело `verticalArrival`, и
+        // происходит оно на месте, над площадкой.
+        altitudeAt(t),
         start[2] + (berth[2] - start[2]) * t,
       ];
     },
-    // Подходят бодро, садятся медленно: последняя четверть — это уже посадка.
-    speedLimit: (progress) => (progress < 0.75 ? 16 : 5),
-    altitude(progress) {
-      const t = Math.max(0, Math.min(1, progress));
-      return start[1] + (berth[1] - start[1]) * t;
-    },
+    // Подходят бодро, встают над площадкой медленно.
+    speedLimit: (progress) => (progress < verticalFrom ? 16 : 5),
+    altitude: altitudeAt,
     corridor: () => 10,
-    finalFrom: 0.92,
+    verticalArrival: {
+      altitude: cruise,
+      from: verticalFrom,
+      horizontalTolerance: 1.2,
+    },
+    finalFrom: verticalFrom,
   };
 }
 

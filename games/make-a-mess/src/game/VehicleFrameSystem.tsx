@@ -956,6 +956,21 @@ interface FrameRecoveryState {
   lifecycle: VehicleRecoveryLifecycle;
   progress: number;
   escapePlan: VehicleRoutePlan | null;
+  /**
+   * ЗАХОД ХРАНИТСЯ, А НЕ СТРОИТСЯ ЗАНОВО КАЖДЫЙ КАДР.
+   *
+   * Здесь жила настоящая беда прибытия. Подменную машину СТАВИЛИ на заход с
+   * изменённым пеленгом — чтобы борта приходили с разных сторон, — а ВЕЛИ её
+   * каждый кадр по заходу, построенному тут же и БЕЗ доводов, то есть с
+   * пеленгом ноль. Два разных маршрута: машина стоит в одной точке, а трасса
+   * считает её началом другую, за полтораста метров. Отсюда и наблюдение
+   * Igor: «маршрут подменного RAX на нулевой высоте, при прибытии он врезается
+   * в край и подвисает».
+   *
+   * Побочно это ещё и расточительство: план строился шестьдесят раз в секунду
+   * ради значения, которое не меняется весь заход.
+   */
+  arrivalPlan: VehicleRoutePlan | null;
   arrivalInitialized: boolean;
   landingStability: VehicleLandingStabilityState;
   /** Seconds the escape has spent without gaining route progress. */
@@ -1112,6 +1127,21 @@ interface FrameState {
   separation: {
     readonly withId: string;
     readonly away: readonly [number, number, number];
+  } | null;
+  /**
+   * ПОЧЕМУ РЕЙС НЕ ЗАКАНЧИВАЕТСЯ. Гейт швартовки — конъюнкция семи условий, и
+   * снаружи виден только его итог: «не пришвартовалась». Машина, зависшая над
+   * своей площадкой, выглядит при этом совершенно исправной, и разобрать её
+   * без разбивки по условиям нечем.
+   */
+  dockingGate: {
+    readonly progress: number;
+    readonly offset: number;
+    readonly height: number;
+    readonly speed: number;
+    readonly verticalSpeed: number;
+    readonly angular: number;
+    readonly alignment: number;
   } | null;
   /** Свободное тело: им корабль живёт, пока не летит по маршруту. */
   body: BodyState;
@@ -1611,6 +1641,7 @@ function restingState(engineCount: number, yawThrusterCount = 0): FrameState {
     escape: null,
     escapeFreeSeconds: 0,
     separation: null,
+    dockingGate: null,
     body: RESTING_BODY,
     mass: null,
     intactMass: 0,
@@ -2379,6 +2410,22 @@ export function VehicleFrameSystem({
           supportContacts: live?.supportContacts ?? null,
           /** Идёт ли высвобождение из зацепа и сколько уже длится, с. */
           escaping: live?.escape ? Number(live.escape.seconds.toFixed(1)) : null,
+          docking: live?.dockingGate
+            ? Object.fromEntries(
+                Object.entries(live.dockingGate).map(([key, value]) => [
+                  key,
+                  Number((value as number).toFixed(3)),
+                ]),
+              )
+            : null,
+          dockingLimits: {
+            position: frame.flight.docking.position,
+            height: frame.flight.docking.height,
+            speed: frame.flight.docking.speed,
+            verticalSpeed: frame.flight.docking.verticalSpeed,
+            angularSpeed: frame.flight.docking.angularSpeed,
+            headingCos: frame.flight.docking.headingCos,
+          },
           separation: live?.separation
             ? {
                 withId: live.separation.withId,
@@ -4042,7 +4089,8 @@ export function VehicleFrameSystem({
             ),
             progress: 0,
             escapePlan: null,
-            arrivalInitialized: false,
+            arrivalPlan: null,
+          arrivalInitialized: false,
             escapeStallSeconds: 0,
             escapeBestProgress: 0,
             landingStability: createVehicleLandingStability(
@@ -4308,6 +4356,7 @@ export function VehicleFrameSystem({
           },
           progress: 0,
           escapePlan: null,
+          arrivalPlan: null,
           arrivalInitialized: false,
           escapeStallSeconds: 0,
           escapeBestProgress: 0,
@@ -4467,6 +4516,9 @@ export function VehicleFrameSystem({
             const arrival = frame.flight.arrivalPlan(berth, {
               bearing: (arrivalSerial.current * 2.399963) % (Math.PI * 2),
             });
+            // Тот же самый план и полетит: ставить машину на один заход, а
+            // вести по другому — это не прибытие, а два разных прибытия.
+            state.recovery.arrivalPlan = arrival;
             const start = arrival.point(0);
             const ahead = arrival.point(Math.min(1, 6 / arrival.length));
             const tangentLength =
@@ -5178,7 +5230,8 @@ export function VehicleFrameSystem({
             ),
             progress: 0,
             escapePlan: null,
-            arrivalInitialized: false,
+            arrivalPlan: null,
+          arrivalInitialized: false,
             escapeStallSeconds: 0,
             escapeBestProgress: 0,
             landingStability: createVehicleLandingStability(
@@ -5283,7 +5336,9 @@ export function VehicleFrameSystem({
           phase === "escape"
             ? recovery.escapePlan
             : phase === "arrival"
-              ? frame.flight.arrivalPlan(berth)
+              ? // Заход, на который машину поставили. Запасной путь на случай
+                // прибытия, начатого не через фазовый вход, — паспортный.
+                (recovery.arrivalPlan ??= frame.flight.arrivalPlan(berth))
               : null;
         if (plan) {
           flyRoutePlan(plan, recovery.progress, 1);
@@ -5542,7 +5597,8 @@ export function VehicleFrameSystem({
                     forward,
                   })
                 : null,
-            arrivalInitialized: false,
+            arrivalPlan: null,
+          arrivalInitialized: false,
             escapeStallSeconds: 0,
             escapeBestProgress: 0,
             landingStability: createVehicleLandingStability(
@@ -5949,6 +6005,24 @@ export function VehicleFrameSystem({
           frame.flight.approach,
           frame.flight.docking,
         );
+        {
+          const forward = rotateByQuaternion(state.body.orientation, frame.nose);
+          const flat = Math.hypot(forward[0], forward[2]) || 1;
+          const gate = frame.flight.approach.heading;
+          state.dockingGate = {
+            progress: flight.progress,
+            offset: Math.hypot(capture.offset[0], capture.offset[2]),
+            height: Math.abs(capture.offset[1]),
+            speed: Math.hypot(capture.velocity[0], capture.velocity[2]),
+            verticalSpeed: Math.abs(capture.velocity[1]),
+            angular: Math.hypot(
+              state.body.angularVelocity[0],
+              state.body.angularVelocity[1],
+              state.body.angularVelocity[2],
+            ),
+            alignment: (forward[0] * gate[0] + forward[2] * gate[1]) / flat,
+          };
+        }
         const requestedEffort = Math.max(
           0,
           ...flight.driveThrottle.map(Math.abs),
@@ -6103,7 +6177,8 @@ export function VehicleFrameSystem({
                     forward,
                   })
                 : null,
-            arrivalInitialized: false,
+            arrivalPlan: null,
+          arrivalInitialized: false,
             escapeStallSeconds: 0,
             escapeBestProgress: 0,
             landingStability: createVehicleLandingStability(
