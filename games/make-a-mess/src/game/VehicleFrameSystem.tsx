@@ -7050,7 +7050,13 @@ export function VehicleFrameSystem({
               clusterRegistry.current.get(clusterId)?.attachedMemberIds ??
               new Set<string>(),
           }),
-          groundHeight: 0,
+          // Пол мира берётся ОТ СОБСТВЕННОГО ПРИЧАЛА, а не от нуля координат.
+          // Это не точная высота грунта под машиной — точную здесь спросить
+          // нечем, поле проходимости живёт у жителей, — но причал принадлежит
+          // ЭТОМУ миру и стоит на его земле, а ноль не принадлежит никому: на
+          // карте, поднятой над нулём, правило «ниже — вниз» уводило бы нижнюю
+          // машину в склон.
+          groundHeight: berth[1],
           exemptId: state.combat?.targetId ?? undefined,
         });
         if (separation) {
