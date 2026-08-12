@@ -1,5 +1,9 @@
 import type { SceneVector3 } from "./destructionScene.ts";
 import {
+  landingApproachPlan,
+  type LandingApproachOptions,
+} from "./landingApproach.ts";
+import {
   createMotionRoute,
   motionRoutePhase,
   type MotionRouteArtifact,
@@ -1107,79 +1111,18 @@ export function combatHexacopterRangePlan(berth: SceneVector3): VehicleRoutePlan
  */
 export function combatHexacopterRangeApproachPlan(
   berth: SceneVector3,
-  options?: {
-    /** Пеленг захода в радианах: с какой стороны машина приходит. */
-    readonly bearing?: number;
-    /** Начало захода в мире. Не задано — берётся точка на горизонте. */
-    readonly from?: SceneVector3;
-  },
+  options?: LandingApproachOptions,
 ): VehicleRoutePlan {
-  const bearing = options?.bearing ?? 0;
-  const HORIZON = 150;
-  /** Высота ровного участка над причалом. Та же, что у ухода на второй круг. */
-  const CRUISE = CLEARANCE_ALTITUDE;
-  const from = options?.from;
-  const start: SceneVector3 = from
-    ? [from[0], from[1], from[2]]
-    : [
-        berth[0] + Math.sin(bearing) * HORIZON,
-        berth[1] + CRUISE,
-        berth[2] + Math.cos(bearing) * HORIZON,
-      ];
-  const span = Math.hypot(start[0] - berth[0], start[2] - berth[2]) || 1;
-  /** С какой доли пути машина уже над площадкой и снижается вертикально. */
-  const verticalFrom = Math.max(0, 1 - Math.min(0.35, 24 / span));
-  const cruise = berth[1] + CRUISE;
-  /**
-   * Доля пути, на которой машина ВЫХОДИТ на высоту захода.
-   *
-   * Заход обязан начинаться там, где машина ЕСТЬ, а не там, где ей следует
-   * быть: отзыв с пульта строится от текущего места, и подменить его высоту
-   * сразу значило бы соврать о положении машины в первой же точке трассы. У
-   * прибытия с горизонта начальная высота и так крейсерская, и участок ничего
-   * не меняет.
-   */
-  const climbSpan = Math.min(0.3, Math.max(0.08, 40 / span));
-  const smootherStep = (value: number): number => {
-    const t = Math.max(0, Math.min(1, value));
-    return t * t * t * (t * (t * 6 - 15) + 10);
-  };
-  const altitudeAt = (progress: number): number => {
-    const t = Math.max(0, Math.min(1, progress));
-    return t >= climbSpan
-      ? cruise
-      : start[1] + (cruise - start[1]) * smootherStep(t / climbSpan);
-  };
-  return {
-    id: "combat-hexacopter:range-approach",
-    length: span,
-    point(progress) {
-      const t = Math.max(0, Math.min(1, progress));
-      return [
-        start[0] + (berth[0] - start[0]) * t,
-        // Высота НЕ интерполируется к причалу: набор в начале, затем ровный
-        // ход до самой площадки. Снижение — дело `verticalArrival`, и
-        // происходит оно на месте, над площадкой.
-        altitudeAt(t),
-        start[2] + (berth[2] - start[2]) * t,
-      ];
-    },
-    // Подходят бодро, встают над площадкой медленно.
-    speedLimit: (progress) => (progress < verticalFrom ? 16 : 5),
-    altitude: altitudeAt,
-    corridor: () => 10,
-    verticalArrival: {
-      altitude: cruise,
-      from: verticalFrom,
-      horizontalTolerance: 1.2,
-    },
-    finalFrom: verticalFrom,
-  };
+  return landingApproachPlan(
+    berth,
+    { id: "combat-hexacopter:range-approach", clearance: CLEARANCE_ALTITUDE },
+    options,
+  );
 }
 
 export function combatHexacopterRangeArrivalPlan(
   berth: SceneVector3,
-  options?: { readonly bearing?: number; readonly from?: SceneVector3 },
+  options?: LandingApproachOptions,
 ): VehicleRoutePlan {
   return combatHexacopterRangeApproachPlan(berth, options);
 }

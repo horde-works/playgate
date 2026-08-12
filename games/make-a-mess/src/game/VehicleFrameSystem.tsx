@@ -93,6 +93,7 @@ import {
   vehicleRouteAltitudeTarget,
   vehicleVerticalArrivalCaptured,
   vehicleRotation,
+  vehicleSensorPieces,
   vehicleSpoolCommand,
   type VehicleRoutePlan,
   type VehiclePose,
@@ -839,6 +840,21 @@ interface FrameMember {
 interface VehicleFrameRuntime extends AirVehicleDefinition {
   readonly actuators: readonly CommandActuatorBinding[];
   readonly members: readonly FrameMember[];
+  /**
+   * ЧЕЙ ЭТО ДАТЧИК. Для каждого датчика приближения — кусок, на котором он
+   * сидит; тот же порядок, что у `proximitySensors`.
+   *
+   * Датчики объявлены точками в осях кадра и до сих пор про свои детали не
+   * знали вовсе: оторванная гондола улетала, а её датчик оставался висеть в
+   * идеальном обводе. Снаружи это и читалось как «сенсоры образуют
+   * собственный геометрический контур, а не закреплены к своим деталям»
+   * (наблюдение Igor, 12.08.2026).
+   *
+   * Привязка ГЕОМЕТРИЧЕСКАЯ, а не авторская: датчик принадлежит ближайшему
+   * куску. Так она достаётся даром всем машинам сразу и не расходится с
+   * паспортом, когда деталь переименуют.
+   */
+  readonly sensorPieces: readonly string[];
   /** Conservative local bounds used while own debris clears the hull. */
   readonly localBounds: {
     readonly minimum: readonly [number, number, number];
@@ -2354,9 +2370,16 @@ export function VehicleFrameSystem({
             maximum[axis] = Math.max(maximum[axis], local + radius);
           }
         }
+        // Решение вынесено в чистую функцию: React-часть тестами не покрыта,
+        // и обе прошлые поломки запуска боевой задачи жили именно здесь.
+        const sensorPieces = vehicleSensorPieces(
+          vehicle.proximitySensors,
+          members.map((member) => member.piece),
+        );
         return {
           ...vehicle,
           members,
+          sensorPieces,
           localBounds: { minimum, maximum },
           actuators: compileCommandActuators(
             members.map((member) => member.piece),
@@ -4369,6 +4392,32 @@ export function VehicleFrameSystem({
           groundContactLatched: false,
           groundLiftAutomation: createVehicleGroundLiftAutomation(),
         };
+      } else if (belowWorld && !state.fellOutOfWorld && state.recovery) {
+        // ГЛУБИНА — СВОЙСТВО МИРА, А НЕ ФАЗЫ.
+        //
+        // Условие выше требовало, чтобы машина НЕ БЫЛА в аварийном цикле, а
+        // внутри цикла предел глубины знала ровно одна фаза — снижение под
+        // туман. Машина, упавшая уже будучи в аварии (сбита в бою, потеряла
+        // позу на уходе, не встала после посадки), проваливалась мимо всех
+        // проверок и считалась вечно: наблюдение Igor — VX на высоте минус два
+        // километра, никуда не исчезает.
+        //
+        // Ниже мира не может удаться ничего: ни уход по маршруту, ни посадка,
+        // ни подъём. Поэтому любая фаза, кроме уже начатой пересборки,
+        // сворачивается в ожидание — оттуда цикл сам приведёт машину к
+        // пересборке и честному прибытию.
+        state.fellOutOfWorld = true;
+        if (state.recovery.lifecycle.phase !== "rebuilding") {
+          state.recovery.lifecycle = {
+            ...state.recovery.lifecycle,
+            phase: "waiting",
+            phaseSeconds: 0,
+          };
+          state.recovery.progress = 0;
+          state.recovery.escapePlan = null;
+          state.recovery.arrivalPlan = null;
+          state.recovery.arrivalInitialized = false;
+        }
       } else if (!belowWorld && state.fellOutOfWorld) {
         state.fellOutOfWorld = false;
       }
@@ -4863,6 +4912,13 @@ export function VehicleFrameSystem({
 
         for (const [sensorIndex, sensor] of frame.proximitySensors.entries()) {
           if (!vehicleProximitySensorEnabled(sensor)) {
+            continue;
+          }
+          // ДАТЧИК ЖИВЁТ РОВНО СТОЛЬКО, СКОЛЬКО ЖИВЁТ ЕГО ДЕТАЛЬ. Оторванная
+          // гондола уносит свои датчики с собой; машина перестаёт видеть тем,
+          // чего у неё больше нет, и её обвод честно становится дырявым.
+          const sensorPiece = frame.sensorPieces[sensorIndex];
+          if (sensorPiece && !attachedMembers.has(sensorPiece)) {
             continue;
           }
           const point = vehiclePiecePosition(

@@ -1,4 +1,8 @@
 import type { SceneVector3 } from "./destructionScene.ts";
+import {
+  landingApproachPlan,
+  type LandingApproachOptions,
+} from "./landingApproach.ts";
 import type { RouteFigureStation } from "./flightFigures.ts";
 import { createMotionRoute, motionRoutePhase } from "./motionRoute.ts";
 import type { MotionRouteArtifact } from "./motionRoute.ts";
@@ -648,8 +652,36 @@ export function ductHexacopterLapPlan(berth: SceneVector3): VehicleRoutePlan {
   };
 }
 
-export function ductHexacopterArrivalPlan(berth: SceneVector3): VehicleRoutePlan {
-  return ductHexacopterLapPlan(berth);
+/**
+ * ЗАХОД — ЭТО ПОСАДКА, А НЕ ЕЩЁ ОДИН КРУГ.
+ *
+ * Здесь стояло `return ductHexacopterLapPlan(berth)`: «заходом» подменной
+ * машины служил тот самый маршрут, который летел предыдущий борт. Машину
+ * ставили в начало прошлого круга, и она честно шла его целиком вместо того,
+ * чтобы сесть. Наблюдение Igor (12.08.2026): «траектория подменной машины —
+ * это по-прежнему старая траектория, по которой летел предыдущий».
+ *
+ * Форма общая с соседней машиной (`landingApproach.ts`): ровный ход на высоте
+ * отрыва, постановка над площадкой, вертикальное снижение. Пеленг и точка
+ * отзыва — доводы: подменные суда приходят с разных сторон, а отзыв с пульта
+ * строит тот же заход от текущего места машины.
+ */
+export function ductHexacopterArrivalPlan(
+  berth: SceneVector3,
+  options?: LandingApproachOptions,
+): VehicleRoutePlan {
+  return landingApproachPlan(
+    berth,
+    {
+      id: "duct-hexacopter:range-approach",
+      clearance: DUCT_HEXACOPTER_CLEARANCE_ALTITUDE,
+      // Машина крупная и тяжёлая: подходит спокойнее соседней и коридор ей
+      // нужен шире собственного полуразмаха.
+      cruiseSpeed: 13,
+      corridor: 12,
+    },
+    options,
+  );
 }
 
 /**

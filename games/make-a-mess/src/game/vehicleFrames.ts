@@ -240,6 +240,50 @@ function keelTrimRails(
 }
 
 /** Physical sensor mount and viewing direction in authored coordinates. */
+/**
+ * ЧЕЙ ЭТО ДАТЧИК — привязка датчиков приближения к деталям машины.
+ *
+ * Датчики объявлены точками в осях кадра и про свои детали не знают: оторванная
+ * гондола улетает, а её датчик остаётся висеть в идеальном обводе. Снаружи это
+ * читается как «сенсоры образуют собственный геометрический контур, а не
+ * закреплены к своим деталям» (наблюдение Igor, 12.08.2026).
+ *
+ * Привязка ГЕОМЕТРИЧЕСКАЯ, а не авторская: датчик принадлежит ближайшему куску.
+ * Так она достаётся даром всем машинам сразу и не расходится с паспортом, когда
+ * деталь переименуют.
+ *
+ * Расстояние меряется до ПОВЕРХНОСТИ куска (центр минус полудиагональ), а не до
+ * его центра: датчик на обшивке гондолы обязан достаться гондоле, а не корпусу,
+ * чей центр к началу координат ближе.
+ */
+export function vehicleSensorPieces(
+  sensors: readonly { readonly point: SceneVector3 }[],
+  pieces: readonly {
+    readonly id: string;
+    readonly position: SceneVector3;
+    readonly size: SceneVector3;
+  }[],
+): string[] {
+  return sensors.map((sensor) => {
+    let bestId = pieces[0]?.id ?? "";
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const piece of pieces) {
+      const radius = Math.hypot(piece.size[0], piece.size[1], piece.size[2]) / 2;
+      const distance =
+        Math.hypot(
+          sensor.point[0] - piece.position[0],
+          sensor.point[1] - piece.position[1],
+          sensor.point[2] - piece.position[2],
+        ) - radius;
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestId = piece.id;
+      }
+    }
+    return bestId;
+  });
+}
+
 export interface VehicleProximitySensor {
   readonly point: SceneVector3;
   readonly normal: SceneVector3;
