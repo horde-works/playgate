@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mixRotorThrust } from "../games/make-a-mess/src/game/rotorcraftDynamics.ts";
+import {
+  NEUTRAL_ROTORCRAFT_TRIM,
+  advanceReversibleThrusterOutput,
+  advanceRotorMotorOutput,
+  mixRotorThrust,
+  rotorcraftFlightStep,
+} from "../games/make-a-mess/src/game/rotorcraftDynamics.ts";
 
 /**
  * РЕВЕРС ПОДЪЁМНЫХ ДВИГАТЕЛЕЙ.
@@ -282,5 +288,139 @@ test("В ДИНАМИКЕ РЕВЕРС ДАЁТ ВЧЕТВЕРО БОЛЬШЕ В
   assert.ok(
     pitchReversed < pitchPlain * 1.6,
     `по тангажу вдруг появился четырёхкратный выигрыш: ${pitchPlain.toFixed(1)} -> ${pitchReversed.toFixed(1)}`,
+  );
+});
+
+/**
+ * ВЕСЬ ПУТЬ ЗНАКА: распределитель → дроссель → мотор → сила.
+ *
+ * Здесь живёт регрессия, которую не поймал ни один тест выше и нашла только
+ * живая проба. Распределитель научился отрицательной тяге, а дроссель и модель
+ * мотора продолжали резать по нулю: каждое отрицательное кольцо молча
+ * становилось остановленным. Машина отрывалась от площадки на три секунды
+ * раньше, уходила выше маршрута, доставленный момент тангажа расходился с
+ * заказанным вплоть до смены знака — и сторож снимал исправную машину с рейса
+ * за `controlMismatch` на двадцатой секунде патруля.
+ *
+ * Тесты распределителя были при этом зелёными, и совершенно честно: они
+ * проверяли распределитель. Отсюда правило, стоившее ночи: НОВЫЙ ЗНАК ОБЯЗАН
+ * ПРОЙТИ ВЕСЬ ПУТЬ, и проверять его надо там, где он превращается в силу, а не
+ * там, где он рождается.
+ */
+
+function flyingMachine(overrides = {}) {
+  return {
+    points: RING_POINTS,
+    centreOfMass: [0, 0, 0],
+    nose: [0, 0, 1],
+    mass: MASS,
+    inertia: [17, 17, 17],
+    availability: [1, 1, 1, 1, 1, 1],
+    liftCapacity: CAPACITY,
+    maximumTilt: 0.9,
+    ...overrides,
+  };
+}
+
+/**
+ * Просьба ТОЛКАТЬ ВНИЗ. Ноль в этом поле означает «держать вес», минус
+ * единица — «не тянуть вовсе»; обратная тяга начинается только ниже, и это
+ * само по себе важное свойство: в обычном полёте реверс не включается никогда,
+ * он ждёт своего случая.
+ */
+const PUSH_DOWN = { forwardSpeed: 0, lateralSpeed: 0, yawRate: 0, collective: -2 };
+
+const LEVEL_AT_ALTITUDE = {
+  orientation: [0, 0, 0, 1],
+  centre: [0, 40, 0],
+  velocity: [0, 0, 0],
+  angularVelocity: [0, 0, 0],
+};
+
+test("ДРОССЕЛЬ ЗНАКОВЫЙ РОВНО У ТОГО, У КОГО ЗНАКОВ РАСПРЕДЕЛИТЕЛЬ", () => {
+  const dive = PUSH_DOWN;
+  const plain = rotorcraftFlightStep(
+    flyingMachine({ motorOutput: [1, 1, 1, 1, 1, 1] }),
+    LEVEL_AT_ALTITUDE,
+    dive,
+    NEUTRAL_ROTORCRAFT_TRIM,
+    1 / 60,
+  );
+  for (const value of plain.result.commandedThrottle) {
+    assert.ok(value >= 0, `нереверсивной машине скомандовали назад: ${value}`);
+  }
+
+  const reversible = rotorcraftFlightStep(
+    flyingMachine({ motorOutput: [1, 1, 1, 1, 1, 1], reverseShare: 0.55 }),
+    LEVEL_AT_ALTITUDE,
+    dive,
+    NEUTRAL_ROTORCRAFT_TRIM,
+    1 / 60,
+  );
+  assert.ok(
+    Math.min(...reversible.result.commandedThrottle) < -0.05,
+    `команда назад не дошла до дросселя: [${reversible.result.commandedThrottle
+      .map((value) => value.toFixed(2))
+      .join(" ")}]`,
+  );
+  // И не глубже объявленного паспортом: доля реверса — ограничение, а не
+  // подарок, и на дросселе она обязана держаться так же, как в распределителе.
+  assert.ok(
+    Math.min(...reversible.result.commandedThrottle) >= -0.55 - 1e-9,
+    "дроссель ушёл глубже паспортной доли реверса",
+  );
+});
+
+test("ЗНАК ДОХОДИТ ДО СИЛЫ, а не теряется на раскрутке", () => {
+  // Один кадр ничего не докажет: силу создаёт мотор, а он следует за командой
+  // с инерцией. Поэтому здесь замкнутый цикл — ровно тот, что крутится в
+  // рантайме: шаг полёта даёт команду, модель мотора её отрабатывает,
+  // следующий шаг считает силу по новому состоянию мотора.
+  const spool = (reverseShare, advance) => {
+    let motorOutput = [0, 0, 0, 0, 0, 0];
+    let vertical = 0;
+    for (let step = 0; step < 120; step += 1) {
+      const flight = rotorcraftFlightStep(
+        flyingMachine({ motorOutput, ...(reverseShare ? { reverseShare } : {}) }),
+        LEVEL_AT_ALTITUDE,
+        PUSH_DOWN,
+        NEUTRAL_ROTORCRAFT_TRIM,
+        1 / 60,
+      );
+      motorOutput = motorOutput.map((value, index) =>
+        advance(value, flight.result.commandedThrottle[index] ?? 0, 1 / 60, 3),
+      );
+      vertical = flight.result.forces.reduce(
+        (sum, applied) => sum + applied.force[1],
+        0,
+      );
+    }
+    return vertical;
+  };
+
+  // Нереверсивная машина умеет только перестать тянуть.
+  const plain = spool(0, advanceRotorMotorOutput);
+  assert.ok(
+    Math.abs(plain) < 1,
+    `нереверсивная машина создала тягу на просьбу о снижении: ${plain.toFixed(1)} Н`,
+  );
+
+  // Реверсивная — ТОЛКАЕТ ВНИЗ ровно столько, сколько просили: заказ был
+  // «тяга в вес, только вниз», и он доставлен целиком (−94.2 Н при весе 94.2).
+  const reversed = spool(0.55, advanceReversibleThrusterOutput);
+  assert.ok(
+    reversed < -MASS * GRAVITY * 0.9,
+    `обратная тяга не дошла до тела: ${reversed.toFixed(1)} Н при весе ${(
+      MASS * GRAVITY
+    ).toFixed(1)}`,
+  );
+
+  // И ГЛАВНОЕ — ЧТО БЫЛО СЛОМАНО: с несмещённой моделью мотора тот же самый
+  // знаковый дроссель не даёт ничего. Команда есть, силы нет; ровно это и
+  // разводило заказанный момент с доставленным.
+  const clipped = spool(0.55, advanceRotorMotorOutput);
+  assert.ok(
+    Math.abs(clipped) < 1,
+    `несмещённая раскрутка вдруг научилась обратной тяге: ${clipped.toFixed(1)} Н`,
   );
 });

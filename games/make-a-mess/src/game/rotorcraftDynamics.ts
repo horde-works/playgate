@@ -1580,9 +1580,13 @@ export function rotorcraftForces(
     machine.points.length,
     machine.capacityWeights,
   );
+  // Состояние мотора тоже знаковое у реверсивной машины: обратная тяга не
+  // возникает мгновенно, она проживает проход через ноль, и обрезать её здесь
+  // значит забыть половину этого пути.
+  const motorFloor = -Math.max(0, Math.min(1, machine.reverseShare ?? 0));
   const currentMotorOutput = machine.motorOutput
     ? machine.points.map((_, index) =>
-        Math.max(0, Math.min(1, machine.motorOutput?.[index] ?? 0)),
+        Math.max(motorFloor, Math.min(1, machine.motorOutput?.[index] ?? 0)),
       )
     : null;
   const uncontrollableThrust = machine.points.map((_, index) =>
@@ -1753,18 +1757,34 @@ export function rotorcraftForces(
   // больше ровно во столько раз, сколько актуатор ещё способен доставить:
   // слой актуаторов затем честно умножит просьбу на attachedFraction. Так
   // потеря лопасти не учитывается дважды и одновременно не обходится стороной.
+  // ДРОССЕЛЬ ЗНАКОВЫЙ РОВНО НАСТОЛЬКО, НАСКОЛЬКО ЗНАКОВ РАСПРЕДЕЛИТЕЛЬ.
+  //
+  // Здесь жила регрессия, которую поймала только живая проба. Распределитель
+  // научился отрицательной тяге, а этот clamp продолжал резать по нулю — и
+  // каждое отрицательное кольцо молча превращалось в остановленное. Машина
+  // при этом отрывалась от площадки на три секунды раньше и уходила выше
+  // маршрута, а доставленный момент тангажа переставал совпадать с
+  // заказанным вплоть до смены знака: `authority.pitch` честно показывал
+  // ноль, и сторож снимал исправную машину с рейса за `controlMismatch`.
+  //
+  // Урок общий: НОВЫЙ ЗНАК ОБЯЗАН ПРОЙТИ ВЕСЬ ПУТЬ. Тесты распределителя были
+  // зелёные — они и проверяли распределитель, а не путь от него до силы.
+  const throttleFloor = -Math.max(0, Math.min(1, machine.reverseShare ?? 0));
   const commandedThrottle = mix.thrust.map((value, index) => {
     const available = Math.max(0, Math.min(1, machine.availability[index] ?? 1));
     const deliveredCapacity = (capacityByPoint[index] ?? 0) * available;
     return deliveredCapacity > 1e-9
-      ? Math.max(0, Math.min(1, value / deliveredCapacity))
+      ? Math.max(throttleFloor, Math.min(1, value / deliveredCapacity))
       : 0;
   });
   const motorOutput = currentMotorOutput
     ? currentMotorOutput
     : mix.thrust.map((value, index) =>
         (capacityByPoint[index] ?? 0) > 1e-9
-          ? Math.max(0, Math.min(1, value / (capacityByPoint[index] ?? 1)))
+          ? Math.max(
+              throttleFloor,
+              Math.min(1, value / (capacityByPoint[index] ?? 1)),
+            )
           : 0,
       );
   const thrust = machine.motorOutput

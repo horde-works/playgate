@@ -550,13 +550,26 @@ function rotorcraftFlightForces(
           ),
         )
       : 1;
+  // РАСКРУТКА ЗНАКОВАЯ У ТОГО, У КОГО ЗНАКОВАЯ ТЯГА. Реверсивное кольцо
+  // проходит через ноль так же, как реверсивный тоннель, и модель у них одна:
+  // разгон и сброс считаются по модулю, а ноль проживается целиком. Обычный
+  // подъёмный мотор остаётся на прежней несмещённой модели — не из экономии, а
+  // потому что отрицательных оборотов у него нет.
+  const rotorReversible = (frame.flight.limits.rotorReverseShare ?? 0) > 0;
   state.rotorMotorOutput = points.map((_, index) =>
-    advanceRotorMotorOutput(
-      state.rotorMotorOutput[index] ?? 0,
-      (deliveredTargets[index] ?? 0) * runUpFraction,
-      step,
-      frame.flight.spoolSeconds,
-    ),
+    rotorReversible
+      ? advanceReversibleThrusterOutput(
+          state.rotorMotorOutput[index] ?? 0,
+          (deliveredTargets[index] ?? 0) * runUpFraction,
+          step,
+          frame.flight.spoolSeconds,
+        )
+      : advanceRotorMotorOutput(
+          state.rotorMotorOutput[index] ?? 0,
+          (deliveredTargets[index] ?? 0) * runUpFraction,
+          step,
+          frame.flight.spoolSeconds,
+        ),
   );
   state.yawThrusterOutput = yawThrusters.map((_, index) =>
     advanceReversibleThrusterOutput(
@@ -627,6 +640,7 @@ function rotorcraftFlightForces(
       )
     : NEUTRAL_GOVERNOR;
   state.rotorAuthority = enabled ? flightStep.result.authority : null;
+  state.rotorCollective = enabled ? flightStep.result.collective : null;
   state.rotorAcceptedYawRate = enabled
     ? flightStep.result.acceptedYawRate
     : null;
@@ -1034,6 +1048,8 @@ interface FrameState {
   activePlan: VehicleRoutePlan | null;
   /** Previous physical step, consumed by the common failure watchdog. */
   rotorAuthority: RotorcraftAuthority | null;
+  /** Заказанный коллектив прошлого шага: со знаком, для разбора отказов. */
+  rotorCollective: number | null;
   /** Command the bounded rotor allocator actually accepted last step. */
   rotorAcceptedYawRate: number | null;
   /** Последнее требование автомата по рысканью — для разбора поведения носа. */
@@ -1561,6 +1577,7 @@ function restingState(engineCount: number, yawThrusterCount = 0): FrameState {
     governor: NEUTRAL_GOVERNOR,
     activePlan: null,
     rotorAuthority: null,
+    rotorCollective: null,
     rotorAcceptedYawRate: null,
     lastGuidanceYawRate: null,
     lastHeadingTarget: null,
@@ -2351,9 +2368,27 @@ export function VehicleFrameSystem({
         return {
           id: frame.id,
           supportContacts: live?.supportContacts ?? null,
+          /** Идёт ли высвобождение из зацепа и сколько уже длится, с. */
+          escaping: live?.escape ? Number(live.escape.seconds.toFixed(1)) : null,
+          authority: live?.rotorAuthority
+            ? {
+                thrust: Number(live.rotorAuthority.thrust.toFixed(2)),
+                pitch: Number(live.rotorAuthority.pitch.toFixed(2)),
+                roll: Number(live.rotorAuthority.roll.toFixed(2)),
+              }
+            : null,
+          collective:
+            live?.rotorCollective === null || live?.rotorCollective === undefined
+              ? null
+              : Number(live.rotorCollective.toFixed(3)),
+          contacts: live?.externalContacts.count ?? null,
           recovery: live?.recovery
             ? {
                 phase: live.recovery.lifecycle.phase,
+                // ЗА ЧТО сняли — не менее важно, чем «сняли». Диагнозы
+                // теперь различаются (`entangled` против `controlMismatch`),
+                // и проба обязана видеть именно имя, а не факт аварии.
+                reason: live.recovery.lifecycle.reason,
                 progress: live.recovery.progress,
                 groundContactSeconds: live.recovery.groundContactSeconds,
               }
@@ -2397,6 +2432,18 @@ export function VehicleFrameSystem({
                 supports: live?.supportContacts ?? 0,
               }
             : null,
+          // МИРОВОЙ ЦЕНТР, а не смещение тела. Смещение отсчитывается от
+          // собственного покоя машины, и сравнивать смещения двух машин
+          // бессмысленно: у стоящих на разных причалах они одинаково нулевые.
+          // Первая же проба расхождения на этом и обманулась.
+          centre:
+            live && live.mass
+              ? [
+                  live.mass.centre[0] + live.body.position[0],
+                  live.mass.centre[1] + live.body.position[1],
+                  live.mass.centre[2] + live.body.position[2],
+                ]
+              : null,
           body: live
             ? {
                 position: live.body.position,
@@ -5158,6 +5205,26 @@ export function VehicleFrameSystem({
         );
       };
 
+      // КАСАНИЕ, КОТОРОЕ ЗАДУМАНО, — НЕ БЕДА.
+      //
+      // Машина на заходе, машина, садящаяся по аварийному циклу, и машина,
+      // встающая с земли, касаются грунта НАМЕРЕННО. Спутать это с зацепом
+      // стоит дорого сразу в трёх местах: сторож насчитает ей срок
+      // высвобождения и снимет с рейса за `entangled`, пока она мирно стоит
+      // на площадке; правило высвобождения вытолкнет садящуюся машину с этой
+      // площадки; расхождение толкнёт вбок ту, что идёт в узкий створ.
+      //
+      // Поэтому признак один на всех троих и объявлен здесь, выше по кадру,
+      // а не переписан в каждом месте по-своему. Это тот же класс ошибки, что
+      // и ложный диагноз сторожа: принять задуманное за беду.
+      const onApproach = flight ? flight.progress > 0.94 : false;
+      const groundIsTheGoal =
+        onApproach ||
+        (state.recovery !== null &&
+          (state.recovery.lifecycle.phase === "landing" ||
+            state.recovery.lifecycle.phase === "settled" ||
+            state.recovery.lifecycle.phase === "righting"));
+
       const recovery = state.recovery;
       if (recovery && flight?.castOff) {
         if (recovery.lifecycle.phase === "escape") {
@@ -5984,7 +6051,7 @@ export function VehicleFrameSystem({
               flight.castOff &&
               state.externalContacts.count > 0 &&
               !dockingComplete &&
-              !(flight.progress > 0.97 && berthDistance < 8),
+              !groundIsTheGoal,
           },
           failureEnvelope,
         );
@@ -6969,7 +7036,7 @@ export function VehicleFrameSystem({
       // столкнуться с ним можно ничуть не хуже. Освобождается ровно один —
       // собственная цель охотника, потому что расхождение с добычей есть
       // срыв задачи, а не осторожность.
-      if (rotorGuidance && mass && flight?.castOff && !state.escape) {
+      if (rotorGuidance && mass && flight?.castOff && !state.escape && !onApproach) {
         const separation = separationDecision({
           self: {
             id: frame.id,
@@ -7031,7 +7098,9 @@ export function VehicleFrameSystem({
       // него управление в тот самый миг, когда он разбирается с зацепом, —
       // это не помощь, а второй пилот, тянущий ручку в свою сторону.
       const touching =
-        flight?.castOff === true && state.externalContacts.count > 0;
+        flight?.castOff === true &&
+        state.externalContacts.count > 0 &&
+        !groundIsTheGoal;
       if (rotorGuidance && (touching || state.escape)) {
         if (touching && !state.escape) {
           // Вход в эпизод: запоминается то, что привело в столкновение.
