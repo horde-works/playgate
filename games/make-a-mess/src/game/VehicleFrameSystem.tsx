@@ -154,6 +154,7 @@ import {
   type ExternalContactSummary,
 } from "./vehiclePhysicalContact";
 import { separationDecision } from "./vehicleSeparation";
+import { worldFloorAvoidance } from "./vehicleWorldEnvelope";
 import {
   beginCollisionEscape,
   stepCollisionEscape,
@@ -7128,7 +7129,75 @@ export function VehicleFrameSystem({
       }
 
       // ---------------------------------------------------------------
-      // РАСХОЖДЕНИЕ — ШЕСТОЙ ИСТОЧНИК GUIDANCE.
+      // ПОЛ МИРА — ИСТОЧНИК GUIDANCE, КОТОРЫЙ НЕ УСТУПАЕТ НИКОМУ.
+      //
+      // «RAX охотно в манёврах уходит ниже уровня острова… либо уходит под
+      // остров и больше не может подняться, либо цепляется за край и не знает,
+      // что делать» (Igor, 12.08.2026). Правило целиком в чистом
+      // `vehicleWorldEnvelope`; здесь только доводы и подстановка.
+      //
+      // Стоит ПЕРЕД расхождением намеренно: разойтись с чужим бортом важно, не
+      // оказаться под островом — важнее. Ниже поправка расхождения ляжет
+      // поверх, но вертикаль конверта её переспорит по величине.
+      //
+      // Остров описывается зоной обслуживания — она и есть диск мира, — а
+      // палуба берётся высотой причала: точнее здесь спросить нечем.
+      // УХОД ПОД МИР БЫВАЕТ ЗАДУМАН. Аварийный исход `descendBelowFog` уводит
+      // машину вниз намеренно, чтобы она исчезла и уступила место подменной;
+      // конверт, дерущийся с этим, превратил бы аварию в вечное висение — тот
+      // же класс ошибки, что «касание, которое задумано» у высвобождения.
+      const sinkingOnPurpose =
+        state.recovery !== null &&
+        (state.recovery.lifecycle.phase === "descent" ||
+          state.recovery.lifecycle.phase === "waiting");
+      const floorRelief =
+        rotorGuidance &&
+        mass &&
+        flight?.castOff &&
+        recoveryServiceArea &&
+        !sinkingOnPurpose
+          ? worldFloorAvoidance({
+              centre: centreNow,
+              velocity: state.body.velocity,
+              island: {
+                centre: recoveryServiceArea.center,
+                radius: recoveryServiceArea.radius,
+                deck: berth[1],
+              },
+            })
+          : null;
+      if (rotorGuidance && floorRelief) {
+        const away = centreNow[0] - recoveryServiceArea!.center[0];
+        const across = centreNow[2] - recoveryServiceArea!.center[1];
+        const span = Math.hypot(away, across) || 1;
+        const outwardWorld: readonly [number, number] = [away / span, across / span];
+        const forward = rotateByQuaternion(state.body.orientation, frame.nose);
+        const flat = Math.hypot(forward[0], forward[2]) || 1;
+        const nose: [number, number] = [forward[0] / flat, forward[2] / flat];
+        const starboard: [number, number] = [-nose[1], nose[0]];
+        const push = floorRelief.outward * floorRelief.urgency;
+        rotorGuidance = {
+          ...rotorGuidance,
+          forwardSpeed:
+            rotorGuidance.forwardSpeed +
+            (outwardWorld[0] * nose[0] + outwardWorld[1] * nose[1]) * push,
+          lateralSpeed:
+            rotorGuidance.lateralSpeed +
+            (outwardWorld[0] * starboard[0] + outwardWorld[1] * starboard[1]) *
+              push,
+          slipAllowance: Math.max(rotorGuidance.slipAllowance ?? 0, Math.PI / 3),
+        };
+        // Подъём просится ДОЛЕЙ ВЕСА, а не скоростью: контур вертикали у
+        // винтокрылой машины принимает именно её. Ноль под островом — там
+        // набирать нельзя, и правило это уже решило.
+        liftCommand = Math.max(
+          0,
+          Math.min(1, liftCommand + floorRelief.climb * 0.06 * floorRelief.urgency),
+        );
+      }
+
+      // ---------------------------------------------------------------
+      // РАСХОЖДЕНИЕ — СЕДЬМОЙ ИСТОЧНИК GUIDANCE.
       //
       // «Инстинкт нас заставляет избегать столкновений. Мы ходим двумерно —
       // инстинкт двумерный. Но для трёхмерной машины он больше на одно
