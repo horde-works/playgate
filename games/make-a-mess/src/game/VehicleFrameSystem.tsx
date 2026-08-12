@@ -4479,6 +4479,25 @@ export function VehicleFrameSystem({
               envelopeLeft / Math.max(1, state.intactEnvelope) >= 0.5 &&
               liftCapacity / Math.max(1, neutral) >= 1.02 &&
               liftHold !== "tumbling",
+            // БЕДА МИНОВАЛА: машина в воздухе, цела и держит позу. Отличие от
+            // `flightworthy` в том, что тот отвечает «сможет ли», а этот —
+            // «летит и держится прямо сейчас».
+            flyingWell:
+              state.supportContacts === 0 &&
+              liftHold === "flying" &&
+              mass.mass / Math.max(1, state.intactMass) >= 0.55 &&
+              envelopeLeft / Math.max(1, state.intactEnvelope) >= 0.5 &&
+              liftCapacity / Math.max(1, neutral) >= 1.02 &&
+              (() => {
+                const pose = vehicleAttitude(
+                  state.body.orientation,
+                  frame.nose,
+                );
+                return (
+                  Math.abs(pose.pitch) < Math.PI * 0.4 &&
+                  Math.abs(pose.roll) < Math.PI * 0.4
+                );
+              })(),
             // ВСТАЛА. Оторвалась от грунта и держит позу брюхом вниз —
             // строгость здесь уместна, это взлёт.
             uprightAgain:

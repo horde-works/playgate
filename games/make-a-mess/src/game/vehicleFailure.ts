@@ -92,6 +92,13 @@ export const VEHICLE_REBUILD_DELAY_SECONDS = 30;
  * работающими двигателями, и подмену тогда лучше вызвать сразу.
  */
 export const VEHICLE_RIGHTING_TIMEOUT_SECONDS = 8;
+/**
+ * Сколько машина обязана продержаться исправной в воздухе, прежде чем авария
+ * будет признана миновавшей. Не мгновенно: отказ снимают по устойчивому
+ * признаку, а не по одному удачному кадру — иначе состояние будет мигать на
+ * каждом покачивании.
+ */
+export const VEHICLE_RECOVERY_HEALTHY_SECONDS = 4;
 export const VEHICLE_LANDING_STABLE_SECONDS = 3;
 /** A bounce is not enough to command a full emergency lift dump. */
 export const VEHICLE_GROUND_CONTACT_CONFIRM_SECONDS = 0.4;
@@ -309,6 +316,8 @@ export interface VehicleRecoveryLifecycle {
    * борт, только с шумом.
    */
   readonly rightingAttempted?: boolean;
+  /** Сколько машина уже держится исправной в воздухе, с. */
+  readonly healthySeconds?: number;
 }
 
 export interface VehicleRecoveryObservation {
@@ -327,6 +336,11 @@ export interface VehicleRecoveryObservation {
   readonly flightworthy?: boolean;
   /** Встала и оторвалась от грунта: попытка удалась. */
   readonly uprightAgain?: boolean;
+  /**
+   * МАШИНА В ВОЗДУХЕ И СНОВА ЦЕЛА. Не то же, что `flightworthy`: тот отвечает
+   * «сможет ли», а этот — «летит и держится», то есть беда позади прямо сейчас.
+   */
+  readonly flyingWell?: boolean;
 }
 
 export interface VehicleRecoveryResult {
@@ -1129,6 +1143,30 @@ export function advanceVehicleRecoveryLifecycle(
           recovered: false,
         };
   }
+  // БЕДА МИНОВАЛА — ЗНАЧИТ БЕДЫ БОЛЬШЕ НЕТ.
+  //
+  // Вердикт Igor (12.08.2026): «RAX после восстановимого сбоя действительно
+  // продолжает сражаться, но его состояние так и остаётся „сбой“. Он должен
+  // возвращаться к заданию, если всё исправилось».
+  //
+  // Прежде выход из аварии был ровно один — доехать до конца её сценария и
+  // быть заменённым. Машина, у которой отказ оказался мгновенным (задело,
+  // качнуло, отпустило), всё равно списывалась. Тот же класс ошибки, что
+  // «исход выбирается один раз, в миг катастрофы», только в воздухе.
+  //
+  // Признак устойчивый и судится только на УХОДЕ: там машина по построению
+  // летит своим ходом. На спуске под туман и на посадке решение снижаться уже
+  // принято, и отменять его на полпути значило бы метание.
+  const healthySeconds =
+    current.phase === "escape" && observation.flyingWell
+      ? (current.healthySeconds ?? 0) + Math.max(0, observation.deltaSeconds)
+      : 0;
+  if (
+    current.phase === "escape" &&
+    healthySeconds >= VEHICLE_RECOVERY_HEALTHY_SECONDS
+  ) {
+    return { lifecycle: null, requestRebuild: false, recovered: true };
+  }
   if (
     (current.phase === "escape" && observation.escapeComplete) ||
     (current.phase === "descent" && observation.belowFog)
@@ -1164,7 +1202,7 @@ export function advanceVehicleRecoveryLifecycle(
     return { lifecycle: null, requestRebuild: false, recovered: true };
   }
   return {
-    lifecycle: { ...current, phaseSeconds: elapsed },
+    lifecycle: { ...current, phaseSeconds: elapsed, healthySeconds },
     requestRebuild: false,
     recovered: false,
   };

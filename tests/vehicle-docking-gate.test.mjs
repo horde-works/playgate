@@ -187,7 +187,9 @@ test("ДОПУСК ПО МЕСТУ ВТИХУЮ ЗАДАЁТ ДОПУСК ПО �
  * чём я потерял время (упрёк Igor: «смотри проблемы в логике и симулятором, а
  * не полным прогоном»).
  */
-function flyToBerth(vehicle, scene, clusterId, kind, fromProgress = 0.86) {
+function flyToBerth(vehicle, scene, clusterId, kind, options = {}) {
+  const fromProgress = options.fromProgress ?? 0.86;
+  const atBerth = options.atBerth === true;
   const mass = massProperties(
     scene.breakablePieces.filter((piece) => piece.clusterId === clusterId),
     densityOf,
@@ -197,6 +199,12 @@ function flyToBerth(vehicle, scene, clusterId, kind, fromProgress = 0.86) {
   const dt = 1 / 60;
   const lateral = GRAVITY * Math.tan(flight.maximumTilt);
   const model = {
+    // ВЕКТОРНАЯ ТЯГА — НЕ ДЕТАЛЬ МОДЕЛИ, А ДРУГОЙ ЗАКОН ПОСАДКИ. Без этого
+    // признака автопилот ведёт машину как корабль с оболочкой: у причала
+    // держит СКОРОСТЬ по профилю вместо МЕСТА, и стенд летит машиной, которой
+    // в игре нет. Первая редакция стенда этого не выставляла — и «улетала»
+    // даже та машина, которая в игре садится идеально.
+    vectoredTranslation: vehicle.flight.liftSource === "rotor",
     mass: mass.mass,
     inertiaYaw: mass.inertia[4],
     bodyCentre: mass.centre,
@@ -228,14 +236,26 @@ function flyToBerth(vehicle, scene, clusterId, kind, fromProgress = 0.86) {
   };
   // Машина ставится НА ТРАССУ в точке `fromProgress`, в позе покоя и без хода:
   // дальше её ведёт тот же автопилот, что в игре.
-  const start = plan.point(fromProgress);
+  const berthPoint = plan.point(1);
+  // ДВА РАЗНЫХ ВОПРОСА, И ИХ НАДО ЗАДАВАТЬ ОТДЕЛЬНО.
+  //
+  // `atBerth` ставит машину туда, где открывается окно захвата: над своей
+  // площадкой, чуть в стороне и чуть выше. Это вопрос «умеет ли она сесть».
+  // Обычный старт с трассы — вопрос «доходит ли она сюда», и он о другом.
+  const start = atBerth
+    ? [berthPoint[0] + 1.8, berthPoint[1] + 1.0, berthPoint[2]]
+    : plan.point(fromProgress);
   // Машина приходит на этот участок С ХОДОМ, а не из покоя: старт без скорости
   // — другой опыт, и он оболгал бы стенд. Берётся касательная трассы и та
   // скорость, которую трасса здесь разрешает.
   const ahead = plan.point(Math.min(1, fromProgress + 2 / plan.length));
   const tangentLength =
     Math.hypot(ahead[0] - start[0], ahead[2] - start[2]) || 1;
-  const entrySpeed = plan.speedLimit ? plan.speedLimit(fromProgress) : 12;
+  const entrySpeed = atBerth
+    ? 0.4
+    : plan.speedLimit
+      ? plan.speedLimit(fromProgress)
+      : 12;
   const entryVelocity = [
     ((ahead[0] - start[0]) / tangentLength) * entrySpeed,
     0,
@@ -254,7 +274,7 @@ function flyToBerth(vehicle, scene, clusterId, kind, fromProgress = 0.86) {
       vehicle.nose,
     ),
   };
-  let progress = fromProgress;
+  let progress = atBerth ? 0.9995 : fromProgress;
   let trim = NEUTRAL_ROTORCRAFT_TRIM;
   let motorOutput = flight.limits.enginePoints.map(() => 1 / flight.liftReserve);
   let yawRateLimits = null;
@@ -375,50 +395,54 @@ function flyToBerth(vehicle, scene, clusterId, kind, fromProgress = 0.86) {
   return { docked, missed, seconds, last };
 }
 
-test("ЗАХОД ВСЕГДА ЧЕМ-ТО КОНЧАЕТСЯ: швартовкой или объявленным промахом", () => {
-  // Настоящее свойство, которое было нарушено, — НЕ «машина всегда садится».
-  // Нарушено было то, что заход мог не кончиться ВООБЩЕ: машина уходила по оси
-  // створа с постоянным ходом, счётчик замирал под самым порогом швартовки, а
-  // промах не объявлялся, потому что его проверка живёт только в узком окне у
-  // причала (2.5 допуска места — у VX-8 это 10.5 м). Мимо этого окна машина
-  // летела в бесконечность, и в игре это выглядело как «висит и не
-  // отключается».
+const RANGE_CASES = [
+  ["VX-8", DUCT_HEXACOPTER_RANGE_AIR_VEHICLE, combatHexacopterRangeScene, "combat-hexacopter-range:duct-vehicle", "circuit"],
+  ["RAX-8", COMBAT_HEXACOPTER_RANGE_AIR_VEHICLE, combatHexacopterRangeScene, "combat-hexacopter-range:vehicle", "patrol"],
+];
+
+test("ПОСЛЕДНИЙ МЕТР ВНИЗ ПРОХОДЯТ, А НЕ ПРИБЛИЖАЮТСЯ К НЕМУ", () => {
+  // Наблюдение Igor: «Корабль не успел стабилизироваться у причала… речь про
+  // какие-то сантиметровые/десятки-сантиметровые допуски».
   //
-  // Теперь у захода есть второй признак промаха — ПРИЧАЛ УДАЛЯЕТСЯ, — и он
-  // берётся предсказанием, а не памятью: автопилот считается заново каждым
-  // кадром. Машина, доворачивающая на створ, идёт К причалу и промахом не
-  // считается; уходящая — считается.
-  const cases = [
-    ["VX-8", DUCT_HEXACOPTER_RANGE_AIR_VEHICLE, combatHexacopterRangeScene, "combat-hexacopter-range:duct-vehicle", "circuit"],
-    ["RAX-8", COMBAT_HEXACOPTER_RANGE_AIR_VEHICLE, combatHexacopterRangeScene, "combat-hexacopter-range:vehicle", "patrol"],
-  ];
+  // Вертикальный контур был пропорционален остатку: чем ближе палуба, тем
+  // медленнее машина к ней шла. Замер VX-8, поставленного в метре над
+  // причалом: скорость снижения затухала −0.20, −0.16, −0.10, −0.08, −0.07 м/с
+  // при остатке, застрявшем на 0.5 м и допуске 0.5 — четырёх сантиметров не
+  // хватало, десять секунд таймера истекали. RAX-8 ту же схему продавливал
+  // одной лишь вертикальной властью, и потому садился «идеально» —
+  // сравнение с ним и показало, что дело не в машине, а в законе.
   const outcomes = [];
-  for (const [name, vehicle, scene, clusterId, kind] of cases) {
+  for (const [name, vehicle, scene, clusterId, kind] of RANGE_CASES) {
+    const result = flyToBerth(vehicle, scene, clusterId, kind, {
+      atBerth: true,
+    });
+    assert.equal(
+      result.docked,
+      true,
+      `${name} не села с метра над площадкой: ` +
+        `остаток ${result.last.height.toFixed(2)} при допуске ` +
+        `${vehicle.flight.docking.height}, ход ${result.last.speed.toFixed(2)}`,
+    );
+    outcomes.push(`${name}: ${result.seconds.toFixed(1)} с`);
+  }
+  // Замер 12.08.2026: обе укладываются втрое быстрее десятисекундного таймера.
+  assert.deepEqual(outcomes, ["VX-8: 3.2 с", "RAX-8: 3.7 с"]);
+});
+
+test("ЗАХОД ЧЕМ-ТО КОНЧАЕТСЯ, а не длится вечно", () => {
+  // Второе свойство и другое: машина, вошедшая в заход далеко от створа, может
+  // и не успеть сойтись — но обязана это ОБЪЯВИТЬ. До правки она молча летела
+  // по оси створа в бесконечность с постоянным ходом, а счётчик замирал под
+  // самым порогом швартовки.
+  for (const [name, vehicle, scene, clusterId, kind] of RANGE_CASES) {
     const result = flyToBerth(vehicle, scene, clusterId, kind);
     assert.ok(
       result.docked || result.missed,
-      `${name}: заход не кончился ничем за ${result.seconds.toFixed(0)} с — ` +
-        `прогресс ${result.last.progress.toFixed(3)}, ` +
-        `до точки швартовки ${result.last.offset.toFixed(1)} м`,
+      `${name}: заход не кончился ничем за ${result.seconds.toFixed(0)} с`,
     );
-    // И кончился он ЗА КОНЕЧНОЕ ВРЕМЯ. Граница щедрая намеренно: она ловит
-    // «никогда», а не медленность. До правки обе машины летели ровно столько,
-    // сколько им отпускал стенд, и остановить их было нечем.
     assert.ok(
       result.seconds < 100,
       `${name}: развязка заняла ${result.seconds.toFixed(0)} с`,
     );
-    outcomes.push(
-      `${name}: ${result.docked ? "пришвартовалась" : "объявила промах"} за ${result.seconds.toFixed(0)} с`,
-    );
   }
-  // Замер 12.08.2026 — чем именно кончается заход у каждой. Обе объявляют
-  // промах: сойтись со створом с этого места они не успевают, и это честный
-  // исход, а не молчаливое зависание. Второй круг конечен
-  // (`maximumGoArounds: 3`), дальше вступает обычный порядок замены — то есть
-  // рейс кончается всегда.
-  assert.deepEqual(outcomes, [
-    "VX-8: объявила промах за 71 с",
-    "RAX-8: объявила промах за 31 с",
-  ]);
 });
