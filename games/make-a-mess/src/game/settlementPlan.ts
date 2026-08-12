@@ -245,12 +245,28 @@ export interface SettlementPlan {
   };
 }
 
-/** Роли, которые встречаются в плане: и у жилья, и в притяжении мест. */
+/**
+ * Роли, которые встречаются в плане: у жилья, в переписи и в притяжении мест.
+ *
+ * ПЕРЕПИСЬ — ТОЖЕ ОБЪЯВЛЕНИЕ РОЛИ, и это тот случай, когда пропуск источника
+ * выглядел как ошибка данных. Дверь объявляет РЕМЕСЛО дома («ткач», «кузнец»),
+ * а перепись — тех, кто за ней живёт на самом деле: `hand`, `housekeeper`.
+ * Пока сюда смотрели только жильё и притяжения, роль из списка живых людей
+ * считалась опечаткой: `createVillagerPopulation` брал её из переписи
+ * (`person?.role`), а проверка «роль не из этого поселения» её не находила.
+ * Чинить это со стороны данных было нельзя — пришлось бы вписать `hand` в
+ * `roles` каждой двери и тем соврать про ремесло дома.
+ */
 export function settlementRoles(plan: SettlementPlan): readonly string[] {
   const roles = new Set<string>();
   for (const dwelling of plan.dwellings) {
     for (const role of dwelling.roles) {
       roles.add(role);
+    }
+  }
+  for (const person of plan.roster ?? []) {
+    if (person.role) {
+      roles.add(person.role);
     }
   }
   for (const interest of Object.values(plan.interest)) {

@@ -117,7 +117,12 @@ for (const cell of dutchPolderLandscapeMesh.cells) {
     "earth",
     "groundTile",
     [x, (earthTop + TERRAIN_BOTTOM) / 2, z],
-    [cell.size + 0.04, earthTop - TERRAIN_BOTTOM, cell.size + 0.04],
+    // Ровно размер клетки. Сетка ландшафта согласованная: размеры 2/4/8 м на
+    // выровненных центрах, соседи примыкают точно. Нахлёст в 4 см ничего не
+    // закрывал, зато делал общими и верхние плоскости, и боковые грани
+    // соседних клеток — а по бортам каналов и на уступах эти боковины видно,
+    // и они спорили за пиксели на любом удалении.
+    [cell.size, earthTop - TERRAIN_BOTTOM, cell.size],
     top > 4 ? "#594a38" : top > 1.2 ? "#62523f" : "#6b5a43",
     undefined,
     {

@@ -2710,7 +2710,15 @@ function createKhrushchevka(
               y,
               row === 0 ? northRowCenter : southRowCenter,
             ],
-            [stripWidth - 0.015, 0.2, rowDepth - 0.015],
+            // ШАГ, А НЕ «ШАГ МИНУС EPSILON». Здесь стояло `- 0.015` по обеим
+            // горизонтальным осям, и плиты перекрытия расходились на 15 мм в
+            // обе стороны: сетка сквозных щелей по всему полу каждой
+            // хрущёвки — этаж под этажом видно с полосой в 0.54 м² на стык.
+            // Полосы примыкают ТОЧНО (`stripCenter` идёт ровно шагом
+            // `stripWidth`, ряды делит `rowSplit`), поэтому щель закрывается
+            // без нахлёста — а нахлёст здесь был бы хуже щели: две плиты с
+            // общей плоскостью верха спорят за пиксели.
+            [stripWidth, 0.2, rowDepth],
             slabPalette[(strip + row + level) % 2],
           ),
         );
@@ -3208,11 +3216,59 @@ function createKhrushchevka(
         panelColor("n", strip * 2 + 1, 0, sectionIndex)),
       weathering: 0.34,
     });
+    // ПРОСТЕНКИ ЛЕСТНИЧНОГО ОКНА.
+    //
+    // Без них вся лестничная клетка снизу доверху была чередованием стекла и
+    // бетона: остекление шло на всю ширину простенка (`stripWidth − 0.05`,
+    // то есть по 2.5 см с каждой стороны — это шов, а не простенок), и под
+    // каждым межэтажным поясом в 1.19 м³ бетона не было НИЧЕГО, кроме
+    // стеклянной панели в 6 см и деревянной рамы, у которой вдобавок стоит
+    // `bearsLoad: false`. Дети это увидели и не поверили — и правильно.
+    //
+    // Почему не поймала ни одна проверка. Решателю возразить нечем: у него
+    // стекло прочнее бетона на сжатие (180 против 132), а дерево — как кирпич
+    // (62). И обрушения тут нет: выбить все стёкла лестницы можно, пояса
+    // стоят — они держатся боковой привязкой к фасаду и на стекло не
+    // опирались никогда. То есть путь нагрузки был неправдоподобным ТОЛЬКО
+    // на вид, а на вид у нас никто не считал.
+    //
+    // Теперь стопка честная: цоколь → простенки → пояс → простенки → пояс →
+    // верх. Ленты стекла между ними — как в настоящей хрущёвке.
+    const stairPierWidth = 0.26;
+    const glazeW = stripWidth - stairPierWidth * 2;
+    // Простенок — ОДНА сплошная стойка от цоколя (верх 2.74) до верхней
+    // панели (низ 9.08), а не стопка отрезков между поясами. Отрезками не
+    // выходит: пояса сами стоят боковой привязкой к фасаду, вертикальной
+    // опорой для следующего этажа они решателю не годятся, и стопка
+    // рассыпается со второго яруса. Сплошная стойка опирается прямо на
+    // цоколь — и это ровно то, чем простенок является в панельном доме.
+    for (const side of [-1, 1] as const) {
+      pieces.push({
+        ...makePiece(`${clusterId}:pier:${side > 0 ? "r" : "l"}`,
+          clusterId, "concrete", "panel",
+          [cx + side * (stripWidth - stairPierWidth) / 2, 5.91, z0],
+          [stairPierWidth, 6.34, 0.3],
+          panelColor("n", strip * 2 + 1, 1, sectionIndex)),
+        weathering: 0.3,
+        carriesAttachments: true,
+        // Стойка НЕ включается в путь нагрузки, и это осознанно. Чинится
+        // здесь не расчёт, а картинка: на стекло не опирался никто и раньше —
+        // пояса держатся боковой привязкой к фасаду, выбей все стёкла, и они
+        // останутся стоять. Но в геометрии под бетоном не было ничего, кроме
+        // стекла, и это видно.
+        //
+        // Взять стойку в опору нельзя: она добавляет вес над первым этажом, а
+        // под ним висят 24-миллиметровые прутья оконных решёток — тот самый
+        // случай из CLAUDE.md, когда довес над перемычкой складывает тонкий
+        // реквизит по всему городу. Проверено: с несущей стойкой ложатся
+        // шесть решёток.
+        bearsLoad: false,
+      });
+    }
     for (let window = 0; window < 3; window += 1) {
       // Stairwell glazing is plain: the landings inside carry their own
       // plafond fixtures, which is where the light actually lives.
       const cy = 3.31 + window * floorHeight;
-      const glazeW = stripWidth - 0.05;
       const zf = z0 - 0.045;
       pieces.push(
         makePiece(`${clusterId}:glass:${window}`, clusterId, "glass", "glassPane",
@@ -3229,8 +3285,12 @@ function createKhrushchevka(
         bearsLoad: false,
       });
       pieces.push(
-        stairBar("top", [cx, cy + 0.54, zf], [glazeW, 0.06, 0.07]),
-        stairBar("bottom", [cx, cy - 0.54, zf], [glazeW, 0.06, 0.07]),
+        // Обвязка идёт на всю ширину простенка стены и заходит В ТЕЛО стоек
+        // (её z лежит внутри их толщины), поэтому концы не видны. Пролёт
+        // намеренно оставлен прежним: за него рама и держалась до появления
+        // стоек, а стойки ненесущие и якорем быть не могут.
+        stairBar("top", [cx, cy + 0.54, zf], [stripWidth - 0.05, 0.06, 0.07]),
+        stairBar("bottom", [cx, cy - 0.54, zf], [stripWidth - 0.05, 0.06, 0.07]),
         stairBar("left", [cx - glazeW / 2 + 0.03, cy, zf], [0.06, 1.02, 0.07]),
         stairBar("right", [cx + glazeW / 2 - 0.03, cy, zf], [0.06, 1.02, 0.07]),
         stairBar("mullion:l", [cx - glazeW / 6, cy, zf], [0.055, 1.02, 0.07]),
@@ -3246,7 +3306,10 @@ function createKhrushchevka(
       if (window < 2) {
         pieces.push({
           ...makePiece(`${clusterId}:band:${window}`, clusterId, "concrete", "panel",
-            [cx, 4.61 + window * floorHeight, z0], [stripWidth, 1.46, 0.3],
+            // Пояс идёт МЕЖДУ простенками, а не поверх них: иначе у стойки и
+            // пояса общая лицевая плоскость с перекрытием 0.26 × 1.46 — то
+            // самое наложение, которое рябит на любом удалении.
+            [cx, 4.61 + window * floorHeight, z0], [glazeW, 1.46, 0.3],
             panelColor("n", strip * 2 + 1, window + 1, window + 1)),
           weathering: 0.18,
         });
@@ -3300,8 +3363,16 @@ function createKhrushchevka(
       const wy = wallCenterY(floor);
       for (const bx of [b1, b2]) {
         pieces.push(
+          // Капитальная стена шахты доходит ДО внутренней грани северного
+          // фасада (`z0 + 0.15`), а не останавливается за 15 мм от неё.
+          // Пятнадцать миллиметров тут — не шов, а сквозная щель на стыке
+          // перегородки с наружной стеной, во всю высоту этажа: изнутри
+          // лестничной клетки видно улицу. Раньше на уровне окон её закрывало
+          // то, что в фасаде на этой высоте стояло тонкое стекло, и щель
+          // просто не с чем было мерить.
           makePiece(`${clusterId}:${floor}:shaft:${bx}`, clusterId, "concrete", "panel",
-            [bx, wy, -6.17], [0.24, wallHeight, 3.33], pal[3 % pal.length]),
+            [bx, wy, (z0 + 0.15 + -4.505) / 2],
+            [0.24, wallHeight, -4.505 - (z0 + 0.15)], pal[3 % pal.length]),
           makePiece(`${clusterId}:${floor}:flat:${bx}`, clusterId, "concrete", "panel",
             [bx, wy, -2.32], [0.24, wallHeight, 2.26], pal[3 % pal.length]),
         );
@@ -3340,8 +3411,12 @@ function createKhrushchevka(
     const sx = stripCenter(strip);
     for (let n = 0; n < 3; n += 1) {
       pieces.push(
+        // Межэтажная площадка тоже доводится до внутренней грани фасада:
+        // стояла за 15 мм от неё, и между площадкой и наружной стеной шла
+        // сквозная щель по всей ширине лестничной клетки.
         makePiece(`${clusterId}:mid:${n}`, clusterId, "concrete", "stoneBlock",
-          [sx, floorBase(n) + 1.22, -7.36], [stripWidth - 0.2, 0.16, 0.95],
+          [sx, floorBase(n) + 1.22, (z0 + 0.15 + -6.885) / 2],
+          [stripWidth - 0.2, 0.16, -6.885 - (z0 + 0.15)],
           stairConcrete),
         makePiece(`${clusterId}:up:${n}`, clusterId, "concrete", "stoneBlock",
           [sx - 0.67, floorBase(n) + 0.72, -5.7], [1.2, 0.15, 2.7],
@@ -4167,14 +4242,18 @@ function createOutskirts(): BreakableClusterDefinition[] {
         // city-ground включает луг в систему поверхностного износа: тропа
         // на запад и гаражная грунтовка на восток рисуются масками маршрутов
         // поверх тайлов, как все дороги города.
+        // Ровно шаг: `[tile, ...]`, а не `[tile + 0.04, ...]`. Нахлёст в 4 см
+        // делал верхние плоскости соседних клеток общими, и они спорили за
+        // пиксели — и между собой, и с дворовым газоном, который стоит на той
+        // же высоте и уже собран точно по шагу.
         ...makePiece(`town:outskirt:grass:${index}`, "town:outskirts", "soil", "groundTile",
-          [cx, -0.14, cz], [6.04, 0.24, 6.04],
+          [cx, -0.14, cz], [tile, 0.24, tile],
           tone > 0.66 ? "#5d7a41" : tone > 0.33 ? "#647f46" : "#587440"),
         landscapeSurface: "city-ground",
       });
       earthPieces.push(
         makePiece(`town:outskirt:earth:${index}`, "town:outskirts:earth", "earth", "groundTile",
-          [cx, -0.71, cz], [6.04, 0.9, 6.04],
+          [cx, -0.71, cz], [tile, 0.9, tile],
           tone > 0.5 ? "#665336" : "#5f4c31"),
       );
 
@@ -4746,7 +4825,11 @@ function createRimClosure(): BreakableClusterDefinition[] {
   for (const [index, tz] of [-22.4, -16.0, -9.6].entries()) {
     track.push(
       makePiece(`town:rim:track:${index}`, "town:rim:track", "earth", "groundTile",
-        [75.5, 0.02, tz], [2.8, 0.08, 6.6], index % 2 === 0 ? "#6a5a42" : "#63543d"),
+        // Длина ровно по шагу (6.4), а не 6.6: нахлёст в 20 см давал соседним
+        // звеньям общую верхнюю плоскость, и колея рябила поперечными
+        // полосами. Разный тон у чётных и нечётных звеньев делал спор особенно
+        // заметным.
+        [75.5, 0.02, tz], [2.8, 0.08, 6.4], index % 2 === 0 ? "#6a5a42" : "#63543d"),
     );
   }
   clusters.push(cluster("town:rim:track", "Garage track", "earth", "mounted", track));

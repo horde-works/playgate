@@ -189,7 +189,13 @@ function addBench(
     [0, yaw, 0],
     rotatedContactSize(seatSize, yaw),
   );
-  const [backDx, backDz] = rotateXZ(0, 0.27, yaw);
+  // Спинка садится ПОЗАДИ доски сиденья, врубаясь в неё на 2 см. До этого
+  // вынос был 0.27: передняя грань спинки оказывалась на 8.5 см ВНУТРИ доски,
+  // и она резала спинку по всей ширине — 9.6% её объёма, две пересекающиеся
+  // деревяшки разного тона на самом видном месте вагона. Решателю такая
+  // врубка безразлична (`deinterpenetrate` разводит только глубже 22%),
+  // поэтому её и не ловил никто, кроме глаз.
+  const [backDx, backDz] = rotateXZ(0, 0.335, yaw);
   builder.add(
     `${prefix}:back`,
     "wood",
@@ -648,8 +654,14 @@ function createCircularGround(): void {
                 ? "#9d978a"
                 : "#928d82";
 
-      surface.add(`tile:${index}`, surfaceMaterial, surfaceShape, [centerX, -0.08, centerZ], [6.04, 0.24, 6.04], color);
-      earth.add(`tile:${index}`, "earth", "groundTile", [centerX, -1.07, centerZ], [6.04, 1.74, 6.04], tone > 0.5 ? "#5c4935" : "#51402f");
+      // Ровно шаг сетки, без нахлёста: при 6.04 на шаге 6 у каждой пары
+      // соседних плит совпадала верхняя плоскость, и полоса в 4 см × 6 м на
+      // КАЖДОМ стыке спорила за пиксели. По всему полю это решётка ряби с
+      // шагом 6 м — то самое, что видно на перроне и на привокзальной
+      // площади. Тона у соседних плит разные, поэтому спор виден как шум,
+      // а не как оттенок.
+      surface.add(`tile:${index}`, surfaceMaterial, surfaceShape, [centerX, -0.08, centerZ], [tile, 0.24, tile], color);
+      earth.add(`tile:${index}`, "earth", "groundTile", [centerX, -1.07, centerZ], [tile, 1.74, tile], tone > 0.5 ? "#5c4935" : "#51402f");
       index += 1;
     }
   }
@@ -732,7 +744,11 @@ function createHeadhouse(): void {
   for (let x = -36; x <= 36; x += 6) {
     for (let z = 11; z <= 32; z += 6) {
       shell.add(`foundation:${x}:${z}`, "concrete", "panel", [x, -0.25, z], [6.04, 0.72, 6.04], "#77756f");
-      shell.add(`floor:${x}:${z}`, "stone", "groundTile", [x, FLOOR_Y, z], [6.02, 0.22, 6.02], (x + z) % 12 === 0 ? "#a69e8e" : "#b2aa99");
+      // Пол вестибюля — ровно по шагу. Было 6.02 при шаге 6: плиты сходились
+      // с нахлёстом в 2 см и общей верхней плоскостью, а тон у них
+      // чередуется через одну — то есть спор двух РАЗНЫХ камней в каждом шве
+      // на самом ходовом полу вокзала.
+      shell.add(`floor:${x}:${z}`, "stone", "groundTile", [x, FLOOR_Y, z], [6, 0.22, 6], (x + z) % 12 === 0 ? "#a69e8e" : "#b2aa99");
     }
   }
 
@@ -1880,7 +1896,8 @@ function createFogSiding(): void {
     for (let z = -74.5; z >= -104.5; z -= 6) {
       const tone = seededNoise(trackX, z, 141);
       siding.add(`ballast:${trackIndex}:${z}`, "concrete", "groundTile",
-        [trackX, 0.1, z], [4.3, 0.16, 6.04],
+        // Длина ленты ровно по шагу цикла (6), без нахлёста.
+        [trackX, 0.1, z], [4.3, 0.16, 6],
         tone > 0.66 ? "#565751" : tone > 0.33 ? "#4e4f4a" : "#55584c");
     }
     siding.add(`footing:${trackIndex}`, "earth", "groundTile",
@@ -2340,7 +2357,9 @@ function createServiceBuildings(): void {
   });
   for (const [trackIndex, tx] of [-45.5, -49.5].entries()) {
     depot.add(`goods:approach:${trackIndex}`, "earth", "groundTile",
-      [tx, 0.02, wzC], [4.2, 0.08, 5.2], trackIndex % 2 === 0 ? "#6a5a42" : "#63543d");
+      // Ширина ровно по расстоянию между путями (4), а не 4.2: два подъезда
+      // сходились нахлёстом в 20 см с общим верхом.
+      [tx, 0.02, wzC], [4, 0.08, 5.2], trackIndex % 2 === 0 ? "#6a5a42" : "#63543d");
   }
 
   // --- Мастерская с угольным закромом (восток, при водонапорке) -----------
@@ -2637,7 +2656,7 @@ function createSkyPlatform(): void {
   for (let x = PLATFORM_FROM - 1.5; x <= 25; x += 6) {
     const tone = seededNoise(x, TRACK_Z, 211);
     berth.add(`ballast:${x.toFixed(0)}`, "concrete", "groundTile",
-      [x, 0.12, TRACK_Z], [6.04, 0.2, 3.8],
+      [x, 0.12, TRACK_Z], [6, 0.2, 3.8],
       tone > 0.66 ? "#565751" : tone > 0.33 ? "#4e4f4a" : "#55584c");
   }
   let sleeperIndex = 0;

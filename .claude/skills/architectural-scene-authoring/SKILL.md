@@ -39,7 +39,17 @@ Then read these architectural contracts completely:
    class.
 
 The merged architectural contract owns the workflow, including its low-level
-mathematical rules.
+mathematical rules — except for one law it deliberately no longer restates:
+
+3. [`games/make-a-mess/docs/joint-canon.md`](../../../games/make-a-mess/docs/joint-canon.md)
+   — how any two bodies meet, and the owner of that topic across every domain:
+   the three lawful joints, "a tile's size equals its pitch, exactly" (and why
+   `pitch + epsilon` costs more than `pitch − epsilon`), why only co-facing
+   coplanar faces fight, why a gap is directional, joinery versus sloppy
+   interpenetration, the depth budget that makes an authoring tolerance a
+   function of viewing distance, and the `joint-audit` measurement with its
+   gate. Sections §9.3, §10.7 and §22.9 of the architectural contract now
+   point here rather than repeat it.
 
 Read these in addition when relevant:
 

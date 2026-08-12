@@ -46,6 +46,8 @@ Read [foundation.md](references/foundation.md) completely only when installing, 
 
 Also read repository instructions, the object passport, authoring schema, renderer, material bindings, current canonical owner and targeted tests. Direct user constraints and project-local contracts override this skill.
 
+In this repository, also read [`games/make-a-mess/docs/joint-canon.md`](../../../games/make-a-mess/docs/joint-canon.md) before authoring any assembly of two or more bodies. It owns how bodies meet — the three lawful joints, tiling by exact pitch, why only co-facing coplanar faces fight, joinery versus visible interpenetration, and the depth budget that makes an authoring tolerance a function of viewing distance. The magenta gap detector in [geometry-construction.md](references/geometry-construction.md) finds holes in a skin; `tools/joint-audit.mjs` measures the same class numerically once the object is seated in a scene.
+
 ## Non-negotiable boundary
 
 - Treat documentary sources, measured drawings and the approved passport as evidence.
