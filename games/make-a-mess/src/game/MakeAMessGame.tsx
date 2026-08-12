@@ -227,6 +227,7 @@ import { WorldEdge } from "./WorldEdge";
 import { HingedDoorSystem, type HingedEntryApproach } from "./HingedDoorSystem";
 import {
   entryInteractionActions,
+  keyboardDigit,
   numberedEntryInteractionAction,
   preferredEntryInteraction,
   type EntryInteractionAction,
@@ -255,6 +256,7 @@ import {
   type ConstructionUiState,
 } from "./ConstructionSystem";
 import { townDsClusterDefinition } from "./townCitroenDs";
+import { directWeaponShortcut } from "./weaponShortcuts.ts";
 import {
   BasaltForceFieldSystem,
   type BasaltForceFieldRuntime,
@@ -13364,10 +13366,12 @@ export function MakeAMessGame({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      const numberedAction = event.code.startsWith("Digit")
+      const pressedDigit = keyboardDigit(event.code, event.key);
+      const directWeapon = directWeaponShortcut(pressedDigit);
+      const numberedAction = pressedDigit !== null
         ? numberedEntryInteractionAction(
             approachedEntry,
-            Number(event.code.slice("Digit".length)),
+            pressedDigit,
           )
         : null;
       if (
@@ -13392,45 +13396,22 @@ export function MakeAMessGame({
         openApproachedEntry();
       } else if (event.code === "KeyR") {
         reset();
-      } else if (event.code === "Digit0" && !occupiedSeatId && !event.repeat) {
-        requestWeaponChange("none");
       } else if (
-        event.code === "Digit1" &&
+        pressedDigit === 4 &&
         (!occupiedSeatId || interIslandPassengerState.flightActive) &&
         !event.repeat
       ) {
-        requestWeaponChange("hammer");
-      } else if (
-        event.code === "Digit2" &&
-        (!occupiedSeatId || interIslandPassengerState.flightActive) &&
-        !event.repeat
-      ) {
-        requestWeaponChange("launcher");
-      } else if (
-        event.code === "Digit3" &&
-        (!occupiedSeatId || interIslandPassengerState.flightActive) &&
-        !event.repeat
-      ) {
-        requestWeaponChange("mg");
-      } else if (
-        event.code === "Digit4" &&
-        (!occupiedSeatId || interIslandPassengerState.flightActive) &&
-        !event.repeat
-      ) {
+        event.preventDefault();
         // Одна клавиша, два ракетомёта: повторное нажатие меняет боеприпас.
         requestWeaponChange(nextLauncherWeapon(weapon));
       } else if (
-        event.code === "Digit5" &&
-        (!occupiedSeatId || interIslandPassengerState.flightActive) &&
+        directWeapon &&
+        (!occupiedSeatId ||
+          (directWeapon !== "none" && interIslandPassengerState.flightActive)) &&
         !event.repeat
       ) {
-        requestWeaponChange("charge");
-      } else if (
-        event.code === "Digit6" &&
-        (!occupiedSeatId || interIslandPassengerState.flightActive) &&
-        !event.repeat
-      ) {
-        requestWeaponChange("construction");
+        event.preventDefault();
+        requestWeaponChange(directWeapon);
       } else if (
         event.code === "KeyQ" &&
         (!occupiedSeatId || interIslandPassengerState.flightActive) &&

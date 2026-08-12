@@ -3,8 +3,20 @@ import test from "node:test";
 import {
   entryInteractionActions,
   entryInteractionMatches,
+  keyboardDigit,
   numberedEntryInteractionAction,
 } from "../games/make-a-mess/src/game/entryInteraction.ts";
+import { directWeaponShortcut } from "../games/make-a-mess/src/game/weaponShortcuts.ts";
+
+test("weapon digits work on the number row, NumPad, and code-poor keyboards", () => {
+  assert.equal(keyboardDigit("Digit6", "6"), 6);
+  assert.equal(keyboardDigit("Numpad6", "6"), 6);
+  assert.equal(keyboardDigit("Unidentified", "6"), 6);
+  assert.equal(keyboardDigit("Digit6", "^"), 6);
+  assert.equal(keyboardDigit("KeyG", "g"), null);
+  assert.equal(directWeaponShortcut(keyboardDigit("Digit6", "6")), "construction");
+  assert.equal(directWeaponShortcut(keyboardDigit("Numpad6", "6")), "construction");
+});
 
 const ride = {
   id: "town:airship:ride",
