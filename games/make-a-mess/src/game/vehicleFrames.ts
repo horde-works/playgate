@@ -343,7 +343,20 @@ function skyTrainProximitySensors(): readonly VehicleProximitySensor[] {
   }
   // Низкая кабина выступает перед вагоном: оболочка над ней не заметит
   // буфер или фасад на уровне стекла, поэтому у эркера свои сенсоры.
-  sensors.push({ point: [-9.34, 2.78, HULL.z], normal: [-1, 0, 0] });
+  // ВПЕРЁД КАБИНА СМОТРИТ СТОЙКАМИ, А НЕ ЛОБОВЫМ СТЕКЛОМ.
+  //
+  // Один датчик стоял по осевой ровно в стекле эркера. Стекло — первое, что
+  // разлетается от любого касания, и вместе с ним корабль терял единственный
+  // передний глаз кабины.
+  //
+  // Взамен пара на угловых стойках эркера, симметрично осевой: смотрят туда
+  // же, стоят на несущем, и потеря одной стороны не ослепляет вперёд.
+  for (const side of [-1, 1] as const) {
+    sensors.push({
+      point: [-9.24, 2.78, HULL.z + side * 0.95],
+      normal: [-1, 0, 0],
+    });
+  }
   sensors.push({ point: [-8.25, 2.78, HULL.z - 1.28], normal: [0, 0, -1] });
   sensors.push({ point: [-8.25, 2.78, HULL.z + 1.28], normal: [0, 0, 1] });
   // Dedicated landing altimeters. These are measurements, not suspension.
@@ -435,8 +448,23 @@ function townAirshipProximitySensors(): readonly VehicleProximitySensor[] {
     // The docking socket intentionally surrounds the mooring pin. Sensor from
     // the upper nose skin so the intended berth is not read as an obstacle.
     { point: townAirshipPoint(0.8, 0, 13.75), normal: nose },
-    { point: townAirshipPoint(15.35, 0, 12.6), normal: tail },
   ];
+  // ХВОСТ ЩУПАЕТ ОБШИВКОЙ, А НЕ ФОНАРЁМ.
+  //
+  // Один датчик стоял ровно в корме по осевой — и садился на СТЕКЛЯННЫЙ плафон
+  // хвостового навигационного огня. Стекло бьётся первым и уносит с собой
+  // единственный кормовой глаз корабля; вдобавок лампа — не силовой набор, ей
+  // датчик держать нечем.
+  //
+  // Взамен симметричная пара на кормовом конусе: чуть впереди фонаря и по обе
+  // стороны от него. Пара, а не одиночка, ровно по той же причине, по какой
+  // симметричны все прочие: потеряв один борт, корабль не слепнет назад.
+  for (const side of [-1, 1] as const) {
+    sensors.push({
+      point: townAirshipPoint(14.9, side * 0.95, 12.6),
+      normal: tail,
+    });
+  }
   for (const a of [2.5, 7, 11.5]) {
     sensors.push(
       { point: townAirshipPoint(a, 2.42, 12.6), normal: positiveB },

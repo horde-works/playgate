@@ -4631,6 +4631,55 @@ export function VehicleFrameSystem({
                 ? 1 / (frame.flight.liftReserve ?? 1.35)
                 : 0,
             );
+            // ПОДМЕННАЯ МАШИНА — НОВАЯ МАШИНА, А НЕ ВОСКРЕШЁННАЯ ПРЕЖНЯЯ.
+            //
+            // Куски пересобирались, а ВЫУЧЕННОЕ состояние прежнего борта
+            // оставалось на месте, и новая машина получала его целиком:
+            //
+            //  - `rotorTrim` — компенсация, накопленная под выбитые кольца.
+            //    На целой машине это готовый момент, и она уходит кубарем в
+            //    первую же секунду;
+            //  - `propulsionFeedback` — обученная доля живых двигателей.
+            //    Автопилот ведёт свежий борт как калеку, пока она не отрастёт;
+            //  - счётчики сторожа: `goArounds`, `corrections` и накопленные
+            //    секунды. Достигнутый предел мгновенно снимает прибывшую
+            //    машину с рейса — и до трассы прибытия она просто не доживает.
+            //
+            // Отсюда наблюдение Igor: «HX подменный появляется то ли в
+            // предыдущем повреждённом состоянии и кубарем валится вниз, то ли
+            // с ним ещё что-то другое… Никогда не летит по траектории
+            // прибытия».
+            //
+            // Чистый лист берётся тем же способом, каким машина рождается в
+            // начале: `createFlightState`. Так список не разойдётся с
+            // конструктором, когда в полётное состояние добавят новое поле.
+            const previousFlight = state.flight;
+            if (previousFlight) {
+              state.flight = {
+                ...createFlightState(
+                  previousFlight.kind,
+                  previousFlight.occupancy,
+                  frame.flight.limits.enginePoints.length,
+                  frame.flight.underwaySeconds,
+                  null,
+                ),
+                // Отчалила она давно: прибытие — это продолжение рейса, а не
+                // новый отрыв от площадки.
+                castOff: true,
+                progress: 0,
+              };
+            }
+            state.rotorTrim = NEUTRAL_ROTORCRAFT_TRIM;
+            state.rotorAuthority = null;
+            state.rotorYawRateLimits = null;
+            state.rotorBody = null;
+            state.governor = NEUTRAL_GOVERNOR;
+            state.trimExhaustedSeconds = 0;
+            state.escape = null;
+            state.escapeFreeSeconds = 0;
+            state.separation = null;
+            state.combat = null;
+            state.evasion = null;
             state.recovery.progress = 0;
             state.recovery.arrivalInitialized = true;
             state.suppressFrameVelocityOnce = true;
