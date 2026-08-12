@@ -28,6 +28,7 @@ import {
 } from "./villagerSim.ts";
 import { alertPose, type NoiseEvent } from "./villagerAlarm.ts";
 import { buildObstacleField, type NavPiece } from "./villagerNavigation.ts";
+import { VILLAGER_BODY, solveVillagerGait } from "./villagerBody.ts";
 import type { SettlementPlan } from "./settlementPlan.ts";
 
 /**
@@ -48,15 +49,13 @@ import type { SettlementPlan } from "./settlementPlan.ts";
  */
 
 // Пропорции взрослого жителя в метрах, от земли.
-const HIP_Y = 0.86;
-const KNEE_Y = 0.44;
-const ANKLE_Y = 0.1;
-const SHOULDER_Y = 1.36;
-const ELBOW_Y = 1.1;
-const WRIST_Y = 0.86;
-const HIP_HALF_WIDTH = 0.105;
-/** Бедро → пятка: из этой длины считается размах шага без скольжения. */
-const LEG_REACH = HIP_Y - ANKLE_Y * 0.4;
+const HIP_Y = VILLAGER_BODY.hipY;
+const KNEE_Y = VILLAGER_BODY.kneeY;
+const ANKLE_Y = VILLAGER_BODY.ankleY;
+const SHOULDER_Y = VILLAGER_BODY.shoulderY;
+const ELBOW_Y = VILLAGER_BODY.elbowY;
+const WRIST_Y = VILLAGER_BODY.wristY;
+const HIP_HALF_WIDTH = VILLAGER_BODY.hipHalfWidth;
 
 const SKIN = new Color("#a87c58");
 const HAIR = new Color("#43301f");
@@ -1278,18 +1277,22 @@ export function Villagers({
       matrix.compose(position, quaternion, scale);
       mesh.setMatrixAt(index, matrix);
 
-      // Размах ноги выведен из длины шага: 2·L·sin(θ) = шаг. Так стопа
-      // остаётся на месте, пока нога опорная.
-      const stride = Math.asin(
-        Math.min(0.85, villager.strideLength / (2 * LEG_REACH * villager.build)),
-      );
-      const move = Math.min(1, villager.speed / 0.85);
+      // Походка уже принадлежит каноническому телу. Пока старый GPU-рендер
+      // получает те же четыре параметра, но больше не изобретает входы сам.
+      // Следующий этап заменит саму доставку позы, сохранив этот результат.
+      const gait = solveVillagerGait({
+        phase: villager.phase,
+        speed: villager.speed,
+        strideLength: villager.strideLength,
+        build: villager.build,
+        female: villager.female,
+      });
       gaitAttribute.setXYZW(
         index,
-        villager.phase,
-        move,
-        stride,
-        stride * 0.8 + 0.08,
+        gait.phase,
+        gait.move,
+        gait.stride,
+        gait.armSwing,
       );
       stateAttribute.setXYZW(
         index,
