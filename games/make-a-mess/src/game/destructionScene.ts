@@ -2166,7 +2166,15 @@ function createKhrushchevka(
   const z1 = -1;
   const floors = 4;
   const floorHeight = 2.6;
-  const wallHeight = 2.38;
+  // ВЫСОТА СТЕНЫ — ПРОСВЕТ МЕЖДУ ПЛИТАМИ, а не своё число рядом с ним.
+  // Плита толщиной 0.2 стоит верхом на `floorBase`, следующая — низом на
+  // `floorBase + floorHeight − 0.2`. Значит этаж в свету ровно 2.4. Стояло
+  // 2.38 при посадке `floorBase + 0.01`, то есть стена не доставала ни до
+  // пола, ни до потолка по 10 мм: щель по периметру КАЖДОЙ комнаты КАЖДОГО
+  // этажа шести домов, 0.27 м² на стык. Пряталось это правилом «слоёв» в
+  // измерителе — тонкая ось плиты совпадала с осью разрыва, и щель под
+  // стеной объявлялась накладным декором.
+  const wallHeight = floorHeight - 0.2;
   const base = 0.4;
   const innerX0 = x0 + 0.15;
   const innerX1 = x1 - 0.15;
@@ -2179,7 +2187,7 @@ function createKhrushchevka(
   const rowDepth = rowSplit - (z0 + 0.15);
   const floorBase = (floor: number) => base + floor * floorHeight;
   const wallCenterY = (floor: number) =>
-    floorBase(floor) + 0.01 + wallHeight / 2;
+    floorBase(floor) + wallHeight / 2;
   const stripCenter = (strip: number) => innerX0 + stripWidth * (strip + 0.5);
   const bayCenter = (bay: number) => innerX0 + bayWidth * (bay + 0.5);
 
@@ -3001,7 +3009,7 @@ function createKhrushchevka(
         southPieces.push(
           {
             ...makePiece(`${clusterId}:${bay}:lintel`, clusterId, "concrete", "panel",
-              [cx, b + 2.2, z1], [bayWidth, 0.38, 0.3],
+              [cx, b + 2.205, z1], [bayWidth, 0.39, 0.3],
               panelColor("s", bay, floor, bay)),
             weathering: wear,
           },
@@ -3044,7 +3052,7 @@ function createKhrushchevka(
         southPieces.push(
           {
             ...makePiece(`${clusterId}:${bay}:lintel`, clusterId, "concrete", "panel",
-              [cx, b + 2.185, z1], [bayWidth, 0.41, 0.3],
+              [cx, b + 2.19, z1], [bayWidth, 0.42, 0.3],
               panelColor("s", bay, floor, bay + floor + 2)),
             weathering: wear,
           },
@@ -3162,7 +3170,7 @@ function createKhrushchevka(
         },
         {
           ...makePiece(`${clusterId}:${strip}:lintel`, clusterId, "concrete", "panel",
-            [cx, b + 2.185, z0], [stripWidth, 0.41, 0.3],
+            [cx, b + 2.19, z0], [stripWidth, 0.42, 0.3],
             panelColor("n", unit, floor, strip + floor + 2)),
           weathering: wear,
         },
