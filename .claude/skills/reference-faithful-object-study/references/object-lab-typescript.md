@@ -174,6 +174,44 @@ Common useful helpers:
 
 When hard normals matter, duplicate vertices by face or split broad faces from reveal/side geometry. Object Lab calls normal computation; shared vertices can create false gradients across real creases.
 
+### Panelling a lofted plate
+
+`buildSlab` triangulates one outline with holes and nothing else: its skin owns
+vertices only on the outline and the hole rings. For a plate whose surfaces are
+functions of `(x, z)` — a lofted deck, a cambered floor — that means the
+interior interpolates flat, and any feature between the rings vanishes from the
+emitted geometry while `topAt`/`bottomAt` still describe it perfectly.
+
+Emit such a plate **bay by bay** instead: clip the outline against the frame
+stations and against longitudinal lane boundaries with a Sutherland-Hodgman pass
+(the contour is convex, so every bay stays simple), and give each bay its own
+`buildSlab`. Rules that keep it honest:
+
+- lane boundaries bracket every feature the surface describes — the edges of a
+  channel, the sides of a cockpit opening — not just the object's thirds;
+- every hole lives wholly inside one bay, with at least two chamfers of margin
+  from any bay edge, or `triangulatePlan` stalls on the sliver;
+- name each bay after its frame and lane, so a defect names its own panel.
+
+`splitFacets` sorts finished facets into groups; it does not add vertices and
+therefore does not fix this. Use it for material or breakability grouping only.
+
+### `steelPlate` and skin-on-frame
+
+The local `steelPlate(a, b, c, d, thickness, tag)` helper used by the vehicle
+studies derives its normal from the quad's own winding, so either traversal
+order yields an outward-wound closed box — its signed volume is positive both
+ways. That is worth knowing before blaming a winding error for a see-through
+panel: the usual cause is a skin authored flush with the frames it covers, so
+the members poke through it. Offset the skin outward by a real thickness.
+
+### `captureFrame`
+
+A model may carry `captureFrame: [width, height]`; `object-lab-capture.mjs`
+falls back to `[1280, 1280]`. Set it to a wide frame for a wide, flat machine —
+and then remember that orthographic `orthoHeight` values authored for the old
+aspect will crop the object. Test the framing rather than eyeballing it.
+
 ### Part budget
 
 The current eleven-object yard-kit total ceiling is `600`. Track:

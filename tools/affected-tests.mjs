@@ -26,8 +26,8 @@
  * то есть всё, что изменено с последнего коммита.
  */
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -63,6 +63,32 @@ const FROM_PATTERN = /\bfrom\s*["']([^"']+)["']/g;
 const DYNAMIC_PATTERN = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
 const BARE_PATTERN = /^\s*import\s+["']([^"']+)["']/gm;
 
+/**
+ * ЧЕТВЁРТАЯ ФОРМА ЗАВИСИМОСТИ: ФАЙЛ, КОТОРЫЙ ТЕСТ ЧИТАЕТ, А НЕ ИМПОРТИРУЕТ.
+ *
+ * Часть сторожей смотрит на исходник ГЛАЗАМИ, а не через импорт: так проверяют
+ * то, что нельзя загрузить в node (React-компонент со сценой), и то, что
+ * вообще не модуль (CSS, лицензии, каталоги ассетов). Для графа импортов такой
+ * тест выглядит одиноким, его замыкание — он сам, и правка охраняемого файла
+ * НИКОГДА его не выберет.
+ *
+ * Цена этой слепоты замерена: СЕМЬ тестов читают файл литералом и ОДИН —
+ * каталог целиком, а под ними `MakeAMessGame`, `WorldEnvironment`,
+ * `TreeVisuals`, `CinematicPostProcessing`, `globals.css` и сторож изоляции
+ * рантайма. То есть ровно те файлы, которые нечем покрыть иначе, охранялись
+ * тестами, молчащими на каждом шаге работы и оживающими только в
+ * шестиминутном прогоне. Отбор, который иногда недобирает, хуже отсутствия
+ * отбора — на него полагаешься.
+ *
+ * ГРАНИЦА И ЗДЕСЬ ЧЕСТНАЯ: литерал обязан быть литералом. Ещё шесть тестов
+ * собирают путь вычислением (`new URL(\`../public${x}\`, ...)`), и такой путь
+ * не разрешается статически ни этим инструментом, ни любым другим — они
+ * остаются на полном прогоне. Сторож самого отбора —
+ * `tests/affected-tests-selection.test.mjs`.
+ */
+const FILE_URL_PATTERN =
+  /new\s+URL\(\s*["']([^"']+)["']\s*,\s*import\.meta\.url\s*,?\s*\)/g;
+
 /** Разрешает относительный импорт в файл на диске; чужое — null. */
 function resolveImport(specifier, fromFile) {
   if (!specifier.startsWith(".")) {
@@ -81,7 +107,19 @@ function resolveImport(specifier, fromFile) {
   return candidates.find((candidate) => existsSync(candidate) && !candidate.endsWith("/")) ?? null;
 }
 
+/**
+ * Путь из `new URL(...)` — относительно САМОГО ФАЙЛА и без угадывания
+ * расширений: тут написан ровно тот путь, который читают, а не спецификатор
+ * модуля. Каталог возвращается тоже: он значит «всё, что внутри».
+ */
+function resolveRead(literal, fromFile) {
+  const target = resolve(dirname(fromFile), literal);
+  return existsSync(target) ? target : null;
+}
+
 const importCache = new Map();
+/** Каталоги, читаемые тестом целиком: `тест → [абсолютный префикс]`. */
+const readDirs = new Map();
 
 function importsOf(file) {
   const cached = importCache.get(file);
@@ -102,6 +140,19 @@ function importsOf(file) {
       if (resolved) {
         found.add(resolved);
       }
+    }
+  }
+  for (const match of source.matchAll(FILE_URL_PATTERN)) {
+    const target = resolveRead(match[1], file);
+    if (!target) {
+      continue;
+    }
+    if (statSync(target).isDirectory()) {
+      const dirs = readDirs.get(file) ?? [];
+      dirs.push(target);
+      readDirs.set(file, dirs);
+    } else {
+      found.add(target);
     }
   }
   const list = [...found];
@@ -138,6 +189,13 @@ const affected = testFiles.filter((test) => {
   const closure = closureOf(test);
   for (const file of changed) {
     if (closure.has(file)) {
+      return true;
+    }
+  }
+  // Каталог, читаемый целиком, означает «любой файл внутри».
+  const watched = [...closure].flatMap((file) => readDirs.get(file) ?? []);
+  for (const file of changed) {
+    if (watched.some((dir) => file.startsWith(`${dir}${sep}`))) {
       return true;
     }
   }

@@ -12,6 +12,16 @@ import {
   RANGE_HEXACOPTER_PAD_Z,
 } from "../games/make-a-mess/src/game/rangeHexacopter.ts";
 import { rangeHexacopterPlan } from "../games/make-a-mess/src/game/rangeHexacopterRoutes.ts";
+import { ductHexacopterRangePadDocument } from "../games/make-a-mess/src/content/scenes/ductHexacopterRangePadDocument.ts";
+import {
+  DUCT_HEXACOPTER_RANGE_BERTH,
+  DUCT_HEXACOPTER_RANGE_PLACEMENT,
+} from "../games/make-a-mess/src/game/rangeDuctHexacopter.ts";
+import { ductHexacopterLapPlan } from "../games/make-a-mess/src/game/ductHexacopterRangeRoutes.ts";
+import {
+  advanceRouteFigureFrame,
+  IDLE_ROUTE_FIGURE,
+} from "../games/make-a-mess/src/game/flightFigures.ts";
 import { airVehicles } from "../games/make-a-mess/src/game/airVehicles.ts";
 import {
   advanceVehicleRouteProgress,
@@ -45,9 +55,11 @@ import {
   createAirCombatState,
   stepAirCombat,
 } from "../games/make-a-mess/src/game/airCombatPilot.ts";
+import { rotorcraftSurgeAcceleration } from "../games/make-a-mess/src/game/rotorcraftDynamics.ts";
 import {
   TONKAWA_ALLEGIANCE,
   TOWN_ALLEGIANCE,
+  YAQUI_ALLEGIANCE,
 } from "../games/make-a-mess/src/game/vehicleAllegiance.ts";
 import {
   deflectHorizontally,
@@ -238,6 +250,54 @@ const hx6Pieces = rangeVertipadCompilation.clusters.find(
   (cluster) => cluster.id === hx6Vehicle.clusterId,
 ).pieces;
 
+const vx8Vehicle = airVehicles.find((entry) => entry.id === "duct-hexacopter");
+const vx8Pieces = compileSceneGroups(
+  ductHexacopterRangePadDocument,
+  new Map(),
+).clusters.find(
+  (cluster) => cluster.id === DUCT_HEXACOPTER_RANGE_PLACEMENT.clusterId,
+).pieces;
+
+/**
+ * КОГО ГОНЯЮТ. Две цели, и они разные не размером, а ПОВЕДЕНИЕМ.
+ *
+ * HX-6 — гость города: он идёт по маршруту и ничего не предпринимает. Это
+ * нижняя граница, на ней проверяется сам механизм боя.
+ *
+ * VX-8 — соседняя боевая машина, и с ней бой другой по существу. Она вдвое
+ * тяжелее, идёт по прямым до тридцати метров в секунду и — главное — КРУТИТ
+ * ФИГУРЫ. Кульбит в её программе стоит как номер показа, но в бою он читается
+ * иначе: машина тормозит с пяти с половиной g, уходит вверх и разворачивается
+ * через нос. Преследователь, взявший обязательство на заход, в этот момент
+ * проскакивает мимо. Стенд обязан это видеть, а видеть он это может, только
+ * если слой фигур у цели РАБОТАЕТ, — иначе VX-8 отличается от HX-6 одной
+ * скоростью и стенд проверяет не то.
+ */
+const TARGETS = {
+  hx6: {
+    id: "hx6",
+    vehicle: hx6Vehicle,
+    pieces: hx6Pieces,
+    allegiance: TOWN_ALLEGIANCE,
+    berth: [
+      RANGE_HEXACOPTER_PAD_X,
+      RANGE_HEXACOPTER_PAD_TOP_Y,
+      RANGE_HEXACOPTER_PAD_Z,
+    ],
+    plan: (kind, berth) => rangeHexacopterPlan(kind, berth),
+    figures: false,
+  },
+  vx8: {
+    id: "vx8",
+    vehicle: vx8Vehicle,
+    pieces: vx8Pieces,
+    allegiance: YAQUI_ALLEGIANCE,
+    berth: DUCT_HEXACOPTER_RANGE_BERTH,
+    plan: (_kind, berth) => ductHexacopterLapPlan(berth),
+    figures: true,
+  },
+};
+
 const armament = combatHexacopterRangeBlueprint.armament;
 
 const STATION = {
@@ -252,6 +312,19 @@ const LIMITS = {
   maximumSpeed: 21,
   yawRate: 0.72,
   liftTrimRange: combatHexacopterRangeBlueprint.flight.liftTrimRange,
+  lateralAcceleration:
+    GRAVITY * Math.tan(combatHexacopterRangeBlueprint.flight.maximumTilt),
+  reversal: { seconds: 5.1, cost: 0 },
+  // Нос АВТОРСКИЙ: поза строится поворотом от позы покоя, и подставить сюда
+  // нынешний курс значило бы вложить его внутрь задания.
+  authoredNose: [
+    combatHexacopterRangeBlueprint.nose[0],
+    combatHexacopterRangeBlueprint.nose[2],
+  ],
+  liftReserve: combatHexacopterRangeBlueprint.flight.liftReserve,
+  // Продольная тяга тоннелей подставляется в прогоне: она считается по
+  // ЖИВЫМ вентиляторам собранной машины, а не по чертежу.
+  surgeAcceleration: 0,
 };
 
 const HX6_BERTH = [
@@ -263,10 +336,27 @@ const HX6_BERTH = [
 export function runDuel({
   seconds = 120,
   targetKind = "evasive",
+  /** Кого гонять: `hx6` (гость города) или `vx8` (соседняя боевая машина). */
+  target: targetName = "hx6",
   startProgress = 0.22,
   collect = false,
+  /**
+   * СОСТОЯНИЕ ТЕЛА НА ВХОДЕ. Задаётся ОТНОСИТЕЛЬНО ЦЕЛИ, а не мира: вопрос
+   * «хватит ли мне тела на бросок отсюда» имеет смысл только в её системе.
+   *
+   *   `speed`  — мой ход, м/с;
+   *   `above`  — превышение над целью, м;
+   *   `range`  — дальность до неё, м;
+   *   `aspect` — где я относительно ЕЁ движения, рад. Ноль — прямо по курсу
+   *              (она идёт на меня), π — я у неё за хвостом.
+   */
+  entry = null,
 } = {}) {
-  const plan = rangeHexacopterPlan(targetKind, HX6_BERTH);
+  const profile = TARGETS[targetName];
+  if (!profile) {
+    throw new Error(`нет такой цели: ${targetName}`);
+  }
+  const plan = profile.plan(targetKind, profile.berth);
   const startPoint = plan.point(startProgress);
   const ahead = plan.point(Math.min(1, startProgress + 0.004));
   const tangent = [
@@ -277,8 +367,8 @@ export function runDuel({
   const tangentLength = Math.hypot(tangent[0], tangent[2]) || 1;
   const cruise = plan.speedLimit(startProgress);
   const target = createMachine({
-    pieces: hx6Pieces,
-    vehicle: hx6Vehicle,
+    pieces: profile.pieces,
+    vehicle: profile.vehicle,
     startPoint,
     startVelocity: [
       (tangent[0] / tangentLength) * cruise,
@@ -290,16 +380,55 @@ export function runDuel({
 
   // Атакующий стоит на своей орбите и уже на ходу: взлёт — не предмет этого
   // стенда, он проверен отдельно.
-  const hunterStart = [0, STATION.centre[1] + STATION.altitude, -STATION.radius];
+  let hunterStart = [0, STATION.centre[1] + STATION.altitude, -STATION.radius];
+  let hunterVelocity = [STATION.speed, 0, 0];
+  let hunterNose = [1, 0, 0];
+  if (entry) {
+    const here = centreOf(target);
+    const heading = Math.atan2(
+      target.state.velocity[0],
+      target.state.velocity[2],
+    );
+    // Ракурс отсчитывается от направления ЕЁ движения: ноль означает «стою у
+    // неё на пути», π — «вишу на хвосте».
+    const at = heading + entry.aspect;
+    hunterStart = [
+      here[0] + Math.sin(at) * entry.range,
+      here[1] + entry.above,
+      here[2] + Math.cos(at) * entry.range,
+    ];
+    // Нос на цель: перед броском зверь смотрит на добычу, а не по сторонам.
+    const toward = [here[0] - hunterStart[0], here[2] - hunterStart[2]];
+    const length = Math.hypot(toward[0], toward[1]) || 1;
+    hunterNose = [toward[0] / length, 0, toward[1] / length];
+    hunterVelocity = [
+      hunterNose[0] * entry.speed,
+      0,
+      hunterNose[2] * entry.speed,
+    ];
+  }
   const hunter = createMachine({
     pieces: raxPieces,
     vehicle: raxVehicle,
     startPoint: hunterStart,
-    startVelocity: [STATION.speed, 0, 0],
-    startNose: [1, 0, 0],
+    startVelocity: hunterVelocity,
+    startNose: hunterNose,
   });
 
+  // ТОННЕЛИ СЧИТАЮТСЯ ПО СОБРАННОЙ МАШИНЕ. Это то самое число, из которого
+  // следует, что ствол RAX-8 может смотреть куда угодно, не теряя высоты:
+  // 24.8 м/с² против 9.81 у веса.
+  const limits = {
+    ...LIMITS,
+    surgeAcceleration: rotorcraftSurgeAcceleration({
+      ...hunter.machine,
+      yawThrusterAvailability: hunter.fanHealth,
+    }),
+  };
+
   let combat = createAirCombatState(armament.rockets.mounts.length);
+  let targetFigures = IDLE_ROUTE_FIGURE;
+  let targetFrozen = null;
   let progress = startProgress;
   const rockets = [];
   const report = {
@@ -315,6 +444,30 @@ export function runDuel({
     minimumRangeBlocks: 0,
     selfDamage: 0,
     outcome: "survived",
+    // САМАЯ ДАЛЬНЯЯ ТОЧКА, КУДА ЧТО-ЛИБО УЛЕТЕЛО, м от центра полигона.
+    //
+    // Меряется затем, что видимое небо — купол КОНЕЧНОГО радиуса, и всё, что
+    // вышло за него, оказывается нарисовано на пустоте. У машин предел задан
+    // трассой и известен заранее; у промахнувшейся ракеты — нет: она летит,
+    // пока не кончится взрыватель, и это 173 м ОТ ТОЧКИ ПУСКА.
+    targetFigures: [],
+    temperAppetite: 0,
+    temperFrustration: 0,
+    approachesUsed: 0,
+    shotsWhileCommitted: 0,
+    firstShotAt: null,
+    exitSpeed: 0,
+    exitHeight: 0,
+    exitAuthority: 1,
+    exitRange: 0,
+    rocketsAtCommitted: 0,
+    rocketHitsAtCommitted: 0,
+    shotsWhileFree: 0,
+    targetSkips: [],
+    reachMachines: 0,
+    reachRockets: 0,
+    ceilingMachines: 0,
+    ceilingRockets: 0,
     seconds: 0,
     firstBloodAt: null,
     killAt: null,
@@ -323,6 +476,13 @@ export function runDuel({
     samples: [],
   };
   let previousTargetVelocity = [...target.state.velocity];
+  // Попадания, случившиеся в этом кадре: докладываются автомату следующим.
+  let pendingHits = 0;
+  // Снятые куски — отдельно от касаний: заход удался, если что-то оторвал.
+  let pendingWounds = 0;
+  // Сколько РАЗНЫХ подходов зверь испробовал за бой. Прежде их было два и они
+  // чередовались счётчиком; теперь их выбирает досада, и число обязано вырасти.
+  const approachesSeen = new Set();
 
   for (let step = 0; step < seconds * 60; step += 1) {
     const now = step * dt;
@@ -343,13 +503,56 @@ export function runDuel({
       target.vehicle.nose,
       target.flight.approach,
     );
-    stepMachine(target, targetPiloted.guidance);
-    progress = advanceVehicleRouteProgress(
-      plan,
-      progress,
-      centreOf(target),
-      Math.hypot(target.state.velocity[0], target.state.velocity[2]) * dt,
-    );
+    // ПОРЯДОК КАДРА У ЦЕЛИ БЕЗ ФИГУР ОСТАЁТСЯ ПРЕЖНИМ, и это не педантизм:
+    // сперва шаг, потом продвижение трассы по НОВОМУ центру. Общая
+    // перестановка ради слоя фигур сдвинула кадр на шаг и перевернула
+    // сравнение маршрутов — злой круг стал легче ровного.
+    //
+    // Машине с фигурами порядок нужен другой — тот, которым живёт рантайм:
+    // трасса двигается сама, фигура откатывает её назад, и только потом шаг.
+    if (profile.figures) {
+      progress = advanceVehicleRouteProgress(
+        plan,
+        progress,
+        targetCentre,
+        Math.hypot(target.state.velocity[0], target.state.velocity[2]) * dt,
+      );
+      const figured = advanceRouteFigureFrame({
+        state: targetFigures,
+        frozenProgress: targetFrozen,
+        stations: plan.figures,
+        berthAltitude: plan.point(1)[1],
+        progress,
+        attitude: target.state.orientation,
+        centre: targetCentre,
+        velocity: target.state.velocity,
+        bodyNose: target.vehicle.nose,
+        machine: target.machine,
+        authority: Math.min(...target.feedback),
+        deltaSeconds: dt,
+      });
+      if (figured.state.skipped && figured.state.skipped !== targetFigures.skipped) {
+        report.targetSkips.push(figured.state.skipped);
+      }
+      if (figured.state.station && !targetFigures.station) {
+        report.targetFigures.push({
+          key: figured.state.station.key,
+          at: now,
+        });
+      }
+      targetFigures = figured.state;
+      targetFrozen = figured.frozenProgress;
+      progress = figured.progress;
+      stepMachine(target, figured.guidance ?? targetPiloted.guidance);
+    } else {
+      stepMachine(target, targetPiloted.guidance);
+      progress = advanceVehicleRouteProgress(
+        plan,
+        progress,
+        centreOf(target),
+        Math.hypot(target.state.velocity[0], target.state.velocity[2]) * dt,
+      );
+    }
     if (progress >= 0.92) {
       progress = 0.14;
     }
@@ -368,8 +571,8 @@ export function runDuel({
     previousTargetVelocity = [...target.state.velocity];
 
     const track = {
-      id: "hx6",
-      allegiance: TOWN_ALLEGIANCE,
+      id: profile.id,
+      allegiance: profile.allegiance,
       centre: liveTargetCentre,
       velocity: [...target.state.velocity],
       turnRate: headingDelta / dt,
@@ -386,7 +589,21 @@ export function runDuel({
     };
 
     const hunterCentre = centreOf(hunter);
+    // ВЫНОС МАШИН — от центра полигона, а не от чьего-то пада: небо рисуется
+    // вокруг мира, и мерить его надо тем же центром, каким оно построено.
+    report.reachMachines = Math.max(
+      report.reachMachines,
+      Math.hypot(hunterCentre[0], hunterCentre[2]),
+      Math.hypot(liveTargetCentre[0], liveTargetCentre[2]),
+    );
+    report.ceilingMachines = Math.max(
+      report.ceilingMachines,
+      hunterCentre[1],
+      liveTargetCentre[1],
+    );
     const hunterNoseAxis = forwardAxis(hunter);
+    // Веер рипла телесный: разводится вокруг собственного «вверх» машины.
+    const hunterUp = rotateVector(hunter.state.orientation, [0, 1, 0]);
     const flatNose = Math.hypot(hunterNoseAxis[0], hunterNoseAxis[2]) || 1;
     const output = stepAirCombat({
       own: {
@@ -395,20 +612,50 @@ export function runDuel({
         velocity: [...hunter.state.velocity],
         nose: [hunterNoseAxis[0] / flatNose, hunterNoseAxis[2] / flatNose],
         gunAxis: hunterNoseAxis,
+        // Правый борт соглашением проекта: `pitchAxisOf(nose) = (−nz, nx)`.
+        starboard: rotateVector(hunter.state.orientation, [
+          -hunter.vehicle.nose[2],
+          0,
+          hunter.vehicle.nose[0],
+        ]),
         verticalSpeed: hunter.state.velocity[1],
         radius: hunter.radius,
+        // ЧТО ТЕЛО ДОЛОЖИЛО ЗА ПРОШЛЫЙ КАДР. На первом его ещё нет, и это
+        // законно: молчание означает «держу».
+        body: hunter.lastResult
+          ? {
+              maneuverScale: hunter.lastResult.maneuverScale,
+              thrust: hunter.lastResult.authority.thrust,
+              pitch: hunter.lastResult.authority.pitch,
+              roll: hunter.lastResult.authority.roll,
+            }
+          : undefined,
       },
       station: STATION,
       armament,
-      limits: LIMITS,
+      limits,
       tracks: [track],
       deltaSeconds: dt,
       state: combat,
+      // ПОПАДАНИЯ ДОКЛАДЫВАЮТСЯ СЛЕДУЮЩИМ КАДРОМ, и иначе не выйдет: стволы
+      // разрешает мир, а мир считает их ниже по этому же циклу. Кадр
+      // запаздывания нрав переживает — он живёт секундами, а не кадрами.
+      hits: pendingHits,
+      wounds: pendingWounds,
     });
+    pendingHits = 0;
+    pendingWounds = 0;
     combat = output.state;
     stepMachine(hunter, output.guidance);
 
     report.modeSeconds[combat.mode] = (report.modeSeconds[combat.mode] ?? 0) + dt;
+    approachesSeen.add(`${combat.passSide}:${combat.passVertical}`);
+    if (process.env.DUEL_TRACE && step % Number(process.env.DUEL_TRACE) === 0) {
+      const up = rotateVector(hunter.state.orientation, [0, 1, 0]);
+      console.log(
+        `${now.toFixed(1)}s ${combat.mode.padEnd(10)} rng=${output.telemetry.range.toFixed(0).padStart(4)} aim=${output.telemetry.aimError.toFixed(2)} bear=${(output.telemetry.postureMargin ?? -1).toFixed(2)} lim=${String(output.telemetry.postureLimit).padEnd(5)} lost=${output.telemetry.bodyLost ? 1 : 0} gunY=${hunterNoseAxis[1].toFixed(2)} upY=${up[1].toFixed(2)} h=${hunterCentre[1].toFixed(0).padStart(3)} v=${Math.hypot(...hunter.state.velocity).toFixed(0).padStart(3)} ms=${(hunter.lastResult?.maneuverScale ?? 1).toFixed(2)} auth=${["thrust", "pitch", "roll"].map((k) => (hunter.lastResult?.authority[k] ?? 1).toFixed(2)).join("/")}`,
+      );
+    }
     if (output.telemetry.weaponsFree && output.telemetry.range < armament.rockets.range) {
       // блокировка пуска собственным радиусом поражения
       if (output.telemetry.range < output.telemetry.minimumRange) {
@@ -420,22 +667,31 @@ export function runDuel({
     const targetPieces = livePieces(target);
     const hunterPieces = livePieces(hunter);
     for (const shot of output.shots) {
+      report.firstShotAt ??= now;
+      if (targetFigures.episode) {
+        report.shotsWhileCommitted += 1;
+      } else {
+        report.shotsWhileFree += 1;
+      }
       if (shot.weapon === "cannon") {
         report.cannonShots += 1;
         const muzzle = toWorld(hunter, armament.cannon.mounts[shot.mountIndex].muzzle);
-        const direction = deflectHorizontally(hunterNoseAxis, shot.deflection);
+        const direction = deflectHorizontally(hunterNoseAxis, shot.deflection, hunterUp);
         const hit = rayHit(muzzle, direction, targetPieces, MG_RANGE);
         if (hit) {
           report.cannonHits += 1;
+          pendingHits += 1;
           const piece = targetPieces.find((entry) => entry.id === hit.id);
           if (piece && bulletDestroys(piece) && target.attached.has(hit.id)) {
             target.attached.delete(hit.id);
             report.cannonBladeKills += 1;
+            pendingWounds += 1;
             report.firstBloodAt ??= now;
           }
         }
       } else {
         report.rocketsFired += 1;
+        if (targetFigures.episode) report.rocketsAtCommitted += 1;
         const tube = toWorld(hunter, armament.rockets.mounts[shot.mountIndex].muzzle);
         const direction = deflectHorizontally(
           harmonisedLaunchDirection(
@@ -445,6 +701,7 @@ export function runDuel({
             armament.rockets.harmonisationRange,
           ),
           shot.deflection,
+          hunterUp,
         );
         // ТОЧКА СХОДА ВЫНЕСЕНА ВПЕРЁД, как в рантайме: снаряд обязан родиться
         // вне собственного габарита. Стенд обязан спрашивать это у паспорта, а
@@ -465,6 +722,10 @@ export function runDuel({
           ],
           life: explosiveProfile(armament.rockets.explosive).projectile.fuseMs / 1000,
           closest: Infinity,
+          // Была ли цель СВЯЗАНА в момент пуска. Тег ставится на ракету, а не
+          // считается при подрыве: к тому времени фигура уже кончится, и вопрос
+          // «стоило ли стрелять тогда» останется без ответа.
+          committed: Boolean(targetFigures.episode),
         });
       }
     }
@@ -479,6 +740,11 @@ export function runDuel({
         rocket.position[2] + rocket.velocity[2] * dt,
       ];
       rocket.life -= dt;
+      report.reachRockets = Math.max(
+        report.reachRockets,
+        Math.hypot(rocket.position[0], rocket.position[2]),
+      );
+      report.ceilingRockets = Math.max(report.ceilingRockets, rocket.position[1]);
       // Пролёт разбивается на подшаги: за кадр ракета проходит 1.6 м, а куски
       // цели меньше — без этого быстрая ракета «протыкает» цель насквозь.
       let detonation = null;
@@ -525,6 +791,8 @@ export function runDuel({
       }
       if (detonation) {
         report.rocketHits += 1;
+        pendingHits += 1;
+        if (rocket.committed) report.rocketHitsAtCommitted += 1;
         report.firstBloodAt ??= now;
         // Взрыв уносит ЛОПАСТИ в радиусе вскрытия стали и не достаёт дальше.
         for (const piece of targetPieces) {
@@ -539,6 +807,7 @@ export function runDuel({
           if (distance <= POD_REACH + piece.radius) {
             target.attached.delete(piece.id);
             report.rocketBladeKills += 1;
+            pendingWounds += 1;
             report.destroyed.push(piece.id.split(":").slice(2).join(":"));
           }
         }
@@ -594,6 +863,23 @@ export function runDuel({
   report.ringAvailability = ringAvailability(target);
   report.podLeft = combat.gunnery.magazine;
   report.reloadingAtEnd = combat.gunnery.rearmSeconds > 0;
+  // ЧЕМ КОНЧИЛОСЬ ДЛЯ ТЕЛА. Зверь, приземлившийся плохо, — мёртвый зверь, и
+  // связка, оставляющая машину медленной и низкой рядом с целью, плоха даже
+  // если попала.
+  {
+    const finish = centreOf(hunter);
+    report.exitSpeed = Math.hypot(...hunter.state.velocity);
+    report.exitHeight = finish[1] - STATION.centre[1];
+    report.exitAuthority = Math.min(...hunter.feedback);
+    report.exitRange = Math.hypot(
+      finish[0] - centreOf(target)[0],
+      finish[1] - centreOf(target)[1],
+      finish[2] - centreOf(target)[2],
+    );
+  }
+  report.temperAppetite = combat.temper.appetite;
+  report.temperFrustration = combat.temper.frustration;
+  report.approachesUsed = approachesSeen.size;
   return report;
 }
 
@@ -614,6 +900,18 @@ export function summarise(report) {
     `кольца: [${(report.ringAvailability ?? []).map((v) => v.toFixed(2)).join(" ")}]`,
     `самоподрыв: ${report.selfDamage}`,
     `под на конец боя: ${report.podLeft ?? "—"}${report.reloadingAtEnd ? " (снаряжается)" : ""}`,
+    `фигуры цели: ${
+      report.targetFigures.length
+        ? report.targetFigures.map((f) => `${f.key}@${f.at.toFixed(0)}с`).join(", ")
+        : "—"
+    }`,
+    `нрав на конец: азарт ${report.temperAppetite.toFixed(2)}, досада ${report.temperFrustration.toFixed(2)}; ` +
+      `подходов испробовано ${report.approachesUsed}`,
+    `ракеты по связанной: ${report.rocketHitsAtCommitted}/${report.rocketsAtCommitted}` +
+      ` против ${report.rocketHits - report.rocketHitsAtCommitted}/${report.rocketsFired - report.rocketsAtCommitted} по свободной`,
+    `выстрелов по СВЯЗАННОЙ цели: ${report.shotsWhileCommitted} против ${report.shotsWhileFree} по свободной`,
+    `вынос: машины ${report.reachMachines.toFixed(0)} м / потолок ${report.ceilingMachines.toFixed(0)} м; ` +
+      `ракеты ${report.reachRockets.toFixed(0)} м / потолок ${report.ceilingRockets.toFixed(0)} м`,
     `режимы: ${Object.entries(report.modeSeconds)
       .map(([mode, value]) => `${mode} ${value.toFixed(0)}с`)
       .join(", ")}`,

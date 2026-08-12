@@ -209,7 +209,9 @@ export function buildPlannedPartitions(
   wallHeight: number,
 ): Piece[] {
   const pieces: Piece[] = [];
-  const wy = floorBase + 0.01 + wallHeight / 2;
+  // Перегородка стоит НА плите и упирается в потолок: `wallHeight` уже равен
+  // просвету этажа. Стояло `+ 0.01` — стена висела на сантиметр над полом.
+  const wy = floorBase + wallHeight / 2;
 
   for (const partition of plan.partitions) {
     const thickness = partition.structural ? 0.22 : 0.12;
@@ -242,10 +244,10 @@ export function buildPlannedPartitions(
       if (partition.tiled) {
         const tileHeight = 1.35;
         pieces.push(
-          place(`${index}:tile`, mid, length, floorBase + 0.01 + tileHeight / 2, tileHeight, TILE_PAINT),
+          place(`${index}:tile`, mid, length, floorBase + tileHeight / 2, tileHeight, TILE_PAINT),
           place(
             `${index}:top`, mid, length,
-            floorBase + 0.01 + tileHeight + (wallHeight - tileHeight) / 2,
+            floorBase + tileHeight + (wallHeight - tileHeight) / 2,
             wallHeight - tileHeight, PARTITION_PAINT,
           ),
         );
@@ -260,7 +262,7 @@ export function buildPlannedPartitions(
       pieces.push({
         ...place(
           `lintel:${index}`, mid, length + 0.12,
-          floorBase + 0.01 + DOOR_HEIGHT + (wallHeight - DOOR_HEIGHT) / 2,
+          floorBase + DOOR_HEIGHT + (wallHeight - DOOR_HEIGHT) / 2,
           wallHeight - DOOR_HEIGHT,
           partition.tiled ? TILE_PAINT : PARTITION_PAINT,
         ),

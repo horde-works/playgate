@@ -106,26 +106,37 @@ export const STANDARD_DOOR_ROTATION_AXIS = [0, 1, 0] as const;
  * «наружу» и ось борта берутся из `hinge.normal` / `hinge.direction`.
  * Конкретная машина задаёт только размерный профиль, механизм остаётся один.
  */
-export function plugSlideDoorPolicy(groupKey: string): PlugSlideDoorPolicy | null {
-  if (groupKey === "terminal:sky-train:head:door") {
-    return { doorId: groupKey, plugDepth: 0.26, travel: 1.78, plugShare: 0.34 };
-  }
-  if (groupKey === "sky-mooring:airship:car:door") {
-    return { doorId: groupKey, plugDepth: 0.22, travel: 1.42, plugShare: 0.34 };
-  }
-  return null;
-}
+/**
+ * РАЗМЕРНЫЕ ПРОФИЛИ — ТАБЛИЦЕЙ, А НЕ ЦЕПОЧКОЙ `if`.
+ *
+ * Данные те же и поведение то же; разница в том, что таблицу можно
+ * ПЕРЕЧИСЛИТЬ. Цепочку `if` нельзя спросить «а какие машины вообще заявили
+ * дверь», поэтому нельзя и проверить, что у машины из каталога не забыт ни
+ * один из её реестров: у машины их три — паспорт (`airVehicles`), место
+ * (`passengerSeats`) и вот этот профиль. Забыть любой можно молча, и ловит
+ * это `tests/vehicle-registry-consistency.test.mjs`, которому нужен именно
+ * перечислимый список.
+ */
+export const PLUG_SLIDE_DOORS: readonly PlugSlideDoorPolicy[] = [
+  { doorId: "terminal:sky-train:head:door", plugDepth: 0.26, travel: 1.78, plugShare: 0.34 },
+  { doorId: "sky-mooring:airship:car:door", plugDepth: 0.22, travel: 1.42, plugShare: 0.34 },
+];
 
 /** The sky ram's stern armour doubles as a loading ramp while docked. */
+export const TAIL_RAMPS: readonly TailRampPolicy[] = [
+  {
+    doorId: "stronghold:sky-ram:gallery:ramp",
+    openAngle: -1.16,
+    rotationAxis: [1, 0, 0],
+  },
+];
+
+export function plugSlideDoorPolicy(groupKey: string): PlugSlideDoorPolicy | null {
+  return PLUG_SLIDE_DOORS.find((door) => door.doorId === groupKey) ?? null;
+}
+
 export function tailRampPolicy(groupKey: string): TailRampPolicy | null {
-  if (groupKey === "stronghold:sky-ram:gallery:ramp") {
-    return {
-      doorId: groupKey,
-      openAngle: -1.16,
-      rotationAxis: [1, 0, 0],
-    };
-  }
-  return null;
+  return TAIL_RAMPS.find((ramp) => ramp.doorId === groupKey) ?? null;
 }
 
 /** A cargo ramp may pitch; every other hinged leaf remains a yawing door. */

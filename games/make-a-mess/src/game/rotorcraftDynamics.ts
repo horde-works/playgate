@@ -296,6 +296,11 @@ export interface RotorMixInput {
    * Values are normalised internally, so their sum still equals `capacity`.
    */
   readonly capacityWeights?: readonly number[];
+  /**
+   * Доля тяги, доступная в РЕВЕРСЕ, 0…1. Ноль — коробка распределителя
+   * начинается с нуля, как было у нереверсивной машины.
+   */
+  readonly reverseShare?: number;
   /** Reaction-torque sign of each rotor. Omitted keeps legacy alternation. */
   readonly spinDirections?: readonly (-1 | 1)[];
   /**
@@ -434,6 +439,15 @@ export function mixRotorThrust(
     (fraction, index) =>
       (capacityByPoint[index] ?? 0) * Math.max(0, Math.min(1, fraction)),
   );
+  // Пол распределителя. Коробка допустимых тяг перестала начинаться с нуля:
+  // у реверсивного кольца она знаковая, и вершины многогранника лежат теперь
+  // на полу, а не в нуле.
+  const reverseShare = Math.max(0, Math.min(1, input.reverseShare ?? 0));
+  // Ровно ноль, а не минус ноль: у нереверсивной машины пол обязан быть тем же
+  // числом, что и прежде, иначе сравнение отчётов ловит знак пустоты.
+  const perRotorFloor = perRotorLimit.map((limit) =>
+    reverseShare > 0 ? -limit * reverseShare : 0,
+  );
   // Направление вращения чередуется по кругу, как у всякого мультиротора:
   // соседние винты крутятся навстречу, и сумма их реактивных моментов у целой
   // машины равна нулю. Рыскание — это перекос ЭТОЙ суммы.
@@ -525,7 +539,7 @@ export function mixRotorThrust(
       multipliers[0] -
       multipliers[1] * arm.longitudinal -
       multipliers[2] * arm.lateral;
-    return Math.max(0, Math.min(perRotorLimit[index], value));
+    return Math.max(perRotorFloor[index], Math.min(perRotorLimit[index], value));
   });
 
   // Joint bounded allocation. With thrust, pitch and roll fixed, every
@@ -564,7 +578,9 @@ export function mixRotorThrust(
           for (let position = 0; position < fixed.length; position += 1) {
             const index = fixed[position];
             candidate[index] =
-              mask & (1 << position) ? perRotorLimit[index] ?? 0 : 0;
+              mask & (1 << position)
+                ? perRotorLimit[index] ?? 0
+                : perRotorFloor[index] ?? 0;
           }
           const right = want.map(
             (value, row) =>
@@ -586,11 +602,12 @@ export function mixRotorThrust(
             const index = free[position];
             const value = solved[position];
             const limit = perRotorLimit[index] ?? 0;
-            if (value < -forceTolerance || value > limit + forceTolerance) {
+            const floor = perRotorFloor[index] ?? 0;
+            if (value < floor - forceTolerance || value > limit + forceTolerance) {
               inside = false;
               break;
             }
-            candidate[index] = Math.max(0, Math.min(limit, value));
+            candidate[index] = Math.max(floor, Math.min(limit, value));
           }
           if (!inside) continue;
           const residuals = [0, 1, 2].map(
@@ -1168,6 +1185,21 @@ export interface RotorcraftMachine {
   /** Reaction-torque sign of each physical rotor. */
   readonly spinDirections?: readonly (-1 | 1)[];
   /**
+   * ДОЛЯ ТЯГИ, ДОСТУПНАЯ В РЕВЕРСЕ, 0…1. Ноль — подъёмные кольца толкают
+   * только в одну сторону, как было.
+   *
+   * Вердикт Igor (12.08.2026): «отсутствие реверса у двигателей подъёма — ну
+   * прям недосмотр и ограничение возможностей машины, она всевекторная».
+   * Так и есть: без него у машины ровно одно ускорение вниз — тяжесть, — и
+   * перевёрнутой она вжимается в грунт вместо того, чтобы встать.
+   *
+   * Доля меньше единицы, потому что канальный вентилятор в обратную сторону
+   * работает хуже: раструб рассчитан на один поток. Цена перехода уже
+   * смоделирована и берётся даром — реверсивная раскрутка проживает ноль
+   * целиком (`advanceReversibleThrusterOutput`).
+   */
+  readonly reverseShare?: number;
+  /**
    * Отдельные реверсивные движители рыскания, если они у машины есть. Обычный
    * мультиротор их не имеет, и весь код ниже работает как работал.
    */
@@ -1504,7 +1536,22 @@ export function rotorcraftForces(
   // спасает — он превращает просьбу в тройную тягу, направленную вниз.
   // Поэтому при заданной позе `collective` читается как тяга ВДОЛЬ ОСИ
   // МАШИНЫ в долях веса, и на ровном полёте это то же самое число.
-  const tiltCosine = commandedAttitude ? 1 : Math.max(0.35, up[1]);
+  // ЗНАК КОСИНУСА СОХРАНЯЕТСЯ, А ЗАЖИМАЕТСЯ ТОЛЬКО МОДУЛЬ.
+  //
+  // Деление на косинус — это удержание МИРОВОЙ вертикали: «дай столько, чтобы
+  // вертикальная проекция равнялась весу». Пока зажимали само число снизу
+  // нулём с третью, перевёрнутая машина получала ПОЛОЖИТЕЛЬНУЮ просьбу и
+  // честно вжимала себя в грунт, исполняя приказ подняться. Igor наблюдал это
+  // буквально: «рухнул вверх пузом, двигатели прижимают его к земле».
+  //
+  // Со знаком та же формула отвечает правильно: лёжа на спине машина просит
+  // ОТРИЦАТЕЛЬНУЮ тягу, то есть реверс, и он толкает её вверх по миру. Модуль
+  // по-прежнему зажат — у отвесного борта проекции почти нет, и без зажима
+  // просьба уходила бы в бесконечность.
+  const upright = commandedAttitude ? 1 : up[1];
+  const tiltCosine = commandedAttitude
+    ? 1
+    : Math.sign(upright || 1) * Math.max(0.35, Math.abs(upright));
   const wantedThrust =
     (machine.mass * gravity * (1 + demand.collective)) / tiltCosine;
   // ЗАПАС ОБОРОТОВ — ЭТО ЗАПАС УПРАВЛЯЕМОСТИ, и держать его должна автоматика,
@@ -1512,10 +1559,15 @@ export function rotorcraftForces(
   // оставляет место под моменты по всем трём осям. Ужимать вместо этого газ
   // ПОСЛЕ насыщения — значит отнимать подъём ровно на манёвре и разгонять
   // собственную ошибку.
+  // ЗНАКОВЫЙ КОЛЛЕКТИВ. Пол — не ноль, а доля паспортной тяги в реверсе:
+  // машина, у которой кольца умеют толкать в обе стороны, имеет ускорение
+  // вниз помимо тяжести и способна встать из перевёрнутого положения.
+  const reverseCeiling =
+    ROTOR_COLLECTIVE_CEILING * Math.max(0, Math.min(1, machine.reverseShare ?? 0));
   const collective =
     machine.liftCapacity > 1e-6
       ? Math.max(
-          0,
+          -reverseCeiling,
           Math.min(
             ROTOR_COLLECTIVE_CEILING,
             wantedThrust / machine.liftCapacity,
@@ -1528,9 +1580,13 @@ export function rotorcraftForces(
     machine.points.length,
     machine.capacityWeights,
   );
+  // Состояние мотора тоже знаковое у реверсивной машины: обратная тяга не
+  // возникает мгновенно, она проживает проход через ноль, и обрезать её здесь
+  // значит забыть половину этого пути.
+  const motorFloor = -Math.max(0, Math.min(1, machine.reverseShare ?? 0));
   const currentMotorOutput = machine.motorOutput
     ? machine.points.map((_, index) =>
-        Math.max(0, Math.min(1, machine.motorOutput?.[index] ?? 0)),
+        Math.max(motorFloor, Math.min(1, machine.motorOutput?.[index] ?? 0)),
       )
     : null;
   const uncontrollableThrust = machine.points.map((_, index) =>
@@ -1588,6 +1644,7 @@ export function rotorcraftForces(
           availability: machine.availability,
           capacity: machine.liftCapacity,
           capacityWeights: machine.capacityWeights,
+          reverseShare: machine.reverseShare,
           spinDirections: machine.spinDirections,
           biasThrust: uncontrollableThrust,
         },
@@ -1700,18 +1757,34 @@ export function rotorcraftForces(
   // больше ровно во столько раз, сколько актуатор ещё способен доставить:
   // слой актуаторов затем честно умножит просьбу на attachedFraction. Так
   // потеря лопасти не учитывается дважды и одновременно не обходится стороной.
+  // ДРОССЕЛЬ ЗНАКОВЫЙ РОВНО НАСТОЛЬКО, НАСКОЛЬКО ЗНАКОВ РАСПРЕДЕЛИТЕЛЬ.
+  //
+  // Здесь жила регрессия, которую поймала только живая проба. Распределитель
+  // научился отрицательной тяге, а этот clamp продолжал резать по нулю — и
+  // каждое отрицательное кольцо молча превращалось в остановленное. Машина
+  // при этом отрывалась от площадки на три секунды раньше и уходила выше
+  // маршрута, а доставленный момент тангажа переставал совпадать с
+  // заказанным вплоть до смены знака: `authority.pitch` честно показывал
+  // ноль, и сторож снимал исправную машину с рейса за `controlMismatch`.
+  //
+  // Урок общий: НОВЫЙ ЗНАК ОБЯЗАН ПРОЙТИ ВЕСЬ ПУТЬ. Тесты распределителя были
+  // зелёные — они и проверяли распределитель, а не путь от него до силы.
+  const throttleFloor = -Math.max(0, Math.min(1, machine.reverseShare ?? 0));
   const commandedThrottle = mix.thrust.map((value, index) => {
     const available = Math.max(0, Math.min(1, machine.availability[index] ?? 1));
     const deliveredCapacity = (capacityByPoint[index] ?? 0) * available;
     return deliveredCapacity > 1e-9
-      ? Math.max(0, Math.min(1, value / deliveredCapacity))
+      ? Math.max(throttleFloor, Math.min(1, value / deliveredCapacity))
       : 0;
   });
   const motorOutput = currentMotorOutput
     ? currentMotorOutput
     : mix.thrust.map((value, index) =>
         (capacityByPoint[index] ?? 0) > 1e-9
-          ? Math.max(0, Math.min(1, value / (capacityByPoint[index] ?? 1)))
+          ? Math.max(
+              throttleFloor,
+              Math.min(1, value / (capacityByPoint[index] ?? 1)),
+            )
           : 0,
       );
   const thrust = machine.motorOutput

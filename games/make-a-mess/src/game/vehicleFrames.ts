@@ -76,6 +76,7 @@ import {
 } from "./sr6Skat.ts";
 import { SR6_ROTOR_STATIONS } from "../content/objects/vehicles/sr6SkatObject.ts";
 import { combatHexacopterRangeFrame } from "./combatHexacopter.ts";
+import { ductHexacopterRangeFrame } from "./rangeDuctHexacopter.ts";
 
 // Kept as re-exports for callers while the authored routes themselves live in
 // their own artifact module.
@@ -239,6 +240,50 @@ function keelTrimRails(
 }
 
 /** Physical sensor mount and viewing direction in authored coordinates. */
+/**
+ * ЧЕЙ ЭТО ДАТЧИК — привязка датчиков приближения к деталям машины.
+ *
+ * Датчики объявлены точками в осях кадра и про свои детали не знают: оторванная
+ * гондола улетает, а её датчик остаётся висеть в идеальном обводе. Снаружи это
+ * читается как «сенсоры образуют собственный геометрический контур, а не
+ * закреплены к своим деталям» (наблюдение Igor, 12.08.2026).
+ *
+ * Привязка ГЕОМЕТРИЧЕСКАЯ, а не авторская: датчик принадлежит ближайшему куску.
+ * Так она достаётся даром всем машинам сразу и не расходится с паспортом, когда
+ * деталь переименуют.
+ *
+ * Расстояние меряется до ПОВЕРХНОСТИ куска (центр минус полудиагональ), а не до
+ * его центра: датчик на обшивке гондолы обязан достаться гондоле, а не корпусу,
+ * чей центр к началу координат ближе.
+ */
+export function vehicleSensorPieces(
+  sensors: readonly { readonly point: SceneVector3 }[],
+  pieces: readonly {
+    readonly id: string;
+    readonly position: SceneVector3;
+    readonly size: SceneVector3;
+  }[],
+): string[] {
+  return sensors.map((sensor) => {
+    let bestId = pieces[0]?.id ?? "";
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const piece of pieces) {
+      const radius = Math.hypot(piece.size[0], piece.size[1], piece.size[2]) / 2;
+      const distance =
+        Math.hypot(
+          sensor.point[0] - piece.position[0],
+          sensor.point[1] - piece.position[1],
+          sensor.point[2] - piece.position[2],
+        ) - radius;
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestId = piece.id;
+      }
+    }
+    return bestId;
+  });
+}
+
 export interface VehicleProximitySensor {
   readonly point: SceneVector3;
   readonly normal: SceneVector3;
@@ -298,7 +343,20 @@ function skyTrainProximitySensors(): readonly VehicleProximitySensor[] {
   }
   // Низкая кабина выступает перед вагоном: оболочка над ней не заметит
   // буфер или фасад на уровне стекла, поэтому у эркера свои сенсоры.
-  sensors.push({ point: [-9.34, 2.78, HULL.z], normal: [-1, 0, 0] });
+  // ВПЕРЁД КАБИНА СМОТРИТ СТОЙКАМИ, А НЕ ЛОБОВЫМ СТЕКЛОМ.
+  //
+  // Один датчик стоял по осевой ровно в стекле эркера. Стекло — первое, что
+  // разлетается от любого касания, и вместе с ним корабль терял единственный
+  // передний глаз кабины.
+  //
+  // Взамен пара на угловых стойках эркера, симметрично осевой: смотрят туда
+  // же, стоят на несущем, и потеря одной стороны не ослепляет вперёд.
+  for (const side of [-1, 1] as const) {
+    sensors.push({
+      point: [-9.24, 2.78, HULL.z + side * 0.95],
+      normal: [-1, 0, 0],
+    });
+  }
   sensors.push({ point: [-8.25, 2.78, HULL.z - 1.28], normal: [0, 0, -1] });
   sensors.push({ point: [-8.25, 2.78, HULL.z + 1.28], normal: [0, 0, 1] });
   // Dedicated landing altimeters. These are measurements, not suspension.
@@ -390,8 +448,23 @@ function townAirshipProximitySensors(): readonly VehicleProximitySensor[] {
     // The docking socket intentionally surrounds the mooring pin. Sensor from
     // the upper nose skin so the intended berth is not read as an obstacle.
     { point: townAirshipPoint(0.8, 0, 13.75), normal: nose },
-    { point: townAirshipPoint(15.35, 0, 12.6), normal: tail },
   ];
+  // ХВОСТ ЩУПАЕТ ОБШИВКОЙ, А НЕ ФОНАРЁМ.
+  //
+  // Один датчик стоял ровно в корме по осевой — и садился на СТЕКЛЯННЫЙ плафон
+  // хвостового навигационного огня. Стекло бьётся первым и уносит с собой
+  // единственный кормовой глаз корабля; вдобавок лампа — не силовой набор, ей
+  // датчик держать нечем.
+  //
+  // Взамен симметричная пара на кормовом конусе: чуть впереди фонаря и по обе
+  // стороны от него. Пара, а не одиночка, ровно по той же причине, по какой
+  // симметричны все прочие: потеряв один борт, корабль не слепнет назад.
+  for (const side of [-1, 1] as const) {
+    sensors.push({
+      point: townAirshipPoint(14.9, side * 0.95, 12.6),
+      normal: tail,
+    });
+  }
   for (const a of [2.5, 7, 11.5]) {
     sensors.push(
       { point: townAirshipPoint(a, 2.42, 12.6), normal: positiveB },
@@ -719,6 +792,7 @@ export const vehicleFrames: readonly VehicleFrameDefinition[] = [
     proximitySensors: sr6SkatProximitySensors(),
   },
   combatHexacopterRangeFrame,
+  ductHexacopterRangeFrame,
 ];
 
 const frameByCluster = new Map(
@@ -1267,6 +1341,22 @@ export function advanceVehicleRouteProgress(
   // целиком. Пропустить больше него счётчик по-прежнему не может: за раз
   // засчитывается не больше этого куска линии, и «срезать» половину рейса
   // машине это не даёт.
+  // ОКНО ПОИСКА — ДОЛЯ РЕЙСА, И ЭТО ПРОВЕРЕНО ЗАМЕРОМ.
+  //
+  // Пол 0.02 выглядит подозрительно: на городском перегоне в 110 м это два
+  // метра, а на круге полигона в 1408 м — двадцать восемь, то есть счётчику
+  // позволено перепрыгнуть за кадр почти тридцать метров линии. Я счёл это
+  // ошибкой масштаба и заменил долю метрами.
+  //
+  // ЗАМЕР СКАЗАЛ ОБРАТНОЕ: с двухметровым полом перестали садиться СЕМЬ машин
+  // разом — дирижабль на мачте (в том числе с потерянными лопастями), дракар
+  // на туре, охотник в дуэли. Широкое окно на длинной трассе не подарок, а
+  // условие работы: счётчик обязан успевать за машиной, которая режет углы, и
+  // отставший счётчик кончается тем же, чем убежавший, — машина гонится за
+  // точкой, которой рядом нет.
+  //
+  // Оставлено как было. Запись здесь затем, чтобы следующий не переделывал
+  // это второй раз: подозрительное число оказалось несущим.
   const stepWindow = Math.max(0.02, (travelled / plan.length) * 8);
   const window = Math.max(
     // Доля рейса — вторая граница того же окна: сорок метров это разворот на
@@ -1354,9 +1444,33 @@ export function vehicleVerticalArrivalCaptured(
     return false;
   }
   const berth = plan.point(1);
+  const horizontal = Math.hypot(centre[0] - berth[0], centre[2] - berth[2]);
+  if (horizontal <= arrival.horizontalTolerance) {
+    return true;
+  }
+  // ПОЛКА — ЭТО ПОРОГ, А НЕ ТОЧКА ВОЗВРАТА.
+  //
+  // Захват считался ЗАНОВО каждый кадр по одному расстоянию, и допуск у него
+  // в десятки сантиметров (0.85 м у VX-8). Машина, уже снижающаяся над
+  // площадкой, снесённая на метр, теряла захват — и получала приказ вернуться
+  // на полку в четырнадцать метров. Сама себе отменяла посадку, а таймер
+  // швартовки шёл: «Корабль не успел стабилизироваться у причала».
+  //
+  // Замер на стенде: машина, поставленная в метре над причалом и в 1.8 м вбок,
+  // сходилась по горизонтали до 0.72 м — и одновременно набирала 14 м, после
+  // чего уходила совсем.
+  //
+  // Гистерезис берётся ВЫСОТОЙ, а не памятью: функция чистая и прошлого не
+  // помнит, но машина НИЖЕ полки могла попасть туда единственным способом —
+  // снижаясь, то есть будучи однажды захваченной. Полка своё уже отработала,
+  // и звать её обратно значит отменять состоявшуюся посадку.
+  //
+  // Радиус отпускания втрое шире радиуса захвата: захват остаётся точным, а
+  // терять его машина начинает только по-настоящему уйдя с площадки.
+  const RELEASE_FACTOR = 3;
   return (
-    Math.hypot(centre[0] - berth[0], centre[2] - berth[2]) <=
-    arrival.horizontalTolerance
+    centre[1] < arrival.altitude - 0.5 &&
+    horizontal <= arrival.horizontalTolerance * RELEASE_FACTOR
   );
 }
 
@@ -1539,6 +1653,19 @@ export interface ShipLimits {
   readonly enginePoints: readonly SceneVector3[];
   /** Relative maximum lift of each rotor; omitted means equal motors. */
   readonly rotorCapacityWeights?: readonly number[];
+  /**
+   * ДОЛЯ ТЯГИ ПОДЪЁМНЫХ ДВИГАТЕЛЕЙ В РЕВЕРСЕ, 0…1. Нет поля — машина толкает
+   * только в одну сторону, как было.
+   *
+   * Вердикт Igor (12.08.2026): у всевекторной машины отсутствие реверса —
+   * недосмотр. Без него ускорение вниз ровно одно, тяжесть, а перевёрнутая
+   * машина вжимается в грунт вместо того, чтобы встать.
+   *
+   * Доля меньше единицы: канал рассчитан на один поток, назад вентилятор
+   * работает хуже. Цена перехода моделью уже учтена — реверсивная раскрутка
+   * проживает ноль целиком.
+   */
+  readonly rotorReverseShare?: number;
   /** Reaction-torque sign of each rotor; omitted keeps legacy alternation. */
   readonly rotorSpinDirections?: readonly (-1 | 1)[];
   /**
@@ -2064,6 +2191,19 @@ export function isDockingSettleWindow(
  * Требование к захваченному носовому узлу, отдельно от маршрута и автопилота.
  * Никакого переноса в ноль здесь нет: функция только измеряет результат сил.
  */
+/**
+ * ЗАВЕРШАЮЩЕЕ СНИЖЕНИЕ. Пол — чтобы машина дошла, потолок — чтобы не ударилась,
+ * мёртвая зона — чтобы уже севшая не давила себя в площадку.
+ *
+ * Числа выведены из допусков швартовки, а не подобраны: 0.3 м/с меньше самого
+ * строгого допуска вертикальной скорости во флотилии (0.22 у дирижабля — но он
+ * этой ветки не касается вовсе, а у винтокрылых минимум 0.5), поэтому машина,
+ * идущая на полу, гейту не противоречит.
+ */
+const TERMINAL_DESCENT_FLOOR = 0.3;
+const TERMINAL_DESCENT_CEILING = 1.2;
+const TERMINAL_DESCENT_DEADBAND = 0.05;
+
 export function isDockedPose(
   captureOffset: SceneVector3,
   orientation: Quaternion,
@@ -3262,12 +3402,48 @@ export function autopilot(
   // один на все три плоскости. Реактивный контур без него летел ленивую
   // версию шоу — 9.5 м промаха из 9 возможных.
   const pathKinematics = pathKinematicDemand(plan, progress, groundSpeed, model);
+  // ПОСЛЕДНИЕ ПОЛМЕТРА ВНИЗ НАДО ПРОЙТИ, А НЕ ПРИБЛИЖАТЬСЯ К НИМ.
+  //
+  // Вертикальный контур пропорционален остатку: чем ближе палуба, тем медленнее
+  // машина к ней идёт. Это верно для ВЫХОДА НА ВЫСОТУ и неверно для ПОСАДКИ —
+  // там получается асимптота, и машина не доходит никогда.
+  //
+  // Замер на стенде (VX-8, поставлен в метре над причалом): скорость снижения
+  // затухает −0.20, −0.16, −0.10, −0.08, −0.07 м/с, а остаток стоит на 0.5 м
+  // при допуске швартовки 0.5 — четыре сантиметра, которых не хватает. Десять
+  // секунд таймера истекают, и рейс кончается сообщением «Корабль не успел
+  // стабилизироваться у причала». У RAX-8 та же схема работает только потому,
+  // что его вертикальной власти хватает продавить асимптоту за отпущенный
+  // срок: он проходит тот же метр за три секунды вместо десяти.
+  //
+  // Горизонтальному подходу у причала пол скорости УЖЕ дан
+  // (`berthApproachSpeed`, тормозная кривая с полом 0.6 м/с) — ровно затем,
+  // чтобы машина «не останавливалась там, где кончился профиль». Вертикали его
+  // не дали, и это единственная разница. Здесь она устраняется: та же форма —
+  // тормозная кривая с полом, — и она включается только там, где машина уже
+  // над своей площадкой и обязана сесть.
+  const terminalDescent =
+    holonomicBerthHold &&
+    vehicleVerticalArrivalCaptured(plan, progress, centre) &&
+    centre[1] > berthPoint[1] + TERMINAL_DESCENT_DEADBAND;
+  const wantedVerticalRate = terminalDescent
+    ? -Math.min(
+        TERMINAL_DESCENT_CEILING,
+        Math.max(
+          TERMINAL_DESCENT_FLOOR,
+          Math.sqrt(2 * 0.3 * (centre[1] - berthPoint[1])),
+        ),
+      )
+    : (pathKinematics?.verticalRate ?? 0);
   const liftFraction = Math.max(
     -limits.liftTrimRange,
     Math.min(
       limits.liftTrimRange,
-      altitudeError * 0.06 +
-        ((pathKinematics?.verticalRate ?? 0) - velocity[1]) * 0.12,
+      // Остаток высоты остаётся в контуре и на посадке: снижение — это ПОЛ
+      // темпа, а не замена закона. Без остатка контур теряет обратную связь по
+      // месту и проскакивает палубу вниз; в замере это выходило снятием рейса
+      // за `routeDivergence` уже ПОСЛЕ касания.
+      altitudeError * 0.06 + (wantedVerticalRate - velocity[1]) * 0.12,
     ),
   );
 
@@ -3295,6 +3471,42 @@ export function autopilot(
     offsetX * routeTangentZ - offsetZ * routeTangentX,
   );
   let goAround = false;
+  // ПРОМАХ — ЭТО ЕЩЁ И «ПРИЧАЛ УДАЛЯЕТСЯ».
+  //
+  // Проверка качества ниже смотрит на машину ТОЛЬКО в узком окне у причала
+  // (2.5 допуска места — у VX-8 это 10.5 м). Машина, идущая по створу мимо, в
+  // это окно не попадает никогда: промах не объявляется, второй круг не
+  // назначается, боковая поправка на заходе обнулена — и она честно летит по
+  // оси створа в бесконечность с постоянным ходом. Замер на стенде конца
+  // рейса: прогресс замирает на 0.983 при пороге швартовки 0.985, машина
+  // уходит от причала со скоростью 3.5 м/с и не останавливается. Отсюда
+  // наблюдение Igor: «VX не завершает полёт, висит и не отключается».
+  //
+  // Признак берётся ПРЕДСКАЗАНИЕМ, а не памятью: автопилот считается заново
+  // каждый кадр и прошлого не помнит. Машина, доворачивающая на створ, имеет
+  // скорость В СТОРОНУ причала, и предсказание у неё ближе; уходящая — дальше.
+  // Это тот же `guess`, которым уже судится поза в окне захвата.
+  // Предсказание плоское: [x, z]. Причал берётся теми же двумя осями.
+  const predictedBerthDistance = Math.hypot(
+    guess.position[0] - berthPoint[0],
+    guess.position[1] - berthPoint[2],
+  );
+  //
+  // Правило узкое НАМЕРЕННО, и первая редакция это доказала: без нижней
+  // границы оно снимало с посадки исправные машины — дирижабль на мачте,
+  // дракар на туре, охотника в дуэли, — потому что у любой машины на
+  // доворотe предсказание на миг оказывается дальше причала. Восемь красных
+  // тестов за одну правку.
+  //
+  // Поэтому два условия сверх расхождения: машина ВНЕ окна, в котором работает
+  // проверка качества (иначе два судьи спорят об одном), и уходит она НА ХОД,
+  // а не на дрожание — не меньше половины того, что унесёт её собственная
+  // скорость за горизонт предсказания.
+  const divergingFromBerth =
+    onApproach &&
+    berthDistance > approach.tolerance.position * 2.5 &&
+    predictedBerthDistance >
+      berthDistance + Math.max(1, groundSpeed * horizon * 0.5);
   if (onApproach && berthDistance < approach.tolerance.position * 2.5) {
     const headingOff = Math.acos(
       Math.max(
@@ -3310,6 +3522,8 @@ export function autopilot(
       crossTrack > approach.tolerance.position ||
       headingOff > approach.tolerance.heading ||
       groundSpeed > approach.tolerance.speed;
+  } else if (divergingFromBerth) {
+    goAround = true;
   }
 
   // Боковой контур: ошибка ПОПЕРЁК линии маршрута и демпфер по фактической

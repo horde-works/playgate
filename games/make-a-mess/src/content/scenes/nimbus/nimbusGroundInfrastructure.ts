@@ -90,11 +90,11 @@ function createSupportBerms(
               + (nimbusNoise(x, z, 142) - 0.5) * 0.24,
           );
           const centreY = ground - 0.08 + height / 2;
-          const size: SceneVector3 = [
-            BERM_PITCH + 0.08,
-            height,
-            BERM_PITCH + 0.08,
-          ];
+          // Ровно шаг. Нахлёст в 8 см ничего не закрывал: ступеньку между
+          // клетками разной высоты он не прячет (её видно с боку в любом
+          // случае), а вот у клеток одинаковой высоты делал верх общим — и
+          // они спорили за пиксели.
+          const size: SceneVector3 = [BERM_PITCH, height, BERM_PITCH];
           const stony = distance > 0.68 || nimbusNoise(x, z, 143) > 0.78;
           nimbusPrimitive(
             earthworks,
@@ -216,7 +216,9 @@ function createOfficePlazas(officePlazas: NimbusMutableGroup): void {
           outer ? "asphalt" : "concrete",
           "groundTile",
           [x, ground + 0.09, z],
-          [PLAZA_PITCH + 0.04, 0.18, PLAZA_PITCH + 0.04],
+          // Ровно шаг: `+ 0.04` делал верхние плоскости соседних плит общими,
+          // и мостовая площадей спорила за пиксели по всей решётке.
+          [PLAZA_PITCH, 0.18, PLAZA_PITCH],
           outer
             ? nimbusNoise(x, z, 151) > 0.5 ? "#4b5152" : "#555b5a"
             : nimbusNoise(x, z, 152) > 0.5 ? "#a4a8a3" : "#929792",

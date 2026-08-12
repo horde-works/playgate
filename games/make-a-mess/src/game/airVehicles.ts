@@ -1,11 +1,18 @@
-import type { LampEventState, SceneVector3 } from "./destructionScene.ts";
+import {
+  departureSignalColor,
+  type LampEventState,
+  type SceneVector3,
+} from "./destructionScene.ts";
 import type { EntryInteractionTarget } from "./entryInteraction.ts";
 import {
   TONKAWA_ALLEGIANCE,
+  YAQUI_ALLEGIANCE,
   TOWN_ALLEGIANCE,
   type VehicleAllegiance,
 } from "./vehicleAllegiance.ts";
 import type { VehicleRecoveryLifecycle } from "./vehicleFailure.ts";
+import type { AirCombatStation } from "./airCombatPilot.ts";
+import type { EvasionCapability } from "./airCombatEvasion.ts";
 import type { VehicleArmament } from "./vehicleGunnery.ts";
 import type { VehicleGuidanceOverrides } from "./vehicleGuidanceEnvelope.ts";
 import type {
@@ -116,9 +123,24 @@ import {
   combatHexacopterRangeBlueprint,
   combatHexacopterRangeFrame,
 } from "./combatHexacopter.ts";
+import { DUCT_HEXACOPTER_PROPOSED_LIMITS } from "./ductHexacopter.ts";
+import {
+  DUCT_HEXACOPTER_RANGE_DISPATCH_POINT,
+  DUCT_HEXACOPTER_RANGE_LIMITS,
+  ductHexacopterRangeBlueprint,
+  ductHexacopterRangeFrame,
+  ductHexacopterRangeYawThrusters,
+} from "./rangeDuctHexacopter.ts";
+import {
+  ductHexacopterArrivalPlan,
+  ductHexacopterEscapePlan,
+  ductHexacopterLapPhase,
+  ductHexacopterLapPlan,
+} from "./ductHexacopterRangeRoutes.ts";
 import {
   combatHexacopterGuardPhase,
   combatHexacopterGuardPlan,
+  combatHexacopterGuardStation,
   combatHexacopterRangeArrivalPlan,
   combatHexacopterRangeEscapePlan,
   combatHexacopterRangePhase,
@@ -165,6 +187,17 @@ export interface AirVehicleDefinition extends VehicleFrameDefinition {
     readonly heightTolerance: number;
     /** Empty service flights put accidental stowaways back ashore. */
     readonly passengerDropPoint?: SceneVector3;
+    /**
+     * ЦВЕТ СИГНАЛЬНОГО СТЕКЛА, КОТОРЫМ ЭТА МАШИНА СВЕТИТ О СВОЁМ ОТПРАВЛЕНИИ.
+     *
+     * Лампы принадлежат сцене, а вот ЧЬЁ отправление ими показывают — свойство
+     * машины, и объявить это может только она. Прежде рантайм зажигал их по
+     * условию `id === "sky-train"`: то есть общий контур знал, что светит
+     * именно состав, и на второй машине с расписанием пришлось бы дописать
+     * второе имя. Не объявлено — машина не светит ничем, и это норма: причал,
+     * у которого нет сигнального стекла, ничего не теряет.
+     */
+    readonly signalColor?: string;
   };
   readonly passengerFlight?: {
     readonly target: EntryInteractionTarget;
@@ -239,7 +272,43 @@ export interface AirVehicleDefinition extends VehicleFrameDefinition {
     /** Physical reach of this berth's capture/winch, in metres. */
     readonly mooringReach?: number;
     routePlan(kind: string, berth: SceneVector3): VehicleRoutePlan;
-    arrivalPlan(berth: SceneVector3): VehicleRoutePlan;
+    /**
+     * СТОРОЖЕВОЙ ПОСТ ЭТОЙ ЗАДАЧИ: что машина стережёт, стоя на этом берте.
+     *
+     * Форма умышленно та же, что у `routePlan`, и стоит рядом с ним: пост и
+     * трасса — одно рабочее место, описанное с двух сторон. Автомат боя имеет
+     * право работать РОВНО ТОГДА, когда пост объявлен, — и это делает бой
+     * СПОСОБНОСТЬЮ ПАСПОРТА, ровно как `armament`, а не веткой по имени
+     * машины. Прежде рантайм спрашивал `kind === "sky-control"` и тащил к себе
+     * импортом три константы полигона; теперь он не знает ни имени задачи, ни
+     * имени машины.
+     *
+     * `null` — у этой задачи поста нет: показательный круг, перегон, посадка.
+     * Отсутствие метода целиком — машина не воюет вовсе.
+     */
+    combatStation?(kind: string, berth: SceneVector3): AirCombatStation | null;
+    /**
+     * СПОСОБНОСТЬ УКЛОНЯТЬСЯ. Нет поля — машина не уклоняется вовсе, и это
+     * законный ответ: состав неба и драккар не должны дёргаться от чужой
+     * скорости, они возят людей.
+     *
+     * Объявляется паспортом по той же причине, что вооружение и пост: движок
+     * не имеет права знать, кто из машин пуглив.
+     */
+    readonly evasion?: EvasionCapability;
+    /**
+     * Заход на посадку. `bearing` — с какой стороны машина приходит: подменные
+     * суда обязаны появляться с разных сторон, иначе полигон выглядит
+     * конвейером. `from` задаёт начало захода вместо горизонта — им пользуется
+     * отзыв с пульта, строя тот же заход от текущего места машины.
+     *
+     * Машина вправе оба довода игнорировать: у той, чей заход не зависит от
+     * стороны, подпись остаётся прежней.
+     */
+    arrivalPlan(
+      berth: SceneVector3,
+      options?: { readonly bearing?: number; readonly from?: SceneVector3 },
+    ): VehicleRoutePlan;
     escapePlan(
       berth: SceneVector3,
       input: SkyTrainEmergencyEscapeInput,
@@ -465,6 +534,8 @@ export const SKY_TRAIN_AIR_VEHICLE: AirVehicleDefinition = {
     releaseRadius: 4.8,
     heightTolerance: 3,
     passengerDropPoint: SKY_TRAIN_PLATFORM_DROP,
+    // Красное сигнальное стекло Терминала — его и зажигает отправление состава.
+    signalColor: departureSignalColor,
   },
   passengerFlight: {
     target: {
@@ -1249,6 +1320,15 @@ export const COMBAT_HEXACOPTER_RANGE_AIR_VEHICLE: AirVehicleDefinition = {
       enginePower: 105,
       enginePoints: combatHexacopterRangeBlueprint.enginePoints,
       rotorCapacityWeights: combatHexacopterRangeBlueprint.rotorCapacityWeights,
+      /**
+       * РЕВЕРС ПОДЪЁМНЫХ КОЛЕЦ: 0.55 паспортной тяги назад.
+       *
+       * Кольцо у RAX-8 открытое, лопасть почти симметричная — обратный поток
+       * теряет на профиле, но не на раструбе. Полсотни с небольшим процентов
+       * даёт ей около 2.3 g управляемого «вниз» сверх тяжести и полтора веса
+       * тяги для подъёма из перевёрнутого положения.
+       */
+      rotorReverseShare: 0.55,
       rotorSpinDirections: combatHexacopterRangeBlueprint.rotorSpinDirections,
       // Второй орган рыскания. Реактивный момент шести колец даёт этой машине
       // около 0.1 рад/с, а её собственный круг требует вдвое больше: без
@@ -1314,12 +1394,167 @@ export const COMBAT_HEXACOPTER_RANGE_AIR_VEHICLE: AirVehicleDefinition = {
       kind === COMBAT_HEXACOPTER_SKY_CONTROL
         ? combatHexacopterGuardPlan(berth)
         : combatHexacopterRangePlan(berth),
+    // Пост объявлен ровно у той задачи, у которой он есть. Показательный круг
+    // поста не имеет — и на нём автомат боя не включается, даже если рядом
+    // висит чужая вооружённая машина: номер есть номер.
+    combatStation: (kind, berth) =>
+      kind === COMBAT_HEXACOPTER_SKY_CONTROL
+        ? combatHexacopterGuardStation(berth)
+        : null,
     arrivalPlan: combatHexacopterRangeArrivalPlan,
     escapePlan: combatHexacopterRangeEscapePlan,
     routePhase: (kind, progress) =>
       kind === COMBAT_HEXACOPTER_SKY_CONTROL
         ? combatHexacopterGuardPhase(progress)
         : combatHexacopterRangePhase(progress),
+  },
+};
+
+/**
+ * VX-8 «Yaqui» НА ПОЛИГОНЕ TONKAWA.
+ *
+ * Вторая машина этого мира и ЧУЖАЯ ей. Сторона — `yaqui`, не `tonkawa`.
+ *
+ * Первая редакция ставила обеим одну сторону: полигон один, хозяин один, а
+ * объявить её чужой значило бы завести войну, которой никто не просил.
+ * Аргумент был честный и неверный ровно в одном месте — вооружение у обеих
+ * настоящее, и две вооружённые машины одной стороны, летающие мимо друг друга,
+ * это не мир, а невыстрелившая декорация. Полигон затем и нужен, чтобы на нём
+ * встречались разные кланы.
+ *
+ * Механики для этого не потребовалось никакой: вражда выводится из РАЗНЫХ
+ * сторон (`isHostileAllegiance`), боевой пилот уже отбирает цели по ней, а
+ * `stepAirCombat` уже включён в кадр машины. Изменилась одна строка паспорта —
+ * и это ровно та проверка, ради которой признак живёт в паспорте, а не в бою.
+ *
+ * ЧИСЛА ПРЕДЕЛОВ ПРИХОДЯТ ИЗ ДВУХ РАЗНЫХ МЕСТ, И ЭТО НАМЕРЕННО.
+ * `maxRudderForce` и `rudderReferenceSpeed` взяты у паспорта как есть: они не
+ * зависят от массы (руля у машины нет вовсе, тоннели работают на месте).
+ * `enginePower` и `lateralThrust` — из `rangeDuctHexacopter.ts`, потому что
+ * ЗАВИСЯТ, а паспорт считал их до того, как машина собралась, и промахнулся
+ * ровно вдвое по массе. Из паспорта взята выводимость, а не цифра.
+ */
+export const DUCT_HEXACOPTER_RANGE_AIR_VEHICLE: AirVehicleDefinition = {
+  ...ductHexacopterRangeFrame,
+  allegiance: YAQUI_ALLEGIANCE,
+  armament: ductHexacopterRangeBlueprint.armament,
+  departure: {
+    target: {
+      id: "duct-hexacopter-range:departure",
+      kind: "departure",
+      cue: "duct-hexacopter-uncrewed-flight",
+      actions: [{ id: "lap", labelKey: "hint.yaquiDeparture.action" }],
+    },
+    point: DUCT_HEXACOPTER_RANGE_DISPATCH_POINT,
+    flightKind: "lap",
+    // Шире, чем у RAX-8 (2.4/3.2): машина вдвое тяжелее и на полтора метра
+    // шире, и подходить к ней вплотную человеку незачем.
+    approachRadius: 3,
+    releaseRadius: 4,
+    heightTolerance: 2.3,
+  },
+  flight: {
+    limits: {
+      enginePower: DUCT_HEXACOPTER_RANGE_LIMITS.enginePower,
+      enginePoints: ductHexacopterRangeBlueprint.enginePoints,
+      rotorCapacityWeights: ductHexacopterRangeBlueprint.rotorCapacityWeights,
+      /**
+       * РЕВЕРС У КАНАЛЬНОЙ МАШИНЫ ДЕШЕВЛЕ НЕ БЫВАЕТ: 0.4.
+       *
+       * У VX-8 кольцо не открытое, а канал с раструбом на входе — он и делает
+       * ducted-фан эффективным вперёд и посредственным назад: обратный поток
+       * входит с острой кромки диффузора. Меньше, чем у RAX-8, и это честная
+       * плата за то, что вперёд он тянет лучше.
+       */
+      rotorReverseShare: 0.4,
+      rotorSpinDirections: ductHexacopterRangeBlueprint.rotorSpinDirections,
+      // Тоннели с ПРИБИТОЙ тягой, а не с паспортной: паспорт сам оставил это
+      // рантайму, и 1030 Н на собранном теле дают вдвое больше углового
+      // ускорения, чем нужно.
+      yawThrusters: ductHexacopterRangeYawThrusters,
+      maxRudderForce: DUCT_HEXACOPTER_PROPOSED_LIMITS.maxRudderForce,
+      rudderReferenceSpeed: DUCT_HEXACOPTER_PROPOSED_LIMITS.rudderReferenceSpeed,
+      rudderPoint: ductHexacopterRangeBlueprint.mooringPoint,
+      liftTrimRange: ductHexacopterRangeBlueprint.flight.liftTrimRange,
+      lateralThrust: DUCT_HEXACOPTER_RANGE_LIMITS.lateralThrust,
+    },
+    approach: {
+      heading: [ductHexacopterRangeFrame.nose[0], ductHexacopterRangeFrame.nose[2]],
+      tolerance: { position: 4.2, heading: 0.4, speed: 2.8 },
+    },
+    docking: {
+      position: 1.5,
+      height: 0.5,
+      headingCos: 0,
+      speed: 0.34,
+      verticalSpeed: 0.5,
+      uprightCos: 0.96,
+      angularSpeed: 0.2,
+    },
+    landing: {
+      // Допуск посадки — от габарита машины, а не от чужого числа: у неё
+      // полуразмах 3.64 против 2.9 у RAX-8, и опоры расставлены шире.
+      radius: 1.4,
+      height: 0.5,
+      speed: 0.4,
+      verticalSpeed: 0.55,
+      uprightCos: 0.978,
+      angularSpeed: 0.22,
+    },
+    spoolSeconds: ductHexacopterRangeBlueprint.flight.spoolSeconds,
+    underwaySeconds: 6,
+    // Медленнее RAX-8 (31): кольца этой машины крупнее, и на его оборотах
+    // концы лопастей читались бы размытым диском вместо винта.
+    driveAnimation: { kind: "propeller", phaseSpeed: 26, shaftAxis: [0, 1, 0] },
+    linearDamping: ductHexacopterRangeBlueprint.flight.linearDamping,
+    angularDamping: ductHexacopterRangeBlueprint.flight.angularDamping,
+    lateralDragRatio: ductHexacopterRangeBlueprint.flight.lateralDragRatio,
+    liftSource: "rotor",
+    liftReserve: ductHexacopterRangeBlueprint.flight.liftReserve,
+    maximumTilt: ductHexacopterRangeBlueprint.flight.maximumTilt,
+    /**
+     * ВОРОТА ВОЗМУЩЕНИЯ СТОЯТ ВЫШЕ ТОГО, ЧТО ПРОСИТ ТРАССА, — И НИЖЕ ТОГО, ЧТО
+     * ПРОСИТ ФИГУРА. Второе не упущение, а признание невозможного.
+     *
+     * Прежние 1.4/1.1 были посчитаны под круг: 14 м/с по дуге радиусом 39.7
+     * дают 0.35 рад/с, троекратный запас — 1.05. Круга больше нет. У программы
+     * овал с разворотами радиусом 39.7 на двадцати метрах в секунду и пять
+     * номеров, и замер на стенде пад-в-пад даёт другие числа: вне фигур
+     * корпус разгоняется до 1.14 рад/с по наклону и 0.70 по рысканию.
+     * Отсюда 2.4 и 1.4 — вдвое над замеренным, как и было задумано.
+     *
+     * А ВНУТРИ ФИГУРЫ ПОРОГА, КОТОРЫЙ РАБОТАЛ БЫ, НЕ СУЩЕСТВУЕТ. Бочка
+     * раскручивает корпус до 4.67 рад/с: это не срыв, это сама фигура. Ворота,
+     * пропускающие бочку, не поймали бы уже ничего. Поэтому фигуру защищает не
+     * порог, а знание о том, что поза ЗАКАЗАНА, — рантайм не пускает корректор
+     * в идущий номер, и стенд проверяет, что без этой защиты номера терялись бы.
+     */
+    guidance: { upsetTiltRate: 2.4, upsetYawRate: 1.4 },
+    mooringReach: 0.6,
+    /**
+     * VX-8 УМЕЕТ УХОДИТЬ С ПРИЦЕЛА. Числа выведены, а не выбраны:
+     *
+     *  - 16 м/с схода: ракета идёт 96 м/с и на полусекунде подлёта уводит
+     *    промах на восемь метров — этого хватает против радиуса поражения в
+     *    два метра, и это по силам машине с её тоннелями;
+     *  - 0.8 с рывка как основа: манёвр обязан пережить уже выпущенную
+     *    ракету, а не оборваться за миг до её прохода;
+     *  - габарит 2.6 м и запас 2.5 м: вместе с радиусом поражения дают ответ
+     *    «попадёт ли», а без запаса решение принималось бы ровно на границе;
+     *  - горизонт 2.5 с: дальше ракета ещё слишком далеко, чтобы тратить на
+     *    неё манёвр, и решение спокойно примет следующий кадр.
+     */
+    evasion: {
+      breakSpeed: 16,
+      breakSeconds: 0.8,
+      radius: 2.6,
+      margin: 2.5,
+      horizonSeconds: 2.5,
+    },
+    routePlan: (_kind, berth) => ductHexacopterLapPlan(berth),
+    arrivalPlan: ductHexacopterArrivalPlan,
+    escapePlan: ductHexacopterEscapePlan,
+    routePhase: (_kind, progress) => ductHexacopterLapPhase(progress),
   },
 };
 
@@ -1332,4 +1567,5 @@ export const airVehicles: readonly AirVehicleDefinition[] = [
   NIMBUS_HEXACOPTER_AIR_VEHICLE,
   SR6_SKAT_AIR_VEHICLE,
   COMBAT_HEXACOPTER_RANGE_AIR_VEHICLE,
+  DUCT_HEXACOPTER_RANGE_AIR_VEHICLE,
 ];

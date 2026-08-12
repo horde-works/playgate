@@ -1,0 +1,146 @@
+{
+  "modelId": "vx8-yaqui",
+  "revision": "duct-hex-d4a-rig-2026-08-08",
+  "modelHash": "25f8228cc394",
+  "generatedAt": "2026-08-08T20:16:53.807Z",
+  "views": [
+    {
+      "id": "front",
+      "label": "Front orthographic — lens section, chine to chine",
+      "projection": "orthographic",
+      "file": "front.png"
+    },
+    {
+      "id": "left",
+      "label": "Left profile — diving crown and lifting belly",
+      "projection": "orthographic",
+      "file": "left.png"
+    },
+    {
+      "id": "rear",
+      "label": "Rear orthographic — yaw tunnels and tail frame",
+      "projection": "orthographic",
+      "file": "rear.png"
+    },
+    {
+      "id": "top",
+      "label": "Top plan — frame grid in the duct band",
+      "projection": "orthographic",
+      "file": "top.png"
+    },
+    {
+      "id": "front-three-quarter",
+      "label": "Front three-quarter — core identity",
+      "projection": "perspective",
+      "file": "front-three-quarter.png"
+    },
+    {
+      "id": "rear-three-quarter",
+      "label": "Rear three-quarter — spine, saddles, tail frame",
+      "projection": "perspective",
+      "file": "rear-three-quarter.png"
+    },
+    {
+      "id": "high-three-quarter",
+      "label": "High three-quarter — frame plan and cabin void",
+      "projection": "perspective",
+      "file": "high-three-quarter.png"
+    },
+    {
+      "id": "underside",
+      "label": "Low three-quarter — belly, lower flange and trunnions",
+      "projection": "perspective",
+      "file": "underside.png"
+    },
+    {
+      "id": "top-cutaway",
+      "label": "Top plan, cutaway — deck flange and dorsal group hidden",
+      "projection": "orthographic",
+      "file": "top-cutaway.png"
+    },
+    {
+      "id": "high-three-quarter-cutaway",
+      "label": "High three-quarter, cutaway — frame grid under the flange",
+      "projection": "perspective",
+      "file": "high-three-quarter-cutaway.png"
+    },
+    {
+      "id": "band-frame-detail",
+      "label": "Detail — the frame in the clear band between rows",
+      "projection": "perspective",
+      "file": "band-frame-detail.png"
+    },
+    {
+      "id": "duct-cell-detail",
+      "label": "Detail — ring plates, splices and paired root webs",
+      "projection": "perspective",
+      "file": "duct-cell-detail.png"
+    },
+    {
+      "id": "cabin-detail",
+      "label": "Detail — canopy bows, sills and crown rail over the tub",
+      "projection": "perspective",
+      "file": "cabin-detail.png"
+    },
+    {
+      "id": "cabin-profile",
+      "label": "Cabin profile — raked cut and the crest that carries on aft",
+      "projection": "orthographic",
+      "file": "cabin-profile.png"
+    },
+    {
+      "id": "intake-detail",
+      "label": "Detail — transition to the cabin and the air duct beside it",
+      "projection": "perspective",
+      "file": "intake-detail.png"
+    },
+    {
+      "id": "tail-detail",
+      "label": "Detail — the dip between the tunnels",
+      "projection": "perspective",
+      "file": "tail-detail.png"
+    },
+    {
+      "id": "rotor-detail",
+      "label": "Detail — inlet lip, ten-blade fan, guard plane and diffuser",
+      "projection": "perspective",
+      "file": "rotor-detail.png"
+    },
+    {
+      "id": "gear-detail",
+      "label": "Detail — nose leg, oleo and pad on the datum",
+      "projection": "perspective",
+      "file": "gear-detail.png"
+    },
+    {
+      "id": "canopy-detail",
+      "label": "Detail — panes in their frame, seat and binnacle behind",
+      "projection": "perspective",
+      "file": "canopy-detail.png"
+    },
+    {
+      "id": "canopy-detail-cutaway",
+      "label": "Detail, cutaway — the same camera with the glazing hidden",
+      "projection": "perspective",
+      "file": "canopy-detail-cutaway.png"
+    },
+    {
+      "id": "belly",
+      "label": "Belly — gun, conformal launchers and four soles",
+      "projection": "perspective",
+      "file": "belly.png"
+    },
+    {
+      "id": "reference-match",
+      "label": "Reference-match camera — concept viewing angle",
+      "projection": "perspective",
+      "file": "reference-match.png"
+    },
+    {
+      "id": "silhouette-top",
+      "label": "Silhouette control — plan",
+      "projection": "orthographic",
+      "file": "silhouette-top.png"
+    }
+  ]
+}

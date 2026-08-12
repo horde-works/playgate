@@ -29,7 +29,6 @@ import { LineMaterial } from "three/addons/lines/LineMaterial.js";
 import { LineSegments2 } from "three/addons/lines/LineSegments2.js";
 import { LineSegmentsGeometry } from "three/addons/lines/LineSegmentsGeometry.js";
 import {
-  departureSignalColor,
   structuralMaterialProfiles,
   type BreakablePieceDefinition,
   type LampEventState,
@@ -61,7 +60,10 @@ import {
   type BodyState,
   type MassProperties,
 } from "./clusterDynamics";
-import type { RemnantDefinition } from "./destructionRuntime";
+import {
+  explosiveProfile,
+  type RemnantDefinition,
+} from "./destructionRuntime";
 import {
   RESTING_POSE,
   departureLightGlow,
@@ -91,6 +93,7 @@ import {
   vehicleRouteAltitudeTarget,
   vehicleVerticalArrivalCaptured,
   vehicleRotation,
+  vehicleSensorPieces,
   vehicleSpoolCommand,
   type VehicleRoutePlan,
   type VehiclePose,
@@ -105,11 +108,11 @@ import {
   type AirVehicleDefinition,
 } from "./airVehicles";
 import {
-  SKY_TRAIN_DRIVER_SEAT,
-  TOWN_HEXACOPTER_PILOT_SEAT,
-  TOWN_HEXACOPTER_PILOT_SEAT_ID,
   passengerSeatContextAction,
+  passengerSeatForCluster,
   passengerSeatIsIntact,
+  seatCommandsCarrier,
+  seatCommandsRotorcraft,
 } from "./passengerSeats";
 import { CompoundKinematicClusterBodies } from "./CompoundKinematicClusterBodies";
 import {
@@ -146,7 +149,18 @@ import {
   createVehicleImpactTelemetry,
 } from "./vehicleImpactTelemetry";
 import { runtimeDiagnosticsEnabled } from "./runtimeDiagnostics";
-import { countActiveUpwardSupportContacts } from "./vehiclePhysicalContact";
+import {
+  summariseExternalContacts,
+  NO_EXTERNAL_CONTACTS,
+  type ExternalContactSummary,
+} from "./vehiclePhysicalContact";
+import { separationDecision } from "./vehicleSeparation";
+import { worldFloorAvoidance } from "./vehicleWorldEnvelope";
+import {
+  beginCollisionEscape,
+  stepCollisionEscape,
+  type CollisionEscapeState,
+} from "./vehicleCollisionEscape";
 import {
   buildSupportStruts,
   strutClosingSpeed,
@@ -225,24 +239,33 @@ import {
   stepAirCombat,
   type AirCombatState,
 } from "./airCombatPilot.ts";
-import type {
-  AirCombatTrack,
-  VehicleWeaponFireEvent,
-} from "./vehicleGunnery.ts";
-import { resolveVehicleWeaponShot } from "./vehicleGunnery.ts";
+import type { BodyReport } from "./airCombatPosture.ts";
+import {
+  createEvasionState,
+  stepEvasion,
+  type EvasionState,
+} from "./airCombatEvasion.ts";
+import {
+  pilotStatusKey,
+  rotorcraftPilotStatusOf,
+  type RotorcraftPilotStatus,
+} from "./rotorcraftPilotStatus.ts";
+import {
+  airCombatOwnState,
+  airCombatTracks,
+  airTraffic,
+  frameHalfSpan,
+  type SightedWorld,
+} from "./airCombatSensing.ts";
 import { allegianceOf } from "./vehicleAllegiance.ts";
-import { COMBAT_HEXACOPTER_SKY_CONTROL } from "./airVehicles.ts";
+import type { VehicleWeaponFireEvent } from "./vehicleGunnery.ts";
+import { resolveVehicleWeaponShot } from "./vehicleGunnery.ts";
 import {
   advanceRouteFigureFrame,
   figureCapabilityOf,
   IDLE_ROUTE_FIGURE,
   type RouteFigureFlight,
 } from "./flightFigures.ts";
-import {
-  COMBAT_HEXACOPTER_GUARD_ALTITUDE,
-  COMBAT_HEXACOPTER_GUARD_RADIUS,
-  COMBAT_HEXACOPTER_GUARD_SPEED,
-} from "./combatHexacopterRangeRoutes.ts";
 import {
   advanceRotorcraftPilot,
   consumeRotorcraftPilotCommands,
@@ -335,13 +358,39 @@ const UPSET_SETTLE_SECONDS = 0.6;
 /** An escape that gains no route progress for this long is not an escape. */
 const ESCAPE_STALL_SECONDS = 18;
 /** Кто отправляет рейс: пока единственный кадр, у которого есть расписание. */
-const SCHEDULED_FRAME = "sky-train";
 type ScheduledInteraction = "board" | "ride" | "seat" | "stand";
 type PilotControlName =
   "forward" | "backward" | "left" | "right" | "run" | "jump";
 
 /** Тяжесть. Плотности в движке свои, но она одна для всех. */
+/**
+ * ОТЗЫВ НА БАЗУ — единственная команда возврата, и только с пульта.
+ *
+ * Вердикт Igor: возврат не запускается ни пустым боезапасом, ни таймером —
+ * только человеком. Иначе бой превращается в бесконечный цикл, а у зрителя
+ * нет способа его закончить.
+ */
+const RECALL_ACTION = "recall";
+
+/**
+ * План рейса. Один вопрос в одном месте: отзыв — это заход на посадку от точки
+ * отзыва, всё остальное берёт паспортную трассу своего вида.
+ */
+function flightRoutePlan(
+  frame: VehicleFrameRuntime,
+  flight: { readonly kind: string; readonly recallFrom?: readonly [number, number, number] },
+  berth: readonly [number, number, number],
+): VehicleRoutePlan {
+  return flight.kind === RECALL_ACTION
+    ? frame.flight.arrivalPlan(berth, {
+        from: flight.recallFrom ? [...flight.recallFrom] : undefined,
+      })
+    : frame.flight.routePlan(flight.kind, berth);
+}
+
 const GRAVITY = 9.81;
+/** Пустое множество датчиков: общее и неизменяемое, чтобы не лить мусор на кадр. */
+const EMPTY_SENSOR_SET: ReadonlySet<number> = new Set<number>();
 
 /** Предельный наклон винтокрылой машины, если паспорт молчит. */
 const DEFAULT_ROTOR_TILT = (30 * Math.PI) / 180;
@@ -420,6 +469,7 @@ function rotorcraftFlightForces(
       motorOutput: points.map((_, index) => state.rotorMotorOutput[index] ?? 0),
       liftCapacity: mass.mass * GRAVITY * (frame.flight.liftReserve ?? 1.35),
       capacityWeights: limits.rotorCapacityWeights,
+      reverseShare: limits.rotorReverseShare,
       spinDirections: limits.rotorSpinDirections,
       yawThrusters: limits.yawThrusters,
       yawThrusterAvailability: yawThrusters.map((_, index) =>
@@ -502,13 +552,26 @@ function rotorcraftFlightForces(
           ),
         )
       : 1;
+  // РАСКРУТКА ЗНАКОВАЯ У ТОГО, У КОГО ЗНАКОВАЯ ТЯГА. Реверсивное кольцо
+  // проходит через ноль так же, как реверсивный тоннель, и модель у них одна:
+  // разгон и сброс считаются по модулю, а ноль проживается целиком. Обычный
+  // подъёмный мотор остаётся на прежней несмещённой модели — не из экономии, а
+  // потому что отрицательных оборотов у него нет.
+  const rotorReversible = (frame.flight.limits.rotorReverseShare ?? 0) > 0;
   state.rotorMotorOutput = points.map((_, index) =>
-    advanceRotorMotorOutput(
-      state.rotorMotorOutput[index] ?? 0,
-      (deliveredTargets[index] ?? 0) * runUpFraction,
-      step,
-      frame.flight.spoolSeconds,
-    ),
+    rotorReversible
+      ? advanceReversibleThrusterOutput(
+          state.rotorMotorOutput[index] ?? 0,
+          (deliveredTargets[index] ?? 0) * runUpFraction,
+          step,
+          frame.flight.spoolSeconds,
+        )
+      : advanceRotorMotorOutput(
+          state.rotorMotorOutput[index] ?? 0,
+          (deliveredTargets[index] ?? 0) * runUpFraction,
+          step,
+          frame.flight.spoolSeconds,
+        ),
   );
   state.yawThrusterOutput = yawThrusters.map((_, index) =>
     advanceReversibleThrusterOutput(
@@ -549,6 +612,16 @@ function rotorcraftFlightForces(
     : trimMayLearn
       ? flightStep.trim
       : trim;
+  // Отчёт тела — то же самое, что уже уходит сторожу, только адресат другой.
+  // Боевому наведению он нужен, чтобы бросить заход, в котором машина
+  // перестала держать заданную позу: «сейчас свалюсь» есть неравенство, а не
+  // настроение (`airCombatPosture.ts`).
+  state.rotorBody = {
+    maneuverScale: flightStep.result.maneuverScale,
+    thrust: flightStep.result.authority.thrust,
+    pitch: flightStep.result.authority.pitch,
+    roll: flightStep.result.authority.roll,
+  };
   // ОБРАТНАЯ СВЯЗЬ ПО ФАКТИЧЕСКОМУ ЗАНОСУ.
   //
   // Всё, что считает автопилот вперёд по трассе, — предсказание. Оно не знает
@@ -569,6 +642,7 @@ function rotorcraftFlightForces(
       )
     : NEUTRAL_GOVERNOR;
   state.rotorAuthority = enabled ? flightStep.result.authority : null;
+  state.rotorCollective = enabled ? flightStep.result.collective : null;
   state.rotorAcceptedYawRate = enabled
     ? flightStep.result.acceptedYawRate
     : null;
@@ -766,6 +840,21 @@ interface FrameMember {
 interface VehicleFrameRuntime extends AirVehicleDefinition {
   readonly actuators: readonly CommandActuatorBinding[];
   readonly members: readonly FrameMember[];
+  /**
+   * ЧЕЙ ЭТО ДАТЧИК. Для каждого датчика приближения — кусок, на котором он
+   * сидит; тот же порядок, что у `proximitySensors`.
+   *
+   * Датчики объявлены точками в осях кадра и до сих пор про свои детали не
+   * знали вовсе: оторванная гондола улетала, а её датчик оставался висеть в
+   * идеальном обводе. Снаружи это и читалось как «сенсоры образуют
+   * собственный геометрический контур, а не закреплены к своим деталям»
+   * (наблюдение Igor, 12.08.2026).
+   *
+   * Привязка ГЕОМЕТРИЧЕСКАЯ, а не авторская: датчик принадлежит ближайшему
+   * куску. Так она достаётся даром всем машинам сразу и не расходится с
+   * паспортом, когда деталь переименуют.
+   */
+  readonly sensorPieces: readonly string[];
   /** Conservative local bounds used while own debris clears the hull. */
   readonly localBounds: {
     readonly minimum: readonly [number, number, number];
@@ -824,6 +913,12 @@ export interface VehicleFramePoseState {
 /** Ход рейса: null — стоим у причала. */
 interface FlightState {
   kind: string;
+  /**
+   * Откуда машину отозвали. Заход на посадку по отзыву начинается ТАМ, ГДЕ
+   * ПРИКАЗ ЗАСТАЛ МАШИНУ, а не на горизонте: телепортировать летящую на глазах
+   * у зрителя нельзя.
+   */
+  recallFrom?: readonly [number, number, number];
   /** How this flight was called; route kind alone does not imply occupancy. */
   occupancy: "uncrewed" | "passenger";
   /** Present only when a seated pilot, rather than a route, owns guidance. */
@@ -878,6 +973,21 @@ interface FrameRecoveryState {
   lifecycle: VehicleRecoveryLifecycle;
   progress: number;
   escapePlan: VehicleRoutePlan | null;
+  /**
+   * ЗАХОД ХРАНИТСЯ, А НЕ СТРОИТСЯ ЗАНОВО КАЖДЫЙ КАДР.
+   *
+   * Здесь жила настоящая беда прибытия. Подменную машину СТАВИЛИ на заход с
+   * изменённым пеленгом — чтобы борта приходили с разных сторон, — а ВЕЛИ её
+   * каждый кадр по заходу, построенному тут же и БЕЗ доводов, то есть с
+   * пеленгом ноль. Два разных маршрута: машина стоит в одной точке, а трасса
+   * считает её началом другую, за полтораста метров. Отсюда и наблюдение
+   * Igor: «маршрут подменного RAX на нулевой высоте, при прибытии он врезается
+   * в край и подвисает».
+   *
+   * Побочно это ещё и расточительство: план строился шестьдесят раз в секунду
+   * ради значения, которое не меняется весь заход.
+   */
+  arrivalPlan: VehicleRoutePlan | null;
   arrivalInitialized: boolean;
   landingStability: VehicleLandingStabilityState;
   /** Seconds the escape has spent without gaining route progress. */
@@ -914,6 +1024,13 @@ interface FrameState {
    * нужен и остаётся null.
    */
   rotorTrim: RotorcraftTrimState | null;
+  /**
+   * ОТЧЁТ ТЕЛА О ПРОШЛОМ КАДРЕ: сколько из заказанного микшер действительно
+   * дал. Копится здесь потому, что винты считаются ПОСЛЕ наведения, а нужен он
+   * наведению — то есть следующему кадру. Кадр запаздывания принципиален и
+   * безвреден: чувство тела живёт десятыми долями секунды, а не кадрами.
+   */
+  rotorBody: BodyReport | null;
   /** Actual per-motor output after actuator delivery and spool inertia. */
   rotorMotorOutput: number[];
   /**
@@ -945,6 +1062,17 @@ interface FrameState {
    * синфазная тяга закрыта; крохотный пробный импульс на первом кадре рейса
    * выучивает правду за 1/60 секунды.
    */
+  /**
+   * Машина уже провалилась ниже мира и пересборка запрошена. Защёлка живёт
+   * между кадрами: пересборка проходит через состояние React, и до следующего
+   * кадра машина всё ещё под миром.
+   */
+  fellOutOfWorld: boolean;
+  /**
+   * Состояние уклонения. `null` — машина не умеет уходить с прицела: это
+   * объявляется паспортом, а не движком.
+   */
+  evasion: EvasionState | null;
   yawThrustersProven: boolean;
   /** Срезка ограничителя по фактическому заносу: живёт между кадрами. */
   governor: RotorcraftGovernorState;
@@ -952,6 +1080,8 @@ interface FrameState {
   activePlan: VehicleRoutePlan | null;
   /** Previous physical step, consumed by the common failure watchdog. */
   rotorAuthority: RotorcraftAuthority | null;
+  /** Заказанный коллектив прошлого шага: со знаком, для разбора отказов. */
+  rotorCollective: number | null;
   /** Command the bounded rotor allocator actually accepted last step. */
   rotorAcceptedYawRate: number | null;
   /** Последнее требование автомата по рысканью — для разбора поведения носа. */
@@ -994,6 +1124,42 @@ interface FrameState {
   recovery: FrameRecoveryState | null;
   /** Number of upward-facing physical contact manifolds last step. */
   supportContacts: number;
+  /**
+   * ЧТО ВНЕШНИЙ МИР ДЕЛАЛ С МАШИНОЙ В ПРОШЛОМ ШАГЕ — целиком, а не только
+   * счётом опор. Нужен двоим: сторожу отказов, чтобы не объявлять поломкой
+   * чужую помеху, и высвобождению, чтобы знать, куда выбираться.
+   */
+  externalContacts: ExternalContactSummary;
+  /**
+   * ВЫСВОБОЖДЕНИЕ ИЗ ЗАЦЕПА. Живёт ровно столько, сколько длится эпизод
+   * контакта плюс доводка; вне его — null, и машина о нём не думает.
+   */
+  escape: CollisionEscapeState | null;
+  /** Сколько машина уже свободна, но ещё доводит уход, с. */
+  escapeFreeSeconds: number;
+  /**
+   * Последнее решение о расхождении: с кем и куда. Хранится ради разбора —
+   * правило, которое ни разу не видели работающим, проверено только на стенде.
+   */
+  separation: {
+    readonly withId: string;
+    readonly away: readonly [number, number, number];
+  } | null;
+  /**
+   * ПОЧЕМУ РЕЙС НЕ ЗАКАНЧИВАЕТСЯ. Гейт швартовки — конъюнкция семи условий, и
+   * снаружи виден только его итог: «не пришвартовалась». Машина, зависшая над
+   * своей площадкой, выглядит при этом совершенно исправной, и разобрать её
+   * без разбивки по условиям нечем.
+   */
+  dockingGate: {
+    readonly progress: number;
+    readonly offset: number;
+    readonly height: number;
+    readonly speed: number;
+    readonly verticalSpeed: number;
+    readonly angular: number;
+    readonly alignment: number;
+  } | null;
   /** Свободное тело: им корабль живёт, пока не летит по маршруту. */
   body: BodyState;
   mass: MassProperties | null;
@@ -1456,13 +1622,17 @@ function restingState(engineCount: number, yawThrusterCount = 0): FrameState {
     trim: [],
     trimAttitude: null,
     rotorTrim: null,
+    rotorBody: null,
     rotorMotorOutput: Array.from({ length: engineCount }, () => 0),
     yawThrusterOutput: Array.from({ length: yawThrusterCount }, () => 0),
     yawThrusterHealth: Array.from({ length: yawThrusterCount }, () => 1),
+    fellOutOfWorld: false,
+    evasion: null,
     yawThrustersProven: false,
     governor: NEUTRAL_GOVERNOR,
     activePlan: null,
     rotorAuthority: null,
+    rotorCollective: null,
     rotorAcceptedYawRate: null,
     lastGuidanceYawRate: null,
     lastHeadingTarget: null,
@@ -1484,6 +1654,11 @@ function restingState(engineCount: number, yawThrusterCount = 0): FrameState {
     flight: null,
     recovery: null,
     supportContacts: 0,
+    externalContacts: NO_EXTERNAL_CONTACTS,
+    escape: null,
+    escapeFreeSeconds: 0,
+    separation: null,
+    dockingGate: null,
     body: RESTING_BODY,
     mass: null,
     intactMass: 0,
@@ -2008,7 +2183,7 @@ export function VehicleFrameSystem({
   }, [remnants]);
 
   useEffect(() => {
-    if (occupiedSeatId === TOWN_HEXACOPTER_PILOT_SEAT_ID) {
+    if (seatCommandsRotorcraft(occupiedSeatId)) {
       return;
     }
     pilotStatusPublished.current = null;
@@ -2019,7 +2194,7 @@ export function VehicleFrameSystem({
 
   useEffect(() => {
     pilotCommands.current = createRotorcraftPilotCommandBuffer();
-    if (occupiedSeatId !== TOWN_HEXACOPTER_PILOT_SEAT_ID) {
+    if (!seatCommandsRotorcraft(occupiedSeatId)) {
       return undefined;
     }
     const handleWheel = (event: WheelEvent) => {
@@ -2195,9 +2370,16 @@ export function VehicleFrameSystem({
             maximum[axis] = Math.max(maximum[axis], local + radius);
           }
         }
+        // Решение вынесено в чистую функцию: React-часть тестами не покрыта,
+        // и обе прошлые поломки запуска боевой задачи жили именно здесь.
+        const sensorPieces = vehicleSensorPieces(
+          vehicle.proximitySensors,
+          members.map((member) => member.piece),
+        );
         return {
           ...vehicle,
           members,
+          sensorPieces,
           localBounds: { minimum, maximum },
           actuators: compileCommandActuators(
             members.map((member) => member.piece),
@@ -2207,6 +2389,20 @@ export function VehicleFrameSystem({
   }, [pieces]);
 
   const states = useRef(new Map<string, FrameState>());
+  /**
+   * РАКЕТЫ В ВОЗДУХЕ — ровно те, что выпустил этот контур.
+   *
+   * Ведутся здесь потому, что здесь же и рождаются: жертве надо уклоняться от
+   * ПУСКА, а не от подозрительного поведения, и увидеть пуск она может только
+   * так. Живут по времени полёта и вычищаются по нему же — иначе список
+   * растёт партию напролёт.
+   */
+  const liveRockets = useRef<
+    { id: number; position: [number, number, number]; velocity: [number, number, number]; blastRadius: number; bornAt: number }[]
+  >([]);
+  const rocketSerial = useRef(0);
+  /** Счётчик прибытий: по нему разводится створ захода. */
+  const arrivalSerial = useRef(0);
   const frameState = useCallback(
     (id: string): FrameState => {
       const existing = states.current.get(id);
@@ -2236,9 +2432,51 @@ export function VehicleFrameSystem({
         return {
           id: frame.id,
           supportContacts: live?.supportContacts ?? null,
+          /** Идёт ли высвобождение из зацепа и сколько уже длится, с. */
+          escaping: live?.escape ? Number(live.escape.seconds.toFixed(1)) : null,
+          docking: live?.dockingGate
+            ? Object.fromEntries(
+                Object.entries(live.dockingGate).map(([key, value]) => [
+                  key,
+                  Number((value as number).toFixed(3)),
+                ]),
+              )
+            : null,
+          dockingLimits: {
+            position: frame.flight.docking.position,
+            height: frame.flight.docking.height,
+            speed: frame.flight.docking.speed,
+            verticalSpeed: frame.flight.docking.verticalSpeed,
+            angularSpeed: frame.flight.docking.angularSpeed,
+            headingCos: frame.flight.docking.headingCos,
+          },
+          separation: live?.separation
+            ? {
+                withId: live.separation.withId,
+                away: live.separation.away.map((value: number) =>
+                  Number(value.toFixed(2)),
+                ),
+              }
+            : null,
+          authority: live?.rotorAuthority
+            ? {
+                thrust: Number(live.rotorAuthority.thrust.toFixed(2)),
+                pitch: Number(live.rotorAuthority.pitch.toFixed(2)),
+                roll: Number(live.rotorAuthority.roll.toFixed(2)),
+              }
+            : null,
+          collective:
+            live?.rotorCollective === null || live?.rotorCollective === undefined
+              ? null
+              : Number(live.rotorCollective.toFixed(3)),
+          contacts: live?.externalContacts.count ?? null,
           recovery: live?.recovery
             ? {
                 phase: live.recovery.lifecycle.phase,
+                // ЗА ЧТО сняли — не менее важно, чем «сняли». Диагнозы
+                // теперь различаются (`entangled` против `controlMismatch`),
+                // и проба обязана видеть именно имя, а не факт аварии.
+                reason: live.recovery.lifecycle.reason,
                 progress: live.recovery.progress,
                 groundContactSeconds: live.recovery.groundContactSeconds,
               }
@@ -2246,6 +2484,11 @@ export function VehicleFrameSystem({
           flight: flight
             ? {
                 kind: flight.kind,
+                // ЗА ШТУРВАЛОМ ЧЕЛОВЕК. Снаружи это не видно ничем другим:
+                // вид рейса у ручного полёта тот же, что у автоматического
+                // (`dispatchedFlightKind` намеренно не заводит вид `manual`),
+                // а разница ровно здесь.
+                pilot: flight.pilot !== null,
                 time: flight.time,
                 castOff: flight.castOff,
                 progress: flight.progress,
@@ -2277,6 +2520,18 @@ export function VehicleFrameSystem({
                 supports: live?.supportContacts ?? 0,
               }
             : null,
+          // МИРОВОЙ ЦЕНТР, а не смещение тела. Смещение отсчитывается от
+          // собственного покоя машины, и сравнивать смещения двух машин
+          // бессмысленно: у стоящих на разных причалах они одинаково нулевые.
+          // Первая же проба расхождения на этом и обманулась.
+          centre:
+            live && live.mass
+              ? [
+                  live.mass.centre[0] + live.body.position[0],
+                  live.mass.centre[1] + live.body.position[1],
+                  live.mass.centre[2] + live.body.position[2],
+                ]
+              : null,
           body: live
             ? {
                 position: live.body.position,
@@ -2360,14 +2615,6 @@ export function VehicleFrameSystem({
         pitch?: number,
         roll?: number,
       ) => boolean;
-      __mamShipPose?: (
-        x: number,
-        y: number,
-        z: number,
-        yaw?: number,
-        pitch?: number,
-        roll?: number,
-      ) => boolean;
       __mamVehicleImpulse?: (
         id: string,
         impulseX: number,
@@ -2378,6 +2625,22 @@ export function VehicleFrameSystem({
         pointZ: number,
       ) => boolean;
       __mamVehicleDepart?: (id: string, kind?: string) => boolean;
+      __mamAirCombat?: () => readonly {
+        readonly id: string;
+        readonly mode: string;
+        readonly targetId: string | null;
+        readonly modeSeconds: number;
+        readonly passes: number;
+      }[];
+      /** Кто сейчас уходит от ракеты и сколько ракет в воздухе. */
+      __mamEvasion?: () => {
+        readonly rockets: number;
+        readonly dodging: readonly {
+          readonly id: string;
+          readonly breakSeconds: number;
+          readonly threatId: number | null;
+        }[];
+      };
       __mamVehicleContacts?: () => {
         readonly seen: number;
         readonly closing: number;
@@ -2401,9 +2664,10 @@ export function VehicleFrameSystem({
       frameState(id).pose = { position: [x, y, z], yaw, pitch, roll };
       return true;
     };
+    // `__mamShipPose` снят: он был псевдонимом `__mamVehiclePose` с зашитым
+    // именем состава, читателей в репозитории не имел, а общий хук умеет то
+    // же самое и для любой машины.
     scope.__mamVehiclePose = setPose;
-    scope.__mamShipPose = (x, y, z, yaw, pitch, roll) =>
-      setPose("sky-train", x, y, z, yaw, pitch, roll);
     const applyDiagnosticImpulse = (
       id: string,
       impulseX: number,
@@ -2439,6 +2703,17 @@ export function VehicleFrameSystem({
       if (state.flight) {
         return false;
       }
+      // ВИД ПРОВЕРЯЕТСЯ ДО ВЗЛЁТА, а не в шаге физики. Диагностика, способная
+      // убить сцену опечаткой в имени маршрута, — это не диагностика: живая
+      // проба попросила `lap` у машины, у которой такого вида нет, отправка
+      // ответила «взлетела», и мир падал каждый кадр до перезагрузки.
+      try {
+        // Спрашивается ровно то, что падало: стадия рейса по имени вида.
+        frame.flight.routePhase(kind, 0);
+      } catch (error) {
+        console.warn(`__mamVehicleDepart: ${(error as Error).message}`);
+        return false;
+      }
       state.flight = createFlightState(
         kind,
         "uncrewed",
@@ -2447,6 +2722,43 @@ export function VehicleFrameSystem({
       return true;
     };
     scope.__mamVehicleDepart = departDiagnostic;
+    /**
+     * ЧТО СЕЙЧАС ДЕЛАЕТ АВТОМАТ БОЯ. Единственный способ увидеть это снаружи:
+     * состояние боя живёт в карте состояний и наружу не публикуется вовсе,
+     * поэтому «машина взлетела и полетела в ту сторону» до сих пор было
+     * единственным наблюдением, а режим, цель и счёт заходов — только в трассе
+     * стенда. Пустой список означает «никто не воюет», и это законный ответ.
+     */
+    scope.__mamAirCombat = () =>
+      frames
+        // ТОЛЬКО ЧТЕНИЕ: `frameState` создаёт состояние при промахе, и
+        // диагностика, которая пишет, — уже не диагностика.
+        .map((frame) => ({
+          frame,
+          combat: states.current.get(frame.id)?.combat ?? null,
+        }))
+        .filter(({ combat }) => combat !== null)
+        .map(({ frame, combat }) => ({
+          id: frame.id,
+          mode: combat!.mode,
+          targetId: combat!.targetId,
+          modeSeconds: Number(combat!.modeSeconds.toFixed(2)),
+          passes: combat!.passes,
+        }));
+    scope.__mamEvasion = () => ({
+      rockets: liveRockets.current.length,
+      dodging: frames
+        .map((frame) => ({
+          id: frame.id,
+          evasion: states.current.get(frame.id)?.evasion ?? null,
+        }))
+        .filter(({ evasion }) => evasion !== null && evasion.breakSeconds > 0)
+        .map(({ id, evasion }) => ({
+          id,
+          breakSeconds: Number(evasion!.breakSeconds.toFixed(2)),
+          threatId: evasion!.threatId,
+        })),
+    });
     const query = new URLSearchParams(window.location.search);
     const impulseRequest = query.get("mamVehicleImpulse");
     const impulseDelay = Math.max(
@@ -2496,7 +2808,6 @@ export function VehicleFrameSystem({
         window.clearTimeout(departureTimer);
       }
       delete scope.__mamVehiclePose;
-      delete scope.__mamShipPose;
       if (scope.__mamVehicleImpulse === applyDiagnosticImpulse) {
         delete scope.__mamVehicleImpulse;
       }
@@ -2504,7 +2815,8 @@ export function VehicleFrameSystem({
       if (scope.__mamVehicleDepart === departDiagnostic) {
         delete scope.__mamVehicleDepart;
       }
-      delete document.documentElement.dataset.mamSkyTrain;
+      delete scope.__mamAirCombat;
+      delete scope.__mamEvasion;
       delete document.documentElement.dataset.mamVehicle;
     };
   }, [externalImpulses, frameState, frames]);
@@ -2645,6 +2957,30 @@ export function VehicleFrameSystem({
   useBeforePhysicsStep(() => {
     const step = PHYSICS_TIME_STEP;
 
+    // РАКЕТЫ ЛЕТЯТ И СТАРЕЮТ. Здесь только счисление для чужих глаз: сам
+    // снаряд живёт своим телом в мире, а этот список нужен жертве, чтобы от
+    // пуска можно было уклониться. Три секунды — заведомо больше времени
+    // полёта на любой дальности этой пары.
+    if (liveRockets.current.length > 0) {
+      const flown: typeof liveRockets.current = [];
+      for (const rocket of liveRockets.current) {
+        const age = rocket.bornAt + step;
+        if (age > 3) {
+          continue;
+        }
+        flown.push({
+          ...rocket,
+          bornAt: age,
+          position: [
+            rocket.position[0] + rocket.velocity[0] * step,
+            rocket.position[1] + rocket.velocity[1] * step,
+            rocket.position[2] + rocket.velocity[2] * step,
+          ],
+        });
+      }
+      liveRockets.current = flown;
+    }
+
     // Кто ВЕДЁТ РЕЙС на этой карте: у него лампы причала, межостровная
     // передача и швартовка. Он один, и это осознанное ограничение.
     const scheduledFrame = frames.find((frame) => frame.departure);
@@ -2698,7 +3034,6 @@ export function VehicleFrameSystem({
       const interactionFrame = nearestFrame ?? scheduledFrame;
       const interaction = frameState(interactionFrame.id);
       const departure = interactionFrame.departure;
-      const isTerminal = interactionFrame.id === SCHEDULED_FRAME;
       const registeredLaunchMembers = clusterRegistry.current.get(
         interactionFrame.clusterId,
       )?.attachedMemberIds;
@@ -2753,12 +3088,12 @@ export function VehicleFrameSystem({
         interaction.pose,
         interactionFrame.nose,
       );
-      const interactionSeat = isTerminal
-        ? SKY_TRAIN_DRIVER_SEAT
-        : interactionFrame.clusterId ===
-            TOWN_HEXACOPTER_PILOT_SEAT.carrierClusterId
-          ? TOWN_HEXACOPTER_PILOT_SEAT
-          : null;
+      // Место управления ищется ПО МАШИНЕ, а не по имени кресла: у каждой
+      // винтокрылой кабина своя, и общий контур обязан находить её так же,
+      // как находит саму машину, — по кластеру.
+      const interactionSeat = passengerSeatForCluster(
+        interactionFrame.clusterId,
+      );
       const seatIntact =
         interactionSeat !== null &&
         passengerSeatIsIntact(interactionSeat, inactivePieces);
@@ -2769,13 +3104,17 @@ export function VehicleFrameSystem({
             eyeInShip[2] - interactionSeat.interactionPoint[2],
           )
         : Number.POSITIVE_INFINITY;
-      const hexacopterPilotMayStand =
-        interactionSeat?.id !== TOWN_HEXACOPTER_PILOT_SEAT_ID ||
-        (occupiedSeatId === TOWN_HEXACOPTER_PILOT_SEAT_ID &&
+      // Встать можно, если это не место управления вовсе, либо человек
+      // сидит ИМЕННО В ЭТОМ месте и машина не в воздухе. Второе условие про
+      // это же кресло, а не про любое пилотское: пока кресло управления было
+      // одно на проект, разницы между этими вопросами не существовало.
+      const pilotMayStand =
+        interactionSeat?.rotorcraftControls !== true ||
+        (occupiedSeatId === interactionSeat.id &&
           interaction.flight === null);
       const seatAction =
         interactionSeat &&
-        hexacopterPilotMayStand &&
+        pilotMayStand &&
         (passengerLaunchAllowed || occupiedSeatId === interactionSeat.id)
           ? passengerSeatContextAction({
               seat: interactionSeat,
@@ -2826,8 +3165,13 @@ export function VehicleFrameSystem({
           post = "ride";
         } else if (
           departure &&
-          uncrewedLaunchAllowed &&
-          vehicleHome &&
+          // ПУЛЬТ ГОВОРИТ И ТОГДА, КОГДА МАШИНА НЕ ДОМА.
+          //
+          // Прежде пост требовал, чтобы машина стояла на площадке, и у пульта
+          // не было ни одного слова для улетевшей. Отсюда бой без конца:
+          // отозвать охотника было нечем (вердикт Igor, 11.08.2026). Отзыв —
+          // единственная команда возврата, других триггеров нет и не будет.
+          (interaction.flight === null ? uncrewedLaunchAllowed && vehicleHome : true) &&
           Math.abs(eye[1] - departure.point[1]) < departure.heightTolerance &&
           boardDistance <=
             (keepBoard ? departure.releaseRadius : departure.approachRadius)
@@ -2852,9 +3196,31 @@ export function VehicleFrameSystem({
             eye: [eye[0], eye[1], eye[2]],
           };
         }
-      } else if (isTerminal) {
+      } else if (interactionSeat) {
+        // Место у машины есть — предложить сесть. Условия у предложения свои
+        // (машина на месте, человек внутри её обвода), и решает их само место;
+        // прежде эта ветка спрашивала имя состава и потому молчала у всех
+        // остальных машин с креслом.
+        //
+        // Для ВИНТОКРЫЛОЙ эта ветка тождественно молчит, и это не случайность,
+        // а следствие `pilotMayStand` выше: сюда попадают только рейсы в
+        // воздухе (`interaction.flight !== null`), а встать за штурвалом в
+        // воздухе запрещено. Связь косвенная и держится на тридцати строках
+        // расстояния — если `pilotMayStand` когда-нибудь смягчат, здесь
+        // появится предложение встать посреди полёта.
         post = seatAction;
       }
+      // Улетевшей машине пульт предлагает РОВНО ОДНО: вернуться. Показывать
+      // ей же «отправить в облёт» было бы обманом — она уже в рейсе.
+      const recallTarget =
+        departure && interaction.flight !== null
+          ? {
+              ...departure.target,
+              actions: [
+                { id: RECALL_ACTION, labelKey: "hint.vehicleRecall.action" },
+              ],
+            }
+          : null;
       const departureTarget =
         departure?.target.actions && !passengerLaunchAllowed
           ? {
@@ -2868,7 +3234,7 @@ export function VehicleFrameSystem({
         post === "ride"
           ? (interactionFrame.passengerFlight?.target ?? null)
           : post === "board"
-            ? departureTarget
+            ? (recallTarget ?? departureTarget)
             : post === "seat"
               ? { id: interactionSeat?.id ?? "seat", kind: "seat" }
               : post === "stand"
@@ -2888,7 +3254,37 @@ export function VehicleFrameSystem({
           post &&
           entryInteractionMatches(departRequestTargetRef?.current, candidate)
         ) {
+          // ОТЗЫВ: машина в рейсе получает заход на посадку ОТ ТЕКУЩЕГО МЕСТА.
+          //
+          // Не «прервать рейс» и не «телепортировать домой»: это тот же заход,
+          // что у подменного судна, только начало у него не на горизонте, а
+          // там, где приказ застал машину. Бой при этом кончается сам — цели
+          // у неё больше нет, потому что нет и рейса на сторожение.
           if (
+            post === "board" &&
+            interaction.flight !== null &&
+            departRequestTargetRef?.current?.selectedActionId === RECALL_ACTION
+          ) {
+            const centre: [number, number, number] = [
+              interaction.mass
+                ? interaction.mass.centre[0] + interaction.body.position[0]
+                : interaction.body.position[0],
+              interaction.mass
+                ? interaction.mass.centre[1] + interaction.body.position[1]
+                : interaction.body.position[1],
+              interaction.mass
+                ? interaction.mass.centre[2] + interaction.body.position[2]
+                : interaction.body.position[2],
+            ];
+            interaction.flight = {
+              ...interaction.flight,
+              kind: RECALL_ACTION,
+              recallFrom: centre,
+              progress: 0,
+              time: 0,
+            };
+            interaction.combat = null;
+          } else if (
             (post === "ride" || post === "board") &&
             interaction.flight === null
           ) {
@@ -2899,7 +3295,7 @@ export function VehicleFrameSystem({
             // пилота где угодно, хоть на крыше.
             const manualPilotLaunch =
               requestedAction === "manual" &&
-              interactionSeat?.id === TOWN_HEXACOPTER_PILOT_SEAT_ID &&
+              interactionSeat?.rotorcraftControls === true &&
               passengerLaunchAllowed &&
               seatIntact;
             interaction.flight = createFlightState(
@@ -2921,7 +3317,7 @@ export function VehicleFrameSystem({
                 : null,
             );
             if (manualPilotLaunch) {
-              onOccupiedSeatChange(TOWN_HEXACOPTER_PILOT_SEAT_ID);
+              onOccupiedSeatChange(interactionSeat.id);
             }
           } else if (
             post === "seat" &&
@@ -3093,9 +3489,12 @@ export function VehicleFrameSystem({
         scheduledEventState,
         scheduled.flight?.time ?? 0,
       );
-      if (isTerminal && glow !== departureGlow.current) {
+      // Каким стеклом светит отправление, объявляет ПАСПОРТ машины: лампы
+      // принадлежат сцене, а чьё отправление они показывают — её свойство.
+      const signalColor = scheduledFrame.departure?.signalColor;
+      if (signalColor && glow !== departureGlow.current) {
         departureGlow.current = glow;
-        setSignalGlassGlow(departureSignalColor, glow);
+        setSignalGlassGlow(signalColor, glow);
       }
       if (vehicleDiagnostics) {
         const now = performance.now();
@@ -3168,10 +3567,6 @@ export function VehicleFrameSystem({
           };
           document.documentElement.dataset.mamVehicle =
             JSON.stringify(diagnostic);
-          if (isTerminal) {
-            document.documentElement.dataset.mamSkyTrain =
-              JSON.stringify(diagnostic);
-          }
         }
       }
     }
@@ -3718,7 +4113,8 @@ export function VehicleFrameSystem({
             ),
             progress: 0,
             escapePlan: null,
-            arrivalInitialized: false,
+            arrivalPlan: null,
+          arrivalInitialized: false,
             escapeStallSeconds: 0,
             escapeBestProgress: 0,
             landingStability: createVehicleLandingStability(
@@ -3914,12 +4310,117 @@ export function VehicleFrameSystem({
         (envelopeLeft / state.intactEnvelope) *
         (frame.flight.liftReserve ?? DEFAULT_VEHICLE_LIFT_RESERVE);
       const neutral = mass.mass * GRAVITY;
+      // ЧТО У МАШИНЫ ОСТАЛОСЬ — считается ДО цикла восстановления, а не после.
+      //
+      // Раньше эти три числа рождались ниже по кадру, и цикл восстановления
+      // физически не мог их спросить: исход аварии выбирался один раз, в миг
+      // отказа, и пересмотру не подлежал. Ровно об этом вердикт Igor про
+      // упавшего вверх пузом охотника — «в безвыходное положение он попал
+      // только в силу нашей логики». Теперь ответ доступен в любой момент
+      // кадра, и лежащая машина может спросить заново, жива ли она.
+      const attachedMembers =
+        clusterRegistry.current.get(frame.clusterId)?.attachedMemberIds ??
+        new Set(alive.map((member) => member.piece.id));
+      const propulsion = propulsionHealth(
+        frame.actuators,
+        attachedMembers,
+        frame.flight.limits.enginePoints.length,
+      );
+      const liftHold = state.mass
+        ? rotorHoldState(
+            frame,
+            state.intactMass,
+            state.mass,
+            propulsion.fractions,
+          )
+        : null;
       const berth = mass.centre as [number, number, number];
       let centreNow: [number, number, number] = [
         mass.centre[0] + state.body.position[0],
         mass.centre[1] + state.body.position[1],
         mass.centre[2] + state.body.position[2],
       ];
+
+      // УПАЛА НИЖЕ МИРА — ПЕРЕСОБРАТЬ НА СВОЁМ МЕСТЕ.
+      //
+      // Глубина исчезновения до машин доходила, но спрашивалась ТОЛЬКО внутри
+      // аварийного цикла и только в фазе снижения. Сбитая машина, которая
+      // просто падает и в этот цикл не вошла, не удалялась никогда: она уходила
+      // под мир и продолжала считаться там вечно, вместе со всеми своими
+      // кусками. Обломки такой предел имеют давно.
+      //
+      // Пересборка, а не удаление, — вердикт Igor: полигон должен оставаться
+      // рабочим, а не пустеть после первого же падения.
+      //
+      // Защёлка обязательна: пересборка проходит через состояние React, и до
+      // следующего кадра машина всё ещё под миром. Без неё запрос уходил бы
+      // каждый кадр падения.
+      const belowWorld =
+        centreNow[1] <= (recoveryServiceArea?.disappearY ?? -12);
+      if (belowWorld && !state.fellOutOfWorld && !state.recovery) {
+        state.fellOutOfWorld = true;
+        // ЧЕРЕЗ АВАРИЙНЫЙ ЦИКЛ, А НЕ МИМО НЕГО.
+        //
+        // Первая редакция звала пересборку напрямую, и это ломало прибытие:
+        // куски восстанавливались на берте, а РЕЙС оставался прежним — машина
+        // возникала на посадочном месте и продолжала лететь свой круг с той
+        // доли, где упала. Снаружи это читалось как «появился и взлетел без
+        // приземления, а потом улетел за остров без повода» (наблюдение Igor).
+        //
+        // Цикл умеет это сам: ожидание, пересборка, и только потом ПРИБЫТИЕ —
+        // с переносом в начало трассы прибытия и честным подлётом к берту.
+        // Провалившаяся машина входит в него на фазе ожидания: спускаться ниже
+        // ей уже некуда, она там.
+        state.recovery = {
+          lifecycle: {
+            reason: "unsafeAltitude",
+            disposition: "descendBelowFog",
+            phase: "waiting",
+            phaseSeconds: 0,
+          },
+          progress: 0,
+          escapePlan: null,
+          arrivalPlan: null,
+          arrivalInitialized: false,
+          escapeStallSeconds: 0,
+          escapeBestProgress: 0,
+          landingStability: createVehicleLandingStability(
+            state.body.position,
+            state.body.orientation,
+          ),
+          groundContactSeconds: 0,
+          groundContactLatched: false,
+          groundLiftAutomation: createVehicleGroundLiftAutomation(),
+        };
+      } else if (belowWorld && !state.fellOutOfWorld && state.recovery) {
+        // ГЛУБИНА — СВОЙСТВО МИРА, А НЕ ФАЗЫ.
+        //
+        // Условие выше требовало, чтобы машина НЕ БЫЛА в аварийном цикле, а
+        // внутри цикла предел глубины знала ровно одна фаза — снижение под
+        // туман. Машина, упавшая уже будучи в аварии (сбита в бою, потеряла
+        // позу на уходе, не встала после посадки), проваливалась мимо всех
+        // проверок и считалась вечно: наблюдение Igor — VX на высоте минус два
+        // километра, никуда не исчезает.
+        //
+        // Ниже мира не может удаться ничего: ни уход по маршруту, ни посадка,
+        // ни подъём. Поэтому любая фаза, кроме уже начатой пересборки,
+        // сворачивается в ожидание — оттуда цикл сам приведёт машину к
+        // пересборке и честному прибытию.
+        state.fellOutOfWorld = true;
+        if (state.recovery.lifecycle.phase !== "rebuilding") {
+          state.recovery.lifecycle = {
+            ...state.recovery.lifecycle,
+            phase: "waiting",
+            phaseSeconds: 0,
+          };
+          state.recovery.progress = 0;
+          state.recovery.escapePlan = null;
+          state.recovery.arrivalPlan = null;
+          state.recovery.arrivalInitialized = false;
+        }
+      } else if (!belowWorld && state.fellOutOfWorld) {
+        state.fellOutOfWorld = false;
+      }
 
       if (state.recovery) {
         const previousPhase = state.recovery.lifecycle.phase;
@@ -4018,6 +4519,50 @@ export function VehicleFrameSystem({
               state.recovery.landingStability.landed,
             rebuildComplete,
             arrivalComplete,
+            // МОЖЕТ ЛИ ОНА ЛЕТЕТЬ ОТСЮДА — вопрос задаётся СЕЙЧАС, когда всё
+            // остановилось, а не в миг катастрофы. Три факта, и все
+            // измеренные: цела ли конструкция, хватает ли подъёма на
+            // собственный вес и держат ли уцелевшие движители позу.
+            flightworthy:
+              mass.mass / Math.max(1, state.intactMass) >= 0.55 &&
+              envelopeLeft / Math.max(1, state.intactEnvelope) >= 0.5 &&
+              liftCapacity / Math.max(1, neutral) >= 1.02 &&
+              liftHold !== "tumbling",
+            // БЕДА МИНОВАЛА: машина в воздухе, цела и держит позу. Отличие от
+            // `flightworthy` в том, что тот отвечает «сможет ли», а этот —
+            // «летит и держится прямо сейчас».
+            flyingWell:
+              state.supportContacts === 0 &&
+              liftHold === "flying" &&
+              mass.mass / Math.max(1, state.intactMass) >= 0.55 &&
+              envelopeLeft / Math.max(1, state.intactEnvelope) >= 0.5 &&
+              liftCapacity / Math.max(1, neutral) >= 1.02 &&
+              (() => {
+                const pose = vehicleAttitude(
+                  state.body.orientation,
+                  frame.nose,
+                );
+                return (
+                  Math.abs(pose.pitch) < Math.PI * 0.4 &&
+                  Math.abs(pose.roll) < Math.PI * 0.4
+                );
+              })(),
+            // ВСТАЛА. Оторвалась от грунта и держит позу брюхом вниз —
+            // строгость здесь уместна, это взлёт.
+            uprightAgain:
+              previousPhase === "righting" &&
+              state.supportContacts === 0 &&
+              centreNow[1] > (recoveryServiceArea?.disappearY ?? -12) + 3 &&
+              (() => {
+                const pose = vehicleAttitude(
+                  state.body.orientation,
+                  frame.nose,
+                );
+                return (
+                  Math.abs(pose.pitch) < Math.PI * 0.25 &&
+                  Math.abs(pose.roll) < Math.PI * 0.25
+                );
+              })(),
           },
         );
         if (recoveryResult.requestRebuild) {
@@ -4032,7 +4577,17 @@ export function VehicleFrameSystem({
             previousPhase !== "arrival" &&
             recoveryResult.lifecycle.phase === "arrival"
           ) {
-            const arrival = frame.flight.arrivalPlan(berth);
+            // ПОДМЕННЫЕ СУДА ПРИХОДЯТ С РАЗНЫХ СТОРОН (вердикт Igor): один и
+            // тот же створ превращает полигон в конвейер. Пеленг берётся из
+            // счётчика прибытий — воспроизводимо и без случайных чисел, но
+            // каждый раз новый.
+            arrivalSerial.current += 1;
+            const arrival = frame.flight.arrivalPlan(berth, {
+              bearing: (arrivalSerial.current * 2.399963) % (Math.PI * 2),
+            });
+            // Тот же самый план и полетит: ставить машину на один заход, а
+            // вести по другому — это не прибытие, а два разных прибытия.
+            state.recovery.arrivalPlan = arrival;
             const start = arrival.point(0);
             const ahead = arrival.point(Math.min(1, 6 / arrival.length));
             const tangentLength =
@@ -4076,6 +4631,55 @@ export function VehicleFrameSystem({
                 ? 1 / (frame.flight.liftReserve ?? 1.35)
                 : 0,
             );
+            // ПОДМЕННАЯ МАШИНА — НОВАЯ МАШИНА, А НЕ ВОСКРЕШЁННАЯ ПРЕЖНЯЯ.
+            //
+            // Куски пересобирались, а ВЫУЧЕННОЕ состояние прежнего борта
+            // оставалось на месте, и новая машина получала его целиком:
+            //
+            //  - `rotorTrim` — компенсация, накопленная под выбитые кольца.
+            //    На целой машине это готовый момент, и она уходит кубарем в
+            //    первую же секунду;
+            //  - `propulsionFeedback` — обученная доля живых двигателей.
+            //    Автопилот ведёт свежий борт как калеку, пока она не отрастёт;
+            //  - счётчики сторожа: `goArounds`, `corrections` и накопленные
+            //    секунды. Достигнутый предел мгновенно снимает прибывшую
+            //    машину с рейса — и до трассы прибытия она просто не доживает.
+            //
+            // Отсюда наблюдение Igor: «HX подменный появляется то ли в
+            // предыдущем повреждённом состоянии и кубарем валится вниз, то ли
+            // с ним ещё что-то другое… Никогда не летит по траектории
+            // прибытия».
+            //
+            // Чистый лист берётся тем же способом, каким машина рождается в
+            // начале: `createFlightState`. Так список не разойдётся с
+            // конструктором, когда в полётное состояние добавят новое поле.
+            const previousFlight = state.flight;
+            if (previousFlight) {
+              state.flight = {
+                ...createFlightState(
+                  previousFlight.kind,
+                  previousFlight.occupancy,
+                  frame.flight.limits.enginePoints.length,
+                  frame.flight.underwaySeconds,
+                  null,
+                ),
+                // Отчалила она давно: прибытие — это продолжение рейса, а не
+                // новый отрыв от площадки.
+                castOff: true,
+                progress: 0,
+              };
+            }
+            state.rotorTrim = NEUTRAL_ROTORCRAFT_TRIM;
+            state.rotorAuthority = null;
+            state.rotorYawRateLimits = null;
+            state.rotorBody = null;
+            state.governor = NEUTRAL_GOVERNOR;
+            state.trimExhaustedSeconds = 0;
+            state.escape = null;
+            state.escapeFreeSeconds = 0;
+            state.separation = null;
+            state.combat = null;
+            state.evasion = null;
             state.recovery.progress = 0;
             state.recovery.arrivalInitialized = true;
             state.suppressFrameVelocityOnce = true;
@@ -4157,7 +4761,7 @@ export function VehicleFrameSystem({
       }
       const flight = state.flight;
       const pilotControlsNow =
-        flight?.pilot && occupiedSeatId === TOWN_HEXACOPTER_PILOT_SEAT_ID
+        flight?.pilot && seatCommandsCarrier(occupiedSeatId, frame.clusterId)
           ? getPilotControls()
           : {
               forward: false,
@@ -4168,7 +4772,7 @@ export function VehicleFrameSystem({
               jump: false,
             };
       const commands =
-        flight?.pilot && occupiedSeatId === TOWN_HEXACOPTER_PILOT_SEAT_ID
+        flight?.pilot && seatCommandsCarrier(occupiedSeatId, frame.clusterId)
           ? consumeRotorcraftPilotCommands(pilotCommands.current)
           : null;
       const pilotManualOverride = Boolean(
@@ -4197,22 +4801,6 @@ export function VehicleFrameSystem({
         const forward = rotateByQuaternion(state.body.orientation, frame.nose);
         onPassengerViewRestore?.(Math.atan2(-forward[0], -forward[2]), 0);
       }
-      const attachedMembers =
-        clusterRegistry.current.get(frame.clusterId)?.attachedMemberIds ??
-        new Set(alive.map((member) => member.piece.id));
-      const propulsion = propulsionHealth(
-        frame.actuators,
-        attachedMembers,
-        frame.flight.limits.enginePoints.length,
-      );
-      const liftHold = state.mass
-        ? rotorHoldState(
-            frame,
-            state.intactMass,
-            state.mass,
-            propulsion.fractions,
-          )
-        : null;
       const flightClearance = propulsionFlightClearance(propulsion, liftHold);
       const feedbackModel: ShipModel =
         driveUsesPropulsionFeedback(frame.flight.driveAnimation) && flight
@@ -4373,6 +4961,13 @@ export function VehicleFrameSystem({
 
         for (const [sensorIndex, sensor] of frame.proximitySensors.entries()) {
           if (!vehicleProximitySensorEnabled(sensor)) {
+            continue;
+          }
+          // ДАТЧИК ЖИВЁТ РОВНО СТОЛЬКО, СКОЛЬКО ЖИВЁТ ЕГО ДЕТАЛЬ. Оторванная
+          // гондола уносит свои датчики с собой; машина перестаёт видеть тем,
+          // чего у неё больше нет, и её обвод честно становится дырявым.
+          const sensorPiece = frame.sensorPieces[sensorIndex];
+          if (sensorPiece && !attachedMembers.has(sensorPiece)) {
             continue;
           }
           const point = vehiclePiecePosition(
@@ -4741,7 +5336,7 @@ export function VehicleFrameSystem({
         // и у судна на воде требуемая высота нулевая на всём маршруте.
         const groundPlan =
           flight.pilot?.returnPlan ??
-          frame.flight.routePlan(flight.kind, berth);
+          flightRoutePlan(frame, flight, berth);
         const requiredAltitude =
           groundPlan.altitude(flight.progress) - berth[1];
         flight.unexpectedGroundContactSeconds =
@@ -4760,7 +5355,8 @@ export function VehicleFrameSystem({
             ),
             progress: 0,
             escapePlan: null,
-            arrivalInitialized: false,
+            arrivalPlan: null,
+          arrivalInitialized: false,
             escapeStallSeconds: 0,
             escapeBestProgress: 0,
             landingStability: createVehicleLandingStability(
@@ -4815,6 +5411,26 @@ export function VehicleFrameSystem({
         );
       };
 
+      // КАСАНИЕ, КОТОРОЕ ЗАДУМАНО, — НЕ БЕДА.
+      //
+      // Машина на заходе, машина, садящаяся по аварийному циклу, и машина,
+      // встающая с земли, касаются грунта НАМЕРЕННО. Спутать это с зацепом
+      // стоит дорого сразу в трёх местах: сторож насчитает ей срок
+      // высвобождения и снимет с рейса за `entangled`, пока она мирно стоит
+      // на площадке; правило высвобождения вытолкнет садящуюся машину с этой
+      // площадки; расхождение толкнёт вбок ту, что идёт в узкий створ.
+      //
+      // Поэтому признак один на всех троих и объявлен здесь, выше по кадру,
+      // а не переписан в каждом месте по-своему. Это тот же класс ошибки, что
+      // и ложный диагноз сторожа: принять задуманное за беду.
+      const onApproach = flight ? flight.progress > 0.94 : false;
+      const groundIsTheGoal =
+        onApproach ||
+        (state.recovery !== null &&
+          (state.recovery.lifecycle.phase === "landing" ||
+            state.recovery.lifecycle.phase === "settled" ||
+            state.recovery.lifecycle.phase === "righting"));
+
       const recovery = state.recovery;
       if (recovery && flight?.castOff) {
         if (recovery.lifecycle.phase === "escape") {
@@ -4845,7 +5461,9 @@ export function VehicleFrameSystem({
           phase === "escape"
             ? recovery.escapePlan
             : phase === "arrival"
-              ? frame.flight.arrivalPlan(berth)
+              ? // Заход, на который машину поставили. Запасной путь на случай
+                // прибытия, начатого не через фазовый вход, — паспортный.
+                (recovery.arrivalPlan ??= frame.flight.arrivalPlan(berth))
               : null;
         if (plan) {
           flyRoutePlan(plan, recovery.progress, 1);
@@ -4877,6 +5495,20 @@ export function VehicleFrameSystem({
                   (GRAVITY * frame.flight.limits.liftTrimRange),
               ),
             );
+          } else if (phase === "righting") {
+            // ВСТАЁТ. Просьба ровно одна: подъём на полную и поза брюхом вниз
+            // — остальное сделает распределитель. Перевёрнутой машине этот же
+            // приказ исполняется ОБРАТНОЙ тягой (`rotorReverseShare`): без
+            // реверса она вжимала бы себя в грунт, старательно исполняя
+            // «поднимайся». Отсюда и порядок работ: сперва реверс, потом
+            // самовосстановление — второе без первого физически невозможно.
+            liftCommand = 1;
+            rotorGuidance = {
+              forwardSpeed: 0,
+              lateralSpeed: 0,
+              yawRate: 0,
+              liftFraction: 1,
+            };
           } else {
             liftCommand = -1;
           }
@@ -5049,6 +5681,9 @@ export function VehicleFrameSystem({
                 corrections: 0,
                 trimAuthorityExhausted: state.trimExhaustedSeconds > 0,
                 turning: Math.abs(state.body.angularVelocity[1]) > 0.1,
+                // Откликается ли машина: доля принятого отклонения позы из
+                // отчёта прошлого кадра. Пока откликается — поза не отказ.
+                responding: state.rotorBody?.maneuverScale ?? 0,
                 inFinalManeuver: false,
                 // Manual flight has no docking objective. Zero is a finite
                 // inactive value; Infinity is an invalid physical state.
@@ -5056,6 +5691,10 @@ export function VehicleFrameSystem({
                 inDockingCapture: false,
                 dockingComplete: false,
                 recoveringDisturbance: false,
+                // Отчалившая машина не должна касаться ничего. Раз касается —
+                // причина снаружи, и внутренние таймеры сторожа стоят.
+                externallyHeld:
+                  flight.castOff && state.externalContacts.count > 0,
               },
               failureEnvelope,
             )
@@ -5083,7 +5722,8 @@ export function VehicleFrameSystem({
                     forward,
                   })
                 : null,
-            arrivalInitialized: false,
+            arrivalPlan: null,
+          arrivalInitialized: false,
             escapeStallSeconds: 0,
             escapeBestProgress: 0,
             landingStability: createVehicleLandingStability(
@@ -5104,7 +5744,7 @@ export function VehicleFrameSystem({
       } else if (flight && flight.castOff) {
         const plan =
           flight.pilot?.returnPlan ??
-          frame.flight.routePlan(flight.kind, berth);
+          flightRoutePlan(frame, flight, berth);
         const beforeRecoveryTracking = routeTrackingState(
           plan,
           flight.progress,
@@ -5490,6 +6130,24 @@ export function VehicleFrameSystem({
           frame.flight.approach,
           frame.flight.docking,
         );
+        {
+          const forward = rotateByQuaternion(state.body.orientation, frame.nose);
+          const flat = Math.hypot(forward[0], forward[2]) || 1;
+          const gate = frame.flight.approach.heading;
+          state.dockingGate = {
+            progress: flight.progress,
+            offset: Math.hypot(capture.offset[0], capture.offset[2]),
+            height: Math.abs(capture.offset[1]),
+            speed: Math.hypot(capture.velocity[0], capture.velocity[2]),
+            verticalSpeed: Math.abs(capture.velocity[1]),
+            angular: Math.hypot(
+              state.body.angularVelocity[0],
+              state.body.angularVelocity[1],
+              state.body.angularVelocity[2],
+            ),
+            alignment: (forward[0] * gate[0] + forward[2] * gate[1]) / flat,
+          };
+        }
         const requestedEffort = Math.max(
           0,
           ...flight.driveThrottle.map(Math.abs),
@@ -5612,6 +6270,15 @@ export function VehicleFrameSystem({
             ),
             dockingComplete,
             recoveringDisturbance,
+            // ВНЕШНЯЯ ПОМЕХА, А НЕ ПОЛОМКА. Машина в рейсе не касается ничего
+            // по построению; исключения — швартовка и заход, где касание и
+            // есть цель. Всё остальное касание держит её снаружи, и судить
+            // её за это управляемостью значит ставить диагноз не той стороне.
+            externallyHeld:
+              flight.castOff &&
+              state.externalContacts.count > 0 &&
+              !dockingComplete &&
+              !groundIsTheGoal,
           },
           failureEnvelope,
         );
@@ -5635,7 +6302,8 @@ export function VehicleFrameSystem({
                     forward,
                   })
                 : null,
-            arrivalInitialized: false,
+            arrivalPlan: null,
+          arrivalInitialized: false,
             escapeStallSeconds: 0,
             escapeBestProgress: 0,
             landingStability: createVehicleLandingStability(
@@ -5786,7 +6454,7 @@ export function VehicleFrameSystem({
         // первого участка: задний ход нельзя начинать ударом тарана в захват.
         if (!usesRotorDynamics) {
           const spool = vehicleSpoolCommand(
-            frame.flight.routePlan(flight.kind, berth),
+            flightRoutePlan(frame, flight, berth),
             flight.time,
             frame.flight.spoolSeconds,
           );
@@ -6300,8 +6968,8 @@ export function VehicleFrameSystem({
       // манифестов при штатной посадке не будет вовсе: она стоит на грунте
       // тем, чего Rapier не видит. Считать её при этом летящей значило бы
       // сорвать ей каждую посадку.
-      state.supportContacts = strutContacts + (physicalRuntime
-        ? countActiveUpwardSupportContacts(
+      const externalContacts = physicalRuntime
+        ? summariseExternalContacts(
             rapierWorld.narrowPhase,
             physicalRuntime.body,
             physicalRuntime.activePhysicalContacts,
@@ -6353,7 +7021,9 @@ export function VehicleFrameSystem({
               );
             },
           )
-        : 0);
+        : NO_EXTERNAL_CONTACTS;
+      state.externalContacts = externalContacts;
+      state.supportContacts = strutContacts + externalContacts.support;
       // Винтокрылая машина несёт себя КОЛЬЦАМИ, а не одной вертикалью в точке
       // подъёма. Отсюда всё её поведение: тяга каждого кольца своя, суммарный
       // вектор наклоняется вместе с корпусом, и разностью тяг рождаются момент
@@ -6373,86 +7043,39 @@ export function VehicleFrameSystem({
       // (`rotorcraftPilot`), и по той же причине: guidance — общая граница, а
       // не собственность автопилота.
       //
-      // Условий работы три, и все объявлены паспортом, а не именем машины:
-      // у неё есть вооружение, она на боевой задаче и в воздухе.
+      // Условий работы три, и все объявлены ПАСПОРТОМ, а не именем машины:
+      // у неё есть вооружение, паспорт объявил пост для этой задачи, и она в
+      // воздухе. Прежде здесь стояло сравнение рейса с ИМЕНЕМ боевой задачи и
+      // три константы полигона, приехавшие импортом из файла маршрутов, — то
+      // есть движок знал имя машины и разметку конкретной карты. Имя задачи
+      // сюда не возвращать даже в комментарии: сторож изоляции проверяет
+      // литерал, и оправдаться «это же комментарий» не выйдет.
       // ---------------------------------------------------------------
+      const combatStation = flight
+        ? (frame.flight.combatStation?.(flight.kind, berth) ?? null)
+        : null;
       if (
         frame.armament &&
         usesRotorDynamics &&
         mass &&
-        flight?.kind === COMBAT_HEXACOPTER_SKY_CONTROL &&
-        flight.castOff
+        combatStation &&
+        flight?.castOff
       ) {
-        const combatCentre: [number, number, number] = [
-          mass.centre[0] + state.body.position[0],
-          mass.centre[1] + state.body.position[1],
-          mass.centre[2] + state.body.position[2],
-        ];
-        const gunAxis = rotateByQuaternion(state.body.orientation, frame.nose);
-        const flatGun = Math.hypot(gunAxis[0], gunAxis[2]) || 1;
-        const halfSpan = Math.max(
-          frame.localBounds.maximum[0] - frame.localBounds.minimum[0],
-          frame.localBounds.maximum[2] - frame.localBounds.minimum[2],
-        ) / 2;
-
-        // Чужие борта в воздухе. Модуль боя получает СНИМОК состояния и
-        // ничего сверх: ни маршрута, ни прогресса, ни определения машины.
-        const tracks: AirCombatTrack[] = [];
-        for (const other of frames) {
-          if (other.id === frame.id || !other.allegiance) {
-            continue;
-          }
-          const otherState = states.current.get(other.id);
-          if (!otherState?.mass) {
-            continue;
-          }
-          const otherCentre: [number, number, number] = [
-            otherState.mass.centre[0] + otherState.body.position[0],
-            otherState.mass.centre[1] + otherState.body.position[1],
-            otherState.mass.centre[2] + otherState.body.position[2],
-          ];
-          const otherAttached =
-            clusterRegistry.current.get(other.clusterId)?.attachedMemberIds ??
-            new Set<string>();
-          const otherHealth = propulsionHealth(
-            other.actuators,
-            otherAttached,
-            other.flight.limits.enginePoints.length,
-          ).fractions;
-          const otherHalfSpan = Math.max(
-            other.localBounds.maximum[0] - other.localBounds.minimum[0],
-            other.localBounds.maximum[2] - other.localBounds.minimum[2],
-          ) / 2;
-          tracks.push({
-            id: other.id,
-            allegiance: other.allegiance,
-            centre: otherCentre,
-            velocity: otherState.body.velocity as [number, number, number],
-            // «Текущий манёвр» снаружи виден как вращение корпуса. У машины,
-            // идущей носом по курсу, это и есть темп разворота её скорости;
-            // краб даст расхождение, и это честная слепота наблюдателя.
-            turnRate: otherState.body.angularVelocity[1],
-            radius: otherHalfSpan,
-            weakPoints: other.flight.limits.enginePoints.map((point, index) => {
-              const offset = rotateByQuaternion(otherState.body.orientation, [
-                point[0] - otherState.mass!.centre[0],
-                point[1] - otherState.mass!.centre[1],
-                point[2] - otherState.mass!.centre[2],
-              ]);
-              return {
-                point: [
-                  otherCentre[0] + offset[0],
-                  otherCentre[1] + offset[1],
-                  otherCentre[2] + offset[2],
-                ] as [number, number, number],
-                health: otherHealth[index] ?? 1,
-              };
-            }),
-            // Севшая цель не цель, отказавшая — тем более.
-            landed: otherState.flight === null && otherState.supportContacts > 0,
-            failed: otherState.recovery !== null,
-          });
-        }
+        // БОЕВОЕ ЗРЕНИЕ ОБЩЕЕ, РЕШЕНИЕ ЧАСТНОЕ. Сборка снимков живёт в
+        // `airCombatSensing`, здесь остаётся ровно доступ к рантайму двумя
+        // вопросами. Уклонению понадобятся ТЕ ЖЕ снимки — оно смотрит на
+        // охотника вместо добычи, — и второй вывод осей в другом месте был бы
+        // вторым шансом ошибиться знаком.
+        const combatWorld: SightedWorld = {
+          stateOf: (frameId) => states.current.get(frameId),
+          attachedTo: (clusterId) =>
+            clusterRegistry.current.get(clusterId)?.attachedMemberIds ??
+            new Set<string>(),
+        };
+        const tracks = airCombatTracks(frame.id, frames, combatWorld);
+        const own = airCombatOwnState(frame, state, mass.centre);
+        const combatCentre = own.centre;
+        const gunAxis = own.gunAxis;
 
         state.combat ??= createAirCombatState(
           frame.armament.rockets.mounts.length,
@@ -6461,28 +7084,42 @@ export function VehicleFrameSystem({
         // которой требуемый темп разворота ещё равен располагаемому.
         const combatLateral = GRAVITY * Math.tan(frame.flight.maximumTilt ?? 0);
         const combatStep = stepAirCombat({
-          own: {
-            allegiance: allegianceOf(frame),
-            centre: combatCentre,
-            velocity: state.body.velocity as [number, number, number],
-            nose: [gunAxis[0] / flatGun, gunAxis[2] / flatGun],
-            gunAxis: gunAxis as [number, number, number],
-            verticalSpeed: state.body.velocity[1],
-            radius: halfSpan,
-          },
-          station: {
-            centre: berth,
-            radius: COMBAT_HEXACOPTER_GUARD_RADIUS,
-            altitude: COMBAT_HEXACOPTER_GUARD_ALTITUDE,
-            speed: COMBAT_HEXACOPTER_GUARD_SPEED,
-            // Периметр стерегут целиком: обнаружение покрывает орбиту с запасом.
-            detectionRange: COMBAT_HEXACOPTER_GUARD_RADIUS * 3,
-          },
+          own,
+          station: combatStation,
           armament: frame.armament,
           limits: {
             maximumSpeed: combatLateral / ROTOR_YAW_RATE,
             yawRate: ROTOR_YAW_RATE,
             liftTrimRange: frame.flight.limits.liftTrimRange,
+            lateralAcceleration: combatLateral,
+            // Фигур боевому пилоту пока не отдано: вход в них перекрыт на время
+            // боя, и обещать разворот через верх было бы враньём оценщику.
+            reversal: null,
+            // Нос АВТОРСКИЙ — поза строится поворотом от позы покоя.
+            authoredNose: [frame.nose[0], frame.nose[2]],
+            liftReserve: frame.flight.liftReserve ?? DEFAULT_VEHICLE_LIFT_RESERVE,
+            surgeAcceleration: rotorcraftSurgeAcceleration({
+              centreOfMass: mass.centre,
+              nose: frame.nose,
+              mass: mass.mass,
+              yawThrusters: frame.flight.limits.yawThrusters,
+              // ОСТОРОЖНОСТЬ НУЖНА КОНТУРУ УПРАВЛЕНИЯ, А НЕ ОЦЕНЩИКУ.
+              //
+              // Здесь считается, на что машина СПОСОБНА, — по этому числу
+              // автомат решает, можно ли вообще целиться с превышением. Пока
+              // сюда приходил ноль «до проверки тоннелей», автомат первые
+              // секунды боя считал, что продольной тяги у него нет вовсе, и
+              // робел на ровном месте. Проба тоннелей живёт в микшере и там же
+              // остаётся: это её дело — не дать синфазный приказ непроверенному
+              // каналу. Оценщику она вредна.
+              //
+              // Вердикт Igor: «если он сам повреждён, его боевое поведение
+              // страдает в разы сильнее» — цепочка была множительная, и
+              // царапина отнимала у него смелость целиком.
+              yawThrusterAvailability: (
+                frame.flight.limits.yawThrusters ?? []
+              ).map((_, index) => state.yawThrusterHealth[index] ?? 1),
+            }),
           },
           tracks,
           deltaSeconds: step,
@@ -6506,16 +7143,314 @@ export function VehicleFrameSystem({
               rotateByQuaternion(state.body.orientation, local) as
                 [number, number, number],
           };
+          const worldShots = combatStep.shots.map((shot) =>
+            resolveVehicleWeaponShot(shot, frame.armament!, carrierPose),
+          );
+          // Ракеты кладутся в общий список: от них будет уклоняться жертва.
+          for (const shot of worldShots) {
+            if (shot.weapon !== "podRocket") {
+              continue;
+            }
+            const profile = explosiveProfile(shot.explosive ?? "podRocket");
+            const speed = profile.projectile.speed;
+            rocketSerial.current += 1;
+            liveRockets.current.push({
+              id: rocketSerial.current,
+              position: [shot.origin[0], shot.origin[1], shot.origin[2]],
+              velocity: [
+                shot.direction[0] * speed + shot.inheritVelocity[0],
+                shot.direction[1] * speed + shot.inheritVelocity[1],
+                shot.direction[2] * speed + shot.inheritVelocity[2],
+              ],
+              blastRadius: profile.blastRadius,
+              bornAt: 0,
+            });
+          }
           onVehicleWeaponFire({
             frameId: frame.id,
             clusterId: frame.clusterId,
-            shots: combatStep.shots.map((shot) =>
-              resolveVehicleWeaponShot(shot, frame.armament!, carrierPose),
+            shots: worldShots.map((shot) =>
+              shot,
             ),
           });
         }
       } else if (state.combat) {
         state.combat = null;
+      }
+
+      // ---------------------------------------------------------------
+      // УКЛОНЕНИЕ — ПЯТЫЙ ИСТОЧНИК GUIDANCE, и самый скромный из них.
+      //
+      // Он не перехватывает требование, а ПОПРАВЛЯЕТ уже посчитанное: машина
+      // продолжает лететь свою трассу, только сходит с линии огня. Отсюда и
+      // возврат берётся даром — ошибка маршрута сама тянет обратно, и писать
+      // «вернуться» не нужно.
+      //
+      // Условие одно и объявлено паспортом: у машины есть способность
+      // уклоняться. Кто именно пуглив, движок не знает.
+      // ---------------------------------------------------------------
+      const evasion = frame.flight.evasion;
+      if (evasion && usesRotorDynamics && mass && flight?.castOff && rotorGuidance) {
+        state.evasion ??= createEvasionState();
+        const evasionStep = stepEvasion({
+          own: {
+            allegiance: allegianceOf(frame),
+            centre: [
+              mass.centre[0] + state.body.position[0],
+              mass.centre[1] + state.body.position[1],
+              mass.centre[2] + state.body.position[2],
+            ],
+            velocity: state.body.velocity,
+          },
+          rockets: liveRockets.current,
+          capability: evasion,
+          deltaSeconds: step,
+          state: state.evasion,
+          deck: berth[1],
+          boundary: recoveryServiceArea
+            ? {
+                centre: [
+                  recoveryServiceArea.center[0],
+                  0,
+                  recoveryServiceArea.center[1],
+                ],
+                radius: recoveryServiceArea.radius,
+              }
+            : undefined,
+        });
+        state.evasion = evasionStep.state;
+        const offset = evasionStep.velocityOffset;
+        if (offset[0] !== 0 || offset[1] !== 0 || offset[2] !== 0) {
+          // Поправка кладётся В ОСЯХ МАШИНЫ: контур принимает продольную и
+          // боковую скорость, а не мировой вектор.
+          const forward = rotateByQuaternion(state.body.orientation, frame.nose);
+          const flat = Math.hypot(forward[0], forward[2]) || 1;
+          const nose: [number, number] = [forward[0] / flat, forward[2] / flat];
+          const starboard: [number, number] = [-nose[1], nose[0]];
+          rotorGuidance = {
+            ...rotorGuidance,
+            forwardSpeed:
+              rotorGuidance.forwardSpeed + offset[0] * nose[0] + offset[2] * nose[1],
+            lateralSpeed:
+              rotorGuidance.lateralSpeed +
+              offset[0] * starboard[0] +
+              offset[2] * starboard[1],
+            // ТРАССА ОБЯЗАНА ОТПУСТИТЬ на время рывка. Без этого регулятор
+            // возврата гасит поправку, и манёвр читается как «не работает»,
+            // хотя работает как раз слишком хорошо.
+            slipAllowance: Math.max(
+              rotorGuidance.slipAllowance ?? 0,
+              Math.PI / 3,
+            ),
+          };
+          liftCommand = Math.max(
+            0,
+            Math.min(1, liftCommand + offset[1] * 0.02),
+          );
+        }
+      } else if (state.evasion) {
+        state.evasion = null;
+      }
+
+      // ---------------------------------------------------------------
+      // ПОЛ МИРА — ИСТОЧНИК GUIDANCE, КОТОРЫЙ НЕ УСТУПАЕТ НИКОМУ.
+      //
+      // «RAX охотно в манёврах уходит ниже уровня острова… либо уходит под
+      // остров и больше не может подняться, либо цепляется за край и не знает,
+      // что делать» (Igor, 12.08.2026). Правило целиком в чистом
+      // `vehicleWorldEnvelope`; здесь только доводы и подстановка.
+      //
+      // Стоит ПЕРЕД расхождением намеренно: разойтись с чужим бортом важно, не
+      // оказаться под островом — важнее. Ниже поправка расхождения ляжет
+      // поверх, но вертикаль конверта её переспорит по величине.
+      //
+      // Остров описывается зоной обслуживания — она и есть диск мира, — а
+      // палуба берётся высотой причала: точнее здесь спросить нечем.
+      // УХОД ПОД МИР БЫВАЕТ ЗАДУМАН. Аварийный исход `descendBelowFog` уводит
+      // машину вниз намеренно, чтобы она исчезла и уступила место подменной;
+      // конверт, дерущийся с этим, превратил бы аварию в вечное висение — тот
+      // же класс ошибки, что «касание, которое задумано» у высвобождения.
+      const sinkingOnPurpose =
+        state.recovery !== null &&
+        (state.recovery.lifecycle.phase === "descent" ||
+          state.recovery.lifecycle.phase === "waiting");
+      const floorRelief =
+        rotorGuidance &&
+        mass &&
+        flight?.castOff &&
+        recoveryServiceArea &&
+        !sinkingOnPurpose
+          ? worldFloorAvoidance({
+              centre: centreNow,
+              velocity: state.body.velocity,
+              island: {
+                centre: recoveryServiceArea.center,
+                radius: recoveryServiceArea.radius,
+                deck: berth[1],
+              },
+            })
+          : null;
+      if (rotorGuidance && floorRelief) {
+        const away = centreNow[0] - recoveryServiceArea!.center[0];
+        const across = centreNow[2] - recoveryServiceArea!.center[1];
+        const span = Math.hypot(away, across) || 1;
+        const outwardWorld: readonly [number, number] = [away / span, across / span];
+        const forward = rotateByQuaternion(state.body.orientation, frame.nose);
+        const flat = Math.hypot(forward[0], forward[2]) || 1;
+        const nose: [number, number] = [forward[0] / flat, forward[2] / flat];
+        const starboard: [number, number] = [-nose[1], nose[0]];
+        const push = floorRelief.outward * floorRelief.urgency;
+        rotorGuidance = {
+          ...rotorGuidance,
+          forwardSpeed:
+            rotorGuidance.forwardSpeed +
+            (outwardWorld[0] * nose[0] + outwardWorld[1] * nose[1]) * push,
+          lateralSpeed:
+            rotorGuidance.lateralSpeed +
+            (outwardWorld[0] * starboard[0] + outwardWorld[1] * starboard[1]) *
+              push,
+          slipAllowance: Math.max(rotorGuidance.slipAllowance ?? 0, Math.PI / 3),
+        };
+        // Подъём просится ДОЛЕЙ ВЕСА, а не скоростью: контур вертикали у
+        // винтокрылой машины принимает именно её. Ноль под островом — там
+        // набирать нельзя, и правило это уже решило.
+        liftCommand = Math.max(
+          0,
+          Math.min(1, liftCommand + floorRelief.climb * 0.06 * floorRelief.urgency),
+        );
+      }
+
+      // ---------------------------------------------------------------
+      // РАСХОЖДЕНИЕ — СЕДЬМОЙ ИСТОЧНИК GUIDANCE.
+      //
+      // «Инстинкт нас заставляет избегать столкновений. Мы ходим двумерно —
+      // инстинкт двумерный. Но для трёхмерной машины он больше на одно
+      // измерение» (Igor, 12.08.2026). Правило целиком в чистом
+      // `vehicleSeparation`, здесь только зрение и подстановка.
+      //
+      // Стороны зрение НЕ СПРАШИВАЕТ: мирный борт в бою не участвует, но
+      // столкнуться с ним можно ничуть не хуже. Освобождается ровно один —
+      // собственная цель охотника, потому что расхождение с добычей есть
+      // срыв задачи, а не осторожность.
+      if (rotorGuidance && mass && flight?.castOff && !state.escape && !onApproach) {
+        const separation = separationDecision({
+          self: {
+            id: frame.id,
+            centre: centreNow,
+            velocity: state.body.velocity,
+            radius: frameHalfSpan(frame.localBounds),
+          },
+          traffic: airTraffic(frame.id, frames, {
+            stateOf: (frameId) => states.current.get(frameId),
+            attachedTo: (clusterId) =>
+              clusterRegistry.current.get(clusterId)?.attachedMemberIds ??
+              new Set<string>(),
+          }),
+          // Пол мира берётся ОТ СОБСТВЕННОГО ПРИЧАЛА, а не от нуля координат.
+          // Это не точная высота грунта под машиной — точную здесь спросить
+          // нечем, поле проходимости живёт у жителей, — но причал принадлежит
+          // ЭТОМУ миру и стоит на его земле, а ноль не принадлежит никому: на
+          // карте, поднятой над нулём, правило «ниже — вниз» уводило бы нижнюю
+          // машину в склон.
+          groundHeight: berth[1],
+          exemptId: state.combat?.targetId ?? undefined,
+        });
+        state.separation = separation
+          ? { withId: separation.withId, away: separation.direction }
+          : null;
+        if (separation) {
+          const away = separation.direction;
+          const forward = rotateByQuaternion(state.body.orientation, frame.nose);
+          const flat = Math.hypot(forward[0], forward[2]) || 1;
+          const nose: [number, number] = [forward[0] / flat, forward[2] / flat];
+          const starboard: [number, number] = [-nose[1], nose[0]];
+          // Расхождение ПОПРАВЛЯЕТ ход, а не заменяет его: машина продолжает
+          // свой рейс, просто мимо. Скорость поправки растёт со срочностью —
+          // на горизонте это едва заметный доворот, у самого борта рывок.
+          const push = 9 * separation.urgency;
+          rotorGuidance = {
+            ...rotorGuidance,
+            forwardSpeed:
+              rotorGuidance.forwardSpeed +
+              (away[0] * nose[0] + away[2] * nose[1]) * push,
+            lateralSpeed:
+              rotorGuidance.lateralSpeed +
+              (away[0] * starboard[0] + away[2] * starboard[1]) * push,
+            slipAllowance: Math.max(
+              rotorGuidance.slipAllowance ?? 0,
+              Math.PI / 4,
+            ),
+          };
+          liftCommand = Math.max(
+            0,
+            Math.min(1, liftCommand + away[1] * 0.05 * separation.urgency),
+          );
+        }
+      }
+
+      // ---------------------------------------------------------------
+      // ВЫСВОБОЖДЕНИЕ ИЗ ЗАЦЕПА — СЕДЬМОЙ ИСТОЧНИК GUIDANCE.
+      //
+      // Врезка той же ширины, что боевая и уклонение: правило целиком в
+      // чистом `vehicleCollisionEscape`, здесь только состояние между кадрами
+      // и подстановка направления.
+      //
+      // Условие одно и оно физическое: отчалившая машина КАСАЕТСЯ чужого
+      // тела. Ни имени, ни паспортного разрешения тут не нужно — выбираться
+      // из зацепа умеет всякий, кто умеет двигаться.
+      //
+      // Только автономный полёт. У ручного за штурвалом человек, и отнимать у
+      // него управление в тот самый миг, когда он разбирается с зацепом, —
+      // это не помощь, а второй пилот, тянущий ручку в свою сторону.
+      const touching =
+        flight?.castOff === true &&
+        state.externalContacts.count > 0 &&
+        !groundIsTheGoal;
+      if (rotorGuidance && (touching || state.escape)) {
+        if (touching && !state.escape) {
+          // Вход в эпизод: запоминается то, что привело в столкновение.
+          state.escape = beginCollisionEscape(state.body.velocity);
+        }
+        const escapeStep = stepCollisionEscape(state.escape!, {
+          contact: state.externalContacts,
+          position: state.body.position,
+          deltaSeconds: step,
+        });
+        state.escape = escapeStep.state;
+        // ДОВОДКА С КОНЦОМ. Освободившаяся машина ещё полсекунды уходит от
+        // тела — и только потом забывает эпизод. Без этого она бросает тягу
+        // внутри габарита препятствия и сваливается обратно.
+        if (!touching && escapeStep.state.seconds > 0) {
+          state.escapeFreeSeconds += step;
+        } else {
+          state.escapeFreeSeconds = 0;
+        }
+        if (state.escapeFreeSeconds > 0.5) {
+          state.escape = null;
+          state.escapeFreeSeconds = 0;
+        } else {
+          const away = escapeStep.direction;
+          const forward = rotateByQuaternion(state.body.orientation, frame.nose);
+          const flat = Math.hypot(forward[0], forward[2]) || 1;
+          const nose: [number, number] = [forward[0] / flat, forward[2] / flat];
+          const starboard: [number, number] = [-nose[1], nose[0]];
+          // Скорость ухода берётся щедрой: зацеп — это не место, где стоит
+          // экономить. Верх и низ идут отдельным каналом, потому что подъём
+          // у винтокрылой машины и есть её вертикальная тяга.
+          const ESCAPE_SPEED = 6;
+          rotorGuidance = {
+            ...rotorGuidance,
+            forwardSpeed:
+              away[0] * nose[0] * ESCAPE_SPEED + away[2] * nose[1] * ESCAPE_SPEED,
+            lateralSpeed:
+              away[0] * starboard[0] * ESCAPE_SPEED +
+              away[2] * starboard[1] * ESCAPE_SPEED,
+            // Трасса на время высвобождения отпускает целиком: держать линию
+            // в чужом теле нечем и незачем.
+            slipAllowance: Math.PI,
+          };
+          liftCommand = Math.max(0, Math.min(1, liftCommand + away[1] * 0.35));
+        }
       }
 
       // ---------------------------------------------------------------
@@ -7307,7 +8242,7 @@ export function VehicleFrameSystem({
 
     if (
       onRotorcraftPilotStatusChange &&
-      occupiedSeatId === TOWN_HEXACOPTER_PILOT_SEAT_ID
+      seatCommandsRotorcraft(occupiedSeatId)
     ) {
       const pilotRuntime = frames
         .map((frame) => ({ frame, state: frameState(frame.id) }))
@@ -7318,67 +8253,33 @@ export function VehicleFrameSystem({
       const pilot = pilotRuntime?.state.flight?.pilot ?? null;
       if (pilot && pilotRuntime) {
         const now = performance.now();
-        const targetAltitude = Math.round(pilot.targetAltitude * 10) / 10;
         const { frame, state } = pilotRuntime;
-        const attitude = vehicleAttitude(state.body.orientation, frame.nose);
-        const forward = rotateByQuaternion(state.body.orientation, frame.nose);
-        const heading =
-          ((Math.atan2(forward[0], -forward[2]) * 180) / Math.PI + 360) % 360;
-        const currentAltitude = Math.round(state.body.position[1] * 10) / 10;
-        const verticalSpeed = Math.round(state.body.velocity[1] * 10) / 10;
-        const groundSpeed =
-          Math.round(
-            Math.hypot(state.body.velocity[0], state.body.velocity[2]) * 10,
-          ) / 10;
-        const proximity = rotorcraftProximitySectors(
-          frame.nose,
-          state.flight?.pilotObstacleReadings ?? [],
-          state.flight?.pilotIntervenedSensors ?? new Set<number>(),
-        );
-        const motorOutput = state.rotorMotorOutput.map(
-          (value) => Math.round(value * 100) / 100,
-        );
-        const motorAvailability = (
-          state.flight?.propulsionFeedback ?? motorOutput.map(() => 0)
-        ).map((value) => Math.round(value * 100) / 100);
-        const key = JSON.stringify([
-          pilot.mode,
-          targetAltitude,
-          currentAltitude,
-          verticalSpeed,
-          groundSpeed,
-          Math.round(heading),
-          Math.round((attitude.pitch * 180) / Math.PI),
-          Math.round((attitude.roll * 180) / Math.PI),
-          pilot.sensorAssistEnabled,
-          pilot.landingStableSeconds >= 0.45,
-          proximity,
-          motorOutput,
-          motorAvailability,
-        ]);
-        const modeChanged = pilotStatusMode.current !== pilot.mode;
+        // Сборка доклада и разбор дальномеров живут в `rotorcraftPilotStatus`:
+        // это приборная доска, по ней человек решает снижаться или уходить, и
+        // покрыта она должна быть как расчёт, а не как кусок компонента.
+        const status = rotorcraftPilotStatusOf({
+          pilot,
+          nose: frame.nose,
+          forward: rotateByQuaternion(state.body.orientation, frame.nose),
+          position: state.body.position,
+          velocity: state.body.velocity,
+          attitude: vehicleAttitude(state.body.orientation, frame.nose),
+          obstacleReadings: state.flight?.pilotObstacleReadings ?? [],
+          intervenedSensors:
+            state.flight?.pilotIntervenedSensors ?? EMPTY_SENSOR_SET,
+          motorOutput: state.rotorMotorOutput,
+          propulsionFeedback: state.flight?.propulsionFeedback,
+        });
+        const key = pilotStatusKey(status);
+        const modeChanged = pilotStatusMode.current !== status.mode;
         if (
           key !== pilotStatusPublished.current &&
           (modeChanged || now >= pilotStatusNextAt.current)
         ) {
           pilotStatusPublished.current = key;
-          pilotStatusMode.current = pilot.mode;
+          pilotStatusMode.current = status.mode;
           pilotStatusNextAt.current = now + 100;
-          onRotorcraftPilotStatusChange({
-            mode: pilot.mode,
-            targetAltitude,
-            currentAltitude,
-            verticalSpeed,
-            groundSpeed,
-            heading,
-            pitch: attitude.pitch,
-            roll: attitude.roll,
-            sensorAssistEnabled: pilot.sensorAssistEnabled,
-            landingReady: pilot.landingStableSeconds >= 0.45,
-            proximity,
-            motorOutput,
-            motorAvailability,
-          });
+          onRotorcraftPilotStatusChange(status);
         }
       } else if (pilotStatusPublished.current !== null) {
         pilotStatusPublished.current = null;
@@ -8249,81 +9150,4 @@ function FlightRouteRibbons({
   );
 }
 
-export interface RotorcraftPilotStatus {
-  readonly mode: RotorcraftPilotState["mode"];
-  readonly targetAltitude: number;
-  readonly currentAltitude: number;
-  readonly verticalSpeed: number;
-  readonly groundSpeed: number;
-  readonly heading: number;
-  readonly pitch: number;
-  readonly roll: number;
-  readonly sensorAssistEnabled: boolean;
-  readonly landingReady: boolean;
-  readonly proximity: Readonly<
-    Record<RotorcraftProximitySector, RotorcraftProximityReading>
-  >;
-  readonly motorOutput: readonly number[];
-  readonly motorAvailability: readonly number[];
-}
 
-export type RotorcraftProximitySector =
-  "fore" | "aft" | "port" | "starboard" | "above" | "below";
-
-export interface RotorcraftProximityReading {
-  readonly distance: number | null;
-  readonly intervening: boolean;
-}
-
-function rotorcraftProximitySectors(
-  nose: readonly [number, number, number],
-  readings: readonly VehicleObstacleReading[],
-  intervened: ReadonlySet<number>,
-): Readonly<Record<RotorcraftProximitySector, RotorcraftProximityReading>> {
-  const empty = (): RotorcraftProximityReading => ({
-    distance: null,
-    intervening: false,
-  });
-  const sectors: Record<RotorcraftProximitySector, RotorcraftProximityReading> =
-    {
-      fore: empty(),
-      aft: empty(),
-      port: empty(),
-      starboard: empty(),
-      above: empty(),
-      below: empty(),
-    };
-  const noseLength = Math.hypot(nose[0], nose[2]) || 1;
-  const fore = [nose[0] / noseLength, nose[2] / noseLength] as const;
-  const starboard = [-fore[1], fore[0]] as const;
-  for (const reading of readings) {
-    const normal = reading.localNormal;
-    let sector: RotorcraftProximitySector;
-    if (normal[1] >= 0.65) {
-      sector = "above";
-    } else if (normal[1] <= -0.65) {
-      sector = "below";
-    } else {
-      const longitudinal = normal[0] * fore[0] + normal[2] * fore[1];
-      const lateral = normal[0] * starboard[0] + normal[2] * starboard[1];
-      sector =
-        Math.abs(longitudinal) >= Math.abs(lateral)
-          ? longitudinal >= 0
-            ? "fore"
-            : "aft"
-          : lateral >= 0
-            ? "starboard"
-            : "port";
-    }
-    const previous = sectors[sector];
-    if (previous.distance === null || reading.distance < previous.distance) {
-      sectors[sector] = {
-        distance: Math.round(reading.distance * 10) / 10,
-        intervening: intervened.has(reading.sensorIndex),
-      };
-    } else if (intervened.has(reading.sensorIndex) && !previous.intervening) {
-      sectors[sector] = { ...previous, intervening: true };
-    }
-  }
-  return sectors;
-}

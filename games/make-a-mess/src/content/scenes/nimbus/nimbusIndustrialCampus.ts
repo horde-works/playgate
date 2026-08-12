@@ -901,7 +901,8 @@ function createLoadingApron(
         row === 2 ? "asphalt" : "concrete",
         "groundTile",
         [point[0], ground + 0.1, point[2]],
-        [tile + 0.04, 0.2, tile + 0.04],
+        // Ровно шаг, без нахлёста: иначе верх соседних плит общий и рябит.
+        [tile, 0.2, tile],
         row === 2 ? "#485052" : row === 0 ? "#8e938e" : "#7d837e",
         {
           rotation: CAMPUS_ROTATION,
@@ -1042,7 +1043,8 @@ function createDockTransferApron(
         Math.abs(across) < 6 ? "steel" : "concrete",
         "groundTile",
         [point[0], ground + 0.1, point[2]],
-        [6.04, 0.2, 6.04],
+        // Ровно шаг цикла (6), без нахлёста.
+        [6, 0.2, 6],
         Math.abs(across) < 6 ? "#4c5a5f" : "#858a85",
         {
           rotation: nimbusOrient(

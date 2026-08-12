@@ -172,7 +172,12 @@ function createTerrain(): void {
       const key = `${x}:${z}`;
       // Deep earth stays darker than timber and cover grass so luminance
       // separates mud / wood / roof instead of collapsing into one mid-tone.
-      primitive(base, `earth:${key}`, "earth", "groundTile", [x, -0.62, z], [4.05, 1, 4.05], "#453628");
+      // Ровно шаг сетки. Было 4.05 при шаге 4: соседние плиты перекрывались
+      // на 5 см, и верхние грани у них совпадали ТОЧНО — а две копланарные
+      // грани спорят за пиксели на любом удалении, потому что глубина у них
+      // одна и та же с точностью до ошибки интерполяции. Нахлёст, взятый
+      // чтобы гарантированно не было щели, и есть источник ряби.
+      primitive(base, `earth:${key}`, "earth", "groundTile", [x, -0.62, z], [tile, 1, tile], "#453628");
 
       const grassVariation = noise(x, z, 2);
       const grassPatch = noise(x, z, 8);
@@ -190,7 +195,7 @@ function createTerrain(): void {
                 : "#546544";
       // Tiles sit flush, edge to edge (no steps); the uneven-earth look is a
       // cheap shader micro-relief on the ground itself, not geometry.
-      primitive(surface, `cover:${key}`, "grass", "groundTile", [x, -0.04, z], [4.06, 0.18, 4.06], surfaceColor, {
+      primitive(surface, `cover:${key}`, "grass", "groundTile", [x, -0.04, z], [tile, 0.18, tile], surfaceColor, {
         surface: grassVariation < 0.18 ? [{ kind: "damp", amount: 0.12 }] : undefined,
         landscapeSurface: "viking-ground",
       });

@@ -7,6 +7,7 @@ import type {
   LampEventLightingDefinition,
   SceneVector3,
 } from "./destructionScene.ts";
+import { SILICATE_JOINT } from "./silicateJoints.ts";
 
 /**
  * The stronghold does not operate a civil airship. Its carrier is a flying
@@ -244,7 +245,12 @@ function createRearBarbican(lamps: LampDefinition[]): BreakableClusterDefinition
           "basalt",
           "stoneBlock",
           [side * (4.2 + bay * 1.0 + stagger), 0.55 + course * 1.05, -89.2],
-          [1.08, 1.06, 4.35],
+          // Кладка, а не монолит: блок = шаг минус общий шов крепости.
+          // Стояло [1.08, 1.06] при шагах 1.0 и 1.05 — то есть блоки лезли
+          // друг на друга на 80 мм по горизонтали и на 10 мм по вертикали, и
+          // их наружные грани спорили за пиксели (35 находок). Нахлёст здесь
+          // не закрывал ничего: закрывать было нечего.
+          [1.0 - SILICATE_JOINT, 1.05 - SILICATE_JOINT, 4.35],
           course === 3 ? BASALT_EDGE : BASALT,
           { weathering: 0.38 },
         );
@@ -1398,7 +1404,12 @@ function createSkyRam(lamps: LampDefinition[]): BreakableClusterDefinition {
         "graphiteStone",
         "stoneBlock",
         ramPoint(a, ductAxisX, ductCentreY(a)),
-        [1.34, ductHeight, 1.86],
+        // Плиты идут шагом 1.8 и смыкаются встык. Стояло 1.86 — нахлёст 60 мм
+        // при ОДИНАКОВОМ выносе наружу, то есть не чешуя, а две копланарные
+        // грани в споре: чешуя лапает со смещением, здесь смещения нет.
+        // Обвод остаётся гранёным — соседние плиты сидят на разной высоте по
+        // `ductCentreY`, и стык читается ступенькой, как на настоящей броне.
+        [1.34, ductHeight, 1.8],
         index % 2 === 0 ? "#454c4e" : "#343b3d",
         {
           volume: 0.07,

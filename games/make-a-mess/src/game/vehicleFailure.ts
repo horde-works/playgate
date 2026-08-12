@@ -9,6 +9,17 @@ export type VehicleFailureReason =
   | "goAroundLimit"
   | "correctionLimit"
   | "trimExhausted"
+  /**
+   * МАШИНУ ДЕРЖИТ ЧУЖОЕ ТЕЛО, и она не смогла освободиться за отпущенный срок.
+   *
+   * Отдельное имя, а не `controlMismatch`, — по прямому вердикту Igor
+   * (12.08.2026): «с одной стороны машина не вполне слушается управления, с
+   * другой — причина снаружи, а не внутри, и это нужно различать». Симптом
+   * действительно тот же: заказали отклонение, получили ноль. Но у зацепа
+   * ДРУГОЕ лечение — не разбор машины, а высвобождение, — и пока причина
+   * названа неверно, правильное лечение не может даже начаться.
+   */
+  | "entangled"
   | "dockingTimeout";
 
 /** One transport-neutral failure notification for HUDs, logs and dispatchers. */
@@ -58,9 +69,36 @@ export type VehicleRecoveryPhase =
   | "waiting"
   | "rebuilding"
   | "arrival"
+  /**
+   * ЛЕЖИТ, НО ЖИВА И ПРОБУЕТ ВСТАТЬ.
+   *
+   * Вердикт Igor (12.08.2026) на упавшего вверх пузом охотника: «прикол в том,
+   * что охотник в безвыходное положение попал только в силу нашей логики.
+   * Если бы он упал, но технически функционален и может реверсом подняться и
+   * вернуться к заданию — он мог бы это сделать».
+   *
+   * Ошибка была не в числах, а в МОМЕНТЕ ВОПРОСА: исход рейса выбирался ОДИН
+   * РАЗ, в миг отказа, когда машина кувыркалась и всё выглядело безнадёжно.
+   * Эта фаза задаёт тот же вопрос ЗАНОВО — когда всё уже остановилось и видно,
+   * что цело. Ответ часто другой.
+   */
+  | "righting"
   | "settled";
 
 export const VEHICLE_REBUILD_DELAY_SECONDS = 30;
+/**
+ * Сколько машине дано на то, чтобы встать своим ходом. Не больше: попытка,
+ * растянутая на полминуты, — это не самовосстановление, а лежание с
+ * работающими двигателями, и подмену тогда лучше вызвать сразу.
+ */
+export const VEHICLE_RIGHTING_TIMEOUT_SECONDS = 8;
+/**
+ * Сколько машина обязана продержаться исправной в воздухе, прежде чем авария
+ * будет признана миновавшей. Не мгновенно: отказ снимают по устойчивому
+ * признаку, а не по одному удачному кадру — иначе состояние будет мигать на
+ * каждом покачивании.
+ */
+export const VEHICLE_RECOVERY_HEALTHY_SECONDS = 4;
 export const VEHICLE_LANDING_STABLE_SECONDS = 3;
 /** A bounce is not enough to command a full emergency lift dump. */
 export const VEHICLE_GROUND_CONTACT_CONFIRM_SECONDS = 0.4;
@@ -272,6 +310,14 @@ export interface VehicleRecoveryLifecycle {
   readonly disposition: VehicleFailureDisposition;
   readonly phase: VehicleRecoveryPhase;
   readonly phaseSeconds: number;
+  /**
+   * Попытка встать уже была. Одна на аварию: машина, которая раз не смогла,
+   * не смогла и не сможет, а бесконечные попытки — это тот же вечный лежачий
+   * борт, только с шумом.
+   */
+  readonly rightingAttempted?: boolean;
+  /** Сколько машина уже держится исправной в воздухе, с. */
+  readonly healthySeconds?: number;
 }
 
 export interface VehicleRecoveryObservation {
@@ -281,6 +327,20 @@ export interface VehicleRecoveryObservation {
   readonly landingComplete: boolean;
   readonly rebuildComplete: boolean;
   readonly arrivalComplete: boolean;
+  /**
+   * МАШИНА МОЖЕТ ЛЕТЕТЬ ОТСЮДА. Не «была исправна», а именно СЕЙЧАС: цела,
+   * подъёма хватает на собственный вес, органы на месте. Спрашивается там,
+   * где она уже лежит неподвижно, и потому отвечает про реальность, а не про
+   * миг катастрофы.
+   */
+  readonly flightworthy?: boolean;
+  /** Встала и оторвалась от грунта: попытка удалась. */
+  readonly uprightAgain?: boolean;
+  /**
+   * МАШИНА В ВОЗДУХЕ И СНОВА ЦЕЛА. Не то же, что `flightworthy`: тот отвечает
+   * «сможет ли», а этот — «летит и держится», то есть беда позади прямо сейчас.
+   */
+  readonly flyingWell?: boolean;
 }
 
 export interface VehicleRecoveryResult {
@@ -303,6 +363,11 @@ export interface VehicleRecoveryCapability {
 }
 
 export interface VehicleFailureObservation {
+  /**
+   * Доля заказанного отклонения позы, принятая в прошлом кадре. Пока машина
+   * откликается, поза не объявляется отказом (см. `vehicleAttitudeCritical`).
+   */
+  readonly responding?: number;
   readonly deltaSeconds: number;
   readonly relativeAltitude: number;
   readonly pitch: number;
@@ -377,6 +442,14 @@ export interface VehicleFailureObservation {
   readonly dockingComplete: boolean;
   /** A physically feasible stabilization manoeuvre currently owns the craft. */
   readonly recoveringDisturbance?: boolean;
+  /**
+   * ЧУЖОЕ ТЕЛО ФИЗИЧЕСКИ ДЕРЖИТ ЛЕТЯЩУЮ МАШИНУ.
+   *
+   * Пока держит, внутренние таймеры сторожа стоят: машина не слушается не
+   * потому, что сломана. Взамен идёт СВОЙ срок (`entangledSeconds`), и
+   * исчерпать его — отдельный отказ с отдельным именем.
+   */
+  readonly externallyHeld?: boolean;
 }
 
 export interface VehicleDisturbanceRecoveryInput {
@@ -518,6 +591,13 @@ export interface VehicleFailureEnvelope {
   readonly correctionGraceSeconds: number;
   /** How long a fully deployed trim may fail to hold the hull before it is a loss. */
   readonly trimGraceSeconds: number;
+  /**
+   * Сколько машине дано на то, чтобы выбраться из зацепа своим ходом.
+   * Щедрее прочих сроков намеренно: высвобождение — это раскачка, у неё нет
+   * монотонного прогресса, и снимать машину на первой неудачной попытке
+   * значит отнимать у неё ровно тот манёвр, ради которого срок и заведён.
+   */
+  readonly entanglementGraceSeconds: number;
   readonly minimumProgressPerSecond: number;
 }
 
@@ -590,6 +670,7 @@ export const DEFAULT_VEHICLE_FAILURE_ENVELOPE: VehicleFailureEnvelope = {
   // Long enough for the cars to reach their stops and for the hull to settle
   // on whatever balance the survivors give it.
   trimGraceSeconds: 6,
+  entanglementGraceSeconds: 12,
   minimumProgressPerSecond: 0.00008,
 };
 
@@ -605,6 +686,8 @@ export interface VehicleFailureWatchdogState {
   readonly correctionSeconds: number;
   /** How long trim has been exhausted without the hull coming back. */
   readonly trimSeconds: number;
+  /** Сколько машина уже висит в чужом теле, не сумев освободиться. */
+  readonly entangledSeconds: number;
   readonly previousProgress: number;
   /** Best distance reached during the present final manoeuvre. */
   readonly bestFinalManeuverDistance: number | null;
@@ -628,6 +711,7 @@ export function createVehicleFailureWatchdog(
     dockingSeconds: 0,
     correctionSeconds: 0,
     trimSeconds: 0,
+    entangledSeconds: 0,
     previousProgress: initialProgress,
     bestFinalManeuverDistance: null,
   };
@@ -677,6 +761,14 @@ function observationIsFinite(observation: VehicleFailureObservation): boolean {
 }
 
 /**
+ * Доля принятого отклонения, ниже которой машину считают потерявшей позу.
+ * Половина — тот же порог, которым живёт чувство тела боевого автомата
+ * (`airCombatPosture`): ниже него машина уже не доворачивается, а только
+ * держится за нынешний угол.
+ */
+export const ATTITUDE_RESPONSE_FLOOR = 0.5;
+
+/**
  * КРИТИЧЕСКАЯ ПОЗА — ОДНО ПРАВИЛО, И ОНО ЖИВЁТ ЗДЕСЬ.
  *
  * Правило было переписано в стенде отдельной строкой, и это тот же дубль, что
@@ -706,15 +798,34 @@ export function vehicleAttitudeCritical(
     readonly yawRateError: number;
     readonly turning?: boolean;
     readonly executingFigure?: boolean;
+    /**
+     * МАШИНА ОТКЛИКАЕТСЯ НА УПРАВЛЕНИЕ — доля заказанного отклонения позы,
+     * которую она приняла в прошлом кадре.
+     *
+     * Пока она откликается, ПОЗА НЕ ОТКАЗ, какой бы та ни была. Вердикт Igor
+     * (12.08.2026): «машине реально плевать как ей летать — она робот. Если
+     * перевернулась и упала — автомат выводит её из соответствующей позиции,
+     * если органы управления исправны и откликаются манёвром. Если
+     * перевернулась в воздухе — тоже так себе проблема».
+     *
+     * Строгой поза остаётся ровно там, где это физика, а не вкус: на взлёте и
+     * посадке, и это проверяет не сторож, а допуски причаливания.
+     */
+    readonly responding?: number;
   },
   envelope: VehicleFailureEnvelope = DEFAULT_VEHICLE_FAILURE_ENVELOPE,
 ): boolean {
   if (observation.executingFigure === true) {
     return false;
   }
+  // ОТКЛИКАЕТСЯ — ЗНАЧИТ ЛЕТИТ, А НЕ ПАДАЕТ. Перевёрнутая машина, принимающая
+  // заказанное отклонение, занята манёвром; объявлять это отказом значит
+  // отнимать у неё половину пространства поз без всякой причины.
+  const responding = observation.responding ?? 0;
   if (
-    Math.abs(observation.pitch) > envelope.maximumPitch ||
-    Math.abs(observation.roll) > envelope.maximumRoll
+    responding < ATTITUDE_RESPONSE_FLOOR &&
+    (Math.abs(observation.pitch) > envelope.maximumPitch ||
+      Math.abs(observation.roll) > envelope.maximumRoll)
   ) {
     return true;
   }
@@ -748,8 +859,22 @@ export function advanceVehicleFailureWatchdog(
   // this flight's grace budget lasts. Beyond it the ordinary watchdog resumes
   // even though the corrector is still trying.
   const correcting = observation.recoveringDisturbance === true;
+  // ПРИЧИНА СНАРУЖИ — ВНУТРЕННИЕ ТАЙМЕРЫ СТОЯТ.
+  //
+  // Зацепившаяся машина показывает разом все симптомы отказа: позу держать не
+  // может, курс не держит, прогресса нет, заказанное отклонение не принимает.
+  // Ни один из них не про машину. Сторож, вынесший здесь `controlMismatch`,
+  // ставит неверный диагноз с уверенным видом — и это ровно тот случай,
+  // который Igor разобрал на охотнике: «в безвыходное положение он попал
+  // только в силу нашей логики».
+  //
+  // Взамен идёт СВОЙ срок. Он не бесконечен: машина, которую держат, обязана
+  // выбраться, а не висеть вечно.
+  const held = observation.externallyHeld === true;
+  const entangledSeconds = heldSeconds(held, current.entangledSeconds, delta);
   const suspended =
-    correcting && current.correctionSeconds < envelope.correctionGraceSeconds;
+    held ||
+    (correcting && current.correctionSeconds < envelope.correctionGraceSeconds);
   const correctionSeconds = correcting
     ? current.correctionSeconds + delta
     : current.correctionSeconds;
@@ -771,11 +896,12 @@ export function advanceVehicleFailureWatchdog(
     delta,
   );
   const controlMismatchSeconds = heldSeconds(
-    !observation.requiredControlAvailable ||
-      (observation.requestedControlEffort > 0.35 &&
-        observation.deliveredControlFraction < 0.5) ||
-      ((observation.requestedLiftEffort ?? 0) > 0.35 &&
-        (observation.deliveredLiftFraction ?? 1) < 0.5),
+    !held &&
+      (!observation.requiredControlAvailable ||
+        (observation.requestedControlEffort > 0.35 &&
+          observation.deliveredControlFraction < 0.5) ||
+        ((observation.requestedLiftEffort ?? 0) > 0.35 &&
+          (observation.deliveredLiftFraction ?? 1) < 0.5)),
     current.controlMismatchSeconds,
     delta,
   );
@@ -806,7 +932,7 @@ export function advanceVehicleFailureWatchdog(
   // asked the hull to level in the first place, and it cannot answer for a
   // balance the machine no longer has.
   const trimSeconds = heldSeconds(
-    observation.trimAuthorityExhausted === true,
+    !held && observation.trimAuthorityExhausted === true,
     current.trimSeconds,
     delta,
   );
@@ -850,6 +976,7 @@ export function advanceVehicleFailureWatchdog(
     dockingSeconds,
     correctionSeconds,
     trimSeconds,
+    entangledSeconds,
     previousProgress: observation.progress,
     bestFinalManeuverDistance,
   };
@@ -875,7 +1002,12 @@ export function advanceVehicleFailureWatchdog(
             : dockingSeconds >= envelope.dockingTimeoutSeconds ||
                 finalManeuverSeconds >= envelope.finalManeuverTimeoutSeconds
               ? "dockingTimeout"
-              : null;
+              : // ПОСЛЕДНИМ В ЦЕПОЧКЕ НАМЕРЕННО. Пока машину держат снаружи,
+                // все предыдущие ветви стоят, и добраться сюда можно только
+                // одним способом: она не выбралась за отпущенный срок.
+                entangledSeconds >= envelope.entanglementGraceSeconds
+                ? "entangled"
+                : null;
   return { state, failure };
 }
 
@@ -928,8 +1060,75 @@ export function advanceVehicleRecoveryLifecycle(
   observation: VehicleRecoveryObservation,
 ): VehicleRecoveryResult {
   const elapsed = current.phaseSeconds + Math.max(0, observation.deltaSeconds);
+  if (current.phase === "righting") {
+    // Встала и оторвалась — авария кончилась. Возврат к заданию, а не
+    // подмена: машина цела, и ей есть чем лететь.
+    if (observation.uprightAgain) {
+      return { lifecycle: null, requestRebuild: false, recovered: true };
+    }
+    // Не встала за отпущенный срок — обычный порядок замены, без второй
+    // попытки. Отсчёт до пересборки начинается с нуля: у неё был свой шанс.
+    if (elapsed >= VEHICLE_RIGHTING_TIMEOUT_SECONDS) {
+      return {
+        lifecycle: {
+          ...current,
+          phase: "settled",
+          phaseSeconds: 0,
+          // Защёлка ставится и ЗДЕСЬ, а не только на входе в попытку. Иначе
+          // инвариант «попытка одна» держится лишь на том, что в фазу попали
+          // правильной дверью, — а `settled` увидит живую машину и пошлёт её
+          // вставать снова, и так до конца мира, причём подмена не придёт
+          // никогда.
+          rightingAttempted: true,
+        },
+        requestRebuild: false,
+        recovered: false,
+      };
+    }
+    return {
+      lifecycle: { ...current, phaseSeconds: elapsed },
+      requestRebuild: false,
+      recovered: false,
+    };
+  }
   if (current.phase === "settled") {
-    return { lifecycle: current, requestRebuild: false, recovered: false };
+    // ЛЕЖИТ, НО ЖИВА — ПУСТЬ ВСТАНЁТ САМА.
+    //
+    // Вопрос задаётся здесь, а не в миг отказа, и в этом вся разница: тогда
+    // машина кувыркалась, сейчас она лежит неподвижно, и видно, что цела.
+    if (observation.flightworthy && !current.rightingAttempted) {
+      return {
+        lifecycle: {
+          ...current,
+          phase: "righting",
+          phaseSeconds: 0,
+          rightingAttempted: true,
+        },
+        requestRebuild: false,
+        recovered: false,
+      };
+    }
+    // СЕВШАЯ МАШИНА ТОЖЕ ВОЗВРАЩАЕТСЯ В СТРОЙ.
+    //
+    // Фаза была терминальной, и это читалось как поломка: разбитая машина
+    // лежала на поле, и на замену ей не приходило ничего (наблюдение Igor,
+    // 11.08.2026). Полигон после первой же аварии пустел навсегда.
+    //
+    // Ждёт она столько же, сколько ушедшая под мир: причина простоя разная, а
+    // цена замены одна. Дальше — та же пересборка и то же прибытие с
+    // горизонта, так что путь в строй у всех бед один.
+    if (elapsed >= VEHICLE_REBUILD_DELAY_SECONDS) {
+      return {
+        lifecycle: { ...current, phase: "rebuilding", phaseSeconds: 0 },
+        requestRebuild: true,
+        recovered: false,
+      };
+    }
+    return {
+      lifecycle: { ...current, phaseSeconds: elapsed },
+      requestRebuild: false,
+      recovered: false,
+    };
   }
   if (current.phase === "landing") {
     return observation.landingComplete
@@ -943,6 +1142,30 @@ export function advanceVehicleRecoveryLifecycle(
           requestRebuild: false,
           recovered: false,
         };
+  }
+  // БЕДА МИНОВАЛА — ЗНАЧИТ БЕДЫ БОЛЬШЕ НЕТ.
+  //
+  // Вердикт Igor (12.08.2026): «RAX после восстановимого сбоя действительно
+  // продолжает сражаться, но его состояние так и остаётся „сбой“. Он должен
+  // возвращаться к заданию, если всё исправилось».
+  //
+  // Прежде выход из аварии был ровно один — доехать до конца её сценария и
+  // быть заменённым. Машина, у которой отказ оказался мгновенным (задело,
+  // качнуло, отпустило), всё равно списывалась. Тот же класс ошибки, что
+  // «исход выбирается один раз, в миг катастрофы», только в воздухе.
+  //
+  // Признак устойчивый и судится только на УХОДЕ: там машина по построению
+  // летит своим ходом. На спуске под туман и на посадке решение снижаться уже
+  // принято, и отменять его на полпути значило бы метание.
+  const healthySeconds =
+    current.phase === "escape" && observation.flyingWell
+      ? (current.healthySeconds ?? 0) + Math.max(0, observation.deltaSeconds)
+      : 0;
+  if (
+    current.phase === "escape" &&
+    healthySeconds >= VEHICLE_RECOVERY_HEALTHY_SECONDS
+  ) {
+    return { lifecycle: null, requestRebuild: false, recovered: true };
   }
   if (
     (current.phase === "escape" && observation.escapeComplete) ||
@@ -979,7 +1202,7 @@ export function advanceVehicleRecoveryLifecycle(
     return { lifecycle: null, requestRebuild: false, recovered: true };
   }
   return {
-    lifecycle: { ...current, phaseSeconds: elapsed },
+    lifecycle: { ...current, phaseSeconds: elapsed, healthySeconds },
     requestRebuild: false,
     recovered: false,
   };

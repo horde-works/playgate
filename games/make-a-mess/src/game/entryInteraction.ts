@@ -13,6 +13,7 @@ export type EntryInteractionCue =
   | "town-uncrewed-flight"
   | "town-hexacopter-uncrewed-flight"
   | "combat-hexacopter-uncrewed-flight"
+  | "duct-hexacopter-uncrewed-flight"
   | "sr6-skat-uncrewed-flight"
   | "stronghold-uncrewed-flight"
   | "terminal-passenger-flight"
@@ -65,6 +66,13 @@ export function numberedEntryInteractionAction(
     return null;
   }
   return actions[digit - 1] ?? null;
+}
+
+/** Resolve number-row shortcuts across physical keys, NumPad, and code-poor clients. */
+export function keyboardDigit(code: string, key: string): number | null {
+  const physical = /^(?:Digit|Numpad)([0-9])$/.exec(code);
+  if (physical) return Number(physical[1]);
+  return /^[0-9]$/.test(key) ? Number(key) : null;
 }
 
 /**

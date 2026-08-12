@@ -11,16 +11,21 @@ import {
   buildShards,
   classifyLandingDamage,
   closestPointOnOccupiedGeometry,
+  crumbleOnLanding,
   damageBody,
   damageBodyBatch,
   damageRadiusScaleByMaterial,
   debrisColliderBoxes,
   debrisCollisionTuning,
-  debrisSleepSampleRequirement,
+  DEBRIS_REST_TRAVEL,
+  DEBRIS_REST_WINDOW_STEPS,
+  debrisRestDecision,
   distanceToOrientedBox,
   fractureEnergyByMaterial,
   grenadeEnergyAtDistance,
   groundCarveRequiresRemnant,
+  hammerWorksMaterial,
+  HAMMER_BLOW_ENERGY,
   impactDamageRadius,
   omittedDebrisColliderBoxes,
   rocketEnergyAtDistance,
@@ -109,11 +114,26 @@ test("actor-only detail keeps every occupied box omitted by cheap proxies", () =
   ));
 });
 
-test("debris cannot sleep in mid-air just because it briefly slows down", () => {
-  assert.equal(debrisSleepSampleRequirement(0.001, 20_000, false), null);
-  assert.equal(debrisSleepSampleRequirement(0.01, 1000, true), 3);
-  assert.equal(debrisSleepSampleRequirement(0.2, 5000, true), 2);
-  assert.equal(debrisSleepSampleRequirement(0.5, 5000, true), null);
+test("rest is measured by travel, and never in mid-air", () => {
+  const still = DEBRIS_REST_TRAVEL / 2;
+  const moving = DEBRIS_REST_TRAVEL * 4;
+  const window = DEBRIS_REST_WINDOW_STEPS;
+
+  // Первый взгляд на кусок — только замер, решать не по чему.
+  assert.equal(debrisRestDecision(null, 0, true), "resample");
+  // Окно ещё не вышло: ответа нет, и контакты спрашивать незачем.
+  assert.equal(debrisRestDecision(still, window - 1, true), "wait");
+  // Встал и на что-то опирается.
+  assert.equal(debrisRestDecision(still, window, true), "freeze");
+  // Тот же покой, но в воздухе — замереть нельзя.
+  assert.equal(debrisRestDecision(still, window, false), "resample");
+  // Едет — замер обновляется.
+  assert.equal(debrisRestDecision(moving, window, true), "resample");
+
+  // За окно свободного падения кусок уходит несопоставимо дальше порога:
+  // порог не может случайно поймать летящий кусок.
+  const fall = 14 * (window / 60) ** 2 / 2;
+  assert.ok(fall > DEBRIS_REST_TRAVEL * 20, `свободное падение ${fall} м`);
 });
 
 test("a blast reaches the end of a long board even when its centre is outside", () => {
@@ -890,4 +910,36 @@ test("retention policy keeps everything while budgets are not exceeded", () => {
     priority: () => 0,
   });
   assert.deepEqual(trimmed.map((shard) => shard.id), ["first", "second"]);
+});
+
+// У удара молотком появилась энергия — в той же шкале, что у всего остального.
+// До неё лестница урона начиналась с безусловного отлома, и один удар по
+// стальному члену машины отцеплял его от корпуса вместе с соседями.
+test("the hammer works stone but never steel", () => {
+  // Самый прочный камень миров молоток обязан брать: на нём стоят крепость и
+  // весь каменный город, и разрушение их — основная механика игры.
+  for (const material of [
+    "glass",
+    "plaster",
+    "wood",
+    "plastic",
+    "brick",
+    "concrete",
+    "stone",
+    "graphiteStone",
+    "basalt",
+  ]) {
+    assert.equal(hammerWorksMaterial(material), true, material);
+  }
+  // Сталь — не материал ручного инструмента. Это согласовано со всем прежним
+  // законом: у неё нет пулевого отверстия и она не берёт контактный удар.
+  for (const material of ["steel", "sheetMetal"]) {
+    assert.equal(hammerWorksMaterial(material), false, material);
+    assert.equal(bulletHoleRadius[material], undefined, material);
+    assert.equal(crumbleOnLanding.has(material), material === "sheetMetal");
+  }
+  // Порог живёт МЕЖДУ ними, а не рядом с краем: запас с обеих сторон должен
+  // быть виден, иначе правка одного числа в каталоге молча меняет закон.
+  assert.ok(fractureEnergyByMaterial.basalt < HAMMER_BLOW_ENERGY);
+  assert.ok(HAMMER_BLOW_ENERGY * 2 < fractureEnergyByMaterial.steel);
 });

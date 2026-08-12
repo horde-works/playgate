@@ -1,10 +1,15 @@
 import type { SceneVector3 } from "./destructionScene.ts";
 import {
+  landingApproachPlan,
+  type LandingApproachOptions,
+} from "./landingApproach.ts";
+import {
   createMotionRoute,
   motionRoutePhase,
   type MotionRouteArtifact,
 } from "./motionRoute.ts";
 import type { RouteFigureStation } from "./flightFigures.ts";
+import type { AirCombatStation } from "./airCombatPilot.ts";
 import type {
   SkyTrainEmergencyEscapeInput,
   VehicleRoutePlan,
@@ -201,8 +206,8 @@ const circuitNodes: readonly { id: string | null; position: SceneVector3 }[] = [
   //     посадочный коридор, который сужается по построению; на тридцати метрах
   //     сторож снимал рейс за то, что машина честно выполнила фигуру.
   namedPoint("immelmann-final", 86, 88),
-  ...hairpin([86, 88], [73.2, 97.6], 8, [113, 151]).slice(1, -1).map(plainPoint),
-  namedPoint("final-rejoin", 73.2, 97.6),
+  ...hairpin([86, 88], [70, 100], 10, [113, 151]).slice(1, -1).map(plainPoint),
+  namedPoint("final-rejoin", 70, 100),
   plainPoint([56, 0, 74]),
   plainPoint([34, 0, 52]),
   plainPoint([16, 0, 36]),
@@ -716,7 +721,19 @@ export const combatHexacopterRangeFigures: readonly RouteFigureStation[] = [
     kind: "immelmann",
     at: nodeAt("immelmann-final"),
     resumeAt: nodeAt("final-rejoin"),
-    speed: COMBAT_HEXACOPTER_FIGURE_SPEED,
+    // ХОД ЭТОГО НОМЕРА СОГЛАСОВАН С УЧАСТКОМ, А НЕ ВЗЯТ ОБЩИЙ.
+    //
+    // Под станцией лежит полукруг трассы — то, что машина полетит, если ворота
+    // фигуру не пустят. Он тесный по необходимости: дальше посадочный столб, и
+    // разворот шире оставлял бы машину слишком далеко от линии. Но губернатор
+    // тормозит под него ЗАРАНЕЕ и совершенно правильно — поворот настоящий.
+    //
+    // Объявлять при этом фигурный ход в шестнадцать значило требовать того,
+    // чего участок не даёт: замер показал вход на 9.6 при объявленных 16, то
+    // есть фигура чертилась под радиус, которого у машины нет, и вырождалась в
+    // медленный переворот на месте. Двенадцать — то, что разрешает вираж
+    // радиусом десять метров, и фигура считается под настоящий вход.
+    speed: 12,
     floor: IMMELMANN_FLOOR,
     sky: COMBAT_HEXACOPTER_RANGE_SKY,
   },
@@ -858,11 +875,11 @@ function placedPlan(
  * шестнадцати метрах в секунду. Это ЗАПЛАТКА, и она названа заплаткой: правильно
  * было бы дать рейсу признак «до отмены», и тогда кругов не считают вовсе.
  */
-export const COMBAT_HEXACOPTER_GUARD_RADIUS = 46;
-export const COMBAT_HEXACOPTER_GUARD_ALTITUDE = 26;
-export const COMBAT_HEXACOPTER_GUARD_SPEED = 16;
+const COMBAT_HEXACOPTER_GUARD_RADIUS = 46;
+const COMBAT_HEXACOPTER_GUARD_ALTITUDE = 26;
+const COMBAT_HEXACOPTER_GUARD_SPEED = 16;
 
-export const COMBAT_HEXACOPTER_GUARD_LAPS = 40;
+const COMBAT_HEXACOPTER_GUARD_LAPS = 40;
 
 const guardCircle = createMotionRoute({
   id: "combat-hexacopter:guard",
@@ -917,6 +934,33 @@ export function combatHexacopterGuardPlan(berth: SceneVector3): VehicleRoutePlan
   return {
     ...placedPlan(guardCircle, berth, guardCircle.markerProgress("final")),
     guidanceLookahead: () => 22,
+  };
+}
+
+/**
+ * ПОСТ И ТРАССА — ОДНО РАБОЧЕЕ МЕСТО, ОПИСАННОЕ ДВАЖДЫ.
+ *
+ * Трасса отвечает автопилоту, где лететь; пост отвечает автомату боя, что
+ * машина стережёт и с какой дальности чужой борт становится её делом. Числа у
+ * них обязаны быть одни и те же, поэтому пост собирается ЗДЕСЬ, рядом с
+ * выводом радиуса, высоты и хода, — а не в рантайме, куда эти константы прежде
+ * уезжали импортом. Рантайм от этого перестал знать имена машин вовсе:
+ * есть пост — есть бой, нет поста — нет.
+ *
+ * ДАЛЬНОСТЬ ОБНАРУЖЕНИЯ втрое больше радиуса потому, что периметр стерегут
+ * ЦЕЛИКОМ: с любой точки орбиты дальний край охраняемого круга лежит в двух
+ * радиусах, и тройка оставляет запас на цель, подходящую снаружи. Это решение
+ * СЦЕНАРИЯ, а не машины: та же машина на другом полигоне получит другой пост.
+ */
+export function combatHexacopterGuardStation(
+  berth: SceneVector3,
+): AirCombatStation {
+  return {
+    centre: berth,
+    radius: COMBAT_HEXACOPTER_GUARD_RADIUS,
+    altitude: COMBAT_HEXACOPTER_GUARD_ALTITUDE,
+    speed: COMBAT_HEXACOPTER_GUARD_SPEED,
+    detectionRange: COMBAT_HEXACOPTER_GUARD_RADIUS * 3,
   };
 }
 
@@ -1023,8 +1067,64 @@ export function combatHexacopterRangePlan(berth: SceneVector3): VehicleRoutePlan
   };
 }
 
-export function combatHexacopterRangeArrivalPlan(berth: SceneVector3): VehicleRoutePlan {
-  return combatHexacopterRangePlan(berth);
+/**
+ * ЗАХОД НА ПОСАДКУ — С ГОРИЗОНТА И С РАЗНЫХ СТОРОН.
+ *
+ * Прежде «прибытием» служил показательный круг: машину переносили в его начало,
+ * и она уходила крутить программу вместо того, чтобы садиться. Снаружи это
+ * читалось как «появился на площадке и взлетел, не приземлившись» (наблюдение
+ * Igor, 11.08.2026), а иногда уводило её за остров — круг ведёт куда угодно,
+ * только не к берту.
+ *
+ * Настоящий заход прост и потому надёжен: прямая с дальнего края мира к берту
+ * со снижением. Пеленг — ДОВОД, а не константа: подменные суда обязаны
+ * приходить с разных сторон, иначе полигон выглядит конвейером.
+ *
+ * Начало захода берётся снаружи, если оно задано: отзыв с пульта строит тот же
+ * заход от ТЕКУЩЕГО места машины, и лететь ей тогда не с горизонта, а оттуда,
+ * где её застал приказ.
+ */
+/**
+ * ЗАХОД: ИДТИ РОВНО, ВСТАТЬ НАД ПЛОЩАДКОЙ, СНИЖАТЬСЯ ВЕРТИКАЛЬНО.
+ *
+ * Первая редакция вела машину ПРЯМОЙ от точки на горизонте к причалу — то есть
+ * постоянным снижающимся глиссадом со ста пятидесяти метров. Замер по
+ * геометрии полигона (диск радиусом 50 м, площадка в 33 м от центра):
+ *
+ *   пеленг 0     — кромка на 12.3 м, минимум над островом 2.9 м;
+ *   пеленг 2.4   — кромка на  4.1 м  (это пеленг ПЕРВОЙ подменной машины);
+ *   отзыв снизу  — кромка на −9.6 м, то есть план идёт СКВОЗЬ остров.
+ *
+ * Отсюда и наблюдение Igor: «маршрут подменного RAX на нулевой высоте, при
+ * прибытии он врезается в край и подвисает». Прямая между двумя точками
+ * ничего не знает о том, что лежит между ними.
+ *
+ * Правильная форма в проекте уже есть и ею живёт машина города: ровный ход на
+ * высоте отрыва от палубы, `verticalArrival` над самой площадкой и только
+ * тогда снижение. Здесь она же. Отзыв снизу этим же и лечится: высота захода
+ * не зависит от того, откуда машину позвали, поэтому первое, что она сделает,
+ * — наберёт высоту, и уже потом пойдёт внутрь.
+ *
+ * Чего эта правка НЕ лечит: машину, которую позвали, когда она уже ПОД
+ * островом. План велит ей набрать высоту, а над ней твёрдое тело. Это не про
+ * трассу, это про конверт машины, и лечится оно там.
+ */
+export function combatHexacopterRangeApproachPlan(
+  berth: SceneVector3,
+  options?: LandingApproachOptions,
+): VehicleRoutePlan {
+  return landingApproachPlan(
+    berth,
+    { id: "combat-hexacopter:range-approach", clearance: CLEARANCE_ALTITUDE },
+    options,
+  );
+}
+
+export function combatHexacopterRangeArrivalPlan(
+  berth: SceneVector3,
+  options?: LandingApproachOptions,
+): VehicleRoutePlan {
+  return combatHexacopterRangeApproachPlan(berth, options);
 }
 
 export function combatHexacopterRangeEscapePlan(

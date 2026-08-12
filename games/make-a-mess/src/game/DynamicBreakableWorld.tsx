@@ -37,6 +37,8 @@ import {
 import {
   type RemnantDefinition,
   type ShardDefinition,
+  bodySettled,
+  physicalBodyKind,
 } from "./destructionRuntime";
 import {
   getPieceMaterial,
@@ -925,7 +927,20 @@ diffuseColor.rgb = mix(
       }
       let sleeping = sleepStates.get(fragment.sourceId);
       if (sleeping === undefined) {
-        sleeping = body.isSleeping();
+        // ЗАМОРОЖЕННОЕ ТЕЛО «НЕ СПИТ», И ЭТО НЕ ОПЕЧАТКА RAPIER.
+        //
+        // Осевший обломок переводится в `Fixed` (destruction-lessons §7.8), а
+        // `isSleeping()` у нефизического тела возвращает false — проверено.
+        // Пока здесь стоял только он, вся замороженная куча писала матрицы
+        // КАЖДЫЙ КАДР навсегда: физика становилась дешёвой, а рендер нет.
+        //
+        // Но «не Dynamic» — ответ НЕВЕРНЫЙ, и он стоил машине винтов: под него
+        // попала кинематика, которой живут лопасти, створки и роторы. Общий
+        // ответ и его цена — `bodySettled` в `destructionRuntime`.
+        sleeping = bodySettled(
+          physicalBodyKind(body.bodyType(), rapier.RigidBodyType),
+          body.isSleeping(),
+        );
         sleepStates.set(fragment.sourceId, sleeping);
       }
       // Copy the pose once on the awake -> sleeping transition. The sleep

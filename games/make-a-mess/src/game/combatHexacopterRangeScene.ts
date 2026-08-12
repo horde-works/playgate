@@ -4,6 +4,7 @@ import {
   rangeVertipadDocument,
   rangeVertipadSpotLights,
 } from "../content/scenes/rangeVertipadDocument.ts";
+import { ductHexacopterRangePadDocument } from "../content/scenes/ductHexacopterRangePadDocument.ts";
 import { cityPrefabLibrary } from "../content/prefabs/cityPrefabs.ts";
 import { createDestructionScene } from "./destructionScene.ts";
 
@@ -25,6 +26,16 @@ export const rangeVertipadCompilation = compileSceneGroups(
   cityPrefabLibrary,
 );
 
+/**
+ * Пад VX-8 и сама машина — один документ и одна компиляция намеренно: решатель
+ * опор считает связность в границах документа, и разложи их порознь — сорок
+ * кусков ног пойдут искать настил, которого в их документе нет.
+ */
+export const ductHexacopterRangePadCompilation = compileSceneGroups(
+  ductHexacopterRangePadDocument,
+  new Map(),
+);
+
 const world = combatHexacopterRangeDocument.world;
 
 export const combatHexacopterRangeScene = createDestructionScene({
@@ -44,10 +55,12 @@ export const combatHexacopterRangeScene = createDestructionScene({
   clusters: [
     ...combatHexacopterRangeCompilation.clusters,
     ...rangeVertipadCompilation.clusters,
+    ...ductHexacopterRangePadCompilation.clusters,
   ],
   lamps: [
     ...combatHexacopterRangeCompilation.lamps,
     ...rangeVertipadCompilation.lamps,
+    ...ductHexacopterRangePadCompilation.lamps,
   ],
   spotLights: rangeVertipadSpotLights,
   fogDistances: combatHexacopterRangeDocument.fogDistances,

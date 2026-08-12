@@ -10,6 +10,7 @@ import {
   type SupportMode,
 } from "./destructionScene.ts";
 import { createBasaltStrongholdWorldbuilding } from "./basaltStrongholdWorldbuilding.ts";
+import { SILICATE_JOINT } from "./silicateJoints.ts";
 import {
   BASALT_SKY_RAM_BERTH_CLUSTER_ID,
   BASALT_SKY_RAM_CLUSTER_ID,
@@ -83,7 +84,9 @@ function createHighlandGround(): void {
           "grass",
           "groundTile",
           [centerX, -0.09, centerZ],
-          [6.04, 0.26, 6.04],
+          // Ровно шаг сетки: нахлёст в 4 см давал соседним клеткам общую
+          // верхнюю плоскость, и вся трава спорила за пиксели решёткой 6 м.
+          [tile, 0.26, tile],
           tone > 0.66 ? "#4a6136" : tone > 0.32 ? "#465c34" : "#425730",
         ),
       );
@@ -94,7 +97,7 @@ function createHighlandGround(): void {
           "earth",
           "groundTile",
           [centerX, -1.08, centerZ],
-          [6.04, 1.72, 6.04],
+          [tile, 1.72, tile],
           tone > 0.5 ? "#453628" : "#3f3224",
         ),
       );
@@ -161,7 +164,7 @@ function createCircularHighlandExtension(): void {
           "grass",
           "groundTile",
           [centerX, grassCenterY, centerZ],
-          [6.04, 0.26, 6.04],
+          [tile, 0.26, tile],
           grassColor,
         ),
       );
@@ -175,7 +178,7 @@ function createCircularHighlandExtension(): void {
             "earth",
             "groundTile",
             [centerX, surfaceY - 0.26 - earthHeight / 2, centerZ],
-            [6.04, earthHeight, 6.04],
+            [tile, earthHeight, tile],
             tone > 0.5 ? "#453628" : "#3f3224",
           ),
         );
@@ -209,7 +212,7 @@ function createCircularHighlandExtension(): void {
             "earth",
             "groundTile",
             [centerX, rockBottom - earthHeight / 2, centerZ],
-            [6.04, earthHeight, 6.04],
+            [tile, earthHeight, tile],
             tone > 0.5 ? "#3f3224" : "#362b20",
           ),
         );
@@ -601,7 +604,12 @@ function createGatehouse(): void {
               arrowSlit ? "darkGlass" : row < 3 ? "basalt" : "graphiteStone",
               arrowSlit ? "glassPane" : "stoneBlock",
               [x, y, -0.42 + face * (depth / 2 - 0.36)],
-              [segmentWidth - 0.025, 0.75, arrowSlit ? 0.2 : 0.72],
+              // Бойница застеклена, а стекло связующего не получает: значит
+              // она заполняет ячейку курса точно (шаг 0.78), иначе вокруг неё
+              // остаётся сквозная щель в 4 мм. Камень идёт со швом.
+              arrowSlit
+                ? [segmentWidth, 0.78, 0.2]
+                : [segmentWidth - 0.025, 0.75, 0.72],
               arrowSlit
                 ? "#243940"
                 : (row + segment + face) % 3 === 0
@@ -664,7 +672,12 @@ function createGatehouse(): void {
           "basalt",
           "stoneBlock",
           [towerX, floorY, floor % 2 === 1 ? 1.33 : -1.55],
-          [1.78, 0.28, 1.45],
+          // Площадка заполняет проём лестницы ТОЧНО: маршевые плиты стоят на
+          // towerX ± 1.42 при ширине 1.5, значит просвет между ними — ровно
+          // 1.34. Стояло 1.78: площадка на 22 см заезжала на каждую плиту, а
+          // лежат они на одной высоте и одной толщины — то есть спорили и
+          // пол, по которому идут, и потолок под ним.
+          [1.34, 0.28, 1.45],
           "#2c3033",
         ),
       );
@@ -764,7 +777,13 @@ function createGatehouse(): void {
           "wood",
           "plank",
           [side * (0.46 + plank * 0.72), 2.5, 1.08],
-          [0.68, 4.85, 0.3],
+          // Доски створки смыкаются встык по шагу 0.72. Стояло 0.68 — то есть
+          // ворота крепости имели пять сквозных прорезей по 40 мм во всю
+          // высоту, и через закрытые ворота просматривался двор. Створка
+          // однослойная, за досками только стальные полосы поперёк, так что
+          // закрывать щель было нечем. Досками створка читается по фаске и
+          // чередованию тона, а не по дыркам.
+          [0.72, 4.85, 0.3],
           plank % 2 === 0 ? "#4b281c" : "#382016",
         ),
       );
@@ -840,7 +859,11 @@ function createWallWalk(): void {
         "basalt",
         "stoneBlock",
         [x, 8.23, -1.25],
-        [3.04, 0.35, 4.1],
+        // Боевой ход — настил, встык по шагу 3. Стояло 3.04: нахлёст 40 мм
+        // с общими плоскостями и сверху, и снизу — то есть спорили и то, по
+        // чему ходят, и потолок галереи под стеной. Тон плит чередуется, так
+        // что спор виден шумом, а не оттенком.
+        [3, 0.35, 4.1],
         index % 2 === 0 ? "#2b2f31" : "#373a3c",
       ),
     );
@@ -958,7 +981,13 @@ function createDarkTower(): void {
               baseY + 0.18,
               centerZ - depth / 2 + (iz + 0.5) * (depth / 3),
             ],
-            [width / 4 - 0.035, 0.38, depth / 3 - 0.035],
+            // НАСТИЛ МОСТИТСЯ ВСТЫК. Здесь стояло `− 0.035`: шов в 35 мм,
+            // который связующее кладки закрывало нахлёстом в 17 мм — и этот
+            // нахлёст выносил две копланарные грани на поверхность, по
+            // которой ходят. 254 спорных стыка на полах башни. У настила
+            // швов не бывает: плиты смыкаются точно, а блоки всё равно
+            // читаются раздельно по фаске и кромочному износу.
+            [width / 4, 0.38, depth / 3],
             (floor + ix + iz) % 3 === 0 ? "#25292c" : "#34383b",
           ),
         );
@@ -986,7 +1015,17 @@ function createDarkTower(): void {
                 window ? "darkGlass" : "graphiteStone",
                 window ? "glassPane" : "stoneBlock",
                 [x, y, centerZ + face * depth / 2],
-                [cellX - 0.025, 0.72, window ? 0.2 : 0.72],
+                // СТЕКЛО ЗАПОЛНЯЕТ ЯЧЕЙКУ ТОЧНО, камень — со швом.
+                // Связующее кладки стекло не получает и получать не должно:
+                // панель, нарисованная на 5 см шире, полезла бы в откосы. Но
+                // тогда шов вокруг неё закрывать нечем, и остаётся щель
+                // шириной «шов минус прирост соседа» — 30 − 26 = 4 мм по всей
+                // раскладке окон башни, насквозь. Стекло берёт полный шаг
+                // курса, а прирост соседнего камня ложится на его кромку, как
+                // штапик.
+                window
+                  ? [cellX, 0.75, 0.2]
+                  : [cellX - 0.025, 0.72, 0.72],
                 window
                   ? front
                     ? "#263b43"
@@ -1012,7 +1051,10 @@ function createDarkTower(): void {
               window ? "darkGlass" : "graphiteStone",
               window ? "glassPane" : "stoneBlock",
               [face * width / 2, y, z],
-              [window ? 0.2 : 0.72, 0.72, cellZ - 0.025],
+              // Стекло — точно по ячейке, камень — со швом (см. стену :x:).
+              window
+                ? [0.2, 0.75, cellZ]
+                : [0.72, 0.72, cellZ - 0.025],
               window
                 ? "#20363d"
                 : (row + column + floor) % 4 === 0
@@ -1108,7 +1150,8 @@ function createDarkTower(): void {
             crownY + 0.18,
             centerZ - roofDepth / 2 + (iz + 0.5) * (roofDepth / 3),
           ],
-          [roofWidth / 4 - 0.035, 0.38, roofDepth / 3 - 0.035],
+          // Кровля — тот же настил, что и полы: встык, без шва.
+          [roofWidth / 4, 0.38, roofDepth / 3],
           (ix + iz) % 2 === 0 ? "#202427" : "#2b2f32",
         ),
       );
@@ -1116,8 +1159,9 @@ function createDarkTower(): void {
   }
 
   const crownWidth = 12.6;
+  const crownPitch = crownWidth / 8;
   for (let index = 0; index < 9; index += 1) {
-    const x = -crownWidth / 2 + index * (crownWidth / 8);
+    const x = -crownWidth / 2 + index * crownPitch;
     pieces.push(
       piece(
         `${id}:crown:base:${index}`,
@@ -1125,7 +1169,10 @@ function createDarkTower(): void {
         "basalt",
         "stoneBlock",
         [x, crownY + 0.9, centerZ + 0.5],
-        [1.52, 1.05, 7.5],
+        // Шов кроны берётся из общего числа крепости, а не набирается руками.
+        // Стояло 1.52 при шаге 1.575 — шов 55 мм, ШИРЕ связующего (52 мм), и
+        // сквозь корону просвечивало на всю высоту блока и все 7.5 м длины.
+        [crownPitch - SILICATE_JOINT, 1.05, 7.5],
         index % 2 === 0 ? "#202427" : "#2d3134",
       ),
     );

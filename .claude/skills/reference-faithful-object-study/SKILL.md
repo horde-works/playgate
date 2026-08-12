@@ -46,6 +46,8 @@ Read [foundation.md](references/foundation.md) completely only when installing, 
 
 Also read repository instructions, the object passport, authoring schema, renderer, material bindings, current canonical owner and targeted tests. Direct user constraints and project-local contracts override this skill.
 
+In this repository, also read [`games/make-a-mess/docs/joint-canon.md`](../../../games/make-a-mess/docs/joint-canon.md) before authoring any assembly of two or more bodies. It owns how bodies meet — the three lawful joints, tiling by exact pitch, why only co-facing coplanar faces fight, joinery versus visible interpenetration, and the depth budget that makes an authoring tolerance a function of viewing distance. The magenta gap detector in [geometry-construction.md](references/geometry-construction.md) finds holes in a skin; `tools/joint-audit.mjs` measures the same class numerically once the object is seated in a scene.
+
 ## Non-negotiable boundary
 
 - Treat documentary sources, measured drawings and the approved passport as evidence.
@@ -132,6 +134,13 @@ Work in this order:
 7. trim, fasteners and tertiary detail.
 
 Classify the dominant body family of every major mass before detail: shell, faceted loft, annular duct, open truss, drafted torque box/casting, revolved body, bent panel or beam lattice. A wrong family is rebuilt, not polished.
+
+For a lofted body — fuselage, hull, lifting body, nacelle — author the crown,
+keel and half-width **tables before any geometry**, and let every member read
+them: a body whose section is constant from nose to tail is the failure
+geometry-construction.md §3.1 calls the cake. Then panel its skin on the
+features the tables describe, because a panel carries the surface only at its
+corners and a wide one interpolates the loft away.
 
 For every part, answer:
 
@@ -319,6 +328,10 @@ Minimum machine gate before showing PNGs:
 - every annex/tower entry into a roof has an open span, support and flashing/collar;
 - main load-bearing members end on supports and stay under the finish shell;
 - ids unique, geometry non-degenerate;
+- lofted surfaces probed by triangle interpolation, not by vertex sampling, and
+  the panel chord stated as a tolerance;
+- occupant/contents volumes recovered as zones and empty of structure;
+- every reviewer verdict from this study carried into a named regression test;
 - all fixed cameras show one revision and one hash;
 - every eligible registered view has the required mask/overlay/metric report and no unresolved multi-view conflict;
 - every intended closed body passes manifold/winding/component-count checks, and every named mate/axis is independently recovered;

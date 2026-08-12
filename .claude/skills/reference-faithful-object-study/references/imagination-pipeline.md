@@ -11,6 +11,7 @@
 7. Self-contradictory sheets
 8. From sheet to invariants
 9. Concept evolution during milestones
+10. Naming an imagined machine
 
 ## 1. When this leg applies
 
@@ -90,5 +91,32 @@ validation evidence, not a route for relabelling concept pixels as published or
 measured dimensions.
 
 ## 9. Concept evolution during milestones
+10. Naming an imagined machine
 
 New concept directions may be generated mid-study (including `style-transfer` over the current canonical renders to propose surface language). Each new sheet passes the same loop: variants → owner selection recorded → placement under `docs/<object>/reference/` → Tier E marking → count audit before any reading. Canonical geometry changes only through the discrepancy loop against the evidence card — never directly "to match the new picture".
+
+## 10. Naming an imagined machine
+
+A name is not decoration; it is two layers of meaning and both are required.
+
+**The index alludes to real relatives.** In the Playgate line, `RAX-8` mutates
+RAH-66 and AH-64 — attack helicopters; `VX-8` points at the ducted-fan VTOLs the
+airframe descends from, Piasecki's VZ-8 Airgeep and the Bell X-22. The number in
+both cases is a countable fact about the machine, not a serial: eight
+propulsors.
+
+**The name is chosen for character, and from a set the real world left free.**
+Apache, Comanche, Kiowa, Cheyenne and Chinook are taken by actual aircraft;
+using them copies rather than alludes. Tonkawa and Yaqui were free, and were
+picked for behaviour rather than shape — the Yaqui were subdued by neither Spain
+nor Mexico, which is exactly the character of a machine that is not fast but
+cannot be shifted.
+
+The test is simple: a name describing the form ("Manta", "Wedge") explains the
+picture; a name describing the behaviour explains the machine. The second
+survives longer, because the form will change ten more times in review.
+
+Carry the name through the object `id`, the lab `title` — it prints on every
+capture — the evidence card, the study README and the discrepancy log, in one
+commit. Do not erase the working designation: mark it retired, so nobody has to
+guess six months later what `HX-D` was.

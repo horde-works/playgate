@@ -33,7 +33,7 @@ GOA4 train, and windmill/constant-rotor mechanisms — the boundary is
 
 Before changing code, read these documents completely and in this order:
 
-1. [`games/make-a-mess/docs/vehicle-control-lessons.md`](../../games/make-a-mess/docs/vehicle-control-lessons.md)
+1. [`games/make-a-mess/docs/vehicle-control-lessons.md`](../../../games/make-a-mess/docs/vehicle-control-lessons.md)
    — the control contract FIRST: cluster membership and articulation,
    actuators, the automation/autopilot boundary, guidance tolerances and
    corridors, route building, journey stages and subscribers,
@@ -42,11 +42,11 @@ Before changing code, read these documents completely and in this order:
    rotors, manual pilot). Read §3.3.1 before touching anything that decides a
    rotorcraft's attitude: the pose is an INPUT to the cascade, not only a
    consequence of the acceleration demand.
-2. [`games/make-a-mess/docs/airborne-vehicle-dynamics.md`](../../games/make-a-mess/docs/airborne-vehicle-dynamics.md)
+2. [`games/make-a-mess/docs/airborne-vehicle-dynamics.md`](../../../games/make-a-mess/docs/airborne-vehicle-dynamics.md)
    — the carrier flight-physics contract: definition contract, physical
    assembly, Rapier body laws, mass/balance/lift, force model, passenger
    inertia, world envelopes, physics test matrix.
-3. [`games/make-a-mess/docs/physical-architecture-guide.md`](../../games/make-a-mess/docs/physical-architecture-guide.md)
+3. [`games/make-a-mess/docs/physical-architecture-guide.md`](../../../games/make-a-mess/docs/physical-architecture-guide.md)
    for the quality bar, ownership boundaries and diagnosis discipline.
 
 Read by adjacency:
@@ -55,6 +55,12 @@ Read by adjacency:
   floating foundation, verification order, assembly checklist):
   [`references/assembly.md`](references/assembly.md) — the dissolved
   transport-lessons core; read before building or re-seating any machine.
+- How two bodies meet — panels, decking, skin plates, and every piece of
+  cabin furniture: [`games/make-a-mess/docs/joint-canon.md`](../../../games/make-a-mess/docs/joint-canon.md).
+  The solver's threshold is not the acceptance threshold: `deinterpenetrate`
+  only separates overlaps deeper than 22% of the smaller body, while the eye
+  sees one at 3% — the sky-train bench backs sat 10.5 cm inside the seat
+  planks on all fourteen benches and passed every test.
 - Two-sided impact law, material verdicts and the debris contract:
   `games/make-a-mess/docs/destruction-lessons.md` — read whenever a vehicle
   hits the world, sheds pieces, or a glass/steel/sheet-metal verdict is in

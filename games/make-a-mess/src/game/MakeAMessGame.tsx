@@ -20,7 +20,7 @@ import {
   shardBodySpec,
   type DebrisColliderSpec,
 } from "./debrisBodyPool";
-import { debrisBodyHasSiblingOverlap } from "./debrisCollisionActivation";
+import { debrisBodyIsEmbedded } from "./debrisCollisionActivation";
 import {
   performanceGovernor,
   type PerformanceQuality,
@@ -123,12 +123,17 @@ import {
   crumbleOnLanding,
   damageBody,
   debrisColliderBoxes,
+  bodySettled,
   debrisCollisionTuning,
-  debrisSleepSampleRequirement,
+  DEBRIS_REST_TRAVEL,
+  DEBRIS_REST_WINDOW_STEPS,
+  debrisRestDecision,
+  physicalBodyKind,
   fractureEnergyByMaterial,
   grenadeEnergyAtDistance,
   groundCarveRequiresRemnant,
   groundMaterials,
+  hammerWorksMaterial,
   selectCarveTargetsWithinBudget,
   impactDamageRadius,
   omittedDebrisColliderBoxes,
@@ -178,6 +183,7 @@ import {
 import {
   FirstPersonHammer,
   FirstPersonDemolitionCharge,
+  FirstPersonConstructor,
   FirstPersonLauncher,
   FirstPersonMachineGun,
   FirstPersonRocketLauncher,
@@ -221,6 +227,7 @@ import { WorldEdge } from "./WorldEdge";
 import { HingedDoorSystem, type HingedEntryApproach } from "./HingedDoorSystem";
 import {
   entryInteractionActions,
+  keyboardDigit,
   numberedEntryInteractionAction,
   preferredEntryInteraction,
   type EntryInteractionAction,
@@ -231,16 +238,25 @@ import { IntactBreakableWorld } from "./IntactBreakableWorld";
 import { LandscapeSurface } from "./LandscapeSurface";
 import {
   VehicleFrameSystem,
-  type RotorcraftPilotStatus,
   type VehicleFramePoseState,
 } from "./VehicleFrameSystem";
+// Приборная доска ручного полёта — свой модуль, а не часть покадрового
+// компонента: по ней человек решает снижаться или уходить.
+import type { RotorcraftPilotStatus } from "./rotorcraftPilotStatus.ts";
 import { AstanaTrainSystem } from "./AstanaTrainSystem";
 import {
   ConstantRotorSystem,
   constantRotorClusterDefinitions,
 } from "./ConstantRotorSystem";
 import { TownCarSystem } from "./TownCarSystem";
+import {
+  ConstructionSystem,
+  DEFAULT_CONSTRUCTION_UI,
+  type ConstructionRuntime,
+  type ConstructionUiState,
+} from "./ConstructionSystem";
 import { townDsClusterDefinition } from "./townCitroenDs";
+import { directWeaponShortcut } from "./weaponShortcuts.ts";
 import {
   BasaltForceFieldSystem,
   type BasaltForceFieldRuntime,
@@ -310,9 +326,11 @@ import {
   ACTOR_SAFETY_FLOOR,
   ACTOR_ABOARD,
   ACTOR_NORMAL,
+  PROJECTILE_FLIGHT,
   DEBRIS_ACTOR_DETAIL,
+  DEBRIS_INSIDE_CARRIER,
+  DEBRIS_LEAVING_CARRIER,
   DEBRIS_NORMAL,
-  DEBRIS_SETTLING,
   VEHICLE_ATTACHMENT,
   WORLD_BOUNDARY,
 } from "./physicsInteractionGroups";
@@ -431,7 +449,8 @@ type WeaponName =
   | "mg"
   | "rocket"
   | "lance"
-  | "charge";
+  | "charge"
+  | "construction";
 
 function nextWeaponName(weapon: WeaponName): Exclude<WeaponName, "none"> {
   return weapon === "hammer"
@@ -444,7 +463,9 @@ function nextWeaponName(weapon: WeaponName): Exclude<WeaponName, "none"> {
           ? "lance"
           : weapon === "lance"
             ? "charge"
-            : "hammer";
+            : weapon === "charge"
+              ? "construction"
+              : "hammer";
 }
 
 /**
@@ -542,6 +563,8 @@ function entryApproachAction(entry: HingedEntryApproach): GameAction {
               ? "hexacopter-departure.approaching"
               : entry.cue === "combat-hexacopter-uncrewed-flight"
                 ? "combat-departure.approaching"
+              : entry.cue === "duct-hexacopter-uncrewed-flight"
+                ? "yaqui-departure.approaching"
               : entry.cue === "sr6-skat-uncrewed-flight"
                 ? "skat-departure.approaching"
               : "terminal-departure.approaching"
@@ -591,6 +614,10 @@ function entryActionKey(
             ? touch
               ? "hint.combatDeparture.actionTouch"
               : "hint.combatDeparture.action"
+          : entry.cue === "duct-hexacopter-uncrewed-flight"
+            ? touch
+              ? "hint.yaquiDeparture.actionTouch"
+              : "hint.yaquiDeparture.action"
           : entry.cue === "sr6-skat-uncrewed-flight"
             ? touch
               ? "hint.skatDeparture.actionTouch"
@@ -2216,8 +2243,32 @@ interface BreakablePieceProps {
 
 // Свежие обломки короткое время не сталкиваются с соседями — подробные
 // маски взаимодействия также используются датчиками транспорта.
-const DEBRIS_SETTLE_STEPS = 36;
+//
+// ЗАДЕРЖКА ДЕРЖИТСЯ ТОЛЬКО НА ОДНОМ: запрос формой честен лишь после того,
+// как тело хоть раз прошло через `world.step()` и попало в broad phase. Пара
+// шагов запаса это гарантирует, и на них же кластер успевает тронуться с
+// места. Больше задержке взять неоткуда: «дать перекрытиям осесть» теперь
+// делают сами ворота, и они судят по ГЛУБИНЕ.
+//
+// Прежние 36 шагов (0.6 с) стоили дорого: за это время куски успевали
+// перемешаться и садились в кучу уже вложенными друг в друга. Замер на
+// фасаде `hru:south:0` — пар с проникновением больше сантиметра после
+// осадки: 36 шагов → 157 пар (худшая 6.4 см), 12 → 131, 6 → 37 (3.9 см),
+// 1 → 28. Остаток на шести — авторское взаимопроникновение оконного набора,
+// которое разводится не здесь (см. `resolveInterpenetration`).
+const DEBRIS_SETTLE_STEPS = 6;
 const DEBRIS_OVERLAP_RETRY_STEPS = 6;
+/**
+ * ПОТОЛОК ПЕРЕСПРОСА. Раньше кусок, оставшийся заделанным в соседа,
+ * возвращался в очередь каждые шесть шагов бесконечно: после обвала бюджет
+ * ворот был занят под завязку до конца партии (замер: 23.5 проверки из 24 на
+ * шаг, 1045 призраков на одну хрущёвку). Три секунды — предел, за которым
+ * спрашивать бессмысленно: кусок в глубине завала не разъедется уже никогда.
+ *
+ * Потолок закрывает ВОПРОС, а не льготу: вооружать глубоко сцепленную кучу
+ * нельзя, это замерено (см. ветку `embedded` в воротах).
+ */
+const DEBRIS_SETTLE_MAX_STEPS = 180;
 const DEBRIS_ACTIVATION_CHECKS_PER_STEP = [4, 12, 24] as const;
 const DEBRIS_CONTACT_GRACE_STEPS = 30;
 const DEBRIS_RETRY_COOLDOWN_STEPS = 12;
@@ -2307,6 +2358,10 @@ const BreakablePiece = memo(function BreakablePiece({
     : false;
   const vehicleAttachment = Boolean(clusterFrame && !compoundClusterMember);
   const ownsContactShape = broken || !compoundClusterMember;
+  // Член машины рождается внутри её оболочки, а не рядом с ней, и только он
+  // получает льготу (см. DEBRIS_LEAVING_CARRIER). Мировой обломок сталкивается
+  // с собратьями с первого шага: призрак садится в кучу вложенным.
+  const birthGroup = clusterFrame ? DEBRIS_LEAVING_CARRIER : DEBRIS_NORMAL;
   const collisionTuning = debrisCollisionTuning(piece.size);
 
   useEffect(() => {
@@ -2406,7 +2461,7 @@ const BreakablePiece = memo(function BreakablePiece({
           continue;
         }
         // Don't collide with sibling debris yet — let overlaps settle.
-        collider.setCollisionGroups(DEBRIS_SETTLING);
+        collider.setCollisionGroups(birthGroup);
       }
     }
 
@@ -2436,6 +2491,7 @@ const BreakablePiece = memo(function BreakablePiece({
     fallingTreeFoliage,
     rapier,
     registerBody,
+    birthGroup,
   ]);
 
   return (
@@ -2457,7 +2513,7 @@ const BreakablePiece = memo(function BreakablePiece({
       // undefined). Отдельный механизм получает явную маску: с миром он
       // взаимодействует, со своим составным корпусом — нет.
       {...(broken
-        ? { collisionGroups: DEBRIS_SETTLING }
+        ? { collisionGroups: birthGroup }
         : vehicleAttachment
           ? { collisionGroups: VEHICLE_ATTACHMENT }
           : {})}
@@ -3302,7 +3358,9 @@ function Grenade({
         linearDamping={0.04}
         angularDamping={profile.projectile.angularDamping}
         ccd
-        collisionGroups={ACTOR_NORMAL}
+        // Снаряд — НЕ пешеход: кольцо-ограничитель и пол безопасности стоят
+        // для человека, и биться о них снаряду незачем (см. группу).
+        collisionGroups={PROJECTILE_FLIGHT}
         onCollisionEnter={() => {
           // Здесь только отметка и чтение позы: подрыв идёт следующим
           // проходом кадра, вне колбэка физического мира.
@@ -4082,6 +4140,8 @@ interface OpenWorldSceneProps {
   mobileActions: MutableRefObject<MobileActionBridge>;
   chargeCount: number;
   demolitionChargeRuntime: MutableRefObject<DemolitionChargeRuntime | null>;
+  constructionRuntime: MutableRefObject<ConstructionRuntime | null>;
+  onConstructionUiChange: (state: ConstructionUiState) => void;
   resetVersion: number;
   entryOpenRequestVersion: number;
   entryOpenRequestTargetRef: MutableRefObject<HingedEntryApproach | null>;
@@ -4137,6 +4197,8 @@ function OpenWorldScene({
   mobileControls,
   mobileActions,
   demolitionChargeRuntime,
+  constructionRuntime,
+  onConstructionUiChange,
   resetVersion,
   entryOpenRequestVersion,
   entryOpenRequestTargetRef,
@@ -4501,10 +4563,19 @@ function OpenWorldScene({
   const debrisSoundByBody = useRef(new Map<string, number>());
   const physicsStep = useRef(0);
   const debrisSettlingUntilStep = useRef(new Map<string, number>());
+  /** Круговой курсор по очереди на проверку: бюджет достаётся всем по разу. */
+  const debrisActivationCursor = useRef(0);
   const lastContactStepByBody = useRef(new Map<string, Map<number, number>>());
   const contactDamageAfterStep = useRef(new Map<string, number>());
   const dynamicStartedStep = useRef(new Map<string, number>());
-  const restCounters = useRef(new Map<string, number>());
+  /**
+   * Замер покоя: где кусок был на прошлом взгляде. Покой меряется СМЕЩЕНИЕМ,
+   * потому что сцепленная куча дрожит и по энергии не успокаивается никогда
+   * (`debrisRestDecision`).
+   */
+  const restSamples = useRef(
+    new Map<string, { step: number; x: number; y: number; z: number }>(),
+  );
   const settleAccumulator = useRef(0);
   const strikeTimers = useRef<number[]>([]);
   const shardsRef = useRef<readonly ShardDefinition[]>([]);
@@ -4561,6 +4632,35 @@ function OpenWorldScene({
         volume:
           source.volume ?? source.size[0] * source.size[1] * source.size[2],
       };
+    },
+    [breakablePieceById],
+  );
+  /**
+   * ЛЬГОТА ОСТАЛАСЬ ТОЛЬКО У КУСКА МАШИНЫ.
+   *
+   * Мировой обломок сталкивается с себе подобными С РОЖДЕНИЯ. Льгота была
+   * придумана против толчка при рождении, но платили за неё не толчком, а
+   * взаимопроникновением: пока кусок призрак, он проваливается сквозь соседей
+   * и садится в кучу уже вложенным. Замер на обвале целой хрущёвки — пар с
+   * проникновением глубже сантиметра: с льготой 3461, с рождения 883.
+   * Расталкивать пару дёшево, пока она в воздухе и свободна; в зажатой куче
+   * это не удаётся уже никакой ценой.
+   *
+   * У члена машины выбора нет: он рождается ВНУТРИ её оболочки (11–27
+   * коллайдеров носителя на кусок), и без льготы солвер выталкивает его
+   * вместе с машиной. Ему — `DEBRIS_LEAVING_CARRIER` и ворота.
+   *
+   * Осколки (`shardById`) кластера не несут и потому всегда мировые: мелкая
+   * стружка из машины и так вылетает наружу.
+   */
+  const debrisBirthGroupFor = useCallback(
+    (id: string): number => {
+      const clusterId =
+        breakablePieceById.get(id)?.clusterId ??
+        remnantById.current.get(id)?.clusterId;
+      return clusterId && vehicleFrameForCluster(clusterId)
+        ? DEBRIS_LEAVING_CARRIER
+        : DEBRIS_NORMAL;
     },
     [breakablePieceById],
   );
@@ -4851,15 +4951,21 @@ function OpenWorldScene({
               id,
               physicsStep.current + DEBRIS_CONTACT_GRACE_STEPS,
             );
-            debrisSettlingUntilStep.current.set(
-              id,
-              physicsStep.current + DEBRIS_SETTLE_STEPS,
-            );
+            const birthGroup = debrisBirthGroupFor(id);
+            // В очередь ворот встают только те, у кого есть льгота: сегодня
+            // это ровно куски машин. Мировой обломок вооружён сразу и
+            // спрашивать о нём нечего.
+            if (birthGroup === DEBRIS_LEAVING_CARRIER) {
+              debrisSettlingUntilStep.current.set(
+                id,
+                physicsStep.current + DEBRIS_SETTLE_STEPS,
+              );
+            }
             const colliderCount = body.numColliders();
             for (let index = 0; index < colliderCount; index += 1) {
               const collider = body.collider(index);
               if (collider.collisionGroups() !== DEBRIS_ACTOR_DETAIL) {
-                collider.setCollisionGroups(DEBRIS_SETTLING);
+                collider.setCollisionGroups(birthGroup);
               }
             }
           }
@@ -4890,7 +4996,7 @@ function OpenWorldScene({
         debrisSettlingUntilStep.current.delete(id);
       }
     },
-    [rapier],
+    [debrisBirthGroupFor, rapier],
   );
 
   const withBody = useCallback((id: string, action: BodyAction) => {
@@ -4915,14 +5021,28 @@ function OpenWorldScene({
       DEBRIS_ACTIVATION_CHECKS_PER_STEP[
         performanceGovernor.getSnapshot().physicsQuality
       ];
-    let dynamicBodyHandles: Set<number> | null = null;
+    // ЧЕРЁД, А НЕ ГОЛОВА КАРТЫ.
+    //
+    // Проверок за шаг отпущено 4/12/24, а `Map.set` по существующему ключу
+    // порядок обхода не меняет. Прежний цикл шёл с начала карты и обрывался
+    // по бюджету, поэтому при обвале в сотни кусков первые же претенденты
+    // съедали бюджет каждый шаг, а хвост не проверялся вообще. Курсор бежит
+    // по очереди и никого не оставляет голодным.
+    const ready: string[] = [];
     for (const [id, readyStep] of debrisSettlingUntilStep.current) {
-      if (physicsStep.current < readyStep) {
-        continue;
+      if (physicsStep.current >= readyStep) {
+        ready.push(id);
       }
-      if (activationChecks >= activationBudget) {
-        break;
-      }
+    }
+    let dynamicBodyHandles: Set<number> | null = null;
+    let carrierBodyHandles: Set<number> | null = null;
+    const start = ready.length > 0 ? debrisActivationCursor.current % ready.length : 0;
+    for (
+      let offset = 0;
+      offset < ready.length && activationChecks < activationBudget;
+      offset += 1
+    ) {
+      const id = ready[(start + offset) % ready.length];
       const body = dynamicBodies.current.get(id);
       if (!body || body.bodyType() !== rapier.RigidBodyType.Dynamic) {
         debrisSettlingUntilStep.current.delete(id);
@@ -4933,15 +5053,34 @@ function OpenWorldScene({
           (candidate) => candidate.handle,
         ),
       );
+      carrierBodyHandles ??= new Set(
+        [...compoundKinematicClusters.current.values()].map(
+          (runtime) => runtime.body.handle,
+        ),
+      );
       activationChecks += 1;
-      if (
-        debrisBodyHasSiblingOverlap(
+      // Заделан ли он в СВОЮ машину — вопрос отдельный от «заделан ли в
+      // собрата»: у ответов разные последствия, и спрашиваются они порознь.
+      const insideCarrier =
+        carrierBodyHandles.size > 0 &&
+        debrisBodyIsEmbedded(
+          world,
+          body,
+          carrierBodyHandles,
+          DEBRIS_ACTOR_DETAIL,
+        );
+      const embedded =
+        insideCarrier ||
+        debrisBodyIsEmbedded(
           world,
           body,
           dynamicBodyHandles,
           DEBRIS_ACTOR_DETAIL,
-        )
-      ) {
+        );
+      const startedStep = dynamicStartedStep.current.get(id) ?? physicsStep.current;
+      const expired =
+        physicsStep.current - startedStep >= DEBRIS_SETTLE_MAX_STEPS;
+      if (embedded && !expired) {
         debrisSettlingUntilStep.current.set(
           id,
           physicsStep.current + DEBRIS_OVERLAP_RETRY_STEPS,
@@ -4949,6 +5088,43 @@ function OpenWorldScene({
         continue;
       }
       debrisSettlingUntilStep.current.delete(id);
+      if (embedded) {
+        // ПОТОЛОК ЗАКРЫВАЕТ ВОПРОС, А НЕ ВООРУЖАЕТ КУЧУ.
+        //
+        // Кусок, не разъехавшийся с СОБРАТЬЯМИ за три секунды, сидит в глубине
+        // завала, и вооружать его нельзя: замер на обвале целой хрущёвки
+        // (1192 куска) — безусловное вооружение поднимает шаг физики с 0.8 до
+        // 15.7 мс и оставляет 750 тел, которые не засыпают никогда, потому что
+        // такая связка в солвере не успокаивается. Ни размер порога, ни
+        // разведение кусков на сборке, ни ограничение живой кучи этого не
+        // меняли — это цена самой связки, а не ворот.
+        //
+        // Поэтому потолок отменяет только БЕСКОНЕЧНЫЙ ПЕРЕСПРОС: кусок
+        // остаётся в льготной группе, но платить за вопрос о нём мы перестаём.
+        // Прежний код переспрашивал вечно, и после обвала бюджет ворот был
+        // занят под завязку до конца партии (23.5 проверки из 24 на шаг).
+        //
+        // Исключение — деталь, запертая в контуре СВОЕЙ машины и ни с кем
+        // больше: она одна, куче не родня, и миру обязана быть препятствием.
+        if (
+          insideCarrier &&
+          !debrisBodyIsEmbedded(
+            world,
+            body,
+            dynamicBodyHandles,
+            DEBRIS_ACTOR_DETAIL,
+          )
+        ) {
+          const colliderCount = body.numColliders();
+          for (let index = 0; index < colliderCount; index += 1) {
+            const collider = body.collider(index);
+            if (collider.collisionGroups() !== DEBRIS_ACTOR_DETAIL) {
+              collider.setCollisionGroups(DEBRIS_INSIDE_CARRIER);
+            }
+          }
+        }
+        continue;
+      }
       const colliderCount = body.numColliders();
       for (let index = 0; index < colliderCount; index += 1) {
         const collider = body.collider(index);
@@ -4957,6 +5133,7 @@ function OpenWorldScene({
         }
       }
     }
+    debrisActivationCursor.current += activationChecks;
 
     for (const [id, body] of dynamicBodies.current) {
       if (body.isSleeping()) {
@@ -5247,7 +5424,7 @@ function OpenWorldScene({
     runtimeStructureCache.current = null;
     firing.current = false;
     projectileRuntime.current?.clear();
-    restCounters.current.clear();
+    restSamples.current.clear();
     preStepMotions.current.clear();
     tethers.current.clear();
     superficialDamage.current.clear();
@@ -5292,7 +5469,7 @@ function OpenWorldScene({
       ) {
         continue;
       }
-      restCounters.current.delete(id);
+      restSamples.current.delete(id);
       if (shardById.current.has(id)) {
         vanishedShardIds.add(id);
       } else if (remnantById.current.has(id)) {
@@ -5341,21 +5518,39 @@ function OpenWorldScene({
         continue;
       }
 
-      const linvel = body.linvel();
-      const angvel = body.angvel();
-      const energy =
-        linvel.x * linvel.x +
-        linvel.y * linvel.y +
-        linvel.z * linvel.z +
-        0.3 * (angvel.x * angvel.x + angvel.y * angvel.y + angvel.z * angvel.z);
-      const dynamicAge =
-        ((physicsStep.current -
-          (dynamicStartedStep.current.get(id) ?? physicsStep.current)) *
-          1000) /
-        60;
-
-      if (energy < 0.035 || (dynamicAge > 4500 && energy < 0.28)) {
-        let hasPhysicalContact = false;
+      // ВСТАВШИЙ КУСОК СТАНОВИТСЯ ЧАСТЬЮ МИРА, А НЕ ЗАСЫПАЕТ.
+      //
+      // Спящее тело дёшево, но не бесплатно, и главное — спящий остров
+      // просыпается ЦЕЛИКОМ от любого касания: одна граната у завала
+      // возвращала бы всю его цену. У `Fixed` степеней свободы нет вообще.
+      // Обратный ход остаётся прежним и общим: `ensureDynamic` возвращает
+      // кусок в динамику от удара, резки и взрыва.
+      const translation = body.translation();
+      const sample = restSamples.current.get(id);
+      const travel = sample
+        ? Math.hypot(
+            translation.x - sample.x,
+            translation.y - sample.y,
+            translation.z - sample.z,
+          )
+        : null;
+      const elapsed = sample ? physicsStep.current - sample.step : 0;
+      if (
+        travel !== null &&
+        elapsed >= DEBRIS_REST_WINDOW_STEPS &&
+        travel >= DEBRIS_REST_TRAVEL
+      ) {
+        // Ещё едет — пересэмплировать без единого запроса к контактам.
+        restSamples.current.set(id, {
+          step: physicsStep.current,
+          x: translation.x,
+          y: translation.y,
+          z: translation.z,
+        });
+        continue;
+      }
+      let hasPhysicalContact = false;
+      if (travel !== null && elapsed >= DEBRIS_REST_WINDOW_STEPS) {
         for (
           let colliderIndex = 0;
           colliderIndex < body.numColliders() && !hasPhysicalContact;
@@ -5365,29 +5560,29 @@ function OpenWorldScene({
             hasPhysicalContact = true;
           });
         }
-        const requiredSamples = debrisSleepSampleRequirement(
-          energy,
-          dynamicAge,
-          hasPhysicalContact,
-        );
-        if (requiredSamples === null) {
-          restCounters.current.delete(id);
-          continue;
-        }
-
-        const count = (restCounters.current.get(id) ?? 0) + 1;
-        if (count >= requiredSamples) {
-          body.setLinvel({ x: 0, y: 0, z: 0 }, false);
-          body.setAngvel({ x: 0, y: 0, z: 0 }, false);
-          body.enableCcd(false);
-          body.sleep();
-          restCounters.current.delete(id);
-        } else {
-          restCounters.current.set(id, count);
-        }
-      } else {
-        restCounters.current.delete(id);
       }
+      const decision = debrisRestDecision(travel, elapsed, hasPhysicalContact);
+      if (decision === "wait") {
+        continue;
+      }
+      if (decision === "resample") {
+        restSamples.current.set(id, {
+          step: physicsStep.current,
+          x: translation.x,
+          y: translation.y,
+          z: translation.z,
+        });
+        continue;
+      }
+      body.setLinvel({ x: 0, y: 0, z: 0 }, false);
+      body.setAngvel({ x: 0, y: 0, z: 0 }, false);
+      body.enableCcd(false);
+      body.setBodyType(rapier.RigidBodyType.Fixed, false);
+      restSamples.current.delete(id);
+      // Тело больше не динамическое: снять его со всех динамических учётов,
+      // иначе оно продолжит стоить обходов, ради которых всё и делалось.
+      dynamicBodies.current.delete(id);
+      preStepMotions.current.delete(id);
     }
   });
 
@@ -5692,7 +5887,7 @@ function OpenWorldScene({
   const commitShards = useCallback((additions: readonly ShardDefinition[]) => {
     const startedAt = performance.now();
     const merged = [...shardsRef.current, ...additions];
-    // Вытеснение при переполнении: сначала спящие и далёкие от игрока.
+    // Вытеснение при переполнении: сначала осевшие и далёкие от игрока.
     // Удаление тела будит его контактный остров, поэтому чистый FIFO
     // заставлял дальний выстрел шевелить давно улёгшуюся кучу перед игроком.
     const playerTranslation = pieceBodies.current.get("player")?.translation();
@@ -5700,7 +5895,17 @@ function OpenWorldScene({
       protectedNewest: additions.length,
       priority: (shard) => {
         const body = pieceBodies.current.get(shard.id);
-        const awakeBonus = body && !body.isSleeping() ? 1_000_000 : 0;
+        // «Осел» — это и уснувший, и ЗАМОРОЖЕННЫЙ: у `Fixed` isSleeping()
+        // возвращает false, и без второй половины условия защита от вытеснения
+        // доставалась бы всей куче разом, то есть никому. Но КИНЕМАТИКА не
+        // оседает никогда: общий ответ и его цена — `bodySettled`.
+        const settled =
+          !body ||
+          bodySettled(
+            physicalBodyKind(body.bodyType(), rapier.RigidBodyType),
+            body.isSleeping(),
+          );
+        const awakeBonus = settled ? 0 : 1_000_000;
         const translation = body?.translation();
         const x = translation?.x ?? shard.position[0];
         const y = translation?.y ?? shard.position[1];
@@ -5720,7 +5925,7 @@ function OpenWorldScene({
       additions: additions.length,
       total: trimmed.length,
     });
-  }, []);
+  }, [rapier]);
 
   const commitRemnants = useCallback(
     (removeId: string | null, additions: readonly RemnantDefinition[]) => {
@@ -9272,6 +9477,10 @@ function OpenWorldScene({
       demolitionChargeRuntime.current?.placeOrRemove();
       return;
     }
+    if (weapon === "construction") {
+      constructionRuntime.current?.primary();
+      return;
+    }
 
     if (weapon === "mg") {
       if (fallbackLook) {
@@ -9353,6 +9562,32 @@ function OpenWorldScene({
       ]);
 
       const strikeSpeed = materialRuntimeProfiles[material].impulse * 2.1;
+
+      // МАТЕРИАЛ, КОТОРЫЙ МОЛОТКУ НЕ ПО ЗУБАМ.
+      //
+      // Ниже начинается лестница урона, и первая же её ступень — `breakAt` —
+      // вносила цель в множество сломанных БЕЗУСЛОВНО, ни разу не спросив
+      // прочность. Для стального члена машины это означало отцепление от
+      // корпуса (и, по `neighborChance`, ещё нескольких соседей) от удара,
+      // который эту сталь заведомо не берёт. Прочность спрашивается ЗДЕСЬ,
+      // одним вопросом на всю лестницу.
+      //
+      // Импульс при этом не отменяется: по двустороннему закону он обязателен
+      // всегда. Но получает его только то, что УЖЕ свободно, — иначе удар,
+      // которому отказано в разрушении, отрывал бы деталь через ensureDynamic
+      // тем же самым способом, только окольным.
+      if (!hammerWorksMaterial(material)) {
+        const looseId =
+          shardId ??
+          (remnantId && remnantById.current.get(remnantId)?.detached
+            ? remnantId
+            : null) ??
+          (piece && brokenPiecesRef.current.has(piece.id) ? piece.id : null);
+        if (looseId) {
+          applyImpact(looseId, material, point, direction);
+        }
+        return;
+      }
 
       // Отцепленная деталь остаётся разрушаемой: молоток выгрызает из неё
       // куски тем же carveLooseTarget, что и пулемёт, — иначе после отрыва
@@ -9581,6 +9816,7 @@ function OpenWorldScene({
     carveLooseTarget,
     center,
     commitRemnants,
+    constructionRuntime,
     fallbackLook,
     demolitionChargeRuntime,
     fireGrenade,
@@ -10106,6 +10342,16 @@ function OpenWorldScene({
         onFramePose={publishVehicleFramePose}
         onMotionTelemetryUpdate={onMotionTelemetryUpdate}
       />
+      <ConstructionSystem
+        active={weapon === "construction"}
+        sceneId={scene.id}
+        resetVersion={resetVersion}
+        occupiedSeatId={occupiedSeatId}
+        onOccupiedSeatChange={onOccupiedSeatChange}
+        vehicleFramePoses={vehicleFramePoses}
+        runtimeRef={constructionRuntime}
+        onUiChange={onConstructionUiChange}
+      />
       <MotionInstrumentSystem
         definitions={motionInstrumentDefinitions}
         pieceById={breakablePieceById}
@@ -10169,6 +10415,8 @@ function OpenWorldScene({
               />
             ) : weapon === "charge" ? (
               <FirstPersonDemolitionCharge />
+            ) : weapon === "construction" ? (
+              <FirstPersonConstructor />
             ) : (
               <FirstPersonMachineGun shotsRef={mgShots} />
             )}
@@ -10993,6 +11241,8 @@ function MobileGameControls({
         ? t("fire.strike")
         : weapon === "charge"
           ? t("fire.place")
+          : weapon === "construction"
+            ? t("fire.build")
           : weapon === "mg"
             ? t("fire.fire")
             : t("fire.launch");
@@ -11097,6 +11347,7 @@ function MobileGameControls({
                   : t("weapon.rocket.short"),
               ],
               ["charge", "5", t("weapon.charge.short")],
+              ["construction", "6", t("weapon.construction.short")],
             ] as const
           ).map(([nextWeapon, shortcut, label]) => (
             <button
@@ -11225,6 +11476,7 @@ const vehicleFailureAnnouncementKeys = {
   goAroundLimit: "announce.vehicleFailure.goAroundLimit",
   correctionLimit: "announce.vehicleFailure.correctionLimit",
   trimExhausted: "announce.vehicleFailure.trimExhausted",
+  entangled: "announce.vehicleFailure.entangled",
   dockingTimeout: "announce.vehicleFailure.dockingTimeout",
 } as const satisfies Readonly<Record<VehicleFailureReason, TranslationKey>>;
 
@@ -11749,7 +12001,9 @@ function usePlayerModeCaption({
                   ? t("announce.weaponLance")
                   : weapon === "charge"
                     ? t("announce.weaponCharge")
-                    : t("announce.weaponMg");
+                    : weapon === "construction"
+                      ? t("announce.weaponConstruction")
+                      : t("announce.weaponMg");
     } else if (before.timeOfDay !== timeOfDay) {
       kicker = `${t(timeOfDayKey(timeOfDay))} · ${gameClockText(TIME_OF_DAY_TARGETS[timeOfDay])}`;
       text = t(timeOfDayAnnouncementKey(timeOfDay));
@@ -11783,7 +12037,9 @@ function ModeChips({
               ? t("weapon.lance")
               : weapon === "charge"
                 ? t("weapon.charge")
-                : t("weapon.mg");
+                : weapon === "construction"
+                  ? t("weapon.construction")
+                  : t("weapon.mg");
 
   if (!flightMode && !weaponChip) {
     return null;
@@ -11795,6 +12051,71 @@ function ModeChips({
       ) : null}
       {weaponChip ? <span className="mode-chip">{weaponChip}</span> : null}
     </div>
+  );
+}
+
+function ConstructionHud({
+  state,
+  driving,
+}: {
+  state: ConstructionUiState;
+  driving: boolean;
+}): ReactElement {
+  const { t } = useLanguage();
+  return (
+    <aside
+      className="construction-hud"
+      role="status"
+      aria-live="polite"
+      data-construction-kind={state.selectedKind}
+      data-construction-assemblies={state.assemblyCount}
+      data-construction-parts={state.partCount}
+    >
+      <div className="construction-hud-title">
+        <p>{t("construction.kicker")}</p>
+        <b>
+          {driving
+            ? state.controlledMachine === "rotorcraft"
+              ? t("construction.machine.rotorcraft")
+              : t("construction.machine.car")
+            : t(`construction.part.${state.selectedKind}` as TranslationKey)}
+        </b>
+        <span>
+          {state.partCount} {t("construction.parts")} · {state.assemblyCount} {t("construction.assemblies")}
+        </span>
+      </div>
+      {state.catalogOpen ? (
+        <div className="construction-catalog" aria-hidden="true">
+          {(["beam", "plate", "wheel", "engine", "seat", "rotor"] as const).map(
+            (kind) => (
+              <span key={kind} className={state.selectedKind === kind ? "is-selected" : undefined}>
+                {t(`construction.part.${kind}` as TranslationKey)}
+              </span>
+            ),
+          )}
+        </div>
+      ) : null}
+      {driving ? (
+        <div className="construction-controls">
+          <span><kbd>WASD</kbd>{t("construction.control.drive")}</span>
+          <span><kbd>Space</kbd>{t("construction.control.liftBrake")}</span>
+          <span><kbd>C</kbd>{t("construction.control.exit")}</span>
+        </div>
+      ) : (
+        <div className="construction-controls">
+          <span><kbd>RMB</kbd>{t("construction.control.grab")}</span>
+          <span><kbd>LMB</kbd>{state.held ? t("construction.control.throw") : t("construction.control.place")}</span>
+          <span><kbd>Wheel</kbd>{t("construction.control.distance")}</span>
+          <span><kbd>Z / X</kbd>{t("construction.control.part")}</span>
+          <span><kbd>B</kbd>{t("construction.control.catalog")}</span>
+          <span><kbd>E</kbd>{t("construction.control.rotate")}</span>
+          <span><kbd>G</kbd>{t("construction.control.weld")}</span>
+          <span><kbd>Shift+G</kbd>{t("construction.control.unweld")}</span>
+          <span><kbd>C</kbd>{t("construction.control.enter")}</span>
+          <span><kbd>Del</kbd>{t("construction.control.remove")}</span>
+        </div>
+      )}
+    </aside>
   );
 }
 
@@ -12150,6 +12471,10 @@ export function MakeAMessGame({
     strikeEnd: () => {},
   });
   const demolitionChargeRuntime = useRef<DemolitionChargeRuntime | null>(null);
+  const constructionRuntime = useRef<ConstructionRuntime | null>(null);
+  const [constructionUi, setConstructionUi] = useState<ConstructionUiState>(
+    DEFAULT_CONSTRUCTION_UI,
+  );
   const arrivalBootstrapSnapshot = useSyncExternalStore(
     subscribeInterIslandBootstrap,
     interIslandBootstrapSnapshot,
@@ -13041,10 +13366,12 @@ export function MakeAMessGame({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      const numberedAction = event.code.startsWith("Digit")
+      const pressedDigit = keyboardDigit(event.code, event.key);
+      const directWeapon = directWeaponShortcut(pressedDigit);
+      const numberedAction = pressedDigit !== null
         ? numberedEntryInteractionAction(
             approachedEntry,
-            Number(event.code.slice("Digit".length)),
+            pressedDigit,
           )
         : null;
       if (
@@ -13069,39 +13396,22 @@ export function MakeAMessGame({
         openApproachedEntry();
       } else if (event.code === "KeyR") {
         reset();
-      } else if (event.code === "Digit0" && !occupiedSeatId && !event.repeat) {
-        requestWeaponChange("none");
       } else if (
-        event.code === "Digit1" &&
+        pressedDigit === 4 &&
         (!occupiedSeatId || interIslandPassengerState.flightActive) &&
         !event.repeat
       ) {
-        requestWeaponChange("hammer");
-      } else if (
-        event.code === "Digit2" &&
-        (!occupiedSeatId || interIslandPassengerState.flightActive) &&
-        !event.repeat
-      ) {
-        requestWeaponChange("launcher");
-      } else if (
-        event.code === "Digit3" &&
-        (!occupiedSeatId || interIslandPassengerState.flightActive) &&
-        !event.repeat
-      ) {
-        requestWeaponChange("mg");
-      } else if (
-        event.code === "Digit4" &&
-        (!occupiedSeatId || interIslandPassengerState.flightActive) &&
-        !event.repeat
-      ) {
+        event.preventDefault();
         // Одна клавиша, два ракетомёта: повторное нажатие меняет боеприпас.
         requestWeaponChange(nextLauncherWeapon(weapon));
       } else if (
-        event.code === "Digit5" &&
-        (!occupiedSeatId || interIslandPassengerState.flightActive) &&
+        directWeapon &&
+        (!occupiedSeatId ||
+          (directWeapon !== "none" && interIslandPassengerState.flightActive)) &&
         !event.repeat
       ) {
-        requestWeaponChange("charge");
+        event.preventDefault();
+        requestWeaponChange(directWeapon);
       } else if (
         event.code === "KeyQ" &&
         (!occupiedSeatId || interIslandPassengerState.flightActive) &&
@@ -13296,6 +13606,8 @@ export function MakeAMessGame({
                     mobileActions={mobileActions}
                     chargeCount={chargeCount}
                     demolitionChargeRuntime={demolitionChargeRuntime}
+                    constructionRuntime={constructionRuntime}
+                    onConstructionUiChange={setConstructionUi}
                     resetVersion={resetVersion}
                     entryOpenRequestVersion={entryOpenRequestVersion}
                     entryOpenRequestTargetRef={entryOpenRequestTargetRef}
@@ -13406,8 +13718,27 @@ export function MakeAMessGame({
       {surfaces.worldHud ? (
         <ModeChips flightMode={flightMode} weapon={equippedWeapon} />
       ) : null}
+      {surfaces.worldHud &&
+      active &&
+      (equippedWeapon === "construction" ||
+        occupiedSeatId?.startsWith("construction-seat:")) ? (
+        <ConstructionHud
+          state={constructionUi}
+          driving={occupiedSeatId?.startsWith("construction-seat:") === true}
+        />
+      ) : null}
+
+      {/* ТЕХНИЧЕСКИЙ РАЗБОР ОТКАЗА СНЯТ С ЭКРАНА (вердикт Igor, 11.08.2026).
+          Он выходил ДВУМЯ оверлеями разом: этим, самостоятельным, и вторым —
+          вшитым в телеметрию (ниже по файлу). Оба показывали один и тот же
+          `failureReport` по одному и тому же условию.
+
+          Блок закомментирован, а не удалён, намеренно: разбор нужен при
+          отладке отказов, и восстанавливать его по памяти дороже, чем снять
+          комментарий. Вернуть — ОДИН из двух, а не оба.
 
       {failureReport ? <VehicleFailureReport report={failureReport} /> : null}
+      */}
 
       {surfaces.worldHud && active && rotorcraftPilotStatus ? (
         <RotorcraftPilotHud
@@ -13495,10 +13826,16 @@ export function MakeAMessGame({
       ) : null}
 
       {/* Разбор отказа живёт и в телеметрии: она вызывается по требованию и
-          не гаснет сама, поэтому кадр успевает снять даже длинный список. */}
+          не гаснет сама, поэтому кадр успевает снять даже длинный список.
+
+          СНЯТ С ЭКРАНА вместе с самостоятельным оверлеем (см. выше): показывать
+          один и тот же разбор дважды незачем, а какой из двух вернуть — вопрос
+          к тому, кто будет отлаживать отказ. Этот удобнее: не гаснет по таймеру.
+
       {telemetryVisible && failureReport ? (
         <VehicleFailureReport report={failureReport} embedded />
       ) : null}
+      */}
 
       {active && surfaces.worldHud && inspectedVillager ? (
         <aside
@@ -13569,7 +13906,9 @@ export function MakeAMessGame({
                         ? t("weapon.lance")
                         : equippedWeapon === "charge"
                           ? `${t("weapon.charge")} · ${chargeCount}/10`
-                          : t("weapon.mg")}
+                          : equippedWeapon === "construction"
+                            ? t("weapon.construction")
+                            : t("weapon.mg")}
             </span>
           </div>
           <div className="damage-copy">
@@ -13723,12 +14062,14 @@ export function MakeAMessGame({
                   ? t("fire.strike")
                   : equippedWeapon === "charge"
                     ? t("fire.place")
+                    : equippedWeapon === "construction"
+                      ? t("fire.build")
                   : equippedWeapon === "launcher" ||
                       equippedWeapon === "rocket" ||
                       equippedWeapon === "lance"
                     ? t("fire.shoot")
                     : t("fire.hold")}
-              <span>0·1·2·3·4·5</span>
+              <span>0·1·2·3·4·5·6</span>
               {t("controls.weapon")}
             </>
           ) : null}

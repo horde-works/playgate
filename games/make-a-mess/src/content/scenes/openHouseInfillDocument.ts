@@ -231,7 +231,11 @@ function createSouthHomestead(): void {
   // расходятся к воротам и навесу.
   const roads = group("south-lane", "Asphalt spur behind the southern block", "concrete", "linked");
   const laneTiles: readonly [number, number][] = [
-    [37.6, 3.6],
+    // Восточное звено упирается в перекрёсток `town:road:cross:1` (его кромка
+    // на x = 39), а не залезает под него на 40 см: у съезда и перекрёстка
+    // общая верхняя плоскость, и нахлёст читался полосой ряби поперёк въезда.
+    // С запада звено по-прежнему встык к `lane:1` (кромка на x = 35.8).
+    [37.4, 3.2],
     [32.8, 6.0],
     [27.4, 4.8],
   ];
