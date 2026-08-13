@@ -22,6 +22,7 @@
 | `destruction-authoring` | Разрушение: закон удара, материалы, carve, обломки, взрывы, звук удара |
 | `tree-authoring` | Процедурные деревья и кусты: породы, крона, посадка, разрушение |
 | `village-inhabitants` | Население: роли, работа, движение, восприятие, реакция на события |
+| `living-creature-authoring` | Живые тела всех видов: скелет, причинные действия, контакт, locomotion/flight, поведение, территория и world boundary |
 | `vehicle-authoring` | Все управляемые машины: воздушные, винтокрылые, наземная, поезд, роторы; сборка (references/assembly.md), управление, маршруты, стадии, швартовка/посадка |
 | `reference-faithful-object-study` | Object Lab: канонический объект и PNG-приёмка до посадки в мир |
 
@@ -38,6 +39,7 @@
 | `destruction-lessons.md` | Двусторонний закон удара, материалы, лестница урона, carve, обломки, взрывы, звук | `destruction-authoring` |
 | `performance-lessons.md` | Три контура производительности, бюджеты рендера и физики | — |
 | `village-inhabitants-lessons.md` | Жители: перепись, работа как спрос, намерения, тропы, походка, движения, объекты, расхождение, реакция на события | `village-inhabitants` |
+| `living-creatures-lessons.md` | Общий контракт живых существ: body/species/profile/world, action passports, связный скелет, опоры, terrain, поведение и приёмка | `living-creature-authoring` |
 | `airborne-vehicle-dynamics.md` | Физика носителя: масса и баланс, подъём, Rapier-тело, силовая модель, удар, пассажирская инерция, оболочки мира | `vehicle-authoring` |
 | `vehicle-control-lessons.md` | Управление машинами: кластер и члены, актуаторы, граница автомат/автопилот (включая §3.3.1 «поза как ВХОД» — почему углы у коптера рудимент), допуски и коридоры, трассы, стадии рейса, швартовка/посадка, отказы, §9А фигуры высшего пилотажа, по-типовые главы (винтокрылая, плавучая, наземная, поезд, роторы, ручной пилот) | `vehicle-authoring` |
 | `inter-island-travel.md` | Перелёты между мирами: топология, семейства форм, CJM, смена сцены | `vehicle-authoring` |
@@ -95,6 +97,8 @@
 - новый материал или ступень урона → `destruction-lessons.md`;
 - небо, вода, свет мира, туман → `environmental-rendering-lessons.md`;
 - поведение жителей → `village-inhabitants-lessons.md`;
+- общий закон живого тела, skeleton, action passport, опора, locomotion/flight,
+  поведение животного, profiles и world boundary → `living-creatures-lessons.md`;
 - грабли решателя при сборке машины →
   `.claude/skills/vehicle-authoring/references/assembly.md`;
 - управление машиной, автопилот, стадии рейса, швартовка/посадка →

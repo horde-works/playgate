@@ -1,0 +1,4 @@
+interface:
+  display_name: "Living Creature Authoring"
+  short_description: "Author believable articulated living creatures"
+  default_prompt: "Use $living-creature-authoring to design and validate a believable creature body, motion, behaviour, and world integration."

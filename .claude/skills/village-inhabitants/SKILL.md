@@ -56,6 +56,13 @@ description: >-
 которых они работают; `games/make-a-mess/docs/destruction-lessons.md` §10 —
 анти-цель «разрушение × проходимость жителей».
 
+Для канонического человеческого тела, action passports, единого skeletal path,
+опоры, whole-body continuity и общих законов наблюдения читать также
+`.claude/skills/living-creature-authoring/SKILL.md` и
+`games/make-a-mess/docs/living-creatures-lessons.md`. Этот плейбук продолжает
+владеть человеческой специализацией: поселением, профессиями, работой,
+общественной реакцией и предметными действиями жителей.
+
 ## Карта представлений: кто чем владеет
 
 | код | владеет |
