@@ -1,6 +1,6 @@
 "use client";
 
-import { useFrame } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
 import { useEffect, useMemo, useRef } from "react";
 import {
   DoubleSide,
@@ -90,9 +90,11 @@ function MediumDragon({
   individualIndex: number;
 }) {
   const root = useRef<Group>(null);
+  const camera = useThree((state) => state.camera);
   const runtime = useRef(createMediumDragonRuntime(definition.profile, individualIndex));
   const acousticCursor = useRef(0);
   const presenceCooldown = useRef(0);
+  const debugFollowCamera = useRef(false);
   const palette = useMemo(() => createMediumDragonPosePalette(), []);
   const contactState = useRef(createMediumDragonContactState());
   const geometry = useMemo(
@@ -138,6 +140,9 @@ function MediumDragon({
     const publishToDocument =
       process.env.NODE_ENV !== "production"
       && new URLSearchParams(window.location.search).get("mamDragonProbe") === "1";
+    debugFollowCamera.current =
+      process.env.NODE_ENV !== "production"
+      && new URLSearchParams(window.location.search).get("mamDragonCamera") === "1";
     const publish = () => {
       if (publishToDocument) {
         document.documentElement.dataset.mamDragonProbe = JSON.stringify(probe());
@@ -149,6 +154,7 @@ function MediumDragon({
       if (timer !== undefined) window.clearInterval(timer);
       delete document.documentElement.dataset.mamDragonProbe;
       if (scope.__mamDragon === probe) delete scope.__mamDragon;
+      debugFollowCamera.current = false;
     };
   }, [definition.id, individualIndex]);
 
@@ -207,6 +213,15 @@ function MediumDragon({
     if (root.current) {
       root.current.position.set(dragon.x, dragon.y, dragon.z);
       root.current.rotation.set(-dragon.pitch, dragon.heading, dragon.roll, "YXZ");
+    }
+    if (individualIndex === 0 && debugFollowCamera.current) {
+      const airborne = !dragon.grounded;
+      camera.position.set(
+        dragon.x + (airborne ? 14 : 6.8),
+        dragon.y + (airborne ? 5.2 : 2.8),
+        dragon.z + (airborne ? 15 : 7.6),
+      );
+      camera.lookAt(dragon.x, dragon.y + 1.05, dragon.z);
     }
   });
 
