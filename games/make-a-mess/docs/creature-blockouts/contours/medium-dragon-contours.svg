@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
+  <rect width="1600" height="1000" fill="#f2f0e9"/>
+  <g fill="none" stroke="#25282a" stroke-width="7" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M81 331 L188 294 L322 258 L458 225 L585 213 L696 235 L781 275 L846 259 L929 207 L1014 177 L1102 197 L1160 240 L1193 285 L1171 321 L1100 337 L1039 326 L977 352 L918 414 L868 486 L835 603 L797 704 L754 709 L722 672 L749 580 L748 451 L665 436 L611 468 L584 592 L544 708 L501 711 L469 674 L499 556 L490 423 L388 410 L322 427 L264 410 L189 381 Z"/>
+    <path d="M81 331 C47 365 50 417 93 446 C145 480 214 452 245 410"/>
+    <path d="M737 449 L686 347 L671 255 L704 194 L769 219 L801 304 L818 409"/>
+    <path d="M801 304 L731 330 L664 390 L610 432"/>
+  </g>
+  <g fill="none" stroke="#4c5255" stroke-width="6" stroke-linejoin="round">
+    <path d="M800 815 L719 778 L588 746 L434 707 L287 656 L121 585 L54 501 L331 540 L545 578 L703 626 L800 642 L897 626 L1055 578 L1269 540 L1546 501 L1479 585 L1313 656 L1166 707 L1012 746 L881 778 Z"/>
+    <path d="M800 642 L800 545 L770 462 L737 392 L765 327 L800 304 L835 327 L863 392 L830 462 L800 545"/>
+    <path d="M800 815 L800 936"/>
+  </g>
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#25282a">
+    <text x="80" y="80" font-size="46" font-weight="700">MEDIUM DRAGON · LOCKED CONTOUR PROPOSAL</text>
+    <text x="80" y="132" font-size="28">180 kg · wing area 22.5 m² · span 11.62 m · four limbs</text>
+    <text x="82" y="190" font-size="25">GROUND PROFILE · FOLDED WING</text>
+    <text x="82" y="520" font-size="25">FLIGHT TOP · SAME SEGMENTS</text>
+    <text x="80" y="958" font-size="22">awaiting owner · silhouette only · no world integration</text>
+  </g>
+</svg>

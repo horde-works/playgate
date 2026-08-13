@@ -1,0 +1,26 @@
+{
+  "modelId": "medium-dragon-ground-blockout",
+  "revision": "dragon-p4-ground-2026-08-13",
+  "modelHash": "bc6bdb042092",
+  "generatedAt": "2026-08-13T12:01:17.519Z",
+  "views": [
+    {
+      "id": "dragon-ground-profile",
+      "label": "GROUND PROFILE · FOLDED WING / FOUR CONTACTS",
+      "projection": "orthographic",
+      "file": "dragon-ground-profile.png"
+    },
+    {
+      "id": "dragon-ground-front",
+      "label": "GROUND FRONT · DEEP CHEST / MANUS",
+      "projection": "orthographic",
+      "file": "dragon-ground-front.png"
+    },
+    {
+      "id": "dragon-ground-three-quarter",
+      "label": "GROUND THREE QUARTER · FOLDED STRUCTURE",
+      "projection": "perspective",
+      "file": "dragon-ground-three-quarter.png"
+    }
+  ]
+}

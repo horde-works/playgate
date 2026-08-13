@@ -1,0 +1,32 @@
+{
+  "modelId": "medium-panther-blockout",
+  "revision": "panther-p4-2026-08-13",
+  "modelHash": "a218539e2094",
+  "generatedAt": "2026-08-13T12:01:13.749Z",
+  "views": [
+    {
+      "id": "panther-profile",
+      "label": "PROFILE · SHOULDER / HOCK / TAIL",
+      "projection": "orthographic",
+      "file": "panther-profile.png"
+    },
+    {
+      "id": "panther-front",
+      "label": "FRONT · CHEST OVER CONTACTS",
+      "projection": "orthographic",
+      "file": "panther-front.png"
+    },
+    {
+      "id": "panther-top",
+      "label": "TOP · SHOULDER / LUMBAR / PELVIS",
+      "projection": "orthographic",
+      "file": "panther-top.png"
+    },
+    {
+      "id": "panther-three-quarter",
+      "label": "THREE QUARTER · PRIMITIVE READ",
+      "projection": "perspective",
+      "file": "panther-three-quarter.png"
+    }
+  ]
+}
