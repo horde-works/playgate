@@ -103,8 +103,29 @@ test("panther pose atlas uses one ordered skeleton and complete action and gait 
 
 test("panther key actions and gait phases retain causal body staging", () => {
   assert.ok(mediumPantherRigStates["lie-observe"].pivots.root[1] < mediumPantherRigStates["stand-observe"].pivots.root[1] - 0.2);
-  assert.ok(mediumPantherRigStates["sit-observe"].pivots.pelvis[1] < mediumPantherRigStates["stand-observe"].pivots.pelvis[1] - 0.1);
-  assert.ok(mediumPantherRigStates["sit-observe"].pivots.head[1] > mediumPantherRigStates["lie-observe"].pivots.head[1] + 0.12);
+  const sit = mediumPantherRigStates["sit-observe"];
+  assert.ok(sit.pivots.pelvis[1] < mediumPantherRigStates["stand-observe"].pivots.pelvis[1] - 0.18);
+  assert.ok(sit.pivots.chest[1] > sit.pivots.pelvis[1] + 0.24, "sit-observe: chest must rise above seated pelvis");
+  assert.ok(sit.pivots.head[1] > sit.pivots.chest[1] + 0.2, "sit-observe: neck must carry head above chest");
+  assert.ok(sit.pivots.head[1] > mediumPantherRigStates["lie-observe"].pivots.head[1] + 0.2);
+  assert.ok(Math.abs(sit.rotations.head[1][2]) < 0.01, "sit-observe: muzzle must remain level with the horizon");
+  assert.ok(sit.rotations.head[2][2] > 0.99, "sit-observe: muzzle must face forward rather than up or down");
+  for (const side of ["left", "right"]) {
+    const foreChain = ["scapula", "forearm", "carpus", "forepaw"].map((bone) => sit.pivots[`${side}-${bone}`]);
+    assert.ok(foreChain.every((pivot, index) => index === 0 || foreChain[index - 1][1] > pivot[1]), `sit-observe/${side}: forelimb must descend joint by joint`);
+    assert.ok(Math.max(...foreChain.map((pivot) => pivot[2])) - Math.min(...foreChain.map((pivot) => pivot[2])) < 0.012, `sit-observe/${side}: forelimb must act as a straight support column`);
+    assert.ok(sit.pivots[`${side}-knee`][2] > sit.pivots[`${side}-hip`][2] + 0.2, `sit-observe/${side}: knee must fold forward under the trunk`);
+    assert.ok(sit.pivots[`${side}-hock`][2] < sit.pivots[`${side}-knee`][2] - 0.25, `sit-observe/${side}: hock must fold back beneath the pelvis`);
+  }
+  const seatedTail = Array.from({ length: 8 }, (_, index) => sit.pivots[`tail-${index}`]);
+  assert.ok(Math.max(...seatedTail.map((pivot) => Math.abs(pivot[0]))) > 0.35, "sit-observe: tail must arc around one hip");
+  assert.ok(distance(seatedTail.at(-1), sit.pivots.pelvis) < 0.43, "sit-observe: tail tip must return beside the seated pelvis");
+  assert.ok(Math.min(...seatedTail.map((pivot) => pivot[1])) > 0.04, "sit-observe: curled tail must stay above the support surface");
+  for (let index = 1; index <= 6; index += 1) {
+    const joint = mediumPantherPoseAtlasObject.parts.find((part) => part.id === `sit-observe--tail-joint-${index}`);
+    assert.ok(joint, `sit-observe: missing tail joint ${index}`);
+    assert.ok(rotatedBoxBottom(joint) >= -1e-8, `sit-observe/tail-joint-${index}: curled tail enters terrain`);
+  }
   assert.ok(mediumPantherRigStates["jump-flight"].pivots.root[1] > 1.5);
   assert.deepEqual(MEDIUM_PANTHER_POSES.find((pose) => pose.id === "landing-absorb").contactPartIds, ["left-fore-paw", "right-fore-paw"]);
   const byId = new Map(MEDIUM_PANTHER_POSES.map((pose) => [pose.id, pose]));

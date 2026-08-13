@@ -1,0 +1,14 @@
+{
+  "modelId": "medium-panther-high-sit-validation",
+  "revision": "panther-rig-m3-2026-08-14",
+  "modelHash": "3926d26279bb",
+  "generatedAt": "2026-08-13T19:45:21.261Z",
+  "views": [
+    {
+      "id": "panther-sit-observe",
+      "label": "PERCH SIT · HIGH GAZE / FOLDED HINDQUARTERS",
+      "projection": "perspective",
+      "file": "panther-sit-observe.png"
+    }
+  ]
+}
