@@ -16,6 +16,8 @@ import {
   BASALT_SKY_RAM_CLUSTER_ID,
   createBasaltSkyRamScene,
 } from "./basaltSkyRam.ts";
+import { basaltStrongholdDragonProfile } from "../content/populations/mediumDragonPopulationProfiles.ts";
+import { mediumDragonTerritoryPopulation } from "./creaturePopulation.ts";
 
 const clusters: BreakableClusterDefinition[] = [];
 const lamps: LampDefinition[] = [];
@@ -1728,6 +1730,13 @@ export const basaltStrongholdScene = createDestructionScene({
   },
   clusters,
   lamps,
+  inhabitants: [
+    mediumDragonTerritoryPopulation({
+      id: "basalt-stronghold-dragon",
+      count: 1,
+      profile: basaltStrongholdDragonProfile,
+    }),
+  ],
   // Trim the deep sibling overlaps in the faceted basalt towers so they stop
   // z-fighting (and stop shoving bricks out on impact) while staying breakable.
   resolveInterpenetration: true,

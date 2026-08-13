@@ -57,8 +57,8 @@
 - строка профессии не меняет механику тела — это делают навыки;
 - территория задаёт интересы, а не рельс или запечённую анимацию;
 - сцена декларативно регистрирует популяцию, но не реализует её тело;
-- один мир может мультикастить одно событие людям, кошкам и будущему дракону;
-- отсутствие регистрации дракона — честный scope, а не скрытая проверка мира.
+- один мир может мультикастить одно событие людям, кошкам и дракону;
+- вид появляется только из декларации популяции, а не из скрытой проверки мира.
 
 ## 3. Текущая карта владельцев
 
@@ -112,10 +112,18 @@
 | --- | --- |
 | `content/objects/creatures/mediumDragonObject.ts` | принятое четырёхконечное тело: крыло является передней конечностью |
 | `content/objects/creatures/mediumDragonRigObject.ts` | 48-костный skeleton, наземные/лётные references, launch/flight/landing atlas |
+| `game/mediumDragonPopulationProfile.ts` | вид, phenotype, skills, airspace и разрушаемые surface affordances |
+| `content/populations/mediumDragonPopulationProfiles.ts` | одна особь базальтовой крепости: башня, коридор и аварийные площадки |
+| `game/mediumDragonAerodynamics.ts` | четыре нагруженных wing panels, soft stall, общий oscillator и asymmetric trim |
+| `game/mediumDragonSim.ts` | needs/intent, внимание, наземное движение, vault, полёт, заход и контактная посадка |
+| `game/mediumDragonRuntimePose.ts` | один 48-костный whole-body pose, сегментное крыло и последовательность опор |
+| `game/mediumDragonRuntimeGeometry.ts` | один runtime draw body из принятой folded P4-геометрии |
+| `game/MediumDragons.tsx` | dragon world/render adapter и dev probe |
 
-Дракон пока остаётся изолированным Object Lab-объектом. Runtime flight solver,
-поведение, профиль популяции и регистрация в мире не реализованы. Исследование
-и источники: [`dragon-locomotion-research.md`](dragon-locomotion-research.md).
+Первая runtime-особь декларативно зарегистрирована в базальтовой крепости.
+Object Lab остаётся владельцем приёмочной формы, но больше не является
+единственным потребителем тела. Исследование и источники:
+[`dragon-locomotion-research.md`](dragon-locomotion-research.md).
 
 ## 4. Один body owner и один skeleton
 
@@ -282,8 +290,9 @@ first contact, absorption и settle. World trajectory владеет дугой;
 Посадка: flare → hind touchdown при ещё раскрытом крыле → unload → fold →
 ground recovery. Полное складывание в первый кадр касания запрещено.
 
-Динамика полёта дракона ещё не реализована. Атлас доказывает достижимые формы и
-последовательность тела, но не заявляет lift, stall, energy или controller.
+Динамика полёта дракона реализована для базового патрульного цикла. Атлас
+доказывает достижимые формы и последовательность тела; lift, stall, energy и
+controller принадлежат отдельному runtime solver и проверяются его trace.
 
 ## 11. Наблюдение и покой
 
@@ -439,6 +448,7 @@ node --experimental-strip-types --test \
   tests/creature-whole-body-motion.test.mjs \
   tests/creature-populations.test.mjs \
   tests/medium-panther-runtime.test.mjs \
+  tests/medium-dragon-runtime.test.mjs \
   tests/human-population-profiles.test.mjs \
   tests/villager-body.test.mjs \
   tests/villager-pose.test.mjs \
@@ -455,17 +465,26 @@ npm run typecheck
 
 Реализовано:
 
-- переносимая граница world/population для людей и средней кошки;
+- переносимая граница world/population для людей, средней кошки и среднего дракона;
 - человеческие профили деревни и города первого острова;
 - одно человеческое тело и единый pose/render path для походки и действий;
 - принятая геометрия, skeleton/atlas и runtime-популяция пантеры;
 - continuous whole-body закон, индивидуальные paw anchors, неровный грунт,
   целевые landscape jumps, perch observation и сход;
-- принятая геометрия и skeleton/action/wing-morph atlas дракона.
+- принятая геометрия, skeleton/action/wing-morph atlas и одна runtime-популяция
+  дракона в базальтовой крепости;
+- force-based vault, четыре аналитические секции крыла, soft stall,
+  flap/glide/return/approach/flare, hind-first touchdown и аварийная посадка
+  при разрушении насеста;
+- head-first внимание, needs/intent с записанной причиной, ground observe/walk,
+  body care и территориальный патруль.
 
 Не реализовано и не обещано текущим кодом:
 
-- runtime-аэродинамика, AI, профиль и world registration дракона;
+- true hover, dive/pullout, weather/uplift routing, пища/вода/гнездо, охота,
+  бой, огонь и локальное повреждение мембраны дракона;
+- отдельная аэродинамическая поверхность хвоста: текущий хвост визуально и
+  управляюще связан с телом, а trim-момент остаётся аналитическим контролем;
 - охота, атака, damage, ragdoll и физический контакт пантеры с игроком;
 - пальцы/когти, final skin, мышцы и мягкие ткани кошки;
 - общая система усталости, боли, травмы и индивидуального характера животных;

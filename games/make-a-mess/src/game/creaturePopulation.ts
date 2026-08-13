@@ -6,6 +6,10 @@ import {
   validateMediumFelinePopulationProfile,
   type MediumFelinePopulationProfile,
 } from "./mediumFelinePopulationProfile.ts";
+import {
+  validateMediumDragonPopulationProfile,
+  type MediumDragonPopulationProfile,
+} from "./mediumDragonPopulationProfile.ts";
 
 interface CreaturePopulationBase {
   /** Stable identity within one world. */
@@ -34,9 +38,18 @@ export interface MediumFelineTerritoryPopulationDefinition
   readonly profile: MediumFelinePopulationProfile;
 }
 
+export interface MediumDragonTerritoryPopulationDefinition
+  extends CreaturePopulationBase {
+  readonly kind: "medium-dragon-territory";
+  readonly bodyType: "medium-dragon";
+  readonly species: "Draco pterosauroides";
+  readonly profile: MediumDragonPopulationProfile;
+}
+
 export type CreaturePopulationDefinition =
   | HumanSettlementPopulationDefinition
-  | MediumFelineTerritoryPopulationDefinition;
+  | MediumFelineTerritoryPopulationDefinition
+  | MediumDragonTerritoryPopulationDefinition;
 
 export function humanSettlementPopulation(options: {
   readonly id: string;
@@ -65,6 +78,24 @@ export function mediumFelineTerritoryPopulation(options: {
     id: options.id,
     kind: "medium-feline-territory",
     bodyType: "medium-feline",
+    species: profile.species,
+    count: options.count,
+    profile,
+  };
+  validateCreaturePopulationDefinitions("population", [definition]);
+  return definition;
+}
+
+export function mediumDragonTerritoryPopulation(options: {
+  readonly id: string;
+  readonly count: number;
+  readonly profile: MediumDragonPopulationProfile;
+}): MediumDragonTerritoryPopulationDefinition {
+  const profile = validateMediumDragonPopulationProfile(options.profile);
+  const definition: MediumDragonTerritoryPopulationDefinition = {
+    id: options.id,
+    kind: "medium-dragon-territory",
+    bodyType: "medium-dragon",
     species: profile.species,
     count: options.count,
     profile,
@@ -115,6 +146,16 @@ export function validateCreaturePopulationDefinitions(
       if (declaredSpecies !== profileSpecies) {
         throw new Error(
           `World ${worldId}: feline population ${definition.id} species differs from its profile`,
+        );
+      }
+    }
+    if (definition.kind === "medium-dragon-territory") {
+      validateMediumDragonPopulationProfile(definition.profile);
+      const declaredSpecies: string = definition.species;
+      const profileSpecies: string = definition.profile.species;
+      if (declaredSpecies !== profileSpecies) {
+        throw new Error(
+          `World ${worldId}: dragon population ${definition.id} species differs from its profile`,
         );
       }
     }

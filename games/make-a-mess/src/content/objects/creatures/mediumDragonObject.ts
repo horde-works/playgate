@@ -290,7 +290,7 @@ const common = {
   sourceNotes: [
     "Authored four-limbed dragon: the wing is the forelimb and the folded manus is the ground contact.",
     "180 kg, 22.5 m² wing area, aspect ratio 6, derived span 11.62 m.",
-    "Ground and flight studies derive from one morphology contract; no world or flight solver registration.",
+    "Ground and flight studies derive from one morphology contract; the world runtime skins this accepted body but does not register these review objects.",
   ],
   dimensions: {
     massKg: MEDIUM_DRAGON_MORPHOLOGY.mass,

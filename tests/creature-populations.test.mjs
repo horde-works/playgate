@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   humanSettlementPopulation,
+  mediumDragonTerritoryPopulation,
   mediumFelineTerritoryPopulation,
   validateCreaturePopulationDefinitions,
 } from "../games/make-a-mess/src/game/creaturePopulation.ts";
@@ -9,6 +10,7 @@ import { CreatureEventJournal } from "../games/make-a-mess/src/game/creatureWorl
 import { vikingSettlement } from "../games/make-a-mess/src/content/scenes/vikingSettlement.ts";
 import { villageHumanProfile } from "../games/make-a-mess/src/content/populations/humanPopulationProfiles.ts";
 import { vikingVillagePantherProfile } from "../games/make-a-mess/src/content/populations/mediumFelinePopulationProfiles.ts";
+import { basaltStrongholdDragonProfile } from "../games/make-a-mess/src/content/populations/mediumDragonPopulationProfiles.ts";
 import { vikingVillageDocument } from "../games/make-a-mess/src/content/scenes/vikingVillageDocument.ts";
 import { vikingVillageScene } from "../games/make-a-mess/src/game/vikingVillageScene.ts";
 import { townScene } from "../games/make-a-mess/src/game/townScene.ts";
@@ -80,6 +82,14 @@ test("population definitions reject ambiguous identity and invalid counts", () =
         count: 0,
         profile: vikingVillagePantherProfile,
       }),
+    /count must be a positive integer/,
+  );
+  assert.throws(
+    () => mediumDragonTerritoryPopulation({
+      id: "no-dragons",
+      count: 0,
+      profile: basaltStrongholdDragonProfile,
+    }),
     /count must be a positive integer/,
   );
 });

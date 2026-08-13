@@ -12,6 +12,16 @@ test("the Basalt Stronghold scene starts as one physically supported world", () 
   assert.equal(unsupported.size, 0);
 });
 
+test("the fortress declares its dragon through the portable creature boundary", () => {
+  const dragon = basaltStrongholdScene.inhabitantDefinitions.find(
+    (definition) => definition.kind === "medium-dragon-territory",
+  );
+  assert.ok(dragon);
+  assert.equal(dragon.id, "basalt-stronghold-dragon");
+  assert.equal(dragon.count, 1);
+  assert.equal(dragon.profile.territory.spawnNodeId, "tower-roost");
+});
+
 test("the fortress uses every new material as a real breakable material", () => {
   const usedMaterials = new Set(
     basaltStrongholdScene.breakablePieces.map((piece) => piece.material),

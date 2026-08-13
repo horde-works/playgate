@@ -2,6 +2,7 @@
 
 import type { CreaturePopulationDefinition } from "./creaturePopulation.ts";
 import type { CreatureWorldRuntime } from "./creatureWorld.ts";
+import { MediumDragons } from "./MediumDragons.tsx";
 import { MediumPanthers } from "./MediumPanthers.tsx";
 import {
   Villagers,
@@ -41,6 +42,14 @@ export function CreaturePopulations({
       case "medium-feline-territory":
         return (
           <MediumPanthers
+            key={definition.id}
+            definition={definition}
+            world={world}
+          />
+        );
+      case "medium-dragon-territory":
+        return (
+          <MediumDragons
             key={definition.id}
             definition={definition}
             world={world}

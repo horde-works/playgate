@@ -385,7 +385,7 @@ export const MEDIUM_DRAGON_POSES: readonly CreaturePoseContract<MediumDragonPose
   },
 ] as const;
 
-function dragonBoneForPart(part: ObjectLabPart, reference: string): string {
+export function mediumDragonBoneForPart(part: ObjectLabPart, reference: string): string {
   const id = part.id;
   if (["pelvis"].includes(id)) return "pelvis";
   if (["abdomen"].includes(id)) return "abdomen";
@@ -420,7 +420,12 @@ function dragonBoneForPart(part: ObjectLabPart, reference: string): string {
   throw new Error(`${id}: no dragon bone mapping for ${reference}`);
 }
 
-function dragonMembraneVertexBone(part: ObjectLabPart, vertex: ObjectPoint, _index: number, reference: string): string | undefined {
+export function mediumDragonMembraneVertexBone(
+  part: ObjectLabPart,
+  vertex: ObjectPoint,
+  _index: number,
+  reference: string,
+): string | undefined {
   if (part.group !== "wing-membrane") return undefined;
   const side = vertex[0] < 0 ? "left" : "right";
   const candidates = ["shoulder", "elbow", "wrist", "metacarpal", "finger-1", "finger-2", "finger-3", "finger-4"]
@@ -445,8 +450,8 @@ const results = MEDIUM_DRAGON_POSES.map((pose) => buildCreaturePoseDerivative({
   pose,
   sourceParts: pose.reference === GROUND ? mediumDragonGroundCanonicalParts : mediumDragonFlightCanonicalParts,
   group: `dragon-pose-${pose.id}`,
-  resolvePartBone: dragonBoneForPart,
-  resolveVertexBone: dragonMembraneVertexBone,
+  resolvePartBone: mediumDragonBoneForPart,
+  resolveVertexBone: mediumDragonMembraneVertexBone,
 }));
 
 export const mediumDragonRigStates: Readonly<Record<MediumDragonPoseId, CreatureRigState>> = Object.fromEntries(
@@ -485,7 +490,7 @@ export const mediumDragonPoseAtlasObject: CreatureLabModel = {
     "All eighteen action states are deterministic derivatives of the accepted P4 masses and one FK hierarchy.",
     "Shoulder, elbow, wrist and long-finger knuckle own active morphing; outer phalanges remain a nearly rigid spar.",
     "Takeoff clears terrain before full area; landing keeps the wing loaded through hind touchdown before sequential folding.",
-    "Folded and extended references preserve the same named wing chain; forces, contact impulses, flight physics and AI remain excluded.",
+    "Folded and extended references preserve the same named wing chain; this review atlas excludes integration while the runtime derivative owns forces, contacts, flight and behaviour.",
   ],
   anchors: {
     ...mediumDragonFlightObject.anchors,
