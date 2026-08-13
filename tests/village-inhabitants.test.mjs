@@ -6,6 +6,7 @@ import {
   stepVillagers,
 } from "../games/make-a-mess/src/game/villagerSim.ts";
 import { vikingSettlement } from "../games/make-a-mess/src/content/scenes/vikingSettlement.ts";
+import { villageHumanProfile } from "../games/make-a-mess/src/content/populations/humanPopulationProfiles.ts";
 import {
   vikingHomeEntrance,
   vikingVillageHomes,
@@ -63,7 +64,7 @@ test("the village network is built from authored footpaths, not invented ones", 
 });
 
 test("villagers get their errands done, wherever they choose to walk", () => {
-  const population = createVillagerPopulation(vikingSettlement, 24, field);
+  const population = createVillagerPopulation(villageHumanProfile, 24, field);
   let arrivals = 0;
   let wedged = 0;
   let walking = 0;
@@ -97,7 +98,7 @@ test("villagers get their errands done, wherever they choose to walk", () => {
 });
 
 test("villagers cannot walk through the world", () => {
-  const population = createVillagerPopulation(vikingSettlement, 24, field);
+  const population = createVillagerPopulation(villageHumanProfile, 24, field);
   let insideFrames = 0;
   let walkFrames = 0;
   let worst = "";
@@ -143,7 +144,7 @@ test("villagers cannot walk through the world", () => {
 });
 
 test("people turn like people: fast walkers cannot pivot on the spot", () => {
-  const population = createVillagerPopulation(vikingSettlement, 24, field);
+  const population = createVillagerPopulation(villageHumanProfile, 24, field);
   for (let tick = 0; tick < 600; tick += 1) {
     stepVillagers(population, 1 / 60, 0);
   }
@@ -176,7 +177,7 @@ test("people turn like people: fast walkers cannot pivot on the spot", () => {
 });
 
 test("the walk cycle is driven by distance, so feet cannot skate", () => {
-  const population = createVillagerPopulation(vikingSettlement, 8, field);
+  const population = createVillagerPopulation(villageHumanProfile, 8, field);
   // Прогреваем, чтобы все точно оказались в движении.
   for (let tick = 0; tick < 120; tick += 1) {
     stepVillagers(population, 1 / 60, 0);
@@ -210,7 +211,7 @@ test("the walk cycle is driven by distance, so feet cannot skate", () => {
 });
 
 test("the village goes to bed at night and comes back out at dawn", () => {
-  const population = createVillagerPopulation(vikingSettlement, 24, field);
+  const population = createVillagerPopulation(villageHumanProfile, 24, field);
   for (let tick = 0; tick < 600; tick += 1) {
     stepVillagers(population, 1 / 60, 0);
   }
@@ -252,7 +253,7 @@ test("craft pulls villagers to their own work yards", () => {
   // ремесло сработало хотя бы в одном: это и есть проверяемое утверждение.
   const visits = new Map();
   for (const count of [24, 28, 34]) {
-    const population = createVillagerPopulation(vikingSettlement, count, field);
+    const population = createVillagerPopulation(villageHumanProfile, count, field);
     for (let tick = 0; tick < 60 * 60 * 6; tick += 1) {
       stepVillagers(population, 1 / 60, 0);
       for (const villager of population.villagers) {

@@ -6,6 +6,7 @@ import {
 } from "../games/make-a-mess/src/game/creaturePopulation.ts";
 import { CreatureEventJournal } from "../games/make-a-mess/src/game/creatureWorld.ts";
 import { vikingSettlement } from "../games/make-a-mess/src/content/scenes/vikingSettlement.ts";
+import { villageHumanProfile } from "../games/make-a-mess/src/content/populations/humanPopulationProfiles.ts";
 import { vikingVillageDocument } from "../games/make-a-mess/src/content/scenes/vikingVillageDocument.ts";
 import { vikingVillageScene } from "../games/make-a-mess/src/game/vikingVillageScene.ts";
 import { townScene } from "../games/make-a-mess/src/game/townScene.ts";
@@ -20,7 +21,8 @@ test("a world declares residents without runtime scene-id wiring", () => {
   assert.equal(residents.bodyType, "human");
   assert.equal(residents.species, "human");
   assert.equal(residents.count, 34);
-  assert.equal(residents.settlement, vikingSettlement);
+  assert.equal(residents.profile, villageHumanProfile);
+  assert.equal(residents.profile.settlement, vikingSettlement);
 
   // A described but deliberately unpopulated settlement remains empty. The
   // renderer no longer infers residents from a known scene id.
@@ -31,7 +33,7 @@ test("population definitions reject ambiguous identity and invalid counts", () =
   const residents = humanSettlementPopulation({
     id: "residents",
     count: 4,
-    settlement: vikingSettlement,
+    profile: villageHumanProfile,
   });
 
   assert.throws(
@@ -41,7 +43,7 @@ test("population definitions reject ambiguous identity and invalid counts", () =
   const neighbours = humanSettlementPopulation({
     id: "neighbours",
     count: 3,
-    settlement: vikingSettlement,
+    profile: villageHumanProfile,
   });
   assert.throws(
     () => validateCreaturePopulationDefinitions("two-towns", [residents, neighbours]),
@@ -52,7 +54,7 @@ test("population definitions reject ambiguous identity and invalid counts", () =
       humanSettlementPopulation({
         id: "nobody",
         count: 0,
-        settlement: vikingSettlement,
+        profile: villageHumanProfile,
       }),
     /count must be a positive integer/,
   );

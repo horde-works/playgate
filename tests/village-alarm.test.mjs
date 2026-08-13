@@ -18,6 +18,7 @@ import {
   STARTLE_FLOOR_DB,
 } from "../games/make-a-mess/src/game/villagerAlarm.ts";
 import { vikingSettlement } from "../games/make-a-mess/src/content/scenes/vikingSettlement.ts";
+import { villageHumanProfile } from "../games/make-a-mess/src/content/populations/humanPopulationProfiles.ts";
 import {
   buildObstacleField,
   distanceToBox,
@@ -114,7 +115,7 @@ test("вздрог — быстрый подъём и долгий спад, а 
 });
 
 test("звук ИДЁТ: дальний край деревни вздрагивает позже ближнего", () => {
-  const population = createVillagerPopulation(vikingSettlement, 34, null);
+  const population = createVillagerPopulation(villageHumanProfile, 34, null);
   // Одинаковая латентность у обоих: меряем распространение звука, а не разброс
   // человеческих реакций.
   const near = pin(population.villagers[0], 4, 0);
@@ -145,7 +146,7 @@ test("звук ИДЁТ: дальний край деревни вздрагив
 });
 
 test("вся деревня не вздрагивает в один кадр", () => {
-  const population = createVillagerPopulation(vikingSettlement, 34, null);
+  const population = createVillagerPopulation(villageHumanProfile, 34, null);
   // Свой разброс латентности у каждого — и все на ОДНОМ расстоянии, чтобы
   // разница не могла прийти от пути звука.
   const pinned = population.villagers.slice(0, 12).map((villager, index) => {
@@ -164,7 +165,7 @@ test("вся деревня не вздрагивает в один кадр", (
 });
 
 test("ступень — кривая по расстоянию, а не круг на земле", () => {
-  const population = createVillagerPopulation(vikingSettlement, 34, null);
+  const population = createVillagerPopulation(villageHumanProfile, 34, null);
   const distances = [5, 10, 20, 35, 50, 70, 90];
   const pinned = distances.map((distance, index) =>
     pin(population.villagers[index], distance, 0),
@@ -196,7 +197,7 @@ test("ступень — кривая по расстоянию, а не кру�
 });
 
 test("к грохоту привыкают, а в тишине отвыкают", () => {
-  const population = createVillagerPopulation(vikingSettlement, 34, null);
+  const population = createVillagerPopulation(villageHumanProfile, 34, null);
   const listener = pin(population.villagers[0], 30, 0);
   const source = { x: 0, y: 1.5, z: 0, level: GUNSHOT, rise: 1 };
   const amplitudes = [];
@@ -229,7 +230,7 @@ test("к грохоту привыкают, а в тишине отвыкают"
 });
 
 test("к взрыву в упор привыкнуть нельзя", () => {
-  const population = createVillagerPopulation(vikingSettlement, 34, null);
+  const population = createVillagerPopulation(villageHumanProfile, 34, null);
   const listener = pin(population.villagers[0], 3, 0);
   listener.villager.habituation = 1;
   emitNoise(population, { x: 0, y: 1.5, z: 0, level: 190, rise: 0.95 });
@@ -249,7 +250,7 @@ test("к взрыву в упор привыкнуть нельзя", () => {
 });
 
 test("рефлекс обрывает ход: человек осекается на шаге", () => {
-  const population = createVillagerPopulation(vikingSettlement, 34, null);
+  const population = createVillagerPopulation(villageHumanProfile, 34, null);
   // Ждём, пока деревня разойдётся по делам и наберёт ход.
   for (let elapsed = 0; elapsed < 12; elapsed += 0.05) {
     stepVillagers(population, 0.05, 0);
@@ -285,7 +286,7 @@ test("рефлекс обрывает ход: человек осекается 
 });
 
 test("деревня не вздрагивает одним телом: у каждого свой испуг", () => {
-  const population = createVillagerPopulation(vikingSettlement, 34, null);
+  const population = createVillagerPopulation(villageHumanProfile, 34, null);
   // ВСЕ НА ОДНОМ РАССТОЯНИИ, чтобы разница не могла прийти от пути звука:
   // остаётся только то, чем люди отличаются друг от друга.
   const pinned = population.villagers.map((villager, index) => {
@@ -316,7 +317,7 @@ test("деревня не вздрагивает одним телом: у ка�
 });
 
 test("ремесло правит порогом: кузнец и старейшина крепче ребёнка", () => {
-  const population = createVillagerPopulation(vikingSettlement, 34, null);
+  const population = createVillagerPopulation(villageHumanProfile, 34, null);
   const gainOf = (predicate) => {
     const group = population.villagers.filter(predicate);
     assert.ok(group.length > 0, "группа пуста");
@@ -330,7 +331,7 @@ test("ремесло правит порогом: кузнец и старейш
 });
 
 test("после рефлекса человек ЗАМИРАЕТ и ищет источник", () => {
-  const population = createVillagerPopulation(vikingSettlement, 34, null);
+  const population = createVillagerPopulation(villageHumanProfile, 34, null);
   for (let elapsed = 0; elapsed < 12; elapsed += 0.05) {
     stepVillagers(population, 0.05, 0);
   }
@@ -373,7 +374,7 @@ test("первый доворот бывает не туда, потом чел�
   // Деревня БЕЗ дозорного: рог — знак, его направление известно без поиска,
   // и он бы затёр как раз то, что здесь меряется.
   const population = createVillagerPopulation(
-    { ...vikingSettlement, horn: undefined },
+    { ...villageHumanProfile, settlement: { ...vikingSettlement, horn: undefined } },
     34,
     null,
   );
@@ -418,7 +419,7 @@ test("первый доворот бывает не туда, потом чел�
 });
 
 test("испуг роняет ношу, и это настоящий убыток склада", () => {
-  const population = createVillagerPopulation(vikingSettlement, 34, null);
+  const population = createVillagerPopulation(villageHumanProfile, 34, null);
   // Даём деревне разойтись по делам и взять ноши в руки.
   for (let elapsed = 0; elapsed < 240; elapsed += 0.1) {
     stepVillagers(population, 0.1, 0);
@@ -450,7 +451,7 @@ test("испуг роняет ношу, и это настоящий убыто�
 
 test("каскадом правит неопределённость: место стрельбы решает больше громкости", () => {
   const deliveredUnder = (mode) => {
-    const population = createVillagerPopulation(vikingSettlement, 34, null);
+    const population = createVillagerPopulation(villageHumanProfile, 34, null);
     for (let elapsed = 0; elapsed < 180; elapsed += 0.1) {
       stepVillagers(population, 0.1, 0);
     }
@@ -508,7 +509,7 @@ test("каскадом правит неопределённость: место
 
 /** Прогон деревни с одним взрывом и заданным сроком после него. */
 function panicRun(seconds, blast = { x: 0, y: 1.5, z: 0, level: 190, rise: 0.95 }) {
-  const population = createVillagerPopulation(vikingSettlement, 34, null);
+  const population = createVillagerPopulation(villageHumanProfile, 34, null);
   for (let elapsed = 0; elapsed < 60; elapsed += 0.1) {
     stepVillagers(population, 0.1, 0);
   }
@@ -553,7 +554,7 @@ test("сначала свои, потом сам: за ребёнком идут
 });
 
 test("укрытие — СВОЯ дверь, а не ближайшая", () => {
-  const population = createVillagerPopulation(vikingSettlement, 34, null);
+  const population = createVillagerPopulation(villageHumanProfile, 34, null);
   for (let elapsed = 0; elapsed < 60; elapsed += 0.1) {
     stepVillagers(population, 0.1, 0);
   }
@@ -633,7 +634,7 @@ const CHARGE_WAVE = { pushRadius: 24.6, horizontal: 14.5, vertical: 10.5 };
 const LANCE_WAVE = { pushRadius: 2.4, horizontal: 5.6, vertical: 4.4 };
 
 test("волна сбивает с ног, а устоявшие отряхиваются — и их больше", () => {
-  const population = createVillagerPopulation(vikingSettlement, 34, null);
+  const population = createVillagerPopulation(villageHumanProfile, 34, null);
   const pinned = population.villagers.map((villager, index) => {
     // Кольцами вокруг заряда: от упора до края радиуса толчка и дальше.
     const angle = (index / population.villagers.length) * Math.PI * 2;
@@ -674,7 +675,7 @@ test("волна сбивает с ног, а устоявшие отряхив�
 
 test("волна согласована с оружием: заряд опрокидывает, копьё — нет", () => {
   const knocked = (wave) => {
-    const population = createVillagerPopulation(vikingSettlement, 34, null);
+    const population = createVillagerPopulation(villageHumanProfile, 34, null);
     const listener = pin(population.villagers[0], 4, 0);
     emitNoise(population, { x: 0, y: 1.5, z: 0, level: 190, rise: 0.95, wave });
     for (let elapsed = 0; elapsed < 0.6; elapsed += STEP) {
@@ -687,7 +688,7 @@ test("волна согласована с оружием: заряд опрок
 });
 
 test("сбитый встаёт, отряхивается и возвращается к жизни", () => {
-  const population = createVillagerPopulation(vikingSettlement, 34, null);
+  const population = createVillagerPopulation(villageHumanProfile, 34, null);
   const listener = pin(population.villagers[0], 3, 0);
   const startX = listener.villager.x;
   const baseWear = listener.villager.wear;
@@ -729,7 +730,7 @@ test("сбитый встаёт, отряхивается и возвращае�
 
 test("отброс не проносит сквозь сруб", () => {
   const field = buildObstacleField(vikingVillageScene.breakablePieces);
-  const population = createVillagerPopulation(vikingSettlement, 34, field);
+  const population = createVillagerPopulation(villageHumanProfile, 34, field);
   for (let elapsed = 0; elapsed < 30; elapsed += 0.1) {
     stepVillagers(population, 0.1, 0);
   }
@@ -766,7 +767,9 @@ test("рог разносит тревогу физикой: слышат и т�
   // дозорного поднимается 15 человек, а с ним — вся деревня.
   const raised = (withHorn) => {
     const population = createVillagerPopulation(
-      withHorn ? vikingSettlement : { ...vikingSettlement, horn: undefined },
+      withHorn
+        ? villageHumanProfile
+        : { ...villageHumanProfile, settlement: { ...vikingSettlement, horn: undefined } },
       34,
       null,
     );
@@ -794,7 +797,7 @@ test("рог разносит тревогу физикой: слышат и т�
   assert.equal(withHorn.population.hornCooldown > 0, true, "дозорный не протрубил");
 
   // И НЕ ПО ПУСТЯКАМ: если тревога не набрала кворума, рог молчит.
-  const quiet = createVillagerPopulation(vikingSettlement, 34, null);
+  const quiet = createVillagerPopulation(villageHumanProfile, 34, null);
   for (let elapsed = 0; elapsed < 60; elapsed += 0.1) {
     stepVillagers(quiet, 0.1, 0);
   }
@@ -806,7 +809,7 @@ test("рог разносит тревогу физикой: слышат и т�
 });
 
 test("рог не уходит в петлю: трубят с передышкой", () => {
-  const population = createVillagerPopulation(vikingSettlement, 34, null);
+  const population = createVillagerPopulation(villageHumanProfile, 34, null);
   for (let elapsed = 0; elapsed < 60; elapsed += 0.1) {
     stepVillagers(population, 0.1, 0);
   }
@@ -825,7 +828,7 @@ test("рог не уходит в петлю: трубят с передышко
 });
 
 test("когда всё стихло, идут смотреть на пролом", () => {
-  const population = createVillagerPopulation(vikingSettlement, 34, null);
+  const population = createVillagerPopulation(villageHumanProfile, 34, null);
   for (let elapsed = 0; elapsed < 60; elapsed += 0.1) {
     stepVillagers(population, 0.1, 0);
   }
@@ -856,7 +859,7 @@ test("когда всё стихло, идут смотреть на проло�
 
 test("вооружённого провожают взглядом, безоружного — нет", () => {
   const facing = (armed) => {
-    const population = createVillagerPopulation(vikingSettlement, 34, null);
+    const population = createVillagerPopulation(villageHumanProfile, 34, null);
     for (let elapsed = 0; elapsed < 30; elapsed += 0.1) {
       stepVillagers(population, 0.1, 0);
     }
@@ -895,7 +898,7 @@ test("вооружённого провожают взглядом, безору
 });
 
 test("вздрог кончается сам и не залипает", () => {
-  const population = createVillagerPopulation(vikingSettlement, 34, null);
+  const population = createVillagerPopulation(villageHumanProfile, 34, null);
   const listener = pin(population.villagers[0], 12, 0);
   emitNoise(population, { x: 0, y: 1.5, z: 0, level: 175, rise: 1 });
   listen(population, [listener], STARTLE_DURATION + 0.6);

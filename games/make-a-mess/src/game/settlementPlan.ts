@@ -3,7 +3,8 @@
  *
  * Смысл разделения: поведение (как человек идёт, садится, просит дверь) едино
  * для всех карт, а ПОСЕЛЕНИЕ у каждой своё — тропы, жильё, места, роли, ритм
- * суток и одежда. Пока сим импортировал план деревни напрямую, второй карте
+ * суток. Внешность, одежда и профессиональные навыки принадлежат человеческому
+ * профилю, а не месту. Пока сим импортировал план деревни напрямую, второй карте
  * достаться было нечему.
  *
  * Интерфейс выведен из ДВУХ готовых разметок — викингской деревни и города, —
@@ -196,15 +197,6 @@ export interface SettlementResident {
   readonly child?: boolean;
 }
 
-/** Одежда поселения: палитра крашеной ткани, из которой набирают жителей. */
-export interface SettlementWardrobe {
-  readonly dyes: readonly (readonly [number, number, number])[];
-  /** Разброс изношенности, 0..1: у деревни выше, у города ровнее. */
-  readonly wearSpread?: number;
-  /** Насколько занятие пачкает одежду: кузнец грязнее старейшины. */
-  readonly grimeByRole?: Readonly<Record<string, number>>;
-}
-
 export interface SettlementPlan {
   readonly id: string;
   readonly routes: readonly SettlementRoute[];
@@ -222,7 +214,6 @@ export interface SettlementPlan {
   readonly stores?: readonly SettlementStore[];
   /** Потоки между складами: из них и получается работа. */
   readonly flows?: readonly SettlementFlow[];
-  readonly wardrobe: SettlementWardrobe;
   /** Каждый n-й житель — ребёнок. 0 — детей нет. */
   readonly childEvery?: number;
   /** Каждый n-й — женщина или девочка. */
@@ -274,6 +265,25 @@ export function settlementRoles(plan: SettlementPlan): readonly string[] {
       if (!role.startsWith("resident:")) {
         roles.add(role);
       }
+    }
+  }
+  return [...roles];
+}
+
+/**
+ * Только роли, которые реально могут быть назначены человеку при рождении.
+ * `women`/`men` из интересов и станций — селекторы адресации, не профессии.
+ */
+export function settlementResidentRoles(plan: SettlementPlan): readonly string[] {
+  const roles = new Set<string>();
+  for (const dwelling of plan.dwellings) {
+    for (const role of dwelling.roles) {
+      roles.add(role);
+    }
+  }
+  for (const person of plan.roster ?? []) {
+    if (person.role) {
+      roles.add(person.role);
     }
   }
   return [...roles];

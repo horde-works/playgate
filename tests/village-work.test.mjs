@@ -7,6 +7,7 @@ import {
   storePieceVisibility,
 } from "../games/make-a-mess/src/game/villagerSim.ts";
 import { vikingSettlement } from "../games/make-a-mess/src/content/scenes/vikingSettlement.ts";
+import { villageHumanProfile } from "../games/make-a-mess/src/content/populations/humanPopulationProfiles.ts";
 import { buildObstacleField } from "../games/make-a-mess/src/game/villagerNavigation.ts";
 import { vikingVillageScene } from "../games/make-a-mess/src/game/vikingVillageScene.ts";
 
@@ -14,7 +15,7 @@ const field = buildObstacleField(vikingVillageScene.breakablePieces);
 
 /** Прогон рабочего дня: шаг крупнее кадра, людей меньше — но правила те же. */
 function workday(minutes, count = 16) {
-  const population = createVillagerPopulation(vikingSettlement, count, field);
+  const population = createVillagerPopulation(villageHumanProfile, count, field);
   for (let tick = 0; tick < minutes * 60 * 20; tick += 1) {
     stepVillagers(population, 1 / 20, 0);
   }
@@ -90,7 +91,7 @@ test("учёт обещаний сходится сам, без правки к�
 });
 
 test("уровень склада виден: полная поленница цела, пустая исчезает", () => {
-  const population = createVillagerPopulation(vikingSettlement, 4, field);
+  const population = createVillagerPopulation(villageHumanProfile, 4, field);
   const pile = population.stores.get("weaver-wood");
   const definition = (vikingSettlement.stores ?? []).find(
     (store) => store.id === "weaver-wood",
@@ -123,7 +124,7 @@ test("уровень склада виден: полная поленница ц
 });
 
 test("работают в рабочей позе, и тяжёлое движение не бывает частым", () => {
-  const population = createVillagerPopulation(vikingSettlement, 16, field);
+  const population = createVillagerPopulation(villageHumanProfile, 16, field);
   const seen = new Set();
   let chopFrames = 0;
   let chopCycles = 0;

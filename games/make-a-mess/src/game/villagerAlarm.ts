@@ -92,18 +92,6 @@ export const STARTLE_FREEZE_SPREAD: readonly [number, number] = [0.6, 1];
 /** Кто-то привыкает к грохоту быстро, кто-то не привыкает почти никогда. */
 export const HABITUATION_GAIN_SPREAD: readonly [number, number] = [0.6, 1.4];
 
-/**
- * Ремесло правит порогом. Кузнец весь день внутри собственного грохота, и это
- * не поблажка, а следствие. Старейшина, который вздрагивает слабее всех и
- * пойдёт РАЗБИРАТЬСЯ, — единственный, кто движется против общего потока, и
- * именно поэтому он читается.
- */
-export const STARTLE_ROLE_GAIN: Readonly<Record<string, number>> = {
-  smith: 0.7,
-  elder: 0.6,
-  herder: 0.9,
-};
-
 /** Ребёнок пугается сильнее взрослого. Допущение. */
 export const STARTLE_CHILD_GAIN = 1.3;
 

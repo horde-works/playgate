@@ -1,4 +1,7 @@
-import type { SettlementPlan } from "./settlementPlan.ts";
+import {
+  validateHumanPopulationProfile,
+  type HumanPopulationProfile,
+} from "./humanPopulationProfile.ts";
 
 interface CreaturePopulationBase {
   /** Stable identity within one world. */
@@ -16,7 +19,7 @@ export interface HumanSettlementPopulationDefinition
   readonly kind: "human-settlement";
   readonly bodyType: "human";
   readonly species: "human";
-  readonly settlement: SettlementPlan;
+  readonly profile: HumanPopulationProfile;
 }
 
 export type CreaturePopulationDefinition = HumanSettlementPopulationDefinition;
@@ -24,7 +27,7 @@ export type CreaturePopulationDefinition = HumanSettlementPopulationDefinition;
 export function humanSettlementPopulation(options: {
   readonly id: string;
   readonly count: number;
-  readonly settlement: SettlementPlan;
+  readonly profile: HumanPopulationProfile;
 }): HumanSettlementPopulationDefinition {
   const definition: HumanSettlementPopulationDefinition = {
     id: options.id,
@@ -32,7 +35,7 @@ export function humanSettlementPopulation(options: {
     bodyType: "human",
     species: "human",
     count: options.count,
-    settlement: options.settlement,
+    profile: validateHumanPopulationProfile(options.profile),
   };
   validateCreaturePopulationDefinitions("population", [definition]);
   return definition;
@@ -59,9 +62,9 @@ export function validateCreaturePopulationDefinitions(
         `World ${worldId}: creature population ${definition.id} count must be a positive integer`,
       );
     }
-    if (definition.kind === "human-settlement" && definition.settlement.id.length === 0) {
+    if (definition.kind === "human-settlement" && definition.profile.id.length === 0) {
       throw new Error(
-        `World ${worldId}: human population ${definition.id} has no settlement id`,
+        `World ${worldId}: human population ${definition.id} has no profile id`,
       );
     }
     if (definition.kind === "human-settlement") {

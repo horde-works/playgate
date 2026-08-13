@@ -9,6 +9,10 @@ import { settlementRoles } from "../games/make-a-mess/src/game/settlementPlan.ts
 import { vikingSettlement } from "../games/make-a-mess/src/content/scenes/vikingSettlement.ts";
 import { townSettlement } from "../games/make-a-mess/src/content/scenes/townSettlement.ts";
 import {
+  firstIslandCityHumanProfile,
+  villageHumanProfile,
+} from "../games/make-a-mess/src/content/populations/humanPopulationProfiles.ts";
+import {
   buildObstacleField,
   distanceToBox,
 } from "../games/make-a-mess/src/game/villagerNavigation.ts";
@@ -20,11 +24,11 @@ import { vikingVillageScene } from "../games/make-a-mess/src/game/vikingVillageS
 // подогнан под одну карту, вторая на нём не поедет.
 
 const SETTLEMENTS = [
-  { plan: vikingSettlement, scene: vikingVillageScene, label: "деревня" },
-  { plan: townSettlement, scene: townScene, label: "город" },
+  { plan: vikingSettlement, profile: villageHumanProfile, scene: vikingVillageScene, label: "деревня" },
+  { plan: townSettlement, profile: firstIslandCityHumanProfile, scene: townScene, label: "город" },
 ];
 
-for (const { plan, scene, label } of SETTLEMENTS) {
+for (const { plan, profile, scene, label } of SETTLEMENTS) {
   test(`${label}: описание поселения ссылается только на то, что в нём есть`, () => {
     assert.equal(plan.routes.length > 10, true, `троп ${plan.routes.length}`);
     assert.equal(plan.dwellings.length > 0, true, "жилья нет вовсе");
@@ -69,9 +73,10 @@ for (const { plan, scene, label } of SETTLEMENTS) {
 
   test(`${label}: население живёт по своему поселению, а не по чужому`, () => {
     const field = buildObstacleField(scene.breakablePieces);
-    const population = createVillagerPopulation(plan, 24, field);
+    const population = createVillagerPopulation(profile, 24, field);
 
     assert.equal(population.settlement, plan, "население забыло своё поселение");
+    assert.equal(population.profile, profile, "население забыло человеческий профиль");
     assert.equal(population.villagers.length, 24);
 
     const declared = new Set(settlementRoles(plan));
@@ -80,7 +85,7 @@ for (const { plan, scene, label } of SETTLEMENTS) {
       assert.equal(declared.has(villager.role), true, `${villager.role}: роль не из этого поселения`);
       assert.equal(dwellingIds.has(villager.homeId), true, `${villager.homeId}: жильё не из этого поселения`);
       assert.equal(
-        plan.wardrobe.dyes.some(
+        profile.appearance.wardrobe.dyes.some(
           (dye) => dye[0] === villager.dye[0] && dye[1] === villager.dye[1] && dye[2] === villager.dye[2],
         ),
         true,
@@ -99,7 +104,7 @@ for (const { plan, scene, label } of SETTLEMENTS) {
 
   test(`${label}: за полминуты жизни никто не оказывается в стене`, () => {
     const field = buildObstacleField(scene.breakablePieces);
-    const population = createVillagerPopulation(plan, 20, field);
+    const population = createVillagerPopulation(profile, 20, field);
 
     let samples = 0;
     let inside = 0;

@@ -81,26 +81,6 @@ const ROLE_HAUNTS: Readonly<Record<string, readonly string[]>> = {
   teen: ["playground-1", "site-fence", "k3-bench", "k4-bench", "mooring"],
 };
 
-/**
- * Позднесоветский двор: серое, коричневое, тёмно-синее, хаки и бордо —
- * ткань фабричная, но выцветшая. Детское чуть ярче взрослого, как оно и
- * было; ядовитых цветов нет — они выдают шаблон, а не эпоху.
- */
-const TOWN_DYES: readonly (readonly [number, number, number])[] = [
-  [0.26, 0.27, 0.29],
-  [0.19, 0.22, 0.31],
-  [0.33, 0.28, 0.22],
-  [0.24, 0.29, 0.24],
-  [0.42, 0.38, 0.31],
-  [0.35, 0.19, 0.19],
-  [0.21, 0.2, 0.22],
-  [0.3, 0.31, 0.34],
-  [0.38, 0.32, 0.18],
-  [0.16, 0.18, 0.2],
-  [0.45, 0.36, 0.26],
-  [0.28, 0.23, 0.28],
-];
-
 export const townSettlement: SettlementPlan = {
   id: "open-house",
   routes,
@@ -126,12 +106,6 @@ export const townSettlement: SettlementPlan = {
     townPlaceInterest.map((place) => [place.areaId, place]),
   ),
   haunts: ROLE_HAUNTS,
-  wardrobe: {
-    dyes: TOWN_DYES,
-    // Городская одежда ровнее деревенской: фабричная, стирается чаще.
-    wearSpread: 0.6,
-    grimeByRole: { driver: 0.28, worker: 0.24, yardkeeper: 0.2, pensioner: -0.08 },
-  },
   childEvery: 5,
   femaleEvery: 2,
 };

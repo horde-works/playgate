@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef } from "react";
 import {
   BufferGeometry,
   Color,
+  DataTexture,
   Euler,
   Float32BufferAttribute,
   InstancedBufferAttribute,
@@ -12,8 +13,11 @@ import {
   Matrix4,
   MeshDepthMaterial,
   MeshStandardMaterial,
+  NearestFilter,
   Quaternion,
   RGBADepthPacking,
+  RGBAFormat,
+  UnsignedByteType,
   Vector3,
 } from "three";
 import {
@@ -97,7 +101,7 @@ interface BoxSpec {
   center: readonly [number, number, number];
   size: readonly [number, number, number];
   color: Color;
-  /** 1 — крашеная ткань (принимает цвет туники жителя), 0 — кожа/волосы. */
+  /** 0 — base, 1 — cloth, 2 — skin, 3 — hair. Kept in the existing aDye slot. */
   dye: number;
   kind: PartKind;
   /** -1 левая сторона, +1 правая, 0 по центру. */
@@ -114,11 +118,11 @@ function villagerBoxes(): BoxSpec[] {
     { center: [0, 1.28, 0], size: [0.44, 0.22, 0.26], color: CLOTH, dye: 1, kind: "body", side: 0, bone: "chest" },
     { center: [0, 1.04, 0], size: [0.36, 0.32, 0.24], color: CLOTH, dye: 1, kind: "body", side: 0, bone: "lumbar" },
     { center: [0, 0.87, 0], size: [0.38, 0.09, 0.25], color: LEATHER, dye: 0, kind: "body", side: 0, bone: "pelvis" },
-    { center: [0, 1.44, 0], size: [0.12, 0.1, 0.12], color: SKIN, dye: 0, kind: "head", side: 0, bone: "head" },
+    { center: [0, 1.44, 0], size: [0.12, 0.1, 0.12], color: SKIN, dye: 2, kind: "head", side: 0, bone: "head" },
     // Голова чуть крупнее анатомической: в такой стилизации точная пропорция
     // читается как «маленькая голова», а не как реализм.
-    { center: [0, 1.6, 0.01], size: [0.27, 0.27, 0.26], color: SKIN, dye: 0, kind: "head", side: 0, bone: "head" },
-    { center: [0, 1.7, -0.03], size: [0.29, 0.15, 0.24], color: HAIR, dye: 0, kind: "head", side: 0, bone: "head" },
+    { center: [0, 1.6, 0.01], size: [0.27, 0.27, 0.26], color: SKIN, dye: 2, kind: "head", side: 0, bone: "head" },
+    { center: [0, 1.7, -0.03], size: [0.29, 0.15, 0.24], color: HAIR, dye: 3, kind: "head", side: 0, bone: "head" },
   );
 
   for (const side of [-1, 1] as const) {
@@ -139,7 +143,7 @@ function villagerBoxes(): BoxSpec[] {
     const shoulderX = side * 0.255;
     boxes.push(
       { center: [shoulderX, (SHOULDER_Y + ELBOW_Y) / 2, 0], size: [0.13, SHOULDER_Y - ELBOW_Y, 0.14], color: CLOTH, dye: 1, kind: "armUpper", side, bone: side < 0 ? "leftUpperArm" : "rightUpperArm" },
-      { center: [shoulderX, (ELBOW_Y + WRIST_Y) / 2, 0.01], size: [0.12, ELBOW_Y - WRIST_Y, 0.13], color: SKIN, dye: 0, kind: "armFore", side, bone: side < 0 ? "leftForearm" : "rightForearm" },
+      { center: [shoulderX, (ELBOW_Y + WRIST_Y) / 2, 0.01], size: [0.12, ELBOW_Y - WRIST_Y, 0.13], color: SKIN, dye: 2, kind: "armFore", side, bone: side < 0 ? "leftForearm" : "rightForearm" },
     );
   }
 
@@ -270,6 +274,34 @@ function buildVillagerGeometry(): BufferGeometry {
   return geometry;
 }
 
+function createVillagerAppearanceTexture(population: VillagerPopulation): DataTexture {
+  // Two texels per person: skin, hair. This avoids another instanced attribute,
+  // while appearance remains independent from the pose palette and skeleton.
+  const data = new Uint8Array(population.villagers.length * 2 * 4);
+  const color = new Color();
+  for (const [index, villager] of population.villagers.entries()) {
+    for (const [slot, value] of [villager.skin, villager.hair].entries()) {
+      color.set(value);
+      const offset = (index * 2 + slot) * 4;
+      data[offset] = Math.round(color.r * 255);
+      data[offset + 1] = Math.round(color.g * 255);
+      data[offset + 2] = Math.round(color.b * 255);
+      data[offset + 3] = 255;
+    }
+  }
+  const texture = new DataTexture(
+    data,
+    2,
+    Math.max(1, population.villagers.length),
+    RGBAFormat,
+    UnsignedByteType,
+  );
+  texture.minFilter = NearestFilter;
+  texture.magFilter = NearestFilter;
+  texture.needsUpdate = true;
+  return texture;
+}
+
 const POSE_DECLARATIONS = /* glsl */ `
   attribute float aDye;
   attribute vec2 aFlags;
@@ -353,7 +385,7 @@ export function Villagers({
   world: CreatureWorldRuntime;
   bindings: VillagerWorldBindings;
 }) {
-  const { settlement, count } = definition;
+  const { profile, count } = definition;
   const pieces = world.geometry.pieces;
   const brokenPieces = world.geometry.removedPieceIds;
   const { doorRequests, openDoors, stockStates, inspect: inspectRef } = bindings;
@@ -366,10 +398,14 @@ export function Villagers({
   useEffect(() => {
     acousticCursor.current = world.stimuli.acoustic.latestSequence;
   }, [world.stimuli.acoustic]);
-  const population = useRef<VillagerPopulation | null>(null);
-  if (population.current === null) {
-    population.current = createVillagerPopulation(settlement, count, obstacleField);
-  }
+  const initialPopulation = useMemo(
+    () => createVillagerPopulation(profile, count, null),
+    [profile, count],
+  );
+  const population = useRef<VillagerPopulation | null>(initialPopulation);
+  useEffect(() => {
+    population.current = initialPopulation;
+  }, [initialPopulation]);
   useEffect(() => {
     if (population.current) {
       population.current.field = obstacleField;
@@ -457,6 +493,11 @@ export function Villagers({
 
   const geometry = useMemo(() => buildVillagerGeometry(), []);
 
+  const appearanceTexture = useMemo(
+    () => createVillagerAppearanceTexture(initialPopulation),
+    [initialPopulation],
+  );
+
   const posePalette = useMemo(() => createVillagerPosePalette(count), [count]);
   const dyeAttribute = useMemo(
     () => new InstancedBufferAttribute(new Float32Array(count * 4), 4),
@@ -481,16 +522,17 @@ export function Villagers({
     });
     standard.onBeforeCompile = (shader) => {
       shader.uniforms.uVillagerPose = { value: posePalette.texture };
+      shader.uniforms.uVillagerAppearance = { value: appearanceTexture };
       shader.vertexShader = shader.vertexShader
         .replace(
           "#include <common>",
-          `#include <common>\n${POSE_DECLARATIONS}\n  varying vec3 vDyeColor;\n  varying float vDyeMask;\n  varying vec3 vBodyPos;\n  varying float vWear;`,
+          `#include <common>\n${POSE_DECLARATIONS}\n  uniform highp sampler2D uVillagerAppearance;\n  varying vec3 vDyeColor;\n  varying float vMaterialMask;\n  varying vec3 vSkinColor;\n  varying vec3 vHairColor;\n  varying vec3 vBodyPos;\n  varying float vWear;`,
         )
         // Позы считаются ДО обработки нормалей, иначе конечности поворачиваются,
         // а свет на них остаётся от позы покоя.
         .replace(
           "#include <beginnormal_vertex>",
-          `#include <beginnormal_vertex>\n${POSE_COMPUTE}\n  objectNormal = posedNormal * objectNormal;\n  vDyeColor = aDyeColor.rgb;\n  vDyeMask = aDye;\n  vBodyPos = position;\n  vWear = aState.x;`,
+          `#include <beginnormal_vertex>\n${POSE_COMPUTE}\n  objectNormal = posedNormal * objectNormal;\n  vDyeColor = aDyeColor.rgb;\n  vMaterialMask = aDye;\n  vSkinColor = texelFetch(uVillagerAppearance, ivec2(0, gl_InstanceID), 0).rgb;\n  vHairColor = texelFetch(uVillagerAppearance, ivec2(1, gl_InstanceID), 0).rgb;\n  vBodyPos = position;\n  vWear = aState.x;`,
         )
         .replace(
           "#include <begin_vertex>",
@@ -499,7 +541,7 @@ export function Villagers({
       shader.fragmentShader = shader.fragmentShader
         .replace(
           "#include <common>",
-          "#include <common>\n  varying vec3 vDyeColor;\n  varying float vDyeMask;\n  varying vec3 vBodyPos;\n  varying float vWear;",
+          "#include <common>\n  varying vec3 vDyeColor;\n  varying float vMaterialMask;\n  varying vec3 vSkinColor;\n  varying vec3 vHairColor;\n  varying vec3 vBodyPos;\n  varying float vWear;",
         )
         .replace(
           "#include <color_fragment>",
@@ -509,8 +551,13 @@ export function Villagers({
   // предметом с идеально ровной поверхностью — оттого и читался наклейкой.
   // Здесь то же самое делается процедурно: плетение, грязь по подолу и
   // коленям, выгоревшие плечи. Ни текстур, ни второго драв-колла.
-  diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vDyeColor * 1.38, vDyeMask);
-  if (vDyeMask > 0.5) {
+  float clothMask = 1.0 - step(0.5, abs(vMaterialMask - 1.0));
+  float skinMask = 1.0 - step(0.5, abs(vMaterialMask - 2.0));
+  float hairMask = 1.0 - step(0.5, abs(vMaterialMask - 3.0));
+  diffuseColor.rgb = mix(diffuseColor.rgb, vSkinColor, skinMask);
+  diffuseColor.rgb = mix(diffuseColor.rgb, vHairColor, hairMask);
+  diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vDyeColor * 1.38, clothMask);
+  if (clothMask > 0.5) {
     // Плетение: две частоты поперёк и вдоль, чтобы читалась нить, а не шум.
     float warp = sin(vBodyPos.y * 210.0) * sin(vBodyPos.x * 168.0 + vBodyPos.z * 143.0);
     float weft = sin((vBodyPos.x + vBodyPos.z) * 96.0);
@@ -530,7 +577,7 @@ export function Villagers({
         );
     };
     return standard;
-  }, [posePalette]);
+  }, [posePalette, appearanceTexture]);
 
   // Тень должна повторять позу, иначе на земле шагает другой человек.
   const depthMaterial = useMemo(() => {
@@ -744,8 +791,9 @@ export function Villagers({
       material.dispose();
       depthMaterial.dispose();
       posePalette.texture.dispose();
+      appearanceTexture.dispose();
     };
-  }, [geometry, material, depthMaterial, posePalette]);
+  }, [geometry, material, depthMaterial, posePalette, appearanceTexture]);
 
   return (
     <instancedMesh

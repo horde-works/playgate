@@ -14,6 +14,7 @@ import type {
   SupportMode,
 } from "../../game/destructionScene.ts";
 import { humanSettlementPopulation } from "../../game/creaturePopulation.ts";
+import { villageHumanProfile } from "../populations/humanPopulationProfiles.ts";
 import {
   vikingHomeLayout,
   vikingPlanLocalPoint,
@@ -22,10 +23,7 @@ import {
 } from "./vikingVillagePlan.ts";
 // Список складов живёт в описании поселения: сцена берёт оттуда, какие куски
 // объявить изменяемыми, чтобы уровень было чем показать.
-import {
-  vikingSettlement,
-  vikingSettlementStores,
-} from "./vikingSettlement.ts";
+import { vikingSettlementStores } from "./vikingSettlement.ts";
 import { shrubExtent, shrubTone } from "../prefabs/coreShrubs.ts";
 
 interface MutableGroup {
@@ -3794,7 +3792,7 @@ export const vikingVillageDocument: AuthoredSceneDocument = {
     humanSettlementPopulation({
       id: "viking-village-residents",
       count: 34,
-      settlement: vikingSettlement,
+      profile: villageHumanProfile,
     }),
   ],
   copy: {
