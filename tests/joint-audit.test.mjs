@@ -51,7 +51,7 @@ const BUDGET = {
   viking: { seeThrough: 198, fights: 62 },
   basalt: { seeThrough: 122, fights: 80 },
   polder: { seeThrough: 82, fights: 353 },
-  astana: { seeThrough: 315, fights: 1080 },
+  astana: { seeThrough: 1264, fights: 1097 },
   nimbus: { seeThrough: 774, fights: 2070 },
   range: { seeThrough: 0, fights: 3 },
   airport: { seeThrough: 157, fights: 38 },
