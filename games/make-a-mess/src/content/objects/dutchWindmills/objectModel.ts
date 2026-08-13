@@ -40,7 +40,16 @@ export type ObjectMaterialId =
   | "lamp-glass"
   | "lamp-bulb"
   | "dark-recess"
-  | "opening";
+  | "opening"
+  | "palace-concrete"
+  | "palace-stone"
+  | "palace-accent-blue"
+  | "palace-accent-red"
+  | "palace-frame-metal"
+  | "palace-glazing"
+  | "palace-roof-metal"
+  | "palace-interior-dark"
+  | "palace-sign-metal";
 
 export type ObjectLightSource = {
   readonly position?: ObjectPoint;

@@ -91,6 +91,18 @@ const materialBindings: Record<ObjectMaterialId, MaterialBinding> = {
   // Legacy house studies still use `opening` for their glazing. New objects
   // must distinguish real glass from an opaque recess explicitly.
   opening: { material: "darkGlass", shape: "glassPane", color: "#1c2528" },
+  // Architectural Object Lab semantics are listed here only because the
+  // shared ObjectMaterialId map is exhaustive. The Palace has no polder
+  // prefab registration and these bindings do not place it in any world.
+  "palace-concrete": { material: "stone", shape: "stoneBlock", color: "#c7c4ba" },
+  "palace-stone": { material: "stone", shape: "panel", color: "#b9b5a9" },
+  "palace-accent-blue": { material: "stone", shape: "panel", color: "#48657a" },
+  "palace-accent-red": { material: "stone", shape: "panel", color: "#8c5748" },
+  "palace-frame-metal": { material: "steel", shape: "steelSheet", color: "#333b40" },
+  "palace-glazing": { material: "darkGlass", shape: "glassPane", color: "#476672" },
+  "palace-roof-metal": { material: "steel", shape: "steelSheet", color: "#b2c0c3" },
+  "palace-interior-dark": { material: "wood", shape: "panel", color: "#272b2c" },
+  "palace-sign-metal": { material: "steel", shape: "steelSheet", color: "#e0ddd2" },
 };
 
 const point = (value: ObjectPoint): SceneVector3 => [value[0], value[1], value[2]];
