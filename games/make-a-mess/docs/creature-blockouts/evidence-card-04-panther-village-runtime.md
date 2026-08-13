@@ -1,7 +1,7 @@
 # Evidence card 04 — medium panther village runtime
 
 Дата: 2026-08-13  
-Статус: `runtime-m4 / planted-paw correction`
+Статус: `runtime-m5 / articulated terrain and lookout perches`
 Единицы: метры, секунды, радианы  
 Координаты животного: `+Y` вверх, `+Z` вперёд, origin на поверхности
 
@@ -24,16 +24,20 @@ draw call, присваивая каждой вершине кость чере�
 | village profile | spawn, territory circuit, lookouts | суставы, скорости кадров, меш |
 | creature world | время, live pieces, removed ids, acoustic events, dangerous presence | команда «беги сюда» или видовая реакция |
 
-Текущий профиль имеет skills `observe`, `territory-roam`, `play-sprint` и
-`ground-bound`. Симуляция действительно читает skills: профиль без
+Текущий профиль имеет skills `observe`, `territory-roam`, `play-sprint`,
+`ground-bound` и `terrain-perch`. Симуляция действительно читает skills: профиль без
 `play-sprint` не переходит в acceleration/gallop, без `ground-bound` не входит
-в прыжок. Территория остаётся набором интересов; путь между ними выбирается по
+в обычный прыжок, без `terrain-perch` не выбирает возвышение. Территория остаётся набором интересов; путь между ними выбирается по
 живому полю препятствий и меняется после разрушения сцены.
 
 ## Runtime action loop
 
 `observe → walk → trot → accelerate → gallop → bound preload → ballistic
 flight → landing absorb → brake → observe`.
+
+Второй, не обязательный для каждого цикла контур среды:
+`observe → perch approach → preload → targeted ballistic flight → landing →
+sit-observe → preload → ballistic descent → landing → brake`.
 
 - скорость выводится из состояния и пройденного пути, а фаза walk/trot/gallop
   — из дистанции центра плюс дуга поворота корпуса, поэтому лапы не перебирают
@@ -44,6 +48,13 @@ flight → landing absorb → brake → observe`.
   целых/обрушенных кусков;
 - прыжок имеет отдельные preload, flight и landing; world root несёт дугу,
   pose несёт работу позвоночника и конечностей;
+- world-owned lookout разрешается только в живой отдельно стоящий landscape
+  stone/basalt достаточной площади, высотой `0.5–1.35 m`; стены, фундаменты,
+  крыши, стойки и галька не проходят фильтр;
+- точка отталкивания лежит за краем камня, посадка — на реальной верхней грани;
+  после разрушения piece немедленно перестаёт быть возможной целью;
+- `sit-observe` складывает задние конечности, оставляет передние опорными и
+  держит голову выше лежачего наблюдения;
 - громкий acoustic event или близкое опасное присутствие переводит внимание
   на источник и заставляет сначала тормозить, не включая охоту или атаку.
 
@@ -62,6 +73,10 @@ flight → landing absorb → brake → observe`.
   `scapula → forearm → carpus → paw` и hind `hip → knee → hock → paw`
   решаются до anchor; малая общая коррекция корпуса включается только когда
   предел одной цепи должен передать движение другой опоре;
+- Y каждого anchor берётся вертикальным лучом с точной ориентированной
+  поверхности под этой лапой. Один низкий камень поднимает одну лапу; высота
+  корпуса берётся по самой низкой из четырёх опор и не телепортируется на
+  верх предмета;
 - после горизонтальной опоры quaternion interpolation дополняется единым
   вертикальным floor correction по каноническим paw boxes. Он устраняет провал
   между ключевыми кадрами, но больше не называется foot lock.
@@ -81,6 +96,9 @@ flight → landing absorb → brake → observe`.
 | non-linear territory motion | больше 100 turning samples, больше 70 m пути за forward-test |
 | complete behaviour | все 9 runtime phases, speed `> 4.7 m/s`, bound apex `> 0.58 m` |
 | skills cause behaviour | quiet profile остаётся ниже `2.4 m/s`, без gallop/bound |
+| one paw owns a small step | test pebble `0.22 m`: root `<0.005 m`, одна paw anchor выше соседней `>0.17 m` |
+| natural perch selection | две village survey boulders проходят; здания/декор не проходят; broken id исчезает |
+| targeted raised landing | последовательность preload/flight/landing; root совпадает с stone top; apex выше top `>0.4 m`; pose `sit-observe` |
 
 ## Rejection conditions
 
@@ -91,6 +109,9 @@ flight → landing absorb → brake → observe`.
 - опорная лапа едет вместе с nav root или корпус поворачивается на одной
   неподвижной фазе шага;
 - прыжок является только сменой pose без world trajectory;
+- небольшой камень под одной лапой поднимает весь root;
+- пантера садится на стену, фундамент, крышу или несущееся в воздухе место;
+- высота посадки меняется без preload, баллистической дуги и absorb;
 - пантера охотится или атакует без отдельного разрешённого milestone;
 - дракон регистрируется вместе с пантерой по побочному условию.
 
@@ -118,3 +139,10 @@ dev-only `?mamPantherProbe=1` на Windows runtime:
   renderer/shader errors не обнаружено.
 
 Это был приёмочный прогон механики, не отдельная постановочная съёмка.
+
+M5 добавил индивидуальную 3D-поверхность лап и целевые возвышения. Два новых
+валуна деревни остаются обычными разрушаемыми частями landscape; кошачий
+профиль лишь связывает ближайший live stone с уже существующим lookout.
+Targeted regression подтверждает баллистическую посадку на `0.83 m`, сидячее
+наблюдение и баллистический сход. Отдельный small-stone regression подтверждает,
+что `0.22 m` неровность меняет только anchor наступившей лапы, не root.

@@ -27,9 +27,17 @@ export interface ObstacleBox {
   readonly id: string;
   /** Центр и ПОЛУразмеры в собственных осях куска. */
   readonly centerX: number;
+  readonly centerY: number;
   readonly centerZ: number;
   readonly halfX: number;
   readonly halfZ: number;
+  /** Полная 3D-ориентация нужна лапам на наклонных камнях. */
+  readonly localHalfSize: readonly [number, number, number];
+  readonly worldAxes: readonly [
+    readonly [number, number, number],
+    readonly [number, number, number],
+    readonly [number, number, number],
+  ];
   /** Поворот вокруг вертикали: препятствия честно ориентированы. */
   readonly yaw: number;
   /** Грубая огибающая для сетки поиска. */
@@ -43,6 +51,8 @@ export interface ObstacleBox {
   readonly bottom: number;
   /** Если это створка — id входа, который надо попросить открыть. */
   readonly doorId?: string;
+  readonly material?: string;
+  readonly shape?: string;
 }
 
 /**
@@ -162,6 +172,11 @@ export function buildObstacleField(
       rotate(0, halfSize[1], 0),
       rotate(0, 0, halfSize[2]),
     ];
+    const worldAxes: ObstacleBox["worldAxes"] = [
+      rotate(1, 0, 0),
+      rotate(0, 1, 0),
+      rotate(0, 0, 1),
+    ];
     // Осевая огибающая: нужна для сетки поиска и для высоты верха.
     const spanX = Math.abs(axes[0][0]) + Math.abs(axes[1][0]) + Math.abs(axes[2][0]);
     const spanY = Math.abs(axes[0][1]) + Math.abs(axes[1][1]) + Math.abs(axes[2][1]);
@@ -222,9 +237,12 @@ export function buildObstacleField(
     const box: ObstacleBox = {
       id: piece.id,
       centerX: piece.position[0],
+      centerY: piece.position[1],
       centerZ: piece.position[2],
       halfX,
       halfZ,
+      localHalfSize: [halfSize[0], halfSize[1], halfSize[2]],
+      worldAxes,
       yaw,
       minX: piece.position[0] - spanX,
       maxX: piece.position[0] + spanX,
@@ -233,6 +251,8 @@ export function buildObstacleField(
       top,
       bottom,
       doorId,
+      material: piece.material,
+      shape: piece.shape,
     };
     let boxes: ObstacleBox[] = [box];
     if (doorId) {
@@ -350,6 +370,63 @@ export function distanceToBox(box: ObstacleBox, x: number, z: number): number {
   const dx = Math.max(Math.abs(localX) - box.halfX, 0);
   const dz = Math.max(Math.abs(localZ) - box.halfZ, 0);
   return Math.hypot(dx, dz);
+}
+
+/**
+ * Верхняя точка реального ориентированного box под вертикальным лучом.
+ * `box.top` — только AABB и на наклонном валуне завышает опору до самого
+ * высокого угла. Для лапы нужна именно поверхность под подушечкой.
+ */
+export function topSurfaceHeightAtBox(
+  box: ObstacleBox,
+  x: number,
+  z: number,
+): number | null {
+  const relativeX = x - box.centerX;
+  const relativeZ = z - box.centerZ;
+  let lower = -Infinity;
+  let upper = Infinity;
+
+  for (let axisIndex = 0; axisIndex < 3; axisIndex += 1) {
+    const axis = box.worldAxes[axisIndex];
+    const half = box.localHalfSize[axisIndex];
+    const base = relativeX * axis[0] + relativeZ * axis[2];
+    const slope = axis[1];
+    if (Math.abs(slope) < 1e-8) {
+      if (Math.abs(base) > half + 1e-8) return null;
+      continue;
+    }
+    const first = (-half - base) / slope;
+    const second = (half - base) / slope;
+    lower = Math.max(lower, Math.min(first, second));
+    upper = Math.min(upper, Math.max(first, second));
+    if (lower > upper + 1e-8) return null;
+  }
+
+  return Number.isFinite(upper) ? box.centerY + upper : null;
+}
+
+/**
+ * Точная опора для отдельных лап. В отличие от `surfaceHeightAt`, она читает
+ * наклон 3D-куска, но сохраняет тот же предел естественного шага вверх.
+ */
+export function articulatedSurfaceHeightAt(
+  field: ObstacleField,
+  x: number,
+  z: number,
+  feetY: number,
+  broken?: ReadonlySet<string>,
+  maximumStep = STEP_UP_HEIGHT,
+): number {
+  let height = 0;
+  for (const box of field.query(x, z, 0.5, broken)) {
+    const surface = topSurfaceHeightAtBox(box, x, z);
+    if (surface === null || surface > feetY + maximumStep || surface <= height) {
+      continue;
+    }
+    height = surface;
+  }
+  return height;
 }
 
 /** Ближайшая точка на ориентированном прямоугольнике. */

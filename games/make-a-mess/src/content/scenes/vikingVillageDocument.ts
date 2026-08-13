@@ -2044,6 +2044,28 @@ function createWoodland(): void {
 function createRockwork(): void {
   const stones = group("terrain-stones", "Rocky Scandinavian ground", "stone");
 
+  // Broad freestanding stones inside the lived territory. They are ordinary
+  // destructible landscape, not animal markers; a feline profile may treat a
+  // nearby lookout as a landing interest while every other system sees rock.
+  for (const rock of [
+    { id: "survey-boulder:north", material: "basalt", position: [7.3, 0.41, 34.2], size: [1.85, 0.84, 1.5], yaw: 0.34, color: "#42474a" },
+    { id: "survey-boulder:well", material: "stone", position: [-14, 0.5, 17], size: [1.75, 1.02, 1.48], yaw: -0.42, color: "#686b64" },
+  ] as const) {
+    primitive(
+      stones,
+      rock.id,
+      rock.material,
+      "stoneBlock",
+      rock.position,
+      rock.size,
+      rock.color,
+      {
+        rotation: [0, rock.yaw, 0],
+        surface: [{ kind: "moss", amount: 0.58 }],
+      },
+    );
+  }
+
   const pileSites: readonly (readonly [number, number])[] = [
     [46, 33], [-47, 22], [49, -24], [-44, -49], [38, 46], [-39, 47], [47, 6],
     [-51, -8], [20, -53], [-27, 45], [12, 48], [-16, -58], [52, 14], [-52, 34],

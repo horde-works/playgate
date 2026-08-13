@@ -10,6 +10,7 @@ import { vikingVillagePantherProfile } from "../games/make-a-mess/src/content/po
 import { vikingVillageScene } from "../games/make-a-mess/src/game/vikingVillageScene.ts";
 import {
   createMediumPantherRuntime,
+  findMediumPantherPerches,
   sampleMediumPantherPose,
   stepMediumPanther,
 } from "../games/make-a-mess/src/game/mediumPantherSim.ts";
@@ -55,6 +56,17 @@ function pawWorldXZ(paw, palette, runtime) {
   };
 }
 
+function pawWorld(paw, palette, runtime) {
+  const local = paw.point.clone().applyMatrix4(palette[paw.bone]);
+  const sine = Math.sin(runtime.heading);
+  const cosine = Math.cos(runtime.heading);
+  return {
+    x: runtime.x + cosine * local.x + sine * local.z,
+    y: runtime.groundY + runtime.airHeight + local.y,
+    z: runtime.z - sine * local.x + cosine * local.z,
+  };
+}
+
 function percentile(values, fraction) {
   const sorted = [...values].sort((a, b) => a - b);
   return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * fraction))];
@@ -78,6 +90,7 @@ test("village panther profile separates species, skills and world territory", ()
     "territory-roam",
     "play-sprint",
     "ground-bound",
+    "terrain-perch",
   ]);
   assert.ok(vikingVillagePantherProfile.territory.circuit.length >= 8);
   assert.ok(vikingVillagePantherProfile.territory.lookouts.length >= 3);
@@ -185,7 +198,12 @@ test("gait duty factors preserve feline support order without unreachable atlas-
 
 test("planted panther paws stay in world contact while the body advances and turns", () => {
   const field = buildObstacleField(vikingVillageScene.breakablePieces);
-  const runtime = createMediumPantherRuntime(vikingVillagePantherProfile);
+  const locomotionProfile = {
+    ...vikingVillagePantherProfile,
+    id: "panther-contact-route",
+    skills: vikingVillagePantherProfile.skills.filter((skill) => skill !== "terrain-perch"),
+  };
+  const runtime = createMediumPantherRuntime(locomotionProfile);
   const palette = createMediumPantherPosePalette();
   const contactState = createMediumPantherContactState();
   const previous = new Map();
@@ -193,7 +211,7 @@ test("planted panther paws stay in world contact while the body advances and tur
   const dt = 1 / 60;
 
   for (let tick = 0; tick < 3000; tick += 1) {
-    stepMediumPanther(runtime, vikingVillagePantherProfile, dt, field);
+    stepMediumPanther(runtime, locomotionProfile, dt, field);
     const sample = sampleMediumPantherPose(runtime);
     writeMediumPantherPose(palette, sample, runtime, tick * dt, contactState);
     for (const paw of PANTHER_PAW_PROBES) {
@@ -228,6 +246,115 @@ test("planted panther paws stay in world contact while the body advances and tur
     assert.ok(mean <= limit.mean, `${gait}: mean planted-paw speed ${mean.toFixed(3)} m/s`);
     assert.ok(p99 <= limit.p99, `${gait}: p99 planted-paw speed ${p99.toFixed(3)} m/s`);
   }
+});
+
+test("a small landscape stone lifts one paw instead of the whole panther root", () => {
+  const runtime = createMediumPantherRuntime(vikingVillagePantherProfile);
+  runtime.x = 0;
+  runtime.z = 0;
+  runtime.heading = 0;
+  runtime.mode = "walk";
+  runtime.modeTime = 0;
+  runtime.gaitDistance = 0;
+  const sample = sampleMediumPantherPose(runtime);
+  const palette = createMediumPantherPosePalette();
+  writeMediumPantherPose(
+    palette,
+    sample,
+    runtime,
+    0,
+    createMediumPantherContactState(),
+  );
+  const leftFore = PANTHER_PAW_PROBES.find((paw) => paw.id === "left-fore-paw");
+  assert.ok(leftFore);
+  const contact = pawWorld(leftFore, palette, runtime);
+  const field = buildObstacleField([{
+    id: "test:terrain-stones:pebble:piece",
+    material: "stone",
+    shape: "stoneBlock",
+    position: [contact.x, 0.11, contact.z],
+    size: [0.32, 0.22, 0.32],
+  }]);
+
+  const groundedProfile = {
+    ...vikingVillagePantherProfile,
+    id: "small-stone-panther",
+    skills: ["observe", "territory-roam"],
+  };
+  stepMediumPanther(runtime, groundedProfile, 1 / 60, field);
+  assert.ok(runtime.groundY < 0.005, `small stone lifted root to ${runtime.groundY}`);
+
+  const contacts = createMediumPantherContactState();
+  writeMediumPantherPose(
+    palette,
+    sampleMediumPantherPose(runtime),
+    runtime,
+    1 / 60,
+    contacts,
+    field,
+  );
+  const lifted = contacts.paws.get("left-fore-paw");
+  const level = contacts.paws.get("right-fore-paw");
+  assert.ok(lifted.active && level.active);
+  assert.ok(
+    lifted.anchorY - level.anchorY > 0.17,
+    `individual paw rise only ${(lifted.anchorY - level.anchorY).toFixed(3)} m`,
+  );
+});
+
+test("live natural rocks become landing targets, not walls or decorative stones", () => {
+  const field = buildObstacleField(vikingVillageScene.breakablePieces);
+  const targets = findMediumPantherPerches(
+    vikingVillagePantherProfile,
+    field,
+    5,
+    34,
+    0,
+  );
+  assert.ok(targets.length >= 2);
+  assert.ok(targets.every((target) => /terrain-stones:survey-boulder/.test(target.id)));
+  assert.ok(targets.every((target) => target.landingY >= 0.8 && target.landingY <= 1.1));
+  assert.ok(targets.every((target) => Math.hypot(
+    target.landingX - target.launchX,
+    target.landingZ - target.launchZ,
+  ) >= 1.25));
+  const afterBreak = findMediumPantherPerches(
+    vikingVillagePantherProfile,
+    field,
+    5,
+    34,
+    0,
+    new Set([targets[0].id]),
+  );
+  assert.equal(afterBreak.some((target) => target.id === targets[0].id), false);
+});
+
+test("panther takes off, lands on the rock top and sits there to observe", () => {
+  const field = buildObstacleField(vikingVillageScene.breakablePieces);
+  const runtime = createMediumPantherRuntime(vikingVillagePantherProfile);
+  const modes = new Set([runtime.mode]);
+  let maximumWorldY = 0;
+  let landingTarget;
+  for (let tick = 0; tick < 300 && runtime.mode !== "perch-observe"; tick += 1) {
+    stepMediumPanther(runtime, vikingVillagePantherProfile, 1 / 30, field);
+    modes.add(runtime.mode);
+    maximumWorldY = Math.max(maximumWorldY, runtime.groundY + runtime.airHeight);
+    landingTarget ??= runtime.perchTarget;
+  }
+  assert.ok(landingTarget);
+  assert.deepEqual(modes, new Set([
+    "observe",
+    "perch-approach",
+    "bound-preload",
+    "bound-flight",
+    "landing",
+    "perch-observe",
+  ]));
+  assert.equal(runtime.perchVisits, 1);
+  assert.equal(sampleMediumPantherPose(runtime).current, "sit-observe");
+  assert.ok(Math.hypot(runtime.x - landingTarget.landingX, runtime.z - landingTarget.landingZ) < 1e-6);
+  assert.ok(Math.abs(runtime.groundY - landingTarget.landingY) < 1e-6);
+  assert.ok(maximumWorldY > landingTarget.landingY + 0.4);
 });
 
 test("feline skills select behaviour instead of changing the body or world adapter", () => {
@@ -272,6 +399,10 @@ test("panther completes a living frolic cycle without entering intact tall obsta
     previousHeading = runtime.heading;
 
     for (const box of field.query(runtime.x, runtime.z, 0.34)) {
+      if (
+        box.id === runtime.perchTarget?.id
+        && (runtime.jump || runtime.mode === "perch-observe")
+      ) continue;
       if (box.top <= runtime.groundY + 0.46) continue;
       assert.ok(
         distanceToBox(box, runtime.x, runtime.z) > 0.26,
@@ -290,13 +421,16 @@ test("panther completes a living frolic cycle without entering intact tall obsta
     "bound-flight",
     "landing",
     "brake",
+    "perch-approach",
+    "perch-observe",
   ]));
   assert.ok(maximumSpeed > 4.7, `maximum speed ${maximumSpeed}`);
   assert.ok(maximumAir > 0.58, `maximum bound ${maximumAir}`);
-  assert.ok(runtime.travelled > 70, `travelled only ${runtime.travelled}`);
+  assert.ok(runtime.travelled > 60, `travelled only ${runtime.travelled}`);
   assert.ok(turns > 100, `route was too straight: ${turns} turning samples`);
   assert.ok(poses.has("stand-observe"));
   assert.ok(poses.has("jump-flight"));
+  assert.ok(poses.has("sit-observe"));
   assert.ok([...poses].some((pose) => pose.startsWith("walk-")));
   assert.ok([...poses].some((pose) => pose.startsWith("trot-")));
   assert.ok([...poses].some((pose) => pose.startsWith("gallop-")));

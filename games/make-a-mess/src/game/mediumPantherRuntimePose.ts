@@ -14,6 +14,10 @@ import type {
   MediumPantherPoseSample,
   MediumPantherRuntime,
 } from "./mediumPantherSim.ts";
+import {
+  articulatedSurfaceHeightAt,
+  type ObstacleField,
+} from "./villagerNavigation.ts";
 
 const UNIT_SCALE = new Vector3(1, 1, 1);
 const Y_AXIS = new Vector3(0, 1, 0);
@@ -31,6 +35,7 @@ interface PawContactProbe {
   readonly id: PawId;
   readonly bone: number;
   readonly point: Vector3;
+  readonly supportPoints: readonly Vector3[];
 }
 
 interface PawContactLock {
@@ -38,6 +43,7 @@ interface PawContactLock {
   anchorX: number;
   anchorY: number;
   anchorZ: number;
+  clearance: number;
 }
 
 export interface MediumPantherContactState {
@@ -94,10 +100,25 @@ const PAW_CONTACT_PROBES: readonly PawContactProbe[] = mediumPantherCanonicalPar
     if (part.kind !== "box") throw new Error(`${part.id}: contact probe must be a box`);
     const bone = BONE_INDEX.get(mediumPantherBoneForPart(part));
     if (bone === undefined) throw new Error(`${part.id}: no runtime contact bone`);
+    const half = part.size.map((value) => value / 2);
+    const rotation = new Euler(...(part.rotation ?? [0, 0, 0]));
+    const supportPoints: Vector3[] = [];
+    for (const x of [-half[0], half[0]]) {
+      for (const y of [-half[1], half[1]]) {
+        for (const z of [-half[2], half[2]]) {
+          supportPoints.push(
+            new Vector3(x, y, z)
+              .applyEuler(rotation)
+              .add(new Vector3(...part.center)),
+          );
+        }
+      }
+    }
     return {
       id: part.id as PawId,
       bone,
       point: new Vector3(...part.center),
+      supportPoints,
     };
   });
 
@@ -161,7 +182,7 @@ export function createMediumPantherContactState(): MediumPantherContactState {
     paws: new Map(
       PAW_CONTACT_PROBES.map((paw) => [
         paw.id,
-        { active: false, anchorX: 0, anchorY: 0, anchorZ: 0 },
+        { active: false, anchorX: 0, anchorY: 0, anchorZ: 0, clearance: 0 },
       ]),
     ),
     bodyOffsetX: 0,
@@ -340,6 +361,8 @@ function solvePlantedPaws(
   runtime: MediumPantherRuntime,
   elapsed: number,
   state: MediumPantherContactState,
+  field: ObstacleField | null,
+  broken: ReadonlySet<string>,
 ): void {
   const dt = state.lastElapsed === null
     ? 1 / 60
@@ -384,10 +407,32 @@ function solvePlantedPaws(
     }
     if (!lock.active) {
       const anchor = toWorld(base, runtime);
+      let bottom = Infinity;
+      for (const point of paw.supportPoints) {
+        bottom = Math.min(bottom, point.clone().applyMatrix4(target[paw.bone]).y);
+      }
       lock.active = true;
       lock.anchorX = anchor.x;
-      lock.anchorY = anchor.y;
       lock.anchorZ = anchor.z;
+      lock.clearance = Math.max(0, base.y - bottom);
+      lock.anchorY = field
+        ? articulatedSurfaceHeightAt(
+            field,
+            anchor.x,
+            anchor.z,
+            runtime.groundY,
+            broken,
+          ) + lock.clearance
+        : anchor.y;
+    } else if (field) {
+      const surface = articulatedSurfaceHeightAt(
+        field,
+        lock.anchorX,
+        lock.anchorZ,
+        runtime.groundY,
+        broken,
+      );
+      lock.anchorY = surface + lock.clearance;
     }
     const anchor = toLocal(
       new Vector3(lock.anchorX, lock.anchorY, lock.anchorZ),
@@ -438,6 +483,8 @@ export function writeMediumPantherPose(
   runtime: MediumPantherRuntime,
   elapsed: number,
   contactState: MediumPantherContactState,
+  field: ObstacleField | null = null,
+  broken: ReadonlySet<string> = new Set(),
 ): void {
   if (target.length !== MEDIUM_PANTHER_SKELETON.bones.length) {
     throw new Error(`Panther pose palette has ${target.length} matrices, expected ${MEDIUM_PANTHER_SKELETON.bones.length}`);
@@ -458,7 +505,7 @@ export function writeMediumPantherPose(
 
     // Stillness is active: support remains fixed and only the head performs a
     // small secondary scan after the gaze has settled.
-    if (runtime.mode === "observe" && bone.id === "head") {
+    if ((runtime.mode === "observe" || runtime.mode === "perch-observe") && bone.id === "head") {
       rotation.multiply(
         new Quaternion().setFromAxisAngle(Y_AXIS, Math.sin(elapsed * 0.72) * 0.08),
       );
@@ -478,7 +525,7 @@ export function writeMediumPantherPose(
   // the planted pads stay put and the body advances over them. This keeps
   // terrain/navigation ownership at the world root without turning the gait
   // into a visual treadmill.
-  solvePlantedPaws(target, sample, runtime, elapsed, contactState);
+  solvePlantedPaws(target, sample, runtime, elapsed, contactState, field, broken);
 
   // Quaternion interpolation between two individually grounded frames does
   // not itself preserve a planted pad. Solve the final few centimetres from

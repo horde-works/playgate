@@ -19,6 +19,7 @@ export type MediumPantherPoseId =
   | "jump-flight"
   | "landing-absorb"
   | "lie-observe"
+  | "sit-observe"
   | "walk-01-left-hind-lift"
   | "walk-02-left-hind-place"
   | "walk-03-left-fore-lift"
@@ -202,6 +203,21 @@ export const MEDIUM_PANTHER_POSES: readonly CreaturePoseContract<MediumPantherPo
     },
     contactPartIds: ["belly-shadow"], grounded: true, phase: "observe",
     intent: "low-urgency side observation", force: "sternum and belly carry the rest pose", response: "head rises independently while paws stay planted",
+  },
+  {
+    id: "sit-observe", label: "PERCH SIT · HIGH GAZE / FOLDED HINDQUARTERS", reference: NEUTRAL,
+    rootTranslation: point(0, -0.12, -0.04),
+    boneRotations: {
+      pelvis: point(0.16, 0, 0), lumbar: point(-0.1, 0, 0), chest: point(-0.12, 0, 0),
+      neck: point(-0.16, 0.11, 0), head: point(0.08, 0.18, 0),
+      "left-scapula": point(-0.8, 0, 0), "left-forearm": point(0.8, 0, 0), "left-carpus": point(-0.8, 0, 0),
+      "right-scapula": point(-0.8, 0, 0), "right-forearm": point(0.8, 0, 0), "right-carpus": point(-0.8, 0, 0),
+      "left-hip": point(-0.4, 0, 0), "left-knee": point(0.9, 0, 0), "left-hock": point(0, 0, 0),
+      "right-hip": point(-0.4, 0, 0), "right-knee": point(0.9, 0, 0), "right-hock": point(0, 0, 0),
+      "tail-1": point(0, 0.24, 0), "tail-2": point(0, 0.28, 0), "tail-3": point(0, 0.22, 0),
+    },
+    contactPartIds: standingContacts, grounded: true, phase: "observe",
+    intent: "hold a raised survey point with a clear exit already selected", force: "folded hindquarters carry the pelvis while straight forelimbs support the chest", response: "head scans above a quiet trunk and the tail curls around the platform",
   },
   {
     id: "walk-01-left-hind-lift", label: "WALK 01 · LEFT HIND LIFTS", reference: NEUTRAL,

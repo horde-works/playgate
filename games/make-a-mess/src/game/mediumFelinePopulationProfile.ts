@@ -2,7 +2,8 @@ export type MediumFelineSkillId =
   | "observe"
   | "territory-roam"
   | "play-sprint"
-  | "ground-bound";
+  | "ground-bound"
+  | "terrain-perch";
 
 export type MediumFelinePoint = readonly [x: number, z: number];
 

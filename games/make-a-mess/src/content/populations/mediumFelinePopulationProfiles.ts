@@ -11,7 +11,7 @@ export const vikingVillagePantherProfile = defineMediumFelinePopulationProfile({
   genus: "Panthera",
   species: "Panthera pardus",
   phenotype: "melanistic",
-  skills: ["observe", "territory-roam", "play-sprint", "ground-bound"],
+  skills: ["observe", "territory-roam", "play-sprint", "ground-bound", "terrain-perch"],
   appearance: {
     coat: "#151819",
     coatPlane: "#2b3031",

@@ -187,6 +187,8 @@ function MediumPanther({
       panther,
       state.clock.elapsedTime,
       contactState.current,
+      obstacleField,
+      world.geometry.removedPieceIds.current,
     );
 
     if (root.current) {

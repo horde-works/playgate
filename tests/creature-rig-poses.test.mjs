@@ -87,7 +87,7 @@ function assertGroundedPoseCandidatesTouch(model, poses) {
 test("panther pose atlas uses one ordered skeleton and complete action and gait sets", () => {
   assertSkeletonContract(MEDIUM_PANTHER_SKELETON);
   assert.deepEqual(MEDIUM_PANTHER_POSES.map((pose) => pose.id), [
-    "stand-observe", "stalk", "jump-preload", "jump-flight", "landing-absorb", "lie-observe",
+    "stand-observe", "stalk", "jump-preload", "jump-flight", "landing-absorb", "lie-observe", "sit-observe",
     "walk-01-left-hind-lift", "walk-02-left-hind-place", "walk-03-left-fore-lift", "walk-04-left-fore-place",
     "walk-05-right-hind-lift", "walk-06-right-hind-place", "walk-07-right-fore-lift", "walk-08-right-fore-place",
     "trot-01-left-diagonal", "trot-02-flight", "trot-03-right-diagonal", "trot-04-flight",
@@ -103,6 +103,8 @@ test("panther pose atlas uses one ordered skeleton and complete action and gait 
 
 test("panther key actions and gait phases retain causal body staging", () => {
   assert.ok(mediumPantherRigStates["lie-observe"].pivots.root[1] < mediumPantherRigStates["stand-observe"].pivots.root[1] - 0.2);
+  assert.ok(mediumPantherRigStates["sit-observe"].pivots.pelvis[1] < mediumPantherRigStates["stand-observe"].pivots.pelvis[1] - 0.1);
+  assert.ok(mediumPantherRigStates["sit-observe"].pivots.head[1] > mediumPantherRigStates["lie-observe"].pivots.head[1] + 0.12);
   assert.ok(mediumPantherRigStates["jump-flight"].pivots.root[1] > 1.5);
   assert.deepEqual(MEDIUM_PANTHER_POSES.find((pose) => pose.id === "landing-absorb").contactPartIds, ["left-fore-paw", "right-fore-paw"]);
   const byId = new Map(MEDIUM_PANTHER_POSES.map((pose) => [pose.id, pose]));
@@ -115,6 +117,10 @@ test("panther key actions and gait phases retain causal body staging", () => {
     [[], ["right-fore-paw"], ["left-fore-paw"], [], ["left-hind-paw"], ["right-hind-paw"], [], []],
   );
   assertGroundedPoseCandidatesTouch(mediumPantherPoseAtlasObject, MEDIUM_PANTHER_POSES);
+  for (const pawId of ["left-fore-paw", "right-fore-paw", "left-hind-paw", "right-hind-paw"]) {
+    const paw = mediumPantherPoseAtlasObject.parts.find((candidate) => candidate.id === `sit-observe--${pawId}`);
+    assert.ok(rotatedBoxBottom(paw) < 0.012, `sit-observe/${pawId}: declared paw floats`);
+  }
   const locomotion = MEDIUM_PANTHER_POSES.filter((pose) => pose.grounded && /^(walk|trot|gallop|accelerate|brake)-/.test(pose.id));
   for (const pose of locomotion) {
     for (const pawId of ["left-fore-paw", "right-fore-paw", "left-hind-paw", "right-hind-paw"]) {
