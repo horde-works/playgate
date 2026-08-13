@@ -10,9 +10,9 @@ import type { MutableGroup } from "./astanaAuthoring.ts";
 import { groundSeatBox, primitive } from "./astanaAuthoring.ts";
 import { astanaAreas, type AstanaArea } from "./astanaPlan.ts";
 import { groundUnder } from "./astanaShell.ts";
-import { PYRAMID_PODIUM_TOP } from "./astanaPyramidPodium.ts";
+import { PYRAMID_GROUND_TOP } from "./astanaPyramidPodium.ts";
 
-const MARKER_HEIGHT = 0.115;
+export const ASTANA_SITE_MARKER_HEIGHT = 0.115;
 
 /**
  * Высоты получены тем же локальным коэффициентом сжатия, что и пятно каждого
@@ -22,6 +22,8 @@ const MARKER_HEIGHT = 0.115;
 export const SITE_MASSING_HEIGHTS = {
   "pyramid-plot": 24,
   "nur-alem-expo-plot": 26,
+  // Published current building height 25 m; medium civic scale is 1:1.6.
+  "virgin-lands-palace-plot": 15.625,
   "abu-dhabi-plaza-plot": 61,
   "arch-square": 13.3,
   "opera-plot": 4.8,
@@ -34,6 +36,7 @@ const SPHERE_BANDS = 17;
 const SITE_COLOURS: Readonly<Record<string, string>> = {
   "pyramid-plot": "#c8b785",
   "nur-alem-expo-plot": "#216b79",
+  "virgin-lands-palace-plot": "#b9aa8c",
   "abu-dhabi-plaza-plot": "#326773",
   "arch-square": "#d6c39d",
   "opera-plot": "#dfd5bd",
@@ -56,10 +59,33 @@ function colourOf(area: AstanaArea): string {
   }
 }
 
+function palaceFoundationContactBoxes(
+  size: readonly [number, number, number],
+): readonly { readonly position: readonly [number, number, number];
+  readonly size: readonly [number, number, number] }[] {
+  const columns = 12;
+  const rows = 9;
+  const pitchX = size[0] / columns;
+  const pitchZ = size[2] / rows;
+  return Array.from({ length: columns * rows }, (_, index) => {
+    const column = index % columns;
+    const row = Math.floor(index / columns);
+    return {
+      position: [
+        -size[0] / 2 + pitchX * (column + 0.5),
+        0,
+        -size[2] / 2 + pitchZ * (row + 0.5),
+      ],
+      size: [pitchX, size[1], pitchZ],
+    };
+  });
+}
+
 function plateTopOf(area: AstanaArea): number {
-  if (area.id === "pyramid-plot") return PYRAMID_PODIUM_TOP;
+  if (area.id === "pyramid-plot") return PYRAMID_GROUND_TOP;
   const [x, z] = area.center;
-  return (area.elevated ? 0.05 : groundUnder(x, z).top) + MARKER_HEIGHT;
+  return (area.elevated ? 0.05 : groundUnder(x, z).top)
+    + ASTANA_SITE_MARKER_HEIGHT;
 }
 
 function massingRotation(area: AstanaArea): readonly [number, number, number] {
@@ -216,12 +242,50 @@ function addSimpleMassing(target: MutableGroup, area: AstanaArea): void {
   );
 }
 
-function addMassing(target: MutableGroup, area: AstanaArea): void {
+function addVirginLandsPalaceMassing(
+  target: MutableGroup,
+  area: AstanaArea,
+): void {
+  const base = plateTopOf(area);
+  const fullHeight = SITE_MASSING_HEIGHTS["virgin-lands-palace-plot"];
+  // Официальное описание фиксирует два объёма: низкие фойе/вестибюль и
+  // нарастающий из них высокий корпус зрительного зала. Пятно пока authored
+  // по полному резерву и не выдаётся за обмер исторического фасада.
+  addSupportedVolume(
+    target,
+    area,
+    "foyer-wing",
+    "stone",
+    "stoneBlock",
+    base + 2.5,
+    [48, 5, 34],
+    "#c7b99c",
+  );
+  addSupportedVolume(
+    target,
+    area,
+    "auditorium",
+    "stone",
+    "stoneBlock",
+    base + fullHeight / 2,
+    [31, fullHeight, 25],
+    SITE_COLOURS[area.id],
+    [0, 3.5],
+  );
+}
+
+export function addAstanaPlanningMassing(
+  target: MutableGroup,
+  area: AstanaArea,
+): void {
   switch (area.id) {
     case "pyramid-plot":
       return;
     case "nur-alem-expo-plot":
       addSphereMassing(target, area);
+      return;
+    case "virgin-lands-palace-plot":
+      addVirginLandsPalaceMassing(target, area);
       return;
     case "arch-square":
       addArchMassing(target, area);
@@ -233,7 +297,6 @@ function addMassing(target: MutableGroup, area: AstanaArea): void {
 
 export function createAstanaSiteMarkers(
   foundations: MutableGroup,
-  massing: MutableGroup,
 ): void {
   for (const area of astanaAreas) {
     if (area.surfaceMode !== "direct" || !area.pavingRadius) continue;
@@ -253,10 +316,10 @@ export function createAstanaSiteMarkers(
     const ground = area.elevated ? 0.05 : groundUnder(x, z).top;
     const size = [
       area.pavingRadius[0] * 2,
-      MARKER_HEIGHT,
+      ASTANA_SITE_MARKER_HEIGHT,
       area.pavingRadius[1] * 2,
     ] as const;
-    const centreY = ground + MARKER_HEIGHT / 2;
+    const centreY = ground + ASTANA_SITE_MARKER_HEIGHT / 2;
     primitive(
       foundations,
       `site-marker:${area.id}`,
@@ -269,11 +332,20 @@ export function createAstanaSiteMarkers(
         rotation: [0, -(area.rotation ?? 0), 0],
         textureProfile: "city-gray-pavers",
         bearingArea: Math.PI * area.pavingRadius[0] * area.pavingRadius[1],
-        volume: area.pavingRadius[0] * area.pavingRadius[1] * MARKER_HEIGHT * 2.5,
-        carriesAttachments: true,
+        volume: area.pavingRadius[0] * area.pavingRadius[1]
+          * ASTANA_SITE_MARKER_HEIGHT * 2.5,
+        // The marker is a bearing slab, not a side-attachment wall. Keeping
+        // this false prevents its rotated AABB from becoming a fictitious
+        // carrier for shelter-belt trees outside the actual rectangular site.
+        carriesAttachments: area.id !== "virgin-lands-palace-plot",
         attachmentSupportMode: "cable",
         sideAttachmentReach: 0.4,
-        ...(area.elevated ? {
+        ...(area.id === "virgin-lands-palace-plot" ? {
+          // Many small exact tiles keep the structural footprint faithful to
+          // the rotated rectangle. One world-axis AABB would reach far beyond
+          // its corners and falsely claim a shelter-belt tree as a dependent.
+          contactBoxes: palaceFoundationContactBoxes(size),
+        } : area.elevated ? {
           // Временная несущая область габаритного макета. Финальные опоры
           // проектируются вместе с Нур Алемом и не подменяются сейчас
           // случайными видимыми колоннами.
@@ -286,10 +358,8 @@ export function createAstanaSiteMarkers(
       },
     );
     // Full-height planning volumes are deliberately kept out of the live
-    // portrait once landmark authoring begins.  They remain available in
-    // this file as dimensional notes, but a 61 m Plaza proxy behind
-    // Nur Alem (or a museum box behind the Arch) corrupts every like-for-like
-    // photographic silhouette check.
-    void massing;
+    // portrait once landmark authoring begins. The dormant builder above
+    // remains a dimensional note for future sites, but the owner-approved
+    // Palace D02 now replaces its former two-box proxy.
   }
 }

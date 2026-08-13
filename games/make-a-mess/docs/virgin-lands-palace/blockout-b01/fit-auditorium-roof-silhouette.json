@@ -1,0 +1,21 @@
+{
+  "schema": "reference-fit-report.v1",
+  "objectId": "virgin-lands-palace-1963",
+  "revision": "b01-2026-08-12-contour-c01",
+  "maskId": "observed-auditorium-roof-silhouette",
+  "pass": true,
+  "scope": "Only the unobscured high auditorium and roof are judged. The fountain-obscured low wing is controlled by the owner-approved C01 multi-view contour instead.",
+  "checks": [
+    {
+      "id": "observed-auditorium-roof-silhouette",
+      "pass": true,
+      "method": "Frozen R1 registration overlay plus the owner-approved B01 front projection",
+      "evidence": [
+        "front-1983-camera.png",
+        "overview-sheet.png",
+        "../../contour-study.png"
+      ],
+      "result": "The high-volume width, eave, shallow roof rise and asymmetric placement remain inside the accepted C01 silhouette."
+    }
+  ]
+}

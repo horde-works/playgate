@@ -1,0 +1,74 @@
+{
+  "modelId": "astana-virgin-lands-palace-1963",
+  "revision": "d01-2026-08-12-real-openings",
+  "modelHash": "14bb16d1aac3",
+  "generatedAt": "2026-08-12T16:38:24.471Z",
+  "views": [
+    {
+      "id": "front-square",
+      "label": "Square facade · real windows and entrance bays",
+      "projection": "orthographic",
+      "file": "front-square.png"
+    },
+    {
+      "id": "foyer-corner",
+      "label": "Foyer corner · open curtain wall",
+      "projection": "perspective",
+      "file": "foyer-corner.png"
+    },
+    {
+      "id": "right-grazing",
+      "label": "Right glazing · panes, frames and interior depth",
+      "projection": "perspective",
+      "file": "right-grazing.png"
+    },
+    {
+      "id": "auditorium-window-detail",
+      "label": "Auditorium window · void, reveals, frame, glass",
+      "projection": "perspective",
+      "file": "auditorium-window-detail.png"
+    },
+    {
+      "id": "door-detail",
+      "label": "Entrance · reserved bays and physical leaves",
+      "projection": "perspective",
+      "file": "door-detail.png"
+    },
+    {
+      "id": "high-three-quarter",
+      "label": "High 3/4 · protected mass and hipped roof",
+      "projection": "perspective",
+      "file": "high-three-quarter.png"
+    },
+    {
+      "id": "left-three-quarter",
+      "label": "3/4 left · hall close to the left return",
+      "projection": "perspective",
+      "file": "left-three-quarter.png"
+    },
+    {
+      "id": "rear",
+      "label": "Rear · conservative authored elevation",
+      "projection": "orthographic",
+      "file": "rear.png"
+    },
+    {
+      "id": "top",
+      "label": "Top · accepted C01 footprint",
+      "projection": "orthographic",
+      "file": "top.png"
+    },
+    {
+      "id": "foyer-corner-cutaway",
+      "label": "Cutaway pair · same corner without outer glass",
+      "projection": "perspective",
+      "file": "foyer-corner-cutaway.png"
+    },
+    {
+      "id": "silhouette",
+      "label": "Silhouette · accepted B01 mass",
+      "projection": "orthographic",
+      "file": "silhouette.png"
+    }
+  ]
+}

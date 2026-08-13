@@ -1,0 +1,25 @@
+{
+  "schema": "view-constraint-report.v1",
+  "objectId": "virgin-lands-palace-1963",
+  "revision": "c01",
+  "status": "pass",
+  "views": ["top", "square-front", "right-profile"],
+  "checks": [
+    {
+      "id": "shared-overall-envelope",
+      "status": "pass",
+      "note": "Front width, profile depth and top footprint resolve to 48 x 34 m."
+    },
+    {
+      "id": "shared-auditorium-envelope",
+      "status": "pass",
+      "note": "The 34 x 24 m hall and 15.625 m apex agree across all three contours."
+    },
+    {
+      "id": "asymmetric-wing-bands",
+      "status": "pass",
+      "note": "The top hypothesis exposes 9 m front and 12 m right bands without contradicting either observed diagonal."
+    }
+  ],
+  "unresolvedConflicts": []
+}

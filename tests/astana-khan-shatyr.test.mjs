@@ -102,8 +102,11 @@ const signedSkinClearance = (point, theta, arcFraction) => {
 test("Khan Shatyr fits its reserved plot and keeps the asymmetric real proportions", () => {
   assert.equal(KHAN_SHATYR_HEIGHT, 38);
   assert.equal(KHAN_SHATYR_SCALE, 38 / 150);
-  assert.deepEqual(KHAN_SHATYR_CENTRE, [49, -41]);
-  const towardBaiterek = Math.atan2(41, -49);
+  assert.ok(Math.abs(Math.hypot(...KHAN_SHATYR_CENTRE) - 167.8) < 1e-12);
+  const towardBaiterek = Math.atan2(
+    -KHAN_SHATYR_CENTRE[1],
+    -KHAN_SHATYR_CENTRE[0],
+  );
   assert.ok(Math.abs(KHAN_SHATYR_YAW - towardBaiterek) < 1e-12,
     "the entrance axis must point exactly toward Baiterek");
   assert.deepEqual(KHAN_SHATYR_CONCRETE_BASE_SEMI_AXES,

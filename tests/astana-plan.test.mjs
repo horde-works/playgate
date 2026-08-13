@@ -22,10 +22,18 @@ import {
   ARCH_YAW,
   ASTANA_TRUE_EAST_VECTOR,
   ASTANA_TRUE_NORTH_VECTOR,
+  CAPITAL_AXIS_DIRECTION,
   CIRCUS_CENTRE,
   KHAN_SHATYR_CENTRE,
+  KHAN_SHATYR_DISTANCE,
   KHAN_SHATYR_YAW,
+  LANDMARK_LRT_CLEARANCES,
+  LANDMARK_RADIAL_HALF_EXTENTS,
+  LRT_OUTER_DECK_EDGE_RADIUS,
   MUSEUM_CENTRE,
+  MEMORY_EXPO_AXIS_DIRECTION,
+  NUR_ALEM_CENTRE,
+  NUR_ALEM_DISTANCE,
   NURZHOL_ACROSS_VECTOR,
   NURZHOL_ALONG_VECTOR,
   NURZHOL_PLAN_ROTATION,
@@ -36,7 +44,10 @@ import {
   OPERA_TO_NURZHOL_DISTANCE,
   OPERA_YAW,
   PYRAMID_CENTRE,
+  PYRAMID_DISTANCE,
   PYRAMID_YAW,
+  VIRGIN_LANDS_PALACE_CENTRE,
+  VIRGIN_LANDS_PALACE_DISTANCE,
 } from "../games/make-a-mess/src/content/scenes/astana/astanaLayout.ts";
 import {
   DEFERRED_HAZRET_SULTAN_SITE,
@@ -52,6 +63,7 @@ import {
 } from "../games/make-a-mess/src/content/scenes/astana/astanaDeferredInfrastructure.ts";
 import {
   LAND_BASE_RADIUS,
+  PENINSULA_SHORE_RADII,
   RIVER_BASE_HALF_WIDTH,
   RIVER_WIDTH_SCALE,
   WORLD_RADIUS,
@@ -257,7 +269,7 @@ test("legacy road guesses stay in the plan but no longer become geometry", () =>
   assert.ok(renderedAstanaWays.some((way) => way.id === "bridge-footbridge"));
 });
 
-test("the new landmark axis and deferred mosque reservation are explicit", () => {
+test("the two landmark axes and deferred mosque reservation are explicit", () => {
   const footbridge = astanaBridges.find((bridge) => bridge.id === "footbridge");
   const atyrauMiddle = footbridge.axis[Math.floor(footbridge.axis.length / 2)];
   assert.ok(Math.abs(atyrauMiddle[0] - 49) < 3,
@@ -280,6 +292,45 @@ test("the new landmark axis and deferred mosque reservation are explicit", () =>
   assert.ok(Math.cos(KHAN_SHATYR_YAW) * -KHAN_SHATYR_CENTRE[0]
     + Math.sin(KHAN_SHATYR_YAW) * -KHAN_SHATYR_CENTRE[1] > 0,
   "Khan Shatyr entrance does not point toward Baiterek");
+  assert.equal(Math.hypot(...KHAN_SHATYR_CENTRE), KHAN_SHATYR_DISTANCE);
+  assert.equal(Math.hypot(...PYRAMID_CENTRE), PYRAMID_DISTANCE);
+  assert.ok(KHAN_SHATYR_CENTRE[0] * PYRAMID_CENTRE[0]
+    + KHAN_SHATYR_CENTRE[1] * PYRAMID_CENTRE[1] < 0);
+
+  const expoCross = NUR_ALEM_CENTRE[0] * VIRGIN_LANDS_PALACE_CENTRE[1]
+    - NUR_ALEM_CENTRE[1] * VIRGIN_LANDS_PALACE_CENTRE[0];
+  assert.ok(Math.abs(expoCross) < 1e-12,
+    "Nur Alem, Baiterek and the Virgin Lands Palace left their exact diagonal");
+  assert.equal(Math.hypot(...NUR_ALEM_CENTRE), NUR_ALEM_DISTANCE);
+  assert.equal(Math.hypot(...VIRGIN_LANDS_PALACE_CENTRE),
+    VIRGIN_LANDS_PALACE_DISTANCE);
+  assert.ok(NUR_ALEM_CENTRE[0] * VIRGIN_LANDS_PALACE_CENTRE[0]
+    + NUR_ALEM_CENTRE[1] * VIRGIN_LANDS_PALACE_CENTRE[1] < 0);
+  KHAN_SHATYR_CENTRE.forEach((coordinate, index) => assert.ok(Math.abs(
+    CAPITAL_AXIS_DIRECTION[index] - coordinate / KHAN_SHATYR_DISTANCE,
+  ) < 1e-12));
+  NUR_ALEM_CENTRE.forEach((coordinate, index) => assert.ok(Math.abs(
+    MEMORY_EXPO_AXIS_DIRECTION[index] - coordinate / NUR_ALEM_DISTANCE,
+  ) < 1e-12));
+
+  const profiles = [
+    [KHAN_SHATYR_DISTANCE, LANDMARK_RADIAL_HALF_EXTENTS.khan,
+      LANDMARK_LRT_CLEARANCES.khan, PENINSULA_SHORE_RADII.khan],
+    [PYRAMID_DISTANCE, LANDMARK_RADIAL_HALF_EXTENTS.pyramid,
+      LANDMARK_LRT_CLEARANCES.pyramid, PENINSULA_SHORE_RADII.pyramid],
+    [NUR_ALEM_DISTANCE, LANDMARK_RADIAL_HALF_EXTENTS.expo,
+      LANDMARK_LRT_CLEARANCES.expo, PENINSULA_SHORE_RADII.expo],
+    [VIRGIN_LANDS_PALACE_DISTANCE, LANDMARK_RADIAL_HALF_EXTENTS.virginLands,
+      LANDMARK_LRT_CLEARANCES.virginLands,
+      PENINSULA_SHORE_RADII.virginLands],
+  ];
+  for (const [distance, halfExtent, clearance, shore] of profiles) {
+    assert.ok(Math.abs(
+      distance - halfExtent - LRT_OUTER_DECK_EDGE_RADIUS - clearance,
+    ) < 1e-12, "принятый чистый разрыв от ЛРТ изменился");
+    assert.ok(shore - distance - halfExtent >= 12,
+      "за внешней гранью доминанты осталось меньше 12 м земли");
+  }
 
   assert.equal(areaById.has("hazret-sultan-plot"), false,
     "the deferred mosque returned to the live island");
@@ -306,6 +357,7 @@ test("the new landmark axis and deferred mosque reservation are explicit", () =>
   assert.deepEqual(areaById.get("abu-dhabi-plaza-plot").center, [-70, 8],
     "Abu Dhabi Plaza left the true south-west LRT environment");
   assert.ok(areaById.has("nur-alem-expo-plot"));
+  assert.ok(areaById.has("virgin-lands-palace-plot"));
 });
 
 test("places are laid out inside the island and do not sit in the river", () => {
@@ -419,11 +471,17 @@ test("the Opera group and north-west landmarks obey their exact composition rule
   const nurAlem = areaById.get("nur-alem-expo-plot");
   assert.equal(nurAlem.orientationRule, "composition-tangent");
   assert.equal(nurAlem.elevated, undefined);
-  assert.deepEqual(nurAlem.center, DEFERRED_HAZRET_SULTAN_SITE.center);
+  assert.deepEqual(nurAlem.center, NUR_ALEM_CENTRE);
   assert.equal(nurAlem.radius[0], nurAlem.radius[1],
     "круглое основание сферы снова стало эллипсом");
   assert.ok(!insideValley(...nurAlem.center));
   assert.equal(areaById.has("nur-alem-bridge-corridor"), false);
+
+  const virginLands = areaById.get("virgin-lands-palace-plot");
+  assert.deepEqual(virginLands.center, VIRGIN_LANDS_PALACE_CENTRE);
+  assert.equal(virginLands.status, "primary-reserve");
+  assert.equal(virginLands.elevated, undefined);
+  assert.ok(!insideValley(...virginLands.center));
 });
 
 test("landmark plots leave all four LRT entrance portals unobstructed", () => {

@@ -1,0 +1,37 @@
+{
+  "schema": "palace-surface-plan.v1",
+  "objectId": "virgin-lands-palace-1963",
+  "revision": "s01-2026-08-12",
+  "basis": {
+    "contour": "c01-approved-2026-08-12",
+    "blockout": "b01-2026-08-12-contour-c01",
+    "blockoutHash": "e61c9c93c244"
+  },
+  "bodyFamilies": [
+    {"id": "foyer-slabs", "family": "planar-slab-and-beam", "silhouetteOwner": true, "primitivePolicy": "standard-box-only"},
+    {"id": "foyer-curtain-wall", "family": "open-mullion-transom-lattice", "silhouetteOwner": true, "primitivePolicy": "standard-curtain-wall-bays"},
+    {"id": "entrance-doors", "family": "framed-glazed-leaves", "silhouetteOwner": false, "primitivePolicy": "standard-double-door-assembly"},
+    {"id": "auditorium-wall", "family": "segmented-thick-wall", "silhouetteOwner": true, "primitivePolicy": "standard-solid-intervals-around-openings"},
+    {"id": "auditorium-windows", "family": "void-reveal-frame-glass-interior", "silhouetteOwner": false, "primitivePolicy": "standard-window-assembly"},
+    {"id": "facade-panels", "family": "modular-rainscreen", "silhouetteOwner": false, "primitivePolicy": "standard-panels-clipped-around-openings"},
+    {"id": "auditorium-roof", "family": "four-plane-hipped-plate", "silhouetteOwner": true, "primitivePolicy": "custom-planar-mesh-required"}
+  ],
+  "standardElementPolicy": {
+    "frontCurtainBays": 24,
+    "rightCurtainBays": 17,
+    "groundCurtainInset": 1.4,
+    "frontDoubleDoorGroups": 2,
+    "auditoriumLowWindows": 15,
+    "auditoriumSquareWindows": 7,
+    "customMeshAllowlist": ["roof-square-slope", "roof-rear-slope", "roof-left-hip", "roof-right-hip"]
+  },
+  "openingRules": {
+    "opaqueOverlapAllowed": false,
+    "glassBackingWallAllowed": false,
+    "doorBackingWallAllowed": false,
+    "oneGlassBodyPerCurtainCell": true,
+    "windowAssembly": ["void", "reveals", "frame", "glass", "interior-air", "interior-back"],
+    "doorAssembly": ["reserved-bay", "jambs", "head", "threshold", "frame", "leaf", "interior-air"]
+  },
+  "integrationAllowed": false
+}

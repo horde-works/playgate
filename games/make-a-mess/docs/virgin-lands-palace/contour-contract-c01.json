@@ -1,0 +1,64 @@
+{
+  "schema": "contour-contract.v1",
+  "objectId": "virgin-lands-palace-1963",
+  "revision": "c01-approved-2026-08-12",
+  "coordinateConvention": {
+    "front": "local +z",
+    "right": "local +x",
+    "up": "local +y"
+  },
+  "views": {
+    "top": {
+      "authority": "owner-approved-hypothesis",
+      "outlineClosed": true,
+      "outline": [[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9], [0.1, 0.1]],
+      "features": {
+        "auditorium-rear-left-placement": [0.38, 0.4],
+        "broad-right-foyer-wing": [0.79, 0.5],
+        "square-side-foyer-band": [0.5, 0.78]
+      },
+      "voids": {}
+    },
+    "square-front": {
+      "authority": "observed",
+      "outlineClosed": true,
+      "outline": [[0.08, 0.9], [0.08, 0.62], [0.12, 0.62], [0.12, 0.32], [0.17, 0.22], [0.68, 0.22], [0.73, 0.32], [0.73, 0.62], [0.92, 0.62], [0.92, 0.9], [0.08, 0.9]],
+      "features": {
+        "shallow-hipped-roof": [0.43, 0.22],
+        "auditorium-window-band": [0.43, 0.55],
+        "right-foyer-overhang": [0.82, 0.62]
+      },
+      "voids": {
+        "recessed-ground-level": [[0.08, 0.79], [0.92, 0.79], [0.92, 0.9], [0.08, 0.9], [0.08, 0.79]]
+      }
+    },
+    "right-profile": {
+      "authority": "inferred-from-coherent-views",
+      "outlineClosed": true,
+      "outline": [[0.08, 0.9], [0.08, 0.62], [0.29, 0.62], [0.29, 0.32], [0.34, 0.22], [0.82, 0.22], [0.87, 0.32], [0.87, 0.62], [0.92, 0.62], [0.92, 0.9], [0.08, 0.9]],
+      "features": {
+        "deep-front-foyer": [0.19, 0.62],
+        "glazed-return-fins": [0.2, 0.7],
+        "narrow-inferred-rear-strip": [0.9, 0.62]
+      },
+      "voids": {
+        "recessed-ground-level": [[0.08, 0.79], [0.92, 0.79], [0.92, 0.9], [0.08, 0.9], [0.08, 0.79]]
+      }
+    }
+  },
+  "characteristics": [
+    {"id": "scene-overall-width", "value": 48, "unit": "m", "provenance": "owner-approved-hypothesis"},
+    {"id": "scene-overall-depth", "value": 34, "unit": "m", "provenance": "owner-approved-hypothesis"},
+    {"id": "scene-overall-height", "value": 15.625, "unit": "m", "provenance": "inferred"},
+    {"id": "scene-auditorium-width", "value": 34, "unit": "m", "provenance": "owner-approved-hypothesis"},
+    {"id": "scene-auditorium-depth", "value": 24, "unit": "m", "provenance": "owner-approved-hypothesis"},
+    {"id": "scene-hall-x-offset", "value": -5, "unit": "m", "provenance": "owner-approved-hypothesis"},
+    {"id": "scene-hall-z-offset", "value": -4, "unit": "m", "provenance": "owner-approved-hypothesis"},
+    {"id": "scene-front-foyer-depth", "value": 9, "unit": "m", "provenance": "owner-approved-hypothesis"},
+    {"id": "scene-right-foyer-width", "value": 12, "unit": "m", "provenance": "owner-approved-hypothesis"},
+    {"id": "scene-foyer-height", "value": 5.2, "unit": "m", "provenance": "inferred"},
+    {"id": "scene-foyer-recess-height", "value": 2.1, "unit": "m", "provenance": "inferred"},
+    {"id": "scene-auditorium-eave-height", "value": 13.9, "unit": "m", "provenance": "inferred"},
+    {"id": "scene-roof-rise", "value": 1.725, "unit": "m", "provenance": "inferred"}
+  ]
+}

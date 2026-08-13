@@ -942,6 +942,7 @@ export const renderedAstanaWays: readonly AstanaWay[] = astanaWays.filter(
 const khanSite = astanaLandmarkSiteById["khan-shatyr-plot"];
 const pyramidSite = astanaLandmarkSiteById["pyramid-plot"];
 const nurAlemSite = astanaLandmarkSiteById["nur-alem-expo-plot"];
+const virginLandsPalaceSite = astanaLandmarkSiteById["virgin-lands-palace-plot"];
 const plazaSite = astanaLandmarkSiteById["abu-dhabi-plaza-plot"];
 const archSite = astanaLandmarkSiteById["arch-square"];
 const operaSite = astanaLandmarkSiteById["opera-plot"];
@@ -1000,6 +1001,17 @@ export const astanaAreas: readonly AstanaArea[] = [
     surfaceMode: "direct",
     status: nurAlemSite.status,
     shape: "ellipse",
+    orientationRule: "composition-tangent",
+  },
+  {
+    id: "virgin-lands-palace-plot",
+    purpose: "Дворец целинников: исторический противовес Нур Алему на второй оси",
+    center: virginLandsPalaceSite.center,
+    radius: virginLandsPalaceSite.radius,
+    rotation: virginLandsPalaceSite.rotation,
+    pavingRadius: [25, 19],
+    surfaceMode: "direct",
+    status: virginLandsPalaceSite.status,
     orientationRule: "composition-tangent",
   },
   {

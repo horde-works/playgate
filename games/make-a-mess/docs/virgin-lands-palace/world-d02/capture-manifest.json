@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "scene": "astana",
+  "objectRevision": "d02-2026-08-12-real-openings",
+  "objectCaptureHash": "499dd1055608",
+  "viewport": [1600, 1000],
+  "timeOfDay": "day",
+  "captures": [
+    {
+      "file": "palace-front-arrival.png",
+      "camera": [47, 27, 63],
+      "target": [75, 5.5, 101],
+      "sha256": "20c5e2e23400aed5d4dfc9d56ec22d9ed2bc9cd4af5ce80d7ceffb086aa24c06"
+    },
+    {
+      "file": "palace-front-right.png",
+      "camera": [30, 25, 91],
+      "target": [75, 5.8, 101],
+      "sha256": "83c7b519affbd159c1446841907156d8cfa30dea6a6ff5b1017177d55b29f010"
+    },
+    {
+      "file": "palace-peninsula-context.png",
+      "camera": [40, 23, 105],
+      "target": [75, 4.8, 101],
+      "sha256": "a5fcbd25333cc18d3801fa3771ee20f50407f2944f420bdeea5d5b09a91243e7"
+    }
+  ]
+}

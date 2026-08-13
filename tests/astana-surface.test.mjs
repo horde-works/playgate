@@ -157,8 +157,11 @@ test("Baiterek and Nurzhol are a circular parterre with two real walking lanes",
 
   const siteMarkers = astanaScene.breakablePieces.filter((piece) =>
     piece.id.includes(":city-site-markers:site-marker:"));
-  assert.equal(siteMarkers.length, 3,
-    "only Plaza, Circus and National Museum should remain as future foundations");
+  assert.equal(siteMarkers.length, 4,
+    "only the Palace of Virgin Lands, Plaza, Circus and National Museum should remain as future foundations");
+  assert.ok(siteMarkers.some((piece) =>
+    piece.id.includes("virgin-lands-palace-plot")),
+  "the accepted Palace reserve lost its peninsula foundation");
   assert.equal(siteMarkers.some((piece) => piece.id.includes("pyramid-plot")), false,
     "the old flat Pyramid marker overlaps the raised concrete podium");
   const circus = siteMarkers.find((piece) => piece.id.includes("circus-plot"));
@@ -180,7 +183,11 @@ test("Baiterek and Nurzhol are a circular parterre with two real walking lanes",
   const massing = astanaScene.breakablePieces.filter((piece) =>
     piece.id.includes(":city-site-massing:massing:"));
   assert.equal(massing.length, 0,
-    "full-height planning proxies obstruct photographic landmark comparison");
+    "a planning proxy remains after all live landmark models were installed");
+
+  assert.ok(astanaScene.breakablePieces.some((piece) =>
+    piece.id.includes(":virgin-lands-palace-structure:")),
+  "the accepted Palace model did not replace its two-volume proxy");
 
   assert.equal(massing.some((piece) =>
     piece.id.includes(":pyramid-plot:layer:")), false,

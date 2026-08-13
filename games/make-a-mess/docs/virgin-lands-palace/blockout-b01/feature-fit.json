@@ -1,0 +1,20 @@
+{
+  "schema": "feature-fit-report.v1",
+  "objectId": "virgin-lands-palace-1963",
+  "revision": "b01-2026-08-12-contour-c01",
+  "pass": true,
+  "method": "Registered R1 control features checked against the emitted B01 geometry and its frozen front camera; hidden-plan claims remain excluded.",
+  "checks": [
+    {"id": "left-auditorium-eave", "pass": true, "owner": "emitted high-volume left edge"},
+    {"id": "left-roof-rise", "pass": true, "owner": "emitted left hip plane"},
+    {"id": "right-roof-rise", "pass": true, "owner": "emitted right hip plane"},
+    {"id": "right-auditorium-eave", "pass": true, "owner": "emitted high-volume right edge"},
+    {"id": "foyer-right-extent", "pass": true, "owner": "owner-approved C01 low-volume outline"},
+    {"id": "foyer-left-extent", "pass": true, "owner": "owner-approved C01 low-volume outline"},
+    {"id": "ground", "pass": true, "owner": "emitted recessed lower-storey datum"},
+    {"id": "auditorium-eave", "pass": true, "owner": "emitted 13.9 m hall eave"},
+    {"id": "roof-ridge", "pass": true, "owner": "emitted 15.625 m apex"},
+    {"id": "auditorium-left", "pass": true, "owner": "emitted 34 m hall envelope"},
+    {"id": "auditorium-right", "pass": true, "owner": "emitted 34 m hall envelope"}
+  ]
+}

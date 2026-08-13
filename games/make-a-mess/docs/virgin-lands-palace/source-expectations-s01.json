@@ -1,0 +1,31 @@
+{
+  "schema": "source-expectations.v1",
+  "objectId": "virgin-lands-palace-1963",
+  "revision": "s01-2026-08-12",
+  "envelope": {
+    "width": {"value": 48, "unit": "m", "provenance": "owner-approved-hypothesis"},
+    "depth": {"value": 34, "unit": "m", "provenance": "owner-approved-hypothesis"},
+    "apexY": {"value": 15.625, "unit": "m", "provenance": "published-anchor-scaled"}
+  },
+  "massing": {
+    "auditoriumWidth": {"value": 34, "unit": "m", "provenance": "owner-approved-hypothesis"},
+    "auditoriumDepth": {"value": 24, "unit": "m", "provenance": "owner-approved-hypothesis"},
+    "auditoriumCentre": {"value": [-5, -4], "unit": "m", "provenance": "owner-approved-hypothesis"},
+    "frontFoyerDepth": {"value": 9, "unit": "m", "provenance": "owner-approved-hypothesis"},
+    "rightFoyerWidth": {"value": 12, "unit": "m", "provenance": "owner-approved-hypothesis"}
+  },
+  "facade": {
+    "frontCurtainBays": {"value": 24, "provenance": "surface-plan"},
+    "rightCurtainBays": {"value": 17, "provenance": "surface-plan"},
+    "frontDoubleDoorGroups": {"value": 2, "provenance": "surface-plan"},
+    "frontLowWindows": {"value": 15, "provenance": "observed-and-calibrated"},
+    "frontSquareWindows": {"value": 7, "provenance": "observed-and-calibrated"},
+    "customRoofMeshes": {"value": 4, "provenance": "surface-plan"}
+  },
+  "rejection": {
+    "opaqueOverlapInAnyOpening": 0,
+    "broadBackingWithinCurtainWallClearance": 0,
+    "ordinaryPaneInDoorBay": 0,
+    "emissiveGlazing": 0
+  }
+}

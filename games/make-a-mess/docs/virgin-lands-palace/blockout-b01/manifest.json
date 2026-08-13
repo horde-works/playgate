@@ -1,0 +1,68 @@
+{
+  "modelId": "astana-virgin-lands-palace-blockout",
+  "revision": "b01-2026-08-12-contour-c01",
+  "modelHash": "e61c9c93c244",
+  "generatedAt": "2026-08-12T16:00:27.905Z",
+  "views": [
+    {
+      "id": "front-1983-camera",
+      "label": "R1 match · square-side massing",
+      "projection": "perspective",
+      "file": "front-1983-camera.png"
+    },
+    {
+      "id": "front",
+      "label": "Front +Z · square-side contour",
+      "projection": "orthographic",
+      "file": "front.png"
+    },
+    {
+      "id": "right-profile",
+      "label": "Right +X · foyer depth and hall setback",
+      "projection": "orthographic",
+      "file": "right-profile.png"
+    },
+    {
+      "id": "left-profile",
+      "label": "Left -X · narrow return hypothesis",
+      "projection": "orthographic",
+      "file": "left-profile.png"
+    },
+    {
+      "id": "rear",
+      "label": "Rear -Z · inferred one-metre strip",
+      "projection": "orthographic",
+      "file": "rear.png"
+    },
+    {
+      "id": "top",
+      "label": "Top · owner-approved C01 footprint",
+      "projection": "orthographic",
+      "file": "top.png"
+    },
+    {
+      "id": "three-quarter-left",
+      "label": "3/4 left · auditorium near the left edge",
+      "projection": "perspective",
+      "file": "three-quarter-left.png"
+    },
+    {
+      "id": "three-quarter-right",
+      "label": "3/4 right · long glazed-wing mass",
+      "projection": "perspective",
+      "file": "three-quarter-right.png"
+    },
+    {
+      "id": "high-three-quarter",
+      "label": "High 3/4 · two-volume plan and hipped roof",
+      "projection": "perspective",
+      "file": "high-three-quarter.png"
+    },
+    {
+      "id": "silhouette",
+      "label": "Silhouette · C01 mass distribution",
+      "projection": "orthographic",
+      "file": "silhouette.png"
+    }
+  ]
+}

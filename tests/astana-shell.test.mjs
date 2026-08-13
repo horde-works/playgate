@@ -3,10 +3,13 @@ import test from "node:test";
 import { readFileSync, readdirSync } from "node:fs";
 import { astanaScene } from "../games/make-a-mess/src/game/astanaScene.ts";
 import {
+  ASTANA_EDGE_BOUNDARY,
   FUTURE_ROAD_FULL_WIDTH,
   GROUND_PITCH,
   LAND_BASE_RADIUS,
   OUTER_LAYOUT_RESERVE,
+  PENINSULA_HALF_ANGLES_DEGREES,
+  PENINSULA_SHORE_RADII,
   RIVER_VALLEY_MARGIN,
   WORLD_RADIUS,
   groundKindAt,
@@ -14,6 +17,7 @@ import {
   landRadiusAt,
   riverAxisZ,
   riverHalfWidth,
+  shoreRadiusAtAngle,
 } from "../games/make-a-mess/src/content/scenes/astana/astanaShell.ts";
 
 const pieces = astanaScene.breakablePieces;
@@ -22,8 +26,11 @@ const withPrefix = (prefix) =>
 
 test("the island is the largest world and carries its licence", () => {
   assert.equal(astanaScene.id, "astana");
-  assert.equal(WORLD_RADIUS, 138);
-  assert.equal(WORLD_RADIUS, 112 + FUTURE_ROAD_FULL_WIDTH * 3 + OUTER_LAYOUT_RESERVE);
+  assert.equal(LAND_BASE_RADIUS,
+    112 + FUTURE_ROAD_FULL_WIDTH * 3 + OUTER_LAYOUT_RESERVE - 8);
+  assert.equal(WORLD_RADIUS, 210);
+  assert.equal(astanaScene.worldEdgeBoundary.length, 192);
+  assert.deepEqual(astanaScene.worldEdgeBoundary, ASTANA_EDGE_BOUNDARY);
   assert.equal(astanaScene.contentLicense, "CC-BY-NC-ND-4.0");
   assert.equal(astanaScene.indestructible, true);
 });
@@ -95,7 +102,7 @@ test("the river leaves a real channel, two steps deep", () => {
 
 test("the channel crosses the whole island", () => {
   // Река входит и выходит за кромку: это не пруд в середине.
-  for (const x of [-125, -95, -40, 0, 40, 95, 125]) {
+  for (const x of [-120, -95, -40, 0, 40, 95, 120]) {
     const z = riverAxisZ(x);
     assert.equal(groundKindAt(x, z), "bed", `на x=${x} русла нет`);
     assert.ok(riverHalfWidth(x) > 4.5, `на x=${x} русло исчезло`);
@@ -112,6 +119,32 @@ test("the channel crosses the whole island", () => {
     const angle = step / 64 * Math.PI * 2;
     assert.equal(groundKindAt(Math.cos(angle) * 16, Math.sin(angle) * 16), "land");
   }
+});
+
+test("four broad peninsulas own the exact shoreline while the gaps keep the old body", () => {
+  const directions = [
+    [49, -41, PENINSULA_SHORE_RADII.khan],
+    [-49, 41, PENINSULA_SHORE_RADII.pyramid],
+    [-43, -58, PENINSULA_SHORE_RADII.expo],
+    [43, 58, PENINSULA_SHORE_RADII.virginLands],
+  ];
+  for (const [x, z, expected] of directions) {
+    const radius = shoreRadiusAtAngle(Math.atan2(z, x));
+    assert.ok(Math.abs(radius - expected) < 1.2,
+      `вершина полуострова ${x},${z}: ${radius.toFixed(2)} м`);
+  }
+
+  const sampledRadii = ASTANA_EDGE_BOUNDARY.map(([x, z]) => Math.hypot(x, z));
+  assert.ok(Math.max(...sampledRadii) < WORLD_RADIUS - 2);
+  assert.ok(Math.min(...sampledRadii) > LAND_BASE_RADIUS - 1.2);
+  assert.ok(sampledRadii.some((radius) => radius < LAND_BASE_RADIUS + 1),
+    "между полуостровами исчезло прежнее степное тело");
+  assert.deepEqual(PENINSULA_HALF_ANGLES_DEGREES, {
+    khan: 30,
+    pyramid: 40,
+    expo: 30,
+    virginLands: 28,
+  });
 });
 
 test("the new annulus outside the LRT is bare soil reserved for later roads", () => {

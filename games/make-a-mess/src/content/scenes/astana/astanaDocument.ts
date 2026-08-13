@@ -14,10 +14,12 @@
 import type { AuthoredSceneDocument } from "../sceneContract.ts";
 import { collectGroups, group, resetGroups } from "./astanaAuthoring.ts";
 import {
+  ASTANA_EDGE_BOUNDARY,
   WORLD_RADIUS,
   createGreenBelt,
   createGround,
   createRiverBed,
+  createShorelineSkirt,
   createSteppeTufts,
 } from "./astanaShell.ts";
 import { createRingViaduct } from "./astanaRing.ts";
@@ -28,11 +30,13 @@ import { createKhanShatyr } from "./astanaKhanShatyr.ts";
 import { createAstanaParterre } from "./astanaParterre.ts";
 import { createAstanaSiteMarkers } from "./astanaSiteMarkers.ts";
 import { createAstanaFramework } from "./astanaFramework.ts";
-import { createAstanaPyramidPodium } from "./astanaPyramidPodium.ts";
+import { createAstanaPyramidGround } from "./astanaPyramidPodium.ts";
 import { createAstanaPyramid } from "./astanaPyramid.ts";
 import { createAstanaTriumphalArch } from "./astanaTriumphalArch.ts";
 import { createAstanaNurAlem } from "./astanaNurAlem.ts";
 import { createAstanaOpera } from "./astanaOpera.ts";
+import { createAstanaVirginLandsPalace } from
+  "./astanaVirginLandsPalace.ts";
 import {
   TRAIN_SECTIONS,
   astanaTrainSpotLights,
@@ -45,6 +49,9 @@ import {
 } from "./astanaLayout.ts";
 
 function createIsland(): void {
+  createShorelineSkirt(
+    group("shoreline-skirt", "Four-peninsula loess cliff", "earth", "linked"),
+  );
   createGround(
     group("terrain-base", "Deep steppe earth", "earth"),
     group("terrain-surface", "Steppe grass, riverbank and sand", "grass"),
@@ -71,12 +78,42 @@ function createIsland(): void {
   );
   createAstanaSiteMarkers(
     group("city-site-markers", "Exact-azimuth future landmark foundations", "stone"),
-    group("city-site-massing", "Full-height future landmark massing", "stone"),
   );
-  createAstanaPyramidPodium(
-    group("pyramid-podium", "Raised concrete bridge podium under the Pyramid", "concrete", "linked"),
-    group("pyramid-entrances", "Three splayed entrance ramps to the Pyramid", "concrete", "linked"),
-    group("pyramid-mound", "Terraced grass mound with three exact entrance cuts", "grass", "linked"),
+  createAstanaVirginLandsPalace({
+    structure: group(
+      "virgin-lands-palace-structure",
+      "Palace of Virgin Lands concrete shell and real opening carriers",
+      "stone",
+      "linked",
+    ),
+    cladding: group(
+      "virgin-lands-palace-cladding",
+      "Palace of Virgin Lands modular stone facade",
+      "stone",
+      "linked",
+    ),
+    glazing: group(
+      "virgin-lands-palace-glazing",
+      "Palace of Virgin Lands finite window and door glass",
+      "darkGlass",
+      "linked",
+    ),
+    metal: group(
+      "virgin-lands-palace-metal",
+      "Palace of Virgin Lands curtain frames, roof and sign",
+      "steel",
+      "linked",
+    ),
+    interior: group(
+      "virgin-lands-palace-interior",
+      "Palace of Virgin Lands visible interior depth",
+      "wood",
+      "linked",
+    ),
+  });
+  createAstanaPyramidGround(
+    group("pyramid-entrances", "Three ground-level entrance cuts through the Pyramid mound", "concrete", "linked"),
+    group("pyramid-mound", "Ground-seated grass mound with three exact entrance cuts", "grass", "linked"),
   );
   createAstanaPyramid(
     group("pyramid-frame", "Exact five-tier triangular steel grid of the Pyramid", "steel", "linked"),
@@ -157,8 +194,9 @@ export const astanaDocument: AuthoredSceneDocument = {
   indestructible: true,
   contentLicense: "CC-BY-NC-ND-4.0",
   // Степной воздух сухой и прозрачный: остров видно целиком с любой точки,
-  // а не сквозь молоко. Дальняя граница держится внутри диска моря (258 м).
-  fogDistances: [150, 328],
+  // а не сквозь молоко. После появления полуостровов дальняя граница
+  // отодвинута вместе с физическим контуром, а не оставлена внутри суши.
+  fogDistances: [280, 560],
   solarFrame: {
     model: "equinox",
     latitudeDegrees: ASTANA_LATITUDE_DEGREES,
@@ -169,10 +207,11 @@ export const astanaDocument: AuthoredSceneDocument = {
     // Спавн на левом берегу, южнее будущего Байтерека: игрок стоит лицом на
     // север, вдоль оси будущего бульвара, и видит реку за центром острова.
     playerSpawn: [0, 1.3, -24],
-    cameraFar: 370,
+    cameraFar: 620,
     center: [0, 0],
     halfExtents: [WORLD_RADIUS + 6, WORLD_RADIUS + 6],
     radius: WORLD_RADIUS,
+    edgeBoundary: ASTANA_EDGE_BOUNDARY,
     safetyFloorY: -2.6,
   },
   copy: {

@@ -29,11 +29,64 @@ export interface AstanaLandmarkSite {
 
 export const BAITEREK_CENTRE = [0, 0] as const;
 
+function unit([x, z]: LayoutPoint): LayoutPoint {
+  const length = Math.hypot(x, z);
+  return [x / length, z / length];
+}
+
+function onAxis(direction: LayoutPoint, distance: number): LayoutPoint {
+  return [direction[0] * distance, direction[1] * distance];
+}
+
+/**
+ * Две композиционные оси существовали до полуостровов. Их направления
+ * зафиксированы прежними центрами, поэтому перенос доминант меняет только
+ * расстояние от Байтерека, но не географический компас и не городской жест.
+ */
+export const CAPITAL_AXIS_DIRECTION = unit([49, -41]);
+export const MEMORY_EXPO_AXIS_DIRECTION = unit([-43, -58]);
+
+/**
+ * Градостроительный профиль внешних доминант. Кольцо ЛРТ остаётся на
+ * радиусе 98 м; его настил шириной 8.6 м заканчивается на 102.3 м. Каждый
+ * следующий разрыв измеряется от этой внешней кромки до реального корпуса
+ * или полного построенного комплекса, а не до центра участка.
+ */
+export const LRT_OUTER_DECK_EDGE_RADIUS = 98 + 8.6 / 2;
+export const LANDMARK_LRT_CLEARANCES = {
+  khan: 40,
+  pyramid: 32,
+  expo: 35,
+  virginLands: 34,
+} as const;
+export const LANDMARK_RADIAL_HALF_EXTENTS = {
+  // Полный бетонный овал Хан Шатыра, включая принятую площадку.
+  khan: 25.5,
+  // Реальное основание Пирамиды 24 × 24 м без удалённого подиума.
+  pyramid: 12,
+  // Сфера вместе с четырьмя низкими павильонами EXPO.
+  expo: 22,
+  // Радиальная половина 34-метровой глубины самого Дворца.
+  virginLands: 17,
+} as const;
+export const KHAN_SHATYR_DISTANCE = LRT_OUTER_DECK_EDGE_RADIUS
+  + LANDMARK_LRT_CLEARANCES.khan + LANDMARK_RADIAL_HALF_EXTENTS.khan;
+export const PYRAMID_DISTANCE = LRT_OUTER_DECK_EDGE_RADIUS
+  + LANDMARK_LRT_CLEARANCES.pyramid + LANDMARK_RADIAL_HALF_EXTENTS.pyramid;
+export const NUR_ALEM_DISTANCE = LRT_OUTER_DECK_EDGE_RADIUS
+  + LANDMARK_LRT_CLEARANCES.expo + LANDMARK_RADIAL_HALF_EXTENTS.expo;
+export const VIRGIN_LANDS_PALACE_DISTANCE = LRT_OUTER_DECK_EDGE_RADIUS
+  + LANDMARK_LRT_CLEARANCES.virginLands
+  + LANDMARK_RADIAL_HALF_EXTENTS.virginLands;
+
 /**
  * Ось Атырау — Байтерек — Хан Шатыр. Мост лежит на северо-западном луче,
  * шатёр — на точном продолжении той же линии к юго-востоку.
  */
-export const KHAN_SHATYR_CENTRE = [49, -41] as const;
+export const KHAN_SHATYR_CENTRE = onAxis(
+  CAPITAL_AXIS_DIRECTION,
+  KHAN_SHATYR_DISTANCE,
+);
 const khanFrontX = BAITEREK_CENTRE[0] - KHAN_SHATYR_CENTRE[0];
 const khanFrontZ = BAITEREK_CENTRE[1] - KHAN_SHATYR_CENTRE[1];
 export const KHAN_SHATYR_YAW = Math.atan2(khanFrontZ, khanFrontX);
@@ -133,7 +186,10 @@ export function astanaGeographicBearingVector(
  * стрелке. Он хранится отдельно от композиции острова: план не вправе
  * «докрутить» мечеть ради красивой улицы.
  */
-export const PYRAMID_CENTRE = [-42, 42 * 41 / 49] as const;
+export const PYRAMID_CENTRE = onAxis(
+  CAPITAL_AXIS_DIRECTION,
+  -PYRAMID_DISTANCE,
+);
 export const PYRAMID_YAW = NURZHOL_PLAN_ROTATION + Math.PI / 2;
 
 /**
@@ -166,7 +222,14 @@ export const ARCH_YAW = NURZHOL_PLAN_ROTATION;
 export const CIRCUS_CENTRE = [-58, 63] as const;
 /** Музей стоит за мостом, на суше между западной кромкой и эстакадой. */
 export const MUSEUM_CENTRE = [-88, 10] as const;
-export const NUR_ALEM_CENTRE = [-43, -58] as const;
+export const NUR_ALEM_CENTRE = onAxis(
+  MEMORY_EXPO_AXIS_DIRECTION,
+  NUR_ALEM_DISTANCE,
+);
+export const VIRGIN_LANDS_PALACE_CENTRE = onAxis(
+  MEMORY_EXPO_AXIS_DIRECTION,
+  -VIRGIN_LANDS_PALACE_DISTANCE,
+);
 
 export const astanaLandmarkSites: readonly AstanaLandmarkSite[] = [
   {
@@ -179,8 +242,8 @@ export const astanaLandmarkSites: readonly AstanaLandmarkSite[] = [
   },
   {
     id: "pyramid-plot",
-    // Пирамида заменяет прежний мост Атырау над Есилем и остаётся строго
-    // на продолжении линии Хан Шатыр — Байтерек.
+    // Пирамида стоит на сухом внешнем полуострове и остаётся строго на
+    // продолжении линии Хан Шатыр — Байтерек.
     center: PYRAMID_CENTRE,
     radius: [13, 13],
     // Одна сторона квадрата ортогональна Нуржолу; для квадратного пятна
@@ -188,7 +251,6 @@ export const astanaLandmarkSites: readonly AstanaLandmarkSite[] = [
     rotation: PYRAMID_YAW,
     status: "primary-reserve",
     clearVegetation: true,
-    elevated: true,
   },
   {
     // Нур Алем занимает освобождённую южную среду бывшего резерва мечети.
@@ -199,6 +261,16 @@ export const astanaLandmarkSites: readonly AstanaLandmarkSite[] = [
     // only the 26 m island-scale sphere.
     radius: [22, 22],
     rotation: 0,
+    status: "primary-reserve",
+    clearVegetation: true,
+  },
+  {
+    id: "virgin-lands-palace-plot",
+    center: VIRGIN_LANDS_PALACE_CENTRE,
+    // Полный резерв держит низкое фойе, высокий зал и воздух Старой площади.
+    // Published: 25 м высоты; сценический масштаб средних общественных 1:1.6.
+    radius: [28, 22],
+    rotation: compositionTangentYaw(VIRGIN_LANDS_PALACE_CENTRE),
     status: "primary-reserve",
     clearVegetation: true,
   },
@@ -272,6 +344,12 @@ export function insideLandmarkReserve(
     const localZ = -Math.sin(yaw) * dx + Math.cos(yaw) * dz;
     const rx = site.radius[0] + margin;
     const rz = site.radius[1] + margin;
+    // The Palace is a 48 × 34 m rectilinear building inside a rectangular
+    // civic forecourt. Treating this reserve as an ellipse leaves vegetation
+    // in all four building corners even though the plan itself is valid.
+    if (site.id === "virgin-lands-palace-plot") {
+      return Math.abs(localX) <= rx && Math.abs(localZ) <= rz;
+    }
     return (localX / rx) ** 2 + (localZ / rz) ** 2 <= 1;
   });
 }

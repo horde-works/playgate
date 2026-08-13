@@ -135,12 +135,16 @@ const PASSPORTS = [
   {
     scene: astanaScene,
     limits: {
-      pieces: 31900,
-      intactBatches: 118,
-      shadowBatches: 90,
-      singleInstanceBatches: 60,
-      foliage: 4200,
-      conifer: 3400,
+      // Четыре детальные внешние доминанты получили 32–40 м настоящего
+      // городского пространства между корпусом и ЛРТ. Цена — больший
+      // двухслойный грунт на полуостровах и отдельные материальные группы
+      // принятых объектов; 5-метровые ячейки остаются физическими опорами.
+      pieces: 37000,
+      intactBatches: 160,
+      shadowBatches: 112,
+      singleInstanceBatches: 65,
+      foliage: 6000,
+      conifer: 5100,
       lamps: 168,
       spotLights: 3,
     },

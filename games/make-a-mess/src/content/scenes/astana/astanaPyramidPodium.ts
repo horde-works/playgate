@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: CC-BY-NC-ND-4.0
 // SPDX-FileCopyrightText: 2026 Igor Kirisiuk
 //
-// Фантазийное основание-мост Дворца мира и согласия. Сама Пирамида остаётся
-// прежним габаритным объёмом; этот файл определяет только поднятую бетонную
-// плиту и три входных подъёма. Опоры проектируются как часть цельного
-// складчатого подиума, а не как отдельные стержни.
+// Наземная насыпь Дворца мира и согласия. Прежние поднятая бетонная плита и
+// три длинных пандуса были компромиссом посадки над Есилем и больше не
+// создаются: на внешнем полуострове Пирамида стоит на честном грунте.
 
 import type { SceneVector3 } from "../../../game/destructionScene.ts";
 import type { MutableGroup } from "./astanaAuthoring.ts";
@@ -24,19 +23,16 @@ import {
   ASTANA_PYRAMID_LIGHT_GROUP,
 } from "./astanaLighting.ts";
 
-export const PYRAMID_PODIUM_SIDE = 30;
-export const PYRAMID_PODIUM_HALF_SIZE = PYRAMID_PODIUM_SIDE / 2;
-export const PYRAMID_NAVIGATION_CLEARANCE = 4.2;
-export const PYRAMID_PODIUM_THICKNESS = 1.2;
-export const PYRAMID_PODIUM_TOP =
-  PYRAMID_NAVIGATION_CLEARANCE + PYRAMID_PODIUM_THICKNESS;
+export const PYRAMID_ENTRANCE_INNER_DISTANCE = 15;
+export const PYRAMID_GROUND_TOP = groundUnder(
+  PYRAMID_CENTRE[0],
+  PYRAMID_CENTRE[1],
+).top;
 
 // Реальный Дворец не начинает стеклянную грань прямо от мощения: он стоит
-// на невысокой озеленённой насыпи, а входы прорезаны в её склонах. Здесь
-// насыпь также разводит две независимые отметки — прогулочную плиту моста и
-// основание стеклянной оболочки — не опуская судоходный просвет над Есилем.
+// на невысокой озеленённой насыпи, а входы прорезаны в её склонах.
 export const PYRAMID_MOUND_HEIGHT = 3.2;
-export const PYRAMID_MOUND_TOP = PYRAMID_PODIUM_TOP + PYRAMID_MOUND_HEIGHT;
+export const PYRAMID_MOUND_TOP = PYRAMID_GROUND_TOP + PYRAMID_MOUND_HEIGHT;
 export const PYRAMID_MOUND_BOTTOM_HALF_SIZE = 14.55;
 export const PYRAMID_MOUND_TOP_HALF_SIZE = 12.3;
 export const PYRAMID_MOUND_LAYERS = 14;
@@ -45,20 +41,9 @@ export const PYRAMID_ENTRANCE_LENGTH = 19;
 export const PYRAMID_ENTRANCE_INNER_WIDTH = 6;
 export const PYRAMID_ENTRANCE_OUTER_WIDTH = 13.5;
 export const PYRAMID_ENTRANCE_OUTER_DISTANCE =
-  PYRAMID_PODIUM_HALF_SIZE + PYRAMID_ENTRANCE_LENGTH;
+  PYRAMID_ENTRANCE_INNER_DISTANCE + PYRAMID_ENTRANCE_LENGTH;
 
 const SLAB_COLOUR = ATYRAU_FRAME_WHITE;
-const RAMP_COLOUR = ATYRAU_FRAME_WHITE;
-const RAMP_EDGE_COLOUR = ATYRAU_FRAME_WHITE;
-export const PYRAMID_RAIL_BRONZE = "#9b6a3a";
-const RAMP_SEGMENTS = 8;
-const RAMP_THICKNESS = 0.28;
-const RAMP_EDGE_SIZE = 0.38;
-const RAMP_EDGE_HEIGHT = 0.46;
-const RAIL_POST_HEIGHT = 0.78;
-const RAIL_POST_DIAMETER = 0.075;
-const HANDRAIL_DIAMETER = 0.1;
-const RAIL_POST_INTERVAL = 2;
 
 const MOUND_COLOUR = "#707858";
 const MOUND_CORRIDOR_INNER_DISTANCE = 9.35;
@@ -104,7 +89,7 @@ function entrance(
   normal: LayoutPoint,
   tangent: LayoutPoint,
 ): EntranceTopology {
-  const innerCentre = add2(PYRAMID_CENTRE, normal, PYRAMID_PODIUM_HALF_SIZE);
+  const innerCentre = add2(PYRAMID_CENTRE, normal, PYRAMID_ENTRANCE_INNER_DISTANCE);
   const outerCentre = add2(PYRAMID_CENTRE, normal, PYRAMID_ENTRANCE_OUTER_DISTANCE);
   return {
     id,
@@ -152,116 +137,7 @@ function normalise(vector: SceneVector3): SceneVector3 {
     : [1, 0, 0];
 }
 
-function addRailMember(
-  target: MutableGroup,
-  id: string,
-  from: SceneVector3,
-  to: SceneVector3,
-  diameter: number,
-): void {
-  const chord: SceneVector3 = [
-    to[0] - from[0],
-    to[1] - from[1],
-    to[2] - from[2],
-  ];
-  const length = Math.hypot(...chord);
-  if (length < 0.02) return;
-  const axis = normalise(chord);
-  const helper: SceneVector3 = Math.abs(axis[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
-  const transverse = normalise(cross(helper, axis));
-  primitive(
-    target,
-    id,
-    "steel",
-    "cylinder",
-    [
-      (from[0] + to[0]) / 2,
-      (from[1] + to[1]) / 2,
-      (from[2] + to[2]) / 2,
-    ],
-    [diameter, length, diameter],
-    PYRAMID_RAIL_BRONZE,
-    {
-      rotation: orient(transverse, axis),
-      textureProfile: "painted-steel",
-      bearsLoad: false,
-      volume: length * diameter * diameter * 0.5,
-    },
-  );
-}
 
-function createSlab(target: MutableGroup): void {
-  const centreY = PYRAMID_NAVIGATION_CLEARANCE + PYRAMID_PODIUM_THICKNESS / 2;
-  primitive(
-    target,
-    "podium:slab",
-    "steel",
-    "panel",
-    [PYRAMID_CENTRE[0], centreY, PYRAMID_CENTRE[1]],
-    [PYRAMID_PODIUM_SIDE, PYRAMID_PODIUM_THICKNESS, PYRAMID_PODIUM_SIDE],
-    SLAB_COLOUR,
-    {
-      rotation: [0, -PYRAMID_YAW, 0],
-      textureProfile: "painted-steel",
-      bearingArea: PYRAMID_PODIUM_SIDE ** 2,
-      carriesAttachments: true,
-      attachmentSupportMode: "cable",
-      sideAttachmentReach: 1.1,
-      volume: PYRAMID_PODIUM_SIDE ** 2 * PYRAMID_PODIUM_THICKNESS,
-    },
-  );
-
-  // Ранее здесь лежала вторая тонкая плита с той же нижней плоскостью, что
-  // и основной объём. Две поверхности спорили за один пиксель и давали рябь.
-  // Теперь низ принадлежит ровно одной детали, а бронза существует только
-  // как четыре вертикальные полосы по периметру.
-  const stripDepth = 0.065;
-  const stripHeight = 0.16;
-  const stripY = PYRAMID_PODIUM_TOP - 0.15;
-  const yaw = -PYRAMID_YAW;
-  const localX: LayoutPoint = [Math.cos(yaw), -Math.sin(yaw)];
-  const localZ: LayoutPoint = [Math.sin(yaw), Math.cos(yaw)];
-  for (const side of [-1, 1] as const) {
-    primitive(
-      target,
-      `podium:bronze-band:x:${side}`,
-      "steel",
-      "panel",
-      [
-        PYRAMID_CENTRE[0] + localX[0] * side * (PYRAMID_PODIUM_HALF_SIZE + stripDepth / 2),
-        stripY,
-        PYRAMID_CENTRE[1] + localX[1] * side * (PYRAMID_PODIUM_HALF_SIZE + stripDepth / 2),
-      ],
-      [stripDepth, stripHeight, PYRAMID_PODIUM_SIDE],
-      PYRAMID_RAIL_BRONZE,
-      {
-        rotation: [0, yaw, 0],
-        textureProfile: "painted-steel",
-        bearsLoad: false,
-        volume: stripDepth * stripHeight * PYRAMID_PODIUM_SIDE,
-      },
-    );
-    primitive(
-      target,
-      `podium:bronze-band:z:${side}`,
-      "steel",
-      "panel",
-      [
-        PYRAMID_CENTRE[0] + localZ[0] * side * (PYRAMID_PODIUM_HALF_SIZE + stripDepth / 2),
-        stripY,
-        PYRAMID_CENTRE[1] + localZ[1] * side * (PYRAMID_PODIUM_HALF_SIZE + stripDepth / 2),
-      ],
-      [PYRAMID_PODIUM_SIDE, stripHeight, stripDepth],
-      PYRAMID_RAIL_BRONZE,
-      {
-        rotation: [0, yaw, 0],
-        textureProfile: "painted-steel",
-        bearsLoad: false,
-        volume: stripDepth * stripHeight * PYRAMID_PODIUM_SIDE,
-      },
-    );
-  }
-}
 
 function moundPoint(along: number, across: number): SceneVector3 {
   return [
@@ -288,7 +164,7 @@ function createMoundLayer(
   corridorWidth: number,
 ): void {
   const layerHeight = PYRAMID_MOUND_HEIGHT / PYRAMID_MOUND_LAYERS;
-  const centreY = PYRAMID_PODIUM_TOP + (layer + 0.5) * layerHeight;
+  const centreY = PYRAMID_GROUND_TOP + (layer + 0.5) * layerHeight;
   const halfCorridor = corridorWidth / 2;
   const inner = MOUND_CORRIDOR_INNER_DISTANCE;
   const regions = [
@@ -362,7 +238,7 @@ function createPortalTunnel(
 ): void {
   const outerDistance = PYRAMID_PORTAL_MOUTH_DISTANCE;
   const innerDistance = MOUND_CORRIDOR_INNER_DISTANCE;
-  const floorY = PYRAMID_PODIUM_TOP + 0.08;
+  const floorY = PYRAMID_GROUND_TOP + 0.08;
   const ceilingY = floorY + PYRAMID_PORTAL_HEIGHT;
   const up: SceneVector3 = [0, 1, 0];
   const tangent: SceneVector3 = [topology.tangent[0], 0, topology.tangent[1]];
@@ -607,145 +483,11 @@ function createPortalTunnel(
   );
 }
 
-function createEntranceRamp(target: MutableGroup, topology: EntranceTopology): void {
-  const outerGround = groundUnder(topology.outerCentre[0], topology.outerCentre[1]).top;
-  const outerTop = outerGround + 0.16;
-  const innerTop = PYRAMID_PODIUM_TOP + 0.02;
-  const rise = innerTop - outerTop;
-  const segmentLength = PYRAMID_ENTRANCE_LENGTH / RAMP_SEGMENTS;
-  const alongFromOuter: SceneVector3 = [
-    -topology.normal[0],
-    rise / PYRAMID_ENTRANCE_LENGTH,
-    -topology.normal[1],
-  ];
-  const across: SceneVector3 = [topology.tangent[0], 0, topology.tangent[1]];
-  const surfaceNormal = cross(alongFromOuter, across);
-  const surfaceLength = Math.hypot(...alongFromOuter);
-  const unitNormal: SceneVector3 = [
-    surfaceNormal[0] / Math.hypot(...surfaceNormal),
-    surfaceNormal[1] / Math.hypot(...surfaceNormal),
-    surfaceNormal[2] / Math.hypot(...surfaceNormal),
-  ];
 
-  for (let segment = 0; segment < RAMP_SEGMENTS; segment += 1) {
-    const t = (segment + 0.5) / RAMP_SEGMENTS;
-    const width = PYRAMID_ENTRANCE_OUTER_WIDTH
-      + (PYRAMID_ENTRANCE_INNER_WIDTH - PYRAMID_ENTRANCE_OUTER_WIDTH) * t;
-    const plan = add2(
-      topology.outerCentre,
-      [-topology.normal[0], -topology.normal[1]],
-      PYRAMID_ENTRANCE_LENGTH * t,
-    );
-    const surfaceY = outerTop + rise * t;
-    const centre: SceneVector3 = [
-      plan[0] - unitNormal[0] * RAMP_THICKNESS / 2,
-      surfaceY - unitNormal[1] * RAMP_THICKNESS / 2,
-      plan[1] - unitNormal[2] * RAMP_THICKNESS / 2,
-    ];
-    const size = [width, RAMP_THICKNESS, segmentLength * surfaceLength] as const;
-    primitive(
-      target,
-      `entrance:${topology.id}:floor:${segment}`,
-      "steel",
-      "panel",
-      centre,
-      size,
-      RAMP_COLOUR,
-      {
-        rotation: orient(across, surfaceNormal),
-        textureProfile: "painted-steel",
-        bearingArea: width * segmentLength,
-        carriesAttachments: true,
-        attachmentSupportMode: "cable",
-        sideAttachmentReach: 0.55,
-        volume: width * segmentLength * RAMP_THICKNESS,
-      },
-    );
-
-    // Борт не висит одной длинной балкой между двумя концами: каждый его
-    // модуль стоит на соответствующем модуле наклонной плиты. Центры этих
-    // модулей всё равно лежат на одной точной расходящейся прямой.
-    for (const side of [-1, 1] as const) {
-      const edgeOffset = side * (width / 2 - RAMP_EDGE_SIZE / 2);
-      const riseAboveFloor = RAMP_THICKNESS / 2 + RAMP_EDGE_HEIGHT / 2;
-      primitive(
-        target,
-        `entrance:${topology.id}:diverging-edge:${side}:${segment}`,
-        "steel",
-        "panel",
-        [
-          centre[0] + across[0] * edgeOffset + unitNormal[0] * riseAboveFloor,
-          centre[1] + across[1] * edgeOffset + unitNormal[1] * riseAboveFloor,
-          centre[2] + across[2] * edgeOffset + unitNormal[2] * riseAboveFloor,
-        ],
-        [RAMP_EDGE_SIZE, RAMP_EDGE_HEIGHT, segmentLength * surfaceLength],
-        RAMP_EDGE_COLOUR,
-        {
-          rotation: orient(across, surfaceNormal),
-          textureProfile: "painted-steel",
-          bearsLoad: false,
-          volume: RAMP_EDGE_SIZE * RAMP_EDGE_HEIGHT * segmentLength,
-        },
-      );
-    }
-  }
-
-  // Белые расходящиеся борта получают лёгкий бронзовый верхний слой.
-  // Стойки стоят только на каждом втором стыке: частая бронзовая гребёнка
-  // читалась отдельным декоративным забором. Поручень при этом остаётся
-  // одной точной линией без щелей и ступенчатых изломов.
-  for (const side of [-1, 1] as const) {
-    const handrailPoints: SceneVector3[] = [];
-    for (let post = 0; post <= RAMP_SEGMENTS; post += 1) {
-      const t = post / RAMP_SEGMENTS;
-      const width = PYRAMID_ENTRANCE_OUTER_WIDTH
-        + (PYRAMID_ENTRANCE_INNER_WIDTH - PYRAMID_ENTRANCE_OUTER_WIDTH) * t;
-      const plan = add2(
-        topology.outerCentre,
-        [-topology.normal[0], -topology.normal[1]],
-        PYRAMID_ENTRANCE_LENGTH * t,
-      );
-      const edgeOffset = side * (width / 2 - RAMP_EDGE_SIZE / 2);
-      const surfaceY = outerTop + rise * t;
-      const baseY = surfaceY + RAMP_EDGE_HEIGHT;
-      const topY = baseY + RAIL_POST_HEIGHT;
-      const x = plan[0] + topology.tangent[0] * edgeOffset;
-      const z = plan[1] + topology.tangent[1] * edgeOffset;
-      if (post % RAIL_POST_INTERVAL === 0) {
-        primitive(
-          target,
-          `entrance:${topology.id}:rail-post:${side}:${post}`,
-          "steel",
-          "cylinder",
-          [x, baseY + RAIL_POST_HEIGHT / 2, z],
-          [RAIL_POST_DIAMETER, RAIL_POST_HEIGHT, RAIL_POST_DIAMETER],
-          PYRAMID_RAIL_BRONZE,
-          {
-            textureProfile: "painted-steel",
-            bearsLoad: false,
-            volume: RAIL_POST_DIAMETER ** 2 * RAIL_POST_HEIGHT * 0.5,
-          },
-        );
-      }
-      handrailPoints.push([x, topY, z]);
-    }
-    addRailMember(
-      target,
-      `entrance:${topology.id}:handrail:${side}`,
-      handrailPoints[0],
-      handrailPoints[handrailPoints.length - 1],
-      HANDRAIL_DIAMETER,
-    );
-  }
-}
-
-export function createAstanaPyramidPodium(
-  slab: MutableGroup,
+export function createAstanaPyramidGround(
   entrances: MutableGroup,
   mound: MutableGroup,
 ): void {
-  createSlab(slab);
   createMound(mound);
-  PYRAMID_ENTRANCES.forEach((topology) => createEntranceRamp(entrances, topology));
   PYRAMID_ENTRANCES.forEach((topology) => createPortalTunnel(entrances, topology));
 }

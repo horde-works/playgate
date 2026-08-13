@@ -4,8 +4,10 @@
 // Оболочка острова «Астана»: грунт, русло Есиля, зелёный пояс и степная
 // кромка. Контент мира — лицензия отличается от лицензии кода, см. LICENSING.md.
 //
-// Остров — круг радиусом 138 м вокруг (0, 0), самый большой в проекте. Река
-// дугой отсекает верхнюю треть макета: за ней правый берег и целиноградские
+// Остров — точный неровный контур с четырьмя внешними полуостровами. Его
+// прежнее степное тело радиусом около 130 м сохранено между ними, а вершины
+// выходят до 171–206 м. Река дугой отсекает верхнюю треть макета: за ней
+// правый берег и целиноградские
 // дворы, на левом — новый город с Байтереком. Геометрический верх остаётся
 // +z, но ИСТИННЫЙ север острова после композиционной посадки задан отдельно
 // в astanaLayout.ts: карту не вращаем, вращаем её географический компас.
@@ -15,7 +17,11 @@
 
 import type { MutableGroup } from "./astanaAuthoring.ts";
 import { noise, place, primitive } from "./astanaAuthoring.ts";
-import { insideLandmarkReserve } from "./astanaLayout.ts";
+import {
+  CAPITAL_AXIS_DIRECTION,
+  MEMORY_EXPO_AXIS_DIRECTION,
+  insideLandmarkReserve,
+} from "./astanaLayout.ts";
 import { shrubTone } from "../../prefabs/coreShrubs.ts";
 
 /**
@@ -42,10 +48,32 @@ const STATION_CLEARING = 26;
  */
 export const FUTURE_ROAD_FULL_WIDTH = 7.5;
 export const OUTER_LAYOUT_RESERVE = 3.5;
-export const WORLD_RADIUS = 112
+const PREVIOUS_WORLD_RADIUS = 112
   + FUTURE_ROAD_FULL_WIDTH * 3
   + OUTER_LAYOUT_RESERVE;
-export const LAND_BASE_RADIUS = WORLD_RADIUS - 8;
+export const LAND_BASE_RADIUS = PREVIOUS_WORLD_RADIUS - 8;
+export const PENINSULA_SHORE_RADII = {
+  khan: 206,
+  pyramid: 171,
+  expo: 194,
+  virginLands: 183,
+} as const;
+const SHORE_NOISE_AMPLITUDE = 1.15;
+export const PENINSULA_HALF_ANGLES_DEGREES = {
+  // Высокие, широкие Хан Шатыр и EXPO получают диагональные точки обзора;
+  // низкий Дворец — немного более собранное городское плечо.
+  khan: 30,
+  // Три 19-метровых входа выходят из Пирамиды в разные стороны; их
+  // поперечные аллеи требуют полноценного плеча, а не узкого мыса.
+  pyramid: 40,
+  expo: 30,
+  virginLands: 28,
+} as const;
+const PENINSULA_CROWN_FRACTION = 0.24;
+export const WORLD_RADIUS = Math.ceil(
+  Math.max(...Object.values(PENINSULA_SHORE_RADII))
+  + SHORE_NOISE_AMPLITUDE + 2,
+);
 /** Шаг сетки грунта. Тайл кладётся с нахлёстом 6 см, чтобы не было щелей. */
 export const GROUND_PITCH = 5;
 // Соседние тайлы имеют одну и ту же расчётную границу. Нахлёст здесь не
@@ -75,16 +103,74 @@ function nearStation(x: number, z: number, clearance: number): boolean {
   return false;
 }
 
-/** Кромка суши: шумная, чтобы остров не читался циркулем. */
-export function landRadiusAt(x: number, z: number): number {
-  const angle = Math.atan2(z, x);
-  return (
-    LAND_BASE_RADIUS
-    + Math.sin(angle * 2.3) * 2.2
-    + Math.sin(angle * 5.1 + 1.7) * 1.1
-    + (noise(x, z, 11) - 0.5) * 2.4
-  );
+function wrappedAngleDelta(left: number, right: number): number {
+  return Math.atan2(Math.sin(left - right), Math.cos(left - right));
 }
+
+function smoothPeninsulaInfluence(
+  angle: number,
+  direction: readonly [number, number],
+  halfAngleDegrees: number,
+): number {
+  const bearing = Math.atan2(direction[1], direction[0]);
+  const distance = Math.abs(wrappedAngleDelta(angle, bearing));
+  const halfAngle = halfAngleDegrees * Math.PI / 180;
+  if (distance >= halfAngle) return 0;
+  const normalized = distance / halfAngle;
+  if (normalized <= PENINSULA_CROWN_FRACTION) return 1;
+  const t = 1 - (
+    (normalized - PENINSULA_CROWN_FRACTION)
+    / (1 - PENINSULA_CROWN_FRACTION)
+  );
+  return t * t * (3 - 2 * t);
+}
+
+/**
+ * Точная радиальная береговая функция: прежняя степная окружность остаётся
+ * между четырьмя широкими плечами, а вершины плеч принадлежат двум принятым
+ * осям. Максимум, а не сумма влияний не даёт соседним полуостровам раздувать
+ * диагональный сектор между ними.
+ */
+export function shoreRadiusAtAngle(angle: number): number {
+  const peninsulas = [
+    [CAPITAL_AXIS_DIRECTION, PENINSULA_SHORE_RADII.khan,
+      PENINSULA_HALF_ANGLES_DEGREES.khan],
+    [[-CAPITAL_AXIS_DIRECTION[0], -CAPITAL_AXIS_DIRECTION[1]],
+      PENINSULA_SHORE_RADII.pyramid, PENINSULA_HALF_ANGLES_DEGREES.pyramid],
+    [MEMORY_EXPO_AXIS_DIRECTION, PENINSULA_SHORE_RADII.expo,
+      PENINSULA_HALF_ANGLES_DEGREES.expo],
+    [[-MEMORY_EXPO_AXIS_DIRECTION[0], -MEMORY_EXPO_AXIS_DIRECTION[1]],
+      PENINSULA_SHORE_RADII.virginLands,
+      PENINSULA_HALF_ANGLES_DEGREES.virginLands],
+  ] as const;
+  let radius = LAND_BASE_RADIUS;
+  for (const [direction, tipRadius, halfAngleDegrees] of peninsulas) {
+    const influence = smoothPeninsulaInfluence(
+      angle,
+      direction,
+      halfAngleDegrees,
+    );
+    radius = Math.max(radius, LAND_BASE_RADIUS + (tipRadius - LAND_BASE_RADIUS) * influence);
+  }
+  const shorelineNoise = (
+    Math.sin(angle * 7 + 0.4) * 0.62
+    + Math.sin(angle * 13 - 1.1) * 0.38
+  ) * SHORE_NOISE_AMPLITUDE;
+  return radius + shorelineNoise;
+}
+
+/** Кромка суши: четыре полуострова поверх прежнего степного тела. */
+export function landRadiusAt(x: number, z: number): number {
+  return shoreRadiusAtAngle(Math.atan2(z, x));
+}
+
+const EDGE_SAMPLES = 192;
+export const ASTANA_EDGE_BOUNDARY: readonly (readonly [number, number])[] =
+  Array.from({ length: EDGE_SAMPLES }, (_, index) => {
+    const angle = index / EDGE_SAMPLES * Math.PI * 2;
+    const radius = shoreRadiusAtAngle(angle);
+    return [Math.cos(angle) * radius, Math.sin(angle) * radius] as const;
+  });
 
 /**
  * Осевая линия Есиля: река входит с северо-запада, прогибается к центру и
@@ -184,6 +270,42 @@ export function groundUnder(
   const [tileX, tileZ] = tileCenterOf(x, z);
   const kind = groundKindAt(tileX, tileZ);
   return { kind, top: groundTopAt(tileX, tileZ) };
+}
+
+/**
+ * Нерадиальная юбка острова. `WorldEdge` получает ту же полилинию и рисует
+ * только туманную стену; круглая каменная юбка для Астаны больше не законна.
+ */
+export function createShorelineSkirt(target: MutableGroup): void {
+  const bottom = -18;
+  for (let index = 0; index < ASTANA_EDGE_BOUNDARY.length; index += 1) {
+    const from = ASTANA_EDGE_BOUNDARY[index];
+    const to = ASTANA_EDGE_BOUNDARY[(index + 1) % ASTANA_EDGE_BOUNDARY.length];
+    const dx = to[0] - from[0];
+    const dz = to[1] - from[1];
+    const length = Math.hypot(dx, dz);
+    const midpoint = [(from[0] + to[0]) / 2, (from[1] + to[1]) / 2] as const;
+    const inwardLength = Math.hypot(midpoint[0], midpoint[1]);
+    const inward = [-midpoint[0] / inwardLength, -midpoint[1] / inwardLength] as const;
+    const seatX = midpoint[0] + inward[0] * 1.25;
+    const seatZ = midpoint[1] + inward[1] * 1.25;
+    const top = groundTopAt(seatX, seatZ) - 0.36;
+    const height = top - bottom;
+    primitive(
+      target,
+      `cliff:${index}`,
+      "earth",
+      "stoneBlock",
+      [seatX, bottom + height / 2, seatZ],
+      [length, height, 2.5],
+      index % 3 === 0 ? "#6d6249" : index % 3 === 1 ? "#7b6f53" : "#665b45",
+      {
+        rotation: [0, -Math.atan2(dz, dx), 0],
+        bearsLoad: false,
+        volume: length * height * 2.5,
+      },
+    );
+  }
 }
 
 /**

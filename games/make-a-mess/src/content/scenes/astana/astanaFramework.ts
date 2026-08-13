@@ -17,6 +17,7 @@ import {
   OPERA_CENTRE,
   PYRAMID_CENTRE,
   PYRAMID_YAW,
+  VIRGIN_LANDS_PALACE_CENTRE,
 } from "./astanaLayout.ts";
 import {
   RING_PATH_LENGTH,
@@ -31,10 +32,9 @@ import {
 import { stationApproach } from "./astanaStation.ts";
 import {
   PYRAMID_ENTRANCE_OUTER_DISTANCE,
-  PYRAMID_PODIUM_HALF_SIZE,
+  PYRAMID_MOUND_BOTTOM_HALF_SIZE,
 } from "./astanaPyramidPodium.ts";
 import {
-  LAND_BASE_RADIUS,
   groundUnder,
   riverAxisZ,
 } from "./astanaShell.ts";
@@ -211,85 +211,10 @@ function pathIncluding(
   return points;
 }
 
-/**
- * Cuts real gates out of an orbit instead of drawing another perfect ring.
- * Radial approaches occupy these gaps, so the object reads as a destination
- * with entrances rather than an island inside a traffic circle.
- */
-function gatedEllipse(
-  centre: PlanPoint,
-  radiusX: number,
-  radiusZ: number,
-  yaw: number,
-  gates: readonly PlanPoint[],
-  steps = 84,
-  halfGapSamples = 2,
-): readonly (readonly PlanPoint[])[] {
-  const loop = ellipse(centre, radiusX, radiusZ, yaw, steps).slice(0, -1);
-  const blocked = new Set<number>();
-  const gateIndices = gates.map((gate) => {
-    let nearest = 0;
-    let nearestDistance = Number.POSITIVE_INFINITY;
-    loop.forEach((point, index) => {
-      const candidate = Math.hypot(point[0] - gate[0], point[1] - gate[1]);
-      if (candidate < nearestDistance) {
-        nearest = index;
-        nearestDistance = candidate;
-      }
-    });
-    for (let offset = -halfGapSamples; offset <= halfGapSamples; offset += 1) {
-      blocked.add((nearest + offset + loop.length) % loop.length);
-    }
-    return nearest;
-  });
-
-  const start = (gateIndices[0] + halfGapSamples + 1) % loop.length;
-  const segments: PlanPoint[][] = [];
-  let current: PlanPoint[] = [];
-  for (let offset = 0; offset < loop.length; offset += 1) {
-    const index = (start + offset) % loop.length;
-    if (blocked.has(index)) {
-      if (current.length > 1) segments.push(current);
-      current = [];
-    } else {
-      current.push(loop[index]);
-    }
-  }
-  if (current.length > 1) segments.push(current);
-  return segments;
-}
-
 type GateMouth = {
   point: PlanPoint;
   neighbour: PlanPoint;
 };
-
-function ellipseGateMouth(
-  centre: PlanPoint,
-  radiusX: number,
-  radiusZ: number,
-  yaw: number,
-  gate: PlanPoint,
-  steps = 84,
-  halfGapSamples = 2,
-): readonly [GateMouth, GateMouth] {
-  const loop = ellipse(centre, radiusX, radiusZ, yaw, steps).slice(0, -1);
-  let nearest = 0;
-  let nearestDistance = Number.POSITIVE_INFINITY;
-  loop.forEach((point, index) => {
-    const candidate = Math.hypot(point[0] - gate[0], point[1] - gate[1]);
-    if (candidate < nearestDistance) {
-      nearest = index;
-      nearestDistance = candidate;
-    }
-  });
-  const left = (nearest - halfGapSamples - 1 + loop.length) % loop.length;
-  const right = (nearest + halfGapSamples + 1) % loop.length;
-  return [
-    { point: loop[left], neighbour: loop[(left - 1 + loop.length) % loop.length] },
-    { point: loop[right], neighbour: loop[(right + 1) % loop.length] },
-  ];
-}
 
 function cubicBezier(
   start: PlanPoint,
@@ -430,40 +355,6 @@ function stationForecourt(
   };
 }
 
-function catmullRom(
-  controls: readonly PlanPoint[],
-  closed: boolean,
-  stepsPerSpan = 6,
-): readonly PlanPoint[] {
-  const points: PlanPoint[] = [];
-  const spanCount = closed ? controls.length : controls.length - 1;
-  const at = (index: number): PlanPoint => {
-    if (closed) return controls[(index + controls.length) % controls.length];
-    return controls[Math.max(0, Math.min(controls.length - 1, index))];
-  };
-  for (let span = 0; span < spanCount; span += 1) {
-    const p0 = at(span - 1);
-    const p1 = at(span);
-    const p2 = at(span + 1);
-    const p3 = at(span + 2);
-    for (let step = 0; step < stepsPerSpan; step += 1) {
-      const t = step / stepsPerSpan;
-      const t2 = t * t;
-      const t3 = t2 * t;
-      points.push([
-        0.5 * ((2 * p1[0]) + (-p0[0] + p2[0]) * t
-          + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2
-          + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3),
-        0.5 * ((2 * p1[1]) + (-p0[1] + p2[1]) * t
-          + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2
-          + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3),
-      ]);
-    }
-  }
-  points.push(closed ? points[0] : controls[controls.length - 1]);
-  return points;
-}
-
 function fromNurzhol(along: number, across: number): PlanPoint {
   return [
     BAITEREK_CENTRE[0]
@@ -503,17 +394,6 @@ function pointOnEllipseToward(
   return localPoint(centre, yaw, localX * scale, localZ * scale);
 }
 
-function rayToRadius(
-  origin: PlanPoint,
-  direction: PlanPoint,
-  radius: number,
-): PlanPoint {
-  const projection = origin[0] * direction[0] + origin[1] * direction[1];
-  const discriminant = projection ** 2 + radius ** 2
-    - origin[0] ** 2 - origin[1] ** 2;
-  return add(origin, direction, -projection + Math.sqrt(Math.max(0, discriminant)));
-}
-
 const pyramidToBaiterek = normalize([-PYRAMID_CENTRE[0], -PYRAMID_CENTRE[1]]);
 const pyramidToBaiterekDistance = Math.hypot(...PYRAMID_CENTRE);
 // Квадратное основание не допускает свободного веера. Центральный выход
@@ -524,21 +404,11 @@ const pyramidSideNormals = [
   [-NURZHOL_ACROSS_VECTOR[0], -NURZHOL_ACROSS_VECTOR[1]],
 ] as const;
 
-function pyramidQuayPoint(direction: PlanPoint): PlanPoint {
-  const side = Math.sign(direction[1]) || 1;
-  for (let distance = PYRAMID_ENTRANCE_OUTER_DISTANCE; distance <= 46; distance += 0.5) {
-    const point = add(PYRAMID_CENTRE, direction, distance);
-    const offset = point[1] - riverAxisZ(point[0]);
-    if (side * offset >= valleyHalfWidth(point[0]) - 2) return point;
-  }
-  return add(PYRAMID_CENTRE, direction, 46);
-}
-
 export const PYRAMID_FRAME = {
-  podium: rectangle(
+  mound: rectangle(
     PYRAMID_CENTRE,
-    PYRAMID_PODIUM_HALF_SIZE,
-    PYRAMID_PODIUM_HALF_SIZE,
+    PYRAMID_MOUND_BOTTOM_HALF_SIZE,
+    PYRAMID_MOUND_BOTTOM_HALF_SIZE,
     PYRAMID_YAW,
   ),
   rays: [
@@ -548,11 +418,11 @@ export const PYRAMID_FRAME = {
     ],
     [
       add(PYRAMID_CENTRE, pyramidSideNormals[0], PYRAMID_ENTRANCE_OUTER_DISTANCE + 0.5),
-      rayToRadius(PYRAMID_CENTRE, pyramidSideNormals[0], LAND_BASE_RADIUS - 6),
+      add(PYRAMID_CENTRE, pyramidSideNormals[0], PYRAMID_ENTRANCE_OUTER_DISTANCE + 12),
     ],
     [
       add(PYRAMID_CENTRE, pyramidSideNormals[1], PYRAMID_ENTRANCE_OUTER_DISTANCE + 0.5),
-      rayToRadius(PYRAMID_CENTRE, pyramidSideNormals[1], LAND_BASE_RADIUS - 6),
+      add(PYRAMID_CENTRE, pyramidSideNormals[1], PYRAMID_ENTRANCE_OUTER_DISTANCE + 12),
     ],
   ] as const,
 } as const;
@@ -641,6 +511,14 @@ const baiterekAtyrauJoin = pointOnEllipseToward(
   BAITEREK_CENTRE, BAITEREK_WALK_RING_RADIUS, BAITEREK_WALK_RING_RADIUS,
   NURZHOL_YAW, fromNurzhol(8, 17.1),
 );
+const baiterekExpoJoin = pointOnEllipseToward(
+  BAITEREK_CENTRE, BAITEREK_WALK_RING_RADIUS, BAITEREK_WALK_RING_RADIUS,
+  NURZHOL_YAW, NUR_ALEM_CENTRE,
+);
+const baiterekVirginLandsJoin = pointOnEllipseToward(
+  BAITEREK_CENTRE, BAITEREK_WALK_RING_RADIUS, BAITEREK_WALK_RING_RADIUS,
+  NURZHOL_YAW, VIRGIN_LANDS_PALACE_CENTRE,
+);
 
 const khanAxisJoin = pointOnEllipseToward(
   KHAN_SHATYR_CENTRE, KHAN_WALK_RING_RADII[0], KHAN_WALK_RING_RADII[1],
@@ -690,17 +568,9 @@ const archAxisYaw = Math.atan2(archAxisDirection[1], archAxisDirection[0]);
 const archFromBaiterek = add(ARCH_CENTRE, archAxisDirection, -ARCH_WALK_RING_RADII[0]);
 const archToExpo = add(ARCH_CENTRE, archAxisDirection, ARCH_WALK_RING_RADII[0]);
 
-const expoFromArch = pointOnEllipseToward(
+const expoFromCore = pointOnEllipseToward(
   NUR_ALEM_CENTRE, NUR_ALEM_WALK_RING_RADII[0], NUR_ALEM_WALK_RING_RADII[1],
-  NURZHOL_YAW, ARCH_CENTRE,
-);
-const expoToArena = pointOnEllipseToward(
-  NUR_ALEM_CENTRE, NUR_ALEM_WALK_RING_RADII[0], NUR_ALEM_WALK_RING_RADII[1],
-  NURZHOL_YAW, arenaGateway,
-);
-const expoToWest = pointOnEllipseToward(
-  NUR_ALEM_CENTRE, NUR_ALEM_WALK_RING_RADII[0], NUR_ALEM_WALK_RING_RADII[1],
-  NURZHOL_YAW, westGateway,
+  NURZHOL_YAW, BAITEREK_CENTRE,
 );
 
 const baiterekNecklace = ellipseIncluding(
@@ -714,6 +584,8 @@ const baiterekNecklace = ellipseIncluding(
     baiterekOperaJoin,
     baiterekArchJoin,
     baiterekAtyrauJoin,
+    baiterekExpoJoin,
+    baiterekVirginLandsJoin,
   ],
   120,
 );
@@ -751,15 +623,15 @@ const expoNecklace = ellipse(
   NURZHOL_YAW,
   84,
 );
-const expoOrbitSegments = gatedEllipse(
+const expoOrbitSegments = [openEllipseFacing(
   NUR_ALEM_CENTRE,
   NUR_ALEM_WALK_RING_RADII[0],
   NUR_ALEM_WALK_RING_RADII[1],
   NURZHOL_YAW,
-  [expoFromArch, expoToArena, expoToWest],
+  BAITEREK_CENTRE,
+  Math.PI * 0.34,
   84,
-  3,
-);
+)] as const;
 
 function openPathMouth(points: readonly PlanPoint[]): readonly [GateMouth, GateMouth] {
   return [
@@ -779,16 +651,7 @@ const operaForecourtArms = forkArms(
   openPathMouth(operaNecklace),
 );
 
-const expoGateMouths = [expoFromArch, expoToArena, expoToWest].map((gate) =>
-  ellipseGateMouth(
-    NUR_ALEM_CENTRE,
-    NUR_ALEM_WALK_RING_RADII[0],
-    NUR_ALEM_WALK_RING_RADII[1],
-    NURZHOL_YAW,
-    gate,
-    84,
-    3,
-  ));
+const expoGateMouth = openPathMouth(expoOrbitSegments[0]);
 const arenaForecourt = stationForecourt(
   arenaGateway, STATION_GROUND_GATEWAYS.arena.inward, OPERA_CENTRE, NUR_ALEM_CENTRE,
   {
@@ -808,20 +671,13 @@ const northForecourt = stationForecourt(
   northGateway, STATION_GROUND_GATEWAYS.north.inward,
   atyrauNorthLanding, PYRAMID_CENTRE, { trunk: 3.2, arms: 3.2 },
 );
-const archExpoGate = forkedGate(cubicBezier(
-  archToExpo,
-  fromNurzhol(-14, -43),
-  fromNurzhol(-11, -49),
-  expoFromArch,
-), expoGateMouths[0], false, 4);
-const arenaExpoGate = forkedGate(cubicBezier(
-  expoToArena, [-2, -82], [24, -80],
-  arenaForecourt.mouths[1], 14,
-), expoGateMouths[1], true, 4);
-const westExpoGate = forkedGate(cubicBezier(
-  expoToWest, fromNurzhol(-31, -72), fromNurzhol(-48, -64),
-  westForecourt.mouths[0], 14,
-), expoGateMouths[2], true, 4);
+const baiterekExpoGate = forkedGate(cubicBezier(
+  baiterekExpoJoin,
+  [baiterekExpoJoin[0] * 2.2, baiterekExpoJoin[1] * 2.2],
+  [expoFromCore[0] * 0.86, expoFromCore[1] * 0.86],
+  expoFromCore,
+  18,
+), expoGateMouth, false, 4);
 const operaExpoApproach = cubicBezier(
   operaExpoJoin,
   add(
@@ -833,26 +689,19 @@ const operaExpoApproach = cubicBezier(
     6,
   ),
   [-33, -27],
-  archExpoGate.trunk[archExpoGate.trunk.length - 1],
+  baiterekExpoGate.trunk[Math.floor(baiterekExpoGate.trunk.length * 0.42)],
   14,
 );
 const khanAxisIsland = forkIsland(khanAxisArms);
 const operaForecourtIsland = forkIsland(operaForecourtArms);
 const expoGateIslands = [
-  forkIsland(archExpoGate.arms),
-  forkIsland(arenaExpoGate.arms),
-  forkIsland(westExpoGate.arms),
+  forkIsland(baiterekExpoGate.arms),
 ] as const;
-
-const pyramidNorthQuayJoin = pyramidQuayPoint(pyramidSideNormals[0]);
-const pyramidSouthQuayJoin = pyramidQuayPoint(pyramidSideNormals[1]);
 
 function quayPoint(side: -1 | 1, x: number): PlanPoint {
   return [x, riverAxisZ(x) + side * (valleyHalfWidth(x) - 2)];
 }
 
-const pyramidNorthQuayNode = quayPoint(1, pyramidNorthQuayJoin[0]);
-const pyramidSouthQuayNode = quayPoint(-1, pyramidSouthQuayJoin[0]);
 const atyrauSouthQuayNode = quayPoint(-1, atyrauSouthLanding[0]);
 const atyrauNorthQuayNode = quayPoint(1, atyrauNorthLanding[0]);
 
@@ -901,8 +750,6 @@ function quay(side: -1 | 1): readonly PlanPoint[] {
     return quayPoint(side, x);
   });
   for (const anchor of [
-    pyramidNorthQuayNode,
-    pyramidSouthQuayNode,
     atyrauSouthQuayNode,
     atyrauNorthQuayNode,
   ]) {
@@ -950,38 +797,9 @@ const eastAtyrauApproach = cubicBezier(
   atyrauEastMouth,
   12,
 );
-const northPyramidApproach = cubicBezier(
-  northForecourt.mouths[1],
-  [-19.1, 61.7],
-  [pyramidNorthQuayJoin[0] + 0.7, pyramidNorthQuayJoin[1] + 0.5],
-  pyramidNorthQuayJoin,
-  8,
-);
-const westPyramidApproach = cubicBezier(
-  westForecourt.mouths[1],
-  [-74, 2],
-  [pyramidSouthQuayJoin[0] - 8, pyramidSouthQuayJoin[1] - 5],
-  pyramidSouthQuayJoin,
-  16,
-);
-
 // Мосты и лестницы подходят к набережной короткими дельтами. Их посадочные
 // точки не подмешиваются в основную кривую: иначе набережная делает острый
 // зигзаг вглубь берега и выглядит связной только в массиве координат.
-const pyramidNorthQuayConnector = cubicBezier(
-  pyramidNorthQuayJoin,
-  [pyramidNorthQuayJoin[0] + 1.5, pyramidNorthQuayJoin[1] - 4],
-  [pyramidNorthQuayNode[0] + 1.5, pyramidNorthQuayNode[1] + 4],
-  pyramidNorthQuayNode,
-  10,
-);
-const pyramidSouthQuayConnector = cubicBezier(
-  pyramidSouthQuayJoin,
-  [pyramidSouthQuayJoin[0] - 1.5, pyramidSouthQuayJoin[1] + 3],
-  [pyramidSouthQuayNode[0] - 1.5, pyramidSouthQuayNode[1] - 3],
-  pyramidSouthQuayNode,
-  10,
-);
 const atyrauSouthQuayConnector = cubicBezier(
   atyrauSouthLanding,
   [47.5, 12],
@@ -1026,9 +844,7 @@ export const PEDESTRIAN_STUDY = {
       north: northForecourt.arms,
     },
     expo: {
-      arch: archExpoGate.arms,
-      arena: arenaExpoGate.arms,
-      west: westExpoGate.arms,
+      core: baiterekExpoGate.arms,
     },
   },
   junctionIslands: {
@@ -1071,32 +887,37 @@ export const PEDESTRIAN_STUDY = {
       archFromBaiterek,
       18,
     ),
-    archExpo: archExpoGate.trunk,
+    baiterekExpo: baiterekExpoGate.trunk,
     archPassage: [archFromBaiterek, ARCH_CENTRE, archToExpo],
-    expoArena: arenaExpoGate.trunk,
-    expoWestStation: westExpoGate.trunk,
     pyramidBaiterek: [
       PYRAMID_FRAME.rays[0][0],
       baiterekPyramidJoin,
     ],
-    pyramidNorthQuay: [
+    pyramidSideNorth: [
       PYRAMID_FRAME.rays[1][0],
-      pyramidNorthQuayJoin,
+      PYRAMID_FRAME.rays[1][1],
     ],
-    pyramidSouthQuay: [
+    pyramidSideSouth: [
       PYRAMID_FRAME.rays[2][0],
-      pyramidSouthQuayJoin,
+      PYRAMID_FRAME.rays[2][1],
     ],
     atyrauKhan: atyrauSouthApproach,
     atyrauBaiterek: atyrauBaiterekApproach,
     atyrauOuter: atyrauNorthApproach,
     eastAtyrau: eastAtyrauApproach,
-    northPyramid: northPyramidApproach,
-    westPyramid: westPyramidApproach,
-    pyramidNorthQuayConnector,
-    pyramidSouthQuayConnector,
     atyrauSouthQuayConnector,
     atyrauNorthQuayConnector,
+    virginLandsBaiterek: [
+      pointOnEllipseToward(
+        VIRGIN_LANDS_PALACE_CENTRE,
+        29,
+        23,
+        Math.atan2(VIRGIN_LANDS_PALACE_CENTRE[1], VIRGIN_LANDS_PALACE_CENTRE[0])
+          + Math.PI / 2,
+        BAITEREK_CENTRE,
+      ),
+      baiterekVirginLandsJoin,
+    ],
   },
   quays: {
     south: quay(-1),
@@ -1110,11 +931,8 @@ export const PEDESTRIAN_STUDY = {
   },
 } as const;
 
-export const NUR_ALEM_FRAME_CENTRE = [-43, -58] as const;
-const expoForward = normalize([
-  NUR_ALEM_FRAME_CENTRE[0] - ARCH_CENTRE[0],
-  NUR_ALEM_FRAME_CENTRE[1] - ARCH_CENTRE[1],
-]);
+export const NUR_ALEM_FRAME_CENTRE = NUR_ALEM_CENTRE;
+const expoForward = normalize(NUR_ALEM_FRAME_CENTRE);
 const expoAcross: PlanPoint = [-expoForward[1], expoForward[0]];
 const expoYaw = Math.atan2(expoForward[1], expoForward[0]);
 const expoPoint = (along: number, across: number): PlanPoint => [
@@ -1123,8 +941,8 @@ const expoPoint = (along: number, across: number): PlanPoint => [
 ];
 
 export const NUR_ALEM_FRAME = {
-  /** Ось начинается за Аркой, проходит точно через её шестиметровый проём. */
-  approach: [add(ARCH_CENTRE, expoForward, -8), ARCH_CENTRE, expoPoint(-15, 0)],
+  /** Главный подход продолжает точный вектор Байтерек — Нур Алем. */
+  approach: [baiterekExpoJoin, expoPoint(-15, 0)],
   approachHalfWidth: 2.75,
   pavilions: [
     rectangle(expoPoint(1, -22), 15, 5, expoYaw),
@@ -1432,9 +1250,9 @@ export function createAstanaFramework(target: MutableGroup): void {
   addPolyline(target, "pedestrian:arch-passage",
     PEDESTRIAN_STUDY.civicLinks.archPassage,
     3.8, COLOURS.civicStone, FRAME_TOP + 0.04);
-  addGradientPolyline(target, "pedestrian:arch-expo",
-    PEDESTRIAN_STUDY.civicLinks.archExpo,
-    4.2, COLOURS.civicStone, COLOURS.expoAsphalt, FRAME_TOP + 0.025,
+  addGradientPolyline(target, "pedestrian:baiterek-expo",
+    PEDESTRIAN_STUDY.civicLinks.baiterekExpo,
+    4.2, COLOURS.ceremonialWhite, COLOURS.expoAsphalt, FRAME_TOP + 0.025,
     "stone", "asphalt");
   Object.entries(PEDESTRIAN_STUDY.junctions.expo).forEach(([gate, arms]) =>
     arms.forEach((arm, index) =>
@@ -1442,33 +1260,24 @@ export function createAstanaFramework(target: MutableGroup): void {
         3.7, COLOURS.expoAsphalt, FRAME_TOP + 0.022, "asphalt")));
   PEDESTRIAN_STUDY.junctionIslands.expo.forEach((island, index) =>
     addPlantedIsland(target, `pedestrian:expo-gate-island:${index}`, island));
-  addPolyline(target, "pedestrian:expo-arena",
-    PEDESTRIAN_STUDY.civicLinks.expoArena,
-    4.2, COLOURS.expoAsphalt, FRAME_TOP + 0.02, "asphalt");
-  addPolyline(target, "pedestrian:expo-west-station",
-    PEDESTRIAN_STUDY.civicLinks.expoWestStation,
-    4.2, COLOURS.expoAsphalt, FRAME_TOP + 0.02, "asphalt");
+  addGradientPolyline(target, "pedestrian:virgin-lands-baiterek",
+    PEDESTRIAN_STUDY.civicLinks.virginLandsBaiterek,
+    4.4, COLOURS.civicStone, COLOURS.ceremonialWhite, FRAME_TOP + 0.04);
 
   addPolyline(target, "pedestrian:pyramid-baiterek",
     PEDESTRIAN_STUDY.civicLinks.pyramidBaiterek,
     5.2, COLOURS.ceremonialWhite, FRAME_TOP + 0.065);
-  addGradientPolyline(target, "pedestrian:pyramid-south-quay",
-    PEDESTRIAN_STUDY.civicLinks.pyramidSouthQuay,
-    4.4, COLOURS.ceremonialWhite, COLOURS.quayGranite, FRAME_TOP + 0.04);
-  addGradientPolyline(target, "pedestrian:pyramid-north-quay",
-    PEDESTRIAN_STUDY.civicLinks.pyramidNorthQuay,
-    4.4, COLOURS.ceremonialWhite, COLOURS.quayGranite, FRAME_TOP + 0.04);
+  addPolyline(target, "pedestrian:pyramid-side-south",
+    PEDESTRIAN_STUDY.civicLinks.pyramidSideSouth,
+    4.4, COLOURS.ceremonialWhite, FRAME_TOP + 0.04);
+  addPolyline(target, "pedestrian:pyramid-side-north",
+    PEDESTRIAN_STUDY.civicLinks.pyramidSideNorth,
+    4.4, COLOURS.ceremonialWhite, FRAME_TOP + 0.04);
 
   addPolyline(target, "pedestrian:quay-south", PEDESTRIAN_STUDY.quays.south,
     4.6, COLOURS.quayGranite, FRAME_TOP + 0.018);
   addPolyline(target, "pedestrian:quay-north", PEDESTRIAN_STUDY.quays.north,
     4.6, COLOURS.quayGranite, FRAME_TOP + 0.018);
-  addGradientPolyline(target, "pedestrian:pyramid-north-quay-connector",
-    PEDESTRIAN_STUDY.civicLinks.pyramidNorthQuayConnector,
-    4.2, COLOURS.ceremonialWhite, COLOURS.quayGranite, FRAME_TOP + 0.035);
-  addGradientPolyline(target, "pedestrian:pyramid-south-quay-connector",
-    PEDESTRIAN_STUDY.civicLinks.pyramidSouthQuayConnector,
-    4.2, COLOURS.ceremonialWhite, COLOURS.quayGranite, FRAME_TOP + 0.035);
   addPolyline(target, "pedestrian:atyrau-south-quay-connector",
     PEDESTRIAN_STUDY.civicLinks.atyrauSouthQuayConnector,
     4.2, COLOURS.quayGranite, FRAME_TOP + 0.02);
@@ -1494,15 +1303,6 @@ export function createAstanaFramework(target: MutableGroup): void {
     PEDESTRIAN_STUDY.civicLinks.eastAtyrau,
     4, COLOURS.expoAsphalt, COLOURS.quayGranite, FRAME_TOP + 0.02,
     "asphalt", "stone");
-  addGradientPolyline(target, "pedestrian:north-pyramid",
-    PEDESTRIAN_STUDY.civicLinks.northPyramid,
-    4, COLOURS.expoAsphalt, COLOURS.quayGranite, FRAME_TOP + 0.02,
-    "asphalt", "stone");
-  addGradientPolyline(target, "pedestrian:west-pyramid",
-    PEDESTRIAN_STUDY.civicLinks.westPyramid,
-    4, COLOURS.expoAsphalt, COLOURS.quayGranite, FRAME_TOP + 0.02,
-    "asphalt", "stone");
-
   // The Expo wireframe retired when the real plaza and four crescent
   // pavilions were built. Keeping it would draw a second, conflicting set
   // of footprints through the finished complex.

@@ -46,6 +46,15 @@ const palette = {
   "lamp-bulb": { color: 0xffd394, roughness: 0.18, transparent: true, opacity: 1, depthWrite: false },
   "dark-recess": { color: 0x111416, roughness: 1 },
   opening: { color: 0x171a1c, roughness: 1 },
+  "palace-concrete": { color: 0xc7c4ba, roughness: 0.94 },
+  "palace-stone": { color: 0xb9b5a9, roughness: 0.9 },
+  "palace-accent-blue": { color: 0x48657a, roughness: 0.55 },
+  "palace-accent-red": { color: 0x8c5748, roughness: 0.58 },
+  "palace-frame-metal": { color: 0x333b40, roughness: 0.32, metalness: 1 },
+  "palace-glazing": { color: 0x476672, roughness: 0.12, metalness: 0, transparent: true, opacity: 0.38, depthWrite: false },
+  "palace-roof-metal": { color: 0xb2c0c3, roughness: 0.55, metalness: 1 },
+  "palace-interior-dark": { color: 0x272b2c, roughness: 0.88 },
+  "palace-sign-metal": { color: 0xe0ddd2, roughness: 0.5, metalness: 0.1 },
 };
 
 for (const [id, override] of Object.entries(model.materialOverrides ?? {})) {
@@ -149,10 +158,10 @@ for (const part of model.parts) {
   // Force nested transparent layers into physical outside-to-inside order.
   // Distance sorting is ambiguous because pane, lens and bulb can share a
   // centre line; without this the clear envelope can paint over the emitter.
-  if (part.material === "glazing") mesh.renderOrder = 3;
+  if (["glazing", "palace-glazing"].includes(part.material)) mesh.renderOrder = 3;
   if (part.material === "lamp-glass") mesh.renderOrder = 4;
   if (part.material === "lamp-bulb") mesh.renderOrder = 5;
-  mesh.castShadow = !silhouette && !["canvas", "glazing", "lamp-glass", "lamp-bulb"].includes(part.material);
+  mesh.castShadow = !silhouette && !["canvas", "glazing", "palace-glazing", "lamp-glass", "lamp-bulb"].includes(part.material);
   mesh.receiveShadow = !silhouette;
   mesh.userData.group = part.group;
   root.add(mesh);

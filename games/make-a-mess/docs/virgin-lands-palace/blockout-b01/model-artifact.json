@@ -1,0 +1,577 @@
+{
+  "id": "astana-virgin-lands-palace-blockout",
+  "revision": "b01-2026-08-12-contour-c01",
+  "title": "Palace of Virgin Lands — C01 shape-only blockout",
+  "units": "metres",
+  "coordinates": {
+    "up": "+Y",
+    "front": "+Z",
+    "origin": "ground-centre"
+  },
+  "captureFrame": [
+    1500,
+    1000
+  ],
+  "materialOverrides": {
+    "cladding": {
+      "color": 11120814,
+      "roughness": 1
+    },
+    "stone": {
+      "color": 8752009,
+      "roughness": 1
+    },
+    "roof": {
+      "color": 6844788,
+      "roughness": 1
+    },
+    "dark-recess": {
+      "color": 4278604,
+      "roughness": 1
+    }
+  },
+  "sourceNotes": [
+    "C01 was accepted by the owner on 2026-08-12; the top footprint remains an owner-approved hypothesis rather than a measured historical plan.",
+    "R1 owns the square-side auditorium and roof silhouette; R2/R3 own the long low wing and recessed lower storey.",
+    "Facade rhythm, openings, signs, rooftop equipment, structure, materials and world placement are intentionally absent from B01."
+  ],
+  "dimensions": {
+    "foyerWidth": 48,
+    "foyerDepth": 34,
+    "foyerHeight": 5.2,
+    "foyerRecessHeight": 2.1,
+    "auditoriumWidth": 34,
+    "auditoriumDepth": 24,
+    "auditoriumCentreX": -5,
+    "auditoriumCentreZ": -4,
+    "auditoriumEaveY": 13.9,
+    "maximumOperatingHeight": 15.625
+  },
+  "labMetrics": [
+    {
+      "label": "FOYER",
+      "value": 48,
+      "decimals": 0,
+      "signed": false
+    },
+    {
+      "label": "DEPTH",
+      "value": 34,
+      "decimals": 0,
+      "signed": false
+    },
+    {
+      "label": "APEX",
+      "value": 15.625,
+      "decimals": 3
+    },
+    {
+      "label": "C01 PARTS",
+      "value": 13,
+      "decimals": 0,
+      "signed": false,
+      "unit": ""
+    }
+  ],
+  "anchors": {
+    "groundCentre": [
+      0,
+      0,
+      0
+    ],
+    "squareFacadeCentre": [
+      0,
+      0,
+      17
+    ],
+    "auditoriumCentre": [
+      -5,
+      0,
+      -4
+    ],
+    "roofRidgeLeft": [
+      -15,
+      15.625,
+      -4
+    ],
+    "roofRidgeRight": [
+      5,
+      15.625,
+      -4
+    ]
+  },
+  "motionConstraints": {
+    "staticObject": true,
+    "facadeDetailDeferred": true,
+    "worldIntegrationDeferred": true
+  },
+  "labEnvironment": {
+    "floorRadius": 38,
+    "gridSize": 64,
+    "gridDivisions": 64,
+    "fogNear": 92,
+    "fogFar": 145,
+    "floorY": -0.04
+  },
+  "parts": [
+    {
+      "kind": "box",
+      "id": "foyer-upper-square-bar",
+      "group": "foyer-upper",
+      "material": "cladding",
+      "center": [
+        0,
+        3.6500000000000004,
+        12.5
+      ],
+      "size": [
+        48,
+        3.1,
+        9
+      ]
+    },
+    {
+      "kind": "box",
+      "id": "foyer-upper-right-wing",
+      "group": "foyer-upper",
+      "material": "cladding",
+      "center": [
+        18,
+        3.6500000000000004,
+        -4
+      ],
+      "size": [
+        12,
+        3.1,
+        24
+      ]
+    },
+    {
+      "kind": "box",
+      "id": "foyer-upper-left-return",
+      "group": "foyer-upper",
+      "material": "cladding",
+      "center": [
+        -23,
+        3.6500000000000004,
+        -4
+      ],
+      "size": [
+        2,
+        3.1,
+        24
+      ]
+    },
+    {
+      "kind": "box",
+      "id": "foyer-upper-rear-strip",
+      "group": "foyer-upper",
+      "material": "cladding",
+      "center": [
+        0,
+        3.6500000000000004,
+        -16.5
+      ],
+      "size": [
+        48,
+        3.1,
+        1
+      ]
+    },
+    {
+      "kind": "box",
+      "id": "foyer-lower-square-core",
+      "group": "foyer-lower-core",
+      "material": "dark-recess",
+      "center": [
+        0,
+        1.05,
+        12.6
+      ],
+      "size": [
+        44,
+        2.1,
+        6.8
+      ]
+    },
+    {
+      "kind": "box",
+      "id": "foyer-lower-right-core",
+      "group": "foyer-lower-core",
+      "material": "dark-recess",
+      "center": [
+        18.1,
+        1.05,
+        -3.4
+      ],
+      "size": [
+        9.8,
+        2.1,
+        22.8
+      ]
+    },
+    {
+      "kind": "box",
+      "id": "foyer-lower-left-core",
+      "group": "foyer-lower-core",
+      "material": "dark-recess",
+      "center": [
+        -23,
+        1.05,
+        -3.4
+      ],
+      "size": [
+        1.2,
+        2.1,
+        22.8
+      ]
+    },
+    {
+      "kind": "box",
+      "id": "foyer-lower-rear-core",
+      "group": "foyer-lower-core",
+      "material": "dark-recess",
+      "center": [
+        0,
+        1.05,
+        -16.5
+      ],
+      "size": [
+        46,
+        2.1,
+        0.5
+      ]
+    },
+    {
+      "kind": "box",
+      "id": "auditorium-body",
+      "group": "auditorium-shell",
+      "material": "stone",
+      "center": [
+        -5,
+        6.95,
+        -4
+      ],
+      "size": [
+        34,
+        13.9,
+        24
+      ]
+    },
+    {
+      "kind": "mesh",
+      "id": "roof-square-slope",
+      "group": "auditorium-roof",
+      "material": "roof",
+      "vertices": [
+        [
+          -22,
+          13.9,
+          8
+        ],
+        [
+          12,
+          13.9,
+          8
+        ],
+        [
+          5,
+          15.625,
+          -4
+        ],
+        [
+          -15,
+          15.625,
+          -4
+        ]
+      ],
+      "triangles": [
+        [
+          0,
+          1,
+          2
+        ],
+        [
+          0,
+          2,
+          3
+        ]
+      ],
+      "doubleSided": true,
+      "showEdges": true
+    },
+    {
+      "kind": "mesh",
+      "id": "roof-rear-slope",
+      "group": "auditorium-roof",
+      "material": "roof",
+      "vertices": [
+        [
+          12,
+          13.9,
+          -16
+        ],
+        [
+          -22,
+          13.9,
+          -16
+        ],
+        [
+          -15,
+          15.625,
+          -4
+        ],
+        [
+          5,
+          15.625,
+          -4
+        ]
+      ],
+      "triangles": [
+        [
+          0,
+          1,
+          2
+        ],
+        [
+          0,
+          2,
+          3
+        ]
+      ],
+      "doubleSided": true,
+      "showEdges": true
+    },
+    {
+      "kind": "mesh",
+      "id": "roof-left-hip",
+      "group": "auditorium-roof",
+      "material": "roof",
+      "vertices": [
+        [
+          -22,
+          13.9,
+          -16
+        ],
+        [
+          -22,
+          13.9,
+          8
+        ],
+        [
+          -15,
+          15.625,
+          -4
+        ]
+      ],
+      "triangles": [
+        [
+          0,
+          1,
+          2
+        ]
+      ],
+      "doubleSided": true,
+      "showEdges": true
+    },
+    {
+      "kind": "mesh",
+      "id": "roof-right-hip",
+      "group": "auditorium-roof",
+      "material": "roof",
+      "vertices": [
+        [
+          12,
+          13.9,
+          8
+        ],
+        [
+          12,
+          13.9,
+          -16
+        ],
+        [
+          5,
+          15.625,
+          -4
+        ]
+      ],
+      "triangles": [
+        [
+          0,
+          1,
+          2
+        ]
+      ],
+      "doubleSided": true,
+      "showEdges": true
+    }
+  ],
+  "views": [
+    {
+      "id": "front-1983-camera",
+      "label": "R1 match · square-side massing",
+      "projection": "perspective",
+      "position": [
+        3,
+        7.2,
+        82
+      ],
+      "target": [
+        -3,
+        7.1,
+        0
+      ],
+      "fov": 25
+    },
+    {
+      "id": "front",
+      "label": "Front +Z · square-side contour",
+      "projection": "orthographic",
+      "position": [
+        0,
+        7.5,
+        70
+      ],
+      "target": [
+        0,
+        7.5,
+        0
+      ],
+      "orthoHeight": 36
+    },
+    {
+      "id": "right-profile",
+      "label": "Right +X · foyer depth and hall setback",
+      "projection": "orthographic",
+      "position": [
+        70,
+        7.5,
+        0
+      ],
+      "target": [
+        0,
+        7.5,
+        0
+      ],
+      "orthoHeight": 30
+    },
+    {
+      "id": "left-profile",
+      "label": "Left -X · narrow return hypothesis",
+      "projection": "orthographic",
+      "position": [
+        -70,
+        7.5,
+        0
+      ],
+      "target": [
+        0,
+        7.5,
+        0
+      ],
+      "orthoHeight": 30
+    },
+    {
+      "id": "rear",
+      "label": "Rear -Z · inferred one-metre strip",
+      "projection": "orthographic",
+      "position": [
+        0,
+        7.5,
+        -70
+      ],
+      "target": [
+        0,
+        7.5,
+        0
+      ],
+      "orthoHeight": 36
+    },
+    {
+      "id": "top",
+      "label": "Top · owner-approved C01 footprint",
+      "projection": "orthographic",
+      "position": [
+        0,
+        70,
+        0
+      ],
+      "target": [
+        0,
+        0,
+        0
+      ],
+      "up": [
+        0,
+        0,
+        1
+      ],
+      "orthoHeight": 40
+    },
+    {
+      "id": "three-quarter-left",
+      "label": "3/4 left · auditorium near the left edge",
+      "projection": "perspective",
+      "position": [
+        -52,
+        25,
+        58
+      ],
+      "target": [
+        0,
+        6.3,
+        0
+      ],
+      "fov": 34
+    },
+    {
+      "id": "three-quarter-right",
+      "label": "3/4 right · long glazed-wing mass",
+      "projection": "perspective",
+      "position": [
+        56,
+        24,
+        56
+      ],
+      "target": [
+        0,
+        6.2,
+        0
+      ],
+      "fov": 34
+    },
+    {
+      "id": "high-three-quarter",
+      "label": "High 3/4 · two-volume plan and hipped roof",
+      "projection": "perspective",
+      "position": [
+        48,
+        48,
+        50
+      ],
+      "target": [
+        0,
+        4.8,
+        0
+      ],
+      "fov": 36
+    },
+    {
+      "id": "silhouette",
+      "label": "Silhouette · C01 mass distribution",
+      "projection": "orthographic",
+      "position": [
+        -48,
+        24,
+        56
+      ],
+      "target": [
+        0,
+        6.2,
+        0
+      ],
+      "orthoHeight": 34
+    }
+  ]
+}

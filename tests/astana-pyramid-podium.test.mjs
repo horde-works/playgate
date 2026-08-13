@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { astanaScene } from "../games/make-a-mess/src/game/astanaScene.ts";
-import { NURZHOL_ALONG_VECTOR } from
+import { NURZHOL_ALONG_VECTOR, PYRAMID_CENTRE } from
   "../games/make-a-mess/src/content/scenes/astana/astanaLayout.ts";
-import { ATYRAU_FRAME_WHITE } from
-  "../games/make-a-mess/src/content/scenes/astana/astanaAtyrau.ts";
+import { groundUnder } from
+  "../games/make-a-mess/src/content/scenes/astana/astanaShell.ts";
 import { PYRAMID_GLASS_CELLS } from
   "../games/make-a-mess/src/content/scenes/astana/astanaPyramid.ts";
 import {
   PYRAMID_ENTRANCES,
+  PYRAMID_GROUND_TOP,
   PYRAMID_ENTRANCE_LIGHT_COLOUR,
   PYRAMID_ENTRANCE_LIGHT_DISTANCE,
   PYRAMID_ENTRANCE_LIGHT_INTENSITY,
@@ -20,17 +21,11 @@ import {
   PYRAMID_MOUND_LAYERS,
   PYRAMID_MOUND_TOP,
   PYRAMID_MOUND_TOP_HALF_SIZE,
-  PYRAMID_NAVIGATION_CLEARANCE,
   PYRAMID_PORTAL_DEPTH,
   PYRAMID_PORTAL_HEIGHT,
   PYRAMID_PORTAL_INNER_WIDTH,
   PYRAMID_PORTAL_MOUTH_DISTANCE,
   PYRAMID_PORTAL_OUTER_WIDTH,
-  PYRAMID_PODIUM_HALF_SIZE,
-  PYRAMID_PODIUM_SIDE,
-  PYRAMID_PODIUM_THICKNESS,
-  PYRAMID_PODIUM_TOP,
-  PYRAMID_RAIL_BRONZE,
 } from "../games/make-a-mess/src/content/scenes/astana/astanaPyramidPodium.ts";
 
 const direction = (from, to) => {
@@ -40,25 +35,12 @@ const direction = (from, to) => {
   return [dx / length, dz / length];
 };
 
-test("the Pyramid stands on a slightly larger square bridge with boat clearance", () => {
-  assert.equal(PYRAMID_PODIUM_SIDE, 30);
-  assert.equal(PYRAMID_PODIUM_HALF_SIZE, 15);
-  assert.ok(PYRAMID_NAVIGATION_CLEARANCE >= 4.2);
-  assert.equal(
-    PYRAMID_PODIUM_TOP,
-    PYRAMID_NAVIGATION_CLEARANCE + PYRAMID_PODIUM_THICKNESS,
-  );
-
-  const slab = astanaScene.breakablePieces.find((piece) =>
-    piece.id.includes(":pyramid-podium:podium:slab:"));
-  assert.ok(slab, "поднятая бетонная плита не построена");
-  assert.deepEqual(slab.size, [30, 1.2, 30]);
-  assert.equal(slab.color, ATYRAU_FRAME_WHITE,
-    "плита больше не рифмуется с белым рисунком моста Атырау");
-  assert.equal(slab.material, "steel");
-  assert.equal(slab.textureProfile, "painted-steel",
-    "одинаковый hex на сером бетоне не выглядит как белый каркас Атырау");
-  assert.equal(slab.position[1] - slab.size[1] / 2, PYRAMID_NAVIGATION_CLEARANCE);
+test("the Pyramid sits on land with no bridge podium or navigation ramps", () => {
+  assert.equal(PYRAMID_GROUND_TOP, groundUnder(...PYRAMID_CENTRE).top);
+  assert.equal(astanaScene.breakablePieces.some((piece) =>
+    piece.id.includes(":pyramid-podium:")), false);
+  assert.equal(astanaScene.breakablePieces.some((piece) =>
+    piece.id.includes(":pyramid-entrances:ramp:")), false);
 
   assert.equal(
     Math.min(...PYRAMID_GLASS_CELLS.flatMap((cell) =>
@@ -70,8 +52,8 @@ test("the Pyramid stands on a slightly larger square bridge with boat clearance"
 
 test("a terraced mound raises the shell while three physical corridors remain open", () => {
   assert.equal(PYRAMID_MOUND_HEIGHT, 3.2);
-  assert.equal(PYRAMID_MOUND_TOP, PYRAMID_PODIUM_TOP + PYRAMID_MOUND_HEIGHT);
-  assert.ok(PYRAMID_MOUND_BOTTOM_HALF_SIZE < PYRAMID_PODIUM_HALF_SIZE);
+  assert.equal(PYRAMID_MOUND_TOP, PYRAMID_GROUND_TOP + PYRAMID_MOUND_HEIGHT);
+  assert.equal(PYRAMID_MOUND_BOTTOM_HALF_SIZE, 14.55);
   assert.ok(PYRAMID_MOUND_TOP_HALF_SIZE > 12,
     "у основания стеклянной оболочки должен оставаться узкий пояс насыпи");
 
@@ -137,7 +119,7 @@ test("all three trapezoidal entrance blocks have concealed warm night light", ()
       && lamp.poolGroupId === "astana:pyramid:architectural-lighting"));
 });
 
-test("three entrance ramps leave face centres along exact normals and flare outside", () => {
+test("three ground-level entrance cuts leave face centres along exact normals", () => {
   assert.equal(PYRAMID_ENTRANCES.length, 3);
   assert.deepEqual(PYRAMID_ENTRANCES[0].normal, NURZHOL_ALONG_VECTOR,
     "главный вход больше не обращён точно к Байтереку");
@@ -159,15 +141,11 @@ test("three entrance ramps leave face centres along exact normals and flare outs
   const floors = astanaScene.breakablePieces.filter((piece) =>
     piece.id.includes(":pyramid-entrances:entrance:")
       && piece.id.includes(":floor:"));
-  assert.equal(floors.length, 24, "каждый из трёх подъёмов должен иметь восемь плит");
-  assert.ok(floors.every((piece) => piece.color === ATYRAU_FRAME_WHITE),
-    "ступени должны оставаться того же белого цвета, что и мост Атырау");
-  assert.ok(floors.every((piece) =>
-    piece.material === "steel" && piece.textureProfile === "painted-steel"),
-  "ступени снова получили серую бетонную фактуру вместо белой окрашенной");
+  assert.equal(floors.length, 0,
+    "подъёмные плиты старого мостового подиума вернулись на грунт");
 });
 
-test("each white entrance has bronze posts and one unbroken handrail per side", () => {
+test("the removed access ramps leave no railings or podium trim behind", () => {
   const posts = astanaScene.breakablePieces.filter((piece) =>
     piece.id.includes(":pyramid-entrances:entrance:")
       && piece.id.includes(":rail-post:"));
@@ -175,22 +153,11 @@ test("each white entrance has bronze posts and one unbroken handrail per side", 
     piece.id.includes(":pyramid-entrances:entrance:")
       && piece.id.includes(":handrail:"));
 
-  assert.equal(posts.length, 3 * 2 * 5);
-  assert.equal(handrails.length, 3 * 2);
-  assert.ok([...posts, ...handrails].every((piece) =>
-    piece.color === PYRAMID_RAIL_BRONZE));
-});
-
-test("the square podium has one thin bronze perimeter and no coplanar underside", () => {
+  assert.equal(posts.length, 0);
+  assert.equal(handrails.length, 0);
   const bands = astanaScene.breakablePieces.filter((piece) =>
     piece.id.includes(":pyramid-podium:podium:bronze-band:"));
-  assert.equal(bands.length, 4);
-  assert.ok(bands.every((piece) =>
-    piece.color === PYRAMID_RAIL_BRONZE
-      && piece.material === "steel"
-      && piece.textureProfile === "painted-steel"
-      && Math.min(piece.size[0], piece.size[2]) === 0.065
-      && piece.size[1] === 0.16));
+  assert.equal(bands.length, 0);
   assert.equal(
     astanaScene.breakablePieces.some((piece) =>
       piece.id.includes(":pyramid-podium:podium:underside-shadow:")),
