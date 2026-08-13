@@ -131,7 +131,19 @@ function MediumPanther({
       };
     };
     scope.__mamPanther = probe;
+    const publishToDocument =
+      process.env.NODE_ENV !== "production" &&
+      new URLSearchParams(window.location.search).get("mamPantherProbe") === "1";
+    const publish = () => {
+      if (publishToDocument) {
+        document.documentElement.dataset.mamPantherProbe = JSON.stringify(probe());
+      }
+    };
+    const timer = publishToDocument ? window.setInterval(publish, 100) : undefined;
+    publish();
     return () => {
+      if (timer !== undefined) window.clearInterval(timer);
+      delete document.documentElement.dataset.mamPantherProbe;
       if (scope.__mamPanther === probe) delete scope.__mamPanther;
     };
   }, [definition.id, individualIndex]);
