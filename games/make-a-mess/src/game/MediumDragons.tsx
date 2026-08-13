@@ -140,9 +140,11 @@ function MediumDragon({
     const publishToDocument =
       process.env.NODE_ENV !== "production"
       && new URLSearchParams(window.location.search).get("mamDragonProbe") === "1";
-    debugFollowCamera.current =
-      process.env.NODE_ENV !== "production"
-      && new URLSearchParams(window.location.search).get("mamDragonCamera") === "1";
+    const search = new URLSearchParams(window.location.search);
+    debugFollowCamera.current = process.env.NODE_ENV !== "production" && (
+      search.get("mamDragonCamera") === "1"
+      || search.get("mamDragonProbe") === "1"
+    );
     const publish = () => {
       if (publishToDocument) {
         document.documentElement.dataset.mamDragonProbe = JSON.stringify(probe());
