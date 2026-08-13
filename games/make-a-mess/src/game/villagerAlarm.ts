@@ -19,6 +19,11 @@
  * не поднимает, а сбрасывает.
  */
 
+import type {
+  AcousticEvent,
+  CreatureImpulseWave,
+} from "./creatureWorld.ts";
+
 /** Скорость звука при 20 °C, м/с. Измерено. */
 export const SPEED_OF_SOUND = 343;
 
@@ -302,13 +307,7 @@ export const WATCH_RADIUS = 16;
  * человека вынесло бы за край мира. Это не упрощение, а единственный способ
  * остаться в согласии с уже откалиброванным миром.
  */
-export interface BlastWave {
-  /** Радиус, за которым волна уже никого не трогает. */
-  readonly pushRadius: number;
-  /** Скорость отброса в упор, м/с: горизонталь и вертикаль. */
-  readonly horizontal: number;
-  readonly vertical: number;
-}
+export type BlastWave = CreatureImpulseWave;
 
 /** Ниже этой скорости человека только качнуло. Допущение, правится по кадрам. */
 export const KNOCKDOWN_SPEED = 2.5;
@@ -369,25 +368,7 @@ export function flightOf(horizontal: number, vertical: number): {
 }
 
 /** Событие шума. Кто шумел — не важно; важны место, уровень и фронт. */
-export interface NoiseEvent {
-  readonly x: number;
-  readonly y: number;
-  readonly z: number;
-  /** Уровень на расстоянии 1 м, дБ. */
-  readonly level: number;
-  /**
-   * Крутизна фронта, 0..1. Рефлекс вызывает РЕЗКИЙ звук: у выстрела фронт
-   * почти единица, у оседающего сруба — треть.
-   */
-  readonly rise: number;
-  /** Волна, если она есть. У выстрела её нет, у взрыва есть. */
-  readonly wave?: BlastWave;
-  /**
-   * Это ЗНАК, а не хлопок: рог, било, крик. Не пугает и не заставляет искать
-   * источник, но понятен сразу и всем, кто его слышит.
-   */
-  readonly signal?: boolean;
-}
+export type NoiseEvent = AcousticEvent;
 
 /** Событие в пути: звук идёт 343 м/с и до дальнего края доходит позже. */
 export interface PendingNoise extends NoiseEvent {

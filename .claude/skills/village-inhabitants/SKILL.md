@@ -65,10 +65,12 @@ description: >-
 | `villagerPassing.ts` | закон расхождения (чистая функция `passingAdvice`) |
 | `villagerAlarm.ts` | закон шума и волны: `NoiseEvent`, пороги, привыкание, каскадные константы |
 | `villagerReach.ts` | рука-двузвенник — единственный источник правды для шейдера и теста |
-| `Villagers.tsx` | внешний вид, все позы в вершинном шейдере, атрибуты, dev-хук, проводка |
+| `creatureWorld.ts` | общий контракт мира и мультикаст-журнал событий для всех популяций |
+| `creaturePopulation.ts`, `CreaturePopulations.tsx` | декларации и монтаж популяций без проверки id мира |
+| `Villagers.tsx` | человеческий адаптер мира, внешний вид, позы, атрибуты и dev-хук |
 | `settlementPlan.ts` | модель данных поселения (`SettlementPlan`, `settlementRoles`) |
 | `content/scenes/vikingSettlement.ts`, `townSettlement.ts` | планы деревни и города |
-| `MakeAMessGame.tsx` | очередь шума (дуло/взрыв), `threat`, монтаж `<Villagers count={34}>` — только viking-village |
+| `MakeAMessGame.tsx` | публикует факты `CreatureWorldRuntime`; человеческие двери/склады даёт отдельной обвязкой |
 | `walkableRoute.ts` | приёмка проходимости ИГРОКА по сцене — жителей не водит |
 
 ## Что нельзя ломать

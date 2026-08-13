@@ -485,6 +485,7 @@ export function compileSceneDocument(
     skyRadius: document.world.skyRadius,
     worldRadius: document.world.radius,
     worldEdgeBoundary: document.world.edgeBoundary,
+    inhabitants: document.inhabitants,
     safetyFloorY: document.world.safetyFloorY,
     copy: document.copy,
     clusters,

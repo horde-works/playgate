@@ -205,10 +205,17 @@ import {
 } from "./ExplosionFxSystem";
 import { getPieceRenderBoxes } from "./breakableGeometry";
 import { Birds } from "./Birds";
-import { Villagers } from "./Villagers";
+import {
+  CreaturePopulations,
+  hasHumanSettlementPopulation,
+} from "./CreaturePopulations.tsx";
 import type { VillagerReport } from "./villagerSim";
-import type { NoiseEvent } from "./villagerAlarm";
-import { vikingSettlement } from "../content/scenes/vikingSettlement.ts";
+import {
+  CreatureEventJournal,
+  type AcousticEvent,
+  type CreaturePresence,
+  type CreatureWorldRuntime,
+} from "./creatureWorld.ts";
 import { GrassField } from "./GrassField";
 import { DutchPolderWater } from "./DutchPolderWater";
 import { CLEAR_SKY, worldWeather } from "./skyWeatherModel.ts";
@@ -4403,15 +4410,35 @@ function OpenWorldScene({
   // Обратная связь от створок: какие входы уже распахнуты. Без неё житель
   // просит открыть — и тут же проходит сквозь ещё закрытую дверь.
   const villagerOpenDoors = useRef<Set<string>>(new Set());
-  // Шум мира для жителей. Очередь ОБЩАЯ и без различения источников: выстрел,
-  // взрыв, обвал — для уха это одно и то же событие с разным уровнем.
-  const villagerNoise = useRef<NoiseEvent[]>([]);
-  // Где стоит игрок, когда он вооружён. Молот и пустые руки деревню не пугают:
-  // испуг вызывает не человек, а СТВОЛ в его руках.
-  const villagerThreat = useRef<{ x: number; z: number } | null>(null);
+  // Один факт мира читают независимо все популяции: человек не может забрать
+  // хлопок из очереди раньше будущей пантеры или дракона.
+  const creatureAcousticEvents = useMemo(
+    () => new CreatureEventJournal<AcousticEvent>(128),
+    [],
+  );
+  // Непрерывное присутствие отдельно от событий. Каждый вид сам решает,
+  // считать ли вооружённого игрока угрозой и как на него отвечать.
+  const creatureDangerousPresence = useRef<CreaturePresence | null>(null);
   const nightRef = useRef(0);
   const worldTimeRef = useRef(TIME_OF_DAY_TARGETS.day);
   const mutablePieceStates = useRef(new Map<string, MutablePieceVisualState>());
+  const creatureWorld = useMemo<CreatureWorldRuntime>(
+    () => ({
+      time: {
+        dayFraction: worldTimeRef,
+        night: nightRef,
+      },
+      geometry: {
+        pieces: breakablePieces,
+        removedPieceIds: brokenPiecesRef,
+      },
+      stimuli: {
+        acoustic: creatureAcousticEvents,
+        dangerousPresence: creatureDangerousPresence,
+      },
+    }),
+    [breakablePieces, creatureAcousticEvents],
+  );
   const breakableRaycastRoot = useRef<Group>(null);
   const pieceBodies = useRef(new Map<string, RapierRigidBody>());
   const bodyIdByHandle = useRef(new Map<number, string>());
@@ -7328,7 +7355,7 @@ function OpenWorldScene({
     const gunshotStartedAt = performance.now();
     playGunshotSound();
     // Шумит ДУЛО, а не пуля: событие рождается там, где стоит стрелок.
-    villagerNoise.current.push({
+    creatureAcousticEvents.publish({
       x: shooterPosition.x,
       y: shooterPosition.y,
       z: shooterPosition.z,
@@ -7838,9 +7865,9 @@ function OpenWorldScene({
 
   useFrame(() => {
     drainBlastQueue();
-    // Деревню тревожит не человек, а СТВОЛ в его руках: с молотом и с пустыми
-    // руками мимо жителей можно ходить сколько угодно.
-    villagerThreat.current =
+    // Мир сообщает о вооружённом присутствии; каждый вид классифицирует его
+    // сам. Нынешние люди не считают угрозой пустые руки и рабочий молот.
+    creatureDangerousPresence.current =
       weapon === "none" || weapon === "hammer"
         ? null
         : { x: camera.position.x, z: camera.position.z };
@@ -7857,7 +7884,7 @@ function OpenWorldScene({
         blastEnergyAtDistance(surfaceDistance, blastRadius, profile.damageEnergy);
       playExplosionSound();
       // Уровень хлопка — свойство боеприпаса, а не ветка «если граната».
-      villagerNoise.current.push({
+      creatureAcousticEvents.publish({
         x: center3.x,
         y: center3.y,
         z: center3.z,
@@ -10161,31 +10188,32 @@ function OpenWorldScene({
             pieces={breakablePieces}
           />
           <SmokePlumes nightRef={nightRef} />
-          <Villagers
-            settlement={vikingSettlement}
-            nightRef={nightRef}
-            pieces={breakablePieces}
-            brokenPieces={brokenPiecesRef}
-            doorRequests={villagerDoorRequests}
-            openDoors={villagerOpenDoors}
-            stockStates={mutablePieceStates}
-            inspectRef={villagerInspect}
-            noise={villagerNoise}
-            threat={villagerThreat}
-            // Деревня выросла: жительниц и девочек ДОБАВИЛИ, а не заменили
-            // ими часть мужчин.
-            count={34}
-          />
-          <VillagerProbe
-            lookup={villagerInspect}
-            onChange={onVillagerInspect}
-          />
           <Birds
             center={scene.worldCenter}
             worldRadius={scene.worldRadius}
             interest={airshipInterest}
             count={20}
           />
+        </>
+      ) : null}
+      {scene.inhabitantDefinitions.length > 0 ? (
+        <>
+          <CreaturePopulations
+            definitions={scene.inhabitantDefinitions}
+            world={creatureWorld}
+            villagers={{
+              doorRequests: villagerDoorRequests,
+              openDoors: villagerOpenDoors,
+              stockStates: mutablePieceStates,
+              inspect: villagerInspect,
+            }}
+          />
+          {hasHumanSettlementPopulation(scene.inhabitantDefinitions) ? (
+            <VillagerProbe
+              lookup={villagerInspect}
+              onChange={onVillagerInspect}
+            />
+          ) : null}
         </>
       ) : null}
       {scene.id === "dutch-polder" && scene.worldRadius ? (

@@ -13,6 +13,7 @@ import type {
   SceneVector3,
   SupportMode,
 } from "../../game/destructionScene.ts";
+import { humanSettlementPopulation } from "../../game/creaturePopulation.ts";
 import {
   vikingHomeLayout,
   vikingPlanLocalPoint,
@@ -21,7 +22,10 @@ import {
 } from "./vikingVillagePlan.ts";
 // Список складов живёт в описании поселения: сцена берёт оттуда, какие куски
 // объявить изменяемыми, чтобы уровень было чем показать.
-import { vikingSettlementStores } from "./vikingSettlement.ts";
+import {
+  vikingSettlement,
+  vikingSettlementStores,
+} from "./vikingSettlement.ts";
 import { shrubExtent, shrubTone } from "../prefabs/coreShrubs.ts";
 
 interface MutableGroup {
@@ -3786,6 +3790,13 @@ export const vikingVillageDocument: AuthoredSceneDocument = {
     radius: WORLD_RADIUS,
     safetyFloorY: -2.4,
   },
+  inhabitants: [
+    humanSettlementPopulation({
+      id: "viking-village-residents",
+      count: 34,
+      settlement: vikingSettlement,
+    }),
+  ],
   copy: {
     status: "Make a Mess / Viking Village",
     eyebrow: "North settlement test 001",

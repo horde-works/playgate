@@ -1,7 +1,7 @@
 "use client";
 
 import { useFrame } from "@react-three/fiber";
-import { useEffect, useMemo, useRef, type RefObject } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import {
   BufferGeometry,
   Color,
@@ -26,8 +26,8 @@ import {
   type VillagerPopulation,
   type VillagerReport,
 } from "./villagerSim.ts";
-import { alertPose, type NoiseEvent } from "./villagerAlarm.ts";
-import { buildObstacleField, type NavPiece } from "./villagerNavigation.ts";
+import { alertPose } from "./villagerAlarm.ts";
+import { buildObstacleField } from "./villagerNavigation.ts";
 import { VILLAGER_BODY } from "./villagerBody.ts";
 import {
   createVillagerPosePalette,
@@ -35,7 +35,8 @@ import {
   writeVillagerPose,
   type VillagerRenderBone,
 } from "./villagerPosePalette.ts";
-import type { SettlementPlan } from "./settlementPlan.ts";
+import type { HumanSettlementPopulationDefinition } from "./creaturePopulation.ts";
+import type { CreatureWorldRuntime, WorldValue } from "./creatureWorld.ts";
 
 /**
  * Жители деревни: тела из тех же коробок, что и всё вокруг, шагающие по
@@ -325,67 +326,46 @@ const POSE_COMPUTE = /* glsl */ `
 const VISIBLE_PIECE = { visible: true } as const;
 const HIDDEN_PIECE = { visible: false } as const;
 
+/** Human-only ports layered on top of the shared living-world boundary. */
+export interface VillagerWorldBindings {
+  /** Doors residents currently ask the world's hinge system to open. */
+  readonly doorRequests?: WorldValue<Set<string>>;
+  /** Entries whose leaves have physically reached the open position. */
+  readonly openDoors?: WorldValue<Set<string>>;
+  /** Piece visibility used to expose the settlement economy in the scene. */
+  readonly stockStates?: WorldValue<Map<string, { readonly visible: boolean }>>;
+  /** Human inspection remains human-specific until a generic entity picker exists. */
+  readonly inspect?: WorldValue<
+    | ((
+        origin: readonly [number, number, number],
+        direction: readonly [number, number, number],
+      ) => VillagerReport | null)
+    | null
+  >;
+}
+
 export function Villagers({
-  settlement,
-  nightRef,
-  pieces,
-  brokenPieces,
-  doorRequests,
-  openDoors,
-  stockStates,
-  inspectRef,
-  noise,
-  threat,
-  count = 24,
+  definition,
+  world,
+  bindings,
 }: {
-  /** Какое поселение здесь живёт: тропы, жильё, места, роли, одежда. */
-  settlement: SettlementPlan;
-  nightRef: RefObject<number>;
-  /** Куски сцены — из них строится поле препятствий. */
-  pieces?: readonly NavPiece[];
-  /** Сломанное перестаёт мешать в тот же кадр. */
-  brokenPieces?: { current: ReadonlySet<string> };
-  /** Сюда жители кладут двери, которые сейчас открывают. */
-  doorRequests?: { current: Set<string> };
-  /** Входы, чьи створки уже распахнуты. */
-  openDoors?: { current: Set<string> };
-  /**
-   * Сюда пишется видимость кусков складов. Поленница пустеет не по расписанию,
-   * а потому что дрова унесли: уровень склада — это то же число, по которому
-   * житель решает, есть ли работа.
-   */
-  stockStates?: { current: Map<string, { readonly visible: boolean }> };
-  /**
-   * Сюда кладётся опросчик «кто под перекрестьем». Наведясь на человека, можно
-   * узнать, кто он и чем занят — это и приёмка работы, и способ увидеть, что
-   * житель на самом деле думает.
-   */
-  inspectRef?: {
-    current:
-      | ((
-          origin: readonly [number, number, number],
-          direction: readonly [number, number, number],
-        ) => VillagerReport | null)
-      | null;
-  };
-  /**
-   * Шум мира: сюда кладут выстрелы, взрывы и обвалы. Очередь ОБЩАЯ и без
-   * различения источников — жителю всё равно, кто именно хлопнул.
-   */
-  noise?: { current: NoiseEvent[] };
-  /**
-   * Где стоит вооружённый человек. Не шум и не событие — присутствие: стоящие
-   * жители провожают его взглядом. null, если руки у него пустые.
-   */
-  threat?: { current: { x: number; z: number } | null };
-  /** Приёмник следов: отпечаток ставится в момент удара пяткой. */
-  count?: number;
+  definition: HumanSettlementPopulationDefinition;
+  world: CreatureWorldRuntime;
+  bindings: VillagerWorldBindings;
 }) {
+  const { settlement, count } = definition;
+  const pieces = world.geometry.pieces;
+  const brokenPieces = world.geometry.removedPieceIds;
+  const { doorRequests, openDoors, stockStates, inspect: inspectRef } = bindings;
   const meshRef = useRef<InstancedMesh>(null);
   const obstacleField = useMemo(
-    () => (pieces && pieces.length > 0 ? buildObstacleField(pieces) : null),
+    () => (pieces.length > 0 ? buildObstacleField(pieces) : null),
     [pieces],
   );
+  const acousticCursor = useRef(world.stimuli.acoustic.latestSequence);
+  useEffect(() => {
+    acousticCursor.current = world.stimuli.acoustic.latestSequence;
+  }, [world.stimuli.acoustic]);
   const population = useRef<VillagerPopulation | null>(null);
   if (population.current === null) {
     population.current = createVillagerPopulation(settlement, count, obstacleField);
@@ -619,16 +599,15 @@ export function Villagers({
     if (openDoors) {
       state.externalOpenDoors = openDoors.current;
     }
-    // Шум этого кадра — в симуляцию. Очередь опустошается здесь и только
-    // здесь: дальше событие живёт своей жизнью, доходя до каждого в свой срок.
-    if (noise && noise.current.length > 0) {
-      for (const event of noise.current) {
-        emitNoise(state, event);
-      }
-      noise.current.length = 0;
+    // У каждой популяции свой курсор: люди читают события, не отнимая их у
+    // будущих животных. Дальше звук живёт по человеческому закону слуха.
+    const acoustic = world.stimuli.acoustic.readAfter(acousticCursor.current);
+    acousticCursor.current = acoustic.cursor;
+    for (const event of acoustic.events) {
+      emitNoise(state, event);
     }
-    state.threat = threat?.current ?? null;
-    stepVillagers(state, delta, nightRef.current ?? 0);
+    state.threat = world.stimuli.dangerousPresence.current;
+    stepVillagers(state, delta, world.time.night.current ?? 0);
 
     // Уровни складов — в изменяемые куски сцены. Раз в четверть секунды:
     // чаще не нужно, а карта состояний общая с часами и табло.
@@ -656,7 +635,7 @@ export function Villagers({
       // раньше, чем последний житель уйдёт домой: иначе задержавшийся
       // окажется заперт в зале до утра.
       const stillOut = state.villagers.some((villager) => villager.visible);
-      if ((nightRef.current ?? 0) < 0.55 || stillOut) {
+      if ((world.time.night.current ?? 0) < 0.55 || stillOut) {
         for (const doorId of state.settlement.alwaysOpen ?? []) {
           doorRequests.current.add(doorId);
         }

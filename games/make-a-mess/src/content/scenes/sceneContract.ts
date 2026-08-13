@@ -223,6 +223,8 @@ export interface AuthoredSceneDocument {
   readonly title: string;
   readonly environment: DestructionSceneDefinition["environment"];
   readonly world: SceneWorldDefinition;
+  /** Populations mounted by capability, never by checking this document id. */
+  readonly inhabitants?: DestructionSceneDefinition["inhabitantDefinitions"];
   readonly copy: DestructionSceneCopy;
   readonly groups: readonly SceneGroupDefinition[];
   readonly landscapeVisual?: LandscapeVisualDefinition;
