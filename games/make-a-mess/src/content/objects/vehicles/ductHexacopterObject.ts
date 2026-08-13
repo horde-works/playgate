@@ -150,9 +150,23 @@ const addFacets = (
   id: string,
   group: string,
   material: ObjectMaterialId,
-  facets: readonly Facet[],
+  source: readonly Facet[] | {
+    readonly facets: readonly Facet[];
+    readonly plateThickness: number;
+  },
   options: { readonly showEdges?: boolean; readonly doubleSided?: boolean } = {},
-) => parts.push(facetsToPart(id, group, material, facets, options));
+) => {
+  const assembly = "facets" in source ? source : null;
+  const facets: readonly Facet[] = assembly
+    ? assembly.facets
+    : (source as readonly Facet[]);
+  const part = facetsToPart(id, group, material, facets, options);
+  parts.push(
+    assembly
+      ? { ...part, plateThickness: assembly.plateThickness }
+      : part,
+  );
+};
 
 /**
  * Flat plate of a given thickness through four corners, thickness laid off along
@@ -167,7 +181,10 @@ const steelPlate = (
   d: ObjectPoint,
   thickness: number,
   tag: string,
-): Facet[] => {
+): {
+  readonly facets: readonly Facet[];
+  readonly plateThickness: number;
+} => {
   const edge1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
   const edge2 = [d[0] - a[0], d[1] - a[1], d[2] - a[2]];
   const normal = [
@@ -184,14 +201,17 @@ const steelPlate = (
   );
   const [a0, b0, c0, d0] = [a, b, c, d].map((p) => offset(p, -1));
   const [a1, b1, c1, d1] = [a, b, c, d].map((p) => offset(p, 1));
-  return [
-    { points: [a1, b1, c1, d1], tag },
-    { points: [d0, c0, b0, a0], tag },
-    { points: [a0, b0, b1, a1], tag },
-    { points: [b0, c0, c1, b1], tag },
-    { points: [c0, d0, d1, c1], tag },
-    { points: [d0, a0, a1, d1], tag },
-  ];
+  return {
+    plateThickness: thickness,
+    facets: [
+      { points: [a1, b1, c1, d1], tag },
+      { points: [d0, c0, b0, a0], tag },
+      { points: [a0, b0, b1, a1], tag },
+      { points: [b0, c0, c1, b1], tag },
+      { points: [c0, d0, d1, c1], tag },
+      { points: [d0, a0, a1, d1], tag },
+    ],
+  };
 };
 
 /** Chain of torque-box segments through a polyline: one member, real joints. */

@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   applyMotionTelemetryUpdate,
   createMotionTelemetryStore,
+  motionTelemetryPrimaryActivity,
   motionTelemetryMetricActivity,
   motionTelemetryAvailable,
   selectMotionTelemetrySnapshot,
@@ -49,6 +50,17 @@ test("a temporary autopilot mode does not erase the journey phase", () => {
   });
   assert.equal(sources.get("airship")?.phase, "departure");
   assert.equal(sources.get("airship")?.mode, "intercepting");
+});
+
+test("the panel headline follows the most urgent live machine action", () => {
+  const activities = [
+    { channel: "assignment", state: "airControl", priority: 10 },
+    { channel: "action", state: "attacking", priority: 40 },
+    { channel: "decision", state: "strengtheningFireSolution", priority: 50 },
+    { channel: "instinct", state: "evading", priority: 80 },
+  ];
+  assert.equal(motionTelemetryPrimaryActivity(activities)?.state, "evading");
+  assert.equal(motionTelemetryPrimaryActivity([]), null);
 });
 
 test("priority beats recency and a publisher cannot impersonate another source", () => {

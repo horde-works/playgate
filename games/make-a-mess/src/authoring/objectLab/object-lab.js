@@ -96,6 +96,38 @@ const edgeMaterial = new THREE.LineBasicMaterial({
 });
 
 const toVector = (value) => new THREE.Vector3(value[0], value[1], value[2]);
+const hingesByGroup = new Map(
+  Object.values(model.surfaceHinges ?? {}).map((hinge) => [hinge.group, hinge]),
+);
+const hingeParents = new Map();
+
+function parentFor(group) {
+  const hinge = hingesByGroup.get(group);
+  if (!hinge) return root;
+  let parent = hingeParents.get(group);
+  if (!parent) {
+    parent = new THREE.Group();
+    parent.name = `hinge:${group}`;
+    parent.position.copy(toVector(hinge.pivot));
+    const degrees = view.articulation?.[group] ?? hinge.restDegrees ?? 0;
+    parent.rotateOnAxis(toVector(hinge.axis).normalize(), THREE.MathUtils.degToRad(degrees));
+    root.add(parent);
+    hingeParents.set(group, parent);
+  }
+  return parent;
+}
+
+function attach(mesh, part) {
+  const hinge = hingesByGroup.get(part.group);
+  if (hinge) {
+    if (part.kind === "mesh") {
+      mesh.geometry.translate(-hinge.pivot[0], -hinge.pivot[1], -hinge.pivot[2]);
+    } else {
+      mesh.position.sub(toVector(hinge.pivot));
+    }
+  }
+  parentFor(part.group).add(mesh);
+}
 
 function orientAlongY(object, from, to) {
   const start = toVector(from);
@@ -120,12 +152,10 @@ for (const part of model.parts) {
     mesh = new THREE.Mesh(new THREE.BoxGeometry(...part.size), materials[part.material]);
     mesh.position.set(...part.center);
     if (part.rotation) mesh.rotation.set(...part.rotation);
-    addEdges(mesh);
   } else if (part.kind === "beam") {
     const length = toVector(part.to).distanceTo(toVector(part.from));
     mesh = new THREE.Mesh(new THREE.BoxGeometry(part.width, length, part.depth), materials[part.material]);
     orientAlongY(mesh, part.from, part.to);
-    addEdges(mesh);
   } else if (part.kind === "cylinder") {
     const length = toVector(part.to).distanceTo(toVector(part.from));
     mesh = new THREE.Mesh(
@@ -133,7 +163,6 @@ for (const part of model.parts) {
       materials[part.material],
     );
     orientAlongY(mesh, part.from, part.to);
-    addEdges(mesh);
   } else if (part.kind === "mesh") {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.Float32BufferAttribute(part.vertices.flat(), 3));
@@ -151,7 +180,6 @@ for (const part of model.parts) {
       material.vertexColors = true;
     }
     mesh = new THREE.Mesh(geometry, material);
-    if (part.showEdges !== false) addEdges(mesh, 18);
   }
   if (!mesh) continue;
   mesh.name = part.id;
@@ -164,7 +192,12 @@ for (const part of model.parts) {
   mesh.castShadow = !silhouette && !["canvas", "glazing", "palace-glazing", "lamp-glass", "lamp-bulb"].includes(part.material);
   mesh.receiveShadow = !silhouette;
   mesh.userData.group = part.group;
-  root.add(mesh);
+  attach(mesh, part);
+  if (part.kind === "mesh") {
+    if (part.showEdges !== false) addEdges(mesh, 18);
+  } else {
+    addEdges(mesh);
+  }
 }
 
 if (!silhouette) {

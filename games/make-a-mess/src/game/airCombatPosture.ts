@@ -92,6 +92,22 @@ export interface PostureSolution {
   readonly limit: "none" | "lift" | "surge";
 }
 
+/**
+ * Тот же физический расклад без построения кватерниона. Поле коротких
+ * намерений пробует его много раз, а полную позу исполнитель строит только для
+ * одного победившего заказа.
+ */
+export interface PostureDemand {
+  readonly axis: SceneVector3;
+  readonly acceptedPerpendicular: SceneVector3;
+  readonly acceptedAcceleration: SceneVector3;
+  readonly liftFraction: number;
+  readonly surge: number;
+  readonly margin: number;
+  readonly feasible: boolean;
+  readonly limit: PostureSolution["limit"];
+}
+
 // ---------------------------------------------------------------------------
 // Векторная мелочь
 // ---------------------------------------------------------------------------
@@ -188,12 +204,11 @@ export function aimAttitude(
  * уходит `feasible: false` и причина. Решение, что с этим делать, принимает
  * тот, кто просил, — здесь его нет и быть не должно.
  */
-export function solvePosture(
-  nose: readonly [number, number],
+export function postureDemand(
   aim: SceneVector3,
   wantedAcceleration: SceneVector3,
   capability: PostureCapability,
-): PostureSolution {
+): PostureDemand {
   const axis = normalize(aim, [0, 0, 1]);
   // Тяга обязана дать заказанное ускорение И удержать вес.
   const required: SceneVector3 = [
@@ -226,6 +241,36 @@ export function solvePosture(
   const acceptedPerpendicular =
     liftShare > 1 ? scale(perpendicular, 1 / liftShare) : perpendicular;
   const acceptedMagnitude = length(acceptedPerpendicular);
+  const surge =
+    surgeCeiling > EPSILON
+      ? Math.max(-surgeCeiling, Math.min(surgeCeiling, along))
+      : 0;
+
+  return {
+    axis,
+    acceptedPerpendicular,
+    acceptedAcceleration: [
+      acceptedPerpendicular[0] + axis[0] * surge,
+      acceptedPerpendicular[1] + axis[1] * surge - GRAVITY,
+      acceptedPerpendicular[2] + axis[2] * surge,
+    ],
+    liftFraction: acceptedMagnitude / GRAVITY - 1,
+    surge,
+    margin: Math.max(0, Math.min(1, 1 - Math.max(liftShare, Math.min(1, surgeShare)))),
+    feasible,
+    limit: !feasible ? "lift" : surgeShare > 1 ? "surge" : "none",
+  };
+}
+
+export function solvePosture(
+  nose: readonly [number, number],
+  aim: SceneVector3,
+  wantedAcceleration: SceneVector3,
+  capability: PostureCapability,
+): PostureSolution {
+  const demand = postureDemand(aim, wantedAcceleration, capability);
+  const { axis, acceptedPerpendicular } = demand;
+  const acceptedMagnitude = length(acceptedPerpendicular);
 
   // Направление подъёмной тяги и есть «вверх» у тела. Если поперечной
   // составляющей нет вовсе — ствол смотрит точно вдоль требуемой тяги, —
@@ -245,14 +290,11 @@ export function solvePosture(
 
   return {
     attitude: aimAttitude(nose, axis, up),
-    liftFraction: acceptedMagnitude / GRAVITY - 1,
-    surge:
-      surgeCeiling > EPSILON
-        ? Math.max(-surgeCeiling, Math.min(surgeCeiling, along))
-        : 0,
-    margin: Math.max(0, Math.min(1, 1 - Math.max(liftShare, Math.min(1, surgeShare)))),
-    feasible,
-    limit: !feasible ? "lift" : surgeShare > 1 ? "surge" : "none",
+    liftFraction: demand.liftFraction,
+    surge: demand.surge,
+    margin: demand.margin,
+    feasible: demand.feasible,
+    limit: demand.limit,
   };
 }
 

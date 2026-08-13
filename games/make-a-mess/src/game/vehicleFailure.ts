@@ -349,6 +349,14 @@ export interface VehicleRecoveryResult {
   readonly recovered: boolean;
 }
 
+/**
+ * Успешный уход или самостоятельный подъём продолжают прежнее задание.
+ * Только прибытие подменной машины завершает аварийный рейс целиком.
+ */
+export function recoveryKeepsFlightTask(phase: VehicleRecoveryPhase): boolean {
+  return phase !== "arrival";
+}
+
 export interface VehicleRecoveryCapability {
   readonly structureFlightworthy: boolean;
   /** Maximum lift divided by current weight. Values above one can climb. */
@@ -416,6 +424,13 @@ export interface VehicleFailureObservation {
   readonly routeProgressTracked?: boolean;
   /** False when a required control channel is physically inoperative. */
   readonly requiredControlAvailable: boolean;
+  /**
+   * False when the measured actuator response belongs to a different guidance
+   * owner than the command fields in this observation. Comparing a combat
+   * command delivered last frame with the authored route request of this frame
+   * is not a control mismatch; it is two controllers speaking in turn.
+   */
+  readonly controlResponseTracked?: boolean;
   readonly requestedControlEffort: number;
   readonly deliveredControlFraction: number;
   /** Positive lift/ballonet command, independent of propulsive effort. */
@@ -883,8 +898,10 @@ export function advanceVehicleFailureWatchdog(
     current.attitudeSeconds,
     delta,
   );
+  const routeProgressTracked = observation.routeProgressTracked !== false;
   const routeSeconds = heldSeconds(
     !suspended &&
+      routeProgressTracked &&
       !observation.turning &&
       ((observation.courseFollowsNose !== false &&
         Math.abs(observation.headingError) > envelope.maximumHeadingError) ||
@@ -897,6 +914,7 @@ export function advanceVehicleFailureWatchdog(
   );
   const controlMismatchSeconds = heldSeconds(
     !held &&
+      observation.controlResponseTracked !== false &&
       (!observation.requiredControlAvailable ||
         (observation.requestedControlEffort > 0.35 &&
           observation.deliveredControlFraction < 0.5) ||
@@ -906,7 +924,6 @@ export function advanceVehicleFailureWatchdog(
     delta,
   );
   const progressDelta = observation.progress - current.previousProgress;
-  const routeProgressTracked = observation.routeProgressTracked !== false;
   const stalledSeconds = heldSeconds(
     !suspended &&
       routeProgressTracked &&

@@ -141,9 +141,9 @@ I_ст    = J · f_шага / (m_куска_стороны · 320)  интенс
 ## 2. Каталог материалов
 
 Единственный список — `BreakableMaterial` в `destructionScene.ts`
-(18 материалов): `brick, wood, cloth, plaster, concrete, glass, steel,
-sheetMetal, plastic, stone, basalt, graphiteStone, darkGlass, foliage, grass,
-soil, earth, asphalt`. Материал — это КЛЮЧ во все таблицы ниже; **новый
+(19 материалов): `brick, wood, cloth, plaster, concrete, glass, steel,
+sheetMetal, aluminium, plastic, stone, basalt, graphiteStone, darkGlass,
+foliage, grass, soil, earth, asphalt`. Материал — это КЛЮЧ во все таблицы ниже; **новый
 материал заводится сразу во всех представлениях** (энергия, радиус пули,
 воксель, посадка, шероховатость, звук §8), иначе он молча получит чужие или
 аварийные значения.
@@ -164,7 +164,7 @@ soil, earth, asphalt`. Материал — это КЛЮЧ во все табл
 | plastic | 0.58 | basalt | 3.2 |
 | wood | 0.72 | steel | 24 |
 | grass | 0.78 | sheetMetal | 24 |
-| soil | 0.9 | | |
+| soil | 0.9 | aluminium | 2.2 |
 | earth | 0.95 | | |
 
 Отношения этой таблицы — валюта всей калибровки оружия: заряд определён как
@@ -202,14 +202,15 @@ HX-6 отцеплял от корпуса 3–7 членов; у кластер�
 `destructionRuntime.ts`: glass 0.24, darkGlass 0.22, brick 0.19, stone 0.18,
 basalt 0.16, graphiteStone 0.17, concrete 0.18, plaster 0.27, wood 0.2,
 plastic 0.22, cloth 0.32, foliage 0.34, grass 0.3, soil 0.3, earth 0.26,
-asphalt 0.24. Мягкое рвётся шире твёрдого. **У steel и sheetMetal записи НЕТ
-намеренно**: пулемёт сталь не пробивает — вместо дырки веер искр
-(`MG_STEEL_SPARK_MATERIAL`, `MakeAMessGame.tsx`).
+asphalt 0.24, aluminium 0.18. Мягкое рвётся шире твёрдого. **У steel и
+sheetMetal записи НЕТ намеренно**: пулемёт сталь не пробивает — вместо
+дырки веер искр (`MG_STEEL_SPARK_MATERIAL`, `MakeAMessGame.tsx`).
+`aluminium` дырку имеет: это дюраль, не броня.
 
 ### 2.4. Клетка решётки: voxelSizeByMaterial
 
 `destructionRuntime.ts`: glass/darkGlass 0.09, cloth 0.1, plaster 0.11,
-wood/plastic/brick/sheetMetal 0.12, concrete 0.14, stone/graphiteStone 0.15,
+wood/plastic/brick/sheetMetal 0.12, aluminium 0.11, concrete 0.14, stone/graphiteStone 0.15,
 basalt/earth/asphalt 0.16, soil/grass 0.18, steel 0.18, foliage 0.2. Хрупкое
 дробится мельче вязкого; панель (sheetMetal) рвётся мельче стального бруска —
 у неё нет толщины, которую надо колоть. Клетка — это и энергетический пол:
@@ -219,7 +220,7 @@ carve с радиусом меньше половины клетки матер�
 ### 2.5. Посадка обломка: crumbleOnLanding + landingDamageByMaterial
 
 `crumbleOnLanding` — кто вообще может пострадать от посадки/контактного
-удара: sheetMetal, wood, foliage, brick, stone, basalt, graphiteStone,
+удара: sheetMetal, aluminium, wood, foliage, brick, stone, basalt, graphiteStone,
 plaster, concrete, glass, darkGlass, grass, asphalt, earth. **Steel, plastic,
 cloth и soil в списке отсутствуют** — их контактный удар не берёт (сталь и
 пластик — конструкционно, см. §1.6).
@@ -237,6 +238,7 @@ minimumIntensity}, скорость в м/с, при РАВНЫХ массах �
 | brick | 4.8 | 7.6 | 0.15 |
 | grass | 4.8 | 7.8 | 0.14 |
 | earth | 5.2 | 8.2 | 0.15 |
+| aluminium | 6 | 16.5 | 0.1 |
 | concrete | 6.8 | 10.5 | 0.16 |
 | asphalt | 7.4 | 11.5 | 0.17 |
 | stone | 8.2 | 12.4 | 0.18 |
@@ -287,6 +289,15 @@ effectiveSpeed = approachSpeed · min(CAP, advantage)
 оружия sheetMetal остаётся сталью (24): пулемёт её не пробивает, ракета —
 берёт. Силовой набор машины остаётся `steel` и переживает всё: машина
 складывается, но не рассыпается конструктором.
+
+### 2.7а. aluminium: дюраль, не кузов и не фасад
+
+Третий металл. `sheetMetal` — стальной лист автомобиля (E = 24, пули нет).
+`matte-aluminium` — только текстурный профиль дворца, не материал удара.
+`aluminium` — обшивка Alclad: E = 2.2 (молоток берёт), пулевое отверстие
+0.18, посадка мнёт с меньшей скорости, чем кузов. Силовой набор рядом
+остаётся `steel`. Визуал — сатинированный блеск (metalness 0.86, roughness
+0.22), не матовый анодир и не автокраска.
 
 ### 2.8. Стекло: лопается, гаснет и рисует швы
 

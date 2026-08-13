@@ -6,6 +6,7 @@ import {
   liftApplicationPoint,
   liftHoldVerdict,
   rotorLiftState,
+  wingLiftState,
 } from "../games/make-a-mess/src/game/vehicleLiftGeometry.ts";
 import { HEXACOPTER_DUCTS, hexacopterDuctPoint } from "../games/make-a-mess/src/game/townHexacopter.ts";
 
@@ -103,4 +104,17 @@ test("плавучая машина никогда не теряет удерж�
   const verdict = liftHoldVerdict("buoyant", without(0, 1, 2, 3, 4), centre, 0, 1);
   assert.equal(verdict.holdsAttitude, true);
   assert.equal(verdict.holdsWeight, true);
+});
+
+test("крыло ниже сваливания срывается, а не снижается на оборотах", () => {
+  const panels = [
+    { point: [-8, 0, 1.2], available: 1 },
+    { point: [-8, 0, -2], available: 1 },
+    { point: [8, 0, 1.2], available: 1 },
+    { point: [8, 0, -2], available: 1 },
+  ];
+  const flying = liftHoldVerdict("wing", panels, [0, 0, 0], 0.4, 1);
+  const stalled = liftHoldVerdict("wing", panels, [0, 0, 0], 0.2, 1);
+  assert.equal(wingLiftState(flying), "flying");
+  assert.equal(wingLiftState(stalled), "stalled");
 });

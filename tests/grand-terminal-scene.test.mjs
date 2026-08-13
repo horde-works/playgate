@@ -142,6 +142,31 @@ test("the side halls are reachable and lead to the side platforms", () => {
   assert.equal(signLanterns.length, 18);
 });
 
+test("the entrance lobby wainscot leaves every street doorway clear", () => {
+  const streetDoorways = [
+    { center: -20, halfWidth: 2.25 },
+    { center: -9, halfWidth: 2.35 },
+    { center: 0, halfWidth: 2.35 },
+    { center: 9, halfWidth: 2.35 },
+    { center: 20, halfWidth: 2.25 },
+  ];
+  const wainscot = grandTerminalScene.breakablePieces.filter((piece) =>
+    piece.id.startsWith("terminal:interior:lobby:wainscot"),
+  );
+
+  assert.equal(wainscot.length > 0, true);
+  for (const piece of wainscot) {
+    for (const doorway of streetDoorways) {
+      const clearance = Math.abs(piece.position[0] - doorway.center);
+      assert.equal(
+        clearance >= doorway.halfWidth + piece.size[0] / 2,
+        true,
+        `${piece.id} blocks the street doorway at x=${doorway.center}`,
+      );
+    }
+  }
+});
+
 test("the station reuses its fixtures for continuous floor coverage", () => {
   const skyLamps = grandTerminalScene.lampDefinitions.filter(
     (lamp) => lamp.id.startsWith("terminal:sky-berth:") ||

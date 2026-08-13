@@ -129,6 +129,7 @@ const dustinessByMaterial: Record<BreakableMaterial, number> = {
   glass: 0.04,
   steel: 0,
   sheetMetal: 0,
+  aluminium: 0.06,
   plastic: 0.12,
   stone: 0.72,
   basalt: 0.62,

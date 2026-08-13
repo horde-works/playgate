@@ -52,6 +52,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useReducer,
@@ -151,7 +152,10 @@ import {
   type ShardDefinition,
   type ShardSource,
 } from "./destructionRuntime";
-import { createBreakablePieceIndex } from "./breakablePieceIndex";
+import {
+  createBreakablePieceIndex,
+  type BreakablePieceIndex,
+} from "./breakablePieceIndex";
 import {
   hingeCapacity,
   stepTether,
@@ -195,7 +199,11 @@ import {
   type DemolitionChargeRuntime,
 } from "./DemolitionChargeSystem";
 import { GrenadeProjectileVisual } from "./GrenadeProjectileVisual";
-import type { VehicleWeaponFireEvent } from "./vehicleGunnery";
+import { solveSteelPenetration } from "./ballisticPenetration";
+import type {
+  CannonProjectileProfile,
+  VehicleWeaponFireEvent,
+} from "./vehicleGunnery";
 import { DynamicBreakableWorld } from "./DynamicBreakableWorld";
 import {
   ExplosionFxSystem,
@@ -434,6 +442,8 @@ import { gameClockText, nextTimeOfDay, TIME_OF_DAY_TARGETS } from "./timeOfDay";
 import {
   createMotionTelemetryStore,
   motionTelemetryMetricActivity,
+  motionTelemetryPrimaryActivity,
+  type MotionTelemetryActivityChannel,
   type MotionTelemetryMachineKind,
   type MotionTelemetryMetric,
   type MotionTelemetrySnapshot,
@@ -445,6 +455,11 @@ import type {
   VehicleFailureEvent,
   VehicleFailureReason,
 } from "./vehicleFailure";
+import {
+  projectileRocketThreat,
+  type RocketThreat,
+  type RocketThreatRegistry,
+} from "./airCombatEvasion.ts";
 
 type ControlName = "forward" | "backward" | "left" | "right" | "run" | "jump";
 
@@ -708,6 +723,8 @@ interface TracerDefinition {
 
 interface GrenadeDefinition {
   readonly id: number;
+  /** Кадр-стрелок либо `player`; только владелец игнорирует свой снаряд. */
+  readonly ownerId: string;
   readonly kind: ExplosiveKind;
   readonly position: readonly [number, number, number];
   readonly velocity: readonly [number, number, number];
@@ -786,6 +803,11 @@ const ROCKET_TRAIL_COLORS = ["#ffcf67", "#f06a32", "#4b4d49"] as const;
 const MG_PROJECTILE_IMPULSE = 2.4;
 const MG_CARVE_BATCH_MAX_HITS = 2;
 const MG_CARVE_BATCH_LATENCY_MS = 140;
+const AP_STEEL_HOLE_RADIUS = 0.1;
+const PLAYER_CANNON_PROJECTILE: CannonProjectileProfile = {
+  kind: "machineGun",
+  steelPenetration: { steelThicknessAtNormal: 0 },
+};
 const MG_IMPACT_CHIP_COUNT = 96;
 const MG_IMPACT_CHIP_LIFE = 0.42;
 const MG_IMPACT_CHIP_MATERIAL = new MeshBasicMaterial({
@@ -820,6 +842,7 @@ const blastTransmissionByMaterial: Record<BreakableMaterial, number> = {
   basalt: 0.014,
   steel: 0.01,
   sheetMetal: 0.01,
+  aluminium: 0.04,
 };
 
 type BlastOccluderSource =
@@ -3098,6 +3121,7 @@ function Grenade({
   grenade,
   onExplode,
   forceFieldRef,
+  threatRegistry,
 }: {
   grenade: GrenadeDefinition;
   onExplode: (
@@ -3109,6 +3133,7 @@ function Grenade({
     fieldCellIndex?: number,
   ) => void;
   forceFieldRef?: MutableRefObject<BasaltForceFieldRuntime | null>;
+  threatRegistry: RocketThreatRegistry;
 }) {
   const body = useRef<RapierRigidBody>(null);
   const rocketVisual = useRef<Group>(null);
@@ -3116,6 +3141,7 @@ function Grenade({
   const exploded = useRef(false);
   const pendingContact = useRef<SceneVector3 | null>(null);
   const previousProjectilePosition = useRef<SceneVector3>(grenade.position);
+  const projectileAge = useRef(0);
   const trailTimer = useRef(0);
   const nextTrailSlot = useRef(0);
   const trailNoiseId = useRef(0);
@@ -3154,7 +3180,41 @@ function Grenade({
   const profile = explosiveProfile(grenade.kind);
   const isRocket = grenade.kind !== "grenade";
 
-  useEffect(() => {
+  // Реестр читает не расчётный дубль полёта, а само rapier-тело. Поэтому
+  // игла, тяжёлая и бортовая ракета приходят к автомату со своей фактической
+  // скоростью и траекторией, включая любой внешний импульс.
+  useBeforePhysicsStep(() => {
+    if (!isRocket || exploded.current || !body.current) {
+      return;
+    }
+    const position = body.current.translation();
+    const velocity = body.current.linvel();
+    const threat = projectileRocketThreat(
+      grenade.id,
+      grenade.ownerId,
+      grenade.kind,
+      [position.x, position.y, position.z],
+      [velocity.x, velocity.y, velocity.z],
+      projectileAge.current,
+    );
+    if (threat) {
+      threatRegistry.current.set(grenade.id, threat);
+    }
+    projectileAge.current += PHYSICS_TIME_STEP;
+  });
+
+  useEffect(
+    () => () => {
+      threatRegistry.current.delete(grenade.id);
+    },
+    [grenade.id, threatRegistry],
+  );
+
+  // Initialise the pooled instances in the same commit that mounts them.
+  // A passive effect is one paint too late: Three starts every instance at
+  // the identity matrix with a white material, so each rocket briefly showed
+  // one overlapped metre-wide cube at the world origin.
+  useLayoutEffect(() => {
     const mesh = rocketTrailMesh.current;
     if (!mesh) {
       return;
@@ -3180,6 +3240,7 @@ function Grenade({
       }
 
       exploded.current = true;
+      threatRegistry.current.delete(grenade.id);
       const translation = body.current.translation();
       const point: SceneVector3 = fieldHit?.point ??
         at ?? [translation.x, translation.y, translation.z];
@@ -3192,7 +3253,7 @@ function Grenade({
         fieldHit?.cellIndex,
       );
     },
-    [grenade.id, grenade.kind, onExplode],
+    [grenade.id, grenade.kind, onExplode, threatRegistry],
   );
 
   const trigger = useCallback(() => {
@@ -3515,6 +3576,7 @@ function ProjectileSystem({
   runtimeRef,
   onExplode,
   forceFieldRef,
+  threatRegistry,
 }: {
   runtimeRef: MutableRefObject<ProjectileRuntime | null>;
   onExplode: (
@@ -3526,6 +3588,7 @@ function ProjectileSystem({
     fieldCellIndex?: number,
   ) => void;
   forceFieldRef?: MutableRefObject<BasaltForceFieldRuntime | null>;
+  threatRegistry: RocketThreatRegistry;
 }) {
   const [projectiles, setProjectiles] = useState<readonly GrenadeDefinition[]>(
     [],
@@ -3536,7 +3599,10 @@ function ProjectileSystem({
       spawn: (definition) => {
         setProjectiles((current) => [...current, definition]);
       },
-      clear: () => setProjectiles([]),
+      clear: () => {
+        threatRegistry.current.clear();
+        setProjectiles([]);
+      },
     };
     runtimeRef.current = api;
     return () => {
@@ -3544,7 +3610,7 @@ function ProjectileSystem({
         runtimeRef.current = null;
       }
     };
-  }, [runtimeRef]);
+  }, [runtimeRef, threatRegistry]);
 
   const handleExplode = useCallback(
     (
@@ -3569,6 +3635,7 @@ function ProjectileSystem({
       grenade={projectile}
       onExplode={handleExplode}
       forceFieldRef={forceFieldRef}
+      threatRegistry={threatRegistry}
     />
   ));
 }
@@ -4498,6 +4565,20 @@ function OpenWorldScene({
     }
     return byCluster;
   }, [breakablePieces, compoundOwnedPieceClusters]);
+  // The user's machine gun already resolves authored pieces through a spatial
+  // index after Rapier has found the occupied area. Moving compound carriers
+  // need the same index in their authored frame: transform the ray, do not
+  // traverse every render batch in the world.
+  const compoundMemberIndexByCluster = useMemo(
+    () =>
+      new Map(
+        [...compoundMemberPiecesByCluster].map(([clusterId, members]) => [
+          clusterId,
+          createBreakablePieceIndex(members),
+        ]),
+      ),
+    [compoundMemberPiecesByCluster],
+  );
   /** Авторский габарит кластера — дешёвая отсечка дальних взрывов. */
   const compoundClusterBounds = useMemo(() => {
     const bounds = new Map<
@@ -4633,6 +4714,7 @@ function OpenWorldScene({
   } | null>(null);
   const tracerRuntime = useRef<TracerRuntime | null>(null);
   const projectileRuntime = useRef<ProjectileRuntime | null>(null);
+  const projectileThreats = useRef(new Map<number, RocketThreat>());
   const machineGunImpactRuntime = useRef<MachineGunImpactRuntime | null>(null);
   const explosionFxRuntime = useRef<ExplosionFxRuntime | null>(null);
   const firing = useRef(false);
@@ -7339,16 +7421,16 @@ function OpenWorldScene({
   }, [flushBulletCarve]);
 
   /**
-   * ОДИН ВЫСТРЕЛ ПУЛЕМЁТА, ОТКУДА БЫ ОН НИ ВЫШЕЛ.
+   * ОДИН ТРАКТ ПУШЕЧНОГО ВЫСТРЕЛА, ОТКУДА БЫ ОН НИ ВЫШЕЛ.
    *
-   * Без аргумента стреляет человек — из камеры, как и раньше. С `mount`
-   * стреляет БОРТОВАЯ установка: ей передают дульный срез и ось ствола, а всё
-   * остальное — луч, поиск куска, carve, импульс, трасса, звук — общее.
-   * Отдельного «оружия машин» не заводится: боеприпас один и тот же.
+   * Без аргумента стреляет человек своим непробивающим боеприпасом. Бортовая
+   * установка добавляет только паспорт снаряда; луч, поиск куска, импульс,
+   * отверстие, трасса и звук остаются общими.
    */
   const fireRound = useCallback((mount?: {
     readonly origin: Vector3;
     readonly direction: Vector3;
+    readonly projectile: CannonProjectileProfile;
   }) => {
     const shooterPosition = mount ? mount.origin : camera.position;
     const traceId = startShotPerformanceTrace();
@@ -7382,7 +7464,7 @@ function OpenWorldScene({
     );
     const playerBody = pieceBodies.current.get("player");
     const raycastStartedAt = performance.now();
-    const physicsHit = world.castRay(
+    const physicsHit = world.castRayAndGetNormal(
       projectileRay,
       MG_RANGE,
       true,
@@ -7418,18 +7500,69 @@ function OpenWorldScene({
       performance.now() - raycastStartedAt,
       { hit: physicsHit !== null },
     );
+    type ShotHit = {
+      readonly distance: number;
+      readonly point: Vector3;
+      readonly normal: Vector3;
+      readonly data: BreakableHitData;
+    };
+    type CompoundShotRay = {
+      readonly clusterId: string;
+      readonly frame: NonNullable<ReturnType<typeof liveCompoundFrame>>;
+      readonly index: BreakablePieceIndex;
+      readonly origin: SceneVector3;
+      readonly direction: SceneVector3;
+    };
+    let compoundShotRay: CompoundShotRay | null = null;
+    const raycastCompound = (
+      ray: CompoundShotRay,
+      accept: (piece: BreakablePieceDefinition) => boolean,
+    ): ShotHit | null => {
+      const canonical = ray.index.raycast(
+        ray.origin,
+        ray.direction,
+        MG_RANGE,
+        accept,
+      );
+      if (!canonical) return null;
+      const worldPoint = compoundClusterPointToWorld(
+        ray.frame.runtime.definition.origin,
+        ray.frame.transform,
+        canonical.point,
+      );
+      const normalTip = compoundClusterPointToWorld(
+        ray.frame.runtime.definition.origin,
+        ray.frame.transform,
+        [
+          canonical.point[0] + canonical.normal[0],
+          canonical.point[1] + canonical.normal[1],
+          canonical.point[2] + canonical.normal[2],
+        ],
+      );
+      return {
+        distance: canonical.distance,
+        point: new Vector3(...worldPoint),
+        normal: new Vector3(
+          normalTip[0] - worldPoint[0],
+          normalTip[1] - worldPoint[1],
+          normalTip[2] - worldPoint[2],
+        ).normalize(),
+        data: { pieceId: canonical.piece.id },
+      };
+    };
     let hit:
-      | {
-          readonly distance: number;
-          readonly point: Vector3;
-          readonly data: BreakableHitData;
-        }
+      | ShotHit
       | undefined;
     if (physicsHit) {
       const distance = physicsHit.timeOfImpact;
       const point = shooterPosition
         .clone()
         .addScaledVector(direction, distance);
+      const normal = new Vector3(
+        physicsHit.normal.x,
+        physicsHit.normal.y,
+        physicsHit.normal.z,
+      );
       const parent = physicsHit.collider.parent();
       const registeredId = parent
         ? bodyIdByHandle.current.get(parent.handle)
@@ -7455,21 +7588,46 @@ function OpenWorldScene({
             { readonly compoundKinematicCluster?: unknown } | undefined
         )?.compoundKinematicCluster;
         if (typeof compoundId === "string") {
-          // Compound colliders move away from their authored coordinates.
-          // This rare branch keeps exact member selection; ordinary city fire
-          // never enters the multi-million-triangle render raycast anymore.
-          raycaster.current.set(shooterPosition, direction);
-          const visual = intersectBreakables(MG_RANGE).find((candidate) => {
-            const candidateData = readBreakableHit(candidate);
-            return Boolean(
-              candidateData?.pieceId &&
-              breakablePieceById.get(candidateData.pieceId)?.clusterId ===
-                compoundId,
+          // Rapier has already selected the moving carrier. Resolve its exact
+          // authored member in the carrier frame, through the same spatial
+          // ray index used by the optimized player weapon path.
+          const frame = liveCompoundFrame(compoundId);
+          const index = compoundMemberIndexByCluster.get(compoundId);
+          if (frame && index) {
+            const authoredOrigin = compoundClusterPointToLocal(
+              frame.runtime.definition.origin,
+              frame.transform,
+              [shooterPosition.x, shooterPosition.y, shooterPosition.z],
             );
-          });
-          data = visual ? readBreakableHit(visual) : null;
-          if (visual && data) {
-            hit = { distance: visual.distance, point: visual.point, data };
+            const authoredAhead = compoundClusterPointToLocal(
+              frame.runtime.definition.origin,
+              frame.transform,
+              [
+                shooterPosition.x + direction.x,
+                shooterPosition.y + direction.y,
+                shooterPosition.z + direction.z,
+              ],
+            );
+            compoundShotRay = {
+              clusterId: compoundId,
+              frame,
+              index,
+              origin: authoredOrigin,
+              direction: [
+                authoredAhead[0] - authoredOrigin[0],
+                authoredAhead[1] - authoredOrigin[1],
+                authoredAhead[2] - authoredOrigin[2],
+              ],
+            };
+            const canonical = raycastCompound(
+              compoundShotRay,
+              (candidate) =>
+                frame.runtime.attachedMemberIds.has(candidate.id) &&
+                !brokenPiecesRef.current.has(candidate.id) &&
+                !shatteredPiecesRef.current.has(candidate.id),
+            );
+            data = canonical?.data ?? null;
+            if (canonical) hit = canonical;
           }
         } else {
           const staticPiece = worldContactIndex.at(
@@ -7484,7 +7642,7 @@ function OpenWorldScene({
         }
       }
       if (!hit && data) {
-        hit = { distance, point, data };
+        hit = { distance, point, normal, data };
       }
     }
     const fieldRayEnd = shooterPosition
@@ -7510,6 +7668,109 @@ function OpenWorldScene({
           fieldHit.point[2] - shooterPosition.z,
         )
       : Number.POSITIVE_INFINITY;
+    const projectile = mount?.projectile ?? PLAYER_CANNON_PROJECTILE;
+    const penetratedSteel: {
+      readonly targetId: string;
+      readonly piece: BreakablePieceDefinition;
+      readonly point: Vector3;
+    }[] = [];
+
+    // БРОНЕБОЙНЫЙ ЛУЧ НЕ ПЕРЕПРЫГИВАЕТ К СЛЕДУЮЩЕЙ ЦЕЛИ. Он последовательно
+    // оплачивает каждый пересечённый стальной лист остатком одного и того же
+    // паспортного пробития. После первого физического контакта поиск остаётся
+    // в найденной зоне: у составной машины — в её авторском индексе, у мира —
+    // в том же индексе, которым уже пользуется оптимизированный пулемёт игрока.
+    if (
+      projectile.kind === "armourPiercing" &&
+      hit &&
+      fieldHitDistance >= hit.distance
+    ) {
+      const consumed = new Set<string>();
+      let steelCapacity =
+        projectile.steelPenetration.steelThicknessAtNormal;
+      const nextCanonicalHit = (afterDistance: number): ShotHit | null => {
+        // Overlapping authored boxes may enter before the sheet just consumed.
+        // The former render-ray path skipped those intersections by distance;
+        // retain that ordering while keeping the search bounded to the index.
+        for (let guard = 0; guard < 32; guard += 1) {
+          const candidate = compoundShotRay
+            ? raycastCompound(
+                compoundShotRay,
+                (piece) =>
+                  !consumed.has(piece.id) &&
+                  compoundShotRay!.frame.runtime.attachedMemberIds.has(
+                    piece.id,
+                  ) &&
+                  !brokenPiecesRef.current.has(piece.id) &&
+                  !shatteredPiecesRef.current.has(piece.id),
+              )
+            : (() => {
+                const canonical = worldContactIndex.raycast(
+                  [shooterPosition.x, shooterPosition.y, shooterPosition.z],
+                  [direction.x, direction.y, direction.z],
+                  MG_RANGE,
+                  (piece) =>
+                    !consumed.has(piece.id) &&
+                    !brokenPiecesRef.current.has(piece.id) &&
+                    !carvedPiecesRef.current.has(piece.id) &&
+                    !shatteredPiecesRef.current.has(piece.id),
+                );
+                return canonical
+                  ? {
+                      distance: canonical.distance,
+                      point: new Vector3(...canonical.point),
+                      normal: new Vector3(...canonical.normal),
+                      data: { pieceId: canonical.piece.id },
+                    }
+                  : null;
+              })();
+          if (!candidate) return null;
+          const candidateId = candidate.data.pieceId;
+          if (candidate.distance > afterDistance + 1e-3) return candidate;
+          if (!candidateId) return null;
+          consumed.add(candidateId);
+        }
+        return null;
+      };
+
+      while (hit && steelCapacity > 0) {
+        const targetId =
+          hit.data.pieceId ?? hit.data.shardId ?? hit.data.remnantId;
+        const piece = hit.data.pieceId
+          ? breakablePieceById.get(hit.data.pieceId)
+          : undefined;
+        const material = piece?.material ?? hit.data.material;
+        if (
+          !targetId ||
+          !piece ||
+          material !== "steel" ||
+          piece.plateThickness === undefined
+        ) {
+          break;
+        }
+        const verdict = solveSteelPenetration(
+          { steelThicknessAtNormal: steelCapacity },
+          {
+            plateThickness: piece.plateThickness,
+            direction: [direction.x, direction.y, direction.z],
+            normal: [hit.normal.x, hit.normal.y, hit.normal.z],
+          },
+        );
+        if (!verdict.penetrates) break;
+
+        penetratedSteel.push({ targetId, piece, point: hit.point.clone() });
+        consumed.add(targetId);
+        steelCapacity = verdict.residualThickness;
+
+        const continuation = nextCanonicalHit(hit.distance);
+        if (!continuation) {
+          hit = undefined;
+          break;
+        }
+        hit = continuation;
+      }
+    }
+
     const fieldIntercepts =
       fieldHit !== null && (!hit || fieldHitDistance < hit.distance);
 
@@ -7529,6 +7790,47 @@ function OpenWorldScene({
       [end.x, end.y, end.z],
     );
 
+    for (const penetration of penetratedSteel) {
+      const { piece, point, targetId } = penetration;
+      machineGunImpactRuntime.current?.spawn(
+        [point.x, point.y, point.z],
+        [direction.x, direction.y, direction.z],
+        "steel",
+      );
+      playDebrisSound("steel", 0.7);
+      if (
+        !brokenPiecesRef.current.has(piece.id) &&
+        vehicleFrameForCluster(piece.clusterId) &&
+        compoundKinematicClusters.current.has(piece.clusterId)
+      ) {
+        queueCompoundKinematicImpulse(
+          compoundKinematicImpulses,
+          piece.clusterId,
+          {
+            impulse: [
+              direction.x * MG_PROJECTILE_IMPULSE,
+              direction.y * MG_PROJECTILE_IMPULSE,
+              direction.z * MG_PROJECTILE_IMPULSE,
+            ],
+            point: [point.x, point.y, point.z],
+          },
+        );
+      }
+      queueBulletCarve(targetId, {
+        traceId,
+        point: [point.x, point.y, point.z],
+        direction: [direction.x, direction.y, direction.z],
+        radius: AP_STEEL_HOLE_RADIUS,
+        material: "steel",
+        pieceId: piece.id,
+        parentId: null,
+      });
+      markShotPerformance(traceId, "steel_penetration", undefined, {
+        targetId,
+        plateThickness: piece.plateThickness,
+      });
+    }
+
     if (fieldIntercepts) {
       const fieldImpactStartedAt = performance.now();
       basaltForceField.current?.hitCell(
@@ -7546,7 +7848,14 @@ function OpenWorldScene({
     }
 
     if (!hit) {
-      setShotPerformanceOutcome(traceId, "miss");
+      if (penetratedSteel.length > 0) {
+        setShotPerformanceOutcome(traceId, "physical_object", {
+          penetratedSteel: penetratedSteel.length,
+          continuedToRangeLimit: true,
+        });
+      } else {
+        setShotPerformanceOutcome(traceId, "miss");
+      }
       return;
     }
 
@@ -7743,8 +8052,9 @@ function OpenWorldScene({
     camera,
     carveAt,
     carveLooseTarget,
+    compoundMemberIndexByCluster,
     forceFieldActive,
-    intersectBreakables,
+    liveCompoundFrame,
     queueBulletCarve,
     rapier,
     settleWorld,
@@ -9233,6 +9543,7 @@ function OpenWorldScene({
     const nextGrenadeId = grenadeId.current;
     projectileRuntime.current?.spawn({
       id: nextGrenadeId,
+      ownerId: "player",
       kind: "grenade",
       position: [origin.x, origin.y, origin.z],
       velocity: [direction.x * 23, direction.y * 23 + 1.4, direction.z * 23],
@@ -9263,6 +9574,7 @@ function OpenWorldScene({
     const speed = explosiveProfile(kind).projectile.speed;
     projectileRuntime.current?.spawn({
       id: nextGrenadeId,
+      ownerId: "player",
       kind,
       position: [origin.x, origin.y, origin.z],
       velocity: [
@@ -9273,23 +9585,18 @@ function OpenWorldScene({
     });
   }, [camera]);
 
-  /**
-   * БОРТОВОЕ ОРУЖИЕ МАШИНЫ СТРЕЛЯЕТ ТЕМ ЖЕ, ЧЕМ И ЧЕЛОВЕК.
-   *
-   * Система машин присылает уже готовые мировые выстрелы — луч из дульного
-   * среза и снаряд с наследованной скоростью носителя, — а здесь они попадают
-   * в те же самые тракты: `fireRound` для пулемёта и общий пул снарядов для
-   * ракеты. Никакого второго оружия «для машин» не заводится: разойдись эти
-   * два тракта, и одна и та же пуля начала бы вести себя по-разному в
-   * зависимости от того, кто нажал.
-   */
+  /** Борт передаёт мировую трассу и паспорт снаряда в общий оружейный тракт. */
   const handleVehicleWeaponFire = useCallback(
     (event: VehicleWeaponFireEvent) => {
       for (const shot of event.shots) {
         const origin = new Vector3(...shot.origin);
         const direction = new Vector3(...shot.direction).normalize();
         if (shot.weapon === "cannon") {
-          fireRound({ origin, direction });
+          fireRound({
+            origin,
+            direction,
+            projectile: shot.cannonProjectile ?? PLAYER_CANNON_PROJECTILE,
+          });
           continue;
         }
         grenadeId.current += 1;
@@ -9297,6 +9604,7 @@ function OpenWorldScene({
           .projectile.speed;
         projectileRuntime.current?.spawn({
           id: grenadeId.current,
+          ownerId: event.frameId,
           kind: shot.explosive ?? "podRocket",
           position: [origin.x, origin.y, origin.z],
           // Снаряд наследует ход носителя: ровно на это и решался прицел
@@ -10186,6 +10494,9 @@ function OpenWorldScene({
             worldRadius={scene.worldRadius}
             center={scene.worldCenter}
             pieces={breakablePieces}
+            // Denser low turf preserves a continuous grass cover inside the
+            // village without bringing back the former tall foreground wall.
+            count={42000}
           />
           <SmokePlumes nightRef={nightRef} />
           <Birds
@@ -10286,6 +10597,7 @@ function OpenWorldScene({
         runtimeRef={projectileRuntime}
         onExplode={handleGrenadeExplode}
         forceFieldRef={forceFieldActive ? basaltForceField : undefined}
+        threatRegistry={projectileThreats}
       />
       <VehicleFrameSystem
         showRouteOverlay={routeOverlayEnabled}
@@ -10330,6 +10642,7 @@ function OpenWorldScene({
         contactMaterialOf={contactMaterialOf}
         onContactDamage={handleContactDamage}
         onVehicleWeaponFire={handleVehicleWeaponFire}
+        projectileThreats={projectileThreats}
         onVehicleFailure={onVehicleFailure}
       />
       <AstanaTrainSystem
@@ -11550,6 +11863,44 @@ const telemetryModeLabels: Readonly<Record<string, TranslationKey>> = {
   stabilizing: "telemetry.mode.stabilizing",
 };
 
+const telemetryActivityChannelLabels: Readonly<
+  Record<MotionTelemetryActivityChannel, TranslationKey>
+> = {
+  assignment: "telemetry.activity.channel.assignment",
+  action: "telemetry.activity.channel.action",
+  decision: "telemetry.activity.channel.decision",
+  instinct: "telemetry.activity.channel.instinct",
+};
+
+const telemetryActivityLabels: Readonly<Record<string, TranslationKey>> = {
+  airControl: "telemetry.activity.airControl",
+  routeFlight: "telemetry.activity.routeFlight",
+  manualFlight: "telemetry.activity.manualFlight",
+  recovery: "telemetry.activity.recovery",
+  guarding: "telemetry.activity.guarding",
+  interceptingTarget: "telemetry.activity.interceptingTarget",
+  attacking: "telemetry.activity.attacking",
+  breakingAttack: "telemetry.activity.breakingAttack",
+  repositioning: "telemetry.activity.repositioning",
+  disengaging: "telemetry.activity.disengaging",
+  flyingFigure: "telemetry.activity.flyingFigure",
+  correctingRoute: "telemetry.activity.correctingRoute",
+  followingRoute: "telemetry.activity.followingRoute",
+  recoveringFlight: "telemetry.activity.recoveringFlight",
+  emergencyDescent: "telemetry.activity.emergencyDescent",
+  emergencyLanding: "telemetry.activity.emergencyLanding",
+  awaitingRecovery: "telemetry.activity.awaitingRecovery",
+  awaitingReplacement: "telemetry.activity.awaitingReplacement",
+  rebuilding: "telemetry.activity.rebuilding",
+  returningToService: "telemetry.activity.returningToService",
+  righting: "telemetry.activity.righting",
+  salvagingFireWindow: "telemetry.activity.salvagingFireWindow",
+  strengtheningFireSolution: "telemetry.activity.strengtheningFireSolution",
+  holdingFireSolution: "telemetry.activity.holdingFireSolution",
+  evading: "telemetry.activity.evading",
+  avoidingSurface: "telemetry.activity.avoidingSurface",
+};
+
 function telemetryValue(metric: MotionTelemetryMetric, locale: string): string {
   const { values, unit } = telemetryValueParts(metric, locale);
   return `${values.join(" / ")}${unit === "°" ? "" : " "}${unit}`;
@@ -11728,10 +12079,14 @@ function MotionTelemetryPanel({
   }
   const locale =
     language === "ru" ? "ru-RU" : language === "es" ? "es-ES" : "en-GB";
-  const operationalState = snapshot.mode ?? snapshot.phase;
-  const operationalStateKey = snapshot.mode
-    ? telemetryModeLabels[snapshot.mode]
-    : telemetryPhaseLabels[snapshot.phase];
+  const primaryActivity = motionTelemetryPrimaryActivity(snapshot.activities);
+  const operationalState =
+    primaryActivity?.state ?? snapshot.mode ?? snapshot.phase;
+  const operationalStateKey = primaryActivity
+    ? telemetryActivityLabels[primaryActivity.state]
+    : snapshot.mode
+      ? telemetryModeLabels[snapshot.mode]
+      : telemetryPhaseLabels[snapshot.phase];
   const pitchMetric = snapshot.metrics.find(
     (metric) => metric.id === "pitch" && typeof metric.value === "number",
   );
@@ -11818,6 +12173,26 @@ function MotionTelemetryPanel({
           {operationalStateKey ? t(operationalStateKey) : operationalState}
         </strong>
       </header>
+      {snapshot.activities?.length ? (
+        <dl className="motion-telemetry-activities">
+          {snapshot.activities.map((activity) => {
+            const rowKey = `activity:${activity.channel}:${activity.state}`;
+            const stateLabel = telemetryActivityLabels[activity.state];
+            return (
+              <div
+                key={`${activity.channel}:${activity.state}`}
+                ref={inkRef(rowKey)}
+                className={`${inkClass(rowKey)}${
+                  activity === primaryActivity ? " is-primary" : ""
+                }`}
+              >
+                <dt>{t(telemetryActivityChannelLabels[activity.channel])}</dt>
+                <dd>{stateLabel ? t(stateLabel) : activity.state}</dd>
+              </div>
+            );
+          })}
+        </dl>
+      ) : null}
       {attitude ? (
         <div
           ref={inkRef("instruments")}

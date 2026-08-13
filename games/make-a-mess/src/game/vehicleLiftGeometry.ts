@@ -26,6 +26,13 @@ import type { SceneVector3 } from "./destructionScene.ts";
  *     его не удержит: машина обязана завалиться и падать кувыркаясь, а не
  *     «плавно опускаться с выключенными винтами».
  *
+ * У КРЫЛАТОЙ МАШИНЫ подъём рождается на крыле, и только пока есть напор.
+ * Нет хода — нет силы. Точка приложения — уцелевшая площадь крыла, как у
+ * винтокрылой уцелевшие движители: потеряла консоль — сила уехала к
+ * живой. Удержание позы — та же выпуклая оболочка панелей. Удержание
+ * веса — уже не тяга моторов, а `q·S·CLmax` на текущей скорости: ниже
+ * сваливания машина не «снижается на оборотах», а срывается.
+ *
  * У ПОЕЗДА, СУДНА И АВТОМОБИЛЯ подъёма нет вовсе: их держит опора. Такая
  * машина объявляет `lift: "none"`, и оба вопроса ниже для неё не задаются.
  *
@@ -33,7 +40,11 @@ import type { SceneVector3 } from "./destructionScene.ts";
  */
 
 /** Источник подъёма. Свойство ВИДА судна, а не его имени. */
-export type VehicleLiftSource = "buoyant" | "rotor" | "none";
+export type VehicleLiftSource = "buoyant" | "rotor" | "wing" | "none";
+
+function usesDistributedLift(source: VehicleLiftSource): boolean {
+  return source === "rotor" || source === "wing";
+}
 
 export interface LiftPointState {
   /** Точка приложения в авторских координатах машины. */
@@ -129,16 +140,17 @@ export function isInsideConvexHull(
  *
  * Для газовой оболочки это авторский центр объёма, и он НЕ двигается: §6.2
  * контракта запрещает бегать за центром масс, иначе повреждение перестаёт
- * быть наблюдаемым. Для винтокрылой машины формула та же по смыслу — «там,
- * где сила рождается», — но рождается она в движителях, поэтому горизонталь
- * берётся из уцелевших точек, а высота остаётся паспортной.
+ * быть наблюдаемым. Для винтокрылой и крылатой машины формула та же по
+ * смыслу — «там, где сила рождается», — но рождается она в движителях или
+ * на панелях крыла, поэтому горизонталь берётся из уцелевших точек, а
+ * высота остаётся паспортной.
  */
 export function liftApplicationPoint(
   source: VehicleLiftSource,
   authoredCentre: SceneVector3,
   points: readonly LiftPointState[],
 ): SceneVector3 {
-  if (source !== "rotor") {
+  if (!usesDistributedLift(source)) {
     return authoredCentre;
   }
   let weight = 0;
@@ -173,7 +185,7 @@ export function liftHoldVerdict(
   weight: number,
   margin = 0.05,
 ): LiftHoldVerdict {
-  if (source !== "rotor") {
+  if (!usesDistributedLift(source)) {
     // Газовая оболочка держит машину сама, а опорная машина стоит на опоре:
     // вопрос о геометрии удержания для них не возникает.
     return { holdsWeight: true, holdsAttitude: true, liftToWeight: 1 };
@@ -218,6 +230,24 @@ export function rotorLiftState(verdict: LiftHoldVerdict): RotorLiftState {
 }
 
 /**
+ * Исход крылатой машины. Слова другие, потому что физика другая:
+ *
+ *   `flying`   — напор и площадь держат вес, панели охватывают центр масс;
+ *   `stalled`  — позу ещё держит (крыло цело), веса не хватает: скорость
+ *                ниже сваливания или закрылки/консоль съедены. Это не
+ *                управляемое снижение коптера — подъёма просто нет;
+ *   `tumbling` — живая площадь не охватывает центр масс (оторвало консоль).
+ */
+export type WingLiftState = "flying" | "stalled" | "tumbling";
+
+export function wingLiftState(verdict: LiftHoldVerdict): WingLiftState {
+  if (!verdict.holdsAttitude) {
+    return "tumbling";
+  }
+  return verdict.holdsWeight ? "flying" : "stalled";
+}
+
+/**
  * ПОСАДКА ВИНТОКРЫЛОЙ МАШИНЫ — не швартовка.
  *
  * У коптера нет ни мачты, ни причального захвата, ни носового узла: их
@@ -254,11 +284,21 @@ export function isRotorLandingComplete(
     readonly angularSpeed: number;
   },
   supportContacts: number,
+  /**
+   * В живом мире лучи стоек — источник истины: малая высота сама по себе не
+   * означает касание. `false` оставляет геометрический суррогат стендам,
+   * которые опоры не трассируют.
+   */
+  supportProbeIsAuthoritative = false,
 ): boolean {
+  const supported =
+    supportContacts > 0 ||
+    (!supportProbeIsAuthoritative &&
+      offset.height <= tolerance.height * 0.35);
   return (
     offset.horizontal <= tolerance.radius &&
     offset.height <= tolerance.height &&
-    (supportContacts > 0 || offset.height <= tolerance.height * 0.35) &&
+    supported &&
     motion.speed <= tolerance.speed &&
     Math.abs(motion.verticalSpeed) <= tolerance.verticalSpeed &&
     motion.uprightCos >= tolerance.uprightCos &&

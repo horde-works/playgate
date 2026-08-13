@@ -110,6 +110,12 @@ export type BreakableMaterial =
    * всё: машина складывается, но не рассыпается конструктором.
    */
   | "sheetMetal"
+  /**
+   * ДЮРАЛЬ / ALCLAD. Обшивка самолёта, не кузов и не анодированный фасад.
+   * Тонкий лист берёт пулю и молоток; силовой набор рядом остаётся сталью.
+   * Визуал — сатинированный блеск, не `matte-aluminium` дворца.
+   */
+  | "aluminium"
   // Пластиковая обшивка (экраны лоджий, сайдинг): легче и мягче стали,
   // пробивается честно, но не крошится в пыль как штукатурка.
   | "plastic"
@@ -298,6 +304,8 @@ export interface BreakablePieceDefinition {
   readonly visualProfile?: SurfacePolygonProfile;
   readonly visualMesh?: SurfaceMeshProfile;
   readonly voxelization?: DamageVoxelizationDefinition;
+  /** Физическая толщина бронелиста, независимо от сетки разрушения. */
+  readonly plateThickness?: number;
   readonly volume?: number;
   readonly bearingArea?: number;
   /** Stable authored world root; terrain does not depend on material choice. */
@@ -496,6 +504,18 @@ export const materialRuntimeProfiles: Record<
     debrisColor: "#747b7d",
     debrisCount: 3,
     restitution: 0.04,
+  },
+  aluminium: {
+    density: 1.35,
+    impulse: 2.05,
+    lift: 0.34,
+    torque: 0.16,
+    fractureRadius: [0.92, 0.7],
+    neighborChance: 0.18,
+    dustColor: "#d8dce0",
+    debrisColor: "#9aa09c",
+    debrisCount: 4,
+    restitution: 0.05,
   },
   stone: {
     density: 2.55,
@@ -5684,6 +5704,14 @@ export const structuralMaterialProfiles: Record<
     compressionStrength: 220,
     cantilever: 2.1,
     maximumVerticalGap: 1.1,
+    carriesAttachments: true,
+    sideAttachmentReach: 0.24,
+  },
+  aluminium: {
+    density: materialRuntimeProfiles.aluminium.density,
+    compressionStrength: 90,
+    cantilever: 0.85,
+    maximumVerticalGap: 0.7,
     carriesAttachments: true,
     sideAttachmentReach: 0.24,
   },

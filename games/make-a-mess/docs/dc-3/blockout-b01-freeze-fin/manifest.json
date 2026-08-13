@@ -1,0 +1,86 @@
+{
+  "modelId": "douglas-dc3-blockout",
+  "revision": "b01-2026-08-13-prototype",
+  "modelHash": "5a197785a856",
+  "generatedAt": "2026-08-13T14:36:27.285Z",
+  "views": [
+    {
+      "id": "front",
+      "label": "Front +Z · span, dihedral, three-blade props",
+      "projection": "orthographic",
+      "file": "front.png"
+    },
+    {
+      "id": "right-profile",
+      "label": "Right +X · three-point sit and loft",
+      "projection": "orthographic",
+      "file": "right-profile.png"
+    },
+    {
+      "id": "left-profile",
+      "label": "Left −X · greenhouse and door side",
+      "projection": "orthographic",
+      "file": "left-profile.png"
+    },
+    {
+      "id": "rear",
+      "label": "Rear −Z · fin and stabilizer",
+      "projection": "orthographic",
+      "file": "rear.png"
+    },
+    {
+      "id": "top",
+      "label": "World top · sit-foreshortened plan",
+      "projection": "orthographic",
+      "file": "top.png"
+    },
+    {
+      "id": "plan",
+      "label": "Body plan · true wing planform",
+      "projection": "orthographic",
+      "file": "plan.png"
+    },
+    {
+      "id": "three-quarter-left",
+      "label": "3/4 left · nacelle and greenhouse",
+      "projection": "perspective",
+      "file": "three-quarter-left.png"
+    },
+    {
+      "id": "three-quarter-right",
+      "label": "3/4 right · wing taper and sit",
+      "projection": "perspective",
+      "file": "three-quarter-right.png"
+    },
+    {
+      "id": "high-three-quarter",
+      "label": "High 3/4 · planform and twin engines",
+      "projection": "perspective",
+      "file": "high-three-quarter.png"
+    },
+    {
+      "id": "nacelle-detail",
+      "label": "Joint · teardrop nacelle, open cowl and wing",
+      "projection": "perspective",
+      "file": "nacelle-detail.png"
+    },
+    {
+      "id": "tail-detail",
+      "label": "Joint · dorsal fillet, rounded tip and vertical TE",
+      "projection": "perspective",
+      "file": "tail-detail.png"
+    },
+    {
+      "id": "nose-detail",
+      "label": "Joint · blunt snout and raked greenhouse",
+      "projection": "perspective",
+      "file": "nose-detail.png"
+    },
+    {
+      "id": "silhouette",
+      "label": "Silhouette · type mass",
+      "projection": "orthographic",
+      "file": "silhouette.png"
+    }
+  ]
+}

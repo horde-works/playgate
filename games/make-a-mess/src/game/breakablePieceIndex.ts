@@ -49,6 +49,8 @@ export interface BreakablePieceRayHit {
   readonly piece: BreakablePieceDefinition;
   readonly distance: number;
   readonly point: SceneVector3;
+  /** Outward normal of the authored occupied volume crossed by the ray. */
+  readonly normal: SceneVector3;
 }
 
 const DEFAULT_CELL_SIZE = 2;
@@ -102,12 +104,12 @@ export function distanceToPiece(
   return Math.sqrt(squared);
 }
 
-function rayDistanceToPiece(
+function rayHitOnPiece(
   piece: BreakablePieceDefinition,
   origin: SceneVector3,
   direction: SceneVector3,
   maximumDistance: number,
-): number {
+): { readonly distance: number; readonly normal: SceneVector3 } | null {
   const rows = rotationRows(piece.rotation);
   const dx = origin[0] - piece.position[0];
   const dy = origin[1] - piece.position[1];
@@ -129,10 +131,13 @@ function rayDistanceToPiece(
       direction[2] * rows[2][2],
   ];
   let closest = Number.POSITIVE_INFINITY;
+  let closestLocalNormal: SceneVector3 | null = null;
   for (const box of getPieceRenderBoxes(piece)) {
     let near = 0;
     let far = Math.min(maximumDistance, closest);
     let intersects = true;
+    let nearAxis = -1;
+    let nearSign = 0;
     for (let axis = 0; axis < 3; axis += 1) {
       const relativeOrigin = localOrigin[axis] - box.center[axis];
       const half = box.size[axis] / 2;
@@ -146,18 +151,51 @@ function rayDistanceToPiece(
       }
       const first = (-half - relativeOrigin) / rayAxis;
       const second = (half - relativeOrigin) / rayAxis;
-      near = Math.max(near, Math.min(first, second));
+      const entry = Math.min(first, second);
+      if (entry > near) {
+        near = entry;
+        nearAxis = axis;
+        nearSign = rayAxis > 0 ? -1 : 1;
+      }
       far = Math.min(far, Math.max(first, second));
       if (near > far) {
         intersects = false;
         break;
       }
     }
-    if (intersects && near <= maximumDistance) {
-      closest = Math.min(closest, near);
+    if (intersects && near <= maximumDistance && near < closest) {
+      closest = near;
+      const normal: [number, number, number] = [0, 0, 0];
+      if (nearAxis >= 0) {
+        normal[nearAxis] = nearSign;
+      } else {
+        // The ray started inside the occupied volume. There is no entry face,
+        // so use the face opposing travel; callers still get a stable normal.
+        const dominant = [0, 1, 2].reduce((best, axis) =>
+          Math.abs(localDirection[axis]) > Math.abs(localDirection[best])
+            ? axis
+            : best,
+        );
+        normal[dominant] = localDirection[dominant] > 0 ? -1 : 1;
+      }
+      closestLocalNormal = normal;
     }
   }
-  return closest;
+  if (!Number.isFinite(closest) || !closestLocalNormal) {
+    return null;
+  }
+  const normal: SceneVector3 = [
+    rows[0][0] * closestLocalNormal[0] +
+      rows[0][1] * closestLocalNormal[1] +
+      rows[0][2] * closestLocalNormal[2],
+    rows[1][0] * closestLocalNormal[0] +
+      rows[1][1] * closestLocalNormal[1] +
+      rows[1][2] * closestLocalNormal[2],
+    rows[2][0] * closestLocalNormal[0] +
+      rows[2][1] * closestLocalNormal[1] +
+      rows[2][2] * closestLocalNormal[2],
+  ];
+  return { distance: closest, normal };
 }
 
 export function createBreakablePieceIndex(
@@ -262,6 +300,7 @@ export function createBreakablePieceIndex(
       const seen = new Set<string>();
       let best: BreakablePieceDefinition | null = null;
       let bestDistance = Number.POSITIVE_INFINITY;
+      let bestNormal: SceneVector3 | null = null;
       const maximumCells = Math.ceil(maximumDistance / cellSize) * 3 + 6;
 
       for (let guard = 0; guard < maximumCells; guard += 1) {
@@ -271,15 +310,16 @@ export function createBreakablePieceIndex(
             if (seen.has(piece.id)) continue;
             seen.add(piece.id);
             if (accept && !accept(piece)) continue;
-            const distance = rayDistanceToPiece(
+            const hit = rayHitOnPiece(
               piece,
               origin,
               normalized,
               Math.min(maximumDistance, bestDistance),
             );
-            if (distance < bestDistance) {
+            if (hit && hit.distance < bestDistance) {
               best = piece;
-              bestDistance = distance;
+              bestDistance = hit.distance;
+              bestNormal = hit.normal;
             }
           }
         }
@@ -294,6 +334,7 @@ export function createBreakablePieceIndex(
               origin[1] + normalized[1] * bestDistance,
               origin[2] + normalized[2] * bestDistance,
             ],
+            normal: bestNormal ?? [-normalized[0], -normalized[1], -normalized[2]],
           };
         }
         if (nextDistance > maximumDistance) break;
@@ -317,6 +358,7 @@ export function createBreakablePieceIndex(
               origin[1] + normalized[1] * bestDistance,
               origin[2] + normalized[2] * bestDistance,
             ],
+            normal: bestNormal ?? [-normalized[0], -normalized[1], -normalized[2]],
           }
         : null;
     },

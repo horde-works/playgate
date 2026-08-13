@@ -143,7 +143,7 @@ export interface StrutReaction {
   readonly contact: boolean;
   /** Обжатие, м, 0…stroke. Им же рисуется осадка штока. */
   readonly compression: number;
-  /** Ход ЗА упором, м. Больше нуля — стойка пробита насквозь. */
+  /** Численная просадка ЗА упор, м: её обязан выбрать `bottomStop`. */
   readonly overtravel: number;
   /** Стойка дошла до железного упора: остаток удара принимает корпус. */
   readonly bottomedOut: boolean;
@@ -153,6 +153,8 @@ export interface StrutReaction {
   readonly spring: number;
   /** Вклад масла, Н. Отрицательный на отбое. */
   readonly damping: number;
+  /** Реакция железного упора, Н. Ноль, пока шток укладывается в свой ход. */
+  readonly bottomStop: number;
 }
 
 const EPSILON = 1e-9;
@@ -277,6 +279,7 @@ export function strutReaction(
     load: 0,
     spring: 0,
     damping: 0,
+    bottomStop: 0,
   };
   if (!probe || share <= EPSILON || !(probe.distance < strut.extendedReach)) {
     return idle;
@@ -286,15 +289,32 @@ export function strutReaction(
   const overtravel = Math.max(0, travel - strut.stroke);
   const spring = strutSpringForce(strut, compression);
   const damping = strutDamperForce(strut, closingSpeed, step);
+  const compliantLoad = spring + damping;
+  // Нога не имеет собственного коллайдера: весь её контакт с миром живёт в
+  // этом луче. Поэтому за концом хода одного флага `bottomedOut` недостаточно
+  // — без реакции железного упора пятка физически проходит сквозь настил.
+  //
+  // Упор здесь не ещё одна подобранная пружина. Он выдаёт ровно недостающий
+  // импульс: гасит оставшееся сжатие и за один шаг выбирает уже накопленный
+  // проход за упор. Газ и масло засчитываются первыми, поэтому одна и та же
+  // скорость не гасится дважды.
+  const requiredStopLoad =
+    overtravel > 0 && step > EPSILON && strut.supportedMass > EPSILON
+      ? (strut.supportedMass *
+          (Math.max(0, closingSpeed) + overtravel / step)) /
+        step
+      : 0;
+  const bottomStop = Math.max(0, requiredStopLoad - compliantLoad);
   return {
     id: strut.id,
     contact: true,
     compression,
     overtravel,
     bottomedOut: overtravel > 0,
-    load: Math.max(0, (spring + damping) * share),
+    load: Math.max(0, (compliantLoad + bottomStop) * share),
     spring,
     damping,
+    bottomStop,
   };
 }
 

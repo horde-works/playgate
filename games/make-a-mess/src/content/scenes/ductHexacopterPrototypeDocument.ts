@@ -272,6 +272,7 @@ function meshObject(
       colors: part.vertexColors?.map(point),
       doubleSided: part.doubleSided,
     },
+    plateThickness: part.plateThickness,
     voxelization: { mode: "shell", thickness: binding.shellThickness, voxelSize: 0.1 },
     volume: Math.max(0.0002, area * binding.shellThickness),
   });

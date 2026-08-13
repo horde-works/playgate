@@ -970,8 +970,11 @@ export function GrassField({
   center,
   pieces,
   count = 26000,
-  bladeColor = "#43602c",
-  tipColor = "#8aa851",
+  // Viking turf must resolve into the painted ground at distance.  These are
+  // deliberately the same muted olive family as viking-ground, rather than
+  // the yellow-green meadow palette used before.
+  bladeColor = "#4d6043",
+  tipColor = "#687754",
   profile = "viking",
   fadeStart = profile === "dutch-polder" ? 28 : 13,
   fadeEnd = profile === "dutch-polder" ? 52 : 27,
@@ -1072,8 +1075,10 @@ export function GrassField({
           uHighlandVisibility: { value: profile === "dutch-polder" ? 1 : 0 },
           uBase: { value: new Color(bladeColor) },
           uTip: { value: new Color(tipColor) },
-          uBaseDry: { value: new Color("#6f6a37") },
-          uTipDry: { value: new Color("#bcae63") },
+          // A dry blade in the village is worn olive, not pale straw: the
+          // ground texture stands in for this grass beyond its render range.
+          uBaseDry: { value: new Color(profile === "viking" ? "#4a583d" : "#6f6a37") },
+          uTipDry: { value: new Color(profile === "viking" ? "#65714c" : "#bcae63") },
           uReedBase: { value: new Color("#596331") },
           uReedTip: { value: new Color("#a5a05b") },
           uReedBaseDry: { value: new Color("#66583a") },
@@ -1544,9 +1549,13 @@ export function GrassField({
         edge = Math.min(1, Math.max(0, edgeTraffic - traffic) * 1.7);
         const keep = Math.min(1.1, 0.6 * (1 - onPath * 0.94) + edge * 0.8);
         if (hash(index, 7) > keep) continue;
-        const edgeBoost = 1 + edge * 0.45;
-        height = (0.42 + hash(index, 3) * 0.5) * edgeBoost;
-        width = 0.78 + hash(index, 4) * 0.6;
+        // This is managed village turf, not shoulder-high wild grass.  Wider,
+        // lower fans keep the near field bushy while leaving the people and
+        // buildings legible; the previous 0.42–0.92 scale made it about twice
+        // as tall as the surface language can support.
+        const edgeBoost = 1 + edge * 0.18;
+        height = (0.20 + hash(index, 3) * 0.24) * edgeBoost;
+        width = 0.92 + hash(index, 4) * 0.68;
       }
       euler.set(tiltX, hash(index, 5) * Math.PI * 2, tiltZ);
       quaternion.setFromEuler(euler);

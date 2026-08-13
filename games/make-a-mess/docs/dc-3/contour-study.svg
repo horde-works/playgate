@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 420" width="1200" height="420">
+  <rect width="1200" height="420" fill="#f3f1ea"/>
+  <text x="24" y="28" font-family="Georgia, serif" font-size="16" fill="#2a2c2d">DC-3 C01 contour hypothesis · published envelope, authored planform</text>
+  <g fill="none" stroke="#2a2c2d" stroke-width="1.6">
+    <rect x="20" y="48" width="360" height="340" fill="#fff"/>
+    <polyline points="200,62 214,82 222,123 225,164 366,184 370,205 225,225 222,286 243,341 229,361 200,375 171,361 157,341 178,286 175,225 31,205 34,184 175,164 178,123 186,82 200,62"/>
+    <circle cx="128" cy="150" r="18"/>
+    <circle cx="272" cy="150" r="18"/>
+  </g>
+  <text x="24" y="380" font-family="sans-serif" font-size="11" fill="#555">PLAN</text>
+  <g fill="none" stroke="#2a2c2d" stroke-width="1.6">
+    <rect x="420" y="48" width="360" height="340" fill="#fff"/>
+    <polyline points="449,259 470,211 499,177 528,191 557,184 607,198 665,211 708,123 730,116 737,191 751,286 722,245 672,259 593,266 521,245 478,273 456,286 449,259"/>
+  </g>
+  <text x="424" y="380" font-family="sans-serif" font-size="11" fill="#555">RIGHT PROFILE · three-point sit</text>
+  <g fill="none" stroke="#2a2c2d" stroke-width="1.6">
+    <rect x="820" y="48" width="360" height="340" fill="#fff"/>
+    <polyline points="834,245 899,232 957,218 986,191 1000,143 1014,191 1043,218 1101,232 1166,245 1166,266 1043,252 1028,313 1000,341 972,313 957,252 834,266 834,245"/>
+    <circle cx="928" cy="211" r="16"/>
+    <circle cx="1072" cy="211" r="16"/>
+  </g>
+  <text x="824" y="380" font-family="sans-serif" font-size="11" fill="#555">FRONT · span and dihedral</text>
+</svg>

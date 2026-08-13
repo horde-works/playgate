@@ -943,3 +943,16 @@ test("the hammer works stone but never steel", () => {
   assert.ok(fractureEnergyByMaterial.basalt < HAMMER_BLOW_ENERGY);
   assert.ok(HAMMER_BLOW_ENERGY * 2 < fractureEnergyByMaterial.steel);
 });
+
+test("aluminium is Alclad: hammer and bullet take it, steel sheet does not", () => {
+  assert.equal(hammerWorksMaterial("aluminium"), true);
+  assert.ok(bulletHoleRadius.aluminium > 0);
+  assert.equal(crumbleOnLanding.has("aluminium"), true);
+  assert.ok(fractureEnergyByMaterial.aluminium < HAMMER_BLOW_ENERGY);
+  assert.ok(fractureEnergyByMaterial.aluminium < fractureEnergyByMaterial.sheetMetal);
+  assert.equal(bulletHoleRadius.sheetMetal, undefined);
+  assert.ok(
+    classifyLandingDamage("aluminium", 7, 1, 3) !== "none",
+    "a heavy hit dents Alclad below the car-body chip speed",
+  );
+});

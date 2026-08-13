@@ -4,7 +4,8 @@
 
 Домен — ВСЁ, что движется под управлением: воздушные носители (состав
 Терминала, дирижабль № 07, драккар, небесный таран), винтокрылые (HX-6 города
-и Нимба, RAX-8, SR-6), наземная машина (Citroën DS), поезд ЛРТ GOA4 (TRITON),
+и Нимба, RAX-8, SR-6), крылатая (DC-3, класс объявлен, в мир не посажена),
+наземная машина (Citroën DS), поезд ЛРТ GOA4 (TRITON),
 мельницы и постоянные роторы. Общие для всех них подсистемы: членство в
 кинематическом кластере, разрушаемые актуаторы, граница «автомат управления ↔
 автопилот», трассы, стадии рейса, швартовка и посадка, отказы и
@@ -398,7 +399,7 @@ idle 0.035 (`VehicleFrameSystem.tsx:1221-1245`).
 |---|---|---|
 | Политика рейса | `vehicleFlightSupervisor.ts` | clearance + масштабированный envelope («меньше власти — больше времени, никогда не шире конверт») |
 | Автопилот (внешний контур) | `vehicleFrames.ts` `autopilot()` (:2704) | `AutopilotOutput {controls, desiredYawRate, goAround, guidance, headingTarget}` |
-| Автомат управления (внутренний контур) | `rotorcraftFlightStep` (`rotorcraftDynamics.ts:1814`) у ротора / `shipControlsForGuidance` (`vehicleFrames.ts:2251`) у плавучей | силы колец / рычаги |
+| Автомат управления (внутренний контур) | `rotorcraftFlightStep` у ротора / `shipControlsForGuidance` у плавучей / `airplaneFlightStep` у крыла | силы колец / рычаги / створки и газ |
 
 Граница — тип `VehicleGuidanceDemand` (`vehicleFrames.ts:2204-2223`):
 `{forwardSpeed, lateralSpeed, yawRate, liftFraction, pathAcceleration?,
@@ -419,7 +420,8 @@ requested lift trim, признак `goAround`. Он не получает сп�
 оценкой.
 
 Обратный поток: `RotorcraftAuthority`/`LimitReport`
-(`rotorcraftDynamics.ts:1072-1096`) и `yawRateLimits` в `ShipModel` —
+(`rotorcraftDynamics.ts:1072-1096`), `AirplaneAuthority` /
+`airplaneTurnCapability` у крыла и `yawRateLimits` в `ShipModel` —
 автопилот масштабирует просьбы по фактической власти
 (`vehicleFrames.ts:2867-2875, 2995-3020`). Над всем — три режима
 `authoredRoute / intercepting / stabilizing`
@@ -1546,6 +1548,17 @@ object-study).
 
 **Швартовка** — раздел «Швартовка, посадка, конец рейса» (лебёдка,
 `mooringReach` 12/15 м, три уровня «состоялось»).
+
+### 9.2а. Крылатая (DC-3)
+
+`liftSource: "wing"`. Guidance тот же; внутренний контур —
+`airplaneFlightStep` (`airplaneDynamics.ts`). Автопилот видит поворотливость
+снизу (`airplaneTurnCapability`: темп рыскания с крена, поперечного
+ускорения нет). Закрылки выпускает сам автомат по фазе и скорости.
+Каналы: `throttle:0/1`, `aileron`, `elevator`, `rudder`, `flap`. Кадр и
+куски читаются из Object Lab (`compileDc3AirplanePieces`,
+`dc3AirplaneStandFrame`). В реестрах `airVehicles` и `vehicleFrames`
+машины нет; силовой стенд — `tests/airplane-rig.mjs`.
 
 ### 9.3. Наземная машина (Citroën DS)
 

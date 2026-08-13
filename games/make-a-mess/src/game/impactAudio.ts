@@ -88,6 +88,14 @@ const soundProfiles: Record<BreakableMaterial, SoundProfile> = {
     noiseFilter: 3100,
     duration: 0.42,
   },
+  aluminium: {
+    tone: 720,
+    toneEnd: 240,
+    toneGain: 0.22,
+    noiseGain: 0.1,
+    noiseFilter: 3400,
+    duration: 0.32,
+  },
   stone: {
     tone: 116,
     toneEnd: 48,
@@ -182,6 +190,7 @@ const heavyRecordings: Record<BreakableMaterial, readonly string[]> = {
   glass: recordingVariants("impactGlass_heavy"),
   steel: recordingVariants("impactMetal_heavy"),
   sheetMetal: recordingVariants("impactMetal_heavy"),
+  aluminium: recordingVariants("impactMetal_heavy"),
   stone: recordingVariants("impactMining"),
   basalt: recordingVariants("impactMining"),
   graphiteStone: recordingVariants("impactMining"),
@@ -203,6 +212,7 @@ const lightRecordings: Record<BreakableMaterial, readonly string[]> = {
   glass: recordingVariants("impactGlass_medium"),
   steel: recordingVariants("impactPlate_heavy"),
   sheetMetal: recordingVariants("impactPlate_heavy"),
+  aluminium: recordingVariants("impactPlate_heavy"),
   stone: recordingVariants("impactGeneric_light"),
   basalt: recordingVariants("impactGeneric_light"),
   graphiteStone: recordingVariants("impactGeneric_light"),
@@ -224,6 +234,7 @@ const lightRecordingTail: Record<BreakableMaterial, number> = {
   glass: 0.52,
   steel: 0.5,
   sheetMetal: 0.5,
+  aluminium: 0.46,
   stone: 0.2,
   basalt: 0.24,
   graphiteStone: 0.22,
@@ -245,6 +256,7 @@ const heavyRecordingTail: Record<BreakableMaterial, number> = {
   glass: 0.42,
   steel: 0.54,
   sheetMetal: 0.54,
+  aluminium: 0.48,
   stone: 0.86,
   basalt: 0.9,
   graphiteStone: 0.88,
@@ -516,7 +528,7 @@ export function playDebrisSound(
   const syntheticScale = recorded ? 0.24 : 1;
 
   const oscillator = context.createOscillator();
-  oscillator.type = material === "wood" || material === "steel" ? "triangle" : "sine";
+  oscillator.type = material === "wood" || material === "steel" || material === "aluminium" ? "triangle" : "sine";
   oscillator.frequency.setValueAtTime(profile.tone * 0.78 * pitch, start);
   oscillator.frequency.exponentialRampToValueAtTime(
     profile.toneEnd * 0.72 * pitch,
@@ -900,7 +912,7 @@ export function playImpactSound(
   const oscillator = context.createOscillator();
   const toneGain = context.createGain();
   oscillator.type =
-    material === "wood" || material === "steel" ? "triangle" : "sine";
+    material === "wood" || material === "steel" || material === "aluminium" ? "triangle" : "sine";
   oscillator.frequency.setValueAtTime(profile.tone * pitch, start);
   oscillator.frequency.exponentialRampToValueAtTime(
     profile.toneEnd * pitch,

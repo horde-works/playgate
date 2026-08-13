@@ -30,6 +30,8 @@ import {
   COMBAT_HEXACOPTER_PROTOTYPE_PLACEMENT,
   combatHexacopterPrototypeFrame,
 } from "../games/make-a-mess/src/game/combatHexacopter.ts";
+import { COMBAT_HEXACOPTER_RANGE_AIR_VEHICLE } from "../games/make-a-mess/src/game/airVehicles.ts";
+import { isRotorLandingComplete } from "../games/make-a-mess/src/game/vehicleLiftGeometry.ts";
 
 // ---------------------------------------------------------------------------
 // ДЕРЖИТ ЛИ ОНА МАШИНУ И СЪЕДАЕТ ЛИ ПОСАДКУ
@@ -96,6 +98,7 @@ function dropCorner(strut, sinkRate, seconds = 6) {
   let velocity = sinkRate;
   let peakLoad = 0;
   let deepest = 0;
+  let maximumOvertravel = 0;
   let bottomedOut = false;
   let rebound = 0;
   for (let index = 0; index < Math.round(seconds / STEP); index += 1) {
@@ -104,6 +107,7 @@ function dropCorner(strut, sinkRate, seconds = 6) {
     const reaction = strutReaction(strut, probe, velocity, STEP);
     peakLoad = Math.max(peakLoad, reaction.load);
     deepest = Math.max(deepest, reaction.compression);
+    maximumOvertravel = Math.max(maximumOvertravel, reaction.overtravel);
     bottomedOut = bottomedOut || reaction.bottomedOut;
     velocity += (GRAVITY - reaction.load / mass) * STEP;
     travel += velocity * STEP;
@@ -113,6 +117,7 @@ function dropCorner(strut, sinkRate, seconds = 6) {
   return {
     peakLoadFactor: peakLoad / (mass * GRAVITY),
     strokeUsed: deepest / strut.stroke,
+    maximumOvertravel,
     bottomedOut,
     rebound,
     restTravel: travel,
@@ -467,7 +472,7 @@ test("расчётная посадка 2 м/с укладывается в хо
   }
 });
 
-test("штатная посадка почти не тревожит машину, четыре метра в секунду пробивают ход", () => {
+test("штатная посадка почти не тревожит машину, четыре метра в секунду доходят до упора", () => {
   const [front] = hexacopterStruts();
   const gentle = dropCorner(front, 0.5);
   assert.equal(gentle.bottomedOut, false);
@@ -476,6 +481,95 @@ test("штатная посадка почти не тревожит машин�
   const hard = dropCorner(front, 4);
   assert.equal(hard.bottomedOut, true, "четыре метра в секунду обязаны дойти до упора");
   assert.ok(hard.strokeUsed >= 1);
+  assert.ok(
+    hard.maximumOvertravel < 0.04,
+    `железный упор пропустил пятку ещё на ${hard.maximumOvertravel.toFixed(3)} м`,
+  );
+  assert.ok(
+    Math.abs(hard.restTravel - front.staticSag) < 0.004,
+    `после удара стойка не вернулась на статику: ${hard.restTravel}`,
+  );
+});
+
+test("за концом хода остаток удара принимает железный упор", () => {
+  const [front] = hexacopterStruts();
+  const overtravel = 0.025;
+  const closingSpeed = 3;
+  const reaction = strutReaction(
+    front,
+    {
+      distance: front.extendedReach - front.stroke - overtravel,
+      normal: [0, 1, 0],
+    },
+    closingSpeed,
+    STEP,
+  );
+  const requiredLoad =
+    (front.supportedMass * (closingSpeed + overtravel / STEP)) / STEP;
+  assert.equal(reaction.bottomedOut, true);
+  assert.ok(reaction.bottomStop > 0, "флаг упора есть, а его реакции нет");
+  assert.ok(
+    Math.abs(reaction.load - requiredLoad) / requiredLoad < 1e-12,
+    `${reaction.load} Н вместо импульса ${requiredLoad} Н`,
+  );
+});
+
+test("RAX выключает кольца после касания и оседает на олео, а не падает на них", () => {
+  const [front] = hexacopterStruts();
+  const tolerance = COMBAT_HEXACOPTER_RANGE_AIR_VEHICLE.flight.landing;
+  let height = 0.08;
+  let velocity = -0.2;
+  let contactLastStep = false;
+  let enginesOn = true;
+  let shutdownHeight = Number.NaN;
+  for (let index = 0; index < Math.round(4 / STEP); index += 1) {
+    if (
+      enginesOn &&
+      isRotorLandingComplete(
+        tolerance,
+        { horizontal: 0, height },
+        {
+          speed: 0,
+          verticalSpeed: velocity,
+          uprightCos: 1,
+          angularSpeed: 0,
+        },
+        contactLastStep ? 1 : 0,
+        true,
+      )
+    ) {
+      assert.equal(contactLastStep, true, "кольца погасли без реакции стойки");
+      enginesOn = false;
+      shutdownHeight = height;
+    }
+    const travel = front.staticSag - height;
+    const reaction = strutReaction(
+      front,
+      travel > 0
+        ? {
+            distance: front.extendedReach - travel,
+            normal: [0, 1, 0],
+          }
+        : null,
+      -velocity,
+      STEP,
+    );
+    contactLastStep = reaction.contact;
+    const engineAcceleration = enginesOn ? GRAVITY : 0;
+    velocity +=
+      (-GRAVITY + engineAcceleration + reaction.load / front.supportedMass) *
+      STEP;
+    height += velocity * STEP;
+  }
+  assert.equal(enginesOn, false, "RAX завис над опорами с работающими кольцами");
+  assert.ok(
+    shutdownHeight <= front.staticSag,
+    `кольца погасли при зазоре ${(shutdownHeight - front.staticSag).toFixed(4)} м`,
+  );
+  assert.ok(
+    Math.abs(height) < 0.004,
+    `после выключения RAX не сел в авторскую осадку: ${height.toFixed(4)} м`,
+  );
 });
 
 test("олео не козлит, а витая пружина той же жёсткости — козлит", () => {

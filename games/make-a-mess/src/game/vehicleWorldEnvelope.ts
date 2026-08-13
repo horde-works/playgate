@@ -49,36 +49,38 @@ export interface WorldEnvelope {
    */
   readonly clearance: number;
   /**
-   * Насколько глубоко под палубой машина считается УЖЕ ПОД ОСТРОВОМ. Небольшая
-   * величина: у кромки палуба не бесконечно тонкая, и машина, чуть провалившись
-   * под её уровень у самого края, ещё имеет над собой небо.
-   */
-  readonly underDepth: number;
-  /**
    * Полоса за кромкой, в которой машина уже обязана думать о ней, м. Дальше
    * острова нет и пола нет.
    */
   readonly reach: number;
   /** Располагаемая скороподъёмность, м/с: по ней решается «успею ли». */
   readonly climbRate: number;
+  /** Время на прохождение команды через контур и набор ускорения, с. */
+  readonly reactionSeconds: number;
 }
 
 export const DEFAULT_WORLD_ENVELOPE: WorldEnvelope = {
   // Двенадцать метров — та же высота отрыва от палубы, которой живут трассы:
   // ниже неё над островом машине делать нечего ни на маршруте, ни в бою.
   clearance: 12,
-  // Три метра под палубой — это уже не «задел кромку», а «зашёл снизу».
-  underDepth: 3,
   // Сорок метров запаса: на скоростях полигона это три секунды, и набор
   // успевает быть манёвром, а не рывком.
   reach: 40,
   climbRate: 8,
+  // Конверт считается каждый кадр, но тяга и поза не возникают мгновенно.
+  reactionSeconds: 0.25,
 };
 
 export interface WorldFloorInput {
   /** Мировой центр машины. */
   readonly centre: SceneVector3;
   readonly velocity: SceneVector3;
+  /** Консервативный радиус тела: границу пересекает корпус, а не его центр. */
+  readonly radius?: number;
+  /** Располагаемое горизонтальное торможение, м/с². */
+  readonly horizontalAcceleration?: number;
+  /** Располагаемое ускорение вверх сверх веса, м/с². */
+  readonly upwardAcceleration?: number;
   readonly island: WorldIsland;
   readonly envelope?: WorldEnvelope;
 }
@@ -92,6 +94,34 @@ export interface WorldFloorAvoidance {
   readonly urgency: number;
   /** Что именно происходит — для разбора и телеметрии. */
   readonly reason: "above" | "approaching" | "under";
+}
+
+/**
+ * Отнимает у верхнего автомата право просить движение СКВОЗЬ борт острова.
+ * Тангенциальная составляющая сохраняется: конверт не строит маршрут, он
+ * исправляет только запрещённую радиальную часть.
+ */
+export function worldFloorSafeVelocity(
+  requested: SceneVector3,
+  centre: SceneVector3,
+  island: WorldIsland,
+  avoidance: WorldFloorAvoidance,
+): SceneVector3 {
+  if (avoidance.outward <= EPSILON) return requested;
+  const dx = centre[0] - island.centre[0];
+  const dz = centre[2] - island.centre[1];
+  const distance = Math.hypot(dx, dz);
+  const outwardX = distance > EPSILON ? dx / distance : 1;
+  const outwardZ = distance > EPSILON ? dz / distance : 0;
+  const radial = requested[0] * outwardX + requested[2] * outwardZ;
+  const minimumRadial = avoidance.outward * avoidance.urgency;
+  if (radial >= minimumRadial) return requested;
+  const correction = minimumRadial - radial;
+  return [
+    requested[0] + outwardX * correction,
+    requested[1],
+    requested[2] + outwardZ * correction,
+  ];
 }
 
 const EPSILON = 1e-6;
@@ -111,28 +141,44 @@ export function worldFloorAvoidance(
   const dx = input.centre[0] - island.centre[0];
   const dz = input.centre[2] - island.centre[1];
   const distance = Math.hypot(dx, dz);
-  const floor = island.deck + envelope.clearance;
+  const bodyRadius = Math.max(0, input.radius ?? 0);
+  const collisionRadius = island.radius + bodyRadius;
+  const outwardX = distance > EPSILON ? dx / distance : 1;
+  const outwardZ = distance > EPSILON ? dz / distance : 0;
+  const radialSpeed = input.velocity[0] * outwardX + input.velocity[2] * outwardZ;
+  const closing = Math.max(0, -radialSpeed);
+  const horizontalAcceleration = Math.max(
+    EPSILON,
+    input.horizontalAcceleration ?? envelope.climbRate,
+  );
+  const horizontalStoppingRoom =
+    (closing * closing) / (2 * horizontalAcceleration);
+  const reach = Math.max(
+    envelope.reach,
+    horizontalStoppingRoom + closing * envelope.reactionSeconds,
+  );
+  const upwardAcceleration = Math.max(
+    EPSILON,
+    input.upwardAcceleration ?? envelope.climbRate,
+  );
+  const descent = Math.max(0, -input.velocity[1]);
+  const verticalStoppingRoom =
+    (descent * descent) / (2 * upwardAcceleration) +
+    descent * envelope.reactionSeconds;
+  const floor =
+    island.deck + envelope.clearance + verticalStoppingRoom;
   const height = input.centre[1];
   if (height >= floor) {
     return null;
   }
-  if (distance > island.radius + envelope.reach) {
+  if (distance > collisionRadius + reach) {
     // Острова рядом нет. Ниже палубы здесь законно и красиво.
     return null;
   }
-  // Наружу — единичный вектор от центра острова. У самого центра направления
-  // нет; тогда любое, лишь бы определённое.
-  const outwardX = distance > EPSILON ? dx / distance : 1;
-  const outwardZ = distance > EPSILON ? dz / distance : 0;
-  const radialSpeed = input.velocity[0] * outwardX + input.velocity[2] * outwardZ;
-
   // СЛУЧАЙ ТРЕТИЙ, И ОН ПЕРВЫЙ ПО ВАЖНОСТИ: машина под островом. Вверх нельзя
   // — там тело. Единственный выход наружу, и торопиться с ним тем сильнее, чем
   // глубже машина забралась под диск.
-  if (
-    distance < island.radius &&
-    height < island.deck - envelope.underDepth
-  ) {
+  if (distance < island.radius && height < island.deck) {
     const depth = island.deck - height;
     return {
       climb: 0,
@@ -157,16 +203,30 @@ export function worldFloorAvoidance(
     };
   }
 
+
+  // Центр ещё снаружи, но корпус уже пересёк геометрическую кромку. Одного
+  // набора здесь недостаточно: инерция продолжит вдавливать машину в борт.
+  // Сначала гарантированно снимается входящая радиальная скорость, затем тело
+  // одновременно выходит и набирает безопасную высоту.
+  if (distance <= collisionRadius) {
+    return {
+      climb: envelope.climbRate,
+      outward: Math.max(envelope.climbRate, -radialSpeed),
+      urgency: 1,
+      reason: "approaching",
+    };
+  }
+
   // За кромкой и ниже пола. Пока машина уходит или идёт вдоль — это её право.
-  const closing = -radialSpeed;
   if (closing <= EPSILON) {
     return null;
   }
   // СКОЛЬКО ОСТАЛОСЬ ДО КРОМКИ и хватит ли этого на набор. Вопрос ставится
   // именно так, а не «далеко ли до кромки»: машине важно не расстояние, а
   // успевает ли она подняться, идя с этим ходом.
-  const secondsToRim = (distance - island.radius) / closing;
-  const neededRate = shortfall / Math.max(0.5, secondsToRim);
+  const secondsToRim = (distance - collisionRadius) / closing;
+  const controlledSeconds = secondsToRim - envelope.reactionSeconds;
+  const neededRate = shortfall / Math.max(0.5, controlledSeconds);
   if (neededRate <= envelope.climbRate) {
     return {
       climb: neededRate,

@@ -26,12 +26,39 @@ import {
   DEFAULT_VEHICLE_FAILURE_ENVELOPE,
   deliveredLiftControlFraction,
   normalizedLiftTrimRequest,
+  recoveryKeepsFlightTask,
   rebaseVehicleFailureWatchdog,
+  VEHICLE_RECOVERY_HEALTHY_SECONDS,
   VEHICLE_LANDING_STABLE_SECONDS,
   VEHICLE_REBUILD_DELAY_SECONDS,
   vehicleDisturbanceRecoveryFeasible,
   vehicleFailureDisposition,
 } from "../games/make-a-mess/src/game/vehicleFailure.ts";
+
+test("four healthy seconds clear FAIL and preserve the current flight task", () => {
+  let lifecycle = createVehicleRecoveryLifecycle(
+    "controlMismatch",
+    "escapeRoute",
+  );
+  let result;
+  for (let elapsed = 0; elapsed < VEHICLE_RECOVERY_HEALTHY_SECONDS; elapsed += 1) {
+    result = advanceVehicleRecoveryLifecycle(lifecycle, {
+      deltaSeconds: 1,
+      escapeComplete: false,
+      belowFog: false,
+      landingComplete: false,
+      rebuildComplete: false,
+      arrivalComplete: false,
+      flyingWell: true,
+    });
+    lifecycle = result.lifecycle;
+  }
+  assert.equal(result.recovered, true);
+  assert.equal(result.lifecycle, null);
+  assert.equal(recoveryKeepsFlightTask("escape"), true);
+  assert.equal(recoveryKeepsFlightTask("righting"), true);
+  assert.equal(recoveryKeepsFlightTask("arrival"), false);
+});
 
 const CLUSTER = "terminal:sky-train";
 const pieces = grandTerminalScene.breakablePieces.filter(
@@ -81,6 +108,34 @@ test("manual flight never feeds synthetic progress into route-stall timers", () 
     assert.equal(watchdog.stalledSeconds, 0);
     assert.equal(watchdog.maneuverSeconds, 0);
   }
+});
+
+test("watchdog never compares a combat response with the authored route command", () => {
+  let watchdog = createVehicleFailureWatchdog(0.4);
+  for (let frame = 0; frame < 10 * 60; frame += 1) {
+    const result = advanceVehicleFailureWatchdog(
+      watchdog,
+      observation({
+        deltaSeconds: 1 / 60,
+        progress: 0.4,
+        routeProgressTracked: false,
+        controlResponseTracked: false,
+        // This is the exact impossible comparison from the runtime: the route
+        // asks for full effort while authority reports the preceding combat
+        // posture as zero.
+        requestedControlEffort: 1,
+        deliveredControlFraction: 0,
+        requestedLiftEffort: 1,
+        deliveredLiftFraction: 0,
+        crossTrackError: 100,
+      }),
+    );
+    assert.equal(result.failure, null);
+    watchdog = result.state;
+  }
+  assert.equal(watchdog.controlMismatchSeconds, 0);
+  assert.equal(watchdog.routeSeconds, 0);
+  assert.equal(watchdog.stalledSeconds, 0);
 });
 
 test("manual lift guidance is normalized before lift-delivery supervision", () => {

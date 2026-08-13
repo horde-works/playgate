@@ -69,6 +69,17 @@ test("луч находит первый занятый объём без обх
   assert.equal(hit?.piece.id, "near");
   assert.equal(hit?.distance, 3);
   assert.deepEqual(hit?.point, [0, 0, 3]);
+  assert.deepEqual(hit?.normal, [0, 0, -1]);
+
+  const continuation = rayIndex.raycast(
+    [0, 0, 0],
+    [0, 0, 1],
+    20,
+    (piece) => piece.id !== hit?.piece.id,
+  );
+  assert.equal(continuation?.piece.id, "far");
+  assert.equal(continuation?.distance, 8);
+  assert.deepEqual(continuation?.normal, [0, 0, -1]);
 });
 
 test("луч учитывает фильтр, поворот и пустое пространство", () => {
@@ -88,6 +99,15 @@ test("луч учитывает фильтр, поворот и пустое п�
   assert.equal(
     rayIndex.raycast([0, 0, 0], [0, 0, 1], 20)?.piece.id,
     "turned",
+  );
+  const turnedHit = rayIndex.raycast([0, 0, 0], [0, 0, 1], 20);
+  assert.ok(turnedHit);
+  assert.ok(
+    turnedHit.normal[0] * 0 +
+      turnedHit.normal[1] * 0 +
+      turnedHit.normal[2] * 1 <
+      -0.999,
+    "нормаль повёрнутого объёма должна смотреть навстречу лучу",
   );
   assert.equal(
     rayIndex.raycast([0, 0, 0], [0, 0, 1], 20, () => false),

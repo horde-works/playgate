@@ -27,8 +27,9 @@
  *
  * 3. МАНЁВР ВЫБИРАЕТСЯ ОДИН РАЗ И ДОВОДИТСЯ. Дрожание — главная ловушка этого
  *    места: жертва, пересматривающая решение каждый кадр, дёргается на месте
- *    и никуда не уходит. Поэтому у рывка есть срок, и внутри срока он не
- *    пересматривается — тот же закон, по которому охотник доводит заход.
+ *    и никуда не уходит. Единственное исключение — новая ракета, которая
+ *    придёт раньше нынешней: доводить устаревший рефлекс ей навстречу было бы
+ *    уже не устойчивостью, а слепотой.
  *
  * Здесь нет ни React, ни Rapier, ни имён машин: на входе числа, на выходе
  * числа.
@@ -37,29 +38,72 @@
 import type { SceneVector3 } from "./destructionScene.ts";
 import { lineOfSightRotation } from "./airCombatPosture.ts";
 import type { AirCombatTrack } from "./vehicleGunnery.ts";
-import { isHostileAllegiance, type VehicleAllegiance } from "./vehicleAllegiance.ts";
+import {
+  explosiveProfile,
+  type ExplosiveKind,
+} from "./destructionRuntime.ts";
+import type { Quaternion } from "./clusterDynamics.ts";
+import {
+  chooseEvasionCorrection,
+  type EvasionDynamics,
+} from "./airCombatEvasionField.ts";
 
 /** Что машина знает о себе, уклоняясь. */
 export interface EvasionOwnState {
-  readonly allegiance: VehicleAllegiance;
+  /** Владелец своих снарядов: единственная ракета, которую можно игнорировать. */
+  readonly id: string;
   readonly centre: SceneVector3;
   readonly velocity: SceneVector3;
+  /** Настоящий габарит текущего кадра, а не дубль числа в паспорте уклонения. */
+  readonly radius: number;
 }
 
 /**
- * Паспортная способность уклоняться. Нет поля — машина не уклоняется вовсе,
- * и это законный ответ: драккар и состав неба не должны дёргаться от чужой
- * скорости.
- */
-/**
  * РАКЕТА В ВОЗДУХЕ — то, от чего уклоняются. Положение, скорость и радиус
- * поражения: больше жертве знать не нужно и неоткуда.
+ * поражения, остаток взрывателя и владелец: больше жертве знать не нужно.
  */
 export interface RocketThreat {
   readonly id: number;
+  /** `null` оставлен внешним снарядам без владельца; они опасны всем. */
+  readonly ownerId: string | null;
+  readonly kind: Extract<ExplosiveKind, "rocket" | "lance" | "podRocket">;
   readonly position: SceneVector3;
   readonly velocity: SceneVector3;
   readonly blastRadius: number;
+  /** Сколько физического полёта осталось до самоликвидации, с. */
+  readonly remainingSeconds: number;
+}
+
+export interface RocketThreatRegistry {
+  readonly current: Map<number, RocketThreat>;
+}
+
+/**
+ * Один вход в воздушную обстановку для пользовательских и бортовых снарядов.
+ * Скорость берётся с физического тела снаружи, поражающий радиус — из
+ * паспорта боеприпаса здесь. Граната не становится ракетой из-за общего пула.
+ */
+export function projectileRocketThreat(
+  id: number,
+  ownerId: string | null,
+  kind: ExplosiveKind,
+  position: SceneVector3,
+  velocity: SceneVector3,
+  ageSeconds = 0,
+): RocketThreat | null {
+  if (kind !== "rocket" && kind !== "lance" && kind !== "podRocket") {
+    return null;
+  }
+  const profile = explosiveProfile(kind);
+  return {
+    id,
+    ownerId,
+    kind,
+    position,
+    velocity,
+    blastRadius: profile.blastRadius,
+    remainingSeconds: Math.max(0, profile.projectile.fuseMs / 1_000 - ageSeconds),
+  };
 }
 
 /**
@@ -95,6 +139,11 @@ export function rocketApproach(
   return { seconds, miss: length(at), offset: scale(at, -1) };
 }
 
+/**
+ * Паспортная способность уклоняться. Нет поля — машина не уклоняется вовсе,
+ * и это законный ответ: драккар и состав неба не должны дёргаться от чужой
+ * скорости.
+ */
 export interface EvasionCapability {
   /**
    * Насколько сильно машина сходит с линии, м/с. Не ускорение и не «сила»:
@@ -104,10 +153,6 @@ export interface EvasionCapability {
   readonly breakSpeed: number;
   /** Сколько рывок длится, с. Внутри срока решение не пересматривается. */
   readonly breakSeconds: number;
-  /**
-   * Габарит машины, м: вместе с радиусом поражения даёт ответ «попадёт ли».
-   */
-  readonly radius: number;
   /**
    * Запас к радиусу поражения, м. Ноль означал бы уклонение ровно на границе,
    * где ошибка в дециметр решает; запас покупает право ошибиться.
@@ -127,6 +172,14 @@ export interface EvasionState {
   readonly breakDirection: SceneVector3;
   /** От какой ракеты уходим. Нужно, чтобы не начинать рывок дважды. */
   readonly threatId: number | null;
+  /** Последняя фактическая срочность выбранной ракеты. */
+  readonly closingSeconds?: number | null;
+  /** Победившее физически достижимое требование живёт весь рывок. */
+  readonly velocityOffset?: SceneVector3;
+  readonly acceleration?: SceneVector3;
+  readonly attitude?: Quaternion | null;
+  readonly liftFraction?: number | null;
+  readonly survivalMargin?: number | null;
 }
 
 export interface EvasionInput {
@@ -136,6 +189,8 @@ export interface EvasionInput {
   readonly capability: EvasionCapability;
   readonly deltaSeconds: number;
   readonly state: EvasionState;
+  /** Живое тело; без него остаётся прежняя сферическая коррекция. */
+  readonly dynamics?: EvasionDynamics;
   /**
    * Высота палубы: ниже неё уклоняться вниз нельзя. Без неё машина уходит от
    * пушки в землю, что охотника более чем устраивает.
@@ -163,10 +218,25 @@ export interface EvasionOutput {
   readonly closingSeconds: number | null;
   /** Насколько она прошла бы мимо, если не двигаться, м. */
   readonly miss: number | null;
+  /** Всевекторное требование для общего физического контура. */
+  readonly acceleration?: SceneVector3;
+  readonly attitude?: Quaternion | null;
+  readonly liftFraction?: number | null;
+  readonly survivalMargin?: number | null;
 }
 
 export function createEvasionState(): EvasionState {
-  return { breakSeconds: 0, breakDirection: [0, 0, 0], threatId: null };
+  return {
+    breakSeconds: 0,
+    breakDirection: [0, 0, 0],
+    threatId: null,
+    closingSeconds: null,
+    velocityOffset: [0, 0, 0],
+    acceleration: [0, 0, 0],
+    attitude: null,
+    liftFraction: null,
+    survivalMargin: null,
+  };
 }
 
 const EPSILON = 1e-6;
@@ -307,9 +377,10 @@ export function breakDirection(
 /**
  * ШАГ УКЛОНЕНИЯ.
  *
- * Порядок намеренный: сперва доводится начатый рывок, и только если он
- * кончился — ищется новая угроза. Пересматривать решение внутри рывка нельзя,
- * иначе машина дрожит на месте вместо того, чтобы уходить.
+ * Порядок намеренный: начатый рывок доводится без покадрового пересмотра.
+ * Новая ракета получает право прервать его только если прежней уже нет среди
+ * угроз либо новая придёт заметно раньше. Это не выбор «красивее», а смена
+ * физически главной опасности.
  */
 export function stepEvasion(input: EvasionInput): EvasionOutput {
   const { own, rockets, capability, deltaSeconds, state, deck } = input;
@@ -317,18 +388,29 @@ export function stepEvasion(input: EvasionInput): EvasionOutput {
   // Самая опасная ракета: та, что придёт ближе всего и раньше всех. НЕ
   // ПОПАДАЕТ — НЕ СЧИТАЕТСЯ: промах больше радиуса поражения с запасом
   // означает, что манёвр только испортит собственный маршрут.
-  const lethal = capability.radius + capability.margin;
+  const lethal = own.radius + capability.margin;
   let threat: RocketThreat | null = null;
   let threatSeconds: number | null = null;
   let threatMiss: number | null = null;
+  const threatening: RocketThreat[] = [];
+  const closingByThreat = new Map<number, number>();
   for (const rocket of rockets) {
+    if (rocket.ownerId === own.id) {
+      continue;
+    }
     const { seconds, miss } = rocketApproach(own, rocket);
-    if (seconds <= 0 || seconds > capability.horizonSeconds) {
+    if (
+      seconds <= 0 ||
+      seconds > capability.horizonSeconds ||
+      seconds > rocket.remainingSeconds
+    ) {
       continue;
     }
     if (miss > rocket.blastRadius + lethal) {
       continue;
     }
+    threatening.push(rocket);
+    closingByThreat.set(rocket.id, seconds);
     if (threatSeconds === null || seconds < threatSeconds) {
       threat = rocket;
       threatSeconds = seconds;
@@ -337,13 +419,43 @@ export function stepEvasion(input: EvasionInput): EvasionOutput {
   }
 
   const remaining = Math.max(0, state.breakSeconds - deltaSeconds);
-  if (remaining > 0) {
+  const committedSeconds = state.threatId === null
+    ? null
+    : closingByThreat.get(state.threatId) ?? null;
+  const urgentReplacement =
+    remaining > 0 &&
+    threat !== null &&
+    threat.id !== state.threatId &&
+    (committedSeconds === null ||
+      (threatSeconds ?? Number.POSITIVE_INFINITY) + 0.08 < committedSeconds);
+  if (remaining > 0 && !urgentReplacement) {
+    const selectedApproach = state.threatId === null
+      ? null
+      : rockets.find((rocket) => rocket.id === state.threatId) ?? null;
+    const selected = selectedApproach
+      ? rocketApproach(own, selectedApproach)
+      : null;
     return {
-      state: { ...state, breakSeconds: remaining },
-      velocityOffset: scale(state.breakDirection, capability.breakSpeed),
-      threatId: threat?.id ?? state.threatId,
-      closingSeconds: threatSeconds,
-      miss: threatMiss,
+      state: {
+        ...state,
+        breakSeconds: remaining,
+        closingSeconds:
+          selected && selected.seconds > 0
+            ? selected.seconds
+            : Math.max(0, (state.closingSeconds ?? 0) - deltaSeconds),
+      },
+      velocityOffset:
+        state.velocityOffset ?? scale(state.breakDirection, capability.breakSpeed),
+      // Докладывается та ракета, чью команду машина ИСПОЛНЯЕТ. Раньше здесь
+      // показывалась новая угроза при старом физическом рывке — панель говорила
+      // правду о зрении и неправду о действии.
+      threatId: state.threatId,
+      closingSeconds: selected?.seconds ?? state.closingSeconds ?? null,
+      miss: selected?.miss ?? null,
+      acceleration: state.acceleration,
+      attitude: state.attitude,
+      liftFraction: state.liftFraction,
+      survivalMargin: state.survivalMargin,
     };
   }
 
@@ -354,15 +466,36 @@ export function stepEvasion(input: EvasionInput): EvasionOutput {
       threatId: null,
       closingSeconds: null,
       miss: null,
+      acceleration: [0, 0, 0],
+      attitude: null,
+      liftFraction: null,
+      survivalMargin: null,
     };
   }
 
-  const direction = breakDirection(
-    own,
-    rocketApproach(own, threat).offset,
-    deck,
-    input.boundary,
-  );
+  const correction = input.dynamics
+    ? chooseEvasionCorrection({
+        centre: own.centre,
+        velocity: own.velocity,
+        threats: threatening,
+        closingSeconds: closingByThreat,
+        breakSpeed: capability.breakSpeed,
+        margin: capability.margin,
+        dynamics: input.dynamics,
+        deck,
+        boundary: input.boundary,
+      })
+    : null;
+  const direction = correction
+    ? normalize(correction.velocityOffset)
+    : breakDirection(
+        own,
+        rocketApproach(own, threat).offset,
+        deck,
+        input.boundary,
+      );
+  const velocityOffset = correction?.velocityOffset ??
+    scale(direction, capability.breakSpeed);
   // ВЫДЕРЖКА РЫВКА ГУЛЯЕТ, И ЭТО НЕ УКРАШЕНИЕ. Два реактивных контура с
   // одинаковыми постоянными времени сцепляются в устойчивый танец, где манёвр
   // жертвы становится функцией от того, что делает охотник, — то есть
@@ -377,10 +510,20 @@ export function stepEvasion(input: EvasionInput): EvasionOutput {
       breakSeconds: capability.breakSeconds * jitter,
       breakDirection: direction,
       threatId: threat.id,
+      closingSeconds: threatSeconds,
+      velocityOffset,
+      acceleration: correction?.acceleration ?? [0, 0, 0],
+      attitude: correction?.attitude ?? null,
+      liftFraction: correction?.liftFraction ?? null,
+      survivalMargin: correction?.survivalMargin ?? null,
     },
-    velocityOffset: scale(direction, capability.breakSpeed),
+    velocityOffset,
     threatId: threat.id,
     closingSeconds: threatSeconds,
     miss: threatMiss,
+    acceleration: correction?.acceleration ?? [0, 0, 0],
+    attitude: correction?.attitude ?? null,
+    liftFraction: correction?.liftFraction ?? null,
+    survivalMargin: correction?.survivalMargin ?? null,
   };
 }

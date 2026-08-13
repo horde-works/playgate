@@ -11,6 +11,36 @@ export type MotionTelemetryValueSide = "left" | "right";
  */
 export type MotionTelemetryValueState = "normal" | "warning" | "critical";
 
+/**
+ * Не роль машины, а слой исполняемого ею решения. Одинаковый словарь нужен
+ * именно затем, чтобы вооружённый борт мог сейчас уклоняться, а маршрутный —
+ * перестраиваться или атаковать, не меняя типа панели.
+ */
+export type MotionTelemetryActivityChannel =
+  | "assignment"
+  | "action"
+  | "decision"
+  | "instinct";
+
+export interface MotionTelemetryActivity {
+  readonly channel: MotionTelemetryActivityChannel;
+  /** Stable semantic name, localised by the HUD. */
+  readonly state: string;
+  /** The highest live priority becomes the short status in the header. */
+  readonly priority: number;
+}
+
+export function motionTelemetryPrimaryActivity(
+  activities: readonly MotionTelemetryActivity[] | undefined,
+): MotionTelemetryActivity | null {
+  if (!activities?.length) {
+    return null;
+  }
+  return activities.reduce((primary, activity) =>
+    activity.priority > primary.priority ? activity : primary,
+  );
+}
+
 export interface MotionTelemetryMetric {
   /** Stable semantic name, localised by the consumer when it knows it. */
   readonly id: string;
@@ -76,6 +106,8 @@ export interface MotionTelemetrySnapshot {
   /** Temporary controller mode; the journey phase remains independently true. */
   readonly mode?: string;
   readonly phase: string;
+  /** Live hierarchy of what the machine is doing inside its current task. */
+  readonly activities?: readonly MotionTelemetryActivity[];
   readonly metrics: readonly MotionTelemetryMetric[];
   /** Тип машины и живое состояние её органов — для типовой панели и сферы. */
   readonly machine?: MotionTelemetryMachine;

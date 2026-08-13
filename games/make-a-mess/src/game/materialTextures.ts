@@ -174,6 +174,7 @@ const photorealTextureUrls: Partial<Record<BreakableMaterial, string>> = {
   asphalt: "/games/make-a-mess/textures/asphalt.webp",
   steel: "/games/make-a-mess/textures/steel.webp",
   sheetMetal: "/games/make-a-mess/textures/steel.webp",
+  aluminium: "/games/make-a-mess/textures/steel.webp",
 };
 
 const surfaceTextureUrls: Partial<Record<SurfaceTextureProfile, string>> = {
@@ -356,6 +357,7 @@ const bumpScaleByMaterial: Record<BreakableMaterial, number> = {
   glass: 0,
   steel: 0.006,
   sheetMetal: 0.006,
+  aluminium: 0.002,
   stone: 0.045,
   basalt: 0.052,
   graphiteStone: 0.04,
@@ -1468,6 +1470,7 @@ export function getPieceMaterial(
   const isEtfeMembrane = material === "glass" && isEtfeMembraneColor(color);
   const isTransparent = pieceMaterialIsTransparent(material, color);
   const isSteel = material === "steel";
+  const isAluminium = material === "aluminium";
   const isPaintedSteel = isSteel && textureProfile === "painted-steel";
   // АВТОМОБИЛЬНЫЙ МЕТАЛЛИК. Тонкая наружная панель под краской — не то же
   // самое, что окрашенный архитектурный металл: у здания покрытие матовое и
@@ -1497,7 +1500,7 @@ export function getPieceMaterial(
     color,
     map: surfaceTexture,
     bumpMap: isGlass || isPaintedSteel || isCarPaint || isMatteAluminium
-      || isGoldMirror
+      || isGoldMirror || isAluminium
       ? null
       : surfaceTexture,
     bumpScale: bumpScaleByMaterial[material],
@@ -1506,6 +1509,8 @@ export function getPieceMaterial(
     depthWrite: !isTransparent,
     metalness: isGoldMirror
       ? 0.92
+      : isAluminium
+        ? 0.86
       : isCarPaint
         ? 0.7
       : isMatteAluminium
@@ -1517,6 +1522,8 @@ export function getPieceMaterial(
             : material === "graphiteStone" ? 0.08 : 0,
     roughness: isGoldMirror
       ? 0.16
+      : isAluminium
+        ? 0.22
       : isCarPaint
         ? 0.17
       : isNimbusCeramic
@@ -1564,6 +1571,8 @@ export function getPieceMaterial(
     // сразу, поэтому она отдельной задачей и с кадрами.
     envMapIntensity: isGoldMirror
       ? 1.8
+      : isAluminium
+        ? 1.55
       : isCarPaint
         ? 1.9
       : isMatteAluminium

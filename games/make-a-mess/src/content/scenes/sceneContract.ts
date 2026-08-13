@@ -92,6 +92,7 @@ export interface ScenePrefabPieceDefinition {
   readonly visualProfile?: SurfacePolygonProfile;
   readonly visualMesh?: SurfaceMeshProfile;
   readonly voxelization?: DamageVoxelizationDefinition;
+  readonly plateThickness?: number;
   readonly volume?: number;
   readonly bearingArea?: number;
   readonly foundation?: boolean;
@@ -151,6 +152,7 @@ export interface ScenePrimitiveDefinition extends SceneObjectBase {
   readonly visualProfile?: SurfacePolygonProfile;
   readonly visualMesh?: SurfaceMeshProfile;
   readonly voxelization?: DamageVoxelizationDefinition;
+  readonly plateThickness?: number;
   readonly volume?: number;
   readonly bearingArea?: number;
   readonly foundation?: boolean;

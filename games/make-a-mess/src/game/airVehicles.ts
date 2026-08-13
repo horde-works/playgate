@@ -15,6 +15,7 @@ import type { AirCombatStation } from "./airCombatPilot.ts";
 import type { EvasionCapability } from "./airCombatEvasion.ts";
 import type { VehicleArmament } from "./vehicleGunnery.ts";
 import type { VehicleGuidanceOverrides } from "./vehicleGuidanceEnvelope.ts";
+import type { AirplanePassport } from "./airplaneDynamics.ts";
 import type {
   RotorLandingTolerance,
   VehicleLiftSource,
@@ -138,6 +139,7 @@ import {
   ductHexacopterLapPlan,
 } from "./ductHexacopterRangeRoutes.ts";
 import {
+  COMBAT_HEXACOPTER_OPEN_SPEED,
   combatHexacopterGuardPhase,
   combatHexacopterGuardPlan,
   combatHexacopterGuardStation,
@@ -223,6 +225,10 @@ export interface AirVehicleDefinition extends VehicleFrameDefinition {
      *               машины определяется не долей уцелевших каналов, а тем,
      *               накрывает ли выпуклая оболочка уцелевших точек тяги её
      *               центр масс;
+     *   "wing"    — крыло и напор. Нет хода — нет подъёма. Точка приложения
+     *               уезжает к уцелевшим панелям; ниже сваливания машина
+     *               срывается, а не снижается на оборотах. Не голономная:
+     *               боковой ход guidance не исполняется;
      *   "none"    — подъёма нет вовсе: поезд, судно, автомобиль держит опора.
      *
      * Не задан — "buoyant": ровно то, чем жили все машины до появления
@@ -269,6 +275,21 @@ export interface AirVehicleDefinition extends VehicleFrameDefinition {
      * винтов не нужен.
      */
     readonly maximumTilt?: number;
+    /**
+     * Паспорт крылатой машины. Есть только при `liftSource: "wing"`.
+     * Автомат управления читает его; автопилот видит только выведенную
+     * поворотливость.
+     */
+    readonly airplane?: AirplanePassport;
+    /**
+     * Полный ход в свободном неустановившемся полёте, м/с.
+     *
+     * Это тактическая просьба внешнего автомата, а не второй физический
+     * ограничитель: достижимые ускорение, наклон и тягу всё равно принимает
+     * общий контур машины. Локальная геометрия виража или огневого прохода
+     * вправе запросить меньше.
+     */
+    readonly openSpeed?: number;
     /** Physical reach of this berth's capture/winch, in metres. */
     readonly mooringReach?: number;
     routePlan(kind: string, berth: SceneVector3): VehicleRoutePlan;
@@ -1287,6 +1308,18 @@ export const SR6_SKAT_AIR_VEHICLE: AirVehicleDefinition = {
  */
 export const COMBAT_HEXACOPTER_SKY_CONTROL = "sky-control";
 
+/**
+ * Рывок против ракеты определяется временем подлёта, а не именем машины.
+ * Фактическую достижимость скорости всё равно ограничивает общий контур
+ * конкретного борта; габарит берётся с его живого кадра.
+ */
+const RANGE_ROTORCRAFT_ROCKET_EVASION: EvasionCapability = {
+  breakSpeed: 16,
+  breakSeconds: 0.8,
+  margin: 2.5,
+  horizonSeconds: 2.5,
+};
+
 export const COMBAT_HEXACOPTER_RANGE_AIR_VEHICLE: AirVehicleDefinition = {
   ...combatHexacopterRangeFrame,
   allegiance: TONKAWA_ALLEGIANCE,
@@ -1370,6 +1403,9 @@ export const COMBAT_HEXACOPTER_RANGE_AIR_VEHICLE: AirVehicleDefinition = {
     liftSource: "rotor",
     liftReserve: combatHexacopterRangeBlueprint.flight.liftReserve,
     maximumTilt: combatHexacopterRangeBlueprint.flight.maximumTilt,
+    // Тот же полный ход, которым машина уже пользуется на открытом галсе.
+    // Бой не получает отдельного, более слабого паспорта.
+    openSpeed: COMBAT_HEXACOPTER_OPEN_SPEED,
     /**
      * ВОРОТА ВОЗМУЩЕНИЯ ОБЯЗАНЫ СТОЯТЬ ВЫШЕ ТОГО, ЧТО МАШИНА ДЕЛАЕТ САМА.
      *
@@ -1390,6 +1426,9 @@ export const COMBAT_HEXACOPTER_RANGE_AIR_VEHICLE: AirVehicleDefinition = {
      */
     guidance: { upsetTiltRate: 1.9, upsetYawRate: 1.3 },
     mooringReach: 0.6,
+    // Хищник не получает иммунитета к ответному пуску: его физически более
+    // сильный контур исполняет тот же запрос, что и контур VX.
+    evasion: RANGE_ROTORCRAFT_ROCKET_EVASION,
     routePlan: (kind, berth) =>
       kind === COMBAT_HEXACOPTER_SKY_CONTROL
         ? combatHexacopterGuardPlan(berth)
@@ -1532,25 +1571,19 @@ export const DUCT_HEXACOPTER_RANGE_AIR_VEHICLE: AirVehicleDefinition = {
     guidance: { upsetTiltRate: 2.4, upsetYawRate: 1.4 },
     mooringReach: 0.6,
     /**
-     * VX-8 УМЕЕТ УХОДИТЬ С ПРИЦЕЛА. Числа выведены, а не выбраны:
+     * VX-8 И RAX-8 УМЕЮТ УХОДИТЬ С ПРИЦЕЛА. Числа выведены, а не выбраны:
      *
      *  - 16 м/с схода: ракета идёт 96 м/с и на полусекунде подлёта уводит
      *    промах на восемь метров — этого хватает против радиуса поражения в
      *    два метра, и это по силам машине с её тоннелями;
      *  - 0.8 с рывка как основа: манёвр обязан пережить уже выпущенную
      *    ракету, а не оборваться за миг до её прохода;
-     *  - габарит 2.6 м и запас 2.5 м: вместе с радиусом поражения дают ответ
-     *    «попадёт ли», а без запаса решение принималось бы ровно на границе;
+     *  - живой габарит кадра и запас 2.5 м вместе с радиусом поражения дают
+     *    ответ «попадёт ли», не дублируя размер машины в этом паспорте;
      *  - горизонт 2.5 с: дальше ракета ещё слишком далеко, чтобы тратить на
      *    неё манёвр, и решение спокойно примет следующий кадр.
      */
-    evasion: {
-      breakSpeed: 16,
-      breakSeconds: 0.8,
-      radius: 2.6,
-      margin: 2.5,
-      horizonSeconds: 2.5,
-    },
+    evasion: RANGE_ROTORCRAFT_ROCKET_EVASION,
     routePlan: (_kind, berth) => ductHexacopterLapPlan(berth),
     arrivalPlan: ductHexacopterArrivalPlan,
     escapePlan: ductHexacopterEscapePlan,

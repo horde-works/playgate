@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import {
   breakDirection,
   createEvasionState,
+  projectileRocketThreat,
   rocketApproach,
   stepEvasion,
 } from "../games/make-a-mess/src/game/airCombatEvasion.ts";
+import { evasionHullFromLocalBounds } from "../games/make-a-mess/src/game/airCombatEvasionField.ts";
+import {
+  COMBAT_HEXACOPTER_RANGE_AIR_VEHICLE,
+  DUCT_HEXACOPTER_RANGE_AIR_VEHICLE,
+} from "../games/make-a-mess/src/game/airVehicles.ts";
 
 /**
  * УКЛОНЕНИЕ ЖЕРТВЫ — ОТ ПУСКА, А НЕ ОТ ПОДОЗРИТЕЛЬНОГО ПОВЕДЕНИЯ.
@@ -20,14 +27,28 @@ import {
 const CAPABILITY = {
   breakSpeed: 16,
   breakSeconds: 0.8,
-  radius: 2.6,
   margin: 2.5,
   horizonSeconds: 2.5,
 };
 const DECK = 0;
+const VECTOR_DYNAMICS = {
+  orientation: [0, 0, 0, 1],
+  authoredNose: [0, -1],
+  hull: {
+    halfExtents: [3, 0.7, 2.4],
+    centreOffset: [0, 0, 0],
+  },
+  horizontalAcceleration: 14.5,
+  upwardAcceleration: 25,
+  downwardAcceleration: 9.81,
+  liftReserve: 4.2,
+  surgeAcceleration: 8,
+  attitudeRate: 1.9,
+  maneuverScale: 1,
+};
 
 function prey(centre = [0, 30, 0], velocity = [0, 0, 12]) {
-  return { allegiance: "yaqui", centre, velocity };
+  return { id: "prey", allegiance: "yaqui", centre, velocity, radius: 2.6 };
 }
 
 /** Ракета, идущая из точки в сторону цели со скоростью 96 м/с. */
@@ -38,12 +59,90 @@ function rocket(from, towards, overrides = {}) {
   const len = Math.hypot(dx, dy, dz) || 1;
   return {
     id: 1,
+    ownerId: "hunter",
+    kind: "podRocket",
     position: from,
     velocity: [(dx / len) * 96, (dy / len) * 96, (dz / len) * 96],
     blastRadius: 2,
+    remainingSeconds: 1.8,
     ...overrides,
   };
 }
+
+test("RAX и VX оба объявляют способность уклоняться", () => {
+  assert.ok(COMBAT_HEXACOPTER_RANGE_AIR_VEHICLE.flight.evasion);
+  assert.ok(DUCT_HEXACOPTER_RANGE_AIR_VEHICLE.flight.evasion);
+});
+
+test("габарит вынесенной от нуля машины остаётся возле её центра масс", () => {
+  // Реальные координаты VX-8: его пост вынесен на [30, 1.32, -26]. До
+  // исправления origin терялся, и поле ставило фантомный корпус примерно на
+  // [-30, -1.5, 26] от настоящего центра машины.
+  const hull = evasionHullFromLocalBounds(
+    {
+      minimum: [-5.6498922567, -4.2150862285, -5.2645253314],
+      maximum: [5.048236907, 4.1927280542, 5.7859599679],
+    },
+    [30, 1.32, -26],
+    [29.9922477515, 1.4771204397, -25.9934638072],
+  );
+  assert.ok(Math.abs(hull.centreOffset[0] + 0.2931) < 0.001);
+  assert.ok(Math.abs(hull.centreOffset[1] + 0.1683) < 0.001);
+  assert.ok(Math.abs(hull.centreOffset[2] - 0.2542) < 0.001);
+});
+
+test("исполняемое задание не может затереть более поздний рефлекс VX", () => {
+  const runtime = readFileSync(
+    new URL(
+      "../games/make-a-mess/src/game/VehicleFrameSystem.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const figure = runtime.indexOf("const figured = advanceRouteFigureFrame({");
+  const evasion = runtime.indexOf("const evasionStep = stepEvasion({");
+  const surface = runtime.indexOf("const floorRelief =");
+  assert.ok(figure >= 0 && evasion >= 0 && surface >= 0);
+  assert.ok(
+    figure < evasion && evasion < surface,
+    "иерархия обязана быть: задание → уклонение → поверхность",
+  );
+});
+
+test("посадка и управляемое снижение не выключают ракетный рефлекс", () => {
+  const runtime = readFileSync(
+    new URL(
+      "../games/make-a-mess/src/game/VehicleFrameSystem.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const recoveryGate = runtime.indexOf(
+    "const rotorRecoveryPhase = state.recovery?.lifecycle.phase ?? null;",
+  );
+  const evasion = runtime.indexOf("const evasion = frame.flight.evasion;", recoveryGate);
+  const decision = runtime.indexOf("const evasionStep = stepEvasion({", evasion);
+  const application = runtime.indexOf("const baseGuidance = rotorGuidance ??", decision);
+  assert.ok(
+    recoveryGate >= 0 && evasion > recoveryGate && decision > evasion && application > decision,
+  );
+  assert.doesNotMatch(
+    runtime.slice(evasion, decision),
+    /flight\?\.castOff\s*&&\s*rotorGuidance/,
+    "рефлекс всё ещё требует маршрутного guidance",
+  );
+  assert.match(
+    runtime.slice(recoveryGate, application),
+    /rotorRecoveryPhase === "landing"/,
+  );
+  assert.match(
+    runtime.slice(recoveryGate, application),
+    /rotorRecoveryPhase === "descent"/,
+  );
+  const commanded = runtime.indexOf("const evasionActuallyCommanded =");
+  const reported = runtime.indexOf("if (evasionActuallyCommanded) {", commanded);
+  assert.ok(commanded > application && reported > commanded);
+});
 
 test("сближение с ракетой считается по обоим движениям, а не по одному", () => {
   // Ракета в лоб с 96 м/с при дистанции 48 м: подлёт около полусекунды, и
@@ -56,7 +155,15 @@ test("сближение с ракетой считается по обоим д
 
 test("ушедшая ракета не тревожит: ближайшая точка позади", () => {
   // Прошла мимо и удаляется. Дёргаться поздно и незачем.
-  const past = { id: 2, position: [0, 30, -20], velocity: [0, 0, -96], blastRadius: 2 };
+  const past = {
+    id: 2,
+    ownerId: "hunter",
+    kind: "podRocket",
+    position: [0, 30, -20],
+    velocity: [0, 0, -96],
+    blastRadius: 2,
+    remainingSeconds: 1.8,
+  };
   assert.ok(rocketApproach(prey(), past).seconds <= 0);
   const step = stepEvasion({
     own: prey(),
@@ -108,7 +215,15 @@ test("идущая в поражение ракета поднимает рыв�
 
 test("далёкая ракета ждёт своего кадра, а не тратит манёвр сейчас", () => {
   // За горизонтом решение спокойно примет следующий кадр.
-  const far = { id: 3, position: [0, 30, 400], velocity: [0, 0, -96], blastRadius: 2 };
+  const far = {
+    id: 3,
+    ownerId: "hunter",
+    kind: "podRocket",
+    position: [0, 30, 400],
+    velocity: [0, 0, -96],
+    blastRadius: 2,
+    remainingSeconds: 1.8,
+  };
   const step = stepEvasion({
     own: prey(),
     rockets: [far],
@@ -120,10 +235,26 @@ test("далёкая ракета ждёт своего кадра, а не тр
   assert.deepEqual(step.velocityOffset, [0, 0, 0]);
 });
 
+test("ракета, которая самоликвидируется до сближения, манёвра не требует", () => {
+  const expiring = rocket([0, 30, 48], [0, 30, 0], {
+    remainingSeconds: 0.2,
+  });
+  const step = stepEvasion({
+    own: prey(),
+    rockets: [expiring],
+    capability: CAPABILITY,
+    deltaSeconds: 1 / 60,
+    state: createEvasionState(),
+    deck: DECK,
+  });
+  assert.equal(step.threatId, null);
+});
+
 test("рывок ДОВОДИТСЯ и не пересматривается внутри срока", () => {
+  const shot = rocket([0, 30, 48], [0, 30, 0]);
   const first = stepEvasion({
     own: prey(),
-    rockets: [rocket([0, 30, 48], [0, 30, 0])],
+    rockets: [shot],
     capability: CAPABILITY,
     deltaSeconds: 1 / 60,
     state: createEvasionState(),
@@ -134,7 +265,8 @@ test("рывок ДОВОДИТСЯ и не пересматривается в�
   for (let frame = 0; frame < 10; frame += 1) {
     const step = stepEvasion({
       own: prey(),
-      rockets: [rocket([2, 31, 40], [0, 30, 0], { id: 9 })],
+      // Та же ракета движется по своей трассе; её id в реестре стабилен.
+      rockets: [{ ...shot, position: [0, 30, 48 - frame * 1.6] }],
       capability: CAPABILITY,
       deltaSeconds: 1 / 60,
       state,
@@ -143,6 +275,35 @@ test("рывок ДОВОДИТСЯ и не пересматривается в�
     state = step.state;
     assert.deepEqual(step.state.breakDirection, chosen);
   }
+});
+
+test("новая более срочная ракета прерывает старый рывок с другого вектора", () => {
+  const firstThreat = rocket([48, 30, 0], [0, 30, 0], { id: 610 });
+  const first = stepEvasion({
+    own: prey([0, 30, 0], [0, 0, 0]),
+    rockets: [firstThreat],
+    capability: CAPABILITY,
+    dynamics: VECTOR_DYNAMICS,
+    deltaSeconds: 1 / 60,
+    state: createEvasionState(),
+    deck: DECK,
+  });
+  const fromAbove = rocket([0, 60, 0], [0, 30, 0], { id: 611 });
+  const interrupted = stepEvasion({
+    own: prey([0, 30, 0], [0, 0, 0]),
+    rockets: [firstThreat, fromAbove],
+    capability: CAPABILITY,
+    dynamics: VECTOR_DYNAMICS,
+    deltaSeconds: 1 / 60,
+    state: first.state,
+    deck: DECK,
+  });
+  assert.equal(interrupted.state.threatId, fromAbove.id);
+  assert.notDeepEqual(
+    interrupted.velocityOffset,
+    first.velocityOffset,
+    "новая вертикальная угроза осталась только надписью в панели",
+  );
 });
 
 test("рывок уходит ВДОЛЬ ВЕКТОРА ПРОМАХА, а не наугад вбок", () => {
@@ -158,12 +319,85 @@ test("рывок уходит ВДОЛЬ ВЕКТОРА ПРОМАХА, а не 
   assert.ok(alignment > 0.7, `рывок ушёл не туда: совпадение ${alignment.toFixed(2)}`);
 });
 
+test("свою ракету машина игнорирует, чужую того же типа — нет", () => {
+  const ownShot = rocket([0, 30, 48], [0, 30, 0], {
+    ownerId: "prey",
+  });
+  const ignored = stepEvasion({
+    own: prey(),
+    rockets: [ownShot],
+    capability: CAPABILITY,
+    deltaSeconds: 1 / 60,
+    state: createEvasionState(),
+    deck: DECK,
+  });
+  assert.equal(ignored.threatId, null);
+  const foreign = stepEvasion({
+    own: prey(),
+    rockets: [{ ...ownShot, ownerId: "other" }],
+    capability: CAPABILITY,
+    deltaSeconds: 1 / 60,
+    state: createEvasionState(),
+    deck: DECK,
+  });
+  assert.equal(foreign.threatId, ownShot.id);
+});
+
+test("тяжёлая и игла входят из общего физического пула со своими паспортами", () => {
+  const heavy = projectileRocketThreat(
+    20,
+    "player",
+    "rocket",
+    [0, 30, 48],
+    [0, 0, -32],
+  );
+  const lance = projectileRocketThreat(
+    21,
+    "player",
+    "lance",
+    [0, 30, 48],
+    [0, 0, -124],
+  );
+  assert.ok(heavy && lance);
+  assert.ok(heavy.blastRadius > lance.blastRadius, "сила боевой части потерялась");
+  assert.ok(
+    heavy.remainingSeconds > lance.remainingSeconds,
+    "время самоликвидации обоих типов стало одинаковым",
+  );
+  assert.ok(
+    rocketApproach(prey(), lance).seconds < rocketApproach(prey(), heavy).seconds,
+    "скорость иглы потерялась",
+  );
+  for (const threat of [heavy, lance]) {
+    const output = stepEvasion({
+      own: prey(),
+      rockets: [threat],
+      capability: CAPABILITY,
+      deltaSeconds: 1 / 60,
+      state: createEvasionState(),
+      deck: DECK,
+    });
+    assert.equal(output.threatId, threat.id, `${threat.kind} не распознана`);
+  }
+  assert.equal(
+    projectileRocketThreat(22, "player", "grenade", [0, 0, 0], [0, 0, 0]),
+    null,
+    "граната ошибочно вошла в воздушную обстановку",
+  );
+});
+
 test("РЫВОК СМЕЩАЕТ, НО НЕ ТОРМОЗИТ", () => {
   // Тормозящая жертва удобнее для упреждения, а не труднее, и вдобавок
   // бросает свою задачу. Замер первой редакции: средняя скорость падала с
   // 12-14 до 4.2 м/с — она выживала бегством, а не манёвром.
   for (const velocity of [[0, 0, 12], [12, 0, 0], [8, 0, -8]]) {
-    const own = { allegiance: "yaqui", centre: [0, 30, 0], velocity };
+    const own = {
+      id: "prey",
+      allegiance: "yaqui",
+      centre: [0, 30, 0],
+      velocity,
+      radius: 2.6,
+    };
     const direction = breakDirection(own, [1, 0.2, 0], DECK);
     const speed = Math.hypot(...velocity);
     const along =
@@ -178,7 +412,13 @@ test("РЫВОК СМЕЩАЕТ, НО НЕ ТОРМОЗИТ", () => {
 test("у самой палубы рывок не уводит вниз", () => {
   // Уклоняться к земле — ровно то, что охотника устраивает.
   const low = breakDirection(
-    { allegiance: "yaqui", centre: [0, 3, 0], velocity: [0, 0, 12] },
+    {
+      id: "prey",
+      allegiance: "yaqui",
+      centre: [0, 3, 0],
+      velocity: [0, 0, 12],
+      radius: 2.6,
+    },
     [0, -1, 0],
     0,
   );
@@ -188,7 +428,13 @@ test("у самой палубы рывок не уводит вниз", () => {
 test("за кромку мира рывок не уводит", () => {
   const boundary = { centre: [0, 0, 0], radius: 55 };
   const direction = breakDirection(
-    { allegiance: "yaqui", centre: [50, 30, 0], velocity: [0, 0, 12] },
+    {
+      id: "prey",
+      allegiance: "yaqui",
+      centre: [50, 30, 0],
+      velocity: [0, 0, 12],
+      radius: 2.6,
+    },
     [1, 0, 0],
     0,
     boundary,
@@ -197,4 +443,212 @@ test("за кромку мира рывок не уводит", () => {
     Math.abs(50 + direction[0] * 20) < boundary.radius,
     `рывок увёл за кромку: x=${(50 + direction[0] * 20).toFixed(1)}`,
   );
+});
+
+test("всевекторное поле уходит поперёк центральной атаки с любой стороны", () => {
+  const own = prey([0, 30, 0], [0, 0, 0]);
+  const attackDirections = [
+    [1, 0, 0],
+    [-1, 0, 0],
+    [0, 1, 0],
+    [0, -1, 0],
+    [0, 0, 1],
+    [0, 0, -1],
+    [1, 1, 1],
+  ];
+  for (const raw of attackDirections) {
+    const length = Math.hypot(...raw);
+    const direction = raw.map((value) => value / length);
+    const threat = {
+      id: 100 + attackDirections.indexOf(raw),
+      ownerId: "hunter",
+      kind: "podRocket",
+      position: direction.map(
+        // At one second even the full physical acceleration cannot buy the
+        // hull + warhead + margin clearance. This test is about vector choice,
+        // so give the same live envelope a genuinely survivable 1.7 seconds.
+        (value, index) => own.centre[index] + value * 163.2,
+      ),
+      velocity: direction.map((value) => -value * 96),
+      blastRadius: 2,
+      remainingSeconds: 1.8,
+    };
+    const output = stepEvasion({
+      own,
+      rockets: [threat],
+      capability: CAPABILITY,
+      dynamics: VECTOR_DYNAMICS,
+      deltaSeconds: 1 / 60,
+      state: createEvasionState(),
+      deck: DECK,
+    });
+    const speed = Math.hypot(...output.velocityOffset);
+    const along = Math.abs(
+      output.velocityOffset[0] * direction[0] +
+        output.velocityOffset[1] * direction[1] +
+        output.velocityOffset[2] * direction[2],
+    );
+    const across = Math.sqrt(Math.max(0, speed ** 2 - along ** 2));
+    assert.ok(across > 3, `нет поперечного ухода для ${raw.join("/")}`);
+    assert.ok(
+      Number.isFinite(output.survivalMargin),
+      `поле не оценило пролёт для ${raw.join("/")}`,
+    );
+  }
+});
+
+test("малой коррекции и нескольких градусов позы хватает убрать край корпуса", () => {
+  const own = { ...prey([0, 30, 0], [0, 0, 0]), radius: 4 };
+  const output = stepEvasion({
+    own,
+    rockets: [
+      {
+        id: 200,
+        ownerId: "hunter",
+        kind: "podRocket",
+        // Идёт сверху рядом с концом четырёхметрового поперечного габарита.
+        position: [3, 164.4, 0],
+        velocity: [0, -96, 0],
+        blastRadius: 0.2,
+        remainingSeconds: 1.8,
+      },
+    ],
+    capability: { ...CAPABILITY, margin: 0.2 },
+    dynamics: {
+      ...VECTOR_DYNAMICS,
+      hull: { halfExtents: [4, 0.5, 1.2], centreOffset: [0, 0, 0] },
+    },
+    deltaSeconds: 1 / 60,
+    state: createEvasionState(),
+    deck: DECK,
+  });
+  const speed = Math.hypot(...output.velocityOffset);
+  assert.ok(speed > 0 && speed < 6, `поле выбрало лишний полный рывок ${speed}`);
+  assert.ok(output.attitude, "край корпуса не был убран позой");
+  const attitudeAngle =
+    2 * Math.acos(Math.min(1, Math.abs(output.attitude[3])));
+  assert.ok(
+    attitudeAngle > (4 * Math.PI) / 180 &&
+      attitudeAngle <= (12 * Math.PI) / 180 + 1e-6,
+    `коррекция позы не минорная: ${(attitudeAngle * 180 / Math.PI).toFixed(1)}°`,
+  );
+  assert.ok(output.survivalMargin > 0);
+});
+
+test("повреждённая машина не получает от оценщика чужую располагаемую власть", () => {
+  const own = prey([0, 30, 0], [0, 0, 0]);
+  const threat = {
+    id: 300,
+    ownerId: "hunter",
+    kind: "podRocket",
+    position: [0, 78, 0],
+    velocity: [0, -96, 0],
+    blastRadius: 2,
+    remainingSeconds: 1.8,
+  };
+  const evade = (maneuverScale) =>
+    stepEvasion({
+      own,
+      rockets: [threat],
+      capability: CAPABILITY,
+      dynamics: {
+        ...VECTOR_DYNAMICS,
+        horizontalAcceleration:
+          VECTOR_DYNAMICS.horizontalAcceleration * maneuverScale,
+        upwardAcceleration:
+          VECTOR_DYNAMICS.upwardAcceleration * maneuverScale,
+        surgeAcceleration: VECTOR_DYNAMICS.surgeAcceleration * maneuverScale,
+        maneuverScale,
+      },
+      deltaSeconds: 1 / 60,
+      state: createEvasionState(),
+      deck: DECK,
+    });
+  const healthy = evade(1);
+  const damaged = evade(0.2);
+  assert.ok(
+    damaged.survivalMargin < healthy.survivalMargin,
+    "повреждение не ухудшило честный прогноз уклонения",
+  );
+});
+
+test("поле фильтрует грунт и кромку до выбора коррекции", () => {
+  const sideThreat = (centre) => ({
+    id: 400,
+    ownerId: "hunter",
+    kind: "podRocket",
+    position: [centre[0], centre[1], centre[2] + 96],
+    velocity: [0, 0, -96],
+    blastRadius: 2,
+    remainingSeconds: 1.8,
+  });
+  const low = prey([0, 2, 0], [0, 0, 0]);
+  const aboveDeck = stepEvasion({
+    own: low,
+    rockets: [sideThreat(low.centre)],
+    capability: CAPABILITY,
+    dynamics: VECTOR_DYNAMICS,
+    deltaSeconds: 1 / 60,
+    state: createEvasionState(),
+    deck: 0,
+  });
+  assert.ok(aboveDeck.velocityOffset[1] >= 0, "поле выбрало грунт");
+
+  const edge = prey([50, 30, 0], [0, 0, 0]);
+  const insideBoundary = stepEvasion({
+    own: edge,
+    rockets: [
+      {
+        ...sideThreat(edge.centre),
+        id: 401,
+        position: [50, 126, 0],
+        velocity: [0, -96, 0],
+      },
+    ],
+    capability: CAPABILITY,
+    dynamics: VECTOR_DYNAMICS,
+    deltaSeconds: 1 / 60,
+    state: createEvasionState(),
+    deck: 0,
+    boundary: { centre: [0, 0, 0], radius: 55 },
+  });
+  assert.ok(
+    insideBoundary.velocityOffset[0] <= 0,
+    "поле выбрало наружу за кромку",
+  );
+});
+
+test("один выбор отвечает сразу двум ракетам из разных плоскостей", () => {
+  const own = prey([0, 30, 0], [0, 0, 0]);
+  const output = stepEvasion({
+    own,
+    rockets: [
+      {
+        id: 500,
+        ownerId: "hunter-a",
+        kind: "podRocket",
+        position: [163.2, 30, 0],
+        velocity: [-96, 0, 0],
+        blastRadius: 2,
+        remainingSeconds: 1.8,
+      },
+      {
+        id: 501,
+        ownerId: "hunter-b",
+        kind: "podRocket",
+        position: [0, 193.2, 0],
+        velocity: [0, -96, 0],
+        blastRadius: 2,
+        remainingSeconds: 1.8,
+      },
+    ],
+    capability: CAPABILITY,
+    dynamics: VECTOR_DYNAMICS,
+    deltaSeconds: 1 / 60,
+    state: createEvasionState(),
+    deck: 0,
+  });
+  // Общая свободная ось у двух ортогональных линий атаки — z. Ненулевая
+  // компонента показывает, что поле не решило только первую ракету списка.
+  assert.ok(Math.abs(output.velocityOffset[2]) > 3);
 });

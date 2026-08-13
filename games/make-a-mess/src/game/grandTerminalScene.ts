@@ -39,6 +39,10 @@ const FLOOR_Y = 0.18;
 const FRONT_Z = 34;
 const REAR_Z = 8;
 const SHED_END_Z = -72;
+const MAIN_ENTRANCE_CENTERS = [-9, 0, 9] as const;
+const MAIN_ENTRANCE_HALF_WIDTH = 2.35;
+const WING_ENTRANCE_CENTERS = [-20, 20] as const;
+const WING_ENTRANCE_HALF_WIDTH = 2.25;
 const STATION_LOCAL_LIGHT_CAPACITY = 8;
 const SKY_TRAIN_CLUSTER_ID = "terminal:sky-train";
 
@@ -691,9 +695,9 @@ function createCircularGround(): void {
 }
 
 function frontOpening(x: number, y: number): boolean {
-  for (const center of [-9, 0, 9]) {
+  for (const center of MAIN_ENTRANCE_CENTERS) {
     const dx = Math.abs(x - center);
-    if (dx < 2.35 && y < 6.6) {
+    if (dx < MAIN_ENTRANCE_HALF_WIDTH && y < 6.6) {
       return true;
     }
     const ellipse = (dx * dx) / (3.15 * 3.15) + ((y - 6.5) * (y - 6.5)) / (3.15 * 3.15);
@@ -708,12 +712,23 @@ function frontOpening(x: number, y: number): boolean {
   }
   // The bays at ±20 are true doorways cut clear down to the floor: the side
   // ticket halls have their own street entrances.
-  for (const center of [-20, 20]) {
-    if (Math.abs(x - center) < 2.25 && y < 8.7) {
+  for (const center of WING_ENTRANCE_CENTERS) {
+    if (Math.abs(x - center) < WING_ENTRANCE_HALF_WIDTH && y < 8.7) {
       return true;
     }
   }
   return false;
+}
+
+function overlapsStreetEntrance(x: number, width: number): boolean {
+  return (
+    MAIN_ENTRANCE_CENTERS.some(
+      (center) => Math.abs(x - center) < MAIN_ENTRANCE_HALF_WIDTH + width / 2,
+    ) ||
+    WING_ENTRANCE_CENTERS.some(
+      (center) => Math.abs(x - center) < WING_ENTRANCE_HALF_WIDTH + width / 2,
+    )
+  );
 }
 
 function addWindow(
@@ -1188,15 +1203,20 @@ function createPublicInterior(): void {
     lobby.add(`pilaster-cap:${x}`, "plaster", "panel", [x, 9.35, liningZ - 0.02], [1.35, 0.55, 0.62], "#d8ceb4");
   }
   // Oak wainscot dado running between the pilasters, standing on the floor.
+  const wainscotWidth = 2.86;
+  const wainscotRailWidth = 2.9;
   for (let x = -36; x <= 36; x += 3) {
     if (pilasterXs.some((px) => Math.abs(px - x) < 1.1)) {
       continue;
     }
-    if (Math.abs(x) < 2) {
+    // The lining spans the whole facade, but the dado must stop at every
+    // street entrance. Previously only the centre door was skipped, leaving
+    // a full-height oak panel across each side entrance to the main hall.
+    if (overlapsStreetEntrance(x, Math.max(wainscotWidth, wainscotRailWidth))) {
       continue;
     }
-    lobby.add(`wainscot:${x}`, "wood", "plank", [x, 1.15, liningZ + 0.04], [2.86, 1.9, 0.34], x % 2 === 0 ? oak : oakDark);
-    lobby.add(`wainscot-rail:${x}`, "wood", "plank", [x, 2.18, liningZ + 0.08], [2.9, 0.16, 0.2], "#8a5a34");
+    lobby.add(`wainscot:${x}`, "wood", "plank", [x, 1.15, liningZ + 0.04], [wainscotWidth, 1.9, 0.34], x % 2 === 0 ? oak : oakDark);
+    lobby.add(`wainscot-rail:${x}`, "wood", "plank", [x, 2.18, liningZ + 0.08], [wainscotRailWidth, 0.16, 0.2], "#8a5a34");
   }
   // Continuous entablature cornice tying the pilaster caps together.
   for (let x = -33; x <= 33; x += 6) {

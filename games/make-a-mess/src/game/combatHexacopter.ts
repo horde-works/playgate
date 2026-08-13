@@ -203,9 +203,17 @@ function armament(placement: CombatHexacopterPlacement): VehicleArmament {
   return {
     cannon: {
       kind: "cannon",
+      projectile: {
+        kind: "armourPiercing",
+        // Авторский паспорт: проходит 40–50 мм наружной брони VX-8 при
+        // близком к нормали ударе, но не его 70–110 мм силовые тоннели.
+        // Число принадлежит боеприпасу, а не цели; граница конструкции
+        // независимо восстанавливается из канонической геометрии в тесте.
+        steelPenetration: { steelThicknessAtNormal: 0.055 },
+      },
       mounts: cannonMounts,
-      // Дальность и темп — общие с ручным пулемётом: это один и тот же
-      // боеприпас, а не «оружие машины» с отдельными числами.
+      // Доставка пока сохраняет вылизанные дальность и ритм старой установки.
+      // Отличие не в скрытом уроне, а в терминальной работе с листом.
       range: MG_RANGE,
       fireInterval: MG_FIRE_INTERVAL,
       dispersion: 0.012,

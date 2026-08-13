@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   DEFAULT_WORLD_ENVELOPE,
   worldFloorAvoidance,
+  worldFloorSafeVelocity,
 } from "../games/make-a-mess/src/game/vehicleWorldEnvelope.ts";
 
 /**
@@ -69,6 +70,13 @@ test("ПОД ОСТРОВОМ УХОДЯТ В СТОРОНУ, А НЕ ВВЕРХ
   assert.ok(west.outward > 0);
 });
 
+test("ДАЖЕ НА САНТИМЕТР ПОД ПАЛУБОЙ В ЦЕНТРЕ НЕЛЬЗЯ КОМАНДОВАТЬ ВВЕРХ", () => {
+  const under = still([0, -0.01, 0]);
+  assert.equal(under?.reason, "under");
+  assert.equal(under?.climb, 0);
+  assert.ok(under?.outward > 0);
+});
+
 test("НАД ОСТРОВОМ, НО НИЗКО — НАБИРАТЬ", () => {
   const low = still([10, 4, 0]);
   assert.ok(low && low.reason === "above");
@@ -76,6 +84,18 @@ test("НАД ОСТРОВОМ, НО НИЗКО — НАБИРАТЬ", () => {
   assert.equal(low.outward, 0, "над островом отворачивать некуда и незачем");
   // Чем ниже, тем срочнее — но не глубже палубы: там уже другой случай.
   assert.ok(still([10, 1, 0]).urgency > low.urgency);
+});
+
+test("БЫСТРОЕ ПИКИРОВАНИЕ ВИДИТ ПОВЕРХНОСТЬ ВЫШЕ СТАТИЧЕСКОГО ПОЛА", () => {
+  assert.equal(still([0, 20, 0]), null, "без снижения запас достаточен");
+  const diving = worldFloorAvoidance({
+    centre: [0, 20, 0],
+    velocity: [0, -20, 0],
+    upwardAcceleration: 20,
+    island: ISLAND,
+  });
+  assert.equal(diving?.reason, "above");
+  assert.ok(diving?.climb > 0);
 });
 
 test("К КРОМКЕ СНИЗУ — НАБИРАТЬ ЗАРАНЕЕ, ПО ВРЕМЕНИ, А НЕ ПО РАССТОЯНИЮ", () => {
@@ -98,6 +118,47 @@ test("К КРОМКЕ СНИЗУ — НАБИРАТЬ ЗАРАНЕЕ, ПО ВР�
   assert.equal(hopeless.reason, "approaching");
   assert.ok(hopeless.outward > 0, "не успевающую машину не отвернули");
   assert.equal(hopeless.urgency, 1);
+});
+
+test("ГРАНИЦУ ПЕРВЫМ ПЕРЕСЕКАЕТ КОРПУС, А НЕ ЕГО ЦЕНТР", () => {
+  const avoidance = worldFloorAvoidance({
+    centre: [54, 2, 0],
+    velocity: [-20, 0, 0],
+    radius: 5,
+    island: ISLAND,
+  });
+  assert.equal(avoidance?.reason, "approaching");
+  assert.equal(avoidance?.urgency, 1);
+  assert.ok(avoidance?.outward >= 20);
+});
+
+test("НА ПОЛНОМ ХОДУ ПОЛОСА РЕАКЦИИ РАСТЁТ ДО ТОРМОЗНОГО ПУТИ", () => {
+  const fast = worldFloorAvoidance({
+    centre: [100, 2, 0],
+    velocity: [-36, 0, 0],
+    radius: 5,
+    horizontalAcceleration: 14.5,
+    island: ISLAND,
+  });
+  assert.equal(fast?.reason, "approaching");
+  assert.ok(fast?.outward > 0, "полный ход заметил борт слишком поздно");
+});
+
+test("РЕФЛЕКС ГАСИТ КОМАНДУ В БОРТ, А НЕ СКЛАДЫВАЕТСЯ С НЕЙ", () => {
+  const avoidance = {
+    climb: 8,
+    outward: 20,
+    urgency: 1,
+    reason: "approaching",
+  };
+  const safe = worldFloorSafeVelocity(
+    [-36, 0, 7],
+    [52, 2, 0],
+    ISLAND,
+    avoidance,
+  );
+  assert.ok(safe[0] >= 20, `осталась скорость ${safe[0]} м/с в борт`);
+  assert.equal(safe[2], 7, "конверт уничтожил тангенциальное движение");
 });
 
 test("ОСТРОВ МОЖЕТ БЫТЬ НЕ В НУЛЕ И НЕ НА НУЛЕ", () => {

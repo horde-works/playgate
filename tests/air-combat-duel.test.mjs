@@ -121,6 +121,26 @@ test("МАРШРУТ ЦЕЛИ РЕШАЕТ ИСХОД — но «злой» пе
  */
 const yaqui = runDuel({ seconds: 150, target: "vx8" });
 
+test("верх и низ существуют как фактический вынос броска, а не ярлык", () => {
+  const committed = yaqui.attackEntries.filter(
+    (entry) => Math.abs(entry.entryAbove) > 4,
+  );
+  assert.ok(
+    committed.some((entry) => entry.entryAbove > 0),
+    "ни один бросок не сохранил верхний вынос",
+  );
+  assert.ok(
+    committed.some((entry) => entry.entryAbove < 0),
+    "ни один бросок не сохранил нижний вынос",
+  );
+  assert.ok(
+    committed.every(
+      (entry) => Math.sign(entry.entryAbove) === Math.sign(entry.vertical),
+    ),
+    "телеметрический ярус снова разошёлся с фактической траекторией",
+  );
+});
+
 test("НЕБО ПОКРЫВАЕТ ВСЁ, ЧТО ЛЕТИТ, — и дальше всех летит промах", () => {
   console.log(`
 [дуэль: RAX-8 против VX-8]

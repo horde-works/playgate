@@ -2491,6 +2491,34 @@ button:focus-visible {
   text-transform: uppercase;
 }
 
+.motion-telemetry .motion-telemetry-activities {
+  margin: 0 0 9px;
+  padding: 5px 0 7px;
+  border-top: 1px solid color-mix(in srgb, var(--telemetry-muted) 32%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--telemetry-muted) 22%, transparent);
+}
+
+.motion-telemetry .motion-telemetry-activities div {
+  min-height: 17px;
+}
+
+.motion-telemetry .motion-telemetry-activities dt,
+.motion-telemetry .motion-telemetry-activities dd {
+  line-height: 17px;
+}
+
+.motion-telemetry .motion-telemetry-activities dd {
+  overflow: hidden;
+  max-width: 72%;
+  color: var(--telemetry-ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.motion-telemetry .motion-telemetry-activities .is-primary dd {
+  color: var(--telemetry-accent);
+}
+
 .motion-telemetry-instruments {
   display: grid;
   grid-template-columns: 1fr 1fr;

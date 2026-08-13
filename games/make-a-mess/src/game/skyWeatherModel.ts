@@ -217,7 +217,7 @@ export const WORLD_SKY: Readonly<Record<string, SkyWeather>> = {
     beamStrength: 0.015,
     shadowStrength: 0.4,
   },
-  // Сухая степь: остров видно целиком, и `fogDistances: [150, 328]` в
+  // Сухая степь: остров видно целиком, и `fogDistances: [190, 390]` в
   // документе сцены поставлены ровно под это. Воздуху положено соответствовать.
   astana: {
     ...CLEAR_SKY,

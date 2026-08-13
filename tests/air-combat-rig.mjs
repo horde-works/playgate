@@ -19,6 +19,9 @@ import {
 } from "../games/make-a-mess/src/game/rangeDuctHexacopter.ts";
 import { ductHexacopterLapPlan } from "../games/make-a-mess/src/game/ductHexacopterRangeRoutes.ts";
 import {
+  COMBAT_HEXACOPTER_OPEN_SPEED,
+} from "../games/make-a-mess/src/game/combatHexacopterRangeRoutes.ts";
+import {
   advanceRouteFigureFrame,
   IDLE_ROUTE_FIGURE,
 } from "../games/make-a-mess/src/game/flightFigures.ts";
@@ -49,7 +52,6 @@ import {
   blastEnergyAtDistance,
   explosiveProfile,
   fractureEnergyByMaterial,
-  MG_RANGE,
 } from "../games/make-a-mess/src/game/destructionRuntime.ts";
 import {
   createAirCombatState,
@@ -122,6 +124,12 @@ function ringAvailability(m) {
 const BULLET_KILLS_THINNER_THAN = 0.06;
 
 function bulletDestroys(piece) {
+  // Рантайм ручного пулемёта на стали заканчивает обработку после искры и
+  // импульса: отверстия и отделения куска нет. Стенд обязан повторять это, а
+  // не объявлять тонкую стальную лопасть уничтоженной только по габариту.
+  if (piece.material === "steel" || piece.material === "sheetMetal") {
+    return false;
+  }
   return Math.min(piece.size[0], piece.size[1], piece.size[2]) < BULLET_KILLS_THINNER_THAN;
 }
 
@@ -181,6 +189,7 @@ function livePieces(target) {
       ]);
       return {
         id: piece.id,
+        material: piece.material,
         size: piece.size,
         centre: [
           centre[0] + offset[0],
@@ -309,7 +318,10 @@ const STATION = {
 };
 
 const LIMITS = {
-  maximumSpeed: 21,
+  openSpeed: COMBAT_HEXACOPTER_OPEN_SPEED,
+  // Это граница поиска, не приказ броску: скорость теперь один из кандидатов
+  // общего поля коррекции.
+  maximumSpeed: COMBAT_HEXACOPTER_OPEN_SPEED,
   yawRate: 0.72,
   liftTrimRange: combatHexacopterRangeBlueprint.flight.liftTrimRange,
   lateralAcceleration:
@@ -327,18 +339,14 @@ const LIMITS = {
   surgeAcceleration: 0,
 };
 
-const HX6_BERTH = [
-  RANGE_HEXACOPTER_PAD_X,
-  RANGE_HEXACOPTER_PAD_TOP_Y,
-  RANGE_HEXACOPTER_PAD_Z,
-];
-
 export function runDuel({
   seconds = 120,
   targetKind = "evasive",
   /** Кого гонять: `hx6` (гость города) или `vx8` (соседняя боевая машина). */
   target: targetName = "hx6",
   startProgress = 0.22,
+  /** Обычный бой зациклен; false пропускает VX через посадочный столб. */
+  loopTarget = true,
   collect = false,
   /**
    * СОСТОЯНИЕ ТЕЛА НА ВХОДЕ. Задаётся ОТНОСИТЕЛЬНО ЦЕЛИ, а не мира: вопрос
@@ -474,12 +482,30 @@ export function runDuel({
     ringsLost: 0,
     destroyed: [],
     samples: [],
+    correctionEvaluations: 0,
+    correctionsApplied: 0,
+    correctionsSalvaged: 0,
+    correctionsAbandoned: 0,
+    correctionFireGain: 0,
+    correctionBodyMargin: 0,
+    speedCorrections: 0,
+    speedUps: 0,
+    slowDowns: 0,
+    correctionBaselineSpeed: 0,
+    correctionChosenSpeed: 0,
+    correctionMinimumSpeed: Number.POSITIVE_INFINITY,
+    correctionMaximumSpeed: 0,
+    bodyLossFrames: 0,
+    flatOverheadSeconds: 0,
+    targetProgressAtEnd: startProgress,
+    attackEntries: [],
   };
   let previousTargetVelocity = [...target.state.velocity];
   // Попадания, случившиеся в этом кадре: докладываются автомату следующим.
   let pendingHits = 0;
   // Снятые куски — отдельно от касаний: заход удался, если что-то оторвал.
   let pendingWounds = 0;
+  let previousCombatMode = combat.mode;
   // Сколько РАЗНЫХ подходов зверь испробовал за бой. Прежде их было два и они
   // чередовались счётчиком; теперь их выбирает досада, и число обязано вырасти.
   const approachesSeen = new Set();
@@ -553,7 +579,7 @@ export function runDuel({
         Math.hypot(target.state.velocity[0], target.state.velocity[2]) * dt,
       );
     }
-    if (progress >= 0.92) {
+    if (loopTarget && progress >= 0.92) {
       progress = 0.14;
     }
 
@@ -605,6 +631,7 @@ export function runDuel({
     // Веер рипла телесный: разводится вокруг собственного «вверх» машины.
     const hunterUp = rotateVector(hunter.state.orientation, [0, 1, 0]);
     const flatNose = Math.hypot(hunterNoseAxis[0], hunterNoseAxis[2]) || 1;
+    const previousCorrection = combat.strikeCorrection;
     const output = stepAirCombat({
       own: {
         allegiance: TONKAWA_ALLEGIANCE,
@@ -647,6 +674,64 @@ export function runDuel({
     pendingWounds = 0;
     combat = output.state;
     stepMachine(hunter, output.guidance);
+    if (combat.mode === "attack" && previousCombatMode !== "attack") {
+      report.attackEntries.push({
+        at: now,
+        vertical: combat.passVertical,
+        entryAbove: combat.passEntryAbove,
+        targetProgress: progress,
+      });
+    }
+    previousCombatMode = combat.mode;
+    if (output.telemetry.bodyLost) report.bodyLossFrames += 1;
+    const overheadRange = Math.hypot(
+      hunterCentre[0] - liveTargetCentre[0],
+      hunterCentre[2] - liveTargetCentre[2],
+    );
+    if (
+      progress >= 0.96 &&
+      hunterCentre[1] > liveTargetCentre[1] &&
+      overheadRange < hunter.radius + target.radius &&
+      Math.abs(hunterNoseAxis[1]) < 0.25
+    ) {
+      report.flatOverheadSeconds += dt;
+    }
+
+    if (
+      combat.strikeCorrection &&
+      combat.strikeCorrection !== previousCorrection
+    ) {
+      report.correctionEvaluations += 1;
+      if (combat.strikeCorrection.selected) report.correctionsApplied += 1;
+      if (combat.strikeCorrection.salvaged) report.correctionsSalvaged += 1;
+      report.correctionFireGain += combat.strikeCorrection.gainedFireSeconds;
+      report.correctionBodyMargin += combat.strikeCorrection.bodyMargin;
+      const selectedSpeed = Math.hypot(...combat.strikeCorrection.desiredVelocity);
+      const baselineSpeed = Math.hypot(
+        ...combat.strikeCorrection.desiredVelocity.map(
+          (value, index) => value - combat.strikeCorrection.velocityOffset[index],
+        ),
+      );
+      if (
+        combat.strikeCorrection.selected &&
+        Math.abs(selectedSpeed - baselineSpeed) >= 0.5
+      ) {
+        report.speedCorrections += 1;
+        report.speedUps += selectedSpeed > baselineSpeed ? 1 : 0;
+        report.slowDowns += selectedSpeed < baselineSpeed ? 1 : 0;
+        report.correctionBaselineSpeed += baselineSpeed;
+        report.correctionChosenSpeed += selectedSpeed;
+        report.correctionMinimumSpeed = Math.min(
+          report.correctionMinimumSpeed,
+          selectedSpeed,
+        );
+        report.correctionMaximumSpeed = Math.max(
+          report.correctionMaximumSpeed,
+          selectedSpeed,
+        );
+      }
+    }
+    if (output.telemetry.correctionAbandoned) report.correctionsAbandoned += 1;
 
     report.modeSeconds[combat.mode] = (report.modeSeconds[combat.mode] ?? 0) + dt;
     approachesSeen.add(`${combat.passSide}:${combat.passVertical}`);
@@ -677,7 +762,12 @@ export function runDuel({
         report.cannonShots += 1;
         const muzzle = toWorld(hunter, armament.cannon.mounts[shot.mountIndex].muzzle);
         const direction = deflectHorizontally(hunterNoseAxis, shot.deflection, hunterUp);
-        const hit = rayHit(muzzle, direction, targetPieces, MG_RANGE);
+        const hit = rayHit(
+          muzzle,
+          direction,
+          targetPieces,
+          armament.cannon.range,
+        );
         if (hit) {
           report.cannonHits += 1;
           pendingHits += 1;
@@ -832,6 +922,7 @@ export function runDuel({
 
     report.seconds = now;
     report.passes = combat.passes;
+    report.targetProgressAtEnd = progress;
     if (collect && step % 3 === 0) {
       report.samples.push({
         t: Number(now.toFixed(2)),
@@ -849,6 +940,14 @@ export function runDuel({
         targetRadius: Number(target.radius.toFixed(2)),
         gate: Number(Math.atan(target.radius / Math.max(output.telemetry.range, 1)).toFixed(3)),
         minR: Number(output.telemetry.minimumRange.toFixed(1)),
+        correction: output.telemetry.correctionSelected,
+        correctionGain: output.telemetry.correctionFireGain,
+        correctionMargin: output.telemetry.correctionBodyMargin,
+        correctionSalvageable: output.telemetry.correctionSalvageable,
+        correctionAbandoned: output.telemetry.correctionAbandoned,
+        passVertical: combat.passVertical,
+        passEntryAbove: Number(combat.passEntryAbove.toFixed(1)),
+        targetProgress: Number(progress.toFixed(4)),
       });
     }
 
@@ -880,6 +979,15 @@ export function runDuel({
   report.temperAppetite = combat.temper.appetite;
   report.temperFrustration = combat.temper.frustration;
   report.approachesUsed = approachesSeen.size;
+  if (report.correctionEvaluations > 0) {
+    report.correctionBodyMargin /= report.correctionEvaluations;
+  }
+  if (report.speedCorrections > 0) {
+    report.correctionBaselineSpeed /= report.speedCorrections;
+    report.correctionChosenSpeed /= report.speedCorrections;
+  } else {
+    report.correctionMinimumSpeed = 0;
+  }
   return report;
 }
 
@@ -907,6 +1015,13 @@ export function summarise(report) {
     }`,
     `нрав на конец: азарт ${report.temperAppetite.toFixed(2)}, досада ${report.temperFrustration.toFixed(2)}; ` +
       `подходов испробовано ${report.approachesUsed}`,
+    `коррекции броска: ${report.correctionsApplied}/${report.correctionEvaluations} применено, ` +
+      `${report.correctionsSalvaged} спасли окно, ${report.correctionsAbandoned} ранних срывов; ` +
+      `куплено ${report.correctionFireGain.toFixed(1)} с окна, тело ${report.correctionBodyMargin.toFixed(2)}`,
+    `скорость броска: ${report.speedCorrections} решений ` +
+      `(${report.speedUps} разгон / ${report.slowDowns} торможение), ` +
+      `в среднем ${report.correctionBaselineSpeed.toFixed(1)}→${report.correctionChosenSpeed.toFixed(1)} м/с, ` +
+      `выбор ${report.correctionMinimumSpeed.toFixed(1)}..${report.correctionMaximumSpeed.toFixed(1)} м/с`,
     `ракеты по связанной: ${report.rocketHitsAtCommitted}/${report.rocketsAtCommitted}` +
       ` против ${report.rocketHits - report.rocketHitsAtCommitted}/${report.rocketsFired - report.rocketsAtCommitted} по свободной`,
     `выстрелов по СВЯЗАННОЙ цели: ${report.shotsWhileCommitted} против ${report.shotsWhileFree} по свободной`,
@@ -917,4 +1032,3 @@ export function summarise(report) {
       .join(", ")}`,
   ].join("\n  ");
 }
-

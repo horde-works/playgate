@@ -293,6 +293,10 @@ function armament(placement: DuctHexacopterPlacement): VehicleArmament {
   return {
     cannon: {
       kind: "cannon",
+      projectile: {
+        kind: "machineGun",
+        steelPenetration: { steelThicknessAtNormal: 0 },
+      },
       mounts: cannonMounts,
       range: MG_RANGE,
       fireInterval: MG_FIRE_INTERVAL,

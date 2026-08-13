@@ -151,6 +151,7 @@ function createDamageTexture(): CanvasTexture {
 const SCORCH_BY_MATERIAL: Partial<Record<BreakableMaterial, string>> = {
   steel: "#b9c2cc",
   sheetMetal: "#c8ced6",
+  aluminium: "#b4bcc2",
   wood: "#c8a578",
   plaster: "#e4ded2",
   brick: "#d8b49a",

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  COMBAT_HEXACOPTER_RANGE_AIR_VEHICLE,
   TOWN_HEXACOPTER_AIR_VEHICLE,
 } from "../games/make-a-mess/src/game/airVehicles.ts";
 import {
@@ -84,6 +85,32 @@ const pad = combatHexacopterRangeScene.breakablePieces.filter(
 // Рантайм берёт бертом ЦЕНТР МАСС машины (VehicleFrameSystem: `mass.centre`),
 // поэтому и высоты маршрута отсчитываются от него, а не от настила.
 const PAD = [RANGE_HEXACOPTER_PAD_X, 0, RANGE_HEXACOPTER_PAD_Z];
+
+test("RAX гасит винты по касанию стойки, а не в сантиметрах над островом", () => {
+  const rax = COMBAT_HEXACOPTER_RANGE_AIR_VEHICLE;
+  const tolerance = rax.flight.landing;
+  assert.equal(rax.supportStruts?.length, 4);
+  const offset = {
+    horizontal: 0,
+    height: tolerance.height * 0.2,
+  };
+  const motion = {
+    speed: 0,
+    verticalSpeed: 0,
+    uprightCos: 1,
+    angularSpeed: 0,
+  };
+  assert.equal(
+    isRotorLandingComplete(tolerance, offset, motion, 0, true),
+    false,
+    "RAX признал посадку до касания",
+  );
+  assert.equal(
+    isRotorLandingComplete(tolerance, offset, motion, 1, true),
+    true,
+    "реальное касание стойки не завершило посадку",
+  );
+});
 
 // ---------------------------------------------------------------------------
 // 1. Конструкция

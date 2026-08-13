@@ -146,6 +146,20 @@ export const materialAppearanceProfiles: Record<
     wetness: 0.18,
     streaking: 0.05,
   },
+  // Alclad: rolling direction visible, satin not matte, oil streaks along
+  // the flow. Not the palace anodize and not car paint.
+  aluminium: {
+    textureScale: 1.6,
+    macroVariation: 0.02,
+    roughnessVariation: 0.04,
+    edgeWear: 0.02,
+    groundDampness: 0.02,
+    topLightening: 0.04,
+    sideTint: [0.98, 0.99, 1],
+    directionalGrain: true,
+    wetness: 0.22,
+    streaking: 0.18,
+  },
   stone: {
     textureScale: 0.46,
     macroVariation: 0.105,

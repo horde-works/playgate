@@ -1,0 +1,16 @@
+{
+  "modelId": "douglas-dc3-blockout",
+  "revision": "b01-2026-08-13-surfaces",
+  "modelHash": "46a4d3941f71",
+  "frozen": "control-surfaces",
+  "views": [
+    { "id": "plan", "file": "plan.png" },
+    { "id": "flap-detail", "file": "flap-detail.png" },
+    { "id": "flap-detail-flaps-down", "file": "flap-detail-flaps-down.png" },
+    { "id": "high-three-quarter", "file": "high-three-quarter.png" },
+    { "id": "high-three-quarter-flaps-down", "file": "high-three-quarter-flaps-down.png" },
+    { "id": "right-profile", "file": "right-profile.png" },
+    { "id": "right-profile-flaps-down", "file": "right-profile-flaps-down.png" },
+    { "id": "tail-detail", "file": "tail-detail.png" }
+  ]
+}

@@ -73,6 +73,8 @@ type ObjectPartBase = {
   id: string;
   material: ObjectMaterialId;
   group: string;
+  /** Физическая толщина замкнутой пластины; не размер вокселя разрушения. */
+  plateThickness?: number;
   /** A real fixture owns its source on the bulb/flame contained by its lens. */
   light?: ObjectLightSource;
 };
@@ -126,6 +128,7 @@ export type ObjectLabView = {
   fov?: number;
   hiddenGroups?: readonly string[];
   lighting?: "day" | "night";
+  articulation?: Readonly<Record<string, number>>;
 };
 
 export type ObjectLabModel = {

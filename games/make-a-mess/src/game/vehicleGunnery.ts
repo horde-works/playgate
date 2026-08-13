@@ -1,4 +1,5 @@
 import type { SceneVector3 } from "./destructionScene.ts";
+import type { SteelPenetrationCapability } from "./ballisticPenetration.ts";
 import { explosiveProfile, type ExplosiveKind } from "./destructionRuntime.ts";
 import type { VehicleAllegiance } from "./vehicleAllegiance.ts";
 
@@ -81,8 +82,18 @@ export interface WeaponMount {
  * баллистического упреждения. Своё упреждение у неё всё равно есть, но оно
  * живёт в контуре наведения (нос доворачивается не мгновенно), а не здесь.
  */
+export interface CannonProjectileProfile {
+  readonly kind: "machineGun" | "armourPiercing";
+  readonly steelPenetration: SteelPenetrationCapability;
+}
+
 export interface CannonArmament {
   readonly kind: "cannon";
+  /**
+   * Тип боеприпаса остаётся в паспорте оружия даже при hitscan-доставке:
+   * трасса мгновенна, но результат встречи со сталью у двух пушек разный.
+   */
+  readonly projectile: CannonProjectileProfile;
   readonly mounts: readonly WeaponMount[];
   readonly range: number;
   readonly fireInterval: number;
@@ -748,6 +759,8 @@ export function advanceGunnery(
  */
 export interface VehicleWeaponShot {
   readonly weapon: "cannon" | "podRocket";
+  /** Терминальный профиль пушки; ракете он не нужен. */
+  readonly cannonProjectile?: CannonProjectileProfile;
   /** Чем стреляет ракетная труба; у пушки не задано. */
   readonly explosive?: ExplosiveKind;
   /** Дульный срез в мире. */
@@ -819,6 +832,7 @@ export function resolveVehicleWeaponShot(
   const clearance = cannon ? 0 : armament.rockets.launchClearance;
   return {
     weapon: shot.weapon,
+    cannonProjectile: cannon ? armament.cannon.projectile : undefined,
     explosive: cannon ? undefined : armament.rockets.explosive,
     origin: [
       origin[0] + direction[0] * clearance,

@@ -641,6 +641,7 @@ export const bulletHoleRadius: Partial<Record<BreakableMaterial, number>> = {
   soil: 0.3,
   earth: 0.26,
   asphalt: 0.24,
+  aluminium: 0.18,
 };
 
 /**
@@ -670,6 +671,7 @@ export const fractureEnergyByMaterial: Record<
   basalt: 3.2,
   steel: 24,
   sheetMetal: 24,
+  aluminium: 2.2,
 };
 
 /**
@@ -753,6 +755,7 @@ export const crumbleOnLanding: ReadonlySet<BreakableMaterial> = new Set([
   // послабление, а физика: лист в миллиметр мнётся на городских скоростях.
   // Силовой набор остаётся сталью и в списке не значится.
   "sheetMetal",
+  "aluminium",
   "wood",
   "foliage",
   "brick",
@@ -804,6 +807,11 @@ const landingDamageByMaterial: Partial<
    * 4 км/ч без следов, к 25 км/ч крыло уже сложено.
    */
   sheetMetal: { chipSpeed: 8.4, shatterSpeed: 25, minimumIntensity: 0.1 },
+  /**
+   * ALCLAD. Мягче автомобильного листа: вмятина раньше, панель срывается
+   * раньше. Пуля его дырявит — это не sheetMetal.
+   */
+  aluminium: { chipSpeed: 6, shatterSpeed: 16.5, minimumIntensity: 0.1 },
 };
 
 /**
@@ -913,6 +921,7 @@ const voxelSizeByMaterial: Record<BreakableMaterial, number> = {
   steel: 0.18,
   // Панель рвётся мельче бруска: у неё нет толщины, которую надо колоть.
   sheetMetal: 0.12,
+  aluminium: 0.11,
   foliage: 0.2,
   grass: 0.18,
   soil: 0.18,
@@ -1179,6 +1188,7 @@ const damageRoughnessByMaterial: Record<BreakableMaterial, number> = {
   concrete: 0.27,
   steel: 0.12,
   sheetMetal: 0.12,
+  aluminium: 0.14,
   foliage: 0.44,
   grass: 0.4,
   soil: 0.38,

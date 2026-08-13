@@ -11,12 +11,10 @@ import {
   IDLE_COMBAT_TEMPER,
   pressedBreakRange,
   shadowing,
-  thrift,
   type CombatTemper,
 } from "./airCombatTemper.ts";
 import {
   chooseAirManoeuvre,
-  predictionHorizon,
   type AirManoeuvreEstimate,
   type AirManoeuvreKind,
 } from "./airCombatManoeuvres.ts";
@@ -28,6 +26,12 @@ import {
   type BodyReport,
   type PostureSolution,
 } from "./airCombatPosture.ts";
+import {
+  chooseStrikeCorrection,
+  chooseStrikeSpeed,
+  STRIKE_CORRECTION_HORIZON,
+  type StrikeCorrectionResult,
+} from "./airCombatStrikeCorrection.ts";
 import { isHostileAllegiance, type VehicleAllegiance } from "./vehicleAllegiance.ts";
 import {
   advanceGunnery,
@@ -153,6 +157,9 @@ export interface AirCombatOwnState {
 }
 
 export interface AirCombatLimits {
+  /** Полный ход для прямого сближения, разрыва и перестроения. */
+  readonly openSpeed?: number;
+  /** Полный ход внутри манёвра; локальная геометрия вправе выбрать меньше. */
   readonly maximumSpeed: number;
   readonly yawRate: number;
   readonly liftTrimRange: number;
@@ -210,6 +217,9 @@ export interface AirCombatState {
    * Проверять его там — значит срывать заход по чужому недобору.
    */
   readonly postureHeld: boolean;
+  /** Последняя локальная поправка к уже начатому броску. */
+  readonly strikeCorrection: StrikeCorrectionResult | null;
+  readonly strikeCorrectionSeconds: number;
   readonly orbitPhase: number;
   /** Диагностика ритма: секунд в бою от первого обнаружения. */
   readonly engagementSeconds: number;
@@ -242,6 +252,14 @@ export interface AirCombatTelemetry {
   readonly postureLimit: PostureSolution["limit"] | null;
   /** Заход сорван потому, что тело перестало держать позу. */
   readonly bodyLost: boolean;
+  readonly correctionSelected: boolean;
+  readonly correctionFireGain: number | null;
+  readonly correctionSalvaged: boolean;
+  readonly correctionSalvageable: boolean | null;
+  readonly correctionAbandoned: boolean;
+  readonly correctionBodyMargin: number | null;
+  readonly correctionCandidates: number;
+  readonly correctionRejectedBy: StrikeCorrectionResult["rejectedBy"] | null;
 }
 
 export interface AirCombatOutput {
@@ -257,6 +275,8 @@ export function createAirCombatState(magazine = 0): AirCombatState {
     temper: IDLE_COMBAT_TEMPER,
     passScored: false,
     postureHeld: false,
+    strikeCorrection: null,
+    strikeCorrectionSeconds: 0,
     modeSeconds: 0,
     targetId: null,
     passes: 0,
@@ -509,6 +529,10 @@ const AIM_ALTITUDE_LIMIT = 14;
  * тоннели и винты нельзя, не зная величины.
  */
 const VELOCITY_GAIN = 1.6;
+/** Корректор думает в 5 Гц; исполнительная машина продолжает работать в 60 Гц. */
+const STRIKE_CORRECTION_INTERVAL = 0.2;
+/** Target-relative separation already used by the reposition phase. */
+const REPOSITION_VERTICAL_OFFSET = 8;
 
 // ---------------------------------------------------------------------------
 // Автомат
@@ -543,19 +567,11 @@ export interface AirCombatInput {
  * остаётся нижней границей — ближе просто нельзя, — но решает не он.
  */
 const PASS_TRACKING_MARGIN = 1.2;
-/**
- * Скорость прохода задаётся долей предельной, а НЕ текущей.
- *
- * От текущей получалась петля: медленнее идёшь — меньше вынос — меньше
- * разрешённая скорость. Стенд устоялся на 8.6 м/с при располагаемых 21 —
- * машина кралась вместо прохода, и заходов за полторы минуты вышло шесть.
- */
-const PASS_SPEED_SHARE = 0.75;
-
 function passOffsetDistance(
   own: AirCombatOwnState,
   track: AirCombatTrack,
   limits: AirCombatLimits,
+  rememberedSpeed: number,
 ): number {
   // ПЕЛЕНГ КРУТИТ ОТНОСИТЕЛЬНОЕ ДВИЖЕНИЕ, А НЕ СОБСТВЕННОЕ.
   //
@@ -564,7 +580,19 @@ function passOffsetDistance(
   // складываются, требуемый темп выходил 0.77 рад/с при располагаемых 0.72 —
   // и ошибка прицела держалась на 0.34 рад при воротах 0.12. Мажет не наводка,
   // мажет геометрия захода.
-  const nominal = limits.maximumSpeed * PASS_SPEED_SHARE;
+  // СТАРТОВАЯ ГЕОМЕТРИЯ НЕ ИМЕЕТ ПРАВА НАЗНАЧАТЬ СКОРОСТЬ САМА СЕБЕ.
+  //
+  // Прежний nominal был долей паспортного потолка. Вынос строился под эту
+  // скорость, затем обратная формула подтверждала её же — получалась круговая
+  // «оптимизация», ради которой потолок приходилось искусственно занижать.
+  // Теперь вынос отвечает на память ЖИВОГО ПРЕДЫДУЩЕГО РЕШЕНИЯ. Фактический
+  // ход на торможении брать нельзя: он сам уменьшается от команды подхода и
+  // снова порождает храповик. После входа поле скорости может изменить эту
+  // память, только если прогноз реально покупает огневое окно.
+  const nominal = Math.max(
+    6,
+    Math.min(limits.maximumSpeed, rememberedSpeed),
+  );
   const closing = nominal + Math.hypot(track.velocity[0], track.velocity[2]);
   const trackable = (closing / Math.max(limits.yawRate, 0.05)) * PASS_TRACKING_MARGIN;
   return Math.max(own.radius + track.radius + 4, trackable);
@@ -585,6 +613,26 @@ function passSpeed(
     (limits.yawRate * offset) / PASS_TRACKING_MARGIN -
     Math.hypot(track.velocity[0], track.velocity[2]);
   return Math.max(6, Math.min(limits.maximumSpeed, budget));
+}
+
+/** Точка, через которую проходит уже выбранный трёхмерный бросок. */
+function passAimPoint(
+  own: AirCombatOwnState,
+  track: AirCombatTrack,
+  lead: SceneVector3,
+  offset: number,
+  entryAbove: number,
+  sideSign: number,
+): SceneVector3 {
+  const line = normalize(subtract(track.centre, own.centre));
+  const side: SceneVector3 = normalize([-line[2], 0, line[0]]);
+  const vertical = Math.max(-1, Math.min(1, entryAbove / Math.max(offset, 1)));
+  const horizontal = Math.sqrt(Math.max(0, 1 - vertical * vertical));
+  return [
+    lead[0] + side[0] * offset * horizontal * sideSign,
+    lead[1] + offset * vertical,
+    lead[2] + side[2] * offset * horizontal * sideSign,
+  ];
 }
 
 export interface AirCombatStepInput extends AirCombatInput {
@@ -611,6 +659,7 @@ export interface AirCombatStepInput extends AirCombatInput {
 
 export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
   const { own, station, armament, limits, state, deltaSeconds } = input;
+  const openSpeed = limits.openSpeed ?? limits.maximumSpeed;
   const rocketSpeed = explosiveProfile(armament.rockets.explosive).projectile.speed;
 
   const target = selectAirCombatTarget(own, station, input.tracks);
@@ -709,12 +758,62 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
   }
 
   // --- переходы ------------------------------------------------------------
-  const passOffset = target ? passOffsetDistance(own, target, limits) : 0;
+  const rememberedPassSpeed =
+    state.passEntrySpeed > EPSILON ? state.passEntrySpeed : station.speed;
+  const passOffset = target
+    ? passOffsetDistance(own, target, limits, rememberedPassSpeed)
+    : 0;
+  const attackEntryRange = target
+    ? maximumEffectiveRange(
+        target,
+        rocketSpeed,
+        explosiveProfile(armament.rockets.explosive).blastRadius + target.radius,
+        limits.lateralAcceleration,
+        armament.rockets.range,
+      )
+    : 0;
+  const horizontalSpeed = Math.hypot(own.velocity[0], own.velocity[2]);
+  const entrySpeed = target ? passSpeed(passOffset, target, limits) : 0;
+  const correctedEntry =
+    state.mode === "intercept" &&
+    state.strikeCorrection?.selected &&
+    state.strikeCorrection.feasible &&
+    // До обязательства поле имеет право менять ход только ради СПАСЕНИЯ
+    // отсутствующего окна. Улучшать уже существующее оно будет внутри самого
+    // броска; иначе локальная лишняя четверть секунды заранее превращает весь
+    // заход в подкрадывание.
+    state.strikeCorrection.salvaged
+      ? state.strikeCorrection
+      : null;
+  const correctedEntrySpeed = correctedEntry
+    ? length(correctedEntry.desiredVelocity)
+    : entrySpeed;
+  const entrySpeedSettled = correctedEntry
+    ? horizontalSpeed >= correctedEntrySpeed * 0.75 &&
+      horizontalSpeed <= correctedEntrySpeed * 1.15
+    : horizontalSpeed <= entrySpeed * 1.15;
   // Азарт подпускает ближе: зверь, попробовавший крови, рискует. Собственный
   // радиус поражения проверяется отдельно и азарту не подчиняется.
   const breakRange = target
     ? pressedBreakRange(state.temper, own.radius + target.radius + 6)
     : 0;
+  const minimumRange = target
+    ? own.radius +
+      explosiveProfile(armament.rockets.explosive).blastPushRadius +
+      Math.max(0, closingSpeed) * armament.rockets.armSeconds
+    : 0;
+  // Перехват динамически закончен, если за горизонт локальной коррекции
+  // взаимное движение не вынесет машины даже за один радиус цели. Это как раз
+  // состояние совместного висения/снижения: радиального сближения уже нет не
+  // потому, что охотник уходит, а потому, что он полностью подобрал движение.
+  const interceptSettled = target
+    ? length(subtract(own.velocity, target.velocity)) *
+        STRIKE_CORRECTION_HORIZON <=
+      target.radius
+    : false;
+  // Пол мира — запрет уже на стадии выбора намерения, а не коррекция после
+  // того, как поле пообещало выгодную траекторию под островом.
+  const deck = station.centre[1] + daredFloor(state.temper, HARD_DECK);
   // Дистанция нового захода. Прежние +34 м давали цикл в восемнадцать секунд:
   // машина уходила на шестьдесят метров и возвращалась. Вертолётный бой, по
   // источникам, «быстрый и яростный», и ритм обязан это показывать.
@@ -723,7 +822,14 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
   // всё равно нечем бить.
   const reattackRange = target
     ? (shadowing(state.gunnery.magazine, state.gunnery.rearmSeconds > 0)
-        ? passOffset * 0.6
+        ? Math.max(
+            passOffset * 0.6,
+            // «Не улетать без яда» не означает дрожать внутри собственной
+            // границы срыва. Новый бросок должен хотя бы геометрически
+            // отличаться от только что закрытого; полный взаимный габарит даёт
+            // этот гистерезис без таймера и без имени режима.
+            breakRange + own.radius + target.radius,
+          )
         : passOffset + 12)
     : 0;
 
@@ -731,7 +837,7 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
   let passes = state.passes;
   let passSide = state.passSide;
   // Нрав живёт между кадрами; здесь он только читается и обновляется событиями.
-  let passScored = state.passScored;
+  const passScored = state.passScored;
   let passEnded = false;
   let passVertical = state.passVertical;
   let modeSeconds = state.modeSeconds + deltaSeconds;
@@ -739,12 +845,40 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
   let passEntryAbove = state.passEntryAbove;
   let armed = false;
   let bodyLost = false;
+  let correctionAbandoned = false;
 
   const changeTo = (next: AirCombatMode) => {
     if (next !== mode) {
       mode = next;
       modeSeconds = 0;
     }
+  };
+  const finishPass = () => {
+    passes += 1;
+    passEnded = true;
+    const chosen = chooseApproach(
+      advanceCombatTemper(state.temper, {
+        seconds: 0,
+        hits: 0,
+        passEnded: true,
+        passScored,
+        approach: approachCode(passSide, passVertical),
+      }),
+      approachCode(passSide, passVertical),
+    );
+    passSide = approachSide(chosen);
+    passVertical = approachVertical(chosen);
+    // Reposition already buys this target-relative vertical separation. Keep
+    // it through intercept instead of letting intercept erase the work before
+    // attack begins. It remains one component of the common pass offset, not
+    // a second full-size manoeuvre stacked on top of it.
+    passEntryAbove =
+      Math.min(passOffset, REPOSITION_VERTICAL_OFFSET) * passVertical;
+    if (target && target.centre[1] + passEntryAbove < deck) {
+      passVertical = 1;
+      passEntryAbove = Math.abs(passEntryAbove);
+    }
+    changeTo("break");
   };
 
   if (!holdsTarget) {
@@ -780,9 +914,18 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
         changeTo("intercept");
         break;
       case "intercept":
-        // ВХОД В АТАКУ — ЭТО РЕШЕНИЕ, А НЕ ДАЛЬНОСТЬ. Нужны все три: цель в
-        // конверте, машина идёт на неё, и нос уже настолько близко к решению,
-        // что проход имеет шанс кончиться выстрелом.
+        // ВХОД В АТАКУ — ЭТО РЕШЕНИЕ, А НЕ ДАЛЬНОСТЬ. Нужны два условия: цель
+        // в конверте и нос уже настолько близко к решению, что проход имеет
+        // шанс кончиться выстрелом.
+        //
+        // ПОЛОЖИТЕЛЬНОЕ СБЛИЖЕНИЕ — НЕ ЕДИНСТВЕННЫЙ УСПЕХ ПЕРЕХВАТА. На
+        // медленной или садящейся цели машина приходила в выбранный
+        // вертикальный вынос, полностью подбирала взаимное движение, начинала
+        // повторять снижение цели — и тем самым навсегда запрещала себе
+        // `attack`, потому что радиальная скорость становилась нулевой.
+        // Быстро расходящуюся машину ворота по-прежнему не пропускают; но
+        // совместное движение внутри одного радиуса на горизонте корректора —
+        // это готовая геометрия броска, а не отсутствие прогресса.
         // ДАЛЬНОСТЬ ВХОДА В ЗАХОД — СВОЙСТВО ЦЕЛИ, А НЕ ПАСПОРТА ОРУЖИЯ.
         //
         // Паспортные 85 м у ракеты подписаны так: «дальше время полёта
@@ -797,33 +940,42 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
         // начинается ближе, чем прежде, против связанной — с паспортного
         // предела, и ни одно из двух чисел не назначено.
         if (
-          range <=
-            maximumEffectiveRange(
-              target,
-              explosiveProfile(armament.rockets.explosive).projectile.speed,
-              explosiveProfile(armament.rockets.explosive).blastRadius +
-                target.radius,
-              limits.lateralAcceleration,
-              armament.rockets.range,
-            ) &&
-          closingSpeed > 0 &&
-          bearingError <= ATTACK_ENTRY_AIM
+          range <= attackEntryRange &&
+          (closingSpeed > 0 || interceptSettled) &&
+          bearingError <= ATTACK_ENTRY_AIM &&
+          // Полный ход служит сближению, но не должен по инерции въезжать в
+          // бросок. Вход разрешён, когда тело уже вернулось в скорость, под
+          // которую поле построило огневую геометрию.
+          entrySpeedSettled
         ) {
           changeTo("attack");
           armed = true;
-          // Ярус захода берётся тот, на котором машина оказалась к моменту
-          // решения, и дальше не меняется. Больше `passOffset` он быть не
-          // может: это тот же единственный вынос прохода, только по вертикали.
-          passEntryAbove = Math.max(
-            -passOffset,
-            Math.min(passOffset, own.centre[1] - target.centre[1]),
+          // ЗНАК ЯРУСА ПРИНАДЛЕЖИТ ВЫБРАННОМУ ПОДХОДУ, А НЕ СЛУЧАЙНОЙ
+          // РАЗНИЦЕ ВЫСОТ В ЭТОМ КАДРЕ. Перехват успевает частично свести
+          // машины по Y; если переписать выбор этой разницей, четыре подхода
+          // остаются только четырьмя ярлыками в телеметрии. Величина всё ещё
+          // берётся из реально набранного разноса и ограничена единым выносом.
+          const enteredAbove = Math.min(
+            passOffset,
+            Math.abs(passEntryAbove) > EPSILON
+              ? Math.abs(passEntryAbove)
+              : Math.abs(own.centre[1] - target.centre[1]),
           );
+          passEntryAbove = enteredAbove * passVertical;
+          // Низ, которого физически нет из-за пола мира, не становится
+          // приказом зависнуть над целью. Пол дисквалифицирует направление до
+          // броска; верх остаётся тем же самым трёхмерным выносом.
+          if (target.centre[1] + passEntryAbove < deck) {
+            passVertical = 1;
+            passEntryAbove = enteredAbove;
+          }
+          // Запоминается реально набранное решение поля, а не прежний
+          // геометрический потолок. Одновременно это фиксирует ход начатого
+          // броска: последующие коррекции меняют продолжение, но не двигают
+          // саму точку прохода вслед за собой.
           passEntrySpeed = Math.max(
-            8,
-            Math.min(
-              passSpeed(passOffset, target, limits),
-              Math.hypot(own.velocity[0], own.velocity[2]),
-            ),
+            6,
+            Math.min(limits.maximumSpeed, horizontalSpeed),
           );
         }
         break;
@@ -863,16 +1015,7 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
         // Поэтому конец прохода — ВЫХОД ИЗ КОНВЕРТА, тем же выведенным числом,
         // каким проверяется вход. Заход по-прежнему остаётся проходом, а не
         // висением: его держит потолок в шесть секунд, и он не сдвинут.
-        const leftEnvelope =
-          range >
-          maximumEffectiveRange(
-            target,
-            rocketSpeed,
-            explosiveProfile(armament.rockets.explosive).blastRadius +
-              target.radius,
-            limits.lateralAcceleration,
-            armament.rockets.range,
-          );
+        const leftEnvelope = range > attackEntryRange;
         if (
           range <= breakRange ||
           leftEnvelope ||
@@ -880,29 +1023,8 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
           bodyLost ||
           modeSeconds > 6
         ) {
-          passes += 1;
-          passEnded = true;
           // ЧЕМ ЗАХОДИТЬ ДАЛЬШЕ — РЕШАЕТ НРАВ, А НЕ ЧЁТНОСТЬ СЧЁТЧИКА.
-          //
-          // Прежде сторона переключалась каждый заход, а ярус — через раз: это
-          // разводило кадры, но было слепо. Получилось — повторяй; не
-          // получилось — не то же самое. Отвращение к повторению и есть весь
-          // механизм разнообразия, и он дешевле любого перебора.
-          {
-            const chosen = chooseApproach(
-              advanceCombatTemper(state.temper, {
-                seconds: 0,
-                hits: 0,
-                passEnded: true,
-                passScored,
-                approach: approachCode(passSide, passVertical),
-              }),
-              approachCode(passSide, passVertical),
-            );
-            passSide = approachSide(chosen);
-            passVertical = approachVertical(chosen);
-          }
-          changeTo("break");
+          finishPass();
         }
         break;
       case "break":
@@ -963,6 +1085,17 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
   const desiredVelocity: [number, number, number] = [0, 0, 0];
   let desiredHeading: readonly [number, number] = own.nose;
   let desiredAltitude = station.centre[1] + station.altitude;
+  let desiredVerticalSpeed: number | null = null;
+  let interceptApproachAbove = 0;
+  const correctionMode = mode === "attack" || mode === "intercept";
+  let strikeCorrection: StrikeCorrectionResult | null =
+    correctionMode && state.mode === mode && state.targetId === target?.id
+      ? (state.strikeCorrection ?? null)
+      : null;
+  let strikeCorrectionSeconds =
+    correctionMode && state.mode === mode && strikeCorrection
+      ? state.strikeCorrectionSeconds + deltaSeconds
+      : 0;
 
   const applyDirection = (direction: SceneVector3, speed: number) => {
     const unit = normalize(direction);
@@ -1015,15 +1148,93 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
         aimLead,
         manoeuvre && Number.isFinite(manoeuvre.seconds) ? manoeuvre.seconds : 0,
       );
-      const meeting = extrapolateTrack(target, bodyLead);
-      applyDirection(subtract(meeting, own.centre), limits.maximumSpeed);
+      const baseMeeting = extrapolateTrack(target, bodyLead);
+      interceptApproachAbove = passEntryAbove;
+      if (Math.abs(interceptApproachAbove) < EPSILON) {
+        interceptApproachAbove =
+          Math.min(
+            passOffset,
+            Math.abs(own.centre[1] - target.centre[1]),
+          ) * passVertical;
+      }
+      if (target.centre[1] + interceptApproachAbove < deck) {
+        interceptApproachAbove = Math.abs(interceptApproachAbove);
+      }
+      const meeting: SceneVector3 = [
+        baseMeeting[0],
+        baseMeeting[1] + interceptApproachAbove,
+        baseMeeting[2],
+      ];
+      // На дальнем сближении машина берёт полный ход. Перед огневым конвертом
+      // она заранее возвращается к скорости манёвра: иначе физически честная
+      // инерция переносит полный ход внутрь броска раньше, чем поле успеет
+      // выбрать скорость начатого прохода.
+      const brakingDistance =
+        Math.max(0, openSpeed ** 2 - entrySpeed ** 2) /
+        Math.max(2 * limits.lateralAcceleration, EPSILON);
+      let interceptSpeed =
+        range > attackEntryRange + brakingDistance ? openSpeed : entrySpeed;
+      // СКОРОСТЬ БРОСКА НАЧИНАЕТСЯ ДО САМОГО БРОСКА. Ждать переключения
+      // режима поздно: инерция честно внесёт прежний ход внутрь огневого окна.
+      // Пока направление принадлежит перехвату, поле перебирает только скаляр
+      // скорости; трёхмерные поправки получат право после входа в `attack`.
+      if (range <= attackEntryRange + brakingDistance) {
+        const baselineDirection = normalize(subtract(meeting, own.centre));
+        const baseline: SceneVector3 = [
+          baselineDirection[0] * interceptSpeed,
+          baselineDirection[1] * interceptSpeed,
+          baselineDirection[2] * interceptSpeed,
+        ];
+        if (
+          !strikeCorrection ||
+          strikeCorrectionSeconds >= STRIKE_CORRECTION_INTERVAL
+        ) {
+          strikeCorrection = chooseStrikeSpeed({
+            own: {
+              centre: own.centre,
+              velocity: own.velocity,
+              gunAxis: own.gunAxis,
+            },
+            target,
+            baselineVelocity: baseline,
+            capability: {
+              maximumSpeed: limits.maximumSpeed,
+              lateralAcceleration: limits.lateralAcceleration,
+              yawRate: limits.yawRate,
+              liftReserve: limits.liftReserve,
+              surgeAcceleration: limits.surgeAcceleration,
+            },
+            weapons: {
+              cannonRange: armament.cannon.range,
+              rocketRange: armament.rockets.range,
+              rocketSpeed,
+              rocketLethalRadius: explosiveProfile(
+                armament.rockets.explosive,
+              ).blastRadius,
+              rocketsAvailable:
+                state.gunnery.magazine > 0 &&
+                state.gunnery.rearmSeconds <= 0,
+              minimumRange,
+            },
+            previousOffset: strikeCorrection?.velocityOffset ?? null,
+            floor: deck,
+          });
+          strikeCorrectionSeconds = 0;
+        }
+        if (
+          strikeCorrection.selected &&
+          strikeCorrection.feasible &&
+          strikeCorrection.salvaged
+        ) {
+          interceptSpeed = length(strikeCorrection.desiredVelocity);
+        }
+      }
+      applyDirection(subtract(meeting, own.centre), interceptSpeed);
       // Высота остаётся ПРИЦЕЛЬНОЙ: ствол связан с корпусом, и вертикальное
       // наведение здесь делается именно ею.
       desiredAltitude = lead[1];
     } else if (mode === "attack") {
       // ПРОХОД: скорость мимо цели с выносом на закреплённую сторону.
-      const line = normalize(subtract(target.centre, own.centre));
-      const side: SceneVector3 = normalize([-line[2], 0, line[0]]);
       // ВЫНОС ПРОХОДА ТЕПЕРЬ ТРЁХМЕРЕН — НО ОСТАЁТСЯ ОДНИМ ВЫНОСОМ.
       //
       // Пока наводило одно рыскание, проход обязан был идти на высоте цели:
@@ -1045,17 +1256,16 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
       // ближе она проходит по земле, и суммарный промах остаётся тем самым
       // `v/ω`, из которого он и выведен. Ноль превышения даёт в точности
       // прежний горизонтальный проход, полный — проход прямо над целью.
-      const vertical = Math.max(
-        -1,
-        Math.min(1, passEntryAbove / Math.max(passOffset, 1)),
+      const aimAt = passAimPoint(
+        own,
+        target,
+        lead,
+        passOffset,
+        passEntryAbove,
+        passSide,
       );
-      const horizontal = Math.sqrt(Math.max(0, 1 - vertical * vertical));
-      const aimAt: SceneVector3 = [
-        lead[0] + side[0] * passOffset * horizontal * passSide,
-        lead[1] + passOffset * vertical,
-        lead[2] + side[2] * passOffset * horizontal * passSide,
-      ];
-      // ПРОХОД ИДЁТ НА ПОСТОЯННОЙ СКОРОСТИ, и это не стилистика.
+      // НУЛЕВАЯ ГИПОТЕЗА ПРОХОДА ИДЁТ НА ПОСТОЯННОЙ СКОРОСТИ, и это не
+      // стилистика.
       //
       // Ствол закреплён на корпусе, а корпус кренится ПРОДОЛЬНЫМ ускорением:
       // tg(тангаж) = a/g. Замер прохода: машина разгонялась, нос стоял на 29°
@@ -1063,21 +1273,102 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
       // цели — компенсировать столько высотой нельзя, да и незачем.
       //
       // Боковое ускорение при этом БЕЗВРЕДНО: оно даёт крен, а крен вращает
-      // машину вокруг самой линии огня и никуда её не уводит. Поэтому на
-      // проходе разрешён любой манёвр, кроме разгона и торможения: скорость
-      // держится той, с какой машина в проход вошла.
+      // машину вокруг самой линии огня и никуда её не уводит. Поэтому входная
+      // скорость остаётся мерой честного продолжения. Разгон или торможение
+      // разрешает уже поле — только когда их временный тангаж окупается
+      // выигранным огневым окном в физическом прогнозе.
       // Скорость берётся ТА, С КОТОРОЙ ВОШЛИ, а не «не больше текущей»:
       // второе — храповик, он умеет только снижать, и машина за несколько
       // проходов сползала на четыре метра в секунду.
+      // СНАЧАЛА — ЧЕСТНОЕ ПРОДОЛЖЕНИЕ БРОСКА. Это ноль, относительно которого
+      // корректор обязан доказать пользу. Он не строит новый заход и не меняет
+      // повадку: только пробует небольшие трёхмерные продолжения нынешней
+      // скорости и принимает одно, если оно покупает реальное огневое окно.
       applyDirection(subtract(aimAt, own.centre), passEntrySpeed);
       desiredAltitude = aimAt[1];
+      const baselineVelocity: SceneVector3 = [...desiredVelocity];
+      if (
+        !strikeCorrection ||
+        strikeCorrectionSeconds >= STRIKE_CORRECTION_INTERVAL
+      ) {
+        strikeCorrection = chooseStrikeCorrection({
+          own: {
+            centre: own.centre,
+            velocity: own.velocity,
+            gunAxis: own.gunAxis,
+          },
+          target,
+          baselineVelocity,
+          capability: {
+            maximumSpeed: limits.maximumSpeed,
+            lateralAcceleration: limits.lateralAcceleration,
+            yawRate: limits.yawRate,
+            liftReserve: limits.liftReserve,
+            surgeAcceleration: limits.surgeAcceleration,
+          },
+          weapons: {
+            cannonRange: armament.cannon.range,
+            rocketRange: armament.rockets.range,
+            rocketSpeed,
+            rocketLethalRadius: explosiveProfile(armament.rockets.explosive).blastRadius,
+            rocketsAvailable:
+              state.gunnery.magazine > 0 && state.gunnery.rearmSeconds <= 0,
+            minimumRange,
+          },
+          previousOffset: strikeCorrection?.velocityOffset ?? null,
+          floor: deck,
+        });
+        strikeCorrectionSeconds = 0;
+      }
+      // Прогноз не нашёл ни огня, ни физического схождения прицела ни у
+      // честного продолжения, ни у одной доступной поправки. Раньше поле это
+      // честно сообщало, но автомат никак не реагировал: флаг
+      // `correctionAbandoned` всегда оставался false, и RAX продолжал висеть в
+      // бесполезном броске до общего тайм-аута.
+      if (
+        strikeCorrection &&
+        !strikeCorrection.salvageable &&
+        modeSeconds >= STRIKE_CORRECTION_HORIZON
+      ) {
+        correctionAbandoned = true;
+        strikeCorrection = null;
+        strikeCorrectionSeconds = 0;
+        finishPass();
+        const away = normalize(subtract(own.centre, target.centre));
+        applyDirection(
+          [away[0], 0.55 * passVertical, away[2]],
+          openSpeed,
+        );
+        desiredHeading = horizontalUnit(subtract(lead, own.centre));
+        desiredAltitude = target.centre[1] + 14 * passVertical;
+      }
+      if (
+        strikeCorrection &&
+        strikeCorrection.selected &&
+        strikeCorrection.feasible
+      ) {
+        desiredVelocity[0] = strikeCorrection.desiredVelocity[0];
+        desiredVelocity[1] = strikeCorrection.desiredVelocity[1];
+        desiredVelocity[2] = strikeCorrection.desiredVelocity[2];
+        // `passEntrySpeed` намеренно не переписывается: это паспорт уже
+        // начатого броска, а не текущая команда. Иначе удачное торможение тут
+        // же уменьшает вынос следующего кадра, уменьшенный вынос снова делает
+        // торможение выгодным — и локальная коррекция сама скатывается в
+        // зависание. Победивший вектор живёт в `strikeCorrection` до нового
+        // пересчёта, не двигая геометрию под собой.
+        desiredVerticalSpeed = strikeCorrection.desiredVelocity[1];
+        // Это не отдельная логика вертикали, а адаптер трёхмерного вектора к
+        // контракту машины, где мировой Y исполняется подъёмным каналом.
+        desiredAltitude =
+          own.centre[1] + desiredVerticalSpeed * STRIKE_CORRECTION_INTERVAL;
+      }
     } else if (mode === "break") {
       // СРЫВ ИЗ ПЛОСКОСТИ: это и разрывает дистанцию быстрее всего, и даёт
       // следующему заходу другой кадр.
       const away = normalize(subtract(own.centre, target.centre));
       applyDirection(
         [away[0], 0.55 * passVertical, away[2]],
-        limits.maximumSpeed,
+        openSpeed,
       );
       desiredHeading = horizontalUnit(subtract(lead, own.centre));
       // Плоскость нового захода отсчитывается ОТ ЦЕЛИ, а не от себя. От себя
@@ -1090,10 +1381,10 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
       const course = normalize(target.velocity);
       const behind: SceneVector3 = [
         target.centre[0] - course[0] * reattackRange,
-        target.centre[1] + 8 * passVertical,
+        target.centre[1] + REPOSITION_VERTICAL_OFFSET * passVertical,
         target.centre[2] - course[2] * reattackRange,
       ];
-      applyDirection(subtract(behind, own.centre), limits.maximumSpeed * 0.85);
+      applyDirection(subtract(behind, own.centre), openSpeed * 0.85);
       desiredAltitude = behind[1];
     }
   }
@@ -1126,19 +1417,19 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
       -AIM_ALTITUDE_LIMIT,
       Math.min(AIM_ALTITUDE_LIMIT, raw),
     );
-    desiredAltitude = lead[1] + compensation;
+    desiredAltitude = lead[1] + interceptApproachAbove + compensation;
   }
   // Пол не обсуждается ни в одном режиме.
   // Страх земли выводится из высоты и памяти не требует — но азарт его
   // приглушает. Единственное место, где нрав трогает безопасность, и запас
   // никогда не падает ниже сорока процентов: земля не договаривается.
-  const deck = station.centre[1] + daredFloor(state.temper, HARD_DECK);
   desiredAltitude = Math.max(deck, desiredAltitude);
 
   // ТА ЖЕ БОЛЕЗНЬ ПО ВЕРТИКАЛИ, И ТО ЖЕ ЛЕКАРСТВО. Цель идёт по высотной волне,
   // и демпфер по СОБСТВЕННОЙ вертикальной скорости гасит именно ту скорость,
   // которая нужна, чтобы за волной поспевать. Гасить надо РАССОГЛАСОВАНИЕ.
-  const targetVerticalSpeed = target ? target.velocity[1] : 0;
+  const targetVerticalSpeed =
+    desiredVerticalSpeed ?? (target ? target.velocity[1] : 0);
   const altitudeError = desiredAltitude - own.centre[1];
   const wantedVerticalAcceleration = Math.max(
     -4.5,
@@ -1301,12 +1592,6 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
     },
     deltaSeconds,
   );
-  const minimumRange = target
-    ? own.radius +
-      explosiveProfile(armament.rockets.explosive).blastPushRadius +
-      Math.max(0, closingSpeed) * armament.rockets.armSeconds
-    : 0;
-
   return {
     state: {
       mode,
@@ -1330,6 +1615,10 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
       // Признак результативности живёт ВНУТРИ захода и гаснет вместе с ним.
       passScored: passEnded ? false : passScored || (input.wounds ?? 0) > 0,
       postureHeld: posture !== null,
+      strikeCorrection:
+        mode === "attack" || mode === "intercept" ? strikeCorrection : null,
+      strikeCorrectionSeconds:
+        mode === "attack" || mode === "intercept" ? strikeCorrectionSeconds : 0,
       orbitPhase: state.orbitPhase,
       engagementSeconds: holdsTarget
         ? state.engagementSeconds + deltaSeconds
@@ -1401,6 +1690,14 @@ export function stepAirCombat(input: AirCombatStepInput): AirCombatOutput {
       postureLimit: posture?.limit ?? null,
       bodyLost,
       rearmSeconds: gunnery.state.rearmSeconds,
+      correctionSelected: strikeCorrection?.selected ?? false,
+      correctionFireGain: strikeCorrection?.gainedFireSeconds ?? null,
+      correctionSalvaged: strikeCorrection?.salvaged ?? false,
+      correctionSalvageable: strikeCorrection?.salvageable ?? null,
+      correctionAbandoned,
+      correctionBodyMargin: strikeCorrection?.bodyMargin ?? null,
+      correctionCandidates: strikeCorrection?.candidates ?? 0,
+      correctionRejectedBy: strikeCorrection?.rejectedBy ?? null,
     },
   };
 }

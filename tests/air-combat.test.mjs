@@ -563,7 +563,8 @@ const station = {
 };
 
 const limits = {
-  maximumSpeed: 21,
+  openSpeed: 36,
+  maximumSpeed: 36,
   yawRate: 0.72,
   liftTrimRange: 0.32,
   lateralAcceleration: 14.5,
@@ -571,6 +572,38 @@ const limits = {
   liftReserve: 4.2,
   surgeAcceleration: 24.81,
 };
+
+test("полный ход принадлежит сближению, а не переносится внутрь броска", () => {
+  const state = {
+    ...createAirCombatState(12),
+    mode: "intercept",
+    modeSeconds: 1,
+  };
+  const far = stepAirCombat({
+    own: ownAt([0, 26, -130]),
+    station,
+    armament,
+    limits,
+    tracks: [trackAt([0, 26, 0])],
+    deltaSeconds: 1 / 60,
+    state,
+  });
+  const near = stepAirCombat({
+    own: ownAt([0, 26, -100]),
+    station,
+    armament,
+    limits,
+    tracks: [trackAt([0, 26, 0])],
+    deltaSeconds: 1 / 60,
+    state,
+  });
+  assert.ok(far.guidance.forwardSpeed > 35, far.guidance.forwardSpeed);
+  assert.ok(
+    near.guidance.forwardSpeed < far.guidance.forwardSpeed - 4,
+    near.guidance.forwardSpeed,
+  );
+  assert.equal(near.state.mode, "intercept");
+});
 
 function ownAt(centre, nose = [0, 1], velocity = [0, 0, 0]) {
   return {
@@ -744,6 +777,121 @@ test("А В АТАКЕ ВЕРТИКАЛЬ БЕРЁТ ПОЗА, А НЕ ЯРУС"
   // И курс при этом приходит ИЗ ПОЗЫ: держать его ещё и рысканием — второе
   // мнение о том же самом.
   assert.equal(above.guidance.yawRate, 0);
+});
+
+test("выбранный верх или низ доезжает до броска, а не переписывается кадром входа", () => {
+  const target = trackAt([0, 50, 45]);
+  const output = stepAirCombat({
+    own: ownAt([0, 50, 0], [0, 1], [0, 0, 12]),
+    station,
+    armament,
+    limits,
+    tracks: [target],
+    deltaSeconds: 1 / 60,
+    state: {
+      ...createAirCombatState(12),
+      mode: "intercept",
+      modeSeconds: 1,
+      passVertical: -1,
+      passEntryAbove: -9,
+    },
+  });
+  assert.equal(output.state.passVertical, -1);
+  assert.ok(
+    output.state.passEntryAbove < -8,
+    `низ превратился в ${output.state.passEntryAbove.toFixed(1)} м`,
+  );
+});
+
+test("нулевое сближение над медленной целью не запирает перехват", () => {
+  // Машины уже сошлись по горизонтали и вместе снижаются. Это не отсутствие
+  // решения: это готовая отвесная атака. Прежнее `closingSpeed > 0` требовало,
+  // чтобы бросок начался до того, как автомат разрешит его начать.
+  const output = stepAirCombat({
+    own: ownAt([0, 34, 0], [0, 1], [0, -1, 0]),
+    station,
+    armament,
+    limits,
+    tracks: [trackAt([0, 26, 0], [0, -1, 0])],
+    deltaSeconds: 1 / 60,
+    state: {
+      ...createAirCombatState(12),
+      mode: "intercept",
+      modeSeconds: 1,
+      passVertical: 1,
+      passEntryAbove: 8,
+    },
+  });
+  assert.equal(output.telemetry.closingSpeed, 0);
+  assert.equal(output.state.mode, "attack");
+  assert.equal(output.telemetry.weaponsFree, true);
+});
+
+test("невозможный низ у земли отбрасывается до броска", () => {
+  const output = stepAirCombat({
+    own: ownAt([0, 14, 0], [0, 1], [0, 0, 12]),
+    station,
+    armament,
+    limits,
+    tracks: [trackAt([0, 2, 45])],
+    deltaSeconds: 1 / 60,
+    state: {
+      ...createAirCombatState(12),
+      mode: "intercept",
+      modeSeconds: 1,
+      passVertical: -1,
+      passEntryAbove: -9,
+    },
+  });
+  assert.equal(output.state.passVertical, 1);
+  assert.ok(output.state.passEntryAbove > 0);
+});
+
+test("корректор оценивает бросок до первого огневого решения", () => {
+  const angle = 0.45;
+  const output = stepAirCombat({
+    own: {
+      ...ownAt([0, 26, 0], [0, 1], [0, 0, 12]),
+      gunAxis: [Math.sin(angle), 0, Math.cos(angle)],
+    },
+    station,
+    armament,
+    limits,
+    tracks: [trackAt([0, 26, 45])],
+    deltaSeconds: 1 / 60,
+    state: {
+      ...createAirCombatState(12),
+      mode: "attack",
+      modeSeconds: 0.1,
+      passEntrySpeed: 12,
+    },
+  });
+  assert.ok(output.telemetry.cannonMiss > 6, "пушка уже была наведена");
+  assert.ok(output.telemetry.correctionCandidates > 20);
+  assert.ok(output.state.strikeCorrection, "поле не оценило начатый бросок");
+});
+
+test("бесперспективный бросок действительно закрывается", () => {
+  const output = stepAirCombat({
+    own: {
+      ...ownAt([0, 26, 0], [0, 1], [0, 0, 0]),
+      gunAxis: [0, 0, -1],
+    },
+    station,
+    armament,
+    limits: { ...limits, maximumSpeed: 0, yawRate: 0 },
+    tracks: [trackAt([0, 26, 45])],
+    deltaSeconds: 1 / 60,
+    state: {
+      ...createAirCombatState(12),
+      mode: "attack",
+      modeSeconds: 1.6,
+      passEntrySpeed: 0,
+    },
+  });
+  assert.equal(output.telemetry.correctionAbandoned, true);
+  assert.equal(output.state.mode, "break");
+  assert.equal(output.state.passes, 1);
 });
 
 test("заход кончается срывом, а не доводкой в упор", () => {

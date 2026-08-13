@@ -432,7 +432,7 @@ function actWeight(
  * её на прямой должен собственный предел, а в повороте — радиус, посчитанный
  * автопилотом из живого паспорта. См. пояснение в требовании `speedLimit`.
  */
-const OPEN_SPEED = 36;
+export const COMBAT_HEXACOPTER_OPEN_SPEED = 36;
 /**
  * Уход спиной — не гонка: машина пятится, и ход у неё соответственный.
  *
@@ -461,7 +461,7 @@ const REST_SPEED = 3;
 const DASH_SPEED = 20;
 
 function showSpeed(progress: number): number {
-  let speed = OPEN_SPEED;
+  let speed = COMBAT_HEXACOPTER_OPEN_SPEED;
   const backaway = actWeight(progress, 0, nodeFraction("backaway"), 0.035);
   speed += (BACKAWAY_SPEED - speed) * backaway;
   const dash = actWeight(

@@ -1,0 +1,48 @@
+{
+  "schema": "source-expectations.v1",
+  "objectId": "douglas-dc3",
+  "revision": "s01-2026-08-13",
+  "identity": {
+    "type": "Douglas DC-3 civil passenger",
+    "explicitlyNot": ["C-47 cargo door and astrodome", "DC-2", "Li-2 as a separate type"]
+  },
+  "envelope": {
+    "wingspan": {"value": 28.956, "unit": "m", "provenance": "published", "source": "95 ft 0 in × 0.3048; NASM A19530075000 29 m"},
+    "length": {"value": 19.6596, "unit": "m", "provenance": "published", "source": "64 ft 6 in × 0.3048; NASM 19.7 m"},
+    "heightTailDown": {"value": 5.15616, "unit": "m", "provenance": "published", "source": "16 ft 11 in × 0.3048; NASM A19530075000; AOPA"},
+    "wingArea": {"value": 91.694, "unit": "m2", "provenance": "published", "source": "987 sq ft × 0.3048²"},
+    "propellerDiameter": {"value": 3.5052, "unit": "m", "provenance": "published", "source": "11 ft 6 in × 0.3048; Wikipedia DC-3A-S1C3G / AOPA 11 ft 7 in"}
+  },
+  "conflicts": {
+    "nasmMoveContractorFuselageWidth": {
+      "value": 4.14,
+      "unit": "m",
+      "note": "NASM 3-D record 414 cm 'width of the main fuselage' from a move contractor. Rejected as fuselage diameter: it is far above the civil cabin type. Treated as a handling/cradle measurement, not a body station."
+    },
+    "heightAttitudes": {
+      "tailDown": 5.156,
+      "tailUpWheelLanding": 7.163,
+      "note": "AOPA 16 ft 11.5 in tail-down vs 23 ft 6 in tail-up. This prototype sits three-point (tail-down). Level-attitude engineering height is not this number."
+    }
+  },
+  "authored": {
+    "fuselageMaxWidth": {"value": 2.74, "unit": "m", "provenance": "estimated", "note": "≈9 ft exterior from 7 ft 8 in cabin plus skin/frames"},
+    "outerDihedralDeg": {"value": 5, "provenance": "estimated", "note": "outer-panel type figure, not a measured drawing"},
+    "engineHalfSpan": {"value": 5.79, "unit": "m", "provenance": "estimated", "note": "≈19 ft, typical three-view"},
+    "engineCylinders": {"value": 9, "provenance": "published-type", "note": "Wright R-1820 Cyclone, NASM A19530075000"},
+    "cowlInnerRadius": {"value": 0.57, "unit": "m", "provenance": "authored", "note": "open NACA cowl around the radial"},
+    "humanScale": {"value": 1.75, "unit": "m", "provenance": "authored"},
+    "sparFrontChord": {"value": 0.18, "provenance": "authored", "note": "front spar at 18% local chord; type three-spar box, not a measured drawing"},
+    "sparMainChord": {"value": 0.38, "provenance": "authored", "note": "main spar at 38% local chord"},
+    "sparRearChord": {"value": 0.70, "provenance": "authored", "note": "rear spar at 70% local chord; flap and aileron hinge"},
+    "finHingeChord": {"value": 0.60, "provenance": "authored", "note": "rudder hinge at 60% local fin chord"},
+    "stabHingeChord": {"value": 0.72, "provenance": "authored", "note": "elevator hinge at 72% local stabilizer chord"},
+    "flapDownDegrees": {"value": -42, "provenance": "authored", "note": "TE down about +X; landing-ish, not a measured travel"}
+  },
+  "rejection": {
+    "constantSectionFuselage": "cake",
+    "missingSecondNacelle": 0,
+    "propellersAsDecorationWithoutDisc": 0,
+    "worldIntegration": 0
+  }
+}
