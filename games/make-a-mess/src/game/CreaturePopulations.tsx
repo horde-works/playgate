@@ -2,6 +2,7 @@
 
 import type { CreaturePopulationDefinition } from "./creaturePopulation.ts";
 import type { CreatureWorldRuntime } from "./creatureWorld.ts";
+import { MediumPanthers } from "./MediumPanthers.tsx";
 import {
   Villagers,
   type VillagerWorldBindings,
@@ -35,6 +36,14 @@ export function CreaturePopulations({
             definition={definition}
             world={world}
             bindings={villagers}
+          />
+        );
+      case "medium-feline-territory":
+        return (
+          <MediumPanthers
+            key={definition.id}
+            definition={definition}
+            world={world}
           />
         );
       default:

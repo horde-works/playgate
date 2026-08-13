@@ -32,7 +32,7 @@ export type CreaturePoseContract<PoseId extends string = string> = {
   readonly response: string;
 };
 
-type Matrix3 = readonly [
+export type CreatureRotationMatrix = readonly [
   readonly [number, number, number],
   readonly [number, number, number],
   readonly [number, number, number],
@@ -42,7 +42,7 @@ export type CreatureRigState = {
   readonly poseId: string;
   readonly reference: CreatureRigReference;
   readonly pivots: Readonly<Record<string, ObjectPoint>>;
-  readonly rotations: Readonly<Record<string, Matrix3>>;
+  readonly rotations: Readonly<Record<string, CreatureRotationMatrix>>;
 };
 
 type PoseDerivativeOptions = {
@@ -69,15 +69,15 @@ function subtract(a: ObjectPoint, b: ObjectPoint): ObjectPoint {
   return point(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 }
 
-function multiply(a: Matrix3, b: Matrix3): Matrix3 {
+function multiply(a: CreatureRotationMatrix, b: CreatureRotationMatrix): CreatureRotationMatrix {
   return [0, 1, 2].map((row) => [0, 1, 2].map((column) => (
     a[row][0] * b[0][column]
       + a[row][1] * b[1][column]
       + a[row][2] * b[2][column]
-  ))) as unknown as Matrix3;
+  ))) as unknown as CreatureRotationMatrix;
 }
 
-function rotate(matrix: Matrix3, vector: ObjectPoint): ObjectPoint {
+function rotate(matrix: CreatureRotationMatrix, vector: ObjectPoint): ObjectPoint {
   return point(
     matrix[0][0] * vector[0] + matrix[0][1] * vector[1] + matrix[0][2] * vector[2],
     matrix[1][0] * vector[0] + matrix[1][1] * vector[1] + matrix[1][2] * vector[2],
@@ -86,7 +86,7 @@ function rotate(matrix: Matrix3, vector: ObjectPoint): ObjectPoint {
 }
 
 // Matches Three.js' default Euler order (XYZ), used by Object Lab boxes.
-function eulerMatrix([x, y, z]: ObjectPoint): Matrix3 {
+function eulerMatrix([x, y, z]: ObjectPoint): CreatureRotationMatrix {
   const a = Math.cos(x);
   const b = Math.sin(x);
   const c = Math.cos(y);
@@ -100,7 +100,7 @@ function eulerMatrix([x, y, z]: ObjectPoint): Matrix3 {
   ];
 }
 
-function matrixEuler(matrix: Matrix3): ObjectPoint {
+function matrixEuler(matrix: CreatureRotationMatrix): ObjectPoint {
   const y = Math.asin(Math.max(-1, Math.min(1, matrix[0][2])));
   if (Math.abs(matrix[0][2]) < 0.9999999) {
     return point(
@@ -124,7 +124,7 @@ export function solveCreatureRig(
 ): CreatureRigState {
   const byId = new Map(skeleton.bones.map((bone) => [bone.id, bone]));
   const pivots: Record<string, ObjectPoint> = {};
-  const rotations: Record<string, Matrix3> = {};
+  const rotations: Record<string, CreatureRotationMatrix> = {};
   for (const bone of skeleton.bones) {
     const localRotation = eulerMatrix(pose.boneRotations?.[bone.id] ?? ZERO);
     if (!bone.parent) {

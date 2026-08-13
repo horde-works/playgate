@@ -155,11 +155,11 @@ export const MEDIUM_PANTHER_POSES: readonly CreaturePoseContract<MediumPantherPo
       pelvis: point(0.1, 0, 0), lumbar: point(0.14, 0, 0), chest: point(-0.08, 0, 0),
       "left-hip": point(-0.5, 0, 0), "left-knee": point(0.8, 0, 0), "left-hock": point(-0.3, 0, 0),
       "right-hip": point(-0.5, 0, 0), "right-knee": point(0.8, 0, 0), "right-hock": point(-0.3, 0, 0),
-      "left-scapula": point(-0.35, 0, 0), "left-forearm": point(0.6, 0, 0), "left-carpus": point(-0.25, 0, 0),
-      "right-scapula": point(-0.35, 0, 0), "right-forearm": point(0.6, 0, 0), "right-carpus": point(-0.25, 0, 0),
+      "left-scapula": point(-1, 0, 0), "left-forearm": point(0, 0, 0), "left-carpus": point(-0.5, 0, 0),
+      "right-scapula": point(-1, 0, 0), "right-forearm": point(0, 0, 0), "right-carpus": point(-0.5, 0, 0),
       neck: point(-0.04, 0, 0),
     },
-    contactPartIds: ["left-hind-paw", "right-hind-paw"], grounded: true, phase: "transition",
+    contactPartIds: standingContacts, grounded: true, phase: "transition",
     intent: "landing target and exit path already acquired", force: "pelvis loads flexed hindlimbs", response: "forequarters brace before unloading",
   },
   {
@@ -351,7 +351,7 @@ export const MEDIUM_PANTHER_POSES: readonly CreaturePoseContract<MediumPantherPo
   },
 ] as const;
 
-function pantherBoneForPart(part: ObjectLabPart): string {
+export function mediumPantherBoneForPart(part: ObjectLabPart): string {
   const id = part.id;
   if (id === "pelvis") return "pelvis";
   if (id === "lumbar") return "lumbar";
@@ -382,7 +382,7 @@ const results = MEDIUM_PANTHER_POSES.map((pose) => buildCreaturePoseDerivative({
   pose,
   sourceParts: mediumPantherCanonicalParts,
   group: `panther-pose-${pose.id}`,
-  resolvePartBone: pantherBoneForPart,
+  resolvePartBone: mediumPantherBoneForPart,
 }));
 
 export const mediumPantherRigStates: Readonly<Record<MediumPantherPoseId, CreatureRigState>> = Object.fromEntries(

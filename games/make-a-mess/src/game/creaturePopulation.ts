@@ -2,6 +2,10 @@ import {
   validateHumanPopulationProfile,
   type HumanPopulationProfile,
 } from "./humanPopulationProfile.ts";
+import {
+  validateMediumFelinePopulationProfile,
+  type MediumFelinePopulationProfile,
+} from "./mediumFelinePopulationProfile.ts";
 
 interface CreaturePopulationBase {
   /** Stable identity within one world. */
@@ -22,7 +26,17 @@ export interface HumanSettlementPopulationDefinition
   readonly profile: HumanPopulationProfile;
 }
 
-export type CreaturePopulationDefinition = HumanSettlementPopulationDefinition;
+export interface MediumFelineTerritoryPopulationDefinition
+  extends CreaturePopulationBase {
+  readonly kind: "medium-feline-territory";
+  readonly bodyType: "medium-feline";
+  readonly species: "Panthera pardus";
+  readonly profile: MediumFelinePopulationProfile;
+}
+
+export type CreaturePopulationDefinition =
+  | HumanSettlementPopulationDefinition
+  | MediumFelineTerritoryPopulationDefinition;
 
 export function humanSettlementPopulation(options: {
   readonly id: string;
@@ -36,6 +50,24 @@ export function humanSettlementPopulation(options: {
     species: "human",
     count: options.count,
     profile: validateHumanPopulationProfile(options.profile),
+  };
+  validateCreaturePopulationDefinitions("population", [definition]);
+  return definition;
+}
+
+export function mediumFelineTerritoryPopulation(options: {
+  readonly id: string;
+  readonly count: number;
+  readonly profile: MediumFelinePopulationProfile;
+}): MediumFelineTerritoryPopulationDefinition {
+  const profile = validateMediumFelinePopulationProfile(options.profile);
+  const definition: MediumFelineTerritoryPopulationDefinition = {
+    id: options.id,
+    kind: "medium-feline-territory",
+    bodyType: "medium-feline",
+    species: profile.species,
+    count: options.count,
+    profile,
   };
   validateCreaturePopulationDefinitions("population", [definition]);
   return definition;
@@ -68,10 +100,21 @@ export function validateCreaturePopulationDefinitions(
       );
     }
     if (definition.kind === "human-settlement") {
+      validateHumanPopulationProfile(definition.profile);
       humanSettlements += 1;
       if (humanSettlements > 1) {
         throw new Error(
           `World ${worldId}: multiple human settlements need independent door, stock and inspection bindings`,
+        );
+      }
+    }
+    if (definition.kind === "medium-feline-territory") {
+      validateMediumFelinePopulationProfile(definition.profile);
+      const declaredSpecies: string = definition.species;
+      const profileSpecies: string = definition.profile.species;
+      if (declaredSpecies !== profileSpecies) {
+        throw new Error(
+          `World ${worldId}: feline population ${definition.id} species differs from its profile`,
         );
       }
     }

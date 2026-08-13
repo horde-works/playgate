@@ -13,8 +13,12 @@ import type {
   SceneVector3,
   SupportMode,
 } from "../../game/destructionScene.ts";
-import { humanSettlementPopulation } from "../../game/creaturePopulation.ts";
+import {
+  humanSettlementPopulation,
+  mediumFelineTerritoryPopulation,
+} from "../../game/creaturePopulation.ts";
 import { villageHumanProfile } from "../populations/humanPopulationProfiles.ts";
+import { vikingVillagePantherProfile } from "../populations/mediumFelinePopulationProfiles.ts";
 import {
   vikingHomeLayout,
   vikingPlanLocalPoint,
@@ -3793,6 +3797,11 @@ export const vikingVillageDocument: AuthoredSceneDocument = {
       id: "viking-village-residents",
       count: 34,
       profile: villageHumanProfile,
+    }),
+    mediumFelineTerritoryPopulation({
+      id: "viking-village-panther",
+      count: 1,
+      profile: vikingVillagePantherProfile,
     }),
   ],
   copy: {

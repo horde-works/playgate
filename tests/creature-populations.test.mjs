@@ -2,20 +2,25 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   humanSettlementPopulation,
+  mediumFelineTerritoryPopulation,
   validateCreaturePopulationDefinitions,
 } from "../games/make-a-mess/src/game/creaturePopulation.ts";
 import { CreatureEventJournal } from "../games/make-a-mess/src/game/creatureWorld.ts";
 import { vikingSettlement } from "../games/make-a-mess/src/content/scenes/vikingSettlement.ts";
 import { villageHumanProfile } from "../games/make-a-mess/src/content/populations/humanPopulationProfiles.ts";
+import { vikingVillagePantherProfile } from "../games/make-a-mess/src/content/populations/mediumFelinePopulationProfiles.ts";
 import { vikingVillageDocument } from "../games/make-a-mess/src/content/scenes/vikingVillageDocument.ts";
 import { vikingVillageScene } from "../games/make-a-mess/src/game/vikingVillageScene.ts";
 import { townScene } from "../games/make-a-mess/src/game/townScene.ts";
 
 test("a world declares residents without runtime scene-id wiring", () => {
-  assert.equal(vikingVillageDocument.inhabitants?.length, 1);
-  assert.equal(vikingVillageScene.inhabitantDefinitions.length, 1);
+  assert.equal(vikingVillageDocument.inhabitants?.length, 2);
+  assert.equal(vikingVillageScene.inhabitantDefinitions.length, 2);
 
-  const residents = vikingVillageScene.inhabitantDefinitions[0];
+  const residents = vikingVillageScene.inhabitantDefinitions.find(
+    (definition) => definition.kind === "human-settlement",
+  );
+  assert.ok(residents);
   assert.equal(residents.id, "viking-village-residents");
   assert.equal(residents.kind, "human-settlement");
   assert.equal(residents.bodyType, "human");
@@ -23,6 +28,16 @@ test("a world declares residents without runtime scene-id wiring", () => {
   assert.equal(residents.count, 34);
   assert.equal(residents.profile, villageHumanProfile);
   assert.equal(residents.profile.settlement, vikingSettlement);
+
+  const panther = vikingVillageScene.inhabitantDefinitions.find(
+    (definition) => definition.kind === "medium-feline-territory",
+  );
+  assert.ok(panther);
+  assert.equal(panther.id, "viking-village-panther");
+  assert.equal(panther.count, 1);
+  assert.equal(panther.bodyType, "medium-feline");
+  assert.equal(panther.species, "Panthera pardus");
+  assert.equal(panther.profile, vikingVillagePantherProfile);
 
   // A described but deliberately unpopulated settlement remains empty. The
   // renderer no longer infers residents from a known scene id.
@@ -55,6 +70,15 @@ test("population definitions reject ambiguous identity and invalid counts", () =
         id: "nobody",
         count: 0,
         profile: villageHumanProfile,
+      }),
+    /count must be a positive integer/,
+  );
+  assert.throws(
+    () =>
+      mediumFelineTerritoryPopulation({
+        id: "no-cats",
+        count: 0,
+        profile: vikingVillagePantherProfile,
       }),
     /count must be a positive integer/,
   );
