@@ -25,6 +25,7 @@ import {
   writeMediumPantherPose,
 } from "../games/make-a-mess/src/game/mediumPantherRuntimePose.ts";
 import {
+  articulatedSurfaceHeightAt,
   buildObstacleField,
   distanceToBox,
 } from "../games/make-a-mess/src/game/villagerNavigation.ts";
@@ -147,28 +148,40 @@ test("interpolated runtime poses keep the accepted body above its contact surfac
   const vertex = new Vector3();
   let worst = Infinity;
   let worstMode = runtime.mode;
+  let worstBone = "";
+  let worstPose = "";
+  let worstRuntime = "";
 
   for (let tick = 0; tick < 600; tick += 1) {
     stepMediumPanther(runtime, vikingVillagePantherProfile, 1 / 30, null);
+    const sample = sampleMediumPantherPose(runtime);
     writeMediumPantherPose(
       palette,
-      sampleMediumPantherPose(runtime),
+      sample,
       runtime,
       tick / 30,
       contactState,
     );
     let minimumY = Infinity;
+    let minimumBone = "";
     for (let index = 0; index < position.count; index += 1) {
       vertex.fromBufferAttribute(position, index).applyMatrix4(palette[bone.getX(index)]);
-      minimumY = Math.min(minimumY, vertex.y + runtime.airHeight);
+      const worldY = vertex.y + runtime.airHeight;
+      if (worldY < minimumY) {
+        minimumY = worldY;
+        minimumBone = MEDIUM_PANTHER_SKELETON.bones[bone.getX(index)].id;
+      }
     }
     if (minimumY < worst) {
       worst = minimumY;
       worstMode = runtime.mode;
+      worstBone = minimumBone;
+      worstPose = `${sample.current}->${sample.next}@${sample.blend.toFixed(2)}`;
+      worstRuntime = `tick=${tick},air=${runtime.airHeight.toFixed(3)},phase=${sample.cyclePhase?.toFixed(3)},support=${mediumPantherPawSupportWeight(sample, "left-fore-paw").toFixed(3)}`;
     }
   }
 
-  assert.ok(worst >= -0.012, `${worstMode}: runtime geometry enters ground by ${(-worst).toFixed(4)} m`);
+  assert.ok(worst >= -0.012, `${worstMode}/${worstPose}/${worstBone}/${worstRuntime}: runtime geometry enters ground by ${(-worst).toFixed(4)} m`);
   geometry.dispose();
 });
 
@@ -176,7 +189,10 @@ test("gait duty factors preserve feline support order without unreachable atlas-
   const expectedSupportCounts = {
     walk: new Set([2, 3]),
     trot: new Set([0, 2]),
-    gallop: new Set([0, 1]),
+    // Consecutive fore or hind contacts briefly overlap while load passes
+    // through the shoulder/pelvis; forbidding that transfer caused the old
+    // one-frame impact and visible shake.
+    gallop: new Set([0, 1, 2]),
   };
   for (const [gait, expected] of Object.entries(expectedSupportCounts)) {
     const actual = new Set();
@@ -194,6 +210,117 @@ test("gait duty factors preserve feline support order without unreachable atlas-
     }
     assert.deepEqual(actual, expected, `${gait}: wrong continuous support topology`);
   }
+});
+
+test("whole panther skeleton keeps bounded velocity and acceleration through gait changes", () => {
+  const profile = {
+    ...vikingVillagePantherProfile,
+    id: "panther-whole-body-continuity",
+    skills: vikingVillagePantherProfile.skills.filter((skill) => skill !== "terrain-perch"),
+  };
+  const runtime = createMediumPantherRuntime(profile);
+  const palette = createMediumPantherPosePalette();
+  const contacts = createMediumPantherContactState();
+  const axialBones = ["root", "pelvis", "lumbar", "chest", "neck", "head"].map((id) => {
+    const index = PANTHER_BONE_INDEX.get(id);
+    assert.notEqual(index, undefined, `${id}: missing axial bone`);
+    return { id, index, point: new Vector3(...MEDIUM_PANTHER_SKELETON.bones[index].rest.neutral) };
+  });
+  const previous = new Map();
+  const previousDelta = new Map();
+  const dt = 1 / 60;
+  let maximumFrameTravel = 0;
+  let maximumFrameAcceleration = 0;
+  let maximumLoadStep = 0;
+  let maximumJointSeparation = 0;
+  let maximumJointContext = "";
+  let maximumShoulderSlingTravel = 0;
+  let modeChanges = 0;
+  let previousMode = runtime.mode;
+
+  for (let tick = 0; tick < 1800; tick += 1) {
+    stepMediumPanther(runtime, profile, dt, null);
+    writeMediumPantherPose(
+      palette,
+      sampleMediumPantherPose(runtime),
+      runtime,
+      tick * dt,
+      contacts,
+    );
+    if (runtime.mode !== previousMode) modeChanges += 1;
+    previousMode = runtime.mode;
+
+    for (const bone of axialBones) {
+      const position = bone.point.clone().applyMatrix4(palette[bone.index]);
+      const prior = previous.get(bone.id);
+      if (prior) {
+        const delta = position.clone().sub(prior);
+        maximumFrameTravel = Math.max(maximumFrameTravel, delta.length());
+        const priorDelta = previousDelta.get(bone.id);
+        if (priorDelta) {
+          maximumFrameAcceleration = Math.max(
+            maximumFrameAcceleration,
+            delta.clone().sub(priorDelta).length(),
+          );
+        }
+        previousDelta.set(bone.id, delta);
+      }
+      previous.set(bone.id, position);
+    }
+
+    for (const [pawId, contact] of contacts.paws) {
+      const key = `load:${pawId}`;
+      const prior = previous.get(key);
+      if (typeof prior === "number") {
+        maximumLoadStep = Math.max(maximumLoadStep, Math.abs(contact.weight - prior));
+      }
+      previous.set(key, contact.weight);
+    }
+
+    for (const [index, bone] of MEDIUM_PANTHER_SKELETON.bones.entries()) {
+      if (!bone.parent) continue;
+      const parent = PANTHER_BONE_INDEX.get(bone.parent);
+      assert.notEqual(parent, undefined, `${bone.id}: missing parent ${bone.parent}`);
+      const joint = new Vector3(...bone.rest.neutral);
+      const throughParent = joint.clone().applyMatrix4(palette[parent]);
+      const throughChild = joint.applyMatrix4(palette[index]);
+      const separation = throughParent.distanceTo(throughChild);
+      if (bone.id.endsWith("scapula")) {
+        maximumShoulderSlingTravel = Math.max(maximumShoulderSlingTravel, separation);
+        continue;
+      }
+      if (separation > maximumJointSeparation) {
+        maximumJointSeparation = separation;
+        maximumJointContext = `${bone.parent}->${bone.id} at tick ${tick} (${runtime.mode})`;
+      }
+    }
+  }
+
+  assert.ok(modeChanges >= 8, `only ${modeChanges} gait/action changes exercised`);
+  assert.ok(
+    maximumFrameTravel < 0.075,
+    `axial skeleton teleported ${maximumFrameTravel.toFixed(4)} m in one frame`,
+  );
+  assert.ok(
+    maximumFrameAcceleration < 0.05,
+    `axial skeleton changed frame velocity by ${maximumFrameAcceleration.toFixed(4)} m`,
+  );
+  assert.ok(
+    maximumLoadStep <= 0.17,
+    `support load jumped by ${maximumLoadStep.toFixed(3)} in one frame`,
+  );
+  assert.ok(
+    maximumJointSeparation < 1e-5,
+    `connected skeleton opened a ${maximumJointSeparation.toFixed(4)} m joint gap: ${maximumJointContext}`,
+  );
+  assert.ok(
+    maximumShoulderSlingTravel > 0.01,
+    `muscular shoulder sling never engaged: ${maximumShoulderSlingTravel.toFixed(4)} m`,
+  );
+  assert.ok(
+    maximumShoulderSlingTravel < 0.125,
+    `muscular shoulder sling travelled ${maximumShoulderSlingTravel.toFixed(4)} m`,
+  );
 });
 
 test("planted panther paws stay in world contact while the body advances and turns", () => {
@@ -285,9 +412,10 @@ test("a small landscape stone lifts one paw instead of the whole panther root", 
   assert.ok(runtime.groundY < 0.005, `small stone lifted root to ${runtime.groundY}`);
 
   const contacts = createMediumPantherContactState();
+  const posedSample = sampleMediumPantherPose(runtime);
   writeMediumPantherPose(
     palette,
-    sampleMediumPantherPose(runtime),
+    posedSample,
     runtime,
     1 / 60,
     contacts,
@@ -300,6 +428,59 @@ test("a small landscape stone lifts one paw instead of the whole panther root", 
     lifted.anchorY - level.anchorY > 0.17,
     `individual paw rise only ${(lifted.anchorY - level.anchorY).toFixed(3)} m`,
   );
+
+  const baselinePalette = createMediumPantherPosePalette();
+  writeMediumPantherPose(
+    baselinePalette,
+    posedSample,
+    runtime,
+    1 / 60,
+    createMediumPantherContactState(),
+  );
+  const root = PANTHER_BONE_INDEX.get("root");
+  assert.notEqual(root, undefined);
+  const rootPoint = new Vector3(...MEDIUM_PANTHER_SKELETON.bones[root].rest.neutral);
+  const terrainRootY = rootPoint.clone().applyMatrix4(palette[root]).y;
+  const baselineRootY = rootPoint.applyMatrix4(baselinePalette[root]).y;
+  assert.ok(
+    Math.abs(terrainRootY - baselineRootY) < 1e-6,
+    `single stone lifted the rendered root by ${Math.abs(terrainRootY - baselineRootY).toFixed(4)} m`,
+  );
+
+  const definition = vikingVillageScene.inhabitantDefinitions.find(
+    (candidate) => candidate.kind === "medium-feline-territory",
+  );
+  assert.ok(definition);
+  const geometry = buildMediumPantherRuntimeGeometry(definition);
+  const positions = geometry.getAttribute("position");
+  const bones = geometry.getAttribute("aPantherBone");
+  let minimumForepawClearance = Infinity;
+  for (let index = 0; index < positions.count; index += 1) {
+    if (bones.getX(index) !== leftFore.bone) continue;
+    const local = new Vector3()
+      .fromBufferAttribute(positions, index)
+      .applyMatrix4(palette[leftFore.bone]);
+    const sine = Math.sin(runtime.heading);
+    const cosine = Math.cos(runtime.heading);
+    const worldX = runtime.x + cosine * local.x + sine * local.z;
+    const worldZ = runtime.z - sine * local.x + cosine * local.z;
+    const surface = articulatedSurfaceHeightAt(
+      field,
+      worldX,
+      worldZ,
+      runtime.groundY,
+      new Set(),
+    );
+    minimumForepawClearance = Math.min(
+      minimumForepawClearance,
+      runtime.groundY + runtime.airHeight + local.y - surface,
+    );
+  }
+  assert.ok(
+    minimumForepawClearance >= -0.012,
+    `forepaw enters its stone by ${(-minimumForepawClearance).toFixed(4)} m`,
+  );
+  geometry.dispose();
 });
 
 test("live natural rocks become landing targets, not walls or decorative stones", () => {

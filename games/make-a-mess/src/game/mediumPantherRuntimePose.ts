@@ -18,12 +18,24 @@ import {
   articulatedSurfaceHeightAt,
   type ObstacleField,
 } from "./villagerNavigation.ts";
+import {
+  createCreatureWholeBodyState,
+  creatureContactWindow,
+  solveCreatureWholeBodyPose,
+  type CreatureWholeBodyState,
+} from "./creatureWholeBodyMotion.ts";
 
 const UNIT_SCALE = new Vector3(1, 1, 1);
 const Y_AXIS = new Vector3(0, 1, 0);
 const BONE_INDEX = new Map(
   MEDIUM_PANTHER_SKELETON.bones.map((bone, index) => [bone.id, index]),
 );
+const PARENT_INDICES = MEDIUM_PANTHER_SKELETON.bones.map((bone) => {
+  if (!bone.parent) return -1;
+  const parent = BONE_INDEX.get(bone.parent);
+  if (parent === undefined) throw new Error(`${bone.id}: missing parent ${bone.parent}`);
+  return parent;
+});
 
 type PawId =
   | "left-fore-paw"
@@ -44,14 +56,24 @@ interface PawContactLock {
   anchorY: number;
   anchorZ: number;
   clearance: number;
+  weight: number;
+}
+
+interface BodyFloorProbe {
+  readonly bone: number;
+  readonly point: Vector3;
+  readonly radius: number;
 }
 
 export interface MediumPantherContactState {
   readonly paws: Map<PawId, PawContactLock>;
+  readonly desiredPose: Matrix4[];
+  readonly wholeBody: CreatureWholeBodyState;
   bodyOffsetX: number;
   bodyOffsetZ: number;
+  bodyVelocityX: number;
+  bodyVelocityZ: number;
   lastElapsed: number | null;
-  lastGait: MediumPantherPoseSample["gait"];
 }
 
 interface LegChain {
@@ -100,17 +122,24 @@ const PAW_CONTACT_PROBES: readonly PawContactProbe[] = mediumPantherCanonicalPar
     if (part.kind !== "box") throw new Error(`${part.id}: contact probe must be a box`);
     const bone = BONE_INDEX.get(mediumPantherBoneForPart(part));
     if (bone === undefined) throw new Error(`${part.id}: no runtime contact bone`);
-    const half = part.size.map((value) => value / 2);
-    const rotation = new Euler(...(part.rotation ?? [0, 0, 0]));
     const supportPoints: Vector3[] = [];
-    for (const x of [-half[0], half[0]]) {
-      for (const y of [-half[1], half[1]]) {
-        for (const z of [-half[2], half[2]]) {
-          supportPoints.push(
-            new Vector3(x, y, z)
-              .applyEuler(rotation)
-              .add(new Vector3(...part.center)),
-          );
+    for (const supportPart of mediumPantherCanonicalParts) {
+      if (
+        supportPart.kind !== "box"
+        || supportPart.group !== "paws"
+        || mediumPantherBoneForPart(supportPart) !== mediumPantherBoneForPart(part)
+      ) continue;
+      const half = supportPart.size.map((value) => value / 2);
+      const rotation = new Euler(...(supportPart.rotation ?? [0, 0, 0]));
+      for (const x of [-half[0], half[0]]) {
+        for (const y of [-half[1], half[1]]) {
+          for (const z of [-half[2], half[2]]) {
+            supportPoints.push(
+              new Vector3(x, y, z)
+                .applyEuler(rotation)
+                .add(new Vector3(...supportPart.center)),
+            );
+          }
         }
       }
     }
@@ -122,27 +151,46 @@ const PAW_CONTACT_PROBES: readonly PawContactProbe[] = mediumPantherCanonicalPar
     };
   });
 
-const PAW_SUPPORT_PROBES = mediumPantherCanonicalParts
-  .filter((part) => part.kind === "box" && part.group === "paws")
-  .flatMap((part) => {
-    if (part.kind !== "box") return [];
-    const bone = BONE_INDEX.get(mediumPantherBoneForPart(part));
-    if (bone === undefined) throw new Error(`${part.id}: no runtime support bone`);
-    const half = part.size.map((value) => value / 2);
-    const rotation = new Euler(...(part.rotation ?? [0, 0, 0]));
-    const points: Vector3[] = [];
-    for (const x of [-half[0], half[0]]) {
-      for (const y of [-half[1], half[1]]) {
-        for (const z of [-half[2], half[2]]) {
-          points.push(
-            new Vector3(x, y, z)
-              .applyEuler(rotation)
-              .add(new Vector3(...part.center)),
-          );
+const BODY_FLOOR_PROBES: readonly BodyFloorProbe[] = mediumPantherCanonicalParts
+  .flatMap((part): BodyFloorProbe[] => {
+    const bone = boneIndex(mediumPantherBoneForPart(part));
+    if (part.kind === "box") {
+      const half = part.size.map((value) => value / 2);
+      const rotation = new Euler(...(part.rotation ?? [0, 0, 0]));
+      const points: BodyFloorProbe[] = [];
+      for (const x of [-half[0], half[0]]) {
+        for (const y of [-half[1], half[1]]) {
+          for (const z of [-half[2], half[2]]) {
+            points.push({
+              bone,
+              point: new Vector3(x, y, z)
+                .applyEuler(rotation)
+                .add(new Vector3(...part.center)),
+              radius: 0,
+            });
+          }
         }
       }
+      return points;
     }
-    return points.map((point) => ({ bone, point }));
+    if (part.kind === "beam") {
+      const radius = Math.max(part.width, part.depth) / 2;
+      return [
+        { bone, point: new Vector3(...part.from), radius },
+        { bone, point: new Vector3(...part.to), radius },
+      ];
+    }
+    if (part.kind === "cylinder") {
+      return [
+        { bone, point: new Vector3(...part.from), radius: part.radius },
+        { bone, point: new Vector3(...part.to), radius: part.radius },
+      ];
+    }
+    return part.vertices.map((point) => ({
+      bone,
+      point: new Vector3(...point),
+      radius: 0,
+    }));
   });
 
 function matrixFromRotation(rotation: CreatureRotationMatrix): Matrix4 {
@@ -182,36 +230,20 @@ export function createMediumPantherContactState(): MediumPantherContactState {
     paws: new Map(
       PAW_CONTACT_PROBES.map((paw) => [
         paw.id,
-        { active: false, anchorX: 0, anchorY: 0, anchorZ: 0, clearance: 0 },
+        { active: false, anchorX: 0, anchorY: 0, anchorZ: 0, clearance: 0, weight: 0 },
       ]),
+    ),
+    desiredPose: createMediumPantherPosePalette(),
+    wholeBody: createCreatureWholeBodyState(
+      MEDIUM_PANTHER_SKELETON.bones.length,
+      PARENT_INDICES,
     ),
     bodyOffsetX: 0,
     bodyOffsetZ: 0,
+    bodyVelocityX: 0,
+    bodyVelocityZ: 0,
     lastElapsed: null,
-    lastGait: undefined,
   };
-}
-
-function smoothstep(value: number): number {
-  const t = Math.max(0, Math.min(1, value));
-  return t * t * (3 - 2 * t);
-}
-
-function circularDistance(a: number, b: number): number {
-  const distance = Math.abs(a - b) % 1;
-  return Math.min(distance, 1 - distance);
-}
-
-function phaseWindow(
-  phase: number,
-  centre: number,
-  halfWidth: number,
-  fade: number,
-): number {
-  const distance = circularDistance(phase, centre);
-  if (distance >= halfWidth) return 0;
-  if (distance <= halfWidth - fade) return 1;
-  return smoothstep((halfWidth - distance) / fade);
 }
 
 /**
@@ -232,13 +264,13 @@ export function mediumPantherPawSupportWeight(
       "right-hind-paw": 0.5,
       "right-fore-paw": 0.75,
     };
-    return 1 - phaseWindow(phase, swingCentre[pawId], 0.22, 0.04);
+    return 1 - creatureContactWindow(phase, swingCentre[pawId], 0.22, 0.08);
   }
   if (sample.gait === "trot") {
     if (pawId === "left-fore-paw" || pawId === "right-hind-paw") {
-      return phaseWindow(phase, 0, 0.09, 0.02);
+      return creatureContactWindow(phase, 0, 0.16, 0.1);
     }
-    return phaseWindow(phase, 0.5, 0.09, 0.02);
+    return creatureContactWindow(phase, 0.5, 0.16, 0.1);
   }
   const contactCentre: Readonly<Record<PawId, number>> = {
     "right-fore-paw": 0.125,
@@ -246,7 +278,42 @@ export function mediumPantherPawSupportWeight(
     "left-hind-paw": 0.5,
     "right-hind-paw": 0.625,
   };
-  return phaseWindow(phase, contactCentre[pawId], 0.045, 0.012);
+  return creatureContactWindow(phase, contactCentre[pawId], 0.1, 0.07);
+}
+
+function stepCriticalScalar(
+  value: number,
+  velocity: number,
+  target: number,
+  halfLife: number,
+  dt: number,
+): readonly [number, number] {
+  const angularFrequency = Math.LN2 / Math.max(1e-4, halfLife);
+  const decay = Math.exp(-angularFrequency * dt);
+  const error = value - target;
+  const combined = velocity + angularFrequency * error;
+  return [
+    target + (error + combined * dt) * decay,
+    (velocity - angularFrequency * combined * dt) * decay,
+  ];
+}
+
+function poseHalfLife(runtime: MediumPantherRuntime): number {
+  switch (runtime.mode) {
+    case "walk":
+      return 0.035;
+    case "trot":
+    case "perch-approach":
+      return 0.032;
+    case "accelerate":
+    case "gallop":
+      return 0.028;
+    case "observe":
+    case "perch-observe":
+      return 0.05;
+    default:
+      return 0.04;
+  }
 }
 
 function toWorld(
@@ -319,10 +386,11 @@ function solveLegContact(
   chain: LegChain,
   paw: PawContactProbe,
   desired: Vector3,
+  allowShoulderSling = true,
 ): void {
   const applied = [0, 0, 0];
   let appliedLateral = 0;
-  for (let iteration = 0; iteration < 16; iteration += 1) {
+  for (let iteration = 0; iteration < 20; iteration += 1) {
     const top = bonePivot(target, chain.boneIndices[0]);
     const lateralEffector = paw.point.clone().applyMatrix4(target[paw.bone]);
     const currentLateral = Math.atan2(
@@ -353,6 +421,123 @@ function solveLegContact(
       rotateLegSuffix(target, chain, jointIndex, pivot, correction);
     }
   }
+  if (allowShoulderSling && chain.pawId.includes("fore")) {
+    const current = paw.point.clone().applyMatrix4(target[paw.bone]);
+    translateShoulderSling(target, chain, desired.clone().sub(current));
+  }
+}
+
+function keepPawsAboveSurface(
+  target: readonly Matrix4[],
+  runtime: MediumPantherRuntime,
+  field: ObstacleField | null,
+  broken: ReadonlySet<string>,
+): void {
+  for (const chain of LEG_CHAINS) {
+    const paw = PAW_CONTACT_PROBES.find((candidate) => candidate.id === chain.pawId)!;
+    // Raising the pad centre can rotate its toe box and reveal a different
+    // lowest corner. Re-sample the rigid pad after each articulated solve;
+    // never detach and translate the completed limb as a fallback.
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const centre = paw.point.clone().applyMatrix4(target[paw.bone]);
+      let bottom = Infinity;
+      for (const support of paw.supportPoints) {
+        bottom = Math.min(bottom, support.clone().applyMatrix4(target[paw.bone]).y);
+      }
+      const world = toWorld(centre, runtime);
+      const surface = field
+        ? articulatedSurfaceHeightAt(field, world.x, world.z, runtime.groundY, broken)
+        : runtime.groundY;
+      const penetration = surface
+        - (runtime.groundY + runtime.airHeight + bottom);
+      if (penetration <= 1e-5) break;
+      solveLegContact(
+        target,
+        chain,
+        paw,
+        centre.clone().setY(centre.y + penetration),
+      );
+    }
+  }
+}
+
+function translateShoulderSling(
+  target: readonly Matrix4[],
+  chain: LegChain,
+  requestedWorld: Vector3,
+): void {
+  if (!chain.pawId.includes("fore")) return;
+  const chest = boneIndex("chest");
+  const scapula = chain.boneIndices[0];
+  const rest = new Vector3(...MEDIUM_PANTHER_SKELETON.bones[scapula].rest.neutral);
+  const expected = rest.clone().applyMatrix4(target[chest]);
+  const actual = bonePivot(target, scapula);
+  const chestRotation = new Quaternion().setFromRotationMatrix(target[chest]);
+  const inverseChestRotation = chestRotation.clone().invert();
+  const currentLocal = actual.clone().sub(expected).applyQuaternion(inverseChestRotation);
+  const requestedLocal = requestedWorld.clone().applyQuaternion(inverseChestRotation);
+  const nextLocal = currentLocal.clone().add(requestedLocal);
+  nextLocal.x = Math.max(-0.035, Math.min(0.035, nextLocal.x));
+  nextLocal.y = Math.max(-0.08, Math.min(0.12, nextLocal.y));
+  nextLocal.z = Math.max(-0.14, Math.min(0.14, nextLocal.z));
+  if (nextLocal.length() > 0.12) nextLocal.setLength(0.12);
+  const appliedWorld = nextLocal
+    .sub(currentLocal)
+    .applyQuaternion(chestRotation);
+  if (appliedWorld.lengthSq() <= 1e-10) return;
+  const translation = new Matrix4().makeTranslation(
+    appliedWorld.x,
+    appliedWorld.y,
+    appliedWorld.z,
+  );
+  for (const bone of chain.boneIndices) target[bone].premultiply(translation);
+}
+
+function keepShoulderSlingsAboveBaseSurface(
+  target: readonly Matrix4[],
+  runtime: MediumPantherRuntime,
+  state: MediumPantherContactState,
+  field: ObstacleField | null,
+  broken: ReadonlySet<string>,
+): void {
+  for (const chain of LEG_CHAINS.filter((candidate) => candidate.pawId.includes("fore"))) {
+    const bones = new Set(chain.boneIndices);
+    const paw = PAW_CONTACT_PROBES.find((candidate) => candidate.id === chain.pawId)!;
+    const lock = state.paws.get(chain.pawId)!;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      let penetration = 0;
+      for (const probe of BODY_FLOOR_PROBES) {
+        if (!bones.has(probe.bone)) continue;
+        const local = probe.point.clone().applyMatrix4(target[probe.bone]);
+        const world = toWorld(local, runtime);
+        const surface = field
+          ? articulatedSurfaceHeightAt(field, world.x, world.z, runtime.groundY, broken)
+          : runtime.groundY;
+        if (surface > runtime.groundY + 1e-4) continue;
+        penetration = Math.max(
+          penetration,
+          surface - (
+            runtime.groundY
+            + runtime.airHeight
+            + local.y
+            - probe.radius
+          ),
+        );
+      }
+      const correction = Math.max(0, penetration - 0.006);
+      if (correction <= 1e-5) break;
+      translateShoulderSling(target, chain, new Vector3(0, correction, 0));
+      if (lock.active && lock.weight > 1e-5) {
+        solveLegContact(
+          target,
+          chain,
+          paw,
+          toLocal(new Vector3(lock.anchorX, lock.anchorY, lock.anchorZ), runtime),
+          false,
+        );
+      }
+    }
+  }
 }
 
 function solvePlantedPaws(
@@ -368,22 +553,6 @@ function solvePlantedPaws(
     ? 1 / 60
     : Math.max(0, Math.min(0.1, elapsed - state.lastElapsed));
   state.lastElapsed = elapsed;
-  if (state.lastGait !== sample.gait) {
-    for (const lock of state.paws.values()) lock.active = false;
-    state.lastGait = sample.gait;
-  }
-
-  if (!sample.gait) {
-    for (const lock of state.paws.values()) lock.active = false;
-    const release = Math.exp(-dt * 10);
-    state.bodyOffsetX *= release;
-    state.bodyOffsetZ *= release;
-    if (Math.hypot(state.bodyOffsetX, state.bodyOffsetZ) > 1e-6) {
-      const bodyShift = new Matrix4().makeTranslation(state.bodyOffsetX, 0, state.bodyOffsetZ);
-      for (const matrix of target) matrix.premultiply(bodyShift);
-    }
-    return;
-  }
 
   if (Math.hypot(state.bodyOffsetX, state.bodyOffsetZ) > 1e-6) {
     const bodyShift = new Matrix4().makeTranslation(state.bodyOffsetX, 0, state.bodyOffsetZ);
@@ -398,11 +567,20 @@ function solvePlantedPaws(
   }> = [];
   for (const chain of LEG_CHAINS) {
     const paw = PAW_CONTACT_PROBES.find((candidate) => candidate.id === chain.pawId)!;
-    const weight = mediumPantherPawSupportWeight(sample, paw.id);
     const lock = state.paws.get(paw.id)!;
+    const requestedWeight = mediumPantherPawSupportWeight(sample, paw.id);
+    const maximumWeightStep = dt * 10;
+    lock.weight += Math.max(
+      -maximumWeightStep,
+      Math.min(maximumWeightStep, requestedWeight - lock.weight),
+    );
+    if (requestedWeight <= 1e-5 && lock.weight <= 1e-5) {
+      lock.weight = 0;
+      lock.active = false;
+    }
+    const weight = lock.weight;
     const base = paw.point.clone().applyMatrix4(target[paw.bone]);
     if (weight <= 1e-5) {
-      lock.active = false;
       continue;
     }
     if (!lock.active) {
@@ -438,7 +616,10 @@ function solvePlantedPaws(
       new Vector3(lock.anchorX, lock.anchorY, lock.anchorZ),
       runtime,
     );
-    const desired = base.clone().lerp(anchor, weight);
+    // Contact position and contact load are different quantities. Once the
+    // pad has touched, it is geometrically stationary; `weight` only controls
+    // how much of the resulting reaction reaches the body before toe-off.
+    const desired = anchor;
     tasks.push({ chain, paw, desired, weight });
   }
 
@@ -446,35 +627,59 @@ function solvePlantedPaws(
   // their remaining horizontal errors move the body between the supports,
   // then resolve the limbs. This is the visible propulsion step: legs do not
   // stretch past their chain merely to protect a perfectly smooth nav root.
-  const bodyIterations = sample.gait === "walk" ? 1 : 3;
-  for (let bodyIteration = 0; bodyIteration < bodyIterations; bodyIteration += 1) {
+  for (const task of tasks) {
+    solveLegContact(target, task.chain, task.paw, task.desired);
+  }
+  let errorX = 0;
+  let errorZ = 0;
+  let totalWeight = 0;
+  for (const task of tasks) {
+    if (task.weight < 0.5) continue;
+    const current = task.paw.point.clone().applyMatrix4(target[task.paw.bone]);
+    const weight = task.weight * task.weight;
+    errorX += (task.desired.x - current.x) * weight;
+    errorZ += (task.desired.z - current.z) * weight;
+    totalWeight += weight;
+  }
+  const requestedOffsetX = totalWeight > 1e-7
+    ? Math.max(-0.22, Math.min(0.22, state.bodyOffsetX + errorX / totalWeight))
+    : 0;
+  const requestedOffsetZ = totalWeight > 1e-7
+    ? Math.max(-0.22, Math.min(0.22, state.bodyOffsetZ + errorZ / totalWeight))
+    : 0;
+  const previousOffsetX = state.bodyOffsetX;
+  const previousOffsetZ = state.bodyOffsetZ;
+  [state.bodyOffsetX, state.bodyVelocityX] = stepCriticalScalar(
+    state.bodyOffsetX,
+    state.bodyVelocityX,
+    requestedOffsetX,
+    0.035,
+    dt,
+  );
+  [state.bodyOffsetZ, state.bodyVelocityZ] = stepCriticalScalar(
+    state.bodyOffsetZ,
+    state.bodyVelocityZ,
+    requestedOffsetZ,
+    0.035,
+    dt,
+  );
+  const shiftX = state.bodyOffsetX - previousOffsetX;
+  const shiftZ = state.bodyOffsetZ - previousOffsetZ;
+  if (Math.hypot(shiftX, shiftZ) > 1e-6) {
+    const bodyShift = new Matrix4().makeTranslation(shiftX, 0, shiftZ);
+    for (const matrix of target) matrix.premultiply(bodyShift);
     for (const task of tasks) {
       solveLegContact(target, task.chain, task.paw, task.desired);
     }
-    let errorX = 0;
-    let errorZ = 0;
-    let totalWeight = 0;
-    for (const task of tasks) {
-      if (task.weight < 0.5) continue;
-      const current = task.paw.point.clone().applyMatrix4(target[task.paw.bone]);
-      const weight = task.weight * task.weight;
-      errorX += (task.desired.x - current.x) * weight;
-      errorZ += (task.desired.z - current.z) * weight;
-      totalWeight += weight;
-    }
-    if (totalWeight <= 1e-7 || sample.gait === "walk") break;
-    const requestedX = Math.max(-0.12, Math.min(0.12, errorX / totalWeight));
-    const requestedZ = Math.max(-0.12, Math.min(0.12, errorZ / totalWeight));
-    const nextOffsetX = Math.max(-0.22, Math.min(0.22, state.bodyOffsetX + requestedX));
-    const nextOffsetZ = Math.max(-0.22, Math.min(0.22, state.bodyOffsetZ + requestedZ));
-    const shiftX = nextOffsetX - state.bodyOffsetX;
-    const shiftZ = nextOffsetZ - state.bodyOffsetZ;
-    if (Math.hypot(shiftX, shiftZ) <= 1e-5) break;
-    const bodyShift = new Matrix4().makeTranslation(shiftX, 0, shiftZ);
-    for (const matrix of target) matrix.premultiply(bodyShift);
-    state.bodyOffsetX = nextOffsetX;
-    state.bodyOffsetZ = nextOffsetZ;
   }
+  keepPawsAboveSurface(target, runtime, field, broken);
+  keepShoulderSlingsAboveBaseSurface(
+    target,
+    runtime,
+    state,
+    field,
+    broken,
+  );
 }
 
 export function writeMediumPantherPose(
@@ -491,6 +696,7 @@ export function writeMediumPantherPose(
   }
   const from = mediumPantherRigStates[sample.current];
   const to = mediumPantherRigStates[sample.next];
+  const desiredPose = contactState.desiredPose;
   for (const [index, bone] of MEDIUM_PANTHER_SKELETON.bones.entries()) {
     const pivot = normalizedPivot(from, bone.id).lerp(
       normalizedPivot(to, bone.id),
@@ -515,9 +721,22 @@ export function writeMediumPantherPose(
     if (!rest) {
       throw new Error(`${bone.id}: no ${from.reference} bind pivot`);
     }
-    target[index]
-      .compose(pivot, rotation, UNIT_SCALE)
-      .multiply(new Matrix4().makeTranslation(-rest[0], -rest[1], -rest[2]));
+    desiredPose[index].compose(pivot, rotation, UNIT_SCALE);
+  }
+
+  solveCreatureWholeBodyPose(
+    target,
+    desiredPose,
+    contactState.wholeBody,
+    elapsed,
+    poseHalfLife(runtime),
+  );
+  for (const [index, bone] of MEDIUM_PANTHER_SKELETON.bones.entries()) {
+    const rest = bone.rest[from.reference];
+    if (!rest) throw new Error(`${bone.id}: no ${from.reference} bind pivot`);
+    target[index].multiply(
+      new Matrix4().makeTranslation(-rest[0], -rest[1], -rest[2]),
+    );
   }
 
   // The navigation root is deliberately smooth. During a declared stance,
@@ -527,22 +746,4 @@ export function writeMediumPantherPose(
   // into a visual treadmill.
   solvePlantedPaws(target, sample, runtime, elapsed, contactState, field, broken);
 
-  // Quaternion interpolation between two individually grounded frames does
-  // not itself preserve a planted pad. Solve the final few centimetres from
-  // the canonical paw boxes, then translate the whole skeleton as one body.
-  // This is a vertical floor correction only; horizontal stance ownership is
-  // handled above by the declared contact paw anchors.
-  let supportY = Infinity;
-  const probe = new Vector3();
-  for (const support of PAW_SUPPORT_PROBES) {
-    probe.copy(support.point).applyMatrix4(target[support.bone]);
-    supportY = Math.min(supportY, probe.y + runtime.airHeight);
-  }
-  const correction = Math.max(0, -supportY);
-  if (correction > 1e-7) {
-    const lift = new Matrix4().makeTranslation(0, correction, 0);
-    for (const matrix of target) {
-      matrix.premultiply(lift);
-    }
-  }
 }
