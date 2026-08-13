@@ -20,9 +20,16 @@
    теперь разрешаются profile skills; территория и appearance остаются
    независимыми данными мира.
 
-## Pending
+## World forward-test
 
-- world-frame capture: размер рядом с жителем, читаемость чёрного корпуса,
-  тень в движении, отсутствие щелей в локтях/скакательных суставах;
+5. **Runtime body и цикл не были доказаны в собранной деревне.** Добавлен
+   opt-in dev-only probe через `data-mam-panther-probe`; он не существует без
+   `?mamPantherProbe=1` и не входит в production behaviour. Целевой прогон
+   подтвердил движение по маршруту, `5.05 m/s` на галопе, `0.58 m` отрыва,
+   посадку и чтение поверхности до `0.34 m`. Стартовый world frame показал
+   пантеру среди жителей и растительности без отдельного world-меша.
+
+## Excluded scope
+
 - player/panther physical contact, hunting, attack, damage and ragdoll — не
   дефекты M3, а исключённый scope.

@@ -85,6 +85,17 @@ flight → landing absorb → brake → observe`.
 ## Forward-test status
 
 Численные, геометрические и типовые гейты пройдены локально. Мир подключает
-ровно одну пантеру. Финальный world-frame capture выполняется отдельно на
-машине, где разрешён `next dev`; до него visual parity в деревне считается
-`pending`, а не принятой по тестам.
+ровно одну пантеру. Targeted world forward-test выполнен 2026-08-13 через
+dev-only `?mamPantherProbe=1` на Windows runtime:
+
+- 80 последовательных измерений за 20 секунд;
+- наблюдались trot, accelerate, gallop, bound flight, landing, brake, observe
+  и walk; короткий preload отдельно покрыт полным 50-секундным simulation gate;
+- фактический максимум скорости `5.05 m/s`, отрыв `0.58 m`;
+- surface height менялся от `0` до `0.34 m`, то есть root следовал рельефу;
+- за один отрезок пантера прошла от `[6.50, 10.64]` до `[-9.97, 24.55]` с
+  несколькими сменами направления;
+- world frame подтвердил runtime body в масштабе жителей и травы; новых
+  renderer/shader errors не обнаружено.
+
+Это был приёмочный прогон механики, не отдельная постановочная съёмка.

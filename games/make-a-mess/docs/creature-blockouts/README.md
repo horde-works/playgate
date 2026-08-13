@@ -93,5 +93,6 @@ runtime skin не подключены.
 
 - runtime contract и гейты: `evidence-card-04-panther-village-runtime.md`;
 - исправления контактов: `discrepancy-log-runtime-m3.md`;
-- world capture остаётся честно pending до прогона на машине, где разрешён
-  `next dev`.
+- целевой world forward-test пройден: `5.05 m/s` галоп, `0.58 m` прыжок,
+  поверхность до `0.34 m`, полный переход обратно к наблюдению. Постановочная
+  beauty-съёмка ради отчёта не запускалась.
