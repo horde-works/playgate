@@ -7,6 +7,11 @@ import type {
   SettlementPlan,
   SettlementStation,
 } from "./settlementPlan.ts";
+import type {
+  HumanAppearanceVariant,
+  HumanPopulationProfile,
+  HumanSkillId,
+} from "./humanPopulationProfile.ts";
 import {
   chooseFreeDirection,
   closestPointOnBox,
@@ -41,7 +46,6 @@ import {
   STARTLE_FREEZE_SPREAD,
   STARTLE_GAIN_CEILING,
   STARTLE_GAIN_SPREAD,
-  STARTLE_ROLE_GAIN,
   STARTLE_SPAN_SPREAD,
   ALERT_SPAN_SPREAD,
   ALERT_TRIGGER,
@@ -381,6 +385,10 @@ export interface Villager {
   readonly patronymic: string;
   readonly homeId: string;
   readonly role: VillagerRole;
+  readonly skills: readonly HumanSkillId[];
+  readonly appearanceId: string;
+  readonly skin: string;
+  readonly hair: string;
   /** Рост, ширина плеч, длина шага, размах рук — все разные. */
   readonly build: number;
   /** Длина ОДНОГО шага (пятка к пятке другой ноги), метры. */
@@ -834,6 +842,8 @@ function dwellTime(node: VillageNode, random: () => number): number {
 }
 
 export interface VillagerPopulation {
+  /** Cultural human layer; body mechanics remain shared. */
+  readonly profile: HumanPopulationProfile;
   /** Описание поселения, по которому живёт это население. */
   readonly settlement: SettlementPlan;
   /** Уровни складов: сколько где лежит, сколько обещано и сколько несут. */
@@ -1162,7 +1172,11 @@ function decideAction(population: VillagerPopulation, villager: Villager): void 
   }
 
   // Ушибленный никуда не разбираться не идёт: ему домой.
-  if (villager.role === "elder" && villager.bruised <= 0 && villager.alertPeak < 0.95) {
+  if (
+    villager.skills.includes("investigate-disturbance") &&
+    villager.bruised <= 0 &&
+    villager.alertPeak < 0.95
+  ) {
     villager.panicKind = "approach";
     replanHere(population, villager);
     return;
@@ -1885,9 +1899,12 @@ function advanceWork(population: VillagerPopulation, villager: Villager): boolea
  */
 export interface VillagerReport {
   readonly id: string;
+  readonly profileId: string;
   readonly name: string;
   readonly patronymic: string;
   readonly role: string;
+  readonly skills: readonly HumanSkillId[];
+  readonly appearanceId: string;
   readonly child: boolean;
   readonly female: boolean;
   /** Что делает прямо сейчас. */
@@ -1986,10 +2003,13 @@ export function describeVillager(
 
   return {
     id: villager.id,
+    profileId: population.profile.id,
     at,
     name: villager.name,
     patronymic: villager.patronymic,
     role: villager.role,
+    skills: villager.skills,
+    appearanceId: villager.appearanceId,
     child: villager.child,
     female: villager.female,
     action,
@@ -2139,11 +2159,28 @@ function buildPath(
   villager.destinationNode = destination;
 }
 
+function chooseAppearance(
+  variants: readonly HumanAppearanceVariant[],
+  random: () => number,
+): HumanAppearanceVariant {
+  const total = variants.reduce((sum, variant) => sum + variant.weight, 0);
+  let draw = random() * total;
+  for (const variant of variants) {
+    draw -= variant.weight;
+    if (draw <= 0) {
+      return variant;
+    }
+  }
+  return variants[variants.length - 1];
+}
+
 export function createVillagerPopulation(
-  plan: SettlementPlan,
+  profile: HumanPopulationProfile,
   count = 24,
   field: ObstacleField | null = null,
 ): VillagerPopulation {
+  const plan = profile.settlement;
+  const wardrobe = profile.appearance.wardrobe;
   const network = buildSettlementNetwork(plan);
   const homeNodes: Record<string, number | undefined> = {};
   for (const dwelling of plan.dwellings) {
@@ -2202,6 +2239,10 @@ export function createVillagerPopulation(
       (home.roles.length > 0
         ? home.roles[Math.floor(index / lodging.length) % home.roles.length]
         : "worker");
+    const profession = profile.professions[role];
+    if (!profession) {
+      throw new Error(`Human profile ${profile.id}: resident role ${role} has no profession`);
+    }
     const spawnNode = spawnNodes[Math.floor(random() * spawnNodes.length)];
     const spawnPoint = network.nodes[spawnNode];
     const spawnAngle = random() * Math.PI * 2;
@@ -2230,12 +2271,20 @@ export function createVillagerPopulation(
     // наступили — от четырёх лишних вызовов покраснел тест про кузнеца у горна,
     // хотя ни строчки про работу не менялось.
     const alarmRandom = mulberry32(0x51ed270b + villagers.length * 2654435761);
+    // Внешность не имеет права менять маршрут, первое дело или тревожность.
+    // Поэтому у неё свой детерминированный поток, а не дополнительные вызовы random().
+    const appearanceRandom = mulberry32(0x2c9277b5 + villagers.length * 2654435761);
+    const appearance = chooseAppearance(profile.appearance.variants, appearanceRandom);
     const villager: Villager = {
       id: `${home.id}:${index}`,
       name: person?.name ?? "",
       patronymic: person?.patronymic ?? "",
       homeId: home.id,
       role,
+      skills: profession.skills,
+      appearanceId: appearance.id,
+      skin: appearance.skin,
+      hair: appearance.hair,
       build,
       // Длина шага следует за ростом: коротышка семенит, высокий шагает.
       // 0.65–0.85 м при скорости 1.05–1.5 м/с — это каденс около 100–115
@@ -2244,7 +2293,7 @@ export function createVillagerPopulation(
       // анализа походки, из которых выведен мужской размах бедра.
       strideLength: (0.65 + random() * 0.2) * build * (female ? 0.9 : 1),
       baseSpeed: (1.05 + random() * 0.45) * (0.9 + build * 0.1),
-      dye: plan.wardrobe.dyes[Math.floor(random() * plan.wardrobe.dyes.length)],
+      dye: wardrobe.dyes[Math.floor(random() * wardrobe.dyes.length)],
       carries: !child && random() > 0.68,
       carryDrop: 0,
       cargo: null,
@@ -2260,8 +2309,8 @@ export function createVillagerPopulation(
         Math.min(
           1,
           (child ? 0.55 : 0.15) +
-            (plan.wardrobe.grimeByRole?.[role] ?? 0) +
-            random() * 0.35 * (plan.wardrobe.wearSpread ?? 1),
+            (wardrobe.grimeByRole?.[role] ?? 0) +
+            random() * 0.35 * (wardrobe.wearSpread ?? 1),
         ),
       ),
       // Дети лезут через всё; взрослые — по настроению и редко.
@@ -2321,7 +2370,7 @@ export function createVillagerPopulation(
         STARTLE_GAIN_CEILING,
         (STARTLE_GAIN_SPREAD[0] +
           alarmRandom() * (STARTLE_GAIN_SPREAD[1] - STARTLE_GAIN_SPREAD[0])) *
-          (STARTLE_ROLE_GAIN[role] ?? 1) *
+          (profession.startleGain ?? 1) *
           (child ? STARTLE_CHILD_GAIN : 1),
       ),
       startleSpan:
@@ -2410,6 +2459,7 @@ export function createVillagerPopulation(
   }
 
   return {
+    profile,
     settlement: plan,
     network,
     villagers,

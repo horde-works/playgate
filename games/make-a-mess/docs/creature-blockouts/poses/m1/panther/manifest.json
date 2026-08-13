@@ -1,0 +1,74 @@
+{
+  "modelId": "medium-panther-pose-atlas",
+  "revision": "panther-rig-m1-2026-08-13",
+  "modelHash": "6719a66ed7d8",
+  "generatedAt": "2026-08-13T12:35:50.803Z",
+  "views": [
+    {
+      "id": "panther-stand-observe",
+      "label": "OBSERVE · HEAD FIRST / WEIGHT FOLLOWS",
+      "projection": "perspective",
+      "file": "panther-stand-observe.png"
+    },
+    {
+      "id": "panther-walk-support",
+      "label": "WALK · DIAGONAL SUPPORT / QUIET HEAD",
+      "projection": "perspective",
+      "file": "panther-walk-support.png"
+    },
+    {
+      "id": "panther-stalk",
+      "label": "STALK · LOW CHEST / CONFIRMED SUPPORT",
+      "projection": "perspective",
+      "file": "panther-stalk.png"
+    },
+    {
+      "id": "panther-gallop-gather",
+      "label": "GALLOP · GATHERED SUSPENSION",
+      "projection": "perspective",
+      "file": "panther-gallop-gather.png"
+    },
+    {
+      "id": "panther-gallop-extend",
+      "label": "GALLOP · EXTENDED SUSPENSION",
+      "projection": "perspective",
+      "file": "panther-gallop-extend.png"
+    },
+    {
+      "id": "panther-jump-preload",
+      "label": "JUMP · PRELOAD / COM IN HIND SUPPORT",
+      "projection": "perspective",
+      "file": "panther-jump-preload.png"
+    },
+    {
+      "id": "panther-jump-flight",
+      "label": "JUMP · BALLISTIC FLIGHT / REACH",
+      "projection": "perspective",
+      "file": "panther-jump-flight.png"
+    },
+    {
+      "id": "panther-landing-absorb",
+      "label": "LANDING · FORE CONTACT / SCAPULA ABSORPTION",
+      "projection": "perspective",
+      "file": "panther-landing-absorb.png"
+    },
+    {
+      "id": "panther-lie-observe",
+      "label": "STERNAL LIE · QUIET BODY / ACTIVE HEAD",
+      "projection": "perspective",
+      "file": "panther-lie-observe.png"
+    },
+    {
+      "id": "panther-skeleton-profile",
+      "label": "SKELETON · PROFILE / AXIAL + LIMB CHAINS",
+      "projection": "orthographic",
+      "file": "panther-skeleton-profile.png"
+    },
+    {
+      "id": "panther-skeleton-three-quarter",
+      "label": "SKELETON · THREE QUARTER / SCAPULA + HOCK",
+      "projection": "perspective",
+      "file": "panther-skeleton-three-quarter.png"
+    }
+  ]
+}

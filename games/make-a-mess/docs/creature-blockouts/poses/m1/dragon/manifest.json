@@ -1,0 +1,92 @@
+{
+  "modelId": "medium-dragon-pose-atlas",
+  "revision": "dragon-rig-m1-2026-08-13",
+  "modelHash": "184b365253d5",
+  "generatedAt": "2026-08-13T12:32:12.819Z",
+  "views": [
+    {
+      "id": "dragon-ground-observe",
+      "label": "GROUND OBSERVE · HEAD FIRST / FOUR SUPPORTS",
+      "projection": "perspective",
+      "file": "dragon-ground-observe.png"
+    },
+    {
+      "id": "dragon-walk-support",
+      "label": "WALK · LATERAL SEQUENCE / HEAVY MANUS",
+      "projection": "perspective",
+      "file": "dragon-walk-support.png"
+    },
+    {
+      "id": "dragon-takeoff-preload",
+      "label": "TAKEOFF · PRELOAD / HIND LOAD",
+      "projection": "perspective",
+      "file": "dragon-takeoff-preload.png"
+    },
+    {
+      "id": "dragon-takeoff-release",
+      "label": "TAKEOFF · RELEASE / FIRST DOWNSTROKE",
+      "projection": "perspective",
+      "file": "dragon-takeoff-release.png"
+    },
+    {
+      "id": "dragon-flight-downstroke",
+      "label": "FLIGHT · DOWNSTROKE / BODY RESPONSE",
+      "projection": "perspective",
+      "file": "dragon-flight-downstroke.png"
+    },
+    {
+      "id": "dragon-flight-upstroke",
+      "label": "FLIGHT · UPSTROKE / REDUCED OUTER AREA",
+      "projection": "perspective",
+      "file": "dragon-flight-upstroke.png"
+    },
+    {
+      "id": "dragon-glide",
+      "label": "GLIDE · BROAD PLANFORM / SMALL TRIM",
+      "projection": "perspective",
+      "file": "dragon-glide.png"
+    },
+    {
+      "id": "dragon-bank-turn",
+      "label": "BANK TURN · GAZE LEADS / ASYMMETRIC WINGS",
+      "projection": "perspective",
+      "file": "dragon-bank-turn.png"
+    },
+    {
+      "id": "dragon-hover-brake",
+      "label": "BRAKE HOVER · NOSE HIGH / POWER STROKE",
+      "projection": "perspective",
+      "file": "dragon-hover-brake.png"
+    },
+    {
+      "id": "dragon-dive",
+      "label": "DIVE · SWEPT WING / STREAMLINED BODY",
+      "projection": "perspective",
+      "file": "dragon-dive.png"
+    },
+    {
+      "id": "dragon-landing-flare",
+      "label": "LANDING · FLARE / HIND FEET FORWARD",
+      "projection": "perspective",
+      "file": "dragon-landing-flare.png"
+    },
+    {
+      "id": "dragon-touchdown",
+      "label": "TOUCHDOWN · HIND CONTACT / FORE SETTLE NEXT",
+      "projection": "perspective",
+      "file": "dragon-touchdown.png"
+    },
+    {
+      "id": "dragon-skeleton-ground-profile",
+      "label": "SKELETON · GROUND PROFILE / FOLDED WING + CONTACTS",
+      "projection": "orthographic",
+      "file": "dragon-skeleton-ground-profile.png"
+    },
+    {
+      "id": "dragon-skeleton-flight-front",
+      "label": "SKELETON · FLIGHT FRONT / ROOT TO FINGER CHAIN",
+      "projection": "orthographic",
+      "file": "dragon-skeleton-flight-front.png"
+    }
+  ]
+}

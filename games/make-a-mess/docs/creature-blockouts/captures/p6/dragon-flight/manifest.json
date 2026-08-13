@@ -1,0 +1,26 @@
+{
+  "modelId": "medium-dragon-flight-blockout",
+  "revision": "dragon-p4-flight-2026-08-13",
+  "modelHash": "012ac673182b",
+  "generatedAt": "2026-08-13T12:01:21.427Z",
+  "views": [
+    {
+      "id": "dragon-flight-top",
+      "label": "FLIGHT TOP · 11.62 m PLANFORM",
+      "projection": "orthographic",
+      "file": "dragon-flight-top.png"
+    },
+    {
+      "id": "dragon-flight-front",
+      "label": "FLIGHT FRONT · ROOT LOAD / DIHEDRAL",
+      "projection": "orthographic",
+      "file": "dragon-flight-front.png"
+    },
+    {
+      "id": "dragon-flight-three-quarter",
+      "label": "FLIGHT THREE QUARTER · SAME SEGMENTS",
+      "projection": "perspective",
+      "file": "dragon-flight-three-quarter.png"
+    }
+  ]
+}

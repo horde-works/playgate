@@ -1,0 +1,128 @@
+{
+  "modelId": "medium-dragon-pose-atlas",
+  "revision": "dragon-rig-m2-2026-08-13",
+  "modelHash": "79e11bdb0948",
+  "generatedAt": "2026-08-13T13:37:59.237Z",
+  "views": [
+    {
+      "id": "dragon-ground-observe",
+      "label": "GROUND OBSERVE · HEAD FIRST / FOUR SUPPORTS",
+      "projection": "perspective",
+      "file": "dragon-ground-observe.png"
+    },
+    {
+      "id": "dragon-walk-support",
+      "label": "WALK · LATERAL SEQUENCE / HEAVY MANUS",
+      "projection": "perspective",
+      "file": "dragon-walk-support.png"
+    },
+    {
+      "id": "dragon-takeoff-preload",
+      "label": "TAKEOFF 01 · FOUR-POINT PRELOAD",
+      "projection": "perspective",
+      "file": "dragon-takeoff-preload.png"
+    },
+    {
+      "id": "dragon-takeoff-hind-drive",
+      "label": "TAKEOFF 02 · HIND DRIVE / MANUS STAY",
+      "projection": "perspective",
+      "file": "dragon-takeoff-hind-drive.png"
+    },
+    {
+      "id": "dragon-takeoff-manus-vault",
+      "label": "TAKEOFF 03 · MANUS VAULT",
+      "projection": "perspective",
+      "file": "dragon-takeoff-manus-vault.png"
+    },
+    {
+      "id": "dragon-takeoff-clearance",
+      "label": "TAKEOFF 04 · CLEARANCE / WING COMPACT",
+      "projection": "perspective",
+      "file": "dragon-takeoff-clearance.png"
+    },
+    {
+      "id": "dragon-takeoff-unfold",
+      "label": "TAKEOFF 05 · ELBOW / WRIST / KNUCKLE OPEN",
+      "projection": "perspective",
+      "file": "dragon-takeoff-unfold.png"
+    },
+    {
+      "id": "dragon-takeoff-first-downstroke",
+      "label": "TAKEOFF 06 · FIRST POWER STROKE",
+      "projection": "perspective",
+      "file": "dragon-takeoff-first-downstroke.png"
+    },
+    {
+      "id": "dragon-flight-downstroke",
+      "label": "FLIGHT · DOWNSTROKE / TENSIONED SPAN",
+      "projection": "perspective",
+      "file": "dragon-flight-downstroke.png"
+    },
+    {
+      "id": "dragon-flight-upstroke",
+      "label": "FLIGHT · UPSTROKE / OUTER AREA FOLDS",
+      "projection": "perspective",
+      "file": "dragon-flight-upstroke.png"
+    },
+    {
+      "id": "dragon-glide",
+      "label": "GLIDE · BROAD PLANFORM / SMALL JOINT TRIM",
+      "projection": "perspective",
+      "file": "dragon-glide.png"
+    },
+    {
+      "id": "dragon-bank-turn",
+      "label": "BANK TURN · OUTER AREA / INNER FOLD",
+      "projection": "perspective",
+      "file": "dragon-bank-turn.png"
+    },
+    {
+      "id": "dragon-hover-brake",
+      "label": "BRAKE HOVER · HIGH CAMBER / NOSE HIGH",
+      "projection": "perspective",
+      "file": "dragon-hover-brake.png"
+    },
+    {
+      "id": "dragon-dive",
+      "label": "DIVE · SHOULDER SWEEP / KNUCKLE AREA REDUCTION",
+      "projection": "perspective",
+      "file": "dragon-dive.png"
+    },
+    {
+      "id": "dragon-landing-flare",
+      "label": "LANDING 01 · FULL FLARE / HIND FEET FORWARD",
+      "projection": "perspective",
+      "file": "dragon-landing-flare.png"
+    },
+    {
+      "id": "dragon-landing-touchdown",
+      "label": "LANDING 02 · HIND CONTACT / WING STILL LOADED",
+      "projection": "perspective",
+      "file": "dragon-landing-touchdown.png"
+    },
+    {
+      "id": "dragon-landing-wing-unload",
+      "label": "LANDING 03 · ELBOW / WRIST / KNUCKLE UNLOAD",
+      "projection": "perspective",
+      "file": "dragon-landing-wing-unload.png"
+    },
+    {
+      "id": "dragon-ground-recovery",
+      "label": "LANDING 04 · MANUS SET / WING FOLDED",
+      "projection": "perspective",
+      "file": "dragon-ground-recovery.png"
+    },
+    {
+      "id": "dragon-skeleton-ground-profile",
+      "label": "SKELETON · GROUND PROFILE / FOLDED WING + CONTACTS",
+      "projection": "orthographic",
+      "file": "dragon-skeleton-ground-profile.png"
+    },
+    {
+      "id": "dragon-skeleton-flight-front",
+      "label": "SKELETON · FLIGHT FRONT / ROOT TO FINGER CHAIN",
+      "projection": "orthographic",
+      "file": "dragon-skeleton-flight-front.png"
+    }
+  ]
+}

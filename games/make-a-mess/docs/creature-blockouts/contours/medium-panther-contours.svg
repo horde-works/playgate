@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
+  <rect width="1600" height="1000" fill="#f2f0e9"/>
+  <g fill="none" stroke="#25282a" stroke-width="8" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M118 330 L206 276 L394 252 L594 260 L741 306 L820 336 L884 323 L934 280 L1004 276 L1072 307 L1124 358 L1089 410 L1018 432 L958 420 L917 462 L879 598 L846 705 L808 712 L785 681 L806 590 L794 456 L693 445 L628 462 L616 574 L585 711 L548 718 L520 687 L542 566 L530 449 L420 445 L383 570 L347 716 L309 716 L283 682 L308 557 L295 429 L222 411 L154 399 Z"/>
+    <path d="M154 399 C92 422 76 476 119 509 C171 547 224 530 255 493"/>
+    <path d="M119 509 C84 550 76 604 111 647 C153 697 222 682 254 638 C279 602 280 553 255 493"/>
+    <path d="M810 712 L867 720 M548 718 L609 724 M309 716 L369 724"/>
+  </g>
+  <g fill="none" stroke="#4c5255" stroke-width="7" stroke-linejoin="round">
+    <path d="M221 802 L315 747 L474 725 L670 731 L820 766 L910 755 L1010 785 L1078 833 L1013 881 L893 898 L756 880 L590 892 L414 882 L273 857 Z"/>
+    <path d="M273 857 C190 896 112 892 84 848 C61 812 102 769 171 773 C217 777 247 802 273 857"/>
+  </g>
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, monospace" fill="#25282a">
+    <text x="80" y="90" font-size="46" font-weight="700">MEDIUM PANTHER · LOCKED CONTOUR PROPOSAL</text>
+    <text x="80" y="145" font-size="28">50 kg · shoulder 0.70 m · body 1.35 m · tail 0.90 m</text>
+    <text x="82" y="238" font-size="25">PROFILE</text>
+    <text x="82" y="755" font-size="25">TOP</text>
+    <text x="80" y="958" font-size="22">awaiting owner · silhouette only · no world integration</text>
+  </g>
+</svg>
+

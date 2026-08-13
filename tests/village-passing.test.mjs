@@ -10,6 +10,7 @@ import {
   stepVillagers,
 } from "../games/make-a-mess/src/game/villagerSim.ts";
 import { vikingSettlement } from "../games/make-a-mess/src/content/scenes/vikingSettlement.ts";
+import { villageHumanProfile } from "../games/make-a-mess/src/content/populations/humanPopulationProfiles.ts";
 
 /** Идущий на север (+z) стоит в начале координат, если не сказано иное. */
 function walker(x, z, yaw, speed = 1.3) {
@@ -155,7 +156,7 @@ test("уступающий сбавляет ход, но не встаёт", () 
 });
 
 test("живая деревня: люди не рыскают и не слипаются", () => {
-  const population = createVillagerPopulation(vikingSettlement, 34, null);
+  const population = createVillagerPopulation(villageHumanProfile, 34, null);
   for (let elapsed = 0; elapsed < 40; elapsed += 0.05) {
     stepVillagers(population, 0.05, 0);
   }

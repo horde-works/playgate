@@ -6,6 +6,10 @@ import { deinterpenetrateClusters } from "./deinterpenetrate.ts";
 import { forbidsDerivatives } from "./contentLicensing.ts";
 import type { MotionInstrumentDefinition } from "./motionTelemetry.ts";
 import type { SolarFrameDefinition } from "./timeOfDay.ts";
+import {
+  validateCreaturePopulationDefinitions,
+  type CreaturePopulationDefinition,
+} from "./creaturePopulation.ts";
 import { propTree } from "../content/prefabs/coreFlora.ts";
 
 /**
@@ -5798,6 +5802,8 @@ export interface DestructionSceneDefinition {
   readonly skyRadius?: number;
   readonly worldRadius?: number;
   readonly worldEdgeBoundary?: readonly (readonly [x: number, z: number])[];
+  /** Living populations authored by the world, independent of its scene id. */
+  readonly inhabitantDefinitions: readonly CreaturePopulationDefinition[];
   /**
    * Seconds after entering the world during which flight is refused. A rule of
    * the map, not a special case of one fortress: a siege only means anything
@@ -5879,6 +5885,7 @@ interface DestructionSceneOptions {
   readonly skyRadius?: number;
   readonly worldRadius?: number;
   readonly worldEdgeBoundary?: readonly (readonly [x: number, z: number])[];
+  readonly inhabitants?: readonly CreaturePopulationDefinition[];
   /** Seconds of enforced walking after entry (see the scene definition). */
   readonly flightLockSeconds?: number;
   readonly safetyFloorY?: number;
@@ -5914,6 +5921,10 @@ interface DestructionSceneOptions {
 export function createDestructionScene(
   options: DestructionSceneOptions,
 ): DestructionSceneDefinition {
+  const inhabitantDefinitions = validateCreaturePopulationDefinitions(
+    options.id,
+    options.inhabitants ?? [],
+  );
   const deinterpenetrationExempt = new Set(
     options.deinterpenetrationExemptClusterIds ?? [],
   );
@@ -6145,6 +6156,7 @@ export function createDestructionScene(
     skyRadius: options.skyRadius,
     worldRadius: options.worldRadius,
     worldEdgeBoundary: options.worldEdgeBoundary,
+    inhabitantDefinitions,
     flightLockSeconds: options.flightLockSeconds,
     safetyFloorY: options.safetyFloorY ?? -2.2,
     copy: options.copy,
