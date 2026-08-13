@@ -119,6 +119,8 @@ function buildPantherParts(): readonly ObjectLabPart[] {
   return parts;
 }
 
+export const mediumPantherCanonicalParts = buildPantherParts();
+
 export const mediumPantherObject: CreatureLabModel = {
   id: "medium-panther-blockout",
   revision: "panther-p4-2026-08-13",
@@ -164,7 +166,7 @@ export const mediumPantherObject: CreatureLabModel = {
     "flower-yellow": { color: 0xc79732, roughness: 0.72 },
     "dark-recess": { color: 0x070809, roughness: 1 },
   },
-  parts: buildPantherParts(),
+  parts: mediumPantherCanonicalParts,
   views: [
     { id: "panther-profile", label: "PROFILE · SHOULDER / HOCK / TAIL", projection: "orthographic", position: point(3.2, 0.62, 0), target: point(0, 0.48, -0.285), orthoHeight: 1.48 },
     { id: "panther-front", label: "FRONT · CHEST OVER CONTACTS", projection: "orthographic", position: point(0, 0.62, 3.2), target: point(0, 0.45, 0.05), orthoHeight: 1.2 },

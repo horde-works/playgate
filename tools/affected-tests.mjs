@@ -10,7 +10,7 @@
  * относительным путям (node_modules не трогаются) и печатает те тесты, чьё
  * замыкание пересекается с изменёнными файлами. Дальше:
  *
- *     node --test $(node tools/affected-tests.mjs)
+ *     node --experimental-strip-types --test $(node tools/affected-tests.mjs)
  *
  * ЧЕСТНАЯ ГРАНИЦА ИНСТРУМЕНТА. Он видит только статические импорты, поэтому:
  *
@@ -226,9 +226,13 @@ if (!runRequested) {
   process.stdout.write(
     `Затронуто тестов: ${names.length} из ${testFiles.length}\n`,
   );
-  const result = spawnSync(process.execPath, ["--test", ...names], {
-    cwd: root,
-    stdio: "inherit",
-  });
+  const result = spawnSync(
+    process.execPath,
+    ["--experimental-strip-types", "--test", ...names],
+    {
+      cwd: root,
+      stdio: "inherit",
+    },
+  );
   process.exit(result.status ?? 1);
 }

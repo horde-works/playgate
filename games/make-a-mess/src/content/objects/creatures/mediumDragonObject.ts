@@ -178,27 +178,29 @@ function addGroundHindlimb(parts: ObjectLabPart[], side: -1 | 1): void {
 
 function addFlightHindlimb(parts: ObjectLabPart[], side: -1 | 1): void {
   const name = side < 0 ? "left" : "right";
-  const hip = sidePoint(side, 0.3, 0.82, -0.76);
-  const knee = sidePoint(side, 0.33, 0.62, -0.48);
-  const ankle = sidePoint(side, 0.29, 0.64, -0.92);
-  const foot = sidePoint(side, 0.25, 0.62, -1.18);
+  const hip = sidePoint(side, 0.31, 0.82, -0.76);
+  const knee = sidePoint(side, 0.33, 1.02, -0.265);
+  const ankle = sidePoint(side, 0.31, 0.92, -0.87);
+  const foot = sidePoint(side, 0.28, 0.86, -1.235);
   addBeam(parts, `${name}-femur`, "hindlimbs", SKIN_PLANE, hip, knee, 0.27, 0.29);
   addJoint(parts, `${name}-knee`, "hindlimbs", SKIN_PLANE, knee, 0.27);
   addBeam(parts, `${name}-tibia`, "hindlimbs", SKIN, knee, ankle, 0.2, 0.22);
   addBeam(parts, `${name}-metatarsus`, "hindlimbs", SKIN, ankle, foot, 0.14, 0.16);
-  addBox(parts, `${name}-folded-foot`, "contacts", BELLY, sidePoint(side, 0.25, 0.61, -1.26), point(0.25, 0.14, 0.34));
+  addBox(parts, `${name}-folded-foot`, "contacts", BELLY, sidePoint(side, 0.28, 0.84, -1.31), point(0.25, 0.14, 0.34));
 }
 
 function addFoldedWing(parts: ObjectLabPart[], side: -1 | 1): void {
   const name = side < 0 ? "left" : "right";
   const shoulder = sidePoint(side, 0.46, 1.16, 0.27);
-  const elbow = sidePoint(side, 0.68, 0.78, 0.56);
-  const wrist = sidePoint(side, 0.72, 0.16, 0.78);
-  const finger0 = sidePoint(side, 0.8, 0.48, 0.34);
-  const finger1 = sidePoint(side, 0.79, 0.76, -0.34);
-  const finger2 = sidePoint(side, 0.75, 0.87, -1.02);
-  const finger3 = sidePoint(side, 0.67, 0.86, -1.61);
-  const tip = sidePoint(side, 0.54, 0.8, -2.11);
+  // The accepted folded silhouette is retained, but the internal chain now
+  // preserves the same segment lengths as the extended diagnostic state.
+  const elbow = sidePoint(side, 0.65, 0.75, -0.82);
+  const wrist = sidePoint(side, 0.72, 0.16, 0.5);
+  const finger0 = sidePoint(side, 0.76, 0.45, 0.04);
+  const finger1 = sidePoint(side, 0.78, 0.72, -0.44);
+  const finger2 = sidePoint(side, 0.77, 0.85, -0.98);
+  const finger3 = sidePoint(side, 0.7, 0.82, -1.51);
+  const tip = sidePoint(side, 0.56, 0.77, -2.01);
   const bone = side === 1 ? SKIN_PLANE : SKIN;
 
   addBeam(parts, `${name}-humerus`, "wing-bones", bone, shoulder, elbow, 0.24, 0.27);
@@ -216,6 +218,7 @@ function addFoldedWing(parts: ObjectLabPart[], side: -1 | 1): void {
   }
 
   addBox(parts, `${name}-manus-pad`, "contacts", BELLY, sidePoint(side, 0.72, 0.055, 0.87), point(0.24, 0.11, 0.38));
+  addBeam(parts, `${name}-free-digit-contact`, "contacts", SKIN, wrist, sidePoint(side, 0.72, 0.08, 0.82), 0.095, 0.1);
   addBox(parts, `${name}-free-digits`, "contacts", CLAW, sidePoint(side, 0.72, 0.04, 1.07), point(0.27, 0.08, 0.16));
 
   // Folded membrane is shown as four controlled facets. It stays close to the
@@ -232,13 +235,13 @@ function addExtendedWing(parts: ObjectLabPart[], side: -1 | 1): void {
   const name = side < 0 ? "left" : "right";
   const leading: readonly ObjectPoint[] = [
     sidePoint(side, 0.46, 1.16, 0.27),
-    sidePoint(side, 1.64, 1.23, 0.42),
-    sidePoint(side, 3.09, 1.17, 0.18),
-    sidePoint(side, 3.64, 1.15, 0.03),
-    sidePoint(side, 4.19, 1.13, -0.1),
-    sidePoint(side, 4.75, 1.1, -0.24),
-    sidePoint(side, 5.29, 1.08, -0.42),
-    sidePoint(side, 5.81, 1.05, -0.59),
+    sidePoint(side, 1.64, 1.16, 0.27),
+    sidePoint(side, 3.09, 1.16, 0.27),
+    sidePoint(side, 3.64, 1.16, 0.27),
+    sidePoint(side, 4.19, 1.16, 0.27),
+    sidePoint(side, 4.75, 1.16, 0.27),
+    sidePoint(side, 5.29, 1.16, 0.27),
+    sidePoint(side, 5.81, 1.16, 0.27),
   ];
   const trailing: readonly ObjectPoint[] = [
     sidePoint(side, 0.3, 0.83, -0.75),
@@ -276,6 +279,9 @@ function buildDragonParts(pose: DragonPose): readonly ObjectLabPart[] {
   }
   return parts;
 }
+
+export const mediumDragonGroundCanonicalParts = buildDragonParts("ground-folded");
+export const mediumDragonFlightCanonicalParts = buildDragonParts("flight-extended");
 
 const common = {
   units: "metres" as const,
@@ -319,7 +325,7 @@ const common = {
 export const mediumDragonGroundObject: CreatureLabModel = {
   ...common,
   id: "medium-dragon-ground-blockout",
-  revision: "dragon-p4-ground-2026-08-13",
+  revision: "dragon-rigbase-ground-m1-2026-08-13",
   title: "MEDIUM DRAGON · FOLDED GROUND BODY",
   anchors: {
     nose: point(0, 1.44, 2.333),
@@ -330,7 +336,7 @@ export const mediumDragonGroundObject: CreatureLabModel = {
     rightHindPad: point(0.39, 0, -0.45),
   },
   labEnvironment: { floorRadius: 7, gridSize: 8, gridDivisions: 24, fogNear: 18, fogFar: 26, floorY: -0.005 },
-  parts: buildDragonParts("ground-folded"),
+  parts: mediumDragonGroundCanonicalParts,
   views: [
     { id: "dragon-ground-profile", label: "GROUND PROFILE · FOLDED WING / FOUR CONTACTS", projection: "orthographic", position: point(7, 1.1, 0), target: point(0, 0.77, -0.55), orthoHeight: 4.0 },
     { id: "dragon-ground-front", label: "GROUND FRONT · DEEP CHEST / MANUS", projection: "orthographic", position: point(0, 1.05, 7), target: point(0, 0.78, 0), orthoHeight: 2.55 },
@@ -341,18 +347,18 @@ export const mediumDragonGroundObject: CreatureLabModel = {
 export const mediumDragonFlightObject: CreatureLabModel = {
   ...common,
   id: "medium-dragon-flight-blockout",
-  revision: "dragon-p4-flight-2026-08-13",
+  revision: "dragon-rigbase-flight-m1-2026-08-13",
   title: "MEDIUM DRAGON · EXTENDED WING PLANFORM",
   anchors: {
     nose: point(0, 1.44, 2.333),
     tailTip: point(-0.025, 0.42, -3.55),
-    leftWingTip: point(-5.81, 1.05, -0.59),
-    rightWingTip: point(5.81, 1.05, -0.59),
+    leftWingTip: point(-5.81, 1.16, 0.27),
+    rightWingTip: point(5.81, 1.16, 0.27),
     leftShoulder: point(-0.46, 1.16, 0.27),
     rightShoulder: point(0.46, 1.16, 0.27),
   },
   labEnvironment: { floorRadius: 9, gridSize: 14, gridDivisions: 28, fogNear: 26, fogFar: 38, floorY: -0.005 },
-  parts: buildDragonParts("flight-extended"),
+  parts: mediumDragonFlightCanonicalParts,
   views: [
     { id: "dragon-flight-top", label: "FLIGHT TOP · 11.62 m PLANFORM", projection: "orthographic", position: point(0, 13, 0.001), target: point(0, 0.75, -0.3), orthoHeight: 7.65, up: point(0, 0, -1) },
     { id: "dragon-flight-front", label: "FLIGHT FRONT · ROOT LOAD / DIHEDRAL", projection: "orthographic", position: point(0, 1.3, 14), target: point(0, 0.95, -0.2), orthoHeight: 3.5 },

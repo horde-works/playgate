@@ -33,5 +33,19 @@
 - `review/panther-p4-review.png`;
 - `review/dragon-p4-review.png`.
 
+## M1 skeleton/action review
+
+Обе принятые формы посажены на именованные FK-иерархии. Все ключевые позы
+снимаются из одного pose atlas на вид, поэтому внутри листа один model hash.
+
+- `review/creature-rig-m1-skeletons.png` — скелеты без скрывающего body layer;
+- `review/panther-rig-m1-actions.png` — 9 ключевых поз;
+- `review/dragon-rig-m1-actions.png` — 12 ключевых поз;
+- `evidence-card-02-creature-rigs.md` — skeleton/action passport и гейты;
+- `discrepancy-log-rig-m1.md` — исправления после визуального цикла.
+
+Это всё ещё изолированный Object Lab. Мир, AI, solver полёта/прыжка, IK и
+runtime skin не подключены.
+
 Полные 1600×1000 ракурсы и manifests лежат в `captures/p6/`. История причинных
 исправлений: `discrepancy-log-p1-p6.md`.
