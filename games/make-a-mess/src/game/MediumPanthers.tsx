@@ -23,6 +23,7 @@ import {
   MEDIUM_PANTHER_RUNTIME_BONE_IDS,
 } from "./mediumPantherRuntimeGeometry.ts";
 import {
+  createMediumPantherContactState,
   createMediumPantherPosePalette,
   writeMediumPantherPose,
 } from "./mediumPantherRuntimePose.ts";
@@ -94,6 +95,7 @@ function MediumPanther({
   const acousticCursor = useRef(0);
   const presenceCooldown = useRef(0);
   const palette = useMemo(() => createMediumPantherPosePalette(), []);
+  const contactState = useRef(createMediumPantherContactState());
   const geometry = useMemo(
     () => buildMediumPantherRuntimeGeometry(definition),
     [definition],
@@ -179,7 +181,13 @@ function MediumPanther({
       world.geometry.removedPieceIds.current,
     );
     const pose = sampleMediumPantherPose(panther);
-    writeMediumPantherPose(palette, pose, panther, state.clock.elapsedTime);
+    writeMediumPantherPose(
+      palette,
+      pose,
+      panther,
+      state.clock.elapsedTime,
+      contactState.current,
+    );
 
     if (root.current) {
       root.current.position.set(panther.x, panther.groundY + panther.airHeight, panther.z);

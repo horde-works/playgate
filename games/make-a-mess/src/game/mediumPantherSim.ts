@@ -18,10 +18,16 @@ export type MediumPantherMotionMode =
   | "landing"
   | "brake";
 
+export type MediumPantherGait = "walk" | "trot" | "gallop";
+
 export interface MediumPantherPoseSample {
   readonly current: MediumPantherPoseId;
   readonly next: MediumPantherPoseId;
   readonly blend: number;
+  /** The cyclic gait owns planted-paw contact; one-shot actions do not. */
+  readonly gait?: MediumPantherGait;
+  /** Normalized travelled phase of the current stride. */
+  readonly cyclePhase?: number;
 }
 
 export interface MediumPantherRuntime {
@@ -128,6 +134,7 @@ function targetSpeed(runtime: MediumPantherRuntime): number {
 }
 
 function gaitSample(
+  gait: MediumPantherGait,
   poses: readonly MediumPantherPoseId[],
   gaitDistance: number,
   strideLength: number,
@@ -139,6 +146,8 @@ function gaitSample(
     current: poses[index],
     next: poses[(index + 1) % poses.length],
     blend: smoothstep(frame - Math.floor(frame)),
+    gait,
+    cyclePhase: cycle,
   };
 }
 
@@ -149,13 +158,13 @@ export function sampleMediumPantherPose(
     case "observe":
       return { current: "stand-observe", next: "stand-observe", blend: 0 };
     case "walk":
-      return gaitSample(WALK, runtime.gaitDistance, 0.92);
+      return gaitSample("walk", WALK, runtime.gaitDistance, 0.92);
     case "trot":
-      return gaitSample(TROT, runtime.gaitDistance, 1.2);
+      return gaitSample("trot", TROT, runtime.gaitDistance, 1.2);
     case "accelerate":
       return { current: "accelerate-hind-drive", next: GALLOP[0], blend: smoothstep(runtime.modeTime / MODE_DURATION.accelerate!) };
     case "gallop":
-      return gaitSample(GALLOP, runtime.gaitDistance, 2.35);
+      return gaitSample("gallop", GALLOP, runtime.gaitDistance, 2.35);
     case "bound-preload":
       return { current: "jump-preload", next: "jump-preload", blend: 0 };
     case "bound-flight":
@@ -292,19 +301,22 @@ function stepOnce(
 
   const turnRate = runtime.mode === "observe"
     ? 1.25
-    : 4.4 / (1 + runtime.speed * 0.4);
+    : 2.2 / (1 + runtime.speed * 0.35);
   const headingTarget = runtime.mode === "observe" ? desiredYaw : travelYaw;
-  runtime.heading += clamp(
+  const headingStep = clamp(
     shortestAngle(runtime.heading, headingTarget),
     -turnRate * seconds,
     turnRate * seconds,
   );
+  runtime.heading += headingStep;
 
   const distance = runtime.speed * seconds;
   runtime.x += Math.sin(runtime.heading) * distance;
   runtime.z += Math.cos(runtime.heading) * distance;
   runtime.travelled += distance;
-  runtime.gaitDistance += distance;
+  // A turn makes the paws cover an arc even when the centre advances slowly.
+  // Counting that arc prevents an arcade pivot on one long planted step.
+  runtime.gaitDistance += distance + Math.abs(headingStep) * 0.9;
 
   runtime.groundY = field
     ? surfaceHeightAt(field, runtime.x, runtime.z, runtime.groundY, broken)

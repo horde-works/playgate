@@ -1,7 +1,7 @@
 # Evidence card 04 — medium panther village runtime
 
 Дата: 2026-08-13  
-Статус: `runtime-m3 / village forward-test`  
+Статус: `runtime-m4 / planted-paw correction`
 Единицы: метры, секунды, радианы  
 Координаты животного: `+Y` вверх, `+Z` вперёд, origin на поверхности
 
@@ -36,7 +36,8 @@ draw call, присваивая каждой вершине кость чере�
 flight → landing absorb → brake → observe`.
 
 - скорость выводится из состояния и пройденного пути, а фаза walk/trot/gallop
-  — из дистанции, поэтому лапы не перебирают на месте при падении FPS;
+  — из дистанции центра плюс дуга поворота корпуса, поэтому лапы не перебирают
+  на месте при падении FPS и чаще переступают на крутом повороте;
 - поворот ограничен скоростью: на галопе траектория является дугой, а не
   мгновенной сменой yaw;
 - веер прогнозирующих лучей выбирает свободный обход домов, телег, загонов и
@@ -54,9 +55,16 @@ flight → landing absorb → brake → observe`.
 - moving parts не имеют независимых rigid bodies или colliders;
 - физика повреждений, атака, охота, ragdoll и контакт с игроком пока явно
   исключены;
-- quaternion interpolation дополняется единым root contact correction по
-  каноническим paw boxes. Это сохраняет целое тело и устраняет провал лап между
-  двумя по отдельности корректными ключевыми кадрами.
+- дискретные `contactPartIds` атласа остаются доказательством порядка касаний;
+  runtime отдельно задаёт непрерывные duty factors: walk держит две-три опоры,
+  trot — диагональную пару с разгрузкой, rotary gallop — одиночные контакты;
+- каждая опорная лапа получает собственный world anchor. Цепи fore
+  `scapula → forearm → carpus → paw` и hind `hip → knee → hock → paw`
+  решаются до anchor; малая общая коррекция корпуса включается только когда
+  предел одной цепи должен передать движение другой опоре;
+- после горизонтальной опоры quaternion interpolation дополняется единым
+  вертикальным floor correction по каноническим paw boxes. Он устраняет провал
+  между ключевыми кадрами, но больше не называется foot lock.
 
 ## Independent gates
 
@@ -67,6 +75,8 @@ flight → landing absorb → brake → observe`.
 | one draw derivative | ожидаемое число вершин восстановлено из P4 boxes/beams/triangles |
 | valid palette | каждая вершина имеет integer bone index внутри 30-bone skeleton |
 | no terrain penetration | полный interpolated loop: нижняя точка geometry не ниже `-0.012 m` |
+| planted paw owns stance | 50 s curved route / 60 Hz: mean paw speed `0.025 / 0.002 / <0.001 m/s` для walk/trot/gallop; p99 rejection `0.30 / 0.08 / 0.06 m/s` |
+| turn is stepped, not pivoted | gait distance включает `0.9 m/rad` yaw arc; walk turn rate ограничен формулой `2.2 / (1 + 0.35·speed)` |
 | live obstacle avoidance | 50 s / 1500 steps без входа в intact obstacle выше step height |
 | non-linear territory motion | больше 100 turning samples, больше 70 m пути за forward-test |
 | complete behaviour | все 9 runtime phases, speed `> 4.7 m/s`, bound apex `> 0.58 m` |
@@ -78,13 +88,22 @@ flight → landing absorb → brake → observe`.
 - pose меняет меш вместо matrix palette;
 - движение проходит сквозь целую высокую деталь деревни;
 - между keyframes лапа уходит под поверхность;
+- опорная лапа едет вместе с nav root или корпус поворачивается на одной
+  неподвижной фазе шага;
 - прыжок является только сменой pose без world trajectory;
 - пантера охотится или атакует без отдельного разрешённого milestone;
 - дракон регистрируется вместе с пантерой по побочному условию.
 
 ## Forward-test status
 
-Численные, геометрические и типовые гейты пройдены локально. Мир подключает
+Численные, геометрические и типовые гейты пройдены локально. M4 добавил
+регрессионный curved-route gate после прямого пользовательского вердикта:
+лапа визуально ехала почти со скоростью корпуса. До исправления измеренные
+средние скорости опорной лапы составляли `0.840 m/s` на walk, `1.998 m/s` на
+trot и `4.270 m/s` на gallop. После индивидуальных anchors и limb solve на
+50-секундном маршруте они составляют примерно `0.025`, `0.002` и `<0.001 m/s`.
+
+Мир подключает
 ровно одну пантеру. Targeted world forward-test выполнен 2026-08-13 через
 dev-only `?mamPantherProbe=1` на Windows runtime:
 

@@ -18,13 +18,47 @@ import {
   MEDIUM_PANTHER_RUNTIME_BONE_IDS,
 } from "../games/make-a-mess/src/game/mediumPantherRuntimeGeometry.ts";
 import {
+  createMediumPantherContactState,
   createMediumPantherPosePalette,
+  mediumPantherPawSupportWeight,
   writeMediumPantherPose,
 } from "../games/make-a-mess/src/game/mediumPantherRuntimePose.ts";
 import {
   buildObstacleField,
   distanceToBox,
 } from "../games/make-a-mess/src/game/villagerNavigation.ts";
+
+const PANTHER_PAW_IDS = [
+  "left-fore-paw",
+  "right-fore-paw",
+  "left-hind-paw",
+  "right-hind-paw",
+];
+const PANTHER_BONE_INDEX = new Map(
+  MEDIUM_PANTHER_SKELETON.bones.map((bone, index) => [bone.id, index]),
+);
+const PANTHER_PAW_PROBES = PANTHER_PAW_IDS.map((id) => {
+  const part = mediumPantherCanonicalParts.find((candidate) => candidate.id === id);
+  assert.ok(part && part.kind === "box", `${id}: missing canonical paw box`);
+  const bone = PANTHER_BONE_INDEX.get(mediumPantherBoneForPart(part));
+  assert.notEqual(bone, undefined, `${id}: missing runtime bone`);
+  return { id, point: new Vector3(...part.center), bone };
+});
+
+function pawWorldXZ(paw, palette, runtime) {
+  const local = paw.point.clone().applyMatrix4(palette[paw.bone]);
+  const sine = Math.sin(runtime.heading);
+  const cosine = Math.cos(runtime.heading);
+  return {
+    x: runtime.x + cosine * local.x + sine * local.z,
+    z: runtime.z - sine * local.x + cosine * local.z,
+  };
+}
+
+function percentile(values, fraction) {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * fraction))];
+}
 
 test("panther runtime maps every accepted P4 part to the accepted M2 skeleton", () => {
   const bones = new Set(MEDIUM_PANTHER_SKELETON.bones.map((bone) => bone.id));
@@ -95,6 +129,7 @@ test("interpolated runtime poses keep the accepted body above its contact surfac
   const position = geometry.getAttribute("position");
   const bone = geometry.getAttribute("aPantherBone");
   const palette = createMediumPantherPosePalette();
+  const contactState = createMediumPantherContactState();
   const runtime = createMediumPantherRuntime(vikingVillagePantherProfile);
   const vertex = new Vector3();
   let worst = Infinity;
@@ -107,6 +142,7 @@ test("interpolated runtime poses keep the accepted body above its contact surfac
       sampleMediumPantherPose(runtime),
       runtime,
       tick / 30,
+      contactState,
     );
     let minimumY = Infinity;
     for (let index = 0; index < position.count; index += 1) {
@@ -121,6 +157,77 @@ test("interpolated runtime poses keep the accepted body above its contact surfac
 
   assert.ok(worst >= -0.012, `${worstMode}: runtime geometry enters ground by ${(-worst).toFixed(4)} m`);
   geometry.dispose();
+});
+
+test("gait duty factors preserve feline support order without unreachable atlas-long contacts", () => {
+  const expectedSupportCounts = {
+    walk: new Set([2, 3]),
+    trot: new Set([0, 2]),
+    gallop: new Set([0, 1]),
+  };
+  for (const [gait, expected] of Object.entries(expectedSupportCounts)) {
+    const actual = new Set();
+    for (let step = 0; step < 1000; step += 1) {
+      const sample = {
+        current: "stand-observe",
+        next: "stand-observe",
+        blend: 0,
+        gait,
+        cyclePhase: step / 1000,
+      };
+      actual.add(PANTHER_PAW_IDS.filter(
+        (pawId) => mediumPantherPawSupportWeight(sample, pawId) > 0.01,
+      ).length);
+    }
+    assert.deepEqual(actual, expected, `${gait}: wrong continuous support topology`);
+  }
+});
+
+test("planted panther paws stay in world contact while the body advances and turns", () => {
+  const field = buildObstacleField(vikingVillageScene.breakablePieces);
+  const runtime = createMediumPantherRuntime(vikingVillagePantherProfile);
+  const palette = createMediumPantherPosePalette();
+  const contactState = createMediumPantherContactState();
+  const previous = new Map();
+  const stanceSpeeds = { walk: [], trot: [], gallop: [] };
+  const dt = 1 / 60;
+
+  for (let tick = 0; tick < 3000; tick += 1) {
+    stepMediumPanther(runtime, vikingVillagePantherProfile, dt, field);
+    const sample = sampleMediumPantherPose(runtime);
+    writeMediumPantherPose(palette, sample, runtime, tick * dt, contactState);
+    for (const paw of PANTHER_PAW_PROBES) {
+      const position = pawWorldXZ(paw, palette, runtime);
+      const support = mediumPantherPawSupportWeight(sample, paw.id);
+      const prior = previous.get(paw.id);
+      if (
+        prior &&
+        runtime.mode === prior.mode &&
+        runtime.mode in stanceSpeeds &&
+        support >= 0.999 &&
+        prior.support >= 0.999
+      ) {
+        stanceSpeeds[runtime.mode].push(
+          Math.hypot(position.x - prior.x, position.z - prior.z) / dt,
+        );
+      }
+      previous.set(paw.id, { ...position, support, mode: runtime.mode });
+    }
+  }
+
+  const limits = {
+    walk: { minimumSamples: 1500, mean: 0.08, p99: 0.3 },
+    trot: { minimumSamples: 250, mean: 0.03, p99: 0.08 },
+    gallop: { minimumSamples: 40, mean: 0.02, p99: 0.06 },
+  };
+  for (const [gait, samples] of Object.entries(stanceSpeeds)) {
+    const limit = limits[gait];
+    const mean = samples.reduce((sum, value) => sum + value, 0) / samples.length;
+    const p99 = percentile(samples, 0.99);
+    assert.ok(samples.length >= limit.minimumSamples, `${gait}: only ${samples.length} stance samples`);
+    assert.ok(mean <= limit.mean, `${gait}: mean planted-paw speed ${mean.toFixed(3)} m/s`);
+    assert.ok(p99 <= limit.p99, `${gait}: p99 planted-paw speed ${p99.toFixed(3)} m/s`);
+  }
 });
 
 test("feline skills select behaviour instead of changing the body or world adapter", () => {
