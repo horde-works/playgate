@@ -400,7 +400,7 @@ function createConnectorWings(target: MutableGroup): void {
       const centre = world(radius * radial[0], EXPO_PLAZA_TOP, radius * radial[2]);
       primitive(target, `nur-alem:connector:${wing}:floor:${segment}`, "stone", "panel",
         [centre[0], centre[1] + 0.08, centre[2]],
-        [width, 0.16, radialLength + 0.08], PAVING, {
+        [width, 0.16, radialLength], PAVING, {
           rotation: orient(tangent, [0, 1, 0]),
           textureProfile: "city-gray-pavers",
           bearsLoad: true,
@@ -420,13 +420,13 @@ function createConnectorWings(target: MutableGroup): void {
         });
       for (const side of [-1, 1] as const) {
         const sideCentre: SceneVector3 = [
-          centre[0] + tangent[0] * width / 2,
+          centre[0] + tangent[0] * width / 2 * side,
           centre[1] + roofHeight / 2,
-          centre[2] + tangent[2] * width / 2,
+          centre[2] + tangent[2] * width / 2 * side,
         ];
         primitive(target, `nur-alem:connector:${wing}:glass:${segment}:${side}`,
           "darkGlass", "glassPane", sideCentre,
-          [radialLength + 0.08, roofHeight - 0.22, 0.075], PAVILION_GLASS, {
+          [radialLength, roofHeight - 0.22, 0.075], PAVILION_GLASS, {
             rotation: orient(radial, [0, 1, 0]),
             bearsLoad: true,
             carriesAttachments: true,

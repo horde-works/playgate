@@ -323,7 +323,7 @@ function createPortalTunnel(
           (floorY + ceilingY) / 2,
           (p0[2] + p1[2]) / 2,
         ],
-        [length + 0.025, PYRAMID_PORTAL_HEIGHT, 0.16],
+        [length, PYRAMID_PORTAL_HEIGHT, 0.16],
         SLAB_COLOUR,
         {
           rotation: orient(chord, up),

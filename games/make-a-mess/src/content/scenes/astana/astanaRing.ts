@@ -139,7 +139,8 @@ function createPier(
     //
     // Смещения считаются по вектору К ЦЕНТРУ острова: платформа всегда на
     // внутренней стороне кольца, и рама должна вылетать именно туда.
-    const height = top - base;
+    const capHeight = 1;
+    const height = top - capHeight - base;
     const radius = Math.hypot(x, z);
     const inwardX = -x / radius;
     const inwardZ = -z / radius;
@@ -352,7 +353,7 @@ function createSegment(
   // Коробчатая балка: полая, поэтому масса задана честно, а не габаритом.
   primitive(deck, id("girder"), "concrete", "stoneBlock",
     [midX, deckBottom + GIRDER_HEIGHT / 2, midZ],
-    [length + 0.04, GIRDER_HEIGHT, GIRDER_WIDTH], CONCRETE,
+    [length, GIRDER_HEIGHT, GIRDER_WIDTH], CONCRETE,
     {
       rotation,
       volume: length * 0.9,
@@ -386,7 +387,10 @@ function createSegment(
     for (let bay = 0; bay < bays; bay += 1) {
       primitive(deck, id(`cantilever:${side > 0 ? "out" : "in"}:${bay}`), "concrete", "panel",
         at((bay + 0.5) * bayLength, side * (DECK_WIDTH / 2 - 0.75), deckTop - 0.28),
-        [bayLength + 0.04, 0.56, 1.5], CONCRETE_SHADE,
+        // Одна непрерывная плоскость обязана делиться ровно по шагу. Запас
+        // 40 мм заставлял каждую пару секций спорить верхними и нижними
+        // гранями по всему кольцу.
+        [bayLength, 0.56, 1.5], CONCRETE_SHADE,
         { rotation, volume: bayLength * 0.18, carriesAttachments: true,
           attachmentSupportMode: "cable", sideAttachmentReach: 0.5,
           bearingArea: 4 });
@@ -398,7 +402,10 @@ function createSegment(
   for (let rib = 1; rib < ribs; rib += 1) {
     const t = (length * rib) / ribs;
     primitive(deck, id(`rib:${rib}`), "concrete", "panel",
-      at(t, 0, deckBottom + 0.18), [0.34, 0.36, GIRDER_WIDTH + 0.1], CONCRETE_DEEP,
+      // Диафрагма входит в коробку прежними 360 мм и той же деталью выступает
+      // на 180 мм вниз. Линия врубки скрыта балкой, а видимой нижней гранью
+      // владеет только ребро — без потери признанного несущего контакта.
+      at(t, 0, deckBottom + 0.09), [0.34, 0.54, GIRDER_WIDTH + 0.1], CONCRETE_DEEP,
       { rotation, bearsLoad: false, volume: 0.6, sideAttachmentReach: 0.4 });
   }
 

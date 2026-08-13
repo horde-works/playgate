@@ -51,7 +51,7 @@ const BUDGET = {
   viking: { seeThrough: 198, fights: 62 },
   basalt: { seeThrough: 122, fights: 80 },
   polder: { seeThrough: 82, fights: 353 },
-  astana: { seeThrough: 1264, fights: 1097 },
+  astana: { seeThrough: 1264, fights: 284 },
   nimbus: { seeThrough: 774, fights: 2070 },
   range: { seeThrough: 0, fights: 3 },
   airport: { seeThrough: 157, fights: 38 },
@@ -97,6 +97,81 @@ for (const name of sceneNames) {
     );
   });
 }
+
+test("стыки: настил ЛРТ Астаны не имеет видимых копланарных наложений", async () => {
+  const report = await reportFor("astana");
+  const offenders = report.fights.filter((fight) =>
+    fight.onset < 60
+      && (fight.a.startsWith("astana:lrt-deck:")
+        || fight.b.startsWith("astana:lrt-deck:")));
+  assert.deepEqual(
+    offenders,
+    [],
+    `настил ЛРТ рябит в ${offenders.length} стыках:\n`
+      + offenders.slice(0, 12).map((fight) =>
+        `  ${fight.a} × ${fight.b}`).join("\n"),
+  );
+});
+
+test("стыки: переходы Нур-Алема не имеют видимых копланарных наложений", async () => {
+  const report = await reportFor("astana");
+  const offenders = report.fights.filter((fight) =>
+    fight.onset < 60
+      && (fight.a.startsWith("astana:nur-alem-complex:nur-alem:connector:")
+        || fight.b.startsWith("astana:nur-alem-complex:nur-alem:connector:")));
+  assert.deepEqual(
+    offenders,
+    [],
+    `переходы Нур-Алема рябят в ${offenders.length} стыках:\n`
+      + offenders.slice(0, 12).map((fight) =>
+        `  ${fight.a} × ${fight.b}`).join("\n"),
+  );
+});
+
+test("стыки: порталы Пирамиды не имеют видимых копланарных наложений", async () => {
+  const report = await reportFor("astana");
+  const offenders = report.fights.filter((fight) =>
+    fight.onset < 60
+      && (fight.a.startsWith("astana:pyramid-entrances:portal:")
+        || fight.b.startsWith("astana:pyramid-entrances:portal:")));
+  assert.deepEqual(
+    offenders,
+    [],
+    `порталы Пирамиды рябят в ${offenders.length} стыках:\n`
+      + offenders.slice(0, 12).map((fight) =>
+        `  ${fight.a} × ${fight.b}`).join("\n"),
+  );
+});
+
+test("стыки: портальные опоры ЛРТ не имеют видимых копланарных наложений", async () => {
+  const report = await reportFor("astana");
+  const offenders = report.fights.filter((fight) =>
+    fight.onset < 60
+      && (fight.a.startsWith("astana:lrt-piers:")
+        || fight.b.startsWith("astana:lrt-piers:")));
+  assert.deepEqual(
+    offenders,
+    [],
+    `портальные опоры ЛРТ рябят в ${offenders.length} стыках:\n`
+      + offenders.slice(0, 12).map((fight) =>
+        `  ${fight.a} × ${fight.b}`).join("\n"),
+  );
+});
+
+test("стыки: специализированный настил Атырау не дублируется общим слоем", async () => {
+  const report = await reportFor("astana");
+  const offenders = report.fights.filter((fight) =>
+    fight.onset < 60
+      && (fight.a.startsWith("astana:city-roads:bridge-footbridge:")
+        || fight.b.startsWith("astana:city-roads:bridge-footbridge:")));
+  assert.deepEqual(
+    offenders,
+    [],
+    `настил Атырау рябит в ${offenders.length} стыках:\n`
+      + offenders.slice(0, 12).map((fight) =>
+        `  ${fight.a} × ${fight.b}`).join("\n"),
+  );
+});
 
 /**
  * Отдельно и жёстко: ПЛИТОЧНОЕ ПОКРЫТИЕ НЕ ПЕРЕКРЫВАЕТСЯ САМО С СОБОЙ.

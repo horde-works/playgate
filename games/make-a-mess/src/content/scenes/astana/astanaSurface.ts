@@ -601,9 +601,11 @@ function createWayDetails(roads: MutableGroup, kerbs: MutableGroup): void {
       const base = overValley ? deckBase : ground.top;
       const surfaceTop = base + skin.thickness;
 
-      createSmoothEdgeBand(roads, way, link, index, surfaceTop);
-
+      // Atyrau owns its full deck finish and edge construction. A generic
+      // road band here duplicated that accepted surface along both sides.
       if (way.id === "bridge-footbridge") continue;
+
+      createSmoothEdgeBand(roads, way, link, index, surfaceTop);
 
       if (skin.centreLine && index % 2 === 0) {
         primitive(roads, `${way.id}:line:${index}`, "concrete", "panel",
