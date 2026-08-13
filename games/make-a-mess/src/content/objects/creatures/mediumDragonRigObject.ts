@@ -18,7 +18,11 @@ export type MediumDragonPoseId =
   | "ground-observe"
   | "walk-support"
   | "takeoff-preload"
-  | "takeoff-release"
+  | "takeoff-hind-drive"
+  | "takeoff-manus-vault"
+  | "takeoff-clearance"
+  | "takeoff-unfold"
+  | "takeoff-first-downstroke"
   | "flight-downstroke"
   | "flight-upstroke"
   | "glide"
@@ -26,7 +30,9 @@ export type MediumDragonPoseId =
   | "hover-brake"
   | "dive"
   | "landing-flare"
-  | "touchdown";
+  | "landing-touchdown"
+  | "landing-wing-unload"
+  | "ground-recovery";
 
 const GROUND = "ground-folded";
 const FLIGHT = "flight-extended";
@@ -103,7 +109,7 @@ const bones = [
 ] as const;
 
 export const MEDIUM_DRAGON_SKELETON: CreatureSkeletonContract = {
-  id: "medium-dragon-skeleton-m1",
+  id: "medium-dragon-skeleton-m2",
   rootBone: "root",
   bones,
   excludedSimulation: [
@@ -117,18 +123,80 @@ export const MEDIUM_DRAGON_SKELETON: CreatureSkeletonContract = {
 
 const fourContacts = ["left-manus-pad", "right-manus-pad", "left-hind-pad", "right-hind-pad"] as const;
 
+type WingControl = "shoulder" | "elbow" | "wrist" | "metacarpal" | "finger-1" | "finger-2" | "finger-3";
+type WingRotation = Readonly<Partial<Record<WingControl, ObjectPoint>>>;
+
+export const MEDIUM_DRAGON_WING_MOTION = {
+  architecture: "pterosaur-inspired-forelimb",
+  activeControls: ["shoulder", "elbow", "wrist", "metacarpal"],
+  knuckleControl: "metacarpal",
+  passiveInterphalangealControls: ["finger-1", "finger-2", "finger-3"],
+  passiveInterphalangealLimitRad: 0.06,
+  terminalFingerControl: "finger-4",
+  membraneModel: "joint-driven-faceted-surface",
+  note: "metacarpal rotates the first long phalanx at the knuckle; outer interphalangeal controls remain spar-like",
+} as const;
+
+export type DragonWingPhaseContract = {
+  readonly poseId: MediumDragonPoseId;
+  readonly state: "compact" | "opening" | "power" | "recovery" | "trim" | "swept" | "flare" | "unloading";
+  readonly leftAreaFraction: number;
+  readonly rightAreaFraction: number;
+  readonly camber: "low" | "medium" | "high";
+  readonly tension: "low" | "medium" | "high";
+  readonly activeControls: readonly (typeof MEDIUM_DRAGON_WING_MOTION.activeControls)[number][];
+};
+
+export const MEDIUM_DRAGON_WING_PHASES: readonly DragonWingPhaseContract[] = [
+  { poseId: "takeoff-preload", state: "compact", leftAreaFraction: 0.18, rightAreaFraction: 0.18, camber: "low", tension: "low", activeControls: ["shoulder", "elbow", "wrist", "metacarpal"] },
+  { poseId: "takeoff-hind-drive", state: "compact", leftAreaFraction: 0.2, rightAreaFraction: 0.2, camber: "low", tension: "medium", activeControls: ["shoulder", "elbow", "wrist", "metacarpal"] },
+  { poseId: "takeoff-manus-vault", state: "compact", leftAreaFraction: 0.22, rightAreaFraction: 0.22, camber: "low", tension: "high", activeControls: ["shoulder", "elbow", "wrist", "metacarpal"] },
+  { poseId: "takeoff-clearance", state: "compact", leftAreaFraction: 0.38, rightAreaFraction: 0.38, camber: "low", tension: "medium", activeControls: ["shoulder", "elbow", "wrist", "metacarpal"] },
+  { poseId: "takeoff-unfold", state: "opening", leftAreaFraction: 0.74, rightAreaFraction: 0.74, camber: "medium", tension: "medium", activeControls: ["elbow", "wrist", "metacarpal"] },
+  { poseId: "takeoff-first-downstroke", state: "power", leftAreaFraction: 0.94, rightAreaFraction: 0.94, camber: "high", tension: "high", activeControls: ["shoulder", "elbow", "wrist", "metacarpal"] },
+  { poseId: "flight-downstroke", state: "power", leftAreaFraction: 0.98, rightAreaFraction: 0.98, camber: "high", tension: "high", activeControls: ["shoulder", "wrist", "metacarpal"] },
+  { poseId: "flight-upstroke", state: "recovery", leftAreaFraction: 0.58, rightAreaFraction: 0.58, camber: "low", tension: "medium", activeControls: ["shoulder", "elbow", "wrist", "metacarpal"] },
+  { poseId: "glide", state: "trim", leftAreaFraction: 1, rightAreaFraction: 1, camber: "medium", tension: "high", activeControls: ["shoulder", "wrist", "metacarpal"] },
+  { poseId: "bank-turn", state: "trim", leftAreaFraction: 0.96, rightAreaFraction: 0.66, camber: "medium", tension: "high", activeControls: ["shoulder", "elbow", "wrist", "metacarpal"] },
+  { poseId: "hover-brake", state: "power", leftAreaFraction: 0.96, rightAreaFraction: 0.96, camber: "high", tension: "high", activeControls: ["shoulder", "elbow", "wrist", "metacarpal"] },
+  { poseId: "dive", state: "swept", leftAreaFraction: 0.54, rightAreaFraction: 0.54, camber: "low", tension: "high", activeControls: ["shoulder", "elbow", "wrist", "metacarpal"] },
+  { poseId: "landing-flare", state: "flare", leftAreaFraction: 1, rightAreaFraction: 1, camber: "high", tension: "high", activeControls: ["shoulder", "wrist", "metacarpal"] },
+  { poseId: "landing-touchdown", state: "flare", leftAreaFraction: 0.94, rightAreaFraction: 0.94, camber: "high", tension: "high", activeControls: ["shoulder", "elbow", "wrist", "metacarpal"] },
+  { poseId: "landing-wing-unload", state: "unloading", leftAreaFraction: 0.52, rightAreaFraction: 0.52, camber: "low", tension: "low", activeControls: ["elbow", "wrist", "metacarpal"] },
+  { poseId: "ground-recovery", state: "compact", leftAreaFraction: 0.18, rightAreaFraction: 0.18, camber: "low", tension: "low", activeControls: ["shoulder", "elbow", "wrist", "metacarpal"] },
+] as const;
+
+function mirrorWingRotation(rotation: ObjectPoint): ObjectPoint {
+  return point(rotation[0], -rotation[1], -rotation[2]);
+}
+
+function wingRotations(left: WingRotation, right?: WingRotation): Readonly<Record<string, ObjectPoint>> {
+  const values: Record<string, ObjectPoint> = {};
+  for (const control of MEDIUM_DRAGON_WING_MOTION.activeControls) {
+    const leftRotation = left[control] ?? point(0, 0, 0);
+    values[`left-${control}`] = leftRotation;
+    values[`right-${control}`] = right?.[control] ?? mirrorWingRotation(leftRotation);
+  }
+  for (const control of MEDIUM_DRAGON_WING_MOTION.passiveInterphalangealControls) {
+    const leftRotation = left[control] ?? point(0, 0, 0);
+    values[`left-${control}`] = leftRotation;
+    values[`right-${control}`] = right?.[control] ?? mirrorWingRotation(leftRotation);
+  }
+  return values;
+}
+
 export const MEDIUM_DRAGON_POSES: readonly CreaturePoseContract<MediumDragonPoseId>[] = [
   {
     id: "ground-observe", label: "GROUND OBSERVE · HEAD FIRST / FOUR SUPPORTS", reference: GROUND,
-    boneRotations: { "neck-2": point(0, 0.08, 0), "neck-3": point(0, 0.1, 0), "neck-4": point(0, 0.1, 0), head: point(0, 0.08, -0.03), "tail-1": point(0, -0.05, 0) },
+    boneRotations: { ...wingRotations({}), "neck-2": point(0, 0.08, 0), "neck-3": point(0, 0.1, 0), "neck-4": point(0, 0.1, 0), head: point(0, 0.08, -0.03), "tail-1": point(0, -0.05, 0) },
     contactPartIds: fourContacts, grounded: true, phase: "observe",
     intent: "acquire a side stimulus without committing the body", force: "load shifts toward the target-side diagonal", response: "neck leads and tail answers last",
   },
   {
     id: "walk-support", label: "WALK · LATERAL SEQUENCE / HEAVY MANUS", reference: GROUND,
     boneRotations: {
+      ...wingRotations({ shoulder: point(-0.1, 0, 0) }, { shoulder: point(0.11, 0, 0) }),
       chest: point(0, 0.035, 0), pelvis: point(0, -0.05, 0),
-      "left-shoulder": point(-0.1, 0, 0), "right-shoulder": point(0.11, 0, 0),
       "left-hip": point(0.2, 0, 0), "left-knee": point(-0.15, 0, 0), "left-ankle": point(-0.05, 0, 0),
       "right-hip": point(-0.22, 0, 0), "right-knee": point(0.16, 0, 0), "right-ankle": point(0.06, 0, 0),
       "neck-1": point(0.025, -0.03, 0), "tail-1": point(0, 0.05, 0),
@@ -137,121 +205,183 @@ export const MEDIUM_DRAGON_POSES: readonly CreaturePoseContract<MediumDragonPose
     intent: "select the next contact before chest travel", force: "one manus and opposite hind foot carry the support", response: "head stabilizes and tail follows the pelvis with delay",
   },
   {
-    id: "takeoff-preload", label: "TAKEOFF · PRELOAD / HIND LOAD", reference: GROUND,
-    rootTranslation: point(0, -0.21, 0), rootRotation: point(-0.09, 0, 0),
+    id: "takeoff-preload", label: "TAKEOFF 01 · FOUR-POINT PRELOAD", reference: GROUND,
+    rootTranslation: point(0, -0.21, 0),
     boneRotations: {
-      pelvis: point(-0.16, 0, 0), abdomen: point(-0.1, 0, 0), chest: point(0.1, 0, 0),
-      "left-hip": point(0.68, 0, 0), "left-knee": point(-0.86, 0, 0), "left-ankle": point(0.24, 0, 0),
-      "right-hip": point(0.68, 0, 0), "right-knee": point(-0.86, 0, 0), "right-ankle": point(0.24, 0, 0),
-      "left-shoulder": point(0.12, 0, 0), "right-shoulder": point(0.12, 0, 0), "neck-2": point(-0.08, 0, 0),
+      ...wingRotations({ wrist: point(-0.6, 0, 0), metacarpal: point(0, 0.08, 0) }),
+      abdomen: point(-0.08, 0, 0), chest: point(0.08, 0, 0),
+      "left-hip": point(-0.4, 0, 0), "left-knee": point(0.5, 0, 0),
+      "right-hip": point(-0.4, 0, 0), "right-knee": point(0.5, 0, 0),
+      "neck-2": point(-0.08, 0, 0),
     },
-    contactPartIds: ["left-hind-pad", "right-hind-pad"], grounded: true, phase: "transition",
-    intent: "launch corridor checked before commitment", force: "hind feet and manus preload below the centre of mass", response: "chest lowers while the wing chain prepares to release",
+    contactPartIds: fourContacts, grounded: true, phase: "transition",
+    intent: "confirm the launch corridor before irreversible loading", force: "hind feet and manus preload below the centre of mass", response: "chest lowers while the compact wing chain becomes tense",
   },
   {
-    id: "takeoff-release", label: "TAKEOFF · RELEASE / FIRST DOWNSTROKE", reference: FLIGHT,
-    rootTranslation: point(0, 1.02, 0.22), rootRotation: point(-0.22, 0, 0),
+    id: "takeoff-hind-drive", label: "TAKEOFF 02 · HIND DRIVE / MANUS STAY", reference: GROUND,
+    rootTranslation: point(0, -0.06, 0.08),
     boneRotations: {
-      "left-shoulder": point(0, -0.05, 0.2), "right-shoulder": point(0, 0.05, -0.2),
-      "left-hip": point(-0.35, 0, 0), "left-knee": point(0.26, 0, 0),
-      "right-hip": point(-0.35, 0, 0), "right-knee": point(0.26, 0, 0), "neck-2": point(0.12, 0, 0),
+      ...wingRotations({ metacarpal: point(0, 0.08, 0) }),
+      pelvis: point(-0.04, 0, 0), abdomen: point(-0.08, 0, 0), chest: point(0.14, 0, 0),
+      "left-hip": point(-0.08, 0, 0), "left-knee": point(0.1, 0, 0),
+      "right-hip": point(-0.08, 0, 0), "right-knee": point(0.1, 0, 0),
+      "neck-2": point(0.02, 0, 0),
+    },
+    contactPartIds: fourContacts, grounded: true, phase: "transition",
+    intent: "raise the pelvis along the already selected launch corridor", force: "hindlimbs extend while both manus retain the forward pivot", response: "chest rotates over the hands before the hind feet unload",
+  },
+  {
+    id: "takeoff-manus-vault", label: "TAKEOFF 03 · MANUS VAULT", reference: GROUND,
+    rootTranslation: point(0, 0.18, 0.16), rootRotation: point(-0.18, 0, 0),
+    boneRotations: {
+      ...wingRotations({ shoulder: point(-0.42, 0, 0), elbow: point(0.26, 0.08, 0), wrist: point(-0.16, -0.08, 0), metacarpal: point(0, 0.12, 0) }),
+      pelvis: point(0.08, 0, 0), abdomen: point(-0.06, 0, 0), chest: point(0.16, 0, 0),
+      "left-hip": point(-0.34, 0, 0), "left-knee": point(0.28, 0, 0), "left-ankle": point(-0.08, 0, 0),
+      "right-hip": point(-0.34, 0, 0), "right-knee": point(0.28, 0, 0), "right-ankle": point(-0.08, 0, 0),
+      "neck-2": point(0.08, 0, 0), "tail-1": point(0.1, 0, 0),
+    },
+    contactPartIds: ["left-manus-pad", "right-manus-pad"], grounded: true, phase: "transition",
+    intent: "finish the ballistic launch without opening the wing into terrain", force: "the forelimbs pole-vault the body after hind-foot unload", response: "pelvis passes above the manus while the compact outer wing trails clear",
+  },
+  {
+    id: "takeoff-clearance", label: "TAKEOFF 04 · CLEARANCE / WING COMPACT", reference: FLIGHT,
+    rootTranslation: point(0, 1.08, 0.24), rootRotation: point(-0.24, 0, 0),
+    boneRotations: {
+      ...wingRotations({ shoulder: point(0, -0.5, -0.18), elbow: point(0, -0.6, 0.08), wrist: point(0, -0.7, 0), metacarpal: point(0, -0.8, 0), "finger-1": point(0, 0.025, 0), "finger-2": point(0, -0.02, 0), "finger-3": point(0, 0.015, 0) }),
+      "left-hip": point(-0.36, 0, 0), "left-knee": point(0.3, 0, 0), "right-hip": point(-0.36, 0, 0), "right-knee": point(0.3, 0, 0),
+      chest: point(0.08, 0, 0), "neck-2": point(0.12, 0, 0), "tail-1": point(0.1, 0, 0),
     },
     contactPartIds: [], grounded: false, phase: "transition",
-    intent: "continue the ballistic launch corridor", force: "manus have just released and the first stroke adds impulse", response: "body still carries obvious jump momentum",
+    intent: "preserve the jump corridor until the full wing can clear terrain", force: "elbow, wrist and knuckle keep projected area small after manus release", response: "body still shows upward launch momentum instead of artificial lift",
   },
   {
-    id: "flight-downstroke", label: "FLIGHT · DOWNSTROKE / BODY RESPONSE", reference: FLIGHT,
+    id: "takeoff-unfold", label: "TAKEOFF 05 · ELBOW / WRIST / KNUCKLE OPEN", reference: FLIGHT,
+    rootTranslation: point(0, 1.42, 0.28), rootRotation: point(-0.18, 0, 0),
+    boneRotations: {
+      ...wingRotations({ shoulder: point(0, -0.18, 0.02), elbow: point(0, -0.22, 0.02), wrist: point(0, -0.24, 0), metacarpal: point(0, -0.2, 0), "finger-1": point(0, 0.02, 0), "finger-2": point(0, -0.015, 0), "finger-3": point(0, 0.01, 0) }),
+      "left-hip": point(-0.3, 0, 0), "left-knee": point(0.24, 0, 0), "right-hip": point(-0.3, 0, 0), "right-knee": point(0.24, 0, 0),
+      chest: point(0.02, 0, 0), "neck-2": point(0.1, 0, 0), "tail-1": point(0.08, 0, 0),
+    },
+    contactPartIds: [], grounded: false, phase: "transition",
+    intent: "increase area only after the tip has safe clearance", force: "elbow opens first, wrist follows and the long-finger knuckle tensions the membrane", response: "chest rotates toward the first power-stroke attitude",
+  },
+  {
+    id: "takeoff-first-downstroke", label: "TAKEOFF 06 · FIRST POWER STROKE", reference: FLIGHT,
+    rootTranslation: point(0, 1.72, 0.3), rootRotation: point(-0.14, 0, 0),
+    boneRotations: {
+      ...wingRotations({ shoulder: point(0, -0.05, 0.24), elbow: point(0, 0.1, 0), wrist: point(0, -0.07, 0), metacarpal: point(0, 0.06, 0), "finger-1": point(0, 0.015, 0), "finger-2": point(0, -0.012, 0), "finger-3": point(0, 0.008, 0) }),
+      "left-hip": point(-0.24, 0, 0), "left-knee": point(0.2, 0, 0), "right-hip": point(-0.24, 0, 0), "right-knee": point(0.2, 0, 0),
+      chest: point(-0.04, 0, 0), "neck-2": point(0.08, 0, 0), "tail-1": point(0.06, 0, 0),
+    },
+    contactPartIds: [], grounded: false, phase: "air",
+    intent: "add aerodynamic impulse to the established ballistic launch", force: "near-full span and tension turn the first downstroke into useful lift and thrust", response: "chest rises before the neck and tail settle the pitch impulse",
+  },
+  {
+    id: "flight-downstroke", label: "FLIGHT · DOWNSTROKE / TENSIONED SPAN", reference: FLIGHT,
     rootTranslation: point(0, 2.2, 0), rootRotation: point(-0.08, 0, 0),
     boneRotations: {
-      "left-shoulder": point(0, 0, 0.32), "right-shoulder": point(0, 0, -0.32),
-      "left-elbow": point(0, -0.06, 0), "right-elbow": point(0, 0.06, 0),
+      ...wingRotations({ shoulder: point(0, 0, 0.34), elbow: point(0, 0.04, 0), wrist: point(0.04, -0.05, 0), metacarpal: point(-0.035, 0.04, 0), "finger-1": point(0, 0.018, 0), "finger-2": point(0, -0.012, 0), "finger-3": point(0, 0.008, 0) }),
       chest: point(-0.04, 0, 0), "neck-2": point(0.08, 0, 0), "tail-1": point(0.05, 0, 0),
     },
     contactPartIds: [], grounded: false, phase: "air",
-    intent: "hold the forward-upward corridor", force: "deep symmetric downstroke", response: "chest rises before head and tail settle the pitch impulse",
+    intent: "hold the forward-upward corridor", force: "shoulder drives a broad stroke while wrist twist and knuckle tension retain planform", response: "chest rises before head and tail settle the pitch impulse",
   },
   {
-    id: "flight-upstroke", label: "FLIGHT · UPSTROKE / REDUCED OUTER AREA", reference: FLIGHT,
+    id: "flight-upstroke", label: "FLIGHT · UPSTROKE / OUTER AREA FOLDS", reference: FLIGHT,
     rootTranslation: point(0, 2.08, 0), rootRotation: point(-0.04, 0, 0),
     boneRotations: {
-      "left-shoulder": point(0, -0.18, -0.34), "right-shoulder": point(0, 0.18, 0.34),
-      "left-elbow": point(0, -0.2, 0.08), "right-elbow": point(0, 0.2, -0.08),
-      "left-wrist": point(0, -0.14, 0), "right-wrist": point(0, 0.14, 0),
+      ...wingRotations({ shoulder: point(0, -0.18, -0.34), elbow: point(0, -0.42, 0.08), wrist: point(0, -0.5, 0), metacarpal: point(0, -0.58, 0), "finger-1": point(0, 0.025, 0), "finger-2": point(0, -0.02, 0), "finger-3": point(0, 0.015, 0) }),
       chest: point(0.035, 0, 0), "neck-2": point(-0.05, 0, 0), "tail-1": point(-0.04, 0, 0),
     },
     contactPartIds: [], grounded: false, phase: "air",
-    intent: "retain gaze while resetting the wing", force: "elbow and wrist fold the outer area", response: "small body sink remains visible under a quiet head",
+    intent: "retain gaze while resetting the wing for the next impulse", force: "elbow, wrist and knuckle reduce outer area while the long phalanges stay aligned", response: "small body sink remains visible under a quiet head",
   },
   {
-    id: "glide", label: "GLIDE · BROAD PLANFORM / SMALL TRIM", reference: FLIGHT,
+    id: "glide", label: "GLIDE · BROAD PLANFORM / SMALL JOINT TRIM", reference: FLIGHT,
     rootTranslation: point(0, 2.35, 0), rootRotation: point(0.035, 0, 0),
     boneRotations: {
-      "left-shoulder": point(0, -0.06, -0.08), "right-shoulder": point(0, 0.06, 0.08),
+      ...wingRotations({ shoulder: point(0, -0.05, -0.07), elbow: point(0, 0.04, 0), wrist: point(0.03, -0.035, 0), metacarpal: point(-0.025, 0.03, 0), "finger-1": point(0, 0.012, 0), "finger-2": point(0, -0.009, 0), "finger-3": point(0, 0.006, 0) }),
       "neck-3": point(0, 0.08, 0), head: point(0, 0.06, 0), "tail-1": point(-0.03, 0, 0),
     },
     contactPartIds: [], grounded: false, phase: "air",
-    intent: "wide scan below and along the horizon", force: "lift is carried by the broad unswept planform", response: "small wrist and tail trim replace frozen wings",
+    intent: "scan below and along the horizon without committing to a turn", force: "broad planform carries lift while wrist and knuckle make small trim changes", response: "neck and tail cancel slow pitch and roll instead of freezing the wing",
   },
   {
-    id: "bank-turn", label: "BANK TURN · GAZE LEADS / ASYMMETRIC WINGS", reference: FLIGHT,
+    id: "bank-turn", label: "BANK TURN · OUTER AREA / INNER FOLD", reference: FLIGHT,
     rootTranslation: point(0, 2.35, 0), rootRotation: point(0.02, 0.12, -0.36),
     boneRotations: {
-      "left-shoulder": point(0, -0.04, -0.04), "right-shoulder": point(0, 0.24, 0.18),
-      "right-elbow": point(0, 0.16, -0.05), "neck-3": point(0, 0.16, 0.13), head: point(0, 0.12, 0.16),
-      "tail-1": point(0, -0.12, 0.1),
+      ...wingRotations(
+        { shoulder: point(0, -0.03, -0.04), elbow: point(0, 0.04, 0), wrist: point(0.02, -0.03, 0), metacarpal: point(-0.02, 0.025, 0), "finger-1": point(0, 0.01, 0) },
+        { shoulder: point(0, 0.24, 0.18), elbow: point(0, 0.5, -0.05), wrist: point(0, 0.55, 0), metacarpal: point(0, 0.62, 0), "finger-1": point(0, -0.022, 0), "finger-2": point(0, 0.016, 0), "finger-3": point(0, -0.01, 0) },
+      ),
+      "neck-3": point(0, 0.16, 0.13), head: point(0, 0.12, 0.16), "tail-1": point(0, -0.12, 0.1),
     },
     contactPartIds: [], grounded: false, phase: "air",
-    intent: "head acquires the exit before trajectory changes", force: "outer wing carries more area than the inner wing", response: "roll precedes yaw while head counter-rolls",
+    intent: "acquire the turn exit before the trajectory changes", force: "outer left wing retains area while inner right elbow, wrist and knuckle reduce it", response: "roll precedes yaw while head counter-rolls and tail answers last",
   },
   {
-    id: "hover-brake", label: "BRAKE HOVER · NOSE HIGH / POWER STROKE", reference: FLIGHT,
+    id: "hover-brake", label: "BRAKE HOVER · HIGH CAMBER / NOSE HIGH", reference: FLIGHT,
     rootTranslation: point(0, 2.72, -0.1), rootRotation: point(-0.72, 0, 0),
     boneRotations: {
-      "left-shoulder": point(0, 0.3, 0.36), "right-shoulder": point(0, -0.3, -0.36),
-      "left-elbow": point(0, 0.1, 0), "right-elbow": point(0, -0.1, 0),
-      "left-hip": point(0.42, 0, 0), "left-knee": point(-0.58, 0, 0),
-      "right-hip": point(0.42, 0, 0), "right-knee": point(-0.58, 0, 0),
+      ...wingRotations({ shoulder: point(0, 0.22, 0.34), elbow: point(0, 0.12, 0), wrist: point(0.08, -0.08, 0), metacarpal: point(-0.06, 0.06, 0), "finger-1": point(0, 0.02, 0), "finger-2": point(0, -0.014, 0), "finger-3": point(0, 0.009, 0) }),
+      "left-hip": point(0.42, 0, 0), "left-knee": point(-0.58, 0, 0), "right-hip": point(0.42, 0, 0), "right-knee": point(-0.58, 0, 0),
       "neck-2": point(0.28, 0, 0), "neck-3": point(0.18, 0, 0), head: point(0.12, 0, 0), "tail-1": point(0.2, 0, 0),
     },
     contactPartIds: [], grounded: false, phase: "air",
-    intent: "hold the landing/inspection point", force: "high-area stroke and drag brake forward speed", response: "body hangs nose-high beneath a stabilized head",
+    intent: "hold an inspection or landing point while preserving an exit", force: "large high-camber stroke trades forward speed for lift and drag", response: "body hangs nose-high beneath a stabilized head with legs prepared",
   },
   {
-    id: "dive", label: "DIVE · SWEPT WING / STREAMLINED BODY", reference: FLIGHT,
+    id: "dive", label: "DIVE · SHOULDER SWEEP / KNUCKLE AREA REDUCTION", reference: FLIGHT,
     rootTranslation: point(0, 3.25, 0), rootRotation: point(0.58, 0, 0),
     boneRotations: {
-      "left-shoulder": point(0, -0.42, 0.04), "right-shoulder": point(0, 0.42, -0.04),
-      "left-elbow": point(0, -0.22, 0), "right-elbow": point(0, 0.22, 0),
-      "left-wrist": point(0, -0.12, 0), "right-wrist": point(0, 0.12, 0),
+      ...wingRotations({ shoulder: point(0, -0.48, 0.03), elbow: point(0, -0.38, 0), wrist: point(0, -0.32, 0), metacarpal: point(0, -0.46, 0), "finger-1": point(0, 0.02, 0), "finger-2": point(0, -0.015, 0), "finger-3": point(0, 0.01, 0) }),
       "neck-2": point(-0.16, 0, 0), head: point(-0.08, 0, 0), "tail-1": point(-0.08, 0, 0),
     },
     contactPartIds: [], grounded: false, phase: "air",
-    intent: "eyes hold the aim corridor with minimal head motion", force: "reduced camber and swept outer wing limit drag", response: "neck, legs and tail align with dynamic pressure",
+    intent: "hold the aim corridor with minimal head motion", force: "shoulder sweep plus elbow, wrist and knuckle fold reduce area and camber", response: "neck, legs and tail align with dynamic pressure",
   },
   {
-    id: "landing-flare", label: "LANDING · FLARE / HIND FEET FORWARD", reference: FLIGHT,
+    id: "landing-flare", label: "LANDING 01 · FULL FLARE / HIND FEET FORWARD", reference: FLIGHT,
     rootTranslation: point(0, 1.58, 0.12), rootRotation: point(-0.46, 0, 0),
     boneRotations: {
-      "left-shoulder": point(0, 0.04, -0.1), "right-shoulder": point(0, -0.04, 0.1),
-      "left-hip": point(-0.72, 0, 0), "left-knee": point(0.54, 0, 0), "left-ankle": point(0.22, 0, 0),
-      "right-hip": point(-0.72, 0, 0), "right-knee": point(0.54, 0, 0), "right-ankle": point(0.22, 0, 0),
+      ...wingRotations({ shoulder: point(0, 0.03, -0.1), elbow: point(0, 0.04, 0), wrist: point(0.1, -0.035, 0), metacarpal: point(-0.08, 0.03, 0), "finger-1": point(0, 0.015, 0), "finger-2": point(0, -0.01, 0), "finger-3": point(0, 0.007, 0) }),
+      "left-hip": point(-0.72, 0, 0), "left-knee": point(0.54, 0, 0), "left-ankle": point(0.22, 0, 0), "right-hip": point(-0.72, 0, 0), "right-knee": point(0.54, 0, 0), "right-ankle": point(0.22, 0, 0),
       "neck-2": point(0.22, 0, 0), "neck-3": point(0.16, 0, 0), head: point(0.1, 0, 0), "tail-1": point(0.16, 0, 0),
     },
     contactPartIds: [], grounded: false, phase: "transition",
-    intent: "alternate touchdown point, obstacles and horizon", force: "high angle of attack trades speed for lift and drag", response: "chest rises while hind feet reach before contact",
+    intent: "alternate between touchdown point, obstacles and horizon", force: "maximum area, camber and angle of attack trade speed for lift and drag", response: "chest rises while hind feet reach before contact",
   },
   {
-    id: "touchdown", label: "TOUCHDOWN · HIND CONTACT / FORE SETTLE NEXT", reference: GROUND,
-    rootTranslation: point(0, 0.24, 0.08), rootRotation: point(-0.22, 0, 0),
+    id: "landing-touchdown", label: "LANDING 02 · HIND CONTACT / WING STILL LOADED", reference: FLIGHT,
+    rootTranslation: point(0, 0.2, 0.08), rootRotation: point(-0.24, 0, 0),
     boneRotations: {
-      pelvis: point(-0.12, 0, 0), chest: point(0.1, 0, 0),
-      "left-hip": point(-0.42, 0, 0), "left-knee": point(0.48, 0, 0), "left-ankle": point(-0.06, 0, 0),
-      "right-hip": point(-0.42, 0, 0), "right-knee": point(0.48, 0, 0), "right-ankle": point(-0.06, 0, 0),
-      "left-shoulder": point(0.22, 0, 0), "right-shoulder": point(0.22, 0, 0),
+      ...wingRotations({ shoulder: point(0, 0.02, -0.07), elbow: point(0, 0.1, 0), wrist: point(0.06, -0.08, 0), metacarpal: point(-0.05, 0.07, 0), "finger-1": point(0, 0.018, 0), "finger-2": point(0, -0.012, 0), "finger-3": point(0, 0.008, 0) }),
+      pelvis: point(-0.12, 0, 0), chest: point(0.1, 0, 0), "left-hip": point(-0.76, 0, 0), "left-knee": point(0.62, 0, 0), "left-ankle": point(0.24, 0, 0), "right-hip": point(-0.76, 0, 0), "right-knee": point(0.62, 0, 0), "right-ankle": point(0.24, 0, 0),
       "neck-2": point(0.12, 0, 0), "tail-1": point(0.12, 0, 0),
     },
-    contactPartIds: ["left-hind-pad", "right-hind-pad"], grounded: true, phase: "impact",
-    intent: "look through the landing into the short run", force: "hind feet absorb first while wings still carry load", response: "pelvis flexes and manus prepare to settle without snapping the body level",
+    contactPartIds: ["left-folded-foot", "right-folded-foot"], grounded: true, phase: "impact",
+    intent: "look through the landing into the short ground run", force: "hind feet absorb first while the still-open wing carries residual load", response: "pelvis flexes without an instantaneous wing collapse",
+  },
+  {
+    id: "landing-wing-unload", label: "LANDING 03 · ELBOW / WRIST / KNUCKLE UNLOAD", reference: FLIGHT,
+    rootTranslation: point(0, 0.08, 0.04), rootRotation: point(-0.12, 0, 0),
+    boneRotations: {
+      ...wingRotations({ shoulder: point(0, -0.22, -0.18), elbow: point(0, -0.55, 0.04), wrist: point(0, -0.62, 0), metacarpal: point(0, -0.68, 0), "finger-1": point(0, 0.025, 0), "finger-2": point(0, -0.02, 0), "finger-3": point(0, 0.015, 0) }),
+      pelvis: point(-0.08, 0, 0), chest: point(0.08, 0, 0), "left-hip": point(-0.68, 0, 0), "left-knee": point(0.58, 0, 0), "left-ankle": point(0.2, 0, 0), "right-hip": point(-0.68, 0, 0), "right-knee": point(0.58, 0, 0), "right-ankle": point(0.2, 0, 0),
+      "neck-2": point(0.08, 0, 0), "tail-1": point(0.08, 0, 0),
+    },
+    contactPartIds: ["left-folded-foot", "right-folded-foot"], grounded: true, phase: "transition",
+    intent: "reduce wing area only after the legs own the load", force: "elbow, wrist and knuckle fold the outer wing while hind support remains compliant", response: "chest settles toward the future manus contacts",
+  },
+  {
+    id: "ground-recovery", label: "LANDING 04 · MANUS SET / WING FOLDED", reference: GROUND,
+    rootTranslation: point(0, -0.04, 0.02), rootRotation: point(-0.05, 0, 0),
+    boneRotations: {
+      ...wingRotations({ shoulder: point(0.08, 0, 0), elbow: point(0, 0.06, 0), wrist: point(0, -0.08, 0), metacarpal: point(0, 0.08, 0) }),
+      pelvis: point(-0.04, 0, 0), chest: point(0.04, 0, 0), "left-hip": point(-0.18, 0, 0), "left-knee": point(0.2, 0, 0), "right-hip": point(-0.18, 0, 0), "right-knee": point(0.2, 0, 0), "neck-2": point(0.06, 0, 0), "tail-1": point(0.05, 0, 0),
+    },
+    contactPartIds: fourContacts, grounded: true, phase: "ground",
+    intent: "restore four-point support while retaining awareness of the exit", force: "manus accept body weight only after the wing has unloaded", response: "neck rises and the folded wing settles against the flank last",
   },
 ] as const;
 
@@ -275,7 +405,8 @@ function dragonBoneForPart(part: ObjectLabPart, reference: string): string {
   if (id.endsWith("knee") || id.endsWith("tibia")) return `${side}-knee`;
   if (id.endsWith("ankle") || id.endsWith("metatarsus")) return `${side}-ankle`;
   if (id.includes("hind-pad") || id.includes("hind-toes") || id.includes("folded-foot")) return `${side}-hindfoot`;
-  if (reference === GROUND && ["wing-bones", "wing-membrane", "contacts"].includes(part.group)) return `${side}-shoulder`;
+  if (id.includes("manus-pad") || id.endsWith("free-digits")) return `${side}-free-digit`;
+  if (id.endsWith("free-digit-contact")) return `${side}-wrist`;
   if (id.endsWith("humerus")) return `${side}-shoulder`;
   if (id.endsWith("elbow") || id.endsWith("forearm")) return `${side}-elbow`;
   if (id.endsWith("wrist") || id.endsWith("wing-metacarpal")) return `${side}-wrist`;
@@ -290,17 +421,22 @@ function dragonBoneForPart(part: ObjectLabPart, reference: string): string {
 }
 
 function dragonMembraneVertexBone(part: ObjectLabPart, vertex: ObjectPoint, _index: number, reference: string): string | undefined {
-  if (reference !== FLIGHT || part.group !== "wing-membrane") return undefined;
+  if (part.group !== "wing-membrane") return undefined;
   const side = vertex[0] < 0 ? "left" : "right";
-  const x = Math.abs(vertex[0]);
-  if (x < 1.6) return `${side}-shoulder`;
-  if (x < 3.0) return `${side}-elbow`;
-  if (x < 3.55) return `${side}-wrist`;
-  if (x < 4.1) return `${side}-metacarpal`;
-  if (x < 4.65) return `${side}-finger-1`;
-  if (x < 5.2) return `${side}-finger-2`;
-  if (x < 5.65) return `${side}-finger-3`;
-  return `${side}-finger-4`;
+  const candidates = ["shoulder", "elbow", "wrist", "metacarpal", "finger-1", "finger-2", "finger-3", "finger-4"]
+    .map((control) => MEDIUM_DRAGON_SKELETON.bones.find((bone) => bone.id === `${side}-${control}`))
+    .filter((bone): bone is CreatureSkeletonContract["bones"][number] => Boolean(bone));
+  let closest = candidates[0];
+  let closestDistance = Number.POSITIVE_INFINITY;
+  for (const candidate of candidates) {
+    const pivot = candidate.rest[reference];
+    const candidateDistance = Math.hypot(vertex[0] - pivot[0], vertex[1] - pivot[1], vertex[2] - pivot[2]);
+    if (candidateDistance < closestDistance) {
+      closest = candidate;
+      closestDistance = candidateDistance;
+    }
+  }
+  return closest.id;
 }
 
 const poseGroups = MEDIUM_DRAGON_POSES.map((pose) => `dragon-pose-${pose.id}`);
@@ -323,9 +459,9 @@ function poseView(pose: CreaturePoseContract<MediumDragonPoseId>): CreatureLabVi
     id: `dragon-${pose.id}`,
     label: pose.label,
     projection: "perspective",
-    position: airborne ? point(9.7, 6.2, 10.2) : point(5.8, 3.25, 7.6),
+    position: airborne ? point(11.4, 7.0, 12.2) : point(5.8, 3.25, 7.6),
     target: airborne ? point(0, 1.75, -0.35) : point(0, 0.8, -0.45),
-    fov: airborne ? 30 : 28,
+    fov: airborne ? 31 : 28,
     hiddenGroups: [
       ...poseGroups.filter((group) => group !== `dragon-pose-${pose.id}`),
       "dragon-skeleton-ground",
@@ -342,12 +478,14 @@ const flightSkeletonParts = buildCreatureRigParts(MEDIUM_DRAGON_SKELETON, flight
 export const mediumDragonPoseAtlasObject: CreatureLabModel = {
   ...mediumDragonFlightObject,
   id: "medium-dragon-pose-atlas",
-  revision: "dragon-rig-m1-2026-08-13",
-  title: "MEDIUM DRAGON · ONE SKELETON / KEY ACTIONS",
+  revision: "dragon-rig-m2-2026-08-13",
+  title: "MEDIUM DRAGON · PTEROSAUR-LIKE WING MORPH",
   sourceNotes: [
     ...mediumDragonGroundObject.sourceNotes,
-    "All twelve action states are deterministic derivatives of the accepted P4 masses and one FK hierarchy.",
-    "Folded and extended references preserve the same named wing chain; forces, contacts, flight physics and AI remain excluded.",
+    "All eighteen action states are deterministic derivatives of the accepted P4 masses and one FK hierarchy.",
+    "Shoulder, elbow, wrist and long-finger knuckle own active morphing; outer phalanges remain a nearly rigid spar.",
+    "Takeoff clears terrain before full area; landing keeps the wing loaded through hind touchdown before sequential folding.",
+    "Folded and extended references preserve the same named wing chain; forces, contact impulses, flight physics and AI remain excluded.",
   ],
   anchors: {
     ...mediumDragonFlightObject.anchors,
@@ -361,6 +499,8 @@ export const mediumDragonPoseAtlasObject: CreatureLabModel = {
     aerodynamicForcesImplemented: false,
     contactImpulsesImplemented: false,
     clothSimulationImplemented: false,
+    pterosaurInspiredWingMorph: true,
+    passiveInterphalangealLimitRad: MEDIUM_DRAGON_WING_MOTION.passiveInterphalangealLimitRad,
   },
   labEnvironment: { floorRadius: 10, gridSize: 14, gridDivisions: 28, fogNear: 26, fogFar: 38, floorY: -0.005 },
   parts: [

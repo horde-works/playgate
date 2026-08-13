@@ -14,14 +14,33 @@ import {
 
 export type MediumPantherPoseId =
   | "stand-observe"
-  | "walk-support"
   | "stalk"
-  | "gallop-gather"
-  | "gallop-extend"
   | "jump-preload"
   | "jump-flight"
   | "landing-absorb"
-  | "lie-observe";
+  | "lie-observe"
+  | "walk-01-left-hind-lift"
+  | "walk-02-left-hind-place"
+  | "walk-03-left-fore-lift"
+  | "walk-04-left-fore-place"
+  | "walk-05-right-hind-lift"
+  | "walk-06-right-hind-place"
+  | "walk-07-right-fore-lift"
+  | "walk-08-right-fore-place"
+  | "trot-01-left-diagonal"
+  | "trot-02-flight"
+  | "trot-03-right-diagonal"
+  | "trot-04-flight"
+  | "gallop-01-extended-flight"
+  | "gallop-02-right-fore-contact"
+  | "gallop-03-left-fore-contact"
+  | "gallop-04-gathered-flight"
+  | "gallop-05-left-hind-contact"
+  | "gallop-06-right-hind-push"
+  | "gallop-07-spine-opening"
+  | "gallop-08-extended-flight"
+  | "accelerate-hind-drive"
+  | "brake-fore-absorb";
 
 const NEUTRAL = "neutral";
 const rest = (pivot: ObjectPoint) => ({ [NEUTRAL]: pivot });
@@ -72,25 +91,49 @@ export const MEDIUM_PANTHER_SKELETON: CreatureSkeletonContract = {
 
 const standingContacts = ["left-fore-paw", "right-fore-paw", "left-hind-paw", "right-hind-paw"] as const;
 
+type LimbChain = readonly [number, number, number];
+
+const FORE_MID: LimbChain = [0, 0, 0];
+const FORE_FORWARD: LimbChain = [-0.3, 0.22, 0.08];
+const FORE_BACK: LimbChain = [0.27, -0.19, -0.07];
+const FORE_SWING: LimbChain = [-0.5, 0.7, -0.28];
+const FORE_GATHER: LimbChain = [1.5, -1.7, -0.5];
+const FORE_REACH: LimbChain = [-1.0, 0.12, 0];
+const HIND_MID: LimbChain = [0, 0, 0];
+const HIND_FORWARD: LimbChain = [-0.29, 0.21, 0.07];
+const HIND_BACK: LimbChain = [0.25, -0.18, -0.06];
+const HIND_SWING: LimbChain = [-0.52, 0.78, -0.3];
+const HIND_GATHER: LimbChain = [-0.3, 1, 0];
+const HIND_REACH: LimbChain = [1, 0, 0];
+
+function limbRotations(
+  leftFore: LimbChain,
+  rightFore: LimbChain,
+  leftHind: LimbChain,
+  rightHind: LimbChain,
+): Readonly<Record<string, ObjectPoint>> {
+  return {
+    "left-scapula": point(leftFore[0], 0, 0),
+    "left-forearm": point(leftFore[1], 0, 0),
+    "left-carpus": point(leftFore[2], 0, 0),
+    "right-scapula": point(rightFore[0], 0, 0),
+    "right-forearm": point(rightFore[1], 0, 0),
+    "right-carpus": point(rightFore[2], 0, 0),
+    "left-hip": point(leftHind[0], 0, 0),
+    "left-knee": point(leftHind[1], 0, 0),
+    "left-hock": point(leftHind[2], 0, 0),
+    "right-hip": point(rightHind[0], 0, 0),
+    "right-knee": point(rightHind[1], 0, 0),
+    "right-hock": point(rightHind[2], 0, 0),
+  };
+}
+
 export const MEDIUM_PANTHER_POSES: readonly CreaturePoseContract<MediumPantherPoseId>[] = [
   {
     id: "stand-observe", label: "OBSERVE · HEAD FIRST / WEIGHT FOLLOWS", reference: NEUTRAL,
     boneRotations: { neck: point(0, 0.13, 0), head: point(0, 0.24, -0.04), "tail-1": point(0, -0.09, 0) },
     contactPartIds: standingContacts, grounded: true, phase: "observe",
     intent: "acquire and hold a side target", force: "diagonal load shift without root travel", response: "tail counterbalances after the head",
-  },
-  {
-    id: "walk-support", label: "WALK · DIAGONAL SUPPORT / QUIET HEAD", reference: NEUTRAL,
-    boneRotations: {
-      chest: point(0, 0.05, 0), pelvis: point(0, -0.06, 0),
-      "left-scapula": point(-0.3, 0, 0), "left-forearm": point(0.22, 0, 0), "left-carpus": point(0.08, 0, 0),
-      "right-scapula": point(0.25, 0, 0), "right-forearm": point(-0.18, 0, 0), "right-carpus": point(-0.07, 0, 0),
-      "left-hip": point(0.24, 0, 0), "left-knee": point(-0.18, 0, 0), "left-hock": point(-0.06, 0, 0),
-      "right-hip": point(-0.27, 0, 0), "right-knee": point(0.2, 0, 0), "right-hock": point(0.07, 0, 0),
-      neck: point(0.03, -0.04, 0), "tail-1": point(0, 0.05, 0),
-    },
-    contactPartIds: ["right-fore-paw", "left-hind-paw"], grounded: true, phase: "ground",
-    intent: "choose the next foothold", force: "right-fore and left-hind support diagonal", response: "scapula and pelvis counter-yaw under a stabilized head",
   },
   {
     id: "stalk", label: "STALK · LOW CHEST / CONFIRMED SUPPORT", reference: NEUTRAL,
@@ -104,34 +147,6 @@ export const MEDIUM_PANTHER_POSES: readonly CreaturePoseContract<MediumPantherPo
     },
     contactPartIds: standingContacts, grounded: true, phase: "ground",
     intent: "locked target with brief ground checks", force: "long duty factor and flexed limbs", response: "body advances low while the head remains quiet",
-  },
-  {
-    id: "gallop-gather", label: "GALLOP · GATHERED SUSPENSION", reference: NEUTRAL,
-    rootTranslation: point(0, 0.95, 0),
-    boneRotations: {
-      chest: point(-0.06, 0, 0), pelvis: point(0.04, 0, 0), lumbar: point(0.16, 0, 0),
-      "left-scapula": point(0.75, 0, 0), "left-forearm": point(-1.15, 0, 0), "left-carpus": point(0.4, 0, 0),
-      "right-scapula": point(0.7, 0, 0), "right-forearm": point(-1.08, 0, 0), "right-carpus": point(0.38, 0, 0),
-      "left-hip": point(1.0, 0, 0), "left-knee": point(-1.4, 0, 0), "left-hock": point(0.45, 0, 0),
-      "right-hip": point(0.94, 0, 0), "right-knee": point(-1.32, 0, 0), "right-hock": point(0.42, 0, 0),
-      neck: point(-0.1, 0, 0), "tail-1": point(0.05, 0, 0),
-    },
-    contactPartIds: [], grounded: false, phase: "air",
-    intent: "retain path through suspension", force: "hindlimbs gathered under flexed lumbar", response: "chest rises while the tail damps roll",
-  },
-  {
-    id: "gallop-extend", label: "GALLOP · EXTENDED SUSPENSION", reference: NEUTRAL,
-    rootTranslation: point(0, 1.05, 0), rootRotation: point(0.02, 0, 0),
-    boneRotations: {
-      chest: point(-0.16, 0, 0), pelvis: point(0.2, 0, 0), lumbar: point(0.14, 0, 0),
-      "left-scapula": point(-1.0, 0, 0), "left-forearm": point(0.12, 0, 0),
-      "right-scapula": point(-0.94, 0, 0), "right-forearm": point(0.1, 0, 0),
-      "left-hip": point(-1.0, 0, 0), "left-knee": point(0.1, 0, 0),
-      "right-hip": point(-0.94, 0, 0), "right-knee": point(0.08, 0, 0),
-      neck: point(-0.05, 0, 0), "tail-1": point(-0.05, 0, 0),
-    },
-    contactPartIds: [], grounded: false, phase: "air",
-    intent: "reach along the chosen path", force: "spine and hips extend after the push", response: "forelimbs reach while head pitch stays quiet",
   },
   {
     id: "jump-preload", label: "JUMP · PRELOAD / COM IN HIND SUPPORT", reference: NEUTRAL,
@@ -188,6 +203,152 @@ export const MEDIUM_PANTHER_POSES: readonly CreaturePoseContract<MediumPantherPo
     contactPartIds: ["belly-shadow"], grounded: true, phase: "observe",
     intent: "low-urgency side observation", force: "sternum and belly carry the rest pose", response: "head rises independently while paws stay planted",
   },
+  {
+    id: "walk-01-left-hind-lift", label: "WALK 01 · LEFT HIND LIFTS", reference: NEUTRAL,
+    boneRotations: { ...limbRotations(FORE_BACK, FORE_FORWARD, HIND_SWING, HIND_MID), pelvis: point(0, -0.04, 0.025), chest: point(0, 0.025, -0.018), neck: point(0.02, 0, 0), "tail-1": point(0, 0.045, 0) },
+    contactPartIds: ["left-fore-paw", "right-fore-paw", "right-hind-paw"], grounded: true, phase: "ground",
+    intent: "advance the left hind foot into the previous ipsilateral fore track", force: "three supports retain a broad polygon during low swing", response: "pelvis yaws first and the tail answers after placement",
+  },
+  {
+    id: "walk-02-left-hind-place", label: "WALK 02 · LEFT HIND PLACES", reference: NEUTRAL,
+    boneRotations: { ...limbRotations(FORE_BACK, FORE_FORWARD, HIND_FORWARD, HIND_BACK), pelvis: point(0, -0.055, 0.018), chest: point(0, 0.03, -0.015), "tail-1": point(0, 0.035, 0) },
+    contactPartIds: standingContacts, grounded: true, phase: "ground",
+    intent: "confirm left hind purchase before the shoulder releases", force: "new hind contact receives load while the other three remain quiet", response: "pelvis settles without a head bob",
+  },
+  {
+    id: "walk-03-left-fore-lift", label: "WALK 03 · LEFT FORE LIFTS", reference: NEUTRAL,
+    boneRotations: { ...limbRotations(FORE_SWING, FORE_MID, HIND_FORWARD, HIND_BACK), pelvis: point(0, 0.025, -0.02), chest: point(0, -0.045, 0.025), neck: point(-0.02, 0, 0), "tail-1": point(0, 0.015, 0) },
+    contactPartIds: ["right-fore-paw", "left-hind-paw", "right-hind-paw"], grounded: true, phase: "ground",
+    intent: "carry the left forepaw past the loaded left hind support", force: "scapula slides forward while the elbow folds for toe clearance", response: "neck cancels most of the chest pitch",
+  },
+  {
+    id: "walk-04-left-fore-place", label: "WALK 04 · LEFT FORE PLACES", reference: NEUTRAL,
+    boneRotations: { ...limbRotations(FORE_FORWARD, FORE_BACK, HIND_FORWARD, HIND_BACK), pelvis: point(0, 0.035, -0.018), chest: point(0, -0.05, 0.02), "tail-1": point(0, -0.015, 0) },
+    contactPartIds: standingContacts, grounded: true, phase: "ground",
+    intent: "place the left forepaw before transferring the chest", force: "pad contact precedes scapular loading", response: "chest advances over the quiet paw and the head remains level",
+  },
+  {
+    id: "walk-05-right-hind-lift", label: "WALK 05 · RIGHT HIND LIFTS", reference: NEUTRAL,
+    boneRotations: { ...limbRotations(FORE_FORWARD, FORE_BACK, HIND_MID, HIND_SWING), pelvis: point(0, 0.04, -0.025), chest: point(0, -0.025, 0.018), neck: point(0.02, 0, 0), "tail-1": point(0, -0.045, 0) },
+    contactPartIds: ["left-fore-paw", "right-fore-paw", "left-hind-paw"], grounded: true, phase: "ground",
+    intent: "advance the right hind foot into the previous ipsilateral fore track", force: "three supports retain a broad polygon during low swing", response: "pelvis reverses yaw and the tail follows late",
+  },
+  {
+    id: "walk-06-right-hind-place", label: "WALK 06 · RIGHT HIND PLACES", reference: NEUTRAL,
+    boneRotations: { ...limbRotations(FORE_FORWARD, FORE_BACK, HIND_BACK, HIND_FORWARD), pelvis: point(0, 0.055, -0.018), chest: point(0, -0.03, 0.015), "tail-1": point(0, -0.035, 0) },
+    contactPartIds: standingContacts, grounded: true, phase: "ground",
+    intent: "confirm right hind purchase before the shoulder releases", force: "new hind contact receives load while the other three remain quiet", response: "pelvis settles without a head bob",
+  },
+  {
+    id: "walk-07-right-fore-lift", label: "WALK 07 · RIGHT FORE LIFTS", reference: NEUTRAL,
+    boneRotations: { ...limbRotations(FORE_MID, FORE_SWING, HIND_BACK, HIND_FORWARD), pelvis: point(0, -0.025, 0.02), chest: point(0, 0.045, -0.025), neck: point(-0.02, 0, 0), "tail-1": point(0, -0.015, 0) },
+    contactPartIds: ["left-fore-paw", "left-hind-paw", "right-hind-paw"], grounded: true, phase: "ground",
+    intent: "carry the right forepaw past the loaded right hind support", force: "scapula slides forward while the elbow folds for toe clearance", response: "neck cancels most of the chest pitch",
+  },
+  {
+    id: "walk-08-right-fore-place", label: "WALK 08 · RIGHT FORE PLACES", reference: NEUTRAL,
+    boneRotations: { ...limbRotations(FORE_BACK, FORE_FORWARD, HIND_BACK, HIND_FORWARD), pelvis: point(0, -0.035, 0.018), chest: point(0, 0.05, -0.02), "tail-1": point(0, 0.015, 0) },
+    contactPartIds: standingContacts, grounded: true, phase: "ground",
+    intent: "place the right forepaw before returning to left hind swing", force: "pad contact precedes scapular loading", response: "chest advances over the quiet paw and the cycle closes without a root jump",
+  },
+  {
+    id: "trot-01-left-diagonal", label: "TROT 01 · LEFT FORE + RIGHT HIND", reference: NEUTRAL,
+    rootTranslation: point(0, 0.03, 0),
+    boneRotations: { ...limbRotations(FORE_BACK, FORE_GATHER, HIND_GATHER, HIND_FORWARD), chest: point(-0.035, 0, 0), pelvis: point(0.035, 0, 0), neck: point(0.03, 0, 0) },
+    contactPartIds: ["left-fore-paw", "right-hind-paw"], grounded: true, phase: "ground",
+    intent: "carry speed on the first diagonal while looking beyond the next step", force: "left fore and right hind share the spring-like support", response: "scapula and pelvis counter the diagonal impulse under a quiet head",
+  },
+  {
+    id: "trot-02-flight", label: "TROT 02 · DIAGONAL UNLOAD", reference: NEUTRAL,
+    rootTranslation: point(0, 0.45, 0),
+    boneRotations: { ...limbRotations(FORE_GATHER, FORE_FORWARD, HIND_FORWARD, HIND_GATHER), chest: point(0.025, 0, 0), pelvis: point(-0.025, 0, 0), neck: point(-0.025, 0, 0) },
+    contactPartIds: [], grounded: false, phase: "air",
+    intent: "retain the chosen line between diagonals", force: "the first diagonal has unloaded without a gallop-style spinal fold", response: "limbs exchange roles while head height changes least",
+  },
+  {
+    id: "trot-03-right-diagonal", label: "TROT 03 · RIGHT FORE + LEFT HIND", reference: NEUTRAL,
+    rootTranslation: point(0, 0.03, 0),
+    boneRotations: { ...limbRotations(FORE_GATHER, FORE_BACK, HIND_FORWARD, HIND_GATHER), chest: point(0.035, 0, 0), pelvis: point(-0.035, 0, 0), neck: point(0.03, 0, 0) },
+    contactPartIds: ["right-fore-paw", "left-hind-paw"], grounded: true, phase: "ground",
+    intent: "carry speed on the second diagonal while looking beyond the next step", force: "right fore and left hind share the spring-like support", response: "scapula and pelvis reverse their small counter-rotation",
+  },
+  {
+    id: "trot-04-flight", label: "TROT 04 · DIAGONAL UNLOAD", reference: NEUTRAL,
+    rootTranslation: point(0, 0.45, 0),
+    boneRotations: { ...limbRotations(FORE_FORWARD, FORE_GATHER, HIND_GATHER, HIND_FORWARD), chest: point(-0.025, 0, 0), pelvis: point(0.025, 0, 0), neck: point(-0.025, 0, 0) },
+    contactPartIds: [], grounded: false, phase: "air",
+    intent: "retain the chosen line before the cycle repeats", force: "the second diagonal unloads with limited spinal excursion", response: "limbs exchange roles and the tail damps the alternating roll",
+  },
+  {
+    id: "gallop-01-extended-flight", label: "GALLOP 01 · EXTENDED SUSPENSION", reference: NEUTRAL,
+    rootTranslation: point(0, 1.05, 0), rootRotation: point(0.02, 0, 0),
+    boneRotations: { ...limbRotations(FORE_REACH, FORE_REACH, HIND_REACH, HIND_REACH), chest: point(-0.16, 0, 0), pelvis: point(0.2, 0, 0), lumbar: point(0.14, 0, 0), neck: point(-0.05, 0, 0), "tail-1": point(-0.05, 0, 0) },
+    contactPartIds: [], grounded: false, phase: "air",
+    intent: "hold the line through the main ballistic phase", force: "spine and limb chains reach after hind toe-off", response: "head pitch stays quieter than the fully extended trunk",
+  },
+  {
+    id: "gallop-02-right-fore-contact", label: "GALLOP 02 · RIGHT FORE CONTACT", reference: NEUTRAL,
+    rootTranslation: point(0, -0.02, 0.05), rootRotation: point(-0.08, 0, 0),
+    boneRotations: { ...limbRotations(FORE_REACH, [-0.78, 1.28, -0.48], HIND_GATHER, HIND_GATHER), chest: point(-0.1, 0, 0), lumbar: point(0.08, 0, 0), neck: point(-0.08, 0, 0) },
+    contactPartIds: ["right-fore-paw"], grounded: true, phase: "impact",
+    intent: "accept the descending trajectory on the near forepaw", force: "pad, carpus, elbow and scapula begin the collision sequence", response: "chest follows the paw while pelvis keeps travelling forward",
+  },
+  {
+    id: "gallop-03-left-fore-contact", label: "GALLOP 03 · LEFT FORE CONTACT", reference: NEUTRAL,
+    rootTranslation: point(0, -0.05, 0.08), rootRotation: point(-0.05, 0, 0),
+    boneRotations: { ...limbRotations([-0.7, 1.2, -0.45], FORE_GATHER, HIND_GATHER, HIND_GATHER), chest: point(-0.08, 0, 0), lumbar: point(0.14, 0, 0), pelvis: point(0.08, 0, 0) },
+    contactPartIds: ["left-fore-paw"], grounded: true, phase: "impact",
+    intent: "complete forequarter support without losing the exit line", force: "the far forelimb finishes the downward-to-forward deflection", response: "lumbar flexion gathers the hindlimbs beneath the travelling pelvis",
+  },
+  {
+    id: "gallop-04-gathered-flight", label: "GALLOP 04 · GATHERED SUSPENSION", reference: NEUTRAL,
+    rootTranslation: point(0, 0.8, 0),
+    boneRotations: { ...limbRotations(FORE_GATHER, FORE_GATHER, HIND_GATHER, HIND_GATHER), chest: point(-0.06, 0, 0), pelvis: point(0.04, 0, 0), lumbar: point(0.3, 0, 0), neck: point(-0.1, 0, 0), "tail-1": point(0.05, 0, 0) },
+    contactPartIds: [], grounded: false, phase: "air",
+    intent: "retain the path during the short collected flight", force: "flexed lumbar brings all four limbs beneath the body", response: "tail damps roll before hind contact",
+  },
+  {
+    id: "gallop-05-left-hind-contact", label: "GALLOP 05 · LEFT HIND CONTACT", reference: NEUTRAL,
+    rootTranslation: point(0, -0.04, -0.02), rootRotation: point(0.05, 0, 0),
+    boneRotations: { ...limbRotations(FORE_GATHER, FORE_GATHER, HIND_MID, HIND_GATHER), pelvis: point(0.12, 0, 0), lumbar: point(0.22, 0, 0), chest: point(-0.04, 0, 0) },
+    contactPartIds: ["left-hind-paw"], grounded: true, phase: "ground",
+    intent: "place the far hind foot under the centre of mass", force: "the first hind contact begins the upward-forward redirection", response: "pelvis loads before the spine opens",
+  },
+  {
+    id: "gallop-06-right-hind-push", label: "GALLOP 06 · RIGHT HIND PUSH", reference: NEUTRAL,
+    rootTranslation: point(0, -0.02, -0.04), rootRotation: point(0.08, 0, 0),
+    boneRotations: { ...limbRotations(FORE_REACH, FORE_REACH, HIND_GATHER, [0.4, -0.1, 0.2]), pelvis: point(0.2, 0, 0), lumbar: point(0.12, 0, 0), chest: point(-0.08, 0, 0) },
+    contactPartIds: ["right-hind-paw"], grounded: true, phase: "ground",
+    intent: "finish propulsion into the next extended flight", force: "near hindlimb supplies the final long ground impulse", response: "spine starts opening only as the paw unloads",
+  },
+  {
+    id: "gallop-07-spine-opening", label: "GALLOP 07 · SPINE OPENS", reference: NEUTRAL,
+    rootTranslation: point(0, 0.72, 0), rootRotation: point(0.06, 0, 0),
+    boneRotations: { ...limbRotations(FORE_REACH, FORE_REACH, HIND_BACK, HIND_BACK), pelvis: point(0.22, 0, 0), lumbar: point(0.02, 0, 0), chest: point(-0.14, 0, 0), neck: point(-0.04, 0, 0) },
+    contactPartIds: [], grounded: false, phase: "air",
+    intent: "continue acceleration after hind toe-off", force: "stored axial flexion releases into stride length", response: "forelimbs reach while the head resists the pitch change",
+  },
+  {
+    id: "gallop-08-extended-flight", label: "GALLOP 08 · EXTENDED SUSPENSION", reference: NEUTRAL,
+    rootTranslation: point(0, 1.05, 0), rootRotation: point(0.02, 0, 0),
+    boneRotations: { ...limbRotations(FORE_REACH, FORE_REACH, HIND_REACH, HIND_REACH), chest: point(-0.16, 0, 0), pelvis: point(0.2, 0, 0), lumbar: point(0.14, 0, 0), neck: point(-0.05, 0, 0), "tail-1": point(-0.05, 0, 0) },
+    contactPartIds: [], grounded: false, phase: "air",
+    intent: "close the rotary cycle before the next near fore contact", force: "fully opened spine carries the longest ballistic reach", response: "tail and neck settle the body for contact",
+  },
+  {
+    id: "accelerate-hind-drive", label: "TRANSITION · ACCELERATE / HIND DRIVE", reference: NEUTRAL,
+    rootTranslation: point(0, -0.12, -0.04), rootRotation: point(-0.08, 0, 0),
+    boneRotations: { ...limbRotations(FORE_REACH, FORE_REACH, HIND_BACK, HIND_BACK), pelvis: point(0.18, 0, 0), lumbar: point(0.14, 0, 0), chest: point(-0.12, 0, 0), neck: point(0.08, 0, 0) },
+    contactPartIds: ["left-hind-paw", "right-hind-paw"], grounded: true, phase: "transition",
+    intent: "commit to a selected corridor before increasing stride", force: "lower pelvis and longer hind contact add forward impulse", response: "forequarters reach while the gaze is already beyond them",
+  },
+  {
+    id: "brake-fore-absorb", label: "TRANSITION · BRAKE / FORE ABSORB", reference: NEUTRAL,
+    rootTranslation: point(0, -0.1, 0.08), rootRotation: point(-0.08, 0, 0),
+    boneRotations: { ...limbRotations([-0.92, 1.58, -0.64], [-0.92, 1.58, -0.64], HIND_GATHER, HIND_GATHER), chest: point(-0.1, 0, 0), pelvis: point(0.14, 0, 0), lumbar: point(0.12, 0, 0), neck: point(-0.08, 0, 0) },
+    contactPartIds: ["left-fore-paw", "right-fore-paw"], grounded: true, phase: "impact",
+    intent: "shed speed while retaining a usable continuation path", force: "both fore chains absorb before the pelvis arrives", response: "hindquarters gather instead of snapping the trunk level",
+  },
 ] as const;
 
 function pantherBoneForPart(part: ObjectLabPart): string {
@@ -230,13 +391,18 @@ export const mediumPantherRigStates: Readonly<Record<MediumPantherPoseId, Creatu
 
 function poseView(pose: CreaturePoseContract<MediumPantherPoseId>): CreatureLabView {
   const airborne = pose.phase === "air";
+  const locomotion = pose.id.startsWith("walk-") || pose.id.startsWith("trot-") || pose.id.startsWith("gallop-");
   return {
     id: `panther-${pose.id}`,
     label: pose.label,
     projection: "perspective",
-    position: airborne ? point(2.9, 2.2, 3.5) : point(2.35, 1.35, 3.0),
-    target: airborne ? point(0, 1.15, -0.05) : point(0, 0.46, -0.12),
-    fov: airborne ? 27 : 25,
+    position: locomotion
+      ? point(3.45, airborne ? 1.55 : 1.05, 0.72)
+      : airborne ? point(2.9, 2.2, 3.5) : point(2.35, 1.35, 3.0),
+    target: locomotion
+      ? point(0, airborne ? 1.05 : 0.48, -0.3)
+      : airborne ? point(0, 1.15, -0.05) : point(0, 0.46, -0.12),
+    fov: locomotion ? 24 : airborne ? 27 : 25,
     hiddenGroups: [...poseGroups.filter((group) => group !== `panther-pose-${pose.id}`), "panther-skeleton-rig"],
   };
 }
@@ -247,11 +413,12 @@ const skeletonParts = buildCreatureRigParts(MEDIUM_PANTHER_SKELETON, skeletonSta
 export const mediumPantherPoseAtlasObject: CreatureLabModel = {
   ...mediumPantherObject,
   id: "medium-panther-pose-atlas",
-  revision: "panther-rig-m1-2026-08-13",
-  title: "MEDIUM PANTHER · ONE SKELETON / KEY ACTIONS",
+  revision: "panther-rig-m2-2026-08-13",
+  title: "MEDIUM PANTHER · WALK / TROT / ROTARY GALLOP",
   sourceNotes: [
     ...mediumPantherObject.sourceNotes,
-    "All nine action states are deterministic derivatives of the accepted P4 parts and one FK hierarchy.",
+    "All action and gait frames are deterministic derivatives of the accepted P4 parts and one FK hierarchy.",
+    "Walk uses a lateral footfall sequence; trot alternates diagonals; rotary gallop includes gathered and extended suspension.",
     "Frames prove articulation only; root motion, forces, jump ballistics, contacts and AI remain excluded.",
   ],
   anchors: {

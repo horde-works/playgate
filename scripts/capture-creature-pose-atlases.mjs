@@ -4,9 +4,9 @@ import { captureObjectLab } from "./object-lab-capture.mjs";
 
 await captureObjectLab(
   mediumPantherPoseAtlasObject,
-  "games/make-a-mess/docs/creature-blockouts/poses/m1/panther",
+  "games/make-a-mess/docs/creature-blockouts/poses/m2/panther",
 );
 await captureObjectLab(
   mediumDragonPoseAtlasObject,
-  "games/make-a-mess/docs/creature-blockouts/poses/m1/dragon",
+  "games/make-a-mess/docs/creature-blockouts/poses/m2/dragon",
 );

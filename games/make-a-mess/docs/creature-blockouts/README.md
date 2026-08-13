@@ -49,3 +49,34 @@ runtime skin не подключены.
 
 Полные 1600×1000 ракурсы и manifests лежат в `captures/p6/`. История причинных
 исправлений: `discrepancy-log-p1-p6.md`.
+
+## M2 locomotion and wing-morph contract
+
+Следующее уточнение артикуляции зафиксировано до новых кадров:
+
+- для пантеры — отдельные циклы шага, рыси и ротационного галопа, включая обе
+  фазы suspension и причинные acceleration/braking transitions;
+- для дракона — птерозавроподобное изменение формы в shoulder/elbow/wrist и у
+  основания длинного пальца; наружные фаланги остаются почти жёстким
+  лонжероном;
+- взлёт разделён на preload, hind drive, manus vault, clearance, unfold и
+  первый силовой мах; посадка — на flare, hind touchdown, unload и ground
+  recovery.
+
+Источник, точный pose passport и независимые гейты:
+`evidence-card-03-locomotion-and-wing-morph.md`.
+
+Кадры M2:
+
+- `review/panther-rig-m2-walk.png`;
+- `review/panther-rig-m2-trot.png`;
+- `review/panther-rig-m2-rotary-gallop.png`;
+- `review/panther-rig-m2-actions.png`;
+- `review/dragon-rig-m2-takeoff.png`;
+- `review/dragon-rig-m2-wing-control.png`;
+- `review/dragon-rig-m2-landing.png`;
+- `review/creature-rig-m2-skeletons.png`.
+
+Результаты автономной визуальной коррекции:
+`discrepancy-log-rig-m2.md`. Полные 1600×1000 кадры и manifests лежат в
+`poses/m2/`. Интеграция в мир всё ещё не выполнялась.

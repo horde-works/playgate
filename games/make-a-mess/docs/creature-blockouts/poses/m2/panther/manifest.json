@@ -1,0 +1,188 @@
+{
+  "modelId": "medium-panther-pose-atlas",
+  "revision": "panther-rig-m2-2026-08-13",
+  "modelHash": "a9d140b8c3ea",
+  "generatedAt": "2026-08-13T13:37:34.670Z",
+  "views": [
+    {
+      "id": "panther-stand-observe",
+      "label": "OBSERVE · HEAD FIRST / WEIGHT FOLLOWS",
+      "projection": "perspective",
+      "file": "panther-stand-observe.png"
+    },
+    {
+      "id": "panther-stalk",
+      "label": "STALK · LOW CHEST / CONFIRMED SUPPORT",
+      "projection": "perspective",
+      "file": "panther-stalk.png"
+    },
+    {
+      "id": "panther-jump-preload",
+      "label": "JUMP · PRELOAD / COM IN HIND SUPPORT",
+      "projection": "perspective",
+      "file": "panther-jump-preload.png"
+    },
+    {
+      "id": "panther-jump-flight",
+      "label": "JUMP · BALLISTIC FLIGHT / REACH",
+      "projection": "perspective",
+      "file": "panther-jump-flight.png"
+    },
+    {
+      "id": "panther-landing-absorb",
+      "label": "LANDING · FORE CONTACT / SCAPULA ABSORPTION",
+      "projection": "perspective",
+      "file": "panther-landing-absorb.png"
+    },
+    {
+      "id": "panther-lie-observe",
+      "label": "STERNAL LIE · QUIET BODY / ACTIVE HEAD",
+      "projection": "perspective",
+      "file": "panther-lie-observe.png"
+    },
+    {
+      "id": "panther-walk-01-left-hind-lift",
+      "label": "WALK 01 · LEFT HIND LIFTS",
+      "projection": "perspective",
+      "file": "panther-walk-01-left-hind-lift.png"
+    },
+    {
+      "id": "panther-walk-02-left-hind-place",
+      "label": "WALK 02 · LEFT HIND PLACES",
+      "projection": "perspective",
+      "file": "panther-walk-02-left-hind-place.png"
+    },
+    {
+      "id": "panther-walk-03-left-fore-lift",
+      "label": "WALK 03 · LEFT FORE LIFTS",
+      "projection": "perspective",
+      "file": "panther-walk-03-left-fore-lift.png"
+    },
+    {
+      "id": "panther-walk-04-left-fore-place",
+      "label": "WALK 04 · LEFT FORE PLACES",
+      "projection": "perspective",
+      "file": "panther-walk-04-left-fore-place.png"
+    },
+    {
+      "id": "panther-walk-05-right-hind-lift",
+      "label": "WALK 05 · RIGHT HIND LIFTS",
+      "projection": "perspective",
+      "file": "panther-walk-05-right-hind-lift.png"
+    },
+    {
+      "id": "panther-walk-06-right-hind-place",
+      "label": "WALK 06 · RIGHT HIND PLACES",
+      "projection": "perspective",
+      "file": "panther-walk-06-right-hind-place.png"
+    },
+    {
+      "id": "panther-walk-07-right-fore-lift",
+      "label": "WALK 07 · RIGHT FORE LIFTS",
+      "projection": "perspective",
+      "file": "panther-walk-07-right-fore-lift.png"
+    },
+    {
+      "id": "panther-walk-08-right-fore-place",
+      "label": "WALK 08 · RIGHT FORE PLACES",
+      "projection": "perspective",
+      "file": "panther-walk-08-right-fore-place.png"
+    },
+    {
+      "id": "panther-trot-01-left-diagonal",
+      "label": "TROT 01 · LEFT FORE + RIGHT HIND",
+      "projection": "perspective",
+      "file": "panther-trot-01-left-diagonal.png"
+    },
+    {
+      "id": "panther-trot-02-flight",
+      "label": "TROT 02 · DIAGONAL UNLOAD",
+      "projection": "perspective",
+      "file": "panther-trot-02-flight.png"
+    },
+    {
+      "id": "panther-trot-03-right-diagonal",
+      "label": "TROT 03 · RIGHT FORE + LEFT HIND",
+      "projection": "perspective",
+      "file": "panther-trot-03-right-diagonal.png"
+    },
+    {
+      "id": "panther-trot-04-flight",
+      "label": "TROT 04 · DIAGONAL UNLOAD",
+      "projection": "perspective",
+      "file": "panther-trot-04-flight.png"
+    },
+    {
+      "id": "panther-gallop-01-extended-flight",
+      "label": "GALLOP 01 · EXTENDED SUSPENSION",
+      "projection": "perspective",
+      "file": "panther-gallop-01-extended-flight.png"
+    },
+    {
+      "id": "panther-gallop-02-right-fore-contact",
+      "label": "GALLOP 02 · RIGHT FORE CONTACT",
+      "projection": "perspective",
+      "file": "panther-gallop-02-right-fore-contact.png"
+    },
+    {
+      "id": "panther-gallop-03-left-fore-contact",
+      "label": "GALLOP 03 · LEFT FORE CONTACT",
+      "projection": "perspective",
+      "file": "panther-gallop-03-left-fore-contact.png"
+    },
+    {
+      "id": "panther-gallop-04-gathered-flight",
+      "label": "GALLOP 04 · GATHERED SUSPENSION",
+      "projection": "perspective",
+      "file": "panther-gallop-04-gathered-flight.png"
+    },
+    {
+      "id": "panther-gallop-05-left-hind-contact",
+      "label": "GALLOP 05 · LEFT HIND CONTACT",
+      "projection": "perspective",
+      "file": "panther-gallop-05-left-hind-contact.png"
+    },
+    {
+      "id": "panther-gallop-06-right-hind-push",
+      "label": "GALLOP 06 · RIGHT HIND PUSH",
+      "projection": "perspective",
+      "file": "panther-gallop-06-right-hind-push.png"
+    },
+    {
+      "id": "panther-gallop-07-spine-opening",
+      "label": "GALLOP 07 · SPINE OPENS",
+      "projection": "perspective",
+      "file": "panther-gallop-07-spine-opening.png"
+    },
+    {
+      "id": "panther-gallop-08-extended-flight",
+      "label": "GALLOP 08 · EXTENDED SUSPENSION",
+      "projection": "perspective",
+      "file": "panther-gallop-08-extended-flight.png"
+    },
+    {
+      "id": "panther-accelerate-hind-drive",
+      "label": "TRANSITION · ACCELERATE / HIND DRIVE",
+      "projection": "perspective",
+      "file": "panther-accelerate-hind-drive.png"
+    },
+    {
+      "id": "panther-brake-fore-absorb",
+      "label": "TRANSITION · BRAKE / FORE ABSORB",
+      "projection": "perspective",
+      "file": "panther-brake-fore-absorb.png"
+    },
+    {
+      "id": "panther-skeleton-profile",
+      "label": "SKELETON · PROFILE / AXIAL + LIMB CHAINS",
+      "projection": "orthographic",
+      "file": "panther-skeleton-profile.png"
+    },
+    {
+      "id": "panther-skeleton-three-quarter",
+      "label": "SKELETON · THREE QUARTER / SCAPULA + HOCK",
+      "projection": "perspective",
+      "file": "panther-skeleton-three-quarter.png"
+    }
+  ]
+}
