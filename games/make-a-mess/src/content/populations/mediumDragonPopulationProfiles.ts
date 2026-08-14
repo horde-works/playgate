@@ -1,16 +1,17 @@
 import { defineMediumDragonPopulationProfile } from "../../game/mediumDragonPopulationProfile.ts";
 
-const towerRearRoofSupports = [
-  "stronghold:dark-tower:roof:1:0",
-  "stronghold:dark-tower:roof:2:0",
-  "stronghold:dark-tower:roof:1:1",
-  "stronghold:dark-tower:roof:2:1",
+const towerCrownSupports = [
+  "stronghold:dark-tower:crown:base:3",
+  "stronghold:dark-tower:crown:base:4",
+  "stronghold:dark-tower:crown:base:5",
 ] as const;
 
 // The dragon runtime datum is the contact plane under its feet, not the
-// centre of the supporting slab. Dark-tower roof slabs are centred at 33.38 m
-// and are 0.38 m thick, so their walkable top is 33.57 m.
-const towerRoofSurfaceY = 33.57;
+// centre of the supporting slab. The visually dominant tower crown is centred
+// at 34.1 m and is 1.05 m thick, so its walkable top is 34.625 m. The lower
+// 33.57 m roof deck is not a valid perch: the crown edge cuts through a
+// medium dragon standing there.
+const towerCrownSurfaceY = 34.625;
 
 /**
  * One adult dragon roosts on the quiet rear half of the dark tower. The roof
@@ -56,31 +57,31 @@ export const basaltStrongholdDragonProfile = defineMediumDragonPopulationProfile
       {
         id: "tower-roost",
         kind: "roost",
-        position: [-1.62, towerRoofSurfaceY, -38.4],
-        heading: 0,
+        position: [0, towerCrownSurfaceY, -37],
+        heading: Math.PI,
         usableRadius: 3.2,
-        supportPieceIds: towerRearRoofSupports,
+        supportPieceIds: towerCrownSupports,
       },
       {
         id: "tower-launch",
         kind: "launch",
-        position: [-1.62, towerRoofSurfaceY, -39.7],
+        position: [0, towerCrownSurfaceY, -38],
         heading: Math.PI,
         usableRadius: 3,
-        supportPieceIds: towerRearRoofSupports,
+        supportPieceIds: towerCrownSupports,
       },
       {
         id: "tower-landing",
         kind: "landing",
-        position: [-1.62, towerRoofSurfaceY, -40.4],
+        position: [0, towerCrownSurfaceY, -38],
         heading: 0,
         usableRadius: 3.2,
         touchdownFootprint: {
-          halfWidth: 4.7,
-          rearExtent: 1.1,
-          forwardExtent: 9.2,
+          halfWidth: 2.1,
+          rearExtent: 0.75,
+          forwardExtent: 3,
         },
-        supportPieceIds: towerRearRoofSupports,
+        supportPieceIds: towerCrownSupports,
       },
       {
         id: "rear-highland",

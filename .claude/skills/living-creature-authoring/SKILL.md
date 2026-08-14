@@ -118,6 +118,10 @@ body becomes alive; it does not license silent resculpting.
 - Give every potential support an oriented footprint and surface query.
 - Store the contact datum at the walkable top of the supporting geometry, not
   at a slab or collider centre. Test it against the actual world piece bounds.
+- Confirm that this datum belongs to the unobstructed visible surface. A lower
+  structural deck can have the right numerical top while a parapet, crown or
+  ledge still cuts through the animal. Validate the whole contact footprint
+  and body clearance, not only the support IDs under the root.
 - Blend load continuously around touch-down and toe-off.
 - Let a small obstacle articulate one limb; do not lift the whole root.
 - Treat raised movement as a target contract: valid affordance, approach,

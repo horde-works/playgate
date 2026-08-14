@@ -625,7 +625,7 @@ function flightTarget(
     const along = relativeX * forwardX + relativeZ * forwardZ;
     const crossTrack = (runtime.x - target.position[0]) * rightX
       + (runtime.z - target.position[2]) * rightZ;
-    const correction = clamp(-crossTrack * 0.035, -0.65, 0.65);
+    const correction = clamp(-crossTrack * 0.06, -0.75, 0.75);
     const runwayHeading = target.heading + correction;
     const runwayLookAhead = 60;
     const touchdownStart = -(target.touchdownFootprint?.rearExtent

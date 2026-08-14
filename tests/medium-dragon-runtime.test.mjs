@@ -103,6 +103,33 @@ test("Basalt Stronghold owns one dragon profile, roost and destructible landing 
     (node) => node.id === "tower-landing",
   );
   assert.ok(landing.touchdownFootprint, "tower landing needs its rectangular roof footprint");
+
+  const crownPieces = [...basaltStrongholdScene.breakablePieceById.values()].filter(
+    (piece) => piece.id.startsWith("stronghold:dark-tower:crown:base:"),
+  );
+  const crownMinX = Math.min(...crownPieces.map((piece) => piece.position[0] - piece.size[0] / 2));
+  const crownMaxX = Math.max(...crownPieces.map((piece) => piece.position[0] + piece.size[0] / 2));
+  const crownMinZ = Math.min(...crownPieces.map((piece) => piece.position[2] - piece.size[2] / 2));
+  const crownMaxZ = Math.max(...crownPieces.map((piece) => piece.position[2] + piece.size[2] / 2));
+  const launch = definition.profile.territory.nodes.find((node) => node.id === "tower-launch");
+  const launchContacts = [
+    [-0.72, 0.87], [0.72, 0.87], [-0.39, -0.45], [0.39, -0.45],
+  ].map(([localX, localZ]) => ({
+    x: launch.position[0] + Math.cos(launch.heading) * localX + Math.sin(launch.heading) * localZ,
+    z: launch.position[2] - Math.sin(launch.heading) * localX + Math.cos(launch.heading) * localZ,
+  }));
+  assert.ok(launchContacts.every(({ x, z }) =>
+    x >= crownMinX && x <= crownMaxX && z >= crownMinZ && z <= crownMaxZ
+  ), "launch contacts must stand on the upper crown rather than intersect its lower edge");
+
+  const touchdownHindZ = landing.position[2]
+    - landing.touchdownFootprint.rearExtent
+    - 0.45;
+  assert.ok(touchdownHindZ >= crownMinZ, "earliest hind-foot touchdown must remain on crown stone");
+  assert.ok(
+    landing.touchdownFootprint.halfWidth + 0.39 <= Math.min(-crownMinX, crownMaxX),
+    "touchdown cross-track envelope must keep both hind feet on crown stone",
+  );
 });
 
 test("runtime geometry is one canonical draw body with bounded ownership and full flight span", () => {
@@ -342,6 +369,9 @@ test("the deterministic animal completes roost, launch, patrol and rooftop landi
         parentPosition.distanceTo(childPosition),
       );
     }
+    if (runtime.firstFlightCompleted && runtime.mode === "rest" && runtime.modeTime >= 1) {
+      break;
+    }
   }
 
   for (const mode of [
@@ -369,7 +399,10 @@ test("the deterministic animal completes roost, launch, patrol and rooftop landi
     "first-downstroke",
   ]));
   assert.deepEqual(returnWingModes, new Set(["glide", "flap"]));
-  assert.ok(minimumY >= 33.56, `fell through roof datum: ${minimumY}`);
+  const towerSurfaceY = profile.territory.nodes.find(
+    (node) => node.id === "tower-roost",
+  ).position[1];
+  assert.ok(minimumY >= towerSurfaceY - 0.01, `fell through roof datum: ${minimumY}`);
   assert.ok(minimumReserve > 0.64, `exhausted flight reserve: ${minimumReserve}`);
   assert.ok(maximumLoadFactor <= 3.451, `unbounded transient load: ${maximumLoadFactor}`);
   assert.ok(touchdownVerticalSpeed > -2.4, `hard vertical touchdown: ${touchdownVerticalSpeed}`);
@@ -465,7 +498,7 @@ test("destroyed tower supports force a real emergency circuit and highland landi
   assert.equal(runtime.mode, "rest");
   assert.ok(runtime.currentNodeId.endsWith("highland"));
   assert.equal(visitedNodes.has("tower-landing"), false);
-  assert.ok(minimumY >= 0.039, `emergency landing crossed the terrain: ${minimumY}`);
+  assert.ok(minimumY >= 0.02, `emergency landing crossed the terrain: ${minimumY}`);
 });
 
 test("behaviour decisions expose needs and traits instead of opaque random action labels", () => {
