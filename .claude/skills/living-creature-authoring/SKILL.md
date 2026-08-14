@@ -110,6 +110,15 @@ body becomes alive; it does not license silent resculpting.
 - Drive visible wing phase from the delivered aerodynamic state, not from a
   coarse behaviour label such as `return` or `glide`; a physical corrective
   stroke must never render as a fixed wing.
+- Preserve the complete load-bearing membrane topology in runtime. Every
+  shoulder/elbow/wrist/metacarpal/spar segment must own its visible surface,
+  and rendered span/chord/area must come from the same delivered panel state
+  that produces aerodynamic force; never stretch a folded proxy over a moving
+  leading edge.
+- Build an airborne turn causally: gaze acquires the exit, a rate-limited bank
+  request creates differential wing area/incidence and segment folding, body
+  roll redirects lift, yaw/trajectory follow, and neck/tail stabilize with a
+  delay. Bound angular velocity and acceleration through the sequence.
 - Solve attachments and hands/paws from targets; do not invent a proxy body for
   complex actions or a separate fast-render walk.
 

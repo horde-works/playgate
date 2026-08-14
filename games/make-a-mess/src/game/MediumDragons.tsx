@@ -15,6 +15,7 @@ import {
   MeshDepthMaterial,
   MeshStandardMaterial,
   RGBADepthPacking,
+  Vector2,
 } from "three";
 import type { MediumDragonTerritoryPopulationDefinition } from "./creaturePopulation.ts";
 import type { CreatureWorldRuntime } from "./creatureWorld.ts";
@@ -25,6 +26,7 @@ import {
   stepMediumDragon,
   type MediumDragonRuntime,
 } from "./mediumDragonSim.ts";
+import { mediumDragonVisibleWingArea } from "./mediumDragonAerodynamics.ts";
 import {
   buildMediumDragonRuntimeGeometry,
   MEDIUM_DRAGON_RUNTIME_BONE_IDS,
@@ -37,14 +39,29 @@ import {
 
 const POSE_SHADER_DECLARATIONS = /* glsl */ `
   attribute float aDragonBone;
+  attribute vec3 aDragonBindPivot;
+  attribute float aDragonMembraneSide;
   uniform mat4 uDragonBones[${MEDIUM_DRAGON_RUNTIME_BONE_IDS.length}];
+  uniform vec2 uDragonWingArea;
 
   mat4 dragonBonePose() {
     return uDragonBones[int(aDragonBone)];
   }
+
+  vec3 dragonBindPosition(vec3 sourcePosition) {
+    float area = aDragonMembraneSide < -0.5
+      ? uDragonWingArea.x
+      : aDragonMembraneSide > 0.5
+        ? uDragonWingArea.y
+        : 1.0;
+    return mix(aDragonBindPivot, sourcePosition, area);
+  }
 `;
 
-function createDragonMaterial(palette: readonly Matrix4[]): MeshStandardMaterial {
+function createDragonMaterial(
+  palette: readonly Matrix4[],
+  wingArea: Vector2,
+): MeshStandardMaterial {
   const material = new MeshStandardMaterial({
     color: 0xffffff,
     vertexColors: true,
@@ -54,6 +71,7 @@ function createDragonMaterial(palette: readonly Matrix4[]): MeshStandardMaterial
   });
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uDragonBones = { value: palette };
+    shader.uniforms.uDragonWingArea = { value: wingArea };
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", `#include <common>\n${POSE_SHADER_DECLARATIONS}`)
       .replace(
@@ -62,28 +80,32 @@ function createDragonMaterial(palette: readonly Matrix4[]): MeshStandardMaterial
       )
       .replace(
         "#include <begin_vertex>",
-        "#include <begin_vertex>\n  transformed = (dragonBonePose() * vec4(position, 1.0)).xyz;",
+        "#include <begin_vertex>\n  transformed = (dragonBonePose() * vec4(dragonBindPosition(position), 1.0)).xyz;",
       );
   };
-  material.customProgramCacheKey = () => "medium-dragon-p4-m2-standard";
+  material.customProgramCacheKey = () => "medium-dragon-p5-segmented-membrane-standard";
   return material;
 }
 
-function createDragonDepthMaterial(palette: readonly Matrix4[]): MeshDepthMaterial {
+function createDragonDepthMaterial(
+  palette: readonly Matrix4[],
+  wingArea: Vector2,
+): MeshDepthMaterial {
   const material = new MeshDepthMaterial({
     depthPacking: RGBADepthPacking,
     side: DoubleSide,
   });
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uDragonBones = { value: palette };
+    shader.uniforms.uDragonWingArea = { value: wingArea };
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", `#include <common>\n${POSE_SHADER_DECLARATIONS}`)
       .replace(
         "#include <begin_vertex>",
-        "#include <begin_vertex>\n  transformed = (dragonBonePose() * vec4(position, 1.0)).xyz;",
+        "#include <begin_vertex>\n  transformed = (dragonBonePose() * vec4(dragonBindPosition(position), 1.0)).xyz;",
       );
   };
-  material.customProgramCacheKey = () => "medium-dragon-p4-m2-depth";
+  material.customProgramCacheKey = () => "medium-dragon-p5-segmented-membrane-depth";
   return material;
 }
 
@@ -127,13 +149,17 @@ function MediumDragon({
       || search.get("mamDragonProbe") === "1";
   });
   const palette = useMemo(() => createMediumDragonPosePalette(), []);
+  const wingArea = useMemo(() => new Vector2(0.16, 0.16), []);
   const contactState = useRef(createMediumDragonContactState());
   const geometry = useMemo(
     () => buildMediumDragonRuntimeGeometry(definition),
     [definition],
   );
-  const material = useMemo(() => createDragonMaterial(palette), [palette]);
-  const depthMaterial = useMemo(() => createDragonDepthMaterial(palette), [palette]);
+  const material = useMemo(() => createDragonMaterial(palette, wingArea), [palette, wingArea]);
+  const depthMaterial = useMemo(
+    () => createDragonDepthMaterial(palette, wingArea),
+    [palette, wingArea],
+  );
 
   useEffect(() => () => {
     geometry.dispose();
@@ -229,13 +255,16 @@ function MediumDragon({
       dayFraction: world.time.dayFraction.current,
       night: world.time.night.current,
     });
+    const pose = sampleMediumDragonPose(dragon);
     writeMediumDragonPose(
       palette,
-      sampleMediumDragonPose(dragon),
+      pose,
       dragon,
       state.clock.elapsedTime,
       contactState.current,
     );
+    const visibleArea = mediumDragonVisibleWingArea(dragon.lastWing);
+    wingArea.set(visibleArea[0], visibleArea[1]);
 
     if (root.current) {
       root.current.position.set(dragon.x, dragon.y, dragon.z);

@@ -3,6 +3,7 @@ import test from "node:test";
 import { Vector3 } from "three";
 import {
   MEDIUM_DRAGON_MORPHOLOGY,
+  mediumDragonFlightCanonicalParts,
   mediumDragonGroundCanonicalParts,
 } from "../games/make-a-mess/src/content/objects/creatures/mediumDragonObject.ts";
 import {
@@ -14,6 +15,7 @@ import { basaltStrongholdDragonProfile } from "../games/make-a-mess/src/content/
 import {
   computeMediumDragonAerodynamics,
   mediumDragonPanelCoefficients,
+  mediumDragonVisibleWingArea,
   sampleMediumDragonWingState,
 } from "../games/make-a-mess/src/game/mediumDragonAerodynamics.ts";
 import {
@@ -46,6 +48,54 @@ function dragonDefinition() {
   );
   assert.ok(definition, "Basalt Stronghold has no medium dragon population");
   return definition;
+}
+
+function posedMembraneArea(geometry, palette, areaBySide, requestedSide) {
+  const position = geometry.getAttribute("position");
+  const bone = geometry.getAttribute("aDragonBone");
+  const bindPivot = geometry.getAttribute("aDragonBindPivot");
+  const membraneSide = geometry.getAttribute("aDragonMembraneSide");
+  let area = 0;
+  for (let vertex = 0; vertex < position.count; vertex += 3) {
+    if (membraneSide.getX(vertex) !== requestedSide) continue;
+    const triangle = [0, 1, 2].map((offset) => {
+      const index = vertex + offset;
+      const scale = requestedSide < 0 ? areaBySide[0] : areaBySide[1];
+      const pivot = new Vector3(
+        bindPivot.getX(index),
+        bindPivot.getY(index),
+        bindPivot.getZ(index),
+      );
+      return new Vector3(position.getX(index), position.getY(index), position.getZ(index))
+        .sub(pivot)
+        .multiplyScalar(scale)
+        .add(pivot)
+        .applyMatrix4(palette[bone.getX(index)]);
+    });
+    area += triangle[1].clone().sub(triangle[0])
+      .cross(triangle[2].clone().sub(triangle[0])).length() * 0.5;
+  }
+  return area;
+}
+
+function posedMinimumY(geometry, palette, areaBySide) {
+  const position = geometry.getAttribute("position");
+  const bone = geometry.getAttribute("aDragonBone");
+  const bindPivot = geometry.getAttribute("aDragonBindPivot");
+  const membraneSide = geometry.getAttribute("aDragonMembraneSide");
+  let minimumY = Number.POSITIVE_INFINITY;
+  for (let index = 0; index < position.count; index += 1) {
+    const side = membraneSide.getX(index);
+    const scale = side < -0.5 ? areaBySide[0] : side > 0.5 ? areaBySide[1] : 1;
+    const pivot = new Vector3(bindPivot.getX(index), bindPivot.getY(index), bindPivot.getZ(index));
+    const posed = new Vector3(position.getX(index), position.getY(index), position.getZ(index))
+      .sub(pivot)
+      .multiplyScalar(scale)
+      .add(pivot)
+      .applyMatrix4(palette[bone.getX(index)]);
+    minimumY = Math.min(minimumY, posed.y);
+  }
+  return minimumY;
 }
 
 test("dragon runtime maps the accepted folded body and every membrane vertex to one skeleton", () => {
@@ -138,7 +188,11 @@ test("runtime geometry is one canonical draw body with bounded ownership and ful
   const normal = geometry.getAttribute("normal");
   const color = geometry.getAttribute("color");
   const bone = geometry.getAttribute("aDragonBone");
-  const expectedVertices = mediumDragonGroundCanonicalParts.reduce((sum, part) => {
+  const runtimeParts = [
+    ...mediumDragonGroundCanonicalParts.filter((part) => part.group !== "wing-membrane"),
+    ...mediumDragonFlightCanonicalParts.filter((part) => part.group === "wing-membrane"),
+  ];
+  const expectedVertices = runtimeParts.reduce((sum, part) => {
     if (part.kind === "box" || part.kind === "beam") return sum + 36;
     if (part.kind === "cylinder") throw new Error("unexpected canonical dragon cylinder");
     return sum + part.triangles.length * 3;
@@ -147,10 +201,84 @@ test("runtime geometry is one canonical draw body with bounded ownership and ful
   assert.equal(normal.count, expectedVertices);
   assert.equal(color.count, expectedVertices);
   assert.equal(bone.count, expectedVertices);
+  assert.equal(geometry.getAttribute("aDragonBindPivot").count, expectedVertices);
+  assert.equal(geometry.getAttribute("aDragonMembraneSide").count, expectedVertices);
   assert.ok(Array.from(bone.array).every(
     (value) => Number.isInteger(value) && value >= 0 && value < MEDIUM_DRAGON_RUNTIME_BONE_IDS.length,
   ));
-  assert.ok(geometry.boundingBox.min.y >= -0.008);
+  const membraneSide = geometry.getAttribute("aDragonMembraneSide");
+  const membraneBones = new Set(Array.from(bone.array).filter(
+    (_, index) => Math.abs(membraneSide.getX(index)) > 0.5,
+  ).map((index) => MEDIUM_DRAGON_RUNTIME_BONE_IDS[index]));
+  for (const side of ["left", "right"]) {
+    for (const control of [
+      "shoulder", "elbow", "wrist", "metacarpal",
+      "finger-1", "finger-2", "finger-3", "finger-4",
+    ]) {
+      assert.ok(membraneBones.has(`${side}-${control}`), `${side}-${control}: membrane has no segment owner`);
+    }
+  }
+  assert.ok(Number.isFinite(geometry.boundingBox.min.y));
+
+  const foldedRuntime = createMediumDragonRuntime(basaltStrongholdDragonProfile);
+  const foldedPalette = createMediumDragonPosePalette();
+  const foldedContacts = createMediumDragonContactState();
+  for (let tick = 0; tick < 120; tick += 1) {
+    writeMediumDragonPose(
+      foldedPalette,
+      sampleMediumDragonPose(foldedRuntime),
+      foldedRuntime,
+      tick / 60,
+      foldedContacts,
+    );
+  }
+  assert.ok(
+    posedMinimumY(
+      geometry,
+      foldedPalette,
+      mediumDragonVisibleWingArea(foldedRuntime.lastWing),
+    ) >= -0.012,
+    "folded full-topology membrane entered the support plane",
+  );
+
+  const posedArea = (wing) => {
+    const areaRuntime = createMediumDragonRuntime(basaltStrongholdDragonProfile);
+    areaRuntime.mode = "patrol-flap";
+    areaRuntime.grounded = false;
+    areaRuntime.lastWing = wing;
+    const areaPalette = createMediumDragonPosePalette();
+    const areaContacts = createMediumDragonContactState();
+    for (let tick = 0; tick < 120; tick += 1) {
+      writeMediumDragonPose(
+        areaPalette,
+        sampleMediumDragonPose(areaRuntime),
+        areaRuntime,
+        tick / 60,
+        areaContacts,
+      );
+    }
+    const visibleArea = mediumDragonVisibleWingArea(wing);
+    return posedMembraneArea(geometry, areaPalette, visibleArea, -1)
+      + posedMembraneArea(geometry, areaPalette, visibleArea, 1);
+  };
+  const downstrokeArea = posedArea(sampleMediumDragonWingState({
+    mode: "flap", phase: 0.3, powerFraction: 0.9,
+  }));
+  const fullPowerArea = posedArea(sampleMediumDragonWingState({
+    mode: "flap", phase: 0.515, powerFraction: 0.9,
+  }));
+  const recoveryArea = posedArea(sampleMediumDragonWingState({
+    mode: "flap", phase: 0.72, powerFraction: 0.9,
+  }));
+  const authoredFlightArea = mediumDragonFlightCanonicalParts.reduce((sum, part) => {
+    if (part.group !== "wing-membrane" || part.kind !== "mesh") return sum;
+    return sum + part.triangles.reduce((partArea, triangle) => {
+      const points = triangle.map((index) => new Vector3(...part.vertices[index]));
+      return partArea + points[1].sub(points[0]).cross(points[2].sub(points[0])).length() * 0.5;
+    }, 0);
+  }, 0);
+  assert.ok(downstrokeArea > recoveryArea * 1.35, `${downstrokeArea} vs ${recoveryArea}`);
+  assert.ok(fullPowerArea > authoredFlightArea * 0.9, `${fullPowerArea} vs ${authoredFlightArea}`);
 
   const runtime = createMediumDragonRuntime(basaltStrongholdDragonProfile);
   const palette = createMediumDragonPosePalette();
@@ -310,6 +438,61 @@ test("corrective return strokes are visible instead of being hidden by the glide
     powerFraction: 0,
   });
   assert.equal(sampleMediumDragonPose(runtime).current, "glide");
+});
+
+test("banked turns lead with gaze and differential wing load before smooth body yaw", () => {
+  const runtime = createMediumDragonRuntime(basaltStrongholdDragonProfile);
+  Object.assign(runtime, {
+    x: 46,
+    y: basaltStrongholdDragonProfile.territory.airspace.patrolHeight,
+    z: basaltStrongholdDragonProfile.territory.airspace.centre[2],
+    velocityX: 13,
+    velocityY: 0,
+    velocityZ: 0,
+    heading: Math.PI / 2,
+    mode: "patrol-glide",
+    modeTime: 3,
+    flightTime: 3,
+    grounded: false,
+    lastWing: sampleMediumDragonWingState({ mode: "glide", phase: 0, powerFraction: 0 }),
+  });
+  let previousBankCommand = runtime.bankCommand;
+  let previousYawRate = runtime.yawRate;
+  let previousHeading = runtime.heading;
+  let firstWingAsymmetry = null;
+  let firstBodyBank = null;
+  let firstTurnLook = null;
+  let maximumYawAcceleration = 0;
+  for (let tick = 0; tick < 120; tick += 1) {
+    stepMediumDragon(runtime, basaltStrongholdDragonProfile, 1 / 60);
+    const visibleArea = mediumDragonVisibleWingArea(runtime.lastWing);
+    const asymmetry = Math.abs(visibleArea[0] - visibleArea[1]);
+    if (firstWingAsymmetry === null && asymmetry > 0.02) firstWingAsymmetry = tick;
+    if (firstBodyBank === null && Math.abs(runtime.roll) > 0.05) firstBodyBank = tick;
+    if (firstTurnLook === null && Math.abs(runtime.attention.headYaw) > 0.08) firstTurnLook = tick;
+    assert.ok(
+      Math.abs(runtime.bankCommand - previousBankCommand) <= 0.01001,
+      "bank command changed without a wing-loading ramp",
+    );
+    maximumYawAcceleration = Math.max(
+      maximumYawAcceleration,
+      Math.abs(runtime.yawRate - previousYawRate) * 60,
+    );
+    assert.ok(
+      Math.abs(Math.atan2(
+        Math.sin(runtime.heading - previousHeading),
+        Math.cos(runtime.heading - previousHeading),
+      )) <= 0.55 / 60 + 1e-9,
+      "heading cornered faster than the bounded body yaw",
+    );
+    previousBankCommand = runtime.bankCommand;
+    previousYawRate = runtime.yawRate;
+    previousHeading = runtime.heading;
+  }
+  assert.ok(firstTurnLook < firstBodyBank, "gaze must acquire the turn before body bank");
+  assert.ok(firstWingAsymmetry < firstBodyBank, "wing asymmetry must precede body bank");
+  assert.ok(Math.sign(runtime.roll) === Math.sign(runtime.bankCommand));
+  assert.ok(maximumYawAcceleration < 0.22, `angular acceleration spike ${maximumYawAcceleration}`);
 });
 
 test("the deterministic animal completes roost, launch, patrol and rooftop landing without pose discontinuity", () => {

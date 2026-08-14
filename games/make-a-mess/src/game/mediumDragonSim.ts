@@ -82,6 +82,8 @@ export interface MediumDragonRuntime {
   pitchRate: number;
   yawRate: number;
   rollRate: number;
+  /** Filtered bank request; wing loading must build before body yaw follows. */
+  bankCommand: number;
   mode: MediumDragonMode;
   modeTime: number;
   lifeTime: number;
@@ -266,6 +268,7 @@ export function createMediumDragonRuntime(
     pitchRate: 0,
     yawRate: 0,
     rollRate: 0,
+    bankCommand: 0,
     mode: "observe",
     modeTime: individualIndex * 0.37,
     lifeTime: 0,
@@ -366,6 +369,14 @@ function stepAttention(runtime: MediumDragonRuntime, dt: number): void {
     }
     desiredYaw = clamp(scanAngles[attention.scanIndex], -maximumYaw, maximumYaw)
       * (0.45 + runtime.needs.information * 0.55);
+    if (airborne && Math.abs(runtime.bankCommand) > 0.025) {
+      // The gaze acquires the turn exit before the bank changes trajectory.
+      desiredYaw = clamp(
+        desiredYaw - runtime.bankCommand * 0.82,
+        -maximumYaw,
+        maximumYaw,
+      );
+    }
     desiredPitch = airborne ? -0.08 : 0.02;
   }
   const headRate = attention.mode === "verify" ? 4.8 : 2.1;
@@ -697,9 +708,16 @@ function stepFlightBody(
     : runtime.heading;
   const pathHeadingError = shortestAngle(horizontalVelocityHeading, targetHeading);
   const maximumBank = runtime.mode === "approach" || runtime.mode === "flare" ? 0.34 : 0.48;
-  const desiredRoll = runtime.mode === "takeoff" || runtime.mode === "powered-climb"
+  const rawDesiredRoll = runtime.mode === "takeoff" || runtime.mode === "powered-climb"
     ? 0
     : -clamp(pathHeadingError * 0.72, -maximumBank, maximumBank);
+  const bankCommandRate = runtime.mode === "approach" || runtime.mode === "flare" ? 0.42 : 0.6;
+  runtime.bankCommand = moveToward(
+    runtime.bankCommand,
+    rawDesiredRoll,
+    bankCommandRate * dt,
+  );
+  const desiredRoll = runtime.bankCommand;
   const horizontalSpeed = Math.max(0.1, Math.hypot(runtime.velocityX, runtime.velocityZ));
   const flightPathAngle = Math.atan2(runtime.velocityY, horizontalSpeed);
   const requestedClimbAngle = clamp(
@@ -904,7 +922,10 @@ function stepFlightBody(
   const velocityAlignment = shortestAngle(runtime.heading, horizontalVelocityHeading);
   localMoment.x += ((desiredPitch - runtime.pitch) * 3200 - runtime.pitchRate * 1200)
     * dynamicAuthority;
-  localMoment.y += (velocityAlignment * 720 - runtime.yawRate * 310)
+  // The body weathervanes into the path only after differential wing loading
+  // has established a bank. Keeping this term weak prevents angular cornering
+  // that is disconnected from the wings.
+  localMoment.y += (velocityAlignment * 620 - runtime.yawRate * 360)
     * dynamicAuthority;
   localMoment.z += -runtime.roll * 680 - runtime.rollRate * 720;
   localMoment.x = clamp(localMoment.x, -2600, 2600);
@@ -915,10 +936,11 @@ function stepFlightBody(
     -0.72,
     0.72,
   );
+  const maximumYawRate = runtime.mode === "approach" || runtime.mode === "flare" ? 0.42 : 0.55;
   runtime.yawRate = clamp(
     runtime.yawRate + localMoment.y / YAW_INERTIA * dt,
-    -0.62,
-    0.62,
+    -maximumYawRate,
+    maximumYawRate,
   );
   runtime.rollRate = clamp(
     runtime.rollRate + localMoment.z / ROLL_INERTIA * dt,
@@ -1168,6 +1190,7 @@ function stepLanding(
   runtime.pitchRate = moveToward(runtime.pitchRate, 0, dt * 1.5);
   runtime.rollRate = moveToward(runtime.rollRate, 0, dt * 1.5);
   runtime.yawRate = moveToward(runtime.yawRate, 0, dt * 1.2);
+  runtime.bankCommand = moveToward(runtime.bankCommand, 0, dt * 0.8);
   if (runtime.mode === "touchdown" && runtime.modeTime >= 0.58) {
     setMode(runtime, "wing-unload");
   } else if (runtime.mode === "wing-unload" && runtime.modeTime >= 0.82) {

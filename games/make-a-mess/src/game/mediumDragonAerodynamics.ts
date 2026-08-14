@@ -225,6 +225,18 @@ function basePanelArea(id: MediumDragonPanelId): number {
   return id.endsWith("inner") ? INNER_AREA : OUTER_AREA;
 }
 
+/** Chord scale delivered to the visible segmented membrane on each side. */
+export function mediumDragonVisibleWingArea(
+  wing: MediumDragonWingState,
+): readonly [left: number, right: number] {
+  const weightedSide = (side: "left" | "right") => {
+    const inner = wing.panels.find((panelState) => panelState.id === `${side}-inner`)!;
+    const outer = wing.panels.find((panelState) => panelState.id === `${side}-outer`)!;
+    return clamp(inner.areaFraction * 0.45 + outer.areaFraction * 0.55, 0.08, 1);
+  };
+  return [weightedSide("left"), weightedSide("right")];
+}
+
 /** Four independently loaded panels plus their real moment arms. */
 export function computeMediumDragonAerodynamics(
   input: MediumDragonAeroInput,

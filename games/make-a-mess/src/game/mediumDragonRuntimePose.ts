@@ -14,6 +14,7 @@ import {
   solveCreatureWholeBodyPose,
   type CreatureWholeBodyState,
 } from "./creatureWholeBodyMotion.ts";
+import { mediumDragonVisibleWingArea } from "./mediumDragonAerodynamics.ts";
 import type {
   MediumDragonPoseSample,
   MediumDragonRuntime,
@@ -22,6 +23,7 @@ import type {
 const UNIT_SCALE = new Vector3(1, 1, 1);
 const X_AXIS = new Vector3(1, 0, 0);
 const Y_AXIS = new Vector3(0, 1, 0);
+const Z_AXIS = new Vector3(0, 0, 1);
 const GROUND_REFERENCE = "ground-folded";
 const BONE_INDEX = new Map(
   MEDIUM_DRAGON_SKELETON.bones.map((bone, index) => [bone.id, index]),
@@ -409,6 +411,7 @@ export function writeMediumDragonPose(
   const from = mediumDragonRigStates[sample.current as MediumDragonPoseId];
   const to = mediumDragonRigStates[sample.next as MediumDragonPoseId];
   const desired = contactState.desiredPose;
+  const visibleWingArea = mediumDragonVisibleWingArea(runtime.lastWing);
   for (const [index, bone] of MEDIUM_DRAGON_SKELETON.bones.entries()) {
     const start = sampledTransform(from, bone.id, false);
     const end = sampledTransform(to, bone.id, Boolean(sample.mirrorBank));
@@ -442,6 +445,57 @@ export function writeMediumDragonPose(
       rotation.multiply(new Quaternion().setFromAxisAngle(
         Y_AXIS,
         Math.sin(elapsed * 0.43) * 0.025,
+      ));
+    }
+    const wingSide = bone.id.startsWith("left-")
+      ? 0
+      : bone.id.startsWith("right-")
+        ? 1
+        : -1;
+    const wingControl = bone.id.split("-").slice(1).join("-");
+    if (
+      wingSide >= 0
+      && ["shoulder", "elbow", "wrist", "metacarpal"].includes(wingControl)
+    ) {
+      const ownArea = wingSide === 0 ? visibleWingArea[0] : visibleWingArea[1];
+      const otherArea = wingSide === 0 ? visibleWingArea[1] : visibleWingArea[0];
+      const differentialFold = Math.max(
+        0,
+        Math.min(0.62, (otherArea - ownArea) * 1.9),
+      );
+      if (differentialFold > 0) {
+        const sideSign = wingSide === 0 ? -1 : 1;
+        const jointShare = wingControl === "shoulder"
+          ? 0.34
+          : wingControl === "elbow"
+            ? 0.72
+            : wingControl === "wrist"
+              ? 0.86
+              : 1;
+        rotation.multiply(new Quaternion().setFromEuler(new Euler(
+          0,
+          sideSign * differentialFold * jointShare,
+          sideSign * differentialFold * jointShare * 0.22,
+        )));
+      }
+    }
+    const tailMatch = /^tail-(\d+)$/.exec(bone.id);
+    if (tailMatch) {
+      const tailShare = 0.16 + Number(tailMatch[1]) * 0.025;
+      rotation
+        .multiply(new Quaternion().setFromAxisAngle(
+          Y_AXIS,
+          -runtime.yawRate * tailShare,
+        ))
+        .multiply(new Quaternion().setFromAxisAngle(
+          Z_AXIS,
+          -runtime.rollRate * tailShare * 0.7,
+        ));
+    }
+    if (bone.id === "head" || bone.id === "neck-4") {
+      rotation.multiply(new Quaternion().setFromAxisAngle(
+        Z_AXIS,
+        -runtime.roll * (bone.id === "head" ? 0.24 : 0.12),
       ));
     }
     desired[index].compose(pivot, rotation, UNIT_SCALE);

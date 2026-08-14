@@ -14,7 +14,10 @@ import {
   mediumDragonBoneForPart,
   mediumDragonMembraneVertexBone,
 } from "../content/objects/creatures/mediumDragonRigObject.ts";
-import { mediumDragonGroundCanonicalParts } from "../content/objects/creatures/mediumDragonObject.ts";
+import {
+  mediumDragonFlightCanonicalParts,
+  mediumDragonGroundCanonicalParts,
+} from "../content/objects/creatures/mediumDragonObject.ts";
 import type { MediumDragonTerritoryPopulationDefinition } from "./creaturePopulation.ts";
 
 export const MEDIUM_DRAGON_RUNTIME_BONE_IDS = MEDIUM_DRAGON_SKELETON.bones.map(
@@ -27,6 +30,7 @@ const BONE_INDEX = new Map(
 const UNIT_SCALE = new Vector3(1, 1, 1);
 const Y_AXIS = new Vector3(0, 1, 0);
 const GROUND_REFERENCE = "ground-folded";
+const FLIGHT_REFERENCE = "flight-extended";
 
 function bakedBoxGeometry(part: Extract<ObjectLabPart, { kind: "box" }>): BufferGeometry {
   const geometry = new BoxGeometry(part.size[0], part.size[1], part.size[2]).toNonIndexed();
@@ -84,6 +88,41 @@ function triangleNormal(a: ObjectPoint, b: ObjectPoint, c: ObjectPoint): Vector3
     .normalize();
 }
 
+function flightReferenceAlignment(boneId: string): Quaternion {
+  const bone = MEDIUM_DRAGON_SKELETON.bones.find((candidate) => candidate.id === boneId);
+  if (!bone) throw new Error(`${boneId}: no dragon bone for flight bind conversion`);
+  const child = MEDIUM_DRAGON_SKELETON.bones.find((candidate) => candidate.parent === boneId);
+  const other = child ?? MEDIUM_DRAGON_SKELETON.bones.find(
+    (candidate) => candidate.id === bone.parent,
+  );
+  if (!other) return new Quaternion();
+  const groundDirection = child
+    ? new Vector3(...other.rest[GROUND_REFERENCE]).sub(new Vector3(...bone.rest[GROUND_REFERENCE]))
+    : new Vector3(...bone.rest[GROUND_REFERENCE]).sub(new Vector3(...other.rest[GROUND_REFERENCE]));
+  const flightDirection = child
+    ? new Vector3(...other.rest[FLIGHT_REFERENCE]).sub(new Vector3(...bone.rest[FLIGHT_REFERENCE]))
+    : new Vector3(...bone.rest[FLIGHT_REFERENCE]).sub(new Vector3(...other.rest[FLIGHT_REFERENCE]));
+  return groundDirection.lengthSq() > 1e-8 && flightDirection.lengthSq() > 1e-8
+    ? new Quaternion().setFromUnitVectors(groundDirection.normalize(), flightDirection.normalize())
+    : new Quaternion();
+}
+
+/** Convert an authored flight membrane point into the common folded bind. */
+export function mediumDragonFlightVertexToGroundBind(
+  vertex: ObjectPoint,
+  boneId: string,
+): ObjectPoint {
+  const bone = MEDIUM_DRAGON_SKELETON.bones.find((candidate) => candidate.id === boneId);
+  if (!bone) throw new Error(`${boneId}: no dragon bone for membrane bind`);
+  const groundPivot = new Vector3(...bone.rest[GROUND_REFERENCE]);
+  const flightPivot = new Vector3(...bone.rest[FLIGHT_REFERENCE]);
+  const converted = new Vector3(...vertex)
+    .sub(flightPivot)
+    .applyQuaternion(flightReferenceAlignment(boneId).invert())
+    .add(groundPivot);
+  return [converted.x, converted.y, converted.z];
+}
+
 /**
  * One canonical body, authored in its folded reference and skinned to the
  * same 48-bone hierarchy used by Object Lab. Extended flight is deformation,
@@ -96,12 +135,16 @@ export function buildMediumDragonRuntimeGeometry(
   const normals: number[] = [];
   const colors: number[] = [];
   const bones: number[] = [];
+  const bindPivots: number[] = [];
+  const membraneSides: number[] = [];
 
   const append = (
     part: ObjectLabPart,
     partPositions: readonly number[],
     partNormals: readonly number[],
     partBones?: readonly string[],
+    partBindPivots?: readonly number[],
+    partMembraneSides?: readonly number[],
   ): void => {
     const fallbackBone = mediumDragonBoneForPart(part, GROUND_REFERENCE);
     const color = partColor(part, definition);
@@ -115,10 +158,16 @@ export function buildMediumDragonRuntimeGeometry(
       }
       colors.push(color.r, color.g, color.b);
       bones.push(boneIndex);
+      bindPivots.push(
+        ...(partBindPivots?.slice(vertex * 3, vertex * 3 + 3) ?? [0, 0, 0]),
+      );
+      membraneSides.push(partMembraneSides?.[vertex] ?? 0);
     }
   };
 
-  for (const part of mediumDragonGroundCanonicalParts) {
+  for (const part of mediumDragonGroundCanonicalParts.filter(
+    (candidate) => candidate.group !== "wing-membrane",
+  )) {
     if (part.kind === "box" || part.kind === "beam") {
       const baked = part.kind === "box" ? bakedBoxGeometry(part) : bakedBeamGeometry(part);
       append(
@@ -134,7 +183,6 @@ export function buildMediumDragonRuntimeGeometry(
     }
     const partPositions: number[] = [];
     const partNormals: number[] = [];
-    const partBones: string[] = [];
     for (const triangle of part.triangles) {
       const faceNormal = triangleNormal(
         part.vertices[triangle[0]],
@@ -145,17 +193,55 @@ export function buildMediumDragonRuntimeGeometry(
         partPositions.push(...part.vertices[vertexIndex]);
         const normal = part.normals?.[vertexIndex];
         partNormals.push(...(normal ?? [faceNormal.x, faceNormal.y, faceNormal.z]));
-        partBones.push(
-          mediumDragonMembraneVertexBone(
-            part,
-            part.vertices[vertexIndex],
-            vertexIndex,
-            GROUND_REFERENCE,
-          ) ?? mediumDragonBoneForPart(part, GROUND_REFERENCE),
-        );
       }
     }
-    append(part, partPositions, partNormals, partBones);
+    append(part, partPositions, partNormals);
+  }
+
+  // Runtime membranes use the complete seven-panel flight topology. Each
+  // vertex is converted once into the folded bind of its owning segment; the
+  // shared skeleton then carries the full surface through every phase.
+  for (const part of mediumDragonFlightCanonicalParts.filter(
+    (candidate) => candidate.group === "wing-membrane",
+  )) {
+    if (part.kind !== "mesh") continue;
+    const partPositions: number[] = [];
+    const partNormals: number[] = [];
+    const partBones: string[] = [];
+    const partBindPivots: number[] = [];
+    const partMembraneSides: number[] = [];
+    for (const triangle of part.triangles) {
+      const converted = triangle.map((vertexIndex) => {
+        const vertex = part.vertices[vertexIndex];
+        const boneId = mediumDragonMembraneVertexBone(
+          part,
+          vertex,
+          vertexIndex,
+          FLIGHT_REFERENCE,
+        ) ?? mediumDragonBoneForPart(part, FLIGHT_REFERENCE);
+        return {
+          boneId,
+          point: mediumDragonFlightVertexToGroundBind(vertex, boneId),
+        };
+      });
+      const faceNormal = triangleNormal(converted[0].point, converted[1].point, converted[2].point);
+      for (const entry of converted) {
+        const bone = MEDIUM_DRAGON_SKELETON.bones.find((candidate) => candidate.id === entry.boneId)!;
+        partPositions.push(...entry.point);
+        partNormals.push(faceNormal.x, faceNormal.y, faceNormal.z);
+        partBones.push(entry.boneId);
+        partBindPivots.push(...bone.rest[GROUND_REFERENCE]);
+        partMembraneSides.push(entry.boneId.startsWith("left-") ? -1 : 1);
+      }
+    }
+    append(
+      part,
+      partPositions,
+      partNormals,
+      partBones,
+      partBindPivots,
+      partMembraneSides,
+    );
   }
 
   const geometry = new BufferGeometry();
@@ -163,6 +249,8 @@ export function buildMediumDragonRuntimeGeometry(
   geometry.setAttribute("normal", new Float32BufferAttribute(normals, 3));
   geometry.setAttribute("color", new Float32BufferAttribute(colors, 3));
   geometry.setAttribute("aDragonBone", new Float32BufferAttribute(bones, 1));
+  geometry.setAttribute("aDragonBindPivot", new Float32BufferAttribute(bindPivots, 3));
+  geometry.setAttribute("aDragonMembraneSide", new Float32BufferAttribute(membraneSides, 1));
   geometry.computeBoundingBox();
   geometry.computeBoundingSphere();
   if (geometry.boundingSphere) geometry.boundingSphere.radius = 8.2;
