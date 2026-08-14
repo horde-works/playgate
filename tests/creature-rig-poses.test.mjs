@@ -207,7 +207,12 @@ test("dragon wing and body phase silhouettes follow the described force sequence
   assert.ok(down.pivots["right-finger-4"][1] < down.pivots["right-shoulder"][1] - 0.8);
   assert.ok(up.pivots["right-finger-4"][1] > up.pivots["right-shoulder"][1] + 0.6);
   const span = (state) => distance(state.pivots["left-finger-4"], state.pivots["right-finger-4"]);
-  assert.ok(span(up) < span(mediumDragonRigStates.glide) * 0.65, "upstroke must reduce outer span");
+  assert.ok(
+    up.pivots["right-finger-4"][1] - down.pivots["right-finger-4"][1] > 4.5,
+    "shoulder stroke must dominate the visible vertical wing excursion",
+  );
+  assert.ok(span(up) < span(mediumDragonRigStates.glide) * 0.72, "upstroke must reduce outer span");
+  assert.ok(span(up) > span(mediumDragonRigStates.glide) * 0.58, "recovery must not look like a full wing fold");
   assert.ok(span(mediumDragonRigStates["takeoff-clearance"]) < span(mediumDragonRigStates["takeoff-unfold"]) * 0.4, "wing must remain compact until clearance");
   assert.ok(span(mediumDragonRigStates.dive) < span(mediumDragonRigStates.glide) * 0.55, "dive must sweep the wing");
   const bank = mediumDragonRigStates["bank-turn"];
@@ -216,6 +221,12 @@ test("dragon wing and body phase silhouettes follow the described force sequence
   assert.ok(dive.pivots.head[1] < dive.pivots.pelvis[1], "dive nose must be below pelvis");
   const flare = mediumDragonRigStates["landing-flare"];
   assert.ok(flare.pivots.head[1] > flare.pivots.pelvis[1] + 1.2, "flare chest/head must rise");
+  assert.ok(
+    flare.pivots["right-finger-4"][1]
+      - mediumDragonRigStates["hover-brake"].pivots["right-finger-4"][1]
+      > 1.35,
+    "landing recovery and braking stroke need a visible vertical beat",
+  );
   const touchdown = mediumDragonRigStates["landing-touchdown"];
   const unload = mediumDragonRigStates["landing-wing-unload"];
   assert.ok(span(touchdown) > span(mediumDragonRigStates.glide) * 0.9, "wing must remain open at hind touchdown");

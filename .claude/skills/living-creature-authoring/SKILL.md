@@ -107,12 +107,17 @@ body becomes alive; it does not license silent resculpting.
   distinct acceleration, braking, takeoff, flight, impact, and recovery states.
 - Filter pose targets through one frame-rate-independent whole-body state.
 - Preserve parent-child lengths and joint velocity through mode changes.
+- Drive visible wing phase from the delivered aerodynamic state, not from a
+  coarse behaviour label such as `return` or `glide`; a physical corrective
+  stroke must never render as a fixed wing.
 - Solve attachments and hands/paws from targets; do not invent a proxy body for
   complex actions or a separate fast-render walk.
 
 ### 5. Establish contact and terrain use
 
 - Give every potential support an oriented footprint and surface query.
+- Store the contact datum at the walkable top of the supporting geometry, not
+  at a slab or collider centre. Test it against the actual world piece bounds.
 - Blend load continuously around touch-down and toe-off.
 - Let a small obstacle articulate one limb; do not lift the whole root.
 - Treat raised movement as a target contract: valid affordance, approach,
@@ -120,6 +125,9 @@ body becomes alive; it does not license silent resculpting.
   a usable exit.
 - Choose a path and a movement mode together. Walking, climbing, jumping, and
   flying are different costs and force histories, not cosmetic clips.
+- For flight, measure phase-resolved body acceleration. For landing, reject
+  contact above the allowed horizontal/vertical speed or outside the oriented
+  footprint; do not snap a falling root onto the surface.
 
 ### 6. Add behaviour through the body
 

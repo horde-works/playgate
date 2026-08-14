@@ -156,17 +156,17 @@ export function sampleMediumDragonWingState(options: {
       camber = 1;
       break;
     case "flare": {
-      innerArea = 1;
-      outerArea = 0.98;
-      incidence = 0.235;
-      camber = 1.18;
-      const downstroke = phase >= 0.08 && phase < 0.52;
+      const downstroke = phase >= 0.06 && phase < 0.62;
       const progress = downstroke
-        ? (phase - 0.08) / 0.44
-        : phase < 0.08
-          ? (phase + 0.48) / 0.56
-          : (phase - 0.52) / 0.56;
-      stroke = (downstroke ? -7.2 : 3.6)
+        ? (phase - 0.06) / 0.56
+        : phase < 0.06
+          ? (phase + 0.38) / 0.44
+          : (phase - 0.62) / 0.44;
+      innerArea = downstroke ? 1 : 0.8;
+      outerArea = downstroke ? 0.98 : 0.66;
+      incidence = downstroke ? 0.235 : 0.48;
+      camber = downstroke ? 1.2 : 0.72;
+      stroke = (downstroke ? -10.2 : 4)
         * power
         * Math.sin(clamp(progress, 0, 1) * Math.PI);
       break;

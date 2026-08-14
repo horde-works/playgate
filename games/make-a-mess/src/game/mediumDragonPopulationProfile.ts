@@ -25,6 +25,12 @@ export interface MediumDragonSurfaceNode {
   /** Heading of the folded body in radians; local +Z is the muzzle direction. */
   readonly heading: number;
   readonly usableRadius: number;
+  /** Optional oriented landing footprint for non-circular surfaces. */
+  readonly touchdownFootprint?: {
+    readonly halfWidth: number;
+    readonly rearExtent: number;
+    readonly forwardExtent: number;
+  };
   /** Destruction removes the affordance when every named support is gone. */
   readonly supportPieceIds: readonly string[];
 }
@@ -131,6 +137,19 @@ export function validateMediumDragonPopulationProfile(
       throw new Error(
         `Medium dragon profile ${profile.id}: node ${node.id} has no usable landing footprint`,
       );
+    }
+    if (node.touchdownFootprint) {
+      const { halfWidth, rearExtent, forwardExtent } = node.touchdownFootprint;
+      if (
+        ![halfWidth, rearExtent, forwardExtent].every(Number.isFinite)
+        || halfWidth <= 0
+        || rearExtent <= 0
+        || forwardExtent <= 0
+      ) {
+        throw new Error(
+          `Medium dragon profile ${profile.id}: node ${node.id} has an invalid touchdown footprint`,
+        );
+      }
     }
     if (node.supportPieceIds.length === 0) {
       throw new Error(

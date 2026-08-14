@@ -476,6 +476,10 @@ npm run typecheck
 - force-based vault, четыре аналитические секции крыла, soft stall,
   flap/glide/return/approach/flare, hind-first touchdown и аварийная посадка
   при разрушении насеста;
+- контактный datum дракона совпадает с верхом опорной геометрии, а посадка
+  проверяет ориентированный footprint кровли; лапный vault наследует скорость
+  в первый мах, downstroke даёт измеримый body heave, корректирующие махи
+  возврата видимы, а flare гасит скорость повторными тормозными ударами крыла;
 - head-first внимание, needs/intent с записанной причиной, ground observe/walk,
   body care и территориальный патруль.
 

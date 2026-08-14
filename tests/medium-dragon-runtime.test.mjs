@@ -87,6 +87,22 @@ test("Basalt Stronghold owns one dragon profile, roost and destructible landing 
       );
     }
   }
+  for (const node of definition.profile.territory.nodes.filter(
+    (candidate) => ["roost", "launch", "landing"].includes(candidate.kind),
+  )) {
+    const supportTop = Math.max(...node.supportPieceIds.map((pieceId) => {
+      const piece = basaltStrongholdScene.breakablePieceById.get(pieceId);
+      return piece.position[1] + piece.size[1] / 2;
+    }));
+    assert.ok(
+      Math.abs(node.position[1] - supportTop) < 1e-9,
+      `${node.id}: contact datum ${node.position[1]} is not roof top ${supportTop}`,
+    );
+  }
+  const landing = definition.profile.territory.nodes.find(
+    (node) => node.id === "tower-landing",
+  );
+  assert.ok(landing.touchdownFootprint, "tower landing needs its rectangular roof footprint");
 });
 
 test("runtime geometry is one canonical draw body with bounded ownership and full flight span", () => {
@@ -122,7 +138,22 @@ test("runtime geometry is one canonical draw body with bounded ownership and ful
       contacts,
     );
   }
-  assert.equal(runtime.mode, "patrol-flap");
+  runtime.mode = "patrol-glide";
+  runtime.roll = 0;
+  runtime.lastWing = sampleMediumDragonWingState({
+    mode: "glide",
+    phase: 0,
+    powerFraction: 0,
+  });
+  for (let tick = 0; tick < 90; tick += 1) {
+    writeMediumDragonPose(
+      palette,
+      sampleMediumDragonPose(runtime),
+      runtime,
+      45 + tick / 60,
+      contacts,
+    );
+  }
   const vertex = new Vector3();
   let minimumX = Infinity;
   let maximumX = -Infinity;
@@ -178,6 +209,82 @@ test("analytic wing panels distinguish folding, power stroke, recovery, stall an
   assert.ok(rightTrim.moment[2] < -900);
 });
 
+test("the quadrupedal launch is a leg-driven vault before aerodynamic climb", () => {
+  const profile = basaltStrongholdDragonProfile;
+  const runtime = createMediumDragonRuntime(profile);
+  while (runtime.mode !== "takeoff") stepMediumDragon(runtime, profile, 1 / 120);
+  const roofY = runtime.y;
+  let hindDrive = null;
+  let release = null;
+  while (runtime.mode === "takeoff") {
+    stepMediumDragon(runtime, profile, 1 / 120);
+    if (!hindDrive && runtime.modeTime >= 0.8) {
+      hindDrive = { y: runtime.y, velocityY: runtime.velocityY, grounded: runtime.grounded };
+    }
+    if (!release && runtime.modeTime >= 1.06) {
+      release = { y: runtime.y, velocityY: runtime.velocityY, grounded: runtime.grounded };
+    }
+  }
+  assert.ok(hindDrive.grounded, "hind drive must still transmit force through the roof");
+  assert.ok(hindDrive.y > roofY + 0.35, "legs did not extend the body above the support");
+  assert.ok(hindDrive.velocityY > 3.2, "hindlimbs produced no ballistic launch velocity");
+  assert.equal(release.grounded, false);
+  assert.ok(release.y > roofY + 1.8, "manus vault released before the body cleared the roof");
+  assert.ok(release.velocityY > 7, "airborne climb was not inherited from the leg impulse");
+});
+
+test("powered wing phases produce a visible physical heave instead of pose-only flapping", () => {
+  const profile = basaltStrongholdDragonProfile;
+  const runtime = createMediumDragonRuntime(profile);
+  while (runtime.mode !== "patrol-flap") stepMediumDragon(runtime, profile, 1 / 120);
+  let previousVelocityY = runtime.velocityY;
+  let downstrokeAcceleration = 0;
+  let recoveryAcceleration = 0;
+  let downstrokeSamples = 0;
+  let recoverySamples = 0;
+  let minimumY = runtime.y;
+  let maximumY = runtime.y;
+  for (let tick = 0; tick < 4 * 120; tick += 1) {
+    stepMediumDragon(runtime, profile, 1 / 120);
+    const accelerationY = (runtime.velocityY - previousVelocityY) * 120;
+    previousVelocityY = runtime.velocityY;
+    minimumY = Math.min(minimumY, runtime.y);
+    maximumY = Math.max(maximumY, runtime.y);
+    if (runtime.lastWing.phase >= 0.08 && runtime.lastWing.phase < 0.52) {
+      downstrokeAcceleration += accelerationY;
+      downstrokeSamples += 1;
+    } else {
+      recoveryAcceleration += accelerationY;
+      recoverySamples += 1;
+    }
+  }
+  const meanDownstroke = downstrokeAcceleration / downstrokeSamples;
+  const meanRecovery = recoveryAcceleration / recoverySamples;
+  assert.ok(meanDownstroke > 5, `downstroke acceleration is ${meanDownstroke}`);
+  assert.ok(meanRecovery < -3, `recovery acceleration is ${meanRecovery}`);
+  assert.ok(maximumY - minimumY > 0.45, "wing beat did not move the body vertically");
+});
+
+test("corrective return strokes are visible instead of being hidden by the glide behaviour label", () => {
+  const runtime = createMediumDragonRuntime(basaltStrongholdDragonProfile);
+  runtime.mode = "return";
+  runtime.grounded = false;
+  runtime.lastWing = sampleMediumDragonWingState({
+    mode: "flap",
+    phase: 0.3,
+    powerFraction: 0.65,
+  });
+  const correctiveStroke = sampleMediumDragonPose(runtime);
+  assert.equal(correctiveStroke.current, "flight-upstroke");
+  assert.equal(correctiveStroke.next, "flight-downstroke");
+  runtime.lastWing = sampleMediumDragonWingState({
+    mode: "glide",
+    phase: 0,
+    powerFraction: 0,
+  });
+  assert.equal(sampleMediumDragonPose(runtime).current, "glide");
+});
+
 test("the deterministic animal completes roost, launch, patrol and rooftop landing without pose discontinuity", () => {
   const profile = basaltStrongholdDragonProfile;
   const runtime = createMediumDragonRuntime(profile);
@@ -185,6 +292,7 @@ test("the deterministic animal completes roost, launch, patrol and rooftop landi
   const contacts = createMediumDragonContactState();
   const visitedModes = new Set([runtime.mode]);
   const visitedTakeoffPhases = new Set();
+  const returnWingModes = new Set();
   let minimumY = runtime.y;
   let minimumReserve = runtime.needs.flightReserve;
   let maximumLoadFactor = 0;
@@ -199,6 +307,7 @@ test("the deterministic animal completes roost, launch, patrol and rooftop landi
     visitedModes.add(runtime.mode);
     const phase = mediumDragonTakeoffPhase(runtime);
     if (phase) visitedTakeoffPhases.add(phase);
+    if (runtime.mode === "return") returnWingModes.add(runtime.lastWing.mode);
     minimumY = Math.min(minimumY, runtime.y);
     minimumReserve = Math.min(minimumReserve, runtime.needs.flightReserve);
     maximumLoadFactor = Math.max(
@@ -259,17 +368,52 @@ test("the deterministic animal completes roost, launch, patrol and rooftop landi
     "unfold",
     "first-downstroke",
   ]));
-  assert.ok(minimumY >= 33.37, `fell through roof datum: ${minimumY}`);
+  assert.deepEqual(returnWingModes, new Set(["glide", "flap"]));
+  assert.ok(minimumY >= 33.56, `fell through roof datum: ${minimumY}`);
   assert.ok(minimumReserve > 0.64, `exhausted flight reserve: ${minimumReserve}`);
   assert.ok(maximumLoadFactor <= 3.451, `unbounded transient load: ${maximumLoadFactor}`);
-  assert.ok(touchdownVerticalSpeed > -3.1, `hard vertical touchdown: ${touchdownVerticalSpeed}`);
-  assert.ok(touchdownSpeed < 9.2, `unbounded touchdown speed: ${touchdownSpeed}`);
+  assert.ok(touchdownVerticalSpeed > -2.4, `hard vertical touchdown: ${touchdownVerticalSpeed}`);
+  assert.ok(touchdownSpeed < 3.8, `unbounded touchdown speed: ${touchdownSpeed}`);
   assert.ok(maximumJointSeparation < 0.006, `skeleton opened by ${maximumJointSeparation} m`);
   assert.equal(runtime.mode, "rest");
   assert.equal(runtime.currentNodeId, "tower-landing");
   const landing = profile.territory.nodes.find((node) => node.id === "tower-landing");
   assert.ok(landing);
-  assert.ok(Math.hypot(runtime.x - landing.position[0], runtime.z - landing.position[2]) < 5.5);
+  const forwardX = Math.sin(landing.heading);
+  const forwardZ = Math.cos(landing.heading);
+  const rightX = Math.cos(landing.heading);
+  const rightZ = -Math.sin(landing.heading);
+  const relativeX = runtime.x - landing.position[0];
+  const relativeZ = runtime.z - landing.position[2];
+  const along = relativeX * forwardX + relativeZ * forwardZ;
+  const cross = Math.abs(relativeX * rightX + relativeZ * rightZ);
+  assert.ok(landing.touchdownFootprint);
+  assert.ok(along >= -landing.touchdownFootprint.rearExtent);
+  assert.ok(along <= landing.touchdownFootprint.forwardExtent);
+  assert.ok(cross <= landing.touchdownFootprint.halfWidth);
+});
+
+test("rooftop braking and contact remain bounded across render rates", () => {
+  for (const frequency of [30, 60, 120, 240]) {
+    const runtime = createMediumDragonRuntime(basaltStrongholdDragonProfile);
+    let contact = null;
+    for (let tick = 0; tick < 150 * frequency; tick += 1) {
+      const previousMode = runtime.mode;
+      const velocity = [runtime.velocityX, runtime.velocityY, runtime.velocityZ];
+      stepMediumDragon(runtime, basaltStrongholdDragonProfile, 1 / frequency);
+      if (previousMode === "flare" && runtime.mode === "touchdown") {
+        contact = {
+          speed: Math.hypot(...velocity),
+          velocityY: velocity[1],
+        };
+      }
+    }
+    assert.equal(runtime.firstFlightCompleted, true, `${frequency} Hz did not land`);
+    assert.equal(runtime.currentNodeId, "tower-landing");
+    assert.ok(contact, `${frequency} Hz missed contact`);
+    assert.ok(contact.speed < 3.8, `${frequency} Hz contact speed ${contact.speed}`);
+    assert.ok(contact.velocityY > -2.4, `${frequency} Hz vertical speed ${contact.velocityY}`);
+  }
 });
 
 test("contact order is four-point preload, manus vault, hind touchdown, then manus recovery", () => {

@@ -545,9 +545,13 @@ function stepTakeoff(
   } else {
     runtime.grounded = false;
     stepFlightBody(runtime, profile, dt, phase === "clearance" ? "opening" : "flap");
+    // Opening is not a hidden flap. Hold the shared oscillator at the raised
+    // reversal until the first powered stroke can begin visibly and
+    // aerodynamically from the same phase.
+    if (phase === "clearance" || phase === "unfold") runtime.flapPhase = 0.08;
   }
   if (runtime.grounded) runtime.lastForce = [force.x, force.y, force.z];
-  if (runtime.modeTime >= 1.72) {
+  if (runtime.modeTime >= 1.96) {
     runtime.flightTime = 0;
     runtime.targetNodeId = null;
     setMode(runtime, "powered-climb", "patrol", runtime.intentReason);
@@ -612,19 +616,31 @@ function flightTarget(
   const dz = target.position[2] - runtime.z;
   const horizontal = Math.hypot(dx, dz);
   if (runtime.mode === "approach" || runtime.mode === "flare") {
+    const forwardX = Math.sin(target.heading);
+    const forwardZ = Math.cos(target.heading);
     const rightX = Math.cos(target.heading);
     const rightZ = -Math.sin(target.heading);
+    const relativeX = runtime.x - target.position[0];
+    const relativeZ = runtime.z - target.position[2];
+    const along = relativeX * forwardX + relativeZ * forwardZ;
     const crossTrack = (runtime.x - target.position[0]) * rightX
       + (runtime.z - target.position[2]) * rightZ;
     const correction = clamp(-crossTrack * 0.035, -0.65, 0.65);
     const runwayHeading = target.heading + correction;
     const runwayLookAhead = 60;
+    const touchdownStart = -(target.touchdownFootprint?.rearExtent
+      ?? target.usableRadius * 0.35);
+    const distanceBeforeSurface = Math.max(0, touchdownStart - along);
+    const distanceInsideSurface = Math.max(0, along - touchdownStart);
+    const flareHeight = distanceBeforeSurface > 0
+      ? clamp(0.65 + distanceBeforeSurface * 0.18, 0.65, 6.5)
+      : clamp(0.65 - distanceInsideSurface * 0.45, 0.08, 0.65);
     return new Vector3(
       runtime.x + Math.sin(runwayHeading) * runwayLookAhead,
       target.position[1] + clamp(
-        horizontal * (runtime.mode === "flare" ? 0.15 : 0.16),
+        runtime.mode === "flare" ? flareHeight : horizontal * 0.16,
         0.08,
-        runtime.mode === "flare" ? 6 : 11.5,
+        runtime.mode === "flare" ? 6.5 : 11.5,
       ),
       runtime.z + Math.cos(runwayHeading) * runwayLookAhead,
     );
@@ -650,7 +666,7 @@ function desiredFlightSpeed(runtime: MediumDragonRuntime): number {
     case "approach":
       return 11.4;
     case "flare":
-      return 7.2;
+      return 4.2;
     default:
       return 11;
   }
@@ -697,13 +713,15 @@ function stepFlightBody(
   // Body pitch follows the achieved flight path plus the residual incidence
   // not already supplied by the wing. Asking the nose to point at a high
   // target directly would hold a stalled animal nose-high as it fell.
-  const desiredPitch = clamp(
-    moveToward(flightPathAngle, lowSpeedRecovery, 0.12)
-      + desiredAngleOfAttack
-      - representativeWingIncidence,
-    -0.34,
-    0.34,
-  );
+  const desiredPitch = runtime.mode === "flare"
+    ? clamp(0.16 + Math.max(0, -runtime.velocityY - 0.5) * 0.018, 0.15, 0.23)
+    : clamp(
+        moveToward(flightPathAngle, lowSpeedRecovery, 0.12)
+          + desiredAngleOfAttack
+          - representativeWingIncidence,
+        -0.34,
+        0.34,
+      );
   const rollControl = clamp(
     (desiredRoll - runtime.roll) * -1.85 + runtime.rollRate * 0.42,
     -1,
@@ -726,12 +744,16 @@ function stepFlightBody(
   ) {
     wingMode = "flap";
   }
+  const periodicFlapGlideBurst = (
+    runtime.mode === "patrol-glide" || runtime.mode === "return"
+  ) && runtime.modeTime > 2 && runtime.modeTime % 8.4 < 1.15;
+  if (periodicFlapGlideBurst) wingMode = "flap";
   const power = wingMode === "flap"
     ? clamp(0.72 + altitudeDemand + speedDemand, 0.48, 1)
     : wingMode === "flare"
-      ? 0.72
+      ? clamp(0.8 + Math.max(0, -runtime.velocityY - 0.65) * 0.055, 0.76, 1)
       : 0;
-  const frequency = 0.92 + power * 0.36;
+  const frequency = wingMode === "flare" ? 1.62 : 0.92 + power * 0.36;
   runtime.flapPhase = (runtime.flapPhase + dt * frequency) % 1;
   const sampledWing = sampleMediumDragonWingState({
     mode: wingMode,
@@ -742,9 +764,9 @@ function stepFlightBody(
   const liftDemand = wingMode === "flap"
     ? Math.max(0, altitudeDemand)
     : wingMode === "flare"
-      ? clamp((-runtime.velocityY - 1.25) * 0.14, 0, 0.28)
+      ? clamp((-runtime.velocityY - 0.45) * 0.18, 0, 0.4)
       : 0;
-  const descentUnload = runtime.mode === "approach" || runtime.mode === "flare"
+  const descentUnload = runtime.mode === "approach"
     ? Math.max(0, -altitudeDemand - liftDemand)
     : 0;
   const wing: MediumDragonWingState = liftDemand > 0 || descentUnload > 0
@@ -774,11 +796,105 @@ function stepFlightBody(
   // Fully spread panels, legs and the raised chest make the flare a large
   // air-brake. This is still a force integrated through the same body; it is
   // not a scripted deceleration or a position correction.
-  const bodyDragArea = runtime.mode === "flare" ? 8.5 : 1.65;
+  const bodyDragArea = runtime.mode === "flare" ? 9.5 : 1.65;
   const bodyDrag = worldVelocity.clone().multiplyScalar(
     -0.5 * 1.225 * worldVelocity.length() * 0.58 * bodyDragArea,
   );
-  const totalForce = aerodynamicForce.add(bodyDrag).clampLength(
+  const flareBrake = new Vector3();
+  if (runtime.mode === "flare" && horizontalSpeed > 2.8) {
+    const downstrokeFraction = wing.panels.reduce(
+      (sum, panel) => sum + clamp(-panel.strokeVelocity / 7.2, 0, 1),
+      0,
+    ) / wing.panels.length;
+    const horizontalVelocity = new Vector3(runtime.velocityX, 0, runtime.velocityZ);
+    const dynamicPressure = 0.5 * 1.225 * horizontalSpeed * horizontalSpeed;
+    const speedExcess = clamp((horizontalSpeed - 2.8) / 5.2, 0, 1);
+    flareBrake.copy(horizontalVelocity).normalize().multiplyScalar(
+      -dynamicPressure
+        * MEDIUM_DRAGON_MORPHOLOGY.wingArea
+        * 0.42
+        * (0.48 + downstrokeFraction * 0.52)
+        * speedExcess,
+    );
+  }
+  // The blade-element approximation above does not include the added mass of
+  // air accelerated by a broad membrane. During the near-hover landing beat
+  // that reaction is a material part of support: the downstroke produces the
+  // main vertical pulse and the open recovery wing can briefly recapture its
+  // own wake when the body falls below the commanded glide path.
+  const strokeReaction = new Vector3();
+  const approachThrust = new Vector3();
+  if (wingMode === "flap") {
+    const meanDownstrokeSpeed = wing.panels.reduce(
+      (sum, panel) => sum + Math.max(0, -panel.strokeVelocity),
+      0,
+    ) / wing.panels.length;
+    const addedMassCoefficient = 0.65
+      + Math.max(0, altitudeDemand) * 4.5
+      + (runtime.mode === "powered-climb" ? 0.45 : 0);
+    const reactionMagnitude = 0.5
+      * 1.225
+      * MEDIUM_DRAGON_MORPHOLOGY.wingArea
+      * meanDownstrokeSpeed
+      * meanDownstrokeSpeed
+      * addedMassCoefficient;
+    strokeReaction.set(0, reactionMagnitude, 0).applyQuaternion(orientation);
+  }
+  if (runtime.mode === "flare") {
+    const meanDownstrokeSpeed = wing.panels.reduce(
+      (sum, panel) => sum + Math.max(0, -panel.strokeVelocity),
+      0,
+    ) / wing.panels.length;
+    const desiredVerticalSpeed = clamp(
+      (target.y - runtime.y) * 0.6,
+      -1.35,
+      0.8,
+    );
+    const addedMassCoefficient = clamp(
+      4.2 + (desiredVerticalSpeed - runtime.velocityY) * 3,
+      0,
+      16,
+    );
+    const reactionMagnitude = 0.5
+      * 1.225
+      * MEDIUM_DRAGON_MORPHOLOGY.wingArea
+      * meanDownstrokeSpeed
+      * meanDownstrokeSpeed
+      * addedMassCoefficient;
+    const recoveryFraction = clamp(1 - meanDownstrokeSpeed / 3, 0, 1);
+    const wakeCaptureMagnitude = MASS * GRAVITY * clamp(
+      (desiredVerticalSpeed - runtime.velocityY) * 0.46,
+      0,
+      1.1,
+    ) * recoveryFraction;
+    strokeReaction
+      .set(0, reactionMagnitude + wakeCaptureMagnitude, 0)
+      .applyQuaternion(orientation);
+
+    const landing = runtime.targetNodeId ? nodeById(profile, runtime.targetNodeId) : null;
+    if (landing) {
+      const forwardX = Math.sin(landing.heading);
+      const forwardZ = Math.cos(landing.heading);
+      const along = (runtime.x - landing.position[0]) * forwardX
+        + (runtime.z - landing.position[2]) * forwardZ;
+      const touchdownStart = -(landing.touchdownFootprint?.rearExtent
+        ?? landing.usableRadius);
+      const alongSpeed = runtime.velocityX * forwardX + runtime.velocityZ * forwardZ;
+      if (along < touchdownStart && alongSpeed < 3.4) {
+        const poweredFraction = clamp(meanDownstrokeSpeed / 8, 0, 1);
+        approachThrust.set(forwardX, 0, forwardZ).multiplyScalar(
+          MASS * clamp((3.4 - alongSpeed) * 1.35, 0, 4.2)
+            * (0.3 + poweredFraction * 0.7),
+        );
+      }
+    }
+  }
+  const totalForce = aerodynamicForce
+    .add(bodyDrag)
+    .add(flareBrake)
+    .add(strokeReaction)
+    .add(approachThrust)
+    .clampLength(
     0,
     MASS * GRAVITY * 3.45,
   );
@@ -955,12 +1071,13 @@ function stepAirMode(
       runtime.approachStage = "staging";
       setMode(runtime, "return", "patrol", "the final approach fell below the usable glide path");
     } else if (
-      along >= -38
+      along >= -56
       && along <= -3
       && cross < 16
       && runtime.y >= landing.position[1]
-      && runtime.y < landing.position[1] + 10.5
+      && runtime.y < landing.position[1] + 14
     ) {
+      runtime.flapPhase = 0.08;
       setMode(runtime, "flare");
     } else if (along > 5) {
       runtime.approachStage = "staging";
@@ -985,7 +1102,26 @@ function stepAirMode(
     const relativeZ = runtime.z - landing.position[2];
     const along = relativeX * forwardX + relativeZ * forwardZ;
     const cross = Math.abs(relativeX * rightX + relativeZ * rightZ);
-    if (horizontal <= landing.usableRadius + 1.8 && runtime.y <= landing.position[1] + 0.12) {
+    const horizontalSpeed = Math.hypot(runtime.velocityX, runtime.velocityZ);
+    const lateBrakingStroke = runtime.flapPhase >= 0.36 && runtime.flapPhase <= 0.64;
+    const raisedWingReversal = runtime.flapPhase >= 0.88 || runtime.flapPhase <= 0.08;
+    const contactReady = horizontalSpeed <= 4.8
+      && runtime.velocityY >= -2.4
+      && (lateBrakingStroke || raisedWingReversal);
+    const contactRadius = landing.usableRadius
+      + (landing.kind === "landing" ? 0.8 : 1.8);
+    const footprint = landing.touchdownFootprint;
+    const withinLandingSurface = footprint
+      ? along >= -footprint.rearExtent
+        && along <= footprint.forwardExtent
+        && cross <= footprint.halfWidth
+      : horizontal <= contactRadius;
+    if (
+      withinLandingSurface
+      && runtime.y >= landing.position[1] - 0.06
+      && runtime.y <= landing.position[1] + 0.18
+      && contactReady
+    ) {
       runtime.y = landing.position[1];
       runtime.velocityY = Math.max(0, -runtime.velocityY * 0.05);
       runtime.currentNodeId = landing.id;
@@ -993,7 +1129,14 @@ function stepAirMode(
       setMode(runtime, "touchdown");
     } else if (along > 9 || cross > 20) {
       runtime.approachStage = "staging";
-      setMode(runtime, "return", "patrol", "the flare retained a go-around before physical contact");
+      setMode(
+        runtime,
+        "return",
+        "patrol",
+        contactReady
+          ? "the flare retained a go-around before physical contact"
+          : "the flare could not shed enough kinetic energy for foot contact",
+      );
     }
   }
 }
@@ -1143,6 +1286,29 @@ function pair(
   return { current, next, blend: clamp01(blend), ...extra };
 }
 
+function sampleWingCycle(
+  runtime: MediumDragonRuntime,
+  upstrokePose: MediumDragonPoseSample["current"],
+  downstrokePose: MediumDragonPoseSample["current"],
+): MediumDragonPoseSample {
+  const phase = runtime.lastWing.phase;
+  const flareCycle = runtime.lastWing.mode === "flare";
+  const downstrokeStart = flareCycle ? 0.06 : 0.08;
+  const downstrokeEnd = flareCycle ? 0.62 : 0.52;
+  const downstroke = phase >= downstrokeStart && phase < downstrokeEnd;
+  const downstrokeDuration = downstrokeEnd - downstrokeStart;
+  const recoveryDuration = 1 - downstrokeDuration;
+  const local = downstroke
+    ? (phase - downstrokeStart) / downstrokeDuration
+    : phase < downstrokeStart
+      ? (phase + 1 - downstrokeEnd) / recoveryDuration
+      : (phase - downstrokeEnd) / recoveryDuration;
+  const blend = 0.5 - Math.cos(clamp01(local) * Math.PI) * 0.5;
+  return downstroke
+    ? pair(upstrokePose, downstrokePose, blend)
+    : pair(downstrokePose, upstrokePose, blend);
+}
+
 export function sampleMediumDragonPose(
   runtime: MediumDragonRuntime,
 ): MediumDragonPoseSample {
@@ -1156,37 +1322,33 @@ export function sampleMediumDragonPose(
     return pair("ground-observe", "takeoff-unfold", open * 0.48, { wingCare: open });
   }
   if (runtime.mode === "takeoff") {
-    const phase = mediumDragonTakeoffPhase(runtime);
-    const map: Readonly<Record<NonNullable<MediumDragonTakeoffPhase>, MediumDragonPoseSample["current"]>> = {
-      preload: "takeoff-preload",
-      "hind-drive": "takeoff-hind-drive",
-      "manus-vault": "takeoff-manus-vault",
-      clearance: "takeoff-clearance",
-      unfold: "takeoff-unfold",
-      "first-downstroke": "takeoff-first-downstroke",
-    };
-    const order = [
-      "preload",
-      "hind-drive",
-      "manus-vault",
-      "clearance",
-      "unfold",
-      "first-downstroke",
-    ] as const;
-    const index = Math.max(0, order.indexOf(phase ?? "preload"));
-    const next = order[Math.min(order.length - 1, index + 1)];
-    return pair(map[order[index]], map[next], 0.18);
+    const time = runtime.modeTime;
+    const transition = (
+      start: number,
+      end: number,
+      from: MediumDragonPoseSample["current"],
+      to: MediumDragonPoseSample["current"],
+    ) => pair(
+      from,
+      to,
+      0.5 - Math.cos(clamp01((time - start) / (end - start)) * Math.PI) * 0.5,
+    );
+    if (time < 0.56) return transition(0, 0.56, "ground-observe", "takeoff-preload");
+    if (time < 0.8) return transition(0.56, 0.8, "takeoff-preload", "takeoff-hind-drive");
+    if (time < 1.06) return transition(0.8, 1.06, "takeoff-hind-drive", "takeoff-manus-vault");
+    if (time < 1.24) return transition(1.06, 1.24, "takeoff-manus-vault", "takeoff-clearance");
+    if (time < 1.52) return transition(1.24, 1.52, "takeoff-clearance", "takeoff-unfold");
+    return transition(1.52, 1.96, "takeoff-unfold", "takeoff-first-downstroke");
   }
-  if (["powered-climb", "patrol-flap"].includes(runtime.mode)) {
-    const downstroke = runtime.flapPhase >= 0.08 && runtime.flapPhase < 0.52;
-    const local = downstroke
-      ? (runtime.flapPhase - 0.08) / 0.44
-      : runtime.flapPhase < 0.08
-        ? (runtime.flapPhase + 0.48) / 0.56
-        : (runtime.flapPhase - 0.52) / 0.56;
-    return downstroke
-      ? pair("flight-upstroke", "flight-downstroke", Math.sin(clamp01(local) * Math.PI * 0.5))
-      : pair("flight-downstroke", "flight-upstroke", Math.sin(clamp01(local) * Math.PI * 0.5));
+  if (runtime.mode === "flare") {
+    return sampleWingCycle(runtime, "landing-flare", "hover-brake");
+  }
+  // Return and final approach are usually glides, but their controller can
+  // ask for an occasional corrective stroke. Pose follows the delivered wing
+  // state rather than the coarse behaviour label, so that stroke cannot be
+  // physically active while visually frozen.
+  if (!runtime.grounded && runtime.lastWing.mode === "flap") {
+    return sampleWingCycle(runtime, "flight-upstroke", "flight-downstroke");
   }
   if (runtime.mode === "patrol-glide" || runtime.mode === "return" || runtime.mode === "emergency-glide") {
     const bank = Math.abs(runtime.roll) > 0.16;
@@ -1197,8 +1359,7 @@ export function sampleMediumDragonPose(
       : pair("glide", "glide", 0);
   }
   if (runtime.mode === "approach") return pair("glide", "landing-flare", clamp01(runtime.modeTime / 1.2));
-  if (runtime.mode === "flare") return pair("landing-flare", "landing-flare", 0);
-  if (runtime.mode === "touchdown") return pair("landing-flare", "landing-touchdown", clamp01(runtime.modeTime / 0.58));
+  if (runtime.mode === "touchdown") return pair("hover-brake", "landing-touchdown", clamp01(runtime.modeTime / 0.58));
   if (runtime.mode === "wing-unload") return pair("landing-touchdown", "landing-wing-unload", clamp01(runtime.modeTime / 0.82));
   if (runtime.mode === "ground-recovery") return pair("landing-wing-unload", "ground-recovery", clamp01(runtime.modeTime / 1.15));
   return pair("ground-observe", "ground-observe", 0);
