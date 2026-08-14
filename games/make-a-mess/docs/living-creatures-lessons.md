@@ -113,7 +113,7 @@
 | `content/objects/creatures/mediumDragonObject.ts` | принятое четырёхконечное тело: крыло является передней конечностью |
 | `content/objects/creatures/mediumDragonRigObject.ts` | 48-костный skeleton, наземные/лётные references, launch/flight/landing atlas |
 | `game/mediumDragonPopulationProfile.ts` | вид, phenotype, skills, airspace и разрушаемые surface affordances |
-| `content/populations/mediumDragonPopulationProfiles.ts` | одна особь базальтовой крепости: башня, коридор и аварийные площадки |
+| `content/populations/mediumDragonPopulationProfiles.ts` | одна особь базальтовой крепости: три башенных site affordances, paired launches, watch sectors и аварийные площадки |
 | `game/mediumDragonAerodynamics.ts` | четыре нагруженных wing panels, soft stall, общий oscillator и asymmetric trim |
 | `game/mediumDragonSim.ts` | needs/intent, внимание, наземное движение, vault, полёт, заход и контактная посадка |
 | `game/mediumDragonRuntimePose.ts` | один 48-костный whole-body pose, сегментное крыло и последовательность опор |
@@ -489,22 +489,30 @@ npm run typecheck
 - принятая геометрия, skeleton/action/wing-morph atlas и одна runtime-популяция
   дракона в базальтовой крепости;
 - force-based vault, четыре аналитические секции крыла, soft stall,
-  flap/glide/return/approach/flare, hind-first touchdown и аварийная посадка
-  при разрушении насеста;
+  flap/glide/return/approach/flare/go-around, hind-first touchdown и аварийная
+  посадка после потери всех нормальных насестов;
 - контактный datum дракона совпадает с верхом опорной геометрии, а посадка
   проверяет ориентированный footprint кровли; лапный vault наследует скорость
   в первый мах, downstroke даёт измеримый body heave, корректирующие махи
   возврата видимы, а flare гасит скорость повторными тормозными ударами крыла;
 - насест, запуск и посадка в базальтовой крепости стоят на свободном верхе
-  короны башни, а не на нижнем настиле за её кромкой; крайние точки опоры лап
-  проверяются против реального footprint короны;
+  короны тёмной башни и двух надвратных башен, а не на нижнем настиле за их
+  кромкой; крайние точки ориентированного footprint проверяются против
+  реальной breakable-геометрии, и у каждого поднятого места есть paired launch;
 - runtime-крыло использует полную семипанельную flight-мембрану с владельцами
   от плеча до четвёртой фаланги; её видимая площадь следует физическим панелям,
   а recovery действительно уменьшает поверхность; воздушный поворот проходит
   через взгляд, плавно набранную асимметрию крыльев, крен, yaw и компенсацию
   шеи/хвоста с численными пределами углового движения;
 - head-first внимание, needs/intent с записанной причиной, ground observe/walk,
-  body care и территориальный патруль.
+  body care и территориальный патруль; landing sites оцениваются как набор
+  observation/rest/body-care/territorial/risk affordances, а память
+  recency/novelty даёт длинному прогону посетить все три вершины;
+- финальный створ ограничивает поперечную скорость вместе с положением;
+  отменённое касание входит в силовой go-around и сначала восстанавливает
+  высоту/скорость, поэтому near-stall не передаётся обычному glide route;
+- phenotype крепости — basalt/ash с тёмно-винной мембраной и янтарным глазом,
+  при этом appearance не участвует в выборе механики или поведения.
 
 Не реализовано и не обещано текущим кодом:
 

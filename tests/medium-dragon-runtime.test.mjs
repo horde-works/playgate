@@ -33,6 +33,7 @@ import {
   mediumDragonTakeoffPhase,
   sampleMediumDragonPose,
   scoreMediumDragonIntents,
+  scoreMediumDragonLandingNodes,
   stepMediumDragon,
 } from "../games/make-a-mess/src/game/mediumDragonSim.ts";
 import { basaltStrongholdScene } from "../games/make-a-mess/src/game/basaltStrongholdScene.ts";
@@ -124,10 +125,34 @@ test("Basalt Stronghold owns one dragon profile, roost and destructible landing 
   assert.equal(definition.species, "Draco pterosauroides");
   assert.equal(definition.profile, basaltStrongholdDragonProfile);
   assert.equal(definition.profile.territory.spawnNodeId, "tower-roost");
+  assert.equal(definition.profile.phenotype, "basalt-ash-membrane");
+  assert.deepEqual(definition.profile.appearance, {
+    skin: "#373538",
+    skinPlane: "#51494a",
+    belly: "#75645a",
+    membrane: "#604047",
+    claws: "#292a2b",
+    eyes: "#d6a53b",
+  });
   assert.ok(definition.profile.skills.includes("quadrupedal-vault-launch"));
   assert.ok(definition.profile.skills.includes("glide-soar"));
-  assert.equal(definition.profile.territory.nodes.filter((node) => node.kind === "landing").length, 1);
+  const landings = definition.profile.territory.nodes.filter((node) => node.kind === "landing");
+  assert.equal(landings.length, 3);
+  assert.deepEqual(
+    new Set(landings.map((node) => node.siteId)),
+    new Set(["dark-tower-crown", "left-gate-tower", "right-gate-tower"]),
+  );
   assert.equal(definition.profile.territory.nodes.filter((node) => node.kind === "emergency-landing").length, 2);
+  for (const landingNode of landings) {
+    assert.ok(
+      definition.profile.territory.nodes.some(
+        (node) => node.kind === "launch" && node.siteId === landingNode.siteId,
+      ),
+      `${landingNode.siteId}: landing site has no paired launch`,
+    );
+    assert.ok(landingNode.watchTarget, `${landingNode.siteId}: lookout has no watch sector`);
+    assert.ok(landingNode.behaviour, `${landingNode.siteId}: surface has no behaviour affordances`);
+  }
   for (const node of definition.profile.territory.nodes) {
     for (const pieceId of node.supportPieceIds) {
       assert.equal(
@@ -153,6 +178,36 @@ test("Basalt Stronghold owns one dragon profile, roost and destructible landing 
     (node) => node.id === "tower-landing",
   );
   assert.ok(landing.touchdownFootprint, "tower landing needs its rectangular roof footprint");
+  for (const gateLanding of landings.filter((node) => node.siteId.endsWith("gate-tower"))) {
+    assert.ok(gateLanding.touchdownFootprint);
+    const supports = gateLanding.supportPieceIds.map(
+      (pieceId) => basaltStrongholdScene.breakablePieceById.get(pieceId),
+    );
+    const minX = Math.min(...supports.map((piece) => piece.position[0] - piece.size[0] / 2));
+    const maxX = Math.max(...supports.map((piece) => piece.position[0] + piece.size[0] / 2));
+    const minZ = Math.min(...supports.map((piece) => piece.position[2] - piece.size[2] / 2));
+    const maxZ = Math.max(...supports.map((piece) => piece.position[2] + piece.size[2] / 2));
+    const forwardX = Math.sin(gateLanding.heading);
+    const forwardZ = Math.cos(gateLanding.heading);
+    const rightX = Math.cos(gateLanding.heading);
+    const rightZ = -Math.sin(gateLanding.heading);
+    for (const along of [
+      -gateLanding.touchdownFootprint.rearExtent,
+      gateLanding.touchdownFootprint.forwardExtent,
+    ]) {
+      for (const cross of [
+        -gateLanding.touchdownFootprint.halfWidth,
+        gateLanding.touchdownFootprint.halfWidth,
+      ]) {
+        const x = gateLanding.position[0] + forwardX * along + rightX * cross;
+        const z = gateLanding.position[2] + forwardZ * along + rightZ * cross;
+        assert.ok(
+          x >= minX && x <= maxX && z >= minZ && z <= maxZ,
+          `${gateLanding.id}: touchdown corner (${x}, ${z}) leaves the physical roof`,
+        );
+      }
+    }
+  }
 
   const crownPieces = [...basaltStrongholdScene.breakablePieceById.values()].filter(
     (piece) => piece.id.startsWith("stronghold:dark-tower:crown:base:"),
@@ -511,7 +566,7 @@ test("the deterministic animal completes roost, launch, patrol and rooftop landi
   let maximumJointSeparation = 0;
   let previousMode = runtime.mode;
 
-  for (let tick = 0; tick < 130 * 60; tick += 1) {
+  for (let tick = 0; tick < 180 * 60; tick += 1) {
     const beforeVerticalSpeed = runtime.velocityY;
     stepMediumDragon(runtime, profile, 1 / 60);
     visitedModes.add(runtime.mode);
@@ -552,7 +607,11 @@ test("the deterministic animal completes roost, launch, patrol and rooftop landi
         parentPosition.distanceTo(childPosition),
       );
     }
-    if (runtime.firstFlightCompleted && runtime.mode === "rest" && runtime.modeTime >= 1) {
+    if (
+      runtime.firstFlightCompleted
+      && runtime.mode === "territorial-display"
+      && runtime.modeTime >= 1
+    ) {
       break;
     }
   }
@@ -569,7 +628,7 @@ test("the deterministic animal completes roost, launch, patrol and rooftop landi
     "touchdown",
     "wing-unload",
     "ground-recovery",
-    "rest",
+    "territorial-display",
   ]) {
     assert.equal(visitedModes.has(mode), true, `missing ${mode}`);
   }
@@ -582,18 +641,18 @@ test("the deterministic animal completes roost, launch, patrol and rooftop landi
     "first-downstroke",
   ]));
   assert.deepEqual(returnWingModes, new Set(["glide", "flap"]));
-  const towerSurfaceY = profile.territory.nodes.find(
-    (node) => node.id === "tower-roost",
-  ).position[1];
-  assert.ok(minimumY >= towerSurfaceY - 0.01, `fell through roof datum: ${minimumY}`);
+  const lowestSurfaceY = Math.min(...profile.territory.nodes
+    .filter((node) => node.kind === "landing")
+    .map((node) => node.position[1]));
+  assert.ok(minimumY >= lowestSurfaceY - 0.01, `fell through landing datum: ${minimumY}`);
   assert.ok(minimumReserve > 0.64, `exhausted flight reserve: ${minimumReserve}`);
   assert.ok(maximumLoadFactor <= 3.451, `unbounded transient load: ${maximumLoadFactor}`);
   assert.ok(touchdownVerticalSpeed > -2.4, `hard vertical touchdown: ${touchdownVerticalSpeed}`);
   assert.ok(touchdownSpeed < 3.8, `unbounded touchdown speed: ${touchdownSpeed}`);
   assert.ok(maximumJointSeparation < 0.006, `skeleton opened by ${maximumJointSeparation} m`);
-  assert.equal(runtime.mode, "rest");
-  assert.equal(runtime.currentNodeId, "tower-landing");
-  const landing = profile.territory.nodes.find((node) => node.id === "tower-landing");
+  assert.equal(runtime.mode, "territorial-display");
+  assert.equal(runtime.currentNodeId, "right-gate-landing");
+  const landing = profile.territory.nodes.find((node) => node.id === runtime.currentNodeId);
   assert.ok(landing);
   const forwardX = Math.sin(landing.heading);
   const forwardZ = Math.cos(landing.heading);
@@ -613,10 +672,12 @@ test("rooftop braking and contact remain bounded across render rates", () => {
   for (const frequency of [30, 60, 120, 240]) {
     const runtime = createMediumDragonRuntime(basaltStrongholdDragonProfile);
     let contact = null;
-    for (let tick = 0; tick < 150 * frequency; tick += 1) {
+    let minimumY = runtime.y;
+    for (let tick = 0; tick < 360 * frequency && !runtime.firstFlightCompleted; tick += 1) {
       const previousMode = runtime.mode;
       const velocity = [runtime.velocityX, runtime.velocityY, runtime.velocityZ];
       stepMediumDragon(runtime, basaltStrongholdDragonProfile, 1 / frequency);
+      minimumY = Math.min(minimumY, runtime.y);
       if (previousMode === "flare" && runtime.mode === "touchdown") {
         contact = {
           speed: Math.hypot(...velocity),
@@ -625,10 +686,11 @@ test("rooftop braking and contact remain bounded across render rates", () => {
       }
     }
     assert.equal(runtime.firstFlightCompleted, true, `${frequency} Hz did not land`);
-    assert.equal(runtime.currentNodeId, "tower-landing");
+    assert.equal(runtime.currentNodeId, "right-gate-landing");
     assert.ok(contact, `${frequency} Hz missed contact`);
     assert.ok(contact.speed < 3.8, `${frequency} Hz contact speed ${contact.speed}`);
     assert.ok(contact.velocityY > -2.4, `${frequency} Hz vertical speed ${contact.velocityY}`);
+    assert.ok(minimumY > 0.02, `${frequency} Hz go-around crossed terrain at ${minimumY}`);
   }
 });
 
@@ -663,25 +725,71 @@ test("contact order is four-point preload, manus vault, hind touchdown, then man
   assert.equal(mediumDragonSupportWeight(sample, runtime, "right-manus-pad"), 1);
 });
 
-test("destroyed tower supports force a real emergency circuit and highland landing", () => {
+test("destroyed dark-tower supports divert the dragon to an intact gate crown", () => {
   const profile = basaltStrongholdDragonProfile;
   const runtime = createMediumDragonRuntime(profile);
   const roofSupports = profile.territory.nodes.find(
     (node) => node.id === "tower-roost",
   ).supportPieceIds;
   const removedPieceIds = new Set(roofSupports);
-  const visitedNodes = new Set([runtime.currentNodeId]);
   let minimumY = runtime.y;
-  for (let tick = 0; tick < 150 * 60; tick += 1) {
+  for (let tick = 0; tick < 360 * 60 && runtime.completedFlights < 1; tick += 1) {
     stepMediumDragon(runtime, profile, 1 / 60, { removedPieceIds });
-    visitedNodes.add(runtime.currentNodeId);
     minimumY = Math.min(minimumY, runtime.y);
-    if (runtime.mode === "rest" && runtime.currentNodeId.endsWith("highland")) break;
   }
-  assert.equal(runtime.mode, "rest");
+  assert.equal(runtime.completedFlights, 1);
+  assert.match(runtime.currentNodeId, /gate-landing$/);
+  assert.ok(minimumY >= 0.02, `diversion crossed the terrain: ${minimumY}`);
+});
+
+test("losing every normal crown forces a real emergency circuit and highland landing", () => {
+  const profile = basaltStrongholdDragonProfile;
+  const runtime = createMediumDragonRuntime(profile);
+  const removedPieceIds = new Set(profile.territory.nodes
+    .filter((node) => node.kind === "landing")
+    .flatMap((node) => node.supportPieceIds));
+  let minimumY = runtime.y;
+  for (let tick = 0; tick < 180 * 60 && runtime.completedFlights < 1; tick += 1) {
+    stepMediumDragon(runtime, profile, 1 / 60, { removedPieceIds });
+    minimumY = Math.min(minimumY, runtime.y);
+  }
+  assert.equal(runtime.completedFlights, 1);
   assert.ok(runtime.currentNodeId.endsWith("highland"));
-  assert.equal(visitedNodes.has("tower-landing"), false);
+  assert.equal(runtime.grounded, true);
   assert.ok(minimumY >= 0.02, `emergency landing crossed the terrain: ${minimumY}`);
+});
+
+test("surface affordances and site memory produce a real three-crown territory", () => {
+  const profile = basaltStrongholdDragonProfile;
+  const scoringRuntime = createMediumDragonRuntime(profile);
+  scoringRuntime.siteLastVisitedAt["right-gate-tower"] = scoringRuntime.lifeTime;
+  const ranked = scoreMediumDragonLandingNodes(scoringRuntime, profile, new Set());
+  assert.equal(ranked[0].node.id, "left-gate-landing");
+  assert.match(ranked[0].reason, /novelty 0\.34/);
+  assert.match(ranked.find((candidate) => candidate.node.id === "right-gate-landing").reason, /recent penalty 1\.18/);
+
+  const runtime = createMediumDragonRuntime(profile);
+  const visitedSites = new Set();
+  const postLandingModes = new Set();
+  let completedFlights = 0;
+  let minimumY = runtime.y;
+  for (let tick = 0; tick < 750 * 60 && completedFlights < 3; tick += 1) {
+    stepMediumDragon(runtime, profile, 1 / 60);
+    minimumY = Math.min(minimumY, runtime.y);
+    if (runtime.completedFlights !== completedFlights) {
+      completedFlights = runtime.completedFlights;
+      const landing = profile.territory.nodes.find((node) => node.id === runtime.currentNodeId);
+      visitedSites.add(landing.siteId);
+      postLandingModes.add(runtime.mode);
+    }
+  }
+  assert.deepEqual(
+    visitedSites,
+    new Set(["dark-tower-crown", "left-gate-tower", "right-gate-tower"]),
+  );
+  assert.ok(postLandingModes.has("territorial-display"));
+  assert.ok(postLandingModes.has("body-care"));
+  assert.ok(minimumY > 0.02, `territory circuit crossed terrain at ${minimumY}`);
 });
 
 test("behaviour decisions expose needs and traits instead of opaque random action labels", () => {

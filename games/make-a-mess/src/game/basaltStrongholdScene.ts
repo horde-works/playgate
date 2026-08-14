@@ -709,7 +709,10 @@ function createGatehouse(): void {
           "graphiteStone",
           "stoneBlock",
           [towerX - 2 + merlon, 12.48, -0.42],
-          [0.72, 1.08, 4.6],
+          // These five deep crown bars are also the real gate-tower roof.
+          // A near-continuous cap lets a large animal distribute its four
+          // contacts across stone instead of balancing over 28 cm slots.
+          [0.96, 1.08, 4.6],
           merlon % 2 === 0 ? "#2d3033" : "#3d4144",
         ),
       );

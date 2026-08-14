@@ -93,6 +93,14 @@ Track recently visited places, failed affordances, current destruction state,
 and an exit plan. A chosen perch or landing must remain valid until commitment
 or trigger an explicit abort.
 
+Score a perch as a bundle of affordances—observation sector, shelter/rest,
+body care, territorial exposure, risk and stimulus affinity—not as a waypoint
+label. Keep per-site recency/novelty memory so equal geometry does not collapse
+into one deterministic loop. Every normal landing/perch site must publish a
+valid species-appropriate exit (launch, descent or connected ground route), and
+destroying one support must divert the animal to another intact normal site
+before emergency ground is considered.
+
 ## Validation ladder
 
 ### Structural
@@ -117,6 +125,8 @@ or trigger an explicit abort.
 - changing appearance does not change decisions;
 - quiet/limited profiles produce measurably different behaviour;
 - live obstacles and destroyed affordances alter routes;
+- a long probe visits the authored territory sites instead of repeating the nearest one;
+- every visited raised site has a valid exit and every rejected landing has a powered abort;
 - long probes visit required states without entering forbidden geometry;
 - neutral world events reach multiple populations and cause species-specific
   responses.

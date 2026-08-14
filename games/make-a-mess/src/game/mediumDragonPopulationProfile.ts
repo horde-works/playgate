@@ -19,6 +19,8 @@ export type MediumDragonSurfaceKind =
 
 export interface MediumDragonSurfaceNode {
   readonly id: string;
+  /** A landing, lookout and launch on the same physical summit share a site. */
+  readonly siteId: string;
   readonly kind: MediumDragonSurfaceKind;
   /** Ground datum under the manus and hind pads, in world metres. */
   readonly position: MediumDragonPoint;
@@ -33,6 +35,17 @@ export interface MediumDragonSurfaceNode {
   };
   /** Destruction removes the affordance when every named support is gone. */
   readonly supportPieceIds: readonly string[];
+  /** World-space sector this summit is naturally suited to watch. */
+  readonly watchTarget?: MediumDragonPoint;
+  /** World-owned affordance values; the animal decides what they mean. */
+  readonly behaviour?: {
+    readonly observation: number;
+    readonly rest: number;
+    readonly bodyCare: number;
+    readonly territorial: number;
+    readonly exposure: number;
+    readonly landingRisk: number;
+  };
 }
 
 export interface MediumDragonPopulationProfile {
@@ -121,6 +134,7 @@ export function validateMediumDragonPopulationProfile(
     );
   }
   const nodeIds = new Set<string>();
+  const siteKinds = new Map<string, Set<MediumDragonSurfaceKind>>();
   for (const node of profile.territory.nodes) {
     if (node.id.trim().length === 0 || nodeIds.has(node.id)) {
       throw new Error(
@@ -128,6 +142,14 @@ export function validateMediumDragonPopulationProfile(
       );
     }
     nodeIds.add(node.id);
+    if (node.siteId.trim().length === 0) {
+      throw new Error(
+        `Medium dragon profile ${profile.id}: node ${node.id} has no site`,
+      );
+    }
+    const kinds = siteKinds.get(node.siteId) ?? new Set<MediumDragonSurfaceKind>();
+    kinds.add(node.kind);
+    siteKinds.set(node.siteId, kinds);
     if (!finitePoint(node.position) || !Number.isFinite(node.heading)) {
       throw new Error(
         `Medium dragon profile ${profile.id}: node ${node.id} has a non-finite pose`,
@@ -156,11 +178,32 @@ export function validateMediumDragonPopulationProfile(
         `Medium dragon profile ${profile.id}: node ${node.id} has no world support`,
       );
     }
+    if (node.watchTarget && !finitePoint(node.watchTarget)) {
+      throw new Error(
+        `Medium dragon profile ${profile.id}: node ${node.id} has an invalid watch target`,
+      );
+    }
+    if (
+      node.behaviour
+      && Object.values(node.behaviour).some((value) => !unitInterval(value))
+    ) {
+      throw new Error(
+        `Medium dragon profile ${profile.id}: node ${node.id} has invalid behaviour values`,
+      );
+    }
   }
   if (!nodeIds.has(profile.territory.spawnNodeId)) {
     throw new Error(
       `Medium dragon profile ${profile.id}: spawn node does not exist`,
     );
+  }
+  for (const [siteId, kinds] of siteKinds) {
+    const normalSurface = kinds.has("roost") || kinds.has("landing") || kinds.has("lookout");
+    if (normalSurface && !kinds.has("launch")) {
+      throw new Error(
+        `Medium dragon profile ${profile.id}: normal site ${siteId} has no launch`,
+      );
+    }
   }
   const airspace = profile.territory.airspace;
   if (!finitePoint(airspace.centre)) {

@@ -130,6 +130,15 @@ Required causal links:
 - flare retains wing support through first contact;
 - folding follows unloading and clearance.
 
+For a finite perch, centreline position is not sufficient evidence of a safe
+final. Measure signed cross-track position and cross-track velocity in the
+surface frame, and permit flare commitment only when both are bounded. Validate
+the complete oriented contact footprint against the physical support pieces.
+If contact is rejected, enter a powered go-around that first recovers height
+and airspeed; never send a near-stalled body directly back to an ordinary glide
+controller. Test the abort densely so neither the support plane nor terrain is
+crossed between sampled states.
+
 Reuse an existing rigid-body/air solver only after mapping its outputs to the
 creature's aerodynamic surfaces and body response. Vehicle controls do not
 automatically produce a living wing cycle.
@@ -146,6 +155,8 @@ automatically produce a living wing cycle.
 | turn looks like skating | yaw ignores gait distance | turn arc, placements, and support duration |
 | jump looks weightless | pose/root offset replaces trajectory | launch velocity, apex, landing impulse |
 | landing snaps | load/contact changes in one frame | contact-weight derivative and axial acceleration |
+| landing is centred but slides off | cross-track position ignores lateral velocity | position and velocity in the oriented landing frame |
+| aborted landing falls through terrain | near-stall state returns to glide routing | go-around height/airspeed recovery and dense minimum clearance |
 | wing folds like paper | distal joints own gross morph | local ROM distribution and span/area measurements |
 | head vibrates | no axial/neck compensation | head angular velocity relative to chest |
 

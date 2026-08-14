@@ -25,10 +25,12 @@ export type MediumDragonMode =
   | "observe"
   | "ground-walk"
   | "body-care"
+  | "territorial-display"
   | "takeoff"
   | "powered-climb"
   | "patrol-flap"
   | "patrol-glide"
+  | "go-around"
   | "return"
   | "approach"
   | "flare"
@@ -94,7 +96,7 @@ export interface MediumDragonRuntime {
   intentReason: string;
   currentNodeId: string;
   targetNodeId: string | null;
-  approachStage: "staging" | "turnaround" | "alignment" | "final";
+  approachStage: "staging" | "alignment" | "final";
   needs: MediumDragonNeeds;
   attention: MediumDragonAttentionState;
   lastWing: MediumDragonWingState;
@@ -103,6 +105,9 @@ export interface MediumDragonRuntime {
   lastMoment: readonly [number, number, number];
   grounded: boolean;
   firstFlightCompleted: boolean;
+  completedFlights: number;
+  /** Per-site memory prevents a territory from collapsing into one loop. */
+  siteLastVisitedAt: Record<string, number>;
   decisionSerial: number;
 }
 
@@ -114,6 +119,12 @@ export interface MediumDragonStepContext {
 
 export interface MediumDragonIntentScore {
   readonly intent: MediumDragonIntent;
+  readonly score: number;
+  readonly reason: string;
+}
+
+export interface MediumDragonLandingScore {
+  readonly node: MediumDragonSurfaceNode;
   readonly score: number;
   readonly reason: string;
 }
@@ -169,22 +180,64 @@ export function mediumDragonNodeIsUsable(
   return alive >= Math.ceil(node.supportPieceIds.length * 0.75);
 }
 
-function nearestUsableLanding(
+const DEFAULT_SURFACE_BEHAVIOUR = {
+  observation: 0.5,
+  rest: 0.35,
+  bodyCare: 0.35,
+  territorial: 0.35,
+  exposure: 0.5,
+  landingRisk: 0.5,
+} as const;
+
+/** Score places as affordances, not as random destinations or route rails. */
+export function scoreMediumDragonLandingNodes(
   runtime: MediumDragonRuntime,
   profile: MediumDragonPopulationProfile,
   removed: ReadonlySet<string>,
-): MediumDragonSurfaceNode | null {
-  const preferred = profile.territory.nodes
+): readonly MediumDragonLandingScore[] {
+  const normal = profile.territory.nodes
     .filter((node) => node.kind === "landing" && mediumDragonNodeIsUsable(node, removed));
   const emergency = profile.territory.nodes
     .filter((node) => node.kind === "emergency-landing" && mediumDragonNodeIsUsable(node, removed));
-  return [...preferred, ...emergency].sort((a, b) => {
-    const distanceA = Math.hypot(a.position[0] - runtime.x, a.position[2] - runtime.z);
-    const distanceB = Math.hypot(b.position[0] - runtime.x, b.position[2] - runtime.z);
-    const preferenceA = a.kind === "landing" ? 0 : 18;
-    const preferenceB = b.kind === "landing" ? 0 : 18;
-    return distanceA + preferenceA - distanceB - preferenceB;
-  })[0] ?? null;
+  const candidates = normal.length > 0 ? normal : emergency;
+  const currentSiteId = nodeById(profile, runtime.currentNodeId).siteId;
+  const attention = runtime.attention;
+  return candidates.map((node) => {
+    const values = node.behaviour ?? DEFAULT_SURFACE_BEHAVIOUR;
+    const distance = Math.hypot(node.position[0] - runtime.x, node.position[2] - runtime.z);
+    const lastVisit = runtime.siteLastVisitedAt[node.siteId];
+    const recentVisitPenalty = lastVisit === undefined
+      ? 0
+      : clamp01(1 - (runtime.lifeTime - lastVisit) / 150) * 1.18;
+    const unvisitedSiteBonus = lastVisit === undefined ? 0.34 : 0;
+    const sameSitePenalty = node.siteId === currentSiteId ? 0.42 : 0;
+    const restNeed = runtime.needs.fatigue * 0.7
+      + (1 - runtime.needs.flightReserve) * 0.62
+      + (1 - runtime.needs.energy) * 0.2;
+    const watchPoint = node.watchTarget ?? node.position;
+    const hasStimulus = attention.targetX !== null && attention.targetZ !== null;
+    const stimulusDistance = hasStimulus
+      ? Math.hypot(watchPoint[0] - attention.targetX!, watchPoint[2] - attention.targetZ!)
+      : Number.POSITIVE_INFINITY;
+    const stimulusAffinity = hasStimulus
+      ? clamp01(1 - stimulusDistance / 90) * attention.urgency
+      : 0;
+    const score = values.observation * (runtime.needs.information * 0.72 + stimulusAffinity * 1.25)
+      + values.territorial * runtime.needs.territorialPressure * 0.86
+      + values.rest * restNeed * 0.76
+      + values.bodyCare * runtime.needs.bodyCare * 0.46
+      - values.exposure * runtime.needs.safety * 0.62
+      - values.landingRisk * (1 - profile.traits.flightSkill) * 0.68
+      - distance / 230
+      - recentVisitPenalty
+      - sameSitePenalty
+      + unvisitedSiteBonus;
+    return {
+      node,
+      score,
+      reason: `${node.siteId}: observation ${values.observation.toFixed(2)}, territory ${values.territorial.toFixed(2)}, stimulus ${stimulusAffinity.toFixed(2)}, recent penalty ${recentVisitPenalty.toFixed(2)}, novelty ${unvisitedSiteBonus.toFixed(2)}`,
+    };
+  }).sort((a, b) => b.score - a.score || a.node.id.localeCompare(b.node.id));
 }
 
 export function scoreMediumDragonIntents(
@@ -308,6 +361,8 @@ export function createMediumDragonRuntime(
     lastMoment: [0, 0, 0],
     grounded: true,
     firstFlightCompleted: false,
+    completedFlights: 0,
+    siteLastVisitedAt: { [spawn.siteId]: 0 },
     decisionSerial: 0,
   };
 }
@@ -391,7 +446,7 @@ function updateNeeds(
   context: MediumDragonStepContext,
 ): void {
   const airborne = !runtime.grounded;
-  const powered = ["powered-climb", "patrol-flap", "return", "approach", "flare"].includes(runtime.mode);
+  const powered = ["powered-climb", "patrol-flap", "go-around", "return", "approach", "flare"].includes(runtime.mode);
   runtime.needs.energy = clamp01(runtime.needs.energy - dt * (airborne ? 0.0012 : 0.00016));
   runtime.needs.information = clamp01(runtime.needs.information + dt * (airborne ? -0.012 : 0.006));
   runtime.needs.territorialPressure = clamp01(runtime.needs.territorialPressure + dt * (airborne ? -0.013 : 0.0032));
@@ -423,17 +478,22 @@ function chooseGroundIntent(
 ): void {
   runtime.decisionSerial += 1;
   const scored = scoreMediumDragonIntents(runtime, profile);
-  const launch = profile.territory.nodes.find(
-    (node) => node.kind === "launch" && mediumDragonNodeIsUsable(node, removed),
+  const currentSiteId = nodeById(profile, runtime.currentNodeId).siteId;
+  const launch = profile.territory.nodes.find((node) =>
+    node.kind === "launch"
+    && node.siteId === currentSiteId
+    && mediumDragonNodeIsUsable(node, removed)
   );
   const canPatrol = Boolean(launch)
     && runtime.needs.flightReserve >= profile.territory.minimumArrivalReserve + 0.34
     && runtime.needs.fatigue < 0.68;
-  const preferred = scored.find((candidate) => candidate.intent !== "patrol" || canPatrol)
+  const preferred = scored.find((candidate) =>
+    !["patrol", "investigate", "avoid"].includes(candidate.intent) || canPatrol
+  )
     ?? scored[0];
   runtime.intent = preferred.intent;
   runtime.intentReason = preferred.reason;
-  if ((preferred.intent === "patrol" || preferred.intent === "avoid") && launch) {
+  if (["patrol", "investigate", "avoid"].includes(preferred.intent) && launch) {
     runtime.targetNodeId = launch.id;
     setMode(runtime, "ground-walk", preferred.intent, preferred.reason);
     return;
@@ -480,7 +540,7 @@ function stepGroundWalk(
   runtime.y = moveToward(runtime.y, target.position[1], dt * 0.25);
   runtime.gaitDistance += Math.hypot(runtime.x - previousX, runtime.z - previousZ)
     + Math.abs(headingStep) * 1.18;
-  if (distance < 0.16 && Math.abs(shortestAngle(runtime.heading, target.heading)) < 0.08) {
+  if (distance < 0.2 && Math.abs(shortestAngle(runtime.heading, target.heading)) < 0.08) {
     runtime.x = target.position[0];
     runtime.y = target.position[1];
     runtime.z = target.position[2];
@@ -565,16 +625,26 @@ function stepTakeoff(
   if (runtime.modeTime >= 1.96) {
     runtime.flightTime = 0;
     runtime.targetNodeId = null;
-    setMode(runtime, "powered-climb", "patrol", runtime.intentReason);
+    setMode(runtime, "powered-climb", runtime.intent, runtime.intentReason);
   }
 }
+
+const LANDING_APPROACH_ENVELOPE = {
+  interceptDistance: 220,
+  interceptLateral: 35,
+  alignmentDistance: 80,
+} as const;
 
 function flightTarget(
   runtime: MediumDragonRuntime,
   profile: MediumDragonPopulationProfile,
 ): Vector3 {
   const airspace = profile.territory.airspace;
-  if (runtime.mode === "takeoff" || runtime.mode === "powered-climb") {
+  if (
+    runtime.mode === "takeoff"
+    || runtime.mode === "powered-climb"
+    || runtime.mode === "go-around"
+  ) {
     const forwardSpeed = Math.hypot(runtime.velocityX, runtime.velocityZ);
     const forwardX = forwardSpeed > 1
       ? runtime.velocityX / forwardSpeed
@@ -612,9 +682,25 @@ function flightTarget(
     const rightX = Math.cos(target.heading);
     const rightZ = -Math.sin(target.heading);
     const staging = runtime.approachStage === "staging";
-    const turnaround = runtime.approachStage === "turnaround";
-    const offset = staging ? -140 : 30;
-    const lateral = staging ? 35 : turnaround ? -160 : 0;
+    const envelope = LANDING_APPROACH_ENVELOPE;
+    const circuitSide = target.position[1] < 20
+      ? Math.sign(target.position[0]) || 1
+      : -1;
+    if (!staging) {
+      const relativeX = runtime.x - target.position[0];
+      const relativeZ = runtime.z - target.position[2];
+      const along = relativeX * forwardX + relativeZ * forwardZ;
+      const centrelineLookAhead = 52;
+      return new Vector3(
+        target.position[0] + forwardX * (along + centrelineLookAhead),
+        target.kind === "emergency-landing"
+          ? target.position[1] + 14
+          : Math.max(target.position[1] + 14, profile.territory.airspace.minimumHeight),
+        target.position[2] + forwardZ * (along + centrelineLookAhead),
+      );
+    }
+    const offset = -envelope.interceptDistance;
+    const lateral = envelope.interceptLateral * circuitSide;
     return new Vector3(
       target.position[0] + forwardX * offset + rightX * lateral,
       target.kind === "emergency-landing"
@@ -636,9 +722,17 @@ function flightTarget(
     const along = relativeX * forwardX + relativeZ * forwardZ;
     const crossTrack = (runtime.x - target.position[0]) * rightX
       + (runtime.z - target.position[2]) * rightZ;
-    const correction = clamp(-crossTrack * 0.06, -0.75, 0.75);
+    const crossTrackVelocity = runtime.velocityX * rightX + runtime.velocityZ * rightZ;
+    // An airborne animal cannot plant a foot to arrest lateral motion. The
+    // final therefore damps lateral velocity before it erases the last metres
+    // of position error. Position-only steering crossed the narrow crown.
+    const correction = clamp(
+      -crossTrack * 0.075 - crossTrackVelocity * 0.07,
+      -0.9,
+      0.9,
+    );
     const runwayHeading = target.heading + correction;
-    const runwayLookAhead = 60;
+    const runwayLookAhead = 70;
     const touchdownStart = -(target.touchdownFootprint?.rearExtent
       ?? target.usableRadius * 0.35);
     const distanceBeforeSurface = Math.max(0, touchdownStart - along);
@@ -671,6 +765,8 @@ function desiredFlightSpeed(runtime: MediumDragonRuntime): number {
       return 13.5;
     case "patrol-glide":
       return 12.7;
+    case "go-around":
+      return 10.8;
     case "return":
     case "emergency-glide":
       return 13;
@@ -849,7 +945,8 @@ function stepFlightBody(
     ) / wing.panels.length;
     const addedMassCoefficient = 0.65
       + Math.max(0, altitudeDemand) * 4.5
-      + (runtime.mode === "powered-climb" ? 0.45 : 0);
+      + (runtime.mode === "powered-climb" ? 0.45 : 0)
+      + (runtime.mode === "go-around" ? 2.7 : 0);
     const reactionMagnitude = 0.5
       * 1.225
       * MEDIUM_DRAGON_MORPHOLOGY.wingArea
@@ -898,11 +995,11 @@ function stepFlightBody(
       const touchdownStart = -(landing.touchdownFootprint?.rearExtent
         ?? landing.usableRadius);
       const alongSpeed = runtime.velocityX * forwardX + runtime.velocityZ * forwardZ;
-      if (along < touchdownStart && alongSpeed < 3.4) {
+      if (along < touchdownStart && alongSpeed < 3.5) {
         const poweredFraction = clamp(meanDownstrokeSpeed / 8, 0, 1);
         approachThrust.set(forwardX, 0, forwardZ).multiplyScalar(
-          MASS * clamp((3.4 - alongSpeed) * 1.35, 0, 4.2)
-            * (0.3 + poweredFraction * 0.7),
+          MASS * clamp((3.5 - alongSpeed) * 1.8, 0, 5)
+            * (0.4 + poweredFraction * 0.6),
         );
       }
     }
@@ -967,11 +1064,16 @@ function chooseLanding(
   profile: MediumDragonPopulationProfile,
   removed: ReadonlySet<string>,
 ): boolean {
-  const landing = nearestUsableLanding(runtime, profile, removed);
-  if (!landing) return false;
-  runtime.targetNodeId = landing.id;
+  const selected = scoreMediumDragonLandingNodes(runtime, profile, removed)[0];
+  if (!selected) return false;
+  runtime.targetNodeId = selected.node.id;
   runtime.approachStage = "staging";
-  setMode(runtime, landing.kind === "landing" ? "return" : "emergency-glide");
+  setMode(
+    runtime,
+    selected.node.kind === "landing" ? "return" : "emergency-glide",
+    runtime.intent,
+    selected.reason,
+  );
   return true;
 }
 
@@ -985,7 +1087,7 @@ function stepAirMode(
   runtime.flightTime += dt;
   if (
     runtime.needs.flightReserve <= profile.territory.minimumArrivalReserve
-    && !["return", "approach", "flare", "emergency-glide"].includes(runtime.mode)
+    && !["go-around", "return", "approach", "flare", "emergency-glide"].includes(runtime.mode)
   ) {
     chooseLanding(runtime, profile, removed);
   }
@@ -996,6 +1098,20 @@ function stepAirMode(
     const speed = Math.hypot(runtime.velocityX, runtime.velocityY, runtime.velocityZ);
     if (runtime.y >= airspace.patrolHeight - 4 && speed >= 9.5) {
       setMode(runtime, "patrol-flap");
+    }
+    return;
+  }
+
+  if (runtime.mode === "go-around") {
+    stepFlightBody(runtime, profile, dt);
+    const landing = runtime.targetNodeId ? nodeById(profile, runtime.targetNodeId) : null;
+    const clearanceY = landing
+      ? landing.position[1] + 10
+      : profile.territory.airspace.minimumHeight;
+    const speed = Math.hypot(runtime.velocityX, runtime.velocityY, runtime.velocityZ);
+    if (runtime.y >= clearanceY && speed >= 8.5) {
+      runtime.approachStage = "staging";
+      setMode(runtime, "return", runtime.intent, "the go-around recovered height and airspeed");
     }
     return;
   }
@@ -1026,39 +1142,46 @@ function stepAirMode(
     const forwardZ = Math.cos(landing.heading);
     const rightX = Math.cos(landing.heading);
     const rightZ = -Math.sin(landing.heading);
-    const interceptX = landing.position[0] - forwardX * 140 + rightX * 35;
-    const interceptZ = landing.position[2] - forwardZ * 140 + rightZ * 35;
+    const envelope = LANDING_APPROACH_ENVELOPE;
+    const circuitSide = landing.position[1] < 20
+      ? Math.sign(landing.position[0]) || 1
+      : -1;
+    const interceptX = landing.position[0]
+      - forwardX * envelope.interceptDistance
+      + rightX * envelope.interceptLateral * circuitSide;
+    const interceptZ = landing.position[2]
+      - forwardZ * envelope.interceptDistance
+      + rightZ * envelope.interceptLateral * circuitSide;
     if (
       runtime.approachStage === "staging"
       && Math.hypot(interceptX - runtime.x, interceptZ - runtime.z) < 15
     ) {
-      runtime.approachStage = "turnaround";
+      runtime.approachStage = "alignment";
       runtime.modeTime = 0;
       return;
     }
-    const stageX = landing.position[0] - forwardX * 80;
-    const stageZ = landing.position[2] - forwardZ * 80;
+    const stageX = landing.position[0] - forwardX * envelope.alignmentDistance;
+    const stageZ = landing.position[2] - forwardZ * envelope.alignmentDistance;
     const relativeX = runtime.x - stageX;
     const relativeZ = runtime.z - stageZ;
     const along = relativeX * forwardX + relativeZ * forwardZ;
     const cross = Math.abs(relativeX * forwardZ - relativeZ * forwardX);
     const velocityHeading = Math.atan2(runtime.velocityX, runtime.velocityZ);
     const speed = Math.hypot(runtime.velocityX, runtime.velocityY, runtime.velocityZ);
-    if (
-      runtime.approachStage === "turnaround"
-      && Math.abs(shortestAngle(velocityHeading, landing.heading)) < 0.55
-    ) {
-      runtime.approachStage = "alignment";
-      runtime.modeTime = 0;
-      return;
-    }
+    const alignmentCrossLimit = landing.touchdownFootprint
+      ? Math.max(10, landing.touchdownFootprint.halfWidth * 6)
+      : 15;
+    const alignmentPositionReady = along >= -6 && along <= 10;
+    const alignmentCrossSpeed = Math.abs(
+      runtime.velocityX * rightX + runtime.velocityZ * rightZ,
+    );
     if (
       runtime.approachStage === "alignment"
       &&
-      along >= -6
-      && along <= 10
-      && cross < 55
-      && Math.abs(shortestAngle(velocityHeading, landing.heading)) < 0.55
+      alignmentPositionReady
+      && cross < alignmentCrossLimit
+      && Math.abs(shortestAngle(velocityHeading, landing.heading)) < 0.2
+      && alignmentCrossSpeed < 2.2
       && speed >= 11.1
     ) {
       runtime.approachStage = "final";
@@ -1086,24 +1209,34 @@ function stepAirMode(
     const relativeZ = runtime.z - landing.position[2];
     const along = relativeX * forwardX + relativeZ * forwardZ;
     const cross = Math.abs(relativeX * rightX + relativeZ * rightZ);
+    const crossTrackSpeed = Math.abs(
+      runtime.velocityX * rightX + runtime.velocityZ * rightZ,
+    );
+    const flareCrossLimit = landing.touchdownFootprint
+      ? Math.max(3.8, landing.touchdownFootprint.halfWidth * 2.25)
+      : 16;
     if (
       runtime.y < landing.position[1] + 1.5
       && horizontal > landing.usableRadius + 3
     ) {
       runtime.approachStage = "staging";
-      setMode(runtime, "return", "patrol", "the final approach fell below the usable glide path");
+      setMode(runtime, "go-around", runtime.intent, "the final approach fell below the usable glide path");
     } else if (
       along >= -56
-      && along <= -3
-      && cross < 16
+      && (along <= -38 || runtime.y < landing.position[1] + 8)
+      && cross < flareCrossLimit
+      && crossTrackSpeed < 1.8
       && runtime.y >= landing.position[1]
       && runtime.y < landing.position[1] + 14
     ) {
       runtime.flapPhase = 0.08;
       setMode(runtime, "flare");
+    } else if (along > -38 && runtime.y >= landing.position[1] + 8) {
+      runtime.approachStage = "staging";
+      setMode(runtime, "go-around", runtime.intent, "the flare gate was crossed too high to brake safely");
     } else if (along > 5) {
       runtime.approachStage = "staging";
-      setMode(runtime, "return", "patrol", "the runway centreline was missed before flare commitment");
+      setMode(runtime, "go-around", runtime.intent, "the runway centreline was missed before flare commitment");
     }
     return;
   }
@@ -1138,6 +1271,16 @@ function stepAirMode(
         && along <= footprint.forwardExtent
         && cross <= footprint.halfWidth
       : horizontal <= contactRadius;
+    const surfaceHalfWidth = footprint?.halfWidth ?? contactRadius;
+    const surfaceRear = -(footprint?.rearExtent ?? contactRadius);
+    const lateralMiss = cross > surfaceHalfWidth
+      && runtime.y < landing.position[1] + 1.8;
+    const shortOfSurface = along < surfaceRear
+      && runtime.y < landing.position[1] - 0.055;
+    const longOfSurface = along > (footprint?.forwardExtent ?? contactRadius)
+      && runtime.y < landing.position[1] + 1.8;
+    const lowMiss = !withinLandingSurface
+      && (lateralMiss || shortOfSurface || longOfSurface);
     if (
       withinLandingSurface
       && runtime.y >= landing.position[1] - 0.06
@@ -1149,12 +1292,15 @@ function stepAirMode(
       runtime.currentNodeId = landing.id;
       runtime.grounded = true;
       setMode(runtime, "touchdown");
-    } else if (along > 9 || cross > 20) {
+    } else if (
+      lowMiss
+      || along > (footprint?.forwardExtent ?? 7) + 2.5
+    ) {
       runtime.approachStage = "staging";
       setMode(
         runtime,
-        "return",
-        "patrol",
+        "go-around",
+        runtime.intent,
         contactReady
           ? "the flare retained a go-around before physical contact"
           : "the flare could not shed enough kinetic energy for foot contact",
@@ -1202,12 +1348,40 @@ function stepLanding(
     runtime.pitch = 0;
     runtime.roll = 0;
     runtime.firstFlightCompleted = true;
-    runtime.needs.information = clamp01(runtime.needs.information - 0.72);
-    runtime.needs.territorialPressure = clamp01(runtime.needs.territorialPressure - 0.64);
+    runtime.completedFlights += 1;
+    runtime.siteLastVisitedAt[landing.siteId] = runtime.lifeTime;
     runtime.needs.bodyCare = clamp01(runtime.needs.bodyCare + 0.18);
     runtime.needs.fatigue = clamp01(runtime.needs.fatigue + 0.18);
     runtime.targetNodeId = null;
-    setMode(runtime, "rest", "rest", "flight reserve and wing load now dominate");
+    if (landing.watchTarget) {
+      runtime.attention.targetX = landing.watchTarget[0];
+      runtime.attention.targetY = landing.watchTarget[1];
+      runtime.attention.targetZ = landing.watchTarget[2];
+      runtime.attention.urgency = Math.max(runtime.attention.urgency, 0.24);
+      runtime.attention.confidence = 0.62;
+      runtime.attention.mode = "acquire";
+    }
+    const values = landing.behaviour ?? DEFAULT_SURFACE_BEHAVIOUR;
+    if (
+      values.territorial >= 0.85
+      && (runtime.intent === "patrol" || runtime.needs.territorialPressure >= 0.12)
+    ) {
+      setMode(
+        runtime,
+        "territorial-display",
+        "patrol",
+        `${landing.siteId} exposes the gate sector for a territorial display`,
+      );
+    } else if (values.bodyCare >= 0.75 && runtime.needs.bodyCare >= 0.5) {
+      setMode(runtime, "body-care", "body-care", "the protected crown permits a wing check");
+    } else if (
+      values.rest >= 0.75
+      && (runtime.needs.fatigue >= 0.28 || runtime.needs.flightReserve <= 0.82)
+    ) {
+      setMode(runtime, "rest", "rest", "the sheltered roost is worth the recovery time");
+    } else {
+      setMode(runtime, "observe", "observe", `${landing.siteId} is being read before the next move`);
+    }
   }
 }
 
@@ -1230,8 +1404,10 @@ export function stepMediumDragon(
     if (!mediumDragonNodeIsUsable(support, removed)) {
       runtime.grounded = false;
       runtime.velocityY = Math.min(runtime.velocityY, -0.8);
-      runtime.targetNodeId = nearestUsableLanding(runtime, profile, removed)?.id ?? null;
-      setMode(runtime, "emergency-glide", "avoid", "the supporting surface was destroyed");
+      if (!chooseLanding(runtime, profile, removed)) {
+        runtime.targetNodeId = null;
+        setMode(runtime, "emergency-glide", "avoid", "the supporting surface was destroyed");
+      }
     }
   }
 
@@ -1243,6 +1419,7 @@ export function stepMediumDragon(
     "powered-climb",
     "patrol-flap",
     "patrol-glide",
+    "go-around",
     "return",
     "approach",
     "flare",
@@ -1257,6 +1434,14 @@ export function stepMediumDragon(
     if (runtime.modeTime >= 5.4) {
       runtime.needs.bodyCare = clamp01(runtime.needs.bodyCare - 0.62);
       setMode(runtime, "observe", "observe", "the opened membrane has been checked");
+    }
+  } else if (runtime.mode === "territorial-display") {
+    runtime.velocityX = 0;
+    runtime.velocityZ = 0;
+    if (runtime.modeTime >= 4.8) {
+      runtime.needs.territorialPressure = clamp01(runtime.needs.territorialPressure - 0.34);
+      runtime.needs.information = clamp01(runtime.needs.information - 0.08);
+      setMode(runtime, "observe", "observe", "the gate sector has been claimed and is now watched");
     }
   } else if (runtime.mode === "rest") {
     runtime.velocityX = 0;
@@ -1343,6 +1528,12 @@ export function sampleMediumDragonPose(
   if (runtime.mode === "body-care") {
     const open = Math.sin(clamp01(runtime.modeTime / 5.4) * Math.PI);
     return pair("ground-observe", "takeoff-unfold", open * 0.48, { wingCare: open });
+  }
+  if (runtime.mode === "territorial-display") {
+    const display = Math.sin(clamp01(runtime.modeTime / 4.8) * Math.PI);
+    return pair("ground-observe", "takeoff-unfold", display * 0.34, {
+      wingCare: display * 0.35,
+    });
   }
   if (runtime.mode === "takeoff") {
     const time = runtime.modeTime;
