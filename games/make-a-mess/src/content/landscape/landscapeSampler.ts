@@ -20,7 +20,7 @@ function hashLattice(ix: number, iz: number, seed: number): number {
 }
 
 /** Smoothly interpolated deterministic value noise in [-1, 1]. */
-function valueNoise(x: number, z: number, seed: number): number {
+export function valueNoise(x: number, z: number, seed: number): number {
   const ix = Math.floor(x);
   const iz = Math.floor(z);
   const fx = smootherstep(x - ix);

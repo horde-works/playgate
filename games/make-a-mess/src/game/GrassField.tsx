@@ -32,6 +32,7 @@ import {
 } from "./dutchPolderVegetation";
 import { WATER_LEVEL as DUTCH_POLDER_WATER_LEVEL } from "./dutchPolderWaterModel";
 import { environmentState } from "./environmentState";
+import { kallurTurfStyleAt, type KallurTurfStyle } from "./kallurVegetation.ts";
 import { sampleVikingGroundTraffic } from "./materialTextures";
 import { registerRefractionExcluded } from "./servicePassPolicy.ts";
 import { windState } from "./windState";
@@ -620,7 +621,7 @@ const EDGE_RING: readonly (readonly [number, number])[] = [
   [-1.3, -1.3],
 ];
 
-export type GrassFieldProfile = "viking" | "dutch-polder";
+export type GrassFieldProfile = "viking" | "dutch-polder" | "kallur";
 
 const dutchPolderSampler = createLandscapeSampler(dutchPolderLandscapeDocument);
 
@@ -1077,8 +1078,16 @@ export function GrassField({
           uTip: { value: new Color(tipColor) },
           // A dry blade in the village is worn olive, not pale straw: the
           // ground texture stands in for this grass beyond its render range.
-          uBaseDry: { value: new Color(profile === "viking" ? "#4a583d" : "#6f6a37") },
-          uTipDry: { value: new Color(profile === "viking" ? "#65714c" : "#bcae63") },
+          uBaseDry: {
+            value: new Color(
+              profile === "viking" ? "#4a583d" : profile === "kallur" ? "#6a6d3f" : "#6f6a37",
+            ),
+          },
+          uTipDry: {
+            value: new Color(
+              profile === "viking" ? "#65714c" : profile === "kallur" ? "#9b9a5e" : "#bcae63",
+            ),
+          },
           uReedBase: { value: new Color("#596331") },
           uReedTip: { value: new Color("#a5a05b") },
           uReedBaseDry: { value: new Color("#66583a") },
@@ -1447,7 +1456,7 @@ export function GrassField({
           const weight = 1 / (1 + Math.max(Math.abs(ox), Math.abs(oz)));
           total += weight;
           const key = `${gx + ox}:${gz + oz}`;
-          const tall = profile === "dutch-polder"
+          const tall = profile !== "viking"
             ? (dutchBlockers.get(key)?.some(([, top]) => top > baseY + 0.6) ?? false)
             : blocked.has(key);
           if (tall) closed += weight;
@@ -1461,7 +1470,8 @@ export function GrassField({
     // worn paths, without ever exceeding the per-species budget. The polder
     // oversamples harder because the marsh bands are a thin share of the disc:
     // a uniform candidate stream fills turf long before it fills the waterline.
-    const maxCandidates = count * (profile === "dutch-polder" ? 4 : 2);
+    const maxCandidates = count *
+      (profile === "dutch-polder" ? 4 : profile === "kallur" ? 3 : 2);
     for (let index = 0; index < maxCandidates && !everyBudgetFull(); index += 1) {
       const radius = Math.sqrt(hash(index, 1)) * usableRadius;
       const angle = hash(index, 2) * Math.PI * 2;
@@ -1471,6 +1481,7 @@ export function GrassField({
       let groundY = 0;
       let dutchStyle: DutchPolderVegetationStyle | null = null;
       let dutchSample: LandscapeSample | null = null;
+      let kallurStyle: KallurTurfStyle | null = null;
       if (profile === "dutch-polder") {
         dutchSample = dutchPolderSampler.sample(x, z);
         dutchStyle = sampleDutchPolderVegetation(dutchSample, x, z);
@@ -1493,6 +1504,14 @@ export function GrassField({
           bottom >= groundY - 1.5 && bottom <= groundY + 0.75 && top >= groundY + 0.04
         );
         if (occupied || hash(index, 7) > dutchStyle.keep) continue;
+      } else if (profile === "kallur") {
+        kallurStyle = kallurTurfStyleAt(x, z);
+        if (!kallurStyle) continue;
+        groundY = kallurStyle.groundY;
+        const occupied = dutchBlockers.get(cell)?.some(([bottom, top]) =>
+          bottom >= groundY - 1.5 && bottom <= groundY + 0.75 && top >= groundY + 0.04
+        );
+        if (occupied || hash(index, 7) > kallurStyle.keep) continue;
       } else if (blocked.has(cell) || !ground.has(cell)) {
         continue;
       }
@@ -1539,6 +1558,11 @@ export function GrassField({
             else if (lean > 0.72) height *= 0.62;
           }
         }
+      } else if (kallurStyle) {
+        // Short Atlantic turf. Height rides the same clump noise as density,
+        // so a thick spot reads as a grown tuft, not a denser sprinkle.
+        height = (0.14 + hash(index, 3) * 0.2) * (0.72 + kallurStyle.clump * 0.5);
+        width = 0.85 + hash(index, 4) * 0.6;
       } else {
         const traffic = sampleVikingGroundTraffic(x, z);
         let edgeTraffic = traffic;
@@ -1580,7 +1604,9 @@ export function GrassField({
       // stand does.
       target.tuft[slot + 3] = dutchStyle
         ? Math.min(1, dutchStyle.dryness + (hash(index, 8) - 0.5) * 0.22)
-        : Math.min(1, hash(index, 8) * (1.15 - edge * 0.5));
+        : kallurStyle
+          ? Math.min(1, Math.max(0, kallurStyle.dryness + (hash(index, 8) - 0.5) * 0.2))
+          : Math.min(1, hash(index, 8) * (1.15 - edge * 0.5));
       if (kind === 0) {
         const flowerPatch = dutchSample
           ? dutchPolderVegetationPatchNoise(x, z, 41)
