@@ -160,7 +160,15 @@ async function main() {
 
     await evaluate("document.querySelectorAll('nextjs-portal').forEach((n) => n.remove()); true");
     await evaluate("document.querySelector('#enter-game').click(); true");
-    await sleep(6000);
+
+    // The world is ready when its dev hooks exist, not when a timer expires.
+    let worldReady = false;
+    for (let attempt = 0; attempt < 30 && !worldReady; attempt += 1) {
+      await sleep(1000);
+      worldReady = await evaluate("typeof window.__mamTeleport === 'function'").catch(() => false);
+    }
+    if (!worldReady) throw new Error("__mamTeleport never appeared after entering");
+    await sleep(2500);
 
     const pressKey = async (code, keyCode, key) => {
       await send("Input.dispatchKeyEvent", {
@@ -170,10 +178,28 @@ async function main() {
         type: "keyUp", code, key, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode,
       });
     };
-    await pressKey("KeyF", 70, "f");
-    await sleep(1200);
-    const flight = await evaluate("document.body.textContent.includes('FLIGHT')");
-    if (!flight) throw new Error("Flight mode did not engage (no FLIGHT in HUD)");
+    const debugShot = async (name) => {
+      const shot = await send("Page.captureScreenshot", { format: "png" });
+      await mkdir(outputRoot, { recursive: true });
+      await writeFile(join(outputRoot, name), Buffer.from(shot.data, "base64"));
+    };
+
+    await evaluate("document.querySelector('canvas')?.focus(); true");
+    let flight = false;
+    for (let attempt = 0; attempt < 6 && !flight; attempt += 1) {
+      await pressKey("KeyF", 70, "f");
+      for (let poll = 0; poll < 8 && !flight; poll += 1) {
+        await sleep(500);
+        flight = await evaluate("document.body.textContent.includes('FLIGHT')").catch(() => false);
+      }
+    }
+    if (!flight) {
+      await debugShot("debug-no-flight.png");
+      const hud = await evaluate(
+        "document.body.textContent.replace(/\\s+/g, ' ').slice(0, 400)",
+      ).catch(() => "<unreadable>");
+      throw new Error(`Flight mode did not engage; HUD sample: ${hud}`);
+    }
 
     await mkdir(outputRoot, { recursive: true });
     const manifest = [];
