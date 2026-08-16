@@ -2,14 +2,87 @@ import type {
   LandscapeDocument,
   LandscapeDryChannel,
   LandscapeFlatPad,
+  LandscapeMesoRelief,
   LandscapePoint2,
   LandscapePoint3,
   LandscapeSample,
   LandscapeSampler,
+  LandscapeTerracettes,
 } from "./landscapeDocument.ts";
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
+}
+
+function hashLattice(ix: number, iz: number, seed: number): number {
+  const value = Math.sin(ix * 127.1 + iz * 311.7 + seed * 74.7) * 43758.5453;
+  return value - Math.floor(value);
+}
+
+/** Smoothly interpolated deterministic value noise in [-1, 1]. */
+function valueNoise(x: number, z: number, seed: number): number {
+  const ix = Math.floor(x);
+  const iz = Math.floor(z);
+  const fx = smootherstep(x - ix);
+  const fz = smootherstep(z - iz);
+  const a = hashLattice(ix, iz, seed);
+  const b = hashLattice(ix + 1, iz, seed);
+  const c = hashLattice(ix, iz + 1, seed);
+  const d = hashLattice(ix + 1, iz + 1, seed);
+  const top = a + (b - a) * fx;
+  const bottom = c + (d - c) * fx;
+  return (top + (bottom - top) * fz) * 2 - 1;
+}
+
+function mesoReliefOffset(
+  meso: LandscapeMesoRelief,
+  x: number,
+  z: number,
+  gradient: number,
+): number {
+  const primary = valueNoise(x / meso.wavelength, z / meso.wavelength, meso.seed);
+  const secondary = valueNoise(
+    x / (meso.wavelength * 0.53),
+    z / (meso.wavelength * 0.53),
+    meso.seed + 17,
+  );
+  const amplitude = Math.min(
+    meso.maximumAmplitude,
+    meso.amplitude + gradient * meso.slopeGain,
+  );
+  return (primary + secondary * 0.45) * amplitude;
+}
+
+function terracetteOffset(
+  terracettes: LandscapeTerracettes,
+  x: number,
+  z: number,
+  elevation: number,
+  gradientX: number,
+  gradientZ: number,
+): number {
+  const gradient = Math.hypot(gradientX, gradientZ);
+  if (gradient <= terracettes.minimumGradient) return 0;
+  // Fade the benches in over the same gradient span again, so the flat-to-steep
+  // border never shows a switched-on line of stripes.
+  const gate = smootherstep(
+    (gradient - terracettes.minimumGradient) / terracettes.minimumGradient,
+  );
+  // Along-contour coordinate: distance measured perpendicular to the gradient.
+  const along = (-gradientZ * x + gradientX * z) / gradient;
+  const phaseJitter = valueNoise(
+    along / terracettes.alongWavelength,
+    elevation / (terracettes.verticalSpacing * 2.6),
+    terracettes.seed,
+  );
+  const stitch = 0.5 + 0.5 * valueNoise(
+    along / (terracettes.alongWavelength * 2.2),
+    elevation / (terracettes.verticalSpacing * 4.4),
+    terracettes.seed + 31,
+  );
+  const phase = (elevation / terracettes.verticalSpacing) * Math.PI * 2;
+  return Math.sin(phase + phaseJitter * 2.4) *
+    terracettes.amplitude * gate * stitch;
 }
 
 function smootherstep(value: number): number {
@@ -184,6 +257,13 @@ export function createLandscapeSampler(document: LandscapeDocument): LandscapeSa
     throw new Error(`Unsupported landscape schema ${String(document.schemaVersion)}`);
   }
 
+  const reliefBumps = document.reliefBumps ?? [];
+  const hasDetail = document.mesoRelief !== undefined ||
+    document.terracettes !== undefined ||
+    reliefBumps.length > 0;
+  const needsGradient = document.terracettes !== undefined ||
+    (document.mesoRelief !== undefined && document.mesoRelief.slopeGain > 0);
+
   const sample = (x: number, z: number): LandscapeSample => {
     if (!pointInPolygon(x, z, document.boundary)) {
       return {
@@ -217,9 +297,12 @@ export function createLandscapeSampler(document: LandscapeDocument): LandscapeSa
         // The visible path mask may feather in one metre, but its earth cut or
         // fill must widen when the route crosses a slope. Otherwise a cheap
         // surface mask silently recreates a vertical ribbon at its edge.
-        const gradeFeather = Math.max(
-          corridor.feather,
-          Math.abs(route.elevation - elevation) / corridor.maximumCrossSlope,
+        const gradeFeather = Math.min(
+          corridor.maximumGradeReach ?? Number.POSITIVE_INFINITY,
+          Math.max(
+            corridor.feather,
+            Math.abs(route.elevation - elevation) / corridor.maximumCrossSlope,
+          ),
         );
         const gradeWeight = route.distance <= halfWidth
           ? 1
@@ -245,6 +328,49 @@ export function createLandscapeSampler(document: LandscapeDocument): LandscapeSa
         // paints across an exposed channel cross-section.
         pathWeight: 0,
       };
+    }
+
+    if (hasDetail) {
+      // Paths and levelled pads stay calm: walked and built ground is where
+      // hummocks and benches are trodden flat in the reference photography.
+      const calm = (1 - pathWeight) * (1 - base.padWeight);
+      let gradientX = 0;
+      let gradientZ = 0;
+      if (needsGradient) {
+        const epsilon = 1.5;
+        gradientX = (
+          baseElevationAt(document, x + epsilon, z).elevation -
+          baseElevationAt(document, x - epsilon, z).elevation
+        ) / (2 * epsilon);
+        gradientZ = (
+          baseElevationAt(document, x, z + epsilon).elevation -
+          baseElevationAt(document, x, z - epsilon).elevation
+        ) / (2 * epsilon);
+      }
+      if (document.mesoRelief) {
+        elevation += mesoReliefOffset(
+          document.mesoRelief,
+          x,
+          z,
+          Math.hypot(gradientX, gradientZ),
+        ) * calm;
+      }
+      if (document.terracettes) {
+        elevation += terracetteOffset(
+          document.terracettes,
+          x,
+          z,
+          base.elevation,
+          gradientX,
+          gradientZ,
+        ) * calm;
+      }
+      for (const bump of reliefBumps) {
+        const distance = Math.hypot(x - bump.center[0], z - bump.center[1]);
+        if (distance >= bump.radius) continue;
+        elevation += bump.height *
+          smootherstep(1 - distance / bump.radius) * (1 - base.padWeight);
+      }
     }
 
     return {

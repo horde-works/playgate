@@ -47,6 +47,15 @@ export interface LandscapeSurfaceCorridor {
   readonly conformsTerrainToGrade: boolean;
   /** Maximum rise/run of the earth shoulder cut or fill beside the route. */
   readonly maximumCrossSlope: number;
+  /**
+   * Hard cap on how far the grade cut may reach sideways, in metres. The
+   * cross-slope rule widens the cut by |Δh| / maximumCrossSlope, which is
+   * road engineering at polder scale and levels whole mountains at Kallur
+   * scale: a route 74 m under a crown otherwise grades a 134 m swathe. With
+   * the cap the route becomes a bench cut into the slope — exactly how a
+   * real mountain path sits. Absent means uncapped (the polder behaviour).
+   */
+  readonly maximumGradeReach?: number;
 }
 
 export interface LandscapeDryChannel {
@@ -60,6 +69,56 @@ export interface LandscapeDryChannel {
   readonly bankSurface: "soil" | "stone";
 }
 
+/**
+ * Deterministic hummock field: the soft, fur-like meso-relief of turf.
+ *
+ * At viewing distance a grassy slope reads "furry" not because of blades but
+ * because grazing light rolls over metre-scale bumps. The field is a seeded
+ * value noise added to the base elevation, suppressed on paths and pads so
+ * levelled and walked ground stays calm.
+ */
+export interface LandscapeMesoRelief {
+  /** Dominant hummock wavelength in metres. Keep above twice the render pitch. */
+  readonly wavelength: number;
+  /** Base-octave amplitude in metres (about half the peak-to-trough relief). */
+  readonly amplitude: number;
+  /** Extra amplitude per unit of base-field gradient: hummocks grow on flanks. */
+  readonly slopeGain: number;
+  /** Hard cap on the final amplitude after slope gain. */
+  readonly maximumAmplitude: number;
+  readonly seed: number;
+}
+
+/**
+ * Sheep-path benches striping steep grass slopes along their contours.
+ * Present only where the base field is steeper than `minimumGradient`; broken
+ * into stitches by along-contour noise so no stripe circles a hill unbroken.
+ */
+export interface LandscapeTerracettes {
+  /** Base-field gradient (rise over run) below which no benches appear. */
+  readonly minimumGradient: number;
+  /** Vertical distance between bench crests, in metres of elevation. */
+  readonly verticalSpacing: number;
+  /** Bench relief amplitude in metres. */
+  readonly amplitude: number;
+  /** Along-contour wavelength of the phase noise that breaks the stripes. */
+  readonly alongWavelength: number;
+  readonly seed: number;
+}
+
+/**
+ * A local dome added to the field: a swallowed boulder, the turf collar a
+ * protruding boulder is bedded into, or any authored mound. The dome is part
+ * of the landscape function itself, so render, collider and every consumer
+ * see the same ground by construction.
+ */
+export interface LandscapeReliefBump {
+  readonly id: string;
+  readonly center: LandscapePoint2;
+  readonly radius: number;
+  readonly height: number;
+}
+
 export interface LandscapeDocument {
   readonly schemaVersion: 1;
   readonly id: string;
@@ -69,6 +128,10 @@ export interface LandscapeDocument {
   readonly flatPads: readonly LandscapeFlatPad[];
   readonly corridors: readonly LandscapeSurfaceCorridor[];
   readonly dryChannels: readonly LandscapeDryChannel[];
+  /** Optional detail layers; absent fields leave the field byte-identical. */
+  readonly mesoRelief?: LandscapeMesoRelief;
+  readonly terracettes?: LandscapeTerracettes;
+  readonly reliefBumps?: readonly LandscapeReliefBump[];
   /** Water is a separate system. `none` means the landscape exposes its bed. */
   readonly water: "none";
 }
