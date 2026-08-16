@@ -146,6 +146,18 @@ const EDGE_PROFILES: Record<string, EdgeProfile> = {
     waveStrength: 0.86,
     strata: ["#33291e", "#4a3b2c", "#57452f", "#62523f", "#575149", "#454039", "#38342e", "#302f2c"],
   },
+  kallur: {
+    // Авторский контур берега (edgeBoundary) ведёт туманную стену; радиусы
+    // ниже задают только диск туманного моря вокруг горы.
+    groundRadius: 122,
+    lipRadius: 124,
+    lipY: -2.6,
+    wallRadius: 128,
+    topY: -0.4,
+    underglow: false,
+    waveStrength: 0.82,
+    strata: ["#2b3134", "#343b3c", "#3d4442", "#474e48", "#525750", "#5d615c", "#6d7165", "#7c7f74"],
+  },
   "island-airport": {
     groundRadius: 118,
     lipRadius: 120,

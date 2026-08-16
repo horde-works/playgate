@@ -1,0 +1,221 @@
+import type {
+  AuthoredSceneDocument,
+  SceneGroupDefinition,
+  SceneObjectDefinition,
+  ScenePrimitiveDefinition,
+} from "../sceneContract.ts";
+import type {
+  LandscapeVisualDefinition,
+  SceneVector3,
+} from "../../../game/destructionScene.ts";
+import {
+  KALLUR_HERO_VIEW,
+  KALLUR_PATH,
+  KALLUR_SHORELINE,
+} from "./kallurTerrainPlan.ts";
+import {
+  kallurEarthCellAt,
+  kallurEarthMesh,
+  kallurEarthPieceId,
+  kallurGroundTopAt,
+  kallurRenderMesh,
+} from "./kallurLandscapeDocument.ts";
+
+/**
+ * Kallur — the Faroe rest island (docs/kallur-brief.md).
+ *
+ * An indestructible world, like The Capital: the mountain, the turf and the
+ * lighthouse are a place to be, not a thing to break. The terrain is one
+ * continuous landscape field; these pieces are only its structural body and
+ * the attachment ground for props.
+ */
+
+type MutableGroup = SceneGroupDefinition & { objects: SceneObjectDefinition[] };
+
+const groups = new Map<string, MutableGroup>();
+
+function group(
+  id: string,
+  label: string,
+  material: SceneGroupDefinition["material"],
+  supportMode: SceneGroupDefinition["supportMode"] = "stack",
+): MutableGroup {
+  const existing = groups.get(id);
+  if (existing) return existing;
+  const created: MutableGroup = { id, label, material, supportMode, objects: [] };
+  groups.set(id, created);
+  return created;
+}
+
+function primitive(
+  target: MutableGroup,
+  id: string,
+  material: ScenePrimitiveDefinition["material"],
+  shape: ScenePrimitiveDefinition["shape"],
+  position: SceneVector3,
+  size: SceneVector3,
+  color: string,
+  overrides: Partial<Omit<ScenePrimitiveDefinition, "id" | "kind" | "material" | "shape" | "size" | "color" | "transform">> & {
+    readonly rotation?: SceneVector3;
+  } = {},
+): void {
+  const { rotation, ...rest } = overrides;
+  target.objects.push({
+    kind: "primitive",
+    id,
+    material,
+    shape,
+    size,
+    color,
+    transform: { position, rotation },
+    ...rest,
+  });
+}
+
+const TERRAIN_BOTTOM = -24;
+const terrain = group("terrain", "Deep island earth body", "earth");
+
+// One bedrock slab under everything: the guaranteed owner for any render
+// triangle whose centroid slips past the adaptive cell coverage at the coast.
+const BEDROCK_PIECE_ID = "kallur:terrain:bedrock:piece";
+primitive(
+  terrain,
+  "bedrock",
+  "earth",
+  "groundTile",
+  [0, TERRAIN_BOTTOM - 3, 0],
+  [252, 6, 236],
+  "#4a4136",
+  { foundation: true },
+);
+
+for (const cell of kallurEarthMesh.cells) {
+  const [x, z] = cell.center;
+  const half = cell.size / 2;
+  const inset = Math.min(1.2, half * 0.4);
+  // The smooth 0.75 m skin dips to the true field: a stepped box topped at
+  // the CENTRE elevation would pierce it on every steep flank. Sink each box
+  // under the lowest sampled corner instead; contact boxes climb back up.
+  const corners = [
+    kallurGroundTopAt(x - half + inset, z - half + inset),
+    kallurGroundTopAt(x + half - inset, z - half + inset),
+    kallurGroundTopAt(x - half + inset, z + half - inset),
+    kallurGroundTopAt(x + half - inset, z + half - inset),
+    kallurGroundTopAt(x, z),
+  ];
+  const earthTop = Math.min(...corners) - 0.2;
+  const divisions = cell.size >= 8 ? 4 : 2;
+  const contactSize = cell.size / divisions + 0.02;
+  const pieceCenterY = (earthTop + TERRAIN_BOTTOM) / 2;
+  primitive(
+    terrain,
+    `cell:${cell.id}`,
+    "earth",
+    "groundTile",
+    [x, pieceCenterY, z],
+    [cell.size, earthTop - TERRAIN_BOTTOM, cell.size],
+    "#584a3a",
+    {
+      // The landscape trimesh owns the walkable surface; these boxes are the
+      // structural body beneath it and the ground props attach to.
+      intactVisible: false,
+      intactCollider: false,
+      foundation: true,
+      carriesAttachments: true,
+      contactBoxes: Array.from({ length: divisions }, (_, index) => index)
+        .flatMap((indexX) =>
+          Array.from({ length: divisions }, (_, index) => index)
+            .map((indexZ) => {
+              const localX = -half + (indexX + 0.5) * cell.size / divisions;
+              const localZ = -half + (indexZ + 0.5) * cell.size / divisions;
+              const top = kallurGroundTopAt(x + localX, z + localZ);
+              return {
+                position: [
+                  localX,
+                  top - 0.25 - pieceCenterY,
+                  localZ,
+                ] as SceneVector3,
+                size: [contactSize, 0.5, contactSize] as SceneVector3,
+              };
+            })
+        ),
+      maximumVerticalGap: 1,
+    },
+  );
+}
+
+export const kallurLandscapeVisual: LandscapeVisualDefinition = {
+  material: "grass",
+  color: "#6d7046",
+  landscapeSurface: "kallur-ground",
+  chunks: kallurRenderMesh.chunks.map((chunk) => {
+    const triangleOwners = chunk.triangles.map((triangle) => {
+      const [a, b, c] = triangle;
+      const centroidX = (
+        chunk.vertices[a][0] + chunk.vertices[b][0] + chunk.vertices[c][0]
+      ) / 3;
+      const centroidZ = (
+        chunk.vertices[a][2] + chunk.vertices[b][2] + chunk.vertices[c][2]
+      ) / 3;
+      const cell = kallurEarthCellAt(centroidX, centroidZ);
+      return cell ? kallurEarthPieceId(cell.id) : BEDROCK_PIECE_ID;
+    });
+    return {
+      id: chunk.id,
+      vertices: chunk.vertices,
+      normals: chunk.normals,
+      indices: chunk.triangles.flatMap((triangle) => [...triangle]),
+      triangleOwners,
+      ownerPieceIds: [...new Set(triangleOwners)],
+    };
+  }),
+};
+
+const spawn = KALLUR_PATH[0];
+
+export const kallurDocument: AuthoredSceneDocument = {
+  schemaVersion: 1,
+  id: "kallur",
+  title: "Make a Mess: Kallur",
+  environment: "town",
+  world: {
+    playerSpawn: [spawn[0], spawn[1] + 1.2, spawn[2]],
+    // 0 looks toward -Z: from the south coast straight at the hill and wall.
+    playerSpawnYaw: 0,
+    cameraFar: 560,
+    center: [4, -2],
+    halfExtents: [114, 106],
+    boundaryRadius: 126,
+    skyRadius: 300,
+    radius: 118,
+    edgeBoundary: KALLUR_SHORELINE,
+    safetyFloorY: -20,
+  },
+  copy: {
+    status: "Make a Mess / Kallur",
+    eyebrow: "Rest island 001",
+    heading: "Остров, где ничего не ломается.",
+    ready: "Каллур собран",
+    loading: "Поднимаем гору из тумана…",
+    description:
+      "Фарерский остров отдыха: гигантский травяной склон против отвесной " +
+      "слоистой стены, нож хребта с тропой и крошечный маяк над туманным " +
+      "морем. Здесь ничего не разрушается — сюда приходят смотреть, ходить " +
+      "и сидеть на камнях.",
+    enter: "Сойти на тропу",
+    returnToGame: "Вернуться на остров",
+    reset: "Вернуться на тропу",
+  },
+  landscapeVisual: kallurLandscapeVisual,
+  groups: [...groups.values()],
+  indestructible: true,
+  fogDistances: [160, 430],
+  solarFrame: {
+    model: "equinox",
+    latitudeDegrees: 62.3,
+    east: [1, 0],
+    north: [0, -1],
+  },
+};
+
+export const kallurHeroView = KALLUR_HERO_VIEW;

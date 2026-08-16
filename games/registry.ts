@@ -84,6 +84,18 @@ export const games = [
     art: "dutch-polder",
   },
   {
+    slug: "make-a-mess-kallur",
+    title: "Make a Mess: Kallur",
+    href: "/games/make-a-mess/kallur",
+    summary:
+      "Фарерский остров отдыха: гигантский травяной склон, отвесная слоистая стена, тропа по хребту и крошечный маяк над туманным морем. Ничего не ломается.",
+    genre: "Rest island",
+    status: "playable",
+    stageLabel: "Новый мир",
+    theme: "electric-blue",
+    art: "mess",
+  },
+  {
     slug: "make-a-mess-island-airport",
     title: "Make a Mess: Island Airport",
     href: "/games/make-a-mess/island-airport",

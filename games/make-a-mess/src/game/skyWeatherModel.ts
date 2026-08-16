@@ -188,6 +188,22 @@ export const WORLD_SKY: Readonly<Record<string, SkyWeather>> = {
     beamStrength: 0.05,
     shadowStrength: 0.74,
   },
+  // Каллур: сплошная фарерская пасмурность — низкая палуба, дымка съедает
+  // дальний план. Канон hero-view (kallur-brief.md §2); числа подбирать
+  // замером кадра, а не наугад — см. предупреждение в шапке.
+  kallur: {
+    ...CLEAR_SKY,
+    coverage: 0.74,
+    baseAltitude: 390,
+    thickness: 680,
+    visibility: 11000,
+    windSpeed: 10,
+    windBearing: -0.7,
+    midLevel: 0.35,
+    cirrus: 0,
+    beamStrength: 0.02,
+    shadowStrength: 0.42,
+  },
   // Морской фронт над фьордом: рваная низкая облачность, чистый солёный воздух.
   "viking-village": {
     ...CLEAR_SKY,

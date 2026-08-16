@@ -16,6 +16,7 @@ import type {
   LandscapeVisualDefinition,
 } from "./destructionScene.ts";
 import { dutchPolderGroundTint } from "./dutchPolderVegetation.ts";
+import { kallurGroundTint } from "./kallurGroundTint.ts";
 import {
   getPieceMaterial,
   pieceMaterialBaseColor,
@@ -319,11 +320,13 @@ export const LandscapeSurface = memo(function LandscapeSurface({
     definition.textureProfile,
   ), [definition.color, definition.material, definition.textureProfile]);
 
-  // Тинт грунта пока есть только у польдера: там растительность банду́ется по
-  // глубине, и земля обязана соглашаться с ней.
+  // Тинт грунта: у польдера земля соглашается с растительностью, у Каллура
+  // дальнее кольцо дёрна — пятнистость, камень на крутизне и грунт тропы.
   const groundTint = definition.landscapeSurface === "dutch-polder-ground"
     ? dutchPolderGroundTint
-    : null;
+    : definition.landscapeSurface === "kallur-ground"
+      ? kallurGroundTint
+      : null;
 
   // ВАЖНО: включать vertexColors на общем материале нельзя — он лежит в кэше
   // и раздаётся всем кускам мира с тем же ключом. Хуже того, у материала есть

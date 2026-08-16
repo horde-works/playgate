@@ -112,3 +112,42 @@ export const kallurEarthPieceId = (cellId: string) =>
 export function kallurGroundTopAt(x: number, z: number): number {
   return kallurLandscapeSampler.elevationAt(x, z);
 }
+
+const earthBucketSize = kallurEarthMesh.maximumCellSize;
+const earthCellsByBucket = new Map<
+  string,
+  Array<(typeof kallurEarthMesh.cells)[number]>
+>();
+for (const cell of kallurEarthMesh.cells) {
+  const half = cell.size / 2;
+  const minBucketX = Math.floor((cell.center[0] - half - 1e-6) / earthBucketSize);
+  const maxBucketX = Math.floor((cell.center[0] + half + 1e-6) / earthBucketSize);
+  const minBucketZ = Math.floor((cell.center[1] - half - 1e-6) / earthBucketSize);
+  const maxBucketZ = Math.floor((cell.center[1] + half + 1e-6) / earthBucketSize);
+  for (let bucketX = minBucketX; bucketX <= maxBucketX; bucketX += 1) {
+    for (let bucketZ = minBucketZ; bucketZ <= maxBucketZ; bucketZ += 1) {
+      const key = `${bucketX}:${bucketZ}`;
+      const bucket = earthCellsByBucket.get(key) ?? [];
+      bucket.push(cell);
+      earthCellsByBucket.set(key, bucket);
+    }
+  }
+}
+
+/** Smallest adaptive earth cell containing the point, if any. */
+export function kallurEarthCellAt(x: number, z: number) {
+  let best: (typeof kallurEarthMesh.cells)[number] | undefined;
+  const bucket = earthCellsByBucket.get(
+    `${Math.floor(x / earthBucketSize)}:${Math.floor(z / earthBucketSize)}`,
+  ) ?? [];
+  for (const cell of bucket) {
+    if (
+      Math.abs(x - cell.center[0]) <= cell.size / 2 + 1e-6 &&
+      Math.abs(z - cell.center[1]) <= cell.size / 2 + 1e-6 &&
+      (!best || cell.size < best.size)
+    ) {
+      best = cell;
+    }
+  }
+  return best;
+}

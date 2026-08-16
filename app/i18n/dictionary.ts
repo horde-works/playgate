@@ -1931,6 +1931,44 @@ export const sceneCopy: Record<string, Record<Language, SceneCopy>> = {
       reset: "Восстановить польдер",
     },
   },
+  kallur: {
+    en: {
+      status: "Make a Mess / Kallur",
+      eyebrow: "Rest island 001",
+      heading: "The island where nothing breaks.",
+      ready: "Kallur is assembled",
+      loading: "Raising the mountain out of the fog…",
+      description:
+        "A Faroese rest island: a giant grass slope against a sheer layered wall, a knife ridge with a path and a tiny lighthouse over the fog sea. Nothing here is destructible — you come to walk, look and sit on the stones.",
+      enter: "Step onto the path",
+      returnToGame: "Return to the island",
+      reset: "Return to the path",
+    },
+    es: {
+      status: "Make a Mess / Kallur",
+      eyebrow: "Isla de descanso 001",
+      heading: "La isla donde nada se rompe.",
+      ready: "Kallur está montado",
+      loading: "Levantando la montaña de la niebla…",
+      description:
+        "Una isla feroesa de descanso: una ladera de hierba gigante contra una pared estratificada vertical, una cresta afilada con sendero y un faro diminuto sobre el mar de niebla. Aquí nada se destruye: se viene a caminar, mirar y sentarse en las piedras.",
+      enter: "Salir al sendero",
+      returnToGame: "Volver a la isla",
+      reset: "Volver al sendero",
+    },
+    ru: {
+      status: "Make a Mess / Kallur",
+      eyebrow: "Остров отдыха 001",
+      heading: "Остров, где ничего не ломается.",
+      ready: "Каллур собран",
+      loading: "Поднимаем гору из тумана…",
+      description:
+        "Фарерский остров отдыха: гигантский травяной склон против отвесной слоистой стены, нож хребта с тропой и крошечный маяк над туманным морем. Здесь ничего не разрушается — сюда приходят смотреть, ходить и сидеть на камнях.",
+      enter: "Сойти на тропу",
+      returnToGame: "Вернуться на остров",
+      reset: "Вернуться на тропу",
+    },
+  },
 };
 
 export interface GameCardCopy {
@@ -1960,6 +1998,26 @@ export const gameCardCopy: Record<string, Record<Language, GameCardCopy>> = {
       genre: "Destruction sandbox",
       summary:
         "Разрушаемая песочница про материалы, опоры и радость хорошо устроенного беспорядка.",
+    },
+  },
+  "make-a-mess-kallur": {
+    en: {
+      stageLabel: "New world",
+      genre: "Rest island",
+      summary:
+        "A Faroese rest island: a giant grass slope, a sheer layered wall, a ridge path and a tiny lighthouse over the fog sea. Nothing breaks.",
+    },
+    es: {
+      stageLabel: "Mundo nuevo",
+      genre: "Isla de descanso",
+      summary:
+        "Una isla feroesa de descanso: ladera de hierba gigante, pared estratificada vertical, sendero de cresta y un faro diminuto sobre el mar de niebla. Nada se rompe.",
+    },
+    ru: {
+      stageLabel: "Новый мир",
+      genre: "Rest island",
+      summary:
+        "Фарерский остров отдыха: гигантский травяной склон, отвесная слоистая стена, тропа по хребту и крошечный маяк над туманным морем. Ничего не ломается.",
     },
   },
   "make-a-mess-basalt-stronghold": {

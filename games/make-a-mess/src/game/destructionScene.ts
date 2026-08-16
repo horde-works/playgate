@@ -189,7 +189,8 @@ export interface DamageVoxelizationDefinition {
 export type LandscapeSurfaceProfile =
   | "viking-ground"
   | "city-ground"
-  | "dutch-polder-ground";
+  | "dutch-polder-ground"
+  | "kallur-ground";
 export type SurfaceTextureProfile =
   | "painted-steel"
   | "matte-aluminium"
