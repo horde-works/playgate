@@ -490,6 +490,22 @@ export interface VehicleRoutePlan {
    * неё сила только вдоль корпуса, и нос обязан идти за движением.
    */
   heading?(progress: number): readonly [number, number] | null;
+  /** Exact stop-and-turn vertices authored by a ground taxi route. */
+  readonly taxiVertices?: readonly {
+    readonly progress: number;
+    readonly point: SceneVector3;
+    readonly incoming: readonly [number, number];
+    readonly outgoing: readonly [number, number];
+    readonly endpoint: boolean;
+  }[];
+  /** Route progress where arrival begins while the vehicle is still flying. */
+  readonly arrivalFrom?: number;
+  /**
+   * Route progress where the airborne arrival ends. Ordinary routes arrive
+   * at their final point; a runway route continues beyond touchdown through
+   * rollout and taxi, so its airborne target is an earlier authored marker.
+   */
+  readonly arrivalAt?: number;
   readonly finalFrom: number;
 }
 

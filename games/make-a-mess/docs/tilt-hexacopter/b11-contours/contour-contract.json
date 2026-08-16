@@ -1,0 +1,25 @@
+{
+  "schema": "contour-contract.v1",
+  "objectId": "tilt-hexacopter-b11",
+  "revision": "b11-owner-review-hypothesis",
+  "authorities": {
+    "reference-three-quarter": "observed visual character from the owner-approved generated concept",
+    "retained-b10-massing": "owner accepted direction",
+    "nose-canopy-ridge-flow": "direct owner instruction",
+    "profile": "owner-review hypothesis",
+    "top": "owner-review hypothesis",
+    "rear": "owner-review hypothesis"
+  },
+  "changeBoundary": {
+    "frozen": ["hull-shell", "rear-undercut", "tail-termination", "primary-core-tail-boom", "armour-belts", "lift-rings", "longitudinal-engines"],
+    "changed": ["canopy-dorsal-line", "canopy-to-ridge-transition"],
+    "flowStartZ": 4.42,
+    "ridgeJoinZ": -0.78
+  },
+  "characteristics": [
+    { "id": "monotonic-dorsal-flow", "value": true, "unit": "boolean", "provenance": "direct-owner-correction" },
+    { "id": "maximum-authored-dorsal-step", "value": 0.25, "unit": "m", "provenance": "shape-gate" },
+    { "id": "retained-primary-core-tail-boom", "value": true, "unit": "boolean", "provenance": "B10-owner-direction" },
+    { "id": "engineering-paused", "value": true, "unit": "boolean", "provenance": "object-study-gate" }
+  ]
+}

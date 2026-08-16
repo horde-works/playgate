@@ -295,13 +295,14 @@ test("a trim car is inertial: it cannot answer an upset instantly", () => {
 test("every carrier carries real trim machinery inside its envelope", () => {
   for (const vehicle of airVehicles) {
     // Подвижный груз — орган ГАЗОВОЙ машины: у неё момент по крену и тангажу
-    // больше взять неоткуда. Винтокрылая создаёт его разнотягом винтов, и
-    // возить ради этого свинец по рельсам значит противоречить её физике.
-    if ((vehicle.flight.liftSource ?? "buoyant") === "rotor") {
+    // больше взять неоткуда. Винтокрылая создаёт его разнотягом винтов,
+    // крылатая — рулём высоты и элеронами; возить ради этого свинец по
+    // рельсам значит в обоих случаях противоречить физике машины.
+    if ((vehicle.flight.liftSource ?? "buoyant") !== "buoyant") {
       assert.equal(
         vehicle.trimRails ?? null,
         null,
-        `${vehicle.id}: у коптера не должно быть балансиров`,
+        `${vehicle.id}: балансиры есть только у газовой машины`,
       );
       continue;
     }
@@ -364,7 +365,8 @@ test("every carrier carries real trim machinery inside its envelope", () => {
 test("a lost propulsor is physically trimmed out by moving real ballast", () => {
   const report = [];
   for (const vehicle of airVehicles) {
-    if ((vehicle.flight.liftSource ?? "buoyant") === "rotor") {
+    // Дифферентовка грузом — только у газовой машины (см. соседний тест).
+    if ((vehicle.flight.liftSource ?? "buoyant") !== "buoyant") {
       continue;
     }
     const lost = oneSidedPropulsor(vehicle);

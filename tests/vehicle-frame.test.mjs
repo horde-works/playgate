@@ -105,8 +105,10 @@ function mooringCapture(frame, state, properties) {
   );
 }
 
-test("all nine airborne machines are declared as vehicle frames", () => {
-  assert.equal(vehicleFrames.length, 9);
+test("all ten airborne machines are declared as vehicle frames", () => {
+  // Десятая — DC-3. Реестр кадров первичен: пока машина не здесь, неподвижный
+  // мир не отпускает её куски, и составное тело дерётся с их копией.
+  assert.equal(vehicleFrames.length, 10);
   const frame = vehicleFrameForCluster(SKY_TRAIN);
   assert.notEqual(frame, null);
   assert.equal(frame.id, "sky-train");

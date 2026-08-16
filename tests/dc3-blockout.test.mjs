@@ -269,6 +269,23 @@ test("each nacelle is a full-diameter teardrop with a Wright radial inside the c
   }
 });
 
+test("Wright cylinders do not intersect each other inside the cowl", () => {
+  for (const side of ["left", "right"]) {
+    const barrels = dc3BlockoutObject.parts.filter((part) =>
+      part.id.startsWith(`engine-${side}-cylinder-`)
+    );
+    assert.equal(barrels.length, 9);
+    for (let index = 0; index < barrels.length; index += 1) {
+      const a = barrels[index];
+      const b = barrels[(index + 1) % barrels.length];
+      const innerGap = length(subtract(a.from, b.from)) - a.radius - b.radius;
+      const outerGap = length(subtract(a.to, b.to)) - a.radius - b.radius;
+      assert.ok(innerGap > 0.004, `${a.id} overlaps ${b.id} at the crankcase (${innerGap})`);
+      assert.ok(outerGap > 0.004, `${a.id} overlaps ${b.id} at the head (${outerGap})`);
+    }
+  }
+});
+
 test("twin nacelles are mirrored and the study stays isolated", () => {
   const left = dc3BlockoutObject.parts.filter((part) => part.group === "nacelle-left");
   const right = dc3BlockoutObject.parts.filter((part) => part.group === "nacelle-right");

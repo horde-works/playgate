@@ -1,0 +1,56 @@
+{
+  "modelId": "tilt-hexacopter-b11",
+  "revision": "tilt-hex-b11-contour-2026-08-16",
+  "modelHash": "db07330c5638",
+  "generatedAt": "2026-08-16T11:36:51.270Z",
+  "views": [
+    {
+      "id": "top",
+      "label": "Top orthographic — longitudinal fighter silhouette",
+      "projection": "orthographic",
+      "file": "top.png"
+    },
+    {
+      "id": "front-three-quarter",
+      "label": "Front three-quarter — complete static state",
+      "projection": "perspective",
+      "file": "front-three-quarter.png"
+    },
+    {
+      "id": "rear-three-quarter",
+      "label": "Rear three-quarter — belt sockets and upper engines",
+      "projection": "perspective",
+      "file": "rear-three-quarter.png"
+    },
+    {
+      "id": "reference-match",
+      "label": "Reference-character camera — massing only",
+      "projection": "perspective",
+      "file": "reference-match.png"
+    },
+    {
+      "id": "primary-core-isometric",
+      "label": "Primary core — isolated spatial cage",
+      "projection": "perspective",
+      "file": "primary-core-isometric.png"
+    },
+    {
+      "id": "dorsal-profile",
+      "label": "Central profile — continuous nose-canopy-ridge line",
+      "projection": "orthographic",
+      "file": "dorsal-profile.png"
+    },
+    {
+      "id": "central-body-three-quarter",
+      "label": "Central body — low integrated glazing over retained B10 shell",
+      "projection": "perspective",
+      "file": "central-body-three-quarter.png"
+    },
+    {
+      "id": "engine-tail-profile",
+      "label": "Engine-tail profile — buried nacelles and restrained crown",
+      "projection": "orthographic",
+      "file": "engine-tail-profile.png"
+    }
+  ]
+}

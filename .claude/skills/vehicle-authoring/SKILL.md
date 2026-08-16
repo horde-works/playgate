@@ -102,6 +102,35 @@ source contract and independent physical profile do not explain the symptom.
 Inspect the relevant current definitions and tests after reading the
 contract. Do not trust remembered constants.
 
+For a behavioral defect, write the complete control path before editing:
+
+```text
+observed symptom
+  -> authored definition
+  -> compiler / registry
+  -> runtime adapter
+  -> planner / controller
+  -> actuator allocator, bounds and fallbacks
+  -> world contacts
+  -> measured motion
+```
+
+Record the user's physical statements verbatim as constraints on this path;
+verify them before translating them into a different hypothesis. Identify the
+physical point that the maneuver must hold or deliver to the route: it may be
+the centre of mass, a mooring point, a contact patch or a wheel axle. Trace
+every physics-changing field through BOTH runtime and rig; an optional or
+dropped field with a plausible default is a runtime fork. Search the entire
+path for coefficients, clamps, reverse limits, saturations and fallback
+branches. Fixing the first plausible defect does not close the diagnosis;
+repeat the trace to the observed output and list what remains unproved.
+
+Do not add a test to discover the causal model. First name the broken
+invariant and the measurement that exposes it, then add only the smallest
+regression gate that preserves it. For control motion prefer target crossings,
+velocity-sign reversals, total travel/angle, controlled-point error and
+delivered actuator commands over a boolean completion result.
+
 ## Classify the work
 
 Choose the smallest correct owner before editing:
@@ -177,6 +206,10 @@ Follow `references/assembly.md` for solver and construction pitfalls.
 - Verify resting geometry, collider membership, contact against both intact
   structures and detached debris, initial stability, and heart collapse
   before route work.
+- Verify decorative surface layers explicitly: `bearsLoad: false` does not
+  disable collision, so paint, markings and decals must not enter intact
+  collision geometry. Check turn and taxi swept zones against complete
+  fixture footprints and the vehicle envelope, never obstacle centre points.
 - Recheck spawn capsule, boarding path, doors and ramps after each major
   hull edit.
 
@@ -267,6 +300,14 @@ vehicle/debris collision masks; loose objects beyond authored land must fall
 through the fog and despawn below the scene envelope.
 
 ### 9. Verify
+
+Before reporting, classify the evidence exactly as defined in
+`games/make-a-mess/docs/run-and-verify.md`, section «Уровень доказательства и
+право на вывод»: inspection, pure law, rig, runtime-equivalent or live scene.
+Never use an unqualified “verified”, “fixed”, or “no hardcode remains”. A
+claim cannot be broader than the inspected path, and a rig cannot prove
+runtime-only adapters, scene colliders or visual behavior. State the highest
+completed level and the remaining unverified boundary in the handoff.
 
 Run, at minimum:
 

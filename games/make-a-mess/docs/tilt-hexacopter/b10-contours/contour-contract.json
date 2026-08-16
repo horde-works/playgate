@@ -1,0 +1,29 @@
+{
+  "schema": "contour-contract.v1",
+  "objectId": "tilt-hexacopter-b10",
+  "revision": "b10-owner-review-hypothesis",
+  "authorities": {
+    "reference-three-quarter": "observed visual character from the owner-approved generated concept",
+    "frozen-forward-body": "B08 geometry retained by direct owner instruction",
+    "rear-third-undercut": "direct owner instruction",
+    "tail-extension-and-width": "direct owner instruction",
+    "central-core-tail-boom": "direct owner instruction with RAX morphology",
+    "profile": "owner-review hypothesis",
+    "top": "owner-review hypothesis",
+    "rear": "owner-review hypothesis"
+  },
+  "changeBoundary": {
+    "frozen": ["nose", "canopy", "forward-and-middle-hull", "armour-belts", "lift-rings", "longitudinal-engines"],
+    "changed": ["lower-rear-third", "rear-shell-termination", "primary-core-tail-boom"],
+    "rearUndercutStartZ": -1.5,
+    "shellEndZ": -4.8,
+    "tailBoomEndZ": -5.65
+  },
+  "characteristics": [
+    { "id": "minimum-core-skin-clearance", "value": 0.04, "unit": "m", "provenance": "authored-clearance-gate" },
+    { "id": "rear-belly-rise", "value": 0.74, "unit": "m", "provenance": "direct-owner-correction" },
+    { "id": "tail-boom-extension-past-shell", "value": 0.85, "unit": "m", "provenance": "direct-owner-correction" },
+    { "id": "independent-primary-core", "value": true, "unit": "boolean", "provenance": "direct-owner-correction" },
+    { "id": "engineering-paused", "value": true, "unit": "boolean", "provenance": "object-study-gate" }
+  ]
+}

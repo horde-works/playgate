@@ -14,6 +14,9 @@
 //
 //   npm run dev            # в другом окне, из корня
 //   node scripts/probe-rax-combat.mjs [--port 3000] [--seconds 120]
+//   node scripts/probe-rax-combat.mjs --incoming-lance --seconds 16
+// Второй режим выпускает в RAX физическую иглу со 100 м и требует не только
+// решения в телеметрии, но и измеримого смещения корпуса.
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
@@ -30,6 +33,7 @@ const PORT = Number(argOf("--port", "3000"));
 const CDP_PORT = Number(argOf("--cdp", "9391"));
 const SECONDS = Number(argOf("--seconds", "120"));
 const OUT = argOf("--out", "playgate-frames/rax-combat-probe");
+const INCOMING_LANCE = args.includes("--incoming-lance");
 const BASE = `http://127.0.0.1:${PORT}`;
 const SCENE_PATH = "/games/make-a-mess/combat-hexacopter-range";
 /** Свой борт и чужой: без второго бой не начнётся и проба ничего не скажет. */
@@ -144,6 +148,8 @@ async function main() {
       "--mute-audio",
       "--use-gl=angle",
       "--enable-unsafe-swiftshader",
+      "--disable-frame-rate-limit",
+      "--disable-gpu-vsync",
       "about:blank",
     ],
     { stdio: "ignore" },
@@ -222,6 +228,13 @@ async function main() {
         "чужой борт не поднялся: пробе не на кого смотреть, вердикт был бы ложным",
       );
     }
+    if (INCOMING_LANCE) {
+      await waitFor(
+        "test missile hook",
+        () => cdp.eval(`typeof window.__mamFireTestMissile === "function"`),
+        { timeout: 120000, every: 500 },
+      );
+    }
 
     const modes = new Set();
     const targets = new Set();
@@ -233,12 +246,31 @@ async function main() {
     let rocketsSeen = 0;
     let dodgeSamples = 0;
     let firstDodgeAt = null;
+    let testMissileFired = false;
+    let testMissileFiredAt = null;
+    const testMotion = [];
 
     while ((Date.now() - started) / 1000 < SECONDS) {
       const sample = await cdp.eval(`JSON.stringify(window.__mamAirCombat())`);
       const rows = JSON.parse(sample ?? "[]");
       const hunter = rows.find((row) => row.id === HUNTER) ?? null;
       const seconds = Number(((Date.now() - started) / 1000).toFixed(1));
+      if (INCOMING_LANCE && !testMissileFired) {
+        const targetRaw = await cdp.eval(
+          `JSON.stringify((window.__mamVehicles?.() ?? []).find((v) => v.id === ${JSON.stringify(HUNTER)}) ?? null)`,
+        );
+        const target = JSON.parse(targetRaw ?? "null");
+        if (target?.flight?.castOff && target?.centre && target?.body?.velocity) {
+          const [x, y, z] = target.centre;
+          const [vx, vy, vz] = target.body.velocity;
+          const fired = await cdp.eval(
+            `window.__mamFireTestMissile("lance", ${JSON.stringify([x, y, z - 100])}, ${JSON.stringify([vx, vy, vz + 124])})`,
+          );
+          testMissileFired = fired !== null;
+          testMissileFiredAt = testMissileFired ? seconds : null;
+          console.log(`t=${seconds}s TEST LANCE:`, fired, target.centre);
+        }
+      }
       if (hunter) {
         modes.add(hunter.mode);
         if (hunter.targetId) targets.add(hunter.targetId);
@@ -287,6 +319,23 @@ async function main() {
           speed: Number(Math.hypot(pv[0], pv[1], pv[2]).toFixed(2)),
         });
       }
+      if (
+        INCOMING_LANCE &&
+        testMissileFiredAt !== null &&
+        seconds <= testMissileFiredAt + 3
+      ) {
+        const hunterRaw = await cdp.eval(
+          `JSON.stringify((window.__mamVehicles?.() ?? []).find((v) => v.id === ${JSON.stringify(HUNTER)}) ?? null)`,
+        );
+        const liveHunter = JSON.parse(hunterRaw ?? "null");
+        if (liveHunter?.centre && liveHunter?.body?.velocity) {
+          testMotion.push({
+            seconds,
+            centre: liveHunter.centre,
+            velocity: liveHunter.body.velocity,
+          });
+        }
+      }
       // Уклонение: сколько ракет в воздухе и уходит ли кто-то прямо сейчас.
       const evRaw = await cdp.eval(
         `JSON.stringify(window.__mamEvasion?.() ?? null)`,
@@ -294,6 +343,12 @@ async function main() {
       const ev = JSON.parse(evRaw ?? "null");
       if (ev) {
         rocketsSeen = Math.max(rocketsSeen, ev.rockets);
+        if (INCOMING_LANCE && ev.rockets > 0) {
+          console.log(
+            `t=${seconds}s EVASION FRAME:`,
+            JSON.stringify(ev.vehicles?.find((row) => row.id === HUNTER) ?? null),
+          );
+        }
         if (ev.dodging.length > 0) {
           dodgeSamples += 1;
           if (firstDodgeAt === null) {
@@ -302,14 +357,32 @@ async function main() {
           }
         }
       }
-      await sleep(500);
+      await sleep(INCOMING_LANCE && testMissileFired ? 100 : 500);
     }
 
     const slow = preySpeeds.filter((row) => row.speed < 0.6);
+    const testOrigin = testMotion[0]?.centre ?? null;
     const verdict = {
       rocketsSeenAtOnce: rocketsSeen,
       dodgeSamples,
       firstDodgeAt,
+      testEvadePeakSpeed: testMotion.length
+        ? Number(
+            Math.max(
+              ...testMotion.map((row) => Math.hypot(...row.velocity)),
+            ).toFixed(2),
+          )
+        : null,
+      testEvadeDisplacement:
+        testOrigin && testMotion.length
+          ? Number(
+              Math.hypot(
+                ...testMotion.at(-1).centre.map(
+                  (value, index) => value - testOrigin[index],
+                ),
+              ).toFixed(2),
+            )
+          : null,
       preySamples: preySpeeds.length,
       preyStalledSamples: slow.length,
       preyFirstStallAt: slow[0]?.seconds ?? null,
@@ -328,7 +401,21 @@ async function main() {
     console.log(JSON.stringify(verdict, null, 2));
     // Выйти из `station` нельзя, не собрав трек, не получив пост из паспорта и
     // не построив снимок себя. Поэтому это и есть проверка проводки.
-    if (firstEngagementAt === null) {
+    if (
+      INCOMING_LANCE &&
+      (rocketsSeen < 1 ||
+        dodgeSamples < 1 ||
+        (verdict.testEvadeDisplacement ?? 0) < 0.25)
+    ) {
+      console.error(
+        "\nПРОВАЛ: игла не дошла до реестра либо RAX увидел её без физического манёвра.",
+      );
+      process.exitCode = 1;
+    } else if (INCOMING_LANCE) {
+      console.log(
+        "\nРАКЕТНЫЙ РЕФЛЕКС ЖИВ: игла видна, команда ненулевая, корпус физически сместился.",
+      );
+    } else if (firstEngagementAt === null) {
       console.error(
         "\nПРОВАЛ: автомат не вышел с поста за отведённое время — либо пост не пришёл из паспорта, либо треки пусты.",
       );

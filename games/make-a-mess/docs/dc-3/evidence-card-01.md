@@ -109,8 +109,11 @@ outer loft. Cutaway cameras hide `fuselage`, `wing`, `nacelle-*` and
 ## Motion contract
 
 - Static airframe except lab-posed control surfaces.
-- Kinematic groups named `propeller-left` and `propeller-right`: constant
-  rotation about each engine axis **only**, phase frozen this milestone.
+- Kinematic groups named `propeller-left` and `propeller-right`: each owns one
+  nacelle-local shaft frame (`pivot`, directed `axis`, `phaseSign`) in the
+  canonical object. Runtime adds phase around that axis only; the carrier pose
+  moves the complete nacelle/shaft/propeller assembly. Both shafts rotate
+  clockwise when viewed from behind the engines; phase is frozen in Object Lab.
 - Typed hinges on `surfaceHinges`: ailerons ±25°, flaps 0 to −42° (TE
   down), elevator −22° / +18°, rudder ±25°. Pivot, axis, range and rest
   live once; Object Lab and the tests read the same record.

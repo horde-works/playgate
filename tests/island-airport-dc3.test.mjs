@@ -1,0 +1,100 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { dc3BlockoutObject } from "../games/make-a-mess/src/content/objects/aircraft/dc3BlockoutObject.ts";
+import {
+  AIRPORT_RUNWAY,
+  AIRPORT_RUNWAY_TOP_Y,
+  AIRPORT_TERMINAL,
+} from "../games/make-a-mess/src/content/scenes/islandAirport/islandAirportPlan.ts";
+import {
+  ISLAND_AIRPORT_DC3_PLACEMENT,
+  islandAirportDc3Frame,
+  islandAirportDc3Group,
+  islandAirportDc3Heading,
+  islandAirportDc3Nose,
+  islandAirportDc3Tail,
+} from "../games/make-a-mess/src/content/scenes/islandAirport/islandAirportDc3.ts";
+import { islandAirportScene } from "../games/make-a-mess/src/game/islandAirportScene.ts";
+import { airVehicles } from "../games/make-a-mess/src/game/airVehicles.ts";
+import { DC3_AIRPLANE_CLASS } from "../games/make-a-mess/src/game/dc3Airplane.ts";
+
+const pieces = islandAirportScene.breakablePieces.filter((piece) =>
+  piece.clusterId === ISLAND_AIRPORT_DC3_PLACEMENT.clusterId,
+);
+
+test("the airport compiles with the DC-3 as one initially stable cluster", () => {
+  assert.equal(islandAirportScene.resolveStructuralCollapse(new Set()).size, 0);
+  assert.equal(pieces.length, dc3BlockoutObject.parts.length);
+  assert.equal(islandAirportDc3Group.objects.length, dc3BlockoutObject.parts.length);
+  assert.ok(
+    islandAirportScene.breakableClusters.some(
+      (cluster) => cluster.id === ISLAND_AIRPORT_DC3_PLACEMENT.clusterId,
+    ),
+  );
+});
+
+test("the DC-3 holds on runway 09, nose east, not at the terminal", () => {
+  assert.equal(ISLAND_AIRPORT_DC3_PLACEMENT.position[0], AIRPORT_RUNWAY.westDesignatorX);
+  assert.equal(ISLAND_AIRPORT_DC3_PLACEMENT.position[1], AIRPORT_RUNWAY_TOP_Y);
+  assert.equal(ISLAND_AIRPORT_DC3_PLACEMENT.position[2], AIRPORT_RUNWAY.centreZ);
+  assert.ok(islandAirportDc3Heading[0] > 0.99);
+  assert.ok(Math.abs(islandAirportDc3Heading[2]) < 0.02);
+  assert.ok(islandAirportDc3Nose[0] > islandAirportDc3Tail[0] + 10);
+  assert.ok(islandAirportDc3Tail[0] > AIRPORT_RUNWAY.westThresholdX);
+  assert.ok(islandAirportDc3Nose[0] < 0);
+  assert.ok(
+    Math.abs(islandAirportDc3Frame.origin[2] - AIRPORT_TERMINAL.origin[2]) > 30,
+    "hold is on the runway, not the terminal apron",
+  );
+  const span = pieces.reduce(
+    (range, piece) => ({
+      minX: Math.min(range.minX, piece.position[0] - piece.size[0] / 2),
+      maxX: Math.max(range.maxX, piece.position[0] + piece.size[0] / 2),
+      minZ: Math.min(range.minZ, piece.position[2] - piece.size[2] / 2),
+      maxZ: Math.max(range.maxZ, piece.position[2] + piece.size[2] / 2),
+    }),
+    { minX: Infinity, maxX: -Infinity, minZ: Infinity, maxZ: -Infinity },
+  );
+  assert.ok(span.minX > AIRPORT_RUNWAY.westThresholdX - 2);
+  assert.ok(span.maxX < AIRPORT_RUNWAY.eastThresholdX);
+  assert.ok(Math.abs((span.minZ + span.maxZ) / 2 - AIRPORT_RUNWAY.centreZ) < 2);
+
+  const tailWheel = pieces.find((piece) => piece.id.includes(":gear-tail-wheel:"));
+  assert.ok(tailWheel, "three-point sit keeps the tailwheel");
+  assert.ok(
+    tailWheel.position[1] > AIRPORT_RUNWAY_TOP_Y,
+    "tailwheel stands on the slab, not in it",
+  );
+  assert.ok(
+    tailWheel.position[0] > AIRPORT_RUNWAY.westThresholdX,
+    "tailwheel is still on the paved strip",
+  );
+});
+
+test("airport pieces keep Object Lab ids, aluminium skins and steel cage", () => {
+  const wing = pieces.find((piece) => piece.id.includes(":wing-right:"));
+  const cage = pieces.filter((piece) =>
+    piece.id.includes(":fuselage-frame-") || piece.id.includes(":longeron-"),
+  );
+  assert.equal(wing?.material, "aluminium");
+  assert.ok(wing?.visualMesh, "skins must keep the Object Lab mesh");
+  assert.equal(wing.visualMesh.doubleSided, false);
+  const cowlInner = pieces.find((piece) => piece.id.includes(":nacelle-right-cowl-inner:"));
+  const nacelleBody = pieces.find((piece) => piece.id.includes(":nacelle-right-body:"));
+  assert.equal(cowlInner?.visualMesh?.doubleSided, true);
+  assert.equal(nacelleBody?.visualMesh?.doubleSided, false);
+  assert.ok(cage.length > 0 && cage.every((piece) => piece.material === "steel"));
+  assert.ok(pieces.some((piece) => piece.actuator?.commandChannel === "throttle:0"));
+  assert.ok(pieces.some((piece) => piece.actuator?.commandChannel === "rudder"));
+  assert.equal(
+    pieces.filter((piece) => piece.hinge).length,
+    0,
+    "airport surfaces are not door leaves",
+  );
+  assert.ok(
+    airVehicles.some(
+      (vehicle) => vehicle.clusterId === ISLAND_AIRPORT_DC3_PLACEMENT.clusterId,
+    ),
+    "машина на полосе и отправляется с неё",
+  );
+});

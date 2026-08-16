@@ -60,11 +60,15 @@ test("the complete airport compiles as one initially stable authored scene", () 
 });
 
 test("the island is flat, elongated and bounded by the authored non-radial shoreline", () => {
-  assert.equal(ISLAND_AIRPORT_SHORELINE.length, 18);
+  // Южный пояс под ВПП 08 добавил три точки нерадиальной кромки.
+  assert.equal(ISLAND_AIRPORT_SHORELINE.length, 21);
   assert.deepEqual(islandAirportScene.worldEdgeBoundary, ISLAND_AIRPORT_SHORELINE);
   const xs = ISLAND_AIRPORT_SHORELINE.map(([x]) => x);
   const zs = ISLAND_AIRPORT_SHORELINE.map(([, z]) => z);
-  assert.ok((Math.max(...xs) - Math.min(...xs)) / (Math.max(...zs) - Math.min(...zs)) > 2);
+  // Двухполосный аэродром глубже однополосного: вытянутость 1.67 вместо 2.1
+  // после южного пояса под ВПП 08 — остров остаётся продолговатым, но уже
+  // не лентой.
+  assert.ok((Math.max(...xs) - Math.min(...xs)) / (Math.max(...zs) - Math.min(...zs)) > 1.5);
   assert.ok(withId(":terrain:earth:").length > 550);
   assert.ok(withId(":terrain:earth:").every((piece) => piece.foundation));
   assert.ok(withId(":shoreline:riprap:").length > 150);
@@ -143,8 +147,9 @@ test("the compact runway, apron and taxiway keep their exact operational geometr
   const taxiway = withId(":pavement:taxiway:");
   assert.ok(runway.length >= 29);
   const runwayX = extent(runway, 0);
-  assert.ok(Math.abs(runwayX.min + AIRPORT_RUNWAY.length / 2) <= 0.021);
-  assert.ok(Math.abs(runwayX.max - AIRPORT_RUNWAY.length / 2) <= 0.021);
+  // Полоса продлена на запад под недолёт: центр плиты больше не в нуле.
+  assert.ok(Math.abs(runwayX.min - (AIRPORT_RUNWAY.centreX - AIRPORT_RUNWAY.length / 2)) <= 0.021);
+  assert.ok(Math.abs(runwayX.max - (AIRPORT_RUNWAY.centreX + AIRPORT_RUNWAY.length / 2)) <= 0.021);
   assert.deepEqual(extent(runway, 2), {
     min: AIRPORT_RUNWAY.centreZ - AIRPORT_RUNWAY.width / 2,
     max: AIRPORT_RUNWAY.centreZ + AIRPORT_RUNWAY.width / 2,
@@ -161,8 +166,10 @@ test("the compact runway, apron and taxiway keep their exact operational geometr
     min: AIRPORT_TAXIWAY.centre[1] - AIRPORT_TAXIWAY.length / 2,
     max: AIRPORT_TAXIWAY.centre[1] + AIRPORT_TAXIWAY.length / 2,
   });
-  assert.equal(withId(":markings:centreline:").length, 13);
-  assert.equal(withId(":markings:threshold-").length, 24);
+  // Осевые штрихи продлены вместе с полосой: −96..72 шагом 12.
+  assert.equal(withId(":markings:centreline:").length, 15);
+  // 24 полосы порогов 09/27 + 10 полос порогов ВПП 08.
+  assert.equal(withId(":markings:threshold-").length, 34);
   assert.equal(withId(":markings:stand-line:").length, AIRPORT_APRON.stands.length);
   assert.equal(withId(":markings:hold-short:").length, 2);
   assert.equal(withId(":markings:runway-number:").length, 20);
@@ -277,8 +284,11 @@ test("terminal fixtures and airfield lights use complete physical carrier chains
       }
     }
   }
-  assert.equal(withId(":airfield-equipment:edge:").length, 44 * 4);
-  assert.equal(withId(":airfield-equipment:threshold:").length, 14 * 7);
+  // Все стойки исключены из четырёх кругов, выметаемых хвостом на pivot.
+  // Западный порог попадает в круг западного разворота целиком; восточный
+  // остаётся. Боковых комплектов вне полных габаритов этих кругов тридцать шесть.
+  assert.equal(withId(":airfield-equipment:edge:").length, 36 * 4);
+  assert.equal(withId(":airfield-equipment:threshold:").length, 7 * 5);
   assert.equal(withId(":airfield-equipment:papi:").length, 8 * 4);
 
   for (const end of [-1, 1]) {
@@ -287,10 +297,13 @@ test("terminal fixtures and airfield lights use complete physical carrier chains
       : AIRPORT_RUNWAY.eastThresholdX - AIRPORT_RUNWAY.thresholdInset;
     for (let index = -3; index <= 3; index += 1) {
       const prefix = `:threshold:${end}:${index}:`;
-      assert.equal(withId(`${prefix}base:`).length, 1);
-      assert.equal(withId(`${prefix}approach:lens:`).length, 1);
-      assert.equal(withId(`${prefix}runway:lens:`).length, 1);
-      assert.equal(withId(`${prefix}base:`)[0].position[0], expectedX);
+      const expected = end < 0 ? 0 : 1;
+      assert.equal(withId(`${prefix}base:`).length, expected);
+      assert.equal(withId(`${prefix}approach:lens:`).length, expected);
+      assert.equal(withId(`${prefix}runway:lens:`).length, expected);
+      if (expected > 0) {
+        assert.equal(withId(`${prefix}base:`)[0].position[0], expectedX);
+      }
     }
   }
   for (const approach of ["west", "east"]) {
@@ -314,7 +327,8 @@ test("terminal fixtures and airfield lights use complete physical carrier chains
     (object.id.startsWith("edge:") || object.id.startsWith("papi:")) &&
     object.id.endsWith(":bulb")
   );
-  assert.equal(activeAirfieldBulbs.length, 52);
+  // 36 огней кромки вне кругов разворота + 8 ламп PAPI.
+  assert.equal(activeAirfieldBulbs.length, 44);
   assert.ok(activeAirfieldBulbs.every((bulb) => {
     if (bulb.kind !== "primitive" || !bulb.light) return false;
     return bulb.light.poolGroupId === (bulb.id.startsWith("papi:") ? "airport-papi" : "airport-runway-edge") &&

@@ -1,0 +1,25 @@
+{
+  "schema": "contour-contract.v1",
+  "objectId": "tilt-hexacopter-b09",
+  "revision": "b09-owner-review-hypothesis",
+  "authorities": {
+    "reference-three-quarter": "observed visual character from the owner-approved generated concept",
+    "nose-and-canopy": "direct owner correction plus accepted RAX C2 morphology",
+    "armour-mass-separation": "direct owner rejection of the visually unchanged B08 silhouette",
+    "profile": "owner-review hypothesis",
+    "top": "owner-review hypothesis",
+    "front": "owner-review hypothesis"
+  },
+  "massArchitecture": {
+    "forwardSurvivalCapsule": { "zRange": [5.15, 0.15], "role": "crew and forward systems armour" },
+    "exposedCoreWaist": { "zRange": [0.22, -0.62], "role": "bounded visible continuation of primary cage" },
+    "aftEngineKeelCapsule": { "zRange": [-0.55, -4.4], "role": "engine and rear load-path armour" },
+    "continuousFullLengthShellForbidden": true
+  },
+  "characteristics": [
+    { "id": "skin-break-min", "value": 0.65, "unit": "m", "provenance": "direct-owner-correction" },
+    { "id": "canopy-frame-bow-count", "value": 3, "unit": "count", "provenance": "RAX-derived-morphology" },
+    { "id": "independent-primary-core", "value": true, "unit": "boolean", "provenance": "direct-owner-correction" },
+    { "id": "engineering-paused", "value": true, "unit": "boolean", "provenance": "object-study-gate" }
+  ]
+}

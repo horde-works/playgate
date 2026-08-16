@@ -41,6 +41,7 @@ import {
   physicalBodyKind,
 } from "./destructionRuntime";
 import {
+  cloneWithMaterialSpace,
   getPieceMaterial,
 } from "./materialTextures";
 import { materialAnchorWithWeathering } from "./materialAppearance";
@@ -557,14 +558,14 @@ const DynamicBreakableBatch = memo(function DynamicBreakableBatch({
     ) {
       return base;
     }
-    const next = base.clone();
+    const next = cloneWithMaterialSpace(base, surfaceMesh);
     if (surfaceMesh) next.vertexColors = Boolean(batch.visualMesh?.colors);
     if (batch.geometryKind === "foliage" || doubleSidedSurface) {
       next.side = DoubleSide;
     }
     if (batch.treeBark) {
-      const baseCompile = base.onBeforeCompile;
-      const baseProgramKey = base.customProgramCacheKey();
+      const baseCompile = next.onBeforeCompile;
+      const baseProgramKey = next.customProgramCacheKey();
       const barkAtlas = treeBarkAtlas();
       next.onBeforeCompile = (compiled, renderer) => {
         baseCompile(compiled, renderer);

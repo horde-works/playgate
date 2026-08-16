@@ -1,0 +1,12 @@
+{
+  "pixelFrame": [1600, 983],
+  "landmarks": {
+    "nose": [520, 861],
+    "rear": [914, 82],
+    "leftBeltOuter": [106, 503],
+    "rightBeltOuter": [1470, 575],
+    "rotorCentres": [[380, 246], [326, 469], [303, 682], [1209, 277], [1188, 496], [1083, 745]],
+    "engineCentres": [[821, 153], [1008, 169]]
+  },
+  "note": "Pixel landmarks are approximate registration handles, not dimensions."
+}

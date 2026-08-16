@@ -1,0 +1,28 @@
+{
+  "schema": "tilt-hexacopter-contour-expectations.v1",
+  "revision": "b05",
+  "provenance": "Owner correction: reject the kayak profile while retaining the approved armour-belt and 6+2 system layout.",
+  "hull": {
+    "minimumLength": 9.4,
+    "maximumWidth": 1.9,
+    "minimumAspectRatio": 5,
+    "centralBellyStations": [2.6, 1, -0.65, -1.45],
+    "maximumCentralBellyRange": 0.08,
+    "minimumNoseUndercut": 0.75,
+    "minimumAftKick": 0.65
+  },
+  "canopy": {
+    "requiredGlazingParts": ["canopy-forward-visor", "canopy-cockpit-cell"],
+    "minimumGlazingRun": 4.1,
+    "plateauStations": [2.2, 1, 0.35],
+    "maximumPlateauCrownRange": 0.08
+  },
+  "sharkRidge": {
+    "minimumHalfWidth": 0.34,
+    "minimumCrownAboveEngine": 0.3,
+    "maximumCrownAboveEngine": 0.6
+  },
+  "engineIntegration": {
+    "minimumVerticalBurial": 0.35
+  }
+}

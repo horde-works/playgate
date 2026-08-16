@@ -199,7 +199,23 @@ export function assessVehicleTrajectory(
   const groundSpeed = Math.hypot(state.velocity[0], state.velocity[2]);
   const current = routeDistance(plan, progress, state.position, 0.025, 0.08);
   const phase = vehicleGuidancePhaseAt(plan, progress);
-  const corridor = vehicleGuidanceCorridor(guidance, phase);
+  const envelopeCorridor = vehicleGuidanceCorridor(guidance, phase);
+  // ── АВТОРСКИЙ КОРИДОР УЧАСТКА — ЗАКОН И ДЛЯ КОРРЕКТОРА ─────────────────
+  //
+  // Точность — свойство УЧАСТКА (§4.3): трасса объявляет, где ей нужна
+  // осевая, а где манёвр. Сторож отказов авторский коридор читает; корректор
+  // читал только собственный конверт от паспорта отказов — и на площадке
+  // перед створом, где трасса разрешает полсотни метров под выход из
+  // разворота, требовал двадцать. Машина, штатно гасившая остаток сноса,
+  // на ~92% трассы забиралась с маршрута «спасать» — и рейс не завершался.
+  // Два судьи об одном и том же обязаны судить по одной норме: берётся
+  // ШИРЕ из двух, потому что конверт — это пол безопасности, а авторский
+  // коридор — осознанное требование участка.
+  const authoredCorridor = plan.corridor?.(progress);
+  const corridor =
+    authoredCorridor !== undefined && authoredCorridor > envelopeCorridor.crossTrack
+      ? { ...envelopeCorridor, crossTrack: authoredCorridor }
+      : envelopeCorridor;
   const gate = distanceToGate(plan, progress, phase);
   const holdableRate = holdableYawRate(model, nose, Math.max(1.5, groundSpeed));
   const reachableClosure = vehicleReachableClosure(
@@ -362,6 +378,12 @@ function holdableYawRate(
       Math.abs(model.yawRateLimits.minimum),
       Math.abs(model.yawRateLimits.maximum),
     );
+  }
+  // Крылатая машина разворачивается КРЕНОМ, и её поворотливость объявлена в
+  // turnCapability. Считать ей руль и разнотяг, как кораблю, значит судить о
+  // выполнимости манёвра по органу, который у неё лишь убирает скольжение.
+  if (model.turnCapability && Number.isFinite(model.turnCapability.yawRate)) {
+    return Math.max(0, model.turnCapability.yawRate);
   }
   const noseLength = Math.hypot(nose[0], nose[2]) || 1;
   const localNose: readonly [number, number] = [
@@ -687,12 +709,27 @@ export function planVehicleTrajectoryCorrection(
   if (!selected) {
     return null;
   }
+  // ── СКОРОСТЬ КОРРЕКЦИИ НЕ БЫВАЕТ НИЖЕ ЛЁТНОЙ ──────────────────────────
+  //
+  // Полка 1.8–5.5 м/с написана для машин, которые умеют так лететь: дирижабль
+  // и коптер замедляются и вползают на трассу. Крылатая машина на этих
+  // скоростях НЕ ЛЕТИТ ВООБЩЕ: её пол — полторы скорости сваливания, и
+  // автомат ниже не отдаёт. План коррекции со скоростью 5.5 для неё
+  // неисполним по построению: машина идёт 31+, план ждёт её на 5.5, слияние
+  // не наступает никогда — и рейс навечно застревает в «возвращаюсь на
+  // трассу». Замер с живой карты: коррекция у входа в разворот на посадочный
+  // курс, тангаж +11.6°, крен +24°, и машина больше никуда не прибыла.
+  //
+  // Пол объявляет сама машина (`limits.minimumSpeed`); у кого его нет,
+  // прежняя полка остаётся как была.
+  const minimumSpeed = model.limits.minimumSpeed ?? 0;
   const correctionSpeed = Math.max(
+    minimumSpeed,
     1.8,
     Math.min(
-      5.5,
+      Math.max(5.5, minimumSpeed * 1.15),
       sourcePlan.speedLimit(selected.progress),
-      Math.max(2.2, speed),
+      Math.max(2.2, speed, minimumSpeed),
     ),
   );
   return {
@@ -749,6 +786,23 @@ export function vehicleTrajectoryStabilizationPlan(
   progress: number,
   state: VehicleNavigationState,
   nose: SceneVector3,
+  /**
+   * МИНИМАЛЬНАЯ ЛЁТНАЯ СКОРОСТЬ МАШИНЫ. Ноль — прежний закон зависания.
+   *
+   * «Замри на месте и поднимись до трассы» — закон газовой машины: её держит
+   * оболочка, и снятая скорость покупает контурам секунды. Крыло на нулевой
+   * скорости НЕ ЛЕТИТ: тот же план приказывал самолёту зависнуть и набрать
+   * одиннадцать метров — газ срезан, нос +11.6°, машина сыплется и виляет,
+   * и «стабилизация» не наступает никогда, потому что стабилизировать
+   * падение нельзя. Живой замер с карты: вечное «возвращаюсь на трассу» у
+   * входа в посадочный разворот.
+   *
+   * Успокоение крылатой машины — ПРЯМАЯ НА ЛЁТНОЙ СКОРОСТИ В ГОРИЗОНТЕ:
+   * крылья ровно, темпы затухают сами, высота ДЕРЖИТСЯ, а не набирается —
+   * на успокоении не бывает набора по той же причине, по которой его не
+   * бывает на заходе.
+   */
+  minimumSpeed = 0,
 ): VehicleRoutePlan {
   const requiredNose = vehicleRouteHeading(sourcePlan, progress);
   const forward = rotateVector(state.orientation, nose);
@@ -758,15 +812,18 @@ export function vehicleTrajectoryStabilizationPlan(
     actualNose[0] * travelDirection,
     actualNose[1] * travelDirection,
   ];
-  const targetAltitude = Math.max(
-    state.position[1],
-    sourcePlan.altitude(progress),
-  );
+  const flying = minimumSpeed > 0;
+  const targetAltitude = flying
+    ? state.position[1]
+    : Math.max(state.position[1], sourcePlan.altitude(progress));
+  // Прямая обязана вмещать всё время успокоения: короче — и машина проезжает
+  // план насквозь, а наведение начинает целиться назад.
+  const length = flying ? Math.max(2, minimumSpeed * 45) : 2;
   return {
     id: `${sourcePlan.id}:stabilization`,
-    length: 2,
+    length,
     point(value) {
-      const distance = clamp01(value) * 2;
+      const distance = clamp01(value) * length;
       return [
         state.position[0] + movement[0] * distance,
         targetAltitude,
@@ -774,7 +831,7 @@ export function vehicleTrajectoryStabilizationPlan(
       ];
     },
     speedLimit() {
-      return 0;
+      return flying ? minimumSpeed : 0;
     },
     altitude() {
       return targetAltitude;
@@ -783,7 +840,7 @@ export function vehicleTrajectoryStabilizationPlan(
       return travelDirection;
     },
     guidanceLookahead() {
-      return 2;
+      return flying ? Math.max(2, minimumSpeed * 2) : 2;
     },
     finalFrom: Number.POSITIVE_INFINITY,
   };

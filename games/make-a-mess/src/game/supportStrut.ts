@@ -177,6 +177,9 @@ function clamp(value: number, low: number, high: number): number {
  * бесконечном столбе, и отдельной ветки для неё нет по существу, а не для
  * краткости.
  */
+/** Сцепление колеса с покрытием по умолчанию: сухой бетон. */
+export const STRUT_DEFAULT_GRIP = 0.9;
+
 export function strutSpringForce(
   strut: SupportStrut,
   compression: number,
@@ -345,6 +348,224 @@ export function strutPadFriction(
   ];
 }
 
+/**
+ * КОЛЕСО ВМЕСТО ПЯТКИ: КАТИТСЯ ВПЕРЁД, ДЕРЖИТ ВБОК, ОСТАНАВЛИВАЕТ ТОРМОЗОМ.
+ *
+ * Пятка изотропна, и для опоры коптера этого довольно. Самолёту — нет: машина
+ * с изотропным трением на полосе не разгоняется (трение съедает тягу) и не
+ * держит осевую линию (боковой ветер и разнотяг уводят её так же легко, как
+ * вперёд). Разница между пяткой и колесом — ровно в одной оси, и потому это
+ * не второй закон трения, а тот же самый, разложенный по двум направлениям:
+ *
+ *   - ВДОЛЬ КАЧЕНИЯ колесо свободно. Сопротивляется ему только качение
+ *     (малая доля нагрузки — то, что останавливает брошенную машину) и
+ *     тормоз, отпущенный по умолчанию;
+ *   - ПОПЕРЁК колесо держит всем сцеплением, как пятка.
+ *
+ * Обе составляющие делят ОДИН круг трения: колесо, отдавшее сцепление
+ * торможению, не держит поворот — то же содержание, что у шины автомобиля
+ * (`carDynamics`). Здесь оно не переиспользовано намеренно: там пятно
+ * контакта живёт вместе со своей подвеской, приводом и рулевым внутри
+ * `carForces`, и вытащить из него одну ось значило бы вывернуть чужой
+ * паспорт наизнанку. Общего у двух мест ровно столько, сколько написано выше.
+ *
+ * Линейность по скорости проскальзывания — то же лекарство, что у пятки:
+ * стоящая машина не должна дрожать.
+ */
+export interface StrutWheelContact {
+  /** Направление качения, мировое, единичное, лежит в плоскости опоры. */
+  readonly rollAxis: Vector3;
+  /** Колодки, 0…1. */
+  readonly brake: number;
+  /** Сопротивление качению, доля нормальной реакции. */
+  readonly rollingResistance: number;
+  /** Н/(м/с) поперечного no-slip constraint, вычисленные текущим шагом. */
+  readonly lateralStiffness?: number;
+  /**
+   * ЯКОРЬ РАЗВОРОТА: колесо заторможено раздельным тормозом и обязано
+   * стоять. Обычная жёсткость псевдостатики — регуляризация, а не физика:
+   * с ней «заякоренное» колесо ползло, машина вращалась вокруг центра масс,
+   * волоча колодку через вязкую зону, и разворот на месте шёл 0.005 рад/с —
+   * девяносто градусов за пять минут (замер 15.08.2026). Замкнутое колесо
+   * держит жёстко: множитель поднимает наклон псевдостатики на порядок, и
+   * лёгкий режим вращения — вокруг якоря — становится тем, чем и должен.
+   */
+  readonly anchorStiff?: boolean;
+}
+
+/** Поворот вектора кватернионом. Локальная копия: модуль остаётся чистым. */
+function rotateVectorByQuaternion(
+  quaternion: readonly [number, number, number, number],
+  vector: readonly [number, number, number],
+): readonly [number, number, number] {
+  const [x, y, z, w] = quaternion;
+  const tx = 2 * (y * vector[2] - z * vector[1]);
+  const ty = 2 * (z * vector[0] - x * vector[2]);
+  const tz = 2 * (x * vector[1] - y * vector[0]);
+  return [
+    vector[0] + w * tx + (y * tz - z * ty),
+    vector[1] + w * ty + (z * tx - x * tz),
+    vector[2] + w * tz + (x * ty - y * tx),
+  ];
+}
+
+/**
+ * РУЛЕВОЕ КОЛЕСО ЖИВЁТ ЗДЕСЬ, А НЕ В КОМПОНЕНТЕ.
+ *
+ * Закон стоял внутри `VehicleFrameSystem`, то есть внутри React-модуля,
+ * которого стенд не видит. Следствие оказалось не архитектурным, а прямым:
+ * стенд гонял пробег БЕЗ РУЛЕВОГО КОЛЕСА вовсе — единственной поперечной
+ * властью там оставался аэродинамический руль, у которого на пяти метрах в
+ * секунду власти нет. Машина честно касалась в двадцати сантиметрах от
+ * осевой и уезжала на девять метров, а приёмка считала это свойством машины.
+ * Правило репозитория ровно об этом: поведение, которого не видит чистый
+ * модуль, тестами не покрыто.
+ */
+/**
+ * Куда катится колесо ЗДЕСЬ И СЕЙЧАС: нос машины, повёрнутый рулевым углом и
+ * положенный на плоскость опоры. Не мировая ось: на уклоне и в развороте
+ * качение идёт по грунту, а не по горизонту.
+ */
+/**
+ * ОПОРА ГЛАЗАМИ ШИНЫ, А НЕ ЛУЧА. Луч видит миллиметровую кромку краски
+ * ступенью-стеной, и на шаге тяга руления упирается в неё насмерть (замер
+ * Igor, 15.08.2026: газ 0.35, тормоз 0, V=0 у кромки разметки). Шина
+ * радиуса R переезжает ступень h по дуге длиной ~sqrt(2·R·h): восьми
+ * миллиметрам краски отвечает пандус в девять сантиметров. Ограничение
+ * уклона опоры и есть эта геометрия; память держит вызывающий, по стойке.
+ */
+export function smoothStrutGround(
+  previous: number | undefined,
+  raw: number,
+  travelMetres: number,
+): number {
+  // Уклон 0.12 — пандус шины для ступеней до ~15 мм; выше — настоящий
+  // борт, его сглаживать нечестно, и он приходит круче сам.
+  const maxDelta = Math.max(travelMetres, 0.002) * 0.12 + 0.0005;
+  if (previous === undefined) return raw;
+  return previous + Math.max(-maxDelta, Math.min(maxDelta, raw - previous));
+}
+
+export function wheelRollAxis(
+  orientation: readonly [number, number, number, number],
+  wheel: {
+    readonly spinAxis: readonly [number, number, number];
+    /** Доля рулевого хода на этом колесе: у хвостового единица, у главных ноль. */
+    readonly steerShare: number;
+  },
+  normal: readonly [number, number, number],
+  steer: number,
+): readonly [number, number, number] {
+  // Ось качения перпендикулярна оси вращения колеса и лежит в плоскости опоры.
+  const axle = rotateVectorByQuaternion(orientation, wheel.spinAxis);
+  const raw: [number, number, number] = [
+    axle[1] * normal[2] - axle[2] * normal[1],
+    axle[2] * normal[0] - axle[0] * normal[2],
+    axle[0] * normal[1] - axle[1] * normal[0],
+  ];
+  const length = Math.hypot(raw[0], raw[1], raw[2]);
+  if (!(length > 1e-6)) return [0, 0, 0];
+  const forward: [number, number, number] = [
+    raw[0] / length,
+    raw[1] / length,
+    raw[2] / length,
+  ];
+  const angle = wheel.steerShare * steer * WHEEL_STEER_RANGE;
+  if (Math.abs(angle) < 1e-6) return forward;
+  // Родригес вокруг нормали опоры: рулевой угол поворачивает колесо в её
+  // плоскости, а не вокруг мировой вертикали.
+  const cosine = Math.cos(angle);
+  const sine = Math.sin(angle);
+  const along =
+    forward[0] * normal[0] + forward[1] * normal[1] + forward[2] * normal[2];
+  return [
+    forward[0] * cosine +
+      (normal[1] * forward[2] - normal[2] * forward[1]) * sine +
+      normal[0] * along * (1 - cosine),
+    forward[1] * cosine +
+      (normal[2] * forward[0] - normal[0] * forward[2]) * sine +
+      normal[1] * along * (1 - cosine),
+    forward[2] * cosine +
+      (normal[0] * forward[1] - normal[1] * forward[0]) * sine +
+      normal[2] * along * (1 - cosine),
+  ];
+}
+
+/** Полный ход рулевого колеса. Хвостовое колесо DC-3 ходит на тридцать. */
+export const WHEEL_STEER_RANGE = (30 * Math.PI) / 180;
+
+export function strutWheelFriction(
+  strut: SupportStrut,
+  load: number,
+  slipVelocity: Vector3,
+  wheel: StrutWheelContact,
+  surfaceGrip = 1,
+): Vector3 {
+  if (load <= 0) {
+    return [0, 0, 0];
+  }
+  const limit = strut.grip * surfaceGrip * load;
+  // Якорь разворота держит ЖЁСТКО: обычный наклон псевдостатики —
+  // регуляризация, и заякоренное колесо на нём ползло (см. StrutWheelContact).
+  const stiffness = strut.slipStiffness * (wheel.anchorStiff ? 12 : 1);
+  const lateralStiffness = wheel.lateralStiffness ?? stiffness;
+  const along =
+    slipVelocity[0] * wheel.rollAxis[0] +
+    slipVelocity[1] * wheel.rollAxis[1] +
+    slipVelocity[2] * wheel.rollAxis[2];
+  const lateral: Vector3 = [
+    slipVelocity[0] - wheel.rollAxis[0] * along,
+    slipVelocity[1] - wheel.rollAxis[1] * along,
+    slipVelocity[2] - wheel.rollAxis[2] * along,
+  ];
+  const lateralSpeed = Math.hypot(lateral[0], lateral[1], lateral[2]);
+  const lateralMagnitude = Math.min(lateralStiffness * lateralSpeed, limit);
+  // Продольная сила ограничена не всем сцеплением, а долей, которую выбрал
+  // тормоз: свободное колесо не тормозит, и заблокированное не тормозит
+  // сильнее, чем держит покрытие.
+  const brakeLimit = clamp(wheel.brake, 0, 1) * limit;
+  const rollingLimit = Math.max(0, wheel.rollingResistance) * load;
+  const alongSpeed = Math.abs(along);
+  const alongMagnitude = Math.min(
+    stiffness * alongSpeed,
+    brakeLimit + rollingLimit,
+  );
+  let alongForce = alongSpeed > EPSILON ? -Math.sign(along) * alongMagnitude : 0;
+  let lateralScale = lateralSpeed > EPSILON ? -lateralMagnitude / lateralSpeed : 0;
+  // Круг трения. Поперечная задача важнее продольной: машина, потерявшая
+  // осевую линию на пробеге, съезжает с полосы, а недотормозившая — просто
+  // катится дальше.
+  const combined = Math.hypot(alongForce, lateralMagnitude);
+  if (combined > limit && combined > EPSILON) {
+    const spare = Math.max(0, limit * limit - lateralMagnitude * lateralMagnitude);
+    alongForce = Math.sign(alongForce) * Math.min(Math.abs(alongForce), Math.sqrt(spare));
+    if (lateralMagnitude > limit) {
+      lateralScale = -limit / lateralSpeed;
+    }
+  }
+  return [
+    wheel.rollAxis[0] * alongForce + lateral[0] * lateralScale,
+    wheel.rollAxis[1] * alongForce + lateral[1] * lateralScale,
+    wheel.rollAxis[2] * alongForce + lateral[2] * lateralScale,
+  ];
+}
+
+/**
+ * Угол проката колеса. Колесо катится ЧЕРЕЗ РЕНДЕР: тела у него нет, а видеть
+ * вращение обязательно — стоящий на месте диск на разбеге читается поломкой.
+ */
+export function wheelSpinAngle(
+  previous: number,
+  rollSpeed: number,
+  radius: number,
+  step: number,
+): number {
+  if (!(radius > EPSILON)) return previous;
+  const advanced = previous + (rollSpeed / radius) * step;
+  const turn = Math.PI * 2;
+  return advanced - Math.floor(advanced / turn) * turn;
+}
+
 // ---------------------------------------------------------------------------
 // ПАСПОРТ
 //
@@ -389,7 +610,7 @@ function mountingCommon(options: StrutMountingOptions) {
   const groundHeight = options.groundHeight ?? 0;
   const extendedReach =
     (options.mount[1] - groundHeight) / descent + staticSag;
-  const grip = options.grip ?? 0.9;
+  const grip = options.grip ?? STRUT_DEFAULT_GRIP;
   return {
     axis,
     gravity,

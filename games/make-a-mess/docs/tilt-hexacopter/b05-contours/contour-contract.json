@@ -1,0 +1,56 @@
+{
+  "schema": "contour-contract.v1",
+  "objectId": "tilt-hexacopter-b05",
+  "revision": "b05-owner-review-hypothesis",
+  "normalization": {
+    "profile": "u: front 5.30 m to rear -4.25 m; v: y / 3.00 m",
+    "plan": "u: x from -4.20 m to +4.20 m; v: front 5.30 m to rear -4.25 m"
+  },
+  "views": {
+    "profile": {
+      "authority": "owner-review-hypothesis",
+      "outlineClosed": true,
+      "outline": [
+        [0, 0.377], [0.058, 0.42], [0.12, 0.5], [0.209, 0.57],
+        [0.283, 0.627], [0.45, 0.673], [0.623, 0.71], [0.707, 0.717],
+        [0.801, 0.713], [0.874, 0.693], [0.948, 0.647], [1, 0.633],
+        [1, 0.282], [0.948, 0.242], [0.874, 0.135], [0.801, 0.068],
+        [0.707, 0.048], [0.623, 0.042], [0.45, 0.042], [0.283, 0.048],
+        [0.209, 0.062], [0.12, 0.128], [0.058, 0.248], [0, 0.348], [0, 0.377]
+      ],
+      "features": {
+        "nose-tip": [0, 0.36],
+        "belly-break-front": [0.209, 0.062],
+        "belly-break-rear": [0.707, 0.048],
+        "aft-kick": [0.948, 0.242],
+        "shark-ridge-crown": [0.84, 0.987]
+      },
+      "controlLines": {
+        "canopy-step": [[0.075, 0.423], [0.141, 0.577], [0.22, 0.683], [0.325, 0.73], [0.45, 0.74], [0.518, 0.733]],
+        "upper-shark-ridge": [[0.637, 0.733], [0.696, 0.827], [0.764, 0.923], [0.84, 0.987], [0.906, 0.947], [1, 0.76]]
+      }
+    },
+    "top": {
+      "authority": "owner-review-hypothesis",
+      "outlineClosed": true,
+      "centralHullOutline": [
+        [0.5, 0], [0.517, 0.058], [0.54, 0.12], [0.576, 0.209],
+        [0.598, 0.283], [0.602, 0.45], [0.605, 0.623], [0.605, 0.707],
+        [0.594, 0.801], [0.581, 0.874], [0.562, 0.948], [0.548, 1],
+        [0.452, 1], [0.438, 0.948], [0.419, 0.874], [0.406, 0.801],
+        [0.395, 0.707], [0.395, 0.623], [0.398, 0.45], [0.402, 0.283],
+        [0.424, 0.209], [0.46, 0.12], [0.483, 0.058], [0.5, 0]
+      ],
+      "features": {
+        "rotor-centres": [[0.229, 0.293], [0.771, 0.293], [0.229, 0.555], [0.771, 0.555], [0.229, 0.817], [0.771, 0.817]],
+        "front-belt-extension": [[0.181, 0.089], [0.819, 0.089]],
+        "reinforced-rear-belt": [[0, 0.99], [1, 0.99]]
+      }
+    }
+  },
+  "characteristics": [
+    { "id": "central-hull-aspect-min", "value": 5, "unit": "ratio", "provenance": "owner-review-hypothesis" },
+    { "id": "central-belly-flat-span", "value": 4.05, "unit": "m", "provenance": "authored" },
+    { "id": "tail-crown-over-engine", "min": 0.3, "max": 0.6, "unit": "m", "provenance": "authored" }
+  ]
+}

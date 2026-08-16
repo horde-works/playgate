@@ -146,8 +146,9 @@ export const materialAppearanceProfiles: Record<
     wetness: 0.18,
     streaking: 0.05,
   },
-  // Alclad: rolling direction visible, satin not matte, oil streaks along
-  // the flow. Not the palace anodize and not car paint.
+  // Alclad: satin, not matte, not car paint. Rolling grain is a mill
+  // artifact; on a skin panel it reads as a stretched steel plate. Finish
+  // is isotropic gloss, not a direction.
   aluminium: {
     textureScale: 1.6,
     macroVariation: 0.02,
@@ -156,9 +157,9 @@ export const materialAppearanceProfiles: Record<
     groundDampness: 0.02,
     topLightening: 0.04,
     sideTint: [0.98, 0.99, 1],
-    directionalGrain: true,
+    directionalGrain: false,
     wetness: 0.22,
-    streaking: 0.18,
+    streaking: 0.05,
   },
   stone: {
     textureScale: 0.46,

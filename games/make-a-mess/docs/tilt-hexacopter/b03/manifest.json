@@ -1,0 +1,122 @@
+{
+  "modelId": "tilt-hexacopter-b03",
+  "revision": "tilt-hex-b03-2026-08-16",
+  "modelHash": "6183b24d9396",
+  "generatedAt": "2026-08-16T08:18:08.199Z",
+  "views": [
+    {
+      "id": "front",
+      "label": "Front orthographic — belts, chamfers and rotor bays",
+      "projection": "orthographic",
+      "file": "front.png"
+    },
+    {
+      "id": "rear",
+      "label": "Rear orthographic — engine pair and belt section",
+      "projection": "orthographic",
+      "file": "rear.png"
+    },
+    {
+      "id": "left",
+      "label": "Left orthographic — hull crown and three stations",
+      "projection": "orthographic",
+      "file": "left.png"
+    },
+    {
+      "id": "right",
+      "label": "Right orthographic — engine and belt depth",
+      "projection": "orthographic",
+      "file": "right.png"
+    },
+    {
+      "id": "top",
+      "label": "Top orthographic — two static ladder frames",
+      "projection": "orthographic",
+      "file": "top.png"
+    },
+    {
+      "id": "front-three-quarter",
+      "label": "Front three-quarter — complete static state",
+      "projection": "perspective",
+      "file": "front-three-quarter.png"
+    },
+    {
+      "id": "rear-three-quarter",
+      "label": "Rear three-quarter — belt sockets and upper engines",
+      "projection": "perspective",
+      "file": "rear-three-quarter.png"
+    },
+    {
+      "id": "high-three-quarter",
+      "label": "High three-quarter — frame and rotor layout",
+      "projection": "perspective",
+      "file": "high-three-quarter.png"
+    },
+    {
+      "id": "reference-match",
+      "label": "Reference-character camera — massing only",
+      "projection": "perspective",
+      "file": "reference-match.png"
+    },
+    {
+      "id": "belt-load-path",
+      "label": "Detail — body root, continuous spar and belt socket",
+      "projection": "perspective",
+      "file": "belt-load-path.png"
+    },
+    {
+      "id": "hinge-detail",
+      "label": "Detail — eccentric pin outside the duct",
+      "projection": "perspective",
+      "file": "hinge-detail.png"
+    },
+    {
+      "id": "independent-tilt",
+      "label": "Articulation — six independent phases",
+      "projection": "perspective",
+      "file": "independent-tilt.png"
+    },
+    {
+      "id": "side-hover",
+      "label": "Articulation — all ducts near lateral-thrust state",
+      "projection": "perspective",
+      "file": "side-hover.png"
+    },
+    {
+      "id": "structural-exterior",
+      "label": "Structural pair — complete exterior",
+      "projection": "perspective",
+      "file": "structural-exterior.png"
+    },
+    {
+      "id": "structural-cutaway",
+      "label": "Structural pair — shell, canopy and dorsal armour hidden",
+      "projection": "perspective",
+      "file": "structural-cutaway.png"
+    },
+    {
+      "id": "primary-core-isometric",
+      "label": "Primary core — isolated spatial cage",
+      "projection": "perspective",
+      "file": "primary-core-isometric.png"
+    },
+    {
+      "id": "primary-core-load-path",
+      "label": "Primary core — three paired sloped support frames and fixed belts",
+      "projection": "perspective",
+      "file": "primary-core-load-path.png"
+    },
+    {
+      "id": "dorsal-profile",
+      "label": "Dorsal profile — engines hidden to expose canopy-to-shark-tail contour",
+      "projection": "orthographic",
+      "file": "dorsal-profile.png"
+    },
+    {
+      "id": "silhouette",
+      "label": "Silhouette control — plan",
+      "projection": "orthographic",
+      "file": "silhouette.png"
+    }
+  ]
+}

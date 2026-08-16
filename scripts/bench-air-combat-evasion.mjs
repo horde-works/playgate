@@ -1,12 +1,10 @@
 import { performance } from "node:perf_hooks";
 import {
   createEvasionState,
-  stepEvasion,
-} from "../games/make-a-mess/src/game/airCombatEvasion.ts";
-import {
   evasionHullClearance,
   evasionHullFromLocalBounds,
-} from "../games/make-a-mess/src/game/airCombatEvasionField.ts";
+  stepEvasion,
+} from "../games/make-a-mess/src/game/missileEvasion.ts";
 import { compileSceneGroups } from "../games/make-a-mess/src/content/scenes/compileScene.ts";
 import { createCombatHexacopterPrototypeDocument } from "../games/make-a-mess/src/content/scenes/combatHexacopterPrototypeDocument.ts";
 import { ductHexacopterRangePadDocument } from "../games/make-a-mess/src/content/scenes/ductHexacopterRangePadDocument.ts";

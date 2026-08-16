@@ -7,6 +7,8 @@
 - Frozen teardrop-nacelle look: [`blockout-b01-freeze-teardrop/`](blockout-b01-freeze-teardrop/)
 - Frozen vertical-fin look: [`blockout-b01-freeze-fin/`](blockout-b01-freeze-fin/)
 - NASM stills for the nose and fin: [`references/`](references/)
+- Обшивка: шов, заклёпка и стёжка числами —
+  [`skin-seam-passport-p01.md`](skin-seam-passport-p01.md)
 
 Canonical B01 geometry lives in
 `src/content/objects/aircraft/dc3BlockoutObject.ts`. No world adapter.

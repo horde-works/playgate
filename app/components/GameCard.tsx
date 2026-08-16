@@ -104,6 +104,27 @@ export function GameCard({ game, featured = false }: GameCardProps) {
           <div className="art-spark art-spark-1" />
           <div className="art-spark art-spark-2" />
         </div>
+      ) : game.art === "dutch-polder" ? (
+        <div className="game-card-art game-card-art-polder" aria-hidden="true">
+          <span className="art-word art-word-dutch">DUTCH</span>
+          <span className="art-word art-word-polder">POLDER</span>
+          <div className="art-polder-cloud art-polder-cloud-1" />
+          <div className="art-polder-cloud art-polder-cloud-2" />
+          <div className="art-polder-land" />
+          <div className="art-polder-canal"><i /><i /></div>
+          <div className="art-polder-mill art-polder-mill-far">
+            <div className="art-polder-mill-cap" />
+            <div className="art-polder-sails"><i /><i /></div>
+          </div>
+          <div className="art-polder-house">
+            <div className="art-polder-roof" />
+          </div>
+          <div className="art-polder-mill art-polder-mill-near">
+            <div className="art-polder-mill-cap" />
+            <div className="art-polder-mill-door" />
+            <div className="art-polder-sails"><i /><i /></div>
+          </div>
+        </div>
       ) : game.art === "viking-village" ? (
         <div className="game-card-art game-card-art-viking" aria-hidden="true">
           <span className="art-word art-word-viking">VIKING</span>

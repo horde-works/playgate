@@ -24,6 +24,7 @@ import { structuralMaterialProfiles } from "../games/make-a-mess/src/game/destru
 import { grandTerminalScene } from "../games/make-a-mess/src/game/grandTerminalScene.ts";
 import { townScene } from "../games/make-a-mess/src/game/townScene.ts";
 import { nimbusScene } from "../games/make-a-mess/src/game/nimbusScene.ts";
+import { islandAirportScene } from "../games/make-a-mess/src/game/islandAirportScene.ts";
 import { combatHexacopterRangeScene } from "../games/make-a-mess/src/game/combatHexacopterRangeScene.ts";
 import {
   advanceVehicleRouteProgress,
@@ -618,6 +619,9 @@ test("every authored air vehicle can construct a moving route intercept", () => 
     // Боевой полигон: RAX-8 живёт в собственной сцене, и с момента регистрации
     // машины в общем реестре её мир обязан участвовать в перекрёстных тестах.
     ...combatHexacopterRangeScene.breakablePieces,
+    // Островной аэропорт: DC-3 попал в общий реестр, значит и его мир обязан
+    // участвовать в перекрёстных проверках — по тому же правилу, что и полигон.
+    ...islandAirportScene.breakablePieces,
   ];
   for (const vehicle of airVehicles) {
     const kind =
@@ -1204,4 +1208,94 @@ test("time to return is taken from the plan that has to be flown", () => {
     vehicleCorrectionAllowanceSeconds(tiny, grace),
     VEHICLE_HOLD_ALLOWANCE_SECONDS,
   );
+});
+
+
+// ---------------------------------------------------------------------------
+// ПЛАН КОРРЕКЦИИ НЕ БЫВАЕТ МЕДЛЕННЕЕ ЛЁТНОЙ СКОРОСТИ
+// ---------------------------------------------------------------------------
+
+test("a wing machine is never handed a correction plan below flying speed", () => {
+  // Полка коррекции 1.8–5.5 м/с написана для машин, которые умеют так лететь.
+  // Крылатая — не умеет: её автомат не отдаёт ход ниже полутора скоростей
+  // сваливания, и план на 5.5 м/с для неё неисполним ПО ПОСТРОЕНИЮ. Живой
+  // замер: машина ушла в «возвращаюсь на трассу» у входа в посадочный
+  // разворот и не прибыла никогда — условие слияния ждало её на скорости,
+  // на которой она падает, а не летит.
+  const dc3 = airVehicles.find((vehicle) => vehicle.flight.airplane !== undefined && vehicle.flight.liftSource === "wing");
+  assert.ok(dc3, "DC-3 не найден в каталоге воздушных машин");
+  const minimum = dc3.flight.limits.minimumSpeed;
+  assert.ok(
+    minimum > dc3.flight.airplane.stallSpeedFlaps,
+    "крылатая машина обязана объявлять минимальную лётную скорость выше сваливания",
+  );
+  const berth = [-66, 0.29, -22];
+  const plan = dc3.flight.routePlan("survey", berth);
+  const model = {
+    ...MODEL,
+    limits: dc3.flight.limits,
+    turnCapability: {
+      yawRate: 0.19,
+      lateralAcceleration: 8.2,
+      braking: 2.6,
+      responseSeconds: 3.4,
+    },
+  };
+  // Машина в крейсере, снесена вбок на сорок метров у входа в разворот.
+  const progress = 0.86;
+  const at = plan.point(progress);
+  const correction = planVehicleTrajectoryCorrection(
+    plan,
+    progress,
+    state({
+      position: [at[0] + 40, at[1] - 6, at[2] + 25],
+      velocity: [40, 0, 8],
+    }),
+    model,
+    NOSE,
+  );
+  assert.ok(correction, "коррекция для крылатой машины обязана строиться");
+  for (let step = 0; step <= 20; step += 1) {
+    const speed = correction.plan.speedLimit(step / 20);
+    assert.ok(
+      speed >= minimum - 0.01,
+      `план коррекции просит ${speed.toFixed(1)} м/с на ${(step * 5)}% — ниже лётной ${minimum.toFixed(1)}`,
+    );
+  }
+});
+
+
+test("the corrector is never stricter than the authored corridor", () => {
+  // Точность — свойство участка: трасса объявляет коридор, и сторож отказов
+  // его читает. Корректор судил по собственному конверту (20 м на крейсере)
+  // и на площадке перед створом, где трасса разрешает полсотни метров под
+  // выход из разворота, забирал машину с маршрута за штатный остаток сноса.
+  // Живой замер: DC-3 уходил в «возвращаюсь на трассу» на 92% рейса, летя
+  // нормально.
+  const widePlan = {
+    ...ROUTE,
+    finalFrom: 0.94,
+    corridor: () => 55,
+  };
+  const at = widePlan.point(0.92);
+  const off = state({
+    position: [at[0], at[1], at[2] + 35],
+    velocity: [40, 0, 0],
+  });
+  const wide = assessVehicleTrajectory(widePlan, 0.92, off, NOSE, MODEL, GUIDANCE);
+  assert.equal(
+    wide.correctionRequired,
+    false,
+    `штатный снос ${wide.crossTrackError.toFixed(0)} м внутри авторских 55 м — корректору тут делать нечего`,
+  );
+  // Контроль: без авторского коридора тот же снос у ворот — повод для ухода.
+  const bare = assessVehicleTrajectory(
+    { ...ROUTE, finalFrom: 0.94 },
+    0.92,
+    off,
+    NOSE,
+    MODEL,
+    GUIDANCE,
+  );
+  assert.equal(bare.correctionRequired, true);
 });

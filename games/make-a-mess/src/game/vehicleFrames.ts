@@ -6,6 +6,10 @@ import type {
 import { PLAYER_CAPSULE_FOOT_OFFSET } from "./playerMovement.ts";
 import type { RotorcraftYawThruster } from "./rotorcraftDynamics.ts";
 import type { StrutRetraction, SupportStrutPlan } from "./supportStrut.ts";
+import type {
+  AirplaneControlSurface,
+  AirplanePropeller,
+} from "./airplaneDynamics.ts";
 import {
   corneringSpeed,
   DEFAULT_SLIP_POLICY,
@@ -30,6 +34,7 @@ import {
   type SkyTrainFlightKind,
   type VehicleRoutePlan,
 } from "./skyTrainRoutes.ts";
+import { islandAirportDc3Frame } from "../content/scenes/islandAirport/islandAirportDc3.ts";
 import {
   BASALT_SKY_RAM_CLUSTER_ID,
   BASALT_SKY_RAM_LIFT_CENTRE,
@@ -117,8 +122,38 @@ export {
  * чтобы ход было видно. Это знание принадлежит кадру, поэтому здесь оно и
  * лежит — совпадением по вхождению в id куска, как и все прочие маски кадра.
  */
+/**
+ * Колесо на стойке. Пятка держит во все стороны одинаково, колесо — нет, и вся
+ * разница живёт здесь: чем оно катится, чем тормозит и чем рулит. Само
+ * вращение — рендер (`clusterMemberArticulation`), потому что тела у колеса
+ * нет и быть не может: луч стойки нашёл бы опору в нём самом.
+ */
+export interface VehicleWheelDefinition {
+  readonly radius: number;
+  /** Доля общего тормозного усилия. Хвостовое колесо не тормозит. */
+  readonly brakeShare: number;
+  /** Доля рулевого угла: у хвостового колеса единица, у основных ноль. */
+  readonly steerShare: number;
+  /** Сопротивление качению, доля нормальной реакции. */
+  readonly rollingResistance: number;
+  /**
+   * БОРТ КОЛЕСА КАК АВТОРСКИЙ ФАКТ: −1 левое, +1 правое, 0 — хвостовое
+   * (флюгируемое). Прежде борт угадывался по знаку mount[0], и мировой
+   * кластер, повёрнутый размещением на π/2, читал обе главные одним бортом,
+   * а хвост — «бортом» с плечом 11 м: разворот на месте шёл вдесятеро
+   * медленнее стенда и полз (замер мировой пробы, 15.08.2026).
+   */
+  readonly side?: -1 | 0 | 1;
+  /** Маска куска, которому рендер крутит прокат. */
+  readonly spinMember: string;
+  /** Ось вращения колеса в осях кадра. */
+  readonly spinAxis: SceneVector3;
+}
+
 export interface VehicleSupportStrutDefinition {
   readonly plan: SupportStrutPlan;
+  /** Есть — опора катится и тормозит; нет — это пятка. */
+  readonly wheel?: VehicleWheelDefinition;
   /** Без этих кусков опоры нет: угол проваливается на грунт. */
   readonly requiredMembers: readonly string[];
   /** Ходят вместе со штоком на весь ход. */
@@ -183,6 +218,14 @@ export interface VehicleFrameDefinition {
    * опору в собственной пятке.
    */
   readonly supportStruts?: readonly VehicleSupportStrutDefinition[];
+  /**
+   * СТВОРКИ, КОТОРЫЕ ВИДНО. Объявляются машиной, двигаются доставленной
+   * командой автомата — как винты дирижабля и лопасти коптера. Пустой список
+   * означает машину без аэродинамических органов, а не «пока не сделали».
+   */
+  readonly controlSurfaces?: readonly AirplaneControlSurface[];
+  /** Винты на валах: фаза идёт за доставленным газом, включая реверс. */
+  readonly propellers?: readonly AirplanePropeller[];
   /**
    * Подвижные грузы дифферентовки внутри оболочки. Единственный орган, который
    * вообще создаёт момент по крену и тангажу: своей массой, а не силой.
@@ -793,6 +836,17 @@ export const vehicleFrames: readonly VehicleFrameDefinition[] = [
   },
   combatHexacopterRangeFrame,
   ductHexacopterRangeFrame,
+  // МАШИНА ОБЯЗАНА БЫТЬ В ОБОИХ РЕЕСТРАХ, И ЭТОТ — ПЕРВЫЙ.
+  //
+  // Отсюда `isVehicleFramePiece` узнаёт, что кластер принадлежит машине, и
+  // неподвижный мир ОТПУСКАЕТ его куски: собственных коллайдеров у них не
+  // остаётся. Только после этого `airVehicles` имеет право строить составное
+  // тело. DC-3 стоял лишь во втором реестре, и на первом же шаге в одной
+  // точке оказывались 127 неподвижных коллайдеров сцены и динамический
+  // компаунд поверх них — Rapier разводил тело с его же призраком, и машину
+  // рвало в клочья. Из тестов это не видно: члены одного тела между собой не
+  // дерутся, дерётся тело с неотпущенной копией мира.
+  islandAirportDc3Frame,
 ];
 
 const frameByCluster = new Map(
@@ -1246,6 +1300,9 @@ export const SKY_TRAIN_UNDERWAY_TIME =
  * сорок метров.
  */
 /** Крейсерская дальность упреждения вдоль линии, м. */
+/** Ускорение свободного падения мира: то же, что у машин. */
+export const GRAVITY_ACCELERATION = 9.81;
+
 export const ROUTE_LOOKAHEAD = 52;
 
 /**
@@ -1283,6 +1340,38 @@ export const PROGRESS_JUMP_PROXIMITY = 6;
  * На посадочной прямой цель должна быть ближе: так корабль захватывает створ
  * до вокзала, а не идёт параллельно ему до последних метров.
  */
+/**
+ * ЗАПАС УСТОЙЧИВОСТИ ПОГОНИ ПО ЗАПАЗДЫВАНИЮ МАШИНЫ.
+ *
+ * Прицел, лежащий ровно на «сколько машина проедет, пока команда доходит до
+ * силы», — это НЕ безопасный минимум, а точная граница устойчивости, и стоять
+ * на ней нельзя.
+ *
+ * Вывод. Погоня на прямой при малых углах даёт
+ *
+ *     ω = −(2V/L²)·e − (2V/L)·ψ,   ψ̇ = ω,   ė = V·ψ,
+ *
+ * а машина отрабатывает просьбу с запаздыванием `τ·ω̇ + ω = ω_просьба`.
+ * Характеристический многочлен получается третьей степени:
+ *
+ *     τ·s³ + s² + (2V/L)·s + 2V²/L² = 0.
+ *
+ * Критерий Рауса для него — `1·(2V/L) > τ·(2V²/L²)`, то есть **L > τ·V**.
+ * Ровно это выражение и стояло в прицеле: коэффициент единица, запаса ноль.
+ * Отсюда и брались перекладки с упора на упор у крылатой машины — не «мало
+ * поворотливости», а автоколебание с нулевым запасом.
+ *
+ * При `L = k·τ·V` многочлен обезразмеривается до `σ³ + σ² + (2/k)σ + 2/k² = 0`,
+ * то есть зависит ТОЛЬКО от k. Затухание колебательной пары: k=3 → 0.36,
+ * k=5 → 0.60, k=8 → 0.71 (предел без запаздывания — 0.707). Пятёрка и взята:
+ * это первое значение с приемлемым затуханием, дальше рост почти ничего не
+ * добавляет, а прицел без нужды уезжает вперёд и начинает срезать изломы.
+ *
+ * Трасса вправе назначить свой горизонт (`guidanceLookahead`) — это заявление
+ * о точности, и оно сильнее общего запаса.
+ */
+export const PURSUIT_LAG_MARGIN = 8;
+
 export const APPROACH_LOOKAHEAD = 30;
 
 /**
@@ -1649,6 +1738,14 @@ export function mooringForce(
 export interface ShipLimits {
   /** Тяга ОДНОГО мотора, Н. */
   readonly enginePower: number;
+  /**
+   * МИНИМАЛЬНАЯ ЛЁТНАЯ СКОРОСТЬ, м/с. Есть только у крыла: ниже неё машина
+   * не летит, а падает. Всякий, кто строит для машины план — корректор,
+   * стабилизация, что угодно, — обязан спрашивать этот пол: план на скорости
+   * ниже него НЕИСПОЛНИМ по построению, и машина, которой его выдали,
+   * зависает в нём навечно.
+   */
+  readonly minimumSpeed?: number;
   /** Точки моторов в авторских координатах. */
   readonly enginePoints: readonly SceneVector3[];
   /** Relative maximum lift of each rotor; omitted means equal motors. */
@@ -1880,6 +1977,41 @@ export interface ShipModel {
    * у которой вопрос «успеет ли нос» вообще стоит.
    */
   readonly turnCapability?: RotorcraftTurnCapability;
+  /**
+   * ВИРАЖ ЭТОЙ МАШИНЫ ДЕРЖИТСЯ СОСТОЯНИЕМ, А НЕ УСИЛИЕМ НА ОРГАНЕ.
+   *
+   * Прогноз по умолчанию гасит темп рыскания угловым сопротивлением: он
+   * выведен для корпуса, который поворачивает ПЕРОМ РУЛЯ, и стоит перу
+   * встать в нейтраль — разворот кончается. У крыла разворачивает КРЕН, и
+   * центрированные органы означают не выход из виража, а его продолжение.
+   *
+   * Цена ошибки не косметическая. На вираже 0.18 рад/с прогноз в 3.5 секунды
+   * терял 36° курса и около девяноста метров бокового смещения: автопилот
+   * видел машину идущей прямо, требовал полного разворота, машина
+   * перекладывалась за предел, положение уезжало в другую сторону — и всё
+   * повторялось. Автоколебание с размахом от 4 до 226 метров от трассы
+   * держалось при любом прицеле, потому что причина была не в прицеле.
+   */
+  readonly turnPersists?: boolean;
+  /**
+   * ЗАПАЗДЫВАНИЕ ВЕРТИКАЛЬНОГО КАНАЛА, с. Объявляет машина; не объявила —
+   * контур остаётся на авторских усилениях, как и был.
+   *
+   * Усиления 0.06 на метр и 0.12 на метр в секунду выведены под машину с
+   * БОЛЬШИМ вертикальным запасом: у неё просьба в долях веса до упора не
+   * доходит. У крыла запас 0.22 веса, и та же пропорция упирается в него уже
+   * при 1.8 м/с ошибки темпа — контур перестаёт быть пропорциональным и
+   * становится РЕЛЕ. Реле с запаздыванием 2.5 с даёт автоколебание периодом
+   * около пяти секунд, и оно было замерено ровно таким: просьба ходила
+   * −0.22 ↔ +0.22 каждые четыре секунды ВЕСЬ полёт.
+   *
+   * Хуже, что вертикальная просьба входит в рабочую точку тяги: набор стоит
+   * `W·sin γ`. Поэтому реле переносилось прямо на РУД, и машина всю дорогу
+   * дёргала оборотами 0.00 → 0.48 → 0.33 → 0.00. Ни один автопилот и ни один
+   * пилот так не летает, и причина не в манере, а в том, что двигатель
+   * ФИЗИЧЕСКИ не успевает, а машина за этими рывками не идёт.
+   */
+  readonly verticalResponseSeconds?: number;
   /** Допустимый занос. Не задан — общий по проекту. */
   readonly slipPolicy?: RotorcraftSlipPolicy;
   /** Срезка от обратной связи по фактическому заносу, 0…1. */
@@ -2264,6 +2396,49 @@ export function isDockingComplete(
  * плоскую модель — ход, снос и рыскание: этого хватает, чтобы вести машину
  * с упреждением, а не догонять собственную ошибку.
  */
+/**
+ * ЗНАКОВАЯ КРИВИЗНА ТРАССЫ ПОД МАШИНОЙ, 1/м.
+ *
+ * Три точки на равном шаге дуги дают поворот касательной; кривизна — этот
+ * поворот, делённый на пройденную дугу. Знак по построению тот же, что у
+ * `bearingError`: положительный — трасса уводит нос вправо.
+ *
+ * Шаг берётся не мельче двадцати метров: у трассы, собранной кубическими
+ * дугами, соседние выборки различаются на доли метра, и разность двух близких
+ * касательных — это шум построения, а не кривизна.
+ */
+export function routeCurvature(plan: VehicleRoutePlan, progress: number): number {
+  // Шаг длиннее ряби тесселяции: на коротком шаге выборка Безье дышит ±10%,
+  // и подача по кривизне вместе с ней; систематика шага на самом крутом
+  // вираже флота (R≈376) — (s/R)²/24 ≈ 1%, это дешевле ряби.
+  const step = Math.max(45, plan.length * 0.002);
+  const share = step / Math.max(1, plan.length);
+  const before = plan.point(Math.max(0, progress - share));
+  const here = plan.point(clamp01(progress));
+  const after = plan.point(Math.min(1, progress + share));
+  const firstX = here[0] - before[0];
+  const firstZ = here[2] - before[2];
+  const secondX = after[0] - here[0];
+  const secondZ = after[2] - here[2];
+  const arc = Math.hypot(firstX, firstZ) + Math.hypot(secondX, secondZ);
+  if (!(arc > 1e-6)) return 0;
+  const turn = Math.atan2(
+    firstZ * secondX - firstX * secondZ,
+    firstX * secondX + firstZ * secondZ,
+  );
+  // УГОЛ МЕЖДУ ХОРДАМИ ДЕЛИТСЯ НА ПОЛОВИНУ СУММЫ ХОРД, НЕ НА СУММУ.
+  //
+  // Хорда направлена как касательная в СВОЕЙ середине; середины отстоят на
+  // половину суммарной длины, и именно на этом пути набегает измеренный угол.
+  // Деление на полную сумму давало РОВНО ПОЛОВИНУ кривизны — замер на круге
+  // радиусом 996 м: κ·V = 0.026 при потребных 0.053. Подача по кривизне
+  // недодавала половину разворота, подстройка добирала её пропорциональным
+  // членом — то есть ПОСТОЯННЫМ смещением с линии: −36 м на круге, и все
+  // прежние равновесия ±30…80 м с обеих сторон трассы были следствиями этой
+  // половины.
+  return (2 * turn) / arc;
+}
+
 export function predictShip(
   centre: SceneVector3,
   heading: readonly [number, number],
@@ -2332,9 +2507,12 @@ export function predictShip(
       rudderCommand *
       model.limits.maxRudderForce *
       rudderEffectiveness(Math.hypot(vx, vz), model.limits);
-    const moment =
-      engineMoment + rudder * rudderArm - model.dragAngular * omega;
-    omega += (moment / model.inertiaYaw) * dt;
+    // Машина, держащая вираж креном, не теряет его от центрированных органов.
+    if (!model.turnPersists) {
+      const moment =
+        engineMoment + rudder * rudderArm - model.dragAngular * omega;
+      omega += (moment / model.inertiaYaw) * dt;
+    }
     const turn = omega * dt;
     const nx = hx * Math.cos(turn) - hz * Math.sin(turn);
     const nz = hx * Math.sin(turn) + hz * Math.cos(turn);
@@ -2360,12 +2538,10 @@ export interface VehicleGuidanceDemand {
   readonly liftFraction: number;
   /** Ускорение, которого требует кривая, в мировых осях [x, y, z]. */
   readonly pathAcceleration?: readonly [number, number, number];
-  /**
-   * Машина в посадочном створе. Фазу знает автопилот, а ПОЛИТИКА фазы —
-   * например, какой занос терпим — применяется автоматом управления: занос на
-   * маршруте почти свободен, а на заходе зажат до створовых шести градусов.
-   */
-  readonly approachPhase?: boolean;
+  /** Судно выполняет всю объявленную маршрутом фазу прибытия. */
+  readonly arrivalPhase?: boolean;
+  /** Судно находится на точном финальном участке прибытия. */
+  readonly finalPhase?: boolean;
   /** Допуск заноса, выведенный из коридора участка, рад. */
   readonly slipAllowance?: number;
   /**
@@ -2761,7 +2937,7 @@ function governedRouteSpeed(
   plan: VehicleRoutePlan,
   progress: number,
   model: ShipModel,
-  onApproach: boolean,
+  onFinal: boolean,
   /** Фактический ход: разгон судится от него, а не от абстрактного нуля. */
   speed = 0,
 ): number {
@@ -2778,7 +2954,7 @@ function governedRouteSpeed(
   const policy = slipPolicyOf(model);
   const corridorHere = plan.corridor?.(progress);
   const allowance = Math.min(
-    onApproach ? policy.onApproach : Number.POSITIVE_INFINITY,
+    onFinal ? policy.onApproach : Number.POSITIVE_INFINITY,
     corridorHere !== undefined
       ? slipAllowanceForCorridor(corridorHere, policy)
       : policy.enRoute,
@@ -2826,6 +3002,9 @@ function governedRouteSpeed(
     samples.push({
       distance,
       speedCap: plan.speedLimit(at),
+      // Снижение впереди — для энергетического конверта машин с объявленным
+      // рассеиванием; остальным поле безвредно (см. pathSpeedCeiling).
+      drop: plan.altitude(progress) - plan.altitude(at),
       radius: Math.min(
         pathTurnRadius(
           [before[0], before[2]],
@@ -2911,7 +3090,22 @@ export function autopilot(
   // Смотрим ВПЕРЁД: где мы окажемся через несколько секунд, если ничего не
   // менять. Вести машину надо от предсказанной ошибки, а не от текущей, —
   // иначе она вечно догоняет себя и приходит в зону боком.
-  const horizon = Math.max(2, Math.min(3.5, groundSpeed * 0.4));
+  // ГОРИЗОНТ ПРЕДСКАЗАНИЯ — СВОЙСТВО МАШИНЫ, А НЕ КОНСТАНТА КОНТУРА.
+  //
+  // Две с половиной секунды выведены под всевекторную и медленную машину:
+  // она перекладывается почти мгновенно, и заглядывать дальше ей незачем.
+  // Крылатой машине этого мало на порядок задачи: разворот у неё начинается
+  // с ПЕРЕКЛАДКИ КРЕНА, а та занимает две-три секунды и сотню метров пути.
+  // С коротким горизонтом машина входит в дугу, ещё не докренившись, тут же
+  // оказывается снаружи и дальше только догоняет — замер дал вынос до 1315 м
+  // при круге 841. Собственное время отклика машина объявляет сама
+  // (`turnCapability.responseSeconds`), и горизонт обязан его вмещать.
+  const responseSeconds = model.turnCapability?.responseSeconds ?? 0;
+  const horizon = Math.max(
+    2,
+    Math.min(3.5, groundSpeed * 0.4),
+    responseSeconds * 1.5,
+  );
   const guess = predictShip(
     centre,
     heading,
@@ -2923,10 +3117,9 @@ export function autopilot(
     nose,
   );
 
-  // Заход — это створ, а не «последние проценты»: с этого места маршрут уже
-  // прямая на причал, и корабль должен идти по ней, не разворачиваясь.
-  const onApproach = progress >= plan.finalFrom;
-  const berthPoint = plan.point(1);
+  const onArrival = progress >= (plan.arrivalFrom ?? plan.finalFrom);
+  const onFinal = progress >= plan.finalFrom;
+  const berthPoint = plan.point(plan.arrivalAt ?? 1);
   const berthDistance = Math.hypot(
     centre[0] - berthPoint[0],
     centre[2] - berthPoint[2],
@@ -2935,10 +3128,68 @@ export function autopilot(
   // На всём маршруте, включая посадочную прямую, ведём на следующую точку
   // самой линии. Целью захода раньше сразу становился причал: корабль резал
   // створ по диагонали и физическая швартовка потом дотягивала его боком.
-  const routeLookahead = plan.guidanceLookahead?.(progress) ?? ROUTE_LOOKAHEAD;
+  // ── КАК РАНО НАЧИНАТЬ МАНЁВР — СВОЙСТВО МАШИНЫ ──────────────────────────
+  //
+  // Прицел не имеет права лежать ближе, чем машина проедет, ПОКА КОМАНДА
+  // ДОХОДИТ ДО СИЛЫ. У всевекторной и медленной машины это доли секунды, и
+  // авторские метры трассы её устраивают. Крылатая начинает разворот с
+  // перекладки крена: сорок градусов на паспортном темпе — две секунды и сто
+  // метров пути. С коротким прицелом она входит в дугу недокренённой, тут же
+  // оказывается снаружи и дальше только догоняет — замер дал вынос до 1315 м
+  // при круге 841.
+  //
+  // Собственное время отклика машина объявляет сама (`responseSeconds`), и
+  // здесь оно превращается в расстояние. Трасса про это не знает и знать не
+  // должна: завтра по ней пойдёт другая машина.
+  // Собственное время отклика машина объявляет сама (`responseSeconds`), и
+  // здесь оно превращается в расстояние — но только там, где трасса СВОЕГО
+  // горизонта не назначила. Назначенный участком горизонт — это заявление о
+  // точности («здесь не срезать»), и машина не вправе его расширять: у фигур
+  // высшего пилотажа он короток намеренно, и подмена его временем отклика
+  // заставляла винтокрылую машину входить в иммельман ползком.
+  const reactionDistance =
+    groundSpeed * (model.turnCapability?.responseSeconds ?? 0) * PURSUIT_LAG_MARGIN;
+  let routeLookahead = plan.guidanceLookahead
+    ? plan.guidanceLookahead(progress)
+    : Math.max(ROUTE_LOOKAHEAD, reactionDistance);
+  // ── ПРИЦЕЛ РУЛЕНИЯ — СЕКУНДЫ ПУТИ, А НЕ ЛЁТНЫЕ МЕТРЫ ────────────────────
+  //
+  // Машина, объявившая наземный отклик (доли секунды), рулит на единицах
+  // метров в секунду, а лётный минимум прицела — 52 м: это тринадцать секунд
+  // пути. С таким прицелом рулящая машина целилась ЗА угол ломаной и резала
+  // диагональ через разрыв между полосами — правое колесо в пятнадцати
+  // метрах за кромкой (замер 15.08.2026). Четыре секунды пути — тот же
+  // запас устойчивости `k·τ·V` при наземных τ.
+  if ((model.turnCapability?.responseSeconds ?? 9) <= 1) {
+    // ТОЧНОЕ СЛЕДОВАНИЕ, А НЕ ФАНТАЗИЯ (вердикт Igor, 15.08.2026): прицел
+    // в 10-17 м у вершины ломаной лежит уже ЗА углом, и машина еле заметно
+    // входила в поворот ДО поворота. На земле прицел — полторы секунды
+    // пути: излом начинается там, где он нарисован.
+    routeLookahead = Math.min(
+      routeLookahead,
+      Math.max(2.5, groundSpeed * 1.5),
+    );
+  }
   const guidanceProgress = Math.min(
     1,
-    progress + (onApproach ? APPROACH_LOOKAHEAD : routeLookahead) / plan.length,
+    progress +
+      (onFinal
+        ? // На створе далеко смотреть НЕЛЬЗЯ: глиссада — отрезок, и упреждение
+          // по нему срезает угол вместо того, чтобы держать линию.
+          //
+          // НО ГРАНИЦА УСТОЙЧИВОСТИ ДЕЙСТВУЕТ И ЗДЕСЬ. Тридцать метров при
+          // ходе 35 м/с и запаздывании 2.25 с — это `L = 0.38·τ·V`, втрое
+          // НИЖЕ порога `L > τ·V`, за которым погоня расходится вовсе. Для
+          // машины, которая перекладывается мгновенно, тридцать метров и
+          // означают точность; для крылатой они означают раскачку на самой
+          // ответственной прямой маршрута. Замер: снос по створу рос 10 → 26
+          // → 36 → 43 м на пути к порогу.
+          //
+          // Срезать при этом нечего: створ — ОТРЕЗОК, и прицел, упёршийся в
+          // его конец, целится ровно в точку касания.
+          Math.max(APPROACH_LOOKAHEAD, reactionDistance)
+        : routeLookahead) /
+        plan.length,
   );
   const routeHere = plan.point(progress);
   let aim = plan.point(guidanceProgress);
@@ -3002,7 +3253,7 @@ export function autopilot(
     // source of the actual backwards motion.
     wanted = [-wanted[0], -wanted[1]];
   }
-  if (onApproach) {
+  if (onFinal) {
     // На оси причала последние метры — уже не навигация к точке, а
     // швартовочное положение. Подмешиваем требуемый курс только после
     // захвата створа: если сделать это при большом боковом сносе, корабль
@@ -3112,7 +3363,7 @@ export function autopilot(
       leadLength > 1e-6
         ? [leadX / leadLength, leadZ / leadLength]
         : [tangentX, tangentZ];
-    wanted = onApproach
+    wanted = onFinal
       ? [approach.heading[0], approach.heading[1]]
       : leadTangent;
   }
@@ -3123,7 +3374,7 @@ export function autopilot(
   // за движением. На заходе требование тоже не действует — там курс принадлежит
   // створу, и второе мнение о нём означало бы промах мимо площадки.
   const authoredHeading =
-    !onApproach && (limits.lateralThrust ?? 0) > 1e-6
+    !onFinal && (limits.lateralThrust ?? 0) > 1e-6
       ? plan.heading?.(progress)
       : null;
   if (authoredHeading) {
@@ -3175,18 +3426,152 @@ export function autopilot(
   // выравнивания, поэтому раскрутки не возникает, а на остром угле разворот
   // начинается заранее — корпус входит в поворот боком, на тяге, и нос
   // приходит к курсу к тому моменту, когда он там понадобится.
+  // ── РАЗВОРОТ ТРАССЫ И ОШИБКА — ЭТО ДВЕ РАЗНЫЕ ЗАДАЧИ ────────────────────
+  //
+  // Погоня одна отвечала и за то, и за другое, а требования к прицелу у них
+  // ПРОТИВОПОЛОЖНЫЕ, и это доказывается, а не предполагается:
+  //
+  //   - устойчивость требует прицела ДЛИННОГО. Погоня с запаздыванием машины
+  //     устойчива лишь при `L > τ·V` (вывод у `PURSUIT_LAG_MARGIN`), а с
+  //     ограничением темпа перекладки нужен и вовсе восьмикратный запас.
+  //     Замер на прямой: при k=5 машина не сходится вовсе и рыскает ±120 м,
+  //     при k=8 садится на линию с точностью 2 м;
+  //   - геометрия требует прицела КОРОТКОГО. Хорда к точке, отстоящей на
+  //     восемь запаздываний, на круге 841 м отсекает 30° дуги, а на круге
+  //     300 м уходит за половину окружности, и машина честно летит в хорду
+  //     вместо дуги. Замер: при k=8 на круге 300 м вынос 3.4 км.
+  //
+  // Совместить их одним числом нельзя, и подбирать его бессмысленно. Но
+  // разворот трассы ЗНАЕТСЯ ТОЧНО — это её кривизна, — и потому принадлежит
+  // не обратной связи, а прямому ходу:
+  //
+  //     ω = V·κ(трасса)  +  погоня по ОСТАТКУ.
+  //
+  // Опорой для остатка служит КАСАТЕЛЬНАЯ в точке под машиной, а не дуга: на
+  // прямой это ровно прежний закон, на дуге — тот же ответ при машине НА
+  // трассе (κ даёт весь разворот, остаток нулевой), а вне трассы — та самая
+  // задача схода на прямую, для которой длинный прицел и выведен.
+  //
+  // Так живёт и человек: в вираже он ставит крен по дуге и правит мелочи, а
+  // не выцарапывает весь разворот из ошибки положения.
   const holonomic = (limits.lateralThrust ?? 0) > 1e-6;
+  // ── КОМУ ПРИНАДЛЕЖИТ РАЗДЕЛЕНИЕ ПОДАЧИ И ОШИБКИ ────────────────────────
+  //
+  // Машине, чей вираж держится СОСТОЯНИЕМ (`turnPersists`), а не усилием на
+  // пере руля. Только у неё разворот стоит перекладки в несколько секунд, и
+  // только у неё поэтому требования к прицелу расходятся: устойчивость тянет
+  // прицел вперёд, геометрия дуги — назад.
+  //
+  // Корпус с рулём поворачивает почти сразу, как только руль положен: у него
+  // этого расхождения нет, ему длинный прицел не нужен, и общая погоня для
+  // него не только достаточна, но и проверена всем флотом. Включать ему
+  // прямую подачу по кривизне значило бы менять поведение семи машин ради
+  // задачи, которой у них нет, — и замер это подтвердил сразу: дирижабль,
+  // ладья и таран разошлись со своими причалами в тот же прогон.
+  const staged = !holonomic && (model.turnPersists ?? false);
+  // Створ — тоже участок трассы, и разделение «разворот отдельно, ошибка
+  // отдельно» на нём не менее верно: кривизна там нулевая, а опора-касательная
+  // есть в точности осевая полосы. Прежде здесь стоял отдельный случай, и
+  // глиссада оставалась на прежнем законе — она одна и продолжала рыскать
+  // полусотней метров, когда весь круг уже держался в тридцати.
+  // ── ПРЯМАЯ ПОДАЧА БЕРЁТСЯ ВПЕРЁДИ НА СОБСТВЕННОЕ ЗАПАЗДЫВАНИЕ ──────────
+  //
+  // Кривизна под машиной — это то, что нужно СЕЙЧАС, а машина доставит крен
+  // через `responseSeconds`. Подача, взятая под собой, опаздывает ровно на
+  // это время и на входе в дугу, и на выходе из неё: машина докручивает уже
+  // на прямой. Замер на развороте на посадочный курс (радиус 411 м, ход 35
+  // м/с, запаздывание 2.25 с): остаточный курс на выходе 11°, то есть 6.5 м/с
+  // бокового хода — и вынос со створа на шестьдесят метров, которые за
+  // восемнадцать секунд глиссады уже не выбираются.
+  //
+  // Упреждение — то же самое число, что и везде: машина объявляет его сама.
+  const leadSeconds = model.turnCapability?.responseSeconds ?? 0;
+  const curvature = !staged
+    ? 0
+    : routeCurvature(
+        plan,
+        Math.min(1, progress + (groundSpeed * leadSeconds) / plan.length),
+      );
+  // ── ПУТЕВОЙ ЗАКОН СТУПЕНЧАТОЙ МАШИНЫ: НОЛЬ — НА ЛИНИИ ПО ПОСТРОЕНИЮ ────
+  //
+  // Прицельная погоня равновесна там, где сходятся её углы, а не там, где
+  // линия: замер дал +27 м ВНУТРЬ кольца от предсказанного курса в пеленге и
+  // −80 м НАРУЖУ от текущего — постоянное смещение на корпус при полной
+  // возможности держать линию. У закона просто не было нуля на трассе.
+  //
+  // Здесь классическая путевая форма (Серре–Френе): разворот дуги несёт
+  // подача по кривизне, а подстройка — ошибка курса к касательной и знаковый
+  // снос. На линии по курсу оба слагаемых нули, и требование равно ровно
+  // κ·V — смещаться некуда. Усиления не подбираются: частота контура берётся
+  // от запаздывания машины (ω = 0.4/τ — за порогом связка с лагом звенит),
+  // затухание критическое: k_ψ = 2ω, k_d = ω²/V.
+  let stagedTrim = 0;
+  if (staged) {
+    // База касательной: в воздухе ±8 м гасят рябь сглаживания, на земле
+    // (мгновенный отклик колёс) ±8 м смазывают излом за восемь метров до
+    // него — машина фантазировала вход в поворот заранее. Наземная база —
+    // метр-полтора: касательная поворачивает у самой вершины.
+    const tangentBase =
+      (model.turnCapability?.responseSeconds ?? 9) <= 1
+        ? Math.max(1, groundSpeed * 0.5)
+        : 8;
+    const behind = plan.point(Math.max(0, progress - tangentBase / plan.length));
+    const ahead = plan.point(Math.min(1, progress + tangentBase / plan.length));
+    const tanX = ahead[0] - behind[0];
+    const tanZ = ahead[2] - behind[2];
+    const tanLength = Math.hypot(tanX, tanZ) || 1;
+    const unitX = tanX / tanLength;
+    const unitZ = tanZ / tanLength;
+    // Снос со знаком: положительный — по ту же сторону, куда положительный
+    // yawRate уводит нос. Обе величины меряются одним векторным произведением,
+    // поэтому знак закона не зависит от ориентации мира.
+    const offsetX = centre[0] - routeHere[0];
+    const offsetZ = centre[2] - routeHere[2];
+    const crossTrackSigned = unitZ * offsetX - unitX * offsetZ;
+    const courseLength = groundSpeed > 1 ? groundSpeed : 1;
+    const courseX = groundSpeed > 1 ? velocity[0] / courseLength : heading[0];
+    const courseZ = groundSpeed > 1 ? velocity[2] / courseLength : heading[1];
+    const headingErrorSigned = Math.atan2(
+      unitZ * courseX - unitX * courseZ,
+      unitX * courseX + unitZ * courseZ,
+    );
+    const lagSeconds = Math.max(0.5, model.turnCapability?.responseSeconds ?? 0.5);
+    const natural = 0.4 / lagSeconds;
+    stagedTrim =
+      -2 * natural * headingErrorSigned -
+      ((natural * natural) / Math.max(10, groundSpeed)) * crossTrackSigned;
+  }
   const pursuit = holonomic
     ? bearingError /
       Math.max(HEADING_ALIGN_SECONDS, Math.abs(bearingError) / yawAuthority)
     : Math.abs(bearingError) > Math.PI / 2 && groundSpeed < 4
       ? bearingError / 3
-      : (2 * Math.max(groundSpeed, 1.5) * Math.sin(bearingError)) /
-        Math.max(20, reach);
+      : staged
+        ? groundSpeed * curvature + stagedTrim
+        : (2 * Math.max(groundSpeed, 1.5) * Math.sin(bearingError)) /
+          Math.max(20, reach);
   // Guidance просит темп без знания органа управления. Корабельный контроллер
   // ниже зажмёт его располагаемым рулём и разнотягом; коптер — собственным
   // реактивным моментом винтов.
   let requestedYawRate = pursuit;
+    // ПРОСИТЬ БОЛЬШЕ, ЧЕМ МАШИНА УМЕЕТ, — ЗНАЧИТ НЕ ПРОСИТЬ НИЧЕГО.
+  //
+  // Погоня даёт темп из одной геометрии, и на большой ошибке курса он выходит
+  // в разы выше располагаемого. Пока орган управления — руль или разнотяг,
+  // насыщение безобидно: перо просто стоит в упоре. У КРЫЛА темп рыскания
+  // задаётся КРЕНОМ, и всякая просьба сверх располагаемой превращается в
+  // предельный крен — одинаковый и для «нужно чуть довернуть», и для «нужно
+  // разворачиваться». Информация о величине теряется, знак погони при этом
+  // меняется, и вместо плавной дуги получается перекладка с упора на упор.
+  //
+  // Замер на облёте: трассе нужен радиус 375 м, машина способна на 190,
+  // а летела она то 233, то 5359 — то есть попеременно перекручивала и не
+  // докручивала, уходя наружу до 1315 м при круге 841. Располагаемый темп
+  // машина публикует сама (`turnCapability`), и просьба обязана в него влезать.
+  const available = model.turnCapability?.yawRate;
+  if (available !== undefined && Number.isFinite(available) && available > 0) {
+    requestedYawRate = Math.max(-available, Math.min(available, requestedYawRate));
+  }
   const yawRateLimits = model.yawRateLimits;
   if (yawRateLimits) {
     const minimum = Math.min(yawRateLimits.minimum, yawRateLimits.maximum);
@@ -3220,7 +3605,9 @@ export function autopilot(
   // До посадочной прямой близость к причалу ничего не означает: замкнутая
   // линия проходит рядом с ним и в середине рейса. Старый регулятор видел
   // малое евклидово расстояние и внезапно включал реверс прямо на круге.
-  const braking = onApproach
+  const minimumFlightSpeed = Math.max(0, limits.minimumSpeed ?? 0);
+  const stopsAtArrival = minimumFlightSpeed <= 1e-6;
+  const braking = onFinal && stopsAtArrival
     ? Math.max(0, speedAlong * speedAlong) / (2 * Math.max(1, berthDistance))
     : 0;
   // АВТОРСКИЙ ПРЕДЕЛ УЧАСТКА — ПОТОЛОК, А НЕ РАБОЧАЯ ТОЧКА.
@@ -3235,11 +3622,14 @@ export function autopilot(
   // Считает его САМ автопилот по геометрии плана: у любого маршрута есть точки
   // и длина, больше ничего не нужно. Делать это свойством маршрута значило бы
   // раздать один и тот же закон по всем трассам и потерять его при следующей.
-  const authored = Math.min(
-    plan.speedLimit(progress),
-    governedRouteSpeed(plan, progress, model, onApproach, groundSpeed),
+  const authored = Math.max(
+    minimumFlightSpeed,
+    Math.min(
+      plan.speedLimit(progress),
+      governedRouteSpeed(plan, progress, model, onFinal, groundSpeed),
+    ),
   );
-  const routeAllowed = onApproach
+  const routeAllowed = onFinal && stopsAtArrival
     ? Math.min(authored, Math.max(0.8, Math.sqrt(2 * 0.35 * berthDistance)))
     : authored;
   const safetyIntervention = safety?.risk === "intervention";
@@ -3267,7 +3657,7 @@ export function autopilot(
   // Поэтому на финальном участке продольная команда выводится из оставшегося
   // расстояния до причальной точки вдоль причального курса, а не из профиля.
   const holonomicBerthHold =
-    onApproach &&
+    onFinal &&
     (limits.lateralThrust ?? 0) > 1e-6 &&
     model.vectoredTranslation === true;
   // ОШИБКА МЕСТА — ЭТО ВЕКТОР, И МЕРИТЬ ЕЁ НАДО ЦЕЛИКОМ.
@@ -3339,7 +3729,7 @@ export function autopilot(
   // на траекторию больше не влияет: упреждение остаётся чистым рысканьем,
   // а тело идёт по маршруту.
   const holonomicRoute =
-    !onApproach &&
+    !onFinal &&
     (limits.lateralThrust ?? 0) > 1e-6 &&
     model.vectoredTranslation === true;
   const aimErrorX = aim[0] - centre[0];
@@ -3435,6 +3825,54 @@ export function autopilot(
         ),
       )
     : (pathKinematics?.verticalRate ?? 0);
+  // ── ВЕРТИКАЛЬНЫЕ УСИЛЕНИЯ ВЫВОДЯТСЯ ИЗ ВЛАСТИ И ЗАПАЗДЫВАНИЯ МАШИНЫ ────
+  //
+  // Просьба измеряется в долях веса, и машина превращает её в вертикальную
+  // скорость со своим запаздыванием `τ`: установившийся набор равен `f·g·τ`.
+  // Отсюда обе пропорции СЧИТАЮТСЯ:
+  //
+  //   - контур ТЕМПА не должен упираться раньше, чем машина исчерпает свою
+  //     вертикальную власть: весь её диапазон `±f·g·τ` обязан ложиться на
+  //     весь диапазон просьбы, то есть `k = 1/(g·τ)`;
+  //   - контур ПОЛОЖЕНИЯ закрывает остаток за СВОЮ постоянную времени:
+  //     потребный темп `e/τ`, значит `k = 1/(g·τ²)`. Две постоянные вместо
+  //     одной пробовались и отменены замером: `τ` объявлено одним числом на
+  //     все режимы, а на заходе с выпущенной механизацией машина отдаёт около
+  //     семи десятых от него — прямая подача недобирает, и остаток ложится на
+  //     этот контур. При двух постоянных он оставлял шесть метров на глиссаде,
+  //     то есть касание на сто двадцать метров дальше расчётного.
+  //
+  // У крыла это 0.041 и 0.008 против авторских 0.12 и 0.06 — контур перестаёт
+  // упираться в упор и становится тем, чем назван.
+  const verticalLag = model.verticalResponseSeconds ?? 0;
+  const verticalPositionGain =
+    verticalLag > 0
+      ? 1 / (GRAVITY_ACCELERATION * verticalLag * verticalLag)
+      : 0.06;
+  const verticalRateGain =
+    verticalLag > 0 ? 1 / (GRAVITY_ACCELERATION * verticalLag) : 0.12;
+  // ── ПРЯМАЯ ПОДАЧА ПО ПРОФИЛЮ: БЕЗ НЕЁ КОНТУР ТЕМПА ПРОСЕДАЕТ ВДВОЕ ─────
+  //
+  // Пропорциональный контур создаёт просьбу только ОШИБКОЙ, а установившийся
+  // темп сам эту ошибку и съедает: `f = k·(w* − f·g·τ)`, откуда при
+  // `k = 1/(g·τ)` выходит ровно `f = w*/(2·g·τ)` — ПОЛОВИНА потребного. Это
+  // не настройка и не грубость усиления, это свойство пропорции.
+  //
+  // Замер на глиссаде: профиль требовал 2.3 м/с снижения, машина давала 1.5,
+  // приходила к полосе на двадцать метров выше неё и уходила за остров, так
+  // и не коснувшись. Ровно тот же провал был и у прежних усилений — там его
+  // прятало насыщение: контур стоял в упоре и потому «дотягивал».
+  //
+  // Потребная доля веса на заданный темп известна точно: `w*/(g·τ)`. Она и
+  // идёт вперёд, а пропорциям остаётся разница.
+  // Профиль читается через путевую скорость, и у ОСТАНОВИВШЕЙСЯ машины она
+  // ноль: требование по вертикали там не определено. Подача обязана это
+  // пережить — иначе последний метр пробега выдаёт NaN на исправной машине,
+  // уже стоящей на полосе.
+  const verticalFeedforward =
+    verticalLag > 0 && Number.isFinite(wantedVerticalRate)
+      ? wantedVerticalRate / (GRAVITY_ACCELERATION * verticalLag)
+      : 0;
   const liftFraction = Math.max(
     -limits.liftTrimRange,
     Math.min(
@@ -3443,7 +3881,11 @@ export function autopilot(
       // темпа, а не замена закона. Без остатка контур теряет обратную связь по
       // месту и проскакивает палубу вниз; в замере это выходило снятием рейса
       // за `routeDivergence` уже ПОСЛЕ касания.
-      altitudeError * 0.06 + (wantedVerticalRate - velocity[1]) * 0.12,
+      verticalFeedforward +
+        altitudeError * verticalPositionGain +
+        ((Number.isFinite(wantedVerticalRate) ? wantedVerticalRate : 0) -
+          velocity[1]) *
+          verticalRateGain,
     ),
   );
 
@@ -3503,11 +3945,11 @@ export function autopilot(
   // а не на дрожание — не меньше половины того, что унесёт её собственная
   // скорость за горизонт предсказания.
   const divergingFromBerth =
-    onApproach &&
+    onFinal &&
     berthDistance > approach.tolerance.position * 2.5 &&
     predictedBerthDistance >
       berthDistance + Math.max(1, groundSpeed * horizon * 0.5);
-  if (onApproach && berthDistance < approach.tolerance.position * 2.5) {
+  if (onFinal && berthDistance < approach.tolerance.position * 2.5) {
     const headingOff = Math.acos(
       Math.max(
         -1,
@@ -3525,6 +3967,22 @@ export function autopilot(
   } else if (divergingFromBerth) {
     goAround = true;
   }
+  // ── НИЖЕ ЛЁТНОЙ СКОРОСТИ УХОДИТЬ НА ВТОРОЙ КРУГ НЕЧЕМ ──────────────────
+  //
+  // Ворота качества писаны для ВОЗДУХА: они ловят машину, приходящую к
+  // причалу боком или мимо. Крылатая машина, РУЛЯЩАЯ к стоянке по земле,
+  // проходит западную перемычку в 24–30 м от точки с носом на 90° к створу —
+  // и ворота честно объявляли уход на второй круг стоящей машине. Дальше
+  // план стабилизации требовал лётную скорость, и машину рвало с места с
+  // рулём на упоре («споткнулся так, что развернуло» — замер Igor,
+  // 15.08.2026). Машина ниже лётной скорости физически не может уйти на
+  // круг — ей нечем: предикат обязан молчать.
+  if (
+    (limits.minimumSpeed ?? 0) > 0 &&
+    groundSpeed < (limits.minimumSpeed ?? 0) * 0.6
+  ) {
+    goAround = false;
+  }
 
   // Боковой контур: ошибка ПОПЕРЁК линии маршрута и демпфер по фактической
   // боковой скорости. Рыскания в нём нет вовсе — тем он и отличается от
@@ -3536,8 +3994,8 @@ export function autopilot(
   // (сегмент схлопывается в ноль), её направление начинает скакать, и боковой
   // контур раскачивает машину вокруг случайной оси. В прогоне это выглядело
   // как разнос: 37 рад/с и корпус вверх ногами у самого пятна.
-  const swayReferenceX = onApproach ? approach.heading[0] : tangentX;
-  const swayReferenceZ = onApproach ? approach.heading[1] : tangentZ;
+  const swayReferenceX = onFinal ? approach.heading[0] : tangentX;
+  const swayReferenceZ = onFinal ? approach.heading[1] : tangentZ;
   const swayAlong =
     errorX * swayReferenceX + errorZ * swayReferenceZ;
   const swayCrossX = errorX - swayReferenceX * swayAlong;
@@ -3568,12 +4026,13 @@ export function autopilot(
     lateralSpeed: requestedLateralSpeed,
     yawRate: requestedYawRate,
     liftFraction,
-    approachPhase: onApproach,
+    arrivalPhase: onArrival,
+    finalPhase: onFinal,
     // Допуск объявляется ВСЕГДА: у политики один владелец — автопилот, и
     // реактивный губернатор заноса обязан жить той же политикой (в том числе
     // выведенной из векторируемости), а не запасными умолчаниями рантайма.
     slipAllowance: Math.min(
-      onApproach
+      onFinal
         ? slipPolicyOf(model).onApproach
         : Number.POSITIVE_INFINITY,
       plan.corridor !== undefined
@@ -3586,7 +4045,7 @@ export function autopilot(
     // ОДИН вектор в трёх осях из одного расчёта: вираж, гребень и торможение —
     // не отдельные каналы, а одно ускорение одной кривой.
     pathAcceleration:
-      (limits.lateralThrust ?? 0) > 1e-6 && !onApproach
+      (limits.lateralThrust ?? 0) > 1e-6 && !onFinal
         ? pathKinematics?.acceleration
         : undefined,
   };

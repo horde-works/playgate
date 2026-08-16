@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "objectId": "tilt-hexacopter-b11",
+  "source": {
+    "asset": "reference/approved-concept.png",
+    "sha256": "c6df5e71156e586d9242d9449cfca20248bf92e3e3d8382fe08f2f497391d087",
+    "sourceClass": "owner-approved-generated-concept",
+    "availableViews": 1,
+    "scaleAnchor": "authored rotor outer diameter 2.10 m"
+  },
+  "registration": {
+    "status": "source-registered",
+    "manifest": "evidence/reference-registration.json",
+    "overlay": "evidence/source-registration-overlay.png",
+    "featureManifest": "evidence/source-features.json"
+  },
+  "contours": {
+    "status": "pending-owner",
+    "revision": "b11-owner-review-hypothesis",
+    "contract": "b11-contours/contour-contract.json",
+    "sheet": "b11-contours/aggressive-contour-sheet.png",
+    "note": "B11 retains the accepted B10 rear-third and core-boom direction, removes the old-F-16 bubble canopy, and joins nose armour, low glazing and shark ridge in one continuously rising dorsal line. Owner acceptance remains pending."
+  },
+  "blockout": {
+    "status": "pending-owner",
+    "currentRevision": "tilt-hex-b11-contour-2026-08-16",
+    "modelHash": "db07330c5638",
+    "engineeringAllowed": false,
+    "worldIntegrationAllowed": false
+  }
+}

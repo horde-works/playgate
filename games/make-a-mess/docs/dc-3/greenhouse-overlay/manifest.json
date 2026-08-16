@@ -1,0 +1,44 @@
+{
+  "modelId": "douglas-dc3-greenhouse-overlay",
+  "revision": "diagnostic-greenhouse-cage",
+  "modelHash": "c314d3f09a74",
+  "generatedAt": "2026-08-14T11:43:45.820Z",
+  "views": [
+    {
+      "id": "greenhouse-cage",
+      "label": "DIAGNOSTIC · greenhouse cage alone",
+      "projection": "perspective",
+      "file": "greenhouse-cage.png"
+    },
+    {
+      "id": "greenhouse-detail",
+      "label": "DIAGNOSTIC · cage sat on unchanged loft",
+      "projection": "perspective",
+      "file": "greenhouse-detail.png"
+    },
+    {
+      "id": "front",
+      "label": "Front +Z · span, dihedral, three-blade props",
+      "projection": "orthographic",
+      "file": "front.png"
+    },
+    {
+      "id": "left-profile",
+      "label": "Left −X · greenhouse and door side",
+      "projection": "orthographic",
+      "file": "left-profile.png"
+    },
+    {
+      "id": "three-quarter-left",
+      "label": "3/4 left · nacelle and greenhouse",
+      "projection": "perspective",
+      "file": "three-quarter-left.png"
+    },
+    {
+      "id": "nose-detail",
+      "label": "Joint · blunt snout and raked greenhouse",
+      "projection": "perspective",
+      "file": "nose-detail.png"
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "modelId": "tilt-hexacopter-b09",
+  "revision": "tilt-hex-b09-contour-2026-08-16",
+  "modelHash": "52efce96e657",
+  "generatedAt": "2026-08-16T10:53:16.156Z",
+  "views": [
+    {
+      "id": "top",
+      "label": "Top orthographic — longitudinal fighter silhouette",
+      "projection": "orthographic",
+      "file": "top.png"
+    },
+    {
+      "id": "front-three-quarter",
+      "label": "Front three-quarter — complete static state",
+      "projection": "perspective",
+      "file": "front-three-quarter.png"
+    },
+    {
+      "id": "rear-three-quarter",
+      "label": "Rear three-quarter — belt sockets and upper engines",
+      "projection": "perspective",
+      "file": "rear-three-quarter.png"
+    },
+    {
+      "id": "reference-match",
+      "label": "Reference-character camera — massing only",
+      "projection": "perspective",
+      "file": "reference-match.png"
+    },
+    {
+      "id": "dorsal-profile",
+      "label": "Central profile — survival capsule, exposed waist and engine-tail",
+      "projection": "orthographic",
+      "file": "dorsal-profile.png"
+    },
+    {
+      "id": "central-body-three-quarter",
+      "label": "Central body — separate armoured masses around the primary core",
+      "projection": "perspective",
+      "file": "central-body-three-quarter.png"
+    },
+    {
+      "id": "engine-tail-profile",
+      "label": "Engine-tail profile — buried nacelles and restrained crown",
+      "projection": "orthographic",
+      "file": "engine-tail-profile.png"
+    }
+  ]
+}

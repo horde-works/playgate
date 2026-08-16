@@ -404,6 +404,7 @@ import {
   type TimeOfDay,
 } from "./WorldEnvironment";
 import { CinematicPostProcessing } from "./CinematicPostProcessing";
+import { VehicleObservationCamera } from "./VehicleObservationCamera";
 import { ScreenLuminanceSampler } from "./ScreenLuminanceSampler";
 import { screenLuminanceProbe } from "./screenLuminanceProbe";
 import { useLanguage } from "../../../../app/i18n/LanguageProvider";
@@ -459,7 +460,7 @@ import {
   projectileRocketThreat,
   type RocketThreat,
   type RocketThreatRegistry,
-} from "./airCombatEvasion.ts";
+} from "./missileEvasion.ts";
 
 type ControlName = "forward" | "backward" | "left" | "right" | "run" | "jump";
 
@@ -589,6 +590,8 @@ function entryApproachAction(entry: HingedEntryApproach): GameAction {
                 ? "yaqui-departure.approaching"
               : entry.cue === "sr6-skat-uncrewed-flight"
                 ? "skat-departure.approaching"
+              : entry.cue === "dc3-uncrewed-flight"
+                ? "dc3-departure.approaching"
               : "terminal-departure.approaching"
         : entry.kind === "ride"
           ? entry.cue === "viking-passenger-flight"
@@ -644,6 +647,10 @@ function entryActionKey(
             ? touch
               ? "hint.skatDeparture.actionTouch"
               : "hint.skatDeparture.action"
+          : entry.cue === "dc3-uncrewed-flight"
+            ? touch
+              ? "hint.dc3Departure.actionTouch"
+              : "hint.dc3Departure.action"
           : touch
             ? "hint.departure.actionTouch"
             : "hint.departure.action";
@@ -1329,6 +1336,7 @@ function Player({
   passengerViewMotion,
   spawn,
   flightMode,
+  observationActive,
   entryInteractionActive,
   interIslandArrivalActive,
   interIslandBoundaryPassThrough,
@@ -1341,6 +1349,13 @@ function Player({
   passengerViewMotion: PassengerViewMotion;
   spawn: readonly [number, number, number];
   flightMode: boolean;
+  /**
+   * Внешний осмотр: камера не у игрока, и весь ходовой вход глушится. В
+   * полётном режиме это не осторожность, а необходимость — движение там
+   * считается ОТ КАМЕРЫ, и WASD при камере на орбите унёс бы игрока в
+   * сторону взгляда на машину.
+   */
+  observationActive: boolean;
   entryInteractionActive: boolean;
   /** Arrival owns the player pose from the first physics step. */
   interIslandArrivalActive: boolean;
@@ -1546,16 +1561,12 @@ function Player({
 
     const { forward, backward, left, right, run, jump } = getControls();
     const touch = mobileControls.current;
-    const inputX = MathUtils.clamp(
-      Number(right) - Number(left) + touch.moveX,
-      -1,
-      1,
-    );
-    const inputZ = MathUtils.clamp(
-      Number(backward) - Number(forward) + touch.moveZ,
-      -1,
-      1,
-    );
+    const inputX = observationActive
+      ? 0
+      : MathUtils.clamp(Number(right) - Number(left) + touch.moveX, -1, 1);
+    const inputZ = observationActive
+      ? 0
+      : MathUtils.clamp(Number(backward) - Number(forward) + touch.moveZ, -1, 1);
     const speed = flightMode
       ? run || touch.run
         ? 13
@@ -1868,7 +1879,10 @@ function Player({
     });
     passengerViewMotion.addYaw(passengerYawVelocity.current * delta);
     const wantsJump =
-      !entryInteractionActive && (jump || touch.jump) && grounded;
+      !entryInteractionActive &&
+      !observationActive &&
+      (jump || touch.jump) &&
+      grounded;
     const verticalTarget = wantsJump
       ? supportVelocity.y + 5.4
       : autoLift > 0
@@ -2030,6 +2044,16 @@ function MouseLook({
       delete scope.__mamSun;
     };
   }, []);
+
+  // Возврат камеры после чужого владения (внешний осмотр): реактивация
+  // переустанавливает взгляд из накопленных yaw/pitch сразу, а не с первого
+  // движения мыши — иначе кадр-другой камера смотрит туда, куда её оставила
+  // орбита.
+  useEffect(() => {
+    if (active && initialized.current) {
+      cameraRef.current.rotation.set(pitch.current, yaw.current, 0, "YXZ");
+    }
+  }, [active]);
 
   useFrame(() => {
     let changed = false;
@@ -4201,6 +4225,8 @@ interface OpenWorldSceneProps {
   routeOverlayEnabled: boolean;
   /** Выбранная прицелом машина — её маршрут и её телеметрия. */
   selectedVehicleClusterId?: string | null;
+  /** Машина под внешним осмотром: камера на орбите вокруг неё, не у игрока. */
+  observationClusterId?: string | null;
   onAimSelectionChange?: (clusterId: string | null) => void;
   aimIndicatorRef?: { readonly current: HTMLElement | null };
   scene: DestructionSceneDefinition;
@@ -4260,6 +4286,7 @@ function OpenWorldScene({
   active,
   routeOverlayEnabled,
   selectedVehicleClusterId,
+  observationClusterId = null,
   onAimSelectionChange,
   aimIndicatorRef,
   flightMode,
@@ -9585,6 +9612,40 @@ function OpenWorldScene({
     });
   }, [camera]);
 
+  useEffect(() => {
+    const scope = window as unknown as Record<string, unknown>;
+    const fireTestMissile = (
+      kind: ExplosiveKind,
+      position: SceneVector3,
+      velocity: SceneVector3,
+    ): number | null => {
+      if (
+        (kind !== "rocket" && kind !== "lance" && kind !== "podRocket") ||
+        position.length !== 3 ||
+        velocity.length !== 3 ||
+        ![...position, ...velocity].every(Number.isFinite) ||
+        !projectileRuntime.current
+      ) {
+        return null;
+      }
+      grenadeId.current += 1;
+      projectileRuntime.current.spawn({
+        id: grenadeId.current,
+        ownerId: "diagnostic",
+        kind,
+        position,
+        velocity,
+      });
+      return grenadeId.current;
+    };
+    scope.__mamFireTestMissile = fireTestMissile;
+    return () => {
+      if (scope.__mamFireTestMissile === fireTestMissile) {
+        delete scope.__mamFireTestMissile;
+      }
+    };
+  }, []);
+
   /** Борт передаёт мировую трассу и паспорт снаряда в общий оружейный тракт. */
   const handleVehicleWeaponFire = useCallback(
     (event: VehicleWeaponFireEvent) => {
@@ -10723,6 +10784,7 @@ function OpenWorldScene({
             passengerViewMotion={passengerViewMotion}
             spawn={scene.playerSpawn}
             flightMode={flightMode}
+            observationActive={observationClusterId !== null}
             entryInteractionActive={
               entryInteractionActive || (weapon === "charge" && chargeCount > 0)
             }
@@ -10763,7 +10825,10 @@ function OpenWorldScene({
             )}
           </Suspense>
           <MouseLook
-            active={active}
+            // Осмотр забирает мышь себе: взгляд игрока и удары заморожены,
+            // а захват указателя MouseLook продолжает держать — по выходе
+            // управление возвращается без лишнего клика.
+            active={active && observationClusterId === null}
             initialYaw={scene.playerSpawnYaw ?? 0}
             mobileControls={mobileControls}
             passengerViewMotion={passengerViewMotion}
@@ -10773,6 +10838,14 @@ function OpenWorldScene({
             onStrike={strike}
             onStrikeEnd={strikeEnd}
           />
+          {observationClusterId !== null ? (
+            <VehicleObservationCamera
+              clusterId={observationClusterId}
+              poses={vehicleFramePoses}
+              clusters={compoundKinematicClusters}
+              touchLook={mobileControls}
+            />
+          ) : null}
         </>
       ) : null}
       {bursts.map((burst) => (
@@ -11829,6 +11902,10 @@ const telemetryMetricLabels: Readonly<Record<string, TranslationKey>> = {
   pitch: "telemetry.metric.pitch",
   roll: "telemetry.metric.roll",
   propellerRevolutions: "telemetry.metric.propellerRevolutions",
+  flapAngle: "telemetry.metric.flapAngle",
+  aileronAngle: "telemetry.metric.aileronAngle",
+  elevatorAngle: "telemetry.metric.elevatorAngle",
+  rudderAngle: "telemetry.metric.rudderAngle",
   rotorRings: "telemetry.metric.rotorRings",
   rotorRingsPort: "telemetry.metric.rotorRingsPort",
   rotorRingsStarboard: "telemetry.metric.rotorRingsStarboard",
@@ -11886,6 +11963,7 @@ const telemetryActivityLabels: Readonly<Record<string, TranslationKey>> = {
   flyingFigure: "telemetry.activity.flyingFigure",
   correctingRoute: "telemetry.activity.correctingRoute",
   followingRoute: "telemetry.activity.followingRoute",
+  taxiingToStand: "telemetry.activity.taxiingToStand",
   recoveringFlight: "telemetry.activity.recoveringFlight",
   emergencyDescent: "telemetry.activity.emergencyDescent",
   emergencyLanding: "telemetry.activity.emergencyLanding",
@@ -13018,9 +13096,10 @@ export function MakeAMessGame({
     performanceGovernor.getSnapshot(),
   );
   const [telemetryStore] = useState(createMotionTelemetryStore);
-  // Три положения по T: выкл -> телеметрия -> телеметрия с маршрутом.
-  // Маршрут в мире — часть телеметрии, а не постоянная декорация.
-  const [telemetryMode, setTelemetryMode] = useState<0 | 1 | 2>(0);
+  // Четыре положения по T: выкл -> телеметрия -> телеметрия с маршрутом ->
+  // внешний осмотр (камера орбитой вокруг летящей машины). Маршрут и осмотр —
+  // часть телеметрии, а не постоянная декорация.
+  const [telemetryMode, setTelemetryMode] = useState<0 | 1 | 2 | 3>(0);
   const telemetryVisible = telemetryMode > 0;
   // Чью телеметрию показывать, решает игрок взглядом (vehicleAimSelection):
   // панель открывается сама для выбранной машины, T листает глубину.
@@ -13029,6 +13108,8 @@ export function MakeAMessGame({
   );
   // Сессия помнит выбранную глубину: наблюдательная сессия — «маршрут
   // всегда», прогулка — «панель, и хватит»; перевыбор не спорит с игроком.
+  // Осмотр (3) в память не пишется: отбирать камеру у игрока на каждый новый
+  // вылет нельзя, в эту глубину входят только руками.
   const telemetryDepthRef = useRef<1 | 2>(1);
   const aimIndicatorRef = useRef<HTMLElement | null>(null);
   const flyoverRunning =
@@ -13158,13 +13239,18 @@ export function MakeAMessGame({
   );
 
   const toggleMotionTelemetry = useCallback(() => {
-    // Цикл прежний (выкл -> панель -> панель с маршрутом), но вход в него
-    // автоматический — от выбора машины прицелом; T листает глубину для
-    // ВЫБРАННОЙ машины. Ненулевая глубина запоминается: перевыбор и новый
-    // вылет открываются сразу на ней.
-    if (telemetryMode === 2) {
+    // Цикл: выкл -> панель -> панель с маршрутом -> внешний осмотр -> выкл.
+    // Вход автоматический — от выбора машины прицелом; T листает глубину для
+    // ВЫБРАННОЙ машины. Запоминаются только панельные глубины (1–2): осмотр
+    // отдаёт камеру машине, и открываться в него сам новый вылет не должен.
+    if (telemetryMode === 3) {
       setTelemetryMode(0);
       announceTelemetry("announce.telemetryOff");
+      return;
+    }
+    if (telemetryMode === 2) {
+      setTelemetryMode(3);
+      announceTelemetry("announce.telemetryObserve");
       return;
     }
     if (telemetryMode === 1) {
@@ -13184,10 +13270,19 @@ export function MakeAMessGame({
 
   // Панель открывается сама для выбранной машины — на запомненной глубине;
   // потеря выбора (машина села, полётов нет) закрывает её.
-  const handleAimSelectionChange = useCallback((clusterId: string | null) => {
-    setSelectedVehicleId(clusterId);
-    setTelemetryMode(clusterId ? telemetryDepthRef.current : 0);
-  }, []);
+  const handleAimSelectionChange = useCallback(
+    (clusterId: string | null) => {
+      // В осмотре выбор заморожен: камера отвёрнута от прицела игрока по
+      // определению режима, и «взгляд ушёл с машины» — не событие, а сама
+      // суть осмотра. Выход — T или конец полёта (onUnavailable).
+      if (telemetryMode === 3) {
+        return;
+      }
+      setSelectedVehicleId(clusterId);
+      setTelemetryMode(clusterId ? telemetryDepthRef.current : 0);
+    },
+    [telemetryMode],
+  );
 
   const handleTelemetryUnavailable = useCallback(() => {
     setTelemetryMode(0);
@@ -13992,7 +14087,10 @@ export function MakeAMessGame({
                 >
                   <PhysicsPerformanceProbe />
                   <OpenWorldScene
-                    routeOverlayEnabled={telemetryMode === 2}
+                    routeOverlayEnabled={telemetryMode >= 2}
+                    observationClusterId={
+                      telemetryMode === 3 ? selectedVehicleId : null
+                    }
                     selectedVehicleClusterId={selectedVehicleId}
                     onAimSelectionChange={handleAimSelectionChange}
                     aimIndicatorRef={aimIndicatorRef}

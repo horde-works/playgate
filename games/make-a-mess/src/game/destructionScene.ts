@@ -194,6 +194,10 @@ export type SurfaceTextureProfile =
   | "painted-steel"
   | "matte-aluminium"
   | "gold-mirror"
+  // Клёпаная обшивка Alclad: швы, ряды заклёпок и разнотон панелей считаются
+  // формулой в телесных метрах, а не берутся с карты. Числа —
+  // docs/dc-3/skin-seam-passport-p01.md, закон — game/skinSeamLattice.ts.
+  | "alclad-riveted"
   | "nimbus-ceramic-composite"
   | "nimbus-carbon-laminate"
   | "nimbus-technical-deck"
@@ -1894,6 +1898,8 @@ export type LampEventState =
   | "departure"
   | "cruise"
   | "approach"
+  | "rollout"
+  | "taxi"
   | "failed";
 
 /** Time source shared by analogue and piece-built digital clocks. */

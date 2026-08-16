@@ -24,6 +24,12 @@ import {
 } from "./destructionScene.ts";
 import { materialAppearanceProfiles } from "./materialAppearance.ts";
 import {
+  alcladSeamFragment,
+  alcladSeamGlsl,
+  alcladSeamNormal,
+  alcladSeamRoughness,
+} from "./skinSeamLattice.ts";
+import {
   vikingTrafficAreas,
   vikingTrafficRoutes,
   type VikingPlanPoint,
@@ -174,7 +180,6 @@ const photorealTextureUrls: Partial<Record<BreakableMaterial, string>> = {
   asphalt: "/games/make-a-mess/textures/asphalt.webp",
   steel: "/games/make-a-mess/textures/steel.webp",
   sheetMetal: "/games/make-a-mess/textures/steel.webp",
-  aluminium: "/games/make-a-mess/textures/steel.webp",
 };
 
 const surfaceTextureUrls: Partial<Record<SurfaceTextureProfile, string>> = {
@@ -1293,6 +1298,12 @@ function paintMaterial(
       }
       break;
     }
+    case "aluminium": {
+      // Alclad is satin, not rolled stock. No stripes: a directional map
+      // stretched along a fuselage panel reads as brushed steel.
+      fillNoise(context, random, 228, 6, 6);
+      break;
+    }
     case "glass":
     case "darkGlass": {
       fillNoise(context, random, 246, 8, 8);
@@ -1439,6 +1450,10 @@ export function getMaterialTexture(
     texture = createArchitecturalMetalTexture(textureProfile);
   } else if (isNimbusTextureProfile(textureProfile)) {
     texture = createNimbusSurfaceTexture(textureProfile);
+  } else if (textureProfile === "alclad-riveted") {
+    // The lattice is a field in the shader, so the map underneath stays the
+    // plain isotropic Alclad satin: any pattern here would fight it.
+    texture = createProceduralTexture("aluminium");
   } else if (sourceUrl) {
     texture = configureTexture(
       textureLoader.load(sourceUrl, undefined, undefined, () => {
@@ -1453,6 +1468,69 @@ export function getMaterialTexture(
 
   textureCache.set(key, texture);
   return texture;
+}
+
+const materialSpaceAttachers = new WeakMap<
+  MeshStandardMaterial,
+  (target: MeshStandardMaterial, surfaceMesh: boolean) => void
+>();
+
+/**
+ * Клон куска материала, сохраняющий его шейдерное пространство.
+ *
+ * Лофтовые поверхности, листва и кора рисуются клоном общего материала —
+ * им нужны свои `vertexColors`/`side`. Обычный `clone()` при этом теряет
+ * `onBeforeCompile` и `customProgramCacheKey`, и клон молча уезжает на
+ * голом MeshStandardMaterial: без бокового тона, макро-вариации, износа
+ * кромки и тумана. Заметить это можно только в кадре — компилятор и тесты
+ * текста шейдера остаются зелёными.
+ */
+export function cloneWithMaterialSpace(
+  base: MeshStandardMaterial,
+  surfaceMesh = false,
+): MeshStandardMaterial {
+  const next = base.clone();
+  materialSpaceAttachers.get(base)?.(next, surfaceMesh);
+  return next;
+}
+
+/**
+ * КЛЮЧ СКОМПИЛИРОВАННОЙ ПРОГРАММЫ.
+ *
+ * three кэширует программы по этому ключу, а не по тексту шейдера. Значит
+ * ЛЮБАЯ ветка, меняющая текст вершинника или фрагментника, обязана менять и
+ * ключ: иначе кусок получит уже скомпилированную программу соседа того же
+ * материала и молча отрисуется чужим шейдером. Ловится это только в кадре —
+ * все проверки текста при этом зелёные.
+ *
+ * Функция чистая (canvas ей не нужен) ровно затем, чтобы контракт проверялся
+ * тестом, а не запуском игры.
+ */
+export function pieceProgramCacheKey(
+  material: BreakableMaterial,
+  textureProfile?: SurfaceTextureProfile,
+  surfaceMesh = false,
+): string {
+  const appearance = materialAppearanceProfiles[material];
+  const profileKey = [
+    appearance.textureScale,
+    appearance.macroVariation,
+    appearance.roughnessVariation,
+    appearance.edgeWear,
+    appearance.groundDampness,
+    appearance.topLightening,
+    ...appearance.sideTint,
+    Number(appearance.directionalGrain),
+    appearance.wetness,
+    appearance.streaking,
+  ].join(":");
+  return `material-space-v9:${material}:${profileKey}:${
+    textureProfile && faceFitTextureProfiles.has(textureProfile)
+      ? "face-fit"
+      : "projected"
+  }:${textureProfile === "city-cracked-plinth" ? "crack" : "solid"}:${
+    textureProfile === "alclad-riveted" ? "alclad" : "plain"
+  }:${surfaceMesh ? "surface" : "box"}`;
 }
 
 export function getPieceMaterial(
@@ -1585,20 +1663,21 @@ export function getPieceMaterial(
   });
 
   if (!isGlass) {
-    const profileKey = [
-      appearance.textureScale,
-      appearance.macroVariation,
-      appearance.roughnessVariation,
-      appearance.edgeWear,
-      appearance.groundDampness,
-      appearance.topLightening,
-      ...appearance.sideTint,
-      Number(appearance.directionalGrain),
-      appearance.wetness,
-      appearance.streaking,
-    ].join(":");
-
-    standardMaterial.onBeforeCompile = (shader) => {
+    // ПРОСТРАНСТВО МАТЕРИАЛА НАВЕШИВАЕТСЯ ФУНКЦИЕЙ, А НЕ ПРИСВАИВАНИЕМ.
+    //
+    // `Material.clone()` не копирует ни `onBeforeCompile`, ни
+    // `customProgramCacheKey` — проверено. Клон получает их этим же вызовом
+    // (`cloneWithMaterialSpace`), и, что важнее, регистрируется в реестре
+    // суточных обновлений ПОД СОБОЙ: пока ключом был общий базовый материал,
+    // каждый следующий клон вычёркивал шейдер предыдущего.
+    //
+    // Тело ниже намеренно не переотбито по отступу: почти весь его объём —
+    // строки GLSL, и сдвиг отступа тронул бы их содержимое.
+    const attachMaterialSpace = (
+      target: MeshStandardMaterial,
+      surfaceMesh: boolean,
+    ) => {
+      target.onBeforeCompile = (shader) => {
       shader.uniforms.uAirExtinction = { value: 0.0 };
       shader.uniforms.uWetness = { value: 0.0 };
       shader.uniforms.uTime = { value: 0.0 };
@@ -1614,11 +1693,11 @@ export function getPieceMaterial(
       // A cached material may be compiled again for a recreated WebGL
       // renderer. Keep only its current program so day/night updates do not
       // retain dead renderers or grow linearly after every scene reset.
-      const previousShader = environmentShaderByMaterial.get(standardMaterial);
+      const previousShader = environmentShaderByMaterial.get(target);
       if (previousShader) {
         environmentShaders.delete(previousShader);
       }
-      environmentShaderByMaterial.set(standardMaterial, shader);
+      environmentShaderByMaterial.set(target, shader);
       environmentShaders.add(shader);
 
       shader.vertexShader = shader.vertexShader
@@ -1628,14 +1707,26 @@ export function getPieceMaterial(
 // materialAnchor.xyz is the world-space anchor; .w carries the organic
 // weathering amount. Packed into this vec4 so it costs no extra vertex
 // attribute slot (WebGL caps the count, and instanceMatrix already eats four).
+//
+// THE SLOT BUDGET IS 16, AND THE BOX PATH SPENDS 15 OF THEM:
+//   position, normal, uv                       3
+//   instanceMatrix                             4
+//   instanceColor                              1
+//   the seven declared below                   7
+// A lofted surface adds the vertex-colour attribute on top of that (its
+// vertexColors come from the visual mesh) and lands on 17 — one over, and the
+// driver rejects the whole program, naming whichever attribute did not fit:
+// «Too many attributes (materialFaceMaskNeg)». Hence the
+// surface variant: a mesh has no box faces and no box corners, so it drops
+// bakedAoA/bakedAoB and both face masks and sits at 13.
 attribute vec4 materialAnchor;
 attribute float silicateJointBand;
 attribute vec3 silicateJointTint;
-attribute vec4 bakedAoA;
-attribute vec4 bakedAoB;
 attribute float bakedSkyExposure;
+${surfaceMesh ? "" : `attribute vec4 bakedAoA;
+attribute vec4 bakedAoB;
 attribute vec3 materialFaceMaskPos;
-attribute vec3 materialFaceMaskNeg;
+attribute vec3 materialFaceMaskNeg;`}
 varying vec3 vMaterialCoordinate;
 varying float vLandscapeSurfaceProfile;
 varying vec3 vMaterialSurfaceNormal;
@@ -1683,9 +1774,13 @@ vSilicateJointTint = silicateJointTint;
 
 // Baked corner ambient occlusion: this vertex IS one of the 8 box corners,
 // so sign-select its value; the rasterizer interpolates across each face.
-vec4 bakedAoGroup = mix(bakedAoA, bakedAoB, step(0.0, position.z));
+// A lofted surface has no box corners and no box faces, so it takes neither
+// attribute: it reads as unoccluded, and its faces are never box edges. That
+// is also what frees the four attribute slots the surface path needs — the
+// budget is 16, and instanceMatrix alone eats four of them.
+${surfaceMesh ? `vBakedAo = 1.0;` : `vec4 bakedAoGroup = mix(bakedAoA, bakedAoB, step(0.0, position.z));
 vec2 bakedAoPair = mix(bakedAoGroup.xz, bakedAoGroup.yw, step(0.0, position.x));
-vBakedAo = mix(bakedAoPair.x, bakedAoPair.y, step(0.0, position.y));
+vBakedAo = mix(bakedAoPair.x, bakedAoPair.y, step(0.0, position.y));`}
 vBakedSky = bakedSkyExposure;
 
 // Instance axes in view space, for screen-space edge bevels.
@@ -1693,8 +1788,9 @@ mat3 materialInstanceRotation = mat3(instanceMatrix);
 vBevelAxisX = normalize(normalMatrix * (materialInstanceRotation * vec3(1.0, 0.0, 0.0)));
 vBevelAxisY = normalize(normalMatrix * (materialInstanceRotation * vec3(0.0, 1.0, 0.0)));
 vBevelAxisZ = normalize(normalMatrix * (materialInstanceRotation * vec3(0.0, 0.0, 1.0)));
-vMaterialFaceMaskPos = materialFaceMaskPos;
-vMaterialFaceMaskNeg = materialFaceMaskNeg;
+${surfaceMesh ? `vMaterialFaceMaskPos = vec3(0.0);
+vMaterialFaceMaskNeg = vec3(0.0);` : `vMaterialFaceMaskPos = materialFaceMaskPos;
+vMaterialFaceMaskNeg = materialFaceMaskNeg;`}
 vWeathering = materialAnchor.w;
 
 vec3 materialProjectionNormal = abs(normal);
@@ -1820,6 +1916,7 @@ float materialColumnNoise(float h) {
   float b = fract(sin((columnIndex + 1.0) * 127.1) * 43758.5453);
   return mix(a, b, columnFraction);
 }
+${textureProfile === "alclad-riveted" ? alcladSeamGlsl() : ""}
 `,
         )
         .replace(
@@ -1852,6 +1949,7 @@ diffuseColor.rgb *= 1.0 + (materialMacro - 0.5) * ${(appearance.macroVariation *
 diffuseColor.rgb *= 1.0 - materialNearGround * ${appearance.groundDampness.toFixed(4)};
 diffuseColor.rgb *= 1.0 + materialUp * ${appearance.topLightening.toFixed(4)};
 diffuseColor.rgb *= 1.0 + materialEdge * ${appearance.edgeWear.toFixed(4)};
+${textureProfile === "alclad-riveted" ? alcladSeamFragment() : ""}
 // Silicate mortar seams baked into the base pass. Instances without the
 // per-instance attributes read band 0.0 and skip the mix, so this replaces
 // the former second (transparent, expanded-shell) draw of the same blocks.
@@ -2180,7 +2278,8 @@ roughnessFactor = mix(roughnessFactor, 0.95, materialBiofilmMoss * 0.7);
 roughnessFactor = mix(roughnessFactor, 0.9, materialBiofilmMould * 0.55);
 // Wet splotches turn glossy: with the sky environment map this alone makes
 // puddles mirror the sky at grazing angles, the way wet ground does.
-roughnessFactor = mix(roughnessFactor, 0.07, materialWet);`,
+roughnessFactor = mix(roughnessFactor, 0.07, materialWet);
+${textureProfile === "alclad-riveted" ? alcladSeamRoughness() : ""}`,
         )
         .replace(
           "#include <normal_fragment_maps>",
@@ -2203,7 +2302,8 @@ vec3 materialBevelBend =
   vBevelAxisX * sign(vMaterialBoxPosition.x) * materialBevelT.x +
   vBevelAxisY * sign(vMaterialBoxPosition.y) * materialBevelT.y +
   vBevelAxisZ * sign(vMaterialBoxPosition.z) * materialBevelT.z;
-normal = normalize(normal + materialBevelBend * 0.6);`,
+normal = normalize(normal + materialBevelBend * 0.6);
+${textureProfile === "alclad-riveted" ? alcladSeamNormal() : ""}`,
         )
         .replace(
           "#include <aomap_fragment>",
@@ -2262,12 +2362,11 @@ gl_FragColor.rgb = mix(gl_FragColor.rgb, materialFogTint, materialFogFactor);
     // Face-fit меняет ТЕКСТ вершинника, значит обязан менять и ключ
     // программы: иначе three переиспользует скомпилированный трипланарный
     // шейдер того же материала, и вывеска остаётся тайлящейся.
-    standardMaterial.customProgramCacheKey = () =>
-      `material-space-v9:${material}:${profileKey}:${
-        textureProfile && faceFitTextureProfiles.has(textureProfile)
-          ? "face-fit"
-          : "projected"
-      }:${textureProfile === "city-cracked-plinth" ? "crack" : "solid"}`;
+      target.customProgramCacheKey = () =>
+        pieceProgramCacheKey(material, textureProfile, surfaceMesh);
+    };
+    attachMaterialSpace(standardMaterial, false);
+    materialSpaceAttachers.set(standardMaterial, attachMaterialSpace);
   }
 
   if (pieceMaterialHasEmissiveGlow(material, color)) {

@@ -107,3 +107,56 @@ export function clearMemberArticulation(pieceId: string): void {
 export function clearAllMemberArticulations(): void {
   articulations.clear();
 }
+
+/**
+ * ПОВОРОТ ЧЛЕНА ВОКРУГ ЧУЖОЙ ОСИ: ОДНА ФОРМУЛА НА ВСЕ ШАРНИРЫ МАШИНЫ.
+ *
+ * Нога шасси ходит вокруг цапфы, элерон — вокруг петли, лопасть — вокруг вала.
+ * Ни одна из этих осей куску не принадлежит и с его центром не совпадает,
+ * поэтому поворот раскладывается на две части: вращение вокруг СОБСТВЕННОГО
+ * центра, которое делает рендерер, и сдвиг самого центра по дуге. Считает
+ * разложение тот, кто знает ось; рендерер просто складывает.
+ *
+ * Механика та же, что у `strutFoldOffset`, но без единого слова про стойки:
+ * шарнир есть шарнир, и второго закона для створки заводить не за что.
+ */
+export function articulationAboutPivot(
+  pivot: readonly [number, number, number],
+  axis: readonly [number, number, number],
+  angle: number,
+  memberCentre: readonly [number, number, number],
+): MemberArticulation {
+  const length = Math.hypot(axis[0], axis[1], axis[2]) || 1;
+  const unit: readonly [number, number, number] = [
+    axis[0] / length,
+    axis[1] / length,
+    axis[2] / length,
+  ];
+  if (Math.abs(angle) < 1e-9) {
+    return { steer: 0, spin: 0, turn: { axis: unit, angle: 0 }, slide: [0, 0, 0] };
+  }
+  const arm: readonly [number, number, number] = [
+    memberCentre[0] - pivot[0],
+    memberCentre[1] - pivot[1],
+    memberCentre[2] - pivot[2],
+  ];
+  // Родригес: поворот плеча вокруг оси шарнира.
+  const cosine = Math.cos(angle);
+  const sine = Math.sin(angle);
+  const along = unit[0] * arm[0] + unit[1] * arm[1] + unit[2] * arm[2];
+  const crossed: readonly [number, number, number] = [
+    unit[1] * arm[2] - unit[2] * arm[1],
+    unit[2] * arm[0] - unit[0] * arm[2],
+    unit[0] * arm[1] - unit[1] * arm[0],
+  ];
+  return {
+    steer: 0,
+    spin: 0,
+    turn: { axis: unit, angle },
+    slide: [
+      arm[0] * cosine + crossed[0] * sine + unit[0] * along * (1 - cosine) - arm[0],
+      arm[1] * cosine + crossed[1] * sine + unit[1] * along * (1 - cosine) - arm[1],
+      arm[2] * cosine + crossed[2] * sine + unit[2] * along * (1 - cosine) - arm[2],
+    ],
+  };
+}

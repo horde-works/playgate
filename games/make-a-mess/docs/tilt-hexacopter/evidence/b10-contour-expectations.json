@@ -1,0 +1,72 @@
+{
+  "schema": "tilt-hexacopter-contour-expectations.v1",
+  "revision": "b10",
+  "provenance": "Direct owner correction to B08: preserve the coherent forward body and cabin; cut only the lower rear third around the untouched core; lengthen and widen the tail slightly; extend the core through it as a central RAX-like beam.",
+  "hull": {
+    "requiredShellPart": "armoured-hull-shell",
+    "minimumLength": 10.1,
+    "maximumWidth": 2.1,
+    "maximumHeight": 1.58,
+    "minimumAspectRatio": 4.8,
+    "minimumWidthToHeight": 1.28,
+    "centralBellyStations": [2.45, 1, -0.6],
+    "maximumCentralBellyRange": 0.03,
+    "rearUndercutStations": [-1.5, -2.35, -3.1, -3.8, -4.8],
+    "minimumRearBellyRise": 0.72,
+    "tailStation": -4.8,
+    "minimumTailHalfWidth": 0.5
+  },
+  "coreClearance": {
+    "minimumSkinClearance": 0.04,
+    "stations": [
+      { "z": -1.5, "minimumCoreBottomY": 0.56 },
+      { "z": -2.35, "minimumCoreBottomY": 0.59 },
+      { "z": -3.1, "minimumCoreBottomY": 0.61 }
+    ]
+  },
+  "tailBoom": {
+    "part": "primary-core-tail-boom",
+    "requiredGroup": "primary-core",
+    "rootStation": -3.35,
+    "shellExitStation": -4.8,
+    "tipStation": -5.65,
+    "minimumExtensionPastShell": 0.8
+  },
+  "noseWedge": {
+    "tipStation": 5.35,
+    "rootStation": 4.1,
+    "maximumAxialRun": 1.3,
+    "minimumTipDepth": 0.28,
+    "minimumCrownDropFromRoot": 0.5,
+    "minimumTipBellyAboveRoot": 0.25,
+    "rootCheekBandY": [0.65, 0.75],
+    "rootShoulderBandY": [1.2, 1.3],
+    "minimumRootCheekBeyondShoulder": 0.2
+  },
+  "cabinFlank": {
+    "tumblehomeStation": 1,
+    "cheekBandY": [0.6, 0.9],
+    "shoulderBandY": [1.3, 1.55],
+    "minimumMidCheekBeyondUpperShoulder": 0.3,
+    "longitudinalStations": [3.35, 2.45, 1, -0.6, -1.5],
+    "minimumCheekVariation": 0.15,
+    "maximumCheekStation": 2.45
+  },
+  "canopy": {
+    "requiredGlazingParts": ["canopy-forward-visor", "canopy-cockpit-cell"],
+    "minimumGlazingRun": 4.05,
+    "maximumVisorRootGap": 0.35,
+    "plateauStations": [2.2, 1, 0.35],
+    "maximumPlateauCrownRange": 0.06
+  },
+  "sharkRidge": {
+    "minimumAbsoluteCrown": 2.7,
+    "minimumHalfWidth": 0.35,
+    "minimumCrownAboveEngine": 0.44,
+    "maximumCrownAboveEngine": 0.52
+  },
+  "engineIntegration": {
+    "rearHullStation": -2.35,
+    "minimumVerticalBurial": 0.34
+  }
+}

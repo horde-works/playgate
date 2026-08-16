@@ -168,7 +168,7 @@ test("HX-6 проходит розетку рантаймной цепью: жи
       governor,
       measuredSlipAngle(rotor.forwardSpeed ?? 0, rotor.lateralSpeed ?? 0),
       piloted.guidance.slipAllowance ??
-        (piloted.guidance.approachPhase
+        (piloted.guidance.finalPhase
           ? DEFAULT_SLIP_POLICY.onApproach
           : DEFAULT_SLIP_POLICY.enRoute),
       dt,

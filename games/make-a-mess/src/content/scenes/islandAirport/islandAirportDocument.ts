@@ -13,11 +13,17 @@ import {
   AIRPORT_TAXIWAY,
   AIRPORT_TERMINAL,
   AIRPORT_WORLD,
+  AIRPORT_RUNWAY_08,
+  AIRPORT_TAXI_LINKS,
   ISLAND_AIRPORT_SHORELINE,
   airportDistanceToShoreline,
   airportInsideRectangle,
   airportPointInShoreline,
 } from "./islandAirportPlan.ts";
+import {
+  islandAirportDc3CommandPostGroup,
+  islandAirportDc3Group,
+} from "./islandAirportDc3.ts";
 
 type MutableGroup = SceneGroupDefinition & { objects: SceneObjectDefinition[] };
 
@@ -85,7 +91,12 @@ const GROUND_STEP = 6;
 const PAVING_CLEARANCE = GROUND_STEP / 2 + 0.1;
 
 function pavedAt(x: number, z: number): boolean {
-  return airportInsideRectangle(x, z, 0, AIRPORT_RUNWAY.centreZ, AIRPORT_RUNWAY.length + 4, AIRPORT_RUNWAY.width + 4, PAVING_CLEARANCE) ||
+  return airportInsideRectangle(x, z, AIRPORT_RUNWAY.centreX, AIRPORT_RUNWAY.centreZ, AIRPORT_RUNWAY.length + 4, AIRPORT_RUNWAY.width + 4, PAVING_CLEARANCE) ||
+    airportInsideRectangle(x, z, AIRPORT_RUNWAY_08.centreX, AIRPORT_RUNWAY_08.centreZ, AIRPORT_RUNWAY_08.length + 4, AIRPORT_RUNWAY_08.width + 4, PAVING_CLEARANCE) ||
+    airportInsideRectangle(x, z, AIRPORT_TAXI_LINKS.eastX, (AIRPORT_RUNWAY.centreZ + AIRPORT_RUNWAY_08.centreZ) / 2, AIRPORT_TAXI_LINKS.width, Math.abs(AIRPORT_RUNWAY.centreZ - AIRPORT_RUNWAY_08.centreZ), PAVING_CLEARANCE) ||
+    airportInsideRectangle(x, z, AIRPORT_TAXI_LINKS.westX, (AIRPORT_RUNWAY.centreZ + AIRPORT_RUNWAY_08.centreZ) / 2, AIRPORT_TAXI_LINKS.width, Math.abs(AIRPORT_RUNWAY.centreZ - AIRPORT_RUNWAY_08.centreZ), PAVING_CLEARANCE) ||
+    airportInsideRectangle(x, z, 44, -12.75, 24, 4.5, PAVING_CLEARANCE) ||
+    airportInsideRectangle(x, z, -88, -76, 24, 6, PAVING_CLEARANCE) ||
     airportInsideRectangle(x, z, AIRPORT_APRON.centre[0], AIRPORT_APRON.centre[1], AIRPORT_APRON.width, AIRPORT_APRON.depth, PAVING_CLEARANCE) ||
     airportInsideRectangle(x, z, AIRPORT_TAXIWAY.centre[0], AIRPORT_TAXIWAY.centre[1], AIRPORT_TAXIWAY.width, AIRPORT_TAXIWAY.length, PAVING_CLEARANCE) ||
     airportInsideRectangle(x, z, 8, 39, 88, 9, PAVING_CLEARANCE) ||
@@ -102,7 +113,7 @@ function pavedAt(x: number, z: number): boolean {
 }
 
 for (let x = -117; x <= 117; x += GROUND_STEP) {
-  for (let z = -57; z <= 57; z += GROUND_STEP) {
+  for (let z = -87; z <= 57; z += GROUND_STEP) {
     const halfTile = GROUND_STEP / 2;
     const cornersInside = [-1, 1].every((sideX) =>
       [-1, 1].every((sideZ) =>
@@ -194,7 +205,12 @@ function slabStrip(
   }
 }
 
-slabStrip("runway", [0, 0.18, AIRPORT_RUNWAY.centreZ], AIRPORT_RUNWAY.length, AIRPORT_RUNWAY.width);
+slabStrip("runway", [AIRPORT_RUNWAY.centreX, AIRPORT_RUNWAY.surfaceY, AIRPORT_RUNWAY.centreZ], AIRPORT_RUNWAY.length, AIRPORT_RUNWAY.width);
+slabStrip("runway-08", [AIRPORT_RUNWAY_08.centreX, AIRPORT_RUNWAY_08.surfaceY, AIRPORT_RUNWAY_08.centreZ], AIRPORT_RUNWAY_08.length, AIRPORT_RUNWAY_08.width);
+// Перемычки идут ВДОЛЬ Z: totalLength — пролёт между полосами, width — их x-габарит.
+const TAXI_LINK_SPAN = Math.abs(AIRPORT_RUNWAY.centreZ - AIRPORT_RUNWAY_08.centreZ) - AIRPORT_RUNWAY.width;
+slabStrip("taxi-link-east", [AIRPORT_TAXI_LINKS.eastX, 0.18, (AIRPORT_RUNWAY.centreZ + AIRPORT_RUNWAY_08.centreZ) / 2], TAXI_LINK_SPAN, AIRPORT_TAXI_LINKS.width, false);
+slabStrip("taxi-link-west", [AIRPORT_TAXI_LINKS.westX, 0.18, (AIRPORT_RUNWAY.centreZ + AIRPORT_RUNWAY_08.centreZ) / 2], TAXI_LINK_SPAN, AIRPORT_TAXI_LINKS.width, false);
 slabStrip("apron", [AIRPORT_APRON.centre[0], 0.18, AIRPORT_APRON.centre[1]], AIRPORT_APRON.width, AIRPORT_APRON.depth);
 slabStrip("taxiway", [AIRPORT_TAXIWAY.centre[0], 0.18, AIRPORT_TAXIWAY.centre[1]], AIRPORT_TAXIWAY.length, AIRPORT_TAXIWAY.width, false);
 slabStrip("landside-loop", [8, 0.18, 39], 88, 7);
@@ -214,17 +230,29 @@ function paint(
   color = "#f4f2df",
   rotation?: SceneVector3,
 ): void {
-  primitive(markings, id, "plaster", "groundTile", [x, 0.305, z], [width, 0.03, depth], color, {
+  // ── РАЗМЕТКА ПЛОСКАЯ, КАК НАСТОЯЩАЯ ─────────────────────────────────────
+  //
+  // Трёхсантиметровая плитка краски — это бордюр: колесо на рулении спотыкалось
+  // о кромочную полосу, пересекающую устье перемычки, а колесо-якорь на
+  // развороте соскальзывало с её ребра (замер Igor, 15.08.2026). Восемь
+  // миллиметров колесо радиусом полметра не замечает, а глаз читает как
+  // прежде: низ плитки лежит на бетоне (0.29), верх — 0.298.
+  primitive(markings, id, "plaster", "groundTile", [x, 0.294, z], [width, 0.008, depth], color, {
     rotation,
     bearsLoad: false,
+    // Paint is a visual/material layer, not an 8 mm Rapier kerb. `bearsLoad`
+    // only affects the structural graph; without this flag the quiet-world
+    // collider still presented every marking to the landing-gear ray as a
+    // real step.
+    intactCollider: false,
     volume: width * depth * 0.008,
     contactBearingOrder: true,
   });
 }
 
-for (let x = -72; x <= 72; x += 12) paint(`centreline:${x}`, x, AIRPORT_RUNWAY.centreZ, 5.4, 0.28);
+for (let x = -96; x <= 72; x += 12) paint(`centreline:${x}`, x, AIRPORT_RUNWAY.centreZ, 5.4, 0.28);
 for (const side of [-1, 1]) {
-  paint(`runway-edge:${side}`, 0, AIRPORT_RUNWAY.centreZ + side * (AIRPORT_RUNWAY.width / 2 - 0.35), AIRPORT_RUNWAY.length - 4, 0.22);
+  paint(`runway-edge:${side}`, AIRPORT_RUNWAY.centreX, AIRPORT_RUNWAY.centreZ + side * (AIRPORT_RUNWAY.width / 2 - 0.35), AIRPORT_RUNWAY.length - 4, 0.22);
   for (let stripe = 0; stripe < 6; stripe += 1) {
     paint(
       `threshold-west:${side}:${stripe}`,
@@ -652,7 +680,33 @@ for (const [index, x, z] of [[0, 10, 7], [1, 17, 7], [2, 24, 7], [3, 45, 0]] as 
 }
 
 // Runway edge/threshold lights: base, housing, clear lens, contained signal bulb.
+// Four taxi vertices are stationary-turn zones. No fixture may occupy the
+// circle swept by the tail about the main gear; the link half-width is the
+// authored clearance which already contains that sweep.
+const taxiTurnCentres = [
+  [AIRPORT_TAXI_LINKS.eastX, AIRPORT_RUNWAY.centreZ],
+  [AIRPORT_TAXI_LINKS.eastX, AIRPORT_RUNWAY_08.centreZ],
+  [AIRPORT_TAXI_LINKS.westX, AIRPORT_RUNWAY_08.centreZ],
+  [AIRPORT_TAXI_LINKS.westX, AIRPORT_RUNWAY.centreZ],
+] as const;
+const airfieldFixtureFootprintRadius = Math.max(
+  Math.hypot(0.38, 0.38) / 2,
+  Math.hypot(0.44, 0.36) / 2,
+);
+// Check the fixture's full concrete footprint, not only its centre. Otherwise
+// the two edge-light bases beside the eastern 09 turn begin on the swept-circle
+// boundary even though their authored coordinates sit just outside it.
+const taxiTurnClearance =
+  AIRPORT_TAXI_LINKS.width / 2 + airfieldFixtureFootprintRadius;
+
+function insideTaxiTurnSweep(x: number, z: number): boolean {
+  return taxiTurnCentres.some(
+    ([turnX, turnZ]) => Math.hypot(x - turnX, z - turnZ) <= taxiTurnClearance,
+  );
+}
+
 function airfieldLight(id: string, x: number, z: number, color: string, height = 0.46): void {
+  if (insideTaxiTurnSweep(x, z)) return;
   primitive(airfield, `${id}:base`, "concrete", "stoneBlock", [x, 0.18, z], [0.38, 0.4, 0.38], "#8d9391", { carriesAttachments: true, volume: 0.04 });
   primitive(airfield, `${id}:stem`, "steel", "cylinder", [x, 0.38 + height / 2, z], [0.08, height, 0.08], "#5e686b", {
     carriesAttachments: true,
@@ -678,18 +732,27 @@ function airfieldLight(id: string, x: number, z: number, color: string, height =
   });
 }
 
-// A threshold fitting carries two opposed faces: green toward the approach,
-// red toward the runway end. The bulbs sit inside a common hood so neither
-// signal reads as an unsupported emissive sphere.
+// ── ПОРОГОВЫЕ ОГНИ — ВРЕЗНЫЕ, КАК НА НАСТОЯЩЕЙ ПОЛОСЕ ──────────────────────
+//
+// Прежний ряд стоял поперёк полосы на стойках высотой 0.9 м, а колёса на
+// глиссаде проходят его на 0.2–0.5 м над плитой: машина сносила огни каждым
+// заходом и ломалась об их же основания (замер 15.08.2026 — «споткнулся о
+// край ВПП»). Настоящие пороговые огни поэтому и врезаны заподлицо: линза
+// торчит из плиты на сантиметры, колесо проходит над ней и по ней. Двуликость
+// сохранена: зелёное стекло смотрит на заход, красное — вдоль полосы.
 function thresholdLight(id: string, x: number, z: number, approachDirection: -1 | 1): void {
-  primitive(airfield, `${id}:base`, "concrete", "stoneBlock", [x, 0.18, z], [0.38, 0.4, 0.38], "#8d9391", { carriesAttachments: true, volume: 0.04 });
-  primitive(airfield, `${id}:stem`, "steel", "cylinder", [x, 0.54, z], [0.08, 0.32, 0.08], "#5e686b", { carriesAttachments: true, attachmentSupportMode: "hinge", sideAttachmentReach: 0.18, maximumVerticalGap: 0.035, volume: 0.003 });
-  primitive(airfield, `${id}:housing`, "steel", "panel", [x, 0.72, z], [0.42, 0.24, 0.34], "#3f494d", { carriesAttachments: true, attachmentSupportMode: "hinge", sideAttachmentReach: 0.18, volume: 0.014 });
+  if (insideTaxiTurnSweep(x, z)) return;
+  // Плита основания стоит НА краске порога, не в её плоскости: δ 0 мм между
+  // гранями — это спор глубины на любом удалении (закон стыка).
+  // Основание сидит на КРАСКЕ порога: её крышка теперь 0.298.
+  const paintTop = 0.298;
+  const top = paintTop + 0.06;
+  primitive(airfield, `${id}:base`, "concrete", "stoneBlock", [x, paintTop + 0.03, z], [0.44, 0.06, 0.36], "#8d9391", { carriesAttachments: true, volume: 0.01 });
   for (const face of ["approach", "runway"] as const) {
     const direction = face === "approach" ? approachDirection : -approachDirection;
     const color = face === "approach" ? "#7fe6a0" : "#f08a80";
-    primitive(airfield, `${id}:${face}:lens`, "glass", "glassPane", [x + direction * 0.225, 0.72, z], [0.06, 0.16, 0.22], color, { bearsLoad: false, carriesAttachments: true, attachmentSupportMode: "hinge", sideAttachmentReach: 0.2, volume: 0.002 });
-    primitive(airfield, `${id}:${face}:bulb`, "glass", "sphere", [x + direction * 0.13, 0.72, z], [0.09, 0.09, 0.09], color, {
+    primitive(airfield, `${id}:${face}:lens`, "glass", "glassPane", [x + direction * 0.14, top + 0.035, z], [0.05, 0.07, 0.24], color, { bearsLoad: false, sideAttachmentReach: 0.2, volume: 0.001 });
+    primitive(airfield, `${id}:${face}:bulb`, "glass", "sphere", [x + direction * 0.07, top + 0.03, z], [0.07, 0.07, 0.07], color, {
       bearsLoad: false,
       sideAttachmentReach: 0.18,
       volume: 0.001,
@@ -698,8 +761,22 @@ function thresholdLight(id: string, x: number, z: number, approachDirection: -1 
   }
 }
 
-for (let x = -84; x <= 84; x += 8) {
-  for (const side of [-1, 1]) airfieldLight(`edge:${x}:${side}`, x, AIRPORT_RUNWAY.centreZ + side * 7.55, "#f4f1e2");
+// Боковые огни — НА ГРУНТЕ, в 2.3 м от кромки плиты: колея шасси ±5.79 м,
+// разлёт касания из приёмки — до 2.6 м, и прежние ±7.55 м попадали в сумму.
+// Колесо достаёт ±9.3 только при сходе, который приёмка и так считает аварией.
+for (let x = -100; x <= 84; x += 8) {
+  for (const side of [-1, 1]) {
+    // Ряд боковых огней РАЗРЫВАЕТСЯ на примыканиях перемычек — как на
+    // настоящих полосах: колонны x=44 и x=−88 стояли ровно на осях рулёжек,
+    // и хвостовое колесо сносило огонь при каждом рулении (замер Igor,
+    // 15.08.2026 — «один такой на рулёжной дорожке точно видел»).
+    const onLink =
+      side < 0 &&
+      (Math.abs(x - AIRPORT_TAXI_LINKS.eastX) <= AIRPORT_TAXI_LINKS.width / 2 + 1 ||
+        Math.abs(x - AIRPORT_TAXI_LINKS.westX) <= AIRPORT_TAXI_LINKS.width / 2 + 1);
+    if (onLink) continue;
+    airfieldLight(`edge:${x}:${side}`, x, AIRPORT_RUNWAY.centreZ + side * 9.3, "#f4f1e2");
+  }
 }
 for (const end of [-1, 1]) {
   const x = end < 0
@@ -712,6 +789,30 @@ for (const end of [-1, 1]) {
 for (let index = 0; index < 4; index += 1) {
   airfieldLight(`papi:west:${index}`, -57, AIRPORT_RUNWAY.centreZ - 9.8 - index * 1.35, index < 2 ? "#f08a80" : "#f4f1e2", 0.28);
   airfieldLight(`papi:east:${index}`, 57, AIRPORT_RUNWAY.centreZ + 9.8 + index * 1.35, index < 2 ? "#f08a80" : "#f4f1e2", 0.28);
+}
+
+// ── УШИРЕНИЯ ПРИМЫКАНИЙ (fillets) ────────────────────────────────────────
+//
+// Разворот на месте — вокруг центра машины: хвостовое колесо на плече 11.8 м
+// выметает дугу за кромку на всех четырёх углах рулёжной схемы (замер: до
+// четырёх метров за бетон). Настоящие аэродромы ровно для этого уширяют
+// примыкания. Каждый квад накрывает расчётное выметание своего угла.
+slabStrip("fillet-e09", [44, 0.18, -12.75], 24, 4.5);
+slabStrip("fillet-w08", [-88, 0.18, -76], 24, 6);
+
+// Разметка ВПП 08 — дневная рулёжная полоса: номера, ось, кромки. Без огней.
+for (let x = -96; x <= 72; x += 12) paint(`centreline-08:${x}`, x, AIRPORT_RUNWAY_08.centreZ, 5.4, 0.28);
+for (const side of [-1, 1]) {
+  paint(`runway-08-edge:${side}`, AIRPORT_RUNWAY_08.centreX, AIRPORT_RUNWAY_08.centreZ + side * (AIRPORT_RUNWAY_08.width / 2 - 0.35), AIRPORT_RUNWAY_08.length - 4, 0.22);
+}
+for (const stripe of [-2, -1, 0, 1, 2]) {
+  paint(`threshold-08-west:${stripe}`, AIRPORT_RUNWAY_08.westThresholdX + 7, AIRPORT_RUNWAY_08.centreZ + stripe * 2.4, 4.6, 1.1);
+  paint(`threshold-08-east:${stripe}`, AIRPORT_RUNWAY_08.eastThresholdX - 7, AIRPORT_RUNWAY_08.centreZ + stripe * 2.4, 4.6, 1.1);
+}
+// Оси перемычек: с 09 налево, по 08 обратно, доворот на старт.
+for (const linkX of [AIRPORT_TAXI_LINKS.eastX, AIRPORT_TAXI_LINKS.westX]) {
+  // Штрихи целиком внутри плиты перемычки: мазок через стык — беспризорник.
+  for (let z = -56; z <= -32; z += 8) paint(`taxi-link:${linkX}:${z}`, linkX, z, 0.28, 4.6);
 }
 
 // Windsock mast and a shaped cloth sock.
@@ -883,5 +984,9 @@ export const islandAirportDocument: AuthoredSceneDocument = {
     returnToGame: "Вернуться в терминал",
     reset: "Восстановить аэропорт",
   },
-  groups: [...groups.values()],
+  groups: [
+    ...groups.values(),
+    islandAirportDc3Group,
+    islandAirportDc3CommandPostGroup,
+  ],
 };

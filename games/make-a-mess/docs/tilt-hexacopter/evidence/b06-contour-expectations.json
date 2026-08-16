@@ -1,0 +1,42 @@
+{
+  "schema": "tilt-hexacopter-contour-expectations.v1",
+  "revision": "b06",
+  "provenance": "Direct owner correction: the B05 nose is a boat prow; replace its rising tip with an aggressive down-pecking beak.",
+  "hull": {
+    "minimumLength": 9.4,
+    "maximumWidth": 1.9,
+    "minimumAspectRatio": 5,
+    "centralBellyStations": [2.6, 1, -0.65, -1.45],
+    "maximumCentralBellyRange": 0.08,
+    "minimumAftKick": 0.65
+  },
+  "noseBeak": {
+    "tipStation": 5.3,
+    "lowerHookStation": 4.75,
+    "browStation": 4.15,
+    "maximumTipCrownY": 0.35,
+    "minimumCrownDropFromBrow": 1.1,
+    "minimumUndersideDropFromHook": 0.25,
+    "tipMustSitBelowPrecedingUnderside": true
+  },
+  "cabinFlank": {
+    "tumblehomeStation": 1,
+    "minimumMidCheekBeyondUpperShoulder": 0.1,
+    "longitudinalStations": [2.6, 1, -0.65, -1.45],
+    "minimumCheekVariation": 0.07
+  },
+  "canopy": {
+    "requiredGlazingParts": ["canopy-forward-visor", "canopy-cockpit-cell"],
+    "minimumGlazingRun": 4.1,
+    "plateauStations": [2.2, 1, 0.35],
+    "maximumPlateauCrownRange": 0.08
+  },
+  "sharkRidge": {
+    "minimumHalfWidth": 0.34,
+    "minimumCrownAboveEngine": 0.3,
+    "maximumCrownAboveEngine": 0.6
+  },
+  "engineIntegration": {
+    "minimumVerticalBurial": 0.35
+  }
+}

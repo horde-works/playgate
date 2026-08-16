@@ -1,6 +1,14 @@
 export type GameStatus = "building" | "playable" | "archived";
 export type GameTheme = "safety-orange" | "electric-blue" | "acid-green";
-export type GameArt = "mess" | "basalt-stronghold" | "grand-terminal" | "viking-village" | "island-airport";
+/* Каждая карта носит свою обложку: значение обязано совпадать с хвостом slug —
+   этим тест ловит перепутанные местами обложки (games/registry art↔slug). */
+export type GameArt =
+  | "mess"
+  | "basalt-stronghold"
+  | "grand-terminal"
+  | "viking-village"
+  | "dutch-polder"
+  | "island-airport";
 
 export interface GameEntry {
   readonly slug: string;
@@ -49,7 +57,7 @@ export const games = [
     status: "playable",
     stageLabel: "Третья карта",
     theme: "acid-green",
-    art: "island-airport",
+    art: "grand-terminal",
   },
   {
     slug: "make-a-mess-viking-village",
@@ -73,7 +81,7 @@ export const games = [
     status: "playable",
     stageLabel: "Новый мир",
     theme: "electric-blue",
-    art: "mess",
+    art: "dutch-polder",
   },
   {
     slug: "make-a-mess-island-airport",
@@ -85,7 +93,7 @@ export const games = [
     status: "playable",
     stageLabel: "Новый мир",
     theme: "acid-green",
-    art: "grand-terminal",
+    art: "island-airport",
   },
 ] as const satisfies readonly GameEntry[];
 

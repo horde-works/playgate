@@ -1,0 +1,62 @@
+{
+  "modelId": "douglas-dc3-skin-panels",
+  "revision": "p2-01-2026-08-15-full-skin",
+  "modelHash": "226189b6567f",
+  "generatedAt": "2026-08-15T13:08:59.994Z",
+  "views": [
+    {
+      "id": "panel-plan",
+      "label": "План · членение обшивки и вырезы под рули",
+      "projection": "perspective",
+      "file": "panel-plan.png"
+    },
+    {
+      "id": "panel-three-quarter",
+      "label": "Три четверти · панельная шкура целиком",
+      "projection": "perspective",
+      "file": "panel-three-quarter.png"
+    },
+    {
+      "id": "reference-loft",
+      "label": "Эталон · сегодняшняя лофтовая шкура, та же камера",
+      "projection": "perspective",
+      "file": "reference-loft.png"
+    },
+    {
+      "id": "panel-nose-detail",
+      "label": "Носок · гнутая панель против гранёного клюва",
+      "projection": "perspective",
+      "file": "panel-nose-detail.png"
+    },
+    {
+      "id": "panel-joint-detail",
+      "label": "Стык · кромка отсека и полосы по лонжеронам",
+      "projection": "perspective",
+      "file": "panel-joint-detail.png"
+    },
+    {
+      "id": "panel-empennage",
+      "label": "Оперение · киль, стабилизатор, рули",
+      "projection": "perspective",
+      "file": "panel-empennage.png"
+    },
+    {
+      "id": "panel-fuselage-detail",
+      "label": "Фюзеляж · продольные клинья и кольцевые стыки",
+      "projection": "perspective",
+      "file": "panel-fuselage-detail.png"
+    },
+    {
+      "id": "panel-nacelle-detail",
+      "label": "Мотогондола · капотная оболочка панелями",
+      "projection": "perspective",
+      "file": "panel-nacelle-detail.png"
+    },
+    {
+      "id": "panel-silhouette",
+      "label": "Силуэт · профиль панельной шкуры",
+      "projection": "orthographic",
+      "file": "panel-silhouette.png"
+    }
+  ]
+}

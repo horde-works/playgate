@@ -12,10 +12,28 @@ import {
 } from "./vehicleAllegiance.ts";
 import type { VehicleRecoveryLifecycle } from "./vehicleFailure.ts";
 import type { AirCombatStation } from "./airCombatPilot.ts";
-import type { EvasionCapability } from "./airCombatEvasion.ts";
+import type { EvasionCapability } from "./missileEvasion.ts";
 import type { VehicleArmament } from "./vehicleGunnery.ts";
 import type { VehicleGuidanceOverrides } from "./vehicleGuidanceEnvelope.ts";
 import type { AirplanePassport } from "./airplaneDynamics.ts";
+import { ROLL_RATE_LIMIT } from "./airplaneDynamics.ts";
+import {
+  DC3_AIRPLANE_CLASS,
+  DC3_AIRPLANE_PASSPORT,
+  dc3AirplaneStandVehicle,
+} from "./dc3Airplane.ts";
+import {
+  dc3AirportArrivalPlan,
+  dc3AirportEscapePlan,
+  dc3AirportPlan,
+  dc3AirportRoutePhase,
+  dc3TaxiDrillPlan,
+  type Dc3FlightKind,
+} from "./dc3AirportRoutes.ts";
+import {
+  ISLAND_AIRPORT_DC3_COMMAND_POST,
+  islandAirportDc3Frame,
+} from "../content/scenes/islandAirport/islandAirportDc3.ts";
 import type {
   RotorLandingTolerance,
   VehicleLiftSource,
@@ -1591,6 +1609,103 @@ export const DUCT_HEXACOPTER_RANGE_AIR_VEHICLE: AirVehicleDefinition = {
   },
 };
 
+/**
+ * DC-3 НА ПОЛОСЕ 09: ПЕРВАЯ КРЫЛАТАЯ МАШИНА В РЕЕСТРЕ.
+ *
+ * Отличий от винтокрылых соседей ровно два, и оба принципиальны.
+ *
+ * ПЕРВОЕ: рейс кончается ПРОБЕГОМ, а не зависанием. Поэтому `landing` здесь
+ * широк по радиусу и узок по скорости: попасть в метр самолёт не обязан — он
+ * обязан остановиться на бетоне, стоя на трёх точках и не двигаясь. Радиус
+ * взят от полосы (её полуширина минус колея), скорость — от «стоит».
+ *
+ * ВТОРОЕ: `verticalDeparture`/`verticalArrival` у трассы отсутствуют
+ * намеренно. Полки вертикального отхода и прихода — свойство машины, которая
+ * умеет висеть; самолёт уходит разбегом и приходит глиссадой, и вертикаль у
+ * него живёт в профиле высоты трассы, а не отдельной политикой.
+ *
+ * Командный пункт стоит у полосы, на траве севернее оси, напротив стоянки
+ * машины: одна команда — «взлёт, облёт, посадка», потому что для крылатой
+ * машины это ОДИН рейс, а не три.
+ */
+export const ISLAND_AIRPORT_DC3_AIR_VEHICLE: AirVehicleDefinition = {
+  ...islandAirportDc3Frame,
+  departure: {
+    target: {
+      id: "island-airport:dc3:departure",
+      kind: "departure",
+      cue: "dc3-uncrewed-flight",
+      actions: [
+        { id: "survey", labelKey: "hint.dc3Departure.survey" },
+        // Режим 2: учебное руление по кварталу — осмотр наземной механики
+        // без сорокаминутного полёта (вердикт Igor, 15.08.2026).
+        { id: "taxi", labelKey: "hint.dc3Departure.taxi" },
+      ],
+    },
+    point: ISLAND_AIRPORT_DC3_COMMAND_POST,
+    flightKind: "survey",
+    approachRadius: 3.2,
+    releaseRadius: 4.4,
+    heightTolerance: 2.6,
+    passengerDropPoint: [
+      ISLAND_AIRPORT_DC3_COMMAND_POST[0] + 2.4,
+      ISLAND_AIRPORT_DC3_COMMAND_POST[1],
+      ISLAND_AIRPORT_DC3_COMMAND_POST[2] + 2.4,
+    ],
+  },
+  flight: {
+    liftSource: "wing",
+    airplane: DC3_AIRPLANE_PASSPORT,
+    // ── ПЕРЕКЛАДКА КРЕНА — МАНЁВР, А НЕ ВОЗМУЩЕНИЕ ───────────────────────
+    //
+    // Общие ворота возмущения (0.55 рад/с наклона) писаны под машины, чей
+    // корпус в норме почти не вращается. Крыло разворачивается ТОЛЬКО
+    // вращением: командный темп крена 0.5 рад/с, и вместе с темпом тангажа
+    // гипотенуза штатной перекладки переваливает общий порог — корректор
+    // прочёл бы вход в обычный разворот как «машину сорвало» и забрал её
+    // себе. Порог — командный потолок крена с двойным запасом на
+    // одновременный тангаж, тем же способом, что у винтокрылых (1.35–2.4).
+    guidance: { upsetTiltRate: ROLL_RATE_LIMIT * 2 },
+    limits: dc3AirplaneStandVehicle.flight.limits,
+    approach: {
+      heading: [islandAirportDc3Frame.nose[0], islandAirportDc3Frame.nose[2]],
+      // Створ узкий по курсу и широкий по скорости: самолёт обязан прийти
+      // ВДОЛЬ полосы, но приходит он на скорости захода, а не подкрадываясь.
+      tolerance: { position: 12, heading: 0.16, speed: 40 },
+    },
+    // Швартовки нет: поле требует общий контракт, и оно намеренно широкое.
+    docking: {
+      position: 14,
+      height: 1.2,
+      headingCos: 0,
+      speed: 2,
+      verticalSpeed: 1,
+      uprightCos: 0.9,
+      angularSpeed: 0.3,
+    },
+    landing: DC3_AIRPLANE_CLASS.landing,
+    spoolSeconds: dc3AirplaneStandVehicle.flight.spoolSeconds,
+    underwaySeconds: 6,
+    driveAnimation: {
+      kind: "propeller",
+      phaseSpeed: 34,
+      // Валы ПРОДОЛЬНЫЕ: винты тянут вдоль носа, а не поднимают машину.
+      shaftAxis: [0, 0, 1],
+    },
+    linearDamping: dc3AirplaneStandVehicle.flight.linearDamping,
+    angularDamping: dc3AirplaneStandVehicle.flight.angularDamping,
+    lateralDragRatio: dc3AirplaneStandVehicle.flight.lateralDragRatio,
+    routePlan: (kind, berth) =>
+      kind === "taxi"
+        ? dc3TaxiDrillPlan(berth)
+        : dc3AirportPlan(kind as Dc3FlightKind, berth),
+    arrivalPlan: dc3AirportArrivalPlan,
+    escapePlan: dc3AirportEscapePlan,
+    routePhase: (kind, progress) =>
+      dc3AirportRoutePhase(kind as Dc3FlightKind, progress),
+  },
+};
+
 export const airVehicles: readonly AirVehicleDefinition[] = [
   SKY_TRAIN_AIR_VEHICLE,
   SKY_LONGSHIP_AIR_VEHICLE,
@@ -1601,4 +1716,5 @@ export const airVehicles: readonly AirVehicleDefinition[] = [
   SR6_SKAT_AIR_VEHICLE,
   COMBAT_HEXACOPTER_RANGE_AIR_VEHICLE,
   DUCT_HEXACOPTER_RANGE_AIR_VEHICLE,
+  ISLAND_AIRPORT_DC3_AIR_VEHICLE,
 ];

@@ -1,0 +1,57 @@
+{
+  "schema": "contour-contract.v1",
+  "objectId": "tilt-hexacopter-b08",
+  "revision": "b08-owner-review-hypothesis",
+  "authorities": {
+    "reference-three-quarter": "observed visual character from the owner-approved generated concept",
+    "nose-and-cabin": "direct owner correction plus accepted RAX C2 morphology",
+    "proportions": "owner-authorized design-ratio hypothesis",
+    "profile": "owner-review hypothesis",
+    "top": "owner-review hypothesis",
+    "front": "owner-review hypothesis"
+  },
+  "dimensions": {
+    "hullLength": 9.8,
+    "maximumCheekWidth": 2.05,
+    "hullDepth": 1.535,
+    "hullLengthWidthDepthRatio": [6.384, 1.336, 1]
+  },
+  "views": {
+    "profile": {
+      "authority": "owner-review-hypothesis",
+      "outlineClosed": true,
+      "features": {
+        "short-thick-nose": [1, 0.24],
+        "straight-central-belly": [0.56, 0.045],
+        "separate-canopy-head": [0.69, 0.81],
+        "raised-shark-spine": [0.177, 0.98],
+        "asymmetric-aft-kick": [0, 0.29]
+      }
+    },
+    "front": {
+      "authority": "owner-review-hypothesis",
+      "outlineClosed": true,
+      "features": {
+        "narrow-keel": [[0.32, 0.08], [0.68, 0.08]],
+        "maximum-cheek": [[0, 0.39], [1, 0.39]],
+        "upper-tumblehome": [[0.183, 0.81], [0.817, 0.81]],
+        "narrow-canopy": [[0.315, 0.86], [0.685, 0.86]]
+      }
+    },
+    "top": {
+      "authority": "owner-review-hypothesis",
+      "outlineClosed": true,
+      "features": {
+        "rotor-centres": [[0.229, 0.293], [0.771, 0.293], [0.229, 0.555], [0.771, 0.555], [0.229, 0.817], [0.771, 0.817]],
+        "maximum-cheek-under-forward-canopy": [0.5, 0.296],
+        "short-nose-wedge-run": [0.872, 1]
+      }
+    }
+  },
+  "characteristics": [
+    { "id": "hull-width-to-depth-min", "value": 1.28, "unit": "ratio", "provenance": "owner-authorized-proportion-gate" },
+    { "id": "nose-axial-run-max", "value": 1.3, "unit": "m", "provenance": "RAX-derived-morphology" },
+    { "id": "cheek-over-shoulder-min", "value": 0.3, "unit": "m", "provenance": "owner-authorized-proportion-gate" },
+    { "id": "engineering-paused", "value": true, "unit": "boolean", "provenance": "object-study-gate" }
+  ]
+}

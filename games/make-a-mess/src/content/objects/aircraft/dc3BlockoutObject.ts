@@ -21,11 +21,20 @@ type SurfaceHinge = {
   readonly range: { readonly minDegrees: number; readonly maxDegrees: number };
   readonly restDegrees: number;
 };
+type PropellerShaft = {
+  readonly group: "propeller-left" | "propeller-right";
+  /** Rest-pose shaft frame in canonical object coordinates. */
+  readonly pivot: ObjectPoint;
+  readonly axis: ObjectPoint;
+  /** Positive phase is clockwise when viewed from behind the engine. */
+  readonly phaseSign: 1 | -1;
+};
 type Dc3BlockoutModel = Omit<ObjectLabModel, "views"> & {
   readonly captureFrame: readonly [width: number, height: number];
   readonly materialOverrides: Readonly<
     Record<string, Readonly<Record<string, number | boolean>>>
   >;
+  readonly propellerShafts: Readonly<Record<"left" | "right", PropellerShaft>>;
   readonly surfaceHinges: Readonly<Record<string, SurfaceHinge>>;
   readonly views: readonly Dc3View[];
 };
@@ -58,7 +67,16 @@ const PROP_BLADES = 3;
 const PROP_PHASE = (22 * Math.PI) / 180;
 const PROP_PITCH = (24 * Math.PI) / 180;
 const PROP_HUB_Y = -0.52;
-const PROP_HUB_Z = 3.1;
+/**
+ * ЛОПАСТИ РАСТУТ ИЗ КОКА, А НЕ ВИСЯТ ПЕРЕД НИМ.
+ *
+ * Плоскость вращения стояла на 3.1, а кок нарисован от 2.56 до 2.92: три
+ * лопасти висели в восемнадцати сантиметрах впереди него, ни к чему не
+ * прикреплённые. Теперь плоскость — середина кока, а комель (`PROP_ROOT_RADIUS`)
+ * уходит ВНУТРЬ его радиуса 0.32, то есть скрыт обтекателем, как на машине.
+ */
+const PROP_HUB_Z = 2.74;
+const PROP_ROOT_RADIUS = 0.2;
 const COWL_OUTER = 0.68;
 const COWL_INNER = 0.57;
 const COWL_FRONT_Z = 2.72;
@@ -298,6 +316,7 @@ function addClosedMesh(
   material: ObjectMaterialId,
   vertices: readonly ObjectPoint[],
   triangles: readonly ObjectTriangle[],
+  options: { readonly doubleSided?: boolean } = {},
 ): void {
   const volume = signedVolume(vertices, triangles);
   const wound = volume < -1e-6
@@ -311,6 +330,7 @@ function addClosedMesh(
     vertices: vertices.map(bodyToWorld),
     triangles: wound,
     showEdges: true,
+    doubleSided: options.doubleSided,
   });
 }
 
@@ -396,8 +416,9 @@ function uniqueStations(values: readonly number[]): number[] {
     .sort((a, b) => a - b);
 }
 
-function addWing(id: string, sign: 1 | -1): void {
-  const stations = uniqueStations([
+// Нервюрные станции крыла. Подняты в модульную константу, чтобы панелизация
+// брала ТЕ ЖЕ границы отсеков, а не свои округлённые.
+const WING_STATIONS = uniqueStations([
     0,
     1.4,
     FLAP_INNER_IN - 0.04,
@@ -419,7 +440,11 @@ function addWing(id: string, sign: 1 | -1): void {
     AILERON_OUT,
     AILERON_OUT + 0.04,
     DC3_WINGSPAN / 2,
-  ]).map((x) => airfoilBand(sign * x, 0, wingSkinEndT(sign * x)));
+]);
+
+function addWing(id: string, sign: 1 | -1): void {
+  const stations = WING_STATIONS
+    .map((x) => airfoilBand(sign * x, 0, wingSkinEndT(sign * x)));
   const lofted = loftRings(stations);
   addClosedMesh(id, "wing", "paint-light", lofted.vertices, lofted.triangles);
 }
@@ -487,17 +512,38 @@ function addNacelle(side: "left" | "right", sign: 1 | -1): void {
     circleRing(x, PROP_HUB_Y, 1.95, COWL_INNER, cowlSeg).reverse(),
     circleRing(x, PROP_HUB_Y, COWL_AFT_Z, COWL_INNER, cowlSeg).reverse(),
   ], { start: false, end: false });
-  addClosedMesh(`${group}-cowl-inner`, group, "metal", inner.vertices, inner.triangles);
+  addClosedMesh(
+    `${group}-cowl-inner`,
+    group,
+    "metal",
+    inner.vertices,
+    inner.triangles,
+    { doubleSided: true },
+  );
   const lip = loftRings([
     circleRing(x, PROP_HUB_Y, COWL_FRONT_Z, 0.71, cowlSeg),
     circleRing(x, PROP_HUB_Y, COWL_FRONT_Z, COWL_INNER, cowlSeg),
   ], { start: false, end: false });
-  addClosedMesh(`${group}-cowl-lip`, group, "metal", lip.vertices, lip.triangles);
+  addClosedMesh(
+    `${group}-cowl-lip`,
+    group,
+    "metal",
+    lip.vertices,
+    lip.triangles,
+    { doubleSided: true },
+  );
   const firewall = loftRings([
     circleRing(x, PROP_HUB_Y, COWL_AFT_Z, COWL_INNER, 16),
     circleRing(x, PROP_HUB_Y, COWL_AFT_Z - 0.04, COWL_INNER, 16),
   ]);
-  addClosedMesh(`${group}-firewall`, group, "metal", firewall.vertices, firewall.triangles);
+  addClosedMesh(
+    `${group}-firewall`,
+    group,
+    "metal",
+    firewall.vertices,
+    firewall.triangles,
+    { doubleSided: true },
+  );
   addCylinder(`${group}-spinner`, group, "paint-light", point(x, PROP_HUB_Y, 2.92), point(x, PROP_HUB_Y, 2.56), 0.32, 16);
   addCylinder(
     `${engine}-crankcase`,
@@ -526,7 +572,7 @@ function addNacelle(side: "left" | "right", sign: 1 | -1): void {
       "metal",
       add(point(x, PROP_HUB_Y, ENGINE_Z), scale(radial, 0.26)),
       add(point(x, PROP_HUB_Y, ENGINE_Z), scale(radial, 0.5)),
-      0.105,
+      0.08,
       10,
     );
   }
@@ -538,7 +584,7 @@ function addNacelle(side: "left" | "right", sign: 1 | -1): void {
     const chord = rotateAxis(cross(span, axis), span, PROP_PITCH);
     const thick = cross(span, chord);
     const stations = [
-      { radius: 0.34, chord: 0.2, thick: 0.055 },
+      { radius: PROP_ROOT_RADIUS, chord: 0.2, thick: 0.055 },
       { radius: 1.12, chord: 0.34, thick: 0.046 },
       { radius: PROP_RADIUS, chord: 0.16, thick: 0.022 },
     ].map(({ radius, chord: width, thick: depth }) => {
@@ -961,6 +1007,30 @@ function stabHingePivot(x: number): ObjectPoint {
 const spanAxis = bodyDirection(point(1, 0, 0));
 const surfaceHinges: Record<string, SurfaceHinge> = {};
 
+/**
+ * ВИНТ ПРИНАДЛЕЖИТ ВАЛУ, А НЕ МИРОВОЙ ПОЗЕ САМОЛЁТА.
+ *
+ * Это две канонические рамы валов в покойной системе объекта. Мотогондола,
+ * втулка и лопасти уже собраны в этой системе; рантайм имеет право добавить
+ * только фазу вокруг `axis`. Поворот и наклон всего самолёта применяются
+ * снаружи ко всему кластеру и этого контракта не касаются.
+ */
+const propellerShaftAxis = bodyDirection(point(0, 0, 1));
+const propellerShafts: Readonly<Record<"left" | "right", PropellerShaft>> = {
+  left: {
+    group: "propeller-left",
+    pivot: bodyToWorld(point(-ENGINE_X, PROP_HUB_Y, PROP_HUB_Z)),
+    axis: propellerShaftAxis,
+    phaseSign: 1,
+  },
+  right: {
+    group: "propeller-right",
+    pivot: bodyToWorld(point(ENGINE_X, PROP_HUB_Y, PROP_HUB_Z)),
+    axis: propellerShaftAxis,
+    phaseSign: 1,
+  },
+};
+
 function addHinge(
   id: string,
   group: string,
@@ -1270,8 +1340,8 @@ export const dc3BlockoutObject: Dc3BlockoutModel = {
     leftWingTip: leftTip,
     rightWingTip: rightTip,
     finTip,
-    leftProp: bodyToWorld(point(-ENGINE_X, PROP_HUB_Y, PROP_HUB_Z)),
-    rightProp: bodyToWorld(point(ENGINE_X, PROP_HUB_Y, PROP_HUB_Z)),
+    leftProp: propellerShafts.left.pivot,
+    rightProp: propellerShafts.right.pivot,
     leftMainWheel: bodyToWorld(point(-ENGINE_X, GEAR_BODY_Y, GEAR_BODY_Z)),
     rightMainWheel: bodyToWorld(point(ENGINE_X, GEAR_BODY_Y, GEAR_BODY_Z)),
     tailwheel: bodyToWorld(point(0, TAILWHEEL_BODY_Y, TAILWHEEL_BODY_Z)),
@@ -1286,6 +1356,7 @@ export const dc3BlockoutObject: Dc3BlockoutModel = {
     aerodynamicsExcluded: true,
     worldIntegrationDeferred: true,
   },
+  propellerShafts,
   surfaceHinges,
   labEnvironment: {
     floorRadius: 34,
@@ -1298,3 +1369,70 @@ export const dc3BlockoutObject: Dc3BlockoutModel = {
   parts,
   views,
 };
+
+/**
+ * ПОВЕРХНОСТЬ ПЛАНЕРА ДЛЯ ПАНЕЛИЗАЦИИ.
+ *
+ * Экспорт только читающий: он ничего не добавляет к машине и ничего в ней не
+ * меняет. Нужен затем, чтобы этап панелизации обшивки крыл и оперения снимал
+ * панели с ТОГО ЖЕ профиля, а не заводил себе второй. Два профиля разойдутся
+ * при первой же правке, и после этого никто не скажет, который канонический.
+ *
+ * Все band-функции отдают точки в КОРПУСНЫХ координатах; в мировые их
+ * переводит `bodyToWorld`, ровно как это делает `addClosedMesh`.
+ */
+export const dc3AirframeSurface = {
+  bodyToWorld,
+  wing: {
+    at: wingAt,
+    band: airfoilBand,
+    skinEndT: wingSkinEndT,
+    inFlapBay,
+    inAileronBay,
+    stations: WING_STATIONS,
+    halfSpan: DC3_WINGSPAN / 2,
+  },
+  stabiliser: {
+    section: stabSection,
+    band: stabBand,
+    inElevatorBay,
+    hingeT: STAB_HINGE_T,
+    halfSpan: 3.25,
+    elevatorSpan: { inner: ELEV_IN, outer: ELEV_OUT },
+  },
+  fin: {
+    stations: FIN_STATIONS,
+    band: finBand,
+    inRudderBay,
+    hingeT: FIN_HINGE_T,
+  },
+  /**
+   * Фюзеляж: кольцо на станции. Панелизации хватает СВОИХ выборок кольца и
+   * своих станций — промежуточных точек выдумывать не надо, поэтому панельная
+   * шкура совпадает с лофтом точно, а не приближённо.
+   */
+  fuselage: {
+    stations: FUSELAGE_STATIONS,
+    at: sampleStation,
+    ring: ellipseRing,
+    ringCount: RING,
+  },
+  /** Мотогондола: та же схема, кольца окружностей по станциям. */
+  nacelle: {
+    halfSpan: ENGINE_X,
+    hubY: PROP_HUB_Y,
+    segments: 24,
+    circle: circleRing,
+    body: [
+      { z: COWL_FRONT_Z, radius: 0.71 },
+      { z: 1.95, radius: COWL_OUTER },
+      { z: COWL_AFT_Z, radius: COWL_OUTER },
+      { z: 0.35, radius: 0.66 },
+      { z: -0.7, radius: 0.58 },
+      { z: -1.9, radius: 0.4 },
+      { z: -3.2, radius: 0.16 },
+    ],
+  },
+  spars: { front: SPAR_FRONT, main: SPAR_MAIN, rear: SPAR_REAR },
+  hingeGapT: HINGE_GAP_T,
+} as const;

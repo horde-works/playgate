@@ -31,7 +31,7 @@ import {
   materialRuntimeProfiles,
   type BreakablePieceDefinition,
 } from "./destructionScene";
-import { getPieceMaterial } from "./materialTextures";
+import { cloneWithMaterialSpace, getPieceMaterial } from "./materialTextures";
 import { materialAnchorWithWeathering } from "./materialAppearance";
 import {
   SILICATE_JOINT_EXPANSION,
@@ -354,7 +354,7 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
         batch.textureProfile,
       );
       if (batch.geometryKind !== "surfaceMesh") return base;
-      const surface = base.clone();
+      const surface = cloneWithMaterialSpace(base, true);
       surface.vertexColors = Boolean(batch.visualMesh?.colors);
       if (batch.visualMesh?.doubleSided !== false) surface.side = DoubleSide;
       return surface;

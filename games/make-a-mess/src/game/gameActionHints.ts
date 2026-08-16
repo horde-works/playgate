@@ -13,6 +13,7 @@ export type GameAction =
   | "combat-departure.approaching"
   | "skat-departure.approaching"
   | "yaqui-departure.approaching"
+  | "dc3-departure.approaching"
   | "terminal-ride.approaching"
   | "viking-ride.approaching"
   | "town-ride.approaching"
@@ -166,6 +167,17 @@ export const gameActionHints: readonly GameActionHint[] = [
     detailKey: "hint.yaquiDeparture.action",
     touchDetailKey: "hint.yaquiDeparture.actionTouch",
     keyLabelKey: "hint.yaquiDeparture.key",
+    once: false,
+  },
+  {
+    id: "dispatching-the-dc3",
+    action: "dc3-departure.approaching",
+    delayMs: 180,
+    eyebrowKey: "hint.dc3Departure.eyebrow",
+    titleKey: "hint.dc3Departure.title",
+    detailKey: "hint.dc3Departure.action",
+    touchDetailKey: "hint.dc3Departure.actionTouch",
+    keyLabelKey: "hint.dc3Departure.key",
     once: false,
   },
   {

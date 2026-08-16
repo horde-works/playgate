@@ -48,7 +48,12 @@ export interface MotionRouteArtifact {
   markerProgress(marker: string): number;
 }
 
-export type MotionRoutePhase = "departure" | "cruise" | "approach";
+export type MotionRoutePhase =
+  | "departure"
+  | "cruise"
+  | "approach"
+  | "rollout"
+  | "taxi";
 
 /**
  * Resolve reusable journey phases from route-authored boundaries. Vehicles
@@ -59,8 +64,16 @@ export function motionRoutePhase(
   progress: number,
   departureCompleteMarker = "departureComplete",
   approachMarker = "final",
+  rolloutMarker?: string,
+  taxiMarker?: string,
 ): MotionRoutePhase {
   const clamped = clamp01(progress);
+  if (taxiMarker && clamped >= route.markerProgress(taxiMarker)) {
+    return "taxi";
+  }
+  if (rolloutMarker && clamped >= route.markerProgress(rolloutMarker)) {
+    return "rollout";
+  }
   if (clamped < route.markerProgress(departureCompleteMarker)) {
     return "departure";
   }

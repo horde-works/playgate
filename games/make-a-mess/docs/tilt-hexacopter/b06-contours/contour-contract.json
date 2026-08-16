@@ -1,0 +1,66 @@
+{
+  "schema": "contour-contract.v1",
+  "objectId": "tilt-hexacopter-b06",
+  "revision": "b06-owner-review-hypothesis",
+  "authorities": {
+    "reference-three-quarter": "observed visual character from the owner-approved generated concept",
+    "profile": "direct owner correction plus authored reconstruction",
+    "top": "owner-review hypothesis",
+    "front": "owner-review hypothesis"
+  },
+  "views": {
+    "profile": {
+      "authority": "owner-approved-hypothesis",
+      "outlineClosed": true,
+      "outline": [
+        [0, 0.08], [0.058, 0.32], [0.12, 0.517], [0.209, 0.57],
+        [0.283, 0.627], [0.45, 0.673], [0.623, 0.71], [0.707, 0.717],
+        [0.801, 0.713], [0.874, 0.693], [0.948, 0.647], [1, 0.633],
+        [1, 0.282], [0.948, 0.242], [0.874, 0.135], [0.801, 0.068],
+        [0.707, 0.048], [0.623, 0.042], [0.45, 0.042], [0.283, 0.048],
+        [0.209, 0.062], [0.12, 0.095], [0.058, 0.168], [0, 0.055], [0, 0.08]
+      ],
+      "features": {
+        "down-beak-tip": [0, 0.067],
+        "underside-hook": [0.058, 0.168],
+        "canopy-brow": [0.12, 0.517],
+        "straight-belly-start": [0.209, 0.062],
+        "aft-kick": [0.948, 0.242]
+      }
+    },
+    "front": {
+      "authority": "owner-approved-hypothesis",
+      "outlineClosed": true,
+      "cabinSectionAtZ1": [
+        [0.5, 0.054], [0.93, 0.109], [0.97, 0.4], [0.91, 0.791],
+        [0.5, 0.878], [0.09, 0.791], [0.03, 0.4], [0.07, 0.109], [0.5, 0.054]
+      ],
+      "features": {
+        "left-cheek": [0.03, 0.4],
+        "right-cheek": [0.97, 0.4],
+        "upper-tumblehome": [[0.09, 0.791], [0.91, 0.791]]
+      }
+    },
+    "top": {
+      "authority": "owner-approved-hypothesis",
+      "outlineClosed": true,
+      "centralHullOutline": [
+        [0.5, 0], [0.518, 0.058], [0.546, 0.12], [0.586, 0.209],
+        [0.606, 0.283], [0.612, 0.45], [0.607, 0.623], [0.605, 0.707],
+        [0.598, 0.801], [0.586, 0.874], [0.565, 0.948], [0.551, 1],
+        [0.449, 1], [0.435, 0.948], [0.414, 0.874], [0.402, 0.801],
+        [0.395, 0.707], [0.393, 0.623], [0.388, 0.45], [0.394, 0.283],
+        [0.414, 0.209], [0.454, 0.12], [0.482, 0.058], [0.5, 0]
+      ],
+      "features": {
+        "rotor-centres": [[0.229, 0.293], [0.771, 0.293], [0.229, 0.555], [0.771, 0.555], [0.229, 0.817], [0.771, 0.817]],
+        "maximum-cabin-cheek": [[0.388, 0.45], [0.612, 0.45]]
+      }
+    }
+  },
+  "characteristics": [
+    { "id": "nose-crown-drop-from-brow-min", "value": 1.1, "unit": "m", "provenance": "direct-owner-correction" },
+    { "id": "nose-tip-below-preceding-underside", "value": true, "unit": "boolean", "provenance": "direct-owner-correction" },
+    { "id": "cabin-mid-cheek-over-upper-shoulder-min", "value": 0.1, "unit": "m", "provenance": "direct-owner-correction" }
+  ]
+}

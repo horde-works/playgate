@@ -43,10 +43,15 @@ test("ground surfaces vary more broadly than manufactured steel", () => {
   );
   assert.equal(materialAppearanceProfiles.wood.directionalGrain, true);
   assert.equal(materialAppearanceProfiles.steel.directionalGrain, true);
-  assert.equal(materialAppearanceProfiles.aluminium.directionalGrain, true);
+  assert.equal(materialAppearanceProfiles.aluminium.directionalGrain, false);
   assert.ok(
     materialAppearanceProfiles.aluminium.roughnessVariation <
       materialAppearanceProfiles.steel.roughnessVariation,
     "Alclad is satin, not brushed stock",
+  );
+  assert.ok(
+    materialAppearanceProfiles.aluminium.streaking <
+      materialAppearanceProfiles.steel.streaking,
+    "Alclad has no imposed mill direction",
   );
 });

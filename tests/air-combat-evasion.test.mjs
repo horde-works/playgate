@@ -4,11 +4,11 @@ import { readFileSync } from "node:fs";
 import {
   breakDirection,
   createEvasionState,
+  evasionHullFromLocalBounds,
   projectileRocketThreat,
   rocketApproach,
   stepEvasion,
-} from "../games/make-a-mess/src/game/airCombatEvasion.ts";
-import { evasionHullFromLocalBounds } from "../games/make-a-mess/src/game/airCombatEvasionField.ts";
+} from "../games/make-a-mess/src/game/missileEvasion.ts";
 import {
   COMBAT_HEXACOPTER_RANGE_AIR_VEHICLE,
   DUCT_HEXACOPTER_RANGE_AIR_VEHICLE,
@@ -277,7 +277,7 @@ test("рывок ДОВОДИТСЯ и не пересматривается в�
   }
 });
 
-test("новая более срочная ракета прерывает старый рывок с другого вектора", () => {
+test("новая более срочная ракета немедленно становится главной угрозой", () => {
   const firstThreat = rocket([48, 30, 0], [0, 30, 0], { id: 610 });
   const first = stepEvasion({
     own: prey([0, 30, 0], [0, 0, 0]),
@@ -299,11 +299,111 @@ test("новая более срочная ракета прерывает ст�
     deck: DECK,
   });
   assert.equal(interrupted.state.threatId, fromAbove.id);
-  assert.notDeepEqual(
-    interrupted.velocityOffset,
-    first.velocityOffset,
-    "новая вертикальная угроза осталась только надписью в панели",
+  assert.ok(
+    interrupted.closingSeconds < first.closingSeconds,
+    "состояние сохранило срок старой ракеты",
   );
+});
+
+test("аналитический runtime учитывает уже действующее ускорение машины", () => {
+  const output = stepEvasion({
+    own: prey([0, 30, 0], [0, 0, 0]),
+    rockets: [
+      {
+        id: 612,
+        ownerId: "hunter",
+        kind: "podRocket",
+        position: [10, 30, 134.4],
+        velocity: [0, 0, -96],
+        blastRadius: 2,
+        remainingSeconds: 1.8,
+      },
+    ],
+    capability: CAPABILITY,
+    dynamics: { ...VECTOR_DYNAMICS, currentAcceleration: [10, 0, 0] },
+    deltaSeconds: 1 / 60,
+    state: createEvasionState(),
+    deck: DECK,
+  });
+  assert.equal(output.threatId, 612);
+});
+
+test("подрыв по таймеру до геометрического сближения не теряется", () => {
+  const output = stepEvasion({
+    own: prey([0, 30, 0], [0, 0, 0]),
+    rockets: [
+      {
+        id: 613,
+        ownerId: "player",
+        kind: "rocket",
+        position: [0, 30, 17.6],
+        velocity: [0, 0, -32],
+        blastRadius: 9.5,
+        remainingSeconds: 0.5,
+      },
+    ],
+    capability: CAPABILITY,
+    dynamics: VECTOR_DYNAMICS,
+    deltaSeconds: 1 / 60,
+    state: createEvasionState(),
+    deck: DECK,
+  });
+  assert.equal(output.threatId, 613);
+  assert.ok(Math.abs(output.closingSeconds - 0.5) < 1e-9);
+});
+
+test("новый более тяжёлый пуск пересчитывает манёвр, даже если приходит позже", () => {
+  const firstThreat = rocket([6.5, 30, 48], [6.5, 30, 0], { id: 614 });
+  const first = stepEvasion({
+    own: prey([0, 30, 0], [0, 0, 0]),
+    rockets: [firstThreat],
+    capability: CAPABILITY,
+    dynamics: VECTOR_DYNAMICS,
+    deltaSeconds: 1 / 60,
+    state: createEvasionState(),
+    deck: DECK,
+  });
+  const laterButHarder = rocket([0, 87.6, 0], [0, 30, 0], {
+    id: 615,
+  });
+  const reconsidered = stepEvasion({
+    own: prey([0, 30, 0], [0, 0, 0]),
+    rockets: [firstThreat, laterButHarder],
+    capability: CAPABILITY,
+    dynamics: VECTOR_DYNAMICS,
+    deltaSeconds: 1 / 60,
+    state: first.state,
+    deck: DECK,
+  });
+  assert.equal(reconsidered.threatId, laterButHarder.id);
+});
+
+test("активный runtime solver не выбирает торможение", () => {
+  const own = prey([0, 30, 0], [0, 0, 20]);
+  const output = stepEvasion({
+    own,
+    rockets: [
+      {
+        id: 616,
+        ownerId: "hunter",
+        kind: "podRocket",
+        position: [-96, 30, 22],
+        velocity: [96, 0, 0],
+        blastRadius: 2,
+        remainingSeconds: 1.8,
+      },
+    ],
+    capability: CAPABILITY,
+    dynamics: VECTOR_DYNAMICS,
+    deltaSeconds: 1 / 60,
+    state: createEvasionState(),
+    deck: DECK,
+  });
+  const along =
+    output.velocityOffset[0] * own.velocity[0] +
+    output.velocityOffset[1] * own.velocity[1] +
+    output.velocityOffset[2] * own.velocity[2];
+  assert.ok(along >= -1e-8, `solver затормозил: ${along.toFixed(3)}`);
 });
 
 test("рывок уходит ВДОЛЬ ВЕКТОРА ПРОМАХА, а не наугад вбок", () => {
@@ -445,7 +545,7 @@ test("за кромку мира рывок не уводит", () => {
   );
 });
 
-test("всевекторное поле уходит поперёк центральной атаки с любой стороны", () => {
+test("аналитическая плоскость даёт поперечный уход при атаке с любой стороны", () => {
   const own = prey([0, 30, 0], [0, 0, 0]);
   const attackDirections = [
     [1, 0, 0],
@@ -616,6 +716,67 @@ test("поле фильтрует грунт и кромку до выбора �
     insideBoundary.velocityOffset[0] <= 0,
     "поле выбрало наружу за кромку",
   );
+});
+
+test("реальный габарит RAX у палубы не обнуляет весь манёвр", () => {
+  // Живой дефект: центр стоящего RAX находится примерно на 1.14 м, а его
+  // общий authored bounds тянется вниз больше чем на четыре. Абсолютная
+  // проверка эллипсоида считала уже исходное положение незаконным и
+  // отбрасывала ВСЕ варианты, включая набор высоты.
+  const own = prey([0, 1.14, 0], [0, 0, 0]);
+  const scenarios = [
+    { name: "в лоб", position: [0, 1.14, -100], velocity: [0, 0, 124] },
+    { name: "снизу", position: [0, -98.86, 0], velocity: [0, 124, 0] },
+    {
+      name: "в мотогондолу",
+      position: [4.6, 1.14, -100],
+      velocity: [0, 0, 124],
+    },
+  ];
+  for (const [index, scenario] of scenarios.entries()) {
+    const output = stepEvasion({
+      own: { ...own, radius: 6 },
+      rockets: [
+        {
+          id: 402 + index,
+          ownerId: "player",
+          kind: "lance",
+          position: scenario.position,
+          velocity: scenario.velocity,
+          blastRadius: 1.6,
+          remainingSeconds: 2.2,
+        },
+      ],
+      capability: CAPABILITY,
+      dynamics: {
+        ...VECTOR_DYNAMICS,
+        hull: {
+          halfExtents: [5.4, 4.2, 5.3],
+          centreOffset: [0, 0, 0],
+        },
+        upwardAcceleration: 7.8,
+        liftReserve: 1.8,
+        actuatorResponseSeconds: 0.1,
+      },
+      deltaSeconds: 1 / 60,
+      state: createEvasionState(),
+      deck: 0,
+    });
+    assert.equal(
+      output.threatId,
+      402 + index,
+      `${scenario.name}: игла пропала до исполнительного поля`,
+    );
+    assert.ok(
+      Math.hypot(...output.velocityOffset) > 0,
+      `${scenario.name}: поле увидело иглу, но снова выбрало нулевую команду`,
+    );
+    assert.ok(
+      output.velocityOffset[1] >= 0,
+      `${scenario.name}: из уже низкого положения поле приказало уйти дальше в палубу`,
+    );
+    assert.ok(Number.isFinite(output.survivalMargin), scenario.name);
+  }
 });
 
 test("один выбор отвечает сразу двум ракетам из разных плоскостей", () => {

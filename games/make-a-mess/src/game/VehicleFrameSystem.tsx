@@ -99,6 +99,7 @@ import {
   type VehiclePose,
   type ApproachGate,
   type VehicleGuidanceDemand,
+  type VehicleWheelDefinition,
   type ShipModel,
 } from "./vehicleFrames";
 import {
@@ -114,6 +115,11 @@ import {
   seatCommandsCarrier,
   seatCommandsRotorcraft,
 } from "./passengerSeats";
+import {
+  advanceDc3GroundTaxiProgress,
+  dc3GroundTaxiDemand,
+  type Dc3GroundTaxiState,
+} from "./dc3GroundTaxi";
 import { CompoundKinematicClusterBodies } from "./CompoundKinematicClusterBodies";
 import {
   compoundCarrierOwnsMemberPose,
@@ -173,10 +179,16 @@ import {
   strutPadFriction,
   strutReaction,
   strutVisualSlide,
+  strutWheelFriction,
+  smoothStrutGround,
+  wheelRollAxis,
+  WHEEL_STEER_RANGE,
+  wheelSpinAngle,
   type StrutRetraction,
   type SupportStrut,
 } from "./supportStrut";
 import {
+  articulationAboutPivot,
   clearMemberArticulation,
   setMemberArticulation,
 } from "./clusterMemberArticulation";
@@ -208,10 +220,17 @@ import {
   type RotorcraftTrimState,
 } from "./rotorcraftDynamics.ts";
 import {
-  airplaneAllocate,
-  airplaneAirspeed,
   airplaneFlightStep,
+  airplaneGroundYawAuthority,
+  airplanePropellerVisualCommand,
   airplaneTurnCapability,
+  CLIMB_RESPONSE_SECONDS,
+  advanceAirplaneTaxi,
+  controlSurfaceDegrees,
+  type AirplaneJourneyStage,
+  type AirplaneControlChannel,
+  type AirplaneSurfaceCommand,
+  type AirplaneTaxiState,
   INTACT_AIRPLANE_AVAILABILITY,
 } from "./airplaneDynamics.ts";
 import {
@@ -255,11 +274,11 @@ import {
 import type { BodyReport } from "./airCombatPosture.ts";
 import {
   createEvasionState,
+  evasionHullFromLocalBounds,
   stepEvasion,
   type EvasionState,
   type RocketThreatRegistry,
-} from "./airCombatEvasion.ts";
-import { evasionHullFromLocalBounds } from "./airCombatEvasionField.ts";
+} from "./missileEvasion.ts";
 import {
   pilotStatusKey,
   rotorcraftPilotStatusOf,
@@ -651,7 +670,7 @@ function rotorcraftFlightForces(
         // Допуск считает автопилот из коридора участка; фаза — запасной путь
         // для маршрутов, не объявивших коридор.
         guidance?.slipAllowance ??
-          (guidance?.approachPhase
+          (guidance?.finalPhase
             ? DEFAULT_SLIP_POLICY.onApproach
             : DEFAULT_SLIP_POLICY.enRoute),
         step,
@@ -725,6 +744,7 @@ function airplaneFlightForces(
   centre: readonly [number, number, number],
   guidance: VehicleGuidanceDemand | null,
   attachedMembers: ReadonlySet<string>,
+  seconds: number,
 ): {
   readonly forces: readonly {
     readonly force: [number, number, number];
@@ -733,23 +753,56 @@ function airplaneFlightForces(
 } | null {
   const passport = frame.flight.airplane;
   if (!passport) return null;
+  const grounded = airplaneOnGround(state, seconds);
+  // Стадия рейса берётся из ОБЩЕГО журнала — того же, по которому убираются
+  // опоры. Второй правды о том, отправлена ли машина, в системе нет.
+  const journey = airVehicleFlightEventState(
+    frame,
+    state.flight,
+    state.recovery?.lifecycle ?? null,
+  ) as AirplaneJourneyStage;
   const demand = guidance ?? {
     forwardSpeed: 0,
     lateralSpeed: 0,
     yawRate: 0,
     liftFraction: 0,
   };
-  const airspeed = airplaneAirspeed(
-    state.body.velocity,
-    state.body.orientation,
-    frame.nose,
-  );
-  const requested = airplaneAllocate(
-    demand,
+  // Наземное завершение рейса: пробег до стопа, затем руление.
+  state.airplaneTaxi = advanceAirplaneTaxi(state.airplaneTaxi ?? null, {
+    journey,
+    onGround: grounded,
+    groundSpeed: Math.hypot(state.body.velocity[0], state.body.velocity[2]),
+  });
+  if (!state.airplaneTaxi) {
+    state.dc3GroundTaxi = null;
+    state.dc3GroundTaxiAcceleration = null;
+    state.dc3GroundTaxiYawAcceleration = null;
+  }
+  // Доступность каналов узнаётся ЗАПРОСОМ по здоровым кускам, а не догадкой:
+  // первый прогон делается с полной властью, доставленное считает второй.
+  const probe = airplaneFlightStep({
     passport,
-    INTACT_AIRPLANE_AVAILABILITY,
-    airspeed,
-  );
+    guidance: demand,
+    availability: INTACT_AIRPLANE_AVAILABILITY,
+    mass: mass.mass,
+    orientation: state.body.orientation,
+    velocity: state.body.velocity,
+    angularVelocity: state.body.angularVelocity,
+    centre,
+    nose: frame.nose,
+    onGround: grounded,
+    journey,
+    journeySeconds: state.flight?.time ?? 0,
+    heightAboveGround: state.groundClearance,
+    taxi: state.airplaneTaxi?.phase ?? null,
+    taxiPivot: state.dc3GroundTaxi?.phase === "pivoting",
+    taxiAcceleration: state.dc3GroundTaxiAcceleration ?? undefined,
+    taxiYawAcceleration: state.dc3GroundTaxiYawAcceleration ?? undefined,
+    yawInertia: mass.inertia[4],
+    yawResponseSeconds: frame.flight.spoolSeconds,
+    yawDamping: frame.flight.angularDamping,
+  });
+  const requested = probe.requested;
   const actuation = executeCommandActuators(frame.actuators, attachedMembers, {
     "throttle:0": requested.throttle[0],
     "throttle:1": requested.throttle[1],
@@ -777,19 +830,135 @@ function airplaneFlightForces(
     mass: mass.mass,
     orientation: state.body.orientation,
     velocity: state.body.velocity,
+    angularVelocity: state.body.angularVelocity,
     centre,
     nose: frame.nose,
+    onGround: grounded,
+    journey,
+    journeySeconds: state.flight?.time ?? 0,
+    heightAboveGround: state.groundClearance,
+    taxi: state.airplaneTaxi?.phase ?? null,
+    taxiPivot: state.dc3GroundTaxi?.phase === "pivoting",
+    taxiAcceleration: state.dc3GroundTaxiAcceleration ?? undefined,
+    taxiYawAcceleration: state.dc3GroundTaxiYawAcceleration ?? undefined,
+    yawInertia: mass.inertia[4],
+    yawResponseSeconds: frame.flight.spoolSeconds,
+    yawDamping: frame.flight.angularDamping,
   });
+  applyAirplaneActuation(frame, state, step.delivered, seconds);
   if (state.flight) {
     state.flight.driveThrottle = [...step.delivered.throttle];
     state.flight.throttle = [...step.delivered.throttle];
   }
+  // Колодки просит автомат, а прикладывают их стойки — и делают это шагом
+  // раньше, чем считается аэродинамика. Кадр запаздывания честнее, чем второй
+  // проход по всем лучам ради него.
+  state.wheelBrake = step.delivered.brake;
+  state.wheelBrakeSplit = step.delivered.brakeSplit ?? 0;
+  state.wheelCasterFree = step.delivered.casterFree ?? false;
+  // Колесо — из своего канала, не из киля: на рулении киль нем, а рулит
+  // хвостовое колесо (см. AirplaneSurfaceCommand.steer).
+  state.wheelSteer = step.delivered.steer ?? 0;
+  state.airplaneSurfaces = step.delivered;
   return {
     forces: step.forces.map((entry) => ({
       force: [entry.force[0], entry.force[1], entry.force[2]] as [number, number, number],
       point: [entry.point[0], entry.point[1], entry.point[2]] as [number, number, number],
     })),
   };
+}
+
+/** На сколько луч стойки длиннее её хода, чтобы мерить просвет. */
+const GROUND_CLEARANCE_REACH = 40;
+
+/** Отскок стойки короче этого — машина всё ещё на земле. */
+const AIRBORNE_DEBOUNCE_SECONDS = 0.4;
+
+/**
+ * Машина на земле с учётом отскока стойки. Счётчик живёт в состоянии кадра,
+ * закон остаётся чистым.
+ */
+function airplaneOnGround(state: FrameState, seconds: number): boolean {
+  if ((state.supportContacts ?? 0) > 0) {
+    state.airborneSeconds = 0;
+    return true;
+  }
+  state.airborneSeconds += seconds;
+  return state.airborneSeconds < AIRBORNE_DEBOUNCE_SECONDS;
+}
+
+/**
+ * ОРГАНЫ, КОТОРЫЕ ВИДНО: ВИНТЫ КРУТЯТСЯ, СТВОРКИ СТОЯТ ГДЕ ПОЛОЖЕНО.
+ *
+ * Правило проекта одно на все машины: актуатор показывает то, что с ним
+ * ДЕЙСТВИТЕЛЬНО происходит. У дирижабля винт идёт за компенсированной
+ * командой вала, у коптера — за доставленной командой тоннеля, включая
+ * реверс. У крылатой машины ровно так же, и добавляются створки: их угол
+ * есть доставленная команда, помноженная на чертёжный ход петли.
+ *
+ * Движение здесь ЧИСТО РЕНДЕРНОЕ (`clusterMemberArticulation`): тела у
+ * створки нет и быть не должно — момент от неё уже посчитан аэродинамикой на
+ * её собственном плече, и второй раз, коллайдером, его брать нельзя.
+ */
+function applyAirplaneActuation(
+  frame: VehicleFrameRuntime,
+  state: FrameState,
+  delivered: AirplaneSurfaceCommand,
+  seconds: number,
+): void {
+  const passport = frame.flight.airplane;
+  const centreOf = (match: string) =>
+    frame.members
+      .filter((member) => member.piece.id.includes(match))
+      .map((member) => member);
+  const airspeed = Math.hypot(...state.body.velocity);
+  for (const propeller of frame.propellers ?? []) {
+    const throttle = delivered.throttle[propeller.engine] ?? 0;
+    // ВИНТ НА МАЛОМ ГАЗУ НЕ СТОИТ — ОН АВТОРОТИРУЕТ.
+    //
+    // Фаза шла строго за газом, и на убранном газе винты замирали намертво:
+    // машина в полёте выглядела с заглохшими двигателями. Настоящий винт в
+    // потоке крутится и без тяги, поэтому фаза берёт большее из двух — газ и
+    // набегающий поток, — сохраняя знак газа для реверса.
+    const windmill = passport
+      ? Math.min(0.45, airspeed / Math.max(1, passport.maximumSpeed) * 0.45)
+      : 0;
+    const driven =
+      airplanePropellerVisualCommand(throttle, windmill) * propeller.phaseSign;
+    state.spinAngles[propeller.engine] = advanceDrivePhase(
+      state.spinAngles[propeller.engine] ?? 0,
+      frame.flight.driveAnimation.phaseSpeed,
+      driven,
+      seconds,
+    );
+    const phase = state.spinAngles[propeller.engine];
+    for (const member of centreOf(propeller.memberMatch)) {
+      setMemberArticulation(
+        member.piece.id,
+        articulationAboutPivot(
+          propeller.hub,
+          propeller.axis,
+          phase,
+          member.piece.position,
+        ),
+      );
+    }
+  }
+  for (const surface of frame.controlSurfaces ?? []) {
+    const degrees = controlSurfaceDegrees(surface, delivered);
+    const angle = (degrees * Math.PI) / 180;
+    for (const member of centreOf(surface.memberMatch)) {
+      setMemberArticulation(
+        member.piece.id,
+        articulationAboutPivot(
+          surface.pivot,
+          surface.axis,
+          angle,
+          member.piece.position,
+        ),
+      );
+    }
+  }
 }
 
 /**
@@ -1221,6 +1390,44 @@ interface FrameState {
   recovery: FrameRecoveryState | null;
   /** Number of upward-facing physical contact manifolds last step. */
   supportContacts: number;
+  /**
+   * Колодки и рулевой угол, которые автомат крылатой машины просит у ШАССИ.
+   * Стойки считаются раньше аэродинамики, поэтому здесь они лежат ровно кадр —
+   * это дешевле, чем второй проход по всем лучам за ту же 1/60 секунды.
+   */
+  wheelBrake: number;
+  /** Раздельное торможение бортов, −1…+1: плюс — правая стойка. */
+  wheelBrakeSplit: number;
+  wheelCasterFree: boolean;
+  wheelSteer: number;
+  /** Доставленные органы крылатой машины — для телеметрии. */
+  airplaneSurfaces: AirplaneSurfaceCommand | null;
+  /** Фаза наземного завершения рейса крылатой машины. */
+  airplaneTaxi: AirplaneTaxiState | null;
+  /** Internal phase of the isolated DC-3 ground path follower. */
+  dc3GroundTaxi: Dc3GroundTaxiState | null;
+  /** Longitudinal acceleration requested by the DC-3 taxi speed profile. */
+  dc3GroundTaxiAcceleration: number | null;
+  /** Ground navigator's direct rest-to-rest yaw acceleration. */
+  dc3GroundTaxiYawAcceleration: number | null;
+  /**
+   * Сколько секунд машина без опоры. КОРОТКИЙ ОТСКОК СТОЙКИ — НЕ ПОЛЁТ.
+   *
+   * Признак «на земле» стоит на счёте нагруженных стоек, а олео на разбеге
+   * разгружается и снова садится. Автомат, читающий этот признак напрямую,
+   * успевал за десятую долю секунды сменить взлётное положение щитка на
+   * посадочное и обратно — на разбеге это выглядит подтормаживанием и
+   * съедает полосу. Машина считается оторвавшейся, только если опоры нет
+   * дольше `AIRBORNE_DEBOUNCE_SECONDS`.
+   */
+  airborneSeconds: number;
+  /**
+   * Просвет под колёсами, м. Тем же лучом стойки, только длиннее: контакт
+   * по-прежнему считается только внутри хода, а хвост луча меряет высоту.
+   * Нужен автомату крыла, чтобы отличить разбег от полёта — на разбеге олео
+   * разгружается за секунды до отрыва, и признака нагрузки для этого мало.
+   */
+  groundClearance: number;
   /**
    * ЧТО ВНЕШНИЙ МИР ДЕЛАЛ С МАШИНОЙ В ПРОШЛОМ ШАГЕ — целиком, а не только
    * счётом опор. Нужен двоим: сторожу отказов, чтобы не объявлять поломкой
@@ -1751,6 +1958,17 @@ function restingState(engineCount: number, yawThrusterCount = 0): FrameState {
     flight: null,
     recovery: null,
     supportContacts: 0,
+    wheelBrake: 0,
+    wheelBrakeSplit: 0,
+    wheelCasterFree: false,
+    wheelSteer: 0,
+    airplaneSurfaces: null,
+    airplaneTaxi: null,
+    dc3GroundTaxi: null,
+    dc3GroundTaxiAcceleration: null,
+    dc3GroundTaxiYawAcceleration: null,
+    airborneSeconds: 0,
+    groundClearance: Number.POSITIVE_INFINITY,
     externalContacts: NO_EXTERNAL_CONTACTS,
     escape: null,
     escapeFreeSeconds: 0,
@@ -1912,7 +2130,12 @@ interface CompiledSupportStrut {
   readonly requiredMembers: readonly string[];
   readonly members: readonly CompiledStrutMember[];
   readonly retraction: StrutRetraction | null;
+  /** Точные id колеса: маска раскрыта один раз при сборке, а не каждый кадр. */
+  readonly wheel:
+    | (Omit<VehicleWheelDefinition, "spinMember"> & { readonly spinMembers: readonly string[] })
+    | null;
 }
+
 
 interface SupportStrutBuild {
   readonly mass: number;
@@ -1963,11 +2186,18 @@ function compileSupportStruts(
           folds,
         });
       }
+      const wheel = definition.wheel
+        ? (({ spinMember, ...contact }) => ({
+            ...contact,
+            spinMembers: matching([spinMember]),
+          }))(definition.wheel)
+        : null;
       return {
         strut,
         requiredMembers: matching(definition.requiredMembers),
         members,
         retraction: definition.retraction ?? null,
+        wheel,
       };
     }),
   };
@@ -2723,6 +2953,12 @@ export function VehicleFrameSystem({
       /** Кто сейчас уходит от ракеты и сколько ракет в воздухе. */
       __mamEvasion?: () => {
         readonly rockets: number;
+        readonly vehicles: readonly {
+          readonly id: string;
+          readonly capable: boolean;
+          readonly castOff: boolean;
+          readonly evasion: EvasionState | null;
+        }[];
         readonly dodging: readonly {
           readonly id: string;
           readonly breakSeconds: number;
@@ -2835,6 +3071,15 @@ export function VehicleFrameSystem({
         }));
     scope.__mamEvasion = () => ({
       rockets: projectileThreats?.current.size ?? 0,
+      vehicles: frames.map((frame) => {
+        const live = states.current.get(frame.id);
+        return {
+          id: frame.id,
+          capable: Boolean(frame.flight.evasion),
+          castOff: live?.flight?.castOff ?? false,
+          evasion: live?.evasion ?? null,
+        };
+      }),
       dodging: frames
         .map((frame) => ({
           id: frame.id,
@@ -2945,6 +3190,8 @@ export function VehicleFrameSystem({
   /** Доля уборки ног, 0 — выпущены, 1 — убраны. Одна на машину. */
   const supportStrutFold = useRef<Map<string, number>>(new Map());
   const supportStrutRay = useRef<InstanceType<typeof rapier.Ray> | null>(null);
+  /** Угол проката каждого колеса. Копится между кадрами: это и есть качение. */
+  const wheelSpinAngles = useRef<Map<string, number>>(new Map());
   const debrisLocalPoint = useRef(new Vector3());
   const debrisCarrierRotation = useRef(new Quaternion());
   const handoffLookDirection = useRef(new Vector3());
@@ -3535,6 +3782,9 @@ export function VehicleFrameSystem({
               liveFrame.flight.docking,
             );
         if (!liveState.recovery && arrived) {
+          console.info(
+            `[flight-end] ${liveFrame.id}: прибытие, прогресс=${(liveFlight.progress * 100).toFixed(1)}%`,
+          );
           if (isInterIslandArrivalKind(liveFlight.kind)) {
             onInterIslandArrivalComplete?.(liveFlight.kind);
           }
@@ -4172,10 +4422,10 @@ export function VehicleFrameSystem({
       if (!mass || mass.mass <= 0 || state.envelopeLeft === 0) {
         if (state.flight && !state.recovery) {
           state.recovery = {
-            lifecycle: createVehicleRecoveryLifecycle(
-              "structureLost",
-              "settleInPlace",
+            lifecycle: (console.info(
+              `[flight-fail] ${frame.id}: structureLost`,
             ),
+            createVehicleRecoveryLifecycle("structureLost", "settleInPlace")),
             progress: 0,
             escapePlan: null,
             arrivalPlan: null,
@@ -4641,6 +4891,9 @@ export function VehicleFrameSystem({
           // задачи, к которой обещал вернуться. Прибытие, напротив, завершает
           // аварийный рейс штатно и потому закрывает его.
           if (!recoveryKeepsFlightTask(previousPhase)) {
+            console.info(
+              `[flight-end] ${frame.id}: восстановление завершено (фаза=${previousPhase}), рейс закрыт`,
+            );
             state.flight = null;
           }
         } else if (recoveryResult.lifecycle) {
@@ -4917,10 +5170,14 @@ export function VehicleFrameSystem({
           : frame.flight.liftSource === "wing" && frame.flight.airplane
             ? {
                 ...feedbackModel,
+                // Вираж крыла держится креном: прогноз обязан его продолжать.
+                turnPersists: true,
+                verticalResponseSeconds: CLIMB_RESPONSE_SECONDS,
                 turnCapability: airplaneTurnCapability(
                   frame.flight.airplane,
                   Math.hypot(state.body.velocity[0], state.body.velocity[2]),
                   mass.mass,
+                  (state.supportContacts ?? 0) > 0,
                 ),
               }
             : feedbackModel;
@@ -5290,19 +5547,101 @@ export function VehicleFrameSystem({
         if (flight) {
           flight.safetyAdvisory = safetyAdvisory;
         }
-        const piloted = autopilot(
-          controlledPlan,
-          progress,
-          centreNow,
-          state.body.orientation,
-          state.body.velocity,
-          state.body.angularVelocity,
-          autopilotModel,
-          startRamp,
-          frame.nose as [number, number, number],
-          frame.flight.approach,
-          safetyInterventionForMode("assisted", safetyAdvisory),
-        );
+        // Taxi-only dispatch starts in the ground branch on its first frame;
+        // it never spends one frame in the shared flight autopilot while the
+        // ground phase is being discovered by the force executor.
+        if (
+          usesAirplaneDynamics &&
+          controlledPlan.id === "dc3:taxi-drill" &&
+          !state.airplaneTaxi
+        ) {
+          state.airplaneTaxi = { phase: "taxi" };
+        }
+        // DC-3 рулит отдельным наземным наведением. Общий автопилот полёта
+        // сюда не вызывается: его створ, go-around, вираж и вертикаль на земле
+        // не являются органами руления. Для всех остальных машин ветка
+        // недостижима — у них нет `airplaneTaxi`.
+        const groundTaxi =
+          usesAirplaneDynamics &&
+          controlledPlan.id.startsWith("dc3:") &&
+          state.airplaneTaxi &&
+          frame.flight.airplane
+            ? (() => {
+                const forward = rotateByQuaternion(
+                  state.body.orientation,
+                  frame.nose,
+                );
+                const flat = Math.hypot(forward[0], forward[2]) || 1;
+                const capability = airplaneTurnCapability(
+                  frame.flight.airplane,
+                  Math.hypot(state.body.velocity[0], state.body.velocity[2]),
+                  mass.mass,
+                  true,
+                );
+                const demand = dc3GroundTaxiDemand({
+                  plan: controlledPlan,
+                  progress,
+                  centre: centreNow,
+                  heading: [forward[0] / flat, forward[2] / flat],
+                  velocity: state.body.velocity,
+                  yawRate: state.body.angularVelocity[1],
+                  maximumYawRate: capability.yawRate,
+                  pivotYawAcceleration: airplaneGroundYawAuthority(
+                    frame.flight.airplane,
+                    mass.inertia[4],
+                    mass.mass,
+                  ).angularAcceleration,
+                  pivotRadius: frame.flight.airplane.wheelbase,
+                  pivotPointAhead:
+                    frame.flight.airplane.mainAxleAheadOfCentre ?? 0,
+                  acceleration:
+                    (2 * frame.flight.airplane.enginePower) / mass.mass,
+                  braking: capability.braking,
+                  responseSeconds: frame.flight.spoolSeconds,
+                  state: state.dc3GroundTaxi,
+                });
+                state.dc3GroundTaxi = demand.state;
+                state.dc3GroundTaxiAcceleration = demand.forwardAcceleration;
+                state.dc3GroundTaxiYawAcceleration = demand.yawAcceleration;
+                return demand;
+              })()
+            : null;
+        if (!groundTaxi) {
+          state.dc3GroundTaxiAcceleration = null;
+          state.dc3GroundTaxiYawAcceleration = null;
+        }
+        const piloted: ReturnType<typeof autopilot> = groundTaxi
+          ? {
+              controls: {
+                throttle: frame.flight.limits.enginePoints.map(() => 0),
+                rudder: 0,
+                liftTrim: 0,
+              },
+              desiredYawRate: groundTaxi.yawRate,
+              headingTarget: groundTaxi.headingTarget,
+              goAround: false,
+              guidance: {
+                forwardSpeed: groundTaxi.forwardSpeed,
+                lateralSpeed: 0,
+                yawRate: groundTaxi.yawRate,
+                liftFraction: 0,
+                arrivalPhase: false,
+                finalPhase: false,
+              },
+            }
+          : autopilot(
+              controlledPlan,
+              progress,
+              centreNow,
+              state.body.orientation,
+              state.body.velocity,
+              state.body.angularVelocity,
+              autopilotModel,
+              startRamp,
+              frame.nose as [number, number, number],
+              frame.flight.approach,
+              safetyInterventionForMode("assisted", safetyAdvisory),
+            );
         liftCommand = piloted.controls.liftTrim;
         if (usesRotorDynamics || usesAirplaneDynamics) {
           // Общий автопилот заканчивается здесь. Внутренний контур (винты
@@ -5429,6 +5768,9 @@ export function VehicleFrameSystem({
           VEHICLE_GROUND_CONTACT_CONFIRM_SECONDS
         ) {
           flight.trajectoryCorrection = null;
+          console.info(
+            `[flight-fail] ${frame.id}: неожиданный контакт с грунтом, прогресс=${((flight.progress ?? 0) * 100).toFixed(1)}%`,
+          );
           state.recovery = {
             lifecycle: createVehicleRecoveryLifecycle(
               "routeDivergence",
@@ -5504,9 +5846,17 @@ export function VehicleFrameSystem({
       // Поэтому признак один на всех троих и объявлен здесь, выше по кадру,
       // а не переписан в каждом месте по-своему. Это тот же класс ошибки, что
       // и ложный диагноз сторожа: принять задуманное за беду.
-      const onApproach = flight ? flight.progress > 0.94 : false;
+      const routeStage = airVehicleFlightEventState(
+        frame,
+        state.flight,
+        state.recovery?.lifecycle ?? null,
+      );
+      const onArrival =
+        routeStage === "approach" ||
+        routeStage === "rollout" ||
+        routeStage === "taxi";
       const groundIsTheGoal =
-        onApproach ||
+        onArrival ||
         (state.recovery !== null &&
           (state.recovery.lifecycle.phase === "landing" ||
             state.recovery.lifecycle.phase === "settled" ||
@@ -5906,6 +6256,9 @@ export function VehicleFrameSystem({
         if (
           !flight.trajectoryCorrection &&
           !state.figure.episode &&
+          // Рулящей машиной владеет наземный автомат: корректор траектории —
+          // лётный орган, манёвр угла ему не сход с трассы (вердикт Igor).
+          !state.airplaneTaxi &&
           requestedTrajectoryMode !== "authoredRoute"
         ) {
           // One autopilot changing modes. A route state ordinary guidance can
@@ -5931,6 +6284,23 @@ export function VehicleFrameSystem({
             directCorrection ||
             (requestedTrajectoryMode === "stabilizing" && disturbanceFeasible)
           ) {
+            // ДИАГНОСТИКА УХОДА С ТРАССЫ. Коррекция — аварийный путь: на
+            // исправной машине и выполнимой трассе её не должно быть вовсе.
+            // Каждый уход печатает причину и числа оценки, чтобы вопрос
+            // «с чего она ушла» имел ответ из самой игры, а не из догадок.
+            console.info(
+              `[trajectory] ${frame.id} ушла с трассы: причина=${
+                trajectoryAssessment.reason ?? "upset"
+              } режим=${directCorrection ? "intercepting" : "stabilizing"} ` +
+                `прогресс=${(flight.progress * 100).toFixed(1)}% ` +
+                `снос=${trajectoryAssessment.crossTrackError.toFixed(1)}м ` +
+                `высОшибка=${trajectoryAssessment.altitudeError.toFixed(1)}м ` +
+                `доВорот=${trajectoryAssessment.distanceToGate.toFixed(0)}м ` +
+                `закрываемо=${trajectoryAssessment.reachableClosure.toFixed(1)}/` +
+                `${trajectoryAssessment.reachableAltitudeClosure.toFixed(1)}м ` +
+                `наклонТемп=${trajectoryAssessment.tiltRate.toFixed(2)} ` +
+                `рысканиеТемп=${trajectoryAssessment.yawRate.toFixed(2)}`,
+            );
             flight.trajectoryCorrection = {
               phase: directCorrection ? "intercepting" : "stabilizing",
               reason: trajectoryAssessment.reason ?? "track",
@@ -6050,6 +6420,8 @@ export function VehicleFrameSystem({
               trajectoryCorrection.sourceProgress,
               navigationState,
               frame.nose,
+              // Крыло успокаивается прямой на лётной скорости, а не зависанием.
+              autopilotModel.limits.minimumSpeed ?? 0,
             ),
             0,
             1,
@@ -6105,23 +6477,33 @@ export function VehicleFrameSystem({
             state.body.velocity[0],
             state.body.velocity[2],
           );
-          flight.progress = advanceVehicleRouteProgress(
-            plan,
-            flight.progress,
-            centreNow,
-            travelled,
-            groundSpeedNow > 0.5
-              ? [
-                  state.body.velocity[0] / groundSpeedNow,
-                  state.body.velocity[2] / groundSpeedNow,
-                ]
-              : undefined,
-            // Срезать разворот позволено машине, которая перемещается наклоном
-            // движителей: она проходит излом мимо кончика штатно. Крейсерское
-            // судно идёт по линии, и та же поблажка уводит его счётчик вперёд
-            // самой машины — до причала оно тогда не доходит, а доползает.
-            frame.flight.liftSource === "rotor" ? PROGRESS_SEARCH_ARC : 0,
-          );
+          flight.progress =
+            usesAirplaneDynamics && state.airplaneTaxi
+              ? advanceDc3GroundTaxiProgress(
+                  plan,
+                  flight.progress,
+                  centreNow,
+                  travelled,
+                )
+              : advanceVehicleRouteProgress(
+                  plan,
+                  flight.progress,
+                  centreNow,
+                  travelled,
+                  groundSpeedNow > 0.5
+                    ? [
+                        state.body.velocity[0] / groundSpeedNow,
+                        state.body.velocity[2] / groundSpeedNow,
+                      ]
+                    : undefined,
+                  // Срезать разворот позволено машине, которая перемещается наклоном
+                  // движителей: она проходит излом мимо кончика штатно. Крейсерское
+                  // судно идёт по линии, и та же поблажка уводит его счётчик вперёд
+                  // самой машины — до причала оно тогда не доходит, а доползает.
+                  frame.flight.liftSource === "rotor"
+                    ? PROGRESS_SEARCH_ARC
+                    : 0,
+                );
           if (
             !flight.handoffRequested &&
             flight.progress >= 0.985 &&
@@ -6296,7 +6678,19 @@ export function VehicleFrameSystem({
             Math.PI
           ).toFixed(1),
         );
-        const watchdogResult = advanceVehicleFailureWatchdog(
+        // НА ЗЕМЛЕ В СТАДИИ РУЛЕНИЯ ЛЁТНЫЙ СТОРОЖ СТОИТ (вердикт Igor,
+        // 15.08.2026: гардиану на рулении нечего контролировать). Манёвр
+        // угла — это законные девяносто градусов от касательной на нулевом
+        // ходу полминуты; лётный сторож читал его как сход с трассы и
+        // снимал рейс прямо у вершины — машина вставала с погасшей
+        // телеметрией. Машиной здесь владеет автомат руления, у него свои
+        // законы; сторож возобновляется, как только машина в воздухе.
+        const watchdogResult = state.airplaneTaxi
+          ? {
+              state: rebaseVehicleFailureWatchdog(flight.watchdog, 0.5),
+              failure: null,
+            }
+          : advanceVehicleFailureWatchdog(
           flight.watchdog,
           {
             deltaSeconds: step,
@@ -6374,6 +6768,9 @@ export function VehicleFrameSystem({
         );
         flight.watchdog = watchdogResult.state;
         if (watchdogResult.failure) {
+          console.info(
+            `[flight-fail] ${frame.id}: сторож=${watchdogResult.failure}, прогресс=${(flight.progress * 100).toFixed(1)}%`,
+          );
           const disposition = currentDisposition();
           const forward = rotateByQuaternion(
             state.body.orientation,
@@ -6815,6 +7212,7 @@ export function VehicleFrameSystem({
         point: [number, number, number];
       }[] = [];
       let strutContacts = 0;
+      let clearance = Number.POSITIVE_INFINITY;
       if (frame.supportStruts?.length && mass && mass.mass > 0) {
         const cached = supportStrutBuilds.current.get(frame.id);
         // Пересборка от массы: пока она не уехала на процент, числа стойки
@@ -6857,6 +7255,11 @@ export function VehicleFrameSystem({
         );
         const cast = supportStrutRay.current;
         const up = rotateByQuaternion(state.body.orientation, [0, 1, 0]);
+        const mainWheelCount = build.struts.filter(
+          (entry) =>
+            entry.wheel &&
+            (entry.wheel.side ?? Math.sign(entry.strut.mount[0])) !== 0,
+        ).length;
         for (const compiled of build.struts) {
           const strut = compiled.strut;
           const foldAngle = compiled.retraction
@@ -6898,7 +7301,9 @@ export function VehicleFrameSystem({
             cast.dir.z = axisWorld[2];
             const hit = rapierWorld.castRayAndGetNormal(
               cast,
-              strut.extendedReach,
+              // Луч длиннее хода: за ходом он уже не опора, а измеритель
+              // просвета. Дешевле, чем второй луч на ту же стойку.
+              strut.extendedReach + GROUND_CLEARANCE_REACH,
               true,
               undefined,
               VEHICLE_CONTACT_QUERY,
@@ -6913,17 +7318,45 @@ export function VehicleFrameSystem({
               },
             );
             if (hit) {
+              clearance = Math.min(
+                clearance,
+                Math.max(0, hit.timeOfImpact - strut.extendedReach),
+              );
               const flipped =
                 hit.normal.x * up[0] +
                   hit.normal.y * up[1] +
                   hit.normal.z * up[2] <
                 0;
+              // Сглаживается ВЫСОТА ЗЕМЛИ (точка стопы), а не расстояние
+              // от узла: в расстояние входит осадка самой машины, и фильтр
+              // по нему отрывал стойку от опоры прямо на стоянке.
+              const memo = ((state as { strutGround?: Map<string, number> })
+                .strutGround ??= new Map());
+              const travelHere =
+                Math.hypot(state.body.velocity[0], state.body.velocity[2]) *
+                step;
+              const rawFootY =
+                mountWorld[1] + axisWorld[1] * hit.timeOfImpact;
+              const smoothFootY = smoothStrutGround(
+                memo.get(strut.id),
+                rawFootY,
+                travelHere,
+              );
+              memo.set(strut.id, smoothFootY);
+              const smoothedDistance =
+                Math.abs(axisWorld[1]) > 1e-6
+                  ? (smoothFootY - mountWorld[1]) / axisWorld[1]
+                  : hit.timeOfImpact;
               probe = {
-                distance: hit.timeOfImpact,
+                distance: smoothedDistance,
                 normal: flipped
                   ? [-hit.normal.x, -hit.normal.y, -hit.normal.z]
                   : [hit.normal.x, hit.normal.y, hit.normal.z],
               };
+            } else {
+              (state as { strutGround?: Map<string, number> }).strutGround?.delete(
+                strut.id,
+              );
             }
           }
           const lever: [number, number, number] = [
@@ -6983,15 +7416,121 @@ export function VehicleFrameSystem({
               footVelocity[0] * probe.normal[0] +
               footVelocity[1] * probe.normal[1] +
               footVelocity[2] * probe.normal[2];
-            const friction = strutPadFriction(
-              strut,
-              reaction.load,
-              [
-                footVelocity[0] - probe.normal[0] * along,
-                footVelocity[1] - probe.normal[1] * along,
-                footVelocity[2] - probe.normal[2] * along,
-              ],
-            );
+            const slip: [number, number, number] = [
+              footVelocity[0] - probe.normal[0] * along,
+              footVelocity[1] - probe.normal[1] * along,
+              footVelocity[2] - probe.normal[2] * along,
+            ];
+            // ПЯТКА ИЛИ КОЛЕСО. Опора коптера держит во все стороны одинаково;
+            // колесо самолёта катится вперёд и держит вбок, иначе машина не
+            // разгоняется по полосе и не держит осевую на пробеге.
+            const wheel = compiled.wheel;
+            let friction: readonly [number, number, number];
+            if (wheel) {
+              const rollAxis = wheelRollAxis(
+                state.body.orientation,
+                wheel,
+                probe.normal,
+                state.wheelSteer,
+              );
+              // Раздельное торможение бортов: якорный разворот хвостовой
+              // машины тормозит ВНУТРЕННЮЮ стойку, внешняя катится. Знак
+              // борта — авторское поперечное положение узла стойки.
+              // Борт — авторский факт колеса; знак mount[0] в мировом
+              // кластере, повёрнутом размещением, показывал продольную ось.
+              const brakeSide =
+                compiled.wheel?.side ?? Math.sign(strut.mount[0]);
+              const splitShare = Math.max(
+                0,
+                Math.min(
+                  1,
+                  1 - Math.max(0, -(state.wheelBrakeSplit ?? 0) * brakeSide),
+                ),
+              );
+              // ── ХВОСТОВАЯ ОПОРА РАСЦЕПЛЯЕТСЯ В КАСТОР ────────────────────
+              //
+              // Якорный разворот требует от хвостового колеса мотнуться почти
+              // поперёк; рулёжная тяга столько не даёт, и зацепленное колесо
+              // скребло боком с моментом, намертво державшим машину. Настоящая
+              // хвостовая опора на таком развороте расцепляется и свободно
+              // флюгирует: если скольжение просит угла за ходом рулёжки —
+              // колесо катится ТУДА, КУДА ЕДЕТ.
+              let effectiveRollAxis = rollAxis;
+              const slipFlat = Math.hypot(slip[0], slip[2]);
+              if ((compiled.wheel?.side ?? Math.sign(strut.mount[0])) === 0 && slipFlat > 0.05) {
+                const slipDir: [number, number, number] = [
+                  slip[0] / slipFlat,
+                  0,
+                  slip[2] / slipFlat,
+                ];
+                const align =
+                  slipDir[0] * rollAxis[0] + slipDir[2] * rollAxis[2];
+                if (Math.abs(align) < Math.cos(0.6)) {
+                  effectiveRollAxis = slipDir;
+                }
+              }
+              // Расцепленный кастор на нулевом ходу не сопротивляется развороту:
+              // пока борта тормозятся раздельно, хвост держит вес, но не курс.
+              const tailFree =
+                state.wheelCasterFree &&
+                (compiled.wheel?.side ?? Math.sign(strut.mount[0])) === 0;
+              const mainPivotWheel =
+                state.wheelCasterFree &&
+                (compiled.wheel?.side ?? Math.sign(strut.mount[0])) !== 0;
+              const lateralAxis: [number, number, number] = [
+                probe.normal[1] * effectiveRollAxis[2] -
+                  probe.normal[2] * effectiveRollAxis[1],
+                probe.normal[2] * effectiveRollAxis[0] -
+                  probe.normal[0] * effectiveRollAxis[2],
+                probe.normal[0] * effectiveRollAxis[1] -
+                  probe.normal[1] * effectiveRollAxis[0],
+              ];
+              const isAnchor =
+                Math.abs(state.wheelBrakeSplit ?? 0) > 0.5 &&
+                brakeSide !== 0 &&
+                brakeSide === Math.sign(state.wheelBrakeSplit ?? 0);
+              friction = tailFree
+                ? [0, 0, 0]
+                : strutWheelFriction(
+                    strut,
+                    reaction.load,
+                    slip,
+                    {
+                      rollAxis: effectiveRollAxis,
+                      brake: wheel.brakeShare * state.wheelBrake * splitShare,
+                      rollingResistance: wheel.rollingResistance,
+                      lateralStiffness: mainPivotWheel
+                        ? pointEffectiveMass(
+                            mass,
+                            state.body.orientation,
+                            [
+                              foot[0] - centre[0],
+                              foot[1] - centre[1],
+                              foot[2] - centre[2],
+                            ],
+                            lateralAxis,
+                          ) /
+                          Math.max(step * mainWheelCount, 1e-6)
+                        : undefined,
+                      anchorStiff: isAnchor,
+                    },
+                  );
+              const rollSpeed =
+                slip[0] * rollAxis[0] + slip[1] * rollAxis[1] + slip[2] * rollAxis[2];
+              for (const id of wheel.spinMembers) {
+                wheelSpinAngles.current.set(
+                  id,
+                  wheelSpinAngle(
+                    wheelSpinAngles.current.get(id) ?? 0,
+                    rollSpeed,
+                    wheel.radius,
+                    step,
+                  ),
+                );
+              }
+            } else {
+              friction = strutPadFriction(strut, reaction.load, slip);
+            }
             strutForces.push({
               force: [friction[0], friction[1], friction[2]],
               point: foot,
@@ -7015,8 +7554,12 @@ export function VehicleFrameSystem({
             ];
             if (!member.folds || !compiled.retraction) {
               setMemberArticulation(member.id, {
-                steer: 0,
-                spin: 0,
+                // Колесо КАТИТСЯ, и катится оно через рендер: тела у него нет.
+                // Неподвижный диск на разбеге читается поломкой машины.
+                steer: compiled.wheel
+                  ? compiled.wheel.steerShare * state.wheelSteer * WHEEL_STEER_RANGE
+                  : 0,
+                spin: wheelSpinAngles.current.get(member.id) ?? 0,
                 slide: [
                   moved[0] - member.centre[0],
                   moved[1] - member.centre[1],
@@ -7114,6 +7657,7 @@ export function VehicleFrameSystem({
         : NO_EXTERNAL_CONTACTS;
       state.externalContacts = externalContacts;
       state.supportContacts = strutContacts + externalContacts.support;
+      state.groundClearance = clearance;
       // Винтокрылая машина несёт себя КОЛЬЦАМИ, а не одной вертикалью в точке
       // подъёма. Отсюда всё её поведение: тяга каждого кольца своя, суммарный
       // вектор наклоняется вместе с корпусом, и разностью тяг рождаются момент
@@ -7606,6 +8150,7 @@ export function VehicleFrameSystem({
         mass &&
         flight?.castOff &&
         recoveryServiceArea &&
+        !(usesAirplaneDynamics && onArrival) &&
         !sinkingOnPurpose
           ? worldFloorAvoidance({
               centre: centreNow,
@@ -7683,7 +8228,7 @@ export function VehicleFrameSystem({
       // столкнуться с ним можно ничуть не хуже. Освобождается ровно один —
       // собственная цель охотника, потому что расхождение с добычей есть
       // срыв задачи, а не осторожность.
-      if (rotorGuidance && mass && flight?.castOff && !state.escape && !onApproach) {
+      if (rotorGuidance && mass && flight?.castOff && !state.escape && !onArrival) {
         const separation = separationDecision({
           self: {
             id: frame.id,
@@ -7826,6 +8371,7 @@ export function VehicleFrameSystem({
             centre,
             rotorGuidance,
             attachedMembers,
+            step,
           )
         : null;
       const physicalForces = [
@@ -7927,7 +8473,11 @@ export function VehicleFrameSystem({
           telemetryRecoveryPhase === "rebuilding",
         reportWhileStopped:
           telemetryRecoveryPhase === "landing" ||
-          telemetryRecoveryPhase === "settled",
+          telemetryRecoveryPhase === "settled" ||
+          // Наземная стадия руления: выдержка после пробега и стопы у
+          // вершин — ЗАКОННЫЕ остановки идущего рейса, а не «стоит, нечего
+          // показывать». Табло гасло ровно на них (замер Igor, 15.08.2026).
+          state.airplaneTaxi !== null,
       });
       if (!telemetryAvailable || !telemetryFlight) {
         if (telemetryActiveSources.current.delete(sourceId)) {
@@ -8019,10 +8569,14 @@ export function VehicleFrameSystem({
               priority: 40,
             });
           } else {
+            // Руление — отдельное видимое состояние рейса крылатой машины:
+            // земля, створ пройден, машина везёт себя к стартовой точке.
+            const taxiing = state.airplaneTaxi?.phase === "taxi";
             activities.push({
               channel: "action",
-              state:
-                telemetryFlight.trajectoryCorrection?.phase === "intercepting"
+              state: taxiing
+                ? "taxiingToStand"
+                : telemetryFlight.trajectoryCorrection?.phase === "intercepting"
                   ? "correctingRoute"
                   : "followingRoute",
               priority: 30,
@@ -8174,6 +8728,60 @@ export function VehicleFrameSystem({
               signed: true,
               activityDelta: 4,
             });
+          }
+          // ── ОРГАНЫ КРЫЛАТОЙ МАШИНЫ: УГЛЫ СТВОРОК, А НЕ ДОЛИ КОМАНД ────
+          //
+          // У самолёта газ — не единственный орган: рейс делают щитки,
+          // элероны, руль высоты и направление, и оператору у пульта они
+          // нужны в ГРАДУСАХ отклонения — как на настоящем указателе
+          // положения механизации. Показывается ДОСТАВЛЕННОЕ, то же, что
+          // стоит на створках рендера: телеметрия не имеет права показывать
+          // просьбу вместо факта.
+          if (
+            frame.flight.liftSource === "wing" &&
+            state.airplaneSurfaces &&
+            frame.controlSurfaces
+          ) {
+            const surfaces = state.airplaneSurfaces;
+            const degreesOf = (channel: AirplaneControlChannel): number => {
+              const surface = frame.controlSurfaces?.find(
+                (entry) => entry.channel === channel && entry.sign !== -1,
+              ) ?? frame.controlSurfaces?.find((entry) => entry.channel === channel);
+              return surface ? controlSurfaceDegrees(surface, surfaces) : 0;
+            };
+            metrics.push(
+              {
+                id: "flapAngle",
+                value: degreesOf("flap"),
+                unit: "deg",
+                precision: 0,
+                activityDelta: 2,
+              },
+              {
+                id: "aileronAngle",
+                value: degreesOf("aileron"),
+                unit: "deg",
+                precision: 1,
+                signed: true,
+                activityDelta: 2,
+              },
+              {
+                id: "elevatorAngle",
+                value: degreesOf("elevator"),
+                unit: "deg",
+                precision: 1,
+                signed: true,
+                activityDelta: 2,
+              },
+              {
+                id: "rudderAngle",
+                value: degreesOf("rudder"),
+                unit: "deg",
+                precision: 1,
+                signed: true,
+                activityDelta: 2,
+              },
+            );
           }
           // Тоннели рыскания — отдельная строка отдельного органа: знак — это
           // реверс, и он часть показания, а не шум.

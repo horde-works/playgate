@@ -1,0 +1,56 @@
+{
+  "schema": "tilt-hexacopter-contour-expectations.v1",
+  "revision": "b09",
+  "provenance": "Direct owner rejection of B08: numerical section edits did not change the silhouette. Replace the full-length boat shell with visibly separate armoured masses around the primary core.",
+  "hull": {
+    "requiredShellParts": ["armoured-forward-capsule", "armoured-aft-keel-capsule"],
+    "requiredExposedWaistParts": ["exposed-core-waist-upper--1", "exposed-core-waist-lower--1", "exposed-core-waist-upper-1", "exposed-core-waist-lower-1"],
+    "minimumCombinedLength": 9.5,
+    "maximumCombinedWidth": 2.1,
+    "maximumCombinedHeight": 1.12,
+    "minimumCombinedAspectRatio": 4.6,
+    "minimumWidthToHeight": 1.8,
+    "minimumExposedWaistGap": 0.65,
+    "forwardBellyStations": [2.45, 1.2, 0.15],
+    "maximumForwardBellyRange": 0.11,
+    "aftFrontStation": -0.55,
+    "aftEndStation": -4.4,
+    "minimumAftKick": 0.45
+  },
+  "noseWedge": {
+    "tipStation": 5.15,
+    "rootStation": 4.1,
+    "maximumAxialRun": 1.1,
+    "minimumTipDepth": 0.18,
+    "minimumCrownDropFromRoot": 0.34,
+    "minimumTipBellyAboveRoot": 0.26,
+    "rootCheekBandY": [0.65, 0.8],
+    "rootShoulderBandY": [1.05, 1.18],
+    "minimumRootCheekBeyondShoulder": 0.25
+  },
+  "cabinFlank": {
+    "tumblehomeStation": 1.2,
+    "cheekBandY": [0.65, 0.85],
+    "shoulderBandY": [1.15, 1.3],
+    "minimumMidCheekBeyondUpperShoulder": 0.34,
+    "longitudinalStations": [3.35, 2.45, 1.2, 0.15],
+    "minimumCheekVariation": 0.17,
+    "maximumCheekStation": 2.45
+  },
+  "canopy": {
+    "requiredGlazingParts": ["canopy-forward-visor", "canopy-cockpit-cell"],
+    "requiredFrameParts": ["canopy-bow-front", "canopy-bow-middle", "canopy-bow-rear", "canopy-sill--1", "canopy-sill-1"],
+    "minimumGlazingRun": 4,
+    "plateauStations": [2.2, 1, 0.35],
+    "maximumPlateauCrownRange": 0.07
+  },
+  "sharkRidge": {
+    "minimumAbsoluteCrown": 2.6,
+    "minimumHalfWidth": 0.38,
+    "minimumCrownAboveEngine": 0.45,
+    "maximumCrownAboveEngine": 0.6
+  },
+  "engineIntegration": {
+    "minimumVerticalBurial": 0.16
+  }
+}
