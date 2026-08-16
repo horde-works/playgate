@@ -87,6 +87,7 @@ const SCENES = {
   nimbus: ["games/make-a-mess/src/game/nimbusScene.ts", "nimbusScene"],
   range: ["games/make-a-mess/src/game/combatHexacopterRangeScene.ts", "combatHexacopterRangeScene"],
   airport: ["games/make-a-mess/src/game/islandAirportScene.ts", "islandAirportScene"],
+  kallur: ["games/make-a-mess/src/game/kallurScene.ts", "kallurScene"],
 };
 
 /** Сцены по имени — чтобы и CLI, и тест грузили их одинаково. */

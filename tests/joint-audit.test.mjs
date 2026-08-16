@@ -55,6 +55,8 @@ const BUDGET = {
   nimbus: { seeThrough: 774, fights: 2070 },
   range: { seeThrough: 0, fights: 3 },
   airport: { seeThrough: 157, fights: 38 },
+  // Каллур собран нулями с первого дня; любой стык здесь — регрессия.
+  kallur: { seeThrough: 0, fights: 0 },
 };
 
 // Разбор сцены стоит секунды, а нужен двум проверкам сразу. Считаем один раз
