@@ -185,12 +185,18 @@ async function main() {
     };
 
     await evaluate("document.querySelector('canvas')?.focus(); true");
+    // The HUD renders "Mode [F]On foot" / "Mode [F]Flight" — read the actual
+    // mode label, not an imagined uppercase constant, or every retry toggles
+    // the mode straight back out of flight.
+    const readMode = () => evaluate(
+      "(document.body.textContent.match(/Mode \\[F\\][^\\u2014]{0,24}/) || [''])[0]",
+    );
     let flight = false;
-    for (let attempt = 0; attempt < 6 && !flight; attempt += 1) {
+    for (let attempt = 0; attempt < 3 && !flight; attempt += 1) {
       await pressKey("KeyF", 70, "f");
-      for (let poll = 0; poll < 8 && !flight; poll += 1) {
+      for (let poll = 0; poll < 6 && !flight; poll += 1) {
         await sleep(500);
-        flight = await evaluate("document.body.textContent.includes('FLIGHT')").catch(() => false);
+        flight = ((await readMode().catch(() => "")) || "").includes("Flight");
       }
     }
     if (!flight) {
