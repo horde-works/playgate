@@ -104,6 +104,20 @@ export function GameCard({ game, featured = false }: GameCardProps) {
           <div className="art-spark art-spark-1" />
           <div className="art-spark art-spark-2" />
         </div>
+      ) : game.art === "kallur" ? (
+        <div className="game-card-art game-card-art-kallur" aria-hidden="true">
+          <span className="art-word art-word-kallur">KALLUR</span>
+          <span className="art-word art-word-rest">REST ISLAND</span>
+          <div className="art-kallur-wall"><i /><i /><i /><i /><i /><i /></div>
+          <div className="art-kallur-slope" />
+          <div className="art-kallur-ridge" />
+          <div className="art-kallur-stone art-kallur-stone-1" />
+          <div className="art-kallur-stone art-kallur-stone-2" />
+          <div className="art-kallur-stone art-kallur-stone-3" />
+          <div className="art-kallur-lighthouse"><i /></div>
+          <div className="art-kallur-fog art-kallur-fog-1" />
+          <div className="art-kallur-fog art-kallur-fog-2" />
+        </div>
       ) : game.art === "dutch-polder" ? (
         <div className="game-card-art game-card-art-polder" aria-hidden="true">
           <span className="art-word art-word-dutch">DUTCH</span>

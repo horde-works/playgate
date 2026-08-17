@@ -5366,3 +5366,151 @@ html[data-terms="accepted"] .consent-content-blocked {
   left: 1.5rem;
   transform: none;
 }
+
+/* Каллур: пасмурная стена над туманным морем, склон с маяком и камнями. */
+.game-card-art-kallur {
+  background: linear-gradient(#cfdce7 0 46%, #dbe4ec 72%, #aeb5b3 100%);
+}
+
+.art-word-kallur {
+  left: 4%;
+  top: 8%;
+  color: #f2f4f7;
+  font-size: clamp(54px, 6.5vw, 100px);
+  text-shadow: 6px 6px 0 rgb(56 66 66 / 0.55);
+  transform: rotate(-4deg);
+}
+
+.art-word-rest {
+  right: 3%;
+  bottom: 6%;
+  color: #b3b374;
+  transform: rotate(-2deg);
+}
+
+.art-kallur-wall {
+  position: absolute;
+  right: -6%;
+  bottom: 14%;
+  width: 46%;
+  height: 74%;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 3px;
+  transform: skewX(-6deg);
+}
+
+.art-kallur-wall i {
+  display: block;
+  height: 14%;
+  background: #474e48;
+  border-radius: 2px;
+}
+
+.art-kallur-wall i:nth-child(odd) {
+  background: #5d615c;
+  width: 96%;
+}
+
+.art-kallur-wall i:nth-child(3) {
+  background: #3d4442;
+  width: 92%;
+}
+
+.art-kallur-wall i:nth-child(6) {
+  background: #6d7165;
+  width: 88%;
+}
+
+.art-kallur-slope {
+  position: absolute;
+  left: -12%;
+  bottom: -28%;
+  width: 90%;
+  height: 92%;
+  background: linear-gradient(160deg, #8a9153 0%, #6d7046 52%, #4f5a34 100%);
+  border-radius: 48% 52% 0 0 / 74% 90% 0 0;
+}
+
+.art-kallur-ridge {
+  position: absolute;
+  left: 30%;
+  bottom: 30%;
+  width: 42%;
+  height: 7px;
+  background: #757641;
+  border-radius: 999px;
+  transform: rotate(-14deg);
+  box-shadow: 0 4px 6px rgb(56 66 66 / 0.35);
+}
+
+.art-kallur-stone {
+  position: absolute;
+  background: #b9bdb4;
+  border-radius: 40% 55% 45% 50%;
+  box-shadow: inset -2px -3px 0 rgb(71 78 72 / 0.55);
+}
+
+.art-kallur-stone-1 {
+  left: 18%;
+  bottom: 26%;
+  width: 14px;
+  height: 10px;
+}
+
+.art-kallur-stone-2 {
+  left: 30%;
+  bottom: 16%;
+  width: 22px;
+  height: 15px;
+}
+
+.art-kallur-stone-3 {
+  left: 47%;
+  bottom: 34%;
+  width: 10px;
+  height: 8px;
+  transform: rotate(14deg);
+}
+
+.art-kallur-lighthouse {
+  position: absolute;
+  left: 24%;
+  bottom: 42%;
+  width: 26px;
+  height: 44px;
+  background: linear-gradient(#e8e9e4 0 52%, #a63b31 52% 74%, #e8e9e4 74% 100%);
+  border-radius: 4px 4px 2px 2px;
+  box-shadow: 0 10px 14px rgb(56 66 66 / 0.4);
+}
+
+.art-kallur-lighthouse i {
+  position: absolute;
+  top: -12px;
+  left: 50%;
+  width: 16px;
+  height: 12px;
+  transform: translateX(-50%);
+  background: #384242;
+  border-radius: 4px 4px 0 0;
+  box-shadow: 0 0 14px 4px rgb(255 233 192 / 0.75);
+}
+
+.art-kallur-fog {
+  position: absolute;
+  left: -4%;
+  width: 108%;
+  height: 15%;
+  background: rgb(219 228 236 / 0.85);
+  border-radius: 999px;
+  filter: blur(6px);
+}
+
+.art-kallur-fog-1 {
+  bottom: 4%;
+}
+
+.art-kallur-fog-2 {
+  bottom: 14%;
+  opacity: 0.6;
+}

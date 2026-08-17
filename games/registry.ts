@@ -8,6 +8,7 @@ export type GameArt =
   | "grand-terminal"
   | "viking-village"
   | "dutch-polder"
+  | "kallur"
   | "island-airport";
 
 export interface GameEntry {
@@ -93,7 +94,7 @@ export const games = [
     status: "playable",
     stageLabel: "Новый мир",
     theme: "electric-blue",
-    art: "mess",
+    art: "kallur",
   },
   {
     slug: "make-a-mess-island-airport",
