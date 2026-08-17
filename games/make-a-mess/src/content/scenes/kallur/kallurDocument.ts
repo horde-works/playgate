@@ -19,7 +19,9 @@ import {
   kallurEarthPieceId,
   kallurGroundTopAt,
   kallurRenderMesh,
+  kallurStones,
 } from "./kallurLandscapeDocument.ts";
+import { kallurVisibleStones } from "./kallurStoneField.ts";
 
 /**
  * Kallur — the Faroe rest island (docs/kallur-brief.md).
@@ -142,6 +144,58 @@ for (const cell of kallurEarthMesh.cells) {
       maximumVerticalGap: 1,
     },
   );
+}
+
+// Stones that break the sod (bible §III): every crown is bedded into its
+// own turf collar, which the landscape field itself carries as a bump — the
+// mesh never meets bare heightfield, only sod grown up around it. Light
+// lichen-topped stones read as the bright speckle of the reference.
+const boulders = group("boulders", "Boulders bedded in turf", "stone");
+for (const stone of kallurVisibleStones(kallurStones)) {
+  const collarTop = kallurGroundTopAt(stone.x, stone.z);
+  const crownHeight = stone.size * (1 - stone.embed) * 0.9 + 0.15;
+  const color = stone.tone > 0.72
+    ? "#b9bdb4"
+    : stone.tone > 0.35
+      ? "#8f958d"
+      : "#79807b";
+  const tiltX = (stone.tone - 0.5) * 0.24;
+  const tiltZ = (((stone.tone * 7) % 1) - 0.5) * 0.24;
+  primitive(
+    boulders,
+    `${stone.id}:crown`,
+    "stone",
+    "stoneBlock",
+    [stone.x, collarTop - 0.35 + (crownHeight + 0.35) / 2, stone.z],
+    [stone.size * 0.92, crownHeight + 0.35, stone.size * 0.72],
+    color,
+    {
+      rotation: [tiltX, stone.yaw, tiltZ],
+      foundation: true,
+      maximumVerticalGap: 1,
+    },
+  );
+  if (stone.size >= 1.4) {
+    // A big boulder is never one clean prism: a second mass leans on it.
+    primitive(
+      boulders,
+      `${stone.id}:shoulder`,
+      "stone",
+      "stoneBlock",
+      [
+        stone.x + Math.cos(stone.yaw) * stone.size * 0.32,
+        collarTop - 0.3 + (crownHeight * 0.62 + 0.3) / 2,
+        stone.z + Math.sin(stone.yaw) * stone.size * 0.32,
+      ],
+      [stone.size * 0.6, crownHeight * 0.62 + 0.3, stone.size * 0.5],
+      color === "#b9bdb4" ? "#8f958d" : color,
+      {
+        rotation: [tiltZ, stone.yaw + 0.7, tiltX],
+        foundation: true,
+        maximumVerticalGap: 1,
+      },
+    );
+  }
 }
 
 export const kallurLandscapeVisual: LandscapeVisualDefinition = {

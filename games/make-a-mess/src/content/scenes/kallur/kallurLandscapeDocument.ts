@@ -6,6 +6,10 @@ import {
 } from "../../landscape/landscapeMesher.ts";
 import { createLandscapeSampler } from "../../landscape/landscapeSampler.ts";
 import {
+  generateKallurStones,
+  kallurStoneBumps,
+} from "./kallurStoneField.ts";
+import {
   KALLUR_PADS,
   KALLUR_PATH,
   KALLUR_SHORELINE,
@@ -19,11 +23,15 @@ export const KALLUR_BASE_ELEVATION = 2.4;
  *
  * The wall crown at +88 over a 2.4 m coast is authored through the same
  * schema the polder pioneered; steepness is nothing but blendWidth. The
- * detail layers (hummocks, terracettes) live in the sampler itself, so the
- * render mesh, the trimesh collider and every later consumer — grass,
- * boulder scatter, walkability probes — read one identical field.
+ * detail layers (hummocks, terracettes, stone collars) live in the sampler
+ * itself, so the render mesh, the trimesh collider and every later
+ * consumer — grass, stone crowns, walkability probes — read one field.
+ *
+ * Built in two passes: the base field first, then the stone field scattered
+ * over it, and its turf collars folded back in as reliefBumps. Stones and
+ * hummocks are one spectrum (bible §III): a swallowed stone IS a mound.
  */
-export const kallurLandscapeDocument: LandscapeDocument = {
+const kallurBaseDocument: LandscapeDocument = {
   schemaVersion: 1,
   id: "kallur-landscape",
   boundary: KALLUR_SHORELINE,
@@ -75,6 +83,16 @@ export const kallurLandscapeDocument: LandscapeDocument = {
     seed: 3,
   },
   water: "none",
+};
+
+const kallurBaseSampler = createLandscapeSampler(kallurBaseDocument);
+
+/** One deterministic stone spectrum: mounds, crowns and boulders (§5.4). */
+export const kallurStones = generateKallurStones(kallurBaseSampler);
+
+export const kallurLandscapeDocument: LandscapeDocument = {
+  ...kallurBaseDocument,
+  reliefBumps: kallurStoneBumps(kallurStones),
 };
 
 export const kallurLandscapeSampler = createLandscapeSampler(

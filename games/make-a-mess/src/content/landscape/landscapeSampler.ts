@@ -368,8 +368,9 @@ export function createLandscapeSampler(document: LandscapeDocument): LandscapeSa
       for (const bump of reliefBumps) {
         const distance = Math.hypot(x - bump.center[0], z - bump.center[1]);
         if (distance >= bump.radius) continue;
+        // Feet flatten a collar's edge where it laps onto the walked line.
         elevation += bump.height *
-          smootherstep(1 - distance / bump.radius) * (1 - base.padWeight);
+          smootherstep(1 - distance / bump.radius) * calm;
       }
     }
 
