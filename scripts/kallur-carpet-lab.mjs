@@ -42,6 +42,9 @@ const PATCH_W = 4.0;
 const PATCH_H = 3.0;
 
 const SUN = normalize3([-0.55, 0.72, -0.42]);
+// Slope-law tiles face downhill toward the viewer's lower edge; the sun
+// swings to light that face, as in the reference of the lit hillside.
+const SUN_SLOPE = normalize3([-0.5, 0.72, 0.45]);
 const SUN_COLOR = [1.06, 1.0, 0.9];
 const SKY_COLOR = [0.52, 0.56, 0.62];
 
@@ -249,11 +252,87 @@ function makeField(flags) {
     ? (x, z) => clamp01(cascadeOctave(x, z, 1) * 0.75 + cascadeOctave(x, z, 2) * 0.5)
     : (x, z) => wrinkleAt(x, z).fold;
 
+  // Round three — the slope law (Igor, 17.08): at mid-far the landform is
+  // the SENIOR octave of the same cascade, and it COMMANDS the junior ones
+  // instead of merely coexisting. Steeper slope combs the cushions into
+  // fall-line streaks; terracettes ride the REAL contours of the form;
+  // spurs dry and diverge the comb, hollows converge and darken it. All of
+  // it derives from the macro field: gradient direction, gradient
+  // magnitude, curvature — never an independent painted-on pattern.
+  const T = flags.terrain;
+  // Downhill is DOWN the image (+z), like the reference; spur and swale are
+  // ridges running down the fall line, so the comb bends around them.
+  const macroAt = (x, z) => {
+    if (!T) return 0;
+    if (T.type === "plane") return -T.slope * z;
+    if (T.type === "spur") {
+      return -T.slope * z + 0.45 * Math.exp(-((x - 4) ** 2) / (2 * 2.4 ** 2));
+    }
+    if (T.type === "hollow") {
+      return -T.slope * z - 0.45 * Math.exp(-((x - 4) ** 2) / (2 * 2.4 ** 2));
+    }
+    // composite hillside: the grade itself steepens down the frame
+    // (slope 0.1 at the top edge to ~0.7 at the bottom), one spur nose and
+    // one drainage swale running down it.
+    return -(0.1 * z + 0.025 * z * z) +
+      0.4 * Math.exp(-((x - 5) ** 2) / (2 * 2.6 ** 2)) -
+      0.4 * Math.exp(-((x - 11.5) ** 2) / (2 * 3.0 ** 2));
+  };
+  const slopeFrameAt = (x, z) => {
+    const eps = 0.05;
+    const gx = (macroAt(x + eps, z) - macroAt(x - eps, z)) / (2 * eps);
+    const gz = (macroAt(x, z + eps) - macroAt(x, z - eps)) / (2 * eps);
+    const slopeMag = Math.hypot(gx, gz);
+    const inv = 1 / (slopeMag || 1);
+    // Downhill unit vector and the across/along coordinates of the comb.
+    const dx = -gx * inv;
+    const dz = -gz * inv;
+    const across = x * -dz + z * dx;
+    const along = x * dx + z * dz;
+    const streakiness = smoothstep(0.12, 0.5, slopeMag);
+    return { slopeMag, across, along, streakiness, dx, dz };
+  };
+  // Where the flow direction is ambiguous — a spur's crest, a hollow's
+  // axis — grass is NOT combed coherently: the comb dissolves back into
+  // tufts. Without this gate the sheared streak field draws wood-grain
+  // parabolas around every form.
+  const combAt = (x, z, frame) => {
+    if (frame.streakiness <= 0) return 0;
+    const ahead = slopeFrameAt(x + 0.9, z + 0.4);
+    const coherence = smoothstep(0.5, 0.9, frame.dx * ahead.dx + frame.dz * ahead.dz);
+    return frame.streakiness * coherence;
+  };
+  const streakAt = (frame) =>
+    valueNoise(frame.across / 0.08, frame.along / 1.4, 360) * 0.3 +
+    valueNoise(frame.across / 0.14, frame.along / 2.2, 361) * 0.45 +
+    valueNoise(frame.across / 0.3, frame.along / 3.5, 362) * 0.35 +
+    valueNoise(frame.across / 0.6, frame.along / 5.0, 364) * 0.3;
+
   const height = (x, z) => {
-    // Shared ground: a gentle slope down +z and two kochka octaves.
-    let h = -z * 0.34;
-    h += valueNoise(x / 2.6, z / 2.6, 7) * 0.11;
-    h += valueNoise(x / 1.35, z / 1.35, 24) * 0.05;
+    // Shared ground: a gentle slope down +z and two kochka octaves. For
+    // slope-law tiles the macro form replaces the built-in tilt, and the
+    // comb takes energy from the kochki as the grade steepens.
+    const frame = T ? slopeFrameAt(x, z) : null;
+    const comb = frame ? combAt(x, z, frame) : 0;
+    const calm = 1 - comb * 0.5;
+    let h = T ? macroAt(x, z) : -z * 0.34;
+    h += valueNoise(x / 2.6, z / 2.6, 7) * 0.11 * calm;
+    h += valueNoise(x / 1.35, z / 1.35, 24) * 0.05 * calm;
+
+    if (frame) {
+      // The comb: streaks stretched along the fall line, their strength a
+      // function of the slope and of the direction's coherence.
+      h += streakAt(frame) * 0.05 * comb;
+      // Terracettes phase-locked to the REAL contours: the band you see is
+      // a line of constant macro height, exactly like sheep tracks — and
+      // like tracks they come in broken segments, not full rings.
+      const terr = smoothstep(0.3, 0.55, frame.slopeMag);
+      if (terr > 0) {
+        const wander = valueNoise(x / 2.2, z / 2.2, 363) * 0.8;
+        const segment = 0.5 + 0.5 * valueNoise(x / 1.1, z / 1.1, 366);
+        h += Math.sin((macroAt(x, z) / 0.45) * Math.PI * 2 + wander) * 0.028 * terr * segment;
+      }
+    }
 
     if (flags.embossNoise) {
       // Variant B: the old isotropic noise, now treated as height.
@@ -285,8 +364,15 @@ function makeField(flags) {
       // "мохнатость" factor is the cascade continuing past what the eye
       // resolves, not any single octave.
       const octaves = flags.cascadeShort ? 3 : 7;
+      // On combed slopes the coarse cushions flatten — the comb takes
+      // their energy, it does not merely overlay them.
+      const damp = comb * 0.55;
+      const fineDamp = comb * 0.35;
       for (let i = 0; i < octaves; i += 1) {
-        h += cascadeOctave(x, z, i) * CASCADE[i].amplitude;
+        // The comb also lays the FINE fur down: isotropic speckle dilutes
+        // the direction on a steep face, so it yields to the streaks.
+        const amplitude = CASCADE[i].amplitude * (i < 3 ? 1 - damp : 1 - fineDamp);
+        h += cascadeOctave(x, z, i) * amplitude;
       }
     }
 
@@ -379,8 +465,29 @@ function makeField(flags) {
       const moss = smoothstep(0.05, 0.75, valueNoise(x / 3.6, z / 3.6, 321));
       color = mix3(color, MOSS_YELLOW, moss * 0.45);
       color = mix3(color, GRASS_LIT, smoothstep(0.5, 1.0, crest) * 0.3);
+      // The hollow-line term is a NEAR-scale signal: at mid-far it re-draws
+      // cell outlines around every cushion (the marble artifact), so the
+      // slope-law tiles keep only a whisper of it.
       const hollow = Math.pow(1 - clamp01(cascadeOctave(x, z, 1) * 1.7), 2.2);
-      color = mix3(color, SEAM_DARK, hollow * 0.45);
+      color = mix3(color, SEAM_DARK, hollow * (T ? 0.15 : 0.45));
+    }
+
+    if (T) {
+      const frame = slopeFrameAt(x, z);
+      const comb = combAt(x, z, frame);
+      // Combed grass shows dry stems: brightness streaks + a silvering of
+      // the steep face toward straw.
+      color = color.map((channel) =>
+        channel * (1 + streakAt(frame) * 0.09 * comb));
+      color = mix3(color, STRAW, comb * 0.1);
+      // Curvature is moisture: drainage hollows wet and darken, spur
+      // crests dry and lighten. Both read straight off the macro field.
+      const step = 0.6;
+      const laplacian =
+        macroAt(x + step, z) + macroAt(x - step, z) +
+        macroAt(x, z + step) + macroAt(x, z - step) - 4 * macroAt(x, z);
+      color = mix3(color, SEAM_DARK, clamp01(laplacian * 5.0) * 0.4);
+      color = mix3(color, GRASS_LIT, clamp01(-laplacian * 4.0) * 0.28);
     }
 
     if (flags.faintCells) {
@@ -439,12 +546,16 @@ function makeField(flags) {
 function renderVariant(flags) {
   const { height, albedo, foldAt } = makeField(flags);
   const pixels = Buffer.alloc(WIDTH * HEIGHT * 3);
-  const epsilon = 0.006;
+  // Mid-far tiles cover more metres per pixel; the normal probe widens
+  // with the footprint so sub-pixel octaves average out instead of
+  // aliasing — the honest hand-over of fine octaves into statistics.
+  const scale = flags.patchScale ?? 1;
+  const epsilon = 0.006 * scale;
 
   for (let py = 0; py < HEIGHT; py += 1) {
-    const z = (py / HEIGHT) * PATCH_H;
+    const z = (py / HEIGHT) * PATCH_H * scale;
     for (let px = 0; px < WIDTH; px += 1) {
-      const x = (px / WIDTH) * PATCH_W;
+      const x = (px / WIDTH) * PATCH_W * scale;
 
       const h = height(x, z);
       const hx = height(x + epsilon, z) - height(x - epsilon, z);
@@ -458,7 +569,8 @@ function renderVariant(flags) {
       ) / 4;
       const occlusion = 1 - smoothstep(0.0, 0.05, around - h) * 0.55;
 
-      const rawNdl = normal[0] * SUN[0] + normal[1] * SUN[1] + normal[2] * SUN[2];
+      const sun = flags.terrain ? SUN_SLOPE : SUN;
+      const rawNdl = normal[0] * sun[0] + normal[1] * sun[1] + normal[2] * sun[2];
       const lambert = Math.max(0, rawNdl);
       const color = albedo(x, z);
       const offset = (py * WIDTH + px) * 3;
@@ -591,6 +703,42 @@ const VARIANTS = [
     label: "P  control: cascade STOPPED at 40 cm",
     flags: { cascade: true, cascadeShort: true, cascadeColor: true, pile: true },
   },
+  {
+    id: "q-slope-flat",
+    label: "Q  slope law: 5 deg — cushions stay round",
+    flags: { cascade: true, cascadeColor: true, pile: true, patchScale: 2,
+      terrain: { type: "plane", slope: 0.09 } },
+  },
+  {
+    id: "r-slope-20",
+    label: "R  20 deg — the comb appears down the fall line",
+    flags: { cascade: true, cascadeColor: true, pile: true, patchScale: 2,
+      terrain: { type: "plane", slope: 0.36 } },
+  },
+  {
+    id: "s-slope-35",
+    label: "S  35 deg — streaks + sheep-track terracettes",
+    flags: { cascade: true, cascadeColor: true, pile: true, patchScale: 2,
+      terrain: { type: "plane", slope: 0.7 } },
+  },
+  {
+    id: "t-slope-spur",
+    label: "T  spur nose — comb diverges, crest dries",
+    flags: { cascade: true, cascadeColor: true, pile: true, patchScale: 2,
+      terrain: { type: "spur", slope: 0.42 } },
+  },
+  {
+    id: "u-slope-hollow",
+    label: "U  hollow — comb converges, drainage darkens",
+    flags: { cascade: true, cascadeColor: true, pile: true, patchScale: 2,
+      terrain: { type: "hollow", slope: 0.42 } },
+  },
+  {
+    id: "v-slope-composite",
+    label: "V  one hillside: flat into steep, spur + swale",
+    flags: { cascade: true, cascadeColor: true, pile: true, patchScale: 4,
+      terrain: { type: "composite" } },
+  },
 ];
 
 await mkdir(outputRoot, { recursive: true });
@@ -639,4 +787,8 @@ await composeSheet("contact-sheet.png", [
 await composeSheet("contact-sheet-2.png", [
   "l-cascade-relief", "m-cascade-color", "n-cascade-pile",
   "p-cascade-cut", "o-cascade-stones", "e-full-carpet",
+]);
+await composeSheet("contact-sheet-3.png", [
+  "q-slope-flat", "r-slope-20", "s-slope-35",
+  "t-slope-spur", "u-slope-hollow", "v-slope-composite",
 ]);
