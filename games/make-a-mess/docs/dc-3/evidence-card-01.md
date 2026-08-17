@@ -68,7 +68,7 @@ Published envelopes (frozen in `source-expectations-s01.json`):
 
 | System | Family | B01 content |
 | --- | --- | --- |
-| Fuselage | lofted oval shell | crown / keel / half-width tables; nose is a blunt snout plus raked greenhouse, not a cone |
+| Fuselage | lofted oval shell | accepted cabin (roof, round-in, blunt windshield); bullet cap from the sill to a rounded tip |
 | Wing | tapered loft, outer dihedral | center almost flat, outer 5°, rounded tips |
 | Nacelles | metal teardrop, same diameter as the cowl | frozen look in `blockout-b01-freeze-teardrop/` (hash `92a6706e0bf6`) |
 | Engines | Wright R-1820 radial | nine cylinders inside each cowl |
@@ -77,7 +77,7 @@ Published envelopes (frozen in `source-expectations-s01.json`):
 | Control surfaces | hinged leaves on the rear-spar / fin-hinge line | ailerons, split flaps (skip the nacelle), elevator, rudder; flaps-down is a posed second state |
 | Core | skin-on-frame cage inset from the loft: three spars, wing formers, frames, four longerons, eight stringers, engine mounts | skins stay filled and outside the cage; cutaway hides named skin groups only |
 | Gear | mains into nacelles, tailwheel | three-point contact; trunnions pick up the front spar |
-| Cockpit | greenhouse in the loft crown | not a window assembly |
+| Cockpit | greenhouse is the blunt windshield drop in the loft | not a window assembly yet; roof does not rise above the cabin |
 | Cabin windows, doors, stringers, tanks, livery | — | deferred |
 
 ## Load path

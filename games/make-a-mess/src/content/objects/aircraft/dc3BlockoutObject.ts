@@ -140,12 +140,20 @@ type Station = {
 };
 
 const FUSELAGE_STATIONS: readonly Station[] = [
-  { z: NOSE_Z, halfWidth: 0.42, crown: 0.44, keel: -0.48 },
-  { z: 7, halfWidth: 0.74, crown: 0.66, keel: -0.7 },
-  { z: 6.5, halfWidth: 0.98, crown: 0.72, keel: -0.92, upperPower: 2.8, faceForward: 0.08 },
-  { z: 6.15, halfWidth: 1.08, crown: 1.16, keel: -1.06, upperPower: 3.6, faceForward: 0.18 },
-  { z: 5.8, halfWidth: 1.14, crown: 1.48, keel: -1.14, upperPower: 3.8, faceForward: 0.1 },
-  { z: 5.15, halfWidth: 1.18, crown: 1.44, keel: -1.22, upperPower: 2.2 },
+  // КАБИНА ФИКСИРОВАНА. КОЛПАК — ПУЛЯ ОТ ПОРОГА СТЕКЛА К ТУПОМУ КОНЧИКУ.
+  //
+  // Крыша → короткий радиус в бровь z=6.15 → прямое тупое стекло на палубу
+  // z=6.5. Это принятая форма кабины; фонарь не сдвигать, чтобы «набрать
+  // длину». Колпак — не полусфера на стыке z=7 (40 см, читалась заглушкой)
+  // и не продолжение салона: от порога стекла нос держит сечение, потом
+  // скругляется к тупому кончику на NOSE_Z. Стекло фонаря — потом.
+  { z: NOSE_Z, halfWidth: 0.32, crown: 0.26, keel: -0.24 },
+  { z: 7.15, halfWidth: 0.72, crown: 0.58, keel: -0.62 },
+  { z: 6.85, halfWidth: 0.9, crown: 0.74, keel: -0.84 },
+  { z: 6.5, halfWidth: 0.98, crown: 0.8, keel: -0.92 },
+  { z: 6.15, halfWidth: 1.08, crown: 1.32, keel: -1.06 },
+  { z: 5.8, halfWidth: 1.14, crown: 1.4, keel: -1.14 },
+  { z: 5.15, halfWidth: 1.18, crown: 1.4, keel: -1.22 },
   { z: 4.3, halfWidth: 1.24, crown: 1.4, keel: -1.26 },
   { z: 2.35, halfWidth: 1.37, crown: 1.4, keel: -1.36 },
   { z: 0, halfWidth: 1.37, crown: 1.38, keel: -1.36 },
@@ -155,6 +163,17 @@ const FUSELAGE_STATIONS: readonly Station[] = [
   { z: -11.35, halfWidth: 0.3, crown: 0.54, keel: -0.16 },
   { z: TAIL_Z, halfWidth: 0.1, crown: 0.4, keel: -0.05 },
 ];
+
+function mixOptional(
+  a: number | undefined,
+  b: number | undefined,
+  t: number,
+): number | undefined {
+  if (a == null && b == null) return undefined;
+  if (a == null) return b;
+  if (b == null) return a;
+  return a * (1 - t) + b * t;
+}
 
 function sampleStation(z: number): Station {
   if (z >= FUSELAGE_STATIONS[0].z) return FUSELAGE_STATIONS[0];
@@ -170,8 +189,8 @@ function sampleStation(z: number): Station {
         halfWidth: a.halfWidth * (1 - t) + b.halfWidth * t,
         crown: a.crown * (1 - t) + b.crown * t,
         keel: a.keel * (1 - t) + b.keel * t,
-        upperPower: a.upperPower,
-        faceForward: a.faceForward,
+        upperPower: mixOptional(a.upperPower, b.upperPower, t),
+        faceForward: mixOptional(a.faceForward, b.faceForward, t),
       };
     }
   }
@@ -1090,6 +1109,7 @@ const FRAME_HALF_THICKNESS = 0.022;
 const FRAME_WEB = 0.032;
 
 for (const station of FUSELAGE_STATIONS.slice(1, -1)) {
+  if (station.z > 6.85 + 1e-9) continue;
   const outer = insetStation(station, SKIN_INSET);
   const inner = insetStation(station, SKIN_INSET + FRAME_WEB);
   // КОЛЬЦОМ СТАНОВИТСЯ ТОЛЬКО САЛОННЫЙ ШПАНГОУТ.
@@ -1465,7 +1485,9 @@ addBodyBox(
 
 
 
-const RAIL_STATIONS = FUSELAGE_STATIONS.slice(2, -1);
+const RAIL_STATIONS = FUSELAGE_STATIONS.filter(
+  (station) => station.z <= 6.85 + 1e-9 && station.z > TAIL_Z + 1e-9,
+);
 const LONGERON_RAILS = [
   ["upper-right", (50 * Math.PI) / 180],
   ["upper-left", (130 * Math.PI) / 180],
@@ -1896,7 +1918,7 @@ export const dc3BlockoutObject: Dc3BlockoutModel = {
     "Station tables, 5° outer dihedral and 19 ft engine half-span are authored. This is a three-point sit, not a level drawing.",
     "Each propeller is three Hamilton Standard paddle blades at the published 11 ft 6 in diameter; rotation is frozen.",
     "Nacelle is one metal teardrop the same diameter as the cowl, open at the lip around a Wright R-1820, then tapering through the wing to the trailing edge. Not a box behind a cylinder.",
-    "Forward stations follow NASM A19530075000: flat snout face, a raked deck under the greenhouse, keel rising without a hanging chin. The rounded cap is off for now. Glass panes stay out.",
+    "Forward stations follow NASM A19530075000: accepted cabin (roof held, short round-in, blunt windshield onto the deck at z=6.5), then a bullet cap that stays fat past the glass and rounds at the tip. Not a stubby hemisphere on z=7, and not a greenhouse shifted aft to steal length. Glass panes stay out.",
     "Vertical fin follows NASM2018-10067 and NASM2025-02160: one loft from the crown, long convex dorsal, rounded tip, nearly vertical trailing edge. Not a four-point slab. Rudder is cut from that loft as a hinged leaf. Frozen fin outline in docs/dc-3/blockout-b01-freeze-fin/.",
     "Skin-on-frame like the other air vehicles: the cage is inset from the loft (12 cm on the fuselage, a fraction of local thickness on the wing). Frames, four longerons and eight stringers carry the fuselage skin; three spars and wing formers carry the wing skin. Wright mounts and gear trunnions pick up the front spar. Tanks and cabin fit-out stay out.",
     "Ailerons, split flaps, elevator and rudder are real openings on the rear-spar / fin-hinge line, not painted seams. Flaps skip the nacelle afterbody. Hinges live on surfaceHinges; flaps-down is a posed second state of the same parts.",

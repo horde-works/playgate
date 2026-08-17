@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { dc3BlockoutObject } from "../games/make-a-mess/src/content/objects/aircraft/dc3BlockoutObject.ts";
+import {
+  dc3AirframeSurface,
+  dc3BlockoutObject,
+} from "../games/make-a-mess/src/content/objects/aircraft/dc3BlockoutObject.ts";
 
 const expected = JSON.parse(readFileSync(new URL(
   "../games/make-a-mess/docs/dc-3/source-expectations-s01.json",
@@ -155,7 +158,80 @@ test("three-point gear reaches the ground", () => {
   assert.ok(bounds(fuselage).minY > 0.12, "belly must clear the floor");
 });
 
-test("the nose is a blunt snout with a raked greenhouse and no hanging chin", () => {
+test("the nose holds a cabin roof, then a blunt windshield drop, with no hanging chin", () => {
+  const { stations } = dc3AirframeSurface.fuselage;
+  const at = (z) => stations.find((station) => Math.abs(station.z - z) < 0.05);
+  const cabin = at(4.3);
+  const brow = at(6.15);
+  const deck = at(6.5);
+  const bullet = at(6.85);
+  const tip = stations.reduce((front, station) => (station.z > front.z ? station : front));
+  const capMid = stations.find((station) => station.z > 7.05 && station.z < tip.z - 0.02);
+  assert.ok(cabin && brow && deck && bullet && capMid, "cabin / brow / deck / bullet / cap missing");
+  const noseToCabin = stations.filter((station) => station.z >= 4.3);
+  for (const station of noseToCabin) {
+    assert.equal(
+      station.upperPower,
+      undefined,
+      `upperPower at z=${station.z} boxes the upper half`,
+    );
+    assert.equal(
+      station.faceForward,
+      undefined,
+      `faceForward at z=${station.z} shears a fake rake`,
+    );
+  }
+  for (let index = 1; index < noseToCabin.length; index += 1) {
+    const aft = noseToCabin[index];
+    const forward = noseToCabin[index - 1];
+    assert.ok(
+      aft.crown >= forward.crown - 1e-9,
+      `crown rose toward the snout: z=${forward.z} ${forward.crown} → z=${aft.z} ${aft.crown}`,
+    );
+  }
+  assert.ok(
+    noseToCabin.every((station) => station.crown <= cabin.crown + 1e-9),
+    "brow sits above the cabin roof",
+  );
+  const roof = stations.filter((station) => station.z >= 4.3 && station.z <= 5.9);
+  assert.ok(
+    roof.every((station) => station.crown >= cabin.crown - 0.04),
+    "cockpit roof droops before the windshield — that is a 21st-century fairing",
+  );
+  const fillet = at(5.8).crown - brow.crown;
+  assert.ok(fillet >= 0.05 && fillet <= 0.16, `brow fillet ${fillet} m is a knife or a fairing`);
+  const drop = brow.crown - deck.crown;
+  const run = deck.z - brow.z;
+  assert.ok(drop >= 0.5, `windshield drop ${drop} m is still a modern slope`);
+  assert.ok(run > 0 && run <= 0.4, `windshield run ${run} m is not a crease`);
+  assert.ok(drop / run >= 1.2, `windshield slope ${((Math.atan(drop / run) * 180) / Math.PI).toFixed(0)}° is too raked`);
+  const deckDrop = deck.crown - bullet.crown;
+  const deckRun = bullet.z - deck.z;
+  const deckSlope = deckDrop / deckRun;
+  assert.ok(
+    deckDrop >= 0.04 && deckDrop <= 0.16,
+    `nose deck drop ${deckDrop} m is a shelf or the windshield`,
+  );
+  assert.ok(
+    deckSlope >= 0.1 && deckSlope <= 0.45,
+    `snout slope ${((Math.atan(deckSlope) * 180) / Math.PI).toFixed(0)}° is still the windshield or a horizon shelf`,
+  );
+  assert.ok(
+    bullet.halfWidth >= 0.85,
+    `cap ${bullet.halfWidth} m wide at z=${bullet.z} already collapsed to a sphere`,
+  );
+  const linearCap = deck.crown
+    + ((tip.crown - deck.crown) * (capMid.z - deck.z)) / (tip.z - deck.z);
+  assert.ok(
+    capMid.crown > linearCap + 0.04,
+    `cap is a cone, not a bullet: mid ${capMid.crown} vs linear ${linearCap}`,
+  );
+  assert.ok(
+    tip.halfWidth > 0.18 && tip.halfWidth < 0.4,
+    `cap tip ${tip.halfWidth} is a pin or a leftover disk`,
+  );
+  assert.ok(!dc3BlockoutObject.parts.some((part) => part.id === "nose-cap"));
+
   const axis = subtract(dc3BlockoutObject.anchors.nose, dc3BlockoutObject.anchors.tail);
   const unit = axis.map((value) => value / length(axis));
   const origin = dc3BlockoutObject.anchors.tail;
@@ -171,12 +247,8 @@ test("the nose is a blunt snout with a raked greenhouse and no hanging chin", ()
   const band = (from, to) => samples.filter(({ s }) => s >= from && s <= to);
   const highest = (from, to) => Math.max(...band(from, to).map(({ height }) => height));
   const lowest = (from, to) => Math.min(...band(from, to).map(({ height }) => height));
-  const brow = highest(0.905, 0.93);
-  const deck = highest(0.948, 0.97);
   const tipSpan = highest(0.978, 0.99) - lowest(0.978, 0.99);
   const keel = [0.986, 0.97, 0.94, 0.91, 0.88, 0.74].map((s) => lowest(s - 0.015, s + 0.015));
-  assert.ok(!dc3BlockoutObject.parts.some((part) => part.id === "nose-cap"));
-  assert.ok(brow - deck > 0.55, `greenhouse rake ${brow - deck} is still a bump`);
   assert.ok(tipSpan > 0.65, `snout ${tipSpan} is still a pin`);
   for (let index = 1; index < keel.length; index += 1) {
     assert.ok(
@@ -202,7 +274,9 @@ test("the fuselage is a loft, not a cake", () => {
   const nose = Math.max(...band(0.993, 1));
   const cabin = Math.max(...band(0.58, 0.78));
   const tail = Math.max(...band(0, 0.16));
-  assert.ok(cabin > nose * 2.4, `cabin ${cabin} must outgrow the nose tip ${nose}`);
+  // The nose deck is held for the type (cap later). 2.4× assumed a pin cut
+  // and would force the windshield to continue into the snout.
+  assert.ok(cabin > nose * 1.8, `cabin ${cabin} must outgrow the nose tip ${nose}`);
   assert.ok(cabin > tail * 1.6, `cabin ${cabin} must outgrow the tail ${tail}`);
 });
 

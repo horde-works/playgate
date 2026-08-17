@@ -554,8 +554,7 @@ const FUSELAGE_GORE_STEP = fuselage.ringCount / FUSELAGE_GORES;
  */
 /**
  * Станция на z. Если z совпадает с авторской станцией, берётся ОНА, а не
- * интерполяция: `sampleStation` тянет `upperPower` и `faceForward` от
- * предыдущей станции, и на границе носовые сечения выходят другой формы.
+ * интерполяция между соседями: на границе это тот же овал, что в таблице.
  */
 function fuselageStationAt(z: number) {
   return fuselage.stations.find((station) => Math.abs(station.z - z) < 1e-9)

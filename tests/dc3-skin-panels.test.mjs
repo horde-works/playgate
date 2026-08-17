@@ -211,11 +211,6 @@ test("панели фюзеляжа лежат на поверхности ло�
     // Наружная половина вершин — первая; внутренняя сдвинута на толщину.
     for (const vertex of part.vertices.slice(0, part.vertices.length / 2)) {
       const [x, y, z] = worldToBody(vertex);
-      // Носовые станции несут `faceForward`: он сдвигает точку ВПЕРЁД по z,
-      // поэтому по её собственной z станция ищется не та, и замер начинает
-      // мерить не то. Носок окон не несёт, и проверка ограничена зоной без
-      // этого сдвига — иначе тест ловил бы свою же ошибку отсчёта.
-      if (z > 5.0) continue;
       const station = stationAt(z);
       const centreY = (station.crown + station.keel) / 2;
       const halfHeight = (station.crown - station.keel) / 2;

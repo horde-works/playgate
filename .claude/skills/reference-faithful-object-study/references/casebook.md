@@ -15,8 +15,9 @@
 11. SR-6 Skat: member families, air gaps, livery and control lines
 12. RAX-8 Tonkawa combat hexacopter (C1 → C2)
 13. VX-8 Yaqui integrated-duct hexacopter: the loft, the panels and the cake
-14. Cross-case best practices
-15. Cross-case worst practices
+14. Douglas DC-3: period greenhouse loft, not a 21st-century fairing
+15. Cross-case best practices
+16. Cross-case worst practices
 
 ## 1. How to use this casebook
 
@@ -432,7 +433,75 @@ panel the skin on the features that section describes, and probe the emitted
 surface rather than its vertices — otherwise the tables, the tests and the
 render will each describe a different object, and all three will look green.
 
-## 14. Cross-case best practices
+## 14. Douglas DC-3: period greenhouse loft, not a 21st-century fairing
+
+### Risk
+
+A mid-century taildragger is given away by its cockpit in profile: a held
+cabin roof, a blunt windshield (visibility over a nose-high sit), then a
+convex snout. The same loft that is allowed to be "smooth" will silently
+become a modern airliner. Three over-corrections of the same defect all
+look green until the owner sees the silhouette.
+
+### Bad practice
+
+- Raise the crown above the cabin to fake a greenhouse, then shear the
+  section forward (`faceForward`) to fake rake. The type reads as a hump
+  and a pit, not as glass.
+- Delete the hump by spreading the drop over two metres of stations. The
+  roof now fairings into the snout. That is a 787, accepted as "monotonic
+  and therefore correct."
+- Restore the drop as one two-station facet from full roof height onto a
+  dead-flat deck. The brow is a knife; the deck is parallel to the body
+  axis, so in a three-point sit it reads as a horizon shelf. Together they
+  are a stair, not a DC-3.
+- Judge windshield rake on the parked three-point camera. The sit already
+  adds ~11°. The KLM/NASM profile is flight-level; mixing the two makes a
+  held deck look horizontal and a 55° body-axis glass look vertical.
+- Treat the oval cheek as the windshield. Until the greenhouse is a cut,
+  side facets of the loft stay smooth; the crease lives on the crown table.
+  A translucent mesh will keep looking "modern" for that reason alone.
+- Protect a pin-like cut with a "cabin must outgrow the tip by 2.4×" cake
+  test. That gate fights a held type deck and forces the windshield back
+  into the snout.
+
+### Correction
+
+- Hold the cabin crown to the brow. Never above the cabin. The greenhouse
+  is not a bump.
+- Round the roof into the glass over a short station (centimetres, not
+  metres). The glass itself stays a straight blunt drop.
+- After the sill, do not continue the windshield and do not hold a shelf:
+  a gentler convex deck toward the cut, keel still rising. The rounded cap
+  is a later part on that cut, not a cone that eats the glass.
+- Lock each rejected silhouette with a station-table test: roof hold,
+  brow fillet band, windshield slope, deck slope distinct from both a
+  shelf and the glass. Do not encode the angles as a new global law.
+- Defer panes until the loft silhouette is the type. The cut is what will
+  make the cabin *read* as the greenhouse; the loft has to be the house
+  those panes sit in. The cap is a bullet from the windshield sill: it stays
+  fat, then rounds at the tip. Do not shift the greenhouse aft to steal
+  length, and do not sit a short ellipsoid on a near joint — both read as
+  the wrong object.
+
+### Tests that matter
+
+- station crowns: no brow above cabin; roof holds until the fillet;
+  fillet is a short round-in, not a fairing and not a knife;
+- windshield drop/run steep; deck drop/run shallower and convex;
+- keel still rising (no hanging chin); no `upperPower` / `faceForward`;
+- no `nose-cap` part until that milestone; overlay glass stays out of
+  the canonical airframe.
+
+### General lesson
+
+A period greenhouse is three slopes, not one. Over-correcting a bump
+into smoothness, then into a knife and a shelf, is the same class of
+error: the table was asked for "not the last mistake" instead of for
+the type. Judge those slopes in body axes against a flight-level
+profile. A sit camera and an uncut oval are not the windshield.
+
+## 15. Cross-case best practices
 
 1. Write an evidence card before code.
 2. Let sources own different claims instead of forcing one source to own everything.
@@ -453,8 +522,9 @@ render will each describe a different object, and all three will look green.
 17. Panel a skin on the features it must describe, and state the chord you accept.
 18. Turn every reviewer verdict into a named regression test in the same pass.
 19. Decide where a stowed member goes before deciding where it hangs.
+20. A period greenhouse is a held roof, a blunt glass and a convex snout — three slopes. Do not collapse them.
 
-## 14. Cross-case worst practices
+## 16. Cross-case worst practices
 
 1. Use ImageGen output as construction documentation.
 2. Infer hidden structure from a single perspective.
@@ -475,3 +545,4 @@ render will each describe a different object, and all three will look green.
 17. Sample vertices to measure the middle of a plate that has none.
 18. Let two solids share a volume because no test was ever written to ask.
 19. Type ninety degrees for a fold whose geometry needs a hundred and thirty.
+20. Correct a crown bump by fairing it into a modern ogive, or by a knife-cut roof onto a dead-flat deck.
