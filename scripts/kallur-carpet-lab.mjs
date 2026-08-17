@@ -54,6 +54,7 @@ const GRASS_LIT = hex("#b3b374");
 const SEAM_DARK = hex("#3a4426");
 const MOSS_YELLOW = hex("#8f8d52");
 const STRAW = hex("#c7c084");
+const DEAD_THATCH = hex("#71603a");
 const STONE_MID = hex("#8f958d");
 const STONE_LICHEN = hex("#b9bdb4");
 
@@ -302,6 +303,31 @@ function makeField(flags) {
     const coherence = smoothstep(0.5, 0.9, frame.dx * ahead.dx + frame.dz * ahead.dz);
     return frame.streakiness * coherence;
   };
+  // Round four — the near ring and the hand-over. Near grass is NOT a new
+  // technology: it is the same cascade whose finest octaves stop being
+  // statistics and resolve into DISCRETE tufts. Tufts crowd the crests of
+  // octaves 3-4 and thin out in the creases, so the near grass can never
+  // contradict the carpet it stands on — today's live artifact is exactly
+  // a blade layer scattered by an INDEPENDENT noise. lod.tuft/lod.grain
+  // are the carrier hand-over knobs: 1 where the octave resolves, 0 where
+  // it has sunk below the pixel and its energy returns to the band.
+  const lod = { tuft: flags.near ? 1 : 0, grain: 1 };
+  // A tuft's silhouette is a burst of STEMS, not a dome — domes rendered
+  // as dew-drop balls on the first try. So the near octave is a
+  // criss-cross of thin ridged stems (two rotated stretched fields,
+  // max-combined), CLUSTERED by the crests of cascade octaves 3-4: the
+  // same field again, one level further down.
+  const stemClusterAt = (x, z) =>
+    clamp01((cascadeOctave(x, z, 3) * 0.8 + cascadeOctave(x, z, 4) * 0.6) * 1.2 - 0.1);
+  const spikeAt = (x, z) => {
+    const a = Math.abs(valueNoise(
+      (x * 0.42 - z * 0.91) / 0.012, (x * 0.91 + z * 0.42) / 0.05, 511));
+    const b = Math.abs(valueNoise(
+      (x * 0.95 + z * 0.31) / 0.05, (x * -0.31 + z * 0.95) / 0.013, 512));
+    const stem = Math.max(1 - a, 1 - b);
+    return stem * stem;
+  };
+
   const streakAt = (frame) =>
     valueNoise(frame.across / 0.08, frame.along / 1.4, 360) * 0.3 +
     valueNoise(frame.across / 0.14, frame.along / 2.2, 361) * 0.45 +
@@ -374,6 +400,10 @@ function makeField(flags) {
         const amplitude = CASCADE[i].amplitude * (i < 3 ? 1 - damp : 1 - fineDamp);
         h += cascadeOctave(x, z, i) * amplitude;
       }
+    }
+
+    if (flags.near && lod.tuft > 0) {
+      h += spikeAt(x, z) * (0.004 + stemClusterAt(x, z) * 0.008) * lod.tuft;
     }
 
     if (flags.faintCells) {
@@ -470,6 +500,15 @@ function makeField(flags) {
       // slope-law tiles keep only a whisper of it.
       const hollow = Math.pow(1 - clamp01(cascadeOctave(x, z, 1) * 1.7), 2.2);
       color = mix3(color, SEAM_DARK, hollow * (T ? 0.15 : 0.45));
+
+      if (flags.near && lod.tuft > 0) {
+        // Dead thatch collects in the deep creases; lit stems dry toward
+        // straw where they cluster.
+        const dead = smoothstep(0.32, 0.06, cascadeOctave(x, z, 1));
+        color = mix3(color, DEAD_THATCH, dead * 0.35 * lod.tuft);
+        const stem = spikeAt(x, z) * stemClusterAt(x, z);
+        color = mix3(color, STRAW, stem * 0.28 * lod.tuft);
+      }
     }
 
     if (T) {
@@ -540,22 +579,52 @@ function makeField(flags) {
     return color;
   };
 
-  return { height, albedo, foldAt };
+  return { height, albedo, foldAt, lod };
 }
 
 function renderVariant(flags) {
-  const { height, albedo, foldAt } = makeField(flags);
+  const { height, albedo, foldAt, lod } = makeField(flags);
   const pixels = Buffer.alloc(WIDTH * HEIGHT * 3);
   // Mid-far tiles cover more metres per pixel; the normal probe widens
   // with the footprint so sub-pixel octaves average out instead of
   // aliasing — the honest hand-over of fine octaves into statistics.
   const scale = flags.patchScale ?? 1;
-  const epsilon = 0.006 * scale;
+  let epsilon = 0.006 * scale;
+
+  // The recession view: one gaze across the ground, near at the bottom of
+  // the frame (1.6 mm/px) receding to far at the top (26 mm/px). Every
+  // octave hands its carrier over at ITS OWN row — tufts sink back into
+  // the band, grain into tint — so no row anywhere holds a seam.
+  let recessionRows = null;
+  if (flags.recession) {
+    recessionRows = [];
+    let zWorld = 0;
+    for (let i = 0; i < HEIGHT; i += 1) {
+      const t = i / (HEIGHT - 1);
+      const footprint = 0.0016 * Math.exp(Math.log(0.026 / 0.0016) * t);
+      recessionRows.push({ zWorld, footprint });
+      zWorld += footprint;
+    }
+  }
 
   for (let py = 0; py < HEIGHT; py += 1) {
-    const z = (py / HEIGHT) * PATCH_H * scale;
+    let z = (py / HEIGHT) * PATCH_H * scale;
+    let footprint = 0;
+    if (recessionRows) {
+      const row = recessionRows[HEIGHT - 1 - py];
+      z = row.zWorld;
+      footprint = row.footprint;
+      lod.tuft = 1 - smoothstep(0.003, 0.007, footprint);
+      lod.grain = 1 - smoothstep(0.006, 0.02, footprint);
+      epsilon = Math.max(0.006, footprint * 2.4);
+    }
     for (let px = 0; px < WIDTH; px += 1) {
-      const x = (px / WIDTH) * PATCH_W * scale;
+      // Recession keeps a CONSTANT horizontal scale (telephoto grazing
+      // view): only the depth compresses with distance. A true perspective
+      // fan smeared every feature into radial zoom streaks.
+      const x = recessionRows
+        ? (px - WIDTH / 2) * 0.005
+        : (px / WIDTH) * PATCH_W * scale;
 
       const h = height(x, z);
       const hx = height(x + epsilon, z) - height(x - epsilon, z);
@@ -597,7 +666,7 @@ function renderVariant(flags) {
         const sparkle = 1 + (
           valueNoise(x / 0.035, z / 0.045, 233) * 0.09 +
           valueNoise(x / 0.06, z / 0.08, 234) * 0.06
-        ) * (0.3 + 0.7 * wrapped);
+        ) * (0.3 + 0.7 * wrapped) * (0.3 + 0.7 * lod.grain);
         for (let channel = 0; channel < 3; channel += 1) {
           let lit = color[channel] * (
             SUN_COLOR[channel] * wrapped * 1.1 +
@@ -739,6 +808,16 @@ const VARIANTS = [
     flags: { cascade: true, cascadeColor: true, pile: true, patchScale: 4,
       terrain: { type: "composite" } },
   },
+  {
+    id: "w-near-tufts",
+    label: "W  near ring: tufts ride the SAME cascade",
+    flags: { cascade: true, cascadeColor: true, pile: true, near: true, patchScale: 0.5 },
+  },
+  {
+    id: "x-recession",
+    label: "X  one gaze near to far — octaves hand over, no seam",
+    flags: { cascade: true, cascadeColor: true, pile: true, near: true, recession: true },
+  },
 ];
 
 await mkdir(outputRoot, { recursive: true });
@@ -760,10 +839,11 @@ for (const variant of VARIANTS) {
 }
 
 async function composeSheet(fileName, ids) {
+  const rows = Math.ceil(ids.length / 2);
   const sheet = await sharp({
     create: {
       width: WIDTH * 2 + 24,
-      height: HEIGHT * 3 + 48,
+      height: HEIGHT * rows + (rows - 1) * 24,
       channels: 3,
       background: { r: 14, g: 16, b: 15 },
     },
@@ -792,3 +872,4 @@ await composeSheet("contact-sheet-3.png", [
   "q-slope-flat", "r-slope-20", "s-slope-35",
   "t-slope-spur", "u-slope-hollow", "v-slope-composite",
 ]);
+await composeSheet("contact-sheet-4.png", ["w-near-tufts", "x-recession"]);
