@@ -2235,6 +2235,24 @@ if (dutchPolderSurface > 0.5) {
   diffuseColor.rgb = mix(diffuseColor.rgb, dutchBed, dutchMask.g * 0.96);
 }
 
+// Kallur turf: the mid-ring detail layer of the fur (kallur-brief.md §5.3).
+// Past the blade ring the pelt is carried by high-frequency light-and-shade
+// — the same trick as the viking uneven-earth relief, tuned to fur scale —
+// plus stretched fibre noise that reads as the lie of combed Atlantic grass.
+float kallurSurface =
+  (1.0 - step(0.5, abs(vLandscapeSurfaceProfile - 4.0))) * materialUp;
+if (kallurSurface > 0.5) {
+  vec2 kallurPoint = vMaterialCoordinate.xz;
+  float kallurTuft =
+    materialValueNoise(kallurPoint * 1.35 + vec2(7.3, 21.9)) * 0.6 +
+    materialValueNoise(kallurPoint * 3.1 + vec2(33.4, 2.8)) * 0.4;
+  float kallurFibre = materialValueNoise(
+    vec2(kallurPoint.x * 0.55, kallurPoint.y * 2.6) + vec2(15.1, 8.7)
+  );
+  diffuseColor.rgb *= 0.8 + kallurTuft * 0.34;
+  diffuseColor.rgb *= 0.93 + kallurFibre * 0.14;
+}
+
 // Standing dampness: glossy splotches on upward, sky-exposed faces.
 // Roughness is lowered in the roughness stage below; here the albedo takes
 // the slight darkening wet ground shows in reality.

@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { TERMS_VERSION } from "../app/legal/consent.ts";
 import { KALLUR_HERO_VIEW } from "../games/make-a-mess/src/content/scenes/kallur/kallurTerrainPlan.ts";
+import { kallurGroundTopAt } from "../games/make-a-mess/src/content/scenes/kallur/kallurLandscapeDocument.ts";
 
 /**
  * Deterministic Kallur frames over CDP (run-and-verify.md §3).
@@ -40,7 +41,21 @@ const FRAMES = [
     position: [-20, 4.6, 86],
     lookAt: [30, 58, -58],
   },
+  {
+    // Acceptance view from the passport: 3-5 m of turf at a grazing angle —
+    // the distance and light at which the fur must read (§6.3).
+    id: "turf-05-closeup",
+    position: [-33, kallurGroundTopAt(-33, 20) + 1.35, 20],
+    lookAt: [-24, kallurGroundTopAt(-26, 8) + 0.4, 8],
+  },
 ];
+
+/** Frames repeated under the low sun: the fur is judged by grazing light. */
+const SUNSET_FRAME_IDS = new Set([
+  "hero-01-wall-and-lighthouse",
+  "saddle-02-lighthouse-hill",
+  "turf-05-closeup",
+]);
 
 function findChrome() {
   let chrome = process.env.PLAYGATE_CHROME;
@@ -209,7 +224,7 @@ async function main() {
 
     await mkdir(outputRoot, { recursive: true });
     const manifest = [];
-    for (const frame of FRAMES) {
+    const takeFrame = async (frame, suffix) => {
       const [x, y, z] = frame.position;
       const [tx, ty, tz] = frame.lookAt;
       const dx = tx - x;
@@ -221,11 +236,35 @@ async function main() {
       await evaluate(`window.__mamLook(${yaw}, ${pitch}); true`);
       await sleep(4500);
       const shot = await send("Page.captureScreenshot", { format: "png" });
-      const destination = join(outputRoot, `${frame.id}.png`);
+      const id = `${frame.id}${suffix}`;
+      const destination = join(outputRoot, `${id}.png`);
       await writeFile(destination, Buffer.from(shot.data, "base64"));
-      manifest.push({ id: frame.id, position: frame.position, lookAt: frame.lookAt, file: `${frame.id}.png` });
+      manifest.push({ id, position: frame.position, lookAt: frame.lookAt, file: `${id}.png` });
       process.stdout.write(`captured ${destination}\n`);
+    };
+
+    for (const frame of FRAMES) {
+      await takeFrame(frame, "");
     }
+
+    // Low light pass: KeyN cycles day -> afternoon -> sunset; the transition
+    // takes several game-clock seconds each (run-and-verify.md §3).
+    const readTime = () => evaluate(
+      "(document.body.textContent.match(/Time \\[N\\][^\\u2014]{0,24}/) || [''])[0]",
+    );
+    for (let press = 0; press < 2; press += 1) {
+      await pressKey("KeyN", 78, "n");
+      await sleep(9000);
+    }
+    const timeLabel = (await readTime().catch(() => "")) || "";
+    if (!timeLabel.toLowerCase().includes("sunset")) {
+      process.stdout.write(`warning: time label after two KeyN is "${timeLabel}"\n`);
+    }
+    for (const frame of FRAMES) {
+      if (!SUNSET_FRAME_IDS.has(frame.id)) continue;
+      await takeFrame(frame, "-sunset");
+    }
+
     await writeFile(
       join(outputRoot, "manifest.json"),
       `${JSON.stringify({ generatedAt: new Date().toISOString(), server: serverUrl, frames: manifest }, null, 2)}\n`,

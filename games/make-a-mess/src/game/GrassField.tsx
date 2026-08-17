@@ -1092,6 +1092,11 @@ export function GrassField({
           uReedTip: { value: new Color("#a5a05b") },
           uReedBaseDry: { value: new Color("#66583a") },
           uReedTipDry: { value: new Color("#b6a264") },
+          // Distance convergence: blades melt into the turf's own colour just
+          // before their fade, so no line marks where instances end and the
+          // ground material takes over. Zero for worlds that predate it.
+          uTurfTone: { value: new Color("#6d7046") },
+          uTurfBlend: { value: profile === "kallur" ? 0.65 : 0 },
         },
         side: DoubleSide,
         transparent: false,
@@ -1122,6 +1127,7 @@ export function GrassField({
           varying float vFlower;
           varying float vBladeVar;
           varying float vTransmit;
+          varying float vFar;
           varying highp float vQuadHalfPixels;
           void main() {
             // Распаковка в читаемые имена — компилятор её сворачивает.
@@ -1175,6 +1181,10 @@ export function GrassField({
             float personalFade = mix(activeFadeStart, activeFadeEnd, aFade);
             float fadeSpan = max(1.5, (activeFadeEnd - activeFadeStart) * 0.07);
             float fade = 1.0 - smoothstep(personalFade, personalFade + fadeSpan, dist);
+            // The blade darkens toward the turf tone across the second half of
+            // its journey out — by the time it shrinks away it already wears
+            // the ground's colour, and the hand-off is invisible.
+            vFar = smoothstep(activeFadeStart * 0.5, personalFade, dist);
             // Wind: the free tip sways, each blade slightly out of phase, on top
             // of the blade's own baked-in curve.
             float sway = sin(uTime * 1.5 + aPhase + aBladeVar * 5.7 + world.x * 0.25 + world.z * 0.2);
@@ -1280,6 +1290,8 @@ export function GrassField({
           uniform vec3 uLightColor;
           uniform vec3 uSheen;
           uniform vec3 uTransmit;
+          uniform vec3 uTurfTone;
+          uniform float uTurfBlend;
           uniform highp float uMinBladePixels;
           varying vec2 vUv;
           varying float vShade;
@@ -1288,6 +1300,7 @@ export function GrassField({
           varying float vFlower;
           varying float vBladeVar;
           varying float vTransmit;
+          varying float vFar;
           varying highp float vQuadHalfPixels;
           void main() {
             // Pointed-blade cutout: discard outside a triangle tapering to the
@@ -1318,6 +1331,9 @@ export function GrassField({
             vec3 base = mix(grassBase, reedBase, vKind);
             vec3 tip = mix(grassTip, reedTip, vKind);
             vec3 albedo = mix(base, tip, vUv.y);
+            // Convergence to the ground: distant blades wear the turf's own
+            // colour statistics before they melt into it.
+            albedo = mix(albedo, uTurfTone, vFar * uTurfBlend);
             vec3 color = albedo * vShade * uLightColor;
             float reedHead = vKind
               * step(0.68, vBladeVar)

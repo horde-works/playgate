@@ -60,9 +60,9 @@ export const kallurLandscapeDocument: LandscapeDocument = {
     // Hummocks: the "fur" of the slope. Wavelength stays well above the
     // 0.75 m render pitch so the lattice can actually carry the bumps.
     wavelength: 2.6,
-    amplitude: 0.2,
-    slopeGain: 0.22,
-    maximumAmplitude: 0.45,
+    amplitude: 0.26,
+    slopeGain: 0.3,
+    maximumAmplitude: 0.6,
     seed: 7,
   },
   terracettes: {
@@ -70,7 +70,7 @@ export const kallurLandscapeDocument: LandscapeDocument = {
     // the steeper hill sides, never the strolling ground.
     minimumGradient: 0.45,
     verticalSpacing: 1.15,
-    amplitude: 0.14,
+    amplitude: 0.2,
     alongWavelength: 7,
     seed: 3,
   },
@@ -87,7 +87,7 @@ export const kallurLandscapeSampler = createLandscapeSampler(
  */
 export const kallurRenderMesh = compileLandscapeMesh(
   kallurLandscapeDocument,
-  LANDSCAPE_RENDER_PROFILES.smooth,
+  LANDSCAPE_RENDER_PROFILES["kallur-turf"],
 );
 
 /**

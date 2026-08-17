@@ -69,13 +69,20 @@ export function kallurGroundTint(
   if (cached) return cached;
 
   const sample = kallurLandscapeSampler.sample(x, z);
+  const center = sample.elevation;
   const epsilon = 1.2;
+  const east = kallurLandscapeSampler.elevationAt(x + epsilon, z);
+  const west = kallurLandscapeSampler.elevationAt(x - epsilon, z);
+  const south = kallurLandscapeSampler.elevationAt(x, z + epsilon);
+  const north = kallurLandscapeSampler.elevationAt(x, z - epsilon);
   const gradient = Math.hypot(
-    (kallurLandscapeSampler.elevationAt(x + epsilon, z) -
-      kallurLandscapeSampler.elevationAt(x - epsilon, z)) / (2 * epsilon),
-    (kallurLandscapeSampler.elevationAt(x, z + epsilon) -
-      kallurLandscapeSampler.elevationAt(x, z - epsilon)) / (2 * epsilon),
+    (east - west) / (2 * epsilon),
+    (south - north) / (2 * epsilon),
   );
+  // Real concavity of the field: negative in hollows, positive on mounds.
+  // This is the hummocks' own ambient shading — the value channel carries
+  // the fur even where smoothed normals iron it out of the light.
+  const relief = center - (east + west + south + north) / 4;
 
   // Large mottling: two independent scales so no repeat reads at frame scale.
   const macro = valueNoise(x / 17, z / 17, 41);
@@ -85,17 +92,21 @@ export function kallurGroundTint(
   let color = mix(GRASS_BASE, GRASS_ALT, 0.5 + 0.5 * macro);
   // Sunlit yellow patches survive the overcast: broad, rare, never on rock.
   const lit = smootherstep((patch - 0.18) / 0.5) * (1 - smootherstep((gradient - 1.0) / 0.4));
-  color = mix(color, GRASS_LIT, lit * 0.62);
-  // Hollows darken: the fur reads through value as much as through relief.
-  const hollow = smootherstep((-mottle - 0.25) / 0.5);
-  color = mix(color, GRASS_SHADOW, hollow * 0.5);
+  color = mix(color, GRASS_LIT, lit * 0.8);
+  // Hummock hollows darken with the ACTUAL field, mound crowns lift; the
+  // separate mottle noise only seasons what the relief already says.
+  const hollow = smootherstep((-relief - 0.04) / 0.22) * 0.72 +
+    smootherstep((-mottle - 0.35) / 0.5) * 0.22;
+  color = mix(color, GRASS_SHADOW, Math.min(1, hollow));
+  const crown = smootherstep((relief - 0.05) / 0.24);
+  color = mix(color, GRASS_LIT, crown * 0.3);
   // Past the walkable gradient grass thins into rock; near-vertical is stone.
-  color = mix(color, ROCK_MID, smootherstep((gradient - 1.15) / 0.55));
+  color = mix(color, ROCK_MID, smootherstep((gradient - 1.05) / 0.55));
   color = mix(color, ROCK_DARK, smootherstep((gradient - 2.1) / 0.8));
   // The trodden line owns its dirt.
   color = mix(color, PATH_DIRT, sample.pathWeight * 0.85);
 
-  const brightness = 1 + mottle * 0.06;
+  const brightness = 1 + mottle * 0.09 + relief * 0.5;
   const tint: readonly [number, number, number] = [
     (color[0] * brightness) / FLAT[0],
     (color[1] * brightness) / FLAT[1],

@@ -6,7 +6,7 @@ import type {
 import { createLandscapeSampler } from "./landscapeSampler.ts";
 
 export interface LandscapeRenderProfile {
-  readonly id: "smooth" | "soft-faceted";
+  readonly id: "smooth" | "soft-faceted" | "kallur-turf";
   readonly pitch: number;
   readonly chunkSize: number;
   readonly heightQuantization: number;
@@ -42,6 +42,16 @@ export const LANDSCAPE_RENDER_PROFILES: Readonly<Record<LandscapeRenderProfile["
     chunkSize: 16,
     heightQuantization: 0.1,
     normalSmoothing: 0.28,
+  },
+  // Turf that must READ its hummocks: fully shared normals iron the bumps
+  // out of the light, so the fur vanishes under a high diffuse sky. Partial
+  // faceting keeps every metre-scale mound catching its own light.
+  "kallur-turf": {
+    id: "kallur-turf",
+    pitch: 0.75,
+    chunkSize: 16,
+    heightQuantization: 0,
+    normalSmoothing: 0.55,
   },
 };
 

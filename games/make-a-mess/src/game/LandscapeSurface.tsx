@@ -28,6 +28,7 @@ function landscapeProfileBand(
   if (profile === "viking-ground") return -1;
   if (profile === "city-ground") return -2;
   if (profile === "dutch-polder-ground") return -3;
+  if (profile === "kallur-ground") return -4;
   return 0;
 }
 
