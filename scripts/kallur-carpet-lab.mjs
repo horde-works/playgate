@@ -17,6 +17,18 @@ import sharp from "sharp";
  *   E  full carpet: D + downslope anisotropy x1.4 + fine stipple grain
  *   F  E + stones bedded in sockets with dark moats
  *
+ * Second round (after Igor's doubt about the craquelure): the reference's
+ * organizing structure is NOT a closed cell net — it is a system of BROKEN
+ * BLANKET FOLDS, elongated along the contour lines, branching and fading.
+ * That is bible II.1-2 (kochki + terracettes), which the cells quietly
+ * replaced. New tiles:
+ *
+ *   G  wrinkles: blanket-fold relief instead of cells (shag stays dominant)
+ *   H  G + color slaved to relief: crests dry straw, creases wet dark
+ *   I  H + pile optics: wrap light, crest sheen, sparkle scaled by light
+ *   J  I + bedded stones
+ *   K  I + a faint cell undertone (hybrid, in case pure folds feel empty)
+ *
  * Patch: 4.0 x 3.0 m, ~3.3 mm per pixel, sun from the upper-left at ~45
  * degrees like the reference crop. Palette is the measured overcast set.
  */
@@ -37,6 +49,8 @@ const GRASS_BASE = hex("#6d7046");
 const GRASS_ALT = hex("#757641");
 const GRASS_LIT = hex("#b3b374");
 const SEAM_DARK = hex("#3a4426");
+const MOSS_YELLOW = hex("#8f8d52");
+const STRAW = hex("#c7c084");
 const STONE_MID = hex("#8f958d");
 const STONE_LICHEN = hex("#b9bdb4");
 
@@ -156,6 +170,85 @@ function makeField(flags) {
   const seamStrength = (x, z) =>
     0.25 + 0.75 * smoothstep(-0.5, 0.5, valueNoise(x / 0.9, z / 0.9, 203));
 
+  // Blanket-fold field (round two). Ridged noise stretched ALONG the contour
+  // (x): its zero-crossings become wandering creases mostly parallel to the
+  // horizontals, branching where octaves disagree — terracettes' little
+  // sibling, never a closed polygon. fold=1 on hummock backs, crease peaks
+  // in the dips, and continuity breaks the lines like real sod.
+  const wrinkleAt = (x, z) => {
+    // Round three: packed CUSHIONS, not incised folds. Ridged noise gave
+    // melted wax — plateaus with canyon creases. The reference is convex
+    // everywhere: rounded elliptical domes pressed together, the "creases"
+    // being nothing but the shadowed gaps between neighbours. Two Worley
+    // scales in a contour-stretched, double-warped domain. The craquelure
+    // of round one died of scale (0.17 m) and of drawn albedo lines —
+    // these are ~0.85 x 0.45 m pillows whose seams exist only as relief
+    // and occlusion.
+    const wx = x + valueNoise(x / 1.6, z / 1.6, 301) * 0.35 +
+      valueNoise(x / 0.3, z / 0.3, 304) * 0.04;
+    const wz = z + valueNoise(x / 1.3, z / 1.3, 302) * 0.22 +
+      valueNoise(x / 0.26, z / 0.26, 305) * 0.04;
+    const big = worley(wx / 1.9, wz, 0.45, 331);
+    const small = worley(wx / 1.5, wz, 0.26, 332);
+    const bigDome = Math.pow(clamp01(1 - big.f1), 0.75) * (0.72 + big.owner * 0.55);
+    const smallDome = Math.pow(clamp01(1 - small.f1), 0.85) * (0.6 + small.owner * 0.7);
+    const fold = clamp01(bigDome * 0.75 + smallDome * 0.42);
+    const continuity = 0.35 + 0.65 * smoothstep(-0.45, 0.5, valueNoise(x / 1.5, z / 1.5, 313));
+    const crease = smoothstep(0.2, 0.03, big.f2 - big.f1) * continuity;
+    return { fold, crease };
+  };
+
+  // Igor's two patterns, literally (17.08): "ландшафтность в текстуре" and
+  // "самоподобие — текстура в текстуре в текстуре". One generator with hill
+  // morphology — billowed value noise, rounded tops and pinched hollows —
+  // repeated self-similarly from 1.7 m down past the pixel. No Worley: any
+  // cell skeleton eventually shows its straight bones, while billow creases
+  // are smooth wandering curves by construction. Coarse octaves lean along
+  // the contour (terracette tendency), fine ones relax to isotropy.
+  // Every octave gets its OWN domain rotation — a shared axis-aligned
+  // lattice reads as woven squares once the billow sharpens it. Coarse
+  // octaves stay near the contour direction, fine ones scatter freely.
+  // Slopes GROW toward fine octaves (persistence 0.62 vs wavelength 0.5):
+  // the reference's small hummocks are steeper than its big waves, and the
+  // steepening is what keeps every scale visible in the light.
+  const CASCADE_ANGLES = [0, 0.35, -0.3, 0.8, -0.75, 1.2, -1.1];
+  const CASCADE = [];
+  {
+    let amplitude = 0.12;
+    let wavelength = 1.7;
+    let stretch = 1.6;
+    for (let i = 0; i < 7; i += 1) {
+      CASCADE.push({
+        amplitude,
+        wavelength,
+        stretch,
+        seed: 401 + i * 17,
+        cos: Math.cos(CASCADE_ANGLES[i]),
+        sin: Math.sin(CASCADE_ANGLES[i]),
+      });
+      amplitude *= 0.62;
+      wavelength *= 0.5;
+      stretch = 1 + (stretch - 1) * 0.7;
+    }
+  }
+  const cascadeOctave = (x, z, index) => {
+    const octave = CASCADE[index];
+    const rx = x * octave.cos - z * octave.sin;
+    const rz = x * octave.sin + z * octave.cos;
+    const sample = valueNoise(
+      rx / (octave.wavelength * octave.stretch),
+      rz / octave.wavelength,
+      octave.seed,
+    );
+    // Hill-in-hill morphology (billow: rounded tops, pinched hollows) holds
+    // down to ~10 cm; below that the surface is pile, and billow's fine
+    // creases curl into worm-cast loops. The last octaves go plain.
+    return index < 5 ? Math.abs(sample) : sample * 0.5 + 0.5;
+  };
+  const foldAt = flags.cascade
+    ? (x, z) => clamp01(cascadeOctave(x, z, 1) * 0.75 + cascadeOctave(x, z, 2) * 0.5)
+    : (x, z) => wrinkleAt(x, z).fold;
+
   const height = (x, z) => {
     // Shared ground: a gentle slope down +z and two kochka octaves.
     let h = -z * 0.34;
@@ -166,6 +259,43 @@ function makeField(flags) {
       // Variant B: the old isotropic noise, now treated as height.
       h += valueNoise(x / 0.42, z / 0.42, 63) * 0.028;
       h += valueNoise(x / 0.18, z / 0.18, 91) * 0.012;
+    }
+
+    if (flags.wrinkles) {
+      // Hummock backs rise, creases dip; one middle octave fills the gap
+      // between the metre-scale kochki and the centimetre shag.
+      const w = wrinkleAt(x, z);
+      h += w.fold * 0.08;
+      h -= w.crease * 0.022;
+      h += valueNoise(x / 0.8, z / 0.8, 26) * 0.03;
+    }
+
+    if (flags.shag) {
+      // Round-two shag: milder anisotropy than round one — the x1.7
+      // downslope stretch read as corduroy once the cells no longer broke
+      // it up. Tufty and near-isotropic, with one gently combed octave.
+      h += valueNoise(x / 0.038, z / 0.05, 133) * 0.008;
+      h += valueNoise(x / 0.07, z / 0.07, 134) * 0.006;
+      h += valueNoise(x / 0.13, z / 0.16, 135) * 0.005;
+    }
+
+    if (flags.cascade) {
+      // The whole carpet is ONE self-similar cascade. cascadeShort is the
+      // negative control: stop it at 40 cm and watch the fur die — the
+      // "мохнатость" factor is the cascade continuing past what the eye
+      // resolves, not any single octave.
+      const octaves = flags.cascadeShort ? 3 : 7;
+      for (let i = 0; i < octaves; i += 1) {
+        h += cascadeOctave(x, z, i) * CASCADE[i].amplitude;
+      }
+    }
+
+    if (flags.faintCells) {
+      // The hybrid: the polster texture survives only as a whisper under
+      // the folds — a quarter of the round-one cell signal.
+      const cell = cellField(x, z);
+      h += Math.pow(clamp01(1 - cell.f1), 1.2) * 0.006;
+      h -= smoothstep(0.16, 0.0, cell.f2 - cell.f1) * 0.004 * seamStrength(x, z);
     }
 
     if (flags.cellRelief) {
@@ -222,6 +352,45 @@ function makeField(flags) {
       color = color.map((channel) => channel * (1 + mottle * 0.09));
     }
 
+    if (flags.slavedColor) {
+      // Color is a SLAVE of the relief, not an independent mottle: crests
+      // dry toward straw-yellow, creases stay wet dark green. Broad mossy
+      // patches (metres) shift the hue family — large patches, not noise
+      // (bible II.3) — and the camouflage-blob artifact dies because no
+      // color transition happens without a relief reason.
+      const w = wrinkleAt(x, z);
+      const moss = smoothstep(0.05, 0.75, valueNoise(x / 3.6, z / 3.6, 321));
+      color = mix3(color, MOSS_YELLOW, moss * 0.45);
+      color = mix3(color, GRASS_LIT, smoothstep(0.55, 0.98, w.fold) * 0.3);
+      color = mix3(color, SEAM_DARK, w.crease * 0.5);
+    }
+
+    if (flags.shag) {
+      const grain = valueNoise(x / 0.035, z / 0.045, 133);
+      color = color.map((channel) => channel * (1 + grain * 0.05));
+    }
+
+    if (flags.cascadeColor) {
+      // Color is a slave of the SAME cascade: octave-1/2 crests dry toward
+      // straw, the pinched hollows of octave 1 hold the wet dark, mossy
+      // patches stay metres wide (bible II.3). No transition without a
+      // relief reason — the camouflage blobs cannot come back.
+      const crest = clamp01(cascadeOctave(x, z, 1) * 0.75 + cascadeOctave(x, z, 2) * 0.5);
+      const moss = smoothstep(0.05, 0.75, valueNoise(x / 3.6, z / 3.6, 321));
+      color = mix3(color, MOSS_YELLOW, moss * 0.45);
+      color = mix3(color, GRASS_LIT, smoothstep(0.5, 1.0, crest) * 0.3);
+      const hollow = Math.pow(1 - clamp01(cascadeOctave(x, z, 1) * 1.7), 2.2);
+      color = mix3(color, SEAM_DARK, hollow * 0.45);
+    }
+
+    if (flags.faintCells) {
+      const cell = cellField(x, z);
+      const cellTint = mix3(GRASS_BASE, GRASS_LIT, clamp01(cell.owner * 1.15 - 0.1));
+      color = mix3(color, cellTint, 0.16);
+      const seam = smoothstep(0.18, 0.02, cell.f2 - cell.f1) * seamStrength(x, z);
+      color = mix3(color, SEAM_DARK, seam * 0.12);
+    }
+
     if (flags.cellAlbedo) {
       const cell = cellField(x, z);
       // Per-polster tint: neighbouring cushions differ visibly, like moss
@@ -264,11 +433,11 @@ function makeField(flags) {
     return color;
   };
 
-  return { height, albedo };
+  return { height, albedo, foldAt };
 }
 
 function renderVariant(flags) {
-  const { height, albedo } = makeField(flags);
+  const { height, albedo, foldAt } = makeField(flags);
   const pixels = Buffer.alloc(WIDTH * HEIGHT * 3);
   const epsilon = 0.006;
 
@@ -289,16 +458,52 @@ function renderVariant(flags) {
       ) / 4;
       const occlusion = 1 - smoothstep(0.0, 0.05, around - h) * 0.55;
 
-      const lambert = Math.max(0, normal[0] * SUN[0] + normal[1] * SUN[1] + normal[2] * SUN[2]);
+      const rawNdl = normal[0] * SUN[0] + normal[1] * SUN[1] + normal[2] * SUN[2];
+      const lambert = Math.max(0, rawNdl);
       const color = albedo(x, z);
       const offset = (py * WIDTH + px) * 3;
-      for (let channel = 0; channel < 3; channel += 1) {
-        const lit = color[channel] * (
-          SUN_COLOR[channel] * lambert * 0.95 +
-          SKY_COLOR[channel] * 0.62 * occlusion
+      if (flags.pile) {
+        // Pile optics: the light behaves as if it fell into fabric.
+        // Wrap diffuse — the pile is translucent, so the terminator never
+        // snaps; depth comes from a DEEP two-ring AO instead, which is why
+        // the creases still go nearly black like the reference.
+        const wrapped = clamp01((rawNdl + 0.18) / 1.18);
+        const around2 = (
+          height(x + 0.22, z) + height(x - 0.22, z) +
+          height(x, z + 0.22) + height(x, z - 0.22)
+        ) / 4;
+        const deepOcclusion = Math.max(
+          0.1,
+          1 - smoothstep(0, 0.04, around - h) * 0.5 - smoothstep(0, 0.1, around2 - h) * 0.45,
         );
-        // Gentle filmic-ish roll-off instead of a hard clip.
-        pixels[offset + channel] = Math.round(clamp01(lit / (1 + lit * 0.18)) * 255);
+        // Crest sheen: sun-facing hummock backs catch a pale straw gleam —
+        // the lit tips of the pile, not a specular dot.
+        const fold = foldAt(x, z);
+        const sheen = smoothstep(0.78, 1.0, wrapped) * smoothstep(0.5, 0.95, fold) * 0.18;
+        // Sparkle rides irradiance: lit zones glitter with tip highlights,
+        // shadowed creases go matte — fabric's signature.
+        const sparkle = 1 + (
+          valueNoise(x / 0.035, z / 0.045, 233) * 0.09 +
+          valueNoise(x / 0.06, z / 0.08, 234) * 0.06
+        ) * (0.3 + 0.7 * wrapped);
+        for (let channel = 0; channel < 3; channel += 1) {
+          let lit = color[channel] * (
+            SUN_COLOR[channel] * wrapped * 1.1 +
+            SKY_COLOR[channel] * 0.5 * deepOcclusion
+          );
+          lit = lit * (1 - sheen) + STRAW[channel] * sheen * (0.8 + 0.4 * wrapped);
+          lit *= sparkle;
+          pixels[offset + channel] = Math.round(clamp01(lit / (1 + lit * 0.18)) * 255);
+        }
+      } else {
+        for (let channel = 0; channel < 3; channel += 1) {
+          const lit = color[channel] * (
+            SUN_COLOR[channel] * lambert * 0.95 +
+            SKY_COLOR[channel] * 0.62 * occlusion
+          );
+          // Gentle filmic-ish roll-off instead of a hard clip.
+          pixels[offset + channel] = Math.round(clamp01(lit / (1 + lit * 0.18)) * 255);
+        }
       }
     }
   }
@@ -336,11 +541,64 @@ const VARIANTS = [
     label: "F  carpet + bedded stones",
     flags: { cellAlbedo: true, cellRelief: true, anisotropy: true, stipple: true, stones: true },
   },
+  {
+    id: "g-wrinkle-relief",
+    label: "G  wrinkles: blanket folds, no cells",
+    flags: { wrinkles: true, shag: true },
+  },
+  {
+    id: "h-wrinkle-color",
+    label: "H  + color slaved to relief",
+    flags: { wrinkles: true, shag: true, slavedColor: true },
+  },
+  {
+    id: "i-wrinkle-pile",
+    label: "I  + pile optics: wrap light, sheen, sparkle",
+    flags: { wrinkles: true, shag: true, slavedColor: true, pile: true },
+  },
+  {
+    id: "j-wrinkle-stones",
+    label: "J  folds + pile + bedded stones",
+    flags: { wrinkles: true, shag: true, slavedColor: true, pile: true, stones: true },
+  },
+  {
+    id: "k-hybrid-cells",
+    label: "K  I + faint cell undertone (hybrid)",
+    flags: { wrinkles: true, shag: true, slavedColor: true, pile: true, faintCells: true },
+  },
+  {
+    id: "l-cascade-relief",
+    label: "L  cascade: hill-in-hill self-similar relief",
+    flags: { cascade: true },
+  },
+  {
+    id: "m-cascade-color",
+    label: "M  + color slaved to the cascade",
+    flags: { cascade: true, cascadeColor: true },
+  },
+  {
+    id: "n-cascade-pile",
+    label: "N  + pile optics: wrap, deep AO, sheen, sparkle",
+    flags: { cascade: true, cascadeColor: true, pile: true },
+  },
+  {
+    id: "o-cascade-stones",
+    label: "O  cascade + pile + bedded stones",
+    flags: { cascade: true, cascadeColor: true, pile: true, stones: true },
+  },
+  {
+    id: "p-cascade-cut",
+    label: "P  control: cascade STOPPED at 40 cm",
+    flags: { cascade: true, cascadeShort: true, cascadeColor: true, pile: true },
+  },
 ];
 
 await mkdir(outputRoot, { recursive: true });
-const tilePaths = [];
+// Optional argv filter: `node kallur-carpet-lab.mjs g-wrinkle-relief ...`
+// renders only the named tiles; the contact sheets still compose from disk.
+const only = process.argv.slice(2);
 for (const variant of VARIANTS) {
+  if (only.length > 0 && !only.includes(variant.id)) continue;
   const pixels = renderVariant(variant.flags);
   const labelSvg = Buffer.from(
     `<svg width="${WIDTH}" height="64"><rect width="100%" height="100%" fill="rgb(20,24,22)" opacity="0.82"/><text x="18" y="42" font-family="monospace" font-size="30" fill="#e8e9e4">${variant.label}</text></svg>`,
@@ -350,24 +608,35 @@ for (const variant of VARIANTS) {
     .composite([{ input: labelSvg, top: 0, left: 0 }])
     .png()
     .toFile(destination);
-  tilePaths.push(destination);
   process.stdout.write(`rendered ${destination}\n`);
 }
 
-// Contact sheet 2 x 3 for the side-by-side verdict.
-const sheet = await sharp({
-  create: {
-    width: WIDTH * 2 + 24,
-    height: HEIGHT * 3 + 48,
-    channels: 3,
-    background: { r: 14, g: 16, b: 15 },
-  },
-})
-  .composite(tilePaths.map((path, index) => ({
-    input: path,
-    left: (index % 2) * (WIDTH + 24),
-    top: Math.floor(index / 2) * (HEIGHT + 24),
-  })))
-  .png()
-  .toFile(join(outputRoot, "contact-sheet.png"));
-process.stdout.write(`rendered ${join(outputRoot, "contact-sheet.png")} (${sheet.width}x${sheet.height})\n`);
+async function composeSheet(fileName, ids) {
+  const sheet = await sharp({
+    create: {
+      width: WIDTH * 2 + 24,
+      height: HEIGHT * 3 + 48,
+      channels: 3,
+      background: { r: 14, g: 16, b: 15 },
+    },
+  })
+    .composite(ids.map((id, index) => ({
+      input: join(outputRoot, `${id}.png`),
+      left: (index % 2) * (WIDTH + 24),
+      top: Math.floor(index / 2) * (HEIGHT + 24),
+    })))
+    .png()
+    .toFile(join(outputRoot, fileName));
+  process.stdout.write(`rendered ${join(outputRoot, fileName)} (${sheet.width}x${sheet.height})\n`);
+}
+
+// Sheet one: the first round (cells). Sheet two: the fold round, with E kept
+// in the corner as the direct comparison against the craquelure direction.
+await composeSheet("contact-sheet.png", [
+  "a-today-mottle", "b-emboss-noise", "c-cells-albedo",
+  "d-cells-relief", "e-full-carpet", "f-carpet-stones",
+]);
+await composeSheet("contact-sheet-2.png", [
+  "l-cascade-relief", "m-cascade-color", "n-cascade-pile",
+  "p-cascade-cut", "o-cascade-stones", "e-full-carpet",
+]);
