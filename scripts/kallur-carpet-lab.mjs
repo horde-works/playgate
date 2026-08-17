@@ -47,6 +47,12 @@ const SUN = normalize3([-0.55, 0.72, -0.42]);
 const SUN_SLOPE = normalize3([-0.5, 0.72, 0.45]);
 const SUN_COLOR = [1.06, 1.0, 0.9];
 const SKY_COLOR = [0.52, 0.56, 0.62];
+// The mid reference's "atmosphere" is a temperature STORY, not a palette:
+// sun warms the lit faces toward straw-yellow, the sky cools every shadow
+// toward blue-green, and a whiff of haze already lives at thirty metres.
+const SUN_WARM = [1.18, 1.04, 0.72];
+const SKY_COOL = [0.4, 0.52, 0.68];
+const HAZE = [0.72, 0.76, 0.7];
 
 const GRASS_BASE = hex("#6d7046");
 const GRASS_ALT = hex("#757641");
@@ -397,13 +403,24 @@ function makeField(flags) {
       for (let i = 0; i < octaves; i += 1) {
         // The comb also lays the FINE fur down: isotropic speckle dilutes
         // the direction on a steep face, so it yields to the streaks.
-        const amplitude = CASCADE[i].amplitude * (i < 3 ? 1 - damp : 1 - fineDamp);
+        // With masses on, the hummock octaves steepen — the photo's depth
+        // lives in their shadow pockets.
+        const boost = flags.masses && i >= 1 && i <= 3 ? 1.35 : 1;
+        const amplitude = CASCADE[i].amplitude * boost * (i < 3 ? 1 - damp : 1 - fineDamp);
         h += cascadeOctave(x, z, i) * amplitude;
       }
     }
 
     if (flags.near && lod.tuft > 0) {
       h += spikeAt(x, z) * (0.004 + stemClusterAt(x, z) * 0.008) * lod.tuft;
+    }
+
+    if (flags.masses) {
+      // Tonal MASSES: one octave ABOVE the kochki — broad rounded swells
+      // that group the hummocks into readable lit and shaded families.
+      // They compose the frame's values; without them every scale carries
+      // equal energy and the frame reads flat, however rich the texture.
+      h += Math.abs(valueNoise(x / 6.5, z / 6.5, 601)) * 0.55;
     }
 
     if (flags.faintCells) {
@@ -508,6 +525,14 @@ function makeField(flags) {
         color = mix3(color, DEAD_THATCH, dead * 0.35 * lod.tuft);
         const stem = spikeAt(x, z) * stemClusterAt(x, z);
         color = mix3(color, STRAW, stem * 0.28 * lod.tuft);
+      }
+
+      if (flags.masses) {
+        // Albedo follows the masses too: high swells dry warm, their
+        // hollows deepen toward a cool damp green.
+        const mass = Math.abs(valueNoise(x / 6.5, z / 6.5, 601));
+        color = mix3(color, GRASS_LIT, smoothstep(0.25, 0.9, mass) * 0.2);
+        color = mix3(color, [0.21, 0.27, 0.19], smoothstep(0.3, 0.02, mass) * 0.25);
       }
     }
 
@@ -667,13 +692,21 @@ function renderVariant(flags) {
           valueNoise(x / 0.035, z / 0.045, 233) * 0.09 +
           valueNoise(x / 0.06, z / 0.08, 234) * 0.06
         ) * (0.3 + 0.7 * wrapped) * (0.3 + 0.7 * lod.grain);
+        const sunColor = flags.warmCool ? SUN_WARM : SUN_COLOR;
+        const skyColor = flags.warmCool ? SKY_COOL : SKY_COLOR;
         for (let channel = 0; channel < 3; channel += 1) {
           let lit = color[channel] * (
-            SUN_COLOR[channel] * wrapped * 1.1 +
-            SKY_COLOR[channel] * 0.5 * deepOcclusion
+            sunColor[channel] * wrapped * 1.1 +
+            skyColor[channel] * 0.5 * deepOcclusion
           );
           lit = lit * (1 - sheen) + STRAW[channel] * sheen * (0.8 + 0.4 * wrapped);
           lit *= sparkle;
+          if (flags.aerial) {
+            // A whiff of aerial perspective inside the frame: the upslope
+            // top third lifts and cools toward haze.
+            const depth = smoothstep(0.5, 1, 1 - py / HEIGHT);
+            lit += (HAZE[channel] - lit) * 0.14 * depth;
+          }
           pixels[offset + channel] = Math.round(clamp01(lit / (1 + lit * 0.18)) * 255);
         }
       } else {
@@ -818,6 +851,13 @@ const VARIANTS = [
     label: "X  one gaze near to far — octaves hand over, no seam",
     flags: { cascade: true, cascadeColor: true, pile: true, near: true, recession: true },
   },
+  {
+    id: "y-mid-frame",
+    label: "Y  mid ring vs the photo: masses, warm sun / cool shade, haze",
+    flags: { cascade: true, cascadeColor: true, pile: true, masses: true,
+      warmCool: true, aerial: true, patchScale: 3,
+      terrain: { type: "plane", slope: 0.22 } },
+  },
 ];
 
 await mkdir(outputRoot, { recursive: true });
@@ -872,4 +912,6 @@ await composeSheet("contact-sheet-3.png", [
   "q-slope-flat", "r-slope-20", "s-slope-35",
   "t-slope-spur", "u-slope-hollow", "v-slope-composite",
 ]);
-await composeSheet("contact-sheet-4.png", ["w-near-tufts", "x-recession"]);
+await composeSheet("contact-sheet-4.png", [
+  "w-near-tufts", "x-recession", "y-mid-frame", "n-cascade-pile",
+]);
