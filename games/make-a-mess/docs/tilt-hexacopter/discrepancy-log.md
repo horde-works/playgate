@@ -116,7 +116,7 @@
 - Current canonical checks: 14/14; fixed contour captures share model hash
   `81d206aa06c3`. Engineering remains paused pending owner acceptance.
 
-## B11 contour gate — current owner-review hypothesis
+## B11 contour gate — approved 2026-08-16
 
 - Complete B10 hull, rear undercut, wider tail termination, core tail boom,
   engines, belts and lift architecture are retained without massing changes.
@@ -125,5 +125,26 @@
   continues directly into the shark ridge at y=2.38 by z=-1.35.
 - No adjacent authored dorsal station rises by more than 0.25 m, preventing a
   detached windshield step or a separate old-F-16-style bubble.
-- Current canonical checks: 14/14; fixed contour captures share model hash
-  `db07330c5638`. Engineering remains paused pending owner acceptance.
+- Owner verdict: “Пожалуй да. Переходи к прочим инженерным чертежам по регламенту”.
+- Canonical emitted inventory: 153 unique parts; recovered envelope
+  11.000 × 8.590 × 2.940 m; validation checks 14/14.
+- E01 releases GA-01, STR-02, KIN-03 and SEC-04 as design-development PNGs.
+  Engineering is allowed; manufacturing and world integration remain blocked.
+
+## E01 engineering package — accepted 2026-08-16
+
+- Owner verdict: “принимается”.
+- General arrangement, primary-core/load-path, lift-ring kinematics and true
+  mesh sections are frozen as the parent basis for E02.
+- No E02 component is permitted to alter the accepted B11 exterior.
+
+## E02 systems package — current owner-review hypothesis
+
+- Adds two tandem crew stations and forward avionics without changing the
+  approved canopy, shell or primary cage.
+- Adds six central removable energy modules, two longitudinal high-voltage
+  buses, four coolant trunks, two pumps and two aft heat exchangers.
+- Adds six local replaceable hinge actuators; each remains independent of the
+  static armour-belt load path.
+- Releases SYS-05, ELEC-06, THM-07 and SRV-08 for owner review. Ratings,
+  component masses, thermal loads and service-door geometry remain open.

@@ -1,0 +1,79 @@
+{
+  "schema": "tilt-hexacopter-engineering-package.v1",
+  "objectId": "tilt-hexacopter-b11",
+  "geometryRevision": "tilt-hex-e02-systems-2026-08-16",
+  "packageRevision": "E02",
+  "parentApproval": "../evidence/e01-approval.md",
+  "exteriorAuthority": "B11 frozen; no silhouette-owning component changed",
+  "status": "system-packaging-not-for-manufacture",
+  "units": "metres",
+  "canonicalModelArtifact": "e02-model.json",
+  "canonicalModelSha256": "697f3e1d614a6fc91c15d5fe48d17846330bbff9cb8fe56414e51fc1d2d26549",
+  "inventory": {
+    "totalParts": 192,
+    "crewStations": 2,
+    "energyModules": 6,
+    "ringActuators": 6,
+    "highVoltageBuses": 2,
+    "coolantTrunks": 4,
+    "heatExchangers": 2,
+    "coolantPumps": 2
+  },
+  "drawings": [
+    {
+      "number": "SYS-05",
+      "title": "Internal systems arrangement",
+      "file": "SYS-05-internal-arrangement.png",
+      "pixels": [
+        3000,
+        2100
+      ],
+      "sha256": "3cb4bc38a093aa22ba5d294c4ecf138e580ed244352ab10310d4a99813023955"
+    },
+    {
+      "number": "ELEC-06",
+      "title": "Electrical power architecture",
+      "file": "ELEC-06-power-architecture.png",
+      "pixels": [
+        3000,
+        2100
+      ],
+      "sha256": "e5cdcfe2f704774bde890f857f4086b7b2e8d424c86ac5de81de753ebe5bd27c"
+    },
+    {
+      "number": "THM-07",
+      "title": "Thermal management",
+      "file": "THM-07-thermal-management.png",
+      "pixels": [
+        3000,
+        2100
+      ],
+      "sha256": "e935928fa8f87e2e62c2e75bf85c7f656f75e0b73c7c2a9bd1b33ef2e16f241b"
+    },
+    {
+      "number": "SRV-08",
+      "title": "Access and maintenance zones",
+      "file": "SRV-08-access-maintenance.png",
+      "pixels": [
+        3000,
+        2100
+      ],
+      "sha256": "af8e3cc3556b584e1351e5f5fb3175f620e8624fa518067204100a9d2f3874ab"
+    }
+  ],
+  "overview": {
+    "file": "E02-overview.png",
+    "pixels": [
+      2400,
+      1680
+    ],
+    "sha256": "10cfed12ae4cddd286295ec9499bf8b5e34fab4fff0bae8537ac0e69882039f4"
+  },
+  "limitations": [
+    "No component mass budget",
+    "No voltage or chemistry selection",
+    "No thermal load sizing",
+    "No access-door or connector detail",
+    "No manufacturing release"
+  ]
+}

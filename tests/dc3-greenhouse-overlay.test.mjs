@@ -6,6 +6,7 @@ import {
   dc3GreenhouseOverlayParts,
 } from "../games/make-a-mess/src/content/objects/aircraft/dc3GreenhouseOverlay.ts";
 import { islandAirportDc3Group } from "../games/make-a-mess/src/content/scenes/islandAirport/islandAirportDc3.ts";
+import { dc3AirframeParts } from "../games/make-a-mess/src/content/objects/aircraft/dc3AirframeParts.ts";
 
 test("greenhouse overlay does not enter the canonical airframe or the airport", () => {
   assert.equal(
@@ -16,7 +17,7 @@ test("greenhouse overlay does not enter the canonical airframe or the airport", 
     islandAirportDc3Group.objects.some((object) => object.id.startsWith("greenhouse-")),
     false,
   );
-  assert.equal(islandAirportDc3Group.objects.length, dc3BlockoutObject.parts.length);
+  assert.equal(islandAirportDc3Group.objects.length, dc3AirframeParts().length);
 });
 
 test("overlay is one connected cage with glass in its six openings", () => {

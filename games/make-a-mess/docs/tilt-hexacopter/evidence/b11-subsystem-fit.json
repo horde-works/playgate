@@ -1,0 +1,30 @@
+{
+  "schema": "reference-fit-report.v1",
+  "pass": true,
+  "checks": [
+    {
+      "id": "lift-rings",
+      "expected": 6,
+      "actual": 6,
+      "pass": true
+    },
+    {
+      "id": "longitudinal-engines",
+      "expected": 2,
+      "actual": 2,
+      "pass": true
+    },
+    {
+      "id": "armour-belts",
+      "expected": 2,
+      "actual": 2,
+      "pass": true
+    },
+    {
+      "id": "paired-support-stations",
+      "expected": 3,
+      "actual": 3,
+      "pass": true
+    }
+  ]
+}

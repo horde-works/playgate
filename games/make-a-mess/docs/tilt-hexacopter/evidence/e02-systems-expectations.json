@@ -1,0 +1,21 @@
+{
+  "schema": "tilt-hexacopter-systems-expectations.v1",
+  "revision": "e02",
+  "provenance": "Authored internal-packaging hypothesis authorized after owner acceptance of E01. The accepted B11 exterior must remain unchanged.",
+  "counts": {
+    "crewStations": 2,
+    "energyModules": 6,
+    "ringActuators": 6,
+    "highVoltageBuses": 2,
+    "coolantTrunks": 4,
+    "heatExchangers": 2,
+    "coolantPumps": 2
+  },
+  "zones": {
+    "crewZ": [1.05, 3.75],
+    "energyZ": [-2.3, 0.7],
+    "thermalZ": [-3.75, 3.25]
+  },
+  "requiredViews": ["systems-cutaway", "systems-isometric", "systems-plan", "crew-cell-profile", "actuator-layout"],
+  "forbiddenExteriorChanges": ["armoured-hull-shell", "canopy-forward-visor", "canopy-cockpit-cell", "canopy-aft-armour-transition", "dorsal-armour-hump", "outer-armour-belt-left", "outer-armour-belt-right"]
+}

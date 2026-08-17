@@ -197,7 +197,16 @@ export function liftHoldVerdict(
   const liftToWeight = weight > EPSILON ? (available * capacity) / weight : 0;
   const live = points.filter((entry) => entry.available > EPSILON);
   return {
-    holdsWeight: liftToWeight >= 1,
+    // РАВЕНСТВО СРАВНИВАЕТСЯ С ДОПУСКОМ, А НЕ СТРОГО.
+    //
+    // Скорость сваливания у самолёта — не наблюдение, а ТОЖДЕСТВО: плотность
+    // среды решается из условия «на этой скорости крыло этой площади держит
+    // этот вес» (`DC3_AIR_DENSITY`). Значит на самой границе отношение равно
+    // единице ТОЧНО, и строгое `>= 1` проверяет не физику, а порядок
+    // умножений: 0.9999999999999999 объявляет машину сваленной на её
+    // собственной паспортной скорости. Один разряд массы — и разбег вырастает
+    // до 148 м, а посадка становится ударом.
+    holdsWeight: liftToWeight >= 1 - 1e-9,
     holdsAttitude: isInsideConvexHull(
       [centreOfMass[0], centreOfMass[2]],
       live.map((entry) => [entry.point[0], entry.point[2]] as Point2),

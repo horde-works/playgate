@@ -1,11 +1,11 @@
 {
+  "schema": "reference-registration.v1",
   "asset": "../reference/approved-concept.png",
   "sha256": "c6df5e71156e586d9242d9449cfca20248bf92e3e3d8382fe08f2f497391d087",
-  "frozenPixelFrame": [1600, 983],
-  "crop": [0, 0, 1600, 983],
-  "projection": "single unknown perspective",
-  "cameraStatus": "not solved; b01 camera is a character-match hypothesis",
-  "requiredMasks": ["source-silhouette-mask.png", "source-subsystem-mask.png"],
-  "requiredLandmarks": ["nose", "rear", "left-belt", "right-belt", "six-rotor-centres", "two-engine-centres"],
-  "measurementAuthority": "none beyond visible proportions"
+  "frozenPixelFrame": [1600,983],
+  "crop": [0,0,1600,983],
+  "projection": "perspective",
+  "matchedCameraId": "reference-match",
+  "cameraStatus": "frozen by owner-approved B11 character match",
+  "measurementAuthority": "visible proportions only; hidden structure and metric scale remain authored hypotheses"
 }

@@ -1,0 +1,164 @@
+{
+  "modelId": "tilt-hexacopter-b11",
+  "revision": "tilt-hex-e02-systems-2026-08-16",
+  "modelHash": "e84cf96cf8e8",
+  "generatedAt": "2026-08-16T13:24:46.096Z",
+  "views": [
+    {
+      "id": "front",
+      "label": "Front orthographic — belts, chamfers and rotor bays",
+      "projection": "orthographic",
+      "file": "front.png"
+    },
+    {
+      "id": "rear",
+      "label": "Rear orthographic — engine pair and belt section",
+      "projection": "orthographic",
+      "file": "rear.png"
+    },
+    {
+      "id": "left",
+      "label": "Left orthographic — hull crown and three stations",
+      "projection": "orthographic",
+      "file": "left.png"
+    },
+    {
+      "id": "right",
+      "label": "Right orthographic — engine and belt depth",
+      "projection": "orthographic",
+      "file": "right.png"
+    },
+    {
+      "id": "top",
+      "label": "Top orthographic — longitudinal fighter silhouette",
+      "projection": "orthographic",
+      "file": "top.png"
+    },
+    {
+      "id": "front-three-quarter",
+      "label": "Front three-quarter — complete static state",
+      "projection": "perspective",
+      "file": "front-three-quarter.png"
+    },
+    {
+      "id": "rear-three-quarter",
+      "label": "Rear three-quarter — belt sockets and upper engines",
+      "projection": "perspective",
+      "file": "rear-three-quarter.png"
+    },
+    {
+      "id": "high-three-quarter",
+      "label": "High three-quarter — frame and rotor layout",
+      "projection": "perspective",
+      "file": "high-three-quarter.png"
+    },
+    {
+      "id": "reference-match",
+      "label": "Reference-character camera — massing only",
+      "projection": "perspective",
+      "file": "reference-match.png"
+    },
+    {
+      "id": "belt-load-path",
+      "label": "Detail — body root, continuous spar and belt socket",
+      "projection": "perspective",
+      "file": "belt-load-path.png"
+    },
+    {
+      "id": "hinge-detail",
+      "label": "Detail — eccentric pin outside the duct",
+      "projection": "perspective",
+      "file": "hinge-detail.png"
+    },
+    {
+      "id": "independent-tilt",
+      "label": "Articulation — six independent phases",
+      "projection": "perspective",
+      "file": "independent-tilt.png"
+    },
+    {
+      "id": "side-hover",
+      "label": "Articulation — all ducts near lateral-thrust state",
+      "projection": "perspective",
+      "file": "side-hover.png"
+    },
+    {
+      "id": "structural-exterior",
+      "label": "Structural pair — complete exterior",
+      "projection": "perspective",
+      "file": "structural-exterior.png"
+    },
+    {
+      "id": "structural-cutaway",
+      "label": "Structural pair — shell, canopy and dorsal armour hidden",
+      "projection": "perspective",
+      "file": "structural-cutaway.png"
+    },
+    {
+      "id": "primary-core-isometric",
+      "label": "Primary core — isolated spatial cage",
+      "projection": "perspective",
+      "file": "primary-core-isometric.png"
+    },
+    {
+      "id": "primary-core-load-path",
+      "label": "Primary core — three paired sloped support frames and fixed belts",
+      "projection": "perspective",
+      "file": "primary-core-load-path.png"
+    },
+    {
+      "id": "dorsal-profile",
+      "label": "Central profile — continuous nose-canopy-ridge line",
+      "projection": "orthographic",
+      "file": "dorsal-profile.png"
+    },
+    {
+      "id": "central-body-three-quarter",
+      "label": "Central body — low integrated glazing over retained B10 shell",
+      "projection": "perspective",
+      "file": "central-body-three-quarter.png"
+    },
+    {
+      "id": "engine-tail-profile",
+      "label": "Engine-tail profile — buried nacelles and restrained crown",
+      "projection": "orthographic",
+      "file": "engine-tail-profile.png"
+    },
+    {
+      "id": "silhouette",
+      "label": "Silhouette control — plan",
+      "projection": "orthographic",
+      "file": "silhouette.png"
+    },
+    {
+      "id": "systems-cutaway",
+      "label": "E02 systems — complete internal architecture in cutaway",
+      "projection": "perspective",
+      "file": "systems-cutaway.png"
+    },
+    {
+      "id": "systems-isometric",
+      "label": "E02 systems — isolated core, crew, power and cooling",
+      "projection": "perspective",
+      "file": "systems-isometric.png"
+    },
+    {
+      "id": "systems-plan",
+      "label": "E02 systems — power and cooling distribution plan",
+      "projection": "orthographic",
+      "file": "systems-plan.png"
+    },
+    {
+      "id": "crew-cell-profile",
+      "label": "E02 systems — tandem crew cell and forward avionics",
+      "projection": "orthographic",
+      "file": "crew-cell-profile.png"
+    },
+    {
+      "id": "actuator-layout",
+      "label": "E02 systems — six local hinge actuators",
+      "projection": "perspective",
+      "file": "actuator-layout.png"
+    }
+  ]
+}

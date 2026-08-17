@@ -1241,8 +1241,23 @@ export function airplaneAllocate(input: AirplaneControlInput): AirplaneSurfaceCo
   // которая снимает наклон до нуля у посадочной высоты центра масс. Второе
   // выравнивание по просвету стойки поднимало фактическую траекторию над этой
   // кривой и переводило снижение в набор ещё до физического касания.
+  // НА ПРОБЕГЕ ПОЗА — ТРЁХТОЧЕЧНАЯ, А НЕ РАЗБЕЖНАЯ.
+  //
+  // `groundPitchTarget` написана для РАЗБЕГА: «нос поднимается по мере
+  // разгона», и цель считается от скорости. На пробеге последовательность
+  // скоростей обратная, и та же функция на посадочных 34 м/с требовала 3.5°
+  // вместо трёхточечных 10.6°. Для машины с хвостовым колесом это команда
+  // «держи хвост вверху» — то есть ровно поза капота через нос: автомат гнал
+  // нос вниз, тангаж проходил ноль и уходил в минус, а тормоза при этом были
+  // в нуле, и потому в них дело и не было.
+  //
+  // На пробеге лётчик делает обратное: держит хвост и ждёт, пока тот сядет.
+  // Расписание подъёма носа по скорости принадлежит РАЗБЕГУ и только ему.
+  const takingOff = stage === "departure";
   const targetPitch = onGround
-    ? groundPitchTarget(passport, air.airspeed)
+    ? takingOff
+      ? groundPitchTarget(passport, air.airspeed)
+      : passport.groundPitch
     : flightPitchTarget(passport, guidance, air, weight, flap);
   const elevator = clamp(
     airplaneTrimElevator(passport, air, weight, flap) +
@@ -1352,7 +1367,7 @@ export function airplaneAllocate(input: AirplaneControlInput): AirplaneSurfaceCo
           groundPivoting
           ? 0
           : rollout
-          ? passport.brakeCeiling
+          ? rolloutBrake(passport, air)
           : profiledTaxi
             ? taxiDemand < 0.05 && air.groundSpeed < 0.08
               ? passport.brakeCeiling
@@ -2191,7 +2206,15 @@ export function airplaneFlightStep(input: {
     lift: aero.lift,
     drag: aero.drag,
     thrust: aero.thrust,
-    targetPitch: airplaneTargetPitch(passport, guidance, air, weight, flap, input.onGround ?? false),
+    targetPitch: airplaneTargetPitch(
+      passport,
+      guidance,
+      air,
+      weight,
+      flap,
+      input.onGround ?? false,
+      (input.journey ?? "cruise") === "departure",
+    ),
     // Отчёт обязан показывать ТО ЖЕ, что исполняется: потолок крена входит в
     // заданное значение, а не остаётся внутренней поправкой.
     targetBank: (input.onGround ?? false)
@@ -2213,6 +2236,15 @@ export function airplaneFlightStep(input: {
   };
 }
 
+/**
+ * ОДИН ЗАКОН НА ИСПОЛНЕНИЕ И НА ПОКАЗ.
+ *
+ * Здесь стоял свой `onGround ? groundPitchTarget(...)`, а руль вёлся другой
+ * веткой — и после того как разбежное расписание ограничили стадией взлёта,
+ * телеметрия продолжала показывать старую цель. Расходящаяся пара «что
+ * исполняется» и «что показано» страшнее любой из них по отдельности: именно
+ * она увела мою пробу по ложному следу.
+ */
 function airplaneTargetPitch(
   passport: AirplanePassport,
   guidance: VehicleGuidanceDemand,
@@ -2220,9 +2252,12 @@ function airplaneTargetPitch(
   weight: number,
   flap: number,
   onGround: boolean,
+  takingOff: boolean,
 ): number {
   if (onGround) {
-    return groundPitchTarget(passport, air.airspeed);
+    return takingOff
+      ? groundPitchTarget(passport, air.airspeed)
+      : passport.groundPitch;
   }
   return flightPitchTarget(passport, guidance, air, weight, flap);
 }
@@ -2239,6 +2274,42 @@ export const INTACT_AIRPLANE_AVAILABILITY: AirplaneAvailability = {
 // ---------------------------------------------------------------------------
 // Мелочь
 // ---------------------------------------------------------------------------
+
+/**
+ * ТОРМОЗ НА ПРОБЕГЕ: НЕ РАНЬШЕ, ЧЕМ СЯДЕТ ХВОСТ.
+ *
+ * Здесь стоял `passport.brakeCeiling` — полный потолок в тот же кадр, когда
+ * коснулись основные колёса. У машины с хвостовым колесом это и есть способ
+ * встать на нос: пока хвост в воздухе, вся тормозная сила даёт момент вокруг
+ * оси главных колёс, и удерживать её нечем — вес приложен ВЫШЕ и ПОЗАДИ.
+ * Лётчик в этот момент не тормозит вообще: он держит хвост, ждёт, пока тот
+ * сядет сам, и только потом дожимает.
+ *
+ * Раньше это сходило с рук: тяжёлая машина медленнее набирала угловую
+ * скорость, и потолок успевал отработать до опрокидывания. После того как из
+ * набора убрали лишние тонны, запас исчез.
+ *
+ * Две доли, обе непрерывные — ступенька в тормозе читается рывком:
+ *
+ *  - `tailShare` — сел ли хвост. Считается по тангажу против трёхточечной
+ *    стоянки: на пробеге с поднятым хвостом тангаж заметно меньше;
+ *  - `settleShare` — насколько ушла скорость. Сразу после касания крыло ещё
+ *    несёт, колёса нагружены слабо, и полный тормоз там не только опасен, но
+ *    и бесполезен.
+ */
+function rolloutBrake(
+  passport: Pick<AirplanePassport, "brakeCeiling" | "groundPitch" | "stallSpeed">,
+  air: Pick<AirplaneAirState, "pitch" | "groundSpeed">,
+): number {
+  const threePoint = Math.max(1e-3, passport.groundPitch);
+  const tailShare = clamp01(
+    (air.pitch - threePoint * 0.55) / (threePoint * 0.35),
+  );
+  const settleShare = clamp01(
+    1 - air.groundSpeed / Math.max(1, passport.stallSpeed),
+  );
+  return passport.brakeCeiling * tailShare * (0.25 + 0.75 * settleShare);
+}
 
 function clamp01(value: number): number {
   return value <= 0 ? 0 : value >= 1 ? 1 : value;

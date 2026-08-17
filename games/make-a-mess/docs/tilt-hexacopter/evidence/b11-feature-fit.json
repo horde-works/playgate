@@ -1,0 +1,71 @@
+{
+  "schema": "feature-fit-report.v1",
+  "pass": true,
+  "checks": [
+    {
+      "id": "nose-tip",
+      "actual": [
+        0,
+        0.5,
+        5.35
+      ],
+      "pass": true
+    },
+    {
+      "id": "tail-boom-tip",
+      "actual": [
+        0,
+        1.26,
+        -5.65
+      ],
+      "pass": true
+    },
+    {
+      "id": "canopy-ridge",
+      "actual": [
+        0,
+        2.18,
+        -0.78
+      ],
+      "pass": true
+    },
+    {
+      "id": "left-belt",
+      "actual": [
+        -4.295,
+        1.4,
+        -3.7
+      ],
+      "pass": true
+    },
+    {
+      "id": "right-belt",
+      "actual": [
+        4.295,
+        1.4,
+        -3.7
+      ],
+      "pass": true
+    },
+    {
+      "id": "six-rotor-centres",
+      "actual": 6,
+      "pass": true
+    },
+    {
+      "id": "two-engine-centres",
+      "actual": 2,
+      "pass": true
+    },
+    {
+      "id": "nose-canopy-ridge",
+      "actual": "monotonic B11 dorsal station sequence",
+      "pass": true
+    },
+    {
+      "id": "armour-belt-sweep",
+      "actual": "sharp forward extension and reinforced rear termination",
+      "pass": true
+    }
+  ]
+}

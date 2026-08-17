@@ -75,7 +75,9 @@ export const TILT_HEX_ROTOR_Y = 1.18;
 export const TILT_HEX_ROTOR_Z = [2.5, 0, -2.5] as const;
 export const TILT_HEX_BELT_BEAM_Z = [1.25, -1.25, -3.72] as const;
 export const TILT_HEX_HINGE_RANGE = [-8, 92] as const;
-export const TILT_HEX_PART_BUDGET = 180;
+export const TILT_HEX_PART_BUDGET = 220;
+export const TILT_HEX_CREW_STATIONS_Z = [2.95, 1.95] as const;
+export const TILT_HEX_ENERGY_MODULE_Z = [0.3, -0.8, -1.9] as const;
 
 type BodySection = {
   readonly z: number;
@@ -490,6 +492,68 @@ for (const side of [-1, 1]) {
 }
 
 // ---------------------------------------------------------------------------
+// E02 internal systems architecture. These components are authored packaging
+// hypotheses inside the accepted B11 shell and separate primary cage. They do
+// not own or alter any approved exterior contour.
+// ---------------------------------------------------------------------------
+
+const crewCapsuleSections = [
+  { z: 3.75, half: 0.34, bottom: 0.72, shoulder: 1.25, crown: 1.43 },
+  { z: 3.15, half: 0.5, bottom: 0.67, shoulder: 1.34, crown: 1.52 },
+  { z: 1.55, half: 0.5, bottom: 0.67, shoulder: 1.36, crown: 1.55 },
+  { z: 1.05, half: 0.38, bottom: 0.72, shoulder: 1.3, crown: 1.43 },
+] as const;
+addFacets("crew-survival-capsule", "crew-armour", "paint-light", buildLoft(
+  crewCapsuleSections.map((section) => [
+    point(section.half, section.bottom, section.z),
+    point(section.half, section.shoulder, section.z),
+    point(0, section.crown, section.z),
+    point(-section.half, section.shoulder, section.z),
+    point(-section.half, section.bottom, section.z),
+  ]),
+  { tag: "crew-survival-capsule", capStart: true, capEnd: true },
+));
+addBox("crew-cell-floor", "crew-cell", "metal", point(0, 0.74, 2.4), point(0.86, 0.08, 2.45));
+for (const [index, z] of TILT_HEX_CREW_STATIONS_Z.entries()) {
+  addBox(`crew-seat-${index}`, "crew-cell", "roof-dark", point(0, 0.98, z), point(0.5, 0.55, 0.58), point(-0.18, 0, 0));
+  addBox(`crew-console-${index}`, "crew-cell", "glazing", point(0, 1.16, z + 0.38), point(0.58, 0.22, 0.24), point(-0.12, 0, 0));
+}
+
+addBox("avionics-flight-control", "avionics", "paint-accent", point(0, 0.87, 4.12), point(0.68, 0.48, 0.72));
+addBox("avionics-navigation", "avionics", "paint-light", point(-0.42, 1.08, 3.72), point(0.22, 0.32, 0.38));
+addBox("avionics-mission", "avionics", "paint-light", point(0.42, 1.08, 3.72), point(0.22, 0.32, 0.38));
+
+for (const [row, z] of TILT_HEX_ENERGY_MODULE_Z.entries()) {
+  for (const side of [-1, 1]) {
+    addBox(`energy-module-${row}-${side}`, "energy-storage", "paint-accent",
+      point(side * 0.27, 0.94, z), point(0.42, 0.42, 0.78));
+  }
+}
+addBox("power-distribution-forward", "power-distribution", "metal", point(0, 1.18, 0.82), point(0.74, 0.22, 0.36));
+addBox("power-distribution-aft", "power-distribution", "metal", point(0, 1.18, -2.68), point(0.7, 0.22, 0.42));
+for (const side of [-1, 1]) {
+  addCylinder(`high-voltage-bus-${side}`, "power-distribution", "paint-accent",
+    point(side * 0.48, 1.28, 3.35), point(side * 0.38, 1.32, -3.25), 0.035, 12);
+  addCylinder(`coolant-supply-${side}`, "cooling-system", "water-reserve",
+    point(side * 0.55, 1.08, 3.2), point(side * 0.42, 1.1, -3.25), 0.045, 12);
+  addCylinder(`coolant-return-${side}`, "cooling-system", "water-reserve",
+    point(side * 0.55, 0.86, 3.2), point(side * 0.42, 0.9, -3.25), 0.045, 12);
+  addBox(`heat-exchanger-${side}`, "cooling-system", "paint-light",
+    point(side * 0.48, 1.15, -3.46), point(0.32, 0.52, 0.5));
+  addCylinder(`coolant-pump-${side}`, "cooling-system", "metal",
+    point(side * 0.48, 0.9, -2.98), point(side * 0.48, 1.18, -2.98), 0.11, 16);
+}
+
+for (const station of TILT_HEX_ROTOR_STATIONS) {
+  const actuatorX = station.side * 0.98;
+  addCylinder(`tilt-actuator-${station.id}`, "ring-actuators", "paint-accent",
+    point(actuatorX, station.pivot[1], station.pivot[2] - 0.2),
+    point(actuatorX, station.pivot[1], station.pivot[2] + 0.2), 0.14, 18);
+  addBox(`tilt-controller-${station.id}`, "ring-actuators", "paint-light",
+    point(station.side * 0.76, station.pivot[1] + 0.26, station.pivot[2]), point(0.24, 0.22, 0.3));
+}
+
+// ---------------------------------------------------------------------------
 // Canonical model, views and same-geometry articulation studies.
 // ---------------------------------------------------------------------------
 
@@ -520,11 +584,25 @@ const engineTailProfileHiddenGroups = [
   "armour-belt-left", "armour-belt-right", "belt-spars", "belt-sockets",
   "hinge-carriers", ...liftGroups,
 ];
+const systemsIsolationHiddenGroups = [
+  "hull-shell", "canopy", "dorsal-hump", "engine-armour", "longitudinal-engines",
+  "hinge-carriers", "belt-spars", "belt-sockets", "armour-belt-left", "armour-belt-right",
+  "ring-actuators", ...liftGroups,
+];
+const systemsCutawayHiddenGroups = ["hull-shell", "canopy", "dorsal-hump", "engine-armour"];
+const systemsPlanHiddenGroups = [
+  "hull-shell", "canopy", "dorsal-hump", "engine-armour", "armour-belt-left", "armour-belt-right",
+];
+const crewProfileHiddenGroups = [
+  "hull-shell", "canopy", "dorsal-hump", "crew-armour", "engine-armour", "longitudinal-engines",
+  "armour-belt-left", "armour-belt-right", "belt-spars", "belt-sockets", "hinge-carriers",
+  "primary-core", "energy-storage", "power-distribution", "cooling-system", "ring-actuators", ...liftGroups,
+];
 
 export const tiltHexacopterObject: TiltHexacopterModel = {
   id: "tilt-hexacopter-b11",
-  revision: "tilt-hex-b11-contour-2026-08-16",
-  title: "Tilt hexacopter — integrated nose-canopy-ridge flow study B11",
+  revision: "tilt-hex-e02-systems-2026-08-16",
+  title: "Tilt hexacopter — B11 exterior with E02 internal systems architecture",
   units: "metres",
   coordinates: { up: "+Y", front: "+Z", origin: "ground-centre" },
   sourceNotes: [
@@ -536,7 +614,8 @@ export const tiltHexacopterObject: TiltHexacopterModel = {
     "The armour belts are intentionally asymmetric: a sharp front run grows into a taller, thicker rear impact and support structure.",
     "A half-segment front extension protects the forward rotor diagonal; stepped glazing hands its roof line to a broad upper shark ridge that separates and only moderately crowns the two partially buried axial engines.",
     "Each complete lift duct is a separate kinematic group on a longitudinal axis tangent to its inner rim; no pivot crosses a fan hub.",
-    "This is a shape-and-system blockout for owner approval. Surface detail, weapons, landing gear, physics and world placement are excluded.",
+    "E02 adds a tandem crew capsule, avionics, six removable energy modules, paired high-voltage and coolant trunks, heat exchangers, pumps and six local ring actuators without changing the accepted B11 exterior.",
+    "This is a design-development packaging study. Loads, propulsion sizing, weapons, landing gear, physics and world placement are excluded.",
   ],
   dimensions: {
     authoredRotorDiameter: TILT_HEX_ROTOR_OUTER_RADIUS * 2,
@@ -547,11 +626,15 @@ export const tiltHexacopterObject: TiltHexacopterModel = {
     armourHalfSparCount: 6,
     hingeMinimumDegrees: TILT_HEX_HINGE_RANGE[0],
     hingeMaximumDegrees: TILT_HEX_HINGE_RANGE[1],
+    crewStationCount: TILT_HEX_CREW_STATIONS_Z.length,
+    energyModuleCount: TILT_HEX_ENERGY_MODULE_Z.length * 2,
+    ringActuatorCount: TILT_HEX_ROTOR_STATIONS.length,
   },
   labMetrics: [
     { label: "LIFT DUCTS", value: 6, decimals: 0, unit: "" },
     { label: "UPPER ENGINES", value: 2, decimals: 0, unit: "" },
     { label: "SUPPORT FRAMES", value: 3, decimals: 0, unit: "" },
+    { label: "ENERGY MODULES", value: 6, decimals: 0, unit: "" },
     { label: "ROTOR DIA", value: TILT_HEX_ROTOR_OUTER_RADIUS * 2, decimals: 2 },
     { label: "PARTS", value: parts.length, decimals: 0, unit: "" },
   ],
@@ -607,6 +690,11 @@ export const tiltHexacopterObject: TiltHexacopterModel = {
     { id: "central-body-three-quarter", label: "Central body — low integrated glazing over retained B10 shell", projection: "perspective", position: point(-4.8, 3.6, 7.5), target: point(0, 1.14, 0.5), fov: 30, hiddenGroups: dorsalProfileHiddenGroups },
     { id: "engine-tail-profile", label: "Engine-tail profile — buried nacelles and restrained crown", projection: "orthographic", position: point(-15, 1.6, 0), target: point(0, 1.35, 0), orthoHeight: 7.2, hiddenGroups: engineTailProfileHiddenGroups },
     { id: "silhouette", label: "Silhouette control — plan", projection: "orthographic", position: point(0, 16, 0), target: point(0, 1.05, 0), up: point(0, 0, 1), orthoHeight: 10.2 },
+    { id: "systems-cutaway", label: "E02 systems — complete internal architecture in cutaway", projection: "perspective", position: point(-6.4, 6.5, 8.2), target: point(0, 1.05, 0), fov: 30, hiddenGroups: systemsCutawayHiddenGroups },
+    { id: "systems-isometric", label: "E02 systems — isolated core, crew, power and cooling", projection: "perspective", position: point(-5.4, 4.8, 6.8), target: point(0, 1.0, 0), fov: 29, hiddenGroups: systemsIsolationHiddenGroups },
+    { id: "systems-plan", label: "E02 systems — power and cooling distribution plan", projection: "orthographic", position: point(0, 15, 0), target: point(0, 1.0, 0), up: point(0, 0, 1), orthoHeight: 8.1, hiddenGroups: systemsPlanHiddenGroups },
+    { id: "crew-cell-profile", label: "E02 systems — tandem crew cell and forward avionics", projection: "orthographic", position: point(-14, 1.5, 2.2), target: point(0, 1.1, 2.2), orthoHeight: 3.8, hiddenGroups: crewProfileHiddenGroups },
+    { id: "actuator-layout", label: "E02 systems — six local hinge actuators", projection: "perspective", position: point(-5.8, 6.4, 8.6), target: point(0, 1.15, 0), fov: 29, hiddenGroups: ["hull-shell", "canopy", "dorsal-hump", "engine-armour", "longitudinal-engines", "armour-belt-left", "armour-belt-right"] },
   ],
 };
 

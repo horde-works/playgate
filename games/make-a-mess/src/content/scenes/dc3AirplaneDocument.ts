@@ -7,7 +7,11 @@
  */
 
 import { Euler, Quaternion, Vector3 } from "three";
-import { dc3BlockoutObject } from "../objects/aircraft/dc3BlockoutObject.ts";
+import {
+  DC3_LANDING_LIGHT_LEVELS,
+  dc3BlockoutObject,
+} from "../objects/aircraft/dc3BlockoutObject.ts";
+import { dc3AirframeParts } from "../objects/aircraft/dc3AirframeParts.ts";
 import type {
   ObjectLabPart,
   ObjectPoint,
@@ -42,6 +46,59 @@ const point = (value: ObjectPoint): SceneVector3 => [value[0], value[1], value[2
 function materialFor(part: ObjectLabPart): MaterialBinding {
   if (part.group === "gear" && /wheel$/.test(part.id)) {
     return { material: "wood", shape: "panel", color: "#2a2c2d", shellThickness: 0.04 };
+  }
+  // САЛОН. Пол и кресла — не обшивка планера: клёпаный алюминий на них
+  // читался бы жестью. Кольца салона остаются сталью, но красятся цветом
+  // интерьера, потому что пока это и есть видимый интерьер.
+  // ОСТЕКЛЕНИЕ ИЛЛЮМИНАТОРА — НАСТОЯЩЕЕ СТЕКЛО В НАСТОЯЩЕМ ПРОЁМЕ.
+  //
+  // Проём вырезан в обшивке полосами вокруг него, а не нарисован: стекло
+  // стоит В дырке, утопленное на толщину обшивки, и сквозь него видно салон.
+  // ТОН СТЕКЛА — НЕ НЕБЕСНЫЙ.
+  //
+  // На снимках этого типа иллюминаторы читаются почти чёрными с лёгким
+  // нейтрально-зеленоватым отливом. Это не цвет самого стекла: так работает
+  // тёмный салон за ним плюс косые блики снаружи. Небесно-голубой оттенок,
+  // стоявший здесь сначала, делал борт похожим на автобус.
+  if (part.group === "window-glazing") {
+    return { material: "glass", shape: "glassPane", color: "#2f3634", shellThickness: 0.01 };
+  }
+  // Обвязка — голый дюраль, лишь на тон темнее обшивки. На фотографиях рамы
+  // почти не выделяются: они не крашены и не анодированы в чёрный.
+  if (part.group === "window-frame") {
+    // Обвязка тоже клёпаная: это тот же дюраль, только на тон темнее.
+    return {
+      material: "aluminium",
+      shape: "steelSheet",
+      color: "#8a8e8c",
+      shellThickness: 0.012,
+      textureProfile: "alclad-riveted",
+    };
+  }
+  // БАКИ ЦЕНТРОПЛАНА — ТОПЛИВО, А НЕ СТАЛЬ.
+  //
+  // Пока они считались сталью (плотность 3.6), два бака весили 11 единиц —
+  // четверть машины, и разбег вырос до 182 м. Бак это тонкая алюминиевая
+  // ёмкость с керосином; средняя плотность ближе к дереву, чем к прокату.
+  if (part.group === "centre-tanks") {
+    return { material: "wood", shape: "panel", color: "#6c6f63", shellThickness: 0.02 };
+  }
+  if (part.group === "cabin-floor") {
+    return { material: "wood", shape: "panel", color: "#4a4038", shellThickness: 0.05 };
+  }
+  if (part.group === "cabin-seats") {
+    return { material: "cloth", shape: "panel", color: "#4d5a63", shellThickness: 0.06 };
+  }
+  if (part.group === "cabin-trim") {
+    return { material: "cloth", shape: "panel", color: "#7a6f5d", shellThickness: 0.02 };
+  }
+  // Крепёж стойки — узлы навески, барабаны и диски. Цветом отделены от самой
+  // стойки нарочно: на машине это литьё и обработанный металл, а не труба.
+  if (part.group === "gear-fittings") {
+    return { material: "steel", shape: "panel", color: "#7d6a4f", shellThickness: 0.05 };
+  }
+  if (part.group === "cabin-frame") {
+    return { material: "steel", shape: "panel", color: "#8d9a8e", shellThickness: 0.04 };
   }
   if (part.group.startsWith("structure-")) {
     return { material: "steel", shape: "panel", color: "#5c6164", shellThickness: 0.04 };
@@ -146,6 +203,29 @@ function primitive(
             ? 0.55
             : 0.4,
     maximumVerticalGap: gear ? 0.16 : 0.12,
+    // СВЕТ КУСКА ДОХОДИТ ДО СЦЕНЫ.
+    //
+    // Поле `light` у куска объекта было, а проводки не было: документ его не
+    // проносил вовсе, поэтому ни фары, ни АНО, ни плафоны салона физически не
+    // могли зажечься. `followsGroup` обязателен — машина летает, и источник
+    // должен ехать с ней, а не остаться висеть над полосой.
+    light: part.light
+      ? {
+          followsGroup: true,
+          ...part.light,
+          // Посадочная фара привязана к СТАДИИ РЕЙСА, а не к времени суток:
+          // она зажигается на взлёте и заходе и гаснет на стоянке. Кластер
+          // знает только размещение, поэтому связка живёт здесь.
+          ...(part.id.startsWith("landing-light-")
+            ? {
+                eventLighting: {
+                  sourceClusterId: placement.clusterId,
+                  levels: DC3_LANDING_LIGHT_LEVELS,
+                },
+              }
+            : {}),
+        }
+      : undefined,
     actuator: dc3ActuatorFor(part),
     // No scene `hinge`: that field is door physics (vertical swing, player
     // shove). Surfaces stay ordinary members; the automaton owns the angle.
@@ -188,7 +268,7 @@ function meshObject(
     },
     plateThickness: part.plateThickness,
     voxelization: { mode: "shell", thickness: binding.shellThickness, voxelSize: 0.11 },
-    volume: Math.max(0.0002, area * binding.shellThickness),
+    volume: part.volume ?? Math.max(0.0002, area * binding.shellThickness),
   });
 }
 
@@ -253,6 +333,6 @@ export function createDc3AirplaneGroup(
     label,
     material: "aluminium",
     supportMode: "linked",
-    objects: dc3BlockoutObject.parts.map((part) => canonicalPart(placement, part)),
+    objects: dc3AirframeParts().map((part) => canonicalPart(placement, part)),
   };
 }

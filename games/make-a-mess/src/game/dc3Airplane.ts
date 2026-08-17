@@ -24,7 +24,12 @@ import type {
   VehicleSupportStrutDefinition,
 } from "./vehicleFrames.ts";
 import { massProperties, type MassProperties } from "./clusterDynamics.ts";
-import { STRUT_DEFAULT_GRIP, WHEEL_STEER_RANGE } from "./supportStrut.ts";
+import {
+  STRUT_DEFAULT_GRIP,
+  WHEEL_STEER_RANGE,
+  type StrutRetraction,
+} from "./supportStrut.ts";
+import { dc3AirframeParts } from "../content/objects/aircraft/dc3AirframeParts.ts";
 import { dc3BlockoutObject } from "../content/objects/aircraft/dc3BlockoutObject.ts";
 import type { ObjectLabPart } from "../content/objects/dutchWindmills/objectModel.ts";
 import {
@@ -53,8 +58,6 @@ export interface Dc3AirplanePlacement {
 export const DC3_ENGINE_HALF_SPAN = 5.79;
 export const DC3_WING_PANEL_COUNT = 4;
 
-const STALL_SPEED = 31;
-const STALL_SPEED_FLAPS = 27;
 const CL_MAX = 1.48;
 
 export const DC3_WING_PANELS = [
@@ -83,6 +86,28 @@ export const DC3_ACTUATOR_PIECES: readonly {
 
 export const DC3_ACTUATOR_TAGS: readonly CommandActuatorTag[] =
   DC3_ACTUATOR_PIECES.map((piece) => piece.actuator);
+
+/**
+ * Куски, которых нет во внешнем обводе компаунда.
+ *
+ * Сопоставление — `id.includes`, как у остальных машин. `fuselage:` (панели
+ * обшивки) сюда не входит: двоеточие и дефис в `fuselage-frame-` нарочно
+ * разные. `wing-` целиком нельзя: это сняло бы панели консоли.
+ */
+export const DC3_CONTACT_MEMBER_EXCLUDES = [
+  "gear-",
+  "stringer-",
+  "longeron-",
+  "fuselage-frame-",
+  "cabin-",
+  "centre-tank-",
+  "nose-equipment-",
+  "mount-",
+  "wing-spar-",
+  "wing-former-",
+  "fin-spar-",
+  "stab-spar-",
+] as const;
 
 export const DC3_STAND_CLUSTER_ID = "dc3-stand:vehicle";
 export const DC3_STAND_PLACEMENT: Dc3AirplanePlacement = {
@@ -176,7 +201,15 @@ function meshGeometry(part: Extract<ObjectLabPart, { kind: "mesh" }>): {
     0,
   );
   const thickness = part.group.startsWith("structure-") ? 0.04 : SKIN_THICKNESS;
-  return { center, size, volume: Math.max(0.0002, area * thickness) };
+  // Замкнутая плитка обшивки несёт свой объём сама: «площадь × толщина»
+  // написана для одиночной оболочки и на плитке удваивает его — у неё две
+  // поверхности и кромка вместо одной оболочки. Иначе стенд и мир снова
+  // разойдутся, теперь по массе.
+  return {
+    center,
+    size,
+    volume: part.volume ?? Math.max(0.0002, area * thickness),
+  };
 }
 
 function rodGeometry(part: Extract<ObjectLabPart, { kind: "cylinder" | "beam" }>): {
@@ -231,6 +264,27 @@ function materialFor(part: ObjectLabPart): {
 } {
   if (part.group === "gear" && /wheel$/.test(part.id)) {
     return { material: "wood", shape: "panel", color: "#2a2c2d" };
+  }
+  if (part.group === "window-glazing") {
+    return { material: "glass", shape: "glassPane", color: "#2f3634" };
+  }
+  if (part.group === "window-frame") {
+    return { material: "aluminium", shape: "steelSheet", color: "#8a8e8c" };
+  }
+  if (part.group === "centre-tanks") {
+    return { material: "wood", shape: "panel", color: "#6c6f63" };
+  }
+  if (part.group === "cabin-floor") {
+    return { material: "wood", shape: "panel", color: "#4a4038" };
+  }
+  if (part.group === "cabin-seats" || part.group === "cabin-trim") {
+    return { material: "cloth", shape: "panel", color: "#4d5a63" };
+  }
+  if (part.group === "gear-fittings") {
+    return { material: "steel", shape: "panel", color: "#7d6a4f" };
+  }
+  if (part.group === "cabin-frame") {
+    return { material: "steel", shape: "panel", color: "#8d9a8e" };
   }
   if (part.group.startsWith("structure-")) {
     return { material: "steel", shape: "panel", color: "#5c6164" };
@@ -302,7 +356,9 @@ function loadBearing(part: ObjectLabPart): boolean {
  * Это не сцена мира: кластер стендовый.
  */
 export function compileDc3AirplanePieces(): BreakablePieceDefinition[] {
-  return dc3BlockoutObject.parts.map((part) => {
+  // Состав берётся из общего модуля, а НЕ из блокаута: обшивка подменена
+  // панелями, и стенд обязан летать ту же машину, что грузит карта.
+  return dc3AirframeParts().map((part) => {
     const geometry = partGeometry(part);
     const binding = materialFor(part);
     return {
@@ -377,12 +433,37 @@ export const DC3_STALL_MASS = massProperties(
 export const DC3_STALL_WEIGHT = DC3_STALL_MASS * GRAVITY;
 
 /**
- * Плотность среды, при которой крыло этой площади несёт этот вес на своей
- * скорости сваливания. Единственная неизвестная в тождестве — и потому не
- * подгонка, а решение уравнения.
+ * ВОЗДУХ — СВОЙСТВО МИРА, А НЕ САМОЛЁТА. Тождество развёрнуто (15.08.2026).
+ *
+ * Прежде решалась ПЛОТНОСТЬ: скорость сваливания 31 м/с считалась
+ * паспортной, площадь крыла published, масса приходила из объекта. Пока масса
+ * не менялась, это работало. Но масса — величина модели: как только из набора
+ * убрали сплошные шпангоуты-переборки, которых на машине нет, она честно
+ * упала на треть, а вместе с ней рухнула и плотность среды. Подъёма на
+ * фиксированной скорости отрыва перестало хватать, и разбег вырос со 150 до
+ * 183 м — при том, что машина стала ЛЕГЧЕ.
+ *
+ * Теперь наоборот: плотность закреплена (это то же значение, при котором
+ * машина летала раньше, и менять воздух под каждую правку набора неправильно),
+ * а скорость сваливания ВЫВОДИТСЯ из веса. Физика прямая: тот же воздух,
+ * то же крыло, машина легче — сваливается медленнее.
  */
-export const DC3_AIR_DENSITY =
-  (2 * DC3_STALL_WEIGHT) / (STALL_SPEED * STALL_SPEED * DC3_WING_AREA * CL_MAX);
+export const DC3_AIR_DENSITY = 0.00589;
+
+/**
+ * ЭКСПЛУАТАЦИОННАЯ скорость сваливания — паспортная, а не расчётная.
+ *
+ * Выводить её из веса пробовали: при массе 26.3 получается 25.4 м/с, и
+ * машина по такому расписанию разбегается ХУЖЕ (203 м), потому что весь
+ * автомат — стадии, закрылки, набор — построен вокруг паспортных чисел.
+ *
+ * И это не подгонка: на настоящей машине табличная скорость сваливания
+ * объявляется для МАКСИМАЛЬНОГО веса. Пустой самолёт сваливается медленнее,
+ * а лётчик всё равно летает по табличке. Наши 31 и 27 — та же табличка;
+ * фактический запас у лёгкой машины просто больше.
+ */
+const STALL_SPEED = 31;
+const STALL_SPEED_FLAPS = 27;
 
 const DC3_MASS_PROPERTIES = dc3AirplaneStandMass();
 
@@ -738,9 +819,27 @@ const DC3_MAIN_WHEEL_AHEAD =
   dc3BlockoutObject.anchors.leftMainWheel[2] - DC3_MASS_PROPERTIES.centre[2];
 const DC3_CENTRE_HEIGHT =
   DC3_MASS_PROPERTIES.centre[1] - dc3BlockoutObject.anchors.leftMainWheel[1];
+/**
+ * ЗАПАС ДО ОПРОКИДЫВАНИЯ, а не сам порог.
+ *
+ * Опрокидывание начинается, когда момент тормозной силы вокруг оси главных
+ * колёс перебарывает момент веса: при доле тормоза `b > Δx/h`. У этой машины
+ * Δx = 1.05 м, h = 2.59 м, то есть порог 0.406.
+ *
+ * Прежняя формула делила на сцепление и выдавала 0.451 — ВЫШЕ порога. Автомат
+ * получал право тормозить ровно на грани, и садящаяся машина вставала на нос
+ * от любого переходного процесса на касании: обжатие стойки на миг повышает
+ * нормальную нагрузку, и грань переходится. Раньше это не вылезало только
+ * потому, что посадка не доезжала до пробега вовсе.
+ *
+ * Поэтому потолок берётся ДОЛЕЙ от порога. 0.7 — обычный инженерный запас на
+ * переходный процесс, и он оставляет тормоз сильным: 0.28 веса это пробег
+ * заметно короче полосы.
+ */
+const DC3_TIP_OVER_MARGIN = 0.7;
 const DC3_BRAKE_CEILING = Math.max(
   0.1,
-  Math.min(1, DC3_MAIN_WHEEL_AHEAD / (STRUT_DEFAULT_GRIP * DC3_CENTRE_HEIGHT)),
+  Math.min(1, DC3_TIP_OVER_MARGIN * (DC3_MAIN_WHEEL_AHEAD / DC3_CENTRE_HEIGHT)),
 );
 
 /**
@@ -872,6 +971,12 @@ function strutFor(options: {
   readonly brakeShare: number;
   readonly steerShare: number;
   readonly side: -1 | 0 | 1;
+  readonly travelling: readonly string[];
+  readonly halfTravelling?: readonly string[];
+  readonly retraction?: {
+    readonly retraction: StrutRetraction;
+    readonly foldingMembers: readonly string[];
+  };
   readonly placement: Dc3AirplanePlacement;
 }): VehicleSupportStrutDefinition {
   const leg = gearPart(options.strutPart);
@@ -902,7 +1007,26 @@ function strutFor(options: {
       recoilSeconds: 1.1,
     },
     requiredMembers: [`:${options.strutPart}:`, `:${options.wheelPart}:`],
-    travellingMembers: [`:${options.wheelPart}:`],
+    // УБОРКА: ВПЕРЁД, ВОКРУГ РАЗМАХНОЙ ОСИ, И КОЛЕСО ОСТАЁТСЯ СНАРУЖИ.
+    //
+    // Приводится общим правилом рейса, а не своим таймером: нога уходит при
+    // переходе в крейсер и возвращается на подходе; отказ выпускает её тоже.
+    // Хвостовое колесо у этого типа НЕ убирается, поэтому уборки у него нет.
+    //
+    // Угол 101° — не круглое число и не вкус: он решён из условия «покрышка
+    // торчит примерно на треть». При 95° снаружи 39%, при 107° — 21%.
+    // Полностью в гондолу колесо не прячется никогда, и по этому силуэту
+    // машину узнают.
+    ...(options.retraction ?? {}),
+    // ЧТО ИМЕННО ХОДИТ ПРИ ОБЖАТИИ.
+    //
+    // Раньше ездило одно колесо, потому что стойка и была одной палкой.
+    // Теперь узел разобран, и амортизация обязана двигать ровно то, что
+    // сидит на штоке: сам шток, ось, барабан и покрышку. Цилиндр, цапфа и
+    // подкос стоят. Шлиц-шарнир ходит НА ПОЛХОДА — его колено делит ход
+    // пополам, для того он и нужен.
+    travellingMembers: options.travelling,
+    halfTravellingMembers: options.halfTravelling,
     wheel: {
       radius: wheel.radius,
       brakeShare: options.brakeShare,
@@ -918,6 +1042,13 @@ function strutFor(options: {
   };
 }
 
+/**
+ * Уборка основной стойки: вперёд на 101° вокруг размахной оси за 6.5 с.
+ * Цапфа берётся из САМОЙ стойки, чтобы число жило в одном месте.
+ */
+const DC3_GEAR_RETRACT_ANGLE = (-101 * Math.PI) / 180;
+const DC3_GEAR_RETRACT_SECONDS = 6.5;
+
 export function createDc3LandingGear(
   placement: Dc3AirplanePlacement,
 ): readonly VehicleSupportStrutDefinition[] {
@@ -926,6 +1057,35 @@ export function createDc3LandingGear(
       id: "gear-left",
       strutPart: "gear-left-strut",
       wheelPart: "gear-left-wheel",
+      travelling: [
+        ":gear-left-piston:",
+        ":gear-left-axle:",
+        ":gear-left-hub:",
+        ":gear-left-wheel:",
+      ],
+      halfTravelling: [
+        ":gear-left-scissor-upper:",
+        ":gear-left-scissor-lower:",
+      ],
+      retraction: {
+        retraction: {
+          pivot: dc3AirplanePoint(placement, gearPart("gear-left-strut").from),
+          hinge: dc3AirplaneVector(placement, [1, 0, 0]),
+          angle: DC3_GEAR_RETRACT_ANGLE,
+          seconds: DC3_GEAR_RETRACT_SECONDS,
+        },
+        foldingMembers: [
+          ":gear-left-strut:",
+          ":gear-left-piston:",
+          ":gear-left-scissor-lug:",
+          ":gear-left-scissor-upper:",
+          ":gear-left-scissor-lower:",
+          ":gear-left-drag-link:",
+          ":gear-left-axle:",
+          ":gear-left-hub:",
+          ":gear-left-wheel:",
+        ],
+      },
       side: -1,
       stroke: DC3_OLEO_STROKE,
       brakeShare: 0.5,
@@ -936,6 +1096,35 @@ export function createDc3LandingGear(
       id: "gear-right",
       strutPart: "gear-right-strut",
       wheelPart: "gear-right-wheel",
+      travelling: [
+        ":gear-right-piston:",
+        ":gear-right-axle:",
+        ":gear-right-hub:",
+        ":gear-right-wheel:",
+      ],
+      halfTravelling: [
+        ":gear-right-scissor-upper:",
+        ":gear-right-scissor-lower:",
+      ],
+      retraction: {
+        retraction: {
+          pivot: dc3AirplanePoint(placement, gearPart("gear-right-strut").from),
+          hinge: dc3AirplaneVector(placement, [1, 0, 0]),
+          angle: DC3_GEAR_RETRACT_ANGLE,
+          seconds: DC3_GEAR_RETRACT_SECONDS,
+        },
+        foldingMembers: [
+          ":gear-right-strut:",
+          ":gear-right-piston:",
+          ":gear-right-scissor-lug:",
+          ":gear-right-scissor-upper:",
+          ":gear-right-scissor-lower:",
+          ":gear-right-drag-link:",
+          ":gear-right-axle:",
+          ":gear-right-hub:",
+          ":gear-right-wheel:",
+        ],
+      },
       side: 1,
       stroke: DC3_OLEO_STROKE,
       brakeShare: 0.5,
@@ -958,6 +1147,12 @@ export function createDc3LandingGear(
       id: "gear-tail",
       strutPart: "gear-tail-strut",
       wheelPart: "gear-tail-wheel",
+      travelling: [
+        ":gear-tail-fork-left:",
+        ":gear-tail-fork-right:",
+        ":gear-tail-hub:",
+        ":gear-tail-wheel:",
+      ],
       side: 0,
       stroke: DC3_TAIL_OLEO_STROKE,
       brakeShare: 0,
@@ -1033,11 +1228,19 @@ export function createDc3AirplaneFrame(
 ): VehicleFrameDefinition {
   const anchors = dc3BlockoutObject.anchors;
   const wings = dc3AirplaneStandPieces.filter((piece) => piece.id.startsWith("wing-"));
-  const localLift: SceneVector3 = wings.length
+  // ЦЕНТР ПОДЪЁМА ВЗВЕШИВАЕТСЯ ПО ОБЪЁМУ, А НЕ ПО ЧИСЛУ КУСКОВ.
+  //
+  // Пока крыло было двумя шкурами на двадцати двух элементах набора, среднее
+  // по кускам случайно совпадало с центроидом. После панелизации семьдесят
+  // мелких панелей перевесили набор, и точка уехала на 16 см ВПЕРЁД — разбег
+  // вырос до 148 м, а посадка стала ударом. Величина обязана быть свойством
+  // распределения материала, а не того, на сколько кусков он нарезан.
+  const wingVolume = wings.reduce((sum, piece) => sum + (piece.volume ?? 0), 0);
+  const localLift: SceneVector3 = wingVolume > 0
     ? [
-        wings.reduce((sum, piece) => sum + piece.position[0], 0) / wings.length,
-        wings.reduce((sum, piece) => sum + piece.position[1], 0) / wings.length,
-        wings.reduce((sum, piece) => sum + piece.position[2], 0) / wings.length,
+        wings.reduce((sum, piece) => sum + piece.position[0] * (piece.volume ?? 0), 0) / wingVolume,
+        wings.reduce((sum, piece) => sum + piece.position[1] * (piece.volume ?? 0), 0) / wingVolume,
+        wings.reduce((sum, piece) => sum + piece.position[2] * (piece.volume ?? 0), 0) / wingVolume,
       ]
     : [0, 0.35, 0];
   const localNose = unitFrom(anchors.tail, anchors.nose);
@@ -1045,7 +1248,15 @@ export function createDc3AirplaneFrame(
     id: DC3_AIRPLANE_CLASS.id,
     clusterId: placement.clusterId,
     telemetryLabel: "DC-3",
-    contactMemberExcludes: ["gear-"],
+    // ВНЕШНИЙ ОБВОД — ОБШИВКА, НЕ НАБОР.
+    //
+    // Стойки уже выключены: их держит луч. Набор (стрингеры, лонжероны,
+    // шпангоуты, лонжероны крыла) — длинные лофты, и Rapier берёт AABB.
+    // Ящик на всю длину фюзеляжа в трёхточечной стоянке ещё проходит, а при
+    // любом более плоском тангаже бьёт полосу под носом. Отсюда подскок,
+    // клевок и «стоит на хвосте» при убранных стойках. Масса и картинка
+    // набора не трогаются: из контакта его нет, как ног шасси.
+    contactMemberExcludes: DC3_CONTACT_MEMBER_EXCLUDES,
     origin: placement.position,
     nose: dc3AirplaneVector(placement, localNose),
     mooringPoint: dc3AirplanePoint(placement, anchors.nose),
@@ -1054,10 +1265,13 @@ export function createDc3AirplaneFrame(
     supportStruts: createDc3LandingGear(placement),
     controlSurfaces: createDc3ControlSurfaces(placement),
     propellers: createDc3Propellers(placement),
+    // НИЖНИХ ДАТЧИКОВ ПРОСВЕТА НЕТ.
+    //
+    // Три датчика смотрели вниз из-под колёс — ровно туда, где стойка и так
+    // меряет опору собственным лучом. Снято по вердикту владельца: лишний
+    // измеритель у самой земли — это лишний повод машине об него запнуться,
+    // а полезного он не давал ничего, чего не даёт стойка.
     proximitySensors: [
-      { point: dc3AirplanePoint(placement, anchors.leftMainWheel), normal: [0, -1, 0] },
-      { point: dc3AirplanePoint(placement, anchors.rightMainWheel), normal: [0, -1, 0] },
-      { point: dc3AirplanePoint(placement, anchors.tailwheel), normal: [0, -1, 0] },
       { point: dc3AirplanePoint(placement, anchors.nose), normal: dc3AirplaneVector(placement, localNose) },
     ],
   };

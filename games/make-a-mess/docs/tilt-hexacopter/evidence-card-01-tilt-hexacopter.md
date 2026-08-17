@@ -31,9 +31,15 @@
   drawings.
 - World placement and physics integration.
 
-## Owner acceptance requested
+## Owner acceptance — B11
 
-1. Plan silhouette and relation of hull, rings and armour belts.
-2. The three paired static load paths: belt → box spar → discrete primary core.
-3. Eccentric hinge location and the six independent motion states.
-4. Overall fighter-like massing before detail engineering begins.
+- Approved 2026-08-16 for engineering development.
+- Frozen exterior: nose wedge, smooth nose-to-canopy-to-ridge transition,
+  sculpted cabin flanks, rear-third undercut, shark ridge and tail boom.
+- Frozen architecture: six independently tilting lift rings, two upper axial
+  engines, two static exterior belts and three paired belt-support stations.
+- Current release: `e01-engineering/engineering-manifest.json`.
+- E01 accepted 2026-08-16; record: `evidence/e01-approval.md`.
+- E02 internal systems are authored packaging hypotheses pending owner review.
+- Approval does not include loads, material gauges, propulsion sizing,
+  manufacturing, world integration or flightworthiness.

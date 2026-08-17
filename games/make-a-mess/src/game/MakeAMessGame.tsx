@@ -11906,6 +11906,8 @@ const telemetryMetricLabels: Readonly<Record<string, TranslationKey>> = {
   aileronAngle: "telemetry.metric.aileronAngle",
   elevatorAngle: "telemetry.metric.elevatorAngle",
   rudderAngle: "telemetry.metric.rudderAngle",
+  wheelBrake: "telemetry.metric.wheelBrake",
+  gearRetraction: "telemetry.metric.gearRetraction",
   rotorRings: "telemetry.metric.rotorRings",
   rotorRingsPort: "telemetry.metric.rotorRingsPort",
   rotorRingsStarboard: "telemetry.metric.rotorRingsStarboard",

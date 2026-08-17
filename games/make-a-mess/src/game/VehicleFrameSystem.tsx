@@ -2512,6 +2512,34 @@ export function VehicleFrameSystem({
     return byCluster;
   }, [remnants]);
 
+  /**
+   * РУЧНАЯ КОМАНДА ШАССИ — ДИАГНОСТИЧЕСКИЙ РЫЧАГ, НЕ ОРГАН УПРАВЛЕНИЯ.
+   *
+   * Клавиша G перебивает журнал рейса: `null` — автомат, дальше «убрать» и
+   * «выпустить» по очереди. Нужна ровно для одной развилки: посадить машину
+   * на брюхо и посмотреть, останется ли подскок. Если без ног его нет —
+   * причина в ногах, и дальше искать негде.
+   */
+  const manualGearCommand = useRef<"up" | "down" | null>(null);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.code !== "KeyG" || event.repeat) {
+        return;
+      }
+      if (event.metaKey || event.ctrlKey || event.altKey) {
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      if (target?.isContentEditable || /input|textarea|select/i.test(target?.tagName ?? "")) {
+        return;
+      }
+      manualGearCommand.current =
+        manualGearCommand.current === "up" ? "down" : "up";
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   useEffect(() => {
     if (seatCommandsRotorcraft(occupiedSeatId)) {
       return;
@@ -7240,9 +7268,15 @@ export function VehicleFrameSystem({
         if (retractSeconds > 0) {
           const previous = supportStrutFold.current.get(frame.id) ?? 0;
           const rate = step / retractSeconds;
+          // Ручная команда (G) старше журнала рейса: она и существует затем,
+          // чтобы посадить машину вопреки автомату.
+          const wantsUp =
+            manualGearCommand.current !== null
+              ? manualGearCommand.current === "up"
+              : journey === "cruise";
           supportStrutFold.current.set(
             frame.id,
-            journey === "cruise"
+            wantsUp
               ? Math.min(1, previous + rate)
               : Math.max(0, previous - rate),
           );
@@ -7574,8 +7608,18 @@ export function VehicleFrameSystem({
               moved,
             );
             setMemberArticulation(member.id, {
-              steer: 0,
-              spin: 0,
+              // КОЛЕСО КАТИТСЯ И ТОГДА, КОГДА ОНО УМЕЕТ СКЛАДЫВАТЬСЯ.
+              //
+              // Здесь стояли нули, и это молча ломало любую УБИРАЮЩУЮСЯ ногу
+              // с колесом: попав в список складывающихся, колесо теряло
+              // качение навсегда — в том числе на полностью выпущенной ноге.
+              // Самолёт садился на заблокированные диски. Поворот вокруг
+              // цапфы и прокат вокруг своей оси — разные поля, они
+              // складываются, а не исключают друг друга.
+              steer: compiled.wheel
+                ? compiled.wheel.steerShare * state.wheelSteer * WHEEL_STEER_RANGE
+                : 0,
+              spin: wheelSpinAngles.current.get(member.id) ?? 0,
               turn,
               slide: [
                 moved[0] - member.centre[0] + folded[0],
@@ -8749,17 +8793,46 @@ export function VehicleFrameSystem({
               ) ?? frame.controlSurfaces?.find((entry) => entry.channel === channel);
               return surface ? controlSurfaceDegrees(surface, surfaces) : 0;
             };
+            /**
+             * ПАРНЫЙ ОРГАН ПОКАЗЫВАЕТСЯ ДВУМЯ ЧИСЛАМИ.
+             *
+             * `degreesOf` брала ОДНУ поверхность на канал, и элероны с рулём
+             * высоты сливались в одно показание — а элероны ходят навстречу
+             * друг другу, и именно их расхождение и надо видеть. Двигатели
+             * так уже показаны; органы отставали.
+             *
+             * Пара распознаётся по знаку в контракте поверхности: `sign` −1 —
+             * это зеркальная сторона. Если пары нет, метрика остаётся
+             * одиночной, и панель ничего не теряет.
+             */
+            const pairedDegrees = (
+              channel: AirplaneControlChannel,
+            ): Pick<MotionTelemetryMetric, "value" | "valueSides"> => {
+              const entries = frame.controlSurfaces?.filter(
+                (entry) => entry.channel === channel,
+              ) ?? [];
+              const right = entries.find((entry) => entry.sign !== -1);
+              const left = entries.find((entry) => entry.sign === -1);
+              if (!right || !left) return { value: degreesOf(channel) };
+              return {
+                value: [
+                  controlSurfaceDegrees(left, surfaces),
+                  controlSurfaceDegrees(right, surfaces),
+                ],
+                valueSides: ["left", "right"],
+              };
+            };
             metrics.push(
               {
                 id: "flapAngle",
-                value: degreesOf("flap"),
+                ...pairedDegrees("flap"),
                 unit: "deg",
                 precision: 0,
                 activityDelta: 2,
               },
               {
                 id: "aileronAngle",
-                value: degreesOf("aileron"),
+                ...pairedDegrees("aileron"),
                 unit: "deg",
                 precision: 1,
                 signed: true,
@@ -8767,7 +8840,7 @@ export function VehicleFrameSystem({
               },
               {
                 id: "elevatorAngle",
-                value: degreesOf("elevator"),
+                ...pairedDegrees("elevator"),
                 unit: "deg",
                 precision: 1,
                 signed: true,
@@ -8781,7 +8854,29 @@ export function VehicleFrameSystem({
                 signed: true,
                 activityDelta: 2,
               },
+              // ТОРМОЗ В ТЕЛЕМЕТРИИ. Без него посадочный капот через нос
+              // приходится угадывать: доля тормоза — единственное число,
+              // которое отличает штатный пробег от опрокидывания.
+              {
+                id: "wheelBrake",
+                value: state.wheelBrake * 100,
+                unit: "percent",
+                precision: 0,
+                activityDelta: 2,
+              },
             );
+            // ПОЛОЖЕНИЕ ШАССИ. Ноль — выпущено, сто — убрано. Без этой строки
+            // опыт с ручной уборкой (G) недоказуем: по кадру не отличить
+            // «нога убралась» от «команда не дошла».
+            if (supportStrutFold.current.has(frame.id)) {
+              metrics.push({
+                id: "gearRetraction",
+                value: (supportStrutFold.current.get(frame.id) ?? 0) * 100,
+                unit: "percent",
+                precision: 0,
+                activityDelta: 2,
+              });
+            }
           }
           // Тоннели рыскания — отдельная строка отдельного органа: знак — это
           // реверс, и он часть показания, а не шум.

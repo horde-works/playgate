@@ -1,0 +1,18 @@
+{
+  "schema": "tilt-hexacopter-engineering-package.v1",
+  "objectId": "tilt-hexacopter-b11",
+  "geometryRevision": "tilt-hex-b11-contour-2026-08-16",
+  "packageRevision": "E01",
+  "status": "design-development-not-for-manufacture",
+  "units": "metres",
+  "canonicalModelArtifact": "../b11-contours/blockout-model.json",
+  "canonicalModelSha256": "1b7cd34f46cdab70e5c314b0390bb22df8da79659db2e8991625375865c99252",
+  "drawings": [
+    {"number":"GA-01","title":"General arrangement","file":"GA-01-general-arrangement.png","pixels":[3000,2100],"sha256":"868f8b8193f28f24adcd79228ddd824020fa23c6b9bb2542726804703ef80e1a"},
+    {"number":"STR-02","title":"Primary structure and load path","file":"STR-02-primary-structure.png","pixels":[3000,2100],"sha256":"7295bc578a3594080a48176af8772f6a15de9fcc0d5625f2e7137895c0c8f1e7"},
+    {"number":"KIN-03","title":"Lift-ring kinematics","file":"KIN-03-lift-ring-kinematics.png","pixels":[3000,2100],"sha256":"2ffeec4725739849cda271b97f29a5efe0d591b3a248f55ed3ac108489a86139"},
+    {"number":"SEC-04","title":"Structural sections","file":"SEC-04-structural-sections.png","pixels":[3000,2100],"sha256":"9cd90b89d89aa48137250bf56a422471e341ac16e269f4138a5d8801ee0728ca"}
+  ],
+  "overview": {"file":"E01-overview.png","pixels":[2400,1155],"sha256":"3c3512a8ea35acd9fce4ab8118ebbe3856c0d4d08b28c3b9324c7bd798ff62d7"},
+  "limitations": ["No certified loads", "No manufacturing tolerances", "No propulsion sizing", "No flightworthiness claim", "No weapons or landing-gear integration"]
+}

@@ -28,6 +28,7 @@ import type {
   ObjectLabModel,
   ObjectLabPart,
   ObjectLabView,
+  ObjectMaterialId,
   ObjectPoint,
   ObjectTriangle,
 } from "../dutchWindmills/objectModel.ts";
@@ -129,6 +130,7 @@ function emitPanel(
   group: string,
   grid: readonly (readonly ObjectPoint[])[],
   centres: readonly ObjectPoint[],
+  material: ObjectMaterialId = "paint-light",
 ): void {
   const rowCount = grid.length;
   const cols = grid[0].length;
@@ -157,7 +159,7 @@ function emitPanel(
       ]);
     }
   }
-  emitClosedTile(id, group, outer, inner, rowCount, cols);
+  emitClosedTile(id, group, outer, inner, rowCount, cols, material);
 }
 
 function addPanel(spec: PanelSpec, band: Band): void {
@@ -174,6 +176,7 @@ function emitClosedTile(
   inner: readonly ObjectPoint[],
   rowCount: number,
   cols: number,
+  material: ObjectMaterialId = "paint-light",
 ): void {
   const vertices = [...outer, ...inner].map(dc3AirframeSurface.bodyToWorld);
   const offset = outer.length;
@@ -212,8 +215,12 @@ function emitClosedTile(
     kind: "mesh",
     id,
     group,
-    material: "paint-light",
+    material,
     plateThickness: SKIN_THICKNESS,
+    // Плитка УЖЕ тело: её объём считается по геометрии, а не по «площадь ×
+    // толщина». Та формула написана для одиночной оболочки и на замкнутой
+    // плитке даёт вдвое больше — двумя поверхностями вместо одной.
+    volume: Math.abs(volume),
     vertices,
     triangles: volume < 0
       ? triangles.map(([a, b, c]) => [a, c, b] as ObjectTriangle)
@@ -530,16 +537,262 @@ function panelRingBody(options: {
   }
 }
 
-// === Фюзеляж: десять продольных клиньев по кругу.
+// === Фюзеляж: десять продольных клиньев по кругу, с вырезами под окна.
 const { fuselage, nacelle } = dc3AirframeSurface;
-panelRingBody({
-  prefix: "fuselage",
-  group: "fuselage-panels",
-  rings: fuselage.stations.map((station) => fuselage.ring(station)),
-  keys: fuselage.stations.map((station) => station.z),
-  baySpan: 1.6,
-  goreStep: fuselage.ringCount / 10,
-});
+
+const TAU = Math.PI * 2;
+const FUSELAGE_GORES = 10;
+const FUSELAGE_GORE_STEP = fuselage.ringCount / FUSELAGE_GORES;
+
+/**
+ * Плитка обшивки фюзеляжа по ПРОИЗВОЛЬНЫМ (z, угол).
+ *
+ * Ровно та же поверхность, что у остальных панелей, но параметризованная не
+ * индексами выборок, а самими координатами. Это и позволяет резать окно: его
+ * кромка почти никогда не совпадает с выборкой кольца, а по хордам между
+ * выборками эллипс отходит на 17 мм — прямо на видимой рамке.
+ */
+/**
+ * Станция на z. Если z совпадает с авторской станцией, берётся ОНА, а не
+ * интерполяция: `sampleStation` тянет `upperPower` и `faceForward` от
+ * предыдущей станции, и на границе носовые сечения выходят другой формы.
+ */
+function fuselageStationAt(z: number) {
+  return fuselage.stations.find((station) => Math.abs(station.z - z) < 1e-9)
+    ?? fuselage.at(z);
+}
+
+function fuselageTile(
+  id: string,
+  group: string,
+  zs: readonly number[],
+  angles: readonly number[],
+  inward = 0,
+  material: ObjectMaterialId = "paint-light",
+): void {
+  const grid = zs.map((z) => {
+    const station = fuselageStationAt(z);
+    return angles.map((angle) => {
+      const surface = fuselage.pointAt(station, angle);
+      if (inward === 0) return surface;
+      const centreY = (station.crown + station.keel) / 2;
+      const dx = surface[0];
+      const dy = surface[1] - centreY;
+      const length = Math.hypot(dx, dy) || 1;
+      return [
+        surface[0] - (dx / length) * inward,
+        surface[1] - (dy / length) * inward,
+        surface[2],
+      ] as ObjectPoint;
+    });
+  });
+  const centres = zs.map((z) => {
+    const station = fuselageStationAt(z);
+    return [0, (station.crown + station.keel) / 2, z] as ObjectPoint;
+  });
+  emitPanel(id, group, grid, centres, material);
+}
+
+/** Угол сечения, на котором борт имеет заданную высоту. */
+function angleAtHeight(z: number, y: number, side: 1 | -1): number {
+  const station = fuselageStationAt(z);
+  const centreY = (station.crown + station.keel) / 2;
+  const halfHeight = (station.crown - station.keel) / 2;
+  const unit = Math.max(-1, Math.min(1, (y - centreY) / halfHeight));
+  const angle = Math.asin(unit);
+  return side > 0 ? angle : Math.PI - angle;
+}
+
+/**
+ * СТЕКЛО НЕ КРЕПИТСЯ К ОБШИВКЕ. Между ними обвязка: проём режется по
+ * наружному контуру, рама занимает кольцо шириной `FRAME_WIDTH`, стекло сидит
+ * за ней. На самолёте так и есть, и на кадре разница видна сразу — иначе
+ * стеклопакет выглядит вставленным в дюраль без ничего.
+ */
+const FRAME_WIDTH = 0.045;
+const FRAME_INSET = 0.008;
+// Стекло сидит В ОБВЯЗКЕ, а не в колодце за ней. При 50 мм между рамой и
+// пакетом на косом взгляде открывался откос шириной в палец — окно читалось
+// утопленным люком. 7 мм ступеньки достаточно, чтобы пакет не лежал заподлицо
+// с рамой и при этом не проваливался.
+const GLASS_INSET = 0.015;
+
+type WindowCut = {
+  readonly id: string;
+  readonly zFrom: number;
+  readonly zTo: number;
+  readonly angleFrom: number;
+  readonly angleTo: number;
+  readonly glassZFrom: number;
+  readonly glassZTo: number;
+  readonly glassAngleFrom: number;
+  readonly glassAngleTo: number;
+};
+
+/** Столбцы, на которые опирается поперечная планка рамы. */
+function columnsBetweenGlass(
+  columns: readonly number[],
+  cut: WindowCut,
+): readonly number[] {
+  return columns.filter(
+    (angle) => angle >= cut.glassAngleFrom - 1e-9 && angle <= cut.glassAngleTo + 1e-9,
+  );
+}
+
+const windowCuts: WindowCut[] = [];
+for (const [index, plan] of dc3AirframeSurface.windows.entries()) {
+  for (const side of [1, -1] as const) {
+    const zFrom = plan.z - plan.along / 2 - FRAME_WIDTH;
+    const zTo = plan.z + plan.along / 2 + FRAME_WIDTH;
+    const outer = [
+      angleAtHeight(plan.z, plan.centreY - plan.across / 2 - FRAME_WIDTH, side),
+      angleAtHeight(plan.z, plan.centreY + plan.across / 2 + FRAME_WIDTH, side),
+    ];
+    const glass = [
+      angleAtHeight(plan.z, plan.centreY - plan.across / 2, side),
+      angleAtHeight(plan.z, plan.centreY + plan.across / 2, side),
+    ];
+    windowCuts.push({
+      id: `window-${side > 0 ? "right" : "left"}-${index}`,
+      zFrom,
+      zTo,
+      angleFrom: Math.min(...outer),
+      angleTo: Math.max(...outer),
+      glassZFrom: plan.z - plan.along / 2,
+      glassZTo: plan.z + plan.along / 2,
+      glassAngleFrom: Math.min(...glass),
+      glassAngleTo: Math.max(...glass),
+    });
+  }
+}
+
+/** Отсеки фюзеляжа: те же границы, что и раньше. */
+const fuselageBays: number[][] = (() => {
+  const zs = fuselage.stations.map((station) => station.z);
+  const result: number[][] = [];
+  let current = [zs[0]];
+  for (let index = 1; index < zs.length; index += 1) {
+    current.push(zs[index]);
+    if (Math.abs(zs[index] - current[0]) >= 1.6 || index === zs.length - 1) {
+      result.push(current);
+      current = [zs[index]];
+    }
+  }
+  return result.filter((bay) => bay.length >= 2);
+})();
+
+for (const [bayIndex, bay] of fuselageBays.entries()) {
+  const zLow = Math.min(...bay);
+  const zHigh = Math.max(...bay);
+  const sortedZs = [...bay].sort((a, b) => a - b);
+  for (let gore = 0; gore < FUSELAGE_GORES; gore += 1) {
+    const angleFrom = ((gore * FUSELAGE_GORE_STEP) / fuselage.ringCount) * TAU;
+    const angleTo = (((gore + 1) * FUSELAGE_GORE_STEP) / fuselage.ringCount) * TAU;
+    const goreAngles = Array.from(
+      { length: FUSELAGE_GORE_STEP + 1 },
+      (_, step) => angleFrom + ((angleTo - angleFrom) * step) / FUSELAGE_GORE_STEP,
+    );
+    const id = `fuselage:bay${bayIndex}:gore${gore}`;
+    const cuts = windowCuts
+      .filter((window) =>
+        window.zFrom > zLow && window.zTo < zHigh
+        && window.angleFrom > angleFrom && window.angleTo < angleTo)
+      .sort((left, right) => left.zFrom - right.zFrom);
+    if (cuts.length === 0) {
+      fuselageTile(id, "fuselage-panels", sortedZs, goreAngles);
+      continue;
+    }
+    // ОБЩАЯ СЕТКА НА ВСЕ ПОЛОСЫ КЛИНА.
+    //
+    // Полосы вокруг проёма делят кромку с соседними полосами. Если каждая
+    // нарезана по своим углам, на общей кромке получается T-образный стык:
+    // одна сторона идёт хордой через середину клина, другая — через кромку
+    // окна, и между ними светится щель. Поэтому список углов и список z
+    // строятся ОДИН РАЗ на клин, а полосы берут из них срезы.
+    // КРОМКА ПРИТЯГИВАЕТСЯ К ГРАНИЦЕ, А НЕ СХЛОПЫВАЕТСЯ С НЕЙ.
+    //
+    // Прежняя редакция сливала близкие выборки в одну — и заодно съедала
+    // кромку СТЕКЛА, если та подходила к границе клина ближе допуска. У двух
+    // окон стекло от этого сжалось вчетверо, а по носу разъехались ряды:
+    // соседние отсеки остались с разными списками станций, и на общей кромке
+    // снова открылся T-образный стык.
+    //
+    // Правильно наоборот: если кромка ПРОЁМА почти совпала с границей клина
+    // или со станцией, она становится этой границей ТОЧНО. Полоса между ними
+    // вырождается и не выпускается, щели при этом не возникает, а стекло
+    // сохраняет свой размер.
+    const snap = (value: number, grid: readonly number[], epsilon: number) => {
+      const near = grid.find((edge) => Math.abs(edge - value) < epsilon);
+      return near ?? value;
+    };
+    const snapped = cuts.map((cut) => ({
+      ...cut,
+      angleFrom: snap(cut.angleFrom, goreAngles, 0.03),
+      angleTo: snap(cut.angleTo, goreAngles, 0.03),
+      zFrom: snap(cut.zFrom, sortedZs, 0.05),
+      zTo: snap(cut.zTo, sortedZs, 0.05),
+    }));
+    const unique = (values: readonly number[]) =>
+      [...values].sort((a, b) => a - b)
+        .filter((value, index, list) => index === 0 || value - list[index - 1] > 1e-9);
+    const columns = unique([
+      ...goreAngles,
+      ...snapped.flatMap((cut) => [
+        cut.angleFrom, cut.glassAngleFrom, cut.glassAngleTo, cut.angleTo,
+      ]),
+    ]);
+    const rows = unique([
+      ...sortedZs,
+      ...snapped.flatMap((cut) => [
+        cut.zFrom, cut.glassZFrom, cut.glassZTo, cut.zTo,
+      ]),
+    ]);
+    const between = (values: readonly number[], low: number, high: number) =>
+      values.filter((value) => value >= low - 1e-9 && value <= high + 1e-9);
+
+    let cursor = zLow;
+    for (const [cutIndex, cut] of snapped.entries()) {
+      const tile = (
+        tag: string,
+        group: string,
+        rws: readonly number[],
+        cols: readonly number[],
+        inward = 0,
+        material: ObjectMaterialId = "paint-light",
+      ): void => {
+        if (rws.length < 2 || cols.length < 2) return;
+        fuselageTile(tag, group, rws, cols, inward, material);
+      };
+      tile(`${id}:seg${cutIndex}`, "fuselage-panels",
+        between(rows, cursor, cut.zFrom), columns);
+      const windowRows = between(rows, cut.zFrom, cut.zTo);
+      tile(`${id}:below${cutIndex}`, "fuselage-panels", windowRows,
+        between(columns, angleFrom, cut.angleFrom));
+      tile(`${id}:above${cutIndex}`, "fuselage-panels", windowRows,
+        between(columns, cut.angleTo, angleTo));
+      // РАМА. Стекло не крепится к обшивке напрямую: между ними обвязка.
+      // Проём режется по НАРУЖНОМУ прямоугольнику, рама занимает кольцо
+      // между ним и стеклом, стекло сидит глубже неё.
+      for (const [tag, cols, rws] of [
+        ["frame-below", between(columns, cut.angleFrom, cut.glassAngleFrom), windowRows],
+        ["frame-above", between(columns, cut.glassAngleTo, cut.angleTo), windowRows],
+        ["frame-aft", columnsBetweenGlass(columns, cut), between(rows, cut.zFrom, cut.glassZFrom)],
+        ["frame-fore", columnsBetweenGlass(columns, cut), between(rows, cut.glassZTo, cut.zTo)],
+      ] as const) {
+        tile(`${cut.id}:${tag}`, "window-frame", rws, cols, FRAME_INSET, "metal");
+      }
+      tile(`${cut.id}:glazing`, "window-glazing",
+        between(rows, cut.glassZFrom, cut.glassZTo),
+        between(columns, cut.glassAngleFrom, cut.glassAngleTo),
+        GLASS_INSET, "glazing");
+      cursor = cut.zTo;
+    }
+    if (between(rows, cursor, zHigh).length >= 2) {
+      fuselageTile(`${id}:segTail`, "fuselage-panels",
+        between(rows, cursor, zHigh), columns);
+    }
+  }
+}
 
 /**
  * Разбиение кольца гондолы. B01 строит капот 24 сегментами — на общем плане
@@ -629,6 +882,29 @@ for (const sign of [1, -1] as const) {
 export const dc3SkinPanelParts: readonly ObjectLabPart[] = [...parts];
 
 /**
+ * Панели по группам — точка, через которую машина забирает обшивку.
+ *
+ * Адаптер сцены подменяет ими лофтовые шкуры B01. Группы разделены нарочно:
+ * неподвижная обшивка врезается первой, рулевые поверхности — отдельным
+ * шагом, потому что актуатор и петля ищутся по ТОЧНОМУ id куска, и дробление
+ * руля на панели без правки этого поиска остановило бы управление.
+ */
+export function dc3SkinPanelsByGroup(
+  groups: readonly string[],
+): readonly ObjectLabPart[] {
+  return parts.filter((part) => groups.includes(part.group));
+}
+
+/** Неподвижная обшивка: крыло, стабилизатор, киль, фюзеляж, гондолы. */
+export const DC3_FIXED_SKIN_GROUPS = [
+  "wing-panels",
+  "stab-panels",
+  "fin-panels",
+  "fuselage-panels",
+  "nacelle-panels",
+] as const;
+
+/**
  * Сегодняшние лофтовые шкуры — только как ЭТАЛОН для сравнения. В приёмочных
  * кадрах эта группа скрыта; она нужна ровно одному виду, где панельная шкура
  * кладётся поверх той, что заменяет.
@@ -638,7 +914,17 @@ const referenceLofts: readonly ObjectLabPart[] = dc3BlockoutObject.parts
     || part.group.startsWith("nacelle-"))
   .map((part) => ({ ...part, id: `reference:${part.id}`, group: "reference-loft" }));
 
+/**
+ * Салон в образце — затем, чтобы проверить главное требование к окну: сквозь
+ * него должно быть видно кресло. Кадр без начинки этого не показывает вовсе.
+ */
+const cabinParts: readonly ObjectLabPart[] = dc3BlockoutObject.parts
+  .filter((part) => part.group.startsWith("cabin-"))
+  .map((part) => ({ ...part, group: "cabin" }));
+
 const panelGroups = [
+  "window-glazing",
+  "window-frame",
   "wing-panels",
   "stab-panels",
   "fin-panels",
@@ -646,7 +932,7 @@ const panelGroups = [
   "fuselage-panels",
   "nacelle-panels",
 ] as const;
-const allGroups = [...panelGroups, "reference-loft"] as const;
+const allGroups = [...panelGroups, "cabin", "reference-loft"] as const;
 const hiddenExcept = (shown: readonly string[]): readonly string[] =>
   allGroups.filter((group) => !shown.includes(group));
 
@@ -707,6 +993,15 @@ const views: readonly ObjectLabView[] = [
     target: point(0, 2.9, -11.4),
     fov: 32,
     hiddenGroups: hiddenExcept(panelGroups),
+  },
+  {
+    id: "panel-windows",
+    label: "Иллюминаторы · настоящие проёмы, за ними кресла",
+    projection: "perspective",
+    position: point(6.4, 4.2, 5.6),
+    target: point(1.25, 3.66, 2.09),
+    fov: 30,
+    hiddenGroups: hiddenExcept([...panelGroups, "cabin"]),
   },
   {
     id: "panel-fuselage-detail",
@@ -794,6 +1089,6 @@ export const dc3SkinPanelsObject: ObjectLabModel & {
     fogFar: 118,
     floorY: -0.04,
   },
-  parts: [...parts, ...referenceLofts],
+  parts: [...parts, ...cabinParts, ...referenceLofts],
   views,
 };

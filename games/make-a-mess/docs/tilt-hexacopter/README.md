@@ -19,8 +19,11 @@ topology; hidden geometry and dimensions are explicitly authored hypotheses.
 - `b08-contours/`: rejected numerical proportion correction with effectively unchanged silhouette.
 - `b09-contours/`: rejected separated armour-mass correction, retained for discrepancy history.
 - `b10-contours/`: owner-approved direction for the rear-third undercut and primary-core tail-boom, superseded by the canopy refinement.
-- `b11-contours/`: current integrated nose-canopy-ridge correction; engineering layout remains paused pending owner acceptance.
+- `b11-contours/`: owner-approved integrated nose-canopy-ridge contour and frozen canonical blockout.
+- `e01-engineering/`: current design-development drawing package: general arrangement, primary structure, lift-ring kinematics and true mesh sections.
+- `e02-systems/`: internal packaging package: crew/avionics, electrical power, cooling and maintenance zoning; pending owner acceptance.
 - Canonical geometry: `src/content/objects/vehicles/tiltHexacopterObject.ts`.
 
-Contour study B11 is for owner silhouette approval. It is not cleared for
-world integration, flight physics, weapons, manufacturing or fabricated loads.
+Contour study B11 and package E01 are owner-approved. Package E02 is not
+cleared for world integration, flight physics, weapons, manufacturing or
+fabricated loads; those remain separate gates.

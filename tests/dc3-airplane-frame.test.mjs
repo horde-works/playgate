@@ -23,6 +23,7 @@ import {
 import { vehicleFrames } from "../games/make-a-mess/src/game/vehicleFrames.ts";
 import { compileCommandActuators } from "../games/make-a-mess/src/game/vehicleActuation.ts";
 import { dc3BlockoutObject } from "../games/make-a-mess/src/content/objects/aircraft/dc3BlockoutObject.ts";
+import { compoundClusterColliders } from "../games/make-a-mess/src/game/compoundKinematicCluster.ts";
 import {
   DC3_ACTUATOR_PIECES,
   DC3_AIRPLANE_CLASS,
@@ -41,10 +42,11 @@ import {
   dc3SurfaceDeflectionDegrees,
 } from "../games/make-a-mess/src/game/dc3Airplane.ts";
 import { createAirplane, stepAirplane, centreOf, dt } from "./airplane-rig.mjs";
+import { dc3AirframeParts } from "../games/make-a-mess/src/content/objects/aircraft/dc3AirframeParts.ts";
 
 test("compiled pieces keep Object Lab ids and actuator channels", () => {
   const pieces = compileDc3AirplanePieces();
-  assert.equal(pieces.length, dc3BlockoutObject.parts.length);
+  assert.equal(pieces.length, dc3AirframeParts().length);
   assert.ok(pieces.every((piece) => piece.clusterId === DC3_STAND_CLUSTER_ID));
   for (const entry of DC3_ACTUATOR_PIECES) {
     const piece = pieces.find((item) => item.id === entry.id);
@@ -68,10 +70,136 @@ test("compiled pieces keep Object Lab ids and actuator channels", () => {
     "control surfaces are not door hinges",
   );
   assert.ok(Object.keys(dc3BlockoutObject.surfaceHinges).length >= 9);
-  const wing = pieces.find((piece) => piece.id === "wing-right");
+  // Обшивка крыла — набор панелей, а не одна шкура: ищем панель, а не кусок
+  // `wing-right`, которого больше нет.
+  const wing = pieces.find((piece) => piece.id.startsWith("wing-right:"));
   const cage = pieces.filter((piece) => piece.id.startsWith("fuselage-frame-") || piece.id.startsWith("longeron-"));
+  assert.ok(wing, "нет ни одной панели правой консоли");
   assert.equal(wing?.material, "aluminium");
   assert.ok(cage.length > 0 && cage.every((piece) => piece.material === "steel"));
+});
+
+// УБОРКА ШАССИ: ВПЕРЁД, И КОЛЕСО ОСТАЁТСЯ СНАРУЖИ.
+//
+// Приводится общим правилом рейса (крейсер — убрано, всё остальное и отказ —
+// выпущено), поэтому здесь проверяется ДАННЫЕ: те ли куски едут, вокруг той
+// ли оси и на тот ли угол. Хвостовое колесо у этого типа не убирается, и это
+// не упущение — так на машине.
+test("основная стойка убирается вперёд, хвостовая остаётся", () => {
+  const struts = dc3AirplaneStandFrame.supportStruts;
+  const main = struts.filter((strut) => strut.plan.id !== "gear-tail");
+  const tail = struts.find((strut) => strut.plan.id === "gear-tail");
+  assert.equal(main.length, 2);
+  assert.equal(tail?.retraction, undefined, "хвостовое колесо не убирается");
+  for (const strut of main) {
+    const retraction = strut.retraction;
+    assert.ok(retraction, `${strut.plan.id}: уборка не объявлена`);
+    // Ось размахная: складывание идёт вперёд, а не вбок.
+    assert.ok(
+      Math.abs(retraction.hinge[0]) > 0.9 || Math.abs(retraction.hinge[2]) > 0.9,
+      "ось уборки должна быть размахной",
+    );
+    const degrees = (retraction.angle * 180) / Math.PI;
+    assert.ok(
+      degrees < -90 && degrees > -115,
+      `угол уборки ${degrees.toFixed(0)}° вне коридора «колесо торчит на треть»`,
+    );
+    assert.ok(retraction.seconds > 2, "мгновенная уборка читается телепортом");
+    // Едет вся нога, но НЕ узлы навески: они остаются на гондоле.
+    assert.ok(
+      strut.foldingMembers.some((member) => member.includes("-wheel")),
+      "колесо обязано ехать со стойкой",
+    );
+    assert.ok(
+      strut.foldingMembers.every((member) => !member.includes("trunnion")
+        && !member.includes("jack-fitting")),
+      "узлы навески не едут: они и есть точка поворота",
+    );
+  }
+});
+
+test("the compound envelope is the skin, not the cage", () => {
+  const colliders = compoundClusterColliders(
+    dc3AirplaneStandFrame,
+    dc3AirplaneStandPieces,
+    new Set(),
+  );
+  const ids = colliders.map((collider) => collider.sourceId);
+  // Набор и салон не участвуют в ударе о полосу. Проверяется результат
+  // сборки, а не строка маски: маска могла бы совпасть, а кусок остаться.
+  for (const needle of [
+    "gear-",
+    "stringer-",
+    "longeron-",
+    "fuselage-frame-",
+    "cabin-",
+    "centre-tank-",
+    "wing-spar-",
+    "wing-former-",
+  ]) {
+    assert.equal(
+      ids.some((id) => id.includes(needle)),
+      false,
+      `${needle} остался в обводе`,
+    );
+  }
+  assert.ok(ids.some((id) => id.startsWith("fuselage:")), "нет панели фюзеляжа");
+  assert.ok(ids.some((id) => id.startsWith("nacelle-")), "нет панели гондолы");
+  assert.ok(
+    ids.some((id) => id.startsWith("wing-left:") || id.startsWith("wing-right:")),
+    "нет панели крыла",
+  );
+  assert.ok(ids.some((id) => id.includes("propeller-")), "нет винта");
+  // Длинный AABB набора — это и был невидимый удар: ящик на всю длину
+  // фюзеляжа. Обшивка нарезана отсеками, такого пролёта у неё нет.
+  const longSpan = colliders.filter(
+    (collider) =>
+      collider.shape === "cuboid" &&
+      Math.max(collider.args[0], collider.args[2]) > 4,
+  );
+  assert.equal(
+    longSpan.length,
+    0,
+    `длинный ящик в обводе: ${longSpan.map((collider) => collider.sourceId).join(", ")}`,
+  );
+  const remainingOleo = Math.max(
+    ...dc3AirplaneStandFrame.supportStruts.map(
+      (strut) => strut.plan.stroke * (1 - strut.plan.staticSagShare),
+    ),
+  );
+  const cuboidCorners = (collider) => {
+    const [hx, hy, hz] = collider.args;
+    const [x, y, z] = collider.position;
+    const corners = [];
+    for (const sx of [-1, 1]) {
+      for (const sy of [-1, 1]) {
+        for (const sz of [-1, 1]) {
+          corners.push([x + sx * hx, y + sy * hy, z + sz * hz]);
+        }
+      }
+    }
+    return corners;
+  };
+  const restMin = Math.min(
+    ...colliders.flatMap((collider) => cuboidCorners(collider).map((point) => point[1])),
+  );
+  assert.ok(
+    restMin > remainingOleo,
+    `в стоянке низ обвода ${restMin.toFixed(3)} м — меньше остатка олео ${remainingOleo.toFixed(3)} м`,
+  );
+  // Плоский фюзеляж: раньше стрингер уходил под бетон уже на +4°.
+  const level = DC3_AIRPLANE_PASSPORT.groundPitch;
+  const cosine = Math.cos(level);
+  const sine = Math.sin(level);
+  const levelMin = Math.min(
+    ...colliders.flatMap((collider) =>
+      cuboidCorners(collider).map((point) => point[1] * cosine - point[2] * sine),
+    ),
+  );
+  assert.ok(
+    levelMin > 0,
+    `на ровном фюзеляже обвод уходит под бетон на ${levelMin.toFixed(3)} м`,
+  );
 });
 
 test("the stand frame reads the object and stays out of the vehicle-frame catalog", () => {

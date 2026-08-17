@@ -17,6 +17,7 @@ import {
 import { islandAirportScene } from "../games/make-a-mess/src/game/islandAirportScene.ts";
 import { airVehicles } from "../games/make-a-mess/src/game/airVehicles.ts";
 import { DC3_AIRPLANE_CLASS } from "../games/make-a-mess/src/game/dc3Airplane.ts";
+import { dc3AirframeParts } from "../games/make-a-mess/src/content/objects/aircraft/dc3AirframeParts.ts";
 
 const pieces = islandAirportScene.breakablePieces.filter((piece) =>
   piece.clusterId === ISLAND_AIRPORT_DC3_PLACEMENT.clusterId,
@@ -24,8 +25,8 @@ const pieces = islandAirportScene.breakablePieces.filter((piece) =>
 
 test("the airport compiles with the DC-3 as one initially stable cluster", () => {
   assert.equal(islandAirportScene.resolveStructuralCollapse(new Set()).size, 0);
-  assert.equal(pieces.length, dc3BlockoutObject.parts.length);
-  assert.equal(islandAirportDc3Group.objects.length, dc3BlockoutObject.parts.length);
+  assert.equal(pieces.length, dc3AirframeParts().length);
+  assert.equal(islandAirportDc3Group.objects.length, dc3AirframeParts().length);
   assert.ok(
     islandAirportScene.breakableClusters.some(
       (cluster) => cluster.id === ISLAND_AIRPORT_DC3_PLACEMENT.clusterId,
@@ -79,10 +80,17 @@ test("airport pieces keep Object Lab ids, aluminium skins and steel cage", () =>
   assert.equal(wing?.material, "aluminium");
   assert.ok(wing?.visualMesh, "skins must keep the Object Lab mesh");
   assert.equal(wing.visualMesh.doubleSided, false);
-  const cowlInner = pieces.find((piece) => piece.id.includes(":nacelle-right-cowl-inner:"));
-  const nacelleBody = pieces.find((piece) => piece.id.includes(":nacelle-right-body:"));
-  assert.equal(cowlInner?.visualMesh?.doubleSided, true);
-  assert.equal(nacelleBody?.visualMesh?.doubleSided, false);
+  // Гондола перелицована панелями: капотная оболочка, губа NACA и тракт —
+  // замкнутые плитки, поэтому двусторонность им больше не нужна. Она была
+  // нужна лофту, у которого тракт был одиночной поверхностью.
+  // Только ПАНЕЛИ: перегородка и кок остались лофтами B01 намеренно.
+  const nacellePanels = pieces.filter((piece) =>
+    /:nacelle-right(-lip|-duct)?:bay/.test(piece.id));
+  assert.ok(nacellePanels.length > 20, `панелей правой гондолы ${nacellePanels.length}`);
+  assert.ok(
+    nacellePanels.every((piece) => piece.visualMesh?.doubleSided === false),
+    "панель гондолы — замкнутое тело, а не двусторонний лист",
+  );
   assert.ok(cage.length > 0 && cage.every((piece) => piece.material === "steel"));
   assert.ok(pieces.some((piece) => piece.actuator?.commandChannel === "throttle:0"));
   assert.ok(pieces.some((piece) => piece.actuator?.commandChannel === "rudder"));

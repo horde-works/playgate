@@ -1,31 +1,205 @@
 {
-  "schemaVersion": 1,
+  "schema": "reference-faithful-gates.v1",
   "objectId": "tilt-hexacopter-b11",
-  "source": {
-    "asset": "reference/approved-concept.png",
+  "reference": {
+    "approvedAsset": "reference/approved-concept.png",
     "sha256": "c6df5e71156e586d9242d9449cfca20248bf92e3e3d8382fe08f2f497391d087",
-    "sourceClass": "owner-approved-generated-concept",
-    "availableViews": 1,
-    "scaleAnchor": "authored rotor outer diameter 2.10 m"
+    "crop": [
+      0,
+      0,
+      1600,
+      983
+    ],
+    "sourceClass": "owner-approved generated concept",
+    "visualClaims": [
+      "aggressive fighter character",
+      "six lift rings",
+      "two upper longitudinal engines",
+      "static exterior armour belts",
+      "three paired armour support stations"
+    ],
+    "forbiddenClaims": [
+      "manufacturing dimensions",
+      "flightworthiness",
+      "certified loads",
+      "measured hidden structure"
+    ],
+    "scaleAnchor": "owner-approved authored lift-ring outside diameter 2.10 m",
+    "viewCount": 1,
+    "singleViewResolution": "owner-approved-hypothesis"
   },
   "registration": {
     "status": "source-registered",
     "manifest": "evidence/reference-registration.json",
-    "overlay": "evidence/source-registration-overlay.png",
-    "featureManifest": "evidence/source-features.json"
+    "cameraStatus": "frozen",
+    "matchedCameraId": "reference-match",
+    "frozenPixelFrame": [
+      1600,
+      983
+    ],
+    "projection": "perspective",
+    "requiredMasks": [
+      "silhouette",
+      "subsystems"
+    ],
+    "providedMasks": [
+      "silhouette",
+      "subsystems"
+    ],
+    "requiredLandmarks": [
+      "nose-tip",
+      "tail-boom-tip",
+      "canopy-ridge",
+      "left-belt",
+      "right-belt",
+      "six-rotor-centres",
+      "two-engine-centres"
+    ],
+    "providedLandmarks": [
+      "nose-tip",
+      "tail-boom-tip",
+      "canopy-ridge",
+      "left-belt",
+      "right-belt",
+      "six-rotor-centres",
+      "two-engine-centres"
+    ],
+    "requiredControlLines": [
+      "nose-canopy-ridge",
+      "armour-belt-sweep"
+    ],
+    "providedControlLines": [
+      "nose-canopy-ridge",
+      "armour-belt-sweep"
+    ],
+    "sourceMasks": {
+      "silhouette": "evidence/source-silhouette-mask.png",
+      "subsystems": "evidence/source-subsystem-mask.png"
+    },
+    "sourceFeatureManifest": "evidence/source-features.json",
+    "registrationOverlay": "evidence/source-registration-overlay.png",
+    "fitThresholds": {
+      "silhouetteIouMin": 0.6,
+      "bboxCenterDriftMax": 0.14,
+      "bboxSizeDriftMax": 0.16,
+      "featureDriftMax": 0.18
+    }
   },
   "contours": {
-    "status": "pending-owner",
-    "revision": "b11-owner-review-hypothesis",
-    "contract": "b11-contours/contour-contract.json",
-    "sheet": "b11-contours/aggressive-contour-sheet.png",
-    "note": "B11 retains the accepted B10 rear-third and core-boom direction, removes the old-F-16 bubble canopy, and joins nose armour, low glazing and shark ridge in one continuously rising dorsal line. Owner acceptance remains pending."
+    "status": "approved",
+    "revision": "b11-owner-approved-2026-08-16",
+    "contourData": "b11-contours/contour-contract.json",
+    "contourHash": "344091485f5c4cb7fd609d87e592f0805fc541cb3e7c48d4e242500102c38418",
+    "sheetPng": "b11-contours/aggressive-contour-sheet.png",
+    "requiredViews": [
+      "top",
+      "profile",
+      "front"
+    ],
+    "requiredFeatures": [
+      "nose-tip",
+      "tail-boom-tip",
+      "canopy-ridge",
+      "left-belt",
+      "right-belt",
+      "max-width-station"
+    ],
+    "requiredVoids": [
+      "duct-left-front",
+      "duct-left-mid",
+      "duct-left-rear",
+      "duct-right-front",
+      "duct-right-mid",
+      "duct-right-rear"
+    ],
+    "tierAOpen": [],
+    "ownerApproval": {
+      "verdict": "approved",
+      "record": "evidence/contour-approval-b11.md"
+    },
+    "viewConstraintReport": "evidence/b11-view-constraint-report.json"
   },
   "blockout": {
-    "status": "pending-owner",
-    "currentRevision": "tilt-hex-b11-contour-2026-08-16",
-    "modelHash": "db07330c5638",
-    "engineeringAllowed": false,
+    "status": "approved",
+    "revision": "tilt-hex-b11-contour-2026-08-16",
+    "matchedCameraId": "reference-match",
+    "modelArtifact": "b11-contours/blockout-model.json",
+    "modelHash": "1b7cd34f46cdab70e5c314b0390bb22df8da79659db2e8991625375865c99252",
+    "views": [
+      "top",
+      "front",
+      "left",
+      "rear",
+      "reference-match",
+      "structural-cutaway",
+      "primary-core-isometric"
+    ],
+    "fitReports": {
+      "silhouette": "evidence/b11-silhouette-fit.json",
+      "subsystems": "evidence/b11-subsystem-fit.json"
+    },
+    "featureFitReport": "evidence/b11-feature-fit.json",
+    "tierAOpen": [],
+    "ownerApproval": {
+      "verdict": "approved",
+      "record": "evidence/blockout-approval-b11.md"
+    }
+  },
+  "surfacePlan": {
+    "status": "pass",
+    "bodyFamilies": [
+      {
+        "id": "armoured-hull",
+        "family": "faceted longitudinal loft",
+        "silhouetteOwner": true,
+        "primitivePolicy": "single rebuilt loft; no contour patch parts"
+      },
+      {
+        "id": "canopy-ridge",
+        "family": "continuous linked lofts",
+        "silhouetteOwner": true,
+        "primitivePolicy": "station continuity owns the dorsal line"
+      },
+      {
+        "id": "armour-belts",
+        "family": "swept solid lofts",
+        "silhouetteOwner": true,
+        "primitivePolicy": "one coherent solid per side"
+      },
+      {
+        "id": "primary-core",
+        "family": "spatial torque-box cage",
+        "silhouetteOwner": false,
+        "primitivePolicy": "separate load-bearing members inside the shell"
+      },
+      {
+        "id": "lift-rings",
+        "family": "revolved duct assemblies",
+        "silhouetteOwner": true,
+        "primitivePolicy": "one articulated group per complete ring"
+      }
+    ]
+  },
+  "correctionPolicy": {
+    "tierAPatchParts": [],
+    "rebuildRequired": false
+  },
+  "validation": {
+    "status": "pass",
+    "sourceExpectationFiles": [
+      "b11-contours/contour-contract.json",
+      "evidence/b11-contour-expectations.json"
+    ],
+    "modelParameterFiles": [
+      "../../src/content/objects/vehicles/tiltHexacopterObject.ts"
+    ],
+    "separateOwners": true,
+    "readsEmittedGeometry": true,
+    "antiSelfConfirmationTest": "../../../../tests/tilt-hexacopter-object.test.mjs"
+  },
+  "engineering": {
+    "allowed": true,
+    "stage": "E01 design-development drawing package",
     "worldIntegrationAllowed": false
   }
 }

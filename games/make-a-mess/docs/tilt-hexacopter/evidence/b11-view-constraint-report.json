@@ -1,0 +1,12 @@
+{
+  "schema": "view-constraint-report.v1",
+  "status": "pass",
+  "revision": "b11-owner-approved-2026-08-16",
+  "views": ["top","profile","front"],
+  "checks": [
+    {"id":"topology-consistent","pass":true,"note":"Six lift-ring voids and two longitudinal engines remain coherent across the canonical views."},
+    {"id":"dorsal-flow-consistent","pass":true,"note":"Profile and three-quarter views share one continuously rising nose-canopy-ridge line."},
+    {"id":"load-path-consistent","pass":true,"note":"Three paired static spars connect the core to the exterior belts without using moving rings."}
+  ],
+  "unresolvedConflicts": []
+}

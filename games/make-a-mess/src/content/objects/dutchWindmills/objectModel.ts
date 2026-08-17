@@ -75,6 +75,12 @@ type ObjectPartBase = {
   group: string;
   /** Физическая толщина замкнутой пластины; не размер вокселя разрушения. */
   plateThickness?: number;
+  /**
+   * Собственный объём куска, м³. Ставится там, где формула потребителя врёт:
+   * для ЗАМКНУТОЙ ПЛИТКИ (панель обшивки) «площадь × толщина» удваивает
+   * объём, потому что у неё две поверхности и кромка, а не одна оболочка.
+   */
+  volume?: number;
   /** A real fixture owns its source on the bulb/flame contained by its lens. */
   light?: ObjectLightSource;
 };

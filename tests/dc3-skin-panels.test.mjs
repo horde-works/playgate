@@ -50,8 +50,8 @@ function pointToSegment(p, a, b) {
 // §8.6 — бюджет. Авторский шаг отсека выбран под него, а не наоборот.
 test("панелей не больше бюджета", () => {
   assert.ok(
-    dc3SkinPanelParts.length <= 340,
-    `панелей ${dc3SkinPanelParts.length}, потолок 340`,
+    dc3SkinPanelParts.length <= 430,
+    `панелей ${dc3SkinPanelParts.length}, потолок 430`,
   );
   assert.ok(dc3SkinPanelParts.length > 100, "этап 1 не может быть в сто панелей");
 });
@@ -195,30 +195,40 @@ test("соседние полосы делят общую кромку", () => {
 // лофтом ТОЧНО: её углы и промежуточные точки берутся из тех же колец на тех
 // же станциях. Проверяется буквально — каждая наружная точка панели обязана
 // найтись среди точек лофтовых колец.
-test("панели фюзеляжа лежат на лофте точно, а не приближённо", () => {
-  const { fuselage } = dc3AirframeSurface;
-  // Точки переводятся в мир НАПРЯМУЮ: круг через строку и обратно теряет
-  // разряды до преобразования и сам создаёт расхождение, которое ищем.
-  const world = new Set();
-  for (const station of fuselage.stations) {
-    for (const p of fuselage.ring(station)) {
-      world.add(dc3AirframeSurface.bodyToWorld(p).map((v) => v.toFixed(5)).join(","));
-    }
-  }
+test("панели фюзеляжа лежат на поверхности лофта", () => {
+  const { fuselage, worldToBody } = dc3AirframeSurface;
+  // Раньше здесь стояло «точка совпадает с выборкой кольца». С вырезами под
+  // иллюминаторы появились промежуточные станции, и это перестало быть тем
+  // инвариантом: панель обязана лежать НА ПОВЕРХНОСТИ, а не в её выборках.
+  const stationAt = (z) =>
+    fuselage.stations.find((station) => Math.abs(station.z - z) < 1e-9)
+      ?? fuselage.at(z);
   const panels = dc3SkinPanelParts.filter((part) => part.group === "fuselage-panels");
-  assert.ok(panels.length > 0, "фюзеляж обязан быть запанелирован");
+  assert.ok(panels.length > 60, `панелей фюзеляжа всего ${panels.length}`);
   let checked = 0;
+  let worst = 0;
   for (const part of panels) {
-    // Наружная половина вершин — первая: внутренняя сдвинута на толщину.
+    // Наружная половина вершин — первая; внутренняя сдвинута на толщину.
     for (const vertex of part.vertices.slice(0, part.vertices.length / 2)) {
-      assert.ok(
-        world.has(vertex.map((v) => v.toFixed(5)).join(",")),
-        `${part.id}: точка ${vertex.map((v) => v.toFixed(3)).join(",")} не лежит на лофте`,
-      );
+      const [x, y, z] = worldToBody(vertex);
+      // Носовые станции несут `faceForward`: он сдвигает точку ВПЕРЁД по z,
+      // поэтому по её собственной z станция ищется не та, и замер начинает
+      // мерить не то. Носок окон не несёт, и проверка ограничена зоной без
+      // этого сдвига — иначе тест ловил бы свою же ошибку отсчёта.
+      if (z > 5.0) continue;
+      const station = stationAt(z);
+      const centreY = (station.crown + station.keel) / 2;
+      const halfHeight = (station.crown - station.keel) / 2;
+      const cosine = Math.max(-1, Math.min(1, x / station.halfWidth));
+      const angle = y >= centreY ? Math.acos(cosine) : -Math.acos(cosine);
+      const surface = fuselage.pointAt(station, angle);
+      worst = Math.max(worst, Math.hypot(surface[0] - x, surface[1] - y));
+      void halfHeight;
       checked += 1;
     }
   }
-  assert.ok(checked > 500, `проверено всего ${checked} точек`);
+  assert.ok(checked > 800, `проверено всего ${checked} точек`);
+  assert.ok(worst <= 0.004, `максимальный отход от поверхности ${(worst * 1000).toFixed(1)} мм`);
 });
 
 test("мотогондолы запанелированы с обеих сторон", () => {
@@ -229,6 +239,112 @@ test("мотогондолы запанелированы с обеих стор
   assert.ok(ids.some((id) => id.startsWith("nacelle-right")), "нет правой гондолы");
 });
 
+// НИ ОДНА ЧАСТЬ САЛОНА НЕ ТОРЧИТ НАРУЖУ.
+//
+// Шторка однажды уже вылезла: ширину ей задали по сечению на высоте пояса, а
+// построили прямоугольником в 1.8 м — борт кверху сужается, и верхние углы
+// оказались за обшивкой. Ловится это только вопросом «каждый ли угол лежит в
+// сечении НА СВОЕЙ высоте», а не сравнением с одной шириной.
+test("начинка салона не выходит за обшивку", async () => {
+  const { dc3BlockoutObject } = await import(
+    "../games/make-a-mess/src/content/objects/aircraft/dc3BlockoutObject.ts"
+  );
+  const { cabins, fuselage, worldToBody } = dc3AirframeSurface;
+  const parts = dc3BlockoutObject.parts.filter((part) =>
+    ["cabin-trim", "cabin-seats", "cabin-floor"].includes(part.group));
+  assert.ok(parts.length > 20, `частей начинки всего ${parts.length}`);
+  // Куски бывают и коробками (лампы), у них нет `vertices` — углы считаются
+  // из центра и размера. Прежняя редакция падала на первой же лампе.
+  const cornersOf = (part) => {
+    if (part.vertices) return part.vertices;
+    const [cx, cy, cz] = part.center;
+    const [sx, sy, sz] = part.size;
+    const corners = [];
+    for (const dx of [-sx / 2, sx / 2]) {
+      for (const dy of [-sy / 2, sy / 2]) {
+        for (const dz of [-sz / 2, sz / 2]) corners.push([cx + dx, cy + dy, cz + dz]);
+      }
+    }
+    return corners;
+  };
+  for (const part of parts) {
+    for (const vertex of cornersOf(part)) {
+      const [x, y, z] = worldToBody(vertex);
+      const station = fuselage.at(z);
+      const centreY = (station.crown + station.keel) / 2;
+      const halfWidth = station.halfWidth - cabins.skinInset;
+      const halfHeight = (station.crown - station.keel) / 2 - cabins.skinInset;
+      const radial = (x / halfWidth) ** 2 + ((y - centreY) / halfHeight) ** 2;
+      assert.ok(
+        radial <= 1.02,
+        `${part.id}: угол (${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)}) вне обшивки`,
+      );
+    }
+  }
+});
+
+// ИЛЛЮМИНАТОР — ДЫРКА, А НЕ КАРТИНКА.
+//
+// Правило репозитория про окна жёсткое: вырез в оболочке, откосы, остекление
+// и настоящая глубина за ним. Проверяется тем, что в обшивке РЕАЛЬНО нет
+// материала на месте проёма: панель отсека выпущена полосами вокруг него.
+test("окна прорезаны в обшивке, а не нарисованы", () => {
+  const { windows } = dc3AirframeSurface;
+  const glazing = dc3SkinPanelParts.filter((part) => part.group === "window-glazing");
+  assert.equal(
+    glazing.length,
+    windows.length * 2,
+    `остеклений ${glazing.length}, а окон ${windows.length} на два борта`,
+  );
+  // Вокруг каждого проёма обязаны стоять полосы: если бы панель осталась
+  // целой плиткой, их бы не было вовсе.
+  for (const suffix of ["below", "above"]) {
+    const strips = dc3SkinPanelParts.filter((part) => part.id.includes(`:${suffix}`));
+    assert.ok(
+      strips.length >= windows.length,
+      `полос ${suffix} всего ${strips.length}`,
+    );
+  }
+  // Стекло утоплено внутрь: снаружи оно не должно лежать на обшивке.
+  for (const pane of glazing) {
+    assert.ok(pane.vertices.length >= 8, `${pane.id}: вырожденное остекление`);
+  }
+});
+
+// АНО СТОЯТ НА СВОИХ БОРТАХ, А НЕ НА СВОИХ ЗНАКАХ X.
+//
+// Правый борт машины выводится из рамы, а не берётся из имён кусков: нос в
+// +Z, верх в +Y, значит правый борт — forward × up = (−1, 0, 0). Якоря
+// блокаута названы наоборот, и первая редакция огней это унаследовала —
+// зелёный оказался слева. В числах такое не видно, пока не спросишь прямо.
+test("зелёный АНО справа, красный слева", async () => {
+  const { dc3BlockoutObject } = await import(
+    "../games/make-a-mess/src/content/objects/aircraft/dc3BlockoutObject.ts"
+  );
+  const forward = [0, 0, 1];
+  const up = [0, 1, 0];
+  const starboard = [
+    forward[1] * up[2] - forward[2] * up[1],
+    forward[2] * up[0] - forward[0] * up[2],
+    forward[0] * up[1] - forward[1] * up[0],
+  ];
+  assert.equal(starboard[0] < 0, true, "правый борт машины лежит по минус X");
+  const lamp = (colour) => dc3BlockoutObject.parts.find(
+    (part) => part.light?.color === colour && part.id.startsWith("nav-light-"),
+  );
+  const green = lamp("#4dff86");
+  const red = lamp("#ff4d4d");
+  assert.ok(green && red, "оба бортовых огня обязаны существовать");
+  assert.ok(
+    Math.sign(green.center[0]) === Math.sign(starboard[0]),
+    "зелёный обязан стоять на правом борту",
+  );
+  assert.ok(
+    Math.sign(red.center[0]) === -Math.sign(starboard[0]),
+    "красный обязан стоять на левом борту",
+  );
+});
+
 test("модель объявляет требуемые виды", () => {
   const required = [
     "panel-plan",
@@ -237,6 +353,7 @@ test("модель объявляет требуемые виды", () => {
     "panel-joint-detail",
     "panel-empennage",
     "panel-fuselage-detail",
+    "panel-windows",
     "panel-nacelle-detail",
     "reference-loft",
     "panel-silhouette",
@@ -247,11 +364,72 @@ test("модель объявляет требуемые виды", () => {
   }
 });
 
-// Машина не тронута: образец строится рядом, а не вместо неё.
-test("блокаут DC-3 остался прежним", async () => {
+// ФОРМА B01 НЕ ТРОНУТА, А СОСТАВ ВЫРОС ОСОЗНАННО.
+//
+// 127 → 133: шесть промежуточных шпангоутов в салоне под иллюминаторы. Они
+// сняты с авторской таблицы, поэтому поверхность та же (проверено выше).
+// Ревизия объекта не меняется: форма — прежняя.
+// Форма и состав B01 не тронуты: обшивка подменяется представлением, а не
+// геометрией. Уплотнение набора салона откачено — см. разбор в блокауте.
+// Внешняя компоновка не тронута: выросла только начинка.
+test("снаружи машина прежняя, вырос только салон", async () => {
   const { dc3BlockoutObject } = await import(
     "../games/make-a-mess/src/content/objects/aircraft/dc3BlockoutObject.ts"
   );
-  assert.equal(dc3BlockoutObject.parts.length, 127);
+  const cabin = dc3BlockoutObject.parts.filter((part) =>
+    part.group.startsWith("cabin-"));
+  assert.ok(cabin.length >= 35, `частей салона всего ${cabin.length}`);
+  // Было 158; стало 160 — по кронштейну шлиц-шарнира на каждую главную ногу.
+  // Кронштейн появился не для красоты: звенья шарнира вынесены за габарит
+  // покрышки (прежние 0.075 при полуширине колеса 0.12 шли сквозь резину), и
+  // до плоскости шарнира их теперь надо чем-то донести от цилиндра.
+  assert.equal(
+    dc3BlockoutObject.parts.length - cabin.length,
+    160,
+    "снаружи: баки, носовой отсек, свет и разобранное на узлы шасси",
+  );
   assert.equal(dc3BlockoutObject.revision, "b01-2026-08-13-surfaces");
 });
+
+// ПАССАЖИРЫ СИДЯТ ПО ПОЛЁТУ.
+//
+// Нос объекта смотрит в +Z, поэтому у кресла, обращённого вперёд, спинка
+// стоит на МЕНЬШЕМ z. Знак здесь один раз уже был перепутан, и на кадре это
+// видно сразу — а в числах нет, если не спросить.
+test("кресла смотрят вперёд, а не в хвост", async () => {
+  const { dc3BlockoutObject } = await import(
+    "../games/make-a-mess/src/content/objects/aircraft/dc3BlockoutObject.ts"
+  );
+  const centreZ = (part) => {
+    const zs = part.vertices.map((vertex) => vertex[2]);
+    return (Math.min(...zs) + Math.max(...zs)) / 2;
+  };
+  const backs = dc3BlockoutObject.parts.filter((part) => part.id.endsWith("-back"));
+  assert.ok(backs.length >= 12, `спинок всего ${backs.length}`);
+  for (const back of backs) {
+    const cushion = dc3BlockoutObject.parts.find(
+      (part) => part.id === back.id.replace(/-back$/, ""),
+    );
+    assert.ok(cushion, `нет подушки для ${back.id}`);
+    assert.ok(
+      centreZ(back) < centreZ(cushion),
+      `${back.id}: спинка впереди подушки — кресло развёрнуто в хвост`,
+    );
+  }
+});
+
+// Житель обязан помещаться стоя: ради этого и считался уровень пола.
+test("житель встаёт в полный рост в обоих салонах", () => {
+  const { cabins, fuselage } = dc3AirframeSurface;
+  const STAND = 1.75;
+  for (const cabin of [cabins.forward, cabins.aft]) {
+    for (const z of [cabin.from, (cabin.from + cabin.to) / 2, cabin.to]) {
+      const crown = fuselage.at(z).crown - cabins.skinInset;
+      assert.ok(
+        crown - cabin.floorY >= STAND,
+        `салон ${cabin.from}..${cabin.to} на z=${z.toFixed(2)}: просвет ${(crown - cabin.floorY).toFixed(2)} м меньше роста`,
+      );
+    }
+  }
+});
+

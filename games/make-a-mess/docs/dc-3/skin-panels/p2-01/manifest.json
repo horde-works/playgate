@@ -1,8 +1,8 @@
 {
   "modelId": "douglas-dc3-skin-panels",
   "revision": "p2-01-2026-08-15-full-skin",
-  "modelHash": "226189b6567f",
-  "generatedAt": "2026-08-15T13:08:59.994Z",
+  "modelHash": "c9f3dd50b302",
+  "generatedAt": "2026-08-16T17:33:53.211Z",
   "views": [
     {
       "id": "panel-plan",
@@ -39,6 +39,12 @@
       "label": "Оперение · киль, стабилизатор, рули",
       "projection": "perspective",
       "file": "panel-empennage.png"
+    },
+    {
+      "id": "panel-windows",
+      "label": "Иллюминаторы · настоящие проёмы, за ними кресла",
+      "projection": "perspective",
+      "file": "panel-windows.png"
     },
     {
       "id": "panel-fuselage-detail",
