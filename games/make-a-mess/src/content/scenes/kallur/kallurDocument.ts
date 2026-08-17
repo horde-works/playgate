@@ -22,6 +22,8 @@ import {
   kallurStones,
 } from "./kallurLandscapeDocument.ts";
 import { kallurVisibleStones } from "./kallurStoneField.ts";
+import { generateKallurWallStrata } from "./kallurWallStrata.ts";
+import { kallurLandscapeSampler } from "./kallurLandscapeDocument.ts";
 
 /**
  * Kallur — the Faroe rest island (docs/kallur-brief.md).
@@ -196,6 +198,30 @@ for (const stone of kallurVisibleStones(kallurStones)) {
       },
     );
   }
+}
+
+// The wall's layered cliff character: courses anchored to the field, grass
+// ledges on random layers, a ragged sod lip over the top course (bible §I:
+// the turf-to-rock seam is designed, never a straight accidental line).
+const STRATA_TONES = ["#3d4442", "#474e48", "#525750", "#5d615c", "#6d7165"];
+const wall = group("wall-strata", "Layered seaward cliff of the crown", "stone");
+for (const layer of generateKallurWallStrata(kallurLandscapeSampler)) {
+  primitive(
+    wall,
+    layer.id,
+    layer.turf ? "grass" : "stone",
+    layer.turf ? "groundTile" : "stoneBlock",
+    [layer.x, layer.y, layer.z],
+    [layer.along, layer.height, layer.depth],
+    layer.turf
+      ? "#757641"
+      : STRATA_TONES[Math.floor(layer.tone * STRATA_TONES.length) % STRATA_TONES.length],
+    {
+      rotation: [0, layer.yaw, 0],
+      foundation: true,
+      maximumVerticalGap: 1,
+    },
+  );
 }
 
 export const kallurLandscapeVisual: LandscapeVisualDefinition = {
