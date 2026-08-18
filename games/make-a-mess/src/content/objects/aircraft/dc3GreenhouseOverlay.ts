@@ -13,25 +13,13 @@ import type {
   ObjectPoint,
   ObjectTriangle,
 } from "../dutchWindmills/objectModel.ts";
-import { dc3BlockoutObject } from "./dc3BlockoutObject.ts";
+import { dc3AirframeSurface, dc3BlockoutObject } from "./dc3BlockoutObject.ts";
 
 const GROUP = "greenhouse-overlay";
 const FRAME_WIDTH = 0.05;
 const FRAME_DEPTH = 0.055;
 const GLASS_INSET = 0.028;
 const GLASS_REBATE = 0.012;
-
-// Same sit as dc3BlockoutObject. Duplicated so the airframe file stays closed.
-const GEAR_BODY_Y = -2.7;
-const GEAR_BODY_Z = 0.2;
-const TAILWHEEL_BODY_Y = -0.52;
-const TAILWHEEL_BODY_Z = -11.05;
-const PITCH = Math.atan2(
-  TAILWHEEL_BODY_Y - GEAR_BODY_Y,
-  GEAR_BODY_Z - TAILWHEEL_BODY_Z,
-);
-const COS = Math.cos(PITCH);
-const SIN = Math.sin(PITCH);
 
 type Vector = ObjectPoint;
 
@@ -51,9 +39,7 @@ const cross = (a: Vector, b: Vector): Vector => [
 ];
 
 function sit(body: Vector): Vector {
-  const yR = body[1] - GEAR_BODY_Y;
-  const zR = body[2] - GEAR_BODY_Z;
-  return [body[0], yR * COS + zR * SIN, zR * COS - yR * SIN];
+  return dc3AirframeSurface.bodyToWorld(body);
 }
 
 /**

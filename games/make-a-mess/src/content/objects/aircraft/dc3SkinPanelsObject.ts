@@ -58,6 +58,11 @@ const parts: ObjectLabPart[] = [];
 const point = (x: number, y: number, z: number): ObjectPoint => [x, y, z];
 const sub = (a: ObjectPoint, b: ObjectPoint): ObjectPoint =>
   [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+const lerp = (a: ObjectPoint, b: ObjectPoint, t: number): ObjectPoint => [
+  a[0] + (b[0] - a[0]) * t,
+  a[1] + (b[1] - a[1]) * t,
+  a[2] + (b[2] - a[2]) * t,
+];
 const cross = (a: ObjectPoint, b: ObjectPoint): ObjectPoint => [
   a[1] * b[2] - a[2] * b[1],
   a[2] * b[0] - a[0] * b[2],
@@ -139,14 +144,19 @@ function emitPanel(
   for (let row = 0; row < rowCount; row += 1) {
     for (let column = 0; column < cols; column += 1) {
       const here = grid[row][column];
-      const across = sub(
-        grid[row][Math.min(column + 1, cols - 1)],
-        grid[row][Math.max(column - 1, 0)],
-      );
-      const along = sub(
-        grid[Math.min(row + 1, rowCount - 1)][column],
-        grid[Math.max(row - 1, 0)][column],
-      );
+      const colNext = Math.min(column + 1, cols - 1);
+      const colPrev = Math.max(column - 1, 0);
+      let across = sub(grid[row][colNext], grid[row][colPrev]);
+      if (dot(across, across) < 1e-16 && row > 0) {
+        across = sub(grid[row - 1][colNext], grid[row - 1][colPrev]);
+      }
+      const rowNext = Math.min(row + 1, rowCount - 1);
+      const rowPrev = Math.max(row - 1, 0);
+      let along = sub(grid[rowNext][column], grid[rowPrev][column]);
+      if (dot(along, along) < 1e-16) {
+        if (row > 0) along = sub(here, grid[row - 1][column]);
+        else if (row + 1 < rowCount) along = sub(grid[row + 1][column], here);
+      }
       let normal = norm(cross(along, across));
       if (dot(normal, sub(here, centres[row])) < 0) {
         normal = [-normal[0], -normal[1], -normal[2]];
@@ -319,17 +329,23 @@ function panelSurface(
     }
     const trailingTo = options.trailingTo;
     if (!trailingTo) continue;
-    // Хвостовая полоса существует только там, где нет руля: в отсеке
-    // закруглка или элерона шкура кончается на заднем лонжероне, и это уже
-    // так в B01 — панели просто не выдумывают того, чего там нет.
-    const ends = bay.map(trailingTo);
-    if (ends.some((end) => end <= options.lanes[1].to + 1e-6)) continue;
+    // Хвостовая полоса только там, где нет руля. Смешанный отсек элерона и
+    // колпака не выкидывается целиком — иначе скруглённая задняя кромка
+    // законцовки остаётся без панелей. Смесь закрылка с щелью у гондолы
+    // по-прежнему пропускается: там заднюю кромку несёт мотогондола.
+    const rear = options.lanes[1].to;
+    if (bay.some((u) => wing.inFlapBay(u))
+      && bay.some((u) => trailingTo(u) <= rear + 1e-6)) {
+      continue;
+    }
+    const trailRows = bay.filter((u) => trailingTo(u) > rear + 1e-6);
+    if (trailRows.length < 2) continue;
     for (const side of [0, 1] as const) {
       addPanel(
         {
           id: `${tag}:trail-${side === 0 ? "upper" : "lower"}`,
           group,
-          rows: bay,
+          rows: trailRows,
           at: (u, step, steps) =>
             facePoint(band, u, spars.rear + ((trailingTo(u) - spars.rear) * step) / steps, side),
           steps: CHORD_STEPS,
@@ -354,23 +370,7 @@ for (const sign of [1, -1] as const) {
 }
 
 // === Горизонтальное оперение.
-const stabStations = [
-  -stabiliser.halfSpan,
-  -(stabiliser.elevatorSpan.outer + 0.04),
-  -stabiliser.elevatorSpan.outer,
-  -2.1,
-  -0.9,
-  -stabiliser.elevatorSpan.inner,
-  0,
-  stabiliser.elevatorSpan.inner,
-  0.9,
-  2.1,
-  stabiliser.elevatorSpan.outer,
-  stabiliser.elevatorSpan.outer + 0.04,
-  stabiliser.halfSpan,
-].sort((a, b) => a - b);
-
-panelSurface("stabiliser", "stab-panels", stabiliser.band, stabStations, {
+panelSurface("stabiliser", "stab-panels", stabiliser.band, stabiliser.stations, {
   noseTo: spars.front,
   lanes: boxLanes,
   trailingTo: (x) =>
@@ -391,7 +391,7 @@ const leaves: readonly Leaf[] = [
   ...[1, -1].flatMap((sign) => [
     { id: `flap-inner-${sign > 0 ? "right" : "left"}`, band: wing.band, stations: [1.58, 2.8, 4.2, 5].map((x) => sign * x).sort((a, b) => a - b), from: spars.rear + hingeGapT, span: 1.8 },
     { id: `flap-outer-${sign > 0 ? "right" : "left"}`, band: wing.band, stations: [6.58, 7.4, 8.55].map((x) => sign * x).sort((a, b) => a - b), from: spars.rear + hingeGapT, span: 1.8 },
-    { id: `aileron-${sign > 0 ? "right" : "left"}`, band: wing.band, stations: [8.72, 10.2, 12.6, DC3_WINGSPAN / 2 - 0.52].map((x) => sign * x).sort((a, b) => a - b), from: spars.rear + hingeGapT, span: 2.2 },
+    { id: `aileron-${sign > 0 ? "right" : "left"}`, band: wing.band, stations: [wing.aileronSpan.inner, 10.2, 12.6, wing.aileronSpan.outer].map((x) => sign * x).sort((a, b) => a - b), from: spars.rear + hingeGapT, span: 2.2 },
     { id: `elevator-${sign > 0 ? "right" : "left"}`, band: stabiliser.band, stations: [stabiliser.elevatorSpan.inner, 0.9, 2.1, stabiliser.elevatorSpan.outer].map((x) => sign * x).sort((a, b) => a - b), from: stabiliser.hingeT + hingeGapT, span: 1.6 },
   ]),
 ];
@@ -602,6 +602,29 @@ function angleAtHeight(z: number, y: number, side: 1 | -1): number {
   return side > 0 ? angle : Math.PI - angle;
 }
 
+/** Угол сечения по точке: visor на оси даёт π/2, даже сидя ниже лофта. */
+function sectionAngle(sample: ObjectPoint): number {
+  const station = fuselageStationAt(sample[2]);
+  const cosine = Math.max(
+    -1,
+    Math.min(1, sample[0] / Math.max(station.halfWidth, 1e-9)),
+  );
+  return sample[1] >= 0 ? Math.acos(cosine) : -Math.acos(cosine);
+}
+
+/** Точка лофта на заданной высоте. Та же формула, что `loftPointAtY` блокаута. */
+function loftPointAtY(z: number, y: number, side: 1 | -1): ObjectPoint {
+  const station = fuselageStationAt(z);
+  const centreY = (station.crown + station.keel) / 2;
+  const halfHeight = (station.crown - station.keel) / 2;
+  const power = station.upperPower ?? 2;
+  const unit = Math.max(0, Math.min(1, (y - centreY) / Math.max(halfHeight, 1e-9)));
+  const sine = Math.pow(unit, power / 2);
+  const angle = Math.asin(Math.max(0, Math.min(1, sine)));
+  const surface = fuselage.pointAt(station, side > 0 ? angle : Math.PI - angle);
+  return [surface[0], y, z];
+}
+
 /**
  * СТЕКЛО НЕ КРЕПИТСЯ К ОБШИВКЕ. Между ними обвязка: проём режется по
  * наружному контуру, рама занимает кольцо шириной `FRAME_WIDTH`, стекло сидит
@@ -626,6 +649,8 @@ type WindowCut = {
   readonly glassZTo: number;
   readonly glassAngleFrom: number;
   readonly glassAngleTo: number;
+  readonly snapZ?: number;
+  readonly snapAngle?: number;
 };
 
 /** Столбцы, на которые опирается поперечная планка рамы. */
@@ -636,6 +661,99 @@ function columnsBetweenGlass(
   return columns.filter(
     (angle) => angle >= cut.glassAngleFrom - 1e-9 && angle <= cut.glassAngleTo + 1e-9,
   );
+}
+
+const uniqueSorted = (values: readonly number[]) =>
+  [...values].sort((a, b) => a - b)
+    .filter((value, index, list) => index === 0 || value - list[index - 1] > 1e-9);
+
+const between = (values: readonly number[], low: number, high: number) =>
+  values.filter((value) => value >= low - 1e-9 && value <= high + 1e-9);
+
+const snapTo = (value: number, grid: readonly number[], epsilon: number) => {
+  const near = grid.find((edge) => Math.abs(edge - value) < epsilon);
+  return near ?? value;
+};
+
+function emitFuselageBand(
+  id: string,
+  zLow: number,
+  zHigh: number,
+  zRows: readonly number[],
+  angleFrom: number,
+  angleTo: number,
+  goreAngles: readonly number[],
+  cuts: readonly WindowCut[],
+): void {
+  const sortedZs = uniqueSorted(zRows);
+  const inside = cuts
+    .filter((cut) =>
+      cut.zFrom > zLow && cut.zTo < zHigh
+      && cut.angleFrom > angleFrom && cut.angleTo < angleTo)
+    .sort((left, right) => left.zFrom - right.zFrom);
+  if (inside.length === 0) {
+    if (sortedZs.length >= 2 && goreAngles.length >= 2) {
+      fuselageTile(id, "fuselage-panels", sortedZs, goreAngles);
+    }
+    return;
+  }
+  const snapped = inside.map((cut) => ({
+    ...cut,
+    angleFrom: snapTo(cut.angleFrom, goreAngles, cut.snapAngle ?? 0.03),
+    angleTo: snapTo(cut.angleTo, goreAngles, cut.snapAngle ?? 0.03),
+    zFrom: snapTo(cut.zFrom, sortedZs, cut.snapZ ?? 0.05),
+    zTo: snapTo(cut.zTo, sortedZs, cut.snapZ ?? 0.05),
+  }));
+  const columns = uniqueSorted([
+    ...goreAngles,
+    ...snapped.flatMap((cut) => [
+      cut.angleFrom, cut.glassAngleFrom, cut.glassAngleTo, cut.angleTo,
+    ]),
+  ]);
+  const rows = uniqueSorted([
+    ...sortedZs,
+    ...snapped.flatMap((cut) => [
+      cut.zFrom, cut.glassZFrom, cut.glassZTo, cut.zTo,
+    ]),
+  ]);
+  const tile = (
+    tag: string,
+    group: string,
+    rws: readonly number[],
+    cols: readonly number[],
+    inward = 0,
+    material: ObjectMaterialId = "paint-light",
+  ): void => {
+    if (rws.length < 2 || cols.length < 2) return;
+    fuselageTile(tag, group, rws, cols, inward, material);
+  };
+  let cursor = zLow;
+  for (const [cutIndex, cut] of snapped.entries()) {
+    tile(`${id}:seg${cutIndex}`, "fuselage-panels",
+      between(rows, cursor, cut.zFrom), columns);
+    const windowRows = between(rows, cut.zFrom, cut.zTo);
+    tile(`${id}:below${cutIndex}`, "fuselage-panels", windowRows,
+      between(columns, angleFrom, cut.angleFrom));
+    tile(`${id}:above${cutIndex}`, "fuselage-panels", windowRows,
+      between(columns, cut.angleTo, angleTo));
+    for (const [tag, cols, rws] of [
+      ["frame-below", between(columns, cut.angleFrom, cut.glassAngleFrom), windowRows],
+      ["frame-above", between(columns, cut.glassAngleTo, cut.angleTo), windowRows],
+      ["frame-aft", columnsBetweenGlass(columns, cut), between(rows, cut.zFrom, cut.glassZFrom)],
+      ["frame-fore", columnsBetweenGlass(columns, cut), between(rows, cut.glassZTo, cut.zTo)],
+    ] as const) {
+      tile(`${cut.id}:${tag}`, "window-frame", rws, cols, FRAME_INSET, "metal");
+    }
+    tile(`${cut.id}:glazing`, "window-glazing",
+      between(rows, cut.glassZFrom, cut.glassZTo),
+      between(columns, cut.glassAngleFrom, cut.glassAngleTo),
+      GLASS_INSET, "glazing");
+    cursor = cut.zTo;
+  }
+  if (between(rows, cursor, zHigh).length >= 2) {
+    fuselageTile(`${id}:segTail`, "fuselage-panels",
+      between(rows, cursor, zHigh), columns);
+  }
 }
 
 const windowCuts: WindowCut[] = [];
@@ -665,7 +783,56 @@ for (const [index, plan] of dc3AirframeSurface.windows.entries()) {
   }
 }
 
-/** Отсеки фюзеляжа: те же границы, что и раньше. */
+const { zAft: WINDSHIELD_Z_AFT, zFore: WINDSHIELD_Z_FORE } = dc3AirframeSurface.windshieldBay;
+const ROOF_TO_BROW_Z = dc3AirframeSurface.greenhouseBrow.apex[2];
+const DECK_TO_SILL_Z = dc3AirframeSurface.greenhouseSill.apex[2];
+const WINDSHIELD_GORE_BEGIN = 1;
+const WINDSHIELD_GORE_END = 4;
+const WINDSHIELD_ANGLE_FROM = (WINDSHIELD_GORE_BEGIN / FUSELAGE_GORES) * TAU;
+const WINDSHIELD_ANGLE_TO = (WINDSHIELD_GORE_END / FUSELAGE_GORES) * TAU;
+
+function goreCoversWindshield(angleFrom: number, angleTo: number): boolean {
+  return angleFrom < WINDSHIELD_ANGLE_TO - 1e-9 && angleTo > WINDSHIELD_ANGLE_FROM + 1e-9;
+}
+
+function expandSideLight(pane: { readonly corners: readonly ObjectPoint[] }): ObjectPoint[] {
+  const along = norm(sub(pane.corners[3], pane.corners[0]));
+  const across = norm(sub(pane.corners[1], pane.corners[0]));
+  const mid: ObjectPoint = [
+    pane.corners.reduce((sum, corner) => sum + corner[0], 0) / 4,
+    pane.corners.reduce((sum, corner) => sum + corner[1], 0) / 4,
+    pane.corners.reduce((sum, corner) => sum + corner[2], 0) / 4,
+  ];
+  return pane.corners.map((corner) => {
+    const fromMid = sub(corner, mid);
+    const du = dot(fromMid, along) >= 0 ? FRAME_WIDTH : -FRAME_WIDTH;
+    const dv = dot(fromMid, across) >= 0 ? FRAME_WIDTH : -FRAME_WIDTH;
+    return [
+      corner[0] + along[0] * du + across[0] * dv,
+      corner[1] + along[1] * du + across[1] * dv,
+      corner[2] + along[2] * du + across[2] * dv,
+    ] as ObjectPoint;
+  });
+}
+
+function sideLightOuter(id: "left" | "right"): ObjectPoint[] {
+  const pane = dc3AirframeSurface.sideLights.find((entry) => entry.id === id);
+  if (!pane) throw new Error(`DC-3 side light ${id} missing`);
+  return expandSideLight(pane);
+}
+
+const SIDE_SKIN_AFT = Math.min(
+  ...dc3AirframeSurface.sideLights.flatMap((pane) => expandSideLight(pane).map((corner) => corner[2])),
+);
+const SIDE_SKIN_FORE = Math.max(
+  ...dc3AirframeSurface.sideLights.flatMap((pane) => expandSideLight(pane).map((corner) => corner[2])),
+);
+/** Салонный шпангоут, с которого борт сходится на заднюю раму иллюминатора. */
+const CABIN_JOIN_Z = fuselage.stations.find((station) => Math.abs(station.z - 5.15) < 1e-9)?.z
+  ?? 5.15;
+const RIGHT_AFT_HEAD_ANGLE = sectionAngle(sideLightOuter("right")[2]);
+const LEFT_AFT_HEAD_ANGLE = sectionAngle(sideLightOuter("left")[2]);
+
 const fuselageBays: number[][] = (() => {
   const zs = fuselage.stations.map((station) => station.z);
   const result: number[][] = [];
@@ -684,6 +851,7 @@ for (const [bayIndex, bay] of fuselageBays.entries()) {
   const zLow = Math.min(...bay);
   const zHigh = Math.max(...bay);
   const sortedZs = [...bay].sort((a, b) => a - b);
+  const bayHasWindshield = zLow < WINDSHIELD_Z_AFT + 1e-9 && zHigh > WINDSHIELD_Z_FORE - 1e-9;
   for (let gore = 0; gore < FUSELAGE_GORES; gore += 1) {
     const angleFrom = ((gore * FUSELAGE_GORE_STEP) / fuselage.ringCount) * TAU;
     const angleTo = (((gore + 1) * FUSELAGE_GORE_STEP) / fuselage.ringCount) * TAU;
@@ -692,104 +860,673 @@ for (const [bayIndex, bay] of fuselageBays.entries()) {
       (_, step) => angleFrom + ((angleTo - angleFrom) * step) / FUSELAGE_GORE_STEP,
     );
     const id = `fuselage:bay${bayIndex}:gore${gore}`;
-    const cuts = windowCuts
-      .filter((window) =>
-        window.zFrom > zLow && window.zTo < zHigh
-        && window.angleFrom > angleFrom && window.angleTo < angleTo)
-      .sort((left, right) => left.zFrom - right.zFrom);
-    if (cuts.length === 0) {
-      fuselageTile(id, "fuselage-panels", sortedZs, goreAngles);
+    const splitWindshield = bayHasWindshield && goreCoversWindshield(angleFrom, angleTo);
+    const greenhouseCheek = gore === 0 || gore === 1 || gore === 3 || gore === 4;
+    const roofEndZ = greenhouseCheek ? SIDE_SKIN_AFT : ROOF_TO_BROW_Z;
+    // Салонный отсек раньше резался ножом на задней раме, и обвод стойки
+    // читался фланцем в той же плоскости. Теперь gore 0/4 и нижняя половина
+    // gore 1/3 кончаются на шпангоуте 5.15 — дальше борт сходится на раму
+    // по лофту. Верх gore 1/3 (висок) по-прежнему до рамы: его забирает купол.
+    // В носовом отсеке gore 0/4 целиком заменены одним клином от колпака
+    // до салона: верх по порогу иллюминатора, без отдельной накладки.
+    const trimGreenhouse = greenhouseCheek
+      && zLow < SIDE_SKIN_AFT + 1e-9
+      && zHigh > SIDE_SKIN_AFT + 1e-9;
+    const overlapsSideLight = zLow < SIDE_SKIN_FORE + 1e-9
+      && zHigh > SIDE_SKIN_AFT - 1e-9;
+    const emitGreenhouseGore = (
+      bandId: string,
+      zEnd: number,
+      a0: number,
+      a1: number,
+      extras: readonly number[] = [],
+      zStart?: number,
+    ): void => {
+      const rows = uniqueSorted([
+        ...(zStart === undefined ? [] : [zStart]),
+        ...sortedZs.filter((z) =>
+          z <= zEnd + 1e-9
+          && (zStart === undefined || z >= zStart - 1e-9)),
+        zEnd,
+      ]);
+      if (rows.length < 2) return;
+      const ringStep = TAU / fuselage.ringCount;
+      const steps = Math.max(2, Math.round(Math.abs(a1 - a0) / ringStep));
+      const angles = uniqueSorted([
+        ...Array.from({ length: steps + 1 }, (_, step) => a0 + ((a1 - a0) * step) / steps),
+        ...extras.filter((angle) =>
+          angle >= Math.min(a0, a1) - 1e-9 && angle <= Math.max(a0, a1) + 1e-9),
+      ]);
+      emitFuselageBand(
+        bandId,
+        Math.min(...rows),
+        Math.max(...rows),
+        rows,
+        a0,
+        a1,
+        angles,
+        windowCuts,
+      );
+    };
+    if (
+      !trimGreenhouse
+      && overlapsSideLight
+      && (gore === 0 || gore === 4)
+    ) {
       continue;
     }
-    // ОБЩАЯ СЕТКА НА ВСЕ ПОЛОСЫ КЛИНА.
-    //
-    // Полосы вокруг проёма делят кромку с соседними полосами. Если каждая
-    // нарезана по своим углам, на общей кромке получается T-образный стык:
-    // одна сторона идёт хордой через середину клина, другая — через кромку
-    // окна, и между ними светится щель. Поэтому список углов и список z
-    // строятся ОДИН РАЗ на клин, а полосы берут из них срезы.
-    // КРОМКА ПРИТЯГИВАЕТСЯ К ГРАНИЦЕ, А НЕ СХЛОПЫВАЕТСЯ С НЕЙ.
-    //
-    // Прежняя редакция сливала близкие выборки в одну — и заодно съедала
-    // кромку СТЕКЛА, если та подходила к границе клина ближе допуска. У двух
-    // окон стекло от этого сжалось вчетверо, а по носу разъехались ряды:
-    // соседние отсеки остались с разными списками станций, и на общей кромке
-    // снова открылся T-образный стык.
-    //
-    // Правильно наоборот: если кромка ПРОЁМА почти совпала с границей клина
-    // или со станцией, она становится этой границей ТОЧНО. Полоса между ними
-    // вырождается и не выпускается, щели при этом не возникает, а стекло
-    // сохраняет свой размер.
-    const snap = (value: number, grid: readonly number[], epsilon: number) => {
-      const near = grid.find((edge) => Math.abs(edge - value) < epsilon);
-      return near ?? value;
-    };
-    const snapped = cuts.map((cut) => ({
-      ...cut,
-      angleFrom: snap(cut.angleFrom, goreAngles, 0.03),
-      angleTo: snap(cut.angleTo, goreAngles, 0.03),
-      zFrom: snap(cut.zFrom, sortedZs, 0.05),
-      zTo: snap(cut.zTo, sortedZs, 0.05),
-    }));
-    const unique = (values: readonly number[]) =>
-      [...values].sort((a, b) => a - b)
-        .filter((value, index, list) => index === 0 || value - list[index - 1] > 1e-9);
-    const columns = unique([
-      ...goreAngles,
-      ...snapped.flatMap((cut) => [
-        cut.angleFrom, cut.glassAngleFrom, cut.glassAngleTo, cut.angleTo,
-      ]),
-    ]);
-    const rows = unique([
-      ...sortedZs,
-      ...snapped.flatMap((cut) => [
-        cut.zFrom, cut.glassZFrom, cut.glassZTo, cut.zTo,
-      ]),
-    ]);
-    const between = (values: readonly number[], low: number, high: number) =>
-      values.filter((value) => value >= low - 1e-9 && value <= high + 1e-9);
+    if (
+      trimGreenhouse
+      && gore === 0
+    ) {
+      emitGreenhouseGore(id, CABIN_JOIN_Z, angleFrom, angleTo, [
+        sectionAngle(loftPointAtY(CABIN_JOIN_Z, sideLightOuter("right")[1][1], 1)),
+      ]);
+      continue;
+    }
+    if (
+      trimGreenhouse
+      && gore === 4
+    ) {
+      emitGreenhouseGore(id, CABIN_JOIN_Z, angleFrom, angleTo, [
+        sectionAngle(loftPointAtY(CABIN_JOIN_Z, sideLightOuter("left")[1][1], -1)),
+      ]);
+      continue;
+    }
+    if (
+      trimGreenhouse
+      && gore === 1
+      && RIGHT_AFT_HEAD_ANGLE > angleFrom + 1e-6
+      && RIGHT_AFT_HEAD_ANGLE < angleTo - 1e-6
+    ) {
+      emitGreenhouseGore(`${id}:cheek`, CABIN_JOIN_Z, angleFrom, RIGHT_AFT_HEAD_ANGLE, [
+        RIGHT_AFT_HEAD_ANGLE,
+      ]);
+      emitGreenhouseGore(`${id}:temple`, SIDE_SKIN_AFT, RIGHT_AFT_HEAD_ANGLE, angleTo, [
+        RIGHT_AFT_HEAD_ANGLE,
+      ]);
+      continue;
+    }
+    if (
+      trimGreenhouse
+      && gore === 3
+      && LEFT_AFT_HEAD_ANGLE > angleFrom + 1e-6
+      && LEFT_AFT_HEAD_ANGLE < angleTo - 1e-6
+    ) {
+      emitGreenhouseGore(`${id}:temple`, SIDE_SKIN_AFT, angleFrom, LEFT_AFT_HEAD_ANGLE, [
+        LEFT_AFT_HEAD_ANGLE,
+      ]);
+      emitGreenhouseGore(`${id}:cheek`, CABIN_JOIN_Z, LEFT_AFT_HEAD_ANGLE, angleTo, [
+        LEFT_AFT_HEAD_ANGLE,
+      ]);
+      continue;
+    }
+    const zBands = (splitWindshield || trimGreenhouse)
+      ? [
+          sortedZs.filter((z) => z >= DECK_TO_SILL_Z - 1e-9),
+          uniqueSorted([
+            ...sortedZs.filter((z) => z <= roofEndZ + 1e-9),
+            roofEndZ,
+          ]),
+        ].filter((rows) => rows.length >= 2)
+      : [sortedZs];
+    for (const [bandIndex, rows] of zBands.entries()) {
+      emitFuselageBand(
+        zBands.length === 1 ? id : `${id}:z${bandIndex}`,
+        Math.min(...rows),
+        Math.max(...rows),
+        rows,
+        angleFrom,
+        angleTo,
+        goreAngles,
+        windowCuts,
+      );
+    }
+  }
+}
 
-    let cursor = zLow;
-    for (const [cutIndex, cut] of snapped.entries()) {
-      const tile = (
-        tag: string,
-        group: string,
-        rws: readonly number[],
-        cols: readonly number[],
-        inward = 0,
-        material: ObjectMaterialId = "paint-light",
-      ): void => {
-        if (rws.length < 2 || cols.length < 2) return;
-        fuselageTile(tag, group, rws, cols, inward, material);
-      };
-      tile(`${id}:seg${cutIndex}`, "fuselage-panels",
-        between(rows, cursor, cut.zFrom), columns);
-      const windowRows = between(rows, cut.zFrom, cut.zTo);
-      tile(`${id}:below${cutIndex}`, "fuselage-panels", windowRows,
-        between(columns, angleFrom, cut.angleFrom));
-      tile(`${id}:above${cutIndex}`, "fuselage-panels", windowRows,
-        between(columns, cut.angleTo, angleTo));
-      // РАМА. Стекло не крепится к обшивке напрямую: между ними обвязка.
-      // Проём режется по НАРУЖНОМУ прямоугольнику, рама занимает кольцо
-      // между ним и стеклом, стекло сидит глубже неё.
-      for (const [tag, cols, rws] of [
-        ["frame-below", between(columns, cut.angleFrom, cut.glassAngleFrom), windowRows],
-        ["frame-above", between(columns, cut.glassAngleTo, cut.angleTo), windowRows],
-        ["frame-aft", columnsBetweenGlass(columns, cut), between(rows, cut.zFrom, cut.glassZFrom)],
-        ["frame-fore", columnsBetweenGlass(columns, cut), between(rows, cut.glassZTo, cut.zTo)],
-      ] as const) {
-        tile(`${cut.id}:${tag}`, "window-frame", rws, cols, FRAME_INSET, "metal");
+{
+  const panes = dc3AirframeSurface.windshields;
+  const expand = (
+    corners: readonly ObjectPoint[],
+    along: ObjectPoint,
+    across: ObjectPoint,
+    margin: number,
+  ): ObjectPoint[] => {
+    const mid: ObjectPoint = [
+      corners.reduce((sum, corner) => sum + corner[0], 0) / corners.length,
+      corners.reduce((sum, corner) => sum + corner[1], 0) / corners.length,
+      corners.reduce((sum, corner) => sum + corner[2], 0) / corners.length,
+    ];
+    return corners.map((corner) => {
+      const fromMid = sub(corner, mid);
+      const u = dot(fromMid, along);
+      const v = dot(fromMid, across);
+      const du = u >= 0 ? margin : -margin;
+      const dv = v >= 0 ? margin : -margin;
+      return [
+        corner[0] + along[0] * du + across[0] * dv,
+        corner[1] + along[1] * du + across[1] * dv,
+        corner[2] + along[2] * du + across[2] * dv,
+      ] as ObjectPoint;
+    });
+  };
+  const emitPlanarQuad = (
+    id: string,
+    group: string,
+    corners: readonly ObjectPoint[],
+    inward: number,
+    material: ObjectMaterialId,
+  ): void => {
+    const along = sub(corners[3], corners[0]);
+    const across = sub(corners[1], corners[0]);
+    let normal = norm(cross(across, along));
+    if (normal[2] < 0) normal = [-normal[0], -normal[1], -normal[2]];
+    const inset = corners.map((corner) => [
+      corner[0] - normal[0] * inward,
+      corner[1] - normal[1] * inward,
+      corner[2] - normal[2] * inward,
+    ] as ObjectPoint);
+    const axis: ObjectPoint = [0, (inset[0][1] + inset[3][1]) / 2, (inset[0][2] + inset[3][2]) / 2];
+    emitPanel(id, group, [[inset[0], inset[1]], [inset[3], inset[2]]], [axis, axis], material);
+  };
+
+  const holes = panes.map((pane) => {
+    const [, , , headIn] = pane.corners;
+    const along = norm(sub(headIn, pane.corners[0]));
+    const across = norm(sub(pane.corners[1], pane.corners[0]));
+    return {
+      id: pane.id,
+      corners: pane.corners,
+      outer: expand(pane.corners, along, across, FRAME_WIDTH),
+    };
+  });
+  const right = holes.find((hole) => hole.id === "right");
+  const left = holes.find((hole) => hole.id === "left");
+  if (!right || !left) throw new Error("DC-3 windshields: both panes required");
+  const mullionBottom: ObjectPoint = [
+    (left.outer[0][0] + right.outer[0][0]) / 2,
+    (left.outer[0][1] + right.outer[0][1]) / 2,
+    (left.outer[0][2] + right.outer[0][2]) / 2,
+  ];
+  const crownAngle = Math.PI / 2;
+  const ringStep = TAU / fuselage.ringCount;
+  const sill = dc3AirframeSurface.greenhouseSill;
+  const deckStation = fuselageStationAt(sill.apex[2]);
+  const deckAngleOf = (sample: ObjectPoint): number => {
+    const cosine = Math.max(-1, Math.min(1, sample[0] / deckStation.halfWidth));
+    return Math.acos(cosine);
+  };
+  const ringAngles = uniqueSorted(
+    Array.from({ length: fuselage.ringCount }, (_, index) =>
+      (index / fuselage.ringCount) * TAU),
+  );
+  const deckCrown = fuselage.pointAt(deckStation, crownAngle);
+  const pointOnPoly = (
+    poly: readonly ObjectPoint[],
+    t: number,
+  ): ObjectPoint => {
+    const clamped = Math.min(1, Math.max(0, t));
+    const segs = poly.length - 1;
+    const scaled = clamped * segs;
+    const index = Math.min(segs - 1, Math.floor(scaled));
+    return lerp(poly[index], poly[index + 1], scaled - index);
+  };
+  const emitSillFairing = (
+    id: string,
+    sillOut: ObjectPoint,
+    sillIn: ObjectPoint,
+  ): void => {
+    const outAngle = deckAngleOf(sillOut);
+    const outSnap = ringAngles.reduce((best, angle) =>
+      Math.abs(angle - outAngle) < Math.abs(best - outAngle) ? angle : best);
+    const angles = uniqueSorted(
+      ringAngles.filter((angle) =>
+        angle >= Math.min(outSnap, crownAngle) - 1e-9
+        && angle <= Math.max(outSnap, crownAngle) + 1e-9),
+    );
+    const span = crownAngle - outSnap;
+    const deckRow = angles.map((angle) =>
+      Math.abs(angle - crownAngle) < 1e-9
+        ? deckCrown
+        : fuselage.pointAt(deckStation, angle));
+    const sillRow = angles.map((angle) => {
+      const t = Math.abs(span) < 1e-9 ? 1 : (angle - outSnap) / span;
+      return pointOnPoly([sillOut, sillIn, mullionBottom], t);
+    });
+    emitPanel(
+      id,
+      "fuselage-panels",
+      [deckRow, sillRow],
+      [
+        [0, sill.apex[1] - 0.25, sill.apex[2]],
+        [0, mullionBottom[1] - 0.25, mullionBottom[2]],
+      ],
+    );
+  };
+  emitSillFairing(
+    "fuselage:windshield:sill-fairing-left",
+    left.outer[1],
+    left.outer[0],
+  );
+  emitSillFairing(
+    "fuselage:windshield:sill-fairing-right",
+    right.outer[1],
+    right.outer[0],
+  );
+
+  const leftSide = sideLightOuter("left");
+  const rightSide = sideLightOuter("right");
+  // Лоб: не плоская крышка в V рам, а панель, чья передняя кромка — шеврон
+  // наружных бровей (как на Flagship Detroit), дальше по образующим на
+  // кольцо 5.8. Плоский visor-треугольник больше не кладём.
+  const browFront: ObjectPoint[] = [
+    left.outer[2],
+    left.outer[3],
+    lerp(left.outer[3], right.outer[3], 0.5),
+    right.outer[3],
+    right.outer[2],
+  ];
+  const blendToEdge = (
+    loftPoint: ObjectPoint,
+    edge: ObjectPoint,
+    v: number,
+  ): ObjectPoint => {
+    const onto = Math.max(0, (v - 0.55) / 0.45);
+    const s = onto * onto * (3 - 2 * onto);
+    return lerp(loftPoint, edge, s);
+  };
+  const emitDomeGrid = (id: string, grid: readonly (readonly ObjectPoint[])[]): void => {
+    emitPanel(
+      id,
+      "fuselage-panels",
+      grid,
+      grid.map((row) => {
+        const z = row[Math.floor(row.length / 2)][2];
+        const station = fuselageStationAt(z);
+        return [0, (station.crown + station.keel) / 2, z] as ObjectPoint;
+      }),
+    );
+  };
+  const snapAng = (ang: number): number => Math.round(ang / ringStep) * ringStep;
+  const visorAt = (
+    front: ObjectPoint,
+    z: number,
+    roofAng = snapAng(sectionAngle(front)),
+  ): ObjectPoint => {
+    const frontAng = sectionAngle(front);
+    const span = front[2] - ROOF_TO_BROW_Z;
+    const v = Math.abs(span) < 1e-9 ? 1 : (z - ROOF_TO_BROW_Z) / span;
+    const ang = roofAng + (frontAng - roofAng) * Math.min(1, Math.max(0, v));
+    const loftPoint = fuselage.pointAt(fuselageStationAt(z), ang);
+    if (v <= 0) return loftPoint;
+    return blendToEdge(loftPoint, front, Math.min(1, v));
+  };
+  // Образующая — угол шеврона, не равномерный t: иначе колонка 72°
+  // садится на внутреннюю бровь (88°) и у наружной стойки остаётся дыра.
+  const chevronPointAtAngle = (angle: number): ObjectPoint => {
+    const samples = browFront.map((point) => ({ point, angle: sectionAngle(point) }));
+    if (angle >= samples[0].angle - 1e-9) return samples[0].point;
+    const last = samples[samples.length - 1];
+    if (angle <= last.angle + 1e-9) return last.point;
+    for (let index = 0; index < samples.length - 1; index += 1) {
+      const from = samples[index];
+      const to = samples[index + 1];
+      if ((angle - to.angle) * (from.angle - angle) >= -1e-12) {
+        const span = from.angle - to.angle;
+        const t = Math.abs(span) < 1e-9 ? 1 : (from.angle - angle) / span;
+        return lerp(from.point, to.point, t);
       }
-      tile(`${cut.id}:glazing`, "window-glazing",
-        between(rows, cut.glassZFrom, cut.glassZTo),
-        between(columns, cut.glassAngleFrom, cut.glassAngleTo),
-        GLASS_INSET, "glazing");
-      cursor = cut.zTo;
     }
-    if (between(rows, cursor, zHigh).length >= 2) {
-      fuselageTile(`${id}:segTail`, "fuselage-panels",
-        between(rows, cursor, zHigh), columns);
-    }
+    return last.point;
+  };
+  // Задний ряд — выборки овала 5.8 от наружной образующей до наружной,
+  // не три колонки в корону: иначе хорда 54°→90° оставляет квадрат.
+  const leftRoofAng = snapAng(sectionAngle(left.outer[2]));
+  const rightRoofAng = snapAng(sectionAngle(right.outer[2]));
+  const roofFrom = Math.min(leftRoofAng, rightRoofAng);
+  const roofTo = Math.max(leftRoofAng, rightRoofAng);
+  const roofAngles = uniqueSorted(
+    Array.from({ length: fuselage.ringCount }, (_, index) => index * ringStep)
+      .filter((angle) => angle >= roofFrom - 1e-9 && angle <= roofTo + 1e-9),
+  );
+  const visorAngles = uniqueSorted([
+    ...roofAngles,
+    ...browFront.map((point) => sectionAngle(point)),
+    ...[1 / 3, 2 / 3].flatMap((t) => [
+      sectionAngle(lerp(left.outer[2], left.outer[3], t)),
+      sectionAngle(lerp(right.outer[3], right.outer[2], t)),
+    ]),
+  ]);
+  const visorRows = 5;
+  const visorOutZs = (frontZ: number): number[] =>
+    Array.from({ length: visorRows }, (_, row) => {
+      const v = row / (visorRows - 1);
+      return ROOF_TO_BROW_Z + (frontZ - ROOF_TO_BROW_Z) * v;
+    });
+  emitDomeGrid(
+    "fuselage:windshield:visor-fairing",
+    Array.from({ length: visorRows }, (_, row) => {
+      const v = row / (visorRows - 1);
+      return visorAngles.map((roofAng) => {
+        const front = chevronPointAtAngle(roofAng);
+        return visorAt(
+          front,
+          ROOF_TO_BROW_Z + (front[2] - ROOF_TO_BROW_Z) * v,
+          roofAng,
+        );
+      });
+    }),
+  );
+  // Прямоугольники за лбом: висок кончается на 5.55, лоб начинается на 5.8.
+  // Две колонки давали хорду 54°→72°, а задняя кромка лба уже овальная —
+  // щель по профилю. Колонки — те же углы, что у лба в этом секторе:
+  // лофт встык, не хорда.
+  const gore2From = (2 / FUSELAGE_GORES) * TAU;
+  const gore2To = (3 / FUSELAGE_GORES) * TAU;
+  const roofCloseZs = uniqueSorted([
+    SIDE_SKIN_AFT,
+    SIDE_SKIN_AFT + (ROOF_TO_BROW_Z - SIDE_SKIN_AFT) / 3,
+    SIDE_SKIN_AFT + (ROOF_TO_BROW_Z - SIDE_SKIN_AFT) * 2 / 3,
+    ROOF_TO_BROW_Z,
+  ]);
+  const emitRoofClose = (id: string, from: number, to: number): void => {
+    const lo = Math.min(from, to);
+    const hi = Math.max(from, to);
+    const angles = uniqueSorted(
+      visorAngles.filter((angle) => angle >= lo - 1e-9 && angle <= hi + 1e-9),
+    );
+    emitDomeGrid(id, roofCloseZs.map((z) =>
+      angles.map((angle) => {
+        if (Math.abs(z - ROOF_TO_BROW_Z) < 1e-9) {
+          return visorAt(chevronPointAtAngle(angle), z, angle);
+        }
+        return fuselage.pointAt(fuselageStationAt(z), angle);
+      })));
+  };
+  emitRoofClose(
+    "fuselage:windshield:roof-close-fairing-right",
+    rightRoofAng,
+    gore2From,
+  );
+  emitRoofClose(
+    "fuselage:windshield:roof-close-fairing-left",
+    gore2To,
+    leftRoofAng,
+  );
+  const emitSideDome = (
+    id: string,
+    headAft: ObjectPoint,
+    headFore: ObjectPoint,
+    browOut: ObjectPoint,
+  ): void => {
+    const cols = 5;
+    const zs = uniqueSorted([
+      SIDE_SKIN_AFT,
+      SIDE_SKIN_AFT + (headFore[2] - SIDE_SKIN_AFT) * 0.33,
+      ...visorOutZs(headFore[2]),
+      headFore[2],
+    ]);
+    emitDomeGrid(id, zs.map((z, row) => {
+      const v = zs.length < 2 ? 1 : row / (zs.length - 1);
+      const tHead = (z - headAft[2]) / Math.max(headFore[2] - headAft[2], 1e-9);
+      const head = lerp(headAft, headFore, Math.min(1, Math.max(0, tHead)));
+      const brow = visorAt(browOut, z);
+      return Array.from({ length: cols }, (_, column) => {
+        const u = column / (cols - 1);
+        if (column === 0) return head;
+        if (column === cols - 1) return brow;
+        const headAng = sectionAngle(head);
+        const browAng = sectionAngle(brow);
+        const angle = headAng + (browAng - headAng) * u;
+        const loftPoint = fuselage.pointAt(fuselageStationAt(z), angle);
+        return blendToEdge(loftPoint, lerp(head, brow, u), v);
+      });
+    }));
+  };
+  emitSideDome(
+    "fuselage:windshield:dome-fairing-left",
+    leftSide[2],
+    leftSide[3],
+    left.outer[2],
+  );
+  emitSideDome(
+    "fuselage:windshield:dome-fairing-right",
+    rightSide[2],
+    rightSide[3],
+    right.outer[2],
+  );
+
+  // Обвод задней стойки: борт идёт от салонного шпангоута 5.15 по лофту на
+  // наружную раму. Порог стойки чуть в нос от брови, поэтому рама на лофте
+  // и сверху, и снизу — сход больше не складывается под стекло. Нижний край
+  // стыкуется с обводом порога.
+  const emitAftFairing = (
+    id: string,
+    head: ObjectPoint,
+    sill: ObjectPoint,
+    side: 1 | -1,
+  ): void => {
+    const rows = 8;
+    const headAng = sectionAngle(head);
+    const seamAngle = side > 0
+      ? (1 / FUSELAGE_GORES) * TAU
+      : (4 / FUSELAGE_GORES) * TAU;
+    const cabinSeam = fuselage.pointAt(fuselageStationAt(CABIN_JOIN_Z), seamAngle);
+    const cabinTop = fuselage.pointAt(fuselageStationAt(CABIN_JOIN_Z), headAng);
+    const spanY = cabinTop[1] - sill[1];
+    const seamT = Math.abs(spanY) < 1e-9
+      ? 0.5
+      : (cabinTop[1] - cabinSeam[1]) / spanY;
+    const ts = uniqueSorted([
+      0,
+      1 / 6,
+      2 / 6,
+      3 / 6,
+      4 / 6,
+      5 / 6,
+      1,
+      ...(seamT > 0.02 && seamT < 0.98 ? [seamT] : []),
+    ]);
+    emitDomeGrid(id, Array.from({ length: rows }, (_, row) => {
+      const v = row / (rows - 1);
+      const onto = Math.max(0, (v - 0.5) / 0.5);
+      const ease = onto * onto * (3 - 2 * onto);
+      return ts.map((t) => {
+        const onFrame = lerp(head, sill, t);
+        const z = CABIN_JOIN_Z + (onFrame[2] - CABIN_JOIN_Z) * v;
+        const top = fuselage.pointAt(fuselageStationAt(z), headAng);
+        const y = top[1] * (1 - t) + sill[1] * t;
+        const onLoft = row === 0 && Math.abs(t - seamT) < 1e-6
+          ? cabinSeam
+          : t < 1e-6
+            ? top
+            : loftPointAtY(z, y, side);
+        return lerp(onLoft, onFrame, ease);
+      });
+    }));
+  };
+  emitAftFairing(
+    "fuselage:windshield:aft-fairing-left",
+    leftSide[2],
+    leftSide[1],
+    -1,
+  );
+  emitAftFairing(
+    "fuselage:windshield:aft-fairing-right",
+    rightSide[2],
+    rightSide[1],
+    1,
+  );
+
+  // Тот же носовой клин gore 0/4: верх по порогу иллюминатора (не по
+  // постоянному углу — иначе кромка лезет в стекло), до задней рамы и
+  // дальше на салонный шпангоут 5.15. Отдельной юбки нет.
+  const emitNoseCheek = (
+    id: string,
+    side: 1 | -1,
+    equatorAngle: number,
+    crownAngle: number,
+    sillFore: ObjectPoint,
+    sillAft: ObjectPoint,
+  ): void => {
+    const sillY = sillAft[1];
+    const zs = uniqueSorted([
+      CABIN_JOIN_Z,
+      CABIN_JOIN_Z + (sillAft[2] - CABIN_JOIN_Z) * 0.5,
+      sillAft[2],
+      sillAft[2] + (sillFore[2] - sillAft[2]) * 1 / 3,
+      sillAft[2] + (sillFore[2] - sillAft[2]) * 2 / 3,
+      sillFore[2],
+      ...fuselage.stations
+        .map((station) => station.z)
+        .filter((z) => z >= CABIN_JOIN_Z - 1e-9),
+    ]);
+    const cols = 5;
+    emitDomeGrid(id, zs.map((z) => {
+      const alongSill = sillFore[2] - sillAft[2];
+      const top = z > sillFore[2] + 1e-9
+        ? fuselage.pointAt(fuselageStationAt(z), crownAngle)
+        : Math.abs(z - sillAft[2]) < 1e-6
+          ? sillAft
+          : Math.abs(z - sillFore[2]) < 1e-6
+            ? sillFore
+            : z >= sillAft[2] - 1e-9 && z <= sillFore[2] + 1e-9 && Math.abs(alongSill) > 1e-9
+              ? lerp(sillAft, sillFore, (z - sillAft[2]) / alongSill)
+              : loftPointAtY(z, sillY, side);
+      const topAng = sectionAngle(top);
+      return Array.from({ length: cols }, (_, column) => {
+        const u = column / (cols - 1);
+        if (column === cols - 1) return top;
+        const angle = equatorAngle + (topAng - equatorAngle) * u;
+        return fuselage.pointAt(fuselageStationAt(z), angle);
+      });
+    }));
+  };
+  const gore0To = (1 / FUSELAGE_GORES) * TAU;
+  const gore4From = (4 / FUSELAGE_GORES) * TAU;
+  emitNoseCheek(
+    "fuselage:bay0:gore0",
+    1,
+    0,
+    gore0To,
+    rightSide[0],
+    rightSide[1],
+  );
+  emitNoseCheek(
+    "fuselage:bay0:gore4",
+    -1,
+    TAU / 2,
+    gore4From,
+    leftSide[0],
+    leftSide[1],
+  );
+
+  // Заглушка щели между лобовым и боковым — по наружным рамам, резкая как
+  // стойка. Спуск в нос тоже резкий: не сглаживать сразу по обеим рамам.
+  const emitCornerClose = (
+    sideId: "left" | "right",
+    windshield: typeof left,
+    sideOuter: readonly ObjectPoint[],
+    hullSide: 1 | -1,
+  ): void => {
+    const head = windshield.outer[2];
+    const wSill = windshield.outer[1];
+    const sSill = sideOuter[0];
+    const midSill = lerp(wSill, sSill, 0.5);
+    emitDomeGrid(`fuselage:windshield:corner-plug-fairing-${sideId}`, [
+      [wSill, midSill, sSill],
+      [
+        lerp(wSill, head, 0.5),
+        lerp(midSill, head, 0.5),
+        lerp(sSill, head, 0.5),
+      ],
+      [
+        lerp(wSill, head, 0.92),
+        head,
+        lerp(sSill, head, 0.92),
+      ],
+    ]);
+    // Проём не прямоугольник и не радиальная юбка под порогом: это сектор
+    // между нижней кромкой заглушки и первым кольцом колпака, снаружи
+    // порожного треугольника и внутри gore 0/4. Передняя кромка — кольцо
+    // колпака, встык к треугольнику и к щеке, не хорда в той же станции.
+    const capZ = sill.apex[2];
+    const outAngle = deckAngleOf(wSill);
+    const outSnap = ringAngles.reduce((best, angle) =>
+      Math.abs(angle - outAngle) < Math.abs(best - outAngle) ? angle : best);
+    const deckOut = fuselage.pointAt(deckStation, outSnap);
+    const goreAng = hullSide > 0 ? gore0To : gore4From;
+    const cheekCap = fuselage.pointAt(fuselageStationAt(capZ), goreAng);
+    const midAng = sectionAngle(midSill);
+    const capMid = fuselage.pointAt(fuselageStationAt(capZ), midAng);
+    const zFrom = Math.max(wSill[2], sSill[2]);
+    const zs = uniqueSorted([
+      zFrom + (capZ - zFrom) / 3,
+      zFrom + (capZ - zFrom) * 2 / 3,
+      capZ,
+      ...fuselage.stations
+        .map((station) => station.z)
+        .filter((z) => z > zFrom + 0.02 && z <= capZ + 1e-9),
+    ]);
+    const inboardAt = (z: number): ObjectPoint => {
+      const span = capZ - wSill[2];
+      const t = Math.abs(span) < 1e-9 ? 1 : (z - wSill[2]) / span;
+      return lerp(wSill, deckOut, Math.min(1, Math.max(0, t)));
+    };
+    emitDomeGrid(`fuselage:windshield:corner-nose-fairing-${sideId}`, [
+      [wSill, midSill, sSill],
+      ...zs.map((z) => [
+        Math.abs(z - capZ) < 1e-9 ? deckOut : inboardAt(z),
+        Math.abs(z - capZ) < 1e-9
+          ? capMid
+          : fuselage.pointAt(fuselageStationAt(z), midAng),
+        Math.abs(z - capZ) < 1e-9
+          ? cheekCap
+          : fuselage.pointAt(fuselageStationAt(z), goreAng),
+      ]),
+    ]);
+  };
+  emitCornerClose("right", right, rightSide, 1);
+  emitCornerClose("left", left, leftSide, -1);
+
+  emitPlanarQuad(
+    "windshield-mullion",
+    "window-frame",
+    [right.outer[0], left.outer[0], left.outer[3], right.outer[3]],
+    0,
+    "metal",
+  );
+  for (const hole of holes) {
+    const [sillIn, sillOut, headOut, headIn] = hole.corners;
+    const [sillInO, sillOutO, headOutO, headInO] = hole.outer;
+    emitPlanarQuad(`windshield-${hole.id}:frame-sill`, "window-frame",
+      [sillInO, sillOutO, sillOut, sillIn], 0, "metal");
+    emitPlanarQuad(`windshield-${hole.id}:frame-head`, "window-frame",
+      [headIn, headOut, headOutO, headInO], 0, "metal");
+    emitPlanarQuad(`windshield-${hole.id}:frame-outboard`, "window-frame",
+      [sillOut, sillOutO, headOutO, headOut], 0, "metal");
+    emitPlanarQuad(`windshield-${hole.id}:frame-inboard`, "window-frame",
+      [sillIn, sillInO, headInO, headIn], 0, "metal");
+    emitPlanarQuad(`windshield-${hole.id}:glazing`, "window-glazing",
+      [sillIn, sillOut, headOut, headIn], GLASS_INSET, "glazing");
+  }
+  for (const pane of dc3AirframeSurface.sideLights) {
+    const along = norm(sub(pane.corners[3], pane.corners[0]));
+    const across = norm(sub(pane.corners[1], pane.corners[0]));
+    const outer = expand(pane.corners, along, across, FRAME_WIDTH);
+    const [sillIn, sillOut, headOut, headIn] = pane.corners;
+    const [sillInO, sillOutO, headOutO, headInO] = outer;
+    emitPlanarQuad(`sidelight-${pane.id}:frame-sill`, "window-frame",
+      [sillInO, sillOutO, sillOut, sillIn], 0, "metal");
+    emitPlanarQuad(`sidelight-${pane.id}:frame-head`, "window-frame",
+      [headIn, headOut, headOutO, headInO], 0, "metal");
+    emitPlanarQuad(`sidelight-${pane.id}:frame-aft`, "window-frame",
+      [sillOut, sillOutO, headOutO, headOut], 0, "metal");
+    emitPlanarQuad(`sidelight-${pane.id}:frame-inboard`, "window-frame",
+      [sillIn, sillInO, headInO, headIn], 0, "metal");
+    emitPlanarQuad(`sidelight-${pane.id}:glazing`, "window-glazing",
+      [sillIn, sillOut, headOut, headIn], GLASS_INSET, "glazing");
   }
 }
 
@@ -913,6 +1650,9 @@ const referenceLofts: readonly ObjectLabPart[] = dc3BlockoutObject.parts
     || part.group.startsWith("nacelle-"))
   .map((part) => ({ ...part, id: `reference:${part.id}`, group: "reference-loft" }));
 
+const noseCapParts: readonly ObjectLabPart[] = dc3BlockoutObject.parts
+  .filter((part) => part.group === "nose-cap");
+
 /**
  * Салон в образце — затем, чтобы проверить главное требование к окну: сквозь
  * него должно быть видно кресло. Кадр без начинки этого не показывает вовсе.
@@ -931,9 +1671,10 @@ const panelGroups = [
   "fuselage-panels",
   "nacelle-panels",
 ] as const;
-const allGroups = [...panelGroups, "cabin", "reference-loft"] as const;
+const allGroups = [...panelGroups, "cabin", "reference-loft", "nose-cap"] as const;
 const hiddenExcept = (shown: readonly string[]): readonly string[] =>
   allGroups.filter((group) => !shown.includes(group));
+const shownSkin = [...panelGroups, "nose-cap"] as const;
 
 const views: readonly ObjectLabView[] = [
   {
@@ -946,7 +1687,7 @@ const views: readonly ObjectLabView[] = [
     position: point(11, 33, 7),
     target: point(0, 1.5, -5.5),
     fov: 30,
-    hiddenGroups: hiddenExcept(panelGroups),
+    hiddenGroups: hiddenExcept(shownSkin),
   },
   {
     id: "panel-three-quarter",
@@ -955,7 +1696,7 @@ const views: readonly ObjectLabView[] = [
     position: point(24, 13, 20),
     target: point(0, 2.2, -5),
     fov: 32,
-    hiddenGroups: hiddenExcept(panelGroups),
+    hiddenGroups: hiddenExcept(shownSkin),
   },
   {
     id: "reference-loft",
@@ -973,7 +1714,7 @@ const views: readonly ObjectLabView[] = [
     position: point(8.6, 3.05, 1.9),
     target: point(7, 2.78, -0.15),
     fov: 24,
-    hiddenGroups: hiddenExcept(panelGroups),
+    hiddenGroups: hiddenExcept(shownSkin),
   },
   {
     id: "panel-joint-detail",
@@ -982,7 +1723,7 @@ const views: readonly ObjectLabView[] = [
     position: point(6.6, 3.4, 1.6),
     target: point(5.2, 2.6, -1),
     fov: 26,
-    hiddenGroups: hiddenExcept(panelGroups),
+    hiddenGroups: hiddenExcept(shownSkin),
   },
   {
     id: "panel-empennage",
@@ -991,7 +1732,7 @@ const views: readonly ObjectLabView[] = [
     position: point(8.5, 6.2, -3.2),
     target: point(0, 2.9, -11.4),
     fov: 32,
-    hiddenGroups: hiddenExcept(panelGroups),
+    hiddenGroups: hiddenExcept(shownSkin),
   },
   {
     id: "panel-windows",
@@ -1000,7 +1741,16 @@ const views: readonly ObjectLabView[] = [
     position: point(6.4, 4.2, 5.6),
     target: point(1.25, 3.66, 2.09),
     fov: 30,
-    hiddenGroups: hiddenExcept([...panelGroups, "cabin"]),
+    hiddenGroups: hiddenExcept([...shownSkin, "cabin"]),
+  },
+  {
+    id: "panel-windshield",
+    label: "Фонарь · два центральных стекла в обшивке",
+    projection: "perspective",
+    position: point(5.8, 2.15, 12.6),
+    target: point(0, 1.85, 7.1),
+    fov: 28,
+    hiddenGroups: hiddenExcept(shownSkin),
   },
   {
     id: "panel-fuselage-detail",
@@ -1009,7 +1759,7 @@ const views: readonly ObjectLabView[] = [
     position: point(4.6, 3.9, 5.4),
     target: point(0.4, 2.2, 0.6),
     fov: 34,
-    hiddenGroups: hiddenExcept(panelGroups),
+    hiddenGroups: hiddenExcept(shownSkin),
   },
   {
     id: "panel-nacelle-detail",
@@ -1018,7 +1768,7 @@ const views: readonly ObjectLabView[] = [
     position: point(8.6, 3.4, 5.2),
     target: point(5.79, 2.1, 0.6),
     fov: 30,
-    hiddenGroups: hiddenExcept(panelGroups),
+    hiddenGroups: hiddenExcept(shownSkin),
   },
   {
     id: "panel-silhouette",
@@ -1027,7 +1777,7 @@ const views: readonly ObjectLabView[] = [
     position: point(-32, 2.8, -6.4),
     target: point(0, 2.8, -6.4),
     orthoHeight: 7.5,
-    hiddenGroups: hiddenExcept(panelGroups),
+    hiddenGroups: hiddenExcept(shownSkin),
   },
 ];
 
@@ -1088,6 +1838,6 @@ export const dc3SkinPanelsObject: ObjectLabModel & {
     fogFar: 118,
     floorY: -0.04,
   },
-  parts: [...parts, ...cabinParts, ...referenceLofts],
+  parts: [...parts, ...noseCapParts, ...cabinParts, ...referenceLofts],
   views,
 };

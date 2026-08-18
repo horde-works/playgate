@@ -66,7 +66,6 @@ const PROP_RADIUS = DC3_PROPELLER_DIAMETER / 2;
 const PROP_BLADES = 3;
 const PROP_PHASE = (22 * Math.PI) / 180;
 const PROP_PITCH = (24 * Math.PI) / 180;
-const PROP_HUB_Y = -0.52;
 /**
  * ЛОПАСТИ РАСТУТ ИЗ КОКА, А НЕ ВИСЯТ ПЕРЕД НИМ.
  *
@@ -92,7 +91,24 @@ const ENGINE_CYLINDERS = 9;
 const ENGINE_Z = 1.88;
 const NOSE_Z = 7.4;
 const TAIL_Z = NOSE_Z - DC3_LENGTH;
+/**
+ * Длина эрмита накладки до бывшего острия. Не продолжение таблицы станций:
+ * обвод последних двух колец (касательная). Сетка в точку не сходится —
+ * острый конец меняет полуэллипс оставшегося овала.
+ */
+const NOSE_CAP_LENGTH = 0.18;
+/** Последнее эрмитово кольцо; дальше — круглое навершие, не игла. */
+const NOSE_CAP_CUT_T = 0.64;
 const SKIN_INSET = 0.12;
+/** Проём двух центральных стёкол: шкура разрезана, ядро сюда не входит. */
+const GREENHOUSE_Z_AFT = 6.15;
+const GREENHOUSE_Z_FORE = 6.5;
+/** Ядро обрывается за боковым стеклом, не в его проёме (~5.64). */
+const COCKPIT_CAGE_AFT_Z = 5.5;
+/** Последнее кольцо крыши: к нему сходится округлый второй сегмент лба. */
+const BROW_FAIRING_APEX_Z = 5.8;
+/** Первое кольцо колпака: на нём сидят передние края порожных треугольников. */
+const SILL_FAIRING_APEX_Z = 6.85;
 const SPAR_FRONT = 0.18;
 const SPAR_MAIN = 0.38;
 const SPAR_REAR = 0.7;
@@ -105,30 +121,35 @@ const FLAP_INNER_IN = 1.58;
 const FLAP_INNER_OUT = 5;
 const FLAP_OUTER_IN = 6.58;
 const FLAP_OUTER_OUT = 8.55;
+const WING_HALF = DC3_WINGSPAN / 2;
+/**
+ * Неподвижный колпак законцовки: элерон кончается раньше, и уже за ним
+ * четверть эллипса закрывает и носок, и заднюю кромку. Толщина профиля
+ * сходит вместе с хордой: сбоку это одна округлая кромка, а не срезанный
+ * аэропрофиль. На стабилизаторе руль высоты по-прежнему доходит до законцовки.
+ */
+const WING_TIP_CAP = 0.52;
+const WING_TIP_ROUND = WING_TIP_CAP;
 const AILERON_IN = 8.72;
-const AILERON_OUT = DC3_WINGSPAN / 2 - 0.52;
+const AILERON_OUT = WING_HALF - WING_TIP_CAP;
 const FIN_HINGE_T = 0.6;
 const RUDDER_Y0 = 1.25;
 const RUDDER_Y1 = 4.55;
 const STAB_HINGE_T = 0.72;
+const STAB_HALF = 3.25;
+const STAB_TIP_CHORD = 1.02;
+const STAB_TIP_ROUND = STAB_HINGE_T * STAB_TIP_CHORD;
 const ELEV_IN = 0.42;
-const ELEV_OUT = 3.12;
+const ELEV_OUT = STAB_HALF;
 const FLAP_DOWN_DEGREES = -42;
 const AILERON_RANGE = 25;
 const ELEVATOR_DOWN = -22;
 const ELEVATOR_UP = 18;
 const RUDDER_RANGE = 25;
 const FLOOR_Y = 0.36;
-const GEAR_BODY_Y = -2.7;
 const GEAR_BODY_Z = 0.2;
 const TAILWHEEL_BODY_Y = -0.52;
 const TAILWHEEL_BODY_Z = -11.05;
-const PITCH = Math.atan2(
-  TAILWHEEL_BODY_Y - GEAR_BODY_Y,
-  GEAR_BODY_Z - TAILWHEEL_BODY_Z,
-);
-const COS = Math.cos(PITCH);
-const SIN = Math.sin(PITCH);
 
 type Station = {
   readonly z: number;
@@ -142,19 +163,25 @@ type Station = {
 const FUSELAGE_STATIONS: readonly Station[] = [
   // КАБИНА ФИКСИРОВАНА. КОЛПАК — ПУЛЯ ОТ ПОРОГА СТЕКЛА К ТУПОМУ КОНЧИКУ.
   //
-  // Крыша → короткий радиус в бровь z=6.15 → прямое тупое стекло на палубу
-  // z=6.5. Это принятая форма кабины; фонарь не сдвигать, чтобы «набрать
-  // длину». Колпак — не полусфера на стыке z=7 (40 см, читалась заглушкой)
-  // и не продолжение салона: от порога стекла нос держит сечение, потом
-  // скругляется к тупому кончику на NOSE_Z. Стекло фонаря — потом.
-  { z: NOSE_Z, halfWidth: 0.32, crown: 0.26, keel: -0.24 },
-  { z: 7.15, halfWidth: 0.72, crown: 0.58, keel: -0.62 },
-  { z: 6.85, halfWidth: 0.9, crown: 0.74, keel: -0.84 },
-  { z: 6.5, halfWidth: 0.98, crown: 0.8, keel: -0.92 },
-  { z: 6.15, halfWidth: 1.08, crown: 1.32, keel: -1.06 },
-  { z: 5.8, halfWidth: 1.14, crown: 1.4, keel: -1.14 },
-  { z: 5.15, halfWidth: 1.18, crown: 1.4, keel: -1.22 },
-  { z: 4.3, halfWidth: 1.24, crown: 1.4, keel: -1.26 },
+  // Крыша держится до z=5.15, затем мягкий скат к z=5.8. Овальная губа не
+  // становится двумя прямыми бровями: стык — лобовой треугольник (панель
+  // временно снята, пока не ясен аккуратный стык), задний край на кольце 5.8,
+  // основание — верхние рамы. Тупое стекло на палубу z=6.5 — полотна.
+  // Колпак не от порога: ленивая палуба до z=6.85, дальше два порожных
+  // треугольника. Скулы вокруг бокового стекла сняты — сначала обвод.
+  //
+  // Поперечник: салон — овал. К стеклу верхняя половина сплющивается
+  // (ленивая макушка, крутые плечи). Колпак у стёкол — заметный овал,
+  // не круглая труба; к кончику снова овал. Крышу не поднимаем, полку
+  // не делаем, киль остаётся эллипсом. upperPower=2 — овал; больше 3 — коробка.
+  { z: NOSE_Z, halfWidth: 0.32, crown: 0.26, keel: -0.24, upperPower: 2 },
+  { z: 7.15, halfWidth: 0.82, crown: 0.61, keel: -0.62, upperPower: 2.8 },
+  { z: 6.85, halfWidth: 0.96, crown: 0.76, keel: -0.84, upperPower: 2.9 },
+  { z: 6.5, halfWidth: 0.98, crown: 0.8, keel: -0.92, upperPower: 2.9 },
+  { z: 6.15, halfWidth: 1.03, crown: 1.18, keel: -1.06, upperPower: 2.9 },
+  { z: 5.8, halfWidth: 1.08, crown: 1.26, keel: -1.14, upperPower: 2.7 },
+  { z: 5.15, halfWidth: 1.18, crown: 1.4, keel: -1.22, upperPower: 2.4 },
+  { z: 4.3, halfWidth: 1.24, crown: 1.4, keel: -1.26, upperPower: 2 },
   { z: 2.35, halfWidth: 1.37, crown: 1.4, keel: -1.36 },
   { z: 0, halfWidth: 1.37, crown: 1.38, keel: -1.36 },
   { z: -2.85, halfWidth: 1.32, crown: 1.32, keel: -1.3 },
@@ -223,25 +250,116 @@ function sampleCrown(z: number): number {
  * Это решение владельца, а не побочный эффект правки обшивки.
  */
 
+/**
+ * Скругление законцовки в плане. Руль — прямоугольная врезка: его задняя
+ * кромка не гнётся. На крыле элерон кончается раньше законцовки, и колпак
+ * за ним скругляет и носок, и заднюю кромку до точки (`closeTip`): иначе
+ * `u` останавливается на 0.985, на торце живёт толстый срез, а `loftRings`
+ * кроет его веером — гармошка сбоку. На стабилизаторе руль доходит до конца,
+ * поэтому скругляется только кессон (носок → шарнир), без схлопывания.
+ */
+function roundBoxLeaf(
+  span: number,
+  halfSpan: number,
+  roundSpan: number,
+  leading0: number,
+  chord0: number,
+  hingeT: number,
+  leafOuter: number,
+  closeTip = false,
+): { leading: number; chord: number; hingeZ: number; te: number } {
+  const hingeZ = leading0 - hingeT * chord0;
+  const te0 = leading0 - chord0;
+  const start = halfSpan - roundSpan;
+  const uMax = closeTip ? 1 : 0.985;
+  let leading = leading0;
+  if (span > start + 1e-9) {
+    const u = Math.min(uMax, (span - start) / Math.max(roundSpan, 1e-9));
+    const keep = Math.sqrt(Math.max(0, 1 - u * u));
+    leading = hingeZ + (leading0 - hingeZ) * keep;
+  }
+  let te = te0;
+  if (span > leafOuter + 1e-9) {
+    const cap = Math.max(halfSpan - leafOuter, 1e-9);
+    const u = Math.min(uMax, (span - leafOuter) / cap);
+    const keep = Math.sqrt(Math.max(0, 1 - u * u));
+    te = hingeZ - (hingeZ - te0) * keep;
+  }
+  return { leading, chord: Math.max(closeTip ? 0 : 0.12, leading - te), hingeZ, te };
+}
+
+function chordTToZ(
+  t: number,
+  leading: number,
+  hingeZ: number,
+  te: number,
+  hingeT: number,
+): number {
+  if (t <= hingeT) return leading - (t / Math.max(hingeT, 1e-9)) * (leading - hingeZ);
+  return hingeZ - ((t - hingeT) / Math.max(1 - hingeT, 1e-9)) * (hingeZ - te);
+}
+
+const AIRFOIL_LOWER = 0.82;
+/**
+ * Low-wing: the root lower surface at max thickness sits on the keel, so
+ * the fuselage does not hang below the wing. Upper fillets stay out of B01.
+ */
+const WING_ROOT_Y =
+  sampleStation(0).keel + AIRFOIL_LOWER * 0.15 * ROOT_CHORD * 0.5;
+
 function wingAt(x: number): {
   readonly chord: number;
   readonly leading: number;
+  readonly hingeZ: number;
+  readonly te: number;
   readonly thickness: number;
   readonly y0: number;
 } {
-  const spanT = Math.min(1, Math.abs(x) / (DC3_WINGSPAN / 2));
-  const chord = ROOT_CHORD * (1 - spanT) + TIP_CHORD * spanT;
+  const span = Math.abs(x);
+  const spanT = Math.min(1, span / WING_HALF);
+  const chord0 = ROOT_CHORD * (1 - spanT) + TIP_CHORD * spanT;
+  const leading0 = ROOT_LE * (1 - spanT) + TIP_LE * spanT;
+  const plan = roundBoxLeaf(
+    span, WING_HALF, WING_TIP_ROUND, leading0, chord0, SPAR_REAR, AILERON_OUT, true,
+  );
   return {
-    chord,
-    leading: ROOT_LE * (1 - spanT) + TIP_LE * spanT,
-    thickness: (0.15 * (1 - spanT) + 0.07 * spanT) * chord,
-    y0: -0.12 + Math.max(0, Math.abs(x) - WING_BREAK) * Math.tan(OUTER_DIHEDRAL),
+    chord: plan.chord,
+    leading: plan.leading,
+    hingeZ: plan.hingeZ,
+    te: plan.te,
+    // Толщина — доля МЕСТНОЙ хорды, уже сжатой эллипсом колпака. Иначе в
+    // плане крыло круглое, а сбоку до самого края стоит корневой профиль.
+    thickness: (0.15 * (1 - spanT) + 0.07 * spanT) * plan.chord,
+    y0: WING_ROOT_Y + Math.max(0, span - WING_BREAK) * Math.tan(OUTER_DIHEDRAL),
   };
 }
+
+/** Shaft on the local wing chord, not a pod under the box. */
+const PROP_HUB_Y = wingAt(ENGINE_X).y0;
+/**
+ * Стойка не тонет в гондоле вместе с низкопланом. Кулак навески — ящик
+ * 20 см; его верх садится на низ капота, весь кулак снаружи. Длина
+ * цапфа→ось — 90% той ноги, что стояла до переноса крыла (1.0 м). Короче
+ * четверти от исходной не делаем: иначе снаружи остаётся покрышка. Колёса
+ * уезжают вниз, трёхточка становится круче — это согласованный обмен, не
+ * ошибка посадки.
+ */
+const GEAR_WHEEL_RADIUS = 0.55;
+const GEAR_STRUT_LENGTH = 0.9;
+const GEAR_TRUNNION_Y = PROP_HUB_Y - COWL_OUTER - 0.12;
+const GEAR_AXLE_Y = GEAR_TRUNNION_Y - GEAR_STRUT_LENGTH;
+const GEAR_BODY_Y = GEAR_AXLE_Y - GEAR_WHEEL_RADIUS;
+const PITCH = Math.atan2(
+  TAILWHEEL_BODY_Y - GEAR_BODY_Y,
+  GEAR_BODY_Z - TAILWHEEL_BODY_Z,
+);
+const COS = Math.cos(PITCH);
+const SIN = Math.sin(PITCH);
 
 const parts: ObjectLabPart[] = [];
 const point = (x: number, y: number, z: number): ObjectPoint => [x, y, z];
 const add = (a: ObjectPoint, b: ObjectPoint): ObjectPoint => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+const sub = (a: ObjectPoint, b: ObjectPoint): ObjectPoint => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const scale = (a: ObjectPoint, s: number): ObjectPoint => [a[0] * s, a[1] * s, a[2] * s];
 const cross = (a: ObjectPoint, b: ObjectPoint): ObjectPoint => [
   a[1] * b[2] - a[2] * b[1],
@@ -371,7 +489,7 @@ function addClosedMesh(
   material: ObjectMaterialId,
   vertices: readonly ObjectPoint[],
   triangles: readonly ObjectTriangle[],
-  options: { readonly doubleSided?: boolean } = {},
+  options: { readonly doubleSided?: boolean; readonly showEdges?: boolean } = {},
 ): void {
   const volume = signedVolume(vertices, triangles);
   const wound = volume < -1e-6
@@ -384,7 +502,7 @@ function addClosedMesh(
     material,
     vertices: vertices.map(bodyToWorld),
     triangles: wound,
-    showEdges: true,
+    showEdges: options.showEdges ?? true,
     doubleSided: options.doubleSided,
   });
 }
@@ -417,6 +535,79 @@ function loftRings(
 }
 
 /**
+ * Колпачок как у визуала датчика дистанции: сфера спереди, усечённый конус
+ * назад. Те же числа, что `CompoundKinematicClusterBodies` рисует на сенсоре.
+ */
+const SENSOR_CAP_DOME = 0.055;
+const SENSOR_CAP_COLLAR = 0.06;
+const SENSOR_CAP_NECK = 0.045;
+const SENSOR_CAP_NECK_LENGTH = 0.07;
+const SENSOR_CAP_SEGMENTS = 12;
+
+function addGlassSensorCap(
+  id: string,
+  origin: ObjectPoint,
+  outward: ObjectPoint,
+): void {
+  const axisLen = Math.hypot(outward[0], outward[1], outward[2]);
+  const axis: ObjectPoint = [
+    outward[0] / axisLen,
+    outward[1] / axisLen,
+    outward[2] / axisLen,
+  ];
+  const helper: ObjectPoint = Math.abs(axis[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
+  const rawU = cross(helper, axis);
+  const uLen = Math.hypot(rawU[0], rawU[1], rawU[2]);
+  const u: ObjectPoint = [rawU[0] / uLen, rawU[1] / uLen, rawU[2] / uLen];
+  const v = cross(axis, u);
+  const stations: readonly { readonly s: number; readonly r: number }[] = [
+    { s: -SENSOR_CAP_NECK_LENGTH, r: SENSOR_CAP_NECK },
+    { s: -SENSOR_CAP_NECK_LENGTH * 0.5, r: (SENSOR_CAP_NECK + SENSOR_CAP_COLLAR) / 2 },
+    { s: 0, r: SENSOR_CAP_COLLAR },
+    { s: SENSOR_CAP_DOME * 0.25, r: Math.sqrt(SENSOR_CAP_DOME ** 2 - (SENSOR_CAP_DOME * 0.25) ** 2) },
+    { s: SENSOR_CAP_DOME * 0.5, r: Math.sqrt(SENSOR_CAP_DOME ** 2 - (SENSOR_CAP_DOME * 0.5) ** 2) },
+    { s: SENSOR_CAP_DOME * 0.72, r: Math.sqrt(SENSOR_CAP_DOME ** 2 - (SENSOR_CAP_DOME * 0.72) ** 2) },
+    { s: SENSOR_CAP_DOME * 0.88, r: Math.sqrt(SENSOR_CAP_DOME ** 2 - (SENSOR_CAP_DOME * 0.88) ** 2) },
+    { s: SENSOR_CAP_DOME * 0.97, r: Math.sqrt(SENSOR_CAP_DOME ** 2 - (SENSOR_CAP_DOME * 0.97) ** 2) },
+  ];
+  const rings = stations.map(({ s, r }) =>
+    Array.from({ length: SENSOR_CAP_SEGMENTS }, (_, index) => {
+      const angle = (index / SENSOR_CAP_SEGMENTS) * Math.PI * 2;
+      return add(
+        add(origin, scale(axis, s)),
+        add(scale(u, Math.cos(angle) * r), scale(v, Math.sin(angle) * r)),
+      );
+    }),
+  );
+  const lofted = loftRingsToPoint(rings, add(origin, scale(axis, SENSOR_CAP_DOME)), true);
+  addClosedMesh(id, "lights", "lamp-glass", lofted.vertices, lofted.triangles, {
+    showEdges: false,
+  });
+}
+
+/**
+ * Лофт на точку законцовки: одно ребро кольца → один треугольник.
+ * Повторять последнее кольцо двенадцатью копиями той же точки нельзя:
+ * второй треугольник каждого квада вырождается и читается гармошкой.
+ */
+function loftRingsToPoint(
+  rings: readonly (readonly ObjectPoint[])[],
+  tip: ObjectPoint,
+  capStart = true,
+): { vertices: ObjectPoint[]; triangles: ObjectTriangle[] } {
+  const lofted = loftRings(rings, { start: capStart, end: false });
+  const count = rings[0].length;
+  const last = (rings.length - 1) * count;
+  const tipIndex = lofted.vertices.length;
+  lofted.vertices.push(tip);
+  for (let i = 0; i < count; i += 1) {
+    const j = (i + 1) % count;
+    lofted.triangles.push([last + i, last + j, tipIndex]);
+  }
+  return lofted;
+}
+
+/**
  * Точка сечения на ПРОИЗВОЛЬНОМ угле.
  *
  * Вынесена из `ellipseRing` затем, чтобы вырез иллюминатора строился по той же
@@ -442,16 +633,95 @@ function ellipseRing(station: Station): ObjectPoint[] {
 const fuselage = loftRings(FUSELAGE_STATIONS.map(ellipseRing));
 addClosedMesh("fuselage-loft", "fuselage", "paint-light", fuselage.vertices, fuselage.triangles);
 
+function hermite01(
+  t: number,
+  value0: number,
+  deriv0: number,
+  value1: number,
+  deriv1: number,
+): number {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return (2 * t3 - 3 * t2 + 1) * value0
+    + (t3 - 2 * t2 + t) * deriv0
+    + (-2 * t3 + 3 * t2) * value1
+    + (t3 - t2) * deriv1;
+}
+
+function noseCapHermiteStation(t: number): Station {
+  const hole = FUSELAGE_STATIONS[0];
+  const prev = FUSELAGE_STATIONS[1];
+  const dz = hole.z - prev.z;
+  const dHalfWidth = ((hole.halfWidth - prev.halfWidth) / dz) * NOSE_CAP_LENGTH;
+  const dCrown = ((hole.crown - prev.crown) / dz) * NOSE_CAP_LENGTH;
+  const dKeel = ((hole.keel - prev.keel) / dz) * NOSE_CAP_LENGTH;
+  const tipY = (hole.crown + hole.keel) / 2;
+  return {
+    z: hole.z + NOSE_CAP_LENGTH * t,
+    halfWidth: hermite01(t, hole.halfWidth, dHalfWidth, 0, 0),
+    crown: hermite01(t, hole.crown, dCrown, tipY, 0),
+    keel: hermite01(t, hole.keel, dKeel, tipY, 0),
+    upperPower: hole.upperPower,
+  };
+}
+
+function noseCapDomeRadius(shoulder: Station): number {
+  return Math.max(shoulder.halfWidth, (shoulder.crown - shoulder.keel) / 2);
+}
+
+const NOSE_CAP_TIP_Z = (() => {
+  const shoulder = noseCapHermiteStation(NOSE_CAP_CUT_T);
+  return shoulder.z + noseCapDomeRadius(shoulder);
+})();
+
+/**
+ * Накладка-колпак: закрывает дырку на последнем кольце, не двигая станции.
+ * Переднее кольцо — `ellipseRing` той же станции, что и лофт (стык встык).
+ * Губа на 2 см внутрь, чтобы при панельной шкуре дырка была закрыта с салона.
+ * Образующие — касательная последних двух станций (тот же эрмит, что дал
+ * верный стык и нос). В точку с нулевой производной не сходим: от последнего
+ * эрмитова кольца — полуэллипс оставшегося овала, навершие без угла.
+ */
+{
+  const hole = FUSELAGE_STATIONS[0];
+  const shoulder = noseCapHermiteStation(NOSE_CAP_CUT_T);
+  const dome = noseCapDomeRadius(shoulder);
+  const tipY = (shoulder.crown + shoulder.keel) / 2;
+  const domeStation = (u: number): Station => {
+    const keep = Math.sqrt(Math.max(0, 1 - u * u));
+    return {
+      z: shoulder.z + dome * u,
+      halfWidth: shoulder.halfWidth * keep,
+      crown: tipY + (shoulder.crown - tipY) * keep,
+      keel: tipY + (shoulder.keel - tipY) * keep,
+      upperPower: hole.upperPower,
+    };
+  };
+  const lip: Station = { ...hole, z: hole.z - 0.02 };
+  const rings = [
+    ellipseRing(lip),
+    ellipseRing(hole),
+    ...[0.22, 0.44, NOSE_CAP_CUT_T].map((t) => ellipseRing(noseCapHermiteStation(t))),
+    ...[0.22, 0.40, 0.56, 0.70, 0.82, 0.91, 0.97].map((u) => ellipseRing(domeStation(u))),
+  ];
+  const lofted = loftRingsToPoint(
+    rings,
+    point(0, tipY, NOSE_CAP_TIP_Z),
+    true,
+  );
+  addClosedMesh("nose-cap", "nose-cap", "paint-light", lofted.vertices, lofted.triangles);
+}
+
 function airfoilBand(x: number, t0: number, t1: number): ObjectPoint[] {
-  const { chord, leading, thickness, y0 } = wingAt(x);
+  const { thickness, y0, leading, hingeZ, te } = wingAt(x);
   const half = AIRFOIL / 2;
   return Array.from({ length: AIRFOIL }, (_, index) => {
     const upper = index <= half;
     const s = upper ? index / half : (AIRFOIL - index) / half;
     const t = t0 + s * (t1 - t0);
-    const z = leading - t * chord;
+    const z = chordTToZ(t, leading, hingeZ, te, SPAR_REAR);
     const bump = Math.sin(Math.PI * t) * thickness * 0.5;
-    const y = y0 + (upper ? bump : -bump * 0.82);
+    const y = y0 + (upper ? bump : -bump * AIRFOIL_LOWER);
     return point(x, y, z);
   });
 }
@@ -499,13 +769,24 @@ const WING_STATIONS = uniqueStations([
     12.6,
     AILERON_OUT,
     AILERON_OUT + 0.04,
-    DC3_WINGSPAN / 2,
+    WING_HALF - WING_TIP_ROUND * 0.72,
+    WING_HALF - WING_TIP_ROUND * 0.45,
+    WING_HALF - WING_TIP_ROUND * 0.22,
+    WING_HALF - WING_TIP_ROUND * 0.08,
+    WING_HALF - WING_TIP_ROUND * 0.03,
+    WING_HALF,
 ]);
 
 function addWing(id: string, sign: 1 | -1): void {
-  const stations = WING_STATIONS
+  const rings = WING_STATIONS
+    .filter((x) => x < WING_HALF - 1e-9)
     .map((x) => airfoilBand(sign * x, 0, wingSkinEndT(sign * x)));
-  const lofted = loftRings(stations);
+  const tipAt = wingAt(sign * WING_HALF);
+  const lofted = loftRingsToPoint(
+    rings,
+    point(sign * WING_HALF, tipAt.y0, tipAt.hingeZ),
+    true,
+  );
   addClosedMesh(id, "wing", "paint-light", lofted.vertices, lofted.triangles);
 }
 
@@ -701,14 +982,14 @@ function addNacelle(side: "left" | "right", sign: 1 | -1): void {
  */
 function addMainGear(side: "left" | "right", sign: 1 | -1): void {
   const x = sign * ENGINE_X;
-  const trunnionY = -1.15;
+  const trunnionY = GEAR_TRUNNION_Y;
   const trunnionZ = 0.22;
-  const axleY = -2.15;
+  const axleY = GEAR_AXLE_Y;
   const axleZ = 0.2;
-  const pistonTopY = -1.62;
+  const pistonTopY = trunnionY + (axleY - trunnionY) * 0.47;
 
   addBodyBox(`gear-${side}-trunnion`, "gear-fittings", "metal",
-    point(x, trunnionY + 0.03, trunnionZ), point(0.26, 0.2, 0.24));
+    point(x, trunnionY + 0.02, trunnionZ), point(0.26, 0.2, 0.24));
   addCylinder(`gear-${side}-strut`, "gear", "metal",
     point(x, trunnionY, trunnionZ), point(x, pistonTopY, axleZ + 0.01), 0.085, 12);
   // Шток полированный: на фотографиях он всегда ярче цилиндра.
@@ -751,9 +1032,10 @@ function addMainGear(side: "left" | "right", sign: 1 | -1): void {
   // деталью. На прежней высоте он заходил под обшивку на ШЕСТЬ миллиметров:
   // с ногой на месте это незаметно, а стоит ей уйти — и узел висит в пустоте.
   // Поднят так, чтобы больше половины сидело в нише, а наружу выходила
-  // проушина. Для сравнения: цапфа, которая тоже стоит, заходит на 0.155.
+  // проушина. Кулак навески при этом висит ПОД капотом — его нельзя прятать
+  // в гондолу вместе с низкопланом.
   addBodyBox(`gear-${side}-jack-fitting`, "gear-fittings", "metal",
-    point(x, trunnionY + 0.14, trunnionZ + 0.62), point(0.2, 0.16, 0.18));
+    point(x, PROP_HUB_Y - COWL_OUTER + 0.19, trunnionZ + 0.62), point(0.2, 0.16, 0.18));
   addBeam(`gear-${side}-drag-link`, "gear", "metal",
     point(x, trunnionY - 0.02, trunnionZ + 0.04),
     point(x, pistonTopY + 0.06, axleZ + 0.34), 0.06, 0.05);
@@ -763,7 +1045,7 @@ function addMainGear(side: "left" | "right", sign: 1 | -1): void {
   addCylinder(`gear-${side}-hub`, "gear-fittings", "metal",
     point(x - 0.13, axleY, axleZ), point(x + 0.13, axleY, axleZ), 0.24, 16);
   addCylinder(`gear-${side}-wheel`, "gear", "timber-dark",
-    point(x - 0.12, axleY, axleZ), point(x + 0.12, axleY, axleZ), 0.55, 18);
+    point(x - 0.12, axleY, axleZ), point(x + 0.12, axleY, axleZ), GEAR_WHEEL_RADIUS, 18);
 }
 
 addNacelle("left", -1);
@@ -790,27 +1072,36 @@ addCylinder("gear-tail-wheel", "gear", "timber-dark",
 function stabSection(x: number): {
   readonly chord: number;
   readonly leading: number;
+  readonly hingeZ: number;
+  readonly te: number;
   readonly y0: number;
   readonly thick: number;
 } {
-  const t = Math.abs(x) / 3.25;
-  const chord = 1.82 * (1 - t) + 1.02 * t;
+  const span = Math.abs(x);
+  const t = Math.min(1, span / STAB_HALF);
+  const chord0 = 1.82 * (1 - t) + STAB_TIP_CHORD * t;
+  const leading0 = -10.15 - t * 0.35;
+  const plan = roundBoxLeaf(
+    span, STAB_HALF, STAB_TIP_ROUND, leading0, chord0, STAB_HINGE_T, ELEV_OUT,
+  );
   return {
-    chord,
-    leading: -10.15 - t * 0.35,
+    chord: plan.chord,
+    leading: plan.leading,
+    hingeZ: plan.hingeZ,
+    te: plan.te,
     y0: 0.4,
-    thick: 0.12 * chord,
+    thick: 0.12 * chord0,
   };
 }
 
 function stabBand(x: number, t0: number, t1: number): ObjectPoint[] {
-  const { chord, leading, y0, thick } = stabSection(x);
+  const { y0, thick, leading, hingeZ, te } = stabSection(x);
   return Array.from({ length: 8 }, (_, index) => {
     const upper = index <= 4;
     const s = upper ? index / 4 : (8 - index) / 4;
     const t = t0 + s * (t1 - t0);
     const bump = Math.sin(Math.PI * t) * thick * 0.5;
-    return point(x, y0 + (upper ? bump : -bump), leading - t * chord);
+    return point(x, y0 + (upper ? bump : -bump), chordTToZ(t, leading, hingeZ, te, STAB_HINGE_T));
   });
 }
 
@@ -819,10 +1110,10 @@ function inElevatorBay(x: number): boolean {
   return span >= ELEV_IN && span <= ELEV_OUT;
 }
 
-const stabStations = uniqueStations([
-  -3.25,
-  -(ELEV_OUT + 0.04),
-  -ELEV_OUT,
+const STAB_STATION_XS = uniqueStations([
+  -STAB_HALF,
+  -(STAB_HALF - STAB_TIP_ROUND * 0.22),
+  -(STAB_HALF - STAB_TIP_ROUND * 0.55),
   -2.1,
   -0.9,
   -ELEV_IN,
@@ -832,10 +1123,12 @@ const stabStations = uniqueStations([
   ELEV_IN,
   0.9,
   2.1,
-  ELEV_OUT,
-  ELEV_OUT + 0.04,
-  3.25,
-]).map((x) => stabBand(x, 0, inElevatorBay(x) ? STAB_HINGE_T - HINGE_GAP_T : 1));
+  STAB_HALF - STAB_TIP_ROUND * 0.55,
+  STAB_HALF - STAB_TIP_ROUND * 0.22,
+  STAB_HALF,
+]);
+const stabStations = STAB_STATION_XS.map((x) =>
+  stabBand(x, 0, inElevatorBay(x) ? STAB_HINGE_T - HINGE_GAP_T : 1));
 const stabilizer = loftRings(stabStations);
 addClosedMesh("horizontal-stabilizer", "empennage", "paint-light", stabilizer.vertices, stabilizer.triangles);
 
@@ -913,20 +1206,22 @@ addClosedMesh("rudder", "rudder", "paint-light", rudder.vertices, rudder.triangl
 const WING_SPAR_XS = [-DC3_WINGSPAN / 2 + 0.55, -12.6, -10.2, -7.4, -WING_JOINT, -ENGINE_X, -4.2, -2.8, -1.4, 0, 1.4, 2.8, 4.2, ENGINE_X, WING_JOINT, 7.4, 10.2, 12.6, DC3_WINGSPAN / 2 - 0.55];
 
 function wingSkinInset(thickness: number): number {
-  return Math.min(SKIN_INSET, thickness * 0.22);
+  // Панельная шкура — тонкая плитка на теоретическом контуре. 22% толщины
+  // оставляли нервюру у самой обшивки, и на корне она протыкала верх и низ.
+  return Math.min(thickness * 0.4, Math.max(0.08, thickness * 0.32));
 }
 
 function sparRing(x: number, chordT: number): ObjectPoint[] {
-  const { chord, leading, thickness, y0 } = wingAt(x);
+  const { thickness, y0, leading, hingeZ, te } = wingAt(x);
   const inset = wingSkinInset(thickness);
-  const z = leading - chordT * chord;
+  const z = chordTToZ(chordT, leading, hingeZ, te, SPAR_REAR);
   // Высота стенки считалась от МАКСИМАЛЬНОЙ толщины профиля, а профиль на
   // носке хорды тоньше: передний лонжерон вылезал наружу обшивки у корня на
   // 42 мм. Ограничиваем местной высотой профиля на СВОЕЙ хорде.
   const localBump = Math.sin(Math.PI * chordT) * thickness * 0.5;
-  const up = Math.max(0.025, Math.min(thickness * 0.5, localBump) - inset);
-  const down = Math.max(0.02, Math.min(thickness * 0.41, localBump * 0.82) - inset);
-  const half = Math.min(SPAR_WEB / 2, Math.max(0.018, thickness * 0.14));
+  const up = Math.max(0.012, Math.min(thickness * 0.5, localBump) - inset);
+  const down = Math.max(0.01, Math.min(thickness * 0.41, localBump * 0.82) - inset);
+  const half = Math.min(SPAR_WEB / 2, Math.max(0.016, thickness * 0.12));
   return [
     point(x, y0 + up, z + half),
     point(x, y0 + up, z - half),
@@ -941,29 +1236,27 @@ for (const [id, chordT] of [["front", SPAR_FRONT], ["main", SPAR_MAIN], ["rear",
 }
 
 function formerBand(x: number, t0: number, t1: number): ObjectPoint[] {
-  const { chord, leading, thickness, y0 } = wingAt(x);
+  const { thickness, y0, leading, hingeZ, te } = wingAt(x);
   const inset = wingSkinInset(thickness);
-  const insetChord = Math.max(0.35, chord - inset * 2);
-  const insetLead = leading - inset;
-  const insetThick = Math.max(0.06, thickness - inset * 2);
   const half = AIRFOIL / 2;
   return Array.from({ length: AIRFOIL }, (_, index) => {
     const upper = index <= half;
     const s = upper ? index / half : (AIRFOIL - index) / half;
     const t = t0 + s * (t1 - t0);
-    const z = insetLead - t * insetChord;
-    const bump = Math.sin(Math.PI * t) * insetThick * 0.5;
-    return point(x, y0 + (upper ? bump : -bump * 0.82), z);
+    const z = chordTToZ(t, leading, hingeZ, te, SPAR_REAR);
+    const skinBump = Math.sin(Math.PI * t) * thickness * 0.5;
+    const bump = Math.max(0.008, skinBump - inset);
+    return point(x, y0 + (upper ? bump : -bump * AIRFOIL_LOWER), z);
   });
 }
 
 for (const x of [0, 1.4, 2.8, 4.2, ENGINE_X, WING_JOINT, 7.4, 9.2, 10.8, 12.4]) {
   const xs = x === 0 ? [0] : [-x, x];
   for (const station of xs) {
-    const endT = wingSkinEndT(station);
+    const endT = Math.max(0.14, wingSkinEndT(station) - 0.04);
     const lofted = loftRings([
-      formerBand(station - 0.022, 0, endT),
-      formerBand(station + 0.022, 0, endT),
+      formerBand(station - 0.016, 0.06, endT),
+      formerBand(station + 0.016, 0.06, endT),
     ]);
     const tag = station === 0 ? "0" : `${station < 0 ? "l" : "r"}-${Math.abs(station).toFixed(1)}`;
     addClosedMesh(`wing-former-${tag}`, "structure-wing", "metal", lofted.vertices, lofted.triangles);
@@ -1022,10 +1315,9 @@ const CABIN_STAND = 1.75 + 0.05;
  *
  * Первая редакция отступала от лонжеронов (0.38 и −1.91) — и оба салона
  * оказались вдвинуты в крыло: носовой на 0.73 м, хвостовой на 1.29 м. Крыло
- * в корне идёт от z = +1.18 (носок) до −3.24 (хвостик), его верх стоит на
- * y = +0.21, то есть выше пола, и оно резало спинки кресел. На кадре это
- * видно сразу, в числах — только если спросить про обвод, а не про силовой
- * набор.
+ * в корне идёт от z = +1.18 (носок) до −3.24 (хвостик). Пока центроплан
+ * стоял у экватора, его верх резал спинки; после опускания на киль коробка
+ * уходит под полы, но границы салонов по-прежнему по обводу, не по лонжеронам.
  */
 const WING_ROOT_LEADING_Z = 1.18;
 const WING_ROOT_TRAILING_Z = -3.24;
@@ -1110,6 +1402,11 @@ const FRAME_WEB = 0.032;
 
 for (const station of FUSELAGE_STATIONS.slice(1, -1)) {
   if (station.z > 6.85 + 1e-9) continue;
+  // Сплошной диск на бровях, виске и пороге стоит в проёме стёкол и режет
+  // кабину. Кольцо ядра обрывается ЗА боковым стеклом; на носу снова своё.
+  if (station.z >= COCKPIT_CAGE_AFT_Z - 1e-9 && station.z <= GREENHOUSE_Z_FORE + 1e-9) {
+    continue;
+  }
   const outer = insetStation(station, SKIN_INSET);
   const inner = insetStation(station, SKIN_INSET + FRAME_WEB);
   // КОЛЬЦОМ СТАНОВИТСЯ ТОЛЬКО САЛОННЫЙ ШПАНГОУТ.
@@ -1177,6 +1474,262 @@ const WINDOW_ROW_CENTRE_Y = 0.5;
 const WINDOW_ROW_FIRST_Z = 3.2;
 const WINDOW_ROW_PITCH = 1.15;
 export const DC3_WINDOW_SIZE = { along: 0.38, across: 0.42 } as const;
+
+/**
+ * ДВА ЦЕНТРАЛЬНЫХ СТЕКЛА — ПЛОСКИЕ ПАРАЛЛЕЛОГРАММЫ, НЕ ОВАЛЬНЫЕ ПЛИТКИ.
+ *
+ * Боковая проекция типа (двухстекольная на борт): верх и низ горизонтальны,
+ * переднее ребро — стойка — около 60° к горизонту, два полотна домиком
+ * (в плане нормали расходятся на 60°). Размер пока держим с прошлой посадки
+ * на нашу кабину; боковое стекло — ниже порога лобовых, верх и низ в горизонте.
+ */
+const WINDSHIELD_Z_AFT = GREENHOUSE_Z_AFT;
+const WINDSHIELD_Z_FORE = GREENHOUSE_Z_FORE;
+const WINDSHIELD_INBOARD_X = 0.08;
+const WINDSHIELD_ALONG = 0.262;
+const WINDSHIELD_ACROSS = 0.548;
+const WINDSHIELD_MULLION = Math.PI / 3;
+const WINDSHIELD_YAW = Math.PI / 6;
+/** Вертикальный спуск порога бокового стекла ниже лобового — полная высота до обрезки. */
+const SIDE_SILL_DROP = 0.22;
+/** Оставляем две трети высоты: обрезаем снизу, верхняя линия на месте. */
+const SIDE_HEIGHT_KEEP = 2 / 3;
+/** Длина верхней кромки вдоль −Z. Четверть короче первой посадки. */
+const SIDE_AFT = 0.55 * 0.75;
+/**
+ * Нижняя вершина задней стойки сдвинута к носу. На одном шпангоуте плоская
+ * рама не садится на кривой овал сразу у брови и у порога — отсюда 10 см
+ * утопления и обвод, который складывался под стекло. Небольшой наклон даёт
+ * второй датиум: обе наружные задние вершины лежат на лофте.
+ */
+const SIDE_AFT_SILL_RAKE = 0.08;
+
+function windshieldCorners(
+  sign: 1 | -1,
+): readonly [ObjectPoint, ObjectPoint, ObjectPoint, ObjectPoint] {
+  const sillY = ellipsePoint(
+    sampleStation(WINDSHIELD_Z_FORE),
+    Math.PI / 2 - sign * 0.08,
+  )[1];
+  const sillIn: ObjectPoint = [sign * WINDSHIELD_INBOARD_X, sillY, WINDSHIELD_Z_FORE];
+  const along: ObjectPoint = [
+    0,
+    Math.sin(WINDSHIELD_MULLION) * WINDSHIELD_ALONG,
+    -Math.cos(WINDSHIELD_MULLION) * WINDSHIELD_ALONG,
+  ];
+  const across: ObjectPoint = [
+    sign * Math.cos(WINDSHIELD_YAW) * WINDSHIELD_ACROSS,
+    0,
+    -Math.sin(WINDSHIELD_YAW) * WINDSHIELD_ACROSS,
+  ];
+  const sillOut = add(sillIn, across);
+  const headIn = add(sillIn, along);
+  const headOut = add(headIn, across);
+  return [sillIn, sillOut, headOut, headIn];
+}
+
+/**
+ * БОКОВОЕ СТЕКЛО ДВУСТЕКОЛЬНОЙ СХЕМЫ.
+ *
+ * Стык с лобовым — по НАРУЖНЫМ углам рам, не по стеклу. Задняя стойка
+ * сидит так, чтобы обвязка не вылезала из лофта. Верх и низ горизонтальны.
+ * Задняя кромка чуть наклонена: порог ближе к носу, чем бровь, чтобы
+ * наружная рама лежала на лофте и у брови, и у порога.
+ */
+function loftAngleAtY(station: Station, y: number, sign: 1 | -1): number {
+  const cy = (station.crown + station.keel) / 2;
+  const ry = (station.crown - station.keel) / 2;
+  const power = station.upperPower ?? 2;
+  const unit = Math.max(0, Math.min(1, (y - cy) / Math.max(ry, 1e-9)));
+  const sine = Math.pow(unit, power / 2);
+  const angle = Math.asin(Math.max(0, Math.min(1, sine)));
+  return sign > 0 ? angle : Math.PI - angle;
+}
+
+function loftPointAtY(z: number, y: number, sign: 1 | -1): ObjectPoint {
+  const station = sampleStation(z);
+  const sampled = ellipsePoint(station, loftAngleAtY(station, y, sign));
+  return [sampled[0], y, z];
+}
+
+/** Совпадает с `FRAME_WIDTH` панелей: стык считаем по наружной обвязке. */
+const GREENHOUSE_FRAME = 0.045;
+
+function unitPoint(vector: ObjectPoint): ObjectPoint {
+  const length = Math.hypot(vector[0], vector[1], vector[2]);
+  return scale(vector, 1 / Math.max(length, 1e-9));
+}
+
+function expandFrame(
+  corners: readonly [ObjectPoint, ObjectPoint, ObjectPoint, ObjectPoint],
+): readonly [ObjectPoint, ObjectPoint, ObjectPoint, ObjectPoint] {
+  const along = unitPoint(sub(corners[3], corners[0]));
+  const across = unitPoint(sub(corners[1], corners[0]));
+  const mid: ObjectPoint = [
+    (corners[0][0] + corners[1][0] + corners[2][0] + corners[3][0]) / 4,
+    (corners[0][1] + corners[1][1] + corners[2][1] + corners[3][1]) / 4,
+    (corners[0][2] + corners[1][2] + corners[2][2] + corners[3][2]) / 4,
+  ];
+  const expanded = corners.map((corner) => {
+    const fromMid = sub(corner, mid);
+    const alongDot = fromMid[0] * along[0] + fromMid[1] * along[1] + fromMid[2] * along[2];
+    const acrossDot = fromMid[0] * across[0] + fromMid[1] * across[1] + fromMid[2] * across[2];
+    const du = alongDot >= 0 ? GREENHOUSE_FRAME : -GREENHOUSE_FRAME;
+    const dv = acrossDot >= 0 ? GREENHOUSE_FRAME : -GREENHOUSE_FRAME;
+    return add(corner, add(scale(along, du), scale(across, dv)));
+  });
+  return expanded as unknown as readonly [ObjectPoint, ObjectPoint, ObjectPoint, ObjectPoint];
+}
+
+function sideLightCorners(
+  sign: 1 | -1,
+): readonly [ObjectPoint, ObjectPoint, ObjectPoint, ObjectPoint] {
+  const windshield = windshieldCorners(sign);
+  const [, sillOut, headOut] = windshield;
+  const pillar = sub(headOut, sillOut);
+  const pillarLen = Math.hypot(pillar[0], pillar[1], pillar[2]);
+  const extra = SIDE_SILL_DROP / (pillar[1] / pillarLen);
+  const fullSill = add(sillOut, scale(pillar, -extra / pillarLen));
+  const headY = headOut[1];
+  const sillY = headY - (headY - fullSill[1]) * SIDE_HEIGHT_KEEP;
+  const fullForeSillZ = fullSill[2];
+  const targetOuter = expandFrame(windshield)[2];
+  const build = (
+    headFore: ObjectPoint,
+    aftHeadX: number | undefined,
+    aftSillXHint: number | undefined,
+  ): readonly [ObjectPoint, ObjectPoint, ObjectPoint, ObjectPoint] => {
+    const headForeZ = headFore[2];
+    const foreSillZ = headForeZ + (fullForeSillZ - headForeZ) * SIDE_HEIGHT_KEEP;
+    const aftZ = headForeZ - SIDE_AFT;
+    const aftSillZ = aftZ + SIDE_AFT_SILL_RAKE;
+    const loftAftHead = loftPointAtY(aftZ, headFore[1], sign);
+    const clampedAftX = aftHeadX === undefined
+      ? loftAftHead[0]
+      : sign > 0
+        ? Math.min(aftHeadX, loftAftHead[0])
+        : Math.max(aftHeadX, loftAftHead[0]);
+    const aftHead: ObjectPoint = [clampedAftX, headFore[1], aftZ];
+    const loftAftSill = loftPointAtY(aftSillZ, sillY, sign);
+    const clampedAftSillX = aftSillXHint === undefined
+      ? loftAftSill[0]
+      : sign > 0
+        ? Math.min(aftSillXHint, loftAftSill[0])
+        : Math.max(aftSillXHint, loftAftSill[0]);
+    const aftSill: ObjectPoint = [clampedAftSillX, sillY, aftSillZ];
+    const normal = cross(sub(aftSill, aftHead), sub(headFore, aftHead));
+    const loftForeSill = loftPointAtY(foreSillZ, sillY, sign);
+    const dy = sillY - aftHead[1];
+    const dz = foreSillZ - aftHead[2];
+    const solvedForeX = Math.abs(normal[0]) < 1e-9
+      ? loftForeSill[0]
+      : aftHead[0] - (dy * normal[1] + dz * normal[2]) / normal[0];
+    const foreSillX = sign > 0
+      ? Math.min(solvedForeX, loftForeSill[0])
+      : Math.max(solvedForeX, loftForeSill[0]);
+    const foreSill: ObjectPoint = [foreSillX, sillY, foreSillZ];
+    return [foreSill, aftSill, aftHead, headFore];
+  };
+  let headFore: ObjectPoint = headOut;
+  let aftHeadX: number | undefined;
+  let aftSillX: number | undefined;
+  let corners = build(headFore, aftHeadX, aftSillX);
+  for (let pass = 0; pass < 5; pass += 1) {
+    const along = unitPoint(sub(corners[3], corners[0]));
+    const across = unitPoint(sub(corners[1], corners[0]));
+    headFore = [
+      targetOuter[0] - along[0] * GREENHOUSE_FRAME + across[0] * GREENHOUSE_FRAME,
+      targetOuter[1] - along[1] * GREENHOUSE_FRAME + across[1] * GREENHOUSE_FRAME,
+      targetOuter[2] - along[2] * GREENHOUSE_FRAME + across[2] * GREENHOUSE_FRAME,
+    ];
+    corners = build(headFore, aftHeadX, aftSillX);
+    const outer = expandFrame(corners);
+    const loftAtHead = loftPointAtY(outer[2][2], outer[2][1], sign);
+    aftHeadX = corners[2][0] - (outer[2][0] - loftAtHead[0]);
+    const loftAtSill = loftPointAtY(outer[1][2], outer[1][1], sign);
+    aftSillX = corners[1][0] - (outer[1][0] - loftAtSill[0]);
+    corners = build(headFore, aftHeadX, aftSillX);
+  }
+  return corners;
+}
+
+/**
+ * Третье полотно фонаря: щель между лобовым и боковым.
+ * Типа так нет — это рабочая грань кабины, не реставрация.
+ */
+function cornerLightCorners(
+  sign: 1 | -1,
+): readonly [ObjectPoint, ObjectPoint, ObjectPoint, ObjectPoint] {
+  const windshield = windshieldCorners(sign);
+  const side = sideLightCorners(sign);
+  return [windshield[1], side[0], side[3], windshield[2]];
+}
+
+/**
+ * Кольцо 5.8 остаётся датиумом крыши: к нему сходится округлый close.
+ * Сам лоб больше не один треугольник — visor плоский, на наружных бровях.
+ */
+function greenhouseBrowFairing(): {
+  readonly apex: ObjectPoint;
+  readonly leftIn: ObjectPoint;
+  readonly leftOut: ObjectPoint;
+  readonly rightIn: ObjectPoint;
+  readonly rightOut: ObjectPoint;
+} {
+  const right = windshieldCorners(1);
+  const left = windshieldCorners(-1);
+  return {
+    apex: ellipsePoint(sampleStation(BROW_FAIRING_APEX_Z), Math.PI / 2),
+    leftIn: left[3],
+    leftOut: left[2],
+    rightIn: right[3],
+    rightOut: right[2],
+  };
+}
+
+/**
+ * Датиум лба: шеврон наружных бровей двух лобовых (visorFore — пик V,
+ * visorAft — наружные внешние углы). Сама панель лба — не плоская крышка
+ * в этом V, а выпуклый сход по образующим на кольцо 5.8; её считает обшивка.
+ */
+function greenhouseForehead(): {
+  readonly visorFore: readonly [ObjectPoint, ObjectPoint, ObjectPoint];
+  readonly visorAft: readonly [ObjectPoint, ObjectPoint, ObjectPoint];
+} {
+  const right = expandFrame(windshieldCorners(1));
+  const left = expandFrame(windshieldCorners(-1));
+  const mid = (a: ObjectPoint, b: ObjectPoint): ObjectPoint => [
+    (a[0] + b[0]) / 2,
+    (a[1] + b[1]) / 2,
+    (a[2] + b[2]) / 2,
+  ];
+  return {
+    visorFore: [left[3], mid(left[3], right[3]), right[3]],
+    visorAft: [left[2], mid(left[2], right[2]), right[2]],
+  };
+}
+
+/**
+ * Порожные треугольники: вершина на первом кольце колпака, основание —
+ * нижние рамы. Овальная палуба сама прямые пороги не обнимает.
+ */
+function greenhouseSillFairing(): {
+  readonly apex: ObjectPoint;
+  readonly leftIn: ObjectPoint;
+  readonly leftOut: ObjectPoint;
+  readonly rightIn: ObjectPoint;
+  readonly rightOut: ObjectPoint;
+} {
+  const right = windshieldCorners(1);
+  const left = windshieldCorners(-1);
+  return {
+    apex: ellipsePoint(sampleStation(SILL_FAIRING_APEX_Z), Math.PI / 2),
+    leftIn: left[0],
+    leftOut: left[1],
+    rightIn: right[0],
+    rightOut: right[1],
+  };
+}
 
 for (const cabin of [FORWARD_CABIN, AFT_CABIN]) {
   const rowZs = cabinRowZ(cabin);
@@ -1278,7 +1831,6 @@ for (const [tag, cabin] of [["fwd", FORWARD_CABIN], ["aft", AFT_CABIN]] as const
  * стоит, пока фара читается и снаружи.
  */
 const LANDING_LIGHT_X = 7.6;
-const NAV_LIGHT_X = 14.3;
 
 /**
  * Фара горит на взлёте и заходе, а не «всегда ночью».
@@ -1334,23 +1886,23 @@ for (const sign of [1, -1] as const) {
   // редакция огней это унаследовала: зелёный оказался слева, красный справа.
   //
   // Поэтому здесь борт называется своим именем, а не «left/right» объекта.
+  // Колпак — тот же, что у датчика дистанции: стеклянная сфера с конусом,
+  // ось наружу; лампа внутри купола, чтобы светить вбок, а не в крыло.
   const board = sign > 0 ? "port" : "starboard";
-  const tip = airfoilBand(sign * NAV_LIGHT_X, 0.12, 0.12)[0];
+  const tip = airfoilBand(sign * (WING_HALF - 0.04), 0.18, 0.18)[0];
+  const capOrigin = point(sign * WING_HALF, tip[1], tip[2]);
+  const outward = point(sign, 0, 0);
   addBodyBox(`nav-light-${board}-base`, "lights", "metal",
-    point(sign * (NAV_LIGHT_X + 0.06), tip[1], tip[2]),
-    point(0.12, 0.07, 0.16));
-  addCylinder(`nav-light-${board}-cap`, "lights", "lamp-glass",
-    point(sign * (NAV_LIGHT_X + 0.11), tip[1] + 0.02, tip[2]),
-    point(sign * (NAV_LIGHT_X + 0.19), tip[1] + 0.02, tip[2]), 0.055, 12);
+    point(sign * (WING_HALF - SENSOR_CAP_NECK_LENGTH * 0.45), tip[1], tip[2]),
+    point(0.08, 0.06, 0.1));
+  addGlassSensorCap(`nav-light-${board}-cap`, capOrigin, outward);
   parts.push({
     kind: "box",
     id: `nav-light-${board}-bulb`,
     group: "lights",
     material: "lamp-bulb",
-    // Лампа сидит в НАРУЖНОЙ половине колпака: иначе свечение читается с
-    // внутренней стороны законцовки, будто фонарь светит в крыло.
-    center: bodyToWorld(point(sign * (NAV_LIGHT_X + 0.16), tip[1] + 0.02, tip[2])),
-    size: [0.04, 0.04, 0.04],
+    center: bodyToWorld(add(capOrigin, scale(outward, SENSOR_CAP_DOME * 0.35))),
+    size: [0.028, 0.028, 0.028],
     light: {
       color: sign > 0 ? "#ff4d4d" : "#4dff86",
       distance: 14,
@@ -1366,19 +1918,19 @@ for (const sign of [1, -1] as const) {
 // Хвостовой АНО — белый, на верхушке киля у задней кромки.
 {
   const tail = FIN_STATIONS[FIN_STATIONS.length - 2];
+  const y = finHeight(tail, tail.trailZ);
+  const capOrigin = point(0, y, tail.trailZ - 0.04);
   addBodyBox("nav-light-tail-base", "lights", "metal",
-    point(0, finHeight(tail, tail.trailZ), tail.trailZ - 0.05),
+    point(0, y, tail.trailZ - 0.02),
     point(0.09, 0.09, 0.12));
-  addCylinder("nav-light-tail-cap", "lights", "lamp-glass",
-    point(0, finHeight(tail, tail.trailZ), tail.trailZ - 0.12),
-    point(0, finHeight(tail, tail.trailZ), tail.trailZ - 0.17), 0.05, 12);
+  addGlassSensorCap("nav-light-tail-cap", capOrigin, point(0, 0, -1));
   parts.push({
     kind: "box",
     id: "nav-light-tail-bulb",
     group: "lights",
     material: "lamp-bulb",
-    center: bodyToWorld(point(0, finHeight(tail, tail.trailZ), tail.trailZ - 0.14)),
-    size: [0.04, 0.04, 0.04],
+    center: bodyToWorld(point(0, y, capOrigin[2] - SENSOR_CAP_DOME * 0.35)),
+    size: [0.028, 0.028, 0.028],
     light: {
       color: "#fff6e8",
       distance: 12,
@@ -1391,23 +1943,23 @@ for (const sign of [1, -1] as const) {
   });
 }
 
-// Плафоны салона: по одному на пролёт, под потолком у борта. Внутренние —
-// они горят и днём, потому что салон тёмный при любом небе.
+// Плафоны салона: тарелка сидит в поясе шпангоута под обводом, лампа —
+// внутри тарелки, не отдельным куском ткани в воздухе. Решатель иначе
+// считает лампу висящей: ткань не несёт, а прежний зазор 2.5 мм меньше
+// порога бокового крепления.
 for (const [tag, cabin] of [["fwd", FORWARD_CABIN], ["aft", AFT_CABIN]] as const) {
   for (const [row, z] of cabinRowZ(cabin).entries()) {
     const station = sampleStation(z);
-    // Плафон висит ПОД обводом, а не в нём: борт у потолка сужается, и
-    // тарелка шириной в треть метра на высоте 0.16 от кроны уже вылезала.
-    const y = station.crown - SKIN_INSET - 0.22;
+    const y = station.crown - SKIN_INSET - 0.1;
     addBodyBox(`cabin-lamp-${tag}-${row}-shade`, "cabin-trim", "metal",
-      point(0, y + 0.045, z), point(0.26, 0.045, 0.2));
+      point(0, y, z), point(0.2, 0.07, 0.16));
     parts.push({
       kind: "box",
       id: `cabin-lamp-${tag}-${row}-bulb`,
       group: "cabin-trim",
       material: "lamp-bulb",
-      center: bodyToWorld(point(0, y, z)),
-      size: [0.09, 0.05, 0.09],
+      center: bodyToWorld(point(0, y - 0.018, z)),
+      size: [0.08, 0.05, 0.08],
       light: {
         color: "#ffd9a3",
         distance: 4.6,
@@ -1446,7 +1998,7 @@ for (const side of [-1, 1] as const) {
     `centre-tank-${side > 0 ? "right" : "left"}`,
     "centre-tanks",
     "metal",
-    point(side * 3.0, -0.12, -0.75),
+    point(side * 3.0, wingAt(3.0).y0, -0.75),
     point(2.4, 0.34, 1.9),
   );
 }
@@ -1485,9 +2037,13 @@ addBodyBox(
 
 
 
-const RAIL_STATIONS = FUSELAGE_STATIONS.filter(
-  (station) => station.z <= 6.85 + 1e-9 && station.z > TAIL_Z + 1e-9,
-);
+const SIDE_RAIL_END_Z = sideLightCorners(1)[2][2] - 0.12;
+const RAIL_STATIONS = [
+  sampleStation(SIDE_RAIL_END_Z),
+  ...FUSELAGE_STATIONS.filter(
+    (station) => station.z < SIDE_RAIL_END_Z - 1e-9 && station.z > TAIL_Z + 1e-9,
+  ),
+];
 const LONGERON_RAILS = [
   ["upper-right", (50 * Math.PI) / 180],
   ["upper-left", (130 * Math.PI) / 180],
@@ -1550,7 +2106,7 @@ function addEngineMount(side: "left" | "right", sign: 1 | -1): void {
     group,
     "metal",
     point(x, y0, sparZ),
-    point(x, -1.15, 0.22),
+    point(x, GEAR_TRUNNION_Y, 0.22),
     0.04,
     8,
   );
@@ -1580,18 +2136,15 @@ addClosedMesh("fin-spar-front", "structure-empennage", "metal", finSparFront.ver
 addClosedMesh("fin-spar-rear", "structure-empennage", "metal", finSparRear.vertices, finSparRear.triangles);
 
 function stabSparRing(x: number, chordT: number): ObjectPoint[] {
-  const t = Math.abs(x) / 3.25;
-  const chord = 1.82 * (1 - t) + 1.02 * t;
-  const leading = -10.15 - t * 0.35;
-  const thick = 0.12 * chord;
-  const z = leading - chordT * chord;
+  const { y0, thick, leading, hingeZ, te } = stabSection(x);
+  const z = chordTToZ(chordT, leading, hingeZ, te, STAB_HINGE_T);
   const half = 0.022;
   const up = Math.max(0.018, thick * 0.35);
   return [
-    point(x, 0.4 + up, z + half),
-    point(x, 0.4 + up, z - half),
-    point(x, 0.4 - up, z - half),
-    point(x, 0.4 - up, z + half),
+    point(x, y0 + up, z + half),
+    point(x, y0 + up, z - half),
+    point(x, y0 - up, z - half),
+    point(x, y0 - up, z + half),
   ];
 }
 
@@ -1601,18 +2154,23 @@ for (const [id, chordT] of [["front", 0.22], ["rear", 0.72]] as const) {
   addClosedMesh(`stab-spar-${id}`, "structure-empennage", "metal", lofted.vertices, lofted.triangles);
 }
 
-const nose = bodyToWorld(point(0, 0.05, NOSE_Z));
+const nose = bodyToWorld(point(
+  0,
+  (FUSELAGE_STATIONS[0].crown + FUSELAGE_STATIONS[0].keel) / 2,
+  NOSE_CAP_TIP_Z,
+));
 const tail = bodyToWorld(point(0, 0.18, TAIL_Z));
-const leftTip = bodyToWorld(point(-DC3_WINGSPAN / 2, -0.12 + (DC3_WINGSPAN / 2 - WING_BREAK) * Math.tan(OUTER_DIHEDRAL), TIP_LE - TIP_CHORD * 0.45));
-const rightTip = bodyToWorld(point(DC3_WINGSPAN / 2, -0.12 + (DC3_WINGSPAN / 2 - WING_BREAK) * Math.tan(OUTER_DIHEDRAL), TIP_LE - TIP_CHORD * 0.45));
+const tipSection = wingAt(WING_HALF);
+const leftTip = bodyToWorld(point(-WING_HALF, tipSection.y0, tipSection.hingeZ));
+const rightTip = bodyToWorld(point(WING_HALF, tipSection.y0, tipSection.hingeZ));
 function wingHingePivot(x: number): ObjectPoint {
-  const { chord, leading, y0 } = wingAt(x);
-  return point(x, y0, leading - SPAR_REAR * chord);
+  const { y0, hingeZ } = wingAt(x);
+  return point(x, y0, hingeZ);
 }
 
 function stabHingePivot(x: number): ObjectPoint {
-  const { chord, leading, y0 } = stabSection(x);
-  return point(x, y0, leading - STAB_HINGE_T * chord);
+  const { y0, hingeZ } = stabSection(x);
+  return point(x, y0, hingeZ);
 }
 
 const spanAxis = bodyDirection(point(1, 0, 0));
@@ -1745,7 +2303,7 @@ const views: readonly Dc3View[] = [
     position: point(44, 2.4, -2),
     target: viewTarget,
     orthoHeight: 14,
-    hiddenGroups: ["fuselage", "wing", "nacelle-left", "nacelle-right", "empennage"],
+    hiddenGroups: ["fuselage", "wing", "nacelle-left", "nacelle-right", "empennage", "nose-cap"],
   },
   {
     id: "right-profile-flaps-down",
@@ -1830,14 +2388,14 @@ const views: readonly Dc3View[] = [
     position: point(24, 22, 26),
     target: viewTarget,
     fov: 34,
-    hiddenGroups: ["fuselage", "wing", "nacelle-left", "nacelle-right", "empennage"],
+    hiddenGroups: ["fuselage", "wing", "nacelle-left", "nacelle-right", "empennage", "nose-cap"],
   },
   {
     id: "core-detail",
     label: "Joint · wing box through the belly",
     projection: "perspective",
     position: point(9.4, 1.05, 6.2),
-    target: bodyToWorld(point(0, -0.05, 0.1)),
+    target: bodyToWorld(point(0, WING_ROOT_Y, 0.1)),
     fov: 32,
   },
   {
@@ -1845,9 +2403,9 @@ const views: readonly Dc3View[] = [
     label: "Cutaway · three spars and frames at the carry-through",
     projection: "perspective",
     position: point(9.4, 1.05, 6.2),
-    target: bodyToWorld(point(0, -0.05, 0.1)),
+    target: bodyToWorld(point(0, WING_ROOT_Y, 0.1)),
     fov: 32,
-    hiddenGroups: ["fuselage", "wing", "nacelle-left", "nacelle-right", "empennage"],
+    hiddenGroups: ["fuselage", "wing", "nacelle-left", "nacelle-right", "empennage", "nose-cap"],
   },
   {
     id: "nacelle-detail",
@@ -1862,7 +2420,7 @@ const views: readonly Dc3View[] = [
     label: "Joint · inner flap cut on the rear spar",
     projection: "perspective",
     position: point(8.8, 1.35, 5.4),
-    target: bodyToWorld(point(3.3, -0.12, -2.1)),
+    target: bodyToWorld(point(3.3, wingAt(3.3).y0, -2.1)),
     fov: 30,
   },
   {
@@ -1870,7 +2428,7 @@ const views: readonly Dc3View[] = [
     label: "Joint · inner flap down",
     projection: "perspective",
     position: point(8.8, 1.35, 5.4),
-    target: bodyToWorld(point(3.3, -0.12, -2.1)),
+    target: bodyToWorld(point(3.3, wingAt(3.3).y0, -2.1)),
     fov: 30,
     articulation: flapDownArticulation,
   },
@@ -1915,10 +2473,10 @@ export const dc3BlockoutObject: Dc3BlockoutModel = {
   sourceNotes: [
     "Published type envelope: 95 ft span, 64 ft 6 in length, 16 ft 11 in tail-down height, 11 ft 6 in propeller, 987 sq ft wing.",
     "NASM A19530075000 owns the museum airframe identity; its 4.14 m move-contractor width is not used as fuselage diameter.",
-    "Station tables, 5° outer dihedral and 19 ft engine half-span are authored. This is a three-point sit, not a level drawing.",
+    "Station tables, 5° outer dihedral and 19 ft engine half-span are authored. This is a three-point sit, not a level drawing. The wing is a low-wing: root lower surface on the keel, engine shafts on the local chord. The main oleo stays outside the nacelle; the sit pitch steepens rather than burying the knuckle.",
     "Each propeller is three Hamilton Standard paddle blades at the published 11 ft 6 in diameter; rotation is frozen.",
     "Nacelle is one metal teardrop the same diameter as the cowl, open at the lip around a Wright R-1820, then tapering through the wing to the trailing edge. Not a box behind a cylinder.",
-    "Forward stations follow NASM A19530075000: accepted cabin (roof held, short round-in, blunt windshield onto the deck at z=6.5), then a bullet cap that stays fat past the glass and rounds at the tip. Not a stubby hemisphere on z=7, and not a greenhouse shifted aft to steal length. Glass panes stay out.",
+    "Forward stations follow NASM A19530075000: accepted cabin roof through z=5.15, then a slope that stays above the windshield V. A separate brow triangle joins that slope to the two glass heads. The oval deck stops at z=6.85; two sill triangles join that ring to the two glass sills. The upper half flattens toward the glass and the anti-glare deck, then returns to an oval at the tip. A separate nose overlay closes that last ring; the station table is not extended. Two central windshields are planar parallelograms with a level side-view head, a 60° mullion rake and a 60° plan V, set 5 cm into the body. The two-pane scheme continues with a side light each side: level head and sill, sill dropped below the windshields, front edge the outboard pillar. Frames and rails stop short of the greenhouse opening.",
     "Vertical fin follows NASM2018-10067 and NASM2025-02160: one loft from the crown, long convex dorsal, rounded tip, nearly vertical trailing edge. Not a four-point slab. Rudder is cut from that loft as a hinged leaf. Frozen fin outline in docs/dc-3/blockout-b01-freeze-fin/.",
     "Skin-on-frame like the other air vehicles: the cage is inset from the loft (12 cm on the fuselage, a fraction of local thickness on the wing). Frames, four longerons and eight stringers carry the fuselage skin; three spars and wing formers carry the wing skin. Wright mounts and gear trunnions pick up the front spar. Tanks and cabin fit-out stay out.",
     "Ailerons, split flaps, elevator and rudder are real openings on the rear-spar / fin-hinge line, not painted seams. Flaps skip the nacelle afterbody. Hinges live on surfaceHinges; flaps-down is a posed second state of the same parts.",
@@ -2004,14 +2562,18 @@ export const dc3AirframeSurface = {
     inFlapBay,
     inAileronBay,
     stations: WING_STATIONS,
-    halfSpan: DC3_WINGSPAN / 2,
+    halfSpan: WING_HALF,
+    aileronSpan: { inner: AILERON_IN, outer: AILERON_OUT },
+    tipRound: WING_TIP_ROUND,
   },
   stabiliser: {
     section: stabSection,
     band: stabBand,
     inElevatorBay,
+    stations: STAB_STATION_XS,
     hingeT: STAB_HINGE_T,
-    halfSpan: 3.25,
+    halfSpan: STAB_HALF,
+    tipRound: STAB_TIP_ROUND,
     elevatorSpan: { inner: ELEV_IN, outer: ELEV_OUT },
   },
   fin: {
@@ -2073,6 +2635,28 @@ export const dc3AirframeSurface = {
     centreY: WINDOW_ROW_CENTRE_Y,
     ...DC3_WINDOW_SIZE,
   })),
+  /**
+   * Два плоских параллелограмма: верх горизонтален в боку, стойка 60° к
+   * горизонту, в плане раствор 60°. Порог, наружный порог, бровь снаружи,
+   * бровь у стойки.
+   */
+  windshields: [
+    { id: "right", corners: windshieldCorners(1) },
+    { id: "left", corners: windshieldCorners(-1) },
+  ],
+  sideLights: [
+    { id: "right", corners: sideLightCorners(1) },
+    { id: "left", corners: sideLightCorners(-1) },
+  ],
+  cornerLights: [
+    { id: "right", corners: cornerLightCorners(1) },
+    { id: "left", corners: cornerLightCorners(-1) },
+  ],
+  sideLightBay: { zAft: 5.15, zFore: 6.5 },
+  windshieldBay: { zAft: WINDSHIELD_Z_AFT, zFore: WINDSHIELD_Z_FORE },
+  greenhouseBrow: greenhouseBrowFairing(),
+  greenhouseForehead: greenhouseForehead(),
+  greenhouseSill: greenhouseSillFairing(),
   cabins: {
     forward: FORWARD_CABIN,
     aft: AFT_CABIN,

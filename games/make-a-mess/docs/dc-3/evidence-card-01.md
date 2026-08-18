@@ -52,7 +52,7 @@ Published envelopes (frozen in `source-expectations-s01.json`):
 | --- | ---: | --- |
 | Wingspan | 28.956 m | 95 ft 0 in |
 | Length along fuselage | 19.659 m | 64 ft 6 in |
-| Height, tail-down | 5.156 m | 16 ft 11 in |
+| Height, tail-down | 5.156 m | 16 ft 11 in, top of fin. Fuselage in the same sit is 14 ft 11.5 in on the type; a restored oleo may put the cabin AABB above the fin |
 | Wing area | 91.69 m² | 987 sq ft |
 | Propeller diameter | 3.505 m | 11 ft 6 in |
 
@@ -68,16 +68,16 @@ Published envelopes (frozen in `source-expectations-s01.json`):
 
 | System | Family | B01 content |
 | --- | --- | --- |
-| Fuselage | lofted oval shell | accepted cabin (roof, round-in, blunt windshield); bullet cap from the sill to a rounded tip |
-| Wing | tapered loft, outer dihedral | center almost flat, outer 5°, rounded tips |
-| Nacelles | metal teardrop, same diameter as the cowl | frozen look in `blockout-b01-freeze-teardrop/` (hash `92a6706e0bf6`) |
+| Fuselage | lofted oval shell | accepted cabin (roof, round-in, blunt windshield); upper half flattens toward the glass and anti-glare deck; bullet cap from the sill to the last ring; a separate nose overlay closes that ring to a rounded tip |
+| Wing | tapered loft, outer dihedral | low-wing: root lower surface on the keel; center almost flat, outer 5°; aileron is a rectangular inset that stops 52 cm short of the tip; the fixed cap outboard rounds leading and trailing edges and pinches thickness to a closed edge; nav lights sit in glass sensor-cap blisters on the tip, facing outboard, bulb nested inside |
+| Nacelles | metal teardrop, same diameter as the cowl | shaft on the local wing chord, not a pod under the box; frozen look in `blockout-b01-freeze-teardrop/` (hash `92a6706e0bf6`) |
 | Engines | Wright R-1820 radial | nine cylinders inside each cowl |
 | Propellers | three paddle blades | frozen; no aero |
-| Empennage | height-lofted fin (dorsal in the same mass) + tapered stabilizer | rudder and elevator cut from those lofts as hinged leaves; fin outline frozen in `blockout-b01-freeze-fin/` |
+| Empennage | height-lofted fin (dorsal in the same mass) + tapered stabilizer | rudder and elevator cut from those lofts as hinged leaves; stabilizer rounds the box to the elevator, which stays a rectangular inset; fin outline frozen in `blockout-b01-freeze-fin/` |
 | Control surfaces | hinged leaves on the rear-spar / fin-hinge line | ailerons, split flaps (skip the nacelle), elevator, rudder; flaps-down is a posed second state |
-| Core | skin-on-frame cage inset from the loft: three spars, wing formers, frames, four longerons, eight stringers, engine mounts | skins stay filled and outside the cage; cutaway hides named skin groups only |
-| Gear | mains into nacelles, tailwheel | three-point contact; trunnions pick up the front spar |
-| Cockpit | greenhouse is the blunt windshield drop in the loft | not a window assembly yet; roof does not rise above the cabin |
+| Core | skin-on-frame cage inset from the loft: three spars, wing formers, frames, four longerons, eight stringers, engine mounts | skins stay filled and outside the cage; wing spars and formers sit 32–40% of local thickness inside the airfoil so the 12 mm panel skin does not cut them; cutaway hides named skin groups only |
+| Gear | mains into nacelles, tailwheel | three-point contact; knuckle box hangs under the cowl; oleo 0.90 m (90% of the pre-low-wing 1.0 m); trunnions pick up the front spar |
+| Cockpit | two-pane greenhouse: central windshields in a V plus a side light each side | side lights sit on the loft, cropped to two-thirds height from the sill; aft sill raked 8 cm toward the nose so the outer aft frame sits on the loft at head and sill; leftover windshield-to-side slit sewn with a sharp skin plug, not a third pane; greenhouse beam follows the cabin-to-nose taper; forehead is a convex brow on the V of the windshield heads, following loft generators to ring 5.8 (each generator keeps its chevron angle, including samples on the head bar); the 18° roof sectors beside gore2, from the temple ring 5.55 onto that visor aft, are loft patches whose columns follow the visor aft samples (not a two-point chord); aft hull follows the loft from station 5.15 onto the rear frame; the nose cheek (gore 0/4) runs from the cap to station 5.15 with its top on the side-light sill frame; from the plug sill edge the 36°–54° sector runs onto the first cap ring, sharing the sill-fairing outboard and the cheek generator, not a radial skirt under the sills; no sill skirt; cage stops behind the side-light frame; roof does not rise above the cabin |
 | Cabin windows, doors, stringers, tanks, livery | — | deferred |
 
 ## Load path
@@ -150,6 +150,7 @@ outer loft. Cutaway cameras hide `fuselage`, `wing`, `nacelle-*` and
 | Two props 3.505 m | published envelope | cylinder radii | front, three-quarter |
 | Lofted fuselage, not a cake | station tables | crown/width change nose→cabin→tail | right-profile, plan |
 | Three-point sit | authored pitch | mains + tailwheel at y≈0 | right-profile |
+| Low-wing, shafts on the chord | keel table + `wingAt` | root lower ≈ keel; hub Y = local chord | front, 3/4 |
 | Twin nacelles mirrored | authored half-span | two groups, opposite X | front, plan |
 | Three spars tip-to-tip | authored chord fractions | recovered X span and Z order | core-detail-cutaway, right-profile-cutaway |
 | Frames, longerons and stringers inside the shell | loft stations, 12 cm inset | per-band cage inside skin | high-three-quarter-cutaway |

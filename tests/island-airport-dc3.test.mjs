@@ -106,3 +106,43 @@ test("airport pieces keep Object Lab ids, aluminium skins and steel cage", () =>
     "машина на полосе и отправляется с неё",
   );
 });
+
+test("the nose range sensor sits inside the overlay, not on its tip", () => {
+  const sensor = islandAirportDc3Frame.proximitySensors[0];
+  assert.ok(sensor, "нет носового датчика");
+  const heading = islandAirportDc3Heading;
+  const ahead =
+    (sensor.point[0] - islandAirportDc3Nose[0]) * heading[0]
+    + (sensor.point[1] - islandAirportDc3Nose[1]) * heading[1]
+    + (sensor.point[2] - islandAirportDc3Nose[2]) * heading[2];
+  assert.ok(
+    ahead < -0.08,
+    `датчик всё ещё на острие накладки (${ahead.toFixed(3)} м вдоль носа)`,
+  );
+  const visualFront = ahead + 0.055;
+  assert.ok(
+    visualFront < -0.01,
+    `колпачок датчика всё ещё выглядывает (${visualFront.toFixed(3)} м за остриё)`,
+  );
+});
+
+test("nav-light caps compile as glass with the bulb nested inside", () => {
+  for (const board of ["port", "starboard", "tail"]) {
+    const cap = pieces.find((piece) => piece.id.includes(`:nav-light-${board}-cap:`));
+    const bulb = pieces.find((piece) => piece.id.includes(`:nav-light-${board}-bulb:`));
+    assert.ok(cap && bulb, `нет АНО ${board}`);
+    assert.equal(cap.material, "glass", `${board}: колпак скомпилирован не стеклом`);
+    assert.equal(cap.color, "#b9c7c8", `${board}: колпак непрозрачный`);
+    assert.equal(bulb.material, "glass", `${board}: лампа не видна как стекло`);
+    const authored = islandAirportDc3Group.objects.find(
+      (object) => object.id === `nav-light-${board}-bulb`,
+    );
+    assert.ok(authored?.light, `${board}: у лампы нет источника`);
+    const half = cap.size.map((value) => value / 2);
+    const local = [0, 1, 2].map((axis) => bulb.position[axis] - cap.position[axis]);
+    assert.ok(
+      local.every((value, axis) => Math.abs(value) < half[axis] - 0.002),
+      `${board}: лампа не внутри колпака`,
+    );
+  }
+});

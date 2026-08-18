@@ -277,6 +277,21 @@ function materialFor(part: ObjectLabPart): {
   if (part.group === "cabin-floor") {
     return { material: "wood", shape: "panel", color: "#4a4038" };
   }
+  if (part.material === "lamp-glass") {
+    return { material: "glass", shape: "glassPane", color: "#b9c7c8" };
+  }
+  if (part.material === "lamp-bulb") {
+    if (part.id.includes("nav-light-port")) {
+      return { material: "glass", shape: "glassPane", color: "#f08a80" };
+    }
+    if (part.id.includes("nav-light-starboard")) {
+      return { material: "glass", shape: "glassPane", color: "#7fd0a0" };
+    }
+    if (part.id.includes("nav-light-tail")) {
+      return { material: "glass", shape: "glassPane", color: "#f4f1e2" };
+    }
+    return { material: "glass", shape: "panel", color: "#f4e4c4" };
+  }
   if (part.group === "cabin-seats" || part.group === "cabin-trim") {
     return { material: "cloth", shape: "panel", color: "#4d5a63" };
   }
@@ -340,6 +355,9 @@ export function dc3SurfaceDeflectionDegrees(
 
 function loadBearing(part: ObjectLabPart): boolean {
   if (part.group.startsWith("propeller-")) return false;
+  if (part.material === "lamp-glass" || part.material === "lamp-bulb" || part.id.endsWith("-bulb")) {
+    return false;
+  }
   if (
     part.group.startsWith("flap-") ||
     part.group.startsWith("aileron-") ||
@@ -1243,39 +1261,51 @@ export function createDc3AirplaneFrame(
         wings.reduce((sum, piece) => sum + piece.position[2] * (piece.volume ?? 0), 0) / wingVolume,
       ]
     : [0, 0.35, 0];
-  const localNose = unitFrom(anchors.tail, anchors.nose);
-  return {
-    id: DC3_AIRPLANE_CLASS.id,
-    clusterId: placement.clusterId,
-    telemetryLabel: "DC-3",
-    // ВНЕШНИЙ ОБВОД — ОБШИВКА, НЕ НАБОР.
-    //
-    // Стойки уже выключены: их держит луч. Набор (стрингеры, лонжероны,
-    // шпангоуты, лонжероны крыла) — длинные лофты, и Rapier берёт AABB.
-    // Ящик на всю длину фюзеляжа в трёхточечной стоянке ещё проходит, а при
-    // любом более плоском тангаже бьёт полосу под носом. Отсюда подскок,
-    // клевок и «стоит на хвосте» при убранных стойках. Масса и картинка
-    // набора не трогаются: из контакта его нет, как ног шасси.
-    contactMemberExcludes: DC3_CONTACT_MEMBER_EXCLUDES,
-    origin: placement.position,
-    nose: dc3AirplaneVector(placement, localNose),
-    mooringPoint: dc3AirplanePoint(placement, anchors.nose),
-    liftCentre: dc3AirplanePoint(placement, localLift),
-    envelopeMatch: "wing-",
-    supportStruts: createDc3LandingGear(placement),
-    controlSurfaces: createDc3ControlSurfaces(placement),
-    propellers: createDc3Propellers(placement),
-    // НИЖНИХ ДАТЧИКОВ ПРОСВЕТА НЕТ.
-    //
-    // Три датчика смотрели вниз из-под колёс — ровно туда, где стойка и так
-    // меряет опору собственным лучом. Снято по вердикту владельца: лишний
-    // измеритель у самой земли — это лишний повод машине об него запнуться,
-    // а полезного он не давал ничего, чего не даёт стойка.
-    proximitySensors: [
-      { point: dc3AirplanePoint(placement, anchors.nose), normal: dc3AirplaneVector(placement, localNose) },
-    ],
-  };
-}
+    const localNose = unitFrom(anchors.tail, anchors.nose);
+    // Датчик сидел на якоре носа — на острие накладки. Колпачок (сфера 55 мм)
+    // торчал наружу. Утоплен вдоль оси, чтобы весь визуал остался внутри
+    // накладки; луч смотрит вперёд и свой корпус игнорирует.
+    const noseSensorRecess = 0.095;
+    const noseSensor: SceneVector3 = [
+      anchors.nose[0] - localNose[0] * noseSensorRecess,
+      anchors.nose[1] - localNose[1] * noseSensorRecess,
+      anchors.nose[2] - localNose[2] * noseSensorRecess,
+    ];
+    return {
+      id: DC3_AIRPLANE_CLASS.id,
+      clusterId: placement.clusterId,
+      telemetryLabel: "DC-3",
+      // ВНЕШНИЙ ОБВОД — ОБШИВКА, НЕ НАБОР.
+      //
+      // Стойки уже выключены: их держит луч. Набор (стрингеры, лонжероны,
+      // шпангоуты, лонжероны крыла) — длинные лофты, и Rapier берёт AABB.
+      // Ящик на всю длину фюзеляжа в трёхточечной стоянке ещё проходит, а при
+      // любом более плоском тангаже бьёт полосу под носом. Отсюда подскок,
+      // клевок и «стоит на хвосте» при убранных стойках. Масса и картинка
+      // набора не трогаются: из контакта его нет, как ног шасси.
+      contactMemberExcludes: DC3_CONTACT_MEMBER_EXCLUDES,
+      origin: placement.position,
+      nose: dc3AirplaneVector(placement, localNose),
+      mooringPoint: dc3AirplanePoint(placement, anchors.nose),
+      liftCentre: dc3AirplanePoint(placement, localLift),
+      envelopeMatch: "wing-",
+      supportStruts: createDc3LandingGear(placement),
+      controlSurfaces: createDc3ControlSurfaces(placement),
+      propellers: createDc3Propellers(placement),
+      // НИЖНИХ ДАТЧИКОВ ПРОСВЕТА НЕТ.
+      //
+      // Три датчика смотрели вниз из-под колёс — ровно туда, где стойка и так
+      // меряет опору собственным лучом. Снято по вердикту владельца: лишний
+      // измеритель у самой земли — это лишний повод машине об него запнуться,
+      // а полезного он не давал ничего, чего не даёт стойка.
+      proximitySensors: [
+        {
+          point: dc3AirplanePoint(placement, noseSensor),
+          normal: dc3AirplaneVector(placement, localNose),
+        },
+      ],
+    };
+  }
 
 export const dc3AirplaneStandFrame = createDc3AirplaneFrame();
 

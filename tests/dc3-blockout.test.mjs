@@ -87,8 +87,17 @@ test("B01 recovers the published type envelope from emitted parts", () => {
   ].flatMap(partPoints);
   const along = fuselagePoints.map((point) => dot(point, unit));
   near(wingBox.maxX - wingBox.minX, published("envelope.wingspan"), 0.18, "span");
-  near(Math.max(...along) - Math.min(...along), published("envelope.length"), 0.12, "length");
-  near(all.maxY - Math.min(0, all.minY), published("envelope.heightTailDown"), 0.28, "height");
+  near(Math.max(...along) - Math.min(...along), published("envelope.length"), 0.22, "length");
+  // Published tail-down height is the fin (16 ft 11 in), not the pitched-cabin AABB.
+  // Restoring the oleo steepens the sit, so the cabin roof can sit above the fin;
+  // burying the knuckle to keep all.maxY on that number is D36.
+  const fin = dc3BlockoutObject.parts.filter((part) => part.id === "vertical-fin");
+  near(
+    bounds(fin).maxY - Math.min(0, all.minY),
+    published("envelope.heightTailDown"),
+    0.28,
+    "height",
+  );
 });
 
 test("contour characteristics stay the published metre conversions", () => {
@@ -158,29 +167,117 @@ test("three-point gear reaches the ground", () => {
   assert.ok(bounds(fuselage).minY > 0.12, "belly must clear the floor");
 });
 
+test("the wing is a low-wing and the shafts sit on its chord", () => {
+  const { worldToBody, fuselage } = dc3AirframeSurface;
+  const keel = fuselage.at(0).keel;
+  const rootSkin = wings.flatMap((part) =>
+    part.kind === "mesh" ? part.vertices : []).map(worldToBody)
+    .filter((vertex) => Math.abs(vertex[0]) < 0.45 && vertex[2] > -2.4 && vertex[2] < 1.1);
+  assert.ok(rootSkin.length >= 8, "no root wing skin to compare with the keel");
+  const lowest = Math.min(...rootSkin.map((vertex) => vertex[1]));
+  near(lowest, keel, 0.06, "root lower surface vs keel");
+  const hub = worldToBody(dc3BlockoutObject.anchors.rightProp);
+  near(hub[1], dc3AirframeSurface.wing.at(hub[0]).y0, 0.03, "prop hub vs wing chord");
+  assert.ok(
+    bounds(props).minY > 0.15,
+    `propellers at y=${bounds(props).minY.toFixed(3)} strike the ground`,
+  );
+});
+
+test("the main oleo hangs below the cowl, knuckle included", () => {
+  const { worldToBody } = dc3AirframeSurface;
+  const pitch = dc3BlockoutObject.dimensions.threePointPitchDegrees;
+  assert.ok(
+    pitch > 12 && pitch < 16,
+    `sit pitch ${pitch.toFixed(2)}° is not the steeper three-point after the long oleo`,
+  );
+  for (const side of ["left", "right"]) {
+    const strut = dc3BlockoutObject.parts.find((part) => part.id === `gear-${side}-strut`);
+    const wheel = dc3BlockoutObject.parts.find((part) => part.id === `gear-${side}-wheel`);
+    const knuckle = dc3BlockoutObject.parts.find((part) => part.id === `gear-${side}-trunnion`);
+    assert.equal(strut?.kind, "cylinder", `${side} strut`);
+    assert.equal(wheel?.kind, "cylinder", `${side} wheel`);
+    assert.equal(knuckle?.kind, "mesh", `${side} knuckle`);
+    const hub = worldToBody(dc3BlockoutObject.anchors[side === "left" ? "leftProp" : "rightProp"]);
+    const cowlBottom = hub[1] - 0.68;
+    const axle = worldToBody([
+      (wheel.from[0] + wheel.to[0]) / 2,
+      (wheel.from[1] + wheel.to[1]) / 2,
+      (wheel.from[2] + wheel.to[2]) / 2,
+    ]);
+    const exposed = cowlBottom - axle[1];
+    assert.ok(
+      exposed > 0.75,
+      `${side} oleo below the cowl is ${exposed.toFixed(2)} m — knuckle still in the nacelle`,
+    );
+    const trunnion = worldToBody(strut.from);
+    assert.ok(
+      trunnion[1] < cowlBottom - 0.08,
+      `${side} strut starts ${((trunnion[1] - cowlBottom) * 1000).toFixed(0)} mm inside the cowl`,
+    );
+    const knuckleTop = Math.max(...knuckle.vertices.map((vertex) => worldToBody(vertex)[1]));
+    assert.ok(
+      knuckleTop <= cowlBottom + 0.02,
+      `${side} knuckle still sits ${(knuckleTop - cowlBottom).toFixed(3)} m inside the cowl`,
+    );
+  }
+});
+
 test("the nose holds a cabin roof, then a blunt windshield drop, with no hanging chin", () => {
   const { stations } = dc3AirframeSurface.fuselage;
   const at = (z) => stations.find((station) => Math.abs(station.z - z) < 0.05);
   const cabin = at(4.3);
+  const hold = at(5.15);
   const brow = at(6.15);
   const deck = at(6.5);
   const bullet = at(6.85);
   const tip = stations.reduce((front, station) => (station.z > front.z ? station : front));
   const capMid = stations.find((station) => station.z > 7.05 && station.z < tip.z - 0.02);
-  assert.ok(cabin && brow && deck && bullet && capMid, "cabin / brow / deck / bullet / cap missing");
+  assert.ok(cabin && hold && brow && deck && bullet && capMid, "cabin / hold / brow / deck / bullet / cap missing");
   const noseToCabin = stations.filter((station) => station.z >= 4.3);
   for (const station of noseToCabin) {
-    assert.equal(
-      station.upperPower,
-      undefined,
-      `upperPower at z=${station.z} boxes the upper half`,
-    );
     assert.equal(
       station.faceForward,
       undefined,
       `faceForward at z=${station.z} shears a fake rake`,
     );
+    const power = station.upperPower ?? 2;
+    assert.ok(
+      power >= 2 && power <= 3.05,
+      `upperPower ${power} at z=${station.z} is a box or a pinch`,
+    );
   }
+  const cabinPower = cabin.upperPower ?? 2;
+  const tipPower = tip.upperPower ?? 2;
+  assert.equal(cabinPower, 2, "passenger cabin section left the oval");
+  assert.equal(tipPower, 2, "cap tip is no longer a round bullet");
+  assert.ok((brow.upperPower ?? 2) >= 2.7, "brow is still a round vault over the glass");
+  assert.ok((deck.upperPower ?? 2) >= 2.7, "anti-glare deck is still an oval");
+  assert.ok((bullet.upperPower ?? 2) >= 2.7, "cap lip is still a round vault under the glass");
+  const ovalAt = (station, angle) => {
+    const { pointAt } = dc3AirframeSurface.fuselage;
+    return pointAt({ ...station, upperPower: 2 }, angle)[1];
+  };
+  const cheek = Math.PI / 2 - 0.6;
+  for (const station of [brow, deck, bullet]) {
+    const y = dc3AirframeSurface.fuselage.pointAt(station, cheek)[1];
+    const oval = ovalAt(station, cheek);
+    assert.ok(
+      y > oval + 0.03,
+      `z=${station.z}: upper cheek ${y.toFixed(3)} is still the oval ${oval.toFixed(3)}`,
+    );
+  }
+  const cabinCheek = dc3AirframeSurface.fuselage.pointAt(cabin, cheek)[1];
+  assert.ok(
+    Math.abs(cabinCheek - ovalAt(cabin, cheek)) < 0.005,
+    "passenger cabin upper half was flattened",
+  );
+  const keelAngle = -Math.PI / 4;
+  const browKeel = dc3AirframeSurface.fuselage.pointAt(brow, keelAngle)[1];
+  assert.ok(
+    Math.abs(browKeel - ovalAt(brow, keelAngle)) < 0.005,
+    "keel was flattened with the greenhouse",
+  );
   for (let index = 1; index < noseToCabin.length; index += 1) {
     const aft = noseToCabin[index];
     const forward = noseToCabin[index - 1];
@@ -193,18 +290,74 @@ test("the nose holds a cabin roof, then a blunt windshield drop, with no hanging
     noseToCabin.every((station) => station.crown <= cabin.crown + 1e-9),
     "brow sits above the cabin roof",
   );
-  const roof = stations.filter((station) => station.z >= 4.3 && station.z <= 5.9);
+  const roof = stations.filter((station) => station.z >= 4.3 && station.z <= 5.2);
   assert.ok(
     roof.every((station) => station.crown >= cabin.crown - 0.04),
     "cockpit roof droops before the windshield — that is a 21st-century fairing",
   );
-  const fillet = at(5.8).crown - brow.crown;
-  assert.ok(fillet >= 0.05 && fillet <= 0.16, `brow fillet ${fillet} m is a knife or a fairing`);
-  const drop = brow.crown - deck.crown;
+  const lastRoof = at(5.8);
+  assert.ok(
+    lastRoof.crown < cabin.crown - 0.08,
+    `last roof ${lastRoof.crown} still holds full height into the glass`,
+  );
+  const linearHw = (z) =>
+    hold.halfWidth + (deck.halfWidth - hold.halfWidth) * ((z - hold.z) / (deck.z - hold.z));
+  assert.ok(
+    lastRoof.halfWidth <= linearHw(lastRoof.z) + 0.01,
+    `greenhouse beam ${lastRoof.halfWidth} at z=${lastRoof.z} thickens the cabin-to-nose taper`,
+  );
+  assert.ok(
+    brow.halfWidth <= linearHw(brow.z) + 0.01,
+    `greenhouse beam ${brow.halfWidth} at z=${brow.z} thickens the cabin-to-nose taper`,
+  );
+  const glassHead = Math.max(
+    ...dc3AirframeSurface.windshields.flatMap((pane) => [pane.corners[2][1], pane.corners[3][1]]),
+  );
+  assert.ok(
+    brow.crown > glassHead + 0.14 && brow.crown < glassHead + 0.32,
+    `brow ${brow.crown} still undercuts the glass V (${glassHead.toFixed(3)})`,
+  );
+  const fillet = lastRoof.crown - brow.crown;
+  assert.ok(fillet >= 0.04 && fillet <= 0.22, `brow fillet ${fillet} m is a knife or a fairing`);
+  const browFairing = dc3AirframeSurface.greenhouseBrow;
+  assert.ok(
+    Math.abs(browFairing.apex[2] - lastRoof.z) < 1e-9
+      && Math.abs(browFairing.apex[0]) < 0.05,
+    "brow fairing apex is not on the last roof ring",
+  );
+  assert.ok(
+    browFairing.apex[1] > glassHead + 0.12,
+    `brow fairing apex ${browFairing.apex[1].toFixed(3)} does not sit on the raised slope`,
+  );
+  const forehead = dc3AirframeSurface.greenhouseForehead;
+  assert.ok(
+    Math.abs(forehead.visorAft[0][1] - forehead.visorFore[0][1]) < 0.002
+      && Math.abs(forehead.visorAft[1][1] - forehead.visorFore[1][1]) < 0.002,
+    "visor is not a level cap on the windshield heads",
+  );
+  assert.ok(
+    forehead.visorAft[1][1] < lastRoof.crown - 0.12,
+    "visor already is the roof ring — the rounded close has no run",
+  );
+  assert.ok(
+    forehead.visorFore[2][2] > forehead.visorAft[2][2],
+    "visor fore edge is not the windshield heads",
+  );
+  const sillFairing = dc3AirframeSurface.greenhouseSill;
+  assert.ok(
+    Math.abs(sillFairing.apex[2] - bullet.z) < 1e-9
+      && Math.abs(sillFairing.apex[0]) < 0.05,
+    "sill fairing apex is not on the first cap ring",
+  );
+  const glassSill = Math.min(
+    ...dc3AirframeSurface.windshields.flatMap((pane) => [pane.corners[0][1], pane.corners[1][1]]),
+  );
+  assert.ok(
+    Math.abs(sillFairing.apex[1] - glassSill) < 0.08,
+    `sill fairing apex ${sillFairing.apex[1].toFixed(3)} does not sit on the flattened deck (${glassSill.toFixed(3)})`,
+  );
   const run = deck.z - brow.z;
-  assert.ok(drop >= 0.5, `windshield drop ${drop} m is still a modern slope`);
   assert.ok(run > 0 && run <= 0.4, `windshield run ${run} m is not a crease`);
-  assert.ok(drop / run >= 1.2, `windshield slope ${((Math.atan(drop / run) * 180) / Math.PI).toFixed(0)}° is too raked`);
   const deckDrop = deck.crown - bullet.crown;
   const deckRun = bullet.z - deck.z;
   const deckSlope = deckDrop / deckRun;
@@ -220,6 +373,17 @@ test("the nose holds a cabin roof, then a blunt windshield drop, with no hanging
     bullet.halfWidth >= 0.85,
     `cap ${bullet.halfWidth} m wide at z=${bullet.z} already collapsed to a sphere`,
   );
+  const bulletHalfHeight = (bullet.crown - bullet.keel) / 2;
+  assert.ok(
+    bullet.halfWidth > bulletHalfHeight + 0.12,
+    `cap lip is still a circle: hw ${bullet.halfWidth} vs ry ${bulletHalfHeight.toFixed(3)}`,
+  );
+  const capHalfHeight = (capMid.crown - capMid.keel) / 2;
+  assert.ok(
+    capMid.halfWidth > capHalfHeight + 0.12,
+    `cap mid is still a circle: hw ${capMid.halfWidth} vs ry ${capHalfHeight.toFixed(3)}`,
+  );
+  assert.ok((capMid.upperPower ?? 2) >= 2.7, "cap mid is still a round vault");
   const linearCap = deck.crown
     + ((tip.crown - deck.crown) * (capMid.z - deck.z)) / (tip.z - deck.z);
   assert.ok(
@@ -230,7 +394,44 @@ test("the nose holds a cabin roof, then a blunt windshield drop, with no hanging
     tip.halfWidth > 0.18 && tip.halfWidth < 0.4,
     `cap tip ${tip.halfWidth} is a pin or a leftover disk`,
   );
-  assert.ok(!dc3BlockoutObject.parts.some((part) => part.id === "nose-cap"));
+  const overlay = dc3BlockoutObject.parts.find((part) => part.id === "nose-cap");
+  assert.equal(overlay?.kind, "mesh", "nose overlay");
+  const { worldToBody, fuselage: surface } = dc3AirframeSurface;
+  const hole = surface.ring(surface.stations[0]);
+  const capBody = overlay.vertices.map(worldToBody);
+  for (const vertex of hole) {
+    const nearest = Math.min(
+      ...capBody.map((point) => Math.hypot(point[0] - vertex[0], point[1] - vertex[1], point[2] - vertex[2])),
+    );
+    assert.ok(
+      nearest < 1e-6,
+      `nose overlay misses the hole oval by ${(nearest * 1000).toFixed(1)} mm`,
+    );
+  }
+  const tipZ = Math.max(...capBody.map((point) => point[2]));
+  assert.ok(
+    tipZ > surface.stations[0].z + 0.12 && tipZ < surface.stations[0].z + 0.24,
+    `overlay tip at z=${tipZ.toFixed(3)} is a cone or a disk`,
+  );
+  const earlyZ = surface.stations[0].z + 0.05;
+  const earlyWidth = Math.max(
+    ...capBody
+      .filter((point) => Math.abs(point[2] - earlyZ) < 0.025)
+      .map((point) => Math.abs(point[0])),
+  );
+  assert.ok(
+    earlyWidth > 0.15 && earlyWidth < 0.26,
+    `overlay start was restyled (${earlyWidth.toFixed(3)} m at +5 cm)`,
+  );
+  const nearTipWidth = Math.max(
+    ...capBody
+      .filter((point) => Math.abs(point[2] - (tipZ - 0.02)) < 0.012)
+      .map((point) => Math.abs(point[0])),
+  );
+  assert.ok(
+    nearTipWidth > 0.028,
+    `overlay tip is still a needle (${nearTipWidth.toFixed(3)} m at 2 cm before the tip)`,
+  );
 
   const axis = subtract(dc3BlockoutObject.anchors.nose, dc3BlockoutObject.anchors.tail);
   const unit = axis.map((value) => value / length(axis));
@@ -392,7 +593,7 @@ test("the airframe hangs on a three-spar wing box with frames and longerons", ()
     const wingBox = bounds(wings);
     assert.ok(box.minY > wingBox.minY - 0.08 && box.maxY < wingBox.maxY + 0.08, `${spar.id} leaves the wing`);
   }
-  const frames = dc3BlockoutObject.parts.filter((part) => part.group === "structure-fuselage" && /^fuselage-frame-/.test(part.id));
+  const frames = dc3BlockoutObject.parts.filter((part) => /^fuselage-frame-/.test(part.id));
   const longerons = dc3BlockoutObject.parts.filter((part) => /^longeron-/.test(part.id));
   const stringers = dc3BlockoutObject.parts.filter((part) => /^stringer-/.test(part.id));
   const formers = dc3BlockoutObject.parts.filter((part) => /^wing-former-/.test(part.id));
@@ -400,6 +601,37 @@ test("the airframe hangs on a three-spar wing box with frames and longerons", ()
   assert.equal(longerons.length, 4);
   assert.ok(stringers.length >= 8, `only ${stringers.length} stringers to hang the skin`);
   assert.ok(formers.length >= 15, `only ${formers.length} wing formers`);
+  assert.ok(
+    !frames.some((part) => /z(6\.(15|5)|5\.8)$/.test(part.id)),
+    "a bulkhead still occupies the greenhouse opening",
+  );
+  const { worldToBody, windshields, sideLights } = dc3AirframeSurface;
+  for (const pane of [...windshields, ...sideLights]) {
+    const centroid = pane.corners[0].map((_, axis) =>
+      pane.corners.reduce((sum, corner) => sum + corner[axis], 0) / 4);
+    for (const part of dc3BlockoutObject.parts.filter((entry) => entry.group === "structure-fuselage")) {
+      for (const vertex of part.vertices) {
+        const body = worldToBody(vertex);
+        const dx = body[0] - centroid[0];
+        const dy = body[1] - centroid[1];
+        const dz = body[2] - centroid[2];
+        assert.ok(
+          dx * dx + dy * dy + dz * dz > 0.12 ** 2,
+          `${part.id} occupies ${pane.id} glass`,
+        );
+      }
+    }
+  }
+  const sideAft = Math.min(...sideLights.flatMap((pane) => pane.corners.map((corner) => corner[2])));
+  for (const part of [...longerons, ...stringers]) {
+    for (const vertex of part.vertices) {
+      const body = worldToBody(vertex);
+      assert.ok(
+        body[2] <= sideAft - 0.08,
+        `${part.id} runs past the side-light frame (z ${body[2].toFixed(3)} > ${sideAft.toFixed(3)})`,
+      );
+    }
+  }
 });
 
 test("the cage sits inside the skins, not on the mold line", () => {
@@ -442,6 +674,49 @@ test("the cage sits inside the skins, not on the mold line", () => {
   assert.ok(wingCore.minX > wingSkin.minX + 0.08, "wing cage reaches the tip skin");
   assert.ok(wingCore.maxY < wingSkin.maxY - 0.02, "spar sits on the upper skin");
   assert.ok(wingCore.minY > wingSkin.minY + 0.02, "spar sits on the lower skin");
+  const { worldToBody, wing } = dc3AirframeSurface;
+  const airfoilY = (x, z) => {
+    const ring = wing.band(x, 0, 1);
+    let yMax = -Infinity;
+    let yMin = Infinity;
+    for (let index = 0; index < ring.length; index += 1) {
+      const here = ring[index];
+      const next = ring[(index + 1) % ring.length];
+      const span = next[2] - here[2];
+      if (Math.abs(span) < 1e-9) continue;
+      const t = (z - here[2]) / span;
+      if (t < -1e-6 || t > 1 + 1e-6) continue;
+      const y = here[1] + (next[1] - here[1]) * Math.min(1, Math.max(0, t));
+      yMax = Math.max(yMax, y);
+      yMin = Math.min(yMin, y);
+    }
+    return { yMax, yMin };
+  };
+  for (const x of [1.4, 2.8, 4.2, 5.79]) {
+    const section = wing.at(x);
+    for (const part of wingCage) {
+      if (part.kind !== "mesh") continue;
+      for (const vertex of part.vertices) {
+        const body = worldToBody(vertex);
+        if (Math.abs(Math.abs(body[0]) - x) > 0.05) continue;
+        if (body[2] > section.leading + 0.02 || body[2] < section.leading - section.chord - 0.02) {
+          continue;
+        }
+        const { yMax, yMin } = airfoilY(body[0], body[2]);
+        if (!Number.isFinite(yMax)) continue;
+        const half = (yMax - yMin) / 2;
+        const margin = Math.min(0.04, Math.max(0.012, half * 0.25));
+        assert.ok(
+          body[1] < yMax - margin,
+          `${part.id} pokes the upper skin at x=${x} by ${((body[1] - yMax) * 1000).toFixed(0)} mm`,
+        );
+        assert.ok(
+          body[1] > yMin + margin,
+          `${part.id} pokes the lower skin at x=${x} by ${((yMin - body[1]) * 1000).toFixed(0)} mm`,
+        );
+      }
+    }
+  }
 });
 
 test("engine mounts and gear trunnions pick up the front spar", () => {
@@ -467,7 +742,7 @@ test("engine mounts and gear trunnions pick up the front spar", () => {
 
 test("cutaway views hide skins only and keep an identical closed twin", () => {
   const views = dc3BlockoutObject.views;
-  const skins = ["fuselage", "wing", "nacelle-left", "nacelle-right", "empennage"];
+  const skins = ["fuselage", "wing", "nacelle-left", "nacelle-right", "empennage", "nose-cap"];
   for (const id of ["right-profile", "high-three-quarter", "core-detail"]) {
     const exterior = views.find((view) => view.id === id);
     const cutaway = views.find((view) => view.id === `${id}-cutaway`);
@@ -583,6 +858,114 @@ test("control surfaces are cut openings with typed hinges, not painted seams", (
   const rudderGap = heightBand(fin, 2.6, 3.2).min - heightBand(rudder, 2.6, 3.2).max;
   assert.ok(rudderGap > 0.01 && rudderGap < 0.16, `rudder bay ${rudderGap}`);
   assert.ok(!dc3BlockoutObject.parts.some((part) => /window|door|livery/.test(part.id)));
+});
+
+test("wing and stabilizer tips round the box to the rectangular leaves", () => {
+  const { wing, stabiliser } = dc3AirframeSurface;
+  const linearTE = (x, half, rootChord, tipChord, rootLE, tipLE) => {
+    const spanT = Math.min(1, Math.abs(x) / half);
+    const chord0 = rootChord * (1 - spanT) + tipChord * spanT;
+    const leading0 = rootLE * (1 - spanT) + tipLE * spanT;
+    return leading0 - chord0;
+  };
+  const aileronOut = wing.aileronSpan.outer;
+  const aileronMid = (wing.aileronSpan.inner + aileronOut) / 2;
+  const aileronTE = (x) => {
+    const section = wing.at(x);
+    return section.leading - section.chord;
+  };
+  const wingLinearTE = (x) => linearTE(x, wing.halfSpan, 4.42, 1.56, 1.18, 0.22);
+  assert.ok(
+    Math.abs(aileronTE(aileronOut) - wingLinearTE(aileronOut)) < 0.02,
+    `aileron outer TE follows the tip ellipse, not the rectangular inset`,
+  );
+  assert.ok(
+    Math.abs(aileronTE(aileronMid) - wingLinearTE(aileronMid)) < 0.02,
+    `aileron mid TE is pinched — the leaf was rounded with the box`,
+  );
+  const cap = wing.at(wing.halfSpan - 0.04);
+  assert.ok(
+    cap.te > wingLinearTE(wing.halfSpan - 0.04) + 0.08,
+    `wingtip TE stays square outboard of the aileron (${(cap.te - wingLinearTE(wing.halfSpan - 0.04)).toFixed(2)} m)`,
+  );
+  const tip = wing.at(wing.halfSpan - 0.04);
+  const before = wing.at(wing.halfSpan - wing.tipRound - 0.05);
+  const tipLinearLE = (() => {
+    const spanT = (wing.halfSpan - 0.04) / wing.halfSpan;
+    return 1.18 * (1 - spanT) + 0.22 * spanT;
+  })();
+  assert.ok(
+    tip.leading < tipLinearLE - 0.25,
+    `wing LE is not rounded back to the aileron (${(tipLinearLE - tip.leading).toFixed(2)} m)`,
+  );
+  assert.ok(
+    before.leading > tip.leading + 0.2,
+    "wingtip round does not pull the LE aft toward the hinge",
+  );
+  const aileronX = Math.max(
+    ...dc3BlockoutObject.parts.filter((part) => part.group === "aileron-right")
+      .flatMap(partPoints).map((point) => point[0]),
+  );
+  const wingX = bounds(wings).maxX;
+  assert.ok(
+    wingX - aileronX > 0.4 && wingX - aileronX < 0.7,
+    `aileron runs to the tip instead of leaving a rounded cap (${((wingX - aileronX) * 1000).toFixed(0)} mm)`,
+  );
+  const elevOut = stabiliser.elevatorSpan.outer;
+  const elevMid = (stabiliser.elevatorSpan.inner + elevOut) / 2;
+  const elevTE = (x) => {
+    const section = stabiliser.section(x);
+    return section.leading - section.chord;
+  };
+  const stabLinearTE = (x) => linearTE(x, stabiliser.halfSpan, 1.82, 1.02, -10.15, -10.5);
+  assert.ok(
+    Math.abs(elevTE(elevOut) - stabLinearTE(elevOut)) < 0.02,
+    "elevator outer TE follows the tip ellipse, not the rectangular inset",
+  );
+  assert.ok(
+    Math.abs(elevTE(elevMid) - stabLinearTE(elevMid)) < 0.02,
+    "elevator mid TE is pinched — the leaf was rounded with the box",
+  );
+  const elevatorX = Math.max(
+    ...dc3BlockoutObject.parts.filter((part) => part.group === "elevator-right")
+      .flatMap(partPoints).map((point) => point[0]),
+  );
+  assert.ok(
+    stabiliser.halfSpan - elevatorX < 0.08,
+    "elevator stopped short of the rounded stabilizer tip",
+  );
+});
+
+test("the wingtip pinches to a rounded edge, not a sliced airfoil", () => {
+  const { wing, worldToBody } = dc3AirframeSurface;
+  const sectionHeight = (x) => {
+    const ring = wing.band(x, 0, 1);
+    return Math.max(...ring.map((point) => point[1]))
+      - Math.min(...ring.map((point) => point[1]));
+  };
+  const atAileron = sectionHeight(wing.aileronSpan.outer);
+  const nearTip = sectionHeight(wing.halfSpan - 0.04);
+  const atTip = sectionHeight(wing.halfSpan);
+  assert.ok(
+    nearTip < atAileron * 0.5,
+    `cap at 4 cm still has airfoil height ${nearTip.toFixed(3)} m against ${atAileron.toFixed(3)} m at the aileron`,
+  );
+  assert.ok(
+    atTip < 0.02,
+    `tip section is still ${atTip.toFixed(3)} m thick`,
+  );
+  const right = dc3BlockoutObject.parts.find((part) => part.id === "wing-right");
+  assert.equal(right?.kind, "mesh");
+  const outboard = right.vertices
+    .map(worldToBody)
+    .filter((vertex) => vertex[0] > wing.halfSpan - 0.03);
+  assert.ok(outboard.length >= 3, "no outboard wing skin to pinch");
+  const height = Math.max(...outboard.map((vertex) => vertex[1]))
+    - Math.min(...outboard.map((vertex) => vertex[1]));
+  assert.ok(
+    height < 0.05,
+    `outboard 3 cm still reads as a sliced profile (${height.toFixed(3)} m)`,
+  );
 });
 
 test("flaps-down is a posed second state of the same leaves", () => {

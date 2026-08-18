@@ -470,28 +470,74 @@ look green until the owner sees the silhouette.
 - Hold the cabin crown to the brow. Never above the cabin. The greenhouse
   is not a bump.
 - Round the roof into the glass over a short station (centimetres, not
-  metres). The glass itself stays a straight blunt drop.
+  metres). The glass itself stays a straight blunt drop. The oval lip
+  cannot become two straight heads: the forehead follows the V of those
+  heads as a convex brow onto the last roof ring, along loft generators —
+  never a flat triangle filling the V, never a fan into the crown, and
+  never a uniform-t pairing that sends a 72° roof column onto the 88°
+  inboard head (that leaves a trapezoid beside the outboard frame).
+  Temple skin from the side-light heads meets that brow. If the visor
+  only begins on the last roof ring, the temple must not stop short of
+  that ring in the 18° sectors beside the centre gore — those rectangles
+  are missing skin, not a third glass. Their columns follow the visor
+  aft samples; a two-column chord against the denser oval is a slit. The cabin oval must not sit over
+  the side lights.
 - After the sill, do not continue the windshield and do not hold a shelf:
-  a gentler convex deck toward the cut, keel still rising. The rounded cap
-  is a later part on that cut, not a cone that eats the glass.
+  a gentler convex deck toward the cut, keel still rising. The oval lip
+  cannot become two straight sills: two almost-triangular header panels
+  sit on the first cap ring and take the two frame sills as their bases.
+  The rounded cap is a later part on that cut, not a cone that eats the
+  glass.
+- Flatten the upper half of the section toward the glass and the
+  anti-glare deck (`upperPower` a little above 2). Do not raise the
+  crown, do not box it (power > 3), do not flatten the keel, do not
+  flatten the passenger cabin. `faceForward` stays forbidden: it shears
+  a fake rake. The old "no upperPower anywhere" gate was that boxing
+  mistake, not this lazy crown.
 - Lock each rejected silhouette with a station-table test: roof hold,
   brow fillet band, windshield slope, deck slope distinct from both a
   shelf and the glass. Do not encode the angles as a new global law.
-- Defer panes until the loft silhouette is the type. The cut is what will
-  make the cabin *read* as the greenhouse; the loft has to be the house
-  those panes sit in. The cap is a bullet from the windshield sill: it stays
-  fat, then rounds at the tip. Do not shift the greenhouse aft to steal
-  length, and do not sit a short ellipsoid on a near joint — both read as
-  the wrong object.
+- The two-pane greenhouse (central windshield plus a side light) cuts the
+  side light as a trapezoid, not a rectangle: level head and sill, sill
+  dropped below the windshields, aft edge allowed a slight forward rake
+  of the sill so the outer frame can sit on the loft. Sit the
+  sill and the fore head on the loft so the bottom leans on the hull and
+  the plan outline is the same curve as fuselage-to-nose. The aft head
+  closes that plane and may sit slightly inside — never outside, or the
+  cap reads as a hump. A gap to the windshields is lawful; do not pull
+  the pane onto the windshield's constant-X pillar to close it. Keep the
+  greenhouse beam (stations between cabin hold and deck) on or inside the
+  linear half-width taper; extra width there is the same hump. Cage stays
+  behind the side-light frame. The aft post may rake slightly — sill toward
+  the nose — so both outer aft corners sit on the loft; do not restore a
+  parallelogram with an invented outboard run. The aft wrap follows that
+  loft from station 5.15 onto the outer frame. The nose cheek (gore 0/4)
+  is one panel from the cap to station 5.15: its top sits on the outer
+  sill frame along the side light, then lands on the cabin oval. Do not
+  add a separate sill skirt. Old temple/cheek/jowl wrap ids stay off.
+  The forehead is a convex brow whose front edge is the V of the two
+  windshield outer heads, following loft generators back onto ring 5.8 —
+  never a flat triangle filling that V, and never a crown fan. Sew the
+  leftover slit between windshield and side light with a sharp skin plug
+  on the outer frames; from that plug the 36°–54° sector (and the left
+  mirror) runs onto the first cap ring, sharing the sill-triangle
+  outboard and the cheek generator — not a radial skirt at the sill
+  station, and not faired along both frames at once.
 
 ### Tests that matter
 
 - station crowns: no brow above cabin; roof holds until the fillet;
   fillet is a short round-in, not a fairing and not a knife;
 - windshield drop/run steep; deck drop/run shallower and convex;
-- keel still rising (no hanging chin); no `upperPower` / `faceForward`;
-- no `nose-cap` part until that milestone; overlay glass stays out of
-  the canonical airframe.
+- keel still rising (no hanging chin); no `faceForward`; cabin and tip
+  stay oval; greenhouse band flattens the upper half only, never a box;
+- the last station is an oval hole; a separate `nose-cap` overlay closes
+  it. Do not extend the station table. Overlay generators follow the last
+  two stations (Hermite); blunt the tip with a round dome — do not Hermite
+  all the way to a vertex, and do not restyle the cap from the hole.
+  Overlay glass stays out of the canonical airframe;
+- wing spars and formers inside the local airfoil at inboard stations,
+  not merely inside the wing AABB.
 
 ### General lesson
 
@@ -500,6 +546,35 @@ into smoothness, then into a knife and a shelf, is the same class of
 error: the table was asked for "not the last mistake" instead of for
 the type. Judge those slopes in body axes against a flight-level
 profile. A sit camera and an uncut oval are not the windshield.
+
+Do not square the wing or stabilizer outboard of the control leaf, and
+do not round the leaf with the box. The aileron is a rectangular inset
+that stops short of the tip; the fixed cap beyond it rounds both leading
+and trailing edges, like the black plan contour. Rounding the plan
+without pinching thickness leaves a sliced airfoil at the tip; lofting
+that last fat ring fans an accordion. Thickness follows the local
+rounded chord to a point. The elevator is different: it reaches the
+stabilizer tip, so only the box rounds to its outer forward corner.
+Nav-light caps face outboard, with the bulb in the outer half.
+
+The DC-3 is a low-wing. A typed root chord near the fuselage equator
+leaves a hanging belly; a typed hub below that chord hangs the engines
+as pods. Put the root lower surface on the keel and the shafts on the
+local chord. Do not keep the main-wheel body height to freeze pitch:
+the trunnion follows the cowl onto the axle and only the tyre shows.
+Leave the knuckle below the cowl and keep at least three-quarters of
+the oleo. Pitch may steepen. Published tail-down height is the fin;
+a steeper sit can put the cabin AABB above that number — do not bury
+the oleo to keep the AABB. Do not add the missing upper wing-fuselage
+fillets to hide the new intersection.
+
+A thin panel skin is not a solid loft. Spars and formers that sat 22% of
+thickness inside a filled wing sit on the mold line of 12 mm panels and
+read as dark wedges on the upper and lower surface, worst between the
+fuselage and the nacelle. Inset the cage by about a third of the *local*
+airfoil height, follow the same generators as the skin, and test
+clearance at the former stations — the wing AABB does not see a local
+poke.
 
 ## 15. Cross-case best practices
 

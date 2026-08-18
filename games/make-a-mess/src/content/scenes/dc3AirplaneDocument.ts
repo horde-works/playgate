@@ -89,6 +89,25 @@ function materialFor(part: ObjectLabPart): MaterialBinding {
   if (part.group === "cabin-seats") {
     return { material: "cloth", shape: "panel", color: "#4d5a63", shellThickness: 0.06 };
   }
+  if (part.id.startsWith("cabin-lamp-") && part.id.endsWith("-shade")) {
+    return { material: "aluminium", shape: "panel", color: "#7a6f5d", shellThickness: 0.02 };
+  }
+  if (part.material === "lamp-glass") {
+    // Прозрачный колпак: иначе лампа внутри не видна, как алюминиевая банка.
+    return { material: "glass", shape: "glassPane", color: "#b9c7c8", shellThickness: 0.008 };
+  }
+  if (part.material === "lamp-bulb" || (part.id.startsWith("cabin-lamp-") && part.id.endsWith("-bulb"))) {
+    if (part.id.includes("nav-light-port")) {
+      return { material: "glass", shape: "glassPane", color: "#f08a80", shellThickness: 0.01 };
+    }
+    if (part.id.includes("nav-light-starboard")) {
+      return { material: "glass", shape: "glassPane", color: "#7fd0a0", shellThickness: 0.01 };
+    }
+    if (part.id.includes("nav-light-tail")) {
+      return { material: "glass", shape: "glassPane", color: "#f4f1e2", shellThickness: 0.01 };
+    }
+    return { material: "glass", shape: "panel", color: "#f4e4c4", shellThickness: 0.01 };
+  }
   if (part.group === "cabin-trim") {
     return { material: "cloth", shape: "panel", color: "#7a6f5d", shellThickness: 0.02 };
   }
@@ -147,6 +166,9 @@ function triangleArea(a: ObjectPoint, b: ObjectPoint, c: ObjectPoint): number {
 
 function loadBearing(part: ObjectLabPart): boolean {
   if (part.group.startsWith("propeller-")) return false;
+  if (part.material === "lamp-glass" || part.material === "lamp-bulb" || part.id.endsWith("-bulb")) {
+    return false;
+  }
   if (
     part.group.startsWith("flap-") ||
     part.group.startsWith("aileron-") ||
@@ -201,7 +223,9 @@ function primitive(
           ? 0.45
           : mount
             ? 0.55
-            : 0.4,
+            : part.id.startsWith("cabin-lamp-")
+              ? 0.28
+              : 0.4,
     maximumVerticalGap: gear ? 0.16 : 0.12,
     // СВЕТ КУСКА ДОХОДИТ ДО СЦЕНЫ.
     //
@@ -229,7 +253,11 @@ function primitive(
     actuator: dc3ActuatorFor(part),
     // No scene `hinge`: that field is door physics (vertical swing, player
     // shove). Surfaces stay ordinary members; the automaton owns the angle.
-    bearsLoad: part.id === "gear-tail-wheel" ? false : loadBearing(part),
+    bearsLoad: part.id === "gear-tail-wheel"
+      || part.material === "lamp-bulb"
+      || part.material === "lamp-glass"
+      ? false
+      : loadBearing(part),
     ...options,
   } as ScenePrimitiveDefinition;
 }
