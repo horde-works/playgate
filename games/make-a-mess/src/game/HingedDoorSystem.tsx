@@ -486,15 +486,17 @@ export function HingedDoorSystem({
       }
 
       // Прислонно-сдвижная створка: сперва выходит из проёма по нормали, затем
-      // едет вдоль борта вправо (право = up × наружная нормаль). Поворота нет
-      // вовсе — полотно и ручка просто переносятся вместе.
+      // едет вдоль борта (право = up × наружная нормаль, знак — slideSign).
+      // Поворота нет вовсе — полотно и ручка просто переносятся вместе.
       const plug = group.plugSlide;
       const automaticSlide = group.automaticSlide;
       const plugOffset = plug
         ? Math.min(1, state.angle / plug.plugShare) * plug.plugDepth
         : 0;
       const slideOffset = plug
-        ? Math.max(0, (state.angle - plug.plugShare) / (1 - plug.plugShare)) * plug.travel
+        ? Math.max(0, (state.angle - plug.plugShare) / (1 - plug.plugShare))
+          * plug.travel
+          * (plug.slideSign ?? 1)
         : automaticSlide
           ? state.angle * automaticSlide.travel * automaticSlide.slideSign
           : 0;

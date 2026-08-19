@@ -88,6 +88,11 @@ export interface PlugSlideDoorPolicy {
   readonly travel: number;
   /** Доля хода, отведённая на выход из проёма. */
   readonly plugShare: number;
+  /**
+   * Знак хода вдоль `up × normal`. Правый борт DC-3 даёт хвост сам;
+   * левый без знака уехал бы к носу.
+   */
+  readonly slideSign?: -1 | 1;
 }
 
 export interface AutomaticSlideDoorPolicy {
@@ -129,6 +134,11 @@ export const STANDARD_DOOR_ROTATION_AXIS = [0, 1, 0] as const;
 export const PLUG_SLIDE_DOORS: readonly PlugSlideDoorPolicy[] = [
   { doorId: "terminal:sky-train:head:door", plugDepth: 0.26, travel: 1.78, plugShare: 0.34 },
   { doorId: "sky-mooring:airship:car:door", plugDepth: 0.22, travel: 1.42, plugShare: 0.34 },
+  // DC-3: все четыре створки к хвосту. Врезки в шкуре ещё нет — едет накладка.
+  { doorId: "island-airport:dc3:cabin-entry-right-forward", plugDepth: 0.18, travel: 0.8, plugShare: 0.34 },
+  { doorId: "island-airport:dc3:cabin-entry-left-forward", plugDepth: 0.18, travel: 0.8, plugShare: 0.34, slideSign: -1 },
+  { doorId: "island-airport:dc3:cabin-entry-right-aft", plugDepth: 0.18, travel: 0.8, plugShare: 0.34 },
+  { doorId: "island-airport:dc3:cabin-entry-left-aft", plugDepth: 0.18, travel: 0.8, plugShare: 0.34, slideSign: -1 },
 ];
 
 /** The sky ram's stern armour doubles as a loading ramp while docked. */

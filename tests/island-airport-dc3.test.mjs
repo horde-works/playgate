@@ -18,6 +18,10 @@ import { islandAirportScene } from "../games/make-a-mess/src/game/islandAirportS
 import { airVehicles } from "../games/make-a-mess/src/game/airVehicles.ts";
 import { DC3_AIRPLANE_CLASS } from "../games/make-a-mess/src/game/dc3Airplane.ts";
 import { dc3AirframeParts } from "../games/make-a-mess/src/content/objects/aircraft/dc3AirframeParts.ts";
+import {
+  hingedDoorGroupKey,
+  plugSlideDoorPolicy,
+} from "../games/make-a-mess/src/game/hingedGatePolicy.ts";
 
 const pieces = islandAirportScene.breakablePieces.filter((piece) =>
   piece.clusterId === ISLAND_AIRPORT_DC3_PLACEMENT.clusterId,
@@ -94,11 +98,12 @@ test("airport pieces keep Object Lab ids, aluminium skins and steel cage", () =>
   assert.ok(cage.length > 0 && cage.every((piece) => piece.material === "steel"));
   assert.ok(pieces.some((piece) => piece.actuator?.commandChannel === "throttle:0"));
   assert.ok(pieces.some((piece) => piece.actuator?.commandChannel === "rudder"));
-  assert.equal(
-    pieces.filter((piece) => piece.hinge).length,
-    0,
-    "airport surfaces are not door leaves",
+  const hinged = pieces.filter((piece) => piece.hinge);
+  assert.ok(
+    hinged.every((piece) => piece.id.includes(":cabin-entry-") && piece.id.includes(":board:")),
+    "control surfaces stay without a door hinge",
   );
+  assert.equal(hinged.length, 8, "four leaves plus four panes");
   assert.ok(
     airVehicles.some(
       (vehicle) => vehicle.clusterId === ISLAND_AIRPORT_DC3_PLACEMENT.clusterId,
@@ -144,5 +149,53 @@ test("nav-light caps compile as glass with the bulb nested inside", () => {
       local.every((value, axis) => Math.abs(value) < half[axis] - 0.002),
       `${board}: лампа не внутри колпака`,
     );
+  }
+});
+
+test("cabin entries plug out then slide toward the tail", () => {
+  for (const side of ["left", "right"]) {
+    for (const station of ["forward", "aft"]) {
+      const prefix = `island-airport:dc3:cabin-entry-${side}-${station}`;
+      const leaf = pieces.find((piece) => piece.id === `${prefix}:board:0:piece`);
+      const pane = pieces.find((piece) => piece.id === `${prefix}:board:1:piece`);
+      const seal = pieces.find((piece) => piece.id === `${prefix}-seal:piece`);
+      const frame = pieces.find((piece) => piece.id === `${prefix}-frame:piece`);
+      assert.ok(leaf && pane && seal && frame, prefix);
+
+      const leafKey = hingedDoorGroupKey(leaf.id, leaf.clusterId);
+      assert.equal(leafKey, prefix);
+      assert.equal(hingedDoorGroupKey(pane.id, pane.clusterId), leafKey);
+      const policy = plugSlideDoorPolicy(leafKey);
+      assert.ok(policy, `${prefix}: нет профиля plug-slide`);
+      assert.equal(policy.slideSign ?? 1, side === "left" ? -1 : 1, prefix);
+      assert.ok(policy.travel >= 0.76, `${prefix}: ход ${policy.travel} короче створки`);
+
+      assert.ok(leaf.hinge && pane.hinge, `${prefix}: нет петли`);
+      assert.equal(seal.hinge, undefined, `${prefix}: уплотнение не должно ехать`);
+      assert.equal(frame.hinge, undefined, `${prefix}: обвод не должен ехать`);
+      assert.ok(Math.abs(leaf.hinge.normal[1]) < 1e-6, `${prefix}: нормаль не горизонтальна`);
+      const outwardZ = Math.sign(leaf.position[2] - AIRPORT_RUNWAY.centreZ) || 1;
+      assert.ok(
+        leaf.hinge.normal[2] * outwardZ > 0.5,
+        `${prefix}: нормаль должна смотреть от борта, не в него`,
+      );
+
+      const slideRight = [leaf.hinge.normal[2], 0, -leaf.hinge.normal[0]];
+      const slideSign = policy.slideSign ?? 1;
+      const opened = [0, 1, 2].map((axis) =>
+        leaf.position[axis]
+          + leaf.hinge.normal[axis] * policy.plugDepth
+          + slideRight[axis] * policy.travel * slideSign,
+      );
+      assert.ok(
+        opened[0] < leaf.position[0] - 0.5,
+        `${prefix}: открытая створка x=${opened[0].toFixed(2)} не уехала к хвосту (закрыта ${leaf.position[0].toFixed(2)})`,
+      );
+      assert.ok(
+        Math.abs(opened[2] - AIRPORT_RUNWAY.centreZ)
+          > Math.abs(leaf.position[2] - AIRPORT_RUNWAY.centreZ) + 0.1,
+        `${prefix}: створка не вышла на игрока`,
+      );
+    }
   }
 });

@@ -89,6 +89,21 @@ function materialFor(part: ObjectLabPart): MaterialBinding {
   if (part.group === "cabin-seats") {
     return { material: "cloth", shape: "panel", color: "#4d5a63", shellThickness: 0.06 };
   }
+  // НАКЛАДКА ВХОДА. Створка, уплотнение и гермообвод — тот же дюраль, что
+  // обшивка: смотрим, читается ли форма без цветового контраста. Тёмным
+  // остаётся только остекление в створке.
+  if (part.group === "cabin-entry-overlay") {
+    if (part.id.endsWith(":board:1")) {
+      return { material: "wood", shape: "panel", color: "#1c201e", shellThickness: 0.008 };
+    }
+    return {
+      material: "aluminium",
+      shape: "steelSheet",
+      color: "#c9ccc6",
+      shellThickness: 0.012,
+      textureProfile: "alclad-riveted",
+    };
+  }
   if (part.id.startsWith("cabin-lamp-") && part.id.endsWith("-shade")) {
     return { material: "aluminium", shape: "panel", color: "#7a6f5d", shellThickness: 0.02 };
   }
@@ -164,6 +179,21 @@ function triangleArea(a: ObjectPoint, b: ObjectPoint, c: ObjectPoint): number {
   );
 }
 
+function cabinEntryPlugHinge(part: ObjectLabPart): ScenePrimitiveDefinition["hinge"] {
+  const match = /^cabin-entry-(left|right)-(?:forward|aft):board:\d+$/.exec(part.id);
+  if (!match) {
+    return undefined;
+  }
+  const outward = match[1] === "right" ? 1 : -1;
+  return {
+    pivot: [0, 0, 0],
+    // Body +Z is the nose. Plug-slide ignores direction and uses up × normal,
+    // but the authored basis still points at the tail.
+    direction: [0, 0, -1],
+    normal: [outward, 0, 0],
+  };
+}
+
 function loadBearing(part: ObjectLabPart): boolean {
   if (part.group.startsWith("propeller-")) return false;
   if (part.material === "lamp-glass" || part.material === "lamp-bulb" || part.id.endsWith("-bulb")) {
@@ -177,6 +207,7 @@ function loadBearing(part: ObjectLabPart): boolean {
   ) {
     return false;
   }
+  if (part.group === "cabin-entry-overlay") return false;
   return true;
 }
 
@@ -195,6 +226,7 @@ function primitive(
     part.group.startsWith("aileron-") ||
     part.group.startsWith("elevator-") ||
     part.group === "rudder";
+  const overlay = part.group === "cabin-entry-overlay";
   const gear = part.group === "gear";
   const mount = part.group === "structure-mount";
   return {
@@ -210,7 +242,7 @@ function primitive(
       rotation: placedEuler(placement, rotation),
     },
     contactBoxes: [{ position: [0, 0, 0], size }],
-    carriesAttachments: !spinning && !surface,
+    carriesAttachments: !spinning && !surface && !overlay,
     attachmentSupportMode: "cable",
     // Blades and the tailwheel sit far from the box they hang on: the blade
     // AABB centre is mid-span, the tailwheel is a short axle. Reach is the
@@ -251,8 +283,9 @@ function primitive(
         }
       : undefined,
     actuator: dc3ActuatorFor(part),
-    // No scene `hinge`: that field is door physics (vertical swing, player
-    // shove). Surfaces stay ordinary members; the automaton owns the angle.
+    // Cabin entries are player plug-slide doors. Control surfaces stay
+    // ordinary members: the automaton owns those angles, not this field.
+    hinge: cabinEntryPlugHinge(part),
     bearsLoad: part.id === "gear-tail-wheel"
       || part.material === "lamp-bulb"
       || part.material === "lamp-glass"

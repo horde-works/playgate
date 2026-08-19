@@ -295,6 +295,12 @@ function materialFor(part: ObjectLabPart): {
   if (part.group === "cabin-seats" || part.group === "cabin-trim") {
     return { material: "cloth", shape: "panel", color: "#4d5a63" };
   }
+  if (part.group === "cabin-entry-overlay") {
+    if (part.id.endsWith(":board:1")) {
+      return { material: "wood", shape: "panel", color: "#1c201e" };
+    }
+    return { material: "aluminium", shape: "steelSheet", color: "#c9ccc6" };
+  }
   if (part.group === "gear-fittings") {
     return { material: "steel", shape: "panel", color: "#7d6a4f" };
   }
@@ -378,6 +384,7 @@ function loadBearing(part: ObjectLabPart): boolean {
   ) {
     return false;
   }
+  if (part.group === "cabin-entry-overlay") return false;
   return true;
 }
 

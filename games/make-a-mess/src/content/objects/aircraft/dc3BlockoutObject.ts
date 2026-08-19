@@ -489,7 +489,11 @@ function addClosedMesh(
   material: ObjectMaterialId,
   vertices: readonly ObjectPoint[],
   triangles: readonly ObjectTriangle[],
-  options: { readonly doubleSided?: boolean; readonly showEdges?: boolean } = {},
+  options: {
+    readonly doubleSided?: boolean;
+    readonly showEdges?: boolean;
+    readonly volume?: number;
+  } = {},
 ): void {
   const volume = signedVolume(vertices, triangles);
   const wound = volume < -1e-6
@@ -500,6 +504,7 @@ function addClosedMesh(
     id,
     group,
     material,
+    volume: options.volume,
     vertices: vertices.map(bodyToWorld),
     triangles: wound,
     showEdges: options.showEdges ?? true,
@@ -1481,6 +1486,45 @@ const WINDOW_ROW_PITCH = 1.15;
 export const DC3_WINDOW_SIZE = { along: 0.38, across: 0.42 } as const;
 
 /**
+ * ПЛАН ВХОДОВ — НАКЛАДКА, НЕ ПРОЁМ.
+ *
+ * Четыре створки, оба борта: передние в глухом пролёте кабина→первый
+ * иллюминатор, задние вместо последнего окна, сдвинутые на 15 см за его
+ * центр, чтобы не сесть на хвостик крыла. Углы скруглены, как у самолётной
+ * двери, а не столярной филёнки. Полотно и остекление — `:board:0` / `:board:1`,
+ * как у вагона небесного поезда: прислонно-сдвижные к хвосту, не распашные.
+ * Шкуру не режем: сначала смотрим, как едет накладка.
+ */
+const CABIN_ENTRY_WIDTH = 0.76;
+const CABIN_ENTRY_HEIGHT = 1.66;
+const CABIN_ENTRY_CORNER = 0.15;
+/**
+ * Створка не сидит в обводе всплошную: между ними щель под герметик.
+ * Сначала узкий просвет (видна шкура), затем тёмная лента уплотнения,
+ * снаружи — металлический гермообвод. Параллель: радиус растёт вместе
+ * с полуосями, иначе на заднем верхнем углу лента расходится.
+ */
+const CABIN_ENTRY_SEAL_REVEAL = 0.008;
+const CABIN_ENTRY_SEAL_STRIP = 0.018;
+const CABIN_ENTRY_SEAL_GAP = CABIN_ENTRY_SEAL_REVEAL + CABIN_ENTRY_SEAL_STRIP;
+const CABIN_ENTRY_FRAME_WIDTH = 0.048;
+const CABIN_ENTRY_FORWARD_Z = 4.72;
+const CABIN_ENTRY_AFT_Z = -3.85;
+const CABIN_ENTRY_PANE = { along: 0.3, across: 0.34, corner: 0.08, sill: 1.02 } as const;
+const CABIN_ENTRY_PLANS = [
+  {
+    id: "forward",
+    z: CABIN_ENTRY_FORWARD_Z,
+    floorY: FORWARD_CABIN.floorY,
+  },
+  {
+    id: "aft",
+    z: CABIN_ENTRY_AFT_Z,
+    floorY: AFT_CABIN.floorY,
+  },
+] as const;
+
+/**
  * ДВА ЦЕНТРАЛЬНЫХ СТЕКЛА — ПЛОСКИЕ ПАРАЛЛЕЛОГРАММЫ, НЕ ОВАЛЬНЫЕ ПЛИТКИ.
  *
  * Боковая проекция типа (двухстекольная на борт): верх и низ горизонтальны,
@@ -1555,6 +1599,224 @@ function loftPointAtY(z: number, y: number, sign: 1 | -1): ObjectPoint {
   const station = sampleStation(z);
   const sampled = ellipsePoint(station, loftAngleAtY(station, y, sign));
   return [sampled[0], y, z];
+}
+
+/**
+ * Точка борта на заданной высоте, включая НИЖНЮЮ половину овала.
+ *
+ * `loftAngleAtY` зажимает y ниже экватора к поясу — для окон, которые сидят
+ * выше, этого хватает. Дверь идёт от пола, и порог обязан лежать на килевой
+ * половине сечения, а не вылезать на экватор.
+ */
+function sideSkinAngle(station: Station, y: number, sign: 1 | -1): number {
+  const cy = (station.crown + station.keel) / 2;
+  const ry = (station.crown - station.keel) / 2;
+  const power = station.upperPower ?? 2;
+  let angle: number;
+  if (y >= cy) {
+    const unit = Math.max(0, Math.min(1, (y - cy) / Math.max(ry, 1e-9)));
+    const sine = Math.pow(unit, power / 2);
+    angle = Math.asin(Math.max(0, Math.min(1, sine)));
+  } else {
+    const unit = Math.max(-1, Math.min(0, (y - cy) / Math.max(ry, 1e-9)));
+    angle = Math.asin(unit);
+  }
+  return sign > 0 ? angle : Math.PI - angle;
+}
+
+function sideSkinPoint(
+  z: number,
+  y: number,
+  sign: 1 | -1,
+  outward: number,
+): ObjectPoint {
+  const station = sampleStation(z);
+  const surface = ellipsePoint(station, sideSkinAngle(station, y, sign));
+  const cy = (station.crown + station.keel) / 2;
+  const dx = surface[0];
+  const dy = surface[1] - cy;
+  const length = Math.hypot(dx, dy) || 1;
+  return [
+    surface[0] + (dx / length) * outward,
+    surface[1] + (dy / length) * outward,
+    surface[2],
+  ];
+}
+
+function roundedRectHalfAcross(
+  deltaAlong: number,
+  halfAlong: number,
+  halfAcross: number,
+  radius: number,
+): number {
+  const corner = Math.min(radius, halfAlong - 0.02, halfAcross - 0.02);
+  const abs = Math.abs(deltaAlong);
+  const straight = halfAlong - corner;
+  if (abs <= straight) return halfAcross;
+  if (abs >= halfAlong) return Math.max(0.02, halfAcross - corner);
+  const t = (abs - straight) / corner;
+  return (halfAcross - corner) + corner * Math.sqrt(Math.max(0, 1 - t * t));
+}
+
+function roundedRectLoop(
+  zCentre: number,
+  yCentre: number,
+  halfAlong: number,
+  halfAcross: number,
+  radius: number,
+): { readonly z: number; readonly y: number }[] {
+  const corner = Math.min(radius, halfAlong - 0.02, halfAcross - 0.02);
+  const zStraight = halfAlong - corner;
+  const yStraight = halfAcross - corner;
+  const points: { z: number; y: number }[] = [];
+  const arcSteps = 8;
+  const lineSteps = 5;
+  const pushLine = (
+    z0: number,
+    y0: number,
+    z1: number,
+    y1: number,
+  ): void => {
+    for (let i = 0; i < lineSteps; i += 1) {
+      const t = i / lineSteps;
+      points.push({ z: z0 + (z1 - z0) * t, y: y0 + (y1 - y0) * t });
+    }
+  };
+  const pushArc = (
+    cz: number,
+    cy: number,
+    from: number,
+    to: number,
+  ): void => {
+    for (let i = 0; i < arcSteps; i += 1) {
+      const angle = from + (to - from) * (i / arcSteps);
+      points.push({
+        z: cz + corner * Math.cos(angle),
+        y: cy + corner * Math.sin(angle),
+      });
+    }
+  };
+  pushLine(zCentre - zStraight, yCentre + halfAcross, zCentre + zStraight, yCentre + halfAcross);
+  pushArc(zCentre + zStraight, yCentre + yStraight, Math.PI / 2, 0);
+  pushLine(zCentre + halfAlong, yCentre + yStraight, zCentre + halfAlong, yCentre - yStraight);
+  pushArc(zCentre + zStraight, yCentre - yStraight, 0, -Math.PI / 2);
+  pushLine(zCentre + zStraight, yCentre - halfAcross, zCentre - zStraight, yCentre - halfAcross);
+  pushArc(zCentre - zStraight, yCentre - yStraight, -Math.PI / 2, -Math.PI);
+  pushLine(zCentre - halfAlong, yCentre - yStraight, zCentre - halfAlong, yCentre + yStraight);
+  pushArc(zCentre - zStraight, yCentre + yStraight, Math.PI, Math.PI / 2);
+  return points;
+}
+
+function addSideOverlayTile(
+  id: string,
+  material: ObjectMaterialId,
+  outer: readonly ObjectPoint[],
+  inner: readonly ObjectPoint[],
+  rowCount: number,
+  cols: number,
+  closedRing = false,
+): void {
+  const vertices = [...outer, ...inner];
+  const offset = outer.length;
+  const triangles: ObjectTriangle[] = [];
+  const index = (row: number, column: number): number => row * cols + column;
+  const columns = closedRing ? cols : cols - 1;
+  for (let row = 0; row + 1 < rowCount; row += 1) {
+    for (let step = 0; step < columns; step += 1) {
+      const column = step;
+      const next = (step + 1) % cols;
+      const a = index(row, column);
+      const b = index(row, next);
+      const c = index(row + 1, next);
+      const d = index(row + 1, column);
+      triangles.push([a, b, c], [a, c, d]);
+      triangles.push(
+        [offset + a, offset + c, offset + b],
+        [offset + a, offset + d, offset + c],
+      );
+    }
+  }
+  const rim = (a: number, b: number): void => {
+    triangles.push([a, offset + a, offset + b], [a, offset + b, b]);
+  };
+  for (let step = 0; step < columns; step += 1) {
+    const column = step;
+    const next = (step + 1) % cols;
+    rim(index(rowCount - 1, column), index(rowCount - 1, next));
+    rim(index(0, next), index(0, column));
+  }
+  if (!closedRing) {
+    for (let row = 0; row + 1 < rowCount; row += 1) {
+      rim(index(row, cols - 1), index(row + 1, cols - 1));
+      rim(index(row + 1, 0), index(row, 0));
+    }
+  }
+  addClosedMesh(id, "cabin-entry-overlay", material, vertices, triangles, {
+    volume: 0.0002,
+  });
+}
+
+function addCabinEntryLeaf(
+  id: string,
+  material: ObjectMaterialId,
+  sign: 1 | -1,
+  zCentre: number,
+  yCentre: number,
+  width: number,
+  height: number,
+  radius: number,
+  outward: number,
+): void {
+  const halfAlong = width / 2;
+  const halfAcross = height / 2;
+  const zSteps = 12;
+  const ySteps = 16;
+  const outer: ObjectPoint[] = [];
+  const inner: ObjectPoint[] = [];
+  for (let row = 0; row <= zSteps; row += 1) {
+    const z = zCentre - halfAlong + (width * row) / zSteps;
+    const halfY = roundedRectHalfAcross(z - zCentre, halfAlong, halfAcross, radius);
+    for (let column = 0; column <= ySteps; column += 1) {
+      const y = yCentre - halfY + (2 * halfY * column) / ySteps;
+      outer.push(sideSkinPoint(z, y, sign, outward));
+      inner.push(sideSkinPoint(z, y, sign, outward - 0.012));
+    }
+  }
+  addSideOverlayTile(id, material, outer, inner, zSteps + 1, ySteps + 1);
+}
+
+function addCabinEntryRing(
+  id: string,
+  material: ObjectMaterialId,
+  sign: 1 | -1,
+  zCentre: number,
+  yCentre: number,
+  width: number,
+  height: number,
+  radius: number,
+  outward: number,
+  innerOffset: number,
+  outerOffset: number,
+): void {
+  const innerLoop = roundedRectLoop(
+    zCentre,
+    yCentre,
+    width / 2 + innerOffset,
+    height / 2 + innerOffset,
+    radius + innerOffset,
+  );
+  const outerLoop = roundedRectLoop(
+    zCentre,
+    yCentre,
+    width / 2 + outerOffset,
+    height / 2 + outerOffset,
+    radius + outerOffset,
+  );
+  const proud = [...innerLoop, ...outerLoop].map((sample) =>
+    sideSkinPoint(sample.z, sample.y, sign, outward));
+  const inset = [...innerLoop, ...outerLoop].map((sample) =>
+    sideSkinPoint(sample.z, sample.y, sign, outward - 0.012));
+  addSideOverlayTile(id, material, proud, inset, 2, innerLoop.length, true);
 }
 
 /** Совпадает с `FRAME_WIDTH` панелей: стык считаем по наружной обвязке. */
@@ -2031,6 +2293,63 @@ addCylinder(
   12,
 );
 
+for (const plan of CABIN_ENTRY_PLANS) {
+  const yCentre = plan.floorY + CABIN_ENTRY_HEIGHT / 2;
+  const paneY = plan.floorY + CABIN_ENTRY_PANE.sill + CABIN_ENTRY_PANE.across / 2;
+  for (const sign of [1, -1] as const) {
+    const side = sign > 0 ? "right" : "left";
+    const prefix = `cabin-entry-${side}-${plan.id}`;
+    addCabinEntryLeaf(
+      `${prefix}:board:0`,
+      "paint-light",
+      sign,
+      plan.z,
+      yCentre,
+      CABIN_ENTRY_WIDTH,
+      CABIN_ENTRY_HEIGHT,
+      CABIN_ENTRY_CORNER,
+      0.02,
+    );
+    addCabinEntryRing(
+      `${prefix}-seal`,
+      "paint-light",
+      sign,
+      plan.z,
+      yCentre,
+      CABIN_ENTRY_WIDTH,
+      CABIN_ENTRY_HEIGHT,
+      CABIN_ENTRY_CORNER,
+      0.022,
+      CABIN_ENTRY_SEAL_REVEAL,
+      CABIN_ENTRY_SEAL_GAP,
+    );
+    addCabinEntryRing(
+      `${prefix}-frame`,
+      "paint-light",
+      sign,
+      plan.z,
+      yCentre,
+      CABIN_ENTRY_WIDTH,
+      CABIN_ENTRY_HEIGHT,
+      CABIN_ENTRY_CORNER,
+      0.024,
+      CABIN_ENTRY_SEAL_GAP,
+      CABIN_ENTRY_SEAL_GAP + CABIN_ENTRY_FRAME_WIDTH,
+    );
+    addCabinEntryLeaf(
+      `${prefix}:board:1`,
+      "timber-dark",
+      sign,
+      plan.z,
+      paneY,
+      CABIN_ENTRY_PANE.along,
+      CABIN_ENTRY_PANE.across,
+      CABIN_ENTRY_PANE.corner,
+      0.028,
+    );
+  }
+}
+
 /**
  * Шторка между салонами — ПОПЕРЁК ПРОХОДА, а не поперёк сечения.
  *
@@ -2469,6 +2788,30 @@ const views: readonly Dc3View[] = [
     fov: 30,
   },
   {
+    id: "entry-forward-right",
+    label: "Entry overlay · forward passenger, right",
+    projection: "perspective",
+    position: bodyToWorld(point(4.6, 0.9, 4.72)),
+    target: bodyToWorld(point(1.22, 0.28, 4.72)),
+    fov: 28,
+  },
+  {
+    id: "entry-aft-right",
+    label: "Entry overlay · aft passenger, right",
+    projection: "perspective",
+    position: bodyToWorld(point(4.4, 0.7, -3.85)),
+    target: bodyToWorld(point(1.18, 0.08, -3.85)),
+    fov: 28,
+  },
+  {
+    id: "entry-forward-left",
+    label: "Entry overlay · forward passenger, left",
+    projection: "perspective",
+    position: bodyToWorld(point(-4.6, 0.9, 4.72)),
+    target: bodyToWorld(point(-1.22, 0.28, 4.72)),
+    fov: 28,
+  },
+  {
     id: "silhouette",
     label: "Silhouette · type mass",
     projection: "orthographic",
@@ -2654,6 +2997,23 @@ export const dc3AirframeSurface = {
     z: WINDOW_ROW_FIRST_Z - index * WINDOW_ROW_PITCH,
     centreY: WINDOW_ROW_CENTRE_Y,
     ...DC3_WINDOW_SIZE,
+  })),
+  /**
+   * Четыре входных накладки. Это план посадки, не вырезанные проёмы:
+   * шкура целая, створка лежит снаружи, чтобы было видно место и скругление.
+   */
+  cabinEntries: CABIN_ENTRY_PLANS.map((plan) => ({
+    id: plan.id,
+    z: plan.z,
+    zFrom: plan.z - CABIN_ENTRY_WIDTH / 2,
+    zTo: plan.z + CABIN_ENTRY_WIDTH / 2,
+    floorY: plan.floorY,
+    width: CABIN_ENTRY_WIDTH,
+    height: CABIN_ENTRY_HEIGHT,
+    cornerRadius: CABIN_ENTRY_CORNER,
+    sealReveal: CABIN_ENTRY_SEAL_REVEAL,
+    sealGap: CABIN_ENTRY_SEAL_GAP,
+    frameWidth: CABIN_ENTRY_FRAME_WIDTH,
   })),
   /**
    * Два плоских параллелограмма: верх горизонтален в боку, стойка 60° к
