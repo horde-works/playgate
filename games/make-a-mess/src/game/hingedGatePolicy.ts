@@ -215,6 +215,22 @@ export function hingedLeafRotationAxis(
   return tailRampPolicy(groupKey)?.rotationAxis ?? STANDARD_DOOR_ROTATION_AXIS;
 }
 
+/**
+ * Створки машины в рейсе — не механизм, а часть кластера. На стоянке
+ * (`docked`) их снова открывает HingedDoorSystem. Дом без записи в
+ * docked/poses сюда не попадает.
+ */
+export function hingedDoorLockedToCarrier(input: {
+  readonly clusterId: string | undefined;
+  readonly dockedVehicles?: ReadonlySet<string>;
+  readonly vehicleFramePoses?: { has(clusterId: string): boolean };
+}): boolean {
+  const clusterId = input.clusterId;
+  if (!clusterId) return false;
+  if (input.dockedVehicles?.has(clusterId)) return false;
+  return input.vehicleFramePoses?.has(clusterId) === true;
+}
+
 export function hingedDoorGroupKey(
   pieceId: string,
   clusterId: string,

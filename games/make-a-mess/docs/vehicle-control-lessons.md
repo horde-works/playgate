@@ -50,6 +50,12 @@
 выпадение — это членство куска в множестве broken/inactive
 (`VehicleFrameSystem.tsx:1789-1800`).
 
+Створки (`piece.hinge`) на стоянке — отдельный механизм
+(`HingedDoorSystem`). В рейсе их тело **выключается**, а визуал идёт от
+позы кластера (`compoundClusterCarriesPieceVisual`): догонять корпус
+`setNextKinematicTranslation` нельзя — это кадр отставания и дёрганье,
+на DC-3 заметнее, чем на дирижабле. После рейса тело снова включается.
+
 Ручки членства в паспорте кластера (`compoundKinematicCluster.ts:34-47`):
 `independentMemberMatches` (своё контактное тело внутри frame — лопасти),
 `contactMemberMatches` (whitelist структурной оболочки),

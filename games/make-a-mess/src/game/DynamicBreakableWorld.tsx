@@ -54,7 +54,10 @@ import {
   treeWoodSpecies,
 } from "./treeVisualModel";
 import { treeBarkAtlas } from "./treeBarkAtlas";
-import type { CompoundKinematicClusterRegistry } from "./compoundKinematicCluster";
+import {
+  compoundClusterCarriesPieceVisual,
+  type CompoundKinematicClusterRegistry,
+} from "./compoundKinematicCluster";
 import {
   getMemberArticulation,
   hasMemberArticulations,
@@ -660,13 +663,17 @@ diffuseColor.rgb = mix(
       // Кусок носится кластером, пока он его член; обрубок — пока родитель не
       // отломан. У отломанного обрубка сразу рождается собственное
       // динамическое тело, поэтому «нет тела» и означает «ещё летит с
-      // машиной».
+      // машиной». Запертая створка в рейсе остаётся attached, но её тело
+      // выключено — визуал тогда тоже от позы корпуса, а не от кинематики.
       if (
         fragment.kind === "remnant"
           ? body !== undefined
-          : !runtime.memberIds.has(
-              fragment.clusterMemberId ?? fragment.sourceId,
-            )
+          : !compoundClusterCarriesPieceVisual({
+              pieceId: fragment.clusterMemberId ?? fragment.sourceId,
+              memberIds: runtime.memberIds,
+              attachedMemberIds: runtime.attachedMemberIds,
+              bodyEnabled: body?.isEnabled(),
+            })
       ) {
         return null;
       }

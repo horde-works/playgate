@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   compoundCarrierOwnsMemberPose,
+  compoundClusterCarriesPieceVisual,
   compoundClusterColliders,
   compoundClusterPointToLocal,
   compoundClusterPointToWorld,
@@ -290,4 +291,37 @@ test("an articulated member always has exactly one pose writer", () => {
   assert.equal(compoundCarrierOwnsMemberPose(door, true), false);
   assert.equal(compoundCarrierOwnsMemberPose(hull, false), true);
   assert.equal(compoundCarrierOwnsMemberPose(hull, true), true);
+});
+
+test("a locked hinge is carried by the cluster visual, not its kinematic body", () => {
+  const doorId = "terminal:sky-train:car:door:board:0";
+  const hullId = "terminal:sky-train:hull";
+  const memberIds = new Set([hullId]);
+  const attachedMemberIds = new Set([hullId, doorId]);
+  assert.equal(
+    compoundClusterCarriesPieceVisual({
+      pieceId: hullId,
+      memberIds,
+      attachedMemberIds,
+    }),
+    true,
+  );
+  assert.equal(
+    compoundClusterCarriesPieceVisual({
+      pieceId: doorId,
+      memberIds,
+      attachedMemberIds,
+      bodyEnabled: true,
+    }),
+    false,
+  );
+  assert.equal(
+    compoundClusterCarriesPieceVisual({
+      pieceId: doorId,
+      memberIds,
+      attachedMemberIds,
+      bodyEnabled: false,
+    }),
+    true,
+  );
 });

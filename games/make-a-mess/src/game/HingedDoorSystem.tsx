@@ -21,6 +21,7 @@ import {
   automaticSlideDoorShouldOpen,
   hingedLeafRotationAxis,
   hingedDoorGroupKey,
+  hingedDoorLockedToCarrier,
   inwardDoorSwingSign,
   plugSlideApproachRadius,
   plugSlideDoorPolicy,
@@ -289,9 +290,11 @@ export function HingedDoorSystem({
       }
       const clusterId = group.members[0]?.piece.clusterId;
       if (
-        clusterId &&
-        movingVehicles?.current.has(clusterId) &&
-        !dockedVehicles?.current.has(clusterId)
+        hingedDoorLockedToCarrier({
+          clusterId,
+          dockedVehicles: dockedVehicles?.current,
+          vehicleFramePoses: vehicleFramePoses?.current,
+        })
       ) {
         openedEntries.current.delete(doorId);
         continue;
@@ -351,6 +354,21 @@ export function HingedDoorSystem({
     openEntries?.current.clear();
 
     for (const group of doorGroups) {
+      const clusterId = group.members[0]?.piece.clusterId;
+      if (
+        hingedDoorLockedToCarrier({
+          clusterId,
+          dockedVehicles: dockedVehicles?.current,
+          vehicleFramePoses: vehicleFramePoses?.current,
+        })
+      ) {
+        const locked = states.current.get(group.key);
+        if (locked) {
+          locked.angle = 0;
+          locked.sign = 0;
+        }
+        continue;
+      }
       const hinge = group.hinge;
       const center = groupWorldCenter(group);
       const carrier = dockedCarrierFrame(group);

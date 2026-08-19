@@ -20,6 +20,7 @@ import { DC3_AIRPLANE_CLASS } from "../games/make-a-mess/src/game/dc3Airplane.ts
 import { dc3AirframeParts } from "../games/make-a-mess/src/content/objects/aircraft/dc3AirframeParts.ts";
 import {
   hingedDoorGroupKey,
+  hingedDoorLockedToCarrier,
   plugSlideDoorPolicy,
 } from "../games/make-a-mess/src/game/hingedGatePolicy.ts";
 
@@ -202,4 +203,36 @@ test("cabin entries plug out then slide toward the tail", () => {
       );
     }
   }
+});
+
+test("DC-3 cabin doors lock to the cluster in flight and release when parked", () => {
+  const clusterId = ISLAND_AIRPORT_DC3_PLACEMENT.clusterId;
+  const poses = new Map([[clusterId, {}]]);
+  const docked = new Set([clusterId]);
+  const hinged = pieces.filter((piece) => piece.hinge);
+  assert.equal(hinged.length, 8, "four leaves, leaf plus pane");
+  assert.equal(
+    hingedDoorLockedToCarrier({
+      clusterId,
+      dockedVehicles: docked,
+      vehicleFramePoses: poses,
+    }),
+    false,
+  );
+  assert.equal(
+    hingedDoorLockedToCarrier({
+      clusterId,
+      dockedVehicles: new Set(),
+      vehicleFramePoses: poses,
+    }),
+    true,
+  );
+  assert.equal(
+    hingedDoorLockedToCarrier({
+      clusterId: "h2:door:front",
+      dockedVehicles: new Set(),
+      vehicleFramePoses: poses,
+    }),
+    false,
+  );
 });

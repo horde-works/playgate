@@ -9088,6 +9088,53 @@ export function VehicleFrameSystem({
       )?.body;
       const carrierSleeping = physicalCarrier?.isSleeping() ?? authoredRest;
       const pendingMemberRelease = state.brokenSeen > state.released.size;
+      const rotation = vehicleRotation(pose, frame.nose);
+      const hingeMechanismActive = state.flight === null;
+      for (const member of frame.members) {
+        const piece = member.piece;
+        if (!piece.hinge || brokenPieces.current.has(piece.id)) {
+          continue;
+        }
+        const body = bodies.current.get(piece.id);
+        if (!body || body.bodyType() === rapier.RigidBodyType.Dynamic) {
+          continue;
+        }
+        if (compoundCarrierOwnsMemberPose(piece, hingeMechanismActive)) {
+          if (body.isEnabled()) {
+            body.setEnabled(false);
+          }
+        } else if (!body.isEnabled()) {
+          body.setEnabled(true);
+          const placed = vehiclePiecePosition(
+            frame.origin,
+            piece.position,
+            pose,
+            rotation,
+          );
+          const composed = multiplyQuaternions(rotation, [
+            member.baseQuaternion.x,
+            member.baseQuaternion.y,
+            member.baseQuaternion.z,
+            member.baseQuaternion.w,
+          ]);
+          if (body.bodyType() !== rapier.RigidBodyType.KinematicPositionBased) {
+            body.setBodyType(rapier.RigidBodyType.KinematicPositionBased, true);
+          }
+          body.setTranslation(
+            { x: placed[0], y: placed[1], z: placed[2] },
+            false,
+          );
+          body.setRotation(
+            {
+              x: composed[0],
+              y: composed[1],
+              z: composed[2],
+              w: composed[3],
+            },
+            false,
+          );
+        }
+      }
       if (carrierSleeping && !state.moving && !pendingMemberRelease) {
         continue;
       }
@@ -9096,7 +9143,6 @@ export function VehicleFrameSystem({
       state.suppressFrameVelocityOnce = false;
       state.previousPose = pose;
 
-      const rotation = vehicleRotation(pose, frame.nose);
       for (const member of frame.members) {
         const piece = member.piece;
         const body = bodies.current.get(piece.id);
@@ -9176,9 +9222,14 @@ export function VehicleFrameSystem({
         // A docked articulated member has its own mechanism controller. The
         // carrier still supplies its frame pose, but must not write the same
         // Rapier body in the same physics step. In flight the mechanism is
-        // locked and the carrier owns it again. This applies to every hinged
-        // member in every compound cluster, not just this vehicle's door.
+        // locked: the hinge body is disabled and the renderer parents the
+        // leaf to the hull. Following with setNextKinematicTranslation
+        // lagged a frame and jittered the doors. This applies to every
+        // hinged member in every compound cluster, not just this vehicle.
         if (!compoundCarrierOwnsMemberPose(piece, state.flight === null)) {
+          continue;
+        }
+        if (piece.hinge) {
           continue;
         }
         if (body.bodyType() === rapier.RigidBodyType.Dynamic) {

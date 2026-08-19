@@ -258,14 +258,32 @@ export function compoundMemberNeedsIndividualBody(
 
 /**
  * Selects the single pose writer for an articulated cluster member.
- * The carrier locks and transports hinges while underway; when an independent
- * mechanism is active (for example at a dock), that mechanism owns the body.
+ * The carrier locks hinges while underway and carries them as ordinary
+ * cluster visuals (own Rapier body disabled). At a dock the independent
+ * door mechanism owns the body again. Never follow the hull with
+ * `setNextKinematicTranslation`: that lags a frame and jitters.
  */
 export function compoundCarrierOwnsMemberPose(
   piece: BreakablePieceDefinition,
   independentMechanismActive: boolean,
 ): boolean {
   return !piece.hinge || !independentMechanismActive;
+}
+
+/**
+ * Render path for a fragment of a moving cluster. Ordinary members have no
+ * body and live in `memberIds`. A locked hinge stays in `attachedMemberIds`
+ * with its own body disabled, so the renderer parents it to the hull pose
+ * instead of interpolating a second kinematic.
+ */
+export function compoundClusterCarriesPieceVisual(input: {
+  readonly pieceId: string;
+  readonly memberIds: ReadonlySet<string>;
+  readonly attachedMemberIds: ReadonlySet<string>;
+  readonly bodyEnabled?: boolean;
+}): boolean {
+  if (input.memberIds.has(input.pieceId)) return true;
+  return input.attachedMemberIds.has(input.pieceId) && input.bodyEnabled === false;
 }
 
 const EMPTY_PIECE_ID_SET: ReadonlySet<string> = new Set();
