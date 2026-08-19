@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { dc3GroundTaxiDemand } from "../games/make-a-mess/src/game/dc3GroundTaxi.ts";
+import { dc3GroundTaxiDemand, dc3GroundTaxiOwnsPlan } from "../games/make-a-mess/src/game/dc3GroundTaxi.ts";
+import { dc3AirportPlan } from "../games/make-a-mess/src/game/dc3AirportRoutes.ts";
+import { vehicleTrajectoryStabilizationPlan } from "../games/make-a-mess/src/game/vehicleTrajectoryCorrection.ts";
 
 const cornerPlan = {
   id: "test:dc3-ground-corner",
@@ -233,4 +235,41 @@ test("taxi controller reads the authored vertex instead of inferring a kink", ()
   });
   assert.equal(turning.pivoting, true);
   assert.deepEqual(turning.headingTarget, [0, -1]);
+});
+
+test("a flight overlay of the survey is not a taxi route", () => {
+  // Касание щёлкает пробег, пока корректор ещё держит `:stabilization`.
+  // Оверлей — прямая успокоения, вершин руления у него нет; наземный
+  // автомат им владеть не должен.
+  const survey = dc3AirportPlan("survey", [0, 0, 0]);
+  assert.equal(dc3GroundTaxiOwnsPlan(survey), true);
+  const overlay = vehicleTrajectoryStabilizationPlan(
+    survey,
+    0.98,
+    {
+      position: [-104, 3, -22],
+      orientation: [0, 0, 0, 1],
+      velocity: [30, 0, 0],
+      angularVelocity: [0, 0, 0],
+    },
+    [0, 0, 1],
+    36,
+  );
+  assert.equal(overlay.id, "dc3:survey:stabilization");
+  assert.equal(dc3GroundTaxiOwnsPlan(overlay), false);
+  assert.throws(
+    () =>
+      dc3GroundTaxiDemand({
+        plan: overlay,
+        progress: 0,
+        centre: [-104, 3, -22],
+        heading: [1, 0],
+        velocity: [30, 0, 0],
+        yawRate: 0,
+        maximumYawRate: 0.45,
+        braking: 3,
+        responseSeconds: 2.4,
+      }),
+    /dc3:survey:stabilization has no authored taxi vertices/,
+  );
 });

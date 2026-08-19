@@ -118,6 +118,7 @@ import {
 import {
   advanceDc3GroundTaxiProgress,
   dc3GroundTaxiDemand,
+  dc3GroundTaxiOwnsPlan,
   type Dc3GroundTaxiState,
 } from "./dc3GroundTaxi";
 import { CompoundKinematicClusterBodies } from "./CompoundKinematicClusterBodies";
@@ -5591,9 +5592,9 @@ export function VehicleFrameSystem({
         // недостижима — у них нет `airplaneTaxi`.
         const groundTaxi =
           usesAirplaneDynamics &&
-          controlledPlan.id.startsWith("dc3:") &&
           state.airplaneTaxi &&
-          frame.flight.airplane
+          frame.flight.airplane &&
+          dc3GroundTaxiOwnsPlan(controlledPlan)
             ? (() => {
                 const forward = rotateByQuaternion(
                   state.body.orientation,
@@ -6287,6 +6288,7 @@ export function VehicleFrameSystem({
           // Рулящей машиной владеет наземный автомат: корректор траектории —
           // лётный орган, манёвр угла ему не сход с трассы (вердикт Igor).
           !state.airplaneTaxi &&
+          !(usesAirplaneDynamics && airplaneOnGround(state, step)) &&
           requestedTrajectoryMode !== "authoredRoute"
         ) {
           // One autopilot changing modes. A route state ordinary guidance can
@@ -6354,6 +6356,13 @@ export function VehicleFrameSystem({
             }
           }
         }
+        // Пробег щёлкается в силовом шаге ПОСЛЕ наведения: касание ещё
+        // читается лётным rate event и держит `:stabilization`. Оверлей
+        // без рулёжных вершин, наземный автомат на нём падает. С земли
+        // корректор больше не владеет машиной.
+        if (state.airplaneTaxi && flight.trajectoryCorrection) {
+          flight.trajectoryCorrection = null;
+        }
         const trajectoryCorrection = flight.trajectoryCorrection;
         if (trajectoryCorrection) {
           trajectoryCorrection.elapsedSeconds += step;
@@ -6390,7 +6399,11 @@ export function VehicleFrameSystem({
         }
 
         let piloted: ReturnType<typeof autopilot>;
+        const groundOwnsAirplane =
+          usesAirplaneDynamics &&
+          (Boolean(state.airplaneTaxi) || airplaneOnGround(state, step));
         if (
+          !groundOwnsAirplane &&
           trajectoryCorrection?.phase === "intercepting" &&
           trajectoryCorrection.correction
         ) {
@@ -6441,7 +6454,7 @@ export function VehicleFrameSystem({
             );
             flight.trajectoryCorrection = null;
           }
-        } else if (trajectoryCorrection) {
+        } else if (trajectoryCorrection && !groundOwnsAirplane) {
           piloted = flyRoutePlan(
             vehicleTrajectoryStabilizationPlan(
               plan,

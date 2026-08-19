@@ -226,6 +226,19 @@ export const DC3_GLIDE_ROUNDING = dc3ProfileRounding(
  */
 export const DC3_FLARE_ROUNDING = DC3_GLIDE_ROUNDING * 2;
 
+/**
+ * ЗАПАС ВЫРАВНИВАНИЯ У КРОМКИ — ТОЛЬКО ФИНИШ, НЕ СДВИГ ПРИЦЕЛА.
+ *
+ * Чистая парабола C¹ с прямой глиссадой у кромки даёт меньше высоты плиты:
+ * колёса встречают грунт за метр до бетона (замер 19.08.2026). Сдвигать
+ * `DC3_TOUCHDOWN_X` нельзя — за ним едет весь финал (`FINAL_ENTRY_X`).
+ * Добавка живёт только внутри выравнивания: ноль на стыке с прямой, ноль
+ * у прицела, производные нули на концах — вход и прямая глиссада не
+ * двигаются. Семнадцать сантиметров в середине — десять у кромки, ещё
+ * несколько метров хода по оставшемуся наклону, касание уже на плите.
+ */
+export const DC3_FLARE_LIP_HOLD = 0.17;
+
 export const DC3_FINAL_LENGTH =
   (DC3_FINAL_ALTITUDE - AIRPORT_RUNWAY_TOP_Y) / Math.tan(DC3_GLIDE_ANGLE) +
   DC3_GLIDE_ROUNDING / 2 +
@@ -265,8 +278,17 @@ export function dc3GlideAltitude(distanceToTouchdown: number): number {
   }
   if (distance < DC3_FLARE_ROUNDING) {
     // Выравнивание: наклон падает от полного до нуля у бетона — на ДВОЙНОЙ
-    // длине, чтобы вертикальный канал успевал за профилем.
-    return standing + (slope * distance * distance) / (2 * DC3_FLARE_ROUNDING);
+    // длине, чтобы вертикальный канал успевал за профилем. Добавка
+    // `t²(R−t)²` поднимает только середину дуги и на стыках исчезает вместе
+    // с производной, поэтому прямая глиссада и прицел не едут.
+    const round = DC3_FLARE_ROUNDING;
+    const parabola = standing + (slope * distance * distance) / (2 * round);
+    const span = round * round * round * round;
+    const hold =
+      (DC3_FLARE_LIP_HOLD * 16 * distance * distance *
+        (round - distance) * (round - distance)) /
+      span;
+    return parabola + hold;
   }
   return standing + slope * distance - (slope * DC3_FLARE_ROUNDING) / 2;
 }

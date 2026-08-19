@@ -11,6 +11,7 @@ import {
   airplaneForces,
   airplanePreflightCommand,
   airplanePropellerVisualCommand,
+  airplaneTrimElevator,
   airplaneTurnCapability,
   controlSurfaceDegrees,
   stallSpeedOf,
@@ -74,6 +75,48 @@ function forcesAt(command, availability = intact, airspeed = 48, alpha = 0.08) {
   });
 }
 
+
+test("trim elevator includes thrust so a powered 1g is not a standing pitch error", () => {
+  const airspeed = 55.5;
+  const alpha = 0.8 * Math.PI / 180;
+  const air = { ...level(airspeed), alpha, pitch: alpha };
+  const throttle = 0.26;
+  const trim = airplaneTrimElevator(passport, air, DC3_STALL_WEIGHT, 0, throttle);
+  const velocity = [0, -airspeed * Math.sin(alpha), airspeed * Math.cos(alpha)];
+  const centre = [0, 200, 0];
+  const result = airplaneForces({
+    passport,
+    command: {
+      aileron: 0,
+      elevator: trim,
+      rudder: 0,
+      flap: 0,
+      throttle: [throttle, throttle],
+      brake: 0,
+    },
+    availability: intact,
+    orientation: [0, 0, 0, 1],
+    velocity,
+    angularVelocity: [0, 0, 0],
+    centre,
+    nose: [0, 0, 1],
+  });
+  let pitchMoment = 0;
+  for (const force of result.forces) {
+    const armY = force.point[1] - centre[1];
+    const armZ = force.point[2] - centre[2];
+    pitchMoment += armY * force.force[2] - armZ * force.force[1];
+  }
+  const idle = airplaneTrimElevator(passport, air, DC3_STALL_WEIGHT, 0, 0);
+  assert.ok(
+    trim > idle,
+    `газ должен добавлять кабрирующий руль: idle ${idle.toFixed(3)} powered ${trim.toFixed(3)}`,
+  );
+  assert.ok(
+    Math.abs(pitchMoment) < 20,
+    `балансировка на газе оставляет момент ${pitchMoment.toFixed(1)} Н·м`,
+  );
+});
 
 test("DC-3 is a wing class, dispatched from the airport it stands on", () => {
   assert.equal(DC3_AIRPLANE_CLASS.liftSource, "wing");

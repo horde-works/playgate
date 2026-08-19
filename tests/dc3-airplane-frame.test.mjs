@@ -6,10 +6,14 @@ import {
 } from "../games/make-a-mess/src/game/airVehicles.ts";
 import {
   DC3_CIRCUIT_RADIUS,
+  DC3_FLARE_ROUNDING,
+  DC3_GLIDE_ANGLE,
+  DC3_TOUCHDOWN_X,
   DC3_TURN_RADIUS,
   dc3AirportArrivalPlan,
   dc3AirportPlan,
   dc3AirportRoute,
+  dc3GlideAltitude,
 } from "../games/make-a-mess/src/game/dc3AirportRoutes.ts";
 import {
   ISLAND_AIRPORT_DC3_COMMAND_POST,
@@ -343,6 +347,29 @@ test("the survey route is one flight: runway, circuit, glide slope, rollout", ()
   // Створ идёт ВДОЛЬ полосы, а не через остров.
   assert.ok(Math.abs(a[2] - AIRPORT_RUNWAY.centreZ) < 4);
   assert.ok(a[0] < AIRPORT_RUNWAY.westThresholdX);
+  // Кромка плиты: выравнивание ещё выше плиты. Иначе колёса встречают грунт
+  // за метр до бетона. Запас живёт в дуге выравнивания, не в сдвиге прицела.
+  const lip = dc3GlideAltitude(DC3_TOUCHDOWN_X - AIRPORT_RUNWAY.westThresholdX);
+  assert.ok(
+    lip - standing > AIRPORT_RUNWAY_TOP_Y,
+    `у кромки глиссада всего ${(lip - standing).toFixed(2)} м над стоянкой`,
+  );
+  const glideSlope = Math.tan(DC3_GLIDE_ANGLE);
+  const join = DC3_FLARE_ROUNDING;
+  assert.ok(
+    Math.abs(
+      dc3GlideAltitude(join) - (standing + (glideSlope * join) / 2),
+    ) < 1e-9,
+    "добавка выравнивания не должна ломать стык с прямой глиссадой",
+  );
+  const far = join + 40;
+  assert.ok(
+    Math.abs(
+      dc3GlideAltitude(far) -
+        (standing + glideSlope * far - (glideSlope * join) / 2),
+    ) < 1e-9,
+    "прямая глиссада не должна ехать из-за финиша",
+  );
 });
 
 test("the circuit fits the passport turn, and the world envelope fits the circuit", () => {

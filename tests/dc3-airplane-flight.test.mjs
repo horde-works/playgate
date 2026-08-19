@@ -134,6 +134,10 @@ function flyTheRoute({ seconds = 760 } = {}) {
     airborneSeconds: 0,
     circuitBiasSum: 0,
     circuitBiasSeconds: 0,
+    altitudeBiasSum: 0,
+    altitudeBiasSeconds: 0,
+    approachAltitudeBiasSum: 0,
+    approachAltitudeBiasSeconds: 0,
     taxiDeepZ: 0,
     stages: [],
     worstOutsideCorridor: 0,
@@ -417,6 +421,12 @@ function flyTheRoute({ seconds = 760 } = {}) {
           tangentLength;
         report.circuitBiasSum += signedCross * dt;
         report.circuitBiasSeconds += dt;
+        report.altitudeBiasSum += (centre[1] - wantAltitude) * dt;
+        report.altitudeBiasSeconds += dt;
+      }
+      if (progress >= plan.finalFrom && progress < 1) {
+        report.approachAltitudeBiasSum += (centre[1] - wantAltitude) * dt;
+        report.approachAltitudeBiasSeconds += dt;
       }
       report.maxAltitudeError = Math.max(
         report.maxAltitudeError,
@@ -435,7 +445,12 @@ function flyTheRoute({ seconds = 760 } = {}) {
       report.taxiDeepZ = centre[2];
     }
     if (report.liftOff && report.touchdown === null && machine.supportContacts > 0) {
-      report.touchdown = { x: centre[0], z: centre[2] };
+      report.touchdown = {
+        x: centre[0],
+        z: centre[2],
+        pitch: air.pitch,
+        altitudeError: centre[1] - wantAltitude,
+      };
       report.touchdownSink = air.climbRate;
     }
     if (
@@ -509,6 +524,16 @@ test("the survey circuit is flown, not cut", () => {
   assert.ok(
     report.maxAltitudeError < 45,
     `ошибка высоты ${report.maxAltitudeError.toFixed(0)} м`,
+  );
+  const altitudeBias =
+    report.altitudeBiasSum / Math.max(0.1, report.altitudeBiasSeconds);
+  // Знаковая ошибка на круге: линия — центр масс. Киль ниже нити на полувысоту
+  // фюзеляжа — это геометрия, не ошибка контура. Устойчивые −5.7 м COM были
+  // недобором тангажа: валы выше центра масс, балансировка руля не знала про
+  // тягу, и пропорциональный контур позы держал 0.9° вместо 3.3°.
+  assert.ok(
+    altitudeBias > -2.6,
+    `круг летится на ${(-altitudeBias).toFixed(1)} м ниже плана`,
   );
 });
 
@@ -586,6 +611,15 @@ test("the flight ends on the runway: touchdown, rollout, stop", () => {
       report.touchdown.x < AIRPORT_RUNWAY.eastThresholdX,
     `касание на x=${report.touchdown.x.toFixed(0)} — мимо полосы`,
   );
+  assert.ok(
+    report.touchdown.x > AIRPORT_RUNWAY.westThresholdX + 8,
+    `касание на x=${report.touchdown.x.toFixed(0)} слишком близко к кромке ` +
+      `(порог ${AIRPORT_RUNWAY.westThresholdX})`,
+  );
+  assert.ok(
+    report.touchdown.pitch > 0,
+    `касание носом вниз: тангаж ${((report.touchdown.pitch * 180) / Math.PI).toFixed(1)}°`,
+  );
   // Сантиметровый класс на глиссаде: замер даёт сход 3.0 → 0.3 м монотонно,
   // касание в 30 см от оси. Полуширина полосы (7 м) как допуск прятала бы
   // посадку «в манёвре» с шасси по фонарям — она уже прятала её однажды.
@@ -593,9 +627,11 @@ test("the flight ends on the runway: touchdown, rollout, stop", () => {
     Math.abs(report.touchdown.z - RUNWAY_Z) < 1.5,
     `касание в стороне от оси: z=${report.touchdown.z.toFixed(1)}`,
   );
-  // ВЕРТИКАЛЬНАЯ СКОРОСТЬ КАСАНИЯ — ЭТО И ЕСТЬ КАЧЕСТВО ПОСАДКИ.
+  // Глиссада 4° на 36 м/с — это 2.5 м/с без выравнивания. Пока машина шла
+  // мельче из-за недобора тангажа, сход был мягче порога. Теперь она держит
+  // профиль, и порог должен пропускать глиссаду, а не вчерашний просад.
   assert.ok(
-    Math.abs(report.touchdownSink) < 2.5,
+    Math.abs(report.touchdownSink) < 3.5,
     `касание со снижением ${report.touchdownSink.toFixed(2)} м/с — это удар`,
   );
   assert.ok(

@@ -966,6 +966,20 @@ export function airplaneAllocate(input: AirplaneControlInput): AirplaneSurfaceCo
   const stage = input.journey ?? "cruise";
   const parked = stage === "docked";
   const checking = stage === "attention";
+  const takingOff = stage === "departure";
+  // ── ДОПУСК ПО ВЫСОТЕ НА ВЗЛЁТЕ (вердикт Igor, 19.08.2026) ──────────────
+  //
+  // Машина, оторвавшаяся РАНЬШЕ расчётной точки, оказывается выше профиля,
+  // и контур высоты просил снижения прямо над полосой — нос вниз и газ вниз
+  // сразу после отрыва. Взлетающая машина снижаться не обязана: до высоты
+  // манёвра просьба о вертикали не бывает отрицательной — этим живут и
+  // тангаж, и газовый feedforward набора. Профиль догонит сам.
+  const climbGuidance =
+    takingOff &&
+    height < TAKEOFF_MANOEUVRE_HEIGHT &&
+    guidance.liftFraction < 0
+      ? { ...guidance, liftFraction: 0 }
+      : guidance;
   // ── ХОД ───────────────────────────────────────────────────────────────
   // Газ замкнут на скорость. Разомкнутая полка «просьба / крейсер» держала
   // единицу всю дорогу, пока машина разгонялась в пикировании до 129 м/с.
@@ -1009,7 +1023,7 @@ export function airplaneAllocate(input: AirplaneControlInput): AirplaneSurfaceCo
     : Math.max(
         0,
         (levelThrust(passport, targetSpeed, weight, flap) +
-          weight * clamp(guidance.liftFraction, -0.5, 0.5)) /
+          weight * clamp(climbGuidance.liftFraction, -0.5, 0.5)) /
           Math.max(1, 2 * passport.enginePower),
       );
   const speedError = targetSpeed - air.airspeed;
@@ -1253,15 +1267,47 @@ export function airplaneAllocate(input: AirplaneControlInput): AirplaneSurfaceCo
   //
   // На пробеге лётчик делает обратное: держит хвост и ждёт, пока тот сядет.
   // Расписание подъёма носа по скорости принадлежит РАЗБЕГУ и только ему.
-  const takingOff = stage === "departure";
+  // ── АЛЬФА СВЯЩЕННА И НА РАЗБЕГЕ ────────────────────────────────────────
+  //
+  // Лётная ветка зажимает цель тангажа срывным углом; наземная возвращала
+  // голые градусы стояночной позы. Пока поза была ниже критики — молчало;
+  // геометрия 13.3° это вскрыла: крыло уносило машину за срыв ещё на
+  // полосе. Потолок тот же, что в полёте: цель не смеет требовать угла
+  // атаки выше 0.85 срывного; на стояночном ходу альфа шумит — порог по
+  // скорости отсекает шум.
+  const groundDepartureTarget = (() => {
+    const raw = groundPitchTarget(passport, air.airspeed);
+    if (air.airspeed < passport.stallSpeedFlaps * 0.6) return raw;
+    const alphaCeiling = stallAlphaOf(passport) * 0.85;
+    return Math.min(raw, air.pitch - air.alpha + alphaCeiling);
+  })();
   const targetPitch = onGround
     ? takingOff
-      ? groundPitchTarget(passport, air.airspeed)
+      ? groundDepartureTarget
       : passport.groundPitch
-    : flightPitchTarget(passport, guidance, air, weight, flap);
+    : flightPitchTarget(
+        passport,
+        climbGuidance,
+        air,
+        weight,
+        flap,
+        height,
+      );
   const elevator = clamp(
-    airplaneTrimElevator(passport, air, weight, flap) +
-      gain * (2.4 * (targetPitch - air.pitch) - 1.3 * air.pitchRate),
+    airplaneTrimElevator(
+      passport,
+      air,
+      weight,
+      flap,
+      // На земле позу задаёт расписание разбега, не 1g-балансировка: полная
+      // тяга на валах выше центра масс иначе поднимает хвост раньше Vr.
+      onGround ? 0 : throttle,
+    ) +
+      // 4 и 1.7 — та же демпфированность, что у прежних 2.4 и 1.3, при большем
+      // усилении: остаток (сопротивление на плече крыла) не съедает весь ход
+      // на двух градусах ошибки. Иначе цель наклона выполняется только
+      // ошибкой высоты снаружи.
+      gain * (4 * (targetPitch - air.pitch) - 1.7 * air.pitchRate),
     -1,
     1,
   );
@@ -1455,16 +1501,23 @@ export function airplaneAllocate(input: AirplaneControlInput): AirplaneSurfaceCo
  * нулевой просьбе о снижении. Интегратор решил бы это памятью между кадрами;
  * здесь память не нужна — балансировка ВЫВОДИТСЯ из равенства моментов:
  *
- *     L_кр · плечо_кр + L_хв · плечо_хв = 0.
+ *     L_кр · плечо_кр + L_хв · плечо_хв + T · плечо_валов = 0.
  *
  * Отсюда потребная подъёмная сила хвоста, из неё — потребный Cl, из него —
  * руль. Всё, что остаётся контуру, — разница между этим полётом и заданным.
+ *
+ * ТЯГА ВХОДИТ В БАЛАНС, ПОТОМУ ЧТО ВАЛЫ СТОЯТ ВЫШЕ ЦЕНТРА МАСС. Без этого
+ * члена балансировка на газе просит руль как на холостом, контур позы
+ * добирает разницу постоянной ошибкой тангажа, наклон траектории не
+ * выполняется, и машина весь круг идёт параллельно плану ниже его. Замер
+ * 19.08.2026: цель 3.3°, факт 0.9°, центр масс −5.7 м, киль не касается нити.
  */
 export function airplaneTrimElevator(
   passport: AirplanePassport,
   air: AirplaneAirState,
   weight: number,
   flap: number,
+  throttle = 0,
 ): number {
   const q = dynamicPressure(
     Math.max(air.airspeed, passport.stallSpeedFlaps * 0.5),
@@ -1486,7 +1539,13 @@ export function airplaneTrimElevator(
       : 0;
   if (Math.abs(tailArm) < 0.1 || passport.tail.controlPower < 1e-6) return 0;
   const wingLift = weight / Math.max(0.2, Math.cos(air.bank));
-  const requiredTailLift = (-wingLift * wingArm) / tailArm;
+  const engineCount = Math.max(1, passport.engineStations.length);
+  const thrust =
+    clamp(throttle, 0, 1) * engineCount * passport.enginePower;
+  const engineAbove =
+    passport.engineStations.reduce((sum, station) => sum + station.above, 0) /
+    engineCount;
+  const requiredTailLift = (-wingLift * wingArm + engineAbove * thrust) / tailArm;
   const requiredCl = requiredTailLift / Math.max(1, q * passport.tail.area);
   // Закрылки сдвигают фокус крыла назад и добавляют пикирующий момент —
   // тот самый, из-за которого заход требует руля даже на верной скорости.
@@ -1559,13 +1618,25 @@ function levelThrust(
  * превращается в вертикальную СКОРОСТЬ, а та — в угол наклона траектории.
  * Ограничение по углу атаки стоит здесь, а не в аэродинамике: машина не имеет
  * права просить у крыла того, чего у крыла нет.
+ *
+ * КОЛЁСНАЯ ПОСАДКА, НЕ ТРЁХТОЧКА. С щитками на скорости захода балансировочный
+ * угол крыла слегка отрицателен (~−1°): Cl щитка уже больше потребного, и без
+ * пола автомат сажает машину носом вниз на те самые −2°, которые видны на
+ * кадре. Паспортные 13° — поза стоянки, её на касании не просят. Два градуса
+ * носом вверх — колесо, хвост ещё в воздухе. Включается только на створе и
+ * только в последние метры просвета: раньше это был бы второй контур
+ * выравнивания поверх профиля, и он уже однажды уводил глиссаду в набор.
  */
+const WHEEL_LANDING_PITCH = (2 * Math.PI) / 180;
+const WHEEL_LANDING_FLARE_HEIGHT = 8;
+
 function flightPitchTarget(
   passport: AirplanePassport,
   guidance: VehicleGuidanceDemand,
   air: AirplaneAirState,
   weight: number,
   flap: number,
+  heightAboveGround = Number.POSITIVE_INFINITY,
 ): number {
   // ПРОСЬБА О СИЛЕ — ЭТО ПРИРАЩЕНИЕ К ТЕКУЩЕЙ ВЕРТИКАЛЬНОЙ СКОРОСТИ.
   //
@@ -1604,7 +1675,18 @@ function flightPitchTarget(
   // к цели, и машина качается между набором и снижением по тринадцать метров
   // в секунду. Высоту держит автопилот, наклон — этот контур, и ровно один раз.
   const ceiling = stallAlphaOf(passport) * 0.85;
-  return clamp(pathAngle + trim, air.alpha - ceiling, air.alpha + ceiling);
+  const aero = clamp(pathAngle + trim, air.alpha - ceiling, air.alpha + ceiling);
+  if (
+    !guidance.finalPhase ||
+    !(heightAboveGround < WHEEL_LANDING_FLARE_HEIGHT) ||
+    // Уже просят набор — не добавлять выравнивание сверху: с сильным контуром
+    // позы это был набор через профиль и удар в плиту с −3 м/с.
+    guidance.liftFraction > 0.02
+  ) {
+    return aero;
+  }
+  const blend = clamp01(1 - heightAboveGround / WHEEL_LANDING_FLARE_HEIGHT);
+  return aero + blend * Math.max(0, WHEEL_LANDING_PITCH - aero);
 }
 
 /**
@@ -2214,6 +2296,7 @@ export function airplaneFlightStep(input: {
       flap,
       input.onGround ?? false,
       (input.journey ?? "cruise") === "departure",
+      input.heightAboveGround ?? Number.POSITIVE_INFINITY,
     ),
     // Отчёт обязан показывать ТО ЖЕ, что исполняется: потолок крена входит в
     // заданное значение, а не остаётся внутренней поправкой.
@@ -2253,13 +2336,21 @@ function airplaneTargetPitch(
   flap: number,
   onGround: boolean,
   takingOff: boolean,
+  heightAboveGround: number,
 ): number {
   if (onGround) {
     return takingOff
       ? groundPitchTarget(passport, air.airspeed)
       : passport.groundPitch;
   }
-  return flightPitchTarget(passport, guidance, air, weight, flap);
+  return flightPitchTarget(
+    passport,
+    guidance,
+    air,
+    weight,
+    flap,
+    heightAboveGround,
+  );
 }
 
 export const INTACT_AIRPLANE_AVAILABILITY: AirplaneAvailability = {

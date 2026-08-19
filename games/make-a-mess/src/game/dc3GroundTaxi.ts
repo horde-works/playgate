@@ -241,7 +241,17 @@ function taxiStopProfile(
  * autopilot. The path supplies geometry and a speed ceiling; this controller
  * chooses the attainable speed, stops at the next authored taxi vertex, turns
  * onto its authored outgoing edge, then releases translation again.
+ *
+ * Flight overlays (`:stabilization`, intercept, escape) are not taxi routes:
+ * they have no vertices. Touchdown latches rollout while an airborne hold is
+ * still active; asking this controller for that overlay is a caller error.
  */
+export function dc3GroundTaxiOwnsPlan(
+  plan: Pick<VehicleRoutePlan, "taxiVertices">,
+): boolean {
+  return (plan.taxiVertices?.length ?? 0) > 0;
+}
+
 export function dc3GroundTaxiDemand(
   input: Dc3GroundTaxiInput,
 ): Dc3GroundTaxiDemand {
@@ -271,7 +281,7 @@ export function dc3GroundTaxiDemand(
   // braking response and previously inserted two fictitious metres.
   const emergencyStopDistance = (groundSpeed * groundSpeed) / (2 * braking);
   const vertices = plan.taxiVertices;
-  if (!vertices || vertices.length === 0) {
+  if (!dc3GroundTaxiOwnsPlan(plan) || !vertices) {
     throw new Error(`Taxi route ${plan.id} has no authored taxi vertices`);
   }
   let precedingVertex = -1;

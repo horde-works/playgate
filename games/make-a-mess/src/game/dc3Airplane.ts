@@ -301,6 +301,18 @@ function materialFor(part: ObjectLabPart): {
   if (part.group === "cabin-frame") {
     return { material: "steel", shape: "panel", color: "#8d9a8e" };
   }
+  // ОПЕРЕНИЕ — ЛЁГКИЙ СПЛАВ, КАК У НАСТОЯЩЕЙ МАШИНЫ. Стальные лонжероны
+  // стабилизатора и киля на десятиметровом плече утащили центр масс назад
+  // (замер 19.08.2026: −10.1 ед·м момента из общего сдвига −19.3, машина
+  // отрывалась на закритических углах). Алюминий возвращает хвосту честный
+  // вес: у DC-3 всё оперение дюралевое.
+  if (part.group === "structure-empennage") {
+    return { material: "aluminium", shape: "panel", color: "#5c6164" };
+  }
+  // Начинка носового отсека — сплошная сталь (батареи, радиостойки).
+  if (part.group === "nose-equipment") {
+    return { material: "steel", shape: "steelSheet", color: "#3a3f42" };
+  }
   if (part.group.startsWith("structure-")) {
     return { material: "steel", shape: "panel", color: "#5c6164" };
   }
