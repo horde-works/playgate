@@ -509,6 +509,8 @@ export const ui = {
     "hint.dc3Departure.actionTouch": "Clear for takeoff",
     "hint.dc3Departure.survey": "Take off, survey the island, land on 09",
     "hint.dc3Departure.taxi": "Taxi drill",
+    "hint.dc3Seat.cabin": "Step into the cabin",
+    "hint.dc3Seat.runway": "Step onto the runway in front of the nose",
     "hint.skatDeparture.eyebrow": "SR-6 prototype stand",
     "hint.skatDeparture.title":
       "SR-6 Skat is ready to fly the standard island circuit empty.",
@@ -1067,6 +1069,8 @@ export const ui = {
     "hint.dc3Departure.actionTouch": "Autorizar el despegue",
     "hint.dc3Departure.survey": "Despegar, sobrevolar la isla y aterrizar en la 09",
     "hint.dc3Departure.taxi": "Rodaje de prueba",
+    "hint.dc3Seat.cabin": "Salir al pasillo",
+    "hint.dc3Seat.runway": "Salir a la pista, delante del morro",
     "hint.skatDeparture.eyebrow": "Puesto del prototipo SR-6",
     "hint.skatDeparture.title":
       "SR-6 Skat está listo para volar vacío alrededor de la isla.",
@@ -1628,6 +1632,8 @@ export const ui = {
     "hint.dc3Departure.actionTouch": "Разрешить взлёт",
     "hint.dc3Departure.survey": "Взлёт, облёт острова, посадка на 09",
     "hint.dc3Departure.taxi": "Только руление",
+    "hint.dc3Seat.cabin": "Выйти в салон",
+    "hint.dc3Seat.runway": "Выйти на ВВП перед носом",
     "hint.skatDeparture.eyebrow": "Стоянка прототипа SR-6",
     "hint.skatDeparture.title":
       "SR-6 Skat готов пустым пройти типовой круг вокруг острова.",

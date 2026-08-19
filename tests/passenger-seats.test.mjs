@@ -280,6 +280,7 @@ test("место управления ищется по машине и не п�
     NIMBUS_HEXACOPTER_PILOT_SEAT,
     SKY_TRAIN_DRIVER_SEAT,
     TOWN_DS_DRIVER_SEAT,
+    ISLAND_AIRPORT_DC3_CAPTAIN_SEAT,
   } = await import("../games/make-a-mess/src/game/passengerSeats.ts");
 
   assert.equal(
@@ -298,6 +299,7 @@ test("место управления ищется по машине и не п�
   // узкий и здесь обязан молчать.
   assert.equal(seatCommandsRotorcraft(SKY_TRAIN_DRIVER_SEAT.id), false);
   assert.equal(seatCommandsRotorcraft(TOWN_DS_DRIVER_SEAT.id), false);
+  assert.equal(seatCommandsRotorcraft(ISLAND_AIRPORT_DC3_CAPTAIN_SEAT.id), false);
   assert.equal(
     rotorcraftControlSeatForCluster(SKY_TRAIN_DRIVER_SEAT.carrierClusterId),
     null,
@@ -343,5 +345,135 @@ test("предпочтение управляющего места работа�
   assert.equal(
     passengerSeatForCluster(cluster, [passenger])?.id,
     passenger.id,
+  );
+});
+
+test("sitting on the DC-3 offers survey and two exits; the runway is parked-only", async () => {
+  const {
+    ISLAND_AIRPORT_DC3_CAPTAIN_SEAT,
+    PASSENGER_SEAT_CABIN_ACTION,
+    PASSENGER_SEAT_RUNWAY_ACTION,
+    PASSENGER_SEAT_SURVEY_ACTION,
+    passengerSeatJourneyInProgress,
+    passengerSeatOccupiedActions,
+    passengerSeatReleasePoint,
+    passengerSeatViewYaw,
+    resolvePassengerSeatRequest,
+  } = await import("../games/make-a-mess/src/game/passengerSeats.ts");
+  const { islandAirportDc3Frame } = await import(
+    "../games/make-a-mess/src/content/scenes/islandAirport/islandAirportDc3.ts"
+  );
+
+  const parkedYaw = passengerSeatViewYaw(ISLAND_AIRPORT_DC3_CAPTAIN_SEAT, {
+    clusterId: islandAirportDc3Frame.clusterId,
+    origin: islandAirportDc3Frame.origin,
+    nose: islandAirportDc3Frame.nose,
+    pose: RESTING_POSE,
+    linearVelocity: [0, 0, 0],
+    angularVelocity: [0, 0, 0],
+    centreOfMass: islandAirportDc3Frame.origin,
+  });
+  assert.ok(
+    Math.abs(parkedYaw + Math.PI / 2) < 1e-9,
+    `parked captain view yaw is ${parkedYaw}, not out the nose`,
+  );
+
+  const parked = passengerSeatOccupiedActions(ISLAND_AIRPORT_DC3_CAPTAIN_SEAT, {
+    inFlight: false,
+  });
+  assert.deepEqual(
+    parked?.map((action) => action.id),
+    [
+      PASSENGER_SEAT_SURVEY_ACTION,
+      PASSENGER_SEAT_CABIN_ACTION,
+      PASSENGER_SEAT_RUNWAY_ACTION,
+    ],
+  );
+  const flying = passengerSeatOccupiedActions(ISLAND_AIRPORT_DC3_CAPTAIN_SEAT, {
+    inFlight: true,
+  });
+  assert.deepEqual(flying?.map((action) => action.id), [PASSENGER_SEAT_CABIN_ACTION]);
+  assert.equal(
+    passengerSeatJourneyInProgress({ hasFlight: true }),
+    true,
+  );
+  assert.equal(
+    passengerSeatJourneyInProgress({
+      hasFlight: true,
+      groundTaxiFinished: true,
+    }),
+    false,
+  );
+  const afterTaxi = passengerSeatOccupiedActions(ISLAND_AIRPORT_DC3_CAPTAIN_SEAT, {
+    inFlight: passengerSeatJourneyInProgress({
+      hasFlight: true,
+      groundTaxiFinished: true,
+    }),
+  });
+  assert.deepEqual(
+    afterTaxi?.map((action) => action.id),
+    [
+      PASSENGER_SEAT_SURVEY_ACTION,
+      PASSENGER_SEAT_CABIN_ACTION,
+      PASSENGER_SEAT_RUNWAY_ACTION,
+    ],
+  );
+
+  assert.deepEqual(
+    resolvePassengerSeatRequest({
+      post: "seat",
+      inFlight: false,
+      intact: true,
+    }),
+    { kind: "occupy" },
+  );
+  assert.deepEqual(
+    resolvePassengerSeatRequest({
+      post: "stand",
+      selectedActionId: PASSENGER_SEAT_SURVEY_ACTION,
+      inFlight: false,
+      intact: true,
+    }),
+    { kind: "startFlight", flightKind: PASSENGER_SEAT_SURVEY_ACTION },
+  );
+  assert.deepEqual(
+    resolvePassengerSeatRequest({
+      post: "stand",
+      selectedActionId: PASSENGER_SEAT_SURVEY_ACTION,
+      inFlight: true,
+      intact: true,
+    }),
+    { kind: "ignore" },
+  );
+  assert.deepEqual(
+    resolvePassengerSeatRequest({
+      post: "stand",
+      selectedActionId: PASSENGER_SEAT_RUNWAY_ACTION,
+      inFlight: true,
+      intact: true,
+    }),
+    { kind: "ignore" },
+  );
+  assert.deepEqual(
+    resolvePassengerSeatRequest({
+      post: "stand",
+      selectedActionId: PASSENGER_SEAT_RUNWAY_ACTION,
+      inFlight: false,
+      intact: true,
+    }),
+    { kind: "release", exit: "exterior" },
+  );
+  assert.deepEqual(
+    resolvePassengerSeatRequest({
+      post: "stand",
+      selectedActionId: PASSENGER_SEAT_CABIN_ACTION,
+      inFlight: true,
+      intact: true,
+    }),
+    { kind: "release", exit: "default" },
+  );
+  assert.notEqual(
+    passengerSeatReleasePoint(ISLAND_AIRPORT_DC3_CAPTAIN_SEAT, "exterior"),
+    passengerSeatReleasePoint(ISLAND_AIRPORT_DC3_CAPTAIN_SEAT, "default"),
   );
 });

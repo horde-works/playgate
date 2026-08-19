@@ -143,12 +143,17 @@ export function entryInteractionMatches(
 }
 
 /**
- * A ride requested from inside a carrier is the primary action there. Nearby
- * doors keep priority everywhere else, including exterior departure posts.
+ * Посадка и поездка — действия УЖЕ внутри машины. Space не должен открывать
+ * соседнюю створку вместо них. Дверь важнее только снаружи: у стойки
+ * отправления, у ручки, у любого поста, который не сажает в кресло.
  */
 export function preferredEntryInteraction(
   door: EntryInteractionTarget | null,
   vehicle: EntryInteractionTarget | null,
 ): EntryInteractionTarget | null {
-  return vehicle?.kind === "ride" ? vehicle : door ?? vehicle;
+  return vehicle?.kind === "ride"
+      || vehicle?.kind === "seat"
+      || vehicle?.kind === "stand"
+    ? vehicle
+    : door ?? vehicle;
 }

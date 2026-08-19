@@ -239,6 +239,8 @@ export interface AuthoredSceneDocument {
    * лишь объявляет их куски изменяемыми; кто и когда их гасит — дело рантайма.
    */
   readonly mutableObjects?: readonly MutableSceneObjectDefinition[];
+  /** Flight instruments portaled onto a named panel piece. */
+  readonly motionInstruments?: DestructionSceneDefinition["motionInstrumentDefinitions"];
   /** Мир-заповедник: ломать нельзя ничего (см. LICENSING.md). */
   readonly indestructible?: boolean;
   /**

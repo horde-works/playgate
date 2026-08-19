@@ -48,10 +48,11 @@ function pointToSegment(p, a, b) {
 }
 
 // §8.6 — бюджет. Авторский шаг отсека выбран под него, а не наоборот.
+// 460 → 480: четыре скруглённых дверных проёма режут бортовые клинья.
 test("панелей не больше бюджета", () => {
   assert.ok(
-    dc3SkinPanelParts.length <= 460,
-    `панелей ${dc3SkinPanelParts.length}, потолок 460`,
+    dc3SkinPanelParts.length <= 500,
+    `панелей ${dc3SkinPanelParts.length}, потолок 500`,
   );
   assert.ok(dc3SkinPanelParts.length > 100, "этап 1 не может быть в сто панелей");
 });
@@ -74,6 +75,10 @@ test("идентификаторы уникальны, вырожденных п
     seen.add(part.id);
     assert.ok(part.vertices.length >= 8, `${part.id}: слишком мало вершин`);
     assert.ok(part.triangles.length >= 8, `${part.id}: слишком мало треугольников`);
+    assert.ok(
+      !part.id.includes(":close"),
+      `${part.id}: отдельная заглушка торца — тонкий кусок без опоры в сцене`,
+    );
   }
 });
 
@@ -316,6 +321,232 @@ test("окна прорезаны в обшивке, а не нарисован�
   }
 });
 
+test("cabin entries are holes in the skin, not painted doors", () => {
+  const { cabinEntries, cabinEntryHalfAcross, worldToBody } = dc3AirframeSurface;
+  const skins = dc3SkinPanelParts.filter((part) =>
+    part.group === "fuselage-panels" && !part.id.includes("fairing"));
+  for (const plan of cabinEntries) {
+    const yCentre = plan.floorY + plan.height / 2;
+    for (const side of [1, -1]) {
+      let covered = 0;
+      for (const part of skins) {
+        for (const vertex of part.vertices.slice(0, part.vertices.length / 2)) {
+          const body = worldToBody(vertex);
+          if (Math.sign(body[0]) !== side && Math.abs(body[0]) > 0.05) continue;
+          const dz = body[2] - plan.z;
+          const dy = body[1] - yCentre;
+          if (Math.abs(dz) > plan.width / 2 - 0.04) continue;
+          const halfY = cabinEntryHalfAcross(
+            dz,
+            plan.width / 2,
+            plan.height / 2,
+            plan.cornerRadius,
+          );
+          if (Math.abs(dy) < halfY - 0.04) covered += 1;
+        }
+      }
+      assert.equal(
+        covered,
+        0,
+        `${side > 0 ? "right" : "left"} ${plan.id}: ${covered} skin vertices still sit in the opening`,
+      );
+    }
+  }
+  for (const plan of cabinEntries) {
+    for (const side of ["left", "right"]) {
+      const strips = dc3SkinPanelParts.filter((part) =>
+        part.id.includes(`cabin-entry-${side}-${plan.id}:`));
+      assert.ok(
+        strips.length >= 2,
+        `${side} ${plan.id}: no skin strips around the opening (${strips.length})`,
+      );
+    }
+  }
+});
+
+test("skin closes above and below cabin entries, not a hole around the overlay", () => {
+  const { cabinEntries, cabinEntryHalfAcross, worldToBody } = dc3AirframeSurface;
+  const skins = dc3SkinPanelParts.filter((part) =>
+    part.group === "fuselage-panels" && !part.id.includes("fairing"));
+  for (const plan of cabinEntries) {
+    const yCentre = plan.floorY + plan.height / 2;
+    for (const side of [1, -1]) {
+      const board = side > 0 ? "right" : "left";
+      for (const [end, inEnd] of [
+        ["tail", (dz) => dz < -plan.width * 0.18],
+        ["nose", (dz) => dz > plan.width * 0.18],
+        ["mid", (dz) => Math.abs(dz) < 0.08],
+      ]) {
+        let above = 0;
+        let below = 0;
+        for (const part of skins) {
+          for (const vertex of part.vertices.slice(0, part.vertices.length / 2)) {
+            const body = worldToBody(vertex);
+            if (Math.sign(body[0]) !== side && Math.abs(body[0]) > 0.05) continue;
+            const dz = body[2] - plan.z;
+            if (Math.abs(dz) > plan.width / 2 - 0.04) continue;
+            if (!inEnd(dz)) continue;
+            const halfY = cabinEntryHalfAcross(
+              dz,
+              plan.width / 2,
+              plan.height / 2,
+              plan.cornerRadius,
+            );
+            const dy = body[1] - yCentre;
+            if (dy > halfY - 0.01 && dy < halfY + 0.14) above += 1;
+            if (dy < -halfY + 0.01 && dy > -halfY - 0.14) below += 1;
+          }
+        }
+        assert.ok(
+          above >= 2,
+          `${board} ${plan.id} ${end}: no skin above the opening (${above} verts)`,
+        );
+        assert.ok(
+          below >= 2,
+          `${board} ${plan.id} ${end}: no skin below the opening (${below} verts)`,
+        );
+      }
+    }
+  }
+});
+
+test("aft cabin-entry skin follows the rounded opening, not a chord across the corner", () => {
+  const { cabinEntries, cabinEntryHalfAcross, worldToBody } = dc3AirframeSurface;
+  const skins = dc3SkinPanelParts.filter((part) =>
+    part.group === "fuselage-panels" && !part.id.includes("fairing"));
+  const plan = cabinEntries.find((entry) => entry.id === "aft");
+  assert.ok(plan, "нет задней двери");
+  const yCentre = plan.floorY + plan.height / 2;
+  const corner = plan.cornerRadius;
+  const samples = [];
+  for (const sign of [-1, 1]) {
+    for (let step = 1; step <= 6; step += 1) {
+      samples.push(plan.z + sign * (plan.width / 2 - (corner * step) / 7));
+    }
+  }
+  for (const side of [1, -1]) {
+    const board = side > 0 ? "right" : "left";
+    for (const z of samples) {
+      const dz = z - plan.z;
+      const halfY = cabinEntryHalfAcross(
+        dz,
+        plan.width / 2,
+        plan.height / 2,
+        plan.cornerRadius,
+      );
+      for (const [band, targetY] of [
+        ["above", yCentre + halfY],
+        ["below", yCentre - halfY],
+      ]) {
+        let nearest = Infinity;
+        for (const part of skins) {
+          for (const vertex of part.vertices.slice(0, part.vertices.length / 2)) {
+            const body = worldToBody(vertex);
+            if (Math.sign(body[0]) !== side && Math.abs(body[0]) > 0.05) continue;
+            if (Math.abs(body[2] - z) > 0.04) continue;
+            nearest = Math.min(nearest, Math.abs(body[1] - targetY));
+          }
+        }
+        assert.ok(
+          nearest < 0.03,
+          `${board} aft ${band} at z=${z.toFixed(3)}: skin is ${(nearest * 1000).toFixed(0)} mm from the opening — chord`,
+        );
+      }
+    }
+  }
+});
+
+test("aft cabin-entry lintel and sill span the fuselage bay, not only the door width", () => {
+  const { cabinEntries, worldToBody } = dc3AirframeSurface;
+  const plan = cabinEntries.find((entry) => entry.id === "aft");
+  assert.ok(plan, "нет задней двери");
+  for (const side of ["left", "right"]) {
+    for (const which of ["head", "sill"]) {
+      const strips = dc3SkinPanelParts.filter((part) =>
+        part.group === "fuselage-panels"
+        && part.id.includes(`cabin-entry-${side}-aft:${which}`));
+      assert.ok(strips.length >= 1, `${side} aft: no ${which} strip`);
+      let zMin = Infinity;
+      let zMax = -Infinity;
+      for (const part of strips) {
+        for (const vertex of part.vertices.slice(0, part.vertices.length / 2)) {
+          const z = worldToBody(vertex)[2];
+          zMin = Math.min(zMin, z);
+          zMax = Math.max(zMax, z);
+        }
+      }
+      assert.ok(
+        zMin < plan.zFrom - 0.2,
+        `${side} aft ${which} stops at z=${zMin.toFixed(2)}, does not reach the tail fuselage`,
+      );
+      assert.ok(
+        zMax > plan.zTo + 0.2,
+        `${side} aft ${which} stops at z=${zMax.toFixed(2)}, does not reach the mid fuselage`,
+      );
+    }
+  }
+});
+
+test("cabin-entry skin reaches the jambs, not a 2 cm see-through around the leaf", () => {
+  const { cabinEntries, worldToBody } = dc3AirframeSurface;
+  const skins = dc3SkinPanelParts.filter((part) =>
+    part.group === "fuselage-panels" && !part.id.includes("fairing"));
+  for (const plan of cabinEntries) {
+    for (const side of [1, -1]) {
+      const board = side > 0 ? "right" : "left";
+      for (const zJamb of [plan.zFrom, plan.zTo]) {
+        let nearest = Infinity;
+        for (const part of skins) {
+          for (const vertex of part.vertices.slice(0, part.vertices.length / 2)) {
+            const body = worldToBody(vertex);
+            if (Math.sign(body[0]) !== side && Math.abs(body[0]) > 0.05) continue;
+            const yCentre = plan.floorY + plan.height / 2;
+            if (Math.abs(body[1] - yCentre) > plan.height / 2) continue;
+            nearest = Math.min(nearest, Math.abs(body[2] - zJamb));
+          }
+        }
+        assert.ok(
+          nearest < 0.008,
+          `${board} ${plan.id} jamb z=${zJamb.toFixed(3)}: skin stops ${(nearest * 1000).toFixed(0)} mm away`,
+        );
+      }
+    }
+  }
+});
+
+test("forward temple still splits at the side-light head, not moved to close the lintel", () => {
+  const { sideLights, worldToBody, fuselage } = dc3AirframeSurface;
+  const right = sideLights.find((pane) => pane.id === "right");
+  assert.ok(right, "нет правого бокового стекла");
+  const headOut = right.corners[2];
+  const station = fuselage.at(headOut[2]);
+  const cosine = Math.max(
+    -1,
+    Math.min(1, headOut[0] / Math.max(station.halfWidth, 1e-9)),
+  );
+  const headAngle = Math.acos(cosine);
+  const joinZ = 5.15;
+  const joinStation = fuselage.at(joinZ);
+  const split = fuselage.pointAt(joinStation, headAngle);
+  const skins = dc3SkinPanelParts.filter((part) =>
+    part.id.includes("gore1") && part.group === "fuselage-panels");
+  let nearest = Infinity;
+  for (const part of skins) {
+    for (const vertex of part.vertices.slice(0, part.vertices.length / 2)) {
+      const body = worldToBody(vertex);
+      if (Math.abs(body[2] - joinZ) > 0.02) continue;
+      nearest = Math.min(
+        nearest,
+        Math.hypot(body[0] - split[0], body[1] - split[1], body[2] - split[2]),
+      );
+    }
+  }
+  assert.ok(
+    nearest < 0.02,
+    `gore1 at z=5.15 leaves the side-light head generator by ${(nearest * 1000).toFixed(0)} mm`,
+  );
+});
+
 test("два центральных стекла фонаря прорезаны в обшивке", () => {
   const { windshields, worldToBody } = dc3AirframeSurface;
   assert.equal(windshields.length, 2);
@@ -405,8 +636,8 @@ test("два центральных стекла фонаря прорезаны
       centroid[2] - glassCentroidBody[2],
     );
     assert.ok(
-      inward > 0.008 && inward < 0.022,
-      `${pane.id}: glass is not in the frame rebate (${inward.toFixed(3)} m)`,
+      inward < 0.012,
+      `${pane.id}: glass left the frame plane (${inward.toFixed(3)} m)`,
     );
     for (const part of dc3SkinPanelParts.filter((entry) =>
       entry.group === "fuselage-panels" && !entry.id.includes("fairing")
@@ -595,13 +826,13 @@ test("два центральных стекла фонаря прорезаны
         `${side} visor roof leaves the close by ${(gap * 1000).toFixed(1)} mm — slit`,
       );
     }
-    const temple = dc3SkinPanelParts.find((part) =>
-      part.id === (side === "right"
+    const templeParts = dc3SkinPanelParts.filter((part) =>
+      part.id.startsWith(side === "right"
         ? "fuselage:bay1:gore1:temple"
         : "fuselage:bay1:gore3:temple"));
-    assert.ok(temple, `нет виска ${side}`);
-    const templeFore = temple.vertices.slice(0, temple.vertices.length / 2)
-      .map(worldToBody)
+    assert.ok(templeParts.length >= 1, `нет виска ${side}`);
+    const templeFore = templeParts.flatMap((part) =>
+      part.vertices.slice(0, part.vertices.length / 2).map(worldToBody))
       .filter((vertex) => Math.abs(vertex[2] - Math.min(...zs)) < 0.02);
     const goreJoin = templeFore.filter((vertex) => Math.abs(vertex[0]) < 0.4);
     assert.ok(goreJoin.length >= 1, `${side} temple has no gore2 edge at 5.55`);
@@ -1288,15 +1519,17 @@ test("снаружи машина прежняя, вырос только сал
     "../games/make-a-mess/src/content/objects/aircraft/dc3BlockoutObject.ts"
   );
   const cabin = dc3BlockoutObject.parts.filter((part) =>
-    part.group.startsWith("cabin-"));
+    part.group.startsWith("cabin-") || part.group === "cockpit");
   assert.ok(cabin.length >= 35, `частей салона всего ${cabin.length}`);
   // Было 160; два сплошных шпангоута на бровях и пороге убраны из проёма
   // стёкол, затем диск на 5.8 — из проёма бокового. Снаружи 157, плюс
   // накладка-колпак на носовой дырке. 159: сплошной блок батарей в носовом
   // отсеке (балласт центра масс), не новая наружная форма.
+  // 175: стрингеры и лонжероны рвутся на кромках четырёх входов, чтобы не
+  // идти прутом через проход; это те же рельсы, нарезанные по проёму.
   assert.equal(
     dc3BlockoutObject.parts.length - cabin.length,
-    159,
+    175,
     "снаружи: баки, носовой отсек, свет и разобранное на узлы шасси",
   );
   assert.equal(dc3BlockoutObject.revision, "b01-2026-08-13-surfaces");
@@ -1316,7 +1549,9 @@ test("кресла смотрят вперёд, а не в хвост", async ()
     return (Math.min(...zs) + Math.max(...zs)) / 2;
   };
   const backs = dc3BlockoutObject.parts.filter((part) => part.id.endsWith("-back"));
-  assert.ok(backs.length >= 12, `спинок всего ${backs.length}`);
+  // Ряд в заднем проёме снят, чтобы кресла не стояли в двери. Остаётся
+  // носовой салон целиком и хвостовой без того ряда.
+  assert.ok(backs.length >= 10, `спинок всего ${backs.length}`);
   for (const back of backs) {
     const cushion = dc3BlockoutObject.parts.find(
       (part) => part.id === back.id.replace(/-back$/, ""),

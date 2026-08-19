@@ -169,6 +169,10 @@ test("cabin entries plug out then slide toward the tail", () => {
       assert.ok(policy, `${prefix}: нет профиля plug-slide`);
       assert.equal(policy.slideSign ?? 1, side === "left" ? -1 : 1, prefix);
       assert.ok(policy.travel >= 0.76, `${prefix}: ход ${policy.travel} короче створки`);
+      assert.ok(
+        (policy.approachRadius ?? 3.2) < 2.2,
+        `${prefix}: зона двери ${policy.approachRadius} хватает салон`,
+      );
 
       assert.ok(leaf.hinge && pane.hinge, `${prefix}: нет петли`);
       assert.equal(seal.hinge, undefined, `${prefix}: уплотнение не должно ехать`);

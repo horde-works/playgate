@@ -137,6 +137,7 @@ test("the compound envelope is the skin, not the cage", () => {
     "longeron-",
     "fuselage-frame-",
     "cabin-",
+    "cockpit-",
     "centre-tank-",
     "wing-spar-",
     "wing-former-",
@@ -249,11 +250,11 @@ test("the airport DC-3 is dispatched from its own command post", () => {
   );
   assert.equal(vehicle.flight.liftSource, "wing");
   assert.equal(vehicle.flight.airplane, DC3_AIRPLANE_CLASS.passport);
-  // ОДНА команда, потому что для крылатой машины взлёт, облёт и посадка —
-  // это один рейс, а не три отдельных действия.
+  // Облёт — один рейс. Учебное руление — вторая команда той же стойки,
+  // без сорокаминутного полёта (вердикт Igor, 15.08.2026).
   assert.deepEqual(
     vehicle.departure?.target.actions?.map((action) => action.id),
-    ["survey"],
+    ["survey", "taxi"],
   );
   assert.equal(vehicle.departure?.flightKind, "survey");
   // Пункт стоит на траве, а не на бетоне: разбег не проходит сквозь человека.

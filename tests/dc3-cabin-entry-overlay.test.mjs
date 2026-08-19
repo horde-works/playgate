@@ -52,7 +52,10 @@ test("four rounded cabin-entry overlays sit on both sides, not in the greenhouse
           `${leaf.id} слишком близко к первому окну`,
         );
       } else {
-        assert.ok(zMin < lastWindow.z && zMax > lastWindow.z, `${leaf.id} мимо последнего окна`);
+        assert.ok(
+          zMax < lastWindow.z - lastWindow.along / 2 - 0.05,
+          `${leaf.id} должна стоять за последним оставшимся окном, а не на нём`,
+        );
       }
 
       const yCentre = plan.floorY + plan.height / 2;
@@ -134,6 +137,82 @@ test("leaf and pane share a plug-slide id, seal and frame stay on the fuselage",
         `${prefix}:board:0`,
         `${prefix}:board:1`,
       ]);
+    }
+  }
+});
+
+test("the cabin-entry opening is clear of seats, frames and cage rails", () => {
+  const { cabinEntries, cabinEntryHalfAcross, worldToBody } = dc3AirframeSurface;
+  const inOpening = (vertex, plan, side, margin) => {
+    const [x, y, z] = worldToBody(vertex);
+    if (Math.sign(x) !== side && Math.abs(x) > 0.08) return false;
+    const dz = z - plan.z;
+    if (Math.abs(dz) > plan.width / 2 - margin) return false;
+    const yCentre = plan.floorY + plan.height / 2;
+    const halfY = cabinEntryHalfAcross(
+      dz,
+      plan.width / 2,
+      plan.height / 2,
+      plan.cornerRadius,
+    );
+    return Math.abs(y - yCentre) < halfY - margin;
+  };
+  const railCrossesOpening = (part, plan, side) => {
+    if (!part.triangles) return false;
+    for (const triangle of part.triangles) {
+      const pts = triangle.map((index) => part.vertices[index]);
+      const bodies = pts.map((vertex) => worldToBody(vertex));
+      const zs = bodies.map((vertex) => vertex[2]);
+      if (Math.min(...zs) > plan.z - 0.05 || Math.max(...zs) < plan.z + 0.05) continue;
+      const centroid = [0, 1, 2].map((axis) =>
+        (pts[0][axis] + pts[1][axis] + pts[2][axis]) / 3);
+      if (inOpening(centroid, plan, side, 0.02)) return true;
+    }
+    return false;
+  };
+  const cornersOf = (part) => {
+    if (part.vertices) return part.vertices;
+    const [cx, cy, cz] = part.center;
+    const [sx, sy, sz] = part.size;
+    const corners = [];
+    for (const dx of [-sx / 2, sx / 2]) {
+      for (const dy of [-sy / 2, sy / 2]) {
+        for (const dz of [-sz / 2, sz / 2]) corners.push([cx + dx, cy + dy, cz + dz]);
+      }
+    }
+    return corners;
+  };
+
+  for (const plan of cabinEntries) {
+    for (const side of [1, -1]) {
+      const board = side > 0 ? "right" : "left";
+      const cage = dc3BlockoutObject.parts.find(
+        (part) => part.id === `cabin-entry-${board}-${plan.id}-cage`,
+      );
+      assert.ok(cage, `${board} ${plan.id}: no inner cage surround`);
+      assert.equal(cage.group, "cabin-frame");
+
+      for (const part of dc3BlockoutObject.parts) {
+        if (part.id === cage.id) continue;
+        if (part.group === "cabin-entry-overlay") continue;
+        const blocking = /^(stringer-|longeron-|fuselage-frame-|cabin-frame-)/.test(part.id)
+          || part.group === "cabin-seats";
+        if (!blocking) continue;
+        if (part.vertices) {
+          assert.equal(
+            railCrossesOpening(part, plan, side),
+            false,
+            `${part.id} still spans the ${board} ${plan.id} opening`,
+          );
+        }
+        for (const vertex of cornersOf(part)) {
+          assert.equal(
+            inOpening(vertex, plan, side, 0.04),
+            false,
+            `${part.id} still occupies the ${board} ${plan.id} opening`,
+          );
+        }
+      }
     }
   }
 });

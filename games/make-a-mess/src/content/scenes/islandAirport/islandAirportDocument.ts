@@ -23,6 +23,7 @@ import {
 import {
   islandAirportDc3CommandPostGroup,
   islandAirportDc3Group,
+  islandAirportDc3MotionInstruments,
 } from "./islandAirportDc3.ts";
 
 type MutableGroup = SceneGroupDefinition & { objects: SceneObjectDefinition[] };
@@ -969,6 +970,7 @@ export const islandAirportDocument: AuthoredSceneDocument = {
     axis: [0, 1, 0],
     radiansPerSecond: 1.7,
   }],
+  motionInstruments: islandAirportDc3MotionInstruments,
   spotLights: [
     { id: "apron-flood-west", position: [-12, 8.4, 8.8], direction: [0.16, -0.72, -0.67], color: "#ffe6bd", distance: 34, intensity: 11, angle: 0.62, penumbra: 0.55, dayIntensityFactor: 0.08 },
     { id: "apron-flood-east", position: [39, 9.2, 8.8], direction: [-0.1, -0.68, -0.72], color: "#ffe6bd", distance: 38, intensity: 12, angle: 0.65, penumbra: 0.55, dayIntensityFactor: 0.08 },

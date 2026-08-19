@@ -378,6 +378,7 @@ import {
   passengerSeatViewYaw,
   passengerSeatWorldMotion,
   passengerSeatWorldPoint,
+  type OccupiedSeatRelease,
   type PassengerSeatDefinition,
 } from "./passengerSeats";
 import {
@@ -1343,6 +1344,7 @@ function Player({
   occupiedSeatId,
   vehicleFramePoses,
   forceFieldRef,
+  seatReleaseExitRef,
 }: {
   registerBody: (id: string, body: RapierRigidBody | null) => void;
   mobileControls: MobileControlsRef;
@@ -1366,6 +1368,7 @@ function Player({
     ReadonlyMap<string, VehicleFramePoseState>
   >;
   forceFieldRef?: MutableRefObject<BasaltForceFieldRuntime | null>;
+  seatReleaseExitRef?: MutableRefObject<SceneVector3 | null>;
 }) {
   const body = useRef<RapierRigidBody>(null);
   const [, getControls] = useKeyboardControls<ControlName>();
@@ -1525,9 +1528,11 @@ function Player({
       const carrier = vehicleFramePoses.current.get(
         releasedSeat.carrierClusterId,
       );
+      const authoredExit = seatReleaseExitRef?.current ?? releasedSeat.exitPoint;
+      if (seatReleaseExitRef) seatReleaseExitRef.current = null;
       const exitPoint = carrier
-        ? passengerSeatWorldPoint(carrier, releasedSeat.exitPoint)
-        : releasedSeat.exitPoint;
+        ? passengerSeatWorldPoint(carrier, authoredExit)
+        : authoredExit;
       const exitMotion = carrier
         ? passengerSeatWorldMotion(carrier, exitPoint)
         : { linearVelocity: { x: 0, y: 0, z: 0 }, yawVelocity: 0 };
@@ -4274,7 +4279,10 @@ interface OpenWorldSceneProps {
     flightKind: string | null,
   ) => void;
   occupiedSeatId: string | null;
-  onOccupiedSeatChange: (seatId: string | null) => void;
+  onOccupiedSeatChange: (
+    seatId: string | null,
+    release?: OccupiedSeatRelease,
+  ) => void;
   onMotionTelemetryUpdate: (update: MotionTelemetryUpdate) => void;
   onRotorcraftPilotStatusChange: (status: RotorcraftPilotStatus | null) => void;
   motionTelemetryStore: MotionTelemetryStore;
@@ -4330,6 +4338,14 @@ function OpenWorldScene({
   motionTelemetryStore,
   onVehicleFailure,
 }: OpenWorldSceneProps) {
+  const seatReleaseExitRef = useRef<SceneVector3 | null>(null);
+  const handleOccupiedSeatChange = useCallback(
+    (seatId: string | null, release?: OccupiedSeatRelease) => {
+      seatReleaseExitRef.current = seatId ? null : (release?.exitPoint ?? null);
+      onOccupiedSeatChange(seatId, release);
+    },
+    [onOccupiedSeatChange],
+  );
   const {
     breakablePieceById,
     breakablePieces,
@@ -10405,9 +10421,9 @@ function OpenWorldScene({
       occupiedSeat &&
       !passengerSeatIsIntact(occupiedSeat, inactiveCompoundMembers)
     ) {
-      onOccupiedSeatChange(null);
+      handleOccupiedSeatChange(null);
     }
-  }, [inactiveCompoundMembers, occupiedSeatId, onOccupiedSeatChange]);
+  }, [inactiveCompoundMembers, occupiedSeatId, handleOccupiedSeatChange]);
 
   // A light fixture counts as dead whether it broke loose, shattered or got
   // a hole carved through it.
@@ -10699,7 +10715,7 @@ function OpenWorldScene({
         onInterIslandPassengerStateChange={onInterIslandPassengerStateChange}
         onPassengerViewRestore={passengerViewMotion.snapTo}
         occupiedSeatId={occupiedSeatId}
-        onOccupiedSeatChange={onOccupiedSeatChange}
+        onOccupiedSeatChange={handleOccupiedSeatChange}
         movingVehicles={movingVehicles}
         dockedVehicles={dockedVehicles}
         clusterEventStates={clusterEventStates}
@@ -10749,7 +10765,7 @@ function OpenWorldScene({
         resetVersion={resetVersion}
         clusterRegistry={compoundKinematicClusters}
         occupiedSeatId={occupiedSeatId}
-        onOccupiedSeatChange={onOccupiedSeatChange}
+        onOccupiedSeatChange={handleOccupiedSeatChange}
         onApproachChange={onCarApproachChange}
         entryRequestVersion={entryOpenRequestVersion}
         entryRequestTargetRef={entryOpenRequestTargetRef}
@@ -10764,7 +10780,7 @@ function OpenWorldScene({
         sceneId={scene.id}
         resetVersion={resetVersion}
         occupiedSeatId={occupiedSeatId}
-        onOccupiedSeatChange={onOccupiedSeatChange}
+        onOccupiedSeatChange={handleOccupiedSeatChange}
         vehicleFramePoses={vehicleFramePoses}
         runtimeRef={constructionRuntime}
         onUiChange={onConstructionUiChange}
@@ -10808,6 +10824,7 @@ function OpenWorldScene({
             occupiedSeatId={occupiedSeatId}
             vehicleFramePoses={vehicleFramePoses}
             forceFieldRef={forceFieldActive ? basaltForceField : undefined}
+            seatReleaseExitRef={seatReleaseExitRef}
           />
           {/* Свет модели вида живёт ПОСТОЯННО: лампы, ездящие вместе с
               оружием, меняли число источников сцены и заставляли three

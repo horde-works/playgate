@@ -633,10 +633,9 @@ function loftPointAtY(z: number, y: number, side: 1 | -1): ObjectPoint {
  */
 const FRAME_WIDTH = 0.045;
 const FRAME_INSET = 0.008;
-// Стекло сидит В ОБВЯЗКЕ, а не в колодце за ней. При 50 мм между рамой и
-// пакетом на косом взгляде открывался откос шириной в палец — окно читалось
-// утопленным люком. 7 мм ступеньки достаточно, чтобы пакет не лежал заподлицо
-// с рамой и при этом не проваливался.
+// Салонные иллюминаторы сидят в обвязке на 15 мм. У фонаря тот же колодец
+// на косом стекле открывал небо у брови — лобовые и боковые фонаря лежат
+// в плоскости внутренней кромки рамы (встык), без отступа по нормали.
 const GLASS_INSET = 0.015;
 
 type WindowCut = {
@@ -675,6 +674,205 @@ const snapTo = (value: number, grid: readonly number[], epsilon: number) => {
   return near ?? value;
 };
 
+type DoorVoid = {
+  readonly id: string;
+  readonly side: 1 | -1;
+  readonly z: number;
+  readonly zFrom: number;
+  readonly zTo: number;
+  readonly floorY: number;
+  readonly height: number;
+  readonly corner: number;
+};
+
+function goreYRange(z: number, angleFrom: number, angleTo: number): readonly [number, number] {
+  const station = fuselageStationAt(z);
+  const y0 = fuselage.pointAt(station, angleFrom)[1];
+  const y1 = fuselage.pointAt(station, angleTo)[1];
+  return [Math.min(y0, y1), Math.max(y0, y1)];
+}
+
+function doorMeetsGore(door: DoorVoid, angleFrom: number, angleTo: number): boolean {
+  const station = fuselageStationAt(door.z);
+  const mid = fuselage.pointAt(station, (angleFrom + angleTo) / 2);
+  if (Math.sign(mid[0]) !== door.side && Math.abs(mid[0]) > 0.05) {
+    return false;
+  }
+  const [gy0, gy1] = goreYRange(door.z, angleFrom, angleTo);
+  return gy1 > door.floorY && gy0 < door.floorY + door.height;
+}
+
+function emitAngleStrip(
+  id: string,
+  zs: readonly number[],
+  innerAngles: readonly number[],
+  outerAngle: number,
+): void {
+  if (zs.length < 2 || innerAngles.length !== zs.length) return;
+  const inners = innerAngles.map((inner) => angleNear(inner, outerAngle));
+  const steps = Math.max(2, Math.round(FUSELAGE_GORE_STEP));
+  const grid = zs.map((z, row) => {
+    const inner = inners[row];
+    return Array.from({ length: steps + 1 }, (_, step) => {
+      const t = step / steps;
+      const angle = outerAngle + (inner - outerAngle) * t;
+      return fuselage.pointAt(fuselageStationAt(z), angle);
+    });
+  });
+  const width = Math.max(
+    ...inners.map((inner) => Math.abs(inner - outerAngle)),
+  );
+  if (width < 1e-4) return;
+  const centres = zs.map((z) => {
+    const station = fuselageStationAt(z);
+    return [0, (station.crown + station.keel) / 2, z] as ObjectPoint;
+  });
+  emitPanel(id, "fuselage-panels", grid, centres);
+}
+
+function angleNear(value: number, target: number): number {
+  let angle = value;
+  while (angle - target > Math.PI) angle -= TAU;
+  while (target - angle > Math.PI) angle += TAU;
+  return angle;
+}
+
+function goreAngleAtY(
+  z: number,
+  y: number,
+  angleFrom: number,
+  angleTo: number,
+): number {
+  let lo = angleFrom;
+  let hi = angleTo;
+  const yLo = fuselage.pointAt(fuselageStationAt(z), lo)[1];
+  const yHi = fuselage.pointAt(fuselageStationAt(z), hi)[1];
+  const rising = yHi >= yLo;
+  for (let step = 0; step < 24; step += 1) {
+    const mid = (lo + hi) / 2;
+    const yMid = fuselage.pointAt(fuselageStationAt(z), mid)[1];
+    if (rising ? yMid < y : yMid > y) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
+function emitDoorVoid(
+  id: string,
+  spanFrom: number,
+  spanTo: number,
+  zRows: readonly number[],
+  angleFrom: number,
+  angleTo: number,
+  door: DoorVoid,
+): void {
+  const yCentre = door.floorY + door.height / 2;
+  const doorBot = door.floorY;
+  const doorTop = door.floorY + door.height;
+  const halfAlong = (door.zTo - door.zFrom) / 2;
+  const halfAcross = door.height / 2;
+  const yAt = (z: number, angle: number): number =>
+    fuselage.pointAt(fuselageStationAt(z), angle)[1];
+  // Кромки клина по ВЫСОТЕ, не по номеру угла: на левом борту угол растёт
+  // к килю, на правом — к короне. Иначе одна полоса зашивает верх слева
+  // и низ справа.
+  const yFrom = yAt(door.z, angleFrom);
+  const yTo = yAt(door.z, angleTo);
+  const sillOuter = yFrom <= yTo ? angleFrom : angleTo;
+  const headOuter = yFrom <= yTo ? angleTo : angleFrom;
+  const headUnwrapped = angleNear(headOuter, sillOuter);
+  const [g0, g1] = goreYRange(door.z, angleFrom, angleTo);
+  const through = doorBot <= g0 + 1e-4 && doorTop >= g1 - 1e-4;
+  const carriesHead = !through && doorTop > g0 + 1e-4 && doorTop < g1 - 1e-4;
+  const carriesSill = !through && doorBot > g0 + 1e-4 && doorBot < g1 - 1e-4;
+  const corner = door.corner;
+  const cornerZs = (end: number, inward: 1 | -1): number[] =>
+    Array.from({ length: 9 }, (_, step) => end + inward * ((corner * step) / 8));
+  const zs = uniqueSorted([
+    spanFrom,
+    spanTo,
+    ...zRows.filter((z) => z >= spanFrom - 1e-9 && z <= spanTo + 1e-9),
+    ...Array.from({ length: 13 }, (_, step) =>
+      door.zFrom + ((door.zTo - door.zFrom) * step) / 12),
+    ...cornerZs(door.zFrom, 1),
+    ...cornerZs(door.zTo, -1),
+  ]).filter((z) => z >= spanFrom - 1e-9 && z <= spanTo + 1e-9);
+  if (zs.length < 2) return;
+  const sillZ: number[] = [];
+  const sillInner: number[] = [];
+  const headZ: number[] = [];
+  const headInner: number[] = [];
+  let part = 0;
+  const flush = (which: "sill" | "head", zsRun: number[], inners: number[], outer: number): void => {
+    if (zsRun.length >= 2) {
+      emitAngleStrip(`${id}:${which}${part}`, zsRun, inners, outer);
+      part += 1;
+    }
+    zsRun.length = 0;
+    inners.length = 0;
+  };
+  const fillGore = (z: number): void => {
+    if (carriesSill && !carriesHead) {
+      flush("head", headZ, headInner, headOuter);
+      sillZ.push(z);
+      sillInner.push(angleNear(headUnwrapped, sillOuter));
+      return;
+    }
+    flush("sill", sillZ, sillInner, sillOuter);
+    headZ.push(z);
+    headInner.push(angleNear(sillOuter, headOuter));
+  };
+  for (const z of zs) {
+    const [gy0, gy1] = goreYRange(z, angleFrom, angleTo);
+    const inHole = z >= door.zFrom - 1e-9 && z <= door.zTo + 1e-9;
+    if (!inHole) {
+      fillGore(z);
+      continue;
+    }
+    const halfY = dc3AirframeSurface.cabinEntryHalfAcross(
+      z - door.z,
+      halfAlong,
+      halfAcross,
+      door.corner,
+    );
+    const openY0 = yCentre - halfY;
+    const openY1 = yCentre + halfY;
+    const holeY0 = Math.max(openY0, gy0);
+    const holeY1 = Math.min(openY1, gy1);
+    if (holeY1 <= holeY0 + 1e-4) {
+      fillGore(z);
+      continue;
+    }
+    if (holeY0 <= gy0 + 1e-4 && holeY1 >= gy1 - 1e-4) {
+      // Сквозной клин: кромка проёма по z — это косяк. Если выкинуть и
+      // zFrom/zTo, последняя строка шкуры остаётся на zFrom−2 см, и вокруг
+      // створки смотрит салон.
+      const atJamb = Math.abs(z - door.zFrom) < 1e-6 || Math.abs(z - door.zTo) < 1e-6;
+      if (atJamb) {
+        fillGore(z);
+      } else {
+        flush("sill", sillZ, sillInner, sillOuter);
+        flush("head", headZ, headInner, headOuter);
+      }
+      continue;
+    }
+    if (holeY0 > gy0 + 1e-4) {
+      sillZ.push(z);
+      sillInner.push(goreAngleAtY(z, holeY0, angleFrom, angleTo));
+    } else {
+      flush("sill", sillZ, sillInner, sillOuter);
+    }
+    if (holeY1 < gy1 - 1e-4) {
+      headZ.push(z);
+      headInner.push(goreAngleAtY(z, holeY1, angleFrom, angleTo));
+    } else {
+      flush("head", headZ, headInner, headOuter);
+    }
+  }
+  flush("sill", sillZ, sillInner, sillOuter);
+  flush("head", headZ, headInner, headOuter);
+}
+
 function emitFuselageBand(
   id: string,
   zLow: number,
@@ -684,6 +882,7 @@ function emitFuselageBand(
   angleTo: number,
   goreAngles: readonly number[],
   cuts: readonly WindowCut[],
+  voids: readonly DoorVoid[] = [],
 ): void {
   const sortedZs = uniqueSorted(zRows);
   const inside = cuts
@@ -691,7 +890,19 @@ function emitFuselageBand(
       cut.zFrom > zLow && cut.zTo < zHigh
       && cut.angleFrom > angleFrom && cut.angleTo < angleTo)
     .sort((left, right) => left.zFrom - right.zFrom);
-  if (inside.length === 0) {
+  const doors = voids
+    .filter((door) =>
+      door.zTo > zLow + 1e-6
+      && door.zFrom < zHigh - 1e-6
+      && doorMeetsGore(door, angleFrom, angleTo))
+    .map((door) => ({
+      door,
+      zFrom: Math.max(door.zFrom, zLow),
+      zTo: Math.min(door.zTo, zHigh),
+    }))
+    .filter((entry) => entry.zTo - entry.zFrom > 1e-4)
+    .sort((left, right) => left.zFrom - right.zFrom);
+  if (inside.length === 0 && doors.length === 0) {
     if (sortedZs.length >= 2 && goreAngles.length >= 2) {
       fuselageTile(id, "fuselage-panels", sortedZs, goreAngles);
     }
@@ -710,11 +921,27 @@ function emitFuselageBand(
       cut.angleFrom, cut.glassAngleFrom, cut.glassAngleTo, cut.angleTo,
     ]),
   ]);
+  const doorNeighborhood = doors.flatMap((entry) => {
+    const pitch = 0.08;
+    const pad = 0.32;
+    const start = Math.max(zLow, entry.zFrom - pad);
+    const end = Math.min(zHigh, entry.zTo + pad);
+    const count = Math.max(4, Math.round((end - start) / pitch));
+    return [
+      ...Array.from({ length: count + 1 }, (_, step) =>
+        start + ((end - start) * step) / count),
+      entry.zFrom - 0.02,
+      entry.zFrom,
+      entry.zTo,
+      entry.zTo + 0.02,
+    ];
+  });
   const rows = uniqueSorted([
     ...sortedZs,
     ...snapped.flatMap((cut) => [
       cut.zFrom, cut.glassZFrom, cut.glassZTo, cut.zTo,
     ]),
+    ...doorNeighborhood,
   ]);
   const tile = (
     tag: string,
@@ -727,32 +954,75 @@ function emitFuselageBand(
     if (rws.length < 2 || cols.length < 2) return;
     fuselageTile(tag, group, rws, cols, inward, material);
   };
+  type BandFeature =
+    | { readonly kind: "window"; readonly zFrom: number; readonly zTo: number; readonly cut: WindowCut }
+    | { readonly kind: "void"; readonly zFrom: number; readonly zTo: number; readonly door: DoorVoid };
+  const features: BandFeature[] = [
+    ...snapped.map((cut) => ({
+      kind: "window" as const,
+      zFrom: cut.zFrom,
+      zTo: cut.zTo,
+      cut,
+    })),
+    ...doors.map((entry) => ({
+      kind: "void" as const,
+      zFrom: entry.zFrom,
+      zTo: entry.zTo,
+      door: entry.door,
+    })),
+  ].sort((left, right) => left.zFrom - right.zFrom);
   let cursor = zLow;
-  for (const [cutIndex, cut] of snapped.entries()) {
-    tile(`${id}:seg${cutIndex}`, "fuselage-panels",
-      between(rows, cursor, cut.zFrom), columns);
-    const windowRows = between(rows, cut.zFrom, cut.zTo);
-    tile(`${id}:below${cutIndex}`, "fuselage-panels", windowRows,
-      between(columns, angleFrom, cut.angleFrom));
-    tile(`${id}:above${cutIndex}`, "fuselage-panels", windowRows,
-      between(columns, cut.angleTo, angleTo));
-    for (const [tag, cols, rws] of [
-      ["frame-below", between(columns, cut.angleFrom, cut.glassAngleFrom), windowRows],
-      ["frame-above", between(columns, cut.glassAngleTo, cut.angleTo), windowRows],
-      ["frame-aft", columnsBetweenGlass(columns, cut), between(rows, cut.zFrom, cut.glassZFrom)],
-      ["frame-fore", columnsBetweenGlass(columns, cut), between(rows, cut.glassZTo, cut.zTo)],
-    ] as const) {
-      tile(`${cut.id}:${tag}`, "window-frame", rws, cols, FRAME_INSET, "metal");
+  let fromOpen = false;
+  for (const [cutIndex, feature] of features.entries()) {
+    if (feature.kind === "window") {
+      const leadRows = rows.filter((z) =>
+        (fromOpen ? z > cursor + 1e-9 : z >= cursor - 1e-9)
+        && z <= feature.zFrom + 1e-9);
+      tile(`${id}:seg${cutIndex}`, "fuselage-panels", leadRows, columns);
+      const cut = feature.cut;
+      const windowRows = between(rows, cut.zFrom, cut.zTo);
+      tile(`${id}:below${cutIndex}`, "fuselage-panels", windowRows,
+        between(columns, angleFrom, cut.angleFrom));
+      tile(`${id}:above${cutIndex}`, "fuselage-panels", windowRows,
+        between(columns, cut.angleTo, angleTo));
+      for (const [tag, cols, rws] of [
+        ["frame-below", between(columns, cut.angleFrom, cut.glassAngleFrom), windowRows],
+        ["frame-above", between(columns, cut.glassAngleTo, cut.angleTo), windowRows],
+        ["frame-aft", columnsBetweenGlass(columns, cut), between(rows, cut.zFrom, cut.glassZFrom)],
+        ["frame-fore", columnsBetweenGlass(columns, cut), between(rows, cut.glassZTo, cut.zTo)],
+      ] as const) {
+        tile(`${cut.id}:${tag}`, "window-frame", rws, cols, FRAME_INSET, "metal");
+      }
+      tile(`${cut.id}:glazing`, "window-glazing",
+        between(rows, cut.glassZFrom, cut.glassZTo),
+        between(columns, cut.glassAngleFrom, cut.glassAngleTo),
+        GLASS_INSET, "glazing");
+      cursor = feature.zTo;
+      fromOpen = false;
+    } else {
+      // Полоса над/под проёмом — это тот же клин фюзеляжа до соседних панелей,
+      // а не заплатка шириной в дверь. Иначе вдоль корпуса остаётся щель.
+      const spanTo = cutIndex + 1 < features.length
+        ? features[cutIndex + 1].zFrom
+        : zHigh;
+      emitDoorVoid(
+        `${id}:${feature.door.id}`,
+        cursor,
+        spanTo,
+        rows,
+        angleFrom,
+        angleTo,
+        feature.door,
+      );
+      cursor = spanTo;
+      fromOpen = false;
     }
-    tile(`${cut.id}:glazing`, "window-glazing",
-      between(rows, cut.glassZFrom, cut.glassZTo),
-      between(columns, cut.glassAngleFrom, cut.glassAngleTo),
-      GLASS_INSET, "glazing");
-    cursor = cut.zTo;
   }
-  if (between(rows, cursor, zHigh).length >= 2) {
-    fuselageTile(`${id}:segTail`, "fuselage-panels",
-      between(rows, cursor, zHigh), columns);
+  const tailRows = rows.filter((z) =>
+    (fromOpen ? z > cursor + 1e-9 : z >= cursor - 1e-9)
+    && z <= zHigh + 1e-9);
+  if (tailRows.length >= 2) {
+    fuselageTile(`${id}:segTail`, "fuselage-panels", tailRows, columns);
   }
 }
 
@@ -782,6 +1052,19 @@ for (const [index, plan] of dc3AirframeSurface.windows.entries()) {
     });
   }
 }
+
+const doorVoids: DoorVoid[] = dc3AirframeSurface.cabinEntries.flatMap((plan) =>
+  ([1, -1] as const).map((side) => ({
+    id: `cabin-entry-${side > 0 ? "right" : "left"}-${plan.id}`,
+    side,
+    z: plan.z,
+    zFrom: plan.zFrom,
+    zTo: plan.zTo,
+    floorY: plan.floorY,
+    height: plan.height,
+    corner: plan.cornerRadius,
+  })),
+);
 
 const { zAft: WINDSHIELD_Z_AFT, zFore: WINDSHIELD_Z_FORE } = dc3AirframeSurface.windshieldBay;
 const ROOF_TO_BROW_Z = dc3AirframeSurface.greenhouseBrow.apex[2];
@@ -833,6 +1116,23 @@ const CABIN_JOIN_Z = fuselage.stations.find((station) => Math.abs(station.z - 5.
 const RIGHT_AFT_HEAD_ANGLE = sectionAngle(sideLightOuter("right")[2]);
 const LEFT_AFT_HEAD_ANGLE = sectionAngle(sideLightOuter("left")[2]);
 
+function doorSeamRows(zLow: number, zHigh: number): number[] {
+  const pitch = 0.08;
+  const pad = 0.32;
+  return doorVoids.flatMap((door) => {
+    if (door.zTo < zLow - pad || door.zFrom > zHigh + pad) return [];
+    const start = Math.max(zLow, door.zFrom - pad);
+    const end = Math.min(zHigh, door.zTo + pad);
+    const count = Math.max(4, Math.round((end - start) / pitch));
+    return [
+      ...Array.from({ length: count + 1 }, (_, step) =>
+        start + ((end - start) * step) / count),
+      door.zFrom,
+      door.zTo,
+    ];
+  });
+}
+
 const fuselageBays: number[][] = (() => {
   const zs = fuselage.stations.map((station) => station.z);
   const result: number[][] = [];
@@ -850,7 +1150,7 @@ const fuselageBays: number[][] = (() => {
 for (const [bayIndex, bay] of fuselageBays.entries()) {
   const zLow = Math.min(...bay);
   const zHigh = Math.max(...bay);
-  const sortedZs = [...bay].sort((a, b) => a - b);
+  const sortedZs = uniqueSorted([...bay, ...doorSeamRows(zLow, zHigh)]);
   const bayHasWindshield = zLow < WINDSHIELD_Z_AFT + 1e-9 && zHigh > WINDSHIELD_Z_FORE - 1e-9;
   for (let gore = 0; gore < FUSELAGE_GORES; gore += 1) {
     const angleFrom = ((gore * FUSELAGE_GORE_STEP) / fuselage.ringCount) * TAU;
@@ -881,6 +1181,7 @@ for (const [bayIndex, bay] of fuselageBays.entries()) {
       a1: number,
       extras: readonly number[] = [],
       zStart?: number,
+      includeDoors = false,
     ): void => {
       const rows = uniqueSorted([
         ...(zStart === undefined ? [] : [zStart]),
@@ -906,6 +1207,7 @@ for (const [bayIndex, bay] of fuselageBays.entries()) {
         a1,
         angles,
         windowCuts,
+        includeDoors ? doorVoids : [],
       );
     };
     if (
@@ -921,7 +1223,7 @@ for (const [bayIndex, bay] of fuselageBays.entries()) {
     ) {
       emitGreenhouseGore(id, CABIN_JOIN_Z, angleFrom, angleTo, [
         sectionAngle(loftPointAtY(CABIN_JOIN_Z, sideLightOuter("right")[1][1], 1)),
-      ]);
+      ], undefined, true);
       continue;
     }
     if (
@@ -930,7 +1232,7 @@ for (const [bayIndex, bay] of fuselageBays.entries()) {
     ) {
       emitGreenhouseGore(id, CABIN_JOIN_Z, angleFrom, angleTo, [
         sectionAngle(loftPointAtY(CABIN_JOIN_Z, sideLightOuter("left")[1][1], -1)),
-      ]);
+      ], undefined, true);
       continue;
     }
     if (
@@ -941,10 +1243,12 @@ for (const [bayIndex, bay] of fuselageBays.entries()) {
     ) {
       emitGreenhouseGore(`${id}:cheek`, CABIN_JOIN_Z, angleFrom, RIGHT_AFT_HEAD_ANGLE, [
         RIGHT_AFT_HEAD_ANGLE,
-      ]);
+      ], undefined, true);
+      // Стык скула/висок не двигаем. Передняя дверь выше скулы, поэтому
+      // притолок — это висок, разрезанный по проёму, а не сдвиг HEAD_ANGLE.
       emitGreenhouseGore(`${id}:temple`, SIDE_SKIN_AFT, RIGHT_AFT_HEAD_ANGLE, angleTo, [
         RIGHT_AFT_HEAD_ANGLE,
-      ]);
+      ], undefined, true);
       continue;
     }
     if (
@@ -955,10 +1259,10 @@ for (const [bayIndex, bay] of fuselageBays.entries()) {
     ) {
       emitGreenhouseGore(`${id}:temple`, SIDE_SKIN_AFT, angleFrom, LEFT_AFT_HEAD_ANGLE, [
         LEFT_AFT_HEAD_ANGLE,
-      ]);
+      ], undefined, true);
       emitGreenhouseGore(`${id}:cheek`, CABIN_JOIN_Z, LEFT_AFT_HEAD_ANGLE, angleTo, [
         LEFT_AFT_HEAD_ANGLE,
-      ]);
+      ], undefined, true);
       continue;
     }
     const zBands = (splitWindshield || trimGreenhouse)
@@ -980,6 +1284,7 @@ for (const [bayIndex, bay] of fuselageBays.entries()) {
         angleTo,
         goreAngles,
         windowCuts,
+        doorVoids,
       );
     }
   }
@@ -1509,7 +1814,7 @@ for (const [bayIndex, bay] of fuselageBays.entries()) {
     emitPlanarQuad(`windshield-${hole.id}:frame-inboard`, "window-frame",
       [sillIn, sillInO, headInO, headIn], 0, "metal");
     emitPlanarQuad(`windshield-${hole.id}:glazing`, "window-glazing",
-      [sillIn, sillOut, headOut, headIn], GLASS_INSET, "glazing");
+      [sillIn, sillOut, headOut, headIn], 0, "glazing");
   }
   for (const pane of dc3AirframeSurface.sideLights) {
     const along = norm(sub(pane.corners[3], pane.corners[0]));
@@ -1526,7 +1831,7 @@ for (const [bayIndex, bay] of fuselageBays.entries()) {
     emitPlanarQuad(`sidelight-${pane.id}:frame-inboard`, "window-frame",
       [sillIn, sillInO, headInO, headIn], 0, "metal");
     emitPlanarQuad(`sidelight-${pane.id}:glazing`, "window-glazing",
-      [sillIn, sillOut, headOut, headIn], GLASS_INSET, "glazing");
+      [sillIn, sillOut, headOut, headIn], 0, "glazing");
   }
 }
 

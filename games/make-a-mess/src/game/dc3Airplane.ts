@@ -100,6 +100,7 @@ export const DC3_CONTACT_MEMBER_EXCLUDES = [
   "longeron-",
   "fuselage-frame-",
   "cabin-",
+  "cockpit-",
   "centre-tank-",
   "nose-equipment-",
   "mount-",
@@ -144,6 +145,22 @@ export function dc3AirplanePoint(
     placement.position[0] + offset[0],
     placement.position[1] + offset[1],
     placement.position[2] + offset[2],
+  ];
+}
+
+/** Inverse of `dc3AirplanePoint`: world → object-lab (pitched) coordinates. */
+export function dc3AirplaneUnpoint(
+  placement: Dc3AirplanePlacement,
+  world: SceneVector3,
+): SceneVector3 {
+  const dx = world[0] - placement.position[0];
+  const dz = world[2] - placement.position[2];
+  const cosine = Math.cos(placement.yaw);
+  const sine = Math.sin(placement.yaw);
+  return [
+    dx * cosine - dz * sine,
+    world[1] - placement.position[1],
+    dx * sine + dz * cosine,
   ];
 }
 
@@ -251,7 +268,7 @@ function partGeometry(part: ObjectLabPart): {
     return {
       center: [part.center[0], part.center[1], part.center[2]],
       size: [part.size[0], part.size[1], part.size[2]],
-      volume: part.size[0] * part.size[1] * part.size[2],
+      volume: part.volume ?? part.size[0] * part.size[1] * part.size[2],
     };
   }
   return rodGeometry(part);
@@ -276,6 +293,27 @@ function materialFor(part: ObjectLabPart): {
   }
   if (part.group === "cabin-floor") {
     return { material: "wood", shape: "panel", color: "#4a4038" };
+  }
+  if (part.group === "cockpit") {
+    if (part.id === "cockpit-floor") {
+      return { material: "wood", shape: "panel", color: "#4a4038" };
+    }
+    if (part.id.startsWith("cockpit-seat-") && !part.id.endsWith("-leg")) {
+      return { material: "cloth", shape: "panel", color: "#3d454c" };
+    }
+    if (part.id.startsWith("cockpit-bulkhead")) {
+      return { material: "cloth", shape: "panel", color: "#5a5248" };
+    }
+    if (part.id.startsWith("cockpit-lamp-") && part.id.endsWith("-shade")) {
+      return { material: "aluminium", shape: "panel", color: "#7a6f5d" };
+    }
+    if (part.id.endsWith("-knob")) {
+      return { material: "wood", shape: "panel", color: "#d8d0c4" };
+    }
+    if (part.id === "cockpit-panel") {
+      return { material: "steel", shape: "panel", color: "#2a2d30" };
+    }
+    return { material: "steel", shape: "panel", color: "#3a3f42" };
   }
   if (part.material === "lamp-glass") {
     return { material: "glass", shape: "glassPane", color: "#b9c7c8" };

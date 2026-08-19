@@ -1,5 +1,5 @@
 import type { SceneVector3 } from "./destructionScene.ts";
-import type { EntryInteractionCue } from "./entryInteraction.ts";
+import type { EntryInteractionAction, EntryInteractionCue } from "./entryInteraction.ts";
 import {
   rotateVector,
   vehiclePiecePosition,
@@ -30,6 +30,13 @@ import {
   dsPoint,
 } from "./townCitroenDs.ts";
 import { PLAYER_CAPSULE_FOOT_OFFSET, PLAYER_CAPSULE_RADIUS } from "./playerMovement.ts";
+import {
+  ISLAND_AIRPORT_DC3_PLACEMENT,
+  islandAirportDc3BodyPoint,
+  islandAirportDc3Heading,
+  islandAirportDc3RestingPoint,
+} from "../content/scenes/islandAirport/islandAirportDc3.ts";
+import { dc3AirframeSurface } from "../content/objects/aircraft/dc3BlockoutObject.ts";
 
 /**
  * A reusable place occupied inside a moving compound object.
@@ -47,6 +54,16 @@ export interface PassengerSeatDefinition {
   readonly occupantPoint: SceneVector3;
   /** Safe capsule centre used when the passenger stands up. */
   readonly exitPoint: SceneVector3;
+  /**
+   * Второй выход: с DC-3 на ВВП перед носом. Без поля встают только
+   * в `exitPoint` (салон, земля у коптера).
+   */
+  readonly exteriorExitPoint?: SceneVector3;
+  /**
+   * Пункты, пока человек уже сидит. Пусто — обычный Space «встать».
+   * `parkedOnly` скрывается в рейсе (с полосы в полёте не выходят).
+   */
+  readonly occupiedActions?: readonly OccupiedSeatAction[];
   /** Presentation-only cue for the stand hint; mechanics stay seat-neutral. */
   readonly hintCue?: EntryInteractionCue;
   /** Direction the passenger faces on taking the seat. */
@@ -72,6 +89,92 @@ export interface PassengerSeatDefinition {
    * ведут другие системы, и общий признак свёл бы их в один контур.
    */
   readonly rotorcraftControls?: boolean;
+  /**
+   * Сесть можно и на стоянке. У состава место машиниста предлагается только
+   * в рейсе, чтобы не спорить с табличкой тура; у DC-3 кресло капитана
+   * внутри, и смотреть в стёкла надо до вылета — из салона и с бетона
+   * перед носом. Сама посадка должна СОСТОЯТЬСЯ на стоянке: предлагать
+   * кресло и принимать Space только в воздухе оставляло пробел мёртвым.
+   */
+  readonly parkedOccupation?: boolean;
+  /**
+   * Объём, из которого предлагают сесть. Без него рантайм спрашивает
+   * `passengerFlight.contains`, которого у стоящей машины может не быть.
+   */
+  readonly occupationContains?: (point: SceneVector3) => boolean;
+}
+
+export interface OccupiedSeatAction extends EntryInteractionAction {
+  /** Скрыть пункт, пока машина в рейсе. */
+  readonly parkedOnly?: boolean;
+}
+
+export const PASSENGER_SEAT_SURVEY_ACTION = "survey";
+export const PASSENGER_SEAT_CABIN_ACTION = "cabin";
+export const PASSENGER_SEAT_RUNWAY_ACTION = "runway";
+
+export type PassengerSeatRequestVerdict =
+  | { readonly kind: "occupy" }
+  | { readonly kind: "release"; readonly exit: "default" | "exterior" }
+  | { readonly kind: "startFlight"; readonly flightKind: string }
+  | { readonly kind: "ignore" };
+
+export interface OccupiedSeatRelease {
+  readonly exitPoint: SceneVector3;
+}
+
+/**
+ * Меню кресла смотрит на ход рейса, а не на жизнь объекта `flight`.
+ * У DC-3 после руления машина уже стоит, но рейс ещё не снят: швартовки нет,
+ * и `flight !== null` прятал «облёт» и выход на полосу, как в воздухе.
+ */
+export function passengerSeatJourneyInProgress(input: {
+  readonly hasFlight: boolean;
+  readonly groundTaxiFinished?: boolean;
+}): boolean {
+  return input.hasFlight && input.groundTaxiFinished !== true;
+}
+
+export function passengerSeatOccupiedActions(
+  seat: PassengerSeatDefinition | null | undefined,
+  options: { readonly inFlight: boolean },
+): readonly EntryInteractionAction[] | undefined {
+  if (!seat?.occupiedActions?.length) return undefined;
+  const actions = seat.occupiedActions.filter(
+    (action) => !action.parkedOnly || !options.inFlight,
+  );
+  return actions.length > 0 ? actions : undefined;
+}
+
+export function resolvePassengerSeatRequest(input: {
+  readonly post: "seat" | "stand";
+  readonly selectedActionId?: string | null;
+  readonly inFlight: boolean;
+  readonly intact: boolean;
+}): PassengerSeatRequestVerdict {
+  if (!input.intact) return { kind: "ignore" };
+  if (input.post === "seat") return { kind: "occupy" };
+  const action = input.selectedActionId ?? PASSENGER_SEAT_CABIN_ACTION;
+  if (action === PASSENGER_SEAT_SURVEY_ACTION) {
+    return input.inFlight
+      ? { kind: "ignore" }
+      : { kind: "startFlight", flightKind: PASSENGER_SEAT_SURVEY_ACTION };
+  }
+  if (action === PASSENGER_SEAT_RUNWAY_ACTION) {
+    return input.inFlight
+      ? { kind: "ignore" }
+      : { kind: "release", exit: "exterior" };
+  }
+  return { kind: "release", exit: "default" };
+}
+
+export function passengerSeatReleasePoint(
+  seat: PassengerSeatDefinition,
+  exit: "default" | "exterior",
+): SceneVector3 {
+  return exit === "exterior"
+    ? (seat.exteriorExitPoint ?? seat.exitPoint)
+    : seat.exitPoint;
 }
 
 export interface PassengerSeatCarrierPose {
@@ -230,11 +333,98 @@ export const TOWN_DS_DRIVER_SEAT: PassengerSeatDefinition = {
   releaseRadius: 2.4,
 };
 
+export const ISLAND_AIRPORT_DC3_CAPTAIN_SEAT_ID = "island-airport:dc3:captain-seat";
+
+const DC3_COCKPIT = dc3AirframeSurface.cockpit;
+const DC3_FORWARD_CABIN = dc3AirframeSurface.cabins.forward;
+const DC3_CLUSTER = ISLAND_AIRPORT_DC3_PLACEMENT.clusterId;
+
+/**
+ * Камера сидит на 0.54 м выше центра капсулы — тот же подъём, что у Player.
+ * Точку капсулы считаем от глаз в МИРОВОМ +Y: трёхточечный тангаж смешивает
+ * body Y/Z, и RestingPoint(тело)+(0,0.54,0) не равно RestingPoint(тело+0.54Y).
+ */
+const PLAYER_SEATED_CAMERA_LIFT = 0.54;
+
+/**
+ * Глаза капитана — в лобовом порта (объектный +X).
+ *
+ * У блокаута нос +Z и верх +Y, поэтому правый борт — forward×up = −X.
+ * Кресло с id `…-left` сидит на −X и это штурман, не командир. Высота 0.72
+ * ставила череп над бровью: взгляд шёл в крышу, как со стоячего места.
+ */
+const DC3_CAPTAIN_EYE_BODY: SceneVector3 = [0.46, 0.97, 5.7];
+
+function islandAirportDc3OccupantFromEye(eyeBody: SceneVector3): SceneVector3 {
+  const eye = islandAirportDc3RestingPoint(eyeBody);
+  return [eye[0], eye[1] - PLAYER_SEATED_CAMERA_LIFT, eye[2]];
+}
+
+export const ISLAND_AIRPORT_DC3_CAPTAIN_SEAT: PassengerSeatDefinition = {
+  id: ISLAND_AIRPORT_DC3_CAPTAIN_SEAT_ID,
+  carrierClusterId: DC3_CLUSTER,
+  // Предлагают из прохода переднего салона и с бетона перед носом.
+  // Встали всё равно в салоне: из кабины экипажа двери нет.
+  interactionPoint: islandAirportDc3RestingPoint([
+    0,
+    DC3_FORWARD_CABIN.floorY + 1.05,
+    DC3_FORWARD_CABIN.to - 0.45,
+  ]),
+  occupantPoint: islandAirportDc3OccupantFromEye(DC3_CAPTAIN_EYE_BODY),
+  exitPoint: islandAirportDc3RestingPoint([
+    0,
+    DC3_FORWARD_CABIN.floorY + PLAYER_CAPSULE_FOOT_OFFSET,
+    DC3_FORWARD_CABIN.to - 0.45,
+  ]),
+  exteriorExitPoint: islandAirportDc3RestingPoint([
+    0,
+    PLAYER_CAPSULE_FOOT_OFFSET,
+    DC3_COCKPIT.noseZ + 1.4,
+  ]),
+  occupiedActions: [
+    {
+      id: PASSENGER_SEAT_SURVEY_ACTION,
+      labelKey: "hint.dc3Departure.survey",
+      parkedOnly: true,
+    },
+    { id: PASSENGER_SEAT_CABIN_ACTION, labelKey: "hint.dc3Seat.cabin" },
+    {
+      id: PASSENGER_SEAT_RUNWAY_ACTION,
+      labelKey: "hint.dc3Seat.runway",
+      parkedOnly: true,
+    },
+  ],
+  facing: islandAirportDc3Heading,
+  requiredPieceIds: [
+    `${DC3_CLUSTER}:${DC3_COCKPIT.captainSeatId}:piece`,
+    `${DC3_CLUSTER}:${DC3_COCKPIT.captainBackId}:piece`,
+    `${DC3_CLUSTER}:${DC3_COCKPIT.captainHubId}:piece`,
+  ],
+  approachRadius: 6.2,
+  releaseRadius: 7.2,
+  parkedOccupation: true,
+  occupationContains: (point) => {
+    const body = islandAirportDc3BodyPoint(point);
+    const standing = body[1] > -0.75 && body[1] < 2.2;
+    const inForwardAisle = standing
+      && body[2] >= DC3_FORWARD_CABIN.from - 0.15
+      && body[2] <= DC3_COCKPIT.bulkheadZ + 0.2
+      && Math.abs(body[0]) < 0.62
+      && body[1] < 1.55;
+    const aheadOfNose = standing
+      && body[2] >= DC3_COCKPIT.noseZ - 0.2
+      && body[2] <= DC3_COCKPIT.noseZ + 3.1
+      && Math.abs(body[0]) < 2.2;
+    return inForwardAisle || aheadOfNose;
+  },
+};
+
 export const passengerSeats: readonly PassengerSeatDefinition[] = [
   SKY_TRAIN_DRIVER_SEAT,
   TOWN_HEXACOPTER_PILOT_SEAT,
   NIMBUS_HEXACOPTER_PILOT_SEAT,
   TOWN_DS_DRIVER_SEAT,
+  ISLAND_AIRPORT_DC3_CAPTAIN_SEAT,
 ];
 
 const seatsById = new Map(passengerSeats.map((seat) => [seat.id, seat] as const));

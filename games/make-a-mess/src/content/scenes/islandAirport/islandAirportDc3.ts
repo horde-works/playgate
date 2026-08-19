@@ -18,12 +18,14 @@ import { createDc3AirplaneGroup } from "../dc3AirplaneDocument.ts";
 import {
   createDc3AirplaneFrame,
   dc3AirplanePoint,
+  dc3AirplaneUnpoint,
   dc3AirplaneVector,
   type Dc3AirplanePlacement,
 } from "../../../game/dc3Airplane.ts";
-import { dc3BlockoutObject } from "../../objects/aircraft/dc3BlockoutObject.ts";
+import { dc3AirframeSurface, dc3BlockoutObject } from "../../objects/aircraft/dc3BlockoutObject.ts";
 import { DC3_WINGSPAN } from "../../objects/aircraft/dc3Dimensions.ts";
 import type { SceneVector3 } from "../../../game/destructionScene.ts";
+import type { MotionInstrumentDefinition } from "../../../game/motionTelemetry.ts";
 import type { SceneGroupDefinition } from "../sceneContract.ts";
 import {
   AIRPORT_RUNWAY,
@@ -56,6 +58,86 @@ export const islandAirportDc3Group = createDc3AirplaneGroup(
 export const islandAirportDc3Frame = createDc3AirplaneFrame(
   ISLAND_AIRPORT_DC3_PLACEMENT,
 );
+
+/** Body point → resting world, same transform as the compiled pieces. */
+export function islandAirportDc3RestingPoint(body: SceneVector3): SceneVector3 {
+  return dc3AirplanePoint(
+    ISLAND_AIRPORT_DC3_PLACEMENT,
+    dc3AirframeSurface.bodyToWorld(body),
+  );
+}
+
+/** Resting world → body. Used by the captain-seat occupation volume. */
+export function islandAirportDc3BodyPoint(world: SceneVector3): SceneVector3 {
+  return dc3AirframeSurface.worldToBody(
+    dc3AirplaneUnpoint(ISLAND_AIRPORT_DC3_PLACEMENT, world),
+  );
+}
+
+export const islandAirportDc3MotionInstruments: readonly MotionInstrumentDefinition[] = [
+  {
+    id: `${ISLAND_AIRPORT_DC3_PLACEMENT.clusterId}:flight-instruments`,
+    sourceId: ISLAND_AIRPORT_DC3_PLACEMENT.clusterId,
+    carrierClusterId: ISLAND_AIRPORT_DC3_PLACEMENT.clusterId,
+    panelPieceId: `${ISLAND_AIRPORT_DC3_PLACEMENT.clusterId}:${dc3AirframeSurface.cockpit.panelId}:piece`,
+    pitchMetricId: "pitch",
+    rollMetricId: "roll",
+    indicators: [
+      {
+        id: "ready",
+        label: "READY",
+        color: "#72f29a",
+        condition: { kind: "phase", phases: ["docked", "attention"] },
+      },
+      {
+        id: "taxi",
+        label: "TAXI",
+        color: "#ffd06d",
+        condition: { kind: "phase", phases: ["taxi", "rollout"] },
+      },
+      {
+        id: "departure",
+        label: "DEPART",
+        color: "#ffbf5f",
+        condition: { kind: "phase", phases: ["departure"] },
+      },
+      {
+        id: "cruise",
+        label: "CRUISE",
+        color: "#79d8ff",
+        condition: { kind: "phase", phases: ["cruise", "inTransit"] },
+      },
+      {
+        id: "failed",
+        label: "FAIL",
+        color: "#ff4d47",
+        condition: { kind: "phase", phases: ["failed"] },
+      },
+      {
+        id: "engine-left",
+        label: "L ENG",
+        color: "#f0f3d1",
+        condition: {
+          kind: "metric",
+          metricId: "propellerRevolutions",
+          valueIndex: 0,
+          fullScale: 100,
+        },
+      },
+      {
+        id: "engine-right",
+        label: "R ENG",
+        color: "#f0f3d1",
+        condition: {
+          kind: "metric",
+          metricId: "propellerRevolutions",
+          valueIndex: 1,
+          fullScale: 100,
+        },
+      },
+    ],
+  },
+];
 
 export const islandAirportDc3Nose = dc3AirplanePoint(
   ISLAND_AIRPORT_DC3_PLACEMENT,

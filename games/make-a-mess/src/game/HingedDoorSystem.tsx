@@ -22,12 +22,12 @@ import {
   hingedLeafRotationAxis,
   hingedDoorGroupKey,
   inwardDoorSwingSign,
+  plugSlideApproachRadius,
   plugSlideDoorPolicy,
+  plugSlideReleaseRadius,
   tailRampPolicy,
   townHouseDoorPolicy,
   DOOR_APPROACH_HEIGHT,
-  VIKING_DOOR_APPROACH_RADIUS,
-  VIKING_DOOR_RELEASE_RADIUS,
   VIKING_GATE_APPROACH_RADIUS,
   VIKING_GATE_RELEASE_RADIUS,
   vikingDoorPolicy,
@@ -308,8 +308,10 @@ export function HingedDoorSystem({
       // Одной горизонтальной дистанции мало: без порога по высоте дверь
       // поднятой гондолы открывается с земли под ней.
       const rise = Math.abs(cameraPosition[1] - center[1]);
+      const approachRadius = plugSlideApproachRadius(group.plugSlide);
+      const releaseRadius = plugSlideReleaseRadius(group.plugSlide);
       if (
-        distance <= VIKING_DOOR_APPROACH_RADIUS &&
+        distance <= approachRadius &&
         rise <= DOOR_APPROACH_HEIGHT &&
         distance < nearestEntryDistance
       ) {
@@ -319,7 +321,7 @@ export function HingedDoorSystem({
         };
         nearestEntryDistance = distance;
       }
-      if (distance > VIKING_DOOR_RELEASE_RADIUS || rise > DOOR_APPROACH_HEIGHT + 1) {
+      if (distance > releaseRadius || rise > DOOR_APPROACH_HEIGHT + 1) {
         openedEntries.current.delete(doorId);
       }
     }

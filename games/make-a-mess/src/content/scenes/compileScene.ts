@@ -495,6 +495,7 @@ export function compileSceneDocument(
     lamps,
     spotLights: document.spotLights,
     mutableObjects: document.mutableObjects,
+    motionInstruments: document.motionInstruments,
     constantRotors,
     indestructible: document.indestructible,
     contentLicense: document.contentLicense,

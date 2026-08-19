@@ -395,12 +395,40 @@ function bodyDirection(dir: ObjectPoint): ObjectPoint {
   return [tip[0] - origin[0], tip[1] - origin[1], tip[2] - origin[2]];
 }
 
+function normalize(dir: ObjectPoint): ObjectPoint {
+  const length = Math.hypot(dir[0], dir[1], dir[2]);
+  return length < 1e-12 ? dir : scale(dir, 1 / length);
+}
+
+/**
+ * Three.js Euler XYZ from a rotation whose columns are the images of the
+ * local axes. The instrument panel uses this so the +Y face and ±Z split
+ * of `MotionInstrumentSystem` mean "toward the crew" and "left / right".
+ */
+function eulerXyzFromBasis(
+  xAxis: ObjectPoint,
+  yAxis: ObjectPoint,
+  zAxis: ObjectPoint,
+): ObjectPoint {
+  const m13 = zAxis[0];
+  const yaw = Math.asin(Math.max(-1, Math.min(1, m13)));
+  if (Math.abs(m13) < 0.9999999) {
+    return [
+      Math.atan2(-zAxis[1], zAxis[2]),
+      yaw,
+      Math.atan2(-yAxis[0], xAxis[0]),
+    ];
+  }
+  return [Math.atan2(yAxis[2], yAxis[1]), yaw, 0];
+}
+
 function addBodyBox(
   id: string,
   group: string,
   material: ObjectMaterialId,
   center: ObjectPoint,
   size: ObjectPoint,
+  options: { readonly volume?: number } = {},
 ): void {
   const [cx, cy, cz] = center;
   const [sx, sy, sz] = size;
@@ -424,7 +452,7 @@ function addBodyBox(
     [3, 2, 6], [3, 6, 7],
     [0, 3, 7], [0, 7, 4],
     [1, 5, 6], [1, 6, 2],
-  ]);
+  ], options);
 }
 
 function addCylinder(
@@ -1213,24 +1241,34 @@ const rudder = loftRings(rudderStations.map((station) => (
 )));
 addClosedMesh("rudder", "rudder", "paint-light", rudder.vertices, rudder.triangles);
 
-const WING_SPAR_XS = [-DC3_WINGSPAN / 2 + 0.55, -12.6, -10.2, -7.4, -WING_JOINT, -ENGINE_X, -4.2, -2.8, -1.4, 0, 1.4, 2.8, 4.2, ENGINE_X, WING_JOINT, 7.4, 10.2, 12.6, DC3_WINGSPAN / 2 - 0.55];
+const WING_SPAR_XS = [
+  -DC3_WINGSPAN / 2 + 0.55, -12.6, -10.2, -7.4, -WING_JOINT, -ENGINE_X,
+  -4.2, -3.5, -2.8, -2.1, -1.4, -0.7, 0, 0.7, 1.4, 2.1, 2.8, 3.5, 4.2,
+  ENGINE_X, WING_JOINT, 7.4, 10.2, 12.6, DC3_WINGSPAN / 2 - 0.55,
+];
 
-function wingSkinInset(thickness: number): number {
+function wingSkinInset(thickness: number, x = 0): number {
   // Панельная шкура — тонкая плитка на теоретическом контуре. 22% толщины
   // оставляли нервюру у самой обшивки, и на корне она протыкала верх и низ.
-  return Math.min(thickness * 0.4, Math.max(0.08, thickness * 0.32));
+  // В первой трети консоли профиль ещё толстый, а лофт лонжерона между
+  // редкими станциями спрямлял стенку наружу обшивки — там inset больше.
+  const innerThird = Math.abs(x) < WING_HALF / 3;
+  const scale = innerThird ? 0.4 : 0.32;
+  const cap = innerThird ? 0.48 : 0.4;
+  return Math.min(thickness * cap, Math.max(0.08, thickness * scale));
 }
 
 function sparRing(x: number, chordT: number): ObjectPoint[] {
   const { thickness, y0, leading, hingeZ, te } = wingAt(x);
-  const inset = wingSkinInset(thickness);
+  const inset = wingSkinInset(thickness, x);
   const z = chordTToZ(chordT, leading, hingeZ, te, SPAR_REAR);
   // Высота стенки считалась от МАКСИМАЛЬНОЙ толщины профиля, а профиль на
   // носке хорды тоньше: передний лонжерон вылезал наружу обшивки у корня на
   // 42 мм. Ограничиваем местной высотой профиля на СВОЕЙ хорде.
   const localBump = Math.sin(Math.PI * chordT) * thickness * 0.5;
-  const up = Math.max(0.012, Math.min(thickness * 0.5, localBump) - inset);
-  const down = Math.max(0.01, Math.min(thickness * 0.41, localBump * 0.82) - inset);
+  const floor = Math.abs(x) < WING_HALF / 3 ? 0.004 : 0.012;
+  const up = Math.max(floor, Math.min(thickness * 0.5, localBump) - inset);
+  const down = Math.max(floor, Math.min(thickness * 0.41, localBump * 0.82) - inset);
   const half = Math.min(SPAR_WEB / 2, Math.max(0.016, thickness * 0.12));
   return [
     point(x, y0 + up, z + half),
@@ -1247,7 +1285,7 @@ for (const [id, chordT] of [["front", SPAR_FRONT], ["main", SPAR_MAIN], ["rear",
 
 function formerBand(x: number, t0: number, t1: number): ObjectPoint[] {
   const { thickness, y0, leading, hingeZ, te } = wingAt(x);
-  const inset = wingSkinInset(thickness);
+  const inset = wingSkinInset(thickness, x);
   const half = AIRFOIL / 2;
   return Array.from({ length: AIRFOIL }, (_, index) => {
     const upper = index <= half;
@@ -1255,7 +1293,8 @@ function formerBand(x: number, t0: number, t1: number): ObjectPoint[] {
     const t = t0 + s * (t1 - t0);
     const z = chordTToZ(t, leading, hingeZ, te, SPAR_REAR);
     const skinBump = Math.sin(Math.PI * t) * thickness * 0.5;
-    const bump = Math.max(0.008, skinBump - inset);
+    const floor = Math.abs(x) < WING_HALF / 3 ? 0.004 : 0.008;
+    const bump = Math.max(floor, skinBump - inset);
     return point(x, y0 + (upper ? bump : -bump * AIRFOIL_LOWER), z);
   });
 }
@@ -1334,7 +1373,36 @@ const WING_ROOT_TRAILING_Z = -3.24;
 const FORWARD_CABIN = { from: WING_ROOT_LEADING_Z + 0.12, to: 4.6, floorY: -0.55 } as const;
 const AFT_CABIN = { from: -5.6, to: WING_ROOT_TRAILING_Z - 0.12, floorY: -0.75 } as const;
 const CABIN_FLOOR_THICKNESS = 0.05;
+/**
+ * Кабина экипажа. Двери в неё нет: из переднего салона садятся Space.
+ * Носовой отсек (`nose-equipment-bay`) не двигаем — на нём держится центр
+ * масс; он же читается центральным туннелем между креслами.
+ */
+const COCKPIT_BULKHEAD_Z = 5.14;
+const COCKPIT_FLOOR_TO = 6.32;
+const COCKPIT_SEAT_X = 0.55;
+const COCKPIT_SEAT_Z = 5.58;
+const COCKPIT_YOKE_X = 0.38;
+const COCKPIT_YOKE_Z = 5.90;
+const NOSE_BAY_CENTER = point(0, -0.15, 5.55);
+const NOSE_BAY_SIZE = point(0.98, 0.64, 1.25);
+const COCKPIT_FURNITURE_VOLUME = 0.00022;
 const SEAT_PITCH = 1.0;
+/**
+ * Станции входов. Ширина нужна уже кольцам набора: шпангоут, попавший в
+ * проём, читается рудиментом над створкой. Полный план (высота, пол) —
+ * ниже, рядом с накладкой.
+ */
+const CABIN_ENTRY_WIDTH = 0.76;
+const CABIN_ENTRY_FORWARD_Z = 4.72;
+const CABIN_ENTRY_AFT_Z = -3.85;
+
+function zHitsCabinEntry(z: number, half = 0): boolean {
+  for (const centre of [CABIN_ENTRY_FORWARD_Z, CABIN_ENTRY_AFT_Z]) {
+    if (Math.abs(z - centre) < CABIN_ENTRY_WIDTH / 2 + half) return true;
+  }
+  return false;
+}
 
 function inCabin(z: number): boolean {
   return (z >= FORWARD_CABIN.from && z <= FORWARD_CABIN.to)
@@ -1417,6 +1485,7 @@ for (const station of FUSELAGE_STATIONS.slice(1, -1)) {
   if (station.z >= COCKPIT_CAGE_AFT_Z - 1e-9 && station.z <= GREENHOUSE_Z_FORE + 1e-9) {
     continue;
   }
+  if (zHitsCabinEntry(station.z, FRAME_HALF_THICKNESS)) continue;
   const outer = insetStation(station, SKIN_INSET);
   const inner = insetStation(station, SKIN_INSET + FRAME_WEB);
   // КОЛЬЦОМ СТАНОВИТСЯ ТОЛЬКО САЛОННЫЙ ШПАНГОУТ.
@@ -1486,16 +1555,15 @@ const WINDOW_ROW_PITCH = 1.15;
 export const DC3_WINDOW_SIZE = { along: 0.38, across: 0.42 } as const;
 
 /**
- * ПЛАН ВХОДОВ — НАКЛАДКА, НЕ ПРОЁМ.
+ * ПЛАН ВХОДОВ — СДВИЖНЫЕ СТВОРКИ В НАСТОЯЩИХ ПРОЁМАХ.
  *
  * Четыре створки, оба борта: передние в глухом пролёте кабина→первый
- * иллюминатор, задние вместо последнего окна, сдвинутые на 15 см за его
- * центр, чтобы не сесть на хвостик крыла. Углы скруглены, как у самолётной
- * двери, а не столярной филёнки. Полотно и остекление — `:board:0` / `:board:1`,
- * как у вагона небесного поезда: прислонно-сдвижные к хвосту, не распашные.
- * Шкуру не режем: сначала смотрим, как едет накладка.
+ * иллюминатор, задние вместо седьмого окна, сдвинутые на 15 см за его
+ * прежний центр, чтобы не сесть на хвостик крыла. Углы скруглены, как у
+ * самолётной двери, а не столярной филёнки. Полотно и остекление —
+ * `:board:0` / `:board:1`, как у вагона небесного поезда: прислонно-сдвижные
+ * к хвосту. Проём — отсутствие шкуры; накладка только обводит его.
  */
-const CABIN_ENTRY_WIDTH = 0.76;
 const CABIN_ENTRY_HEIGHT = 1.66;
 const CABIN_ENTRY_CORNER = 0.15;
 /**
@@ -1508,8 +1576,9 @@ const CABIN_ENTRY_SEAL_REVEAL = 0.008;
 const CABIN_ENTRY_SEAL_STRIP = 0.018;
 const CABIN_ENTRY_SEAL_GAP = CABIN_ENTRY_SEAL_REVEAL + CABIN_ENTRY_SEAL_STRIP;
 const CABIN_ENTRY_FRAME_WIDTH = 0.048;
-const CABIN_ENTRY_FORWARD_Z = 4.72;
-const CABIN_ENTRY_AFT_Z = -3.85;
+/** Накладка сидит на лофте, не на 2 см воздуха перед шкурой. */
+const CABIN_ENTRY_OVERLAY_OUTWARD = 0.012;
+const CABIN_ENTRY_CAGE_WEB = 0.055;
 const CABIN_ENTRY_PANE = { along: 0.3, across: 0.34, corner: 0.08, sill: 1.02 } as const;
 const CABIN_ENTRY_PLANS = [
   {
@@ -1523,6 +1592,29 @@ const CABIN_ENTRY_PLANS = [
     floorY: AFT_CABIN.floorY,
   },
 ] as const;
+
+function cabinEntryContains(
+  z: number,
+  y: number,
+  plan: (typeof CABIN_ENTRY_PLANS)[number],
+  margin = 0,
+): boolean {
+  const yCentre = plan.floorY + CABIN_ENTRY_HEIGHT / 2;
+  const dz = z - plan.z;
+  if (Math.abs(dz) > CABIN_ENTRY_WIDTH / 2 + margin) return false;
+  const halfY = roundedRectHalfAcross(
+    dz,
+    CABIN_ENTRY_WIDTH / 2,
+    CABIN_ENTRY_HEIGHT / 2,
+    CABIN_ENTRY_CORNER,
+  );
+  return Math.abs(y - yCentre) <= halfY + margin;
+}
+
+function cabinEntryBlocksRow(z: number, halfAlong = 0.25): boolean {
+  return CABIN_ENTRY_PLANS.some((plan) =>
+    Math.abs(z - plan.z) < CABIN_ENTRY_WIDTH / 2 + halfAlong);
+}
 
 /**
  * ДВА ЦЕНТРАЛЬНЫХ СТЕКЛА — ПЛОСКИЕ ПАРАЛЛЕЛОГРАММЫ, НЕ ОВАЛЬНЫЕ ПЛИТКИ.
@@ -1715,6 +1807,8 @@ function addSideOverlayTile(
   rowCount: number,
   cols: number,
   closedRing = false,
+  group = "cabin-entry-overlay",
+  volume: number | undefined = group === "cabin-entry-overlay" ? 0.0002 : undefined,
 ): void {
   const vertices = [...outer, ...inner];
   const offset = outer.length;
@@ -1751,8 +1845,8 @@ function addSideOverlayTile(
       rim(index(row + 1, 0), index(row, 0));
     }
   }
-  addClosedMesh(id, "cabin-entry-overlay", material, vertices, triangles, {
-    volume: 0.0002,
+  addClosedMesh(id, group, material, vertices, triangles, {
+    volume,
   });
 }
 
@@ -1797,6 +1891,8 @@ function addCabinEntryRing(
   outward: number,
   innerOffset: number,
   outerOffset: number,
+  group = "cabin-entry-overlay",
+  thickness = 0.012,
 ): void {
   const innerLoop = roundedRectLoop(
     zCentre,
@@ -1815,8 +1911,18 @@ function addCabinEntryRing(
   const proud = [...innerLoop, ...outerLoop].map((sample) =>
     sideSkinPoint(sample.z, sample.y, sign, outward));
   const inset = [...innerLoop, ...outerLoop].map((sample) =>
-    sideSkinPoint(sample.z, sample.y, sign, outward - 0.012));
-  addSideOverlayTile(id, material, proud, inset, 2, innerLoop.length, true);
+    sideSkinPoint(sample.z, sample.y, sign, outward - thickness));
+  addSideOverlayTile(
+    id,
+    material,
+    proud,
+    inset,
+    2,
+    innerLoop.length,
+    true,
+    group,
+    group === "cabin-entry-overlay" ? 0.0002 : undefined,
+  );
 }
 
 /** Совпадает с `FRAME_WIDTH` панелей: стык считаем по наружной обвязке. */
@@ -2007,6 +2113,7 @@ for (const cabin of [FORWARD_CABIN, AFT_CABIN]) {
   for (const z of frameZs) {
     // Станции авторской таблицы уже несут своё кольцо — не дублируем.
     if (FUSELAGE_STATIONS.some((station) => Math.abs(station.z - z) < 0.2)) continue;
+    if (zHitsCabinEntry(z, FRAME_HALF_THICKNESS)) continue;
     const station = sampleStation(z);
     const outer = insetStation(station, SKIN_INSET);
     const inner = insetStation(station, SKIN_INSET + FRAME_WEB);
@@ -2056,6 +2163,7 @@ for (const [tag, cabin] of [["fwd", FORWARD_CABIN], ["aft", AFT_CABIN]] as const
   // Кресла: два по левому борту, одно по правому, между ними проход. Так
   // сидели в этом типе, и так ряд помещается в наш борт с запасом.
   for (const [row, z] of cabinRowZ(cabin).entries()) {
+    if (cabinEntryBlocksRow(z)) continue;
     // РЯД ВЫВОДИТСЯ ИЗ СЕЧЕНИЯ, А НЕ ЗАДАЁТСЯ ЧИСЛАМИ.
     //
     // Свободная полуширина на уровне пола у двух салонов разная: хвостовой
@@ -2274,8 +2382,8 @@ addBodyBox(
   "nose-equipment-bay",
   "structure-fuselage",
   "metal",
-  point(0, -0.15, 5.55),
-  point(0.98, 0.64, 1.25),
+  NOSE_BAY_CENTER,
+  NOSE_BAY_SIZE,
 );
 
 // СПЛОШНОЙ БЛОК АККУМУЛЯТОРОВ И РАДИО ВНУТРИ НОСОВОГО ОТСЕКА. Сам отсек —
@@ -2293,6 +2401,269 @@ addCylinder(
   12,
 );
 
+/**
+ * КАБИНА ЭКИПАЖА.
+ *
+ * Не идеальный макет и не прогулка через дверь: закрытая переборка сразу
+ * за креслами, из салона сюда садятся. Носовой отсек остаётся на месте —
+ * его верх становится пьедесталом, на нём шесть замороженных рычагов,
+ * батарея живёт внутри. Мебель лёгкая (явный объём), чтобы центр масс
+ * не уехал с −1.027.
+ */
+function addCockpitBox(
+  id: string,
+  material: ObjectMaterialId,
+  center: ObjectPoint,
+  size: ObjectPoint,
+): void {
+  addBodyBox(id, "cockpit", material, center, size, { volume: COCKPIT_FURNITURE_VOLUME });
+}
+
+{
+  const bayTop = NOSE_BAY_CENTER[1] + NOSE_BAY_SIZE[1] / 2;
+  const bayBottom = NOSE_BAY_CENTER[1] - NOSE_BAY_SIZE[1] / 2;
+  const bayAft = NOSE_BAY_CENTER[2] - NOSE_BAY_SIZE[2] / 2;
+  const coverT = 0.024;
+  const coverTop = bayTop + coverT;
+  const floorY = FORWARD_CABIN.floorY;
+
+  const floorLength = COCKPIT_FLOOR_TO - FORWARD_CABIN.to;
+  const floorCentreZ = (FORWARD_CABIN.to + COCKPIT_FLOOR_TO) / 2;
+  const floorWidth = Math.min(
+    ...[FORWARD_CABIN.to, floorCentreZ, COCKPIT_FLOOR_TO].map((z) =>
+      cabinHalfWidth(sampleStation(z), floorY - CABIN_FLOOR_THICKNESS) * 2),
+  ) - 0.08;
+  addCockpitBox(
+    "cockpit-floor",
+    "timber-mid",
+    point(0, floorY - CABIN_FLOOR_THICKNESS / 2, floorCentreZ),
+    point(floorWidth, CABIN_FLOOR_THICKNESS, floorLength),
+  );
+
+  const bulkheadHalfW = Math.min(
+    cabinHalfWidth(sampleStation(COCKPIT_BULKHEAD_Z), floorY + 0.15),
+    cabinHalfWidth(sampleStation(COCKPIT_BULKHEAD_Z), 0.55),
+  ) - 0.06;
+  const tunnelHalf = NOSE_BAY_SIZE[0] / 2;
+  const wallWidth = bulkheadHalfW - tunnelHalf;
+  const wallTop = 0.62;
+  const wallHeight = wallTop - floorY;
+  const wallY = (floorY + wallTop) / 2;
+  for (const side of [-1, 1] as const) {
+    const board = side < 0 ? "left" : "right";
+    addCockpitBox(
+      `cockpit-bulkhead-${board}`,
+      "timber-dark",
+      point(side * (tunnelHalf + wallWidth / 2), wallY, COCKPIT_BULKHEAD_Z),
+      point(wallWidth, wallHeight, 0.04),
+    );
+  }
+  addCockpitBox(
+    "cockpit-bulkhead-head",
+    "timber-dark",
+    point(0, (bayTop + wallTop) / 2, COCKPIT_BULKHEAD_Z),
+    point(NOSE_BAY_SIZE[0], wallTop - bayTop, 0.04),
+  );
+
+  addCockpitBox(
+    "cockpit-tunnel-cover",
+    "metal",
+    point(NOSE_BAY_CENTER[0], bayTop + coverT / 2, NOSE_BAY_CENTER[2]),
+    point(NOSE_BAY_SIZE[0], coverT, NOSE_BAY_SIZE[2]),
+  );
+  addCockpitBox(
+    "cockpit-tunnel-plinth",
+    "metal",
+    point(NOSE_BAY_CENTER[0], (bayBottom + floorY) / 2, NOSE_BAY_CENTER[2]),
+    point(NOSE_BAY_SIZE[0], bayBottom - floorY, NOSE_BAY_SIZE[2]),
+  );
+  addCockpitBox(
+    "cockpit-tunnel-aft",
+    "metal",
+    point(NOSE_BAY_CENTER[0], NOSE_BAY_CENTER[1], bayAft - coverT / 2),
+    point(NOSE_BAY_SIZE[0], NOSE_BAY_SIZE[1], coverT),
+  );
+
+  const leverRows = [
+    { id: "prop", z: 5.88 },
+    { id: "throttle", z: 5.70 },
+    { id: "mixture", z: 5.52 },
+  ] as const;
+  for (const row of leverRows) {
+    for (const side of [-1, 1] as const) {
+      const board = side < 0 ? "left" : "right";
+      const x = side * 0.12;
+      addCylinder(
+        `cockpit-lever-${row.id}-${board}-shaft`,
+        "cockpit",
+        "metal",
+        point(x, coverTop, row.z),
+        point(x, coverTop + 0.11, row.z),
+        0.011,
+        10,
+      );
+      addCylinder(
+        `cockpit-lever-${row.id}-${board}-knob`,
+        "cockpit",
+        "paint-light",
+        point(x, coverTop + 0.11, row.z),
+        point(x, coverTop + 0.13, row.z),
+        0.022,
+        12,
+      );
+    }
+  }
+
+  for (const side of [-1, 1] as const) {
+    const board = side < 0 ? "left" : "right";
+    const seatX = side * COCKPIT_SEAT_X;
+    const cushionY = coverTop + 0.09;
+    addCockpitBox(
+      `cockpit-seat-${board}-leg`,
+      "metal",
+      point(side * 0.68, (floorY + coverTop) / 2, COCKPIT_SEAT_Z),
+      point(0.08, coverTop - floorY, 0.22),
+    );
+    addCockpitBox(
+      `cockpit-seat-${board}`,
+      "timber-dark",
+      point(seatX, cushionY, COCKPIT_SEAT_Z),
+      point(0.36, 0.18, 0.46),
+    );
+    addCockpitBox(
+      `cockpit-seat-${board}-back`,
+      "timber-dark",
+      point(seatX, coverTop + 0.40, COCKPIT_SEAT_Z - 0.275),
+      point(0.36, 0.56, 0.09),
+    );
+
+    const yokeX = side * COCKPIT_YOKE_X;
+    const hubY = 0.38;
+    addCylinder(
+      `cockpit-yoke-${board}-column`,
+      "cockpit",
+      "metal",
+      point(yokeX, coverTop, COCKPIT_YOKE_Z),
+      point(yokeX, hubY, COCKPIT_YOKE_Z),
+      0.022,
+      12,
+    );
+    addCockpitBox(
+      `cockpit-yoke-${board}-hub`,
+      "metal",
+      point(yokeX, hubY, COCKPIT_YOKE_Z),
+      point(0.08, 0.07, 0.07),
+    );
+    addCylinder(
+      `cockpit-yoke-${board}-horn-left`,
+      "cockpit",
+      "metal",
+      point(yokeX, hubY, COCKPIT_YOKE_Z + 0.01),
+      point(yokeX - 0.13, hubY + 0.09, COCKPIT_YOKE_Z + 0.01),
+      0.016,
+      10,
+    );
+    addCylinder(
+      `cockpit-yoke-${board}-horn-right`,
+      "cockpit",
+      "metal",
+      point(yokeX, hubY, COCKPIT_YOKE_Z + 0.01),
+      point(yokeX + 0.13, hubY + 0.09, COCKPIT_YOKE_Z + 0.01),
+      0.016,
+      10,
+    );
+    addCylinder(
+      `cockpit-yoke-${board}-horn-bow`,
+      "cockpit",
+      "metal",
+      point(yokeX - 0.13, hubY + 0.09, COCKPIT_YOKE_Z + 0.01),
+      point(yokeX + 0.13, hubY + 0.09, COCKPIT_YOKE_Z + 0.01),
+      0.016,
+      10,
+    );
+  }
+
+  /**
+   * ПРИБОРНАЯ ДОСКА СМОТРИТ В ЭКИПАЖ, А НЕ В СТЕКЛО.
+   *
+   * `MotionInstrumentSystem` рисует на грани +Y и раскладывает горизонт /
+   * лампы по ±Z. +Y — к лётчикам (−Z корпуса и чуть вверх). Капитан на
+   * порту (+X): +Z плиты туда, доска сдвинута к его креслу.
+   *
+   * Местный +X плиты смотрит ВНИЗ. На горизонтальной полке у системы
+   * приборов «верх» совпадал с +Y мира; на плите в лицо экипажу тот же
+   * контур без этого разворота даёт перевёрнутые надписи и горизонт.
+   */
+  const panelRake = 0.42;
+  const panelSpan = 0.68;
+  const panelHeight = 0.36;
+  const panelThickness = 0.05;
+  const panelCenter = point(0.18, 0.56, 6.16);
+  const panelFace = normalize(point(0, Math.sin(panelRake), -Math.cos(panelRake)));
+  const panelLeft = point(1, 0, 0);
+  const panelUp = normalize(cross(panelFace, panelLeft));
+  const visualUp = panelUp[1] >= 0 ? panelUp : scale(panelUp, -1);
+  const panelBottomY = panelCenter[1] - (panelHeight / 2) * visualUp[1];
+  const panelBottomZ = panelCenter[2] - (panelHeight / 2) * visualUp[2];
+  parts.push({
+    kind: "box",
+    id: "cockpit-panel",
+    group: "cockpit",
+    material: "dark-recess",
+    center: bodyToWorld(panelCenter),
+    size: [panelHeight, panelThickness, panelSpan],
+    rotation: eulerXyzFromBasis(
+      bodyDirection(panelUp),
+      bodyDirection(panelFace),
+      bodyDirection(panelLeft),
+    ),
+    volume: 0.0003,
+  });
+  const riserTop = panelBottomY + 0.012;
+  addCockpitBox(
+    "cockpit-panel-riser",
+    "metal",
+    point(panelCenter[0], (coverTop + riserTop) / 2, panelBottomZ),
+    point(0.50, riserTop - coverTop, 0.14),
+  );
+
+  for (const [tag, z] of [["aft", 5.32], ["fwd", 5.95]] as const) {
+    const station = sampleStation(z);
+    const y = station.crown - SKIN_INSET - 0.08;
+    addCockpitBox(
+      `cockpit-lamp-${tag}-mount`,
+      "metal",
+      point(0, y + 0.03, z),
+      point(0.08, 0.04, 0.08),
+    );
+    addCockpitBox(
+      `cockpit-lamp-${tag}-shade`,
+      "metal",
+      point(0, y, z),
+      point(0.18, 0.06, 0.14),
+    );
+    parts.push({
+      kind: "box",
+      id: `cockpit-lamp-${tag}-bulb`,
+      group: "cockpit",
+      material: "lamp-bulb",
+      center: bodyToWorld(point(0, y - 0.016, z)),
+      size: [0.07, 0.04, 0.07],
+      volume: 0.00012,
+      light: {
+        color: "#ffd9a3",
+        distance: 3.8,
+        intensity: 1.35,
+        dayIntensityFactor: 0.82,
+        interior: true,
+        poolPriority: 2.8,
+        poolGroupId: "dc3-cockpit",
+        reservePoolGroup: tag === "fwd",
+      },
+    });
+  }
+}
+
 for (const plan of CABIN_ENTRY_PLANS) {
   const yCentre = plan.floorY + CABIN_ENTRY_HEIGHT / 2;
   const paneY = plan.floorY + CABIN_ENTRY_PANE.sill + CABIN_ENTRY_PANE.across / 2;
@@ -2308,7 +2679,7 @@ for (const plan of CABIN_ENTRY_PLANS) {
       CABIN_ENTRY_WIDTH,
       CABIN_ENTRY_HEIGHT,
       CABIN_ENTRY_CORNER,
-      0.02,
+      CABIN_ENTRY_OVERLAY_OUTWARD,
     );
     addCabinEntryRing(
       `${prefix}-seal`,
@@ -2319,7 +2690,7 @@ for (const plan of CABIN_ENTRY_PLANS) {
       CABIN_ENTRY_WIDTH,
       CABIN_ENTRY_HEIGHT,
       CABIN_ENTRY_CORNER,
-      0.022,
+      CABIN_ENTRY_OVERLAY_OUTWARD,
       CABIN_ENTRY_SEAL_REVEAL,
       CABIN_ENTRY_SEAL_GAP,
     );
@@ -2332,9 +2703,24 @@ for (const plan of CABIN_ENTRY_PLANS) {
       CABIN_ENTRY_WIDTH,
       CABIN_ENTRY_HEIGHT,
       CABIN_ENTRY_CORNER,
-      0.024,
+      CABIN_ENTRY_OVERLAY_OUTWARD,
       CABIN_ENTRY_SEAL_GAP,
       CABIN_ENTRY_SEAL_GAP + CABIN_ENTRY_FRAME_WIDTH,
+    );
+    addCabinEntryRing(
+      `${prefix}-cage`,
+      "metal",
+      sign,
+      plan.z,
+      yCentre,
+      CABIN_ENTRY_WIDTH,
+      CABIN_ENTRY_HEIGHT,
+      CABIN_ENTRY_CORNER,
+      -SKIN_INSET,
+      0,
+      CABIN_ENTRY_CAGE_WEB,
+      "cabin-frame",
+      FRAME_WEB,
     );
     addCabinEntryLeaf(
       `${prefix}:board:1`,
@@ -2389,15 +2775,71 @@ const LONGERON_RAILS = [
   ["lower-left", (230 * Math.PI) / 180],
   ["lower-right", (310 * Math.PI) / 180],
 ] as const;
+
+function railCrossesCabinEntry(angle: number, plan: (typeof CABIN_ENTRY_PLANS)[number]): boolean {
+  const cosine = Math.cos(angle);
+  const side: 1 | -1 | 0 = cosine > 0.2 ? 1 : cosine < -0.2 ? -1 : 0;
+  if (side === 0) return false;
+  const [, y] = railPoint(sampleStation(plan.z), angle);
+  return cabinEntryContains(plan.z, y, plan, LONGERON_HALF + 0.02);
+}
+
+/**
+ * Стрингеры и лонжероны, которые пересекают проём, обрываются на его
+ * кромке: дальше их несёт внутренний обвод двери, а не пруток сквозь
+ * проход.
+ */
+function splitRailStations(angle: number): Station[][] {
+  const extra = CABIN_ENTRY_PLANS.flatMap((plan) => {
+    if (!railCrossesCabinEntry(angle, plan)) return [];
+    const zFrom = plan.z - CABIN_ENTRY_WIDTH / 2;
+    const zTo = plan.z + CABIN_ENTRY_WIDTH / 2;
+    return [sampleStation(zFrom), sampleStation(zTo)];
+  });
+  const stations = [...RAIL_STATIONS, ...extra]
+    .sort((left, right) => right.z - left.z)
+    .filter((station, index, list) =>
+      index === 0 || Math.abs(station.z - list[index - 1].z) > 1e-4);
+  const runs: Station[][] = [];
+  let current: Station[] = [];
+  const gapAfter = (prev: Station, next: Station): boolean =>
+    CABIN_ENTRY_PLANS.some((plan) => {
+      if (!railCrossesCabinEntry(angle, plan)) return false;
+      const z0 = plan.z - CABIN_ENTRY_WIDTH / 2;
+      const z1 = plan.z + CABIN_ENTRY_WIDTH / 2;
+      return prev.z >= z1 - 1e-4 && next.z <= z0 + 1e-4;
+    });
+  for (const station of stations) {
+    if (current.length > 0 && gapAfter(current[current.length - 1], station)) {
+      if (current.length >= 2) runs.push(current);
+      current = [station];
+      continue;
+    }
+    current.push(station);
+  }
+  if (current.length >= 2) runs.push(current);
+  return runs;
+}
+
+function addRailRuns(
+  id: string,
+  angle: number,
+  half: number,
+): void {
+  for (const [index, run] of splitRailStations(angle).entries()) {
+    const lofted = loftRings(run.map((station) => railSection(station, angle, half)));
+    const suffix = index === 0 ? "" : `:seg${index}`;
+    addClosedMesh(`${id}${suffix}`, "structure-fuselage", "metal", lofted.vertices, lofted.triangles);
+  }
+}
+
 for (const [id, angle] of LONGERON_RAILS) {
-  const lofted = loftRings(RAIL_STATIONS.map((station) => railSection(station, angle, LONGERON_HALF)));
-  addClosedMesh(`longeron-${id}`, "structure-fuselage", "metal", lofted.vertices, lofted.triangles);
+  addRailRuns(`longeron-${id}`, angle, LONGERON_HALF);
 }
 
 const STRINGER_ANGLES = [0, 30, 90, 150, 180, 210, 270, 330].map((deg) => (deg * Math.PI) / 180);
 STRINGER_ANGLES.forEach((angle, index) => {
-  const lofted = loftRings(RAIL_STATIONS.map((station) => railSection(station, angle, STRINGER_HALF)));
-  addClosedMesh(`stringer-${index}`, "structure-fuselage", "metal", lofted.vertices, lofted.triangles);
+  addRailRuns(`stringer-${index}`, angle, STRINGER_HALF);
 });
 
 /**
@@ -2788,6 +3230,15 @@ const views: readonly Dc3View[] = [
     fov: 30,
   },
   {
+    id: "cockpit-cutaway",
+    label: "Cutaway · crew seats, pedestal and panel",
+    projection: "perspective",
+    position: bodyToWorld(point(-2.6, 0.9, 5.55)),
+    target: bodyToWorld(point(0.05, 0.28, 5.95)),
+    fov: 40,
+    hiddenGroups: ["fuselage", "wing", "nacelle-left", "nacelle-right", "empennage", "nose-cap"],
+  },
+  {
     id: "entry-forward-right",
     label: "Entry overlay · forward passenger, right",
     projection: "perspective",
@@ -2993,14 +3444,14 @@ export const dc3AirframeSurface = {
    * а высота 0.50 выше верха кессона (0.21), так что смотрят они в пустоту
    * прохода, а не в лонжерон.
    */
-  windows: Array.from({ length: 7 }, (_, index) => ({
+  windows: Array.from({ length: 6 }, (_, index) => ({
     z: WINDOW_ROW_FIRST_Z - index * WINDOW_ROW_PITCH,
     centreY: WINDOW_ROW_CENTRE_Y,
     ...DC3_WINDOW_SIZE,
   })),
   /**
-   * Четыре входных накладки. Это план посадки, не вырезанные проёмы:
-   * шкура целая, створка лежит снаружи, чтобы было видно место и скругление.
+   * Четыре входа. Проём режется в панельной шкуре по этому контуру;
+   * створка, уплотнение и гермообвод остаются накладкой вокруг дырки.
    */
   cabinEntries: CABIN_ENTRY_PLANS.map((plan) => ({
     id: plan.id,
@@ -3043,6 +3494,24 @@ export const dc3AirframeSurface = {
     standClearance: CABIN_STAND,
     skinInset: SKIN_INSET,
   },
+  cockpit: {
+    bulkheadZ: COCKPIT_BULKHEAD_Z,
+    floorFrom: FORWARD_CABIN.to,
+    floorTo: COCKPIT_FLOOR_TO,
+    floorY: FORWARD_CABIN.floorY,
+    seatX: COCKPIT_SEAT_X,
+    seatZ: COCKPIT_SEAT_Z,
+    yokeX: COCKPIT_YOKE_X,
+    yokeZ: COCKPIT_YOKE_Z,
+    panelId: "cockpit-panel",
+    noseZ: NOSE_Z,
+    // Порт — объектный +X (forward×up = −X = правый борт). Имена left/right
+    // у кресел — про знак X, не про борт машины.
+    captainSeatId: "cockpit-seat-right",
+    captainBackId: "cockpit-seat-right-back",
+    captainHubId: "cockpit-yoke-right-hub",
+  },
   spars: { front: SPAR_FRONT, main: SPAR_MAIN, rear: SPAR_REAR },
   hingeGapT: HINGE_GAP_T,
+  cabinEntryHalfAcross: roundedRectHalfAcross,
 } as const;

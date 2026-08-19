@@ -598,7 +598,8 @@ test("the airframe hangs on a three-spar wing box with frames and longerons", ()
   const stringers = dc3BlockoutObject.parts.filter((part) => /^stringer-/.test(part.id));
   const formers = dc3BlockoutObject.parts.filter((part) => /^wing-former-/.test(part.id));
   assert.ok(frames.length >= 8, `only ${frames.length} fuselage frames`);
-  assert.equal(longerons.length, 4);
+  const longeronRails = new Set(longerons.map((part) => part.id.replace(/:.*$/, "")));
+  assert.equal(longeronRails.size, 4);
   assert.ok(stringers.length >= 8, `only ${stringers.length} stringers to hang the skin`);
   assert.ok(formers.length >= 15, `only ${formers.length} wing formers`);
   assert.ok(
@@ -692,8 +693,9 @@ test("the cage sits inside the skins, not on the mold line", () => {
     }
     return { yMax, yMin };
   };
-  for (const x of [1.4, 2.8, 4.2, 5.79]) {
+  for (const x of [0.7, 1.4, 2.1, 2.8, 3.5, 4.2, 5.79]) {
     const section = wing.at(x);
+    const innerThird = Math.abs(x) < wing.halfSpan / 3;
     for (const part of wingCage) {
       if (part.kind !== "mesh") continue;
       for (const vertex of part.vertices) {
@@ -705,7 +707,9 @@ test("the cage sits inside the skins, not on the mold line", () => {
         const { yMax, yMin } = airfoilY(body[0], body[2]);
         if (!Number.isFinite(yMax)) continue;
         const half = (yMax - yMin) / 2;
-        const margin = Math.min(0.04, Math.max(0.012, half * 0.25));
+        const margin = innerThird
+          ? Math.min(0.05, Math.max(0.02, half * 0.32))
+          : Math.min(0.04, Math.max(0.012, half * 0.25));
         assert.ok(
           body[1] < yMax - margin,
           `${part.id} pokes the upper skin at x=${x} by ${((body[1] - yMax) * 1000).toFixed(0)} mm`,
@@ -760,7 +764,7 @@ test("cutaway views hide skins only and keep an identical closed twin", () => {
 
 test("required engineering views are present and unique ids stay non-degenerate", () => {
   const ids = dc3BlockoutObject.views.map((view) => view.id);
-  for (const view of ["front", "right-profile", "left-profile", "rear", "top", "plan", "silhouette", "nacelle-detail", "nose-detail", "tail-detail", "core-detail", "high-three-quarter-cutaway", "flap-detail", "flap-detail-flaps-down", "high-three-quarter-flaps-down", "right-profile-flaps-down"]) {
+  for (const view of ["front", "right-profile", "left-profile", "rear", "top", "plan", "silhouette", "nacelle-detail", "nose-detail", "cockpit-cutaway", "tail-detail", "core-detail", "high-three-quarter-cutaway", "flap-detail", "flap-detail-flaps-down", "high-three-quarter-flaps-down", "right-profile-flaps-down"]) {
     assert.ok(ids.includes(view), view);
   }
   const partIds = dc3BlockoutObject.parts.map((part) => part.id);

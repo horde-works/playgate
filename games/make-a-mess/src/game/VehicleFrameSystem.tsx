@@ -112,8 +112,13 @@ import {
   passengerSeatContextAction,
   passengerSeatForCluster,
   passengerSeatIsIntact,
+  passengerSeatJourneyInProgress,
+  passengerSeatOccupiedActions,
+  passengerSeatReleasePoint,
+  resolvePassengerSeatRequest,
   seatCommandsCarrier,
   seatCommandsRotorcraft,
+  type OccupiedSeatRelease,
 } from "./passengerSeats";
 import {
   advanceDc3GroundTaxiProgress,
@@ -2306,7 +2311,10 @@ export function VehicleFrameSystem({
   onPassengerViewRestore?: (yaw: number, pitch: number) => void;
   /** Occupancy is UI/player state; the vehicle only offers and validates it. */
   occupiedSeatId?: string | null;
-  onOccupiedSeatChange?: (seatId: string | null) => void;
+  onOccupiedSeatChange?: (
+    seatId: string | null,
+    release?: OccupiedSeatRelease,
+  ) => void;
   /**
    * Кластеры, которые прямо сейчас везёт кадр. Система дверей по этому
    * списку молчит: иначе она каждый кадр возвращала бы створку на авторское
@@ -3434,6 +3442,10 @@ export function VehicleFrameSystem({
       const interactionSeat = passengerSeatForCluster(
         interactionFrame.clusterId,
       );
+      const seatJourneyLive = passengerSeatJourneyInProgress({
+        hasFlight: interaction.flight !== null,
+        groundTaxiFinished: interaction.dc3GroundTaxi?.phase === "finished",
+      });
       const seatIntact =
         interactionSeat !== null &&
         passengerSeatIsIntact(interactionSeat, inactivePieces);
@@ -3459,9 +3471,13 @@ export function VehicleFrameSystem({
           ? passengerSeatContextAction({
               seat: interactionSeat,
               occupiedSeatId,
-              carrierActive: interaction.flight !== null,
+              carrierActive:
+                interaction.flight !== null
+                || interactionSeat.parkedOccupation === true,
               passengerInsideCarrier:
-                interactionFrame.passengerFlight?.contains(eyeInShip) ?? false,
+                interactionSeat.occupationContains?.(eyeInShip)
+                ?? interactionFrame.passengerFlight?.contains(eyeInShip)
+                ?? false,
               distance: seatDistance,
               keepApproach: approachedPost.current === "seat",
               intact: seatIntact,
@@ -3470,71 +3486,75 @@ export function VehicleFrameSystem({
       if (seatAction === "stand") {
         post = seatAction;
       } else if (interaction.flight === null) {
-        const boardDistance = departure
-          ? Math.hypot(eye[0] - departure.point[0], eye[2] - departure.point[2])
-          : Number.POSITIVE_INFINITY;
-        const passengerFlight = interactionFrame.passengerFlight;
-        const rideDistance = passengerFlight
-          ? Math.hypot(
-              eyeInShip[0] - passengerFlight.point[0],
-              eyeInShip[1] - passengerFlight.point[1],
-              eyeInShip[2] - passengerFlight.point[2],
-            )
-          : Number.POSITIVE_INFINITY;
-        const keepRide = approachedPost.current === "ride";
-        const keepBoard = approachedPost.current === "board";
-        // Стойка на паде — интерфейс ПЛОЩАДКИ, и она видит машину только
-        // когда машина дома. Пульт без машины — призрак: он телепортировал
-        // пилота в кресло через полкарты. За улетевшей машиной идут пешком;
-        // вход в управление ждёт у самого кресла и едет вместе с ней.
-        const vehicleHome =
-          Math.hypot(
-            interaction.pose.position[0],
-            interaction.pose.position[1],
-            interaction.pose.position[2],
-          ) <= DEPARTURE_HOME_RADIUS;
-        if (
-          passengerFlight &&
-          passengerLaunchAllowed &&
-          passengerFlight.contains(eyeInShip) &&
-          rideDistance <=
-            (keepRide
-              ? passengerFlight.releaseRadius
-              : passengerFlight.approachRadius)
-        ) {
-          post = "ride";
-        } else if (
-          departure &&
-          // ПУЛЬТ ГОВОРИТ И ТОГДА, КОГДА МАШИНА НЕ ДОМА.
-          //
-          // Прежде пост требовал, чтобы машина стояла на площадке, и у пульта
-          // не было ни одного слова для улетевшей. Отсюда бой без конца:
-          // отозвать охотника было нечем (вердикт Igor, 11.08.2026). Отзыв —
-          // единственная команда возврата, других триггеров нет и не будет.
-          (interaction.flight === null ? uncrewedLaunchAllowed && vehicleHome : true) &&
-          Math.abs(eye[1] - departure.point[1]) < departure.heightTolerance &&
-          boardDistance <=
-            (keepBoard ? departure.releaseRadius : departure.approachRadius)
-        ) {
-          post = "board";
-        }
-        if (
-          process.env.NODE_ENV !== "production" &&
-          typeof window !== "undefined"
-        ) {
-          // Диагноз поста для headless-проверок: какие ворота не пустили.
-          (window as unknown as Record<string, unknown>).__mamDepartureDebug = {
-            frame: interactionFrame.id,
-            post,
-            uncrewedLaunchAllowed,
-            vehicleHome,
-            boardDistance,
-            approachRadius: departure?.approachRadius ?? null,
-            eyeHeightDelta: departure
-              ? Math.abs(eye[1] - departure.point[1])
-              : null,
-            eye: [eye[0], eye[1], eye[2]],
-          };
+        if (seatAction === "seat") {
+          post = seatAction;
+        } else {
+          const boardDistance = departure
+            ? Math.hypot(eye[0] - departure.point[0], eye[2] - departure.point[2])
+            : Number.POSITIVE_INFINITY;
+          const passengerFlight = interactionFrame.passengerFlight;
+          const rideDistance = passengerFlight
+            ? Math.hypot(
+                eyeInShip[0] - passengerFlight.point[0],
+                eyeInShip[1] - passengerFlight.point[1],
+                eyeInShip[2] - passengerFlight.point[2],
+              )
+            : Number.POSITIVE_INFINITY;
+          const keepRide = approachedPost.current === "ride";
+          const keepBoard = approachedPost.current === "board";
+          // Стойка на паде — интерфейс ПЛОЩАДКИ, и она видит машину только
+          // когда машина дома. Пульт без машины — призрак: он телепортировал
+          // пилота в кресло через полкарты. За улетевшей машиной идут пешком;
+          // вход в управление ждёт у самого кресла и едет вместе с ней.
+          const vehicleHome =
+            Math.hypot(
+              interaction.pose.position[0],
+              interaction.pose.position[1],
+              interaction.pose.position[2],
+            ) <= DEPARTURE_HOME_RADIUS;
+          if (
+            passengerFlight &&
+            passengerLaunchAllowed &&
+            passengerFlight.contains(eyeInShip) &&
+            rideDistance <=
+              (keepRide
+                ? passengerFlight.releaseRadius
+                : passengerFlight.approachRadius)
+          ) {
+            post = "ride";
+          } else if (
+            departure &&
+            // ПУЛЬТ ГОВОРИТ И ТОГДА, КОГДА МАШИНА НЕ ДОМА.
+            //
+            // Прежде пост требовал, чтобы машина стояла на площадке, и у пульта
+            // не было ни одного слова для улетевшей. Отсюда бой без конца:
+            // отозвать охотника было нечем (вердикт Igor, 11.08.2026). Отзыв —
+            // единственная команда возврата, других триггеров нет и не будет.
+            (interaction.flight === null ? uncrewedLaunchAllowed && vehicleHome : true) &&
+            Math.abs(eye[1] - departure.point[1]) < departure.heightTolerance &&
+            boardDistance <=
+              (keepBoard ? departure.releaseRadius : departure.approachRadius)
+          ) {
+            post = "board";
+          }
+          if (
+            process.env.NODE_ENV !== "production" &&
+            typeof window !== "undefined"
+          ) {
+            // Диагноз поста для headless-проверок: какие ворота не пустили.
+            (window as unknown as Record<string, unknown>).__mamDepartureDebug = {
+              frame: interactionFrame.id,
+              post,
+              uncrewedLaunchAllowed,
+              vehicleHome,
+              boardDistance,
+              approachRadius: departure?.approachRadius ?? null,
+              eyeHeightDelta: departure
+                ? Math.abs(eye[1] - departure.point[1])
+                : null,
+              eye: [eye[0], eye[1], eye[2]],
+            };
+          }
         }
       } else if (interactionSeat) {
         // Место у машины есть — предложить сесть. Условия у предложения свои
@@ -3582,6 +3602,9 @@ export function VehicleFrameSystem({
                     id: interactionSeat?.id ?? "seat",
                     kind: "stand",
                     cue: interactionSeat?.hintCue,
+                    actions: passengerSeatOccupiedActions(interactionSeat, {
+                      inFlight: seatJourneyLive,
+                    }),
                   }
                 : null;
       if (post !== approachedPost.current) {
@@ -3660,17 +3683,43 @@ export function VehicleFrameSystem({
               onOccupiedSeatChange(interactionSeat.id);
             }
           } else if (
-            post === "seat" &&
-            interaction.flight !== null &&
-            seatIntact &&
+            (post === "seat" || post === "stand") &&
             interactionSeat
           ) {
-            onOccupiedSeatChange(interactionSeat.id);
-          } else if (
-            post === "stand" &&
-            occupiedSeatId === interactionSeat?.id
-          ) {
-            onOccupiedSeatChange(null);
+            const verdict = resolvePassengerSeatRequest({
+              post,
+              selectedActionId:
+                departRequestTargetRef?.current?.selectedActionId,
+              inFlight: seatJourneyLive,
+              intact: seatIntact,
+            });
+            if (verdict.kind === "occupy") {
+              onOccupiedSeatChange(interactionSeat.id);
+            } else if (verdict.kind === "release") {
+              onOccupiedSeatChange(null, {
+                exitPoint: passengerSeatReleasePoint(
+                  interactionSeat,
+                  verdict.exit,
+                ),
+              });
+            } else if (
+              verdict.kind === "startFlight" &&
+              !seatJourneyLive
+            ) {
+              interaction.flight = createFlightState(
+                dispatchedFlightKind({
+                  post: "ride",
+                  requestedAction: verdict.flightKind,
+                  departureKind: departure?.flightKind ?? verdict.flightKind,
+                  passengerKind: verdict.flightKind,
+                  manualPilotLaunch: false,
+                }),
+                "passenger",
+                interactionFrame.flight.limits.enginePoints.length,
+                0,
+                null,
+              );
+            }
           }
           approachedPost.current = null;
           onDepartureApproachChange(null);
@@ -3773,7 +3822,11 @@ export function VehicleFrameSystem({
         const up = rotateByQuaternion(liveState.body.orientation, [0, 1, 0]);
         // Прогресс маршрута — обязательное условие: машина, стоящая на своём
         // пятне и никуда не летавшая, всем признакам посадки удовлетворяет.
-        const arrived = landingTolerance
+        // DC-3 довозит себя рулением: стоянка на точке старта — это конец
+        // рейса, а не швартовка носа в допуск дирижабля.
+        const arrived =
+          liveState.dc3GroundTaxi?.phase === "finished" ||
+          (landingTolerance
           ? liveFlight.progress > 0.985 &&
             isRotorLandingComplete(
               landingTolerance,
@@ -3809,7 +3862,7 @@ export function VehicleFrameSystem({
               liveFrame.nose,
               liveFrame.flight.approach,
               liveFrame.flight.docking,
-            );
+            ));
         if (!liveState.recovery && arrived) {
           console.info(
             `[flight-end] ${liveFrame.id}: прибытие, прогресс=${(liveFlight.progress * 100).toFixed(1)}%`,

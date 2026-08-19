@@ -64,8 +64,13 @@ test("the town airship keeps exterior and onboard commands separate", () => {
   assert.equal(entryInteractionMatches(dispatch, ride), false);
 });
 
-test("an onboard ride wins over a nearby carrier door", () => {
+test("an onboard ride or seat wins over a nearby carrier door", () => {
   assert.equal(preferredEntryInteraction(DOOR, RIDE), RIDE);
+  assert.equal(preferredEntryInteraction(DOOR, SEAT), SEAT);
+  assert.equal(preferredEntryInteraction(DOOR, STAND), STAND);
+  const dc3Door = { id: "island-airport:dc3:cabin-entry-right-forward", kind: "town-door" };
+  const dc3Seat = { id: "island-airport:dc3:captain-seat", kind: "seat" };
+  assert.equal(preferredEntryInteraction(dc3Door, dc3Seat), dc3Seat);
   assert.equal(preferredEntryInteraction(DOOR, null), DOOR);
   assert.equal(
     preferredEntryInteraction(DOOR, {

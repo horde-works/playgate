@@ -86,6 +86,27 @@ function materialFor(part: ObjectLabPart): MaterialBinding {
   if (part.group === "cabin-floor") {
     return { material: "wood", shape: "panel", color: "#4a4038", shellThickness: 0.05 };
   }
+  if (part.group === "cockpit") {
+    if (part.id === "cockpit-floor") {
+      return { material: "wood", shape: "panel", color: "#4a4038", shellThickness: 0.05 };
+    }
+    if (part.id.startsWith("cockpit-seat-") && !part.id.endsWith("-leg")) {
+      return { material: "cloth", shape: "panel", color: "#3d454c", shellThickness: 0.06 };
+    }
+    if (part.id.startsWith("cockpit-bulkhead")) {
+      return { material: "cloth", shape: "panel", color: "#5a5248", shellThickness: 0.03 };
+    }
+    if (part.id.startsWith("cockpit-lamp-") && part.id.endsWith("-shade")) {
+      return { material: "aluminium", shape: "panel", color: "#7a6f5d", shellThickness: 0.02 };
+    }
+    if (part.id.endsWith("-knob")) {
+      return { material: "wood", shape: "panel", color: "#d8d0c4", shellThickness: 0.01 };
+    }
+    if (part.id === "cockpit-panel") {
+      return { material: "steel", shape: "panel", color: "#2a2d30", shellThickness: 0.02 };
+    }
+    return { material: "steel", shape: "panel", color: "#3a3f42", shellThickness: 0.02 };
+  }
   if (part.group === "cabin-seats") {
     return { material: "cloth", shape: "panel", color: "#4d5a63", shellThickness: 0.06 };
   }
@@ -255,7 +276,7 @@ function primitive(
           ? 0.45
           : mount
             ? 0.55
-            : part.id.startsWith("cabin-lamp-")
+            : part.id.startsWith("cabin-lamp-") || part.id.startsWith("cockpit-lamp-")
               ? 0.28
               : 0.4,
     maximumVerticalGap: gear ? 0.16 : 0.12,
@@ -346,7 +367,7 @@ function canonicalPart(
       point(part.center),
       size,
       part.rotation ? point(part.rotation) : undefined,
-      { volume: size[0] * size[1] * size[2] },
+      { volume: part.volume ?? size[0] * size[1] * size[2] },
     );
   }
   const center: SceneVector3 = [

@@ -93,6 +93,21 @@ export interface PlugSlideDoorPolicy {
    * левый без знака уехал бы к носу.
    */
   readonly slideSign?: -1 | 1;
+  /** Горизонтальный вызов Space; без поля — общий `VIKING_DOOR_APPROACH_RADIUS`. */
+  readonly approachRadius?: number;
+  readonly releaseRadius?: number;
+}
+
+export function plugSlideApproachRadius(
+  policy: PlugSlideDoorPolicy | null | undefined,
+): number {
+  return policy?.approachRadius ?? VIKING_DOOR_APPROACH_RADIUS;
+}
+
+export function plugSlideReleaseRadius(
+  policy: PlugSlideDoorPolicy | null | undefined,
+): number {
+  return policy?.releaseRadius ?? VIKING_DOOR_RELEASE_RADIUS;
 }
 
 export interface AutomaticSlideDoorPolicy {
@@ -134,11 +149,13 @@ export const STANDARD_DOOR_ROTATION_AXIS = [0, 1, 0] as const;
 export const PLUG_SLIDE_DOORS: readonly PlugSlideDoorPolicy[] = [
   { doorId: "terminal:sky-train:head:door", plugDepth: 0.26, travel: 1.78, plugShare: 0.34 },
   { doorId: "sky-mooring:airship:car:door", plugDepth: 0.22, travel: 1.42, plugShare: 0.34 },
-  // DC-3: все четыре створки к хвосту. Врезки в шкуре ещё нет — едет накладка.
-  { doorId: "island-airport:dc3:cabin-entry-right-forward", plugDepth: 0.18, travel: 0.8, plugShare: 0.34 },
-  { doorId: "island-airport:dc3:cabin-entry-left-forward", plugDepth: 0.18, travel: 0.8, plugShare: 0.34, slideSign: -1 },
-  { doorId: "island-airport:dc3:cabin-entry-right-aft", plugDepth: 0.18, travel: 0.8, plugShare: 0.34 },
-  { doorId: "island-airport:dc3:cabin-entry-left-aft", plugDepth: 0.18, travel: 0.8, plugShare: 0.34, slideSign: -1 },
+  // DC-3: все четыре створки к хвосту. Проём — дырка в шкуре, едет накладка.
+  // Радиус 3.2 м (общий для дверей деревни) с салона и с носа хватал переднюю
+  // створку: Space открывал дверь вместо посадки в кресло.
+  { doorId: "island-airport:dc3:cabin-entry-right-forward", plugDepth: 0.18, travel: 0.8, plugShare: 0.34, approachRadius: 1.8, releaseRadius: 2.4 },
+  { doorId: "island-airport:dc3:cabin-entry-left-forward", plugDepth: 0.18, travel: 0.8, plugShare: 0.34, slideSign: -1, approachRadius: 1.8, releaseRadius: 2.4 },
+  { doorId: "island-airport:dc3:cabin-entry-right-aft", plugDepth: 0.18, travel: 0.8, plugShare: 0.34, approachRadius: 1.8, releaseRadius: 2.4 },
+  { doorId: "island-airport:dc3:cabin-entry-left-aft", plugDepth: 0.18, travel: 0.8, plugShare: 0.34, slideSign: -1, approachRadius: 1.8, releaseRadius: 2.4 },
 ];
 
 /** The sky ram's stern armour doubles as a loading ramp while docked. */
