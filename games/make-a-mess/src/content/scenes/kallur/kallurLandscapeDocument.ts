@@ -69,10 +69,11 @@ const kallurBaseDocument: LandscapeDocument = {
     // between the 2.6 m hummocks and the 15-42 m zone blends there was a
     // spectral gap, and the mid ring read uniformly rough. These broad
     // swells group the hummocks into the lit and shaded families that
-    // compose the reference's middle distance.
+    // compose the reference's middle distance. Numbers ported VERBATIM
+    // from lab tile Y (scripts/kallur-carpet-lab.mjs, flags.masses).
     wavelength: 6.5,
-    amplitude: 0.5,
-    seed: 11,
+    amplitude: 0.55,
+    seed: 601,
   },
   mesoRelief: {
     // Hummocks: the "fur" of the slope. Wavelength stays well above the
