@@ -184,7 +184,7 @@ test("the wing is a low-wing and the shafts sit on its chord", () => {
   );
 });
 
-test("the main oleo hangs below the cowl, knuckle included", () => {
+test("the main oleo hangs below the cowl; the knuckle sits in the well", () => {
   const { worldToBody } = dc3AirframeSurface;
   const pitch = dc3BlockoutObject.dimensions.threePointPitchDegrees;
   assert.ok(
@@ -208,17 +208,23 @@ test("the main oleo hangs below the cowl, knuckle included", () => {
     const exposed = cowlBottom - axle[1];
     assert.ok(
       exposed > 0.75,
-      `${side} oleo below the cowl is ${exposed.toFixed(2)} m — knuckle still in the nacelle`,
+      `${side} oleo below the cowl is ${exposed.toFixed(2)} m — axle buried with the knuckle`,
     );
     const trunnion = worldToBody(strut.from);
     assert.ok(
-      trunnion[1] < cowlBottom - 0.08,
-      `${side} strut starts ${((trunnion[1] - cowlBottom) * 1000).toFixed(0)} mm inside the cowl`,
+      trunnion[1] > cowlBottom + 0.02,
+      `${side} strut still starts ${((cowlBottom - trunnion[1]) * 1000).toFixed(0)} mm below the cowl`,
     );
-    const knuckleTop = Math.max(...knuckle.vertices.map((vertex) => worldToBody(vertex)[1]));
+    const knuckleYs = knuckle.vertices.map((vertex) => worldToBody(vertex)[1]);
+    const knuckleTop = Math.max(...knuckleYs);
+    const knuckleBottom = Math.min(...knuckleYs);
     assert.ok(
-      knuckleTop <= cowlBottom + 0.02,
-      `${side} knuckle still sits ${(knuckleTop - cowlBottom).toFixed(3)} m inside the cowl`,
+      knuckleTop > cowlBottom + 0.12,
+      `${side} knuckle top is only ${((knuckleTop - cowlBottom) * 1000).toFixed(0)} mm into the well`,
+    );
+    assert.ok(
+      knuckleBottom < cowlBottom && knuckleBottom > cowlBottom - 0.08,
+      `${side} knuckle bottom ${((cowlBottom - knuckleBottom) * 1000).toFixed(0)} mm below the opening`,
     );
   }
 });

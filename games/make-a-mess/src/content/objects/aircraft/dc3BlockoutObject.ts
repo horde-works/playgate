@@ -337,17 +337,21 @@ function wingAt(x: number): {
 /** Shaft on the local wing chord, not a pod under the box. */
 const PROP_HUB_Y = wingAt(ENGINE_X).y0;
 /**
- * Стойка не тонет в гондоле вместе с низкопланом. Кулак навески — ящик
- * 20 см; его верх садится на низ капота, весь кулак снаружи. Длина
- * цапфа→ось — 90% той ноги, что стояла до переноса крыла (1.0 м). Короче
- * четверти от исходной не делаем: иначе снаружи остаётся покрышка. Колёса
- * уезжают вниз, трёхточка становится круче — это согласованный обмен, не
- * ошибка посадки.
+ * Ось и покрышка не едут: длина цапфа→ось и трёхточка заморожены. Кулак
+ * навески — ящик 20 см ВНУТРИ гондолы (15 см над обводом капота, 5 см
+ * выглядывает в проём). Стойка входит в нишу к кулаку; снаружи по-прежнему
+ * олео. После уборки наружу торчит только небольшая часть колеса — это тип,
+ * не повод топить ось в гондолу.
  */
 const GEAR_WHEEL_RADIUS = 0.55;
 const GEAR_STRUT_LENGTH = 0.9;
-const GEAR_TRUNNION_Y = PROP_HUB_Y - COWL_OUTER - 0.12;
-const GEAR_AXLE_Y = GEAR_TRUNNION_Y - GEAR_STRUT_LENGTH;
+const COWL_BOTTOM_Y = PROP_HUB_Y - COWL_OUTER;
+const GEAR_OLEO_TOP_Y = COWL_BOTTOM_Y - 0.12;
+const GEAR_AXLE_Y = GEAR_OLEO_TOP_Y - GEAR_STRUT_LENGTH;
+const GEAR_KNUCKLE_HEIGHT = 0.2;
+const GEAR_KNUCKLE_BELOW_OPENING = 0.05;
+const GEAR_TRUNNION_Y =
+  COWL_BOTTOM_Y - GEAR_KNUCKLE_BELOW_OPENING + GEAR_KNUCKLE_HEIGHT / 2;
 const GEAR_BODY_Y = GEAR_AXLE_Y - GEAR_WHEEL_RADIUS;
 const PITCH = Math.atan2(
   TAILWHEEL_BODY_Y - GEAR_BODY_Y,
@@ -1024,10 +1028,10 @@ function addMainGear(side: "left" | "right", sign: 1 | -1): void {
   const trunnionZ = 0.22;
   const axleY = GEAR_AXLE_Y;
   const axleZ = 0.2;
-  const pistonTopY = trunnionY + (axleY - trunnionY) * 0.47;
+  const pistonTopY = GEAR_OLEO_TOP_Y + (axleY - GEAR_OLEO_TOP_Y) * 0.47;
 
   addBodyBox(`gear-${side}-trunnion`, "gear-fittings", "metal",
-    point(x, trunnionY + 0.02, trunnionZ), point(0.26, 0.2, 0.24));
+    point(x, trunnionY, trunnionZ), point(0.26, GEAR_KNUCKLE_HEIGHT, 0.24));
   addCylinder(`gear-${side}-strut`, "gear", "metal",
     point(x, trunnionY, trunnionZ), point(x, pistonTopY, axleZ + 0.01), 0.085, 12);
   // Шток полированный: на фотографиях он всегда ярче цилиндра.
@@ -1070,8 +1074,7 @@ function addMainGear(side: "left" | "right", sign: 1 | -1): void {
   // деталью. На прежней высоте он заходил под обшивку на ШЕСТЬ миллиметров:
   // с ногой на месте это незаметно, а стоит ей уйти — и узел висит в пустоте.
   // Поднят так, чтобы больше половины сидело в нише, а наружу выходила
-  // проушина. Кулак навески при этом висит ПОД капотом — его нельзя прятать
-  // в гондолу вместе с низкопланом.
+  // проушина. Кулак навески сидит в той же нише; ось и покрышка снаружи.
   addBodyBox(`gear-${side}-jack-fitting`, "gear-fittings", "metal",
     point(x, PROP_HUB_Y - COWL_OUTER + 0.19, trunnionZ + 0.62), point(0.2, 0.16, 0.18));
   addBeam(`gear-${side}-drag-link`, "gear", "metal",
@@ -3287,7 +3290,7 @@ export const dc3BlockoutObject: Dc3BlockoutModel = {
   sourceNotes: [
     "Published type envelope: 95 ft span, 64 ft 6 in length, 16 ft 11 in tail-down height, 11 ft 6 in propeller, 987 sq ft wing.",
     "NASM A19530075000 owns the museum airframe identity; its 4.14 m move-contractor width is not used as fuselage diameter.",
-    "Station tables, 5° outer dihedral and 19 ft engine half-span are authored. This is a three-point sit, not a level drawing. The wing is a low-wing: root lower surface on the keel, engine shafts on the local chord. The main oleo stays outside the nacelle; the sit pitch steepens rather than burying the knuckle.",
+    "Station tables, 5° outer dihedral and 19 ft engine half-span are authored. This is a three-point sit, not a level drawing. The wing is a low-wing: root lower surface on the keel, engine shafts on the local chord. The gear knuckle sits in the nacelle well; the oleo and tyre stay outside. Do not bury the axle to freeze pitch or AABB.",
     "Each propeller is three Hamilton Standard paddle blades at the published 11 ft 6 in diameter; rotation is frozen.",
     "Nacelle is one metal teardrop the same diameter as the cowl, open at the lip around a Wright R-1820, then tapering through the wing to the trailing edge. Not a box behind a cylinder.",
     "Forward stations follow NASM A19530075000: accepted cabin roof through z=5.15, then a slope that stays above the windshield V. A separate brow triangle joins that slope to the two glass heads. The oval deck stops at z=6.85; two sill triangles join that ring to the two glass sills. The upper half flattens toward the glass and the anti-glare deck, then returns to an oval at the tip. A separate nose overlay closes that last ring; the station table is not extended. Two central windshields are planar parallelograms with a level side-view head, a 60° mullion rake and a 60° plan V, set 5 cm into the body. The two-pane scheme continues with a side light each side: level head and sill, sill dropped below the windshields, front edge the outboard pillar. Frames and rails stop short of the greenhouse opening.",

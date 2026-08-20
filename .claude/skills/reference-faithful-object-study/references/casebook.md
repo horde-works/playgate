@@ -562,8 +562,8 @@ leaves a hanging belly; a typed hub below that chord hangs the engines
 as pods. Put the root lower surface on the keel and the shafts on the
 local chord. Do not keep the main-wheel body height to freeze pitch:
 the trunnion follows the cowl onto the axle and only the tyre shows.
-Leave the knuckle below the cowl and keep at least three-quarters of
-the oleo. Pitch may steepen. Published tail-down height is the fin;
+The knuckle sits in the nacelle well; keep at least three-quarters of
+the oleo outside. Pitch may steepen. Published tail-down height is the fin;
 a steeper sit can put the cabin AABB above that number — do not bury
 the oleo to keep the AABB. Do not add the missing upper wing-fuselage
 fillets to hide the new intersection.
