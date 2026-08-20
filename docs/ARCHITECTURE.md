@@ -241,18 +241,19 @@ and without leaving a hole.
 
 ### Instanced batching
 
-The static, un-broken world is drawn with `InstancedMesh` batches, split by
-`geometryKind` (box vs. faceted-round vs. ground tile). Per-instance data is
-uploaded as instanced attributes:
+The static, un-broken world is drawn with **`BatchedMesh`** groups keyed by
+material program (`buildIntactMaterialBatches`), not by mesh topology. Unique
+visual meshes of the same brick/steel/glass share one multi-draw; per-instance
+frustum culling hides bricks behind the camera. Piece AO, weathering and
+anchors live in a data texture sampled by draw id. Moving doors and cratered
+meshes stay on `InstancedMesh`. The older geometry-hash grouping
+(`buildIntactInstanceBatches`) remains the content-cost passport.
 
-- `materialAnchor` — object-space texture anchoring;
-- `bakedAoA` / `bakedAoB` — 8-corner baked ambient occlusion;
-- `bakedSkyExposure` — how much open sky the piece sees;
-- `silicateJointBand` / `silicateJointTint` — mortar banding;
-- `materialFaceMaskPos` / `materialFaceMaskNeg` — per-face exposure masks so a
-  face buried against a sibling is not lit or bevelled like an exposed one.
+The same seven fields still travel with every piece (`materialAnchor`,
+baked AO/sky, silicate joints, face masks); BatchedMesh packs them in a
+data texture, InstancedMesh keeps them as instance attributes.
 
-When pieces break, only the changed instances are diffed out of the intact batch
+When pieces break, only the changed instances are hidden in the intact batch
 and handed to the dynamic renderer, keeping draw calls flat.
 
 ### Materials and shaders
@@ -260,7 +261,7 @@ and handed to the dynamic renderer, keeping draw calls flat.
 `materialTextures.ts` builds procedural `MeshStandardMaterial`s and injects GLSL
 via `onBeforeCompile`: sun-tinted depth fog, wet-ground reflectance at grazing
 angles, and baked-AO/sky-exposure sampling. The shader cache key
-(`customProgramCacheKey`) is versioned (`material-space-v6`) so material variants
+(`customProgramCacheKey`) is versioned (`material-space-v10`) so material variants
 don't collide. Lit glass (`litWindowColor`) carries an emissive that the day/night
 cycle ramps up after dusk — this drives glowing signage such as the terminal's
 departures board.

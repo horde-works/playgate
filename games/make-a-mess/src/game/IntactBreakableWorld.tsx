@@ -8,6 +8,7 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
   type MutableRefObject,
 } from "react";
 import {
@@ -43,10 +44,18 @@ import {
   applyHiddenPieceDiff,
   buildIntactGroundRenderColors,
   buildIntactInstanceBatches,
+  buildIntactMaterialBatches,
   type IntactInstanceBatch,
+  type IntactMaterialBatch,
 } from "./intactWorldBatching";
 import {
+  createIntactMaterialBatchedMesh,
+  disposeIntactBatchedMesh,
+  updateIntactCylinderLods,
+} from "./intactMaterialBatchedMesh";
+import {
   WorldLightingBake,
+  instancedLightingBatch,
   writeBakeResult,
 } from "./worldLightingBake";
 import {
@@ -337,14 +346,14 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
   // The bake writes refreshed neighbour values straight into these
   // attributes when nearby pieces are destroyed.
   useEffect(() => {
-    return lighting.registerBatch({
-      aoA: geometry.getAttribute("bakedAoA") as InstancedBufferAttribute,
-      aoB: geometry.getAttribute("bakedAoB") as InstancedBufferAttribute,
-      sky: geometry.getAttribute(
-        "bakedSkyExposure",
-      ) as InstancedBufferAttribute,
-      indexById,
-    });
+    return lighting.registerBatch(
+      instancedLightingBatch(
+        geometry.getAttribute("bakedAoA") as InstancedBufferAttribute,
+        geometry.getAttribute("bakedAoB") as InstancedBufferAttribute,
+        geometry.getAttribute("bakedSkyExposure") as InstancedBufferAttribute,
+        indexById,
+      ),
+    );
   }, [geometry, indexById, lighting]);
   const material = useMemo(
     () => {
@@ -487,6 +496,78 @@ const IntactPieceBatch = memo(function IntactPieceBatch({
   );
 });
 
+const IntactMaterialBatchMesh = memo(function IntactMaterialBatchMesh({
+  batch,
+  hiddenPieceIds,
+  lighting,
+}: {
+  batch: IntactMaterialBatch;
+  hiddenPieceIds: ReadonlySet<string>;
+  lighting: WorldLightingBake;
+}) {
+  const appliedHidden = useRef(new Set<string>());
+  const [bundle, setBundle] = useState<ReturnType<
+    typeof createIntactMaterialBatchedMesh
+  > | null>(null);
+
+  useLayoutEffect(() => {
+    const next = createIntactMaterialBatchedMesh(batch, lighting);
+    appliedHidden.current = new Set();
+    setBundle(next);
+    return () => {
+      disposeIntactBatchedMesh(next);
+    };
+  }, [batch, lighting]);
+
+  useEffect(() => {
+    if (!bundle) return;
+    const indexById = new Map(
+      batch.pieces.map((piece, index) => [piece.id, index]),
+    );
+    return lighting.registerBatch({
+      indexById,
+      writeBake(index, result) {
+        bundle.attributes.writeBake(index, result);
+      },
+      flush() {
+        bundle.attributes.flush();
+      },
+    });
+  }, [batch.pieces, bundle, lighting]);
+
+  useLayoutEffect(() => {
+    if (!bundle) return;
+    const startedAt = performance.now();
+    const { hide, restore } = applyHiddenPieceDiff(
+      batch.pieces,
+      appliedHidden.current,
+      hiddenPieceIds,
+    );
+    if (hide.length === 0 && restore.length === 0) {
+      return;
+    }
+    for (const index of hide) bundle.mesh.setVisibleAt(index, false);
+    for (const index of restore) bundle.mesh.setVisibleAt(index, true);
+    markActiveShotPerformance(
+      "intact_instance_visibility",
+      performance.now() - startedAt,
+      {
+        hidden: hide.length,
+        restored: restore.length,
+        batchSize: batch.pieces.length,
+      },
+    );
+  }, [batch, bundle, hiddenPieceIds]);
+
+  useFrame((state) => {
+    if (!bundle) return;
+    updateIntactCylinderLods(bundle, state.camera.position);
+  });
+
+  if (!bundle) return null;
+  return <primitive object={bundle.mesh} />;
+});
+
 const StaticColliderMesh = memo(function StaticColliderMesh({
   mesh,
 }: {
@@ -605,21 +686,24 @@ export const IntactBreakableWorld = memo(function IntactBreakableWorld({
     () => pieces.filter((piece) => !isProceduralVegetationPiece(piece)),
     [pieces],
   );
-  const instanceBatches = useMemo(
-    () => [
-      ...buildIntactInstanceBatches(
+  const materialBatches = useMemo(
+    () =>
+      buildIntactMaterialBatches(
         genericRenderPieces.filter((piece) => !mutablePieceIds.has(piece.id)),
       ).map((batch) => ({
-        batch: { ...batch, id: `static:${batch.id}` },
-        mutable: false,
+        ...batch,
+        id: `static:${batch.id}`,
       })),
-      ...buildIntactInstanceBatches(
+    [genericRenderPieces, mutablePieceIds],
+  );
+  const mutableInstanceBatches = useMemo(
+    () =>
+      buildIntactInstanceBatches(
         genericRenderPieces.filter((piece) => mutablePieceIds.has(piece.id)),
       ).map((batch) => ({
         batch: { ...batch, id: `mutable:${batch.id}` },
-        mutable: true,
+        mutable: true as const,
       })),
-    ],
     [genericRenderPieces, mutablePieceIds],
   );
   // Пробитые куски: батч на кусок, с его собственной подрезанной сеткой.
@@ -673,7 +757,15 @@ export const IntactBreakableWorld = memo(function IntactBreakableWorld({
 
   return (
     <>
-      {instanceBatches.map(({ batch, mutable }) => (
+      {materialBatches.map((batch) => (
+        <IntactMaterialBatchMesh
+          key={batch.id}
+          batch={batch}
+          hiddenPieceIds={hiddenForBatches}
+          lighting={lighting}
+        />
+      ))}
+      {mutableInstanceBatches.map(({ batch, mutable }) => (
         <IntactPieceBatch
           key={batch.id}
           batch={batch}

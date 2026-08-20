@@ -102,6 +102,16 @@ import {
   PERSISTENT_LAMP_GROUP_PRIORITY,
   selectGroupedLampCandidates,
 } from "./lampPoolSelection";
+import {
+  LAMP_ASSIGNMENT_INTERVAL_SECONDS,
+  beginLampCandidateFrame,
+  collectUnassignedWaiting,
+  createLampPoolScratch,
+  markLampKeepIds,
+  nearestLampCandidate,
+  pushLampCandidate,
+  sortLampCandidates,
+} from "./lampPoolRuntime";
 import { windState } from "./windState";
 import {
   DEFAULT_SOLAR_FRAME,
@@ -1279,83 +1289,78 @@ export function LampLightPool({
     () => new Map(lamps.map((lamp) => [lamp.id, lamp])),
     [lamps],
   );
+  const scratch = useRef(createLampPoolScratch<LampDefinition>());
+  useEffect(() => {
+    scratch.current.assignmentAge = LAMP_ASSIGNMENT_INTERVAL_SECONDS;
+  }, [lamps]);
 
   useFrame((_, delta) => {
     const night = nightRef.current;
+    const ranking = scratch.current;
+    ranking.assignmentAge += delta;
 
-    // Rank lit lamps by distance to the camera. Safety/signalling lights may
-    // read as nearer so their local cast does not disappear behind decorative
-    // fixtures while the player can still resolve the vehicle.
-    const candidates: {
-      lamp: LampDefinition;
-      position: LampDefinition["position"];
-      distanceSq: number;
-      rank: number;
-    }[] = [];
-    for (const lamp of lamps) {
-      if (brokenPieces.has(lamp.id)) {
-        continue;
+    if (ranking.assignmentAge >= LAMP_ASSIGNMENT_INTERVAL_SECONDS) {
+      ranking.assignmentAge = 0;
+      beginLampCandidateFrame(ranking);
+      for (const lamp of lamps) {
+        if (brokenPieces.has(lamp.id)) {
+          continue;
+        }
+        const timeFactor = lampTimeFactor(lamp, night);
+        const selfCastFactor = lampSelfCastFactor(
+          lamp,
+          occupiedCarrierClusterId,
+        );
+        const eventState = lamp.eventLighting
+          ? resolveEventState(lamp.eventLighting.sourceClusterId)
+          : "inTransit";
+        const level = lampEventLevel(lamp, eventState);
+        if (timeFactor * selfCastFactor * level.intensityMultiplier <= 0.001) {
+          continue;
+        }
+        const position = resolveLampPosition(lamp);
+        const priority =
+          Math.max(1, lamp.poolPriority ?? 1) *
+          Math.max(0.1, level.intensityMultiplier);
+        pushLampCandidate(
+          ranking,
+          lamp,
+          position[0],
+          position[1],
+          position[2],
+          camera.position.x,
+          camera.position.y,
+          camera.position.z,
+          priority,
+        );
       }
-      const timeFactor = lampTimeFactor(lamp, night);
-      const selfCastFactor = lampSelfCastFactor(
-        lamp,
-        occupiedCarrierClusterId,
-      );
-      const eventState = lamp.eventLighting
-        ? resolveEventState(lamp.eventLighting.sourceClusterId)
-        : "inTransit";
-      const level = lampEventLevel(lamp, eventState);
-      if (timeFactor * selfCastFactor * level.intensityMultiplier <= 0.001) {
-        continue;
-      }
-      const position = resolveLampPosition(lamp);
-      const dx = position[0] - camera.position.x;
-      const dy = position[1] - camera.position.y;
-      const dz = position[2] - camera.position.z;
-      const distanceSq = dx * dx + dy * dy + dz * dz;
-      const priority =
-        Math.max(1, lamp.poolPriority ?? 1) *
-        Math.max(0.1, level.intensityMultiplier);
-      candidates.push({
-        lamp,
-        position,
-        distanceSq,
-        rank: distanceSq / priority,
-      });
-    }
-    const nearest = candidates.reduce<(typeof candidates)[number] | undefined>(
-      (closest, candidate) =>
-        !closest || candidate.distanceSq < closest.distanceSq ? candidate : closest,
-      undefined,
-    );
-    const hasPersistentGroups = candidates.some((candidate) =>
-      (candidate.lamp.poolPriority ?? 0) >= PERSISTENT_LAMP_GROUP_PRIORITY);
-    const localCapacity = hasPersistentGroups
-      ? LAMP_POOL_SIZE
-      : Math.max(
-        1,
-        Math.min(
-          DEFAULT_LAMP_POOL_CAPACITY,
-          nearest?.lamp.localPoolCapacity ?? DEFAULT_LAMP_POOL_CAPACITY,
+      const nearest = nearestLampCandidate(ranking);
+      const hasPersistentGroups = ranking.active.some((candidate) =>
+        (candidate.lamp.poolPriority ?? 0) >= PERSISTENT_LAMP_GROUP_PRIORITY);
+      const localCapacity = hasPersistentGroups
+        ? LAMP_POOL_SIZE
+        : Math.max(
+          1,
+          Math.min(
+            DEFAULT_LAMP_POOL_CAPACITY,
+            nearest?.lamp.localPoolCapacity ?? DEFAULT_LAMP_POOL_CAPACITY,
+          ),
+        );
+      sortLampCandidates(ranking);
+      const chosen = selectGroupedLampCandidates(ranking.active, localCapacity);
+      markLampKeepIds(
+        ranking,
+        selectGroupedLampCandidates(
+          ranking.active,
+          Math.min(LAMP_POOL_SIZE, localCapacity + 2),
         ),
       );
-    candidates.sort((left, right) => left.rank - right.rank);
-    const chosen = selectGroupedLampCandidates(candidates, localCapacity);
-    // Hysteresis: a slot keeps its lamp while it stays in a slightly larger
-    // top set, so two lamps at similar range don't fight over a slot.
-    const keepSet = new Set(
-      selectGroupedLampCandidates(
-        candidates,
-        Math.min(LAMP_POOL_SIZE, localCapacity + 2),
-      )
-        .map((entry) => entry.lamp.id),
-    );
-    const assigned = new Set(
-      slots.current
-        .map((slot) => slot.lampId)
-        .filter((id): id is string => id !== null && keepSet.has(id)),
-    );
-    const waiting = chosen.filter((entry) => !assigned.has(entry.lamp.id));
+      collectUnassignedWaiting(
+        ranking,
+        chosen,
+        slots.current.map((slot) => slot.lampId),
+      );
+    }
 
     slots.current.forEach((slot, index) => {
       const light = lights.current[index];
@@ -1366,7 +1371,7 @@ export function LampLightPool({
       const current = slot.lampId ? lampById.get(slot.lampId) : undefined;
       const keep =
         current !== undefined &&
-        keepSet.has(current.id) &&
+        ranking.keepIds.has(current.id) &&
         !brokenPieces.has(current.id);
 
       if (!keep) {
@@ -1378,7 +1383,7 @@ export function LampLightPool({
           delta,
         );
         if (slot.intensity < 0.04) {
-          const next = waiting.shift();
+          const next = ranking.waiting.shift();
           slot.lampId = next ? next.lamp.id : null;
           slot.intensity = 0;
           if (next) {
@@ -1530,6 +1535,11 @@ export function SpotLightPool({
     () => new Map(definitions.map((light) => [light.id, light])),
     [definitions],
   );
+  const scratch = useRef(createLampPoolScratch<SpotLightDefinition>());
+  const desiredFixtureGlow = useRef(new Map<string, number>());
+  useEffect(() => {
+    scratch.current.assignmentAge = LAMP_ASSIGNMENT_INTERVAL_SECONDS;
+  }, [definitions]);
   const direction = useMemo(() => new Vector3(), []);
   const fixtureGlowLevels = useRef(new Map<string, number>());
   const fixtureGlowColors = useMemo(
@@ -1553,9 +1563,8 @@ export function SpotLightPool({
 
   useFrame((_, delta) => {
     const night = nightRef.current;
-    const desiredFixtureGlow = new Map(
-      fixtureGlowColors.map((color) => [color, 0]),
-    );
+    const glowTargets = desiredFixtureGlow.current;
+    for (const color of fixtureGlowColors) glowTargets.set(color, 0);
     for (const definition of definitions) {
       const fixtureGlow = definition.fixtureGlow;
       if (!fixtureGlow || brokenPieces.has(definition.id)) {
@@ -1573,12 +1582,12 @@ export function SpotLightPool({
             lampInteriorFactor(definition, occupiedCarrierClusterId) *
             level.intensityMultiplier,
         );
-      desiredFixtureGlow.set(
+      glowTargets.set(
         fixtureGlow.color,
-        Math.max(desiredFixtureGlow.get(fixtureGlow.color) ?? 0, glow),
+        Math.max(glowTargets.get(fixtureGlow.color) ?? 0, glow),
       );
     }
-    for (const [color, targetGlow] of desiredFixtureGlow) {
+    for (const [color, targetGlow] of glowTargets) {
       const previous = fixtureGlowLevels.current.get(color) ?? 0;
       let glow = smoothLampLevel(
         fixtureDefinitionByColor.get(color) ?? {},
@@ -1594,52 +1603,65 @@ export function SpotLightPool({
         setSignalGlassGlow(color, glow);
       }
     }
-    const candidates = definitions
-      .filter((definition) => {
+    const ranking = scratch.current;
+    ranking.assignmentAge += delta;
+    if (ranking.assignmentAge >= LAMP_ASSIGNMENT_INTERVAL_SECONDS) {
+      ranking.assignmentAge = 0;
+      beginLampCandidateFrame(ranking);
+      for (const definition of definitions) {
         if (brokenPieces.has(definition.id)) {
-          return false;
+          continue;
         }
         const state = definition.eventLighting
           ? resolveEventState(definition.eventLighting.sourceClusterId)
           : "inTransit";
         const level = lampEventLevel(definition, state);
-        return (
+        if (
           lampTimeFactor(definition, night) *
             lampInteriorFactor(definition, occupiedCarrierClusterId) *
-            level.intensityMultiplier >
+            level.intensityMultiplier <=
           0.001
-        );
-      })
-      .map((definition) => {
+        ) {
+          continue;
+        }
         const position = resolveLightPosition(definition);
-        const dx = position[0] - camera.position.x;
-        const dy = position[1] - camera.position.y;
-        const dz = position[2] - camera.position.z;
-        return { definition, distanceSq: dx * dx + dy * dy + dz * dz };
-      })
-      .sort((left, right) => left.distanceSq - right.distanceSq);
-    const wanted = new Set(
-      candidates.slice(0, SPOT_LIGHT_POOL_SIZE).map(({ definition }) => definition.id),
-    );
-    const assigned = new Set(
-      slots.current
-        .map((slot) => slot.lightId)
-        .filter((id): id is string => id !== null && wanted.has(id)),
-    );
-    const waiting = candidates.filter(({ definition }) => !assigned.has(definition.id));
+        pushLampCandidate(
+          ranking,
+          definition,
+          position[0],
+          position[1],
+          position[2],
+          camera.position.x,
+          camera.position.y,
+          camera.position.z,
+          1,
+        );
+      }
+      sortLampCandidates(ranking);
+      ranking.keepIds.clear();
+      const wantedCount = Math.min(SPOT_LIGHT_POOL_SIZE, ranking.active.length);
+      for (let index = 0; index < wantedCount; index += 1) {
+        ranking.keepIds.add(ranking.active[index].lamp.id);
+      }
+      collectUnassignedWaiting(
+        ranking,
+        ranking.active,
+        slots.current.map((slot) => slot.lightId),
+      );
+    }
     slots.current.forEach((slot, index) => {
       let definition = slot.lightId ? lightById.get(slot.lightId) : undefined;
       const shouldKeep =
         definition !== undefined &&
-        wanted.has(definition.id) &&
+        ranking.keepIds.has(definition.id) &&
         !brokenPieces.has(definition.id);
 
       if (!shouldKeep) {
         if (slot.intensity < 0.04) {
-          const next = waiting.shift();
-          slot.lightId = next?.definition.id ?? null;
+          const next = ranking.waiting.shift();
+          slot.lightId = next?.lamp.id ?? null;
           slot.intensity = 0;
-          definition = next?.definition;
+          definition = next?.lamp;
         }
       }
 
@@ -1660,7 +1682,8 @@ export function SpotLightPool({
         : "inTransit";
       const level = lampEventLevel(definition, state);
       const timeFactor = lampTimeFactor(definition, night);
-      const selected = wanted.has(definition.id) && !brokenPieces.has(definition.id);
+      const selected = ranking.keepIds.has(definition.id)
+        && !brokenPieces.has(definition.id);
       const desiredIntensity = selected
         ? timeFactor *
           lampInteriorFactor(definition, occupiedCarrierClusterId) *

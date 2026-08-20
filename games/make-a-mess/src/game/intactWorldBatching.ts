@@ -52,7 +52,7 @@ export function pieceGeometryKind(
   return "box";
 }
 
-function visualMeshKey(piece: BreakablePieceDefinition): string {
+export function visualMeshKey(piece: BreakablePieceDefinition): string {
   if (!piece.visualMesh) return "default";
   // Flags share one instanced billow surface per tessellation. Their authored
   // vertex offsets only vary the pose, while hard vehicle/architecture meshes
@@ -87,7 +87,7 @@ function visualMeshKey(piece: BreakablePieceDefinition): string {
   return `${piece.visualMesh.vertices.length}:${piece.visualMesh.indices.length}:${hash >>> 0}:${piece.visualMesh.doubleSided === false ? "front" : "double"}`;
 }
 
-function visualProfileKey(piece: BreakablePieceDefinition): string {
+export function visualProfileKey(piece: BreakablePieceDefinition): string {
   return piece.visualProfile
     ? piece.visualProfile.vertices
         .map(([x, y]) => `${x.toFixed(5)},${y.toFixed(5)}`)
@@ -148,6 +148,76 @@ export function buildIntactInstanceBatches(
     visualMesh: batchPieces[0].visualMesh,
     pieces: batchPieces,
   }));
+}
+
+export type IntactShadingKind = "solid" | "surface";
+
+export interface IntactMaterialBatch {
+  readonly id: string;
+  readonly material: BreakableMaterial;
+  readonly materialColor: string;
+  readonly textureProfile?: SurfaceTextureProfile;
+  readonly castShadow: boolean;
+  readonly shadingKind: IntactShadingKind;
+  readonly vertexColors: boolean;
+  readonly doubleSided: boolean;
+  readonly pieces: readonly BreakablePieceDefinition[];
+}
+
+export function intactShadingKind(
+  piece: BreakablePieceDefinition,
+): IntactShadingKind {
+  return piece.visualMesh ? "surface" : "solid";
+}
+
+function intactMaterialBatchKey(piece: BreakablePieceDefinition): string {
+  const materialColor = pieceMaterialBaseColor(piece.material, piece.color);
+  const castShadow =
+    !isGlassMaterial(piece.material) && piece.shape !== "groundTile";
+  const shadingKind = intactShadingKind(piece);
+  const vertexColors = Boolean(piece.visualMesh?.colors);
+  const doubleSided = piece.visualMesh?.doubleSided !== false;
+  return `${piece.material}:${materialColor}:${piece.textureProfile ?? "default"}:${Number(
+    castShadow,
+  )}:${shadingKind}:${Number(vertexColors)}:${doubleSided ? "double" : "front"}`;
+}
+
+/**
+ * Groups pieces by the material program they share, not by mesh topology.
+ * Unique visual meshes of one aluminium/brick/glass therefore become one
+ * BatchedMesh draw instead of one InstancedMesh per hash. InstancedMesh
+ * batches remain the content-cost passport; this list is the draw-call list.
+ */
+export function buildIntactMaterialBatches(
+  pieces: readonly BreakablePieceDefinition[],
+): readonly IntactMaterialBatch[] {
+  const batches = new Map<string, BreakablePieceDefinition[]>();
+  for (const piece of pieces) {
+    if (piece.intactVisible === false) continue;
+    const id = intactMaterialBatchKey(piece);
+    const batch = batches.get(id);
+    if (batch) {
+      batch.push(piece);
+    } else {
+      batches.set(id, [piece]);
+    }
+  }
+
+  return [...batches].map(([id, batchPieces]) => {
+    const sample = batchPieces[0];
+    return {
+      id,
+      material: sample.material,
+      materialColor: pieceMaterialBaseColor(sample.material, sample.color),
+      textureProfile: sample.textureProfile,
+      castShadow:
+        !isGlassMaterial(sample.material) && sample.shape !== "groundTile",
+      shadingKind: intactShadingKind(sample),
+      vertexColors: Boolean(sample.visualMesh?.colors),
+      doubleSided: sample.visualMesh?.doubleSided !== false,
+      pieces: batchPieces,
+    };
+  });
 }
 
 /** Display colours used by intact ground batches, keyed by authored piece. */

@@ -16,10 +16,9 @@ import { createSpatialIndex, type SpatialIndex } from "./spatialIndex.ts";
  */
 
 export interface RegisteredLightingBatch {
-  readonly aoA: InstancedBufferAttribute;
-  readonly aoB: InstancedBufferAttribute;
-  readonly sky: InstancedBufferAttribute;
   readonly indexById: ReadonlyMap<string, number>;
+  writeBake(index: number, result: PieceBakeResult): void;
+  flush(indices: number[]): void;
 }
 
 interface LightingDestination {
@@ -39,6 +38,58 @@ export function writeBakeResult(
     aoB[index * 4 + corner] = result.cornerAo[corner + 4];
   }
   sky[index] = result.skyExposure;
+}
+
+export function instancedLightingBatch(
+  aoA: InstancedBufferAttribute,
+  aoB: InstancedBufferAttribute,
+  sky: InstancedBufferAttribute,
+  indexById: ReadonlyMap<string, number>,
+): RegisteredLightingBatch {
+  return {
+    indexById,
+    writeBake(index, result) {
+      writeBakeResult(
+        result,
+        index,
+        aoA.array as Float32Array,
+        aoB.array as Float32Array,
+        sky.array as Float32Array,
+      );
+    },
+    flush(indices) {
+      if (indices.length === 0) return;
+      const ordered = [...indices].sort((left, right) => left - right);
+      const ranges: Array<readonly [number, number]> = [];
+      let start = ordered[0];
+      let end = start;
+      for (let cursor = 1; cursor < ordered.length; cursor += 1) {
+        const index = ordered[cursor];
+        if (index <= end + 1) {
+          end = Math.max(end, index);
+        } else {
+          ranges.push([start, end]);
+          start = index;
+          end = index;
+        }
+      }
+      ranges.push([start, end]);
+      // WebGL issues one bufferSubData call per range. If a time slice touched
+      // many scattered rows, one wider upload is cheaper than dozens of calls.
+      const uploads = ranges.length > 8
+        ? [[ranges[0][0], ranges[ranges.length - 1][1]] as const]
+        : ranges;
+      for (const [first, last] of uploads) {
+        const count = last - first + 1;
+        aoA.addUpdateRange(first * 4, count * 4);
+        aoB.addUpdateRange(first * 4, count * 4);
+        sky.addUpdateRange(first, count);
+      }
+      aoA.needsUpdate = true;
+      aoB.needsUpdate = true;
+      sky.needsUpdate = true;
+    },
+  };
 }
 
 export class WorldLightingBake {
@@ -76,13 +127,7 @@ export class WorldLightingBake {
       this.destinationByPieceId.set(pieceId, { batch, index });
       const result = this.results.get(pieceId);
       if (!result) continue;
-      writeBakeResult(
-        result,
-        index,
-        batch.aoA.array as Float32Array,
-        batch.aoB.array as Float32Array,
-        batch.sky.array as Float32Array,
-      );
+      batch.writeBake(index, result);
       restored.push(index);
     }
     this.flushBatch(batch, restored);
@@ -192,48 +237,13 @@ export class WorldLightingBake {
     const destination = this.destinationByPieceId.get(pieceId);
     if (!destination) return;
     const { batch, index } = destination;
-    writeBakeResult(
-      result,
-      index,
-      batch.aoA.array as Float32Array,
-      batch.aoB.array as Float32Array,
-      batch.sky.array as Float32Array,
-    );
+    batch.writeBake(index, result);
     const pending = this.pendingBatchWrites.get(batch);
     if (pending) pending.push(index);
     else this.pendingBatchWrites.set(batch, [index]);
   }
 
   private flushBatch(batch: RegisteredLightingBatch, indices: number[]): void {
-    if (indices.length === 0) return;
-    indices.sort((left, right) => left - right);
-    const ranges: Array<readonly [number, number]> = [];
-    let start = indices[0];
-    let end = start;
-    for (let cursor = 1; cursor < indices.length; cursor += 1) {
-      const index = indices[cursor];
-      if (index <= end + 1) {
-        end = Math.max(end, index);
-      } else {
-        ranges.push([start, end]);
-        start = index;
-        end = index;
-      }
-    }
-    ranges.push([start, end]);
-    // WebGL issues one bufferSubData call per range. If a time slice touched
-    // many scattered rows, one wider upload is cheaper than dozens of calls.
-    const uploads = ranges.length > 8
-      ? [[ranges[0][0], ranges[ranges.length - 1][1]] as const]
-      : ranges;
-    for (const [first, last] of uploads) {
-      const count = last - first + 1;
-      batch.aoA.addUpdateRange(first * 4, count * 4);
-      batch.aoB.addUpdateRange(first * 4, count * 4);
-      batch.sky.addUpdateRange(first, count);
-    }
-    batch.aoA.needsUpdate = true;
-    batch.aoB.needsUpdate = true;
-    batch.sky.needsUpdate = true;
+    batch.flush(indices);
   }
 }

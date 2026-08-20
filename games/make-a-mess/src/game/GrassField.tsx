@@ -35,6 +35,10 @@ import { environmentState } from "./environmentState";
 import { kallurTurfStyleAt, type KallurTurfStyle } from "./kallurVegetation.ts";
 import { sampleVikingGroundTraffic } from "./materialTextures";
 import { registerRefractionExcluded } from "./servicePassPolicy.ts";
+import {
+  VEGETATION_ORIGIN_CULL_GLSL,
+  writeVegetationViewCull,
+} from "./vegetationViewCull.ts";
 import { windState } from "./windState";
 
 /**
@@ -752,6 +756,7 @@ function makeMarshMaterial(species: MarshSpecies): ShaderMaterial {
     uniforms: {
       uTime: { value: 0 },
       uCamera: { value: new Vector3() },
+      uViewDir: { value: new Vector3(0, 0, -1) },
       uSunDir: { value: new Vector3(0.4, 0.7, 0.5) },
       uLightColor: { value: new Color(1, 1, 1) },
       uSheen: { value: new Color(0, 0, 0) },
@@ -780,6 +785,7 @@ function makeMarshMaterial(species: MarshSpecies): ShaderMaterial {
     vertexShader: /* glsl */ `
       uniform float uTime;
       uniform vec3 uCamera;
+      uniform vec3 uViewDir;
       uniform vec3 uSunDir;
       uniform float uWind;
       uniform vec2 uWindDir;
@@ -818,6 +824,7 @@ function makeMarshMaterial(species: MarshSpecies): ShaderMaterial {
         vElementVar = elementVar;
 
         vec4 origin = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+${VEGETATION_ORIGIN_CULL_GLSL}
         vec4 world = instanceMatrix * vec4(position, 1.0);
         float dist = length(origin.xyz - uCamera);
 
@@ -1055,6 +1062,7 @@ export function GrassField({
         uniforms: {
           uTime: { value: 0 },
           uCamera: { value: new Vector3() },
+          uViewDir: { value: new Vector3(0, 0, -1) },
           uLightColor: { value: new Color(1, 1, 1) },
           uSheen: { value: new Color(0, 0, 0) },
           // Просвет: тонкий лист против солнца ярче себя же в разы. Без этого
@@ -1104,6 +1112,7 @@ export function GrassField({
         vertexShader: /* glsl */ `
           uniform float uTime;
           uniform vec3 uCamera;
+          uniform vec3 uViewDir;
           uniform vec3 uSunDir;
           uniform float uWind;
           uniform vec2 uWindDir;
@@ -1149,6 +1158,7 @@ export function GrassField({
             float aFlower = aTuftKind.y;
             vUv = uv;
             vec4 origin = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+${VEGETATION_ORIGIN_CULL_GLSL}
             vec4 world = instanceMatrix * vec4(position, 1.0);
             // Distance fade: low turf goes cheap quickly, tall stems keep their
             // silhouette right out to the rim of the world.
@@ -1648,8 +1658,9 @@ export function GrassField({
       if (kind === 0) {
         attributes.setAttribute("aTuftKind", new InstancedBufferAttribute(tuftKind, 2));
       }
-      // The bounding sphere spans the whole field (instances are not
-      // individually culled), so it never wrongly disappears at the screen edge.
+      // Combined bounding sphere spans the island, so Three.js frustum
+      // culling never rejects the mesh on-island. Off-screen tufts skip
+      // vertex work in the shader (VEGETATION_ORIGIN_CULL_GLSL) instead.
       target.mesh.frustumCulled = false;
     }
   }, [
@@ -1693,11 +1704,11 @@ export function GrassField({
     const lowSun = Math.max(0, 1 - Math.min(1, sunHeight / 0.35));
     const sheen = GRASS_SHEEN * lit * lowSun;
 
-    for (const target of [material, marshParts?.reed.material, marshParts?.iris.material, marshParts?.herb.material]) {
+    for (const target of [material, marshParts?.reed.material, marshParts?.iris.material, marshParts?.herb.material, marshParts?.lily.material]) {
       if (!target) continue;
       const uniforms = target.uniforms;
       uniforms.uTime.value = state.clock.elapsedTime;
-      uniforms.uCamera.value.copy(camera.position);
+      writeVegetationViewCull(uniforms, camera);
       uniforms.uWind.value = windState.strength * windScale;
       uniforms.uWindDir.value.set(windState.direction[0], windState.direction[1]);
       uniforms.uSunDir.value.copy(environmentState.keyLightDirection);

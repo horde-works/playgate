@@ -4,6 +4,7 @@ import {
   applyHiddenPieceDiff,
   buildIntactGroundRenderColors,
   buildIntactInstanceBatches,
+  buildIntactMaterialBatches,
 } from "../games/make-a-mess/src/game/intactWorldBatching.ts";
 import { basaltStrongholdScene } from "../games/make-a-mess/src/game/basaltStrongholdScene.ts";
 
@@ -180,4 +181,43 @@ test("ground render colours survive the transition to a damaged remnant", () => 
   assert.equal(colors.size, 2);
   assert.notEqual(colors.get("grass-dark"), pieces[0].color);
   assert.notEqual(colors.get("grass-light"), pieces[1].color);
+});
+
+test("material batches merge unique visual meshes that share a program", () => {
+  const shallow = piece("shallow", "steel", [0, 0, 0], {
+    visualMesh: {
+      vertices: [[-0.5, -0.5, 0], [0.5, -0.5, 0], [0.5, 0.5, 0.1], [-0.5, 0.5, 0.1]],
+      indices: [0, 1, 2, 0, 2, 3],
+    },
+  });
+  const crowned = piece("crowned", "steel", [1, 0, 0], {
+    visualMesh: {
+      vertices: [[-0.5, -0.5, 0], [0.5, -0.5, 0], [0, 0.5, 0.25]],
+      indices: [0, 1, 2],
+    },
+  });
+  const brick = piece("brick", "brick", [2, 0, 0]);
+  const instanceBatches = buildIntactInstanceBatches([shallow, crowned, brick]);
+  const materialBatches = buildIntactMaterialBatches([shallow, crowned, brick]);
+  assert.equal(instanceBatches.length, 3);
+  assert.equal(materialBatches.length, 2);
+  const steel = materialBatches.find((batch) => batch.material === "steel");
+  assert.deepEqual(steel.pieces.map((entry) => entry.id), ["shallow", "crowned"]);
+});
+
+test("material batches still split texture profiles and surface vs solid", () => {
+  const paverGray = piece("gray", "concrete", [0, 0, 0], {
+    textureProfile: "city-gray-pavers",
+  });
+  const paverRed = piece("red", "concrete", [2, 0, 0], {
+    textureProfile: "city-red-pavers",
+  });
+  const panel = piece("panel", "concrete", [4, 0, 0], {
+    visualMesh: {
+      vertices: [[-0.5, -0.5, 0], [0.5, -0.5, 0], [0.5, 0.5, 0], [-0.5, 0.5, 0]],
+      indices: [0, 1, 2, 0, 2, 3],
+    },
+  });
+  const batches = buildIntactMaterialBatches([paverGray, paverRed, panel]);
+  assert.equal(batches.length, 3);
 });

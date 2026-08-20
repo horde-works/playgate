@@ -1524,7 +1524,7 @@ export function pieceProgramCacheKey(
     appearance.wetness,
     appearance.streaking,
   ].join(":");
-  return `material-space-v9:${material}:${profileKey}:${
+  return `material-space-v10:${material}:${profileKey}:${
     textureProfile && faceFitTextureProfiles.has(textureProfile)
       ? "face-fit"
       : "projected"
@@ -1699,6 +1699,7 @@ export function getPieceMaterial(
       }
       environmentShaderByMaterial.set(target, shader);
       environmentShaders.add(shader);
+      shader.uniforms.uPieceAttrTexture = { value: null };
 
       shader.vertexShader = shader.vertexShader
         .replace(
@@ -1719,6 +1720,18 @@ export function getPieceMaterial(
 // «Too many attributes (materialFaceMaskNeg)». Hence the
 // surface variant: a mesh has no box faces and no box corners, so it drops
 // bakedAoA/bakedAoB and both face masks and sits at 13.
+//
+// BatchedMesh (USE_BATCHING) stores the same seven values in a data texture
+// sampled by draw id. That path has no instanceMatrix attributes, so the
+// slot budget does not apply; unique visual meshes share one draw with boxes.
+#ifdef USE_BATCHING
+uniform highp sampler2D uPieceAttrTexture;
+vec4 pieceAttrPixel(const in int instanceId, const in int offset) {
+  int size = textureSize(uPieceAttrTexture, 0).x;
+  int j = instanceId * 8 + offset;
+  return texelFetch(uPieceAttrTexture, ivec2(j % size, j / size), 0);
+}
+#else
 attribute vec4 materialAnchor;
 attribute float silicateJointBand;
 attribute vec3 silicateJointTint;
@@ -1727,6 +1740,7 @@ ${surfaceMesh ? "" : `attribute vec4 bakedAoA;
 attribute vec4 bakedAoB;
 attribute vec3 materialFaceMaskPos;
 attribute vec3 materialFaceMaskNeg;`}
+#endif
 varying vec3 vMaterialCoordinate;
 varying float vLandscapeSurfaceProfile;
 varying vec3 vMaterialSurfaceNormal;
@@ -1757,10 +1771,24 @@ float materialVertexMacroNoise(vec3 coordinate) {
         .replace(
           "#include <uv_vertex>",
           `#include <uv_vertex>
+#ifdef USE_BATCHING
+int pieceInstanceId = int(getIndirectIndex(gl_DrawID));
+vec4 materialAnchor = pieceAttrPixel(pieceInstanceId, 0);
+float silicateJointBand = pieceAttrPixel(pieceInstanceId, 3).y;
+vec3 silicateJointTint = pieceAttrPixel(pieceInstanceId, 6).xyz;
+float bakedSkyExposure = pieceAttrPixel(pieceInstanceId, 3).x;
+vec4 bakedAoA = pieceAttrPixel(pieceInstanceId, 1);
+vec4 bakedAoB = pieceAttrPixel(pieceInstanceId, 2);
+vec3 materialFaceMaskPos = pieceAttrPixel(pieceInstanceId, 4).xyz;
+vec3 materialFaceMaskNeg = pieceAttrPixel(pieceInstanceId, 5).xyz;
+mat4 materialInstanceMatrix = getBatchingMatrix(getIndirectIndex(gl_DrawID));
+#else
+mat4 materialInstanceMatrix = instanceMatrix;
+#endif
 vec3 materialInstanceScale = vec3(
-  length(instanceMatrix[0].xyz),
-  length(instanceMatrix[1].xyz),
-  length(instanceMatrix[2].xyz)
+  length(materialInstanceMatrix[0].xyz),
+  length(materialInstanceMatrix[1].xyz),
+  length(materialInstanceMatrix[2].xyz)
 );
 vMaterialCoordinate = materialAnchor.xyz + position * materialInstanceScale;
 vLandscapeSurfaceProfile = -min(silicateJointBand, 0.0);
@@ -1784,7 +1812,7 @@ vBakedAo = mix(bakedAoPair.x, bakedAoPair.y, step(0.0, position.y));`}
 vBakedSky = bakedSkyExposure;
 
 // Instance axes in view space, for screen-space edge bevels.
-mat3 materialInstanceRotation = mat3(instanceMatrix);
+mat3 materialInstanceRotation = mat3(materialInstanceMatrix);
 vBevelAxisX = normalize(normalMatrix * (materialInstanceRotation * vec3(1.0, 0.0, 0.0)));
 vBevelAxisY = normalize(normalMatrix * (materialInstanceRotation * vec3(0.0, 1.0, 0.0)));
 vBevelAxisZ = normalize(normalMatrix * (materialInstanceRotation * vec3(0.0, 0.0, 1.0)));
@@ -1855,7 +1883,7 @@ vec2 materialFaceFitUv = abs(normal.z) > 0.5
   float clothFreeEdge = max(0.0, 0.6 - position.y);
   // Only HANGING cloth catches the wind: a tall panel (banner, laundry, loom
   // warp) sways; a flat, low panel lying indoors (bedding, a fur) does not.
-  float clothHangingHeight = length(instanceMatrix[1].xyz);
+  float clothHangingHeight = length(materialInstanceMatrix[1].xyz);
   float clothHanging = smoothstep(0.5, 1.0, clothHangingHeight);
   float clothAmp = 0.09 * uWindStrength * clothFreeEdge * clothHanging;
   transformed.x += clothBillow * clothAmp;

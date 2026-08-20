@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef } from "react";
-import { useFrame } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
 import {
   BufferGeometry,
   Color,
@@ -17,6 +17,10 @@ import {
   Vector3,
 } from "three";
 import { environmentState } from "./environmentState";
+import {
+  VEGETATION_ORIGIN_CULL_GLSL,
+  writeVegetationViewCull,
+} from "./vegetationViewCull.ts";
 import { windState } from "./windState";
 
 /**
@@ -241,6 +245,7 @@ export function IvyPatches({
   runs: readonly IvyRun[];
 }) {
   const meshRef = useRef<InstancedMesh>(null);
+  const { camera } = useThree();
   const build = useMemo(() => buildIvy(runs), [runs]);
   const geometry = useMemo(() => makeLeafGeometry(), []);
 
@@ -254,6 +259,8 @@ export function IvyPatches({
       new ShaderMaterial({
         uniforms: {
           uTime: { value: 0 },
+          uCamera: { value: new Vector3() },
+          uViewDir: { value: new Vector3(0, 0, -1) },
           uLight: { value: new Color(1, 1, 1) },
           uWind: { value: 1 },
           uShadow: { value: new Color("#131c0d") },
@@ -266,6 +273,8 @@ export function IvyPatches({
         alphaTest: 0.5,
         vertexShader: /* glsl */ `
           uniform float uTime;
+          uniform vec3 uCamera;
+          uniform vec3 uViewDir;
           uniform float uWind;
           attribute float aPhase;
           attribute float aTone;
@@ -278,6 +287,8 @@ export function IvyPatches({
             vUv = uv;
             vTone = aTone;
             vDepth = aDepth;
+            vec4 origin = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+${VEGETATION_ORIGIN_CULL_GLSL}
             vec4 world = instanceMatrix * vec4(position, 1.0);
             float sway = sin(uTime * 1.7 + aPhase) * 0.018 * aSway * uWind;
             world.x += sway;
@@ -354,6 +365,7 @@ export function IvyPatches({
   useFrame((state) => {
     material.uniforms.uTime.value = state.clock.elapsedTime;
     material.uniforms.uWind.value = windState.strength;
+    writeVegetationViewCull(material.uniforms, camera);
     // Ivy is lit by the world, not by a curve of its own: `groundLightLevel`
     // is the same energy the scene's key, moon and fill were just given,
     // normalised to a clear midday. Its own 0.82 ramp meant a wall of leaves
@@ -459,6 +471,7 @@ export function WeedClumps({
   points: readonly WeedPoint[];
 }) {
   const meshRef = useRef<InstancedMesh>(null);
+  const { camera } = useThree();
   const geometry = useMemo(() => makeWeedGeometry(), []);
 
   const material = useMemo(
@@ -466,6 +479,8 @@ export function WeedClumps({
       new ShaderMaterial({
         uniforms: {
           uTime: { value: 0 },
+          uCamera: { value: new Vector3() },
+          uViewDir: { value: new Vector3(0, 0, -1) },
           uLight: { value: new Color(1, 1, 1) },
           uWind: { value: 1 },
           uBase: { value: new Color("#42542c") },
@@ -478,6 +493,8 @@ export function WeedClumps({
         alphaTest: 0.5,
         vertexShader: /* glsl */ `
           uniform float uTime;
+          uniform vec3 uCamera;
+          uniform vec3 uViewDir;
           uniform float uWind;
           attribute float aPhase;
           attribute float aDry;
@@ -486,6 +503,8 @@ export function WeedClumps({
           void main() {
             vUv = uv;
             vDry = aDry;
+            vec4 origin = instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+${VEGETATION_ORIGIN_CULL_GLSL}
             vec4 world = instanceMatrix * vec4(position, 1.0);
             float sway = sin(uTime * 1.4 + aPhase + world.x * 0.3) * 0.07 * uv.y * uv.y * uWind;
             world.x += sway;
@@ -549,6 +568,7 @@ export function WeedClumps({
   useFrame((state) => {
     material.uniforms.uTime.value = state.clock.elapsedTime;
     material.uniforms.uWind.value = windState.strength;
+    writeVegetationViewCull(material.uniforms, camera);
     material.uniforms.uLight.value
       .copy(environmentState.groundLight)
       .multiplyScalar(environmentState.groundLightLevel);
