@@ -8,6 +8,7 @@ import type {
   LandscapeSample,
   LandscapeSampler,
   LandscapeTerracettes,
+  LandscapeTonalMasses,
 } from "./landscapeDocument.ts";
 
 function clamp01(value: number): number {
@@ -32,6 +33,16 @@ export function valueNoise(x: number, z: number, seed: number): number {
   const top = a + (b - a) * fx;
   const bottom = c + (d - c) * fx;
   return (top + (bottom - top) * fz) * 2 - 1;
+}
+
+/**
+ * Billowed swell: |noise| keeps every top rounded and pinches the hollows,
+ * the same hill-in-hill morphology as the hummocks one octave below.
+ */
+function tonalMassOffset(masses: LandscapeTonalMasses, x: number, z: number): number {
+  return Math.abs(
+    valueNoise(x / masses.wavelength, z / masses.wavelength, masses.seed),
+  ) * masses.amplitude;
 }
 
 function mesoReliefOffset(
@@ -258,7 +269,8 @@ export function createLandscapeSampler(document: LandscapeDocument): LandscapeSa
   }
 
   const reliefBumps = document.reliefBumps ?? [];
-  const hasDetail = document.mesoRelief !== undefined ||
+  const hasDetail = document.tonalMasses !== undefined ||
+    document.mesoRelief !== undefined ||
     document.terracettes !== undefined ||
     reliefBumps.length > 0;
   const needsGradient = document.terracettes !== undefined ||
@@ -346,6 +358,11 @@ export function createLandscapeSampler(document: LandscapeDocument): LandscapeSa
           baseElevationAt(document, x, z + epsilon).elevation -
           baseElevationAt(document, x, z - epsilon).elevation
         ) / (2 * epsilon);
+      }
+      if (document.tonalMasses) {
+        // The senior detail octave goes first: masses group the hummocks,
+        // they do not decorate them.
+        elevation += tonalMassOffset(document.tonalMasses, x, z) * calm;
       }
       if (document.mesoRelief) {
         elevation += mesoReliefOffset(

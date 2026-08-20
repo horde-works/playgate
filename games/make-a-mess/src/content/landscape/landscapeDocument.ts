@@ -119,6 +119,20 @@ export interface LandscapeReliefBump {
   readonly height: number;
 }
 
+/**
+ * The tonal-mass octave: broad rounded swells one step ABOVE the hummocks
+ * (5–8 m), grouping them into readable lit and shaded families. Billowed
+ * noise (|n|): rounded tops, pinched hollows — hill-in-hill morphology.
+ * Measured on Kallur: without this layer the field has a spectral gap
+ * between the 2.6 m hummocks and the 15–42 m zone blends, and the middle
+ * distance reads uniformly rough however rich the finer texture is.
+ */
+export interface LandscapeTonalMasses {
+  readonly wavelength: number;
+  readonly amplitude: number;
+  readonly seed: number;
+}
+
 export interface LandscapeDocument {
   readonly schemaVersion: 1;
   readonly id: string;
@@ -129,6 +143,7 @@ export interface LandscapeDocument {
   readonly corridors: readonly LandscapeSurfaceCorridor[];
   readonly dryChannels: readonly LandscapeDryChannel[];
   /** Optional detail layers; absent fields leave the field byte-identical. */
+  readonly tonalMasses?: LandscapeTonalMasses;
   readonly mesoRelief?: LandscapeMesoRelief;
   readonly terracettes?: LandscapeTerracettes;
   readonly reliefBumps?: readonly LandscapeReliefBump[];

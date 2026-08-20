@@ -64,6 +64,16 @@ const kallurBaseDocument: LandscapeDocument = {
     },
   ],
   dryChannels: [],
+  tonalMasses: {
+    // The octave the field was missing (bible §IV, carpet-lab verdict 5):
+    // between the 2.6 m hummocks and the 15-42 m zone blends there was a
+    // spectral gap, and the mid ring read uniformly rough. These broad
+    // swells group the hummocks into the lit and shaded families that
+    // compose the reference's middle distance.
+    wavelength: 6.5,
+    amplitude: 0.5,
+    seed: 11,
+  },
   mesoRelief: {
     // Hummocks: the "fur" of the slope. Wavelength stays well above the
     // 0.75 m render pitch so the lattice can actually carry the bumps.
