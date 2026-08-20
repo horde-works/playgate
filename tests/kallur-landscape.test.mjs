@@ -7,7 +7,10 @@ import {
   kallurLandscapeSampler,
   kallurRenderMesh,
 } from "../games/make-a-mess/src/content/scenes/kallur/kallurLandscapeDocument.ts";
-import { flatPadDistance } from "../games/make-a-mess/src/content/landscape/landscapeSampler.ts";
+import {
+  createLandscapeSampler,
+  flatPadDistance,
+} from "../games/make-a-mess/src/content/landscape/landscapeSampler.ts";
 import {
   KALLUR_PADS,
   KALLUR_PATH,
@@ -208,4 +211,43 @@ test("kallur: the field is deterministic", () => {
     assert.equal(first, second);
   }
   assert.equal(kallurLandscapeDocument.boundary, KALLUR_SHORELINE);
+});
+
+test("kallur: the tonal-mass octave fills the 5-8 m band and spares the path", () => {
+  // The lab measured a spectral gap between the 2.6 m hummocks and the
+  // 15-42 m zone blends; the masses close it. Compare the field against a
+  // twin with the layer stripped: the difference IS the octave.
+  const bald = createLandscapeSampler({
+    ...kallurLandscapeDocument,
+    tonalMasses: undefined,
+  });
+  let sum = 0;
+  let count = 0;
+  let peak = 0;
+  for (let x = -40; x <= 20; x += 1.3) {
+    for (let z = 10; z <= 40; z += 1.7) {
+      const sample = kallurLandscapeSampler.sample(x, z);
+      if (sample.groundKind === "outside") continue;
+      if (sample.pathWeight > 0.05) continue;
+      const delta = kallurLandscapeSampler.elevationAt(x, z) - bald.elevationAt(x, z);
+      sum += delta * delta;
+      count += 1;
+      peak = Math.max(peak, Math.abs(delta));
+    }
+  }
+  assert.ok(count > 200, `too few meadow probes: ${count}`);
+  const rms = Math.sqrt(sum / count);
+  assert.ok(rms > 0.08, `masses are inaudible on the meadow: rms ${rms.toFixed(3)}`);
+  assert.ok(
+    peak <= kallurLandscapeDocument.tonalMasses.amplitude + 1e-9,
+    `masses exceed their authored amplitude: ${peak.toFixed(3)}`,
+  );
+  // Feet flatten the masses like every other detail layer: the path
+  // centreline must not feel them at all. Waypoints are [x, y, z] triples.
+  for (const [x, , z] of KALLUR_PATH) {
+    const delta = Math.abs(
+      kallurLandscapeSampler.elevationAt(x, z) - bald.elevationAt(x, z),
+    );
+    assert.ok(delta < 0.02, `masses leak onto the path at ${x},${z}: ${delta.toFixed(3)}`);
+  }
 });
