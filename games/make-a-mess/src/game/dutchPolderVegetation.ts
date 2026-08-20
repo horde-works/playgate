@@ -5,6 +5,9 @@ import { dutchPolderLandscapeDocument } from "../content/scenes/dutchPolder/dutc
 // bands and the visible waterline must never be able to disagree.
 import { DUTCH_POLDER_BRIDGE_SEATS } from "../content/scenes/dutchPolder/dutchPolderTerrainGraybox.ts";
 import { WATER_LEVEL } from "./dutchPolderWaterModel.ts";
+import {
+  registerLandscapeGroundTint,
+} from "./landscapeSurfaceRuntime.ts";
 
 /**
  * 0 turf, 1 reed, 2 yellow flag iris, 3 marsh marigold, 4 yellow water-lily.
@@ -471,3 +474,6 @@ export function dutchPolderGroundTint(x: number, z: number): readonly [number, n
     (1 + (blue - 1) * soil) * dim,
   ];
 }
+
+registerLandscapeGroundTint("dutch-polder-ground", dutchPolderGroundTint);
+

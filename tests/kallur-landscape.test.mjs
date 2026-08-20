@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   KALLUR_BASE_ELEVATION,
+  kallurAuthoredSampler,
   kallurEarthMesh,
   kallurLandscapeDocument,
   kallurLandscapeSampler,
@@ -215,8 +216,11 @@ test("kallur: the field is deterministic", () => {
 
 test("kallur: the tonal-mass octave fills the 5-8 m band and spares the path", () => {
   // The lab measured a spectral gap between the 2.6 m hummocks and the
-  // 15-42 m zone blends; the masses close it. Compare the field against a
-  // twin with the layer stripped: the difference IS the octave.
+  // 15-42 m zone blends; the masses close it. Compare the authored function
+  // against a twin with the layer stripped: the difference IS the octave.
+  // Runtime walks a lattice of that function; mixing lattice height with a
+  // live bald twin would charge interpolation of stones and hummocks to the
+  // masses and falsely exceed amplitude.
   const bald = createLandscapeSampler({
     ...kallurLandscapeDocument,
     tonalMasses: undefined,
@@ -226,10 +230,10 @@ test("kallur: the tonal-mass octave fills the 5-8 m band and spares the path", (
   let peak = 0;
   for (let x = -40; x <= 20; x += 1.3) {
     for (let z = 10; z <= 40; z += 1.7) {
-      const sample = kallurLandscapeSampler.sample(x, z);
+      const sample = kallurAuthoredSampler.sample(x, z);
       if (sample.groundKind === "outside") continue;
       if (sample.pathWeight > 0.05) continue;
-      const delta = kallurLandscapeSampler.elevationAt(x, z) - bald.elevationAt(x, z);
+      const delta = kallurAuthoredSampler.elevationAt(x, z) - bald.elevationAt(x, z);
       sum += delta * delta;
       count += 1;
       peak = Math.max(peak, Math.abs(delta));
@@ -246,7 +250,7 @@ test("kallur: the tonal-mass octave fills the 5-8 m band and spares the path", (
   // centreline must not feel them at all. Waypoints are [x, y, z] triples.
   for (const [x, , z] of KALLUR_PATH) {
     const delta = Math.abs(
-      kallurLandscapeSampler.elevationAt(x, z) - bald.elevationAt(x, z),
+      kallurAuthoredSampler.elevationAt(x, z) - bald.elevationAt(x, z),
     );
     assert.ok(delta < 0.02, `masses leak onto the path at ${x},${z}: ${delta.toFixed(3)}`);
   }

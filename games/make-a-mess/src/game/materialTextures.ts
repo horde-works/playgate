@@ -32,7 +32,7 @@ import {
   kallurFlatBaseGlsl,
   kallurWallMidGlsl,
 } from "../content/landscape/naturalSurfaceCascade.ts";
-import { kallurLandscapeSampler } from "../content/scenes/kallur/kallurLandscapeDocument.ts";
+import { landscapeGradeMap } from "./landscapeSurfaceRuntime.ts";
 import { materialAppearanceProfiles } from "./materialAppearance.ts";
 import {
   alcladSeamFragment,
@@ -473,43 +473,31 @@ function getDutchPolderSurfaceTexture(): CanvasTexture {
   return dutchPolderSurfaceTexture;
 }
 
-const KALLUR_GRADE_TEXTURE_SIZE = 192;
-const KALLUR_GRADE_WORLD_MIN = -128;
-const KALLUR_GRADE_WORLD_SPAN = 256;
 let kallurGradeTexture: DataTexture | null = null;
+let kallurGradeFallback: DataTexture | null = null;
+
+function emptyGradeTexture(): DataTexture {
+  if (kallurGradeFallback) return kallurGradeFallback;
+  // Mid-grey = zero gradient. Worlds that never registered a map must not
+  // compile someone else's field just to fill this uniform.
+  const data = new Uint8Array([128, 128, 0, 255]);
+  kallurGradeFallback = new DataTexture(data, 1, 1);
+  kallurGradeFallback.magFilter = LinearFilter;
+  kallurGradeFallback.minFilter = LinearFilter;
+  kallurGradeFallback.colorSpace = NoColorSpace;
+  kallurGradeFallback.needsUpdate = true;
+  return kallurGradeFallback;
+}
 
 /**
- * Baked macro grade of the kallur field: the SENIOR octave the slope law
- * commands from (carpet-port-plan). The probe averages the hummocks out
- * (+-2.2 m), so the comb follows sustained hillsides — reading the
- * fragment normal instead combed every kochka face its own way and drew
- * chaotic hatch on the meadow. R/G encode the gradient in [-3..3].
+ * Slope-law comb map. Built from the world's registered bake, never by
+ * importing that world's landscape document.
  */
 function getKallurGradeTexture(): DataTexture {
   if (kallurGradeTexture) return kallurGradeTexture;
-  const size = KALLUR_GRADE_TEXTURE_SIZE;
-  const data = new Uint8Array(size * size * 4);
-  const probe = 2.2;
-  for (let row = 0; row < size; row += 1) {
-    for (let column = 0; column < size; column += 1) {
-      const worldX = KALLUR_GRADE_WORLD_MIN +
-        ((column + 0.5) / size) * KALLUR_GRADE_WORLD_SPAN;
-      const worldZ = KALLUR_GRADE_WORLD_MIN +
-        ((row + 0.5) / size) * KALLUR_GRADE_WORLD_SPAN;
-      const east = kallurLandscapeSampler.elevationAt(worldX + probe, worldZ);
-      const west = kallurLandscapeSampler.elevationAt(worldX - probe, worldZ);
-      const south = kallurLandscapeSampler.elevationAt(worldX, worldZ + probe);
-      const north = kallurLandscapeSampler.elevationAt(worldX, worldZ - probe);
-      const gradientX = (east - west) / (2 * probe);
-      const gradientZ = (south - north) / (2 * probe);
-      const offset = (row * size + column) * 4;
-      data[offset] = Math.round((Math.max(-3, Math.min(3, gradientX)) / 6 + 0.5) * 255);
-      data[offset + 1] = Math.round((Math.max(-3, Math.min(3, gradientZ)) / 6 + 0.5) * 255);
-      data[offset + 2] = 0;
-      data[offset + 3] = 255;
-    }
-  }
-  kallurGradeTexture = new DataTexture(data, size, size);
+  const spec = landscapeGradeMap("kallur");
+  if (!spec) return emptyGradeTexture();
+  kallurGradeTexture = new DataTexture(spec.data, spec.size, spec.size);
   kallurGradeTexture.magFilter = LinearFilter;
   kallurGradeTexture.minFilter = LinearFilter;
   kallurGradeTexture.colorSpace = NoColorSpace;

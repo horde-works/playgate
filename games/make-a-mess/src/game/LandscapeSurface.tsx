@@ -15,8 +15,9 @@ import type {
   LandscapeVisualChunkDefinition,
   LandscapeVisualDefinition,
 } from "./destructionScene.ts";
-import { dutchPolderGroundTint } from "./dutchPolderVegetation.ts";
-import { kallurGroundTint } from "./kallurGroundTint.ts";
+import {
+  landscapeGroundTint,
+} from "./landscapeSurfaceRuntime.ts";
 import {
   getPieceMaterial,
   pieceMaterialBaseColor,
@@ -323,11 +324,7 @@ export const LandscapeSurface = memo(function LandscapeSurface({
 
   // Тинт грунта: у польдера земля соглашается с растительностью, у Каллура
   // дальнее кольцо дёрна — пятнистость, камень на крутизне и грунт тропы.
-  const groundTint = definition.landscapeSurface === "dutch-polder-ground"
-    ? dutchPolderGroundTint
-    : definition.landscapeSurface === "kallur-ground"
-      ? kallurGroundTint
-      : null;
+  const groundTint = landscapeGroundTint(definition.landscapeSurface);
 
   // ВАЖНО: включать vertexColors на общем материале нельзя — он лежит в кэше
   // и раздаётся всем кускам мира с тем же ключом. Хуже того, у материала есть
@@ -400,14 +397,29 @@ export const LandscapeSurface = memo(function LandscapeSurface({
         />
       )) : null}
       <RigidBody type="fixed" colliders={false}>
-        {chunks.map(({ chunk, hiddenKey }) => (
-          <LandscapeColliderChunk
-            key={`collider:${chunk.id}`}
-            chunk={chunk}
-            hiddenPieceIds={hiddenPieceIds}
-            hiddenKey={hiddenKey}
+        {definition.indexedCollider ? (
+          <TrimeshCollider
+            args={[
+              definition.indexedCollider.vertices instanceof Float32Array
+                ? definition.indexedCollider.vertices
+                : new Float32Array(definition.indexedCollider.vertices),
+              definition.indexedCollider.indices instanceof Uint32Array
+                ? definition.indexedCollider.indices
+                : new Uint32Array(definition.indexedCollider.indices),
+            ]}
+            friction={0.84}
+            restitution={0.008}
           />
-        ))}
+        ) : (
+          chunks.map(({ chunk, hiddenKey }) => (
+            <LandscapeColliderChunk
+              key={`collider:${chunk.id}`}
+              chunk={chunk}
+              hiddenPieceIds={hiddenPieceIds}
+              hiddenKey={hiddenKey}
+            />
+          ))
+        )}
       </RigidBody>
     </group>
   );

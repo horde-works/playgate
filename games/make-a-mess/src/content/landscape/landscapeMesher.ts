@@ -2,6 +2,7 @@ import type {
   LandscapeDocument,
   LandscapePoint3,
   LandscapeSample,
+  LandscapeSampler,
 } from "./landscapeDocument.ts";
 import { createLandscapeSampler } from "./landscapeSampler.ts";
 
@@ -125,8 +126,8 @@ export function landscapeColorAt(sample: LandscapeSample, x: number, z: number):
 export function compileLandscapeMesh(
   document: LandscapeDocument,
   profile: LandscapeRenderProfile,
+  sampler: LandscapeSampler = createLandscapeSampler(document),
 ): CompiledLandscapeMesh {
-  const sampler = createLandscapeSampler(document);
   const xs = document.boundary.map(([x]) => x);
   const zs = document.boundary.map(([, z]) => z);
   const minX = Math.floor(Math.min(...xs) / profile.pitch) * profile.pitch;
@@ -275,6 +276,8 @@ export function compileVoxelSmoothedLandscape(
     readonly flatHeightTolerance?: number;
     /** Prevent the intact skin from dipping through a stepped substrate. */
     readonly maximumDownwardSmoothing?: number;
+    /** Reuse a bake; otherwise a fresh function sampler is created. */
+    readonly sampler?: LandscapeSampler;
   },
 ): CompiledVoxelSmoothedLandscape {
   if (
@@ -287,7 +290,7 @@ export function compileVoxelSmoothedLandscape(
   ) {
     throw new Error("Adaptive landscape cell sizes must form a positive power-of-two range");
   }
-  const sampler = createLandscapeSampler(document);
+  const sampler = options.sampler ?? createLandscapeSampler(document);
   const xs = document.boundary.map(([x]) => x);
   const zs = document.boundary.map(([, z]) => z);
   const minX = Math.floor(Math.min(...xs) / options.maximumCellSize) * options.maximumCellSize;

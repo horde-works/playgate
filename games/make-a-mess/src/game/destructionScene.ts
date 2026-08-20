@@ -380,6 +380,14 @@ export interface LandscapeVisualDefinition {
   readonly textureProfile?: SurfaceTextureProfile;
   readonly landscapeSurface?: LandscapeSurfaceProfile;
   readonly chunks: readonly LandscapeVisualChunkDefinition[];
+  /**
+   * Shared-vertex collider for an indestructible height field. When present
+   * the surface does not build a trimesh per visual chunk.
+   */
+  readonly indexedCollider?: {
+    readonly vertices: ArrayLike<number>;
+    readonly indices: ArrayLike<number>;
+  };
   /** Gives an owner-aware intact heightfield a physical-looking cut edge. */
   readonly destructionShell?: {
     readonly depth: number;

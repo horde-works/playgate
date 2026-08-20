@@ -29,19 +29,14 @@ export function kallurTurfStyleAt(x: number, z: number): KallurTurfStyle | null 
   const sample = kallurLandscapeSampler.sample(x, z);
   if (sample.groundKind !== "land") return null;
 
-  const epsilon = 1.2;
-  const gradient = Math.hypot(
-    (kallurLandscapeSampler.elevationAt(x + epsilon, z) -
-      kallurLandscapeSampler.elevationAt(x - epsilon, z)) / (2 * epsilon),
-    (kallurLandscapeSampler.elevationAt(x, z + epsilon) -
-      kallurLandscapeSampler.elevationAt(x, z - epsilon)) / (2 * epsilon),
-  );
+  const gradient = kallurLandscapeSampler.gradientAt(x, z);
+  const slope = Math.hypot(gradient.x, gradient.z);
   // Blades live on walkable turf; past this the slope hands over to the
   // tint's grass-to-rock transition and blades would float over stone.
-  if (gradient > 1.05) return null;
+  if (slope > 1.05) return null;
 
   const clump = 0.5 + 0.5 * valueNoise(x / 3.4, z / 3.4, 19);
-  const steep = Math.min(1, Math.max(0, (gradient - 0.7) / 0.35));
+  const steep = Math.min(1, Math.max(0, (slope - 0.7) / 0.35));
   const keep = (0.22 + clump * 0.9) *
     (1 - sample.pathWeight * 0.92) *
     (1 - steep * 0.55);
@@ -54,7 +49,7 @@ export function kallurTurfStyleAt(x: number, z: number): KallurTurfStyle | null 
   return {
     keep,
     clump,
-    groundY: kallurLandscapeSampler.elevationAt(x, z) + 0.02,
+    groundY: sample.elevation + 0.02,
     dryness,
   };
 }

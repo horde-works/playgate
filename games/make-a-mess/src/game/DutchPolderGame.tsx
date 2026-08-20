@@ -1,7 +1,7 @@
 "use client";
 
-import { MakeAMessGame } from "./MakeAMessGame";
 import { dutchPolderScene } from "./dutchPolderScene";
+import { MakeAMessGame } from "./MakeAMessGame";
 
 export function DutchPolderGame() {
   return <MakeAMessGame scene={dutchPolderScene} />;

@@ -5,6 +5,7 @@ import type {
   LandscapeMesoRelief,
   LandscapePoint2,
   LandscapePoint3,
+  LandscapeReliefBump,
   LandscapeSample,
   LandscapeSampler,
   LandscapeTerracettes,
@@ -269,6 +270,7 @@ export function createLandscapeSampler(document: LandscapeDocument): LandscapeSa
   }
 
   const reliefBumps = document.reliefBumps ?? [];
+  const bumpIndex = indexReliefBumps(reliefBumps);
   const hasDetail = document.tonalMasses !== undefined ||
     document.mesoRelief !== undefined ||
     document.terracettes !== undefined ||
@@ -382,7 +384,7 @@ export function createLandscapeSampler(document: LandscapeDocument): LandscapeSa
           gradientZ,
         ) * calm;
       }
-      for (const bump of reliefBumps) {
+      for (const bump of bumpsNear(bumpIndex, x, z)) {
         const distance = Math.hypot(x - bump.center[0], z - bump.center[1]);
         if (distance >= bump.radius) continue;
         // Feet flatten a collar's edge where it laps onto the walked line.
@@ -401,8 +403,63 @@ export function createLandscapeSampler(document: LandscapeDocument): LandscapeSa
     };
   };
 
+  const elevationAt = (x: number, z: number) => sample(x, z).elevation;
   return {
     sample,
-    elevationAt: (x, z) => sample(x, z).elevation,
+    elevationAt,
+    gradientAt: (x, z, epsilon = 1.2) => ({
+      elevation: elevationAt(x, z),
+      x: (elevationAt(x + epsilon, z) - elevationAt(x - epsilon, z)) / (2 * epsilon),
+      z: (elevationAt(x, z + epsilon) - elevationAt(x, z - epsilon)) / (2 * epsilon),
+    }),
   };
+}
+
+const EMPTY_BUMPS: readonly LandscapeReliefBump[] = [];
+
+interface ReliefBumpIndex {
+  readonly cellSize: number;
+  readonly cells: ReadonlyMap<string, readonly LandscapeReliefBump[]>;
+}
+
+/**
+ * Discrete collars must not be a linear scan of the whole island on every
+ * sample. Each bump lives in the cells its radius overlaps; a query reads
+ * one cell. Same field, O(nearby) instead of O(stones).
+ */
+function indexReliefBumps(
+  bumps: readonly LandscapeReliefBump[],
+): ReliefBumpIndex | null {
+  if (bumps.length === 0) return null;
+  let cellSize = 4;
+  for (const bump of bumps) {
+    cellSize = Math.max(cellSize, bump.radius * 2);
+  }
+  const cells = new Map<string, LandscapeReliefBump[]>();
+  for (const bump of bumps) {
+    const minX = Math.floor((bump.center[0] - bump.radius) / cellSize);
+    const maxX = Math.floor((bump.center[0] + bump.radius) / cellSize);
+    const minZ = Math.floor((bump.center[1] - bump.radius) / cellSize);
+    const maxZ = Math.floor((bump.center[1] + bump.radius) / cellSize);
+    for (let cellX = minX; cellX <= maxX; cellX += 1) {
+      for (let cellZ = minZ; cellZ <= maxZ; cellZ += 1) {
+        const key = `${cellX}:${cellZ}`;
+        const bucket = cells.get(key);
+        if (bucket) bucket.push(bump);
+        else cells.set(key, [bump]);
+      }
+    }
+  }
+  return { cellSize, cells };
+}
+
+function bumpsNear(
+  index: ReliefBumpIndex | null,
+  x: number,
+  z: number,
+): readonly LandscapeReliefBump[] {
+  if (!index) return EMPTY_BUMPS;
+  return index.cells.get(
+    `${Math.floor(x / index.cellSize)}:${Math.floor(z / index.cellSize)}`,
+  ) ?? EMPTY_BUMPS;
 }

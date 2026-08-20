@@ -161,7 +161,15 @@ export interface LandscapeSample {
   readonly channelDistance: number | null;
 }
 
+export interface LandscapeGradient {
+  readonly elevation: number;
+  readonly x: number;
+  readonly z: number;
+}
+
 export interface LandscapeSampler {
   readonly sample: (x: number, z: number) => LandscapeSample;
   readonly elevationAt: (x: number, z: number) => number;
+  /** Finite-difference slope. Lattice samplers read the bake, not the function. */
+  readonly gradientAt: (x: number, z: number, epsilon?: number) => LandscapeGradient;
 }

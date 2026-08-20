@@ -1,4 +1,9 @@
 import type { LandscapeDocument } from "../../landscape/landscapeDocument.ts";
+import {
+  bakeLandscapeLattice,
+  compileLandscapeIndexedCollider,
+  createLatticeSampler,
+} from "../../landscape/landscapeLattice.ts";
 import { KALLUR_TONAL_MASSES } from "../../landscape/naturalSurfaceCascade.ts";
 import {
   compileLandscapeMesh,
@@ -23,10 +28,10 @@ export const KALLUR_BASE_ELEVATION = 2.4;
  * Kallur landscape — the first world where relief is the protagonist.
  *
  * The wall crown at +88 over a 2.4 m coast is authored through the same
- * schema the polder pioneered; steepness is nothing but blendWidth. The
- * detail layers (hummocks, terracettes, stone collars) live in the sampler
- * itself, so the render mesh, the trimesh collider and every later
- * consumer — grass, stone crowns, walkability probes — read one field.
+ * schema the polder pioneered; steepness is nothing but blendWidth. Detail
+ * layers (hummocks, terracettes, stone collars) are authored in the sampler
+ * and baked to a lattice: render, collider, grass, tint and the slope-law
+ * map read that grid.
  *
  * Built in two passes: the base field first, then the stone field scattered
  * over it, and its turf collars folded back in as reliefBumps. Stones and
@@ -103,8 +108,25 @@ export const kallurLandscapeDocument: LandscapeDocument = {
   reliefBumps: kallurStoneBumps(kallurStones),
 };
 
-export const kallurLandscapeSampler = createLandscapeSampler(
+/**
+ * Authored function — used once to fill the lattice. Runtime height, grass,
+ * tint and the slope-law map read the bake.
+ */
+const kallurAuthoredSampler = createLandscapeSampler(kallurLandscapeDocument);
+
+/** Function sampler — tests of the authored field, and the one-time bake. */
+export { kallurAuthoredSampler };
+
+export const kallurLandscapeLattice = bakeLandscapeLattice(
+  kallurAuthoredSampler,
   kallurLandscapeDocument,
+  LANDSCAPE_RENDER_PROFILES["kallur-turf"].pitch,
+);
+
+export const kallurLandscapeSampler = createLatticeSampler(kallurLandscapeLattice);
+
+export const kallurIndexedCollider = compileLandscapeIndexedCollider(
+  kallurLandscapeLattice,
 );
 
 /**
@@ -114,6 +136,7 @@ export const kallurLandscapeSampler = createLandscapeSampler(
 export const kallurRenderMesh = compileLandscapeMesh(
   kallurLandscapeDocument,
   LANDSCAPE_RENDER_PROFILES["kallur-turf"],
+  kallurLandscapeSampler,
 );
 
 /**
@@ -128,6 +151,7 @@ export const kallurEarthMesh = compileVoxelSmoothedLandscape(
     maximumCellSize: 16,
     chunkSize: 24,
     flatHeightTolerance: 0.6,
+    sampler: kallurLandscapeSampler,
   },
 );
 

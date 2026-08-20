@@ -32,7 +32,10 @@ import {
 } from "./dutchPolderVegetation";
 import { WATER_LEVEL as DUTCH_POLDER_WATER_LEVEL } from "./dutchPolderWaterModel";
 import { environmentState } from "./environmentState";
-import { kallurTurfStyleAt, type KallurTurfStyle } from "./kallurVegetation.ts";
+import {
+  landscapeGrassStyleAt,
+  type LandscapeGrassStyle,
+} from "./landscapeSurfaceRuntime.ts";
 import { sampleVikingGroundTraffic } from "./materialTextures";
 import { registerRefractionExcluded } from "./servicePassPolicy.ts";
 import {
@@ -1507,7 +1510,7 @@ ${VEGETATION_ORIGIN_CULL_GLSL}
       let groundY = 0;
       let dutchStyle: DutchPolderVegetationStyle | null = null;
       let dutchSample: LandscapeSample | null = null;
-      let kallurStyle: KallurTurfStyle | null = null;
+      let kallurStyle: LandscapeGrassStyle | null = null;
       if (profile === "dutch-polder") {
         dutchSample = dutchPolderSampler.sample(x, z);
         dutchStyle = sampleDutchPolderVegetation(dutchSample, x, z);
@@ -1531,7 +1534,7 @@ ${VEGETATION_ORIGIN_CULL_GLSL}
         );
         if (occupied || hash(index, 7) > dutchStyle.keep) continue;
       } else if (profile === "kallur") {
-        kallurStyle = kallurTurfStyleAt(x, z);
+        kallurStyle = landscapeGrassStyleAt("kallur", x, z);
         if (!kallurStyle) continue;
         groundY = kallurStyle.groundY;
         const occupied = dutchBlockers.get(cell)?.some(([bottom, top]) =>

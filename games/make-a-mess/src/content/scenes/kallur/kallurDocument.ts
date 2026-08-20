@@ -18,6 +18,7 @@ import {
   kallurEarthMesh,
   kallurEarthPieceId,
   kallurGroundTopAt,
+  kallurIndexedCollider,
   kallurRenderMesh,
   kallurStones,
 } from "./kallurLandscapeDocument.ts";
@@ -228,6 +229,7 @@ export const kallurLandscapeVisual: LandscapeVisualDefinition = {
   material: "grass",
   color: "#6d7046",
   landscapeSurface: "kallur-ground",
+  indexedCollider: kallurIndexedCollider,
   chunks: kallurRenderMesh.chunks.map((chunk) => {
     const triangleOwners = chunk.triangles.map((triangle) => {
       const [a, b, c] = triangle;

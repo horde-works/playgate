@@ -1,3 +1,4 @@
+import "./kallurLandscapeRuntime.ts";
 import { compileSceneDocument } from "../content/scenes/compileScene.ts";
 import { kallurDocument } from "../content/scenes/kallur/kallurDocument.ts";
 
