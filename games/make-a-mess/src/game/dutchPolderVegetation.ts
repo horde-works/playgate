@@ -1,12 +1,19 @@
 import { createLandscapeSampler } from "../content/landscape/landscapeSampler.ts";
 import type { LandscapeSample } from "../content/landscape/landscapeDocument.ts";
-import { dutchPolderLandscapeDocument } from "../content/scenes/dutchPolder/dutchPolderLandscapeDocument.ts";
+import {
+  dutchPolderCoverPieceIdAt,
+  dutchPolderLandscapeDocument,
+  dutchPolderVisualTopAt,
+} from "../content/scenes/dutchPolder/dutchPolderLandscapeDocument.ts";
 // One datum for the water plane, shared with the water sheet itself: vegetation
 // bands and the visible waterline must never be able to disagree.
 import { DUTCH_POLDER_BRIDGE_SEATS } from "../content/scenes/dutchPolder/dutchPolderTerrainGraybox.ts";
 import { WATER_LEVEL } from "./dutchPolderWaterModel.ts";
 import {
+  registerLandscapeGrassStyle,
   registerLandscapeGroundTint,
+  registerLandscapeSurfaceMap,
+  type LandscapeGrassStyle,
 } from "./landscapeSurfaceRuntime.ts";
 
 /**
@@ -476,4 +483,61 @@ export function dutchPolderGroundTint(x: number, z: number): readonly [number, n
 }
 
 registerLandscapeGroundTint("dutch-polder-ground", dutchPolderGroundTint);
+
+const DUTCH_POLDER_SURFACE_MAP_SIZE = 256;
+const DUTCH_POLDER_WORLD_MIN = -96;
+const DUTCH_POLDER_WORLD_SPAN = 192;
+
+function bakeDutchPolderSurfaceMap(): Uint8Array {
+  const size = DUTCH_POLDER_SURFACE_MAP_SIZE;
+  const data = new Uint8Array(size * size * 4);
+  for (let row = 0; row < size; row += 1) {
+    for (let column = 0; column < size; column += 1) {
+      const worldX = DUTCH_POLDER_WORLD_MIN +
+        (column + 0.5) / size * DUTCH_POLDER_WORLD_SPAN;
+      // DataTexture v=0 is the first row. The shader UV is (z+96)/192, so
+      // row 0 is the south edge — unlike the old canvas upload, which flipped.
+      const worldZ = DUTCH_POLDER_WORLD_MIN +
+        (row + 0.5) / size * DUTCH_POLDER_WORLD_SPAN;
+      const sample = groundSampler.sample(worldX, worldZ);
+      const offset = (row * size + column) * 4;
+      data[offset] = Math.round(sample.pathWeight * 255);
+      data[offset + 1] =
+        sample.groundKind === "bed" ? 255 : sample.groundKind === "bank" ? 210 : 0;
+      data[offset + 2] = 0;
+      data[offset + 3] = 255;
+    }
+  }
+  return data;
+}
+
+registerLandscapeSurfaceMap("dutch-polder", {
+  data: bakeDutchPolderSurfaceMap(),
+  size: DUTCH_POLDER_SURFACE_MAP_SIZE,
+});
+
+function dutchPolderTurfStyleAt(x: number, z: number): LandscapeGrassStyle | null {
+  const sample = groundSampler.sample(x, z);
+  const style = sampleDutchPolderVegetation(sample, x, z);
+  if (!style) return null;
+  const coverPieceId = dutchPolderCoverPieceIdAt(x, z);
+  if (!coverPieceId) return null;
+  return {
+    keep: style.keep,
+    clump: meadowClump(x, z),
+    groundY: style.kind === 4
+      ? WATER_LEVEL + 0.012
+      : dutchPolderVisualTopAt(x, z) + 0.025,
+    dryness: style.dryness,
+    kind: style.kind,
+    height: style.height,
+    width: style.width,
+    flowerChance: style.flowerChance,
+    coverPieceId,
+    flowerPatch: dutchPolderVegetationPatchNoise(x, z, 41),
+    wetLine: sample.groundKind === "bank" || sample.groundKind === "terrace",
+  };
+}
+
+registerLandscapeGrassStyle("dutch-polder", dutchPolderTurfStyleAt);
 

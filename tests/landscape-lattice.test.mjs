@@ -99,5 +99,20 @@ test("shared engine modules do not import the Kallur document", () => {
       false,
       `${relative} imports Kallur runtime — other worlds would bake the Faroe field`,
     );
+    assert.equal(
+      source.includes("dutchPolderLandscapeDocument"),
+      false,
+      `${relative} imports polder landscape data — other worlds would compile the polder field`,
+    );
+    assert.equal(
+      source.includes("dutchPolderVegetation"),
+      false,
+      `${relative} imports polder vegetation`,
+    );
+    assert.equal(
+      source.includes("DutchPolderWater"),
+      false,
+      `${relative} imports polder water — other worlds would compile the polder field`,
+    );
   }
 });

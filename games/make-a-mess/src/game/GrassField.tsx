@@ -16,21 +16,7 @@ import {
   Vector2,
   Vector3,
 } from "three";
-import { createLandscapeSampler } from "../content/landscape/landscapeSampler";
-import type { LandscapeSample } from "../content/landscape/landscapeDocument";
-import {
-  dutchPolderCoverPieceIdAt,
-  dutchPolderLandscapeDocument,
-  dutchPolderVisualTopAt,
-} from "../content/scenes/dutchPolder/dutchPolderLandscapeDocument";
 import type { BreakablePieceDefinition } from "./destructionScene";
-import {
-  dutchPolderVegetationPatchNoise,
-  meadowClump,
-  sampleDutchPolderVegetation,
-  type DutchPolderVegetationStyle,
-} from "./dutchPolderVegetation";
-import { WATER_LEVEL as DUTCH_POLDER_WATER_LEVEL } from "./dutchPolderWaterModel";
 import { environmentState } from "./environmentState";
 import {
   landscapeGrassStyleAt,
@@ -629,8 +615,6 @@ const EDGE_RING: readonly (readonly [number, number])[] = [
 ];
 
 export type GrassFieldProfile = "viking" | "dutch-polder" | "kallur";
-
-const dutchPolderSampler = createLandscapeSampler(dutchPolderLandscapeDocument);
 
 /**
  * One species of marsh plant: which geometry, how far it stays visible, and the
@@ -1508,27 +1492,19 @@ ${VEGETATION_ORIGIN_CULL_GLSL}
       const z = center[1] + Math.sin(angle) * radius;
       const cell = `${Math.floor(x)}:${Math.floor(z)}`;
       let groundY = 0;
-      let dutchStyle: DutchPolderVegetationStyle | null = null;
-      let dutchSample: LandscapeSample | null = null;
+      let dutchStyle: LandscapeGrassStyle | null = null;
       let kallurStyle: LandscapeGrassStyle | null = null;
       if (profile === "dutch-polder") {
-        dutchSample = dutchPolderSampler.sample(x, z);
-        dutchStyle = sampleDutchPolderVegetation(dutchSample, x, z);
+        dutchStyle = landscapeGrassStyleAt("dutch-polder", x, z);
         if (!dutchStyle) continue;
         // Вид решается до всей остальной работы: если его меш уже полон,
         // кандидат отбрасывается, не тратя выборку высоты и затенённости.
-        const target = targets[dutchStyle.kind];
+        const target = targets[dutchStyle.kind ?? 0];
         if (!target || target.placed >= target.budget) continue;
-        const coverPieceId = dutchPolderCoverPieceIdAt(x, z);
-        if (!coverPieceId) continue;
-        if (hiddenPieceIds?.has(coverPieceId)) {
+        if (dutchStyle.coverPieceId && hiddenPieceIds?.has(dutchStyle.coverPieceId)) {
           continue;
         }
-        // Плавающие пластины сидят в плоскости воды: посади их на дно —
-        // и колония утонет ровно на глубину русла.
-        groundY = dutchStyle.kind === 4
-          ? DUTCH_POLDER_WATER_LEVEL + 0.012
-          : dutchPolderVisualTopAt(x, z) + 0.025;
+        groundY = dutchStyle.groundY;
         const occupied = dutchBlockers.get(cell)?.some(([bottom, top]) =>
           bottom >= groundY - 1.5 && bottom <= groundY + 0.75 && top >= groundY + 0.04
         );
@@ -1552,13 +1528,15 @@ ${VEGETATION_ORIGIN_CULL_GLSL}
       let tiltX = 0;
       let tiltZ = 0;
       if (dutchStyle) {
-        height = dutchStyle.height[0] + hash(index, 3) * (dutchStyle.height[1] - dutchStyle.height[0]);
-        width = dutchStyle.width[0] + hash(index, 4) * (dutchStyle.width[1] - dutchStyle.width[0]);
-        if (dutchStyle.kind === 0) {
+        const heightSpan = dutchStyle.height ?? [0.16, 0.42];
+        const widthSpan = dutchStyle.width ?? [0.8, 1.22];
+        height = heightSpan[0] + hash(index, 3) * (heightSpan[1] - heightSpan[0]);
+        width = widthSpan[0] + hash(index, 4) * (widthSpan[1] - widthSpan[0]);
+        if ((dutchStyle.kind ?? 0) === 0) {
           // Рост коррелирован с тем же шумом, что и плотность: кочка держит
           // общее среднее, а не набор независимо разыгранных высот. Без этого
           // сгущение читается как «насыпали гуще», а не как выросший куст.
-          height *= 0.74 + meadowClump(x, z) * 0.38;
+          height *= 0.74 + dutchStyle.clump * 0.38;
         } else if (dutchStyle.kind === 1) {
           // Не весь тростник стоит вертикально, и к апрелю — далеко не весь.
           // Прошлогодний стебель за зиму кренится, ломается и в конце концов
@@ -1637,13 +1615,9 @@ ${VEGETATION_ORIGIN_CULL_GLSL}
           ? Math.min(1, Math.max(0, kallurStyle.dryness + (hash(index, 8) - 0.5) * 0.2))
           : Math.min(1, hash(index, 8) * (1.15 - edge * 0.5));
       if (kind === 0) {
-        const flowerPatch = dutchSample
-          ? dutchPolderVegetationPatchNoise(x, z, 41)
-          : 1;
-        const wetLine = dutchSample
-          ? dutchSample.groundKind === "bank" || dutchSample.groundKind === "terrace"
-          : false;
-        const inNaturalPatch = !dutchSample || (wetLine ? flowerPatch > 0.4 : flowerPatch > 0.7);
+        const flowerPatch = dutchStyle?.flowerPatch ?? 1;
+        const wetLine = dutchStyle?.wetLine ?? false;
+        const inNaturalPatch = !dutchStyle || (wetLine ? flowerPatch > 0.4 : flowerPatch > 0.7);
         const chance = dutchStyle?.flowerChance ?? 0;
         if (inNaturalPatch && dutchStyle && hash(index, 14) < chance) {
           tuftKind[at * 2 + 1] = 1 + Math.floor(hash(index, 15) * 3);

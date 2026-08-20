@@ -63,6 +63,7 @@ import {
   type MutableRefObject,
   type PointerEvent as ReactPointerEvent,
   type ReactElement,
+  type ReactNode,
   type TouchEvent as ReactTouchEvent,
 } from "react";
 import {
@@ -226,7 +227,6 @@ import {
   type CreatureWorldRuntime,
 } from "./creatureWorld.ts";
 import { GrassField } from "./GrassField";
-import { DutchPolderWater } from "./DutchPolderWater";
 import { CLEAR_SKY, worldWeather } from "./skyWeatherModel.ts";
 
 /**
@@ -4288,6 +4288,8 @@ interface OpenWorldSceneProps {
   onRotorcraftPilotStatusChange: (status: RotorcraftPilotStatus | null) => void;
   motionTelemetryStore: MotionTelemetryStore;
   onVehicleFailure: (event: VehicleFailureEvent) => void;
+  /** World-specific canvas dressing the shared game must not statically import. */
+  worldOverlay?: ReactNode;
 }
 
 function OpenWorldScene({
@@ -4338,6 +4340,7 @@ function OpenWorldScene({
   onRotorcraftPilotStatusChange,
   motionTelemetryStore,
   onVehicleFailure,
+  worldOverlay,
 }: OpenWorldSceneProps) {
   const seatReleaseExitRef = useRef<SceneVector3 | null>(null);
   const handleOccupiedSeatChange = useCallback(
@@ -10632,7 +10635,7 @@ function OpenWorldScene({
             tipColor="#879b57"
             hiddenPieceIds={hiddenPieces}
           />
-          <DutchPolderWater />
+          {worldOverlay}
         </>
       ) : null}
       <group ref={breakableRaycastRoot}>
@@ -12944,9 +12947,11 @@ function serverInterIslandBootstrapSnapshot(): null {
 export function MakeAMessGame({
   scene: sceneProp = openHouseScene,
   flyover,
+  worldOverlay,
 }: {
   scene?: DestructionSceneDefinition;
   flyover?: CinematicFlyoverDefinition;
+  worldOverlay?: ReactNode;
 }) {
   // Dev aid: `?spawn=x,y,z` drops the player anywhere on the map — handy
   // for inspecting far corners without a long walk.
@@ -14169,6 +14174,7 @@ export function MakeAMessGame({
                     onRotorcraftPilotStatusChange={setRotorcraftPilotStatus}
                     motionTelemetryStore={telemetryStore}
                     onVehicleFailure={handleVehicleFailure}
+                    worldOverlay={worldOverlay}
                   />
                 </Physics>
                 {flyover ? (

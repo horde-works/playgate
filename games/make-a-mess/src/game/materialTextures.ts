@@ -32,7 +32,7 @@ import {
   kallurFlatBaseGlsl,
   kallurWallMidGlsl,
 } from "../content/landscape/naturalSurfaceCascade.ts";
-import { landscapeGradeMap } from "./landscapeSurfaceRuntime.ts";
+import { landscapeGradeMap, landscapeSurfaceMap } from "./landscapeSurfaceRuntime.ts";
 import { materialAppearanceProfiles } from "./materialAppearance.ts";
 import {
   alcladSeamFragment,
@@ -50,8 +50,6 @@ import {
   townSurfaceRoutes,
   type TownPlanPoint,
 } from "../content/scenes/townSurfacePlan.ts";
-import { createLandscapeSampler } from "../content/landscape/landscapeSampler.ts";
-import { dutchPolderLandscapeDocument } from "../content/scenes/dutchPolder/dutchPolderLandscapeDocument.ts";
 
 interface GlowMaterial {
   readonly material: MeshStandardMaterial;
@@ -428,48 +426,37 @@ const textureCache = new Map<string, Texture>();
 const materialCache = new Map<string, MeshStandardMaterial>();
 let vikingTrafficTexture: CanvasTexture | null = null;
 let citySurfaceTexture: CanvasTexture | null = null;
-let dutchPolderSurfaceTexture: CanvasTexture | null = null;
+let dutchPolderSurfaceTexture: DataTexture | null = null;
+let dutchPolderSurfaceFallback: DataTexture | null = null;
 
-const DUTCH_POLDER_SURFACE_TEXTURE_SIZE = 256;
-const DUTCH_POLDER_WORLD_MIN = -96;
-const DUTCH_POLDER_WORLD_SPAN = 192;
+function emptyDutchPolderSurfaceTexture(): DataTexture {
+  if (dutchPolderSurfaceFallback) return dutchPolderSurfaceFallback;
+  const data = new Uint8Array([0, 0, 0, 255]);
+  dutchPolderSurfaceFallback = new DataTexture(data, 1, 1);
+  dutchPolderSurfaceFallback.magFilter = LinearFilter;
+  dutchPolderSurfaceFallback.minFilter = LinearFilter;
+  dutchPolderSurfaceFallback.colorSpace = NoColorSpace;
+  dutchPolderSurfaceFallback.needsUpdate = true;
+  return dutchPolderSurfaceFallback;
+}
 
 /**
  * Shared semantic mask for intact terrain and its post-hit voxels. Red is the
  * authored path mask; green is exposed channel soil. It changes material
  * response in world space and never replaces the terrain geometry or texture.
+ * The world's scene module bakes the map; other islands get a zero mask.
  */
-function getDutchPolderSurfaceTexture(): CanvasTexture {
+function getDutchPolderSurfaceTexture(): DataTexture {
   if (dutchPolderSurfaceTexture) return dutchPolderSurfaceTexture;
-  const canvas = document.createElement("canvas");
-  canvas.width = DUTCH_POLDER_SURFACE_TEXTURE_SIZE;
-  canvas.height = DUTCH_POLDER_SURFACE_TEXTURE_SIZE;
-  const context = canvas.getContext("2d");
-  if (context) {
-    const pixels = context.createImageData(canvas.width, canvas.height);
-    const sampler = createLandscapeSampler(dutchPolderLandscapeDocument);
-    for (let row = 0; row < canvas.height; row += 1) {
-      for (let column = 0; column < canvas.width; column += 1) {
-        const worldX = DUTCH_POLDER_WORLD_MIN +
-          (column + 0.5) / canvas.width * DUTCH_POLDER_WORLD_SPAN;
-        const worldZ = DUTCH_POLDER_WORLD_MIN +
-          (canvas.height - row - 0.5) / canvas.height * DUTCH_POLDER_WORLD_SPAN;
-        const sample = sampler.sample(worldX, worldZ);
-        const offset = (row * canvas.width + column) * 4;
-        pixels.data[offset] = Math.round(sample.pathWeight * 255);
-        pixels.data[offset + 1] =
-          sample.groundKind === "bed" ? 255 : sample.groundKind === "bank" ? 210 : 0;
-        pixels.data[offset + 2] = 0;
-        pixels.data[offset + 3] = 255;
-      }
-    }
-    context.putImageData(pixels, 0, 0);
-  }
-  dutchPolderSurfaceTexture = new CanvasTexture(canvas);
+  const spec = landscapeSurfaceMap("dutch-polder");
+  if (!spec) return emptyDutchPolderSurfaceTexture();
+  dutchPolderSurfaceTexture = new DataTexture(spec.data, spec.size, spec.size);
   dutchPolderSurfaceTexture.magFilter = LinearFilter;
   dutchPolderSurfaceTexture.minFilter = LinearMipmapLinearFilter;
+  dutchPolderSurfaceTexture.generateMipmaps = true;
   dutchPolderSurfaceTexture.anisotropy = 4;
   dutchPolderSurfaceTexture.colorSpace = NoColorSpace;
+  dutchPolderSurfaceTexture.needsUpdate = true;
   return dutchPolderSurfaceTexture;
 }
 

@@ -18,6 +18,14 @@ export interface LandscapeGrassStyle {
   readonly clump: number;
   readonly groundY: number;
   readonly dryness: number;
+  /** Marsh species id when the world plants more than turf. */
+  readonly kind?: number;
+  readonly height?: readonly [number, number];
+  readonly width?: readonly [number, number];
+  readonly flowerChance?: number;
+  readonly coverPieceId?: string | null;
+  readonly flowerPatch?: number;
+  readonly wetLine?: boolean;
 }
 
 export type LandscapeGrassStyleAt = (
@@ -25,9 +33,15 @@ export type LandscapeGrassStyleAt = (
   z: number,
 ) => LandscapeGrassStyle | null;
 
+export interface LandscapeRgbaMapSpec {
+  readonly data: Uint8Array;
+  readonly size: number;
+}
+
 const groundTints = new Map<string, LandscapeGroundTint>();
 const grassStyles = new Map<string, LandscapeGrassStyleAt>();
 const gradeMaps = new Map<string, LandscapeGradeMapSpec>();
+const surfaceMaps = new Map<string, LandscapeRgbaMapSpec>();
 
 export function registerLandscapeGroundTint(
   profile: string,
@@ -67,4 +81,15 @@ export function registerLandscapeGradeMap(
 
 export function landscapeGradeMap(id: string): LandscapeGradeMapSpec | undefined {
   return gradeMaps.get(id);
+}
+
+export function registerLandscapeSurfaceMap(
+  id: string,
+  spec: LandscapeRgbaMapSpec,
+): void {
+  surfaceMaps.set(id, spec);
+}
+
+export function landscapeSurfaceMap(id: string): LandscapeRgbaMapSpec | undefined {
+  return surfaceMaps.get(id);
 }
