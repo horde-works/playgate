@@ -1,0 +1,56 @@
+{
+  "modelId": "kallur-lighthouse",
+  "revision": "lighthouse-a02-2026-08-20",
+  "modelHash": "4417422fcd3a",
+  "generatedAt": "2026-08-20T18:19:45.554Z",
+  "views": [
+    {
+      "id": "front",
+      "label": "Front (south): windows, door, full program",
+      "projection": "orthographic",
+      "file": "front.png"
+    },
+    {
+      "id": "profile",
+      "label": "Profile (east)",
+      "projection": "orthographic",
+      "file": "profile.png"
+    },
+    {
+      "id": "three-quarter",
+      "label": "Three-quarter: mass and gallery",
+      "projection": "perspective",
+      "file": "three-quarter.png"
+    },
+    {
+      "id": "high-three-quarter",
+      "label": "High three-quarter (reference-13 angle)",
+      "projection": "perspective",
+      "file": "high-three-quarter.png"
+    },
+    {
+      "id": "lantern-detail",
+      "label": "Lantern: lattice, rings, bulb behind glass",
+      "projection": "perspective",
+      "file": "lantern-detail.png"
+    },
+    {
+      "id": "lantern-cutaway",
+      "label": "Lantern cutaway: pedestal and bulb (glazing+lattice hidden)",
+      "projection": "perspective",
+      "file": "lantern-cutaway.png"
+    },
+    {
+      "id": "night-close",
+      "label": "Night: the bulb through ordinary glass",
+      "projection": "perspective",
+      "file": "night-close.png"
+    },
+    {
+      "id": "night-wide",
+      "label": "Night wide: lamp reads at distance",
+      "projection": "perspective",
+      "file": "night-wide.png"
+    }
+  ]
+}
