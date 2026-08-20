@@ -276,6 +276,16 @@ async function main() {
       await takeFrame(frame, "-sunset");
     }
 
+    // One more press: deep dusk/night — the lamp pool wakes, reference-11
+    // canon (the burning lantern) and the searchlight beam live here.
+    await pressKey("KeyN", 78, "n");
+    await sleep(9000);
+    for (const frame of FRAMES) {
+      if (!SUNSET_FRAME_IDS.has(frame.id)) continue;
+      if (!wantFrame(frame.id)) continue;
+      await takeFrame(frame, "-night");
+    }
+
     await writeFile(
       join(outputRoot, "manifest.json"),
       `${JSON.stringify({ generatedAt: new Date().toISOString(), server: serverUrl, frames: manifest }, null, 2)}\n`,

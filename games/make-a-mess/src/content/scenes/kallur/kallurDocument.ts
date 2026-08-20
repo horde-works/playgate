@@ -23,7 +23,10 @@ import {
   kallurStones,
 } from "./kallurLandscapeDocument.ts";
 import { kallurVisibleStones } from "./kallurStoneField.ts";
-import { createKallurLighthouse } from "./kallurLighthouse.ts";
+import {
+  createKallurLighthouse,
+  KALLUR_LIGHTHOUSE_PAD,
+} from "./kallurLighthouse.ts";
 import { generateKallurWallStrata } from "./kallurWallStrata.ts";
 import { kallurLandscapeSampler } from "./kallurLandscapeDocument.ts";
 
@@ -234,6 +237,68 @@ createKallurLighthouse((object) => {
   lighthouse.objects.push(object);
 });
 
+// The lighthouse SEARCHLIGHT (Igor, 21.08): from dusk the lantern throws a
+// visible beam to the RIGHT of the path as a newly arrived player sees it
+// from the path start — about 45 degrees off the path's own first bearing.
+// The physical source is the lantern bulb behind ordinary glass; the beam
+// azimuth is DERIVED from the path data, not hand-aimed.
+const kallurSpotLights = (() => {
+  const pad = KALLUR_LIGHTHOUSE_PAD;
+  const start = KALLUR_PATH[0];
+  const next = KALLUR_PATH[1];
+  // Southward bearing of the path's first leg (from its second point back
+  // to the start), rotated 45 degrees AWAY from the great wall (Igor,
+  // 21.08: same angle, the other side of the path — off the mountain),
+  // and thrown INTO the horizon, not down at the ground.
+  const bearing = Math.atan2(start[0] - next[0], start[2] - next[2]);
+  const azimuth = bearing - Math.PI / 4;
+  const lampPosition: SceneVector3 = [
+    pad.center[0],
+    pad.elevation + 5.66,
+    pad.center[1],
+  ];
+  return [{
+    id: "kallur:lighthouse:searchlight",
+    position: lampPosition,
+    direction: [
+      Math.sin(azimuth),
+      0,
+      Math.cos(azimuth),
+    ] as SceneVector3,
+    color: "#ffe9c4",
+    distance: 95,
+    intensity: 1020,
+    angle: 0.12,
+    penumbra: 0.42,
+    decay: 1.6,
+    // Dark hours only: the beam wakes with the lamps at dusk.
+    dayIntensityFactor: 0,
+    transition: { fadeInSeconds: 2.4, fadeOutSeconds: 1.6 },
+    visibleBeam: {
+      opacity: 0.14,
+      sourceRadius: 0.5,
+      length: 85,
+      attenuation: 72,
+      anglePower: 5,
+    },
+    // Head-on honesty: nature BLINDS when you look into a beam (forward
+    // Mie scattering plus the bare lens), while the cone shader fades
+    // axial views to hide its own cross-section. The lens flare takes
+    // over exactly where the cone bows out.
+    fixtureGlow: {
+      color: "#ffe9c4",
+      intensity: 8.5,
+      halo: {
+        physicalDiameter: 0.8,
+        minScreenDiameter: 6,
+        maxWorldDiameter: 2.6,
+        dayOpacity: 0,
+        nightOpacity: 0.95,
+      },
+    },
+  }];
+})();
+
 export const kallurLandscapeVisual: LandscapeVisualDefinition = {
   material: "grass",
   color: "#6d7046",
@@ -298,6 +363,7 @@ export const kallurDocument: AuthoredSceneDocument = {
     reset: "Вернуться на тропу",
   },
   landscapeVisual: kallurLandscapeVisual,
+  spotLights: kallurSpotLights,
   groups: [...groups.values()],
   indestructible: true,
   fogDistances: [160, 430],

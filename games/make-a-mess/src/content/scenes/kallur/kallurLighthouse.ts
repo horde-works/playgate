@@ -22,6 +22,8 @@ export const KALLUR_LIGHTHOUSE_ACCEPTED_REVISION = "lighthouse-a06-2026-08-20";
 const foundPad = KALLUR_PADS.find((pad) => pad.id === "lighthouse-pad");
 if (!foundPad) throw new Error("lighthouse-pad missing from KALLUR_PADS");
 const PAD = foundPad;
+/** The resolved site: one shared source for the adapter and the searchlight. */
+export const KALLUR_LIGHTHOUSE_PAD = PAD;
 const SITE_YAW = PAD.yaw;
 const BASE_Y = PAD.elevation;
 const COS = Math.cos(SITE_YAW);
