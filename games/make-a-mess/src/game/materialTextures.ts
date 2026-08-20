@@ -27,6 +27,12 @@ import {
   materialAtmosphereGlsl,
   registerMaterialAtmosphereShader,
 } from "./materialAtmosphere.ts";
+import {
+  kallurCascadeGlsl,
+  kallurFlatBaseGlsl,
+  kallurWallMidGlsl,
+} from "../content/landscape/naturalSurfaceCascade.ts";
+import { kallurLandscapeSampler } from "../content/scenes/kallur/kallurLandscapeDocument.ts";
 import { materialAppearanceProfiles } from "./materialAppearance.ts";
 import {
   alcladSeamFragment,
@@ -465,6 +471,50 @@ function getDutchPolderSurfaceTexture(): CanvasTexture {
   dutchPolderSurfaceTexture.anisotropy = 4;
   dutchPolderSurfaceTexture.colorSpace = NoColorSpace;
   return dutchPolderSurfaceTexture;
+}
+
+const KALLUR_GRADE_TEXTURE_SIZE = 192;
+const KALLUR_GRADE_WORLD_MIN = -128;
+const KALLUR_GRADE_WORLD_SPAN = 256;
+let kallurGradeTexture: DataTexture | null = null;
+
+/**
+ * Baked macro grade of the kallur field: the SENIOR octave the slope law
+ * commands from (carpet-port-plan). The probe averages the hummocks out
+ * (+-2.2 m), so the comb follows sustained hillsides — reading the
+ * fragment normal instead combed every kochka face its own way and drew
+ * chaotic hatch on the meadow. R/G encode the gradient in [-3..3].
+ */
+function getKallurGradeTexture(): DataTexture {
+  if (kallurGradeTexture) return kallurGradeTexture;
+  const size = KALLUR_GRADE_TEXTURE_SIZE;
+  const data = new Uint8Array(size * size * 4);
+  const probe = 2.2;
+  for (let row = 0; row < size; row += 1) {
+    for (let column = 0; column < size; column += 1) {
+      const worldX = KALLUR_GRADE_WORLD_MIN +
+        ((column + 0.5) / size) * KALLUR_GRADE_WORLD_SPAN;
+      const worldZ = KALLUR_GRADE_WORLD_MIN +
+        ((row + 0.5) / size) * KALLUR_GRADE_WORLD_SPAN;
+      const east = kallurLandscapeSampler.elevationAt(worldX + probe, worldZ);
+      const west = kallurLandscapeSampler.elevationAt(worldX - probe, worldZ);
+      const south = kallurLandscapeSampler.elevationAt(worldX, worldZ + probe);
+      const north = kallurLandscapeSampler.elevationAt(worldX, worldZ - probe);
+      const gradientX = (east - west) / (2 * probe);
+      const gradientZ = (south - north) / (2 * probe);
+      const offset = (row * size + column) * 4;
+      data[offset] = Math.round((Math.max(-3, Math.min(3, gradientX)) / 6 + 0.5) * 255);
+      data[offset + 1] = Math.round((Math.max(-3, Math.min(3, gradientZ)) / 6 + 0.5) * 255);
+      data[offset + 2] = 0;
+      data[offset + 3] = 255;
+    }
+  }
+  kallurGradeTexture = new DataTexture(data, size, size);
+  kallurGradeTexture.magFilter = LinearFilter;
+  kallurGradeTexture.minFilter = LinearFilter;
+  kallurGradeTexture.colorSpace = NoColorSpace;
+  kallurGradeTexture.needsUpdate = true;
+  return kallurGradeTexture;
 }
 
 const VIKING_TRAFFIC_TEXTURE_SIZE = 512;
@@ -1734,6 +1784,7 @@ export function getPieceMaterial(
       shader.uniforms.uVikingTrafficMap = { value: getVikingTrafficTexture() };
       shader.uniforms.uCitySurfaceMap = { value: getCitySurfaceTexture() };
       shader.uniforms.uDutchPolderSurfaceMap = { value: getDutchPolderSurfaceTexture() };
+      shader.uniforms.uKallurGradeMap = { value: getKallurGradeTexture() };
       // A cached material may be compiled again for a recreated WebGL
       // renderer. Keep only its current program so day/night updates do not
       // retain dead renderers or grow linearly after every scene reset.
@@ -1748,6 +1799,10 @@ export function getPieceMaterial(
       };
       applyEnvironmentUniforms(shader, lastEnvironmentUpdate);
       registerMaterialAtmosphereShader(shader);
+      // The carpet quality switch: 1 = full cascade, 0 = the fine octaves
+      // fold back into flat albedo. Survives recompiles because it is
+      // re-assigned here, not captured by a stale shader object.
+      shader.uniforms.uKallurCarpetDetail = { value: 1 };
 
       shader.vertexShader = shader.vertexShader
         .replace(
@@ -1945,6 +2000,9 @@ vec2 materialFaceFitUv = abs(normal.z) > 0.5
           "#include <common>",
           `#include <common>
 ${materialAtmosphereGlsl()}
+uniform float uKallurCarpetDetail;
+uniform sampler2D uKallurGradeMap;
+${kallurCascadeGlsl()}
 ${
   material === "concrete" || material === "plaster" || material === "brick"
     ? "uniform sampler2D uStainMap;\nuniform float uStainStrength;"
@@ -2312,22 +2370,76 @@ if (dutchPolderSurface > 0.5) {
   diffuseColor.rgb = mix(diffuseColor.rgb, dutchBed, dutchMask.g * 0.96);
 }
 
-// Kallur turf: the mid-ring detail layer of the fur (kallur-brief.md §5.3).
-// Past the blade ring the pelt is carried by high-frequency light-and-shade
-// — the same trick as the viking uneven-earth relief, tuned to fur scale —
-// plus stretched fibre noise that reads as the lie of combed Atlantic grass.
-float kallurSurface =
-  (1.0 - step(0.5, abs(vLandscapeSurfaceProfile - 4.0))) * materialUp;
-if (kallurSurface > 0.5) {
+// Kallur turf: the carpet band is the SINGLE OWNER of this ground's albedo
+// (carpet-port-plan.md). It does not decorate the canvas texture — it
+// replaces it with the cascade generated from the measured palette, the
+// way every accepted lab tile was drawn. The vertex color keeps only its
+// macro role (zones, path, rock) and rides as a ratio against the flat
+// definition color it was premultiplied with.
+float kallurProfileOn = 1.0 - step(0.5, abs(vLandscapeSurfaceProfile - 4.0));
+float kallurComb = 0.0;
+float kallurCarpetWeight = 0.0;
+vec2 kallurAcrossAlong = vec2(0.0);
+// Pixel footprint in metres — computed OUTSIDE the branch so the
+// derivative is uniform across the quad.
+float kallurFootprint = length(fwidth(vMaterialCoordinate.xz));
+if (kallurProfileOn > 0.5) {
+  vec3 kallurUp = inverseTransformDirection(normalize(vNormal), viewMatrix);
   vec2 kallurPoint = vMaterialCoordinate.xz;
-  float kallurTuft =
-    materialValueNoise(kallurPoint * 1.35 + vec2(7.3, 21.9)) * 0.6 +
-    materialValueNoise(kallurPoint * 3.1 + vec2(33.4, 2.8)) * 0.4;
-  float kallurFibre = materialValueNoise(
-    vec2(kallurPoint.x * 0.55, kallurPoint.y * 2.6) + vec2(15.1, 8.7)
-  );
-  diffuseColor.rgb *= 0.8 + kallurTuft * 0.34;
-  diffuseColor.rgb *= 0.93 + kallurFibre * 0.14;
+  // The SENIOR octave, as agreed: the comb keys off the BAKED macro grade
+  // of the field (2.2 m probe — hummocks average out), with the lab's
+  // thresholds verbatim: it appears from ~20-degree hillsides and is
+  // strong past ~35 (tiles R/S). The fragment normal carries every kochka
+  // — reading it combed each hummock its own way and drew chaotic hatch
+  // on the meadow — so it keeps only the wall test below.
+  vec2 kallurGradeUv = clamp(
+    vec2((kallurPoint.x + 128.0) / 256.0, (kallurPoint.y + 128.0) / 256.0),
+    vec2(0.001), vec2(0.999));
+  vec2 kallurMacroGrad =
+    (texture2D(uKallurGradeMap, kallurGradeUv).rg * 2.0 - 1.0) * 3.0;
+  float kallurMacroSlope = length(kallurMacroGrad);
+  vec2 kallurDown = kallurMacroSlope > 0.02
+    ? -kallurMacroGrad / kallurMacroSlope
+    : vec2(0.0, 1.0);
+  kallurComb = smoothstep(0.12, 0.5, kallurMacroSlope);
+  // The agreed cliff logic (lab tile group Q-V, verdict 20.08): linear
+  // ridges leave the flat ground and live ON the faces, shaped BY the
+  // face. On a wall the fall line leaves the XZ plane - down is -Y - so
+  // the ridge coordinates swing to (along-the-wall, down-the-face) as the
+  // surface turns vertical: the striation of the reference walls instead
+  // of ground streaks smeared across a cliff.
+  float kallurWallness = 1.0 - smoothstep(0.25, 0.6, kallurUp.y);
+  vec2 kallurWallTangent = vec2(-kallurDown.y, kallurDown.x);
+  kallurAcrossAlong = mix(
+    vec2(dot(kallurPoint, kallurWallTangent), dot(kallurPoint, kallurDown)),
+    vec2(dot(kallurPoint, kallurWallTangent), -vMaterialCoordinate.y),
+    kallurWallness);
+  kallurComb = max(kallurComb, kallurWallness);
+  float kallurLit = clamp(dot(kallurUp, normalize(uMatSunDirection)), 0.0, 1.0);
+  vec3 kallurCarpet = nscCarpetAlbedo(
+    kallurPoint, kallurAcrossAlong, kallurComb, kallurLit, kallurFootprint);
+  // The wall converges to the MEASURED stone of the brief and keeps only
+  // the ridge light-and-shade from the carpet's luminance. The grass
+  // vertex ratio is divided back out below - stone is brighter than turf,
+  // and multiplying the two bleached every cliff chalk-white.
+  float kallurLuma = dot(kallurCarpet, vec3(0.2126, 0.7152, 0.0722));
+  vec3 kallurWallTone = ${kallurWallMidGlsl()} * clamp(kallurLuma / 0.16, 0.35, 1.7);
+  // ONE texture family on the whole kallur ground, cliffs included: any
+  // grade where the old canvas survived sat next to the carpet as a
+  // colossal visible seam (Igor, 20.08). Stone families arrive through
+  // the vertex tint ratio; the strata wall is its own authored object.
+  kallurCarpetWeight = 1.0;
+  // color_fragment multiplies vColor (= macro tint ratio x flat definition
+  // color) AFTER this chunk, so pre-divide by the flat color: the final
+  // pixel is carpet x macro ratio, the canvas texel is fully replaced.
+  #if defined( USE_COLOR ) || defined( USE_COLOR_ALPHA )
+  diffuseColor.rgb = mix(
+    kallurCarpet / ${kallurFlatBaseGlsl()},
+    kallurWallTone / max(vColor.rgb, vec3(0.05)),
+    kallurWallness);
+  #else
+  diffuseColor.rgb = mix(kallurCarpet, kallurWallTone, kallurWallness);
+  #endif
 }
 
 // Standing dampness: glossy splotches on upward, sky-exposed faces.
@@ -2398,6 +2510,24 @@ vec3 materialBevelBend =
   vBevelAxisY * sign(vMaterialBoxPosition.y) * materialBevelT.y +
   vBevelAxisZ * sign(vMaterialBoxPosition.z) * materialBevelT.z;
 normal = normalize(normal + materialBevelBend * 0.6);
+// Kallur carpet: the octaves the 0.75 m lattice cannot carry become a
+// derivative bump, so the sun models the fur exactly as it models the
+// baked kochki above it — one light, every scale (bible II.1). Classic
+// dHdxy perturbation over view-space position derivatives.
+if (kallurCarpetWeight > 0.01 && uKallurCarpetDetail > 0.01) {
+  float kallurHeight = nscCarpetHeight(
+    vMaterialCoordinate.xz, kallurAcrossAlong, kallurComb, uKallurCarpetDetail,
+    kallurFootprint);
+  vec3 kallurSigmaX = dFdx(-vViewPosition);
+  vec3 kallurSigmaY = dFdy(-vViewPosition);
+  vec3 kallurR1 = cross(kallurSigmaY, normal);
+  vec3 kallurR2 = cross(normal, kallurSigmaX);
+  float kallurDet = dot(kallurSigmaX, kallurR1);
+  kallurDet *= float(gl_FrontFacing) * 2.0 - 1.0;
+  vec3 kallurGrad = sign(kallurDet) * kallurCarpetWeight *
+    (dFdx(kallurHeight) * kallurR1 + dFdy(kallurHeight) * kallurR2);
+  normal = normalize(abs(kallurDet) * normal - kallurGrad);
+}
 ${textureProfile === "alclad-riveted" ? alcladSeamNormal() : ""}`,
         )
         .replace(

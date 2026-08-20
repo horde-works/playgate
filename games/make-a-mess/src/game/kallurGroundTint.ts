@@ -87,26 +87,30 @@ export function kallurGroundTint(
   // Large mottling: two independent scales so no repeat reads at frame scale.
   const macro = valueNoise(x / 17, z / 17, 41);
   const patch = valueNoise(x / 29, z / 29, 87);
-  const mottle = valueNoise(x / 5.3, z / 5.3, 63);
 
   let color = mix(GRASS_BASE, GRASS_ALT, 0.5 + 0.5 * macro);
   // Sunlit yellow patches survive the overcast: broad, rare, never on rock.
   const lit = smootherstep((patch - 0.18) / 0.5) * (1 - smootherstep((gradient - 1.0) / 0.4));
   color = mix(color, GRASS_LIT, lit * 0.8);
-  // Hummock hollows darken with the ACTUAL field, mound crowns lift; the
-  // separate mottle noise only seasons what the relief already says.
-  const hollow = smootherstep((-relief - 0.04) / 0.22) * 0.72 +
-    smootherstep((-mottle - 0.35) / 0.5) * 0.22;
+  // DEMOTED to a macro whisper (carpet-port-plan: single-owner law). The
+  // per-pixel cascade band now owns hummock-scale light and hollows; the
+  // vertex channel keeps only a soft ambient echo of the real field so the
+  // smoothed mesh normals do not iron the big mounds completely flat. The
+  // 5.3 m mottle is gone - the band's moss and patch octaves cover it.
+  const hollow = smootherstep((-relief - 0.04) / 0.22) * 0.3;
   color = mix(color, GRASS_SHADOW, Math.min(1, hollow));
   const crown = smootherstep((relief - 0.05) / 0.24);
-  color = mix(color, GRASS_LIT, crown * 0.3);
-  // Past the walkable gradient grass thins into rock; near-vertical is stone.
-  color = mix(color, ROCK_MID, smootherstep((gradient - 1.05) / 0.55));
-  color = mix(color, ROCK_DARK, smootherstep((gradient - 2.1) / 0.8));
+  color = mix(color, GRASS_LIT, crown * 0.12);
+  // Past the walkable gradient grass thins into rock; near-vertical is
+  // stone. Faroese turf holds far steeper than a lowland lawn — the rock
+  // families start only where the reference slopes actually bare (the
+  // 1.05 start greyed every hillside two steps too early).
+  color = mix(color, ROCK_MID, smootherstep((gradient - 1.35) / 0.6));
+  color = mix(color, ROCK_DARK, smootherstep((gradient - 2.6) / 0.9));
   // The trodden line owns its dirt.
   color = mix(color, PATH_DIRT, sample.pathWeight * 0.85);
 
-  const brightness = 1 + mottle * 0.09 + relief * 0.5;
+  const brightness = 1 + relief * 0.2;
   const tint: readonly [number, number, number] = [
     (color[0] * brightness) / FLAT[0],
     (color[1] * brightness) / FLAT[1],

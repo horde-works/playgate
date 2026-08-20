@@ -19,6 +19,11 @@ import { kallurGroundTopAt } from "../games/make-a-mess/src/content/scenes/kallu
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const outputRoot = join(repositoryRoot, "games/make-a-mess/docs/kallur/frames");
 const serverUrl = process.env.PLAYGATE_DEV_URL ?? "http://127.0.0.1:3000";
+// Optional frame filter (`node capture-kallur-frames.mjs hero-01-...`) and a
+// filename suffix (PLAYGATE_FRAME_SUFFIX) for A/B passes of the same view.
+const onlyFrames = new Set(process.argv.slice(2));
+const wantFrame = (id) => onlyFrames.size === 0 || onlyFrames.has(id);
+const extraSuffix = process.env.PLAYGATE_FRAME_SUFFIX ?? "";
 
 const FRAMES = [
   {
@@ -236,7 +241,7 @@ async function main() {
       await evaluate(`window.__mamLook(${yaw}, ${pitch}); true`);
       await sleep(4500);
       const shot = await send("Page.captureScreenshot", { format: "png" });
-      const id = `${frame.id}${suffix}`;
+      const id = `${frame.id}${suffix}${extraSuffix}`;
       const destination = join(outputRoot, `${id}.png`);
       await writeFile(destination, Buffer.from(shot.data, "base64"));
       manifest.push({ id, position: frame.position, lookAt: frame.lookAt, file: `${id}.png` });
@@ -244,8 +249,13 @@ async function main() {
     };
 
     for (const frame of FRAMES) {
+      if (!wantFrame(frame.id)) continue;
       await takeFrame(frame, "");
     }
+
+    const wantsSunset = onlyFrames.size === 0 ||
+      [...SUNSET_FRAME_IDS].some((id) => onlyFrames.has(id));
+    if (!wantsSunset) return;
 
     // Low light pass: KeyN cycles day -> afternoon -> sunset; the transition
     // takes several game-clock seconds each (run-and-verify.md §3).
@@ -262,6 +272,7 @@ async function main() {
     }
     for (const frame of FRAMES) {
       if (!SUNSET_FRAME_IDS.has(frame.id)) continue;
+      if (!wantFrame(frame.id)) continue;
       await takeFrame(frame, "-sunset");
     }
 
