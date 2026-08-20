@@ -1,6 +1,7 @@
 import {
   CanvasTexture,
   Color,
+  DataTexture,
   LinearFilter,
   LinearMipmapLinearFilter,
   MeshStandardMaterial,
@@ -151,17 +152,53 @@ export interface MaterialEnvironmentUpdate {
   readonly stains: number;
 }
 
+/**
+ * Last day/night values. A freshly compiled program used to start with
+ * `uWetness = 0` until the next frame's update — puddles vanished for the
+ * hitch frame that compiled the shader (lights, shadows, DPR).
+ */
+const lastEnvironmentUpdate: MaterialEnvironmentUpdate = {
+  airExtinction: 0,
+  wetness: 0.55,
+  time: 0,
+  windStrength: 1,
+  stains: 0,
+};
+
+function applyEnvironmentUniforms(
+  shader: WebGLProgramParametersWithUniforms,
+  update: MaterialEnvironmentUpdate,
+): void {
+  const uniforms = shader.uniforms;
+  if (uniforms.uAirExtinction) uniforms.uAirExtinction.value = update.airExtinction;
+  if (uniforms.uWetness) uniforms.uWetness.value = update.wetness;
+  if (uniforms.uTime) uniforms.uTime.value = update.time;
+  if (uniforms.uWindStrength) uniforms.uWindStrength.value = update.windStrength;
+  if (uniforms.uStainStrength) uniforms.uStainStrength.value = update.stains;
+}
+
 export function updateMaterialEnvironment(
   update: MaterialEnvironmentUpdate,
 ): void {
+  lastEnvironmentUpdate.airExtinction = update.airExtinction;
+  lastEnvironmentUpdate.wetness = update.wetness;
+  lastEnvironmentUpdate.time = update.time;
+  lastEnvironmentUpdate.windStrength = update.windStrength;
+  lastEnvironmentUpdate.stains = update.stains;
   for (const shader of environmentShaders) {
-    shader.uniforms.uAirExtinction.value = update.airExtinction;
-    shader.uniforms.uWetness.value = update.wetness;
-    shader.uniforms.uTime.value = update.time;
-    shader.uniforms.uWindStrength.value = update.windStrength;
-    if (shader.uniforms.uStainStrength) {
-      shader.uniforms.uStainStrength.value = update.stains;
-    }
+    applyEnvironmentUniforms(shader, lastEnvironmentUpdate);
+  }
+}
+
+/** BatchedMesh programs share a cache key; bind this mesh's attr texture before draw. */
+export function bindPieceAttrTexture(
+  material: MeshStandardMaterial,
+  texture: DataTexture | null,
+): void {
+  material.userData.pieceAttrTexture = texture;
+  const shader = environmentShaderByMaterial.get(material);
+  if (shader?.uniforms.uPieceAttrTexture) {
+    shader.uniforms.uPieceAttrTexture.value = texture;
   }
 }
 
@@ -1699,7 +1736,10 @@ export function getPieceMaterial(
       }
       environmentShaderByMaterial.set(target, shader);
       environmentShaders.add(shader);
-      shader.uniforms.uPieceAttrTexture = { value: null };
+      shader.uniforms.uPieceAttrTexture = {
+        value: target.userData.pieceAttrTexture ?? null,
+      };
+      applyEnvironmentUniforms(shader, lastEnvironmentUpdate);
 
       shader.vertexShader = shader.vertexShader
         .replace(

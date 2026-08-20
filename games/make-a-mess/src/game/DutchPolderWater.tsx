@@ -885,7 +885,7 @@ export function DutchPolderWater() {
       }
 
       const budget = waterPassBudget(
-        performanceGovernor.getSnapshot().gpuQuality,
+        performanceGovernor.atmosphereQuality(),
       );
       const perspective = camera as PerspectiveCamera;
       renderer.getDrawingBufferSize(drawingSize);

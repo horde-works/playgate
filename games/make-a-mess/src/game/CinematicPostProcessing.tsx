@@ -474,15 +474,11 @@ export function CinematicPostProcessing({
   });
 
   useFrame((_, delta) => {
-    const gpuQuality = performanceGovernor.getSnapshot().gpuQuality;
     // Keep the pass graph stable. EffectComposer/N8AO can leave the final
     // screen target unwritten when passes are disabled after construction on
     // some Chrome/WebGL combinations, producing a live but flat-grey canvas.
-    // DPR is the safe adaptive GPU lever; cheaper shader details below never
-    // change which pass owns the screen buffer.
-    const sunPresence = pipeline.cinematicPass.uniforms.uSunPresence;
-    const restoredSunPresence = sunPresence.value;
-    if (gpuQuality === 0) sunPresence.value = 0;
+    // DPR is the GPU fill-rate lever. Shafts stay on: they are atmosphere,
+    // not a cheap quality toggle.
     // Размер конвейера сверяется с буфером В ЭТОМ кадре, до рендера: смена
     // DPR никогда не должна дожить до composer.render рассинхроненной.
     syncPipelineSize();
@@ -491,7 +487,6 @@ export function CinematicPostProcessing({
       pipeline.composer.render(delta);
     } finally {
       gpuTimer.end();
-      sunPresence.value = restoredSunPresence;
     }
   }, 1);
 

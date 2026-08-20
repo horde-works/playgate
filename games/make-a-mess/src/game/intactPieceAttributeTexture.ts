@@ -1,4 +1,10 @@
-import { Color, DataTexture, FloatType, RGBAFormat } from "three";
+import {
+  Color,
+  DataTexture,
+  FloatType,
+  NearestFilter,
+  RGBAFormat,
+} from "three";
 import type { PieceBakeResult } from "./bakedLighting.ts";
 import type { BreakablePieceDefinition } from "./destructionScene.ts";
 import { materialAnchorWithWeathering } from "./materialAppearance.ts";
@@ -38,6 +44,9 @@ export function createIntactPieceAttributeTexture(
   const size = textureSizeFor(maxInstanceCount);
   const array = new Float32Array(size * size * 4);
   const texture = new DataTexture(array, size, size, RGBAFormat, FloatType);
+  texture.magFilter = NearestFilter;
+  texture.minFilter = NearestFilter;
+  texture.generateMipmaps = false;
   texture.needsUpdate = true;
 
   return {

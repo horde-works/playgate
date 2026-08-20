@@ -22,6 +22,7 @@ import {
 } from "./debrisBodyPool";
 import { debrisBodyIsEmbedded } from "./debrisCollisionActivation";
 import {
+  notifyPipelineHitch,
   performanceGovernor,
   type PerformanceQuality,
   type RuntimePerformanceSnapshot,
@@ -10902,18 +10903,17 @@ const COMPACT_PIXEL_BUDGET = 720_000;
 // поднимал масштаб, спайк GPU ронял его обратно — и экран мерцал вспышками.
 //
 // Поэтому масштаб теперь не «подкручивается», а ходит по ЛЕСТНИЦЕ: одна
-// ступень за раз, только после нескольких согласных окон подряд, и обратный
-// ход закрыт длинной задержкой. Мёртвая зона между порогами гарантирует, что
-// сцена, стоящая ровно на границе, не качается вверх-вниз.
+// ступень за раз, только после нескольких согласных окон подряд. Обратный
+// ход автоматом не делается: подъём DPR пересобирает композер (55–88%
+// пикселей) и читается как моргание мокрости. Игрок поднимает ступень в
+// настройках.
 const RENDER_SCALE_LADDER = [1, 0.85, 0.72, 0.62] as const;
 const SCALE_WINDOW_SECONDS = 1;
 const SCALE_WARMUP_SECONDS = 2.5;
-// Понижение отвечает на реальную перегрузку, поэтому ему нужно меньше
-// свидетельств, чем повышению, — но больше одного шумного окна.
-const WINDOWS_BEFORE_DEMOTION = 3;
-const WINDOWS_BEFORE_PROMOTION = 8;
-const SECONDS_AFTER_ANY_CHANGE = 6;
-const SECONDS_BEFORE_REVERSAL = 25;
+// Понижение отвечает на реальный FPS, не на ось gpuQuality: одно окно
+// шума недостаточно, и после смены буфера датчики губернатора молчат.
+const WINDOWS_BEFORE_DEMOTION = 5;
+const SECONDS_AFTER_ANY_CHANGE = 8;
 
 function AdaptiveRenderScale({
   compact,
@@ -10949,9 +10949,7 @@ function AdaptiveRenderScale({
   // Индекс ступени: 0 — полное разрешение бюджета.
   const level = useRef(0);
   const overloadedWindows = useRef(0);
-  const comfortableWindows = useRef(0);
   const sinceAnyChange = useRef(Number.POSITIVE_INFINITY);
-  const sinceDemotion = useRef(Number.POSITIVE_INFINITY);
   const baseline = useRef(1);
   const applied = useRef(0);
 
@@ -10996,11 +10994,11 @@ function AdaptiveRenderScale({
     frames.current = 0;
     warmup.current = 0;
     overloadedWindows.current = 0;
-    comfortableWindows.current = 0;
     performanceGovernor.setRenderScaleLevel(level.current);
     if (Math.abs(nextDpr - applied.current) > 0.001) {
       applied.current = nextDpr;
       performanceGovernor.setDpr(nextDpr);
+      notifyPipelineHitch();
       applyDpr(nextDpr);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- applyDpr стабилен по gl/size
@@ -11023,7 +11021,6 @@ function AdaptiveRenderScale({
 
     warmup.current += delta;
     sinceAnyChange.current += delta;
-    sinceDemotion.current += delta;
     if (warmup.current < SCALE_WARMUP_SECONDS) {
       return;
     }
@@ -11038,13 +11035,11 @@ function AdaptiveRenderScale({
     elapsed.current = 0;
     frames.current = 0;
 
-    const pressure = performanceGovernor.getSnapshot();
-    // Мёртвая зона: окно голосует, только когда оно ЯВНО на одной из сторон.
-    // Всё, что между порогами, лестницу не трогает вовсе.
-    const struggling = pressure.gpuQuality < 2 || fps < (compact ? 44 : 48);
-    const roomy = pressure.gpuQuality === 2 && fps > (compact ? 52 : 57);
+    // Ступень вниз только по FPS. Ось gpuQuality больше не голос «мне
+    // тяжело»: губернатор и лестница раньше смотрели друг на друга и
+    // качали буфер. Обратный подъём выключен — см. шапку лестницы.
+    const struggling = fps < (compact ? 40 : 42);
     overloadedWindows.current = struggling ? overloadedWindows.current + 1 : 0;
-    comfortableWindows.current = roomy ? comfortableWindows.current + 1 : 0;
 
     if (sinceAnyChange.current < SECONDS_AFTER_ANY_CHANGE) {
       return;
@@ -11056,13 +11051,11 @@ function AdaptiveRenderScale({
       level.current < RENDER_SCALE_LADDER.length - 1
     ) {
       nextLevel = level.current + 1;
-    } else if (
-      comfortableWindows.current >= WINDOWS_BEFORE_PROMOTION &&
-      level.current > 0 &&
-      sinceDemotion.current >= SECONDS_BEFORE_REVERSAL
-    ) {
-      nextLevel = level.current - 1;
     }
+    // No auto-promote. Climbing DPR rebuilds the composer (measured 55–88%
+    // pixel delta). Wet puddles are env-map gloss, so that hitch reads as
+    // wetness blinking on and off. Stay on the stable lower rung; settings
+    // can raise it.
     if (nextLevel === level.current) {
       return;
     }
@@ -11073,13 +11066,9 @@ function AdaptiveRenderScale({
       hardFloor,
       1,
     );
-    if (nextLevel > level.current) {
-      sinceDemotion.current = 0;
-    }
     level.current = nextLevel;
     performanceGovernor.setRenderScaleLevel(nextLevel);
     overloadedWindows.current = 0;
-    comfortableWindows.current = 0;
     // Упёрлись в пол: ступень запомнена, но буфер трогать незачем.
     if (Math.abs(nextDpr - applied.current) <= 0.001) {
       return;
@@ -11087,6 +11076,7 @@ function AdaptiveRenderScale({
     applied.current = nextDpr;
     sinceAnyChange.current = 0;
     performanceGovernor.setDpr(nextDpr);
+    notifyPipelineHitch();
     applyDpr(nextDpr);
   });
 

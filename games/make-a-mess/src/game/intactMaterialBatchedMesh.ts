@@ -27,6 +27,7 @@ import {
 } from "./intactPieceGeometry.ts";
 import { createIntactPieceAttributeTexture } from "./intactPieceAttributeTexture.ts";
 import {
+  bindPieceAttrTexture,
   cloneWithMaterialSpace,
   getPieceMaterial,
   pieceMaterialIsTransparent,
@@ -114,6 +115,7 @@ export function createIntactMaterialBatchedMesh(
     if (batch.doubleSided) material.side = DoubleSide;
   }
   const attributes = createIntactPieceAttributeTexture(batch.pieces.length);
+  material.userData.pieceAttrTexture = attributes.texture;
   const previousCompile = material.onBeforeCompile;
   material.onBeforeCompile = (shader, renderer) => {
     previousCompile?.call(material, shader, renderer);
@@ -185,6 +187,12 @@ export function createIntactMaterialBatchedMesh(
     }
   });
   attributes.flush();
+  material.userData.pieceAttrTexture = attributes.texture;
+  const batchedOnBeforeRender = mesh.onBeforeRender.bind(mesh);
+  mesh.onBeforeRender = (renderer, scene, camera, geometry, objectMaterial, group) => {
+    batchedOnBeforeRender(renderer, scene, camera, geometry, objectMaterial, group);
+    bindPieceAttrTexture(material, attributes.texture);
+  };
   mesh.computeBoundingSphere();
   mesh.computeBoundingBox();
   mesh.userData = {

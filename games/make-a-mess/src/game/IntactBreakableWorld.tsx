@@ -529,7 +529,8 @@ const IntactMaterialBatchMesh = memo(function IntactMaterialBatchMesh({
       writeBake(index, result) {
         bundle.attributes.writeBake(index, result);
       },
-      flush() {
+      flush(indices: number[]) {
+        if (indices.length === 0) return;
         bundle.attributes.flush();
       },
     });

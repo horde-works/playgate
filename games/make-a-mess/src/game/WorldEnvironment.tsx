@@ -150,7 +150,8 @@ export function SceneEnvironment({
     return { holder, sky };
   }, [theme]);
   const currentTarget = useRef<WebGLRenderTarget | null>(null);
-  const lastBucket = useRef("");
+  const pendingDispose = useRef<WebGLRenderTarget | null>(null);
+  const lastBakedSun = useRef(new Vector3(Number.NaN, 0, 0));
   const lastDomeVersion = useRef(-1);
 
   useEffect(() => {
@@ -161,6 +162,8 @@ export function SceneEnvironment({
     return () => {
       scene.environmentIntensity = 1;
       scene.environment = null;
+      pendingDispose.current?.dispose();
+      pendingDispose.current = null;
       currentTarget.current?.dispose();
       currentTarget.current = null;
       pmrem.dispose();
@@ -168,22 +171,24 @@ export function SceneEnvironment({
   }, [pmrem, scene]);
 
   useFrame(() => {
-    // Re-bake the environment only when the sun has moved perceptibly — or
-    // when the amortized dome finished a repaint under new light.
+    // Drop the previous PMREM a frame late: disposing the in-use env map
+    // the same frame as the swap left puddles without IBL for one tick —
+    // wetness blinking off then on.
+    pendingDispose.current?.dispose();
+    pendingDispose.current = null;
+
+    // Re-bake only when the sun has moved ~2°, or the amortized dome
+    // finished a repaint. Rounding each axis used to hunt around .5 and
+    // rebuild IBL every few seconds while the sun was "parked".
     const direction = environmentState.sunDirection;
-    const bucket = [
-      Math.round(direction.x * 10),
-      Math.round(direction.y * 14),
-      Math.round(direction.z * 10),
-    ].join(":");
     const domeVersion = environmentState.skyDomeVersion;
-    if (
-      bucket === lastBucket.current &&
-      domeVersion === lastDomeVersion.current
-    ) {
+    const sunStable =
+      Number.isFinite(lastBakedSun.current.x) &&
+      lastBakedSun.current.dot(direction) > 0.9994;
+    if (sunStable && domeVersion === lastDomeVersion.current) {
       return;
     }
-    lastBucket.current = bucket;
+    lastBakedSun.current.copy(direction);
     lastDomeVersion.current = domeVersion;
 
     let target: WebGLRenderTarget;
@@ -203,7 +208,7 @@ export function SceneEnvironment({
       setSkyCloudCoarse(skyScene.sky.material, false);
     }
     scene.environment = target.texture;
-    currentTarget.current?.dispose();
+    pendingDispose.current = currentTarget.current;
     currentTarget.current = target;
   });
 
@@ -573,7 +578,7 @@ export function DayNightCycle({
     gl.shadowMap.needsUpdate = previousShadowUpdate;
     setSkyMarchQuality(
       material,
-      performanceGovernor.getSnapshot().gpuQuality,
+      performanceGovernor.atmosphereQuality(),
     );
   };
 
@@ -614,10 +619,11 @@ export function DayNightCycle({
     if (worldTimeRef) {
       worldTimeRef.current = time.current;
     }
-    // Live sky march budget follows gpuQuality (author max at 2; bake still
-    // forces coarse via setSkyCloudCoarse). Kill-switch freezes at full.
+    // Live sky march budget follows atmosphere quality: auto stays at
+    // author maximum so IBL/wet puddles do not hunt. Bake still forces
+    // coarse via setSkyCloudCoarse. Kill-switch freezes at full.
     clouds.current?.setMarchQuality(
-      performanceGovernor.getSnapshot().gpuQuality,
+      performanceGovernor.atmosphereQuality(),
     );
     // ОДНО СОЛНЦЕ. Высоту и положение берут из одного вектора, иначе луч и
     // купол расходятся во мнении, который час: прежний фолбэк для мира без
@@ -889,14 +895,12 @@ export function DayNightCycle({
     const domeMesh = domeViewRef.current;
     if (skyMesh && domeMesh) {
       const state = domeState.current;
-      // Кэш купола — амортизация для НИЖНИХ ярусов GPU. На максималках небо
-      // маршируется живьём каждый кадр: подмена на кубокарту 512/грань после
-      // остановки солнца читалась глазом как «похожее, но упрощённое, другая
-      // гамма» (вердикт Igor) — против принципа «от максимума и вниз»
-      // амортизации на вершине не место. Спуск качества возвращает кэш —
-      // там кадр важнее идеальности неба.
+      // Кэш купола — только ручной Low. На автомате живой марш не снимают
+      // и шаги неба не спускают: подмена на кубокарту 512 и охота 16↔10
+      // шагов читались как «другая гамма», мокрый пол моргал.
       const domeTier =
-        performanceGovernor.getSnapshot().gpuQuality < 2;
+        performanceGovernor.getQualityOverride() !== null
+        && performanceGovernor.atmosphereQuality() === 0;
       if (!SKY_DOME_CACHE_ENABLED || !domeTier || sunIsMoving) {
         state.completed = false;
         state.cursor = 0;
@@ -949,7 +953,7 @@ export function DayNightCycle({
           // Спуск оси — темп перекраски, а не качество грани: грань всегда
           // авторский максимум, страйд лишь растягивает оборот.
           const stride =
-            DOME_REPAINT_STRIDES[performanceGovernor.getSnapshot().gpuQuality];
+            DOME_REPAINT_STRIDES[performanceGovernor.atmosphereQuality()];
           state.frameParity = (state.frameParity + 1) % stride;
           if (state.frameParity === 0) {
             renderDomeFace(frameState.gl, state.cursor);
@@ -1419,6 +1423,8 @@ export function LampLightPool({
       }
 
       light.intensity = slot.intensity;
+      // React must not pass `visible` on the <pointLight> — that prop would
+      // stomp this every parent render and recompile NUM_POINT_LIGHTS.
       light.visible = slot.intensity > 0.001;
     });
   });
@@ -1431,7 +1437,6 @@ export function LampLightPool({
           ref={(light) => {
             lights.current[index] = light;
           }}
-          visible={false}
           intensity={0}
           decay={1.8}
         />
@@ -1716,6 +1721,8 @@ export function SpotLightPool({
       light.intensity = slot.intensity;
       light.target.position.set(...position).addScaledVector(direction, range);
       light.target.updateMatrixWorld();
+      // Same as the point pool: the JSX must not pass `visible`, or React
+      // would reset it every render and recompile materials.
       light.visible = slot.intensity > 0.001;
 
       const normalizedPower = Math.min(
@@ -1789,7 +1796,6 @@ export function SpotLightPool({
             anglePower={5}
             opacity={0}
             castShadow={false}
-            visible={false}
             intensity={0}
           />
           <sprite

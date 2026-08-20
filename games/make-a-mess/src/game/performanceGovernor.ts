@@ -35,6 +35,20 @@ export interface QualityOverride {
 
 const TARGET_FRAME_MS = 1000 / 60;
 const EMA_WEIGHT = 0.08;
+export const DECISION_WINDOW_MS = 1000;
+/** Sustained overload before a quality step drops — one noisy second is not enough. */
+export const WINDOWS_BEFORE_QUALITY_DEMOTION = 3;
+/** Clean windows before a quality step climbs back. */
+export const WINDOWS_BEFORE_QUALITY_PROMOTION = 8;
+/**
+ * After the render-scale ladder rebuilds the composer, ignore quality
+ * decisions: that hitch is self-inflicted and must not cascade into sky/FX.
+ */
+export const PIPELINE_HITCH_IGNORE_MS = 8000;
+/** Plateau, not a 60 fps cliff: ~50 fps GPU, ~70% of a 60 fps CPU budget. */
+export const CPU_OVERLOAD_MS = 14.5;
+export const GPU_OVERLOAD_MS = 20;
+export const PHYSICS_OVERLOAD_MS = 5.5;
 
 function smooth(current: number, sample: number): number {
   return current + (sample - current) * EMA_WEIGHT;
@@ -58,9 +72,13 @@ class PerformanceGovernor {
   };
   private pendingPhysicsMs = 0;
   private decisionElapsedMs = 0;
+  private hitchRemainingMs = 0;
   private cpuRecoveryWindows = 0;
   private gpuRecoveryWindows = 0;
   private physicsRecoveryWindows = 0;
+  private cpuOverloadWindows = 0;
+  private gpuOverloadWindows = 0;
+  private physicsOverloadWindows = 0;
   private override: QualityOverride | null = null;
 
   /**
@@ -72,9 +90,7 @@ class PerformanceGovernor {
     this.override = override;
     if (override) {
       this.snapshot = { ...this.snapshot, ...override };
-      this.cpuRecoveryWindows = 0;
-      this.gpuRecoveryWindows = 0;
-      this.physicsRecoveryWindows = 0;
+      this.resetQualityWindows();
     }
   }
 
@@ -82,11 +98,30 @@ class PerformanceGovernor {
     return this.override;
   }
 
+  /**
+   * Sky, water and shafts. Auto never touches them: hunting gpuQuality 2↔1
+   * resized water targets and changed sky march steps, which made puddles
+   * (env-map gloss) flash on and off. The player can still pick Low by hand.
+   */
+  atmosphereQuality(): PerformanceQuality {
+    return this.override?.gpuQuality ?? 2;
+  }
+
   /** Лестница разрешения публикует свою ступень для панели настроек. */
   setRenderScaleLevel(level: number): void {
     if (this.snapshot.renderScaleLevel !== level) {
       this.snapshot = { ...this.snapshot, renderScaleLevel: level };
     }
+  }
+
+  /**
+   * Composer/DPR rebuilds poison the next seconds of GPU time. Sensors keep
+   * updating the HUD; quality axes freeze until the hitch ages out.
+   */
+  notifyPipelineHitch(durationMs = PIPELINE_HITCH_IGNORE_MS): void {
+    if (!Number.isFinite(durationMs) || durationMs <= 0) return;
+    this.hitchRemainingMs = Math.max(this.hitchRemainingMs ?? 0, durationMs);
+    this.decisionElapsedMs = 0;
   }
 
   recordPhysics(durationMs: number): void {
@@ -118,6 +153,8 @@ class PerformanceGovernor {
     const nextPhysicsMs = smooth(this.snapshot.physicsMs, physicsMs);
     const gpuMs = this.snapshot.gpuMs;
     const exclusiveCpuMs = Math.max(0, nextCpuMs - nextPhysicsMs);
+    // HUD may still infer GPU from leftover time. Quality must not: a CPU
+    // city frame with a missing timer query used to kill the sky.
     const inferredGpuMs = gpuMs ??
       (nextFrameMs > 22 && nextCpuMs < nextFrameMs * 0.58
         ? nextFrameMs - nextCpuMs
@@ -141,15 +178,22 @@ class PerformanceGovernor {
       triangles,
       bottleneck,
     };
+
+    if ((this.hitchRemainingMs ?? 0) > 0) {
+      this.hitchRemainingMs = Math.max(0, this.hitchRemainingMs - boundedFrameMs);
+      this.decisionElapsedMs = 0;
+      return;
+    }
+
     this.decisionElapsedMs += boundedFrameMs;
-    if (this.decisionElapsedMs >= 1000) {
-      this.decisionElapsedMs %= 1000;
+    if (this.decisionElapsedMs >= DECISION_WINDOW_MS) {
+      this.decisionElapsedMs %= DECISION_WINDOW_MS;
       // Ручной режим: сенсоры продолжают мерить (HUD честен), оси стоят.
       if (!this.override) {
         this.updateQuality(
-          exclusiveCpuMs > 12.5,
-          inferredGpuMs > 15.2,
-          nextPhysicsMs > 5.5,
+          exclusiveCpuMs > CPU_OVERLOAD_MS,
+          gpuMs !== null && gpuMs > GPU_OVERLOAD_MS,
+          nextPhysicsMs > PHYSICS_OVERLOAD_MS,
         );
       }
     }
@@ -164,33 +208,48 @@ class PerformanceGovernor {
       quality: PerformanceQuality,
       overloaded: boolean,
       recoveryWindows: number,
-    ): readonly [PerformanceQuality, number] => {
+      overloadWindows: number,
+    ): readonly [PerformanceQuality, number, number] => {
       if (overloaded) {
-        return [Math.max(0, quality - 1) as PerformanceQuality, 0];
+        const strain = overloadWindows + 1;
+        if (strain >= WINDOWS_BEFORE_QUALITY_DEMOTION) {
+          return [
+            Math.max(0, quality - 1) as PerformanceQuality,
+            0,
+            0,
+          ];
+        }
+        return [quality, 0, strain];
       }
       const recovery = recoveryWindows + 1;
-      return recovery >= 5
-        ? [Math.min(2, quality + 1) as PerformanceQuality, 0]
-        : [quality, recovery];
+      return recovery >= WINDOWS_BEFORE_QUALITY_PROMOTION
+        ? [Math.min(2, quality + 1) as PerformanceQuality, 0, 0]
+        : [quality, recovery, 0];
     };
-    const [cpuQuality, cpuRecovery] = update(
+    const [cpuQuality, cpuRecovery, cpuOverload] = update(
       this.snapshot.cpuQuality,
       cpuOverloaded,
       this.cpuRecoveryWindows,
+      this.cpuOverloadWindows,
     );
-    const [gpuQuality, gpuRecovery] = update(
+    const [gpuQuality, gpuRecovery, gpuOverload] = update(
       this.snapshot.gpuQuality,
       gpuOverloaded,
       this.gpuRecoveryWindows,
+      this.gpuOverloadWindows,
     );
-    const [physicsQuality, physicsRecovery] = update(
+    const [physicsQuality, physicsRecovery, physicsOverload] = update(
       this.snapshot.physicsQuality,
       physicsOverloaded,
       this.physicsRecoveryWindows,
+      this.physicsOverloadWindows,
     );
     this.cpuRecoveryWindows = cpuRecovery;
     this.gpuRecoveryWindows = gpuRecovery;
     this.physicsRecoveryWindows = physicsRecovery;
+    this.cpuOverloadWindows = cpuOverload;
+    this.gpuOverloadWindows = gpuOverload;
+    this.physicsOverloadWindows = physicsOverload;
     this.snapshot = {
       ...this.snapshot,
       cpuQuality,
@@ -205,6 +264,15 @@ class PerformanceGovernor {
 
   getSnapshot(): RuntimePerformanceSnapshot {
     return this.snapshot;
+  }
+
+  private resetQualityWindows(): void {
+    this.cpuRecoveryWindows = 0;
+    this.gpuRecoveryWindows = 0;
+    this.physicsRecoveryWindows = 0;
+    this.cpuOverloadWindows = 0;
+    this.gpuOverloadWindows = 0;
+    this.physicsOverloadWindows = 0;
   }
 
   reset(): void {
@@ -222,10 +290,36 @@ class PerformanceGovernor {
     };
     this.pendingPhysicsMs = 0;
     this.decisionElapsedMs = 0;
-    this.cpuRecoveryWindows = 0;
-    this.gpuRecoveryWindows = 0;
-    this.physicsRecoveryWindows = 0;
+    this.hitchRemainingMs = 0;
+    this.resetQualityWindows();
   }
 }
 
-export const performanceGovernor = new PerformanceGovernor();
+const globalStore = globalThis as typeof globalThis & {
+  __mamPerformanceGovernor?: PerformanceGovernor;
+};
+
+// Fast Refresh keeps the first singleton. Rebind the current prototype so
+// new methods (notifyPipelineHitch, atmosphereQuality) exist on the live
+// object instead of crashing MakeAMessGame after a hot reload.
+export const performanceGovernor =
+  globalStore.__mamPerformanceGovernor ?? new PerformanceGovernor();
+globalStore.__mamPerformanceGovernor = performanceGovernor;
+Object.setPrototypeOf(performanceGovernor, PerformanceGovernor.prototype);
+
+export function notifyPipelineHitch(
+  durationMs = PIPELINE_HITCH_IGNORE_MS,
+): void {
+  const live = performanceGovernor as PerformanceGovernor & {
+    hitchRemainingMs?: number;
+    decisionElapsedMs?: number;
+    notifyPipelineHitch?: (duration: number) => void;
+  };
+  if (typeof live.notifyPipelineHitch === "function") {
+    live.notifyPipelineHitch(durationMs);
+    return;
+  }
+  if (!Number.isFinite(durationMs) || durationMs <= 0) return;
+  live.hitchRemainingMs = Math.max(live.hitchRemainingMs ?? 0, durationMs);
+  live.decisionElapsedMs = 0;
+}
