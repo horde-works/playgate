@@ -1,7 +1,21 @@
 {
-  "generatedAt": "2026-08-20T14:16:08.980Z",
+  "generatedAt": "2026-08-20T15:43:42.799Z",
   "server": "http://127.0.0.1:3000",
   "frames": [
+    {
+      "id": "hero-01-wall-and-lighthouse",
+      "position": [
+        -40,
+        11.4,
+        30
+      ],
+      "lookAt": [
+        30,
+        46,
+        -58
+      ],
+      "file": "hero-01-wall-and-lighthouse.png"
+    },
     {
       "id": "saddle-02-lighthouse-hill",
       "position": [
@@ -29,6 +43,20 @@
         8
       ],
       "file": "turf-05-closeup.png"
+    },
+    {
+      "id": "hero-01-wall-and-lighthouse-sunset",
+      "position": [
+        -40,
+        11.4,
+        30
+      ],
+      "lookAt": [
+        30,
+        46,
+        -58
+      ],
+      "file": "hero-01-wall-and-lighthouse-sunset.png"
     },
     {
       "id": "saddle-02-lighthouse-hill-sunset",

@@ -2408,7 +2408,10 @@ if (kallurProfileOn > 0.5) {
   // the ridge coordinates swing to (along-the-wall, down-the-face) as the
   // surface turns vertical: the striation of the reference walls instead
   // of ground streaks smeared across a cliff.
-  float kallurWallness = 1.0 - smoothstep(0.25, 0.6, kallurUp.y);
+  // Faroese turf holds green to ~60 degrees; the wall tone begins only on
+  // truly near-vertical faces (~73+), otherwise the whole massif greyed
+  // while the meadow stayed green - the exact two-tone split Igor called.
+  float kallurWallness = 1.0 - smoothstep(0.12, 0.3, kallurUp.y);
   vec2 kallurWallTangent = vec2(-kallurDown.y, kallurDown.x);
   kallurAcrossAlong = mix(
     vec2(dot(kallurPoint, kallurWallTangent), dot(kallurPoint, kallurDown)),
@@ -2586,11 +2589,11 @@ vec3 materialSunDir = normalize(uMatSunDirection);
 float materialSunMu = max(dot(materialViewRay, materialSunDir), 0.0);
 float materialSunLobe = pow(materialSunMu, 5.0);
 float materialHorizonBoost = pow(1.0 - abs(materialViewRay.y), 2.0);
-float materialPathWeight = materialPathScatter * mix(1.0, 1.35, materialHorizonBoost);
+float materialPathWeight = materialPathScatter * mix(1.0, 1.22, materialHorizonBoost);
 // Bias the sky read toward the sun where the path carries scatter — spatial
 // air, not one cube tap at the pixel's view direction only.
 vec3 materialScatterRay = normalize(
-  mix(materialViewRay, materialSunDir, materialPathWeight * 0.32)
+  mix(materialViewRay, materialSunDir, materialPathWeight * 0.28)
 );
 // Read a broadened lobe rather than the sharpest mip: what in-scatters toward
 // the eye is spread by the phase function, so the solar disc belongs in this
@@ -2604,6 +2607,16 @@ float materialForwardScatter = materialPathWeight * materialSunLobe * uMatAirFor
 materialFogTint += uMatSunFogColour * materialForwardScatter;
 float materialDeckShaft = matCloudDeckGap(vMaterialCoordinate, materialSunDir);
 materialFogTint += uMatCloudLit * materialDeckShaft * uMatCloudShaftStrength;
+// Look hierarchy: far air quieter and cooler off-sun so midground is not the
+// same midtone as the near hold. Near stay clear via materialAirNear already.
+float materialOffSun = 1.0 - materialSunMu;
+float materialFarQuiet = mix(1.0, 0.74, materialAirNear * mix(0.55, 1.0, materialOffSun));
+vec3 materialCoolFar = mix(
+  vec3(1.0),
+  vec3(0.78, 0.86, 1.02),
+  materialAirNear * materialOffSun * 0.42
+);
+materialFogTint *= materialFarQuiet * materialCoolFar;
 #else
 // Anything shaded without the sky bake keeps the scene's own fog colour.
 vec3 materialFogTint = fogColor;

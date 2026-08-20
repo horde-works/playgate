@@ -105,8 +105,8 @@ export function kallurGroundTint(
   // stone. Faroese turf holds far steeper than a lowland lawn — the rock
   // families start only where the reference slopes actually bare (the
   // 1.05 start greyed every hillside two steps too early).
-  color = mix(color, ROCK_MID, smootherstep((gradient - 1.35) / 0.6));
-  color = mix(color, ROCK_DARK, smootherstep((gradient - 2.6) / 0.9));
+  color = mix(color, ROCK_MID, smootherstep((gradient - 1.9) / 0.7));
+  color = mix(color, ROCK_DARK, smootherstep((gradient - 3.2) / 1.0));
   // The trodden line owns its dirt.
   color = mix(color, PATH_DIRT, sample.pathWeight * 0.85);
 
