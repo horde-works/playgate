@@ -161,7 +161,9 @@ export interface MaterialEnvironmentUpdate {
  * `uWetness = 0` until the next frame's update — puddles vanished for the
  * hitch frame that compiled the shader (lights, shadows, DPR).
  */
-const lastEnvironmentUpdate: MaterialEnvironmentUpdate = {
+const lastEnvironmentUpdate: {
+  -readonly [K in keyof MaterialEnvironmentUpdate]: MaterialEnvironmentUpdate[K];
+} = {
   airExtinction: 0,
   wetness: 0.55,
   time: 0,

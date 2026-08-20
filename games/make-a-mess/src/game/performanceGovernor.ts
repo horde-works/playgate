@@ -310,7 +310,9 @@ Object.setPrototypeOf(performanceGovernor, PerformanceGovernor.prototype);
 export function notifyPipelineHitch(
   durationMs = PIPELINE_HITCH_IGNORE_MS,
 ): void {
-  const live = performanceGovernor as PerformanceGovernor & {
+  // Cast through unknown to a plain shape: intersecting with the class
+  // collapses to never because these fields are private on it.
+  const live = performanceGovernor as unknown as {
     hitchRemainingMs?: number;
     decisionElapsedMs?: number;
     notifyPipelineHitch?: (duration: number) => void;

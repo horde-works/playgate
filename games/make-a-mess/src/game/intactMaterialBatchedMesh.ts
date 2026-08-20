@@ -7,7 +7,6 @@ import {
   Object3D,
   Vector3,
   type Intersection,
-  type MeshStandardMaterial,
   type Raycaster,
 } from "three";
 import type { IntactMaterialBatch } from "./intactWorldBatching.ts";
