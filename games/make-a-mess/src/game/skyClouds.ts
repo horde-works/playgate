@@ -526,8 +526,11 @@ const skyShaderFunctions = /* glsl */ `
       // a black sky, not as a flat slab of moon fill.
       float nightModel = mix(1.0, 1.45, nightMix);
       float dusk = uTwilight * (1.0 - nightMix);
-      vec3 beamLit = mix(uCloudLit, airColor, dusk * 0.82);
-      vec3 beamShade = mix(uCloudShade, airColor * 0.88, dusk * 0.62);
+      // Body fill may lean toward local air at dusk; the BEAM that crowns and
+      // under-fires the deck stays the measured sunset transmittance — mixing
+      // it into airColor turned every heap into a flat grey silhouette.
+      vec3 beamLit = mix(uCloudLit, airColor, dusk * 0.18);
+      vec3 beamShade = mix(uCloudShade, airColor * 0.88, dusk * 0.55);
       float sunDepth = cloudSunDepth(p, cloud, keyDir, lod) * nightModel;
       float energy = cloudSunEnergy(sunDepth, cosKey);
       // Powder: seen from the lit side, a thin fringe is darker than Beer's
@@ -536,8 +539,25 @@ const skyShaderFunctions = /* glsl */ `
       // this once did, capped every cloud in the sky at 0.385 of full light.
       float powder = 1.0
         - ${f(CLOUD_LAW.powder)} * clamp(-cosKey, 0.0, 1.0) * exp(-sunDepth * 3.0);
+      // Horizontal sunset still lights the deck: keyUp alone goes to zero on
+      // the horizon and erased every sunlit term the moment the disc kissed it.
+      float keyLift = max(keyUp, dusk * 0.28);
       vec3 sunlit = beamLit
-        * (energy * ${f(CLOUD_LAW.sunGain)} * powder * keyUp);
+        * (energy * ${f(CLOUD_LAW.sunGain)} * powder * keyLift);
+      // Golden crown / silver lining: thin optical depth toward the sun.
+      // Daytime mild; dusk is where the fringe burns.
+      float lining = smoothstep(0.42, 0.97, cosKey)
+        * exp(-sunDepth * 2.4)
+        * mix(0.22, 1.0, dusk);
+      sunlit += uCloudLit * lining * mix(0.9, 3.2, dusk);
+      // Under-fire: low sun rakes the belly and lit lower strands from below.
+      float sunAlt = keyDir.y;
+      float lowSun = smoothstep(0.22, -0.04, sunAlt);
+      float underFire = (1.0 - cloud.y)
+        * lowSun
+        * mix(0.35, 1.0, dusk)
+        * (0.4 + 0.6 * smoothstep(0.55, -0.15, cosKey));
+      sunlit += uCloudLit * underFire * mix(0.0, 2.1, dusk + lowSun * 0.35);
       // Sky above and wet polder below fill the rest, by height within this
       // column — and darkened by the same column, because sky light falls from
       // above and the belly of a heap sees hardly any of it. Without that a
@@ -551,7 +571,9 @@ const skyShaderFunctions = /* glsl */ `
       // Aerial perspective per sample, not per cloud: a raft that runs from
       // two kilometres out to twenty fades along its own length, which is
       // also what keeps the horizon from ending in a hard slab edge.
-      float hazeBoost = mix(1.0, 1.85, dusk);
+      // At dusk keep MORE of the crown/belly on the near deck — heavy haze
+      // mix into airColor was washing the fire out of every heap.
+      float hazeBoost = mix(1.0, 1.25, dusk);
       vec3 lit = mix(
         sunlit + filled,
         airColor,
@@ -595,14 +617,18 @@ const skyShaderFunctions = /* glsl */ `
     float mottling = mix(1.0, 0.68 + 0.32 * veil, mottlingWeight);
     float shadeMix = clamp(shade * (1.0 - form), 0.0, 1.0);
     float dusk = uTwilight * nightFade;
-    float glowTerm = glow * smoothstep(0.72, 0.999, cosKey) * (1.0 - dusk * 0.88);
+    // Dusk is when ice sheets crown: do not kill forward glow with twilight.
+    float glowTerm = glow * smoothstep(0.55, 0.999, cosKey) * mix(1.0, 1.85, dusk);
     vec3 keyLit = mix(
       uCloudLit * (1.0 + glowTerm),
       airColor,
-      dusk * 0.82
+      dusk * 0.28
     );
-    vec3 keyShade = mix(uCloudShade, airColor * 0.88, dusk * 0.62);
+    vec3 keyShade = mix(uCloudShade, airColor * 0.88, dusk * 0.5);
     vec3 colour = mix(keyLit, keyShade, shadeMix) * mottling;
+    // Thin strands near the sun pick up under-fire from the warm horizon air.
+    float sheetLining = smoothstep(0.5, 0.98, cosKey) * (1.0 - form * 0.35);
+    colour += uCloudLit * sheetLining * mix(0.15, 1.4, dusk) * nightFade;
     // Amount fades at night; colour must too or AgX turns sparse sheet texels
     // into yellow-white grains against a black dome.
     colour *= mix(0.1, 1.0, nightFade);

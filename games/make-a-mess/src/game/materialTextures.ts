@@ -2589,11 +2589,11 @@ vec3 materialSunDir = normalize(uMatSunDirection);
 float materialSunMu = max(dot(materialViewRay, materialSunDir), 0.0);
 float materialSunLobe = pow(materialSunMu, 5.0);
 float materialHorizonBoost = pow(1.0 - abs(materialViewRay.y), 2.0);
-float materialPathWeight = materialPathScatter * mix(1.0, 1.22, materialHorizonBoost);
+float materialPathWeight = materialPathScatter * mix(1.0, 1.35, materialHorizonBoost);
 // Bias the sky read toward the sun where the path carries scatter — spatial
 // air, not one cube tap at the pixel's view direction only.
 vec3 materialScatterRay = normalize(
-  mix(materialViewRay, materialSunDir, materialPathWeight * 0.28)
+  mix(materialViewRay, materialSunDir, materialPathWeight * 0.32)
 );
 // Read a broadened lobe rather than the sharpest mip: what in-scatters toward
 // the eye is spread by the phase function, so the solar disc belongs in this
@@ -2607,16 +2607,16 @@ float materialForwardScatter = materialPathWeight * materialSunLobe * uMatAirFor
 materialFogTint += uMatSunFogColour * materialForwardScatter;
 float materialDeckShaft = matCloudDeckGap(vMaterialCoordinate, materialSunDir);
 materialFogTint += uMatCloudLit * materialDeckShaft * uMatCloudShaftStrength;
-// Look hierarchy: far air quieter and cooler off-sun so midground is not the
-// same midtone as the near hold. Near stay clear via materialAirNear already.
+// Far landforms (Kallur wall ~200-400 m) separate by dissolving INTO the sky
+// bake, not by quieting that bake. A quieter tint kept albedo and erased the
+// haze shelf. Near stay clear via materialAirNear (32-110 m).
 float materialOffSun = 1.0 - materialSunMu;
-float materialFarQuiet = mix(1.0, 0.74, materialAirNear * mix(0.55, 1.0, materialOffSun));
-vec3 materialCoolFar = mix(
-  vec3(1.0),
-  vec3(0.78, 0.86, 1.02),
-  materialAirNear * materialOffSun * 0.42
+float materialHazeShelf = smoothstep(120.0, 320.0, vFogDepth);
+materialFogTint = mix(
+  materialFogTint,
+  materialFogTint * mix(1.08, 1.18, materialHorizonBoost),
+  materialHazeShelf * (0.55 + 0.45 * materialOffSun)
 );
-materialFogTint *= materialFarQuiet * materialCoolFar;
 #else
 // Anything shaded without the sky bake keeps the scene's own fog colour.
 vec3 materialFogTint = fogColor;

@@ -262,9 +262,9 @@ const HEMISPHERE_NIGHT = 0.1;
  * Full sun → key owns the frame; dusk/night → weight returns to 1 so twilight
  * stays readable. Without this, fill+PMREM lift every midtone into haze.
  */
-const DAY_FILL_WEIGHT = 0.58;
+const DAY_FILL_WEIGHT = 0.48;
 /** Same idea for PMREM ambient — sky bounce, not a second sun. */
-const DAY_AMBIENT_WEIGHT = 0.66;
+const DAY_AMBIENT_WEIGHT = 0.55;
 /**
  * How much of the dome's irradiance reaches the shaded side of a cumulus.
  * The march applies its own base-to-top profile and its own occlusion on top
@@ -1240,8 +1240,8 @@ export function DayNightCycle({
         shadow-bias={-0.00035}
         shadow-normalBias={0.024}
         // Soft PCF at 3.2 dissolved into fog as "no shadows". Radius under 2
-        // keeps contact; 1.15 restores day punch without hard aliasing.
-        shadow-radius={1.15}
+        // keeps contact; 1.0 restores day form without hard aliasing.
+        shadow-radius={1.0}
       />
     </>
   );

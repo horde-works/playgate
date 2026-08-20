@@ -413,6 +413,9 @@ test("the sky shader is generated from the one law, and still grafts", () => {
   assert.ok(source.includes("uTwilight"));
   assert.ok(source.includes("duskMix"));
   assert.ok(source.includes("beamLit"));
+  assert.ok(source.includes("lining"));
+  assert.ok(source.includes("underFire"));
+  assert.ok(source.includes("keyLift"));
   assert.ok(
     source.includes("(1.0 - duskMix * 0.92)"),
     "crepuscular beams must fade at dusk so they do not fight per-ray air",
@@ -657,7 +660,15 @@ test("the deck actually dims the world it is drifting over", () => {
   assert.ok(source.includes("DAY_FILL_WEIGHT"));
   assert.ok(source.includes("dayPunch"));
   assert.ok(source.includes("DAY_AMBIENT_WEIGHT"));
-  assert.ok(source.includes("shadow-radius={1.15}"));
+  assert.ok(source.includes("shadow-radius={1.0}"));
+  assert.ok(
+    source.includes("DAY_FILL_WEIGHT = 0.48"),
+    "day punch fill weight must stay the look-1 authored trim",
+  );
+  assert.ok(
+    source.includes("DAY_AMBIENT_WEIGHT = 0.55"),
+    "day punch ambient weight must stay the look-1 authored trim",
+  );
 });
 
 test("piece fog holds clear air on the near midground", () => {
@@ -667,6 +678,8 @@ test("piece fog holds clear air on the near midground", () => {
   );
   assert.ok(source.includes("materialAirNear"));
   assert.ok(source.includes("materialPathScatter"));
+  assert.ok(source.includes("materialHazeShelf"));
+  assert.ok(source.includes("smoothstep(120.0, 320.0, vFogDepth)"));
   assert.ok(source.includes("smoothstep(32.0, 110.0, vFogDepth)"));
 });
 

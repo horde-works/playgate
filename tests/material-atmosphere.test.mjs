@@ -20,7 +20,12 @@ test("piece fog carries path-integrated scatter and deck-gap shafts", () => {
   assert.ok(source.includes("materialAtmosphereGlsl"));
   assert.ok(source.includes("materialPathScatter"));
   assert.ok(source.includes("materialScatterRay"));
+  assert.ok(source.includes("materialHazeShelf"));
   assert.ok(source.includes("uMatAirForwardScatter"));
+  assert.ok(
+    !source.includes("materialFarQuiet"),
+    "far quiet erased the haze shelf that separates distant landforms",
+  );
   assert.ok(source.includes("matCloudDeckGap"));
   assert.ok(source.includes("registerMaterialAtmosphereShader"));
 });

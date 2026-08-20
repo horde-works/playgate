@@ -918,6 +918,37 @@ shadowStrength`. Значение демпфируется (`MathUtils.damp`, 2.
 против 16** у чистого воздуха, и `domeNeedsContinuousRepaint` снимает
 амортизацию купола на нижних ярусах GPU. Облака авторятся там, где делают кадр.
 
+### 11.6.2. Day punch, near-hold и воздух кусков
+
+Днём fill и PMREM не должны спорить с key: `DAY_FILL_WEIGHT` /
+`DAY_AMBIENT_WEIGHT` в `WorldEnvironment.tsx` режут заливку под высоким
+солнцем и отпускают к сумеркам (`dayPunch` от `keyLevel` и `night`). Иначе
+весь midtone уезжает в серую дымку при живом ключе.
+
+Туман кусков (`materialTextures` fog-graft + `materialAtmosphere.ts`) —
+не второй цвет мира, а тот же воздух:
+
+- **near-hold** `smoothstep(32, 110, depth)` — двор и фасад не красятся небом;
+- **path scatter** `1 − T²` — in-scatter вдоль луча, сильнее к солнцу; на
+  полке ~120–320 м tint чуть поднимается к небу (`materialHazeShelf`), чтобы
+  дальние массы (стена Каллура) отступали дымкой, а не оставались в альбедо
+  ближнего плана; quieter tint это убивал — не повторять;
+- **forward scatter / deck shafts** — сумерки и щели палубы через те же
+  uniforms, что публикует `WorldEnvironment` каждый кадр.
+
+PMREM: `setSkyBakeCoarse({ clouds: true, air: false })` — палуба грубо, воздух
+полный, иначе отражения держат среднюю яркость без градиента заката.
+
+Закатная палуба: `keyLift` не даёт `keyUp→0` на горизонте стереть lit; **lining**
+(тонкая глубина к солнцу) — золотая корона/кромка; **underFire** (низкий
+`keyDir.y` × низ колонны) — поджигает брюхо и нижние пряди. Луч остаётся
+`uCloudLit` (измеренный transmittance), не `airColor` — иначе кучи серые
+силуэты. См. `marchCumulus` / `highSheet` в `skyClouds.ts`.
+
+Природный каскад Kallur (`naturalSurfaceCascade`) альбедо и скат автор сам;
+дымку и облачные тени на земле **не** плодит — хозяин воздуха один,
+`materialAtmosphere` (контракт в `docs/kallur/carpet-port-plan.md`).
+
 ### 11.7. Туман — закон радиуса, а не хардкод
 
 Туман — вуаль кромки, его работа — спрятать место, где остров кончается, а не
