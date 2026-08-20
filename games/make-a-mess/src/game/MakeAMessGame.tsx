@@ -10608,21 +10608,6 @@ function OpenWorldScene({
           ) : null}
         </>
       ) : null}
-      {scene.id === "kallur" && scene.worldRadius ? (
-        <GrassField
-          profile="kallur"
-          worldRadius={scene.worldRadius}
-          center={scene.worldCenter}
-          pieces={breakablePieces}
-          count={30000}
-          bladeColor="#556036"
-          tipColor="#8b9154"
-          fadeStart={30}
-          fadeEnd={56}
-          windScale={0.85}
-          hiddenPieceIds={hiddenPieces}
-        />
-      ) : null}
       {scene.id === "dutch-polder" && scene.worldRadius ? (
         <>
           <GrassField

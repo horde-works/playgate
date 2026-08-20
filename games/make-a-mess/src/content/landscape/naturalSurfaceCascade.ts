@@ -15,9 +15,10 @@
  * Octaves change CARRIER with distance, never technology: the tonal masses
  * and hummocks live in real geometry (landscapeSampler), everything from
  * ~0.4 m down lives here as shader albedo + derivative-bump normal, and the
- * finest octaves resolve into grass sprigs near the camera. Hand-over
- * contracts (same seeds, energy conservation at fades, root color slaving)
- * are documented in docs/kallur/carpet-port-plan.md.
+ * near ring's discrete stems are the SAME cascade (lab tile W: spike hatch
+ * clustered on octaves 3–4). They are not a second GrassField species.
+ * Hand-over contracts (same seeds, energy conservation at fades, root color
+ * slaving) are documented in docs/kallur/carpet-port-plan.md.
  */
 
 export interface CascadeOctave {
@@ -72,6 +73,53 @@ export const KALLUR_CARPET_PALETTE = {
   straw: "#c7c084",
   thatch: "#71603a",
 } as const;
+
+/**
+ * Walking-frame hatch (the look we are holding). Pattern size stays;
+ * `fadeWavelength` is the previous cutoff plus ~5 m of the same pile.
+ */
+export const KALLUR_NEAR_STEM = {
+  wavelengthA: 0.028,
+  stretchA: 0.11,
+  seedA: 511,
+  wavelengthB: 0.11,
+  stretchB: 0.03,
+  seedB: 512,
+  rotA: { c: 0.42, s: 0.91 },
+  rotB: { c: 0.95, s: 0.31 },
+  heightBase: 0.014,
+  heightCrest: 0.032,
+  fadeWavelength: 0.034,
+  strawMix: 0.4,
+  thatchMix: 0.4,
+} as const;
+
+/**
+ * Leftover for the unused Kallur GrassField path. Near comfort is
+ * `KALLUR_NEAR_STEM` in the ground band; do not revive instance lawns.
+ */
+export const KALLUR_STRAND_LAW = {
+  geometryWavelength: KALLUR_NEAR_STEM.fadeWavelength,
+  instanceCount: 0,
+  oversample: 3,
+  ridgeStart: 0.18,
+  ridgeEnd: 0.55,
+  nearFine: 0.55,
+  farFine: 1.18,
+} as const;
+
+/** CPU twin of GLSL `nscFade` — an octave dissolves into its mean. */
+export function kallurCascadeFade(wavelength: number, footprint: number): number {
+  const start = wavelength * 0.25;
+  const end = wavelength * 0.9;
+  const t = Math.max(0, Math.min(1, (footprint - start) / Math.max(1e-8, end - start)));
+  return 1 - t * t * (3 - 2 * t);
+}
+
+/** 1 while a lock still owns octaves 3–4 as geometry; 0 when the band does. */
+export function kallurStrandCarrier(footprint: number, personal = 1): number {
+  return kallurCascadeFade(KALLUR_STRAND_LAW.geometryWavelength * personal, footprint);
+}
 
 /**
  * The slope law (accepted tile group Q–V): the landform is the senior
@@ -129,6 +177,7 @@ const glslNumber = (value: number): string => value.toFixed(6);
 export function kallurCascadeGlsl(): string {
   const p = KALLUR_CARPET_PALETTE;
   const law = KALLUR_SLOPE_LAW;
+  const stem = KALLUR_NEAR_STEM;
   const octaveLines = KALLUR_CASCADE.map((octave, index) => {
     const c = glslNumber(Math.cos(octave.angle));
     const s = glslNumber(Math.sin(octave.angle));
@@ -173,6 +222,28 @@ float nscStreak(vec2 acrossAlong, float footprint) {
     nscNoise(vec2(acrossAlong.x / 0.3, acrossAlong.y / 3.5), 362.0) * 0.35 * nscFade(0.3, footprint) +
     nscNoise(vec2(acrossAlong.x / 0.6, acrossAlong.y / 5.0), 364.0) * 0.3 * nscFade(0.6, footprint);
 }
+// Lab tile W: a burst of STEMS, not a dome. Two rotated stretched billows
+// max-combined, clustered on cascade octaves 3–4 so the hatch cannot
+// contradict the carpet it stands on.
+float nscStemCluster(vec2 point) {
+  float third = abs(nscNoise(vec2(
+    (point.x * ${glslNumber(Math.cos(KALLUR_CASCADE[3].angle))} - point.y * ${glslNumber(Math.sin(KALLUR_CASCADE[3].angle))}) / ${glslNumber(KALLUR_CASCADE[3].wavelength * KALLUR_CASCADE[3].stretch)},
+    (point.x * ${glslNumber(Math.sin(KALLUR_CASCADE[3].angle))} + point.y * ${glslNumber(Math.cos(KALLUR_CASCADE[3].angle))}) / ${glslNumber(KALLUR_CASCADE[3].wavelength)}), ${glslNumber(KALLUR_CASCADE[3].seed)}));
+  float fourth = abs(nscNoise(vec2(
+    (point.x * ${glslNumber(Math.cos(KALLUR_CASCADE[4].angle))} - point.y * ${glslNumber(Math.sin(KALLUR_CASCADE[4].angle))}) / ${glslNumber(KALLUR_CASCADE[4].wavelength * KALLUR_CASCADE[4].stretch)},
+    (point.x * ${glslNumber(Math.sin(KALLUR_CASCADE[4].angle))} + point.y * ${glslNumber(Math.cos(KALLUR_CASCADE[4].angle))}) / ${glslNumber(KALLUR_CASCADE[4].wavelength)}), ${glslNumber(KALLUR_CASCADE[4].seed)}));
+  return clamp((third * 0.8 + fourth * 0.6) * 1.2 - 0.1, 0.0, 1.0);
+}
+float nscSpike(vec2 point) {
+  float a = abs(nscNoise(vec2(
+    (point.x * ${glslNumber(stem.rotA.c)} - point.y * ${glslNumber(stem.rotA.s)}) / ${glslNumber(stem.wavelengthA)},
+    (point.x * ${glslNumber(stem.rotA.s)} + point.y * ${glslNumber(stem.rotA.c)}) / ${glslNumber(stem.stretchA)}), ${glslNumber(stem.seedA)}));
+  float b = abs(nscNoise(vec2(
+    (point.x * ${glslNumber(stem.rotB.c)} + point.y * ${glslNumber(stem.rotB.s)}) / ${glslNumber(stem.wavelengthB)},
+    (point.x * ${glslNumber(-stem.rotB.s)} + point.y * ${glslNumber(stem.rotB.c)}) / ${glslNumber(stem.stretchB)}), ${glslNumber(stem.seedB)}));
+  float ridge = max(1.0 - a, 1.0 - b);
+  return ridge * ridge;
+}
 // The carpet height: every octave the mesh cannot carry. comb in [0,1] is
 // the slope law's grip — it flattens the coarse cushions (their energy goes
 // to the streaks) and lays the fine fur down.
@@ -183,6 +254,9 @@ float nscCarpetHeight(vec2 point, vec2 acrossAlong, float comb, float detail, fl
   float fineCalm = (1.0 - comb * ${glslNumber(law.fineDamp)}) * detail;
 ${octaveLines}
   height += nscStreak(acrossAlong, footprint) * ${glslNumber(law.streakAmplitude)} * comb;
+  height += nscSpike(point)
+    * (${glslNumber(stem.heightBase)} + nscStemCluster(point) * ${glslNumber(stem.heightCrest)})
+    * nscFade(${glslNumber(stem.fadeWavelength)}, footprint);
   return height;
 }
 // The carpet albedo, generated from the palette — it does not decorate a
@@ -215,20 +289,95 @@ vec3 nscCarpetAlbedo(vec2 point, vec2 acrossAlong, float comb, float litness, fl
   float hollow = pow(1.0 - clamp(octaveOne * 1.7, 0.0, 1.0), 2.2);
   carpet = mix(carpet, ${glslColor(p.seamDark)}, hollow * 0.2);
   carpet = mix(carpet, ${glslColor(p.thatch)}, smoothstep(0.32, 0.06, octaveOne) * 0.1);
+  float tuft = nscFade(${glslNumber(stem.fadeWavelength)}, footprint);
+  carpet = mix(carpet, ${glslColor(p.thatch)}, smoothstep(0.32, 0.06, octaveOne) * ${glslNumber(stem.thatchMix)} * tuft);
+  carpet = mix(carpet, ${glslColor(p.straw)}, nscSpike(point) * nscStemCluster(point) * ${glslNumber(stem.strawMix)} * tuft);
   float streak = nscStreak(acrossAlong, footprint);
   carpet *= 1.0 + streak * ${glslNumber(law.streakBrightness)} * comb;
   carpet = mix(carpet, ${glslColor(p.straw)}, comb * ${glslNumber(law.silvering)});
   float grain = nscNoise(point / 0.035, 233.0) * 0.09 * nscFade(0.035, footprint) +
     nscNoise(point / 0.06, 234.0) * 0.06 * nscFade(0.06, footprint);
   carpet *= 1.0 + grain * (0.35 + 0.85 * litness);
-  // World calibration: the engine's light, sky ambient and tone mapping
-  // shift the rendered meadow away from the ORIGINAL - the measured Faroe
-  // palette of kallur-brief.md ("трава: основной склон" #6d7046 under the
-  // overcast canon). Frame-vs-canon delta measured +34%/+26%/+54%; this
-  // counter-gain holds the FRAME to the canon. Iterate by measurement
-  // only - never by eye.
-  carpet *= vec3(0.455, 0.546, 0.327);
   return carpet;
 }
 `;
+}
+
+/** GLSL `nscHash` / `nscNoise` on the CPU so scatter sits on the same crests. */
+function cascadeHash(ix: number, iz: number, seed: number): number {
+  const value = Math.sin(ix * 127.1 + iz * 311.7 + seed * 74.7) * 43758.5453;
+  return value - Math.floor(value);
+}
+
+function cascadeSmoothstep(t: number): number {
+  const x = Math.max(0, Math.min(1, t));
+  return x * x * (3 - 2 * x);
+}
+
+/** Value noise in [-1, 1], hermite interpolation matching the band. */
+export function kallurCascadeNoise(x: number, z: number, seed: number): number {
+  const ix = Math.floor(x);
+  const iz = Math.floor(z);
+  const fx = cascadeSmoothstep(x - ix);
+  const fz = cascadeSmoothstep(z - iz);
+  const a = cascadeHash(ix, iz, seed);
+  const b = cascadeHash(ix + 1, iz, seed);
+  const c = cascadeHash(ix, iz + 1, seed);
+  const d = cascadeHash(ix + 1, iz + 1, seed);
+  const top = a + (b - a) * fx;
+  const bottom = c + (d - c) * fx;
+  return (top + (bottom - top) * fz) * 2 - 1;
+}
+
+export function kallurCascadeOctaveAt(
+  x: number,
+  z: number,
+  octave: CascadeOctave,
+): number {
+  const cosine = Math.cos(octave.angle);
+  const sine = Math.sin(octave.angle);
+  const sample = kallurCascadeNoise(
+    (x * cosine - z * sine) / (octave.wavelength * octave.stretch),
+    (x * sine + z * cosine) / octave.wavelength,
+    octave.seed,
+  );
+  return octave.billow ? Math.abs(sample) : sample * 0.5 + 0.5;
+}
+
+/**
+ * Crest of cascade octaves 3 and 4 — the pile strokes the standing strands
+ * grow on. Same seeds as `nscCarpetHeight`; ridge in [0, 1].
+ */
+export function kallurCascadeRidgeAt(x: number, z: number): number {
+  const third = kallurCascadeOctaveAt(x, z, KALLUR_CASCADE[3]);
+  const fourth = kallurCascadeOctaveAt(x, z, KALLUR_CASCADE[4]);
+  return Math.max(0, Math.min(1, third * 0.65 + fourth * 0.35));
+}
+
+/** Lab `stemClusterAt` — CPU twin of GLSL `nscStemCluster`. */
+export function kallurStemClusterAt(x: number, z: number): number {
+  const third = kallurCascadeOctaveAt(x, z, KALLUR_CASCADE[3]);
+  const fourth = kallurCascadeOctaveAt(x, z, KALLUR_CASCADE[4]);
+  return Math.max(0, Math.min(1, (third * 0.8 + fourth * 0.6) * 1.2 - 0.1));
+}
+
+/** Lab `spikeAt` — CPU twin of GLSL `nscSpike`. */
+export function kallurSpikeAt(x: number, z: number): number {
+  const stem = KALLUR_NEAR_STEM;
+  const a = Math.abs(
+    kallurCascadeNoise(
+      (x * stem.rotA.c - z * stem.rotA.s) / stem.wavelengthA,
+      (x * stem.rotA.s + z * stem.rotA.c) / stem.stretchA,
+      stem.seedA,
+    ),
+  );
+  const b = Math.abs(
+    kallurCascadeNoise(
+      (x * stem.rotB.c + z * stem.rotB.s) / stem.wavelengthB,
+      (x * -stem.rotB.s + z * stem.rotB.c) / stem.stretchB,
+      stem.seedB,
+    ),
+  );
+  const ridge = Math.max(1 - a, 1 - b);
+  return ridge * ridge;
 }

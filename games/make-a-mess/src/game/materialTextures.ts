@@ -480,7 +480,7 @@ function emptyGradeTexture(): DataTexture {
  * Slope-law comb map. Built from the world's registered bake, never by
  * importing that world's landscape document.
  */
-function getKallurGradeTexture(): DataTexture {
+export function getKallurGradeTexture(): DataTexture {
   if (kallurGradeTexture) return kallurGradeTexture;
   const spec = landscapeGradeMap("kallur");
   if (!spec) return emptyGradeTexture();
@@ -2396,6 +2396,10 @@ if (kallurProfileOn > 0.5) {
   float kallurLit = clamp(dot(kallurUp, normalize(uMatSunDirection)), 0.0, 1.0);
   vec3 kallurCarpet = nscCarpetAlbedo(
     kallurPoint, kallurAcrossAlong, kallurComb, kallurLit, kallurFootprint);
+  // World calibration lives HERE, not inside nscCarpetAlbedo: the grass
+  // shader lights the same formula itself and must not inherit a gain
+  // that was measured against MeshStandardMaterial + tone mapping.
+  kallurCarpet *= vec3(0.455, 0.546, 0.327);
   // The wall converges to the MEASURED stone of the brief and keeps only
   // the ridge light-and-shade from the carpet's luminance. The grass
   // vertex ratio is divided back out below - stone is brighter than turf,

@@ -22,7 +22,11 @@ import {
   landscapeGrassStyleAt,
   type LandscapeGrassStyle,
 } from "./landscapeSurfaceRuntime.ts";
-import { sampleVikingGroundTraffic } from "./materialTextures";
+import { getKallurGradeTexture, sampleVikingGroundTraffic } from "./materialTextures";
+import {
+  kallurCascadeGlsl,
+  KALLUR_STRAND_LAW,
+} from "../content/landscape/naturalSurfaceCascade.ts";
 import { registerRefractionExcluded } from "./servicePassPolicy.ts";
 import {
   VEGETATION_ORIGIN_CULL_GLSL,
@@ -130,6 +134,79 @@ function makeTuftGeometry(): BufferGeometry {
       vertex + 2, vertex + 3, vertex + 5, vertex + 2, vertex + 5, vertex + 4,
     );
     vertex += 6;
+  }
+  const geometry = new BufferGeometry();
+  geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("uv", new Float32BufferAttribute(uvs, 2));
+  geometry.setAttribute("aBlade", new Float32BufferAttribute(blade, 4));
+  geometry.setAttribute("aBladeSide", new Float32BufferAttribute(bladeSide, 3));
+  geometry.setIndex(indices);
+  return geometry;
+}
+
+/**
+ * Kallur near: a few bent strands from one root, not a twelve-blade fan.
+ * The tip hangs past the shoulder so the tuft reads as hair, not a flag.
+ */
+function makeKallurStrandGeometry(): BufferGeometry {
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+  const blade: number[] = [];
+  const bladeSide: number[] = [];
+  let vertex = 0;
+  const stems = 6;
+  for (let stem = 0; stem < stems; stem += 1) {
+    const stemVar = bladeHash(stem * 11 + 2);
+    const baseAngle = stem * 1.047198 + bladeHash(stem * 3 + 1) * 0.35;
+    const baseRadius = stem === 0 ? 0.004 : 0.014 + bladeHash(stem * 3 + 2) * 0.032;
+    const baseX = Math.cos(baseAngle) * baseRadius;
+    const baseZ = Math.sin(baseAngle) * baseRadius;
+    const height = 0.82 + stemVar * 0.22;
+    const dirX = Math.cos(baseAngle);
+    const dirZ = Math.sin(baseAngle);
+    const perpX = -dirZ;
+    const perpZ = dirX;
+    const curve = 0.42 + bladeHash(stem * 5 + 4) * 0.28;
+    const width = 0.014 + bladeHash(stem * 7 + 5) * 0.01;
+    const variance = bladeHash(stem + 1);
+    const along = (fraction: number, amount: number) => ({
+      x: baseX + dirX * curve * height * amount,
+      z: baseZ + dirZ * curve * height * amount,
+    });
+    const knee = along(0.38, 0.2);
+    const shoulder = along(0.72, 0.52);
+    const tip = along(1, 0.82);
+    const pushRow = (
+      offsetX: number,
+      offsetY: number,
+      offsetZ: number,
+      halfWidth: number,
+      uvY: number,
+    ): void => {
+      const leftX = -perpX * halfWidth;
+      const leftZ = -perpZ * halfWidth;
+      positions.push(offsetX + leftX, offsetY, offsetZ + leftZ);
+      uvs.push(0, uvY);
+      blade.push(offsetX, offsetZ, baseX, baseZ);
+      bladeSide.push(leftX, leftZ, variance);
+      const rightX = perpX * halfWidth;
+      const rightZ = perpZ * halfWidth;
+      positions.push(offsetX + rightX, offsetY, offsetZ + rightZ);
+      uvs.push(1, uvY);
+      blade.push(offsetX, offsetZ, baseX, baseZ);
+      bladeSide.push(rightX, rightZ, variance);
+    };
+    pushRow(baseX, 0, baseZ, width, 0);
+    pushRow(knee.x, height * 0.4, knee.z, width * 0.92, 0.38);
+    pushRow(shoulder.x, height * 0.78, shoulder.z, width * 0.72, 0.72);
+    pushRow(tip.x, height * 0.56, tip.z, width * 0.22, 1);
+    indices.push(
+      vertex, vertex + 1, vertex + 3, vertex, vertex + 3, vertex + 2,
+      vertex + 2, vertex + 3, vertex + 5, vertex + 2, vertex + 5, vertex + 4,
+      vertex + 4, vertex + 5, vertex + 7, vertex + 4, vertex + 7, vertex + 6,
+    );
+    vertex += 8;
   }
   const geometry = new BufferGeometry();
   geometry.setAttribute("position", new Float32BufferAttribute(positions, 3));
@@ -995,7 +1072,10 @@ export function GrassField({
   const lilyRef = useRef<InstancedMesh>(null);
   const { camera } = useThree();
 
-  const geometry = useMemo(() => makeTuftGeometry(), []);
+  const geometry = useMemo(
+    () => profile === "kallur" ? makeKallurStrandGeometry() : makeTuftGeometry(),
+    [profile],
+  );
 
   // Болотные растения живут только в польдере, и каждое — свой меш со своей
   // геометрией. Один меш на все виды был именно тем, из-за чего тростник
@@ -1060,7 +1140,7 @@ export function GrassField({
           uWind: { value: 1 },
           uWindDir: { value: new Vector2(0.71, -0.71) },
           uViewport: { value: new Vector2(1280, 720) },
-          uMinBladePixels: { value: 2.5 },
+          uMinBladePixels: { value: profile === "kallur" ? 1.7 : 2.5 },
           uFadeStart: { value: fadeStart },
           uFadeEnd: { value: fadeEnd },
           // Тростник виден через весь польдер: радиус мира 79 м, значит по
@@ -1091,7 +1171,9 @@ export function GrassField({
           // before their fade, so no line marks where instances end and the
           // ground material takes over. Zero for worlds that predate it.
           uTurfTone: { value: new Color("#6d7046") },
-          uTurfBlend: { value: profile === "kallur" ? 0.65 : 0 },
+          uTurfBlend: { value: 0 },
+          uKallurGradeMap: { value: getKallurGradeTexture() },
+          uKallurCarpet: { value: profile === "kallur" ? 1 : 0 },
         },
         side: DoubleSide,
         transparent: false,
@@ -1110,6 +1192,7 @@ export function GrassField({
           uniform float uTallFadeStart;
           uniform float uTallFadeEnd;
           uniform float uHighlandVisibility;
+          uniform highp float uKallurCarpet;
           // Упаковано под бюджет вершинных атрибутов: 16 слотов на всё, из них
           // четыре забирает instanceMatrix и три — преппенд three.
           attribute vec4 aBlade;      // xy центр линии листа, zw его основание
@@ -1125,6 +1208,8 @@ export function GrassField({
           varying float vTransmit;
           varying float vFar;
           varying highp float vQuadHalfPixels;
+          varying vec2 vWorldXZ;
+          varying float vLit;
           void main() {
             // Распаковка в читаемые имена — компилятор её сворачивает.
             vec2 aBladeCenter = aBlade.xy;
@@ -1178,10 +1263,21 @@ ${VEGETATION_ORIGIN_CULL_GLSL}
             float personalFade = mix(activeFadeStart, activeFadeEnd, aFade);
             float fadeSpan = max(1.5, (activeFadeEnd - activeFadeStart) * 0.07);
             float fade = 1.0 - smoothstep(personalFade, personalFade + fadeSpan, dist);
+            // Kallur locks do not use this metre window. Their carrier is
+            // nscFade of the lock wavelength vs metres-per-pixel — the same
+            // footprint law as the ground band. Village turf still Y-shrinks.
+            float metresPerPixel = dist
+              / max(abs(projectionMatrix[1][1]) * uViewport.y * 0.5, 1e-4);
+            float kallurWave = ${KALLUR_STRAND_LAW.geometryWavelength.toFixed(5)}
+              * mix(0.82, 1.18, aFade);
+            float kallurCarrier = 1.0 - smoothstep(
+              kallurWave * 0.25, kallurWave * 0.9, metresPerPixel);
             // The blade darkens toward the turf tone across the second half of
             // its journey out — by the time it shrinks away it already wears
             // the ground's colour, and the hand-off is invisible.
-            vFar = smoothstep(activeFadeStart * 0.5, personalFade, dist);
+            vFar = uKallurCarpet > 0.5
+              ? 1.0 - kallurCarrier
+              : smoothstep(activeFadeStart * 0.5, personalFade, dist);
             // Wind: the free tip sways, each blade slightly out of phase, on top
             // of the blade's own baked-in curve.
             float sway = sin(uTime * 1.5 + aPhase + aBladeVar * 5.7 + world.x * 0.25 + world.z * 0.2);
@@ -1216,9 +1312,18 @@ ${VEGETATION_ORIGIN_CULL_GLSL}
             float farLod = smoothstep(personalFade * 0.55, personalFade * 0.9, dist)
               * uHighlandVisibility;
             float silhouetteBlade = step(0.66, aBladeVar);
-            float bladeVisibility = mix(1.0, silhouetteBlade, farLod);
-            local *= fade * bladeVisibility;
-            local.y *= mix(1.0, 1.16, farLod);
+            float bladeVisibility = uKallurCarpet > 0.5
+              ? 1.0
+              : mix(1.0, silhouetteBlade, farLod);
+            if (uKallurCarpet > 0.5) {
+              // Height stays. Width becomes the hatch. Degenerate only when
+              // the band fully owns the octave — no holes shrinking into dirt.
+              local.xz *= mix(0.06, 1.0, kallurCarrier);
+              local *= step(0.05, kallurCarrier);
+            } else {
+              local *= fade * bladeVisibility;
+              local.y *= mix(1.0, 1.16, farLod);
+            }
             // Cutout alpha decides coverage per pixel with no partial tones, so
             // a blade narrower than a pixel does not thin out — it flips on and
             // off as the view turns, and a field of reeds boils. Widen every
@@ -1226,7 +1331,12 @@ ${VEGETATION_ORIGIN_CULL_GLSL}
             // uMinBladePixels across. The factor is exactly 1 for anything
             // already wider, so near silhouettes keep their authored shape, and
             // the cap keeps an edge-on blade from ballooning.
-            vec2 centreXZ = mix(aBladeCenter, reedCenter, aKind) * fade * bladeVisibility;
+            vec2 centreXZ = mix(aBladeCenter, reedCenter, aKind);
+            if (uKallurCarpet > 0.5) {
+              centreXZ *= mix(0.06, 1.0, kallurCarrier) * step(0.05, kallurCarrier);
+            } else {
+              centreXZ *= fade * bladeVisibility;
+            }
             vec2 sideXZ = local.xz - centreXZ;
             vec4 centreClip = projectionMatrix * viewMatrix
               * instanceMatrix * vec4(centreXZ.x, local.y, centreXZ.y, 1.0);
@@ -1235,7 +1345,9 @@ ${VEGETATION_ORIGIN_CULL_GLSL}
             vec2 centrePx = centreClip.xy / max(centreClip.w, 1e-4) * uViewport * 0.5;
             vec2 edgePx = edgeClip.xy / max(edgeClip.w, 1e-4) * uViewport * 0.5;
             float halfPixels = length(edgePx - centrePx);
-            float widen = clamp(uMinBladePixels * 0.5 / max(halfPixels, 1e-4), 1.0, 16.0);
+            float widen = uKallurCarpet > 0.5
+              ? 1.0
+              : clamp(uMinBladePixels * 0.5 / max(halfPixels, 1e-4), 1.0, 16.0);
             local.xz = centreXZ + sideXZ * widen;
             // Hand the achieved on-screen half-width to the fragment stage: the
             // cutout tapers the blade to a point, so a quad that is barely a
@@ -1244,6 +1356,8 @@ ${VEGETATION_ORIGIN_CULL_GLSL}
             vec4 shifted = instanceMatrix * vec4(local, 1.0);
             // Гнёт ПО ВЕТРУ, а не всегда в +x с примесью +z.
             shifted.xz += uWindDir * bend;
+            vWorldXZ = shifted.xz;
+            vLit = clamp(uSunDir.y * 0.9 + 0.12, 0.0, 1.0);
             // Затенение полога считается по метрам над корнем, а не по uv.y.
             // По uv.y основание тридцатисантиметровой травинки было ровно таким
             // же тёмным, как основание двухметрового стебля, и травяной мат
@@ -1276,6 +1390,7 @@ ${VEGETATION_ORIGIN_CULL_GLSL}
         `,
         fragmentShader: /* glsl */ `
           precision mediump float;
+          ${profile === "kallur" ? kallurCascadeGlsl() : ""}
           uniform vec3 uBase;
           uniform vec3 uTip;
           uniform vec3 uBaseDry;
@@ -1289,6 +1404,8 @@ ${VEGETATION_ORIGIN_CULL_GLSL}
           uniform vec3 uTransmit;
           uniform vec3 uTurfTone;
           uniform float uTurfBlend;
+          uniform highp float uKallurCarpet;
+          uniform sampler2D uKallurGradeMap;
           uniform highp float uMinBladePixels;
           varying vec2 vUv;
           varying float vShade;
@@ -1299,6 +1416,8 @@ ${VEGETATION_ORIGIN_CULL_GLSL}
           varying float vTransmit;
           varying float vFar;
           varying highp float vQuadHalfPixels;
+          varying vec2 vWorldXZ;
+          varying float vLit;
           void main() {
             // Pointed-blade cutout: discard outside a triangle tapering to the
             // tip. No blending — depth-correct and sort-free.
@@ -1316,7 +1435,9 @@ ${VEGETATION_ORIGIN_CULL_GLSL}
             // Far blades stop tapering and become parallel-sided lines about
             // uMinBladePixels wide. Near blades are untouched: their quad is
             // tens of pixels across, so this floor sits far below the taper.
-            float minHalfWidth = min(0.5, uMinBladePixels / max(4.0 * vQuadHalfPixels, 1e-4));
+            float minHalfWidth = uKallurCarpet > 0.5
+              ? 0.0
+              : min(0.5, uMinBladePixels / max(4.0 * vQuadHalfPixels, 1e-4));
             halfWidth = max(halfWidth, minHalfWidth);
             if (abs(vUv.x - 0.5) > halfWidth) discard;
             // Lush green blends toward dry straw per blade; dry tips catch it
@@ -1328,10 +1449,33 @@ ${VEGETATION_ORIGIN_CULL_GLSL}
             vec3 base = mix(grassBase, reedBase, vKind);
             vec3 tip = mix(grassTip, reedTip, vKind);
             vec3 albedo = mix(base, tip, vUv.y);
+            if (uKallurCarpet > 0.5) {
+              ${profile === "kallur" ? `vec2 kallurGradeUv = clamp(
+                vec2((vWorldXZ.x + 128.0) / 256.0, (vWorldXZ.y + 128.0) / 256.0),
+                vec2(0.001), vec2(0.999));
+              vec2 kallurMacroGrad =
+                (texture2D(uKallurGradeMap, kallurGradeUv).rg * 2.0 - 1.0) * 3.0;
+              float kallurMacroSlope = length(kallurMacroGrad);
+              float kallurComb = smoothstep(0.12, 0.5, kallurMacroSlope);
+              vec2 kallurDown = kallurMacroSlope > 0.02
+                ? -kallurMacroGrad / kallurMacroSlope
+                : vec2(0.0, 1.0);
+              vec2 kallurWallTangent = vec2(-kallurDown.y, kallurDown.x);
+              vec2 kallurAcrossAlong = vec2(
+                dot(vWorldXZ, kallurWallTangent),
+                dot(vWorldXZ, kallurDown));
+              float kallurFootprint = length(fwidth(vWorldXZ));
+              vec3 carpet = nscCarpetAlbedo(
+                vWorldXZ, kallurAcrossAlong, kallurComb, vLit, kallurFootprint);
+              albedo = mix(carpet, mix(carpet, carpet * vec3(1.12, 1.06, 0.78), vDryness),
+                vUv.y * 0.42);` : "albedo = albedo;"}
+            }
             // Convergence to the ground: distant blades wear the turf's own
             // colour statistics before they melt into it.
             albedo = mix(albedo, uTurfTone, vFar * uTurfBlend);
-            vec3 color = albedo * vShade * uLightColor;
+            vec3 color = uKallurCarpet > 0.5
+              ? albedo * mix(0.88, 1.0, vShade) * uLightColor
+              : albedo * vShade * uLightColor;
             float reedHead = vKind
               * step(0.68, vBladeVar)
               * smoothstep(0.76, 0.84, vUv.y)
@@ -1484,7 +1628,11 @@ ${VEGETATION_ORIGIN_CULL_GLSL}
     // oversamples harder because the marsh bands are a thin share of the disc:
     // a uniform candidate stream fills turf long before it fills the waterline.
     const maxCandidates = count *
-      (profile === "dutch-polder" ? 4 : profile === "kallur" ? 3 : 2);
+      (profile === "dutch-polder"
+        ? 4
+        : profile === "kallur"
+          ? KALLUR_STRAND_LAW.oversample
+          : 2);
     for (let index = 0; index < maxCandidates && !everyBudgetFull(); index += 1) {
       const radius = Math.sqrt(hash(index, 1)) * usableRadius;
       const angle = hash(index, 2) * Math.PI * 2;
@@ -1566,10 +1714,13 @@ ${VEGETATION_ORIGIN_CULL_GLSL}
           }
         }
       } else if (kallurStyle) {
-        // Short Atlantic turf. Height rides the same clump noise as density,
-        // so a thick spot reads as a grown tuft, not a denser sprinkle.
-        height = (0.14 + hash(index, 3) * 0.2) * (0.72 + kallurStyle.clump * 0.5);
-        width = 0.85 + hash(index, 4) * 0.6;
+        // Short Atlantic strands on pile crests. Height follows the ridge
+        // that let the tuft exist, so a crest reads as a grown lock, not a
+        // taller random blade.
+        height = (0.12 + hash(index, 3) * 0.11) * (0.82 + kallurStyle.clump * 0.28);
+        width = 0.78 + hash(index, 4) * 0.32;
+        tiltX = kallurStyle.leanX ?? 0;
+        tiltZ = kallurStyle.leanZ ?? 0;
       } else {
         const traffic = sampleVikingGroundTraffic(x, z);
         let edgeTraffic = traffic;

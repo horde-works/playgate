@@ -26,6 +26,9 @@ export interface LandscapeGrassStyle {
   readonly coverPieceId?: string | null;
   readonly flowerPatch?: number;
   readonly wetLine?: boolean;
+  /** Downslope lean of standing strands (radians-ish euler XZ). */
+  readonly leanX?: number;
+  readonly leanZ?: number;
 }
 
 export type LandscapeGrassStyleAt = (

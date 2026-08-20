@@ -1,28 +1,31 @@
-import { valueNoise } from "../content/landscape/landscapeSampler.ts";
+import {
+  KALLUR_STRAND_LAW,
+  kallurCascadeNoise,
+  kallurCascadeRidgeAt,
+} from "../content/landscape/naturalSurfaceCascade.ts";
 import {
   kallurLandscapeSampler,
 } from "../content/scenes/kallur/kallurLandscapeDocument.ts";
 
 /**
- * Kallur turf blades — the near ring of the turf plan (kallur-brief.md §5.3).
+ * Kallur standing strands — the last octave of the carpet, not a second lawn.
  *
- * Blades scatter in clumps, not as an even carpet: one noise owns both the
- * clump density and the blade height, so a thick spot reads as a grown tuft
- * rather than a denser sprinkle. Dryness rides the same patch noise as the
- * ground tint's sunlit-yellow mottling, so straw-coloured blades stand
- * exactly where the ground beneath them turns yellow — the two rings agree
- * by construction, which is what keeps the hand-off invisible.
+ * Walkable turf always carries some locks so the near ring is a field, not
+ * fifty wires. Cascade octaves 3–4 thicken the crests. Path and cliff refuse.
  */
 
 export interface KallurTurfStyle {
-  /** Probability gate the scatter rolls against. */
   readonly keep: number;
-  /** Shared clump value in [0, 1]; height correlates with it. */
   readonly clump: number;
-  /** Field height under the blade. */
   readonly groundY: number;
-  /** Chance this blade is last year's straw. */
   readonly dryness: number;
+  readonly leanX: number;
+  readonly leanZ: number;
+}
+
+function smoother01(edge0: number, edge1: number, value: number): number {
+  const t = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
 }
 
 export function kallurTurfStyleAt(x: number, z: number): KallurTurfStyle | null {
@@ -31,25 +34,33 @@ export function kallurTurfStyleAt(x: number, z: number): KallurTurfStyle | null 
 
   const gradient = kallurLandscapeSampler.gradientAt(x, z);
   const slope = Math.hypot(gradient.x, gradient.z);
-  // Blades live on walkable turf; past this the slope hands over to the
-  // tint's grass-to-rock transition and blades would float over stone.
   if (slope > 1.05) return null;
 
-  const clump = 0.5 + 0.5 * valueNoise(x / 3.4, z / 3.4, 19);
+  const ridge = kallurCascadeRidgeAt(x, z);
+  const onCrest = smoother01(
+    KALLUR_STRAND_LAW.ridgeStart,
+    KALLUR_STRAND_LAW.ridgeEnd,
+    ridge,
+  );
   const steep = Math.min(1, Math.max(0, (slope - 0.7) / 0.35));
-  const keep = (0.22 + clump * 0.9) *
-    (1 - sample.pathWeight * 0.92) *
-    (1 - steep * 0.55);
+  const keep = (0.38 + onCrest * 0.62) *
+    (1 - sample.pathWeight * 0.94) *
+    (1 - steep * 0.7);
+  if (keep <= 0.02) return null;
 
-  // Same lattice as the ground tint's lit patches (wavelength 29, seed 87):
-  // straw blades and yellow ground appear together or not at all.
-  const litPatch = valueNoise(x / 29, z / 29, 87);
+  const litPatch = kallurCascadeNoise(x / 2.9, z / 2.9, 87);
   const dryness = Math.min(1, Math.max(0, 0.14 + Math.max(0, litPatch) * 0.55));
+
+  const lean = Math.min(0.28, slope * 0.2) * (0.35 + onCrest * 0.65);
+  const leanX = slope > 0.02 ? (gradient.x / slope) * lean : 0;
+  const leanZ = slope > 0.02 ? (gradient.z / slope) * lean : 0;
 
   return {
     keep,
-    clump,
-    groundY: sample.elevation + 0.02,
+    clump: 0.35 + ridge * 0.65,
+    groundY: sample.elevation + 0.015,
     dryness,
+    leanX,
+    leanZ,
   };
 }
