@@ -724,6 +724,137 @@ function renderVariant(flags) {
   return pixels;
 }
 
+/**
+ * The SEA rounds (Igor, 21.08): the ocean is the cascade's fourth profile.
+ * From Kallur's cliff heights waves are a MOVING PATTERN on a surface, not
+ * displaced geometry: long swell octaves elongated along their crests,
+ * chop, glitter statistics by the sun, whitecaps on crests, haze eating
+ * the horizon. Palettes measured from reference-05 (sunny) and
+ * reference-10 (sunset golden path).
+ */
+const SEA_DEEP_DAY = hex("#3e6489");
+const SEA_LIGHT_DAY = hex("#7a97a9");
+const SEA_HAZE_DAY = hex("#e0e4e6");
+const SKY_DAY_HORIZON = hex("#e7e8e8");
+const SKY_DAY_UP = hex("#b0c4d4");
+const SEA_DEEP_DUSK = hex("#232735");
+const SEA_LIGHT_DUSK = hex("#3a4351");
+const SEA_HAZE_DUSK = hex("#8a7360");
+const SKY_DUSK_HORIZON = hex("#f0b273");
+const SKY_DUSK_UP = hex("#494f51");
+const SUN_PATH_GOLD = hex("#f9b061");
+
+/** Swell height: plain (not billowed) octaves elongated ALONG their crests. */
+function seaHeight(x, z, phase) {
+  // Travel toward -z (to the island behind the camera); crests along x.
+  let height = 0;
+  height += Math.sin((z + phase * 14) / 90 * Math.PI * 2 +
+    valueNoise(x / 260, z / 90, 601) * 2.2) * 0.85;
+  height += Math.sin((z * 0.94 + x * 0.34 + phase * 9) / 46 * Math.PI * 2 +
+    valueNoise(x / 150, z / 60, 602) * 2.0) * 0.45;
+  height += valueNoise((x * 0.97 + z * 0.26) / 70, (z * 0.97 - x * 0.26) / 15, 603) * 0.3;
+  height += valueNoise(x / 6.5, (z + phase * 4) / 5.2, 604) * 0.2;
+  height += valueNoise(x / 2.1, z / 1.8, 605) * 0.11;
+  height += valueNoise(x / 0.8, z / 0.7, 606) * 0.055;
+  return height;
+}
+
+function renderSeaVariant(flags) {
+  const pixels = Buffer.alloc(WIDTH * HEIGHT * 3);
+  const dusk = Boolean(flags.dusk);
+  const eyeHeight = 62;
+  const horizonRow = Math.floor(HEIGHT * 0.24);
+  const sunAzimuthX = dusk ? 0 : -0.55;
+  const sunDir = dusk
+    ? normalize3([0, 0.045, 1])
+    : normalize3([-0.55, 0.62, 0.62]);
+  const deep = dusk ? SEA_DEEP_DUSK : SEA_DEEP_DAY;
+  const light = dusk ? SEA_LIGHT_DUSK : SEA_LIGHT_DAY;
+  const hazeColor = dusk ? SEA_HAZE_DUSK : SEA_HAZE_DAY;
+  const skyHorizon = dusk ? SKY_DUSK_HORIZON : SKY_DAY_HORIZON;
+  const skyUp = dusk ? SKY_DUSK_UP : SKY_DAY_UP;
+
+  for (let py = 0; py < HEIGHT; py += 1) {
+    for (let px = 0; px < WIDTH; px += 1) {
+      const offset = (py * WIDTH + px) * 3;
+      const screenX = (px / WIDTH - 0.5) * 1.15;
+      if (py <= horizonRow) {
+        // Sky: vertical gradient plus the low-sun glow at dusk.
+        const up = (horizonRow - py) / horizonRow;
+        let sky = mix3(skyHorizon, skyUp, Math.pow(up, 0.72));
+        if (dusk) {
+          const toSun = Math.hypot(screenX - sunAzimuthX, up * 0.62);
+          sky = mix3(sky, SUN_PATH_GOLD, Math.max(0, 1 - toSun * 2.6) * 0.85);
+        }
+        for (let channel = 0; channel < 3; channel += 1) {
+          pixels[offset + channel] = Math.round(clamp01(sky[channel]) * 255);
+        }
+        continue;
+      }
+      // Sea: rows map to distance, telephoto-style, out to the horizon.
+      const below = (py - horizonRow) / (HEIGHT - horizonRow);
+      const distance = 24 * Math.exp((1 - below) * 4.6);
+      const x = screenX * distance;
+      const z = distance;
+      const grazing = Math.atan2(eyeHeight, distance);
+      const footAcross = distance * 0.0012;
+      const footAlong = footAcross / Math.max(0.05, Math.sin(grazing));
+      const fadeFine = 1 - smoothstep(2.2, 9, footAlong);
+      const epsilon = Math.max(0.12, footAlong * 0.5);
+      const h0 = seaHeight(x, z, 0.35);
+      const hx = seaHeight(x + epsilon, z, 0.35) - seaHeight(x - epsilon, z, 0.35);
+      const hz = seaHeight(x, z + epsilon, 0.35) - seaHeight(x, z - epsilon, 0.35);
+      const normal = normalize3([
+        -hx / (2 * epsilon) * (0.6 + 0.4 * fadeFine),
+        1,
+        -hz / (2 * epsilon) * (0.6 + 0.4 * fadeFine),
+      ]);
+      const view = normalize3([-x, eyeHeight, -z]);
+      const cosView = Math.max(0.02, normal[0] * view[0] + normal[1] * view[1] + normal[2] * view[2]);
+      const fresnel = 0.02 + 0.98 * Math.pow(1 - cosView, 5);
+      // Water body: deep toward the camera, lighter where the swell face
+      // tilts toward the light.
+      const faceLight = clamp01(0.5 + (normal[2] * (dusk ? 0.9 : 0.4) + normal[0] * sunAzimuthX) * 2.2);
+      let water = mix3(deep, light, faceLight * 0.55);
+      // Sky reflection by fresnel.
+      water = mix3(water, skyHorizon, clamp01(fresnel) * 0.82);
+      // Sun glint: reflect the view about the normal; the exponent falls
+      // with footprint so the far glitter widens into the path.
+      const reflect = [
+        view[0] - 2 * cosView * normal[0],
+        view[1] - 2 * cosView * normal[1],
+        view[2] - 2 * cosView * normal[2],
+      ];
+      const toSun = Math.max(0,
+        -reflect[0] * sunDir[0] - reflect[1] * sunDir[1] - reflect[2] * sunDir[2]);
+      const glossExponent = 70 + 480 * fadeFine;
+      const glint = Math.pow(toSun, glossExponent) * (dusk ? 2.6 : 2.2);
+      const glintColor = dusk ? SUN_PATH_GOLD : [1, 1, 0.96];
+      water = [
+        water[0] + glintColor[0] * glint,
+        water[1] + glintColor[1] * glint,
+        water[2] + glintColor[2] * glint,
+      ];
+      // Whitecaps: crests of the second swell octave sharpened, dying with
+      // distance like every octave (windy Faroe day; calm at dusk).
+      if (!dusk) {
+        const crest = seaHeight(x, z, 0.35) - seaHeight(x, z + 2.6, 0.35);
+        const caps = smoothstep(0.5, 0.85, crest) *
+          smoothstep(0.42, 0.8, valueNoise(x / 9, z / 7, 611)) * fadeFine;
+        water = mix3(water, [0.94, 0.96, 0.97], clamp01(caps) * 0.8);
+      }
+      // Aerial haze: the sea dissolves into the horizon, never a hard line.
+      const haze = smoothstep(180, 2100, distance);
+      water = mix3(water, mix3(hazeColor, skyHorizon, 0.55), haze * 0.92);
+      for (let channel = 0; channel < 3; channel += 1) {
+        const lit = water[channel];
+        pixels[offset + channel] = Math.round(clamp01(lit / (1 + lit * 0.12)) * 255);
+      }
+    }
+  }
+  return pixels;
+}
+
 const VARIANTS = [
   {
     id: "a-today-mottle",
@@ -858,6 +989,16 @@ const VARIANTS = [
       warmCool: true, aerial: true, patchScale: 3,
       terrain: { type: "plane", slope: 0.22 } },
   },
+  {
+    id: "s1-sea-day",
+    label: "S1  sea, sunny day vs reference-05: swell, glitter, whitecaps",
+    flags: { seaView: true },
+  },
+  {
+    id: "s2-sea-sunset",
+    label: "S2  sea at sunset vs reference-10: ink water, golden path",
+    flags: { seaView: true, dusk: true },
+  },
 ];
 
 await mkdir(outputRoot, { recursive: true });
@@ -866,7 +1007,9 @@ await mkdir(outputRoot, { recursive: true });
 const only = process.argv.slice(2);
 for (const variant of VARIANTS) {
   if (only.length > 0 && !only.includes(variant.id)) continue;
-  const pixels = renderVariant(variant.flags);
+  const pixels = variant.flags.seaView
+    ? renderSeaVariant(variant.flags)
+    : renderVariant(variant.flags);
   const labelSvg = Buffer.from(
     `<svg width="${WIDTH}" height="64"><rect width="100%" height="100%" fill="rgb(20,24,22)" opacity="0.82"/><text x="18" y="42" font-family="monospace" font-size="30" fill="#e8e9e4">${variant.label}</text></svg>`,
   );
