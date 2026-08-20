@@ -1,8 +1,8 @@
 {
   "modelId": "kallur-lighthouse",
-  "revision": "lighthouse-a02-2026-08-20",
-  "modelHash": "4417422fcd3a",
-  "generatedAt": "2026-08-20T18:19:45.554Z",
+  "revision": "lighthouse-a06-2026-08-20",
+  "modelHash": "8613507be1d8",
+  "generatedAt": "2026-08-20T18:50:40.792Z",
   "views": [
     {
       "id": "front",

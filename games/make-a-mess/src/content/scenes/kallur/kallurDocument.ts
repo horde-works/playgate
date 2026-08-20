@@ -23,6 +23,7 @@ import {
   kallurStones,
 } from "./kallurLandscapeDocument.ts";
 import { kallurVisibleStones } from "./kallurStoneField.ts";
+import { createKallurLighthouse } from "./kallurLighthouse.ts";
 import { generateKallurWallStrata } from "./kallurWallStrata.ts";
 import { kallurLandscapeSampler } from "./kallurLandscapeDocument.ts";
 
@@ -224,6 +225,14 @@ for (const layer of generateKallurWallStrata(kallurLandscapeSampler)) {
     },
   );
 }
+
+// The accepted lighthouse (Object Lab a03) seats on the levelled pad of the
+// smaller hill: geometry stays owned by the lab object, the adapter applies
+// only the site transform, materials and support metadata.
+const lighthouse = group("lighthouse", "Kallur lighthouse on its pad", "stone");
+createKallurLighthouse((object) => {
+  lighthouse.objects.push(object);
+});
 
 export const kallurLandscapeVisual: LandscapeVisualDefinition = {
   material: "grass",

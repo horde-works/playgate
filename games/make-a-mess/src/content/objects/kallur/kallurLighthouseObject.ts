@@ -170,6 +170,34 @@ const addMesh = (
   });
 };
 
+/** Axis-aligned box as an outward-wound mesh (for merged joinery parts). */
+const boxGeometry = (
+  center: ObjectPoint,
+  size: ObjectPoint,
+): { vertices: ObjectPoint[]; triangles: ObjectTriangle[] } => {
+  const [cx, cy, cz] = center;
+  const [hx, hy, hz] = [size[0] / 2, size[1] / 2, size[2] / 2];
+  const vertices: ObjectPoint[] = [
+    point(cx - hx, cy - hy, cz - hz),
+    point(cx + hx, cy - hy, cz - hz),
+    point(cx + hx, cy + hy, cz - hz),
+    point(cx - hx, cy + hy, cz - hz),
+    point(cx - hx, cy - hy, cz + hz),
+    point(cx + hx, cy - hy, cz + hz),
+    point(cx + hx, cy + hy, cz + hz),
+    point(cx - hx, cy + hy, cz + hz),
+  ];
+  const triangles: ObjectTriangle[] = [
+    [0, 2, 1], [0, 3, 2],
+    [4, 5, 6], [4, 6, 7],
+    [0, 1, 5], [0, 5, 4],
+    [3, 7, 6], [3, 6, 2],
+    [0, 4, 7], [0, 7, 3],
+    [1, 2, 6], [1, 6, 5],
+  ];
+  return { vertices, triangles };
+};
+
 const mergeGeometry = (
   pieces: readonly { vertices: readonly ObjectPoint[]; triangles: readonly ObjectTriangle[] }[],
 ): { vertices: ObjectPoint[]; triangles: ObjectTriangle[] } => {
@@ -255,19 +283,23 @@ for (let index = 0; index < SEGMENTS; index += 1) {
       point(0, centerY, z - SHAFT_WALL * 0.25),
       point(WINDOW_WIDTH - 0.06, WINDOW_HEIGHT - 0.06, 0.02),
     );
-    addBox(
-      `shaft-window-${index}-mullion`,
+    // The cross is ONE joined frame member standing on the sill band —
+    // a loose transom flush between jambs hangs in the solver's eyes
+    // exactly as it would on a real site before the glue sets.
+    addMesh(
+      `shaft-window-${index}-cross`,
       "lighthouse-windows",
       "paint-light",
-      point(0, centerY, z - SHAFT_WALL * 0.18),
-      point(0.04, WINDOW_HEIGHT - 0.04, 0.03),
-    );
-    addBox(
-      `shaft-window-${index}-transom`,
-      "lighthouse-windows",
-      "paint-light",
-      point(0, centerY, z - SHAFT_WALL * 0.18),
-      point(WINDOW_WIDTH - 0.04, 0.04, 0.03),
+      mergeGeometry([
+        boxGeometry(
+          point(0, centerY, z - SHAFT_WALL * 0.18),
+          point(0.04, WINDOW_HEIGHT, 0.03),
+        ),
+        boxGeometry(
+          point(0, centerY, z - SHAFT_WALL * 0.18),
+          point(WINDOW_WIDTH + 0.04, 0.04, 0.03),
+        ),
+      ]),
     );
   });
 }
@@ -295,12 +327,16 @@ addCylinder(
   const doorH = 1.45;
   const jamb = (width - doorW) / 2;
   for (const side of [-1, 1]) {
+    // Jambs stop at the lintel seat: the lintel BEARS on them (stack).
+    // In plan they BUTT against the side wall's inner face — running them
+    // to the corner made two coplanar face pairs fight at any distance.
+    const jambSpan = jamb - wallT;
     addBox(
       `annex-front-jamb-${side > 0 ? "r" : "l"}`,
       "lighthouse-annex",
       "paint-light",
-      point(side * (doorW / 2 + jamb / 2), wallTop / 2, zFront),
-      point(jamb, wallTop, wallT),
+      point(side * (doorW / 2 + jambSpan / 2), doorH / 2, zFront),
+      point(jambSpan, doorH, wallT),
     );
     addBox(
       `annex-side-${side > 0 ? "r" : "l"}`,
@@ -315,7 +351,8 @@ addCylinder(
     "lighthouse-annex",
     "paint-light",
     point(0, doorH + (wallTop - doorH) / 2, zFront),
-    point(doorW, wallTop - doorH, wallT),
+    // The lintel bears 6 cm into each jamb, concealed inside the solid.
+    point(doorW + 0.12, wallTop - doorH, wallT),
   );
   addBox(
     "annex-door-leaf",
@@ -339,13 +376,29 @@ addCylinder(
       point(0, 0, -side * slope),
     );
   }
-  addBox(
-    "annex-gable",
-    "lighthouse-annex",
-    "paint-light",
-    point(0, wallTop + (ridgeY - wallTop) / 2 - 0.02, zFront),
-    point(width, ridgeY - wallTop, wallT),
-  );
+  // The gable is a TRIANGULAR pediment under the slopes — a rectangle
+  // pierced the roof skin at its top corners (Igor's acceptance note).
+  {
+    const zBack = zFront - wallT / 2;
+    const zFace = zFront + wallT / 2;
+    const apexY = ridgeY - 0.04;
+    const vertices: ObjectPoint[] = [
+      point(-width / 2, wallTop, zFace),
+      point(width / 2, wallTop, zFace),
+      point(0, apexY, zFace),
+      point(-width / 2, wallTop, zBack),
+      point(width / 2, wallTop, zBack),
+      point(0, apexY, zBack),
+    ];
+    const triangles: ObjectTriangle[] = [
+      [0, 1, 2],
+      [4, 3, 5],
+      [0, 2, 5], [0, 5, 3],
+      [1, 4, 5], [1, 5, 2],
+      [0, 3, 4], [0, 4, 1],
+    ];
+    addMesh("annex-gable", "lighthouse-annex", "paint-light", { vertices, triangles });
+  }
 }
 
 // --- 4. Cornice, gallery deck, railing -------------------------------------
@@ -533,7 +586,7 @@ export const kallurLighthouseParts: readonly ObjectLabPart[] = parts;
 
 export const kallurLighthouseObject: ObjectLabModel = {
   id: "kallur-lighthouse",
-  revision: "lighthouse-a02-2026-08-20",
+  revision: "lighthouse-a06-2026-08-20",
   title: "Kallur lighthouse",
   units: "metres",
   coordinates: { up: "+Y", front: "+Z", origin: "ground-centre" },

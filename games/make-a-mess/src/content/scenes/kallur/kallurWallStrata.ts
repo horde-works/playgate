@@ -154,16 +154,24 @@ export function generateKallurWallStrata(
       // jittered so no straight turf|rock line survives.
       const lipOffset = faceOffsetAt(Math.min(topY, y) - 0.4);
       if (lipOffset !== null) {
+        // Per-station setback jitter: after the tonal-mass octave moved the
+        // face function, a fixed 0.2 inset landed within ripple distance of
+        // a course plane at two stations. The depth stays short of the next
+        // course row — the sod shows its first half-metre, it does not
+        // pierce the hill body behind.
+        const lipSetback = 0.2 + hash(seed, 997) * 0.08;
         layers.push({
           id: `strata:${segment}:${station}:lip`,
-          x: sx + normalX * (lipOffset - 0.2),
-          y: Math.min(topY, y) + 0.12,
-          z: sz + normalZ * (lipOffset - 0.2),
+          x: sx + normalX * (lipOffset - lipSetback),
+          // The lip SITS on the top course flush and hangs over its face;
+          // 7 cm lower it embraced the course body - a visible-line cut.
+          y: Math.min(topY, y) + 0.19,
+          z: sz + normalZ * (lipOffset - lipSetback),
           yaw,
           // Inset from the course planes so the sod lip never z-fights them.
           along: (spacing - SEAM) * 0.94,
           height: 0.32,
-          depth: 1.2 + hash(seed, 999) * 1.1,
+          depth: 0.9 + hash(seed, 999) * 0.5,
           tone: hash(seed, 998),
           turf: true,
         });

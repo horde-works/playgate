@@ -59,7 +59,9 @@ const BUDGET = {
   // (базальтовая отдельность, шаг−epsilon), физически подпёртые ландшафтным
   // тримешем ПОЗАДИ, которого аудит не видит — он меряет только куски.
   // Наложения и врезки — строго ноль; рост любого числа — регрессия.
-  kallur: { seeThrough: 653, fights: 0 },
+  // Tightened after the lighthouse landed and the strata lip reseated:
+  // measured 594. Any rise is a regression, not headroom.
+  kallur: { seeThrough: 594, fights: 0 },
 };
 
 // Разбор сцены стоит секунды, а нужен двум проверкам сразу. Считаем один раз
