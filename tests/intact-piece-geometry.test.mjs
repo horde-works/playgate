@@ -3,7 +3,9 @@ import test from "node:test";
 import {
   cylinderDistanceLodSegments,
   cylinderLodSegments,
+  prepareGeometryForBatchedMesh,
 } from "../games/make-a-mess/src/game/intactPieceGeometry.ts";
+import { BoxGeometry, BufferGeometry, Float32BufferAttribute } from "three";
 
 test("thin rods drop cylinder tessellation, large columns keep twenty sides", () => {
   assert.equal(
@@ -35,4 +37,24 @@ test("cylinder distance LOD uses hysteresis so columns do not flicker", () => {
   assert.equal(cylinderDistanceLodSegments(20, 41, 8), 12);
   assert.equal(cylinderDistanceLodSegments(20, 48, 12), 12);
   assert.equal(cylinderDistanceLodSegments(20, 49, 12), 8);
+});
+
+test("batched mesh preparation gives every geometry an index and shared attrs", () => {
+  const mesh = new BufferGeometry();
+  mesh.setAttribute(
+    "position",
+    new Float32BufferAttribute([0, 0, 0, 1, 0, 0, 0, 1, 0], 3),
+  );
+  const prepared = prepareGeometryForBatchedMesh(mesh, { vertexColors: false });
+  assert.ok(prepared.getIndex());
+  assert.equal(prepared.getIndex().count, 3);
+  assert.ok(prepared.getAttribute("normal"));
+  assert.ok(prepared.getAttribute("uv"));
+  assert.equal(prepared.getAttribute("color"), undefined);
+
+  const indexed = prepareGeometryForBatchedMesh(new BoxGeometry(1, 1, 1), {
+    vertexColors: true,
+  });
+  assert.ok(indexed.getIndex());
+  assert.ok(indexed.getAttribute("color"));
 });

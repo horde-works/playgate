@@ -54,9 +54,15 @@ import {
   setWindowGlow,
   updateMaterialEnvironment,
 } from "./materialTextures";
+import {
+  cloudShaftStrengthAmount,
+  airForwardScatterAmount,
+  setMaterialAtmosphere,
+} from "./materialAtmosphere.ts";
 import { environmentState } from "./environmentState";
 import {
   installSkyClouds,
+  setSkyBakeCoarse,
   setSkyCloudCoarse,
   setSkyMarchQuality,
   type SkyCloudUniforms,
@@ -75,10 +81,12 @@ import {
   ATMOSPHERE,
   CLEAR_SKY,
   cloudDrift,
+  cloudEdgeFor,
   extinctionLength,
   getSkyFieldData,
   skyHaze,
   sunOcclusionAt,
+  weatherFieldOrigin,
   type SkyWeather,
 } from "./skyWeatherModel.ts";
 import {
@@ -171,6 +179,13 @@ export function SceneEnvironment({
   }, [pmrem, scene]);
 
   useFrame(() => {
+    // Day punch on ambient: full sun → less sky bounce in every material;
+    // dusk restores the authored trim so twilight does not go dead.
+    const punch = environmentState.dayFactor * (1 - environmentState.nightFactor);
+    scene.environmentIntensity =
+      ATMOSPHERE.ambientIntensity
+      * MathUtils.lerp(1, DAY_AMBIENT_WEIGHT, punch);
+
     // Drop the previous PMREM a frame late: disposing the in-use env map
     // the same frame as the swap left puddles without IBL for one tick —
     // wetness blinking off then on.
@@ -203,9 +218,10 @@ export function SceneEnvironment({
       // Six cube faces of the same shader the visible sky uses — three-stdlib
       // shares one material across every Sky. Walk the deck coarsely for them:
       // what survives the blur is its average brightness, not its billows.
-      setSkyCloudCoarse(skyScene.sky.material, true);
+      // Deck coarse; air full — sunset gradient survives PMREM blur.
+      setSkyBakeCoarse(skyScene.sky.material, { clouds: true, air: false });
       target = pmrem.fromScene(skyScene.holder, 0.028, 1, 60);
-      setSkyCloudCoarse(skyScene.sky.material, false);
+      setSkyBakeCoarse(skyScene.sky.material, { clouds: false, air: false });
     }
     scene.environment = target.texture;
     pendingDispose.current = currentTarget.current;
@@ -242,12 +258,33 @@ const HEMISPHERE_GAIN = 0.3;
 /** What is left of the fill under a moon, once the sky has stopped giving. */
 const HEMISPHERE_NIGHT = 0.1;
 /**
+ * Day punch: how much of the authored fill survives under a high sun.
+ * Full sun → key owns the frame; dusk/night → weight returns to 1 so twilight
+ * stays readable. Without this, fill+PMREM lift every midtone into haze.
+ */
+const DAY_FILL_WEIGHT = 0.58;
+/** Same idea for PMREM ambient — sky bounce, not a second sun. */
+const DAY_AMBIENT_WEIGHT = 0.66;
+/**
  * How much of the dome's irradiance reaches the shaded side of a cumulus.
  * The march applies its own base-to-top profile and its own occlusion on top
  * of this; what this carries is the COLOUR of the fill and its order of
  * magnitude against the lit side.
  */
 const CLOUD_FILL_SHARE = 0.55;
+/**
+ * Moon beam on the deck vs noon key. Smaller than the ground-key ratio on
+ * purpose: AgX against a black night sky turns ~8% of day cloud into white
+ * slabs, and every world shared that look. ~3% keeps moonlight readable
+ * without reading as self-lit cumulus.
+ */
+const MOON_CLOUD_GAIN = 0.028;
+/**
+ * Moon is a point source, not a second sun. `skyFill(moon)` invents a full
+ * daytime dome and made night lit≈shade — flat glowing blobs. Soft fill is a
+ * fraction of the moon beam so heaps keep a lit side and a dark body.
+ */
+const MOON_CLOUD_FILL_SHARE = 0.18;
 /**
  * How much of the beam a cloud takes comes back as diffuse fill rather than
  * being reflected to space or absorbed. A cumulus is not a lid: its albedo is
@@ -635,10 +672,20 @@ export function DayNightCycle({
       solarFrame ?? DEFAULT_SOLAR_FRAME,
     );
     const elevation = geographicSun[1];
+    const night = nightLevel(elevation);
+    const moonDirection = [
+      -geographicSun[0],
+      -geographicSun[1],
+      -geographicSun[2],
+    ] as const;
+    const moonKey = night > 0.5;
+    const activeKey = moonKey ? moonDirection : geographicSun;
     const sunX = geographicSun[0] * 30;
     const sunZ = geographicSun[2] * 30;
     const sunY = geographicSun[1] * 30;
-    const night = nightLevel(elevation);
+    const keyX = activeKey[0] * 30;
+    const keyY = moonKey ? activeKey[1] * 30 : Math.max(sunY, 0.65);
+    const keyZ = activeKey[2] * 30;
     // A band a few degrees either side of the horizon: what shafts and lens
     // glare are scaled by, and the only remaining hand-shaped curve here.
     const elevationNow = elevationDegrees(elevation);
@@ -685,12 +732,37 @@ export function DayNightCycle({
       // red against the ground's 9%, and a degree later the ground has none
       // left while the cloud base still has 2%. Asking this at height costs
       // one table lookup and buys the effect nothing else in the frame gives.
-      const litBeam = transmittanceAt(weather.baseAltitude, elevation);
-      measured.cloudLit.setRGB(litBeam[0], litBeam[1], litBeam[2]);
-      // What the sky and the wet ground put back into the shaded side.
-      measured.cloudShade
-        .copy(measured.fillColour)
-        .multiplyScalar(measured.fillLevel * CLOUD_FILL_SHARE);
+      // After civil twilight the sun term is zero and the deck must read the
+      // moon at the same altitude — otherwise the shader still marches with a
+      // sunken sun and the fill defaults read as a white daytime slab.
+      const moonWeight = MathUtils.clamp((night - 0.35) / 0.3, 0, 1);
+      const sunLitBeam = transmittanceAt(weather.baseAltitude, elevation);
+      const moonLitBeam = transmittanceAt(weather.baseAltitude, moonDirection[1]);
+      measured.cloudLit.setRGB(
+        sunLitBeam[0] * (1 - moonWeight)
+          + moonLitBeam[0] * MOON_CLOUD_GAIN * moonWeight,
+        sunLitBeam[1] * (1 - moonWeight)
+          + moonLitBeam[1] * MOON_CLOUD_GAIN * moonWeight,
+        sunLitBeam[2] * (1 - moonWeight)
+          + moonLitBeam[2] * MOON_CLOUD_GAIN * moonWeight,
+      );
+      // Day shade is the measured dome. Night shade is moonlight bounce —
+      // moon colour, not skyFill(moon), which would relight the whole sky.
+      const sunShade = measured.fillLevel * CLOUD_FILL_SHARE;
+      const moonBeam = Math.max(
+        moonLitBeam[0],
+        moonLitBeam[1],
+        moonLitBeam[2],
+      );
+      const moonShade = moonBeam * MOON_CLOUD_GAIN * MOON_CLOUD_FILL_SHARE;
+      measured.cloudShade.setRGB(
+        measured.fillColour.r * sunShade * (1 - moonWeight)
+          + moonColor.r * moonShade * moonWeight,
+        measured.fillColour.g * sunShade * (1 - moonWeight)
+          + moonColor.g * moonShade * moonWeight,
+        measured.fillColour.b * sunShade * (1 - moonWeight)
+          + moonColor.b * moonShade * moonWeight,
+      );
     }
 
     // ---- IS THE SUN BEHIND A CLOUD RIGHT NOW ----------------------------
@@ -733,8 +805,14 @@ export function DayNightCycle({
     // different day from the ground. What the deck takes from the beam it
     // hands to the fill, less what it sends back to space.
     const beamLost = KEY_GAIN * measured.keyLevel * shade;
+    // High sun → mute fill so key casts readable shade. Low sun / night →
+    // full fill weight (twilight must stay lit by the sky, not the beam).
+    const dayPunch = MathUtils.smoothstep(0.12, 0.78, measured.keyLevel / NOON.beam)
+      * (1 - night)
+      * (1 - shade * 0.35);
+    const fillWeight = MathUtils.lerp(1, DAY_FILL_WEIGHT, dayPunch);
     const keyEnergy = KEY_GAIN * measured.keyLevel - beamLost + MOON_INTENSITY * night;
-    const fillEnergy = HEMISPHERE_GAIN * measured.fillLevel
+    const fillEnergy = HEMISPHERE_GAIN * measured.fillLevel * fillWeight
       + beamLost * CLOUD_DIFFUSE_RETURN
       + HEMISPHERE_NIGHT * night;
 
@@ -744,7 +822,7 @@ export function DayNightCycle({
       // shadow. The floor left here is a degree and a bit, only so the shadow
       // matrix stays conditioned; by then the beam is 7% of its red and
       // whether it casts at all has stopped mattering.
-      directional.current.position.set(sunX, Math.max(sunY, 0.65), sunZ);
+      directional.current.position.set(keyX, keyY, keyZ);
       // Aim the shadow frustum at the island centre — worlds like Viking sit
       // off the origin, and a target left at (0,0,0) softens contact across
       // the courtyard that the eye is actually looking at.
@@ -855,6 +933,43 @@ export function DayNightCycle({
       windStrength: windState.strength,
       stains: theme === "town" ? 1 : 0,
     });
+    const [fieldOriginX, fieldOriginZ] = weatherFieldOrigin(weather);
+    setMaterialAtmosphere({
+      sunDirection: [
+        environmentState.sunDirection.x,
+        environmentState.sunDirection.y,
+        environmentState.sunDirection.z,
+      ],
+      sunFogColour: [
+        measured.keyColour.r,
+        measured.keyColour.g,
+        measured.keyColour.b,
+      ],
+      airForwardScatter: airForwardScatterAmount(
+        environmentState.dayFactor,
+        measured.keyLevel,
+        twilight,
+        shade,
+      ),
+      cloudCoverage: weather.coverage,
+      cloudEdge: cloudEdgeFor(weather.coverage),
+      cloudBase: weather.baseAltitude,
+      cloudThickness: weather.thickness,
+      cloudScale: weather.fieldScale,
+      cloudDrift: environmentState.cloudDrift,
+      cloudFieldOrigin: [fieldOriginX, fieldOriginZ],
+      cloudShaftStrength: cloudShaftStrengthAmount(
+        weather.beamStrength,
+        measured.cloudLit,
+        environmentState.dayFactor,
+        twilight,
+      ),
+      cloudLit: [
+        measured.cloudLit.r,
+        measured.cloudLit.g,
+        measured.cloudLit.b,
+      ],
+    });
 
     // Keep the visible sun on the exact same frame-coherent position used by
     // glare and lens dirt. The old throttled React update left the sky disc a
@@ -863,6 +978,8 @@ export function DayNightCycle({
     if (skyMaterial && "uniforms" in skyMaterial) {
       skyMaterial.uniforms.sunPosition.value.set(sunX, sunY, sunZ);
     }
+    clouds.current?.setNight(night, moonDirection);
+    clouds.current?.setTwilight(twilight);
 
     // The deck rides the wind on world time, so the shadow it will cast can
     // be asked for at any world point without a second clock.
@@ -1121,10 +1238,10 @@ export function DayNightCycle({
         shadow-camera-top={fortress ? 95 : 70}
         shadow-camera-bottom={fortress ? -95 : -70}
         shadow-bias={-0.00035}
-        shadow-normalBias={0.028}
-        // Soft PCF at 3.2 dissolved into fog as "no shadows". Tighter radius
-        // keeps contact readable without returning hard aliasing.
-        shadow-radius={1.7}
+        shadow-normalBias={0.024}
+        // Soft PCF at 3.2 dissolved into fog as "no shadows". Radius under 2
+        // keeps contact; 1.15 restores day punch without hard aliasing.
+        shadow-radius={1.15}
       />
     </>
   );

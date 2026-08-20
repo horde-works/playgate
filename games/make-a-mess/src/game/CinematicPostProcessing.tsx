@@ -439,7 +439,7 @@ export function CinematicPostProcessing({
     } else {
       sunWorld
         .copy(camera.position)
-        .addScaledVector(environmentState.sunDirection, 220);
+        .addScaledVector(environmentState.sunDirection, camera.far * 0.92);
       sunWorld.project(camera);
       const uvX = sunWorld.x * 0.5 + 0.5;
       const uvY = sunWorld.y * 0.5 + 0.5;

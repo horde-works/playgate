@@ -66,6 +66,15 @@ export interface SkyWeather {
   readonly beamStrength: number;
   /** How dark the ground goes under the thickest part of the deck, 0..1. */
   readonly shadowStrength: number;
+  /**
+   * World-space origin of the cloud field in metres. Offsets the shared noise
+   * tile so worlds do not read the same heap layout at the same coordinates.
+   */
+  readonly fieldOrigin?: readonly [x: number, z: number];
+  /**
+   * Column lean in metres between base and top. Defaults to `CLOUD_LAW.shear`.
+   */
+  readonly shear?: number;
 }
 
 export const CLEAR_SKY: SkyWeather = {
@@ -156,16 +165,17 @@ export const DUTCH_POLDER_SKY: SkyWeather = {
  */
 export const WORLD_SKY: Readonly<Record<string, SkyWeather>> = {
   // Летний город: кучевые с плоским основанием, воздух обычный городской.
+  // Без mid/cirrus sheets — дальние слои на низком coverage читались как
+  // шумовой рудимент между домами, а не как погода.
   "open-house": {
     ...CLEAR_SKY,
     coverage: 0.22,
     baseAltitude: 820,
     thickness: 1000,
+    fieldScale: 4800,
     visibility: 24000,
     windSpeed: 6.5,
     windBearing: 0.6,
-    midLevel: 0.14,
-    cirrus: 0.1,
     beamStrength: 0.02,
     shadowStrength: 0.55,
   },
@@ -179,11 +189,16 @@ export const WORLD_SKY: Readonly<Record<string, SkyWeather>> = {
     coverage: 0.58,
     baseAltitude: 540,
     thickness: 1400,
+    fieldScale: 3600,
     density: 0.0056,
     visibility: 14000,
     windSpeed: 8,
     windBearing: 2.4,
+    fieldOrigin: [1200, -800],
+    shear: 180,
     midLevel: 0.3,
+    midAltitude: 3200,
+    midScale: 4400,
     cirrus: 0,
     beamStrength: 0.05,
     shadowStrength: 0.74,
@@ -196,10 +211,16 @@ export const WORLD_SKY: Readonly<Record<string, SkyWeather>> = {
     coverage: 0.74,
     baseAltitude: 390,
     thickness: 680,
+    fieldScale: 4200,
+    density: 0.0052,
     visibility: 11000,
     windSpeed: 10,
     windBearing: -0.7,
+    fieldOrigin: [-900, 600],
+    shear: 140,
     midLevel: 0.35,
+    midAltitude: 2800,
+    midScale: 4800,
     cirrus: 0,
     beamStrength: 0.02,
     shadowStrength: 0.42,
@@ -210,11 +231,19 @@ export const WORLD_SKY: Readonly<Record<string, SkyWeather>> = {
     coverage: 0.44,
     baseAltitude: 620,
     thickness: 1150,
+    fieldScale: 4400,
+    density: 0.0046,
     visibility: 30000,
     windSpeed: 9.5,
     windBearing: -0.9,
+    fieldOrigin: [-600, 400],
+    shear: 220,
     midLevel: 0.24,
+    midAltitude: 3600,
+    midScale: 5000,
     cirrus: 0.18,
+    cirrusAltitude: 6800,
+    cirrusScale: 8600,
     beamStrength: 0.04,
     shadowStrength: 0.66,
   },
@@ -225,11 +254,17 @@ export const WORLD_SKY: Readonly<Record<string, SkyWeather>> = {
     coverage: 0.12,
     baseAltitude: 1150,
     thickness: 700,
+    fieldScale: 6200,
+    density: 0.0038,
     visibility: 40000,
     windSpeed: 5,
     windBearing: 1.9,
     midLevel: 0.08,
+    midAltitude: 4800,
+    midScale: 6400,
     cirrus: 0.32,
+    cirrusAltitude: 8200,
+    cirrusScale: 11000,
     beamStrength: 0.015,
     shadowStrength: 0.4,
   },
@@ -240,11 +275,18 @@ export const WORLD_SKY: Readonly<Record<string, SkyWeather>> = {
     coverage: 0.1,
     baseAltitude: 1400,
     thickness: 800,
+    fieldScale: 7800,
+    density: 0.0034,
     visibility: 60000,
     windSpeed: 7,
     windBearing: 0.2,
+    fieldOrigin: [1400, 900],
     midLevel: 0.06,
+    midAltitude: 5200,
+    midScale: 7200,
     cirrus: 0.14,
+    cirrusAltitude: 9800,
+    cirrusScale: 11800,
     beamStrength: 0.012,
     shadowStrength: 0.38,
   },
@@ -253,11 +295,18 @@ export const WORLD_SKY: Readonly<Record<string, SkyWeather>> = {
     coverage: 0.34,
     baseAltitude: 980,
     thickness: 1300,
+    fieldScale: 5400,
+    density: 0.0048,
     visibility: 45000,
     windSpeed: 11,
     windBearing: -2.1,
+    shear: 320,
     midLevel: 0.2,
+    midAltitude: 4600,
+    midScale: 6000,
     cirrus: 0.22,
+    cirrusAltitude: 7600,
+    cirrusScale: 9800,
     beamStrength: 0.03,
     shadowStrength: 0.6,
   },
@@ -267,11 +316,17 @@ export const WORLD_SKY: Readonly<Record<string, SkyWeather>> = {
     coverage: 0.14,
     baseAltitude: 1250,
     thickness: 750,
+    fieldScale: 6800,
+    density: 0.0036,
     visibility: 45000,
     windSpeed: 4.5,
     windBearing: 1.1,
     midLevel: 0.05,
+    midAltitude: 5000,
+    midScale: 6600,
     cirrus: 0.08,
+    cirrusAltitude: 9000,
+    cirrusScale: 10400,
     beamStrength: 0.01,
     shadowStrength: 0.42,
   },
@@ -281,11 +336,18 @@ export const WORLD_SKY: Readonly<Record<string, SkyWeather>> = {
     coverage: 0.2,
     baseAltitude: 1050,
     thickness: 820,
+    fieldScale: 6400,
+    density: 0.0039,
     visibility: 42000,
     windSpeed: 7.5,
     windBearing: 0.35,
+    fieldOrigin: [800, -500],
     midLevel: 0.1,
+    midAltitude: 4700,
+    midScale: 6200,
     cirrus: 0.22,
+    cirrusAltitude: 8500,
+    cirrusScale: 10500,
     beamStrength: 0.018,
     shadowStrength: 0.48,
   },
@@ -319,7 +381,7 @@ export const ATMOSPHERE = {
    * scene-linear units of its own, so this is a genuine artistic trim on how
    * much of the sky's light the world receives, not a units fix.
    */
-  ambientIntensity: 0.44,
+  ambientIntensity: 0.36,
   /** Open country. Every world but the fortress stands under this air. */
   town: { haze: 1 },
   /** Volcanic: the heaviest sky we draw. */
@@ -408,18 +470,28 @@ export const CLOUD_LAW = {
   /** Fraction of a column's depth the flat base takes to fill in. */
   baseRamp: 0.08,
   /** Where a column starts fraying out, as a fraction of its own depth. */
-  topFade: 0.6,
+  topFade: 0.55,
   /** How much the fine octave eats out of the body, at its strongest. */
   erosion: 0.55,
   /** Where that erosion starts biting, as a fraction of a column's depth. */
   erosionOnset: 0.3,
+  /**
+   * Extra bite on the SILHOUETTE only. Core mass stays; the rim frays so a
+   * dense heap does not read as a smooth stamp. Costs no field lookups —
+   * it reweights the detail channel and a cell hash of the leaned UV.
+   */
+  fringeErosion: 0.72,
+  /** How far into the heap (`over`, field units) the fringe bite reaches. */
+  fringeWidth: 0.11,
+  /** Cauliflower cells per field tile on the rim. */
+  fringeFrequency: 7.5,
   /**
    * Metres the deck leans downwind between base and top. The wind is faster
    * aloft, so a heap leans — and the lean is also what decorrelates one height
    * of a column from another without paying for a 3D texture, or for a second
    * lookup: shape, billow and depth all come out of the ONE leaning texel.
    */
-  shear: 260,
+  shear: 320,
 
   // ---- the field -------------------------------------------------------
   /** Weight of the primary tap and of the rotated, wider second tap. */
@@ -556,6 +628,10 @@ const QUANTILE_STEPS = 256;
 function smoothstep(edge0: number, edge1: number, value: number): number {
   const t = Math.max(0, Math.min(1, (value - edge0) / (edge1 - edge0)));
   return t * t * (3 - 2 * t);
+}
+
+function fract(value: number): number {
+  return value - Math.floor(value);
 }
 
 /**
@@ -804,12 +880,22 @@ export function sampleCloudDetail(
   return bilinearChannel(data, worldX / fieldScale, worldZ / fieldScale, 1);
 }
 
+export function weatherFieldOrigin(
+  weather: SkyWeather,
+): readonly [x: number, z: number] {
+  return weather.fieldOrigin ?? [0, 0];
+}
+
+export function weatherShearMetres(weather: SkyWeather): number {
+  return weather.shear ?? CLOUD_LAW.shear;
+}
+
 /** How far the deck leans downwind at a given height through it. */
 export function cloudShear(
   weather: SkyWeather,
   height: number,
 ): readonly [x: number, z: number] {
-  const lean = CLOUD_LAW.shear * height;
+  const lean = weatherShearMetres(weather) * height;
   return [Math.cos(weather.windBearing) * lean, Math.sin(weather.windBearing) * lean];
 }
 
@@ -837,8 +923,9 @@ export function cloudDensityAt(
   const height = (worldY - weather.baseAltitude) / weather.thickness;
   if (height < 0 || height > 1) return 0;
   const [leanX, leanZ] = cloudShear(weather, height);
-  const atX = worldX - drift[0] + leanX;
-  const atZ = worldZ - drift[1] + leanZ;
+  const [originX, originZ] = weatherFieldOrigin(weather);
+  const atX = worldX - originX - drift[0] + leanX;
+  const atZ = worldZ - originZ - drift[1] + leanZ;
   const rise = CLOUD_LAW.topFloor
     + (1 - CLOUD_LAW.topFloor) * sampleCloudTops(data, atX, atZ, weather.fieldScale);
   const climb = height / rise;
@@ -852,10 +939,21 @@ export function cloudDensityAt(
     * smoothstep(0, CLOUD_LAW.baseRamp, climb)
     * (1 - smoothstep(CLOUD_LAW.topFade, 1, climb));
   if (body <= 0) return 0;
-  const bite = CLOUD_LAW.erosion
+  const detail = sampleCloudDetail(data, atX, atZ, weather.fieldScale);
+  const climbBite = CLOUD_LAW.erosion
     * smoothstep(CLOUD_LAW.erosionOnset, 1, climb)
-    * sampleCloudDetail(data, atX, atZ, weather.fieldScale);
-  return Math.max(body * (1 - bite), 0);
+    * detail;
+  // Rim only: same mass, torn edge. Cell hash is seeded by the leaned point
+  // so CPU shadow and GPU silhouette agree without a third field tap.
+  const fringeMask = 1 - smoothstep(0, CLOUD_LAW.fringeWidth, over);
+  const cellX = Math.floor((atX / weather.fieldScale) * CLOUD_LAW.fringeFrequency);
+  const cellZ = Math.floor((atZ / weather.fieldScale) * CLOUD_LAW.fringeFrequency);
+  const fine = fract(Math.sin(cellX * 127.1 + cellZ * 311.7) * 43758.5453);
+  const fringeBite = CLOUD_LAW.fringeErosion
+    * fringeMask
+    * (0.4 + 0.6 * climb)
+    * (detail * 0.45 + fine * 0.55);
+  return Math.max(body * (1 - climbBite - fringeBite), 0);
 }
 
 /** How far a ray is walked through the deck before haze has eaten all of it. */
@@ -986,8 +1084,14 @@ export function cloudSilhouetteAt(
   worldZ: number,
   drift: readonly [x: number, z: number],
 ): number {
+  const [originX, originZ] = weatherFieldOrigin(weather);
   return shapeCloudField(
-    sampleCloudField(data, worldX - drift[0], worldZ - drift[1], weather.fieldScale),
+    sampleCloudField(
+      data,
+      worldX - originX - drift[0],
+      worldZ - originZ - drift[1],
+      weather.fieldScale,
+    ),
     weather.coverage,
   );
 }

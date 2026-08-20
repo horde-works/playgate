@@ -221,3 +221,33 @@ test("material batches still split texture profiles and surface vs solid", () =>
   const batches = buildIntactMaterialBatches([paverGray, paverRed, panel]);
   assert.equal(batches.length, 3);
 });
+
+test("material batched mesh accepts mixed primitive and surface topology", async () => {
+  const { validateIntactMaterialBatchGeometries } =
+    await import("../games/make-a-mess/src/game/intactMaterialBatchedMesh.ts");
+  const pieces = [
+    piece("box", "steel", [0, 0, 0]),
+    piece("rod", "steel", [2, 0, 0], { shape: "cylinder", size: [0.4, 2, 0.4] }),
+    piece("orb", "steel", [4, 0, 0], { shape: "sphere", size: [1.2, 1.2, 1.2] }),
+    piece("panel", "steel", [6, 0, 0], {
+      visualMesh: {
+        vertices: [[-0.5, -0.5, 0], [0.5, -0.5, 0], [0.5, 0.5, 0.1], [-0.5, 0.5, 0.1]],
+        indices: [0, 1, 2, 0, 2, 3],
+      },
+    }),
+  ];
+  const [batch] = buildIntactMaterialBatches(pieces);
+  assert.ok(validateIntactMaterialBatchGeometries(batch) >= 4);
+});
+
+test("basalt stronghold material batches build without index mismatch", async () => {
+  const { validateIntactMaterialBatchGeometries } =
+    await import("../games/make-a-mess/src/game/intactMaterialBatchedMesh.ts");
+  const materialBatches = buildIntactMaterialBatches(
+    basaltStrongholdScene.breakablePieces,
+  );
+  assert.ok(materialBatches.length > 0);
+  for (const batch of materialBatches.slice(0, 12)) {
+    assert.ok(validateIntactMaterialBatchGeometries(batch) > 0);
+  }
+});

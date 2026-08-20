@@ -212,6 +212,57 @@ export function isSharedIntactGeometry(geometry: BufferGeometry): boolean {
   return SHARED_GEOMETRIES.has(geometry);
 }
 
+/**
+ * BatchedMesh requires every geometry in a batch to agree on indexed vs
+ * non-indexed draw and on the same attribute set. Material batches merge
+ * boxes, cylinders, spheres and authored meshes — normalize before addGeometry.
+ */
+export function prepareGeometryForBatchedMesh(
+  geometry: BufferGeometry,
+  options: { readonly vertexColors: boolean },
+): BufferGeometry {
+  const prepared = isSharedIntactGeometry(geometry)
+    ? geometry.clone()
+    : geometry;
+  const position = prepared.getAttribute("position");
+  if (!position) {
+    throw new Error("Batched geometry needs a position attribute");
+  }
+
+  if (!prepared.getIndex()) {
+    const indices = new Array<number>(position.count);
+    for (let index = 0; index < position.count; index += 1) {
+      indices[index] = index;
+    }
+    prepared.setIndex(indices);
+  }
+
+  if (!prepared.getAttribute("normal")) {
+    prepared.computeVertexNormals();
+  }
+
+  if (!prepared.getAttribute("uv")) {
+    const uvs = new Float32Array(position.count * 2);
+    for (let index = 0; index < position.count; index += 1) {
+      uvs[index * 2] = position.getX(index) + 0.5;
+      uvs[index * 2 + 1] = position.getY(index) + 0.5;
+    }
+    prepared.setAttribute("uv", new Float32BufferAttribute(uvs, 2));
+  }
+
+  if (options.vertexColors) {
+    if (!prepared.getAttribute("color")) {
+      const colors = new Float32Array(position.count * 3);
+      colors.fill(1);
+      prepared.setAttribute("color", new Float32BufferAttribute(colors, 3));
+    }
+  } else if (prepared.getAttribute("color")) {
+    prepared.deleteAttribute("color");
+  }
+
+  return prepared;
+}
+
 export function intactGeometryBudget(
   geometries: readonly BufferGeometry[],
 ): { readonly vertexCount: number; readonly indexCount: number } {

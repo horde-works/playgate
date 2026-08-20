@@ -23,6 +23,10 @@ import {
   type BreakableMaterial,
   type SurfaceTextureProfile,
 } from "./destructionScene.ts";
+import {
+  materialAtmosphereGlsl,
+  registerMaterialAtmosphereShader,
+} from "./materialAtmosphere.ts";
 import { materialAppearanceProfiles } from "./materialAppearance.ts";
 import {
   alcladSeamFragment,
@@ -1675,7 +1679,8 @@ export function getPieceMaterial(
     // WebGLRenderer.js:2696 — `material.envMap === null && scene.environment
     // !== null` — каждый кадр перетирает униформу значением
     // `scene.environmentIntensity`, то есть `ATMOSPHERE.ambientIntensity`
-    // (0.44). Фактически ВСЕ материалы получают 0.44: и камень, которому
+    // (базовый trim, днём ещё режется DAY_AMBIENT_WEIGHT). Фактически ВСЕ
+    // материалы получают этот потолок: и камень, которому
     // заказано 0.35, и автокраска, которой заказано 1.9, и стекло с его 1.5.
     //
     // Числа оставлены как авторское намерение, а не как рабочая настройка.
@@ -1740,6 +1745,7 @@ export function getPieceMaterial(
         value: target.userData.pieceAttrTexture ?? null,
       };
       applyEnvironmentUniforms(shader, lastEnvironmentUpdate);
+      registerMaterialAtmosphereShader(shader);
 
       shader.vertexShader = shader.vertexShader
         .replace(
@@ -1936,6 +1942,7 @@ vec2 materialFaceFitUv = abs(normal.z) > 0.5
         .replace(
           "#include <common>",
           `#include <common>
+${materialAtmosphereGlsl()}
 ${
   material === "concrete" || material === "plaster" || material === "brick"
     ? "uniform sampler2D uStainMap;\nuniform float uStainStrength;"
@@ -2428,15 +2435,43 @@ reflectedLight.indirectSpecular *= materialSpecularOcclusion;
 // not a weather one. Both dissolve into the same sky, so they compose without
 // showing a seam, and whichever is thicker owns the pixel.
 // (No backticks in here: this GLSL lives inside a template literal.)
-float materialAir = 1.0 - exp(-vFogDepth * uAirExtinction);
+float materialAirRaw = 1.0 - exp(-vFogDepth * uAirExtinction);
+// Near hold: Koschmieder still owns distance, but the first tens of metres
+// stay clear so courtyards and façades are not painted with sky. Without this
+// every midground mixes toward the bright dome and the frame reads as haze.
+float materialAirNear = smoothstep(32.0, 110.0, vFogDepth);
+float materialTransmittance = 1.0 - materialAirRaw;
+// Path-integrated in-scatter (~1 - T^2): light builds along the ray, peaks in
+// mid-distance, and reads toward the sun — not a single endpoint sky sample.
+float materialPathScatter = (1.0 - materialTransmittance * materialTransmittance)
+  * materialAirNear;
+float materialAir = materialAirRaw * materialAirNear;
 float materialEdgeVeil = smoothstep(fogNear, fogFar, vFogDepth);
 float materialFogFactor = max(materialAir, materialEdgeVeil);
 #if defined( USE_ENVMAP ) && defined( ENVMAP_TYPE_CUBE_UV )
 vec3 materialViewRay = transformDirectionByInverseViewMatrix(-vViewPosition, viewMatrix);
+vec3 materialSunDir = normalize(uMatSunDirection);
+float materialSunMu = max(dot(materialViewRay, materialSunDir), 0.0);
+float materialSunLobe = pow(materialSunMu, 5.0);
+float materialHorizonBoost = pow(1.0 - abs(materialViewRay.y), 2.0);
+float materialPathWeight = materialPathScatter * mix(1.0, 1.35, materialHorizonBoost);
+// Bias the sky read toward the sun where the path carries scatter — spatial
+// air, not one cube tap at the pixel's view direction only.
+vec3 materialScatterRay = normalize(
+  mix(materialViewRay, materialSunDir, materialPathWeight * 0.32)
+);
 // Read a broadened lobe rather than the sharpest mip: what in-scatters toward
 // the eye is spread by the phase function, so the solar disc belongs in this
 // as a circumsolar glow and not as one blazing texel of the environment map.
-vec3 materialFogTint = textureCubeUV(envMap, envMapRotation * materialViewRay, 0.25).rgb;
+vec3 materialFogTint = textureCubeUV(
+  envMap,
+  envMapRotation * materialScatterRay,
+  mix(0.26, 0.2, materialSunMu)
+).rgb;
+float materialForwardScatter = materialPathWeight * materialSunLobe * uMatAirForwardScatter;
+materialFogTint += uMatSunFogColour * materialForwardScatter;
+float materialDeckShaft = matCloudDeckGap(vMaterialCoordinate, materialSunDir);
+materialFogTint += uMatCloudLit * materialDeckShaft * uMatCloudShaftStrength;
 #else
 // Anything shaded without the sky bake keeps the scene's own fog colour.
 vec3 materialFogTint = fogColor;

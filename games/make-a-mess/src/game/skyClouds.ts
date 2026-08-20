@@ -10,6 +10,7 @@ import {
   RepeatWrapping,
   UnsignedByteType,
   Vector2,
+  Vector3,
 } from "three";
 import type { Material, Texture } from "three";
 import {
@@ -19,6 +20,8 @@ import {
   cloudEdgeFor,
   cloudReach,
   getSkyFieldData,
+  weatherFieldOrigin,
+  weatherShearMetres,
   type SkyWeather,
 } from "./skyWeatherModel.ts";
 import {
@@ -32,7 +35,7 @@ import {
 
 let fieldTexture: DataTexture | null = null;
 
-function getSkyFieldTexture(): DataTexture {
+export function getSkyFieldTexture(): DataTexture {
   if (!fieldTexture) {
     const texture = new DataTexture(
       getSkyFieldData(),
@@ -58,6 +61,8 @@ function getSkyFieldTexture(): DataTexture {
 
 /** Half the sun's angular diameter, in degrees. */
 const SUN_ANGULAR_RADIUS_DEGREES = 0.2666;
+/** Full moon angular radius — close enough for a charm pass without ephemeris. */
+const MOON_ANGULAR_RADIUS_DEGREES = 0.272;
 
 /**
  * Honest A/B for the live quality axis. When false, the dome always marches
@@ -222,7 +227,7 @@ const airShaderFunctions = /* glsl */ `
       q2,
       clamp(uSkyQuality - 1.0, 0.0, 1.0)
     );
-    float steps = mix(qualityCeiling, ${f(AIR_LAW.coarseViewSteps)}, uCloudCoarse);
+    float steps = mix(qualityCeiling, ${f(AIR_LAW.coarseViewSteps)}, uAirCoarse);
     // Zenith spends less of the ceiling; the horizon keeps it for twilight.
     steps = max(
       ${f(AIR_LAW.coarseViewSteps)},
@@ -282,6 +287,7 @@ const WARP_LOD_BIAS = -Math.log2(
 const skyShaderFunctions = /* glsl */ `
   uniform sampler2D uCloudMap;
   uniform vec2 uCloudDrift;
+  uniform vec2 uCloudFieldOrigin;
   uniform vec2 uMidDrift;
   uniform vec2 uCirrusDrift;
   uniform vec2 uCloudShear;
@@ -298,6 +304,7 @@ const skyShaderFunctions = /* glsl */ `
   uniform float uCloudHazeRate;
   uniform float uCloudReach;
   uniform float uCloudCoarse;
+  uniform float uAirCoarse;
   // Live quality 0 / 1 / 2 from the governor. Bake forces coarse via
   // uCloudCoarse. Kill-switch freezes this at 2.
   uniform float uSkyQuality;
@@ -309,6 +316,11 @@ const skyShaderFunctions = /* glsl */ `
   uniform float uCirrusScale;
   uniform float uBeamStrength;
   uniform float uSunRadiusDegrees;
+  uniform vec3 uMoonDirection;
+  uniform float uNightLevel;
+  uniform float uTwilight;
+  uniform float uMoonRadiusDegrees;
+  uniform float uMoonDiscRadiance;
 
   ${SKY_PHASE_DITHER.trim()}
 
@@ -342,9 +354,10 @@ const skyShaderFunctions = /* glsl */ `
 
   /** The whole silhouette, for things that only want the deck's plan shape. */
   float cloudField(vec2 world, float lod) {
-    return textureLod(uCloudMap, world / uCloudScale, lod).r
+    vec2 fieldWorld = world - uCloudFieldOrigin;
+    return textureLod(uCloudMap, fieldWorld / uCloudScale, lod).r
         * ${f(CLOUD_LAW.fieldPrimary)}
-      + cloudWideTap(world, lod) * ${f(CLOUD_LAW.fieldSecondary)};
+      + cloudWideTap(fieldWorld, lod) * ${f(CLOUD_LAW.fieldSecondary)};
   }
 
   /**
@@ -366,7 +379,7 @@ const skyShaderFunctions = /* glsl */ `
   vec3 cloudSample(vec3 p, float lod) {
     float height = (p.y - uCloudBase) / uCloudThickness;
     if (height < 0.0 || height > 1.0) return vec3(0.0);
-    vec2 leaned = p.xz - uCloudDrift + uCloudShear * height;
+    vec2 leaned = p.xz - uCloudFieldOrigin - uCloudDrift + uCloudShear * height;
     vec4 tap = textureLod(uCloudMap, leaned / uCloudScale, lod);
     float rise = ${f(CLOUD_LAW.topFloor)} + ${f(1 - CLOUD_LAW.topFloor)} * tap.a;
     float climb = height / rise;
@@ -382,9 +395,19 @@ const skyShaderFunctions = /* glsl */ `
       * (${f(CLOUD_LAW.coreFloor)} + ${f(CLOUD_LAW.coreGain)} * over)
       * smoothstep(0.0, ${f(CLOUD_LAW.baseRamp)}, climb)
       * (1.0 - smoothstep(${f(CLOUD_LAW.topFade)}, 1.0, climb));
-    float bite = ${f(CLOUD_LAW.erosion)}
+    // Top erosion keeps the dome from reading as a smooth cap; fringe erosion
+    // tears the silhouette so mass and rim disagree — density of a large heap,
+    // edge of a cauliflower. No third lookup: detail channel + cell hash.
+    float climbBite = ${f(CLOUD_LAW.erosion)}
       * smoothstep(${f(CLOUD_LAW.erosionOnset)}, 1.0, climb) * tap.g;
-    return vec3(max(body * (1.0 - bite), 0.0), climb, above);
+    float fringeMask = 1.0 - smoothstep(0.0, ${f(CLOUD_LAW.fringeWidth)}, over);
+    vec2 fringeCell = floor(leaned / uCloudScale * ${f(CLOUD_LAW.fringeFrequency)});
+    float fine = fract(sin(dot(fringeCell, vec2(127.1, 311.7))) * 43758.5453);
+    float fringeBite = ${f(CLOUD_LAW.fringeErosion)}
+      * fringeMask
+      * (0.4 + 0.6 * climb)
+      * (tap.g * 0.45 + fine * 0.55);
+    return vec3(max(body * (1.0 - climbBite - fringeBite), 0.0), climb, above);
   }
 
   /**
@@ -447,8 +470,11 @@ const skyShaderFunctions = /* glsl */ `
     return min(energy, ${f(CLOUD_LAW.scatterCeiling)});
   }
 
-  vec4 marchCumulus(vec3 origin, vec3 dir, vec3 sunDir, float cosSun, vec3 airColor) {
+  vec4 marchCumulus(
+    vec3 origin, vec3 dir, vec3 keyDir, float cosKey, vec3 airColor, float nightMix
+  ) {
     if (uCloudCoverage <= 0.0 || dir.y < 0.006) return vec4(0.0);
+    float keyUp = max(dot(keyDir, up), 0.0);
     float baseT = (uCloudBase - origin.y) / dir.y;
     if (baseT <= 0.0) return vec4(0.0);
     float through = min(uCloudThickness / dir.y, uCloudReach);
@@ -496,29 +522,43 @@ const skyShaderFunctions = /* glsl */ `
       vec3 cloud = cloudSample(p, lod);
       float density = cloud.x * uCloudDensity;
       if (density <= 0.0) continue;
-      float sunDepth = cloudSunDepth(p, cloud, sunDir, lod);
-      float energy = cloudSunEnergy(sunDepth, cosSun);
+      // Night: deepen self-shadow so density/erosion read as facture against
+      // a black sky, not as a flat slab of moon fill.
+      float nightModel = mix(1.0, 1.45, nightMix);
+      float dusk = uTwilight * (1.0 - nightMix);
+      vec3 beamLit = mix(uCloudLit, airColor, dusk * 0.82);
+      vec3 beamShade = mix(uCloudShade, airColor * 0.88, dusk * 0.62);
+      float sunDepth = cloudSunDepth(p, cloud, keyDir, lod) * nightModel;
+      float energy = cloudSunEnergy(sunDepth, cosKey);
       // Powder: seen from the lit side, a thin fringe is darker than Beer's
       // law says, because forward scattering carries the light on inwards.
       // It darkens the FRINGE. Multiplying the whole sunlit term by it, as
       // this once did, capped every cloud in the sky at 0.385 of full light.
       float powder = 1.0
-        - ${f(CLOUD_LAW.powder)} * clamp(-cosSun, 0.0, 1.0) * exp(-sunDepth * 3.0);
-      vec3 sunlit = uCloudLit * (energy * ${f(CLOUD_LAW.sunGain)} * powder);
+        - ${f(CLOUD_LAW.powder)} * clamp(-cosKey, 0.0, 1.0) * exp(-sunDepth * 3.0);
+      vec3 sunlit = beamLit
+        * (energy * ${f(CLOUD_LAW.sunGain)} * powder * keyUp);
       // Sky above and wet polder below fill the rest, by height within this
       // column — and darkened by the same column, because sky light falls from
       // above and the belly of a heap sees hardly any of it. Without that a
       // cloud glows evenly from inside and the sun is the only thing modelling
       // it, which is a flat shape lit from one side.
-      float overhead = exp(-cloud.x * cloud.z * uCloudDensity);
-      vec3 filled = uCloudShade
+      float overhead = exp(-cloud.x * cloud.z * uCloudDensity * nightModel);
+      vec3 filled = beamShade
         * mix(${f(CLOUD_LAW.fillBase)}, ${f(CLOUD_LAW.fillTop)}, cloud.y)
         * (${f(1 - CLOUD_LAW.ambientOcclusion)}
           + ${f(CLOUD_LAW.ambientOcclusion)} * overhead);
       // Aerial perspective per sample, not per cloud: a raft that runs from
       // two kilometres out to twenty fades along its own length, which is
       // also what keeps the horizon from ending in a hard slab edge.
-      vec3 lit = mix(sunlit + filled, airColor, 1.0 - exp(-t * uCloudHazeRate));
+      float hazeBoost = mix(1.0, 1.85, dusk);
+      vec3 lit = mix(
+        sunlit + filled,
+        airColor,
+        1.0 - exp(-t * uCloudHazeRate * hazeBoost)
+      );
+      // Cool and slightly mute — AgX against black still lifts midtones.
+      lit *= mix(vec3(1.0), vec3(0.62, 0.70, 0.88), nightMix);
       float extinct = exp(-density * stepLength);
       scattered += transmittance * (1.0 - extinct) * lit;
       transmittance *= extinct;
@@ -535,8 +575,9 @@ const skyShaderFunctions = /* glsl */ `
   vec4 highSheet(
     vec3 origin, vec3 dir, vec4 channel, vec2 stretch, vec2 sheetDrift,
     float altitude, float scale, float amount, float threshold,
-    float glow, float shade, float cosSun, vec3 airColor
+    float glow, float shade, float cosKey, vec3 airColor, float nightFade
   ) {
+    amount *= nightFade;
     if (amount <= 0.0 || dir.y < 0.012) return vec4(0.0);
     float t = (altitude - origin.y) / dir.y;
     if (t <= 0.0) return vec4(0.0);
@@ -545,12 +586,26 @@ const skyShaderFunctions = /* glsl */ `
     // world per pixel the further out it is read.
     float lod = clamp(log2(max(t / altitude, 1.0)) + 1.0, 1.0, 6.0);
     float veil = dot(textureLod(uCloudMap, uv * stretch, lod), channel);
-    float form = smoothstep(threshold, threshold + 0.34, veil);
-    vec3 colour = mix(
-      uCloudLit * (1.0 + glow * smoothstep(0.72, 0.999, cosSun)),
-      uCloudShade,
-      shade * (1.0 - form)
+    float form = smoothstep(threshold, threshold + 0.42, veil);
+    // Mottling from the field itself — night sheets used to read as flat
+    // grey because lit≈shade erased the veil variation. shade also drives
+    // lit/shade mix below; keep mottling weight clamped so cirrus (shade>1)
+    // does not extrapolate into high-contrast speckle on black air.
+    float mottlingWeight = clamp(shade * 0.38, 0.0, 0.72);
+    float mottling = mix(1.0, 0.68 + 0.32 * veil, mottlingWeight);
+    float shadeMix = clamp(shade * (1.0 - form), 0.0, 1.0);
+    float dusk = uTwilight * nightFade;
+    float glowTerm = glow * smoothstep(0.72, 0.999, cosKey) * (1.0 - dusk * 0.88);
+    vec3 keyLit = mix(
+      uCloudLit * (1.0 + glowTerm),
+      airColor,
+      dusk * 0.82
     );
+    vec3 keyShade = mix(uCloudShade, airColor * 0.88, dusk * 0.62);
+    vec3 colour = mix(keyLit, keyShade, shadeMix) * mottling;
+    // Amount fades at night; colour must too or AgX turns sparse sheet texels
+    // into yellow-white grains against a black dome.
+    colour *= mix(0.1, 1.0, nightFade);
     return vec4(
       mix(colour, airColor, 1.0 - exp(-t * uCloudHazeRate)),
       form * amount
@@ -594,15 +649,20 @@ const skyShaderFunctions = /* glsl */ `
 
 const sunDiscShader = /* glsl */ `
         // --- the solar disc, seen through the real atmosphere -------------
+        // three-stdlib Sky builds \`direction\` from the WORLD ORIGIN
+        // (\`cameraPos = vec3(0)\`), not the eye. The cinematic glare projects
+        // the sun from the camera, so a disc aimed at the origin sits beside
+        // its halo the moment the player is not at (0,0,0).
+        vec3 sunView = normalize(vWorldPosition - cameraPosition);
         // Refracting the RAY and leaving the sun geometric is what puts the
         // disc on the horizon while it is already below it, and squashes it
         // while it sits there: refraction bends the lower limb more than the
         // upper one.
-        float rayAltitude = degrees(asin(clamp(dot(up, direction), -1.0, 1.0)));
+        float rayAltitude = degrees(asin(clamp(dot(up, sunView), -1.0, 1.0)));
         float sunAltitude = degrees(asin(clamp(dot(up, vSunDirection), -1.0, 1.0)));
         float rayGeometricAltitude =
           rayAltitude - atmosphericRefraction(rayAltitude) / 60.0;
-        vec3 rayFlat = direction - up * dot(up, direction);
+        vec3 rayFlat = sunView - up * dot(up, sunView);
         vec3 sunFlat = vSunDirection - up * dot(up, vSunDirection);
         float bearing = degrees(acos(clamp(
           dot(normalize(rayFlat + vec3(1e-6, 0.0, 0.0)),
@@ -636,6 +696,78 @@ const sunDiscShader = /* glsl */ `
           + uSunAureole.y / (1.0 + pow(discRadius / 11.0, 1.9));
 `;
 
+// Stars are placed on a cube-face grid so they do not inherit the radial
+// rings of a world-space Cartesian floor. Density follows the galactic plane.
+const nightSkyFunctions = /* glsl */ `
+  const vec3 NIGHT_MILKY_AXIS = normalize(vec3(0.22, 0.78, 0.58));
+
+  float nightHash1(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+  }
+
+  vec2 nightHash2(vec2 p) {
+    return fract(sin(vec2(
+      dot(p, vec2(127.1, 311.7)),
+      dot(p, vec2(269.5, 183.3))
+    )) * 43758.5453123);
+  }
+
+  vec3 nightCubeFace(vec3 dir) {
+    vec3 a = abs(dir);
+    float m = max(a.x, max(a.y, a.z));
+    vec3 n = dir / m;
+    if (a.x >= a.y && a.x >= a.z) {
+      return vec3(n.x > 0.0 ? 0.0 : 1.0, n.y, n.z);
+    }
+    if (a.y >= a.z) {
+      return vec3(n.y > 0.0 ? 2.0 : 3.0, n.x, n.z);
+    }
+    return vec3(n.z > 0.0 ? 4.0 : 5.0, n.x, n.y);
+  }
+
+  vec3 nightStarLayer(
+    vec3 dir,
+    float scale,
+    float keep,
+    float base,
+    float galW
+  ) {
+    vec3 face = nightCubeFace(dir);
+    vec2 cellKey = floor(face.yz * scale);
+    vec2 local = fract(face.yz * scale) - 0.5;
+    vec2 key = cellKey + vec2(face.x * 19.0, face.x * 41.0);
+    if (nightHash1(key) > keep) {
+      return vec3(0.0);
+    }
+    vec2 offset = nightHash2(key + 3.17) - 0.5;
+    float dist2 = dot(local - offset, local - offset);
+    float mag = nightHash1(key + 11.3);
+    float angular = mix(0.00085, 0.0032, mag * mag);
+    float core = exp(-dist2 / (angular * angular));
+    float lum = base * mix(0.08, 1.0, pow(mag, 2.6)) * galW;
+    vec3 colour = mix(vec3(0.66, 0.73, 1.0), vec3(1.0, 0.92, 0.82), mag);
+    return colour * core * lum;
+  }
+
+  vec3 nightStarField(vec3 dir) {
+    float galLat = abs(dot(dir, NIGHT_MILKY_AXIS));
+    float inGalaxy = exp(-pow(galLat / 0.17, 2.0));
+    float galW = mix(0.5, 1.0, inGalaxy);
+    vec3 stars = vec3(0.0);
+    stars += nightStarLayer(dir, 88.0, 0.945, 0.22, galW);
+    stars += nightStarLayer(dir, 52.0, 0.978, 0.48, galW);
+    stars += nightStarLayer(dir, 30.0, 0.993, 1.05, galW);
+    return stars;
+  }
+
+  float nightMilkyGlow(vec3 dir) {
+    float galLat = abs(dot(dir, NIGHT_MILKY_AXIS));
+    float band = exp(-pow(galLat / 0.11, 2.0));
+    float core = exp(-pow(galLat / 0.038, 2.0));
+    return band * 0.014 + core * 0.007;
+  }
+`;
+
 const skyComposite = /* glsl */ `
   vec3 skyRayOrigin = cameraPosition;
   vec3 skyRayDirection = normalize(vWorldPosition - cameraPosition);
@@ -655,6 +787,13 @@ const skyComposite = /* glsl */ `
   vec3 airColor = airRadiance(skyRayDirection, vSunDirection, skyEyeHeight);
   retColor = airColor;
 
+  float nightSky = clamp(uNightLevel, 0.0, 1.0);
+  float cloudNight = smoothstep(0.35, 0.65, nightSky);
+  float duskMix = uTwilight * (1.0 - cloudNight);
+  vec3 cloudKeyDir = normalize(mix(vSunDirection, uMoonDirection, cloudNight));
+  float cloudCosKey = dot(skyRayDirection, cloudKeyDir);
+  float sheetNightFade = 1.0 - cloudNight;
+
   // The sun itself, reddened by the air it is seen through rather than by an
   // authored dusk tint. At the horizon seven per cent of its red and half a
   // per cent of its green survive — which is why a setting sun can be looked
@@ -670,23 +809,64 @@ const skyComposite = /* glsl */ `
   vec4 veil = highSheet(
     skyRayOrigin, skyRayDirection, vec4(0.0, 0.0, 1.0, 0.0), vec2(0.28, 1.0),
     uCirrusDrift, uCirrusBase, uCirrusScale, uCirrus, 0.58, 1.6, 0.0,
-    skyCosSun, airColor
+    cloudCosKey, airColor, sheetNightFade
   );
+  // Mid sheet reads the shape channel (r), not detail (g): g is high-frequency
+  // billow for cumulus tops and fringe, and on a flat sheet at four kilometres
+  // it reads as speckled static against the night dome.
   vec4 sheet = highSheet(
-    skyRayOrigin, skyRayDirection, vec4(0.0, 1.0, 0.0, 0.0), vec2(1.0, 1.0),
+    skyRayOrigin, skyRayDirection, vec4(1.0, 0.0, 0.0, 0.0), vec2(1.0, 1.0),
     uMidDrift, uMidBase, uMidScale, uMidLevel, 0.50, 0.25, 0.55,
-    skyCosSun, airColor
+    cloudCosKey, airColor, sheetNightFade
   );
   vec4 deck = marchCumulus(
-    skyRayOrigin, skyRayDirection, vSunDirection, skyCosSun, airColor
+    skyRayOrigin, skyRayDirection, cloudKeyDir, cloudCosKey, airColor, cloudNight
   );
   retColor = mix(retColor, veil.rgb, veil.a);
   retColor = mix(retColor, sheet.rgb, sheet.a);
   retColor = mix(retColor, deck.rgb, deck.a);
   // Beams are in the air between the eye and the deck, so they go on last.
+  // At dusk uCloudLit is a scalar noon/sunset beam while airColor is per-ray;
+  // fading beams here removes the fourth visible lighting pass.
   retColor += uCloudLit
     * cloudBeams(skyRayOrigin, skyRayDirection, vSunDirection, skyCosSun)
-    * uBeamStrength;
+    * uBeamStrength
+    * (1.0 - cloudNight)
+    * (1.0 - duskMix * 0.92);
+
+  // Night: moon disc opposite the sun, sparse stars, a soft Milky Way band.
+  float skyCloudMask = clamp(
+    deck.a * 0.94 + sheet.a * 0.28 + veil.a * 0.14,
+    0.0,
+    1.0
+  );
+  float starMask = 1.0 - skyCloudMask;
+  if (nightSky > 0.001) {
+    float moonAlt = degrees(asin(clamp(dot(up, uMoonDirection), -1.0, 1.0)));
+    float viewAlt = degrees(asin(clamp(dot(up, skyRayDirection), -1.0, 1.0)));
+    vec3 moonFlat = uMoonDirection - up * dot(up, uMoonDirection);
+    vec3 viewFlat = skyRayDirection - up * dot(up, skyRayDirection);
+    float moonBearing = degrees(acos(clamp(
+      dot(normalize(viewFlat + vec3(1e-6, 0.0, 0.0)),
+          normalize(moonFlat + vec3(1e-6, 0.0, 0.0))),
+      -1.0, 1.0
+    ))) * cos(radians(moonAlt));
+    float moonRadius = length(vec2(moonBearing, viewAlt - moonAlt))
+      / uMoonRadiusDegrees;
+    float moonLimb = sqrt(max(0.0, 1.0 - moonRadius * moonRadius));
+    float moonDisc = (1.0 - smoothstep(0.92, 1.08, moonRadius))
+      * max(0.65 + 0.35 * moonLimb, 0.0);
+    retColor += vec3(0.78, 0.84, 0.98)
+      * moonDisc * uMoonDiscRadiance * nightSky
+      * (1.0 - deck.a * 0.72);
+
+    retColor += nightStarField(skyRayDirection) * nightSky * starMask;
+    retColor += vec3(0.58, 0.64, 0.88)
+      * nightMilkyGlow(skyRayDirection)
+      * nightSky
+      * starMask;
+  }
+
   // No exposure knob rides here any more. The dome leaves this shader in
   // scene-linear radiance because AIR_LAW.solarIrradiance is the ONE anchor
   // between physics and the renderer's units, and it is applied inside the
@@ -709,6 +889,10 @@ export interface SkyCloudUniforms {
    * `SKY_MARCH_QUALITY_ENABLED` is false.
    */
   setMarchQuality(quality: 0 | 1 | 2): void;
+  /** Moon direction, star field strength — antipodal to the sun at night. */
+  setNight(night: number, moonDirection: readonly [number, number, number]): void;
+  /** Civil twilight band around the horizon — harmonises cloud vs air colour. */
+  setTwilight(twilight: number): void;
 }
 
 interface UniformMap {
@@ -775,14 +959,31 @@ function getAirTables(): readonly [DataTexture, DataTexture] {
 }
 
 /**
+ * Coarse mode for environment bakes and service passes. Cloud and air marches
+ * can diverge: PMREM needs the sunset gradient in the air but not billows in
+ * the deck.
+ */
+export function setSkyBakeCoarse(
+  material: Material,
+  options: { clouds?: boolean; air?: boolean },
+): void {
+  const uniforms = (material as Material & { uniforms?: UniformMap }).uniforms;
+  if (uniforms?.uCloudCoarse && options.clouds !== undefined) {
+    uniforms.uCloudCoarse.value = options.clouds ? 1 : 0;
+  }
+  if (uniforms?.uAirCoarse && options.air !== undefined) {
+    uniforms.uAirCoarse.value = options.air ? 1 : 0;
+  }
+}
+
+/**
  * Coarse mode, for the PMREM bake. `three-stdlib` hands every `Sky` the same
  * material instance, so the environment capture renders the visible sky's own
  * shader six times per relight — at full march that is six more full-cost
  * skies for an irradiance probe that will be blurred to nothing anyway.
  */
 export function setSkyCloudCoarse(material: Material, coarse: boolean): void {
-  const uniforms = (material as Material & { uniforms?: UniformMap }).uniforms;
-  if (uniforms?.uCloudCoarse) uniforms.uCloudCoarse.value = coarse ? 1 : 0;
+  setSkyBakeCoarse(material, { clouds: coarse, air: coarse });
 }
 
 /**
@@ -826,15 +1027,18 @@ export function installSkyClouds(material: Material): SkyCloudUniforms | null {
   if (shaderMaterial.uniforms.uCloudMap) return null;
 
   const drift = new Vector2();
+  const fieldOrigin = new Vector2();
   const midDrift = new Vector2();
   const cirrusDrift = new Vector2();
   const shear = new Vector2();
-  const lit = new Color("#ffffff");
-  const shade = new Color("#8d97a6");
+  const moonDirection = new Vector3();
+  const lit = new Color(0, 0, 0);
+  const shade = new Color(0, 0, 0);
 
   const uniforms = shaderMaterial.uniforms;
   uniforms.uCloudMap = { value: getSkyFieldTexture() as Texture };
   uniforms.uCloudDrift = { value: drift };
+  uniforms.uCloudFieldOrigin = { value: fieldOrigin };
   uniforms.uMidDrift = { value: midDrift };
   uniforms.uCirrusDrift = { value: cirrusDrift };
   uniforms.uCloudShear = { value: shear };
@@ -849,6 +1053,7 @@ export function installSkyClouds(material: Material): SkyCloudUniforms | null {
   uniforms.uCloudHazeRate = { value: 1 / 13000 };
   uniforms.uCloudReach = { value: 13000 * CLOUD_LAW.reachInHazes };
   uniforms.uCloudCoarse = { value: 0 };
+  uniforms.uAirCoarse = { value: 0 };
   uniforms.uSkyQuality = { value: 2 };
   uniforms.uMidLevel = { value: 0 };
   uniforms.uMidBase = { value: 4200 };
@@ -871,12 +1076,24 @@ export function installSkyClouds(material: Material): SkyCloudUniforms | null {
   // clipping once the horizon has taken all but seven per cent of its red.
   uniforms.uSunDiscRadiance = { value: 420 };
   uniforms.uSunAureoleGain = { value: 40 };
+  uniforms.uMoonDirection = { value: moonDirection };
+  uniforms.uNightLevel = { value: 0 };
+  uniforms.uTwilight = { value: 0 };
+  uniforms.uMoonRadiusDegrees = { value: MOON_ANGULAR_RADIUS_DEGREES };
+  uniforms.uMoonDiscRadiance = { value: 14 };
 
+  const viewFromOriginSource =
+    "vec3 direction = normalize( vWorldPosition - cameraPos );";
   const sunDiscSource =
     "float sundisk = smoothstep( sunAngularDiameterCos, sunAngularDiameterCos + 0.00002, cosTheta );";
   const sunAddSource = "L0 += ( vSunE * 19000.0 * Fex ) * sundisk;";
   const compositeSource = "gl_FragColor = vec4( retColor, 1.0 );";
-  for (const source of [sunDiscSource, sunAddSource, compositeSource]) {
+  for (const source of [
+    viewFromOriginSource,
+    sunDiscSource,
+    sunAddSource,
+    compositeSource,
+  ]) {
     if (!shaderMaterial.fragmentShader.includes(source)) {
       // The upstream sky shader moved. Better a plain sky than a broken one.
       return null;
@@ -889,7 +1106,11 @@ export function installSkyClouds(material: Material): SkyCloudUniforms | null {
   shaderMaterial.fragmentShader = shaderMaterial.fragmentShader
     .replace(
       "void main() {",
-      `${skyShaderFunctions}\n${airShaderFunctions}\n      void main() {`,
+      `${skyShaderFunctions}\n${nightSkyFunctions}\n${airShaderFunctions}\n      void main() {`,
+    )
+    .replace(
+      viewFromOriginSource,
+      "vec3 direction = normalize( vWorldPosition - cameraPosition );",
     )
     .replace(sunDiscSource, sunDiscShader)
     // The upstream sum is left in place so `sundisk` and `sunAureole` keep a
@@ -917,9 +1138,12 @@ export function installSkyClouds(material: Material): SkyCloudUniforms | null {
       uniforms.uCloudDensity.value = weather.density;
       uniforms.uCloudHazeRate.value = 1 / extinctionLength(weather);
       uniforms.uCloudReach.value = cloudReach(weather);
+      const [originX, originZ] = weatherFieldOrigin(weather);
+      fieldOrigin.set(originX, originZ);
+      const shearMetres = weatherShearMetres(weather);
       shear.set(
-        Math.cos(weather.windBearing) * CLOUD_LAW.shear,
-        Math.sin(weather.windBearing) * CLOUD_LAW.shear,
+        Math.cos(weather.windBearing) * shearMetres,
+        Math.sin(weather.windBearing) * shearMetres,
       );
       uniforms.uMidLevel.value = weather.midLevel;
       uniforms.uMidBase.value = weather.midAltitude;
@@ -934,6 +1158,13 @@ export function installSkyClouds(material: Material): SkyCloudUniforms | null {
     },
     setMarchQuality(quality: 0 | 1 | 2) {
       uniforms.uSkyQuality.value = SKY_MARCH_QUALITY_ENABLED ? quality : 2;
+    },
+    setNight(night: number, direction: readonly [number, number, number]) {
+      uniforms.uNightLevel.value = Math.max(0, Math.min(1, night));
+      moonDirection.set(direction[0], direction[1], direction[2]).normalize();
+    },
+    setTwilight(twilight: number) {
+      uniforms.uTwilight.value = Math.max(0, Math.min(1, twilight));
     },
   };
 }

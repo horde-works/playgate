@@ -101,7 +101,7 @@ export const AIR_LAW = {
   cpuViewSteps: 24,
   /**
    * Live-frame air step ceilings for gpuQuality 0 / 1 / 2. Bake still forces
-   * `coarseViewSteps` via `uCloudCoarse`. Quality is a descent FROM the author
+   * `coarseViewSteps` via `uAirCoarse`. Quality is a descent FROM the author
    * max, never a lowered authorship floor.
    */
   qualityViewSteps: [6, 10, 16] as const,

@@ -24,6 +24,8 @@ import {
   sampleCloudTops,
   shapeCloudField,
   sunOcclusionAt,
+  worldWeather,
+  weatherFieldOrigin,
 } from "../games/make-a-mess/src/game/skyWeatherModel.ts";
 import { installSkyClouds } from "../games/make-a-mess/src/game/skyClouds.ts";
 import {
@@ -368,7 +370,8 @@ test("the sky shader is generated from the one law, and still grafts", () => {
   assert.notEqual(source, before);
   for (const key of [
     "edgeSoftness", "topFloor", "shoulder", "coreFloor", "coreGain",
-    "baseRamp", "topFade", "erosion", "erosionOnset", "stepSpan",
+    "baseRamp", "topFade", "erosion", "erosionOnset", "fringeErosion",
+    "fringeWidth", "stepSpan",
     "maxLod", "scatterFalloff", "scatterTransmit", "scatterSpread",
     "sunGain", "powder", "fillBase", "fillTop", "scatterCeiling",
   ]) {
@@ -379,6 +382,41 @@ test("the sky shader is generated from the one law, and still grafts", () => {
   }
   assert.ok(source.includes("textureLod("), "the march still guesses its own mip level");
   assert.ok(!source.includes("texture2D(uCloudMap"), "a cloud tap is still derivative-driven");
+  assert.ok(
+    source.includes("vWorldPosition - cameraPosition"),
+    "the disc and air march must share the camera ray, not the world origin",
+  );
+  assert.ok(
+    !source.includes("vWorldPosition - cameraPos );"),
+    "three-stdlib still aims the sky from the origin",
+  );
+  assert.ok(source.includes("uCloudFieldOrigin"));
+  assert.ok(source.includes("uNightLevel"));
+  assert.ok(source.includes("uMoonDirection"));
+  assert.ok(source.includes("nightStarField"));
+  assert.ok(source.includes("nightMilkyGlow"));
+  assert.ok(!source.includes("floor(skyRayDirection * 420"));
+  assert.ok(source.includes("cloudKeyDir"));
+  assert.ok(source.includes("sheetNightFade"));
+  assert.ok(source.includes("uAirCoarse"));
+  assert.ok(source.includes("starMask"));
+  assert.ok(source.includes("nightModel"));
+  assert.ok(source.includes("mottling"));
+  assert.ok(
+    source.includes("vec4(1.0, 0.0, 0.0, 0.0), vec2(1.0, 1.0)"),
+    "mid sheet must sample the broad shape channel, not detail billow",
+  );
+  assert.ok(
+    source.includes("mix(0.1, 1.0, nightFade)"),
+    "sheet colour must dim with night fade, not only coverage",
+  );
+  assert.ok(source.includes("uTwilight"));
+  assert.ok(source.includes("duskMix"));
+  assert.ok(source.includes("beamLit"));
+  assert.ok(
+    source.includes("(1.0 - duskMix * 0.92)"),
+    "crepuscular beams must fade at dusk so they do not fight per-ray air",
+  );
   // A second graft onto the same material would double every uniform.
   assert.equal(installSkyClouds(sky.material), null);
 });
@@ -416,6 +454,10 @@ test("the march stays inside its lookup budget", () => {
   const perSample = taps(shaderFunction(source, "vec3 cloudSample"))
     + taps(shaderFunction(source, "float cloudWideTap"));
   assert.equal(perSample, 2, `a density sample costs ${perSample} lookups, not 2`);
+  assert.ok(
+    source.includes("fringeBite") || source.includes("fringeMask"),
+    "silhouette fringe erosion never reached the shader",
+  );
 
   const sunWalk = shaderFunction(source, "float cloudSunDepth");
   const sunSamples = (sunWalk.match(/cloudSample\(/g) ?? []).length;
@@ -611,5 +653,56 @@ test("the deck actually dims the world it is drifting over", () => {
     (source.match(/KEY_GAIN \* measured\.keyLevel/g) ?? []).length,
     2,
     "the key's energy is being computed in more than one place again",
+  );
+  assert.ok(source.includes("DAY_FILL_WEIGHT"));
+  assert.ok(source.includes("dayPunch"));
+  assert.ok(source.includes("DAY_AMBIENT_WEIGHT"));
+  assert.ok(source.includes("shadow-radius={1.15}"));
+});
+
+test("piece fog holds clear air on the near midground", () => {
+  const source = readFileSync(
+    new URL("../games/make-a-mess/src/game/materialTextures.ts", import.meta.url),
+    "utf8",
+  );
+  assert.ok(source.includes("materialAirNear"));
+  assert.ok(source.includes("materialPathScatter"));
+  assert.ok(source.includes("smoothstep(32.0, 110.0, vFogDepth)"));
+});
+
+test("authored worlds diverge in deck scale and field origin, not only coverage", () => {
+  const astana = worldWeather("astana");
+  const kallur = worldWeather("kallur");
+  const basalt = worldWeather("basalt-stronghold");
+  assert.notEqual(astana.fieldScale, kallur.fieldScale);
+  assert.notEqual(astana.density, basalt.density);
+  assert.notEqual(weatherFieldOrigin(kallur)[0], weatherFieldOrigin(basalt)[0]);
+  assert.ok(astana.cirrusAltitude > kallur.cirrusAltitude + 2000);
+});
+
+test("at night the scene key follows the moon, not the sunken sun azimuth", () => {
+  const frame = {
+    model: "equinox",
+    latitudeDegrees: 52.4,
+    east: [1, 0],
+    north: [0, -1],
+  };
+  const midnight = equinoxSunDirection(TIME_OF_DAY_TARGETS.night, frame);
+  const moon = [-midnight[0], -midnight[1], -midnight[2]];
+  assert.ok(midnight[1] < -0.5, "midnight sun should be well below the horizon");
+  assert.ok(moon[1] > 0.5, "full moon at midnight should be above the horizon");
+  const source = readFileSync(
+    new URL("../games/make-a-mess/src/game/WorldEnvironment.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.ok(source.includes("moonKey = night > 0.5"));
+  assert.ok(source.includes("setNight(night, moonDirection)"));
+  assert.ok(source.includes("MOON_CLOUD_GAIN"));
+  assert.ok(source.includes("MOON_CLOUD_FILL_SHARE"));
+  assert.ok(source.includes("moonLitBeam"));
+  assert.ok(source.includes("setSkyBakeCoarse"));
+  assert.ok(
+    !source.includes("skyFill([\n        moonDirection"),
+    "moon shade must not invent a daytime dome via skyFill(moon)",
   );
 });

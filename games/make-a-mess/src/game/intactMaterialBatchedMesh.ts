@@ -3,6 +3,7 @@ import {
   BufferGeometry,
   Color,
   DoubleSide,
+  MeshStandardMaterial,
   Object3D,
   Vector3,
   type Intersection,
@@ -23,6 +24,7 @@ import {
   intactGeometryBudget,
   intactGeometryKey,
   isSharedIntactGeometry,
+  prepareGeometryForBatchedMesh,
   type CylinderLodSegments,
 } from "./intactPieceGeometry.ts";
 import { createIntactPieceAttributeTexture } from "./intactPieceAttributeTexture.ts";
@@ -82,10 +84,9 @@ function writePieceTransform(
   transform.updateMatrix();
 }
 
-export function createIntactMaterialBatchedMesh(
+function collectPreparedBatchGeometries(
   batch: IntactMaterialBatch,
-  lighting: WorldLightingBake,
-): IntactBatchedMeshBundle {
+): Map<string, BufferGeometry> {
   const unique = new Map<string, BufferGeometry>();
   let hasCylinder = false;
   for (const piece of batch.pieces) {
@@ -99,6 +100,52 @@ export function createIntactMaterialBatchedMesh(
       if (!unique.has(key)) unique.set(key, cylinderLodGeometry(segments));
     }
   }
+  const vertexColors = batch.shadingKind === "surface" && batch.vertexColors;
+  for (const [key, geometry] of unique) {
+    unique.set(
+      key,
+      prepareGeometryForBatchedMesh(geometry, { vertexColors }),
+    );
+  }
+  return unique;
+}
+
+/**
+ * Geometry-only validation for tests: proves a material batch can enter
+ * BatchedMesh without touching textured piece materials.
+ */
+export function validateIntactMaterialBatchGeometries(
+  batch: IntactMaterialBatch,
+): number {
+  const unique = collectPreparedBatchGeometries(batch);
+  const geometries = [...unique.values()];
+  const budget = intactGeometryBudget(geometries);
+  const material = new MeshStandardMaterial({ color: 0xffffff });
+  const mesh = new BatchedMesh(
+    Math.max(batch.pieces.length, 1),
+    Math.max(budget.vertexCount, 1),
+    Math.max(budget.indexCount, 3),
+    material,
+  );
+  let geometryCount = 0;
+  for (const geometry of unique.values()) {
+    mesh.addGeometry(geometry);
+    geometryCount += 1;
+    if (!isSharedIntactGeometry(geometry)) geometry.dispose();
+  }
+  material.dispose();
+  mesh.dispose();
+  return geometryCount;
+}
+
+export function createIntactMaterialBatchedMesh(
+  batch: IntactMaterialBatch,
+  lighting: WorldLightingBake,
+): IntactBatchedMeshBundle {
+  const unique = collectPreparedBatchGeometries(batch);
+  const hasCylinder = batch.pieces.some(
+    (piece) => pieceGeometryKind(piece) === "cylinder",
+  );
   const geometries = [...unique.values()];
   const budget = intactGeometryBudget(geometries);
   const base = getPieceMaterial(
