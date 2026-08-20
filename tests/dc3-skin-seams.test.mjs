@@ -191,6 +191,12 @@ test("only the outer skin wears the riveted profile", () => {
 
   assert.equal(skin.length > 0, true);
   for (const piece of skin) {
+    // Титулы ливреи — второй законный профиль алюминия: краска поверх
+    // обшивки, вырубается по альфе (docs/dc-3/livery-crosstown-p01.md).
+    if (piece.id.startsWith("livery-title-")) {
+      assert.equal(piece.textureProfile, "dc3-livery-titles", piece.id);
+      continue;
+    }
     assert.equal(piece.textureProfile, "alclad-riveted", piece.id);
   }
   // Набор внутри и мотогондолы — сталь: клёпаный рисунок им не положен.

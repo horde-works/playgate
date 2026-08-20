@@ -242,6 +242,9 @@ const surfaceTextureUrls: Partial<Record<SurfaceTextureProfile, string>> = {
   "city-shop-sign": "/games/make-a-mess/textures/city-shop-sign.png",
   "city-chalk-sign-a": "/games/make-a-mess/textures/city-chalk-sign-a.png",
   "city-chalk-sign-b": "/games/make-a-mess/textures/city-chalk-sign-b.png",
+  // Альфа-маска титулов: белые глифы, цвет даёт color куска. Генератор —
+  // tools/dc3-livery-titles-texture.mjs.
+  "dc3-livery-titles": "/games/make-a-mess/textures/dc3-livery-titles.png",
 };
 
 function createArchitecturalMetalTexture(
@@ -397,6 +400,7 @@ const faceFitTextureProfiles = new Set<SurfaceTextureProfile>([
   "city-shop-sign",
   "city-chalk-sign-a",
   "city-chalk-sign-b",
+  "dc3-livery-titles",
 ]);
 
 const bumpScaleByMaterial: Record<BreakableMaterial, number> = {
@@ -1628,6 +1632,10 @@ export function getPieceMaterial(
   // то есть выглядел матовой тканью, чем бы его ни красили.
   const isCarPaint = material === "sheetMetal"
     && textureProfile === "painted-steel";
+  // ТИТУЛЫ ЛИВРЕИ DC-3. Видимая часть куска — только мазки эмали (лента
+  // вырубается по альфе), поэтому PBR здесь красочный, а не дюралевый:
+  // диэлектрик, полуглянец. Паспорт — docs/dc-3/livery-crosstown-p01.md.
+  const isLiveryTitles = textureProfile === "dc3-livery-titles";
   const isMatteAluminium = isSteel && textureProfile === "matte-aluminium";
   const isGoldMirror = isSteel && textureProfile === "gold-mirror";
   const isNimbusCeramic = textureProfile === "nimbus-ceramic-composite";
@@ -1653,7 +1661,9 @@ export function getPieceMaterial(
     transparent: isTransparent,
     opacity: pieceMaterialOpacity(material, color),
     depthWrite: !isTransparent,
-    metalness: isGoldMirror
+    metalness: isLiveryTitles
+      ? 0.08
+      : isGoldMirror
       ? 0.92
       : isAluminium
         ? 0.86
@@ -1666,7 +1676,9 @@ export function getPieceMaterial(
           : isSteel
             ? 0.78
             : material === "graphiteStone" ? 0.08 : 0,
-    roughness: isGoldMirror
+    roughness: isLiveryTitles
+      ? 0.42
+      : isGoldMirror
       ? 0.16
       : isAluminium
         ? 0.22
@@ -1716,7 +1728,9 @@ export function getPieceMaterial(
     // нужно домножить на `ATMOSPHERE.ambientIntensity` — иначе общий уровень
     // подскочит вдвое-вчетверо. Это правка ко всем машинам и всему остеклению
     // сразу, поэтому она отдельной задачей и с кадрами.
-    envMapIntensity: isGoldMirror
+    envMapIntensity: isLiveryTitles
+      ? 0.9
+      : isGoldMirror
       ? 1.8
       : isAluminium
         ? 1.55
@@ -1730,6 +1744,12 @@ export function getPieceMaterial(
             ? ETFE_MEMBRANE_ENV_MAP_INTENSITY
             : isGlass ? 1.5 : 0.35,
   });
+
+  if (isLiveryTitles) {
+    // Вырубка ленты до букв. Порог ниже 0.5 нарочно: мип-уровни съедают
+    // альфу тонких штрихов, и на дистанции буквы худели бы до исчезновения.
+    standardMaterial.alphaTest = 0.4;
+  }
 
   if (!isGlass) {
     // ПРОСТРАНСТВО МАТЕРИАЛА НАВЕШИВАЕТСЯ ФУНКЦИЕЙ, А НЕ ПРИСВАИВАНИЕМ.

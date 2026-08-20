@@ -17,6 +17,7 @@
  */
 import type { ObjectLabPart } from "../dutchWindmills/objectModel.ts";
 import { dc3BlockoutObject } from "./dc3BlockoutObject.ts";
+import { dc3LiveryTitleParts } from "./dc3LiveryTitles.ts";
 import { dc3SkinPanelsByGroup } from "./dc3SkinPanelsObject.ts";
 
 /** Лофтовые шкуры B01, которые заменены панелями. */
@@ -61,5 +62,8 @@ export function dc3AirframeParts(): readonly ObjectLabPart[] {
         && !DC3_PANELLED_LOFT_IDS.includes(part.id),
     ),
     ...dc3SkinPanelsByGroup(DC3_PANEL_SOURCE_GROUPS),
+    // Ливрея — краска поверх готовой обшивки, идёт последней и панелизацию
+    // не меняет: docs/dc-3/livery-crosstown-p01.md.
+    ...dc3LiveryTitleParts,
   ];
 }

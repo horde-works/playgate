@@ -12,6 +12,7 @@ import {
   dc3BlockoutObject,
 } from "../objects/aircraft/dc3BlockoutObject.ts";
 import { dc3AirframeParts } from "../objects/aircraft/dc3AirframeParts.ts";
+import { DC3_LIVERY_TITLE_COLOR } from "../objects/aircraft/dc3LiveryTitles.ts";
 import type {
   ObjectLabPart,
   ObjectPoint,
@@ -147,6 +148,17 @@ function materialFor(part: ObjectLabPart): MaterialBinding {
   if (part.group === "cabin-trim") {
     return { material: "cloth", shape: "panel", color: "#7a6f5d", shellThickness: 0.02 };
   }
+  // ТИТУЛЫ ЛИВРЕИ — КРАСКА, НЕ КОНСТРУКЦИЯ. Лента вырубается по альфе до
+  // букв, цвет эмали живёт здесь; паспорт — docs/dc-3/livery-crosstown-p01.md.
+  if (part.group === "livery-titles") {
+    return {
+      material: "aluminium",
+      shape: "steelSheet",
+      color: DC3_LIVERY_TITLE_COLOR,
+      shellThickness: 0.003,
+      textureProfile: "dc3-livery-titles",
+    };
+  }
   // Крепёж стойки — узлы навески, барабаны и диски. Цветом отделены от самой
   // стойки нарочно: на машине это литьё и обработанный металл, а не труба.
   if (part.group === "gear-fittings") {
@@ -229,6 +241,7 @@ function loadBearing(part: ObjectLabPart): boolean {
     return false;
   }
   if (part.group === "cabin-entry-overlay") return false;
+  if (part.group === "livery-titles") return false;
   return true;
 }
 
@@ -247,7 +260,8 @@ function primitive(
     part.group.startsWith("aileron-") ||
     part.group.startsWith("elevator-") ||
     part.group === "rudder";
-  const overlay = part.group === "cabin-entry-overlay";
+  const overlay = part.group === "cabin-entry-overlay"
+    || part.group === "livery-titles";
   const gear = part.group === "gear";
   const mount = part.group === "structure-mount";
   return {

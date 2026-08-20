@@ -217,7 +217,11 @@ export type SurfaceTextureProfile =
   // мировой трипланарной проекции) — так на боксе читается надпись.
   | "city-shop-sign"
   | "city-chalk-sign-a"
-  | "city-chalk-sign-b";
+  | "city-chalk-sign-b"
+  // Титулы ливреи DC-3: face-fit альфа-маска букв, лента вырубается по альфе
+  // до краски; цвет эмали живёт на куске. Паспорт —
+  // docs/dc-3/livery-crosstown-p01.md.
+  | "dc3-livery-titles";
 
 export type TreeVisualKind = "oak" | "birch" | "pine" | "willow";
 // `knob` — древесина, которая НЕ вытянута в трубу: наплыв каллуса на голове

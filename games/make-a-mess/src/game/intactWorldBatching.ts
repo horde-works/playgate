@@ -104,6 +104,20 @@ function worldChunkKey(piece: BreakablePieceDefinition): string {
 }
 
 /**
+ * Тень куска. Стекло и плитка грунта не отбрасывали её всегда; титулы
+ * ливреи DC-3 — потому что это краска: лента вырубается по альфе до букв,
+ * а глубинный проход альфу не читает и затенял бы борт целым
+ * прямоугольником (docs/dc-3/livery-crosstown-p01.md).
+ */
+export function pieceCastsShadow(piece: BreakablePieceDefinition): boolean {
+  return (
+    !isGlassMaterial(piece.material) &&
+    piece.shape !== "groundTile" &&
+    piece.textureProfile !== "dc3-livery-titles"
+  );
+}
+
+/**
  * Groups the FULL authored piece list into instanced draw batches. The
  * grouping key never depends on which pieces are currently broken, so the
  * batches — and every piece's instance index inside its batch — stay stable
@@ -116,8 +130,7 @@ export function buildIntactInstanceBatches(
   for (const piece of pieces) {
     if (piece.intactVisible === false) continue;
     const materialColor = pieceMaterialBaseColor(piece.material, piece.color);
-    const castShadow =
-      !isGlassMaterial(piece.material) && piece.shape !== "groundTile";
+    const castShadow = pieceCastsShadow(piece);
     const id = `${worldChunkKey(piece)}:${piece.material}:${materialColor}:${piece.textureProfile ?? "default"}:${Number(
       castShadow,
     )}:${pieceGeometryKind(piece)}:${visualProfileKey(piece)}:${visualMeshKey(piece)}`;
@@ -137,9 +150,7 @@ export function buildIntactInstanceBatches(
       batchPieces[0].color,
     ),
     textureProfile: batchPieces[0].textureProfile,
-    castShadow:
-      !isGlassMaterial(batchPieces[0].material) &&
-      batchPieces[0].shape !== "groundTile",
+    castShadow: pieceCastsShadow(batchPieces[0]),
     jointed: batchPieces.some((piece) =>
       hasSilicateJoints(piece.id, piece.material),
     ),
@@ -172,8 +183,7 @@ export function intactShadingKind(
 
 function intactMaterialBatchKey(piece: BreakablePieceDefinition): string {
   const materialColor = pieceMaterialBaseColor(piece.material, piece.color);
-  const castShadow =
-    !isGlassMaterial(piece.material) && piece.shape !== "groundTile";
+  const castShadow = pieceCastsShadow(piece);
   const shadingKind = intactShadingKind(piece);
   const vertexColors = Boolean(piece.visualMesh?.colors);
   const doubleSided = piece.visualMesh?.doubleSided !== false;
@@ -210,8 +220,7 @@ export function buildIntactMaterialBatches(
       material: sample.material,
       materialColor: pieceMaterialBaseColor(sample.material, sample.color),
       textureProfile: sample.textureProfile,
-      castShadow:
-        !isGlassMaterial(sample.material) && sample.shape !== "groundTile",
+      castShadow: pieceCastsShadow(sample),
       shadingKind: intactShadingKind(sample),
       vertexColors: Boolean(sample.visualMesh?.colors),
       doubleSided: sample.visualMesh?.doubleSided !== false,
