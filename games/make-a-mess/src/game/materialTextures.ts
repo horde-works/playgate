@@ -2561,13 +2561,24 @@ float materialPathScatter = (1.0 - materialTransmittance * materialTransmittance
   * materialAirNear;
 float materialAir = materialAirRaw * materialAirNear;
 float materialEdgeVeil = smoothstep(fogNear, fogFar, vFogDepth);
-float materialFogFactor = max(materialAir, materialEdgeVeil);
-#if defined( USE_ENVMAP ) && defined( ENVMAP_TYPE_CUBE_UV )
 vec3 materialViewRay = transformDirectionByInverseViewMatrix(-vViewPosition, viewMatrix);
+// Landform haze shelf: distant masses (Kallur wall-scale ~150-350 m) must
+// dissolve into sky bake even when Koschmieder visibility is tens of km —
+// otherwise the wall stays as sharp and green as the near meadow. Cap is
+// implicit in the shelf mix (≤0.78); near hold still clears the first ~100 m.
+float materialHazeShelf = smoothstep(100.0, 280.0, vFogDepth);
+float materialHorizonBoost = pow(1.0 - abs(materialViewRay.y), 2.0);
+float materialLandHaze = materialHazeShelf
+  * mix(0.42, 0.78, materialHorizonBoost)
+  * materialAirNear;
+float materialFogFactor = max(
+  max(materialAir, materialEdgeVeil),
+  materialLandHaze
+);
+#if defined( USE_ENVMAP ) && defined( ENVMAP_TYPE_CUBE_UV )
 vec3 materialSunDir = normalize(uMatSunDirection);
 float materialSunMu = max(dot(materialViewRay, materialSunDir), 0.0);
 float materialSunLobe = pow(materialSunMu, 5.0);
-float materialHorizonBoost = pow(1.0 - abs(materialViewRay.y), 2.0);
 float materialPathWeight = materialPathScatter * mix(1.0, 1.35, materialHorizonBoost);
 // Bias the sky read toward the sun where the path carries scatter — spatial
 // air, not one cube tap at the pixel's view direction only.
@@ -2580,21 +2591,19 @@ vec3 materialScatterRay = normalize(
 vec3 materialFogTint = textureCubeUV(
   envMap,
   envMapRotation * materialScatterRay,
-  mix(0.26, 0.2, materialSunMu)
+  mix(0.28, 0.18, materialSunMu)
 ).rgb;
 float materialForwardScatter = materialPathWeight * materialSunLobe * uMatAirForwardScatter;
 materialFogTint += uMatSunFogColour * materialForwardScatter;
 float materialDeckShaft = matCloudDeckGap(vMaterialCoordinate, materialSunDir);
 materialFogTint += uMatCloudLit * materialDeckShaft * uMatCloudShaftStrength;
-// Far landforms (Kallur wall ~200-400 m) separate by dissolving INTO the sky
-// bake, not by quieting that bake. A quieter tint kept albedo and erased the
-// haze shelf. Near stay clear via materialAirNear (32-110 m).
+// Lift tint toward brighter horizon air on the shelf so the mix reads as haze,
+// not as a greyer copy of the same meadow albedo.
 float materialOffSun = 1.0 - materialSunMu;
-float materialHazeShelf = smoothstep(120.0, 320.0, vFogDepth);
-materialFogTint = mix(
-  materialFogTint,
-  materialFogTint * mix(1.08, 1.18, materialHorizonBoost),
-  materialHazeShelf * (0.55 + 0.45 * materialOffSun)
+materialFogTint *= mix(
+  1.0,
+  mix(1.12, 1.32, materialHorizonBoost) * mix(1.0, 0.92, materialSunMu * 0.5),
+  materialHazeShelf * (0.65 + 0.35 * materialOffSun)
 );
 #else
 // Anything shaded without the sky bake keeps the scene's own fog colour.

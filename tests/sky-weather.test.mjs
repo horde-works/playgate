@@ -679,7 +679,8 @@ test("piece fog holds clear air on the near midground", () => {
   assert.ok(source.includes("materialAirNear"));
   assert.ok(source.includes("materialPathScatter"));
   assert.ok(source.includes("materialHazeShelf"));
-  assert.ok(source.includes("smoothstep(120.0, 320.0, vFogDepth)"));
+  assert.ok(source.includes("materialLandHaze"));
+  assert.ok(source.includes("smoothstep(100.0, 280.0, vFogDepth)"));
   assert.ok(source.includes("smoothstep(32.0, 110.0, vFogDepth)"));
 });
 
