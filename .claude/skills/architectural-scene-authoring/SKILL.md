@@ -8,7 +8,9 @@ description: >-
   mounting, architectural lighting, player access, urban composition,
   promenades, embankments, LRT exits, visual comparison with photographs,
   unsupported scene pieces, or any request to make an authored place
-  physically and visually match reality.
+  physically and visually match reality. Triggers: DC-3 cockpit, кабина
+  экипажа, приборная панель, greenhouse from inside, cockpit-panel,
+  MotionInstrumentSystem.
 ---
 
 # Architectural Scene Authoring
@@ -67,7 +69,13 @@ Read these in addition when relevant:
 - vehicle construction and solver lessons:
   `.claude/skills/vehicle-authoring/references/assembly.md`;
 - vehicle dynamics and control: use `$vehicle-authoring` and its normative
-  contracts (`airborne-vehicle-dynamics.md`, `vehicle-control-lessons.md`).
+  contracts (`airborne-vehicle-dynamics.md`, `vehicle-control-lessons.md`);
+- DC-3 cockpit interior (captain on port, instrument plate vs dummy hoods,
+  greenhouse glazing from the seat):
+  [`games/make-a-mess/docs/dc-3/runtime-lessons.md`](../../../games/make-a-mess/docs/dc-3/runtime-lessons.md);
+- live screenshot from the owner in the scene, “step back”, freeze accepted
+  form: [`games/make-a-mess/docs/visual-coauthoring-lessons.md`](../../../games/make-a-mess/docs/visual-coauthoring-lessons.md)
+  and [`.claude/skills/visual-coauthoring/SKILL.md`](../visual-coauthoring/SKILL.md).
 
 Inspect the current implementation, compiler/runtime owners and targeted tests
 after reading the applicable documents. Do not trust remembered constants or

@@ -1,0 +1,17 @@
+---
+description: >-
+  DC-3 on runway 09: axes, captain seat, instrument plate, leftover
+  flight after taxi, in-flight door lock. Read before editing these files.
+globs: >-
+  games/make-a-mess/src/**/dc3*.ts,games/make-a-mess/src/**/dc3*.tsx,games/make-a-mess/src/game/passengerSeats.ts,games/make-a-mess/src/game/HingedDoorSystem.tsx,games/make-a-mess/src/game/hingedGatePolicy.ts,games/make-a-mess/src/game/VehicleFrameSystem.tsx,games/make-a-mess/src/game/compoundKinematicCluster.ts,games/make-a-mess/src/content/scenes/islandAirport/**,tests/dc3-*.mjs,tests/passenger-seats.test.mjs,tests/entry-interaction-routing.test.mjs,games/make-a-mess/docs/dc-3/**
+alwaysApply: false
+---
+
+Read [`games/make-a-mess/docs/dc-3/runtime-lessons.md`](../../games/make-a-mess/docs/dc-3/runtime-lessons.md)
+before changing this file. Do not retell those laws here.
+
+Captain is port (+X, `cockpit-seat-right`). Dummy `glare-coaming` boxes are
+not the panel. `flight !== null` is not in-flight on a machine without a
+mast. In flight, hinge bodies are off; do not kinematic-follow the hull.
+Do not restyle `MotionInstrumentSystem` or the accepted greenhouse to fix
+the cockpit. Kallur is neighbor work.

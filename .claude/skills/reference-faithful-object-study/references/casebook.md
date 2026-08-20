@@ -576,6 +576,23 @@ airfoil height, follow the same generators as the skin, and test
 clearance at the former stations — the wing AABB does not see a local
 poke.
 
+### Interior once the type is seated (2026-08-19)
+
+The seated machine has a second failure class. Recorded in
+[`games/make-a-mess/docs/dc-3/runtime-lessons.md`](../../../../games/make-a-mess/docs/dc-3/runtime-lessons.md);
+do not restyle the accepted greenhouse to fix it.
+
+- Body +Z is the nose. `forward × up` is starboard (−X). Part ids
+  `…-left` / `…-right` are the sign of X, not nautical port. Captain is
+  `cockpit-seat-right` on +X.
+- The instrument plate is `cockpit-panel` (horizon + lamps). Dummy boxes
+  on its top edge (`glare-coaming`) are not a coaming and not a panel;
+  they block the windshield. Tilt and raise the plate itself.
+  `MotionInstrumentSystem` paints +Y; plate local +X points down so text
+  is upright. Do not restyle that system globally.
+- Eyes from the port windshield, not the cushion Y. Capsule is world eye
+  minus `(0, 0.54, 0)` because three-point pitch mixes body Y/Z.
+
 ## 15. Cross-case best practices
 
 1. Write an evidence card before code.
@@ -598,6 +615,8 @@ poke.
 18. Turn every reviewer verdict into a named regression test in the same pass.
 19. Decide where a stowed member goes before deciding where it hangs.
 20. A period greenhouse is a held roof, a blunt glass and a convex snout — three slopes. Do not collapse them.
+21. On a +Z-nose body, left/right part ids are the sign of X, not nautical port.
+22. Close a cockpit leak by moving the real part; do not invent dummy volumes on the instrument plate.
 
 ## 16. Cross-case worst practices
 
@@ -621,3 +640,7 @@ poke.
 18. Let two solids share a volume because no test was ever written to ask.
 19. Type ninety degrees for a fold whose geometry needs a hundred and thirty.
 20. Correct a crown bump by fairing it into a modern ogive, or by a knife-cut roof onto a dead-flat deck.
+21. Sit the captain on `…-left` because the name sounds like port.
+22. Bolt dummy hoods onto an instrument plate to plug a windshield sill.
+23. Follow a flying hull with a second kinematic door (`setNextKinematicTranslation`).
+

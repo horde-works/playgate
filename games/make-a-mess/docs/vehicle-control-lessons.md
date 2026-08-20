@@ -4,7 +4,7 @@
 
 Домен — ВСЁ, что движется под управлением: воздушные носители (состав
 Терминала, дирижабль № 07, драккар, небесный таран), винтокрылые (HX-6 города
-и Нимба, RAX-8, SR-6), крылатая (DC-3, стоит на полосе 09 островного аэропорта),
+и Нимба, RAX-8, SR-6), крылатая (DC-3, полоса 09 островного аэропорта, летает),
 наземная машина (Citroën DS), поезд ЛРТ GOA4 (TRITON),
 мельницы и постоянные роторы. Общие для всех них подсистемы: членство в
 кинематическом кластере, разрушаемые актуаторы, граница «автомат управления ↔
@@ -1021,6 +1021,13 @@ mechanisms therefore cannot disagree about the hand-off frame». Fallback —
 (`escape/descent → waiting → rebuilding → arrival → docked`) — раздел «Отказы
 и восстановление».
 
+У машины без мачты (DC-3) объект `flight` может пережить конец хода: после
+руления `phase === "finished"` самолёт уже стоит, а `flight !== null` всё
+ещё прячет `parkedOnly` и держит створки как в воздухе. Меню и lock створок
+спрашивают ход рейса (`passengerSeatJourneyInProgress`,
+`hingedDoorLockedToCarrier`), не жизнь объекта. Разбор —
+[`dc-3/runtime-lessons.md`](dc-3/runtime-lessons.md) §§4–5.
+
 ### 6.6. Жизненный цикл рейса принадлежит МАШИНЕ, а не карте
 
 Раскрутка, отдача концов, фаза винтов и завершение швартовки висели на
@@ -1569,11 +1576,13 @@ object-study).
 `dc3AirplaneStandFrame`). Посадка — `islandAirportDc3.ts`: полоса 09,
 нос на восток, не терминал. Стойка трёхточечная: основные колёса несут
 машину, хвостовое опирается на плиту и нагрузку клетки не несёт.
-Створки — обычные члены, не дверные `hinge`: поле `hinge` отдаёт кусок
-`HingedDoorSystem` и крутит его вокруг вертикали от толчка игрока.
-Ось и ход живут в `surfaceHinges`; угол пишет автомат
-(`dc3SurfaceDeflectionDegrees`). В реестрах `airVehicles` и
-`vehicleFrames` машины ещё нет — стоит, не летает. Силовой стенд —
+Четыре входа — прислонно-сдвижные (`piece.hinge` + plug-slide); на стоянке
+ими владеет `HingedDoorSystem`, в рейсе тела выключены
+([`dc-3/runtime-lessons.md`](dc-3/runtime-lessons.md) §§4–5). Ось и ход
+рулей живут в `surfaceHinges`; угол пишет автомат
+(`dc3SurfaceDeflectionDegrees`). В `airVehicles` / `vehicleFrames` —
+`island-airport:dc3`. Кабина, кресло, leftover `flight`, вспышка на грязи
+и глиссада — тот же `runtime-lessons.md`. Силовой стенд —
 `tests/airplane-rig.mjs`.
 
 #### Наземный осевой разворот колёсной машины
@@ -2346,6 +2355,8 @@ altitude error к плану (en-route: вертикальные полки — 
 | Постоянные роторы, ветер | `src/game/ConstantRotorSystem.tsx`, `WindController.tsx`, `windState.ts` |
 | Группы взаимодействий | `src/game/physicsInteractionGroups.ts` |
 | Кресла и interaction | `src/game/passengerSeats.ts`, `entryInteraction.ts`, `gameActionHints.ts` |
+| Створки на стоянке / в рейсе | `src/game/HingedDoorSystem.tsx`, `hingedGatePolicy.ts` (`hingedDoorLockedToCarrier`) |
+| DC-3 в мире | `src/game/dc3Airplane.ts`, `islandAirportDc3.ts`, docs `dc-3/runtime-lessons.md` |
 
 Эталонные тесты: `tests/vehicle-frame.test.mjs`, `tests/motion-route.test.mjs`,
 `tests/vehicle-failure.test.mjs`, `tests/rotorcraft-flight.test.mjs`,

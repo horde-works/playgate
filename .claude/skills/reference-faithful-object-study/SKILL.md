@@ -18,7 +18,8 @@ description: >-
   ObjectLabModel, objectModel.ts, object lab, evidence card, discrepancy log,
   canonical object, reference manifest, silhouette control, silhouette fit,
   motionConstraints, rotor pivot, swept envelope, cutaway, solid validity,
-  assembly datum, model hash and capture manifest.
+  assembly datum, model hash and capture manifest, DC-3 cockpit, captain
+  seat, cockpit-panel, glare coaming.
 ---
 
 # Reference-Faithful Object Study
@@ -47,6 +48,10 @@ Read [foundation.md](references/foundation.md) completely only when installing, 
 Also read repository instructions, the object passport, authoring schema, renderer, material bindings, current canonical owner and targeted tests. Direct user constraints and project-local contracts override this skill.
 
 In this repository, also read [`games/make-a-mess/docs/joint-canon.md`](../../../games/make-a-mess/docs/joint-canon.md) before authoring any assembly of two or more bodies. It owns how bodies meet — the three lawful joints, tiling by exact pitch, why only co-facing coplanar faces fight, joinery versus visible interpenetration, and the depth budget that makes an authoring tolerance a function of viewing distance. The magenta gap detector in [geometry-construction.md](references/geometry-construction.md) finds holes in a skin; `tools/joint-audit.mjs` measures the same class numerically once the object is seated in a scene.
+
+When the object is the DC-3 already seated in a world (cockpit furniture, captain seat, instrument plate, cabin entries as plug-slides), also read [`games/make-a-mess/docs/dc-3/runtime-lessons.md`](../../../games/make-a-mess/docs/dc-3/runtime-lessons.md) and casebook §14. Do not restyle the accepted greenhouse visor/temple split to fix an interior nit.
+
+When the owner is in the world and sending screenshots, or says to step back / freeze the accepted part / adapt the reference to our form, read [`games/make-a-mess/docs/visual-coauthoring-lessons.md`](../../../games/make-a-mess/docs/visual-coauthoring-lessons.md) before the next geometry edit. The Object Lab camera loop in [verification-visual-loop.md](references/verification-visual-loop.md) does not replace a sit-camera frame.
 
 ## Non-negotiable boundary
 

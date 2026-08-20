@@ -34,6 +34,10 @@ description: >-
   математика — там же, §7–§8. Читать полностью
   перед зданием, станцией, памятником, интерьером, сложным кузовом, остеклением,
   навесом или архитектурным светом;
+- **кадр хозяина из живой сцены** (слон по частям, заморозка, откат шага) —
+  `.claude/skills/visual-coauthoring/SKILL.md`; контракт —
+  `games/make-a-mess/docs/visual-coauthoring-lessons.md`. Читать, когда
+  приложен скриншот из игры, а не только Object Lab;
 - **изолированная object study до посадки в мир** — скилл
   `.claude/skills/reference-faithful-object-study/` (SKILL.md + references/).
   Читать перед созданием

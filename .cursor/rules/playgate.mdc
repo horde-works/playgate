@@ -1,0 +1,18 @@
+---
+description: >-
+  Playgate in-repo skills and DC-3 runtime lessons. Do not duplicate
+  playbooks in the user skill layer.
+alwaysApply: true
+---
+
+Read [`CLAUDE.md`](../../CLAUDE.md). Domain playbooks are
+[`.claude/skills/*/SKILL.md`](../../.claude/skills/) and point at
+`games/make-a-mess/docs/`. Same-named skills in `~/.claude/skills` or
+`~/.cursor/skills` silently override the repo — do not copy them there.
+
+DC-3 cockpit, occupation after taxi, and in-flight door lock:
+[`games/make-a-mess/docs/dc-3/runtime-lessons.md`](../../games/make-a-mess/docs/dc-3/runtime-lessons.md).
+
+Live screenshot sessions (one part, freeze, step back):
+[`games/make-a-mess/docs/visual-coauthoring-lessons.md`](../../games/make-a-mess/docs/visual-coauthoring-lessons.md).
+After compact, the chat is the JSONL path in the system message, not the summary.

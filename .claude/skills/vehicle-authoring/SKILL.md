@@ -16,7 +16,9 @@ description: >-
   motionRoute, rotorcraftDynamics, rotorcraftPilot, vehicleFrames,
   VehicleFrameSystem, vehicleFailure, vehicleActuation, supportStrut,
   clusterMemberArticulation, resetForces, mooringForce, LampEventState,
-  VehicleGuidanceDemand.
+  VehicleGuidanceDemand, DC-3, dc3, кабина экипажа, кресло капитана,
+  parkedOnly, руление, створки в полёте, plug-slide, HingedDoorSystem,
+  passengerSeats, passengerSeatJourneyInProgress.
 ---
 
 # Vehicle Authoring
@@ -88,6 +90,16 @@ Read by adjacency:
 - World numbers for the train: `games/make-a-mess/docs/astana-brief.md`
   (разделы «B2b — физика состава», «Балисы»); ground-car passport:
   `games/make-a-mess/docs/citroen-ds-brief.md`.
+- DC-3 seated on runway 09 — axes, captain seat, instrument plate, leftover
+  taxi `flight`, in-flight door lock:
+  [`games/make-a-mess/docs/dc-3/runtime-lessons.md`](../../../games/make-a-mess/docs/dc-3/runtime-lessons.md).
+  Read before touching `passengerSeats`, `islandAirportDc3`, cockpit furniture
+  in `dc3BlockoutObject`, or hinged leaves on a flying cluster.
+- Live screenshot loop with the owner in the world (one part, freeze, roll
+  back this step). Read **before** a new large seated type so the owner is
+  the last gate, not the detector:
+  [`games/make-a-mess/docs/visual-coauthoring-lessons.md`](../../../games/make-a-mess/docs/visual-coauthoring-lessons.md)
+  and `.claude/skills/visual-coauthoring/SKILL.md`.
 
 The two contracts are the semantic source of truth and must remain
 synchronized with semantic changes. Do not ask the user to provide
