@@ -180,6 +180,10 @@ for (const stone of kallurVisibleStones(kallurStones)) {
       rotation: [tiltX, stone.yaw, tiltZ],
       foundation: true,
       maximumVerticalGap: 1,
+      // The accepted archetype kit renders the boulders as six
+      // InstancedMesh (KallurBoulders); the box stays as the collider
+      // and climbing support only.
+      intactVisible: false,
     },
   );
   if (stone.size >= 1.4) {
@@ -200,6 +204,7 @@ for (const stone of kallurVisibleStones(kallurStones)) {
         rotation: [tiltZ, stone.yaw + 0.7, tiltX],
         foundation: true,
         maximumVerticalGap: 1,
+        intactVisible: false,
       },
     );
   }

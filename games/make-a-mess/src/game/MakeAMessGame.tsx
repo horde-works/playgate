@@ -241,6 +241,7 @@ import { environmentState } from "./environmentState";
 import { SceneDressing } from "./SceneDressing";
 import { WorldEdge } from "./WorldEdge";
 import { KallurSea } from "./KallurSea";
+import { KallurBoulders } from "./KallurBoulders";
 import { HingedDoorSystem, type HingedEntryApproach } from "./HingedDoorSystem";
 import {
   entryInteractionActions,
@@ -10594,6 +10595,7 @@ function OpenWorldScene({
         />
       ) : null}
       {scene.id === "kallur" ? <KallurSea /> : null}
+      {scene.id === "kallur" ? <KallurBoulders /> : null}
       {scene.id === "viking-village" && scene.worldRadius ? (
         <>
           <GrassField

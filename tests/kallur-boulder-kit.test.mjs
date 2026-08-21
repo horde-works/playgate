@@ -59,6 +59,38 @@ test("валуны: детерминизм и невырожденность г�
   }
 });
 
+test("валуны: размещения детерминированы и покрывают все видимые камни", async () => {
+  const { kallurBoulderPlacements, kallurBoulderArchetypeFor } = await import(
+    "../games/make-a-mess/src/content/scenes/kallur/kallurBoulderPlacements.ts"
+  );
+  const { kallurVisibleStones } = await import(
+    "../games/make-a-mess/src/content/scenes/kallur/kallurStoneField.ts"
+  );
+  const { kallurStones, kallurGroundTopAt } = await import(
+    "../games/make-a-mess/src/content/scenes/kallur/kallurLandscapeDocument.ts"
+  );
+  const placements = kallurBoulderPlacements();
+  const visible = kallurVisibleStones(kallurStones);
+  assert.equal(placements.length, visible.length, "не каждый камень получил архетип");
+  const known = new Set(KALLUR_BOULDER_ARCHETYPES.map((archetype) => archetype.id));
+  const used = new Set();
+  for (const placement of placements) {
+    assert.ok(known.has(placement.archetype), `${placement.id}: неизвестный архетип`);
+    used.add(placement.archetype);
+    const collarTop = kallurGroundTopAt(placement.position[0], placement.position[2]);
+    assert.ok(
+      placement.position[1] <= collarTop - 0.3,
+      `${placement.id}: основание не утоплено в воротник`,
+    );
+  }
+  assert.ok(used.size >= 5, `используется лишь ${used.size} архетипов из шести`);
+  assert.equal(
+    kallurBoulderArchetypeFor({ size: 0.3, tone: 0.9 }),
+    "loaf",
+    "мелочь обязана быть буханками",
+  );
+});
+
 test("валуны: обязательные виды присутствуют", () => {
   const ids = new Set(kallurBoulderKitObject.views.map((view) => view.id));
   for (const required of ["front-row", "three-quarter-row", "top-row", "profile-row"]) {
