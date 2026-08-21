@@ -278,16 +278,77 @@ export function createLandscapeSampler(document: LandscapeDocument): LandscapeSa
   const needsGradient = document.terracettes !== undefined ||
     (document.mesoRelief !== undefined && document.mesoRelief.slopeGain > 0);
 
+  // Coastal apron: signed distance to the LAND edge and the arc kind of
+  // the nearest shoreline segment. Positive distance = seaward of land.
+  const apron = document.coastApron;
+  const apronAt = apron
+    ? (x: number, z: number) => {
+      let best = Infinity;
+      let bestSegment = 0;
+      let bestPoint: readonly [number, number] = [x, z];
+      for (let index = 0; index < apron.shoreline.length; index += 1) {
+        const [ax, az] = apron.shoreline[index];
+        const [bx, bz] = apron.shoreline[(index + 1) % apron.shoreline.length];
+        const dx = bx - ax;
+        const dz = bz - az;
+        const lengthSquared = dx * dx + dz * dz || 1e-9;
+        const t = Math.max(0, Math.min(1,
+          ((x - ax) * dx + (z - az) * dz) / lengthSquared));
+        const px = ax + dx * t;
+        const pz = az + dz * t;
+        const distance = Math.hypot(x - px, z - pz);
+        if (distance < best) {
+          best = distance;
+          bestSegment = index;
+          bestPoint = [px, pz];
+        }
+      }
+      const inside = pointInPolygon(x, z, apron.shoreline);
+      const arc = apron.arcs.find((candidate) =>
+        bestSegment >= candidate.fromSegment && bestSegment <= candidate.toSegment);
+      const profile = (arc?.kind ?? "cliff") === "beach" ? apron.beach : apron.cliff;
+      return { seaward: inside ? -best : best, profile, edgePoint: bestPoint };
+    }
+    : null;
+
   const sample = (x: number, z: number): LandscapeSample => {
     if (!pointInPolygon(x, z, document.boundary)) {
+      // With a coastal apron the world past the boundary is SEA FLOOR, and
+      // it must continue the apron's depth: returning baseElevation folded
+      // every boundary-straddling lattice triangle from -2 up to +2.4 — a
+      // chain of turf shards standing in open water along the whole coast.
+      const coast = apronAt?.(x, z);
       return {
-        elevation: document.baseElevation,
+        elevation: coast ? coast.profile.dropTo : document.baseElevation,
         groundKind: "outside",
         surface: "soil",
         pathWeight: 0,
         channelId: null,
         channelDistance: null,
       };
+    }
+
+    if (apronAt) {
+      const coast = apronAt(x, z);
+      if (coast.seaward > 0) {
+        // Seaward of the land edge: the apron owns the ground. It starts
+        // at the terrain's own edge height and rolls to the profile's
+        // depth; detail layers stay OFF — a beach is smooth by nature,
+        // and the band paints its sand and shingle per-pixel.
+        const edge = baseElevationAt(
+          document, coast.edgePoint[0], coast.edgePoint[1],
+        ).elevation;
+        const t = Math.max(0, Math.min(1, coast.seaward / coast.profile.width));
+        const roll = t * t * (3 - 2 * t);
+        return {
+          elevation: edge + (coast.profile.dropTo - edge) * roll,
+          groundKind: "bank",
+          surface: "soil",
+          pathWeight: 0,
+          channelId: null,
+          channelDistance: null,
+        };
+      }
     }
 
     // Levelled ground is levelled. A route may paint its surface across a yard,
@@ -347,7 +408,18 @@ export function createLandscapeSampler(document: LandscapeDocument): LandscapeSa
     if (hasDetail) {
       // Paths and levelled pads stay calm: walked and built ground is where
       // hummocks and benches are trodden flat in the reference photography.
-      const calm = (1 - pathWeight) * (1 - base.padWeight);
+      // Detail layers fade toward the coast: on the land/apron seam the
+      // hummocks and masses otherwise end in a metre-tall STEP that the
+      // lattice spans with a chain of vertical turf shards along the
+      // whole shoreline.
+      let shoreCalm = 1;
+      if (apronAt) {
+        const coast = apronAt(x, z);
+        const inland = -coast.seaward;
+        const fadeT = Math.max(0, Math.min(1, (inland - 1) / 5));
+        shoreCalm = fadeT * fadeT * (3 - 2 * fadeT);
+      }
+      const calm = (1 - pathWeight) * (1 - base.padWeight) * shoreCalm;
       let gradientX = 0;
       let gradientZ = 0;
       if (needsGradient) {

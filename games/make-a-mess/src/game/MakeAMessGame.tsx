@@ -4988,6 +4988,28 @@ function OpenWorldScene({
                 ?.type)) ?? null,
         visible: hit.object.visible,
         renderOrder: hit.object.renderOrder,
+        // Ancestry and world position: an unnamed Mesh names itself by the
+        // chain of parents and the hit point.
+        chain: (() => {
+          const names: string[] = [];
+          let node:
+            | { name?: string; type?: string; parent?: unknown }
+            | null = hit.object;
+          while (node && names.length < 6) {
+            names.push(node.name || node.type || "?");
+            node = (node.parent ?? null) as
+              | { name?: string; type?: string; parent?: unknown }
+              | null;
+          }
+          return names.join("<");
+        })(),
+        point: [
+          +hit.point.x.toFixed(1),
+          +hit.point.y.toFixed(1),
+          +hit.point.z.toFixed(1),
+        ],
+        pieceId: (hit.object as { userData?: { pieceId?: string } }).userData
+          ?.pieceId ?? null,
       }));
     };
     const teleportWindow = window as Window & {

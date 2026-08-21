@@ -2420,6 +2420,17 @@ if (kallurProfileOn > 0.5) {
   // shader lights the same formula itself and must not inherit a gain
   // that was measured against MeshStandardMaterial + tone mapping.
   kallurCarpet *= vec3(0.455, 0.546, 0.327);
+  // The BEACH zone: on the apron's low, near-flat ground the turf trades
+  // for dark volcanic shingle and sand (the cascade's beach profile); the
+  // wet band darkens toward the waterline. Steep low faces stay with the
+  // wall handover below.
+  float kallurBeach = smoothstep(2.1, 1.4, vMaterialCoordinate.y)
+    * smoothstep(0.55, 0.75, kallurUp.y);
+  if (kallurBeach > 0.001) {
+    vec3 kallurBeachColor = nscBeachAlbedo(
+      kallurPoint, vMaterialCoordinate.y, kallurLit, kallurFootprint);
+    kallurCarpet = mix(kallurCarpet, kallurBeachColor, kallurBeach);
+  }
   // The wall converges to the MEASURED stone of the brief and keeps only
   // the ridge light-and-shade from the carpet's luminance. The grass
   // vertex ratio is divided back out below - stone is brighter than turf,
@@ -2571,9 +2582,10 @@ reflectedLight.indirectSpecular *= materialSpecularOcclusion;
 // (No backticks in here: this GLSL lives inside a template literal.)
 float materialAirRaw = 1.0 - exp(-vFogDepth * uAirExtinction);
 // Near hold: Koschmieder still owns distance, but the first tens of metres
-// stay clear so courtyards and façades are not painted with sky. Without this
-// every midground mixes toward the bright dome and the frame reads as haze.
-float materialAirNear = smoothstep(32.0, 110.0, vFogDepth);
+// stay clear so courtyards and façades are not painted with sky. Distances
+// come from landHazeBand(worldRadius) — a fixed 32-110 m shelf never fires
+// on a ~120 m island (Kallur wall sits inside it and stays meadow-green).
+float materialAirNear = smoothstep(uMatNearHoldStart, uMatNearHoldEnd, vFogDepth);
 float materialTransmittance = 1.0 - materialAirRaw;
 // Path-integrated in-scatter (~1 - T^2): light builds along the ray, peaks in
 // mid-distance, and reads toward the sun — not a single endpoint sky sample.
@@ -2582,48 +2594,68 @@ float materialPathScatter = (1.0 - materialTransmittance * materialTransmittance
 float materialAir = materialAirRaw * materialAirNear;
 float materialEdgeVeil = smoothstep(fogNear, fogFar, vFogDepth);
 vec3 materialViewRay = transformDirectionByInverseViewMatrix(-vViewPosition, viewMatrix);
-// Landform haze shelf: distant masses (Kallur wall-scale ~150-350 m) must
-// dissolve into sky bake even when Koschmieder visibility is tens of km —
-// otherwise the wall stays as sharp and green as the near meadow. Cap is
-// implicit in the shelf mix (≤0.78); near hold still clears the first ~100 m.
-float materialHazeShelf = smoothstep(100.0, 280.0, vFogDepth);
+// Landform haze shelf: distant masses dissolve into sky bake even when
+// Koschmieder visibility is tens of km. Band is island-scaled (see
+// landHazeBand) so a 80-100 m wall on Kallur actually enters the shelf.
+float materialHazeShelf = smoothstep(uMatLandHazeNear, uMatLandHazeFar, vFogDepth);
 float materialHorizonBoost = pow(1.0 - abs(materialViewRay.y), 2.0);
 float materialLandHaze = materialHazeShelf
   * mix(0.42, 0.78, materialHorizonBoost)
-  * materialAirNear;
+  * materialAirNear
+  * uMatLandHazeStrength;
+// Rim milk: when the player stands near the world edge, air thickens around
+// them — skin says stop — without painting a glass wall on the horizon.
+float materialEdgeMilk = uMatEdgeMilk * materialAirNear * mix(0.55, 0.9, materialHorizonBoost);
 float materialFogFactor = max(
   max(materialAir, materialEdgeVeil),
-  materialLandHaze
+  max(materialLandHaze, materialEdgeMilk)
 );
 #if defined( USE_ENVMAP ) && defined( ENVMAP_TYPE_CUBE_UV )
 vec3 materialSunDir = normalize(uMatSunDirection);
 float materialSunMu = max(dot(materialViewRay, materialSunDir), 0.0);
 float materialSunLobe = pow(materialSunMu, 5.0);
 float materialPathWeight = materialPathScatter * mix(1.0, 1.35, materialHorizonBoost);
-// Bias the sky read toward the sun where the path carries scatter — spatial
-// air, not one cube tap at the pixel's view direction only.
+// Sky BEHIND the mass — aerial perspective dissolves into this, never above it.
+// Broad mip averages the phase a little; dusk ridges must stay ≤ this air.
+vec3 materialSkyAlongView = textureCubeUV(
+  envMap,
+  envMapRotation * materialViewRay,
+  0.22
+).rgb;
+// Mild sunward bias only where the path carries scatter AND the shelf has not
+// taken over. On a landform shelf the eye sees the sky behind the mass; pulling
+// hard toward the key invents brighter gray milk than the purple dusk dome.
+float materialSunBias = materialPathWeight * 0.32 * (1.0 - materialLandHaze * 0.88);
 vec3 materialScatterRay = normalize(
-  mix(materialViewRay, materialSunDir, materialPathWeight * 0.32)
+  mix(materialViewRay, materialSunDir, materialSunBias)
 );
-// Read a broadened lobe rather than the sharpest mip: what in-scatters toward
-// the eye is spread by the phase function, so the solar disc belongs in this
-// as a circumsolar glow and not as one blazing texel of the environment map.
 vec3 materialFogTint = textureCubeUV(
   envMap,
   envMapRotation * materialScatterRay,
   mix(0.28, 0.18, materialSunMu)
 ).rgb;
+materialFogTint = mix(materialFogTint, materialSkyAlongView, materialLandHaze * 0.75);
 float materialForwardScatter = materialPathWeight * materialSunLobe * uMatAirForwardScatter;
-materialFogTint += uMatSunFogColour * materialForwardScatter;
+// Key Mie (sun/moon) adds direction, but shelf air must not outshine the dome.
+materialFogTint += uMatSunFogColour * materialForwardScatter
+  * (1.0 - materialLandHaze * 0.7);
 float materialDeckShaft = matCloudDeckGap(vMaterialCoordinate, materialSunDir);
-materialFogTint += uMatCloudLit * materialDeckShaft * uMatCloudShaftStrength;
-// Lift tint toward brighter horizon air on the shelf so the mix reads as haze,
-// not as a greyer copy of the same meadow albedo.
-float materialOffSun = 1.0 - materialSunMu;
-materialFogTint *= mix(
+materialFogTint += uMatCloudLit * materialDeckShaft * uMatCloudShaftStrength
+  * (1.0 - materialLandHaze * 0.55);
+float materialSkyLum = max(
+  materialSkyAlongView.r,
+  max(materialSkyAlongView.g, materialSkyAlongView.b)
+);
+float materialTintLum = max(
+  materialFogTint.r,
+  max(materialFogTint.g, materialFogTint.b)
+);
+// Hard ceiling vs view-sky: photo dusk ridges are cool layers under the dome,
+// not a brighter slab. Tiny headroom only for on-key Mie.
+materialFogTint *= min(
   1.0,
-  mix(1.12, 1.32, materialHorizonBoost) * mix(1.0, 0.92, materialSunMu * 0.5),
-  materialHazeShelf * (0.65 + 0.35 * materialOffSun)
+  (materialSkyLum * mix(1.12, 1.02, materialLandHaze) + 1e-5)
+    / (materialTintLum + 1e-5)
 );
 #else
 // Anything shaded without the sky bake keeps the scene's own fog colour.

@@ -133,6 +133,27 @@ export interface LandscapeTonalMasses {
   readonly seed: number;
 }
 
+/**
+ * The coastal apron: a fine-lattice strip between the LAND edge (the shore
+ * polyline) and the document boundary, dropping below sea level so the
+ * waterline cuts smooth 0.75 m ground everywhere — never the blocky sides
+ * of deep earth cells. Arcs pick the character per coast stretch: a beach
+ * ramps gently into the water, a cliff coast plunges within a few metres.
+ * Unlisted segments take the cliff profile.
+ */
+export interface LandscapeCoastApron {
+  /** The LAND edge; the document boundary must lie outside it. */
+  readonly shoreline: readonly LandscapePoint2[];
+  readonly arcs: readonly {
+    /** Inclusive segment index range of the shoreline polyline. */
+    readonly fromSegment: number;
+    readonly toSegment: number;
+    readonly kind: "beach" | "cliff";
+  }[];
+  readonly beach: { readonly width: number; readonly dropTo: number };
+  readonly cliff: { readonly width: number; readonly dropTo: number };
+}
+
 export interface LandscapeDocument {
   readonly schemaVersion: 1;
   readonly id: string;
@@ -143,6 +164,7 @@ export interface LandscapeDocument {
   readonly corridors: readonly LandscapeSurfaceCorridor[];
   readonly dryChannels: readonly LandscapeDryChannel[];
   /** Optional detail layers; absent fields leave the field byte-identical. */
+  readonly coastApron?: LandscapeCoastApron;
   readonly tonalMasses?: LandscapeTonalMasses;
   readonly mesoRelief?: LandscapeMesoRelief;
   readonly terracettes?: LandscapeTerracettes;

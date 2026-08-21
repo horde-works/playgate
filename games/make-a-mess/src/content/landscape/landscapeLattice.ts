@@ -218,7 +218,11 @@ export function latticeSample(
   const kind = nearestKind(lattice, x, z);
   const groundKind = NAME_BY_KIND[kind] ?? "outside";
   if (groundKind === "outside") {
-    return outsideSample(lattice.baseElevation);
+    // Keep the BAKED elevation: with a coastal apron the raw sampler's
+    // outside law is the sea floor, and substituting baseElevation here
+    // folded every boundary-straddling triangle into a turf shard
+    // palisade standing in open water along the whole coast.
+    return outsideSample(bilinearElevation(lattice, x, z));
   }
   const elevation = bilinearElevation(lattice, x, z);
   const pathWeight = bilinearPathWeight(lattice, x, z);

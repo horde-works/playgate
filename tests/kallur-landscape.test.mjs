@@ -13,6 +13,7 @@ import {
   flatPadDistance,
 } from "../games/make-a-mess/src/content/landscape/landscapeSampler.ts";
 import {
+  KALLUR_COAST_BOUNDARY,
   KALLUR_PADS,
   KALLUR_PATH,
   KALLUR_SHORELINE,
@@ -211,7 +212,23 @@ test("kallur: the field is deterministic", () => {
     const second = kallurLandscapeSampler.elevationAt(x, z);
     assert.equal(first, second);
   }
-  assert.equal(kallurLandscapeDocument.boundary, KALLUR_SHORELINE);
+  // The boundary lies seaward of the land edge: the coastal apron owns
+  // the strip between them (waterline on fine ground, never earth cells).
+  assert.equal(kallurLandscapeDocument.boundary, KALLUR_COAST_BOUNDARY);
+  assert.equal(kallurLandscapeDocument.coastApron?.shoreline, KALLUR_SHORELINE);
+});
+
+test("kallur: пляжный скат уходит под воду, обрыв падает у кромки", () => {
+  // Mid-beach (southern arc): the apron rolls from the flats to below the
+  // sea level within its width; mid-cliff: the drop happens in metres.
+  const beachMid = [-5, 101]; // seaward of the [-22,100]->[12,102] segment
+  const beachOuter = [-4, 112];
+  const nearEdge = kallurLandscapeSampler.elevationAt(beachMid[0], beachMid[1]);
+  const outer = kallurLandscapeSampler.elevationAt(beachOuter[0], beachOuter[1]);
+  assert.ok(nearEdge < 3.0 && nearEdge > -1.5, `пляж у кромки ${nearEdge.toFixed(2)}`);
+  assert.ok(outer < 0.0, `внешний пляж ${outer.toFixed(2)} не ушёл под воду`);
+  const cliffOuter = kallurLandscapeSampler.elevationAt(121.5, 8.3);
+  assert.ok(cliffOuter < 0.0, `обрыв у кромки ${cliffOuter.toFixed(2)} не упал под воду`);
 });
 
 test("kallur: the tonal-mass octave fills the 5-8 m band and spares the path", () => {

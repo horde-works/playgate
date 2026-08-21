@@ -300,6 +300,34 @@ vec3 nscCarpetAlbedo(vec2 point, vec2 acrossAlong, float comb, float litness, fl
   carpet *= 1.0 + grain * (0.35 + 0.85 * litness);
   return carpet;
 }
+// The BEACH profile (Igor, 21.08): Kalsoy has no golden sand — its coves
+// hold dark volcanic shingle and near-black sand (Tjornuvik family). The
+// same cascade draws both: sharp billow cells for the shingle, fine grain
+// for the sand, contour bands parallel to the waterline, and the wet band
+// darkening toward the water. Heights are WORLD y: sand below ~0.9,
+// shingle to ~2.0, turf above.
+vec3 nscBeachAlbedo(vec2 point, float worldY, float litness, float footprint) {
+  float shingleCell = pow(abs(nscNoise(point / 0.16, 641.0)), 1.3)
+    * nscFade(0.16, footprint);
+  float shingleTone = nscNoise(point / 0.45, 642.0) * nscFade(0.45, footprint);
+  vec3 shingle = mix(
+    ${glslColor("#23211f")},
+    ${glslColor("#6b6660")},
+    clamp(shingleCell * 1.15 + shingleTone * 0.25 + 0.22, 0.0, 1.0));
+  float sandGrain = nscNoise(point / 0.045, 651.0) * 0.6
+    + nscNoise(point / 0.11, 652.0) * 0.4;
+  vec3 sand = ${glslColor("#4a4643")}
+    * (1.0 + sandGrain * 0.16 * nscFade(0.08, footprint));
+  // Waterline-parallel bands: contours of height, the tide's own ruling.
+  sand *= 1.0 + sin(worldY * 9.0 + nscNoise(point / 1.4, 654.0) * 2.0) * 0.05;
+  float sandiness = smoothstep(1.15, 0.75, worldY);
+  vec3 beach = mix(shingle, sand, sandiness);
+  float wet = smoothstep(1.3, 0.7, worldY);
+  beach = mix(beach, beach * 0.42, wet);
+  beach *= 1.0 + nscNoise(point / 0.03, 653.0) * 0.06
+    * (0.35 + 0.85 * litness) * nscFade(0.03, footprint);
+  return beach;
+}
 `;
 }
 

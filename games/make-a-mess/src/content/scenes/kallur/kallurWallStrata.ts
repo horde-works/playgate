@@ -52,6 +52,12 @@ export function generateKallurWallStrata(
   sampler: LandscapeSampler,
 ): readonly KallurStratumLayer[] {
   const layers: KallurStratumLayer[] = [];
+  // The wall lives on LAND. With the coastal apron the field continues
+  // seaward and the face bisection happily marches onto it — 53 courses
+  // once relocated into open water. A stratum whose plan position is not
+  // land does not exist.
+  const onLand = (x: number, z: number): boolean =>
+    sampler.sample(x, z).groundKind === "land";
 
   for (let segment = 1; segment < FACE_CHAIN.length; segment += 1) {
     const [ax, az] = FACE_CHAIN[segment - 1];
@@ -112,6 +118,7 @@ export function generateKallurWallStrata(
         const jitter = (hash(seed, course + 80) - 0.5) * 0.36;
         // Embedded by 0.4 behind the face, proud by roughly a metre.
         const outwardCentre = faceOffset - 0.4 + jitter;
+        if (!onLand(sx + normalX * outwardCentre, sz + normalZ * outwardCentre)) { y += layerHeight; course += 1; continue; }
         layers.push({
           id: `strata:${segment}:${station}:${course}`,
           x: sx + normalX * outwardCentre,
@@ -130,7 +137,11 @@ export function generateKallurWallStrata(
         // stations carry no ledges — at a chain kink a rotated ledge reaches
         // into the neighbouring segment's column.
         const cornerStation = station === 0 || station === stations - 1;
-        if (!cornerStation && y > footY + 8 && hash(seed, course + 160) < 0.2) {
+        if (!cornerStation && y > footY + 8 && hash(seed, course + 160) < 0.2
+          && onLand(
+            sx + normalX * (outwardCentre + depth / 2 - 0.72),
+            sz + normalZ * (outwardCentre + depth / 2 - 0.72),
+          )) {
           layers.push({
             id: `strata:${segment}:${station}:${course}:ledge`,
             x: sx + normalX * (outwardCentre + depth / 2 - 0.72),
@@ -160,6 +171,10 @@ export function generateKallurWallStrata(
         // course row — the sod shows its first half-metre, it does not
         // pierce the hill body behind.
         const lipSetback = 0.2 + hash(seed, 997) * 0.08;
+        if (!onLand(
+          sx + normalX * (lipOffset - lipSetback),
+          sz + normalZ * (lipOffset - lipSetback),
+        )) continue;
         layers.push({
           id: `strata:${segment}:${station}:lip`,
           x: sx + normalX * (lipOffset - lipSetback),

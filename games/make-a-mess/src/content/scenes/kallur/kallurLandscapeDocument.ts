@@ -17,6 +17,8 @@ import {
 } from "./kallurStoneField.ts";
 import {
   KALLUR_PADS,
+  KALLUR_BEACH_SEGMENTS,
+  KALLUR_COAST_BOUNDARY,
   KALLUR_PATH,
   KALLUR_SHORELINE,
   KALLUR_ZONES,
@@ -40,7 +42,21 @@ export const KALLUR_BASE_ELEVATION = 2.4;
 const kallurBaseDocument: LandscapeDocument = {
   schemaVersion: 1,
   id: "kallur-landscape",
-  boundary: KALLUR_SHORELINE,
+  boundary: KALLUR_COAST_BOUNDARY,
+  coastApron: {
+    // The waterline law: between the land edge and the boundary the apron
+    // owns the ground. The southern flats roll out as the beach (dark
+    // volcanic sand and shingle painted by the band); every other coast
+    // plunges cliff-style within metres, still on the fine lattice.
+    shoreline: KALLUR_SHORELINE,
+    arcs: [{
+      fromSegment: KALLUR_BEACH_SEGMENTS.from,
+      toSegment: KALLUR_BEACH_SEGMENTS.to,
+      kind: "beach",
+    }],
+    beach: { width: 14, dropTo: -1.4 },
+    cliff: { width: 4, dropTo: -2.2 },
+  },
   baseElevation: KALLUR_BASE_ELEVATION,
   elevationAreas: KALLUR_ZONES.map((zone) => ({
     id: zone.id,

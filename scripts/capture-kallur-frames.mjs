@@ -53,6 +53,13 @@ const FRAMES = [
     position: [-33, kallurGroundTopAt(-33, 20) + 1.35, 20],
     lookAt: [-24, kallurGroundTopAt(-26, 8) + 0.4, 8],
   },
+  {
+    // The southern beach: the waterline swash on the coastal apron, seen
+    // low along the shore — sand, shingle, and the sea lapping onto them.
+    id: "beach-06-swash",
+    position: [-40, 6.5, 114],
+    lookAt: [14, 0.6, 98],
+  },
 ];
 
 /** Frames repeated under the low sun: the fur is judged by grazing light. */
@@ -251,6 +258,19 @@ async function main() {
     for (const frame of FRAMES) {
       if (!wantFrame(frame.id)) continue;
       await takeFrame(frame, "");
+    }
+
+    // Diagnostic: raycast the scene at NDC points of the current view and
+    // print what the renderer actually hits (PLAYGATE_PROBE="x,y;x,y").
+    if (process.env.PLAYGATE_PROBE) {
+      const points = process.env.PLAYGATE_PROBE.split(";").map((pair) =>
+        pair.split(",").map(Number));
+      for (const [ndcX, ndcY] of points) {
+        const report = await evaluate(
+          `JSON.stringify(window.__mamSceneProbe ? window.__mamSceneProbe(${ndcX}, ${ndcY}) : "no probe")`,
+        );
+        process.stdout.write(`probe ${ndcX},${ndcY}: ${report}\n`);
+      }
     }
 
     const wantsSunset = onlyFrames.size === 0 ||

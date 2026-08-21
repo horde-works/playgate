@@ -1,21 +1,7 @@
 {
-  "generatedAt": "2026-08-20T19:26:13.800Z",
+  "generatedAt": "2026-08-21T03:45:24.740Z",
   "server": "http://127.0.0.1:3000",
   "frames": [
-    {
-      "id": "hero-01-wall-and-lighthouse",
-      "position": [
-        -40,
-        11.4,
-        30
-      ],
-      "lookAt": [
-        30,
-        46,
-        -58
-      ],
-      "file": "hero-01-wall-and-lighthouse.png"
-    },
     {
       "id": "saddle-02-lighthouse-hill",
       "position": [
@@ -31,18 +17,18 @@
       "file": "saddle-02-lighthouse-hill.png"
     },
     {
-      "id": "hero-01-wall-and-lighthouse-sunset",
+      "id": "coast-04-first-sight",
       "position": [
-        -40,
-        11.4,
-        30
+        -20,
+        4.6,
+        86
       ],
       "lookAt": [
         30,
-        46,
+        58,
         -58
       ],
-      "file": "hero-01-wall-and-lighthouse-sunset.png"
+      "file": "coast-04-first-sight.png"
     },
     {
       "id": "saddle-02-lighthouse-hill-sunset",
@@ -57,20 +43,6 @@
         5
       ],
       "file": "saddle-02-lighthouse-hill-sunset.png"
-    },
-    {
-      "id": "hero-01-wall-and-lighthouse-night",
-      "position": [
-        -40,
-        11.4,
-        30
-      ],
-      "lookAt": [
-        30,
-        46,
-        -58
-      ],
-      "file": "hero-01-wall-and-lighthouse-night.png"
     },
     {
       "id": "saddle-02-lighthouse-hill-night",

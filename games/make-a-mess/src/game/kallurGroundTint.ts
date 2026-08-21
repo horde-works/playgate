@@ -69,6 +69,15 @@ export function kallurGroundTint(
   if (cached) return cached;
 
   const sample = kallurLandscapeSampler.sample(x, z);
+  if (sample.groundKind === "bank") {
+    // The coastal apron: the band paints sand and shingle per-pixel; the
+    // vertex channel keeps only a soft neutral breath so the grass ratio
+    // cannot green the beach.
+    const breath = 1 + valueNoise(x / 17, z / 17, 41) * 0.06;
+    const neutral: readonly [number, number, number] = [breath, breath, breath];
+    tintCache.set(key, neutral);
+    return neutral;
+  }
   const gradient = kallurLandscapeSampler.gradientAt(x, z);
   const center = gradient.elevation;
   const slope = Math.hypot(gradient.x, gradient.z);

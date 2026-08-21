@@ -17,6 +17,17 @@ import type {
  */
 
 /** Irregular shoreline, counter-clockwise. The north edge hugs the wall. */
+/**
+ * The document boundary lies seaward of the LAND edge: the coastal apron
+ * (landscapeDocument.coastApron) owns the strip between them, so the
+ * waterline everywhere cuts fine 0.75 m ground instead of the blocky
+ * sides of deep earth cells. The southern arc (segments 11-13) is the
+ * beach: a wide gentle roll into the water off the strolling flats.
+ */
+export const KALLUR_BEACH_SEGMENTS = { from: 11, to: 13 } as const;
+const KALLUR_BEACH_REACH = 17;
+const KALLUR_CLIFF_REACH = 7;
+
 export const KALLUR_SHORELINE: readonly LandscapePoint2[] = [
   [118, 8],
   [98, -38],
@@ -36,6 +47,24 @@ export const KALLUR_SHORELINE: readonly LandscapePoint2[] = [
   [86, 54],
   [106, 26],
 ];
+
+export const KALLUR_COAST_BOUNDARY: readonly LandscapePoint2[] = (() => {
+  let centroidX = 0;
+  let centroidZ = 0;
+  for (const [x, z] of KALLUR_SHORELINE) {
+    centroidX += x / KALLUR_SHORELINE.length;
+    centroidZ += z / KALLUR_SHORELINE.length;
+  }
+  return KALLUR_SHORELINE.map(([x, z], index) => {
+    const beachVertex = index >= KALLUR_BEACH_SEGMENTS.from &&
+      index <= KALLUR_BEACH_SEGMENTS.to + 1;
+    const reach = beachVertex ? KALLUR_BEACH_REACH : KALLUR_CLIFF_REACH;
+    const dx = x - centroidX;
+    const dz = z - centroidZ;
+    const length = Math.hypot(dx, dz) || 1;
+    return [x + (dx / length) * reach, z + (dz / length) * reach];
+  });
+})();
 
 export interface KallurZone {
   readonly id: string;

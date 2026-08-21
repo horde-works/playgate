@@ -16,6 +16,10 @@ import {
   Vector3,
 } from "three";
 import { environmentState } from "./environmentState";
+import {
+  edgeApproachAmount,
+  setMaterialAtmosphere,
+} from "./materialAtmosphere.ts";
 import { windState } from "./windState";
 
 /**
@@ -24,16 +28,15 @@ import { windState } from "./windState";
  * below ground level (so looking over the rim reads as mystery, not as the
  * end of the geometry).
  *
- * The fog is height-based, not camera-distance based — the scene's linear
- * fog cannot hide the rim from a player standing on it, because up close its
- * density is zero. Instead we render two fog surfaces: a cylinder hugging the
- * island just outside the rim and a wide disc far below. Their shader fades
- * alpha by world height with a noise-warped shoreline, so wisps occasionally
- * roll over the edge. Colors are read from `scene.fog` every frame, which
- * keeps the sea in lockstep with the day/night cycle without duplicating any
- * of DayNightCycle's color math.
+ * The fog is height-based AND approach-based. Scene linear fog cannot hide
+ * the rim from a player standing on it (density zero up close). Two fog
+ * surfaces — cylinder outside the rim, disc far below — fade by height with
+ * a noise-warped shoreline. Their opacity also follows how close the CAMERA
+ * is to the rim: inland the wall is almost gone (no glass ring on the
+ * horizon); near the edge milk thickens around the player so the skin says
+ * stop. Waves on the fog sea stay. Colors track `scene.fog` each frame.
  *
- * Draw calls: skirt 1 + fog cylinder 1 + fog disc 1 (SceneDressing budget).
+ * Draw calls: skirt 1 + fog cylinder 1 + fog disc 1 + creep 1.
  */
 
 interface EdgeProfile {
@@ -355,6 +358,7 @@ const FOG_FRAGMENT = /* glsl */ `
   uniform float uCreepStart;
   uniform float uBoundaryMode;
   uniform float uWaveStrength;
+  uniform float uCamApproach;
   varying vec3 vWorld;
   varying vec2 vLocal;
   varying float vFogEdgeFactor;
@@ -403,6 +407,14 @@ const FOG_FRAGMENT = /* glsl */ `
       ? smoothstep(0.72, 0.98, vFogEdgeFactor)
       : smoothstep(uRimRadius - 3.5, uRimRadius + 1.0, radial);
     alpha = max(alpha, nearRim * body * mix(0.55, 0.9, n));
+
+    // Approach milk: inland the cylinder is almost gone (no glass horizon
+    // ring). Near the rim opacity returns so fog rises around the walker.
+    float approach = clamp(uCamApproach, 0.0, 1.0);
+    float approachGate = mix(0.07, 1.0, pow(approach, 1.35));
+    alpha *= approachGate;
+    // Extra body when standing on the brink — milk, not a distant sheet.
+    alpha = max(alpha, approach * approach * body * mix(0.35, 0.75, n));
 
     // Ridges catch the sun like cloud tops; the glint follows the camera.
     float crest = smoothstep(0.55, 0.9, n);
@@ -601,7 +613,7 @@ export function WorldEdge({
         )
         .replace(
           "#include <fog_fragment>",
-          "#include <fog_fragment>\n  gl_FragColor.rgb = mix(gl_FragColor.rgb, uHazeColor, min(vHaze * 0.5 + 0.12, 0.62));",
+          "#include <fog_fragment>\n  gl_FragColor.rgb = mix(gl_FragColor.rgb, uHazeColor, min(vHaze * 0.22, 0.18));",
         );
     };
     return material;
@@ -628,6 +640,7 @@ export function WorldEdge({
           uCreepStart: { value: 45 },
           uBoundaryMode: { value: 0 },
           uWaveStrength: { value: 0.48 },
+          uCamApproach: { value: 0 },
         },
         vertexShader: FOG_VERTEX,
         fragmentShader: FOG_FRAGMENT,
@@ -730,6 +743,16 @@ export function WorldEdge({
     uniforms.uCreepStart.value = profile.groundRadius - 13;
     uniforms.uBoundaryMode.value = boundary ? 1 : 0;
     uniforms.uWaveStrength.value = profile.waveStrength ?? 0.48;
+    const approach = edgeApproachAmount(
+      frameState.camera.position.x,
+      frameState.camera.position.z,
+      center[0],
+      center[1],
+      profile.groundRadius,
+    );
+    uniforms.uCamApproach.value = approach;
+    // Piece fog shares the same brink milk — air thickens around the walker.
+    setMaterialAtmosphere({ edgeMilk: approach * approach * 0.72 });
     const sceneFog = frameState.scene.fog;
     if (sceneFog instanceof Fog) {
       (uniforms.uFogColor.value as Color).copy(sceneFog.color);
@@ -738,8 +761,9 @@ export function WorldEdge({
       // Дымка юбки живёт тем же цветом, что и туман времени суток.
       skirtHazeColor.value.copy(sceneFog.color);
     }
-    (uniforms.uSunDirection.value as Vector3).copy(environmentState.sunDirection);
-    (uniforms.uSunColor.value as Color).copy(environmentState.sunColor);
+    // Same active key as piece fog — moon glints the rim mist at night.
+    (uniforms.uSunDirection.value as Vector3).copy(environmentState.keyLightDirection);
+    (uniforms.uSunColor.value as Color).copy(environmentState.keyLightColor);
     uniforms.uDay.value = environmentState.dayFactor;
     const night = nightRef.current ?? 0;
     uniforms.uGlow.value = profile.underglow
