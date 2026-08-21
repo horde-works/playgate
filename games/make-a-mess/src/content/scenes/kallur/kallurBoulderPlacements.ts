@@ -4,6 +4,7 @@ import {
 } from "../../objects/kallur/kallurBoulderKitObject.ts";
 import {
   kallurGroundTopAt,
+  kallurLandscapeSampler,
   kallurStones,
 } from "./kallurLandscapeDocument.ts";
 import { kallurVisibleStones } from "./kallurStoneField.ts";
@@ -23,8 +24,14 @@ export interface KallurBoulderPlacement {
   readonly position: readonly [number, number, number];
   readonly rotation: readonly [number, number, number];
   readonly scale: readonly [number, number, number];
-  readonly colour: string;
+  /** instanceColor RATIO against the body colour: strata tones, dark→mid. */
+  readonly tint: readonly [number, number, number];
 }
+
+/** The body colour of every boulder: the escarpment's own basalt family.
+ * Deliberately NOT equal to any wall stratum string, so the render
+ * material owns a private cache entry. */
+export const KALLUR_BOULDER_BODY_COLOUR = "#565b55";
 
 /** Nominal bbox height of each archetype at unit scale, measured once. */
 const archetypeHeights: ReadonlyMap<string, number> = new Map(
@@ -36,17 +43,23 @@ const archetypeHeights: ReadonlyMap<string, number> = new Map(
   }),
 );
 
-/** Deterministic archetype pick from the stone's own numbers. */
+/** Deterministic archetype pick from the stone's own numbers AND the
+ * ground it stands on: a columnar stub cannot balance on a hillside, and
+ * steep ground carries lying forms only (Igor, физика положения). */
 export function kallurBoulderArchetypeFor(stone: {
   readonly size: number;
   readonly tone: number;
-}): string {
+}, slope = 0): string {
   if (stone.size < 0.45) return "loaf";
   const pick = (stone.tone * 13.7) % 1;
+  if (slope > 0.8) return pick < 0.55 ? "rounded" : "slab";
   if (pick < 0.34) return "rounded";
   if (pick < 0.55) return "slab";
   if (pick < 0.7) return "twin";
-  if (pick < 0.85) return stone.size >= 1.4 ? "split" : "column";
+  if (pick < 0.85) {
+    if (slope < 0.35 && stone.size < 1.4) return "column";
+    return "split";
+  }
   return "split";
 }
 
@@ -55,32 +68,48 @@ let cached: readonly KallurBoulderPlacement[] | null = null;
 export function kallurBoulderPlacements(): readonly KallurBoulderPlacement[] {
   if (cached) return cached;
   const placements: KallurBoulderPlacement[] = [];
+  // Strata ratios against the body colour #565b55 (linear-free: ratios of
+  // sRGB components track closely at these small spans).
+  const tintFor = (tone: number): readonly [number, number, number] => {
+    const target = tone > 0.72
+      ? [0x7c, 0x7f, 0x74]
+      : tone > 0.35
+        ? [0x5d, 0x61, 0x5c]
+        : [0x47, 0x4e, 0x48];
+    return [target[0] / 0x56, target[1] / 0x5b, target[2] / 0x55];
+  };
   for (const stone of kallurVisibleStones(kallurStones)) {
     const collarTop = kallurGroundTopAt(stone.x, stone.z);
+    const gradient = kallurLandscapeSampler.gradientAt(stone.x, stone.z);
+    const slope = Math.hypot(gradient.x, gradient.z);
     const crownHeight = stone.size * (1 - stone.embed) * 0.9 + 0.15;
-    const colour = stone.tone > 0.72
-      ? "#b9bdb4"
-      : stone.tone > 0.35
-        ? "#8f958d"
-        : "#79807b";
-    const archetype = kallurBoulderArchetypeFor(stone);
+    const archetype = kallurBoulderArchetypeFor(stone, slope);
     const nominalHeight = archetypeHeights.get(archetype) ?? 1;
-    // The instance spans the same visual budget the box crown owned: its
-    // bottom sits 0.35 sunk into the collar and its top reaches the crown
-    // height, whatever the archetype's own proportions are.
-    const scaleY = (crownHeight + 0.35) / nominalHeight;
+    // Slope physics: a boulder on a hillside GROWS INTO it — the steeper
+    // the ground, the deeper it sinks (only a low back shows), and its
+    // base tilts to the terrain normal so nothing balances on an edge.
+    const slopeSink = Math.min(0.6, slope * 0.4) * stone.size;
+    const scaleY = Math.max(
+      0.2,
+      (crownHeight + 0.35 - slopeSink * 0.5) / nominalHeight,
+    );
     const scaleXZ = stone.size * 0.98;
+    const tiltLimit = 0.45;
+    const tiltX = Math.max(-tiltLimit, Math.min(tiltLimit,
+      Math.atan(gradient.z) + (stone.tone - 0.5) * 0.12));
+    const tiltZ = Math.max(-tiltLimit, Math.min(tiltLimit,
+      -Math.atan(gradient.x) + (((stone.tone * 7) % 1) - 0.5) * 0.12));
+    // Long axis along the contour on slopes: yaw follows the level line.
+    const contourYaw = slope > 0.5
+      ? Math.atan2(gradient.x, -gradient.z)
+      : stone.yaw;
     placements.push({
       id: stone.id,
       archetype,
-      position: [stone.x, collarTop - 0.35, stone.z],
-      rotation: [
-        (stone.tone - 0.5) * 0.24,
-        stone.yaw,
-        (((stone.tone * 7) % 1) - 0.5) * 0.24,
-      ],
+      position: [stone.x, collarTop - 0.35 - slopeSink, stone.z],
+      rotation: [tiltX, contourYaw, tiltZ],
       scale: [scaleXZ, scaleY, scaleXZ * 0.82],
-      colour,
+      tint: tintFor(stone.tone),
     });
   }
   cached = placements;
