@@ -2424,8 +2424,11 @@ if (kallurProfileOn > 0.5) {
   // for dark volcanic shingle and sand (the cascade's beach profile); the
   // wet band darkens toward the waterline. Steep low faces stay with the
   // wall handover below.
+  // Any gently-shelving waterline wears the shingle (Igor, 21.08): the
+  // gate admits everything a walker could descend (slope under ~1.5) and
+  // yields only where true rock plunges (slope past ~2.2, up.y < 0.42).
   float kallurBeach = smoothstep(2.1, 1.4, vMaterialCoordinate.y)
-    * smoothstep(0.55, 0.75, kallurUp.y);
+    * smoothstep(0.42, 0.55, kallurUp.y);
   if (kallurBeach > 0.001) {
     vec3 kallurBeachColor = nscBeachAlbedo(
       kallurPoint, vMaterialCoordinate.y, kallurLit, kallurFootprint);

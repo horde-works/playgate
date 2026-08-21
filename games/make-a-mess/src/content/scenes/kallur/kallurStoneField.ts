@@ -104,17 +104,18 @@ export function generateKallurStones(
 
   const admits = (x: number, z: number, size: number): boolean => {
     if (baseSampler.sample(x, z).groundKind !== "land") return false;
-    // Edge margin: a stone whose CENTRE is the last land sample still
-    // hangs its crown over the coastal apron — require land around it.
-    for (const [mx, mz] of [[1.3, 0], [-1.3, 0], [0, 1.3], [0, -1.3]] as const) {
-      if (baseSampler.sample(x + mx, z + mz).groundKind !== "land") return false;
-    }
     if (pathDistance(x, z) < PATH_CLEARANCE + size / 2) return false;
     if (padDistance(x, z) < 0.5 + size / 2) return false;
     const gradient = gradientAt(x, z);
     // Stones live in turf, not on the cliff; past ~2.2 the tint is stone
     // already and a bedded boulder has nothing to sit in.
     if (gradient > 2.2) return false;
+    // Edge margin LAST — four raw-sampler probes are the expensive test,
+    // so only candidates that survived every cheap gate pay for it (the
+    // early version cost ~180k extra raw samples at world start).
+    for (const [mx, mz] of [[1.3, 0], [-1.3, 0], [0, 1.3], [0, -1.3]] as const) {
+      if (baseSampler.sample(x + mx, z + mz).groundKind !== "land") return false;
+    }
     const key = cellKey(x, z);
     const taken = occupied.get(key) ?? 0;
     if (taken >= (size > 1.2 ? 1 : 2)) return false;

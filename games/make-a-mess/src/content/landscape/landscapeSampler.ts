@@ -281,6 +281,28 @@ export function createLandscapeSampler(document: LandscapeDocument): LandscapeSa
   // Coastal apron: signed distance to the LAND edge and the arc kind of
   // the nearest shoreline segment. Positive distance = seaward of land.
   const apron = document.coastApron;
+  // Deep-inland skip: the 17-segment coast scan on EVERY raw sample was
+  // ~20% of the world bake. A point closer to the shoreline's centroid
+  // than its innermost reach minus the whole coastal band cannot feel the
+  // coast — one hypot instead of the scan.
+  let apronCentroidX = 0;
+  let apronCentroidZ = 0;
+  let apronInnerReach = 0;
+  if (apron) {
+    for (const [px, pz] of apron.shoreline) {
+      apronCentroidX += px / apron.shoreline.length;
+      apronCentroidZ += pz / apron.shoreline.length;
+    }
+    let minimum = Infinity;
+    for (const [px, pz] of apron.shoreline) {
+      minimum = Math.min(
+        minimum,
+        Math.hypot(px - apronCentroidX, pz - apronCentroidZ),
+      );
+    }
+    apronInnerReach = minimum -
+      Math.max(apron.beach.width, apron.cliff.width) - 10;
+  }
   const apronAt = apron
     ? (x: number, z: number) => {
       let best = Infinity;
@@ -328,7 +350,10 @@ export function createLandscapeSampler(document: LandscapeDocument): LandscapeSa
       };
     }
 
-    if (apronAt) {
+    if (
+      apronAt &&
+      Math.hypot(x - apronCentroidX, z - apronCentroidZ) > apronInnerReach
+    ) {
       const coast = apronAt(x, z);
       if (coast.seaward > 0) {
         // Seaward of the land edge: the apron owns the ground. It starts
@@ -413,7 +438,10 @@ export function createLandscapeSampler(document: LandscapeDocument): LandscapeSa
       // lattice spans with a chain of vertical turf shards along the
       // whole shoreline.
       let shoreCalm = 1;
-      if (apronAt) {
+      if (
+        apronAt &&
+        Math.hypot(x - apronCentroidX, z - apronCentroidZ) > apronInnerReach
+      ) {
         const coast = apronAt(x, z);
         const inland = -coast.seaward;
         const fadeT = Math.max(0, Math.min(1, (inland - 1) / 5));
