@@ -25,6 +25,7 @@ import { grandTerminalScene } from "../games/make-a-mess/src/game/grandTerminalS
 import { townScene } from "../games/make-a-mess/src/game/townScene.ts";
 import { nimbusScene } from "../games/make-a-mess/src/game/nimbusScene.ts";
 import { islandAirportScene } from "../games/make-a-mess/src/game/islandAirportScene.ts";
+import { kallurScene } from "../games/make-a-mess/src/game/kallurScene.ts";
 import { combatHexacopterRangeScene } from "../games/make-a-mess/src/game/combatHexacopterRangeScene.ts";
 import {
   advanceVehicleRouteProgress,
@@ -622,6 +623,8 @@ test("every authored air vehicle can construct a moving route intercept", () => 
     // Островной аэропорт: DC-3 попал в общий реестр, значит и его мир обязан
     // участвовать в перекрёстных проверках — по тому же правилу, что и полигон.
     ...islandAirportScene.breakablePieces,
+    // Каллур: дирижабль острова отдыха — в реестре, его мир участвует тоже.
+    ...kallurScene.breakablePieces,
   ];
   for (const vehicle of airVehicles) {
     const kind =

@@ -639,24 +639,38 @@ export function vehicleFailureEnvelopeFor(
   passport: {
     /** Паспортный предел наклона винтокрылой машины, рад. */
     readonly maximumTilt?: number;
+    /**
+     * Паспортный пол безопасной высоты, метры ОТНОСИТЕЛЬНО СТОЯНКИ.
+     *
+     * Высота тела машины считается смещением от её причальной позы, и
+     * общий порог −20 молча предполагает причал у поверхности. Машина,
+     * чей причал стоит на горе, штатно уходит на десятки метров НИЖЕ
+     * стоянки — её пол задаёт рельеф мира: до уровня поверхности и чуть
+     * ниже (вердикт Igor, 21.08.2026, Каллур).
+     */
+    readonly minimumRelativeAltitude?: number;
   },
   base: VehicleFailureEnvelope = DEFAULT_VEHICLE_FAILURE_ENVELOPE,
 ): VehicleFailureEnvelope {
+  const floor = passport.minimumRelativeAltitude;
+  const floored = floor === undefined
+    ? base
+    : { ...base, minimumRelativeAltitude: floor };
   const tilt = passport.maximumTilt;
   if (!tilt || tilt <= 0) {
-    return base;
+    return floored;
   }
   // Треть сверх разрешённого: меньше — и обычный энергичный вираж считается
   // аварией, больше — и настоящее опрокидывание замечается слишком поздно.
   const ATTITUDE_MARGIN = 1.33;
   const limit = Math.min(Math.PI * 0.45, tilt * ATTITUDE_MARGIN);
   return {
-    ...base,
-    maximumPitch: Math.max(base.maximumPitch, limit),
+    ...floored,
+    maximumPitch: Math.max(floored.maximumPitch, limit),
     // Крен у винтокрылой машины — тот же наклон, только вокруг другой оси, и
     // в координированном вираже он ровно паспортный. Держать его строже
     // тангажа значит объявлять аварией штатный вираж.
-    maximumRoll: Math.max(base.maximumRoll, limit),
+    maximumRoll: Math.max(floored.maximumRoll, limit),
   };
 }
 

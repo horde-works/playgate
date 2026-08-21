@@ -36,6 +36,7 @@ import { grandTerminalScene } from "../games/make-a-mess/src/game/grandTerminalS
 import { townScene } from "../games/make-a-mess/src/game/townScene.ts";
 import { vikingVillageScene } from "../games/make-a-mess/src/game/vikingVillageScene.ts";
 import { basaltStrongholdScene } from "../games/make-a-mess/src/game/basaltStrongholdScene.ts";
+import { kallurScene } from "../games/make-a-mess/src/game/kallurScene.ts";
 
 const GRAVITY = 9.81;
 const densityOf = (material) => structuralMaterialProfiles[material].density;
@@ -44,6 +45,7 @@ const allPieces = [
   ...townScene.breakablePieces,
   ...vikingVillageScene.breakablePieces,
   ...basaltStrongholdScene.breakablePieces,
+  ...kallurScene.breakablePieces,
 ];
 const shipPieces = (vehicle) =>
   allPieces.filter((piece) => piece.clusterId === vehicle.clusterId);
@@ -404,7 +406,7 @@ test("a lost propulsor is physically trimmed out by moving real ballast", () => 
       `${vehicle.id}: ${degrees(withTrim.tilt).toFixed(1)}° is outside its own corridor`,
     );
   }
-  assert.equal(report.length, 4, report.join("; "));
+  assert.equal(report.length, 5, report.join("; "));
 });
 
 test("trim authority is bounded by geometry, and one carrier runs out", () => {

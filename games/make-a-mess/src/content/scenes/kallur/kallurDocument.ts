@@ -29,6 +29,11 @@ import {
 } from "./kallurLighthouse.ts";
 import { generateKallurWallStrata } from "./kallurWallStrata.ts";
 import { kallurLandscapeSampler } from "./kallurLandscapeDocument.ts";
+import { createKallurAirship } from "../../../game/kallurAirship.ts";
+import {
+  createKallurAirshipBerth,
+  KALLUR_AIRSHIP_PLACEMENT,
+} from "./kallurAirshipPlacement.ts";
 
 /**
  * Kallur — the Faroe rest island (docs/kallur-brief.md).
@@ -240,6 +245,29 @@ for (const layer of generateKallurWallStrata(kallurLandscapeSampler)) {
 const lighthouse = group("lighthouse", "Kallur lighthouse on its pad", "stone");
 createKallurLighthouse((object) => {
   lighthouse.objects.push(object);
+});
+
+// The airship berth: the summit plank platform on its levelled crown
+// (Igor: a simple platform with wooden decking, not a mooring mast).
+const airshipBerth = group(
+  "airship-berth",
+  "Summit landing platform",
+  "wood",
+);
+createKallurAirshipBerth((object) => {
+  airshipBerth.objects.push(object);
+});
+
+// The VESSEL: declared apart from the world in kallurAirship.ts, seated
+// here as one linked cluster — cluster id "kallur:airship" by group name.
+const airship = group(
+  "airship",
+  "Kallur airship on the summit platform",
+  "cloth",
+  "linked",
+);
+createKallurAirship(KALLUR_AIRSHIP_PLACEMENT, (object) => {
+  airship.objects.push(object);
 });
 
 // The lighthouse SEARCHLIGHT (Igor, 21.08): from dusk the lantern throws a

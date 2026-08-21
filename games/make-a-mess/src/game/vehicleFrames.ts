@@ -82,6 +82,17 @@ import {
 import { SR6_ROTOR_STATIONS } from "../content/objects/vehicles/sr6SkatObject.ts";
 import { combatHexacopterRangeFrame } from "./combatHexacopter.ts";
 import { ductHexacopterRangeFrame } from "./rangeDuctHexacopter.ts";
+import {
+  kallurAirshipNose,
+  kallurAirshipPoint,
+  kallurAirshipProximitySensors,
+  KALLUR_AIRSHIP_LIFT_LOCAL,
+} from "./kallurAirship.ts";
+import {
+  KALLUR_AIRSHIP_AXIS_Y,
+  KALLUR_AIRSHIP_LENGTH,
+} from "../content/objects/kallur/kallurAirshipObject.ts";
+import { KALLUR_AIRSHIP_PLACEMENT } from "../content/scenes/kallur/kallurAirshipPlacement.ts";
 
 // Kept as re-exports for callers while the authored routes themselves live in
 // their own artifact module.
@@ -833,6 +844,49 @@ export const vehicleFrames: readonly VehicleFrameDefinition[] = [
     liftCentre: SR6_SKAT_LIFT_CENTRE,
     envelopeMatch: ":blade:",
     proximitySensors: sr6SkatProximitySensors(),
+  },
+  {
+    id: "kallur-airship",
+    clusterId: "kallur:airship",
+    telemetryLabel: "KALLUR AIRSHIP 01",
+    independentMemberMatches: [":blade:", ":trim:"],
+    // Origin = lift centre = the hull-of-revolution volume centre,
+    // integrated from the same profile the accepted loft is built from.
+    origin: kallurAirshipPoint(KALLUR_AIRSHIP_PLACEMENT, KALLUR_AIRSHIP_LIFT_LOCAL),
+    nose: kallurAirshipNose(KALLUR_AIRSHIP_PLACEMENT),
+    // The nose tip; this ship berths on a platform, not a mast, so the
+    // point is a reference fitting rather than a capture cone.
+    mooringPoint: kallurAirshipPoint(KALLUR_AIRSHIP_PLACEMENT, [
+      0,
+      KALLUR_AIRSHIP_AXIS_Y,
+      KALLUR_AIRSHIP_LENGTH / 2,
+    ]),
+    liftCentre: kallurAirshipPoint(KALLUR_AIRSHIP_PLACEMENT, KALLUR_AIRSHIP_LIFT_LOCAL),
+    envelopeMatch: ":hull-skin:",
+    proximitySensors: kallurAirshipProximitySensors(KALLUR_AIRSHIP_PLACEMENT),
+    trimRails: keelTrimRails(
+      kallurAirshipNose(KALLUR_AIRSHIP_PLACEMENT),
+      {
+        carPieceId: "kallur:airship:trim:pitch:car:piece",
+        zero: kallurAirshipPoint(KALLUR_AIRSHIP_PLACEMENT, [
+          0,
+          KALLUR_AIRSHIP_AXIS_Y - 1.05,
+          0.7,
+        ]),
+        travel: 5,
+        speed: 0.3,
+      },
+      {
+        carPieceId: "kallur:airship:trim:roll:car:piece",
+        zero: kallurAirshipPoint(KALLUR_AIRSHIP_PLACEMENT, [
+          0,
+          KALLUR_AIRSHIP_AXIS_Y - 0.62,
+          0.7,
+        ]),
+        travel: 1.7,
+        speed: 0.24,
+      },
+    ),
   },
   combatHexacopterRangeFrame,
   ductHexacopterRangeFrame,

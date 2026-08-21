@@ -198,6 +198,16 @@ export const KALLUR_PADS: readonly KallurPad[] = [
     elevation: 2.9,
     shoulder: 2.6,
   },
+  {
+    // The summit landing crown: the airship platform's levelled ground.
+    // Pad local Z runs along the ship's nose axis (yaw matches placement).
+    id: "airship-berth",
+    center: [24, -73],
+    yaw: -1.328,
+    halfExtents: [5.2, 10.6],
+    elevation: 88.4,
+    shoulder: 3,
+  },
 ];
 
 /** Hero-view anchor: where the reference-01 camera roughly stands. */

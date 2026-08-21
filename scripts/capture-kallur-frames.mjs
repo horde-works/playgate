@@ -74,6 +74,13 @@ const FRAMES = [
     position: [-12, 6.2, 94],
     lookAt: [-24, 2.8, 82],
   },
+  {
+    // The airship on its summit platform: livery, fusion, skids on the
+    // planks, and the gas heart staying INSIDE the envelope.
+    id: "airship-10-berth",
+    position: [8, 94.5, -58],
+    lookAt: [26, 92, -74],
+  },
 ];
 
 /** Frames repeated under the low sun: the fur is judged by grazing light. */
