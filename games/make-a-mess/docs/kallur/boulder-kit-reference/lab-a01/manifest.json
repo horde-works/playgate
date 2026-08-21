@@ -1,0 +1,32 @@
+{
+  "modelId": "kallur-boulder-kit",
+  "revision": "boulder-kit-a02-2026-08-21",
+  "modelHash": "8345ba3ed7d0",
+  "generatedAt": "2026-08-21T05:33:49.890Z",
+  "views": [
+    {
+      "id": "front-row",
+      "label": "All six, front row",
+      "projection": "orthographic",
+      "file": "front-row.png"
+    },
+    {
+      "id": "three-quarter-row",
+      "label": "All six, three-quarter",
+      "projection": "perspective",
+      "file": "three-quarter-row.png"
+    },
+    {
+      "id": "top-row",
+      "label": "All six from above: plan silhouettes",
+      "projection": "orthographic",
+      "file": "top-row.png"
+    },
+    {
+      "id": "profile-row",
+      "label": "Profile row: bottoms sit flat on the datum",
+      "projection": "orthographic",
+      "file": "profile-row.png"
+    }
+  ]
+}
