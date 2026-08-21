@@ -240,6 +240,7 @@ const WORLD_WEATHER_ENABLED = true;
 import { environmentState } from "./environmentState";
 import { SceneDressing } from "./SceneDressing";
 import { WorldEdge } from "./WorldEdge";
+import { KallurSea } from "./KallurSea";
 import { HingedDoorSystem, type HingedEntryApproach } from "./HingedDoorSystem";
 import {
   entryInteractionActions,
@@ -10509,6 +10510,7 @@ function OpenWorldScene({
         snapVersion={timeOfDaySnapVersion}
         cinematic={cinematic}
         weather={WORLD_WEATHER_ENABLED ? worldWeather(scene.id) : CLEAR_SKY}
+        sceneId={scene.id}
       />
       <SceneMutableObjectSystem
         definitions={mutableObjectDefinitions}
@@ -10569,6 +10571,7 @@ function OpenWorldScene({
           nightRef={nightRef}
         />
       ) : null}
+      {scene.id === "kallur" ? <KallurSea /> : null}
       {scene.id === "viking-village" && scene.worldRadius ? (
         <>
           <GrassField
