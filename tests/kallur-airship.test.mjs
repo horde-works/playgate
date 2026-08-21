@@ -5,8 +5,10 @@ import {
   kallurAirshipObject,
   kallurAirshipParts,
   KALLUR_AIRSHIP_AXIS_Y,
+  KALLUR_AIRSHIP_FLOOR_TOP,
   KALLUR_AIRSHIP_LENGTH,
   KALLUR_AIRSHIP_RADIUS,
+  KALLUR_AIRSHIP_SCALE,
 } from "../games/make-a-mess/src/content/objects/kallur/kallurAirshipObject.ts";
 
 const meshParts = kallurAirshipParts.filter((part) => part.kind === "mesh");
@@ -74,7 +76,8 @@ test("airship: slender hull envelope recovered from the loft", () => {
   assert.ok(Math.abs((bounds.max[1] + bounds.min[1]) / 2 - KALLUR_AIRSHIP_AXIS_Y) < 0.03,
     "hull is centred on the axis height");
   const volume = signedVolume(hull);
-  assert.ok(volume > 14 && volume < 30,
+  const scaledRange = [14 * KALLUR_AIRSHIP_SCALE ** 3, 30 * KALLUR_AIRSHIP_SCALE ** 3];
+  assert.ok(volume > scaledRange[0] && volume < scaledRange[1],
     `hull must close outward: signed volume ${volume.toFixed(1)}`);
 });
 
@@ -97,11 +100,12 @@ test("airship: the pod is MERGED - wall tops bury into the hull belly", () => {
   // Recover per-z wall tops from the emitted geometry: at each sampled z
   // in the cabin range, the highest pod/canopy vertex near that z must
   // reach past the hull belly at its own x.
-  for (const z of [2.2, 1.4, 0.9, 0.3, -0.5, -1.3, -2.2, -3.1]) {
+  for (const author of [2.2, 1.4, 0.9, 0.3, -0.5, -1.3, -2.2, -3.1]) {
+    const z = author * KALLUR_AIRSHIP_SCALE;
     let best = null;
     for (const source of [pod, canopy]) {
       for (const vertex of source.vertices) {
-        if (Math.abs(vertex[2] - z) > 0.12) continue;
+        if (Math.abs(vertex[2] - z) > 0.12 * KALLUR_AIRSHIP_SCALE) continue;
         if (!best || vertex[1] > best[1]) best = vertex;
       }
     }
@@ -119,16 +123,17 @@ test("airship: the doorway is a REAL void with the sliding door outside", () => 
   for (const [a, b, c] of pod.triangles) {
     const centroid = [0, 1, 2].map((axis) =>
       (pod.vertices[a][axis] + pod.vertices[b][axis] + pod.vertices[c][axis]) / 3);
-    const inDoorway = Math.abs(centroid[0]) > 0.55 &&
-      centroid[2] > -1.2 && centroid[2] < -0.6 &&
-      centroid[1] > 1.12 && centroid[1] < 1.82;
+    const S = KALLUR_AIRSHIP_SCALE;
+    const inDoorway = Math.abs(centroid[0]) > 0.55 * S &&
+      centroid[2] > -1.2 * S && centroid[2] < -0.6 * S &&
+      centroid[1] > 1.12 * S && centroid[1] < 1.82 * S;
     assert.ok(!inDoorway,
       `pod facet walls over the doorway at ${centroid.map((v) => v.toFixed(2))}`);
   }
   const doors = kallurAirshipParts.filter((part) => part.id.startsWith("door-"));
   assert.equal(doors.length, 6, "two sliding doors of three parts each");
   for (const door of doors) {
-    assert.ok(Math.abs(door.center[0]) > 0.68,
+    assert.ok(Math.abs(door.center[0]) > 0.68 * KALLUR_AIRSHIP_SCALE,
       `${door.id} must ride outside the wall plane`);
   }
 });
@@ -136,7 +141,7 @@ test("airship: the doorway is a REAL void with the sliding door outside", () => 
 test("airship: no main rotor above the cabin (rejection condition)", () => {
   for (const part of kallurAirshipParts) {
     if (!part.id.startsWith("prop-")) continue;
-    assert.ok(Math.abs(part.center[0]) > 1.2,
+    assert.ok(Math.abs(part.center[0]) > 1.2 * KALLUR_AIRSHIP_SCALE,
       `${part.id} sits on the centreline like a main rotor`);
   }
 });
@@ -152,8 +157,10 @@ test("airship: glazing lives only in the glazing group, wrap canopy exists", () 
   }
   const canopy = meshParts.find((part) => part.id === "gondola-canopy");
   const bounds = meshBounds(canopy);
-  assert.ok(bounds.max[2] > 2.0, "the wrap canopy must reach the cockpit nose");
-  assert.ok(bounds.min[2] < 0.6, "the side window band must be glazed");
+  assert.ok(bounds.max[2] > 2.0 * KALLUR_AIRSHIP_SCALE,
+    "the wrap canopy must reach the cockpit nose");
+  assert.ok(bounds.min[2] < 0.6 * KALLUR_AIRSHIP_SCALE,
+    "the side window band must be glazed");
   assert.ok(canopy.triangles.length >= 20, "canopy is a wrap, not a porthole");
 });
 
@@ -175,5 +182,15 @@ test("airship: fins root inside the hull and required views exist", () => {
     "high-three-quarter", "gondola-detail", "gondola-cutaway",
   ]) {
     assert.ok(viewIds.has(required), `missing view ${required}`);
+  }
+});
+
+test("airship: a 1.62 m villager stands in the cabin with margin", () => {
+  // Recovered, not restated: ceiling = the hull belly over the cabin
+  // centreline, floor = the exported world-scale floor top.
+  for (const z of [1.0, 0.4, -0.4]) {
+    const headroom = kallurAirshipBellyY(0, z) - KALLUR_AIRSHIP_FLOOR_TOP;
+    assert.ok(headroom >= 1.62 + 0.1,
+      `headroom ${headroom.toFixed(2)} at z=${z} cannot take a standing villager`);
   }
 });

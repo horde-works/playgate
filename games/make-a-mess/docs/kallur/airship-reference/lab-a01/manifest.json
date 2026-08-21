@@ -1,8 +1,8 @@
 {
   "modelId": "kallur-airship",
-  "revision": "airship-a04-2026-08-21",
-  "modelHash": "809dfe964cf4",
-  "generatedAt": "2026-08-21T10:22:35.331Z",
+  "revision": "airship-a05-2026-08-21",
+  "modelHash": "10ee5de1962d",
+  "generatedAt": "2026-08-21T10:49:57.734Z",
   "views": [
     {
       "id": "front",

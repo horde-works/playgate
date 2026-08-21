@@ -22,39 +22,57 @@ import type {
 
 const TAU = Math.PI * 2;
 
-export const KALLUR_AIRSHIP_LENGTH = 11.2;
-export const KALLUR_AIRSHIP_RADIUS = 1.1;
-export const KALLUR_AIRSHIP_AXIS_Y = 2.95;
+// Authoring space: the hull is drawn at the a04 accepted proportions and
+// the WHOLE ship is scaled uniformly at emission - Igor's verdict
+// (21.08): keep the lines, grow the ship so a 1.62 m villager stands in
+// the cabin with margin. 1.45 turns the 1.21 m centreline headroom into
+// 1.76 m (1.87 m half a metre off-axis).
+export const KALLUR_AIRSHIP_SCALE = 1.45;
+const AUTHOR_LENGTH = 11.2;
+const AUTHOR_RADIUS = 1.1;
+const AUTHOR_AXIS_Y = 2.95;
+export const KALLUR_AIRSHIP_LENGTH = AUTHOR_LENGTH * KALLUR_AIRSHIP_SCALE;
+export const KALLUR_AIRSHIP_RADIUS = AUTHOR_RADIUS * KALLUR_AIRSHIP_SCALE;
+export const KALLUR_AIRSHIP_AXIS_Y = AUTHOR_AXIS_Y * KALLUR_AIRSHIP_SCALE;
 
-const HALF_LENGTH = KALLUR_AIRSHIP_LENGTH / 2;
-const NOSE_LENGTH = KALLUR_AIRSHIP_LENGTH * 0.28;
+const HALF_LENGTH = AUTHOR_LENGTH / 2;
+const NOSE_LENGTH = AUTHOR_LENGTH * 0.28;
 const WEDGES = 28;
 
 /** Hull radius as a function of distance from the nose — the one owner of
  * the loft; fins, pod boom and pylons read it too. Slender thirties
  * proportions: elliptic nose sharpened past the pure sqrt, midship at
  * 28%, long power-law tail cone. */
-export function kallurAirshipHullRadius(a: number): number {
-  if (a <= 0 || a >= KALLUR_AIRSHIP_LENGTH) return 0;
+function authorHullRadius(a: number): number {
+  if (a <= 0 || a >= AUTHOR_LENGTH) return 0;
   if (a <= NOSE_LENGTH) {
     const t = a / NOSE_LENGTH;
-    return KALLUR_AIRSHIP_RADIUS *
+    return AUTHOR_RADIUS *
       Math.pow(Math.max(0, 1 - (1 - t) * (1 - t)), 0.62);
   }
-  const t = (a - NOSE_LENGTH) / (KALLUR_AIRSHIP_LENGTH - NOSE_LENGTH);
-  return KALLUR_AIRSHIP_RADIUS * Math.pow(Math.max(0, 1 - t * t), 0.62);
+  const t = (a - NOSE_LENGTH) / (AUTHOR_LENGTH - NOSE_LENGTH);
+  return AUTHOR_RADIUS * Math.pow(Math.max(0, 1 - t * t), 0.62);
 }
 
+/** World-scale hull radius by world-scale distance from the nose. */
+export const kallurAirshipHullRadius = (a: number): number =>
+  authorHullRadius(a / KALLUR_AIRSHIP_SCALE) * KALLUR_AIRSHIP_SCALE;
+
 const radiusAtZ = (z: number): number =>
-  kallurAirshipHullRadius(HALF_LENGTH - z);
+  authorHullRadius(HALF_LENGTH - z);
 
 /** Hull belly height at (x, z) — where the pod must bury its wall tops. */
-export const kallurAirshipBellyY = (x: number, z: number): number => {
+const authorBellyY = (x: number, z: number): number => {
   const radius = radiusAtZ(z);
   const reach = radius * radius - x * x;
-  if (reach <= 0) return KALLUR_AIRSHIP_AXIS_Y;
-  return KALLUR_AIRSHIP_AXIS_Y - Math.sqrt(reach);
+  if (reach <= 0) return AUTHOR_AXIS_Y;
+  return AUTHOR_AXIS_Y - Math.sqrt(reach);
 };
+
+/** World-scale hull belly height at world-scale (x, z). */
+export const kallurAirshipBellyY = (x: number, z: number): number =>
+  authorBellyY(x / KALLUR_AIRSHIP_SCALE, z / KALLUR_AIRSHIP_SCALE) *
+    KALLUR_AIRSHIP_SCALE;
 
 const point = (x: number, y: number, z: number): ObjectPoint => [x, y, z];
 
@@ -116,20 +134,20 @@ const HULL_STATIONS = [
 {
   const vertices: ObjectPoint[] = [];
   const gridIndex = (station: number, wedge: number): number => {
-    const radius = kallurAirshipHullRadius(HULL_STATIONS[station]);
+    const radius = authorHullRadius(HULL_STATIONS[station]);
     if (radius === 0) return station === 0 ? 0 : 1;
     return 2 + (station - 1) * WEDGES + (wedge % WEDGES);
   };
-  vertices.push(point(0, KALLUR_AIRSHIP_AXIS_Y, HALF_LENGTH));
-  vertices.push(point(0, KALLUR_AIRSHIP_AXIS_Y, -HALF_LENGTH));
+  vertices.push(point(0, AUTHOR_AXIS_Y, HALF_LENGTH));
+  vertices.push(point(0, AUTHOR_AXIS_Y, -HALF_LENGTH));
   for (let station = 1; station < HULL_STATIONS.length - 1; station += 1) {
     const a = HULL_STATIONS[station];
-    const radius = kallurAirshipHullRadius(a);
+    const radius = authorHullRadius(a);
     for (let wedge = 0; wedge < WEDGES; wedge += 1) {
       const phi = (wedge / WEDGES) * TAU;
       vertices.push(point(
         radius * Math.sin(phi),
-        KALLUR_AIRSHIP_AXIS_Y + radius * Math.cos(phi),
+        AUTHOR_AXIS_Y + radius * Math.cos(phi),
         HALF_LENGTH - a,
       ));
     }
@@ -164,10 +182,10 @@ const HULL_STATIONS = [
   } => {
     const vertices: ObjectPoint[] = [];
     const at = (a: number, phi: number, lift: number): ObjectPoint => {
-      const radius = kallurAirshipHullRadius(a) + lift;
+      const radius = authorHullRadius(a) + lift;
       return point(
         radius * Math.sin(phi),
-        KALLUR_AIRSHIP_AXIS_Y + radius * Math.cos(phi),
+        AUTHOR_AXIS_Y + radius * Math.cos(phi),
         HALF_LENGTH - a,
       );
     };
@@ -252,7 +270,7 @@ const finPrism = (
       outline,
       (z, span) => point(
         fin.dir[0] * span,
-        KALLUR_AIRSHIP_AXIS_Y + fin.dir[1] * span,
+        AUTHOR_AXIS_Y + fin.dir[1] * span,
         z,
       ),
       fin.across,
@@ -322,7 +340,7 @@ const POD_TIP = point(0, 1.4, 2.71);
 
 const wallTopAt = (station: PodStation, side: 1 | -1): number =>
   NOSE_ROOF.get(station.z)?.base ??
-    kallurAirshipBellyY(side * station.w, station.z) + 0.12;
+    authorBellyY(side * station.w, station.z) + 0.12;
 
 /** Cockpit glazing reaches from this height up; below is the red chin.
  * Applies to the nose loft only — mid-cabin shells stay red. */
@@ -399,8 +417,8 @@ const DOORWAY_HEAD = 1.9;
     const roofStations = POD_STATIONS.filter((s) => NOSE_ROOF.has(s.z));
     // Merge ring: buried just inside the hull at the merge station.
     const mergeRoof = {
-      base: kallurAirshipBellyY(mergeStation!.w, 2.2) + 0.12,
-      crown: kallurAirshipBellyY(0, 2.2) + 0.24,
+      base: authorBellyY(mergeStation!.w, 2.2) + 0.12,
+      crown: authorBellyY(0, 2.2) + 0.24,
     };
     const rings: { station: PodStation; roof: { base: number; crown: number } }[] = [
       { station: mergeStation!, roof: mergeRoof },
@@ -533,7 +551,7 @@ for (const side of [1, -1] as const) {
 for (const side of [1, -1] as const) {
   const tag = side > 0 ? "l" : "r";
   const podX = side * 1.48;
-  const podY = KALLUR_AIRSHIP_AXIS_Y - 0.25;
+  const podY = AUTHOR_AXIS_Y - 0.25;
   addCylinder(`pod-${tag}`, "airship-motors", "paint-light",
     point(podX, podY, -0.15), point(podX, podY, -1.05), 0.19);
   addCylinder(`pod-nose-${tag}`, "airship-motors", "metal",
@@ -542,10 +560,10 @@ for (const side of [1, -1] as const) {
     point(podX, podY, 0.07), point(0.05, 1.12, 0.09),
     point(0, 0, side * 0.35));
   addBeam(`pylon-front-${tag}`, "airship-motors", "metal",
-    point(side * 0.88, KALLUR_AIRSHIP_AXIS_Y + 0.15, -0.3),
+    point(side * 0.88, AUTHOR_AXIS_Y + 0.15, -0.3),
     point(podX, podY + 0.1, -0.4), 0.06, 0.06);
   addBeam(`pylon-rear-${tag}`, "airship-motors", "metal",
-    point(side * 0.88, KALLUR_AIRSHIP_AXIS_Y + 0.15, -0.85),
+    point(side * 0.88, AUTHOR_AXIS_Y + 0.15, -0.85),
     point(podX, podY + 0.1, -0.8), 0.06, 0.06);
 }
 
@@ -565,11 +583,35 @@ for (const side of [1, -1] as const) {
     point(x, SKID_RADIUS * 2, -0.8), 0.055, 0.055);
 }
 
-export const kallurAirshipParts: readonly ObjectLabPart[] = parts;
+// Uniform world scale at emission: proportions untouched by contract.
+const S = KALLUR_AIRSHIP_SCALE;
+const scalePoint = (p: ObjectPoint): ObjectPoint => [p[0] * S, p[1] * S, p[2] * S];
+const scaledParts: ObjectLabPart[] = parts.map((part) => {
+  if (part.kind === "box") {
+    return { ...part, center: scalePoint(part.center), size: scalePoint(part.size) };
+  }
+  if (part.kind === "beam") {
+    return {
+      ...part, from: scalePoint(part.from), to: scalePoint(part.to),
+      width: part.width * S, depth: part.depth * S,
+    };
+  }
+  if (part.kind === "cylinder") {
+    return {
+      ...part, from: scalePoint(part.from), to: scalePoint(part.to),
+      radius: part.radius * S,
+    };
+  }
+  return { ...part, vertices: part.vertices.map(scalePoint) };
+});
+
+export const KALLUR_AIRSHIP_FLOOR_TOP = (FLOOR_Y + 0.12) * S;
+
+export const kallurAirshipParts: readonly ObjectLabPart[] = scaledParts;
 
 export const kallurAirshipObject: ObjectLabModel = {
   id: "kallur-airship",
-  revision: "airship-a04-2026-08-21",
+  revision: "airship-a05-2026-08-21",
   title: "Kallur airship",
   units: "metres",
   coordinates: { up: "+Y", front: "+Z", origin: "ground-centre" },
@@ -582,89 +624,90 @@ export const kallurAirshipObject: ObjectLabModel = {
     hullLength: KALLUR_AIRSHIP_LENGTH,
     hullDiameter: KALLUR_AIRSHIP_RADIUS * 2,
     axisHeight: KALLUR_AIRSHIP_AXIS_Y,
-    cabinFloorY: FLOOR_Y,
-    finSpan: 1.45,
+    cabinFloorY: FLOOR_Y * S,
+    standingHeadroom: (authorBellyY(0, 0.3) - FLOOR_Y - 0.12) * S,
+    finSpan: 1.45 * S,
   },
   labMetrics: [
     { label: "Hull length", value: KALLUR_AIRSHIP_LENGTH, unit: "m", decimals: 1 },
     { label: "Hull diameter", value: KALLUR_AIRSHIP_RADIUS * 2, unit: "m", decimals: 2 },
-    { label: "Fineness L/D", value: KALLUR_AIRSHIP_LENGTH / (KALLUR_AIRSHIP_RADIUS * 2), decimals: 1 },
-    { label: "Parts", value: parts.length, decimals: 0 },
+    { label: "Cabin headroom", value: (authorBellyY(0, 0.3) - FLOOR_Y - 0.12) * S, unit: "m", decimals: 2 },
+    { label: "Parts", value: scaledParts.length, decimals: 0 },
   ],
   anchors: {
     "skid-plane": point(0, 0, 0),
     "cabin-door-l": point(0.71, 1.2, (DOORWAY_Z[0] + DOORWAY_Z[1]) / 2),
-    "nose-tip": point(0, KALLUR_AIRSHIP_AXIS_Y, HALF_LENGTH),
+    "nose-tip": point(0, AUTHOR_AXIS_Y, HALF_LENGTH),
   },
   motionConstraints: {
     frozen: "propellers, rudders",
     excluded: "flight, wind, docking",
   },
-  labEnvironment: { floorRadius: 14, gridSize: 20, gridDivisions: 20 },
-  parts,
+  labEnvironment: { floorRadius: 20, gridSize: 28, gridDivisions: 28 },
+  parts: scaledParts,
   views: [
     {
       id: "front",
       label: "Front: chin glazing, skids, pod symmetry",
       projection: "orthographic",
-      position: point(0, 2.4, 18),
-      target: point(0, 2.4, 0),
-      orthoHeight: 6,
+      position: scalePoint(point(0, 2.4, 18)),
+      target: scalePoint(point(0, 2.4, 0)),
+      orthoHeight: 6.0 * S,
     },
     {
       id: "profile",
       label: "Profile: hull program, cheatline, merged pod",
       projection: "orthographic",
-      position: point(18, 2.3, 0),
-      target: point(0, 2.3, 0),
-      orthoHeight: 12.2,
+      position: scalePoint(point(18, 2.3, 0)),
+      target: scalePoint(point(0, 2.3, 0)),
+      orthoHeight: 12.2 * S,
     },
     {
       id: "rear",
       label: "Rear: cruciform fins",
       projection: "orthographic",
-      position: point(0, 2.7, -18),
-      target: point(0, 2.7, 0),
-      orthoHeight: 6.6,
+      position: scalePoint(point(0, 2.7, -18)),
+      target: scalePoint(point(0, 2.7, 0)),
+      orthoHeight: 6.6 * S,
     },
     {
       id: "three-quarter",
       label: "Three-quarter: mass, fusion, livery",
       projection: "perspective",
-      position: point(9.5, 4.2, 10.5),
-      target: point(0, 2.3, 0),
+      position: scalePoint(point(9.5, 4.2, 10.5)),
+      target: scalePoint(point(0, 2.3, 0)),
       fov: 32,
     },
     {
       id: "tail-three-quarter",
       label: "Tail three-quarter: fins and boom run-out",
       projection: "perspective",
-      position: point(-8.5, 4.4, -9.5),
-      target: point(0, 2.6, -1.5),
+      position: scalePoint(point(-8.5, 4.4, -9.5)),
+      target: scalePoint(point(0, 2.6, -1.5)),
       fov: 32,
     },
     {
       id: "high-three-quarter",
       label: "High three-quarter: no rotor, white back, red lane",
       projection: "perspective",
-      position: point(6.5, 9.5, 8),
-      target: point(0, 2.6, 0),
+      position: scalePoint(point(6.5, 9.5, 8)),
+      target: scalePoint(point(0, 2.6, 0)),
       fov: 32,
     },
     {
       id: "gondola-detail",
       label: "Gondola: chin loft, wrap canopy, door, real openings",
       projection: "perspective",
-      position: point(4.4, 1.7, 4.6),
-      target: point(0, 1.35, 0.5),
+      position: scalePoint(point(4.4, 1.7, 4.6)),
+      target: scalePoint(point(0, 1.35, 0.5)),
       fov: 30,
     },
     {
       id: "gondola-cutaway",
       label: "Gondola cutaway: glazing hidden, openings are voids",
       projection: "perspective",
-      position: point(4.4, 1.7, 4.6),
-      target: point(0, 1.35, 0.5),
+      position: scalePoint(point(4.4, 1.7, 4.6)),
+      target: scalePoint(point(0, 1.35, 0.5)),
       fov: 30,
       hiddenGroups: ["airship-glazing"],
     },
