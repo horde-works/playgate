@@ -38,36 +38,90 @@ import { getPieceMaterial } from "./materialTextures.ts";
 
 let geometryCache: Map<string, BufferGeometry> | null = null;
 
-/** Weld the facet soup into shared vertices: polygonal silhouette, smooth shading. */
+/**
+ * Crease-aware shading: positions weld so curvature reads smooth, but a
+ * corner averages only the neighbouring faces within the crease angle —
+ * split scars, column facets and slab edges keep their HARD edges. A full
+ * weld melted every archetype into "something oval" (Igor).
+ */
+const CREASE_COSINE = Math.cos((44 * Math.PI) / 180);
+
 function weldedGeometry(archetypeId: string): BufferGeometry | undefined {
   if (!geometryCache) {
     geometryCache = new Map();
     for (const archetype of KALLUR_BOULDER_ARCHETYPES) {
       const source = buildBoulderArchetype(archetype);
-      const index = new Map<string, number>();
-      const positions: number[] = [];
-      const remap: number[] = [];
-      source.vertices.forEach(([x, y, z]) => {
+      // Weld positions to recover adjacency.
+      const slotByKey = new Map<string, number>();
+      const welded: number[][] = [];
+      const remap = source.vertices.map(([x, y, z]) => {
         const key = `${x.toFixed(4)}:${y.toFixed(4)}:${z.toFixed(4)}`;
-        let slot = index.get(key);
+        let slot = slotByKey.get(key);
         if (slot === undefined) {
-          slot = positions.length / 3;
-          positions.push(x, y, z);
-          index.set(key, slot);
+          slot = welded.length;
+          welded.push([x, y, z]);
+          slotByKey.set(key, slot);
         }
-        remap.push(slot);
+        return slot;
       });
-      const indices: number[] = [];
-      for (const [a, b, c] of source.triangles) {
-        indices.push(remap[a], remap[b], remap[c]);
-      }
+      // Face normals + vertex->face adjacency.
+      const faceNormals: number[][] = [];
+      const facesByVertex = new Map<number, number[]>();
+      source.triangles.forEach(([a, b, c], face) => {
+        const va = welded[remap[a]];
+        const vb = welded[remap[b]];
+        const vc = welded[remap[c]];
+        const ab = [vb[0] - va[0], vb[1] - va[1], vb[2] - va[2]];
+        const ac = [vc[0] - va[0], vc[1] - va[1], vc[2] - va[2]];
+        const cross = [
+          ab[1] * ac[2] - ab[2] * ac[1],
+          ab[2] * ac[0] - ab[0] * ac[2],
+          ab[0] * ac[1] - ab[1] * ac[0],
+        ];
+        const length = Math.hypot(...cross) || 1;
+        faceNormals.push([cross[0] / length, cross[1] / length, cross[2] / length]);
+        for (const corner of [a, b, c]) {
+          const slot = remap[corner];
+          const bucket = facesByVertex.get(slot) ?? [];
+          bucket.push(face);
+          facesByVertex.set(slot, bucket);
+        }
+      });
+      // Emit soup with per-corner crease-grouped normals.
+      const positions = new Float32Array(source.triangles.length * 9);
+      const normals = new Float32Array(source.triangles.length * 9);
+      source.triangles.forEach(([a, b, c], face) => {
+        const faceNormal = faceNormals[face];
+        [a, b, c].forEach((corner, cornerIndex) => {
+          const slot = remap[corner];
+          const vertex = welded[slot];
+          let nx = 0;
+          let ny = 0;
+          let nz = 0;
+          for (const neighbour of facesByVertex.get(slot) ?? []) {
+            const candidate = faceNormals[neighbour];
+            const agreement = faceNormal[0] * candidate[0] +
+              faceNormal[1] * candidate[1] +
+              faceNormal[2] * candidate[2];
+            if (agreement >= CREASE_COSINE) {
+              nx += candidate[0];
+              ny += candidate[1];
+              nz += candidate[2];
+            }
+          }
+          const length = Math.hypot(nx, ny, nz) || 1;
+          const write = face * 9 + cornerIndex * 3;
+          positions[write] = vertex[0];
+          positions[write + 1] = vertex[1];
+          positions[write + 2] = vertex[2];
+          normals[write] = nx / length;
+          normals[write + 1] = ny / length;
+          normals[write + 2] = nz / length;
+        });
+      });
       const geometry = new BufferGeometry();
-      geometry.setAttribute(
-        "position",
-        new BufferAttribute(new Float32Array(positions), 3),
-      );
-      geometry.setIndex(new BufferAttribute(new Uint16Array(indices), 1));
-      geometry.computeVertexNormals();
+      geometry.setAttribute("position", new BufferAttribute(positions, 3));
+      geometry.setAttribute("normal", new BufferAttribute(normals, 3));
       geometry.computeBoundingSphere();
       geometryCache.set(archetype.id, geometry);
     }
@@ -109,32 +163,52 @@ function getBoulderMaterial(): MeshStandardMaterial {
     shader.vertexShader = shader.vertexShader
       .replace(
         "#include <common>",
-        "#include <common>\nvarying float vBoulderLocalY;",
+        "#include <common>\nvarying vec3 vBoulderLocal;",
       )
       .replace(
         "#include <begin_vertex>",
-        "#include <begin_vertex>\nvBoulderLocalY = position.y;",
+        "#include <begin_vertex>\nvBoulderLocal = position.xyz;",
       );
     shader.fragmentShader = shader.fragmentShader
       .replace(
         "#include <common>",
-        "#include <common>\nvarying float vBoulderLocalY;",
+        `#include <common>
+varying vec3 vBoulderLocal;
+float mamBoulderHash(vec2 p) {
+  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+float mamBoulderNoise(vec2 p) {
+  vec2 cell = floor(p);
+  vec2 f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(
+    mix(mamBoulderHash(cell), mamBoulderHash(cell + vec2(1.0, 0.0)), f.x),
+    mix(mamBoulderHash(cell + vec2(0.0, 1.0)), mamBoulderHash(cell + vec2(1.0, 1.0)), f.x),
+    f.y);
+}`,
       )
       .replace(
         "#include <color_fragment>",
         `#include <color_fragment>
-// Albedo masks only - light keeps its owner. Lichen crowns: the bright
-// speckle of the reference (bible III), on upward faces of the tops.
+// Albedo masks only - light keeps its owner. Lichen: SMOOTH blobs in the
+// stone's OWN frame. The old floor() grid over world XZ projected bright
+// squares onto sloped faces and stretched them into unrelated patches;
+// value noise in local coordinates cannot do either by construction.
 vec3 boulderWorldNormal = inverseTransformDirection(normalize(vNormal), viewMatrix);
-float boulderLichenHash = fract(sin(dot(floor(vMaterialCoordinate.xz * 2.7),
-  vec2(127.1, 311.7))) * 43758.5453);
-float boulderLichen = smoothstep(0.6, 0.92, boulderWorldNormal.y)
-  * smoothstep(0.45, 0.8, boulderLichenHash)
-  * smoothstep(0.2, 0.5, vBoulderLocalY);
-diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.398, 0.415, 0.373), boulderLichen * 0.5);
+vec2 boulderLichenPlane = vBoulderLocal.xz * 3.1
+  + vec2(vBoulderLocal.y * 1.7, vBoulderLocal.y * -1.1);
+float boulderLichenBlob = mamBoulderNoise(boulderLichenPlane)
+  + mamBoulderNoise(boulderLichenPlane * 2.7) * 0.35;
+// A slow world-space seed so neighbouring instances of one archetype do
+// not wear the same coat; smooth, so it cannot re-introduce squares.
+float boulderSeed = mamBoulderNoise(vMaterialCoordinate.xz * 0.13);
+float boulderLichen = smoothstep(0.92, 1.12, boulderLichenBlob + boulderSeed * 0.4)
+  * smoothstep(0.45, 0.85, boulderWorldNormal.y)
+  * smoothstep(0.15, 0.45, vBoulderLocal.y);
+diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.315, 0.33, 0.295), boulderLichen * 0.4);
 // The sod line: the base converges to the turf's colour statistics, so
 // the stone SITS in the hill instead of resting on it.
-float boulderSod = smoothstep(0.3, 0.06, vBoulderLocalY)
+float boulderSod = smoothstep(0.3, 0.06, vBoulderLocal.y)
   * smoothstep(0.25, 0.75, boulderWorldNormal.y * 0.5 + 0.5);
 diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.153, 0.162, 0.061), boulderSod * 0.55);
 // Beach boulders darken below the same waterline law as the sand.

@@ -340,6 +340,9 @@ export function DayNightCycle({
   const time = useRef(TIME_OF_DAY_TARGETS.day);
   const appliedSnapVersion = useRef(snapVersion);
   const fortress = theme === "fortress";
+  // Sun-shadow ortho half-extent: sized by the world, floored at the old
+  // constants so small islands keep their texel density.
+  const shadowHalf = Math.max(fortress ? 95 : 70, (worldRadius ?? 58) * 1.08);
   // Moonlight is the one key this file still authors: there is no lunar
   // ephemeris here, so below the horizon the model has nothing left to answer.
   const moonColor = useMemo(() => new Color("#8fa5c8"), []);
@@ -1232,11 +1235,14 @@ export function DayNightCycle({
         shadow-mapSize-width={2048}
         shadow-mapSize-height={2048}
         shadow-camera-near={1}
-        shadow-camera-far={170}
-        shadow-camera-left={fortress ? -95 : -70}
-        shadow-camera-right={fortress ? 95 : 70}
-        shadow-camera-top={fortress ? 95 : 70}
-        shadow-camera-bottom={fortress ? -95 : -70}
+        // The frustum must cover the WHOLE island: a fixed ±70 box left
+        // everything past 70 m of Kallur (r=118) outside the shadow map —
+        // the lighthouse cast, the boulders around it could not.
+        shadow-camera-far={Math.max(170, (worldRadius ?? 58) * 1.7 + 60)}
+        shadow-camera-left={-shadowHalf}
+        shadow-camera-right={shadowHalf}
+        shadow-camera-top={shadowHalf}
+        shadow-camera-bottom={-shadowHalf}
         shadow-bias={-0.00035}
         shadow-normalBias={0.024}
         // Soft PCF at 3.2 dissolved into fog as "no shadows". Radius under 2

@@ -202,28 +202,30 @@ function buildBlob(
   const base = icosphere();
   const vertices = base.vertices.map((direction) => {
     const bump = 1 + lobeDisplacement(direction, seed) * noise;
-    let vertex: ObjectPoint = [
+    const free: ObjectPoint = [
       direction[0] * bump * scale[0],
       direction[1] * bump * scale[1],
       direction[2] * bump * scale[2],
     ];
+    // RADIAL support clamp — the potato cut. Projection clamping folded
+    // triangles wherever two planes met (inverted normals, glowing
+    // facets); shrinking the vertex along its own ray toward the centre
+    // cannot fold anything, and the cut flats get naturally rounded rims.
+    const radius = Math.hypot(free[0], free[1], free[2]) || 1e-9;
+    const ray: ObjectPoint = [free[0] / radius, free[1] / radius, free[2] / radius];
+    let clamped = radius;
     for (const clamp of clamps) {
-      const along = vertex[0] * clamp.direction[0] +
-        vertex[1] * clamp.direction[1] +
-        vertex[2] * clamp.direction[2];
-      if (along > clamp.distance) {
-        const excess = along - clamp.distance;
-        vertex = [
-          vertex[0] - clamp.direction[0] * excess,
-          vertex[1] - clamp.direction[1] * excess,
-          vertex[2] - clamp.direction[2] * excess,
-        ];
+      const along = ray[0] * clamp.direction[0] +
+        ray[1] * clamp.direction[1] +
+        ray[2] * clamp.direction[2];
+      if (along > 1e-4) {
+        clamped = Math.min(clamped, clamp.distance / along);
       }
     }
     return [
-      vertex[0] + offset[0],
-      vertex[1] + offset[1],
-      vertex[2] + offset[2],
+      ray[0] * clamped + offset[0],
+      ray[1] * clamped + offset[1],
+      ray[2] * clamped + offset[2],
     ] as ObjectPoint;
   });
   return { vertices, faces: base.faces };
@@ -283,7 +285,7 @@ export const kallurBoulderKitParts: readonly ObjectLabPart[] = parts;
 
 export const kallurBoulderKitObject: ObjectLabModel = {
   id: "kallur-boulder-kit",
-  revision: "boulder-kit-a02-2026-08-21",
+  revision: "boulder-kit-a03-2026-08-21",
   title: "Kallur boulder kit",
   units: "metres",
   coordinates: { up: "+Y", front: "+Z", origin: "ground-centre" },

@@ -194,6 +194,50 @@ export function generateKallurStones(
     place(index, x, z, size, 0.74);
   }
 
+  // The path verge (Igor, 21.08): people tramping the trail between the
+  // mountains moved the stones aside BY HAND — so just past the walking
+  // corridor lies a broken edge of small and middling boulders. Only the
+  // sizes a person shifts (≤ ~0.9 m), in patches, never a tidy lining.
+  let pathLength = 0;
+  const cumulative: number[] = [];
+  for (let index = 1; index < KALLUR_PATH.length; index += 1) {
+    const [ax, , az] = KALLUR_PATH[index - 1];
+    const [bx, , bz] = KALLUR_PATH[index];
+    pathLength += Math.hypot(bx - ax, bz - az);
+    cumulative.push(pathLength);
+  }
+  for (let index = 50000; index < 50300; index += 1) {
+    const along = hash(index, 1) * pathLength;
+    let segment = 0;
+    while (segment < cumulative.length - 1 && cumulative[segment] < along) {
+      segment += 1;
+    }
+    const start = segment === 0 ? 0 : cumulative[segment - 1];
+    const [ax, , az] = KALLUR_PATH[segment];
+    const [bx, , bz] = KALLUR_PATH[segment + 1];
+    const span = Math.max(1e-9, cumulative[segment] - start);
+    const t = (along - start) / span;
+    const px = ax + (bx - ax) * t;
+    const pz = az + (bz - az) * t;
+    // Patchy, not uniform: the verge shows where the ground actually
+    // offered stones to move.
+    const verge = 0.5 + 0.5 * valueNoise(px / 9, pz / 9, 91);
+    // 0.55 keeps the whole field inside the 1800-visible piece budget
+    // (0.8 landed 90 verge stones and blew it by 22).
+    if (hash(index, 11) > verge * 0.55) continue;
+    const length = Math.hypot(bx - ax, bz - az) || 1;
+    const side = hash(index, 2) < 0.5 ? -1 : 1;
+    const size = 0.3 + hash(index, 3) * 0.6;
+    const lateral = PATH_CLEARANCE + size / 2 + 0.25 + hash(index, 4) * 2.1;
+    place(
+      index,
+      px + (-(bz - az) / length) * side * lateral,
+      pz + ((bx - ax) / length) * side * lateral,
+      size,
+      0.4,
+    );
+  }
+
   return stones;
 }
 

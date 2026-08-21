@@ -52,12 +52,14 @@ export function kallurBoulderArchetypeFor(stone: {
 }, slope = 0): string {
   if (stone.size < 0.45) return "loaf";
   const pick = (stone.tone * 13.7) % 1;
-  if (slope > 0.8) return pick < 0.55 ? "rounded" : "slab";
-  if (pick < 0.34) return "rounded";
-  if (pick < 0.55) return "slab";
-  if (pick < 0.7) return "twin";
-  if (pick < 0.85) {
-    if (slope < 0.35 && stone.size < 1.4) return "column";
+  // Slopes carry the full mix — during the mountain's formation stones
+  // stayed on slopes, folds, tops and hollows alike (Igor, 21.08). The one
+  // true physical gate: a columnar stub cannot balance on steep ground.
+  if (pick < 0.26) return "rounded";
+  if (pick < 0.48) return "slab";
+  if (pick < 0.62) return "twin";
+  if (pick < 0.8) {
+    if (slope < 0.5 && stone.size < 1.4) return "column";
     return "split";
   }
   return "split";
@@ -85,29 +87,36 @@ export function kallurBoulderPlacements(): readonly KallurBoulderPlacement[] {
     const crownHeight = stone.size * (1 - stone.embed) * 0.9 + 0.15;
     const archetype = kallurBoulderArchetypeFor(stone, slope);
     const nominalHeight = archetypeHeights.get(archetype) ?? 1;
-    // Slope physics: a boulder on a hillside GROWS INTO it — the steeper
-    // the ground, the deeper it sinks (only a low back shows), and its
-    // base tilts to the terrain normal so nothing balances on an edge.
-    const slopeSink = Math.min(0.6, slope * 0.4) * stone.size;
-    const scaleY = Math.max(
-      0.2,
-      (crownHeight + 0.35 - slopeSink * 0.5) / nominalHeight,
-    );
     const scaleXZ = stone.size * 0.98;
-    const tiltLimit = 0.45;
+    const scaleY = Math.max(0.3, (crownHeight + 0.35) / nominalHeight);
+    // Attitude: each stone decides HOW it stayed on the hill. High
+    // attitude — it lies bedded along the ground; low attitude — it sits
+    // nearly upright, wedged into a fold, and buries deeper instead. The
+    // impossible thing was never "a stone on a slope" — it was a rim
+    // hovering over the falling ground, and that is what the sink covers.
+    const attitude = 0.35 + ((stone.tone * 29.3) % 1) * 0.65;
+    const tiltLimit = 0.6;
     const tiltX = Math.max(-tiltLimit, Math.min(tiltLimit,
-      Math.atan(gradient.z) + (stone.tone - 0.5) * 0.12));
+      Math.atan(gradient.z) * attitude + (stone.tone - 0.5) * 0.16));
     const tiltZ = Math.max(-tiltLimit, Math.min(tiltLimit,
-      -Math.atan(gradient.x) + (((stone.tone * 7) % 1) - 0.5) * 0.12));
-    // Long axis along the contour on slopes: yaw follows the level line.
-    const contourYaw = slope > 0.5
-      ? Math.atan2(gradient.x, -gradient.z)
+      -Math.atan(gradient.x) * attitude + (((stone.tone * 7) % 1) - 0.5) * 0.16));
+    // Whatever grade the tilt did not absorb goes under the turf, so no
+    // downhill rim hangs in the air — the fix aims at the rim, not at
+    // the slope, and the stone keeps its full mass above ground.
+    const residualGrade = slope * (1 - attitude * 0.85);
+    const slopeSink = Math.min(0.9,
+      residualGrade * scaleXZ * 0.55 + slope * 0.08 * stone.size);
+    // Slabs and loaves lie along the contour line; every other form keeps
+    // its author yaw — a hillside of combed stones reads as one gesture.
+    const liesAlong = archetype === "slab" || archetype === "loaf";
+    const yaw = liesAlong && slope > 0.55
+      ? Math.atan2(gradient.x, -gradient.z) + (stone.tone - 0.5) * 0.7
       : stone.yaw;
     placements.push({
       id: stone.id,
       archetype,
       position: [stone.x, collarTop - 0.35 - slopeSink, stone.z],
-      rotation: [tiltX, contourYaw, tiltZ],
+      rotation: [tiltX, yaw, tiltZ],
       scale: [scaleXZ, scaleY, scaleXZ * 0.82],
       tint: tintFor(stone.tone),
     });

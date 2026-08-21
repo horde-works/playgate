@@ -60,6 +60,20 @@ const FRAMES = [
     position: [-40, 6.5, 114],
     lookAt: [14, 0.6, 98],
   },
+  {
+    // The largest split boulder on the mountainside: the close-up that
+    // judges lichen blobs, crease edges, shadow contact and seating.
+    id: "boulder-07-closeup",
+    position: [-28, 45.8, -54.5],
+    lookAt: [-21.6, 42.6, -61.3],
+  },
+  {
+    // The path verge near the trailhead — 90 m out, past the OLD ±70
+    // shadow box: judges the hand-moved stone edge AND far-field shadows.
+    id: "path-08-verge",
+    position: [-12, 6.2, 94],
+    lookAt: [-24, 2.8, 82],
+  },
 ];
 
 /** Frames repeated under the low sun: the fur is judged by grazing light. */

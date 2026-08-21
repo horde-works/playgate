@@ -1,8 +1,8 @@
 {
   "modelId": "kallur-boulder-kit",
-  "revision": "boulder-kit-a02-2026-08-21",
-  "modelHash": "8345ba3ed7d0",
-  "generatedAt": "2026-08-21T05:33:49.890Z",
+  "revision": "boulder-kit-a03-2026-08-21",
+  "modelHash": "b5e2da377fde",
+  "generatedAt": "2026-08-21T08:36:31.274Z",
   "views": [
     {
       "id": "front-row",
