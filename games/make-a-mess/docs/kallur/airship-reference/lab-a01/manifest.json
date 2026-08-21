@@ -1,0 +1,56 @@
+{
+  "modelId": "kallur-airship",
+  "revision": "airship-a04-2026-08-21",
+  "modelHash": "809dfe964cf4",
+  "generatedAt": "2026-08-21T10:22:35.331Z",
+  "views": [
+    {
+      "id": "front",
+      "label": "Front: chin glazing, skids, pod symmetry",
+      "projection": "orthographic",
+      "file": "front.png"
+    },
+    {
+      "id": "profile",
+      "label": "Profile: hull program, cheatline, merged pod",
+      "projection": "orthographic",
+      "file": "profile.png"
+    },
+    {
+      "id": "rear",
+      "label": "Rear: cruciform fins",
+      "projection": "orthographic",
+      "file": "rear.png"
+    },
+    {
+      "id": "three-quarter",
+      "label": "Three-quarter: mass, fusion, livery",
+      "projection": "perspective",
+      "file": "three-quarter.png"
+    },
+    {
+      "id": "tail-three-quarter",
+      "label": "Tail three-quarter: fins and boom run-out",
+      "projection": "perspective",
+      "file": "tail-three-quarter.png"
+    },
+    {
+      "id": "high-three-quarter",
+      "label": "High three-quarter: no rotor, white back, red lane",
+      "projection": "perspective",
+      "file": "high-three-quarter.png"
+    },
+    {
+      "id": "gondola-detail",
+      "label": "Gondola: chin loft, wrap canopy, door, real openings",
+      "projection": "perspective",
+      "file": "gondola-detail.png"
+    },
+    {
+      "id": "gondola-cutaway",
+      "label": "Gondola cutaway: glazing hidden, openings are voids",
+      "projection": "perspective",
+      "file": "gondola-cutaway.png"
+    }
+  ]
+}
