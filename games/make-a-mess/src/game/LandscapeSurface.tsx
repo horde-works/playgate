@@ -171,6 +171,10 @@ const LandscapeRenderChunk = memo(function LandscapeRenderChunk({
     <instancedMesh
       ref={mesh}
       args={[geometry, material, 1]}
+      // The terrain joins the world's one shadow law as a CASTER too: a
+      // ridge lays its shadow into the valley and onto the next mountain,
+      // same light, same map as every building and boulder.
+      castShadow
       receiveShadow
       userData={{
         breakableTriangleOwnerIds: owners,
@@ -300,6 +304,7 @@ const LandscapeShellEdgeChunk = memo(function LandscapeShellEdgeChunk({
     <instancedMesh
       ref={mesh}
       args={[geometry, material, 1]}
+      castShadow
       receiveShadow
       userData={{
         breakableTriangleOwnerIds: owners,

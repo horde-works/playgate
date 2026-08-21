@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-08-21T08:38:50.410Z",
+  "generatedAt": "2026-08-21T09:01:43.257Z",
   "server": "http://127.0.0.1:3000",
   "frames": [
     {
@@ -17,18 +17,32 @@
       "file": "saddle-02-lighthouse-hill.png"
     },
     {
-      "id": "turf-05-closeup",
+      "id": "boulder-07-closeup",
       "position": [
-        -33,
-        10.456450080871585,
-        20
+        -28,
+        45.8,
+        -54.5
+      ],
+      "lookAt": [
+        -21.6,
+        42.6,
+        -61.3
+      ],
+      "file": "boulder-07-closeup.png"
+    },
+    {
+      "id": "path-08-verge",
+      "position": [
+        -12,
+        6.2,
+        94
       ],
       "lookAt": [
         -24,
-        10.947473801506899,
-        8
+        2.8,
+        82
       ],
-      "file": "turf-05-closeup.png"
+      "file": "path-08-verge.png"
     },
     {
       "id": "saddle-02-lighthouse-hill-sunset",
@@ -45,20 +59,6 @@
       "file": "saddle-02-lighthouse-hill-sunset.png"
     },
     {
-      "id": "turf-05-closeup-sunset",
-      "position": [
-        -33,
-        10.456450080871585,
-        20
-      ],
-      "lookAt": [
-        -24,
-        10.947473801506899,
-        8
-      ],
-      "file": "turf-05-closeup-sunset.png"
-    },
-    {
       "id": "saddle-02-lighthouse-hill-night",
       "position": [
         14,
@@ -71,20 +71,6 @@
         5
       ],
       "file": "saddle-02-lighthouse-hill-night.png"
-    },
-    {
-      "id": "turf-05-closeup-night",
-      "position": [
-        -33,
-        10.456450080871585,
-        20
-      ],
-      "lookAt": [
-        -24,
-        10.947473801506899,
-        8
-      ],
-      "file": "turf-05-closeup-night.png"
     }
   ]
 }

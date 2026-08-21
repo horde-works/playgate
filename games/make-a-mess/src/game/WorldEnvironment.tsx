@@ -1244,7 +1244,11 @@ export function DayNightCycle({
         shadow-camera-top={shadowHalf}
         shadow-camera-bottom={-shadowHalf}
         shadow-bias={-0.00035}
-        shadow-normalBias={0.024}
+        // normalBias compensates texel quantisation, so it scales with the
+        // texel's world size: the box grew from ±70 to the island, the
+        // texel grew with it — a fixed 0.024 would acne the terrain's own
+        // cast shadows at grazing sun. Small worlds keep the old value.
+        shadow-normalBias={0.024 * (shadowHalf / 70)}
         // Soft PCF at 3.2 dissolved into fog as "no shadows". Radius under 2
         // keeps contact; 1.0 restores day form without hard aliasing.
         shadow-radius={1.0}
