@@ -191,7 +191,9 @@ test("ассет текстуры: размер пояса, альфа-маск�
   const midCapV =
     (DC3_LIVERY_BASELINE_Y + DC3_LIVERY_CAP_HEIGHT / 2 - DC3_LIVERY_BAND.yBottom) /
     bandHeight;
-  const midCapRow = Math.round((1 - midCapV) * info.height);
+  // Маска записана ПЕРЕВЁРНУТОЙ (эмпирический закон x-ветки face-fit, см.
+  // генератор): строка капители считается от ВЕРХА изображения.
+  const midCapRow = Math.round(midCapV * info.height);
   let opaque = 0;
   for (let x = 0; x < info.width; x += 1) {
     if (alphaAt(x, midCapRow) > 200) opaque += 1;

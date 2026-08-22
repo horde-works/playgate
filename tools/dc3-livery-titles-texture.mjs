@@ -63,7 +63,13 @@ const target = join(
   "dc3-livery-titles.png",
 );
 
-const image = await sharp(Buffer.from(svg)).png().toFile(target);
+// ЭМПИРИЧЕСКИЙ ЗАКОН КОНВЕЙЕРА (кадр 23.08.2026): у x-ветки face-fit
+// (борта, |normal.x| > 0.5) ось v в бою смотрит ВНИЗ — текстура приходит на
+// борт вверх ногами, хотя y-ветка вывесок города рисует прямо. Корень не
+// раскопан; маска переворачивается здесь, при генерации. Если следующий
+// ассет x-ветки тоже придётся флипать — чинить ветку шейдера, а не ассеты
+// (и тогда поднять версию materialSpace-ключа программы).
+const image = await sharp(Buffer.from(svg)).flip().png().toFile(target);
 console.log(
   `dc3-livery-titles.png: ${image.width}x${image.height}, ` +
     `капитель ${capPx.toFixed(0)} px (${DC3_LIVERY_CAP_HEIGHT} м), ` +
