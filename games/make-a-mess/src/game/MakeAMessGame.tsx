@@ -254,6 +254,11 @@ import {
 import { SmokePlumes } from "./SmokePlumes";
 import { WindController } from "./WindController";
 import { IntactBreakableWorld } from "./IntactBreakableWorld";
+import { VehicleClusterBatchedWorld } from "./VehicleClusterBatchedWorld";
+import {
+  carrierBatchEligible,
+  splitBreakableRenderPieces,
+} from "./vehicleClusterBatches";
 import { LandscapeSurface } from "./LandscapeSurface";
 import {
   VehicleFrameSystem,
@@ -2686,70 +2691,58 @@ function BreakableObjects({
     otherColliderHandle: number,
   ) => void;
 }) {
-  const { hiddenPieceIds, bodyPieces, physicalBodyPieces } = useMemo(() => {
-    const hidden = new Set<string>();
-    const dynamicVisuals: BreakablePieceDefinition[] = [];
-    const physicalBodies: BreakablePieceDefinition[] = [];
-    const compoundDefinitionByCluster = new Map(
+  // Развод кусков по рендерам вынесен в чистую функцию (тестируемую):
+  // docs/carrier-batched-render.md. Целые члены compound-носителей уходят в
+  // подвижный батч, остальное — прежними путями.
+  const { hiddenPieceIds, bodyPieces, physicalBodyPieces } = useMemo(
+    () =>
+      splitBreakableRenderPieces({
+        pieces,
+        brokenPieces,
+        shatteredPieces,
+        kinematicClusterDefinitions,
+        mutablePieceIds,
+        presentBrokenPiece: (piece) =>
+          flattenDetachedTreeFoliage(
+            pieceWithMutableState(
+              piece,
+              mutablePieceStates.current.get(piece.id),
+            ),
+          ),
+        memberNeedsIndividualBody: compoundMemberNeedsIndividualBody,
+      }),
+    [
+      brokenPieces,
+      kinematicClusterDefinitions,
+      mutablePieceIds,
+      mutablePieceStates,
+      pieces,
+      shatteredPieces,
+    ],
+  );
+  // Список батча носителей НЕ зависит от сломанного: батчи стабильны на всю
+  // сессию, слом гасит инстанс диффом, а не пересборкой геометрии.
+  const carrierBatchedPieces = useMemo(() => {
+    const definitionByCluster = new Map(
       kinematicClusterDefinitions.map(
         (definition) => [definition.clusterId, definition] as const,
       ),
     );
-    for (const piece of pieces) {
-      if (shatteredPieces.has(piece.id)) {
-        hidden.add(piece.id);
-        continue;
-      }
-      if (
-        brokenPieces.has(piece.id) ||
-        piece.hinge ||
-        piece.intactCollisionRole === "actor-only" ||
-        // Кластер транспорта живёт своими телами: его куски двигает кадр
-        // отсчёта, а инстансная батчёвка целого мира неподвижна.
-        isVehicleFramePiece(piece) ||
-        compoundDefinitionByCluster.has(piece.clusterId) ||
-        piece.shape === "cinderBlock"
-      ) {
-        hidden.add(piece.id);
-        const visualPiece = brokenPieces.has(piece.id)
-          ? flattenDetachedTreeFoliage(
-              pieceWithMutableState(
-                piece,
-                mutablePieceStates.current.get(piece.id),
-              ),
-            )
-          : piece;
-        dynamicVisuals.push(visualPiece);
-        const compoundDefinition = compoundDefinitionByCluster.get(
-          piece.clusterId,
-        );
-        // The carrier already owns ordinary intact members completely. Only
-        // articulated attachments keep an individual pose body; every other
-        // member materialises one at the instant it detaches.
-        if (
-          !compoundDefinition ||
-          compoundMemberNeedsIndividualBody(
-            compoundDefinition,
-            piece,
-            brokenPieces.has(piece.id),
-          )
-        ) {
-          physicalBodies.push(visualPiece);
-        }
-      }
-    }
-    return {
-      hiddenPieceIds: hidden,
-      bodyPieces: dynamicVisuals,
-      physicalBodyPieces: physicalBodies,
-    };
-  }, [
-    brokenPieces,
-    kinematicClusterDefinitions,
-    mutablePieceStates,
-    pieces,
-    shatteredPieces,
-  ]);
+    return pieces.filter((piece) =>
+      carrierBatchEligible(
+        piece,
+        definitionByCluster.get(piece.clusterId),
+        mutablePieceIds,
+      ),
+    );
+  }, [kinematicClusterDefinitions, mutablePieceIds, pieces]);
+  const carrierHiddenPieceIds = useMemo(() => {
+    const hidden = new Set<string>();
+    for (const id of brokenPieces) hidden.add(id);
+    for (const id of shatteredPieces) hidden.add(id);
+    return hidden;
+  }, [brokenPieces, shatteredPieces]);
+
 
   return (
     <group>
@@ -2759,6 +2752,12 @@ function BreakableObjects({
         mutablePieceIds={mutablePieceIds}
         mutablePieceStates={mutablePieceStates}
         crateredMeshes={crateredMeshes}
+      />
+      <VehicleClusterBatchedWorld
+        pieces={carrierBatchedPieces}
+        hiddenPieceIds={carrierHiddenPieceIds}
+        kinematicClusters={kinematicClusters}
+        bodies={bodies}
       />
       {landscapeVisual ? (
         <LandscapeSurface
