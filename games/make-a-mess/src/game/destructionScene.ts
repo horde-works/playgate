@@ -319,10 +319,14 @@ export interface BreakablePieceDefinition {
   readonly bearingArea?: number;
   /** Stable authored world root; terrain does not depend on material choice. */
   readonly foundation?: boolean;
+  /** Keep collision/support but reject every destruction input. Defaults true. */
+  readonly destructible?: boolean;
   /** Physics/destruction body represented by a separate intact visual shell. */
   readonly intactVisible?: boolean;
   /** Exclude the body's box from the quiet-world collider mesh. */
   readonly intactCollider?: boolean;
+  /** Intact support seen by actors but ignored by vehicles and world debris. */
+  readonly intactCollisionRole?: "actor-only";
   readonly color: string;
   readonly row?: number;
   readonly column?: number;

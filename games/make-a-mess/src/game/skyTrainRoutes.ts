@@ -465,6 +465,12 @@ export interface VehicleRoutePlan {
    * at a route join, not at a place where the craft should stop or turn back.
    */
   readonly terminalGuidanceHeading?: readonly [number, number];
+  /**
+   * Nose heading at the route's own dock, world XZ. The frame approach
+   * heading is the rest pose; a shuttle that ends at a second berth authors
+   * this so final blend and docking capture face the destination, not home.
+   */
+  readonly dockHeading?: readonly [number, number];
   /** Source-route point beyond a temporary plan's endpoint, by flown metres. */
   terminalGuidancePoint?(distance: number): SceneVector3;
   /**

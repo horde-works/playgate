@@ -33,6 +33,52 @@ export interface CascadeOctave {
   readonly billow: boolean;
 }
 
+export interface NaturalSurfacePalette {
+  readonly base: string;
+  readonly alt: string;
+  readonly lit: string;
+  readonly seamDark: string;
+  readonly moss: string;
+  readonly straw: string;
+  readonly thatch: string;
+}
+
+export interface NaturalSurfaceProfile {
+  readonly id: "kallur-carpet" | "viking-heath";
+  readonly octaves: readonly CascadeOctave[];
+  readonly palette: NaturalSurfacePalette;
+}
+
+function createNaturalSurfaceOctaves(options: {
+  readonly wavelength: number;
+  readonly amplitude: number;
+  readonly persistence: number;
+  readonly stretch: number;
+  readonly stretchPersistence: number;
+  readonly seed: number;
+  readonly billowCount: number;
+  readonly angles: readonly number[];
+}): readonly CascadeOctave[] {
+  const octaves: CascadeOctave[] = [];
+  let amplitude = options.amplitude;
+  let wavelength = options.wavelength;
+  let stretch = options.stretch;
+  for (let index = 0; index < options.angles.length; index += 1) {
+    octaves.push({
+      wavelength,
+      amplitude,
+      stretch,
+      angle: options.angles[index],
+      seed: options.seed + index * 17,
+      billow: index < options.billowCount,
+    });
+    amplitude *= options.persistence;
+    wavelength *= 0.5;
+    stretch = 1 + (stretch - 1) * options.stretchPersistence;
+  }
+  return octaves;
+}
+
 /** Lab tile Y/N/O cascade, ported verbatim: a0 0.12, persistence 0.62. */
 export const KALLUR_CASCADE: readonly CascadeOctave[] = (() => {
   const angles = [0, 0.35, -0.3, 0.8, -0.75, 1.2, -1.1];
@@ -56,6 +102,22 @@ export const KALLUR_CASCADE: readonly CascadeOctave[] = (() => {
   return octaves;
 })();
 
+/**
+ * Viking turf is its own material language: close-cropped northern heath,
+ * flatter than Kallur, with less coherent billow and no standing-stem hatch.
+ * It keeps the laboratory's octave hand-off without copying the Faroese fur.
+ */
+export const VIKING_HEATH_CASCADE: readonly CascadeOctave[] = createNaturalSurfaceOctaves({
+  wavelength: 1.35,
+  amplitude: 0.052,
+  persistence: 0.56,
+  stretch: 1.22,
+  stretchPersistence: 0.62,
+  seed: 701,
+  billowCount: 3,
+  angles: [0.18, -0.52, 0.71, -0.93, 1.26, -1.35, 0.43],
+});
+
 /** Lab tile Y masses, verbatim — the octave the field was missing. */
 export const KALLUR_TONAL_MASSES = {
   wavelength: 6.5,
@@ -64,7 +126,7 @@ export const KALLUR_TONAL_MASSES = {
 } as const;
 
 /** Measured Kallur palette (kallur-brief.md), shared with the lab. */
-export const KALLUR_CARPET_PALETTE = {
+export const KALLUR_CARPET_PALETTE: NaturalSurfacePalette = {
   base: "#6d7046",
   alt: "#757641",
   lit: "#b3b374",
@@ -73,6 +135,31 @@ export const KALLUR_CARPET_PALETTE = {
   straw: "#c7c084",
   thatch: "#71603a",
 } as const;
+
+export const VIKING_HEATH_PALETTE: NaturalSurfacePalette = {
+  base: "#64734e",
+  alt: "#7b825a",
+  lit: "#b4aa76",
+  seamDark: "#2d3927",
+  moss: "#87945d",
+  straw: "#b8ad77",
+  thatch: "#867754",
+} as const;
+
+export const NATURAL_SURFACE_PROFILES: Readonly<
+  Record<NaturalSurfaceProfile["id"], NaturalSurfaceProfile>
+> = {
+  "kallur-carpet": {
+    id: "kallur-carpet",
+    octaves: KALLUR_CASCADE,
+    palette: KALLUR_CARPET_PALETTE,
+  },
+  "viking-heath": {
+    id: "viking-heath",
+    octaves: VIKING_HEATH_CASCADE,
+    palette: VIKING_HEATH_PALETTE,
+  },
+};
 
 /**
  * Walking-frame hatch (the look we are holding). Pattern size stays;
@@ -92,6 +179,95 @@ export const KALLUR_NEAR_STEM = {
   fadeWavelength: 0.034,
   strawMix: 0.4,
   thatchMix: 0.4,
+} as const;
+
+/**
+ * Viking near/medium carrier: the same pixel-footprint hand-off as Kallur's
+ * ground-bound stems, but a different organism. The main cascade supplies a
+ * connected sponge cushion; this layer supplies its dense low nap. It never
+ * becomes separate droplets, upright blades or instanced tufts.
+ */
+export const VIKING_MOSS_MICRO = {
+  napWavelengthA: 0.011,
+  napWavelengthB: 0.024,
+  warpWavelength: 0.13,
+  warpAmplitude: 0.007,
+  clusterWavelength: 0.18,
+  seedA: 1181,
+  seedB: 1187,
+  warpSeedA: 1193,
+  warpSeedB: 1201,
+  clusterSeed: 1213,
+  // The heath cascade already owns the moss cushion. This band carries only
+  // its dense nap, so its energy is millimetres rather than separate domes.
+  heightBase: 0.0018,
+  heightCluster: 0.0015,
+  // Same carrier cut-off as Kallur's accepted near-stem layer. Pattern size
+  // stays fixed; only its energy dissolves as the pixel footprint grows.
+  fadeWavelength: KALLUR_NEAR_STEM.fadeWavelength,
+} as const;
+
+/**
+ * Close-cropped village grass: a dense surface-bound mesh impression, not
+ * instanced bunches. Slow colonies choose a local lay direction; fine broken
+ * strokes supply short blades and dissolve on Kallur's accepted carrier law.
+ */
+export const VIKING_GRASS_MICRO = {
+  bladeWidth: 0.014,
+  bladeLength: 0.086,
+  breakAcross: 0.056,
+  breakAlong: 0.03,
+  warpWavelength: 0.21,
+  warpAmplitude: 0.012,
+  choiceWavelength: 0.72,
+  angleA: 0.31,
+  angleB: -0.91,
+  clusterWavelength: 0.26,
+  bladeSeed: 1229,
+  breakSeed: 1231,
+  warpSeedA: 1237,
+  warpSeedB: 1249,
+  choiceSeed: 1259,
+  clusterSeed: 1277,
+  heightBase: 0.0038,
+  heightCrown: 0.0086,
+  fadeWavelength: KALLUR_NEAR_STEM.fadeWavelength,
+} as const;
+
+/**
+ * Close path mud: boot-churned humus, shallow retained water and sparse flat
+ * leaf litter. Direction changes by colony, so it cannot become wheel ruts or
+ * one repeated parallel brush over every route.
+ */
+export const VIKING_MUD_MICRO = {
+  smearAcross: 0.036,
+  smearAlong: 0.17,
+  breakWavelength: 0.072,
+  crumbWavelength: 0.028,
+  warpWavelength: 0.39,
+  warpAmplitude: 0.026,
+  choiceWavelength: 0.94,
+  angleA: 0.24,
+  angleB: -1.03,
+  smearSeed: 1283,
+  breakSeed: 1289,
+  crumbSeed: 1291,
+  warpSeedA: 1297,
+  warpSeedB: 1301,
+  choiceSeed: 1303,
+  heightSmear: 0.0065,
+  heightCrumb: 0.0022,
+  leafCell: 0.18,
+  leafLength: 0.068,
+  leafWidth: 0.027,
+  leafPresence: 0.76,
+  leafSeed: 1319,
+  leafAngleSeed: 1321,
+  leafOffsetSeedA: 1327,
+  leafOffsetSeedB: 1361,
+  leafToneSeed: 1367,
+  fadeWavelength: 0.12,
+  leafFadeWavelength: 0.085,
 } as const;
 
 /**
@@ -327,6 +503,310 @@ vec3 nscBeachAlbedo(vec2 point, float worldY, float litness, float footprint) {
   beach *= 1.0 + nscNoise(point / 0.03, 653.0) * 0.06
     * (0.35 + 0.85 * litness) * nscFade(0.03, footprint);
   return beach;
+}
+`;
+}
+
+/**
+ * Viking member of the same reusable octave family. It deliberately exposes
+ * material signals instead of one final colour: a world may combine the same
+ * heath structure with its own traffic, wetness and soil laws. Polder can use
+ * the carrier without inheriting Viking mud or Kallur's Faroese palette.
+ */
+export function vikingHeathCascadeGlsl(): string {
+  const p = VIKING_HEATH_PALETTE;
+  const moss = VIKING_MOSS_MICRO;
+  const grass = VIKING_GRASS_MICRO;
+  const mud = VIKING_MUD_MICRO;
+  const octaveLines = VIKING_HEATH_CASCADE.map((octave, index) => {
+    const c = glslNumber(Math.cos(octave.angle));
+    const s = glslNumber(Math.sin(octave.angle));
+    const wx = glslNumber(octave.wavelength * octave.stretch);
+    const wz = glslNumber(octave.wavelength);
+    const seed = glslNumber(octave.seed);
+    const fade = `nscFade(${glslNumber(octave.wavelength)}, footprint)`;
+    const sample = `nscNoise(vec2(
+      (point.x * ${c} - point.y * ${s}) / ${wx},
+      (point.x * ${s} + point.y * ${c}) / ${wz}), ${seed})`;
+    const shaped = octave.billow ? `abs(${sample})` : `(${sample} * 0.5 + 0.5)`;
+    return `  float nsvOctave${index} = mix(0.45, ${shaped}, ${fade});`;
+  }).join("\n");
+  const heightLines = VIKING_HEATH_CASCADE.map((octave, index) =>
+    `  height += (nsvOctave${index} - 0.45) * ${glslNumber(octave.amplitude)};`
+  ).join("\n");
+
+  return /* glsl */ `
+void nsvHeathCascade(
+  vec2 point,
+  float footprint,
+  out float height,
+  out float cushions,
+  out float fibre,
+  out float litter
+) {
+${octaveLines}
+  height = 0.0;
+${heightLines}
+  cushions = clamp(nsvOctave0 * 0.44 + nsvOctave1 * 0.34 + nsvOctave2 * 0.28, 0.0, 1.0);
+  // Matted old growth is made from isolated extrema in a warped isotropic
+  // field. It produces torn curls and felted patches, never the continuous
+  // zero-contours that drew the rejected engraved "threads".
+  vec2 fibreWarp = vec2(
+    nscNoise(point / 0.74, 941.0),
+    nscNoise(point / 0.91, 947.0)
+  ) * 0.12;
+  float fibreGuide = 1.0 - abs(nscNoise((point + fibreWarp) / 0.21, 953.0));
+  float fibreBreak = abs(nscNoise((point - fibreWarp * 0.55) / 0.115, 957.0));
+  float fibreCrumple = pow(clamp(fibreGuide, 0.0, 1.0), 2.35)
+    * smoothstep(0.28, 0.78, fibreBreak);
+  vec2 crumbWarp = vec2(
+    nscNoise(point / 0.43, 963.0),
+    nscNoise(point / 0.37, 967.0)
+  ) * 0.055;
+  float crumbGuide = 1.0 - abs(nscNoise((point + crumbWarp) / 0.082, 969.0));
+  float crumbBreak = abs(nscNoise((point - crumbWarp) / 0.051, 973.0));
+  float fibreCrumb = pow(clamp(crumbGuide, 0.0, 1.0), 2.7)
+    * smoothstep(0.34, 0.8, crumbBreak)
+    * nscFade(0.082, footprint);
+  float fibreCluster = smoothstep(
+    0.42,
+    0.78,
+    nscNoise((point + fibreWarp * 0.35) / 0.82, 961.0) * 0.5 + 0.5
+  );
+  fibre = clamp(fibreCrumple * 0.82 + fibreCrumb * 0.38, 0.0, 1.0)
+    * (0.24 + fibreCluster * 0.76)
+    * nscFade(0.21, footprint)
+    * (0.42 + nsvOctave3 * 0.48);
+  litter = smoothstep(0.54, 0.82, nsvOctave2 * 0.58 + nsvOctave4 * 0.55)
+    * (0.42 + fibre * 0.58);
+  height += fibreCrumple * fibreCluster * 0.011 * nscFade(0.21, footprint);
+  height += fibreCrumb * fibreCluster * 0.0038;
+}
+
+// Close moss uses Kallur's accepted carrier hand-off, not its grass shape.
+// The broad heath cascade already makes connected sponge-like cushions. This
+// band adds only their dense signed nap: no positive domes, no droplets and
+// no upright blades. Each scale fades by its own pixel footprint.
+void nsvMossVelvet(
+  vec2 point,
+  float footprint,
+  out float height,
+  out float nap
+) {
+  vec2 mossWarp = vec2(
+    nscNoise(point / ${glslNumber(moss.warpWavelength)}, ${glslNumber(moss.warpSeedA)}),
+    nscNoise(point / ${glslNumber(moss.warpWavelength * 1.17)}, ${glslNumber(moss.warpSeedB)})
+  ) * ${glslNumber(moss.warpAmplitude)};
+  float mossNapA = nscNoise(
+    (point + mossWarp) / ${glslNumber(moss.napWavelengthA)},
+    ${glslNumber(moss.seedA)}
+  );
+  float mossNapB = nscNoise(
+    (point - mossWarp * 0.72) / ${glslNumber(moss.napWavelengthB)},
+    ${glslNumber(moss.seedB)}
+  );
+  float mossCluster = smoothstep(
+    0.34,
+    0.78,
+    nscNoise(point / ${glslNumber(moss.clusterWavelength)}, ${glslNumber(moss.clusterSeed)}) * 0.5 + 0.5
+  );
+  float napFadeA = nscFade(${glslNumber(moss.napWavelengthA)}, footprint);
+  float napFadeB = nscFade(${glslNumber(moss.fadeWavelength)}, footprint);
+  float signedNap = mossNapA * 0.58 * napFadeA
+    + mossNapB * 0.42 * napFadeB;
+  height = signedNap * (
+    ${glslNumber(moss.heightBase)}
+    + mossCluster * ${glslNumber(moss.heightCluster)}
+  );
+  nap = clamp(0.5 + signedNap * 0.5, 0.0, 1.0) * napFadeB;
+}
+
+// Short village turf. A slow colony mask chooses between two FIXED world-space
+// frames, then a second fine field chops every anisotropic stroke into pieces.
+// Never rotate the absolute point by an angle(point): d(R(point)*point) grows
+// with distance from the origin and creates radial moire in derivative normals.
+void nsvGrassNap(
+  vec2 point,
+  float footprint,
+  out float height,
+  out float blade
+) {
+  vec2 grassWarp = vec2(
+    nscNoise(point / ${glslNumber(grass.warpWavelength)}, ${glslNumber(grass.warpSeedA)}),
+    nscNoise(point / ${glslNumber(grass.warpWavelength * 1.13)}, ${glslNumber(grass.warpSeedB)})
+  ) * ${glslNumber(grass.warpAmplitude)};
+  vec2 grassPoint = point + grassWarp;
+  vec2 grassFrameA = vec2(
+    grassPoint.x * ${glslNumber(Math.cos(grass.angleA))} - grassPoint.y * ${glslNumber(Math.sin(grass.angleA))},
+    grassPoint.x * ${glslNumber(Math.sin(grass.angleA))} + grassPoint.y * ${glslNumber(Math.cos(grass.angleA))}
+  );
+  vec2 grassFrameB = vec2(
+    grassPoint.x * ${glslNumber(Math.cos(grass.angleB))} - grassPoint.y * ${glslNumber(Math.sin(grass.angleB))},
+    grassPoint.x * ${glslNumber(Math.sin(grass.angleB))} + grassPoint.y * ${glslNumber(Math.cos(grass.angleB))}
+  );
+  float bladeCarrierA = nscNoise(
+    vec2(
+      grassFrameA.x / ${glslNumber(grass.bladeWidth)},
+      grassFrameA.y / ${glslNumber(grass.bladeLength)}
+    ),
+    ${glslNumber(grass.bladeSeed)}
+  ) * 0.5 + 0.5;
+  float bladeCarrierB = nscNoise(
+    vec2(
+      grassFrameB.x / ${glslNumber(grass.bladeWidth)},
+      grassFrameB.y / ${glslNumber(grass.bladeLength)}
+    ),
+    ${glslNumber(grass.bladeSeed + 17)}
+  ) * 0.5 + 0.5;
+  float bladeBreak = nscNoise(
+    (point - grassWarp * 0.4) / ${glslNumber(grass.breakAcross)},
+    ${glslNumber(grass.breakSeed)}
+  ) * 0.5 + 0.5;
+  float grassChoice = smoothstep(
+    0.42,
+    0.58,
+    nscNoise(point / ${glslNumber(grass.choiceWavelength)}, ${glslNumber(grass.choiceSeed)}) * 0.5 + 0.5
+  );
+  float bladeCarrier = mix(bladeCarrierA, bladeCarrierB, grassChoice);
+  float grassCluster = smoothstep(
+    0.28,
+    0.74,
+    nscNoise(point / ${glslNumber(grass.clusterWavelength)}, ${glslNumber(grass.clusterSeed)}) * 0.5 + 0.5
+  );
+  float grassFade = nscFade(${glslNumber(grass.fadeWavelength)}, footprint);
+  blade = smoothstep(0.46, 0.82, bladeCarrier)
+    * smoothstep(0.26, 0.68, bladeBreak)
+    * (0.52 + grassCluster * 0.48)
+    * grassFade;
+  height = blade * (
+    ${glslNumber(grass.heightBase)}
+    + grassCluster * ${glslNumber(grass.heightCrown)}
+  );
+}
+
+// Boot-churned path material. A slow mask chooses between fixed smear frames,
+// then isotropic breaks and crumbs interrupt them. The leaf cell is heavily
+// jittered and sparse; it supplies occasional flat organic silhouettes rather
+// than a repeated decal sheet. As above, never rotate an absolute coordinate
+// by a varying angle: that was the source of the radial derivative explosion.
+void nsvMudClose(
+  vec2 point,
+  float footprint,
+  out float height,
+  out float churn,
+  out float hollow,
+  out float leaf,
+  out float leafTone
+) {
+  vec2 mudWarp = vec2(
+    nscNoise(point / ${glslNumber(mud.warpWavelength)}, ${glslNumber(mud.warpSeedA)}),
+    nscNoise(point / ${glslNumber(mud.warpWavelength * 1.21)}, ${glslNumber(mud.warpSeedB)})
+  ) * ${glslNumber(mud.warpAmplitude)};
+  vec2 mudPoint = point + mudWarp;
+  vec2 mudFrameA = vec2(
+    mudPoint.x * ${glslNumber(Math.cos(mud.angleA))} - mudPoint.y * ${glslNumber(Math.sin(mud.angleA))},
+    mudPoint.x * ${glslNumber(Math.sin(mud.angleA))} + mudPoint.y * ${glslNumber(Math.cos(mud.angleA))}
+  );
+  vec2 mudFrameB = vec2(
+    mudPoint.x * ${glslNumber(Math.cos(mud.angleB))} - mudPoint.y * ${glslNumber(Math.sin(mud.angleB))},
+    mudPoint.x * ${glslNumber(Math.sin(mud.angleB))} + mudPoint.y * ${glslNumber(Math.cos(mud.angleB))}
+  );
+  float mudSmearA = nscNoise(
+    vec2(
+      mudFrameA.x / ${glslNumber(mud.smearAcross)},
+      mudFrameA.y / ${glslNumber(mud.smearAlong)}
+    ),
+    ${glslNumber(mud.smearSeed)}
+  );
+  float mudSmearB = nscNoise(
+    vec2(
+      mudFrameB.x / ${glslNumber(mud.smearAcross)},
+      mudFrameB.y / ${glslNumber(mud.smearAlong)}
+    ),
+    ${glslNumber(mud.smearSeed + 19)}
+  );
+  float mudChoice = smoothstep(
+    0.42,
+    0.58,
+    nscNoise(point / ${glslNumber(mud.choiceWavelength)}, ${glslNumber(mud.choiceSeed)}) * 0.5 + 0.5
+  );
+  float mudSmear = mix(mudSmearA, mudSmearB, mudChoice);
+  float mudBreak = abs(nscNoise(
+    (point - mudWarp * 0.55) / ${glslNumber(mud.breakWavelength)},
+    ${glslNumber(mud.breakSeed)}
+  ));
+  float mudCrumb = nscNoise(
+    (point + mudWarp * 0.2) / ${glslNumber(mud.crumbWavelength)},
+    ${glslNumber(mud.crumbSeed)}
+  );
+  float smearFade = nscFade(${glslNumber(mud.fadeWavelength)}, footprint);
+  float crumbFade = nscFade(${glslNumber(mud.crumbWavelength)}, footprint);
+  float signedChurn = mudSmear * (0.34 + mudBreak * 0.66) * smearFade;
+  churn = clamp(0.5 + signedChurn * 0.5 + mudCrumb * 0.12 * crumbFade, 0.0, 1.0);
+  hollow = smoothstep(0.55, 0.88, 0.5 - signedChurn * 0.5)
+    * smoothstep(0.18, 0.72, mudBreak)
+    * smearFade;
+
+  vec2 leafCell = floor(point / ${glslNumber(mud.leafCell)});
+  vec2 leafFraction = fract(point / ${glslNumber(mud.leafCell)}) - 0.5;
+  vec2 leafOffset = vec2(
+    nscHash(leafCell, ${glslNumber(mud.leafOffsetSeedA)}),
+    nscHash(leafCell, ${glslNumber(mud.leafOffsetSeedB)})
+  ) - 0.5;
+  vec2 leafPoint = (leafFraction - leafOffset * 0.3) * ${glslNumber(mud.leafCell)};
+  float leafAngle = nscHash(leafCell, ${glslNumber(mud.leafAngleSeed)}) * 6.2831853;
+  float leafCosine = cos(leafAngle);
+  float leafSine = sin(leafAngle);
+  vec2 leafFrame = vec2(
+    leafPoint.x * leafCosine - leafPoint.y * leafSine,
+    leafPoint.x * leafSine + leafPoint.y * leafCosine
+  );
+  float leafShape = abs(leafFrame.x) / ${glslNumber(mud.leafLength * 0.5)}
+    + pow(abs(leafFrame.y) / ${glslNumber(mud.leafWidth * 0.5)}, 1.35);
+  float leafPresent = step(
+    ${glslNumber(mud.leafPresence)},
+    nscHash(leafCell, ${glslNumber(mud.leafSeed)})
+  );
+  leaf = (1.0 - smoothstep(0.78, 1.0, leafShape))
+    * leafPresent
+    * nscFade(${glslNumber(mud.leafFadeWavelength)}, footprint);
+  leafTone = nscHash(leafCell, ${glslNumber(mud.leafToneSeed)});
+  height = signedChurn * ${glslNumber(mud.heightSmear)}
+    + mudCrumb * ${glslNumber(mud.heightCrumb)} * crumbFade
+    + leaf * 0.0012;
+}
+
+vec3 nsvHeathAlbedo(
+  vec2 point,
+  float footprint,
+  float cushions,
+  float fibre,
+  float litter,
+  float moss,
+  float litness
+) {
+  vec3 heath = mix(${glslColor(p.base)}, ${glslColor(p.alt)}, clamp(cushions, 0.0, 1.0));
+  vec2 matWarp = vec2(
+    nscNoise(point / 0.81, 971.0),
+    nscNoise(point / 0.63, 977.0)
+  ) * 0.11;
+  float mat = abs(nscNoise((point + matWarp) / 0.34, 983.0));
+  float pock = abs(nscNoise((point - matWarp * 0.6) / 0.145, 991.0));
+  mat = mix(0.45, mat, nscFade(0.34, footprint));
+  pock = mix(0.45, pock, nscFade(0.145, footprint));
+  heath = mix(heath, ${glslColor(p.seamDark)}, pow(1.0 - cushions, 1.8) * 0.48);
+  heath = mix(heath, ${glslColor(p.lit)}, smoothstep(0.5, 0.86, cushions) * 0.34);
+  float feltHollow = pow(1.0 - mat, 2.4);
+  float feltCrown = smoothstep(0.58, 0.9, mat * 0.68 + pock * 0.42);
+  heath = mix(heath, ${glslColor(p.seamDark)}, feltHollow * 0.58);
+  heath = mix(heath, ${glslColor(p.lit)}, feltCrown * 0.39);
+  heath = mix(heath, ${glslColor(p.moss)}, moss * 0.82);
+  heath = mix(heath, ${glslColor(p.thatch)}, litter * (0.3 + pock * 0.34));
+  heath = mix(heath, ${glslColor(p.straw)}, fibre * (0.17 + litness * 0.2));
+  float grain = nscNoise(point / 0.043, 967.0) * nscFade(0.043, footprint) * 0.5
+    + nscNoise(point / 0.083, 969.0) * nscFade(0.083, footprint) * 0.5;
+  heath *= 1.0 + grain * (0.075 + litness * 0.095);
+  return heath;
 }
 `;
 }

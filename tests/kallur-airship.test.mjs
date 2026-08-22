@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   kallurAirshipBellyY,
+  kallurAirshipHullRadius,
   kallurAirshipObject,
   kallurAirshipParts,
   KALLUR_AIRSHIP_AXIS_Y,
@@ -25,6 +26,41 @@ function meshBounds(part) {
     }
   }
   return bounds;
+}
+
+function boxCorners(center, size, rotation) {
+  const hx = size[0] / 2;
+  const hy = size[1] / 2;
+  const hz = size[2] / 2;
+  const rx = rotation?.[0] ?? 0;
+  const ry = rotation?.[1] ?? 0;
+  const rz = rotation?.[2] ?? 0;
+  const corners = [];
+  for (const sx of [-1, 1]) {
+    for (const sy of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        const x = sx * hx;
+        let y = sy * hy;
+        let z = sz * hz;
+        const cx = Math.cos(rx);
+        const sxr = Math.sin(rx);
+        const y1 = cx * y - sxr * z;
+        const z1 = sxr * y + cx * z;
+        const cy = Math.cos(ry);
+        const syr = Math.sin(ry);
+        const x2 = cy * x + syr * z1;
+        const z2 = -syr * x + cy * z1;
+        const cz = Math.cos(rz);
+        const szr = Math.sin(rz);
+        corners.push([
+          center[0] + cz * x2 - szr * y1,
+          center[1] + szr * x2 + cz * y1,
+          center[2] + z2,
+        ]);
+      }
+    }
+  }
+  return corners;
 }
 
 function signedVolume(part) {
@@ -91,6 +127,22 @@ test("airship: skids sit exactly on the y=0 platform datum", () => {
     const bottom = Math.min(skid.from[1], skid.to[1]) - skid.radius;
     assert.ok(Math.abs(bottom) < 1e-6, `${skid.id} bottom at ${bottom}`);
   }
+  const struts = kallurAirshipParts.filter((part) =>
+    part.kind === "cylinder" && part.id.includes("skid-strut"));
+  assert.equal(struts.length, 4);
+  for (const strut of struts) {
+    const side = Math.sign(strut.to[0]);
+    const skid = skids.find((part) => Math.sign(part.from[0]) === side);
+    const foot = [strut.to[0] - skid.from[0], strut.to[1] - skid.from[1]];
+    assert.ok(Math.hypot(...foot) <= skid.radius + 1e-6,
+      `${strut.id} foot misses the skid tube by ${
+        (Math.hypot(...foot) - skid.radius).toFixed(3)
+      } m`);
+    const along = strut.to[2];
+    const z0 = Math.min(skid.from[2], skid.to[2]);
+    const z1 = Math.max(skid.from[2], skid.to[2]);
+    assert.ok(along >= z0 && along <= z1, `${strut.id} lands off the skid length`);
+  }
 });
 
 test("airship: the pod is MERGED - wall tops bury into the hull belly", () => {
@@ -138,9 +190,12 @@ test("airship: the doorway is a REAL void with the sliding door outside", () => 
   }
 });
 
-test("airship: no main rotor above the cabin (rejection condition)", () => {
-  for (const part of kallurAirshipParts) {
-    if (!part.id.startsWith("prop-")) continue;
+test("airship: two blades per side sit outboard, never on the cabin axis", () => {
+  const blades = kallurAirshipParts.filter((part) =>
+    /engine:-?1:blade:-?1/.test(part.id));
+  assert.equal(blades.length, 4);
+  for (const part of blades) {
+    if (part.kind !== "box") continue;
     assert.ok(Math.abs(part.center[0]) > 1.2 * KALLUR_AIRSHIP_SCALE,
       `${part.id} sits on the centreline like a main rotor`);
   }
@@ -158,10 +213,150 @@ test("airship: glazing lives only in the glazing group, wrap canopy exists", () 
   const canopy = meshParts.find((part) => part.id === "gondola-canopy");
   const bounds = meshBounds(canopy);
   assert.ok(bounds.max[2] > 2.0 * KALLUR_AIRSHIP_SCALE,
-    "the wrap canopy must reach the cockpit nose");
+    "the canopy must reach the cockpit nose");
   assert.ok(bounds.min[2] < 0.6 * KALLUR_AIRSHIP_SCALE,
     "the side window band must be glazed");
   assert.ok(canopy.triangles.length >= 20, "canopy is a wrap, not a porthole");
+});
+
+test("airship: nose glass follows the hull belly, not a helicopter visor", () => {
+  const canopy = meshParts.find((part) => part.id === "gondola-canopy");
+  const bury = 0.12 * KALLUR_AIRSHIP_SCALE;
+  for (const authorZ of [2.68, 2.48, 2.2]) {
+    const z = authorZ * KALLUR_AIRSHIP_SCALE;
+    let highest = null;
+    for (const vertex of canopy.vertices) {
+      if (Math.abs(vertex[2] - z) > 0.18 * KALLUR_AIRSHIP_SCALE) continue;
+      if (!highest || vertex[1] > highest[1]) highest = vertex;
+    }
+    assert.ok(highest, `no canopy at z=${authorZ}`);
+    const belly = kallurAirshipBellyY(highest[0], highest[2]);
+    assert.ok(highest[1] > belly,
+      `glass at z=${authorZ} hangs below the hull (${highest[1].toFixed(2)} vs belly ${belly.toFixed(2)})`);
+    assert.ok(highest[1] < belly + bury + 0.08 * KALLUR_AIRSHIP_SCALE,
+      `glass at z=${authorZ} stands off the hull as a visor (${highest[1].toFixed(2)} vs belly ${belly.toFixed(2)})`);
+  }
+  for (const vertex of canopy.vertices) {
+    if (vertex[2] > 2.62 * KALLUR_AIRSHIP_SCALE) {
+      assert.ok(vertex[1] > 1.42 * KALLUR_AIRSHIP_SCALE,
+        `glass spike below the chin at ${vertex.join(",")}`);
+    }
+  }
+});
+
+test("airship: blades are one diameter through the hub, and the disk misses the hull", () => {
+  const blades = kallurAirshipParts.filter((part) =>
+    part.kind === "box" && /engine:-?1:blade:-?1/.test(part.id));
+  assert.equal(blades.length, 4);
+  const nacelles = kallurAirshipParts.filter((part) =>
+    part.kind === "cylinder" && part.id.endsWith(":nacelle"));
+  const spinners = kallurAirshipParts.filter((part) =>
+    part.kind === "cylinder" && part.id.endsWith(":spinner"));
+  for (const part of blades) {
+    assert.ok(Math.abs(part.rotation[1]) >= 0.25,
+      `${part.id} is a face-on plank, not a pitched blade`);
+    assert.ok(part.size[2] < part.size[0],
+      `${part.id} is a thick slab along the shaft, not a thin diameter`);
+  }
+  for (const nacelle of nacelles) {
+    const prefix = nacelle.id.replace(":nacelle", "");
+    const sideBlades = blades.filter((blade) => blade.id.startsWith(prefix));
+    const spinner = spinners.find((part) => part.id.startsWith(prefix));
+    const hub = [
+      nacelle.from[0],
+      nacelle.from[1],
+      sideBlades[0].center[2],
+    ];
+    const mid = [0, 1, 2].map((axis) =>
+      (sideBlades[0].center[axis] + sideBlades[1].center[axis]) / 2);
+    assert.ok(Math.hypot(mid[0] - hub[0], mid[1] - hub[1]) < 0.02,
+      `${prefix} blades do not meet on one line through the hub`);
+    const a = [
+      sideBlades[0].center[0] - hub[0],
+      sideBlades[0].center[1] - hub[1],
+    ];
+    const b = [
+      sideBlades[1].center[0] - hub[0],
+      sideBlades[1].center[1] - hub[1],
+    ];
+    const dot = (a[0] * b[0] + a[1] * b[1])
+      / (Math.hypot(...a) * Math.hypot(...b));
+    assert.ok(dot < -0.98, `${prefix} blades are not 180° apart`);
+    for (const blade of sideBlades) {
+      const radial = Math.hypot(
+        blade.center[0] - hub[0],
+        blade.center[1] - hub[1],
+      );
+      const inner = radial - blade.size[1] / 2;
+      assert.ok(inner < spinner.radius,
+        `${blade.id} root sits ${inner.toFixed(3)} m outside the spinner`);
+      const z0 = Math.min(spinner.from[2], spinner.to[2]);
+      const z1 = Math.max(spinner.from[2], spinner.to[2]);
+      assert.ok(blade.center[2] >= z0 && blade.center[2] <= z1,
+        `${blade.id} sits in front of the hub, not in the shaft`);
+    }
+  }
+
+  const half = KALLUR_AIRSHIP_LENGTH / 2;
+  let worst = Infinity;
+  for (const nacelle of nacelles) {
+    const prefix = nacelle.id.replace(":nacelle", "");
+    const sideBlades = blades.filter((blade) => blade.id.startsWith(prefix));
+    const hub = [nacelle.from[0], nacelle.from[1], sideBlades[0].center[2]];
+    for (let deg = 0; deg < 360; deg += 5) {
+      const angle = deg * Math.PI / 180;
+      const cs = Math.cos(angle);
+      const sn = Math.sin(angle);
+      for (const blade of sideBlades) {
+        for (const corner of boxCorners(blade.center, blade.size, blade.rotation)) {
+          const x = corner[0] - hub[0];
+          const y = corner[1] - hub[1];
+          const point = [hub[0] + cs * x - sn * y, hub[1] + sn * x + cs * y, corner[2]];
+          const dist = Math.hypot(point[0], point[1] - KALLUR_AIRSHIP_AXIS_Y);
+          const hull = kallurAirshipHullRadius(half - point[2]);
+          worst = Math.min(worst, dist - hull);
+        }
+      }
+    }
+  }
+  assert.ok(worst > 0.12,
+    `inboard tip chops the envelope by ${(-worst).toFixed(3)} m through a revolution`);
+});
+
+test("airship: the nacelle hangs on the outrigger, not beside it", () => {
+  const nacelles = kallurAirshipParts.filter((part) =>
+    part.kind === "cylinder" && part.id.endsWith(":nacelle"));
+  const pylons = kallurAirshipParts.filter((part) =>
+    part.kind === "beam" && part.id.includes(":pylon:"));
+  const wings = kallurAirshipParts.filter((part) => part.id.endsWith(":wing"));
+  assert.equal(pylons.length, 6, "upper-fore, upper-aft and lower stay per side");
+  assert.equal(wings.length, 2);
+  for (const pylon of pylons) {
+    const side = pylon.id.includes("engine:1:") ? "engine:1:nacelle" : "engine:-1:nacelle";
+    const nacelle = nacelles.find((part) => part.id === side);
+    const radial = Math.hypot(
+      pylon.to[0] - nacelle.from[0],
+      pylon.to[1] - nacelle.from[1],
+    );
+    const z0 = Math.min(nacelle.from[2], nacelle.to[2]);
+    const z1 = Math.max(nacelle.from[2], nacelle.to[2]);
+    assert.ok(radial <= nacelle.radius,
+      `${pylon.id} ends ${ (radial - nacelle.radius).toFixed(3) } m short of the cowling`);
+    assert.ok(pylon.to[2] >= z0 - 0.02 && pylon.to[2] <= z1 + 0.02,
+      `${pylon.id} misses the nacelle along the shaft`);
+  }
+  for (const wing of wings) {
+    const side = Math.sign(wing.center[0]);
+    const nacelle = nacelles.find((part) => Math.sign(part.from[0]) === side);
+    const inboard = Math.abs(wing.center[0]) - wing.size[0] / 2;
+    const outboard = Math.abs(wing.center[0]) + wing.size[0] / 2;
+    const hull = kallurAirshipHullRadius(KALLUR_AIRSHIP_LENGTH / 2 - wing.center[2]);
+    const nacelleInboard = Math.abs(nacelle.from[0]) - nacelle.radius;
+    assert.ok(inboard < hull,
+      `${wing.id} does not bury into the hull`);
+    assert.ok(outboard > nacelleInboard,
+      `${wing.id} does not reach the nacelle`);
+  }
 });
 
 test("airship: fins root inside the hull and required views exist", () => {

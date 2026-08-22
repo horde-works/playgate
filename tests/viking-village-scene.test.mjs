@@ -8,6 +8,16 @@ import {
   vikingVillageHomes,
 } from "../games/make-a-mess/src/content/scenes/vikingVillagePlan.ts";
 import {
+  VIKING_BOULDER_ARCHETYPES,
+  vikingBoulderPlacements,
+} from "../games/make-a-mess/src/content/scenes/vikingVillageBoulders.ts";
+import {
+  vikingGroundTopAt,
+  vikingLandscapeMesh,
+  vikingTerrainPieceIdAt,
+  vikingTrafficWearAt,
+} from "../games/make-a-mess/src/content/scenes/vikingVillageLandscape.ts";
+import {
   vikingVillageCompilation,
   vikingVillageScene,
 } from "../games/make-a-mess/src/game/vikingVillageScene.ts";
@@ -95,14 +105,53 @@ test("new longhouse timbers rest separately against the west wall frame", () => 
   }
 });
 
-test("mud, moss and wet tracks are masks on the destructible ground", () => {
+test("longship mooring stays visual while the brow only supports actors", () => {
+  const dock = vikingVillageScene.breakablePieces.filter(
+    (piece) => piece.clusterId === "viking-village:sky-longship-dock",
+  );
+  const lines = dock.filter((piece) =>
+    piece.id.includes(":bow-line:") ||
+    piece.id.includes(":moor-line:") ||
+    piece.id.includes(":spring-line:"),
+  );
+  const brow = dock.find((piece) => piece.id.includes(":brow:"));
+
+  assert.equal(lines.length, 5);
+  assert.equal(lines.every((piece) => piece.intactCollider === false), true);
+  assert.equal(lines.every((piece) => piece.destructible !== false), true);
+  assert.equal(brow?.intactCollisionRole, "actor-only");
+  assert.equal(brow?.destructible !== false, true);
+});
+
+test("mud, moss and wet tracks are masks on indestructible ground", () => {
   const landscape = vikingVillageScene.breakablePieces.filter(
     (piece) => piece.landscapeSurface === "viking-ground",
+  );
+  const earth = vikingVillageScene.breakablePieces.filter(
+    (piece) => piece.clusterId.endsWith(":terrain-base"),
   );
   const ids = vikingVillageScene.breakablePieces.map((piece) => piece.id);
 
   assert.equal(landscape.length > 1_000, true);
   assert.equal(landscape.every((piece) => piece.shape === "groundTile"), true);
+  assert.equal(landscape.every((piece) => piece.destructible === false), true);
+  assert.equal(landscape.every((piece) => piece.intactVisible === false), true);
+  assert.equal(landscape.every((piece) => piece.intactCollider === false), true);
+  assert.equal(earth.length, landscape.length);
+  assert.equal(earth.every((piece) => piece.destructible === false), true);
+  assert.equal(vikingVillageDocument.landscapeVisual?.landscapeSurface, "viking-ground");
+  assert.equal(vikingVillageDocument.landscapeVisual?.indexedCollider != null, true);
+  assert.equal(vikingLandscapeMesh.triangleCount > 80_000, true);
+  const heights = [
+    vikingGroundTopAt(-17.3, 12.1),
+    vikingGroundTopAt(-14.8, 13.6),
+    vikingGroundTopAt(-11.9, 15.4),
+    vikingGroundTopAt(24.2, 29.7),
+    vikingGroundTopAt(31.6, -34.4),
+  ];
+  assert.equal(Math.max(...heights) - Math.min(...heights) > 0.025, true);
+  assert.equal(vikingTrafficWearAt(0, 48) > vikingTrafficWearAt(11, 48), true);
+  assert.equal(vikingTerrainPieceIdAt(0, 48)?.endsWith(":cover:0:50:piece"), true);
   for (const fakeOverlay of [
     ":main-track:",
     ":hall-track:",
@@ -110,6 +159,97 @@ test("mud, moss and wet tracks are masks on the destructible ground", () => {
     ":moss:",
   ]) {
     assert.equal(ids.some((id) => id.includes(fakeOverlay)), false, fakeOverlay);
+  }
+});
+
+test("natural rocks use the Viking field while cat blocks and built stone stay distinct", () => {
+  const placements = vikingBoulderPlacements();
+  const usedArchetypes = new Set(placements.map((placement) => placement.archetype));
+  const natural = vikingVillageScene.breakablePieces.filter((piece) =>
+    piece.id.includes(":viking-erratic:") || piece.id.includes(":viking-fieldstone:"),
+  );
+  const embedded = placements.filter((placement) => placement.id.startsWith("viking-fieldstone:"));
+  const pathShoulder = placements.filter((placement) =>
+    placement.id.startsWith("viking-fieldstone:path:"),
+  );
+  const companions = placements.filter((placement) =>
+    placement.id.startsWith("viking-fieldstone:companion:"),
+  );
+  const ambient = placements.filter((placement) =>
+    placement.id.startsWith("viking-fieldstone:ambient:"),
+  );
+  const survey = vikingVillageScene.breakablePieces.filter((piece) =>
+    piece.id.includes(":survey-boulder:"),
+  );
+  const builtStone = vikingVillageScene.breakablePieces.filter((piece) =>
+    piece.id.includes(":village-well:stone:"),
+  );
+  const ids = vikingVillageScene.breakablePieces.map((piece) => piece.id);
+
+  assert.equal(placements.length, 104);
+  assert.equal(embedded.length, 52);
+  assert.equal(pathShoulder.length, 40);
+  assert.equal(companions.length, 7);
+  assert.equal(ambient.length, 5);
+  for (const [cluster, count] of [
+    ["north-spine", 6],
+    ["well-shoulder", 8],
+    ["commons-bend", 6],
+    ["south-junction", 7],
+    ["fisher-bend", 7],
+    ["south-approach", 6],
+  ]) {
+    assert.equal(
+      pathShoulder.filter((stone) =>
+        stone.id.startsWith(`viking-fieldstone:path:${cluster}:`),
+      ).length,
+      count,
+      `${cluster} remains a local deposit rather than uniform scatter`,
+    );
+  }
+  assert.equal(
+    Math.min(...companions.map((placement) => placement.scale[0]))
+      > Math.max(...pathShoulder.map((placement) => placement.scale[0])),
+    true,
+    "occasional larger stones support the displaced path fragments",
+  );
+  for (const stone of pathShoulder) {
+    const [x, , z] = stone.position;
+    const localWear = vikingTrafficWearAt(x, z);
+    let nearbyWear = 0;
+    for (const radius of [1.1, 1.5, 1.9, 2.3, 2.7]) {
+      for (let direction = 0; direction < 16; direction += 1) {
+        const angle = direction * Math.PI / 8;
+        nearbyWear = Math.max(
+          nearbyWear,
+          vikingTrafficWearAt(
+            x + Math.cos(angle) * radius,
+            z + Math.sin(angle) * radius,
+          ),
+        );
+      }
+    }
+    assert.equal(localWear < 0.38, true, `${stone.id} stays out of the walked centre`);
+    assert.equal(
+      nearbyWear - localWear > 0.2,
+      true,
+      `${stone.id} belongs to a loose path shoulder`,
+    );
+  }
+  assert.deepEqual(
+    usedArchetypes,
+    new Set(VIKING_BOULDER_ARCHETYPES.map((archetype) => archetype.id)),
+  );
+  assert.equal(natural.length, placements.length);
+  assert.equal(natural.every((piece) => piece.intactVisible === false), true);
+  assert.equal(natural.every((piece) => piece.destructible === false), true);
+  assert.equal(survey.length, 2);
+  assert.equal(survey.every((piece) => piece.intactVisible !== false), true);
+  assert.equal(survey.every((piece) => piece.destructible === false), true);
+  assert.equal(builtStone.length > 4, true);
+  assert.equal(builtStone.every((piece) => piece.destructible !== false), true);
+  for (const removedScatter of [":rock-pile:", ":pebble:", ":shore-stone:", ":sedge:"]) {
+    assert.equal(ids.some((id) => id.includes(removedScatter)), false, removedScatter);
   }
 });
 

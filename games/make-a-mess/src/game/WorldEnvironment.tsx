@@ -57,6 +57,7 @@ import {
 import {
   cloudShaftStrengthAmount,
   airForwardScatterAmount,
+  landHazeBand,
   setMaterialAtmosphere,
 } from "./materialAtmosphere.ts";
 import { environmentState } from "./environmentState";
@@ -314,6 +315,7 @@ export function DayNightCycle({
   snapVersion = 0,
   cinematic = false,
   weather = CLEAR_SKY,
+  sceneId = "",
 }: {
   mode: TimeOfDay;
   nightRef: { current: number };
@@ -332,6 +334,8 @@ export function DayNightCycle({
   cinematic?: boolean;
   /** Authored weather. `CLEAR_SKY` leaves the analytic dome untouched. */
   weather?: SkyWeather;
+  /** Scene id — place character for land haze (polder mist, steppe clear…). */
+  sceneId?: string;
 }) {
   const directional = useRef<DirectionalLight>(null);
   const hemisphere = useRef<HemisphereLight>(null);
@@ -925,10 +929,10 @@ export function DayNightCycle({
       (directional.current?.color.b ?? 1) * (keyEnergy / totalEnergy)
         + measured.fillColour.b * (fillEnergy / totalEnergy),
     );
-    // The sun is no longer passed to the piece materials: haze used to be a
-    // flat colour with a hand-authored warm tint aimed at the sun, and it is
-    // now the sky itself, read out of the environment bake along the view ray.
-    // Where the sun is, and how warm the air is around it, is already in there.
+    // Piece haze colour is the sky bake along the ray. Mie lobe aims at the
+    // ACTIVE key (sun by day, moon by night) — same light the ground uses —
+    // so dusk/night fog keeps density but takes the hour's colour, not a
+    // leftover noon white.
     updateMaterialEnvironment({
       airExtinction: 1 / extinctionLength(weather),
       wetness: environmentState.wetness,
@@ -937,23 +941,30 @@ export function DayNightCycle({
       stains: theme === "town" ? 1 : 0,
     });
     const [fieldOriginX, fieldOriginZ] = weatherFieldOrigin(weather);
+    const hazeBand = landHazeBand(worldRadius ?? 67, sceneId);
     setMaterialAtmosphere({
       sunDirection: [
-        environmentState.sunDirection.x,
-        environmentState.sunDirection.y,
-        environmentState.sunDirection.z,
+        environmentState.keyLightDirection.x,
+        environmentState.keyLightDirection.y,
+        environmentState.keyLightDirection.z,
       ],
       sunFogColour: [
-        measured.keyColour.r,
-        measured.keyColour.g,
-        measured.keyColour.b,
+        environmentState.keyLightColor.r,
+        environmentState.keyLightColor.g,
+        environmentState.keyLightColor.b,
       ],
       airForwardScatter: airForwardScatterAmount(
         environmentState.dayFactor,
         measured.keyLevel,
         twilight,
         shade,
+        night,
       ),
+      nearHoldStart: hazeBand.nearHoldStart,
+      nearHoldEnd: hazeBand.nearHoldEnd,
+      landHazeNear: hazeBand.landHazeNear,
+      landHazeFar: hazeBand.landHazeFar,
+      landHazeStrength: hazeBand.landHazeStrength,
       cloudCoverage: weather.coverage,
       cloudEdge: cloudEdgeFor(weather.coverage),
       cloudBase: weather.baseAltitude,

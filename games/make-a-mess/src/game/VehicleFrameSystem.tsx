@@ -76,6 +76,7 @@ import {
   shipForces,
   isDockingSettleWindow,
   isDockingComplete,
+  isPlatformDockingComplete,
   hullDrag,
   isMooringCaptureEligible,
   isRestingPose,
@@ -89,6 +90,9 @@ import {
   vehicleMooringState,
   vehiclePiecePosition,
   vehicleProximitySensorEnabled,
+  vehicleRouteDockState,
+  vehiclePlatformDockState,
+  vehicleRoutePlatformDockState,
   vehicleRouteHeading,
   vehicleRouteAltitudeTarget,
   vehicleVerticalArrivalCaptured,
@@ -140,6 +144,15 @@ import {
   entryInteractionMatches,
   type EntryInteractionTarget,
 } from "./entryInteraction";
+import {
+  nearestVehicleDeparturePost,
+  vehicleBaseParkedLiftCommand,
+  vehicleDeparturePostById,
+  vehicleDeparturePostActions,
+  vehicleFlightTargetPost,
+  vehicleHomeDeparturePost,
+  type VehicleDeparturePost,
+} from "./vehicleDepartureBoard.ts";
 import {
   isInterIslandArrivalKind,
   isInterIslandTransferKind,
@@ -427,6 +440,27 @@ function flightRoutePlan(
         from: flight.recallFrom ? [...flight.recallFrom] : undefined,
       })
     : frame.flight.routePlan(flight.kind, berth);
+}
+
+function targetVehicleBase(
+  frame: VehicleFrameRuntime,
+  flight: Pick<FlightState, "kind" | "targetBaseId">,
+): VehicleDeparturePost | null {
+  const posts = frame.departure?.posts;
+  if (!posts) return null;
+  return vehicleDeparturePostById(posts, flight.targetBaseId) ??
+    vehicleFlightTargetPost(posts, flight.kind);
+}
+
+function parkedVehicleBase(
+  frame: VehicleFrameRuntime,
+  dockedBaseId: string | null,
+  centre: readonly [number, number, number],
+): VehicleDeparturePost | null {
+  const posts = frame.departure?.posts;
+  if (!posts) return null;
+  return vehicleDeparturePostById(posts, dockedBaseId) ??
+    vehicleHomeDeparturePost(posts, centre);
 }
 
 const GRAVITY = 9.81;
@@ -1185,6 +1219,8 @@ export interface VehicleFramePoseState {
 /** Ход рейса: null — стоим у причала. */
 interface FlightState {
   kind: string;
+  /** Authored base whose docking law ends this flight. */
+  targetBaseId: string | null;
   /**
    * Откуда машину отозвали. Заход на посадку по отзыву начинается ТАМ, ГДЕ
    * ПРИКАЗ ЗАСТАЛ МАШИНУ, а не на горизонте: телепортировать летящую на глазах
@@ -1393,6 +1429,8 @@ interface FrameState {
    */
   spinAngles: number[];
   flight: FlightState | null;
+  /** Base whose parked pose is the current zero after a completed flight. */
+  dockedBaseId: string | null;
   recovery: FrameRecoveryState | null;
   /** Number of upward-facing physical contact manifolds last step. */
   supportContacts: number;
@@ -1962,6 +2000,7 @@ function restingState(engineCount: number, yawThrusterCount = 0): FrameState {
       () => 0,
     ),
     flight: null,
+    dockedBaseId: null,
     recovery: null,
     supportContacts: 0,
     wheelBrake: 0,
@@ -2001,10 +2040,12 @@ function createFlightState(
   engineCount: number,
   underwayTime = 0,
   pilot: RotorcraftPilotState | null = null,
+  targetBaseId: string | null = null,
 ): FlightState {
   const zeroThrottle = Array.from({ length: engineCount }, () => 0);
   return {
     kind,
+    targetBaseId,
     occupancy,
     pilot,
     time: underwayTime,
@@ -2365,6 +2406,8 @@ export function VehicleFrameSystem({
   const { camera } = useThree();
   const [, getPilotControls] = useKeyboardControls<PilotControlName>();
   const approachedPost = useRef<ScheduledInteraction | null>(null);
+  const approachedBoardId = useRef<string | null>(null);
+  const approachedCandidateKey = useRef("");
   /** Яркость перронных огней в прошлом кадре: переключаем только по смене. */
   const departureGlow = useRef<number | null>(null);
   const debugTelemetryAt = useRef(0);
@@ -3079,6 +3122,11 @@ export function VehicleFrameSystem({
         kind,
         "uncrewed",
         frame.flight.limits.enginePoints.length,
+        0,
+        null,
+        frame.departure.posts
+          ? vehicleFlightTargetPost(frame.departure.posts, kind)?.id ?? null
+          : null,
       );
       return true;
     };
@@ -3483,6 +3531,14 @@ export function VehicleFrameSystem({
               intact: seatIntact,
             })
           : null;
+      let homePost = departure?.posts
+        ? vehicleHomeDeparturePost(departure.posts, [
+            interactionFrame.origin[0] + interaction.pose.position[0],
+            interactionFrame.origin[1] + interaction.pose.position[1],
+            interactionFrame.origin[2] + interaction.pose.position[2],
+          ])
+        : null;
+      let nearbyPost = null as ReturnType<typeof nearestVehicleDeparturePost>;
       if (seatAction === "stand") {
         post = seatAction;
       } else if (interaction.flight === null) {
@@ -3502,16 +3558,31 @@ export function VehicleFrameSystem({
             : Number.POSITIVE_INFINITY;
           const keepRide = approachedPost.current === "ride";
           const keepBoard = approachedPost.current === "board";
-          // Стойка на паде — интерфейс ПЛОЩАДКИ, и она видит машину только
-          // когда машина дома. Пульт без машины — призрак: он телепортировал
-          // пилота в кресло через полкарты. За улетевшей машиной идут пешком;
-          // вход в управление ждёт у самого кресла и едет вместе с ней.
           const vehicleHome =
             Math.hypot(
               interaction.pose.position[0],
               interaction.pose.position[1],
               interaction.pose.position[2],
             ) <= DEPARTURE_HOME_RADIUS;
+          const shipWorld: [number, number, number] = [
+            interactionFrame.origin[0] + interaction.pose.position[0],
+            interactionFrame.origin[1] + interaction.pose.position[1],
+            interactionFrame.origin[2] + interaction.pose.position[2],
+          ];
+          const posts = departure?.posts;
+          homePost = posts
+            ? vehicleHomeDeparturePost(posts, shipWorld)
+            : null;
+          nearbyPost = posts && departure
+            ? nearestVehicleDeparturePost(
+                posts,
+                eye,
+                departure.approachRadius,
+                departure.releaseRadius,
+                departure.heightTolerance,
+                keepBoard ? approachedBoardId.current : null,
+              )
+            : null;
           if (
             passengerFlight &&
             passengerLaunchAllowed &&
@@ -3523,14 +3594,17 @@ export function VehicleFrameSystem({
           ) {
             post = "ride";
           } else if (
+            nearbyPost &&
+            uncrewedLaunchAllowed &&
+            homePost
+          ) {
+            post = "board";
+            approachedBoardId.current = nearbyPost.id;
+          } else if (
+            !posts &&
             departure &&
-            // ПУЛЬТ ГОВОРИТ И ТОГДА, КОГДА МАШИНА НЕ ДОМА.
-            //
-            // Прежде пост требовал, чтобы машина стояла на площадке, и у пульта
-            // не было ни одного слова для улетевшей. Отсюда бой без конца:
-            // отозвать охотника было нечем (вердикт Igor, 11.08.2026). Отзыв —
-            // единственная команда возврата, других триггеров нет и не будет.
-            (interaction.flight === null ? uncrewedLaunchAllowed && vehicleHome : true) &&
+            uncrewedLaunchAllowed &&
+            vehicleHome &&
             Math.abs(eye[1] - departure.point[1]) < departure.heightTolerance &&
             boardDistance <=
               (keepBoard ? departure.releaseRadius : departure.approachRadius)
@@ -3541,13 +3615,14 @@ export function VehicleFrameSystem({
             process.env.NODE_ENV !== "production" &&
             typeof window !== "undefined"
           ) {
-            // Диагноз поста для headless-проверок: какие ворота не пустили.
             (window as unknown as Record<string, unknown>).__mamDepartureDebug = {
               frame: interactionFrame.id,
               post,
               uncrewedLaunchAllowed,
               vehicleHome,
               boardDistance,
+              nearbyPost: nearbyPost?.id ?? null,
+              homePost: homePost?.id ?? null,
               approachRadius: departure?.approachRadius ?? null,
               eyeHeightDelta: departure
                 ? Math.abs(eye[1] - departure.point[1])
@@ -3581,6 +3656,17 @@ export function VehicleFrameSystem({
               ],
             }
           : null;
+      const shuttleActions = nearbyPost && homePost
+        ? vehicleDeparturePostActions(nearbyPost, homePost)
+        : null;
+      const shuttleTarget =
+        departure && shuttleActions && shuttleActions.length > 0 && nearbyPost
+          ? {
+              ...departure.target,
+              id: `${departure.target.id}:${nearbyPost.id}`,
+              actions: shuttleActions,
+            }
+          : null;
       const departureTarget =
         departure?.target.actions && !passengerLaunchAllowed
           ? {
@@ -3594,7 +3680,7 @@ export function VehicleFrameSystem({
         post === "ride"
           ? (interactionFrame.passengerFlight?.target ?? null)
           : post === "board"
-            ? (recallTarget ?? departureTarget)
+            ? (recallTarget ?? shuttleTarget ?? departureTarget)
             : post === "seat"
               ? { id: interactionSeat?.id ?? "seat", kind: "seat" }
               : post === "stand"
@@ -3607,8 +3693,13 @@ export function VehicleFrameSystem({
                     }),
                   }
                 : null;
-      if (post !== approachedPost.current) {
+      const candidateKey = `${post ?? ""}:${candidate?.id ?? ""}:${
+        candidate?.actions?.[0]?.id ?? ""
+      }`;
+      if (candidateKey !== approachedCandidateKey.current) {
+        approachedCandidateKey.current = candidateKey;
         approachedPost.current = post;
+        if (post !== "board") approachedBoardId.current = null;
         onDepartureApproachChange(candidate);
       }
       if (handledDepartRequest.current !== departRequestVersion) {
@@ -3642,6 +3733,7 @@ export function VehicleFrameSystem({
             interaction.flight = {
               ...interaction.flight,
               kind: RECALL_ACTION,
+              targetBaseId: departure?.posts?.[0]?.id ?? null,
               recallFrom: centre,
               progress: 0,
               time: 0,
@@ -3661,22 +3753,28 @@ export function VehicleFrameSystem({
               interactionSeat?.rotorcraftControls === true &&
               passengerLaunchAllowed &&
               seatIntact;
-            interaction.flight = createFlightState(
-              // Решение «какой рейс начинается» вынесено в чистую функцию:
-              // здесь уже была ошибка, которую нечем было поймать тестом.
-              dispatchedFlightKind({
+            const dispatchedKind = dispatchedFlightKind({
                 post: post === "ride" ? "ride" : "board",
                 requestedAction,
                 departureKind: departure?.flightKind ?? null,
                 passengerKind:
-                  interactionFrame.passengerFlight?.flightKind ?? null,
+                  homePost?.outboundKind ??
+                  interactionFrame.passengerFlight?.flightKind ??
+                  null,
                 manualPilotLaunch,
-              }),
+              });
+            interaction.flight = createFlightState(
+              // Решение «какой рейс начинается» вынесено в чистую функцию:
+              // здесь уже была ошибка, которую нечем было поймать тестом.
+              dispatchedKind,
               post === "ride" || manualPilotLaunch ? "passenger" : "uncrewed",
               interactionFrame.flight.limits.enginePoints.length,
               0,
               manualPilotLaunch
                 ? createRotorcraftPilotState(interaction.body.position[1], true)
+                : null,
+              departure?.posts
+                ? vehicleFlightTargetPost(departure.posts, dispatchedKind)?.id ?? null
                 : null,
             );
             if (manualPilotLaunch) {
@@ -3706,22 +3804,28 @@ export function VehicleFrameSystem({
               verdict.kind === "startFlight" &&
               !seatJourneyLive
             ) {
-              interaction.flight = createFlightState(
-                dispatchedFlightKind({
+              const dispatchedKind = dispatchedFlightKind({
                   post: "ride",
                   requestedAction: verdict.flightKind,
                   departureKind: departure?.flightKind ?? verdict.flightKind,
                   passengerKind: verdict.flightKind,
                   manualPilotLaunch: false,
-                }),
+                });
+              interaction.flight = createFlightState(
+                dispatchedKind,
                 "passenger",
                 interactionFrame.flight.limits.enginePoints.length,
                 0,
                 null,
+                departure?.posts
+                  ? vehicleFlightTargetPost(departure.posts, dispatchedKind)?.id ?? null
+                  : null,
               );
             }
           }
           approachedPost.current = null;
+          approachedBoardId.current = null;
+          approachedCandidateKey.current = "";
           onDepartureApproachChange(null);
         }
       }
@@ -3813,6 +3917,37 @@ export function VehicleFrameSystem({
           liveState.body.angularVelocity,
           liveState.mass?.centre ?? liveFrame.origin,
         );
+        const liveBerth = liveState.mass?.centre ?? liveFrame.origin;
+        const livePlan = flightRoutePlan(liveFrame, liveFlight, liveBerth);
+        const liveTargetBase = targetVehicleBase(liveFrame, liveFlight);
+        const liveBaseDocking = liveTargetBase?.docking;
+        const livePlatformDocking =
+          (liveBaseDocking?.kind ?? liveFrame.flight.dockingKind) === "platform";
+        const liveCentre: [number, number, number] = [
+          liveBerth[0] + liveState.body.position[0],
+          liveBerth[1] + liveState.body.position[1],
+          liveBerth[2] + liveState.body.position[2],
+        ];
+        const liveDock = livePlatformDocking
+          ? liveTargetBase && liveBaseDocking
+            ? vehiclePlatformDockState(
+                liveCentre,
+                liveState.body.velocity,
+                liveTargetBase.berth,
+                liveBaseDocking.approach,
+              )
+            : vehicleRoutePlatformDockState(
+                liveCentre,
+                liveState.body.velocity,
+                liveFrame.flight.approach,
+                livePlan,
+              )
+          : vehicleRouteDockState(
+              liveMooring,
+              liveBerth,
+              liveFrame.flight.approach,
+              livePlan,
+            );
         // КОПТЕР НЕ ШВАРТУЕТСЯ. У него нет ни мачты, ни носового узла: рейс
         // кончается посадкой, и признаки её ровно те, по которым её признаёт
         // автоматика настоящего дрона — я над своим пятном, подо мной опора,
@@ -3853,16 +3988,28 @@ export function VehicleFrameSystem({
               liveState.supportContacts,
               (liveFrame.supportStruts?.length ?? 0) > 0,
             )
-          : isDockingComplete(
-              liveFlight.progress,
-              liveMooring.offset,
-              liveState.body.orientation,
-              liveMooring.velocity,
-              liveState.body.angularVelocity as [number, number, number],
-              liveFrame.nose,
-              liveFrame.flight.approach,
-              liveFrame.flight.docking,
-            ));
+          : livePlatformDocking
+            ? isPlatformDockingComplete(
+                liveFlight.progress,
+                liveDock.capture.offset,
+                liveState.body.orientation,
+                liveDock.capture.velocity,
+                liveState.body.angularVelocity as [number, number, number],
+                liveState.supportContacts,
+                liveFrame.nose,
+                liveDock.approach,
+                liveBaseDocking?.tolerance ?? liveFrame.flight.docking,
+              )
+            : isDockingComplete(
+                liveFlight.progress,
+                liveDock.capture.offset,
+                liveState.body.orientation,
+                liveDock.capture.velocity,
+                liveState.body.angularVelocity as [number, number, number],
+                liveFrame.nose,
+                liveDock.approach,
+                liveBaseDocking?.tolerance ?? liveFrame.flight.docking,
+              ));
         if (!liveState.recovery && arrived) {
           console.info(
             `[flight-end] ${liveFrame.id}: прибытие, прогресс=${(liveFlight.progress * 100).toFixed(1)}%`,
@@ -3870,6 +4017,7 @@ export function VehicleFrameSystem({
           if (isInterIslandArrivalKind(liveFlight.kind)) {
             onInterIslandArrivalComplete?.(liveFlight.kind);
           }
+          liveState.dockedBaseId = liveTargetBase?.id ?? null;
           liveState.flight = null;
         }
       }
@@ -4616,6 +4764,13 @@ export function VehicleFrameSystem({
           "passenger",
           frame.flight.limits.enginePoints.length,
           frame.flight.underwaySeconds + 8,
+          null,
+          frame.departure?.posts
+            ? vehicleFlightTargetPost(
+                frame.departure.posts,
+                initialArrivalFlightKind,
+              )?.id ?? null
+            : null,
         );
         state.liftNow = mass.mass * GRAVITY;
         state.released.clear();
@@ -5069,6 +5224,7 @@ export function VehicleFrameSystem({
                   frame.flight.limits.enginePoints.length,
                   frame.flight.underwaySeconds,
                   null,
+                  previousFlight.targetBaseId,
                 ),
                 // Отчалила она давно: прибытие — это продолжение рейса, а не
                 // новый отрыв от площадки.
@@ -5721,7 +5877,8 @@ export function VehicleFrameSystem({
               autopilotModel,
               startRamp,
               frame.nose as [number, number, number],
-              frame.flight.approach,
+              (flight ? targetVehicleBase(frame, flight)?.docking?.approach : null) ??
+                frame.flight.approach,
               safetyInterventionForMode("assisted", safetyAdvisory),
             );
         liftCommand = piloted.controls.liftTrim;
@@ -6676,27 +6833,67 @@ export function VehicleFrameSystem({
           state.body.orientation,
           frame.nose,
         );
-        const berthDistance = Math.hypot(capture.offset[0], capture.offset[2]);
-        const dockingComplete = isDockingComplete(
-          flight.progress,
-          capture.offset,
-          state.body.orientation,
-          capture.velocity,
-          state.body.angularVelocity as [number, number, number],
-          frame.nose,
-          frame.flight.approach,
-          frame.flight.docking,
+        const targetBase = targetVehicleBase(frame, flight);
+        const baseDocking = targetBase?.docking;
+        const platformDocking =
+          (baseDocking?.kind ?? frame.flight.dockingKind) === "platform";
+        const dock = platformDocking
+          ? targetBase && baseDocking
+            ? vehiclePlatformDockState(
+                centreNow,
+                state.body.velocity,
+                targetBase.berth,
+                baseDocking.approach,
+              )
+            : vehicleRoutePlatformDockState(
+                centreNow,
+                state.body.velocity,
+                frame.flight.approach,
+                plan,
+              )
+          : vehicleRouteDockState(
+              capture,
+              berth,
+              frame.flight.approach,
+              plan,
+            );
+        const berthDistance = Math.hypot(
+          dock.capture.offset[0],
+          dock.capture.offset[2],
         );
+        const dockingDistance = Math.hypot(...dock.capture.offset);
+        const dockingComplete = platformDocking
+          ? isPlatformDockingComplete(
+              flight.progress,
+              dock.capture.offset,
+              state.body.orientation,
+              dock.capture.velocity,
+              state.body.angularVelocity as [number, number, number],
+              state.supportContacts,
+              frame.nose,
+              dock.approach,
+              baseDocking?.tolerance ?? frame.flight.docking,
+            )
+          : isDockingComplete(
+              flight.progress,
+              dock.capture.offset,
+              state.body.orientation,
+              dock.capture.velocity,
+              state.body.angularVelocity as [number, number, number],
+              frame.nose,
+              dock.approach,
+              baseDocking?.tolerance ?? frame.flight.docking,
+            );
         {
           const forward = rotateByQuaternion(state.body.orientation, frame.nose);
           const flat = Math.hypot(forward[0], forward[2]) || 1;
-          const gate = frame.flight.approach.heading;
+          const gate = dock.approach.heading;
           state.dockingGate = {
             progress: flight.progress,
-            offset: Math.hypot(capture.offset[0], capture.offset[2]),
-            height: Math.abs(capture.offset[1]),
-            speed: Math.hypot(capture.velocity[0], capture.velocity[2]),
-            verticalSpeed: Math.abs(capture.velocity[1]),
+            offset: Math.hypot(dock.capture.offset[0], dock.capture.offset[2]),
+            height: Math.abs(dock.capture.offset[1]),
+            speed: Math.hypot(dock.capture.velocity[0], dock.capture.velocity[2]),
+            verticalSpeed: Math.abs(dock.capture.velocity[1]),
             angular: Math.hypot(
               state.body.angularVelocity[0],
               state.body.angularVelocity[1],
@@ -6837,14 +7034,16 @@ export function VehicleFrameSystem({
             // not hide route loss by asking forever for a turn that never came.
             turning: Math.abs(state.body.angularVelocity[1]) > 0.1,
             inFinalManeuver: flight.progress > 0.97 && berthDistance < 8,
-            dockingDistance: berthDistance,
+            dockingDistance,
+            dockingTimeoutSeconds: baseDocking?.settlingStallSeconds,
+            dockingProgressMetres: baseDocking?.settlingProgressMetres,
             inDockingCapture: isDockingSettleWindow(
               flight.progress,
-              capture.offset,
+              dock.capture.offset,
               state.body.orientation,
               frame.nose,
-              frame.flight.approach,
-              frame.flight.docking,
+              dock.approach,
+              baseDocking?.tolerance ?? frame.flight.docking,
             ),
             dockingComplete,
             recoveringDisturbance,
@@ -7022,14 +7221,28 @@ export function VehicleFrameSystem({
       } else if (!flight) {
         // У причала корабль держит высоту балластом и клапаном — как это и
         // делается на настоящем судне.
-        liftCommand = Math.max(
-          -1,
-          Math.min(
-            1,
-            (-0.06 * state.body.position[1] - 0.18 * state.body.velocity[1]) /
-              frame.flight.limits.liftTrimRange,
-          ),
+        const parkedBase = parkedVehicleBase(
+          frame,
+          state.dockedBaseId,
+          centreNow,
         );
+        if (parkedBase?.docking) {
+          state.dockedBaseId = parkedBase.id;
+          liftCommand = vehicleBaseParkedLiftCommand(
+            parkedBase,
+            state.body.velocity[1],
+            frame.flight.limits.liftTrimRange,
+          );
+        } else {
+          liftCommand = Math.max(
+            -1,
+            Math.min(
+              1,
+              (-0.06 * state.body.position[1] - 0.18 * state.body.velocity[1]) /
+                frame.flight.limits.liftTrimRange,
+            ),
+          );
+        }
       } else if (flight) {
         // На отрыве моторы раскручиваются одинаково, но в направлении
         // первого участка: задний ход нельзя начинать ударом тарана в захват.
@@ -7082,14 +7295,25 @@ export function VehicleFrameSystem({
         // высоту. После отдачи концов маршрутный регулятор выше сразу получает
         // требование UNSTICK_HEIGHT — отдельного режима подъёма и скачка между
         // двумя законами управления больше нет.
-        liftCommand = Math.max(
-          -1,
-          Math.min(
-            1,
-            (-0.06 * state.body.position[1] - 0.18 * state.body.velocity[1]) /
-              frame.flight.limits.liftTrimRange,
-          ),
+        const parkedBase = parkedVehicleBase(
+          frame,
+          state.dockedBaseId,
+          centreNow,
         );
+        liftCommand = parkedBase?.docking
+          ? vehicleBaseParkedLiftCommand(
+              parkedBase,
+              state.body.velocity[1],
+              frame.flight.limits.liftTrimRange,
+            )
+          : Math.max(
+              -1,
+              Math.min(
+                1,
+                (-0.06 * state.body.position[1] - 0.18 * state.body.velocity[1]) /
+                  frame.flight.limits.liftTrimRange,
+              ),
+            );
       }
 
       // Точка приложения подъёма едет вместе с корпусом.
@@ -7170,22 +7394,55 @@ export function VehicleFrameSystem({
         mass.centre[1] + state.body.position[1],
         mass.centre[2] + state.body.position[2],
       ];
+      const forceTargetBase = state.flight
+        ? targetVehicleBase(frame, state.flight)
+        : null;
+      const forceBaseDocking = forceTargetBase?.docking;
+      const platformDocking =
+        (forceBaseDocking?.kind ?? frame.flight.dockingKind) === "platform";
+      const mooringDock = state.flight?.castOff && !state.recovery
+        ? platformDocking
+          ? forceTargetBase && forceBaseDocking
+            ? vehiclePlatformDockState(
+                centre,
+                state.body.velocity,
+                forceTargetBase.berth,
+                forceBaseDocking.approach,
+              )
+            : vehicleRoutePlatformDockState(
+                centre,
+                state.body.velocity,
+                frame.flight.approach,
+                state.flight.pilot?.returnPlan ??
+                  flightRoutePlan(frame, state.flight, berth),
+              )
+          : vehicleRouteDockState(
+              capture,
+              berth,
+              frame.flight.approach,
+              state.flight.pilot?.returnPlan ??
+                flightRoutePlan(frame, state.flight, berth),
+            )
+        : { capture, approach: frame.flight.approach };
       const mooring = {
         force: (isMooringCaptureEligible(
-          capture.offset,
+          mooringDock.capture.offset,
           state.body.orientation,
           frame.nose,
-          frame.flight.approach,
-          frame.flight.mooringReach,
+          mooringDock.approach,
+          forceBaseDocking?.mooringReach ?? frame.flight.mooringReach,
         )
           ? mooringForce(
-              capture.offset,
-              capture.velocity,
+              mooringDock.capture.offset,
+              mooringDock.capture.velocity,
               mass.mass,
-              frame.flight.mooringReach,
+              forceBaseDocking?.mooringReach ?? frame.flight.mooringReach,
             )
           : [0, 0, 0]) as [number, number, number],
-        point: capture.point,
+        // A platform winch represents balanced ground lines. Pulling a long
+        // nose arm while the skids are planted injects the very pitch motion
+        // the docking gate is waiting to disappear.
+        point: platformDocking ? centre : capture.point,
       };
 
       if (

@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
+import { Color } from "three";
 import {
   buildKallurSeaGeometry,
   kallurShoreDistance,
@@ -10,6 +12,11 @@ import {
 } from "../games/make-a-mess/src/content/scenes/kallur/kallurSeaModel.ts";
 import { KALLUR_BASE_ELEVATION } from "../games/make-a-mess/src/content/scenes/kallur/kallurLandscapeDocument.ts";
 import { KALLUR_SHORELINE } from "../games/make-a-mess/src/content/scenes/kallur/kallurTerrainPlan.ts";
+import {
+  applyKallurSeaBody,
+  KALLUR_SEA_BODY_DAY,
+  KALLUR_SEA_BODY_NIGHT,
+} from "../games/make-a-mess/src/game/kallurSeaLighting.ts";
 
 test("море: уровень ниже берега, радиус по закону кромки", () => {
   assert.ok(
@@ -66,4 +73,44 @@ test("море: дистанция до берега честная и лежи�
     checked += 1;
   }
   assert.ok(checked > 50, "выборка вершин слишком мала");
+});
+
+test("море: тело темнеет с ночью и с бюджетом света земли", () => {
+  const deep = new Color();
+  const light = new Color();
+  applyKallurSeaBody(deep, light, 0, 1);
+  const dayLum = deep.r + deep.g + deep.b;
+  assert.ok(
+    Math.abs(dayLum - (
+      KALLUR_SEA_BODY_DAY.deep.r
+      + KALLUR_SEA_BODY_DAY.deep.g
+      + KALLUR_SEA_BODY_DAY.deep.b
+    )) < 1e-5,
+  );
+  applyKallurSeaBody(deep, light, 1, 1);
+  const nightLum = deep.r + deep.g + deep.b;
+  assert.ok(nightLum < dayLum * 0.55);
+  const duskDeep = new Color();
+  applyKallurSeaBody(duskDeep, new Color(), 0.55, 0.12);
+  const midDeep = new Color();
+  applyKallurSeaBody(midDeep, new Color(), 0.55, 1);
+  assert.ok(
+    duskDeep.r + duskDeep.g + duskDeep.b
+      < midDeep.r + midDeep.g + midDeep.b,
+    "при низком groundLightLevel тело темнее того же часа на полном уровне",
+  );
+  assert.ok(KALLUR_SEA_BODY_NIGHT.deep.r < KALLUR_SEA_BODY_DAY.deep.r);
+});
+
+test("море: fresnel-небо берёт живой туман, не палитру DUSK", () => {
+  const source = readFileSync(
+    new URL("../games/make-a-mess/src/game/KallurSea.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.ok(source.includes("scene.fog"));
+  assert.ok(source.includes("applyKallurSeaBody"));
+  assert.ok(
+    !source.includes("#f0b273"),
+    "authored dusk sky paint left a milk sheet after civil dusk",
+  );
 });

@@ -22,9 +22,18 @@ import { vikingVillagePantherProfile } from "../populations/mediumFelinePopulati
 import {
   vikingHomeLayout,
   vikingPlanLocalPoint,
-  vikingTrafficRoutes,
   vikingVillageHomes,
 } from "./vikingVillagePlan.ts";
+import { vikingBoulderPlacements } from "./vikingVillageBoulders.ts";
+import {
+  VIKING_TERRAIN_MAX_X,
+  VIKING_TERRAIN_MAX_Z,
+  VIKING_TERRAIN_MIN_X,
+  VIKING_TERRAIN_MIN_Z,
+  VIKING_TERRAIN_TILE,
+  vikingTerrainTileAt,
+  vikingVillageLandscapeVisual,
+} from "./vikingVillageLandscape.ts";
 // Список складов живёт в описании поселения: сцена берёт оттуда, какие куски
 // объявить изменяемыми, чтобы уровень было чем показать.
 import { vikingSettlementStores } from "./vikingSettlement.ts";
@@ -166,13 +175,11 @@ function createTerrain(): void {
   const base = group("terrain-base", "Deep village earth", "earth");
   const surface = group("terrain-surface", "Grass, mud and travelled ground", "grass");
   const stones = group("terrain-stones", "Rocky Scandinavian ground", "stone");
-  const tile = 4;
+  const tile = VIKING_TERRAIN_TILE;
 
-  for (let x = -96; x <= 96; x += tile) {
-    for (let z = WORLD_CENTER_Z - 96; z <= WORLD_CENTER_Z + 96; z += tile) {
-      const radius = Math.hypot(x, z - WORLD_CENTER_Z);
-      const edge = 92 + (noise(x, z, 4) - 0.5) * 8 + Math.sin(z * 0.075) * 2.4;
-      if (radius > edge) {
+  for (let x = VIKING_TERRAIN_MIN_X; x <= VIKING_TERRAIN_MAX_X; x += tile) {
+    for (let z = VIKING_TERRAIN_MIN_Z; z <= VIKING_TERRAIN_MAX_Z; z += tile) {
+      if (!vikingTerrainTileAt(x, z)) {
         continue;
       }
       const key = `${x}:${z}`;
@@ -183,55 +190,39 @@ function createTerrain(): void {
       // грани спорят за пиксели на любом удалении, потому что глубина у них
       // одна и та же с точностью до ошибки интерполяции. Нахлёст, взятый
       // чтобы гарантированно не было щели, и есть источник ряби.
-      primitive(base, `earth:${key}`, "earth", "groundTile", [x, -0.62, z], [tile, 1, tile], "#453628");
+      primitive(base, `earth:${key}`, "earth", "groundTile", [x, -0.62, z], [tile, 1, tile], "#453628", {
+        destructible: false,
+      });
 
-      const grassVariation = noise(x, z, 2);
-      const grassPatch = noise(x, z, 8);
-      // Richer, patchier grass so the ground never reads as one flat colour.
-      const surfaceColor = grassVariation > 0.8
-        ? "#63704b"
-        : grassVariation > 0.6
-          ? "#5a6c46"
-          : grassVariation < 0.16
-            ? "#485a3b"
-            : grassVariation < 0.34
-              ? "#4f6042"
-              : grassPatch > 0.58
-                ? "#566848"
-                : "#546544";
-      // Tiles sit flush, edge to edge (no steps); the uneven-earth look is a
-      // cheap shader micro-relief on the ground itself, not geometry.
-      primitive(surface, `cover:${key}`, "grass", "groundTile", [x, -0.04, z], [tile, 0.18, tile], surfaceColor, {
-        surface: grassVariation < 0.18 ? [{ kind: "damp", amount: 0.12 }] : undefined,
+      // One neutral carrier colour on every tile. Ecological variation belongs
+      // to the continuous world-space surface law below, not to a visible
+      // four-metre checkerboard of independently coloured blocks.
+      primitive(surface, `cover:${key}`, "grass", "groundTile", [x, -0.04, z], [tile, 0.18, tile], "#505c43", {
+        destructible: false,
+        intactVisible: false,
+        intactCollider: false,
         landscapeSurface: "viking-ground",
       });
     }
   }
 
-  for (let index = 0; index < 150; index += 1) {
-    const angle = noise(index, 2, 3) * Math.PI * 2;
-    const radius = 68 + noise(index, 8, 5) * 17;
-    const x = Math.cos(angle) * radius;
-    const z = WORLD_CENTER_Z + Math.sin(angle) * radius;
-    const sx = 0.45 + noise(index, 1, 7) * 2.2;
-    const sy = 0.35 + noise(index, 5, 8) * 1.8;
-    const sz = 0.5 + noise(index, 9, 6) * 2.0;
-    if (z > 34 && distanceToVillagePath(x, z) < 7.5) {
-      continue;
-    }
+  // Natural boulders keep honest collision and support here, while the shared
+  // instanced renderer owns their organic silhouette. Unlike object masonry,
+  // these boxes are never visible as cubes.
+  for (const rock of vikingBoulderPlacements()) {
+    const [sx, sy, sz] = rock.colliderSize;
     primitive(
       stones,
-      `boulder:${index}`,
-      index % 4 === 0 ? "basalt" : "stone",
+      rock.id,
+      "stone",
       "stoneBlock",
-      [x, sy / 2 - 0.01, z],
+      [rock.position[0], rock.position[1] + sy / 2, rock.position[2]],
       [sx, sy, sz],
-      index % 4 === 0 ? "#42474a" : index % 3 === 0 ? "#797a70" : "#62655f",
+      "#686a63",
       {
-        rotation: [noise(index, 3) * 0.25, noise(index, 4) * Math.PI, noise(index, 5) * 0.18],
-        // Mossy Scandinavian rocks: heavy moss on their crowns and shaded
-        // north sides, patterned by the shader.
-        surface: [{ kind: "moss", amount: 0.55 + noise(index, 6, 9) * 0.4 }],
+        rotation: rock.rotation,
+        destructible: false,
+        intactVisible: false,
       },
     );
   }
@@ -2038,9 +2029,9 @@ function createWoodland(): void {
   }
 }
 
-// Heaped fieldstones and gravel-strewn path edges — the stony Scandinavian
-// ground reads as lived-on, not swept. Piles are mossy cairns of clustered
-// boulders; pebbles line the busiest trodden routes where boots kick them clear.
+// Two broad, deliberately blocky stones remain as the animal's authored
+// lookout affordances. Fine gravel now belongs to the ground shader; hearth,
+// well and other built stonework stay with their objects.
 function createRockwork(): void {
   const stones = group("terrain-stones", "Rocky Scandinavian ground", "stone");
 
@@ -2061,122 +2052,12 @@ function createRockwork(): void {
       rock.color,
       {
         rotation: [0, rock.yaw, 0],
+        destructible: false,
         surface: [{ kind: "moss", amount: 0.58 }],
       },
     );
   }
 
-  const pileSites: readonly (readonly [number, number])[] = [
-    [46, 33], [-47, 22], [49, -24], [-44, -49], [38, 46], [-39, 47], [47, 6],
-    [-51, -8], [20, -53], [-27, 45], [12, 48], [-16, -58], [52, 14], [-52, 34],
-    [43, -44], [-33, -55], [30, 40], [-45, -2], [8, 52], [51, -40], [-20, 50],
-    [36, -50], [-48, -28], [23, 44],
-  ];
-  pileSites.forEach(([cx, cz], pile) => {
-    if (insideAnyHome(cx, cz, 1.8)) {
-      return;
-    }
-    // Real heaps: a broad ring of boulders on the ground, then a second course
-    // stacked squarely onto those base stones, so it reads as a piled cairn.
-    const count = 9 + Math.floor(noise(pile, cx, 2) * 7);
-    const baseCount = Math.max(4, Math.floor(count * 0.62));
-    const bases: { x: number; z: number; top: number }[] = [];
-    for (let index = 0; index < count; index += 1) {
-      const sx = 0.5 + noise(index, cx, 7) * 1.1;
-      const sy = 0.42 + noise(index, cx, 9) * 0.78;
-      const sz = 0.52 + noise(index, cz, 11) * 1.1;
-      let x: number;
-      let z: number;
-      let y: number;
-      if (index < baseCount) {
-        const angle = noise(index, cx, pile) * Math.PI * 2;
-        const radius = 1.55 * Math.sqrt(noise(index, cz, pile + 1));
-        x = cx + Math.cos(angle) * radius;
-        z = cz + Math.sin(angle) * radius;
-        y = sy / 2 - 0.04;
-        bases.push({ x, z, top: y + sy / 2 });
-      } else {
-        const base = bases[index % bases.length];
-        x = base.x + (noise(index, 3) - 0.5) * 0.3;
-        z = base.z + (noise(index, 4) - 0.5) * 0.3;
-        y = base.top + sy / 2 - 0.14; // rests on the base stone, slightly sunk
-      }
-      primitive(
-        stones,
-        `rock-pile:${pile}:${index}`,
-        index % 4 === 0 ? "basalt" : "stone",
-        "stoneBlock",
-        [x, y, z],
-        [sx, sy, sz],
-        index % 4 === 0 ? "#42474a" : index % 3 === 0 ? "#797a70" : "#63665f",
-        {
-          rotation: [noise(index, 1) * 0.3, noise(index, 2) * Math.PI, noise(index, 3) * 0.24],
-          surface: [{ kind: "moss", amount: 0.45 + noise(index, cx, 5) * 0.4 }],
-        },
-      );
-    }
-  });
-
-  // Дуги распахивания воротных створок держим чистыми: створки уходят
-  // внутрь деревни, и любой камушек на дуге они проходили бы насквозь.
-  const insideGateSwing = (x: number, z: number): boolean => {
-    const northZ = WORLD_CENTER_Z + palisadeRadius(Math.PI / 2);
-    const southZ = WORLD_CENTER_Z - palisadeRadius(Math.PI * 1.5);
-    return (
-      (Math.abs(x) < 4.6 && z > northZ - 4.4 && z < northZ + 0.8) ||
-      (Math.abs(x) < 4.6 && z < southZ + 4.4 && z > southZ - 0.8)
-    );
-  };
-
-  let pebble = 0;
-  for (const route of vikingTrafficRoutes) {
-    if (route.wear < 0.58) {
-      continue; // only the busy routes shed gravel to their verges
-    }
-    for (let segment = 0; segment < route.points.length - 1; segment += 1) {
-      const a = route.points[segment];
-      const b = route.points[segment + 1];
-      const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
-      const steps = Math.max(1, Math.floor(length / 1.6));
-      const normalX = length > 0 ? -(b[1] - a[1]) / length : 0;
-      const normalZ = length > 0 ? (b[0] - a[0]) / length : 0;
-      for (let step = 0; step < steps; step += 1) {
-        const fraction = step / steps;
-        const px = a[0] + (b[0] - a[0]) * fraction;
-        const pz = a[1] + (b[1] - a[1]) * fraction;
-        for (const side of [-1, 1] as const) {
-          pebble += 1;
-          if (noise(pebble, segment, 3) > 0.5) {
-            continue; // scattered, not a kerb
-          }
-          const offset = route.width + 0.15 + noise(pebble, 1) * 0.45;
-          const ex = px + normalX * side * offset;
-          const ez = pz + normalZ * side * offset;
-          if (
-            insideAnyHome(ex, ez, 0.3) ||
-            nearAnyDoor(ex, ez, 1.8) ||
-            insideGateSwing(ex, ez)
-          ) {
-            continue;
-          }
-          const size = 0.12 + noise(pebble, 7) * 0.24;
-          primitive(
-            stones,
-            `pebble:${pebble}`,
-            pebble % 5 === 0 ? "basalt" : "stone",
-            "stoneBlock",
-            [ex, size / 2 - 0.04, ez],
-            [size, size * 0.7, size * 1.15],
-            pebble % 3 === 0 ? "#6d6f68" : "#7d7e74",
-            {
-              rotation: [0, noise(pebble, 2) * Math.PI, 0],
-              surface: noise(pebble, 4) > 0.62 ? [{ kind: "moss", amount: 0.3 }] : undefined,
-            },
-          );
-        }
-      }
-    }
-  }
 }
 
 
@@ -3559,6 +3440,8 @@ function createSkyLongship(): void {
       [(x1 + x2) / 2, (y1 + y2) / 2, (z1 + z2) / 2], [0.055, length, 0.055], "#7a6648", {
         rotation: rodRotation(x2 - x1, y2 - y1, z2 - z1),
         contactBoxes: [{ position: [0, 0, 0], size: [0.15, length, 0.15] }],
+        // Structural story, not a rigid bar which can shove the whole ship.
+        intactCollider: false,
         carriesAttachments: true,
         attachmentSupportMode: "cable",
         sideAttachmentReach: 0.6,
@@ -3609,6 +3492,8 @@ function createSkyLongship(): void {
       [0.05, length, 0.05], "#7a6648", {
         rotation: rodRotation(dx, dy, dz),
         contactBoxes: [{ position: [0, 0, 0], size: [0.18, length, 0.18] }],
+        // The visible taut line participates in support authorship, not Rapier contact.
+        intactCollider: false,
         bearsLoad: false,
         sideAttachmentReach: 0.6,
       });
@@ -3625,6 +3510,8 @@ function createSkyLongship(): void {
       [0.05, Math.hypot(dx, dy, dz) - 0.15, 0.05], "#7a6648", {
         rotation: rodRotation(dx, dy, dz),
         contactBoxes: [{ position: [0, 0, 0], size: [0.15, Math.hypot(dx, dy, dz) - 0.15, 0.15] }],
+        // The visible taut line participates in support authorship, not Rapier contact.
+        intactCollider: false,
         bearsLoad: false,
         sideAttachmentReach: 0.6,
       });
@@ -3669,6 +3556,8 @@ function createSkyLongship(): void {
         // Наклонная доска: её центр ниже планширя, «кто на ком лежит»
         // должны решать опорные пятна на концах, не центр рендера.
         contactBearingOrder: true,
+        // Walkable while berthed, but never a fixed wedge against the carrier.
+        intactCollisionRole: "actor-only",
         carriesAttachments: true,
         attachmentSupportMode: "cable",
         surface: [{ kind: "damp", amount: 0.35 }],
@@ -3677,10 +3566,9 @@ function createSkyLongship(): void {
 }
 
 /**
- * Прибрежная полоса: непрерывный периметр берега. Осока и жёсткая трава
- * гуще всего у самой кромки, между ними плоские замшелые камни и плавник —
- * брёвна, которые «вынесло» из тумана. Кромка читается берегом в любой
- * точке круга, а не только у причала.
+ * Прибрежная полоса больше не рисует траву пучками и природный камень
+ * кубами. Берег связывают непрерывный материал земли, органические эрратики
+ * общего каменного поля и редкий плавник, который «вынесло» из тумана.
  */
 function createShoreFringe(): void {
   const fringe = group("shore-fringe", "Shoreline sedge and drift", "grass", "stack");
@@ -3739,31 +3627,6 @@ function createShoreFringe(): void {
           contactBoxes: [{ position: [0, 0, 0], size: along ? [0.32, length, 0.3] : [0.32, length, 0.3] }],
           surface: [{ kind: "damp", amount: 0.55 }, { kind: "moss", amount: 0.4 }],
         });
-    } else if (kind < 0.42) {
-      const width = 0.7 + seedB * 1.1;
-      primitive(fringe, `shore-stone:${step}`, step % 5 === 0 ? "basalt" : "stone", "stoneBlock",
-        [x, 0.1 + width * 0.12, z], [width, 0.22 + width * 0.26, width * 0.78],
-        step % 5 === 0 ? "#42474a" : step % 2 === 0 ? "#6d6f68" : "#7a7b72", {
-          rotation: [0, seedA * Math.PI, 0.04],
-          surface: [{ kind: "moss", amount: 0.5 + seedB * 0.3 }, { kind: "damp", amount: 0.4 }],
-        });
-    } else {
-      // Осока: пучок из двух-трёх жёстких куп с наклоном от «воды».
-      const clumps = 2 + Math.floor(seedB * 1.99);
-      for (let clump = 0; clump < clumps; clump += 1) {
-        const clumpAngle = angle + (noise(step, clump, 73) - 0.5) * 1.6;
-        const cx = x + Math.cos(clumpAngle) * (0.35 + clump * 0.3);
-        const cz = z + Math.sin(clumpAngle) * (0.3 + clump * 0.28);
-        const height = 0.55 + noise(step, clump, 79) * 0.5;
-        primitive(fringe, `sedge:${step}:${clump}`, "foliage", "groundTile",
-          [cx, height / 2, cz], [0.3 + seedA * 0.2, height, 0.26],
-          clump % 2 === 0 ? "#5b6b44" : "#52633e", {
-            rotation: [(seedB - 0.5) * 0.2, noise(step, clump, 83) * Math.PI, (seedA - 0.5) * 0.24],
-            // Урез фьорда — осока, а не куст: жёсткий пучок листьев вверх.
-            vegetationVisual: { kind: "sedge", seed: step * 7 + clump },
-            bearsLoad: false,
-          });
-      }
     }
   }
 }
@@ -3838,6 +3701,7 @@ export const vikingVillageDocument: AuthoredSceneDocument = {
     returnToGame: "Вернуться в деревню",
     reset: "Отстроить поселение заново",
   },
+  landscapeVisual: vikingVillageLandscapeVisual,
   groups: [...groups.values()].map((current): SceneGroupDefinition => ({
     ...current,
     objects: current.objects,

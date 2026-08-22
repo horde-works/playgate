@@ -96,8 +96,12 @@ export interface ScenePrefabPieceDefinition {
   readonly volume?: number;
   readonly bearingArea?: number;
   readonly foundation?: boolean;
+  /** Keep collision/support but reject every destruction input. Defaults true. */
+  readonly destructible?: boolean;
   readonly intactVisible?: boolean;
   readonly intactCollider?: boolean;
+  /** Intact support seen by actors but ignored by vehicles and world debris. */
+  readonly intactCollisionRole?: "actor-only";
   readonly color: string;
   readonly colorSlot?: string;
   readonly contactBoxes?: readonly SceneContactBox[];
@@ -156,8 +160,12 @@ export interface ScenePrimitiveDefinition extends SceneObjectBase {
   readonly volume?: number;
   readonly bearingArea?: number;
   readonly foundation?: boolean;
+  /** Keep collision/support but reject every destruction input. Defaults true. */
+  readonly destructible?: boolean;
   readonly intactVisible?: boolean;
   readonly intactCollider?: boolean;
+  /** Intact support seen by actors but ignored by vehicles and world debris. */
+  readonly intactCollisionRole?: "actor-only";
   readonly color: string;
   readonly contactBoxes?: readonly SceneContactBox[];
   readonly bearsLoad?: boolean;

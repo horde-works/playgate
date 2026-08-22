@@ -32,6 +32,7 @@ import { kallurLandscapeSampler } from "./kallurLandscapeDocument.ts";
 import { createKallurAirship } from "../../../game/kallurAirship.ts";
 import {
   createKallurAirshipBerth,
+  createKallurAirshipShoreBerth,
   KALLUR_AIRSHIP_PLACEMENT,
 } from "./kallurAirshipPlacement.ts";
 
@@ -256,6 +257,15 @@ const airshipBerth = group(
 );
 createKallurAirshipBerth((object) => {
   airshipBerth.objects.push(object);
+});
+
+const airshipShore = group(
+  "airship-shore",
+  "Shore landing platform behind spawn",
+  "wood",
+);
+createKallurAirshipShoreBerth((object) => {
+  airshipShore.objects.push(object);
 });
 
 // The VESSEL: declared apart from the world in kallurAirship.ts, seated

@@ -417,6 +417,22 @@ test("the sky shader is generated from the one law, and still grafts", () => {
   assert.ok(source.includes("underFire"));
   assert.ok(source.includes("keyLift"));
   assert.ok(
+    source.includes("clamp(cosKey, 0.0, 1.0) * exp(-sunDepth * 3.0)"),
+    "powder must only darken the sunward fringe, not the anti-sun halo",
+  );
+  assert.ok(
+    !source.includes("clamp(-cosKey, 0.0, 1.0) * exp(-sunDepth * 3.0)"),
+    "anti-sun powder drew dark rings around bright cores at twilight",
+  );
+  assert.ok(
+    source.includes("shade * form"),
+    "high-sheet dense cores take shade; thin veil stays lit",
+  );
+  assert.ok(
+    !source.includes("shade * (1.0 - form)"),
+    "inverted sheet shade made bright centres with dark halos",
+  );
+  assert.ok(
     source.includes("(1.0 - duskMix * 0.92)"),
     "crepuscular beams must fade at dusk so they do not fight per-ray air",
   );
@@ -676,12 +692,14 @@ test("piece fog holds clear air on the near midground", () => {
     new URL("../games/make-a-mess/src/game/materialTextures.ts", import.meta.url),
     "utf8",
   );
-  assert.ok(source.includes("materialAirNear"));
-  assert.ok(source.includes("materialPathScatter"));
   assert.ok(source.includes("materialHazeShelf"));
   assert.ok(source.includes("materialLandHaze"));
-  assert.ok(source.includes("smoothstep(100.0, 280.0, vFogDepth)"));
-  assert.ok(source.includes("smoothstep(32.0, 110.0, vFogDepth)"));
+  assert.ok(source.includes("uMatLandHazeNear"));
+  assert.ok(source.includes("uMatLandHazeStrength"));
+  assert.ok(source.includes("uMatEdgeMilk"));
+  assert.ok(source.includes("uMatNearHoldStart"));
+  assert.ok(source.includes("smoothstep(uMatNearHoldStart, uMatNearHoldEnd, vFogDepth)"));
+  assert.ok(source.includes("smoothstep(uMatLandHazeNear, uMatLandHazeFar, vFogDepth)"));
 });
 
 test("authored worlds diverge in deck scale and field origin, not only coverage", () => {

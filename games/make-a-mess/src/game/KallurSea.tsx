@@ -5,6 +5,8 @@ import {
   BufferGeometry,
   Color,
   DoubleSide,
+  Fog,
+  FogExp2,
   ShaderMaterial,
   Vector3,
 } from "three";
@@ -13,6 +15,10 @@ import {
   KALLUR_SEA_SHORE_BAND,
 } from "../content/scenes/kallur/kallurSeaModel.ts";
 import { environmentState } from "./environmentState";
+import {
+  applyKallurSeaBody,
+  KALLUR_SEA_BODY_DAY,
+} from "./kallurSeaLighting.ts";
 
 /**
  * The Kallur ocean: the accepted lab tiles S1/S2 ported verbatim. One
@@ -21,30 +27,13 @@ import { environmentState } from "./environmentState";
  * whose gloss falls with the pixel footprint, whitecaps by day), plus a
  * vertex-shader swell that breathes the waterline against the cliffs in
  * the shore band. No reflection or refraction passes: deep water is
- * opaque, the sky arrives through fresnel, the sun through the glint —
- * and at night the key light IS the moon, so the moon path is free.
- * The world-edge fog sea (y = -7, drawn above 1000) dissolves the far
- * field exactly like the lab's haze.
+ * opaque, the sky arrives through fresnel from the LIVE air (scene fog /
+ * measured horizon), the key through the glint — and at night the key is
+ * the moon, so the moon path is free. Authored DAY/DUSK sky paints were
+ * retired: they left a bright milk sheet at civil dusk while land followed
+ * the dome. The world-edge fog sea (y = -7, drawn above 1000) dissolves
+ * the far field with the same fog colour.
  */
-
-const DAY = {
-  deep: new Color("#3e6489"),
-  light: new Color("#7a97a9"),
-  sky: new Color("#e7e8e8"),
-  haze: new Color("#e0e4e6"),
-};
-const DUSK = {
-  deep: new Color("#232735"),
-  light: new Color("#3a4351"),
-  sky: new Color("#f0b273"),
-  haze: new Color("#8a7360"),
-};
-const NIGHT = {
-  deep: new Color("#0f131d"),
-  light: new Color("#1b2130"),
-  sky: new Color("#2a3040"),
-  haze: new Color("#222936"),
-};
 
 const seaGlsl = /* glsl */ `
 float seaHash(vec2 cell, float seed) {
@@ -99,10 +88,10 @@ export function KallurSea() {
       uKeyColor: { value: new Color("#fff2d8") },
       uDayFactor: { value: 1 },
       uTwilight: { value: 0 },
-      uDeep: { value: DAY.deep.clone() },
-      uLight: { value: DAY.light.clone() },
-      uSky: { value: DAY.sky.clone() },
-      uHaze: { value: DAY.haze.clone() },
+      uDeep: { value: KALLUR_SEA_BODY_DAY.deep.clone() },
+      uLight: { value: KALLUR_SEA_BODY_DAY.light.clone() },
+      uSky: { value: new Color("#e7e8e8") },
+      uHaze: { value: new Color("#e0e4e6") },
       uShoreBand: { value: KALLUR_SEA_SHORE_BAND },
     },
     vertexShader: /* glsl */ `
@@ -157,6 +146,7 @@ export function KallurSea() {
         float fresnel = 0.02 + 0.98 * pow(1.0 - cosView, 5.0);
         float faceLight = clamp(0.5 + dot(normal.xz, uKeyDir.xz) * 2.2, 0.0, 1.0);
         vec3 water = mix(uDeep, uLight, faceLight * 0.55);
+        // Sky via fresnel is the LIVE air (fog / measured horizon), not paint.
         water = mix(water, uSky, clamp(fresnel, 0.0, 1.0) * 0.82);
         vec3 reflected = reflect(-view, normal);
         float toKey = max(0.0, dot(reflected, normalize(uKeyDir)));
@@ -170,14 +160,15 @@ export function KallurSea() {
           * fadeFine * uDayFactor;
         water = mix(water, vec3(0.94, 0.96, 0.97), clamp(caps, 0.0, 1.0) * 0.8);
         // The foam collar: lapping breath where the sea meets the coast.
+        // Dim with day — bright collar at civil dusk reads as a second sun.
         float foamPulse = 0.5 + 0.5 * sin(uPhase * 0.9 + vShoreDist * 0.9
           + seaNoise(p / 4.0, 617.0) * 3.0);
         float foam = smoothstep(7.0, 1.2, vShoreDist)
           * (0.45 + 0.55 * foamPulse)
-          * (0.6 + 0.4 * seaNoise(p / 2.3, 618.0));
+          * (0.6 + 0.4 * seaNoise(p / 2.3, 618.0))
+          * mix(0.12, 1.0, uDayFactor);
         water = mix(water, vec3(0.93, 0.95, 0.96), clamp(foam, 0.0, 1.0) * 0.85);
-        // Aerial haze toward the horizon; the fog sea finishes the far
-        // dissolve above this surface.
+        // Aerial haze toward the horizon; same air colour as WorldEdge fog sea.
         float away = length(cameraPosition.xz - p);
         water = mix(water, uHaze, smoothstep(180.0, 270.0, away) * 0.85);
         gl_FragColor = vec4(water, 1.0);
@@ -185,22 +176,25 @@ export function KallurSea() {
     `,
   }), []);
 
-  useFrame((_, delta) => {
+  useFrame((frameState, delta) => {
     const shader = materialRef.current;
     if (!shader) return;
-    // Deep-water phase speed of the 90 m swell: about 12 m/s of travel.
     shader.uniforms.uPhase.value += delta * 0.86;
     shader.uniforms.uKeyDir.value.copy(environmentState.keyLightDirection);
     shader.uniforms.uKeyColor.value.copy(environmentState.keyLightColor);
-    const night = environmentState.nightFactor;
-    const twilight = environmentState.twilightFactor;
     shader.uniforms.uDayFactor.value = environmentState.dayFactor;
-    shader.uniforms.uTwilight.value = twilight;
-    for (const key of ["deep", "light", "sky", "haze"] as const) {
-      const target = shader.uniforms[
-        `u${key.charAt(0).toUpperCase()}${key.slice(1)}` as "uDeep"
-      ].value as Color;
-      target.copy(DAY[key]).lerp(NIGHT[key], night).lerp(DUSK[key], twilight);
+    shader.uniforms.uTwilight.value = environmentState.twilightFactor;
+    applyKallurSeaBody(
+      shader.uniforms.uDeep.value as Color,
+      shader.uniforms.uLight.value as Color,
+      environmentState.nightFactor,
+      environmentState.groundLightLevel,
+    );
+    // Fresnel sky + far haze = measured horizon (WorldEnvironment → scene.fog).
+    const fog = frameState.scene.fog;
+    if (fog instanceof Fog || fog instanceof FogExp2) {
+      (shader.uniforms.uSky.value as Color).copy(fog.color);
+      (shader.uniforms.uHaze.value as Color).copy(fog.color);
     }
   });
 

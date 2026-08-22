@@ -4,6 +4,7 @@ import {
   ACTOR_ABOARD,
   ACTOR_NORMAL,
   ACTOR_SAFETY_FLOOR,
+  DEBRIS_ACTOR_DETAIL,
   DEBRIS_INSIDE_CARRIER,
   DEBRIS_LEAVING_CARRIER,
   DEBRIS_NORMAL,
@@ -48,6 +49,13 @@ test("a carrier never collides with its own attached pose bodies", () => {
   assert.equal(interacts(VEHICLE_CONTACT_QUERY, VEHICLE_ATTACHMENT), false);
   assert.equal(interacts(VEHICLE_CARRIER, 0xffff_ffff), true);
   assert.equal(interacts(VEHICLE_ATTACHMENT, 0xffff_ffff), true);
+});
+
+test("actor-only detail supports people without pushing carriers or debris", () => {
+  assert.equal(interacts(DEBRIS_ACTOR_DETAIL, ACTOR_NORMAL), true);
+  assert.equal(interacts(DEBRIS_ACTOR_DETAIL, ACTOR_ABOARD), true);
+  assert.equal(interacts(DEBRIS_ACTOR_DETAIL, VEHICLE_CARRIER), false);
+  assert.equal(interacts(DEBRIS_ACTOR_DETAIL, DEBRIS_NORMAL), false);
 });
 
 // Общей льготы на оседание больше нет: мировой обломок вооружён с рождения и

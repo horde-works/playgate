@@ -450,8 +450,12 @@ export interface VehicleFailureObservation {
   readonly turning: boolean;
   /** The vehicle is deliberately completing a low-speed terminal manoeuvre. */
   readonly inFinalManeuver: boolean;
-  /** Horizontal distance from the physical mooring capture, in metres. */
+  /** Three-dimensional distance from the target base pose, in metres. */
   readonly dockingDistance?: number;
+  /** Seconds without measurable docking progress allowed by the target base. */
+  readonly dockingTimeoutSeconds?: number;
+  /** Distance improvement that counts as fresh docking progress. */
+  readonly dockingProgressMetres?: number;
   /** The vehicle has reached its landing pose and is expected to settle. */
   readonly inDockingCapture: boolean;
   readonly dockingComplete: boolean;
@@ -711,6 +715,8 @@ export interface VehicleFailureWatchdogState {
   readonly maneuverSeconds: number;
   readonly finalManeuverSeconds: number;
   readonly dockingSeconds: number;
+  /** Best three-dimensional capture distance reached in this docking episode. */
+  readonly bestDockingDistance: number | null;
   /** Time already spent under correction during this flight. */
   readonly correctionSeconds: number;
   /** How long trim has been exhausted without the hull coming back. */
@@ -738,6 +744,7 @@ export function createVehicleFailureWatchdog(
     maneuverSeconds: 0,
     finalManeuverSeconds: 0,
     dockingSeconds: 0,
+    bestDockingDistance: null,
     correctionSeconds: 0,
     trimSeconds: 0,
     entangledSeconds: 0,
@@ -759,6 +766,7 @@ export function rebaseVehicleFailureWatchdog(
     ...current,
     previousProgress: progress,
     bestFinalManeuverDistance: null,
+    bestDockingDistance: null,
   };
 }
 
@@ -786,6 +794,8 @@ function observationIsFinite(observation: VehicleFailureObservation): boolean {
     observation.requestedLiftEffort ?? 0,
     observation.deliveredLiftFraction ?? 1,
     observation.dockingDistance ?? 0,
+    observation.dockingTimeoutSeconds ?? 0,
+    observation.dockingProgressMetres ?? 0,
   ].every(Number.isFinite);
 }
 
@@ -967,19 +977,40 @@ export function advanceVehicleFailureWatchdog(
     current.trimSeconds,
     delta,
   );
-  const dockingSeconds = heldSeconds(
+  const dockingActive =
     !suspended &&
-      observation.inDockingCapture &&
-      !observation.dockingComplete,
+    observation.inDockingCapture &&
+    !observation.dockingComplete;
+  const measuredDockingDistance = observation.dockingDistance;
+  const dockingProgressMetres = Math.max(
+    0,
+    observation.dockingProgressMetres ?? 0.02,
+  );
+  const dockingImproved =
+    dockingActive &&
+    measuredDockingDistance !== undefined &&
+    (current.bestDockingDistance === null ||
+      measuredDockingDistance <= current.bestDockingDistance - dockingProgressMetres);
+  // This is a STALL timer, not a total winch-time timer. A slow but visibly
+  // converging physical capture is healthy; only a capture that stops making
+  // measurable progress exhausts its base-owned allowance.
+  const dockingSeconds = heldSeconds(
+    dockingActive && !dockingImproved,
     current.dockingSeconds,
     delta,
   );
+  const bestDockingDistance = !dockingActive
+    ? null
+    : measuredDockingDistance === undefined
+      ? current.bestDockingDistance
+      : current.bestDockingDistance === null || dockingImproved
+        ? measuredDockingDistance
+        : current.bestDockingDistance;
   const finalManeuverActive =
     !suspended &&
     observation.inFinalManeuver &&
     !observation.inDockingCapture &&
     !observation.dockingComplete;
-  const measuredDockingDistance = observation.dockingDistance;
   const finalManeuverImproved =
     finalManeuverActive &&
     measuredDockingDistance !== undefined &&
@@ -1005,6 +1036,7 @@ export function advanceVehicleFailureWatchdog(
     maneuverSeconds,
     finalManeuverSeconds,
     dockingSeconds,
+    bestDockingDistance,
     correctionSeconds,
     trimSeconds,
     entangledSeconds,
@@ -1030,7 +1062,8 @@ export function advanceVehicleFailureWatchdog(
           : stalledSeconds >= envelope.stallGraceSeconds ||
               maneuverSeconds >= envelope.maneuverTimeoutSeconds
             ? "stalled"
-            : dockingSeconds >= envelope.dockingTimeoutSeconds ||
+            : dockingSeconds >=
+                (observation.dockingTimeoutSeconds ?? envelope.dockingTimeoutSeconds) ||
                 finalManeuverSeconds >= envelope.finalManeuverTimeoutSeconds
               ? "dockingTimeout"
               : // ПОСЛЕДНИМ В ЦЕПОЧКЕ НАМЕРЕННО. Пока машину держат снаружи,

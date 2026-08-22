@@ -199,6 +199,16 @@ export const KALLUR_PADS: readonly KallurPad[] = [
     shoulder: 2.6,
   },
   {
+    // Shore airship stand, behind the spawn (player looks −Z at the hill).
+    // Local Z follows the parked nose, east along the beach.
+    id: "airship-shore",
+    center: [-20, 96.8],
+    yaw: Math.PI / 2,
+    halfExtents: [3.8, 7.4],
+    elevation: 3.05,
+    shoulder: 2.4,
+  },
+  {
     // The summit landing crown: the airship platform's levelled ground.
     // Pad local Z runs along the ship's nose axis (yaw matches placement).
     id: "airship-berth",

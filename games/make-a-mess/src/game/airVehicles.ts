@@ -179,6 +179,9 @@ import {
   isInsideKallurAirshipLocal,
   kallurAirshipNose,
   kallurAirshipPoint,
+  KALLUR_AIRSHIP_ENGINE_LOCAL,
+  KALLUR_AIRSHIP_LIFT_LOCAL,
+  KALLUR_AIRSHIP_REST_CENTRE_LOCAL,
 } from "./kallurAirship.ts";
 import {
   kallurAirshipArrivalPlan,
@@ -191,7 +194,10 @@ import {
   KALLUR_AIRSHIP_DECK_TOP,
   KALLUR_AIRSHIP_DISPATCH_POINT,
   KALLUR_AIRSHIP_PLACEMENT,
+  KALLUR_AIRSHIP_SHORE_DISPATCH_POINT,
+  KALLUR_AIRSHIP_SHORE_PLACEMENT,
 } from "../content/scenes/kallur/kallurAirshipPlacement.ts";
+import type { VehicleDeparturePost } from "./vehicleDepartureBoard.ts";
 
 /**
  * The controller understands only this contract. A train, longship or any
@@ -224,6 +230,12 @@ export interface AirVehicleDefinition extends VehicleFrameDefinition {
     readonly heightTolerance: number;
     /** Empty service flights put accidental stowaways back ashore. */
     readonly passengerDropPoint?: SceneVector3;
+    /**
+     * Second (and further) dispatch posts on the same machine. When present,
+     * each stand has its own bollard and parked pose; an empty stand offers
+     * a call that starts the other stand's outbound leg.
+     */
+    readonly posts?: readonly VehicleDeparturePost[];
     /**
      * ЦВЕТ СИГНАЛЬНОГО СТЕКЛА, КОТОРЫМ ЭТА МАШИНА СВЕТИТ О СВОЁМ ОТПРАВЛЕНИИ.
      *
@@ -278,6 +290,12 @@ export interface AirVehicleDefinition extends VehicleFrameDefinition {
     readonly landing?: RotorLandingTolerance;
     readonly approach: ApproachGate;
     readonly docking: DockingTolerance;
+    /**
+     * What physically ends the flight. A moored carrier settles its authored
+     * fitting in a mast or cup. A platform carrier settles its mass centre
+     * over the route endpoint and must actually stand on an upward support.
+     */
+    readonly dockingKind?: "mooring" | "platform";
     /**
      * Physical deviations of this machine from the derived guidance corridor.
      * The corridor itself comes from the failure envelope, the approach gate
@@ -904,9 +922,9 @@ export function isInsideKallurAirship(point: SceneVector3): boolean {
 }
 
 /**
- * The rest-island ship: the terminal machine's automation and docking
- * grammar on a summit PLATFORM berth — buoyant lift, twin side pods, keel
- * trim cars; the standard task is the irregular ring around the island.
+ * The rest-island ship: a shuttle between the summit platform and the
+ * shore stand behind spawn. Down follows the old circuit's direction;
+ * up is the old climb back onto the mountain.
  */
 export const KALLUR_AIRSHIP_AIR_VEHICLE: AirVehicleDefinition = {
   ...kallurAirshipFrame,
@@ -914,15 +932,83 @@ export const KALLUR_AIRSHIP_AIR_VEHICLE: AirVehicleDefinition = {
     target: {
       id: "kallur:airship:departure",
       kind: "departure",
-      cue: "terminal-uncrewed-flight",
+      cue: "kallur-uncrewed-flight",
     },
-    // The bollard on the platform is the island's departures board.
     point: KALLUR_AIRSHIP_DISPATCH_POINT,
-    flightKind: "circuit",
+    flightKind: "down",
     approachRadius: 2.8,
     releaseRadius: 3.8,
     heightTolerance: 2.6,
     passengerDropPoint: KALLUR_AIRSHIP_DISPATCH_POINT,
+    posts: [
+      {
+        id: "summit",
+        point: KALLUR_AIRSHIP_DISPATCH_POINT,
+        berth: kallurAirshipPoint(
+          KALLUR_AIRSHIP_PLACEMENT,
+          KALLUR_AIRSHIP_REST_CENTRE_LOCAL,
+        ),
+        outboundKind: "down",
+        outboundLabelKey: "hint.kallurAirship.down",
+        callLabelKey: "hint.kallurAirship.call",
+        docking: {
+          arrivalKinds: ["up", "tour"],
+          kind: "platform",
+          approach: {
+            heading: [kallurAirshipFrame.nose[0], kallurAirshipFrame.nose[2]],
+            tolerance: { position: 4.6, heading: 0.34, speed: 3.8 },
+          },
+          tolerance: {
+            position: 0.6,
+            height: 0.25,
+            headingCos: 0.99,
+            speed: 0.2,
+            verticalSpeed: 0.12,
+            uprightCos: 0.99,
+            angularSpeed: 0.035,
+          },
+          mooringReach: 26,
+          settlingStallSeconds: 6,
+          settlingProgressMetres: 0.01,
+          parkedLiftTrim: -0.35,
+        },
+      },
+      {
+        id: "shore",
+        point: KALLUR_AIRSHIP_SHORE_DISPATCH_POINT,
+        berth: kallurAirshipPoint(
+          KALLUR_AIRSHIP_SHORE_PLACEMENT,
+          KALLUR_AIRSHIP_REST_CENTRE_LOCAL,
+        ),
+        outboundKind: "up",
+        outboundLabelKey: "hint.kallurAirship.up",
+        callLabelKey: "hint.kallurAirship.call",
+        docking: {
+          arrivalKinds: ["down", "circuit"],
+          kind: "platform",
+          approach: {
+            heading: [
+              Math.sin(KALLUR_AIRSHIP_SHORE_PLACEMENT.yaw),
+              Math.cos(KALLUR_AIRSHIP_SHORE_PLACEMENT.yaw),
+            ],
+            tolerance: { position: 4.6, heading: 0.34, speed: 3.8 },
+          },
+          tolerance: {
+            position: 0.6,
+            height: 0.25,
+            headingCos: 0.99,
+            speed: 0.2,
+            verticalSpeed: 0.12,
+            uprightCos: 0.99,
+            angularSpeed: 0.035,
+          },
+          mooringReach: 26,
+          settlingStallSeconds: 6,
+          settlingProgressMetres: 0.01,
+          parkedLiftTrim: -0.35,
+        },
+      },
+    ],
   },
   passengerFlight: {
     target: {
@@ -932,21 +1018,22 @@ export const KALLUR_AIRSHIP_AIR_VEHICLE: AirVehicleDefinition = {
     },
     // Mid-cabin, by the port sliding door.
     point: kallurAirshipPoint(KALLUR_AIRSHIP_PLACEMENT, [0.4, 1.5, -1.2]),
-    flightKind: "tour",
+    flightKind: "down",
     approachRadius: 2.1,
     releaseRadius: 2.7,
     contains: isInsideKallurAirship,
   },
   flight: {
     limits: {
-      // Twin side pods, scaled between the longship's 117 and the town
-      // ship's 220 by the measured hull; the rudder is the cruciform tail.
-      enginePower: 190,
-      enginePoints: [
-        kallurAirshipPoint(KALLUR_AIRSHIP_PLACEMENT, [-2.15, 3.92, -0.87]),
-        kallurAirshipPoint(KALLUR_AIRSHIP_PLACEMENT, [2.15, 3.92, -0.87]),
-      ],
-      maxRudderForce: 80,
+      // Twin side pods. Thrust follows the measured 39-unit hull at the
+      // fleet 0.30 g (town is 440 / 148), not the hull-length interpolation
+      // that left this light ship at nearly 1 g — airplane acceleration on
+      // an airship route.
+      enginePower: 58,
+      enginePoints: KALLUR_AIRSHIP_ENGINE_LOCAL.map((local) =>
+        kallurAirshipPoint(KALLUR_AIRSHIP_PLACEMENT, local),
+      ),
+      maxRudderForce: 28,
       rudderReferenceSpeed: 7,
       rudderPoint: kallurAirshipPoint(KALLUR_AIRSHIP_PLACEMENT, [0, 4.28, -7.9]),
       liftTrimRange: 0.12,
@@ -956,26 +1043,27 @@ export const KALLUR_AIRSHIP_AIR_VEHICLE: AirVehicleDefinition = {
       tolerance: { position: 4.6, heading: 0.34, speed: 3.8 },
     },
     docking: {
-      // A platform touch-down on skids: looser radially than a mast cone,
-      // tighter vertically — the deck is the datum.
-      position: 0.45,
-      height: 0.18,
+      // The deck owns the centre pose and the skids own the final support.
+      // These are the reference terminal's operational tolerances; unlike a
+      // mast cup there is no narrow physical throat asking for centimetres.
+      position: 0.6,
+      height: 0.25,
       headingCos: 0.99,
-      speed: 0.22,
-      verticalSpeed: 0.11,
+      speed: 0.2,
+      verticalSpeed: 0.12,
       uprightCos: 0.99,
-      angularSpeed: 0.034,
+      angularSpeed: 0.035,
     },
+    dockingKind: "platform",
     spoolSeconds: 4.5,
     underwaySeconds: 9,
     driveAnimation: { kind: "propeller", phaseSpeed: 18.4 },
     linearDamping: 0.22,
-    angularDamping: 0.55,
+    angularDamping: 0.9,
     lateralDragRatio: 7,
-    // The berth is on the SUMMIT: the safe floor is the world surface and
-    // a little below it — room for a future second berth by the spawn
-    // terrace (Igor, 21.08). Relative to the mountain-top rest pose that
-    // is the whole mountain of descent.
+    // Two berths: the summit and the shore behind spawn. The floor is the
+    // world surface, a little below it — the whole mountain of descent
+    // from the rest pose.
     minimumRelativeAltitude: -(KALLUR_AIRSHIP_DECK_TOP + 8),
     routePlan: (kind, berth) =>
       kallurAirshipPlan(kind as KallurAirshipFlightKind, berth),

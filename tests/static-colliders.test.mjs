@@ -149,6 +149,20 @@ test("a body covered by a separate intact landscape shell is not boxed twice", (
   assert.deepEqual(store.updateHidden(new Set()), []);
 });
 
+test("actor-only intact support stays out of the world collider mesh", () => {
+  const brow = {
+    id: "berth:brow",
+    material: "wood",
+    shape: "plank",
+    position: [0, 1, 0],
+    size: [4, 0.1, 0.6],
+    intactCollisionRole: "actor-only",
+  };
+  assert.deepEqual(buildStaticColliderMeshes([brow]), []);
+  const store = createStaticColliderMeshStore([brow]);
+  assert.deepEqual(store.updateHidden(new Set()), []);
+});
+
 test("пробоина меняет коллайдер куска: дыра простреливается и проходится", () => {
   // Вердикт Igor (август 2026): кратер жил только в рендере, а тримеш
   // коллайдера оставался авторским — дыра, сквозь которую видно, была

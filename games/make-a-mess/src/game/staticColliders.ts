@@ -302,7 +302,11 @@ export function buildStaticColliderMeshes(
 ): readonly StaticColliderMeshDefinition[] {
   const chunks = new Map<string, BreakablePieceDefinition[]>();
   for (const piece of pieces) {
-    if (piece.material === "foliage" || piece.intactCollider === false) {
+    if (
+      piece.material === "foliage" ||
+      piece.intactCollider === false ||
+      piece.intactCollisionRole === "actor-only"
+    ) {
       continue;
     }
     const key = chunkKey(piece);
@@ -346,7 +350,11 @@ export function createStaticColliderMeshStore(
   const chunks = new Map<string, BreakablePieceDefinition[]>();
   const pieceChunk = new Map<string, string>();
   for (const piece of pieces) {
-    if (piece.material === "foliage" || piece.intactCollider === false) {
+    if (
+      piece.material === "foliage" ||
+      piece.intactCollider === false ||
+      piece.intactCollisionRole === "actor-only"
+    ) {
       continue;
     }
     const key = chunkKey(piece);

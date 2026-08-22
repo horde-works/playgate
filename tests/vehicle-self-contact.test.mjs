@@ -16,7 +16,9 @@ import {
 import { structuralMaterialProfiles } from "../games/make-a-mess/src/game/destructionScene.ts";
 import { townScene } from "../games/make-a-mess/src/game/townScene.ts";
 import { combatHexacopterRangeScene } from "../games/make-a-mess/src/game/combatHexacopterRangeScene.ts";
+import { vikingVillageScene } from "../games/make-a-mess/src/game/vikingVillageScene.ts";
 import {
+  DEBRIS_ACTOR_DETAIL,
   VEHICLE_ATTACHMENT,
   VEHICLE_CARRIER,
 } from "../games/make-a-mess/src/game/physicsInteractionGroups.ts";
@@ -31,6 +33,7 @@ await RAPIER.init();
 const machineScenePieces = [
   ...townScene.breakablePieces,
   ...combatHexacopterRangeScene.breakablePieces,
+  ...vikingVillageScene.breakablePieces,
 ];
 
 function rotationOf(piece) {
@@ -97,6 +100,17 @@ function addFixedPiece(world, piece, collisionGroups) {
     ).handle);
   }
   return handles;
+}
+
+function addIntactFixedPiece(world, piece) {
+  if (piece.intactCollider === false) return [];
+  return addFixedPiece(
+    world,
+    piece,
+    piece.intactCollisionRole === "actor-only"
+      ? DEBRIS_ACTOR_DETAIL
+      : undefined,
+  );
 }
 
 function selfContactResult(clusterId) {
@@ -253,7 +267,7 @@ function idleBerthResult(clusterId, berthClusterId) {
   for (const piece of machineScenePieces.filter(
     (piece) => piece.clusterId === berthClusterId,
   )) {
-    for (const handle of addFixedPiece(world, piece, undefined)) {
+    for (const handle of addIntactFixedPiece(world, piece)) {
       berthSources.set(handle, piece.id);
     }
   }
@@ -350,6 +364,17 @@ test("the real town hexacopter settles on its pad and leaves the active island",
 
 test("the real town airship remains neutrally buoyant and sleeps at its mast", () => {
   const result = idleBerthResult("sky-mooring:airship", "sky-mooring:mast");
+  assert.equal(result.sleeping, true, JSON.stringify(result));
+  assert.ok(result.displacement < 0.02, JSON.stringify(result));
+  assert.ok(result.speed < 1e-5, JSON.stringify(result));
+});
+
+test("the real Viking longship remains neutrally buoyant at its berth", () => {
+  const result = idleBerthResult(
+    "viking-village:sky-longship",
+    "viking-village:sky-longship-dock",
+  );
+  assert.deepEqual(result.berthContacts, [], JSON.stringify(result));
   assert.equal(result.sleeping, true, JSON.stringify(result));
   assert.ok(result.displacement < 0.02, JSON.stringify(result));
   assert.ok(result.speed < 1e-5, JSON.stringify(result));

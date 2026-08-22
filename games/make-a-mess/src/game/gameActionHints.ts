@@ -14,6 +14,7 @@ export type GameAction =
   | "skat-departure.approaching"
   | "yaqui-departure.approaching"
   | "dc3-departure.approaching"
+  | "kallur-departure.approaching"
   | "terminal-ride.approaching"
   | "viking-ride.approaching"
   | "town-ride.approaching"
@@ -178,6 +179,17 @@ export const gameActionHints: readonly GameActionHint[] = [
     detailKey: "hint.dc3Departure.action",
     touchDetailKey: "hint.dc3Departure.actionTouch",
     keyLabelKey: "hint.dc3Departure.key",
+    once: false,
+  },
+  {
+    id: "dispatching-the-kallur-airship",
+    action: "kallur-departure.approaching",
+    delayMs: 180,
+    eyebrowKey: "hint.kallurAirship.eyebrow",
+    titleKey: "hint.kallurAirship.title",
+    detailKey: "hint.kallurAirship.action",
+    touchDetailKey: "hint.kallurAirship.actionTouch",
+    keyLabelKey: "hint.kallurAirship.key",
     once: false,
   },
   {

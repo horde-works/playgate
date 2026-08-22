@@ -242,6 +242,7 @@ import { SceneDressing } from "./SceneDressing";
 import { WorldEdge } from "./WorldEdge";
 import { KallurSea } from "./KallurSea";
 import { KallurBoulders } from "./KallurBoulders";
+import { VikingBoulders } from "./VikingBoulders";
 import { HingedDoorSystem, type HingedEntryApproach } from "./HingedDoorSystem";
 import {
   entryInteractionActions,
@@ -564,6 +565,7 @@ const entryApproachActions: readonly GameAction[] = [
   "terminal-departure.approaching",
   "viking-departure.approaching",
   "town-departure.approaching",
+  "kallur-departure.approaching",
   "terminal-ride.approaching",
   "viking-ride.approaching",
   "town-ride.approaching",
@@ -596,6 +598,8 @@ function entryApproachAction(entry: HingedEntryApproach): GameAction {
                 ? "skat-departure.approaching"
               : entry.cue === "dc3-uncrewed-flight"
                 ? "dc3-departure.approaching"
+              : entry.cue === "kallur-uncrewed-flight"
+                ? "kallur-departure.approaching"
               : "terminal-departure.approaching"
         : entry.kind === "ride"
           ? entry.cue === "viking-passenger-flight"
@@ -655,6 +659,10 @@ function entryActionKey(
             ? touch
               ? "hint.dc3Departure.actionTouch"
               : "hint.dc3Departure.action"
+          : entry.cue === "kallur-uncrewed-flight"
+            ? touch
+              ? "hint.kallurAirship.actionTouch"
+              : "hint.kallurAirship.action"
           : touch
             ? "hint.departure.actionTouch"
             : "hint.departure.action";
@@ -2419,6 +2427,8 @@ const BreakablePiece = memo(function BreakablePiece({
     ? compoundClusterOwnsPiece(clusterFrame, piece)
     : false;
   const vehicleAttachment = Boolean(clusterFrame && !compoundClusterMember);
+  const actorOnlyIntact =
+    !broken && piece.intactCollisionRole === "actor-only";
   const ownsContactShape = broken || !compoundClusterMember;
   // Член машины рождается внутри её оболочки, а не рядом с ней, и только он
   // получает льготу (см. DEBRIS_LEAVING_CARRIER). Мировой обломок сталкивается
@@ -2576,9 +2586,11 @@ const BreakablePiece = memo(function BreakablePiece({
       // взаимодействует, со своим составным корпусом — нет.
       {...(broken
         ? { collisionGroups: birthGroup }
-        : vehicleAttachment
-          ? { collisionGroups: VEHICLE_ATTACHMENT }
-          : {})}
+        : actorOnlyIntact
+          ? { collisionGroups: DEBRIS_ACTOR_DETAIL }
+          : vehicleAttachment
+            ? { collisionGroups: VEHICLE_ATTACHMENT }
+            : {})}
       ccd={broken && collisionTuning.hardCcd}
       softCcdPrediction={broken ? collisionTuning.softCcdPrediction : 0}
       onContactForce={
@@ -2691,6 +2703,7 @@ function BreakableObjects({
       if (
         brokenPieces.has(piece.id) ||
         piece.hinge ||
+        piece.intactCollisionRole === "actor-only" ||
         // Кластер транспорта живёт своими телами: его куски двигает кадр
         // отсчёта, а инстансная батчёвка целого мира неподвижна.
         isVehicleFramePiece(piece) ||
@@ -5997,7 +6010,7 @@ function OpenWorldScene({
 
   const breakAt = useCallback(
     (target: BreakablePieceDefinition, currentImpact: number) => {
-      if (indestructible) {
+      if (indestructible || target.destructible === false) {
         return;
       }
       const next = fractureLocallyAt(
@@ -6144,7 +6157,7 @@ function OpenWorldScene({
         return false;
       }
       const parent = breakablePieceById.get(parentId);
-      if (!parent) {
+      if (!parent || parent.destructible === false) {
         return false;
       }
       if (groundMaterials.has(parent.material)) {
@@ -6168,11 +6181,13 @@ function OpenWorldScene({
 
       const next = new Set(brokenPiecesRef.current);
       for (const id of ids) {
-        next.add(id);
+        if (breakablePieceById.get(id)?.destructible !== false) {
+          next.add(id);
+        }
       }
       settleStructure(next);
     },
-    [settleStructure],
+    [breakablePieceById, settleStructure],
   );
 
   // Replace a whole box body with real sub-boxes of the same object,
@@ -6185,7 +6200,7 @@ function OpenWorldScene({
       burstSpeed: number,
       cause: FractureCause = "impact",
     ): boolean => {
-      if (indestructible) {
+      if (indestructible || source.destructible === false) {
         return false;
       }
       if (
@@ -6319,7 +6334,7 @@ function OpenWorldScene({
       physicalChipCount = 2,
       emitImpactBurst = true,
     ): boolean => {
-      if (indestructible) {
+      if (indestructible || source.destructible === false) {
         return false;
       }
       if (
@@ -6508,7 +6523,7 @@ function OpenWorldScene({
       forceDirection: { x: number; y: number; z: number },
       intensity: number,
     ): boolean => {
-      if (indestructible) {
+      if (indestructible || source.destructible === false) {
         return false;
       }
       const body = pieceBodies.current.get(source.id);
@@ -6566,7 +6581,7 @@ function OpenWorldScene({
       const remnant = remnantById.current.get(targetId);
       const piece = remnant ? undefined : breakablePieceById.get(targetId);
       const source = remnant ?? piece;
-      if (!source) {
+      if (!source || source.destructible === false) {
         return null;
       }
       if (
@@ -6884,6 +6899,7 @@ function OpenWorldScene({
         return {
           id: `remnant:${remnantCounter.current}`,
           parentId,
+          destructible: source.destructible,
           clusterId: clusterId ?? undefined,
           material: source.material,
           color: source.color,
@@ -7166,7 +7182,11 @@ function OpenWorldScene({
       const worldPiece = request.worldPieceId
         ? breakablePieceById.get(request.worldPieceId)
         : undefined;
-      if (worldPiece && crumbleOnLanding.has(worldPiece.material)) {
+      if (
+        worldPiece &&
+        worldPiece.destructible !== false &&
+        crumbleOnLanding.has(worldPiece.material)
+      ) {
         const verdict = classifyLandingDamage(
           worldPiece.material,
           request.closingSpeed,
@@ -7206,6 +7226,7 @@ function OpenWorldScene({
       const vehiclePiece = breakablePieceById.get(request.vehiclePieceId);
       if (
         vehiclePiece &&
+        vehiclePiece.destructible !== false &&
         !brokenPiecesRef.current.has(vehiclePiece.id) &&
         crumbleOnLanding.has(vehiclePiece.material)
       ) {
@@ -8640,7 +8661,7 @@ function OpenWorldScene({
           continue;
         }
         const source = breakablePieceById.get(id);
-        if (!source) {
+        if (!source || source.destructible === false) {
           continue;
         }
         looseAuthoredIds.add(id);
@@ -8651,6 +8672,7 @@ function OpenWorldScene({
       // mounts. Keep that short generation gap damageable too.
       for (const source of blastPieceCandidates) {
         if (
+          source.destructible === false ||
           looseAuthoredIds.has(source.id) ||
           pieceBodies.current.has(source.id) ||
           (!previousBroken.has(source.id) && !source.hinge) ||
@@ -8701,6 +8723,7 @@ function OpenWorldScene({
               .filter((piece) => {
                 const body = pieceBodies.current.get(piece.id);
                 return (
+                  piece.destructible !== false &&
                   !previousBroken.has(piece.id) &&
                   !carvedPiecesRef.current.has(piece.id) &&
                   !shatteredPiecesRef.current.has(piece.id) &&
@@ -8819,6 +8842,7 @@ function OpenWorldScene({
           })[] = [];
           for (const member of members) {
             if (
+              member.destructible === false ||
               previousBroken.has(member.id) ||
               carvedPiecesRef.current.has(member.id) ||
               shatteredPiecesRef.current.has(member.id)
@@ -10598,14 +10622,7 @@ function OpenWorldScene({
       {scene.id === "kallur" ? <KallurBoulders /> : null}
       {scene.id === "viking-village" && scene.worldRadius ? (
         <>
-          <GrassField
-            worldRadius={scene.worldRadius}
-            center={scene.worldCenter}
-            pieces={breakablePieces}
-            // Denser low turf preserves a continuous grass cover inside the
-            // village without bringing back the former tall foreground wall.
-            count={42000}
-          />
+          <VikingBoulders />
           <SmokePlumes nightRef={nightRef} />
           <Birds
             center={scene.worldCenter}
@@ -14527,9 +14544,12 @@ export function MakeAMessGame({
             ) : null}
             <span>
               {t(
-                fallbackLook && activeHint.touchDetailKey
-                  ? activeHint.touchDetailKey
-                  : activeHint.detailKey,
+                approachedEntryActions.length === 1 &&
+                  approachedEntryActions[0].labelKey
+                  ? (approachedEntryActions[0].labelKey as TranslationKey)
+                  : fallbackLook && activeHint.touchDetailKey
+                    ? activeHint.touchDetailKey
+                    : activeHint.detailKey,
               )}
             </span>
           </div>

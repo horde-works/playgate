@@ -24,6 +24,7 @@ import {
 
 export interface ShardDefinition {
   readonly id: string;
+  readonly destructible?: boolean;
   readonly material: BreakableMaterial;
   readonly color: string;
   /** Display colour inherited from the intact ground batch. */
@@ -51,6 +52,7 @@ export interface ShardDefinition {
 
 export interface ShardSource {
   readonly id: string;
+  readonly destructible?: boolean;
   readonly material: BreakableMaterial;
   readonly color: string;
   readonly renderColor?: string;
@@ -72,6 +74,7 @@ export type LandingDamage = "none" | "chip" | "shatter";
 export interface RemnantDefinition {
   readonly id: string;
   readonly parentId: string;
+  readonly destructible?: boolean;
   /**
    * Обрубок члена составного кластера остаётся ЧЛЕНОМ этого кластера:
    * его position/quaternion живут в авторской системе кластера, рендер и
@@ -1917,6 +1920,7 @@ function damageFragments(
       const tumble = 1.5 + noise * 4.5;
       return {
         id,
+        destructible: source.destructible,
         material: source.material,
         color: source.color,
         renderColor: source.renderColor,

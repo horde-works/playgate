@@ -31,6 +31,7 @@ import {
   kallurCascadeGlsl,
   kallurFlatBaseGlsl,
   kallurWallMidGlsl,
+  vikingHeathCascadeGlsl,
 } from "../content/landscape/naturalSurfaceCascade.ts";
 import { landscapeGradeMap, landscapeSurfaceMap } from "./landscapeSurfaceRuntime.ts";
 import { materialAppearanceProfiles } from "./materialAppearance.ts";
@@ -1998,6 +1999,7 @@ ${materialAtmosphereGlsl()}
 uniform float uKallurCarpetDetail;
 uniform sampler2D uKallurGradeMap;
 ${kallurCascadeGlsl()}
+${vikingHeathCascadeGlsl()}
 ${
   material === "concrete" || material === "plaster" || material === "brick"
     ? "uniform sampler2D uStainMap;\nuniform float uStainStrength;"
@@ -2236,8 +2238,8 @@ ${
     : ""
 }
 
-// Viking ground is one continuous, destructible surface. Paths, yards,
-// moss and wet soil are world-space material masks, never stacked panels.
+// Viking ground is one continuous surface. Paths, yards, moss and wet soil
+// are world-space material masks, never stacked panels or separate tufts.
 // The profile attribute keeps every other map visually unchanged.
 float vikingSurface = (1.0 - step(0.5, abs(vLandscapeSurfaceProfile - 1.0))) * materialUp;
 vec2 vikingPoint = vMaterialCoordinate.xz;
@@ -2245,60 +2247,352 @@ float vikingTravel = 0.0;
 float vikingYards = 0.0;
 float vikingDirt = 0.0;
 float vikingMoss = 0.0;
+float vikingHeight = 0.0;
+float vikingRetainedWet = 0.0;
 if (vikingSurface > 0.5) {
+  float vikingFootprint = max(
+    length(dFdx(vikingPoint)),
+    length(dFdy(vikingPoint))
+  );
+  float vikingHeathHeight = 0.0;
+  float vikingCushions = 0.0;
+  float vikingFibre = 0.0;
+  float vikingLitter = 0.0;
+  nsvHeathCascade(
+    vikingPoint,
+    vikingFootprint,
+    vikingHeathHeight,
+    vikingCushions,
+    vikingFibre,
+    vikingLitter
+  );
+
+  // Traffic is a cause field, not a road decal. Warp the whole authored map
+  // through metre-scale earth structure, then let two smaller octaves eat
+  // bays and tongues into its margins. The broad low-opacity layers remain
+  // mixed sod; only accumulated use exposes continuous soil.
+  vec2 vikingMaskWarp = vec2(
+    nscNoise(vikingPoint / 7.4, 971.0),
+    nscNoise(vikingPoint / 6.1, 977.0)
+  ) * 0.92;
   vec2 vikingTrafficUv = clamp(
     vec2(
-      (vikingPoint.x + 96.0) / 192.0,
-      (vikingPoint.y + 106.0) / 192.0
+      (vikingPoint.x + vikingMaskWarp.x + 96.0) / 192.0,
+      (vikingPoint.y + vikingMaskWarp.y + 106.0) / 192.0
     ),
     vec2(0.001),
     vec2(0.999)
   );
   vec2 vikingTrafficMask = texture2D(uVikingTrafficMap, vikingTrafficUv).rg;
-  float vikingBroadNoise =
-    materialValueNoise(vikingPoint * 0.075 + vec2(4.7, 18.2)) * 0.68 +
-    materialValueNoise(vikingPoint * 0.21 + vec2(27.4, 3.1)) * 0.32;
-  float vikingFineNoise = materialValueNoise(vikingPoint * 0.83 + vec2(11.9, 36.2));
+  float vikingMass = nscNoise(vikingPoint / 8.8, 983.0) * 0.66
+    + nscNoise(vikingPoint / 3.6, 991.0) * 0.34;
+  float vikingMeso = nscNoise(vikingPoint / 1.32, 997.0);
+  float vikingFine = nscNoise(vikingPoint / 0.34, 1009.0)
+    * nscFade(0.34, vikingFootprint);
+  float vikingEdgeFray = vikingMass * 0.16 + vikingMeso * 0.125 + vikingFine * 0.045;
+  float vikingTravelSignal = clamp(vikingTrafficMask.r * 1.1 + vikingEdgeFray, 0.0, 1.0);
+  float vikingYardSignal = clamp(vikingTrafficMask.g * 1.08 + vikingMass * 0.055, 0.0, 1.0);
+  vikingTravel = smoothstep(0.065, 0.82, vikingTravelSignal);
+  vikingYards = smoothstep(0.025, 0.88, vikingYardSignal);
 
-  // The authored traffic frequency is softened by ground-scale noise. This
-  // keeps route intent legible while preventing CAD-clean edges.
-  vikingTravel = clamp(
-    vikingTrafficMask.r * 1.35 + (vikingBroadNoise - 0.5) * 0.1,
+  // A few uncrushed sod islands survive inside medium traffic, while boots
+  // cut small dirty tongues beyond the nominal line. Both disappear in the
+  // truly compacted core, avoiding a noisy camouflage pattern.
+  float vikingSodIslands = smoothstep(0.54, 0.86, nscNoise(vikingPoint / 0.78, 1013.0) * 0.5 + 0.5)
+    * smoothstep(0.13, 0.42, vikingTravel)
+    * (1.0 - smoothstep(0.7, 0.94, vikingTravel));
+  float vikingDirtTongues = smoothstep(0.58, 0.86, nscNoise(vikingPoint / 1.05, 1019.0) * 0.5 + 0.5)
+    * smoothstep(0.02, 0.26, vikingTrafficMask.r)
+    * (1.0 - smoothstep(0.65, 0.92, vikingTrafficMask.r));
+
+  // Yard churn is local and subordinate to authored activity. It joins
+  // thresholds and work sites into lived patches without turning the whole
+  // palisade interior into one dark disk.
+  float vikingVillageCore = 1.0 - smoothstep(
+    32.0,
+    58.0,
+    length(vikingPoint - vec2(0.0, -10.0))
+  );
+  float vikingLocalChurn = vikingVillageCore
+    * smoothstep(0.38, 0.78, -vikingMass * 0.5 + 0.5)
+    * (0.08 + vikingYards * 0.24);
+  vikingDirt = clamp(
+    max(vikingTravel * 0.9, vikingYards * 0.82)
+      + vikingDirtTongues * 0.48
+      + vikingLocalChurn
+      - vikingSodIslands * 0.7,
     0.0,
     1.0
   );
-  vikingYards = clamp(vikingTrafficMask.g * 1.22, 0.0, 1.0);
-  float vikingTrafficWear = clamp(0.73 + vikingFineNoise * 0.38, 0.0, 1.0);
-  vikingDirt = clamp(max(vikingTravel, vikingYards * 0.88) * vikingTrafficWear, 0.0, 1.0);
 
-  vec3 vikingSoil = sRGBTransferEOTF(
-    texture2D(uLandscapeSoilMap, vikingPoint * 0.32 + vec2(0.17, 0.43))
+  // Moss is a broad ecology and also colonises the frayed transition. It is
+  // not a green multiplier over every tile: patches have their own cushions,
+  // dark seams and pale old growth.
+  float vikingMossMass = nscNoise(vikingPoint / 5.2, 1031.0) * 0.62
+    + nscNoise(vikingPoint / 2.05, 1033.0) * 0.38;
+  float vikingQuiet = 1.0 - smoothstep(0.16, 0.76, vikingDirt);
+  float vikingTransition = 4.0 * vikingDirt * (1.0 - vikingDirt);
+  vikingMoss = smoothstep(-0.18, 0.53, vikingMossMass)
+    * (vikingQuiet * 0.88 + vikingTransition * 0.24)
+    * (0.64 + vikingCushions * 0.5);
+  float vikingMossMicroHeight = 0.0;
+  float vikingMossMicroNap = 0.0;
+  nsvMossVelvet(
+    vikingPoint,
+    vikingFootprint,
+    vikingMossMicroHeight,
+    vikingMossMicroNap
+  );
+  // Once a colony exists it owns its velvet clearly. Multiplying by the raw
+  // low-valued ecology mask made the first pass technically present but
+  // invisible; the smooth threshold keeps locality without attenuating it
+  // twice.
+  float vikingMossMicroWeight = smoothstep(0.055, 0.52, vikingMoss)
+    * (0.64 + vikingCushions * 0.36)
+    * (1.0 - smoothstep(0.42, 0.9, vikingDirt) * 0.82);
+  float vikingGrassMicroHeight = 0.0;
+  float vikingGrassMicroBlade = 0.0;
+  nsvGrassNap(
+    vikingPoint,
+    vikingFootprint,
+    vikingGrassMicroHeight,
+    vikingGrassMicroBlade
+  );
+
+  vec3 vikingHeath = nsvHeathAlbedo(
+    vikingPoint,
+    vikingFootprint,
+    vikingCushions,
+    vikingFibre * vikingQuiet,
+    vikingLitter * (0.45 + vikingQuiet * 0.55),
+    vikingMoss,
+    materialUp
+  );
+  // Broad age/soil chemistry shifts whole families of cushions without
+  // tinting a square carrier.
+  vikingHeath *= mix(
+    vec3(0.72, 0.82, 0.62),
+    vec3(1.18, 1.08, 0.78),
+    clamp(vikingMass * 0.5 + 0.5, 0.0, 1.0)
+  );
+
+  // Independent substance fields, not brightness variants of green. The
+  // accepted concept works because one patch of ground can read as turf,
+  // deep moss, mineral-grey wear and brown old growth at the same time.
+  // Their domains and seeds deliberately disagree so light cannot collapse
+  // them back into one monochrome relief family.
+  vec2 vikingColourWarp = vec2(
+    nscNoise(vikingPoint / 4.8, 1103.0),
+    nscNoise(vikingPoint / 3.7, 1109.0)
+  ) * 0.58;
+  float vikingMineralMass = nscNoise((vikingPoint + vikingColourWarp) / 2.85, 1117.0) * 0.5 + 0.5;
+  float vikingMineralBreak = abs(nscNoise((vikingPoint - vikingColourWarp * 0.35) / 0.68, 1123.0));
+  float vikingMineralBed = smoothstep(
+    0.5,
+    0.81,
+    vikingMineralMass * 0.72 + vikingMineralBreak * 0.28
+  ) * (0.56 + vikingTransition * 0.34) * (1.0 - vikingMoss * 0.38);
+
+  float vikingBrownMass = nscNoise((vikingPoint - vikingColourWarp * 0.7) / 2.15, 1129.0) * 0.5 + 0.5;
+  float vikingBrownBreak = abs(nscNoise((vikingPoint + vikingColourWarp * 0.25) / 0.51, 1151.0));
+  float vikingBrownBed = smoothstep(
+    0.48,
+    0.82,
+    vikingBrownMass * 0.76 + vikingBrownBreak * 0.24
+  ) * (1.0 - vikingMineralBed * 0.72) * (0.62 + vikingLitter * 0.38);
+  float vikingGreenTurf = smoothstep(0.18, 0.82, vikingQuiet)
+    * (1.0 - smoothstep(0.055, 0.46, vikingMoss))
+    * (1.0 - smoothstep(0.08, 0.52, vikingMineralBed))
+    * (1.0 - smoothstep(0.08, 0.52, vikingBrownBed))
+    * (1.0 - smoothstep(0.18, 0.64, vikingDirt));
+  float vikingGrassMicroWeight = vikingGreenTurf;
+
+  float vikingDeepMoss = vikingMoss
+    * smoothstep(0.42, 0.78, -nscNoise((vikingPoint + vikingColourWarp) / 1.08, 1153.0) * 0.5 + 0.5);
+  vec3 vikingMineralColour = mix(
+    vec3(0.125, 0.132, 0.12),
+    vec3(0.205, 0.198, 0.17),
+    vikingMineralBreak
+  );
+  vec3 vikingBrownColour = mix(
+    vec3(0.092, 0.055, 0.027),
+    vec3(0.165, 0.105, 0.052),
+    vikingBrownBreak
+  );
+  vikingHeath = mix(vikingHeath, vikingMineralColour, vikingMineralBed * 0.68);
+  vikingHeath = mix(vikingHeath, vikingBrownColour, vikingBrownBed * 0.58);
+  vikingHeath = mix(vikingHeath, vec3(0.038, 0.061, 0.021), vikingDeepMoss * 0.62);
+  // Dense nap seasons the connected cushion; it must never read as isolated
+  // glossy droplets. Most of its evidence comes from the signed normal field,
+  // with only a quiet dry-tip colour variation in albedo.
+  vikingHeath = mix(
+    vikingHeath,
+    vec3(0.235, 0.31, 0.105),
+    vikingMossMicroNap * vikingMossMicroWeight * 0.16
+  );
+  vikingHeath = mix(
+    vikingHeath,
+    vec3(0.17, 0.225, 0.082),
+    vikingGrassMicroBlade * vikingGrassMicroWeight * 0.16
+  );
+  // Pale torn matter sits on TOP of those substances, preserving the close
+  // fibrous read instead of being swallowed by the broad colour fields.
+  vikingHeath = mix(vikingHeath, vec3(0.31, 0.275, 0.16), vikingFibre * 0.16);
+  float vikingMatted = abs(nscNoise(vikingPoint / 0.48, 1041.0))
+    * nscFade(0.48, vikingFootprint);
+  float vikingOldGrowth = smoothstep(0.55, 0.88, vikingMatted * 0.66 + vikingLitter * 0.48)
+    * (1.0 - vikingDirt * 0.76);
+  vikingHeath = mix(vikingHeath, vec3(0.18, 0.165, 0.085), vikingOldGrowth * 0.25);
+  float vikingHeathHollow = pow(1.0 - vikingMatted, 2.4) * (0.3 + vikingCushions * 0.7);
+  vikingHeath = mix(vikingHeath, vec3(0.024, 0.036, 0.019), vikingHeathHollow * 0.3);
+
+  // The path margin is its own material state: torn moss, exposed pale
+  // roots and old trampled felt. It prevents the authored route from reading
+  // as a dark decal with a single contour.
+  vec2 vikingEcotoneWarp = vec2(
+    nscNoise(vikingPoint / 0.92, 1045.0),
+    nscNoise(vikingPoint / 0.71, 1047.0)
+  ) * 0.14;
+  float vikingEcotoneBody = abs(nscNoise((vikingPoint + vikingEcotoneWarp) / 0.27, 1055.0));
+  float vikingEcotoneFelt = smoothstep(0.5, 0.86, vikingEcotoneBody)
+    * pow(clamp(vikingTransition, 0.0, 1.0), 0.7);
+  float vikingExposedRoots = vikingEcotoneFelt
+    * smoothstep(0.48, 0.86, vikingFibre * 0.58 + vikingLitter * 0.62);
+  vikingHeath = mix(vikingHeath, vec3(0.29, 0.255, 0.14), vikingExposedRoots * 0.52);
+  vikingHeath = mix(vikingHeath, vec3(0.105, 0.125, 0.06), vikingEcotoneFelt * vikingMoss * 0.24);
+
+  // Mud has its own nested material: humus masses, compressed pale rub,
+  // centimetre clods, dark hollows and sparse embedded mineral grit. Two
+  // differently oriented soil samples break the repeat of the source map.
+  vec3 vikingSoilA = sRGBTransferEOTF(
+    texture2D(uLandscapeSoilMap, vikingPoint * 0.37 + vec2(0.17, 0.43))
   ).rgb;
-  // Travelled mud is darker and cooler than grass or timber — without that
-  // split the courtyard, walls and fog sit in one mid-grey and lose weight.
-  vikingSoil *= mix(vec3(0.46, 0.31, 0.20), vec3(0.58, 0.42, 0.27), vikingFineNoise);
-  diffuseColor.rgb = mix(diffuseColor.rgb, vikingSoil, vikingDirt * 0.96);
+  vec2 vikingSoilPointB = vec2(
+    vikingPoint.x * 0.36 - vikingPoint.y * 0.61,
+    vikingPoint.x * 0.61 + vikingPoint.y * 0.36
+  );
+  vec3 vikingSoilB = sRGBTransferEOTF(
+    texture2D(uLandscapeSoilMap, vikingSoilPointB * 0.73 + vec2(0.61, 0.09))
+  ).rgb;
+  float vikingHumus = clamp(
+    dot(vikingSoilA * 0.58 + vikingSoilB * 0.42, vec3(0.34, 0.46, 0.2)) * 3.7,
+    0.0,
+    1.0
+  );
+  vec2 vikingMudWarp = vec2(
+    nscNoise(vikingPoint / 0.83, 1063.0),
+    nscNoise(vikingPoint / 0.69, 1069.0)
+  ) * 0.1;
+  float vikingMudClod = abs(nscNoise((vikingPoint + vikingMudWarp) / 0.17, 1073.0))
+    * nscFade(0.17, vikingFootprint);
+  float vikingMudCrumb = abs(nscNoise((vikingPoint - vikingMudWarp * 0.45) / 0.075, 1081.0))
+    * nscFade(0.075, vikingFootprint);
+  float vikingMudMeso = abs(nscNoise((vikingPoint + vikingMudWarp * 0.7) / 0.64, 1087.0));
+  float vikingMudCloseHeight = 0.0;
+  float vikingMudCloseChurn = 0.0;
+  float vikingMudCloseHollow = 0.0;
+  float vikingMudCloseLeaf = 0.0;
+  float vikingMudCloseLeafTone = 0.0;
+  nsvMudClose(
+    vikingPoint,
+    vikingFootprint,
+    vikingMudCloseHeight,
+    vikingMudCloseChurn,
+    vikingMudCloseHollow,
+    vikingMudCloseLeaf,
+    vikingMudCloseLeafTone
+  );
+  float vikingMudCloseWeight = smoothstep(0.14, 0.72, vikingDirt)
+    * (0.66 + vikingTravel * 0.22 + vikingYards * 0.12);
+  float vikingFurrowGuide = 1.0 - abs(
+    nscNoise((vikingPoint + vikingMudWarp * 1.2) / 0.23, 1091.0)
+  );
+  float vikingFurrowBreak = abs(
+    nscNoise((vikingPoint - vikingMudWarp * 0.6) / 0.105, 1093.0)
+  );
+  float vikingSoilFurrow = pow(clamp(vikingFurrowGuide, 0.0, 1.0), 2.2)
+    * smoothstep(0.3, 0.78, vikingFurrowBreak)
+    * nscFade(0.23, vikingFootprint);
+  vec3 vikingSoil = mix(
+    vec3(0.027, 0.024, 0.017),
+    vec3(0.17, 0.132, 0.074),
+    clamp(vikingHumus * 0.38 + vikingMudMeso * 0.38 + vikingMudClod * 0.24 + vikingMass * 0.08, 0.0, 1.0)
+  );
+  float vikingAbrasion = smoothstep(0.62, 0.9, vikingMudClod * 0.7 + vikingMudCrumb * 0.42)
+    * (0.28 + vikingTravel * 0.46 + vikingTransition * 0.42);
+  vikingSoil = mix(vikingSoil, vec3(0.25, 0.215, 0.13), vikingAbrasion * 0.48);
+  vikingSoil = mix(vikingSoil, vec3(0.285, 0.25, 0.15), vikingExposedRoots * 0.42);
+  vikingSoil = mix(vikingSoil, vec3(0.205, 0.175, 0.105), vikingSoilFurrow * 0.36);
+  // The same mineral and humus families cross the path boundary; otherwise
+  // the track becomes a separate brown carpet laid over the field.
+  vikingSoil = mix(
+    vikingSoil,
+    vikingMineralColour * 0.88,
+    vikingMineralBed * (0.26 + vikingTransition * 0.24)
+  );
+  vikingSoil = mix(
+    vikingSoil,
+    vikingBrownColour * 0.78,
+    vikingBrownBed * (0.18 + vikingDirt * 0.18)
+  );
+  vec3 vikingPressedHumus = mix(
+    vec3(0.035, 0.028, 0.02),
+    vec3(0.145, 0.118, 0.076),
+    vikingMudCloseChurn
+  );
+  vikingSoil = mix(
+    vikingSoil,
+    vikingPressedHumus,
+    vikingMudCloseWeight * 0.32
+  );
+  vec3 vikingLeafColour = mix(
+    vec3(0.115, 0.058, 0.018),
+    vec3(0.31, 0.19, 0.047),
+    vikingMudCloseLeafTone
+  );
+  vikingSoil = mix(
+    vikingSoil,
+    vikingLeafColour,
+    vikingMudCloseLeaf * vikingMudCloseWeight * 0.78
+  );
+  float vikingAsh = vikingYards
+    * smoothstep(0.48, 0.84, -vikingMeso * 0.5 + 0.5);
+  vikingSoil = mix(vikingSoil, vec3(0.027, 0.025, 0.022), vikingAsh * 0.22);
 
-  float vikingMossNoise =
-    materialValueNoise(vikingPoint * 0.095 + vec2(41.3, 7.9)) * 0.7 +
-    materialValueNoise(vikingPoint * 0.37 + vec2(8.2, 59.1)) * 0.3;
-  vikingMoss = smoothstep(0.57, 0.78, vikingMossNoise)
-    * (1.0 - vikingTravel * 0.92)
-    * (1.0 - vikingYards * 0.58);
-  vec3 vikingMossTint = mix(vec3(0.46, 0.62, 0.39), vec3(0.31, 0.47, 0.28), vikingFineNoise);
-  diffuseColor.rgb *= mix(vec3(1.0), vikingMossTint, vikingMoss * 0.64);
+  float vikingGritCluster = smoothstep(0.38, 0.76, nscNoise(vikingPoint / 1.1, 1061.0) * 0.5 + 0.5);
+  float vikingGrit = pow(clamp(vikingMudCrumb, 0.0, 1.0), 7.0)
+    * vikingGritCluster * (0.22 + vikingDirt * 0.78);
+  vikingSoil = mix(vikingSoil, vec3(0.25, 0.255, 0.22), vikingGrit * 0.52);
 
-  float vikingOrganicDarkening = vikingMoss
-    * smoothstep(0.68, 0.86, materialValueNoise(vikingPoint * 0.61 + vec2(73.0, 12.0)));
-  diffuseColor.rgb *= 1.0 - vikingOrganicDarkening * 0.22;
+  // Retained water occupies low clod hollows inside traffic, producing dark
+  // irregular pockets rather than glazing an entire road uniformly.
+  float vikingLowPocket = smoothstep(0.18, 0.68, -vikingMass * 0.42 - vikingMeso * 0.58);
+  vikingRetainedWet = vikingDirt * vikingLowPocket
+    * smoothstep(0.18, 0.72, vikingTravel + vikingYards * 0.7);
+  vikingRetainedWet = max(
+    vikingRetainedWet,
+    vikingMudCloseHollow * vikingMudCloseWeight * 0.58
+  );
+  vikingSoil *= 1.0 - vikingRetainedWet * 0.28;
 
-  // Cheap uneven-earth relief: two octaves of world-space noise light and
-  // shade the turf as if it dips and mounds a little, so the flush ground
-  // tiles never read as one dead-flat plane. Softened on trodden paths.
-  float vikingRelief =
-    materialValueNoise(vikingPoint * 0.5 + vec2(17.0, 44.0)) * 0.62 +
-    materialValueNoise(vikingPoint * 1.25 + vec2(5.0, 61.0)) * 0.38;
-  diffuseColor.rgb *= mix(1.0, 0.82 + vikingRelief * 0.32, 1.0 - vikingDirt * 0.6);
+  float vikingSoilMix = smoothstep(0.025, 0.94, vikingDirt);
+  diffuseColor.rgb = mix(vikingHeath, vikingSoil, vikingSoilMix);
+
+  // Geometry owns metre-scale ground form. This derivative band continues
+  // from heath cushions through fibres and into mud clods, with traffic
+  // physically compressing the spectrum rather than only recolouring it.
+  float vikingMudRelief = (vikingMudClod - 0.46) * 0.018
+    + (vikingMudCrumb - 0.45) * 0.005
+    + (vikingMudMeso - 0.45) * 0.027
+    + vikingSoilFurrow * 0.009
+    + vikingMudCloseHeight * vikingMudCloseWeight;
+  vikingHeight = vikingHeathHeight * (1.0 - vikingDirt * 0.7)
+    + vikingMudRelief * vikingDirt
+    - vikingDirt * 0.013
+    + vikingMoss * 0.009
+    + vikingMossMicroHeight * vikingMossMicroWeight
+    + vikingGrassMicroHeight * vikingGrassMicroWeight
+    + vikingEcotoneFelt * 0.004;
 }
 
 // Rain Seam uses the same single destructible ground body model, but its mask
@@ -2470,8 +2764,10 @@ float materialWet = smoothstep(0.56, 0.74, materialPuddleNoise)
   * smoothstep(0.3, 0.7, vBakedSky)
   * uWetness
   * ${appearance.wetness.toFixed(4)};
-float vikingPuddle = vikingDirt
-  * smoothstep(0.5, 0.72, materialPuddleNoise)
+float vikingPuddle = max(
+    vikingRetainedWet * 0.92,
+    vikingDirt * smoothstep(0.55, 0.76, materialPuddleNoise) * 0.46
+  )
   * smoothstep(0.55, 0.85, materialWorldNormal.y)
   * smoothstep(0.3, 0.7, vBakedSky)
   * uWetness;
@@ -2493,7 +2789,7 @@ roughnessFactor = clamp(
   0.08,
   1.0
 );
-roughnessFactor = mix(roughnessFactor, 0.78, vikingDirt * 0.36);
+roughnessFactor = mix(roughnessFactor, 0.9, vikingDirt * 0.52);
 roughnessFactor = mix(roughnessFactor, 0.82, cityDirt * 0.3);
 roughnessFactor = mix(roughnessFactor, 0.98, vikingMoss * 0.52);
 // Biofilm is matte: moss and mould kill any sheen the base surface had.
@@ -2526,6 +2822,20 @@ vec3 materialBevelBend =
   vBevelAxisY * sign(vMaterialBoxPosition.y) * materialBevelT.y +
   vBevelAxisZ * sign(vMaterialBoxPosition.z) * materialBevelT.z;
 normal = normalize(normal + materialBevelBend * 0.6);
+// Viking surface: the same multi-scale field that separates mud, turf and
+// moss also bends the lighting normal. This is what keeps the low continuous
+// ground from reading flat after the separate GrassField tufts are removed.
+if (vikingSurface > 0.5) {
+  vec3 vikingSigmaX = dFdx(-vViewPosition);
+  vec3 vikingSigmaY = dFdy(-vViewPosition);
+  vec3 vikingR1 = cross(vikingSigmaY, normal);
+  vec3 vikingR2 = cross(normal, vikingSigmaX);
+  float vikingDet = dot(vikingSigmaX, vikingR1);
+  vikingDet *= float(gl_FrontFacing) * 2.0 - 1.0;
+  vec3 vikingGrad = sign(vikingDet) *
+    (dFdx(vikingHeight) * vikingR1 + dFdy(vikingHeight) * vikingR2);
+  normal = normalize(abs(vikingDet) * normal - vikingGrad * 1.72);
+}
 // Kallur carpet: the octaves the 0.75 m lattice cannot carry become a
 // derivative bump, so the sun models the fur exactly as it models the
 // baked kochki above it — one light, every scale (bible II.1). Classic

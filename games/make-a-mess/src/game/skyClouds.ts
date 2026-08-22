@@ -533,12 +533,14 @@ const skyShaderFunctions = /* glsl */ `
       vec3 beamShade = mix(uCloudShade, airColor * 0.88, dusk * 0.55);
       float sunDepth = cloudSunDepth(p, cloud, keyDir, lod) * nightModel;
       float energy = cloudSunEnergy(sunDepth, cosKey);
-      // Powder: seen from the lit side, a thin fringe is darker than Beer's
-      // law says, because forward scattering carries the light on inwards.
-      // It darkens the FRINGE. Multiplying the whole sunlit term by it, as
-      // this once did, capped every cloud in the sky at 0.385 of full light.
+      // Powder sugar (Schneider): thin OD toward the sun — forward scatter
+      // carries light past the eye, so the sunward fringe is a touch darker
+      // than Beer alone. NEVER apply on the anti-sun face: that inverted
+      // every heap into a bright core with a dark halo (Igor, twilight).
+      // Multiplying the whole sunlit term by powder once capped every cloud
+      // at 0.385 of full light — that older bug stays retired.
       float powder = 1.0
-        - ${f(CLOUD_LAW.powder)} * clamp(-cosKey, 0.0, 1.0) * exp(-sunDepth * 3.0);
+        - ${f(CLOUD_LAW.powder)} * clamp(cosKey, 0.0, 1.0) * exp(-sunDepth * 3.0);
       // Horizontal sunset still lights the deck: keyUp alone goes to zero on
       // the horizon and erased every sunlit term the moment the disc kissed it.
       float keyLift = max(keyUp, dusk * 0.28);
@@ -615,7 +617,10 @@ const skyShaderFunctions = /* glsl */ `
     // does not extrapolate into high-contrast speckle on black air.
     float mottlingWeight = clamp(shade * 0.38, 0.0, 0.72);
     float mottling = mix(1.0, 0.68 + 0.32 * veil, mottlingWeight);
-    float shadeMix = clamp(shade * (1.0 - form), 0.0, 1.0);
+    // Dense core takes shade; thin veil stays closer to lit. The old
+    // shade*(1-form) inverted every sheet into a bright centre with a dark
+    // ring — not a cloud (Igor, intermediate hours).
+    float shadeMix = clamp(shade * form, 0.0, 1.0);
     float dusk = uTwilight * nightFade;
     // Dusk is when ice sheets crown: do not kill forward glow with twilight.
     float glowTerm = glow * smoothstep(0.55, 0.999, cosKey) * mix(1.0, 1.85, dusk);
@@ -626,8 +631,9 @@ const skyShaderFunctions = /* glsl */ `
     );
     vec3 keyShade = mix(uCloudShade, airColor * 0.88, dusk * 0.5);
     vec3 colour = mix(keyLit, keyShade, shadeMix) * mottling;
-    // Thin strands near the sun pick up under-fire from the warm horizon air.
-    float sheetLining = smoothstep(0.5, 0.98, cosKey) * (1.0 - form * 0.35);
+    // Thin strands near the sun pick up under-fire / lining from the warm
+    // horizon — edges and belly toward the key, never a hollow bright core.
+    float sheetLining = smoothstep(0.5, 0.98, cosKey) * (1.0 - form * 0.55);
     colour += uCloudLit * sheetLining * mix(0.15, 1.4, dusk) * nightFade;
     // Amount fades at night; colour must too or AgX turns sparse sheet texels
     // into yellow-white grains against a black dome.

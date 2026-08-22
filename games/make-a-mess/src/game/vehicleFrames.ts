@@ -87,6 +87,8 @@ import {
   kallurAirshipPoint,
   kallurAirshipProximitySensors,
   KALLUR_AIRSHIP_LIFT_LOCAL,
+  KALLUR_AIRSHIP_PITCH_TRIM_TRAVEL,
+  KALLUR_AIRSHIP_ROLL_TRIM_TRAVEL,
 } from "./kallurAirship.ts";
 import {
   KALLUR_AIRSHIP_AXIS_Y,
@@ -849,7 +851,10 @@ export const vehicleFrames: readonly VehicleFrameDefinition[] = [
     id: "kallur-airship",
     clusterId: "kallur:airship",
     telemetryLabel: "KALLUR AIRSHIP 01",
-    independentMemberMatches: [":blade:", ":trim:"],
+    // Rails stay on the compound hull. `:trim:` also matched the roll
+    // rail, a 4 m rod that poked out between the engine pods as its own
+    // kinematic body and wobbled in flight. Only the cars slide.
+    independentMemberMatches: [":blade:", ":car:"],
     // Origin = lift centre = the hull-of-revolution volume centre,
     // integrated from the same profile the accepted loft is built from.
     origin: kallurAirshipPoint(KALLUR_AIRSHIP_PLACEMENT, KALLUR_AIRSHIP_LIFT_LOCAL),
@@ -871,9 +876,9 @@ export const vehicleFrames: readonly VehicleFrameDefinition[] = [
         zero: kallurAirshipPoint(KALLUR_AIRSHIP_PLACEMENT, [
           0,
           KALLUR_AIRSHIP_AXIS_Y - 1.05,
-          0.7,
+          KALLUR_AIRSHIP_LIFT_LOCAL[2],
         ]),
-        travel: 5,
+        travel: KALLUR_AIRSHIP_PITCH_TRIM_TRAVEL,
         speed: 0.3,
       },
       {
@@ -881,9 +886,9 @@ export const vehicleFrames: readonly VehicleFrameDefinition[] = [
         zero: kallurAirshipPoint(KALLUR_AIRSHIP_PLACEMENT, [
           0,
           KALLUR_AIRSHIP_AXIS_Y - 0.62,
-          0.7,
+          KALLUR_AIRSHIP_LIFT_LOCAL[2],
         ]),
-        travel: 1.7,
+        travel: KALLUR_AIRSHIP_ROLL_TRIM_TRAVEL,
         speed: 0.24,
       },
     ),
@@ -1244,6 +1249,110 @@ export function vehicleMooringState(
       linearVelocity[1] + rotationalVelocity[1],
       linearVelocity[2] + rotationalVelocity[2],
     ],
+  };
+}
+
+/**
+ * Shuttle berths sit away from the rest origin. Capture and heading then
+ * belong to the route's end, not the rest mast: lift centre vs plan.point(1),
+ * nose vs plan.dockHeading. A circuit that omits dockHeading is unchanged.
+ */
+export function vehicleRouteDockState(
+  rest: VehicleMooringState,
+  restCentre: SceneVector3,
+  approach: ApproachGate,
+  plan: Pick<VehicleRoutePlan, "point" | "dockHeading"> | null,
+): { capture: VehicleMooringState; approach: ApproachGate } {
+  const heading = plan?.dockHeading;
+  if (!heading) return { capture: rest, approach };
+  const dock = plan.point(1);
+  // `plan.point(1)` is the carrier-centre pose. Move the authored capture
+  // fitting with that pose as well: measuring the centre itself made the
+  // shuttle observer route-aware while the physical winch remained tied to
+  // the original berth. At a remote stand the watchdog then entered its
+  // settle window, but no mooring force could ever be armed there.
+  const restCapture: SceneVector3 = [
+    rest.point[0] - rest.offset[0],
+    rest.point[1] - rest.offset[1],
+    rest.point[2] - rest.offset[2],
+  ];
+  const arm: SceneVector3 = [
+    restCapture[0] - restCentre[0],
+    restCapture[1] - restCentre[1],
+    restCapture[2] - restCentre[2],
+  ];
+  const fromLength = Math.hypot(approach.heading[0], approach.heading[1]) || 1;
+  const toLength = Math.hypot(heading[0], heading[1]) || 1;
+  const fromX = approach.heading[0] / fromLength;
+  const fromZ = approach.heading[1] / fromLength;
+  const toX = heading[0] / toLength;
+  const toZ = heading[1] / toLength;
+  const cosine = fromX * toX + fromZ * toZ;
+  const sine = toX * fromZ - toZ * fromX;
+  const targetCapture: SceneVector3 = [
+    dock[0] + cosine * arm[0] + sine * arm[2],
+    dock[1] + arm[1],
+    dock[2] - sine * arm[0] + cosine * arm[2],
+  ];
+  return {
+    capture: {
+      ...rest,
+      offset: [
+        rest.point[0] - targetCapture[0],
+        rest.point[1] - targetCapture[1],
+        rest.point[2] - targetCapture[2],
+      ],
+    },
+    approach: { ...approach, heading: [heading[0], heading[1]] },
+  };
+}
+
+/**
+ * A skid platform owns the carrier centre, not a remote nose fitting. Using
+ * the nose point here makes ordinary pitch motion appear as translational
+ * docking speed and lets a horizontal winch torque the craft against its
+ * planted skids. The route endpoint is already the authored resting centre.
+ */
+export function vehicleRoutePlatformDockState(
+  centre: SceneVector3,
+  velocity: SceneVector3,
+  approach: ApproachGate,
+  plan: Pick<VehicleRoutePlan, "point" | "dockHeading">,
+): { capture: VehicleMooringState; approach: ApproachGate } {
+  const target = plan.point(1);
+  const heading = plan.dockHeading ?? approach.heading;
+  return {
+    capture: {
+      point: centre,
+      offset: [
+        centre[0] - target[0],
+        centre[1] - target[1],
+        centre[2] - target[2],
+      ],
+      velocity: [velocity[0], velocity[1], velocity[2]],
+    },
+    approach: { ...approach, heading: [heading[0], heading[1]] },
+  };
+}
+
+/** A named base owns its resting centre and approach independently of route geometry. */
+export function vehiclePlatformDockState(
+  centre: SceneVector3,
+  velocity: SceneVector3,
+  berth: SceneVector3,
+  approach: ApproachGate,
+): { capture: VehicleMooringState; approach: ApproachGate } {
+  return {
+    capture: {
+      point: centre,
+      offset: [
+        centre[0] - berth[0],
+        centre[1] - berth[1],
+        centre[2] - berth[2],
+      ],
+      velocity: [velocity[0], velocity[1], velocity[2]],
+    },
+    approach,
   };
 }
 
@@ -2445,6 +2554,33 @@ export function isDockingComplete(
   );
 }
 
+/** Platform docking is a settled pose carried by a real upward support. */
+export function isPlatformDockingComplete(
+  progress: number,
+  captureOffset: SceneVector3,
+  orientation: Quaternion,
+  centreVelocity: SceneVector3,
+  angularVelocity: SceneVector3,
+  supportContacts: number,
+  nose: SceneVector3 = [-1, 0, 0],
+  approach: ApproachGate = SKY_TRAIN_APPROACH,
+  tolerance: DockingTolerance = SKY_TRAIN_DOCKING,
+): boolean {
+  return (
+    supportContacts > 0 &&
+    isDockingComplete(
+      progress,
+      captureOffset,
+      orientation,
+      centreVelocity,
+      angularVelocity,
+      nose,
+      approach,
+      tolerance,
+    )
+  );
+}
+
 /**
  * Куда корабль придёт через `horizon` секунд, если ничего не менять. Считаем
  * плоскую модель — ход, снос и рыскание: этого хватает, чтобы вести машину
@@ -3174,6 +3310,10 @@ export function autopilot(
   const onArrival = progress >= (plan.arrivalFrom ?? plan.finalFrom);
   const onFinal = progress >= plan.finalFrom;
   const berthPoint = plan.point(plan.arrivalAt ?? 1);
+  const dockHeading = plan.dockHeading ?? [
+    approach.heading[0],
+    approach.heading[1],
+  ];
   const berthDistance = Math.hypot(
     centre[0] - berthPoint[0],
     centre[2] - berthPoint[2],
@@ -3315,7 +3455,7 @@ export function autopilot(
     const finalOffsetX = centre[0] - berthPoint[0];
     const finalOffsetZ = centre[2] - berthPoint[2];
     const finalCrossTrack = Math.abs(
-      finalOffsetX * approach.heading[1] - finalOffsetZ * approach.heading[0],
+      finalOffsetX * dockHeading[1] - finalOffsetZ * dockHeading[0],
     );
     const positionBlend = clamp01(1 - berthDistance / 35);
     // Do not freeze onto the berth heading while still visibly off its axis.
@@ -3332,8 +3472,8 @@ export function autopilot(
     // the turn, after which the near-mast winch can finish the translation.
     const settleHeadingBlend = progress > 0.985 && groundSpeed < 1 ? 1 : 0;
     const blend = Math.max(positionBlend * captureBlend, settleHeadingBlend);
-    const mixX = wanted[0] * (1 - blend) + approach.heading[0] * blend;
-    const mixZ = wanted[1] * (1 - blend) + approach.heading[1] * blend;
+    const mixX = wanted[0] * (1 - blend) + dockHeading[0] * blend;
+    const mixZ = wanted[1] * (1 - blend) + dockHeading[1] * blend;
     const mixLength = Math.hypot(mixX, mixZ) || 1;
     wanted = [mixX / mixLength, mixZ / mixLength];
   }
@@ -3418,7 +3558,7 @@ export function autopilot(
         ? [leadX / leadLength, leadZ / leadLength]
         : [tangentX, tangentZ];
     wanted = onFinal
-      ? [approach.heading[0], approach.heading[1]]
+      ? [dockHeading[0], dockHeading[1]]
       : leadTangent;
   }
   // ТРАССА МОЖЕТ ПОПРОСИТЬ КУРС НАПРЯМУЮ, и тогда он не выводится из движения.
@@ -4009,8 +4149,8 @@ export function autopilot(
         -1,
         Math.min(
           1,
-          guess.heading[0] * approach.heading[0] +
-            guess.heading[1] * approach.heading[1],
+          guess.heading[0] * dockHeading[0] +
+            guess.heading[1] * dockHeading[1],
         ),
       ),
     );
@@ -4048,8 +4188,8 @@ export function autopilot(
   // (сегмент схлопывается в ноль), её направление начинает скакать, и боковой
   // контур раскачивает машину вокруг случайной оси. В прогоне это выглядело
   // как разнос: 37 рад/с и корпус вверх ногами у самого пятна.
-  const swayReferenceX = onFinal ? approach.heading[0] : tangentX;
-  const swayReferenceZ = onFinal ? approach.heading[1] : tangentZ;
+  const swayReferenceX = onFinal ? dockHeading[0] : tangentX;
+  const swayReferenceZ = onFinal ? dockHeading[1] : tangentZ;
   const swayAlong =
     errorX * swayReferenceX + errorZ * swayReferenceZ;
   const swayCrossX = errorX - swayReferenceX * swayAlong;

@@ -3,28 +3,34 @@ import type { SceneVector3 } from "../../../game/destructionScene.ts";
 import type { KallurAirshipPlacement } from "../../../game/kallurAirship.ts";
 import {
   KALLUR_AIRSHIP_BERTH_ANCHOR,
+  KALLUR_AIRSHIP_SHORE_ANCHOR,
+  KALLUR_AIRSHIP_SHORE_YAW,
   KALLUR_AIRSHIP_YAW,
 } from "../../../game/kallurAirshipRoutes.ts";
-import { KALLUR_PADS } from "./kallurTerrainPlan.ts";
+import { KALLUR_PADS, type KallurPad } from "./kallurTerrainPlan.ts";
 
 /**
- * The world seats the separately-declared vessel: the summit landing
- * platform (Igor's verdict — a SIMPLE platform with wooden plank decking,
- * not a mooring mast) and the placement handed to the ship factory. The
- * levelled crown comes from the airship-berth flat pad in the terrain
- * plan; the deck build here reads its elevation.
+ * Two wooden landing stands: the summit crown and a second plank deck
+ * behind the spawn, on the south beach. Same construction — bearers,
+ * joists, planks, a bollard — not a mooring mast.
  */
 
-const foundPad = KALLUR_PADS.find((pad) => pad.id === "airship-berth");
-if (!foundPad) throw new Error("airship-berth missing from KALLUR_PADS");
-export const KALLUR_AIRSHIP_PAD = foundPad;
+const summitPad = KALLUR_PADS.find((pad) => pad.id === "airship-berth");
+if (!summitPad) throw new Error("airship-berth missing from KALLUR_PADS");
+export const KALLUR_AIRSHIP_PAD = summitPad;
 
-// Bearers on the pad, joists across them, planks over the joists.
+const shorePad = KALLUR_PADS.find((pad) => pad.id === "airship-shore");
+if (!shorePad) throw new Error("airship-shore missing from KALLUR_PADS");
+export const KALLUR_AIRSHIP_SHORE_PAD = shorePad;
+
 const BEARER_HEIGHT = 0.4;
 const JOIST_HEIGHT = 0.3;
 const PLANK_HEIGHT = 0.09;
-export const KALLUR_AIRSHIP_DECK_TOP = KALLUR_AIRSHIP_PAD.elevation +
-  BEARER_HEIGHT + JOIST_HEIGHT + PLANK_HEIGHT;
+const DECK_STACK = BEARER_HEIGHT + JOIST_HEIGHT + PLANK_HEIGHT;
+
+export const KALLUR_AIRSHIP_DECK_TOP = KALLUR_AIRSHIP_PAD.elevation + DECK_STACK;
+export const KALLUR_AIRSHIP_SHORE_DECK_TOP =
+  KALLUR_AIRSHIP_SHORE_PAD.elevation + DECK_STACK;
 
 export const KALLUR_AIRSHIP_PLACEMENT: KallurAirshipPlacement = {
   position: [
@@ -35,34 +41,81 @@ export const KALLUR_AIRSHIP_PLACEMENT: KallurAirshipPlacement = {
   yaw: KALLUR_AIRSHIP_YAW,
 };
 
-/** Deck plan: the long axis follows the ship's nose axis. */
-const DECK_LENGTH = 18;
-const DECK_WIDTH = 7;
+export const KALLUR_AIRSHIP_SHORE_PLACEMENT: KallurAirshipPlacement = {
+  position: [
+    KALLUR_AIRSHIP_SHORE_ANCHOR[0],
+    KALLUR_AIRSHIP_SHORE_DECK_TOP,
+    KALLUR_AIRSHIP_SHORE_ANCHOR[1],
+  ],
+  yaw: KALLUR_AIRSHIP_SHORE_YAW,
+};
+
 const PLANK_PITCH = 0.5;
 
-const COS = Math.cos(KALLUR_AIRSHIP_YAW);
-const SIN = Math.sin(KALLUR_AIRSHIP_YAW);
+interface DeckSite {
+  readonly pad: KallurPad;
+  readonly anchor: readonly [number, number];
+  readonly yaw: number;
+  readonly length: number;
+  readonly width: number;
+  readonly bearerAlong: readonly number[];
+  readonly joistAcross: number;
+}
 
-/** Platform-local (along, up, across) → world; along = ship nose axis. */
-function deckPoint(along: number, up: number, across: number): SceneVector3 {
+const SUMMIT_DECK: DeckSite = {
+  pad: KALLUR_AIRSHIP_PAD,
+  anchor: KALLUR_AIRSHIP_BERTH_ANCHOR,
+  yaw: KALLUR_AIRSHIP_YAW,
+  length: 18,
+  width: 7,
+  bearerAlong: [-7.6, -3.8, 0, 3.8, 7.6],
+  joistAcross: 2.5,
+};
+
+const SHORE_DECK: DeckSite = {
+  pad: KALLUR_AIRSHIP_SHORE_PAD,
+  anchor: KALLUR_AIRSHIP_SHORE_ANCHOR,
+  yaw: KALLUR_AIRSHIP_SHORE_YAW,
+  length: 14,
+  width: 6.4,
+  bearerAlong: [-5.6, -1.9, 1.9, 5.6],
+  joistAcross: 2.2,
+};
+
+function deckPoint(
+  site: DeckSite,
+  along: number,
+  up: number,
+  across: number,
+): SceneVector3 {
+  const cos = Math.cos(site.yaw);
+  const sin = Math.sin(site.yaw);
   return [
-    KALLUR_AIRSHIP_BERTH_ANCHOR[0] + SIN * along + COS * across,
-    KALLUR_AIRSHIP_PAD.elevation + up,
-    KALLUR_AIRSHIP_BERTH_ANCHOR[1] + COS * along - SIN * across,
+    site.anchor[0] + sin * along + cos * across,
+    site.pad.elevation + up,
+    site.anchor[1] + cos * along - sin * across,
   ];
 }
 
-/** The player's dispatch point: a bollard by the port stern quarter. */
-export const KALLUR_AIRSHIP_DISPATCH_POINT: SceneVector3 = deckPoint(
-  -3.4,
-  BEARER_HEIGHT + JOIST_HEIGHT + PLANK_HEIGHT + 0.6,
-  2.4,
-);
+function dispatchPoint(site: DeckSite): SceneVector3 {
+  return deckPoint(
+    site,
+    -3.4,
+    DECK_STACK + 0.6,
+    site.width / 2 - 1.1,
+  );
+}
 
-export function createKallurAirshipBerth(
+/** Summit bollard — the island's original departures board. */
+export const KALLUR_AIRSHIP_DISPATCH_POINT = dispatchPoint(SUMMIT_DECK);
+/** Shore bollard, behind the spawn. */
+export const KALLUR_AIRSHIP_SHORE_DISPATCH_POINT = dispatchPoint(SHORE_DECK);
+
+function buildDeck(
+  site: DeckSite,
   push: (object: SceneObjectDefinition) => void,
 ): void {
-  const rotation: SceneVector3 = [0, KALLUR_AIRSHIP_YAW, 0];
+  const rotation: SceneVector3 = [0, site.yaw, 0];
   const primitive = (
     id: string,
     material: "wood" | "steel",
@@ -86,52 +139,68 @@ export function createKallurAirshipBerth(
     });
   };
 
-  // Bearers: two rows of squat sleeper blocks on the levelled crown.
-  for (const [index, along] of [-7.6, -3.8, 0, 3.8, 7.6].entries()) {
+  for (const [index, along] of site.bearerAlong.entries()) {
     for (const side of [1, -1] as const) {
       primitive(
         `bearer:${index}:${side > 0 ? "l" : "r"}`,
         "wood",
         "panel",
-        deckPoint(along, BEARER_HEIGHT / 2, side * 2.5),
+        deckPoint(site, along, BEARER_HEIGHT / 2, side * site.joistAcross),
         [0.55, BEARER_HEIGHT, 0.55],
         "#4a4038",
       );
     }
   }
-  // Two joists run the full deck length on the bearers.
   for (const side of [1, -1] as const) {
     primitive(
       `joist:${side > 0 ? "l" : "r"}`,
       "wood",
       "panel",
-      deckPoint(0, BEARER_HEIGHT + JOIST_HEIGHT / 2, side * 2.5),
-      // Local axes: the deck build rotates by yaw, so size X is ACROSS
-      // and size Z is ALONG the ship axis.
-      [0.28, JOIST_HEIGHT, DECK_LENGTH],
+      deckPoint(
+        site,
+        0,
+        BEARER_HEIGHT + JOIST_HEIGHT / 2,
+        side * site.joistAcross,
+      ),
+      [0.28, JOIST_HEIGHT, site.length],
       "#57493d",
     );
   }
-  // Planks across the joists: pitch EXACTLY equals the plank size.
-  const plankCount = Math.round(DECK_LENGTH / PLANK_PITCH);
+  const plankCount = Math.round(site.length / PLANK_PITCH);
   for (let plank = 0; plank < plankCount; plank += 1) {
-    const along = -DECK_LENGTH / 2 + (plank + 0.5) * PLANK_PITCH;
+    const along = -site.length / 2 + (plank + 0.5) * PLANK_PITCH;
     primitive(
       `plank:${plank}`,
       "wood",
       "panel",
-      deckPoint(along, BEARER_HEIGHT + JOIST_HEIGHT + PLANK_HEIGHT / 2, 0),
-      [DECK_WIDTH, PLANK_HEIGHT, PLANK_PITCH],
+      deckPoint(site, along, BEARER_HEIGHT + JOIST_HEIGHT + PLANK_HEIGHT / 2, 0),
+      [site.width, PLANK_HEIGHT, PLANK_PITCH],
       plank % 3 === 0 ? "#6d5c4b" : plank % 3 === 1 ? "#75634f" : "#685744",
     );
   }
-  // The dispatch bollard: the platform's departures board.
   primitive(
     "bollard",
     "steel",
     "cylinder",
-    deckPoint(-3.4, BEARER_HEIGHT + JOIST_HEIGHT + PLANK_HEIGHT + 0.3, 2.9),
+    deckPoint(
+      site,
+      -3.4,
+      DECK_STACK + 0.3,
+      site.width / 2 - 0.6,
+    ),
     [0.22, 0.6, 0.22],
     "#3a3f42",
   );
+}
+
+export function createKallurAirshipBerth(
+  push: (object: SceneObjectDefinition) => void,
+): void {
+  buildDeck(SUMMIT_DECK, push);
+}
+
+export function createKallurAirshipShoreBerth(
+  push: (object: SceneObjectDefinition) => void,
+): void {
+  buildDeck(SHORE_DECK, push);
 }

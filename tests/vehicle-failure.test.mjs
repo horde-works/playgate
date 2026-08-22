@@ -601,6 +601,44 @@ test("arrival times out only after ten seconds inside the docking capture", () =
   assert.equal(failure, "dockingTimeout");
 });
 
+test("a captured winch may take longer than its stall allowance while it keeps converging", () => {
+  let watchdog = createVehicleFailureWatchdog(0.99);
+  let failure = null;
+  for (let index = 0; index < 200; index += 1) {
+    const result = advanceVehicleFailureWatchdog(
+      watchdog,
+      observation({
+        progress: 1,
+        requestedControlEffort: 0.1,
+        inDockingCapture: true,
+        dockingDistance: 0.7 - index * 0.0005,
+        dockingTimeoutSeconds: 6,
+        dockingProgressMetres: 0.01,
+      }),
+    );
+    watchdog = result.state;
+    failure = result.failure;
+  }
+  assert.equal(failure, null, "twenty seconds of slow physical convergence is healthy");
+
+  for (let index = 0; index < 61; index += 1) {
+    const result = advanceVehicleFailureWatchdog(
+      watchdog,
+      observation({
+        progress: 1,
+        requestedControlEffort: 0.1,
+        inDockingCapture: true,
+        dockingDistance: 0.6,
+        dockingTimeoutSeconds: 6,
+        dockingProgressMetres: 0.01,
+      }),
+    );
+    watchdog = result.state;
+    failure = result.failure;
+  }
+  assert.equal(failure, "dockingTimeout", "a captured but stuck winch still fails");
+});
+
 test("entering the docking capture hands the final manoeuvre over to its own timer", () => {
   let watchdog = createVehicleFailureWatchdog(0.99);
   for (let index = 0; index < 340; index += 1) {
